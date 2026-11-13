@@ -1,0 +1,63 @@
+{
+  "CPU_controls": {
+    "accepted_helper_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-preparation-v2/measure.py",
+    "accepted_helper_sha256": "2ac588680327ea12d2a020858487b7b79187e331ea42cb2cd9dba6cf77923c9e",
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-cpu-controls.py",
+    "scope": "Existing actual-source synthetic loss/mask/fallback/differentiability, zeroNoneconstant and analyticcos controls; no model/Trainer/researcharray/GPU qualification. Root must supply exact finite CPU180 command/admission.",
+    "sha256": "087306786d5013fb5e80710f6c4fdb6ecdcff6d762448c311939919f949174d2",
+    "status": "SOURCE_DESIGN_ACCEPTED_BOUND_TO_CORRECTED_HELPER_NO_EXECUTION_IN_REVIEW"
+  },
+  "changed_function_ASTs_only": [
+    "measure_row",
+    "run_state"
+  ],
+  "created_utc": "2026-11-13T06:59:00.014629+00:00",
+  "findings": [],
+  "helper": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-preparation-v2/measure.py",
+    "sha256": "2ac588680327ea12d2a020858487b7b79187e331ea42cb2cd9dba6cf77923c9e"
+  },
+  "limits": [
+    "Exact delta review reuses102bf fullsource review; no broader wholehelper restat/test reruns needed.",
+    "No imports, tests, arrays/checkpoints/models, engines/TBqueries, forwards/gradients or jobs executed. No source or template edits; v1 preservedUNRUN."
+  ],
+  "manifest_sha256": "bb6f1d9b089381aee2d7f04efec2637ca66b094bf257c6bdd3c9b049ecb6bbe6",
+  "metadata_reverse_to_v1_exact": {
+    "binding-contract.json": true,
+    "command.TEMPLATE.json": true,
+    "manifest.json": true,
+    "protocol.TEMPLATE.json": true,
+    "root-admission.TEMPLATE.json": true
+  },
+  "patch_sha256": "899a2f9c06c780e76f963db5052fb3f569af53ee4a876a11156647a3840da95e",
+  "predecessor_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-independent-source-review-v1/review.json",
+    "sha256": "102bf9feb7ce0e13c8ade00d4f1196e232121cb6682d4c9b7d2a7d1c554122c1"
+  },
+  "preparation": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-preparation-v2/preparation.json",
+    "sha256": "81df94957d11536a8812d7e020b331603062948eb1d5f993b20f2117636e2601"
+  },
+  "protocol_template_sha256": "8cbb9d9331edb1624129e830491176e474f95eaa928e4506bb9400d72717bb57",
+  "remaining_before_GPU": [
+    "Actual scoped CPU controls outcome and independent readout as root requires.",
+    "Final immutable scientific implementation/command bindings and allowed-late-leaf projections, publication/main gate if applicable, actual custody/source/math/proof inputs.",
+    "Fresh parent-owned GPU600/570 finite admission; this review is not execution or result acceptance."
+  ],
+  "resolved_findings": [
+    {
+      "disposition": "Resolved",
+      "evidence": "First sentinel fsynced before repeat call; complete repeat observed report/errors/drifts/controlflags fsynced before all(flags) refusal. No duplicate game0write; other games retain same immutable creation.",
+      "id": "E3-IMPL-1"
+    },
+    {
+      "disposition": "Resolved",
+      "evidence": "Both blocks.N and layer_smolgens.N aliases recognized. Actual16alias generator receives tied_across_layers; individual Smolgen rows retain per-layer group. Primary whole-trunk Gram unchanged.",
+      "id": "E3-IMPL-2"
+    }
+  ],
+  "schema": "independent-E3-implementation-v2-corrective-source-review-v1",
+  "scientific_controls_unchanged": true,
+  "status": "ACCEPT_CORRECTED_SOURCE_FOR_SEPARATELY_ADMITTED_SCOPED_CPU_CONTROLS_ONLY",
+  "unchanged_expected_map_sha256": "219d77e26feba07d8f1baf6b615d2f17c783692b5e3f8029af77bdbf689e75f3"
+}

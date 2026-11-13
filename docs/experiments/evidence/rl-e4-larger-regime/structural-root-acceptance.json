@@ -1,0 +1,40 @@
+{
+  "status": "ACCEPT_COMPLETE_E4_STRUCTURAL_SELECTION_ONLY_NOT_ENCODING_OR_RESEARCH_ADMISSION",
+  "utc": "2026-11-13T08:18:02.227639+00:00",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "collection_uuid": "cd47b230-f32f-4256-a51e-4869f5708bb6",
+  "accepted": 820,
+  "cohort": 192,
+  "TRAIN": 128,
+  "HOLD": 64,
+  "screen_pairs": 128,
+  "confirmation_pairs": 500,
+  "independent_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-structural-actual-independent-review-v1/review.json",
+    "sha256": "4d630b8a56bae855d48bfd629409d729c4ebdd5b7d277291c51624b4d350f8a9"
+  },
+  "manifest": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-structural-selection-results-v1-cd47b230/manifest.json",
+    "sha256": "7db17da357fc524d6b1862fc45fab9a3fad2745fd4c5b54d4eec889051825724"
+  },
+  "selection": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-structural-selection-results-v1-cd47b230/selection.json",
+    "sha256": "ca5cb33f5ffa22606dd6d7cc8bbf9e0dcd0859f75d5b031fc76cacd6459905ed"
+  },
+  "selected": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-structural-selection-results-v1-cd47b230/selected820.json",
+    "sha256": "544237b04888b2a20d5b1237200dab14b27afad05123fe7e048c132e7a6c7a84"
+  },
+  "games": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-structural-selection-results-v1-cd47b230/games.json",
+    "sha256": "45cf99e121e03999cedd704d6d4a8ea6c855927fe797373ecb7fa752757dab32"
+  },
+  "terminal": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-structural-selection-execution-v1/terminal.json",
+    "sha256": "3d53b4de29c032233ead4d3370496aca936117ccd727896cf0b825a424485d1b"
+  },
+  "owner_wall_seconds": 3.1726627349853516,
+  "actual820_native_encoding_qualified": false,
+  "generation_training_or_strength_admitted": false,
+  "next": "Actual R7 820 raw/file-mirror encoding and E4config/builder qualification before generation."
+}

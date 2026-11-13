@@ -1,0 +1,88 @@
+{
+  "accepted_composite_flat_offline_placements": [
+    {
+      "directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline64-roots-final-v2",
+      "files": {
+        "common.py": "a62e85e22a593028b68ddc673e0fcf24186f08d67059e05863c0e3b7a8598d92",
+        "freeze_roots.py": "40dc49d582326c4d63f06011746f65f052826fb66e579e54cad105eef7a9a956",
+        "metrics.py": "8058546e7fa263c5becfae1f4378917d4b1d4f333f32d8e04b94fceefe7a1d56",
+        "readout.py": "c9f79c370c9c87edd59cd284515b644e30e48f6c9c4046c702be37c437d430e3",
+        "score.py": "b8229d1af09cfa19bfda26a85fc4cddc416c6cdf7a05de349789da9fe5214541",
+        "source-proof.json": "3da383ff9d7addf3c3bcc97bfc9bb346ada5d86682bba9a4f4c35ef7c89c966c",
+        "strict_roots.py": "5c60108f71d5154a21c7836a2cf48910b0596dd677a240c19ff30c793a18033c"
+      },
+      "phase": "roots"
+    },
+    {
+      "directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline64-score-final-v2",
+      "files": {
+        "common.py": "a62e85e22a593028b68ddc673e0fcf24186f08d67059e05863c0e3b7a8598d92",
+        "freeze_roots.py": "40dc49d582326c4d63f06011746f65f052826fb66e579e54cad105eef7a9a956",
+        "metrics.py": "8058546e7fa263c5becfae1f4378917d4b1d4f333f32d8e04b94fceefe7a1d56",
+        "readout.py": "c9f79c370c9c87edd59cd284515b644e30e48f6c9c4046c702be37c437d430e3",
+        "score.py": "b8229d1af09cfa19bfda26a85fc4cddc416c6cdf7a05de349789da9fe5214541",
+        "source-proof.json": "3da383ff9d7addf3c3bcc97bfc9bb346ada5d86682bba9a4f4c35ef7c89c966c",
+        "strict_roots.py": "5c60108f71d5154a21c7836a2cf48910b0596dd677a240c19ff30c793a18033c"
+      },
+      "phase": "score"
+    },
+    {
+      "directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline64-readout-final-v2",
+      "files": {
+        "common.py": "a62e85e22a593028b68ddc673e0fcf24186f08d67059e05863c0e3b7a8598d92",
+        "freeze_roots.py": "40dc49d582326c4d63f06011746f65f052826fb66e579e54cad105eef7a9a956",
+        "metrics.py": "8058546e7fa263c5becfae1f4378917d4b1d4f333f32d8e04b94fceefe7a1d56",
+        "readout.py": "c9f79c370c9c87edd59cd284515b644e30e48f6c9c4046c702be37c437d430e3",
+        "score.py": "b8229d1af09cfa19bfda26a85fc4cddc416c6cdf7a05de349789da9fe5214541",
+        "source-proof.json": "3da383ff9d7addf3c3bcc97bfc9bb346ada5d86682bba9a4f4c35ef7c89c966c",
+        "strict_roots.py": "5c60108f71d5154a21c7836a2cf48910b0596dd677a240c19ff30c793a18033c"
+      },
+      "phase": "readout"
+    }
+  ],
+  "active_findings": [],
+  "correction_ref": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline-final-fen-correction-v1/correction.json",
+    "sha256": "6dc0fdcefabe1872e3ee2a44b0a383e063e6250ad6f3f87f8607daa33a3fb5a5"
+  },
+  "files_verified": 45,
+  "findings_closed_in_composite_successor": [
+    {
+      "correction": "board.fen() == chess.Board(actual['final_fen']).fen()",
+      "exact_one_expression_byte_replacement_all3_flat_sources_verified": true,
+      "file": "offline/strict_roots.py",
+      "line": 78,
+      "original": "board.fen() == actual['final_fen']",
+      "priority": 2,
+      "risk": "False diagnostic refusal on legal native en-passant FEN serialization. No TRAIN admission or target change.",
+      "successor_sha256": "5c60108f71d5154a21c7836a2cf48910b0596dd677a240c19ff30c793a18033c"
+    },
+    {
+      "file": "offline/common.py:14 -> score.py:174",
+      "priority": 2,
+      "resolution": "All3 prospective final phase directories are direct globalWROOT children;6py+sourceproof placement hashes verified. No numerical sourcepatch. TRAIN/draw/checkpoint have no HERE.parent dependency; explicit HERE-local and component paths still bind consistently.",
+      "risk": "Nested HERE.parent points under preparation instead of global WROOT for historical494shape metadata."
+    }
+  ],
+  "not_performed": "No project/helper imports, arrays/checkpoints/models/engines/TBqueries, tests, jobs, sourcewrites or outcomes read.",
+  "pending_before_execution": [
+    "Explicit final known config/starts/profile/source/native identities and fixed projections frozen before science/generation.",
+    "Flat offline phase manifests/commandtemplates must pin corrected strict_roots SHA and correction ref; old source-proof remains historicalparent, not new aggregate proof.",
+    "Rebind TRAIN_directory/component/helper/selection/HERE paths consistently; draw science component binds actual installed manifest without selfhash cycles.",
+    "Scoped separately root-admitted CPU qualification; no newGPUAA or researcherjobs authorized by source review."
+  ],
+  "preparation_sha256": "ee0a188fd885f714c63e05a070df9908b47b8fc7ce3ec00b5a0d8bb1a2d10972",
+  "reviewed_behavior": {
+    "LR": "Actual129 uses7.136969439881711e-6 matrix and3.568484719940855e-7 aux; final saved scheduler epoch120/peak is next130. Perupdate release arithmetic and snapshot0/1/8/129 bookkeeping match source. No update130.",
+    "TRAIN_boundary": "All192 root+independent/cohort/sixSHA/628-vs192 metadata gates; ALL128 fresh canonical proofs and immutable inventories prepared before first TRAIN shard/raw archive decode. No HOLD learner arrays. All128 nonempty/verified resolved/rawcontrol.",
+    "bounds": "PairedGPU1200/1170;drawCPU300/270;CPUcheckpoint300/270;offlineRoots120/105,score300/270,reader120. No automatic admission.",
+    "draw_rng": "Uniform129x256seed1342; fixed physical IDs/indices/multiplicities/signatures, mirror1343/common1344 restored once perarm beforeprefetch, no perstep resets/extra draws. Actual posthost/device/masks/RNG/counters observed equally.",
+    "freshness": "Both freshA39 all494exact/step0/emptyoptimizer+scheduler+Zclip/noSWA, original94kwargs/Aurora/Adam ownership unchanged; selected8 diagnostics and weakref cleanup preserve scope.",
+    "offline": "Whole64 freshproofs before HOLD/derived root arrays perconsumer; any validcensor/missingroot=>wholeinconclusive, not TRAIN/primaryveto. Only3fixedmodels, same metrics/legal1858/eagerBF16/494/cleanup; bootstrap10000 seed1347, no selection.",
+    "snapshots": "Both0/1/8/129; final trainer.pt==step129 hardlink; onlyDONOR/A129/B129 offline/custody.9CPUcheckpoint loads proposed:1donor+8snapshots, no forwards.",
+    "target_math": "Same08a8 rawfactory/f634 verifier. MainWDL common storedF16search with actual1vs.8share+resolved outcome; categorical A raw signedQ HLgauss->F16 bitmatches original, B .8rawsearchQ+.2outcomeQ before HLgauss/F16. No F32substitution to mainWDL, no mixture-of-histograms confound, both rebuild flagsOFF."
+  },
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "ACCEPT_E4_LEARNING_SOURCE_WITH_VERIFIED_OFFLINE_CORRECTIONS_FINAL_BINDINGS_PENDING",
+  "utc": "2026-11-13T08:30:44.269399+00:00"
+}

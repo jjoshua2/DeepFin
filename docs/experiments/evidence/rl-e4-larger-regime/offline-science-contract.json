@@ -1,0 +1,27 @@
+{
+  "offline": {
+    "roots": 64,
+    "bootstrap": {
+      "seed": 2026111347,
+      "paired_samples": 10000
+    },
+    "snapshots": [
+      "donor",
+      "FULLA129",
+      "FULLB129"
+    ],
+    "role": "DIAGNOSTIC_ONLY_NOT_SELECTION_OR_PLAYING_GATE",
+    "root_rule": "One preselected eligible8..80retainedNETroot pernewHOLDgame, fixednew producer salt and known-input exclusions; anycensor/missingroot => wholeofflineinconclusive, no subset/replacement."
+  },
+  "seeds": {
+    "generation": 2026111340,
+    "rank": 2026111341,
+    "draw": 2026111342,
+    "mirror": 2026111343,
+    "training_common": 2026111344,
+    "screens": 2026111345,
+    "confirmation": 2026111346,
+    "offline_bootstrap": 2026111347
+  },
+  "rule": "Final science.offline and science.seeds must be canonicalexact to these objects. Other scientificsections may differ; no silent fields added insideoffline."
+}

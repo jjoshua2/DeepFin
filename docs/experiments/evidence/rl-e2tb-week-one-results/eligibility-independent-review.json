@@ -1,0 +1,175 @@
+{
+  "checks": {
+    "CPU_driver_role_only_reversal_exact_reviewed_primary": true,
+    "GPU_command_exact_frozen_role": true,
+    "all128_complete_color_reversed_pairs": true,
+    "all256_raw_PGN_and_readout_joins": true,
+    "both_owners_closed_known_births_absent": true,
+    "copied_bindings_exact_utility_endpoint": true,
+    "full16_history_matches_fixed_ordered_book": true,
+    "integer_paired_statistics_independently_recomputed": true,
+    "prepost_assets_identical_and_source_494_model_custody_qualified": true
+  },
+  "closure_observations": [
+    {
+      "current_birth": null,
+      "expected_birth": 27081811,
+      "pid": 1257464,
+      "stage": "e2tb-eligibility-execution-v1"
+    },
+    {
+      "absent": true,
+      "cpu_seconds": 675.86,
+      "stage": "e2tb-eligibility-execution-v1",
+      "supervisor_pid": 1257462,
+      "wall_seconds": 647.3398877109867
+    },
+    {
+      "current_birth": null,
+      "expected_birth": 27161746,
+      "pid": 1260941,
+      "stage": "e2tb-eligibility-readout-execution-v1"
+    },
+    {
+      "absent": true,
+      "cpu_seconds": 12.85,
+      "stage": "e2tb-eligibility-readout-execution-v1",
+      "supervisor_pid": 1260924,
+      "wall_seconds": 15.282809363969136
+    }
+  ],
+  "created_utc": "2026-11-13T05:42:08.323433+00:00",
+  "findings": [],
+  "interpretation": "FULLB40 versus A39 misses point>=0.53 and available lower>0.5. Available upper is not below0.5, so no qualified donor regression; this does not establish equivalence or gain. Context is still mandatory. Confirmation remains prohibited, no promotion/adoption of A or B.",
+  "limits": [
+    "Stdlib-only raw JSONL/PGN metadata and integer paired arithmetic; completed source-qualified CPU reader supplies board legality, native full-history and actual strict TB/rule terminal validation. No repeated engine/probe/model/checkpoint/array operations.",
+    "Model byte identity joins immutable accepted pre/post SHA/stat custody and494 architecture qualification; no per-game served-state hash or independently repeated per-forward precision claim.",
+    "Conditional approximate paired normal95 at fixed profile, one learning realization; no external/general Elo/optimality conclusion."
+  ],
+  "readout_sha256": "3b4ecc6218a861ae27651e9ea1cae75df6826776081a8ba91b2c04647a7e5429",
+  "references": {
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-arena-command-preparation-v2/preparation.json": {
+      "mode": "0o644",
+      "sha256": "2de3a7139ba851e8911b6f45dd888ed541a34786e9a41f87c9a10f79777683bf"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-arena-readout-preparation-v2/manifest.json": {
+      "mode": "0o444",
+      "sha256": "396744fe6537cdee254daf9b5f9ed5a148521b6502f1a824ed202b87edf2bd6d"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-arena-readout-preparation-v2/read_endpoint.py": {
+      "mode": "0o444",
+      "sha256": "1ba5dfe8ad668ad21a088197392de97d2b9788b45ece1bf2874ab624890f2ed8"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-arena-readout-results-v1/eligibility/readout.json": {
+      "mode": "0o644",
+      "sha256": "3b4ecc6218a861ae27651e9ea1cae75df6826776081a8ba91b2c04647a7e5429"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-execution-v1/stage.log": {
+      "mode": "0o444",
+      "sha256": "27a17cc6c3e72e08af31bfe27731f79eb2075de6bb5c73558da001b20d7bf413"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-execution-v1/terminal.json": {
+      "mode": "0o644",
+      "sha256": "368bfe38c8096eef6a3ae536bc7ed5046834f39e0c93b178aa491d9d050b85fa"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-launch-settlement-v1/model-custody.json": {
+      "mode": "0o444",
+      "sha256": "8046f1caaf4ecce52c006b6f5bcd3351148ecc575baf558647eb8ef6749d0a31"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-launch-settlement-v1/reader-admission.json": {
+      "mode": "0o444",
+      "sha256": "5132238618f622df0ab243a9966ce4660f2614b6354937903100f0a70d59266f"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-launch-settlement-v1/settlement.json": {
+      "mode": "0o444",
+      "sha256": "351a9618ca5648d116eeab4a6b11c24ce519006ca5224fab55cb0b33d611a1d8"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-readout-bindings-v1.json": {
+      "mode": "0o444",
+      "sha256": "939f0cd05bf60eaec305c71d66d4ecbfbf5728e2b8caee57f264bdda68844672"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-readout-execution-v1/terminal.json": {
+      "mode": "0o644",
+      "sha256": "c09de63c0a7519fdbcda30816e4b9c34620a9ddea4dc43b2fc03ba430b3e649d"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-readout-root-execution-admission-v1/admission.json": {
+      "mode": "0o444",
+      "sha256": "769ff39c4932014e9e2550117f92b10761ceb80313cad7f437f839e8712be484"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-readout-root-execution-admission-v1/admit_and_exec.py": {
+      "mode": "0o644",
+      "sha256": "d7bf968184c55931b18fcea8a1bbe7022edd4c1cba3d09455eb92b0b70c9a2db"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-results-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/games.jsonl": {
+      "mode": "0o444",
+      "sha256": "35e3923a954fec70ffbd13da02cc6add9446fe870f99fb431dbdf67a76f97ce8"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-results-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/games.pgn": {
+      "mode": "0o444",
+      "sha256": "1a1418c323d5cfbdd749143eb4f29367c5d4cbe9468d88f2ad552ed0da10abe3"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-results-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/result.jsonl": {
+      "mode": "0o444",
+      "sha256": "e13ec2406518e11fd51fbda2cf782def6a4df4677d6c6984883783dea234c5fd"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-primary-readout-root-execution-admission-v1/admit_and_exec.py": {
+      "mode": "0o644",
+      "sha256": "5b5800650719cf03f75ec23e716870df985a55445ee60213259a79eb6d7807c1"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-primary-readout-root-execution-admission-v1/remaining-role-source-equivalence.json": {
+      "mode": "0o444",
+      "sha256": "f15edddc8f38c6603bc50dabf6dfac12a1a718b7d968acbc33cfb0bfac935f40"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-scientific-protocol-final-v2/protocol.json": {
+      "mode": "0o444",
+      "sha256": "ee24d3b7aa575c3dd2b85061f376a4920d5f9034a2cc358e03ed8312cd1476c0"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-structural-selection-results-v2-f1dadbe4/screen.epd": {
+      "mode": "0o444",
+      "sha256": "d7e4ff3b4cffc4b36cd6402dedf3d967caef689ff01a4a20eca6813898ae1091"
+    }
+  },
+  "schema": "independent-actual-e2tb-eligibility-review-v1",
+  "status": "ACCEPT_COMPLETE_TECHNICALLY_QUALIFIED_ELIGIBILITY_REGISTERED_PERFORMANCE_NONPASS",
+  "summary": {
+    "candidate": "FULLB40",
+    "candidate_WDL": [
+      88,
+      91,
+      77
+    ],
+    "confirmation_allowed": false,
+    "games": 256,
+    "halfpoint_denominator": 512,
+    "integer_halfpoints": 267,
+    "max_additional_plies": 183,
+    "opening_plies": 16,
+    "pairs": 128,
+    "pentanomial_low_to_high": [
+      10,
+      24,
+      49,
+      35,
+      10
+    ],
+    "qualified_donor_regression": false,
+    "reference": "A39",
+    "registered_eligibility_pass": false,
+    "remaining_fixed_screen_required": "context",
+    "rule_flags": {
+      "checkmate": 93,
+      "claimable_threefold": 38
+    },
+    "sample_variance": 0.06794029896653543,
+    "score": 0.521484375,
+    "score_ci95": [
+      0.4763284426905775,
+      0.5666403073094225
+    ],
+    "score_se": 0.02303874097419514,
+    "terminations": {
+      "rules": 131,
+      "syzygy": 125
+    }
+  }
+}

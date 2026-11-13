@@ -1,0 +1,125 @@
+{
+  "checks": {
+    "actual_GPU_child_OMP_MKL2_CUDA0_math_overrides_absent": true,
+    "all_frozen_arena_source_hashes_exact": true,
+    "both_processes_present_complete": true,
+    "child_live_and_recorded_argv_exact": true,
+    "frozen_HEAD_ba9_clean": true,
+    "mapped_native5_where_present_inode_SHA_exact": true,
+    "owner_and_child_affinity20_22": true,
+    "owner_and_child_expected_pid": true,
+    "owner_child_PPIDs_and_cwds": true,
+    "owner_child_births_stable_through_observation": true,
+    "owner_live_argv_exact": true,
+    "owner_source_b728_and_stage3600": true,
+    "root_admission_SHA_exact": true
+  },
+  "child_observed_environment": {
+    "CUBLAS_WORKSPACE_CONFIG": null,
+    "CUDA_VISIBLE_DEVICES": "0",
+    "MAX_JOBS": "1",
+    "MKL_NUM_THREADS": "2",
+    "NVIDIA_TF32_OVERRIDE": null,
+    "OMP_NUM_THREADS": "2",
+    "PYTHONPATH": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess",
+    "TORCHINDUCTOR_COMPILE_THREADS": "1"
+  },
+  "child_pid_birth": [
+    1253947,
+    26923505
+  ],
+  "evidence": {
+    "frozen_commands": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-arena-command-preparation-v2/preparation.json",
+      "sha256": "2de3a7139ba851e8911b6f45dd888ed541a34786e9a41f87c9a10f79777683bf"
+    },
+    "native_qualification": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cpu-qualification-root-acceptance-v3/native-origins.json",
+      "sha256": "b830357fe37a8a5bf83f403de055700fc1be1146bb78d205fc23a62d46ee4abb"
+    },
+    "process_metadata": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-primary-execution-v1/process.json",
+      "sha256": "2edaad2a54b0b79d8890a07196d7cbc5500fe59331ef3d8fcb9b180dd3d323ac"
+    },
+    "root_admission": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-primary-root-execution-admission-v1/admission.json",
+      "sha256": "7e63694b58946fb203f504626061a6c54228203016e3c4b11534331d5b904a8a"
+    },
+    "snapshot": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-primary-live-custody-independent-observation-v1/snapshot.json",
+      "sha256": "5b21cd04a57704f151cf55cc78dee46e0a70ac980cae65b1ddfb00085e698f2f"
+    },
+    "utility_independent_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-screen-launch-settlement-independent-source-review-v2/review.json",
+      "sha256": "cd1e6ed43e2f5fff0c8fbfb9467ec10f670972ede345dc214e46d245309a4821"
+    },
+    "utility_manifest": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-screen-launch-settlement-preparation-v4/manifest.json",
+      "sha256": "1aed47b2b69172e8268f42dd68ce523f4376332e2f4bb443d021c64fcb962628"
+    },
+    "utility_source": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-screen-launch-settlement-preparation-v4/screen.py",
+      "sha256": "279a73c697b9b2f0aa30c63a77ea586a464441c2518196777af5eba3db886f41"
+    }
+  },
+  "limits": [
+    "Initial failed overstrict-controller-environment assertion preserved explicitly; this is the one root-authorized narrow diagnostic followup, not a gameplay or research rerun. Snapshot was fsynced before assertions/checks.",
+    "Whitelist only8 authorized environment keys; no full environment/credentials. No gameplay log/results/score, model/checkpoint/array content, project imports, signals, engine/TB/GPU query or new job. Native ELF bytes were hashed solely to match mapped source images.",
+    "One live custody observation only, not256game completeness/legal-history/numerical-serving/strength acceptance. Root owns all monitoring, controls and post-stage settlement/readout."
+  ],
+  "mapped_native_images": [
+    {
+      "actual_inode_and_hash_match": true,
+      "inode": 14528091,
+      "mapped_segments": 5,
+      "module": "chess_anti_engine.encoding._features_ext",
+      "path": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/encoding/_features_ext.cpython-313-x86_64-linux-gnu.so",
+      "sha256": "24bfb5b0a1a0adecee32914e349f0e3d09cf828c5df79fedcf3602cd0c4bd041"
+    },
+    {
+      "actual_inode_and_hash_match": true,
+      "inode": 14528092,
+      "mapped_segments": 5,
+      "module": "chess_anti_engine.encoding._lc0_ext",
+      "path": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/encoding/_lc0_ext.cpython-313-x86_64-linux-gnu.so",
+      "sha256": "54fb0a7f0bb69602c253b13330f4832a22162db8f526c6ab2aa4bf16ab372ebd"
+    },
+    {
+      "actual_inode_and_hash_match": true,
+      "inode": 14528095,
+      "mapped_segments": 5,
+      "module": "chess_anti_engine.mcts._mcts_tree",
+      "path": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/mcts/_mcts_tree.cpython-313-x86_64-linux-gnu.so",
+      "sha256": "da294b4f59e453b7db7bd7c94353d9ecdc4d07925cb56c9e6568675a50e1b476"
+    }
+  ],
+  "native_modules_not_present_at_snapshot": [
+    "chess_anti_engine.encoding._perft_ext",
+    "chess_anti_engine.nnue._nnue_ext"
+  ],
+  "notes": [
+    "Owner OMP/MKL/CUDA values are observations only: controller tracks resources/psutil and does not execute neural math; explicit child environment is the numerical contract."
+  ],
+  "owner_observed_environment": {
+    "CUBLAS_WORKSPACE_CONFIG": null,
+    "CUDA_VISIBLE_DEVICES": null,
+    "MAX_JOBS": null,
+    "MKL_NUM_THREADS": null,
+    "NVIDIA_TF32_OVERRIDE": null,
+    "OMP_NUM_THREADS": null,
+    "PYTHONPATH": null,
+    "TORCHINDUCTOR_COMPILE_THREADS": null
+  },
+  "owner_pid_birth": [
+    1253945,
+    26923499
+  ],
+  "source": {
+    "HEAD": "ba9d6de1987902e1759d984532a4c63f091b9269",
+    "clean": true,
+    "git_optional_locks_disabled": true,
+    "source_manifest_count": 6
+  },
+  "status": "OBSERVED_EXACT_LIVE_PRIMARY_OWNER_CHILD_AND_GPU_ENV_NATIVE_CUSTODY_ONLY",
+  "utc": "2026-11-13T04:59:19.624386+00:00"
+}

@@ -1,0 +1,580 @@
+"""Finite existing-Trainer caller: prospective E4_129 with freshly verified whole128 TRAIN only."""
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import asdict
+from copy import deepcopy
+import json
+import math
+import os
+from pathlib import Path
+import random
+import signal
+import sys
+from types import SimpleNamespace
+import uuid
+import weakref
+
+import numpy as np
+
+from train_inputs import (
+    base_inputs,
+    checked_json,
+    digest,
+    load_research_train,
+    require,
+)
+from paired_observer import (
+    FixedBundleBatches,
+    ObservePairedTrainer,
+    assert_pair,
+    identity,
+    math_context,
+    parameter_map,
+    plain,
+    release_arm_refs,
+    restore_rng,
+    rng_state,
+    tensors_signature,
+    arrays_signature,
+)
+from value_bundle import arm_flat_config
+
+
+HERE = Path(__file__).resolve().parent
+
+
+def write_json(path, value):
+    with Path(path).open("x") as stream:
+        json.dump(plain(value), stream, indent=2, sort_keys=True, allow_nan=False)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def guard(manifest, protocol):
+    for name, expected in manifest["helpers"].items():
+        require(digest(HERE / name) == expected, "paired helper changed: " + name)
+    for name in ("train_inputs", "paired_observer", "value_bundle", "verified_outcome"):
+        require(Path(sys.modules[name].__file__).resolve() == HERE / (name + ".py"),
+                "foreign paired/proof helper: " + name)
+    require(protocol["source_inputs_bound"] is True, "E4 source bindings UNBOUND")
+    old, parts = base_inputs(protocol, manifest)
+    require(
+        protocol["source_revision"] == parts[1]["source_revision"],
+        "paired source changed",
+    )
+    selection = checked_json(protocol["selection_path"], protocol["selection_sha256"])
+    require(
+        1 <= len(selection["parameters"]) <= 8,
+        "selected parameter contract empty/too large",
+    )
+    require(
+        math_context() == protocol["math_context"],
+        "planned math context differs; do not change settings to force pass",
+    )
+    return old, parts, selection
+
+
+def owner(protocol):
+    args = (
+        Path("/proc/" + str(os.getppid()) + "/cmdline")
+        .read_bytes()
+        .decode()
+        .split("\0")
+    )
+    require(
+        protocol["owner_path"] in args
+        and digest(protocol["owner_path"]) == protocol["owner_sha256"],
+        "wrong paired owner",
+    )
+    for key, expected in [
+        ("--seconds", str(protocol["owner_seconds"])),
+        ("--resource", "gpu"),
+    ]:
+        require(
+            key in args and args[args.index(key) + 1] == expected,
+            "wrong paired finite owner bounds",
+        )
+    require(
+        sorted(os.sched_getaffinity(0)) == [20, 22]
+        and os.environ.get("CUDA_VISIBLE_DEVICES") == "0",
+        "paired CPU/GPU custody differs",
+    )
+    require(
+        os.environ.get("OMP_NUM_THREADS") == os.environ.get("MKL_NUM_THREADS") == "2"
+        and __debug__
+        and os.environ.get("PYTHONOPTIMIZE", "0") == "0",
+        "paired threads/assertions differ",
+    )
+
+
+def named_optimizer_signature(trainer):
+    """Normalize by physical parameter names, NEVER process-local object IDs."""
+    import torch
+
+    names = {id(p): name for name, p in trainer.model.named_parameters()}
+
+    def signature(value):
+        if isinstance(value, torch.Tensor):
+            require(
+                bool(torch.isfinite(value).all()), "nonfinite actual optimizer tensor"
+            )
+            return tensors_signature({"value": value})["value"]
+        if isinstance(value, dict):
+            return {str(key): signature(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [signature(item) for item in value]
+        if value is None or isinstance(value, (str, bool, int, float)):
+            require(
+                not isinstance(value, float) or math.isfinite(value),
+                "nonfinite optimizer scalar",
+            )
+            return value
+        if isinstance(value, torch.dtype):
+            return str(value)
+        raise ValueError("unqualified optimizer state type: " + str(type(value)))
+
+    state = {
+        name: signature(trainer.opt.state.get(p, {}))
+        for name, p in trainer.model.named_parameters()
+    }
+    groups = [
+        {
+            **{
+                key: signature(value) for key, value in group.items() if key != "params"
+            },
+            "physical_parameter_names": [names[id(p)] for p in group["params"]],
+        }
+        for group in trainer.opt.param_groups
+    ]
+    return {"state_by_physical_name": state, "groups": groups}
+
+
+def selection_matches(mapping, contract):
+    actual = {row["name"]: row for row in mapping}
+    for expected in contract["parameters"]:
+        require(expected["name"] in actual, "predeclared selected name absent")
+        row = actual[expected["name"]]
+        require(
+            all(
+                row[key] == expected[key] for key in ("shape", "dtype", "role", "route")
+            ),
+            "predeclared selected shape/role/route differs: " + expected["name"],
+        )
+
+
+def run_one_arm(
+    label,
+    *,
+    recipe,
+    observe_deltas,
+    dataset,
+    indices,
+    parts,
+    selection,
+    protocol,
+    out,
+    common,
+):
+    import torch
+    from chess_anti_engine.model import ARCH_SCHEMA_VERSION, build_model
+    from chess_anti_engine.train import trainer as trainer_module
+    from chess_anti_engine.train.trainer import Trainer, trainer_kwargs_from_config
+    from chess_anti_engine.tune.fresh_rl_donor import load_fresh_donor
+    from chess_anti_engine.tune.trainable_config_ops import _sync_trainer_weights
+    from chess_anti_engine.tune.trial_config import DifficultyState, TrialConfig
+
+    _gen, gp, base, _tc, _kwargs, model_cfg = parts
+    arrays, ids, games, raw, metadata, _lineage = dataset
+    directory = out / label
+    directory.mkdir()
+    flat = arm_flat_config(
+        base,
+        arm=recipe,
+        run_uuid=str(uuid.uuid5(uuid.UUID(protocol["run_uuid"]), label)),
+    )
+    kwargs = trainer_kwargs_from_config(flat, log_dir=directory / "tensorboard")
+    torch.manual_seed(
+        int(base["seed"])
+    )  # Construction only; training common state follows fresh load.
+    model = build_model(model_cfg)
+    trainer = Trainer(model, model_config=model_cfg, **kwargs)
+    writer_closed = False
+    try:
+        require(
+            trainer.step == 0
+            and len(trainer.opt.state) == 0
+            and trainer._swa_model is None
+            and type(trainer.opt).__name__ == "AuroraWithAuxAdam",
+            "paired Trainer not fresh original Aurora",
+        )
+        scheduler, zclip = (
+            deepcopy(trainer._scheduler.state_dict()),
+            trainer.zclip_state_dict(),
+        )
+        require(
+            not zclip["initialized"] and not zclip["buffer"], "paired ZClip not fresh"
+        )
+        load_fresh_donor(
+            config=flat,
+            trainer=trainer,
+            checkpoint=None,
+            restore=SimpleNamespace(seed_warmstart_used=False),
+            torch_module=torch,
+            schema_version=ARCH_SCHEMA_VERSION,
+        )
+        _sync_trainer_weights(
+            trainer,
+            flat,
+            TrialConfig.from_dict(flat),
+            DifficultyState(wdl_regret=-1.0, sf_nodes=int(flat["sf_nodes"])),
+        )
+        require(
+            digest(gp["checkpoint_path"]) == gp["checkpoint_sha256"],
+            "donor changed before paired equality check",
+        )
+        payload = torch.load(
+            gp["checkpoint_path"], map_location="cpu", mmap=True, weights_only=True
+        )
+        reference = {
+            name.removeprefix("_orig_mod."): value
+            for name, value in payload["model"].items()
+        }
+        state = trainer.model.state_dict()
+        require(
+            len(state) == len(reference) == 494 and state.keys() == reference.keys(),
+            "paired initial494 keys differ",
+        )
+        for name, tensor in state.items():
+            require(
+                tensor.shape == reference[name].shape
+                and tensor.dtype == reference[name].dtype
+                and bool(torch.isfinite(tensor).all())
+                and torch.equal(tensor.detach().cpu(), reference[name]),
+                "paired step0 donor mismatch: " + name,
+            )
+        require(
+            digest(gp["checkpoint_path"]) == gp["checkpoint_sha256"]
+            and trainer.step == 0
+            and len(trainer.opt.state) == 0
+            and trainer._scheduler.state_dict() == scheduler
+            and trainer.zclip_state_dict() == zclip
+            and trainer._swa_model is None,
+            "paired freshness/phase changed",
+        )
+        require(
+            math_context() == protocol["math_context"]
+            and trainer.search_wdl_frac == (1 if recipe == "FULLA" else 0.8)
+            and trainer.sf_wdl_frac == 0
+            and trainer.accum_steps == 1,
+            "actual math/loss/dose differs",
+        )
+        mapping = parameter_map(trainer)
+        selection_matches(mapping, selection)
+        write_json(
+            directory / "fresh-state.json",
+            {
+                "all494_donor_equal": True,
+                "step": 0,
+                "optimizer_state_entries": 0,
+                "scheduler": scheduler,
+                "zclip": zclip,
+                "swa": None,
+                "trainer_kwargs": kwargs,
+                "effective_loss_kwargs": trainer._loss_kwargs,
+                "parameter_map": mapping,
+                "math_context": math_context(),
+            },
+        )
+        scope = "pilot_aa4" if protocol["mode"] == "AA4" else "research"
+        mirror_state = np.random.default_rng(
+            protocol["mirror_seed"]
+        ).bit_generator.state
+        sampler = FixedBundleBatches(
+            arrays,
+            ids,
+            indices,
+            raw_values=raw,
+            value_metadata=metadata,
+            arm=recipe,
+            train_game_ids=games,
+            mirror_state=mirror_state,
+            scope=scope,
+        )
+        if common is None:
+            random.seed(protocol["common_seed"])
+            np.random.seed(protocol["common_seed"])
+            torch.manual_seed(protocol["common_seed"])
+            common = (
+                rng_state()
+            )  # ONCE after first fresh construction, before any prefetch.
+            write_json(out / "common-training-rng.json", common)
+        restore_rng(common)  # Exact same state for B; no per-step forced resets.
+        selected = [entry["name"] for entry in selection["parameters"]]
+
+        def checkpoint(step):
+            trainer.save(directory / ("step-" + str(step) + ".pt"))
+
+        trainer.save(directory / "step-0.pt")
+        observation = ObservePairedTrainer(
+            trainer,
+            sampler,
+            trainer_module,
+            selected_names=selected,
+            checkpoint=checkpoint,
+            observe_deltas=observe_deltas,
+        )
+        del state, tensor, payload  # Remove step0 GPU aliases before the window.
+        with observation:
+            metrics = trainer.train_steps(sampler, batch_size=256, steps=len(indices))
+        observation.assert_complete(metrics)
+        require(
+            trainer.step == len(indices)
+            and math_context() == protocol["math_context"]
+            and math.isfinite(metrics.loss),
+            "paired final step/math/loss differs",
+        )
+        for tensor in trainer.model.state_dict().values():
+            require(bool(torch.isfinite(tensor).all()), "paired nonfinite final model")
+        state_signature = tensors_signature(trainer.model.state_dict())
+        opt_signature = named_optimizer_signature(trainer)
+        trainer.save(directory / "trainer.pt")
+        os.link(directory / "trainer.pt", directory / "step-129.pt")
+        trainer.writer.flush()
+        trainer.writer.close()
+        writer_closed = True
+        old_metrics = asdict(metrics)
+        metrics_json = {
+            key: None
+            if isinstance(value, float) and not math.isfinite(value)
+            else value
+            for key, value in old_metrics.items()
+        }
+        receipt = {
+            "label": label,
+            "recipe": recipe,
+            "selected_copies_enabled": observe_deltas,
+            "math_context_before_after": math_context(),
+            "final_step": trainer.step,
+            "final_model_signature": state_signature,
+            "final_model_digest": identity(state_signature),
+            "named_optimizer_digest": identity(opt_signature),
+            "final_scheduler": trainer._scheduler.state_dict(),
+            "metrics": metrics_json,
+            "observations": {
+                "host": observation.host,
+                "loss": observation.loss,
+                "randomness": observation.randomness,
+                "updates": observation.updates,
+                "mapping": observation.mapping,
+                "draws": observation.draws,
+            },
+            "final_checkpoint_sha256": digest(directory / "trainer.pt"),
+            "selected_subset_scope": "Eight frozen selected tensors; no whole-model gradient/interference/quality claim",
+        }
+        write_json(directory / "readout.json", receipt)
+        refs = [
+            weakref.ref(trainer),
+            weakref.ref(model),
+            weakref.ref(trainer.opt),
+            *[weakref.ref(p) for p in model.parameters()],
+        ]
+        refs.extend(
+            weakref.ref(value)
+            for value in trainer.opt.state.values()
+            for value in value.values()
+            if isinstance(value, torch.Tensor) and value.is_cuda
+        )
+        return observation, receipt, refs, common
+    finally:
+        if not writer_closed:
+            trainer.writer.close()
+    # Arm-local frame must RETURN before release_arm_refs; no optimizer/model retained by receipts.
+
+
+def execute(manifest, protocol, old, parts, selection):
+    import torch
+
+    require(
+        protocol.get("execution_binding_complete") is True,
+        "paired execution inputs remain UNBOUND",
+    )
+    owner(protocol)
+    out = Path(protocol["output_root"])
+    require(not out.exists(), "paired runtime exists")
+    require(protocol["execution_admitted"] is True, "paired stage not admitted")
+    science = checked_json(protocol["scientific_path"], protocol["scientific_sha256"])
+    publication = checked_json(protocol["publication_path"], protocol["publication_sha256"])
+    require(science["status"].startswith("FROZEN_E4_") and
+            science["cohort"]["uuid"] == "cd47b230-f32f-4256-a51e-4869f5708bb6" and
+            science["source"]["revision"] == protocol["source_revision"] and
+            publication["status"] == "MAIN_PUBLISHED_FROZEN_E4_SCIENCE" and
+            publication["scientific_sha256"] == protocol["scientific_sha256"],
+            "E4 science not actually frozen/published")
+    reuse = checked_json(protocol["AA_reuse_acceptance_path"], protocol["AA_reuse_acceptance_sha256"])
+    require(reuse["status"] == "ACCEPT_LIMITED_PAIRED_REUSE_FOR_E4_129" and
+            reuse["source_revision"] == protocol["source_revision"] and
+            reuse["AA_actual_readout_sha256"] == "fc114dcb839e834f8c194368f3429db7b9057484ebdea97fd5e677116cd2c9d9" and
+            reuse["source_equivalence_sha256"] == manifest["AA_source_equivalence_sha256"] and
+            reuse["observer_sha256"] == manifest["helpers"]["paired_observer.py"] and
+            reuse["proof_dispatch_controls_qualified"] is True,
+            "limited historical AA reuse/new proof dispatch not qualified")
+    binding = checked_json(protocol["cohort_binding_path"], protocol["cohort_binding_sha256"])
+    require(binding["producer_protocol_sha256"] == protocol["producer_protocol_sha256"] and
+            binding["producer_manifest_sha256"] == protocol["producer_manifest_sha256"],
+            "paired/loader producer bindings differ")
+    dataset = load_research_train(binding, parts)
+    arrays, ids, _games, _raw, _metadata, lineage = dataset
+    plan = checked_json(protocol["draw_plan_path"], protocol["draw_plan_sha256"])
+    indices = np.random.default_rng(protocol["draw_seed"]).integers(
+        0, len(ids), size=(protocol["steps"], 256), dtype=np.int64
+    )
+    require(
+        plan["physical_row_ids"] == ids and plan["indices"] == indices.tolist(),
+        "frozen common physical draw plan differs",
+    )
+    require(
+        plan["raw_arrays"] == arrays_signature(arrays),
+        "frozen TRAIN source arrays changed",
+    )
+    for array in arrays.values():
+        np.asarray(array).flags.writeable = False
+    out.mkdir()
+    gen = parts[0]
+    write_json(
+        out / "runtime-process.json",
+        {
+            "pid": os.getpid(),
+            "birth": gen.proc_birth(os.getpid()),
+            "source_revision": protocol["source_revision"],
+        },
+    )
+    signal.signal(
+        signal.SIGALRM,
+        lambda *_: (_ for _ in ()).throw(
+            TimeoutError("finite paired training deadline")
+        ),
+    )
+    signal.alarm(protocol["alarm_seconds"])
+    try:
+        torch.set_num_threads(2)
+        torch.set_num_interop_threads(2)
+        torch.cuda.init()
+        torch.cuda.set_device(0)
+        require(
+            torch.cuda.is_initialized()
+            and torch.cuda.current_device() == 0
+            and math_context() == protocol["math_context"],
+            "paired CUDA/math initialization differs",
+        )
+        torch.cuda.reset_peak_memory_stats(0)
+        write_json(out / "input-lineage.json", lineage)
+        first, a, refs, common = run_one_arm(
+            "CAPTURE_CONTROL" if protocol["mode"] == "AA4" else "FULLA",
+            recipe="FULLA",
+            observe_deltas=protocol["mode"] != "AA4",
+            dataset=dataset,
+            indices=indices,
+            parts=parts,
+            selection=selection,
+            protocol=protocol,
+            out=out,
+            common=None,
+        )
+        release_arm_refs(refs)
+        second, b, refs, _common = run_one_arm(
+            "CAPTURE_PLUS_DELTAS" if protocol["mode"] == "AA4" else "FULLB",
+            recipe="FULLA" if protocol["mode"] == "AA4" else "FULLB",
+            observe_deltas=True,
+            dataset=dataset,
+            indices=indices,
+            parts=parts,
+            selection=selection,
+            protocol=protocol,
+            out=out,
+            common=common,
+        )
+        release_arm_refs(refs)
+        assert_pair(
+            first,
+            second,
+            contrast="AA_observer_only" if protocol["mode"] == "AA4" else "E2FULL",
+        )
+        if protocol["mode"] == "AA4":
+            require(
+                a["final_model_signature"] == b["final_model_signature"]
+                and len(a["final_model_signature"]) == 494,
+                "AAall494final tensors notBITEXACT; qualificationinconclusive, no tolerancechange",
+            )
+            require(
+                a["named_optimizer_digest"] == b["named_optimizer_digest"],
+                "AAnamed optimizer state differs",
+            )
+        guard(manifest, protocol)
+        write_json(
+            out / "readout.json",
+            {
+                "status": "PASS_AA4_RELATIVE_DELTA_OBSERVER_QUALIFICATION_ONLY"
+                if protocol["mode"] == "AA4"
+                else "PASS_MATCHED_E4_129_TECHNICAL_DELIVERY_ONLY",
+                "mode": protocol["mode"],
+                "source_revision": protocol["source_revision"],
+                "first": a,
+                "second": b,
+                "all494_BITEXACT": a["final_model_signature"]
+                == b["final_model_signature"]
+                if protocol["mode"] == "AA4"
+                else None,
+                "math_context": math_context(),
+                "prior_arm_refs_closed": True,
+                "peak_cuda_allocated": torch.cuda.max_memory_allocated(0),
+                "scope": "No heldout scoring/quality/gradientinterference/Elo/candidate adoption. AAcompares commoncapturewithvswithoutselectedcopies, not wholly uninstrumentedTrainer.",
+            },
+        )
+        gen.freeze_tree(out)
+        return 0
+    except BaseException as exc:
+        write_json(
+            out / "failure.json",
+            {
+                "status": "FAILED_CLOSED_UNQUALIFIED",
+                "type": type(exc).__name__,
+                "message": str(exc),
+            },
+        )
+        gen.freeze_tree(out)
+        raise
+    finally:
+        signal.alarm(0)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--check", action="store_true")
+    mode.add_argument("--execute", action="store_true")
+    parser.add_argument("--manifest", required=True)
+    parser.add_argument("--manifest-sha256", required=True)
+    args = parser.parse_args()
+    manifest = checked_json(args.manifest, args.manifest_sha256)
+    protocol = checked_json(manifest["protocol_path"], manifest["protocol_sha256"])
+    require(
+        protocol["mode"] == "E4_129" and protocol["steps"] == 129,
+        "unknown paired scope/dose",
+    )
+    require(protocol["source_inputs_bound"] is True, "E4 source/native/config inputs UNBOUND")
+    require(protocol["draw_seed"] == 2026111342 and protocol["mirror_seed"] == 2026111343 and
+            protocol["common_seed"] == 2026111344 and protocol["batch_size"] == 256,
+            "prospective common draws/mirror/RNG/dose changed")
+    old, parts, selection = guard(manifest, protocol)
+    if args.check:
+        require(not __import__("torch").cuda.is_initialized(), "check initialized CUDA")
+        print("PASS_SOURCE_CONFIG_SELECTION_MATH_ONLY_NO_MODEL_OR_DATA")
+        return 0
+    return execute(manifest, protocol, old, parts, selection)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

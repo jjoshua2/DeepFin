@@ -1,0 +1,96 @@
+"""Finite synthetic CPU integration controls; never loads a research array/model."""
+import argparse
+from collections import defaultdict
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import sys
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--helper', required=True)
+    parser.add_argument('--helper-sha256', required=True)
+    parser.add_argument('--output', required=True)
+    args = parser.parse_args()
+    path = Path(args.helper)
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == args.helper_sha256
+    assert os.environ.get('CUDA_VISIBLE_DEVICES') == ''
+    assert sorted(os.sched_getaffinity(0)) == [20,22]
+    import numpy as np
+    import torch
+    torch.set_num_threads(2)
+    torch.set_num_interop_threads(2)
+    assert not torch.cuda.is_initialized()
+    helper = load('e3_cpu_subject', path)
+    repo = Path('/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess')
+    # Existing ordinary loss fixtures supply synthetic tensors only.
+    fixture_path = repo/'tests/test_losses_zero_weight_disarm.py'
+    fixture_sha = hashlib.sha256(fixture_path.read_bytes()).hexdigest()
+    assert fixture_sha == 'd7a807be2587218c790be3cdb23ae46f9679a82f74289be3c51f08b58e0aecbe'
+    fixture = load('e3_loss_fixture', fixture_path)
+    from chess_anti_engine.train.losses import compute_loss
+    result_count = 0
+    for share in (1.0, 0.8):
+        outputs, batch = fixture._outputs(), fixture._batch()
+        batch['search_wdl'] = torch.tensor([[.6,.3,.1],[.1,.2,.7]])
+        batch['has_search_wdl'] = torch.tensor([1.,0.])
+        batch['has_policy_soft'] = torch.tensor([.25,0.])
+        kwargs = dict(w_policy=1.,w_soft=1.,w_future=.01,w_sf_own=0.,
+                      w_sf_own_regret=0.,w_wdl=1.,w_sf_move=0.,w_sf_eval=0.,
+                      w_categorical=1.,w_volatility=.1,w_sf_volatility=0.,
+                      w_moves_left=.02,sf_wdl_frac=0.,search_wdl_frac=share)
+        result, terms, fallback, families = helper.captured_loss(compute_loss, outputs, batch, kwargs)
+        assert set(families)=={'P','U','W','C'}
+        assert all(torch.isfinite(x) and x.requires_grad for x in families.values())
+        source = {name:(weight,mask) for name,weight,_mean,mask in terms}
+        assert source['soft_policy'][1].tolist()==[.25,0.]
+        assert fallback['search_available'].tolist()==[1.,0.]
+        assert fallback['search_wdl_frac_f']==share
+        assert torch.isfinite(result['total'])
+        assert sys.getprofile() is None
+        # Independent scalar loss and differentiated component APIs stay linked.
+        for name in ('P','U','W','C'):
+            grads = torch.autograd.grad(families[name],tuple(outputs.values()),
+                                        retain_graph=True,allow_unused=True)
+            assert any(x is not None for x in grads)
+        result_count += 1
+    p=torch.tensor([.2,.4],requires_grad=True)
+    q=torch.tensor([.7],requires_grad=True)
+    unused=torch.tensor([.9],requires_grad=True)
+    counter=defaultdict(int)
+    vector,coverage=helper.gradients(p.sum()+0*q.sum(),[p,q,unused],torch,np,counter,retain=False)
+    assert vector.tolist()==[1.,1.,0.,0.]
+    assert coverage['none']==[2] and coverage['zero_connected']==[1]
+    zeros,zcoverage=helper.gradients(torch.tensor(0.),[p,q,unused],torch,np,counter,retain=False)
+    assert np.array_equal(zeros,np.zeros(4)) and zcoverage['none']==[0,1,2]
+    vectors=[np.array(x,dtype=np.float32) for x in [(1,0),(0,0),(1,0),(0,1),(0,1),(-1,0)]]
+    matrix=helper.gram(vectors,np)
+    cos=helper.cosines(matrix)
+    assert abs(cos['d']+2**.5)<1e-12 and cos['P_U'] is None
+    vectors[3]=-vectors[2]
+    assert helper.cosines(helper.gram(vectors,np))['d'] is None
+    assert not torch.cuda.is_initialized()
+    report={'status':'PASS_SYNTHETIC_CPU_ONLY','helper_sha256':args.helper_sha256,
+            'fixture_sha256':fixture_sha,'real_source_loss_captures':result_count,
+            'controls':['actual weighted-term/profile capture and scalar fold',
+                        'fractional/absent masks and value fallback exposure',
+                        'differentiable source component identities',
+                        'connected zero versus None versus constant family',
+                        'analytic geometry and undefined primary'],
+            'CUDA_initialized':False,'research_arrays_models_engines_loaded':False,
+            'limits':'Synthetic CPU checks do not qualify real model gradients, BF16 repeats or performance.'}
+    with Path(args.output).open('x') as f:
+        json.dump(report,f,indent=2);f.write('\n')
+    print(json.dumps(report))
+
+if __name__=='__main__':
+    main()

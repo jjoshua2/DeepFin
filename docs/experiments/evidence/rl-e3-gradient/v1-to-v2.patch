@@ -1,0 +1,54 @@
+--- v1/measure.py
++++ v2/measure.py
+@@ -226,7 +226,8 @@
+     groups = defaultdict(list)
+     for row in mapping:
+         stop = offset + row['numel']; aliases = row['aliases']
+-        layers = {'.'.join(n.split('.')[:2]) for n in aliases if n.startswith('blocks.')}
++        layers = {'.'.join(n.split('.')[:2]) for n in aliases
++                  if n.startswith(('blocks.', 'layer_smolgens.'))}
+         layer = 'tied_across_layers' if len(layers) > 1 else next(iter(layers), row['name'].split('.')[0])
+         groups['layer/' + layer].append((offset, stop)); groups['route/' + row['route']].append((offset, stop)); offset = stop
+     for name, slices in groups.items():
+@@ -310,23 +311,32 @@
+                                              parameters, mapping, counter, observer, ordinal == 0)
+                 report.update(identity=row, state=item['label'])
+                 if ordinal == 0:
++                    # Bank the first sentinel before any repeat work/refusal.
++                    write(out / (item['label'] + '-game-0.json'), report)
+                     repeat, again = measure_row(trainer, arrays, categories, row['index'], {'A': kwargs_a, 'B': kwargs_b},
+                                                 parameters, mapping, counter, observer, False)
+-                    require(report['host_signatures'] == repeat['host_signatures'] and report['forward'] == repeat['forward'],
+-                            'repeat input/target/forward mismatch')
+                     errors = {}
++                    flags = {'input_target_signatures_equal':report['host_signatures'] == repeat['host_signatures'],
++                             'forward_signatures_equal':report['forward'] == repeat['forward']}
+                     for j, name in enumerate(FAMILIES):
+-                        require(all(report['coverage'][name][key] == repeat['coverage'][name][key]
+-                                    for key in ('none','zero_connected','constant_loss_without_graph')),
+-                                'repeat None/zero coverage changed')
++                        flags[name+'_None_zero_coverage_equal'] = all(
++                            report['coverage'][name][key] == repeat['coverage'][name][key]
++                            for key in ('none','zero_connected','constant_loss_without_graph'))
+                         errors[name] = relative_error(vectors[j], again[j], np)
+-                        require(errors[name] <= 1e-5, 'repeat gradient resolution failed')
++                        flags[name+'_relative_L2_pass'] = errors[name] <= 1e-5
++                    drift = {}
+                     for name in ('P_WC_A', 'P_WC_B', 'd'):
+                         x, y = report['cosines'][name], repeat['cosines'][name]
+-                        require(x is not None and y is not None and abs(x-y) <= 1e-5, 'repeat primary undefined/drift')
+-                    write(out / (item['label'] + '-repeat.json'), {'report': repeat, 'relative_L2': errors})
++                        drift[name] = abs(x-y) if x is not None and y is not None else None
++                        flags[name+'_defined_and_drift_pass'] = drift[name] is not None and drift[name] <= 1e-5
++                    # Complete observations/control flags are durable BEFORE
++                    # choosing the registered numerical-control disposition.
++                    write(out / (item['label'] + '-repeat.json'),
++                          {'report': repeat, 'relative_L2': errors, 'cosine_drift': drift, 'control_flags': flags})
+                     del again
+-                write(out / (item['label'] + '-game-' + str(ordinal) + '.json'), report)
++                    require(all(flags.values()), 'repeat numerical control failed; raw reports preserved')
++                else:
++                    write(out / (item['label'] + '-game-' + str(ordinal) + '.json'), report)
+                 reports.append({'identity': row, 'cosines': report['cosines']}); del vectors
+                 require(trainer.step == 0 and not trainer.opt.state and trainer._scheduler.state_dict() == scheduler and
+                         trainer.zclip_state_dict() == clip and all(p.grad is None for p in model.parameters()), 'state/optimizer mutated')

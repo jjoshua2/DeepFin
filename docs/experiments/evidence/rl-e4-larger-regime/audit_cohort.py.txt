@@ -1,0 +1,271 @@
+"""Finite metadata/inventory and fresh-outcome audit; never decode replay arrays."""
+from __future__ import annotations
+import argparse
+from contextlib import ExitStack
+import hashlib
+import importlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import signal
+import sys
+from unittest.mock import patch
+
+HERE = Path(__file__).resolve().parent
+
+
+def require(ok, message):
+    if not ok:
+        raise ValueError(message)
+
+
+def digest(path):
+    with Path(path).open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def checked(ref):
+    require(set(ref) == {"path", "sha256"} and "UNBOUND" not in ref["path"], "identity remains UNBOUND")
+    require(digest(ref["path"]) == ref["sha256"], "bound artifact changed")
+    return json.loads(Path(ref["path"]).read_text())
+
+
+def canonical(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+
+
+def write(path, value):
+    with Path(path).open("x") as stream:
+        json.dump(value, stream, indent=2, sort_keys=True, allow_nan=False)
+        stream.write("\n"); stream.flush(); os.fsync(stream.fileno())
+
+
+def module(name, path, expected):
+    require(digest(path) == expected and name not in sys.modules, "helper changed or namespace occupied")
+    spec = importlib.util.spec_from_file_location(name, path)
+    require(spec is not None and spec.loader is not None, "helper import unavailable")
+    result = importlib.util.module_from_spec(spec); sys.modules[name] = result
+    spec.loader.exec_module(result)
+    return result
+
+
+def main():
+    ap = argparse.ArgumentParser(); ap.add_argument("--execute", action="store_true")
+    ap.add_argument("--manifest-sha256", required=True); ap.add_argument("--bindings", required=True)
+    ap.add_argument("--bindings-sha256", required=True); args = ap.parse_args()
+    require(args.execute and digest(HERE / "manifest.json") == args.manifest_sha256, "auditor not admitted or changed")
+    m = json.loads((HERE / "manifest.json").read_text())
+    require(digest(__file__) == m["helper_sha256"], "auditor source changed")
+    require(digest(args.bindings) == args.bindings_sha256, "late identities changed")
+    refs = json.loads(Path(args.bindings).read_text())
+    require(set(refs) == {"scientific", "publication", "producer_protocol", "producer_manifest", "terminal",
+                          "readout", "playing_guard", "resolved_profile"}, "unexpected late binding field")
+    parent = Path(f"/proc/{os.getppid()}/cmdline").read_bytes().decode().split("\0")
+    require(m["owner_path"] in parent and digest(m["owner_path"]) == m["owner_sha256"] and
+            "--resource" in parent and parent[parent.index("--resource") + 1] == "cpu" and
+            "--seconds" in parent and parent[parent.index("--seconds") + 1] == "300", "wrong finite CPU owner")
+    require(Path(sys.executable).resolve() == Path(m["python"]).resolve() and tuple(sys.version_info[:3]) == (3, 13, 15) and
+            sorted(os.sched_getaffinity(0)) == [20, 22] and os.environ.get("CUDA_VISIBLE_DEVICES") == "" and
+            os.environ.get("OMP_NUM_THREADS") == os.environ.get("MKL_NUM_THREADS") == "2" and __debug__, "runtime resources changed")
+    for ref in m["authorities"].values():
+        require(digest(ref["path"]) == ref["sha256"], "fixed authority changed")
+    values = {key: checked(ref) for key, ref in refs.items()}
+    science, publication, producer, pm, terminal, readout, playing, profile = [values[key] for key in
+        ("scientific", "publication", "producer_protocol", "producer_manifest", "terminal", "readout", "playing_guard", "resolved_profile")]
+    require(refs["scientific"]["sha256"] == m["scientific_sha256"] and science["status"].startswith("FROZEN_E4_") and
+            publication["status"] == "MAIN_PUBLISHED_FROZEN_E4_SCIENCE" and
+            publication["scientific_sha256"] == refs["scientific"]["sha256"], "science is not frozen and main-published")
+    require(producer["scientific_preregistration_sha256"] == refs["scientific"]["sha256"] and
+            producer["publication_receipt"] == refs["publication"] and
+            producer["source_revision"] == science["source"]["revision"] == m["source_revision"] and
+            producer["collection_uuid"] == science["cohort"]["uuid"] == m["collection_uuid"], "producer source/science/UUID differs")
+    require(refs["producer_protocol"]["path"] == str(Path(m["collector_directory"]) / "protocol.json") and
+            refs["producer_manifest"]["path"] == str(Path(m["collector_directory"]) / "manifest.json") and
+            pm["protocol_sha256"] == refs["producer_protocol"]["sha256"], "actual collector metadata identity differs")
+    fixed_protocol = checked(m["collection_protocol_template"])
+    fixed_manifest = checked(m["collection_manifest_template"])
+    contract = checked(m["collection_binding_contract"])
+    reversed_protocol = json.loads(json.dumps(producer))
+    for pointer in contract["protocol_mutable_leaves"]:
+        names = pointer.strip("/").split("/"); target, original = reversed_protocol, fixed_protocol
+        for name in names[:-1]:
+            target, original = target[name], original[name]
+        target[names[-1]] = original[names[-1]]
+    reversed_manifest = dict(pm, protocol_sha256=fixed_manifest["protocol_sha256"])
+    require(canonical(reversed_protocol) == canonical(fixed_protocol) and canonical(reversed_manifest) == canonical(fixed_manifest) and
+            all(producer[key] is True for key in ("cohort_inputs_bound", "scientific_final_bound", "generation_execution_admitted")),
+            "fixed collection fields or actual admission flags differ")
+    command = checked(m["collection_command_template"])["argv"]
+    require(command.count("LATE_ACTUAL_MANIFEST_SHA256") == 1, "unexpected command template")
+    command = [refs["producer_manifest"]["sha256"] if x == "LATE_ACTUAL_MANIFEST_SHA256" else x for x in command]
+    child = command[command.index("--") + 1:]
+    require(terminal["status"] == "PASS" and terminal["returncode"] == 0 and terminal["owned_processes_closed"] is True and
+            terminal["custody"] == "OWNED_PROCESSES_CLOSED" and terminal["source_revision"] == m["source_revision"] and
+            terminal["supervisor_sha256"] == m["owner_sha256"] and terminal["resource"] == "gpu" and terminal["seconds"] == 2400 and
+            terminal["cwd"] == producer["source_checkout"] and terminal["command"] == child, "not exact closed collection")
+    require(terminal["known_processes"] and not Path("/proc", str(terminal["supervisor_pid"])).exists(), "missing births or surviving supervisor")
+    for pid, birth in terminal["known_processes"].items():
+        stat = Path("/proc", str(pid), "stat")
+        require(not stat.exists() or int(stat.read_text().rsplit(")", 1)[1].split()[19]) != birth, "collection process birth survives")
+    root = Path(producer["output_root"])
+    for key, filename in (("readout", "readout.json"), ("playing_guard", "playing-start-overlap.json"), ("resolved_profile", "resolved-profile.json")):
+        require(Path(refs[key]["path"]) == root / filename, "cohort artifact path differs")
+    require(root.is_dir() and not root.is_symlink() and not root.stat().st_mode & 0o222 and
+            not (root / "failure.json").exists() and not list(root.glob(".game-*")), "failed, mutable or staged cohort")
+    require(readout["status"] == "PASS_128_TRAIN_E4_VERIFIED_BUNDLE_DATA_ONLY" and
+            readout["source_revision"] == m["source_revision"] and readout["collection_uuid"] == m["collection_uuid"] and
+            readout["manifest_sha256"] == refs["producer_manifest"]["sha256"] and readout["training_steps"] == 0 and
+            readout["all192_integrity_qualified"] is readout["all192_attempts_retained"] is True and
+            readout["train_data_qualified"] is readout["train_verified_resolved_outcomes_qualified"] is
+            readout["playing_guard_qualified"] is True, "producer did not qualify whole192/128TRAIN/playing scope")
+    require(hashlib.sha256(canonical(profile)).hexdigest() == pm["resolved_profile_sha256"], "actual profile changed")
+    output = Path(m["output_root"]); output.mkdir(exist_ok=False)
+    attempts = {}
+    def forbidden(name):
+        attempts[name] = 0
+        def reject(*_a, **_k):
+            attempts[name] += 1; raise RuntimeError("FORBIDDEN_COHORT_AUDIT:" + name)
+        return reject
+    signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError("fixed270s cohort audit deadline")))
+    signal.alarm(270)
+    verifier = None
+    try:
+        sys.path.insert(0, producer["source_checkout"]); sys.path.insert(0, m["collector_directory"])
+        proof_api = importlib.import_module("verified_outcome")
+        require(Path(proof_api.__file__).resolve() == Path(m["collector_directory"]) / "verified_outcome.py" and
+                digest(proof_api.__file__) == m["verified_outcome_sha256"], "foreign proof issuer")
+        core = module("cohort_audit_collector", Path(m["collector_directory"]) / "collect192.py", m["collector_sha256"])
+        native = core.source_guard(pm, producer, for_execute=True)
+        core.validate_protocol(producer)
+        for image in native["native_images"]:
+            actual = importlib.import_module(image["module"])
+            require(Path(actual.__file__).resolve() == Path(image["path"]).resolve(), "foreign native image")
+        inputs = module("cohort_audit_train_primitives", Path(m["TRAIN_directory"]) / "train_inputs.py", m["train_inputs_sha256"])
+        import torch, numpy as np
+        from chess_anti_engine.selfplay.config import GameConfig
+        from chess_anti_engine.encoding import rep_fix
+        from chess_anti_engine.replay import shard
+        require(not torch.cuda.is_initialized(), "CUDA preinitialized")
+        torch.set_num_threads(2); torch.set_num_interop_threads(2); rep_fix.apply(True, boards_discarded=True)
+        game = GameConfig(**profile["pilot"]["game"])
+        fixed = checked(m["paired_protocol_template"])
+        require(profile["pilot"]["game"] == fixed["training_game_config"], "actual GameConfig differs from qualified fixed descriptor")
+        with ExitStack() as spies:
+            for obj, name, label in [(np, "load", "array_archive_decode"), (shard, "load_shard_arrays", "shard_decode"),
+                    (shard, "open_shard_arrays", "shard_open"), (torch, "load", "checkpoint_load"),
+                    (inputs, "load_research_train", "TRAIN_array_loader"),
+                    (torch.cuda, "init", "CUDA_init"), (torch.cuda, "_lazy_init", "CUDA_lazy_init")]:
+                spies.enter_context(patch.object(obj, name, forbidden(label)))
+            verifier = proof_api.VerifiedOutcomeVerifier(path=producer["tablebase_path"],
+                asset_inventory_sha256=producer["tablebase_asset_inventory_sha256"],
+                collection_uuid=m["collection_uuid"], source_revision=m["source_revision"])
+            completed = readout["completed"]; require(set(completed) == {str(i) for i in range(192)}, "not exact192 completed IDs")
+            require(readout["counts"]["games"] == 192, "reported game count differs")
+            for bank in ("train", "holdout"):
+                expected_directories = {"game-" + str(g["start_ordinal"]) for g in producer["games"] if g["bank"] == bank}
+                require({p.name for p in (root / bank).iterdir()} == expected_directories,
+                        "extra or missing physical game directory")
+            counts = {bank: {kind: 0 for kind in ("NATURAL", "STRICT_TB_ADJUDICATED", "UNRESOLVED")} for bank in ("train", "holdout")}
+            observations = []; inventories = 0
+            for planned in producer["games"]:
+                ordinal = planned["start_ordinal"]; item = completed[str(ordinal)]; directory = root / planned["bank"] / ("game-" + str(ordinal))
+                require(item["physical_game_id"] == planned["physical_game_id"] and item["bank"] == planned["bank"] and
+                        Path(item["path"]) == directory and directory.is_dir() and not directory.stat().st_mode & 0o222,
+                        "physical game/bank/path mismatch")
+                inputs.inventory(directory, item["inventory"]); inventories += len(item["inventory"])
+                validation = json.loads((directory / "validation.json").read_text())
+                observed = json.loads((directory / "provenance.json").read_text())
+                require(validation == item["validation"] and observed["planned"] == planned and
+                        json.loads((root / ("completed-" + str(ordinal) + ".json")).read_text()) == item, "per-game metadata join differs")
+                audit = observed["actual"]; proof = verifier.verify(audit, planned, game); verified = proof.metadata()
+                require(json.loads((directory / "verified-outcome.json").read_text()) ==
+                        {"verification": verified, "proof_sha256": proof.proof_sha256} and
+                        validation["verified_outcome"] == verified and validation["verified_outcome_sha256"] == proof.proof_sha256,
+                        "fresh outcome/policy proof differs")
+                n = audit["retained_samples"]; rows = validation["rows"]; kind = verified["scientific_class"]
+                require(0 <= n <= 450 and len(rows) == validation["retained_rows"] == verified["retained_rows"] == n and
+                        validation["raw_records"] == len(audit["records"]) and validation["full_history_validated"] is True and
+                        validation["scientific_outcome_class"] == kind and validation["resolved_outcome_eligible"] is verified["resolved"] and
+                        validation["usable_shard"] is bool(n) and (directory / "shard").is_dir() is bool(n), "row/class/shard availability mismatch")
+                require(item["game_id"] == audit["game_id"] and len({r["ply"] for r in rows}) == n and
+                        [r["physical_row_id"] for r in rows] == [planned["physical_game_id"] + ":" + str(i) for i in range(n)],
+                        "retained physical identity/ply join differs")
+                positions = inputs.record_positions(audit); records = {r["ply_index"]: r for r in audit["records"]}
+                require(all(r["has_policy"] is True and r["is_sf_refute_opp"] is False for r in audit["records"]), "raw record is not neural policy provenance")
+                for row in rows:
+                    require(row["ply"] in records and row["move_offset"] == records[row["ply"]]["move_offset"], "retained raw-record join differs")
+                    board = positions[row["ply"]]
+                    expected_history = hashlib.sha256(canonical([board.root().fen(), [move.uci() for move in board.move_stack]])).hexdigest()
+                    require(row["history_sha256"] == expected_history and all(isinstance(row[k], str) and len(row[k]) == 64 and
+                            all(c in "0123456789abcdef" for c in row[k]) for k in
+                            ("stored_input_float16_sha256", "stored_input_float16_mirror_sha256")), "retained history/input hash metadata differs")
+                raw = json.loads((directory / "raw-values.json").read_text()); proof_api.require_verified(proof, metadata=raw)
+                require(raw == validation["raw_value_control"] and raw["rows"] == n and raw["resolved_outcome_qualified"] is verified["resolved"] and
+                        raw["natural_outcome_qualified"] is (kind == "NATURAL") and
+                        raw["strict_tb_outcome_qualified"] is (kind == "STRICT_TB_ADJUDICATED") and
+                        raw["categorical_bins"] == game.categorical_bins and raw["hlgauss_sigma"] == game.hlgauss_sigma and
+                        (directory / "raw-values.npz").is_file(), "raw control metadata/class differs")
+                if not n:
+                    require(json.loads((directory / "zero-row-no-shard.json").read_text()) ==
+                            {"retained_rows": 0, "usable_shard": False, "game_not_replaced": True} and raw["all_rows_raw_control_proven"] is False,
+                            "zero-row censor/natural metadata differs")
+                if planned["bank"] == "train":
+                    require(n > 0 and verified["resolved"] is True and kind in ("NATURAL", "STRICT_TB_ADJUDICATED") and
+                            raw["all_rows_raw_control_proven"] is True, "TRAIN is empty, censored or raw-unqualified")
+                counts[planned["bank"]][kind] += 1
+                observations.append({"physical_game_id": planned["physical_game_id"], "bank": planned["bank"],
+                    "class": kind, "rows": n, "cap_reached": verified["cap_reached"], "fresh_proof_sha256": proof.proof_sha256})
+            require(sum(counts["train"].values()) == 128 and sum(counts["holdout"].values()) == 64, "fixed bank counts differ")
+            for bank in counts:
+                for kind, count in counts[bank].items():
+                    declared = readout["class_counts"][bank][kind]
+                    require(declared["games"] == count and declared["retained_rows"] ==
+                            sum(x["rows"] for x in observations if x["bank"] == bank and x["class"] == kind),
+                            "reported outcome-class strata differ")
+                require(readout["unresolved_strata"][bank] == {
+                    "cap_reached": sum(x["class"] == "UNRESOLVED" and x["cap_reached"] for x in observations if x["bank"] == bank),
+                    "non_cap": sum(x["class"] == "UNRESOLVED" and not x["cap_reached"] for x in observations if x["bank"] == bank)},
+                    "reported capped/non-cap censored strata differ")
+            recalculated = core.playing_overlap_gate(completed, producer)
+            require(recalculated == playing and playing["qualified"] is True and not playing["collisions"] and
+                    playing["all192_physical_attempts"] == 192 and playing["playing_starts"] == 628, "playing-start gate differs or collides")
+            verifier.close(); verifier = None
+            require(not any(attempts.values()) and not torch.cuda.is_initialized(), "auditor attempted array/CUDA/checkpoint work")
+            core.source_guard(pm, producer, for_execute=True)
+            for ref in refs.values():
+                require(digest(ref["path"]) == ref["sha256"], "input metadata changed during audit")
+            result = {"status": "ACCEPT_ALL192_E4_INTEGRITY_128TRAIN_AND_PLAYING_GATES", "source_revision": m["source_revision"],
+                "collection_uuid": m["collection_uuid"], **{key + "_sha256": refs[key]["sha256"] for key in
+                    ("terminal", "readout", "producer_protocol", "producer_manifest", "playing_guard", "resolved_profile")},
+                "all192_integrity_qualified": True, "TRAIN_games": 128, "HOLDOUT_games": 64,
+                "fresh_proofs": 192, "inventory_files_stream_hashed": inventories, "class_counts": counts,
+                "observations": observations, "side_effect_attempts": attempts, "arrays_deserialized": False,
+                "HOLDOUT_arrays_loaded": False, "learning_admitted": False,
+                "limits": "Outcome/history/policy classification proofs and complete immutable file inventories only. Producer rawF32/storedF16/policy array checks remain source-qualified claims; this audit does not decode or revalidate arrays. Actual128 TRAIN raw/array validation remains mandatory in unchanged load_research_train before any update."}
+            write(output / "readout.json", result)
+    except BaseException as error:
+        write(output / "failure.json", {"status": "UNQUALIFIED_OR_INCONCLUSIVE_COHORT_AUDIT", "error": repr(error), "side_effect_attempts": attempts})
+        raise
+    finally:
+        try:
+            if verifier is not None:
+                verifier.close()
+        finally:
+            signal.alarm(0)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except BaseException as error:
+        # Metadata/closure refusals can happen before the proof-stage output
+        # exists. Preserve them as failures too; never fabricate an acceptance.
+        metadata = json.loads((HERE / "manifest.json").read_text())
+        if digest(__file__) == metadata["helper_sha256"]:
+            failure = Path(metadata["output_root"]) / "failure.json"
+            if not failure.exists():
+                failure.parent.mkdir(exist_ok=True)
+                write(failure, {"status": "UNQUALIFIED_OR_INCONCLUSIVE_COHORT_AUDIT", "error": repr(error),
+                                "phase": "metadata_or_early_closure_refusal", "arrays_deserialized": False})
+        raise

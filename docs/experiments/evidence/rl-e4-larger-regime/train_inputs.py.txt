@@ -1,0 +1,386 @@
+"""Prospective E4_128 TRAIN-only proof/array boundary. Never load HOLD arrays."""
+from __future__ import annotations
+
+from dataclasses import asdict
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+from types import SimpleNamespace
+
+import numpy as np
+
+HERE = Path(__file__).resolve().parent
+RUN = "cd47b230-f32f-4256-a51e-4869f5708bb6"
+SOURCE = "ba9d6de1987902e1759d984532a4c63f091b9269"
+
+
+def require(ok, message):
+    if not ok:
+        raise ValueError(message)
+
+
+def digest(path):
+    with Path(path).open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def checked_json(path, expected):
+    require(isinstance(expected, str) and len(expected) == 64 and
+            all(c in "0123456789abcdef" for c in expected), "metadata hash UNBOUND")
+    require(digest(path) == expected, "bound metadata changed: " + str(path))
+    return json.loads(Path(path).read_text())
+
+
+def canonical(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+
+
+def proc_birth(pid):
+    try:
+        return int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19])
+    except FileNotFoundError:
+        return None
+
+
+def freeze_tree(path):
+    require(not path.is_symlink() and all(not p.is_symlink() for p in path.rglob("*")), "symlink output")
+    for p in path.rglob("*"):
+        if p.is_file():
+            p.chmod(0o444)
+            with p.open("rb") as stream:
+                os.fsync(stream.fileno())
+    for p in sorted([p for p in path.rglob("*") if p.is_dir()], reverse=True) + [path]:
+        p.chmod(0o555)
+        fd = os.open(p, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+
+def base_inputs(protocol, manifest):
+    """Bound R7 descriptors only; no old R6 consumer/AA data route."""
+    require(protocol["source_inputs_bound"] is True, "E4 source/config/native bindings UNBOUND")
+    repo = Path(protocol["source_checkout"])
+    require(protocol["source_revision"] == SOURCE and
+            subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip() == SOURCE,
+            "not frozen R7 ba9 source")
+    require(not subprocess.check_output(["git", "status", "--porcelain"], cwd=repo, text=True), "dirty source")
+    require(Path(sys.executable).resolve() == Path(protocol["python"]).resolve() and
+            tuple(sys.version_info[:3]) == (3, 13, 15), "planned interpreter changed")
+    require(digest(protocol["owner_path"]) == protocol["owner_sha256"] ==
+            "b7287b50906b90a6729833f8ee3369d7a544d2d202d365e90f5c66afb275fa13", "R7 owner changed")
+    for rel, expected in manifest["source_sha256"].items():
+        require(digest(repo / rel) == expected, "source changed: " + rel)
+    for rel, expected in manifest["native_input_sha256"].items():
+        require(digest(repo / rel) == expected, "native input changed: " + rel)
+    native = checked_json(protocol["native_qualification_path"], protocol["native_qualification_sha256"])
+    require(native["status"] == "ACCEPT_R7_NATIVE_ORIGINS_FOR_E4" and
+            native["source_revision"] == SOURCE and len(native["native_images"]) == 5,
+            "actual relocated native qualification missing")
+    for image in native["native_images"]:
+        require(digest(image["path"]) == image["sha256"], "native image changed")
+    producer = checked_json(protocol["producer_protocol_path"], protocol["producer_protocol_sha256"])
+    pm = checked_json(protocol["producer_manifest_path"], protocol["producer_manifest_sha256"])
+    require(producer["source_revision"] == SOURCE and producer["source_checkout"] == str(repo) and
+            producer["collection_uuid"] == RUN and digest(producer["config_path"]) == pm["config_sha256"],
+            "producer source/UUID/config mismatch")
+    # Caller binds the qualified builder's actual pilot.game descriptor; this
+    # does not add a field to or rewrite the shared producer protocol.
+    require(isinstance(protocol["training_game_config"], dict), "actual finite GameConfig UNBOUND")
+    producer = {**producer, "training_game_config": protocol["training_game_config"]}
+    sys.path.insert(0, str(repo))
+    import importlib
+    for image in native["native_images"]:
+        module = importlib.import_module(image["module"])
+        require(Path(module.__file__).resolve() == Path(image["path"]).resolve(), "foreign native import")
+    from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
+    from chess_anti_engine.tune.trial_config import TrialConfig
+    from chess_anti_engine.train.trainer import trainer_kwargs_from_config
+    from chess_anti_engine.uci.model_loader import model_config_from_arch
+    from chess_anti_engine.tune.trainable_config_ops import _play_batch_kwargs
+    flat = flatten_run_config_defaults(load_yaml_file(producer["config_path"]))
+    tc = TrialConfig.from_dict(flat)
+    from chess_anti_engine.selfplay.config import GameConfig
+    direct = _play_batch_kwargs(tc)["game"]
+    game = GameConfig(**producer["training_game_config"])
+    require(game.syzygy_outcome_mode == "rule50_match_v1" and game.syzygy_rescore_policy is True,
+            "not strict policy-only finite source")
+    keys = ("syzygy_outcome_mode", "syzygy_path", "stockfish_syzygy_path", "syzygy_in_search",
+            "syzygy_adjudicate", "syzygy_adjudicate_fraction", "syzygy_rescore_policy", "history_rep_fix",
+            "input_history_encoding", "input_extra_features", "policy_encoding", "categorical_bins",
+            "hlgauss_sigma", "categorical_blend_frac", "categorical_search_blend_frac", "max_plies")
+    require(asdict(game) == producer["training_game_config"] and game.selfplay_fraction == 1 and
+            all(getattr(game, key) == getattr(direct, key) for key in keys),
+            "actual finite producer/TC rules, encoding or target descriptor differs")
+    from chess_anti_engine.encoding import rep_fix
+    require(game.history_rep_fix is True, "producer repetition encoding changed")
+    rep_fix.apply(True, boards_discarded=True)
+    kwargs = trainer_kwargs_from_config(flat, log_dir=Path(protocol["output_root"]) / "tensorboard")
+    require(kwargs["device"] in ("cuda", "cuda:0") and kwargs["optimizer"] == "aurora" and
+            kwargs["matrix_optimizer_scope"] == "mlp_out" and kwargs["accum_steps"] == 1 and
+            kwargs["swa_start"] == -1 and int(flat["batch_size"]) == 256 and
+            kwargs["warmup_steps"] == 8 and kwargs["lr_release_cycle_steps"] == 120,
+            "original optimizer/schedule changed")
+    # log_dir is the only intended relocation in the kwargs descriptor.
+    from paired_observer import plain
+    stable_kwargs = plain({k: v for k, v in kwargs.items() if k != "log_dir"})
+    require(hashlib.sha256(canonical(stable_kwargs)).hexdigest() == manifest["trainer_kwargs_without_log_dir_sha256"],
+            "resolved Trainer kwargs UNBOUND/changed")
+    gen = SimpleNamespace(proc_birth=proc_birth, freeze_tree=freeze_tree)
+    return None, (gen, producer, flat, tc, kwargs, model_config_from_arch(flat["bootstrap_model_contract"]))
+
+
+def inventory(game, entries):
+    require(not game.is_symlink() and all(not p.is_symlink() for p in game.rglob("*")), "symlink TRAIN directory")
+    declared = set()
+    for item in entries:
+        rel = Path(item["path"])
+        require(not rel.is_absolute() and ".." not in rel.parts and str(rel) not in declared, "unsafe/duplicate inventory")
+        declared.add(str(rel))
+        path = game / rel
+        require(path.is_file() and not path.is_symlink() and
+                all(not p.is_symlink() for p in path.parents) and
+                path.stat().st_mode & 0o222 == 0, "mutable/nonregular TRAIN artifact")
+        require(path.stat().st_size == item["bytes"] and digest(path) == item["sha256"], "TRAIN inventory changed")
+    require({str(p.relative_to(game)) for p in game.rglob("*") if p.is_file()} == declared,
+            "TRAIN inventory not complete")
+
+
+def cohort_metadata(binding, producer):
+    """All192 metadata/integrity and playing gates BEFORE any array loading."""
+    require(binding["status"] == "BOUND_E4_COHORT_FOR_PAIRED_FULL129" and binding["collection_uuid"] == RUN,
+            "cohort binding UNBOUND")
+    terminal = checked_json(binding["terminal_path"], binding["terminal_sha256"])
+    require(Path(binding["readout_path"]) == Path(producer["output_root"]) / "readout.json" and
+            Path(binding["playing_guard_path"]) == Path(producer["output_root"]) / "playing-start-overlap.json",
+            "cohort output paths differ")
+    readout = checked_json(binding["readout_path"], binding["readout_sha256"])
+    admission = checked_json(binding["admission_path"], binding["admission_sha256"])
+    independent = checked_json(binding["independent_path"], binding["independent_sha256"])
+    require(terminal["status"] == "PASS" and terminal["returncode"] == 0 and
+            terminal["owned_processes_closed"] is True and terminal["source_revision"] == SOURCE and
+            terminal["supervisor_sha256"] == producer["owner_sha256"] and
+            terminal["resource"] == "gpu" and terminal["seconds"] == 2400 and
+            terminal["cwd"] == producer["source_checkout"] and terminal["command"] == binding["generation_command"],
+            "collection not exact closed PASS")
+    require(admission["status"] == "ROOT_ACCEPTED_E4_128_TRAIN_FOR_PAIRED_FULL129" and
+            independent["status"] == "ACCEPT_ALL192_E4_INTEGRITY_128TRAIN_AND_PLAYING_GATES" and
+            admission["source_revision"] == independent["source_revision"] == SOURCE and
+            admission["collection_uuid"] == independent["collection_uuid"] == RUN, "actual whole-cohort acceptance absent")
+    for key in ("terminal_sha256", "readout_sha256", "producer_protocol_sha256", "producer_manifest_sha256", "playing_guard_sha256", "resolved_profile_sha256"):
+        require(admission[key] == independent[key] == binding[key], "cohort acceptance mismatch: " + key)
+    require(admission["independent_sha256"] == binding["independent_sha256"] and
+            admission["all192_integrity_qualified"] is True and admission["playing_guard_qualified"] is True and
+            admission["TRAIN_games"] == 128 and admission["HOLDOUT_loaded_for_learning"] is False,
+            "not admitted ALL192/ALL128/playing scope")
+    require(readout["status"] == "PASS_128_TRAIN_E4_VERIFIED_BUNDLE_DATA_ONLY" and
+            readout["source_revision"] == SOURCE and readout["collection_uuid"] == RUN and
+            readout["manifest_sha256"] == binding["producer_manifest_sha256"] and
+            readout["all192_integrity_qualified"] is readout["all192_attempts_retained"] is True and
+            readout["train_data_qualified"] is readout["train_verified_resolved_outcomes_qualified"] is True and
+            readout["playing_guard_qualified"] is True and readout["training_steps"] == 0,
+            "TRAIN/source/ALL192/playing gate not qualified")
+    require(not (Path(producer["output_root"]) / "failure.json").exists(), "failed generation cannot qualify")
+    require(Path(binding["resolved_profile_path"]) == Path(producer["output_root"]) / "resolved-profile.json",
+            "producer profile path differs")
+    profile = checked_json(binding["resolved_profile_path"], binding["resolved_profile_sha256"])
+    require(profile["pilot"]["game"] == producer["training_game_config"],
+            "actual collected GameConfig differs from proof configuration")
+    planned = producer["games"]
+    require(len(planned) == 192 and [g["start_ordinal"] for g in planned] == list(range(192)) and
+            sum(g["bank"] == "train" for g in planned) == 128 and
+            sum(g["bank"] == "holdout" for g in planned) == 64 and
+            set(readout["completed"]) == {str(i) for i in range(192)}, "not fixed192/128TRAIN/64HOLD")
+    for game in planned:
+        item = readout["completed"][str(game["start_ordinal"])]
+        require(game["physical_game_id"] == RUN + ":" + str(game["start_ordinal"]) and
+                item["physical_game_id"] == game["physical_game_id"] and item["bank"] == game["bank"] and
+                Path(item["path"]) == Path(producer["output_root"]) / game["bank"] / ("game-" + str(game["start_ordinal"])) and
+                item["validation"]["full_history_validated"] is True, "ALL192 metadata identity mismatch")
+    playing = checked_json(binding["playing_guard_path"], binding["playing_guard_sha256"])
+    require(playing["status"] == "PASS_ALL628_VS_ALL192_RETAINED_RAW_MIRROR" and
+            playing["qualified"] is True and playing["all192_physical_attempts"] == 192 and
+            playing["playing_starts"] == 628 and not playing["collisions"], "playing guard not exact qualified628/192")
+    # Metadata only: no HOLD archive/shard/inventory path is opened here.
+    starts = checked_json(producer["playing_start_identities_path"], producer["playing_start_identities_sha256"])
+    playing_starts = [g for g in starts if g["role"] in ("screen", "confirmation")]
+    require(len(starts) == 820 and len(playing_starts) == 628 and sum(g["role"] == "screen" for g in playing_starts) == 128,
+            "not fixed128/500 playing metadata")
+    retained = {row[k] for item in readout["completed"].values() for row in item["validation"]["rows"]
+                for k in ("stored_input_float16_sha256", "stored_input_float16_mirror_sha256")}
+    require(not any({g["stored175F16_input_sha256"], g["stored175F16_mirror_sha256"]} & retained for g in playing_starts),
+            "actual metadata628/192 retained-input overlap")
+    return readout, sorted([g for g in planned if g["bank"] == "train"], key=lambda g: g["start_ordinal"])
+
+
+def record_positions(audit):
+    import chess
+    from chess_anti_engine.moves import index_to_move_strict
+    board = chess.Board(audit["start"]["root_fen"])
+    for token in audit["start"]["opening_moves"]:
+        board.push_uci(token)
+    positions = {}
+    wanted = {r["move_offset"]: r["ply_index"] for r in audit["records"]}
+    for offset, action in enumerate(audit["played_move_indices"]):
+        if offset in wanted:
+            positions[wanted[offset]] = board.copy(stack=True)
+        board.push(index_to_move_strict(action, board))
+    return positions
+
+
+def validate_loaded_game(arrays, raw, meta, rows, audit, proof, verifier, game):
+    from chess_anti_engine.encoding.cboard_encode import encode_cboard
+    from chess_anti_engine.encoding._lc0_ext import CBoard
+    from chess_anti_engine.moves import move_to_index_for_encoding
+    from chess_anti_engine.selfplay.finalize import _result_to_wdl
+    from chess_anti_engine.train.targets import categorical_target_value, hlgauss_target
+    from verified_outcome import require_verified
+    from value_bundle import validate_stored_control
+    verified = require_verified(proof, audit=audit, metadata=meta)
+    n = len(rows)
+    require(0 < n <= 450 and arrays["x"].shape == (n, 175, 8, 8) and
+            arrays["x"].dtype == np.float16 and len(raw["physical_row_id"]) == n and
+            raw["physical_row_id"].tolist() == [r["physical_row_id"] for r in rows], "raw/storage physical rows differ")
+    for flag in ("has_game_id", "has_ply_index", "has_is_network_turn", "has_legal_mask"):
+        require(flag in arrays and arrays[flag].shape == (n,) and np.all(arrays[flag] == 1),
+                "serialized retained identity/NET/legal availability missing: " + flag)
+    require(arrays["game_id"].shape == arrays["ply_index"].shape == arrays["is_network_turn"].shape == (n,) and
+            np.all(arrays["game_id"] == audit["game_id"]) and np.all(arrays["is_network_turn"] == 1),
+            "serialized game identity or NET turn differs from audit")
+    for key in ("is_sf_refute", "is_sf_refute_opp"):
+        if key in arrays:
+            require(arrays[key].shape == (n,) and np.all(arrays[key] == 0), "serialized SF-refute row outside E4")
+    require(set(raw) == {"physical_row_id", "search_wdl_raw", "categorical_raw", "has_search_raw", "has_categorical_raw", "outcome_wdl", "pov_white"},
+            "raw archive fields changed")
+    for key, shape in (("search_wdl_raw", (n, 3)), ("categorical_raw", (n, game.categorical_bins))):
+        x = raw[key]
+        require(x.dtype == np.float32 and x.shape == shape and np.isfinite(x).all() and
+                (x >= 0).all() and np.all(np.abs(x.sum(axis=1) - 1) < 1e-5), "rawF32 simplex/dtype changed")
+    for key in ("has_search_raw", "has_categorical_raw"):
+        require(raw[key].shape == (n,) and raw[key].dtype == np.uint8 and np.all(raw[key] == 1), "missing raw control")
+    require(raw["outcome_wdl"].shape == raw["pov_white"].shape == (n,) and
+            raw["outcome_wdl"].dtype == np.int8 and raw["pov_white"].dtype == np.uint8, "raw outcome/POV layout changed")
+    positions = record_positions(audit)
+    records = {r["ply_index"]: r for r in audit["records"]}
+    require(len({r["ply"] for r in rows}) == n, "duplicate retained physical ply")
+    from chess_anti_engine.replay.augment import _mirror_x_batch
+    mirrored = _mirror_x_batch(arrays["x"], np.ones(n, dtype=bool), input_history_encoding=game.input_history_encoding)
+    for i, row in enumerate(rows):
+        position = positions[row["ply"]]
+        require(arrays["ply_index"][i] == row["ply"] == records[row["ply"]]["ply_index"] and
+                records[row["ply"]]["has_policy"] is True and
+                records[row["ply"]]["is_sf_refute_opp"] is False,
+                "serialized/raw retained ply or actual NET record provenance differs")
+        require(records[row["ply"]]["move_offset"] == row["move_offset"] and
+                hashlib.sha256(canonical([position.root().fen(), [m.uci() for m in position.move_stack]])).hexdigest() == row["history_sha256"],
+                "retained full-history/ply/offset identity differs")
+        require(int(raw["pov_white"][i]) == int(position.turn) and
+                int(raw["outcome_wdl"][i]) == _result_to_wdl(verified["result"], pov_white=position.turn), "resolved per-row POV mismatch")
+        expected = encode_cboard(CBoard.from_board(position), input_history_encoding=game.input_history_encoding,
+                                 input_extra_features=game.input_extra_features).astype(np.float16)
+        require(np.array_equal(expected, arrays["x"][i]), "replayed175F16 input differs")
+        require(hashlib.sha256(arrays["x"][i].astype('<f2').tobytes()).hexdigest() == row["stored_input_float16_sha256"] and
+                hashlib.sha256(mirrored[i].astype('<f2').tobytes()).hexdigest() == row["stored_input_float16_mirror_sha256"], "raw/mirror row identity differs")
+        legal = np.zeros(1858, np.uint8)
+        for move in position.legal_moves:
+            legal[move_to_index_for_encoding(move, position, policy_encoding=game.policy_encoding)] = 1
+        policy = arrays["policy_target"][i]
+        require(np.array_equal(arrays["legal_mask"][i], legal) and arrays["has_policy"][i] == 1 and
+                np.isfinite(policy).all() and (policy >= 0).all() and abs(float(policy.sum(dtype=np.float32)) - 1) < .002 and
+                not np.any(policy[legal == 0]), "serialized legal policy mismatch")
+        verifier.verify_policy_sample(proof, SimpleNamespace(ply_index=row["ply"], policy_target=policy), position, game.policy_encoding)
+        q = 1 if raw["outcome_wdl"][i] == 0 else (0 if raw["outcome_wdl"][i] == 1 else -1)
+        control = hlgauss_target(categorical_target_value(q, None, blend_frac=0, search_wdl=raw["search_wdl_raw"][i], search_blend_frac=1),
+                                num_bins=game.categorical_bins, sigma=game.hlgauss_sigma)
+        require(control.tobytes() == raw["categorical_raw"][i].tobytes(), "raw original categorical control differs")
+    validate_stored_control(raw, arrays, proof=proof, metadata=meta)
+
+
+def load_research_train(binding, parts):
+    """Reverify ALL128 proofs before deserializing a single TRAIN archive/shard."""
+    from chess_anti_engine.replay.shard import load_shard_arrays
+    from chess_anti_engine.selfplay.config import GameConfig
+    from scripts.offline_replay_epoch import _concat
+    from verified_outcome import VerifiedOutcomeVerifier, require_verified
+    _gen, producer, _flat, tc, _kwargs, _model_cfg = parts
+    readout, planned = cohort_metadata(binding, producer)
+    game = GameConfig(**producer["training_game_config"])
+    verifier = VerifiedOutcomeVerifier(path=producer["tablebase_path"],
+        asset_inventory_sha256=producer["tablebase_asset_inventory_sha256"], collection_uuid=RUN, source_revision=SOURCE)
+    prepared = []
+    try:
+        for g in planned:
+            item = readout["completed"][str(g["start_ordinal"])]
+            directory = Path(item["path"])
+            inventory(directory, item["inventory"])  # Stream hashes only; no array deserialization.
+            validation = json.loads((directory / "validation.json").read_text())
+            require(validation == item["validation"] and validation["usable_shard"] is True and
+                    validation["resolved_outcome_eligible"] is True and
+                    validation["scientific_outcome_class"] in ("NATURAL", "STRICT_TB_ADJUDICATED") and
+                    validation["raw_value_control"]["all_rows_raw_control_proven"] is True, "unusable/censored TRAIN game")
+            observed = json.loads((directory / "provenance.json").read_text())
+            require(observed["planned"] == g, "raw planned TRAIN identity changed")
+            proof = verifier.verify(observed["actual"], g, game)
+            require_verified(proof, audit=observed["actual"])
+            stored_proof = json.loads((directory / "verified-outcome.json").read_text())
+            require(stored_proof == {"verification": proof.metadata(), "proof_sha256": proof.proof_sha256}, "fresh/serialized outcome proof differs")
+            rows = validation["rows"]
+            require(0 < len(rows) <= 450 and len(rows) == validation["retained_rows"] == proof.payload["retained_rows"] and
+                    [r["physical_row_id"] for r in rows] == [g["physical_game_id"] + ":" + str(i) for i in range(len(rows))],
+                    "not complete ordered physical TRAIN rows")
+            prepared.append((g, directory, validation, observed["actual"], proof))
+        require(len(prepared) == 128 and len({g[0]["physical_game_id"] for g in prepared}) == 128, "not ALL128 fresh TRAIN proofs")
+        chunks, raw_chunks, ids, games, segments = [], [], [], [], []
+        for g, directory, validation, audit, proof in prepared:
+            arrays, stored_meta = load_shard_arrays(directory / "shard", lazy=False, validate=True)
+            require(stored_meta["run_id"] == RUN and stored_meta["model_sha256"] == producer["checkpoint_sha256"], "TRAIN shard source/donor differs")
+            with np.load(directory / "raw-values.npz", allow_pickle=False) as archive:
+                raw = {key: archive[key].copy() for key in archive.files}
+            meta = json.loads((directory / "raw-values.json").read_text())
+            require(meta == validation["raw_value_control"] and meta["all_rows_raw_control_proven"] is True,
+                    "raw metadata differs from admitted game")
+            validate_loaded_game(arrays, raw, meta, validation["rows"], audit, proof, verifier, game)
+            segments.append({"start": len(ids), "stop": len(ids) + len(raw["physical_row_id"]), "metadata": meta, "proof": proof})
+            chunks.append(arrays); raw_chunks.append(raw); ids.extend(raw["physical_row_id"].tolist()); games.append(g["physical_game_id"])
+        require(0 < len(ids) <= 128 * 450 and len(ids) == len(set(ids)), "TRAIN row bound/uniqueness")
+        arrays = _concat(chunks)
+        raw = {key: np.concatenate([x[key] for x in raw_chunks], axis=0) for key in raw_chunks[0]}
+        metadata = {"segments": segments, "categorical_bins": game.categorical_bins, "hlgauss_sigma": game.hlgauss_sigma}
+        validate_train_stored_control(raw, arrays, metadata=metadata)
+        return arrays, ids, games, raw, metadata, {"scope": "accepted128wholeTRAINonly_fresh_verified_outcomes",
+            "cohort_binding": binding, "heldout_loaded": False, "games": games, "rows": len(ids),
+            "fresh_proof_sha256": [x["proof"].proof_sha256 for x in segments],
+            "classes": [x["proof"].payload["scientific_class"] for x in segments]}
+    finally:
+        verifier.close()
+
+
+def segments(raw, arrays, metadata):
+    from scripts.offline_replay_epoch import _slice_arrays
+    from verified_outcome import require_verified
+    require(len(metadata["segments"]) == 128, "not128 proof segments")
+    cursor = 0
+    for segment in metadata["segments"]:
+        start, stop = segment["start"], segment["stop"]
+        require(start == cursor and start < stop <= len(raw["physical_row_id"]), "proof segment gap/overlap")
+        require_verified(segment["proof"], metadata=segment["metadata"])
+        ix = np.arange(start, stop)
+        yield {k: v[start:stop] for k, v in raw.items()}, (_slice_arrays(arrays, ix) if arrays is not None else None), segment
+        cursor = stop
+    require(cursor == len(raw["physical_row_id"]), "unproven trailing TRAIN rows")
+
+
+def validate_train_stored_control(raw, arrays, *, metadata):
+    from value_bundle import validate_stored_control
+    for values, stored, segment in segments(raw, arrays, metadata):
+        validate_stored_control(values, stored, proof=segment["proof"], metadata=segment["metadata"])
+
+
+def categorical_for_train_arm(raw, *, arm, metadata):
+    from value_bundle import categorical_for_arm
+    return np.concatenate([categorical_for_arm(values, arm=arm, metadata=segment["metadata"], proof=segment["proof"])
+                           for values, _stored, segment in segments(raw, None, metadata)], axis=0)

@@ -1,0 +1,63 @@
+--- /home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v1/bind_draw_plan.py
++++ /home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-final-v3/bind_draw_plan.py
+@@ -39,7 +39,7 @@
+         os.fsync(stream.fileno())
+ 
+ 
+-def verify_frozen_components(science, manifest, scientific_sha256):
++def verify_frozen_components(science, manifest, scientific_sha256, technical_publication_ref, execution_manifest_sha256):
+     """Technical schema correction only; project exactly to frozen ancestors."""
+     root = HERE.parent
+     frozen_science = {"path": str(root / "e4-scientific-protocol-final-v2/protocol.json"),
+@@ -95,9 +95,32 @@
+     require(technical["new_helper"] == {"path": str(HERE / "bind_draw_plan.py"), "sha256": digest(__file__)}
+             and manifest["helper_sha256"] == technical["new_helper"]["sha256"],
+             "technical successor helper identity differs")
++    new_inputs_ref = technical["new_inputs_template"]
++    require(manifest["inputs_template"] == new_inputs_ref, "technical input-template identity differs")
++    new_inputs, old_inputs = checked(new_inputs_ref), checked(inputs_ref)
++    require(set(new_inputs) == set(old_inputs) | {"technical_publication"}
++            and {k: v for k, v in new_inputs.items() if k != "technical_publication"} == old_inputs,
++            "five scientific/data input references changed")
++    require(isinstance(technical_publication_ref, dict)
++            and set(technical_publication_ref) == {"path", "sha256"}
++            and "UNBOUND" not in technical_publication_ref["path"],
++            "published technical publication reference required")
++    publication = checked(technical_publication_ref)
++    require(publication["status"] == "MAIN_PUBLISHED_E4_DRAW_METADATA_TECHNICAL_CORRECTION"
++            and publication["frozen_scientific_sha256"] == frozen_science["sha256"]
++            and publication["source_revision"] == science["source"]["revision"]
++            and publication["collection_uuid"] == science["cohort"]["uuid"],
++            "technical publication not published for this frozen science/source/cohort")
++    require(publication["new_helper"] == technical["new_helper"]
++            and publication["entrypoint"] == str(HERE / "bind_draw_plan.py")
++            and publication["new_execution_manifest"] == {"path": str(HERE / "manifest.json"), "sha256": execution_manifest_sha256}
++            and publication["technical_descriptor"] == technical_ref
++            and publication["ancestor_draw_helper"] == parent_helper_ref,
++            "published technical helper/manifest/descriptor/entrypoint/ancestor differs")
+     projected = dict(manifest)
+     del projected["technical_metadata_consumer_correction"]
+     projected["helper_sha256"] = parent["helper_sha256"]
++    projected["inputs_template"] = parent["inputs_template"]
+     require(projected == parent, "successor draw manifest changes beyond declared technical identities")
+ 
+ 
+@@ -114,7 +137,7 @@
+     require(digest(__file__) == m["helper_sha256"], "draw helper changed")
+     require(digest(args.bindings) == args.bindings_sha256, "late bindings changed")
+     bindings = json.loads(Path(args.bindings).read_text())
+-    require(set(bindings) == {"scientific", "publication", "producer_protocol", "producer_manifest", "cohort"}, "unexpected binding fields")
++    require(set(bindings) == {"scientific", "publication", "producer_protocol", "producer_manifest", "cohort", "technical_publication"}, "unexpected binding fields")
+     require(Path(sys.executable).resolve() == Path(m["python"]).resolve() and tuple(sys.version_info[:3]) == (3, 13, 15), "interpreter changed")
+     parent = Path(f"/proc/{os.getppid()}/cmdline").read_bytes().decode().split("\0")
+     require(m["owner_path"] in parent and digest(m["owner_path"]) == m["owner_sha256"] and
+@@ -133,7 +156,8 @@
+             science["cohort"]["uuid"] == protocol["run_uuid"] and
+             publication["status"] == "MAIN_PUBLISHED_FROZEN_E4_SCIENCE" and
+             publication["scientific_sha256"] == bindings["scientific"]["sha256"], "science is not frozen and published")
+-    verify_frozen_components(science, m, bindings["scientific"]["sha256"])
++    verify_frozen_components(science, m, bindings["scientific"]["sha256"],
++        bindings["technical_publication"], args.manifest_sha256)
+     require(producer["scientific_preregistration_sha256"] == bindings["scientific"]["sha256"] and
+             producer["collection_uuid"] == protocol["run_uuid"], "producer scientific identity differs")
+     require(cohort["producer_protocol_sha256"] == bindings["producer_protocol"]["sha256"] and

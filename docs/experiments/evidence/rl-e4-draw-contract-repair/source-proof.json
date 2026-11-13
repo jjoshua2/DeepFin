@@ -1,0 +1,21 @@
+{
+  "status": "STDLIB_AST_AND_TEXT_SOURCE_PROOF_ONLY_NOT_EXECUTED",
+  "ancestor4d07": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-final-v1/bind_draw_plan.py",
+    "sha256": "4d07f1c83e3d173be3fa8500eaf1f315274722c2f12e78d3552bc863d23561d2"
+  },
+  "preserved_v1_c784": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-final-v2/bind_draw_plan.py",
+    "sha256": "c7841ffe9baed0cc023a403b29aa8909c500888ced1f86d555de1f765bee1d86"
+  },
+  "new_helper": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-final-v3/bind_draw_plan.py",
+    "sha256": "ff24bc622171b8e226e3f05c66800d046fb008713d30991088e68a008b07f47f"
+  },
+  "all_original_nonmain_functions_AST_exact": true,
+  "original_main_tail_after_component_guard_TEXT_exact": true,
+  "tail_sha256": "f233fce464bb6d1a5661c7880bb6b533af42cf0d79d2e29a1e4dcb88b9e3e474",
+  "main_AST_exact_except": "oldmissingcomponent predicate -> actualgraph/publicationguard; sixth technical_publication identity key. All other original statements unchanged.",
+  "manifest_projection": "OnlynewhelperSHA/new6inputtemplate/ref+technicaldescriptorref differ; restorationprojects exactlyancestor efb. Fiveoriginal inputtemplates projectexactfdef.",
+  "new_published_identities": "Newhelper/descriptor/staticexecutionmanifest/new6inputs allpublished before actualtechnicalpubproof; sixth actualbinding carriesitsref afterpublication, no cycles."
+}

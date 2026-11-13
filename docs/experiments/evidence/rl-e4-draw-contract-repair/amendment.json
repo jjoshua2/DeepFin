@@ -1,0 +1,105 @@
+{
+  "actual_guard_controls": {
+    "all_passed": true,
+    "array_path_attempts": 0,
+    "cases": 22,
+    "independent_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-guard-controls-actual-independent-review-v2/review.json",
+      "sha256": "d0e2128b27714323902196f667c734600a23183016fa2179200288b577c0f046"
+    },
+    "readout": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-guard-controls-results-v2/readout.json",
+      "sha256": "a1ce2df1ccb49428ce5c4f6c373a9478fb3da021f26d14343c01e5439654f808"
+    },
+    "scope": "Actual extracted metadata guard with authentic frozen metadata and explicitly simulated future publication. No realtechnicalpublication, arrays/loader/draw/model/data/RNG execution or filesystem-race qualification.",
+    "terminal": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-guard-controls-execution-v2/terminal.json",
+      "sha256": "7135d03872da6cc915f86f272484671aca39febed87d869f9c6b3936445dfc08"
+    }
+  },
+  "ancestor_draw_helper": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/draw/bind_draw_plan.py",
+    "sha256": "4d07f1c83e3d173be3fa8500eaf1f315274722c2f12e78d3552bc863d23561d2"
+  },
+  "declared_technical_changes": [
+    "Replace impossible direct component-key guard with exact7cfd\u21927160/d243/c4ea/EE0/efb/4d07/fdef ancestry verification.",
+    "Add separately published technical amendment as sixth authority input; five original scientific/data reference objects project exactly to oldfdef.",
+    "Newhelper/canonicalentrypoint/staticmanifest/new6inputtemplate/descriptor identities are explicit. Manifestprojects exactly to oldefb after restoring onlyhelperSHA/inputtemplate and removing technicaldescriptor reference.",
+    "Require actual technicalpublication status and exactscience/source/UUID/helper/entrypoint/manifest/descriptor/ancestor identities before outputs/imports/arrays. Static source\u2192descriptor\u2192manifest\u2192publication\u2192late sixthbinding is acyclic."
+  ],
+  "draw_command_template": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/draw-command.TEMPLATE.json",
+    "sha256": "6dc3daf0bdef2e52d95d885f9f5e572a661e6479dd8be0970684b2e160c311ed"
+  },
+  "finding": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-original-draw-guard-independent-finding-v1/review.json",
+    "sha256": "cc2100e2739cf71d7281e9fb27b3ca0692c6c028bac963e9b56563551042219c"
+  },
+  "frozen_science": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-scientific-protocol-final-v2/protocol.json",
+    "sha256": "7cfd6e45b565f39827a1801c828dc302fe5d79f176c7701b004fa7f1adab3478"
+  },
+  "new_execution_manifest_target": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-final-v3/manifest.json",
+    "sha256": "905fc0884365d411ce37db8490c1ba7a95718afaf391c2a45eedf9cf662435df"
+  },
+  "new_execution_manifest_template": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/manifest.json",
+    "sha256": "905fc0884365d411ce37db8490c1ba7a95718afaf391c2a45eedf9cf662435df"
+  },
+  "new_helper": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-final-v3/bind_draw_plan.py",
+    "sha256": "ff24bc622171b8e226e3f05c66800d046fb008713d30991088e68a008b07f47f"
+  },
+  "new_six_reference_inputs": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/identity-inputs.TEMPLATE.json",
+    "sha256": "d3e0eba354bf15595c6e095bcc411d6364755e180e96becb78e3f2e036040679"
+  },
+  "not_authorized": "No newcohort/data/reselection/seed/horizon/estimator/scientificrule change, actual learning, playing, adoption or strength claim through this amendment.",
+  "reason": "Original4d07 draw guard requires absent science.components.draw_plan_binder. Actualfrozen7cfd authenticates the same ancestor components through7160/d243/EE0 packet identities. The original integration review missed this metadata consumer mismatch. No original draw was attempted.",
+  "required_before_draw": [
+    "Publish this amendment and exact successor source/manifest/descriptor on main; root verifies actual merge/CI/reviews/blobs and banks truthful technicalpublication proof.",
+    "Only then install exact905f staticmanifest at newcanonicalentrypoint and bind actualsixth technicalpublication ref. Original4d07/c784 sources remain unrun and immutable.",
+    "Closedwhole192cohort/128TRAIN proof and playing audit with independent/root acceptance, actualdata-identity bindings, and one fresh CPU300/270 draw admission."
+  ],
+  "scientific_invariants": {
+    "HOLD": 64,
+    "TRAIN": 128,
+    "batch_size": 256,
+    "cohort": 192,
+    "draw_seed": 2026111342,
+    "draw_shape": [
+      129,
+      256
+    ],
+    "no_research_rerun_or_count_seed_replacement": true,
+    "original_science_and_source_preserved": true,
+    "playing": "All three256screens, bothNEW129utilityeligibility, onefresh1000selectedsamehash confirmation, originalthresholds/inference/stop/budget rules unchanged.",
+    "targets_optimizer_LR_clipping_masks_mirroring_and_training_RNG": "Original fixed E4 recipe unchanged. Original loader/proof/constructor-spy/RNG/draw/output main tail text is byte-exact.",
+    "updates_per_arm": 129
+  },
+  "source_equivalence": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/source-proof.json",
+    "sha256": "bc55a3d39817d998a8f347fc85a084cddadcf7f82cbacc87a6ed3293b392d2bf"
+  },
+  "source_preparation": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/preparation.json",
+    "sha256": "3118d14329ecf06f8d84c27d533f6ac72156748568328a08fc9a0738365721b8"
+  },
+  "source_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-correction-independent-source-review-v2/review.json",
+    "sha256": "b8a4e4f3c7f2a84207191ffe9c00e06419b4a62b87aa6f6a8031dd5e8b0bc044"
+  },
+  "status": "FROZEN_E4_DRAW_METADATA_TECHNICAL_AMENDMENT_V1_NOT_EXECUTION_ADMISSION",
+  "superseded_claim": "Original804322 finalintegration review cannot establish that original4d07 draw guard executes. Its draw-guard compatibility claim is superseded by findingcc210 and correctiveb8a review; historical receipts/source preserved.",
+  "technical_descriptor": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/technical-descriptor.json",
+    "sha256": "6af973aae6820cf1f39bc2d3c8ae6a7f7687cab02e6e29d7a08252465e12505c"
+  },
+  "technical_publication_interface": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/technical-publication-interface.json",
+    "sha256": "b2c437055445311e607fa90bffed5f81b44720de15eeccd358a29cbf1ba3ec63"
+  },
+  "timing_and_observations": "Discovered during collection by source-only bridge audit before any draw, learner or playing execution. Source author/reviewer used frozen source/metadata and did not inspect fresh game outcomes/arrays/model predictions to choose correction. Collection remained on original b18/b3fd/7cfd and finished192games without reroll; independent wholecohort audit remains separate.",
+  "utc": "2026-11-13T10:03:22.263445+00:00"
+}

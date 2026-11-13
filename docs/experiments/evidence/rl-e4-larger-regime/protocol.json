@@ -1,0 +1,469 @@
+{
+  "arms": {
+    "FULLA": {
+      "categorical": "OriginalrawF32searchQ -> actualHLGauss -> sameproductionF16; everyroworiginalF32andstoredF16controlbitmatch",
+      "main_SF": 0.0,
+      "main_outcome": 0.0,
+      "main_search": 1.0
+    },
+    "FULLB": {
+      "categorical": "HLGauss(.8rawF32searchQ+.2verifiedResolvedOutcomeQ), then same productionF16 cast; NATURAL and STRICT_TB_ADJUDICATED provenance classes distinct.",
+      "main_SF": 0.0,
+      "main_outcome": 0.2,
+      "main_search": 0.8
+    },
+    "common": "Alloriginalpolicyauxweights/fulltrunk/Aurora+Adam/clipping/LRwarmup/reference state; mainsearchinputs storedF16both; SFandcategoricalhostrebuildOFFboth; noSFopponent/anchor/LR/architecturechange",
+    "units": "Categorical signedQ[-1,1], outcome+1/0/-1STM; expectedscoreW+.5D forreporting only; scalarblend BEFOREHLGauss, not20%CE/gradientmix"
+  },
+  "budget": {
+    "CPU_affinity": [
+      20,
+      22
+    ],
+    "E4_GPU_charged_before_research": 0,
+    "Torch_OMP_MKL_threads": 2,
+    "Windows_GPU_sharing_authorization": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/gpu-resource-observation-20261113T0107Z/user-resource-preference.json",
+      "sha256": "0d8bb0031e725ebf1567fb00789cfe13e2dd134ae707e4d05688bd6f6265f1b4"
+    },
+    "conditional_confirmation": 7200,
+    "controls": "Honor allglobal/stageSTOP/PAUSE/CANCEL/YIELD/intentionalstop; neverclear oldstopped53 marker; all3leases/custody/deadline/source/index/memory/disk gates refreshed every stage. No paidcompute; allfailures debit study+week ceilings.",
+    "debit_rule": "EveryE4GPUintended owner wall time, successful/failed/interrupted, debits22260total; historical E2/E3 remainweekcharges, not E4charges. Allstudy decidingcaps fixed beforeoutcomes; rootpreflight mayrefuse, never enlarge cap.",
+    "generation": 2400,
+    "limits": "Fixed elapsedGPUintended ownerwall caps include startup/overhead, not CUDAactive time. Everyowner<=7200seconds; no automaticextension, caprefinement or completionguarantee afterfreeze.",
+    "maximum_single_owner_seconds": 7200,
+    "maximum_total": 22260,
+    "offline_scoring": 300,
+    "one_compute_stage_at_a_time": true,
+    "paired_training": 1200,
+    "qualifications": 360,
+    "reservation": "No newGPUAA selected. Any requiredfreshGPUqualification must fit total360reservation and22260study/172800week ceilings; noautomatic extensions/reseed/reallocation. CPUqualification/readouts finite separately and samephysicalresource coordination.",
+    "screens_each": 3600,
+    "screens_total": 10800,
+    "status": "FIXED_CEILINGS_NOT_PROPOSAL_OR_COMPLETION_GUARANTEE",
+    "week_GPU_charged_before_E4": 9202.945051084971,
+    "week_GPU_stage_ceiling_seconds": 172800,
+    "week_deadline_utc": "2026-11-19T16:09:20+00:00"
+  },
+  "causal_scope": "Fresh cohort and training horizon change together relative to E2TB. This is not an isolated data/dose effect, a matched RNG replication, or proof that a previous failure was caused by clipping/SFabsence. E3 inconclusive raw-gradient contrast does not select a mechanism.",
+  "cohort": {
+    "HOLDOUT_games": 64,
+    "TRAIN_games": 128,
+    "all820_native_encoding": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/producer-encoding-compatibility.json",
+      "sha256": "0b50797c0bdbcb7f1a7d65d8df54283abbe197af66d4d2268775194b659a0811"
+    },
+    "attempts": 192,
+    "concurrent_slots": 16,
+    "gate_matrix": "ALL192 predetermined games require complete identity/integrity/provenance audit; every one of128TRAIN must have nonempty usable verified resolved raw/categorical-control data. No outcome-based replacement/count expansion. A valid censored HOLD or missing diagnostic root makes wholeoffline64 inconclusive, not a subset estimate or replacement; learning may proceed if allTRAIN and sharedintegrity gates pass.",
+    "generation": "ImmutableA39 pureSP1, original64sim finiteWorker, SFpool2 only existing5000node/MultiPV8 labels, fullhistory175F16+productionmirror, strict3\u20136rule50 and rescore policyON;450additionalplycap. No replacement/outcome completion quotas.",
+    "known_union_limits": "Fixed4096 scoreblind pool/exclusions include allprior756starts/known parent/history/normalized and raw+mirror identities, originalknown803/53 metadata plus allknownE2retained inputs/historyprefixes. Broader source-family/pretraining overlap unknown. No oldHOLDarray read or score-based rank.",
+    "offline_root_rule": {
+      "all64_or_inconclusive": true,
+      "eligible_added_plies": [
+        8,
+        80
+      ],
+      "salt": "E4-root-v1:2026111341",
+      "selection": "sha256((salt+':'+physical_row_id).encode('utf-8')) ascending digest; exact old helper, before predictions",
+      "tie": "first chronological retained row; min is stable for equal digests"
+    },
+    "playing_guard": "All628 preselected playing starts vs ALL192 retained raw+mirror inputs; anycollision invalidates playing admission.",
+    "split": "GLOBAL192 physicalidentity hash-rank128TRAIN/64HOLD before outcomes; no active-slot quota/completion-dependent bank.",
+    "split_seed": "E4-split-v1:2026111341",
+    "structural_manifest": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-structural-selection-results-v1-cd47b230/manifest.json",
+      "sha256": "7db17da357fc524d6b1862fc45fab9a3fad2745fd4c5b54d4eec889051825724"
+    },
+    "structural_root_acceptance": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-structural-root-actual-acceptance-v1/readout.json",
+      "sha256": "44b89043cd19df0207748248d3f0d7174be76e2af5135a6965f9b70133ebb004"
+    },
+    "structural_rule_sha256": "50a2eaf11683bc22e1c3e908bf5a7e177bbd988ced3f2f403d7e6e0283c7a45b",
+    "uuid": "cd47b230-f32f-4256-a51e-4869f5708bb6"
+  },
+  "components": {
+    "arena_fifteen_inert_actual_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-decision-inert-controls-actual-independent-review-v1/review.json",
+      "sha256": "a5006e5869cceb6acf70f6aebe5437817dd030b843660041625b4f19225342c6"
+    },
+    "arena_final_known_template": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-template-v1/preparation.json",
+      "sha256": "015ca351c034b4f58c5f64522c0f52566e912905cc5ca694c17b946c0ca61876"
+    },
+    "arena_final_template_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-template-independent-review-v1/review.json",
+      "sha256": "d42a6c3261c8b3e71134f07dfeb57633c887f07958d56127a34f6b7e3f3bd2ae"
+    },
+    "arena_source_and_rules": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-preparation-v1/preparation.json",
+      "sha256": "fd7e75b12c642533d59273ac9da1ba89abf6bb807ef611a8d5e2680cee84d35e"
+    },
+    "cohort_auditor_templates": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cohort-auditor-final-template-v1/preparation.json",
+      "sha256": "0cab40056d0d038f2a2be774b260f250a48374f6b9d09a3bbc8b159f9382b7bc"
+    },
+    "learning_draw_checkpoint_offline_templates": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/preparation.json",
+      "sha256": "7160670e77430936e692ea52b282e3c7c9153fd4148ac94748208bd290be1a3a"
+    },
+    "learning_final_template_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-final-learning-template-independent-review-v2/review.json",
+      "sha256": "1c62c13733e14a03ee0ad96cb6e9795bc72e33098872d4345540b1cce4d75a1b"
+    },
+    "learning_source": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/preparation.json",
+      "sha256": "ee0a188fd885f714c63e05a070df9908b47b8fc7ce3ec00b5a0d8bb1a2d10972"
+    },
+    "offline_FEN_correction": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline-final-fen-correction-v1/correction.json",
+      "sha256": "6dc0fdcefabe1872e3ee2a44b0a383e063e6250ad6f3f87f8607daa33a3fb5a5"
+    },
+    "paired129_protocol_template": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/train/protocol.TEMPLATE.json",
+      "sha256": "d243be34aee5ccb8a40779bb112f8551aee5cd8083cdc77303c0809f57b482bb"
+    },
+    "strict_collection_exact_command": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-template-v1/collection-command.observed.template.json",
+      "sha256": "fa15dfe9c5f635884cb6cfb4712e3e0e1f07ec6ced2584289eb1bbc2af226c26"
+    },
+    "strict_collection_late_contract": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-template-v1/binding-contract.json",
+      "sha256": "f21908156f0e1ecda25a3587f9c33dfa92032890f7a497247b79aa5fd8a3bed4"
+    },
+    "strict_collection_manifest_template": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-template-v1/manifest.template.json",
+      "sha256": "e703b36355451d275f9584fe4799a60a3efd583c75e2d98c68c52a608fcad4c9"
+    },
+    "strict_collection_protocol_template": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-template-v1/protocol.template.json",
+      "sha256": "ff9befc67974238680c1ad59785ad495cf1dbc02292cbce0313faee4660a6ef9"
+    },
+    "strict_collection_selected_variant": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-observed-collection-command-selection-v1/selection.json",
+      "sha256": "ab04e5a9ad62a9f5b5971dc65c8c2073c9d60b67b856551890da033a93dc1e59"
+    },
+    "strict_collection_source": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-preparation-v2/preparation.json",
+      "sha256": "5c1ffad4f438f1a5aa12970aaf7ec68231c1e18d82c2ad18e945f91b1f7eeea5"
+    },
+    "strict_collection_template_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collector-final-template-independent-review-v1/review.json",
+      "sha256": "baddc36d03a5faec5a450bec72bf62d1db3442e44783feafe27f5bf59993a064"
+    },
+    "strict_collection_templates": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-template-v1/preparation.json",
+      "sha256": "8ecc68e9928ee5dc9eb1784280f9e79f59b02c5f77e6a16904cf4236275a4fcf"
+    }
+  },
+  "confirmation": {
+    "candidate": "Sameimmutable selected129 checkpoint hash banked before play; no retraining/swapping.",
+    "claims": "Only passing selectedcandidate-vs-donor confirmation supports internalplayinggain for thatmodel under fixedprofile; not confirmedB>A, no automaticadoption/noRofchade/Stockfish/Lc0milestone. Intervals are conditional/testwise, not a globalfamilywise5% guarantee from two-candidate selection.",
+    "conditional": "Exactlyone selected eligible129 endpoint from fixed rule; no confirmation otherwise.",
+    "consumption": "Any launched selectedconfirmation consumes soleattempt, including technicalfailure/timeout/statisticalnonpass. No othercandidate, E2fallback, rerun, extension or replacement afterward.",
+    "games": 1000,
+    "opening_pairs": 500,
+    "opponent": "Sameimmutable DONOR",
+    "success": "Fulltechnicalqualification AND point>=0.53 AND fullprecisionpaired95lower>0.5; zeroVariance unavailable cannotpass."
+  },
+  "created_utc": "2026-11-13T08:56:20.643521+00:00",
+  "data": {
+    "TRAIN_games": 128,
+    "bank_assignment": "Preassign GLOBAL hash-ranked128TRAIN/64HOLD over fixed192game identities, rankseed2026111341, before generation. Freeze exact rank/hash implementation and roster before execution. Never assign banks by active slot or completion order.",
+    "bank_rule": "ALL192 predetermined games require complete identity/integrity/provenance audit; every one of128TRAIN must have nonempty usable verified resolved raw/categorical-control data. No outcome-based replacement/count expansion. A valid censored HOLD or missing diagnostic root makes wholeoffline64 inconclusive, not a subset estimate or replacement; learning may proceed if allTRAIN and sharedintegrity gates pass.",
+    "fixed_games": 192,
+    "fresh_HOLD_games": 64,
+    "generation_concurrency": "At most16active slots; refill whichever finishes. Slot IDs/order are metadata only; no8/4slotquota.",
+    "old_data": "No old HOLD reuse or old cohort/results pooling; prior E2TB remains closed.",
+    "source": "Planned fresh strict-TB-ON collection with fullhistory/POV/provenance and fixed structural/exposure gates. Actual192data must qualify aftergeneration. All knownUUID/roster/index/books/profile/source/config identities are concrete in cohort/source/components before anygame."
+  },
+  "donor": {
+    "path": "/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/baseline/epoch2.pt",
+    "sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0"
+  },
+  "execution_admitted": false,
+  "failure_and_recovery": "Any source/native/config/data/history/owner/control/deadline/cleanup mismatch leaves affectedstage unqualified/inconclusive, preserve allpartials/costs anddonor. No second researchcollection/training/playing/inferenceattempt, reseed/quota replacement/endpoint extension/othercandidate fallback throughthis preregistration. Same-observation finite CPUmetadata/readout corrections mayrepair technicalconsumption without newdata, estimator/selection/scientificrule changes or research rerun. No automaticadoption.",
+  "freeze_scope": "All scientific/source/config/starts/profile/recipe/count/seed/selection parameters and component templates fixed BEFORE any E4research game. Actual future science/publication/cohort/draw/checkpoint/custody identities follow ONLY pinned phase contracts. This file is not finite stage execution authority.",
+  "identity_record": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-study-identity-v1/identity.json",
+    "sha256": "1b4d6d9db14638fa5ccfb434d598fb4a9b5d186f349d3a6ff74af651256c20f7"
+  },
+  "learning": {
+    "LR_source_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-scheduler-regime-independent-planning-review-v1/review.json",
+      "sha256": "2d3aaef32a8507c25cfbfc26b2e19033bcbc850b936b9a6f71096810a0126f8b"
+    },
+    "arms": [
+      "FULLA129",
+      "FULLB129"
+    ],
+    "batch_size": 256,
+    "candidate_steps": "Only final129 endpoints may be utility candidates; no intermediate fishing or E2A40 fallback.",
+    "horizon_rationale": "Independent source/index review confirms update129 is final pre-restart sqrt_release-tail update: actual scale0.11894949066469518 of peak, NOT exact0.1floor. Post-update129 saved scheduler state already prepares peak LR for update130. No update130 allowed.",
+    "interventions": "Only longer horizon plus fresh larger cohort; no new loss/share/search/optimizer/LR knob.",
+    "math": "Original target maps, architecture, optimizer, clipping, LRconfig, warmup8 and schedule mechanics unchanged; matched new128TRAIN draw/mirror/common RNG plan, fresh original donor/optimizer state.",
+    "physical_draws_per_arm": 33024,
+    "updates_per_arm": 129
+  },
+  "long_term_goal_achieved": false,
+  "offline": {
+    "bootstrap": {
+      "paired_samples": 10000,
+      "seed": 2026111347
+    },
+    "role": "DIAGNOSTIC_ONLY_NOT_SELECTION_OR_PLAYING_GATE",
+    "root_rule": "One preselected eligible8..80retainedNETroot pernewHOLDgame, fixednew producer salt and known-input exclusions; anycensor/missingroot => wholeofflineinconclusive, no subset/replacement.",
+    "roots": 64,
+    "snapshots": [
+      "donor",
+      "FULLA129",
+      "FULLB129"
+    ]
+  },
+  "offline_scope": {
+    "completeness": "All64 fixedfreshHOLD games/roots required for wholeplanned diagnostic. ValidcensoredHOLD/missingroot => wholeoffline INCONCLUSIVE; no subset/replacement or learner veto if all128TRAIN/sharedintegrity gates pass.",
+    "games": 64,
+    "labels": "Preserve natural versus qualified strictTB outcome strata and target/coverage limitations; not teachertruth.",
+    "models": [
+      "DONOR",
+      "FULLA129",
+      "FULLB129"
+    ],
+    "role": "FreshHOLD diagnostic only, not selection/eligibility/gain gate; no seven-snapshot rerun."
+  },
+  "passive_SF_observation": {
+    "archive_byte_cap": 1073741824,
+    "archive_failure": "Futureteacherinformation incomplete/nonveto; neverchanges coretarget/retention/eligibility. Barecommand alternative staysUNRUN, not an afterfailure fallback.",
+    "confounds_and_limits": "Observer I/O/locks/fsync and earlier selfplay imports can alter realizedtiming/batching. Same generatedcohort shared botharms, no identical counterfactual RNG/timing claim. Eight synchronousfake controls do not qualify real constructor/concurrency/wiretiming. Archive preserves exactFuture\u2192record\u2192game plus normalizedwire/prethinraw observations, not universal teachertruth, P0equivalence, completecoverage or selected-stamp/airbag result qualification. No teacher label use in E4.",
+    "dispatch": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-sf-observation-dispatch-preparation-v1/preparation.json",
+      "sha256": "a3f15cacc3ddf226afee232cfa8ffcb576ffc3f833630667519ca4169578d2cc"
+    },
+    "dispatch_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-sf-observation-dispatch-independent-source-review-v1/review.json",
+      "sha256": "068c13bd302d7ea236697677a0a5a56dd4ae46360e2c6e65aa1e7eb04286ecc9"
+    },
+    "eight_inert_controls_actual_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-sf-observer-inert-controls-actual-independent-review-v1/review.json",
+      "sha256": "069f862d19d3ce8ef8ad478739043d86c2c04812cfed66d44db0142bd4d22f2f"
+    },
+    "fixed_binding": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-sf-observation-dispatch-binding-candidate-v1/binding.candidate.json",
+      "sha256": "c03ae042d83f03464e7dfdf5f77ae59b0d17cc5d6c12198e7aa6aba73c197660"
+    },
+    "no_new_query_or_training_target": true,
+    "selected_before_data": true,
+    "source": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-sf-raw-observation-implementation-v1/preparation.json",
+      "sha256": "c813a8c04fbba2868a216d0d6d2920c3415a9f7a6dde98a742846cb9f933a67b"
+    }
+  },
+  "playing": {
+    "TB": "commonindexed3-6strictroot+leaf+rule50/fullhistoryawareadjud; keepunresolvedpositiveclockdecisive leaves; no silentTBofffallback",
+    "TB_path": "/home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6",
+    "Torch_compile": "off",
+    "books": {
+      "R7_encoder_qualification": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/producer-encoding-compatibility.json",
+        "sha256": "0b50797c0bdbcb7f1a7d65d8df54283abbe197af66d4d2268775194b659a0811"
+      },
+      "confirmation": {
+        "pairs": 500,
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-structural-selection-results-v1-cd47b230/confirmation.epd",
+        "sha256": "c0e7c52496dbb132f292bf06c39a313a389aaf5bb31dc46cae0a542a99598296"
+      },
+      "screen": {
+        "pairs": 128,
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-structural-selection-results-v1-cd47b230/screen.epd",
+        "sha256": "fc8598f6abebaae9ded8051506e2c2f3fccf44425d3f93397fae92e315696aaf"
+      }
+    },
+    "claim_policy": "Actualarena claim_draw=True includesnextmoveclaims; discloseendingstrata",
+    "concurrency": 32,
+    "eval_max_batch": 1024,
+    "gumbel_noise": "ON fixedarena scale1; differsproductionper-plyschedule",
+    "inner_helper_caps": {
+      "confirmation": 6900,
+      "each_screen": 3500
+    },
+    "max_additional_plies": 450,
+    "mode": "matched_sims",
+    "no_per_game_clock": true,
+    "precision_environment": "Unset NVIDIA_TF32_OVERRIDE and CUBLAS_WORKSPACE_CONFIG before child Python/Torch; explicit CUDA0. Eager public arena profile remains distinct from external compiled UCI.",
+    "scope": "DifferentfromoldTBoffarenasandexternalRof30+.1/noharnessadjud; no crossprofilepooling",
+    "screen_commands": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-preparation-v1/commands.template.json",
+      "sha256": "055f0200b0669b58ad9f2a340a6aeef3c12c4c16e7dd5abf02f7d11817b64781"
+    },
+    "shape": "Pinned71b4 publicarena evaluation-shape config; c78 E4training-generation config is separate and originalarchitecture unchanged. Actualcheckpoint shape/complete494 and publicloader/serving custody mustqualify before endpoints.",
+    "sims": 64,
+    "source": "Frozen R7 same qualified actual public internalarena source/5native images and new820 encodings. Distinct from externalcompiledUCI/Rof clocks; freshactualendpoint/model/custody/history/TB/fault/cap readout qualification mandatory.",
+    "structural_rule_sha256": "50a2eaf11683bc22e1c3e908bf5a7e177bbd988ced3f2f403d7e6e0283c7a45b",
+    "temperature": 0.1
+  },
+  "prior_studies": {
+    "E2TB": "Completed/closed40updates perarm on32TRAIN, three256screens allintervals contain0.5; no registeredgain/harm, no confirmation/adoption, donorretained. No pooling/reopening.",
+    "E2TB_decision_sha256": "f630501017c205fbd9239fbc4e5bf8537c48ad61ca93d868a7448754236e0b4e",
+    "E3": "Completed/closed TRAIN-only gradientdiagnostic, primary0.009130375700267646 bootstrap95[-0.08169118532222314,0.09287763524152975]UNRESOLVED, not null/equivalence/recipe mechanism evidence.",
+    "E3_root_acceptance": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-root-actual-acceptance-v1/readout.json",
+      "sha256": "5adcae7164c69f6e00942cd50164e51047009d46e8a5f2f2a0e161b69ffc6d88"
+    },
+    "external_strength": "Pinnedold30+.1 donor vs unhandicapped8threadRof3.1:1W24D39L/64=20.3125%, paired95[0.1473019112,0.2589480888]. No victory/approachingSF/Lc0 milestone. NoE4 result yet; passing selectedcandidate-vs-donor onlyinternalprofile/testwiseclaim, not Elo/confirmedB>A/optimalformula/externalengine strength."
+  },
+  "prospective_direction": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-larger-regime-prospective-draft-v2/proposal.DRAFT.json",
+    "sha256": "82073830b8efc52b5e9f3ba6842c5c822e2f261c8a1d9623be6c76b8fc1e0dc6"
+  },
+  "publication_order": "Independent science/component review and exact main publication BEFORE192research games. Install actual finalcanonical JSON by listed identity-only reversals; closed canonical public--check and fresh root resource/control/custody/source admission before GPUcollection.",
+  "question": "Compare unchanged search-only FULLA versus FULLB20%verified-outcome WDL+categorical bundle in a fresh larger-data/longer-learning regime; measure internal playing utility separately from the scientific B-versus-A contrast.",
+  "schema": "week1-E4-larger-resolved-outcome-bundle-preregistration-v1",
+  "scientific_primary": {
+    "classifier": {
+      "screen_supported_bundle_advantage": "BvsA technicalqualified AND point>=0.53 AND paired95lower>0.5",
+      "screen_supported_bundle_disadvantage": "BvsA technicalqualified AND paired95upper<0.5",
+      "unresolved": "Otherwise, including zero-variance unavailable interval; technicallyinvalid is separately unqualified."
+    },
+    "comparison": "FULLB129 versus FULLA129",
+    "games": 256,
+    "interpretation": "This classifies screen-supported bundle advantage/disadvantage only. It does not confirm B>Amethod. Selecting and confirming onecandidate versus donor only confirms that candidate versus donor under fixedprofile, not superiority to the otherarm.",
+    "metric": "Fullprecision per-opening paired game-score mean and paired-normal95% interval; report all fixed outcomes.",
+    "opening_pairs": 128
+  },
+  "screens": {
+    "books": "The pinned fresh128pair screen panel is shared across3comparisons with pairedcolors; the pinned fresh500pair confirmation panel is disjoint. All known book/source/seed/CLI/profile identities are fixed in playing/source/components before anygame.",
+    "fixed_all_three": [
+      "FULLB129_vs_FULLA129",
+      "FULLB129_vs_DONOR",
+      "FULLA129_vs_DONOR"
+    ],
+    "games_each": 256,
+    "opening_pairs_each": 128,
+    "statistics": "For each pair x=(integer game outcomes converted to0/.5/1 and summed)/2. Point=mean(x); samplevariance denominator n-1; SE=sqrt(samplevariance/n); interval=point +/-1.96*SE, computed fullprecision. Zero variance => interval unavailable; cannot satisfy an interval-based eligibility/gain rule.",
+    "technical": "All3 fullfixed screens must technicallyqualify; allgames/fault/cap/TB strata retained. No early score-based stop, extra pairs, swapped opponents or seedfishing.",
+    "zero_variance_scope": "A complete zero-variance match may remain technicallyqualified/descriptive; do not manufacture a CI. BvsA selection uses its fixed point, not an invented significance claim."
+  },
+  "seeds": {
+    "confirmation": 2026111346,
+    "draw": 2026111342,
+    "generation": 2026111340,
+    "mirror": 2026111343,
+    "offline_bootstrap": 2026111347,
+    "rank": 2026111341,
+    "screens": 2026111345,
+    "training_common": 2026111344
+  },
+  "separate_not_selected_hypotheses": [
+    "WDL-only P0SF anchor: separate hypothesis, source qualification/effort/active masks unresolved; not E4intervention or automaticlaunch.",
+    "Optimizer-restored versus fresh supervised-learning/LR comparison: separate notselected.",
+    "HigherLR intervention: separate notselected.",
+    "Additional RNGreplicate/400stepdose: notselected."
+  ],
+  "source": {
+    "canonical_profile_file": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-results-v1/actual-builder-profile.json",
+      "sha256": "9e9ca115e387b49bc7734248dc6edae5b3bf9e88c0d25a62889b4d05aefff734"
+    },
+    "canonical_profile_sha256": "87fca0ba2283a82642af48b37823f54d4d1bf77c8016ef4c193102db4a253700",
+    "current_config_builders_native820": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/readout.json",
+      "sha256": "34cd17f72d78c0cafc8160640bb216a77c3a7c6791bed6a41c37d8b966ddc737"
+    },
+    "evaluation_shape": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-strict-generation-config-preparation-v1/f1dadbe4-43e2-4cf3-9a93-70a288533b48/evaluation-shape.yaml",
+      "sha256": "71b4cb1be3d4249887f36b640f48c6987f0ca13437f759657b97e160b474eae3"
+    },
+    "historical_SF_transport": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/strict-selfplay-final-cpu-root-acceptance-v1/sf-transport.json",
+      "sha256": "7514c30cca61b93812c7d2da84db773dbea4b1bb7e13182d66ddf923b26c70ff"
+    },
+    "historical_excluded_inputs": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-combined-engineering-input-supplement-root-acceptance-v1/known-observed-inputs.json",
+      "sha256": "80be774f97075dd8664f0fc1c56cad315e7991772186f13e6c4c6e89713f7b37"
+    },
+    "historical_strict_TB_producer": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-three-case-producer-root-actual-acceptance-v3/readout.json",
+      "sha256": "6e1cab125891bb31eab40cbac7e243716a77bfb107c9214593be9110efb5ded3"
+    },
+    "limited_historical_AA_plus_new_synthetic": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-limited-paired-reuse-root-acceptance-v1/readout.json",
+      "sha256": "9579e8c03924826ae865acff161e9f8170382f36e0b0bdaec60149cb5dc8d927"
+    },
+    "native_origins": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/native-origins.json",
+      "sha256": "8d9b629c7f6724b9d863ec6fc6bdadb8f0355be1460ed424c6256e9bc5a35023"
+    },
+    "profile_compatibility": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/profile-compatibility.json",
+      "sha256": "86abfae294282de956320a8e76aaeeb16c753c097bc804b7992757bfd87cb2c1"
+    },
+    "qualification_scope": "Actualnew820/native/config/94kwargs/12synthetic boundary checks and sourcecompatibility are accepted. Historical realstrictTB/SF/producer and four-updateAA evidence remain historical exact-consumer limitedreuse, not newE4realmodel/hostmirror/optimizer/129bitwise/teachertruth tests. Actualcurrent192data/modelserving/paired129 delivery/custody stillmustqualify. Canonicalpublic--check pending beforegeneration.",
+    "revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+    "runtime_checkout": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess",
+    "runtime_freeze": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/tb-on-runtime-source-freeze-v1/freeze.json",
+      "sha256": "6366f1e755fb5cdb72fac8b209423c1ef1ca32d932d091720d0fb8f464516055"
+    },
+    "runtime_policy": "Keep R7HEAD/tracked index/source/native images fixed; development/main publication is not runtime adoption. All artifacts outside checkouts.",
+    "training_generation_config": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-config-preparation-v1/config.yaml",
+      "sha256": "c78ecaf0bef637f2119abc555d108d5d08697772e554d4b20aa38724892e3ebb"
+    }
+  },
+  "status": "FROZEN_E4_PREREGISTRATION_V2",
+  "stop_recovery": "Preserve everyfailedattempt/partial/rawreceipt and source/model/draw/owner identity. Requiredtechnical/data/control/cleanup failure leaves stageunqualified/inconclusive; no after-result count/seed/dose substitution, scientificrerun orautomaticextension. Separatefiniteadmission is mandatory for everyactualstage.",
+  "supersession_before_data": {
+    "parent": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-scientific-protocol-final-v1/protocol.json",
+      "sha256": "18f2f8854c9dd29f1b3d273ecc6514ff304d34bd3878e65e682d1038682f82cf"
+    },
+    "reason": "Prepublication prose cleanup only: remove inherited draft pending-binding/refinement language now allknown component identities fixed; clarify separatetrainingconfig/publicarena shape. No numeric/source/template/statistical/seed/selection change; v1neverpublished/research-executed."
+  },
+  "training": {
+    "LR129_actual": {
+      "Aurora": 7.136969439881711e-06,
+      "auxiliary": 3.568484719940855e-07,
+      "saved_next_LR": "Peak, not the LR applied129. No update130.",
+      "saved_next_update": 130,
+      "scale": 0.11894949066469518
+    },
+    "LR_source_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-scheduler-regime-independent-planning-review-v1/review.json",
+      "sha256": "2d3aaef32a8507c25cfbfc26b2e19033bcbc850b936b9a6f71096810a0126f8b"
+    },
+    "arms": [
+      "FULLA129",
+      "FULLB129"
+    ],
+    "batch_size": 256,
+    "candidate_steps": "Only final129 endpoints may be utility candidates; no intermediate fishing or E2A40 fallback.",
+    "horizon_rationale": "Independent source/index review confirms update129 is final pre-restart sqrt_release-tail update: actual scale0.11894949066469518 of peak, NOT exact0.1floor. Post-update129 saved scheduler state already prepares peak LR for update130. No update130 allowed.",
+    "initial": "Fresh original full494 donor weights, empty original Aurora/Adam state, fresh original clipping/scheduler state, no resume/headreset/SWA, step0 eacharm.",
+    "interventions": "Only longer horizon plus fresh larger cohort; no new loss/share/search/optimizer/LR knob.",
+    "math": "Original target maps, architecture, optimizer, clipping, LRconfig, warmup8 and schedule mechanics unchanged; matched new128TRAIN draw/mirror/common RNG plan, fresh original donor/optimizer state.",
+    "normalized_trainer_kwargs_without_log_dir_sha256": "660c9ff5ec28b14d45563bee842376b424fc94a509b313c6bd7787fefbc5405e",
+    "physical_draws_per_arm": 33024,
+    "sampler": "One uniform-with-replacement129x256 physical-row draw plan; common hostmirroring and common Torch/dropout RNG; not production prioritized replay/curriculum equivalence.",
+    "snapshots": [
+      0,
+      1,
+      8,
+      129
+    ],
+    "updates_per_arm": 129,
+    "utility_candidates": [
+      "FULLA129",
+      "FULLB129"
+    ]
+  },
+  "utility_selection": {
+    "both": "Select B129 if BvsA point>=0.5; otherwise A129. Exact tie selects B129.",
+    "eligible_A": "A129_vs_DONOR technicalqualified AND point>=0.53 AND paired95lower>0.5",
+    "eligible_B": "B129_vs_DONOR technicalqualified AND point>=0.53 AND paired95lower>0.5",
+    "exactly_one": "Select the sole eligible NEW129 endpoint.",
+    "limits": "No additional utility ranking, HOLD modelselection, bestsnapshot selection, or oldcandidate substitution.",
+    "neither": "No confirmation; no internal gain/adoption claim.",
+    "none_or_invalid": "Neither eligible OR anyof3screens technicallyinvalid => no confirmation.",
+    "precondition": "All3 fixedscreens technicallyqualified."
+  }
+}
