@@ -1,0 +1,68 @@
+{
+  "planned": {
+    "start_ordinal": 0,
+    "physical_game_id": "26d5472c-b1be-5db1-a7b7-4e46b21aecdb:0",
+    "root_fen": "7k/8/8/8/8/p7/P1P5/KQ6 w - - 13 1",
+    "opening_moves": [],
+    "bank": "excluded"
+  },
+  "actual": {
+    "start": {
+      "start_ordinal": 0,
+      "slot": 0,
+      "root_fen": "7k/8/8/8/8/p7/P1P5/KQ6 w - - 13 1",
+      "opening_moves": [],
+      "start_fen": "7k/8/8/8/8/p7/P1P5/KQ6 w - - 13 1",
+      "start_ply": 0,
+      "opening_source": "fenlist",
+      "net_color": true,
+      "is_selfplay": true
+    },
+    "game_id": 7436479611872352636,
+    "played_move_indices": [
+      731
+    ],
+    "final_fen": "7k/8/8/8/2P5/p7/P7/KQ6 b - - 0 1",
+    "records": [
+      {
+        "move_offset": 0,
+        "ply_index": 0,
+        "pov_color": true,
+        "has_policy": true,
+        "is_sf_refute_opp": false
+      }
+    ],
+    "result": "1-0",
+    "resolved_result": "1-0",
+    "natural_result": "*",
+    "resolution": "tablebase_adjudication",
+    "tablebase_rescore_result": null,
+    "cap_reached": false,
+    "total_plies": 1,
+    "retained_samples": 1,
+    "native_result": "*",
+    "tablebase_witness": {
+      "mode": "rule50_match_v1",
+      "origin": "TB_ADJUDICATED",
+      "root_fen": "7k/8/8/8/8/p7/P1P5/KQ6 w - - 13 1",
+      "moves": [
+        "c2c4"
+      ],
+      "final_fen": "7k/8/8/8/2P5/p7/P7/KQ6 b - - 0 1",
+      "move_offset": 1,
+      "turn": false,
+      "halfmove_clock": 0,
+      "wdl": -2,
+      "dtz": -2,
+      "status": -1,
+      "result": "1-0",
+      "max_pieces": 6,
+      "asset_inventory_sha256": "207f7bc99c9113b237bee40ef1dc4f64f29bd3524279b6637da31032a2305ae5",
+      "asset_identity_scope": "resolved-file-path,size,mtime_ns;not-content-hash"
+    },
+    "tablebase_policy_applied_plies": [],
+    "tablebase_policy_abstained_plies": [
+      0
+    ]
+  }
+}

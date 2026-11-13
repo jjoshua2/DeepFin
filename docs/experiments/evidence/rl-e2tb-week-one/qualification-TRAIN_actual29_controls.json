@@ -1,0 +1,49 @@
+{
+  "status": "ACCEPT_SYNTHETIC_TRAIN_PROOF_DISPATCH_AND_BOUNDARIES_ONLY",
+  "utc": "2026-11-13T01:30:03.713595+00:00",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "TRAIN_loader": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-train-paired-preparation-v3/train_inputs.py",
+    "sha256": "9a277c0d49f302559866b5f5a3a2fbd4b14e40cb4bf75ba8d33d185ede69a019"
+  },
+  "full_source_root_v2_review_sha256": "a35e14f4fe08b06222a9ac86fac779e25fedda4539301df572a475c4a203ca18",
+  "import_only_patch_sha256": "71654ac882e236de837e3cf9804e159fb08badf0d8d20832437c93611fa1edc0",
+  "actual_cpu_preparation_sha256": "23e5e08896c4a68d7e4dc2e44a805de19824ec825522879d4af7cbdfc577d8e3",
+  "actual_terminal": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-train-cpu-control-execution-v2/terminal.json",
+    "sha256": "f0958d78371b14d218f261219fb8241e1b6c798a01181995e9c474d5c05bed85",
+    "wall_seconds": 7.2006882969872095,
+    "cpu_seconds": 4.59,
+    "known_births_absent": 1,
+    "supervisor_absent": true
+  },
+  "actual_control_receipt": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-train-cpu-control-results-v2/receipt.json",
+    "sha256": "e3c6f88709cbd4ce3da23eea64b28fb67c71d309cf2fba2238548ca8fe2d36f9"
+  },
+  "cases": 29,
+  "synthetic_TRAIN_games": 32,
+  "synthetic_rows": 94,
+  "synthetic_classes": {
+    "NATURAL": 31,
+    "STRICT_TB_ADJUDICATED": 1
+  },
+  "expected_rejections": 22,
+  "actual_32_issued_proofs_before_arrays": {
+    "name": "actual_load_all32_proofs_before_deserialization",
+    "result": "PASS",
+    "proof_calls": 32,
+    "shard_reads": 32,
+    "raw_reads": 32,
+    "HOLD_opens": 0
+  },
+  "actual_32nd_proof_refusal_prevents_all_array_deserialization": true,
+  "actual_FULLA_F16_and_FULLB_signed_scalar_HLgauss_dispatch": true,
+  "actual_common_sampler_draws_each": 40,
+  "actual_batch_size": 256,
+  "actual_hardlink_same_stub_bytes_inode_no_extraSave_RNG": true,
+  "all_3_fake_owned_verification_handles_closed": true,
+  "no_actual_model_Trainer_engine_TBquery_GPU_or_researchdata": true,
+  "source_native_authority_bytes_unchanged": true,
+  "limits": "Source-controlled synthetic32 plus metadata96, fakeTBbackend only; actualverifierconstructor/method/rawfactory/loader/sampler APIs exercised, real syntheticNPZ but stubshardreturns. No actualcohort, hostmirror, optimizer, numericalfullTrainer, externalstrength or admission. AAcore limitedreuse separately pending currentactualkwargs/metadata guard qualification."
+}

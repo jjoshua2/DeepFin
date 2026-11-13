@@ -1,0 +1,104 @@
+--- final-v1/protocol.json
++++ final-v2/protocol.json
+@@ -157,14 +157,40 @@
+       "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-train-paired-preparation-v5/preparation.json",
+       "sha256": "e48e09f5af8c5a29c3c50352714763d0dba3843f8c93434684604855bf5c78fe"
+     },
++    "draw_plan_binder": {
++      "helper": {
++        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-preparation-v1/bind_draw_plan.py",
++        "sha256": "4b2a2787d94795d9c38ab0900533a7a9c9e4616e81648317d2ecab23bb3987b1"
++      },
++      "identity_only_inputs_template": {
++        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-preparation-v1/identity-inputs.TEMPLATE.json",
++        "sha256": "fdefbde7a15bf5a7d9960fb9629ba10949fbe95c719017733c8b0d2c2877227b"
++      },
++      "manifest": {
++        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-preparation-v1/manifest.json",
++        "sha256": "4a1896729659a4b3c23d812b5b6b5c0f45b34a01b479e6904bb2b9ebbacb011f"
++      }
++    },
++    "draw_plan_binder_contract": {
++      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-preparation-v1/binding-contract.json",
++      "sha256": "3034699e8b6d124c1a8af2ba09462460c1f50de9968ced80a2d97872cc6fb302"
++    },
++    "draw_plan_binder_exact_command": {
++      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-preparation-v1/command.TEMPLATE.json",
++      "sha256": "727b88ed5580a0f51c3454eac6ef5d57b9a3f1944923c86ced5c832f881456de"
++    },
++    "draw_plan_binder_preparation": {
++      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-preparation-v1/preparation.json",
++      "sha256": "523398af29c5cb328950707e4811b3bf7f7dae56305a8ac75d7b03b7084e1e18"
++    },
+     "offline64": {
+       "exact_phase_command_templates": {
+-        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-final-binding-contract-v2/commands.template.json",
+-        "sha256": "45b0fce5658bf8deae7be38483e2c3034ad224db6acb9fc30f14b9b566278b94"
++        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-final-binding-contract-v3/commands.template.json",
++        "sha256": "84c8b476ee0c5735a3926da833b291141b98adf0a320f282d2b8f63e612f7d19"
+       },
+       "identity_only_binding_contract": {
+-        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-final-binding-contract-v2/binding-contract.json",
+-        "sha256": "9928d2c37b6d846db15c43d77847b89c2a7ce65aa517d4a1a1c7975050499c4f"
++        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-final-binding-contract-v3/binding-contract.json",
++        "sha256": "105e4f7f9ea4cc6b127ee922fae5786b5db9f25448b49d69e12eb712099aa41a"
+       },
+       "manifest_template": {
+         "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-preparation-v3/manifest.json",
+@@ -177,6 +203,10 @@
+       "protocol_template": {
+         "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-preparation-v3/protocol.json",
+         "sha256": "b2123634a6e3f8eff8a093c7c5c93120df4105e903ac2a7e844e39d95c70e892"
++      },
++      "root_bank_binding_template": {
++        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-final-binding-contract-v3/root-bank-binding.template.json",
++        "sha256": "d39c0bed2668943f2b1b9f849ff67baf3e1e1915e2f39a41ef24518bb37687cd"
+       }
+     },
+     "paired40": {
+@@ -241,7 +271,7 @@
+       "sha256": "7e0a668a84e8302df1c82922ae52745ac791bdf3b7a14b74e9001acd130ca8f5"
+     }
+   },
+-  "created_utc": "2026-11-13T02:28:59.394233+00:00",
++  "created_utc": "2026-11-13T02:37:34.416671+00:00",
+   "decision_labels": {
+     "confirmation_nonpass": "No gain/adoption; classify qualified donor regression if upper<.5, else unread at registered horizon. No pooledscreen+confirm estimator or repeated confirmation.",
+     "confirmation_pass": "Conditional internal TB6/64sim evidence at one training realization/dose only. No automatic adoption, external Rof milestone, seed replication or optimal formula claim.",
+@@ -261,7 +291,7 @@
+   },
+   "execution_admitted": false,
+   "external_strength": "Baseline under pinned30+.1 profile:1W24D39L/64 vs unhandicapped8-threadRof3.1,20.3125% score. No proven research gain or victory milestone. External60+1 walltime/source-profile baseline and candidate confirmation need their own prospective controls before adoption; never pool unlike old clocks/books/search/native images.",
+-  "failure_and_next_decision": "Any source/native/data/history/owner/control/budget/deadline mismatch refuses affected stage and preserves partials. No automatic retry/extension/clearing STOP. A diagnosed technical fix may receive a new reviewed finite admission; no post-result hypothesis/seed/book/dose selection. Negative or unread results motivate separately prospective next question, never goal complete for plumbing or one experiment.",
++  "failure_and_next_decision": "Any source/native/data/history/owner/control/budget/deadline mismatch refuses the affected stage and preserves its failure/partials and costs. No second research collection, repeated training/playing/inference attempt, replacement game, stage extension or replenished allowance through this preregistration. Same-observation metadata or readout correction may receive finite CPU admission without new games, optimizer updates, predictions or changes to scientific estimator, selection or rules. A diagnosed executable repair requiring new research execution needs a separately prospective registered study. The already completed excluded engineering qualifications remain distinct and fully charged to their original reservation. Negative or unread results motivate a separately prospective next question; plumbing or one experiment never completes the strength goal.",
+   "freeze_scope": "Fixed scientific parameters and immutable component templates frozen before any of the96 research games. Future artifact identity bindings follow pinned whitelist contracts; main publication, independent review and separate finite stage admission are still required. No source/settings/budget/selection changes permitted through identity binding.",
+   "historical_interrupted_study": {
+     "completed": 53,
+@@ -299,6 +329,10 @@
+     ]
+   },
+   "parent_draft_sha256": "31f12d13d9cbafcf24e9b7059d5cac71b054fb6ca6f99cb9f904c9c322a480e4",
++  "parent_preregistration_candidate": {
++    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-scientific-protocol-final-v1/protocol.json",
++    "sha256": "234e75ee42e174e20420165cae03d94def86c4ae0868e15f5c449f7c5b1f0d60"
++  },
+   "playing": {
+     "TB": "commonindexed3-6strictroot+leaf+rule50/fullhistoryawareadjud; keepunresolvedpositiveclockdecisive leaves; no silentTBofffallback",
+     "TB_path": "/home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6",
+@@ -350,7 +384,7 @@
+     "Old AA4 and32same-donor strict arena evidence reuse only after exact consumed-source/native compatibility proof; otherwise separate bounded qualification."
+   ],
+   "question": "At fresh A39, fixed new pure-selfplay TB-on data and40B256 delivery, does20% VERIFIED_RESOLVED_OUTCOME in BOTH mainWDL and categorical improve internal playing versus search-only FULLA? One target-bundle hypothesis at one dose and realization; not optimum RL formula or isolated-head proof.",
+-  "schema": "week1-E2TB-resolved-outcome-value-bundle-preregistration-v1",
++  "schema": "week1-E2TB-resolved-outcome-value-bundle-preregistration-v2",
+   "scientific_decision_rule": {
+     "all3_screens_fixed": "Runallthree evenprimaryfails, exceptglobalstop/technicalfailure; nooptionalfavorableextensions",
+     "confirmation": {
+@@ -498,6 +532,7 @@
+     }
+   },
+   "status": "FROZEN_E2TB_PREREGISTRATION_V1",
++  "supersession_before_research": "Candidate v1 was never main-published or research-executed. Independent source review found nested offline metadata paths; final v2 binds flat phase paths and explicit current rootbank sidecar, pins the previously specified exact common CPU draw binder, and removes ambiguous research retry wording. No scientific numeric/arm/dose/seed/book/threshold/budget/helper changes.",
+   "training": {
+     "arms": 2,
+     "batch_size": 256,

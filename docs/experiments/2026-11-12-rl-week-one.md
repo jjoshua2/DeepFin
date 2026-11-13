@@ -581,3 +581,12 @@ primary comparison. No small positive diagnostic or completed qualification can
 select an optimum RL recipe or meet the external-engine objective. The observed
 multicore Rofchade baseline remains 1 win, 24 draws and 39 losses, score 0.203125,
 under its separately pinned 30 s + 100 ms protocol.
+
+## Strict-outcome comparison preregistration
+
+The [new resolved-outcome value-bundle study](2026-11-13-rl-resolved-outcome-bundle.md)
+freezes a new 96-attempt cohort, two common 40-update arms, three fixed playing
+screens and one conditional fresh confirmation. Its strict library and excluded
+three-case producer are qualified; no research learning or gain is yet observed.
+The interrupted 53-game collection remains stopped and retired. This study is one
+conditional experiment within the active week and months-long strength program.

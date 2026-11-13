@@ -1,0 +1,44 @@
+{
+  "status": "ACCEPT_FINAL_PAIRED40_V2_TEMPLATE_AND_SCOPED_TRAIN_V5_REUSE",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "utc": "2026-11-13T02:22:16.263862+00:00",
+  "TRAIN_preparation": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-train-paired-preparation-v5/preparation.json",
+    "sha256": "e48e09f5af8c5a29c3c50352714763d0dba3843f8c93434684604855bf5c78fe"
+  },
+  "template_preparation": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired-40-final-template-v2/preparation.json",
+    "sha256": "2378b824d5e3995229217ce7fa31ae7d5c30db52bd2905bd3a9898bf0c090084"
+  },
+  "protocol_template": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired-40-final-template-v2/protocol.TEMPLATE.json",
+    "sha256": "caf75fccdcc75f7aeff736aea653cf1444f2daba00e497ba0a99c40c831296b5"
+  },
+  "manifest_template": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired-40-final-template-v2/manifest.TEMPLATE.json",
+    "sha256": "c4ed5c1f248f4049aacc087b1bb1cffa6111d0704173c14936379a5960d93a12"
+  },
+  "binding_contract": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired-40-final-template-v2/binding-contract.json",
+    "sha256": "f44696ce699aba5474a82e690c50decb14ce3bce11a3e47625b1bbd912232376"
+  },
+  "exact_command_template": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired-40-final-template-v2/command.TEMPLATE.json",
+    "sha256": "fc1d95e2cfd7fdfcd65e03cc02c27fab8c91f215285b2fe8cb71d78682d23466"
+  },
+  "root_review": "Read full v1 protocol/late identity contract and exact v1-to-v2 delta. Verified v5 whole runner reverses byte-exact after only owner affinity literal20,22 to16,18; all executable data/target/model/train/optimizer/RNG/cleanup helpers exact v4. Metadata paths/hash updates only. Exact child env restores CUDA0 after owner strips it; owner and child unset two precision env variables. Final source/settings/arms/common seeds/40B256/endpoint/selected8 and late-field whitelist frozen; no further mutable parameters.",
+  "actual_prior_controls": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-train-cpu-control-root-acceptance-v2/readout.json",
+    "sha256": "4dd1fe29cc44d0f94d19a0b9f660ae375c05e9c7e812f6eef1e19ab061710107"
+  },
+  "actual_prior_descriptor": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-train-descriptor-root-acceptance-v2/readout.json",
+    "sha256": "bdc2dad8ed53488ec09527e4943325cbbfab479aa74220e18e8e952ce82f5554"
+  },
+  "limited_historical_AA_reuse": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-limited-AA-reuse-root-acceptance-v1/readout.json",
+    "sha256": "4d7f93a63f64a0d6e7d504d3dc4d2bbc9b12504ab4a7e6e4e2f98d247cdd8d82"
+  },
+  "scope": "Prior actual29 loader/proof/raw/draw tests and94-kwargs descriptor plus historical4+4 AA reuse cover unchanged paths. New affinity guard is source-reviewed only; no new v5 run or40-step parity claim. Actual cohort/draw/model outcomes and owner execution remain unbound.",
+  "research_or_GPU_execution_admitted": false
+}

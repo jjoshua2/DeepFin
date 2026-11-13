@@ -1,0 +1,22 @@
+{
+  "scientific": {
+    "path": "UNBOUND",
+    "sha256": "UNBOUND"
+  },
+  "publication": {
+    "path": "UNBOUND",
+    "sha256": "UNBOUND"
+  },
+  "producer_protocol": {
+    "path": "UNBOUND",
+    "sha256": "UNBOUND"
+  },
+  "producer_manifest": {
+    "path": "UNBOUND",
+    "sha256": "UNBOUND"
+  },
+  "cohort": {
+    "path": "UNBOUND",
+    "sha256": "UNBOUND"
+  }
+}

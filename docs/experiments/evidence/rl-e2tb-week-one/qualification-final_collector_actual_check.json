@@ -1,0 +1,31 @@
+{
+  "status": "ACCEPT_FINAL_COLLECTION_V2_METADATA_AND_ACTUAL_BUILDER_CHECK",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "utc": "2026-11-13T02:25:49.830389+00:00",
+  "terminal": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-final-collector-check-execution-v1/terminal.json",
+    "sha256": "11dc76a623ef14ac55c8d063858e67361271cbf49fc63f295f4ba9f9d1229ba7"
+  },
+  "actual_collector_check": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-final-collector-check-execution-v1/collector-check.json",
+    "sha256": "242d9d4a2aacc3eb978cb7bbe4d09a6e049971d31a46a32c280ce47f896083b7"
+  },
+  "root_admission": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-final-collector-check-root-admission-v1/admission.json",
+    "sha256": "1907f8a69eb152899d8f6d7dc5f517581c99b0cc33ea87fb41272e9541691694"
+  },
+  "template_preparation": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-final-package-v2/preparation.json",
+    "sha256": "7e0a668a84e8302df1c82922ae52745ac791bdf3b7a14b74e9001acd130ca8f5"
+  },
+  "binding_receipt": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-check-binding-v2/binding-receipt.json",
+    "sha256": "d1d0c3843a23a679b140a51dbf303d00c91b804cb6b3b03c65ba6010df0d0604"
+  },
+  "actual_profile_canonical_sha256": "76e7c4dcc404c4e04f283b33ba0c09c1aa1b4fe596337cc5889d9f2ab6ceb5f6",
+  "actual_equals_predicted_full_profile": true,
+  "actual_owner_wall_seconds": 4.203509290993679,
+  "owned_births_closed_supervisor_absent": true,
+  "scope": "Actual source/native hash checks, full96 planned histories, YAML/TC/direct GameConfig/production metadata Worker64 builder and relocated opening path; same actual profile. Source inspection and prior independent constructor-spy qualification support constructor-free check path; this stage report alone is not per-constructor instrumentation or actual TB/SF/serving qualification. Existing separate actual3-case producer covers those engineering mechanics.",
+  "research_or_GPU_or_model_execution_admitted": false
+}
