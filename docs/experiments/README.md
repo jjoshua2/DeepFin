@@ -10,6 +10,8 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
+- [2026-11-13: Larger fresh-data outcome regime](2026-11-13-rl-larger-outcome-regime.md) — E4 preregistration: 192 games, 128 TRAIN/64 HOLD and 129 matched updates per arm; research execution pending, no gain claim.
+
 - [2026-11-13: TRAIN objective-gradient geometry](2026-11-13-rl-train-gradient-geometry.md) — completed E3 diagnostic on 32 fixed TRAIN roots; primary alignment effect unresolved, no playing or recipe claim.
 
 - [2026-11-13: Resolved-outcome RL value bundle](2026-11-13-rl-resolved-outcome-bundle.md) — completed 40-update paired study with strict outcomes and three qualified playing screens; no registered gain, donor retained.

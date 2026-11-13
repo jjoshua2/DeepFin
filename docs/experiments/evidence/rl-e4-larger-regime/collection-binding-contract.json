@@ -1,0 +1,57 @@
+{
+  "data_affecting_manifest_fields_must_be_bound_and_frozen_before_generation": [
+    "config_sha256",
+    "starts_sha256",
+    "resolved_profile_sha256",
+    "helper_sha256",
+    "known_e2_sha256",
+    "source_sha256",
+    "native_receipt",
+    "native_receipt_sha256",
+    "value_bundle_sha256",
+    "verified_outcome_sha256",
+    "stockfish_sha256",
+    "owner_smoke_sha256"
+  ],
+  "final_collector_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-package-v1",
+  "final_manifest_template": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-template-v1/manifest.template.json",
+    "sha256": "e703b36355451d275f9584fe4799a60a3efd583c75e2d98c68c52a608fcad4c9"
+  },
+  "final_protocol_template": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-template-v1/protocol.template.json",
+    "sha256": "ff9befc67974238680c1ad59785ad495cf1dbc02292cbce0313faee4660a6ef9"
+  },
+  "final_template_review": "Root+independent review of this concrete template/config/starts/profile/source projection still required before science freeze/generation; seven listed protocol leaves and protocol_sha256 only late.",
+  "mandatory_pre_freeze_projection": {
+    "HOLD": 64,
+    "TRAIN": 128,
+    "collection_games": 192,
+    "collection_uuid": "cd47b230-f32f-4256-a51e-4869f5708bb6",
+    "concurrent_slots": 16,
+    "global_split": "Hash-rank all192 physical IDs under E4 split salt; first128TRAIN/rest64HOLD; no per-slot quotas.",
+    "raw_components_byte_exact": {
+      "value_bundle_sha256": "08a8ba502e3ef3e1b4e372094a99e993f681278242032aee29b190bd84147f78",
+      "verified_outcome_sha256": "f6340208eec76470d58001717a1a02d01808c38374c53417a5e5ffff0db3cf81"
+    },
+    "schema_shape": "Same prior profile arch/serving and pilot dictionaries; actual newly resolved canonical profile hash, not invented equality to old profile path.",
+    "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+    "strict_profile": "Resolved actual GameConfig/SearchConfig and full raw factory/proof/source/precision contract equal the qualified E2 recipe, except opening_fen_list_path relocation to new192 starts; seed/run identity/finite target count and2370alarm are declared changes. All64sims/SF5000/MultiPV8/pureSP1/SFpool2/450plies/thinning/strictTB/rescore policy/targets unchanged.",
+    "target_games": 192
+  },
+  "manifest_mutable_leaves": [
+    "/protocol_sha256"
+  ],
+  "one_way_binding": "1 prospective source/templates;2 admitted metadata selection+R7encoder/configCPU qualification;3 NEW final protocol/manifest templates with all known config/starts/profile/source/native/exposure identities concrete plus exact games;4 final science pins those final templates+this contract;5 actual protocol binds ONLY the listed science/publication/admission leaves, manifest changes ONLY protocol_sha256;6 auditor reverses exactly those protocol leaves and manifest.protocol_sha256 to frozen final templates. No cycle and no postcollection data-affecting mutation.",
+  "protocol_mutable_leaves": [
+    "/cohort_inputs_bound",
+    "/scientific_final_bound",
+    "/generation_execution_admitted",
+    "/scientific_preregistration_path",
+    "/scientific_preregistration_sha256",
+    "/publication_receipt/path",
+    "/publication_receipt/sha256"
+  ],
+  "status": "FROZEN_E4_ALL_KNOWN_FINAL_TEMPLATE_LATE_IDENTITY_CONTRACT",
+  "unbound_final_templates_not_authorities": false
+}

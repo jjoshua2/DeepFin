@@ -1,0 +1,26 @@
+{
+  "controls_sha256": "cd2ce09070f4c78200639f97912c2f252733b8ff0de6d7896143376f485ae4c2",
+  "coverage": "Full observer/helper/protocol/README/eightinert controls and actualR7pool executor initializer/submit/search/replacement/close, manager-finalizer alias and SF pending/escalation consumers read; all6file pins verified.",
+  "findings": [],
+  "helper_sha256": "dda3ef2140f042d529960ab226bf5cf01e2352fbb4568f27d3b61f016cea4da6",
+  "limits_and_integration_requirements": [
+    "SOURCEONLY acceptance; eightinert controls have NOT run. They intentionally use synchronous fakeexecutor, not actualR7 constructors/threads/race/numerics/transport qualification. Root must separately admit finite CPU controls.",
+    "Collector integration not present. Exact wrapper context must surround intendedpoolconstruction through originalclose, use sameUUID/actualsourcepins, and be reviewed before freezing science/commands. DefaultOFF remains.",
+    "Added lock/fsync/I/O/Pythonframes CAN alter walltime/querycompletion/batching/stochastic realization despite no new teacher waits/RNG/selection calls; no bitexact trajectory assertion.",
+    "Runtime archive receipt must be separately consumed as optional future-information evidence only; core cohort admission must ignore observerincompleteness.",
+    "Query-to-record-to-game lineage is not complete proof of which result stamped idempotent records or shallow escalation fallback. teacher_information_completeFalse/query_to_P0_equivalence_qualifiedFalse even successful archive. No P0teacher/strength/50knodes qualification."
+  ],
+  "not_performed": "No imports/control execution/jobs/source integration/models/arrays/queries/newteacher labels.",
+  "preparation_sha256": "c813a8c04fbba2868a216d0d6d2920c3415a9f7a6dde98a742846cb9f933a67b",
+  "source_contracts": [
+    "One original executor Future returned; exactly one closure delegates same original bound _search once/sameargs; no queries/callbacks/Future.result/wait/close/RNG/target/retention calls added.",
+    "Weak Future identity joined at Pending construction or existing escalation to exact rawrecord, rawrecord identity carried to immutable finalizer game_start ordinal. Strong active records bounded7200 and retired pergame; no x/target/mask copies.",
+    "Raw wire source normalizedUnicode lines including fullPV/bounds before parser reduction; outbound attempt+returned not falsely successful write claim. Constructor/replacement lifecycle separated from queryTLS; exactpool workerinitializer establishes engine before closure query-start access.",
+    "Post-existing-flush/prethin snapshots preserve reduced SF fields/transform/fulltrace/POV; censored earlyreturn explicitlyUNFLUSHED, failurepartial not qualified. No extra flush.",
+    "Exception/cap/IOfailure disables observation only, preserves original result/exception path; BaseException cancellation propagates. Bounded1GiB/1MiBevent/4096inflightweakFuture map.",
+    "Owned context restores prior class/instance attributes and doesnotownworker/processlifecycle. Existingpool.close threadshutdown assessed; uncertainclosure/archivefailure=>incomplete, nevercore data authority."
+  ],
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "ACCEPT_OPTIONAL_SF_OBSERVER_SOURCE_PREPARATION_ONLY_UNRUN_UNINTEGRATED",
+  "utc": "2026-11-13T08:30:44.273407+00:00"
+}

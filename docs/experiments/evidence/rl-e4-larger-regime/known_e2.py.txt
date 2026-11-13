@@ -1,0 +1,74 @@
+"""E4 metadata-only known E2 inputs/history union; no arrays, labels or model work."""
+from __future__ import annotations
+import hashlib
+import json
+from pathlib import Path
+
+METADATA_BYTES = 0
+METADATA_CAP = 128 * 1024**2
+
+
+def require(ok, why):
+    if not ok:
+        raise ValueError(why)
+
+
+def checked(ref):
+    global METADATA_BYTES
+    p = Path(ref['path'])
+    require(p.is_file() and not p.is_symlink() and p.stat().st_size <= 64 * 1024**2, 'bounded regular JSON required')
+    METADATA_BYTES += p.stat().st_size
+    require(METADATA_BYTES <= METADATA_CAP, 'known-E2 metadata aggregate cap')
+    before = p.stat()
+    data = p.read_bytes()
+    after = p.stat()
+    signature = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
+    require(signature(before) == signature(after) and hashlib.sha256(data).hexdigest() == ref['sha256'], 'metadata mutation/SHA')
+    return json.loads(data)
+
+
+def known_e2(refs):
+    # Installed only inside future admitted R7 metadata/collection stages.
+    import chess
+    from chess_anti_engine.moves import index_to_move_strict
+    accepted = checked(refs['root_acceptance'])
+    observed = checked(refs['producer_readout'])
+    audit = checked(refs['independent_audit'])
+    require(accepted['status'] == 'ROOT_ACCEPTED_E2TB32_TRAIN_FOR_PAIRED_FULL40' and accepted['all96_integrity_qualified'] is True,
+            'old96 integrity not accepted')
+    require(accepted['readout_sha256'] == refs['producer_readout']['sha256'] == audit['readout_sha256'] and
+            audit['status'] == 'ACCEPT_ALL96_E2TB_INTEGRITY_32TRAIN_AND_PLAYING_GATES' and
+            accepted['independent_sha256'] == refs['independent_audit']['sha256'], 'old96 authority/readout join')
+    require(observed['collection_uuid'] == 'f1dadbe4-43e2-4cf3-9a93-70a288533b48' and
+            set(observed['completed']) == {str(i) for i in range(96)}, 'old96 physical identity scope')
+    inputs, histories = set(), set()
+    rows = 0
+    for ordinal in range(96):
+        item = observed['completed'][str(ordinal)]
+        require(item['physical_game_id'] == observed['collection_uuid'] + ':' + str(ordinal), 'old physical ID differs')
+        validation = item['validation']
+        for row in validation['rows']:
+            for key in ('stored_input_float16_sha256', 'stored_input_float16_mirror_sha256'):
+                value = row[key]
+                require(isinstance(value, str) and len(value) == 64 and all(c in '0123456789abcdef' for c in value), 'old input hash malformed')
+                inputs.add(value)
+            histories.add(row['history_sha256']); rows += 1
+        entries = [entry for entry in item['inventory'] if entry['path'] == 'provenance.json']
+        require(len(entries) == 1, 'old provenance missing or duplicate')
+        provenance = checked({'path': str(Path(item['path']) / 'provenance.json'), 'sha256': entries[0]['sha256']})
+        require(provenance['planned']['physical_game_id'] == item['physical_game_id'], 'old provenance join')
+        actual = provenance['actual']; start = actual['start']
+        board = chess.Board(start['root_fen'])
+        for move in start['opening_moves']:
+            board.push_uci(move)
+        require(0 <= len(actual['played_move_indices']) <= 450, 'old trajectory bound')
+        def add_history():
+            payload = [board.root().fen(), [m.uci() for m in board.move_stack]]
+            histories.add(hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest())
+        add_history()
+        for action in actual['played_move_indices']:
+            board.push(index_to_move_strict(int(action), board)); add_history()
+        require(board.fen() == chess.Board(actual['final_fen']).fen(), 'old complete history/final FEN mismatch')
+    require(rows == accepted['TRAIN_rows'] + accepted['HOLDOUT_rows_metadata_only'] == 8348, 'old retained metadata count')
+    return {'inputs': inputs, 'histories': histories, 'games': 96, 'retained_rows': rows,
+            'scope': 'ALL96 retained raw/file-mirror inputs and complete observed played-history prefixes. TRAIN32 trained; HOLD64 never trained. Unretained/search inputs, staging, feature-dropout and donor pretraining UNKNOWN.'}

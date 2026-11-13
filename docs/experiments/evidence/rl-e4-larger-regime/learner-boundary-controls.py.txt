@@ -1,0 +1,485 @@
+"""Focused E4 synthetic changed-boundary CPU controls. No action at import."""
+from __future__ import annotations
+
+import argparse
+import ast
+from contextlib import contextmanager
+from copy import deepcopy
+from dataclasses import asdict, replace
+import hashlib
+import importlib
+import json
+import os
+from pathlib import Path
+import random
+import signal
+import subprocess
+import sys
+from types import SimpleNamespace
+
+HERE = Path(__file__).resolve().parent
+
+
+def require(ok, message):
+    if not ok:
+        raise ValueError(message)
+
+
+def digest(path):
+    with Path(path).open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def write(path, value):
+    with Path(path).open("x") as stream:
+        json.dump(value, stream, indent=2, allow_nan=False)
+        stream.write("\n")
+        stream.flush(); os.fsync(stream.fileno())
+
+
+def run(loader, proof_api, raw_api, output):
+    import chess
+    import numpy as np
+    from chess_anti_engine.encoding import rep_fix
+    from chess_anti_engine.encoding.cboard_encode import encode_cboard
+    from chess_anti_engine.encoding._lc0_ext import CBoard
+    from chess_anti_engine.moves import move_to_index, move_to_index_for_encoding
+    from chess_anti_engine.replay import shard as shard_api
+    from chess_anti_engine.replay.sample import ReplaySample
+    from chess_anti_engine.selfplay import strict_tb as strict_api
+    from chess_anti_engine.selfplay.config import GameConfig
+    from chess_anti_engine.selfplay.finalize import _stable_game_id, _result_to_wdl
+    from chess_anti_engine.selfplay.provenance import GameStartProvenance, GameProvenance, NetRecordProvenance
+    from chess_anti_engine.train.targets import hlgauss_target
+
+    rows = []
+    def passed(name, **observed):
+        rows.append({"name": name, "result": "PASS", **observed})
+        write(output / ("case-" + str(len(rows)) + ".json"), rows[-1])
+    def rejects(name, action, fragment):
+        try:
+            action()
+        except ValueError as error:
+            require(fragment in str(error), name + ": unintended rejection " + str(error))
+            passed(name, expected_rejection=str(error))
+        else:
+            raise ValueError(name + ": false acceptance")
+
+    # Adapted from root-reviewed sealed pilot6a71 legal mate fixture. Positive
+    # proofs always come from the ACTUAL verifier constructor and verify method;
+    # only its explicitly controlled TB owner factory is substituted.
+    asset = hashlib.sha256(b"[]").hexdigest()
+    owner_instances = []
+    class FakeOwner:
+        def __init__(self, path):
+            self.asset_inventory_sha256 = asset
+            self.tablebase = SimpleNamespace(wdl={}, dtz={})
+            self.closed = False
+            owner_instances.append(self)
+        def resolve(self, board, *, move_offset):
+            natural = board.outcome(claim_draw=True)
+            origin = "NATURAL" if natural else "TB_ADJUDICATED"
+            result = natural.result() if natural else "1-0"
+            return strict_api.TablebaseWitness("rule50_match_v1", origin, board.root().fen(),
+                tuple(m.uci() for m in board.move_stack), board.fen(), move_offset,
+                board.turn, board.halfmove_clock, None if natural else -2,
+                None if natural else -2, -1, result, 6, asset)
+        def policy_move(self, board):
+            return None if board.ply() == 1 else next(iter(board.legal_moves))
+        def close(self):
+            self.closed = True
+    @contextmanager
+    def fake_owners():
+        original = strict_api.StrictSelfplayTablebase
+        strict_api.StrictSelfplayTablebase = FakeOwner
+        try:
+            yield
+        finally:
+            strict_api.StrictSelfplayTablebase = original
+
+    game = GameConfig(syzygy_outcome_mode="rule50_match_v1", syzygy_path="CPU_CONTROLLED_OWNER",
+        stockfish_syzygy_path="CPU_CONTROLLED_OWNER", syzygy_in_search=True,
+        syzygy_adjudicate=True, syzygy_adjudicate_fraction=1.0, syzygy_rescore_policy=True,
+        selfplay_fraction=1.0, history_rep_fix=True, input_history_encoding="lc0_root_legacy_meta",
+        input_extra_features="v2_threats", policy_encoding="lc0_1858",
+        categorical_blend_frac=0.0, categorical_search_blend_frac=1.0)
+    rep_fix.apply(True, boards_discarded=True)
+
+    def fixture(ordinal, verifier, *, tb=False, ep=False):
+        root = "7k/8/5KQ1/8/8/8/8/8 w - - 0 1" if not tb else "4k3/8/8/8/8/8/P7/KQ6 w - - 0 1"
+        tokens = ("g6g5", "h8h7", "g5g7") if not tb else (("a2a4",) if ep else ("a2a3",))
+        board = chess.Board(root)
+        positions, actions, records = [], [], []
+        for token in tokens:
+            positions.append(board.copy(stack=True))
+            move = chess.Move.from_uci(token)
+            require(move in board.legal_moves, "fixed control trace illegal")
+            records.append(NetRecordProvenance(len(actions), board.ply(), board.turn, True, False))
+            actions.append(move_to_index(move, board)); board.push(move)
+        result = "1-0"
+        start = GameStartProvenance(ordinal, ordinal % 16, root, (), root, 0,
+                                   "CPU_SYNTHETIC:" + str(ordinal), True, True)
+        witness = verifier.owner.resolve(board, move_offset=len(actions))
+        gid = _stable_game_id(start_fen=root, opening_source=start.opening_source,
+            move_trace=",".join(map(str, actions)), result=result, total_plies_played=board.ply())
+        applied = tuple(r.ply_index for r in records if verifier.owner.policy_move(positions[r.move_offset]) is not None)
+        abstained = tuple(r.ply_index for r in records if r.ply_index not in applied)
+        audit = GameProvenance(start, gid, tuple(actions), board.fen(en_passant="fen") if ep else board.fen(), tuple(records), result, result,
+            "*" if tb else result, "tablebase_adjudication" if tb else "natural", None, False,
+            board.ply(), len(records), str(CBoard.from_board(board).result()), witness, applied, abstained)
+        planned = {"start_ordinal": ordinal, "physical_game_id": loader.RUN + ":" + str(ordinal),
+                   "root_fen": root, "opening_moves": [], "bank": "train"}
+        proof = verifier.verify(audit, planned, game)
+        samples, metadata_rows = [], []
+        for i, (record, position) in enumerate(zip(records, positions)):
+            legal = np.zeros(1858, np.uint8)
+            for move in position.legal_moves:
+                legal[move_to_index_for_encoding(move, position, policy_encoding=game.policy_encoding)] = 1
+            best = verifier.owner.policy_move(position)
+            policy = legal.astype(np.float32) / legal.sum() if best is None else np.zeros(1858, np.float32)
+            if best is not None:
+                policy[move_to_index_for_encoding(best, position, policy_encoding=game.policy_encoding)] = 1
+            swdl = np.asarray([.5, .25, .25], np.float32)
+            cat = hlgauss_target((float(swdl[0]) - float(swdl[2])) / float(swdl.sum()),
+                                num_bins=game.categorical_bins, sigma=game.hlgauss_sigma)
+            sample = ReplaySample(encode_cboard(CBoard.from_board(position), input_history_encoding=game.input_history_encoding,
+                input_extra_features=game.input_extra_features), policy, _result_to_wdl(result, pov_white=position.turn),
+                game_id=gid, ply_index=record.ply_index, is_network_turn=True, is_selfplay=True, has_policy=True,
+                legal_mask=legal, search_wdl=swdl, categorical_target=cat,
+                input_history_encoding=game.input_history_encoding, history_rep_fix=True)
+            samples.append(sample)
+            metadata_rows.append({"physical_row_id": planned["physical_game_id"] + ":" + str(i), "ply": record.ply_index,
+                "move_offset": record.move_offset, "history_sha256": hashlib.sha256(loader.canonical(
+                    [root, [m.uci() for m in position.move_stack]])).hexdigest(),
+                "stored_input_float16_sha256": hashlib.sha256(sample.x.astype('<f2').tobytes()).hexdigest()})
+        arrays = shard_api.samples_to_arrays(samples)
+        from chess_anti_engine.replay.augment import _mirror_x_batch
+        mirror = _mirror_x_batch(arrays["x"], np.ones(len(samples), bool), input_history_encoding=game.input_history_encoding)
+        for row, x in zip(metadata_rows, mirror):
+            row["stored_input_float16_mirror_sha256"] = hashlib.sha256(x.astype('<f2').tobytes()).hexdigest()
+        raw, meta = raw_api.capture_raw(samples, audit, [r["physical_row_id"] for r in metadata_rows], game, proof=proof)
+        return planned, asdict(audit), proof, arrays, raw, meta, metadata_rows
+
+    with fake_owners():
+        verifier = proof_api.VerifiedOutcomeVerifier(path=game.syzygy_path, asset_inventory_sha256=asset,
+                                                   collection_uuid=loader.RUN, source_revision=loader.SOURCE)
+        try:
+            rank = sorted(range(192), key=lambda i: hashlib.sha256(
+                ('E4-split-v1:2026111341' + '\0' + loader.RUN + ':' + str(i)).encode()).digest())
+            train_ordinals = sorted(rank[:128])
+            fixtures = [fixture(i, verifier, tb=(n == 127)) for n, i in enumerate(train_ordinals)]
+            # Reuse the reviewed real-verifier fixture; do not rerun the29 old
+            # serialized/forgery/math negatives. Changed count paths are below.
+            # Actual32 per-game proof dispatch, actual concat/slice helpers, no model.
+            from scripts.offline_replay_epoch import _concat
+            joined = _concat([x[3] for x in fixtures])
+            raw_keys = set(fixtures[0][4])
+            require(all(set(x[4]) == raw_keys for x in fixtures), "synthetic raw archive keysets differ")
+            joined_raw = {k: np.concatenate([x[4][k] for x in fixtures]) for k in fixtures[0][4]}
+            segments, cursor = [], 0
+            for x in fixtures:
+                stop = cursor + len(x[6]); segments.append({"start": cursor, "stop": stop, "proof": x[2], "metadata": x[5]}); cursor = stop
+            md = {"segments": segments}
+            from paired_observer import FixedBundleBatches, arrays_signature
+            indices = np.random.default_rng(2026111342).integers(0, cursor, size=(129, 256), dtype=np.int64)
+            ids = joined_raw["physical_row_id"].tolist()
+            samplers = [FixedBundleBatches(joined, ids, indices, raw_values=joined_raw, value_metadata=md,
+                arm=arm, train_game_ids=[x[0]["physical_game_id"] for x in fixtures],
+                mirror_state=np.random.default_rng(2026111343).bit_generator.state, scope="research") for arm in ("FULLA", "FULLB")]
+            for _ in range(129):
+                batches = [s.sample_batch_arrays(256) for s in samplers]
+                require(arrays_signature({k: v for k, v in batches[0].items() if k != "categorical_target"}) ==
+                        arrays_signature({k: v for k, v in batches[1].items() if k != "categorical_target"}),
+                        "common raw physical draw differs outside categorical")
+            require(all(len(s.draws) == 129 for s in samplers) and
+                    samplers[0].rng.bit_generator.state == samplers[1].rng.bit_generator.state and
+                    all(samplers[0].draws[i]["physical_row_ids"] == samplers[1].draws[i]["physical_row_ids"] for i in range(129)),
+                    "not exact129 common synthetic sampler draws/initial mirror RNG")
+            passed("actual_observer_proof_dispatch_and_common129_draws", draws_each=129, batch=256,
+                   identical_mirror_RNG=True, actual_Trainer_host_mirror_executed=False, Trainer_created=False)
+            # Remaining actual loader/census controls are in a bounded helper below.
+            census_controls(loader, proof_api, raw_api, game, fixtures, output, passed, rejects)
+            # Synthetic fullhistory ends on a noncapturable double-pawn EP square.
+            ep_planned, ep_audit, ep_proof, _a, _r, _m, ep_rows = fixture(1000, verifier, tb=True, ep=True)
+            require(chess.Board(ep_audit["final_fen"]).ep_square is not None and
+                    chess.Board(ep_audit["final_fen"]).fen() != ep_audit["final_fen"],
+                    "EP regression fixture failed to exercise native/legal FEN difference")
+            import importlib.util
+            m = json.loads((HERE/"manifest.json").read_text())
+            ref = m["offline_strict_roots"]
+            require(digest(ref["path"]) == ref["sha256"], "corrected root source changed")
+            sys.path.insert(0, str(Path(ref["path"]).parent))
+            spec = importlib.util.spec_from_file_location("E4_control_corrected_roots", ref["path"])
+            roots = importlib.util.module_from_spec(spec);spec.loader.exec_module(roots)
+            roots.context = lambda: {"collector": SimpleNamespace(canonical=loader.canonical)}
+            board, label = roots.root_board_and_label(ep_audit, ep_rows[0], ep_proof, proof_api)
+            require(board.fen() == ep_audit["start"]["root_fen"] and label == 0,
+                    "equivalent native EP FEN lost fullhistory/POV label")
+            passed("actual_offline_root_equivalent_native_EP_fullhistory_qualifies", actual_final_fen=ep_audit["final_fen"],
+                   canonical_final_fen=chess.Board(ep_audit["final_fen"]).fen(), label=label,
+                   actual_fresh_verifier_issued_proof=True, controlled_fake_TB_owner=True)
+            changed = deepcopy(ep_audit)
+            bad = chess.Board(changed["final_fen"]);bad.remove_piece_at(chess.A4);bad.set_piece_at(chess.B4,chess.Piece(chess.PAWN,chess.WHITE))
+            changed["final_fen"] = bad.fen()
+            rejects("actual_offline_root_genuinely_different_final_board_refuses",
+                lambda: roots.root_board_and_label(changed, ep_rows[0], ep_proof, proof_api), "proof/audit")
+        finally:
+            verifier.close()
+    require(all(x.closed for x in owner_instances), "fake owned verification handle leaked")
+    passed("all_controlled_verification_handles_closed", handles=len(owner_instances))
+    return rows
+
+
+def census_controls(loader, proof_api, raw_api, game, fixtures, output, passed, rejects):
+    """Synthetic metadata/files only. Exercise actual loading order, not a mock gate."""
+    import numpy as np
+    from chess_anti_engine.replay import shard as shard_api
+    bank = output / "synthetic-cohort"; bank.mkdir()
+    completed, planned, sources = {}, [], {}
+    fixture_map = {x[0]["start_ordinal"]: x for x in fixtures}
+    for i in range(192):
+        physical = loader.RUN + ":" + str(i)
+        g = {"start_ordinal": i, "physical_game_id": physical, "bank": "train" if i in fixture_map else "holdout"}
+        directory = bank / g["bank"] / ("game-" + str(i))
+        if i in fixture_map:
+            g, audit, proof, arrays, raw, meta, rs = fixture_map[i]
+            directory.mkdir(parents=True); (directory / "shard").mkdir()
+            validation = {"full_history_validated": True, "usable_shard": True, "resolved_outcome_eligible": True,
+                "scientific_outcome_class": proof.payload["scientific_class"], "retained_rows": len(rs),
+                "rows": rs, "raw_value_control": meta}
+            write(directory / "provenance.json", {"planned": g, "actual": audit})
+            write(directory / "verified-outcome.json", {"verification": proof.metadata(), "proof_sha256": proof.proof_sha256})
+            write(directory / "validation.json", validation)
+            raw_api.save_raw(directory / "raw-values.npz", raw, meta, proof=proof)
+            entries = []
+            for p in directory.rglob("*"):
+                if p.is_file():
+                    p.chmod(0o444); entries.append({"path": str(p.relative_to(directory)), "bytes": p.stat().st_size, "sha256": digest(p)})
+            sources[str(directory / "shard")] = arrays
+        else:
+            validation = {"full_history_validated": True, "usable_shard": False, "resolved_outcome_eligible": False,
+                "scientific_outcome_class": "UNRESOLVED", "retained_rows": 0, "rows": []}
+            entries = []  # No HOLDOUT directory or array payload is created/opened.
+        planned.append(g); completed[str(i)] = {"path": str(directory), "bank": g["bank"],
+            "physical_game_id": physical, "validation": validation, "inventory": entries}
+    producer = {"output_root": str(bank), "source_checkout": "CPU_SYNTHETIC_SOURCE", "owner_sha256": "CPU_OWNER",
+        "checkpoint_sha256": "CPU_NO_MODEL", "collection_uuid": loader.RUN, "games": planned,
+        "tablebase_path": game.syzygy_path, "tablebase_asset_inventory_sha256": fixtures[0][2].payload["asset_inventory_sha256"],
+        "training_game_config": asdict(game)}
+    starts = [{"role": "screen" if i < 128 else ("confirmation" if i < 628 else "cohort"),
+               "stored175F16_input_sha256": "NO_SYNTHETIC_COLLISION", "stored175F16_mirror_sha256": "NO_SYNTHETIC_COLLISION"} for i in range(820)]
+    startpath = output / "synthetic-start-metadata.json"; write(startpath, starts)
+    producer.update(playing_start_identities_path=str(startpath), playing_start_identities_sha256=digest(startpath))
+    terminal = {"status": "PASS", "returncode": 0, "owned_processes_closed": True, "source_revision": loader.SOURCE,
+        "supervisor_sha256": "CPU_OWNER", "resource": "gpu", "seconds": 2400, "cwd": "CPU_SYNTHETIC_SOURCE", "command": ["CPU_FIXTURE_NOT_A_JOB"]}
+    readout = {"status": "PASS_128_TRAIN_E4_VERIFIED_BUNDLE_DATA_ONLY", "source_revision": loader.SOURCE,
+        "collection_uuid": loader.RUN, "manifest_sha256": "CPU_MANIFEST", "all192_integrity_qualified": True,
+        "all192_attempts_retained": True, "train_data_qualified": True, "train_verified_resolved_outcomes_qualified": True,
+        "playing_guard_qualified": True, "training_steps": 0, "completed": completed}
+    playing = {"status": "PASS_ALL628_VS_ALL192_RETAINED_RAW_MIRROR", "qualified": True,
+               "all192_physical_attempts": 192, "playing_starts": 628, "collisions": []}
+    write(bank / "resolved-profile.json", {"pilot": {"game": asdict(game)}})
+    write(bank / "readout.json", readout); write(bank / "playing-start-overlap.json", playing)
+    terminalpath = output / "synthetic-terminal.json"; write(terminalpath, terminal)
+    binding = {"status": "BOUND_E4_COHORT_FOR_PAIRED_FULL129", "collection_uuid": loader.RUN,
+               "generation_command": terminal["command"], "producer_protocol_sha256": "CPU_PROTOCOL", "producer_manifest_sha256": "CPU_MANIFEST"}
+    for key, p in [("terminal", terminalpath), ("readout", bank / "readout.json"), ("playing_guard", bank / "playing-start-overlap.json"), ("resolved_profile", bank / "resolved-profile.json")]:
+        binding[key + "_path"] = str(p); binding[key + "_sha256"] = digest(p)
+    shared = {k: binding[k] for k in ["terminal_sha256", "readout_sha256", "producer_protocol_sha256", "producer_manifest_sha256", "playing_guard_sha256", "resolved_profile_sha256"]}
+    independent = {**shared, "status": "ACCEPT_ALL192_E4_INTEGRITY_128TRAIN_AND_PLAYING_GATES", "source_revision": loader.SOURCE, "collection_uuid": loader.RUN}
+    ip = output / "synthetic-independent.json"; write(ip, independent); binding.update(independent_path=str(ip), independent_sha256=digest(ip))
+    admission = {**shared, "status": "ROOT_ACCEPTED_E4_128_TRAIN_FOR_PAIRED_FULL129", "source_revision": loader.SOURCE,
+        "collection_uuid": loader.RUN, "independent_sha256": digest(ip), "all192_integrity_qualified": True,
+        "playing_guard_qualified": True, "TRAIN_games": 128, "HOLDOUT_loaded_for_learning": False}
+    ap = output / "synthetic-admission.json"; write(ap, admission); binding.update(admission_path=str(ap), admission_sha256=digest(ap))
+    loader.cohort_metadata(binding, producer)
+    passed("actual192_metadata_gate_censored64HOLD_allowed")
+    def refresh_readout(value):
+        # Only this newly generated CPU_SYNTHETIC fixture is mutable. Update its
+        # scalar custody hashes together so failures reach the intended gate.
+        (bank / "readout.json").write_text(json.dumps(value))
+        binding["readout_sha256"] = digest(bank / "readout.json")
+        independent["readout_sha256"] = binding["readout_sha256"]
+        ip.write_text(json.dumps(independent)); binding["independent_sha256"] = digest(ip)
+        admission["readout_sha256"] = binding["readout_sha256"]
+        admission["independent_sha256"] = digest(ip)
+        ap.write_text(json.dumps(admission)); binding["admission_sha256"] = digest(ap)
+    changed = deepcopy(readout); changed["train_verified_resolved_outcomes_qualified"] = False
+    changed["completed"][str(fixtures[0][0]["start_ordinal"])]["validation"]["scientific_outcome_class"] = "UNRESOLVED"
+    write(output / "synthetic-censored-TRAIN-rejection-input.json", changed)
+    refresh_readout(changed)
+    rejects("TRAIN_censored_refuses_whole128", lambda: loader.cohort_metadata(binding, producer), "TRAIN/source/ALL192/playing")
+    changed = deepcopy(readout); del changed["completed"]["191"]
+    write(output / "synthetic-missing-attempt-rejection-input.json", changed)
+    refresh_readout(changed)
+    rejects("missing192_integrity_refuses", lambda: loader.cohort_metadata(binding, producer), "not fixed192")
+    refresh_readout(readout)
+    proof_calls, shard_reads, npz_reads, opened = [], [], [], []
+    actual_verify, actual_load, actual_np_load = proof_api.VerifiedOutcomeVerifier.verify, shard_api.load_shard_arrays, np.load
+    import builtins
+    import io
+    actual_open = builtins.open
+    actual_io_open = io.open
+    def watched_open(path, *args, **kwargs):
+        require("/holdout/" not in str(path), "HOLDOUT payload opened")
+        opened.append(str(path)); return actual_open(path, *args, **kwargs)
+    def watched_io_open(path, *args, **kwargs):
+        require("/holdout/" not in str(path), "HOLDOUT payload opened")
+        opened.append(str(path)); return actual_io_open(path, *args, **kwargs)
+    def verify(self, *args):
+        proof_calls.append(len(proof_calls) + 1)
+        return actual_verify(self, *args)
+    def array_load(path, **kwargs):
+        require(len(proof_calls) == 128 and "/train/" in str(path), "array load before128 proofs or outsideTRAIN")
+        shard_reads.append(str(path)); return sources[str(path)], {"run_id": loader.RUN, "model_sha256": "CPU_NO_MODEL"}
+    def npz_load(path, **kwargs):
+        require(len(proof_calls) == 128 and "/train/" in str(path), "npz load before128 proofs or outsideTRAIN")
+        npz_reads.append(str(path)); return actual_np_load(path, **kwargs)
+    parts = (None, producer, None, None, None, None)
+    try:
+        builtins.open = watched_open
+        io.open = watched_io_open
+        proof_api.VerifiedOutcomeVerifier.verify = verify
+        shard_api.load_shard_arrays = array_load; np.load = npz_load
+        dataset = loader.load_research_train(binding, parts)
+        require(len(proof_calls) == len(shard_reads) == len(npz_reads) == 128 and len(dataset[2]) == 128 and not dataset[-1]["heldout_loaded"], "wrong loader proof/read census")
+        passed("actual_load_all128_proofs_before_deserialization", proof_calls=128, shard_reads=128, raw_reads=128, HOLD_opens=0)
+        proof_calls.clear(); shard_reads.clear(); npz_reads.clear()
+        def refuse128(self, *args):
+            proof_calls.append(len(proof_calls) + 1)
+            if len(proof_calls) == 128:
+                raise ValueError("CONTROL_128TH_PROOF_REJECTED")
+            return actual_verify(self, *args)
+        proof_api.VerifiedOutcomeVerifier.verify = refuse128
+        rejects("128th_proof_refusal_no_arrays", lambda: loader.load_research_train(binding, parts), "CONTROL_128TH")
+        require(len(proof_calls) == 128 and not shard_reads and not npz_reads, "rejected128th proof still deserialized")
+    finally:
+        builtins.open = actual_open; proof_api.VerifiedOutcomeVerifier.verify = actual_verify
+        io.open = actual_io_open
+        shard_api.load_shard_arrays = actual_load; np.load = actual_np_load
+    # Extract and execute ONLY the real caller's post-save alias expression.
+    tree = ast.parse((Path(loader.__file__).parent / "run_paired.py").read_text())
+    alias = next(n for n in ast.walk(tree) if isinstance(n, ast.Expr) and isinstance(n.value, ast.Call)
+                 and ast.unparse(n.value.func) == "os.link")
+    directory = output / "checkpoint-alias"; directory.mkdir()
+    save_calls = []
+    def save():
+        save_calls.append(1); (directory / "trainer.pt").write_bytes(b"CPU_STUB_NOT_A_CHECKPOINT")
+    save(); rng = repr(random.getstate())
+    exec(compile(ast.Module(body=[alias], type_ignores=[]), "bound-real-alias", "exec"), {"directory": directory, "os": os})
+    require(len(save_calls) == 1 and random.getstate() is not None and repr(random.getstate()) == rng and
+            (directory / "trainer.pt").stat().st_ino == (directory / "step-129.pt").stat().st_ino, "alias changes Save/RNG/bytes")
+    passed("actual_caller_hardlink_no_extra_Save_or_RNG")
+    source_count_controls(loader, output, passed)
+
+
+def source_count_controls(loader, output, passed):
+    """Actual scheduler/method and observer callback, inert owners, no Trainer."""
+    import math
+    from types import MethodType
+    from chess_anti_engine.train import trainer as actual
+    from paired_observer import identity, rng_state
+    opt = SimpleNamespace(param_groups=[{"lr": x} for x in (6e-5, 3e-6, 3e-6, 3e-6)])
+    schedule = actual._SqrtReleaseLRScheduler(opt, cycle_steps=120,
+        release_start_frac=.8, min_scale=.1, release_shape="sqrt")
+    owner = SimpleNamespace(step=0, opt=opt, _scheduler=schedule,
+        _warmup_steps=8, _peak_lr=3e-6, _warmup_lr_start=3e-7)
+    for name in ("_base_lrs", "_warmup_start_lr_for", "_set_initial_lrs", "_update_lr"):
+        setattr(owner, name, MethodType(getattr(actual.Trainer, name), owner))
+    owner._set_initial_lrs()
+    trace = []
+    for step in range(129):
+        trace.append([float(x["lr"]) for x in opt.param_groups])
+        owner.step = step
+        owner._update_lr()  # Actual after-step source called at pre-increment step.
+    require(math.isclose(trace[128][0], 7.136969439881711e-6, rel_tol=1e-14)
+            and math.isclose(trace[128][1], 3.568484719940855e-7, rel_tol=1e-14),
+            "actual129 usedLR not lasttail")
+    require(schedule.last_epoch == 120 and [x["lr"] for x in opt.param_groups] == [6e-5,3e-6,3e-6,3e-6],
+            "post129 savedstate doesnotprepare130peak")
+    write(output/"actual-source-LR129-state.json", {"used": trace, "post129": schedule.state_dict()})
+    passed("actual_LR129_tail_and_saved130_peak_no_optimizer_steps", last_epoch=120)
+    # Execute only the actual observer's nested pre-step checkpoint wrapper.
+    path = Path(loader.__file__).parent/"paired_observer.py"
+    tree = ast.parse(path.read_text())
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "optimizer_step")
+    callbacks=[]; calls=[]
+    trainer = SimpleNamespace(step=0)
+    scope=SimpleNamespace(updates=[], checkpoint=lambda step: callbacks.append(step),
+        original={"_run_optimizer_step": lambda *a,**k: calls.append(1)})
+    namespace={"t":trainer,"self":scope,"require":require,"identity":identity,"rng_state":rng_state,"np":__import__("numpy")}
+    exec(compile(ast.Module(body=[fn],type_ignores=[]),str(path),"exec"),namespace)
+    for step in range(129):
+        trainer.step=step;scope.updates=[None]*step;namespace["optimizer_step"]()
+    require(callbacks==[1,8] and len(calls)==129,"actual observer callbacks or callcount drift")
+    # Caller owns initial0 and final129 save, callback owns1/8. No real Save called.
+    caller=ast.parse((Path(loader.__file__).parent/"run_paired.py").read_text())
+    save_args=[ast.unparse(n.args[0]) for n in ast.walk(caller) if isinstance(n,ast.Call)
+        and ast.unparse(n.func)=="trainer.save"]
+    require("directory / 'step-0.pt'" in save_args and "directory / 'trainer.pt'" in save_args,
+            "caller initial/final saves absent")
+    passed("actual129_callback_calls_and_snapshot0_1_8_129_contract", callback_steps=callbacks,
+        pre_step_calls=len(calls), caller_save_expressions=save_args,
+        actual_saved_checkpoint_or_Trainer_created=False)
+
+
+def main():
+    ap = argparse.ArgumentParser(); ap.add_argument("--execute", action="store_true"); ap.add_argument("--manifest-sha256", required=True)
+    args = ap.parse_args(); require(args.execute, "root admission and explicit execute required")
+    require(digest(HERE / "manifest.json") == args.manifest_sha256, "manifest changed")
+    m = json.loads((HERE / "manifest.json").read_text()); require(digest(__file__) == m["helper_sha256"], "control helper changed")
+    require(m["execution_bindings_complete"] is True, "actual source/native qualification bindings UNBOUND")
+    require(Path(sys.executable).resolve() == Path(m["python"]).resolve() and
+            tuple(sys.version_info[:3]) == (3, 13, 15), "managed interpreter changed")
+    parent = Path(f"/proc/{os.getppid()}/cmdline").read_bytes().decode().split("\0")
+    require(m["owner_path"] in parent and digest(m["owner_path"]) == m["owner_sha256"] and
+            "--seconds" in parent and parent[parent.index("--seconds") + 1] == "300" and
+            "--resource" in parent and parent[parent.index("--resource") + 1] == "cpu", "wrong finite CPU owner")
+    repo = Path(m["source_checkout"])
+    require(subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip() == m["source_revision"] and
+            not subprocess.check_output(["git", "status", "--porcelain"], cwd=repo, text=True), "source changed")
+    for n, h in m["source_sha256"].items():require(digest(repo / n) == h, "source pin changed")
+    for n, h in m["native_input_sha256"].items():require(digest(repo / n) == h, "native input changed")
+    for p, h in m["authority_sha256"].items():require(digest(p) == h, "authority pin changed")
+    q = json.loads(Path(m["native_qualification_path"]).read_text())
+    require(digest(m["native_qualification_path"]) == m["native_qualification_sha256"] and
+            q["status"] == "ACCEPT_R7_NATIVE_ORIGINS_FOR_E4" and q["source_revision"] == m["source_revision"] and
+            len(q["native_images"]) == 5, "native qualification absent")
+    require(sorted(os.sched_getaffinity(0)) == [20, 22] and os.environ.get("CUDA_VISIBLE_DEVICES") == "" and
+            os.environ.get("OMP_NUM_THREADS") == os.environ.get("MKL_NUM_THREADS") == "2", "resource contract")
+    descriptor_path = m["E4_descriptor_readout_path"]
+    require(digest(descriptor_path) == m["E4_descriptor_readout_sha256"], "E4 descriptor identity UNBOUND")
+    descriptor=json.loads(Path(descriptor_path).read_text())
+    require(descriptor["status"] == "PASS_E4_CPU_CANONICAL_DESCRIPTOR_CONFIG_AND_ALL820_ENCODING_ONLY"
+            and descriptor["source_revision"] == m["source_revision"]
+            and descriptor["config_nested_train_steps"] == descriptor["TrialConfig_train_steps"] == 129
+            and descriptor["trainer_kwargs_without_log_dir_sha256"] == "660c9ff5ec28b14d45563bee842376b424fc94a509b313c6bd7787fefbc5405e",
+            "actual E4 config/94kwargs descriptor not qualified")
+    output = Path(m["output_root"]); output.mkdir(exist_ok=False)
+    signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError("fixed270s CPU controls"))); signal.alarm(270)
+    try:
+        sys.path.insert(0, str(repo)); sys.path.insert(0, m["target_preparation"])
+        modules = {}
+        for name in ("verified_outcome", "value_bundle", "train_inputs"):
+            modules[name] = importlib.import_module(name)
+            require(Path(modules[name].__file__).resolve() == Path(m["target_preparation"]) / (name + ".py"), "foreign target helper")
+        import torch
+        torch.set_num_threads(2); torch.set_num_interop_threads(2)
+        require(not torch.cuda.is_initialized(), "CUDA initialized")
+        for image in q["native_images"]:
+            module = importlib.import_module(image["module"])
+            require(Path(module.__file__).resolve() == Path(image["path"]).resolve() and digest(image["path"]) == image["sha256"], "foreign native")
+        results = run(modules["train_inputs"], modules["verified_outcome"], modules["value_bundle"], output)
+        require(not torch.cuda.is_initialized(), "CUDA initialized after controls")
+        write(output / "receipt.json", {"status": "PASS_FOCUSED_E4_128_129_TRAIN_BOUNDARY_ONLY", "results": results,
+            "source_revision": m["source_revision"], "synthetic_only": True, "actual_TRAIN_or_HOLD_data_opened": False,
+            "models_Trainers_engines_TB_queries_GPU_training": False, "independent_readout_and_owned_closure_required": True,
+            "limits": "Explicit fake owned TB backend; actual constructor/verify/issued proofs/native encodings/raw factory/128segment dispatch/synthetic sampler exercised. Shard loading is an explicit in-memory fixture substitution: actual proof/validate ordering is exercised, not public shard deserialization. Not real table truth, Trainer host mirror/optimizer execution, actual cohort admission or scientific/gain evidence."})
+    except BaseException as error:
+        write(output / "failure.json", {"status": "FAILED_PARTIAL_CONTROLS", "error": repr(error)}); raise
+    finally:
+        signal.alarm(0)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,46 @@
+{
+  "A39_sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+  "commands": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-preparation-v1/commands.template.json",
+    "sha256": "055f0200b0669b58ad9f2a340a6aeef3c12c4c16e7dd5abf02f7d11817b64781"
+  },
+  "controls_sha256": "0f4b0238852c9284f5b236f71986b87f2dc55b184e08f5c5ad248e73a55fe26e",
+  "decision_sha256": "34f3cb2045edc125b871a79f1d51624fe38d661ce5e621d2fab7684f5d72ef7e",
+  "owner": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/run_stage_tb_on_runtime_v1.py",
+    "sha256": "b7287b50906b90a6729833f8ee3369d7a544d2d202d365e90f5c66afb275fa13"
+  },
+  "qualifications": {
+    "E4_actual820_and_config": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/readout.json",
+      "sha256": "34cd17f72d78c0cafc8160640bb216a77c3a7c6791bed6a41c37d8b966ddc737"
+    },
+    "decision_inert_actual_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-decision-inert-controls-actual-independent-review-v1/review.json",
+      "sha256": "a5006e5869cceb6acf70f6aebe5437817dd030b843660041625b4f19225342c6"
+    },
+    "decision_source_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-independent-source-review-v1/review.json",
+      "sha256": "ed408f6889cfd443c7673d78c7a152fef49ea033ff2096b7e16d2798302c65cf"
+    },
+    "limited_arena_reuse": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-limited-arena-reuse-root-acceptance-v1/readout.json",
+      "sha256": "b0a2f04aaaa5f44d8439e6b45ed3ccf6446b175099adda8d3a2302a02c2f1f3d"
+    },
+    "native": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/native-origins.json",
+      "sha256": "8d9b629c7f6724b9d863ec6fc6bdadb8f0355be1460ed424c6256e9bc5a35023"
+    },
+    "strict_producer": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-three-case-producer-root-actual-acceptance-v3/readout.json",
+      "sha256": "6e1cab125891bb31eab40cbac7e243716a77bfb107c9214593be9110efb5ded3"
+    }
+  },
+  "reader_sha256": "be9d9f5b8b63de3e855b15152c28fb262ab491170916e72c81378fea1af47776",
+  "readout_output_root": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-readout-results-v1",
+  "science": {
+    "path": "UNBOUND_FROZEN_E4_SCIENCE",
+    "sha256": "UNBOUND"
+  },
+  "status": "FIXED_KNOWN_E4_ARENA_READER_TEMPLATE_ONLY_SCIENCE_IDENTITY_LATE"
+}

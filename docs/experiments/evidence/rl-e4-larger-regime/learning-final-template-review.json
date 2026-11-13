@@ -1,0 +1,39 @@
+{
+  "candidate_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-final-learning-template-independent-review-v1/review.json",
+    "sha256": "329f822453a96ba71cb7d98458dbb263443e5da67dcdcc1570e9ebc323e59433"
+  },
+  "checks": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-final-learning-template-independent-review-v2/checks.json",
+    "sha256": "4aef608329500939729bc149feafbc96090a75f92aeb46d091371d843e6b7208"
+  },
+  "corrections_and_delta_verified": [
+    "Actual root9579 limited-AA receipt bound into fixed prefreeze protocol/projection/manifest refs; no afterdata AA late leaf and no new129numerical-equivalence claim.",
+    "Root-selected observed commandfa15/selectionab04 exact child argv frozen in cohort-binding template; only actualcoremanifest SHA token late. No bare fallback after freeze.",
+    "Draw/checkpoint helpers copied byteexact to distinct canonicalHERE directories, fixed commands now point there; no actualmetadata installed and no helper logic changed.",
+    "Known offline scorehelper path fixed to flat sourcev2, removed from late identity whitelist; metrics/rootselector/formulas/seeds/models/profile/source remain bytecanonical equal.",
+    "Stale ALL96/ALL32 contract prose corrected toALL192/ALL128. All26 finalmetadata files and explicit concrete refs hashed, fixed-field projections recomputed, source/helper maps equal reviewedcandidate."
+  ],
+  "final_preparation": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/preparation.json",
+    "sha256": "7160670e77430936e692ea52b282e3c7c9153fd4148ac94748208bd290be1a3a"
+  },
+  "findings": [],
+  "limits": [
+    "Source/metadata acceptance only; finalscience/publication,actualwhole192/128/628 gates/qualifieddraws,current learning/closedcheckpoint/hardware/custody/offline phases and each finite rootadmission remain required.",
+    "HistoricalAA4+sourceequivalence+synthetic12boundary controls are not a new R7AA/129-update bitwise proof or a playing/learning-quality claim.",
+    "No project imports/helper execution/tests/data/replay/model/checkpoint/nativebinary reads,engines,probes or jobs.",
+    "Reviewer did not author learner/draw/checkpoint/offline helpers/templates. Collector/proof/raw design authored by this reviewer has separate nonauthor receipts; this review does not replace them."
+  ],
+  "paired_manifest_template": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/train/manifest.TEMPLATE.json",
+    "sha256": "c4ea9bd6911f1e7cbc52aab0790820496d35801864b8cfa65e9258c262edd5d8"
+  },
+  "paired_protocol_template": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/train/protocol.TEMPLATE.json",
+    "sha256": "d243be34aee5ccb8a40779bb112f8551aee5cd8083cdc77303c0809f57b482bb"
+  },
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "ACCEPT_ALL_KNOWN_E4_FINAL_LEARNING_TEMPLATES_SOURCE_METADATA_ONLY",
+  "utc": "2026-11-13T08:51:56.933488+00:00"
+}

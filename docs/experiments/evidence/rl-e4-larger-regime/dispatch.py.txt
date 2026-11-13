@@ -1,0 +1,54 @@
+"""UNBOUND optional same-process dispatch; original collector main/argv/HERE."""
+import argparse
+import hashlib
+import importlib.util
+import json
+from pathlib import Path
+import sys
+
+
+def checked(path,digest):
+    data=Path(path).read_bytes()
+    if hashlib.sha256(data).hexdigest()!=digest:raise ValueError('dispatch bound identity changed')
+    return json.loads(data)
+
+
+def module(name,path,digest):
+    if hashlib.sha256(Path(path).read_bytes()).hexdigest()!=digest or name in sys.modules:
+        raise ValueError('dispatch source identity/namespace')
+    spec=importlib.util.spec_from_file_location(name,path);value=importlib.util.module_from_spec(spec)
+    sys.modules[name]=value;spec.loader.exec_module(value);return value
+
+
+def main():
+    p=argparse.ArgumentParser();p.add_argument('--binding',required=True);p.add_argument('--binding-sha256',required=True)
+    p.add_argument('--manifest-sha256',required=True);args=p.parse_args()
+    b=checked(args.binding,args.binding_sha256)
+    if b['status']!='BOUND_REVIEWED_OPTIONAL_E4_SF_OBSERVATION_DISPATCH' or b['enabled'] is not True:
+        raise ValueError('optional observation dispatch remains UNBOUND')
+    proof=checked(b['observer_review']['path'],b['observer_review']['sha256'])
+    if not proof['status'].startswith('ACCEPT') or proof['helper_sha256']!=b['observer']['sha256']:
+        raise ValueError('observer source not independently accepted')
+    core_path=Path(b['collector']['path']);here=core_path.parent
+    checked(here/'manifest.json',args.manifest_sha256)
+    protocol=json.loads((here/'protocol.json').read_text())
+    if protocol['collection_uuid']!=b['collection_uuid'] or protocol['source_revision']!=b['source_revision']:
+        raise ValueError('dispatch/core physical/source identity differs')
+    core_output=Path(protocol['output_root']).resolve();obs_output=Path(b['observer_output']).resolve()
+    if core_output.exists() or obs_output.exists() or core_output.is_relative_to(obs_output) or obs_output.is_relative_to(core_output):
+        raise ValueError('core/observer output identity is not fresh and separate')
+    sys.path.insert(0,str(here))
+    observer=module('_e4_bound_passive_observer',b['observer']['path'],b['observer']['sha256'])
+    core=module('_e4_bound_exact_collector',core_path,b['collector']['sha256'])
+    if core.HERE!=here.resolve():raise ValueError('canonical collector HERE changed')
+    previous=sys.argv
+    sys.argv=[str(core_path),'--execute','--manifest-sha256',args.manifest_sha256]
+    try:
+        with observer.PassiveSFObserver(output=obs_output,collection_uuid=b['collection_uuid'],
+                source_checkout=protocol['source_checkout'],source_sha256=b['source_sha256'],byte_cap=1073741824):
+            return core.main()
+    finally:
+        sys.argv=previous
+
+
+if __name__=='__main__':raise SystemExit(main())

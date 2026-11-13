@@ -1,0 +1,59 @@
+{
+  "accepted_encoder_comparisons_sha256": "2ad59f8c19d41f52c02cc297d33b4c1498a665fe86c9ba7ac28d8bc7263d1b54",
+  "accepted_profile_sha256": "87fca0ba2283a82642af48b37823f54d4d1bf77c8016ef4c193102db4a253700",
+  "closure": {
+    "all_births_absent": true,
+    "cpu_seconds": 3.23,
+    "known_births": {
+      "1300827": 28210108,
+      "1300852": 28210512
+    },
+    "owner": 1300823,
+    "wall_seconds": 5.2084755770047195
+  },
+  "collection_uuid": "cd47b230-f32f-4256-a51e-4869f5708bb6",
+  "counts": {
+    "actual_native_imports": 5,
+    "actual_python_imports": 20,
+    "cohort": 192,
+    "confirmation": 500,
+    "encoded_starts": 820,
+    "nested_and_TC_train_steps": 129,
+    "normalized_Trainer_kwargs": 94,
+    "screen": 128
+  },
+  "findings": [],
+  "helper_sha256": "ce6db6428195a0233873ca98778489b0790153a3e4c02d1a42307cc2b7bb2e94",
+  "limits": [
+    "No helper/project import/native encoding/checkpoint/model/arrays/engine/TBquery or job by reviewer.",
+    "Actualall820encoding/config/native-descriptor scope only; no real model numerical/AMP/producer serialization/SF/TBtruth/learner/strength qualification.",
+    "Historical negative tests referenced not rerun. Canonicalmain/source_guard/CLI--check not run; canonicalJSON and research flags remained unbound during this stage. Finalfrozenmetadata/publicCLIcheck and stageadmission remain separate.",
+    "readout.native_images inherits prepared imported:false flags; authoritative native-origins.json lists actualall5 imported:true and25originJSON verifies exactpaths/hashes. No false runtimefailure inferred."
+  ],
+  "output_files": {
+    "actual-builder-profile.json": "9e9ca115e387b49bc7734248dc6edae5b3bf9e88c0d25a62889b4d05aefff734",
+    "all820-encoder-comparisons.json": "2ad59f8c19d41f52c02cc297d33b4c1498a665fe86c9ba7ac28d8bc7263d1b54",
+    "builder-route-values.json": "276e11891dab86dc0f4c83d2212de4c01d0ee739d81a75885ca1168d013262b2",
+    "canonical-CLI-check-pending.json": "0cbefb1c16bca2bb9be66b1ad61537e858ae2422287af3e1467bf16ba0109bdb",
+    "descriptor-only-protocol.json": "f615515f53e66a26446a6ef34ca2cf73d856a31b9806e48368a38d65ec542672",
+    "import-origins.json": "73fecfec4d628eaee1f9eb6a19ef15b3225ff2ea078c9001fd6ac00bc29b132d",
+    "native-origins.json": "aa1cd98abfbfc83e0b7bb6135814b45056b32bb50a240f20d5684fffef68c380",
+    "readout.json": "645bf79f3de25131e9c449280441e52874ae97f159ebd35adf04d6ed6ddb6502",
+    "trainer-kwargs.json": "4e99fadaec05b53a8a306a9feca222cccf27085c0b589a200ba9cd6930c7d325"
+  },
+  "raw175_and_file_mirror_compatible": true,
+  "readout_sha256": "645bf79f3de25131e9c449280441e52874ae97f159ebd35adf04d6ed6ddb6502",
+  "reconciled": [
+    "All820 actual comparison IDs/roles/rawF16/mirror hashes join immutable selected820 order exactly. No reranking/encoding rerun by reviewer.",
+    "ActualcanonicalHERE build_configs/validate only, actual R7origin checks and forbidden constructor/CUDA counters all pass.",
+    "Actualnew full profile equals qualifiedE2profile with SOLE /pilot/opening/opening_fen_list_path relocation; directSearchConfig50 distinguished actualWorker64;pureSP1/max450/fullstrictTB recipe unchanged.",
+    "Actual129YAML+startup UUID and TC propagation are source-qualified closed helper checks;94 realized kwargs stablehash660c9 unchanged.",
+    "Source/command/CPU300/closedtwoPIDbirths+supervisor custody exact;all9JSONimmutable."
+  ],
+  "source_review_sha256": "a4c5a29fc50a661e2b905c3d4702377c75830c3e260af9c7e35fa76e5258251a",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "ACCEPT_E4_ACTUAL_CPU_CANONICAL_DESCRIPTOR_CONFIG_AND_SELECTED820_ENCODING_ONLY",
+  "terminal_sha256": "95d9dcac229682896bc2d898d82f242ebe32cea8aec7b0e90d074a083ebb22fc",
+  "trainer_kwargs_without_log_dir_sha256": "660c9ff5ec28b14d45563bee842376b424fc94a509b313c6bd7787fefbc5405e",
+  "utc": "2026-11-13T08:32:20.138267+00:00"
+}

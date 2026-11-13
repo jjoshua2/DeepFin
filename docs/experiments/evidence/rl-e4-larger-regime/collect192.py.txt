@@ -1,0 +1,741 @@
+"""Strict E4 192-game producer PREP; actual bindings refuse before project imports."""
+from __future__ import annotations
+
+import argparse
+from dataclasses import asdict, is_dataclass, replace
+import hashlib
+import importlib
+import json
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import time
+from types import SimpleNamespace
+import uuid
+
+from verified_outcome import VerifiedOutcomeVerifier, require_verified
+
+HERE = Path(__file__).resolve().parent
+
+
+def require(ok, message):
+    if not ok:
+        raise ValueError(message)
+
+
+def digest(path):
+    value = hashlib.sha256()
+    with Path(path).open('rb') as handle:
+        for block in iter(lambda: handle.read(8 * 1024 * 1024), b''):
+            value.update(block)
+    return value.hexdigest()
+
+
+def canonical(value):
+    return json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
+
+
+def write_json(path, value):
+    with Path(path).open('x') as handle:
+        json.dump(value, handle, indent=2, allow_nan=False)
+        handle.write('\n')
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def proc_birth(pid):
+    try:
+        return int(Path('/proc/' + str(pid) + '/stat').read_text().rsplit(')', 1)[1].split()[19])
+    except FileNotFoundError:
+        return None
+
+
+def freeze_tree(path, *, seal_root=True):
+    require(not path.is_symlink() and all(not p.is_symlink() for p in path.rglob('*')), 'output tree contains symlink')
+    files = sorted(p for p in path.rglob('*') if p.is_file())
+    inventory = []
+    for item in files:
+        require(not item.is_symlink(), 'output contains symlink')
+        inventory.append({'path': str(item.relative_to(path)), 'sha256': digest(item), 'bytes': item.stat().st_size})
+        item.chmod(0o444)
+        with item.open('rb') as handle:
+            os.fsync(handle.fileno())
+    for directory in sorted((p for p in path.rglob('*') if p.is_dir()), reverse=True):
+        directory.chmod(0o555)
+        sync_dir(directory)
+    if seal_root:
+        path.chmod(0o555)
+    sync_dir(path)
+    return inventory
+
+
+def sync_dir(path):
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def unqualified_sample_evidence(samples, planned, callback_id):
+    """Failure-only bounded hashes, never eligible raw targets or replay arrays."""
+    from dataclasses import fields
+    import numpy as np
+
+    max_rows, max_field_bytes, max_total_bytes = 450, 1024 * 1024, 64 * 1024 * 1024
+    used = 0
+    rows = []
+    for i, sample in enumerate(samples[:max_rows]):
+        values = {}
+        for descriptor in fields(sample):
+            value = getattr(sample, descriptor.name)
+            if isinstance(value, np.ndarray):
+                item = {'shape': list(value.shape), 'dtype': value.dtype.str, 'bytes': value.nbytes}
+                if value.dtype.hasobject or value.nbytes > max_field_bytes or used + value.nbytes > max_total_bytes:
+                    item['hash_status'] = 'UNHASHED_OBJECT_OR_FIXED_BYTE_CAP'
+                else:
+                    item['sha256_C_order'] = hashlib.sha256(value.tobytes(order='C')).hexdigest()
+                    used += value.nbytes
+                values[descriptor.name] = item
+            else:
+                # Scalar repr preserves diagnostic NaN/inf without invalid JSON.
+                values[descriptor.name] = {'python_type': type(value).__name__, 'repr': repr(value)[:256]}
+        rows.append({'row_index': i, 'physical_row_id':
+                     (planned['physical_game_id'] + ':' + str(i)) if planned is not None else None,
+                     'sample_fields': values})
+    return {'status': 'UNQUALIFIED_CALLBACK_SAMPLE_HASH_EVIDENCE_ONLY',
+            'callback_id': callback_id, 'available_samples': len(samples), 'rows': rows,
+            'max_rows': max_rows, 'max_field_bytes': max_field_bytes, 'max_total_hashed_bytes': max_total_bytes,
+            'hashed_bytes': used, 'unhashed_rows': max(0, len(samples) - max_rows),
+            'eligible_raw_archive_or_replay': False,
+            'limits': 'Partial diagnostic hashes only if fixed caps apply; no proof, learning, sample validity or complete quarantine claim.'}
+
+
+def source_guard(manifest, protocol, *, for_execute=False):
+    repo = Path(protocol['source_checkout'])
+    require(Path(sys.executable).resolve() == Path(protocol['python']).resolve() and sys.version_info[:2] == (3, 13), 'managed interpreter changed')
+    require(subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo).decode().strip() == protocol['source_revision'], 'source revision changed')
+    require(not subprocess.check_output(['git', 'status', '--porcelain'], cwd=repo).strip(), 'source dirty')
+    require(digest(HERE / 'collect192.py') == manifest['helper_sha256'], 'helper changed')
+    require(digest(HERE / 'protocol.json') == manifest['protocol_sha256'], 'protocol changed')
+    require(digest(HERE / 'starts.epd') == manifest['starts_sha256'], 'starts changed')
+    require(digest(protocol['config_path']) == manifest['config_sha256'], 'base config changed')
+    require(digest(HERE / 'value_bundle.py') == manifest['value_bundle_sha256'], 'raw value helper changed')
+    require(digest(HERE / 'verified_outcome.py') == manifest['verified_outcome_sha256'], 'verified outcome helper changed')
+    require(Path(sys.modules['verified_outcome'].__file__).resolve() == HERE / 'verified_outcome.py', 'foreign verified proof module')
+    require(digest(HERE / 'known_e2.py') == manifest['known_e2_sha256'], 'old96 metadata union helper changed')
+    require(digest(protocol['exposure_index_path']) == protocol['exposure_index_sha256'], 'exposure index changed')
+    require(digest(protocol['known53_path']) == protocol['known53_sha256'], 'known53 observed input supplement changed')
+    require(digest(protocol['selection_manifest_path']) == protocol['selection_manifest_sha256'], 'accepted structural selection changed')
+    require(digest(protocol['selection_root_readout_path']) == protocol['selection_root_readout_sha256'], 'structural selection readout changed')
+    selection_path = Path(protocol['selection_manifest_path'])
+    selection = json.loads(selection_path.read_text())
+    require(digest(selection_path.parent / 'games.json') == selection['files']['games.json'] and
+            canonical(json.loads((selection_path.parent / 'games.json').read_text())) == canonical(protocol['games']), 'physical starts/banks not accepted selection')
+    require(digest(HERE / 'starts.epd') == selection['files']['cohort.epd'] and
+            digest(protocol['playing_start_identities_path']) == selection['files']['selected820.json'], 'books/820 not accepted structural output')
+    if for_execute:
+        require(protocol['scientific_final_bound'] is True and protocol['generation_execution_admitted'] is True,
+                'final scientific/stage execution bindings UNBOUND')
+        require(digest(protocol['scientific_preregistration_path']) == protocol['scientific_preregistration_sha256'], 'scientific preregistration changed or UNBOUND')
+        preregistration = json.loads(Path(protocol['scientific_preregistration_path']).read_text())
+        require(preregistration['status'].startswith('FROZEN_E4_') and preregistration['cohort']['uuid'] == protocol['collection_uuid'] and
+                preregistration['cohort']['structural_rule_sha256'] == protocol['structural_rule_sha256'],
+                'new E4 science not frozen before research collection')
+        require(preregistration['source']['revision'] == protocol['source_revision'] and
+                preregistration['source']['training_generation_config']['sha256'] == manifest['config_sha256'],
+                'frozen scientific source/producer config mismatch')
+        for key in ('publication_receipt', 'tablebase_qualification', 'stockfish_qualification', 'producer_encoding_compatibility', 'excluded_qualification_inputs'):
+            ref = protocol[key]
+            require(digest(ref['path']) == ref['sha256'], 'UNBOUND qualification: ' + key)
+            proof = json.loads(Path(ref['path']).read_text())
+            if key == 'publication_receipt':
+                require(proof['status'] == 'MAIN_PUBLISHED_FROZEN_E4_SCIENCE' and proof['scientific_sha256'] == protocol['scientific_preregistration_sha256'], 'research science not published')
+            else:
+                require(proof['status'].startswith('ACCEPT') and proof['source_revision'] == protocol['source_revision'], 'unqualified actual source consumer: ' + key)
+    require(digest(protocol['owner_path']) == protocol['owner_sha256'], 'owner changed')
+    require(digest(protocol['owner_smoke_terminal']) == manifest['owner_smoke_sha256'], 'owner smoke changed')
+    smoke = json.loads(Path(protocol['owner_smoke_terminal']).read_text())
+    require(smoke['status'] == 'PASS' and smoke['returncode'] == 0 and smoke['owned_processes_closed'], 'owner smoke not closed PASS')
+    require(smoke['source_revision'] == protocol['source_revision'], 'owner smoke source mismatch')
+    require(digest(manifest['native_receipt']) == manifest['native_receipt_sha256'], 'native receipt changed')
+    native = json.loads(Path(manifest['native_receipt']).read_text())
+    require(len(native['native_images']) == 5, 'native image count changed')
+    for entry in native['native_images']:
+        require(digest(entry['path']) == entry['sha256'], 'native image changed')
+    for rel, expected in manifest['source_sha256'].items():
+        require(digest(repo / rel) == expected, 'source file changed: ' + rel)
+    sys.path.insert(0, str(repo))
+    return native
+
+
+
+def load_exposure(protocol):
+    require(digest(protocol['exposure_index_path']) == protocol['exposure_index_sha256'], 'exposure index changed')
+    index = json.loads(Path(protocol['exposure_index_path']).read_text())
+    require(index['status'] == 'BOUND_PROSPECTIVE_KNOWN_PRIOR_RL_IDENTITIES' and index['donor_pretraining_exposure'] == 'UNKNOWN', 'exposure scope not explicit')
+    require(index['coverage_scope'] and index['source_artifacts'] and index['coverage_status'] == 'COMPLETE_DECLARED803_PRIMARY_RAW_PLUS_FILE_MIRROR' and index['all_fixed_sources_complete'], 'exposure index has no complete bounded provenance')
+    known = json.loads(Path(protocol['known53_path']).read_text())
+    require(digest(protocol['known53_path']) == protocol['known53_sha256'] and known['research_training_updates'] == 0 and len(known['games']) == 53, 'known53 scope')
+    ref = protocol['excluded_qualification_inputs']
+    require(digest(ref['path']) == ref['sha256'], 'excluded producer observed input supplement UNBOUND/changed')
+    excluded = json.loads(Path(ref['path']).read_text())
+    require(excluded['status'].startswith('ACCEPT') and excluded['training_updates'] == 0 and
+            excluded['source_revision'] == protocol['source_revision'], 'excluded engineering input scope/source')
+    import known_e2 as previous_api
+    require(Path(previous_api.__file__).resolve() == HERE / 'known_e2.py', 'foreign old96 metadata helper')
+    known_e2 = previous_api.known_e2
+    previous = known_e2(protocol['known_e2'])
+    return {'histories': set(index['history_sha256']) | set(known['history_sha256']) | set(excluded['history_sha256']) | previous['histories'],
+            'inputs': set(index['stored_input_float16_sha256']) | set(known['stored_input_float16_sha256']) | set(excluded['stored_input_float16_sha256']) | previous['inputs'],
+            'coverage_scope': {'known803': index['coverage_scope'], 'known53': 'observed retained inputs NEVER_TRAINED; staging/unretained/search/epoch2 UNKNOWN', 'excluded_qualification': excluded['coverage_scope'], 'known_e2': previous['scope']},
+            'lineages_separate': True}
+
+
+def attach_mirror_input_ids(rows, stored_x, *, input_history_encoding):
+    from chess_anti_engine.replay.augment import _mirror_x_batch
+    import numpy as np
+    require(stored_x.shape == (len(rows), 175, 8, 8) and stored_x.dtype == np.dtype('float16'), 'unqualified175F16 mirror layout')
+    mirrored = _mirror_x_batch(stored_x, np.ones(len(rows), dtype=bool), input_history_encoding=input_history_encoding)
+    for i, row in enumerate(rows):
+        raw = np.ascontiguousarray(stored_x[i], dtype='<f2')
+        require(hashlib.sha256(raw.tobytes()).hexdigest() == row['stored_input_float16_sha256'], 'raw stored input identity differs before mirror')
+        row['stored_input_float16_mirror_sha256'] = hashlib.sha256(np.ascontiguousarray(mirrored[i], dtype='<f2').tobytes()).hexdigest()
+
+
+def exposure_check(rows, exposure):
+    bad = [row['physical_row_id'] for row in rows if row['history_sha256'] in exposure['histories'] or (row['stored_input_float16_sha256'] in exposure['inputs'] or row['stored_input_float16_mirror_sha256'] in exposure['inputs'])]
+    return {'known_overlap_rows': len(bad), 'physical_row_ids': bad, 'coverage_scope': exposure['coverage_scope'], 'donor_pretraining_exposure': 'UNKNOWN'}
+
+
+def select_holdout_root(rows, planned, exposure, salt):
+    # Row list is already proven full-history, actual neural-policy and nonSFrefute.
+    eligible = [row for row in rows if 8 <= row['move_offset'] <= 80 and row['history_sha256'] not in exposure['histories'] and row['stored_input_float16_sha256'] not in exposure['inputs'] and row['stored_input_float16_mirror_sha256'] not in exposure['inputs']]
+    if not eligible:
+        return None
+    root = min(eligible, key=lambda row: hashlib.sha256((salt + ':' + row['physical_row_id']).encode('utf-8')).digest())
+    return {'physical_game_id': planned['physical_game_id'], **root, 'selection': 'fixed_offset8..80_hash_min_scoreblind', 'donor_pretraining_exposure': 'UNKNOWN'}
+
+
+def validate_protocol(protocol):
+    import chess
+
+    require(protocol['collection_games'] == 192 and protocol['concurrent_slots'] == 16 and protocol['collection_uuid'] == 'cd47b230-f32f-4256-a51e-4869f5708bb6', 'not new fixed192games/16slots')
+    games = protocol['games']
+    require(len(games) == 192 and [x['start_ordinal'] for x in games] == list(range(192)), 'not192fixed starts')
+    require(sum(x['bank'] == 'train' for x in games) == 128 and sum(x['bank'] == 'holdout' for x in games) == 64, 'not128train64holdout')
+    histories = []
+    for game in games:
+        require(game['physical_game_id'] == protocol['collection_uuid'] + ':' + str(game['start_ordinal']), 'physical game identity mismatch')
+        board = chess.Board(game['root_fen'])
+        require(board.fen() == chess.STARTING_FEN and len(game['opening_moves']) == 16, 'full16 startpos history required')
+        for move in game['opening_moves']:
+            board.push_uci(move)
+        require(board.is_valid() and not board.is_game_over(claim_draw=True), 'invalid/terminal start')
+        histories.append(canonical([game['root_fen'], game['opening_moves']]))
+    require(len(set(histories)) == 192, 'duplicate starts')
+    rank = sorted(games, key=lambda x: hashlib.sha256((protocol['split_seed'] + '\0' + x['physical_game_id']).encode()).digest())
+    require(all(game['bank'] == ('train' if i < 128 else 'holdout') for i, game in enumerate(rank)), 'split not preassigned hash rank')
+
+
+def build_configs(protocol):
+    import torch
+    from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
+    from chess_anti_engine.tune.trial_config import TrialConfig
+    from chess_anti_engine.tune.distributed_runtime import build_recommended_worker, distributed_worker_sf_workers
+    from chess_anti_engine.tune.trainable_config_ops import _play_batch_kwargs
+    from chess_anti_engine.uci.model_loader import model_config_from_arch
+    from chess_anti_engine.worker import WorkerSession
+    from chess_anti_engine.selfplay.opening import resolve_slot_opening
+    import numpy as np
+
+    require(torch.__version__ == protocol['torch_version'], 'Torch runtime changed')
+    flat = flatten_run_config_defaults(load_yaml_file(protocol['config_path']))
+    tc = TrialConfig.from_dict(flat)
+    direct_game = _play_batch_kwargs(tc)['game']
+    arch = flat['bootstrap_model_contract']
+    model_cfg = model_config_from_arch(arch)  # Descriptor only; no model built.
+    reco = build_recommended_worker(config=flat, model_cfg=model_cfg, sf_nodes=int(flat['sf_nodes']), mcts_simulations=int(flat['mcts_simulations']), wdl_regret=-1.0)
+    worker = WorkerSession.__new__(WorkerSession)  # No constructor/auth/files/server.
+    worker.args = SimpleNamespace(sf_workers=distributed_worker_sf_workers(flat))
+    for key in ('opening_book_path', 'opening_book_path_2', 'opening_fen_list_path'):
+        require(not flat.get(key), 'base opening asset is not disabled: ' + key)
+        setattr(worker, key, None)
+    worker._check_sf_budget_topology(reco)
+    base, sf_args = worker._build_selfplay_configs(reco)
+    cfg = dict(base)
+    cfg['game'] = replace(base['game'], selfplay_fraction=1.0)
+    cfg['opening'] = replace(base['opening'], opening_fen_list_path=str(HERE / 'starts.epd'), opening_fen_dole_per_iter=1)
+    require(worker.args.sf_workers == protocol['sf_pool_workers'] == 2, 'effective pool topology changed')
+    require(cfg['search'].mcts_type == 'gumbel' and cfg['search'].simulations == 64 and cfg['game'].max_plies == 450, 'base search extent changed')
+    require(cfg['game'].input_history_encoding == arch['input_history_encoding'] and cfg['game'].input_extra_features == arch['input_extra_features'], 'encoding descriptor mismatch')
+    from chess_anti_engine.utils.syzygy_config import validate_selfplay_syzygy
+    validate_selfplay_syzygy(asdict(cfg['game']))
+    require(cfg['game'].syzygy_outcome_mode == 'rule50_match_v1' and cfg['game'].syzygy_path == protocol['tablebase_path'] and
+            (cfg['game'].stockfish_syzygy_path or cfg['game'].syzygy_path) == protocol['tablebase_path'] and
+            sf_args[3] == protocol['tablebase_path'] and cfg['game'].syzygy_rescore_policy is True,
+            'actual finite strictTB/policyON/fullSFpath not realized')
+    strict_keys = ('syzygy_outcome_mode', 'syzygy_path', 'stockfish_syzygy_path', 'syzygy_in_search',
+                   'syzygy_adjudicate', 'syzygy_adjudicate_fraction', 'syzygy_rescore_policy')
+    trace = {name: {key: getattr(obj, key) for key in strict_keys} for name, obj in
+             (('TrialConfig', tc), ('direct_finite_game', direct_game), ('metadata_worker_game', cfg['game']))}
+    require(trace['TrialConfig'] == trace['direct_finite_game'] == trace['metadata_worker_game'], 'strict config accepted but ignored by a builder')
+    require(flat['sf_wdl_frac'] == 0 and flat['search_wdl_frac'] == 1 and
+            cfg['game'].categorical_blend_frac == 0 and cfg['game'].categorical_search_blend_frac == 1,
+            'collection must preserve original search1 categorical/raw control')
+    require(cfg['opening'].opening_fen_sf_refute_frac == 0, 'SF-refute is outside pilot')
+    queue = (HERE / 'starts.epd').read_text().splitlines()
+    for planned in protocol['games']:
+        start = resolve_slot_opening(rng=np.random.default_rng(protocol['seed']), cfg=cfg['opening'], is_selfplay=True, fen_dole_queue=queue)
+        require(start.board.root().fen() == planned['root_fen'], 'production seed root mismatch')
+        require([m.uci() for m in start.board.move_stack] == planned['opening_moves'], 'production seed dropped history')
+    require(not queue, 'unused predetermined start')
+    def plain(values):
+        return {k: asdict(v) if is_dataclass(v) else v for k, v in values.items()}
+    profile = {'base': plain(base), 'pilot': plain(cfg), 'sf_args': list(sf_args), 'sf_workers': worker.args.sf_workers, 'arch': arch, 'stockfish_path': flat['stockfish_path'],
+               'strict_config_trace': trace, 'stockfish_options': {'syzygy_50_move_rule': True, 'syzygy_probe_limit': 6},
+               'trainer_created': False, 'descriptor_only': True, 'WorkerSession_run_or_Tune_adopted': False,
+               'finite_API_only': True}
+    return cfg, sf_args, profile
+
+
+def verify_owner(protocol):
+    args = Path('/proc/' + str(os.getppid()) + '/cmdline').read_bytes().decode().split('\0')
+    require(protocol['owner_path'] in args, 'execute must be a direct child of bound owner')
+    for key, expected in [('--seconds', str(protocol['max_owner_seconds'])), ('--resource', 'gpu')]:
+        require(key in args and args[args.index(key) + 1] == expected, 'wrong owner bound: ' + key)
+    require(sorted(os.sched_getaffinity(0)) == protocol['cpu_affinity'], 'CPU affinity changed')
+    require(os.environ.get('CUDA_VISIBLE_DEVICES') == protocol['cuda_visible_devices'], 'GPU visibility changed')
+    require(os.environ.get('OMP_NUM_THREADS') == os.environ.get('MKL_NUM_THREADS') == '2', 'CPU thread budget changed')
+    require(__debug__ and os.environ.get('PYTHONOPTIMIZE', '0') == '0', 'optimized guard execution forbidden')
+
+
+def shard_metadata(protocol, game_cfg, audit, count, sf_nodes):
+    from chess_anti_engine.replay.shard import ShardMeta
+
+    return ShardMeta(
+        run_id=protocol['collection_uuid'], generated_at_unix=int(time.time()),
+        model_sha256=protocol['checkpoint_sha256'],
+        input_history_encoding=game_cfg.input_history_encoding,
+        history_rep_fix=game_cfg.history_rep_fix, policy_encoding=game_cfg.policy_encoding,
+        sf_nodes=int(sf_nodes), games=1, positions=count,
+        total_game_plies=audit.total_plies, selfplay_games=1, curriculum_games=0,
+    )
+
+
+def validate_game(audit, samples, model, game_cfg, planned, seen, *, proof, verifier):
+    import chess
+    import numpy as np
+    from chess_anti_engine.encoding import encode_cboard_for_model, model_encoding_kwargs, rep_fix
+    from chess_anti_engine.encoding._lc0_ext import CBoard
+    from chess_anti_engine.moves import index_to_move_strict, move_to_index_for_encoding
+    from chess_anti_engine.selfplay.finalize import _stable_game_id
+
+    start = audit.start
+    verified = require_verified(proof, audit=audit)
+    enc = model_encoding_kwargs(model)
+    require(enc == {'input_history_encoding': game_cfg.input_history_encoding, 'input_extra_features': game_cfg.input_extra_features}, 'producer/model encoding mismatch')
+    require(rep_fix.current() is game_cfg.history_rep_fix is True, 'producer runtime repetition flag mismatch')
+    require(start.start_ordinal == planned['start_ordinal'] and 0 <= start.slot < 16, 'unplanned ordinal or invalid recycled slot')
+    require(start.root_fen == planned['root_fen'] and list(start.opening_moves) == planned['opening_moves'], 'start history mismatch')
+    require(start.is_selfplay, 'curriculum game outside pilot')
+    board = chess.Board(start.root_fen)
+    for uci in start.opening_moves:
+        board.push_uci(uci)
+    require(board.fen() == start.start_fen and board.ply() == start.start_ply, 'start state mismatch')
+    before = []
+    played_uci = []
+    for action in audit.played_move_indices:
+        before.append(board.copy())
+        move = index_to_move_strict(action, board)
+        require(move in board.legal_moves, 'illegal played action')
+        played_uci.append(move.uci())
+        board.push(move)
+    require(board.fen() == chess.Board(audit.final_fen).fen() and board.ply() == audit.total_plies, 'trace/native final board mismatch')
+    require(audit.game_id == _stable_game_id(start_fen=start.start_fen, opening_source=start.opening_source, move_trace=','.join(str(m) for m in audit.played_move_indices), result=audit.result, total_plies_played=audit.total_plies), 'producer game content identity mismatch')
+    records = {}
+    for rec in audit.records:
+        require(0 <= rec.move_offset < len(before), 'record offset outside actual moves')
+        position = before[rec.move_offset]
+        require(position.ply() == rec.ply_index and position.turn == rec.pov_color, 'record POV/ply mismatch')
+        require(not rec.is_sf_refute_opp and rec.has_policy, 'non-network/fast record outside pilot')
+        require(rec.ply_index not in records, 'duplicate raw record ply')
+        records[rec.ply_index] = (rec, position)
+    bank = planned['bank']
+    # Physical-game banks are preassigned; shared trajectory patterns are counted, not silently discarded.
+    rows = []
+    for row_index, sample in enumerate(samples):
+        require(sample.game_id == audit.game_id and sample.ply_index in records, 'sample/raw record join mismatch')
+        rec, position = records[sample.ply_index]
+        require(sample.has_policy and sample.is_network_turn is True, 'sample not actual full neural turn')
+        require(sample.input_history_encoding == model.input_history_encoding and sample.history_rep_fix is True, 'sample encoding contract mismatch')
+        expected = encode_cboard_for_model(model, CBoard.from_board(position))
+        actual = np.asarray(sample.x)
+        require(expected.shape == actual.shape == (175, 8, 8) and np.isfinite(actual).all(), 'sample input shape/finiteness')
+        require(np.array_equal(expected, actual), 'full-history/model-aware raw175plane input mismatch')
+        legal = np.zeros(1858, dtype=np.uint8)
+        for move in position.legal_moves:
+            legal[move_to_index_for_encoding(move, position, policy_encoding='lc0_1858')] = 1
+        require(sample.legal_mask is not None and np.array_equal(np.asarray(sample.legal_mask).astype(bool), legal.astype(bool)), 'sample legal mask mismatch')
+        policy = np.asarray(sample.policy_target)
+        require(policy.shape == (1858,) and np.isfinite(policy).all() and (policy >= 0).all(), 'policy target invalid')
+        require(abs(float(policy.sum()) - 1) < 0.002 and not np.any(policy[legal == 0]), 'policy target normalization/legality')
+        verifier.verify_policy_sample(proof, sample, position, game_cfg.policy_encoding)
+        history_id = hashlib.sha256(canonical([start.root_fen, list(start.opening_moves) + played_uci[:rec.move_offset]])).hexdigest()
+        input_id = hashlib.sha256(actual.astype(np.float16).tobytes()).hexdigest()
+        # Root eligibility is filtered against ALL completed TRAIN inputs later.
+        seen[bank]['histories'].add(history_id)
+        seen[bank]['inputs'].add(input_id)
+        rows.append({'physical_row_id': planned['physical_game_id'] + ':' + str(row_index), 'ply': sample.ply_index, 'move_offset': rec.move_offset, 'history_sha256': history_id, 'stored_input_float16_sha256': input_id})
+    require(len({x['ply'] for x in rows}) == len(rows), 'duplicate physical-row ply')
+    seen[bank]['games'].add(audit.game_id)
+    return {'rows': rows, 'raw_records': len(records), 'retained_rows': len(samples),
+            'resolved_outcome_eligible': verified['resolved'], 'scientific_outcome_class': verified['scientific_class'],
+            'verified_outcome': verified, 'verified_outcome_sha256': proof.proof_sha256,
+            'played_plies': len(played_uci), 'full_history_validated': True,
+            'policy_declared_retained_rows_reprobed': True,
+            'encoding': {**enc, 'history_rep_fix': game_cfg.history_rep_fix, 'runtime_rep_fix': rep_fix.current(), 'record_lc0_root_input': game_cfg.record_lc0_root_input, 'record_relations': game_cfg.record_relations, 'raw175plane_equality': True, 'stored_hash_precision': 'float16'}}
+
+
+def playing_overlap_gate(completed, protocol):
+    """ALL628 selected start raw/mirror IDs against ALL192 retained raw/mirror IDs."""
+    p = Path(protocol['playing_start_identities_path'])
+    require(digest(p) == protocol['playing_start_identities_sha256'], 'playing metadata changed')
+    selected = json.loads(p.read_text())
+    require(len(selected) == 820, 'not fixed820 metadata')
+    playing = [row for row in selected if row['role'] in ('screen', 'confirmation')]
+    require(len(playing) == 628 and sum(row['role'] == 'screen' for row in playing) == 128, 'not fixed128+500 playing starts')
+    retained = {row[key] for game in completed.values() for row in game['validation']['rows']
+                for key in ('stored_input_float16_sha256', 'stored_input_float16_mirror_sha256')}
+    collisions = [{'candidate_id': row['candidate_id'], 'role': row['role'],
+                   'matching_hashes': sorted({row['stored175F16_input_sha256'], row['stored175F16_mirror_sha256']} & retained)}
+                  for row in playing if {row['stored175F16_input_sha256'], row['stored175F16_mirror_sha256']} & retained]
+    return {'status': 'PASS_ALL628_VS_ALL192_RETAINED_RAW_MIRROR' if not collisions else 'INCONCLUSIVE_PLAYING_START_COLLISION_NO_LEARNING',
+            'qualified': not collisions, 'all192_physical_attempts': len(completed), 'playing_starts': len(playing),
+            'playing_metadata_sha256': protocol['playing_start_identities_sha256'], 'collisions': collisions,
+            'no_replacement_or_new_seed': True, 'unknown': 'unstored/search/staging/pretraining/dropout variants not indexed'}
+
+
+def execute(manifest, protocol, cfg, sf_args, profile, native, started):
+    import torch
+    from chess_anti_engine.uci import model_loader
+    from chess_anti_engine.inference import DirectGPUEvaluator
+    from chess_anti_engine.stockfish.pool import StockfishPool
+    from chess_anti_engine.selfplay import play_batch
+    from chess_anti_engine.replay.shard import samples_to_arrays, save_local_shard_arrays, validate_arrays
+    from chess_anti_engine.selfplay.strict_tb import validate_stockfish_contract
+    import importlib.util
+    raw_spec = importlib.util.spec_from_file_location('e2tb_raw_value_factory', HERE / 'value_bundle.py')
+    require(raw_spec is not None and raw_spec.loader is not None, 'raw factory loader missing')
+    raw_factory = importlib.util.module_from_spec(raw_spec)
+    raw_spec.loader.exec_module(raw_factory)
+    capture_raw, validate_stored_control, save_raw = raw_factory.capture_raw, raw_factory.validate_stored_control, raw_factory.save_raw
+    import threading
+    import numpy as np
+
+    verify_owner(protocol)
+    def alarm(_signum, _frame):
+        raise TimeoutError('finite strict generation/verification/serialization deadline')
+    signal.signal(signal.SIGALRM, alarm)
+    signal.alarm(protocol['helper_alarm_seconds'])
+    require(not torch.cuda.is_initialized(), 'CUDA initialized before qualified execution')
+    require(torch.cuda.is_available(), 'CUDA unavailable; no fallback')
+    donor_stat = Path(protocol['checkpoint_path']).stat()
+    require(digest(protocol['checkpoint_path']) == protocol['checkpoint_sha256'], 'A39 byte identity mismatch')
+    require(not donor_stat.st_mode & 0o222, 'A39 writable')
+    require(digest(profile['stockfish_path']) == manifest['stockfish_sha256'], 'Stockfish binary changed')
+    exposure = load_exposure(protocol)
+    out = Path(protocol['output_root'])
+    out.mkdir(exist_ok=False)
+    pool = model = evaluator = verifier = handle = None
+    pool_witness_lock = threading.Lock()
+    pool_events, engine_processes = [], {}
+    completed, pending = {}, {}
+    seen = {bank: {'games': set(), 'histories': set(), 'inputs': set()} for bank in ['train', 'holdout']}
+    forwards = {'calls': 0, 'rows': 0, 'first_input': None}
+    load_calls = 0
+    pool_replacements = 0
+    def close_pool():
+        nonlocal pool, pool_replacements
+        if pool is not None:
+            pool_replacements = pool.replacements
+            pool.close()
+            pool = None
+        require(all(proc.poll() is not None and proc_birth(pid) != birth
+                    for pid, (proc, birth) in engine_processes.items()), 'observed SF engine survived close')
+        return {'events': list(pool_events), 'pool_replacements': pool_replacements,
+                'all_observed_births_closed': True,
+                'observed_births': [{'pid': pid, 'birth': birth} for pid, (_proc, birth) in engine_processes.items()],
+                'scope': 'all successful initial/replacement constructor events; failed constructions and full descendants still require outer owner closure'}
+    try:
+        write_json(out / 'assignment.json', protocol['games'])  # Before model/engine/generation.
+        write_json(out / 'resolved-profile.json', profile)
+        write_json(out / 'runtime-process.json', {'pid': os.getpid(), 'birth': proc_birth(os.getpid()), 'owner_pid': os.getppid(), 'owner_birth': proc_birth(os.getppid()), 'source_revision': protocol['source_revision']})
+        verifier = VerifiedOutcomeVerifier(path=protocol['tablebase_path'],
+            asset_inventory_sha256=protocol['tablebase_asset_inventory_sha256'],
+            collection_uuid=protocol['collection_uuid'], source_revision=protocol['source_revision'])
+        torch.set_num_threads(2)
+        torch.set_num_interop_threads(2)
+        torch.manual_seed(protocol['seed'])
+        origins = {}
+        for image in native['native_images']:
+            module = importlib.import_module(image['module'])
+            path = Path(module.__file__).resolve()
+            require(str(path) == image['path'] and digest(path) == image['sha256'], 'foreign native import')
+            origins[image['module']] = image
+        write_json(out / 'native-imports.json', origins)
+        python_origins = {}
+        for name in ('chess_anti_engine.worker', 'chess_anti_engine.selfplay.manager', 'chess_anti_engine.selfplay.finalize', 'chess_anti_engine.selfplay.provenance',
+                     'chess_anti_engine.selfplay.strict_tb', 'chess_anti_engine.tablebase', 'chess_anti_engine.stockfish.pool', 'chess_anti_engine.stockfish.uci',
+                     'chess_anti_engine.uci.model_loader', 'chess_anti_engine.inference', 'chess_anti_engine.replay.shard'):
+            module = importlib.import_module(name)
+            path = Path(module.__file__).resolve()
+            relative = str(path.relative_to(protocol['source_checkout']))
+            require(digest(path) == manifest['source_sha256'][relative], 'foreign Python import')
+            python_origins[name] = {'path': str(path), 'sha256': digest(path)}
+        write_json(out / 'python-imports.json', python_origins)
+        captured_arch = []
+        built_models = []
+        parser = model_loader.model_config_from_arch
+        builder = model_loader.build_model
+        def capture(arch):
+            captured_arch.append(arch)
+            return parser(arch)
+        model_loader.model_config_from_arch = capture
+        def capture_build(config):
+            value = builder(config)
+            built_models.append(id(value))
+            return value
+        model_loader.build_model = capture_build
+        try:
+            model = model_loader.load_model_from_checkpoint(protocol['checkpoint_path'], device='cuda:0', require_complete=True)
+            load_calls += 1
+        finally:
+            model_loader.model_config_from_arch = parser
+            model_loader.build_model = builder
+        after_stat = Path(protocol['checkpoint_path']).stat()
+        def stat_key(value):
+            return (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+        require(stat_key(donor_stat) == stat_key(after_stat), 'donor changed during load')
+        require(built_models == [id(model)], 'loader did not build exactly one served model')
+        require(len(captured_arch) == 1 and canonical(captured_arch[0]) == canonical(profile['arch']), 'actual embedded donor architecture mismatch')
+        require(len(model.state_dict()) == 494 and all(bool(torch.isfinite(x).all()) for x in model.state_dict().values()), 'donor tensor contract')
+        require(sum(x.numel() for x in model.parameters()) == 61444448, 'donor parameter count')
+        require({str(x.device) for x in model.parameters()} == {'cuda:0'}, 'model not CUDA')
+        write_json(out / 'model-serving.json', {'checkpoint_sha256': protocol['checkpoint_sha256'], 'arch': captured_arch[0], 'parameters': sum(x.numel() for x in model.parameters()), 'state_tensors': len(model.state_dict()), 'model_build_count': len(built_models), 'model_id': id(model), 'torch': torch.__version__, 'python': sys.version, 'device': torch.cuda.get_device_name(0), 'parameter_dtypes': sorted({str(x.dtype) for x in model.parameters()}), 'history_rep_fix': cfg['game'].history_rep_fix})
+        def on_forward(_module, args):
+            forwards['calls'] += 1
+            forwards['rows'] += int(args[0].shape[0])
+            require(tuple(args[0].shape[1:]) == (175, 8, 8) and str(args[0].device) == 'cuda:0', 'serving input contract')
+            require(not torch.is_grad_enabled() and torch.is_autocast_enabled('cuda') and torch.get_autocast_dtype('cuda') == torch.bfloat16, 'serving no-grad/AMP changed')
+            if forwards['first_input'] is None:
+                forwards['first_input'] = {'shape': list(args[0].shape), 'device': str(args[0].device), 'storage_dtype': str(args[0].dtype), 'autocast_dtype': str(torch.get_autocast_dtype('cuda'))}
+        handle = model.register_forward_pre_hook(on_forward)
+        evaluator = DirectGPUEvaluator(model, **protocol['serving_config'])
+        require(evaluator.model is model, 'evaluator does not serve sole donor model')
+        def on_samples(batch):
+            require(batch.games == 1 and batch.samples and len(batch.samples) == batch.positions, 'sample callback contract')
+            game_id = batch.samples[0].game_id
+            require(game_id not in pending, 'duplicate pending game')
+            pending[game_id] = list(batch.samples)
+        def on_game(audit):
+            ordinal = audit.start.start_ordinal
+            planned = (protocol['games'][ordinal]
+                       if type(ordinal) is int and 0 <= ordinal < 192 else None)
+            stage = out / ('.game-callback-' + str(uuid.uuid4()))
+            stage.mkdir()
+            # Bank the source callback before count guards, pending removal or
+            # any proof/row verification can reject this observed attempt.
+            write_json(stage / 'provenance.json', {'planned': planned, 'actual': asdict(audit)})
+            sync_dir(stage)
+            sync_dir(out)
+            samples = pending.get(audit.game_id, [])
+            try:
+                require(planned is not None and ordinal not in completed, 'unexpected/repeated predetermined game')
+                require(len(samples) == audit.retained_samples, 'callback sample count mismatch')
+                require(len(samples) <= 450, 'retained rows exceed fixed additional-ply horizon')
+                require(verifier is not None, 'verification handle missing')
+                proof = verifier.verify(audit, planned, cfg['game'])
+                write_json(stage / 'verified-outcome.json', {'verification': proof.metadata(), 'proof_sha256': proof.proof_sha256})
+                raw, raw_metadata = capture_raw(samples, audit, [planned['physical_game_id'] + ':' + str(j) for j in range(len(samples))], cfg['game'], proof=proof)
+                save_raw(stage / 'raw-values.npz', raw, raw_metadata, proof=proof)
+                if samples:
+                    arrays = samples_to_arrays(samples)
+                    validate_stored_control(raw, arrays, proof=proof, metadata=raw_metadata)
+                    save_local_shard_arrays(stage / 'shard', arrs=arrays, meta=shard_metadata(protocol, cfg['game'], audit, len(samples), sf_args[0]))
+                    validate_arrays(arrays)
+                else:
+                    write_json(stage / 'zero-row-no-shard.json', {'retained_rows': 0, 'usable_shard': False, 'game_not_replaced': True})
+                checked = validate_game(audit, samples, model, cfg['game'], planned, seen, proof=proof, verifier=verifier)
+                if samples:
+                    attach_mirror_input_ids(checked['rows'], arrays['x'], input_history_encoding=cfg['game'].input_history_encoding)
+                checked['usable_shard'] = bool(samples)
+                checked['raw_value_control'] = raw_metadata
+                checked['exposure'] = exposure_check(checked['rows'], exposure)
+                checked['holdout_root_selection'] = 'PENDING_ALL_TRAIN_INPUTS; scoreblind after192complete'
+                write_json(stage / 'validation.json', checked)
+                inventory = freeze_tree(stage, seal_root=False)
+                bank = out / planned['bank']
+                bank.mkdir(exist_ok=True)
+                require(not bank.is_symlink(), 'physical game bank is symlink')
+                final = bank / ('game-' + str(ordinal))
+                require(not final.exists(), 'game bank exists')
+                stage.rename(final)
+                final.chmod(0o555)
+                sync_dir(final)
+                sync_dir(bank)
+                sync_dir(out)
+                completed[ordinal] = {'physical_game_id': planned['physical_game_id'], 'game_id': audit.game_id, 'bank': planned['bank'], 'path': str(final), 'validation': checked, 'inventory': inventory}
+                write_json(out / ('completed-' + str(ordinal) + '.json'), completed[ordinal])
+                pending.pop(audit.game_id, None)
+            except BaseException as error:
+                evidence_dir = stage if stage.exists() else out / planned['bank'] / ('game-' + str(ordinal))
+                try:
+                    evidence = unqualified_sample_evidence(samples, planned, stage.name)
+                    evidence['error'] = repr(error)
+                    evidence['pending_game_counts'] = {str(key): len(value) for key, value in pending.items()}
+                    evidence['provenance_path'] = str(evidence_dir / 'provenance.json')
+                    # Root remains writable until the outer failure seal, even
+                    # if this callback had already renamed/sealed its game dir.
+                    write_json(out / ('unqualified-callback-' + stage.name + '.json'), evidence)
+                    sync_dir(out)
+                except BaseException as evidence_error:
+                    write_json(out / ('unqualified-callback-evidence-error-' + stage.name + '.json'),
+                               {'error': repr(error), 'diagnostic_error': repr(evidence_error),
+                                'available_samples': len(samples), 'provenance_path': str(evidence_dir / 'provenance.json'),
+                                'partial_not_qualified': True})
+                raise
+        class WitnessedStockfishPool(StockfishPool):
+            def _new_engine(self):
+                engine = super()._new_engine()
+                try:
+                    validate_stockfish_contract(engine, protocol['tablebase_path'])
+                    with pool_witness_lock:
+                        birth = proc_birth(engine.proc.pid)
+                        require(birth is not None and engine.proc.poll() is None, 'SF engine died after ready')
+                        engine_processes[engine.proc.pid] = (engine.proc, birth)
+                        pool_events.append({'event': len(pool_events), 'pid': engine.proc.pid, 'birth': birth,
+                            'phase': 'initial' if len(pool_events) < protocol['sf_pool_workers'] else 'replacement_or_close_race',
+                            'syzygy_path': engine.syzygy_path, 'syzygy_50_move_rule': engine.syzygy_50_move_rule,
+                            'syzygy_probe_limit': engine.syzygy_probe_limit,
+                            'ready_after_explicit_options': engine.syzygy_ready_after_requests})
+                except BaseException:
+                    engine.close()
+                    raise
+                return engine
+        pool = WitnessedStockfishPool(path=profile['stockfish_path'], nodes=sf_args[0], multipv=sf_args[1], hash_mb=sf_args[2],
+            syzygy_path=protocol['tablebase_path'], syzygy_50_move_rule=True, syzygy_probe_limit=6,
+            num_workers=protocol['sf_pool_workers'], read_timeout_s=protocol['sf_read_timeout_seconds'])
+        validate_stockfish_contract(pool, protocol['tablebase_path'])
+        queue = (HERE / 'starts.epd').read_text().splitlines()
+        _, stats = play_batch(model, device='cuda:0', rng=np.random.default_rng(protocol['seed']), stockfish=pool, evaluator=evaluator, games=16, target_games=192, on_game_complete=on_samples, on_game_provenance=on_game, fen_dole_queue=queue, **cfg)
+        require(set(completed) == set(range(192)) and stats.games == 192 and not queue and not pending, 'incomplete predetermined collection')
+        handle.remove()
+        handle = None
+        require(load_calls == 1 and forwards['calls'] > 0, 'not one actual donor serving instance')
+        train = [x for x in completed.values() if x['bank'] == 'train']
+        heldout = [x for x in completed.values() if x['bank'] == 'holdout']
+        train_data_ok = all(x['validation']['usable_shard'] and x['validation']['raw_value_control']['all_rows_raw_control_proven'] for x in train)
+        train_resolved_ok = all(x['validation']['resolved_outcome_eligible'] for x in train)
+        heldout_data_ok = all(x['validation']['usable_shard'] for x in heldout)
+        heldout_resolved_ok = all(x['validation']['resolved_outcome_eligible'] for x in heldout)
+        root_exclusions = {**exposure,
+            'histories': exposure['histories'] | {row['history_sha256'] for x in train for row in x['validation']['rows']},
+            'inputs': exposure['inputs'] | {row[key] for x in train for row in x['validation']['rows'] for key in ('stored_input_float16_sha256', 'stored_input_float16_mirror_sha256')}}
+        holdout_roots = {str(ordinal): (select_holdout_root(x['validation']['rows'], protocol['games'][ordinal], root_exclusions, protocol['holdout_root_salt'])
+                         if x['validation']['resolved_outcome_eligible'] else None)
+                         for ordinal, x in completed.items() if x['bank'] == 'holdout'}
+        roots_ok = all(root is not None for root in holdout_roots.values())
+        write_json(out / 'holdout-roots.json', {'roots': holdout_roots, 'selected_before_branch_or_teacher_scoring': True, 'scope': 'new physical games; selected roots novel to bounded known prior raw+filemirror index+allnewTRAIN raw+filemirror inputs; dropout/epoch2/unknown archivesUNKNOWN'})
+        playing_guard = playing_overlap_gate(completed, protocol)
+        write_json(out / 'playing-start-overlap.json', playing_guard)
+        lifecycle = close_pool()
+        write_json(out / 'stockfish-lifecycle.json', lifecycle)
+        verifier.close()
+        source_guard(manifest, protocol, for_execute=True)
+        signal.alarm(0)
+        elapsed = time.monotonic() - started
+        train_qualified = train_data_ok and train_resolved_ok and playing_guard['qualified']
+        class_counts = {bank: {kind: {'games': sum(x['validation']['scientific_outcome_class'] == kind for x in completed.values() if x['bank'] == bank),
+                         'retained_rows': sum(x['validation']['retained_rows'] for x in completed.values() if x['bank'] == bank and x['validation']['scientific_outcome_class'] == kind)}
+                         for kind in ('NATURAL', 'STRICT_TB_ADJUDICATED', 'UNRESOLVED')} for bank in ('train', 'holdout')}
+        write_json(out / 'readout.json', {'status': 'PASS_128_TRAIN_E4_VERIFIED_BUNDLE_DATA_ONLY' if train_qualified else 'INCONCLUSIVE_TRAIN_E4_BUNDLE_NO_LEARNING',
+            'source_revision': protocol['source_revision'], 'manifest_sha256': digest(HERE / 'manifest.json'), 'collection_uuid': protocol['collection_uuid'],
+            'learning_or_gain_admitted': False, 'all192_integrity_qualified': True, 'offline_outcome_roots_qualified': roots_ok and heldout_data_ok and heldout_resolved_ok,
+            'completed': completed, 'class_counts': class_counts,
+            'unresolved_strata': {bank: {'cap_reached': sum(x['validation']['scientific_outcome_class'] == 'UNRESOLVED' and x['validation']['verified_outcome']['cap_reached'] for x in completed.values() if x['bank'] == bank),
+                'non_cap': sum(x['validation']['scientific_outcome_class'] == 'UNRESOLVED' and not x['validation']['verified_outcome']['cap_reached'] for x in completed.values() if x['bank'] == bank)} for bank in ('train', 'holdout')},
+            'counts': {'games': stats.games, 'positions': stats.positions, 'total_game_plies': stats.total_game_plies, 'adjudicated_games': stats.adjudicated_games,
+                       'tb_adjudicated_games': stats.tb_adjudicated_games, 'censored_games': stats.censored_games},
+            'train_data_qualified': train_data_ok, 'train_verified_resolved_outcomes_qualified': train_resolved_ok, 'playing_guard_qualified': playing_guard['qualified'],
+            'heldout_data_qualified': heldout_data_ok, 'heldout_verified_resolved_outcomes_qualified': heldout_resolved_ok, 'holdout_roots': holdout_roots,
+            'all192_attempts_retained': True, 'ordinary_HOLDOUT_censoring_not_primary_veto': True, 'old_trajectory_matches_disclosed_not_automatic_cohort_failure': True,
+            'model_load_calls': load_calls, 'serving': forwards, 'elapsed_seconds': elapsed,
+            'rows_per_completed_wall_second': sum(x['validation']['retained_rows'] for x in completed.values()) / elapsed,
+            'peak_cuda_memory_allocated': torch.cuda.max_memory_allocated(0), 'pool_closed': True, 'stockfish_lifecycle': lifecycle,
+            'verification_handle_closed': True, 'training_steps': 0, 'scope': protocol['scope']})
+        freeze_tree(out)
+        return 0 if train_qualified else 2
+    except BaseException as exc:
+        lifecycle_error = None
+        try:
+            lifecycle = close_pool()
+            write_json(out / 'stockfish-lifecycle-failed-stage.json', lifecycle)
+        except BaseException as closing:
+            lifecycle_error = repr(closing)
+        write_json(out / 'failure.json', {'error': repr(exc), 'completed_ordinals': sorted(completed), 'predetermined_ordinals': list(range(192)), 'elapsed_seconds': time.monotonic() - started, 'partial_not_qualified': True})
+        if lifecycle_error is not None:
+            write_json(out / 'lifecycle-error.json', {'error': lifecycle_error, 'outer_owner_closure_still_required': True})
+        freeze_tree(out)
+        raise
+    finally:
+        try:
+            if pool is not None:
+                pool.close()
+        finally:
+            signal.alarm(0)
+            if verifier is not None:
+                verifier.close()
+            if handle is not None:
+                handle.remove()
+            evaluator = model = None
+            torch.cuda.empty_cache()
+
+
+def main():
+    started = time.monotonic()
+    ap = argparse.ArgumentParser()
+    mode = ap.add_mutually_exclusive_group(required=True)
+    mode.add_argument('--check', action='store_true')
+    mode.add_argument('--execute', action='store_true')
+    ap.add_argument('--manifest-sha256', required=True)
+    ap.add_argument('--report')
+    args = ap.parse_args()
+    protocol = json.loads((HERE / 'protocol.json').read_text())
+    require(protocol['structural_inputs_bound'] is True and protocol['source_inputs_bound'] is True,
+            'E4 prospective roster/producer-source bindings UNBOUND')
+    if args.execute:
+        require(protocol['cohort_inputs_bound'] is True, 'E4 research admission UNBOUND')
+    require(digest(HERE / 'manifest.json') == args.manifest_sha256, 'preparation manifest identity mismatch')
+    manifest = json.loads((HERE / 'manifest.json').read_text())
+    protocol = json.loads((HERE / 'protocol.json').read_text())
+    validate_protocol(protocol)
+    native = source_guard(manifest, protocol, for_execute=args.execute)
+    cfg, sf_args, profile = build_configs(protocol)
+    require(hashlib.sha256(canonical(profile)).hexdigest() == manifest['resolved_profile_sha256'], 'realized production builder profile changed')
+    if args.check:
+        import torch
+        require(not torch.cuda.is_initialized(), 'check initialized CUDA')
+        require(not Path(protocol['output_root']).exists(), 'runtime root already exists')
+        report = {'status': 'PASS_SOURCE_CONFIG_AND_FULL_HISTORY_METADATA_ONLY', 'source_revision': protocol['source_revision'], 'profile': profile, 'cuda_initialized': False, 'models_created': False, 'engines_created': False, 'tablebase_handles_opened': False, 'runtime_root_created': False, 'strict_TB_or_SF_runtime_qualification': False, 'WorkerSession_run_or_Tune_adopted': False}
+        if args.report:
+            write_json(args.report, report)
+        print(report['status'])
+        return 0
+    return execute(manifest, protocol, cfg, sf_args, profile, native, started)
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

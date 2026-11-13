@@ -1,0 +1,210 @@
+"""UNRUN inert CPU controls for observer bodies; no project module/engine/model import."""
+from __future__ import annotations
+
+from concurrent.futures import Future
+from dataclasses import dataclass
+import importlib.util
+import json
+import os
+from pathlib import Path
+import signal
+import struct
+import sys
+import tempfile
+from types import SimpleNamespace
+
+HERE=Path(__file__).resolve().parent
+
+
+def require(ok,why):
+    if not ok:raise AssertionError(why)
+
+
+class Executor:
+    def __init__(self):
+        self._shutdown=False;self._threads=set();self.original_futures=[];self.calls=[]
+    def submit(self,fn,*args,**kwargs):
+        self.calls.append((fn,args,kwargs));future=Future();self.original_futures.append(future)
+        try:future.set_result(fn(*args,**kwargs))
+        except BaseException as error:future.set_exception(error)
+        return future
+
+
+class Engine:
+    def __init__(self,path,**kwargs):
+        self.path=path;self.proc=SimpleNamespace(pid=os.getpid());self.nodes=5000;self.multipv=8
+        self.hash_mb=16;self.threads=1;self.syzygy_path='fixed:pair';self.syzygy_50_move_rule=True;self.syzygy_probe_limit=6
+        self.sent=[];self.lines=[];self.result=object();self.failure=None
+        self._send('uci');self._send('setoption name MultiPV value 8')
+    def _send(self,command):
+        if '\n' in command or '\r' in command:raise ValueError('original command newline refusal')
+        self.sent.append((command+'\n').encode());return 'original-send-return'
+    def _readline_with_deadline(self,deadline):
+        return self.lines.pop(0)
+    def search(self,fen,**kwargs):
+        self._send('position fen '+kwargs['root_fen']+' moves '+' '.join(kwargs['root_moves']))
+        self._send('go nodes '+str(kwargs['nodes']))
+        self.lines=['info depth 9 nodes 5001 multipv 1 score cp 12 lowerbound pv e2e4 e7e5 g1f3\n','bestmove e2e4 ponder e7e5\n']
+        first=self._readline_with_deadline(1.0)
+        require(' lowerbound pv e2e4 e7e5 g1f3' in first,'source line intact')
+        self._readline_with_deadline(1.0)
+        if self.failure is not None:raise self.failure
+        return self.result
+
+
+class Pool:
+    def __init__(self):
+        self._closing=False;self._exec=Executor();self._worker_state=SimpleNamespace(engine=self._new_engine())
+    def _new_engine(self):return Engine('inert-engine')
+    def _search(self,fen,nodes,syzygy_path,fresh,searchmoves=None,root_fen=None,root_moves=None):
+        return self._worker_state.engine.search(fen,nodes=nodes,syzygy_path=syzygy_path,fresh=fresh,
+            searchmoves=searchmoves,root_fen=root_fen,root_moves=root_moves)
+    def submit(self,fen,*,nodes=None,syzygy_path=None,fresh=False,searchmoves=None,root_fen=None,root_moves=None):
+        return self._exec.submit(self._search,fen,nodes,syzygy_path,fresh,searchmoves,root_fen,tuple(root_moves))
+    def close(self):self._closing=True;self._exec._shutdown=True
+
+
+@dataclass
+class Pending:
+    future:object
+    record:object
+    turn:bool
+    legal_indices:object
+    query_fen:str=''
+    slot:int=-1
+    root_fen:str|None=None
+    root_moves:tuple|None=None
+
+
+@dataclass
+class Start:
+    start_ordinal:int
+    slot:int=0
+    root_fen:str='fixed-root'
+    opening_moves:tuple=('a2a3',)
+
+
+class Numeric:
+    dtype=SimpleNamespace(str='<f4',hasobject=False)
+    shape=(3,)
+    nbytes=12
+    def tobytes(self,order='C'):require(order=='C','C bytes');return struct.pack('<fff',.4,.3,.3)
+
+
+def record():
+    result=SimpleNamespace(move_offset=0,ply_index=16,pos_hash=123,pov_color=True,
+        has_policy=True,is_sf_refute_opp=False,sf_wdl=Numeric(),sf_wdl_original=None,
+        sf_label_meta=None,sf_multipv_raw=None,sf_move_index=12,sf_played_move_index=None,
+        sf_played_rank=None,sf_played_regret=None)
+    return result
+
+
+def fixtures():
+    def build(state,index,records,*args,**kwargs):
+        require(state.flushed,'observer snapshot seam after existing fake flush')
+        state.core_build_calls+=1;return state.return_value
+    finalize=SimpleNamespace(_build_replay_samples=build)
+    def finish(state,index,*args,**kwargs):
+        state.core_finalize_calls+=1
+        if state.censored:return state.return_value
+        state.flushed=True
+        return finalize._build_replay_samples(state,index,state.samples_per_game[index])
+    finalize.finalize_game=finish
+    def escalation(state,pending,result):
+        if state.escalate:
+            pending.future=state.pool.submit('fixed-fen',nodes=50000,syzygy_path='fixed:pair',fresh=True,
+                root_fen='fixed-root',root_moves=('a2a3','a7a6'))
+            return True
+        return False
+    return {'uci':SimpleNamespace(StockfishUCI=Engine),'pool':SimpleNamespace(StockfishPool=Pool),
+        'turn':SimpleNamespace(_PendingSfLabel=Pending,_maybe_submit_label_escalation=escalation),
+        'finalize':finalize,'manager':SimpleNamespace(finalize_game=finish)}
+
+
+def exercise(api,path,*,censored=False,small_cap=False,io_failure=False,query_failure=False,leave_open=False,escalate=False,replacement=False):
+    modules=fixtures();observer=api.PassiveSFObserver(output=path,collection_uuid='fake-fixed-uuid',
+        source_checkout=HERE,source_sha256={},byte_cap=65536 if small_cap else 1024**2)
+    # Pure fixture entry exercises the actual installer/context exit, with no
+    # attempt to claim actual R7 imports or source/native runtime qualification.
+    observer.sink.open();observer.entered=True;observer._install(modules)
+    original_finalize=modules['manager'].finalize_game.__wrapped__
+    outcome=None;error=None
+    try:
+        pool=Pool();r=record();state=SimpleNamespace(samples_per_game=[[r]],move_idx_history=[[12]],
+            flushed=False,core_build_calls=0,core_finalize_calls=0,censored=censored,
+            return_value=object(),pool=pool,escalate=False,game=SimpleNamespace(sf_wdl_use_cp_logistic=True,
+                sf_wdl_cp_slope=.006,sf_wdl_cp_draw_width=120.,sf_policy_score_mode='wdl',
+                sf_policy_temp=.25,sf_policy_cp_temp=16.,sf_policy_label_smooth=.05))
+        if io_failure:
+            def fail(*_a,**_k):raise OSError('inert simulated archive error')
+            observer.sink.emit=fail
+        if query_failure:pool._worker_state.engine.failure=ValueError('original engine failure')
+        future=pool.submit('fixed-fen',nodes=5000,syzygy_path='fixed:pair',root_fen='fixed-root',root_moves=('a2a3',))
+        require(future is pool._exec.original_futures[-1],'SAME original Future')
+        pending=Pending(future,r,False,(),query_fen='fixed-fen',slot=0,root_fen='fixed-root',root_moves=('a2a3',))
+        require(pending.record is r,'SAME original record')
+        if query_failure:
+            try:future.result()
+            except ValueError as caught:require(caught is pool._worker_state.engine.failure,'SAME original exception object')
+            else:raise AssertionError('original exception lost')
+        else:require(future.result() is pool._worker_state.engine.result,'SAME result object')
+        if escalate:
+            state.escalate=True
+            require(modules['turn']._maybe_submit_label_escalation(state,pending,pool._worker_state.engine.result) is True,'original escalation result')
+            require(pending.future is pool._exec.original_futures[-1] and pending.future.result() is pool._worker_state.engine.result,'same escalated Future/result')
+        if replacement:
+            observer.tls.query='prior-failing-query'
+            pool._worker_state.engine=pool._new_engine()
+            observer.tls.query=None
+        if small_cap:
+            for _ in range(100):observer._emit('large_inert_event',payload='x'*2048)
+        outcome=modules['manager'].finalize_game(state,0,[],None,game_start=Start(0))
+        require(outcome is state.return_value and state.core_finalize_calls==1,'original core finalize once/return')
+        require(state.core_build_calls==(0 if censored else 1),'core build count unchanged')
+        require(not observer.records,'completed record references retired')
+        if not leave_open:pool.close()
+    except BaseException as caught:
+        error=caught;raise
+    finally:
+        observer.__exit__(type(error) if error else None,error,None)
+    require(modules['manager'].finalize_game is original_finalize,'manager alias restored')
+    require(Engine.__init__.__name__=='__init__' and not hasattr(Engine.__init__,'__wrapped__'),'engine methods restored')
+    readout=json.loads((path/'runtime-observation.json').read_text())
+    events=[json.loads(line) for line in (path/'events.jsonl').read_text().splitlines()]
+    if not (small_cap or io_failure):
+        lines=[e['line'] for e in events if e['kind']=='uci_in_normalized_line']
+        require(any('lowerbound pv e2e4 e7e5 g1f3\n' in line for line in lines),'full PV/bounds retained')
+        raw=[e for e in events if e['kind']=='raw_sf_record'];require(len(raw)==1,'all raw records snapshot')
+        require(raw[0]['snapshot_scope']==('UNFLUSHED_CORE_EARLY_RETURN' if censored else 'POST_EXISTING_FLUSH_PRE_THIN'),'honest snapshot scope')
+        joined=next(e for e in events if e['kind']=='pending_query_record_join')
+        require(joined['record_id']==raw[0]['record_id'] and raw[0]['physical_game_id']=='fake-fixed-uuid:0','exact record/physical join')
+        require(readout['counters']['query']==(2 if escalate else 1),'no extra query')
+        if escalate:
+            joins=[e for e in events if e['kind']=='pending_query_record_join']
+            require(len(joins)==2 and joins[1]['parent_query_id']==joins[0]['query_id'] and joins[1]['record_id']==joins[0]['record_id'],'exact escalation lineage')
+        if replacement:
+            lifecycle=[e for e in events if e['kind']=='uci_out_attempt' and e['engine_lifecycle']]
+            require(lifecycle and all(e['query_id'] is None for e in lifecycle),'replacement handshake not old query')
+    if small_cap or io_failure or leave_open:require(readout['status']=='FUTURE_TEACHER_INFORMATION_INCOMPLETE','no fake completeness')
+    else:require(readout['status']=='PASS_OBSERVATION_ARCHIVE_ONLY','complete observed archive')
+    require(readout['teacher_information_complete'] is False,'not universal teacher coverage')
+    return {'status':'PASS','events':len(events),'archive_status':readout['status']}
+
+
+def main():
+    require(os.environ.get('CUDA_VISIBLE_DEVICES')=='','hidden CUDA CPU controls')
+    signal.signal(signal.SIGALRM,lambda *_:(_ for _ in ()).throw(TimeoutError('100s control ceiling')));signal.alarm(100)
+    spec=importlib.util.spec_from_file_location('e4_observation_source',HERE/'observe_sf.py')
+    api=importlib.util.module_from_spec(spec);spec.loader.exec_module(api)
+    out=Path(sys.argv[1]);out.mkdir(exist_ok=False)
+    results={}
+    for name,kw in [('normal',{}),('censored',{'censored':True}),('diskcap',{'small_cap':True}),
+                    ('iofailure',{'io_failure':True}),('queryfailure',{'query_failure':True}),
+                    ('unclosedowner',{'leave_open':True}),('escalation',{'escalate':True}),('replacement',{'replacement':True})]:
+        results[name]=exercise(api,out/name,**kw)
+    (out/'readout.json').write_text(json.dumps({'status':'PASS_INERT_OBSERVER_CONTROLS_ONLY','cases':results,
+        'project_modules_models_engines_TB_arrays_jobs_created':False,'R7_constructor_interface_or_actual_timing_qualified':False},indent=2)+'\n')
+    signal.alarm(0)
+
+
+if __name__=='__main__':main()

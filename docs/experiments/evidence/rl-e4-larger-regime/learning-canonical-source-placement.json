@@ -1,0 +1,31 @@
+{
+  "status": "SOURCE_BYTES_ONLY_METADATA_NOT_INSTALLED",
+  "placements": [
+    {
+      "directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-final-v1",
+      "file": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-final-v1/bind_draw_plan.py",
+        "sha256": "4d07f1c83e3d173be3fa8500eaf1f315274722c2f12e78d3552bc863d23561d2"
+      },
+      "byteexact_predecessor": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/draw/bind_draw_plan.py",
+        "sha256": "4d07f1c83e3d173be3fa8500eaf1f315274722c2f12e78d3552bc863d23561d2"
+      },
+      "actual_metadata_installed": false
+    },
+    {
+      "directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-paired129-readout-final-v1",
+      "file": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-paired129-readout-final-v1/audit_paired129.py",
+        "sha256": "00333589bc09630debd497bb97a53de79f6a0c5f887cc99abfd2182f91c15d49"
+      },
+      "byteexact_predecessor": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/checkpoint/audit_paired129.py",
+        "sha256": "00333589bc09630debd497bb97a53de79f6a0c5f887cc99abfd2182f91c15d49"
+      },
+      "actual_metadata_installed": false
+    }
+  ],
+  "TRAIN_source_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/train",
+  "offline_sources": "Existingflat e4-offline64-{roots,score,readout}-final-v2, correctedstrictroots5c60108f."
+}

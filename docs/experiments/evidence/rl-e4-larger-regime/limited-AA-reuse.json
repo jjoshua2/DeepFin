@@ -1,0 +1,43 @@
+{
+  "status": "ACCEPT_LIMITED_PAIRED_REUSE_FOR_E4_129",
+  "utc": "2026-11-13T08:46:21.014175+00:00",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "AA_actual_readout_sha256": "fc114dcb839e834f8c194368f3429db7b9057484ebdea97fd5e677116cd2c9d9",
+  "historically_executed_source_revision": "6d7f2e6d1b1fc80aa9df2ee5b922eaa3fabf0814",
+  "source_equivalence_sha256": "3da383ff9d7addf3c3bcc97bfc9bb346ada5d86682bba9a4f4c35ef7c89c966c",
+  "source_equivalence": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/source-proof.json",
+    "sha256": "3da383ff9d7addf3c3bcc97bfc9bb346ada5d86682bba9a4f4c35ef7c89c966c"
+  },
+  "historical_AA_equivalence": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-train-paired-preparation-v5/AA-source-equivalence.json",
+    "sha256": "74f8811fc74e2c538d1ecd86022474031aa1b7fc5360d7b73324c3864f3115ab"
+  },
+  "observer_sha256": "ed38901e300ae0d8b4c72e040373f2bcfc0775470dcdf38e719c03442cee8afe",
+  "TRAIN_loader_sha256": "a95420782bf03b47cc4028a65eb8cac73b3d548f1e3eac725bb116721bc9e95f",
+  "proof_dispatch_controls_qualified": true,
+  "actual_focused_controls": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-limited-paired-reuse-root-acceptance-v1/controls-readout.json",
+    "sha256": "e251f642e36964b00307a19a5f4e64563c04db23546a9a83a16c9e43f1285f86"
+  },
+  "actual_descriptor_root_acceptance": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/readout.json",
+    "sha256": "34cd17f72d78c0cafc8160640bb216a77c3a7c6791bed6a41c37d8b966ddc737"
+  },
+  "actual_descriptor_readout": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-results-v1/readout.json",
+    "sha256": "645bf79f3de25131e9c449280441e52874ae97f159ebd35adf04d6ed6ddb6502"
+  },
+  "trainer_kwargs_without_log_dir_sha256": "660c9ff5ec28b14d45563bee842376b424fc94a509b313c6bd7787fefbc5405e",
+  "math_source_files_rechecked_exact": 21,
+  "selected8_exact": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/train/selected-parameters.json",
+    "sha256": "fbb738aaf19b30520ef92a55c93a77eed9971c3904abbb2e18b2479f2a4e79ff"
+  },
+  "new_GPU_AA_or_research_execution": false,
+  "limits": [
+    "Historical four-update AA relative observation at R6 plus exact consumed original model/Trainer/optimizer source, source-reviewed E4 adapters and focused actualsynthetic128/129 boundaries; NOT a new R7AA,129-update bitwise equivalence, hostmirror/optimizer runtime test, seed replication or playing gain.",
+    "Native5currentimports and all820actual encodings/mirrors are accepted separately; no universal numericalbinary parity or model/engine runtime claim.",
+    "Fresh192cohort allintegrity/128TRAINproofs, fixedcommonphysicaldraws, finalscience/mainpublication and finiteactualstageadmission remain mandatory. OldHOLD closed, no old corpus learning or adoption."
+  ]
+}

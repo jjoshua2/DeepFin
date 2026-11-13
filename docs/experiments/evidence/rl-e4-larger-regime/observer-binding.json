@@ -1,0 +1,33 @@
+{
+  "actual_core_manifest_SHA_is_CLI_only": "Do not add actual manifest/science SHA to this binding; fixed binding/review ready BEFORE science, runtime CLI core manifest SHA is sole late command token.",
+  "collection_uuid": "cd47b230-f32f-4256-a51e-4869f5708bb6",
+  "collector": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-package-v1/collect192.py",
+    "sha256": "b2fe1f8107ae025ac4151525660da8c6a6b402ed8baa0d770143d2841bd274fd"
+  },
+  "enabled": true,
+  "observer": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-sf-raw-observation-implementation-v1/observe_sf.py",
+    "sha256": "dda3ef2140f042d529960ab226bf5cf01e2352fbb4568f27d3b61f016cea4da6"
+  },
+  "observer_inert_controls_actual_independent_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-sf-observer-inert-controls-actual-independent-review-v1/review.json",
+    "sha256": "069f862d19d3ce8ef8ad478739043d86c2c04812cfed66d44db0142bd4d22f2f"
+  },
+  "observer_output": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-sf-raw-observation-results-v1-cd47b230",
+  "observer_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-sf-raw-observation-independent-source-review-v1/review.json",
+    "sha256": "fb247e20960df1121766e012a05d0a43b29cc0c0901fe44d3dcaf94814ac51a3"
+  },
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "source_sha256": {
+    "chess_anti_engine/selfplay/finalize.py": "e8f15f8d6fc92c5efb7eb90988426b3ce4c3aac21c6ca80de4aca6fb498a9c2d",
+    "chess_anti_engine/selfplay/manager.py": "f31841cb5ce9536cfc1f97ce650468a74a8f81a65786eaf9ec9b04ceb6b25787",
+    "chess_anti_engine/selfplay/provenance.py": "55e42004ace3192e58db9705f49add6e96bd3bb1792c3dfbc96e8dffb7768d18",
+    "chess_anti_engine/selfplay/state.py": "5cdc8cabd90dfd809af32d10ec2bd2bd0f62a1d2ed3ad22c8a4e9c3b3cf0cd0d",
+    "chess_anti_engine/selfplay/stockfish_turn.py": "de460e47bb83c434190ca69d8aded9757578fd36d82da2a31be767b5daa213d7",
+    "chess_anti_engine/stockfish/pool.py": "369bd81e53b92db4c5e1d375215b1875eba300822d8e7943b29b2bbcdc72bc1d",
+    "chess_anti_engine/stockfish/uci.py": "5111d0006901f7d758e23f8d87a7abdca8f3dfe3e462621a776123611d9ec66b"
+  },
+  "status": "BOUND_REVIEWED_OPTIONAL_E4_SF_OBSERVATION_DISPATCH"
+}

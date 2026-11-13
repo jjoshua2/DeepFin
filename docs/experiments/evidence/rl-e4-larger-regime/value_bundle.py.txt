@@ -1,0 +1,130 @@
+"""Strict verified-outcome rawF32 archive/math only; no learning admission or runner."""
+from __future__ import annotations
+
+from pathlib import Path
+import json
+import numpy as np
+from verified_outcome import require_verified, RESOLVED_CLASSES
+
+
+def require(ok, message):
+    if not ok:
+        raise ValueError(message)
+
+
+def capture_raw(samples, audit, row_ids, game_cfg, *, proof):
+    """Call before samples_to_arrays. Never infer rawF32 by upcasting storage."""
+    from chess_anti_engine.selfplay.finalize import _result_to_wdl
+    from chess_anti_engine.train.targets import categorical_target_value, hlgauss_target
+    verified = require_verified(proof, audit=audit)
+    require(len(samples) == len(row_ids) == audit.retained_samples == verified['retained_rows'], 'raw row join count differs')
+    require(all(row == verified['physical_game_id'] + ':' + str(i) for i, row in enumerate(row_ids)), 'raw physical row identity')
+    require(not samples or verified['scientific_class'] in RESOLVED_CLASSES, 'unresolved/censored game cannot have replay rows')
+    require(game_cfg.categorical_blend_frac == 0 and game_cfg.categorical_search_blend_frac == 1, 'collector must retain original categorical search1')
+    records = {rec.ply_index: rec for rec in audit.records}
+    resolved = verified['scientific_class'] in RESOLVED_CLASSES
+    n = len(samples)
+    search = np.zeros((n, 3), np.float32)
+    categorical = np.zeros((n, game_cfg.categorical_bins), np.float32)
+    has_search = np.zeros(n, np.uint8)
+    has_cat = np.zeros(n, np.uint8)
+    outcomes = np.zeros(n, np.int8)
+    povs = np.zeros(n, np.uint8)
+    all_control = bool(n)
+    for i, sample in enumerate(samples):
+        require(sample.game_id == audit.game_id and sample.ply_index in records, 'raw sample/record identity differs')
+        record = records[sample.ply_index]
+        require(record.has_policy and not record.is_sf_refute_opp and sample.is_network_turn is True, 'raw value row is not actual neural policy turn')
+        povs[i] = record.pov_color
+        outcomes[i] = sample.wdl_target
+        require(int(outcomes[i]) in (0, 1, 2), 'invalid hard outcome')
+        require(resolved and sample.wdl_target == _result_to_wdl(verified['result'], pov_white=bool(record.pov_color)), 'raw hard outcome not verified resolved POV')
+        swdl, cat = sample.search_wdl, sample.categorical_target
+        if swdl is not None:
+            swdl = np.asarray(swdl)
+            require(swdl.dtype == np.dtype('float32') and swdl.shape == (3,), 'raw search target already quantized/wrong dtype or shape')
+            require(np.isfinite(swdl).all() and (swdl >= 0).all() and abs(float(swdl.sum()) - 1) < 1e-5, 'invalid raw search simplex')
+            search[i], has_search[i] = swdl, 1
+        if cat is not None:
+            cat = np.asarray(cat)
+            require(cat.dtype == np.dtype('float32') and cat.shape == (game_cfg.categorical_bins,), 'raw categorical target already quantized/wrong dtype or shape')
+            require(np.isfinite(cat).all() and (cat >= 0).all() and abs(float(cat.sum()) - 1) < 1e-5, 'invalid raw categorical simplex')
+            categorical[i], has_cat[i] = cat, 1
+        if swdl is None or cat is None:
+            all_control = False
+            continue
+        scalar = 1 if sample.wdl_target == 0 else (0 if sample.wdl_target == 1 else -1)
+        control = hlgauss_target(categorical_target_value(scalar, None, blend_frac=0, search_wdl=swdl, search_blend_frac=1), num_bins=game_cfg.categorical_bins, sigma=game_cfg.hlgauss_sigma)
+        require(control.dtype == cat.dtype and control.tobytes() == cat.tobytes(), 'raw original categorical control does not reconstruct bit-exactly')
+        search[i], categorical[i], has_search[i], has_cat[i] = swdl, cat, 1, 1
+    return {'physical_row_id': np.asarray(row_ids, dtype=np.str_), 'search_wdl_raw': search, 'categorical_raw': categorical, 'has_search_raw': has_search, 'has_categorical_raw': has_cat, 'outcome_wdl': outcomes, 'pov_white': povs}, {'resolved_outcome_qualified': resolved, 'natural_outcome_qualified': verified['scientific_class'] == 'NATURAL', 'strict_tb_outcome_qualified': verified['scientific_class'] == 'STRICT_TB_ADJUDICATED', 'verified_outcome': verified, 'verified_outcome_sha256': proof.proof_sha256, 'all_rows_raw_control_proven': all_control, 'rows': n, 'units': 'signedQ[-1,1]; HLgauss bounds[-1,1]', 'categorical_bins': game_cfg.categorical_bins, 'hlgauss_sigma': game_cfg.hlgauss_sigma}
+
+
+def validate_stored_control(raw, arrays, *, proof, metadata):
+    require_verified(proof, metadata=metadata)
+    n = len(raw['physical_row_id'])
+    require(n == int(arrays['x'].shape[0]), 'raw/storage row count differs')
+    require(np.array_equal(raw['outcome_wdl'], arrays['wdl_target']), 'raw/storage outcome differs')
+    require('search_wdl' in arrays and 'categorical_target' in arrays, 'missing serialized value fields')
+    for key, stored in (('search_wdl_raw', 'search_wdl'), ('categorical_raw', 'categorical_target')):
+        expected = raw[key].astype(np.float16)
+        actual = np.asarray(arrays[stored])
+        require(actual.dtype == expected.dtype and actual.shape == expected.shape and actual.tobytes() == expected.tobytes(),
+                'everyrow serializedF16 control bitmatch failed: ' + stored)
+    require(np.array_equal(raw['has_search_raw'], arrays['has_search_wdl']) and np.array_equal(raw['has_categorical_raw'], arrays['has_categorical']), 'raw/storage availability differs')
+
+
+def categorical_for_arm(raw, *, arm, metadata, proof):
+    """Math only: future TRAIN loader separately needs whole32 admission and a reverified proof."""
+    from chess_anti_engine.train.targets import categorical_target_value, hlgauss_target
+    require(arm in ('FULLA', 'FULLB'), 'unknown E2 arm')
+    require(len(raw['physical_row_id']) > 0, 'empty game cannot train E2')
+    verified = require_verified(proof, metadata=metadata)
+    require(verified['scientific_class'] in RESOLVED_CLASSES and metadata['resolved_outcome_qualified'] and metadata['all_rows_raw_control_proven'], 'censored or raw-unqualified game cannot supply E2 targets')
+    n = len(raw['physical_row_id'])
+    require(raw['outcome_wdl'].shape == raw['pov_white'].shape == (n,) and
+            np.isin(raw['outcome_wdl'], [0, 1, 2]).all() and np.isin(raw['pov_white'], [0, 1]).all(), 'raw outcome/POV shape or enum')
+    require(np.all(raw['has_search_raw'] == 1) and np.all(raw['has_categorical_raw'] == 1), 'E2 missing source target')
+    from chess_anti_engine.selfplay.finalize import _result_to_wdl
+    require(len(raw['physical_row_id']) == verified['retained_rows'] and
+            all(row == verified['physical_game_id'] + ':' + str(i) for i, row in enumerate(raw['physical_row_id'])), 'raw physical rows differ from verified game')
+    require(all(int(label) == _result_to_wdl(verified['result'], pov_white=bool(pov))
+                for label, pov in zip(raw['outcome_wdl'], raw['pov_white'])), 'raw outcome not verified result/POV')
+    if arm == 'FULLA':
+        return raw['categorical_raw'].astype(np.float16)
+    output = np.empty(raw['categorical_raw'].shape, dtype=np.float16)
+    for i, label in enumerate(raw['outcome_wdl']):
+        outcome_q = 1 if label == 0 else (0 if label == 1 else -1)
+        q = categorical_target_value(outcome_q, None, blend_frac=0, search_wdl=raw['search_wdl_raw'][i], search_blend_frac=.8)
+        output[i] = hlgauss_target(q, num_bins=metadata['categorical_bins'], sigma=metadata['hlgauss_sigma']).astype(np.float16)
+    return output
+
+
+def save_raw(path, raw, metadata, *, proof):
+    """Writer leaves file sealing/publication to the qualified game bank path."""
+    require_verified(proof, metadata=metadata)
+    path = Path(path)
+    with path.open('xb') as stream:
+        np.savez_compressed(stream, **raw)
+        stream.flush()
+        __import__('os').fsync(stream.fileno())
+    with path.with_suffix('.json').open('x') as stream:
+        json.dump(metadata, stream, indent=2, allow_nan=False)
+        stream.write('\n')
+        stream.flush()
+        __import__('os').fsync(stream.fileno())
+
+
+def arm_flat_config(base, *, arm, run_uuid):
+    """Coherent strict mirror; only MAIN WDL share changes in Trainer kwargs."""
+    from copy import deepcopy
+    from chess_anti_engine.tune.trial_config import TrialConfig
+    require(arm in ('FULLA', 'FULLB'), 'unknown E2 arm')
+    require(base['sf_wdl_frac'] == 0 and base['search_wdl_frac'] == 1 and base['w_wdl'] == base['w_categorical'] == 1, 'original FULL target map differs')
+    require(base['rebuild_categorical_target'] is False and base['rebuild_sf_targets'] is False, 'original common host rebuild flags differ')
+    cfg = deepcopy(base)
+    cfg['search_wdl_frac'] = 1. if arm == 'FULLA' else .8
+    cfg['rl_startup_contract']['run_uuid'] = run_uuid
+    cfg['rl_startup_contract']['settings']['search_wdl_frac'] = cfg['search_wdl_frac']
+    TrialConfig.from_dict(cfg)
+    return cfg

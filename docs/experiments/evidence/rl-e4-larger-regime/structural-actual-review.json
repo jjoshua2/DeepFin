@@ -1,0 +1,71 @@
+{
+  "accepted_selection_manifest_sha256": "7db17da357fc524d6b1862fc45fab9a3fad2745fd4c5b54d4eec889051825724",
+  "accepted_selection_sha256": "ca5cb33f5ffa22606dd6d7cc8bbf9e0dcd0859f75d5b031fc76cacd6459905ed",
+  "bindings_sha256": "9f4fe93885da1e060e49fb71b20111c868e643824499f0c2fb7ae03a902389f5",
+  "closure": {
+    "all_recorded_births_absent_independently": true,
+    "cpu_seconds": 1.93,
+    "known_births": {
+      "1297437": 28112468
+    },
+    "owner": 1297420,
+    "owner_absent": true,
+    "prior_preflight": "88closed338births snapshot; owner actual resource leases remain root responsibility",
+    "wall_seconds": 3.1726627349853516
+  },
+  "collection_uuid": "cd47b230-f32f-4256-a51e-4869f5708bb6",
+  "findings": [],
+  "games_sha256": "45cf99e121e03999cedd704d6d4a8ea6c855927fe797373ecb7fa752757dab32",
+  "helper_sha256": "2cdd0ce00875a16ecca9663f5ad9137f9fbe71b88c0455a915ad2290317284ed",
+  "known_e2_sha256": "ddb0b57ad7cb561a4e4cc5994a2328f16627dc2cc2f47b28e3969bbb1d5f82e5",
+  "limits": [
+    "No helper execution/project import/native encoding/arrays/models/engines/probes/new games by reviewer. Standard-library JSON/hash/math only.",
+    "Old complete played-history-prefix replay and actual legal board/public-loader/color-loop execution are source-qualified claims of the accepted helper closedPASS; this review independently recomputed all saved rank/split/history identities/book panel digests without replaying native moves.",
+    "Current stored start hashes are reused metadata identities, NOT actual selected820 R7 encoding qualification. Separate actual820 raw175F16+production-file-mirror qualification remains mandatory before generation.",
+    "No collection/learning/playing/strength or final-science admission follows from this structural acceptance."
+  ],
+  "reconciliation": {
+    "all820_candidateIDs_roles16move_histories_sourceIDs_and_canonical_history_hashes_checked": true,
+    "all96_old_provenance_SHA_joins_checked_no_HOLD_arrays": true,
+    "all_output_manifest_SHA_and_immutability": true,
+    "books_byteexact_and_ordered_public_driver_digests_recomputed": {
+      "cohort": {
+        "ordered_public_driver_digest": "9e0c33c73b2325753700dc8126cd1d7d6bb1a184249d2f5a5372321e77e085f5",
+        "sha256": "91713d0205ad89e3997e4b9ced55d8b9b1fe508ca1348584f728e975abaabaf2",
+        "starts_or_pairs": 192
+      },
+      "confirmation": {
+        "ordered_public_driver_digest": "c7311813baadb93d88b8e6cbd3999865c2bdc32e5755d3143c56a7814531e254",
+        "sha256": "c0e7c52496dbb132f292bf06c39a313a389aaf5bb31dc46cae0a542a99598296",
+        "starts_or_pairs": 500
+      },
+      "screen": {
+        "ordered_public_driver_digest": "bc537d1b876fef1f8f5e91e0a721af9f3f0a0b78ed7db4e777558198b66c503f",
+        "sha256": "fc8598f6abebaae9ded8051506e2c2f3fccf44425d3f93397fae92e315696aaf",
+        "starts_or_pairs": 128
+      }
+    },
+    "exact_actual_child_argv_and_finite_owner": true,
+    "first820_acceptance_and_rejection_counts_recomputed": {
+      "known803_or_never_trained53_input_or_history": 2,
+      "retired_start_parent_history_or_EPD": 194
+    },
+    "full4096_weighted_race_math_order_and_old_pool_fields_independently_recomputed": true,
+    "global192_ID_hash_rank128TRAIN64HOLD_independently_recomputed": true,
+    "no_pool_extension_reseed_replacement": true,
+    "old803_stopped53_engineering_plus_E2_all8348_retained_raw_mirror_history_metadata_checked": true,
+    "old_retired756_inherited_parents_history_EPD_raw_mirror_exclusions_checked": true,
+    "roles": {
+      "cohort": 192,
+      "confirmation_pairs": 500,
+      "screen_pairs": 128
+    },
+    "source_review_base_compatibility_binding_joins": true
+  },
+  "root_admission_sha256": "d07f68524fa0d040b62b3bda49873245614b99cfc5e808208335c2dc421f893f",
+  "selected820_sha256": "544237b04888b2a20d5b1237200dab14b27afad05123fe7e048c132e7a6c7a84",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "ACCEPT_COMPLETE_E4_STRUCTURAL_METADATA_SELECTION_ONLY",
+  "terminal_sha256": "3d53b4de29c032233ead4d3370496aca936117ccd727896cf0b825a424485d1b",
+  "utc": "2026-11-13T08:17:08.319439+00:00"
+}
