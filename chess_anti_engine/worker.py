@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 import argparse
 from collections import deque
 import dataclasses
@@ -20,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
 from contextlib import nullcontext, suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar, overload
+from typing import TYPE_CHECKING, Any, NamedTuple, TypedDict, TypeVar, overload
 from collections.abc import Callable
 
 import chess
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
     import requests
 
 from chess_anti_engine.heap_census import maybe_start_heap_census
+from chess_anti_engine.utils.syzygy_config import refuse_strict_worker_session
 from chess_anti_engine.broker_hang import (
     WORKER_HANG_ABORT_EXIT_CODE,
     BrokerHangWatchdog,
@@ -897,6 +899,11 @@ def main() -> None:
     session.run()
 
 
+class _StrictSfOptions(TypedDict, total=False):
+    syzygy_50_move_rule: bool
+    syzygy_probe_limit: int
+
+
 class WorkerSession:
     """Manages a worker's lifecycle: poll manifest -> sync assets -> play -> upload."""
 
@@ -1047,7 +1054,7 @@ class WorkerSession:
                 "temperature_endgame",
                 "selfplay_temperature", "selfplay_temperature_decay_start_move",
                 "selfplay_temperature_decay_moves", "selfplay_temperature_endgame",
-                "syzygy_path", "stockfish_syzygy_path", "syzygy_rescore_policy",
+                "syzygy_outcome_mode", "syzygy_path", "stockfish_syzygy_path", "syzygy_rescore_policy",
                 "syzygy_adjudicate", "syzygy_adjudicate_fraction", "syzygy_in_search",
             ]
             overridden = [k for k in _server_managed_keys if getattr(args, k, None) is not None]
@@ -1070,6 +1077,7 @@ class WorkerSession:
         self.sf_multipv_active: int | None = None
         self.sf_hash_mb_active: int | None = None
         self.sf_syzygy_path_active: str | None = None
+        self.sf_syzygy_strict_active = False
   # Resolved binary path the live engine was built with; re-init on change so a
   # hot-swapped Stockfish (new SHA -> new cached path) is actually loaded.
         self.sf_path_active: str | None = None
@@ -1383,6 +1391,7 @@ class WorkerSession:
                 manifest = self._poll_manifest()
                 if manifest is None:
                     continue
+                refuse_strict_worker_session(manifest.get("recommended_worker") or {})
                 self._sync_assets(manifest)
   # Ingest a won dole HERE — after assets sync (FEN path current), before the
   # model-not-ready retry and the arena branch below — so a session-start dole
@@ -3761,6 +3770,7 @@ class WorkerSession:
         sf_multipv: int,
         sf_hash_mb: int,
         syzygy_path: str | None = None,
+        strict_tb: bool = False,
     ) -> str:
         """Download SF and reinitialize when its process-level options change.
 
@@ -3798,13 +3808,17 @@ class WorkerSession:
         sz_path = syzygy_path or None
         multipv_changed = self.sf_multipv_active is None or int(self.sf_multipv_active) != int(sf_multipv)
         hash_changed = self.sf_hash_mb_active is None or int(self.sf_hash_mb_active) != int(sf_hash_mb)
-        syzygy_changed = self.sf_syzygy_path_active != sz_path
+        syzygy_changed = (self.sf_syzygy_path_active != sz_path
+                          or getattr(self, "sf_syzygy_strict_active", False) != strict_tb)
         binary_changed = self.sf_path_active != stockfish_path
         if self.sf is None or multipv_changed or hash_changed or syzygy_changed or binary_changed:
             if self.sf is not None:
                 with suppress(Exception):
                     self.sf.close()
 
+            strict_sf_options: _StrictSfOptions = (
+                {"syzygy_50_move_rule": True, "syzygy_probe_limit": 6} if strict_tb else {}
+            )
             if sf_workers_use_pool(self.args.sf_workers):
                 self.sf = StockfishPool(
                     path=str(stockfish_path),
@@ -3813,6 +3827,7 @@ class WorkerSession:
                     multipv=int(sf_multipv),
                     hash_mb=int(sf_hash_mb),
                     syzygy_path=sz_path,
+                    **strict_sf_options,
                     nice=int(self.args.sf_nice),
                 )
             else:
@@ -3822,11 +3837,13 @@ class WorkerSession:
                     multipv=int(sf_multipv),
                     hash_mb=int(sf_hash_mb),
                     syzygy_path=sz_path,
+                    **strict_sf_options,
                     nice=int(self.args.sf_nice),
                 )
             self.sf_multipv_active = int(sf_multipv)
             self.sf_hash_mb_active = int(sf_hash_mb)
             self.sf_syzygy_path_active = sz_path
+            self.sf_syzygy_strict_active = strict_tb
             self.sf_path_active = stockfish_path
         else:
   # update nodes dynamically (same live-update used by _apply_live_reco)
@@ -4039,7 +4056,7 @@ class WorkerSession:
         # Syzygy knobs affect adjudication + in-search overrides — without a
         # restart, workers keep producing shards under stale TB settings until
         # an unrelated key changes. Flagged by Codex adversarial review.
-        "syzygy_path", "stockfish_syzygy_path", "syzygy_rescore_policy",
+        "syzygy_outcome_mode", "syzygy_path", "stockfish_syzygy_path", "syzygy_rescore_policy",
         "syzygy_adjudicate", "syzygy_adjudicate_fraction", "syzygy_in_search",
         "policy_encoding", "input_extra_features",
         "use_dynamic_relations", "record_relations",
@@ -4617,6 +4634,7 @@ class WorkerSession:
   # mix two target sharpnesses inside one replay window.
                 soft_policy_temp=float(reco.get("soft_policy_temp", 2.0)),
                 timeout_adjudication_threshold=float(reco.get("timeout_adjudication_threshold", 0.90)),
+                syzygy_outcome_mode=str(reco.get("syzygy_outcome_mode", "theoretical_wdl")),
                 syzygy_path=syzygy_path,
                 stockfish_syzygy_path=stockfish_syzygy_path,
                 syzygy_rescore_policy=bool(reco.get("syzygy_rescore_policy", False)),
@@ -5108,6 +5126,7 @@ class WorkerSession:
 
     def _run_selfplay(self, manifest: dict) -> None:
         """Continuous selfplay — runs until stop signal (task change/pause/shutdown)."""
+        refuse_strict_worker_session(manifest.get("recommended_worker") or {})
   # Do not start a session we have already been told to shut down. `run()`'s
   # loop-head check cannot cover the gap between itself and here — a SIGTERM
   # landing while the worker is between sessions (blocked in `_poll_manifest`'s
@@ -5203,6 +5222,7 @@ class WorkerSession:
         warm_opening_book_cache(cfgs["opening"])
         self._sync_stockfish(
             manifest, sf_nodes, sf_multipv, sf_hash_mb, syzygy_path=syzygy_path,
+            strict_tb=cfgs["game"].syzygy_outcome_mode == "rule50_match_v1",
         )
         assert self.sf is not None  # _sync_stockfish always assigns
 
