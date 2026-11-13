@@ -27,6 +27,7 @@ from chess_anti_engine.selfplay.finalize import (
     _sf_terminal_result,
 )
 from chess_anti_engine.selfplay.state import _NetRecord, _StatsAcc
+from chess_anti_engine.selfplay.config import GameConfig
 
 
 def _sf_res(wdl: list[float]) -> Mock:
@@ -455,6 +456,57 @@ def test_fast_ply_value_rows_bypass_diff_focus_keep_prob() -> None:
     )
     assert len(samples) == 1
     assert samples[0].has_policy is False  # policy row dropped, value row kept
+
+
+@pytest.mark.parametrize(("sample_weight", "keep_prob"), [(0.0, 1.0), (1.0, 0.0), (0.0, 0.0)])
+@pytest.mark.parametrize("retention", ["legacy", "all_eligible"])
+def test_declared_policy_retention_controls_both_filters(sample_weight, keep_prob, retention) -> None:
+    state = _fastply_state(record_fast_ply_value=False)
+    state.game.policy_row_retention = GameConfig(policy_row_retention=retention).policy_row_retention
+    records = [_fastply_record(ply_index=0, has_policy=True, keep_prob=keep_prob)]
+    records[0].sample_weight = sample_weight
+    before = state.rng.bit_generator.state
+    samples = _build_replay_samples(
+        state, 0, records, result="1-0", tb_policy_overrides={},
+        vol_targets=[None], sf_vol_targets=[None], total_plies_played=1,
+        ply_to_index={0: 0},
+    )
+    assert len(samples) == (1 if retention == "all_eligible" else 0)
+    assert records[0].sample_weight == sample_weight
+    assert records[0].keep_prob == keep_prob
+    if retention == "all_eligible":
+        assert state.rng.bit_generator.state == before
+        assert samples[0].wdl_target == 0  # white's genuine win
+
+
+@pytest.mark.parametrize("keep_fast", [False, True])
+def test_all_eligible_retention_preserves_fast_eligibility_and_tb_override(keep_fast) -> None:
+    state = _fastply_state(record_fast_ply_value=keep_fast)
+    state.game.policy_row_retention = "all_eligible"
+    records = [
+        _fastply_record(ply_index=0, has_policy=True, keep_prob=0.0),
+        _fastply_record(ply_index=1, has_policy=False, keep_prob=0.0),
+    ]
+    records[0].sample_weight = 0.0
+    override = np.zeros(POLICY_SIZE, dtype=np.float32)
+    override[5] = 1.0
+    samples = _build_replay_samples(
+        state, 0, records, result="0-1", tb_policy_overrides={0: override},
+        vol_targets=[None, None], sf_vol_targets=[None, None], total_plies_played=2,
+        ply_to_index={0: 0, 1: 1},
+    )
+    assert len(samples) == (2 if keep_fast else 1)
+    np.testing.assert_array_equal(samples[0].policy_target, override)
+    assert samples[0].wdl_target == 2
+    if keep_fast:
+        assert not samples[1].has_policy
+        assert samples[1].policy_soft_target is None
+
+
+def test_policy_retention_defaults_legacy_and_refuses_unknown_mode() -> None:
+    assert GameConfig().policy_row_retention == "legacy"
+    with pytest.raises(ValueError, match="policy_row_retention"):
+        GameConfig(policy_row_retention="uniform")
 
 
 def test_fast_ply_value_rows_get_neutral_priority() -> None:

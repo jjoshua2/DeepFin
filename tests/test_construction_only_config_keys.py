@@ -173,6 +173,7 @@ _STARTUP_ONLY_READER_FILES: dict[str, set[str]] = {
     # split a readout window across two different targets with nothing in the
     # metrics able to say where the split fell.
     "policy_target_temp": {"chess_anti_engine/train/trainer.py"},
+    "grad_clip_mode": {"chess_anti_engine/train/trainer.py"},
     # `_resolve_pause_marker_paths`, which the startup block calls once.
     "pause_file": {"chess_anti_engine/tune/trainable_config_ops.py"},
     # SF-policy-floor SHAPE. TWO readers, and only one of them is a consumer:
