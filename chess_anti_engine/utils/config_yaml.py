@@ -672,6 +672,7 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     _check_boolean_run_values(flat)
     _check_pb2_bounds(flat)
     _check_exploit_replay_share_fraction(flat)
+    _check_pid_node_bounds(flat)
     validate_fresh_rl_config(flat)
     validate_sequential_selfplay_config(flat)
     validate_selfplay_syzygy(flat)
@@ -886,6 +887,44 @@ def _check_exploit_replay_share_fraction(flat: dict[str, Any]) -> None:
         raise ValueError(
             f"YAML {key} must be a finite number in [0, 1], got {value!r}. "
             f"Out-of-range values used to ingest the WHOLE donor shard."
+        )
+
+
+# The PID's node floor/ceiling, with the default `pid_from_config` realizes
+# when the key is absent (the inversion check must see the realized pair, not
+# only the keys the yaml happens to contain).
+_PID_NODE_BOUND_DEFAULTS: tuple[tuple[str, int], ...] = (
+    ("sf_pid_min_nodes", 100),
+    ("sf_pid_max_nodes", 50000),
+)
+
+
+def _check_pid_node_bounds(flat: dict[str, Any]) -> None:
+    """Refuse node bounds the PID would truncate, zero, or invert.
+
+    Both keys are live (``DifficultyPID.refresh_live_params``), and the PID used
+    to read them with a bare ``int()``: ``1.5`` silently became 1 and ``0`` was
+    accepted. Rejecting here makes a bad live edit a whole-reload rejection
+    (the old config stays in effect) and a bad launch config fatal, instead of
+    a value applied raw inside the iteration loop.
+    """
+    from chess_anti_engine.stockfish.pid import positive_node_count
+
+    realized: dict[str, int] = {}
+    for key, default in _PID_NODE_BOUND_DEFAULTS:
+        if key not in flat:
+            realized[key] = default
+            continue
+        n = positive_node_count(flat[key])
+        if n is None:
+            raise ValueError(
+                f"YAML '{key}' must be a positive integer node count, got {flat[key]!r}"
+            )
+        realized[key] = n
+    lo, hi = realized["sf_pid_min_nodes"], realized["sf_pid_max_nodes"]
+    if lo > hi:
+        raise ValueError(
+            f"YAML sf_pid_min_nodes ({lo}) must not exceed sf_pid_max_nodes ({hi})"
         )
 
 

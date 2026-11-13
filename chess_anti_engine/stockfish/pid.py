@@ -1,12 +1,43 @@
 from __future__ import annotations
 
+import logging
 import math
 from collections import deque
 from dataclasses import dataclass, field
 
+_LOG = logging.getLogger(__name__)
+
 
 def _clamp(val: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, val))
+
+
+def positive_node_count(value: object) -> int | None:
+    """``value`` as a node budget, or None when it is not one.
+
+    A node budget is a positive integer. Integral floats (``50000.0``) and
+    integer strings (``"50000"``) are accepted because ``int()`` has always
+    accepted them here; what is refused is everything ``int()`` would silently
+    TRUNCATE (``1.5`` -> 1), zero and negatives (``0`` is not a budget), bools,
+    and non-finite values. Shared by the yaml loader's range check and by the
+    PID's live/restore paths so both apply one rule.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        n = value
+    elif isinstance(value, float):
+        if not math.isfinite(value) or not value.is_integer():
+            return None
+        n = int(value)
+    elif isinstance(value, str):
+        try:
+            n = int(value.strip())
+        except ValueError:
+            return None
+    else:
+        return None
+    return n if n >= 1 else None
 
 
 # Floor on per-observation SE to prevent saturated (all-win/all-loss/all-draw)
@@ -652,27 +683,34 @@ class DifficultyPID:
         # re-clamping every iter would rewrite the nodes lever's fractional
         # accumulator through the ceil-based `nodes` property and defeat the
         # sub-integer float accumulation the nodes PID relies on.
-        nodes_bounds_changed = False
-        if "sf_pid_min_nodes" in config:
-            new_min = int(config["sf_pid_min_nodes"])
-            if new_min != self.min_nodes:
-                self.min_nodes = new_min
-                self.nodes_lever.min_value = float(self.min_nodes)
-                nodes_bounds_changed = True
-        if "sf_pid_max_nodes" in config:
-            new_max = int(config["sf_pid_max_nodes"])
-            if new_max != self.max_nodes:
-                self.max_nodes = new_max
-                self.nodes_lever.max_value = float(self.max_nodes)
-                nodes_bounds_changed = True
-        if nodes_bounds_changed:
+        #
+        # Both bounds are parsed BEFORE either is assigned, so a bad max can no
+        # longer land after the min has already moved. A value that is not a
+        # positive integer keeps BOTH previous bounds and warns: the yaml loader
+        # (`flatten_run_config_defaults`) already rejects such an edit as a
+        # whole, so reaching here means another route (a hand-built config, a
+        # caller that skipped the loader) -- and raising from inside the
+        # iteration loop would kill the trial over one typo.
+        raw_min = config.get("sf_pid_min_nodes", self.min_nodes)
+        raw_max = config.get("sf_pid_max_nodes", self.max_nodes)
+        new_min = positive_node_count(raw_min)
+        new_max = positive_node_count(raw_max)
+        if new_min is None or new_max is None:
+            _LOG.warning(
+                "PID node bounds NOT changed: sf_pid_min_nodes=%r sf_pid_max_nodes=%r "
+                "must both be positive integers; keeping [%d, %d]",
+                raw_min, raw_max, self.min_nodes, self.max_nodes,
+            )
+        elif (new_min, new_max) != (self.min_nodes, self.max_nodes):
             # Normalize inverted live bounds (operator error: floor above ceiling)
             # so the clamp can't strand nodes above max_nodes. Floor yields to the
             # ceiling — the tightest valid range.
-            if self.min_nodes > self.max_nodes:
-                self.min_nodes = self.max_nodes
-                self.nodes_lever.min_value = float(self.min_nodes)
-            self.nodes = int(_clamp(int(self.nodes), self.min_nodes, self.max_nodes))
+            new_min = min(new_min, new_max)
+            if (new_min, new_max) != (self.min_nodes, self.max_nodes):
+                self.min_nodes, self.max_nodes = new_min, new_max
+                self.nodes_lever.min_value = float(new_min)
+                self.nodes_lever.max_value = float(new_max)
+                self.nodes = int(_clamp(int(self.nodes), self.min_nodes, self.max_nodes))
 
         _refresh_lever_from_config(self.regret_lever, config, "sf_pid_regret_")
         _refresh_lever_from_config(self.nodes_lever, config, "sf_pid_nodes_")
@@ -709,7 +747,20 @@ class DifficultyPID:
 
     def load_state_dict(self, state: dict) -> None:
         """Restore controller state. Tolerates legacy ``inverse_history``."""
-        self.nodes = int(_clamp(int(state.get("nodes", self.nodes)), self.min_nodes, self.max_nodes))
+        # Node fields never raise and never half-apply: a value that cannot be
+        # read keeps the just-built one, loudly, and the rest of the state
+        # still restores (a raise here made `_init_pid` drop the WHOLE state).
+        # A finite number is accepted exactly as before -- truncated, then
+        # clamped into the live bounds -- so legacy checkpoints load unchanged.
+        raw_nodes = state.get("nodes", self.nodes)
+        try:
+            restored_nodes = int(raw_nodes)
+        except (TypeError, ValueError, OverflowError):
+            _LOG.warning(
+                "PID restore: nodes=%r is not a number; keeping %d", raw_nodes, self.nodes,
+            )
+        else:
+            self.nodes = int(_clamp(restored_nodes, self.min_nodes, self.max_nodes))
 
         if self._regret_enabled:
             self.wdl_regret = _clamp(
@@ -724,8 +775,19 @@ class DifficultyPID:
         # them from the checkpoint keeps opponent_strength normalized against the
         # construction-time range across resumes (Codex review #2 follow-up).
         # Legacy checkpoints without these keys fall back to the just-built value.
-        self.metric_min_nodes = int(state.get("metric_min_nodes", self.metric_min_nodes))
-        self.metric_max_nodes = int(state.get("metric_max_nodes", self.metric_max_nodes))
+        # The pair is validated together and assigned together.
+        raw_mmin = state.get("metric_min_nodes", self.metric_min_nodes)
+        raw_mmax = state.get("metric_max_nodes", self.metric_max_nodes)
+        metric_min = positive_node_count(raw_mmin)
+        metric_max = positive_node_count(raw_mmax)
+        if metric_min is None or metric_max is None:
+            _LOG.warning(
+                "PID restore: metric_min_nodes=%r metric_max_nodes=%r are not positive "
+                "integers; keeping the construction-time [%d, %d]",
+                raw_mmin, raw_mmax, self.metric_min_nodes, self.metric_max_nodes,
+            )
+        else:
+            self.metric_min_nodes, self.metric_max_nodes = metric_min, metric_max
 
         # `inverse_history` is the pre-2026-04-26-rename key. Drop the
         # fallback once no live training run still has a checkpoint with it
