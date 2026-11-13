@@ -253,7 +253,8 @@ def test_late_final_seal_fault_banks_immutable_external_failure(tmp_path: Path, 
     with pytest.raises(OSError, match='injected late seal'):
         collect.seal_readout(out, {'status': 'COLLECTED_CORE_GENERATION_V1', 'run_uuid': RUN, 'generation': 1})
     marker = collect.failure_marker(out)
-    assert marker.parent == out.parent and marker.parent != out
+    assert marker.parent == out.parent
+    assert marker.parent != out
     assert marker.stat().st_mode & 0o222 == 0
     failure = collect.checked({'path': str(marker), 'sha256': collect.digest(marker)})
     assert failure['phase'] == 'final_output_seal'
