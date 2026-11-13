@@ -11,9 +11,11 @@ from __future__ import annotations
 import hashlib
 import threading
 import time
+from typing import Any
 
 import chess
 import numpy as np
+import pytest
 
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.moves import POLICY_SIZE
@@ -155,3 +157,112 @@ def test_forced_root_on_walker_pool_spends_one_small_chunk() -> None:
         w.close()
     assert result.bestmove_uci == "h1g2"
     assert 0 < result.nodes <= 64, result.nodes
+
+
+def test_searchmoves_narrowing_rebuilt_root_counts_its_nodes() -> None:
+    """A narrowed `searchmoves` root is rebuilt inside the chunk; its visits
+    must be counted from 0, not clamped against the old root (which reported 0
+    nodes and ended `go nodes` after one chunk)."""
+    w = _worker(chunk=256)
+    board = chess.Board()
+    w.run(board, stop_event=threading.Event(), deadline=Deadline(None), max_nodes=512)
+    old_root = w._root_id
+    result = w.run(board, stop_event=threading.Event(), deadline=Deadline(None), max_nodes=512,
+                   root_moves=("e2e4", "d2d4"))
+    assert w._root_id != old_root  # the C runner really allocated a fresh root
+    assert w._tree is not None
+    assert w._root_id is not None
+    visits = int(w._tree.get_children_visits(w._root_id)[1].sum())
+    assert result.nodes == 512
+    assert visits == 512
+
+
+def test_history_context_mismatch_rebuilt_root_counts_its_nodes() -> None:
+    """Same FEN, different history: the carried root fails the history-context
+    check and the runner allocates a fresh root mid-chunk."""
+    a = chess.Board()
+    for mv in ("e2e3", "e7e6", "d2d3", "d7d6"):
+        a.push_uci(mv)
+    b = chess.Board()
+    for mv in ("d2d3", "d7d6", "e2e3", "e7e6"):
+        b.push_uci(mv)
+    assert a.fen() == b.fen()
+    w = _worker(chunk=256)
+    w.run(a, stop_event=threading.Event(), deadline=Deadline(None), max_nodes=512)
+    old_root = w._root_id
+    result = w.run(b, stop_event=threading.Event(), deadline=Deadline(None), max_nodes=512)
+    assert w._root_id != old_root
+    assert result.nodes == 512
+
+
+def test_forced_root_idle_wait_does_not_spin_a_core() -> None:
+    w = _worker()
+    cpu0 = time.process_time()
+    w.run(chess.Board(FORCED), stop_event=threading.Event(), deadline=Deadline(800),
+          max_nodes=None, optimum_ms=None)
+    cpu = time.process_time() - cpu0
+    assert cpu < 0.4, cpu  # spinning measured ~0.6 s CPU per 0.6 s wall
+
+
+@pytest.mark.parametrize("walkers", [1, 2])
+def test_forced_move_emits_one_info_line_with_score_and_pv(walkers: int, capsys) -> None:
+    from chess_anti_engine.uci.engine import Engine
+    from chess_anti_engine.uci.protocol import parse_command
+
+    worker = SearchWorker(
+        _SpreadEvaluator(), device="cpu", chunk_sims=256, n_walkers=walkers,
+        gumbel_cfg=GumbelConfig(simulations=256, topk=16, temperature=0.0, add_noise=False),
+    )
+    engine = Engine(worker)
+    try:
+        for line in (f"position fen {FORCED}", "go wtime 60000 btime 60000 winc 1000 binc 1000"):
+            cmd = parse_command(line)
+            assert cmd is not None
+            engine.dispatch(cmd)
+        engine._wait_for_search()
+    finally:
+        engine.close()
+    out = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith(("info", "bestmove"))]
+    pv_lines = [ln for ln in out if ln.startswith("info") and " pv " in ln]
+    assert out[-1] == "bestmove h1g2"
+    assert len(pv_lines) == 1, out
+    assert " score " in pv_lines[0]
+    assert pv_lines[0].split(" pv ")[1].split()[0] == "h1g2"
+
+
+def test_forced_root_info_line_comes_from_the_worker() -> None:
+    """`run` itself reports a score + pv line for a forced root (the clocked
+    bank fires after one chunk, before the first periodic info tick)."""
+    w = _worker()
+    lines: list[dict[str, Any]] = []
+    w.run(chess.Board(FORCED), stop_event=threading.Event(), deadline=Deadline(20_000),
+          max_nodes=None, optimum_ms=2_500, info_cb=lambda **kw: lines.append(kw))
+    assert len(lines) == 1
+    assert tuple(lines[0]["pv"])[:1] == ("h1g2",)
+    assert lines[0]["score_cp"] is not None
+
+
+def test_solved_root_witness_branch_counts_real_simulations(monkeypatch) -> None:
+    from chess_anti_engine.mcts.solved_root import SolvedRootWitnessUnavailable
+
+    w = _worker(chunk=256)
+    board = chess.Board()
+    w.run(board, stop_event=threading.Event(), deadline=Deadline(None), max_nodes=256)
+    original = w._run_gumbel_chunk
+    raised: list[bool] = []
+
+    def half_then_raise(chunk: int, *args: Any, **kwargs: Any) -> float:
+        value = original(chunk // 2, *args, **kwargs)
+        if not raised:
+            raised.append(True)
+            raise SolvedRootWitnessUnavailable(
+                {0: 1}, (None, None, None, None, w._tree, [w._root_id]), {}, {0: 0},
+            )
+        return value
+
+    monkeypatch.setattr(w, "_run_gumbel_chunk", half_then_raise)
+    seen: list[int] = []
+    w.run(board, stop_event=threading.Event(), deadline=Deadline(None), max_nodes=4096,
+          on_chunk=seen.append)
+    assert raised
+    assert seen[0] == 128, seen  # the chunk really ran 128 sims, not the requested 256

@@ -14,7 +14,7 @@ import dataclasses
 import threading
 from dataclasses import dataclass
 from collections.abc import Callable
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 import chess
 import numpy as np
@@ -95,8 +95,11 @@ _DEFAULT_CHUNK_SIMS = 32
 _INFO_EMIT_INTERVAL_MS = 1000
 
 # First-chunk size for a time-managed search of a forced root (one legal or
-# `searchmoves` move): enough simulations for a meaningful score/PV on the info
-# line; the visit-margin abort then banks the move after that chunk.
+# `searchmoves` move); the visit-margin abort banks the move after that chunk.
+# Only the walker / pool paths simulate a forced root at all (the classic Gumbel
+# path returns the sole action without a simulation); this keeps them from
+# spending a full `chunk_sims` chunk on a decided move. `run` emits the info
+# line (score from the root evaluation / the visited child, pv = the move).
 _FORCED_ROOT_CHUNK_SIMS = 64
 # Back-off after a chunk that completed no simulation (see `run`).
 _IDLE_CHUNK_WAIT_S = 0.01
@@ -1690,7 +1693,7 @@ class SearchWorker:
             # Do NOT "optimize" this back onto the pools without first teaching them to
             # honor allowed_root_indices, or the restriction is silently ignored.
             #
-            visits_before = self._root_visit_total()
+            visits_before = self._root_visit_snapshot()
             value = self._run_gumbel_chunk(
                 chunk, board, tb_probe, allowed_root_indices,
                 allow_terminal_shortcuts=allow_terminal_shortcuts,
@@ -1704,7 +1707,7 @@ class SearchWorker:
             return self._run_pucv_pool_chunk(chunk, stop_event, *tb_args)
         if self._walker_pool is not None:
             return self._run_walker_chunk(chunk, stop_event, tb_probe)
-        visits_before = self._root_visit_total()
+        visits_before = self._root_visit_snapshot()
         if self._pucv is not None:
             value = self._run_pucv_chunk(chunk, *tb_args)
             return value, self._root_visits_added(visits_before)
@@ -1722,13 +1725,24 @@ class SearchWorker:
         _actions, visits = self._tree.get_children_visits(self._root_id)
         return int(visits.sum())
 
-    def _root_visits_added(self, before: int) -> int:
+    def _root_visit_snapshot(self) -> tuple[int, int | None, int]:
+        """``(tree identity, root id, root visits)`` before a chunk."""
+        return id(self._tree), self._root_id, self._root_visit_total()
+
+    def _root_visits_added(self, before: tuple[int, int | None, int]) -> int:
         """Simulations a chunk really completed: the root's visit growth.
 
         Every completed simulation backs up through exactly one root child, so
-        this is the chunk's real node count. A chunk that started on a fresh
-        or replaced tree measures from 0."""
-        return max(0, self._root_visit_total() - int(before))
+        this is the chunk's real node count. When the chunk searched a
+        different root than the one measured before it — a fresh tree, or a
+        fresh root the C runner allocated because the carried one was narrowed
+        (`searchmoves`, winning-root draw prune), lost a legal action, or no
+        longer matched the root history context — the new root's visits all
+        came from this chunk, so count them from 0."""
+        tree_id, root_id, visits = before
+        if id(self._tree) != tree_id or self._root_id != root_id:
+            return self._root_visit_total()
+        return max(0, self._root_visit_total() - int(visits))
 
     def _maybe_emit_pv_info(
         self,
@@ -2285,6 +2299,16 @@ class SearchWorker:
 
         total_nodes = 0
         last_info_ms = -1
+  # Track whether any info line went out (periodic tick, tree-full stop, ...).
+        info_emitted = [False]
+        if info_cb is not None:
+            outer_info_cb = info_cb
+
+            def _tracking_info_cb(**fields: Any) -> None:
+                info_emitted[0] = True
+                outer_info_cb(**fields)
+
+            info_cb = cast("InfoCallback", _tracking_info_cb)
         last_value = 0.0
         pv_indices: list[int] = []
         elapsed = 0
@@ -2340,6 +2364,7 @@ class SearchWorker:
                     break
 
             _chunk_t0 = time.monotonic()
+            _visits_before = self._root_visit_snapshot()
             try:
                 last_value, completed = self._run_one_chunk(
                     chunk, board, stop_event, tb_probe, allowed_root_indices,
@@ -2351,9 +2376,10 @@ class SearchWorker:
                 rid = int(exc.partial_result[5][0])
                 self._root_id = rid if rid >= 0 else None
                 self._last_gumbel_action_idx = None
-                # The completed native chunk consumed its existing budget.
+                # Count what the interrupted native chunk really simulated
+                # (root visit growth), not the requested chunk.
                 # An incomplete chunk is not yet an exhausted whole go.
-                total_nodes += chunk
+                total_nodes += self._root_visits_added(_visits_before)
                 witness_checks_total += exc.child_checks.get(0, 0)
                 exc.child_checks[0] = witness_checks_total
                 self._record_batch_ms((time.monotonic() - _chunk_t0) * 1000.0)
@@ -2457,6 +2483,16 @@ class SearchWorker:
                 if max_nodes is not None or max_depth is not None:
                     break
                 stop_event.wait(_IDLE_CHUNK_WAIT_S)
+
+  # Every search that reached the tree reports at least one info line (score +
+  # pv) before bestmove: a forced root banks after one chunk, long before the
+  # first 1 s info tick, and GUIs / broadcasts expect a line per move.
+        if info_cb is not None and not info_emitted[0] and self._root_id is not None:
+            self._emit_pv_info(
+                info_cb, board, float(last_value), total_nodes,
+                deadline.elapsed_ms(), tb_probe,
+                allowed_root_indices=allowed_root_indices,
+            )
 
         return self._build_final_search_result(
             board=board, total_nodes=total_nodes,
