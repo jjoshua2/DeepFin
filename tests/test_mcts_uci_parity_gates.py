@@ -512,7 +512,9 @@ def test_uci_searchmoves_uses_filtered_gumbel_path_with_walkers(
         )
 
         assert value == 0.25
-        assert completed == 4  # non-pool paths always run the full chunk
+        # The fake chunk touched no tree, so the real count (root visit growth)
+        # is 0 — the requested chunk is no longer reported as completed.
+        assert completed == 0
         assert calls == [
             (
                 "gumbel",

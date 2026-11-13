@@ -205,7 +205,8 @@ def search_fixture(rpg=True):
               '_try_immediate_checkmate': lambda *_args, **_kwargs: None, 'SearchResult': SimpleNamespace}
     names = ['SearchWorker.run', 'SearchWorker._run_one_chunk', 'SearchWorker._run_gumbel_chunk',
              'SearchWorker._pre_expand_root_for_pool', 'SearchWorker._chunk_budget',
-             'SearchWorker._should_stop_search', 'SearchWorker.reset_tree', '_allowed_root_indices']
+             'SearchWorker._should_stop_search', 'SearchWorker.reset_tree', '_allowed_root_indices',
+             'SearchWorker._root_visits_added', '_root_move_count']
     defs = definitions('chess_anti_engine/uci/search.py', names, ns)
     cls = type('ActualSearchCallers', (), {name.rsplit('.', 1)[-1]: fn for name, fn in defs.items() if name.startswith('SearchWorker.')})
     worker: Any = cls()
@@ -222,6 +223,11 @@ def search_fixture(rpg=True):
     worker._invalidate_root_caches = invalidate
     worker._reset_batch_timing = lambda: None
     worker._record_batch_ms = lambda *_args: None
+    # The stub tree's `visits` counter stands in for the root's child visits,
+    # which `_run_one_chunk` now reads as the chunk's real completed count.
+    worker._root_visit_total = lambda: (
+        getattr(worker._tree, 'visits', 0) if worker._root_id is not None else 0
+    )
     def root_eval(*_args):
         worker._root_pol_logits = [[0.0, 1.0, 2.0]]
         worker._root_wdl_logits = [[0.0, 0.0, 0.0]]

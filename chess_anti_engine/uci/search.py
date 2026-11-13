@@ -94,6 +94,13 @@ _DEFAULT_CHUNK_SIMS = 32
 # gets noisy fast. PV extraction (tree walks) runs only on the tick.
 _INFO_EMIT_INTERVAL_MS = 1000
 
+# First-chunk size for a time-managed search of a forced root (one legal or
+# `searchmoves` move): enough simulations for a meaningful score/PV on the info
+# line; the visit-margin abort then banks the move after that chunk.
+_FORCED_ROOT_CHUNK_SIMS = 64
+# Back-off after a chunk that completed no simulation (see `run`).
+_IDLE_CHUNK_WAIT_S = 0.01
+
 # --- shared-tree concurrency: pre-grow to avoid mid-chunk realloc ------------
 # The walker / multi-GPU pucv pools mutate one MCTSTree from N threads. The C
 # extension reads node/child arrays lock-free during descent, and `_mcts_tree.c`
@@ -1669,8 +1676,11 @@ class SearchWorker:
 
         Multi-GPU pool and walker pool report real completed counts (either
         can stop mid-chunk on ``stop_event``). Single-thread PUCV and the
-        gumbel C path run the full requested chunk (no early stop), so they
-        count ``chunk``.
+        gumbel C path do not report a count, so theirs is the root's visit
+        growth over the chunk. Counting the REQUESTED ``chunk`` instead made a
+        forced root (the Gumbel path returns its sole action without visiting
+        it) print ~100M nodes at ~20M nps and fed that nps to
+        ``_time_capped_chunk`` and the abort's provable-bank projection.
         """
         if allowed_root_indices is not None:
             # `searchmoves` restriction is only threaded through the single-walker
@@ -1680,11 +1690,13 @@ class SearchWorker:
             # Do NOT "optimize" this back onto the pools without first teaching them to
             # honor allowed_root_indices, or the restriction is silently ignored.
             #
-            return self._run_gumbel_chunk(
+            visits_before = self._root_visit_total()
+            value = self._run_gumbel_chunk(
                 chunk, board, tb_probe, allowed_root_indices,
                 allow_terminal_shortcuts=allow_terminal_shortcuts,
                 witness_stop_fn=witness_stop_fn,
-            ), chunk
+            )
+            return value, self._root_visits_added(visits_before)
         tb_args = () if tb_probe is None else (tb_probe,)
         if self._rpg_pool is not None:
             return self._run_rpg_chunk(chunk, stop_event, *tb_args)
@@ -1692,13 +1704,31 @@ class SearchWorker:
             return self._run_pucv_pool_chunk(chunk, stop_event, *tb_args)
         if self._walker_pool is not None:
             return self._run_walker_chunk(chunk, stop_event, tb_probe)
+        visits_before = self._root_visit_total()
         if self._pucv is not None:
-            return self._run_pucv_chunk(chunk, *tb_args), chunk
-        return self._run_gumbel_chunk(
+            value = self._run_pucv_chunk(chunk, *tb_args)
+            return value, self._root_visits_added(visits_before)
+        value = self._run_gumbel_chunk(
             chunk, board, tb_probe, allowed_root_indices,
             allow_terminal_shortcuts=allow_terminal_shortcuts,
             witness_stop_fn=witness_stop_fn,
-        ), chunk
+        )
+        return value, self._root_visits_added(visits_before)
+
+    def _root_visit_total(self) -> int:
+        """Visits summed over every root child (unfiltered); 0 without a root."""
+        if self._tree is None or self._root_id is None or self._root_id < 0:
+            return 0
+        _actions, visits = self._tree.get_children_visits(self._root_id)
+        return int(visits.sum())
+
+    def _root_visits_added(self, before: int) -> int:
+        """Simulations a chunk really completed: the root's visit growth.
+
+        Every completed simulation backs up through exactly one root child, so
+        this is the chunk's real node count. A chunk that started on a fresh
+        or replaced tree measures from 0."""
+        return max(0, self._root_visit_total() - int(before))
 
     def _maybe_emit_pv_info(
         self,
@@ -2105,6 +2135,13 @@ class SearchWorker:
         if best < 0:
   # No legal/root move: nothing to bank, keep searching toward the hard deadline.
             return False
+  # Exactly one legal (or `searchmoves`) move: nothing to decide, so bank now.
+  # This used to fall through to `remaining_ms <= 0` and spend the whole soft
+  # target (4.7 s of a 60 s clock) on a move that cannot change. `optimum_ms` is
+  # None for ponder / infinite / movetime / nodes searches (checked above), so
+  # those still run until stop / ponderhit / their own limit, as UCI requires.
+        if self._filtered_root_visits(allowed_root_indices)[0].size == 1:
+            return True
   # A forced position (exactly one legal/root move) is decided even with a zero
   # visit lead: the C Gumbel path returns the sole action WITHOUT visiting its
   # child, so `lead` is trivially 0 — bank it instead of spending the full
@@ -2256,6 +2293,12 @@ class SearchWorker:
         start_remaining_ms = deadline.remaining_ms()
         witness_checks_remaining = _SOLVED_ROOT_TB_CHECK_LIMIT
         witness_checks_total = 0
+  # A time-managed search of a forced root banks after its first chunk (see
+  # `_abort_ready`); keep that chunk small — it only has to produce the info
+  # line's score/PV, not spend a full chunk of evaluations on one move.
+        forced_root = optimum_ms is not None and _root_move_count(
+            board, allowed_root_indices,
+        ) == 1
 
         def witness_stop() -> bool:
             nonlocal witness_checks_remaining
@@ -2277,6 +2320,8 @@ class SearchWorker:
   # remaining time (estimated from the running nps), but never below the base
   # chunk so single-GPU stop latency is unchanged.
             chunk = self._time_capped_chunk(chunk, deadline, total_nodes)
+            if forced_root:
+                chunk = min(chunk, _FORCED_ROOT_CHUNK_SIMS)
 
   # Shared-tree (walker / multi-GPU pucv) chunks descend lock-free from N
   # threads; grow the arena now, while quiescent, so the chunk can't realloc
@@ -2331,8 +2376,11 @@ class SearchWorker:
                 # abort or a proven-value PV. Continue within the original cap.
                 continue
   # Time the (un-interruptible) chunk so the batch-time clock margin below can
-  # reserve one worst-case batch before the hard deadline.
-            self._record_batch_ms((time.monotonic() - _chunk_t0) * 1000.0)
+  # reserve one worst-case batch before the hard deadline. A chunk that did no
+  # work (declined/forced root) took ~0 ms and would drag the batch-time
+  # statistics toward zero, shrinking the margin for the real chunks.
+            if int(completed) > 0:
+                self._record_batch_ms((time.monotonic() - _chunk_t0) * 1000.0)
   # Count the sims actually completed, not the requested chunk: a pool chunk
   # cut short by stop_event would otherwise inflate reported nodes AND the nps
   # estimate `_time_capped_chunk` sizes later chunks with.
@@ -2343,12 +2391,9 @@ class SearchWorker:
   # stop now and let `_build_final_search_result` answer from the cached root
   # prior instead of walking a -1 node id.
             if self._root_id is None:
-  # `_run_one_chunk` reports `chunk` as completed for the gumbel path whether or
-  # not a single simulation ran (`return ..., chunk`), so the nodes accumulated
-  # for a declined root are fabricated: they made a 0-sim answer print as
-  # `nodes 2048 nps 1024000` and read as an ordinary searched move in a match
-  # log. Discard them — 0 is the truth, and it is what makes this move findable
-  # in a banked per-move CSV.
+  # A declined root ran no simulation; `_run_one_chunk` now reports the root's
+  # real visit growth, but keep the reset explicit — 0 is the truth, and it is
+  # what makes this move findable in a banked per-move CSV.
                 total_nodes = 0
                 break
   # Per-chunk instrumentation hook (offline analysis of the accumulating tree —
@@ -2403,6 +2448,15 @@ class SearchWorker:
                 optimum_ms, deadline, total_nodes, allowed_root_indices, abort_factor,
             ):
                 break
+  # A chunk that completed nothing (forced root: the Gumbel path returns the
+  # sole action without simulating) cannot make progress. Under a node or depth
+  # bound that bound can then never be reached, so stop; otherwise (ponder /
+  # infinite / movetime, which must run until stop or their deadline) idle
+  # briefly on the stop event instead of spinning a core.
+            if int(completed) == 0 and not stop_event.is_set():
+                if max_nodes is not None or max_depth is not None:
+                    break
+                stop_event.wait(_IDLE_CHUNK_WAIT_S)
 
         return self._build_final_search_result(
             board=board, total_nodes=total_nodes,
@@ -2762,6 +2816,13 @@ def _multipv_lines(
     return out
 
 
+
+
+def _root_move_count(board: chess.Board, allowed_root_indices: set[int] | None) -> int:
+    """Moves the root may play: the ``searchmoves`` set when given, else legal moves."""
+    if allowed_root_indices is not None:
+        return len(allowed_root_indices)
+    return board.legal_moves.count()
 
 
 def _allowed_root_indices(board: chess.Board, root_moves: tuple[str, ...]) -> set[int] | None:
