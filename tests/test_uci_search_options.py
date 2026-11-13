@@ -2150,3 +2150,67 @@ def test_main_builds_the_engine_from_the_args_it_advertised(
     assert captured["chunk_sims"] == 777
     assert captured["cpuct_factor"] == 7.0
     assert printed["CScale"] == "0.077"
+
+
+_LEAF_TB_NOTE = "leaf tablebase probing is inactive on search path"
+
+
+def test_syzygy_path_reports_no_inactive_note_for_implemented_routes(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Walker, Gumbel and the real asynchronous PUCV route all receive it."""
+    tb_dir = tmp_path / "tb"
+    tb_dir.mkdir()
+    for name in ("KQvK.rtbw", "KQvK.rtbz"):  # names only: never probed here
+        (tb_dir / name).write_bytes(b"")
+
+    walker = _make_engine(threads=2)
+    try:
+        assert walker._worker.realized_search_path() == "walker"
+        capsys.readouterr()
+        _setoption(walker, f"setoption name SyzygyPath value {tb_dir}")
+        assert _LEAF_TB_NOTE not in capsys.readouterr().out
+    finally:
+        walker._worker.close()
+
+    gumbel = _make_engine(
+        threads=1, evaluator=_DetAsyncEval(input_plane_count("v2_threats")),
+    )
+    try:
+        assert gumbel._worker.realized_search_path() == "gumbel"
+        capsys.readouterr()
+        _setoption(gumbel, f"setoption name SyzygyPath value {tb_dir}")
+        assert _LEAF_TB_NOTE not in capsys.readouterr().out
+        _setoption(gumbel, "setoption name UseVL value true")
+        assert gumbel._worker.realized_search_path() == "pucv"
+        capsys.readouterr()
+        gumbel.dispatch(parse_command(f"position fen {FEN}"))
+        gumbel.dispatch(parse_command("go nodes 64"))
+        gumbel._wait_for_search()
+        out = capsys.readouterr().out
+        assert _LEAF_TB_NOTE not in out
+        gumbel.dispatch(parse_command("go nodes 64"))
+        gumbel._wait_for_search()
+        assert _LEAF_TB_NOTE not in capsys.readouterr().out
+    finally:
+        gumbel._worker.close()
+
+
+def test_unknown_future_leaf_route_keeps_warning_dedup(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    from chess_anti_engine.tablebase import SyzygyProbe
+
+    engine = _make_engine(threads=1)
+    try:
+        engine._worker._tb_probe = SyzygyProbe("not opened", max_pieces=3)
+        monkeypatch.setattr(engine._worker, "realized_search_path", lambda: "future_unwired")
+        capsys.readouterr()
+        engine._note_leaf_tb_inactive()
+        engine._note_leaf_tb_inactive()
+        assert capsys.readouterr().out.count(f"{_LEAF_TB_NOTE} future_unwired") == 1
+        monkeypatch.setattr(engine._worker, "realized_search_path", lambda: "gumbel")
+        engine._note_leaf_tb_inactive()
+        assert _LEAF_TB_NOTE not in capsys.readouterr().out
+    finally:
+        engine._worker.close()

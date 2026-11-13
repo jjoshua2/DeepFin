@@ -1,0 +1,65 @@
+{
+  "status": "ACCEPT_SOURCE_ONLY_FINAL_COLLECTION_PACKAGE_V2_NO_BLOCKING_FINDINGS",
+  "utc": "2026-11-13T02:26:09.672128+00:00",
+  "candidate_preparation": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-final-package-v2/preparation.json",
+    "sha256": "7e0a668a84e8302df1c82922ae52745ac791bdf3b7a14b74e9001acd130ca8f5"
+  },
+  "scientific_component_binding": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-final-package-v2/scientific-component-binding.json",
+    "sha256": "e7e67642147ce6ba38cdc76f82bd230d44cccd3cee3f3fd84bbfc81679e97e1b"
+  },
+  "findings": [],
+  "reviewed": "Full binder and actual patch, template protocol and manifest, exact 13-leaf whitelist, check/execute input snapshots, stable runtime projection, scientific component object, CPU check proposal, GPU argv and actual collect96 source consumers.",
+  "verified": [
+    "Every preparation artifact and contract immutable-file hash matches. The binder patch was independently recomputed from actual v1/v2 source.",
+    "The runtime helpers, starts and profile stay at fixed v1 paths. Manifest template is byte-identical to v1; reversing only protocol cpu_affinity to16,18 recovers v1 protocol bytes.",
+    "Only the ten qualification/science/publication identity strings and three explicit admission booleans can vary. Exact keyset/type checks and byte-level fixed-field reversal prevent numeric/source/profile/seed drift.",
+    "Check phase requires all three admission flags false. Execute phase requires all true plus frozen source/cohort/config-matched science, exact strict_collection component object, main publication and accepted source-qualified TB/SF/excluded-input receipts.",
+    "Templates and contract feed the scientific JSON; actual protocol then feeds manifest and CLI hash. No cyclic self-hash is required.",
+    "Binder imports only stdlib and never runs collector. It refuses used research output, preserves a consistent old metadata pair in a fresh record, refuses torn prior pairs, and fsyncs atomic file replacements.",
+    "Actual collector --check validates legal full-history starts, source identities, config builders and predicted profile without entering execution/model/engine/TB/CUDA constructors.",
+    "CPU proposal uses owner120 and hidden CUDA. GPU argv uses owner1200/inner1170. Both child commands use20,22, unset both fixed math environment variables before Python, and explicitly set the applicable empty/zero CUDA visibility after owner sanitation."
+  ],
+  "current_metadata_observation": {
+    "note": "The package preparation recorded no actual JSONs. During review a check-bound pair appeared, authored elsewhere. This reviewer did not execute binder or write that pair.",
+    "protocol_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-final-package-v1/protocol.json",
+    "protocol_sha256": "5563027defd33c11cba8e2dee584a56a45c048037c30aaeb6ac573a6035dad67",
+    "manifest_sha256": "ae22a822455e9b3af1b91227d662e3b45953f1021e5c9e84ffb7f81770e32741",
+    "actual_protocol_equals_v2_template": true,
+    "all_three_research_admission_flags": false,
+    "pair_hash_consistent": true,
+    "research_output_absent": true
+  },
+  "limits": [
+    "Source and JSON metadata only. No binder/helper/project import, tests, models, arrays, checkpoints, engines, tablebase query or compute job was executed by this reviewer.",
+    "Pending accepted excluded-input union must preserve all failed and successful engineering lineages and unknown telemetry. Actual CPU --check, final scientific publication and exact root resource/control/lease admission remain separate.",
+    "No source checkout, stable helper, starts or profile was changed. Metadata binding alone does not admit generation or training."
+  ],
+  "evidence": {
+    "binder_sha256": "7354fd14ab0d51367728008f13d8b493b7e224818d7bd97f8c72704110d7265a",
+    "contract_sha256": "663f520c39c7034329d828fd31ac638878b29ecbd23f4d83bc6872d9a4d94086",
+    "protocol_template_sha256": "5563027defd33c11cba8e2dee584a56a45c048037c30aaeb6ac573a6035dad67",
+    "manifest_template_sha256": "e7e4223f4636721a15eb14d18594ddbc5826f01f2b0e994b2977dc702fcda20c",
+    "cpu_proposal_sha256": "3e9bd2437c0a5175a3b5df295be5b26cd202a11f7c47051eae4999c0b016a545",
+    "gpu_command_template_sha256": "57189d0ffa78f8fe1d8f300ea715ff7f433960376db4f69f501fd920289cdafd",
+    "collector_sha256": "6fe7fb06db4c87ed089818351178160ca207bc0bee184a31d8a2efcb65301989"
+  },
+  "source_citations": [
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-final-package-v2/bind_metadata.py",
+      "lines": "63-114",
+      "claim": "Whitelist, phase flags, exact scientific component and fixed-field/hash reversal."
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-final-package-v2/bind_metadata.py",
+      "lines": "115-143",
+      "claim": "Prior pair preservation, atomic fsynced publication and no collector execution."
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-final-package-v1/collect96.py",
+      "lines": "702-734",
+      "claim": "Actual --check consumer keeps research execution separate."
+    }
+  ]
+}

@@ -1274,18 +1274,35 @@ def test_record_without_replay_bookkeeping_is_not_persisted(
 
 
 def test_every_restart_key_is_classified_for_resume() -> None:
-    """Completeness guard: a new restart key must be declared either as
-    record-shaping (games recorded under the old value are discarded) or as
-    exempt. Unclassified would silently mean "exempt", which is how a game ends
-    up carrying two different record schemas into one shard."""
+    """Classify restart keys as record-shaping, exempt or worker-unsupported.
+
+    Unclassified would silently mean "exempt", which is how a game ends up
+    carrying two different record schemas into one shard. Unsupported modes
+    must retain their refusal before any worker resume session can start.
+    """
     from chess_anti_engine.worker import WorkerSession
+    from chess_anti_engine.utils.syzygy_config import refuse_strict_worker_session
 
     restart = set(WorkerSession._RECO_RESTART_KEYS)
     compat = set(WorkerSession._RESUME_COMPAT_KEYS)
     exempt = set(WorkerSession._RESUME_COMPAT_EXEMPT_KEYS)
+    # Strict outcomes are finite-only: neither fingerprinting them nor calling
+    # them ordinary finalizer exemptions would describe a supported resume.
+    unsupported = {"syzygy_outcome_mode"}
+    classified = compat | exempt | unsupported
     assert not compat & exempt, sorted(compat & exempt)
-    assert not restart - (compat | exempt), sorted(restart - (compat | exempt))
-    assert not (compat | exempt) - restart, sorted((compat | exempt) - restart)
+    assert not (compat | exempt) & unsupported, sorted((compat | exempt) & unsupported)
+    assert not restart - classified, sorted(restart - classified)
+    assert not classified - restart, sorted(classified - restart)
+
+    refuse_strict_worker_session({"syzygy_outcome_mode": "theoretical_wdl"})
+    with pytest.raises(ValueError, match="finite play_batch only"):
+        refuse_strict_worker_session({
+            "syzygy_outcome_mode": "rule50_match_v1",
+            "syzygy_path": "full", "stockfish_syzygy_path": "full",
+            "syzygy_in_search": True, "syzygy_adjudicate": True,
+            "syzygy_adjudicate_fraction": 1.0, "syzygy_rescore_policy": True,
+        })
 
 
 def test_resume_flag_is_watched_and_defaults_off() -> None:

@@ -1,0 +1,248 @@
+{
+  "schema": "rl-week-one-engineering-panel-readout-v1",
+  "cutoff_utc": "2026-11-12T19:29:02.661934+00:00",
+  "bulk_root": "~/chess-artifacts/operations/rl-week-one-20261112-v1",
+  "source_revision": "f914f51eb349681300fe50147029e98b880de63e",
+  "model_sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+  "long_term_strength_achieved": false,
+  "week_one_goal_complete": false,
+  "new_week_training_steps": 0,
+  "checkpoint_adopted": false,
+  "compiled_UCI": {
+    "startup_seconds": 98.49082989498856,
+    "probes": [
+      {
+        "name": "clock-0",
+        "computed_hard_ms": 940,
+        "elapsed_seconds": 0.9451632710115518,
+        "nodes": 410,
+        "tbhits": 0
+      },
+      {
+        "name": "clock-1",
+        "computed_hard_ms": 940,
+        "elapsed_seconds": 0.9444769289984833,
+        "nodes": 430,
+        "tbhits": 0
+      },
+      {
+        "name": "movetime",
+        "computed_hard_ms": 170,
+        "elapsed_seconds": 0.1745494850038085,
+        "nodes": 81,
+        "tbhits": 0
+      },
+      {
+        "name": "nodes",
+        "computed_hard_ms": null,
+        "elapsed_seconds": 0.1404244189907331,
+        "nodes": 64,
+        "tbhits": 0
+      }
+    ],
+    "numerical_profile": "Distinct compiled reduce-overhead; raw eager/compiled strict tolerance remains UNQUALIFIED0/24; no equivalence or adoption claim.",
+    "strict_raw_eager_compiled_old_tolerance_passes": 0,
+    "strict_raw_eager_compiled_old_tolerance_comparisons": 24
+  },
+  "external_panel": {
+    "disposition": "VALID_COMPLETE_EIGHT_GAME_ENGINEERING_PANEL_NO_STRENGTH_MILESTONE",
+    "opponent": "rofChade3.1 BMI2 AVX2",
+    "threads": 8,
+    "hash_MiB": 1024,
+    "clock_base_seconds": 30,
+    "increment_seconds": 0.1,
+    "clock_grace_seconds": 0,
+    "max_additional_plies": 450,
+    "common_tablebases": "indexed3through6pieceWDLandDTZ; no harness theoretical adjudication",
+    "result": {
+      "wins": 0,
+      "draws": 4,
+      "losses": 4,
+      "score": 0.25,
+      "games": 8,
+      "convenience_opening_pairs": 4,
+      "actual_checkmate_losses": 4,
+      "claimable_threefold_draws": 4,
+      "clock_forfeits": 0,
+      "illegal_or_null": 0,
+      "cap_draws": 0,
+      "search_faults": 0,
+      "prior_only_roots_observed": 0,
+      "total_played_responses": 774,
+      "PGN_plies_including52book_plies": 826,
+      "score_interval": "not reported: four convenience opening groups, no representative/random sampling or general-strength interval"
+    },
+    "pair_descriptive_points": [
+      0,
+      1,
+      0.5,
+      0.5
+    ],
+    "pair_denominator_games": 2,
+    "response_strata": {
+      "A39-compiled-reduce-overhead-PUCT2": {
+        "responses": 386,
+        "nodes_sum": 354321,
+        "nodes_min": 1,
+        "nodes_median": 345.0,
+        "nodes_max": 69078,
+        "zero_nodes": 0,
+        "elapsed_median": 0.6879945000000001,
+        "elapsed_max": 1.380313,
+        "positive_TBhits": 34,
+        "TB_eligible_roots": 30,
+        "TB_roots_nodes1_hits1": 30,
+        "nonTB_roots_positive_hits": 4,
+        "nonTB_nodes_sum": 354291
+      },
+      "rofChade3.1-8threads": {
+        "responses": 388,
+        "nodes_sum": 3568876924,
+        "nodes_min": 1,
+        "nodes_median": 8074171.5,
+        "nodes_max": 37369203,
+        "zero_nodes": 0,
+        "elapsed_median": 0.4660835,
+        "elapsed_max": 2.152144,
+        "positive_TBhits": 177,
+        "TB_eligible_roots": 31,
+        "TB_roots_nodes1_hits1": 13,
+        "nonTB_roots_positive_hits": 153,
+        "nonTB_nodes_sum": 3568470511
+      }
+    },
+    "nonTB_donor_nodes_median": 357.0,
+    "owner_wall_seconds": 484.08005171699915,
+    "owner_recorded_CPU_seconds": 1896.59,
+    "owner_closed": true,
+    "limits": [
+      "No Elo/general-strength confidence interval, milestone, checkpoint adoption or representative Rof/SF/Lc0 claim; four convenience groups with paired color correlation. Driver printed its own normal CI; it is not adopted as a general-strength interval here.",
+      "Do not pool with prior eager singlepair or infer a causal playing-strength improvement from compile mode: mathematical serving profile and openings differ.",
+      "Full histories preserve repetition claims; all four draws were claimable next-move threefold rather than currentposition already third occurrence. This matches frozen driver claim_draw=True semantics.",
+      "PhysicalCPU mapping/taskset command and actualRof thread acknowledgement are verified; no continuous perthread affinity/core-utilization telemetry was collected.",
+      "Future measured learning/cohort qualification remains separate. No extension, replacement, favorable reroll, additional games or model work was started by reviewer."
+    ]
+  },
+  "collector_attempts": [
+    {
+      "version": 1,
+      "status": "FAILED_CLOSED_NO_GAMES",
+      "cause": "Runtime process.json collided with stage-owner namespace; failed output preserved without changing owner guard.",
+      "wall_seconds": 3.2532553109922446,
+      "model_reach": "Imports completed; checkpoint read/partial model construction unknown."
+    },
+    {
+      "version": 2,
+      "status": "FAILED_CLOSED_NO_GAMES",
+      "cause": "Raw embedded architecture dictionary equality failed after strict donor loader returned; evaluator and generation not reached.",
+      "wall_seconds": 5.14548370699049,
+      "model_reach": "Strict model load returned; unchanged donor stat and sole model guards passed; no evaluator, forwards, games or shards."
+    }
+  ],
+  "learning_design": {
+    "old_four_arm_study": "superseded proposal; not run",
+    "proposed_direction": "two FULL-loss branches differing only mainWDLtarget SF/searchshare; samefulltrunk,optimizer,batches,dose; categoricalstoredtargets unchanged",
+    "SF_share_teacher_effort_and_deciding_threshold": "unselected; actualtarget+consumerqualification required",
+    "historical_SF_removal_claim": "operator rejected old uncontrolled result asmechanism evidence Aug23; guidance corrected",
+    "outcome_ruler": "prospectivefullplannedcohort, naturalrulequalifiedlabels; censoredendpointinconclusive; no outcome-basedreplacement"
+  },
+  "GPU_intended_stage_cost": {
+    "completed_stages": 11,
+    "sum_owner_wall_seconds": 1585.0665610409342,
+    "scope": "wholeownerwall includesfailedstages/import/load/warmup/cleanup; notGPUkernelorcompleteCPUcost",
+    "stages": [
+      {
+        "stage": "compiled-serving-execution-v1",
+        "terminal_sha256": "c4556ad4ac0a102d83297ff69d6641302fe865945ec49fa1cdc7efb1c6554d3f",
+        "status": "FAILED",
+        "wall_seconds": 23.221695877000457,
+        "owned_processes_closed": true
+      },
+      {
+        "stage": "compiled-serving-execution-v2",
+        "terminal_sha256": "e3e4e5895a6b3b66c40680ced8e338a71c0237d108a67fe847e02e005f3ad2b8",
+        "status": "PASS",
+        "wall_seconds": 107.49991975698504,
+        "owned_processes_closed": true
+      },
+      {
+        "stage": "compiled-uci-qualification-execution-v2",
+        "terminal_sha256": "0e1744c76de0fc525b76c970d3e7b2514fef12cbcff7ac50cf17daa5cf584c9b",
+        "status": "PASS",
+        "wall_seconds": 106.52261679599178,
+        "owned_processes_closed": true
+      },
+      {
+        "stage": "deadline-donor-qualification-execution-v1",
+        "terminal_sha256": "a9b2bc54e55df8d67f98f65078b315bc677085011de8242a87d4dad2713636cb",
+        "status": "PASS",
+        "wall_seconds": 90.40765657799784,
+        "owned_processes_closed": true
+      },
+      {
+        "stage": "donor-rof-engineering-pair-execution-v1",
+        "terminal_sha256": "c4591fe607afc62412af0256975721ba84ba7b53510f2055feda046931792953",
+        "status": "PASS",
+        "wall_seconds": 303.9566195179941,
+        "owned_processes_closed": true
+      },
+      {
+        "stage": "donor-rof-engineering-pair-execution-v2",
+        "terminal_sha256": "422672d09ddc29aef3cf9c6acfbdb6c50a9edaee6d2b47dd630f4ddec2412be9",
+        "status": "PASS",
+        "wall_seconds": 288.22089199599577,
+        "owned_processes_closed": true
+      },
+      {
+        "stage": "donor-rof-full-history-panel-execution-v1",
+        "terminal_sha256": "fe3b098ee1e17dcaba233d894868a95073054b49c941aa8a152f999e99f82e5d",
+        "status": "PASS",
+        "wall_seconds": 484.08005171699915,
+        "owned_processes_closed": true
+      },
+      {
+        "stage": "donor-uci-readiness-execution-v1",
+        "terminal_sha256": "44727f639828ee2059350a4d709dd45cd4412e3c4a763acf92ba3d571cdb2e7e",
+        "status": "PASS",
+        "wall_seconds": 165.6103058909939,
+        "owned_processes_closed": true
+      },
+      {
+        "stage": "fresh-game-pilot-execution-v1",
+        "terminal_sha256": "41552b0f0c1ceebf10ceaa3d89112526b1ab4f9c4239a35f2422e2ecb4c1c2a7",
+        "status": "FAILED",
+        "wall_seconds": 3.2532553109922446,
+        "owned_processes_closed": true
+      },
+      {
+        "stage": "fresh-game-pilot-execution-v2",
+        "terminal_sha256": "7006ef779f09f8cfeabf2d46104beea01a4cbfef8e5c8fc6a0b446c46c88e331",
+        "status": "FAILED",
+        "wall_seconds": 5.14548370699049,
+        "owned_processes_closed": true
+      },
+      {
+        "stage": "throughput-measurement-execution-v1",
+        "terminal_sha256": "0ecfbfae7aed2acc95774e5048c4c39aff0c7f07d6ef0c370aee6ce60982ba9e",
+        "status": "PASS",
+        "wall_seconds": 7.1480638929933775,
+        "owned_processes_closed": true
+      }
+    ]
+  },
+  "bulk_artifacts_sha256": {
+    "compiled-uci-results-v2/receipt.json": "935dceee595ca12947b9359443791bda42ce78b7df0668ac4bccf706d01da474",
+    "full-history-panel-execution-preparation-v1/manifest.json": "b85deea36a94e65b2c38b01d6f4f1e9488dd7572931b2d1232a4bb21bf27d7fc",
+    "full-history-panel-execution-independent-review-v1/review.json": "03ad2b9b82e1703e7b001e207f332d3b2a89e46e55525cd73f9ca9f75fb6dcbf",
+    "full-history-panel-readout-v1/readout.json": "bd8e8651f519571eb6efd264f1c6ca25f189885c6005607b0c2b8ac04a463d50",
+    "full-history-panel-readout-v1/manifest.json": "ae1623463415c733c9fff0ccebec4fd70037ce495e8508be5d871e043432a157",
+    "fresh-game-pilot-preparation-v1/preparation.json": "e70ba77440c203411e3e93c6ab507463701f76a35cc61b71a756b486341becb4",
+    "fresh-game-pilot-v1-failure-preservation/preservation.json": "a10e74910061ad9afb002228844e90a6932a6918d45bee29a3f6ccdea1a2cf23",
+    "fresh-game-pilot-preparation-v2/preparation.json": "2c8ba34a901c674a5f9b719c7f4d36505eb78fea3e4ee5697494bc3f80f24491",
+    "fresh-game-pilot-failure-readout-v2/readout.json": "694ae1d58bef6ad8a5f1d3d28dfa4ff3a953cb1e80baa0fed832344e595e3437",
+    "first-learning-comparison-assessment-v1/readout.md": "47e9acb1374ff467fc2884a5d1af26bddc54e103301f815508ad233f09c76b8a",
+    "learning-design-disposition-v1/decision.json": "e169cae6f87358c4211255bf06650f411efc7b413cf790e4a29802f9d7b0c3cf",
+    "sf-anchor-documentation-independent-review-v1/review.json": "53394b265c15ce21de07c74f4a83077407c246612f60c94fc3c16a56042a109c",
+    "compiled-uci-readout-v2/readout.json": "6d9c773ffccd4769bd765f954bb5eace55ae5fd6eaef110f5e55957581e74a50"
+  }
+}

@@ -62,8 +62,10 @@ class _QueuedFakePool(StockfishPool):
 
     def submit(
         self, fen: str, *, nodes=None, syzygy_path=None, fresh: bool = False,
-        searchmoves=None,
+        searchmoves=None, root_fen=None, root_moves=None,
     ):
+        assert root_fen is None
+        assert root_moves is None
         # Recorded, so an escalation that silently narrowed its root would show
         # up here rather than being absorbed by the fake.
         self.calls.append(

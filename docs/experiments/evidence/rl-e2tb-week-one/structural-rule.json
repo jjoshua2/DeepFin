@@ -1,0 +1,95 @@
+{
+  "banks_and_reserves": {
+    "bank_assignment": "Sort physicalordinals0..95 by SHA256(split_salt+NUL+UUID+colon+ordinal) ascending digest (ordinal tie-break); first32TRAIN, remaining64HOLDOUT. Bind before generation.",
+    "new_physical_run_only": true,
+    "physical_ids": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:0..95; physicalordinal never runtime slotID",
+    "structural_reserves": "Only before ANY generation, a source/encoding/identity preflight rejection can promote the earliest unused passing reserved candidate into same physicalordinal and preassigned bank; seal exact reason/new map before games. No reserve for zero rows, censoring, outcomes, slowness, errors or failedgames. All128 candidates remain excluded from playing."
+  },
+  "collection_uuid": "f1dadbe4-43e2-4cf3-9a93-70a288533b48",
+  "created_utc": "2026-11-12T23:16:59.436115+00:00",
+  "execution": "UNRUN; this rule alone authorizes no selection stage, encoding, generation, learning, engines, probes or GPU. Root exact CPU/source admission required.",
+  "identity": {
+    "collection_uuid": "f1dadbe4-43e2-4cf3-9a93-70a288533b48",
+    "created_utc": "2026-11-12T23:16:59.436115+00:00",
+    "identity_generation": "uuid.uuid4 once; no candidate ranking/encoding/catalogue scan performed before freezing this rule.",
+    "salts": {
+      "rank": "E2TB-rank-20261112:2026111400",
+      "root": "E2TB-root-20261112:20261114",
+      "split": "E2TB-split-20261112:2026111400"
+    },
+    "seeds": {
+      "bootstrap": 2026111406,
+      "common_optimizer_RNG": 2026111403,
+      "confirmation": 2026111405,
+      "draw": 2026111401,
+      "generation": 20261114,
+      "mirror": 2026111402,
+      "rank": 2026111400,
+      "screens": 2026111404
+    },
+    "status": "NEW_ONCE_GENERATED_PHYSICAL_STUDY_IDENTITY_NOT_EXECUTION_ADMISSION"
+  },
+  "postcollection_boundaries": {
+    "all96_retained": "Every attempt inclzero/censored retained; no outcome-based replacement/reselection.",
+    "holdout": "Selected offline roots filter known803+53 identities and ALLnewTRAIN raw+filemirror inputs before branch prediction or scoring. Other trajectory matches counted/disclosed; no blanket unseen-playing-study claim.",
+    "playing_guard": "Before learning/scoring compare all628fixedplaying initial raw/mirror identity hashes to ALL96retained raw+production-file-mirror inputs. Collision => playing/learning gate not qualified; no replacementbook/game/seed. Final precise primary/offline handling belongs future reviewed prereg.",
+    "train": "All32 must satisfy future verified resolved-outcome/rawtarget/usability/source contract before learning; natural and strictTB-adjudicated kept distinct.",
+    "unknowns": [
+      "epoch2pretraining",
+      "feature-dropout variants and realizedsample RNG",
+      "unstored/thinned/search positions",
+      "unfinished stagingpayload",
+      "broader opening families"
+    ]
+  },
+  "purpose": "One new physical TB-on study, not restart/resumption/replacement of interrupted TB-off cohort. No generation or research admission.",
+  "ranking": {
+    "accepted_count": 756,
+    "allocation": "First128 accepted groups:96primary cohort then32structural reserves; next128 screen; next500 confirmation. All756 unique under all declared gates. No independent reshuffle/seed or outcome-based role assignment.",
+    "group_tie_break": "ascending source_group_id",
+    "input_gate": "Compute actual descriptor175 root rawF16 and actual production-file-mirrorF16 using qualified encoder and existing _mirror_x_batch; reject if either hash matches any known retired/exposure hash or either intersects earlier accepted raw/mirror input pair. Same little-endian contiguous175x8x8 F16 hash representation as known803 index. No new transform implementation.",
+    "insufficient_pool": "Fewer756passing => structural preparation inconclusive, no cap enlargement/reseed/replacement or source-corpus regeneration.",
+    "known_descriptor": {
+      "history_rep_fix": true,
+      "input_extra_features": "v2_threats",
+      "input_history_encoding": "lc0_root_legacy_meta"
+    },
+    "max_rank_pool": 4096,
+    "post_rank_filter": "In sorted fixedpool order reject known retired parents/history/normalizedEPD/input; known803+53 hash/history matches; any within-accepted parent/history/EPD/input duplicate. Use same producer canonical history hash [root_fen,orderedUCIstack].",
+    "pre_rank_filter": "Preserve existing catalogue old_history/old_epd/selection exclusions and their parent retirement; require usable/reject_reasonNone/exact16plies. Known retired exacthistory/EPD also excluded before ranking and their sourceparents retired, matching qualified playing selector. No extra candidates beyond best4096 after these declared filters.",
+    "seed": "E2TB-rank-20261112:2026111400",
+    "single_scan": true,
+    "source_compatibility": "Actual selection source/native images must be independently qualified before execution; no model/checkpoint construction or reads needed.",
+    "weight": "parent_count, with u=(int(SHA256(rank_salt+NUL+group_id),16)+1)/(2**256+1), key=-log(u)/parent_count; ascending(key,group_id)"
+  },
+  "retirements": [
+    "All inherited old original/cap40 panels,32pair Rof baseline,4engineering/convenience starts,both pilot starts, knownPR1229 exact roots and source-parent exclusions from prior qualified selector.",
+    "All128 old cohort+structural-reserve starts, not just53completed; all628old E2 playing starts, whether ever played or not. Exclude known parent IDs, exact root+orderedhistory, normalized terminalEPD and known stored175F16 input hashes.",
+    "Known803 raw+production-file-mirror input union5483 and all53 never-trained observed raw+file-mirror inputs34021/history hashes, kept separate by lineage.",
+    "Unfinished staging is UNKNOWN/unqualified and not decoded; its ordinal start is retired through all128 structural starts. No claim all its/search/unstored inputs are known."
+  ],
+  "scientific_context": {
+    "arms": "FULLA search1 vs FULLB 0.8search+0.2VERIFIED_RESOLVED_OUTCOME for both mainWDL andcategorical",
+    "classes_kept_distinct": true,
+    "collection": {
+      "attempts": 96,
+      "holdout": 64,
+      "slots": 16,
+      "train": 32
+    },
+    "eligible_resolved_outcome_classes": [
+      "NATURAL",
+      "STRICT_TB_ADJUDICATED"
+    ],
+    "offline64": "Diagnostic only, not primary playing veto",
+    "planned_playing": "3fixed256game screens on shared128pair book; conditional single1000game confirmation on disjoint500pair book; final mapping/decision protocol UNBOUND",
+    "planned_training": "40xB256, same optimizer/draw/mirror/common RNG between arms; final scientific/source/label contract UNBOUND"
+  },
+  "source_catalogue": {
+    "groups": 147248,
+    "history_requirement": "Exactly16 legal plies from declared startpos root; board validity, >1legal move, nonterminal with claim_draw=True; prospective native175 descriptor qualification. No PGN re-extraction.",
+    "manifest_path": "/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/cap40-evaluation-openings-v1/manifest.json",
+    "source_groups_sha256": "761767c9d75591da1dba1d8f779449d2c10387637f85b246e6337dd4da6d0d78"
+  },
+  "status": "FROZEN_PROSPECTIVE_STRUCTURAL_RULE_BEFORE_SELECTION_CPU_WORK"
+}

@@ -1,0 +1,28 @@
+{
+  "status": "ACCEPT_OFFLINE_V3_SOURCE_AND_LIMITED_WIRING_REUSE",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "utc": "2026-11-13T02:23:33.634478+00:00",
+  "preparation": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-preparation-v3/preparation.json",
+    "sha256": "10a4a538d97151fea86428c6fd78ad5d0210bebc8769a368dae7d6b861283352"
+  },
+  "source_proof": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-preparation-v3/source-proof.json",
+    "sha256": "521315ed1cf72ab7bc824563f5f96d5917b1867927e684b832dfd6edd44f3082"
+  },
+  "root_review": "Reviewed full v3 protocol/common guard and commands, exact byte reversal of sole scorer GPU-affinity literal; five other Python files and fixed protocol exact v2. Updated component references use qualified TRAINv5 loader and same observer. base_inputs metadata normalization is disclosed, not falsely AST-exact to v2. Snapshot order, source, roots, bootstrap, metrics, inference and proof/exclusion/whole64 inconclusive rules unchanged.",
+  "actual44_wiring": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-negative-root-acceptance-v2/readout.json",
+    "sha256": "173ffd4a77d6a7f29d3597f8a3e21e9ed8c3f401486c989b87df708adfacb16b"
+  },
+  "TRAIN_metadata_descriptor": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-train-descriptor-root-acceptance-v2/readout.json",
+    "sha256": "bdc2dad8ed53488ec09527e4943325cbbfab479aa74220e18e8e952ce82f5554"
+  },
+  "TRAIN_scoped_reuse": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-final-paired-template-root-source-acceptance-v2/readout.json",
+    "sha256": "55ca128bb8fcdd2aeffdfab01528a3b1315e10f422ae8b98beba66ec5192a8f6"
+  },
+  "limits": "Historical actual44 controlled source-wiring cases are scoped synthetic evidence. GPU owner affinity is source-reviewed; actual all64 proof/rootbank/seven-model inference and diagnostic metrics remain unexecuted. Future binding may replace only identity placeholders and their prerequisite booleans; all numerical/source/formula/selection/snapshot/budget fields remain immutable under final science. GPU child must restore CUDA0 after owner clears it, and both precision environment variables stay unset.",
+  "offline_or_GPU_execution_admitted": false
+}

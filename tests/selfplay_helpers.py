@@ -36,7 +36,12 @@ class FakeStockfish(StockfishUCI):
         syzygy_path: str | None = None,
         fresh: bool = False,
         searchmoves: Sequence[str] | None = None,
+        root_fen: str | None = None,
+        root_moves: Sequence[str] | None = None,
     ) -> StockfishResult:
+        # This fixed-answer fake models only existing bare-FEN callers.
+        assert root_fen is None
+        assert root_moves is None
         del syzygy_path
         del nodes
         # `depth` joins `nodes` in being ignored for the same reason: this

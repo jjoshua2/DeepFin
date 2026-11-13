@@ -1,0 +1,64 @@
+{
+  "status": "PROSPECTIVE_IDENTITY_ONLY_BINDING_CONTRACT_NO_EXECUTION",
+  "input_schema": {
+    "scientific": {
+      "path": "UNBOUND",
+      "sha256": "UNBOUND"
+    },
+    "publication": {
+      "path": "UNBOUND",
+      "sha256": "UNBOUND"
+    },
+    "producer_protocol": {
+      "path": "UNBOUND",
+      "sha256": "UNBOUND"
+    },
+    "producer_manifest": {
+      "path": "UNBOUND",
+      "sha256": "UNBOUND"
+    },
+    "cohort": {
+      "path": "UNBOUND",
+      "sha256": "UNBOUND"
+    }
+  },
+  "allowed_leaf_changes": [
+    "/scientific/path",
+    "/scientific/sha256",
+    "/publication/path",
+    "/publication/sha256",
+    "/producer_protocol/path",
+    "/producer_protocol/sha256",
+    "/producer_manifest/path",
+    "/producer_manifest/sha256",
+    "/cohort/path",
+    "/cohort/sha256"
+  ],
+  "no_other_fields_or_numeric_choices": true,
+  "fixed_dose": {
+    "draw_seed": 2026111401,
+    "NumPy": "2.2.6",
+    "API": "np.random.default_rng(seed).integers(0,len(ids),size=(40,256),dtype=np.int64)",
+    "steps": 40,
+    "batch_size": 256
+  },
+  "required_scientific_field": "/components/draw_plan_binder",
+  "required_scientific_object": {
+    "helper": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-preparation-v1/bind_draw_plan.py",
+      "sha256": "4b2a2787d94795d9c38ab0900533a7a9c9e4616e81648317d2ecab23bb3987b1"
+    },
+    "manifest": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-preparation-v1/manifest.json",
+      "sha256": "4a1896729659a4b3c23d812b5b6b5c0f45b34a01b479e6904bb2b9ebbacb011f"
+    },
+    "identity_only_inputs_template": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-preparation-v1/identity-inputs.TEMPLATE.json",
+      "sha256": "fdefbde7a15bf5a7d9960fb9629ba10949fbe95c719017733c8b0d2c2877227b"
+    }
+  },
+  "no_draw_plan_dependency": "Inputs reference science/publication/producer/cohort only. The protocol and manifest are fixed templates in memory; no final paired manifest or draw plan is read to construct the plan. Science pins this helper/manifest/identity-template object, then actual science and accepted cohort identities fill only these ten leaves.",
+  "proof_and_array_order": "The actual qualified TRAINv5 base_inputs and load_research_train enforce all96/32TRAIN/628 admission and issue all32 owned verifier proofs before any TRAIN arrays. This helper does not duplicate or weaken those checks and never calls a HOLD loader.",
+  "output_role": "Writes fresh results draw-plan.json with exactly physical_row_ids,indices,raw_arrays. After closed PASS and independent root acceptance, root may copy these exact immutable bytes to the fixed paired protocol draw_plan_path and bind their SHA; no resampling or recomputation. This metadata copy does not admit learning.",
+  "no_retry_extension_reseed_or_extra_sampler": true
+}

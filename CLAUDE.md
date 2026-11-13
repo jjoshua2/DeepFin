@@ -127,8 +127,9 @@ themselves establish playing strength.
 
 ## Semantics worth knowing
 
-- The SF component of the WDL blend has been load-bearing in prior runs. Consult the
-  ledger before removing it; a sharper teacher-fit score is not sufficient evidence.
+- Changes to the WDL blend's SF share need a fresh controlled comparison. The ledger's
+  2026-08-23 operator note rejects the old uncontrolled removal result as mechanism
+  evidence; a sharper teacher-fit score is also insufficient to establish strength.
 - `policy_sf` predicts the opponent's reply at P1 after the network's move. It is not
   a teacher distribution over the network's current moves.
 - MCTS uses the `wdl` value head; `sf_eval` and `categorical` are auxiliary.

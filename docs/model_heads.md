@@ -68,20 +68,28 @@ gradient share, a head weight, or a value verdict must use the trained loss;
 readings, and never in a denominator of gradient contribution
 (docs/rl_loop_audit.md I3/I7).
 
-## The WDL blend note (load-bearing)
+## The WDL blend and its evidence limits
 
-**The blend's SF component must not be zeroed.** The main `value_wdl` head
-trains on one soft-CE against a three-way blend built in `losses.py`:
+**Treat the SF share as an experimental choice, not an established optimum.**
+The main `value_wdl` head trains on one soft-CE against a three-way blend built
+in `losses.py`:
 `game_frac`·outcome + `sf_wdl_frac`·SF cp-logistic label +
 `search_wdl_frac`·own search-root WDL (no separate `w_sf_wdl` knob exists —
-the blend replaced the old dual loss). Removing SF value supervision crashed
-winrate 0.64 → 0.40 in 4 iters (2026-04-17, reverted in 52ab9c0). The
-cp-logistic label is deliberately soft and ~calibrated to actual selfplay
-outcomes (verified 2026-07-01), so the head's "hedged" predictions are an
-accurate fit to its target, not under-fitting — the head sharpens only as the
-net's real conversion ability improves. Don't chase value-head sharpness
-against a deep-SF ruler; that comparison is a category error. `value_sf_eval`
-is a weak auxiliary channel, not a substitute.
+the blend replaced the old dual loss). An old run reported a winrate fall
+0.64 → 0.40 after removing SF value supervision (2026-04-17, reverted in
+52ab9c0), but the [ledger](experiment_ledger.md) records the operator's 2026-08-23
+instruction that this ancient, uncontrolled result must not be cited as a
+mechanism without a fresh preregistered re-ablation. It neither establishes
+that SF supervision is necessary for the current model nor explains a new
+regression. Compare a declared target change with a matched control under
+the actual optimizer, data and dose, then require fresh playing evidence
+before claiming strength.
+
+The cp-logistic SF label is deliberately soft. The historical calibration
+check (2026-07-01) describes that run's selfplay distribution, not every
+future model or teacher effort. Sharpness or agreement with deep SF alone
+cannot establish conversion ability. `value_sf_eval` is an auxiliary head,
+not a substitute for the `wdl` head used in search.
 
 **How the search component is CONSTRUCTED (`search_wdl_draw_mode`, default
 `net_raw` = the production construction).** The blend's third component is a
@@ -162,11 +170,12 @@ pre-feature one.
 
 `wdl_terminal_outcome_sf_frac` (default **0.0** — the SF share is then never
 touched at any d) is the fraction of the SF share the outcome may additionally
-take on the same taper. It exists for the offline screen's aggressive arm; the
-SF component is load-bearing (see above), so raising it is a training-target
-experiment of its own. At sf_frac 0.5 with the production floor sf 0.69 /
-search 0.31: d ≤ 2 → SF 0.345 / search 0.0 / outcome 0.655; d = 6 → SF 0.621 /
-search 0.248 / outcome 0.131.
+take on the same taper. It exists for the offline screen's aggressive arm;
+raising this knob transfers supervision from SF to outcomes and needs a
+separate controlled target experiment (see above). For a worked example with
+`wdl_terminal_outcome_sf_frac=0.5` and SF 0.69 / search 0.31:
+d ≤ 2 → SF 0.345 / search 0.0 /
+outcome 0.655; d = 6 → SF 0.621 / search 0.248 / outcome 0.131.
 
 Proof of effect is the `wdl_terminal_outcome_frac` column in progress.csv (the
 mean weight moved onto the outcome across all batch rows, exactly 0.0 while the

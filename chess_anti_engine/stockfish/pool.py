@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import suppress
 
-from .uci import StockfishResult, StockfishUCI
+from .uci import StockfishResult, StockfishUCI, _validated_position_history
 
 
 _LOG = logging.getLogger("chess_anti_engine.stockfish")
@@ -30,6 +30,8 @@ class StockfishPool:
         multipv: int = 1,
         hash_mb: int | None = None,
         syzygy_path: str | None = None,
+        syzygy_50_move_rule: bool | None = None,
+        syzygy_probe_limit: int | None = None,
         nice: int = 0,
         read_timeout_s: float | None = None,
     ):
@@ -41,6 +43,8 @@ class StockfishPool:
         self.multipv = int(multipv)
         self.hash_mb = None if hash_mb is None else max(1, int(hash_mb))
         self.syzygy_path = syzygy_path or None
+        self.syzygy_50_move_rule = syzygy_50_move_rule
+        self.syzygy_probe_limit = syzygy_probe_limit
         self.nice = min(19, max(0, int(nice)))
         # Carried into every engine INCLUDING replacements, so a pool built with
         # a custom deadline does not silently revert to the 60s default the
@@ -91,6 +95,8 @@ class StockfishPool:
             multipv=self.multipv,
             hash_mb=self.hash_mb,
             syzygy_path=self.syzygy_path,
+            syzygy_50_move_rule=self.syzygy_50_move_rule,
+            syzygy_probe_limit=self.syzygy_probe_limit,
             nice=self.nice,
             read_timeout_s=(
                 None if self.read_timeout_s is None else float(self.read_timeout_s)
@@ -150,9 +156,17 @@ class StockfishPool:
         syzygy_path: str | None,
         fresh: bool,
         searchmoves: Sequence[str] | None = None,
+        root_fen: str | None = None,
+        root_moves: tuple[str, ...] | None = None,
     ) -> StockfishResult:
         engine: StockfishUCI = self._worker_state.engine
         try:
+            if root_fen is not None or root_moves is not None:
+                return engine.search(
+                    fen, nodes=nodes, syzygy_path=syzygy_path,
+                    fresh=fresh, searchmoves=searchmoves,
+                    root_fen=root_fen, root_moves=root_moves,
+                )
             # ⚑ Spelled out rather than built as a **kwargs dict. A dict costs
             # the ONLY static check that covers this call: CI installs no
             # Stockfish, so every real-engine test here is skipped, and a
@@ -211,7 +225,18 @@ class StockfishPool:
         syzygy_path: str | None = None,
         fresh: bool = False,
         searchmoves: Sequence[str] | None = None,
+        root_fen: str | None = None,
+        root_moves: Sequence[str] | None = None,
     ) -> Future[StockfishResult]:
+        """Queue a query, optionally preserving a validated root/move history.
+
+        History is copied and validated synchronously, before a worker can
+        touch its engine; caller mutation cannot change a queued query. A
+        failed search still raises as before (replacement is not a retry).
+        """
+        history = _validated_position_history(
+            fen, root_fen=root_fen, root_moves=root_moves,
+        )
   # The shared executor gives this request to the first free engine-owning
   # thread. `fresh` requests a cold-TT (ucinewgame) search; it is forwarded
   # only when set so the default engine call stays identical.
@@ -222,6 +247,12 @@ class StockfishPool:
   # validated in StockfishUCI.search, so a bad token raises here rather than
   # being silently dropped -- see `_validated_searchmoves`.
         assert self._exec is not None
+        if history is not None:
+            root, moves = history
+            return self._exec.submit(
+                self._search, fen, nodes, syzygy_path, fresh, searchmoves,
+                root, moves,
+            )
         return self._exec.submit(
             self._search, fen, nodes, syzygy_path, fresh, searchmoves,
         )

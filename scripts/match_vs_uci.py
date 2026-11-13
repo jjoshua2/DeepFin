@@ -2,8 +2,8 @@
 """UCI-vs-UCI match driver.
 
 Pits two UCI engines against each other. Used to benchmark our model's UCI
-engine against external references like rofChade/Stockfish/lc0 to get an
-absolute Elo number.
+engine against pinned external references like rofChade/Stockfish/lc0.
+Results describe the declared engines and conditions, not an absolute Elo rating.
 
 Each side plays White and Black equally. Per-move budget can be fixed time
 (``--time-ms``), fixed nodes (``--nodes-a`` / ``--nodes-b``), or a game clock
@@ -37,6 +37,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
+import json
 import math
 import os
 import shlex
@@ -127,10 +129,11 @@ def _score_ci(points: list[float], *, z: float = 1.96) -> tuple[float, float] | 
 
 
 def _parse_opening_line(line: str) -> chess.Board | None:
-    stripped = line.strip()
-    if not stripped or stripped.startswith("#"):
+    stripped = line.partition("#")[0].strip()
+    if not stripped:
         return None
-    fields = stripped.split()
+    fen_part, separator, moves_part = stripped.partition("|")
+    fields = fen_part.split()
     if len(fields) >= 6 and fields[4].isdigit() and fields[5].isdigit():
         fen = " ".join(fields[:6])
     elif len(fields) >= 4:
@@ -138,8 +141,18 @@ def _parse_opening_line(line: str) -> chess.Board | None:
     else:
         return None
     try:
-        return chess.Board(fen)
-    except ValueError:
+        board = chess.Board(fen)
+        if not board.is_valid():
+            raise ValueError("illegal opening position")
+        for token in moves_part.split():
+            move = chess.Move.from_uci(token)
+            if move not in board.legal_moves:
+                raise ValueError(f"illegal opening move {token!r}")
+            board.push(move)
+        return board
+    except ValueError as exc:
+        if separator:
+            raise ValueError("invalid opening history") from exc
         return None
 
 
@@ -147,9 +160,14 @@ def _load_openings(path: Path, *, limit: int | None = None, offset: int = 0) -> 
     boards: list[chess.Board] = []
     skipped = 0
     with path.open() as f:
-        for line in f:
-            board = _parse_opening_line(line)
+        for number, line in enumerate(f, 1):
+            try:
+                board = _parse_opening_line(line)
+            except ValueError as exc:
+                raise ValueError(f"{path}:{number}: {exc}") from exc
             if board is None:
+                if line.partition("#")[0].strip():
+                    raise ValueError(f"{path}:{number}: invalid opening FEN/EPD")
                 continue
             if skipped < offset:
                 skipped += 1
@@ -160,6 +178,16 @@ def _load_openings(path: Path, *, limit: int | None = None, offset: int = 0) -> 
     if not boards:
         raise ValueError(f"no valid opening FEN/EPD rows found in {path}")
     return boards
+
+
+def _opening_identity(board: chess.Board) -> tuple[str, list[str]]:
+    return board.root().fen(), [move.uci() for move in board.move_stack]
+
+
+def _opening_panel_digest(openings: Sequence[chess.Board]) -> str:
+    rows = [(*_opening_identity(board), board.fen()) for board in openings]
+    encoded = json.dumps(rows, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(b"uci-opening-panel-v1\0" + encoded).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -379,25 +407,34 @@ def _quit_engine(eng: chess.engine.SimpleEngine) -> None:
 
 
 def _set_options(eng: chess.engine.SimpleEngine, opts: dict[str, str]) -> None:
+    configured: dict[str, str | int | bool] = {}
     for k, v in opts.items():
-        if k in eng.options:
-            try:
-                option = eng.options[k]
-                if option.type == "spin":
-                    eng.configure({k: int(v)})
-                elif option.type == "check":
-                    eng.configure({k: str(v).lower() in ("1", "true", "yes")})
-                else:
-                    eng.configure({k: v})
-            except (chess.engine.EngineError, ValueError) as exc:
-                print(f"[warn] could not set {k}={v}: {exc}")
+        if k not in eng.options:
+            raise ValueError(f"engine does not advertise requested UCI option {k!r}")
+        option = eng.options[k]
+        if option.type == "spin":
+            configured[k] = int(v)
+        elif option.type == "check":
+            value = str(v).lower()
+            if value not in ("1", "true", "yes", "0", "false", "no"):
+                raise ValueError(f"invalid boolean UCI option {k}={v!r}")
+            configured[k] = value in ("1", "true", "yes")
+        else:
+            configured[k] = v
+    if configured:
+        # Configuration errors abort startup; the caller closes the failed owner.
+        eng.configure(configured)
 
 
 def _open_syzygy_tablebase(path: str) -> chess.syzygy.Tablebase | None:
     dirs = [p.strip() for p in path.split(os.pathsep) if p.strip()]
     if not dirs:
         return None
-    tablebase = chess.syzygy.Tablebase()
+    # Shared no-eviction constructor (see its docstring for the deadlock);
+    # imported here so the script's import stays free of the compiled extension.
+    from chess_anti_engine.tablebase import new_tablebase
+
+    tablebase = new_tablebase()
     added = 0
     for directory in dirs:
         try:
@@ -591,6 +628,7 @@ def play_one_game(
     clock_grace_ms: int = 0,
     max_plies: int,
     start_board: chess.Board | None = None,
+    preserve_opening_history: bool = False,
     move_callback: Callable[[MoveRecord], None] | None = None,
     syzygy_adjudicator: Any | None = None,
     syzygy_adjudicate_max_pieces: int = 7,
@@ -602,8 +640,10 @@ def play_one_game(
     ``ucinewgame`` on both engines, so hash/tree state doesn't leak between
     games of a match.
     """
-    board = chess.Board() if start_board is None else start_board.copy(stack=False)
-    initial = board.copy(stack=False)
+    # External matches opt in below. Legacy arena matched_time records remain
+    # FEN-only until their separate resume/readout contract supports histories.
+    board = chess.Board() if start_board is None else start_board.copy(stack=preserve_opening_history)
+    initial = board.copy(stack=preserve_opening_history)
     clock_mode = clock_base_w_ms is not None or clock_base_b_ms is not None
     if clock_mode and (clock_base_w_ms is None or clock_base_b_ms is None):
         raise ValueError("clock mode requires both white and black base times")
@@ -758,6 +798,7 @@ def _play_one_pairing(
         clock_grace_ms=clock_grace_ms,
         max_plies=max_plies,
         start_board=start_board,
+        preserve_opening_history=True,
         move_callback=move_callback,
         syzygy_adjudicator=syzygy_adjudicator,
         syzygy_adjudicate_max_pieces=syzygy_adjudicate_max_pieces,
@@ -781,10 +822,13 @@ def _write_pgn_game(
     game.headers["Black"] = black_name
     game.headers["Result"] = record.result
     game.headers["Termination"] = record.termination
-    if record.start_board.fen() != chess.Board().fen():
-        game.setup(record.start_board)
+    root = record.start_board.root()
+    if root.fen() != chess.Board().fen():
+        game.setup(root)
+    if record.start_board.move_stack:
+        game.headers["OpeningPlyCount"] = str(len(record.start_board.move_stack))
     node = game
-    for move in record.moves:
+    for move in (*record.start_board.move_stack, *record.moves):
         node = node.add_variation(move)
     print(game, file=fh, end="\n\n")
 
@@ -856,6 +900,7 @@ def match_game_log_settings(
     warmup_nodes_b: int | None,
     opts_a: dict[str, str],
     opts_b: dict[str, str],
+    openings: Sequence[chess.Board],
 ) -> dict[str, Any]:
     """The settings a --resume must MATCH: both engines and both budgets.
 
@@ -887,6 +932,8 @@ def match_game_log_settings(
             None if args.openings_limit is None else int(args.openings_limit)
         ),
         "openings_offset": int(args.openings_offset),
+        "opening_history_version": 1,
+        "opening_panel_sha256": _opening_panel_digest(openings),
         "options_a": dict(opts_a),
         "options_b": dict(opts_b),
         "syzygy_adjudicate_path": args.syzygy_adjudicate_path,
@@ -957,6 +1004,11 @@ def load_match_resume(
                 f"({openings[opening_index].fen()!r}). The opening list has "
                 "changed under the log; refusing to mix two populations."
             )
+        root_fen, opening_uci = _opening_identity(openings[opening_index])
+        if (opening_uci or "opening_root_fen" in row or "opening_uci" in row) and (
+            row.get("opening_root_fen") != root_fen or row.get("opening_uci") != opening_uci
+        ):
+            raise SystemExit(f"--resume: {path} game {index} opening history differs")
         result = row.get("result")
         score = row.get("score_a")
         if (
@@ -1007,7 +1059,7 @@ def main() -> None:
     p.add_argument("--enforce-nodes-a", action="store_true", help="externally stop engine A at --nodes-a/--nodes")
     p.add_argument("--enforce-nodes-b", action="store_true", help="externally stop engine B at --nodes-b/--nodes")
     p.add_argument("--max-plies", type=_positive_int, default=300)
-    p.add_argument("--openings", type=Path, default=None, help="FEN/EPD opening file; games are paired by opening with swapped colors")
+    p.add_argument("--openings", type=Path, default=None, help="FEN/EPD or 'root FEN | UCI moves' file; paired with swapped colors")
     p.add_argument("--openings-limit", type=_positive_int, default=None, help="maximum opening rows to load")
     p.add_argument("--openings-offset", type=int, default=0, help="skip this many valid opening rows before loading")
     p.add_argument("--pgn-out", type=Path, default=None, help="write completed games to a PGN file")
@@ -1118,6 +1170,7 @@ def main() -> None:
             enforce_nodes_a=enforce_nodes_a, enforce_nodes_b=enforce_nodes_b,
             warmup_nodes_a=warmup_nodes_a, warmup_nodes_b=warmup_nodes_b,
             opts_a=opts_a, opts_b=opts_b,
+            openings=openings,
         )
         fingerprint = settings_fingerprint(log_settings)
         game_log_path = resolve_game_log_path(args, fingerprint=fingerprint)
@@ -1366,6 +1419,10 @@ def main() -> None:
                     clock_grace_ms=args.clock_grace_ms,
                     game=i + 1,
                 )
+                if (record.start_board.fen() != start_board.fen()
+                        or _opening_identity(record.start_board) != _opening_identity(start_board)):
+                    raise ValueError("play record did not preserve the declared opening history")
+                opening_root_fen, opening_uci = _opening_identity(record.start_board)
                 result = record.result
                 plies = record.plies
                 point = _score_for_a(result, a_is_white=a_white)
@@ -1400,6 +1457,8 @@ def main() -> None:
                     "game_number": i + 1,     # what the console and the CSV show
                     "opening_index": opening_idx,
                     "opening_fen": openings[opening_idx].fen(),
+                    "opening_root_fen": opening_root_fen,
+                    "opening_uci": opening_uci,
                     "a_is_white": bool(a_white),
                     "white": white.label,
                     "black": black.label,

@@ -1,0 +1,190 @@
+{
+  "schema": "rl-week-one-day1-readout-v1",
+  "as_of_utc": "2026-11-12T18:36:00.684953+00:00",
+  "status": "ACTIVE_LONG_TERM_STRENGTH_UNACHIEVED",
+  "bulk_artifact_bundle": "rl-week-one-20261112-v1",
+  "artifact_sha256": {
+    "engineering-pair-readout-v2/readout.json": "c4ad035ce1c59ccc77c097839d77bb800bc1908227d99595002af1e324fa56df",
+    "deadline-donor-qualification-v1/receipt.json": "11344600b742d4955c3d7b69a1146ee07829f1778ce79ff3cbe985d6ee0d64b2",
+    "throughput-measurement-results-v1/receipt.json": "ee76f4ff0782002488ccf41a2a23be57571155ae977f6b3153e41a02602cd83a",
+    "throughput-measurement-readout-v1/review.json": "19359fe8b2ddff42f96ce35d6c1aa0e455f27f64a39377261025b5128856f0fb",
+    "compiled-serving-results-v2/study.json": "0befb48f4104a59f41a17c3eddf42743b0b762dfa3a68fd09409e6a3acee6c9f",
+    "compiled-serving-results-v2/receipt.json": "73e19d347544622c72eeb1bff79d5fd3a171cddcb59a423de959334abe6c652c",
+    "compiled-serving-readout-v2/readout.json": "5cfe42e24319128436c39d6ccdc6e5a33f6665f10ead176ed5b89491ec5316e3",
+    "compiled-serving-failure-audit-v1/report.json": "1bee7e57923cb6149b7f11c155779b3636f9be72ad7cc6202fea2f7bb996f0a5"
+  },
+  "donor_sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+  "measured_repaired_source": "f914f51eb349681300fe50147029e98b880de63e",
+  "source_PRs_merged": {
+    "1232": "0db6e954861ebae91526c6cd4c3a08dd37ce1655",
+    "1235": "9a0a825b2b147d72522b406c52d051b7a2a97f80"
+  },
+  "engineering_pair": {
+    "games": 2,
+    "opening_pairs": 1,
+    "donor_wins": 0,
+    "draws": 0,
+    "donor_losses": 2,
+    "played_plies": [
+      132,
+      127
+    ],
+    "terminations": [
+      "rules",
+      "rules"
+    ],
+    "independently_verified_checkmates": 2,
+    "clock_forfeits": 0,
+    "illegal_moves": 0,
+    "max_ply_draws": 0,
+    "score_interval": "unavailable: one opening pair; this is engineering, not strength confirmation"
+  },
+  "compiled_serving": {
+    "fixed_request_counts": {
+      "factory_calls": 4,
+      "factory_rows": 6,
+      "warmup_calls": 8,
+      "warmup_rows": 12,
+      "measured_calls": 36,
+      "measured_rows": 48
+    },
+    "route_qualified": true,
+    "numerical_qualification": "UNQUALIFIED_STRICT_OLD_TOLERANCE_DRIFT",
+    "latency": [
+      {
+        "route": "eager",
+        "batch": 1,
+        "calls": 12,
+        "wall_median_ms": 29.72608699928969,
+        "wall_range_ms": [
+          28.456289001042023,
+          83.06033900589682
+        ],
+        "inverse_median_rows_per_second": 33.64048554469665,
+        "aggregate_rows_per_completed_second": 24.649181400442643
+      },
+      {
+        "route": "eager",
+        "batch": 2,
+        "calls": 6,
+        "wall_median_ms": 29.126662499038503,
+        "wall_range_ms": [
+          28.4656290023122,
+          29.586586984805763
+        ],
+        "inverse_median_rows_per_second": 68.66560836024456,
+        "aggregate_rows_per_completed_second": 68.86734288683402
+      },
+      {
+        "route": "compiled",
+        "batch": 1,
+        "calls": 12,
+        "wall_median_ms": 3.0516955157509074,
+        "wall_range_ms": [
+          2.2908279788680375,
+          3.9013119821902364
+        ],
+        "inverse_median_rows_per_second": 327.6866891990493,
+        "aggregate_rows_per_completed_second": 330.52256940072675
+      },
+      {
+        "route": "compiled",
+        "batch": 2,
+        "calls": 6,
+        "wall_median_ms": 3.6633139970945194,
+        "wall_range_ms": [
+          2.8890829998999834,
+          4.395046998979524
+        ],
+        "inverse_median_rows_per_second": 545.953746139768,
+        "aggregate_rows_per_completed_second": 557.4737043267781
+      }
+    ],
+    "Dynamo_unique_graphs": 2,
+    "Dynamo_calls_captured": 1840,
+    "capture_on_compiled_owner": true,
+    "numerical_comparisons": 24,
+    "strict_old_tolerance_passes": 0,
+    "max_WDL_probability_error": 0.000615106192671161,
+    "max_legal_policy_TV": 0.003933961879759889,
+    "sampled_legal_top_action_changes": 0
+  },
+  "GPU_intended_stages": [
+    {
+      "stage": "compiled-serving-execution-v1",
+      "source_revision": "f914f51eb349681300fe50147029e98b880de63e",
+      "status": "FAILED",
+      "returncode": 1,
+      "owned_processes_closed": true,
+      "wall_seconds": 23.221695877000457,
+      "terminal_sha256": "c4556ad4ac0a102d83297ff69d6641302fe865945ec49fa1cdc7efb1c6554d3f"
+    },
+    {
+      "stage": "compiled-serving-execution-v2",
+      "source_revision": "f914f51eb349681300fe50147029e98b880de63e",
+      "status": "PASS",
+      "returncode": 0,
+      "owned_processes_closed": true,
+      "wall_seconds": 107.49991975698504,
+      "terminal_sha256": "e3e4e5895a6b3b66c40680ced8e338a71c0237d108a67fe847e02e005f3ad2b8"
+    },
+    {
+      "stage": "deadline-donor-qualification-execution-v1",
+      "source_revision": "f914f51eb349681300fe50147029e98b880de63e",
+      "status": "PASS",
+      "returncode": 0,
+      "owned_processes_closed": true,
+      "wall_seconds": 90.40765657799784,
+      "terminal_sha256": "a9b2bc54e55df8d67f98f65078b315bc677085011de8242a87d4dad2713636cb"
+    },
+    {
+      "stage": "donor-rof-engineering-pair-execution-v1",
+      "source_revision": "5c4cff29a3832d7c6de94f8a6a542780c1c9ffbf",
+      "status": "PASS",
+      "returncode": 0,
+      "owned_processes_closed": true,
+      "wall_seconds": 303.9566195179941,
+      "terminal_sha256": "c4591fe607afc62412af0256975721ba84ba7b53510f2055feda046931792953"
+    },
+    {
+      "stage": "donor-rof-engineering-pair-execution-v2",
+      "source_revision": "f914f51eb349681300fe50147029e98b880de63e",
+      "status": "PASS",
+      "returncode": 0,
+      "owned_processes_closed": true,
+      "wall_seconds": 288.22089199599577,
+      "terminal_sha256": "422672d09ddc29aef3cf9c6acfbdb6c50a9edaee6d2b47dd630f4ddec2412be9"
+    },
+    {
+      "stage": "donor-uci-readiness-execution-v1",
+      "source_revision": "5c4cff29a3832d7c6de94f8a6a542780c1c9ffbf",
+      "status": "PASS",
+      "returncode": 0,
+      "owned_processes_closed": true,
+      "wall_seconds": 165.6103058909939,
+      "terminal_sha256": "44727f639828ee2059350a4d709dd45cd4412e3c4a763acf92ba3d571cdb2e7e"
+    },
+    {
+      "stage": "throughput-measurement-execution-v1",
+      "source_revision": "f914f51eb349681300fe50147029e98b880de63e",
+      "status": "PASS",
+      "returncode": 0,
+      "owned_processes_closed": true,
+      "wall_seconds": 7.1480638929933775,
+      "terminal_sha256": "0ecfbfae7aed2acc95774e5048c4c39aff0c7f07d6ef0c370aee6ce60982ba9e"
+    }
+  ],
+  "GPU_intended_stage_wall_seconds": 986.0651535099605,
+  "cost_scope": "Owned stage wall includes load, startup, warmup, failure and cleanup; not GPU kernel time; excludes manual CPU tests and remote CI. Earlier closed RL experiment costs remain in their own records.",
+  "new_week_training_steps": 0,
+  "candidate_adopted": false,
+  "substantive_external_baseline_complete": false,
+  "compiled_UCI_or_panel_admitted": false,
+  "fresh_research_cohort_qualified": false,
+  "limits": [
+    "One opening pair has no between-opening score interval and is not a strength milestone.",
+    "Only sampled four-prefix numerical behavior is measured; strict old tolerance fails.",
+    "Dynamo graph counts differ from CUDA capture objects; direct graph hooks observed three captures and22 balanced replays.",
+    "Default row holdout is unsuitable for new game-level evidence; provenance PR1237 is pending CI and no new cohort is admitted."
+  ]
+}
