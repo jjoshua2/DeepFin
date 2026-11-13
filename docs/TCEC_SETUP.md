@@ -214,12 +214,23 @@ phase C tells us what the additional seven GPUs are worth.
   **A GUI that never sends `isready` between games gets no health re-check at
   all**: the engine stays unhealthy, keeps answering every `go`, and every
   unsearched move stays loud as listed above.
-- **`isready` mid-game** never rebuilds, re-checks or exits. It answers at once
-  when a search (or a stuck one) holds the worker. Otherwise, if an option
-  rebuild left the search path cold, it first re-warms it: one search of
-  max(256, `chunk_sims`) nodes on the start position, milliseconds when the
-  graphs are already captured and a few seconds (about 3-4 s measured for a
-  cold Gumbel capture) right after a rebuild. No clock runs between `bestmove`
+- **`isready` mid-game** never rebuilds, re-checks or exits. "Mid-game" starts
+  at the first `go` after a boundary, however that `go` was answered (a search,
+  or an unsearched reply while a stuck search still held the worker). It
+  answers at once when a search (or a stuck one) holds the worker. Otherwise,
+  if an option rebuild left the search path cold, it first re-warms it with one
+  search on the start position, no deadline, of:
+  - classic Gumbel, walker or single-device paths: max(256, `ChunkSims`) nodes;
+  - multi-GPU PUCV pool: max(256, `ChunkSims`, max(`ChunkSims`, G) x number
+    of devices) nodes, so every device captures its own graph;
+  - root-parallel Gumbel (`SearchParallel gumbel`): max(256, `ChunkSims`,
+    max(`ChunkSims`, 1 + 2 x G) x number of groups) nodes;
+
+  where G = min(`VLGather`, `MaxBatch`) is the pools' gather.
+
+  That takes milliseconds when the graphs are already captured and a few
+  seconds (about 3-4 s measured for a cold Gumbel capture, per device) right
+  after a rebuild. No clock runs between `bestmove`
   and the next `go`. A failed re-warm prints `search-path re-warm failed`,
   marks the engine unhealthy, keeps the path cold for the next `isready`, and
   still answers `readyok`.

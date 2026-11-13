@@ -795,6 +795,7 @@ class Engine:
             target=self._run_failed_go_reply,
             args=(gen, board, args.searchmoves, args.ponder, open_ended, not worker_busy,
                   fresh_budget_s),
+            kwargs={"cancel_event": self._cancel_event, "ponder_release": self._ponder_release},
             daemon=True,
         )
         self._search_thread = reply
@@ -813,11 +814,16 @@ class Engine:
         self, gen: int, board: chess.Board, searchmoves: tuple[str, ...],
         ponder: bool, open_ended: bool, allow_fresh_eval: bool = True,
         fresh_budget_s: float | None = None,
+        *, cancel_event: threading.Event | None = None,
+        ponder_release: threading.Event | None = None,
     ) -> None:
+        # Wait on THIS go's events, handed over at thread creation: `self._...`
+        # is replaced by every later go, and a superseded thread waiting on the
+        # new, never-set event would hold the worker forever.
         if ponder:
-            self._ponder_release.wait()
+            (ponder_release or self._ponder_release).wait()
         elif open_ended:
-            self._cancel_event.wait()
+            (cancel_event or self._cancel_event).wait()
         with self._state_lock:
             if gen != self._search_gen or self._quit_requested:
                 return
@@ -1058,6 +1064,11 @@ class Engine:
         self._applied_moves = tuple(target_moves)
 
     def _handle_go(self, cmd: CmdGo) -> None:
+        # First, before anything that can raise: every route that answers a
+        # `go` -- a search, the reply-only answer for a handler fault, the
+        # busy-worker answer when the wait below raises -- is a move of a game,
+        # so a later isready must not run the boundary checks.
+        self._in_game = True
         # The move clock starts at `go` receipt: the bounded wait for a live
         # search, tree sync (including any reuse work) and thread start-up
         # below are all charged to this move's deadline.
@@ -1067,7 +1078,6 @@ class Engine:
         # bounded by this move's own clock, then `dispatch` answers from the
         # busy-worker fallback for the latest board.
         self._wait_for_search(timeout_s=self._go_wait_budget_s(cmd))
-        self._in_game = True
   # Ponder mode: search at the position BEFORE opponent's predicted
   # reply. That node's root expansion creates a child for every legal
   # opponent move, so whichever one they play — predicted or not — we
@@ -1134,6 +1144,7 @@ class Engine:
         self._search_thread = threading.Thread(
             target=self._run_search,
             args=(limits, gen, search_board, go_received_at),
+            kwargs={"cancel_event": self._cancel_event, "ponder_release": self._ponder_release},
             daemon=True,
         )
         self._search_thread.start()
@@ -2255,7 +2266,15 @@ class Engine:
     def _run_search(
         self, limits: SearchLimits, gen: int, board: chess.Board,
         go_received_at: float | None = None,
+        *, cancel_event: threading.Event | None = None,
+        ponder_release: threading.Event | None = None,
     ) -> None:
+  # THIS go's events, handed over at thread creation. Every later `go` replaces
+  # `self._cancel_event` / `self._ponder_release`; a search parked after `stop`
+  # that returned later and then waited on the NEW, never-set event would stay
+  # an orphan for good -- every later move a busy-worker fallback.
+        cancel = cancel_event if cancel_event is not None else self._cancel_event
+        release = ponder_release if ponder_release is not None else self._ponder_release
   # Ponder search: no deadline yet; runs until ponderhit or stop.
         result = self._run_one_phase(
             limits, is_ponder=limits.ponder, board=board, clock_started_at=go_received_at,
@@ -2267,8 +2286,8 @@ class Engine:
   # until ``stop`` or ``ponderhit``. Those commands set ``_ponder_release``.
   # ``_stop_event`` does not: a pool fault sets it and then raises, and
   # treating that as a release publishes the pre-reply fallback.
-        if limits.ponder and not self._ponder_release.is_set():
-            self._ponder_release.wait()
+        if limits.ponder and not release.is_set():
+            release.wait()
         ponderhit = self._ponderhit_event.is_set() and self._pending_real_limits is not None
         if self._ponder_fallback_pending:
             self._ponder_fallback_pending = False
@@ -2314,7 +2333,7 @@ class Engine:
         # Pool failures can set _stop_event without cancelling that ownership.
         # After ponderhit, use the real phase's limits so finite searches emit.
         if not limits.ponder and limits.is_open_ended():
-            self._cancel_event.wait()
+            cancel.wait()
   # Gate the emit: if a newer `go` has started, our result is stale
   # and the new search owns bestmove. Silently drop.
         with self._state_lock:

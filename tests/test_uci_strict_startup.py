@@ -446,6 +446,81 @@ def test_boundary_checks_wait_for_a_free_worker(monkeypatch, capsys) -> None:
         t.join(5)
 
 
+def test_busy_worker_answers_after_a_boundary_still_start_the_game(monkeypatch, capsys) -> None:
+    """The reviewer's scenario: a search ignores stop and is parked, a new game
+    starts, its first gos are busy-worker answers (unhealthy after 3), the stuck
+    search ends -- and a mid-game isready must still not rebuild, re-check or
+    exit. `_in_game` used to be set only after the wait, which raised here."""
+    monkeypatch.setattr("chess_anti_engine.uci.engine._GO_WAIT_NO_CLOCK_S", 0.05)
+    engine, worker, rebuilt = _flaky_engine()
+    release, entered = threading.Event(), threading.Event()
+
+    def hang(board, **_kw):
+        entered.set()
+        release.wait(10)
+        return _ok(board)
+
+    worker.run.side_effect = hang
+    engine.dispatch(parse_command("go infinite"))
+    assert entered.wait(5)
+    engine.dispatch(parse_command("stop"))  # parked: an orphan
+    for boundary in ("ucinewgame", "position startpos"):
+        engine.dispatch(parse_command(boundary))
+        assert not engine._in_game
+    engine.dispatch(parse_command("position startpos moves e2e4"))
+    for _ in range(3):
+        engine.dispatch(CmdGo(GoArgs(nodes=8)))  # busy-worker answers
+        _join(engine)
+        assert engine._in_game  # each one is a move of this game
+    assert engine._unhealthy is not None
+    release.set()
+    for t in list(engine._orphan_threads):
+        t.join(5)
+    assert engine.worker_is_free()
+    capsys.readouterr()
+    engine.dispatch(parse_command("isready"))  # mid-game
+    out = capsys.readouterr().out
+    assert out.splitlines()[-1] == "readyok"
+    assert "health check" not in out
+    assert rebuilt == []
+    assert not engine.quit_requested
+
+
+@pytest.mark.parametrize("first_go", ["go infinite", "go ponder wtime 5000 btime 5000"])
+def test_a_parked_search_released_after_a_later_go_still_ends(first_go: str, monkeypatch, capsys) -> None:
+    """A search parked after `stop` that returns only after a LATER go must still
+    end: it waits on its own go's cancel / ponder-release event, not on the one
+    the later go installed (never set), which held the worker forever and made
+    every later move a busy-worker fallback."""
+    monkeypatch.setattr("chess_anti_engine.uci.engine._GO_WAIT_NO_CLOCK_S", 0.05)
+    engine, worker, _ = _flaky_engine()
+    engine.dispatch(parse_command("setoption name Ponder value true"))
+    release, entered = threading.Event(), threading.Event()
+
+    def hang(board, **_kw):
+        entered.set()
+        release.wait(10)
+        return _ok(board)
+
+    worker.run.side_effect = hang
+    engine.dispatch(parse_command("position startpos moves e2e4 e7e5"))
+    engine.dispatch(parse_command(first_go))
+    assert entered.wait(5)
+    engine.dispatch(parse_command("stop"))  # parked; answered from the fallback
+    engine.dispatch(CmdGo(GoArgs(nodes=8)))  # busy-worker answer: new events
+    _join(engine)
+    release.set()
+    for t in list(engine._orphan_threads):
+        t.join(5)
+    assert engine.worker_is_free()
+    worker.run.side_effect = _ok
+    capsys.readouterr()
+    _go(engine)
+    out = capsys.readouterr().out
+    assert "search not started" not in out  # a real search again
+    assert len(_bestmoves(out)) == 1
+
+
 def test_a_parked_searchs_late_result_does_not_touch_the_streak(monkeypatch, capsys) -> None:
     monkeypatch.setattr("chess_anti_engine.uci.engine._GO_WAIT_NO_CLOCK_S", 0.05)
     engine, worker, _ = _flaky_engine()
