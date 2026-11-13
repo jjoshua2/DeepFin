@@ -1,0 +1,225 @@
+"""Actual strict-outcome verification; serialized labels alone never issue proofs.
+
+Only construction opens a caller-owned tablebase. Importing this module is stdlib
+only. The future caller must bind exact source/assets before construction.
+"""
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, field, is_dataclass
+import hashlib
+import json
+from pathlib import Path
+from typing import Any
+
+_ISSUER = object()
+RESOLVED_CLASSES = ('NATURAL', 'STRICT_TB_ADJUDICATED')
+
+
+def require(ok: bool, message: str) -> None:
+    if not ok:
+        raise ValueError(message)
+
+
+def plain(value: Any) -> Any:
+    return asdict(value) if is_dataclass(value) else value
+
+
+def canonical(value: Any) -> bytes:
+    return json.dumps(plain(value), sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
+
+
+def fingerprint(value: Any) -> str:
+    return hashlib.sha256(canonical(value)).hexdigest()
+
+
+@dataclass(frozen=True)
+class VerifiedOutcome:
+    payload: dict[str, Any]
+    proof_sha256: str
+    _issuer: object = field(repr=False, compare=False)
+
+    def metadata(self) -> dict[str, Any]:
+        require_verified(self)
+        return json.loads(canonical(self.payload))
+
+
+def require_verified(proof: Any, audit: Any = None, metadata: Any = None) -> dict[str, Any]:
+    require(isinstance(proof, VerifiedOutcome) and proof._issuer is _ISSUER,
+            'actual verified-outcome proof required; not a renamed origin/boolean')
+    require(fingerprint(proof.payload) == proof.proof_sha256, 'verified proof mutated')
+    if audit is not None:
+        require(proof.payload['audit_sha256'] == fingerprint(audit), 'proof/audit mismatch')
+    if metadata is not None:
+        require(metadata['verified_outcome'] == proof.payload and
+                metadata['verified_outcome_sha256'] == proof.proof_sha256, 'raw/proof mismatch')
+    return proof.payload
+
+
+class VerifiedOutcomeVerifier:
+    """A second, independently owned strict handle; never the legacy global cache."""
+
+    def __init__(self, *, path: str, asset_inventory_sha256: str, collection_uuid: str,
+                 source_revision: str, run_uuid: str, generation: int,
+                 concurrent_slots: int, actor_sha256: str,
+                 served_state_sha256: str) -> None:
+        from chess_anti_engine.selfplay.strict_tb import StrictSelfplayTablebase
+        require(type(concurrent_slots) is int and concurrent_slots > 0 and
+                type(generation) is int and generation > 0 and
+                len(actor_sha256) == len(served_state_sha256) == 64, 'verification identity/slot contract')
+        self.run_uuid = run_uuid
+        self.generation = generation
+        self.owner = StrictSelfplayTablebase(path)
+        self.closed = False
+        self.collection_uuid = collection_uuid
+        self.source_revision = source_revision
+        self.path = path
+        self.concurrent_slots = concurrent_slots
+        self.actor_sha256 = actor_sha256
+        self.served_state_sha256 = served_state_sha256
+        try:
+            require(self.owner.asset_inventory_sha256 == asset_inventory_sha256,
+                    'verification handle asset metadata identity changed')
+        except BaseException:
+            self.close()
+            raise
+
+    def close(self) -> None:
+        if not self.closed:
+            self.closed = True
+            try:
+                # Same metadata identity algorithm as the pinned source owner,
+                # checked again before it clears its mappings. Not byte hashing.
+                inventory = []
+                for tables in (self.owner.tablebase.wdl, self.owner.tablebase.dtz):
+                    for name in sorted({str(Path(table.path).resolve()) for table in tables.values()}):
+                        info = Path(name).stat()
+                        inventory.append((name, info.st_size, info.st_mtime_ns))
+                actual = hashlib.sha256(json.dumps(inventory, separators=(',', ':')).encode()).hexdigest()
+                require(actual == self.owner.asset_inventory_sha256, 'verification assets changed during finite call')
+            finally:
+                self.owner.close()
+
+    def verify(self, audit: Any, planned: dict[str, Any], game_cfg: Any) -> VerifiedOutcome:
+        import chess
+        from chess_anti_engine.encoding._lc0_ext import CBoard
+        from chess_anti_engine.encoding import rep_fix
+        from chess_anti_engine.moves import index_to_move_strict
+        from chess_anti_engine.selfplay.finalize import _stable_game_id
+        from chess_anti_engine.utils.syzygy_config import validate_selfplay_syzygy
+
+        require(not self.closed, 'verification handle closed')
+        cfg = plain(game_cfg)
+        validate_selfplay_syzygy(cfg)
+        require(cfg['syzygy_outcome_mode'] == 'rule50_match_v1' and cfg['syzygy_rescore_policy'] is True,
+                'strict policy-only producer mode not realized')
+        require(cfg['syzygy_path'] == self.path and (cfg['stockfish_syzygy_path'] or cfg['syzygy_path']) == self.path,
+                'verified handle and actual producer/SF path differ')
+        require(rep_fix.current() is cfg['history_rep_fix'] is True, 'native repetition flag changed')
+        a = plain(audit)
+        start = a['start']
+        require(start['start_ordinal'] == planned['start_ordinal'] and
+                planned['physical_game_id'] == self.collection_uuid + ':' + str(start['start_ordinal']) and
+                0 <= start['slot'] < self.concurrent_slots and start['is_selfplay'] is True, 'physical game/slot mismatch')
+        require(start['root_fen'] == planned['root_fen'] and list(start['opening_moves']) == planned['opening_moves'], 'planned history differs')
+        board = chess.Board(start['root_fen'])
+        require(board.is_valid(), 'invalid planned root')
+        for token in start['opening_moves']:
+            board.push_uci(token)
+        require(board.is_valid() and board.fen() == start['start_fen'] and board.ply() == start['start_ply'], 'opening state/clocks')
+        before = []
+        for action in a['played_move_indices']:
+            before.append(board.copy(stack=True))
+            move = index_to_move_strict(int(action), board)
+            require(move in board.legal_moves, 'illegal played4672 action')
+            board.push(move)
+        require(len(a['played_move_indices']) <= int(cfg['max_plies']), 'played trace exceeds fixed additional-ply horizon')
+        native = CBoard.from_board(board)
+        require(board.fen() == chess.Board(a['final_fen']).fen() == chess.Board(native.fen()).fen() and
+                board.ply() == a['total_plies'], 'fullhistory/native final state/clocks')
+        require(a['native_result'] == str(native.result()), 'actual native result string differs')
+        require(a['cap_reached'] == (len(a['played_move_indices']) >= int(cfg['max_plies'])), 'cap/played trace mismatch')
+        require(a['game_id'] == _stable_game_id(start_fen=start['start_fen'], opening_source=start['opening_source'],
+                move_trace=','.join(str(x) for x in a['played_move_indices']), result=a['result'], total_plies_played=a['total_plies']), 'native game content ID')
+        raw_witness = a['tablebase_witness']
+        require(raw_witness is not None, 'missing strict witness')
+        actual = self.owner.resolve(board, move_offset=len(a['played_move_indices']))
+        require(canonical(raw_witness) == canonical(actual), 'actual strict resolve/rawclasses/history/assets differ from witness')
+        require(actual.mode == 'rule50_match_v1' and actual.max_pieces == 6 and
+                actual.asset_inventory_sha256 == self.owner.asset_inventory_sha256, 'witness mode/capacity/assets')
+        require(a['tablebase_rescore_result'] is None and a['result'] == a['resolved_result'] == actual.result,
+                'theoretical rescore contamination/result mismatch')
+        natural = board.outcome(claim_draw=True)
+        if actual.origin == 'NATURAL':
+            require(natural is not None and natural.result() == a['natural_result'] == a['result'] != '*' and
+                    a['resolution'] == 'natural', 'natural wire/rules mismatch')
+            label = 'NATURAL'
+        elif actual.origin == 'TB_ADJUDICATED':
+            require(natural is None and a['natural_result'] == '*' and a['resolution'] == 'tablebase_adjudication' and
+                    actual.wdl in (-2, -1, 0, 1, 2) and type(actual.dtz) is int, 'strictTB wire/raw class mismatch')
+            require(abs(actual.wdl) != 2 or actual.halfmove_clock == 0, 'positive-clock decisive TB label')
+            label = 'STRICT_TB_ADJUDICATED'
+        else:
+            require(actual.origin == 'UNRESOLVED' and natural is None and a['resolution'] == 'unresolved' and
+                    a['result'] == a['resolved_result'] == a['natural_result'] == '*' and a['retained_samples'] == 0,
+                    'unresolved must be censored with zero rows')
+            label = 'UNRESOLVED'
+        applied = tuple(a['tablebase_policy_applied_plies'])
+        abstained = tuple(a['tablebase_policy_abstained_plies'])
+        require(len(set(applied)) == len(applied) and len(set(abstained)) == len(abstained) and not set(applied) & set(abstained), 'policy witness duplicates')
+        records = {}
+        for rec in a['records']:
+            offset = rec['move_offset']
+            require(0 <= offset < len(before), 'record outside played trace')
+            position = before[offset]
+            require(position.ply() == rec['ply_index'] and position.turn == rec['pov_color'] and rec['ply_index'] not in records, 'record POV/ply join')
+            records[rec['ply_index']] = position
+        eligible = {ply: position for ply, position in records.items()
+                    if chess.popcount(position.occupied) <= 6 and not position.castling_rights}
+        if label == 'UNRESOLVED':
+            # Source finalize returns before policy rescoring for censored games.
+            require(not applied and not abstained and a['retained_samples'] == 0,
+                    'censored bypass must have empty policy sets and zero retained rows')
+        else:
+            require(set(applied) | set(abstained) == set(eligible),
+                    'resolved policy witness must cover ALL and ONLY eligible raw records')
+            # Include dropped raw records: declaration completeness alone cannot
+            # prove that applied and abstained classifications were not swapped.
+            for ply, position in eligible.items():
+                best = self.owner.policy_move(position)
+                if best is None:
+                    require(ply in abstained, 'actual policy abstention missing/misclassified')
+                else:
+                    require(best in position.legal_moves and ply in applied,
+                            'actual legal policy application missing/misclassified')
+        payload = {'schema': 'CORE_ACTUALLY_VERIFIED_OUTCOME_V1', 'source_revision': self.source_revision,
+                   'actor_sha256': self.actor_sha256, 'served_state_sha256': self.served_state_sha256,
+                   'run_uuid': self.run_uuid, 'generation': self.generation, 'collection_uuid': self.collection_uuid,
+                   'physical_game_id': planned['physical_game_id'], 'game_id': a['game_id'], 'audit_sha256': fingerprint(a),
+                   'scientific_class': label, 'resolved': label in RESOLVED_CLASSES, 'result': actual.result,
+                   'retained_rows': a['retained_samples'], 'witness_sha256': fingerprint(actual),
+                   'cap_reached': a['cap_reached'],
+                   'asset_inventory_sha256': actual.asset_inventory_sha256, 'asset_identity_scope': actual.asset_identity_scope,
+                   'history_sha256': fingerprint([actual.root_fen, list(actual.moves)]),
+                   'policy_applied_plies': list(applied), 'policy_abstained_plies': list(abstained),
+                   'policy_all_eligible_raw_records_reprobed': label != 'UNRESOLVED',
+                   'policy_eligible_raw_records': len(eligible),
+                   'policy_censored_bypass': label == 'UNRESOLVED',
+                   'verification': 'actualownedStrictSelfplayTablebase.resolve after legalfullhistory/native reconstruction; not metadata-origin rename'}
+        return VerifiedOutcome(payload, fingerprint(payload), _ISSUER)
+
+    def verify_policy_sample(self, proof: VerifiedOutcome, sample: Any, position: Any, policy_encoding: str) -> None:
+        """Recheck declared applied/abstained retained-row policy mapping, no NN."""
+        import numpy as np
+        from chess_anti_engine.moves import move_to_index_for_encoding
+        data = require_verified(proof)
+        ply = int(sample.ply_index)
+        if ply in data['policy_applied_plies'] or ply in data['policy_abstained_plies']:
+            best = self.owner.policy_move(position)
+            if ply in data['policy_applied_plies']:
+                require(best is not None and best in position.legal_moves, 'declared policy move not strict/legal')
+                action = move_to_index_for_encoding(best, position, policy_encoding=policy_encoding)
+                expected = np.zeros_like(sample.policy_target)
+                expected[int(action)] = 1
+                require(np.array_equal(np.asarray(sample.policy_target), expected), 'applied policy encoding/onehot differs')
+            else:
+                require(best is None, 'declared policy abstention differs')
