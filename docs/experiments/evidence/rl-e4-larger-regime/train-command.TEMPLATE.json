@@ -1,0 +1,66 @@
+{
+  "status": "FUTURE_EXACT_EXECUTE_ARGV_ONE_HASH_LATE_BOUND_NOT_ADMITTED",
+  "argv": [
+    "/usr/bin/taskset",
+    "-c",
+    "20,22",
+    "/usr/bin/env",
+    "-u",
+    "NVIDIA_TF32_OVERRIDE",
+    "-u",
+    "CUBLAS_WORKSPACE_CONFIG",
+    "/home/josh/chess-artifacts/venvs/rl-transition-managed-20261111-cu130/bin/python",
+    "-B",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/run_stage_tb_on_runtime_v1.py",
+    "--name",
+    "e4-paired-full129-execution-v1",
+    "--resource",
+    "gpu",
+    "--seconds",
+    "1200",
+    "--min-free-gib",
+    "20",
+    "--",
+    "/usr/bin/env",
+    "-u",
+    "NVIDIA_TF32_OVERRIDE",
+    "-u",
+    "CUBLAS_WORKSPACE_CONFIG",
+    "CUDA_VISIBLE_DEVICES=0",
+    "/home/josh/chess-artifacts/venvs/rl-transition-managed-20261111-cu130/bin/python",
+    "-B",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/train/run_paired.py",
+    "--execute",
+    "--manifest",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-bindings-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/manifest.json",
+    "--manifest-sha256",
+    "UNBOUND_FINAL_MANIFEST_SHA256"
+  ],
+  "only_allowed_argv_change": {
+    "index": 33,
+    "from": "UNBOUND_FINAL_MANIFEST_SHA256",
+    "to": "sha256 of actual final bound manifest.json; every other argv element fixed"
+  },
+  "outer_seconds": 1200,
+  "inner_seconds": 1170,
+  "runtime_output": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6",
+  "fixed_output_endpoints": [
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/FULLA/step-129.pt",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/FULLB/step-129.pt"
+  ],
+  "snapshots": [
+    0,
+    1,
+    8,
+    129
+  ],
+  "batch_size": 256,
+  "steps_per_arm": 129,
+  "arm_order": [
+    "FULLA",
+    "FULLB"
+  ],
+  "maximum_optimizer_updates_total": 258,
+  "GPU_admitted": false,
+  "no_retry_extension_or_intermediate_candidate_selection": true
+}

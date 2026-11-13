@@ -1,0 +1,23 @@
+{
+  "command_sha256": "f4e84f6acd857eb2581361afd77ff05346237ac97137365e3b561cb9db10396e",
+  "endpoint_binding": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-launch-settlement-v1/endpoint-binding.json",
+    "sha256": "939f0cd05bf60eaec305c71d66d4ecbfbf5728e2b8caee57f264bdda68844672"
+  },
+  "finished_unix": 1794547962.3363996,
+  "owner_call_returncode": 0,
+  "role": "eligibility",
+  "root_bindings": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-root-execution-admission-v1/bindings.json",
+    "sha256": "05085d52917ec707a5e5eb6a79fdd643464e98b259a7045770bed0a4c4ded79b"
+  },
+  "signal_forward_errors": [],
+  "signals": [],
+  "started_unix": 1794547312.6844904,
+  "status": "CLOSED_OWNER_AND_ASSET_CUSTODY_ONLY_READER_REQUIRED",
+  "technical_game_qualification": false,
+  "terminal": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-execution-v1/terminal.json",
+    "sha256": "368bfe38c8096eef6a3ae536bc7ed5046834f39e0c93b178aa491d9d050b85fa"
+  }
+}

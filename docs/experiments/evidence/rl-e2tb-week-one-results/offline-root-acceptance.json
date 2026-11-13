@@ -1,0 +1,529 @@
+{
+  "status": "ROOT_ACCEPTED_COMPLETE64_GAME_OFFLINE_DIAGNOSTICS_NO_SELECTION",
+  "utc": "2026-11-13T04:35:21.054291+00:00",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "collection_uuid": "f1dadbe4-43e2-4cf3-9a93-70a288533b48",
+  "scientific_sha256": "ee24d3b7aa575c3dd2b85061f376a4920d5f9034a2cc358e03ed8312cd1476c0",
+  "readout": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-readout-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/readout.json",
+    "sha256": "8dc6c626206c2e921a1d0fb7301d1684f171dbb9a09ca904ef370dda7df004d6"
+  },
+  "terminal": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-readout-execution-v1/terminal.json",
+    "sha256": "7b0dfa1cc8fa421667799985d2db8d12a83cac4efcddf20ee1ffeb277eb6f088"
+  },
+  "independent_actual_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-actual-diagnostic-independent-review-v1/review.json",
+    "sha256": "5356ddba2e7a9bab3f1ac5ce6db6b105985b3a4b56fcb58bbafff7266642c04c"
+  },
+  "means": {
+    "DONOR": {
+      "draw_Brier": 0.20558443636219714,
+      "expected_score_MSE": 0.0776596298569942,
+      "legal_policy_TV_vs_donor": 0.0,
+      "three_class_WDL_Brier_sum": 0.4636959142572841
+    },
+    "FULLA1": {
+      "draw_Brier": 0.20605491216683847,
+      "expected_score_MSE": 0.07790204044917536,
+      "legal_policy_TV_vs_donor": 0.0049069846091192625,
+      "three_class_WDL_Brier_sum": 0.46488644914860844
+    },
+    "FULLA40": {
+      "draw_Brier": 0.19787159301731175,
+      "expected_score_MSE": 0.0727133766309152,
+      "legal_policy_TV_vs_donor": 0.05224368384662742,
+      "three_class_WDL_Brier_sum": 0.44223414278779805
+    },
+    "FULLA8": {
+      "draw_Brier": 0.20658518227719935,
+      "expected_score_MSE": 0.0778820252123843,
+      "legal_policy_TV_vs_donor": 0.01061276232463789,
+      "three_class_WDL_Brier_sum": 0.4656418238405676
+    },
+    "FULLB1": {
+      "draw_Brier": 0.20571396930014918,
+      "expected_score_MSE": 0.07774221054965,
+      "legal_policy_TV_vs_donor": 0.004815975807784097,
+      "three_class_WDL_Brier_sum": 0.46405537504952377
+    },
+    "FULLB40": {
+      "draw_Brier": 0.1986924232107701,
+      "expected_score_MSE": 0.07150483515467963,
+      "legal_policy_TV_vs_donor": 0.05134537141340099,
+      "three_class_WDL_Brier_sum": 0.4410483051255144
+    },
+    "FULLB8": {
+      "draw_Brier": 0.20516165165419226,
+      "expected_score_MSE": 0.07716118182855647,
+      "legal_policy_TV_vs_donor": 0.009629388626705503,
+      "three_class_WDL_Brier_sum": 0.4620648411384013
+    }
+  },
+  "paired": {
+    "FULLA1_minus_DONOR": {
+      "draw_Brier": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": 0.0004704758046413429,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.00014019081527747273,
+          0.0011247466925551838
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "expected_score_MSE": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": 0.0002424105921811428,
+        "diagnostic_only": true,
+        "percentile95": [
+          -3.751444067994154e-05,
+          0.0005574511413561427
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "legal_policy_TV_vs_donor": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": 0.0049069846091192625,
+        "diagnostic_only": true,
+        "percentile95": [
+          0.0038763415000990288,
+          0.006022405428397983
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "three_class_WDL_Brier_sum": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": 0.0011905348913242605,
+        "diagnostic_only": true,
+        "percentile95": [
+          -8.997063631006943e-05,
+          0.00259612176802131
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      }
+    },
+    "FULLA40_minus_DONOR": {
+      "draw_Brier": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": -0.00771284334488538,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.016503091802784,
+          0.0006384109896679082
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "expected_score_MSE": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": -0.004946253226078997,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.008864990348457315,
+          -0.0011901911683805527
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "legal_policy_TV_vs_donor": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": 0.05224368384662742,
+        "diagnostic_only": true,
+        "percentile95": [
+          0.04174050180836142,
+          0.06360366716231294
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "three_class_WDL_Brier_sum": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": -0.021461771469486097,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.039063114341343394,
+          -0.004695314876341447
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      }
+    },
+    "FULLA8_minus_DONOR": {
+      "draw_Brier": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": 0.0010007459150022267,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.0017655003374952851,
+          0.0037059198832660777
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "expected_score_MSE": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": 0.0002223953553900812,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.000935798280130239,
+          0.001357874347844732
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "legal_policy_TV_vs_donor": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": 0.01061276232463789,
+        "diagnostic_only": true,
+        "percentile95": [
+          0.00865429968658368,
+          0.012597897253375323
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "three_class_WDL_Brier_sum": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": 0.0019459095832834673,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.003499272684317941,
+          0.007466946061470891
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      }
+    },
+    "FULLB1_minus_DONOR": {
+      "draw_Brier": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": 0.00012953293795204914,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.0003811055218669967,
+          0.0006488003826099268
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "expected_score_MSE": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": 8.258069265577514e-05,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.00011735582122301325,
+          0.00028635254599667655
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "legal_policy_TV_vs_donor": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": 0.004815975807784097,
+        "diagnostic_only": true,
+        "percentile95": [
+          0.0039778413942416335,
+          0.005701779453750116
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "three_class_WDL_Brier_sum": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": 0.0003594607922396063,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.000675195148412048,
+          0.0013929641155851324
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      }
+    },
+    "FULLB1_minus_FULLA1": {
+      "draw_Brier": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": -0.00034094286668929374,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.0009890168769518073,
+          0.00025685208635532075
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "expected_score_MSE": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": -0.00015982989952536766,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.00038767666056304176,
+          4.969319790278328e-05
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "legal_policy_TV_vs_donor": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": -9.100880133516528e-05,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.0009959987191521156,
+          0.0007854495101422147
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "three_class_WDL_Brier_sum": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": -0.0008310740990846541,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.00216580129165212,
+          0.0004084182580638254
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      }
+    },
+    "FULLB40_minus_DONOR": {
+      "draw_Brier": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": -0.0068920131514270105,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.01913599628435465,
+          0.004385679913730254
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "expected_score_MSE": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": -0.006154794702314577,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.010749951270750686,
+          -0.002145342387270985
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "legal_policy_TV_vs_donor": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": 0.05134537141340099,
+        "diagnostic_only": true,
+        "percentile95": [
+          0.04068454909744156,
+          0.06287852950512852
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "three_class_WDL_Brier_sum": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": -0.022647609131769705,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.04453500934366465,
+          -0.001990290072949427
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      }
+    },
+    "FULLB40_minus_FULLA40": {
+      "draw_Brier": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": 0.0008208301934583693,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.005974803628718222,
+          0.007462964191675578
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "expected_score_MSE": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": -0.0012085414762355803,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.0030352140477651864,
+          0.000496860616300303
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "legal_policy_TV_vs_donor": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": -0.0008983124332264381,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.002709473693426996,
+          0.0008899021048059013
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "three_class_WDL_Brier_sum": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": -0.001185837662283607,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.013611634045507184,
+          0.01101426409156549
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      }
+    },
+    "FULLB8_minus_DONOR": {
+      "draw_Brier": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": -0.0004227847080048846,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.0021424260379495925,
+          0.0011923443088384192
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "expected_score_MSE": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": -0.0004984480284377342,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.0010390463813746652,
+          5.745635193932928e-06
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "legal_policy_TV_vs_donor": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": 0.009629388626705503,
+        "diagnostic_only": true,
+        "percentile95": [
+          0.0079052604010151,
+          0.011425873010527738
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "three_class_WDL_Brier_sum": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": -0.001631073118882833,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.004618094516038843,
+          0.0012571182075237193
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      }
+    },
+    "FULLB8_minus_FULLA8": {
+      "draw_Brier": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": -0.0014235306230071113,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.004232966503149411,
+          0.0012779764232152288
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "expected_score_MSE": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": -0.0007208433838278153,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.0017188678664155552,
+          0.00024648119402197936
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "legal_policy_TV_vs_donor": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": -0.0009833736979323895,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.0018573391922045643,
+          -0.00014068479562514752
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      },
+      "three_class_WDL_Brier_sum": {
+        "bootstrap_draws": 10000,
+        "delta_candidate_minus_reference": -0.0035769827021663,
+        "diagnostic_only": true,
+        "percentile95": [
+          -0.00915746065936443,
+          0.0017389198914757997
+        ],
+        "roots_per_game": 1,
+        "seed": 2026111406,
+        "whole_games": 64
+      }
+    }
+  },
+  "games": 64,
+  "model_count": 7,
+  "bootstrap_draws": 10000,
+  "bootstrap_seed": 2026111406,
+  "no_model_or_checkpoint_selected": true,
+  "playing_gate_or_adoption_changed": false,
+  "interpretation": "Both40-step arms show lower expected-score MSE and three-class WDL Brier than donor with conditional bootstrap intervals below0. B40minusA40 value/draw intervals all include0; no incremental benefit resolved. PolicyTV records drift only. This is no playingstrength/Elo/optimalformula/adoption result.",
+  "limits": [
+    "One64game physical cohort/one trainingrealization; outcomes NATURAL and STRICT_TB_ADJUDICATED separately identified; openingfamily correlations/unknownpretraining not removed bybootstrap",
+    "Diagnostics cannot selectcheckpoint/arm/seed/LR, gateprimaryplaying or establishgain; no multiplicity/power/representativecalibration claim",
+    "Identical source/declaredBF16batch64ruler; B1/B64 orcompiled/eagerparity and repeatforwardstability not independentlyqualified",
+    "No subset/drop/imputation or fallback permitted; any missingof64/7 makesentireendpoint unqualified/inconclusive",
+    "36 diagnostic intervals are not multiplicity-adjusted; 64physicalgame units, not448 independent observations. Independent reviewer reconciled metadata and mean deltas without repeating arrays/bootstrap."
+  ]
+}

@@ -1,0 +1,292 @@
+"""Closed paired129 CPU readout. Checkpoint mmap is allowed only after admission."""
+from __future__ import annotations
+import argparse
+import collections
+import gc
+import hashlib
+import importlib
+import json
+import math
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+from types import SimpleNamespace
+
+HERE = Path(__file__).resolve().parent
+
+
+def require(ok, message):
+    if not ok:
+        raise ValueError(message)
+
+
+def sha(path):
+    with Path(path).open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def canonical(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+
+
+def identity(value):
+    return hashlib.sha256(canonical(value)).hexdigest()
+
+
+def checked(ref):
+    require(set(ref) == {"path", "sha256"} and "UNBOUND" not in ref["path"], "identity remains UNBOUND")
+    require(sha(ref["path"]) == ref["sha256"], "bound artifact changed")
+    return json.loads(Path(ref["path"]).read_text())
+
+
+def write(path, value):
+    with Path(path).open("x") as stream:
+        json.dump(value, stream, indent=2, sort_keys=True, allow_nan=False)
+        stream.write("\n"); stream.flush(); os.fsync(stream.fileno())
+
+
+def stat_key(path):
+    s = Path(path).stat()
+    return {"dev": s.st_dev, "ino": s.st_ino, "size": s.st_size, "mtime_ns": s.st_mtime_ns, "ctime_ns": s.st_ctime_ns}
+
+
+def main():
+    ap = argparse.ArgumentParser(); ap.add_argument("--execute", action="store_true")
+    ap.add_argument("--manifest-sha256", required=True); ap.add_argument("--bindings", required=True)
+    ap.add_argument("--bindings-sha256", required=True); args = ap.parse_args()
+    require(args.execute and sha(HERE / "manifest.json") == args.manifest_sha256, "readout requires exact finite admission")
+    m = json.loads((HERE / "manifest.json").read_text()); require(sha(__file__) == m["helper_sha256"], "helper changed")
+    require(sha(args.bindings) == args.bindings_sha256, "late readout identities changed")
+    refs = json.loads(Path(args.bindings).read_text())
+    require(set(refs) == {"protocol", "manifest", "terminal", "readout", "draw_plan", "cohort_root_acceptance"}, "binding fields differ")
+    parent = Path(f"/proc/{os.getppid()}/cmdline").read_bytes().decode().split("\0")
+    require(m["owner_path"] in parent and sha(m["owner_path"]) == m["owner_sha256"] and
+            parent[parent.index("--resource") + 1] == "cpu" and parent[parent.index("--seconds") + 1] == "300", "wrong CPU owner")
+    require(Path(sys.executable).resolve() == Path(m["python"]).resolve() and tuple(sys.version_info[:3]) == (3, 13, 15) and
+            sorted(os.sched_getaffinity(0)) == [20, 22] and os.environ.get("CUDA_VISIBLE_DEVICES") == "" and
+            os.environ.get("OMP_NUM_THREADS") == os.environ.get("MKL_NUM_THREADS") == "2" and __debug__, "CPU resource contract changed")
+    p, manifest, terminal, report, plan, cohort_acceptance = [checked(refs[k]) for k in
+        ("protocol", "manifest", "terminal", "readout", "draw_plan", "cohort_root_acceptance")]
+    fixed = checked(m["fixed_projections"])
+    require({k: v for k, v in manifest.items() if k != "protocol_sha256"} == fixed["projections"]["manifest_fixed"] and
+            manifest["protocol_sha256"] == refs["protocol"]["sha256"], "paired manifest fixed fields changed")
+    excluded = set(checked(m["binding_contract"])["allowed_identity_only_changes"]["protocol.json"]) | {"execution_binding_complete", "execution_admitted"}
+    require(canonical({k: v for k, v in p.items() if k not in excluded}) == canonical(fixed["projections"]["protocol_fixed"]), "paired protocol fixed fields changed")
+    repo = Path(p["source_checkout"]); runtime = Path(p["output_root"])
+    require(subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip() == p["source_revision"] and
+            not subprocess.check_output(["git", "status", "--porcelain"], cwd=repo, text=True), "frozen source changed")
+    for rel, expected in {**manifest["source_sha256"], **manifest["native_input_sha256"]}.items():
+        require(sha(repo / rel) == expected, "source/native input changed")
+    for name, expected in manifest["helpers"].items():
+        require(sha(Path(m["TRAIN_directory"]) / name) == expected, "stable helper changed")
+    command = checked(m["command_template"])["argv"]
+    command = [refs["manifest"]["sha256"] if x == "UNBOUND_FINAL_MANIFEST_SHA256" else x for x in command]
+    require(terminal["status"] == "PASS" and terminal["returncode"] == 0 and terminal["owned_processes_closed"] is True and
+            terminal["source_revision"] == p["source_revision"] and terminal["supervisor_sha256"] == m["owner_sha256"] and
+            terminal["resource"] == "gpu" and terminal["seconds"] == 1200 and terminal["cwd"] == str(repo) and
+            terminal["command"] == command[command.index("--") + 1:], "training did not close exact PASS")
+    require(terminal["known_processes"] and not Path("/proc", str(terminal["supervisor_pid"])).exists(), "missing births or live supervisor")
+    for pid, birth in terminal["known_processes"].items():
+        s = Path("/proc", str(pid), "stat")
+        require(not s.exists() or int(s.read_text().rsplit(")", 1)[1].split()[19]) != birth, "training birth remains alive")
+    require(Path(refs["readout"]["path"]) == runtime / "readout.json" and Path(refs["draw_plan"]["path"]) == Path(p["draw_plan_path"]) and
+            refs["draw_plan"]["sha256"] == p["draw_plan_sha256"] and not (runtime / "failure.json").exists() and
+            report["status"] == "PASS_MATCHED_E4_129_TECHNICAL_DELIVERY_ONLY" and report["mode"] == "E4_129" and
+            report["source_revision"] == p["source_revision"] and report["prior_arm_refs_closed"] is True and
+            report["math_context"] == p["math_context"], "paired technical readout/scope differs")
+    require(cohort_acceptance["status"] == "ROOT_ACCEPTED_E4_128_TRAIN_FOR_PAIRED_FULL129" and
+            cohort_acceptance["source_revision"] == p["source_revision"] and cohort_acceptance["collection_uuid"] == p["run_uuid"], "cohort admission differs")
+    output = Path(m["output_root"]); output.mkdir(exist_ok=False)
+    signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError("fixed270s paired129 readout"))); signal.alarm(270)
+    try:
+        sys.path.insert(0, str(repo)); sys.path.insert(0, m["TRAIN_directory"])
+        import torch, numpy as np
+        torch.set_num_threads(2); torch.set_num_interop_threads(2)
+        require(not torch.cuda.is_initialized() and np.__version__ == "2.2.6", "CPU reader or draw implementation differs")
+        observer = importlib.import_module("paired_observer")
+        require(Path(observer.__file__).resolve() == Path(m["TRAIN_directory"]) / "paired_observer.py" and observer.math_context() == p["math_context"], "observer/math context differs")
+        from chess_anti_engine.model import ARCH_SCHEMA_VERSION
+        from chess_anti_engine.tune.fresh_rl_donor import validate_architecture
+        recipient = {"_schema_version": ARCH_SCHEMA_VERSION, **checked(m["descriptor_guards"])["descriptor_model_config_only"]}
+        expected_shapes = checked(m["historical_shapes"])["model_shapes_dtypes"]
+        kwargs_expected = checked(m["kwargs_equivalence"])["new_normalized_kwargs"]
+        def tensor_sig(t):
+            require(t.device.type == "cpu" and bool(torch.isfinite(t).all()), "nonfinite or nonCPU checkpoint tensor")
+            return {"shape": list(t.shape), "dtype": str(t.dtype), "sha256": hashlib.sha256(t.detach().contiguous().reshape(-1).view(torch.uint8).numpy().tobytes()).hexdigest()}
+        def norm(value):
+            if isinstance(value, torch.Tensor): return tensor_sig(value)
+            if isinstance(value, dict): return {str(k): norm(v) for k, v in value.items()}
+            if isinstance(value, (list, tuple)): return [norm(v) for v in value]
+            if isinstance(value, torch.dtype): return str(value)
+            require(value is None or isinstance(value, (str, bool, int, float)), "unknown optimizer state type")
+            require(not isinstance(value, float) or math.isfinite(value), "nonfinite optimizer scalar")
+            return value
+        lineage = json.loads((runtime / "input-lineage.json").read_text())
+        binding = json.loads(Path(p["cohort_binding_path"]).read_text())
+        require(sha(p["cohort_binding_path"]) == p["cohort_binding_sha256"] and lineage["cohort_binding"] == binding and
+                binding["admission_sha256"] == refs["cohort_root_acceptance"]["sha256"] and lineage["heldout_loaded"] is False and
+                len(lineage["games"]) == len(set(lineage["games"])) == len(lineage["fresh_proof_sha256"]) == 128, "TRAIN provenance differs")
+        ids = plan["physical_row_ids"]
+        require(lineage["rows"] == len(ids) and len(ids) == len(set(ids)) and
+                {x.rsplit(":", 1)[0] for x in ids} == set(lineage["games"]) and
+                all(x in ("NATURAL", "STRICT_TB_ADJUDICATED") for x in lineage["classes"]), "not exact physical TRAIN source")
+        indices = np.random.default_rng(p["draw_seed"]).integers(0, len(ids), size=(129, 256), dtype=np.int64)
+        require(indices.tolist() == plan["indices"], "fixed draw plan differs")
+        arms = [report["first"], report["second"]]
+        require([arm["label"] for arm in arms] == ["FULLA", "FULLB"], "fixed arm order differs")
+        observer.assert_pair(*[SimpleNamespace(steps=129, math=p["math_context"], **arm["observations"]) for arm in arms], contrast="E2FULL")
+        model_rows = []; checkpoint_rows = []; custody_rows = []; donor_signature = None
+        donor = Path(m["donor_path"]); donor_before = stat_key(donor)
+        require(not donor.is_symlink() and not donor.stat().st_mode & 0o222 and sha(donor) == m["donor_sha256"], "A39 bytes changed or mutable")
+        # One CPU payload at a time: model signatures are small metadata, not model copies.
+        payload = torch.load(donor, map_location="cpu", mmap=True, weights_only=True)
+        validate_architecture(recipient, payload["arch"], recipient)
+        donor_signature = {k.removeprefix("_orig_mod."): tensor_sig(v) for k, v in payload["model"].items()}
+        require(len(donor_signature) == len(payload["model"]), "ambiguous donor compile-prefix names")
+        require(len(donor_signature) == 494 and {k: {x: row[x] for x in ("shape", "dtype")} for k, row in donor_signature.items()} == expected_shapes, "donor494 shape/dtype mismatch")
+        model_rows.append({"label": "DONOR", "path": str(donor), "sha256": m["donor_sha256"], "step": None})
+        donor_metadata = {"checkpoint_sha256": m["donor_sha256"], "bytes": donor.stat().st_size, "model_tensor_count": 494,
+                          "model_shapes_dtypes": expected_shapes, "arch": payload["arch"], "all494_finite": True, "model_devices": ["cpu"]}
+        custody_rows.append({"label": "DONOR", "path": str(donor), "sha256": m["donor_sha256"], "step": None,
+                             "readonly": True, "stat_before": donor_before, "all494_model_architecture_qualified": True})
+        del payload; gc.collect()
+        for arm in arms:
+            label = arm["label"]; require(label == arm["recipe"] and label in ("FULLA", "FULLB") and arm["final_step"] == 129 and arm["selected_copies_enabled"] is True, "arm identity/dose differs")
+            o = arm["observations"]; fresh = json.loads((runtime / label / "fresh-state.json").read_text())
+            require(fresh["step"] == fresh["optimizer_state_entries"] == 0 and fresh["all494_donor_equal"] is True and fresh["swa"] is None and
+                    fresh["zclip"] == {"initialized": False, "mean": None, "var": None, "buffer": [], "warmup_steps": 25} and
+                    fresh["scheduler"]["last_epoch"] == -1 and fresh["parameter_map"] == o["mapping"] and
+                    fresh["math_context"] == arm["math_context_before_after"] == p["math_context"], "fresh state/ownership/math differs")
+            kw = {k: v for k, v in fresh["trainer_kwargs"].items() if k != "log_dir"}
+            require(len(kw) == 94 and kw["search_wdl_frac"] == (1. if label == "FULLA" else .8), "realized kwargs dose differs")
+            base_kw = dict(kw, search_wdl_frac=1.)
+            require(base_kw == kwargs_expected and identity(base_kw) == manifest["trainer_kwargs_without_log_dir_sha256"], "realized94 kwargs changed")
+            for name, value in {"train_steps_done": 129, "train_samples_seen": 33024, "batches_drawn": 129,
+                                "grad_nonfinite_skip_rate": 0, "transient_cuda_retry_batches": 0}.items():
+                require(arm["metrics"][name] == value, "actual update/sample/skip/retry mismatch")
+            require(len(o["host"]) == len(o["loss"]) == len(o["draws"]) == len(o["updates"]) == 129, "incomplete per-step delivery")
+            require([x["token"] for x in o["host"]] == [x["token"] for x in o["loss"]] == list(range(129)), "per-step token order differs")
+            forwards = [x for x in o["randomness"] if x["kind"] == "forward_math_context"]
+            require(len(o["randomness"]) == 516 and len(forwards) == 129 and all(x["grad_enabled"] and x["cuda_autocast_enabled"] and
+                    x["autocast_dtype"] == "torch.bfloat16" and x["input_device"] == "cuda:0" for x in forwards), "actual forward/RNG context differs")
+            selected = {x["name"] for x in checked(m["selected8"])["parameters"]}
+            for step, (draw, update, loss) in enumerate(zip(o["draws"], o["updates"], o["loss"], strict=True), 1):
+                wanted = [ids[int(i)] for i in indices[step - 1]]
+                require(draw["token"] == step - 1 and draw["physical_row_ids"] == wanted and draw["multiplicities"] == dict(collections.Counter(wanted)), "physical draw/multiplicity differs")
+                require(update["applied_update"] == step and all(math.isfinite(x) for x in update["gradient_norms"].values()) and
+                        set(update["selected"]) == (selected if step in (1, 8, 129) else set()), "actual optimizer/selected-copy count differs")
+                norm(update)
+                require(o["host"][step - 1]["arrays"]["categorical_target"] == draw["raw_arrays"]["categorical_target"] and
+                        loss["actual_tensors"]["categorical_t"]["dtype"] == "torch.float32" and
+                        loss["actual_tensors"]["categorical_t"]["shape"] == [256, 32], "categorical host/device signature contract differs")
+                if step <= 8:
+                    used = 3e-7 + (step - 1) * (3e-6 - 3e-7) / 8
+                else:
+                    phase = (step - 10) % 120 if step >= 10 else 0
+                    scale = 1.0 if phase <= 96 else 1.0 - .9 * math.sqrt((phase - 96) / 24)
+                    used = 3e-6 * scale
+                require(len(update["lr_used"]) == 4 and all(math.isclose(x, used, rel_tol=1e-14) for x in update["lr_used"][1:]) and
+                        math.isclose(update["lr_used"][0], 20 * used, rel_tol=1e-14), "actual warmup/release LR differs")
+                require(math.isfinite(loss["finite_total_loss"]) and loss["trainer_step"] == step - 1 and
+                        loss["loss_kwargs"]["search_wdl_frac"] == (1. if label == "FULLA" else .8) and loss["loss_kwargs"]["sf_wdl_frac"] == 0,
+                        "actual loss map differs")
+                require(loss["loss_kwargs"] == {**fresh["effective_loss_kwargs"], "report_exact_masked_sums": False,
+                        "exact_corpus_rows": None, "exact_objective_mask_weights": None}, "actual loss weights differ from realized fresh map")
+            require(len(o["mapping"]) == 479 and len({x["name"] for x in o["mapping"]}) == 479 and
+                    sum(x["numel"] for x in o["mapping"]) == 61444448 and
+                    all(x["requires_grad"] and x["role"] != "UNKNOWN" and x["optimizer_class"] == "AuroraWithAuxAdam" for x in o["mapping"]), "optimizer ownership incomplete")
+            final = runtime / label / "step-129.pt"; trainer = runtime / label / "trainer.pt"
+            require(final.stat().st_ino == trainer.stat().st_ino and final.stat().st_dev == trainer.stat().st_dev and sha(final) == sha(trainer) == arm["final_checkpoint_sha256"], "step129 is not exact final-save hardlink")
+            for step in (0, 1, 8, 129):
+                path = runtime / label / ("step-" + str(step) + ".pt")
+                before = stat_key(path); file_sha = sha(path)
+                require(not path.is_symlink() and not path.stat().st_mode & 0o222, "checkpoint mutable or symlink")
+                payload = torch.load(path, map_location="cpu", mmap=True, weights_only=True)
+                require(payload["step"] == step and not any("swa" in key.lower() for key in payload) and
+                        payload["fresh_rl_donor_provenance"]["sha256"] == m["donor_sha256"], "checkpoint step/SWA/donor provenance differs")
+                validate_architecture(recipient, payload["arch"], recipient)
+                model_sig = {k: tensor_sig(v) for k, v in payload["model"].items()}
+                require(len(model_sig) == 494 and {k: {x: row[x] for x in ("shape", "dtype")} for k, row in model_sig.items()} == expected_shapes, "checkpoint494 keys/shape/dtype differs")
+                opt = payload["opt"]; names = payload["opt_param_names"]
+                opt_ids = [i for group in opt["param_groups"] for i in group["params"]]
+                require(len(names) == len(opt_ids) == len(set(opt_ids)) == 479 and names == [x["name"] for x in o["mapping"]], "checkpoint optimizer ownership differs")
+                require(set(opt["state"]) <= set(opt_ids), "unknown optimizer state owner")
+                name_map = dict(zip(opt_ids, names))
+                named = {"state_by_physical_name": {name_map[i]: norm(opt["state"].get(i, {})) for i in opt_ids},
+                         "groups": [{**{k: norm(v) for k, v in group.items() if k != "params"},
+                                     "physical_parameter_names": [name_map[i] for i in group["params"]]} for group in opt["param_groups"]]}
+                state_counters = [int(s["step"]) for s in opt["state"].values() if "step" in s]
+                require(not opt["state"] if step == 0 else len(opt["state"]) == 462 and len(state_counters) == 414 and set(state_counters) == {step}, "optimizer state/counters differ")
+                require(payload["scheduler"]["last_epoch"] == (-1 if step <= 8 else step - 9), "scheduler phase differs")
+                norm(payload["scheduler"]); norm(payload["zclip"])
+                require(payload["zclip"]["warmup_steps"] == 25 and payload["zclip"]["initialized"] is (step >= 25), "ZClip phase differs")
+                after_lr = 3e-7 + min(step, 8) * (3e-6 - 3e-7) / 8
+                require(payload["scheduler"]["base_lrs"] == payload["scheduler"]["_last_lr"] == fresh["scheduler"]["base_lrs"] and
+                        all(math.isclose(g["lr"], after_lr * (20 if i == 0 else 1), rel_tol=1e-14)
+                            for i, g in enumerate(opt["param_groups"])), "checkpoint LR/release bookkeeping differs")
+                if step < 25:
+                    require(len(payload["zclip"]["buffer"]) == step and payload["zclip"]["mean"] is payload["zclip"]["var"] is None, "ZClip fresh warmup bookkeeping differs")
+                else:
+                    require(not payload["zclip"]["buffer"] and payload["zclip"]["mean"] is not None and
+                            payload["zclip"]["var"] is not None and payload["zclip"]["var"] >= 0, "ZClip trained state differs")
+                if step == 0:
+                    require(model_sig == donor_signature and payload["scheduler"] == fresh["scheduler"] and payload["zclip"] == fresh["zclip"], "saved step0 not fresh A39")
+                if step == 129:
+                    require(math.isclose(o["updates"][-1]["lr_used"][0], 7.136969439881711e-6, rel_tol=1e-14) and
+                            math.isclose(o["updates"][-1]["lr_used"][1], 3.568484719940855e-7, rel_tol=1e-14) and
+                            payload["scheduler"]["last_epoch"] == 120,
+                            "129 final-tail LR or post-save130 phase differs")
+                    require(model_sig == arm["final_model_signature"] and identity(model_sig) == arm["final_model_digest"] and
+                            identity(named) == arm["named_optimizer_digest"] and payload["scheduler"] == arm["final_scheduler"], "actual final checkpoint/receipt mismatch")
+                require(stat_key(path) == before and sha(path) == file_sha, "checkpoint changed during readout")
+                metadata = {"checkpoint_sha256": file_sha, "bytes": path.stat().st_size, "top_keys": list(payload), "scalar_metadata": {"step": step, "peak_lr": payload["peak_lr"]},
+                    "model_tensor_count": 494, "model_devices": ["cpu"], "model_shapes_dtypes": expected_shapes, "arch": payload["arch"], "all494_finite": True,
+                    "optimizer_state_entries": len(opt["state"]), "optimizer_state_step_counts": dict(collections.Counter(state_counters)),
+                    "optimizer_group_lrs": [g["lr"] for g in opt["param_groups"]], "scheduler": norm(payload["scheduler"]), "zclip": norm(payload["zclip"]),
+                    "swa_state_present": False, "CUDA_initialized": False, "stat_before": before, "stat_after": stat_key(path)}
+                write(output / (label + "-step-" + str(step) + "-metadata.json"), metadata)
+                checkpoint_rows.append({"arm": label, "step": step, "sha256": file_sha, "model_digest": identity(model_sig), "changed_vs_A39_tensors": sum(model_sig[k] != donor_signature[k] for k in model_sig)})
+                if step == 129:
+                    serving_path = trainer if step == 129 else path
+                    model_rows.append({"label": label + str(step), "path": str(serving_path), "sha256": file_sha, "step": step})
+                    custody_rows.append({"label": label + str(step), "path": str(serving_path), "sha256": file_sha, "step": step,
+                        "readonly": True, "stat_before": before, "stat_after": stat_key(serving_path),
+                        "all494_model_architecture_qualified": True,
+                        "metadata_path": str(output / (label + "-step-" + str(step) + "-metadata.json")),
+                        "metadata_sha256": sha(output / (label + "-step-" + str(step) + "-metadata.json"))})
+                del payload, opt, named, model_sig; gc.collect()
+        require(sha(donor) == m["donor_sha256"] and stat_key(donor) == donor_before and not torch.cuda.is_initialized(), "donor changed or reader initialized CUDA")
+        custody_rows[0]["stat_after"] = stat_key(donor)
+        write(output / "checkpoint-metadata.json", donor_metadata)
+        write(output / "three-models.json", {"status": "QUALIFIED_CPU_CHECKPOINT_METADATA_ONLY_ROOT_ADMISSION_REQUIRED", "models": model_rows,
+            "model_shapes_dtypes": expected_shapes, "training_readout": refs["readout"], "training_terminal": refs["terminal"],
+            "no_model_constructed_or_forward_executed": True})
+        write(output / "checkpoint-custody.json", {"status": "CPU_QUALIFIED_THREE_CHECKPOINTS_BEFORE_ANY_ARENA_LAUNCH",
+            "source_revision": p["source_revision"], "models": custody_rows,
+            "not_post_arena_verification": True, "arena_or_offline_execution_admitted": False})
+        for ref in refs.values():
+            require(sha(ref["path"]) == ref["sha256"], "readout input changed during CPU audit")
+        write(output / "readout.json", {"status": "ACCEPT_MATCHED_E4_129_TECHNICAL_DELIVERY_AND_CPU_CHECKPOINTS_ONLY", "source_revision": p["source_revision"],
+            "scientific_sha256": p["scientific_sha256"], "terminal": refs["terminal"], "training_readout": refs["readout"],
+            "updates_per_arm": 129, "optimizer_updates_total": 258, "samples_per_arm": 33024, "checkpoints": checkpoint_rows,
+            "model_rows": model_rows, "common_data_RNG_math_ownership_except_declared_categorical_and_WDLshare": True,
+            "A_B_final_models_expected_to_differ_no_equality_gate": True, "no_skips_or_retries": True,
+            "actual_A_B_final_tensor_differences": sum(arms[0]["final_model_signature"][k] != arms[1]["final_model_signature"][k]
+                                                       for k in arms[0]["final_model_signature"]),
+            "gradient_metrics": {arm["label"]: {k: arm["metrics"][k] for k in ("grad_hard_clip_rate", "grad_adaptive_clip_rate", "grad_norm_median")} for arm in arms},
+            "effective_fraction_semantics": "search_wdl_effective_frac and sf_wdl_effective_frac are availability diagnostics, not recipe weights. Actual loss kwargs enforce search1/.8 and SF0.",
+            "weakref_cleanup": "Guarded by exact source and prior_arm_refs_closed receipt, not a retrospective live-object observation.",
+            "CPU_reader_closure": "Outer owner terminal and independent root acceptance are still required after this process exits.",
+            "CUDA_initialized": False, "models_constructed_or_forwarded": False, "learning_or_playing_adoption_admitted": False,
+            "limits": "Technical delivery/checkpoint provenance only; selected8 are not whole-trunk gradient diagnostics, tensor differences/losses do not establish strength. Three-model inference and actual playing are separate."})
+    except BaseException as error:
+        write(output / "failure.json", {"status": "UNQUALIFIED_OR_INCONCLUSIVE_PAIRED129_CPU_READOUT", "error": repr(error)})
+        raise
+    finally:
+        signal.alarm(0)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,240 @@
+"""One fixed TRAIN-only draw plan; no action occurs at import."""
+from __future__ import annotations
+
+import argparse
+from contextlib import ExitStack
+import hashlib
+import importlib
+import json
+import os
+from pathlib import Path
+import signal
+import sys
+from unittest.mock import patch
+
+HERE = Path(__file__).resolve().parent
+
+
+def require(ok, message):
+    if not ok:
+        raise ValueError(message)
+
+
+def digest(path):
+    with Path(path).open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def checked(ref):
+    require(set(ref) == {"path", "sha256"} and "UNBOUND" not in ref["path"], "identity remains UNBOUND")
+    require(digest(ref["path"]) == ref["sha256"], "bound identity changed")
+    return json.loads(Path(ref["path"]).read_text())
+
+
+def write(path, value):
+    with Path(path).open("x") as stream:
+        json.dump(value, stream, indent=2, sort_keys=True, allow_nan=False)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def verify_frozen_components(science, manifest, scientific_sha256, technical_publication_ref, execution_manifest_sha256):
+    """Technical schema correction only; project exactly to frozen ancestors."""
+    root = HERE.parent
+    frozen_science = {"path": str(root / "e4-scientific-protocol-final-v2/protocol.json"),
+        "sha256": "7cfd6e45b565f39827a1801c828dc302fe5d79f176c7701b004fa7f1adab3478"}
+    packet_ref = {"path": str(root / "e4-learning-final-template-v1/preparation.json"),
+        "sha256": "7160670e77430936e692ea52b282e3c7c9153fd4148ac94748208bd290be1a3a"}
+    source_ref = {"path": str(root / "e4-learning-preparation-v1/preparation.json"),
+        "sha256": "ee0a188fd885f714c63e05a070df9908b47b8fc7ce3ec00b5a0d8bb1a2d10972"}
+    parent_manifest_ref = {"path": str(root / "e4-learning-final-template-v1/draw/manifest.TEMPLATE.json"),
+        "sha256": "efb0505181b9287a49c26a2e8278926d3fe08cc51de4dbfe44395007b3d4d638"}
+    parent_helper_ref = {"path": str(root / "e4-learning-preparation-v1/draw/bind_draw_plan.py"),
+        "sha256": "4d07f1c83e3d173be3fa8500eaf1f315274722c2f12e78d3552bc863d23561d2"}
+    paired_protocol_ref = {"path": str(root / "e4-learning-final-template-v1/train/protocol.TEMPLATE.json"),
+        "sha256": "d243be34aee5ccb8a40779bb112f8551aee5cd8083cdc77303c0809f57b482bb"}
+    paired_manifest_ref = {"path": str(root / "e4-learning-final-template-v1/train/manifest.TEMPLATE.json"),
+        "sha256": "c4ea9bd6911f1e7cbc52aab0790820496d35801864b8cfa65e9258c262edd5d8"}
+    inputs_ref = {"path": str(root / "e4-learning-preparation-v1/draw/identity-inputs.TEMPLATE.json"),
+        "sha256": "fdefbde7a15bf5a7d9960fb9629ba10949fbe95c719017733c8b0d2c2877227b"}
+    require(scientific_sha256 == frozen_science["sha256"], "wrong frozen E4 scientific identity")
+    require(science == checked(frozen_science), "scientific content differs from frozen7cfd")
+    require(science["components"]["learning_draw_checkpoint_offline_templates"] == packet_ref
+            and science["components"]["paired129_protocol_template"] == paired_protocol_ref
+            and science["components"]["learning_source"] == source_ref,
+            "science ancestor component graph differs")
+    packet, source, parent = checked(packet_ref), checked(source_ref), checked(parent_manifest_ref)
+    for relative, expected in (("draw/manifest.TEMPLATE.json", parent_manifest_ref["sha256"]),
+            ("train/protocol.TEMPLATE.json", paired_protocol_ref["sha256"]),
+            ("train/manifest.TEMPLATE.json", paired_manifest_ref["sha256"])):
+        require(packet["files"][relative] == expected, "frozen packet file-map differs: " + relative)
+    require(source["files"]["draw/bind_draw_plan.py"] == parent_helper_ref["sha256"]
+            and source["files"]["draw/identity-inputs.TEMPLATE.json"] == inputs_ref["sha256"],
+            "original draw source/input-template file-map differs")
+    require(digest(parent_helper_ref["path"]) == parent_helper_ref["sha256"], "original draw helper changed")
+    checked(paired_protocol_ref); checked(paired_manifest_ref); checked(inputs_ref)
+    require(parent["helper_sha256"] == parent_helper_ref["sha256"]
+            and parent["paired_protocol_template"] == paired_protocol_ref
+            and parent["paired_manifest_template"] == paired_manifest_ref
+            and parent["inputs_template"] == inputs_ref
+            and parent["authorities"]["TRAIN_source_preparation"] == source_ref,
+            "original draw manifest ancestry differs")
+    technical_ref = manifest["technical_metadata_consumer_correction"]
+    technical = checked(technical_ref)
+    require(technical["schema"] == "E4_DRAW_METADATA_CONSUMER_TECHNICAL_CORRECTION_V1"
+            and technical["frozen_science"] == frozen_science
+            and technical["ancestor_template_preparation"] == packet_ref
+            and technical["ancestor_source_preparation"] == source_ref
+            and technical["ancestor_draw_manifest"] == parent_manifest_ref
+            and technical["ancestor_draw_helper"] == parent_helper_ref
+            and technical["paired_protocol_template"] == paired_protocol_ref
+            and technical["paired_manifest_template"] == paired_manifest_ref
+            and technical["ancestor_inputs_template"] == inputs_ref,
+            "technical correction ancestry differs")
+    require(technical["new_helper"] == {"path": str(HERE / "bind_draw_plan.py"), "sha256": digest(__file__)}
+            and manifest["helper_sha256"] == technical["new_helper"]["sha256"],
+            "technical successor helper identity differs")
+    new_inputs_ref = technical["new_inputs_template"]
+    require(manifest["inputs_template"] == new_inputs_ref, "technical input-template identity differs")
+    new_inputs, old_inputs = checked(new_inputs_ref), checked(inputs_ref)
+    require(set(new_inputs) == set(old_inputs) | {"technical_publication"}
+            and {k: v for k, v in new_inputs.items() if k != "technical_publication"} == old_inputs,
+            "five scientific/data input references changed")
+    require(isinstance(technical_publication_ref, dict)
+            and set(technical_publication_ref) == {"path", "sha256"}
+            and "UNBOUND" not in technical_publication_ref["path"],
+            "published technical publication reference required")
+    publication = checked(technical_publication_ref)
+    require(publication["status"] == "MAIN_PUBLISHED_E4_DRAW_METADATA_TECHNICAL_CORRECTION"
+            and publication["frozen_scientific_sha256"] == frozen_science["sha256"]
+            and publication["source_revision"] == science["source"]["revision"]
+            and publication["collection_uuid"] == science["cohort"]["uuid"],
+            "technical publication not published for this frozen science/source/cohort")
+    require(publication["new_helper"] == technical["new_helper"]
+            and publication["entrypoint"] == str(HERE / "bind_draw_plan.py")
+            and publication["new_execution_manifest"] == {"path": str(HERE / "manifest.json"), "sha256": execution_manifest_sha256}
+            and publication["technical_descriptor"] == technical_ref
+            and publication["ancestor_draw_helper"] == parent_helper_ref,
+            "published technical helper/manifest/descriptor/entrypoint/ancestor differs")
+    projected = dict(manifest)
+    del projected["technical_metadata_consumer_correction"]
+    projected["helper_sha256"] = parent["helper_sha256"]
+    projected["inputs_template"] = parent["inputs_template"]
+    require(projected == parent, "successor draw manifest changes beyond declared technical identities")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--execute", action="store_true")
+    ap.add_argument("--manifest-sha256", required=True)
+    ap.add_argument("--bindings", required=True)
+    ap.add_argument("--bindings-sha256", required=True)
+    args = ap.parse_args()
+    require(args.execute, "separate finite CPU admission required")
+    require(digest(HERE / "manifest.json") == args.manifest_sha256, "draw helper manifest changed")
+    m = json.loads((HERE / "manifest.json").read_text())
+    require(digest(__file__) == m["helper_sha256"], "draw helper changed")
+    require(digest(args.bindings) == args.bindings_sha256, "late bindings changed")
+    bindings = json.loads(Path(args.bindings).read_text())
+    require(set(bindings) == {"scientific", "publication", "producer_protocol", "producer_manifest", "cohort", "technical_publication"}, "unexpected binding fields")
+    require(Path(sys.executable).resolve() == Path(m["python"]).resolve() and tuple(sys.version_info[:3]) == (3, 13, 15), "interpreter changed")
+    parent = Path(f"/proc/{os.getppid()}/cmdline").read_bytes().decode().split("\0")
+    require(m["owner_path"] in parent and digest(m["owner_path"]) == m["owner_sha256"] and
+            "--seconds" in parent and parent[parent.index("--seconds") + 1] == "300" and
+            "--resource" in parent and parent[parent.index("--resource") + 1] == "cpu", "wrong finite owner")
+    require(sorted(os.sched_getaffinity(0)) == [20, 22] and os.environ.get("CUDA_VISIBLE_DEVICES") == "" and
+            os.environ.get("OMP_NUM_THREADS") == os.environ.get("MKL_NUM_THREADS") == "2" and
+            __debug__ and os.environ.get("PYTHONOPTIMIZE", "0") == "0", "CPU resource contract changed")
+    for ref in m["authorities"].values():
+        require(digest(ref["path"]) == ref["sha256"], "fixed authority changed")
+    protocol = checked(m["paired_protocol_template"])
+    manifest = checked(m["paired_manifest_template"])
+    science, publication, producer, _pm, cohort = [checked(bindings[key]) for key in
+        ("scientific", "publication", "producer_protocol", "producer_manifest", "cohort")]
+    require(science["status"].startswith("FROZEN_E4_") and science["source"]["revision"] == protocol["source_revision"] and
+            science["cohort"]["uuid"] == protocol["run_uuid"] and
+            publication["status"] == "MAIN_PUBLISHED_FROZEN_E4_SCIENCE" and
+            publication["scientific_sha256"] == bindings["scientific"]["sha256"], "science is not frozen and published")
+    verify_frozen_components(science, m, bindings["scientific"]["sha256"],
+        bindings["technical_publication"], args.manifest_sha256)
+    require(producer["scientific_preregistration_sha256"] == bindings["scientific"]["sha256"] and
+            producer["collection_uuid"] == protocol["run_uuid"], "producer scientific identity differs")
+    require(cohort["producer_protocol_sha256"] == bindings["producer_protocol"]["sha256"] and
+            cohort["producer_manifest_sha256"] == bindings["producer_manifest"]["sha256"],
+            "cohort and loader producer identities differ")
+    for key in ("producer_protocol", "producer_manifest", "scientific", "publication", "cohort"):
+        stem = "cohort_binding" if key == "cohort" else key
+        protocol[stem + "_path"] = bindings[key]["path"]
+        protocol[stem + "_sha256"] = bindings[key]["sha256"]
+    require(protocol["execution_binding_complete"] is protocol["execution_admitted"] is False and
+            protocol["steps"] == 129 and protocol["batch_size"] == 256 and protocol["draw_seed"] == 2026111342,
+            "fixed dose or non-execution scope changed")
+    for name, expected in manifest["helpers"].items():
+        require(digest(Path(m["TRAIN_code_directory"]) / name) == expected, "TRAIN helper changed")
+    output = Path(m["output_root"])
+    require(not output.exists() and not Path(protocol["draw_plan_path"]).exists(), "draw output already exists")
+    output.mkdir()
+    attempts = {}
+    def forbidden(name):
+        attempts[name] = 0
+        def refuse(*_a, **_k):
+            attempts[name] += 1
+            raise RuntimeError("FORBIDDEN_DRAW_SIDE_EFFECT:" + name)
+        return refuse
+    signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError("fixed270s CPU draw-plan deadline")))
+    signal.alarm(270)
+    try:
+        sys.path.insert(0, protocol["source_checkout"])
+        sys.path.insert(0, m["TRAIN_code_directory"])
+        import torch
+        torch.set_num_threads(2)
+        torch.set_num_interop_threads(2)
+        require(not torch.cuda.is_initialized(), "CUDA preinitialized")
+        with ExitStack() as stack:
+            for obj, name, label in [(torch, "load", "checkpoint_load"), (torch.cuda, "init", "CUDA_init"),
+                    (torch.cuda, "_lazy_init", "CUDA_lazy_init")]:
+                stack.enter_context(patch.object(obj, name, forbidden(label)))
+            from chess_anti_engine import model as model_api
+            from chess_anti_engine.uci import model_loader
+            from chess_anti_engine.train.trainer import Trainer
+            from chess_anti_engine.stockfish.uci import StockfishUCI
+            from chess_anti_engine.stockfish.pool import StockfishPool
+            from chess_anti_engine.worker import WorkerSession
+            for obj, name, label in [(model_api, "build_model", "model_build"),
+                    (model_loader, "build_model", "loader_model_build"), (Trainer, "__init__", "Trainer_construct"),
+                    (StockfishUCI, "__init__", "SF_construct"), (StockfishPool, "__init__", "SF_pool_construct"),
+                    (WorkerSession, "__init__", "Worker_construct")]:
+                stack.enter_context(patch.object(obj, name, forbidden(label)))
+            modules = {name: importlib.import_module(name) for name in
+                       ("verified_outcome", "value_bundle", "paired_observer", "train_inputs")}
+            for name, module in modules.items():
+                require(Path(module.__file__).resolve() == Path(m["TRAIN_code_directory"]) / (name + ".py"), "foreign helper origin")
+            import numpy as np
+            require(np.__version__ == "2.2.6", "NumPy draw implementation changed")
+            inputs, observer = modules["train_inputs"], modules["paired_observer"]
+            _old, parts = inputs.base_inputs(protocol, manifest)
+            arrays, ids, games, _raw, _metadata, lineage = inputs.load_research_train(cohort, parts)
+            require(len(games) == len(lineage["fresh_proof_sha256"]) == 128 and lineage["heldout_loaded"] is False,
+                    "not freshly proved whole128 TRAIN only")
+            indices = np.random.default_rng(protocol["draw_seed"]).integers(0, len(ids), size=(129, 256), dtype=np.int64)
+            plan = {"physical_row_ids": ids, "indices": indices.tolist(), "raw_arrays": observer.arrays_signature(arrays)}
+            require(not any(attempts.values()) and not torch.cuda.is_initialized(), "forbidden side effect occurred")
+            write(output / "draw-plan.json", plan)
+            write(output / "input-lineage.json", lineage)
+            write(output / "readout.json", {"status": "PASS_FIXED_TRAIN128_DRAW_PLAN_CPU_ONLY",
+                "source_revision": protocol["source_revision"], "source_bindings_sha256": args.bindings_sha256,
+                "draw_plan_sha256": digest(output / "draw-plan.json"), "future_binding_path": protocol["draw_plan_path"],
+                "games": 128, "rows": len(ids), "draw_shape": [129, 256], "draw_seed": 2026111342,
+                "NumPy": np.__version__, "side_effect_attempts": attempts, "CUDA_initialized": False,
+                "draw_plan_installed_into_execution_bindings": False, "learning_admitted": False})
+        parts[0].freeze_tree(output)
+    except BaseException as error:
+        write(output / "failure.json", {"status": "FAILED_DRAW_PLAN_UNQUALIFIED", "error": repr(error), "side_effect_attempts": attempts})
+        raise
+    finally:
+        signal.alarm(0)
+
+
+if __name__ == "__main__":
+    main()

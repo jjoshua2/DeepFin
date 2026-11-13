@@ -1,0 +1,76 @@
+{
+  "bootstrap_seed": 2026111501,
+  "cohort_binding": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/cohort-binding.json",
+    "sha256": "bf0d048e4b76d3b06e442d3a87028192ae5e6d7d2f605626a1146aad07a0efa4"
+  },
+  "execution_admitted": true,
+  "expected_trunk_map": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-preparation-v2/expected-trunk-map.json",
+    "sha256": "219d77e26feba07d8f1baf6b615d2f17c783692b5e3f8029af77bdbf689e75f3"
+  },
+  "math_context": {
+    "cuda_matmul_allow_bf16_reduced_precision_reduction": true,
+    "cuda_matmul_allow_fp16_reduced_precision_reduction": true,
+    "cuda_matmul_allow_tf32": false,
+    "cudnn_allow_tf32": true,
+    "cudnn_benchmark": false,
+    "cudnn_deterministic": false,
+    "default_dtype": "torch.float32",
+    "deterministic_algorithms": false,
+    "deterministic_warn_only": false,
+    "float32_matmul_precision": "highest",
+    "math_environment": {
+      "CUBLAS_WORKSPACE_CONFIG": null,
+      "NVIDIA_TF32_OVERRIDE": null
+    },
+    "torch": "2.14.0+cu130"
+  },
+  "output_root": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-runtime-v1-1fb23ace-676a-485e-94b1-10f54b4d4a3a",
+  "owner": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/run_stage_tb_on_runtime_v1.py",
+    "sha256": "b7287b50906b90a6729833f8ee3369d7a544d2d202d365e90f5c66afb275fa13"
+  },
+  "root_admission_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-root-admission-v1/admission.json",
+  "root_roster": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-score-blind-root-roster-v1/selection.json",
+    "sha256": "e87058c7ad071f1baab6e085dcb756cf7e05bb706f18d23cd1fe86c375d00146"
+  },
+  "root_salt": "E3-gradient-root-v1:20261113:",
+  "run_uuid": "1fb23ace-676a-485e-94b1-10f54b4d4a3a",
+  "scientific": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-final-bindings-v1-1fb23ace-676a-485e-94b1-10f54b4d4a3a/scientific.json",
+    "sha256": "6260995b5661cb4c8718749e5fac60f38de527dc4c37ce05fd2edc1082af87eb"
+  },
+  "source_checkout": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "states": [
+    {
+      "label": "DONOR",
+      "path": "/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/baseline/epoch2.pt",
+      "sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+      "step": null
+    },
+    {
+      "label": "FULLA40",
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLA/trainer.pt",
+      "sha256": "534adbeb112d2a5c9b39b7827ffce8eaa9c7d51597ddf91f269cda4ee3818229",
+      "step": 40
+    },
+    {
+      "label": "FULLB40",
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLB/trainer.pt",
+      "sha256": "8e3038b5db03db7455582e98dde09cd503c30df4ac781f4f5680096f144dc522",
+      "step": 40
+    }
+  ],
+  "status": "ROOT_BOUND_ONE_E3_STAGE_CONTRACT_PENDING_FRESH_RESOURCE_ADMISSION",
+  "training_manifest": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/manifest.json",
+    "sha256": "d60ba0905fd0826698ad5f99b5d4e5c1efc4755e47b4fbe5b8376d6bc1042191"
+  },
+  "training_protocol": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/protocol.json",
+    "sha256": "93910eea9763c7d0ac4265c2f552f8b8a452b004b151a894d0b48ce558aa0825"
+  }
+}

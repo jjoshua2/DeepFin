@@ -1,0 +1,161 @@
+"""Reuse frozen source/consumer guards; all actual data bindings remain explicit."""
+
+from __future__ import annotations
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import sys
+
+import numpy as np
+
+HERE = Path(__file__).resolve().parent
+WROOT = HERE.parent
+SOURCE = Path("/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess")
+REVISION = "ba9d6de1987902e1759d984532a4c63f091b9269"
+RUN = "cd47b230-f32f-4256-a51e-4869f5708bb6"
+_CONTEXT = None
+DONOR = "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0"
+LABELS = ["DONOR", "FULLA129", "FULLB129"]
+
+
+def require(ok, message):
+    if not ok:
+        raise ValueError(message)
+
+
+def digest(path):
+    h = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def checked_json(path, expected):
+    require(digest(path) == expected, "bound metadata changed: " + str(path))
+    return json.loads(Path(path).read_text())
+
+
+def write_json(path, value):
+    with Path(path).open("x") as stream:
+        json.dump(value, stream, indent=2, sort_keys=True, allow_nan=False)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def module(name, path, expected):
+    require(digest(path) == expected, "qualified helper changed: " + str(path))
+    sys.path.insert(0, str(Path(path).parent))
+    spec = importlib.util.spec_from_file_location(name, path)
+    result = importlib.util.module_from_spec(spec)
+    sys.modules[name] = result
+    spec.loader.exec_module(result)
+    return result
+
+
+def guard(manifest, protocol):
+    global _CONTEXT
+    require(protocol["source_inputs_bound"] is True and protocol["science_binding_complete"] is True,
+            "E4 offline actual source/science bindings UNBOUND")
+    for name, expected in manifest["helpers"].items():
+        require(digest(HERE / name) == expected, "offline helper changed: " + name)
+    require(digest(HERE / "source-proof.json") == manifest["source_proof_sha256"],
+            "offline source proof changed")
+    draft = checked_json(protocol["draft_science_path"], protocol["draft_science_sha256"])
+    require(protocol["draft_science_sha256"] == "82073830b8efc52b5e9f3ba6842c5c822e2f261c8a1d9623be6c76b8fc1e0dc6",
+            "prospective scientific direction changed")
+    science = checked_json(protocol["scientific_path"], protocol["scientific_sha256"])
+    publication = checked_json(protocol["publication_path"], protocol["publication_sha256"])
+    require(science["offline"] == protocol["fixed_scientific_offline_contract"] and science["seeds"] == protocol["fixed_scientific_seeds"]
+            and science["offline"]["roots"] == 64
+            and science["offline"]["bootstrap"]["seed"] == 2026111347
+            and science["offline"]["bootstrap"]["paired_samples"] == 10000
+            and science["offline"]["snapshots"] == ["donor", *LABELS[1:]]
+            and protocol["snapshot_order"] == LABELS,
+            "fixed whole64 diagnostic ruler/seeds changed")
+    require(publication["status"] == "MAIN_PUBLISHED_FROZEN_E4_SCIENCE"
+            and publication["scientific_sha256"] == protocol["scientific_sha256"],
+            "final scientific publication prerequisite UNBOUND")
+    require(protocol["diagnostic_only"] is True and protocol["source_revision"] == REVISION
+            and protocol["source_checkout"] == str(SOURCE), "offline role/source changed")
+    training_protocol = checked_json(protocol["training_protocol_path"], protocol["training_protocol_sha256"])
+    training_manifest = checked_json(protocol["training_manifest_path"], protocol["training_manifest_sha256"])
+    require(training_protocol["source_revision"] == REVISION and training_protocol["run_uuid"] == RUN
+            and training_protocol["scientific_sha256"] == protocol["scientific_sha256"],
+            "TRAIN metadata source/science differs")
+    require(training_manifest["helpers"]["train_inputs.py"] == manifest["components"]["train_inputs"]["sha256"]
+            and training_manifest["helpers"]["paired_observer.py"] == manifest["components"]["observer"]["sha256"],
+            "offline gate/observer differs from exact TRAIN metadata consumer")
+    inputs = module("offline_e2tb_train_metadata", manifest["components"]["train_inputs"]["path"],
+                    manifest["components"]["train_inputs"]["sha256"])
+    _old, parts = inputs.base_inputs(training_protocol, training_manifest)
+    observer = module("offline_e2tb_observer", manifest["components"]["observer"]["path"],
+                      manifest["components"]["observer"]["sha256"])
+    # The canonical proof module is shared with the collector import; serialized proof data never suffices.
+    proof_api = module("verified_outcome", manifest["components"]["verified_outcome"]["path"],
+                       manifest["components"]["verified_outcome"]["sha256"])
+    collector = module("offline_e2tb_collector_primitives", manifest["components"]["collector"]["path"],
+                       manifest["components"]["collector"]["sha256"])
+    for rel, expected in manifest["additional_source_sha256"].items():
+        require(digest(SOURCE / rel) == expected, "offline consumer source changed: " + rel)
+    require(observer.math_context() == protocol["math_context"] and str(np.__version__) == protocol["numpy_version"],
+            "offline math context differs")
+    _CONTEXT = {"inputs": inputs, "parts": parts, "proof_api": proof_api, "collector": collector}
+    return inputs, observer, parts
+
+
+def context():
+    require(_CONTEXT is not None, "actual guarded E4 context unavailable")
+    return _CONTEXT
+
+
+def cohort_metadata(binding):
+    ctx = context()
+    producer = ctx["parts"][1]
+    readout, _train128 = ctx["inputs"].cohort_metadata(binding, producer)
+    # This is the unchanged strict all192/128/628 metadata gate, NEVER load_research_train.
+    return producer, readout
+
+
+def hash_input(value):
+    x = np.asarray(value)
+    require(
+        x.shape == (175, 8, 8) and x.dtype == np.dtype("<f2") and np.isfinite(x).all(),
+        "root input not finite175F16",
+    )
+    return hashlib.sha256(np.ascontiguousarray(x).tobytes()).hexdigest()
+
+
+def verify_owner(protocol, *, resource, seconds, affinity, cuda):
+    args = (
+        Path("/proc/" + str(os.getppid()) + "/cmdline")
+        .read_bytes()
+        .decode()
+        .split("\0")
+    )
+    require(
+        protocol["owner_path"] in args
+        and digest(protocol["owner_path"]) == protocol["owner_sha256"],
+        "wrong finite offline owner",
+    )
+    require(
+        "--resource" in args
+        and args[args.index("--resource") + 1] == resource
+        and "--seconds" in args
+        and args[args.index("--seconds") + 1] == str(seconds),
+        "offline owner resource/ceiling differs",
+    )
+    require(
+        sorted(os.sched_getaffinity(0)) == affinity
+        and os.environ.get("CUDA_VISIBLE_DEVICES") == cuda
+        and __debug__
+        and os.environ.get("OMP_NUM_THREADS")
+        == os.environ.get("MKL_NUM_THREADS")
+        == "2",
+        "offline visibility/affinity/assertions/thread contract differs",
+    )
+
+

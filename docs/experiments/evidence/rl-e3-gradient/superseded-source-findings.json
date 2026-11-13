@@ -1,0 +1,74 @@
+{
+  "CPU_controls": {
+    "fixture_path": "tests/test_losses_zero_weight_disarm.py",
+    "fixture_sha256": "d7a807be2587218c790be3cdb23ae46f9679a82f74289be3c51f08b58e0aecbe",
+    "limits": "No helper.main, real model/Trainer, researcharrays/checkpoints, engines/TB probes orGPU construction; actual negative failure guards/residency/BF16 remain source-only, not established by these controls.",
+    "nonvacuity": [
+      "ActualR7 compute_loss undercaptured_loss with differentiable nonzero synthetic policy/value/aux terms, sourcefold/objectidentity return checks.",
+      "Fractionalsoft mask .25 plus absentsearch row and both search1/.8 maps expose real source fallback/denominator behavior.",
+      "Autograd connectedzero versus unusedNone versus constant-loss-no-graph cases distinguished.",
+      "Analytic 6vectorcosinedifference -sqrt2 and exactlycancelled W+C => undefinedprimary."
+    ],
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-cpu-controls.py",
+    "sha256": "087306786d5013fb5e80710f6c4fdb6ecdcff6d762448c311939919f949174d2",
+    "source_only_status": "ACCEPT_SCOPED_CONTROL_DESIGN_PENDING_CORRECTED_HELPER_PIN_AND_ROOT_FINITE_ADMISSION"
+  },
+  "binding_contract_sha256": "af4abb08c58bc7a022c4bbbf4a0c10d3221af3d9f5ae1096c00ccdb8076a1ab8",
+  "created_utc": "2026-11-13T06:57:35.149540+00:00",
+  "expected_trunk_map_sha256": "219d77e26feba07d8f1baf6b615d2f17c783692b5e3f8029af77bdbf689e75f3",
+  "findings": [
+    {
+      "evidence": "First report and repeat live only in RAM when require() gates at315\u2013326 run. Neither first-game0 nor repeat JSON exists until after all gates pass; outer failure.json stores only error/counters. Failed forward/coverage/gradient/cos drift loses both observed component/mask/fallback/forward/reconstruction records under no-rerun protocol.",
+      "id": "E3-IMPL-1",
+      "lines": [
+        309,
+        329
+      ],
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-preparation-v1/measure.py",
+      "priority": "P1",
+      "required_fix": "In additive immutable successor, fsync first sentinel report before repeat and durable complete repeat report plus errors/qualification flags before refusing gates. Preserve metrics/tolerances/roots/call counts; no autoretry.",
+      "title": "Repeat failure observations are not durable before refusal"
+    },
+    {
+      "evidence": "layers set only parses names starting blocks.; actual tied generator aliases are16 layer_smolgens.N.gen_weight.weight names. Current result buckets it with all layer_smolgens, contradicting separate tied-cross-layer attribution. Primary whole-trunk Gram is unaffected.",
+      "id": "E3-IMPL-2",
+      "lines": [
+        227,
+        234
+      ],
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-preparation-v1/measure.py",
+      "priority": "P2",
+      "required_fix": "Recognize actual layer_smolgens.N aliases (or explicit exact tiedgenerator) and emit tied_across_layers for shared16alias parameter; retain precise per-layer attribution for untied Smolgen rows. No primary estimator change.",
+      "title": "Layer summary misses actual tied Smolgen aliases"
+    }
+  ],
+  "helper": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-preparation-v1/measure.py",
+    "sha256": "14fd7eded2b9580fd33d8b392e70883e5287347ba84b9525c02be6c07a0b7815"
+  },
+  "limits": [
+    "No imports/tests/jobs/arrays/models/checkpoints/forwards/gradients executed during this review. No source or template edits.",
+    "V1 must remain preservedUNRUN; author additive corrected version needs exactdelta review. CPU controls cannot substitute actualBF16repeat/control/custody result or grantGPUadmission."
+  ],
+  "manifest": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-preparation-v1/manifest.json",
+    "sha256": "50e3705eb577115ad96a3a522953cb72714d3c3f19f286f951ba7afda0f8f336"
+  },
+  "preparation": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-preparation-v1/preparation.json",
+    "sha256": "9264afa0e459120f1d3a46af492102e5182bd86f457bb9935049a7668033a97a"
+  },
+  "protocol_template_sha256": "d6a72ea6b25d5767d07f143cf4fd33ae244760feac87f51450177efae1f13a31",
+  "schema": "independent-E3-implementation-v1-source-review-v1",
+  "source_checks_completed": [
+    "Full432-line helper read, preparation/manifest/protocol/rootadmission/command/bindingcontract/README exact sealed artifact pins inspected.",
+    "Actual weighted_terms current-thread code-identity profile capture with immediate finally-restoration, sourceordered active scalar fold and returned differentiable-object identity crosscheck. Synthetic capture/API assumptions traced to actualR7 losses fields/returns.",
+    "TRAINv5 loader/proofs/targets preserve all32/noHOLDarrays; fixedE3roster recomputed before newmodel forwards, exact219d/423/57,533,899 map and physical aliases enforced.",
+    "Strict494 architecture/shape/dtype/finite model load with immutable prepost modelSHA; one fresh nonstepping Trainer/optimizer, map covers all479, guarded train/save/step calls; step/moments/scheduler/Zclip/.grad and model signatures checked unchanged.",
+    "99forwards/600nominal gradientattempts, distinctactualautograd count for constant families, F32 fulltrunkCPU vectors/float64 sufficientstats, finite checks and primary undefined<=1e-12 behavior traced.",
+    "Both state-independent A/B targetmaps, coupled W/C graph retained, separate total-gradient residual diagnostic, primaryDONOR paired32 bootstrap10000seed2026111501, endclass/layer/route reports descriptive.",
+    "One-way protocol->admission path avoids hashcycle; frozen finalscience must bind implementationmanifest, late rootprotocol remainsUNBOUND and bindingcontract admits only status/execution/scientificidentities. Exact actual late fixed-field projection still needed before execution.",
+    "One-model frame return + weakref/GC/cache cleanup and writer close source reviewed; no per-root GPU gradientbank retained. Source-derived memory/time plausibility remains unmeasured."
+  ],
+  "status": "CHANGES_REQUIRED_BEFORE_ANY_EXECUTION"
+}

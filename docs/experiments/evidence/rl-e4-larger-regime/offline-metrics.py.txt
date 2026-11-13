@@ -1,0 +1,65 @@
+"""Frozen diagnostic units; per-root probabilities are the reusable observations."""
+
+from __future__ import annotations
+import numpy as np
+from common import require
+
+
+def probabilities(policy1858_logits, wdl_logits, legal_mask):
+    policy = np.asarray(policy1858_logits, dtype=np.float64)
+    wdl = np.asarray(wdl_logits, dtype=np.float64)
+    require(np.isin(np.asarray(legal_mask), [0, 1]).all(), "nonbinary legal mask")
+    legal = np.asarray(legal_mask, dtype=bool)
+    require(
+        policy.shape == legal.shape == (64, 1858) and wdl.shape == (64, 3),
+        "wrong complete64 output shape",
+    )
+    require(
+        np.isfinite(policy).all()
+        and np.isfinite(wdl).all()
+        and legal.any(axis=1).all(),
+        "nonfinite or empty legal root; no fallback",
+    )
+    masked = np.where(legal, policy, -np.inf)
+    p = np.exp(masked - masked.max(axis=1, keepdims=True))
+    p /= p.sum(axis=1, keepdims=True)
+    q = np.exp(wdl - wdl.max(axis=1, keepdims=True))
+    q /= q.sum(axis=1, keepdims=True)
+    return p, q
+
+
+def per_root(wdl, policy, labels, legal_mask, donor_policy):
+    wdl, policy, donor = (
+        np.asarray(v, np.float64) for v in (wdl, policy, donor_policy)
+    )
+    labels = np.asarray(labels)
+    require(np.isin(np.asarray(legal_mask), [0, 1]).all(), "nonbinary legal mask")
+    legal = np.asarray(legal_mask, bool)
+    require(
+        wdl.shape == (64, 3)
+        and policy.shape == donor.shape == legal.shape == (64, 1858),
+        "whole64 probability shape differs",
+    )
+    require(
+        labels.shape == (64,) and np.isin(labels, [0, 1, 2]).all(),
+        "invalid genuine WDL labels",
+    )
+    for value in (wdl, policy, donor):
+        require(
+            np.isfinite(value).all()
+            and (value >= 0).all()
+            and np.allclose(value.sum(axis=1), 1, rtol=0, atol=1e-12),
+            "invalid recorded probabilities",
+        )
+    require(
+        not np.any(policy[~legal]) and not np.any(donor[~legal]), "illegal policy mass"
+    )
+    onehot = np.eye(3, dtype=np.float64)[labels.astype(np.int64)]
+    expected = wdl[:, 0] + 0.5 * wdl[:, 1]
+    actual = onehot[:, 0] + 0.5 * onehot[:, 1]
+    return {
+        "expected_score_MSE": (expected - actual) ** 2,
+        "draw_Brier": (wdl[:, 1] - onehot[:, 1]) ** 2,
+        "three_class_WDL_Brier_sum": ((wdl - onehot) ** 2).sum(axis=1),
+        "legal_policy_TV_vs_donor": 0.5 * np.abs(policy - donor).sum(axis=1),
+    }

@@ -1,0 +1,91 @@
+{
+  "count": 8,
+  "metadata_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-game-consumer-actual-readout-v1/checkpoint-metadata.json",
+  "metadata_sha256": "5c6d344967cd3714523a24526315feaf1a626b6cb48b59b9021c3400e3a0e49e",
+  "ownership_scope": "source-declared roles/routes; exact actual runtime full optimizer map must match before training",
+  "parameters": [
+    {
+      "dtype": "torch.float32",
+      "name": "blocks.0.ffn.0.weight",
+      "role": "shared_trunk",
+      "route": "aurora",
+      "shape": [
+        768,
+        512
+      ]
+    },
+    {
+      "dtype": "torch.float32",
+      "name": "blocks.0.out_proj.weight",
+      "role": "shared_trunk",
+      "route": "aurora",
+      "shape": [
+        512,
+        512
+      ]
+    },
+    {
+      "dtype": "torch.float32",
+      "name": "embed.weight",
+      "role": "shared_trunk",
+      "route": "adamw",
+      "shape": [
+        512,
+        175
+      ]
+    },
+    {
+      "dtype": "torch.float32",
+      "name": "policy_own.k.weight",
+      "role": "policy_own",
+      "route": "adamw",
+      "shape": [
+        512,
+        512
+      ]
+    },
+    {
+      "dtype": "torch.float32",
+      "name": "value_wdl.net.0.weight",
+      "role": "value_wdl",
+      "route": "adamw",
+      "shape": [
+        128,
+        8192
+      ]
+    },
+    {
+      "dtype": "torch.float32",
+      "name": "value_categorical_coupled.weight",
+      "role": "value_categorical_coupled",
+      "route": "adamw",
+      "shape": [
+        32,
+        128
+      ]
+    },
+    {
+      "dtype": "torch.float32",
+      "name": "moves_left.net.0.weight",
+      "role": "moves_left",
+      "route": "adamw",
+      "shape": [
+        32,
+        512
+      ]
+    },
+    {
+      "dtype": "torch.float32",
+      "name": "policy_sf.k.weight",
+      "role": "policy_sf",
+      "route": "adamw",
+      "shape": [
+        128,
+        512
+      ]
+    }
+  ],
+  "schema": "frozen-actual-physical-names-for-paired-observation-v1",
+  "source_revision": "6d7f2e6d1b1fc80aa9df2ee5b922eaa3fabf0814",
+  "whole_model_gradient_or_quality_claim": false
+}

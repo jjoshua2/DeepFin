@@ -1,0 +1,278 @@
+{
+  "status": "FROZEN_IDENTITY_ONLY_TRAIN32_ROOT_ROSTER_NO_ARRAY_OR_LOSS_OR_MODEL_ACCESS",
+  "utc": "2026-11-13T06:43:53.408272+00:00",
+  "study": "E3-gradient-TRAIN32",
+  "salt": "E3-gradient-root-v1:20261113:",
+  "selection_rule": "Per game min (SHA256(UTF8(salt+physical_row_id)), numeric retained-row ordinal). ALL retained rows; no ply or outcome filter.",
+  "game_order": "Numeric source game-start ordinal increasing",
+  "source_draw_plan": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-results-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/draw-plan.json",
+    "sha256": "6a4fcb7136d24955bcb1ea11a6f79a3659226d1771fdca661442e169bbfccdb5"
+  },
+  "source_input_lineage": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-results-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/input-lineage.json",
+    "sha256": "a8b940861c5630c2c4615ef9ae95d03f41bf52dde18b4b3ffd7823274f6abbbe"
+  },
+  "all3012_ids_sha256": "19b84e1255432598d45d6114ea77878bc882dee4fe8bb5c857d80fd594f00a53",
+  "selected_rows": [
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:1",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:1:12",
+      "TRAIN_array_index": 12,
+      "selection_sha256": "05c13fbfd5b6d551465431dc15488933012caf65c819c2c064db1a88ad4f1596",
+      "outcome_class": "NATURAL",
+      "retained_row_candidates": 103
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:2",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:2:68",
+      "TRAIN_array_index": 171,
+      "selection_sha256": "02422e0198d54025740881d70f2fe4d85a61290c68aaee040cfcbd8c392ab648",
+      "outcome_class": "STRICT_TB_ADJUDICATED",
+      "retained_row_candidates": 128
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:4",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:4:49",
+      "TRAIN_array_index": 280,
+      "selection_sha256": "06f66c673dbd41e87c6c7446e7330120bbc0cf242e3a4644a156400ab9e1d9d4",
+      "outcome_class": "STRICT_TB_ADJUDICATED",
+      "retained_row_candidates": 63
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:5",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:5:69",
+      "TRAIN_array_index": 363,
+      "selection_sha256": "01463601d99ad2b166ef9f4d64873e3fec36f85f2a8be44f6ed16ec4c4584c60",
+      "outcome_class": "STRICT_TB_ADJUDICATED",
+      "retained_row_candidates": 120
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:11",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:11:80",
+      "TRAIN_array_index": 494,
+      "selection_sha256": "05891841d0be5d9f4cac10de1303234296490d7e7ce5f0bab30c430d5299bd88",
+      "outcome_class": "STRICT_TB_ADJUDICATED",
+      "retained_row_candidates": 112
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:13",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:13:50",
+      "TRAIN_array_index": 576,
+      "selection_sha256": "0419dba9f0f1a8e59014915d52861c2ec247e7c7881f689ee38620551b1301dc",
+      "outcome_class": "STRICT_TB_ADJUDICATED",
+      "retained_row_candidates": 87
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:16",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:16:53",
+      "TRAIN_array_index": 666,
+      "selection_sha256": "023d3e2023e4114be9a3b6928cd895f8d3f84d8bb16050500a58fefb9ceb91f2",
+      "outcome_class": "NATURAL",
+      "retained_row_candidates": 70
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:17",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:17:77",
+      "TRAIN_array_index": 760,
+      "selection_sha256": "0a5576d9c96ed986fd38c92a5931bed54512a5ca6fae3e063f739a5f9bd4fe06",
+      "outcome_class": "STRICT_TB_ADJUDICATED",
+      "retained_row_candidates": 81
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:23",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:23:59",
+      "TRAIN_array_index": 823,
+      "selection_sha256": "0069835e28a6d105160a961117b6c538a859a3c5aa4894091387d2862e818791",
+      "outcome_class": "NATURAL",
+      "retained_row_candidates": 151
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:24",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:24:109",
+      "TRAIN_array_index": 1024,
+      "selection_sha256": "01eeca7b589f95a9c4b571aaeeeba78775dc29d0ad58e696f6bbb1f8c5ab45d7",
+      "outcome_class": "STRICT_TB_ADJUDICATED",
+      "retained_row_candidates": 126
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:35",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:35:72",
+      "TRAIN_array_index": 1113,
+      "selection_sha256": "0644c0c1b2c7afc780f4e18d4c47480dc511eb21d21dfd4a7e91f4e56e928934",
+      "outcome_class": "NATURAL",
+      "retained_row_candidates": 74
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:37",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:37:24",
+      "TRAIN_array_index": 1139,
+      "selection_sha256": "0098d61c7131c5ad2e2c8a4ba796eb2e25a5015be9995592108a9463d5ba2709",
+      "outcome_class": "NATURAL",
+      "retained_row_candidates": 77
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:39",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:39:39",
+      "TRAIN_array_index": 1231,
+      "selection_sha256": "03653bdaaf0dd4a266c699e71bf3c52972b070a8d80e8ebecde6c15e0df60078",
+      "outcome_class": "STRICT_TB_ADJUDICATED",
+      "retained_row_candidates": 70
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:41",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:41:102",
+      "TRAIN_array_index": 1364,
+      "selection_sha256": "01d0a8f64587ce946d76b3e5ccaa93959e31926f340fe42d9e7a427670f3d012",
+      "outcome_class": "STRICT_TB_ADJUDICATED",
+      "retained_row_candidates": 133
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:44",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:44:8",
+      "TRAIN_array_index": 1403,
+      "selection_sha256": "01336e8ee7bb9ad5c7ea7b1508af9b27e4b0fb57cc51cc3a2547d60c2b6e74fc",
+      "outcome_class": "NATURAL",
+      "retained_row_candidates": 79
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:47",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:47:60",
+      "TRAIN_array_index": 1534,
+      "selection_sha256": "00d5cf30944da070b2afa6f83b9003c23545d54f485a6b3eded3edb7572b5ffc",
+      "outcome_class": "NATURAL",
+      "retained_row_candidates": 83
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:52",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:52:15",
+      "TRAIN_array_index": 1572,
+      "selection_sha256": "042b4032a9d6e169dc1bccdaa3f52a5495f0b12ef3a6ec6ae262f7ea6b04d908",
+      "outcome_class": "STRICT_TB_ADJUDICATED",
+      "retained_row_candidates": 95
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:53",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:53:95",
+      "TRAIN_array_index": 1747,
+      "selection_sha256": "01cf5fd582dff88f186cfdc1517f742130d37cb0b990b39cae23eb7c1efa4077",
+      "outcome_class": "STRICT_TB_ADJUDICATED",
+      "retained_row_candidates": 107
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:60",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:60:70",
+      "TRAIN_array_index": 1829,
+      "selection_sha256": "0018243c321934a3805f6b865c24a75e5659b2a8c3c669a4766e7109a9d40244",
+      "outcome_class": "NATURAL",
+      "retained_row_candidates": 120
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:64",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:64:21",
+      "TRAIN_array_index": 1900,
+      "selection_sha256": "0110a22a92fd82e2919b336912e3019709d3bc3cff712414106fb9d7709aac3c",
+      "outcome_class": "NATURAL",
+      "retained_row_candidates": 59
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:66",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:66:36",
+      "TRAIN_array_index": 1974,
+      "selection_sha256": "01a302fd7252b4a336cab4bcfacc1b5dedfb5dfa03f4a441f859f27be27d4ed2",
+      "outcome_class": "NATURAL",
+      "retained_row_candidates": 54
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:67",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:67:41",
+      "TRAIN_array_index": 2033,
+      "selection_sha256": "0210a3677e3e7a41b7c40f209c460238f2f17c7d34ab68de739ac98a730fffa1",
+      "outcome_class": "STRICT_TB_ADJUDICATED",
+      "retained_row_candidates": 74
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:69",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:69:51",
+      "TRAIN_array_index": 2117,
+      "selection_sha256": "02492e2f68a576bf12a108d4c9bc358dc122a179731eacde2bd9e6aaeab988f3",
+      "outcome_class": "STRICT_TB_ADJUDICATED",
+      "retained_row_candidates": 105
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:74",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:74:80",
+      "TRAIN_array_index": 2251,
+      "selection_sha256": "07dd3a87c45936e3eadfeebaebbd4067b3e9bb6567b09eefa9a2b8b645f67b2f",
+      "outcome_class": "NATURAL",
+      "retained_row_candidates": 90
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:78",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:78:84",
+      "TRAIN_array_index": 2345,
+      "selection_sha256": "03f82501ff1bdc6a72dd82d4cf6da21e610f535729165fffd9eca5fc47c380de",
+      "outcome_class": "NATURAL",
+      "retained_row_candidates": 88
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:80",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:80:7",
+      "TRAIN_array_index": 2356,
+      "selection_sha256": "026df4cc7923c3941bedf5a323f5f026c7d958ba4f26e7f083d5fd65c703b182",
+      "outcome_class": "NATURAL",
+      "retained_row_candidates": 63
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:82",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:82:32",
+      "TRAIN_array_index": 2444,
+      "selection_sha256": "02925cfbbf997d2cd17f4cc4348dae8cef46ad2861b3da4b834e55a5beb3d5bf",
+      "outcome_class": "STRICT_TB_ADJUDICATED",
+      "retained_row_candidates": 108
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:86",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:86:29",
+      "TRAIN_array_index": 2549,
+      "selection_sha256": "00b6eb775543b511a1b0f74b9d3390177e9beb610c3cd42371d5254d4b2e480c",
+      "outcome_class": "NATURAL",
+      "retained_row_candidates": 92
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:88",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:88:101",
+      "TRAIN_array_index": 2713,
+      "selection_sha256": "006e6da38d9cab0e69a6c2639fd32eceb6f55e6864fb5173c2cae716a7972b86",
+      "outcome_class": "STRICT_TB_ADJUDICATED",
+      "retained_row_candidates": 118
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:90",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:90:34",
+      "TRAIN_array_index": 2764,
+      "selection_sha256": "00405694e31efa39e056c54c5bef37a84f04198d80652f4b11314a8289316ba0",
+      "outcome_class": "STRICT_TB_ADJUDICATED",
+      "retained_row_candidates": 88
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:93",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:93:48",
+      "TRAIN_array_index": 2866,
+      "selection_sha256": "02ef81722f0145b8a09c657509085163a047bd5463d5642746466649f4d1e98d",
+      "outcome_class": "NATURAL",
+      "retained_row_candidates": 116
+    },
+    {
+      "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:94",
+      "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:94:3",
+      "TRAIN_array_index": 2937,
+      "selection_sha256": "068e2871f536053583afd669fb80e09cd2d5ce9bebb6230bdff52a57443154fa",
+      "outcome_class": "STRICT_TB_ADJUDICATED",
+      "retained_row_candidates": 78
+    }
+  ],
+  "sentinel_physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:1:12",
+  "no_HOLD_or_model_or_array_or_teacher_query": true,
+  "execution_admitted": false
+}

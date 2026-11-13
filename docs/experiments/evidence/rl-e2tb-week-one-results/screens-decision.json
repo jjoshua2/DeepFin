@@ -1,0 +1,18 @@
+{
+  "A_promotion_allowed": false,
+  "adoption": false,
+  "all_three_screens_qualified": true,
+  "bindings_sha256": "34b6996e0c5f3ccb9b737d1c2390fcf9dbfc8a354de26f2ff71c7f6343010e72",
+  "confirmation_allowed": false,
+  "context_descriptive_only": true,
+  "created_unix": 1794549704.4628088,
+  "donor_eligibility_pass": false,
+  "donor_regression": false,
+  "label": "UNREAD_FOR_REGISTERED_GAIN_AT40_UPDATE_DOSE",
+  "no_pooling_or_Elo_or_external_strength_claim": true,
+  "preselected_B40_sha256": "8e3038b5db03db7455582e98dde09cd503c30df4ac781f4f5680096f144dc522",
+  "primary_harm": false,
+  "primary_pass": false,
+  "scientific_sha256": "ee24d3b7aa575c3dd2b85061f376a4920d5f9034a2cc358e03ed8312cd1476c0",
+  "status": "FROZEN_RULE_METADATA_DECISION_ONLY"
+}

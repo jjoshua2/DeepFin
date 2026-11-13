@@ -1,0 +1,125 @@
+{
+  "all32_TRAIN_positive_usable_raw_control_metadata": true,
+  "arrays_deserialized": false,
+  "audit": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cohort-independent-audit-results-v1/readout.json",
+    "sha256": "6599f57d3e18adf2806f3cc1deb7a6431e12084f4db5ca60e63145f61197431d"
+  },
+  "audit_manifest": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cohort-auditor-preparation-v1/manifest.json",
+    "sha256": "41154ac9e50100166c73526472ecbf404d570eb7c33a01a3823b9aca0d1267e0"
+  },
+  "audit_source": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cohort-auditor-preparation-v1/audit_cohort.py",
+    "sha256": "5656a63e7938d6799b6175a34ab8bfe2402c309ad69a51b59b88270549e5b2ba"
+  },
+  "bindings": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cohort-audit-final-bindings-v1/identities.json",
+    "sha256": "20bf847003246401190e558d6c187aad01874be1dfe84c1628459ba934e172ee"
+  },
+  "blocking_findings": [],
+  "class_counts": {
+    "holdout": {
+      "NATURAL": 33,
+      "STRICT_TB_ADJUDICATED": 31,
+      "UNRESOLVED": 0
+    },
+    "train": {
+      "NATURAL": 15,
+      "STRICT_TB_ADJUDICATED": 17,
+      "UNRESOLVED": 0
+    }
+  },
+  "closure": {
+    "audit": {
+      "cpu_seconds": 15.4,
+      "known_births_absent": {
+        "1162408": 26528866
+      },
+      "supervisor_absent": 1162406,
+      "terminal_sha256": "324692d02fa5e606bdc76445ac5fad53b3f7fd86ec4e63345c869d9c38c2bf60",
+      "wall_seconds": 21.423313025967218
+    },
+    "producer": {
+      "cpu_seconds": 554.61,
+      "known_births_absent": {
+        "1159236": 26404742,
+        "1159285": 26405750,
+        "1159290": 26405802
+      },
+      "supervisor_absent": 1159209,
+      "terminal_sha256": "265910df9b6bb8ee17b9f8c172d7fc46d72ae231b8007d470a6385f817b4adfd",
+      "wall_seconds": 703.6630138210021
+    }
+  },
+  "collection_uuid": "f1dadbe4-43e2-4cf3-9a93-70a288533b48",
+  "independence_scope": "Independently reconciles actual nonauthor CPU auditor outputs/source and producer metadata. Reviewer authored underlying collector/verifier/rawfactory; functional proof semantics are not self-reapproved. Actual closed auditor issued96 real proofs and streamed24096 file hashes; this review checks their recorded metadata identities/counts and96 proof sidecars, not a second TB/probe/inventory-array rerun.",
+  "inventory_file_count_reconciled": 24096,
+  "learning_admitted": false,
+  "limits": [
+    "No project imports, arrays/checkpoints/models/engines/TB probes/jobs/GPU work by reviewer.",
+    "Producer rawF32\u2192F16/policy contents remain accepted producer assertions, not new array-level verification here; unchanged TRAIN loader must freshly verify all32 and decode/validate actual TRAIN arrays before any update.",
+    "HOLDOUT arrays never loaded, no strength/label-quality/gain/learning admission. Root must separately publish consumer-compatible ROOT_ACCEPTED metadata and exact draw/stage bindings."
+  ],
+  "playing_guard": {
+    "all96_physical_attempts": 96,
+    "collisions": [],
+    "no_replacement_or_new_seed": true,
+    "playing_metadata_sha256": "e4ea7c596d6889f620b7b91fb396ca22b9b95eb5eee4cacc24430137b05dc1dc",
+    "playing_starts": 628,
+    "qualified": true,
+    "status": "PASS_ALL628_VS_ALL96_RETAINED_RAW_MIRROR",
+    "unknown": "unstored/search/staging/pretraining/dropout variants not indexed"
+  },
+  "proof_metadata_and_96_sidecar_joins_exact": true,
+  "retained_rows": {
+    "holdout": 5336,
+    "train": 3012
+  },
+  "reviewer": "pilot_path_audit",
+  "root_admission": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cohort-audit-root-execution-admission-v1/admission.json",
+    "sha256": "e1c459f37ea5083570430547d4cc96ab962b26af8fb00052b609e08fb34751dc"
+  },
+  "side_effect_attempts": {
+    "CUDA_init": 0,
+    "CUDA_lazy_init": 0,
+    "TRAIN_array_loader": 0,
+    "array_archive_decode": 0,
+    "checkpoint_load": 0,
+    "shard_decode": 0,
+    "shard_open": 0
+  },
+  "six_exact_identity_joins": {
+    "playing_guard": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cohort-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/playing-start-overlap.json",
+      "sha256": "929b7536d716eb7e990bb0a16861b9452af358df55512368ab1dd70c9b4d4f9a"
+    },
+    "producer_manifest": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-final-package-v1/manifest.json",
+      "sha256": "52d09aff20eda45603313417e49e6b1ce327da5084b21543f1509cf571a450a9"
+    },
+    "producer_protocol": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-final-package-v1/protocol.json",
+      "sha256": "409b9673130f4b368b6b6368e9f9983309ff6addcca71dba5d5e8c90531812e3"
+    },
+    "readout": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cohort-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/readout.json",
+      "sha256": "b8ff226e0532ff1c0ee2627e6875c6f05ad4f0a3a5885f6cf35d75a913bfc906"
+    },
+    "resolved_profile": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cohort-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/resolved-profile.json",
+      "sha256": "c6659d6077ceb677e2fe50a99929c0d9b87c2271bef9c5e4908b345baaf78ee3"
+    },
+    "terminal": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-execution-v1/terminal.json",
+      "sha256": "265910df9b6bb8ee17b9f8c172d7fc46d72ae231b8007d470a6385f817b4adfd"
+    }
+  },
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "ACCEPT_CLOSED_CPU_WHOLE96_AUDIT_METADATA_RECONCILIATION",
+  "total_rows": 8348,
+  "unique_fresh_proof_digests": 96,
+  "unique_physical_game_ids": 96,
+  "utc": "2026-11-13T03:52:02.774711+00:00"
+}

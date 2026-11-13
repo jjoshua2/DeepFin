@@ -1,0 +1,41 @@
+{
+  "status": "ALL_KNOWN_E4_LEARNING_DRAW_CHECKPOINT_OFFLINE_FINAL_TEMPLATES_NOT_ACTUAL_EXECUTION_BINDINGS",
+  "source_code_changed": false,
+  "known_limited_AA_reuse": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-limited-paired-reuse-root-acceptance-v1/readout.json",
+    "sha256": "9579e8c03924826ae865acff161e9f8170382f36e0b0bdaec60149cb5dc8d927"
+  },
+  "known_observed_command_selection": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-observed-collection-command-selection-v1/selection.json",
+    "sha256": "ab04e5a9ad62a9f5b5971dc65c8c2073c9d60b67b856551890da033a93dc1e59"
+  },
+  "paired_protocol_template": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/train/protocol.TEMPLATE.json",
+    "sha256": "d243be34aee5ccb8a40779bb112f8551aee5cd8083cdc77303c0809f57b482bb"
+  },
+  "paired_manifest_template": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/train/manifest.TEMPLATE.json",
+    "sha256": "c4ea9bd6911f1e7cbc52aab0790820496d35801864b8cfa65e9258c262edd5d8"
+  },
+  "TRAIN_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/train",
+  "TRAIN_train_inputs_sha256": "a95420782bf03b47cc4028a65eb8cac73b3d548f1e3eac725bb116721bc9e95f",
+  "known_native": "8d9b629c7f6724b9d863ec6fc6bdadb8f0355be1460ed424c6256e9bc5a35023",
+  "known_config": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-config-preparation-v1/config.yaml",
+    "sha256": "c78ecaf0bef637f2119abc555d108d5d08697772e554d4b20aa38724892e3ebb"
+  },
+  "known_profile": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-results-v1/actual-builder-profile.json",
+    "sha256": "9e9ca115e387b49bc7734248dc6edae5b3bf9e88c0d25a62889b4d05aefff734"
+  },
+  "offline_final_science_exact_contract": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/offline-science-contract.EXACT.json",
+    "sha256": "8fd1712bbbef89140d74eb5d35c29bcdfa692a47a244348ef76b8ad98136e3c7"
+  },
+  "canonical_source_placement": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/canonical-source-placement.json",
+    "sha256": "35fb1c14b0a0cdd88ef84589c23dd1f312686f3dfa08fa9433481c1ff837ee31"
+  },
+  "late_only": "Science/publication identities and derive collector science-boundprotocol/manifest hashes; actualcohort/draw/closedtraining/checkpoint/offlinephase identities+explicitexecutionflags. All known source/config/profile/native/AA/observer fields fixed before science/data.",
+  "no_actual_metadata_install_or_jobs": true
+}

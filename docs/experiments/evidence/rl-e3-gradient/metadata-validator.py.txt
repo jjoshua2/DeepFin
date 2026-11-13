@@ -1,0 +1,87 @@
+"""Read-only verification/summary of banked E3 JSON; no models or replay arrays."""
+import argparse
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+
+W=Path('/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1')
+O=W/'e3-gradient-runtime-v1-1fb23ace-676a-485e-94b1-10f54b4d4a3a'
+F=('P','U','W_A','C_A','W_B','C_B')
+
+def read(p): return json.loads(p.read_text())
+def sha(p): return hashlib.sha256(p.read_bytes()).hexdigest()
+
+def main():
+    parser=argparse.ArgumentParser();parser.add_argument('--output',required=True);args=parser.parse_args()
+    assert os.environ.get('CUDA_VISIBLE_DEVICES')=='' and sorted(os.sched_getaffinity(0))==[20,22]
+    import numpy as np
+    assert np.__version__=='2.2.6'
+    assert sha(O/'readout.json')=='2115f46bdde89d8845926dea23ca5b7469d601aa8e8074e18d7134a05088f447'
+    r=read(O/'readout.json');roster=read(W/'e3-score-blind-root-roster-v1/selection.json')['selected_rows']
+    assert r['status']=='COMPLETE_TRAIN_GEOMETRY_ONLY' and r['optimizer_steps']==0 and not r['HOLD_loaded']
+    assert r['counters']=={'autograd_calls':600,'forwards':99,'gradients':600}
+    expected=[{'game':x['game_id'],'physical_row_id':x['physical_row_id'],'index':x['TRAIN_array_index'],
+               'rank':x['selection_sha256'],'end_class':x['outcome_class']} for x in roster]
+    assert read(O/'selected-roots.json')['roots']==expected
+    summary={};donor_values=[];max_repeat=0.;max_drift=0.;max_residual=0.
+    for state in ('DONOR','FULLA40','FULLB40'):
+        context=read(O/(state+'-context.json'))
+        a,b=(dict(context['source_loss_kwargs'][x]) for x in ('A','B'))
+        assert a.pop('search_wdl_frac')==1. and b.pop('search_wdl_frac')==.8
+        assert a==b and a['sf_wdl_frac']==0.
+        repeat=read(O/(state+'-repeat.json'));assert all(repeat['control_flags'].values())
+        max_repeat=max(max_repeat,*repeat['relative_L2'].values());max_drift=max(max_drift,*repeat['cosine_drift'].values())
+        assert max_repeat<=1e-5 and max_drift<=1e-5
+        norms={x:[] for x in F};cos_a=[];cos_b=[];ds=[]
+        for i,identity in enumerate(expected):
+            q=read(O/(state+'-game-'+str(i)+'.json'))
+            assert q['identity']==identity and q['state']==state
+            assert r['states'][state][i]=={'identity':identity,'cosines':q['cosines']}
+            ha,hb=q['host_signatures']['A'],q['host_signatures']['B'];assert ha.keys()==hb.keys()
+            changed={k for k in ha if ha[k]!=hb[k]};assert changed<={'categorical_target','categorical_t'},changed
+            g=np.asarray(q['gram'],dtype=np.float64);assert g.shape==(6,6) and np.isfinite(g).all()
+            assert np.allclose(g,g.T,rtol=1e-12,atol=1e-14) and (g.diagonal()>=0).all()
+            cs=[]
+            for wi,ci in ((2,3),(4,5)):
+                value_norm_sq=math.fsum([float(g[wi,wi]),float(g[wi,ci]),float(g[ci,wi]),float(g[ci,ci])])
+                assert g[0,0]>1e-24 and value_norm_sq>1e-24
+                cs.append(math.fsum([float(g[0,wi]),float(g[0,ci])])/math.sqrt(float(g[0,0])*value_norm_sq))
+            assert abs(cs[0]-q['cosines']['P_WC_A'])<1e-12
+            assert abs(cs[1]-q['cosines']['P_WC_B'])<1e-12
+            assert abs(cs[1]-cs[0]-q['cosines']['d'])<1e-12
+            for prefix in ('layer/','route/'):
+                parts=[np.asarray(v,dtype=np.float64) for k,v in q['group_gram'].items() if k.startswith(prefix)]
+                assert parts and np.allclose(np.sum(parts,axis=0),g,rtol=1e-9,atol=1e-12)
+            assert 'layer/tied_across_layers' in q['group_gram']
+            for j,name in enumerate(F):norms[name].append(math.sqrt(float(g[j,j])))
+            for control in q['total_gradient_controls'].values():
+                assert control['gate'] is False
+                max_residual=max(max_residual,control['family_sum_vs_actual_total_relative_L2'])
+            ds.append(q['cosines']['d']);cos_a.append(q['cosines']['P_WC_A']);cos_b.append(q['cosines']['P_WC_B'])
+        summary[state]={'games':32,'mean_d':float(np.mean(ds)),
+                        'median_component_gradient_norms':{k:float(np.median(v)) for k,v in norms.items()},
+                        'mean_P_WC_A':float(np.mean(cos_a)),'mean_P_WC_B':float(np.mean(cos_b)),
+                        'descriptive_only':state!='DONOR'}
+        if state=='DONOR':donor_values=ds
+    assert donor_values==r['primary']['values']
+    values=np.asarray(donor_values,dtype=np.float64)
+    indices=np.random.default_rng(2026111501).integers(0,32,size=(10000,32))
+    ci=np.quantile(values[indices].mean(axis=1),[.025,.975],method='linear').tolist()
+    assert float(values.mean())==r['primary']['mean'] and ci==r['primary']['bootstrap95']
+    for kind,n in [('NATURAL',15),('STRICT_TB_ADJUDICATED',17)]:
+        selected=[donor_values[i] for i,x in enumerate(expected) if x['end_class']==kind]
+        assert len(selected)==n and selected==r['descriptive_endclass_strata'][kind]['values']
+    files=[{'path':str(p),'sha256':sha(p)} for p in sorted(O.glob('*.json'))]
+    result={'status':'PASS_SAME_OBSERVATION_METADATA_AND_EXACT_BOOTSTRAP_VERIFICATION','raw_readout_sha256':sha(O/'readout.json'),
+            'primary':r['primary'],'primary_interval_includes_zero':ci[0]<=0<=ci[1],
+            'states':summary,'max_sentinel_component_relative_L2':max_repeat,
+            'max_sentinel_primary_cosine_or_d_drift':max_drift,
+            'max_BF16_family_sum_vs_total_gradient_relative_L2':max_residual,
+            'source_JSONs':files,'read_only_no_new_predictions_updates_or_research_arrays':True,
+            'limits':'Same banked observations; Euclidean component geometry and conditional game bootstrap, no playing/optimizer/recipe claim.'}
+    with Path(args.output).open('x') as f:json.dump(result,f,indent=2);f.write('\n')
+    print(json.dumps({k:v for k,v in result.items() if k!='source_JSONs'}))
+
+if __name__=='__main__':main()

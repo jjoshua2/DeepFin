@@ -1,0 +1,46 @@
+{
+  "status": "SOURCE_ONLY_KNOWN_FIELDS_FIXED_PHASE_IDENTITIES_LATE",
+  "canonical_metadata_install": {
+    "directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline64-roots-final-v2",
+    "files": [
+      "protocol.json",
+      "manifest.json"
+    ],
+    "exclusive_create_only": true,
+    "installed_now": false
+  },
+  "allowed_protocol_identity_leaves": [
+    "checkpoints_binding_path",
+    "checkpoints_binding_sha256",
+    "cohort_binding_path",
+    "cohort_binding_sha256",
+    "publication_path",
+    "publication_sha256",
+    "root_bank_binding_path",
+    "root_bank_binding_sha256",
+    "scientific_path",
+    "scientific_sha256",
+    "score_readout_sha256",
+    "score_terminal_path",
+    "score_terminal_sha256",
+    "scorer_manifest_sha256",
+    "scorer_protocol_sha256",
+    "training_manifest_sha256",
+    "training_protocol_sha256"
+  ],
+  "allowed_authority_flags": [
+    "science_binding_complete",
+    "cohort_binding_complete",
+    "score_bindings_complete",
+    "read_bindings_complete"
+  ],
+  "allowed_manifest_identity_leaves": [
+    "protocol_sha256"
+  ],
+  "allother": "MUST canonicalexact after onlythese masks; models fixed DONOR/A129/B129 and actualcheckpoint hashes bind only via qualifiedcheckpointscustody file; no numeric/seed/source/array/selection changes.",
+  "source_correction": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline-final-fen-correction-v1/correction.json",
+    "sha256": "6dc0fdcefabe1872e3ee2a44b0a383e063e6250ad6f3f87f8607daa33a3fb5a5"
+  },
+  "note": "Parent source-proof.json stays historical3da; explicit correction receipt proves normalizedFEN successor5c60108f. Actualmodel/corpus/score identities not invented."
+}

@@ -1,0 +1,50 @@
+{
+  "status": "ROOT_ACCEPTED_COMPLETE_E3_PRIMARY_GEOMETRY_UNRESOLVED",
+  "utc": "2026-11-13T07:22:08.606629+00:00",
+  "scientific": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-final-bindings-v1-1fb23ace-676a-485e-94b1-10f54b4d4a3a/scientific.json",
+    "sha256": "6260995b5661cb4c8718749e5fac60f38de527dc4c37ce05fd2edc1082af87eb"
+  },
+  "raw_readout": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-runtime-v1-1fb23ace-676a-485e-94b1-10f54b4d4a3a/readout.json",
+    "sha256": "2115f46bdde89d8845926dea23ca5b7469d601aa8e8074e18d7134a05088f447"
+  },
+  "independent_actual_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-actual-independent-review-v1/review.json",
+    "sha256": "1e38bf097dad392d5969de338bef48c3f8c1d974e877fb69d514c850e604705f"
+  },
+  "metadata_verification": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-metadata-validation-results-v1/readout.json",
+    "sha256": "00827fff82067f8a074436247ecef7cefa1d9f49c4fe41e61e6fcc7fb862148c"
+  },
+  "GPU_terminal": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-execution-v1/terminal.json",
+    "sha256": "e9c3a2f5bd1eda470b26e142ad3c187d9d28106185b2399ed2a5b4ee6d41ed33"
+  },
+  "CPU_metadata_terminal": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-metadata-validation-execution-v1/terminal.json",
+    "sha256": "a69c9d39a4096ef3a7e0a1ab18285b694c8c07ce1a6d66b468ca4be0a121dd2d"
+  },
+  "closure": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-root-actual-acceptance-v1/closure-and-source.json",
+    "sha256": "8405944a246b2ee8a93bfda9e5a8a6dc78f6b861c3efb76c234039e603ced654"
+  },
+  "primary_mean": 0.009130375700267646,
+  "primary_bootstrap95": [
+    -0.08169118532222314,
+    0.09287763524152975
+  ],
+  "registered_geometry_difference_resolved": false,
+  "optimizer_updates": 0,
+  "new_games": 0,
+  "new_HOLD_measurements": 0,
+  "GPU_owner_seconds": 529.4682366520283,
+  "all87_recorded_stages_closed": true,
+  "birth_count": 337,
+  "week_GPU_owner_seconds": 9202.945051084971,
+  "E2TB_GPU_seconds_unchanged": 2814.0289723879832,
+  "no_recipe_or_optimizer_or_strength_verdict": true,
+  "adoption": false,
+  "firstweek_and_longterm_goal_complete": false,
+  "next": "Publish complete E3 readout on main, then separately preregister a justified learning comparison; no extension or rerun of E2TB/E3."
+}

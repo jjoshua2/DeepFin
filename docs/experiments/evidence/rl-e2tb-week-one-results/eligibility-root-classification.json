@@ -1,0 +1,42 @@
+{
+  "status": "ROOT_ACCEPTED_E2TB_ENDPOINT_READOUT_CLASSIFICATION",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "endpoint": "eligibility",
+  "scientific_sha256": "ee24d3b7aa575c3dd2b85061f376a4920d5f9034a2cc358e03ed8312cd1476c0",
+  "readout_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-arena-readout-results-v1/eligibility/readout.json",
+  "readout_sha256": "3b4ecc6218a861ae27651e9ea1cae75df6826776081a8ba91b2c04647a7e5429",
+  "technical_qualified": true,
+  "independent_actual_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-actual-independent-review-v1/review.json",
+    "sha256": "ef190472b6d75e1ebc4849858db6c2d00b42e6dc773e5c807c31050661b1ae8a"
+  },
+  "CPU_terminal": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-readout-execution-v1/terminal.json",
+    "sha256": "c09de63c0a7519fdbcda30816e4b9c34620a9ddea4dc43b2fc03ba430b3e649d"
+  },
+  "GPU_terminal": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-execution-v1/terminal.json",
+    "sha256": "368bfe38c8096eef6a3ae536bc7ed5046834f39e0c93b178aa491d9d050b85fa"
+  },
+  "candidate": "FULLB40",
+  "reference": "A39",
+  "candidate_wins": 88,
+  "draws": 91,
+  "candidate_losses": 77,
+  "games": 256,
+  "pairs": 128,
+  "score": 0.521484375,
+  "score_ci95": [
+    0.4763284426905775,
+    0.5666403073094225
+  ],
+  "point_and_lower_gate_pass": false,
+  "qualified_harm": false,
+  "frozen_readout": true,
+  "root_recomputed_pair_statistics_from_all256_metadata": true,
+  "interpretation": "B40 did not meet the registered donor-eligibility gain criterion at this dose/profile/realization. CI includes50%; noqualifieddonorregression. Context256remainsmandatorydescriptive; primaryalreadyNONPASS so no confirmation/Afallback/adoption. No external-engine/Elo claim.",
+  "limits": [
+    "Model paths are joined to immutable pre/post asset custody and source loader logs; no per-game served-state hash or per-forward precision/finite-logit instrumentation exists.",
+    "Pair interval is conditional approximate normal95 for one training realization and profile. No Elo/adoption/external strength verdict."
+  ]
+}

@@ -1,0 +1,476 @@
+"""Optional bounded passive SF observation; no project import until context entry.
+
+Not enabled by this file. A separately reviewed collector context must enclose
+pool construction through its existing close(). Observer owns no engine/worker.
+"""
+from __future__ import annotations
+
+import functools
+import hashlib
+import importlib
+import json
+import os
+from pathlib import Path
+import threading
+import time
+import weakref
+
+SOURCE = 'ba9d6de1987902e1759d984532a4c63f091b9269'
+MODULES = {
+    'uci': 'chess_anti_engine.stockfish.uci',
+    'pool': 'chess_anti_engine.stockfish.pool',
+    'turn': 'chess_anti_engine.selfplay.stockfish_turn',
+    'finalize': 'chess_anti_engine.selfplay.finalize',
+    'manager': 'chess_anti_engine.selfplay.manager',
+}
+SF_FIELDS = ('sf_wdl', 'sf_wdl_original', 'sf_label_meta', 'sf_multipv_raw',
+             'sf_move_index', 'sf_played_move_index', 'sf_played_rank', 'sf_played_regret')
+
+
+def _require(ok, why):
+    if not ok:
+        raise ValueError(why)
+
+
+def _sha(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _birth(pid):
+    try:
+        return int(Path('/proc', str(pid), 'stat').read_text().rsplit(')', 1)[1].split()[19])
+    except FileNotFoundError:
+        return None
+
+
+def _scalar(value):
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    # Reduced SF arrays only; never called with x, targets or mask planes.
+    if hasattr(value, 'dtype') and hasattr(value, 'shape'):
+        _require(not value.dtype.hasobject and value.nbytes <= 4096, 'SF scalar array bound')
+        return {'dtype': value.dtype.str, 'shape': list(value.shape),
+                'bytes_C_order_hex': value.tobytes(order='C').hex()}
+    if hasattr(value, 'item'):
+        return value.item()
+    raise ValueError('unsupported scalar SF metadata')
+
+
+class _Sink:
+    """One bounded stream; logging failures never become teacher labels."""
+    def __init__(self, path, byte_cap):
+        self.path = Path(path)
+        self.byte_cap = min(int(byte_cap), 1024**3)
+        _require(64 * 1024 <= self.byte_cap <= 1024**3, 'archive cap')
+        self.lock = threading.Lock()
+        self.active = True
+        self.errors = []
+        self.bytes = 0
+        self.events = 0
+        self.stream = None
+        self.closed = False
+
+    def fail(self, where, error):
+        with self.lock:
+            self.active = False
+            if len(self.errors) < 32:
+                self.errors.append({'where': where, 'error': repr(error)[:512]})
+
+    def open(self):
+        self.path.mkdir(exist_ok=False)
+        _require(not self.path.is_symlink(), 'observation path symlink')
+        self.stream = (self.path / 'events.jsonl').open('xb')
+
+    def emit(self, kind, *, durable=False, **payload):
+        with self.lock:
+            if not self.active or self.closed:
+                return
+            event = {'sequence': self.events, 'monotonic_ns': time.monotonic_ns(),
+                     'thread_id': threading.get_ident(), 'kind': kind, **payload}
+            data = (json.dumps(event, sort_keys=True, separators=(',', ':'), allow_nan=False) + '\n').encode()
+            _require(len(data) <= 1024**2 and self.bytes + len(data) <= self.byte_cap - 16384,
+                     'observation byte/event cap reached')
+            _require(self.stream is not None, 'observation stream not open')
+            self.stream.write(data)
+            self.bytes += len(data)
+            self.events += 1
+            if durable:
+                self.stream.flush()
+                os.fsync(self.stream.fileno())
+
+    def close(self, metadata):
+        with self.lock:
+            if self.closed:
+                return
+            self.closed = True
+            if self.stream is not None:
+                self.stream.flush()
+                os.fsync(self.stream.fileno())
+                self.stream.close()
+            if not self.path.is_dir():
+                return  # No created archive never implies complete observations.
+            result = {'status': 'PASS_OBSERVATION_ARCHIVE_ONLY' if self.active else 'FUTURE_TEACHER_INFORMATION_INCOMPLETE',
+                      'bytes': self.bytes, 'events': self.events, 'errors': self.errors,
+                      'engine_queries_or_targets_added': False, 'core_data_admission': False,
+                      **metadata}
+            if (self.path / 'events.jsonl').is_file():
+                result['events_sha256'] = _sha(self.path / 'events.jsonl')
+            data = (json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + '\n').encode()
+            _require(self.bytes + len(data) <= self.byte_cap, 'final observation metadata cap')
+            with (self.path / 'runtime-observation.json').open('xb') as stream:
+                stream.write(data); stream.flush(); os.fsync(stream.fileno())
+            for name in ('events.jsonl', 'runtime-observation.json'):
+                p = self.path / name
+                if p.exists():
+                    p.chmod(0o444)
+            fd = os.open(self.path, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            self.path.chmod(0o555)
+
+
+class PassiveSFObserver:
+    """Process-local scoped wrappers for the exact fresh R7 pure-SP route."""
+    def __init__(self, *, output, collection_uuid, source_checkout, source_sha256,
+                 byte_cap=1024**3, query_cap=4096, record_cap=7200):
+        self.sink = _Sink(output, byte_cap)
+        self.collection_uuid = str(collection_uuid)
+        self.root = Path(source_checkout).resolve()
+        self.pins = dict(source_sha256)
+        self.query_cap = min(int(query_cap), 4096)
+        self.record_cap = min(int(record_cap), 7200)
+        _require(self.query_cap > 0 and self.record_cap > 0, 'identity-map bounds')
+        self.lock = threading.RLock()
+        self.tls = threading.local()
+        self.patches = []
+        self.pool = None
+        self.engines = {}  # id -> (weakref, immutable engine token)
+        self.futures = weakref.WeakKeyDictionary()  # No future/args/result retention.
+        self.records = {}  # Only active records, removed after each finalization.
+        self.counters = {'engine': 0, 'query': 0, 'record': 0}
+        self.snapshot_games = set()
+        self.finished_games = set()
+        self.entered = False
+
+    def _safe(self, where, action):
+        if not self.sink.active:
+            return None
+        try:
+            return action()
+        except Exception as error:
+            self.sink.fail(where, error)
+            return None
+
+    def _emit(self, kind, **fields):
+        return self._safe(kind, lambda: self.sink.emit(kind, **fields))
+
+    def _token(self, role):
+        with self.lock:
+            self.counters[role] += 1
+            return role + ':' + str(self.counters[role])
+
+    def _patch(self, obj, name, replacement):
+        had_local = name in getattr(obj, '__dict__', {})
+        old = getattr(obj, name)
+        self.patches.append((obj, name, old, replacement, had_local))
+        setattr(obj, name, replacement)
+
+    def _record(self, record):
+        with self.lock:
+            key = id(record)
+            if key in self.records:
+                _require(self.records[key][0] is record, 'record identity reuse')
+                return self.records[key][1]
+            _require(len(self.records) < self.record_cap, 'active-record cap')
+            token = self._token('record')
+            self.records[key] = (record, token)
+            return token
+
+    def _engine(self, engine):
+        with self.lock:
+            entry = self.engines.get(id(engine))
+            return entry[1] if entry is not None and entry[0]() is engine else None
+
+    def _pending(self, pending, *, parent_query=None, reason='initial'):
+        with self.lock:
+            query = self.futures.get(pending.future) if pending.future is not None else None
+        _require(query is not None, 'pending Future has no exact observed query')
+        self.sink.emit('pending_query_record_join', durable=True, query_id=query,
+                       parent_query_id=parent_query, reason=reason,
+                       record_id=self._record(pending.record), actual_slot=int(pending.slot),
+                       query_fen=pending.query_fen, root_fen=pending.root_fen,
+                       root_moves=list(pending.root_moves) if pending.root_moves is not None else None,
+                       query_stm=bool(pending.turn), record_pov=bool(pending.record.pov_color),
+                       record_move_offset=int(pending.record.move_offset), record_ply=int(pending.record.ply_index),
+                       record_pos_hash=int(pending.record.pos_hash))
+
+    def _snapshot(self, state, index, records, context, status):
+        _require(context is not None and context['state'] is state and context['index'] == index,
+                 'raw snapshot has no exact finalizer context')
+        game = context['physical_game_id']
+        _require(game not in self.snapshot_games, 'duplicate game snapshot')
+        self.sink.emit('raw_sf_game_begin', physical_game_id=game, snapshot_scope=status,
+                       game_start=context['start'], played_move_indices=[int(x) for x in state.move_idx_history[index]],
+                       records=len(records), sf_transform={key:_scalar(getattr(state.game,key)) for key in
+                           ('sf_wdl_use_cp_logistic','sf_wdl_cp_slope','sf_wdl_cp_draw_width',
+                            'sf_policy_score_mode','sf_policy_temp','sf_policy_cp_temp','sf_policy_label_smooth')})
+        for raw_index, record in enumerate(records):
+            self.sink.emit('raw_sf_record', physical_game_id=game, raw_record_index=raw_index,
+                           record_id=self._record(record), move_offset=int(record.move_offset),
+                           ply_index=int(record.ply_index), pos_hash=int(record.pos_hash),
+                           record_pov=bool(record.pov_color), has_policy=bool(record.has_policy),
+                           is_sf_refute_opp=bool(record.is_sf_refute_opp), snapshot_scope=status,
+                           sf={key: _scalar(getattr(record, key)) for key in SF_FIELDS})
+        self.sink.emit('raw_sf_game_end', durable=True, physical_game_id=game, snapshot_scope=status)
+        self.snapshot_games.add(game)
+
+    def _install(self, modules):
+        uci, poolmod, turn, finalize, manager = [modules[k] for k in ('uci','pool','turn','finalize','manager')]
+        Engine, Pool = uci.StockfishUCI, poolmod.StockfishPool
+        old_new, old_init = Pool._new_engine, Engine.__init__
+        old_send, old_read = Engine._send, Engine._readline_with_deadline
+        old_submit, old_search = Pool.submit, Pool._search
+        old_pending = turn._PendingSfLabel.__init__
+        old_escalate = turn._maybe_submit_label_escalation
+        old_finalize, old_build = finalize.finalize_game, finalize._build_replay_samples
+        _require(manager.finalize_game is old_finalize, 'manager/finalizer alias diverged')
+
+        @functools.wraps(old_new)
+        def new_engine(pool, *args, **kwargs):
+            if self.pool is None:
+                self.pool = pool
+            previous = getattr(self.tls, 'constructing_pool', None)
+            self.tls.constructing_pool = pool
+            try:
+                return old_new(pool, *args, **kwargs)
+            finally:
+                self.tls.constructing_pool = previous
+
+        @functools.wraps(old_init)
+        def engine_init(engine, *args, **kwargs):
+            active = getattr(self.tls, 'constructing_pool', None) is self.pool and self.pool is not None
+            if active:
+                self._safe('register_engine', lambda: self.engines.__setitem__(id(engine), (weakref.ref(engine), self._token('engine'))))
+            previous = getattr(self.tls, 'engine_lifecycle', False)
+            self.tls.engine_lifecycle = active
+            try:
+                result = old_init(engine, *args, **kwargs)
+            except BaseException as error:
+                if active:
+                    self._emit('engine_constructor_error', engine_id=self._engine(engine), exception_type=type(error).__name__)
+                raise
+            else:
+                if active:
+                    self._safe('engine_ready', lambda: self.sink.emit('engine_ready', durable=True,
+                        engine_id=self._engine(engine), pid=int(engine.proc.pid), birth=_birth(engine.proc.pid),
+                        executable=str(engine.path), nodes=int(engine.nodes), multipv=int(engine.multipv),
+                        hash_mb=engine.hash_mb, threads=int(engine.threads),
+                        syzygy_path=engine.syzygy_path, syzygy_50_move_rule=engine.syzygy_50_move_rule,
+                        syzygy_probe_limit=engine.syzygy_probe_limit))
+                return result
+            finally:
+                self.tls.engine_lifecycle = previous
+
+        def wire(engine):
+            token = self._engine(engine)
+            return {'engine_id': token, 'query_id': None if getattr(self.tls,'engine_lifecycle',False)
+                    else getattr(self.tls,'query',None), 'engine_lifecycle': bool(getattr(self.tls,'engine_lifecycle',False))} if token else None
+
+        @functools.wraps(old_send)
+        def send(engine, command):
+            meta = self._safe('wire_identity',lambda:wire(engine))
+            if meta is not None:
+                self._safe('uci_out_attempt',lambda:self.sink.emit('uci_out_attempt',command=command,utf8_command_with_newline_hex=(command+'\n').encode('utf-8').hex(),**meta))
+            try:
+                result = old_send(engine, command)
+            except BaseException as error:
+                if meta is not None:
+                    self._emit('uci_out_error', exception_type=type(error).__name__, **meta)
+                raise
+            if meta is not None:
+                self._emit('uci_out_returned', **meta)
+            return result
+
+        @functools.wraps(old_read)
+        def read(engine, *args, **kwargs):
+            line = old_read(engine, *args, **kwargs)
+            meta = self._safe('wire_identity',lambda:wire(engine))
+            if meta is not None:
+                self._emit('uci_in_normalized_line', line=line, **meta)
+            return line
+
+        @functools.wraps(old_submit)
+        def submit(pool, *args, **kwargs):
+            if pool is self.pool:
+                self._safe('install_executor_observer', lambda: install_executor(pool))
+            return old_submit(pool, *args, **kwargs)
+
+        def install_executor(pool):
+            executor = pool._exec
+            _require(executor is not None, 'target executor missing')
+            if any(obj is executor and name == 'submit' for obj,name,*_ in self.patches):
+                return
+            original = executor.submit
+            def enqueue(fn, *args, **kwargs):
+                target = getattr(fn,'__self__',None) is pool and getattr(fn,'__func__',None) is old_search
+                if not target or not self.sink.active:
+                    if not target:
+                        self._safe('unsupported_pool_task', lambda: _require(False,'target executor callable changed'))
+                    return original(fn,*args,**kwargs)
+                query = self._safe('query_identity', lambda: self._token('query'))
+                if query is None:
+                    return original(fn,*args,**kwargs)
+                # Arguments are the exact already-validated source _search tuple.
+                def start():
+                    _require(not kwargs and len(args) in (5,7), 'pool search signature changed')
+                    self.sink.emit('query_queued', query_id=query, fen=args[0], nodes=args[1],
+                        syzygy_path=args[2], fresh=args[3], searchmoves=None if args[4] is None else list(args[4]),
+                        root_fen=args[5] if len(args)==7 else None,
+                        root_moves=list(args[6]) if len(args)==7 else None)
+                self._safe('query_arguments',start)
+                def run():
+                    previous = getattr(self.tls,'query',None)
+                    self.tls.query = query
+                    self._safe('query_started',lambda:self.sink.emit('query_started',query_id=query,engine_id=self._engine(pool._worker_state.engine)))
+                    try:
+                        result = fn(*args,**kwargs)
+                    except BaseException as error:
+                        self._emit('query_failed', query_id=query, exception_type=type(error).__name__)
+                        raise
+                    else:
+                        self._emit('query_returned', query_id=query)
+                        return result
+                    finally:
+                        self.tls.query = previous
+                future = original(run)
+                def bind():
+                    with self.lock:
+                        _require(len(self.futures) < self.query_cap,'inflight Future identity cap')
+                        self.futures[future] = query
+                    self.sink.emit('query_future_join',query_id=query)
+                self._safe('future_join',bind)
+                return future
+            self._patch(executor,'submit',enqueue)
+
+        @functools.wraps(old_pending)
+        def pending_init(pending, *args, **kwargs):
+            result = old_pending(pending,*args,**kwargs)
+            self._safe('pending_join', lambda: self._pending(pending))
+            return result
+
+        @functools.wraps(old_escalate)
+        def escalate(state,pending,*args,**kwargs):
+            before = pending.future
+            with self.lock:
+                parent_query = self._safe('escalation_parent_identity',lambda:self.futures.get(before) if before is not None else None)
+            result = old_escalate(state,pending,*args,**kwargs)
+            if pending.future is not before:
+                self._safe('escalated_pending_join',lambda:self._pending(pending,parent_query=parent_query,reason='existing_escalation'))
+            return result
+
+        @functools.wraps(old_finalize)
+        def finalize_game(state,index,*args,**kwargs):
+            previous = getattr(self.tls,'game',None)
+            start = kwargs.get('game_start')
+            records = self._safe('finalizer_record_snapshot',lambda:tuple(state.samples_per_game[index]))
+            context = None
+            def establish():
+                _require(start is not None,'actual game_start missing')
+                from dataclasses import asdict
+                _require(start.slot == index,'game_start actual slot mismatch')
+                game = self.collection_uuid+':'+str(start.start_ordinal)
+                _require(game not in self.finished_games,'duplicate physical finalization')
+                return {'state':state,'index':index,'physical_game_id':game,'start':asdict(start)}
+            context = self._safe('finalizer_context',establish)
+            self.tls.game = context
+            failed = True
+            try:
+                result = old_finalize(state,index,*args,**kwargs)
+                failed = False
+                if context is not None and context['physical_game_id'] not in self.snapshot_games:
+                    self._safe('unflushed_snapshot',lambda:self._snapshot(state,index,records or (),context,'UNFLUSHED_CORE_EARLY_RETURN'))
+                return result
+            finally:
+                if failed and context is not None and context['physical_game_id'] not in self.snapshot_games:
+                    self._safe('failed_finalizer_snapshot',lambda:self._snapshot(state,index,records or (),context,'FAILED_PARTIAL_NOT_FLUSH_QUALIFIED'))
+                with self.lock:
+                    if records is None:
+                        self.records.clear()  # Observer failed: release references, never retain completed planes.
+                    for record in records or ():
+                        entry=self.records.get(id(record))
+                        if entry is not None and entry[0] is record:
+                            del self.records[id(record)]
+                if context is not None:
+                    self.finished_games.add(context['physical_game_id'])
+                self.tls.game = previous
+
+        @functools.wraps(old_build)
+        def build(state,index,records,*args,**kwargs):
+            self._safe('postflush_prethin_snapshot',lambda:self._snapshot(state,index,records,getattr(self.tls,'game',None),'POST_EXISTING_FLUSH_PRE_THIN'))
+            return old_build(state,index,records,*args,**kwargs)
+
+        for obj,name,value in ((Pool,'_new_engine',new_engine),(Engine,'__init__',engine_init),
+             (Engine,'_send',send),(Engine,'_readline_with_deadline',read),(Pool,'submit',submit),
+             (turn._PendingSfLabel,'__init__',pending_init),(turn,'_maybe_submit_label_escalation',escalate),
+             (finalize,'finalize_game',finalize_game),(manager,'finalize_game',finalize_game),
+             (finalize,'_build_replay_samples',build)):
+            self._patch(obj,name,value)
+
+    def __enter__(self):
+        _require(not self.entered,'observer context reuse')
+        self.entered = True
+        def install():
+            self.sink.open()
+            expected={name.replace('.','/')+'.py' for name in MODULES.values()} | {'chess_anti_engine/selfplay/state.py','chess_anti_engine/selfplay/provenance.py'}
+            _require(set(self.pins)==expected,'observer source pins missing or extra')
+            for name,digest in self.pins.items():
+                _require(_sha(self.root/name)==digest,'observer source changed:'+name)
+            modules={key:importlib.import_module(name) for key,name in MODULES.items()}
+            for key,module in modules.items():
+                expected=self.root/(MODULES[key].replace('.','/')+'.py')
+                _require(Path(module.__file__).resolve()==expected,'foreign observation module')
+            self._install(modules)
+            self.sink.emit('observer_installed',durable=True,source_revision=SOURCE,collection_uuid=self.collection_uuid,
+                source_sha256=self.pins,scope='Fresh pure-SP pool only; no extra query/target/retention/RNG calls')
+        self._safe('observer_install',install)
+        return self
+
+    def __exit__(self, kind, value, trace):
+        # Existing pool.close owns engine termination and worker joins. Never
+        # call close/result/wait here to manufacture observation completeness.
+        if self.pool is not None:
+            executor=getattr(self.pool,'_exec',None)
+            closed=getattr(self.pool,'_closing',False) and executor is not None and getattr(executor,'_shutdown',False)
+            threads=getattr(executor,'_threads',None)
+            closed=closed and threads is not None and not any(thread.is_alive() for thread in threads)
+            if not closed:
+                self.sink.fail('existing_pool_close','worker closure not proven; observation incomplete')
+        if kind is not None:
+            self.sink.fail('core_exception',str(getattr(kind,'__name__',kind)))
+        for obj,name,old,replacement,had_local in reversed(self.patches):
+            try:
+                _require(getattr(obj,name) is replacement,'observer wrapper replaced by another owner')
+                if had_local:
+                    setattr(obj,name,old)
+                else:
+                    delattr(obj,name)
+            except Exception as error:
+                self.sink.fail('restore_wrapper',error)
+        self.patches.clear()
+        with self.lock:
+            active_records=len(self.records)
+            self.records.clear();self.futures.clear();self.engines.clear()
+        if active_records:
+            self.sink.fail('unfinished_raw_records',active_records)
+        try:
+            self.sink.close({'source_revision':SOURCE,'collection_uuid':self.collection_uuid,
+                'counters':self.counters,'snapshot_games':len(self.snapshot_games),
+                'finalized_games':len(self.finished_games),'normalized_unicode_not_raw_pty_bytes':True,
+                'teacher_information_complete':False,'query_to_P0_equivalence_qualified':False,
+                'timing_batching_can_differ':True,'no_strength_or_teacher_equivalence':True})
+        except Exception as error:
+            # A missing/broken completion receipt cannot imply complete data.
+            self.sink.fail('archive_close',error)
+        return False
