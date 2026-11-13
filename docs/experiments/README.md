@@ -14,7 +14,7 @@ Bend engine records and their evidence live on the `bend` branch (see
 [development](../development.md#bend-branch)); tag `pre-slim-20261113` holds the
 last `main` that carried them.
 
-- [2026-11-13: Core policy and resolved-outcome baseline](2026-11-13-core-outcome-policy-baseline.md) — ongoing: G6 scored 30.8594% versus original A39 (paired 95% interval 26.1687–35.5501%) after 3,072 updates; descriptive negative, no G6 stop/promotion. Actual G5/G6 journals confirm the moving four-generation FIFO window. Fixed G7/G8 continue.
+- [2026-11-13: Core policy and resolved-outcome baseline](2026-11-13-core-outcome-policy-baseline.md) — completed leg-1 terminal nonpass: G8 scored 21.875% versus original A39 (paired 95% interval 19.0304–24.7196%) after 4,096 updates / 2,048 games. No eligible or consumed confirmation, C1, second leg or adoption; long-term strength goal remains unmet.
 
 - [2026-11-13: Larger fresh-data outcome regime](2026-11-13-rl-larger-outcome-regime.md) — E4 completed: 192 games and 129 updates per arm; all three screens technically qualified, bundle contrast unresolved, neither arm donor-utility eligible. No confirmation or adoption; donor retained.
 
