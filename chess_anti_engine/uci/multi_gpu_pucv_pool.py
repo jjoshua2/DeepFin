@@ -36,6 +36,8 @@ from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
 from chess_anti_engine.inference_cache import PucvEvalCache, PucvEvalCacheStats
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
 from chess_anti_engine.mcts.puct_history import puct_history_args
+from chess_anti_engine.mcts.puct_tb import LeafSnapshots, descend_batch, mark_batch_solved, override_leaf_values
+from chess_anti_engine.tablebase import SyzygyProbe
 from chess_anti_engine.async_safety import drain_failed_receipts, ensure_usable, note_cleanup, pending_receipt, submit_async
 from chess_anti_engine.mcts.puct_vl import _PLANES, _alloc_buffers, _release_outstanding
 
@@ -120,6 +122,7 @@ class _Job:
     root_cboard: _CBoard
     budget: threading.Semaphore
     stop_event: threading.Event
+    tb_probe: SyzygyProbe | None = None
 
 
 class MultiGpuPucvPool:
@@ -283,6 +286,7 @@ class MultiGpuPucvPool:
         root_cboard: _CBoard,
         target_sims: int,
         stop_event: threading.Event,
+        tb_probe: SyzygyProbe | None = None,
     ) -> int:
         """Run up to ``target_sims`` sims; returns the count actually
         COMPLETED (== target unless ``stop_event`` fired mid-run). Callers
@@ -309,7 +313,7 @@ class MultiGpuPucvPool:
             self._job = _Job(
                 tree=tree, root_id=root_id, root_cboard=root_cboard,
                 budget=threading.Semaphore(target_sims),
-                stop_event=stop_event,
+                stop_event=stop_event, tb_probe=tb_probe,
             )
         for ev in self._wakes:
             ev.set()
@@ -457,6 +461,7 @@ class MultiGpuPucvPool:
   # (SHARED_BROKER_AUDIT B7 -- reproduced on the WalkerPool twin).
         outstanding: dict[int, int] = {}
         receipts: dict[int, Any] = {}
+        tb_batches: dict[int, LeafSnapshots | None] = {}
         # Own the exact async result before pending metadata or registration can fail.
         unregistered_receipt: list[Any] = [None]
         next_local = -1
@@ -480,17 +485,14 @@ class MultiGpuPucvPool:
                     enc_view = np.asarray(inp_np).reshape(n, int(cfg.input_planes), 8, 8)
                     b = bufs[next_local]
                     rel = b["rel"] if cfg.compute_relations else None
-                    tree.batch_descend_puct(
-                        root_id, root_cb, n, c_puct, fpu_root, fpu_red, vloss,
-                        enc_view,
-                        b["leaf_ids"], b["path_buf"], b["path_lens"],
-                        b["legal_buf"], b["legal_lens"],
-                        b["term_qs"], b["is_term"], vloss_mode,
+                    snapshots = descend_batch(
+                        tree, root_id, root_cb, n, c_puct, fpu_root, fpu_red, vloss,
+                        enc_view, b, vloss_mode,
                         b["cache_keys"] if self._cache is not None else None,
-                        rel,
-                        *self._input_history_args,
+                        rel, self._input_history_args, job.tb_probe,
                     )
                     outstanding[next_local] = n
+                    tb_batches[next_local] = snapshots
                     batches += 1
                     leaves += n
                     max_batch = max(max_batch, n)
@@ -514,6 +516,9 @@ class MultiGpuPucvPool:
                     receipts.pop(int(pending[1]), None)
                     if submit_t > 0.0:
                         wait_seconds += time.perf_counter() - submit_t
+                    wdl, solved = override_leaf_values(
+                        job.tb_probe, tb_batches.get(int(pending[1])), wdl,
+                    )
                     tree.batch_integrate_leaves(
                         p_n,
                         b_cur["path_buf"], b_cur["path_lens"],
@@ -521,6 +526,8 @@ class MultiGpuPucvPool:
                         b_cur["is_term"], pol, wdl, vloss,
                     )
                     outstanding.pop(int(pending[1]), None)
+                    tb_batches.pop(int(pending[1]), None)
+                    mark_batch_solved(tree, b_cur, solved)
 
                 pending = next_handle
         except BaseException as error:

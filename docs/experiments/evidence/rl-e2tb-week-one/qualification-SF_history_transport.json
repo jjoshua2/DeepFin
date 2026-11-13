@@ -1,0 +1,61 @@
+{
+  "status": "ACCEPT_STRICT_SELFPLAY_SF_FULLHISTORY_TB_TRANSPORT_ONLY",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "utc": "2026-11-13T00:22:24.709169+00:00",
+  "terminal_sha256": "bdff43befac0327c1d291bb923919385808790d783a66a88d9c121845902267b",
+  "receipt_sha256": "897bd6c2ea4c8e209fdfc9a23af4946de62bf0e5c8f81645ede6b9a7dfe38ac2",
+  "trace_sha256": "f428b5527297e64a4c06d2bef591e5660815a1a89724a299e625e1d2d5aaf558",
+  "five_fixed_requests_completed": true,
+  "exact_old_pending_history_after_advancement": true,
+  "three_real_initial_and_replacement_options_ready_before_go": true,
+  "helper_engine_births_absent": {
+    "1113036": 25241015,
+    "1113042": 25241061,
+    "1113047": 25241105
+  },
+  "owner_births_absent": {
+    "1113010": 25240778,
+    "1113011": 25240778,
+    "1113042": 25241061,
+    "1113036": 25241015
+  },
+  "census_limit": "Owner sampled4identities; protocoltrace adds fast replacement1113047@25241105. All5 union identities independently absent; no claim owner sampled everyshort-livedprocess.",
+  "engine_exit_codes": [
+    -9,
+    -9,
+    -9
+  ],
+  "scope": "Five fixed5000/7500node protocolqueries; capture-only downstream/synthetic escalationtrigger. No game/model/NN-quality/outcome/training/strength. Requested options and readiness/capability observed, no effective-option engine introspection.",
+  "descriptive_raw_TB_telemetry_not_new_gate": [
+    {
+      "phase": "single_selfplay_sync",
+      "reported_tbhits_max": 25
+    },
+    {
+      "phase": "pool_selfplay_move_request",
+      "reported_tbhits_max": 25
+    },
+    {
+      "phase": "pool_selfplay_pending_label",
+      "reported_tbhits_max": 25
+    },
+    {
+      "phase": "pool_old_pending_escalation",
+      "reported_tbhits_max": 25
+    },
+    {
+      "phase": "replacement_next_selfplay_request",
+      "reported_tbhits_max": 10
+    }
+  ],
+  "wall_seconds": 5.171778550022282,
+  "cpu_seconds": 2.58,
+  "asset_inventory": {
+    "sha256": "207f7bc99c9113b237bee40ef1dc4f64f29bd3524279b6637da31032a2305ae5",
+    "wdl_mapping_count": 1000,
+    "dtz_mapping_count": 1000,
+    "identity_scope": "resolved-file-path,size,mtime_ns; not content hashes",
+    "python_table_probes": 0
+  },
+  "prior_failed_v1_preserved_sha256": "1101fe2805c0ab5c76e37c3d14979eb89ca778088f8f89c2df6cb7bf941dd0f1"
+}

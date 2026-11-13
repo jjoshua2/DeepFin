@@ -1,0 +1,25 @@
+{
+  "all_copies_exact_source_hash_size_bytes": true,
+  "artifact_manifest": {
+    "path": "/home/josh/.codex/worktrees/rl-final-integration-20261112/chess/docs/experiments/evidence/rl-e2tb-week-one/artifact-manifest.json",
+    "sha256": "72d1694c25339642402ebd8abf8ac61152005460bd9e71fc328bcfb8349622c4"
+  },
+  "blocking_findings": [],
+  "broken_relative_document_links": [],
+  "copies": 51,
+  "copy_bytes": 501965,
+  "created_utc": "2026-11-13T02:39:43.001375+00:00",
+  "document": {
+    "path": "/home/josh/.codex/worktrees/rl-final-integration-20261112/chess/docs/experiments/2026-11-13-rl-resolved-outcome-bundle.md",
+    "sha256": "077178369ebd9f0189ad6f4956e27f6602eaee6e3e964d2a644f0bd3bc81dd1e"
+  },
+  "limits": "Read-only stdlib metadata/source inspection. No imports/jobs/data/model reads. Final addition of review receipts to evidence manifest will change manifest identity and needs ordinary copy/hash validation; science bytes stay fixed. No execution admission.",
+  "prior_science_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-scientific-protocol-final-independent-review-v2/review.json",
+    "sha256": "4bc8c6720b3dc1fce4d5e8b7b95747b5d6b24b4da7d5d4d7e87ff3c0f4f57209"
+  },
+  "prose_delta": "Only science hash replacement, explicit stronger no-reroll rule and historical supersession explanation. Matches accepted scientific v2; no other semantic change.",
+  "reviewer": "pilot_path_audit",
+  "science_sha256": "ee24d3b7aa575c3dd2b85061f376a4920d5f9034a2cc358e03ed8312cd1476c0",
+  "status": "ACCEPT_PUBLICATION_COPY_AND_PROSE_DELTA_V2"
+}

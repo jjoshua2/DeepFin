@@ -1,0 +1,21 @@
+{
+  "status": "UNBOUND_NOT_ACCEPTED",
+  "collection_uuid": "f1dadbe4-43e2-4cf3-9a93-70a288533b48",
+  "generation_command": "UNBOUND",
+  "resolved_profile_path": "UNBOUND",
+  "resolved_profile_sha256": "UNBOUND",
+  "terminal_path": "UNBOUND",
+  "terminal_sha256": "UNBOUND",
+  "readout_path": "UNBOUND",
+  "readout_sha256": "UNBOUND",
+  "admission_path": "UNBOUND",
+  "admission_sha256": "UNBOUND",
+  "independent_path": "UNBOUND",
+  "independent_sha256": "UNBOUND",
+  "producer_protocol_path": "UNBOUND",
+  "producer_protocol_sha256": "UNBOUND",
+  "producer_manifest_path": "UNBOUND",
+  "producer_manifest_sha256": "UNBOUND",
+  "playing_guard_path": "UNBOUND",
+  "playing_guard_sha256": "UNBOUND"
+}
