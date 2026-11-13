@@ -1,0 +1,95 @@
+{
+  "closed_findings": [
+    {
+      "predecessor": "cc210 originaldraw4d07 absent science.components.draw_plan_binder",
+      "resolution": "Strict exact7cfd\u21927160/d243/c4ea/EE0/efb/4d07/fdef graph replaces impossible key; no science rewrite."
+    },
+    {
+      "predecessor": "74640 correctivev1 lacks changed-helper main-publication anchor",
+      "resolution": "Sixth technical_publication checked before output/imports/arrays; published status/science/source/UUID/newhelper+entrypoint/newmanifestdigest/descriptor/oldhelper lineage exact."
+    }
+  ],
+  "control_plan": {
+    "inner_seconds": 100,
+    "negative_scope": "Missing/unpublished/wrongscience/source/helper/manifest/descriptor/entrypoint/ancestor publication; wrongfrozenSHA, alteredsciencepacket/output/paired/helper/extrafield; four transitive object faults and two byte-digest faults. Everyunexpectedacceptance hits fatal array sentinel.",
+    "no_actual_draw_or_loader_models_arrays_project_imports": true,
+    "outer_seconds": 120,
+    "planned_cases": 22,
+    "source": "Actual extracted require/digest/checked/verify_frozen_components only; real frozen ancestor metadata plus explicitly in-memory synthetic futurepublication; no actualproof file fabricated.",
+    "status": "UNRUN_SOURCE_REVIEW_ONLY"
+  },
+  "findings": [],
+  "limits": [
+    "This is an explicitly disclosed postcollection-start technical consumer/source deviation. It must be published on main BEFORE any draw; original7cfd/b18/b3, immutable originals and current cohort remain unchanged.",
+    "No source helper/control/project imports, tests, jobs, numerical draw, models/checkpoints/arrays or freshdata/outcomes were read/executed by reviewer. Controls and correctedhelper remain UNRUN.",
+    "CPU controls need separate finite resource admission after existing GPU owner closes, then actualmetadata result review. Actual draw still requires qualified closed192/128/cohort/auditor, realtechnicalpublication, canonicalmanifest and root CPU300 admission.",
+    "No research rerun/reseed/replacement/target change/estimator or selection criterion change, learning, playing or strength inference."
+  ],
+  "publication_chain": {
+    "actual_main_publication_proof": "FUTURE_UNBOUND_NOT_FABRICATED",
+    "no_publication_SHA_inside_static_helper_descriptor_manifest": true,
+    "order": "statichelper+six-input-template\u2192descriptor\u2192staticmanifest\u2192actualmainpublicationproof\u2192sixthactualbinding+rootadmission",
+    "root_must_independently_verify": "Actual immutable main merge/copied source/manifest/descriptor/input/command blobs and proof fields before draw. Guard checks the pinned rootproof identity; a synthetic fixture is not actual publication."
+  },
+  "references_sha256": {
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/native-origins.json": "8d9b629c7f6724b9d863ec6fc6bdadb8f0355be1460ed424c6256e9bc5a35023",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/readout.json": "34cd17f72d78c0cafc8160640bb216a77c3a7c6791bed6a41c37d8b966ddc737",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/README.md": "5f5f5e65be38d234a22a687314da2224e03b986a63b1b9d04a49778351f5680c",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/bind_draw_plan.py": "ff24bc622171b8e226e3f05c66800d046fb008713d30991088e68a008b07f47f",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/draw-command.TEMPLATE.json": "6dc3daf0bdef2e52d95d885f9f5e572a661e6479dd8be0970684b2e160c311ed",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/guard-control-command.json": "e3dad0c0eb12c614f2b9bb7b7cbf9f80099e935995b6801468b53d792917d02d",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/guard-control-manifest.json": "120e986d527125902036268ba2f0b7310a70221fb9150e4d05a70d14f85b95ff",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/guard-only.diff": "ada6125c319789a0c95a9dcfa478d3acd793e1635f422a24d3f7db5fa9f53008",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/guard_controls.py": "a5de30161312cb1433033acb7d5118e618caeab3e3b5febd1bc19a2f2b8d4d00",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/identity-inputs.TEMPLATE.json": "d3e0eba354bf15595c6e095bcc411d6364755e180e96becb78e3f2e036040679",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/manifest.json": "905fc0884365d411ce37db8490c1ba7a95718afaf391c2a45eedf9cf662435df",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/preparation.json": "3118d14329ecf06f8d84c27d533f6ac72156748568328a08fc9a0738365721b8",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/source-proof.json": "bc55a3d39817d998a8f347fc85a084cddadcf7f82cbacc87a6ed3293b392d2bf",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/technical-amendment.DRAFT.json": "b578284b0ce74139be91aaa497181440fddc90828ba2029dd6a7c1d50d73910d",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/technical-descriptor.json": "6af973aae6820cf1f39bc2d3c8ae6a7f7687cab02e6e29d7a08252465e12505c",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/technical-publication-interface.json": "b2c437055445311e607fa90bffed5f81b44720de15eeccd358a29cbf1ba3ec63",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/v1-to-v2-scope.json": "292e88e4f608cfb10f33dffdbe549749b8298bbe697b614c7b7441e9ef721cad",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/v1-to-v2.diff": "5a869d35ab66379f6a81133a513af6a97616334b190282d528542614b657f1f0",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-final-v3/bind_draw_plan.py": "ff24bc622171b8e226e3f05c66800d046fb008713d30991088e68a008b07f47f",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/draw/manifest.TEMPLATE.json": "efb0505181b9287a49c26a2e8278926d3fe08cc51de4dbfe44395007b3d4d638",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/preparation.json": "7160670e77430936e692ea52b282e3c7c9153fd4148ac94748208bd290be1a3a",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/train/binding-contract.json": "dd3f8bd412677cf4572ace2fdfebc98b8c07d0767da440df37646da1759969e8",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/train/manifest.TEMPLATE.json": "c4ea9bd6911f1e7cbc52aab0790820496d35801864b8cfa65e9258c262edd5d8",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/train/protocol.TEMPLATE.json": "d243be34aee5ccb8a40779bb112f8551aee5cd8083cdc77303c0809f57b482bb",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/draw/bind_draw_plan.py": "4d07f1c83e3d173be3fa8500eaf1f315274722c2f12e78d3552bc863d23561d2",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/draw/identity-inputs.TEMPLATE.json": "fdefbde7a15bf5a7d9960fb9629ba10949fbe95c719017733c8b0d2c2877227b",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/preparation.json": "ee0a188fd885f714c63e05a070df9908b47b8fc7ce3ec00b5a0d8bb1a2d10972",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-limited-paired-reuse-root-acceptance-v1/readout.json": "9579e8c03924826ae865acff161e9f8170382f36e0b0bdaec60149cb5dc8d927",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-scientific-protocol-final-v2/protocol.json": "7cfd6e45b565f39827a1801c828dc302fe5d79f176c7701b004fa7f1adab3478"
+  },
+  "source_proof": {
+    "canonical_new_manifest_absent": true,
+    "draw_argv_changed_only_helper_entry_and_exact_new_manifest_SHA": [
+      {
+        "index": 30,
+        "new": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-final-v3/bind_draw_plan.py",
+        "old": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-final-v1/bind_draw_plan.py"
+      },
+      {
+        "index": 33,
+        "new": "905fc0884365d411ce37db8490c1ba7a95718afaf391c2a45eedf9cf662435df",
+        "old": "UNBOUND_FINAL_DRAW_MANIFEST_SHA256"
+      }
+    ],
+    "entire_original_main_restores_ASTexact_after_only_sixth_key_and_guard_substitution": true,
+    "full_transitive_ancestor_filemap_and_byte_pins_verified": true,
+    "manifest_projection_exact_original_efb": true,
+    "math_loader_proof_order_RNG129x256seed1342_outputs_and_resource_dose_unchanged": true,
+    "old_four_nonmain_functions_AST_exact": true,
+    "original_main_tail_after_component_guard_TEXT_exact": true,
+    "six_input_template_projects_original_five_fdef_exact": true,
+    "tail_sha256": "f233fce464bb6d1a5661c7880bb6b533af42cf0d79d2e29a1e4dcb88b9e3e474",
+    "three_manifest_identity_changes_only": [
+      "helper_sha256",
+      "inputs_template",
+      "technical_metadata_consumer_correction"
+    ]
+  },
+  "status": "ACCEPT_E4_DRAW_TECHNICAL_METADATA_CORRECTION_V2_SOURCE_AND_CONTROL_PLAN_ONLY",
+  "utc": "2026-11-13T09:56:37.948101+00:00"
+}

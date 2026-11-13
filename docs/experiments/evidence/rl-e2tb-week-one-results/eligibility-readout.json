@@ -1,0 +1,5258 @@
+{
+  "artifacts": {
+    "games": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-results-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/games.jsonl",
+      "sha256": "35e3923a954fec70ffbd13da02cc6add9446fe870f99fb431dbdf67a76f97ce8"
+    },
+    "pgn": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-results-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/games.pgn",
+      "sha256": "1a1418c323d5cfbdd749143eb4f29367c5d4cbe9468d88f2ad552ed0da10abe3"
+    },
+    "result": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-results-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/result.jsonl",
+      "sha256": "e13ec2406518e11fd51fbda2cf782def6a4df4677d6c6984883783dea234c5fd"
+    }
+  },
+  "bindings_sha256": "939f0cd05bf60eaec305c71d66d4ecbfbf5728e2b8caee57f264bdda68844672",
+  "book": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-structural-selection-results-v2-f1dadbe4/screen.epd",
+    "sha256": "d7e4ff3b4cffc4b36cd6402dedf3d967caef689ff01a4a20eca6813898ae1091"
+  },
+  "created_unix": 1794548127.848391,
+  "endpoint": "eligibility",
+  "games": 256,
+  "limits": [
+    "Model paths are joined to immutable pre/post asset custody and source loader logs; no per-game served-state hash or per-forward precision/finite-logit instrumentation exists.",
+    "Pair interval is conditional approximate normal95 for one training realization and profile. No Elo/adoption/external strength verdict."
+  ],
+  "model_identities": {
+    "assets": {
+      "candidate": {
+        "after_sha256": "8e3038b5db03db7455582e98dde09cd503c30df4ac781f4f5680096f144dc522",
+        "before_sha256": "8e3038b5db03db7455582e98dde09cd503c30df4ac781f4f5680096f144dc522",
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLB/step-40.pt",
+        "readonly_after": true,
+        "readonly_before": true,
+        "sha256": "8e3038b5db03db7455582e98dde09cd503c30df4ac781f4f5680096f144dc522",
+        "stat_after": {
+          "ctime_ns": 1794542404668757302,
+          "dev": 2096,
+          "ino": 14472940,
+          "mtime_ns": 1794542401634239129,
+          "size": 655382347
+        },
+        "stat_before": {
+          "ctime_ns": 1794542404668757302,
+          "dev": 2096,
+          "ino": 14472940,
+          "mtime_ns": 1794542401634239129,
+          "size": 655382347
+        },
+        "step": 40
+      },
+      "reference": {
+        "after_sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+        "before_sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+        "path": "/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/baseline/epoch2.pt",
+        "readonly_after": true,
+        "readonly_before": true,
+        "sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+        "stat_after": {
+          "ctime_ns": 1794435951764542732,
+          "dev": 2096,
+          "ino": 10308758,
+          "mtime_ns": 1794435951364542774,
+          "size": 665665037
+        },
+        "stat_before": {
+          "ctime_ns": 1794435951764542732,
+          "dev": 2096,
+          "ino": 10308758,
+          "mtime_ns": 1794435951364542774,
+          "size": 665665037
+        },
+        "step": null
+      }
+    },
+    "candidate_role": "FULLB40",
+    "complete494_model_and_architecture_qualified": true,
+    "endpoint": "eligibility",
+    "reference_role": "A39",
+    "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+    "status": "ACCEPT_IMMUTABLE_E2TB_ARENA_MODEL_CUSTODY"
+  },
+  "outcome_counts": {
+    "A_losses": 77,
+    "A_wins": 88,
+    "draws": 91
+  },
+  "owner_terminal": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-execution-v1/terminal.json",
+    "sha256": "368bfe38c8096eef6a3ae536bc7ed5046834f39e0c93b178aa491d9d050b85fa"
+  },
+  "pairs": 128,
+  "per_game": [
+    {
+      "additional_plies": 95,
+      "final_fen": "2R5/8/5k1P/p7/2Q5/5K2/8/8 b - - 0 56",
+      "half": 0,
+      "pair_id": 0,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 56,
+      "final_fen": "8/2r2k1p/R4p2/4pP2/1p2n3/1P2B3/1Pr5/1K4R1 w - - 8 37",
+      "half": 1,
+      "pair_id": 0,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 90,
+      "final_fen": "8/3N4/5p1p/8/6k1/4K3/2b5/8 w - - 0 54",
+      "half": 0,
+      "pair_id": 1,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 102,
+      "final_fen": "8/6k1/8/8/1BR2K2/5P2/8/6q1 w - - 0 60",
+      "half": 1,
+      "pair_id": 1,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 81,
+      "final_fen": "8/8/7k/8/3K4/5Q1P/P4P2/8 b - - 0 49",
+      "half": 0,
+      "pair_id": 2,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 61,
+      "final_fen": "6k1/6Q1/4pP2/8/1P4p1/5P2/P1K3P1/8 b - - 3 39",
+      "half": 1,
+      "pair_id": 2,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 121,
+      "final_fen": "8/8/2K3k1/8/6p1/6B1/2R4p/8 b - - 0 69",
+      "half": 0,
+      "pair_id": 3,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 84,
+      "final_fen": "8/p1p5/3p2k1/2p3p1/7K/8/6q1/8 w - - 0 51",
+      "half": 1,
+      "pair_id": 3,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 76,
+      "final_fen": "6k1/3r3p/7P/R7/8/8/5pP1/5K2 w - - 9 47",
+      "half": 0,
+      "pair_id": 4,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 77,
+      "final_fen": "8/p6k/6R1/4N2R/8/4p2P/P1p5/4K3 b - - 0 47",
+      "half": 1,
+      "pair_id": 4,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 101,
+      "final_fen": "4Q3/6k1/6Q1/1K6/5p1P/5P2/5P2/8 b - - 4 59",
+      "half": 0,
+      "pair_id": 5,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 111,
+      "final_fen": "5k2/5Q2/4K3/3p1p2/p1p2P1p/2P5/pP6/8 b - - 2 64",
+      "half": 1,
+      "pair_id": 5,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 102,
+      "final_fen": "7R/8/8/7P/5k2/2r5/5PK1/8 w - - 0 60",
+      "half": 0,
+      "pair_id": 6,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 80,
+      "final_fen": "8/6p1/5pk1/8/2K4b/p7/8/8 w - - 0 49",
+      "half": 1,
+      "pair_id": 6,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 89,
+      "final_fen": "5k2/1R6/8/6R1/4K1P1/8/8/r7 b - - 0 53",
+      "half": 0,
+      "pair_id": 7,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 75,
+      "final_fen": "8/8/4p1b1/2Pp2B1/3P1Q2/5R1k/r7/6K1 b - - 3 46",
+      "half": 1,
+      "pair_id": 7,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 80,
+      "final_fen": "7k/7p/3P4/1p2p3/p2r4/PPK5/3q4/8 w - - 3 49",
+      "half": 0,
+      "pair_id": 8,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 111,
+      "final_fen": "8/8/2Q3p1/3P1Pk1/8/8/K7/8 b - - 0 64",
+      "half": 1,
+      "pair_id": 8,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 93,
+      "final_fen": "2q5/P6k/7R/2p3Q1/8/8/1P1p3P/7K b - - 7 55",
+      "half": 0,
+      "pair_id": 9,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 59,
+      "final_fen": "6Q1/1p5k/6p1/2pB2Pp/P7/2p5/7P/6BK b - - 1 38",
+      "half": 1,
+      "pair_id": 9,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 51,
+      "final_fen": "2r1nr2/5k2/p1p1Q3/7p/8/P5R1/1P3PP1/4R1K1 b - - 1 34",
+      "half": 0,
+      "pair_id": 10,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 103,
+      "final_fen": "3Q4/7k/pp3K2/7R/8/P5Pp/1P4P1/8 b - - 5 60",
+      "half": 1,
+      "pair_id": 10,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 102,
+      "final_fen": "8/8/6k1/R7/P7/4K2p/1r6/8 w - - 0 60",
+      "half": 0,
+      "pair_id": 11,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 57,
+      "final_fen": "r7/1R1b1p1k/5Pp1/p6p/P6P/8/5BP1/6K1 b - - 8 37",
+      "half": 1,
+      "pair_id": 11,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 80,
+      "final_fen": "8/1P2Q1p1/8/1k3q2/6K1/7P/1P3qP1/8 w - - 9 49",
+      "half": 0,
+      "pair_id": 12,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 183,
+      "final_fen": "1B6/8/p7/1p1k4/1P2p3/P1K1P3/8/5b2 b - - 65 100",
+      "half": 1,
+      "pair_id": 12,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 83,
+      "final_fen": "k7/P1p5/8/8/6K1/8/7r/R7 b - - 0 50",
+      "half": 0,
+      "pair_id": 13,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 67,
+      "final_fen": "Q4k2/1R5p/3p2p1/2pP4/2P1P1P1/5p2/5K2/8 b - - 0 42",
+      "half": 1,
+      "pair_id": 13,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 113,
+      "final_fen": "8/8/1p6/8/pk4K1/8/5P2/2Q5 b - - 0 65",
+      "half": 0,
+      "pair_id": 14,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 94,
+      "final_fen": "4k3/8/4p3/3pP1p1/6P1/3K4/3q4/4b3 w - - 8 56",
+      "half": 1,
+      "pair_id": 14,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 71,
+      "final_fen": "7Q/2p2B2/p6k/4p3/3P1P1n/2P4P/8/7K b - - 1 44",
+      "half": 0,
+      "pair_id": 15,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 91,
+      "final_fen": "8/1p2p3/p7/8/8/3K4/3Q4/2k5 b - - 0 54",
+      "half": 1,
+      "pair_id": 15,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 72,
+      "final_fen": "R7/5Qpk/3p3p/8/4pK2/2P2q2/7P/8 w - - 25 45",
+      "half": 0,
+      "pair_id": 16,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 105,
+      "final_fen": "8/5B2/7k/N7/1P2K2Q/8/8/8 b - - 0 61",
+      "half": 1,
+      "pair_id": 16,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 99,
+      "final_fen": "8/2k5/4R2p/7r/5K2/8/5B2/8 b - - 0 58",
+      "half": 0,
+      "pair_id": 17,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 40,
+      "final_fen": "r1r4Q/bp1qkp2/4p3/3n4/P3N3/4PN2/5PPP/n2R2K1 w - - 8 29",
+      "half": 1,
+      "pair_id": 17,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 102,
+      "final_fen": "8/4k3/7K/8/4P3/P1p4q/8/8 w - - 0 60",
+      "half": 0,
+      "pair_id": 18,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 114,
+      "final_fen": "8/8/8/6p1/1k3pP1/5K2/5r2/4q3 w - - 2 66",
+      "half": 1,
+      "pair_id": 18,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 103,
+      "final_fen": "8/8/P3K3/8/7k/6R1/7p/7B b - - 0 60",
+      "half": 0,
+      "pair_id": 19,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 103,
+      "final_fen": "8/8/1p5p/1B2p3/P3KbP1/8/3k4/8 b - - 33 60",
+      "half": 1,
+      "pair_id": 19,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 102,
+      "final_fen": "2R5/8/8/3k4/3Pp3/6r1/4K3/8 w - - 0 60",
+      "half": 0,
+      "pair_id": 20,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 96,
+      "final_fen": "8/5k2/R7/1r5p/6K1/6P1/8/8 w - - 0 57",
+      "half": 1,
+      "pair_id": 20,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 116,
+      "final_fen": "8/8/8/8/7p/1P5P/4kq1K/2r5 w - - 3 67",
+      "half": 0,
+      "pair_id": 21,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 165,
+      "final_fen": "8/8/6p1/2P4p/b6P/6B1/3Kp3/5k2 b - - 32 91",
+      "half": 1,
+      "pair_id": 21,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 86,
+      "final_fen": "8/r1N5/8/4k3/5p2/6PK/8/8 w - - 0 52",
+      "half": 0,
+      "pair_id": 22,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 62,
+      "final_fen": "7r/p1q1b1k1/1n2p1p1/1p2p1P1/2p1P2Q/1P2B3/P5BP/5RK1 w - - 14 40",
+      "half": 1,
+      "pair_id": 22,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 110,
+      "final_fen": "1K6/7p/8/1p4p1/4n3/8/7k/8 w - - 0 64",
+      "half": 0,
+      "pair_id": 23,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 112,
+      "final_fen": "8/7p/7P/5p2/5k1K/8/5n1r/8 w - - 5 65",
+      "half": 1,
+      "pair_id": 23,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 101,
+      "final_fen": "5Q2/1pp5/3kp3/5p2/5Pp1/K4b2/1Q1p4/2q5 b - - 8 59",
+      "half": 0,
+      "pair_id": 24,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 117,
+      "final_fen": "7Q/8/6R1/4KP1k/8/4N3/7r/8 b - - 0 67",
+      "half": 1,
+      "pair_id": 24,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 81,
+      "final_fen": "8/6k1/8/5N2/8/6P1/r4P2/6K1 b - - 0 49",
+      "half": 0,
+      "pair_id": 25,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 102,
+      "final_fen": "8/p3P3/3N4/4P1k1/3p1n2/8/6q1/6K1 w - - 7 60",
+      "half": 1,
+      "pair_id": 25,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 73,
+      "final_fen": "r7/6Qp/2N1p2R/2PpP2k/8/1P4PP/p7/6K1 b - - 6 45",
+      "half": 0,
+      "pair_id": 26,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 65,
+      "final_fen": "Q2k4/1R6/8/3pP1p1/3P2P1/2P5/P4P2/7K b - - 2 41",
+      "half": 1,
+      "pair_id": 26,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 94,
+      "final_fen": "5rk1/8/3Kp3/8/8/7p/3q4/8 w - - 0 56",
+      "half": 0,
+      "pair_id": 27,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 88,
+      "final_fen": "8/8/k2q4/6p1/8/2r5/5RK1/8 w - - 0 53",
+      "half": 1,
+      "pair_id": 27,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 99,
+      "final_fen": "8/3n4/8/Pk3N2/3K4/4P3/8/8 b - - 0 58",
+      "half": 0,
+      "pair_id": 28,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 111,
+      "final_fen": "8/n7/P7/P7/7K/5kp1/8/8 b - - 0 64",
+      "half": 1,
+      "pair_id": 28,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 80,
+      "final_fen": "8/p3n1p1/1p2k1P1/3rp2P/4R3/P5B1/1K3P2/8 w - - 9 49",
+      "half": 0,
+      "pair_id": 29,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 93,
+      "final_fen": "8/6k1/1KB5/1P6/8/6R1/5r2/8 b - - 0 55",
+      "half": 1,
+      "pair_id": 29,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 55,
+      "final_fen": "3bkr2/3Q3R/8/pP6/8/2B2P2/6PP/7K b - - 5 36",
+      "half": 0,
+      "pair_id": 30,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 103,
+      "final_fen": "8/8/5p2/5P2/4k1K1/6P1/4R3/3Q4 b - - 8 60",
+      "half": 1,
+      "pair_id": 30,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 70,
+      "final_fen": "2b5/1p5p/pP6/P7/4p3/4Pk2/8/3r1K2 w - - 4 44",
+      "half": 0,
+      "pair_id": 31,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 63,
+      "final_fen": "6R1/p1R1rk2/6Q1/3p4/8/4P2P/6P1/7K b - - 4 40",
+      "half": 1,
+      "pair_id": 31,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 115,
+      "final_fen": "4Q2k/pKp3p1/6Qp/7P/1p6/6P1/8/8 b - - 0 66",
+      "half": 0,
+      "pair_id": 32,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 105,
+      "final_fen": "8/K1k5/8/P2q3p/7P/8/8/8 b - - 0 61",
+      "half": 1,
+      "pair_id": 32,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 132,
+      "final_fen": "2k2r2/4Q3/8/3K4/3P4/2P5/8/8 w - - 0 75",
+      "half": 0,
+      "pair_id": 33,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 111,
+      "final_fen": "1R1k4/R7/6P1/3p1p2/3P1K2/4P3/5P2/8 b - - 3 64",
+      "half": 1,
+      "pair_id": 33,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 57,
+      "final_fen": "8/7p/R2kn1p1/5p2/2Pp4/5NP1/1r3PKP/8 b - - 9 37",
+      "half": 0,
+      "pair_id": 34,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 114,
+      "final_fen": "8/8/8/5pk1/8/3N1pK1/4p3/8 w - - 0 66",
+      "half": 1,
+      "pair_id": 34,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 77,
+      "final_fen": "8/8/2BN4/5p2/p1p5/P1P5/1PK4Q/4k1R1 b - - 4 47",
+      "half": 0,
+      "pair_id": 35,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 74,
+      "final_fen": "1bR5/7r/8/3k4/8/2P5/8/1K6 w - - 0 46",
+      "half": 1,
+      "pair_id": 35,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 77,
+      "final_fen": "2Q1k3/8/5K2/3p1P2/3P4/8/7P/8 b - - 4 47",
+      "half": 0,
+      "pair_id": 36,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 104,
+      "final_fen": "8/8/5k2/p2p3p/P2P3P/5P2/6K1/8 w - - 24 61",
+      "half": 1,
+      "pair_id": 36,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 100,
+      "final_fen": "8/6k1/8/7p/4R2K/6P1/5r2/8 w - - 0 59",
+      "half": 0,
+      "pair_id": 37,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 103,
+      "final_fen": "8/5kr1/5p2/4p3/R7/5P2/7K/8 b - - 21 60",
+      "half": 1,
+      "pair_id": 37,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 72,
+      "final_fen": "2r1k3/8/4BK2/1p6/8/2P5/8/8 w - - 0 45",
+      "half": 0,
+      "pair_id": 38,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 113,
+      "final_fen": "3k4/8/2P4r/4K3/8/7p/8/R7 b - - 0 65",
+      "half": 1,
+      "pair_id": 38,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 92,
+      "final_fen": "8/3k2p1/6p1/2P1p3/4P1P1/3p3K/5b2/7q w - - 1 55",
+      "half": 0,
+      "pair_id": 39,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 122,
+      "final_fen": "8/8/5pk1/4p2p/4P2P/8/r7/3K1r2 w - - 2 70",
+      "half": 1,
+      "pair_id": 39,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 23,
+      "final_fen": "r1b4Q/pp3pk1/1np2qp1/8/3P1b2/1B6/PP3PP1/R3K2R b KQ - 2 20",
+      "half": 0,
+      "pair_id": 40,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 59,
+      "final_fen": "2r5/p7/4Rpp1/3Q4/1k6/PB6/1P3PP1/1K6 b - - 0 38",
+      "half": 1,
+      "pair_id": 40,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 87,
+      "final_fen": "8/4r3/8/3p1k2/1K1P4/R7/8/8 b - - 0 52",
+      "half": 0,
+      "pair_id": 41,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 101,
+      "final_fen": "8/8/6Q1/7p/5k2/3p3P/3K4/8 b - - 0 59",
+      "half": 1,
+      "pair_id": 41,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 146,
+      "final_fen": "8/8/8/p7/8/6Pq/7K/2kq4 w - - 0 82",
+      "half": 0,
+      "pair_id": 42,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 96,
+      "final_fen": "8/p7/8/6kp/1P6/8/P5K1/8 w - - 0 57",
+      "half": 1,
+      "pair_id": 42,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 154,
+      "final_fen": "8/2B3Kp/1P2k1p1/8/1r5P/8/5P2/8 w - - 16 86",
+      "half": 0,
+      "pair_id": 43,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 94,
+      "final_fen": "1b6/P7/2K5/6k1/8/4n3/1q6/8 w - - 0 56",
+      "half": 1,
+      "pair_id": 43,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 73,
+      "final_fen": "8/8/8/p1pp3Q/3P2Pk/P1P5/5K2/8 b - - 1 45",
+      "half": 0,
+      "pair_id": 44,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 47,
+      "final_fen": "R7/2p2pbk/6p1/6Pp/4PB2/3n2Q1/1P3PKP/3q4 b - - 11 32",
+      "half": 1,
+      "pair_id": 44,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 71,
+      "final_fen": "Q6k/1R1R4/2p5/1pP2p2/5P2/6P1/1K6/8 b - - 0 44",
+      "half": 0,
+      "pair_id": 45,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 72,
+      "final_fen": "N3R3/5pk1/6p1/Pp5p/Pr6/8/1q6/K7 w - - 8 45",
+      "half": 1,
+      "pair_id": 45,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 79,
+      "final_fen": "8/5k2/2p5/8/8/5N2/1Q1R4/6K1 b - - 0 48",
+      "half": 0,
+      "pair_id": 46,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 37,
+      "final_fen": "1rk4r/Rp2bp2/3p1p2/1Pp1pP1p/4P3/3PB3/4K1PP/R7 b - - 8 27",
+      "half": 1,
+      "pair_id": 46,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 79,
+      "final_fen": "2N5/5R1Q/1p6/4B1p1/1p4k1/5P2/P7/6K1 b - - 0 48",
+      "half": 0,
+      "pair_id": 47,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 136,
+      "final_fen": "8/8/3R4/8/7p/3p3r/2k5/4K3 w - - 0 77",
+      "half": 1,
+      "pair_id": 47,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 91,
+      "final_fen": "5k2/8/6K1/2R5/1BP5/6N1/8/8 b - - 0 54",
+      "half": 0,
+      "pair_id": 48,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 122,
+      "final_fen": "8/4K1k1/6p1/6P1/5r2/8/2R5/8 w - - 0 70",
+      "half": 1,
+      "pair_id": 48,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 75,
+      "final_fen": "6RR/5nk1/5rp1/7p/3Q4/2P3P1/P4P1P/6K1 b - - 8 46",
+      "half": 0,
+      "pair_id": 49,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 86,
+      "final_fen": "8/8/6k1/2b5/6p1/5P1K/4r3/8 w - - 0 52",
+      "half": 1,
+      "pair_id": 49,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 67,
+      "final_fen": "3Q3k/5p1P/2K2P2/5B2/2p5/2P4P/2P1p3/8 b - - 0 42",
+      "half": 0,
+      "pair_id": 50,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 47,
+      "final_fen": "4B3/6k1/6p1/2p5/8/6K1/8/5R2 b - - 0 32",
+      "half": 1,
+      "pair_id": 50,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 47,
+      "final_fen": "5Q1k/pp5p/6b1/3p4/8/P1R1P3/5P2/3BK3 b - - 2 32",
+      "half": 0,
+      "pair_id": 51,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 73,
+      "final_fen": "2k5/8/1P2NR2/8/4P3/5K2/8/8 b - - 0 45",
+      "half": 1,
+      "pair_id": 51,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 82,
+      "final_fen": "3r4/8/6k1/8/3R2P1/4P3/6K1/8 w - - 0 50",
+      "half": 0,
+      "pair_id": 52,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 75,
+      "final_fen": "6k1/8/8/6P1/8/6P1/4K3/R2r4 b - - 0 46",
+      "half": 1,
+      "pair_id": 52,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 85,
+      "final_fen": "8/8/8/8/p2K2p1/4Bk2/5P2/8 b - - 0 51",
+      "half": 0,
+      "pair_id": 53,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 104,
+      "final_fen": "8/7p/rR6/8/8/8/4K1pk/8 w - - 0 61",
+      "half": 1,
+      "pair_id": 53,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 115,
+      "final_fen": "8/8/8/pB6/P2k4/8/3r4/2K5 b - - 0 66",
+      "half": 0,
+      "pair_id": 54,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 123,
+      "final_fen": "5k2/5Q2/3K1pP1/8/8/7p/7P/8 b - - 3 70",
+      "half": 1,
+      "pair_id": 54,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 85,
+      "final_fen": "7Q/8/2R3B1/4k3/2P2p2/7K/8/b7 b - - 0 51",
+      "half": 0,
+      "pair_id": 55,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 79,
+      "final_fen": "2k4R/p4Q2/2p5/1P6/2P5/3p2K1/P2P4/8 b - - 4 48",
+      "half": 1,
+      "pair_id": 55,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 53,
+      "final_fen": "R6k/5QRp/6p1/1p6/1P4p1/8/4p1PP/6K1 b - - 1 35",
+      "half": 0,
+      "pair_id": 56,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 99,
+      "final_fen": "6Q1/7k/6R1/p6P/6P1/8/1p4K1/8 b - - 2 58",
+      "half": 1,
+      "pair_id": 56,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 137,
+      "final_fen": "8/8/8/8/1PK5/2p2P2/2k1Q3/8 b - - 0 77",
+      "half": 0,
+      "pair_id": 57,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 119,
+      "final_fen": "8/3R4/8/2p5/8/1k2N3/r7/3K4 b - - 0 68",
+      "half": 1,
+      "pair_id": 57,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 87,
+      "final_fen": "4Q3/4R3/1p1Nn1k1/6PN/6K1/8/P7/1r6 b - - 1 52",
+      "half": 0,
+      "pair_id": 58,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 77,
+      "final_fen": "8/8/3k4/PR5p/2r5/8/6K1/8 b - - 0 47",
+      "half": 1,
+      "pair_id": 58,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 110,
+      "final_fen": "8/8/6p1/7p/5P2/1K4P1/7k/8 w - - 0 64",
+      "half": 0,
+      "pair_id": 59,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 85,
+      "final_fen": "1k6/pQ2R3/P7/8/5p2/7P/6PK/3r4 b - - 8 51",
+      "half": 1,
+      "pair_id": 59,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 59,
+      "final_fen": "8/8/p2R2p1/P1Q1k2p/5p1P/5P2/1P4P1/5BK1 b - - 5 38",
+      "half": 0,
+      "pair_id": 60,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 93,
+      "final_fen": "6k1/4K2R/8/5PP1/8/8/8/1b6 b - - 0 55",
+      "half": 1,
+      "pair_id": 60,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 106,
+      "final_fen": "8/k7/8/8/6P1/5KBp/6r1/8 w - - 0 62",
+      "half": 0,
+      "pair_id": 61,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 142,
+      "final_fen": "4Q3/8/3B1p2/3K4/6k1/7p/8/8 w - - 0 80",
+      "half": 1,
+      "pair_id": 61,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 72,
+      "final_fen": "8/1rB2p1p/1Pk3p1/2b5/5P2/7P/5P2/3R1K2 w - - 11 45",
+      "half": 0,
+      "pair_id": 62,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 111,
+      "final_fen": "8/7p/8/6p1/k7/7P/6K1/1q6 b - - 0 64",
+      "half": 1,
+      "pair_id": 62,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 92,
+      "final_fen": "R1Q5/5ppk/p7/P2N4/1K2p3/3nP3/5P2/2q5 w - - 15 55",
+      "half": 0,
+      "pair_id": 63,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 132,
+      "final_fen": "8/3k4/8/p7/P7/4n3/2r5/1K1q4 w - - 0 75",
+      "half": 1,
+      "pair_id": 63,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 80,
+      "final_fen": "8/8/3p3P/p6K/3P2q1/5k2/8/8 w - - 4 49",
+      "half": 0,
+      "pair_id": 64,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 149,
+      "final_fen": "4Q3/B7/8/1K6/7P/3B4/8/4k3 b - - 0 83",
+      "half": 1,
+      "pair_id": 64,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 67,
+      "final_fen": "7R/pp5p/3pR1Qk/6p1/8/Pr5P/5P2/6K1 b - - 0 42",
+      "half": 0,
+      "pair_id": 65,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 118,
+      "final_fen": "3r4/6p1/6p1/6k1/4K3/1p6/8/8 w - - 0 68",
+      "half": 1,
+      "pair_id": 65,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 66,
+      "final_fen": "8/8/7k/8/1p5P/8/P7/1R5K w - - 0 42",
+      "half": 0,
+      "pair_id": 66,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 118,
+      "final_fen": "8/K1k5/P7/7p/2b4P/8/8/8 w - - 0 68",
+      "half": 1,
+      "pair_id": 66,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 106,
+      "final_fen": "8/8/2k3pp/Kq6/5P2/1r5P/6P1/8 w - - 1 62",
+      "half": 0,
+      "pair_id": 67,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 91,
+      "final_fen": "2r5/8/6P1/8/6P1/k4K2/8/2R5 b - - 0 54",
+      "half": 1,
+      "pair_id": 67,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 150,
+      "final_fen": "5KR1/3q4/7r/p1q1k3/8/8/8/8 w - - 8 84",
+      "half": 0,
+      "pair_id": 68,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 98,
+      "final_fen": "8/2P2pk1/2Bp2p1/P2P4/5n2/5Q2/3q1K2/8 w - - 15 58",
+      "half": 1,
+      "pair_id": 68,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 139,
+      "final_fen": "QQ6/6k1/8/8/8/5K2/R7/4r3 b - - 0 78",
+      "half": 0,
+      "pair_id": 69,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 60,
+      "final_fen": "8/1p3ppk/p6p/8/P6P/6P1/1P3q2/3r3K w - - 2 39",
+      "half": 1,
+      "pair_id": 69,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 91,
+      "final_fen": "r7/P3k3/R5P1/2K5/8/8/8/8 b - - 0 54",
+      "half": 0,
+      "pair_id": 70,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 150,
+      "final_fen": "7k/8/7p/8/3KQ1P1/7q/8/8 w - - 0 84",
+      "half": 1,
+      "pair_id": 70,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 85,
+      "final_fen": "8/R7/8/p1r5/2k3PK/8/8/8 b - - 0 51",
+      "half": 0,
+      "pair_id": 71,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 88,
+      "final_fen": "4k3/8/6p1/2p1B1P1/8/7p/6qK/8 w - - 2 53",
+      "half": 1,
+      "pair_id": 71,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 76,
+      "final_fen": "8/6pk/8/8/5Pp1/8/5K2/r7 w - - 0 47",
+      "half": 0,
+      "pair_id": 72,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 85,
+      "final_fen": "8/p4k2/8/2p3P1/8/PK6/8/8 b - - 0 51",
+      "half": 1,
+      "pair_id": 72,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 108,
+      "final_fen": "8/p7/8/1p1K4/1P6/q7/5k2/8 w - - 0 63",
+      "half": 0,
+      "pair_id": 73,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 81,
+      "final_fen": "6rk/3R3p/4p3/1pp1Pp2/7Q/1P4PP/5K2/2q5 b - - 15 49",
+      "half": 1,
+      "pair_id": 73,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 117,
+      "final_fen": "k7/P7/5q2/8/3r4/4K3/7R/8 b - - 0 67",
+      "half": 0,
+      "pair_id": 74,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 27,
+      "final_fen": "r6r/1bk1qpb1/2ppp3/pP1P1p1p/Q1n5/1NN1PB2/PP3PPP/1K1R2R1 b - - 8 22",
+      "half": 1,
+      "pair_id": 74,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 87,
+      "final_fen": "6k1/5R1Q/3p4/2pP4/2P3P1/p7/8/6K1 b - - 2 52",
+      "half": 0,
+      "pair_id": 75,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 93,
+      "final_fen": "4R3/8/3Q1k2/p7/3N4/8/5K2/8 b - - 0 55",
+      "half": 1,
+      "pair_id": 75,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 71,
+      "final_fen": "8/8/7Q/p7/5PkP/8/8/1K6 b - - 0 44",
+      "half": 0,
+      "pair_id": 76,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 85,
+      "final_fen": "4Q3/1R6/5k2/8/5p1B/3B1P2/6P1/6K1 b - - 8 51",
+      "half": 1,
+      "pair_id": 76,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 59,
+      "final_fen": "7Q/7p/p3R2k/1P4p1/B2B2P1/8/3P1P1P/6K1 b - - 0 38",
+      "half": 0,
+      "pair_id": 77,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 122,
+      "final_fen": "8/5Q2/8/1K6/1P6/2P5/R7/3k4 w - - 0 70",
+      "half": 1,
+      "pair_id": 77,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 158,
+      "final_fen": "4k3/8/4PQ2/1K1q1p1p/8/8/8/8 w - - 24 88",
+      "half": 0,
+      "pair_id": 78,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 120,
+      "final_fen": "6k1/4Q3/7P/8/4B3/6pK/8/8 w - - 0 69",
+      "half": 1,
+      "pair_id": 78,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 93,
+      "final_fen": "8/8/8/4n2N/1kp5/6P1/4K3/8 b - - 0 55",
+      "half": 0,
+      "pair_id": 79,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 76,
+      "final_fen": "5k2/R3n3/6p1/1r2N1Pp/p2K4/8/1P4P1/8 w - - 14 47",
+      "half": 1,
+      "pair_id": 79,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 45,
+      "final_fen": "6Qb/p3R1qk/7p/3B3P/1B1p4/6nb/PPP2P2/5RK1 b - - 2 31",
+      "half": 0,
+      "pair_id": 80,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 93,
+      "final_fen": "8/2Q5/4b3/6k1/8/1P2KP2/8/8 b - - 0 55",
+      "half": 1,
+      "pair_id": 80,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 136,
+      "final_fen": "8/8/r7/2p1k3/2P4R/8/2K5/8 w - - 0 77",
+      "half": 0,
+      "pair_id": 81,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 101,
+      "final_fen": "6Q1/8/3k4/8/4Q3/4B3/6K1/2b5 b - - 0 59",
+      "half": 1,
+      "pair_id": 81,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 70,
+      "final_fen": "8/R7/8/pP1k4/8/4K3/7r/8 w - - 0 44",
+      "half": 0,
+      "pair_id": 82,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 100,
+      "final_fen": "8/4b3/4k3/5p1p/5K1P/p1B2P2/P7/8 w - - 14 59",
+      "half": 1,
+      "pair_id": 82,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 97,
+      "final_fen": "8/8/3k1Bp1/5b2/5P2/8/6K1/8 b - - 0 57",
+      "half": 0,
+      "pair_id": 83,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 61,
+      "final_fen": "1k6/7R/1pN1b3/2p2p2/8/3PK3/1r6/8 b - - 11 39",
+      "half": 1,
+      "pair_id": 83,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 92,
+      "final_fen": "8/8/p7/2p5/1p6/3K4/b3qk2/8 w - - 4 55",
+      "half": 0,
+      "pair_id": 84,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 74,
+      "final_fen": "8/1p5k/2P3p1/p7/P6p/7P/6PK/5rq1 w - - 1 46",
+      "half": 1,
+      "pair_id": 84,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 63,
+      "final_fen": "2r5/8/2p5/R1K5/8/3P4/2k5/8 b - - 0 40",
+      "half": 0,
+      "pair_id": 85,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 130,
+      "final_fen": "8/5p2/7k/6p1/8/6bK/4p3/8 w - - 0 74",
+      "half": 1,
+      "pair_id": 85,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 92,
+      "final_fen": "8/8/8/1kp4p/7P/P2b4/K4r2/1q6 w - - 0 55",
+      "half": 0,
+      "pair_id": 86,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 91,
+      "final_fen": "8/8/8/1k5Q/2p5/7P/6K1/4b3 b - - 0 54",
+      "half": 1,
+      "pair_id": 86,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 59,
+      "final_fen": "5R2/p4Qk1/7p/1p6/1P1b1P2/8/P1K4P/8 b - - 3 38",
+      "half": 0,
+      "pair_id": 87,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 87,
+      "final_fen": "8/8/8/1p2K3/6p1/7k/1P6/4B3 b - - 0 52",
+      "half": 1,
+      "pair_id": 87,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 55,
+      "final_fen": "r3nkr1/5R2/p3B3/1p1Pp3/4Pp1P/5b2/PP3N2/1K6 b - - 1 36",
+      "half": 0,
+      "pair_id": 88,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 95,
+      "final_fen": "8/8/6k1/8/5K2/6p1/1P5r/6R1 b - - 0 56",
+      "half": 1,
+      "pair_id": 88,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 133,
+      "final_fen": "8/8/5kN1/7p/4K1p1/6P1/8/8 b - - 0 75",
+      "half": 0,
+      "pair_id": 89,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 91,
+      "final_fen": "8/r4k2/6p1/8/4KP2/8/7R/8 b - - 0 54",
+      "half": 1,
+      "pair_id": 89,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 87,
+      "final_fen": "8/8/3p4/3P3p/5P2/4PK1k/8/7Q b - - 6 52",
+      "half": 0,
+      "pair_id": 90,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 84,
+      "final_fen": "8/p3k3/1p6/5K1P/P7/8/8/8 w - - 0 51",
+      "half": 1,
+      "pair_id": 90,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 81,
+      "final_fen": "8/3Q4/7k/6Q1/1P5P/p5P1/7K/8 b - - 0 49",
+      "half": 0,
+      "pair_id": 91,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 43,
+      "final_fen": "2Q1k3/p1R3pp/8/4P3/3P4/8/PP4PP/6K1 b - - 0 30",
+      "half": 1,
+      "pair_id": 91,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 86,
+      "final_fen": "8/k6p/2p5/Kp6/7P/1pq5/Q7/8 w - - 0 52",
+      "half": 0,
+      "pair_id": 92,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 77,
+      "final_fen": "8/8/2B2K1k/p1n5/P7/8/8/8 b - - 0 47",
+      "half": 1,
+      "pair_id": 92,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 57,
+      "final_fen": "1Q6/1p6/pk2R3/R2P1p1p/7N/1pB5/1P6/6K1 b - - 1 37",
+      "half": 0,
+      "pair_id": 93,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 65,
+      "final_fen": "k1R5/5pp1/1Q1P3p/8/2p5/1P3PP1/P4P2/5K2 b - - 0 41",
+      "half": 1,
+      "pair_id": 93,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 106,
+      "final_fen": "2n5/8/1q6/4k3/1KB5/7r/8/8 w - - 0 62",
+      "half": 0,
+      "pair_id": 94,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 68,
+      "final_fen": "3r4/8/4R3/1k3p1p/pn6/5PN1/1PK3PP/8 w - - 14 43",
+      "half": 1,
+      "pair_id": 94,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 61,
+      "final_fen": "k3R3/2Q2p2/p4P2/1p6/2P5/7P/PP1N4/7K b - - 1 39",
+      "half": 0,
+      "pair_id": 95,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 100,
+      "final_fen": "8/5k2/4p3/6R1/7n/8/5pK1/8 w - - 0 59",
+      "half": 1,
+      "pair_id": 95,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 100,
+      "final_fen": "3k4/3b3p/8/6K1/4N3/8/7P/8 w - - 0 59",
+      "half": 0,
+      "pair_id": 96,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 59,
+      "final_fen": "3Q2k1/p5qp/8/2Pp4/3P4/8/PP3P1r/5K2 b - - 13 38",
+      "half": 1,
+      "pair_id": 96,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 77,
+      "final_fen": "8/8/8/8/7P/2k1P3/6K1/1Rr5 b - - 0 47",
+      "half": 0,
+      "pair_id": 97,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 45,
+      "final_fen": "3r3k/ppp1Q1pp/8/5p2/P7/2Pp1q2/1P6/R3R1K1 b - - 9 31",
+      "half": 1,
+      "pair_id": 97,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 59,
+      "final_fen": "8/p3Q3/4kB1p/1pP3p1/2P3P1/P7/7K/8 b - - 1 38",
+      "half": 0,
+      "pair_id": 98,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 87,
+      "final_fen": "8/8/8/3K4/p7/P7/2Q4B/6k1 b - - 0 52",
+      "half": 1,
+      "pair_id": 98,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 93,
+      "final_fen": "5k2/R7/5K2/8/7p/7P/6P1/8 b - - 0 55",
+      "half": 0,
+      "pair_id": 99,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 68,
+      "final_fen": "8/R7/5k2/6pr/8/p5K1/8/8 w - - 0 43",
+      "half": 1,
+      "pair_id": 99,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 57,
+      "final_fen": "r4k1Q/5pp1/p4P2/4p3/Pp2P3/2P2KN1/1P6/7R b - - 2 37",
+      "half": 0,
+      "pair_id": 100,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 87,
+      "final_fen": "1r1B4/8/3R4/8/2k3p1/4K3/8/8 b - - 0 52",
+      "half": 1,
+      "pair_id": 100,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 72,
+      "final_fen": "8/p7/2pk4/8/1q6/p7/2K5/8 w - - 0 45",
+      "half": 0,
+      "pair_id": 101,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 116,
+      "final_fen": "2Q5/8/1k6/8/P7/2K5/4qp2/8 w - - 0 67",
+      "half": 1,
+      "pair_id": 101,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 159,
+      "final_fen": "8/R5PP/1k6/8/5K2/8/6r1/8 b - - 0 88",
+      "half": 0,
+      "pair_id": 102,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 87,
+      "final_fen": "8/6B1/8/3k1n1p/8/5P1K/8/8 b - - 0 52",
+      "half": 1,
+      "pair_id": 102,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 92,
+      "final_fen": "8/8/8/5pk1/8/3RK1P1/2r5/8 w - - 0 55",
+      "half": 0,
+      "pair_id": 103,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 105,
+      "final_fen": "n7/Pr5p/K7/2R2P1k/8/8/8/8 b - - 9 61",
+      "half": 1,
+      "pair_id": 103,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 154,
+      "final_fen": "8/7p/8/8/6PP/5k2/1r6/5K2 w - - 0 86",
+      "half": 0,
+      "pair_id": 104,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 134,
+      "final_fen": "8/5pR1/1k6/7K/5qp1/7r/8/8 w - - 8 76",
+      "half": 1,
+      "pair_id": 104,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 73,
+      "final_fen": "4Q1R1/4k3/4p2p/p3Pp2/5P2/8/P6P/7K b - - 1 45",
+      "half": 0,
+      "pair_id": 105,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 68,
+      "final_fen": "R7/8/P6p/3k4/8/r7/4K3/8 w - - 0 43",
+      "half": 1,
+      "pair_id": 105,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 126,
+      "final_fen": "b7/P2k4/8/6n1/5KP1/8/8/8 w - - 0 72",
+      "half": 0,
+      "pair_id": 106,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 76,
+      "final_fen": "5k2/1pp2p2/p2p3p/P2P2p1/1PP2N2/8/5q2/4r2K w - - 4 47",
+      "half": 1,
+      "pair_id": 106,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 65,
+      "final_fen": "8/8/8/5pQ1/5B1k/8/1PP2PPK/8 b - - 4 41",
+      "half": 0,
+      "pair_id": 107,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 156,
+      "final_fen": "8/8/5pK1/3N1P2/3b2k1/8/8/8 w - - 0 87",
+      "half": 1,
+      "pair_id": 107,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 86,
+      "final_fen": "5k2/1p3p1p/p2P4/P1p1Q1K1/8/8/1P4qP/8 w - - 19 52",
+      "half": 0,
+      "pair_id": 108,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 107,
+      "final_fen": "8/8/5k2/5p1P/6P1/7K/1R6/8 b - - 0 62",
+      "half": 1,
+      "pair_id": 108,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 109,
+      "final_fen": "8/5P2/8/1NK4n/1P6/k7/8/8 b - - 0 63",
+      "half": 0,
+      "pair_id": 109,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 90,
+      "final_fen": "6k1/3P4/8/4p3/1P4B1/8/6K1/8 w - - 0 54",
+      "half": 1,
+      "pair_id": 109,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 79,
+      "final_fen": "8/1p1R3Q/2p1p2k/p4p2/3P1P2/P2p2K1/8/8 b - - 1 48",
+      "half": 0,
+      "pair_id": 110,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 65,
+      "final_fen": "2Q4k/5pp1/2p5/3p3P/p2q1P2/P1R5/1P4K1/4r3 b - - 9 41",
+      "half": 1,
+      "pair_id": 110,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 81,
+      "final_fen": "8/8/4p3/1K2P2p/4k2P/8/8/8 b - - 0 49",
+      "half": 0,
+      "pair_id": 111,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 115,
+      "final_fen": "2k2Q2/8/2PK3p/3B2pP/4P1P1/8/8/8 b - - 0 66",
+      "half": 1,
+      "pair_id": 111,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 74,
+      "final_fen": "8/3Pb3/7k/8/2B1K3/8/r7/8 w - - 0 46",
+      "half": 0,
+      "pair_id": 112,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 52,
+      "final_fen": "4r2k/p6p/1p6/8/1P6/P4P2/4b1P1/3q2qK w - - 0 35",
+      "half": 1,
+      "pair_id": 112,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 139,
+      "final_fen": "8/5pk1/8/7p/8/8/5PK1/1q6 b - - 0 78",
+      "half": 0,
+      "pair_id": 113,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 122,
+      "final_fen": "8/1P2R3/8/5k2/4Np2/1r3Kp1/8/8 w - - 7 70",
+      "half": 1,
+      "pair_id": 113,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 78,
+      "final_fen": "8/p6R/5pk1/1P6/5p1P/5P2/r7/6K1 w - - 19 48",
+      "half": 0,
+      "pair_id": 114,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 84,
+      "final_fen": "8/1R6/7k/5p2/7P/6r1/2K5/8 w - - 0 51",
+      "half": 1,
+      "pair_id": 114,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 97,
+      "final_fen": "8/3k4/8/5K1p/5P2/6P1/7P/8 b - - 0 57",
+      "half": 0,
+      "pair_id": 115,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 80,
+      "final_fen": "8/p7/1p6/1P4PP/5k2/7K/5r2/7r w - - 1 49",
+      "half": 1,
+      "pair_id": 115,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 103,
+      "final_fen": "8/8/5pk1/4p3/6P1/8/5P1K/8 b - - 0 60",
+      "half": 0,
+      "pair_id": 116,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 115,
+      "final_fen": "8/1R3p2/k5p1/1Q2p2p/7P/6P1/5P1K/8 b - - 8 66",
+      "half": 1,
+      "pair_id": 116,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 93,
+      "final_fen": "8/6k1/8/p4K2/1pB5/8/7P/8 b - - 0 55",
+      "half": 0,
+      "pair_id": 117,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 118,
+      "final_fen": "3k4/7p/P3K1p1/4B3/8/8/8/8 w - - 0 68",
+      "half": 1,
+      "pair_id": 117,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 107,
+      "final_fen": "8/3P1k2/8/2p5/7N/8/KP6/8 b - - 0 62",
+      "half": 0,
+      "pair_id": 118,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 85,
+      "final_fen": "8/8/6p1/R5Pk/7r/4K3/8/8 b - - 0 51",
+      "half": 1,
+      "pair_id": 118,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 82,
+      "final_fen": "4Q3/R7/7k/8/1p3P2/8/5K2/8 w - - 0 50",
+      "half": 0,
+      "pair_id": 119,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 88,
+      "final_fen": "8/3b2k1/p1p1p2p/PpPpP2K/3P2B1/2P5/8/8 w - - 20 53",
+      "half": 1,
+      "pair_id": 119,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 124,
+      "final_fen": "8/8/4r3/R5b1/5pPk/5K2/5P2/8 w - - 12 71",
+      "half": 0,
+      "pair_id": 120,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 67,
+      "final_fen": "4bk2/2R4p/4pBpN/p4p2/3p1nP1/1r3P1P/8/6K1 b - - 7 42",
+      "half": 1,
+      "pair_id": 120,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 118,
+      "final_fen": "7k/4Q3/6pK/7q/7P/8/6P1/8 w - - 13 68",
+      "half": 0,
+      "pair_id": 121,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 110,
+      "final_fen": "6b1/q7/8/K1k5/7p/1p6/1P6/8 w - - 8 64",
+      "half": 1,
+      "pair_id": 121,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 84,
+      "final_fen": "8/p7/P5p1/8/1p6/5kp1/8/4r1K1 w - - 2 51",
+      "half": 0,
+      "pair_id": 122,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 83,
+      "final_fen": "8/1k6/6R1/8/8/6PP/2K1P3/8 b - - 0 50",
+      "half": 1,
+      "pair_id": 122,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 72,
+      "final_fen": "8/8/p3k3/3b4/1P1K4/6P1/8/8 w - - 0 45",
+      "half": 0,
+      "pair_id": 123,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 38,
+      "final_fen": "2r2r1k/pp4pp/8/P3p3/R2pn3/1B5P/1PPb1PP1/2B2RK1 w - - 14 28",
+      "half": 1,
+      "pair_id": 123,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 57,
+      "final_fen": "3R3Q/7k/6p1/4p2p/4p3/7P/2B2PP1/7K b - - 1 37",
+      "half": 0,
+      "pair_id": 124,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 83,
+      "final_fen": "7k/4N3/4b1BP/p1pPQ3/PpP5/1P6/5K2/7R b - - 3 50",
+      "half": 1,
+      "pair_id": 124,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 54,
+      "final_fen": "4k3/1Qp2b1p/2p1K3/2Pr4/8/2q1P2B/P6P/8 w - - 11 36",
+      "half": 0,
+      "pair_id": 125,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 97,
+      "final_fen": "kQ6/8/q2B4/2P5/1P1P4/2K4p/8/8 b - - 10 57",
+      "half": 1,
+      "pair_id": 125,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 77,
+      "final_fen": "8/5p2/2p3pn/3pP1Qk/3P1P2/6pP/1K4P1/8 b - - 1 47",
+      "half": 0,
+      "pair_id": 126,
+      "result": "1-0",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 97,
+      "final_fen": "8/8/3R4/2p5/2k5/8/1R2K3/7r b - - 0 57",
+      "half": 1,
+      "pair_id": 126,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "syzygy"
+    },
+    {
+      "additional_plies": 78,
+      "final_fen": "8/8/2p1kn2/1p2p3/1P2P1p1/2PK3r/5B2/4N1R1 w - - 8 48",
+      "half": 0,
+      "pair_id": 127,
+      "result": "1/2-1/2",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": false,
+        "claimable_fifty": false,
+        "claimable_threefold": true,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    },
+    {
+      "additional_plies": 116,
+      "final_fen": "4k3/1P2n3/6p1/6P1/1p2P3/q7/8/1Kr5 w - - 5 67",
+      "half": 1,
+      "pair_id": 127,
+      "result": "0-1",
+      "rule_flags": {
+        "automatic_75move": false,
+        "automatic_fivefold": false,
+        "checkmate": true,
+        "claimable_fifty": false,
+        "claimable_threefold": false,
+        "current_fifty": false,
+        "current_threefold": false,
+        "insufficient_material": false,
+        "stalemate": false
+      },
+      "termination": "rules"
+    }
+  ],
+  "reader_sha256": "1ba5dfe8ad668ad21a088197392de97d2b9788b45ece1bf2874ab624890f2ed8",
+  "rule_flags": {
+    "automatic_75move": 0,
+    "automatic_fivefold": 0,
+    "checkmate": 93,
+    "claimable_fifty": 0,
+    "claimable_threefold": 38,
+    "current_fifty": 0,
+    "current_threefold": 0,
+    "insufficient_material": 0,
+    "stalemate": 0
+  },
+  "scientific_sha256": "ee24d3b7aa575c3dd2b85061f376a4920d5f9034a2cc358e03ed8312cd1476c0",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "stage_log": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-execution-v1/stage.log",
+    "sha256": "27a17cc6c3e72e08af31bfe27731f79eb2075de6bb5c73558da001b20d7bf413"
+  },
+  "statistics": {
+    "interval_available": true,
+    "interval_status": "available_normal_approximation",
+    "pair_means": [
+      0.75,
+      0.5,
+      0.5,
+      0.5,
+      0.25,
+      0.5,
+      0.75,
+      0.5,
+      0.0,
+      0.5,
+      0.5,
+      0.5,
+      0.25,
+      0.25,
+      1.0,
+      0.5,
+      0.0,
+      0.5,
+      0.5,
+      0.75,
+      0.5,
+      0.25,
+      0.5,
+      0.5,
+      0.25,
+      0.75,
+      0.5,
+      0.5,
+      0.75,
+      0.25,
+      0.5,
+      0.0,
+      1.0,
+      0.5,
+      0.5,
+      0.75,
+      0.75,
+      0.5,
+      0.75,
+      0.5,
+      0.5,
+      0.25,
+      0.25,
+      0.75,
+      0.75,
+      1.0,
+      0.75,
+      1.0,
+      0.75,
+      1.0,
+      0.5,
+      0.5,
+      1.0,
+      0.75,
+      0.0,
+      0.5,
+      0.5,
+      0.75,
+      0.75,
+      0.0,
+      0.5,
+      0.25,
+      0.75,
+      0.75,
+      0.0,
+      1.0,
+      1.0,
+      0.25,
+      0.25,
+      1.0,
+      0.75,
+      0.75,
+      0.25,
+      0.25,
+      0.25,
+      0.5,
+      0.5,
+      0.5,
+      0.25,
+      0.5,
+      0.5,
+      0.25,
+      0.5,
+      0.5,
+      0.5,
+      0.75,
+      0.0,
+      0.5,
+      0.75,
+      0.5,
+      0.75,
+      0.5,
+      0.25,
+      0.5,
+      0.25,
+      0.75,
+      0.5,
+      0.25,
+      0.5,
+      0.75,
+      0.75,
+      0.25,
+      0.75,
+      0.5,
+      0.5,
+      0.75,
+      0.75,
+      0.75,
+      0.25,
+      0.5,
+      0.75,
+      0.0,
+      0.75,
+      0.25,
+      0.5,
+      1.0,
+      0.25,
+      0.25,
+      0.75,
+      0.75,
+      0.5,
+      0.5,
+      0.0,
+      0.5,
+      0.5,
+      0.0,
+      0.75,
+      0.75
+    ],
+    "pair_totals": [
+      1.5,
+      1.0,
+      1.0,
+      1.0,
+      0.5,
+      1.0,
+      1.5,
+      1.0,
+      0.0,
+      1.0,
+      1.0,
+      1.0,
+      0.5,
+      0.5,
+      2.0,
+      1.0,
+      0.0,
+      1.0,
+      1.0,
+      1.5,
+      1.0,
+      0.5,
+      1.0,
+      1.0,
+      0.5,
+      1.5,
+      1.0,
+      1.0,
+      1.5,
+      0.5,
+      1.0,
+      0.0,
+      2.0,
+      1.0,
+      1.0,
+      1.5,
+      1.5,
+      1.0,
+      1.5,
+      1.0,
+      1.0,
+      0.5,
+      0.5,
+      1.5,
+      1.5,
+      2.0,
+      1.5,
+      2.0,
+      1.5,
+      2.0,
+      1.0,
+      1.0,
+      2.0,
+      1.5,
+      0.0,
+      1.0,
+      1.0,
+      1.5,
+      1.5,
+      0.0,
+      1.0,
+      0.5,
+      1.5,
+      1.5,
+      0.0,
+      2.0,
+      2.0,
+      0.5,
+      0.5,
+      2.0,
+      1.5,
+      1.5,
+      0.5,
+      0.5,
+      0.5,
+      1.0,
+      1.0,
+      1.0,
+      0.5,
+      1.0,
+      1.0,
+      0.5,
+      1.0,
+      1.0,
+      1.0,
+      1.5,
+      0.0,
+      1.0,
+      1.5,
+      1.0,
+      1.5,
+      1.0,
+      0.5,
+      1.0,
+      0.5,
+      1.5,
+      1.0,
+      0.5,
+      1.0,
+      1.5,
+      1.5,
+      0.5,
+      1.5,
+      1.0,
+      1.0,
+      1.5,
+      1.5,
+      1.5,
+      0.5,
+      1.0,
+      1.5,
+      0.0,
+      1.5,
+      0.5,
+      1.0,
+      2.0,
+      0.5,
+      0.5,
+      1.5,
+      1.5,
+      1.0,
+      1.0,
+      0.0,
+      1.0,
+      1.0,
+      0.0,
+      1.5,
+      1.5
+    ],
+    "pairs": 128,
+    "passes_registered_point_and_lower": false,
+    "qualified_upper_below_half": false,
+    "sample_variance": 0.06794029896653543,
+    "score": 0.521484375,
+    "score_ci95": [
+      0.4763284426905775,
+      0.5666403073094225
+    ],
+    "score_se": 0.02303874097419514
+  },
+  "status": "PASS_QUALIFIED_E2TB_ARENA_ENDPOINT",
+  "technical_qualified": true,
+  "terminations": {
+    "rules": 131,
+    "syzygy": 125
+  }
+}

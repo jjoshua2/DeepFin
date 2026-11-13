@@ -1,0 +1,158 @@
+{
+  "status": "ROOT_ACCEPTED_E2TB_FULLA40_FULLB40_TECHNICAL_DELIVERY_ONLY",
+  "utc": "2026-11-13T04:15:42.749761+00:00",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "collection_uuid": "f1dadbe4-43e2-4cf3-9a93-70a288533b48",
+  "scientific_sha256": "ee24d3b7aa575c3dd2b85061f376a4920d5f9034a2cc358e03ed8312cd1476c0",
+  "protocol": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/protocol.json",
+    "sha256": "93910eea9763c7d0ac4265c2f552f8b8a452b004b151a894d0b48ce558aa0825"
+  },
+  "manifest": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/manifest.json",
+    "sha256": "d60ba0905fd0826698ad5f99b5d4e5c1efc4755e47b4fbe5b8376d6bc1042191"
+  },
+  "CPU_audit": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired40-actual-cpu-readout-v1/readout.json",
+    "sha256": "ef09e461bdd530eff775b6056d6faa08e8fe84d52058faa82b2a97be77fbc25f"
+  },
+  "CPU_terminal": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired40-cpu-readout-execution-v1/terminal.json",
+    "sha256": "2c98964e7bbda1d70b5938fedc4fd5c634590326d572ba17760487c8fcd329bf"
+  },
+  "independent_actual_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired40-cpu-actual-independent-review-v1/review.json",
+    "sha256": "ea7163e5d08e56cf9edfe4156e3fd647283de24daab7d3d1cf6b2e94c55b4eeb"
+  },
+  "actual_files": [
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired40-actual-cpu-readout-v1/FULLA-step-0-metadata.json",
+      "sha256": "8924775c0d8e2e1304d5188b5a5d572a6812079b28425a940200bf34ba4e2004"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired40-actual-cpu-readout-v1/FULLA-step-1-metadata.json",
+      "sha256": "816e7f2dc6b3bf6081399aaeaf8b22b46734e6d0dca4d672f57bfc41223512ab"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired40-actual-cpu-readout-v1/FULLA-step-40-metadata.json",
+      "sha256": "a9bd4f106735bdb0696ea4b9b6dfdb7fdc028c452be233756a1118f321bf9073"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired40-actual-cpu-readout-v1/FULLA-step-8-metadata.json",
+      "sha256": "01de07219452e147ce6fecc9bcdec9bc1a23923a053220baecd165795c3b0e50"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired40-actual-cpu-readout-v1/FULLB-step-0-metadata.json",
+      "sha256": "167d5f0e595ca429332a87c9d11e2a5d97371c3a65fa817233c9b51a73e5588d"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired40-actual-cpu-readout-v1/FULLB-step-1-metadata.json",
+      "sha256": "d1c1f55f501804f9905a6c866c15daaaf3bdfa725f90cccbe40d9ef33b4b9ee9"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired40-actual-cpu-readout-v1/FULLB-step-40-metadata.json",
+      "sha256": "209ff872f8cb3ae747f1643286c737bf28f9374cf2c98179aa9fa0f5b61c34de"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired40-actual-cpu-readout-v1/FULLB-step-8-metadata.json",
+      "sha256": "e6cac4e9b1a4312a62cff7418e66266df29161d711a2536dc3217bf984a522c4"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired40-actual-cpu-readout-v1/checkpoint-custody.json",
+      "sha256": "89c7654160f9083b40c6635f3037753f9c8a84e49cf547f9ef477df9fb86de05"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired40-actual-cpu-readout-v1/checkpoint-metadata.json",
+      "sha256": "e58d69a1638eedb1e6bd73feaec3bb3e8d3c02856807f9e046aa6bce2a8f8f61"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired40-actual-cpu-readout-v1/readout.json",
+      "sha256": "ef09e461bdd530eff775b6056d6faa08e8fe84d52058faa82b2a97be77fbc25f"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired40-actual-cpu-readout-v1/seven-models.json",
+      "sha256": "8d26826b4c17679a37ef0fa3bf87dff1773cdccc6accc623380ab4752028c106"
+    }
+  ],
+  "training_terminal": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired-full40-execution-v1/terminal.json",
+    "sha256": "b1b427647c7fbd10bdb3753c4969c7135385a10cb4b2d465c75f62fe5cf96659"
+  },
+  "training_readout": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/readout.json",
+    "sha256": "1ae3c0749c4066270b94859ac1491c93a9347baee5d3efed20128f9b4a7109e2"
+  },
+  "updates_per_arm": 40,
+  "optimizer_updates_total": 80,
+  "samples_per_arm": 10240,
+  "all494_and_architecture_qualified_for_seven_models": true,
+  "models": [
+    {
+      "label": "DONOR",
+      "path": "/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/baseline/epoch2.pt",
+      "sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+      "step": null
+    },
+    {
+      "label": "FULLA1",
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLA/step-1.pt",
+      "sha256": "2b873c888c582bc2b4273aa3e47dfec74e2f48454e9026f53b528243465b9000",
+      "step": 1
+    },
+    {
+      "label": "FULLA8",
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLA/step-8.pt",
+      "sha256": "155ced225fdddb4efe715f1651d66b6e11d0fa8c0785140e36c998ca7a57032a",
+      "step": 8
+    },
+    {
+      "label": "FULLA40",
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLA/trainer.pt",
+      "sha256": "534adbeb112d2a5c9b39b7827ffce8eaa9c7d51597ddf91f269cda4ee3818229",
+      "step": 40
+    },
+    {
+      "label": "FULLB1",
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLB/step-1.pt",
+      "sha256": "c7c10a4adb9b98117918c15dfb7bc14a0fef18b8a1caed9f4115007113f4d968",
+      "step": 1
+    },
+    {
+      "label": "FULLB8",
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLB/step-8.pt",
+      "sha256": "24132a31ec6dfc7db0b00eafd0d6a25cc71600aadcccc4326b00dfa762e8bf94",
+      "step": 8
+    },
+    {
+      "label": "FULLB40",
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLB/trainer.pt",
+      "sha256": "8e3038b5db03db7455582e98dde09cd503c30df4ac781f4f5680096f144dc522",
+      "step": 40
+    }
+  ],
+  "checkpoint_custody": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired40-actual-cpu-readout-v1/checkpoint-custody.json",
+    "sha256": "89c7654160f9083b40c6635f3037753f9c8a84e49cf547f9ef477df9fb86de05"
+  },
+  "gradient_clipping": {
+    "FULLA": {
+      "grad_adaptive_clip_rate": 0.0,
+      "grad_hard_clip_rate": 0.975,
+      "grad_norm_median": 8.108510971069336
+    },
+    "FULLB": {
+      "grad_adaptive_clip_rate": 0.0,
+      "grad_hard_clip_rate": 0.975,
+      "grad_norm_median": 8.374338150024414
+    }
+  },
+  "actual_A_B_final_tensor_differences": 476,
+  "outputs_sealed_readonly_without_byte_changes": true,
+  "model_selection_or_Elo_gain_or_adoption_admitted": false,
+  "limits": [
+    "CPUsource-qualified savedstate integrity plus independently reconciledmetadata; no actualinference/playing result.",
+    "Actual live process environment/native mappings were not captured before closure; mathcontext/forward data come from qualified instrumentation.",
+    "Hardclip bound auxiliary AdamW39/40 each; Aurora matrices excluded, recipeunchanged.",
+    "Selected8 tensors do not measure whole-model gradient interference."
+  ]
+}

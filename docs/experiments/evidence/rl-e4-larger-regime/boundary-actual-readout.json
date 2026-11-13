@@ -1,0 +1,90 @@
+{
+  "status": "PASS_FOCUSED_E4_128_129_TRAIN_BOUNDARY_ONLY",
+  "results": [
+    {
+      "name": "actual_observer_proof_dispatch_and_common129_draws",
+      "result": "PASS",
+      "draws_each": 129,
+      "batch": 256,
+      "identical_mirror_RNG": true,
+      "actual_Trainer_host_mirror_executed": false,
+      "Trainer_created": false
+    },
+    {
+      "name": "actual192_metadata_gate_censored64HOLD_allowed",
+      "result": "PASS"
+    },
+    {
+      "name": "TRAIN_censored_refuses_whole128",
+      "result": "PASS",
+      "expected_rejection": "TRAIN/source/ALL192/playing gate not qualified"
+    },
+    {
+      "name": "missing192_integrity_refuses",
+      "result": "PASS",
+      "expected_rejection": "not fixed192/128TRAIN/64HOLD"
+    },
+    {
+      "name": "actual_load_all128_proofs_before_deserialization",
+      "result": "PASS",
+      "proof_calls": 128,
+      "shard_reads": 128,
+      "raw_reads": 128,
+      "HOLD_opens": 0
+    },
+    {
+      "name": "128th_proof_refusal_no_arrays",
+      "result": "PASS",
+      "expected_rejection": "CONTROL_128TH_PROOF_REJECTED"
+    },
+    {
+      "name": "actual_caller_hardlink_no_extra_Save_or_RNG",
+      "result": "PASS"
+    },
+    {
+      "name": "actual_LR129_tail_and_saved130_peak_no_optimizer_steps",
+      "result": "PASS",
+      "last_epoch": 120
+    },
+    {
+      "name": "actual129_callback_calls_and_snapshot0_1_8_129_contract",
+      "result": "PASS",
+      "callback_steps": [
+        1,
+        8
+      ],
+      "pre_step_calls": 129,
+      "caller_save_expressions": [
+        "directory / 'step-0.pt'",
+        "directory / 'trainer.pt'",
+        "directory / ('step-' + str(step) + '.pt')"
+      ],
+      "actual_saved_checkpoint_or_Trainer_created": false
+    },
+    {
+      "name": "actual_offline_root_equivalent_native_EP_fullhistory_qualifies",
+      "result": "PASS",
+      "actual_final_fen": "4k3/8/8/8/P7/8/8/KQ6 b - a3 0 1",
+      "canonical_final_fen": "4k3/8/8/8/P7/8/8/KQ6 b - - 0 1",
+      "label": 0,
+      "actual_fresh_verifier_issued_proof": true,
+      "controlled_fake_TB_owner": true
+    },
+    {
+      "name": "actual_offline_root_genuinely_different_final_board_refuses",
+      "result": "PASS",
+      "expected_rejection": "proof/audit mismatch"
+    },
+    {
+      "name": "all_controlled_verification_handles_closed",
+      "result": "PASS",
+      "handles": 3
+    }
+  ],
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "synthetic_only": true,
+  "actual_TRAIN_or_HOLD_data_opened": false,
+  "models_Trainers_engines_TB_queries_GPU_training": false,
+  "independent_readout_and_owned_closure_required": true,
+  "limits": "Explicit fake owned TB backend; actual constructor/verify/issued proofs/native encodings/raw factory/128segment dispatch/synthetic sampler exercised. Shard loading is an explicit in-memory fixture substitution: actual proof/validate ordering is exercised, not public shard deserialization. Not real table truth, Trainer host mirror/optimizer execution, actual cohort admission or scientific/gain evidence."
+}

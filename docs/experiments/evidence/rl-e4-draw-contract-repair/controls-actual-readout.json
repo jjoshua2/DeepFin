@@ -1,0 +1,100 @@
+{
+  "status": "PASS_E4_DRAW_METADATA_GUARD_CONTROLS_ONLY",
+  "cases": [
+    {
+      "name": "authentic_7cfd_graph_plus_explicit_synthetic_publication_predicate",
+      "result": "PASS"
+    },
+    {
+      "name": "missing_technical_publication",
+      "result": "PASS"
+    },
+    {
+      "name": "unpublished_technical_record_refuses",
+      "result": "PASS"
+    },
+    {
+      "name": "technical_publication_wrong_science",
+      "result": "PASS"
+    },
+    {
+      "name": "technical_publication_wrong_source",
+      "result": "PASS"
+    },
+    {
+      "name": "technical_publication_wrong_helper",
+      "result": "PASS"
+    },
+    {
+      "name": "technical_publication_wrong_manifest",
+      "result": "PASS"
+    },
+    {
+      "name": "technical_publication_wrong_descriptor",
+      "result": "PASS"
+    },
+    {
+      "name": "technical_publication_wrong_entrypoint",
+      "result": "PASS"
+    },
+    {
+      "name": "technical_publication_wrong_ancestor",
+      "result": "PASS"
+    },
+    {
+      "name": "wrong_frozen_scientific_SHA",
+      "result": "PASS"
+    },
+    {
+      "name": "tampered_science_packet_ref",
+      "result": "PASS"
+    },
+    {
+      "name": "tampered_output_manifest_field",
+      "result": "PASS"
+    },
+    {
+      "name": "tampered_paired_manifest_ref",
+      "result": "PASS"
+    },
+    {
+      "name": "wrong_successor_helper_digest",
+      "result": "PASS"
+    },
+    {
+      "name": "extra_manifest_field_refuses",
+      "result": "PASS"
+    },
+    {
+      "name": "packet_file_map_join_refuses",
+      "result": "PASS"
+    },
+    {
+      "name": "EE0_original_helper_file_map_refuses",
+      "result": "PASS"
+    },
+    {
+      "name": "parent_input_template_ref_refuses",
+      "result": "PASS"
+    },
+    {
+      "name": "technical_ancestor_ref_refuses",
+      "result": "PASS"
+    },
+    {
+      "name": "original_helper_bytes_pin_refuses",
+      "result": "PASS"
+    },
+    {
+      "name": "input_template_bytes_pin_refuses",
+      "result": "PASS"
+    }
+  ],
+  "array_path_attempts": 0,
+  "helper_sha256": "ff24bc622171b8e226e3f05c66800d046fb008713d30991088e68a008b07f47f",
+  "manifest_sha256": "905fc0884365d411ce37db8490c1ba7a95718afaf391c2a45eedf9cf662435df",
+  "module_imports_or_loader_draw_model_data_execution": false,
+  "actual_technical_publication_verified": false,
+  "publication_predicate_simulation_only": true,
+  "scope": "Actual guard/helper source extracted and executed only; authentic frozen metadata plus explicit object/digest fault injection. Not filesystem-race testing or actual draw/loader qualification."
+}

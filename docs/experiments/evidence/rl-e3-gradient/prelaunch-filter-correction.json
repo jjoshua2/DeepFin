@@ -1,0 +1,8 @@
+{
+  "status": "PREOWNER_ASSERTION_CORRECTED_NO_GPU_LAUNCH",
+  "failed_check": "Rejected all e3-*/process.json, including legitimate closed synthetic CPU predecessor.",
+  "corrected_check": "Reject prior E3 GPU process receipts only; all CPU/GPU predecessors still require terminal closure in standard preflight.",
+  "scientific_source_command_rules_unchanged": true,
+  "stage_created": false,
+  "GPU_execution_started": false
+}

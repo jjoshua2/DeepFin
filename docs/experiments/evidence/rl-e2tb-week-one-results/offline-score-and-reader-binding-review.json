@@ -1,0 +1,177 @@
+{
+  "actual_raw_delivery": {
+    "actual_forward_calls_each": 1,
+    "all7model_JSON_and_opaque_archive_hashes_exact": true,
+    "autocast_dtype": "torch.bfloat16",
+    "batch_size_each": 64,
+    "fixed_root_ids_and_checkpoint_bindings_exact": true,
+    "full_arch_matches_CPU_qualified_arch": true,
+    "head_WDL_dtype": "torch.bfloat16",
+    "head_policy_dtype": "torch.float32",
+    "inference_mode": true,
+    "input_shape": [
+      64,
+      175,
+      8,
+      8
+    ],
+    "input_storage_dtype": "torch.float32",
+    "math_context_exact": true,
+    "no_SF_search_TRAIN_writes_or_metric_selection": true,
+    "ordered_models": [
+      "DONOR",
+      "FULLA1",
+      "FULLA8",
+      "FULLA40",
+      "FULLB1",
+      "FULLB8",
+      "FULLB40"
+    ],
+    "peak_cuda_allocated_bytes": 940549120,
+    "raw_banks_immutable": true,
+    "same_recorded_input_F32_sha256": "a661b286d39490425b7283b32537bfb338c09f3734ab375d8463e28e887f958c",
+    "strict_complete_model_tensors_each": 494,
+    "weakrefs_closed_source_guarded": true
+  },
+  "blocking_findings": [],
+  "collection_uuid": "f1dadbe4-43e2-4cf3-9a93-70a288533b48",
+  "evidence": {
+    "actual_score_readout": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-scoring-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/readout.json",
+      "sha256": "649d34075f8f9795657bd45a8ba56bfc6f581e6301fceabab30f1c98c8a0ae48"
+    },
+    "contract": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-final-binding-contract-v3/binding-contract.json",
+      "sha256": "105e4f7f9ea4cc6b127ee922fae5786b5db9f25448b49d69e12eb712099aa41a"
+    },
+    "prior_roots_and_score_binding_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-roots-and-score-binding-independent-review-v1/review.json",
+      "sha256": "e2215e6bc941a37d5ae4927a62f25bd5ad72c1a1dfc8a4eae93cdf4ba083f45a"
+    },
+    "raw_archives_opaque_stream_hashes": {
+      "DONOR": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-scoring-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/DONOR.npz",
+        "sha256": "40a2dcd410b19811518a162832fdf3bee6e149afae165af9363bceb37047d464"
+      },
+      "FULLA1": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-scoring-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLA1.npz",
+        "sha256": "fe68399a5aa8c2a94f1ed4e402a98bb4c81bf7f319fc95d9052976eb24183d8b"
+      },
+      "FULLA40": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-scoring-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLA40.npz",
+        "sha256": "34a49d648f3e8bd4b120ec54d8db8ac67680bd9eac88a8e09e466f2e723589ff"
+      },
+      "FULLA8": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-scoring-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLA8.npz",
+        "sha256": "dc12bb04b383f6324bb8ac8e0dd210f166f478d2646fa16845d11e424460450e"
+      },
+      "FULLB1": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-scoring-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLB1.npz",
+        "sha256": "d2702c2392824216f01d5d66848788803c0603058c046331a522106e6f5dc0d2"
+      },
+      "FULLB40": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-scoring-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLB40.npz",
+        "sha256": "9aec6489d8dd44f2e19985aec71d275ab9be220cdec875865febea1aa3344e60"
+      },
+      "FULLB8": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-scoring-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLB8.npz",
+        "sha256": "f3eb3b4f28df05b9e83d0f21dc97d3210d21306b04925bd386dea19e5e30e922"
+      }
+    },
+    "reader_authority": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-readout-root-execution-admission-v1/authority.json",
+      "sha256": "97d67d1429050f91f177a706045b95764a808f0773e563b2e414e25829febebe"
+    },
+    "reader_binding_receipt": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-readout-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/binding-receipt.json",
+      "sha256": "703407338d227c1ad66b4b37406ce9c0858f748cb92ccd360ce5f2e5ce251136"
+    },
+    "reader_command": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-readout-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/command.json",
+      "sha256": "31ace7a6542b831accda616194f56f6648641467e22b1ac8032217ca5b903f6f"
+    },
+    "reader_manifest": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-readout-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/manifest.json",
+      "sha256": "fc6058db3661f9928d3ac7197b064f12709416ad5ff3e6af4919d68f9468f3ec"
+    },
+    "reader_protocol": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-readout-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/protocol.json",
+      "sha256": "10af8973b38882bf326b7acbf7e5112500134fb10363086d87a2f9a0d9c25a9b"
+    },
+    "score_root_acceptance": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-score-root-actual-acceptance-v1/readout.json",
+      "sha256": "d109a4ad1ecb43aebaf1f5992016f5efb02aba2e807785e89bbc8bd05578fb79"
+    },
+    "score_terminal": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-score-execution-v1/terminal.json",
+      "sha256": "a2a8693dde858a0077dfe73d0077a41d7ffb556b0ee3634655bff19ff2b12658"
+    }
+  },
+  "limits": [
+    "Reviewer used stdlib source/metadata reads and opaque rawNPZ streaming SHA only; no array decode, prediction/logit/probability/metric inspection or recomputation, checkpoint/model read/hash, project/Torch/NumPy import, forward/probe/job.",
+    "Actual494 load/finiteness/forward precision/input and cleanup are qualified scorer assertions reconciled by metadata; B1/B64, eager/compiled parity, repeat-forward stability and teacher calibration remain unqualified.",
+    "Root separately performs fresh source/native/control/lease/resource/custody admission and CPU120 reader launch. Whole64 CPU metric recomputation+closure still pending; offline diagnostics cannot select arm/checkpoint or change playing/strength/adoption gates."
+  ],
+  "reader_binding": {
+    "CPU_owner_seconds": 120,
+    "affinity": [
+      20,
+      22
+    ],
+    "all6helpers_sourceproof_byteexact": true,
+    "all_other_protocol_manifest_fields_template_exact": true,
+    "authority_flags_changed": 5,
+    "changed_protocol_keys": [
+      "checkpoints_binding_path",
+      "checkpoints_binding_sha256",
+      "cohort_binding_complete",
+      "cohort_binding_path",
+      "cohort_binding_sha256",
+      "publication_path",
+      "publication_sha256",
+      "read_bindings_complete",
+      "root_bank_binding_path",
+      "root_bank_binding_sha256",
+      "science_binding_complete",
+      "scientific_path",
+      "scientific_sha256",
+      "score_bindings_complete",
+      "score_helper_path",
+      "score_readout_sha256",
+      "score_terminal_path",
+      "score_terminal_sha256",
+      "scorer_manifest_sha256",
+      "scorer_protocol_sha256",
+      "source_inputs_bound",
+      "training_manifest_path",
+      "training_manifest_sha256",
+      "training_protocol_path",
+      "training_protocol_sha256"
+    ],
+    "childCUDA_hidden": true,
+    "command_only_argv27_lateSHA": true,
+    "estimator_code_unchanged_no_selection": true,
+    "fixed_games": 64,
+    "flatHERE_globalWROOT": true,
+    "fresh_reader_output_absent": true,
+    "identity_leaves_changed": 20,
+    "inner_alarm": "None in unchanged source; finite owner120 enforced",
+    "math_overrides_unset": true,
+    "no_hashcycle": true,
+    "scorer_predecessor_protocol_manifest_terminal_readout_exact": true,
+    "seven_fixed_models": true,
+    "whole_game_bootstrap_draws": 10000,
+    "whole_game_bootstrap_seed": 2026111406
+  },
+  "score_closure": {
+    "CPU_seconds": 19.47,
+    "known_births_absent": {
+      "1245033": 26737054
+    },
+    "supervisor_absent": 1245031,
+    "wall_seconds": 21.408228543994483
+  },
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "ACCEPT_COMPLETE_SEVEN_MODEL_RAW_DELIVERY_METADATA_AND_EXACT_BOUND_CPU_READER",
+  "utc": "2026-11-13T04:29:47.087174+00:00"
+}

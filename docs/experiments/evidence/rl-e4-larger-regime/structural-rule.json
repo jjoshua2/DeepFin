@@ -1,0 +1,44 @@
+{
+  "HOLD": 64,
+  "TRAIN": 128,
+  "accepted": 820,
+  "cohort": 192,
+  "collection_uuid": "cd47b230-f32f-4256-a51e-4869f5708bb6",
+  "confirmation": 500,
+  "filter_order": "fixed preencoded4096 pool; preserve prior static_rejection; retire all oldselected756 and inherited old128/628 parent/history/normalizedEPD/raw+mirror plus known803/stopped53/engineering/E2all96 retained inputs/full histories; sequential accepted-set parent/history/EPD/raw+mirror disjointness",
+  "fixed_pool": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-structural-selection-results-v2-f1dadbe4/ranked-pool.json",
+    "sha256": "89319d1456c0f1ed81c1048f3c0bcc86311f58843b6621d5cb3c74a82fb24c85"
+  },
+  "insufficient": "INCONCLUSIVE; no pool/seed enlargement, replacement or rank-by-outcomes",
+  "limits": "Existing pool, broader opening families/epoch2 exposure UNKNOWN; input novelty only for declared stored175F16 raw/filemirror/history scope. Full E2 HOLD arrays remain closed. No new ranking outcome/target fields read.",
+  "pool_count": 4096,
+  "rank_formula": "u=(int(SHA256(UTF8(rank_salt+NUL+source_group_id)),16)+1)/(2**256+1); key=-log(u)/parent_count; ties ascending source_group_id",
+  "rank_salt": "E4-rank-v1:2026111341",
+  "rank_seed": 2026111341,
+  "reserves": 0,
+  "resource_proposal": {
+    "CUDA_VISIBLE_DEVICES": "",
+    "address_space_bytes": 4294967296,
+    "cpus": [
+      20,
+      22
+    ],
+    "inner_seconds": 270,
+    "metadata_read_bytes": 268435456,
+    "no_catalogue_or_array_scan": true,
+    "output_bytes": 33554432,
+    "owner_seconds": 300,
+    "resource": "cpu"
+  },
+  "roles": "first192 cohort, next128 screen,next500 confirmation",
+  "screen": 128,
+  "source_compatibility": "UNBOUND_R7_SOURCE_METADATA_AND_PURE_PUBLIC_LOADER_VALIDATION_REQUIRED",
+  "split": "GLOBAL physical-ID SHA rank; first128 TRAIN/rest64 HOLD. No per-actual-slot quotas; at most16 concurrent slots.",
+  "split_salt": "E4-split-v1:2026111341",
+  "status": "PROSPECTIVE_E4_STRUCTURAL_RULE_NOT_EXECUTION_ADMISSION",
+  "study_identity": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-study-identity-v1/identity.json",
+    "sha256": "1b4d6d9db14638fa5ccfb434d598fb4a9b5d186f349d3a6ff74af651256c20f7"
+  }
+}

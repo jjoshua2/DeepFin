@@ -1,0 +1,506 @@
+"""Future fixed64 roots × three strict checkpoints, sequential eager production serving."""
+
+from __future__ import annotations
+import argparse
+from dataclasses import asdict
+import json
+import os
+from pathlib import Path
+import signal
+import sys
+import weakref
+
+import numpy as np
+
+from common import (
+    DONOR,
+    HERE,
+    LABELS,
+    REVISION,
+    WROOT,
+    checked_json,
+    cohort_metadata,
+    digest,
+    guard,
+    hash_input,
+    require,
+    verify_owner,
+    write_json,
+)
+from metrics import probabilities
+from common import context
+from strict_roots import choose_roots, verified_roots
+
+
+def check_root_bank(binding):
+    require(
+        binding["status"] == "ROOT_ACCEPTED_FROZEN64_OFFLINE_ROOTS_BEFORE_PREDICTIONS",
+        "frozen64 root admission UNBOUND",
+    )
+    directory = Path(binding["path"])
+    receipt = checked_json(directory / "receipt.json", binding["receipt_sha256"])
+    require(
+        receipt["status"] == "FROZEN64_VERIFIED_RESOLVED_HOLDOUT_ROOTS_BEFORE_BRANCH_PREDICTIONS"
+        and receipt["root_count"] == receipt["physical_game_count"] == 64
+        and receipt["all64_verified_resolved_eligible"]
+        and receipt["source_revision"] == REVISION
+        and receipt["all64_fresh_owned_proofs_before_any_HOLD_arrays"]
+        and receipt["branch_or_teacher_predictions"] == 0,
+        "incomplete/prediction-selected offline roots",
+    )
+    cp, readout = cohort_metadata(receipt["cohort_binding"])
+    planned_heldout = {
+        g["physical_game_id"] for g in cp["games"] if g["bank"] == "holdout"
+    }
+    identities = checked_json(
+        directory / "identities.json", receipt["identities_sha256"]
+    )
+    require(
+        {r["physical_game_id"] for r in identities} == planned_heldout,
+        "root bank contains wrong physical games",
+    )
+    require(
+        len(identities)
+        == len({r["physical_game_id"] for r in identities})
+        == len({r["physical_row_id"] for r in identities})
+        == 64
+        and all(r["bank"] == "holdout" for r in identities),
+        "not64 whole HOLDOUT identities",
+    )
+    selected = choose_roots(cp, readout, context()["collector"])
+    require(selected is not None, "whole offline endpoint no longer eligible; no derivative array read")
+    with verified_roots(cp, readout, selected) as verified_items:
+        require(len(verified_items) == len(identities) == 64, "fresh whole64 proofs unavailable")
+        for identity, (game, _item, root, _audit, _board, label, verified) in zip(identities, verified_items):
+            require(identity["physical_game_id"] == game["physical_game_id"]
+                    and identity["physical_row_id"] == root["physical_row_id"]
+                    and identity["verified_resolved_outcome_wdl_label"] == label
+                    and identity["fresh_verified_outcome"] == verified
+                    and identity["scientific_outcome_class"] == verified["scientific_class"],
+                    "frozen root labels/classes differ from fresh owned proof")
+        require(
+            digest(directory / "roots.npz") == receipt["root_arrays_sha256"],
+            "frozen root arrays changed",
+        )
+        with np.load(directory / "roots.npz", allow_pickle=False) as archive:
+            arrays = {name: archive[name].copy() for name in archive.files}
+        require(
+            set(arrays) == {"x", "legal_mask", "wdl_target"}
+            and arrays["x"].shape == (64, 175, 8, 8)
+            and arrays["legal_mask"].shape == (64, 1858)
+            and arrays["wdl_target"].shape == (64,),
+            "frozen root bank shape differs",
+        )
+        for index, row in enumerate(identities):
+            require(
+                hash_input(arrays["x"][index]) == row["stored_input_float16_sha256"]
+                and int(arrays["wdl_target"][index]) == row["verified_resolved_outcome_wdl_label"],
+                "frozen raw root/outcome changed",
+            )
+    return arrays, identities, receipt
+
+
+def verify_training_binding(checkpoints, root_receipt):
+    cp, _readout = cohort_metadata(root_receipt["cohort_binding"])
+    train_games = {g["physical_game_id"] for g in cp["games"] if g["bank"] == "train"}
+    terminal = checked_json(
+        checkpoints["training_terminal_path"], checkpoints["training_terminal_sha256"]
+    )
+    require(
+        terminal["status"] == "PASS"
+        and terminal["returncode"] == 0
+        and terminal["owned_processes_closed"]
+        and terminal["source_revision"] == REVISION
+        and terminal["resource"] == "gpu"
+        and terminal["seconds"] == 1200,
+        "paired training not closed exact1200second PASS",
+    )
+    training = checked_json(
+        checkpoints["training_readout_path"], checkpoints["training_readout_sha256"]
+    )
+    require(
+        training["status"] == "PASS_MATCHED_E4_129_TECHNICAL_DELIVERY_ONLY"
+        and training["source_revision"] == REVISION,
+        "paired129 actual delivery not qualified",
+    )
+    for arm, field in [("FULLA", "first"), ("FULLB", "second")]:
+        data = training[field]
+        require(
+            data["recipe"] == data["label"] == arm and data["final_step"] == 129,
+            "training arm/129step identity differs",
+        )
+        draws = data["observations"]["draws"]
+        require(
+            len(draws) == 129
+            and all(len(row["physical_row_ids"]) == 256 for row in draws),
+            "actual paired129 physical delivery incomplete",
+        )
+        require(
+            all(
+                row_id.rsplit(":", 1)[0] in train_games
+                for row in draws
+                for row_id in row["physical_row_ids"]
+            ),
+            "HOLDOUT or outside game entered actual TRAIN draws",
+        )
+        final = next(
+            item for item in checkpoints["models"] if item["label"] == arm + "129"
+        )
+        require(
+            data["final_checkpoint_sha256"] == final["sha256"],
+            "final checkpoint not actual delivered arm",
+        )
+        directory = Path(checkpoints["training_output"]) / arm
+        require(
+            all(
+                Path(item["path"]).parent == directory
+                for item in checkpoints["models"]
+                if item["label"].startswith(arm)
+            ),
+            "snapshot outside corresponding actual arm directory",
+        )
+
+
+def one_model(item, arrays, observer, parts, protocol):
+    import torch
+    from chess_anti_engine.uci import model_loader
+    from chess_anti_engine.model import ARCH_SCHEMA_VERSION
+    from chess_anti_engine.inference import DirectGPUEvaluator
+    from chess_anti_engine.moves.encode import COMPACT_TO_FULL_POLICY
+    from chess_anti_engine.tune.fresh_rl_donor import validate_architecture
+
+    _gen, _gp, flat, _tc, _kwargs, _cfg = parts
+    expected = checked_json(
+        WROOT / "fresh-game-consumer-actual-readout-v1/checkpoint-metadata.json",
+        "5c6d344967cd3714523a24526315feaf1a626b6cb48b59b9021c3400e3a0e49e",
+    )["model_shapes_dtypes"]
+    require(digest(item["path"]) == item["sha256"], "checkpoint byte identity changed")
+    original_load = torch.load
+    original_build = model_loader.build_model
+    recipient_arch = {"_schema_version": ARCH_SCHEMA_VERSION, **asdict(_cfg)}
+    captured, built_configs = [], []
+
+    def checked_build(config):
+        validate_architecture(
+            flat["bootstrap_model_contract"],
+            {"_schema_version": ARCH_SCHEMA_VERSION, **asdict(config)},
+            recipient_arch,
+        )
+        require(not built_configs, "more than one model constructed for checkpoint")
+        built_configs.append(asdict(config))
+        return original_build(config)
+
+    def checked_load(path, *args, **kwargs):
+        require(
+            Path(path).resolve() == Path(item["path"]).resolve()
+            and kwargs.get("weights_only") is True
+            and not captured,
+            "unexpected loader/fallback checkpoint",
+        )
+        payload = original_load(
+            path, *args, **kwargs
+        )  # Unchanged real public loader IO.
+        validate_architecture(
+            flat["bootstrap_model_contract"], payload["arch"], recipient_arch
+        )
+        state = payload["model"]
+        require(
+            len(state) == len(expected) == 494 and state.keys() == expected.keys(),
+            "not exact494 checkpoint state",
+        )
+        for name, value in state.items():
+            require(
+                list(value.shape) == expected[name]["shape"]
+                and str(value.dtype) == expected[name]["dtype"]
+                and bool(torch.isfinite(value).all()),
+                "checkpoint shape/dtype/finiteness differs: " + name,
+            )
+        if item["label"] != "DONOR":
+            require(
+                payload["step"] == item["step"]
+                and payload["fresh_rl_donor_provenance"]["sha256"] == DONOR,
+                "wrong actual training checkpoint step/lineage",
+            )
+        captured.append(
+            {
+                "step_metadata": payload.get("step"),
+                "model_tensors": 494,
+                "finite_shape_dtype_matched": True,
+                "arch": payload["arch"],
+            }
+        )
+        return payload
+
+    torch.load = checked_load
+    model_loader.build_model = checked_build
+    try:
+        model = model_loader.load_model_from_checkpoint(
+            item["path"], device="cuda:0", require_complete=True
+        )
+    finally:
+        torch.load = original_load
+        model_loader.build_model = original_build
+    require(
+        len(captured) == len(built_configs) == 1
+        and digest(item["path"]) == item["sha256"]
+        and not model.training
+        and not hasattr(model, "_orig_mod"),
+        "loader identity/eager eval changed",
+    )
+    require(
+        model.input_history_encoding == _cfg.input_history_encoding
+        and model.input_extra_features == _cfg.input_extra_features
+        and len(model.state_dict()) == 494,
+        "loaded model encoding/494 differs",
+    )
+    for value in model.state_dict().values():
+        require(bool(torch.isfinite(value).all()), "nonfinite loaded model")
+    forwards = []
+    expected_input = np.ascontiguousarray(arrays["x"], np.float32)
+
+    def before_forward(_module, args):
+        value = args[0]
+        require(
+            torch.is_inference_mode_enabled()
+            and not torch.is_grad_enabled()
+            and torch.is_autocast_enabled("cuda")
+            and torch.get_autocast_dtype("cuda") == torch.bfloat16
+            and value.is_cuda,
+            "actual inference/AMP/device context differs",
+        )
+        actual = value.detach().cpu().numpy()
+        require(
+            actual.dtype == np.float32 and np.array_equal(actual, expected_input),
+            "production adapter changed frozen175 input",
+        )
+        forwards.append(
+            {
+                "input_shape": list(actual.shape),
+                "storage_dtype": str(value.dtype),
+                "amp_dtype": "torch.bfloat16",
+                "inference_mode": True,
+                "input_float32_sha256": __import__("hashlib")
+                .sha256(actual.tobytes())
+                .hexdigest(),
+            }
+        )
+
+    handle = model.register_forward_pre_hook(before_forward)
+    output_dtypes = []
+
+    def after_forward(_module, _args, value):
+        policy = value["policy"] if "policy" in value else value["policy_own"]
+        output_dtypes.append(
+            {"policy": str(policy.dtype), "wdl": str(value["wdl"].dtype)}
+        )
+
+    post_handle = model.register_forward_hook(after_forward)
+    evaluator = DirectGPUEvaluator(
+        model,
+        device="cuda:0",
+        max_batch=64,
+        n_slots=1,
+        use_amp=True,
+        amp_dtype="bf16",
+        input_bf16=False,
+        legal_bf16=True,
+    )
+    try:
+        require(
+            observer.math_context() == protocol["math_context"],
+            "per-model existing math flags changed",
+        )
+        with torch.inference_mode():
+            full_policy, wdl_logits = evaluator.evaluate_encoded(
+                arrays["x"], copy_out=True
+            )
+        require(
+            len(forwards) == 1
+            and full_policy.shape == (64, 4672)
+            and wdl_logits.shape == (64, 3),
+            "wrong completed64 forward/output",
+        )
+        policy_logits = full_policy[
+            :, np.asarray(COMPACT_TO_FULL_POLICY, dtype=np.int64)
+        ].copy()
+        policy, wdl = probabilities(policy_logits, wdl_logits, arrays["legal_mask"])
+        require(
+            observer.math_context() == protocol["math_context"],
+            "post-forward math flags changed",
+        )
+        output = {
+            "policy1858_logits": policy_logits,
+            "wdl_logits": wdl_logits.copy(),
+            "legal_policy_probabilities": policy,
+            "wdl_probabilities": wdl,
+        }
+        refs = [
+            weakref.ref(model),
+            weakref.ref(evaluator),
+            *[weakref.ref(p) for p in model.parameters()],
+        ]
+        return (
+            output,
+            {
+                "label": item["label"],
+                "checkpoint": item,
+                "load": captured[0],
+                "forwards": forwards,
+                "raw_head_output_dtypes": output_dtypes,
+                "math_context": observer.math_context(),
+                "policy_adapter": "actualCOMPACT_TO_FULL_POLICY gather fromproduction4672 dense output",
+                "softmax_ruler": "float64stableCPU WDLsoftmax andlegal1858softmax; nofallback",
+            },
+            refs,
+        )
+    finally:
+        handle.remove()
+        post_handle.remove()
+    # Return clears evaluator/model/loader-observer frame before weakref check.
+
+
+def score(protocol, observer, parts, manifest):
+    import torch
+
+    require(protocol["score_bindings_complete"] is True, "offline scoring UNBOUND")
+    verify_owner(protocol, resource="gpu", seconds=300, affinity=[20, 22], cuda="0")
+    out = Path(protocol["score_output"])
+    require(not out.exists(), "offline prediction output already exists")
+    binding = checked_json(
+        protocol["root_bank_binding_path"], protocol["root_bank_binding_sha256"]
+    )
+    arrays, identities, receipt = check_root_bank(binding)
+    checkpoints = checked_json(
+        protocol["checkpoints_binding_path"], protocol["checkpoints_binding_sha256"]
+    )
+    require(
+        checkpoints["status"]
+        == "ROOT_ACCEPTED_PAIRED_FULL129_CHECKPOINTS_FOR_OFFLINE_DIAGNOSTICS"
+        and [r["label"] for r in checkpoints["models"]] == LABELS,
+        "three-model checkpoint admission UNBOUND",
+    )
+    require(
+        checkpoints["cohort_readout_sha256"] == receipt["producer_readout_sha256"],
+        "models trained on different cohort",
+    )
+    verify_training_binding(checkpoints, receipt)
+    for row in checkpoints["models"]:
+        expected_step = (
+            None
+            if row["label"] == "DONOR"
+            else int(row["label"].removeprefix("FULLA").removeprefix("FULLB"))
+        )
+        require(
+            row["step"] == expected_step
+            and (
+                row["sha256"] == DONOR
+                if expected_step is None
+                else Path(row["path"]).name
+                == (
+                    "trainer.pt"
+                    if expected_step == 129
+                    else "step-" + str(expected_step) + ".pt"
+                )
+            ),
+            "snapshot identity/step differs",
+        )
+    out.mkdir()
+    write_json(
+        out / "runtime-process.json",
+        {
+            "pid": os.getpid(),
+            "source_revision": REVISION,
+            "birth": parts[0].proc_birth(os.getpid()),
+        },
+    )
+    signal.signal(
+        signal.SIGALRM,
+        lambda *_: (_ for _ in ()).throw(TimeoutError("offline270secondhelperalarm")),
+    )
+    signal.alarm(270)
+    try:
+        torch.set_num_threads(2)
+        torch.set_num_interop_threads(2)
+        torch.cuda.init()
+        torch.cuda.set_device(0)
+        torch.cuda.reset_peak_memory_stats(0)
+        reports = []
+        for item in checkpoints["models"]:
+            output, report, refs = one_model(item, arrays, observer, parts, protocol)
+            observer.release_arm_refs(
+                refs
+            )  # All prior GPU state dead before next load.
+            with (out / (item["label"] + ".npz")).open("xb") as stream:
+                np.savez_compressed(stream, **output)
+            report["raw_output_sha256"] = digest(out / (item["label"] + ".npz"))
+            write_json(out / (item["label"] + ".json"), report)
+            reports.append(report)
+        guard(manifest, protocol)
+        write_json(out / "identities.json", identities)
+        write_json(out / "root-bank-receipt.json", receipt)
+        write_json(
+            out / "readout.json",
+            {
+                "status": "COMPLETE64_BY3_RAW_OFFLINE_PREDICTIONS_DIAGNOSTIC_ONLY",
+                "source_revision": REVISION,
+                "manifest_sha256": digest(HERE / "manifest.json"),
+                "protocol_sha256": digest(HERE / "protocol.json"),
+                "root_bank_binding": binding,
+                "checkpoints_binding": checkpoints,
+                "identities_sha256": digest(out / "identities.json"),
+                "models": reports,
+                "raw_output_files": {
+                    r["label"]: r["raw_output_sha256"] for r in reports
+                },
+                "root_count": 64,
+                "peak_cuda_allocated": torch.cuda.max_memory_allocated(0),
+                "one_model_at_a_time_weakrefs_closed": True,
+                "no_TRAIN_or_replay_writes": True,
+                "no_SF_or_search": True,
+                "metric_or_playing_gate_used_for_selection": False,
+                "scope_limits": [
+                    "Allsame declaredbatch64/eagerBF16 productionadapter; no B1/B64 or eager/compiled numericalparity proof",
+                    "No repeat-forward deterministic control or teacher calibration claimed",
+                    "StoredF16inputs widenedtoF32; BF16autocast headoutputs exportedF32 (actualhead dtypes separatelyrecorded), float64CPUsoftmax is declared ruler",
+                    "Offline diagnostic only; no candidate/endpoint/adoption/playing-gain decision",
+                ],
+            },
+        )
+        parts[0].freeze_tree(out)
+        return 0
+    except BaseException as exc:
+        write_json(
+            out / "failure.json",
+            {
+                "status": "UNQUALIFIED_PARTIAL_OFFLINE_PREDICTIONS_NO_SUBSET_METRIC",
+                "type": type(exc).__name__,
+                "message": str(exc),
+            },
+        )
+        parts[0].freeze_tree(out)
+        raise
+    finally:
+        signal.alarm(0)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--manifest-sha256", required=True)
+    parser.add_argument("--check", action="store_true")
+    args = parser.parse_args()
+    require(
+        digest(HERE / "manifest.json") == args.manifest_sha256,
+        "offline manifest changed",
+    )
+    manifest = json.loads((HERE / "manifest.json").read_text())
+    protocol = checked_json(HERE / "protocol.json", manifest["protocol_sha256"])
+    _inputs, observer, parts = guard(manifest, protocol)
+    if args.check:
+        require(not __import__("torch").cuda.is_initialized(), "check initialized CUDA")
+        print("PASS_OFFLINE_SOURCE_ONLY_NO_DATA_MODEL_GPU")
+        return 0
+    return score(protocol, observer, parts, manifest)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,113 @@
+"""E4 fixed three-screen selection and sole fresh confirmation metadata decision."""
+import argparse
+import json
+import os
+from pathlib import Path
+import signal
+import time
+
+from read_endpoint import REV, checked, cpu_owner, load, paired_statistics, require, sha
+
+HERE=Path(__file__).resolve().parent
+
+
+def endpoint(ref,acceptance_ref,name,science_sha):
+    value=checked(ref);acceptance=checked(acceptance_ref)
+    require(acceptance['status']=='ROOT_ACCEPTED_E4_ENDPOINT_READOUT_CLASSIFICATION' and
+            acceptance['endpoint']==name and acceptance['scientific_sha256']==science_sha and
+            acceptance['readout_sha256']==ref['sha256'] and
+            acceptance['technical_qualified'] is (value.get('technical_qualified') is True),
+            'readout classification not independently accepted')
+    require(value['endpoint']==name,'wrong endpoint readout')
+    if value.get('technical_qualified') is not True:return value
+    count,pairs=(1000,500) if name=='confirmation' else (256,128)
+    require(value['status']=='PASS_QUALIFIED_E4_ARENA_ENDPOINT' and value['games']==count and
+            value['pairs']==pairs and value['scientific_sha256']==science_sha and value['source_revision']==REV,
+            'qualified endpoint scope differs')
+    totals=value['statistics']['pair_totals']
+    require(len(totals)==pairs and paired_statistics(totals)==value['statistics'],
+            'fullprecision accepted pair statistics differ')
+    return value
+
+
+def decision(screens,confirmation=None):
+    require(set(screens)=={'primary','eligibility','context'},'three fixed screens required')
+    if not all(row.get('technical_qualified') is True for row in screens.values()):
+        require(confirmation is None,'confirmation after technical screen failure forbidden')
+        return {'label':'NO_CONFIRMATION','reason':'TECHNICAL_SCREEN_FAILURE_OR_INCOMPLETE',
+                'confirmation_allowed':False,'confirmation_consumed':False,
+                'all_three_screens_qualified':False,'bundle_contrast':'UNQUALIFIED',
+                'selected_role':None,'selected_candidate':None,'adoption':False}
+    primary,b_donor,a_donor=[screens[key] for key in ('primary','eligibility','context')]
+    assets=lambda row:row['model_identities']['assets']
+    a,b,donor=assets(primary)['reference'],assets(primary)['candidate'],assets(b_donor)['reference']
+    same=lambda left,right:all(left[key]==right[key] for key in ('path','sha256'))
+    require(same(b,assets(b_donor)['candidate']) and same(a,assets(a_donor)['candidate']) and
+            same(donor,assets(a_donor)['reference']) and a['step']==b['step']==129,
+            'fixed A129/B129/A39 identities differ across screens')
+    require(len({row['book']['sha256'] for row in screens.values()})==1,'screen books differ')
+    p=primary['statistics'];eligible_a=a_donor['statistics']['passes_registered_point_and_lower']
+    eligible_b=b_donor['statistics']['passes_registered_point_and_lower']
+    contrast=('SCREEN_SUPPORTED_BUNDLE_ADVANTAGE' if p['passes_registered_point_and_lower'] else
+              'SCREEN_SUPPORTED_BUNDLE_DISADVANTAGE' if p['qualified_upper_below_half'] else 'UNRESOLVED')
+    selected=('FULLB129' if eligible_b and (not eligible_a or p['score']>=.5) else
+              'FULLA129' if eligible_a else None)
+    selected_asset=b if selected=='FULLB129' else a if selected=='FULLA129' else None
+    result={'label':'SELECTED_FOR_SOLE_FRESH_CONFIRMATION' if selected else 'NO_CONFIRMATION',
+            'confirmation_allowed':selected is not None,'confirmation_consumed':False,
+            'all_three_screens_qualified':True,'bundle_contrast':contrast,
+            'A_utility_eligible':eligible_a,'B_utility_eligible':eligible_b,
+            'selected_role':selected,'selected_candidate':
+                {key:selected_asset[key] for key in ('path','sha256','step')} if selected_asset else None,
+            'donor':{key:donor[key] for key in ('path','sha256')},
+            'both_eligible_tie_break':'B if BvsA point>=0.5; otherwise A; exact tie B',
+            'adoption':False,'no_old_candidate_or_intermediate_fallback':True,
+            'scope':'Bundle contrast is screen-supported only; sole selected-model-vs-donor confirmation is a separate testwise claim.'}
+    if confirmation is None:return result
+    require(selected is not None,'confirmation without eligible selected129 forbidden')
+    result.update(confirmation_consumed=True,confirmation_allowed=False)
+    if confirmation.get('technical_qualified') is not True:
+        result.update(label='UNQUALIFIED_OR_INCONCLUSIVE_CONFIRMATION',confirmation_pass=False)
+        return result
+    require(same(assets(confirmation)['candidate'],selected_asset) and
+            same(assets(confirmation)['reference'],donor) and assets(confirmation)['candidate']['step']==129,
+            'confirmation changed selected129 checkpoint or donor')
+    require(confirmation['book']['sha256']!=primary['book']['sha256'],'confirmation reused screen book')
+    passed=confirmation['statistics']['passes_registered_point_and_lower']
+    result.update(confirmation_pass=passed,
+        label='CONFIRMED_SELECTED_MODEL_INTERNAL_PROFILE_GAIN' if passed else
+              'SELECTED_MODEL_DONOR_DISADVANTAGE_IN_CONFIRMATION' if confirmation['statistics']['qualified_upper_below_half'] else
+              'INCONCLUSIVE_FOR_REGISTERED_SELECTED_MODEL_GAIN',
+        no_second_candidate_after_consumed_confirmation=True,
+        confirmed_B_superiority_over_A=False)
+    return result
+
+
+def main():
+    p=argparse.ArgumentParser();p.add_argument('--manifest-sha256',required=True)
+    p.add_argument('--bindings',required=True);p.add_argument('--bindings-sha256',required=True)
+    p.add_argument('--mode',choices=('screens','confirmation'),required=True);args=p.parse_args()
+    require(sha(HERE/'manifest.json')==args.manifest_sha256,'manifest changed')
+    m=load(HERE/'manifest.json')
+    require(sha(__file__)==m['decision_sha256'] and sha(HERE/'read_endpoint.py')==m['reader_sha256'],'decision helpers changed')
+    cpu_owner(m);science=checked(m['science']);require(science['status'].startswith('FROZEN_E4_'),'science not frozen')
+    science_sha=m['science']['sha256'];require(sha(args.bindings)==args.bindings_sha256,'decision identities changed')
+    bindings=load(args.bindings)
+    require(set(bindings)=={'screens','confirmation'} and set(bindings['screens'])=={'primary','eligibility','context'},'decision binding fields differ')
+    signal.signal(signal.SIGALRM,lambda *_:(_ for _ in ()).throw(TimeoutError('fixed270s metadata decision deadline')));signal.alarm(270)
+    try:
+        require((bindings['confirmation'] is None)==(args.mode=='screens'),'unexpected confirmation binding')
+        screens={key:endpoint(item['readout'],item['acceptance'],key,science_sha) for key,item in bindings['screens'].items()}
+        item=bindings['confirmation'];confirmation=endpoint(item['readout'],item['acceptance'],'confirmation',science_sha) if item else None
+        result=decision(screens,confirmation)
+        result.update(status='FROZEN_E4_RULE_METADATA_DECISION_ONLY',scientific_sha256=science_sha,
+            bindings_sha256=args.bindings_sha256,created_unix=time.time(),
+            screen_readouts={key:row['readout'] for key,row in bindings['screens'].items()},
+            confirmation_readout=item['readout'] if item else None,
+            no_pooling_or_Elo_or_external_strength_claim=True)
+        output=Path(m['readout_output_root'])/(args.mode+'-decision.json');output.parent.mkdir(parents=True,exist_ok=True)
+        with output.open('x') as f:json.dump(result,f,indent=2,sort_keys=True,allow_nan=False);f.write('\n');f.flush();os.fsync(f.fileno())
+    finally:signal.alarm(0)
+
+
+if __name__=='__main__':main()

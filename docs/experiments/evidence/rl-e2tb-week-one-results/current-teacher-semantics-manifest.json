@@ -1,0 +1,155 @@
+{
+  "actual_cohort": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cohort-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/readout.json",
+    "sha256": "b8ff226e0532ff1c0ee2627e6875c6f05ad4f0a3a5885f6cf35d75a913bfc906"
+  },
+  "actual_learning": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/readout.json",
+    "sha256": "1ae3c0749c4066270b94859ac1491c93a9347baee5d3efed20128f9b4a7109e2"
+  },
+  "arms": {
+    "FULLA": {
+      "actual_loss_kwargs": {
+        "search_wdl_frac": 1.0,
+        "sf_policy_floor": {
+          "delta_cp": 20.0,
+          "tau": 0.15,
+          "tau_played": 0.0625,
+          "tau_top1": 0.15,
+          "w": 0.0
+        },
+        "sf_wdl_frac": 0.0,
+        "w_categorical": 1.0,
+        "w_future": 0.01,
+        "w_moves_left": 0.02,
+        "w_policy": 1.0,
+        "w_sf_eval": 0.0,
+        "w_sf_move": 0.0,
+        "w_sf_own": 0.0,
+        "w_sf_own_regret": 0.0,
+        "w_sf_volatility": 0.0,
+        "w_soft": 1.0,
+        "w_volatility": 0.1,
+        "w_wdl": 1.0
+      },
+      "all40_actual_calls_same_kwargs": true,
+      "floor_metric_unweighted": 0.06296228603162822,
+      "has_sf_p0_frac": 0.0,
+      "has_sf_p0_regret_frac": 0.98427734375,
+      "metric_search_wdl_effective_frac": 1.0,
+      "metric_sf_wdl_effective_frac": 1.0,
+      "sf_eval_pv_orphan_frac": 0.00478515625,
+      "sf_search_agree_frac": 0.8767578125,
+      "sf_wdl_degenerate_frac": 0.0,
+      "sf_wdl_orphaned_frac": 0.0
+    },
+    "FULLB": {
+      "actual_loss_kwargs": {
+        "search_wdl_frac": 0.8,
+        "sf_policy_floor": {
+          "delta_cp": 20.0,
+          "tau": 0.15,
+          "tau_played": 0.0625,
+          "tau_top1": 0.15,
+          "w": 0.0
+        },
+        "sf_wdl_frac": 0.0,
+        "w_categorical": 1.0,
+        "w_future": 0.01,
+        "w_moves_left": 0.02,
+        "w_policy": 1.0,
+        "w_sf_eval": 0.0,
+        "w_sf_move": 0.0,
+        "w_sf_own": 0.0,
+        "w_sf_own_regret": 0.0,
+        "w_sf_volatility": 0.0,
+        "w_soft": 1.0,
+        "w_volatility": 0.1,
+        "w_wdl": 1.0
+      },
+      "all40_actual_calls_same_kwargs": true,
+      "floor_metric_unweighted": 0.06310455902475061,
+      "has_sf_p0_frac": 0.0,
+      "has_sf_p0_regret_frac": 0.98427734375,
+      "metric_search_wdl_effective_frac": 1.0,
+      "metric_sf_wdl_effective_frac": 1.0,
+      "sf_eval_pv_orphan_frac": 0.00478515625,
+      "sf_search_agree_frac": 0.8767578125,
+      "sf_wdl_degenerate_frac": 0.0,
+      "sf_wdl_orphaned_frac": 0.0
+    }
+  },
+  "current_study_changed": false,
+  "new_execution_or_parameter_recommendation_admitted": false,
+  "note": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-teacher-signal-semantic-audit-v1/note.md",
+    "sha256": "d0461a4b5ece8a704ecdb1fd745120e86d85ec7778c33fcc791ff5bf1a7e902a"
+  },
+  "resolved_profile": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cohort-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/resolved-profile.json",
+    "sha256": "c6659d6077ceb677e2fe50a99929c0d9b87c2271bef9c5e4908b345baaf78ee3"
+  },
+  "scope": "Source+JSON only; no arrays/NPZ/shards/checkpoints/Torch/project imports/engine/probes/jobs or running outputs. Parent-reported primary only; eligibility/context not inspected.",
+  "source_refs": {
+    "chess_anti_engine/selfplay/finalize.py": {
+      "path": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/selfplay/finalize.py",
+      "sha256": "e8f15f8d6fc92c5efb7eb90988426b3ce4c3aac21c6ca80de4aca6fb498a9c2d"
+    },
+    "chess_anti_engine/selfplay/network_turn.py": {
+      "path": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/selfplay/network_turn.py",
+      "sha256": "e1970dbd4afdc952a3bbf1e81842b715d84ac7fc48b21c1f1211360d67b870fd"
+    },
+    "chess_anti_engine/selfplay/stockfish_turn.py": {
+      "path": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/selfplay/stockfish_turn.py",
+      "sha256": "de460e47bb83c434190ca69d8aded9757578fd36d82da2a31be767b5daa213d7"
+    },
+    "chess_anti_engine/train/losses.py": {
+      "path": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/train/losses.py",
+      "sha256": "a70ec504f7a852e639aa9e954000925fb0aeeaeb97304d1e7f1c7fc4f4205820"
+    },
+    "chess_anti_engine/train/trainer.py": {
+      "path": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/train/trainer.py",
+      "sha256": "dadd881bbd53c9915a8ad3e0ffa5402838e9f5443d572eaf657ee84e3effe7f0"
+    }
+  },
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "READ_ONLY_SEMANTIC_AUDIT_FUTURE_QUESTIONS_NOT_STUDY_OR_ADMISSION",
+  "stockfish_lifecycle": {
+    "all_observed_births_closed": true,
+    "events": [
+      {
+        "birth": 26405750,
+        "event": 0,
+        "phase": "initial",
+        "pid": 1159285,
+        "ready_after_explicit_options": true,
+        "syzygy_50_move_rule": true,
+        "syzygy_path": "/home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6",
+        "syzygy_probe_limit": 6
+      },
+      {
+        "birth": 26405802,
+        "event": 1,
+        "phase": "initial",
+        "pid": 1159290,
+        "ready_after_explicit_options": true,
+        "syzygy_50_move_rule": true,
+        "syzygy_path": "/home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6",
+        "syzygy_probe_limit": 6
+      }
+    ],
+    "observed_births": [
+      {
+        "birth": 26405750,
+        "pid": 1159285
+      },
+      {
+        "birth": 26405802,
+        "pid": 1159290
+      }
+    ],
+    "pool_replacements": 0,
+    "scope": "all successful initial/replacement constructor events; failed constructions and full descendants still require outer owner closure"
+  },
+  "utc": "2026-11-13T05:35:07.729908+00:00"
+}

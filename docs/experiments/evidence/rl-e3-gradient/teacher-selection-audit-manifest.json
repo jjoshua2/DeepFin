@@ -1,0 +1,94 @@
+{
+  "actual_SF_selection_routes": {
+    "actual_sampler": "fixed uniform physical-row matrix; no DiskReplay shaping",
+    "priority_sf_search_gap": "computed after producer keep decision; stored diagnostic",
+    "producer_diff_focus": "own searchQ/raw networkQ and prior-policy KL, not SF",
+    "producer_soft_resign": "raw network win probability, not SF",
+    "replay_gap_weight": 0.0
+  },
+  "actual_new_jobs_models_arrays_imports_queries": 0,
+  "current_study_changed": false,
+  "model_identity_relationship_from_receipt": {
+    "current_model_bytes_opened_or_hashed": false,
+    "derived": {
+      "bytes": 370680384,
+      "path": "/home/josh/chess-artifacts/bt4-fp16-conversion-20261018-v1/attempt-01/BT4-it332-vanilla-winner.fp16-internal-fp32-io.onnx",
+      "sha256": "809db9c3c8063683bf8e7c08de8fec92ea4e37ad8c68c8b1befbde4bd1958961"
+    },
+    "original_path": "/home/josh/projects/chess/data/lc0/onnx/BT4-it332-vanilla-winner.onnx",
+    "original_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+    "static_conversion_only": true
+  },
+  "note": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-sf-selection-and-teacher-origin-audit-v1/note.md",
+    "sha256": "dd52384c53de7df304b6a9d4a74e9d8acc28370b11396498741ca091f5cb875f"
+  },
+  "references": {
+    "BT4_project_reference": {
+      "path": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/docs/bt4.md",
+      "sha256": "08d75d36a760cb69e0c3965586ffda6a162499a2e9c3708fa2287e0df97a257b"
+    },
+    "accepted_positive_wave_chain": {
+      "path": "/mnt/c/Users/jjosh/Documents/Codex/2026-10-08/task/INDEPENDENT-BULK94-RETAINED-POSITIVE-WAVE-EXECUTION-ACCEPTANCE-v1.json",
+      "sha256": "ab110690507872398b511fa873777f216c6cfd40c95f33c3d93b46489cacd075"
+    },
+    "accepted_producer_body": {
+      "path": "/mnt/c/Users/jjosh/Documents/Codex/2026-10-08/task/gpu-fourcpu20wave-7680-exact-final-20261101-v1/ordinary_fresh_trial_owned_multi_SOURCE_ONLY_v2.py",
+      "sha256": "5010d9c52880d6d1ba4522eb5ed60c94c428e64a6c71fa0b0623251f80a008b1"
+    },
+    "chess_anti_engine/mcts/_mcts_tree.c": {
+      "path": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/mcts/_mcts_tree.c",
+      "sha256": "d5ae014ecefb1509fb1a43c5701c61963ced2bac60d485e6e2e9942082aacc15"
+    },
+    "chess_anti_engine/replay/disk_buffer.py": {
+      "path": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/replay/disk_buffer.py",
+      "sha256": "2265ff10edd674becc4cf400a44e5469578279d7a8aa537e0935a0820bad800b"
+    },
+    "chess_anti_engine/selfplay/finalize.py": {
+      "path": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/selfplay/finalize.py",
+      "sha256": "e8f15f8d6fc92c5efb7eb90988426b3ce4c3aac21c6ca80de4aca6fb498a9c2d"
+    },
+    "chess_anti_engine/selfplay/network_turn.py": {
+      "path": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/selfplay/network_turn.py",
+      "sha256": "e1970dbd4afdc952a3bbf1e81842b715d84ac7fc48b21c1f1211360d67b870fd"
+    },
+    "chess_anti_engine/selfplay/stockfish_turn.py": {
+      "path": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/selfplay/stockfish_turn.py",
+      "sha256": "de460e47bb83c434190ca69d8aded9757578fd36d82da2a31be767b5daa213d7"
+    },
+    "conversion_receipt": {
+      "path": "/home/josh/chess-artifacts/bt4-fp16-conversion-20261018-v1/attempt-01/CONVERSION-RESULT.json",
+      "sha256": "3d1936d02010b8026d85f6880c0303008324d72a15aceda34de507a8ee532180"
+    },
+    "frozen_generation_YAML": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-strict-generation-config-preparation-v1/f1dadbe4-43e2-4cf3-9a93-70a288533b48/config.yaml",
+      "sha256": "58f908d1b6afdeb8034dabf222c1ed91d069d6f9501b2ab9fb10ca0b67ca676d"
+    },
+    "paired_observer.py": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-train-paired-preparation-v5/paired_observer.py",
+      "sha256": "3b8fab909222ac717ee8ff460e878f5f7519c62678c578bf07498b0ca9c6d505"
+    },
+    "previous_lineage_audit": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/a39-supervised-teacher-lineage-audit-v1/manifest.json",
+      "sha256": "4f43b6c115097f6eb530f28e85176eda1ccdecd05c69e0d0e8306c8e9b2213c5"
+    },
+    "resolved_generation": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cohort-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/resolved-profile.json",
+      "sha256": "c6659d6077ceb677e2fe50a99929c0d9b87c2271bef9c5e4908b345baaf78ee3"
+    },
+    "run_paired.py": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-train-paired-preparation-v5/run_paired.py",
+      "sha256": "a5ea07b2e54c012785fa1c182c9b12fb29689038950e0a46a910a6128bcd6a9f"
+    }
+  },
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "SOURCE_JSON_ONLY_SELECTION_AND_TEACHER_ORIGIN_AUDIT",
+  "unknowns": [
+    "original100M full teacher lineage",
+    "exact protobuf-to-ONNX exporter/head mapping and teacher training pedigree",
+    "numerical equivalence original/converted teacher",
+    "counterfactual runtime scheduling with SF annotation service disabled",
+    "actual teacher-information/gradient utility beyond recorded coverage"
+  ],
+  "utc": "2026-11-13T06:19:28.954209+00:00"
+}

@@ -1,0 +1,208 @@
+"""Closed raw-bank recomputation only; no inference, selection or playing gate."""
+
+from __future__ import annotations
+import argparse
+import json
+from pathlib import Path
+import sys
+
+import numpy as np
+
+from common import (
+    HERE,
+    LABELS,
+    REVISION,
+    checked_json,
+    digest,
+    guard,
+    require,
+    verify_owner,
+    write_json,
+)
+from metrics import per_root, probabilities
+from score import check_root_bank
+
+
+def summarize(raw, arrays):
+    from scripts.paired_compare import paired_bootstrap_ci
+
+    require(list(raw) == LABELS, "missing/reordered three-model raw observations")
+    metrics = {
+        label: per_root(
+            value["wdl_probabilities"],
+            value["legal_policy_probabilities"],
+            arrays["wdl_target"],
+            arrays["legal_mask"],
+            raw["DONOR"]["legal_policy_probabilities"],
+        )
+        for label, value in raw.items()
+    }
+    means = {
+        label: {key: float(value.mean()) for key, value in rows.items()}
+        for label, rows in metrics.items()
+    }
+    comparisons = [(label, "DONOR") for label in LABELS[1:]] + [
+        ("FULLB" + str(step), "FULLA" + str(step)) for step in (129,)
+    ]
+    paired = {}
+    for candidate, reference in comparisons:
+        result = {}
+        for key in metrics[candidate]:
+            delta = metrics[candidate][key] - metrics[reference][key]
+            lo, hi = paired_bootstrap_ci(
+                delta, n_boot=10000, alpha=0.05, seed=2026111347
+            )
+            result[key] = {
+                "delta_candidate_minus_reference": float(delta.mean()),
+                "percentile95": [lo, hi],
+                "whole_games": 64,
+                "roots_per_game": 1,
+                "bootstrap_draws": 10000,
+                "seed": 2026111347,
+                "diagnostic_only": True,
+            }
+        paired[candidate + "_minus_" + reference] = result
+    return means, paired, metrics
+
+
+def read(protocol, _observer, parts):
+    require(protocol["read_bindings_complete"] is True, "offline readout UNBOUND")
+    verify_owner(protocol, resource="cpu", seconds=120, affinity=[20, 22], cuda="")
+    terminal = checked_json(
+        protocol["score_terminal_path"], protocol["score_terminal_sha256"]
+    )
+    require(
+        terminal["status"] == "PASS"
+        and terminal["returncode"] == 0
+        and terminal["owned_processes_closed"]
+        and terminal["source_revision"] == REVISION
+        and terminal["supervisor_sha256"] == protocol["owner_sha256"]
+        and terminal["seconds"] == 300
+        and terminal["resource"] == "gpu",
+        "scoring not exact closed300s PASS",
+    )
+    directory = Path(protocol["score_output"])
+    require(not (directory / "failure.json").exists(), "partial/failed prediction bank")
+    result = checked_json(directory / "readout.json", protocol["score_readout_sha256"])
+    require(
+        result["status"] == "COMPLETE64_BY3_RAW_OFFLINE_PREDICTIONS_DIAGNOSTIC_ONLY"
+        and result["root_count"] == 64
+        and result["source_revision"] == REVISION
+        and result["one_model_at_a_time_weakrefs_closed"],
+        "incomplete scoring endpoint",
+    )
+    require(
+        result["manifest_sha256"] == protocol["scorer_manifest_sha256"]
+        and result["protocol_sha256"] == protocol["scorer_protocol_sha256"],
+        "raw bank scoring source binding changed",
+    )
+    require(
+        protocol["score_helper_path"] in terminal["command"]
+        and protocol["scorer_manifest_sha256"] in terminal["command"],
+        "actual scoring command differs",
+    )
+    arrays, identities, _receipt = check_root_bank(result["root_bank_binding"])
+    bank_identities = checked_json(
+        directory / "identities.json", result["identities_sha256"]
+    )
+    require(
+        bank_identities == identities
+        and [r["label"] for r in result["models"]] == LABELS,
+        "actual prediction/root ordering differs",
+    )
+    raw = {}
+    for report in result["models"]:
+        label = report["label"]
+        require(
+            digest(directory / (label + ".npz"))
+            == result["raw_output_files"][label]
+            == report["raw_output_sha256"],
+            "raw output changed",
+        )
+        with np.load(directory / (label + ".npz"), allow_pickle=False) as archive:
+            value = {name: archive[name].copy() for name in archive.files}
+        require(
+            set(value)
+            == {
+                "policy1858_logits",
+                "wdl_logits",
+                "legal_policy_probabilities",
+                "wdl_probabilities",
+            },
+            "wrong probability bank fields",
+        )
+        p, q = probabilities(
+            value["policy1858_logits"], value["wdl_logits"], arrays["legal_mask"]
+        )
+        require(
+            np.array_equal(p, value["legal_policy_probabilities"])
+            and np.array_equal(q, value["wdl_probabilities"]),
+            "saved probability ruler differs from raw logits",
+        )
+        raw[label] = value
+    means, paired, metrics = summarize(raw, arrays)
+    out = Path(protocol["reader_output"])
+    require(not out.exists(), "offline readout output exists")
+    out.mkdir()
+    with (out / "per-root-metrics.npz").open("xb") as stream:
+        np.savez_compressed(
+            stream,
+            **{
+                label + "__" + key: value
+                for label, rows in metrics.items()
+                for key, value in rows.items()
+            },
+        )
+    write_json(
+        out / "readout.json",
+        {
+            "status": "COMPLETE64_GAME_PAIRED_OFFLINE_DIAGNOSTICS_ONLY_NO_SELECTION",
+            "source_revision": REVISION,
+            "identities": identities,
+            "model_raw_output_hashes": result["raw_output_files"],
+            "means": means,
+            "paired": paired,
+            "metric_definitions": {
+                "expected_score_MSE": "(W+.5D-outcomeE)^2",
+                "draw_Brier": "(D-I[verifiedResolvedDraw])^2",
+                "three_class_WDL_Brier_sum": "sumclass(prob-onehot)^2, range0..2 (NOTdividedby3)",
+                "legal_policy_TV_vs_donor": ".5sumlegal(abs(policy-donor)), legalrenormalized; drift magnitudeNOTquality",
+            },
+            "bootstrap_unit": "onefixedrootperwholeheldoutphysicalgame; sharedresample seed acrosspairedcomparisons",
+            "limits": [
+                "One64game physical cohort/one trainingrealization; outcomes NATURAL and STRICT_TB_ADJUDICATED separately identified; openingfamily correlations/unknownpretraining not removed bybootstrap",
+                "Diagnostics cannot selectcheckpoint/arm/seed/LR, gateprimaryplaying or establishgain; no multiplicity/power/representativecalibration claim",
+                "Identical source/declaredBF16batch64ruler; B1/B64 orcompiled/eagerparity and repeatforwardstability not independentlyqualified",
+                "No subset/drop/imputation or fallback permitted; any missingof64/3 makesentireendpoint unqualified/inconclusive",
+            ],
+            "playing_gate_or_adoption_changed": False,
+            "scoring_terminal_sha256": protocol["score_terminal_sha256"],
+            "raw_readout_sha256": protocol["score_readout_sha256"],
+            "per_root_metrics_sha256": digest(out / "per-root-metrics.npz"),
+        },
+    )
+    parts[0].freeze_tree(out)
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--manifest-sha256", required=True)
+    parser.add_argument("--check", action="store_true")
+    args = parser.parse_args()
+    require(
+        digest(HERE / "manifest.json") == args.manifest_sha256,
+        "offline manifest changed",
+    )
+    manifest = json.loads((HERE / "manifest.json").read_text())
+    protocol = checked_json(HERE / "protocol.json", manifest["protocol_sha256"])
+    _inputs, observer, parts = guard(manifest, protocol)
+    if args.check:
+        require(not __import__("torch").cuda.is_initialized(), "check initialized CUDA")
+        print("PASS_OFFLINE_SOURCE_ONLY_NO_DATA_MODEL_GPU")
+        return 0
+    return read(protocol, observer, parts)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

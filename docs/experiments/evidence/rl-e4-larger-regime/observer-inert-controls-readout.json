@@ -1,0 +1,47 @@
+{
+  "status": "PASS_INERT_OBSERVER_CONTROLS_ONLY",
+  "cases": {
+    "normal": {
+      "status": "PASS",
+      "events": 19,
+      "archive_status": "PASS_OBSERVATION_ARCHIVE_ONLY"
+    },
+    "censored": {
+      "status": "PASS",
+      "events": 19,
+      "archive_status": "PASS_OBSERVATION_ARCHIVE_ONLY"
+    },
+    "diskcap": {
+      "status": "PASS",
+      "events": 37,
+      "archive_status": "FUTURE_TEACHER_INFORMATION_INCOMPLETE"
+    },
+    "iofailure": {
+      "status": "PASS",
+      "events": 5,
+      "archive_status": "FUTURE_TEACHER_INFORMATION_INCOMPLETE"
+    },
+    "queryfailure": {
+      "status": "PASS",
+      "events": 19,
+      "archive_status": "PASS_OBSERVATION_ARCHIVE_ONLY"
+    },
+    "unclosedowner": {
+      "status": "PASS",
+      "events": 19,
+      "archive_status": "FUTURE_TEACHER_INFORMATION_INCOMPLETE"
+    },
+    "escalation": {
+      "status": "PASS",
+      "events": 30,
+      "archive_status": "PASS_OBSERVATION_ARCHIVE_ONLY"
+    },
+    "replacement": {
+      "status": "PASS",
+      "events": 24,
+      "archive_status": "PASS_OBSERVATION_ARCHIVE_ONLY"
+    }
+  },
+  "project_modules_models_engines_TB_arrays_jobs_created": false,
+  "R7_constructor_interface_or_actual_timing_qualified": false
+}

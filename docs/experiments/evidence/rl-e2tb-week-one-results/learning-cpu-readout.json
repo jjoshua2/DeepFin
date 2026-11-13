@@ -1,0 +1,141 @@
+{
+  "A_B_final_models_expected_to_differ_no_equality_gate": true,
+  "CPU_reader_closure": "Outer owner terminal and independent root acceptance are still required after this process exits.",
+  "CUDA_initialized": false,
+  "actual_A_B_final_tensor_differences": 476,
+  "checkpoints": [
+    {
+      "arm": "FULLA",
+      "changed_vs_A39_tensors": 0,
+      "model_digest": "d9d3849b485a2ca3c0b1e440b0c8c4fec796ddf6e0824176926cc93c873f80b1",
+      "sha256": "399859f7d35f39b5925306f189cff77265a762ca2d95810f5ec0eac4969dfaa9",
+      "step": 0
+    },
+    {
+      "arm": "FULLA",
+      "changed_vs_A39_tensors": 477,
+      "model_digest": "2c101b7f1629d5e4f48bcd163b4f7760fea959b2dce379d6697164fc79ba39c8",
+      "sha256": "2b873c888c582bc2b4273aa3e47dfec74e2f48454e9026f53b528243465b9000",
+      "step": 1
+    },
+    {
+      "arm": "FULLA",
+      "changed_vs_A39_tensors": 477,
+      "model_digest": "9ef869e01a9fbb57efeb654ac1773b9c598a230533369a87ffc89b099c5ced5c",
+      "sha256": "155ced225fdddb4efe715f1651d66b6e11d0fa8c0785140e36c998ca7a57032a",
+      "step": 8
+    },
+    {
+      "arm": "FULLA",
+      "changed_vs_A39_tensors": 477,
+      "model_digest": "e215027cd04445ac2de06bbb2c0cacb6fe11327baf3b03760d51da2205ad68ef",
+      "sha256": "534adbeb112d2a5c9b39b7827ffce8eaa9c7d51597ddf91f269cda4ee3818229",
+      "step": 40
+    },
+    {
+      "arm": "FULLB",
+      "changed_vs_A39_tensors": 0,
+      "model_digest": "d9d3849b485a2ca3c0b1e440b0c8c4fec796ddf6e0824176926cc93c873f80b1",
+      "sha256": "399859f7d35f39b5925306f189cff77265a762ca2d95810f5ec0eac4969dfaa9",
+      "step": 0
+    },
+    {
+      "arm": "FULLB",
+      "changed_vs_A39_tensors": 477,
+      "model_digest": "6e41002560791712eea58a1d94fa65a2825bca4e64bf0462f50fda986745394b",
+      "sha256": "c7c10a4adb9b98117918c15dfb7bc14a0fef18b8a1caed9f4115007113f4d968",
+      "step": 1
+    },
+    {
+      "arm": "FULLB",
+      "changed_vs_A39_tensors": 477,
+      "model_digest": "5dc52c2b201381f4573cb138280c2d93e416533865eb0e246c45958b897b3ba0",
+      "sha256": "24132a31ec6dfc7db0b00eafd0d6a25cc71600aadcccc4326b00dfa762e8bf94",
+      "step": 8
+    },
+    {
+      "arm": "FULLB",
+      "changed_vs_A39_tensors": 477,
+      "model_digest": "5a1f5e5a359bb1a52544df1486c7d5b3439a6e113ab2d6f4941c77e4e94d1751",
+      "sha256": "8e3038b5db03db7455582e98dde09cd503c30df4ac781f4f5680096f144dc522",
+      "step": 40
+    }
+  ],
+  "common_data_RNG_math_ownership_except_declared_categorical_and_WDLshare": true,
+  "effective_fraction_semantics": "search_wdl_effective_frac and sf_wdl_effective_frac are availability diagnostics, not recipe weights. Actual loss kwargs enforce search1/.8 and SF0.",
+  "gradient_metrics": {
+    "FULLA": {
+      "grad_adaptive_clip_rate": 0.0,
+      "grad_hard_clip_rate": 0.975,
+      "grad_norm_median": 8.108510971069336
+    },
+    "FULLB": {
+      "grad_adaptive_clip_rate": 0.0,
+      "grad_hard_clip_rate": 0.975,
+      "grad_norm_median": 8.374338150024414
+    }
+  },
+  "learning_or_playing_adoption_admitted": false,
+  "limits": "Technical delivery/checkpoint provenance only; selected8 are not whole-trunk gradient diagnostics, tensor differences/losses do not establish strength. Seven-model inference and actual playing are separate.",
+  "model_rows": [
+    {
+      "label": "DONOR",
+      "path": "/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/baseline/epoch2.pt",
+      "sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+      "step": null
+    },
+    {
+      "label": "FULLA1",
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLA/step-1.pt",
+      "sha256": "2b873c888c582bc2b4273aa3e47dfec74e2f48454e9026f53b528243465b9000",
+      "step": 1
+    },
+    {
+      "label": "FULLA8",
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLA/step-8.pt",
+      "sha256": "155ced225fdddb4efe715f1651d66b6e11d0fa8c0785140e36c998ca7a57032a",
+      "step": 8
+    },
+    {
+      "label": "FULLA40",
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLA/trainer.pt",
+      "sha256": "534adbeb112d2a5c9b39b7827ffce8eaa9c7d51597ddf91f269cda4ee3818229",
+      "step": 40
+    },
+    {
+      "label": "FULLB1",
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLB/step-1.pt",
+      "sha256": "c7c10a4adb9b98117918c15dfb7bc14a0fef18b8a1caed9f4115007113f4d968",
+      "step": 1
+    },
+    {
+      "label": "FULLB8",
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLB/step-8.pt",
+      "sha256": "24132a31ec6dfc7db0b00eafd0d6a25cc71600aadcccc4326b00dfa762e8bf94",
+      "step": 8
+    },
+    {
+      "label": "FULLB40",
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLB/trainer.pt",
+      "sha256": "8e3038b5db03db7455582e98dde09cd503c30df4ac781f4f5680096f144dc522",
+      "step": 40
+    }
+  ],
+  "models_constructed_or_forwarded": false,
+  "no_skips_or_retries": true,
+  "optimizer_updates_total": 80,
+  "samples_per_arm": 10240,
+  "scientific_sha256": "ee24d3b7aa575c3dd2b85061f376a4920d5f9034a2cc358e03ed8312cd1476c0",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "ACCEPT_MATCHED_E2TB40_TECHNICAL_DELIVERY_AND_CPU_CHECKPOINTS_ONLY",
+  "terminal": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired-full40-execution-v1/terminal.json",
+    "sha256": "b1b427647c7fbd10bdb3753c4969c7135385a10cb4b2d465c75f62fe5cf96659"
+  },
+  "training_readout": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/readout.json",
+    "sha256": "1ae3c0749c4066270b94859ac1491c93a9347baee5d3efed20128f9b4a7109e2"
+  },
+  "updates_per_arm": 40,
+  "weakref_cleanup": "Guarded by exact source and prior_arm_refs_closed receipt, not a retrospective live-object observation."
+}
