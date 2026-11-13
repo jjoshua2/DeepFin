@@ -1,0 +1,16 @@
+{
+  "status": "PASS_SYNTHETIC_CPU_ONLY",
+  "helper_sha256": "2ac588680327ea12d2a020858487b7b79187e331ea42cb2cd9dba6cf77923c9e",
+  "fixture_sha256": "d7a807be2587218c790be3cdb23ae46f9679a82f74289be3c51f08b58e0aecbe",
+  "real_source_loss_captures": 2,
+  "controls": [
+    "actual weighted-term/profile capture and scalar fold",
+    "fractional/absent masks and value fallback exposure",
+    "differentiable source component identities",
+    "connected zero versus None versus constant family",
+    "analytic geometry and undefined primary"
+  ],
+  "CUDA_initialized": false,
+  "research_arrays_models_engines_loaded": false,
+  "limits": "Synthetic CPU checks do not qualify real model gradients, BF16 repeats or performance."
+}

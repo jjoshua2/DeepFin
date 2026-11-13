@@ -10,6 +10,8 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
+- [2026-11-13: TRAIN objective-gradient geometry](2026-11-13-rl-train-gradient-geometry.md) — E3 diagnostic preparation on 32 fixed TRAIN roots; no execution or playing claim.
+
 - [2026-11-13: Resolved-outcome RL value bundle](2026-11-13-rl-resolved-outcome-bundle.md) — completed 40-update paired study with strict outcomes and three qualified playing screens; no registered gain, donor retained.
 
 - [2026-11-12: E2 outcome-target bundle comparison](2026-11-12-e2-outcome-bundle.md) — preregistered FULLA search-only versus FULLB 20% genuine-outcome WDL/categorical bundle; scientific inputs frozen, execution separately gated, no research result or adoption.
