@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -301,6 +302,9 @@ def test_teardown_drain_is_not_a_selfplay_stall_but_is_bounded(session: Any) -> 
     from chess_anti_engine import worker as worker_mod
 
     limit = worker_mod._SESSION_HANDOFF_DRAIN_LIMIT_S
+    # One clock: the drain mark is real time.time() at teardown, so selfplay's
+    # last progress is too. Without a drain mark, progress + 301 s IS a stall.
+    session._last_selfplay_progress_s = time.time()
     entered, release = threading.Event(), threading.Event()
 
     def slow_swap() -> None:
@@ -322,12 +326,13 @@ def test_teardown_drain_is_not_a_selfplay_stall_but_is_bounded(session: Any) -> 
         assert lock.attempt_threads[-1] == "owner"
         # Teardown is blocked: the session flag must still be True (no race)...
         assert session._selfplay_session_active
-        since = session._session_handoff_draining_since_s
-        assert since is not None
         # ...yet 301 s without selfplay progress is NOT a stall during a drain,
         assert not session._selfplay_stalled(
             session._last_selfplay_progress_s + 301.0, 300.0,
         )
+        since = session._session_handoff_draining_since_s
+        assert since is not None
+        assert since >= session._last_selfplay_progress_s
         assert not session._selfplay_stalled(since + limit - 1.0, 300.0)
         # while a drain past the explicit bound IS one.
         assert session._selfplay_stalled(since + limit + 1.0, 300.0)
@@ -346,3 +351,75 @@ def test_ordinary_stall_semantics_unchanged_outside_a_drain(session: Any) -> Non
     session._set_selfplay_session_active(True)
     assert session._session_handoff_draining_since_s is None
     assert session._selfplay_stalled(session._last_selfplay_progress_s + 301.0, 300.0)
+
+
+class _Exited(Exception):
+    pass
+
+
+@pytest.fixture
+def no_exit(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Replace the watchdog's os._exit so a tick can be observed, not obeyed."""
+    from chess_anti_engine import worker as worker_mod
+
+    codes: list[int] = []
+
+    def fake_exit(code: int) -> None:
+        codes.append(code)
+        raise _Exited
+
+    monkeypatch.setattr(worker_mod.os, "_exit", fake_exit)
+    return codes
+
+
+def test_watchdog_tick_names_a_wedged_teardown_drain(
+    session: Any, no_exit: list[int], caplog: pytest.LogCaptureFixture,
+) -> None:
+    from chess_anti_engine import worker as worker_mod
+
+    since = session._last_selfplay_progress_s
+    session._session_handoff_draining_since_s = since
+    with caplog.at_level(logging.ERROR), pytest.raises(_Exited):
+        session._stall_watchdog_tick(
+            since + worker_mod._SESSION_HANDOFF_DRAIN_LIMIT_S + 1.0, 300.0,
+        )
+    assert no_exit == [2]
+    assert "session teardown waited" in caplog.text
+    assert "swap is wedged" in caplog.text
+    assert "selfplay stalled for" not in caplog.text
+
+
+def test_watchdog_tick_names_an_ordinary_selfplay_stall(
+    session: Any, no_exit: list[int], caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.ERROR), pytest.raises(_Exited):
+        session._stall_watchdog_tick(session._last_selfplay_progress_s + 301.0, 300.0)
+    assert no_exit == [2]
+    assert "selfplay stalled for" in caplog.text
+    assert "session teardown waited" not in caplog.text
+
+
+def test_watchdog_tick_is_silent_when_healthy(
+    session: Any, no_exit: list[int], caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.ERROR):
+        session._stall_watchdog_tick(session._last_selfplay_progress_s + 1.0, 300.0)
+        session._session_handoff_draining_since_s = session._last_selfplay_progress_s
+        session._stall_watchdog_tick(session._last_selfplay_progress_s + 301.0, 300.0)
+    assert no_exit == []
+    assert caplog.text == ""
+
+
+def test_drain_mark_is_cleared_when_the_handoff_raises(session: Any) -> None:
+    class _BrokenLock:
+        def __enter__(self) -> bool:
+            raise RuntimeError("synthetic lock failure")
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+    session._model_watch_lock = _BrokenLock()
+    with pytest.raises(RuntimeError, match="synthetic lock failure"):
+        session._set_selfplay_session_active(False)
+    assert session._session_handoff_draining_since_s is None
+    session._model_watch_lock = _ProbeLock()  # for the fixture's teardown

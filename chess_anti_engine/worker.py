@@ -3021,17 +3021,59 @@ class WorkerSession:
         refreshes the progress timer rather than counting as a stall — the
         watchdog must never hard-exit a healthy paused worker.
         """
+        return self._selfplay_stall_kind(
+            now, timeout_s, self._session_handoff_draining_since_s,
+        ) is not None
+
+    def _selfplay_stall_kind(
+        self, now: float, timeout_s: float, draining_since: float | None,
+    ) -> str | None:
+        """``"drain"``, ``"stall"`` or None, judged on ONE read of the drain mark.
+
+        The caller passes ``draining_since`` (read once) so the verdict and the
+        message the watchdog prints cannot disagree when teardown clears the
+        mark between two reads.
+        """
         if not self._selfplay_session_active:
-            return False
-        draining_since = self._session_handoff_draining_since_s
+            return None
         if draining_since is not None:
             # Teardown is waiting out an in-flight model update: not a selfplay
             # stall, but still bounded (see _set_selfplay_session_active).
-            return (now - float(draining_since)) >= _SESSION_HANDOFF_DRAIN_LIMIT_S
+            if (now - float(draining_since)) >= _SESSION_HANDOFF_DRAIN_LIMIT_S:
+                return "drain"
+            return None
         if self._hold_selfplay:
             self._last_selfplay_progress_s = now
-            return False
-        return (now - float(self._last_selfplay_progress_s)) >= timeout_s
+            return None
+        if (now - float(self._last_selfplay_progress_s)) >= timeout_s:
+            return "stall"
+        return None
+
+    def _stall_watchdog_tick(self, now: float, timeout_s: float) -> None:
+        """One stall-watchdog check: log the matching cause and hard-exit."""
+        draining_since = self._session_handoff_draining_since_s
+        kind = self._selfplay_stall_kind(now, timeout_s, draining_since)
+        if kind is None:
+            return
+        if kind == "drain":
+            assert draining_since is not None
+            self.log.error(
+                "session teardown waited %.0fs (limit=%.0fs) for an "
+                "in-flight model update to release the model-watch "
+                "lock; the swap is wedged. Exiting so the launcher "
+                "restarts this worker",
+                now - float(draining_since), _SESSION_HANDOFF_DRAIN_LIMIT_S,
+            )
+        else:
+            idle_s = now - float(self._last_selfplay_progress_s)
+            self.log.error(
+                "selfplay stalled for %.0fs (limit=%.0fs) with no phase-stats/"
+                "completions; exiting so the launcher restarts this worker "
+                "(set CAE_WORKER_STALL_TIMEOUT_S=0 to disable)",
+                idle_s, timeout_s,
+            )
+        # Hard exit: daemon threads / stuck GIL holders will not join.
+        os._exit(2)
 
     def _start_selfplay_stall_watchdog(self) -> None:
         """Exit the process if a selfplay session produces no progress for too long.
@@ -3072,28 +3114,7 @@ class WorkerSession:
         def _loop() -> None:
             while True:
                 time.sleep(poll_s)
-                if not self._selfplay_stalled(time.time(), timeout_s):
-                    continue
-                draining_since = self._session_handoff_draining_since_s
-                if draining_since is not None:
-                    self.log.error(
-                        "session teardown waited %.0fs (limit=%.0fs) for an "
-                        "in-flight model update to release the model-watch "
-                        "lock; the swap is wedged. Exiting so the launcher "
-                        "restarts this worker",
-                        time.time() - float(draining_since),
-                        _SESSION_HANDOFF_DRAIN_LIMIT_S,
-                    )
-                    os._exit(2)
-                idle_s = time.time() - float(self._last_selfplay_progress_s)
-                self.log.error(
-                    "selfplay stalled for %.0fs (limit=%.0fs) with no phase-stats/"
-                    "completions; exiting so the launcher restarts this worker "
-                    "(set CAE_WORKER_STALL_TIMEOUT_S=0 to disable)",
-                    idle_s, timeout_s,
-                )
-                # Hard exit: daemon threads / stuck GIL holders will not join.
-                os._exit(2)
+                self._stall_watchdog_tick(time.time(), timeout_s)
 
         threading.Thread(
             target=_loop, name="selfplay-stall-watchdog", daemon=True,
