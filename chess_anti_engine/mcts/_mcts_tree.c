@@ -210,6 +210,9 @@ static int extract_cboards(PyObject *list, int32_t n,
 
 #define INITIAL_NODE_CAP   4096
 #define INITIAL_CHILD_CAP  65536
+/* Node and child ids are int32: no pool may hold more slots than this. The
+ * UCI search stops (tree_ids) well before node_count gets near it. */
+#define TREE_MAX_SLOTS     ((int64_t)INT32_MAX - 1)
 
 /* Solved-node status, from the node's side-to-move perspective.
  * Stored in TreeData.solved[node_id] as int8_t.
@@ -275,10 +278,25 @@ typedef struct {
     int32_t child_count;
     int32_t child_cap;
 
-    /* Optional CBoard cache for prepare_gumbel_leaves (lazily allocated) */
-    CBoard  *cb_cache;      /* one CBoard per node (indexed by node_id) */
-    int8_t  *cb_valid;      /* 1 if cb_cache[node_id] is populated */
-    int32_t  cb_cache_cap;  /* allocated capacity */
+    /* Optional CBoard cache for prepare_gumbel_leaves (lazily allocated).
+     * DENSE: cb_slot maps node_id -> index into cb_pool (-1 = no entry), and
+     * cb_pool holds only the boards actually cached (about one per evaluated
+     * leaf, i.e. ~1 in 25 nodes). The previous layout stored one CBoard
+     * (~1.6 KB) per node id, so it ALLOCATED ~25x the boards it held and made
+     * one or two 4 KB pages resident per entry — the capacity-based
+     * memory_bytes() then reported ~41 KB per visit against ~7 KB of RSS. */
+    int32_t *cb_slot;       /* [cb_slot_cap] pool index per node id, -1 = none */
+    int32_t  cb_slot_cap;   /* allocated length of cb_slot (tracks node_cap) */
+    CBoard  *cb_pool;       /* [cb_pool_cap] cached boards, insertion order */
+    int32_t  cb_pool_count; /* live entries in cb_pool */
+    int32_t  cb_pool_cap;   /* allocated length of cb_pool */
+
+    /* Upper bound on node slots ONE tree_grow_nodes call may add (0 = plain
+     * doubling, the selfplay/training default). The UCI engine sets it so a
+     * growth step near the Hash cap cannot double a multi-GB node arena in
+     * one go (node arrays are zero-filled on growth, so capacity is resident).
+     * Configuration, not tree state: survives reset() and reset_compact(). */
+    int32_t  grow_step_max;
 
     /* Per-node Zobrist hash (for DAG transposition detection) */
     uint64_t *node_hash;    /* hash per node_id */
@@ -318,6 +336,13 @@ typedef struct {
     pthread_mutex_t tree_lock;
     int tree_lock_initialized;
 } TreeData;
+
+/* Cached board of node `nid`, or NULL when it has none. */
+static inline const CBoard *tree_cb_lookup(const TreeData *t, int32_t nid) {
+    if (nid < 0 || nid >= t->cb_slot_cap) return NULL;
+    int32_t slot = t->cb_slot[nid];
+    return slot >= 0 ? &t->cb_pool[slot] : NULL;
+}
 
 /* One parent-perspective Q contract for public queries and root halving.
  * A proven parent loss applies to every child, even when a tablebase solved
@@ -399,9 +424,12 @@ static int tree_init(TreeData *t) {
     t->child_action = (int32_t *)malloc(t->child_cap * sizeof(int32_t));
     t->child_node = (int32_t *)malloc(t->child_cap * sizeof(int32_t));
 
-    t->cb_cache = NULL;
-    t->cb_valid = NULL;
-    t->cb_cache_cap = 0;
+    t->cb_slot = NULL;
+    t->cb_slot_cap = 0;
+    t->cb_pool = NULL;
+    t->cb_pool_count = 0;
+    t->cb_pool_cap = 0;
+    t->grow_step_max = 0;
 
     /* Per-node hash + hash table for DAG transposition detection */
     t->node_hash = (uint64_t *)calloc(t->node_cap, sizeof(uint64_t));
@@ -460,8 +488,8 @@ static void tree_free(TreeData *t) {
     free(t->has_solved_child);
     free(t->child_action);
     free(t->child_node);
-    free(t->cb_cache);
-    free(t->cb_valid);
+    free(t->cb_slot);
+    free(t->cb_pool);
     free(t->node_hash);
     free(t->hash_table);
     memset(t, 0, sizeof(TreeData));
@@ -469,7 +497,12 @@ static void tree_free(TreeData *t) {
 
 
 static int tree_grow_nodes(TreeData *t) {
-    int32_t new_cap = t->node_cap * 2;
+    if (t->node_cap >= TREE_MAX_SLOTS) return -1;
+    int64_t want = (int64_t)t->node_cap * 2;
+    if (t->grow_step_max > 0 && want - t->node_cap > t->grow_step_max)
+        want = (int64_t)t->node_cap + t->grow_step_max;
+    if (want > TREE_MAX_SLOTS) want = TREE_MAX_SLOTS;
+    int32_t new_cap = (int32_t)want;
 
     /* Each realloc is committed to the struct only on success so that an
      * OOM mid-growth leaves t->* pointing at the still-valid old buffers
@@ -639,9 +672,9 @@ static int cboard_context_match(const CBoard *d, const CBoard *own,
 
 static int tt_donor_context_match(const TreeData *t, int32_t donor,
                                   const CBoard *own) {
-    if (donor < 0 || donor >= t->cb_cache_cap || !t->cb_valid[donor])
-        return 0;
-    return cboard_context_match(&t->cb_cache[donor], own, 0);
+    const CBoard *d = tree_cb_lookup(t, donor);
+    if (!d) return 0;
+    return cboard_context_match(d, own, 0);
 }
 
 /* Newly built/manual roots are unbound until their first Gumbel search.
@@ -650,8 +683,9 @@ static int tt_donor_context_match(const TreeData *t, int32_t donor,
 static int tree_root_context_match(const TreeData *t, int32_t root,
                                    const CBoard *own) {
     if (root < 0 || root >= t->node_count) return 0;
-    if (root < t->cb_cache_cap && t->cb_valid[root])
-        return cboard_context_match(&t->cb_cache[root], own, 1);
+    const CBoard *root_cb = tree_cb_lookup(t, root);
+    if (root_cb)
+        return cboard_context_match(root_cb, own, 1);
     if (t->parent[root] < 0) return 1;  /* new/manual unbound top-level root */
 
     /* Forced collapse can expand or solve intermediate nodes without caching
@@ -660,13 +694,13 @@ static int tree_root_context_match(const TreeData *t, int32_t root,
      * replace evaluated/solved state on an advanced root. */
     int32_t actions[MCTS_MAX_PATH], n = 0, ancestor = root;
     while (ancestor >= 0 && ancestor < t->node_count &&
-           !(ancestor < t->cb_cache_cap && t->cb_valid[ancestor])) {
+           !tree_cb_lookup(t, ancestor)) {
         if (n >= MCTS_MAX_PATH || t->action_from_parent[ancestor] < 0) return 0;
         actions[n++] = t->action_from_parent[ancestor];
         ancestor = t->parent[ancestor];
     }
     if (ancestor < 0 || ancestor >= t->node_count) return 0;
-    CBoard cb = t->cb_cache[ancestor];
+    CBoard cb = *tree_cb_lookup(t, ancestor);
     for (int32_t i = n - 1; i >= 0; i--)
         cboard_push_index(&cb, actions[i]);
     return cboard_context_match(&cb, own, 1);
@@ -679,7 +713,9 @@ static int tree_root_context_match(const TreeData *t, int32_t root,
 static int32_t tree_ht_probe(const TreeData *t, uint64_t hash) {
     int32_t slot = (int32_t)(hash & (uint64_t)t->ht_mask);
     int32_t nid = __atomic_load_n(&t->hash_table[slot], __ATOMIC_ACQUIRE);
-    if (nid >= 0 && t->node_hash[nid] == hash)
+    /* Bound by node_count too: a stale slot (e.g. one a compaction failed to
+     * remap) must read as a miss, never index past the live arena. */
+    if (nid >= 0 && nid < t->node_count && t->node_hash[nid] == hash)
         return nid;
     return -1;
 }
@@ -708,10 +744,17 @@ static void tree_ht_insert(TreeData *t, uint64_t hash, int32_t node_id) {
 
 
 static int tree_grow_children(TreeData *t, int32_t need) {
-    int32_t new_cap = t->child_cap;
-    while (new_cap < t->child_count + need)
-        new_cap *= 2;
-    if (new_cap == t->child_cap) return 0;
+    /* int64 throughout: an int32 `new_cap *= 2` wrapped to 0 past 2^30 and
+     * spun forever holding tree_lock. Child ids are int32, so the pool can
+     * never exceed TREE_MAX_SLOTS entries; a request beyond that fails. */
+    if (need < 0) return -1;
+    int64_t want = (int64_t)t->child_count + (int64_t)need;
+    if (want > TREE_MAX_SLOTS) return -1;
+    int64_t grown = t->child_cap > 0 ? t->child_cap : INITIAL_CHILD_CAP;
+    while (grown < want) grown *= 2;
+    if (grown > TREE_MAX_SLOTS) grown = TREE_MAX_SLOTS;
+    int32_t new_cap = (int32_t)grown;
+    if (new_cap <= t->child_cap) return 0;
 
     /* Commit each realloc only on success — leaves t->* valid on OOM. */
     int32_t *new_action = (int32_t *)realloc(t->child_action, new_cap * sizeof(int32_t));
@@ -726,20 +769,44 @@ static int tree_grow_children(TreeData *t, int32_t need) {
 }
 
 
-/* Ensure CBoard cache can hold at least `need` entries. All-or-nothing: on
- * any failure t->cb_cache/cb_valid/cb_cache_cap remain mutually consistent. */
+/* Turn the CBoard cache on / make cb_slot cover node ids [0, need). The slot
+ * array tracks node_cap (not a doubling of `need`), so its resident size
+ * follows the node arena's bounded growth. All-or-nothing: on failure
+ * cb_slot/cb_slot_cap remain mutually consistent. */
 static int tree_ensure_cb_cache(TreeData *t, int32_t need) {
-    if (need <= t->cb_cache_cap) return 0;
-    int32_t new_cap = t->cb_cache_cap ? t->cb_cache_cap : 256;
-    while (new_cap < need) new_cap *= 2;
-    CBoard *new_cb = (CBoard *)realloc(t->cb_cache, new_cap * sizeof(CBoard));
-    if (!new_cb) return -1;
-    t->cb_cache = new_cb;
-    int8_t *new_valid = (int8_t *)realloc(t->cb_valid, new_cap * sizeof(int8_t));
-    if (!new_valid) return -1;
-    t->cb_valid = new_valid;
-    memset(t->cb_valid + t->cb_cache_cap, 0, (new_cap - t->cb_cache_cap) * sizeof(int8_t));
-    t->cb_cache_cap = new_cap;
+    if (need <= t->cb_slot_cap) return 0;
+    int32_t new_cap = need > t->node_cap ? need : t->node_cap;
+    int32_t *new_slot = (int32_t *)realloc(t->cb_slot, (size_t)new_cap * sizeof(int32_t));
+    if (!new_slot) return -1;
+    memset(new_slot + t->cb_slot_cap, -1,
+           (size_t)(new_cap - t->cb_slot_cap) * sizeof(int32_t));
+    t->cb_slot = new_slot;
+    t->cb_slot_cap = new_cap;
+    return 0;
+}
+
+/* Store `cb` as node `nid`'s cached board (overwriting any existing entry in
+ * place). Returns 0, or -1 on OOM with the cache unchanged — the cache is an
+ * optimisation, callers may ignore the failure. */
+static int tree_cb_store(TreeData *t, int32_t nid, const CBoard *cb) {
+    if (nid < 0) return -1;
+    if (nid >= t->cb_slot_cap && tree_ensure_cb_cache(t, nid + 1) < 0) return -1;
+    int32_t slot = t->cb_slot[nid];
+    if (slot < 0) {
+        if (t->cb_pool_count >= t->cb_pool_cap) {
+            if (t->cb_pool_cap >= TREE_MAX_SLOTS) return -1;
+            int64_t grown = t->cb_pool_cap ? (int64_t)t->cb_pool_cap * 2 : 256;
+            if (grown > TREE_MAX_SLOTS) grown = TREE_MAX_SLOTS;
+            int32_t new_cap = (int32_t)grown;
+            CBoard *np = (CBoard *)realloc(t->cb_pool, (size_t)new_cap * sizeof(CBoard));
+            if (!np) return -1;
+            t->cb_pool = np;
+            t->cb_pool_cap = new_cap;
+        }
+        slot = t->cb_pool_count++;
+        t->cb_slot[nid] = slot;
+    }
+    t->cb_pool[slot] = *cb;
     return 0;
 }
 
@@ -1404,11 +1471,7 @@ static void softmax_inplace(double *arr, int n);
 
 /* Store a CBoard into the tree's per-node cache slot, growing if needed. */
 static inline void tree_cb_cache_put(TreeData *t, int32_t leaf_id, const CBoard *cb) {
-    if (leaf_id >= t->cb_cache_cap) tree_ensure_cb_cache(t, leaf_id + 1);
-    if (leaf_id < t->cb_cache_cap) {
-        t->cb_cache[leaf_id] = *cb;
-        t->cb_valid[leaf_id] = 1;
-    }
+    (void)tree_cb_store(t, leaf_id, cb);
 }
 
 /* Append a terminal leaf (path + value) to StoredPrepState.
@@ -1816,7 +1879,7 @@ static int32_t gss_prepare_batch(
     TreeData *t, StoredPrepState *s, GumbelSimState *g,
     int32_t n_queries, void *enc_data)
 {
-    int cache_ok = (t->cb_cache != NULL);
+    int cache_ok = (t->cb_slot != NULL);
     int32_t path_buf[MCTS_MAX_PATH];
     int32_t old_n_leaves = s->n_leaves;
     int vloss_w = g->sel.vloss_weight;
@@ -1851,8 +1914,9 @@ static int32_t gss_prepare_batch(
         if (cache_ok) {
             int32_t nid = leaf_id;
             while (nid >= 0 && nid != rid && n_replay < MCTS_MAX_PATH) {
-                if (nid < t->cb_cache_cap && t->cb_valid[nid]) {
-                    cb = t->cb_cache[nid];
+                const CBoard *hit = tree_cb_lookup(t, nid);
+                if (hit) {
+                    cb = *hit;
                     found_cached = 1;
                     break;
                 }
@@ -1860,10 +1924,12 @@ static int32_t gss_prepare_batch(
                 if (act >= 0) replay_actions[n_replay++] = act;
                 nid = t->parent[nid];
             }
-            if (!found_cached && nid == rid &&
-                nid < t->cb_cache_cap && t->cb_valid[nid]) {
-                cb = t->cb_cache[nid];
-                found_cached = 1;
+            if (!found_cached && nid == rid) {
+                const CBoard *hit = tree_cb_lookup(t, nid);
+                if (hit) {
+                    cb = *hit;
+                    found_cached = 1;
+                }
             }
         }
         if (!found_cached) {
@@ -2136,12 +2202,8 @@ static int32_t gss_step(TreeData *t, StoredPrepState *s, GumbelSimState *g, void
             for (int32_t qi = 0; qi < n_queries; qi++) {
                 int32_t rid = g->q_root_ids[qi];
                 int32_t bi = g->q_board_idx[qi];
-                if (rid >= 0 && rid < t->cb_cache_cap) {
-                    if (!t->cb_valid[rid]) {
-                        t->cb_cache[rid] = g->root_cboards[bi];
-                        t->cb_valid[rid] = 1;
-                    }
-                }
+                if (rid >= 0 && rid < t->cb_slot_cap && t->cb_slot[rid] < 0)
+                    (void)tree_cb_store(t, rid, &g->root_cboards[bi]);
             }
 
             if (gss_prepare_batch(t, s, g, n_queries, enc_data) < 0) return -1;
@@ -2364,9 +2426,11 @@ static PyObject *MCTSTree_add_root(MCTSTreeObject *self, PyObject *args) {
     }
     __atomic_store_n(&self->tree.N[id], N, __ATOMIC_RELAXED);
     atomic_store_double(&self->tree.W[id], W);
-    if (cb) {
-        self->tree.cb_cache[id] = *cb;
-        self->tree.cb_valid[id] = 1;
+    if (cb && tree_cb_store(&self->tree, id, cb) < 0) {
+        /* Roll the root back out: a bound-less root left behind would leak a
+         * node and later bind to whatever context searches it first. */
+        self->tree.node_count = id;
+        return PyErr_NoMemory();
     }
     return PyLong_FromLong(id);
 }
@@ -3811,6 +3875,14 @@ static PyObject *MCTSTree_node_capacity(MCTSTreeObject *self, PyObject *Py_UNUSE
 }
 
 
+/* Bytes per node slot across every per-node array (N, W, prior, expanded,
+ * parent, action_from_parent, num_children, children_offset, virtual_loss,
+ * solved, has_solved_child, node_hash). */
+#define TREE_NODE_BYTES ( \
+    sizeof(int32_t) + sizeof(double) + sizeof(double) + sizeof(int8_t) \
+  + sizeof(int32_t) + sizeof(int32_t) + sizeof(int32_t) + sizeof(int32_t) \
+  + sizeof(int32_t) + sizeof(int8_t) + sizeof(int8_t) + sizeof(uint64_t))
+
 /* memory_bytes() -> int — rough total bytes allocated for the tree's own
  * buffers. Sums the realloc'd node arrays (sized to node_cap), the children
  * pool (child_cap), the lazy CBoard cache (cb_cache_cap, a big per-entry
@@ -3820,29 +3892,317 @@ static PyObject *MCTSTree_memory_bytes(MCTSTreeObject *self, PyObject *Py_UNUSED
     const TreeData *t = &self->tree;
     int64_t bytes = 0;
     /* Per-node arrays sized to node_cap. */
-    bytes += (int64_t)t->node_cap * (
-        sizeof(int32_t)   /* N */
-      + sizeof(double)    /* W */
-      + sizeof(double)    /* prior */
-      + sizeof(int8_t)    /* expanded */
-      + sizeof(int32_t)   /* parent */
-      + sizeof(int32_t)   /* action_from_parent */
-      + sizeof(int32_t)   /* num_children */
-      + sizeof(int32_t)   /* children_offset */
-      + sizeof(int32_t)   /* virtual_loss */
-      + sizeof(int8_t)    /* solved */
-      + sizeof(int8_t)    /* has_solved_child */
-      + sizeof(uint64_t)  /* node_hash */
-    );
+    bytes += (int64_t)t->node_cap * (int64_t)TREE_NODE_BYTES;
     /* Children pool. */
     bytes += (int64_t)t->child_cap * (sizeof(int32_t) + sizeof(int32_t));
     /* CBoard cache (only if lazily allocated). */
-    if (t->cb_cache) {
-        bytes += (int64_t)t->cb_cache_cap * (sizeof(CBoard) + sizeof(int8_t));
+    if (t->cb_slot) {
+        bytes += (int64_t)t->cb_slot_cap * (int64_t)sizeof(int32_t);
+        bytes += (int64_t)t->cb_pool_cap * (int64_t)sizeof(CBoard);
     }
     /* Transposition hash table. */
     bytes += (int64_t)t->ht_cap * sizeof(int32_t);
     return PyLong_FromLongLong(bytes);
+}
+
+
+/* Bytes the tree really holds resident — the quantity the UCI Hash budget
+ * and `hashfull` are measured against. Differs from memory_bytes() (allocated
+ * capacity) where capacity is not touched:
+ *   - per-node arrays: node_cap slots (tree_grow_nodes zero-fills new slots,
+ *     so the whole capacity is resident);
+ *   - children pool: child_count entries (realloc'd, never zero-filled, so
+ *     the untouched tail costs address space only);
+ *   - CBoard cache: the slot index (memset to -1 → resident at cb_slot_cap)
+ *     plus the LIVE pool entries;
+ *   - transposition table: ht_cap (memset at init).
+ * Validated against process RSS by the UCI Hash-accounting harness. */
+static int64_t tree_footprint_bytes(const TreeData *t) {
+    int64_t bytes = (int64_t)t->node_cap * (int64_t)TREE_NODE_BYTES;
+    bytes += (int64_t)t->child_count * (int64_t)(sizeof(int32_t) + sizeof(int32_t));
+    bytes += (int64_t)t->cb_slot_cap * (int64_t)sizeof(int32_t);
+    bytes += (int64_t)t->cb_pool_count * (int64_t)sizeof(CBoard);
+    bytes += (int64_t)t->ht_cap * (int64_t)sizeof(int32_t);
+    return bytes;
+}
+
+static PyObject *MCTSTree_footprint_bytes(MCTSTreeObject *self, PyObject *Py_UNUSED(args)) {
+    return PyLong_FromLongLong(tree_footprint_bytes(&self->tree));
+}
+
+/* memory_stats() -> dict. Diagnostic breakdown of the tree's buffers:
+ * allocated capacities and live counts for every buffer memory_bytes() and
+ * footprint_bytes() sum, plus the per-element sizes, so tests and the
+ * Hash-accounting harness can compare both against measured RSS. */
+static PyObject *MCTSTree_memory_stats(MCTSTreeObject *self, PyObject *Py_UNUSED(args)) {
+    const TreeData *t = &self->tree;
+    return Py_BuildValue(
+        "{s:i,s:i,s:i,s:i,s:i,s:i,s:i,s:i,s:i,s:n,s:n,s:n,s:n}",
+        "node_count", (int)t->node_count,
+        "node_cap", (int)t->node_cap,
+        "child_count", (int)t->child_count,
+        "child_cap", (int)t->child_cap,
+        "cb_slot_cap", (int)t->cb_slot_cap,
+        "cb_pool_count", (int)t->cb_pool_count,
+        "cb_pool_cap", (int)t->cb_pool_cap,
+        "ht_cap", (int)t->ht_cap,
+        "grow_step_max", (int)t->grow_step_max,
+        "node_bytes", (Py_ssize_t)TREE_NODE_BYTES,
+        "child_bytes", (Py_ssize_t)(sizeof(int32_t) + sizeof(int32_t)),
+        "cb_slot_bytes", (Py_ssize_t)sizeof(int32_t),
+        "cboard_bytes", (Py_ssize_t)sizeof(CBoard));
+}
+
+/* tt_entry_stats() -> (live_entries, max_node_id). Diagnostic scan of the
+ * transposition table (max_node_id -1 when empty); lets tests assert that
+ * every surviving entry addresses a live node after compaction. */
+static PyObject *MCTSTree_tt_entry_stats(MCTSTreeObject *self, PyObject *Py_UNUSED(args)) {
+    const TreeData *t = &self->tree;
+    long long live = 0;
+    int32_t mx = -1;
+    for (int32_t sl = 0; sl < t->ht_cap; sl++) {
+        int32_t nid = t->hash_table[sl];
+        if (nid >= 0) { live++; if (nid > mx) mx = nid; }
+    }
+    return Py_BuildValue("(Li)", live, (int)mx);
+}
+
+/* set_growth_step(max_nodes) -> None. Cap on node slots one arena growth may
+ * add (0 = plain doubling, the default every non-UCI caller keeps). */
+static PyObject *MCTSTree_set_growth_step(MCTSTreeObject *self, PyObject *args) {
+    int step;
+    if (!PyArg_ParseTuple(args, "i", &step)) return NULL;
+    if (step < 0) {
+        PyErr_SetString(PyExc_ValueError, "growth step must be >= 0");
+        return NULL;
+    }
+    self->tree.grow_step_max = step;
+    Py_RETURN_NONE;
+}
+
+/* Shrink one realloc'd array to `n` elements; keeps the old block on failure
+ * (realloc leaves it valid), which only forgoes the memory return. */
+#define SHRINK_ARRAY(ptr, type, n) do { \
+    type *_p = (type *)realloc((ptr), (size_t)(n) * sizeof(type)); \
+    if (_p) (ptr) = _p; \
+} while (0)
+
+/* compact_to_subtree(root_id, max_footprint_bytes) -> int
+ *
+ * Rebuild the arena so it holds ONLY the subtree under `root_id`, which
+ * becomes node 0 (parent -1). Cross-move tree reuse otherwise just repoints
+ * the root: the discarded siblings stay in the arena and the footprint climbs
+ * monotonically across a game. Compaction is in place — nodes keep their
+ * relative order (a child is always created after its parent, so new id <=
+ * old id and an ascending copy never clobbers unread data); the
+ * virtual_loss array is the old->new id map during the rebuild (it is zero
+ * for every node at the quiescent points this is called from and is zeroed
+ * again on exit). Transient extra memory: the kept children pool and a
+ * 4-byte owner index per cached board. The node arrays, slot index and CBoard
+ * pool are then shrunk so the freed memory goes back to the allocator.
+ *
+ * Refuses (returns -1, tree unchanged apart from cleared virtual loss) when
+ * the compacted footprint would exceed `max_footprint_bytes` (<= 0: no
+ * limit). Returns the new root id (0) on success. Pending Gumbel/stored batch
+ * state references old node ids and is discarded, exactly as reset() does. */
+static PyObject *MCTSTree_compact_to_subtree(MCTSTreeObject *self, PyObject *args) {
+    int rid;
+    long long max_bytes = 0;
+    if (!PyArg_ParseTuple(args, "i|L", &rid, &max_bytes)) return NULL;
+    TreeData *t = &self->tree;
+    if (!validate_node_id(t, rid, "root_id")) return NULL;
+    const int32_t n = t->node_count;
+    int32_t *map = t->virtual_loss;
+
+    /* Pass 1: old -> new id map (ascending; parent[id] < id). */
+    for (int32_t i = 0; i < rid; i++) map[i] = -1;
+    map[rid] = 0;
+    int32_t m = 1;
+    int64_t kept_children = t->num_children[rid];
+    int64_t kept_cb = tree_cb_lookup(t, rid) ? 1 : 0;
+    for (int32_t i = rid + 1; i < n; i++) {
+        int32_t p = t->parent[i];
+        if (p >= rid && p < i && map[p] >= 0) {
+            map[i] = m++;
+            kept_children += t->num_children[i];
+            if (tree_cb_lookup(t, i)) kept_cb++;
+        } else {
+            map[i] = -1;
+        }
+    }
+
+    /* A searched root normally has its own cached board; an advanced root
+     * that was only expanded by forced collapse does not. Derive it from
+     * the nearest cached ancestor (as tree_root_context_match does) so the
+     * compacted root stays bound to its history context. */
+    CBoard root_cb;
+    int have_root_cb = 0;
+    if (t->cb_slot) {
+        const CBoard *own = tree_cb_lookup(t, rid);
+        if (own) {
+            root_cb = *own;
+            have_root_cb = 1;
+        } else {
+            int32_t actions[MCTS_MAX_PATH], na = 0, anc = rid;
+            int ok = 1;
+            while (anc >= 0 && !tree_cb_lookup(t, anc)) {
+                if (na >= MCTS_MAX_PATH || t->action_from_parent[anc] < 0) { ok = 0; break; }
+                actions[na++] = t->action_from_parent[anc];
+                anc = t->parent[anc];
+            }
+            if (ok && anc >= 0) {
+                root_cb = *tree_cb_lookup(t, anc);
+                for (int32_t i = na - 1; i >= 0; i--) cboard_push_index(&root_cb, actions[i]);
+                have_root_cb = 1;
+                kept_cb++;
+            }
+        }
+    }
+
+    const int32_t new_node_cap = m > INITIAL_NODE_CAP ? m : INITIAL_NODE_CAP;
+    const int32_t new_child_cap = kept_children > INITIAL_CHILD_CAP
+        ? (int32_t)kept_children : INITIAL_CHILD_CAP;
+    if (max_bytes > 0) {
+        int64_t projected = (int64_t)new_node_cap * (int64_t)TREE_NODE_BYTES
+            + kept_children * (int64_t)(sizeof(int32_t) + sizeof(int32_t))
+            + (t->cb_slot ? (int64_t)new_node_cap * (int64_t)sizeof(int32_t) : 0)
+            + kept_cb * (int64_t)sizeof(CBoard)
+            + (int64_t)t->ht_cap * (int64_t)sizeof(int32_t);
+        if (projected > (int64_t)max_bytes) {
+            memset(map, 0, (size_t)n * sizeof(int32_t));
+            return PyLong_FromLong(-1);
+        }
+    }
+
+    int32_t *new_action = (int32_t *)malloc((size_t)new_child_cap * sizeof(int32_t));
+    int32_t *new_cnode = (int32_t *)malloc((size_t)new_child_cap * sizeof(int32_t));
+    int32_t *owner = NULL;
+    if (t->cb_pool_count > 0)
+        owner = (int32_t *)malloc((size_t)t->cb_pool_count * sizeof(int32_t));
+    if (!new_action || !new_cnode || (t->cb_pool_count > 0 && !owner)) {
+        free(new_action); free(new_cnode); free(owner);
+        memset(map, 0, (size_t)n * sizeof(int32_t));
+        return PyErr_NoMemory();
+    }
+
+    pthread_mutex_lock(&t->tree_lock);
+    gss_free(&self->gsim);
+    stored_free(&self->stored);
+
+    /* Pass 2: move per-node data down (new id <= old id). children_offset
+     * keeps the OLD offset until pass 3 rebuilds the children pool. */
+    for (int32_t i = rid; i < n; i++) {
+        int32_t j = map[i];
+        if (j < 0) continue;
+        int32_t old_parent = t->parent[i];
+        t->N[j] = t->N[i];
+        t->W[j] = t->W[i];
+        t->prior[j] = t->prior[i];
+        t->expanded[j] = t->expanded[i];
+        t->action_from_parent[j] = (i == rid) ? -1 : t->action_from_parent[i];
+        t->parent[j] = (i == rid) ? -1 : map[old_parent];
+        t->num_children[j] = t->num_children[i];
+        t->children_offset[j] = t->children_offset[i];
+        t->solved[j] = t->solved[i];
+        t->has_solved_child[j] = t->has_solved_child[i];
+        t->node_hash[j] = t->node_hash[i];
+    }
+
+    /* Pass 3: children pool rebuilt in new-id order. */
+    int32_t k = 0;
+    for (int32_t j = 0; j < m; j++) {
+        int32_t nc = t->num_children[j];
+        int32_t off = t->children_offset[j];
+        for (int32_t c = 0; c < nc; c++) {
+            new_action[k + c] = t->child_action[off + c];
+            new_cnode[k + c] = map[t->child_node[off + c]];
+        }
+        t->children_offset[j] = nc > 0 ? k : 0;
+        k += nc;
+    }
+    free(t->child_action);
+    free(t->child_node);
+    t->child_action = new_action;
+    t->child_node = new_cnode;
+    t->child_count = k;
+    t->child_cap = new_child_cap;
+
+    /* Transposition table: keep each surviving entry, remapped; drop the rest. */
+    for (int32_t sl = 0; sl < t->ht_cap; sl++) {
+        int32_t nid = t->hash_table[sl];
+        t->hash_table[sl] = (nid >= rid && nid < n) ? map[nid] : -1;
+    }
+
+    /* CBoard cache: compact the pool in slot order (k <= slot), re-index. */
+    if (t->cb_slot) {
+        int32_t pool_n = t->cb_pool_count;
+        if (owner) {
+            for (int32_t q = 0; q < pool_n; q++) owner[q] = -1;
+            int32_t lim = t->cb_slot_cap < n ? t->cb_slot_cap : n;
+            for (int32_t i = 0; i < lim; i++)
+                if (t->cb_slot[i] >= 0) owner[t->cb_slot[i]] = i;
+        }
+        memset(t->cb_slot, -1, (size_t)t->cb_slot_cap * sizeof(int32_t));
+        int32_t kc = 0;
+        for (int32_t q = 0; q < pool_n; q++) {
+            int32_t i = owner[q];
+            if (i < rid || map[i] < 0) continue;
+            if (kc != q) t->cb_pool[kc] = t->cb_pool[q];
+            t->cb_slot[map[i]] = kc++;
+        }
+        t->cb_pool_count = kc;
+        if (have_root_cb && t->cb_slot[0] < 0)
+            (void)tree_cb_store(t, 0, &root_cb);  /* derived root board */
+    }
+    free(owner);
+
+    /* Clear the scratch map and the vacated tail, then return memory. */
+    memset(t->virtual_loss, 0, (size_t)n * sizeof(int32_t));
+    t->node_count = m;
+    #define SHRINK_NODE_FIELD(field, type) SHRINK_ARRAY(t->field, type, new_node_cap)
+    SHRINK_NODE_FIELD(N, int32_t);
+    SHRINK_NODE_FIELD(W, double);
+    SHRINK_NODE_FIELD(prior, double);
+    SHRINK_NODE_FIELD(expanded, int8_t);
+    SHRINK_NODE_FIELD(parent, int32_t);
+    SHRINK_NODE_FIELD(action_from_parent, int32_t);
+    SHRINK_NODE_FIELD(num_children, int32_t);
+    SHRINK_NODE_FIELD(children_offset, int32_t);
+    SHRINK_NODE_FIELD(virtual_loss, int32_t);
+    SHRINK_NODE_FIELD(solved, int8_t);
+    SHRINK_NODE_FIELD(has_solved_child, int8_t);
+    SHRINK_NODE_FIELD(node_hash, uint64_t);
+    #undef SHRINK_NODE_FIELD
+    if (new_node_cap < t->node_cap) t->node_cap = new_node_cap;  /* m <= n <= node_cap */
+    /* Vacated slots [m, node_cap) must look freshly zero-filled, as
+     * tree_grow_nodes leaves them (parent/action -1). */
+    {
+        int32_t tail = t->node_cap - m;
+        if (tail > 0) {
+            memset(t->N + m, 0, (size_t)tail * sizeof(int32_t));
+            memset(t->W + m, 0, (size_t)tail * sizeof(double));
+            memset(t->prior + m, 0, (size_t)tail * sizeof(double));
+            memset(t->expanded + m, 0, (size_t)tail * sizeof(int8_t));
+            memset(t->parent + m, -1, (size_t)tail * sizeof(int32_t));
+            memset(t->action_from_parent + m, -1, (size_t)tail * sizeof(int32_t));
+            memset(t->num_children + m, 0, (size_t)tail * sizeof(int32_t));
+            memset(t->children_offset + m, 0, (size_t)tail * sizeof(int32_t));
+            memset(t->solved + m, 0, (size_t)tail * sizeof(int8_t));
+            memset(t->has_solved_child + m, 0, (size_t)tail * sizeof(int8_t));
+            memset(t->node_hash + m, 0, (size_t)tail * sizeof(uint64_t));
+        }
+    }
+    if (t->cb_slot && t->cb_slot_cap > t->node_cap) {
+        SHRINK_ARRAY(t->cb_slot, int32_t, t->node_cap);
+        t->cb_slot_cap = t->node_cap;
+    }
+    if (t->cb_pool && t->cb_pool_cap > 256 && t->cb_pool_count < t->cb_pool_cap) {
+        int32_t pc = t->cb_pool_count > 256 ? t->cb_pool_count : 256;
+        CBoard *np = (CBoard *)realloc(t->cb_pool, (size_t)pc * sizeof(CBoard));
+        if (np) { t->cb_pool = np; t->cb_pool_cap = pc; }
+    }
+    pthread_mutex_unlock(&t->tree_lock);
+    return PyLong_FromLong(0);
 }
 
 
@@ -3855,8 +4215,9 @@ static PyObject *MCTSTree_reset(MCTSTreeObject *self, PyObject *Py_UNUSED(args))
     self->tree.node_count = 0;
     self->tree.child_count = 0;
     /* Invalidate CBoard cache */
-    if (self->tree.cb_valid && self->tree.cb_cache_cap > 0)
-        memset(self->tree.cb_valid, 0, self->tree.cb_cache_cap * sizeof(int8_t));
+    if (self->tree.cb_slot && self->tree.cb_slot_cap > 0)
+        memset(self->tree.cb_slot, -1, (size_t)self->tree.cb_slot_cap * sizeof(int32_t));
+    self->tree.cb_pool_count = 0;
     /* Clear transposition hash table to prevent stale lookups */
     if (self->tree.hash_table && self->tree.ht_cap > 0)
         memset(self->tree.hash_table, -1, self->tree.ht_cap * sizeof(int32_t));
@@ -3883,6 +4244,7 @@ static PyObject *MCTSTree_reset_compact(MCTSTreeObject *self, PyObject *Py_UNUSE
      * struct comment promises it survives both reset paths). */
     fresh.puct_cpuct_factor = self->tree.puct_cpuct_factor;
     fresh.puct_cpuct_base = self->tree.puct_cpuct_base;
+    fresh.grow_step_max = self->tree.grow_step_max;
     gss_free(&self->gsim);
     stored_free(&self->stored);
     tree_free(&self->tree);
@@ -4359,7 +4721,7 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
             return NULL;
         }
         if (rid >= 0 && self->tree.parent[rid] < 0 &&
-            (rid >= self->tree.cb_cache_cap || !self->tree.cb_valid[rid])) {
+            !tree_cb_lookup(&self->tree, rid)) {
             /* An unbound root may appear twice in a raw batch, but can bind to
              * only one context. Normal Python roots are already bound, so this
              * duplicate check costs no pairwise work on the production path. */
@@ -4631,10 +4993,8 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     tree_ensure_cb_cache(&self->tree, self->tree.node_count);
     for (int32_t i = 0; i < n_boards; i++) {
         int32_t rid = g->root_ids[i];
-        if (rid >= 0 && rid < self->tree.cb_cache_cap) {
-            self->tree.cb_cache[rid] = g->root_cboards[i];
-            self->tree.cb_valid[rid] = 1;
-        }
+        if (rid >= 0 && rid < self->tree.cb_slot_cap)
+            (void)tree_cb_store(&self->tree, rid, &g->root_cboards[i]);
     }
 
     Py_DECREF(root_ids_arr);
@@ -5438,6 +5798,17 @@ static PyMethodDef MCTSTree_methods[] = {
      "is_expanded(node_id) -> bool"},
     {"memory_bytes", (PyCFunction)MCTSTree_memory_bytes, METH_NOARGS,
      "memory_bytes() -> int. Approximate total bytes allocated for tree buffers."},
+    {"memory_stats", (PyCFunction)MCTSTree_memory_stats, METH_NOARGS,
+     "memory_stats() -> dict. Capacities, live counts and element sizes of the tree buffers."},
+    {"tt_entry_stats", (PyCFunction)MCTSTree_tt_entry_stats, METH_NOARGS,
+     "tt_entry_stats() -> (live_entries, max_node_id). Transposition-table scan (diagnostic)."},
+    {"footprint_bytes", (PyCFunction)MCTSTree_footprint_bytes, METH_NOARGS,
+     "footprint_bytes() -> int. Bytes the tree really holds resident (the UCI Hash measure)."},
+    {"set_growth_step", (PyCFunction)MCTSTree_set_growth_step, METH_VARARGS,
+     "set_growth_step(max_nodes) -> None. Cap node slots added per arena growth (0 = doubling)."},
+    {"compact_to_subtree", (PyCFunction)MCTSTree_compact_to_subtree, METH_VARARGS,
+     "compact_to_subtree(root_id, max_footprint_bytes=0) -> int. Keep only root_id's subtree "
+     "(new root id 0); -1 = refused because the compacted footprint exceeds the limit."},
     {"node_count", (PyCFunction)MCTSTree_node_count, METH_NOARGS,
      "node_count() -> int"},
     {"node_capacity", (PyCFunction)MCTSTree_node_capacity, METH_NOARGS,
@@ -6683,8 +7054,10 @@ PyMODINIT_FUNC PyInit__mcts_tree(void) {
      * 7 = solved-root child witnesses + exact solved-value queries. Stale
      * binaries can discard a tablebase win or report an averaged proven loss.
      * 8 = explicit incomplete survivors for bounded caller witness recovery.
-     * 9 = optional PUCT leaf input-history mode (legacy/root/root-legacy-meta). */
-    if (PyModule_AddIntConstant(m, "ABI_VERSION", 9) < 0) {
+     * 9 = optional PUCT leaf input-history mode (legacy/root/root-legacy-meta).
+     * 10 = dense CBoard cache + footprint_bytes()/memory_stats()/
+     * set_growth_step()/compact_to_subtree() (UCI Hash accounting). */
+    if (PyModule_AddIntConstant(m, "ABI_VERSION", 10) < 0) {
         Py_DECREF(m);
         return NULL;
     }

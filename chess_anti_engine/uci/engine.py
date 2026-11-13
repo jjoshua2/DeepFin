@@ -638,6 +638,9 @@ class Engine:
         self._applied_moves = tuple(target_moves)
 
     def _handle_go(self, cmd: CmdGo) -> None:
+        # The move clock starts at `go` receipt: tree sync (including any reuse
+        # work) and thread start-up below are charged to this move's deadline.
+        go_received_at = time.monotonic()
         # A timeout cannot transfer ownership of the still-live worker.
         self._wait_for_search()
   # Ponder mode: search at the position BEFORE opponent's predicted
@@ -704,7 +707,7 @@ class Engine:
             gen = self._search_gen
         self._search_thread = threading.Thread(
             target=self._run_search,
-            args=(limits, gen, search_board),
+            args=(limits, gen, search_board, go_received_at),
             daemon=True,
         )
         self._search_thread.start()
@@ -1611,9 +1614,14 @@ class Engine:
         finally:
             self._worker.reset_tree()
 
-    def _run_search(self, limits: SearchLimits, gen: int, board: chess.Board) -> None:
+    def _run_search(
+        self, limits: SearchLimits, gen: int, board: chess.Board,
+        go_received_at: float | None = None,
+    ) -> None:
   # Ponder search: no deadline yet; runs until ponderhit or stop.
-        result = self._run_one_phase(limits, is_ponder=limits.ponder, board=board)
+        result = self._run_one_phase(
+            limits, is_ponder=limits.ponder, board=board, clock_started_at=go_received_at,
+        )
   # The worker can return before the GUI does. A mated root, a tablebase
   # hit, a declined draw, a full hash, or a search exception is not a
   # ponder release: this phase is still the position *before* the predicted
@@ -1669,12 +1677,16 @@ class Engine:
     def _run_one_phase(
         self, limits: SearchLimits, *, is_ponder: bool, board: chess.Board,
         started_at: float | None = None,
+        clock_started_at: float | None = None,
     ) -> SearchResult:
         deadline_ms = None if is_ponder else limits.deadline_ms
         max_nodes = None if is_ponder else limits.max_nodes
         max_depth = None if is_ponder else limits.max_depth
         optimum_ms = None if is_ponder else limits.optimum_ms
-        deadline = Deadline(deadline_ms=deadline_ms, now=started_at)
+        deadline = Deadline(
+            deadline_ms=deadline_ms,
+            now=started_at if started_at is not None else clock_started_at,
+        )
         if started_at is not None and (self._stop_event.is_set() or deadline.expired()):
             reason = ("ponder_transition_cancelled" if self._stop_event.is_set()
                       else "ponder_transition_deadline")
