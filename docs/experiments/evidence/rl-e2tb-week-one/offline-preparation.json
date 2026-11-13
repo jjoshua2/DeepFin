@@ -1,0 +1,91 @@
+{
+  "status": "SEALED_SOURCE_ONLY_OFFLINE_V3_UNBOUND_NOT_ADMITTED",
+  "utc": "2026-11-13T02:22:13.041934+00:00",
+  "previous_preparation_sha256": "2e07415a98ab759bedf2b00eb687ea99f33682a64bf621263b47ad79bce604f4",
+  "all_other_offline_Python_byte_exact": true,
+  "only_executable_change": "One GPU affinity literal in score().",
+  "numeric_metrics_inference_root_selection_or_science_changes": false,
+  "execution_admitted": false,
+  "files": {
+    "README.md": {
+      "sha256": "1a1d079e562a009e73f5dee26ac37856e61d13b4a8fe84486247591e13909a38",
+      "bytes": 3507
+    },
+    "TRAINv2-binding-delta.json": {
+      "sha256": "b0965996f5fa80351cf1ebbf7378078e18715ee78895720b392bd35164374155",
+      "bytes": 1024
+    },
+    "checkpoints-binding.UNBOUND.json": {
+      "sha256": "73c287610dde4969ef4fc53b7a2562b9a3a1543132a783a934a43572b8f855ba",
+      "bytes": 1432
+    },
+    "cohort-binding.UNBOUND.json": {
+      "sha256": "756ad44c1b132344b1ee1293f722b800bc0ff3e262c87381c071715509443552",
+      "bytes": 931
+    },
+    "commands.UNBOUND.json": {
+      "sha256": "61db36558fa0e6b9bc91b3f3f494d994c90b04a176f6e4cbdf82127188d07f16",
+      "bytes": 2262
+    },
+    "common.py": {
+      "sha256": "fe19a87af201ecdd9d3a2cadef2105e9d4016afc549f13e9622e9afea484c2e9",
+      "bytes": 7202
+    },
+    "freeze_roots.py": {
+      "sha256": "40dc49d582326c4d63f06011746f65f052826fb66e579e54cad105eef7a9a956",
+      "bytes": 8425
+    },
+    "full-source-change.patch": {
+      "sha256": "be184246a11a62f2236e27518d155a8ca61987611f9b82c3ea6d3cc173b29384",
+      "bytes": 38796
+    },
+    "manifest.json": {
+      "sha256": "5b36c63d811a91a6f35847251a602a18a24a41a4660af50e071a698a47d1303a",
+      "bytes": 3343
+    },
+    "metrics.py": {
+      "sha256": "8058546e7fa263c5becfae1f4378917d4b1d4f333f32d8e04b94fceefe7a1d56",
+      "bytes": 2447
+    },
+    "negative-qualification-plan.UNRUN.json": {
+      "sha256": "911f2efaa2b42244536aa66f11ed336bece37beb1086bfdc1a76ab001ce44e79",
+      "bytes": 2259
+    },
+    "protocol.json": {
+      "sha256": "b2123634a6e3f8eff8a093c7c5c93120df4105e903ac2a7e844e39d95c70e892",
+      "bytes": 5297
+    },
+    "readout.py": {
+      "sha256": "285c3c9b1914a7b913ea1de0330394d1c2b36185ffa87e05c24276bc58ca88bf",
+      "bytes": 8166
+    },
+    "root-bank-binding.UNBOUND.json": {
+      "sha256": "e9cbc15cd6c0daa356d903fe67e4d6480fb70cd12454281c35e32f5d00b8546f",
+      "bytes": 337
+    },
+    "score-affinity-v2-to-v3.diff": {
+      "sha256": "63718c4de170250a1b63be755172e52bc9d4fb2934fe6fa01f7bd237b8d3e6cd",
+      "bytes": 489
+    },
+    "score.py": {
+      "sha256": "6d96e964df8e6d0f252b1c602d10d52e5d167fbdf906e8fa5ddc65fd3a63b671",
+      "bytes": 19580
+    },
+    "source-proof.json": {
+      "sha256": "521315ed1cf72ab7bc824563f5f96d5917b1867927e684b832dfd6edd44f3082",
+      "bytes": 4020
+    },
+    "source-proof.v2.json": {
+      "sha256": "ccd9c9bd5b732ba387954e9daf3bc60b251a7e0f58375e61700775763dfc3969",
+      "bytes": 3743
+    },
+    "strict_roots.py": {
+      "sha256": "2b88f17f1fd9d06a8f60d35a3222b90ed6288d7eebd61997e9893fc1aa59b319",
+      "bytes": 7150
+    },
+    "v2-to-v3.patch": {
+      "sha256": "b8db3d16c695af08d2f4c0924126f3e8eb4a8ee01a0a943a50b24447e082124b",
+      "bytes": 15873
+    }
+  }
+}

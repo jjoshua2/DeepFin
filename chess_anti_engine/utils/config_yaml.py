@@ -9,6 +9,7 @@ from typing import Any
 from chess_anti_engine.config_keys import TRAINER_WEIGHT_KEYS
 from chess_anti_engine.tune.fresh_rl_donor import validate_config as validate_fresh_rl_config
 from chess_anti_engine.utils.sequential_selfplay import validate_sequential_selfplay_config
+from chess_anti_engine.utils.syzygy_config import validate_selfplay_syzygy
 
 
 def strict_config_bool(value: Any, *, key: str, source: str) -> bool:
@@ -197,7 +198,7 @@ _SELFPLAY_KEYS = (
     "sf_policy_score_mode", "sf_policy_cp_temp",
     "sf_wdl_use_cp_logistic", "sf_wdl_cp_slope", "sf_wdl_cp_draw_width",
     "search_wdl_draw_mode",
-    "syzygy_path", "stockfish_syzygy_path", "syzygy_rescore_policy", "syzygy_adjudicate",
+    "syzygy_outcome_mode", "syzygy_path", "stockfish_syzygy_path", "syzygy_rescore_policy", "syzygy_adjudicate",
     "syzygy_adjudicate_fraction", "syzygy_in_search",
     "timeout_adjudication_threshold",
     "diff_focus_enabled", "diff_focus_q_weight", "diff_focus_pol_scale",
@@ -673,6 +674,7 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     _check_exploit_replay_share_fraction(flat)
     validate_fresh_rl_config(flat)
     validate_sequential_selfplay_config(flat)
+    validate_selfplay_syzygy(flat)
     return flat
 
 

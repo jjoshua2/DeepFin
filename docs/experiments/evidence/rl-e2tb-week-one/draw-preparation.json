@@ -1,0 +1,42 @@
+{
+  "status": "SEALED_SOURCE_ONLY_E2TB_DRAW_PLAN_PREPARATION_UNBOUND_NOT_ADMITTED",
+  "utc": "2026-11-13T02:35:47.983464+00:00",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "new_helper_executed": false,
+  "actual_identity_inputs_bound": false,
+  "research_or_learning_admitted": false,
+  "files": {
+    "README.md": {
+      "sha256": "c17acf1ccb6dbdfa48d967c13774cea8c8b8eba8a76c435ba2e01e0c81ec5699",
+      "bytes": 2125
+    },
+    "bind_draw_plan.py": {
+      "sha256": "4b2a2787d94795d9c38ab0900533a7a9c9e4616e81648317d2ecab23bb3987b1",
+      "bytes": 9297
+    },
+    "binding-contract.json": {
+      "sha256": "3034699e8b6d124c1a8af2ba09462460c1f50de9968ced80a2d97872cc6fb302",
+      "bytes": 2915
+    },
+    "command.TEMPLATE.json": {
+      "sha256": "727b88ed5580a0f51c3454eac6ef5d57b9a3f1944923c86ced5c832f881456de",
+      "bytes": 2173
+    },
+    "identity-inputs.TEMPLATE.json": {
+      "sha256": "fdefbde7a15bf5a7d9960fb9629ba10949fbe95c719017733c8b0d2c2877227b",
+      "bytes": 364
+    },
+    "manifest.json": {
+      "sha256": "4a1896729659a4b3c23d812b5b6b5c0f45b34a01b479e6904bb2b9ebbacb011f",
+      "bytes": 3009
+    },
+    "scientific-component-binding.json": {
+      "sha256": "4662aa4468e3be30e2a134b65daa793cacffee9a53ec6c53812dd378e10c2bd5",
+      "bytes": 711
+    },
+    "source-proof.json": {
+      "sha256": "434dc4b9200d98160ead4f0d23baf4ff4af21c7c1f4823f8ef078a1be623f876",
+      "bytes": 4516
+    }
+  }
+}

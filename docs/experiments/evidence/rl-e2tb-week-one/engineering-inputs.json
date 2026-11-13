@@ -1,0 +1,274 @@
+{
+  "coverage_scope": "All3 successful attempt3 declared initial encodings and retained rows raw+actual production-file-mirror identities and declared full histories, plus failed1 known initial/c2c4 histories (actualinput/forwardUNKNOWN), plus failed2 captured initial+retained input/mirror/history. No actual training; no claim all internal search inputs/unstored states/dropout/pre-FEN past/epoch2 exposure covered. Mirror hashes are possible production transforms, not observed training draws.",
+  "engineering_uuid": "ceec22f2-1ca1-40e9-851c-f7c95300ec0f",
+  "history_sha256": [
+    "0a328ba53bbe58b6c554fb0fff187a42d6ece3dcf4012baa8781c886578c9be0",
+    "4797e11ed834a993c6157c9071d710bbba12f92927baaede9e005eff147975c8",
+    "49846f21a3c15a49f182fffafd999c827126c9625b1ccfa0c1fe2ee2784633b5",
+    "f0d6192bbaff6c1b9c919bfa5260f949306490e9e85d628ff206871bcdc2278b"
+  ],
+  "latest_attempt_id": "cd2ce2d8-bca5-498e-91ae-013580b1c43f",
+  "lineages": {
+    "attempt1": {
+      "actual_input_hashes_and_forward_telemetry": "UNKNOWN_NOT_RECORDED; no retrospective reconstruction asserted",
+      "all3_declared_original_cases_still_structurally_excluded": [
+        "26d5472c-b1be-5db1-a7b7-4e46b21aecdb:0",
+        "402c44b4-4b82-56fe-9b9b-029dea8ee602:0",
+        "e3a75e51-17b6-5691-9e72-bd143c1a92bc:0"
+      ],
+      "future_union_requirement": "Any externally accepted observed-input union must include this separate known-history lineage plus accepted attempt2 supplement. Attempt2 supplement alone does not claim old input or telemetry coverage.",
+      "known_history_prefixes": [
+        {
+          "history_sha256": "4797e11ed834a993c6157c9071d710bbba12f92927baaede9e005eff147975c8",
+          "moves": [],
+          "root_fen": "7k/8/8/8/8/p7/P1P5/KQ6 w - - 13 1",
+          "scope": "known prior trajectory initial"
+        },
+        {
+          "history_sha256": "f0d6192bbaff6c1b9c919bfa5260f949306490e9e85d628ff206871bcdc2278b",
+          "moves": [
+            "c2c4"
+          ],
+          "root_fen": "7k/8/8/8/8/p7/P1P5/KQ6 w - - 13 1",
+          "scope": "known prior final trajectory, not proof of NN evaluation"
+        }
+      ],
+      "never_trained": true,
+      "physical_game_id": "26d5472c-b1be-5db1-a7b7-4e46b21aecdb:0",
+      "prior_actual_provenance": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-three-case-producer-results-ceec22f2-1ca1-40e9-851c-f7c95300ec0f/.case-0-339dd6db-a520-4a6e-a1b2-324752773f7b/provenance.json",
+        "sha256": "7ab59be156614e3012af9c118f33b8f8d416b185e71d85a623bb33d77860fe2d"
+      },
+      "prior_failed_readout": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-three-case-producer-failure-readout-v1/readout.json",
+        "sha256": "da6adfc91a876fcf8edadf4630a8974e22b97f24793e9e2070735d49fe472cb2"
+      },
+      "prior_terminal": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-three-case-producer-execution-v1/terminal.json",
+        "sha256": "254af72a5279a9d7c596866ee29d674ee6a063024c3181222c062f49189d494f"
+      },
+      "retained_rows": 0,
+      "status": "KNOWN_PRIOR_FAILED_ATTEMPT_HISTORY_METADATA_ONLY_NOT_INPUT_QUALIFICATION",
+      "stored_input_float16_sha256": []
+    },
+    "attempt2": {
+      "actual_initial_identities": [
+        {
+          "history_sha256": "4797e11ed834a993c6157c9071d710bbba12f92927baaede9e005eff147975c8",
+          "physical_game_id": "26d5472c-b1be-5db1-a7b7-4e46b21aecdb:0",
+          "row_scope": "DECLARED_INITIAL_POSITION",
+          "stored_input_float16_mirror_sha256": "3a8b030d31deffdb9b94cd956f4868b42f44565198183c32e45859450de3ccc0",
+          "stored_input_float16_sha256": "20dc35074316a699a0c81ab2783a95940ae033d6b687442e3acc417238c38e2a"
+        }
+      ],
+      "actual_readonly_row_diagnostic": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-serialization-diagnostic-results-v1/actual-failed-row-diagnostic.json",
+        "sha256": "07711b9213c8000cddf22144255c31c2d0da360c9bf53561a4320bd911b1a30c"
+      },
+      "diagnostic_acceptance": "Storage/frame diagnostics only, no realproof reissue or label/dataadmission",
+      "failed_readout": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-three-case-producer-failure-readout-v2/readout.json",
+        "sha256": "a31c62272a73b22e0b809aaffb723914d80fde4c359378ea65995d1549e26005"
+      },
+      "forward_telemetry": {
+        "by_case": {
+          "0": 1,
+          "1": 0,
+          "2": 0
+        },
+        "calls": 1,
+        "first_input": {
+          "actual_autocast_dtype": "torch.bfloat16",
+          "deterministic_algorithms": false,
+          "device": "cuda:0",
+          "grad_enabled": false,
+          "matmul_allow_tf32": false,
+          "matmul_precision": "highest",
+          "shape": [
+            32,
+            175,
+            8,
+            8
+          ],
+          "storage_dtype": "torch.float32"
+        },
+        "rows": 32
+      },
+      "retained_rows": 1,
+      "state": "PARTIAL_FAILED_NOT_ALL3COMPLETE; nevertrained",
+      "terminal": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-three-case-producer-execution-v2/terminal.json",
+        "sha256": "bad0758286c09f888c2b7f06b78731fa9c446b93de698cbfebd2f6df751a6b5b"
+      },
+      "unknowns": [
+        "lost original pre-saveRAM all-array values",
+        "unretained/internal search input identities",
+        "peakVRAM onfailure"
+      ]
+    },
+    "attempt3": {
+      "cases": 3,
+      "declared_initial_positions": [
+        {
+          "history_sha256": "4797e11ed834a993c6157c9071d710bbba12f92927baaede9e005eff147975c8",
+          "physical_game_id": "26d5472c-b1be-5db1-a7b7-4e46b21aecdb:0",
+          "row_scope": "DECLARED_INITIAL_POSITION",
+          "stored_input_float16_mirror_sha256": "3a8b030d31deffdb9b94cd956f4868b42f44565198183c32e45859450de3ccc0",
+          "stored_input_float16_sha256": "20dc35074316a699a0c81ab2783a95940ae033d6b687442e3acc417238c38e2a"
+        },
+        {
+          "history_sha256": "49846f21a3c15a49f182fffafd999c827126c9625b1ccfa0c1fe2ee2784633b5",
+          "physical_game_id": "402c44b4-4b82-56fe-9b9b-029dea8ee602:0",
+          "row_scope": "DECLARED_INITIAL_POSITION",
+          "stored_input_float16_mirror_sha256": "2e3e9d95d290d71ca43eb20a28ff88ec11586b655d352386df0da858024c9bc3",
+          "stored_input_float16_sha256": "ccb26055b62d0cf4e9265bc8033bea045caaebdf60d7a70b4c5d9d062b95a912"
+        },
+        {
+          "history_sha256": "0a328ba53bbe58b6c554fb0fff187a42d6ece3dcf4012baa8781c886578c9be0",
+          "physical_game_id": "e3a75e51-17b6-5691-9e72-bd143c1a92bc:0",
+          "row_scope": "DECLARED_INITIAL_POSITION",
+          "stored_input_float16_mirror_sha256": "77bb5baa9d1bc71b4474147b18e43329381410367268380876c51edb26f0758c",
+          "stored_input_float16_sha256": "577b3336c7384a7d666be35f946cd524a55b6ffb96ed17b1c2e171183dc363a3"
+        }
+      ],
+      "full_histories": [
+        {
+          "attempt_id": "cd2ce2d8-bca5-498e-91ae-013580b1c43f",
+          "case_ordinal": 0,
+          "final_fen": "7k/8/8/8/2P5/p7/P7/KQ6 b - - 0 1",
+          "full_declared_moves": [
+            "c2c4"
+          ],
+          "full_history_sha256": "f0d6192bbaff6c1b9c919bfa5260f949306490e9e85d628ff206871bcdc2278b",
+          "opening_moves": [],
+          "origin": "TB_ADJUDICATED",
+          "physical_game_id": "26d5472c-b1be-5db1-a7b7-4e46b21aecdb:0",
+          "result": "1-0",
+          "root_fen": "7k/8/8/8/8/p7/P1P5/KQ6 w - - 13 1",
+          "scope": "Declared full history, not unseen pre-FEN past or proof of every neural-search input."
+        },
+        {
+          "attempt_id": "cd2ce2d8-bca5-498e-91ae-013580b1c43f",
+          "case_ordinal": 1,
+          "final_fen": "4k3/8/5n2/8/8/8/8/3QK1N1 b - - 7 4",
+          "full_declared_moves": [
+            "g1f3",
+            "g8f6",
+            "f3g1",
+            "f6g8",
+            "g1f3",
+            "g8f6",
+            "f3g1"
+          ],
+          "full_history_sha256": "49846f21a3c15a49f182fffafd999c827126c9625b1ccfa0c1fe2ee2784633b5",
+          "opening_moves": [
+            "g1f3",
+            "g8f6",
+            "f3g1",
+            "f6g8",
+            "g1f3",
+            "g8f6",
+            "f3g1"
+          ],
+          "origin": "NATURAL",
+          "physical_game_id": "402c44b4-4b82-56fe-9b9b-029dea8ee602:0",
+          "result": "1/2-1/2",
+          "root_fen": "4k1n1/8/8/8/8/8/8/3QK1N1 w - - 0 1",
+          "scope": "Declared full history, not unseen pre-FEN past or proof of every neural-search input."
+        },
+        {
+          "attempt_id": "cd2ce2d8-bca5-498e-91ae-013580b1c43f",
+          "case_ordinal": 2,
+          "final_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+          "full_declared_moves": [],
+          "full_history_sha256": "0a328ba53bbe58b6c554fb0fff187a42d6ece3dcf4012baa8781c886578c9be0",
+          "opening_moves": [],
+          "origin": "UNRESOLVED",
+          "physical_game_id": "e3a75e51-17b6-5691-9e72-bd143c1a92bc:0",
+          "result": "*",
+          "root_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+          "scope": "Declared full history, not unseen pre-FEN past or proof of every neural-search input."
+        }
+      ],
+      "history_union_count": 4,
+      "physical_game_ids": [
+        "26d5472c-b1be-5db1-a7b7-4e46b21aecdb:0",
+        "402c44b4-4b82-56fe-9b9b-029dea8ee602:0",
+        "e3a75e51-17b6-5691-9e72-bd143c1a92bc:0"
+      ],
+      "raw_plus_mirror_union_count": 6,
+      "retained_rows": [
+        {
+          "attempt_id": "cd2ce2d8-bca5-498e-91ae-013580b1c43f",
+          "case_ordinal": 0,
+          "history_sha256": "4797e11ed834a993c6157c9071d710bbba12f92927baaede9e005eff147975c8",
+          "move_offset": 0,
+          "physical_game_id": "26d5472c-b1be-5db1-a7b7-4e46b21aecdb:0",
+          "physical_row_id": "26d5472c-b1be-5db1-a7b7-4e46b21aecdb:0:0",
+          "ply": 0,
+          "row_scope": "RETAINED_ACTUAL_INPUT_AND_FILE_MIRROR",
+          "stored_input_float16_mirror_sha256": "3a8b030d31deffdb9b94cd956f4868b42f44565198183c32e45859450de3ccc0",
+          "stored_input_float16_sha256": "20dc35074316a699a0c81ab2783a95940ae033d6b687442e3acc417238c38e2a"
+        }
+      ],
+      "status": "ACTUAL_PRODUCER_PASS_PENDING_INDEPENDENT_ACCEPTANCE"
+    }
+  },
+  "no_research_label_or_training_admission": true,
+  "no_retroactive_old_missing_telemetry_claim": true,
+  "requires_independent_acceptance_before_any_use": false,
+  "root_acceptance": {
+    "actual_producer_root_acceptance_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-three-case-producer-root-actual-acceptance-v3/readout.json",
+    "actual_producer_root_acceptance_sha256": "6e1cab125891bb31eab40cbac7e243716a77bfb107c9214593be9110efb5ded3",
+    "candidate_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-combined-engineering-input-supplement-candidate-v1/candidate.json",
+    "candidate_sha256": "948cb7711b80fe29c1763ff8f048a5e4b9b2edb5eb3a9d84ee42ca88069ef089",
+    "review": "Root independently checked all candidate source reference hashes, exact initial/retained IDs against accepted actual3-case readout, actual final history/proof joins, recomputed failed1 known full-history hashes, retained failed2 input/mirror and declared histories. Exact6-input/4-history union reconciled. No new arrays or labels admitted, no retroactive telemetry reconstruction. This receipt admits only known exclusion identities.",
+    "utc": "2026-11-13T02:26:59.196232+00:00"
+  },
+  "source_artifacts": [
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-three-case-producer-results-attempt3-cd2ce2d8-bca5-498e-91ae-013580b1c43f/readout.json",
+      "sha256": "811a074a662c748ec1fd3e555e358e1366432f2b783f9888ae3e0ca247410c28"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-three-case-producer-execution-v3/terminal.json",
+      "sha256": "9e28b1c7af6a6890d4a300ca8da485d2d2ad596ccea1dc7bf62cb8175b7a0ec5"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-three-case-producer-results-attempt3-cd2ce2d8-bca5-498e-91ae-013580b1c43f/observed-identity-supplement.UNADMITTED.json",
+      "sha256": "0b27239650ff46f11268e8ba4636267db58689f81eaa6d158cc4bd18aa43566b"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-three-case-producer-failure-readout-v1/readout.json",
+      "sha256": "da6adfc91a876fcf8edadf4630a8974e22b97f24793e9e2070735d49fe472cb2"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-three-case-producer-failure-readout-v2/readout.json",
+      "sha256": "a31c62272a73b22e0b809aaffb723914d80fde4c359378ea65995d1549e26005"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-serialization-diagnostic-root-acceptance-v1/readout.json",
+      "sha256": "a0c8cf8c2b1599e174f3a58d7d7db087316ae729d4e2d5786cb208c0b893f8aa"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-three-case-producer-binding-v3/prior-failed-exposure-scope.json",
+      "sha256": "ab9adfc43aabd689268b1686b7c398fdfe58b68f8d7d9558d1eb7b653d82758d"
+    }
+  ],
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "ACCEPT_COMBINED_EXCLUDED_ENGINEERING_INPUT_IDENTITIES",
+  "stored_input_float16_sha256": [
+    "20dc35074316a699a0c81ab2783a95940ae033d6b687442e3acc417238c38e2a",
+    "2e3e9d95d290d71ca43eb20a28ff88ec11586b655d352386df0da858024c9bc3",
+    "3a8b030d31deffdb9b94cd956f4868b42f44565198183c32e45859450de3ccc0",
+    "577b3336c7384a7d666be35f946cd524a55b6ffb96ed17b1c2e171183dc363a3",
+    "77bb5baa9d1bc71b4474147b18e43329381410367268380876c51edb26f0758c",
+    "ccb26055b62d0cf4e9265bc8033bea045caaebdf60d7a70b4c5d9d062b95a912"
+  ],
+  "training_updates": 0,
+  "union_counts": {
+    "history_sha256": 4,
+    "note": "Repeated fixed physical cases and identical hashes deduplicated. Counts are not independent games or target-quality evidence.",
+    "stored_input_float16_sha256": 6
+  }
+}

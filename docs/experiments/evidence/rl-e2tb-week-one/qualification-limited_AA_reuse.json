@@ -1,0 +1,31 @@
+{
+  "status": "ACCEPT_LIMITED_AA4_REUSE_FOR_E2TB",
+  "utc": "2026-11-13T01:53:54.082131+00:00",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "AA_actual_readout_sha256": "fc114dcb839e834f8c194368f3429db7b9057484ebdea97fd5e677116cd2c9d9",
+  "historically_executed_source_revision": "6d7f2e6d1b1fc80aa9df2ee5b922eaa3fabf0814",
+  "source_equivalence_sha256": "74f8811fc74e2c538d1ecd86022474031aa1b7fc5360d7b73324c3864f3115ab",
+  "observer_sha256": "3b8fab909222ac717ee8ff460e878f5f7519c62678c578bf07498b0ca9c6d505",
+  "TRAIN_loader_sha256": "f35cea34aa0bd0022756539212f1215a748a144c2b9a656f4800a3902e8b22aa",
+  "proof_dispatch_controls_qualified": true,
+  "actual29_control_root_acceptance": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-train-cpu-control-root-acceptance-v2/readout.json",
+    "sha256": "4dd1fe29cc44d0f94d19a0b9f660ae375c05e9c7e812f6eef1e19ab061710107"
+  },
+  "actual_descriptor_root_acceptance": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-train-descriptor-root-acceptance-v2/readout.json",
+    "sha256": "bdc2dad8ed53488ec09527e4943325cbbfab479aa74220e18e8e952ce82f5554"
+  },
+  "trainer_kwargs_without_log_dir_sha256": "660c9ff5ec28b14d45563bee842376b424fc94a509b313c6bd7787fefbc5405e",
+  "all_model_Trainer_optimizer_source_files_checked": 21,
+  "callbacks_AST_equal": 3,
+  "run_one_arm_AST_equal_after_only_output_hardlink": true,
+  "observer_byte_equal_after_only_two_research_proof_dispatch_reversals": true,
+  "selected8_unchanged": true,
+  "new_GPU_AA_or_research_execution": false,
+  "limits": [
+    "Historical four-update relative observer qualification (494 final tensors and named optimizer state) at R6, plus exact consumed math source and actual new synthetic proof dispatch / current descriptor compatibility. Not a newly executed AA at R7, uninstru\u00admented equivalence, forty-update bitwise equivalence, seed replication, learning gain or adoption.",
+    "Native MCTS changes add unused UCI walker APIs; new five images are source/build/origin-qualified and actual756 encoder/mirror comparisons passed. No universal binary/numerical equivalence claim.",
+    "Actual TRAIN32, common draw plan, complete science/main publication and final execution binding remain mandatory. All previous excluded ten engineering optimizer updates remain excluded; new research optimizer updates zero."
+  ]
+}

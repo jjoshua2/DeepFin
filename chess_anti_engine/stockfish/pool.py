@@ -30,6 +30,8 @@ class StockfishPool:
         multipv: int = 1,
         hash_mb: int | None = None,
         syzygy_path: str | None = None,
+        syzygy_50_move_rule: bool | None = None,
+        syzygy_probe_limit: int | None = None,
         nice: int = 0,
         read_timeout_s: float | None = None,
     ):
@@ -41,6 +43,8 @@ class StockfishPool:
         self.multipv = int(multipv)
         self.hash_mb = None if hash_mb is None else max(1, int(hash_mb))
         self.syzygy_path = syzygy_path or None
+        self.syzygy_50_move_rule = syzygy_50_move_rule
+        self.syzygy_probe_limit = syzygy_probe_limit
         self.nice = min(19, max(0, int(nice)))
         # Carried into every engine INCLUDING replacements, so a pool built with
         # a custom deadline does not silently revert to the 60s default the
@@ -91,6 +95,8 @@ class StockfishPool:
             multipv=self.multipv,
             hash_mb=self.hash_mb,
             syzygy_path=self.syzygy_path,
+            syzygy_50_move_rule=self.syzygy_50_move_rule,
+            syzygy_probe_limit=self.syzygy_probe_limit,
             nice=self.nice,
             read_timeout_s=(
                 None if self.read_timeout_s is None else float(self.read_timeout_s)
