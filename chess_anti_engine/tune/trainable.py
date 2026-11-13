@@ -347,8 +347,19 @@ def _init_pid(tc: TrialConfig, config: dict, restored_pid_state, sf):
         try:
             pid.load_state_dict(restored_pid_state)
         except (KeyError, ValueError, TypeError) as exc:
-  # Silent fallback would lose regret/winrate history; surface it.
-            logging.getLogger(__name__).warning("PID state restore failed (using defaults): %s", exc)
+  # Silent fallback would lose regret/winrate history AND inject a difficulty
+  # step at restart that reads like the net changing; make it unmissable.
+            saved_nodes = (
+                restored_pid_state.get("nodes") if isinstance(restored_pid_state, dict) else None
+            )
+            # Count it as every node field lost: whatever survived, the saved
+            # difficulty was not resumed as a whole.
+            pid.restore_fallbacks = 3
+            logging.getLogger(__name__).error(
+                "PID state restore FAILED (%s): saved nodes=%r, now running at %d; "
+                "state only partly restored (pid_restore_fallbacks=%d in the result)",
+                exc, saved_nodes, int(pid.nodes), pid.restore_fallbacks,
+            )
   # Keep gate-game SF in lock-step with restored PID nodes so gate plays
   # at the same difficulty distributed workers do. Cosmetic — fail quietly.
     if sf is not None:
