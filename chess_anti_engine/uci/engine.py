@@ -15,6 +15,7 @@ import math
 import sys
 import threading
 import time
+import weakref
 from dataclasses import dataclass, fields, replace
 from typing import TYPE_CHECKING, ClassVar, Protocol
 from collections.abc import Callable
@@ -1223,8 +1224,21 @@ class Engine:
   # options must not mutate while a search thread is still reading them.
   # In particular SyzygyPath swaps the shared tablebase cache, which the
   # search thread probes through on every leaf batch.
-        self._wait_for_search()
         name = cmd.name.lower()
+        try:
+            self._wait_for_search()
+        except SearchNotQuiescent:
+  # A stuck search (orphan) still holds the worker. Reporting-only options write
+  # one plain field the next info emission reads (no evaluator, tree or pool),
+  # and the orphan's own output is silenced, so they apply now. Everything else
+  # -- Hash resizes the growth step of the C tree the orphan is still searching
+  # -- stays rejected (the previous value stays in force).
+            if name not in self._REPORTING_ONLY_OPTIONS:
+                raise
+            _println(
+                f"info string setoption {cmd.name}: applied while a stuck search still "
+                "holds the worker (reporting option only)"
+            )
   # A building option mid-game is applied here, synchronously, inside the
   # setoption transaction of `dispatch` (rolled back on failure). Nothing is
   # deferred: no background build exists that it could race.
@@ -2115,6 +2129,10 @@ class Engine:
         self._options.syzygy_path = v
         self._install_tablebase(v)
 
+    # Options whose handler writes only a reporting field read at the next info
+    # emission; safe to apply while an orphan is still inside the worker.
+    _REPORTING_ONLY_OPTIONS: ClassVar[frozenset[str]] = frozenset({"multipv", "uci_showwdl"})
+
     _SETOPTION_HANDLERS: ClassVar[dict[str, Callable[[Engine, str], None]]] = {
         "hash": _set_hash,
         "ponder": _set_ponder,
@@ -2289,7 +2307,9 @@ class Engine:
         if limits.ponder and not release.is_set():
             release.wait()
         ponderhit = self._ponderhit_event.is_set() and self._pending_real_limits is not None
-        if self._ponder_fallback_pending:
+        if self._ponder_fallback_pending and self._counts_for_streak():
+            # Gated like the streak: a parked ponder search must neither print
+            # this warning nor consume the flag the live search owns.
             self._ponder_fallback_pending = False
             if not ponderhit:  # stop: the ponder fallback IS the published move
                 self._note_fallback_phase()
@@ -2891,6 +2911,7 @@ class Engine:
             quitting = self._quit_requested
         if thread not in self._orphan_threads:
             self._orphan_threads.append(thread)
+        _SILENCED_THREADS.add(thread)  # its later info lines must not reach stdout
         self._search_thread = None
         live, self._live_go = self._live_go, None
         if not answer or quitting or live is None or thread is self._fallback_reply_thread:
@@ -2930,6 +2951,7 @@ class Engine:
         if helper.is_alive():
             with self._state_lock:
                 self._orphan_threads.append(helper)
+            _SILENCED_THREADS.add(helper)
             _println(
                 f"info string fresh root-eval fallback timed out after {timeout * 1000:.0f} ms; "
                 "using the first legal move"
@@ -3000,7 +3022,16 @@ def _legal_fallback_move(board: chess.Board, searchmoves: tuple[str, ...]) -> st
 _PRINT_LOCK = threading.Lock()
 
 
+# Threads parked as orphans (a search that missed its stop, a hung fresh-eval
+# helper). Once parked, their `go` has been answered (or will be by a fallback),
+# so anything they print -- info lines, warnings -- would land in the middle of
+# another move. `_println` drops it; logging to stderr is unaffected.
+_SILENCED_THREADS: weakref.WeakSet[threading.Thread] = weakref.WeakSet()
+
+
 def _println(s: str) -> None:
+    if threading.current_thread() in _SILENCED_THREADS:
+        return
     with _PRINT_LOCK:
         sys.stdout.write(s + "\n")
         sys.stdout.flush()
