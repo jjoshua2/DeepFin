@@ -63,18 +63,49 @@ def test_timeout_rejects_mutation_and_second_run_until_quiescent(held_engine, co
     old_thread, old_stop = engine._search_thread, engine._stop_event
     old_fen, old_gen = engine._board.fen(), engine._search_gen
     engine.dispatch(cmd)
-    assert engine._search_thread is old_thread
-    assert engine._stop_event is old_stop
-    assert engine._board.fen() == old_fen
-    assert engine._search_gen == old_gen
+    if command == "position":
+        # `position` records the board and never waits on or touches the worker.
+        assert engine._search_thread is old_thread
+        assert engine._stop_event is old_stop
+        assert engine._search_gen == old_gen
+        assert engine._board.peek().uci() == "e2e4"
+        assert "rejected" not in capsys.readouterr().out
+    else:
+        # The held search missed its stop: parked ONCE as an orphan (still
+        # owning the worker), its late result silenced by a new generation.
+        assert engine._search_gen > old_gen
+        assert engine._orphan_threads == [old_thread]
+    if command == "go":
+        # A rejected go is still answered exactly once, from a reply thread;
+        # the busy worker's evaluator is not touched.
+        reply = engine._search_thread
+        assert reply is not None
+        assert reply is not old_thread
+        reply.join(2)
+        worker.fresh_root_policy_bestmove.assert_not_called()
+        out = capsys.readouterr().out
+        assert "rejected" in out
+        assert len([ln for ln in out.splitlines() if ln.startswith("bestmove ")]) == 1
+    elif command != "position":
+        assert engine._search_thread is None
+    if command not in ("position", "newgame"):
+        assert engine._board.fen() == old_fen
     assert worker.run.call_count == 1
     worker.reset_tree.assert_not_called()
     worker.advance_root.assert_not_called()
     worker.set_max_tree_mb.assert_not_called()
     assert engine._options.hash_mb == 1024
-    assert "rejected" in capsys.readouterr().out
+    if command in ("setoption",):
+        assert "rejected" in capsys.readouterr().out
+    if command == "newgame":
+        assert engine._force_tree_reset is True  # tree reset deferred to a free go
+        assert "tree reset deferred" in capsys.readouterr().out
     release.set()
     threads[0].join(2)
+    held_out = capsys.readouterr().out
+    if command != "position":
+        # The held search finished under a stale generation: it must not answer.
+        assert "bestmove" not in held_out
     engine.dispatch(cmd)
     if command == "position":
         assert engine._board.peek().uci() == "e2e4"
@@ -140,10 +171,11 @@ def _ponder_engine(monkeypatch, *, advance_ms=0):
 
 def _join(engine, release):
     release.set()
-    thread = engine._search_thread
-    assert thread is not None
-    thread.join(2)
-    assert not thread.is_alive()
+    threads = [t for t in (engine._search_thread, *engine._orphan_threads) if t is not None]
+    assert threads
+    for thread in threads:
+        thread.join(2)
+        assert not thread.is_alive()
 
 
 def test_ponderhit_charges_drain_and_advance_time_from_first_hit(monkeypatch):
@@ -280,8 +312,14 @@ def test_quit_during_actual_warmup_keeps_builder_ownership_until_drain(monkeypat
     monkeypatch.setattr(main, "_build_engine", lambda **_kw: engine)
     monkeypatch.setattr(main.sys, "argv", ["deepfin", "--checkpoint", "fake.pt", "--device", "cpu"])
     monkeypatch.setattr(main.sys, "stdin", stdin())
+    # The builder is held inside warmup past main's bounded join, so main takes
+    # its hard-exit path; record it instead of letting it end pytest.
+    hard_exits: list[int] = []
+    monkeypatch.setattr(main, "_BUILDER_JOIN_TIMEOUT_S", 0.0)
+    monkeypatch.setattr(main, "_hard_exit", hard_exits.append)
     try:
         assert main.main() == 0
+        assert hard_exits == [0]
         worker.close.assert_not_called()
     finally:
         release.set()

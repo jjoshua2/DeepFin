@@ -407,14 +407,19 @@ def test_eval_cache_entries_reinstalls_multi_gpu_pucv(capsys) -> None:
         CmdSetOption(name="EvalCacheEntries", value="256"),
     )
 
-    worker.set_evaluator.assert_called_once_with(rebuilt)
+    # Build-then-swap: the pool is reinstalled FIRST and the primary swapped in
+    # last with the pool kept, so a failed pool rebuild never strands the old
+    # primary's replacement (see Engine._install_rebuilt_primary).
+    worker.set_evaluator.assert_called_once_with(rebuilt, keep_pools=True)
     worker.install_multi_gpu_pucv.assert_called_once_with(
         factories, gather=512, as_factories=True,
     )
+    order = [c[0] for c in worker.mock_calls if c[0] in ("install_multi_gpu_pucv", "set_evaluator")]
+    assert order == ["install_multi_gpu_pucv", "set_evaluator"]
     assert engine._options.use_multi_gpu_pucv is True
+    assert engine._options.eval_cache_entries == 256
     out = capsys.readouterr().out
-    # Reinstall is silent (no second "UseMultiGpuPUCV on"); primary already
-    # rebuilt via set_evaluator under the still-on option.
+    # Reinstall is silent (no second "UseMultiGpuPUCV on").
     assert "EvalCacheEntries set to 256" in out
 
 

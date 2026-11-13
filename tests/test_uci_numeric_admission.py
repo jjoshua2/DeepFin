@@ -19,6 +19,7 @@ def admission_engine(monkeypatch: pytest.MonkeyPatch) -> Engine:
     engine._options = EngineOptions()
     engine._closed = False
     engine._quit_requested = False
+    engine._worker = Mock()  # setoption snapshots its search state; no real worker
     monkeypatch.setattr(engine, "_wait_for_search", Mock())
     monkeypatch.setattr(
         engine, "_apply_search_option",

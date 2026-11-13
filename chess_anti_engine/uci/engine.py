@@ -9,12 +9,13 @@ path end-to-end so we can play a game.
 """
 from __future__ import annotations
 
+import gc
 import logging
 import math
 import sys
 import threading
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from typing import TYPE_CHECKING, ClassVar, Protocol
 from collections.abc import Callable
 
@@ -63,6 +64,8 @@ from .time_manager import (
     limits_from_go,
 )
 
+_log = logging.getLogger(__name__)
+
 _ENGINE_NAME = "DeepFin"
 _ENGINE_AUTHOR = "jjosh"
 
@@ -110,11 +113,13 @@ def emit_handshake(options: EngineOptions) -> None:
     for line in format_id_lines(_ENGINE_NAME, _ENGINE_AUTHOR):
         _println(line)
     _println(
-        f"option name Hash type spin default {options.hash_mb} "
-        f"min {_MIN_HASH_MB} max 524288"
+        f"option name Hash type spin default {options.hash_mb} {_spin_range('Hash')}"
     )
-    _println(f"option name Threads type spin default {options.threads} min 1 max 64")
-    _println(f"option name LeafGather type spin default {options.leaf_gather} min 1 max 64")
+    _println(f"option name Threads type spin default {options.threads} {_spin_range('Threads')}")
+    _println(
+        f"option name LeafGather type spin default {options.leaf_gather} "
+        f"{_spin_range('LeafGather')}"
+    )
     _println(f"option name UseVL type check default {'true' if options.use_vl else 'false'}")
     _println(
         "option name UseMultiGpuPUCV type check default "
@@ -132,26 +137,32 @@ def emit_handshake(options: EngineOptions) -> None:
     # -1 = auto (open/min_vpa→VLGather, min_keep→#devices); 0 = off; >0 = fixed.
     _println(
         f"option name RPGOpenVPA type spin default {options.rpg_open_vpa} "
-        "min -1 max 4096"
+        f"{_spin_range('RPGOpenVPA')}"
     )
     _println(
         f"option name RPGMinVPA type spin default {options.rpg_min_vpa} "
-        "min -1 max 4096"
+        f"{_spin_range('RPGMinVPA')}"
     )
     _println(
         f"option name RPGMinKeep type spin default {options.rpg_min_keep} "
-        "min -1 max 64"
+        f"{_spin_range('RPGMinKeep')}"
     )
     _println(
         "option name RPGOpenBudgetFrac type string default "
         f"{options.rpg_open_budget_frac}"
     )
-    _println(f"option name VLGather type spin default {options.vl_gather} min 32 max 4096")
-    _println(f"option name MaxBatch type spin default {options.max_batch} min 64 max 8192")
-    _println(f"option name EvalCacheEntries type spin default {options.eval_cache_entries} min 0 max 1048576")
-    _println(f"option name MultiPV type spin default {options.multi_pv} min 1 max 256")
+    _println(f"option name VLGather type spin default {options.vl_gather} {_spin_range('VLGather')}")
+    _println(f"option name MaxBatch type spin default {options.max_batch} {_spin_range('MaxBatch')}")
+    _println(
+        f"option name EvalCacheEntries type spin default {options.eval_cache_entries} "
+        f"{_spin_range('EvalCacheEntries')}"
+    )
+    _println(f"option name MultiPV type spin default {options.multi_pv} {_spin_range('MultiPV')}")
     _println(f"option name UCI_ShowWDL type check default {'true' if options.show_wdl else 'false'}")
-    _println(f"option name MoveOverheadMs type spin default {options.move_overhead_ms} min 0 max 5000")
+    _println(
+        f"option name MoveOverheadMs type spin default {options.move_overhead_ms} "
+        f"{_spin_range('MoveOverheadMs')}"
+    )
     _println(
         "option name ClockBatchMarginSigmas type string default "
         f"{options.clock_batch_margin_sigmas}",
@@ -173,15 +184,72 @@ def emit_handshake(options: EngineOptions) -> None:
 # stale bestmove against the next board — a cold CUDA-graph compile on
 # the first search is ~3-4s on its own.
 _JOIN_TIMEOUT_S = 30.0
+# A `go` waits for the worker at most this fraction of its own hard deadline
+# (clamped to [_GO_WAIT_MIN_S, _JOIN_TIMEOUT_S]), or _GO_WAIT_NO_CLOCK_S with no
+# clock, then answers from the busy-worker fallback. Normally the previous
+# search has already exited and the wait is zero. On a very short clock the
+# floor itself shrinks to _GO_WAIT_MAX_SHARE of the deadline, so the wait plus
+# a fallback's fresh eval (<= a tenth of what is left) stays inside the clock.
+_GO_WAIT_FRACTION = 0.1
+_GO_WAIT_MIN_S = 0.1
+_GO_WAIT_MAX_SHARE = 0.25
+_GO_WAIT_NO_CLOCK_S = 1.0
+# The one fresh root eval a fallback may run: at most this long (and at most a
+# tenth of the remaining clock), then first-legal. A hung evaluator must not
+# withhold the bestmove.
+_FRESH_EVAL_TIMEOUT_S = 0.15
+# `close()` waits this long for a search / helper; a thread still alive after
+# that is left to `__main__`, which hard-exits instead of finalizing under it.
+_SHUTDOWN_JOIN_S = 3.0
+
+
+# (options snapshot, `SearchWorker.search_state()` or None for a test double)
+_SetoptionSnapshot = tuple["EngineOptions", object]
 
 
 class SearchNotQuiescent(TimeoutError):
     """The search still owns the worker; mutation and teardown must wait."""
 
+
+def _one_line(exc: BaseException, limit: int = 300) -> str:
+    """``Type: message`` on one line, for an ``info string``.
+
+    A GUI parses stdout line by line; a multi-line exception message (torch's
+    are) would put free text on lines that do not start with a UCI keyword.
+    """
+    text = " ".join(f"{type(exc).__name__}: {exc}".split())
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
 # Advertised (and now enforced) floor for the `Hash` UCI option, in MB. Keep this
 # in step with the `min` field `emit_handshake` prints — the two disagreeing is
 # exactly the defect this constant closes.
 _MIN_HASH_MB = 1024
+
+# The ONE table of hand-written spin-option bounds. `emit_handshake` prints these
+# numbers as `min`/`max` and every setoption handler clamps to them, so what a GUI
+# is told and what the engine accepts cannot drift. The maxima used to be printed
+# and never enforced: `MaxBatch 50000000` reached the evaluator factory, tried to
+# allocate 2.2 TB of pinned input and killed the process. Registry search options
+# (mcts/search_options.py) carry their own lo/hi and are range-checked by
+# `_parse_search_value`; they are deliberately not repeated here.
+_SPIN_BOUNDS: dict[str, tuple[int, int]] = {
+    "Hash": (_MIN_HASH_MB, 524288),
+    "Threads": (1, 64),
+    "LeafGather": (1, 64),
+    "RPGOpenVPA": (-1, 4096),
+    "RPGMinVPA": (-1, 4096),
+    "RPGMinKeep": (-1, 64),
+    "VLGather": (32, 4096),
+    "MaxBatch": (64, 8192),
+    "EvalCacheEntries": (0, 1048576),
+    "MultiPV": (1, 256),
+    "MoveOverheadMs": (0, 5000),
+}
+
+
+def _spin_range(name: str) -> str:
+    lo, hi = _SPIN_BOUNDS[name]
+    return f"min {lo} max {hi}"
 
 # The one registry field whose EngineOptions attribute does not match its name:
 # `CPuct` predates the registry and stores into `cpuct`. Renaming the attribute
@@ -439,6 +507,21 @@ class Engine:
   # search thread advances the tree root by this move before switching
   # to time-bounded search.
         self._popped_ponder_move: chess.Move | None = None
+  # The reply-only thread `_answer_failed_go` starts, while it is the current
+  # search thread; ponderhit releases it like stop.
+        self._fallback_reply_thread: threading.Thread | None = None
+  # Search threads that outlived their join timeout and were superseded by a
+  # fallback reply. They may still own the worker, so the quiescence barrier
+  # waits for them too.
+        self._orphan_threads: list[threading.Thread] = []
+  # (board, searchmoves) of the `go` the current search thread answers, so a
+  # search parked as an orphan by `_wait_for_search` still gets its one bestmove.
+        self._live_go: tuple[chess.Board, tuple[str, ...]] | None = None
+        self._go_received_at: float | None = None
+  # Set by `position` / `ucinewgame` when the tree must not be reused; consumed by
+  # `_sync_tree_root` at the next `go`, when the worker is free. `position` never
+  # touches the worker itself.
+        self._force_tree_reset = False
 
   # -- main-thread command dispatch -----------------------------------------
 
@@ -446,10 +529,260 @@ class Engine:
         if self._quit_requested or self._closed:
             _println("info string command rejected: engine is shutting down")
             return
+        # A setoption is a transaction over BOTH the options and the worker-side
+        # search state (`set_gumbel_field` writes `_cfg` before a helper rebuild
+        # that can fail). On a raise both are restored and the matching path
+        # reinstalled; on success OR rollback the realized path must be the one
+        # the options name. See `_restore_after_failed_setoption`.
+        snapshot: _SetoptionSnapshot | None = None
+        if isinstance(cmd, CmdSetOption):
+            snapshot = (replace(self._options), self._worker_search_state())
         try:
             self._dispatch(cmd)
+            if snapshot is not None:
+                self._enforce_path_invariant(after="setoption")
         except SearchNotQuiescent as exc:
             _println(f"info string command rejected ({type(cmd).__name__}): {exc}")
+            if isinstance(cmd, CmdGo):
+  # The previous search did not stop within the wait budget and still owns the
+  # worker. This `go` must still be answered exactly once, from a fallback that
+  # does not touch the busy worker's evaluator.
+                self._answer_failed_go(cmd, worker_busy=True)
+        except Exception as exc:
+  # A handler bug or a resource failure must never end the process: a dead
+  # engine forfeits every remaining game, a lost option costs nothing. One
+  # line on stdout for the GUI, the traceback to stderr / LogFile for the
+  # operator. KeyboardInterrupt / SystemExit are not Exceptions and still exit.
+            _log.error("UCI command %r failed", cmd, exc_info=True)
+            _println(
+                f"info string error handling {type(cmd).__name__}: "
+                f"{_one_line(exc)}; engine continues"
+            )
+            if isinstance(cmd, CmdGo):
+                self._answer_failed_go(cmd)
+            elif isinstance(cmd, CmdIsReady):
+  # `readyok` is the handler's last statement, so it was not printed. A GUI
+  # blocks on it; the engine is alive and answers `go`, so say ready.
+                _println(format_readyok())
+            elif snapshot is not None:
+                self._restore_after_failed_setoption(snapshot)
+
+    def _worker_search_state(self) -> object:
+        snap = getattr(self._worker, "search_state", None)
+        return snap() if callable(snap) else None
+
+    def _restore_after_failed_setoption(self, snapshot: _SetoptionSnapshot) -> None:
+        """Put the engine back on a working configuration that matches its options.
+
+        Preferred: the configuration before the failed setoption -- options AND
+        worker-side search state from ``snapshot``, with the matching path
+        reinstalled if the failure tore it down or the restored state no longer
+        matches the installed helpers. If that cannot be done, or the realized
+        path still disagrees with the options, fall back to the last-resort
+        single-evaluator classic Gumbel path and make the options SAY so.
+        One info string names the outcome and the realized path.
+        """
+        options, worker_state = snapshot
+        for f in fields(EngineOptions):
+            setattr(self._options, f.name, getattr(options, f.name))
+        try:
+            restore = getattr(self._worker, "restore_search_state", None)
+            changed = bool(restore(worker_state)) if callable(restore) else False
+            self._ensure_configured_path_installed(force=changed)
+            mismatch = self._path_mismatch()
+            if mismatch is not None:
+                raise RuntimeError(mismatch)
+            outcome = "previous configuration kept"
+        except Exception as exc:
+            _log.error("restoring the previous configuration failed", exc_info=True)
+            outcome = (
+                f"previous configuration could not be restored ({_one_line(exc)}); "
+                + self._fall_back_to_single_evaluator_gumbel()
+            )
+        self._warmup_dirty = True
+        _println(
+            f"info string setoption failed; {outcome}: "
+            f"path={self._worker.realized_search_path()}"
+        )
+
+    def _configured_walkers(self) -> int:
+        return int(self._options.threads)
+
+    def _set_configured_walkers(self, n: int) -> None:
+        self._options.threads = n
+
+    def _path_mismatch(self) -> str | None:
+        """Why the realized search path is not the one the options name, or None.
+
+        ``UseVL`` may legitimately realize classic Gumbel (an evaluator without
+        the slot API); every other combination names exactly one path.
+        """
+        realized = getattr(self._worker, "realized_search_path")()
+        if not isinstance(realized, str):  # a test double without a real worker
+            return None
+        o = self._options
+        if o.search_parallel == "gumbel":
+            allowed: tuple[str, ...] = ("rpg",)
+        elif o.use_multi_gpu_pucv:
+            allowed = ("pucv_pool",)
+        elif self._configured_walkers() > 1:
+            allowed = ("walker",)
+        elif o.use_vl:
+            allowed = ("pucv", "gumbel")
+        else:
+            allowed = ("gumbel",)
+        if realized in allowed:
+            return None
+        return f"realized path={realized} but the options name {'/'.join(allowed)}"
+
+    def _enforce_path_invariant(self, *, after: str) -> None:
+        mismatch = self._path_mismatch()
+        if mismatch is None:
+            return
+        _log.error("%s left an inconsistent search path: %s", after, mismatch)
+        outcome = self._fall_back_to_single_evaluator_gumbel()
+        self._warmup_dirty = True
+        _println(
+            f"info string {after}: {mismatch}; {outcome}: "
+            f"path={self._worker.realized_search_path()}"
+        )
+
+    def _fall_back_to_single_evaluator_gumbel(self) -> str:
+        """Last resort: classic Gumbel on the current primary, options to match.
+
+        Builds nothing: it only tears pools and helpers DOWN, so it cannot fail
+        for lack of memory.
+        """
+        o = self._options
+        o.search_parallel = "pucv"
+        o.use_multi_gpu_pucv = False
+        o.use_vl = False
+        self._set_configured_walkers(1)
+        try:
+            worker = self._worker
+            worker.clear_root_parallel_gumbel()
+            worker.clear_multi_gpu_pucv(restore_fallback=False)
+            worker.set_use_pucv(False)
+            worker.set_num_threads(1)
+        except Exception as exc:
+            _log.error("single-evaluator fallback failed", exc_info=True)
+            return (
+                f"no working search path could be installed ({_one_line(exc)}); "
+                "moves will be unsearched fallbacks"
+            )
+        return ("fell back to the single-evaluator classic Gumbel path "
+                "(multi-GPU pools OFF, UseVL off, 1 walker)")
+
+    def _ensure_configured_path_installed(self, *, force: bool = False) -> None:
+        """Install the path the options name if it is missing (or ``force``).
+
+        ``force``: the worker-side search state was rolled back, so helpers
+        built from the failed state must be rebuilt from the restored one.
+        Raises if impossible.
+        """
+        worker = self._worker
+        rpg = getattr(worker, "_rpg_pool", None)
+        pucv_pool = getattr(worker, "_pucv_pool", None)
+        if self._options.search_parallel == "gumbel":
+            if (rpg is None or force) and not self._try_install_root_parallel_gumbel():
+                raise RuntimeError("root-parallel Gumbel pool could not be reinstalled")
+        elif self._options.use_multi_gpu_pucv:
+            if (pucv_pool is None or force) and self._install_multi_gpu_pucv_pool() is None:
+                raise RuntimeError("multi-GPU PUCV pool could not be reinstalled")
+        else:
+            # A pool install tears the walker pool / PUCV chunker down before it
+            # builds; if it then failed, the classic helpers are missing -- and a
+            # CLOSED pool is missing too (see `classic_helpers_missing`).
+            missing = getattr(worker, "classic_helpers_missing", None)
+            helpers_missing = bool(missing()) if callable(missing) else False
+            if rpg is not None or pucv_pool is not None or helpers_missing or force:
+                worker.clear_root_parallel_gumbel()
+                worker.clear_multi_gpu_pucv(restore_fallback=False)
+                worker.restore_classic_search_path()
+
+    def _answer_failed_go(self, cmd: CmdGo, *, worker_busy: bool = False) -> None:
+        """Guarantee exactly one bestmove for a ``go`` whose handler raised.
+
+        If the handler got as far as starting the search thread, that thread owns
+        the reply (and the generation gate already keeps it to one). Otherwise
+        nothing would ever answer and the GUI would flag us on time, so start a
+        reply-only thread under a NEW generation: it obeys the same UCI rules as a
+        real search -- a ponder reply waits for ``ponderhit``/``stop``, an
+        open-ended one for ``stop`` -- and the same gate drops it if a newer
+        ``go`` or ``quit`` supersedes it.
+
+        ``worker_busy``: the go was rejected because the PREVIOUS search did not
+        stop. That thread is parked as an orphan (every later command still
+        waits for it -- see `_wait_for_search`), the new generation silences its
+        stale result, and the fallback reads only the cached prior, never the
+        evaluator the orphan is still using.
+        """
+        thread = self._search_thread
+        if worker_busy:
+            if thread is not None and thread.is_alive():
+                self._park_search_thread(thread, answer=False)
+            self._search_thread = None
+        elif thread is not None and thread.ident is not None:
+            return
+        args = cmd.args
+        try:
+            open_ended = limits_from_go(
+                args, side_to_move_is_white=self._board.turn == chess.WHITE,
+            ).is_open_ended()
+        except Exception:
+            open_ended = args.infinite or args.ponder
+        board = self._board.copy()
+        self._stop_event = threading.Event()
+        self._cancel_event = threading.Event()
+        self._ponderhit_at = None
+        self._ponderhit_event = threading.Event()
+        self._ponder_release = threading.Event()
+        self._pending_real_limits = None
+        self._popped_ponder_move = None
+        with self._state_lock:
+            self._search_gen += 1
+            gen = self._search_gen
+        self._bestmove_fallback_used += 1
+        self._note_unsearched_reply()
+        fresh_budget_s = self._failed_go_fresh_eval_budget_s(cmd)
+        reply = threading.Thread(
+            target=self._run_failed_go_reply,
+            args=(gen, board, args.searchmoves, args.ponder, open_ended, not worker_busy,
+                  fresh_budget_s),
+            daemon=True,
+        )
+        self._search_thread = reply
+        self._fallback_reply_thread = reply
+        try:
+            reply.start()
+        except Exception:
+  # No thread to wait for UCI's permission: answer now rather than never.
+            self._search_thread = None
+            self._fallback_reply_thread = None
+            self._run_failed_go_reply(
+                gen, board, args.searchmoves, False, False, not worker_busy, fresh_budget_s,
+            )
+
+    def _run_failed_go_reply(
+        self, gen: int, board: chess.Board, searchmoves: tuple[str, ...],
+        ponder: bool, open_ended: bool, allow_fresh_eval: bool = True,
+        fresh_budget_s: float | None = None,
+    ) -> None:
+        if ponder:
+            self._ponder_release.wait()
+        elif open_ended:
+            self._cancel_event.wait()
+        with self._state_lock:
+            if gen != self._search_gen or self._quit_requested:
+                return
+        move, source = self._bestmove_fallback(
+            board, searchmoves, allow_fresh_eval=allow_fresh_eval, budget_s=fresh_budget_s,
+        )
+        _println(
+            f"info string search not started; bestmove_fallback_used="
+            f"{self._bestmove_fallback_used} source={source} move={move}"
+        )
+        _println(format_bestmove(move, ponder=None))
 
     def _dispatch(self, cmd: Command) -> None:
         if isinstance(cmd, CmdUci):
@@ -492,15 +825,23 @@ class Engine:
   # shared tree / eval caches. On an isready mid-ponder, leave _warmup_dirty set and
   # re-warm on the next idle isready rather than corrupting the live search.
   # Idempotent: the flag is cleared so we don't warm again until the next reshape.
-        searching = self._search_thread is not None and self._search_thread.is_alive()
-        if self._warmup_dirty and not searching:
+        # Not free (a search or an orphan still inside the worker): answer at once
+        # and touch nothing; the re-warm waits for the next free isready.
+        if self._warmup_dirty and self.worker_is_free():
             self._warmup_dirty = False
             self.warmup_search()
         _println(format_readyok())
 
     def _handle_newgame(self) -> None:
-        self._wait_for_search()
-        self._worker.reset_tree()
+        try:
+            self._wait_for_search()
+        except SearchNotQuiescent as exc:
+            # The Python-side game state still resets; the tree resets at the
+            # first `go` that gets the worker.
+            _println(f"info string ucinewgame: {exc}; tree reset deferred")
+            self._force_tree_reset = True
+        else:
+            self._worker.reset_tree()
         self._board = chess.Board()
         self._pending_fen = None
         self._pending_moves = []
@@ -509,7 +850,9 @@ class Engine:
         self._popped_ponder_move = None
 
     def _handle_position(self, cmd: CmdPosition) -> None:
-        self._wait_for_search()
+  # Records Python-side board state only: never waits on, rejects for, or touches
+  # the worker. The board every later reply is for is therefore always the latest
+  # one the GUI sent, even while an orphaned search is still inside the worker.
         if cmd.fen is None:
             start = chess.Board()
         else:
@@ -535,14 +878,12 @@ class Engine:
                     f"info string position: rejected FEN {cmd.fen!r} ({reason}); "
                     "using the start position"
                 )
-                # Discard the old root before recording empty fallback history.
-                self._worker.reset_tree()
+                # Discard the old root (at the next go) before recording empty
+                # fallback history.
+                self._force_tree_reset = True
                 self._board = chess.Board()
                 self._pending_fen = None
                 self._pending_moves = []
-                self._applied_fen = None
-                self._applied_moves = ()
-                self._popped_ponder_move = None
                 return
         new_board = start.copy(stack=False)
         parsed: list[chess.Move] = []
@@ -600,8 +941,8 @@ class Engine:
   # can choose to stop one ply short.
         self._pending_fen = cmd.fen
         self._pending_moves = parsed
-  # Any popped-ponder state from a prior `go ponder` is invalid now.
-        self._popped_ponder_move = None
+  # `_popped_ponder_move` is left alone: a live ponder search reads it at
+  # ponderhit, and every `go` sets it afresh.
 
     @staticmethod
     def _warn_moves_truncated(
@@ -619,7 +960,8 @@ class Engine:
         ``self._pending_fen`` plus ``target_moves``. Updates ``_applied_*`` to
         reflect the post-sync state."""
         reused = (
-            self._applied_fen == self._pending_fen
+            not self._force_tree_reset
+            and self._applied_fen == self._pending_fen
             and len(target_moves) >= len(self._applied_moves)
             and tuple(target_moves[:len(self._applied_moves)]) == self._applied_moves
         )
@@ -634,15 +976,20 @@ class Engine:
             reused = self._worker.advance_root(from_board, extras)
         if not reused:
             self._worker.reset_tree()
+        self._force_tree_reset = False
         self._applied_fen = self._pending_fen
         self._applied_moves = tuple(target_moves)
 
     def _handle_go(self, cmd: CmdGo) -> None:
-        # The move clock starts at `go` receipt: tree sync (including any reuse
-        # work) and thread start-up below are charged to this move's deadline.
+        # The move clock starts at `go` receipt: the bounded wait for a live
+        # search, tree sync (including any reuse work) and thread start-up
+        # below are all charged to this move's deadline.
         go_received_at = time.monotonic()
-        # A timeout cannot transfer ownership of the still-live worker.
-        self._wait_for_search()
+        self._go_received_at = go_received_at
+        # A timeout cannot transfer ownership of the still-live worker; it is
+        # bounded by this move's own clock, then `dispatch` answers from the
+        # busy-worker fallback for the latest board.
+        self._wait_for_search(timeout_s=self._go_wait_budget_s(cmd))
   # Ponder mode: search at the position BEFORE opponent's predicted
   # reply. That node's root expansion creates a child for every legal
   # opponent move, so whichever one they play — predicted or not — we
@@ -705,6 +1052,7 @@ class Engine:
         with self._state_lock:
             self._search_gen += 1
             gen = self._search_gen
+        self._live_go = (self._board.copy(), tuple(cmd.args.searchmoves))
         self._search_thread = threading.Thread(
             target=self._run_search,
             args=(limits, gen, search_board, go_received_at),
@@ -712,9 +1060,47 @@ class Engine:
         )
         self._search_thread.start()
 
+    def _go_wait_budget_s(self, cmd: CmdGo) -> float:
+        try:
+            limits = limits_from_go(
+                cmd.args, side_to_move_is_white=self._board.turn == chess.WHITE,
+                move_overhead_ms=self._options.move_overhead_ms,
+            )
+        except Exception:
+            return _GO_WAIT_NO_CLOCK_S
+        if cmd.args.ponder or limits.deadline_ms is None:
+            return _GO_WAIT_NO_CLOCK_S
+        deadline_s = max(0.0, limits.deadline_ms / 1000.0)
+        floor_s = min(_GO_WAIT_MIN_S, _GO_WAIT_MAX_SHARE * deadline_s)
+        return min(_JOIN_TIMEOUT_S, max(floor_s, _GO_WAIT_FRACTION * deadline_s))
+
+    def _failed_go_fresh_eval_budget_s(self, cmd: CmdGo) -> float | None:
+        """A tenth of what is left of this `go`'s clock since receipt (None: no clock).
+
+        The reply for a `go` whose handler raised runs after the bounded wait;
+        its fresh eval must fit in what remains, not take a fixed 150 ms."""
+        received = self._go_received_at
+        if received is None or cmd.args.ponder:
+            return None
+        try:
+            limits = limits_from_go(
+                cmd.args, side_to_move_is_white=self._board.turn == chess.WHITE,
+                move_overhead_ms=self._options.move_overhead_ms,
+            )
+        except Exception:
+            return None
+        if limits.deadline_ms is None:
+            return None
+        remaining_s = limits.deadline_ms / 1000.0 - (time.monotonic() - received)
+        return max(0.0, remaining_s) * 0.1
+
     def _handle_stop(self) -> None:
         try:
-            self._wait_for_search()
+            # The GUI is waiting for this bestmove: a search that has not stopped
+            # within a second is parked and answered from the fallback.
+            self._wait_for_search(
+                timeout_s=min(_JOIN_TIMEOUT_S, _GO_WAIT_NO_CLOCK_S), answer_parked=True,
+            )
         except SearchNotQuiescent as exc:
             # Stop remains requested. Keep the owner available for a later join.
             _println(f"info string {exc}")
@@ -723,8 +1109,14 @@ class Engine:
         """Opponent played our predicted move. Convert open-ended ponder
         search into a time-bounded real search, keeping the MCTS tree.
         """
-        if (self._search_thread is None or not self._search_thread.is_alive()
-                or self._pending_real_limits is None):
+        if self._search_thread is None or not self._search_thread.is_alive():
+            return
+        if self._search_thread is self._fallback_reply_thread:
+            # A failed `go ponder` is answered by a reply-only thread; ponderhit
+            # releases it exactly as `stop` would.
+            self._ponder_release.set()
+            return
+        if self._pending_real_limits is None:
             return
   # Signal the search loop: next iteration, swap ponder-deadline
   # for real-deadline.
@@ -918,31 +1310,48 @@ class Engine:
 
   # ─── setoption handlers ────────────────────────────────────────────────────
   # Each takes the raw value string and is responsible for parsing + clamping.
-  # Non-int values silently keep the prior value (mirrors original behavior).
+  # Non-int values keep the prior value, and say so.
     @staticmethod
-    def _parse_clamped_int(value: str, lo: int) -> int | None:
+    def _parse_clamped_int(value: str, name: str) -> int | None:
+        """Parse hand-written spin option ``name`` and clamp it to ``_SPIN_BOUNDS``.
+
+        CLAMP, not reject, at both ends: clamping is what this engine always did
+        at the low end (``Hash 256`` -> 1024 is pinned by a test), and a GUI that
+        sends ``Threads 128`` or ``MaxBatch 50000000`` means "as much as you
+        allow", which the advertised maximum answers. Every clamp is announced on
+        an ``info string`` -- a silently moved value is this repo's signature
+        defect. Registry search options keep their own reject-with-reason rule
+        (``_parse_search_value``).
+        """
         try:
-            return max(lo, int(value))
+            requested = int(value.strip())
         except ValueError:
+            _println(f"info string {name}: {value.strip()!r} is not an integer; ignored")
             return None
+        lo, hi = _SPIN_BOUNDS[name]
+        n = min(hi, max(lo, requested))
+        if requested < lo:
+            _println(
+                f"info string {name} {requested} is below the advertised minimum "
+                f"{lo}; using {n}"
+            )
+        elif requested > hi:
+            _println(
+                f"info string {name} {requested} is above the advertised maximum "
+                f"{hi}; using {n}"
+            )
+        return n
 
     def _set_hash(self, value: str) -> None:
-        try:
-            requested = int(value)
-        except ValueError:
-            return
   # The handshake advertises `min 1024` but enforcement used to floor at 1, so a
   # GUI's conventional `Hash 256` was accepted and then quietly crippled the
   # engine: `advance_root` refuses cross-move reuse once the tree passes
   # `max_tree_bytes // 2`, and the initial reserve alone is ~8.6 MB — so any
   # Hash below ~17 MB kills reuse from move one and throttles every chunk.
   # Advertisement and enforcement now agree, and a clamp is announced.
-        n = max(_MIN_HASH_MB, requested)
-        if n != requested:
-            _println(
-                f"info string Hash {requested} is below the advertised minimum "
-                f"{_MIN_HASH_MB}; using {n}"
-            )
+        n = self._parse_clamped_int(value, "Hash")
+        if n is None:
+            return
         self._options.hash_mb = n
         self._worker.set_max_tree_mb(n)
 
@@ -957,13 +1366,13 @@ class Engine:
         )
 
     def _set_threads(self, value: str) -> None:
-        n = self._parse_clamped_int(value, lo=1)
+        n = self._parse_clamped_int(value, "Threads")
         if n is None:
             return
         old_threads = self._options.threads
-        self._options.threads = n
-        self._worker.set_num_threads(n)
         if self._multi_gpu_path_active():
+            self._options.threads = n
+            self._worker.set_num_threads(n)
             # Worker stores n_walkers for leave-multi-GPU restore; live
             # dispatch still uses the RPG / multi-GPU PUCV pool.
             mode = (
@@ -976,12 +1385,14 @@ class Engine:
                 f"(deferred — {mode} is active)",
             )
             return
-        self._warmup_dirty = True
         # Crossing 1 <-> >1 changes which dispatcher tier the factory builds
         # (compiled: CUDAOwner at 1 walker vs BatchCoalescing at >1). The
         # walker-pool rebuild alone leaves the old wrapper in place — walkers
         # would then serialize through the owner queue (1->N) or lose the
         # pinned in-place path (N->1). Same-tier changes skip the rebuild.
+        # The rebuild runs BEFORE any option or worker state moves, so a
+        # failed one leaves the engine exactly as it was.
+        new_eval = None
         if (
             (n == 1) != (old_threads == 1)
             and self._rebuild_evaluator is not None
@@ -990,11 +1401,28 @@ class Engine:
                 f"info string Threads {old_threads}->{n} crosses dispatcher "
                 "tier; rebuilding evaluator…"
             )
-            new_eval = self._rebuild_evaluator(
-                self._options.max_batch, self._options.eval_cache_entries,
-                n_walkers=n,
+            new_eval = self._rebuild_or_keep(
+                f"Threads {n}", self._options.max_batch,
+                self._options.eval_cache_entries, n_walkers=n,
             )
-            self._worker.set_evaluator(new_eval)
+            if new_eval is None:
+                return
+        # Both worker steps build before they swap, so a raise leaves the old
+        # pool / evaluator live; undo the first if the second fails.
+        try:
+            self._worker.set_num_threads(n)
+        except Exception:
+            _close_quietly(new_eval)
+            raise
+        if new_eval is not None:
+            try:
+                self._worker.set_evaluator(new_eval)
+            except Exception:
+                self._worker.set_num_threads(old_threads)
+                raise
+        self._options.threads = n
+        self._warmup_dirty = True
+        if new_eval is not None:
             self._reinstall_configured_search_path()
         _println(
             f"info string Threads set to {n} "
@@ -1010,7 +1438,7 @@ class Engine:
             )
 
     def _set_leaf_gather(self, value: str) -> None:
-        n = self._parse_clamped_int(value, lo=1)
+        n = self._parse_clamped_int(value, "LeafGather")
         if n is None:
             return
         self._options.leaf_gather = n
@@ -1045,17 +1473,29 @@ class Engine:
         enabled = value.strip().lower() == "true"
         if not enabled:
             had_pool = getattr(self._worker, "_pucv_pool", None) is not None
-            self._options.use_multi_gpu_pucv = False
-            self._worker.clear_multi_gpu_pucv()
             # Size the primary for the remaining path: RPG still needs only
             # device 0; the routing/walker path uses all devices.
+            # Build the replacement primary BEFORE tearing the pool down: a
+            # failed build leaves pool, primary and options exactly as they were.
+            new_eval = None
             if (
                 self._rebuild_evaluator is not None
                 and self._rebuild_multi_gpu_pucv_factories is not None
             ):
-                new_eval = self._rebuild_evaluator(
-                    self._options.max_batch, self._options.eval_cache_entries,
-                )
+                previous = self._options.use_multi_gpu_pucv
+                self._options.use_multi_gpu_pucv = False
+                try:
+                    new_eval = self._rebuild_or_keep(
+                        "UseMultiGpuPUCV off", self._options.max_batch,
+                        self._options.eval_cache_entries,
+                    )
+                finally:
+                    self._options.use_multi_gpu_pucv = previous
+                if new_eval is None:
+                    return
+            self._options.use_multi_gpu_pucv = False
+            self._worker.clear_multi_gpu_pucv()
+            if new_eval is not None:
                 self._worker.set_evaluator(new_eval)
             self._warmup_dirty = True
             _println("info string UseMultiGpuPUCV off")
@@ -1114,6 +1554,7 @@ class Engine:
             self._options.use_multi_gpu_pucv = False
             _println("info string UseMultiGpuPUCV unavailable — need at least two devices")
             return None
+        new_eval = None
         if rebuild_primary and self._rebuild_evaluator is not None:
             # The entry factory closes over these shared options. Construction
             # must see the intended topology, including when leaving RPG.
@@ -1128,10 +1569,17 @@ class Engine:
                 )
             finally:
                 self._options.use_multi_gpu_pucv, self._options.search_parallel = previous
-            self._worker.set_evaluator(new_eval)
-        self._worker.install_multi_gpu_pucv(
-            factories, gather=gather, as_factories=True,
-        )
+        # Pool first, primary swap last: if the pool install raises, the old
+        # primary is still installed and the new one is retired here.
+        try:
+            self._worker.install_multi_gpu_pucv(
+                factories, gather=gather, as_factories=True,
+            )
+        except BaseException:
+            _close_quietly(new_eval)
+            raise
+        if new_eval is not None:
+            self._worker.set_evaluator(new_eval, keep_pools=True)
         return len(factories)
 
     def _set_pucv_pending_mode(self, value: str) -> None:
@@ -1170,13 +1618,26 @@ class Engine:
                 return
             return
         was_gumbel = self._options.search_parallel == "gumbel"
-        self._options.search_parallel = "pucv"
-        self._worker.clear_root_parallel_gumbel()
+        # Build the replacement primary BEFORE clearing the RPG pool, under the
+        # target topology: a failed build leaves the pool and options as they were.
+        new_eval = None
         if (was_gumbel and not self._options.use_multi_gpu_pucv
                 and self._rebuild_evaluator is not None):
-            self._worker.set_evaluator(self._rebuild_evaluator(
-                self._options.max_batch, self._options.eval_cache_entries,
-            ))
+            previous = self._options.search_parallel
+            self._options.search_parallel = "pucv"
+            try:
+                new_eval = self._rebuild_or_keep(
+                    "SearchParallel pucv", self._options.max_batch,
+                    self._options.eval_cache_entries,
+                )
+            finally:
+                self._options.search_parallel = previous
+            if new_eval is None:
+                return
+        self._options.search_parallel = "pucv"
+        self._worker.clear_root_parallel_gumbel()
+        if new_eval is not None:
+            self._worker.set_evaluator(new_eval)
         self._warmup_dirty = True
         _println("info string SearchParallel pucv")
         # Restore whichever non-RPG path is configured. install_root_parallel
@@ -1209,6 +1670,7 @@ class Engine:
                 "need at least two devices",
             )
             return False
+        new_eval = None
         if rebuild_primary and self._rebuild_evaluator is not None:
             # Preflight factories first, then let the primary factory observe
             # the intended topology, as in the multi-GPU PUCV transition.
@@ -1220,22 +1682,30 @@ class Engine:
                 )
             finally:
                 self._options.search_parallel = previous
-            self._worker.set_evaluator(new_eval)
+        previous_mode = self._options.search_parallel
         self._options.search_parallel = "gumbel"
         # search_parallel is the source of truth while Gumbel is selected:
         # _reinstall_configured_search_path prefers it over use_multi_gpu_pucv
         # so MaxBatch/EvalCache/VLGather rebuilds reinstall RPG, not PUCV.
         # The use_multi_gpu_pucv flag is left intact so switching back to
         # SearchParallel=pucv can restore the multi-GPU PUCV pool.
-        self._worker.install_root_parallel_gumbel(
-            factories, gather=gather, as_factories=True,
-            devices=list(self._search_devices) if self._search_devices else None,
-            info_string_cb=_emit_info_string,
-            open_vpa=int(self._options.rpg_open_vpa),
-            min_vpa=int(self._options.rpg_min_vpa),
-            min_keep=int(self._options.rpg_min_keep),
-            open_budget_frac=float(self._options.rpg_open_budget_frac),
-        )
+        # Pool first, primary swap last (see _install_multi_gpu_pucv_pool).
+        try:
+            self._worker.install_root_parallel_gumbel(
+                factories, gather=gather, as_factories=True,
+                devices=list(self._search_devices) if self._search_devices else None,
+                info_string_cb=_emit_info_string,
+                open_vpa=int(self._options.rpg_open_vpa),
+                min_vpa=int(self._options.rpg_min_vpa),
+                min_keep=int(self._options.rpg_min_keep),
+                open_budget_frac=float(self._options.rpg_open_budget_frac),
+            )
+        except BaseException:
+            self._options.search_parallel = previous_mode
+            _close_quietly(new_eval)
+            raise
+        if new_eval is not None:
+            self._worker.set_evaluator(new_eval, keep_pools=True)
         self._warmup_dirty = True
         _println(
             f"info string SearchParallel gumbel on "
@@ -1256,26 +1726,26 @@ class Engine:
         _println(f"info string RPG reinstalled after {reason}")
 
     def _set_rpg_open_vpa(self, value: str) -> None:
-        n = self._parse_clamped_int(value, lo=-1)
+        n = self._parse_clamped_int(value, "RPGOpenVPA")
         if n is None:
             return
-        self._options.rpg_open_vpa = min(4096, n)
+        self._options.rpg_open_vpa = n
         _println(f"info string RPGOpenVPA set to {self._options.rpg_open_vpa}")
         self._reinstall_rpg_if_active(reason="RPGOpenVPA")
 
     def _set_rpg_min_vpa(self, value: str) -> None:
-        n = self._parse_clamped_int(value, lo=-1)
+        n = self._parse_clamped_int(value, "RPGMinVPA")
         if n is None:
             return
-        self._options.rpg_min_vpa = min(4096, n)
+        self._options.rpg_min_vpa = n
         _println(f"info string RPGMinVPA set to {self._options.rpg_min_vpa}")
         self._reinstall_rpg_if_active(reason="RPGMinVPA")
 
     def _set_rpg_min_keep(self, value: str) -> None:
-        n = self._parse_clamped_int(value, lo=-1)
+        n = self._parse_clamped_int(value, "RPGMinKeep")
         if n is None:
             return
-        self._options.rpg_min_keep = min(64, n)
+        self._options.rpg_min_keep = n
         _println(f"info string RPGMinKeep set to {self._options.rpg_min_keep}")
         self._reinstall_rpg_if_active(reason="RPGMinKeep")
 
@@ -1352,7 +1822,7 @@ class Engine:
                 self._worker.set_use_pucv(True, gather=self._options.vl_gather)
 
     def _set_vl_gather(self, value: str) -> None:
-        n = self._parse_clamped_int(value, lo=32)
+        n = self._parse_clamped_int(value, "VLGather")
         if n is None:
             return
         self._options.vl_gather = n
@@ -1370,7 +1840,7 @@ class Engine:
         _println(f"info string VLGather set to {n}")
 
     def _set_multi_pv(self, value: str) -> None:
-        n = self._parse_clamped_int(value, lo=1)
+        n = self._parse_clamped_int(value, "MultiPV")
         if n is None:
             return
         self._options.multi_pv = n
@@ -1381,7 +1851,7 @@ class Engine:
         self._worker.set_show_wdl(self._options.show_wdl)
 
     def _set_move_overhead_ms(self, value: str) -> None:
-        n = self._parse_clamped_int(value, lo=0)
+        n = self._parse_clamped_int(value, "MoveOverheadMs")
         if n is None:
             return
         self._options.move_overhead_ms = n
@@ -1409,7 +1879,7 @@ class Engine:
         _attach_log_file(path)
 
     def _set_max_batch(self, value: str) -> None:
-        mb = self._parse_clamped_int(value, lo=64)
+        mb = self._parse_clamped_int(value, "MaxBatch")
         if mb is None:
             return
         if self._rebuild_evaluator is None:
@@ -1420,19 +1890,19 @@ class Engine:
   # Rebuild is 5-10s (CUDA graph recapture on first forward).
   # User sees the stall only if they poll isready soon after.
         _println(f"info string MaxBatch rebuilding evaluator at {mb}…")
-        new_eval = self._rebuild_evaluator(mb, self._options.eval_cache_entries)
-        self._options.max_batch = mb
-        self._worker.set_evaluator(new_eval)
-        # set_evaluator clears multi-GPU pools; reinstall from search_parallel
-        # (Gumbel) or use_multi_gpu_pucv — not only the PUCV flag.
-        self._reinstall_configured_search_path()
+        new_eval = self._rebuild_or_keep(
+            f"MaxBatch {mb}", mb, self._options.eval_cache_entries,
+        )
+        if new_eval is None:
+            return
+        self._install_rebuilt_primary(new_eval, max_batch=mb)
         # The rebuilt evaluator's raw forward is warmed, but the SEARCH-path
         # cudagraph is captured separately — re-warm it before the clock.
         self._warmup_dirty = True
         _println(f"info string MaxBatch set to {mb}; evaluator rebuilt + warmed")
 
     def _set_eval_cache_entries(self, value: str) -> None:
-        n = self._parse_clamped_int(value, lo=0)
+        n = self._parse_clamped_int(value, "EvalCacheEntries")
         if n is None:
             return
         if n == self._options.eval_cache_entries:
@@ -1441,15 +1911,83 @@ class Engine:
             _println("info string EvalCacheEntries ignored — no evaluator factory wired")
             return
         _println(f"info string EvalCacheEntries rebuilding evaluator at {n}")
-        new_eval = self._rebuild_evaluator(self._options.max_batch, n)
-        self._options.eval_cache_entries = n
+        new_eval = self._rebuild_or_keep(
+            f"EvalCacheEntries {n}", self._options.max_batch, n,
+        )
+        if new_eval is None:
+            return
+        previous = self._options.eval_cache_entries
         self._worker.set_eval_cache_entries(n)
-        self._worker.set_evaluator(new_eval)
-        self._reinstall_configured_search_path()
+        try:
+            self._install_rebuilt_primary(new_eval, eval_cache_entries=n)
+        except BaseException:
+            self._worker.set_eval_cache_entries(previous)
+            raise
         # Same as MaxBatch: evaluator rebuilt cold, so the search-path
         # cudagraph must be re-warmed before the first real ``go``.
         self._warmup_dirty = True
         _println(f"info string EvalCacheEntries set to {n}; evaluator rebuilt + warmed")
+
+    def _install_rebuilt_primary(self, new_eval: BatchEvaluator, **option_updates: int) -> None:
+        """Commit ``option_updates`` and make ``new_eval`` the primary, all or nothing.
+
+        Classic path: ``set_evaluator`` builds the walker / PUCV helpers before
+        it swaps, so a raise leaves the old evaluator live. Multi-GPU path: the
+        pool is rebuilt from the new options FIRST and the primary swapped in
+        last with the pool kept; if the pool rebuild raises, the old primary is
+        still installed and the setoption transaction in `dispatch` reinstalls
+        the previous pool. Options are restored here on any raise.
+        """
+        previous = {k: getattr(self._options, k) for k in option_updates}
+        for key, value in option_updates.items():
+            setattr(self._options, key, value)
+        handed_over = False
+        try:
+            if self._multi_gpu_path_active():
+                self._reinstall_configured_search_path()
+                handed_over = True
+                self._worker.set_evaluator(new_eval, keep_pools=True)
+            else:
+                handed_over = True
+                self._worker.set_evaluator(new_eval)
+        except BaseException:
+            for key, value in previous.items():
+                setattr(self._options, key, value)
+            if not handed_over:
+                _close_quietly(new_eval)
+            raise
+
+    def _rebuild_or_keep(
+        self, what: str, max_batch: int, eval_cache_entries: int,
+        *, n_walkers: int | None = None,
+    ) -> BatchEvaluator | None:
+        """A replacement evaluator, or ``None`` with the current one kept.
+
+        Every caller builds BEFORE it changes an option or calls
+        ``set_evaluator``, so on failure the worker still holds the previous,
+        working evaluator and every setting still describes it. A raise here
+        used to escape the handler: the process died (``MaxBatch`` OOM) or, once
+        dispatch is guarded, the options would claim a batch size nothing was
+        built for. Say so instead and keep playing on the last good setup.
+        """
+        assert self._rebuild_evaluator is not None
+        try:
+            if n_walkers is None:
+                return self._rebuild_evaluator(max_batch, eval_cache_entries)
+            return self._rebuild_evaluator(
+                max_batch, eval_cache_entries, n_walkers=n_walkers,
+            )
+        except Exception as exc:
+            _log.error("evaluator rebuild for %s failed", what, exc_info=True)
+            reason = _one_line(exc)
+        # Outside the except block, so the traceback (and the half-built
+        # evaluator's buffers it references) is already released.
+        gc.collect()
+        _println(
+            f"info string {what}: evaluator rebuild failed ({reason}); "
+            "keeping the previous evaluator and settings"
+        )
+        return None
 
     def _set_syzygy_path(self, value: str | None) -> None:
         v = (value or "").strip()
@@ -1533,8 +2071,8 @@ class Engine:
                 return
             if not self._warmup_done.is_set():
                 raise SearchNotQuiescent("warmup already owns the worker")
-            if self._search_thread is not None and self._search_thread.is_alive():
-                raise SearchNotQuiescent("active search owns the worker; warmup deferred")
+            if not self._search_free_locked():
+                raise SearchNotQuiescent("a search owns the worker; warmup deferred")
             self._warmup_done.clear()
         try:
             self._warmup_search_owned()
@@ -1690,7 +2228,9 @@ class Engine:
         if started_at is not None and (self._stop_event.is_set() or deadline.expired()):
             reason = ("ponder_transition_cancelled" if self._stop_event.is_set()
                       else "ponder_transition_deadline")
-            move, source = self._bestmove_fallback(board, limits.searchmoves)
+            move, source = self._bestmove_fallback(
+                board, limits.searchmoves, budget_s=_fresh_eval_budget_s(deadline),
+            )
             _println(f"info string search incomplete reason={reason} move={move} source={source}")
             return SearchResult(
                 bestmove_uci=move, ponder_uci=None, nodes=0, pv=(), score_cp=0,
@@ -1780,7 +2320,9 @@ class Engine:
             if move is not None and _is_playable_fallback(board, move, limits.searchmoves):
                 source = "unknown_root_child"
             else:
-                move, source = self._bestmove_fallback(board, limits.searchmoves)
+                move, source = self._bestmove_fallback(
+                    board, limits.searchmoves, budget_s=_fresh_eval_budget_s(deadline),
+                )
             self._bestmove_fallback_used += 1
             reason = "solved_root_without_move_witness"
             _println(
@@ -1800,7 +2342,9 @@ class Engine:
                 is_ponder=is_ponder,
             )
             _println(f"info string search error: {exc!r}")
-            fallback, source = self._bestmove_fallback(board, limits.searchmoves)
+            fallback, source = self._bestmove_fallback(
+                board, limits.searchmoves, budget_s=_fresh_eval_budget_s(deadline),
+            )
             self._bestmove_fallback_used += 1
             _println(
                 f"info string bestmove_fallback_used={self._bestmove_fallback_used} "
@@ -1854,6 +2398,7 @@ class Engine:
 
     def _bestmove_fallback(
         self, board: chess.Board, searchmoves: tuple[str, ...],
+        *, allow_fresh_eval: bool = True, budget_s: float | None = None,
     ) -> tuple[str, str]:
         """``(uci, source)`` for a bestmove the search could not produce.
 
@@ -1876,6 +2421,13 @@ class Engine:
             candidate = None
         if isinstance(candidate, str) and _is_playable_fallback(board, candidate, searchmoves):
             return candidate, "root_policy"
+  # The cache is empty or belongs to another position (a `go` that failed before
+  # its own root eval). One forward pass on THIS board, no search, beats a
+  # square-order move. Skipped when another thread may still own the evaluator.
+        if allow_fresh_eval:
+            fresh = self._bounded_fresh_eval(board, searchmoves, budget_s)
+            if isinstance(fresh, str) and _is_playable_fallback(board, fresh, searchmoves):
+                return fresh, "fresh_root_eval"
         return _legal_fallback_move(board, searchmoves), "first_legal"
 
     @property
@@ -1950,7 +2502,7 @@ class Engine:
         with self._state_lock:
             self._quit_requested = True
             self._search_gen += 1
-        self._wait_for_search()
+        self._wait_for_search(timeout_s=min(_SHUTDOWN_JOIN_S, _JOIN_TIMEOUT_S))
         if self._gil_probe is not None:
             self._gil_probe.close()
         self._worker.close()
@@ -1958,17 +2510,150 @@ class Engine:
 
   # -- helpers --------------------------------------------------------------
 
-    def _wait_for_search(self) -> None:
-        if self._search_thread is not None and self._search_thread.is_alive():
+    def worker_is_free(self) -> bool:
+        """No search thread, no live orphan, no warmup: the worker is ours.
+
+        The single predicate every path that touches the worker, tree or
+        evaluator outside a search uses (re-warm, staged-evaluator adoption,
+        health re-check; setoption rebuilds go through `_wait_for_search`,
+        which raises on the same condition).
+        """
+        with self._state_lock:
+            return self._search_free_locked() and self._warmup_done.is_set()
+
+    def _search_free_locked(self) -> bool:
+        self._orphan_threads = [t for t in self._orphan_threads if t.is_alive()]
+        thread = self._search_thread
+        return (thread is None or not thread.is_alive()) and not self._orphan_threads
+
+    def has_live_threads(self) -> bool:
+        """A search, orphan or fallback helper is still running (e.g. in torch).
+
+        `__main__` hard-exits after `close()` when this is True rather than
+        finalizing the interpreter under a live thread.
+        """
+        with self._state_lock:
+            return not self._search_free_locked()
+
+    def _wait_for_search(
+        self, *, timeout_s: float | None = None, answer_parked: bool = False,
+    ) -> None:
+        """Stop the current search and make sure nothing else owns the worker.
+
+        Waits at most ``timeout_s`` (default `_JOIN_TIMEOUT_S`) IN TOTAL. A
+        search that does not stop in time is parked as an orphan, ONCE, and its
+        late result is silenced by a generation bump. Later commands only POLL
+        orphans (no join on every command); `go` passes its clock-bounded budget.
+        ``answer_parked`` (only `stop`, whose GUI is waiting for exactly that
+        bestmove): answer the parked search's `go` from the fallback now. Any
+        other command must NOT: a late bestmove after the GUI has moved on is
+        read as the reply to its NEXT `go`, for the wrong board.
+        Raises `SearchNotQuiescent` while anything still owns the worker.
+        """
+        budget = _JOIN_TIMEOUT_S if timeout_s is None else max(0.0, timeout_s)
+        end = time.monotonic() + budget
+        thread = self._search_thread
+        if thread is not None and thread.is_alive():
             self._cancel_event.set()
             self._stop_event.set()
             self._ponder_release.set()
-            self._search_thread.join(timeout=_JOIN_TIMEOUT_S)
-            if self._search_thread.is_alive():
-                raise SearchNotQuiescent("search stop timed out; thread still running; worker unchanged")
-        if not self._warmup_done.wait(timeout=_JOIN_TIMEOUT_S):
+            thread.join(timeout=max(0.0, end - time.monotonic()))
+            if thread.is_alive():
+                self._park_search_thread(thread, answer=answer_parked)
+                raise SearchNotQuiescent(
+                    f"search did not stop within {budget:.1f}s; parked; worker unchanged"
+                )
+        if not self._warmup_done.wait(timeout=max(0.0, end - time.monotonic())):
             raise SearchNotQuiescent("warmup stop timed out; worker unchanged")
+        for orphan in list(self._orphan_threads):
+            wait = 0.0 if timeout_s is None else max(0.0, end - time.monotonic())
+            orphan.join(timeout=wait)
+            if orphan.is_alive():
+                raise SearchNotQuiescent(
+                    "an earlier search that missed its stop deadline still owns the worker"
+                )
+            with self._state_lock:
+                if orphan in self._orphan_threads:
+                    self._orphan_threads.remove(orphan)
         self._search_thread = None
+        self._live_go = None
+
+    def _park_search_thread(self, thread: threading.Thread, *, answer: bool) -> None:
+        """Retire a search that missed its stop: orphan it, silence it, answer it."""
+        with self._state_lock:
+            self._search_gen += 1
+            quitting = self._quit_requested
+        if thread not in self._orphan_threads:
+            self._orphan_threads.append(thread)
+        self._search_thread = None
+        live, self._live_go = self._live_go, None
+        if not answer or quitting or live is None or thread is self._fallback_reply_thread:
+            return
+        board, searchmoves = live
+        move, source = self._bestmove_fallback(board, searchmoves, allow_fresh_eval=False)
+        self._bestmove_fallback_used += 1
+        self._note_unsearched_reply()
+        _println(
+            "info string search did not stop in time; answering unsearched "
+            f"bestmove_fallback_used={self._bestmove_fallback_used} source={source} move={move}"
+        )
+        _println(format_bestmove(move, ponder=None))
+
+    def _note_unsearched_reply(self) -> None:
+        """Hook: a fallback reply that was not a search phase (streak bookkeeping)."""
+
+    def _bounded_fresh_eval(
+        self, board: chess.Board, searchmoves: tuple[str, ...], budget_s: float | None,
+    ) -> str | None:
+        """One fresh root eval of ``board`` on a helper thread, time-bounded.
+
+        A helper still running after the budget is still inside the evaluator, so
+        it is parked with the orphans: nothing reuses the worker until it ends.
+        """
+        timeout = _FRESH_EVAL_TIMEOUT_S if budget_s is None else min(_FRESH_EVAL_TIMEOUT_S, budget_s)
+        box: dict[str, object] = {}
+
+        def run() -> None:
+            try:
+                box["move"] = self._worker.fresh_root_policy_bestmove(
+                    board, searchmoves=searchmoves,
+                )
+            except Exception as exc:
+                box["error"] = exc
+
+        helper = threading.Thread(target=run, daemon=True, name="uci-fresh-eval")
+        helper.start()
+        helper.join(timeout=max(0.0, timeout))
+        if helper.is_alive():
+            with self._state_lock:
+                self._orphan_threads.append(helper)
+            _println(
+                f"info string fresh root-eval fallback timed out after {timeout * 1000:.0f} ms; "
+                "using the first legal move"
+            )
+            return None
+        error = box.get("error")
+        if isinstance(error, BaseException):
+            _println(f"info string fresh root-eval fallback unavailable: {_one_line(error)}")
+            return None
+        move = box.get("move")
+        return move if isinstance(move, str) else None
+
+
+def _fresh_eval_budget_s(deadline: Deadline) -> float | None:
+    """A tenth of what is left of this phase's clock (None: no clock)."""
+    remaining = deadline.remaining_ms()
+    return None if remaining is None else max(0.0, remaining / 1000.0) * 0.1
+
+
+def _close_quietly(evaluator: object) -> None:
+    """Retire an evaluator that was built but never installed."""
+    close = getattr(evaluator, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:
+            _log.warning("closing an uninstalled evaluator failed", exc_info=True)
 
 
 def _is_playable_fallback(
