@@ -487,3 +487,38 @@ def test_restored_hash_cap_resyncs_the_live_tree_growth_step() -> None:
     w._tree = _Spy(w._tree)  # pyright: ignore[reportAttributeAccessIssue]
     assert w.restore_search_state(snapshot) is True
     assert seen == [expected]
+
+
+# --- the boundary health rebuild is transactional (round 5) ------------------
+
+
+def test_health_rebuild_restores_the_pool_after_a_failed_install(make_engine, monkeypatch, capsys) -> None:
+    engine = make_engine(walkers=1, multi=True)
+    engine.dispatch(parse_command("setoption name UseMultiGpuPUCV value true"))
+    assert engine._worker.realized_search_path() == "pucv_pool"
+    engine._mark_unhealthy("test")
+    _fail(monkeypatch, "install_multi_gpu_pucv", times=1, teardown_first=True)
+    capsys.readouterr()
+    engine.dispatch(parse_command("isready"))  # not in a game: the boundary
+    out = capsys.readouterr().out
+    assert "health rebuild: install failed" in out
+    assert "health rebuild failed; previous configuration kept: path=pucv_pool" in out
+    assert "health rebuild: evaluator rebuilt" not in out
+    assert "engine health check passed; unhealthy state cleared" in out
+    assert "DEGRADED" not in out
+    assert _assert_searches_and_reports_truthfully(engine, capsys) == "pucv_pool"
+
+
+def test_health_rebuild_that_cannot_restore_the_pool_says_degraded(make_engine, monkeypatch, capsys) -> None:
+    engine = make_engine(walkers=1, multi=True)
+    engine.dispatch(parse_command("setoption name UseMultiGpuPUCV value true"))
+    engine._mark_unhealthy("test")
+    _fail(monkeypatch, "install_multi_gpu_pucv", times=99, teardown_first=True)
+    capsys.readouterr()
+    engine.dispatch(parse_command("isready"))
+    out = capsys.readouterr().out
+    assert "previous configuration could not be restored" in out
+    assert ("engine health check passed on a DEGRADED path (realized path=gumbel but "
+            "the options named pucv_pool before the rebuild)") in out
+    assert "engine health check passed; unhealthy state cleared" not in out
+    assert _assert_searches_and_reports_truthfully(engine, capsys) == "gumbel"

@@ -224,6 +224,8 @@ def test_boundary_rebuilds_synchronously_announces_first_then_rechecks(capsys) -
 
     worker.run.side_effect = warm
     engine.dispatch(parse_command("ucinewgame"))
+    assert calls == []  # ucinewgame only opens the boundary
+    engine.dispatch(parse_command("isready"))
     out = capsys.readouterr().out
     assert calls == ["build", "install", "warmup"]  # synchronous, in order
     worker.set_evaluator.assert_called_once_with(rebuilt[0])
@@ -243,6 +245,7 @@ def test_failed_boundary_rebuild_keeps_the_evaluator_and_the_recheck_decides(cap
     _make_unhealthy(engine, worker)
     worker.run.side_effect = _ok  # the fault was transient
     engine.dispatch(parse_command("ucinewgame"))
+    engine.dispatch(parse_command("isready"))
     out = capsys.readouterr().out
     assert "health rebuild: evaluator rebuild failed" in out
     worker.set_evaluator.assert_not_called()
@@ -257,11 +260,72 @@ def test_failed_boundary_install_is_contained_and_the_recheck_still_runs(capsys)
     worker.set_evaluator.side_effect = RuntimeError("install failed: device busy")
     worker.run.side_effect = _ok
     engine.dispatch(parse_command("ucinewgame"))
+    engine.dispatch(parse_command("isready"))
     out = capsys.readouterr().out
     assert len(rebuilt) == 1
     assert "health rebuild: install failed" in out
+    assert "health rebuild failed; previous configuration kept" in out  # restored
+    assert "health rebuild: evaluator rebuilt" not in out  # only on success
     assert "error handling" not in out  # contained here, not by the dispatch guard
     assert "health check passed" in out
+    assert engine._unhealthy is None
+
+
+def test_ucinewgame_only_opens_the_boundary_position_and_go_are_never_delayed(capsys) -> None:
+    """A GUI that sends ucinewgame + position + go with no isready: nothing is
+    rebuilt and nothing can exit inside ucinewgame; the go is answered."""
+    engine, worker, rebuilt = _flaky_engine()
+    _make_unhealthy(engine, worker)
+    capsys.readouterr()
+    worker.run.side_effect = _ok
+    engine.dispatch(parse_command("ucinewgame"))
+    assert rebuilt == []
+    assert not engine.quit_requested
+    engine.dispatch(parse_command("position startpos moves e2e4"))
+    _go(engine)
+    out = capsys.readouterr().out
+    assert len(_bestmoves(out)) == 1
+    assert "health check" not in out
+    assert rebuilt == []
+    assert engine._unhealthy is not None  # still owed: no isready between games
+
+
+def test_a_failed_mid_game_rewarm_marks_unhealthy_and_keeps_the_path_dirty(capsys) -> None:
+    engine, worker, rebuilt = _flaky_engine()
+    worker.run.side_effect = _ok
+    engine.dispatch(parse_command("position startpos moves e2e4"))
+    _go(engine)  # in game
+    engine._warmup_dirty = True
+    worker.run.side_effect = RuntimeError("search-path capture failed")
+    capsys.readouterr()
+    engine.dispatch(parse_command("isready"))
+    out = capsys.readouterr().out
+    assert out.splitlines()[-1] == "readyok"
+    assert "search-path re-warm failed" in out
+    assert "error handling" not in out
+    assert engine._warmup_dirty is True  # retried at the next free isready
+    assert engine._unhealthy == "the search-path re-warm at isready failed"
+    assert rebuilt == []  # mid-game: the rebuild waits for the boundary
+    assert not engine.quit_requested
+
+
+def test_a_raising_health_rebuild_is_one_reported_outcome(monkeypatch, capsys) -> None:
+    engine, worker, _ = _flaky_engine()
+    _make_unhealthy(engine, worker)
+    worker.run.side_effect = _ok
+
+    def boom(*_a, **_kw):
+        raise RuntimeError("invariant check exploded")
+
+    monkeypatch.setattr(engine, "_enforce_path_invariant", boom)
+    engine.dispatch(parse_command("ucinewgame"))
+    capsys.readouterr()
+    engine.dispatch(parse_command("isready"))
+    out = capsys.readouterr().out
+    assert out.count("health rebuild raised (RuntimeError: invariant check exploded)") == 1
+    assert out.count("health check passed") == 1
+    assert "error handling" not in out
+    assert out.splitlines()[-1] == "readyok"
     assert engine._unhealthy is None
 
 
@@ -527,14 +591,27 @@ def test_a_go_ponder_counts_once_in_the_streak(capsys) -> None:
     assert rebuilt == []
 
 
-def test_solved_root_and_ponder_transition_fallbacks_extend_the_streak(capsys) -> None:
+def test_solved_root_without_witness_is_exempt_and_transition_extends_the_streak(capsys) -> None:
+    """A solved root whose proof names no move is a property of the position:
+    announced and counted on its own, never in the unhealthy streak (#1265's
+    node-bound re-raise makes it common)."""
     engine, worker, rebuilt = _flaky_engine()
+    worker.run.side_effect = SolvedRootWitnessUnavailable({}, (), {}, {})
+    for n in (1, 2, 3, 4):
+        _go(engine)
+        assert engine._witness_unavailable_roots == n
+    assert engine._consecutive_search_failures == 0
+    assert engine._unhealthy is None
+    out = capsys.readouterr().out
+    assert "solved_root_without_move_witness" in out
+    assert "witness_unavailable_roots=4" in out
+    assert len(_bestmoves(out)) == 4
+    # ...and it does not RESET a streak a real fault started either.
+    worker.run.side_effect = RuntimeError("broken")
+    _go(engine)
     worker.run.side_effect = SolvedRootWitnessUnavailable({}, (), {}, {})
     _go(engine)
     assert engine._consecutive_search_failures == 1
-    out = capsys.readouterr().out
-    assert "solved_root_without_move_witness" in out
-    assert len(_bestmoves(out)) == 1
 
     result = engine._run_one_phase(
         SearchLimits(deadline_ms=10), is_ponder=False, board=chess.Board(),

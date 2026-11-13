@@ -491,6 +491,9 @@ class Engine:
   # Search phases in a row that published a fallback move (reset by any phase
   # that returns a searched result). See `_note_fallback_phase`.
         self._consecutive_search_failures = 0
+  # Solved roots whose proof named no move (`SolvedRootWitnessUnavailable`):
+  # counted here, NOT in the streak above -- a property of the position.
+        self._witness_unavailable_roots = 0
   # A ponder phase that fell back has not published anything yet: ponderhit
   # hands the move to a real phase, which then decides the streak. Only a
   # ponder reply that IS published (stop) counts. See `_run_search`.
@@ -608,7 +611,9 @@ class Engine:
         snap = getattr(self._worker, "search_state", None)
         return snap() if callable(snap) else None
 
-    def _restore_after_failed_setoption(self, snapshot: _SetoptionSnapshot) -> None:
+    def _restore_after_failed_setoption(
+        self, snapshot: _SetoptionSnapshot, *, what: str = "setoption",
+    ) -> None:
         """Put the engine back on a working configuration that matches its options.
 
         Preferred: the configuration before the failed setoption -- options AND
@@ -638,12 +643,9 @@ class Engine:
             )
         self._warmup_dirty = True
         _println(
-            f"info string setoption failed; {outcome}: "
+            f"info string {what} failed; {outcome}: "
             f"path={self._worker.realized_search_path()}"
         )
-
-    def _configured_walkers(self) -> int:
-        return int(self._options.search_walkers)
 
     def _set_configured_walkers(self, n: int) -> None:
         self._options.search_walkers = n
@@ -657,20 +659,24 @@ class Engine:
         realized = getattr(self._worker, "realized_search_path")()
         if not isinstance(realized, str):  # a test double without a real worker
             return None
-        o = self._options
+        allowed = self._paths_named_by(self._options)
+        if realized in allowed:
+            return None
+        return f"realized path={realized} but the options name {'/'.join(allowed)}"
+
+    def _paths_named_by(self, o: EngineOptions) -> tuple[str, ...]:
+        """The realized search path(s) a set of options names."""
         if o.search_parallel == "gumbel":
             allowed: tuple[str, ...] = ("rpg",)
         elif o.use_multi_gpu_pucv:
             allowed = ("pucv_pool",)
-        elif self._configured_walkers() > 1:
+        elif int(o.search_walkers) > 1:
             allowed = ("walker",)
         elif o.use_vl:
             allowed = ("pucv", "gumbel")
         else:
             allowed = ("gumbel",)
-        if realized in allowed:
-            return None
-        return f"realized path={realized} but the options name {'/'.join(allowed)}"
+        return allowed
 
     def _enforce_path_invariant(self, *, after: str) -> None:
         mismatch = self._path_mismatch()
@@ -873,8 +879,19 @@ class Engine:
             if not self._in_game and not self._game_boundary_checks():
                 return  # exiting non-zero; no readyok over a broken search
             if self._warmup_dirty:
-                self._warmup_dirty = False
-                self.warmup_search()
+                try:
+                    self.warmup_search()
+                except Exception as exc:
+                    # The path stays dirty (the next free isready retries) and
+                    # the next game boundary rebuilds and strictly re-checks.
+                    _log.error("search-path re-warm failed", exc_info=True)
+                    _println(
+                        f"info string search-path re-warm failed ({_one_line(exc)}); "
+                        "the engine still answers every go"
+                    )
+                    self._mark_unhealthy("the search-path re-warm at isready failed")
+                else:
+                    self._warmup_dirty = False
         _println(format_readyok())
 
     def _handle_newgame(self) -> None:
@@ -883,13 +900,13 @@ class Engine:
             self._wait_for_search()
         except SearchNotQuiescent as exc:
             # The Python-side game state still resets; the tree resets at the
-            # first `go` that gets the worker, and the boundary checks run at the
-            # next free isready before that game's first `go`.
+            # first `go` that gets the worker.
             _println(f"info string ucinewgame: {exc}; tree reset deferred")
             self._force_tree_reset = True
         else:
-            if not self._game_boundary_checks():
-                return
+            # Only opens the boundary: the health rebuild / re-check runs at the
+            # next free isready, never here -- a GUI may send `position` + `go`
+            # right after `ucinewgame` and would not see an exit until it wrote.
             self._worker.reset_tree()
         self._board = chess.Board()
         self._pending_fen = None
@@ -2341,8 +2358,23 @@ class Engine:
             f"info string engine unhealthy ({reason}): rebuilding the evaluator and "
             "rerunning the strict startup check before the next game"
         )
-        self._rebuild_for_health_check()
-        return self._recheck_health()
+        named_before = self._paths_named_by(replace(self._options))
+        try:
+            self._rebuild_for_health_check()
+        except Exception as exc:
+            # One outcome, reported once: the strict re-check below still decides.
+            _log.error("health rebuild raised", exc_info=True)
+            _println(f"info string health rebuild raised ({_one_line(exc)}); "
+                     "the strict re-check decides")
+        try:
+            realized = self._worker.realized_search_path()
+        except Exception:
+            realized = None
+        degraded = None
+        if isinstance(realized, str) and realized not in named_before:
+            degraded = (f"realized path={realized} but the options named "
+                        f"{'/'.join(named_before)} before the rebuild")
+        return self._recheck_health(degraded=degraded)
 
     def _rebuild_for_health_check(self) -> None:
         """Build a fresh evaluator for the configured path and install it.
@@ -2359,14 +2391,17 @@ class Engine:
         )
         if new_eval is None:
             return
+        # Transactional like a setoption: a failed install (which on a multi-GPU
+        # path may already have torn the pool down) restores the previous
+        # options, worker search state and pool via the same restore.
+        snapshot = (replace(self._options), self._worker_search_state())
         try:
             self._install_rebuilt_primary(new_eval)
         except Exception as exc:
             _log.error("installing the health-rebuild evaluator failed", exc_info=True)
-            _println(
-                f"info string health rebuild: install failed ({_one_line(exc)}); "
-                "keeping the current evaluator"
-            )
+            _println(f"info string health rebuild: install failed ({_one_line(exc)})")
+            self._restore_after_failed_setoption(snapshot, what="health rebuild")
+            return
         self._enforce_path_invariant(after="health rebuild")
         self._warmup_dirty = True
         _println("info string health rebuild: evaluator rebuilt")
@@ -2376,7 +2411,7 @@ class Engine:
         # extends the streak, so a `go` that always fails still goes unhealthy.
         self._note_fallback_phase()
 
-    def _recheck_health(self) -> bool:
+    def _recheck_health(self, *, degraded: str | None = None) -> bool:
         """Rerun the strict startup warmup; False = failed, engine is exiting.
 
         Called only from `_game_boundary_checks` (worker free, between games).
@@ -2397,7 +2432,13 @@ class Engine:
         self._warmup_dirty = False
         self._unhealthy = None
         self._consecutive_search_failures = 0
-        _println("info string engine health check passed; unhealthy state cleared")
+        if degraded is not None:
+            _println(
+                f"info string WARNING engine health check passed on a DEGRADED path "
+                f"({degraded}); unhealthy state cleared"
+            )
+        else:
+            _println("info string engine health check passed; unhealthy state cleared")
         return True
 
     @property
@@ -2551,14 +2592,18 @@ class Engine:
                     board, limits.searchmoves, budget_s=_fresh_eval_budget_s(deadline),
                 )
             self._bestmove_fallback_used += 1
+            self._witness_unavailable_roots += 1
             reason = "solved_root_without_move_witness"
             _println(
                 f"info string search incomplete reason={reason} root_status={exc.outcomes.get(0)} "
                 f"child_checks={exc.child_checks.get(0, 0)} move={move} "
                 f"outcome_preserved=UNVERIFIED source={source} "
-                f"bestmove_fallback_used={self._bestmove_fallback_used}"
+                f"bestmove_fallback_used={self._bestmove_fallback_used} "
+                f"witness_unavailable_roots={self._witness_unavailable_roots}"
             )
-            self._note_fallback_phase(is_ponder=is_ponder)
+  # A property of the POSITION (the root is proved solved, the proof names no
+  # move), not of the engine: an evaluator or search fault raises a different
+  # exception. It neither extends nor resets the unhealthy streak.
             return SearchResult(
                 bestmove_uci=move, ponder_uci=None, nodes=0, pv=(), score_cp=0,
                 search_incomplete=reason,

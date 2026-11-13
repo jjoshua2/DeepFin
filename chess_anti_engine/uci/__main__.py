@@ -138,9 +138,16 @@ def _warmup_evaluator(
     and outside the chunk clock-guard.
 
     STRICT: a failure raises. At startup the builder turns that into a clear
-    error and a non-zero exit before ``readyok``; on a mid-session rebuild
-    (``MaxBatch`` etc.) the engine keeps its previous evaluator. Skipping
-    silently used to hand a cold or broken evaluator to the first ``go``.
+    error and a non-zero exit before ``readyok``. Mid-session this factory is
+    reached two ways: through ``Engine._rebuild_or_keep`` (``MaxBatch``,
+    ``EvalCacheEntries``, ``SearchWalkers``, the game-boundary health rebuild),
+    which catches the raise and keeps the previous evaluator; or as the
+    primary rebuild inside a multi-GPU pool install, where the raise unwinds
+    to the setoption / health-rebuild transaction, which restores the
+    previous configuration. This warms the PRIMARY chain only: the per-device
+    pool evaluators are warmed (strictly) by ``_warmup_pucv_evaluator`` in the
+    pool factory builder. Skipping silently used to hand a cold or broken
+    evaluator to the first ``go``.
     """
     cb = CBoard.from_board(chess.Board())
     encoded = encode_cboard(

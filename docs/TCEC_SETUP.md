@@ -171,36 +171,77 @@ phase C tells us what the additional seven GPUs are worth.
   and `deepfin: engine startup failed: ...` on stderr and exits non-zero
   *before* `readyok`, so the GUI reports a failed engine start instead of
   playing a game on an unsearched fallback.
-- **A failed search never loses on time.** The move is answered from the
-  network's root policy and every such move prints `info string WARNING search
-  failed on N consecutive move(s)`. Nothing is rebuilt during a game. Any
-  non-zero count is worth a report.
-- **Unhealthy state.** 3 fallback moves in a row (a failed search, a reply to a
-  `go` that could not start a search, or a reply while a stuck search still
-  holds the worker) print `info string WARNING engine unhealthy: ...` once. The
-  engine keeps answering every `go`. At the next game boundary -- `ucinewgame`,
-  or, for a GUI that never sends it, `position startpos` with no moves -- the
-  next `isready` (or the `ucinewgame` itself) announces `engine unhealthy (...):
-  rebuilding the evaluator and rerunning the strict startup check`, rebuilds the
-  evaluator synchronously (no clock is running), and reruns the strict startup
-  warmup. It then prints `engine health check passed`, or prints `engine health
-  check failed ...` (and `deepfin: engine health check failed` on stderr) and
-  exits non-zero *before* `readyok`, so the GUI restarts a fresh process for the
-  next game. A mid-game `isready` always answers `readyok` promptly and never
-  exits. A GUI that starts games from a FEN and never sends `ucinewgame` gets no
-  health check until restart (it still gets every move answered).
+- **A failed search never loses on time.** The move comes from, in order: the
+  network's cached root policy for that exact position (`source=root_policy`);
+  one fresh root evaluation of the position, bounded by min(150 ms, a tenth of
+  the remaining clock) (`source=fresh_root_eval`); or, when that is skipped
+  (another thread may still be inside the evaluator) or times out, the first
+  legal move (`source=first_legal`). Nothing is rebuilt during a game. Each kind
+  of unsearched move has its own line; any of them is worth a report:
+  - a search that raised: `info string search error: ...`, then
+    `info string bestmove_fallback_used=N source=... move=... exception=...
+    phase=main` and `info string WARNING search failed on N consecutive
+    move(s); this move is UNSEARCHED (fallback)` (a failed ponder search says
+    `WARNING ponder search failed; ...` and counts only if `stop` publishes it);
+  - a `go` that could not start a search, or that arrived while a stuck search
+    still holds the worker: `info string error handling CmdGo: ...` or
+    `info string command rejected (CmdGo): ...`, then `info string search not
+    started; bestmove_fallback_used=N source=... move=...`;
+  - a `stop` that the search ignored for 1 s: `info string search did not stop
+    in time; answering unsearched bestmove_fallback_used=N source=... move=...`;
+  - a ponder transition past its deadline or cancelled: `info string search
+    incomplete reason=ponder_transition_deadline|ponder_transition_cancelled
+    move=... source=...`;
+  - a root proved solved whose proof names no move: `info string search
+    incomplete reason=solved_root_without_move_witness ...
+    witness_unavailable_roots=N`. This is a property of the position, not a
+    fault, and does NOT count toward the unhealthy streak below.
+- **Unhealthy state.** 3 counted fallback moves in a row (every kind above except
+  the solved-root one), or a failed search-path re-warm at `isready`, print
+  `info string WARNING engine unhealthy: ...` once. The engine keeps answering
+  every `go`. A game boundary is `ucinewgame`, or, for a GUI that never sends
+  it, `position startpos` with no moves; it only marks the boundary. The checks
+  run at the next `isready` after it (never inside `ucinewgame` / `position`,
+  because a `go` may follow at once): it announces `engine unhealthy (...):
+  rebuilding the evaluator and rerunning the strict startup check`, rebuilds
+  the evaluator synchronously, and reruns the strict startup warmup. Outcomes:
+  `engine health check passed; unhealthy state cleared`; or `WARNING engine
+  health check passed on a DEGRADED path (realized path=... but the options
+  named ... before the rebuild)` (see "One bad GPU"); or `engine health check
+  failed ...` plus `deepfin: engine health check failed` on stderr and an exit
+  with status 1 *before* `readyok`. Whether a given GUI then restarts a fresh
+  process for the next game is unverified (see the PR's GPU checks).
+  **A GUI that never sends `isready` between games gets no health re-check at
+  all**: the engine stays unhealthy, keeps answering every `go`, and every
+  unsearched move stays loud as listed above.
+- **`isready` mid-game** never rebuilds, re-checks or exits. It answers at once
+  when a search (or a stuck one) holds the worker. Otherwise, if an option
+  rebuild left the search path cold, it first re-warms it: one search of
+  max(256, `chunk_sims`) nodes on the start position, milliseconds when the
+  graphs are already captured and a few seconds (about 3-4 s measured for a
+  cold Gumbel capture) right after a rebuild. No clock runs between `bestmove`
+  and the next `go`. A failed re-warm prints `search-path re-warm failed`,
+  marks the engine unhealthy, keeps the path cold for the next `isready`, and
+  still answers `readyok`.
 - **Options mid-game.** A `setoption` that rebuilds an evaluator or a pool
   (e.g. `MaxBatch`, `SearchWalkers`, `UseMultiGpuPUCV`) is applied at once,
   synchronously, between moves; if the rebuild fails the previous settings and
-  evaluator stay. The next `isready` re-warms the search path before the clock.
+  evaluator stay. While a search that ignored `stop` still holds the worker,
+  every `setoption` (including `MultiPV`) is rejected at once with `info
+  string command rejected (CmdSetOption): ...` and the previous value stays.
 - **One bad GPU on a multi-GPU host.** There is no degrade-to-the-healthy-GPUs
-  path. If a multi-GPU pool cannot be (re)installed after a `setoption`, the
-  engine first restores the previous pool; if that also fails it falls back to
-  classic Gumbel on ONE GPU and says so in an info string. It stays on one GPU
-  until the process is restarted (or the GUI sends `UseMultiGpuPUCV` /
-  `SearchParallel` again): a game-boundary rebuild rebuilds what the options
-  name, which is then the single-GPU path. A pool that fails at startup fails
-  the strict startup check and the engine exits before `readyok`.
+  path. If a multi-GPU pool cannot be (re)installed -- after a `setoption`, or
+  during the boundary health rebuild -- the engine first restores the previous
+  pool (`... failed; previous configuration kept: path=pucv_pool`). If that
+  also fails it falls back to classic Gumbel on ONE GPU and says so
+  (`previous configuration could not be restored ...; fell back to the
+  single-evaluator classic Gumbel path`); after a health rebuild the result
+  line then reads `engine health check passed on a DEGRADED path`, never plain
+  `passed`. It stays on one GPU until the process is restarted (or the GUI
+  sends `UseMultiGpuPUCV` / `SearchParallel` again): a later boundary rebuild
+  rebuilds what the options name, which is then the single-GPU path. A pool
+  that fails at startup fails the strict startup check and the engine exits
+  before `readyok`.
 - **A search that ignores `stop`.** After 1 s the engine answers that `go` from
   the fallback; the stuck search is parked and every later `go` answers at
   once (within a tenth of its clock) for the board the GUI sent, until the
