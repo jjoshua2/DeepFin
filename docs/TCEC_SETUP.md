@@ -21,6 +21,9 @@ hardware, including a multi-GPU test.
 
 ## 2. Install
 
+For the install roles, a torch build that supports current NVIDIA cards, and
+`deepfin --selfcheck`, see [install and verify](install.md).
+
 ```bash
 # from the provided source archive / repository checkout:
 cd deepfin

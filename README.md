@@ -55,8 +55,9 @@ See [development](docs/development.md) for the uv version, platform scope, updat
 and validation. Create this environment in a fresh worktree when jobs are live.
 
 Ordinary package installs (without the development lock):
-- trainer/tune machine: `pip install -e ".[train,tune,server]"`
-- worker/client machine: `pip install -e ".[worker]"`
+- UCI engine only: `pip install ".[match]"` — see [install and verify](docs/install.md)
+- trainer/tune machine: `pip install -e ".[server]"` (same as `.[train,tune,server]`)
+- worker/client machine: `pip install -e ".[client]"` (alias `.[worker]`)
 
 ## Quickstart: single-trial run (selfplay + train loop, no PBT)
 You must point at a Stockfish binary. `--mode train` runs a single trial through the same distributed selfplay pipeline as tune mode, but without population-based hyperparameter search — one worker process, no population search, no exploits.

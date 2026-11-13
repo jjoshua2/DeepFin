@@ -54,6 +54,7 @@ from .engine import (
 from .model_loader import load_model_from_checkpoint
 from .protocol import CmdQuit, CmdUci, parse_command
 from .search import SearchWorker
+from .selfcheck import enforce_startup_gate
 
 # torch.compile modes that enable Inductor CUDA graphs (cudagraph_trees).
 _CUDAGRAPH_COMPILE_MODES = frozenset({"reduce-overhead", "max-autotune"})
@@ -739,6 +740,9 @@ def _build_parser() -> argparse.ArgumentParser:
     can be built without running the engine.
     """
     p = argparse.ArgumentParser(prog="chess-anti-engine-uci")
+    p.add_argument("--selfcheck", action="store_true",
+                   help="verify this install (torch/GPU, C extensions, optional --checkpoint/"
+                        "--syzygy, a UCI exchange) and exit; see --selfcheck --help")
   # --checkpoint is required, but we accept DEEPFIN_CKPT as the default so
   # the `deepfin` console-script entry point (from pyproject.toml) can be
   # launched as a bare executable by chess GUIs that don't pass CLI args.
@@ -1187,8 +1191,15 @@ def _startup_engine_options(
 
 
 def main() -> int:
+    if "--selfcheck" in sys.argv[1:]:
+        from .selfcheck import main as selfcheck_main
+        return selfcheck_main(sys.argv[1:])
     p = _build_parser()
     args = p.parse_args()
+  # Refuse a missing/stale/ABI-mismatched extension before any protocol line.
+    refused = enforce_startup_gate()
+    if refused is not None:
+        return refused
 
     if not args.checkpoint:
         p.error(
@@ -1206,10 +1217,11 @@ def main() -> int:
   # Configure shared inductor + triton cache before any torch.compile
   # call. Mirrors selfplay (worker._configure_shared_compile_cache) so a
   # `deepfin` UCI invocation reuses the same compiled kernels as training.
+  # Imported from compile_cache, not worker: worker pulls in zarr/replay.
     if args.compile:
-        from chess_anti_engine.worker import _configure_shared_compile_cache
+        from chess_anti_engine.compile_cache import configure_shared_compile_cache
         from pathlib import Path
-        _configure_shared_compile_cache(
+        configure_shared_compile_cache(
             cache_dir=Path(args.compile_cache_dir).expanduser(),
         )
 
