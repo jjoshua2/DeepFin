@@ -663,3 +663,38 @@ def test_last_resort_fallback_options_follow_the_teardown_step_by_step() -> None
     assert engine._options.use_multi_gpu_pucv is False
     assert engine._options.use_vl is False
     assert engine._options.search_walkers == 1
+
+
+def test_fresh_eval_keeps_its_absolute_150ms_cap_on_a_long_clock(capsys) -> None:
+    """On a two-minute move a tenth of the clock is 12 s; the fresh root-eval
+    fallback must still give up after the absolute 150 ms cap."""
+    hang = threading.Event()
+    worker = MagicMock()
+    worker.advance_root.side_effect = RuntimeError("tree allocation failed")  # handler fault
+    worker.reset_tree.side_effect = RuntimeError("tree allocation failed")
+    worker.root_policy_bestmove.return_value = None
+    worker.fresh_root_policy_bestmove.side_effect = lambda *_a, **_kw: hang.wait(30)
+    engine = Engine(worker, options=EngineOptions())
+    seen: list[float | None] = []
+    real = engine._bounded_fresh_eval
+
+    def spy(board: chess.Board, searchmoves: tuple[str, ...], budget_s: float | None) -> str | None:
+        seen.append(budget_s)
+        return real(board, searchmoves, budget_s)
+
+    engine._bounded_fresh_eval = spy  # type: ignore[method-assign]
+    engine.dispatch(parse_command("position startpos moves e2e4"))
+    t0 = time.monotonic()
+    engine.dispatch(parse_command("go movetime 120000"))
+    _join(engine)
+    elapsed = time.monotonic() - t0
+    out = capsys.readouterr().out
+    (budget,) = seen
+    assert budget is not None
+    assert budget > 10.0  # the clock alone would allow ~12 s
+    assert "fresh root-eval fallback timed out after 150 ms" in out
+    assert elapsed < 1.0, elapsed
+    assert len(_bestmoves(out)) == 1
+    hang.set()
+    for t in list(engine._orphan_threads):
+        t.join(5)
