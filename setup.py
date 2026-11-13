@@ -23,6 +23,45 @@ from setuptools import setup, Extension
 from setuptools.command.build_ext import build_ext as _build_ext
 import numpy as np
 
+_ROOT = Path(__file__).resolve().parent
+
+
+def _load_by_path(name: str, path: Path):
+    """Import a stdlib-only helper from this tree, or None when it is absent.
+
+    ``spec_from_file_location`` does not return None for a missing file (the
+    failure only surfaces in ``exec_module``), so the existence check is ours.
+    """
+    if not path.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    import sys
+    sys.modules[name] = module  # dataclasses resolve annotations through sys.modules
+    spec.loader.exec_module(module)
+    return module
+
+
+# ⚑ ONE SOURCE OF TRUTH FOR WHAT EACH EXTENSION IS COMPILED FROM.
+# scripts/check_c_extensions_fresh.py lists every extension's transitive
+# .c/.h inputs (plus setup.py itself) for the training gate; the same list is
+# each Extension's ``depends`` below, so a header-only edit makes setuptools
+# recompile instead of reusing build/lib (and copying that stale object back
+# in place), and it is what build records hash. A tree without scripts/ (not
+# a supported install) builds with no depends and writes no records.
+_FRESHNESS_TOOL = _load_by_path(
+    "_cae_check_c_extensions_fresh", _ROOT / "scripts" / "check_c_extensions_fresh.py")
+_EXT_DEPENDENCIES: dict[str, tuple[str, ...]] = (
+    {} if _FRESHNESS_TOOL is None
+    else {spec.module: tuple(spec.dependencies) for spec in _FRESHNESS_TOOL.EXTENSION_SPECS}
+)
+
+
+def _depends(module: str) -> list[str]:
+    return list(_EXT_DEPENDENCIES.get(module, ()))
+
 
 def _env_enabled(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes"}
@@ -179,6 +218,7 @@ _CBOARD_FAST_SLIDER_MACROS: list[tuple[str, str | None]] = [
 # once per encoded position, not per search node).
 features_ext = Extension(
     "chess_anti_engine.encoding._features_ext",
+    depends=_depends("chess_anti_engine.encoding._features_ext"),
     sources=["chess_anti_engine/encoding/_features_ext.c"],
     include_dirs=[np.get_include(), "chess_anti_engine/encoding"],
     extra_compile_args=_ext_compile_args(),
@@ -187,6 +227,7 @@ features_ext = Extension(
 
 lc0_ext = Extension(
     "chess_anti_engine.encoding._lc0_ext",
+    depends=_depends("chess_anti_engine.encoding._lc0_ext"),
     sources=["chess_anti_engine/encoding/_lc0_ext.c"],
     include_dirs=[np.get_include()],
     define_macros=_CBOARD_FAST_SLIDER_MACROS,
@@ -200,11 +241,7 @@ perft_ext = Extension(
     "chess_anti_engine.encoding._perft_ext",
     sources=["chess_anti_engine/encoding/_perft_ext.c"],
     include_dirs=["chess_anti_engine/encoding"],
-    depends=[
-        "chess_anti_engine/encoding/_cboard_impl.h",
-        "chess_anti_engine/encoding/_bitboard_planes_impl.h",
-        "chess_anti_engine/encoding/_slider_attacks_impl.h",
-    ],
+    depends=_depends("chess_anti_engine.encoding._perft_ext"),
     define_macros=_CBOARD_FAST_SLIDER_MACROS,
     extra_compile_args=_ext_compile_args(),
     extra_link_args=_ext_link_args(),
@@ -212,6 +249,7 @@ perft_ext = Extension(
 
 mcts_tree_ext = Extension(
     "chess_anti_engine.mcts._mcts_tree",
+    depends=_depends("chess_anti_engine.mcts._mcts_tree"),
     sources=["chess_anti_engine/mcts/_mcts_tree.c"],
     # The tree includes the encoding headers directly (_cboard_impl.h,
     # _features_impl.h, and the eval-plugin seam _value_provider.h, which itself
@@ -240,6 +278,7 @@ mcts_tree_ext = Extension(
 # gated against Stockfish precisely to keep that true.
 nnue_ext = Extension(
     "chess_anti_engine.nnue._nnue_ext",
+    depends=_depends("chess_anti_engine.nnue._nnue_ext"),
     sources=["chess_anti_engine/nnue/_nnue_ext.c"],
     include_dirs=[np.get_include(), "chess_anti_engine/encoding"],
     # ⚑ THIS IS THE EXTENSION PR-S2 EXISTS FOR. _nnue_ext.c includes
@@ -256,37 +295,38 @@ nnue_ext = Extension(
     extra_link_args=_ext_link_args(openmp=True),
 )
 
-def _load_by_path(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        return None
-    module = importlib.util.module_from_spec(spec)
-    import sys
-    sys.modules[name] = module  # dataclasses resolve annotations through sys.modules
-    spec.loader.exec_module(module)
-    return module
-
-
 class build_ext_with_record(_build_ext):
-    """build_ext that writes a build record beside every extension it rebuilt.
+    """build_ext that writes a build record for every extension it COMPILED.
 
     The record (chess_anti_engine/ext_build_record.py) holds the sha256 of the
     built file and of each source in its dependency list, so the UCI engine's
     startup gate can tell a real source edit from a timestamp-only change.
 
-    ⚑ Only for files that actually changed in this run. setuptools skips an
-    extension whose ``sources``/``depends`` are older than the output -- and
-    most headers are not in ``depends`` -- so a skipped build after a header
-    edit would otherwise be stamped as matching the edited header. A file whose
-    (mtime, size) did not move keeps its old record, which still says stale.
-    The record covers the in-place file when building in place (editable
-    installs, scripts/build_production_extensions.py) and the build_lib copy
-    otherwise (it then ships in the wheel beside the extension).
+    ⚑ A RECORD IS A CLAIM THAT THE COMPILER RAN ON THESE BYTES. setuptools
+    builds into build/lib and, for an in-place build, copies the result into
+    the source tree whether or not it recompiled anything -- so "the in-place
+    file changed" does not mean "rebuilt" (delete the .so, rebuild, and the
+    copy is the old object). An extension gets a record only when its linked
+    output in build/lib was rewritten during this run, and the hashes are of
+    the sources as they were just before that compile (if a source changed
+    while it compiled, no record). An extension that was skipped or merely
+    copied keeps whatever record it had; nothing is refreshed.
+
+    The record goes beside the in-place file for an in-place build (editable
+    installs, scripts/build_production_extensions.py) and beside the build/lib
+    file otherwise (it then ships in the wheel).
     """
 
-    def _final_paths(self) -> dict:
-        base = Path.cwd() if self.inplace else Path(self.build_lib)
-        return {ext.name: base / self.get_ext_filename(ext.name) for ext in self.extensions}
+    _RECORD_MODULE = None
+    # Set fresh at the start of every run(); build_extension adds to it.
+    _compiled_inputs: dict[str, dict[str, str]] | None = None
+
+    @classmethod
+    def _record_module(cls):
+        if cls._RECORD_MODULE is None:
+            cls._RECORD_MODULE = _load_by_path(
+                "_cae_ext_build_record", _ROOT / "chess_anti_engine" / "ext_build_record.py")
+        return cls._RECORD_MODULE
 
     @staticmethod
     def _stamp(path: Path):
@@ -294,25 +334,42 @@ class build_ext_with_record(_build_ext):
             st = path.stat()
         except OSError:
             return None
-        return (st.st_mtime_ns, st.st_size)
+        return (st.st_ino, st.st_mtime_ns, st.st_size)
 
     def run(self) -> None:
-        before = {name: self._stamp(p) for name, p in self._final_paths().items()}
+        self._compiled_inputs = {}
         super().run()
-        root = Path(__file__).resolve().parent
-        record_mod = _load_by_path(
-            "_cae_ext_build_record", root / "chess_anti_engine" / "ext_build_record.py")
-        specs_mod = _load_by_path(
-            "_cae_check_c_extensions_fresh", root / "scripts" / "check_c_extensions_fresh.py")
-        if record_mod is None or specs_mod is None:
+        record_mod = self._record_module()
+        if record_mod is None or not _EXT_DEPENDENCIES:
             print("build record: helper modules not found; no records written")
             return
-        deps = {spec.module: spec.dependencies for spec in specs_mod.EXTENSION_SPECS}
-        for name, path in self._final_paths().items():
-            if name not in deps or not path.is_file() or self._stamp(path) == before.get(name):
+        base = Path.cwd() if self.inplace else Path(self.build_lib)
+        for name, input_hashes in (self._compiled_inputs or {}).items():
+            path = base / self.get_ext_filename(name)
+            if not path.is_file():
                 continue
-            written = record_mod.write_record(path, module=name, root=root, inputs=deps[name])
+            written = record_mod.write_record(path, module=name, input_hashes=input_hashes)
             print(f"build record: {written}")
+
+    def build_extension(self, ext) -> None:
+        record_mod = self._record_module()
+        deps = _EXT_DEPENDENCIES.get(ext.name)
+        if record_mod is None or deps is None:
+            super().build_extension(ext)
+            return
+        # During setuptools' run() this is the build/lib path even for an
+        # in-place build: the object the compiler and linker write.
+        output = Path(self.get_ext_fullpath(ext.name))
+        before = self._stamp(output)
+        hashes = record_mod.hash_inputs(_ROOT, deps)
+        super().build_extension(ext)
+        if hashes is None or self._stamp(output) in (None, before):
+            return  # skipped as up to date (nothing compiled) or inputs missing
+        if record_mod.hash_inputs(_ROOT, deps) != hashes:
+            print(f"build record: {ext.name}: a source changed during the compile; no record")
+            return
+        if self._compiled_inputs is not None:
+            self._compiled_inputs[ext.name] = hashes
 
 
 setup(

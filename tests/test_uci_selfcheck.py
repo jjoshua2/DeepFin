@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import textwrap
+import time
 import types
 from pathlib import Path
 
@@ -194,7 +195,7 @@ def test_extensions_missing_symbol_fails(monkeypatch: pytest.MonkeyPatch) -> Non
 def _fake_tree(tmp_path: Path, *, so_mtime: int, src_mtime: int,
                records: bool = False) -> Path:
     """A checkout skeleton with the real freshness tool and every listed file."""
-    from chess_anti_engine.ext_build_record import write_record
+    from chess_anti_engine.ext_build_record import hash_inputs, write_record
 
     tool = sc._load_freshness_tool(REPO_ROOT)
     (tmp_path / "scripts").mkdir()
@@ -212,7 +213,9 @@ def _fake_tree(tmp_path: Path, *, so_mtime: int, src_mtime: int,
         out.write_text(f"binary of {spec.module}\n", encoding="utf-8")
         os.utime(out, ns=(so_mtime, so_mtime))
         if records:
-            write_record(out, module=spec.module, root=tmp_path, inputs=spec.dependencies)
+            hashes = hash_inputs(tmp_path, spec.dependencies)
+            assert hashes is not None
+            write_record(out, module=spec.module, input_hashes=hashes)
     return tmp_path
 
 
@@ -268,6 +271,20 @@ def test_freshness_record_replaced_artifact_refuses(tmp_path: Path) -> None:
     out.write_text("a different binary\n", encoding="utf-8")
     problems = sc.freshness_problems(root)
     assert any("_mcts_tree" in p and "not the file its build record describes" in p
+               for p in problems), problems
+
+
+def test_freshness_record_missing_dependency_refuses(tmp_path: Path) -> None:
+    """A dependency the record does not cover (a header added to the include
+    graph since the build) is unverified, so stale."""
+    root = _fake_tree(tmp_path, so_mtime=2_000_000_000, src_mtime=1_000_000_000, records=True)
+    base = root / "chess_anti_engine" / "encoding" / "_lc0_ext"
+    rec = Path(str(base) + importlib.machinery.EXTENSION_SUFFIXES[0] + ".build-record.json")
+    data = json.loads(rec.read_text(encoding="utf-8"))
+    del data["inputs"][str(_FEATURES_IMPL)]
+    rec.write_text(json.dumps(data), encoding="utf-8")
+    problems = sc.freshness_problems(root)
+    assert any("_lc0_ext" in p and f"{_FEATURES_IMPL} (not in the build record)" in p
                for p in problems), problems
 
 
@@ -586,6 +603,15 @@ def test_uci_failure_marker_fails_despite_legal_move(marker: str) -> None:
     assert marker in res.detail
 
 
+def test_uci_timeout_reports_the_real_value() -> None:
+    """--uci-timeout 0.5 must say 0.5s, not a rounded 0s."""
+    silent = [sys.executable, "-c", "import time; time.sleep(30)"]
+    opts = sc.SelfcheckOptions(checkpoint="unused", devices=("cpu",), uci_timeout_s=0.5)
+    res = _run(lambda: sc.check_uci(opts, command=lambda ck, o, cache: silent))
+    assert res.status == "FAIL"
+    assert "within 0.5s" in res.detail, res.detail
+
+
 def test_uci_nonzero_exit_after_quit_fails() -> None:
     res = _fake_check(rc=3)
     assert res.status == "FAIL"
@@ -882,41 +908,135 @@ def test_entry_points_start_on_this_install(entry: str, tmp_path: Path) -> None:
 # ── setup.py build-record hook ────────────────────────────────────────────
 
 
-def test_setup_build_ext_records_only_rebuilt_extensions(
+_CBOARD_H = "chess_anti_engine/encoding/_cboard_impl.h"
+_NO_DEPENDS = """def _depends(module: str) -> list[str]:
+    return []
+"""
+
+
+def _build_tree(dst: Path, *, depends: bool = True, scripts: bool = True) -> Path:
+    """A minimal source tree: setup.py, its two helpers, every C input."""
+    tool = sc._load_freshness_tool(REPO_ROOT)
+    files = {"setup.py", "chess_anti_engine/ext_build_record.py"}
+    if scripts:
+        files.add("scripts/check_c_extensions_fresh.py")
+    for spec in tool.EXTENSION_SPECS:
+        files.update(spec.dependencies)
+    for rel in files:
+        (dst / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO_ROOT / rel, dst / rel)
+    if not depends:
+        # An extension with no `depends` (the state three of them were in
+        # before): setuptools then never recompiles it after a header edit.
+        src = (dst / "setup.py").read_text(encoding="utf-8")
+        start = src.index("def _depends(module: str) -> list[str]:")
+        end = src.index("\n\n", start) + 1
+        (dst / "setup.py").write_text(src[:start] + _NO_DEPENDS + src[end:], encoding="utf-8")
+    return dst
+
+
+def _setup_build(root: Path, *extra: str) -> list[str]:
+    """Run the real `setup.py build_ext --inplace`; return the extensions it recorded."""
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith("CAE_EXT_") and k not in ("CFLAGS", "LDFLAGS", "LDSHARED")}
+    proc = subprocess.run(
+        [sys.executable, "setup.py", "build_ext", "--inplace", *extra],
+        cwd=root, env=env, capture_output=True, text=True, timeout=600, check=False,
+    )
+    assert proc.returncode == 0, proc.stdout[-3000:] + proc.stderr[-3000:]
+    return sorted(line.split("/")[-1].split(".")[0]
+                  for line in proc.stdout.splitlines() if line.startswith("build record: /"))
+
+
+def _delete_inplace_objects(root: Path) -> None:
+    """The lazy "clean rebuild": delete the in-place .so files, keep build/."""
+    suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
+    gone = [p for p in (root / "chess_anti_engine").rglob(f"*{suffix}") if p.is_file()]
+    assert len(gone) == 5, gone
+    for p in gone:
+        p.unlink()
+
+
+def _edit_header(root: Path) -> None:
+    # distutils compares WHOLE-SECOND mtimes (os.stat()[ST_MTIME]); an edit in
+    # the same second as the link would look up to date. A human edit is never
+    # that fast, so step past the second rather than weaken the check.
+    time.sleep(1.1)
+    with (root / _CBOARD_H).open("a", encoding="utf-8") as fh:
+        fh.write("/* header-only edit */\n")
+
+
+_ALL_EXTS = ["_features_ext", "_lc0_ext", "_mcts_tree", "_nnue_ext", "_perft_ext"]
+_CBOARD_EXTS = ["_lc0_ext", "_mcts_tree", "_nnue_ext", "_perft_ext"]
+
+
+def test_setup_header_edit_recompiles_on_a_lazy_rebuild(tmp_path: Path) -> None:
+    """Header edit, delete the in-place .so, keep build/, rebuild: the header is
+    a declared dependency, so the extensions that include it are recompiled and
+    the gate passes on a genuinely fresh binary (real compiler, ~20 s on CPU)."""
+    root = _build_tree(tmp_path)
+    assert _setup_build(root) == _ALL_EXTS
+    assert sc.freshness_problems(root) == []
+    _edit_header(root)
+    assert any("stale" in p or _CBOARD_H in p for p in sc.freshness_problems(root))
+    _delete_inplace_objects(root)
+    assert _setup_build(root) == _CBOARD_EXTS  # recompiled; _features_ext does not include it
+    assert sc.freshness_problems(root) == []
+    assert _setup_build(root) == []  # nothing compiled, nothing (re)recorded
+
+
+def test_setup_copy_without_compile_gets_no_record(tmp_path: Path) -> None:
+    """Without `depends`, the same lazy rebuild compiles nothing and copies the
+    old object out of build/. No record may certify it: the gate must refuse,
+    with the old record left in place and with no record at all (mtime
+    fallback), and the forcing command in the refusal must clear it."""
+    root = _build_tree(tmp_path, depends=False)
+    assert _setup_build(root) == _ALL_EXTS
+    _edit_header(root)
+    _delete_inplace_objects(root)
+    assert _setup_build(root) == []  # copied from build/, not compiled
+    problems = sc.freshness_problems(root)
+    assert any("_lc0_ext" in p and _CBOARD_H in p for p in problems), problems
+    for record in (root / "chess_anti_engine").rglob("*.build-record.json"):
+        record.unlink()
+    problems = sc.freshness_problems(root)
+    assert any("_lc0_ext is older than" in p for p in problems), problems
+    assert sc.FORCE_REBUILD_COMMAND in sc.REBUILD_HINT
+    cmd = sc.FORCE_REBUILD_COMMAND.split()
+    assert cmd[:2] == ["python", "setup.py"]
+    assert _setup_build(root, *cmd[4:]) == _ALL_EXTS
+    assert sc.freshness_problems(root) == []
+
+
+def test_setup_without_scripts_builds_without_records(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A skipped (up-to-date) extension must keep its old record, not get a new one."""
+    """A tree without scripts/: setup.py still loads (no depends, no records)."""
     import runpy
 
     import setuptools
-    from setuptools import Distribution
-    from setuptools.command.build_ext import build_ext as setuptools_build_ext
 
-    from chess_anti_engine.ext_build_record import record_path
+    root = _build_tree(tmp_path, scripts=False)
+    captured: dict = {}
+    monkeypatch.setattr(setuptools, "setup", lambda **kw: captured.update(kw))
+    monkeypatch.chdir(root)
+    ns = runpy.run_path(str(root / "setup.py"))
+    assert ns["_FRESHNESS_TOOL"] is None
+    assert len(captured["ext_modules"]) == 5
+    assert all(ext.depends == [] for ext in captured["ext_modules"])
+
+
+def test_setup_depends_come_from_the_freshness_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import runpy
+
+    import setuptools
 
     captured: dict = {}
     monkeypatch.setattr(setuptools, "setup", lambda **kw: captured.update(kw))
     runpy.run_path(str(REPO_ROOT / "setup.py"))
-    cls = captured["cmdclass"]["build_ext"]
-
-    monkeypatch.chdir(tmp_path)  # in-place outputs land under the cwd
-    cmd = cls(Distribution({"ext_modules": captured["ext_modules"]}))
-    cmd.inplace = True
-    cmd.ensure_finalized()
-    outputs = {ext.name: tmp_path / cmd.get_ext_filename(ext.name) for ext in cmd.extensions}
-    for out in outputs.values():
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_bytes(b"old build")
-        os.utime(out, ns=(1_000_000_000, 1_000_000_000))
-    rebuilt = "chess_anti_engine.mcts._mcts_tree"
-
-    def fake_run(_self) -> None:
-        outputs[rebuilt].write_bytes(b"new build")
-
-    monkeypatch.setattr(setuptools_build_ext, "run", fake_run)
-    cmd.run()
-    for name, out in outputs.items():
-        assert record_path(out).is_file() is (name == rebuilt), name
-    record = json.loads(record_path(outputs[rebuilt]).read_text())
-    assert "chess_anti_engine/mcts/_mcts_tree.c" in record["inputs"]
-    assert "setup.py" in record["inputs"]
+    tool = sc._load_freshness_tool(REPO_ROOT)
+    table = {spec.module: list(spec.dependencies) for spec in tool.EXTENSION_SPECS}
+    got = {ext.name: list(ext.depends) for ext in captured["ext_modules"]}
+    assert got == table

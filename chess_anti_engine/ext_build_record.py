@@ -1,7 +1,8 @@
 """Build records: what source content each compiled extension was built from.
 
 ``setup.py`` writes ``<extension file>.build-record.json`` beside every
-extension it actually (re)builds: the sha256 of the built file and of every
+extension it actually compiled in that run (not one it skipped as up to date
+or merely copied out of ``build/``): the sha256 of the built file and of every
 source it was compiled from (the transitive ``.c``/``.h`` list in
 ``scripts/check_c_extensions_fresh.py``, plus ``setup.py`` itself, which owns
 the flags and macros). The UCI engine's startup gate and ``deepfin
@@ -19,7 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -53,19 +54,32 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def make_record(ext_path: Path, *, module: str, root: Path, inputs: Iterable[str]) -> dict:
+def hash_inputs(root: Path, inputs: Iterable[str]) -> dict[str, str] | None:
+    """sha256 of every input under ``root``, or None if one is missing."""
+    hashes: dict[str, str] = {}
+    for rel in sorted(set(inputs)):
+        source = root / rel
+        if not source.is_file():
+            return None
+        hashes[rel] = sha256_file(source)
+    return hashes
+
+
+def make_record(ext_path: Path, *, module: str, input_hashes: Mapping[str, str]) -> dict:
+    """``input_hashes`` are the sources as the compiler saw them (``hash_inputs``
+    taken just before the compile), not as they are when the record is written."""
     return {
         "version": RECORD_VERSION,
         "module": module,
         "artifact_sha256": sha256_file(ext_path),
-        "inputs": {rel: sha256_file(root / rel) for rel in sorted(set(inputs))},
+        "inputs": dict(sorted(input_hashes.items())),
         "build_env": {k: os.environ[k] for k in _BUILD_ENV_KEYS if k in os.environ},
     }
 
 
-def write_record(ext_path: Path, *, module: str, root: Path, inputs: Iterable[str]) -> Path:
+def write_record(ext_path: Path, *, module: str, input_hashes: Mapping[str, str]) -> Path:
     path = record_path(ext_path)
-    record = make_record(ext_path, module=module, root=root, inputs=inputs)
+    record = make_record(ext_path, module=module, input_hashes=input_hashes)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps(record, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(tmp, path)

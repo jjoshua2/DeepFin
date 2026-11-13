@@ -35,7 +35,7 @@ not pull a default build. The project's CUDA profile pins torch 2.14.0 from the
 `cu130` index (`pyproject.toml`, `[tool.uv.index]`):
 
 ```bash
-cd deepfin                                   # the source archive / checkout
+cd deepfin                                   # a git checkout (or a `git archive` of one)
 python3 -m venv .venv && . .venv/bin/activate
 pip install --upgrade pip
 pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cu130
@@ -43,6 +43,10 @@ pip install ".[match]"                       # builds the C extensions with the 
 ```
 
 For a CPU-only host use `--index-url https://download.pytorch.org/whl/cpu`.
+Install from a source checkout as above, or from a wheel built from one
+(`pip wheel --no-deps -w dist .`, then `pip install dist/*.whl` on the target).
+A source distribution (`python -m build --sdist`, or an sdist on an index) is not
+supported: it does not carry the C headers the extensions are compiled from.
 Use `pip install -e ".[match]"` instead if you want to edit or rebuild in place;
 that also lets the self-check compare each built extension against its sources.
 
@@ -89,7 +93,7 @@ the cost of writing to it.
 | `python` | Interpreter outside 3.10.12–3.13, or a free-threaded build. Use a supported CPython. |
 | `torch` | torch is missing, a requested CUDA device is not visible, or this torch build has no kernels for the GPU (the message names the GPU's `sm_XY`). Reinstall torch from a newer `cuXXX` index. |
 | `extensions` | A required C extension (`_lc0_ext`, `_features_ext`, `_mcts_tree`) is missing, lacks a symbol, or has an older ABI than the Python code needs. Rebuild: `pip install .` again (or `-e .`). |
-| `freshness` | (Source checkouts only; SKIP on a regular `pip install .`.) An extension's sources changed since it was built. The build writes a hash of every source beside each extension, and the check compares contents, so a timestamp-only change (branch switch and back, `cp` without `-p`) does not fail it. An extension built before these records existed falls back to comparing timestamps; the message then says a checkout or copy can trigger it. Either way `pip install -e .` rebuilds and clears it. |
+| `freshness` | (Source checkouts only; SKIP on a regular `pip install .`.) An extension's sources changed since it was built. The build writes a hash of every source beside each extension, and the check compares contents, so a timestamp-only change (branch switch and back, `cp` without `-p`) does not fail it. An extension built before these records existed falls back to comparing timestamps; the message then says a checkout or copy can trigger it. Clear it with `python setup.py build_ext --inplace --force` (needs `setuptools` in the venv; production host: `python scripts/build_production_extensions.py`). A rebuild without `--force` after deleting the `.so` files can copy an old object back out of `build/`; the check then still fails, because a build record is written only for an extension that was actually compiled. |
 | `encoder` | The C board encoder or the search tree's leaf encoder produced all-zero feature planes, or differs from the Python reference encoder. Rebuild; if it persists, report it. |
 | `movegen` | C move generation disagrees with python-chess or perft. Rebuild; report if it persists. |
 | `search` | A short C Gumbel search on a random tiny net did not complete in the C tree. |

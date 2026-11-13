@@ -78,10 +78,15 @@ REQUIRED_CBOARD_METHODS: tuple[str, ...] = ("encode_full", "legal_move_indices")
 # Development escape hatch for the startup gate (never for an operator).
 ALLOW_UNVERIFIED_ENV = "DEEPFIN_ALLOW_UNVERIFIED_EXTENSIONS"
 
+# The command that clears a refusal must force a recompile: deleting the .so
+# and rebuilding without --force can copy an old object back out of build/.
+FORCE_REBUILD_COMMAND = "python setup.py build_ext --inplace --force"
 REBUILD_HINT = (
-    "rebuild the C extensions from this source tree: `pip install -e .` "
-    "(or `pip install .`), or on the production host "
-    "`python scripts/build_production_extensions.py`"
+    "recompile the C extensions from this source tree with "
+    f"`{FORCE_REBUILD_COMMAND}` (production host: "
+    "`python scripts/build_production_extensions.py`, which always forces); "
+    "deleting the .so files and rebuilding without --force can reuse a stale "
+    "object from build/"
 )
 
 # Positions for the encoder parity and move-generation checks: the start
@@ -214,9 +219,9 @@ def _load_freshness_tool(root: Path) -> ModuleType:
 
 MTIME_FALLBACK_NOTE = (
     "mtime check: this extension has no build record, so a checkout or a copy that "
-    "rewrites timestamps can also trigger this; rebuilding with `pip install -e .` "
-    "(production host: `python scripts/build_production_extensions.py`) clears it "
-    "and writes a record"
+    "rewrites timestamps can also trigger this; recompiling with "
+    f"`{FORCE_REBUILD_COMMAND}` (production host: "
+    "`python scripts/build_production_extensions.py`) clears it and writes a record"
 )
 
 
@@ -851,7 +856,7 @@ class _Transcript:
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise TimeoutError(f"no {token!r} within {timeout_s:.0f}s")
+                raise TimeoutError(f"no {token!r} within {timeout_s:g}s")
             try:
                 line = self._q.get(timeout=min(remaining, 1.0))
             except queue.Empty:
