@@ -1,0 +1,248 @@
+{
+  "status": "FROZEN_E3_TRAIN32_GRADIENT_GEOMETRY_SCIENCE_BEFORE_NEW_MEASUREMENTS",
+  "purpose": "Within-state target-bundle objective geometry on ingested TRAIN support, not applied optimizer geometry or playing strength.",
+  "author_review_limit": "Original author proposed the direction. Scientific component and concrete corrected implementation separately independently accepted; this root freeze remains non-executing until fresh resource admission.",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "prior_experiment": {
+    "protocol_sha256": "ee24d3b7aa575c3dd2b85061f376a4920d5f9034a2cc358e03ed8312cd1476c0",
+    "paired40_readout_sha256": "1ae3c0749c4066270b94859ac1491c93a9347baee5d3efed20128f9b4a7109e2",
+    "remains_closed": true,
+    "confirmation_or_reopened_screens": false
+  },
+  "sampling": {
+    "games": 32,
+    "bank": "TRAIN only; all retained qualified NET rows eligible, no ply filter",
+    "salt": "E3-gradient-root-v1:20261113:",
+    "rule": "Per game min (SHA256(UTF8(salt+physical_row_id)), numeric retained-row ordinal). ALL retained rows; no ply or outcome filter.",
+    "unit": "One equal-weight game/root; TRAIN-ingested, not held out or unseen.",
+    "masks_do_not_select_roots": true,
+    "replacement_or_outcome_selection": false,
+    "HOLD64_open": false,
+    "descriptive_game_tags": {
+      "NATURAL": 15,
+      "STRICT_TB_ADJUDICATED": 17,
+      "primary": "All32 together; tags are descriptive, not exclusion or separate selection gates."
+    },
+    "roster": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-score-blind-root-roster-v1/selection.json",
+      "sha256": "e87058c7ad071f1baab6e085dcb756cf7e05bb706f18d23cd1fe86c375d00146"
+    },
+    "source_draw_plan": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-results-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/draw-plan.json",
+      "sha256": "6a4fcb7136d24955bcb1ea11a6f79a3659226d1771fdca661442e169bbfccdb5"
+    },
+    "source_input_lineage": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-results-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/input-lineage.json",
+      "sha256": "a8b940861c5630c2c4615ef9ae95d03f41bf52dde18b4b3ffd7823274f6abbbe"
+    },
+    "all3012_ids_sha256": "19b84e1255432598d45d6114ea77878bc882dee4fe8bb5c857d80fd594f00a53",
+    "game_order": "Numeric source game-start ordinal increasing",
+    "sentinel_physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:1:12"
+  },
+  "states": {
+    "order": [
+      "DONOR",
+      "FULLA40",
+      "FULLB40"
+    ],
+    "primary": "DONOR",
+    "other_states": "Descriptive fixed context, no best-state selection",
+    "identities": "These immutable three model paths/SHA and accepted custody bind this candidate; verify before and after measurement, no new checkpoint choices.",
+    "models": [
+      {
+        "all494_model_architecture_qualified": true,
+        "label": "DONOR",
+        "path": "/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/baseline/epoch2.pt",
+        "readonly": true,
+        "sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+        "step": null
+      },
+      {
+        "all494_model_architecture_qualified": true,
+        "label": "FULLA40",
+        "metadata_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired40-actual-cpu-readout-v1/FULLA-step-40-metadata.json",
+        "metadata_sha256": "a9bd4f106735bdb0696ea4b9b6dfdb7fdc028c452be233756a1118f321bf9073",
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLA/trainer.pt",
+        "readonly": true,
+        "sha256": "534adbeb112d2a5c9b39b7827ffce8eaa9c7d51597ddf91f269cda4ee3818229",
+        "step": 40
+      },
+      {
+        "all494_model_architecture_qualified": true,
+        "label": "FULLB40",
+        "metadata_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired40-actual-cpu-readout-v1/FULLB-step-40-metadata.json",
+        "metadata_sha256": "209ff872f8cb3ae747f1643286c737bf28f9374cf2c98179aa9fa0f5b61c34de",
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLB/trainer.pt",
+        "readonly": true,
+        "sha256": "8e3038b5db03db7455582e98dde09cd503c30df4ac781f4f5680096f144dc522",
+        "step": 40
+      }
+    ],
+    "custody": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired40-actual-cpu-readout-v1/checkpoint-custody.json",
+      "sha256": "89c7654160f9083b40c6635f3037753f9c8a84e49cf547f9ef477df9fb86de05"
+    },
+    "accepted_checkpoint_binding": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired-full40-root-actual-acceptance-v1/checkpoints-binding.json",
+      "sha256": "1d0cc47cda40bdddb82edcb0f9a5ea978925222e74950de71994398ef4e20dbe"
+    },
+    "root_learning_acceptance": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired-full40-root-actual-acceptance-v1/readout.json",
+      "sha256": "9dec3ef8f4986820d13e1a56b003f233c700e441938df7fa123d3748cb0fdeee"
+    }
+  },
+  "context": {
+    "mode": "eval(), gradients enabled",
+    "batch_rows": 1,
+    "augmentation": "No mirror, feature dropout or row augmentation",
+    "numerics": "Fixed qualified E2TB math/AMP context; capture realized dtype/device/TF32/thread settings. No optimizer, scheduler, clip, compile or parameter update.",
+    "interpretation": "Unaugmented loss geometry, not the realized training gradient sequence."
+  },
+  "six_gradient_families": {
+    "P": "Actual source-weighted policy_ce + soft_policy_ce + future_policy_ce; common to both arms.",
+    "U": "Every other active source-weighted common term from captured weighted_terms, excluding P/W/C; current realized nonzero terms are volatility and moves_left. Do not assume missing/zero eligibility means perfect supervision.",
+    "W_A": "Actual source w_wdl * blended_wdl_ce with FULLA main value target.",
+    "C_A": "Actual source w_categorical * categorical_ce with FULLA categorical target.",
+    "W_B": "Actual source w_wdl * blended_wdl_ce with FULLB main value target.",
+    "C_B": "Actual source w_categorical * categorical_ce with FULLB categorical target."
+  },
+  "objective_integrity": {
+    "targets": "Unchanged qualified TRAIN raw/stored/proof loader and exact two existing FULLA/FULLB target maps, no new coefficients or relabels. Preserve complete175-plane history and legal masks.",
+    "graph": "Do not detach shared/coupled heads. Same-state/root forward shared between target maps where actual graph permits.",
+    "sum_control": "On EVERY row and both target maps, capture actual active weighted_terms and fold LEFT in actual source declaration order, skipping exactly zero weights, to reproduce actual source total BITEXACT. Preserve differentiable means/masks. Grouped-family scalar residuals are reported separately; their different summation order is not a scalar source-fold failure.",
+    "masks_denominators": "Record actual per-term eligibility/presence masks, mask numerator, source denominator and whether zero/clamped; preserve source masked_mean sum(mask).clamp_min(1) where used. A masked-zero loss is unavailable supervision, not perfect fit. No per-term renormalization/replacement or masking roots out of the primary.",
+    "fallback_trace": "For both target maps record actual search/SF field presence, claimed masks, finite checks, effective availability, realized search/SF/outcome target mass including fallback/terminal transfer; record categorical raw/stored/host target signatures and realized rebuild flags. Coverage fractions are not recipe shares. Existing loss fallback stays unchanged; expose it rather than silently call all rows search-supervised.",
+    "gradient_reconstruction_control": "On the first fixed root at EACH state, differentiate actual combined source total for A and B (+6 gradient calls). Report full-trunk residual vs separately differentiated family sum. BF16 cotangent rounding makes this residual diagnostic, NOT a bitmatch/threshold acceptance gate. Primary explicitly uses SUM of separately measured W+C gradients, not the gradient of a combined optimizer objective.",
+    "capture_api": "Accepted source-v2 current-thread sys.setprofile return capture of actual compute_loss weighted_terms and masks/fallback locals, restored in finally; actual-source synthetic CPU controls passed. Real-model BF16 controls remain part of the one fixed GPU stage."
+  },
+  "gradient_scope": {
+    "primary": "All shared-trunk deduplicated physical parameters from actual source role/alias map, identical ordered membership across three states.",
+    "coverage": "Retain parameter names/roles/routes/aliases/numel, zero versus None gradients, shared-trunk/layer/optimizer-route norm-square and dot sufficient statistics. No selected-eight substitute.",
+    "other_families": "Report P vs W, C, W+C and U separately plus W/C norm ratios, all descriptive beyond primary.",
+    "physical_scope_binding": "Match exact ordered names/aliases/shapes/dtypes/routes against accepted actual map; dedup shared physical tensors once, including tied1,048,576-element Smolgen generator with16aliases.",
+    "physical_parameters": 423,
+    "physical_elements": 57533899,
+    "ordered_map_sha256": "219d77e26feba07d8f1baf6b615d2f17c783692b5e3f8029af77bdbf689e75f3",
+    "phase_output_adapter": "Must be False and absent, assert before measurement. A present upstream adapter is unsupported by this fixed map, not silently excluded.",
+    "coupling_precision": "Categorical follows value_wdl.hidden including token_proj/net.0; net.2 is WDL-only projection, so categorical None there is expected. Policy-specific/output-head parameters are outside shared-trunk primary."
+  },
+  "primary": {
+    "per_game": "d = cos(g_P,g_W_B+g_C_B) - cos(g_P,g_W_A+g_C_A), at DONOR only.",
+    "summary": "In canonical fixed numeric game order form32paired d values at DONOR; NumPy default_rng(2026111501) draws10000x32 game indices with replacement ONCE; compute paired d means and percentile[2.5,97.5] interval, equal-game weights. Never bootstrap arms separately.",
+    "undefined": "Any norm<=1e-12, nonfinite or missing primary denominator => primary INCONCLUSIVE, all32 retained in readout, no epsilon-created cosine or silent dropping.",
+    "readout": "An interval excluding0 supports a bundle-related geometry difference on these sampled TRAIN roots. Its sign is not improvement; containing0 is unresolved, not equivalence/no effect. No strength/adoption/recipe-selection endpoint.",
+    "resolution_limit": "The prospectively chosen1e-5 sentinel drift rule is measurement resolution, not a proven global backend error bound. Primary inference is conditional on it; opening-family dependence/single cohort limit bootstrap inference."
+  },
+  "controls": {
+    "sentinel": "Repeat the first fixed roster root once at EACH state (same fixed inputs/targets/context; no extra forward beyond99).",
+    "exact": [
+      "input signatures",
+      "target signatures",
+      "forward output signatures",
+      "per-family parameter None/zero coverage"
+    ],
+    "component_relative_L2": {
+      "formula": "norm(g1-g2)/max(norm(g1),norm(g2),1e-12)",
+      "maximum": 1e-05,
+      "scope": "Each six-component whole-trunk sentinel gradient"
+    },
+    "cosine_and_drift": {
+      "maximum_absolute": 1e-05,
+      "scope": "Both primary cosines and their d, sentinel at each state; norm<=1e-12 remains undefined."
+    },
+    "interpretation": "Chosen prospective resolution, not evidence all backend/root gradients obey this bound. No threshold retuning after measurement.",
+    "gradient_reconstruction": "Source-total A/B sentinel gradients add6calls; separately summed BF16-family reconstruction residuals REPORTED, not a bitmatch or acceptance threshold.",
+    "descriptive_unavailable": "Zero/None U or unused head gradients reported as coverage, not automatic primary failure if primary remains defined.",
+    "failure": "Any required schema/proof/identity/finite/map/source-scalar/repeat failure => numerical/technical INCONCLUSIVE, retain partials, no new roots/retry/extension/alternate recipe."
+  },
+  "budget": {
+    "GPU_owner_seconds": 600,
+    "inner_seconds": 570,
+    "CPU_affinity": [
+      20,
+      22
+    ],
+    "torch_threads": 2,
+    "maximum_forwards": 99,
+    "maximum_component_gradient_calls": 594,
+    "model_residency": "One state at a time; an empty nonstepping Trainer/optimizer OBJECT for actual preparation/map is permitted. No loaded optimizer state, optimizer.step, scheduler advance, saved checkpoint or parameter update.",
+    "includes": "Startup/load/encoding/control/measurement/cleanup; no automatic extension.",
+    "execution": "No execution admitted; concrete independently reviewed helper/identities/command and root admission required.",
+    "additional_source_total_gradient_calls": 6,
+    "maximum_total_gradient_calls": 600
+  },
+  "limits": [
+    "Raw Euclidean gradient cosines do not measure Aurora/AdamW applied updates; momentum/preconditioning and AuxAdamW-only clipping matter.",
+    "No causal strength/optimal clipping/dose/SF-anchoring conclusion; no400-update extension or second RNG realization selected.",
+    "Uniform learner sampling does not undo producer disagreement-based retention; results describe retained TRAIN support only.",
+    "Existing P1 SF value/opponent-reply policy are not a newly qualified P0 ruler; no teacher queries or teacher-identity/parity claims.",
+    "No HOLD, old playing-panel reuse, seven-model rerun, new candidate, or automatic follow-up.",
+    "Natural15/TB17 tags are descriptive only, all32 are primary. No seven-model rerun; only fixed DONOR/A40/B40.",
+    "The game bootstrap is conditional on this retained TRAIN cohort and fixed root sample; shared opening-family correlation is not separately corrected and no unseen-data or population-generalization claim follows."
+  ],
+  "design_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-design-independent-review-v1/review.json",
+    "sha256": "105005a1c5ff8aade1975328dc5c832f11d8a364f26553ac4d18700b144384c4"
+  },
+  "fresh_state_control": {
+    "optimizer": "Object may exist; actual state/moments empty, step0, no advance.",
+    "parameters": "Model bytes must equal selected immutable state before/after, all494 model entries finite; no parameter mutation.",
+    "cleanup": "Remove hooks/profile and strong references, close loaders, release prior model before nextstate; record owner closure and peak resources."
+  },
+  "implementation_binding": {
+    "status": "BOUND_SOURCE_V2_CPU_CONTROLS_PASS_FRESH_GPU_ADMISSION_PENDING",
+    "helper": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-preparation-v2/measure.py",
+      "sha256": "2ac588680327ea12d2a020858487b7b79187e331ea42cb2cd9dba6cf77923c9e"
+    },
+    "manifest": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-preparation-v2/manifest.json",
+      "sha256": "bb6f1d9b089381aee2d7f04efec2637ca66b094bf257c6bdd3c9b049ecb6bbe6"
+    },
+    "protocol_template": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-preparation-v2/protocol.TEMPLATE.json",
+      "sha256": "8cbb9d9331edb1624129e830491176e474f95eaa928e4506bb9400d72717bb57"
+    },
+    "command_template": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-preparation-v2/command.TEMPLATE.json",
+      "sha256": "c8c53646200834ece30f7a7ab7e050c1cdf887701e36ea041694bdc66651039f"
+    },
+    "binding_contract": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-preparation-v2/binding-contract.json",
+      "sha256": "e5e6555ff96c2f6ba9686aa2db07c01b775479532b34a571b3e9fdf34946d69e"
+    },
+    "source_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-independent-source-review-v2/review.json",
+      "sha256": "0ab9f04b39734d5beebb3b0c1857dcc36137b2462e93a01e3f651a01b165198d"
+    },
+    "CPU_controls": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-cpu-controls-root-acceptance-v1/readout.json",
+      "sha256": "de4ff0277ba04c712f374ba6ed476a622e555b8b451d557a01ad54689d77df25"
+    }
+  },
+  "readout_branches": {
+    "complete_informative": "All32 primary defined, required controls qualified; report interval/geometry only. Excluding0 = conditional target-bundle geometry difference, not better strength or optimizer effect.",
+    "complete_unresolved": "Primary interval includes0 => unresolved, not equivalence/no effect; donor remains retained.",
+    "partial_startup_failure": "Preserve partial identities/counters/error/resource closure, no primary inference/retry/extension.",
+    "numerical_failure": "Preserve repeat/reconstruction/mask/fallback evidence; numerical-unqualified INCONCLUSIVE, no resolution retuning.",
+    "all_branches": "No adoption, new candidate, reopened E2 panels, teacher query, second40-update replicate, dose extension, or next-study execution automatically selected."
+  },
+  "implementation": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-preparation-v2/manifest.json",
+    "sha256": "bb6f1d9b089381aee2d7f04efec2637ca66b094bf257c6bdd3c9b049ecb6bbe6"
+  },
+  "root_freeze": {
+    "utc": "2026-11-13T07:00:49.451618+00:00",
+    "candidate": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-protocol-candidate-v2/protocol.CANDIDATE.json",
+      "sha256": "98d40d213c45f1d1ac541d23e51933bec989f3902f647263aa8f413ef248f271"
+    },
+    "scientific_component_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-candidate-v2-independent-scientific-review-v1/review.json",
+      "sha256": "6e0249757de85e396001a1d70182c7aab1221968e5165cc790aad5d7431a7a45"
+    },
+    "same_sampling_models_targets_metrics_thresholds_counts_and_budgets": true,
+    "publication_record": "docs/experiments/2026-11-13-rl-train-gradient-geometry.md",
+    "execution_admitted": false
+  }
+}

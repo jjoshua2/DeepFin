@@ -1,0 +1,442 @@
+"""Prospective E3 TRAIN-only geometry; no work or project imports at import."""
+import argparse
+from collections import defaultdict
+from copy import deepcopy
+from dataclasses import asdict
+import gc
+import hashlib
+import importlib
+import json
+import math
+import os
+from pathlib import Path
+import signal
+import sys
+from unittest.mock import patch
+import uuid
+import weakref
+
+HERE = Path(__file__).resolve().parent
+W = HERE.parent
+REV = 'ba9d6de1987902e1759d984532a4c63f091b9269'
+SALT = 'E3-gradient-root-v1:20261113:'
+FAMILIES = ('P', 'U', 'W_A', 'C_A', 'W_B', 'C_B')
+
+
+def require(value, message):
+    if not value:
+        raise ValueError(message)
+
+
+def sha(path):
+    h = hashlib.sha256()
+    with Path(path).open('rb') as stream:
+        for block in iter(lambda: stream.read(1048576), b''):
+            h.update(block)
+    return h.hexdigest()
+
+
+def canonical(value):
+    return json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
+
+
+def checked(ref):
+    require(set(ref) == {'path', 'sha256'} and 'UNBOUND' not in ref['path'], 'UNBOUND identity')
+    require(sha(ref['path']) == ref['sha256'], 'identity changed: ' + ref['path'])
+    return json.loads(Path(ref['path']).read_text())
+
+
+def write(path, value):
+    with Path(path).open('x') as stream:
+        json.dump(value, stream, indent=2, sort_keys=True, allow_nan=False)
+        stream.write('\n'); stream.flush(); os.fsync(stream.fileno())
+
+
+def selected_rows(ids, games):
+    groups = defaultdict(list)
+    for index, row in enumerate(ids):
+        groups[row.rsplit(':', 1)[0]].append((hashlib.sha256((SALT + row).encode()).hexdigest(),
+                                             int(row.rsplit(':', 1)[1]), index, row))
+    require(len(groups) == len(games) == 32 and set(groups) == set(games), 'whole32 TRAIN root scope')
+    return [{'game': game, 'rank': min(groups[game])[0], 'index': min(groups[game])[2],
+             'physical_row_id': min(groups[game])[3]}
+            for game in sorted(games, key=lambda x: int(x.rsplit(':', 1)[1]))]
+
+
+def captured_loss(function, output, batch, kwargs):
+    """Read the actual frozen source locals, never substitute loss/mask formulas."""
+    require(sys.getprofile() is None, 'existing profiler must not be overwritten')
+    captured = []
+    names = ('sf_wdl_frac_f', 'search_wdl_frac_f', 'game_frac', 'sf_available',
+             'search_available', 'sf_effective', 'sf_component', 'search_component',
+             'target', 'terminal_taper')
+    def profile(frame, event, _arg):
+        if event == 'return' and frame.f_code is function.__code__:
+            local = frame.f_locals
+            require(all(k in local for k in names), 'actual fallback capture field missing')
+            captured.append((local['weighted_terms'], {k: local[k] for k in names},
+                             local['report_exact_masked_sums']))
+    sys.setprofile(profile)
+    try:
+        result = function(output, batch, **kwargs)
+    finally:
+        sys.setprofile(None)
+    require(len(captured) == 1 and captured[0][2] is False, 'wrong loss capture/normalization')
+    terms, fallback, _ = captured[0]
+    import torch
+    fold = None
+    for _name, weight, mean, _mask in terms:
+        if weight:
+            fold = weight * mean if fold is None else fold + weight * mean
+    require(fold is not None and torch.equal(fold, result['total']), 'source ordered total differs')
+    require(all(torch.isfinite(mean).all() for _n, w, mean, _m in terms if w), 'active nonfinite loss')
+    returned = {'policy': 'policy_ce', 'soft_policy': 'soft_policy_ce', 'future_policy': 'future_policy_ce',
+                'wdl': 'blended_wdl_ce', 'categorical': 'categorical_ce',
+                'volatility': 'volatility', 'moves_left': 'moves_left'}
+    for name, weight, mean, _mask in terms:
+        if weight:
+            require(name in returned and result[returned[name]] is mean, 'unmapped/nonreturned active component')
+    common = {'policy', 'soft_policy', 'future_policy'}
+    def group(names):
+        values = [w * t for name, w, t, _mask in terms if w and name in names]
+        require(values, 'empty active family')
+        value = values[0]
+        for term in values[1:]: value = value + term
+        return value
+    active = {n for n, w, _t, _m in terms if w}
+    families = {'P': group(common), 'U': group(active - common - {'wdl', 'categorical'}),
+                'W': group({'wdl'}), 'C': group({'categorical'})}
+    return result, terms, fallback, families
+
+
+def gradients(value, parameters, torch, np, counter, *, retain):
+    counter['gradients'] += 1
+    require(counter['gradients'] <= 600, 'extra gradient call')
+    if not value.requires_grad:
+        vector = np.zeros(sum(p.numel() for p in parameters), dtype=np.float32)
+        return vector, {'none':list(range(len(parameters))), 'zero_connected':[],
+                        'constant_loss_without_graph':True,
+                        'sha256':hashlib.sha256(vector.tobytes()).hexdigest()}
+    counter['autograd_calls'] += 1
+    values = torch.autograd.grad(value, parameters, retain_graph=retain, allow_unused=True)
+    vector = np.empty(sum(p.numel() for p in parameters), dtype=np.float32)
+    none, zero, offset = [], [], 0
+    for index, (parameter, grad) in enumerate(zip(parameters, values)):
+        stop = offset + parameter.numel()
+        if grad is None:
+            vector[offset:stop] = 0; none.append(index)
+        else:
+            require(grad.dtype == torch.float32 and bool(torch.isfinite(grad).all()), 'bad trunk gradient')
+            part = grad.detach().cpu().contiguous().numpy().reshape(-1)
+            vector[offset:stop] = part
+            if not np.any(part): zero.append(index)
+        offset = stop
+    return vector, {'none': none, 'zero_connected': zero,
+                    'constant_loss_without_graph':False,
+                    'sha256': hashlib.sha256(vector.tobytes()).hexdigest()}
+
+
+def gram(vectors, np):
+    require(len(vectors) == 6, 'wrong family matrix')
+    result = np.zeros((6, 6), dtype=np.float64)
+    for start in range(0, len(vectors[0]), 65536):
+        block = np.stack([v[start:start + 65536] for v in vectors]).astype(np.float64)
+        result += block @ block.T
+    require(np.isfinite(result).all(), 'nonfinite sufficient statistics')
+    return result
+
+
+def cosine(matrix, left, right):
+    def dot(a, b):
+        return math.fsum(float(matrix[i, j]) * x * y for i, x in a.items() for j, y in b.items())
+    aa, bb = dot(left, left), dot(right, right)
+    if aa <= 1e-24 or bb <= 1e-24: return None
+    return dot(left, right) / math.sqrt(aa * bb)
+
+
+def cosines(matrix):
+    result = {label: cosine(matrix, {0: 1}, vector) for label, vector in
+              [('P_W_A', {2: 1}), ('P_C_A', {3: 1}), ('P_WC_A', {2: 1, 3: 1}),
+               ('P_W_B', {4: 1}), ('P_C_B', {5: 1}), ('P_WC_B', {4: 1, 5: 1}), ('P_U', {1: 1})]}
+    result['d'] = (result['P_WC_B'] - result['P_WC_A']
+                   if result['P_WC_A'] is not None and result['P_WC_B'] is not None else None)
+    return result
+
+
+def relative_error(a, b, np):
+    delta = aa = bb = 0.0
+    for start in range(0, len(a), 65536):
+        x = a[start:start + 65536].astype(np.float64); y = b[start:start + 65536].astype(np.float64)
+        delta += float((x - y) @ (x - y)); aa += float(x @ x); bb += float(y @ y)
+    return math.sqrt(delta) / max(math.sqrt(aa), math.sqrt(bb), 1e-12)
+
+
+def measure_row(trainer, arrays, categories, index, kwargs, parameters, mapping, counter, observer, total_control):
+    import torch, numpy as np
+    from chess_anti_engine.train.losses import compute_loss
+    from scripts.offline_replay_epoch import _slice_arrays
+    hosts, batches = {}, {}
+    for arm in ('A', 'B'):
+        raw = _slice_arrays(arrays, np.asarray([index], np.int64))
+        raw['categorical_target'] = categories[arm][[index]].copy()
+        host = trainer._prepare_host_arrays(raw, rng=np.random.default_rng(0), mirror_prob=0,
+                                            rebuild_sf_targets=False)
+        hosts[arm] = observer.arrays_signature(host)
+        batches[arm] = trainer._host_batch_to_tensors(host)
+    counter['forwards'] += 1; require(counter['forwards'] <= 99, 'extra forward')
+    require(not trainer.model.training, 'dropout/train mode active')
+    with trainer._amp_context():
+        require(torch.is_grad_enabled() and torch.is_autocast_enabled('cuda') and
+                torch.get_autocast_dtype('cuda') == torch.bfloat16, 'not gradient-enabled bf16 eager context')
+        output = trainer.model(batches['A']['x'])
+        actual = {}
+        for arm in ('A', 'B'):
+            actual[arm] = captured_loss(compute_loss, output, batches[arm], kwargs[arm])
+    require(all(bool(torch.isfinite(v).all()) for v in output.values() if isinstance(v, torch.Tensor)), 'nonfinite forward')
+    result_a, terms_a, fallback_a, family_a = actual['A']
+    result_b, terms_b, fallback_b, family_b = actual['B']
+    require(torch.equal(family_a['P'], family_b['P']) and torch.equal(family_a['U'], family_b['U']), 'common loss families differ')
+    values = [family_a['P'], family_a['U'], family_a['W'], family_a['C'], family_b['W'], family_b['C']]
+    totals = [gradients(actual[arm][0]['total'], parameters, torch, np, counter, retain=True)[0]
+              for arm in ('A', 'B')] if total_control else []
+    vectors, coverage = [], {}
+    for index_family, (name, value) in enumerate(zip(FAMILIES, values)):
+        vector, info = gradients(value, parameters, torch, np, counter, retain=index_family < 5)
+        vectors.append(vector); coverage[name] = info
+    matrix = gram(vectors, np)
+    decomposition = {}
+    for arm, terms, fallback in [('A', terms_a, fallback_a), ('B', terms_b, fallback_b)]:
+        decomposition[arm] = {'components': [{'name': n, 'weight': w, 'mean': float(t.detach()),
+            'mask': m.detach().cpu().tolist(), 'mask_sum': float(m.detach().sum()),
+            'masked_mean_denominator': float(m.detach().sum().clamp_min(1)),
+            'recovered_masked_numerator': float((t.detach() * m.detach().sum().clamp_min(1))),
+            'zero_mask': not bool(m.detach().any())} for n, w, t, m in terms],
+            'fallback': {k: {'signature': observer.tensors_signature({k: v})[k],
+                             'values': v.detach().cpu().tolist()} if isinstance(v, torch.Tensor) else v
+                         for k, v in fallback.items()}, 'actual_total': float(actual[arm][0]['total'].detach()),
+            'grouped_scalar_residual': float((sum(actual[arm][3].values()) - actual[arm][0]['total']).detach())}
+    residual = {}
+    for arm, target, wi, ci in zip(('A', 'B'), totals, (2, 4), (3, 5)):
+        combined = vectors[0] + vectors[1] + vectors[wi] + vectors[ci]
+        residual[arm] = {'family_sum_vs_actual_total_relative_L2': relative_error(combined, target, np),
+                        'gate': False, 'scope': 'BF16 finite cotangent accumulation need not be bitexact linear'}
+    del totals
+    by_group = {}
+    offset = 0
+    groups = defaultdict(list)
+    for row in mapping:
+        stop = offset + row['numel']; aliases = row['aliases']
+        layers = {'.'.join(n.split('.')[:2]) for n in aliases
+                  if n.startswith(('blocks.', 'layer_smolgens.'))}
+        layer = 'tied_across_layers' if len(layers) > 1 else next(iter(layers), row['name'].split('.')[0])
+        groups['layer/' + layer].append((offset, stop)); groups['route/' + row['route']].append((offset, stop)); offset = stop
+    for name, slices in groups.items():
+        part = sum((gram([v[a:b] for v in vectors], np) for a, b in slices), np.zeros((6, 6)))
+        by_group[name] = part.tolist()
+    norm_sq = {name: float(matrix[j, j]) for j, name in enumerate(FAMILIES)}
+    report = {'host_signatures': hosts, 'forward': observer.tensors_signature(output),
+              'components': decomposition, 'coverage': coverage, 'gram': matrix.tolist(),
+              'norm_squared': norm_sq,
+              'W_over_C_norm_ratio': {arm: math.sqrt(norm_sq['W_'+arm] / norm_sq['C_'+arm])
+                                     if norm_sq['C_'+arm] > 1e-24 else None for arm in ('A','B')},
+              'cosines': cosines(matrix), 'group_gram': by_group, 'total_gradient_controls': residual}
+    return report, vectors
+
+
+def run_state(item, protocol, parts, dataset, selected, observer, inputs, counter, out):
+    import torch, numpy as np
+    from chess_anti_engine.model import build_model, ARCH_SCHEMA_VERSION
+    from chess_anti_engine.train.trainer import Trainer, trainer_kwargs_from_config
+    from chess_anti_engine.tune.fresh_rl_donor import validate_architecture
+    from value_bundle import arm_flat_config
+    _gen, _producer, base, _tc, _old_kwargs, cfg = parts
+    arrays, ids, games, raw, metadata, _lineage = dataset
+    flat_a = arm_flat_config(base, arm='FULLA', run_uuid=protocol['run_uuid'])
+    flat_b = arm_flat_config(base, arm='FULLB', run_uuid=protocol['run_uuid'])
+    kwargs = trainer_kwargs_from_config(flat_a, log_dir=out / item['label'] / 'logs')
+    require(kwargs['use_compile'] is False, 'compilation forbidden')
+    require(not Path(item['path']).is_symlink() and not Path(item['path']).stat().st_mode & 0o222
+            and sha(item['path']) == item['sha256'], 'checkpoint identity/custody changed')
+    payload = torch.load(item['path'], map_location='cpu', mmap=True, weights_only=True)
+    validate_architecture(base['bootstrap_model_contract'], payload['arch'], {'_schema_version': ARCH_SCHEMA_VERSION, **asdict(cfg)})
+    model = build_model(cfg)
+    expected = model.state_dict(); state = payload['model']
+    require(len(state) == len(expected) == 494 and state.keys() == expected.keys(), 'not494 exact learned tensors')
+    for name, value in state.items():
+        require(value.shape == expected[name].shape and value.dtype == expected[name].dtype and
+                bool(torch.isfinite(value).all()), 'model tensor shape/dtype/finiteness differs')
+    if item['label'] != 'DONOR': require(payload['step'] == 40, 'nonfinal endpoint')
+    model.load_state_dict(state, strict=True)
+    require(all(torch.equal(value, state[name]) for name, value in model.state_dict().items()),
+            'strict loaded state or tied alias differs')
+    del payload, state, expected
+    trainer = Trainer(model, model_config=cfg, **kwargs)
+    try:
+        require(trainer.step == 0 and not trainer.opt.state and trainer._swa_model is None and
+                not trainer.rebuild_sf_targets and not trainer.rebuild_categorical_target and
+                trainer.resid_channel_balance_weight == 0 and not model.phase_output_adapter_enabled and
+                model.phase_output_adapter is None,
+                'unexpected update/state/rebuild/extra loss/phase adapter')
+        trainer.model.eval()
+        mapping_all = observer.parameter_map(trainer)
+        require(all(row['role'] != 'UNKNOWN' for row in mapping_all), 'unknown parameter role')
+        mapping = [row for row in mapping_all if row['role'] == 'shared_trunk']
+        require(len(mapping) == 423 and sum(row['numel'] for row in mapping) == 57533899 and
+                len(mapping_all) == 479, 'physical whole-trunk map differs')
+        expected_map = checked(protocol['expected_trunk_map'])
+        projected = [{k:row[k] for k in ('name','aliases','shape','dtype','route','numel','role')} for row in mapping]
+        require(projected == expected_map and hashlib.sha256(canonical(projected)).hexdigest() ==
+                '219d77e26feba07d8f1baf6b615d2f17c783692b5e3f8029af77bdbf689e75f3', 'exact ordered trunk identity differs')
+        require(12 * sum(row['numel'] for row in mapping) * 4 <= 3 * 1024**3, 'CPU gradient buffer ceiling')
+        by_name = dict(trainer.model.named_parameters()); parameters = [by_name[row['name']] for row in mapping]
+        before = observer.tensors_signature(trainer.model.state_dict())
+        scheduler = deepcopy(trainer._scheduler.state_dict()); clip = trainer.zclip_state_dict()
+        kwargs_a = trainer._loss_kwargs
+        trainer.search_wdl_frac = flat_b['search_wdl_frac']; kwargs_b = trainer._loss_kwargs
+        trainer.search_wdl_frac = flat_a['search_wdl_frac']
+        write(out / (item['label'] + '-context.json'), {'model': item, 'mode':'eval_gradients_enabled',
+              'source_loss_kwargs': {'A':observer.plain(kwargs_a),'B':observer.plain(kwargs_b)},
+              'math_context':observer.math_context(), 'optimizer_state_entries':len(trainer.opt.state),
+              'SWA_present':trainer._swa_model is not None, 'feature_dropout_applied':False,
+              'mirror_probability':0, 'host_rebuild_SF':trainer.rebuild_sf_targets,
+              'host_rebuild_categorical':trainer.rebuild_categorical_target})
+        categories = {arm: inputs.categorical_for_train_arm(raw, arm='FULL' + arm, metadata=metadata) for arm in ('A', 'B')}
+        reports = []
+        write(out / (item['label'] + '-parameter-map.json'), mapping_all)
+        def forbidden(*_a, **_k): raise RuntimeError('E3_OPTIMIZER_OR_MODEL_WRITE_FORBIDDEN')
+        with patch.object(trainer.opt, 'step', forbidden), patch.object(trainer, 'train_steps', forbidden), \
+                patch.object(trainer, 'save', forbidden), patch.object(torch, 'save', forbidden):
+            for ordinal, row in enumerate(selected):
+                report, vectors = measure_row(trainer, arrays, categories, row['index'], {'A': kwargs_a, 'B': kwargs_b},
+                                             parameters, mapping, counter, observer, ordinal == 0)
+                report.update(identity=row, state=item['label'])
+                if ordinal == 0:
+                    # Bank the first sentinel before any repeat work/refusal.
+                    write(out / (item['label'] + '-game-0.json'), report)
+                    repeat, again = measure_row(trainer, arrays, categories, row['index'], {'A': kwargs_a, 'B': kwargs_b},
+                                                parameters, mapping, counter, observer, False)
+                    errors = {}
+                    flags = {'input_target_signatures_equal':report['host_signatures'] == repeat['host_signatures'],
+                             'forward_signatures_equal':report['forward'] == repeat['forward']}
+                    for j, name in enumerate(FAMILIES):
+                        flags[name+'_None_zero_coverage_equal'] = all(
+                            report['coverage'][name][key] == repeat['coverage'][name][key]
+                            for key in ('none','zero_connected','constant_loss_without_graph'))
+                        errors[name] = relative_error(vectors[j], again[j], np)
+                        flags[name+'_relative_L2_pass'] = errors[name] <= 1e-5
+                    drift = {}
+                    for name in ('P_WC_A', 'P_WC_B', 'd'):
+                        x, y = report['cosines'][name], repeat['cosines'][name]
+                        drift[name] = abs(x-y) if x is not None and y is not None else None
+                        flags[name+'_defined_and_drift_pass'] = drift[name] is not None and drift[name] <= 1e-5
+                    # Complete observations/control flags are durable BEFORE
+                    # choosing the registered numerical-control disposition.
+                    write(out / (item['label'] + '-repeat.json'),
+                          {'report': repeat, 'relative_L2': errors, 'cosine_drift': drift, 'control_flags': flags})
+                    del again
+                    require(all(flags.values()), 'repeat numerical control failed; raw reports preserved')
+                else:
+                    write(out / (item['label'] + '-game-' + str(ordinal) + '.json'), report)
+                reports.append({'identity': row, 'cosines': report['cosines']}); del vectors
+                require(trainer.step == 0 and not trainer.opt.state and trainer._scheduler.state_dict() == scheduler and
+                        trainer.zclip_state_dict() == clip and all(p.grad is None for p in model.parameters()), 'state/optimizer mutated')
+        require(observer.tensors_signature(trainer.model.state_dict()) == before, 'model state changed')
+        require(sha(item['path']) == item['sha256'] and observer.math_context() == protocol['math_context'],
+                'poststate file or numeric context changed')
+        refs = [weakref.ref(trainer), weakref.ref(model), weakref.ref(trainer.opt), *[weakref.ref(p) for p in model.parameters()]]
+        return reports, mapping, refs
+    finally:
+        trainer.writer.close()
+
+
+def main():
+    parser = argparse.ArgumentParser(); parser.add_argument('--execute', action='store_true')
+    parser.add_argument('--manifest-sha256', required=True); parser.add_argument('--protocol-sha256', required=True)
+    parser.add_argument('--protocol', required=True); args = parser.parse_args()
+    require(args.execute and sha(HERE/'manifest.json') == args.manifest_sha256 and sha(__file__) ==
+            json.loads((HERE/'manifest.json').read_text())['helper_sha256'], 'source/explicit authority missing')
+    m = json.loads((HERE/'manifest.json').read_text()); p = checked({'path': args.protocol, 'sha256': args.protocol_sha256})
+    require(p['execution_admitted'] is True and p['source_revision'] == REV, 'E3 execution UNBOUND')
+    science = checked(p['scientific'])
+    # One-way late admission: fixed path only, never a protocol->admission SHA
+    # edge while the admission itself binds this protocol's CLI digest.
+    require(p['root_admission_path'] == str(W/'e3-gradient-root-admission-v1/admission.json'), 'wrong admission path')
+    admission = json.loads(Path(p['root_admission_path']).read_text())
+    require(science['status'].startswith('FROZEN_E3') and admission['status'] == 'ROOT_ADMITTED_EXACT_E3_GRADIENT_STAGE' and
+            admission['protocol_sha256'] == args.protocol_sha256 and admission['manifest_sha256'] == args.manifest_sha256,
+            'final E3 science/admission missing')
+    require(science['implementation'] == {'path':str(HERE/'manifest.json'),'sha256':args.manifest_sha256},
+            'final science does not bind this implementation')
+    parent = Path('/proc', str(os.getppid()), 'cmdline').read_bytes().decode().split('\0')
+    require(p['owner']['path'] in parent and sha(p['owner']['path']) == p['owner']['sha256'] and
+            parent[parent.index('--seconds')+1] == '600' and parent[parent.index('--resource')+1] == 'gpu' and
+            sorted(os.sched_getaffinity(0)) == [20,22] and os.environ.get('CUDA_VISIBLE_DEVICES') == '0' and
+            os.environ.get('OMP_NUM_THREADS') == os.environ.get('MKL_NUM_THREADS') == '2' and __debug__, 'owner/resource mismatch')
+    require(p['root_salt'] == SALT and p['bootstrap_seed'] == 2026111501, 'selection/bootstrap changed')
+    for item in m['authorities'].values(): checked(item)
+    for name, digest in m['TRAIN_helpers'].items(): require(sha(Path(m['TRAIN_directory'])/name) == digest, 'TRAIN helper changed')
+    for name, digest in m['source_sha256'].items(): require(sha(Path(p['source_checkout'])/name) == digest, 'R7 source changed')
+    require(p['states'] == m['states'] and p['root_roster'] == m['root_roster'] and
+            p['owner'] == m['owner'], 'fixed state/roster/owner identity changed')
+    signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError('E3 fixed570s alarm'))); signal.alarm(570)
+    out = Path(p['output_root']); require(not out.exists(), 'one-use E3 output exists'); out.mkdir()
+    counter = {'forwards': 0, 'gradients': 0, 'autograd_calls':0}
+    try:
+        sys.path.insert(0, p['source_checkout']); sys.path.insert(0, m['TRAIN_directory'])
+        import torch, numpy as np
+        require(not torch.cuda.is_initialized(), 'CUDA preinitialized')
+        require(np.__version__ == '2.2.6', 'NumPy bootstrap implementation changed')
+        torch.set_num_threads(2); torch.set_num_interop_threads(2); torch.cuda.init(); torch.cuda.set_device(0)
+        inputs = importlib.import_module('train_inputs'); observer = importlib.import_module('paired_observer')
+        require(Path(inputs.__file__).parent == Path(m['TRAIN_directory']) and Path(observer.__file__).parent == Path(m['TRAIN_directory']), 'foreign helpers')
+        train_protocol = checked(p['training_protocol']); train_manifest = checked(p['training_manifest'])
+        _old, parts = inputs.base_inputs(train_protocol, train_manifest)
+        require(observer.math_context() == p['math_context'], 'math context changed')
+        dataset = inputs.load_research_train(checked(p['cohort_binding']), parts)
+        arrays, ids, games, _raw, _metadata, lineage = dataset
+        selected = selected_rows(ids, games)
+        roster = checked(p['root_roster'])
+        require(roster['salt'] == SALT and hashlib.sha256(canonical(ids)).hexdigest() == roster['all3012_ids_sha256'],
+                'fixed all3012 row identities differ')
+        for row in selected:
+            row['end_class'] = lineage['classes'][games.index(row['game'])]
+        require([{'game_id':row['game'], 'physical_row_id':row['physical_row_id'],
+                  'TRAIN_array_index':row['index'], 'selection_sha256':row['rank'],
+                  'outcome_class':row['end_class'],
+                  'retained_row_candidates':sum(x.rsplit(':',1)[0] == row['game'] for x in ids)} for row in selected]
+                == roster['selected_rows'], 'recomputed selector differs from pre-forward frozen roster')
+        write(out/'selected-roots.json', {'roots': selected, 'lineage': lineage, 'prediction_calls': 0})
+        require([x['label'] for x in p['states']] == ['DONOR','FULLA40','FULLB40'], 'state selection differs')
+        all_states, physical_map = {}, None
+        for item in p['states']:
+            reports, mapping, refs = run_state(item, p, parts, dataset, selected, observer, inputs, counter, out)
+            identity_map = [{k:v for k,v in row.items() if k not in ('lr','state_keys_at_map')} for row in mapping]
+            require(physical_map is None or identity_map == physical_map, 'trunk membership differs across states')
+            physical_map = identity_map; all_states[item['label']] = reports
+            gc.collect(); torch.cuda.empty_cache(); require(all(x() is None for x in refs), 'prior model still resident')
+        require(counter['forwards'] == 99 and counter['gradients'] == 600 and
+                counter['autograd_calls'] <= 600, 'fixed delivery count differs')
+        values = [row['cosines']['d'] for row in all_states['DONOR']]
+        primary = {'status':'INCONCLUSIVE_UNDEFINED_PRIMARY', 'values':values}
+        if all(x is not None and math.isfinite(x) for x in values):
+            rng = np.random.default_rng(2026111501); data = np.asarray(values, np.float64)
+            means = data[rng.integers(0,32,size=(10000,32))].mean(axis=1)
+            primary = {'status':'COMPLETE_TRAIN_GEOMETRY_ONLY', 'values':values, 'mean':float(data.mean()),
+                       'bootstrap95':np.quantile(means,[.025,.975]).tolist(), 'seed':2026111501}
+        strata = {kind: {'games':sum(row['identity']['end_class'] == kind for row in all_states['DONOR']),
+                         'values':[row['cosines']['d'] for row in all_states['DONOR'] if row['identity']['end_class'] == kind],
+                         'diagnostic_only':True} for kind in ('NATURAL','STRICT_TB_ADJUDICATED')}
+        write(out/'readout.json', {'status':primary['status'], 'source_revision':REV, 'primary':primary,
+                                  'states':all_states, 'counters':counter, 'optimizer_steps':0,
+                                  'descriptive_endclass_strata':strata,
+                                  'HOLD_loaded':False, 'raw_Euclidean_not_optimizer_or_strength':True,
+                                  'peak_cuda_allocated':torch.cuda.max_memory_allocated()})
+    except BaseException as error:
+        write(out/'failure.json', {'status':'UNQUALIFIED_OR_INCONCLUSIVE_NO_RETRY', 'error':repr(error), 'counters':counter})
+        raise
+    finally:
+        signal.alarm(0)
+
+
+if __name__ == '__main__':
+    main()

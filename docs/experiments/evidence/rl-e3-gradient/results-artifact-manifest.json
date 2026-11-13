@@ -1,0 +1,244 @@
+{
+  "status": "COMPLETE_E3_PRIMARY_GEOMETRY_UNRESOLVED",
+  "premeasurement_manifest_sha256": "b6ca6429e5c176428c1b51e82dfe0e5495f0b6afef2342482e2f9c4ba892ca4f",
+  "premeasurement_commit": "6a2f790e594b5a96f6a166eaba2a81b8cd0e01a7",
+  "files": [
+    {
+      "path": "DONOR-context.json",
+      "bytes": 3655,
+      "sha256": "e7e46eb711b80f9bb58193748b90145332835dedd1d4d6884260420e914316c7",
+      "source_paths": [
+        "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-runtime-v1-1fb23ace-676a-485e-94b1-10f54b4d4a3a/DONOR-context.json"
+      ],
+      "copy": "EXACT_BYTES",
+      "projection_only": false
+    },
+    {
+      "path": "DONOR-game-0.json",
+      "bytes": 101451,
+      "sha256": "03aaa898c9ed93472c5a823de0532741afd32b913a0e26d79363bd1c6eb21a5a",
+      "source_paths": [
+        "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-runtime-v1-1fb23ace-676a-485e-94b1-10f54b4d4a3a/DONOR-game-0.json"
+      ],
+      "copy": "EXACT_BYTES",
+      "projection_only": false
+    },
+    {
+      "path": "DONOR-repeat.json",
+      "bytes": 109608,
+      "sha256": "f9620c1f351fd3dd07df2981d5060c0e09dfa2c5df0266c05c23055bc929f7f4",
+      "source_paths": [
+        "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-runtime-v1-1fb23ace-676a-485e-94b1-10f54b4d4a3a/DONOR-repeat.json"
+      ],
+      "copy": "EXACT_BYTES",
+      "projection_only": false
+    },
+    {
+      "path": "FULLA40-context.json",
+      "bytes": 3697,
+      "sha256": "c5998b27c4afe696a523e5eac21e24a7ba98fa8dc0b3e5655810478084a270b0",
+      "source_paths": [
+        "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-runtime-v1-1fb23ace-676a-485e-94b1-10f54b4d4a3a/FULLA40-context.json"
+      ],
+      "copy": "EXACT_BYTES",
+      "projection_only": false
+    },
+    {
+      "path": "FULLA40-game-0.json",
+      "bytes": 101714,
+      "sha256": "93b25b3df10a4d92ca529ca1b645c9f60225e4e7d82d1905542c6477f8fdc422",
+      "source_paths": [
+        "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-runtime-v1-1fb23ace-676a-485e-94b1-10f54b4d4a3a/FULLA40-game-0.json"
+      ],
+      "copy": "EXACT_BYTES",
+      "projection_only": false
+    },
+    {
+      "path": "FULLA40-repeat.json",
+      "bytes": 109868,
+      "sha256": "f263d9162bf459dd4d42816e182e08e03fce060bf447a3e1cdf2e9296261d03d",
+      "source_paths": [
+        "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-runtime-v1-1fb23ace-676a-485e-94b1-10f54b4d4a3a/FULLA40-repeat.json"
+      ],
+      "copy": "EXACT_BYTES",
+      "projection_only": false
+    },
+    {
+      "path": "FULLB40-context.json",
+      "bytes": 3697,
+      "sha256": "f7c50317a190317f96ea87f0b370602d1d4cd79e8b3ab71926da32062929fa63",
+      "source_paths": [
+        "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-runtime-v1-1fb23ace-676a-485e-94b1-10f54b4d4a3a/FULLB40-context.json"
+      ],
+      "copy": "EXACT_BYTES",
+      "projection_only": false
+    },
+    {
+      "path": "FULLB40-game-0.json",
+      "bytes": 101726,
+      "sha256": "c99678b0e19f71cbce5be28b4b628fbfb972e6fa25a7808c5bde197ebedc1210",
+      "source_paths": [
+        "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-runtime-v1-1fb23ace-676a-485e-94b1-10f54b4d4a3a/FULLB40-game-0.json"
+      ],
+      "copy": "EXACT_BYTES",
+      "projection_only": false
+    },
+    {
+      "path": "FULLB40-repeat.json",
+      "bytes": 109882,
+      "sha256": "1c024f553ae2d7a95a9778e39d46a30a6e6032ff9d2c4b653a66bf3ec966b0f6",
+      "source_paths": [
+        "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-runtime-v1-1fb23ace-676a-485e-94b1-10f54b4d4a3a/FULLB40-repeat.json"
+      ],
+      "copy": "EXACT_BYTES",
+      "projection_only": false
+    },
+    {
+      "path": "GPU-terminal.json",
+      "bytes": 1646,
+      "sha256": "e9c3a2f5bd1eda470b26e142ad3c187d9d28106185b2399ed2a5b4ee6d41ed33",
+      "source_paths": [
+        "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-execution-v1/terminal.json"
+      ],
+      "copy": "EXACT_BYTES",
+      "projection_only": false
+    },
+    {
+      "path": "actual-independent-review.json",
+      "bytes": 38579,
+      "sha256": "1e38bf097dad392d5969de338bef48c3f8c1d974e877fb69d514c850e604705f",
+      "source_paths": [
+        "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-actual-independent-review-v1/review.json"
+      ],
+      "copy": "EXACT_BYTES",
+      "projection_only": false
+    },
+    {
+      "path": "actual-readout.json",
+      "bytes": 68568,
+      "sha256": "2115f46bdde89d8845926dea23ca5b7469d601aa8e8074e18d7134a05088f447",
+      "source_paths": [
+        "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-runtime-v1-1fb23ace-676a-485e-94b1-10f54b4d4a3a/readout.json"
+      ],
+      "copy": "EXACT_BYTES",
+      "projection_only": false
+    },
+    {
+      "path": "final-binding-review.json",
+      "bytes": 9884,
+      "sha256": "f38ccc66af93a7c0708fe33776b7738266bf5253af9b7f44e3143c2aae7a0865",
+      "source_paths": [
+        "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-final-binding-independent-review-v1/review.json"
+      ],
+      "copy": "EXACT_BYTES",
+      "projection_only": false
+    },
+    {
+      "path": "gram-sufficient-statistics.json",
+      "bytes": 232288,
+      "sha256": "62d7217ac598c2e14397ae63a82aff315778b54f90bd314b011cd92bdeabdb1e",
+      "source_paths": [
+        "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-portable-result-evidence-v1/gram-sufficient-statistics.json"
+      ],
+      "copy": "EXACT_BYTES",
+      "projection_only": true
+    },
+    {
+      "path": "live-custody-review.json",
+      "bytes": 5644,
+      "sha256": "f8397506b203313af2c42649435f8e995dd527e9f896233565b2b6318912338d",
+      "source_paths": [
+        "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-live-custody-independent-observation-v2/review.json"
+      ],
+      "copy": "EXACT_BYTES",
+      "projection_only": false
+    },
+    {
+      "path": "metadata-terminal.json",
+      "bytes": 1009,
+      "sha256": "a69c9d39a4096ef3a7e0a1ab18285b694c8c07ce1a6d66b468ca4be0a121dd2d",
+      "source_paths": [
+        "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-metadata-validation-execution-v1/terminal.json"
+      ],
+      "copy": "EXACT_BYTES",
+      "projection_only": false
+    },
+    {
+      "path": "metadata-validator.py.txt",
+      "bytes": 5895,
+      "sha256": "bbf02cc9d62af1ddf9a38ab6833b8da51c0ab71dcd13c7e90f197a55dcbe90d5",
+      "source_paths": [
+        "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-validate-metadata.py"
+      ],
+      "copy": "EXACT_BYTES",
+      "projection_only": false
+    },
+    {
+      "path": "metadata-verification.json",
+      "bytes": 30402,
+      "sha256": "00827fff82067f8a074436247ecef7cefa1d9f49c4fe41e61e6fcc7fb862148c",
+      "source_paths": [
+        "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-metadata-validation-results-v1/readout.json"
+      ],
+      "copy": "EXACT_BYTES",
+      "projection_only": false
+    },
+    {
+      "path": "prelaunch-filter-correction.json",
+      "bytes": 428,
+      "sha256": "6fef81448be037f1b9731844ff81234549189e50a6f7da251764bdc71a091300",
+      "source_paths": [
+        "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-root-prelaunch-filter-correction-v1/readout.json"
+      ],
+      "copy": "EXACT_BYTES",
+      "projection_only": false
+    },
+    {
+      "path": "root-actual-acceptance.json",
+      "bytes": 2539,
+      "sha256": "5adcae7164c69f6e00942cd50164e51047009d46e8a5f2f2a0e161b69ffc6d88",
+      "source_paths": [
+        "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-root-actual-acceptance-v1/readout.json"
+      ],
+      "copy": "EXACT_BYTES",
+      "projection_only": false
+    },
+    {
+      "path": "teacher-selection-audit-manifest.json",
+      "bytes": 5454,
+      "sha256": "56ded32267132d4ee531705fb9ccaa6f45268082320ffc31c7a9193af62427d1",
+      "source_paths": [
+        "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-sf-selection-and-teacher-origin-audit-v1/manifest.json"
+      ],
+      "copy": "EXACT_BYTES",
+      "projection_only": false
+    },
+    {
+      "path": "teacher-selection-audit-review.json",
+      "bytes": 8338,
+      "sha256": "0509495cbba09b35feff7814fae1b332f116414e92a23594730e538f2684a9da",
+      "source_paths": [
+        "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-sf-selection-teacher-origin-independent-review-v1/review.json"
+      ],
+      "copy": "EXACT_BYTES",
+      "projection_only": false
+    },
+    {
+      "path": "teacher-selection-audit.md.txt",
+      "bytes": 5675,
+      "sha256": "dd52384c53de7df304b6a9d4a74e9d8acc28370b11396498741ca091f5cb875f",
+      "source_paths": [
+        "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-sf-selection-and-teacher-origin-audit-v1/note.md"
+      ],
+      "copy": "EXACT_BYTES",
+      "projection_only": false
+    }
+  ],
+  "new_predictions_or_updates_during_publication": false,
+  "bulk_artifact_root": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1",
+  "limits": [
+    "Raw checkpoints/replay arrays/full gradient vectors are not committed.",
+    "Portable Gram evidence copies only specified fields from all96 immutable raw JSON records; per-row source paths/SHA preserve joins.",
+    "No recipe, optimizer-direction, Elo, external-strength, adoption or optimality conclusion."
+  ]
+}

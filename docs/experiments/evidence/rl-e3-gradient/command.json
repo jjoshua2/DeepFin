@@ -1,0 +1,54 @@
+{
+  "status": "BOUND_EXACT_ONE_STAGE_COMMAND_PENDING_FRESH_ROOT_RESOURCE_ADMISSION",
+  "argv": [
+    "/home/josh/chess-artifacts/venvs/rl-transition-managed-20261111-cu130/bin/python",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/run_stage_tb_on_runtime_v1.py",
+    "--name",
+    "e3-gradient-execution-v1",
+    "--resource",
+    "gpu",
+    "--seconds",
+    "600",
+    "--",
+    "/usr/bin/taskset",
+    "-c",
+    "20,22",
+    "/usr/bin/env",
+    "-u",
+    "NVIDIA_TF32_OVERRIDE",
+    "-u",
+    "CUBLAS_WORKSPACE_CONFIG",
+    "CUDA_VISIBLE_DEVICES=0",
+    "PYTHONOPTIMIZE=0",
+    "PYTHONDONTWRITEBYTECODE=1",
+    "OMP_NUM_THREADS=2",
+    "MKL_NUM_THREADS=2",
+    "PYTHONPATH=/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess",
+    "/home/josh/chess-artifacts/venvs/rl-transition-managed-20261111-cu130/bin/python",
+    "-B",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-preparation-v2/measure.py",
+    "--execute",
+    "--manifest-sha256",
+    "bb6f1d9b089381aee2d7f04efec2637ca66b094bf257c6bdd3c9b049ecb6bbe6",
+    "--protocol",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-final-bindings-v1-1fb23ace-676a-485e-94b1-10f54b4d4a3a/runtime-protocol.json",
+    "--protocol-sha256",
+    "a4446cbf2ff5e459eee5428e97d0ffe1a24e32040bb7af52001fe6555bbe804d"
+  ],
+  "owner_affinity_inherited_from_root_exec_driver": [
+    20,
+    22
+  ],
+  "owner_environment_inherited": {
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "GIT_OPTIONAL_LOCKS": "0"
+  },
+  "scientific": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-final-bindings-v1-1fb23ace-676a-485e-94b1-10f54b4d4a3a/scientific.json",
+    "sha256": "6260995b5661cb4c8718749e5fac60f38de527dc4c37ce05fd2edc1082af87eb"
+  },
+  "runtime_protocol": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-final-bindings-v1-1fb23ace-676a-485e-94b1-10f54b4d4a3a/runtime-protocol.json",
+    "sha256": "a4446cbf2ff5e459eee5428e97d0ffe1a24e32040bb7af52001fe6555bbe804d"
+  }
+}
