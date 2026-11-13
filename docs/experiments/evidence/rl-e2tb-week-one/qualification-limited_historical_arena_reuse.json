@@ -1,0 +1,25 @@
+{
+  "status": "ACCEPT_LIMITED_HISTORICAL_ARENA_MECHANICS_REUSE_FOR_E2TB",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "utc": "2026-11-13T02:22:16.267946+00:00",
+  "source_and_command_independent_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-arena-command-independent-review-v1/review.json",
+    "sha256": "174b3474b1eabb3d57d064a60d8794ecc408f6ae48026163535c2fdaa68d3275"
+  },
+  "historical_actual": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/internal-tb6-arena-engineering-actual-readout-v2/readout.json",
+    "sha256": "f504034609da9e7853439d250326274d9295e20700b6643ae8c53217a9817822"
+  },
+  "current_actual_native_and_encoder": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cpu-qualification-root-acceptance-v3/readout.json",
+    "sha256": "eea06de82e50f01ea7b33c70e6d7a1fc16493c66abe17d1d7e85925de6b045ac"
+  },
+  "current_actual_GPU_serving_and_strict_rule": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-three-case-producer-root-actual-acceptance-v3/readout.json",
+    "sha256": "6e1cab125891bb31eab40cbac7e243716a77bfb107c9214593be9110efb5ded3"
+  },
+  "root_review": "Reviewed prospective four commands and source equivalence. Historical32 publicCLI matched-sims64/training/.1/noise1/32concurrency/eval1024/eager/TB6 closed with complete legal full histories. Executable arena AST same after docs; Gumbel/match/opening/shape byte-exact. Safe table handle constructor and unused UCI walker native additions independently qualified; actual current5 native imports/all756 encodings and GPU BF16/strict outcomes now observed.",
+  "limits": "Limited operational reuse only; not new R7 arena, universal native/compiler numerical parity, current per-forward arena precision/finiteness or full256/1000 completion guarantee. Old affinity16,18 versus prospective20,22 declared. Every actual arena still requires current checkpoint identity, fixed source/assets/book/count/history/cap/fault/custody, full cohort and remaining budget gates. No old games pooled or historical costs double-debited.",
+  "new_GPU_AA_or_arena_executed_for_reuse": false,
+  "research_or_playing_execution_admitted": false
+}

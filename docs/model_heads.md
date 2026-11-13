@@ -77,7 +77,7 @@ in `losses.py`:
 `search_wdl_frac`·own search-root WDL (no separate `w_sf_wdl` knob exists —
 the blend replaced the old dual loss). An old run reported a winrate fall
 0.64 → 0.40 after removing SF value supervision (2026-04-17, reverted in
-52ab9c0), but the [ledger](experiment_ledger.md) records Josh's 2026-08-23
+52ab9c0), but the [ledger](experiment_ledger.md) records the operator's 2026-08-23
 instruction that this ancient, uncontrolled result must not be cited as a
 mechanism without a fresh preregistered re-ablation. It neither establishes
 that SF supervision is necessary for the current model nor explains a new

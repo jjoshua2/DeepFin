@@ -11,9 +11,10 @@ from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from .state import SelfplayState
+    from .strict_tb import TablebaseWitness
 
 TerminalResolution = Literal[
-    "natural", "tablebase_adjudication", "sf_adjudication", "sf_default_draw",
+    "natural", "tablebase_adjudication", "sf_adjudication", "sf_default_draw", "unresolved",
 ]
 
 @dataclass(frozen=True)
@@ -42,7 +43,9 @@ class NetRecordProvenance:
 class GameProvenance:
     """Raw producing paths, including separate final-label rescoring.
 
-    ``natural_result`` is the native board's result (often ``*`` at a cap).
+    In legacy mode ``natural_result`` is the native board's result (often
+    ``*`` at a cap). Strict mode checks the full-history claim policy instead
+    and preserves the separate native string in ``native_result``.
     ``resolved_result`` precedes optional TB rescoring; ``result`` labels replay.
     ``cap_reached`` counts plies since the opening, not absolute game ply.
     Played action IDs use the full4672 move space, independent of policy encoding.
@@ -61,6 +64,11 @@ class GameProvenance:
     cap_reached: bool
     total_plies: int
     retained_samples: int
+    # Strict-mode additions. Legacy fields/default meanings remain intact.
+    native_result: str | None = None
+    tablebase_witness: TablebaseWitness | None = None
+    tablebase_policy_applied_plies: tuple[int, ...] = ()
+    tablebase_policy_abstained_plies: tuple[int, ...] = ()
 
 
 def capture_game_start(

@@ -22,6 +22,7 @@ from chess_anti_engine.tune._utils import (
 from chess_anti_engine.utils.atomic import atomic_write_text
 from chess_anti_engine.utils.config_yaml import strict_config_bool
 from chess_anti_engine.utils.sequential_selfplay import validate_sequential_selfplay_config
+from chess_anti_engine.utils.syzygy_config import refuse_strict_worker_session
 import contextlib
 
 
@@ -1160,6 +1161,7 @@ def run_tune(
         GPU.  On an RTX 5090 with a small model, 10 trials at gpu=0.1 each
         fits comfortably in 32 GB VRAM.
     """
+    refuse_strict_worker_session(base_config)
     validate_declared(base_config | {"resume": resume})
     validate_sequential_selfplay_config(base_config)
     try:

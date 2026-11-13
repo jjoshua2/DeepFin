@@ -430,7 +430,11 @@ def _open_syzygy_tablebase(path: str) -> chess.syzygy.Tablebase | None:
     dirs = [p.strip() for p in path.split(os.pathsep) if p.strip()]
     if not dirs:
         return None
-    tablebase = chess.syzygy.Tablebase()
+    # Shared no-eviction constructor (see its docstring for the deadlock);
+    # imported here so the script's import stays free of the compiled extension.
+    from chess_anti_engine.tablebase import new_tablebase
+
+    tablebase = new_tablebase()
     added = 0
     for directory in dirs:
         try:

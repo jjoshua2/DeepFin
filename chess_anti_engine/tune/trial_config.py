@@ -27,6 +27,7 @@ from chess_anti_engine.utils.architecture import (
     normalize_phase_piece_thresholds,
 )
 from chess_anti_engine.utils.sequential_selfplay import validate_sequential_selfplay_config
+from chess_anti_engine.utils.syzygy_config import validate_selfplay_syzygy, syzygy_outcome_mode
 
 if TYPE_CHECKING:
     from chess_anti_engine.train.trainer import TrainMetrics
@@ -382,6 +383,7 @@ class TrialConfig:
     soft_policy_temp: float = 2.0
     timeout_adjudication_threshold: float = 0.90
     volatility_source: str = "raw"
+    syzygy_outcome_mode: str = "theoretical_wdl"
     syzygy_path: str | None = None
     stockfish_syzygy_path: str | None = None
     syzygy_rescore_policy: bool = False
@@ -672,6 +674,7 @@ class TrialConfig:
             w=config.get("w_sf_shape"),
             temp_cp=config.get("sf_shape_temp_cp"),
         )
+        validate_selfplay_syzygy(config)
         return cls(
   # --- Global ---
             seed=int(config.get("seed", 0)),
@@ -913,6 +916,7 @@ class TrialConfig:
             soft_policy_temp=float(config.get("soft_policy_temp", 2.0)),
             timeout_adjudication_threshold=float(config.get("timeout_adjudication_threshold", 0.90)),
             volatility_source=str(config.get("volatility_source", "raw")),
+            syzygy_outcome_mode=syzygy_outcome_mode(config.get("syzygy_outcome_mode", "theoretical_wdl")),
             syzygy_path=_get("syzygy_path", None),
             stockfish_syzygy_path=_get("stockfish_syzygy_path", None),
             syzygy_rescore_policy=bool(config.get("syzygy_rescore_policy", False)),

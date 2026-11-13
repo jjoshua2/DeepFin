@@ -1,0 +1,470 @@
+{
+  "STOP_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-collection-execution-v1/STOP",
+  "STOP_sha256": "1c3ca7bf8e656145e4f8f2454206cf2c9534774a1505492795d37a1a6fc562d4",
+  "birth_checks": [
+    {
+      "birth": 24699280,
+      "pid": 1071883,
+      "recorded_identity_absent": true
+    },
+    {
+      "birth": 24699949,
+      "pid": 1071916,
+      "recorded_identity_absent": true
+    },
+    {
+      "birth": 24699975,
+      "pid": 1071926,
+      "recorded_identity_absent": true
+    }
+  ],
+  "candidate_adoption": false,
+  "complete_producer_readout_exists": false,
+  "completed_receipts": [
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-0",
+      "ordinal": 0,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-0.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:0",
+      "sha256": "4a4e4cfd106a182b38dfa19a1f3f6171a361d80d9c7c6e09e039a434933fc4ba"
+    },
+    {
+      "bank": "train",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/train/game-1",
+      "ordinal": 1,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-1.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:1",
+      "sha256": "c245483f0d9075939fd29d16f3161f21ad4baf6a5904c9720cbf22a5de8956dd"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-2",
+      "ordinal": 2,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-2.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:2",
+      "sha256": "abb562d69fe1534310ab371b6b09b0d584c3613a677877395d90dcb341924fb1"
+    },
+    {
+      "bank": "train",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/train/game-3",
+      "ordinal": 3,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-3.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:3",
+      "sha256": "82eea2939717e3382c723c46a0864c0e1c600169583d53a383eb2a8d48322f1d"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-4",
+      "ordinal": 4,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-4.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:4",
+      "sha256": "ba9f6b5e3a5f40f5ebbc0e69dd92cbfe88616d5c30ea201118ea28a9ee2d7a95"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-5",
+      "ordinal": 5,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-5.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:5",
+      "sha256": "fac6cc28667e864ce41874dc0b27be8e5f571d0056379f44789df888bd9c94b6"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-6",
+      "ordinal": 6,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-6.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:6",
+      "sha256": "f1e949107e4e89d2ecba080050a03cd99f5960b6d473c2c8fb4c0a1f440eadc6"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-7",
+      "ordinal": 7,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-7.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:7",
+      "sha256": "01e2258b70bb47052c6b5cf15e1fb75d711c79800cd0103f4a71d6721f69b7a3"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-8",
+      "ordinal": 8,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-8.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:8",
+      "sha256": "2759dc7da1cc101a51c635bd6e9d97e54bef2f903dde069b8364c5a3a0ff29f7"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-9",
+      "ordinal": 9,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-9.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:9",
+      "sha256": "bd3536004ab09a8699931cfab08ca9c2bd9e4182e2fbbb4a3f54b6ab0b4fc0e0"
+    },
+    {
+      "bank": "train",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/train/game-10",
+      "ordinal": 10,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-10.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:10",
+      "sha256": "e33824a0cd76d064cdb570ce29da043587f65d934ed4d5914a728c1eab0df9c7"
+    },
+    {
+      "bank": "train",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/train/game-11",
+      "ordinal": 11,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-11.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:11",
+      "sha256": "73cba246246cced32b1362cb15280d08cf5e0da050e9c24ebdce4de0e300656e"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-12",
+      "ordinal": 12,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-12.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:12",
+      "sha256": "fa1f4e14f8f14a57ed10234e4a1f6769344454db023425d4ecefb30e46e0ccc6"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-13",
+      "ordinal": 13,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-13.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:13",
+      "sha256": "96682fef6acb4d0f1056244b6c9561ff6d31a82fd05abedd9c3abce7b151038f"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-14",
+      "ordinal": 14,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-14.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:14",
+      "sha256": "1299b676ccc58b04ea1c269333f20fe346b03ccaa19583bf60e02ca3b307b3e2"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-15",
+      "ordinal": 15,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-15.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:15",
+      "sha256": "5f33a027507210c1bd1cd626b81ca912e846947eaffbe109fdbb7678a59deb76"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-16",
+      "ordinal": 16,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-16.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:16",
+      "sha256": "c85cbfaa1f79456f7a806bfb7b08ae3565eea541abd9a5706b4761c026c56723"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-17",
+      "ordinal": 17,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-17.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:17",
+      "sha256": "95fc746ef24cda819c750b6cc2c485e4a4942b38cab40c1aca381018013efd21"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-18",
+      "ordinal": 18,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-18.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:18",
+      "sha256": "17d7fd5d642c2881e20dd4a4036c2e451d984d85f33811cb28651c056af948d8"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-19",
+      "ordinal": 19,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-19.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:19",
+      "sha256": "5c048806000e34634949c7da78ef41b0ea53336ba08bdb86d4631963e9078f2c"
+    },
+    {
+      "bank": "train",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/train/game-20",
+      "ordinal": 20,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-20.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:20",
+      "sha256": "2463e858186bb0a994df499974af8dc6e627972915352279321f525f7a9ad3d5"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-21",
+      "ordinal": 21,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-21.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:21",
+      "sha256": "5bbb60a63c3e0037aa0a764999c47541a8be6cb8f20862cd3055af74e09e1ad0"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-22",
+      "ordinal": 22,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-22.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:22",
+      "sha256": "7e30ff03cd7ae7f791730106fd4ae929c500236e75a172c473ed2a0d8590936b"
+    },
+    {
+      "bank": "train",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/train/game-23",
+      "ordinal": 23,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-23.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:23",
+      "sha256": "61cefdb8a660dd06c1b27ff981e16c47539204c4943b24cec6e28b34868a685f"
+    },
+    {
+      "bank": "train",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/train/game-24",
+      "ordinal": 24,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-24.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:24",
+      "sha256": "9db7d1c9031e97dded1648cadff9adfd1020611ceeb2ca5d2486250b60ec42f5"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-25",
+      "ordinal": 25,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-25.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:25",
+      "sha256": "3dfb1357870d914be6ee0a80c664e27a541090f2eed1cc6f1de691b5148309f4"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-26",
+      "ordinal": 26,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-26.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:26",
+      "sha256": "16f6ed9922c8f212a1846911edeb20eabaa93bd696e32593b366349e5cc47447"
+    },
+    {
+      "bank": "train",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/train/game-27",
+      "ordinal": 27,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-27.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:27",
+      "sha256": "5f9bce60a96ca56fa7655871f5123ee0cd649a6acc9ecab6374ae95cae859e84"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-28",
+      "ordinal": 28,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-28.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:28",
+      "sha256": "b9144f420aa97680fd1a75e48d3ceeae8b5dd5e8bb48290e81c6aece1f5cdd8e"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-29",
+      "ordinal": 29,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-29.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:29",
+      "sha256": "be740da45c79c6082cd654b027f6b24cad83f982bd123248911002140c9eba06"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-30",
+      "ordinal": 30,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-30.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:30",
+      "sha256": "968e0e5e6d41ef4419079f421fa93b451b7e4f3ac8e842022aa77c83c8c1afb2"
+    },
+    {
+      "bank": "train",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/train/game-31",
+      "ordinal": 31,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-31.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:31",
+      "sha256": "123b7a9f46d78967d1c037756a4d3017ee86dc6c49c7a279e17f43094cd38874"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-32",
+      "ordinal": 32,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-32.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:32",
+      "sha256": "62f7cdacc3886c56c2d6c6f8c3ac1e71030146c9806162b1ca946a4c2208467e"
+    },
+    {
+      "bank": "train",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/train/game-33",
+      "ordinal": 33,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-33.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:33",
+      "sha256": "157cdbd548a7da77a254ff3d8f50e8b69f97e26803e4ebcfbb7ec80ef3f55e4d"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-35",
+      "ordinal": 35,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-35.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:35",
+      "sha256": "61acd37ff42bc56f40f3de11ae5ee2b85716629ca5d5321d0b01529d41d5ccbf"
+    },
+    {
+      "bank": "train",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/train/game-36",
+      "ordinal": 36,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-36.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:36",
+      "sha256": "8fcc0ced0f29196b217455ea6c087eb40318f8db7037d204dd59ca74a1fe72b4"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-37",
+      "ordinal": 37,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-37.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:37",
+      "sha256": "2805ae4b8210baefd7998af9015ebc2e15855e5ec92794e69370ab3daf1fb860"
+    },
+    {
+      "bank": "train",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/train/game-39",
+      "ordinal": 39,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-39.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:39",
+      "sha256": "6cc5e5ef130f1790c352467c23429a21ec1dcb9d50d045dd05bb05bcb60be8be"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-40",
+      "ordinal": 40,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-40.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:40",
+      "sha256": "8ac9106ddacdb89677008f377869b3839e1685f0ceadb57d6bdf97a4796a79fd"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-41",
+      "ordinal": 41,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-41.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:41",
+      "sha256": "85f757bc23e682b24a2c859d8453d9bf1273b2523e54e68bc8b4f858bb58475b"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-42",
+      "ordinal": 42,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-42.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:42",
+      "sha256": "2476514e996e64f65676da38228e3b63abfbcb5e131d3c28549d356d10e34205"
+    },
+    {
+      "bank": "train",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/train/game-43",
+      "ordinal": 43,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-43.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:43",
+      "sha256": "63c27290a461262055ac15b51405387377ef1979b4b6f20511977164b24f0059"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-44",
+      "ordinal": 44,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-44.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:44",
+      "sha256": "7d5ee97c8b45fdb140a2a5fdbe44a7be75fd8207f02330f1605482c5cee56fb0"
+    },
+    {
+      "bank": "train",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/train/game-45",
+      "ordinal": 45,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-45.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:45",
+      "sha256": "935821ec9cd296ff3f375563d932b89eb182abd5d3a8ff3977157e5bc85be80a"
+    },
+    {
+      "bank": "train",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/train/game-46",
+      "ordinal": 46,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-46.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:46",
+      "sha256": "0633bf1a6f0e4639e3e8b84934978f89d4421f7145050cf8d93061e01d606200"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-47",
+      "ordinal": 47,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-47.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:47",
+      "sha256": "7a46c9af572126de5f4ab354b878fc6f50b95fc8ed82f8082adb3b719faefbe8"
+    },
+    {
+      "bank": "train",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/train/game-50",
+      "ordinal": 50,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-50.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:50",
+      "sha256": "b3c62aaa07d15a80464d655217091947851e77bae081b632f34f622126c03c95"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-51",
+      "ordinal": 51,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-51.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:51",
+      "sha256": "9bec9994587ca35762dd562834132efd08c91114f40397de44d640a46d5bd198"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-52",
+      "ordinal": 52,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-52.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:52",
+      "sha256": "142e072db25fea8720ce186e6d22e9969da04f4f3fa57320471f4b4ba5d589f1"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-54",
+      "ordinal": 54,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-54.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:54",
+      "sha256": "c3839b12f5c907d54cecd31fc5cd029bdc016ea3eb6e51ac5afd801e40e12680"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-55",
+      "ordinal": 55,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-55.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:55",
+      "sha256": "bee20fc437e6287fa512211768c3a4dcf4d259e9eb618bac32229233b58fc9bf"
+    },
+    {
+      "bank": "train",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/train/game-56",
+      "ordinal": 56,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-56.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:56",
+      "sha256": "a26e5bc2c7da9c44f83103aed87bb73a7bedae4df9585cbd112704d330a4ea31"
+    },
+    {
+      "bank": "holdout",
+      "game_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/holdout/game-57",
+      "ordinal": 57,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/completed-57.json",
+      "physical_game_id": "162f4f8c-a0ea-4a35-8024-e794eb52663b:57",
+      "sha256": "0fd4c0d9af2f539f61fcb025b126220c9f5cb088abf2fd846be071ac02b77c28"
+    }
+  ],
+  "completed_receipts_count": 53,
+  "cpu_seconds": 262.4,
+  "no_outcome_dependent_replacement": "Completionbank/ordinal/fileidentities only inspectedforhold. No partialcohort selection/screen/loss/qualityanalysis/admittedlearning. FuturestudyneedsnewprospectiveTB-onquestion/UUID/inputexposure/fullhistory/labelprovenance andqualifiedsource.",
+  "original_preregistration_preserved": "main6dd3697d47+8c66+1e2ed unchanged; historicalrecordnotrewritten.",
+  "owned_processes_closed": true,
+  "owner_error": "RuntimeError('control present: /home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-collection-execution-v1/STOP')",
+  "owner_status": "FAILED",
+  "partial_staging_paths_preserved": [
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b/.game-48-9d3fe13d-9528-4d2e-b281-b13c09b2ea82"
+  ],
+  "planned_attempts": 96,
+  "policy_conflict": "Frozen collector2fc/v3protocolb0e explicitlyTBoff forsearch/adjudication/rescore/Stockfish; mathematicalprofilewasintentionalbutmayconflictwithglobaluserTBdirection. No claim these53constitutecompliantTB-ondata.",
+  "reported_user_policy": "Cross-chat report quotes use tablebases whereverapplicable, notjustsearch/everything/experiments/matches/training. Exactdirectuserprompt wasnot independentlyavailable in appread_thread summaries; report treated conservatively aspossibleconstraintconflict, not authenticated newpermission.",
+  "research_training_updates": 0,
+  "root_decision": "Stage-only establishedSTOP, preserve allpartialdata/oldpreregistration, no trainingadmission. ReconcilefutureTB-onprotocolandindependentlyqualifyit; no resuming/retryingold96 asifunchanged. Weekgoalremainsactive.",
+  "runtime_root": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-runtime-v1-162f4f8c-a0ea-4a35-8024-e794eb52663b",
+  "status": "INTERRUPTED_INCOMPLETE_TB_OFF_COHORT_NO_LEARNING_OR_REPLACEMENT_ADMISSION",
+  "terminal_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-collection-execution-v1/terminal.json",
+  "terminal_sha256": "a02917e5f9f5c17d8320779171b27824ec549369475430a2f1e5234bccdd19ca",
+  "utc": "2026-11-12T22:52:12.669351+00:00",
+  "wall_seconds": 312.49362804199336
+}

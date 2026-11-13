@@ -1,0 +1,77 @@
+{
+  "checks": {
+    "arena_commands": {
+      "count": 4,
+      "exact_reverse_to_reviewed_v1_after_only_removing_env_unsets": [
+        "NVIDIA_TF32_OVERRIDE",
+        "CUBLAS_WORKSPACE_CONFIG"
+      ],
+      "new_games_or_models": 0
+    },
+    "checkpoint_bytes_opened": false,
+    "deciding_stage_ceiling_sum_seconds": 20700,
+    "freeze_noncheckpoint_refs_hash_verified": 52,
+    "freeze_qualified_identity_refs": 53,
+    "producer_actual_gpu_wall_sum": 41.87411845297902,
+    "published_evidence_copies_exact_source_bytes_hash_and_size": 42,
+    "qualification_reservation_seconds": 360,
+    "scientific_sections_exact_draft4": [
+      "arms",
+      "training",
+      "scientific_decision_rule",
+      "offline",
+      "seeds",
+      "budget.stage_seconds"
+    ],
+    "structured_noncheckpoint_refs_hash_verified": 47,
+    "structured_unique_path_sha_refs": 48,
+    "study_gpu_ceiling_seconds": 21060
+  },
+  "created_utc": "2026-11-13T02:36:05.832515+00:00",
+  "documentation": {
+    "artifact_manifest_sha256": "e7bf3534f18d337a3f7b70f468a0be0199ab2e03b84ad4738609ab12e88f978d",
+    "path": "/home/josh/.codex/worktrees/rl-final-integration-20261112/chess/docs/experiments/2026-11-13-rl-resolved-outcome-bundle.md",
+    "sha256": "f3f2cb1829d3960d329675a5ad7621d222c8714a8787c48d263d8976b5795e3c"
+  },
+  "draft": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-scientific-protocol-preparation-v4/protocol.DRAFT.json",
+    "sha256": "31f12d13d9cbafcf24e9b7059d5cac71b054fb6ca6f99cb9f904c9c322a480e4"
+  },
+  "findings": [
+    {
+      "finding": "Nested phase directories make common.WROOT=HERE.parent resolve to an intermediate binding directory, while score.one_model loads known global WROOT/fresh-game-consumer-actual-readout-v1/checkpoint-metadata.json. Exact proposed scoring path cannot resolve the required metadata.",
+      "id": "SCIENCE-FINAL-01",
+      "required_correction": "Use three fresh flat phase directories directly under global WROOT, retaining exact six helper bytes, identity-only binding constraints, fixed output roots, source and scientific math. Root has separately identified this and proposed immutable contract-v3.",
+      "severity": "blocking-execution-path",
+      "source": "offline final-binding-contract-v2 phase_runtime_directories and commands.template.json; offline common.py:15 and score.py:174"
+    },
+    {
+      "finding": "The first forbids retries through this preregistration; the latter permits a diagnosed technical fix with new finite admission, without distinguishing same-observation readout correction from new collection/training/inference/playing.",
+      "id": "SCIENCE-FINAL-02",
+      "required_correction": "Explicitly retain no second research execution/extension/budget replenishment under this study; permit only same-observation finite CPU metadata/readout correction with unchanged estimator/rules; a fix requiring new research execution needs separate prospective registration.",
+      "severity": "scientific-failure-rule-ambiguity",
+      "source": "protocol.json classification.technical_failure (line94) versus failure_and_next_decision (line264)"
+    }
+  ],
+  "independence_scope": "Root-authored final scientific protocol, late-binding contracts, arena command delta and publication prose/copies. Reviewer authored shared collector/verifier/rawfactory and some engineering prerequisites; their functional correctness is explicitly NOT independently reapproved here. Separate root/other-author acceptances remain authoritative.",
+  "limits": [
+    "No project imports, models/checkpoints/arrays, engines/TB queries, tests/jobs, GPU activity or new data were performed by this review.",
+    "No actual late-bound collection/training/offline/arena execution identities exist yet; actual accepted predecessor receipts, publication, immutable binding checks and separate finite admissions remain required.",
+    "Frozen v1 is preserved; acceptance requires an immutable successor resolving findings and updated publication evidence."
+  ],
+  "reviewer": "pilot_path_audit",
+  "schema": "independent-E2TB-final-science-and-document-review-v1",
+  "science": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-scientific-protocol-final-v1/protocol.json",
+    "sha256": "234e75ee42e174e20420165cae03d94def86c4ae0868e15f5c449f7c5b1f0d60"
+  },
+  "scientific_assessment": [
+    "No other scientific contradiction found in arms/dose/decision/offline/seeds, all96 integrity versus all32 usable resolved TRAIN and whole64 diagnostic unavailability, ALL628 retained-input guard, rawQ scalar blend before HLGauss/F16 and fresh common40x256 RNG/optimizer scope.",
+    "B40 remains preselected; both B screens require point>=.53 and paired-normal95 lower>.5; all3 complete screens including descriptive A context required; no A promotion, exactly one conditional1000 fresh disjoint confirmation of sameB40, zero variance unavailable for deciding gain/harm.",
+    "Natural full-history outcomes, verified strict rule50 TB adjudications and censored unresolved modes remain distinct; no cap-as-draw or SF rescore substitution.",
+    "Source ba9 frozen/main strict-library publication, source/native compatibility reuse limits and actual engineering-only retention conditioning are accurately separated.",
+    "Current study41.87411845297902 GPU-intended owner-wall seconds remain charged; earlier week5859.4478420449595 retained; 21060 study /172800 week ceilings and hard deadline independent; explicit CoD sharing permission does not remove custody/lease/control checks.",
+    "Prose is faithful about one realization/bundled intervention, conditional internal gain, unknown broader source-family/pretraining exposure, no Rofchade milestone/adoption and no research results observed."
+  ],
+  "status": "REQUIRES_TWO_METADATA_CORRECTIONS_BEFORE_FINAL_ACCEPTANCE"
+}

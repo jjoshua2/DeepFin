@@ -62,6 +62,29 @@ _tablebases: dict[str, chess.syzygy.Tablebase] = {}
 _tablebase_lock = threading.Lock()
 
 
+def new_tablebase() -> chess.syzygy.Tablebase:
+    """An empty python-chess handle with LRU eviction OFF (``max_fds=None``).
+
+    ⚑ Eviction must stay off on any handle more than one thread probes.
+    python-chess 1.11's eviction inverts its own lock order: a prober counts
+    itself into a table's ``read_count`` and then waits for that table's
+    ``write_lock``, while ``Tablebase._bump_lru`` closes the evicted table
+    *holding* ``lru_lock`` -- ``Table.close()`` takes ``write_lock`` and waits
+    for ``read_count == 0``. A reader of the evicted table and the evictor then
+    wait on each other forever and every later probe blocks on ``lru_lock``.
+    Eviction starts once more distinct tables are touched than ``max_fds``
+    (default 128); the production pair holds ~1000 distinct tables, and selfplay
+    probes one cached handle from every ``--selfplay-threads`` thread.
+
+    Cost: every table touched retains its read-only mapping until the handle
+    closes. On Python's default Unix mmap settings the mapping also owns a
+    duplicate file descriptor, even after the original fd closes. Budget both
+    mappings and descriptors alongside other process resources; page cache is
+    shared.
+    """
+    return chess.syzygy.Tablebase(max_fds=None)
+
+
 class MatchTablebaseError(RuntimeError):
     """A required match tablebase component or eligible probe is unavailable."""
 
@@ -94,7 +117,7 @@ def open_strict_match_tablebase(
         if directory in resolved:
             raise MatchTablebaseError(f"duplicate match Syzygy directory: {part}")
         resolved.append(directory)
-    tablebase = chess.syzygy.Tablebase()
+    tablebase = new_tablebase()
     try:
         for directory in resolved:
             before = len(tablebase.wdl) + len(tablebase.dtz)
@@ -201,7 +224,7 @@ def get_tablebase(path: str) -> chess.syzygy.Tablebase | None:
         dirs = [p.strip() for p in path.split(os.pathsep) if p.strip()]
         if not dirs:
             return None
-        tb = chess.syzygy.Tablebase()
+        tb = new_tablebase()
         added = 0
         for d in dirs:
             try:

@@ -474,6 +474,7 @@ def build_recommended_worker(
   # (same layout on all nodes in a multi-node deployment). Server
   # operators can edit these directly in publish/manifest.json to
   # change endgame adjudication behavior without restarting anyone.
+        "syzygy_outcome_mode": config.get("syzygy_outcome_mode", "theoretical_wdl"),
         "syzygy_path": config.get("syzygy_path") or None,
         "stockfish_syzygy_path": config.get("stockfish_syzygy_path") or None,
         "syzygy_rescore_policy": bool(config.get("syzygy_rescore_policy", False)),

@@ -1073,6 +1073,11 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
     if not net_idxs:
         return
 
+    if (getattr(state.game, "syzygy_outcome_mode", "theoretical_wdl") == "rule50_match_v1"
+            and (state.search.mcts_type != "gumbel" or not _HAS_GUMBEL_C
+                 or state.search.volatility_q_scale or state.search.volatility_fpu
+                 or getattr(state, "strict_tb", None) is None)):
+        raise ValueError("strict TB selfplay cannot fall back to a search without its TB consumer")
     net_idxs = _apply_forced_moves(state, net_idxs)
     if not net_idxs:
         return
