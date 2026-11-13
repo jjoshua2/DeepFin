@@ -68,6 +68,7 @@ from chess_anti_engine.model import (
     load_state_dict_tolerant,
     model_config_from_manifest_dict,
 )
+from chess_anti_engine.uci.model_loader import model_config_from_arch
 from chess_anti_engine.utils.config_yaml import strict_config_bool
 from chess_anti_engine.replay.shard import (
     LOCAL_SHARD_SUFFIX,
@@ -173,6 +174,29 @@ class _UnsupportedSfBudgetForTopology(_MissingRequiredReco):
     refusal forever. Waiting keeps the process alive and the reason in its log
     until the server publishes a usable reco.
     """
+
+
+class _ArenaBestModelRefused(RuntimeError):
+    """The arena's best checkpoint cannot be loaded as the net it claims to be.
+
+    Raised (via ``_load_and_compile_model(checkpoint_arch=True)``) when the
+    best checkpoint's embedded ``arch`` is invalid (``model_config_from_arch``) or its weights do not load completely
+    into the model built from that arch (or, for an arch-less legacy export,
+    into the active manifest config). Before this, the best was built from the
+    ACTIVE model's config and loaded tolerantly, so an architecture difference
+    fresh-initialised the mismatched tensors and the arena scored the current
+    net against a half-random opponent with no error.
+
+    ``run()`` contains it like ``ActionDecodeError``: log at ERROR, write no
+    arena result, keep the worker alive and re-poll. It is raised ONLY for
+    failures that are a pure function of the sha-verified file (plus this
+    worker's fixed slot width): a ValueError from arch parsing, config
+    validation or the slot-plane check, or a non-OOM RuntimeError from the
+    state-dict load. So ``_run_arena`` remembers the refused sha and does not
+    reload it every poll. Out-of-memory and other transient errors are not
+    converted; they propagate as before and the sha is not remembered.
+    """
+
 
   # Wire-protocol values sent in X-CAE-Worker-State; tests assert on them
   # (tests/test_distributed_selfplay_backpressure.py).
@@ -1107,6 +1131,8 @@ class WorkerSession:
 
         self.last_best_sha = None
         self.best_model = None
+        # sha of a best checkpoint _run_arena refused (_ArenaBestModelRefused).
+        self._refused_best_sha: str | None = None
 
   # Opening book paths (set by _sync_opening_books each iteration).
         self.opening_book_path: str | None = None
@@ -1426,6 +1452,18 @@ class WorkerSession:
                         )
                         time.sleep(float(self.args.poll_seconds))
                         continue
+                    except _ArenaBestModelRefused as exc:
+                        # Same containment as above: one unloadable best
+                        # checkpoint must not exit the worker. Logged once per
+                        # refused sha (_run_arena skips that sha afterwards).
+                        self.log.error(
+                            "arena batch VOID: %s. No arena result was written; "
+                            "this best model will not be retried until a new "
+                            "best sha is published.",
+                            exc,
+                        )
+                        time.sleep(float(self.args.poll_seconds))
+                        continue
                 else:
                     try:
                         self._run_selfplay(manifest)
@@ -1730,21 +1768,20 @@ class WorkerSession:
                 break
         return last_uploaded_at
 
-    def _load_and_compile_model(self, path: Path, cfg: ModelConfig, *, label: str, sha_short: str) -> torch.nn.Module:
-        """Build model, load checkpoint, optionally compile."""
-        model = build_model(cfg)
-        # Slot width vs the model actually built here. NOT the production
-        # selfplay check: a worker with a broker client does not reach this
-        # function at all (see _require_slot_planes_match_manifest, which runs on
-        # the manifest path every selfplay worker takes). This covers the case
-        # where a local model IS built alongside a client — arena tasks — where
-        # the built model is the more specific source of truth than the manifest.
-        client = self.inference_client
-        if client is not None:
-            require_model_planes(
-                model, int(client.input_planes),
-                where="worker inference slot (local model)",
-            )
+    def _load_and_compile_model(
+        self, path: Path, cfg: ModelConfig, *, label: str, sha_short: str,
+        checkpoint_arch: bool = False,
+    ) -> torch.nn.Module:
+        """Build model, load checkpoint, optionally compile.
+
+        ``checkpoint_arch=True`` (the arena's best model): build from the
+        checkpoint's own embedded ``arch`` when it has one, falling back to
+        ``cfg`` only for an arch-less legacy export, and require a COMPLETE
+        state-dict load either way. The best is a different checkpoint from the
+        active manifest, so ``cfg`` says nothing about its topology. Default
+        (False) keeps the manifest-authoritative tolerant load the selfplay
+        model has always used.
+        """
   # weights_only=True blocks arbitrary pickle execution on a file that came
   # off the network. The manifest sha is verified before we get here, but the
   # sha arrives over the SAME channel as the file, so it does not authenticate
@@ -1755,7 +1792,50 @@ class WorkerSession:
   # Same rationale as uci/model_loader.py.
         ckpt = torch.load(str(path), map_location="cpu", weights_only=True)
         sd = ckpt.get("model", ckpt)
-        load_state_dict_tolerant(model, sd, label=label)
+        try:
+            if checkpoint_arch:
+                arch = ckpt.get("arch") if isinstance(ckpt, dict) else None
+                if isinstance(arch, dict):
+                    # Same strict helper the serving loader
+                    # (load_model_from_checkpoint, both sides of
+                    # scripts/arena_standard.py) uses: refuses a newer schema or
+                    # unknown keys instead of defaulting them away.
+                    cfg = dataclasses.replace(
+                        model_config_from_arch(arch), use_gradient_checkpointing=False,
+                    )
+            model = build_model(cfg)
+            # Slot width vs the model actually built here. NOT the production
+            # selfplay check: a worker with a broker client does not reach this
+            # function at all (see _require_slot_planes_match_manifest, which runs on
+            # the manifest path every selfplay worker takes). This covers the case
+            # where a local model IS built alongside a client — arena tasks — where
+            # the built model is the more specific source of truth than the manifest.
+            client = self.inference_client
+            if client is not None:
+                require_model_planes(
+                    model, int(client.input_planes),
+                    where="worker inference slot (local model)",
+                )
+            try:
+                load_state_dict_tolerant(model, sd, label=label, require_complete=checkpoint_arch)
+            except torch.OutOfMemoryError:
+                raise
+            except RuntimeError as exc:
+                # Incomplete / catastrophic state-dict load: determined by the
+                # file's tensors vs the model its own arch built.
+                if not checkpoint_arch:
+                    raise
+                raise _ArenaBestModelRefused(f"[{label}] sha={sha_short}: {exc}") from exc
+        except ValueError as exc:
+            # Invalid embedded arch (model_config_from_arch), a config the arch
+            # describes that build_model rejects, or a slot-width mismatch: a
+            # pure function of the sha-verified file plus this worker's fixed
+            # slot width. Any OTHER error (out-of-memory, a transient
+            # RuntimeError from build_model, device transfer, compile below)
+            # propagates exactly as before and is NOT remembered as refused.
+            if not checkpoint_arch:
+                raise
+            raise _ArenaBestModelRefused(f"[{label}] sha={sha_short}: {exc}") from exc
         # `.to(device)` is the first driver-touching call on this path and the
         # one observed to wedge (audit R1). It runs while a server lease is
         # already held, so an unbounded block here is a silently stalled worker.
@@ -3870,6 +3950,12 @@ class WorkerSession:
             time.sleep(float(self.args.poll_seconds))
             return
 
+        if best_sha == self._refused_best_sha:
+            # Already refused and reported; the file is sha-pinned, so a reload
+            # would fail identically. Wait for a new best to be published.
+            time.sleep(float(self.args.poll_seconds))
+            return
+
         if best_sha != self.last_best_sha:
             self.log.info("arena task: loading best model sha=%s", best_sha)
             best_path = self.cache_dir / f"best_{best_sha}.pt"
@@ -3891,9 +3977,16 @@ class WorkerSession:
                     time.sleep(float(self.args.poll_seconds))
                     return
 
-            self.best_model = self._load_and_compile_model(
-                best_path, self.model_cfg_active, label="worker-best", sha_short=str(best_sha)[:8],
-            )
+            try:
+                best_model = self._load_and_compile_model(
+                    best_path, self.model_cfg_active, label="worker-best",
+                    sha_short=str(best_sha)[:8], checkpoint_arch=True,
+                )
+            except _ArenaBestModelRefused:
+                # The prior best_model / last_best_sha stay as they were.
+                self._refused_best_sha = best_sha
+                raise
+            self.best_model = best_model
             self.last_best_sha = best_sha
 
         if self.best_model is None:

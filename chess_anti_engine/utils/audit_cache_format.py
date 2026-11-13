@@ -79,6 +79,12 @@ NET_KEY = "net"
 #: siblings. Recorded for the human reading the header, like the path keys.
 PRODUCER_KEY = "producer"
 
+#: The repetition-plane regime (``rep_fix.current()``) the C encoders held while
+#: a ruler scored — stamped by ``value_regret.py`` / ``audit_targets.py``. It is
+#: a property of the NET (``NetSource.load`` applies the regime the loaded net
+#: was trained under), like ``NET_KEY``, not of the ruler.
+HISTORY_REP_FIX_KEY = "history_rep_fix"
+
 #: The keys `audit_cache_stamp` writes for EVERY stamped cache, whatever the
 #: writer. `chess_anti_engine.eval.audit_cache.audit_cache_stamp` builds its
 #: header from exactly these plus the caller's `extra`, and
@@ -158,12 +164,25 @@ CORE_STAMP_KEYS: frozenset[str] = frozenset({
 #:     between producers is carried by the actual ruler keys (`cp_slope`,
 #:     the digests, the versions), which stay compared. The writer's name is
 #:     the measurement's byline, not its ruler (codex round 2 on PR #488).
+#:   - `HISTORY_REP_FIX_KEY` is the regime of the net that was scored, set by
+#:     the loader from the net itself: an own checkpoint trained OFF against a
+#:     foreign LC0 net (always ON) differs on it by construction, and no
+#:     re-dump can make them agree — the own-vs-foreign joins
+#:     `docs/eval_protocol.md` recommends would all be refused. Nor can it change
+#:     a number either stamping ruler writes: under `fen_only` no encoded board
+#:     carries a history repetition (a FEN plus at most one push, and the C
+#:     search treats any 2-fold as terminal, so it never evaluates one); under
+#:     `stored` the history planes are the matched-rows BYTES — whose content
+#:     `MATCHED_ROWS_DIGEST_KEY` already binds — and the freshly encoded child is
+#:     again FEN-plus-one-push. If a ruler ever encodes history-bearing boards
+#:     through the C encoders, this exclusion must be revisited for that mode.
 STAMP_NON_IDENTITY_KEYS: frozenset[str] = frozenset({
     ROW_COUNT_KEY,
     AUDIT_SET_KEY,
     MATCHED_ROWS_KEY,
     NET_KEY,
     PRODUCER_KEY,
+    HISTORY_REP_FIX_KEY,
 })
 
 
@@ -208,6 +227,7 @@ __all__ = [
     "AUDIT_SET_DIGEST_KEY",
     "AUDIT_SET_KEY",
     "CORE_STAMP_KEYS",
+    "HISTORY_REP_FIX_KEY",
     "MATCHED_ROWS_DIGEST_KEY",
     "MATCHED_ROWS_KEY",
     "NET_KEY",
