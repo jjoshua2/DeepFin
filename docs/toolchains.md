@@ -201,6 +201,31 @@ control limitations remain in the receipt. Future matches need separate
 checkpoint/reader admission and registration; this tool does not require replacing
 a compatible qualified search backend.
 
+## Finite generation replay
+
+Direct finite `play_batch` callers can opt into
+`GameConfig(policy_row_retention="all_eligible")`. The shared finalizer then keeps
+every eligible policy row, bypassing both soft-resign sample-weight and difficulty
+keep-probability drops. Fast/value-only eligibility, outcome adjudication, raw
+diagnostics and TB policy overrides retain their own semantics. Skipping retention
+draws changes the subsequent RNG stream; this is a prospective experiment setting.
+The default remains `legacy`. This control is not exposed through Worker/YAML.
+
+`replay/generation.py::GenerationReplay` supplies the corresponding finite learner
+adapter. Admit consecutive generations as `GenerationChunk` objects containing
+already authenticated, immutable arrays and their source SHA256 identities. It
+retains complete last-N generations, samples uniformly with replacement across
+their physical rows, and bypasses both priority weighting and outcome balancing.
+Its `membership` roster and optional `on_draw` callback expose generation, source
+and physical row identities; recorded draws include unused prefetch/retry batches
+and must not be reported as applied learning views.
+
+Refill only between completed Trainer calls. The adapter preserves the same RNG
+object across refills and Trainer augmentation, but does not persist RNG/cursors or
+authenticate hashes, fresh-game lineage or resolved outcomes. Those remain caller
+contracts. Host memory must accommodate the retained arrays and a replacement
+buffer during refill. These primitives do not constitute a running RL controller.
+
 ## Playing and measurement
 
 | Question | Entry point |
