@@ -1,0 +1,43 @@
+{
+  "status": "ACCEPT_FIXED_E2TB_TRAIN32_DRAW_PLAN_FOR_PAIRED_FULL40",
+  "utc": "2026-11-13T03:55:50.756180+00:00",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "collection_uuid": "f1dadbe4-43e2-4cf3-9a93-70a288533b48",
+  "cohort_binding_sha256": "bf0d048e4b76d3b06e442d3a87028192ae5e6d7d2f605626a1146aad07a0efa4",
+  "draw_plan_sha256": "6a4fcb7136d24955bcb1ea11a6f79a3659226d1771fdca661442e169bbfccdb5",
+  "draw_seed": 2026111401,
+  "draw_shape": [
+    40,
+    256
+  ],
+  "rows": 3012,
+  "TRAIN_games": 32,
+  "actual32_fresh_proofs_match_auditor": true,
+  "physical_row_ids_match_all32_actual_metadata_rows": true,
+  "heldout_arrays_loaded": false,
+  "model_or_optimizer_constructed": false,
+  "owned_processes_closed": true,
+  "terminal": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-execution-v1/terminal.json",
+    "sha256": "a6820b4e834c16f4d3afb0087b115f5aa8c9a38aa859e7f6948a20c134721b6f"
+  },
+  "artifacts": {
+    "readout.json": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-results-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/readout.json",
+      "sha256": "76c720b20e03f963f3857f3bd3262b6757aebe84a91caf54d3c6a5fe3ec2eb79"
+    },
+    "input-lineage.json": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-results-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/input-lineage.json",
+      "sha256": "a8b940861c5630c2c4615ef9ae95d03f41bf52dde18b4b3ffd7823274f6abbbe"
+    },
+    "draw-plan.json": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-results-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/draw-plan.json",
+      "sha256": "6a4fcb7136d24955bcb1ea11a6f79a3659226d1771fdca661442e169bbfccdb5"
+    }
+  },
+  "independent_actual_metadata_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-actual-independent-review-v1/review.json",
+    "sha256": "6e9a0ea46d1c2984a772aa1cc3d9535645cce5d6aad66e03a615a451c96f10a2"
+  },
+  "scope": "Accepted source-qualified actual TRAIN array validation and fixed one-time NumPy draws. Root checked plan structure/IDs/signatures, did not independently decode arrays or regenerate draws. Paired runtime must repeat qualified32proof/array/signature/draw consistency gates before updates. No learning/gain/adoption admitted here."
+}

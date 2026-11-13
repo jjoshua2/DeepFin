@@ -1,0 +1,80 @@
+{
+  "cases": [
+    {
+      "name": "both eligible exact BvsA point tie selects B",
+      "status": "PASS"
+    },
+    {
+      "name": "both eligible BvsA belowhalf selects A",
+      "status": "PASS"
+    },
+    {
+      "name": "sole A eligible independently primary",
+      "status": "PASS"
+    },
+    {
+      "name": "sole B eligible independently primary",
+      "status": "PASS"
+    },
+    {
+      "name": "neither eligible no confirmation",
+      "status": "PASS"
+    },
+    {
+      "name": "any technical failure no confirmation",
+      "status": "PASS"
+    },
+    {
+      "name": "zero variance utilities unavailable/nonpass",
+      "status": "PASS"
+    },
+    {
+      "name": "zero variance primary descriptive point tie selects B",
+      "status": "PASS"
+    },
+    {
+      "name": "primary advantage separate classification",
+      "status": "PASS"
+    },
+    {
+      "name": "primary disadvantage separate classification",
+      "status": "PASS"
+    },
+    {
+      "name": "selected A samehash confirmation pass consumed",
+      "status": "PASS"
+    },
+    {
+      "name": "technical confirmation consumes attempt no fallback",
+      "status": "PASS"
+    },
+    {
+      "name": "n-1 paired variance exact two-pair sanity",
+      "status": "PASS"
+    },
+    {
+      "name": "confirmation changed selected hash",
+      "status": "PASS"
+    },
+    {
+      "name": "nonfinal old40 rejected",
+      "status": "PASS"
+    }
+  ],
+  "closure": {
+    "all_absent": true,
+    "births": {
+      "1302213": 28247514
+    },
+    "cpu_seconds": 0.0,
+    "owner": 1302211,
+    "wall_seconds": 1.1519334400072694
+  },
+  "findings": [],
+  "readout_sha256": "404b4a764cc2b17e95e9f9212015c7d64d93c3bb03d55aa985c73eda5fd34eef",
+  "scope": "Actual15 AST-extracted production decision/statistics functions on inertmetadata passed, including botheligiblehierarchy/tie/soleA/B/nonpass/zeroVar and failedconfirmationconsumption/samehash/nonfinalrefusals. Savedreceipt+sourcepins+closure reconciled, no rerun. Does not exercise fullactualtechnicalreader/PGN/TB/modelcustody/arena or admit playing.",
+  "source_review_sha256": "ed408f6889cfd443c7673d78c7a152fef49ea033ff2096b7e16d2798302c65cf",
+  "status": "ACCEPT_FIFTEEN_E4_ARENA_DECISION_INERT_CONTROLS_ONLY",
+  "terminal_sha256": "1ca8aba633afc2cf46725336285aa9f8d7316cc1907ac240dd6c883370cdff5c",
+  "utc": "2026-11-13T08:39:30.556553+00:00"
+}

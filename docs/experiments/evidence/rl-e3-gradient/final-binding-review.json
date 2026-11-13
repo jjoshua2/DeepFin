@@ -1,0 +1,179 @@
+{
+  "actual_CPU": {
+    "CUDA_initialized": false,
+    "closed_births": [
+      {
+        "current_birth": null,
+        "expected_birth": 27668516,
+        "pid": 1281312
+      }
+    ],
+    "cpu_seconds": 2.29,
+    "helper_sha256": "2ac588680327ea12d2a020858487b7b79187e331ea42cb2cd9dba6cf77923c9e",
+    "readout_sha256": "56086c2dadf47a820f724619b611deaa959901a46be845979b717e370ca3d23b",
+    "research_arrays_models_engines_loaded": false,
+    "root_acceptance_sha256": "de4ff0277ba04c712f374ba6ed476a622e555b8b451d557a01ad54689d77df25",
+    "scope": "Two actual frozen loss captures, synthetic fractional/missing masks/fallback/differentiable families, connectedzero/None/constant and analyticgeometry. No real-model/BF16/performance qualification.",
+    "source_control_sha256": "087306786d5013fb5e80710f6c4fdb6ecdcff6d762448c311939919f949174d2",
+    "supervisor_absent": true,
+    "supervisor_pid": 1281295,
+    "terminal_sha256": "75883e640aaf0486cac3cc6dbb07d9943d86e83375a8982704930f3a87c5df09",
+    "wall_seconds": 4.181765244982671
+  },
+  "created_utc": "2026-11-13T07:03:45.184485+00:00",
+  "final_binding": {
+    "GPU_output_absent_at_review": true,
+    "command_only_late_protocol_tokens": [
+      30,
+      32
+    ],
+    "command_sha256": "63519e6786952ec0913699d4d7c3ff5d06d8d4db81ee0202fb1a81ecced1a8ec",
+    "expected_map_sha256": "219d77e26feba07d8f1baf6b615d2f17c783692b5e3f8029af77bdbf689e75f3",
+    "fresh_admission_absent_at_review": true,
+    "hash_graph": "Manifest pins candidate and prioraccepted authorities; finalscience pins implementationmanifest; runtime pins science; future admission binds runtime/manifest while runtime contains only fixed admissionPATH, no admissionSHA cycle.",
+    "owner_affinity_to_be_inherited": [
+      20,
+      22
+    ],
+    "owner_environment_to_be_inherited": {
+      "GIT_OPTIONAL_LOCKS": "0",
+      "PYTHONDONTWRITEBYTECODE": "1"
+    },
+    "runtime_changed_leaves": [
+      "/execution_admitted",
+      "/scientific/path",
+      "/scientific/sha256",
+      "/status"
+    ],
+    "runtime_protocol_sha256": "a4446cbf2ff5e459eee5428e97d0ffe1a24e32040bb7af52001fe6555bbe804d",
+    "scientific_changed_top_level_fields": [
+      "status",
+      "author_review_limit",
+      "objective_integrity",
+      "limits",
+      "implementation_binding",
+      "implementation",
+      "root_freeze"
+    ],
+    "scientific_core_preserved": true,
+    "scientific_sha256": "6260995b5661cb4c8718749e5fac60f38de527dc4c37ce05fd2edc1082af87eb",
+    "source": "ba9d6de1987902e1759d984532a4c63f091b9269"
+  },
+  "findings": [],
+  "limits": [
+    "Stdlib source/metadata/hash/proc closure review only; no imports/tests, array/checkpoint/model bytes, forward/gradient/engine/TB/probe operations orjobs.",
+    "Runtime execution_admittedTrue is boundintent; source refuses absent fresh root-admission file. Receipt accepts binding chain only, not GPUlaunch/scientificresult."
+  ],
+  "references": {
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-results-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/draw-plan.json": {
+      "mode": "0o444",
+      "sha256": "6a4fcb7136d24955bcb1ea11a6f79a3659226d1771fdca661442e169bbfccdb5"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-results-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/input-lineage.json": {
+      "mode": "0o444",
+      "sha256": "a8b940861c5630c2c4615ef9ae95d03f41bf52dde18b4b3ffd7823274f6abbbe"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/cohort-binding.json": {
+      "mode": "0o444",
+      "sha256": "bf0d048e4b76d3b06e442d3a87028192ae5e6d7d2f605626a1146aad07a0efa4"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/manifest.json": {
+      "mode": "0o444",
+      "sha256": "d60ba0905fd0826698ad5f99b5d4e5c1efc4755e47b4fbe5b8376d6bc1042191"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/protocol.json": {
+      "mode": "0o444",
+      "sha256": "93910eea9763c7d0ac4265c2f552f8b8a452b004b151a894d0b48ce558aa0825"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired-full40-root-actual-acceptance-v1/checkpoints-binding.json": {
+      "mode": "0o444",
+      "sha256": "1d0cc47cda40bdddb82edcb0f9a5ea978925222e74950de71994398ef4e20dbe"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired-full40-root-actual-acceptance-v1/readout.json": {
+      "mode": "0o444",
+      "sha256": "9dec3ef8f4986820d13e1a56b003f233c700e441938df7fa123d3748cb0fdeee"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired40-actual-cpu-readout-v1/checkpoint-custody.json": {
+      "mode": "0o444",
+      "sha256": "89c7654160f9083b40c6635f3037753f9c8a84e49cf547f9ef477df9fb86de05"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-final-bindings-v1-1fb23ace-676a-485e-94b1-10f54b4d4a3a/command.json": {
+      "mode": "0o444",
+      "sha256": "63519e6786952ec0913699d4d7c3ff5d06d8d4db81ee0202fb1a81ecced1a8ec"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-final-bindings-v1-1fb23ace-676a-485e-94b1-10f54b4d4a3a/runtime-protocol.json": {
+      "mode": "0o444",
+      "sha256": "a4446cbf2ff5e459eee5428e97d0ffe1a24e32040bb7af52001fe6555bbe804d"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-final-bindings-v1-1fb23ace-676a-485e-94b1-10f54b4d4a3a/scientific.json": {
+      "mode": "0o444",
+      "sha256": "6260995b5661cb4c8718749e5fac60f38de527dc4c37ce05fd2edc1082af87eb"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-candidate-v2-independent-scientific-review-v1/review.json": {
+      "mode": "0o444",
+      "sha256": "6e0249757de85e396001a1d70182c7aab1221968e5165cc790aad5d7431a7a45"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-cpu-controls-execution-v1/terminal.json": {
+      "mode": "0o644",
+      "sha256": "75883e640aaf0486cac3cc6dbb07d9943d86e83375a8982704930f3a87c5df09"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-cpu-controls-results-v1/readout.json": {
+      "mode": "0o444",
+      "sha256": "56086c2dadf47a820f724619b611deaa959901a46be845979b717e370ca3d23b"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-cpu-controls-root-acceptance-v1/readout.json": {
+      "mode": "0o444",
+      "sha256": "de4ff0277ba04c712f374ba6ed476a622e555b8b451d557a01ad54689d77df25"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-design-independent-review-v1/review.json": {
+      "mode": "0o444",
+      "sha256": "105005a1c5ff8aade1975328dc5c832f11d8a364f26553ac4d18700b144384c4"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-independent-source-review-v2/review.json": {
+      "mode": "0o444",
+      "sha256": "0ab9f04b39734d5beebb3b0c1857dcc36137b2462e93a01e3f651a01b165198d"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-preparation-v2/binding-contract.json": {
+      "mode": "0o444",
+      "sha256": "e5e6555ff96c2f6ba9686aa2db07c01b775479532b34a571b3e9fdf34946d69e"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-preparation-v2/command.TEMPLATE.json": {
+      "mode": "0o444",
+      "sha256": "c8c53646200834ece30f7a7ab7e050c1cdf887701e36ea041694bdc66651039f"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-preparation-v2/expected-trunk-map.json": {
+      "mode": "0o444",
+      "sha256": "219d77e26feba07d8f1baf6b615d2f17c783692b5e3f8029af77bdbf689e75f3"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-preparation-v2/manifest.json": {
+      "mode": "0o444",
+      "sha256": "bb6f1d9b089381aee2d7f04efec2637ca66b094bf257c6bdd3c9b049ecb6bbe6"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-preparation-v2/measure.py": {
+      "mode": "0o444",
+      "sha256": "2ac588680327ea12d2a020858487b7b79187e331ea42cb2cd9dba6cf77923c9e"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-preparation-v2/protocol.TEMPLATE.json": {
+      "mode": "0o444",
+      "sha256": "8cbb9d9331edb1624129e830491176e474f95eaa928e4506bb9400d72717bb57"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-protocol-candidate-v2/protocol.CANDIDATE.json": {
+      "mode": "0o444",
+      "sha256": "98d40d213c45f1d1ac541d23e51933bec989f3902f647263aa8f413ef248f271"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-score-blind-root-roster-v1/selection.json": {
+      "mode": "0o444",
+      "sha256": "e87058c7ad071f1baab6e085dcb756cf7e05bb706f18d23cd1fe86c375d00146"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/run_stage_tb_on_runtime_v1.py": {
+      "mode": "0o444",
+      "sha256": "b7287b50906b90a6729833f8ee3369d7a544d2d202d365e90f5c66afb275fa13"
+    }
+  },
+  "remaining": [
+    "Parent fresh source/native/modelcustody/control/lease/deadline/cost/resource admission before exactGPU600/570 command.",
+    "Actual99forward/600gradient/control/cleanup outcome must be faithfully audited; no numerical-repeat or primary conclusion before execution."
+  ],
+  "schema": "independent-E3-final-oneway-binding-and-actual-CPU-review-v1",
+  "status": "ACCEPT_FINAL_ONEWAY_BINDING_AND_SCOPED_ACTUAL_CPU_CONTROLS_PENDING_FRESH_GPU_RESOURCE_ADMISSION"
+}

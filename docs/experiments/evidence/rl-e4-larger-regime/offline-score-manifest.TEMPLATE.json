@@ -1,0 +1,69 @@
+{
+  "additional_source_sha256": {
+    "chess_anti_engine/inference.py": "308ed6dda1d476fb5c9c7251de1575306d133d038fefd4c89a1fb8674313c72c",
+    "chess_anti_engine/moves/encode.py": "4c3227adfc74d9911d1db66e4abf7cb27e19d6fcd9006069f638f53966e7ac6f",
+    "chess_anti_engine/moves/torch_maps.py": "f93ba12976a69729d8a39becf3c11fbd34a678e48365715c250f34b2de7403c9",
+    "chess_anti_engine/replay/shard.py": "29238b4cb61c4c60895826db6b55865baba4044409c6442abf10d038f351212f",
+    "chess_anti_engine/tune/fresh_rl_donor.py": "b7a8237cbe6113c235b7cc91608128886851b55ee681afdbb9b2bc7b8788e8b2",
+    "chess_anti_engine/uci/model_loader.py": "76041fc68a50f4ecacde8e828e7aa4c2fdf593d0403d7aff2bcc02f8af881ea3",
+    "chess_anti_engine/utils/amp.py": "91be05cab22b47fc06e0c06ac15029553cd84c592e0dafd8ceae512783670188",
+    "scripts/paired_compare.py": "6f8ae6bfecd636abfbbd00724e66137cdf640d9f88d8816964e7450ef5b3747c"
+  },
+  "components": {
+    "train_inputs": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/train/train_inputs.py",
+      "sha256": "a95420782bf03b47cc4028a65eb8cac73b3d548f1e3eac725bb116721bc9e95f"
+    },
+    "observer": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/train/paired_observer.py",
+      "sha256": "ed38901e300ae0d8b4c72e040373f2bcfc0775470dcdf38e719c03442cee8afe"
+    },
+    "verified_outcome": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/train/verified_outcome.py",
+      "sha256": "f6340208eec76470d58001717a1a02d01808c38374c53417a5e5ffff0db3cf81"
+    },
+    "collector": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-package-v1/collect192.py",
+      "sha256": "b2fe1f8107ae025ac4151525660da8c6a6b402ed8baa0d770143d2841bd274fd"
+    }
+  },
+  "components_root_review_scope": "E4 source adaptation only; E2 historical qualification not rebranded as E4 execution.",
+  "helpers": {
+    "common.py": "a62e85e22a593028b68ddc673e0fcf24186f08d67059e05863c0e3b7a8598d92",
+    "freeze_roots.py": "40dc49d582326c4d63f06011746f65f052826fb66e579e54cad105eef7a9a956",
+    "strict_roots.py": "5c60108f71d5154a21c7836a2cf48910b0596dd677a240c19ff30c793a18033c",
+    "score.py": "b8229d1af09cfa19bfda26a85fc4cddc416c6cdf7a05de349789da9fe5214541",
+    "metrics.py": "8058546e7fa263c5becfae1f4378917d4b1d4f333f32d8e04b94fceefe7a1d56",
+    "readout.py": "c9f79c370c9c87edd59cd284515b644e30e48f6c9c4046c702be37c437d430e3"
+  },
+  "protocol_sha256": "UNBOUND",
+  "schema": "strict-E2TB-offline64-source-preparation-v3-affinity-and-qualified-TRAIN-metadata",
+  "source_prior_arch_metadata_sha256": "5c6d344967cd3714523a24526315feaf1a626b6cb48b59b9021c3400e3a0e49e",
+  "source_proof_sha256": "3da383ff9d7addf3c3bcc97bfc9bb346ada5d86682bba9a4f4c35ef7c89c966c",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "FROZEN_KNOWN_E4_OFFLINE64_BY3_SOURCE_LATE_PHASE_IDENTITIES_ONLY",
+  "source_correction": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline-final-fen-correction-v1/correction.json",
+    "sha256": "6dc0fdcefabe1872e3ee2a44b0a383e063e6250ad6f3f87f8607daa33a3fb5a5"
+  },
+  "known_E4_descriptor_acceptance": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/readout.json",
+    "sha256": "34cd17f72d78c0cafc8160640bb216a77c3a7c6791bed6a41c37d8b966ddc737"
+  },
+  "known_E4_native_receipt": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/native-origins.json",
+    "sha256": "8d9b629c7f6724b9d863ec6fc6bdadb8f0355be1460ed424c6256e9bc5a35023"
+  },
+  "known_E4_config": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-config-preparation-v1/config.yaml",
+    "sha256": "c78ecaf0bef637f2119abc555d108d5d08697772e554d4b20aa38724892e3ebb"
+  },
+  "known_E4_canonical_profile": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-results-v1/actual-builder-profile.json",
+    "sha256": "9e9ca115e387b49bc7734248dc6edae5b3bf9e88c0d25a62889b4d05aefff734"
+  },
+  "known_E4_limited_AA_reuse": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-limited-paired-reuse-root-acceptance-v1/readout.json",
+    "sha256": "9579e8c03924826ae865acff161e9f8170382f36e0b0bdaec60149cb5dc8d927"
+  }
+}

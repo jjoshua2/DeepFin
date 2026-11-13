@@ -1,0 +1,692 @@
+{
+  "E3_roster": {
+    "all32_min_hash_choices_exact": true,
+    "all_retained_ids": 3012,
+    "draw_plan": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-results-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/draw-plan.json",
+      "sha256": "6a4fcb7136d24955bcb1ea11a6f79a3659226d1771fdca661442e169bbfccdb5"
+    },
+    "execution_admitted": false,
+    "games": 32,
+    "input": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-score-blind-root-roster-v1/selection.json",
+      "sha256": "e87058c7ad071f1baab6e085dcb756cf7e05bb706f18d23cd1fe86c375d00146"
+    },
+    "input_lineage": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-results-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/input-lineage.json",
+      "sha256": "a8b940861c5630c2c4615ef9ae95d03f41bf52dde18b4b3ffd7823274f6abbbe"
+    },
+    "limits": "Identity-only prospective roots on retained ingested TRAIN support. No outcome/ply/mask filter or replacement; classes copied as descriptive tags after identity selection. No unseen/holdout claim.",
+    "numeric_game_order_and_numeric_row_tie_break": true,
+    "outcome_tags": {
+      "NATURAL": 15,
+      "STRICT_TB_ADJUDICATED": 17
+    },
+    "salt": "E3-gradient-root-v1:20261113:",
+    "selected_digest_ties": 0,
+    "selected_rows": [
+      {
+        "TRAIN_array_index": 12,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:1",
+        "outcome_class": "NATURAL",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:1:12",
+        "retained_row_candidates": 103,
+        "selection_sha256": "05c13fbfd5b6d551465431dc15488933012caf65c819c2c064db1a88ad4f1596"
+      },
+      {
+        "TRAIN_array_index": 171,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:2",
+        "outcome_class": "STRICT_TB_ADJUDICATED",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:2:68",
+        "retained_row_candidates": 128,
+        "selection_sha256": "02422e0198d54025740881d70f2fe4d85a61290c68aaee040cfcbd8c392ab648"
+      },
+      {
+        "TRAIN_array_index": 280,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:4",
+        "outcome_class": "STRICT_TB_ADJUDICATED",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:4:49",
+        "retained_row_candidates": 63,
+        "selection_sha256": "06f66c673dbd41e87c6c7446e7330120bbc0cf242e3a4644a156400ab9e1d9d4"
+      },
+      {
+        "TRAIN_array_index": 363,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:5",
+        "outcome_class": "STRICT_TB_ADJUDICATED",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:5:69",
+        "retained_row_candidates": 120,
+        "selection_sha256": "01463601d99ad2b166ef9f4d64873e3fec36f85f2a8be44f6ed16ec4c4584c60"
+      },
+      {
+        "TRAIN_array_index": 494,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:11",
+        "outcome_class": "STRICT_TB_ADJUDICATED",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:11:80",
+        "retained_row_candidates": 112,
+        "selection_sha256": "05891841d0be5d9f4cac10de1303234296490d7e7ce5f0bab30c430d5299bd88"
+      },
+      {
+        "TRAIN_array_index": 576,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:13",
+        "outcome_class": "STRICT_TB_ADJUDICATED",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:13:50",
+        "retained_row_candidates": 87,
+        "selection_sha256": "0419dba9f0f1a8e59014915d52861c2ec247e7c7881f689ee38620551b1301dc"
+      },
+      {
+        "TRAIN_array_index": 666,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:16",
+        "outcome_class": "NATURAL",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:16:53",
+        "retained_row_candidates": 70,
+        "selection_sha256": "023d3e2023e4114be9a3b6928cd895f8d3f84d8bb16050500a58fefb9ceb91f2"
+      },
+      {
+        "TRAIN_array_index": 760,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:17",
+        "outcome_class": "STRICT_TB_ADJUDICATED",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:17:77",
+        "retained_row_candidates": 81,
+        "selection_sha256": "0a5576d9c96ed986fd38c92a5931bed54512a5ca6fae3e063f739a5f9bd4fe06"
+      },
+      {
+        "TRAIN_array_index": 823,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:23",
+        "outcome_class": "NATURAL",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:23:59",
+        "retained_row_candidates": 151,
+        "selection_sha256": "0069835e28a6d105160a961117b6c538a859a3c5aa4894091387d2862e818791"
+      },
+      {
+        "TRAIN_array_index": 1024,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:24",
+        "outcome_class": "STRICT_TB_ADJUDICATED",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:24:109",
+        "retained_row_candidates": 126,
+        "selection_sha256": "01eeca7b589f95a9c4b571aaeeeba78775dc29d0ad58e696f6bbb1f8c5ab45d7"
+      },
+      {
+        "TRAIN_array_index": 1113,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:35",
+        "outcome_class": "NATURAL",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:35:72",
+        "retained_row_candidates": 74,
+        "selection_sha256": "0644c0c1b2c7afc780f4e18d4c47480dc511eb21d21dfd4a7e91f4e56e928934"
+      },
+      {
+        "TRAIN_array_index": 1139,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:37",
+        "outcome_class": "NATURAL",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:37:24",
+        "retained_row_candidates": 77,
+        "selection_sha256": "0098d61c7131c5ad2e2c8a4ba796eb2e25a5015be9995592108a9463d5ba2709"
+      },
+      {
+        "TRAIN_array_index": 1231,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:39",
+        "outcome_class": "STRICT_TB_ADJUDICATED",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:39:39",
+        "retained_row_candidates": 70,
+        "selection_sha256": "03653bdaaf0dd4a266c699e71bf3c52972b070a8d80e8ebecde6c15e0df60078"
+      },
+      {
+        "TRAIN_array_index": 1364,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:41",
+        "outcome_class": "STRICT_TB_ADJUDICATED",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:41:102",
+        "retained_row_candidates": 133,
+        "selection_sha256": "01d0a8f64587ce946d76b3e5ccaa93959e31926f340fe42d9e7a427670f3d012"
+      },
+      {
+        "TRAIN_array_index": 1403,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:44",
+        "outcome_class": "NATURAL",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:44:8",
+        "retained_row_candidates": 79,
+        "selection_sha256": "01336e8ee7bb9ad5c7ea7b1508af9b27e4b0fb57cc51cc3a2547d60c2b6e74fc"
+      },
+      {
+        "TRAIN_array_index": 1534,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:47",
+        "outcome_class": "NATURAL",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:47:60",
+        "retained_row_candidates": 83,
+        "selection_sha256": "00d5cf30944da070b2afa6f83b9003c23545d54f485a6b3eded3edb7572b5ffc"
+      },
+      {
+        "TRAIN_array_index": 1572,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:52",
+        "outcome_class": "STRICT_TB_ADJUDICATED",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:52:15",
+        "retained_row_candidates": 95,
+        "selection_sha256": "042b4032a9d6e169dc1bccdaa3f52a5495f0b12ef3a6ec6ae262f7ea6b04d908"
+      },
+      {
+        "TRAIN_array_index": 1747,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:53",
+        "outcome_class": "STRICT_TB_ADJUDICATED",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:53:95",
+        "retained_row_candidates": 107,
+        "selection_sha256": "01cf5fd582dff88f186cfdc1517f742130d37cb0b990b39cae23eb7c1efa4077"
+      },
+      {
+        "TRAIN_array_index": 1829,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:60",
+        "outcome_class": "NATURAL",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:60:70",
+        "retained_row_candidates": 120,
+        "selection_sha256": "0018243c321934a3805f6b865c24a75e5659b2a8c3c669a4766e7109a9d40244"
+      },
+      {
+        "TRAIN_array_index": 1900,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:64",
+        "outcome_class": "NATURAL",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:64:21",
+        "retained_row_candidates": 59,
+        "selection_sha256": "0110a22a92fd82e2919b336912e3019709d3bc3cff712414106fb9d7709aac3c"
+      },
+      {
+        "TRAIN_array_index": 1974,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:66",
+        "outcome_class": "NATURAL",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:66:36",
+        "retained_row_candidates": 54,
+        "selection_sha256": "01a302fd7252b4a336cab4bcfacc1b5dedfb5dfa03f4a441f859f27be27d4ed2"
+      },
+      {
+        "TRAIN_array_index": 2033,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:67",
+        "outcome_class": "STRICT_TB_ADJUDICATED",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:67:41",
+        "retained_row_candidates": 74,
+        "selection_sha256": "0210a3677e3e7a41b7c40f209c460238f2f17c7d34ab68de739ac98a730fffa1"
+      },
+      {
+        "TRAIN_array_index": 2117,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:69",
+        "outcome_class": "STRICT_TB_ADJUDICATED",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:69:51",
+        "retained_row_candidates": 105,
+        "selection_sha256": "02492e2f68a576bf12a108d4c9bc358dc122a179731eacde2bd9e6aaeab988f3"
+      },
+      {
+        "TRAIN_array_index": 2251,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:74",
+        "outcome_class": "NATURAL",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:74:80",
+        "retained_row_candidates": 90,
+        "selection_sha256": "07dd3a87c45936e3eadfeebaebbd4067b3e9bb6567b09eefa9a2b8b645f67b2f"
+      },
+      {
+        "TRAIN_array_index": 2345,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:78",
+        "outcome_class": "NATURAL",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:78:84",
+        "retained_row_candidates": 88,
+        "selection_sha256": "03f82501ff1bdc6a72dd82d4cf6da21e610f535729165fffd9eca5fc47c380de"
+      },
+      {
+        "TRAIN_array_index": 2356,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:80",
+        "outcome_class": "NATURAL",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:80:7",
+        "retained_row_candidates": 63,
+        "selection_sha256": "026df4cc7923c3941bedf5a323f5f026c7d958ba4f26e7f083d5fd65c703b182"
+      },
+      {
+        "TRAIN_array_index": 2444,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:82",
+        "outcome_class": "STRICT_TB_ADJUDICATED",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:82:32",
+        "retained_row_candidates": 108,
+        "selection_sha256": "02925cfbbf997d2cd17f4cc4348dae8cef46ad2861b3da4b834e55a5beb3d5bf"
+      },
+      {
+        "TRAIN_array_index": 2549,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:86",
+        "outcome_class": "NATURAL",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:86:29",
+        "retained_row_candidates": 92,
+        "selection_sha256": "00b6eb775543b511a1b0f74b9d3390177e9beb610c3cd42371d5254d4b2e480c"
+      },
+      {
+        "TRAIN_array_index": 2713,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:88",
+        "outcome_class": "STRICT_TB_ADJUDICATED",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:88:101",
+        "retained_row_candidates": 118,
+        "selection_sha256": "006e6da38d9cab0e69a6c2639fd32eceb6f55e6864fb5173c2cae716a7972b86"
+      },
+      {
+        "TRAIN_array_index": 2764,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:90",
+        "outcome_class": "STRICT_TB_ADJUDICATED",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:90:34",
+        "retained_row_candidates": 88,
+        "selection_sha256": "00405694e31efa39e056c54c5bef37a84f04198d80652f4b11314a8289316ba0"
+      },
+      {
+        "TRAIN_array_index": 2866,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:93",
+        "outcome_class": "NATURAL",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:93:48",
+        "retained_row_candidates": 116,
+        "selection_sha256": "02ef81722f0145b8a09c657509085163a047bd5463d5642746466649f4d1e98d"
+      },
+      {
+        "TRAIN_array_index": 2937,
+        "game_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:94",
+        "outcome_class": "STRICT_TB_ADJUDICATED",
+        "physical_row_id": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:94:3",
+        "retained_row_candidates": 78,
+        "selection_sha256": "068e2871f536053583afd669fb80e09cd2d5ce9bebb6230bdff52a57443154fa"
+      }
+    ],
+    "sentinel": "f1dadbe4-43e2-4cf3-9a93-70a288533b48:1:12",
+    "source_array_indices_and_candidate_counts_exact": true
+  },
+  "created_utc": "2026-11-13T06:46:23.709561+00:00",
+  "findings": [],
+  "limits": [
+    "Only immutable Git objects, saved CI/review snapshots and metadata/physical-ID strings checked; no runtime imports, arrays/checkpoints/models/engines/TB/probes/tests/jobs.",
+    "Publication feedback/CI claims are scoped to saved premerge snapshot, not a new live GitHub crawl. Merge object/65blobs/source135/native5 independently verified locally; no fetch/index/head mutations.",
+    "E3 source implementation, numerical controls/final protocol and finite-stage admission remain separate; this roster review does not authorize execution or change the completed E2 result."
+  ],
+  "publication": {
+    "CI_run": 43378216114,
+    "PR": 1254,
+    "R7_clean": true,
+    "R7_current_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+    "accepted_record_index_manifest_sha_match": true,
+    "admission": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-results-main-publication-v1/admission.json",
+      "sha256": "096a22cb573ae250fb6cd59f4fc5fd27248baca2339a33ec792f9cc5f66cd50f"
+    },
+    "all65_published_blobs_exact": true,
+    "base": "6cfeb8b86716073c782bc2b1d0d127fd53e561d2",
+    "checks": [
+      {
+        "conclusion": "success",
+        "head": "f22264731760119123dd77fcc53e997749abbe55",
+        "id": 131729609017,
+        "name": "pext-sliders",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "head": "f22264731760119123dd77fcc53e997749abbe55",
+        "id": 131729608959,
+        "name": "lint",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "head": "f22264731760119123dd77fcc53e997749abbe55",
+        "id": 131729608932,
+        "name": "backlog-handoff",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "head": "f22264731760119123dd77fcc53e997749abbe55",
+        "id": 131729608605,
+        "name": "test",
+        "status": "completed"
+      }
+    ],
+    "checks_snapshot_utc": "2026-11-13T06:41:08.119091+00:00",
+    "feedback_snapshot": {
+      "inline_comments": 0,
+      "issue_comments": 0,
+      "review_threads": 0,
+      "reviews": 0,
+      "threads_hasNextPage": false
+    },
+    "head": "f22264731760119123dd77fcc53e997749abbe55",
+    "input": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-results-main-publication-v1/publication.json",
+      "sha256": "fba635d53fc15220affee70f6199b24d592503a3969364cbc43aa1e408627194"
+    },
+    "legacy_combined_status": {
+      "contexts": 0,
+      "interpretation": "Empty legacy commit-status list is not a failed or running check; four required check-runs are completed/success in the saved admission snapshot.",
+      "state": "pending"
+    },
+    "merge": "5c93a0d969096c39e5d8e116630912a09674808c",
+    "merge_parents_exact": true,
+    "merge_tree_equals_accepted_head_tree": true,
+    "native5_hashes_exact": true,
+    "no_confirmation_adoption_goal_complete": true,
+    "published_blobs": [
+      {
+        "blob": "031a6dea75bb9c11db750088589791044a8c635d",
+        "path": "docs/experiments/2026-11-13-rl-resolved-outcome-bundle.md",
+        "sha256": "bebe466d583adcaa3ea1f8404d7c8f6532dd72a32de9fdf0a41bd37939ea292f"
+      },
+      {
+        "blob": "4b3b5ca8a6f95114879d7f823b66c44e6110c067",
+        "path": "docs/experiments/README.md",
+        "sha256": "abbcb89bf690f0954ac6278479f3a1be609c5ba2c052766ec2478728976c1363"
+      },
+      {
+        "blob": "7b7b0260edbd2884ed22911df0199ad1e736cb95",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/arena-utility-source-proof.json",
+        "sha256": "b070ba2f70b17d0454cfdaece4cdf120dc8009e9a01789cac558f6ab095c73cb"
+      },
+      {
+        "blob": "15119f13445c25b1c39ef9f0d74fd1e6da67355a",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/arena-utility-source-review.json",
+        "sha256": "cd1e6ed43e2f5fff0c8fbfb9467ec10f670972ede345dc214e46d245309a4821"
+      },
+      {
+        "blob": "e6224c800097660b9c0a3eb8008158faf652b4ef",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/artifact-manifest.json",
+        "sha256": "8fcba575752fbf462236e138769a4da7756f724fe727caff7e07a32018611822"
+      },
+      {
+        "blob": "528afe356c8b523f194e6982958d5bf93a7e938d",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/cohort-audit-terminal.json",
+        "sha256": "324692d02fa5e606bdc76445ac5fad53b3f7fd86ec4e63345c869d9c38c2bf60"
+      },
+      {
+        "blob": "366f4512a81f08b792a71acd840fec61cb7fe85d",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/cohort-independent-audit.json",
+        "sha256": "6599f57d3e18adf2806f3cc1deb7a6431e12084f4db5ca60e63145f61197431d"
+      },
+      {
+        "blob": "0e9b32e5174077650bfe753156dbd2d151f8bba1",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/cohort-independent-metadata-review.json",
+        "sha256": "89982932fce89c6b892741f628cb840be0f4d508dfa480ccd1857fb2cb6c0d6d"
+      },
+      {
+        "blob": "429f515fea05f2037b3adbd059042381691d859c",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/cohort-root-acceptance.json",
+        "sha256": "7d66832c79e5942460279f97cc08d7f8e690d68d73d9c1d5a2501e36a786c486"
+      },
+      {
+        "blob": "2d61fea1b20d1cb8f6d600e57b721dd2f7494401",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/collection-terminal.json",
+        "sha256": "265910df9b6bb8ee17b9f8c172d7fc46d72ae231b8007d470a6385f817b4adfd"
+      },
+      {
+        "blob": "df2ecde45b0466edbb530eb06ac788f603c54778",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/context-CPU-terminal.json",
+        "sha256": "60e09fe3d905ee72e0a69e3a75def9fffa9e276bfd0b8b68ddb287e12708cb30"
+      },
+      {
+        "blob": "0263ebf70d2f9e76957b9078677a4723c41efd0d",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/context-GPU-terminal.json",
+        "sha256": "560dfd5efea5724ff20ffbe9ce8c152d7c3f4f61bf6646cdabb015024ffb6dfa"
+      },
+      {
+        "blob": "8eb26ecbf840c951f78a949d0a3ff7100f157f06",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/context-independent-review.json",
+        "sha256": "5bd189e956b36b51c3295dcd317370a9d4b79b37ece3ff35db4cc3d82b67a2f5"
+      },
+      {
+        "blob": "0187ef2e976bacefb97cde4cc0bea1ebbcbf2565",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/context-model-custody.json",
+        "sha256": "14f2c5c5a7ca75f082321bb505b49e1fc3b21990bb5fb6a58ece58755f394ce6"
+      },
+      {
+        "blob": "6d8cf761f0ef235616b9cedb2cdc30a4d7da7202",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/context-readout.json",
+        "sha256": "c2ddb225ce9068f4668f16b8295052d363ee99c94328ea50cef6ce73f6da679f"
+      },
+      {
+        "blob": "c110942baf32a48cbce398d0f44673606e89bb74",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/context-root-classification.json",
+        "sha256": "6f94fad61e677a72bb992549144314fa39882d9ba3ae61bb493d425a9713593a"
+      },
+      {
+        "blob": "514c0c9472ff2d066f364b882ece8fd3fdbb7a79",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/context-utility-settlement.json",
+        "sha256": "7f7ead01900e501f06744419e14c085959daca981691e4ae7e82bb47fb1e4bb1"
+      },
+      {
+        "blob": "fa0f5e0178dc740401e6a6d576a15ce6db3745bc",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/current-teacher-semantics-manifest.json",
+        "sha256": "001cd195f8cadf754dc5376a239c336a8072fe3242dd54b7d0bc563d0585958a"
+      },
+      {
+        "blob": "1f57b87f60cfe63b2e9e2d17bedf31b5e410bf22",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/current-teacher-semantics.md.txt",
+        "sha256": "d0461a4b5ece8a704ecdb1fd745120e86d85ec7778c33fcc791ff5bf1a7e902a"
+      },
+      {
+        "blob": "7c3df4c47bd43637dcf771953e15fe3d086cb7fd",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/decision-bindings.json",
+        "sha256": "34b6996e0c5f3ccb9b737d1c2390fcf9dbfc8a354de26f2ff71c7f6343010e72"
+      },
+      {
+        "blob": "15d10d93c39d82ab7f421d59af1dee8ccfac8bca",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/decision-independent-review.json",
+        "sha256": "a069ccfb94550c0e91763437134d2d4e7bc5480d91e18da9cce34cda514585f8"
+      },
+      {
+        "blob": "f144702b8b26dd6e5d75bac79bba5892815adc64",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/decision-terminal.json",
+        "sha256": "f611ef80e0d5ec694aaa55e4f09bee93f9cbf22dceb80baff35831b239ea9b59"
+      },
+      {
+        "blob": "e5708d579a8adae811d6f2be97b3a9c49e0cc87c",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/donor-supervised-lineage-manifest.json",
+        "sha256": "4f43b6c115097f6eb530f28e85176eda1ccdecd05c69e0d0e8306c8e9b2213c5"
+      },
+      {
+        "blob": "947fcb67a6f540c2f3d5ec7dce342bb45595fee6",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/donor-supervised-lineage.md.txt",
+        "sha256": "b2cb9231b85988702731ee40e715650734354b55587bbfcffabb06b3eb0f110b"
+      },
+      {
+        "blob": "675e4cffe1dc0905d760981cb489e8a06e9925e5",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/draw-independent-review.json",
+        "sha256": "6e9a0ea46d1c2984a772aa1cc3d9535645cce5d6aad66e03a615a451c96f10a2"
+      },
+      {
+        "blob": "26c96e6922db2a6412e5ced14cff8493340a1906",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/draw-readout.json",
+        "sha256": "76c720b20e03f963f3857f3bd3262b6757aebe84a91caf54d3c6a5fe3ec2eb79"
+      },
+      {
+        "blob": "5ad3ff5c368e63b4ee670a23b755883dc5275777",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/draw-root-acceptance.json",
+        "sha256": "f58e66ce401fea7ae6e3b54df5875f8a2f4a19b3f470d1c9cd09acb194e42a73"
+      },
+      {
+        "blob": "7e18bb20dff24571e348970d747d457402fde927",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/draw-terminal.json",
+        "sha256": "a6820b4e834c16f4d3afb0087b115f5aa8c9a38aa859e7f6948a20c134721b6f"
+      },
+      {
+        "blob": "010399f9505f6461cdc8d65bf29c482e68e2f406",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/eligibility-CPU-terminal.json",
+        "sha256": "c09de63c0a7519fdbcda30816e4b9c34620a9ddea4dc43b2fc03ba430b3e649d"
+      },
+      {
+        "blob": "f98a606f8943672c969ea4db29cb615e5aa8330b",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/eligibility-GPU-terminal.json",
+        "sha256": "368bfe38c8096eef6a3ae536bc7ed5046834f39e0c93b178aa491d9d050b85fa"
+      },
+      {
+        "blob": "dbd8a90b88bef5d3bfd4f8382c8942d6711c3774",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/eligibility-independent-review.json",
+        "sha256": "ef190472b6d75e1ebc4849858db6c2d00b42e6dc773e5c807c31050661b1ae8a"
+      },
+      {
+        "blob": "43ff36770e9e7d90e451b6383844783767b7dc9c",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/eligibility-model-custody.json",
+        "sha256": "8046f1caaf4ecce52c006b6f5bcd3351148ecc575baf558647eb8ef6749d0a31"
+      },
+      {
+        "blob": "32261d01a94f015b928593ddb5ff54e2d2a39974",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/eligibility-readout.json",
+        "sha256": "3b4ecc6218a861ae27651e9ea1cae75df6826776081a8ba91b2c04647a7e5429"
+      },
+      {
+        "blob": "3b823ef0a37e2747a68e40eda98cd4bc1ac910b1",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/eligibility-root-classification.json",
+        "sha256": "3ab245a668342df75b0a007a9d4cccf1a6e98bcafe281ee1fc993d0f4efb3b15"
+      },
+      {
+        "blob": "e3a73afe75887c9029f061cedf9dca0ed719ae8e",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/eligibility-utility-settlement.json",
+        "sha256": "351a9618ca5648d116eeab4a6b11c24ce519006ca5224fab55cb0b33d611a1d8"
+      },
+      {
+        "blob": "941634fd4ae14ebfeb5bfb97eee3d59301ccb171",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/learning-bound-independent-review.json",
+        "sha256": "d1ac532410148bded3b59e594c03c09b628df7736fe133d65f4266f8f7f12192"
+      },
+      {
+        "blob": "501db1d2e20c88331b4ab14d474bb83f2cab8268",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/learning-checkpoint-custody.json",
+        "sha256": "89c7654160f9083b40c6635f3037753f9c8a84e49cf547f9ef477df9fb86de05"
+      },
+      {
+        "blob": "dc4472eeae47325a66c53af36c6de1faa18e2b46",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/learning-checkpoints-binding.json",
+        "sha256": "1d0cc47cda40bdddb82edcb0f9a5ea978925222e74950de71994398ef4e20dbe"
+      },
+      {
+        "blob": "b900c55b7e151009f036a907cd34a207c4bba3bd",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/learning-cpu-independent-review.json",
+        "sha256": "ea7163e5d08e56cf9edfe4156e3fd647283de24daab7d3d1cf6b2e94c55b4eeb"
+      },
+      {
+        "blob": "944c9c08393dec501601d5c486fb120f32434e22",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/learning-cpu-readout.json",
+        "sha256": "ef09e461bdd530eff775b6056d6faa08e8fe84d52058faa82b2a97be77fbc25f"
+      },
+      {
+        "blob": "2e77b4c9a4ef44335d2ad8d05c678437922e6acb",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/learning-cpu-terminal.json",
+        "sha256": "2c98964e7bbda1d70b5938fedc4fd5c634590326d572ba17760487c8fcd329bf"
+      },
+      {
+        "blob": "9dc3ad168cdd733dab38c942cc151927a8bca574",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/learning-json-independent-review.json",
+        "sha256": "d6f76efb7c2d6711a0fbd5fa084a5b24e98bfc39441a8f1a54e01174b5f3919c"
+      },
+      {
+        "blob": "ccbaf98893939031cdace6970951f8f0feb756e2",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/learning-root-acceptance.json",
+        "sha256": "9dec3ef8f4986820d13e1a56b003f233c700e441938df7fa123d3748cb0fdeee"
+      },
+      {
+        "blob": "496b6e6517fc03b0382772555b595ecd59129cd4",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/learning-seven-models.json",
+        "sha256": "8d26826b4c17679a37ef0fa3bf87dff1773cdccc6accc623380ab4752028c106"
+      },
+      {
+        "blob": "104ee3224257f9aab253b22a0f3f950db00cddd6",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/learning-terminal.json",
+        "sha256": "b1b427647c7fbd10bdb3753c4969c7135385a10cb4b2d465c75f62fe5cf96659"
+      },
+      {
+        "blob": "2e7db0d9772cdd4002b0a54971b22e3c7d2011e7",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/offline-independent-review.json",
+        "sha256": "5356ddba2e7a9bab3f1ac5ce6db6b105985b3a4b56fcb58bbafff7266642c04c"
+      },
+      {
+        "blob": "81b885a92d84ee1ee19e783cc8653d07d7968155",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/offline-readout-terminal.json",
+        "sha256": "7b0dfa1cc8fa421667799985d2db8d12a83cac4efcddf20ee1ffeb277eb6f088"
+      },
+      {
+        "blob": "69e2602262224b57568c741ae7861f2e193abeba",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/offline-root-acceptance.json",
+        "sha256": "b184f9951c8376b20cd3d38d3307268eb915e36d53c34e42bef49bf0cb02ae51"
+      },
+      {
+        "blob": "22316e4b42ddb2ed0699f3a5a5791ed8ab75ac7b",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/offline-root-and-score-binding-review.json",
+        "sha256": "e2215e6bc941a37d5ae4927a62f25bd5ad72c1a1dfc8a4eae93cdf4ba083f45a"
+      },
+      {
+        "blob": "5c2ccd7cb50f35461248f6b5ecbc70c4c2051dd9",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/offline-roots-receipt.json",
+        "sha256": "dafdff1e7ee501d08218eaceb9fb036a5393287a214cf5f1fc8d57a1b1ff64f4"
+      },
+      {
+        "blob": "7648aaf728a329cfb8078e71e123cd8821756086",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/offline-roots-terminal.json",
+        "sha256": "e77b860546e6702de835bca5b95720b212377c4d5621ffda3ab30f8061b8e15c"
+      },
+      {
+        "blob": "a0ac193dfce32e891f25b22b77d632855b40be69",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/offline-score-and-reader-binding-review.json",
+        "sha256": "3004642992b732f27323378ac9a91209cd382f12a180175ce1b55f78f968e3aa"
+      },
+      {
+        "blob": "42e124af8c1d09e95a4d2969669cc497de2a2f35",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/offline-score-terminal.json",
+        "sha256": "a2a8693dde858a0077dfe73d0077a41d7ffb556b0ee3634655bff19ff2b12658"
+      },
+      {
+        "blob": "8c60490d74cea33c85eb59a716a3c565747fecd9",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/primary-CPU-terminal.json",
+        "sha256": "40bffc02c925b5b1c2b29317b6108ccffbdaae48bebd75e5ceca20359f4aae02"
+      },
+      {
+        "blob": "4331dd80ac50d488bceb03b6d95c0c04b053560b",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/primary-GPU-terminal.json",
+        "sha256": "f379266292ccab82f13d3351a16f58c8b8238cc9f7891be7cc0c4cd0ffbfad58"
+      },
+      {
+        "blob": "3b46095563dc950dc8cf679a13fd424da2a1589e",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/primary-independent-review.json",
+        "sha256": "99ba76fe0ffe94133407fa4330a93409ad5e84385107405e9f67c6a2d25094f8"
+      },
+      {
+        "blob": "acd60ec4a2a8f77a8554235bbb71851b09714b6f",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/primary-live-custody-review.json",
+        "sha256": "7c694e389793c96b7db02b3fcb4e27a21dc89daccd5b59f23ab7b4a742043aa4"
+      },
+      {
+        "blob": "d85b6faabe013d7160a6d695ec384a12e04a8105",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/primary-model-custody.json",
+        "sha256": "56bfb16f5ed367e612c147c46499eaa59579ac530a65bf7f089a85dbeb868c8a"
+      },
+      {
+        "blob": "37b0e77379679c4d3bd7cfd34e3b2d3f62706fd6",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/primary-readout.json",
+        "sha256": "bac78d586368043db0426d3b134760c8a29834f9b7a89281ee9baf44e6cb8969"
+      },
+      {
+        "blob": "7966f05347bc3465bb9687a0360f2ff2c9d89f97",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/primary-root-classification.json",
+        "sha256": "52a30634670d517b89316a89edba2de8a080460b5855342955218cdf58e4756b"
+      },
+      {
+        "blob": "03b1838dad41a776b55917dca76a8dc1c2f5d914",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/primary-utility-settlement.json",
+        "sha256": "5e1c77acb1b50a7470ce5e59d77f77259d3d12250807e46d0a9c30a6233e1772"
+      },
+      {
+        "blob": "226caa98430d3881c751a2aad446591cdd288a12",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/remaining-screen-driver-source-review.json",
+        "sha256": "e3c64f57f366f1a623009d324559687ae2e09d0d341b9da2909240c20ee69f69"
+      },
+      {
+        "blob": "d69fd6e3f89850ac88b8d2f16284ca697dd5244a",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/screens-decision.json",
+        "sha256": "f630501017c205fbd9239fbc4e5bf8537c48ad61ca93d868a7448754236e0b4e"
+      },
+      {
+        "blob": "556a2b5bbf177d47eff47be66afd9b9d7c74ddbd",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/source-index-serialization-reconciliation.json",
+        "sha256": "d863077b08d3546a0930dfc594e6294b88df6398818c500ef18e88299778cb41"
+      },
+      {
+        "blob": "c517dff8f9c760a54b024ce53d6419818a4df213",
+        "path": "docs/experiments/evidence/rl-e2tb-week-one-results/study-root-acceptance.json",
+        "sha256": "4bd2c05bab46f1aa3d3ff0272974029210ca2bd07c2f1e61936011f0fb836fda"
+      }
+    ],
+    "source135_hashes_exact": true,
+    "tree": "2079f6e687c9cd2266a4d6fdac63ef9ea66aad47"
+  },
+  "schema": "independent-E2-publication-and-E3-root-roster-metadata-review-v1",
+  "status": "ACCEPT_BOTH_METADATA_RECONCILIATIONS_NO_EXECUTION_AUTHORITY"
+}

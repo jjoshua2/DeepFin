@@ -1,0 +1,69 @@
+{
+  "findings": [],
+  "limits": [
+    "Preparation/metadata acceptance only. Final science identity must replace only the two allowed manifest leaves, and canonical HERE/manifest.json must be installed with that accepted projection before use.",
+    "Actual endpoint/decision/selected-confirmation identity and custody bindings remain future; no game, model, checkpoint, query, runtime constructor, project import, tests or jobs were performed by this review.",
+    "Historical arena reuse, source and 15 inert decision controls retain their original scopes; this does not qualify actual E4 playing data or establish strength/adoption."
+  ],
+  "references_sha256": {
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-limited-arena-reuse-root-acceptance-v1/readout.json": "b0a2f04aaaa5f44d8439e6b45ed3ccf6446b175099adda8d3a2302a02c2f1f3d",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-three-case-producer-root-actual-acceptance-v3/readout.json": "6e1cab125891bb31eab40cbac7e243716a77bfb107c9214593be9110efb5ded3",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-decision-inert-controls-actual-independent-review-v1/review.json": "a5006e5869cceb6acf70f6aebe5437817dd030b843660041625b4f19225342c6",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-package-v1/controls.py": "0f4b0238852c9284f5b236f71986b87f2dc55b184e08f5c5ad248e73a55fe26e",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-package-v1/decide.py": "34f3cb2045edc125b871a79f1d51624fe38d661ce5e621d2fab7684f5d72ef7e",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-package-v1/read_endpoint.py": "be9d9f5b8b63de3e855b15152c28fb262ab491170916e72c81378fea1af47776",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-template-v1/binding-contract.json": "403865c97736baf455071d18ed485083aadbd2238772acd57037c51af7359ceb",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-template-v1/manifest.template.json": "370f7fa00259fa77abe005c798355ae1ff5feaca637f71f28a05228a6f7ea056",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-template-v1/preparation.json": "015ca351c034b4f58c5f64522c0f52566e912905cc5ca694c17b946c0ca61876",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-template-v1/readout-commands.template.json": "d202ec7f47ba333f0fc2d8e49300d0f468698b30a0e54c24aea518acc0a37b32",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-independent-source-review-v1/review.json": "ed408f6889cfd443c7673d78c7a152fef49ea033ff2096b7e16d2798302c65cf",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-preparation-v1/commands.template.json": "055f0200b0669b58ad9f2a340a6aeef3c12c4c16e7dd5abf02f7d11817b64781",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/native-origins.json": "8d9b629c7f6724b9d863ec6fc6bdadb8f0355be1460ed424c6256e9bc5a35023",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/readout.json": "34cd17f72d78c0cafc8160640bb216a77c3a7c6791bed6a41c37d8b966ddc737"
+  },
+  "status": "ACCEPT_E4_ARENA_FINAL_KNOWN_METADATA_TEMPLATES_SOURCE_ONLY",
+  "utc": "2026-11-13T08:49:18.626507+00:00",
+  "verified": {
+    "GPU_arena_command_source_055f_byte_unchanged": true,
+    "actual_E4_native_8d9_and_820_and_independent_control_qualifications_hash_verified": true,
+    "all_three_canonical_helpers_byte_exact_accepted_parent": true,
+    "canonical_actual_manifest_absent": true,
+    "flat_HERE_parent_is_global_WROOT": true,
+    "old_commands_hash_typo_corrected_to_immutable_055f_before_data": true,
+    "old_manifest_only_commands_qualifications_status_changes": true,
+    "only_manifest_science_path_and_SHA_late": true,
+    "six_readout_argv_only_literal_entry_relocation": [
+      {
+        "argv_changed_index": 18,
+        "entry": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-package-v1/read_endpoint.py",
+        "role": "confirmation"
+      },
+      {
+        "argv_changed_index": 18,
+        "entry": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-package-v1/decide.py",
+        "role": "confirmation_decision"
+      },
+      {
+        "argv_changed_index": 18,
+        "entry": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-package-v1/read_endpoint.py",
+        "role": "context"
+      },
+      {
+        "argv_changed_index": 18,
+        "entry": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-package-v1/read_endpoint.py",
+        "role": "eligibility"
+      },
+      {
+        "argv_changed_index": 18,
+        "entry": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-package-v1/read_endpoint.py",
+        "role": "primary"
+      },
+      {
+        "argv_changed_index": 18,
+        "entry": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-package-v1/decide.py",
+        "role": "screens_decision"
+      }
+    ],
+    "source_stats_decision_thresholds_and_game_settings_unchanged": true
+  }
+}

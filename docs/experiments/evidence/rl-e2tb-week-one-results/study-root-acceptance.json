@@ -1,0 +1,48 @@
+{
+  "status": "ROOT_ACCEPTED_COMPLETED_E2TB_NO_REGISTERED_PLAYING_GAIN_RETAIN_DONOR",
+  "utc": "2026-11-13T06:15:27.368357+00:00",
+  "scientific_sha256": "ee24d3b7aa575c3dd2b85061f376a4920d5f9034a2cc358e03ed8312cd1476c0",
+  "decision": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-arena-readout-results-v1/screens-decision.json",
+    "sha256": "f630501017c205fbd9239fbc4e5bf8537c48ad61ca93d868a7448754236e0b4e"
+  },
+  "independent_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-screens-decision-actual-independent-review-v1/review.json",
+    "sha256": "a069ccfb94550c0e91763437134d2d4e7bc5480d91e18da9cce34cda514585f8"
+  },
+  "closure": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-study-root-actual-decision-v1/closure-and-source.json",
+    "sha256": "fb1b89536925dc3314556cce3ee4b6771fde71002f0f76572c959ce692427e95"
+  },
+  "endpoint_classifications": {
+    "primary": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-primary-root-actual-readout-v1/classification.json",
+      "sha256": "52a30634670d517b89316a89edba2de8a080460b5855342955218cdf58e4756b"
+    },
+    "eligibility": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-root-actual-readout-v1/classification.json",
+      "sha256": "3ab245a668342df75b0a007a9d4cccf1a6e98bcafe281ee1fc993d0f4efb3b15"
+    },
+    "context": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-context-root-actual-readout-v1/classification.json",
+      "sha256": "6f94fad61e677a72bb992549144314fa39882d9ba3ae61bb493d425a9713593a"
+    }
+  },
+  "decision_terminal": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-screens-decision-execution-v1/terminal.json",
+    "sha256": "f611ef80e0d5ec694aaa55e4f09bee93f9cbf22dceb80baff35831b239ea9b59"
+  },
+  "research_generated_games": 96,
+  "research_training_updates": 80,
+  "playing_games": 768,
+  "playing_pairs": 384,
+  "study_GPU_owner_seconds": 2814.0289723879832,
+  "week_GPU_owner_seconds": 8673.476814432943,
+  "closed_owner_stage_count": 83,
+  "birth_count": 333,
+  "GPU_stage_count": 28,
+  "confirmation_allowed": false,
+  "adoption": false,
+  "goal_complete": false,
+  "next": "Publish complete actual readout; new research requires a separate prospective study. No further E2TB execution."
+}

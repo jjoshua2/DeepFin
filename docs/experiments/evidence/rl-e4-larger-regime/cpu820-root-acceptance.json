@@ -1,0 +1,34 @@
+{
+  "status": "ACCEPT_E4_ACTUAL_CANONICAL_CONFIG_BUILDERS_AND_ALL820_ENCODINGS_ONLY",
+  "utc": "2026-11-13T08:33:05.281530+00:00",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "raw_readout": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-results-v1/readout.json",
+    "sha256": "645bf79f3de25131e9c449280441e52874ae97f159ebd35adf04d6ed6ddb6502"
+  },
+  "independent_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-actual-independent-review-v1/review.json",
+    "sha256": "fe5f631f864827e800771a3ac5cd050e999ec206769556600f0005857c9175dc"
+  },
+  "terminal": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-execution-v1/terminal.json",
+    "sha256": "95d9dcac229682896bc2d898d82f242ebe32cea8aec7b0e90d074a083ebb22fc"
+  },
+  "owner_wall_seconds": 5.2084755770047195,
+  "profile_compatibility": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/profile-compatibility.json",
+    "sha256": "86abfae294282de956320a8e76aaeeb16c753c097bc804b7992757bfd87cb2c1"
+  },
+  "producer_encoding_compatibility": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/producer-encoding-compatibility.json",
+    "sha256": "0b50797c0bdbcb7f1a7d65d8df54283abbe197af66d4d2268775194b659a0811"
+  },
+  "native_origins": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/native-origins.json",
+    "sha256": "8d9b629c7f6724b9d863ec6fc6bdadb8f0355be1460ed424c6256e9bc5a35023"
+  },
+  "actual94kwargs_sha256": "660c9ff5ec28b14d45563bee842376b424fc94a509b313c6bd7787fefbc5405e",
+  "canonical_public_CLI_check_run": false,
+  "models_queries_games_training_or_GPU_work": false,
+  "next": "Freeze allknownfinaltemplates, run canonical--check, finish focusednew-count/sourcecontrols, reviewandpublish complete science beforegeneration."
+}

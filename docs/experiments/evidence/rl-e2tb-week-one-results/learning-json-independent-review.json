@@ -1,0 +1,225 @@
+{
+  "blocking_findings": [],
+  "closed_stage": {
+    "CPU_seconds": 56.17,
+    "known_births_absent": {
+      "1166564": 26584540
+    },
+    "peak_cuda_allocated_bytes": 9778347520,
+    "supervisor_absent": 1166555,
+    "wall_seconds": 64.86483061203035
+  },
+  "collection_uuid": "f1dadbe4-43e2-4cf3-9a93-70a288533b48",
+  "evidence": {
+    "FULLA_fresh": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLA/fresh-state.json",
+      "sha256": "48255f8dc02158ae15104395a72e97b6a2dfe7a54590605f126e4db7c8e4469f"
+    },
+    "FULLA_readout": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLA/readout.json",
+      "sha256": "0b3007db70bfc6cdd540dcdbdf5543901b15031d0106aabb714e501d2543c7d4"
+    },
+    "FULLB_fresh": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLB/fresh-state.json",
+      "sha256": "bd971d5e4978b50e6b2542dc62dec3dbc4c8965a1849a2405a351fbba76fa451"
+    },
+    "FULLB_readout": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLB/readout.json",
+      "sha256": "d26463d56f024028c5366cba7eaf627ba433c083f0d142aaf79e143e9a916b18"
+    },
+    "common_training_RNG": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/common-training-rng.json",
+      "sha256": "0f6494ee31645c0ed3de380292a2906bc1c7a367a840bee0291351749e535c5e"
+    },
+    "input_lineage": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/input-lineage.json",
+      "sha256": "a8b940861c5630c2c4615ef9ae95d03f41bf52dde18b4b3ffd7823274f6abbbe"
+    },
+    "manifest": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/manifest.json",
+      "sha256": "d60ba0905fd0826698ad5f99b5d4e5c1efc4755e47b4fbe5b8376d6bc1042191"
+    },
+    "prior_actual_binding_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired-actual-binding-independent-review-v1/review.json",
+      "sha256": "d1ac532410148bded3b59e594c03c09b628df7736fe133d65f4266f8f7f12192"
+    },
+    "prior_draw_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-actual-independent-review-v1/review.json",
+      "sha256": "6e9a0ea46d1c2984a772aa1cc3d9535645cce5d6aad66e03a615a451c96f10a2"
+    },
+    "producer_readout": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/readout.json",
+      "sha256": "1ae3c0749c4066270b94859ac1491c93a9347baee5d3efed20128f9b4a7109e2"
+    },
+    "protocol": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/protocol.json",
+      "sha256": "93910eea9763c7d0ac4265c2f552f8b8a452b004b151a894d0b48ce558aa0825"
+    },
+    "selected_parameter_map": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-train-paired-preparation-v5/selected-parameters.json",
+      "sha256": "fbb738aaf19b30520ef92a55c93a77eed9971c3904abbb2e18b2479f2a4e79ff"
+    },
+    "terminal": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired-full40-execution-v1/terminal.json",
+      "sha256": "b1b427647c7fbd10bdb3753c4969c7135385a10cb4b2d465c75f62fe5cf96659"
+    }
+  },
+  "matched_delivery": {
+    "all40_physical_draws_and_multiplicities_match_fixed_plan": true,
+    "all_forward_math_receipts_eager_CUDA_BF16_grad_enabled": true,
+    "all_math_contexts_exact_to_protocol": true,
+    "final494_JSON_signature_digest_valid_each": true,
+    "finite_total_loss_is_numeric_float_not_boolean": true,
+    "fresh32_lineage_exact_to_draw_stage": true,
+    "fresh494_donor_equal_asserted_by_producer": true,
+    "fresh_opt0_step0_SWA_none_ZClip_empty": true,
+    "full479_named_optimizer_mapping_equal": true,
+    "loss_kwarg_difference_only_search_share": [
+      1,
+      0.8
+    ],
+    "nonfinite_skips_each": 0,
+    "prior_arm_weakrefs_closed_asserted_by_source_guarded_producer": true,
+    "randomness_events_equal": 160,
+    "raw_host_device_hash_differences_only_declared_categorical_target": {
+      "device": 40,
+      "host": 40,
+      "raw": 40
+    },
+    "retry_batches_each": 0,
+    "same_LR_update_RNG_and_augmentation_trajectories": true,
+    "same_common_float16_search_WDL_and_outcome_labels": true,
+    "samples_each": 10240,
+    "steps_each": 40,
+    "unique_input_rows": 3012
+  },
+  "optimizer_observations": {
+    "AdamW_group2": 142,
+    "AdamW_group3": 289,
+    "AdamW_hard_clip_each": {
+      "rate": 0.975,
+      "total": 40,
+      "updates": 39
+    },
+    "Aurora_excluded_from_ZClip": true,
+    "Aurora_group0": 48,
+    "LR_full_from_step9": [
+      6e-05,
+      3e-06,
+      3e-06,
+      3e-06
+    ],
+    "LR_used_step1": [
+      5.999999999999999e-06,
+      3e-07,
+      3e-07,
+      3e-07
+    ],
+    "adaptive_clip_each": 0,
+    "empty_group1": 0,
+    "final_scheduler_last_epoch": 31,
+    "per_update_gradients": {
+      "AdamW_none": 17,
+      "AdamW_present": 414,
+      "Aurora_present": 48
+    },
+    "physical_parameters": 479,
+    "selected_SF_policy_weight_gradient_none_delta0": true,
+    "selected_observed_updates": [
+      1,
+      8,
+      40
+    ],
+    "selected_relative_deltas": {
+      "FULLA": {
+        "1": {
+          "blocks.0.ffn.0.weight": 3.1297953719217475e-06,
+          "blocks.0.out_proj.weight": 3.376383126018797e-06,
+          "embed.weight": 5.987164283617913e-06,
+          "moves_left.net.0.weight": 1.1766767093903088e-05,
+          "policy_own.k.weight": 1.0647906614021568e-05,
+          "policy_sf.k.weight": 0.0,
+          "value_categorical_coupled.weight": 3.0127942329056577e-05,
+          "value_wdl.net.0.weight": 1.168623862985937e-05
+        },
+        "8": {
+          "blocks.0.ffn.0.weight": 2.7773611588628804e-05,
+          "blocks.0.out_proj.weight": 2.9750309304511153e-05,
+          "embed.weight": 2.475223091700886e-05,
+          "moves_left.net.0.weight": 0.00010015978420511599,
+          "policy_own.k.weight": 4.392857398439457e-05,
+          "policy_sf.k.weight": 0.0,
+          "value_categorical_coupled.weight": 0.00022846989844272115,
+          "value_wdl.net.0.weight": 8.220992686959824e-05
+        },
+        "40": {
+          "blocks.0.ffn.0.weight": 3.129959401521175e-05,
+          "blocks.0.out_proj.weight": 3.380735041215725e-05,
+          "embed.weight": 2.0742772251540116e-05,
+          "moves_left.net.0.weight": 0.00011130060086803535,
+          "policy_own.k.weight": 4.25573197903809e-05,
+          "policy_sf.k.weight": 0.0,
+          "value_categorical_coupled.weight": 0.00025403964263185676,
+          "value_wdl.net.0.weight": 8.861185979558709e-05
+        }
+      },
+      "FULLB": {
+        "1": {
+          "blocks.0.ffn.0.weight": 3.1297890685932808e-06,
+          "blocks.0.out_proj.weight": 3.382508001146187e-06,
+          "embed.weight": 5.987156651410513e-06,
+          "moves_left.net.0.weight": 1.176619226632807e-05,
+          "policy_own.k.weight": 1.0647758996899659e-05,
+          "policy_sf.k.weight": 0.0,
+          "value_categorical_coupled.weight": 3.012790296770448e-05,
+          "value_wdl.net.0.weight": 1.1683831518891983e-05
+        },
+        "8": {
+          "blocks.0.ffn.0.weight": 2.7767327793842275e-05,
+          "blocks.0.out_proj.weight": 2.9628546841087727e-05,
+          "embed.weight": 2.4992277059359075e-05,
+          "moves_left.net.0.weight": 0.00010003113350054915,
+          "policy_own.k.weight": 4.388289210495269e-05,
+          "policy_sf.k.weight": 0.0,
+          "value_categorical_coupled.weight": 0.00022662118848157644,
+          "value_wdl.net.0.weight": 8.042600952432454e-05
+        },
+        "40": {
+          "blocks.0.ffn.0.weight": 3.1297132391678236e-05,
+          "blocks.0.out_proj.weight": 3.3660053338868674e-05,
+          "embed.weight": 2.146821344099815e-05,
+          "moves_left.net.0.weight": 0.0001118189135472166,
+          "policy_own.k.weight": 4.237680023913746e-05,
+          "policy_sf.k.weight": 0.0,
+          "value_categorical_coupled.weight": 0.00025206147839896046,
+          "value_wdl.net.0.weight": 8.679384319884627e-05
+        }
+      }
+    },
+    "selected_tensors": 8
+  },
+  "reported_losses_descriptive_only": {
+    "FULLA": {
+      "first": 8.459829330444336,
+      "last": 8.039706230163574,
+      "max": 8.479663848876953,
+      "min": 8.039706230163574
+    },
+    "FULLB": {
+      "first": 8.52409553527832,
+      "last": 8.075061798095703,
+      "max": 8.541563034057617,
+      "min": 8.075061798095703
+    }
+  },
+  "scope_limits": [
+    "Metadata/source-only reconciliation; no checkpoint/model/array load or hash, project import, engine/TB/GPU query or job. Saved checkpoint CPU audit remains mandatory; finalmodel JSON signatures and step0 equality are producer assertions until then.",
+    "Independent live /proc observation unavailable because stage had already closed; actual environment/math is recorded by qualified instrumentation, not independently observed live.",
+    "Parameter gradient/delta copies cover8selected tensors at3updates only; no whole-model gradient-interference/quality claim.17NONE gradient counts and selected inactive SF policy do not alone prove every SF tensor unchanged.",
+    "SF metrics/search_wdl_effective_frac are diagnostics/availability, not applied loss coefficients; actual loss kwargs are authoritative. Same-policy inputs do not imply identical policy-weight deltas after coupled optimization.",
+    "A/B is mainWDL plus categorical target bundle, not isolated head/teacher/optimal-formula or Elo/strength/adoption result; no heldout predictions were read."
+  ],
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "ACCEPT_ACTUAL_PAIRED40_JSON_TECHNICAL_DELIVERY_PENDING_CHECKPOINT_AUDIT",
+  "utc": "2026-11-13T04:07:57.938594+00:00"
+}

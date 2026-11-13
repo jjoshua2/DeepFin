@@ -1,0 +1,45 @@
+{
+  "checks": [
+    "Full two operational drivers read source-only; fixed256/128 and3600/3500 settings match frozen2de3 command packet.",
+    "Prior accepted classification requires technical qualification, not performance; primary nonpass does not stop eligibility, and eligibility nonpass does not stop context.",
+    "Current V4 utility/hash/owner path preserved; role/candidate/reference/command digest matches exact frozen role.",
+    "Fresh global controls/custody/leases/budgets and resource check delegated unchanged to accepted preflight; direct exec existing utility, no automatic next role or reader.",
+    "A39 command role preserved; accepted V4 utility normalizes only qualified donor lookup to DONOR."
+  ],
+  "created_utc": "2026-11-13T05:20:32.890238+00:00",
+  "findings": [],
+  "limits": [
+    "Source-only review does not admit or observe any future stage or bind its assets; root retains fresh resource/custody/admission duties.",
+    "Registered confirmation remains prohibited after primary nonpass regardless of later screens."
+  ],
+  "primary_review_sha256": "99ba76fe0ffe94133407fa4330a93409ad5e84385107405e9f67c6a2d25094f8",
+  "sources": [
+    {
+      "candidate": "FULLB40",
+      "command_sha256": "f4e84f6acd857eb2581361afd77ff05346237ac97137365e3b561cb9db10396e",
+      "games": 256,
+      "inner_seconds": 3500,
+      "owner_seconds": 3600,
+      "pairs": 128,
+      "previous_required_technically_qualified": "primary",
+      "reference": "A39",
+      "role": "eligibility",
+      "sha256": "a8b369aa1011d2e633caf742b981ddff81f40c36f2d2849a9cf63d9504bfc11c",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-root-execution-admission-v1/admit_and_exec.py"
+    },
+    {
+      "candidate": "FULLA40",
+      "command_sha256": "5e4c4a17c47b43b1326aaeba9fe0af155d6293259d091a1dd9385b7f62c20c11",
+      "games": 256,
+      "inner_seconds": 3500,
+      "owner_seconds": 3600,
+      "pairs": 128,
+      "previous_required_technically_qualified": "eligibility",
+      "reference": "A39",
+      "role": "context",
+      "sha256": "8f22e8df5d9277b70f2c43275bb2019a658ced4e82c892f578498808d54da492",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-context-root-execution-admission-v1/admit_and_exec.py"
+    }
+  ],
+  "status": "ACCEPT_SOURCE_ONLY_FIXED_ELIGIBILITY_CONTEXT_ADMISSION_DRIVERS"
+}

@@ -276,6 +276,10 @@ def run_owned_roster(
             pipeline.poll()
     try:
         control()
+        # Startup constructs the strict BT4 evaluator, which refuses a process
+        # whose mode is not installed. Install it under inherited custody before
+        # any checkpoint or evaluator step; no board from this roster exists yet.
+        worker.rep_fix.apply(True, boards_discarded=True)
         for name, descriptor in frozen.items():
             checkpoint = entry.Checkpoint(prepared[name][1], descriptor["bindings"],
                                           descriptor["checkpoint_limits"], guard.check)
@@ -288,7 +292,6 @@ def run_owned_roster(
             cudnn_conv_algo_search="DEFAULT", cudnn_conv_use_max_workspace=0)
         generation = next(iter(frozen.values()))["generation"]
         handle = worker.tablebase.open_strict_match_tablebase(generation["syzygy_path"], max_pieces=6)
-        worker.rep_fix.apply(True, boards_discarded=True)
         units = {}
         for name in frozen:
             spec = replace(specs[name], providers=tuple(providers), provider_options=options)

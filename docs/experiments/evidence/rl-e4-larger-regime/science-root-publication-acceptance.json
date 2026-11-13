@@ -1,0 +1,48 @@
+{
+  "status": "ROOT_ACCEPT_COMPLETE_E4_SCIENCE_COMPONENTS_FOR_MAIN_PUBLICATION_ONLY",
+  "utc": "2026-11-13T09:01:22.747688+00:00",
+  "scientific": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-scientific-protocol-final-v2/protocol.json",
+    "sha256": "7cfd6e45b565f39827a1801c828dc302fe5d79f176c7701b004fa7f1adab3478"
+  },
+  "independent_integration_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-final-science-component-integration-independent-review-v1/review.json",
+    "sha256": "80432209beaa7c8a2c53403d1b44cff76d9666f14f37ff736299cec9cdaab5eb"
+  },
+  "root_review": "Authored complete33KB science against prospective direction, actual820/config/profile/94kwargs and focused128/129/sourceLR controls. Reconciled all components and scoped historical21mathfile/AA reuse, actualsource/HERE relocations, immutableknownidentity graph,3mandatory screens/bothnew129utility/onefreshselectedhashconfirmation, observernonveto/timing limits, GPUcaps/deadline/control/custody and no automaticadoption. No oldHOLD/data/recipe substitution or newresearch result inferred.",
+  "actual_prerequisite_root_acceptances": [
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/readout.json",
+      "sha256": "34cd17f72d78c0cafc8160640bb216a77c3a7c6791bed6a41c37d8b966ddc737"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-limited-paired-reuse-root-acceptance-v1/readout.json",
+      "sha256": "9579e8c03924826ae865acff161e9f8170382f36e0b0bdaec60149cb5dc8d927"
+    }
+  ],
+  "actual_prerequisite_independent_acceptances": [
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-final-learning-template-independent-review-v2/review.json",
+      "sha256": "1c62c13733e14a03ee0ad96cb6e9795bc72e33098872d4345540b1cce4d75a1b"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cohort-auditor-final-template-independent-review-v1/review.json",
+      "sha256": "6e3fed977f66df742a673dd7a7f052b80f82450283ab4823cbeff6315c702a2a"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collector-final-template-independent-review-v1/review.json",
+      "sha256": "baddc36d03a5faec5a450bec72bf62d1db3442e44783feafe27f5bf59993a064"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-template-independent-review-v1/review.json",
+      "sha256": "d42a6c3261c8b3e71134f07dfeb57633c887f07958d56127a34f6b7e3f3bd2ae"
+    }
+  ],
+  "main_publication_canonical_public_check_and_fresh_finite_admission_required": true,
+  "research_execution_admitted": false,
+  "E4games": 0,
+  "E4optimizer_updates": 0,
+  "E4GPU_owner_seconds": 0,
+  "closed_owner_stages": 93,
+  "long_term_strength_goal_achieved": false
+}

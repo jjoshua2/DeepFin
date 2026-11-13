@@ -1,0 +1,63 @@
+{
+  "actual_cases": {
+    "censored": {
+      "archive_status": "PASS_OBSERVATION_ARCHIVE_ONLY",
+      "events": 19,
+      "status": "PASS"
+    },
+    "diskcap": {
+      "archive_status": "FUTURE_TEACHER_INFORMATION_INCOMPLETE",
+      "events": 37,
+      "status": "PASS"
+    },
+    "escalation": {
+      "archive_status": "PASS_OBSERVATION_ARCHIVE_ONLY",
+      "events": 30,
+      "status": "PASS"
+    },
+    "iofailure": {
+      "archive_status": "FUTURE_TEACHER_INFORMATION_INCOMPLETE",
+      "events": 5,
+      "status": "PASS"
+    },
+    "normal": {
+      "archive_status": "PASS_OBSERVATION_ARCHIVE_ONLY",
+      "events": 19,
+      "status": "PASS"
+    },
+    "queryfailure": {
+      "archive_status": "PASS_OBSERVATION_ARCHIVE_ONLY",
+      "events": 19,
+      "status": "PASS"
+    },
+    "replacement": {
+      "archive_status": "PASS_OBSERVATION_ARCHIVE_ONLY",
+      "events": 24,
+      "status": "PASS"
+    },
+    "unclosedowner": {
+      "archive_status": "FUTURE_TEACHER_INFORMATION_INCOMPLETE",
+      "events": 19,
+      "status": "PASS"
+    }
+  },
+  "closure": {
+    "all_absent": true,
+    "births": {
+      "1301139": 28220733
+    },
+    "cpu_seconds": 0.0,
+    "owner": 1301137,
+    "wall_seconds": 1.1505774859688245
+  },
+  "controls_sha256": "cd2ce09070f4c78200639f97912c2f252733b8ff0de6d7896143376f485ae4c2",
+  "findings": [],
+  "helper_sha256": "dda3ef2140f042d529960ab226bf5cf01e2352fbb4568f27d3b61f016cea4da6",
+  "limits": "Synchronous fakeexecutor/engine/samples only, including execution-before-submit-return. No actualR7constructor/transport/concurrency/timing/collectorintegration/teacherP0 qualification. No core data/generation or research admission.",
+  "observed": "All8 sourcequalified inertcases passed; event counts/SHA/recordgame joins/escalation parent/censorUNFLUSHED and3failureincomplete statuses independently reconcile from savedJSON. No controls rerun.",
+  "readout_sha256": "6d4ae66ea75d3cbb2ed39303148ddcf860a2ede8d80279720ad2eac71adf6e68",
+  "source_review_sha256": "fb247e20960df1121766e012a05d0a43b29cc0c0901fe44d3dcaf94814ac51a3",
+  "status": "ACCEPT_EIGHT_INERT_OPTIONAL_SF_OBSERVER_CONTROLS_ONLY",
+  "terminal_sha256": "3816b400bc5a33d3c72559c5d4e35a5223183d0c940e1b1cce443617e58226e0",
+  "utc": "2026-11-13T08:33:04.615205+00:00"
+}

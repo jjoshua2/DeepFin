@@ -1,0 +1,37 @@
+{
+  "status": "DRAFT_TECHNICAL_CONSUMPTION_CORRECTION_NOT_EXECUTION_ADMISSION",
+  "timing": "Discovered after collection start, before draw/learning; no freshdata inspected by author. Originalcollection/science7cfd remain unchanged.",
+  "frozen_science": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-scientific-protocol-final-v2/protocol.json",
+    "sha256": "7cfd6e45b565f39827a1801c828dc302fe5d79f176c7701b004fa7f1adab3478"
+  },
+  "reason": "Original4d07 assumes absent direct draw_plan_binder component. Successor validates actual7cfd\u21927160/d243/c4ea\u2192EE0/4d07/fdef graph, plus separately PUBLISHEDtechnicalmainproof.",
+  "descriptor": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/technical-descriptor.json",
+    "sha256": "6af973aae6820cf1f39bc2d3c8ae6a7f7687cab02e6e29d7a08252465e12505c"
+  },
+  "new_helper": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-final-v3/bind_draw_plan.py",
+    "sha256": "ff24bc622171b8e226e3f05c66800d046fb008713d30991088e68a008b07f47f"
+  },
+  "new_execution_manifest": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-final-v3/manifest.json",
+    "sha256": "905fc0884365d411ce37db8490c1ba7a95718afaf391c2a45eedf9cf662435df"
+  },
+  "new_inputs_template": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/identity-inputs.TEMPLATE.json",
+    "sha256": "d3e0eba354bf15595c6e095bcc411d6364755e180e96becb78e3f2e036040679"
+  },
+  "original_five_refs_projection_exact": true,
+  "sixth_late_identity": "technical_publication actualpath+SHA onlyAFTERmainproof. No publicationSHA in statichelper/descriptor/manifest; no cycle.",
+  "actual_mainproof": {
+    "status": "UNKNOWN_UNPUBLISHED",
+    "interface_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/technical-publication-interface.json"
+  },
+  "source_equivalence": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/source-proof.json",
+    "sha256": "bc55a3d39817d998a8f347fc85a084cddadcf7f82cbacc87a6ed3293b392d2bf"
+  },
+  "no_numeric_or_observation_change": true,
+  "needed_before_draw": "Independent source acceptance, focused stdlibguardcontrols, actualmainpublicationproof+rootfiniteadmission afterclosedqualifiedcohort/audit. No fabricatedsciencefield/newdata/rerun."
+}

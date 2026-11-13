@@ -1,0 +1,262 @@
+{
+  "status": "FROZEN_ALL_KNOWN_E4_PAIRED129_LATE_IDENTITY_CONTRACT",
+  "schema": "E4_129-exact-template-late-identity-fields-v1",
+  "final_binding_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-bindings-v1-cd47b230-f32f-4256-a51e-4869f5708bb6",
+  "fixed_runtime_output": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6",
+  "fixed_source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "fixed_TRAIN_code_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/train",
+  "allowed_identity_only_changes": {
+    "protocol.json": {
+      "producer_protocol_sha256": {
+        "template_value": "UNBOUND",
+        "required_final_type": "sha256",
+        "rule": "Actual frozen/published or closed accepted artifact identity only; no descriptor or numeric changes."
+      },
+      "producer_manifest_sha256": {
+        "template_value": "UNBOUND",
+        "required_final_type": "sha256",
+        "rule": "Actual frozen/published or closed accepted artifact identity only; no descriptor or numeric changes."
+      },
+      "scientific_path": {
+        "template_value": "UNBOUND",
+        "required_final_type": "absolute_path",
+        "rule": "Actual frozen/published or closed accepted artifact identity only; no descriptor or numeric changes."
+      },
+      "scientific_sha256": {
+        "template_value": "UNBOUND",
+        "required_final_type": "sha256",
+        "rule": "Actual frozen/published or closed accepted artifact identity only; no descriptor or numeric changes."
+      },
+      "publication_path": {
+        "template_value": "UNBOUND",
+        "required_final_type": "absolute_path",
+        "rule": "Actual frozen/published or closed accepted artifact identity only; no descriptor or numeric changes."
+      },
+      "publication_sha256": {
+        "template_value": "UNBOUND",
+        "required_final_type": "sha256",
+        "rule": "Actual frozen/published or closed accepted artifact identity only; no descriptor or numeric changes."
+      },
+      "cohort_binding_sha256": {
+        "template_value": "UNBOUND",
+        "required_final_type": "sha256",
+        "rule": "Actual frozen/published or closed accepted artifact identity only; no descriptor or numeric changes."
+      },
+      "draw_plan_sha256": {
+        "template_value": "UNBOUND",
+        "required_final_type": "sha256",
+        "rule": "Actual frozen/published or closed accepted artifact identity only; no descriptor or numeric changes."
+      }
+    },
+    "manifest.json": {
+      "protocol_sha256": {
+        "template_value": "UNBOUND",
+        "required_final_type": "sha256",
+        "rule": "Actual final protocol bytes digest; protocol_path fixed."
+      }
+    },
+    "cohort-binding.json": {
+      "status": {
+        "template_value": "UNBOUND_NOT_ACCEPTED",
+        "rule": "Exactly BOUND_E4_COHORT_FOR_PAIRED_FULL129 after all gate receipts"
+      },
+      "generation_command": {
+        "template_value": [
+          "/usr/bin/taskset",
+          "-c",
+          "20,22",
+          "/usr/bin/env",
+          "-u",
+          "NVIDIA_TF32_OVERRIDE",
+          "-u",
+          "CUBLAS_WORKSPACE_CONFIG",
+          "CUDA_VISIBLE_DEVICES=0",
+          "OMP_NUM_THREADS=2",
+          "MKL_NUM_THREADS=2",
+          "PYTHONOPTIMIZE=0",
+          "PYTHONDONTWRITEBYTECODE=1",
+          "PYTHONPATH=/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess",
+          "/home/josh/chess-artifacts/venvs/rl-transition-managed-20261111-cu130/bin/python",
+          "-B",
+          "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-sf-observation-dispatch-preparation-v1/dispatch.py",
+          "--binding",
+          "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-sf-observation-dispatch-binding-candidate-v1/binding.candidate.json",
+          "--binding-sha256",
+          "c03ae042d83f03464e7dfdf5f77ae59b0d17cc5d6c12198e7aa6aba73c197660",
+          "--manifest-sha256",
+          "LATE_ACTUAL_MANIFEST_SHA256"
+        ],
+        "rule": "cohort-binding.generation_command MUST equal selectedobserved argv after owner --, substituting ONLY LATE_ACTUAL_MANIFEST_SHA256 with cohort-binding.producer_manifest_sha256. Every other argv bytefixed; no barefallback or source/profile/resource/observer choice."
+      },
+      "resolved_profile_path": {
+        "template_value": "UNBOUND",
+        "rule": "Actual accepted metadata path/hash only; exact consumer field semantics in TRAINv4 binding-contract.json"
+      },
+      "resolved_profile_sha256": {
+        "template_value": "UNBOUND",
+        "rule": "Actual accepted metadata path/hash only; exact consumer field semantics in TRAINv4 binding-contract.json"
+      },
+      "terminal_path": {
+        "template_value": "UNBOUND",
+        "rule": "Actual accepted metadata path/hash only; exact consumer field semantics in TRAINv4 binding-contract.json"
+      },
+      "terminal_sha256": {
+        "template_value": "UNBOUND",
+        "rule": "Actual accepted metadata path/hash only; exact consumer field semantics in TRAINv4 binding-contract.json"
+      },
+      "readout_path": {
+        "template_value": "UNBOUND",
+        "rule": "Actual accepted metadata path/hash only; exact consumer field semantics in TRAINv4 binding-contract.json"
+      },
+      "readout_sha256": {
+        "template_value": "UNBOUND",
+        "rule": "Actual accepted metadata path/hash only; exact consumer field semantics in TRAINv4 binding-contract.json"
+      },
+      "admission_path": {
+        "template_value": "UNBOUND",
+        "rule": "Actual accepted metadata path/hash only; exact consumer field semantics in TRAINv4 binding-contract.json"
+      },
+      "admission_sha256": {
+        "template_value": "UNBOUND",
+        "rule": "Actual accepted metadata path/hash only; exact consumer field semantics in TRAINv4 binding-contract.json"
+      },
+      "independent_path": {
+        "template_value": "UNBOUND",
+        "rule": "Actual accepted metadata path/hash only; exact consumer field semantics in TRAINv4 binding-contract.json"
+      },
+      "independent_sha256": {
+        "template_value": "UNBOUND",
+        "rule": "Actual accepted metadata path/hash only; exact consumer field semantics in TRAINv4 binding-contract.json"
+      },
+      "producer_protocol_path": {
+        "template_value": "UNBOUND",
+        "rule": "Actual accepted metadata path/hash only; exact consumer field semantics in TRAINv4 binding-contract.json"
+      },
+      "producer_protocol_sha256": {
+        "template_value": "UNBOUND",
+        "rule": "Actual accepted metadata path/hash only; exact consumer field semantics in TRAINv4 binding-contract.json"
+      },
+      "producer_manifest_path": {
+        "template_value": "UNBOUND",
+        "rule": "Actual accepted metadata path/hash only; exact consumer field semantics in TRAINv4 binding-contract.json"
+      },
+      "producer_manifest_sha256": {
+        "template_value": "UNBOUND",
+        "rule": "Actual accepted metadata path/hash only; exact consumer field semantics in TRAINv4 binding-contract.json"
+      },
+      "playing_guard_path": {
+        "template_value": "UNBOUND",
+        "rule": "Actual accepted metadata path/hash only; exact consumer field semantics in TRAINv4 binding-contract.json"
+      },
+      "playing_guard_sha256": {
+        "template_value": "UNBOUND",
+        "rule": "Actual accepted metadata path/hash only; exact consumer field semantics in TRAINv4 binding-contract.json"
+      }
+    }
+  },
+  "execution_authority_changes_separate_from_identity": {
+    "protocol.json": {
+      "execution_binding_complete": {
+        "from": false,
+        "to": true,
+        "requires": "All late identities qualified and independently/root accepted before any model or dataset work"
+      },
+      "execution_admitted": {
+        "from": false,
+        "to": true,
+        "requires": "Separate exact finite root stage admission after science/main publication and ALL192/ALL128/playing/draw gates."
+      }
+    }
+  },
+  "all_other_fields": "MUST remain canonicalexact after masking only listedlateidentity leaves and separateexecutionflags. All source/native/config/profile/AA/observer/helpers/model/kwargs/arms/seeds/dose/math/owner/paths/targetGameConfig fixed BEFOREscience/data. No postdata reselection or source/profile/AA binding.",
+  "producer_binding_rules": {
+    "source": "R7 ba9 and unchanged collector/proof/raw source pins from qualified final science",
+    "config": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-config-preparation-v1/config.yaml",
+      "sha256": "c78ecaf0bef637f2119abc555d108d5d08697772e554d4b20aa38724892e3ebb"
+    },
+    "resolved_game_config": "Must exactly match fixed protocol.training_game_config; no postcollection changes",
+    "science_publication": "Actual frozen E4 source/cohort UUID matching publication; no draft/old E2 science",
+    "cohort": "ExactlyALL192integrity/128TRAIN/64HOLD +ALL628vsALL192retainedrawmirror; all128freshproofs beforeTRAINarrays; globalrankbankpreassignment notslotquotas.",
+    "draw_plan": "129x256 uniformphysical draws, seed2026111342, actual128TRAIN only; no rerolls.",
+    "generation_command": "Must match terminal.command and immutable admitted producer argv; cannot bind alternate budgets, source, seeds or profile",
+    "resolved_profile": {
+      "file": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-results-v1/actual-builder-profile.json",
+        "sha256": "9e9ca115e387b49bc7734248dc6edae5b3bf9e88c0d25a62889b4d05aefff734"
+      },
+      "canonical_sha256": "87fca0ba2283a82642af48b37823f54d4d1bf77c8016ef4c193102db4a253700",
+      "GameConfig_exact": {
+        "blindspot_harvest_out_path": "",
+        "categorical_bins": 32,
+        "categorical_blend_frac": 0.0,
+        "categorical_search_blend_frac": 1.0,
+        "history_rep_fix": true,
+        "hlgauss_sigma": 0.04,
+        "input_extra_features": "v2_threats",
+        "input_history_encoding": "lc0_root_legacy_meta",
+        "max_plies": 450,
+        "policy_encoding": "lc0_1858",
+        "record_dense_sf_policy": true,
+        "record_fast_ply_value": false,
+        "record_lc0_root_input": true,
+        "record_prior_top1": true,
+        "record_relations": false,
+        "record_sf_p0_policy": false,
+        "record_sf_p0_regret": true,
+        "search_wdl_draw_mode": "net_raw",
+        "selfplay_fraction": 1.0,
+        "sf_fast_ply_node_scale": 0.25,
+        "sf_label_escalate_max_per_game": 2,
+        "sf_label_escalate_nodes": 0,
+        "sf_label_escalate_q_gap": 0.0,
+        "sf_label_nodes_cap": 0,
+        "sf_label_nodes_floor": 0,
+        "sf_move_nodes": 0,
+        "sf_policy_cp_temp": 16.2,
+        "sf_policy_label_smooth": 0.01,
+        "sf_policy_score_mode": "cp",
+        "sf_policy_temp": 0.012,
+        "sf_wdl_cp_draw_width": 120.0,
+        "sf_wdl_cp_slope": 0.006,
+        "sf_wdl_use_cp_logistic": true,
+        "soft_policy_temp": 2.0,
+        "stockfish_syzygy_path": "/home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6",
+        "syzygy_adjudicate": true,
+        "syzygy_adjudicate_fraction": 1.0,
+        "syzygy_in_search": true,
+        "syzygy_outcome_mode": "rule50_match_v1",
+        "syzygy_path": "/home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6",
+        "syzygy_rescore_policy": true,
+        "timeout_adjudication_threshold": 0.99,
+        "volatility_source": "raw"
+      }
+    }
+  },
+  "no_circular_self_hash": "Final science pins these TEMPLATE bytes and this binding contract, not final execution manifest. After science/main-publication exist, bind their identities into protocol; then hash protocol into manifest; hash manifest into command; final receipt records all identities. Cohort/draw identities bind only after qualified collection. No file contains its own hash, and science is not rewritten.",
+  "output_preservation": "Final binding directory and learning runtime must be fresh; immutable templates/failed attempts never overwritten; no partial or censored TRAIN admission.",
+  "research_admitted": false,
+  "environment_contract": {
+    "CPU_affinity": [
+      20,
+      22
+    ],
+    "GPU_visibility": "Child /usr/bin/env sets CUDA_VISIBLE_DEVICES=0 after owner b728 removes inherited visibility.",
+    "precision_environment": "Both owner and child /usr/bin/env -u NVIDIA_TF32_OVERRIDE -u CUBLAS_WORKSPACE_CONFIG before Python/Torch; protocol.math_context requires both null.",
+    "Torch_flags": "Unchanged. Actual math_context must match; no setting values to force agreement."
+  },
+  "source_qualification_transition": "Already fixed source_inputs_bound=True from actual E4 config/profile/native qualification; no remaining source flag transition.",
+  "known_pre_freeze_limited_AA": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-limited-paired-reuse-root-acceptance-v1/readout.json",
+    "sha256": "9579e8c03924826ae865acff161e9f8170382f36e0b0bdaec60149cb5dc8d927"
+  },
+  "known_pre_freeze_collection_command_selection": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-observed-collection-command-selection-v1/selection.json",
+    "sha256": "ab04e5a9ad62a9f5b5971dc65c8c2073c9d60b67b856551890da033a93dc1e59"
+  },
+  "selected_generation_command_template": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-template-v1/collection-command.observed.template.json",
+    "sha256": "fa15dfe9c5f635884cb6cfb4712e3e0e1f07ec6ced2584289eb1bbc2af226c26"
+  },
+  "generation_command_binding": "cohort-binding.generation_command MUST equal selectedobserved argv after owner --, substituting ONLY LATE_ACTUAL_MANIFEST_SHA256 with cohort-binding.producer_manifest_sha256. Every other argv bytefixed; no barefallback or source/profile/resource/observer choice."
+}
