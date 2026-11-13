@@ -66,6 +66,7 @@ class _ImmediateWorker:
         info_cb: object = None,
         include_ponder: bool = False,
         allow_terminal_shortcuts: bool = True,
+        stop_sensitive: bool = False,
     ) -> SearchResult:
         del (
             stop_event,
@@ -77,6 +78,7 @@ class _ImmediateWorker:
             info_cb,
             include_ponder,
             allow_terminal_shortcuts,
+            stop_sensitive,
         )
         move = next(iter(board.legal_moves)).uci()
         self.turns.append(board.turn)
@@ -114,6 +116,7 @@ class _BlockingWorker(_ImmediateWorker):
         info_cb: object = None,
         include_ponder: bool = False,
         allow_terminal_shortcuts: bool = True,
+        stop_sensitive: bool = False,
     ) -> SearchResult:
         self._calls += 1
         if self._calls == 1:
@@ -132,6 +135,7 @@ class _BlockingWorker(_ImmediateWorker):
             info_cb=info_cb,
             include_ponder=include_ponder,
             allow_terminal_shortcuts=allow_terminal_shortcuts,
+            stop_sensitive=stop_sensitive,
         )
 
 
@@ -156,6 +160,7 @@ class _FaultThenRun(_ImmediateWorker):
         info_cb: object = None,
         include_ponder: bool = False,
         allow_terminal_shortcuts: bool = True,
+        stop_sensitive: bool = False,
     ) -> SearchResult:
         self._calls += 1
         if self._calls == 1:
@@ -174,6 +179,7 @@ class _FaultThenRun(_ImmediateWorker):
             info_cb=info_cb,
             include_ponder=include_ponder,
             allow_terminal_shortcuts=allow_terminal_shortcuts,
+            stop_sensitive=stop_sensitive,
         )
 
 
@@ -199,6 +205,7 @@ class _DeclineThenRun(_ImmediateWorker):
         info_cb: object = None,
         include_ponder: bool = False,
         allow_terminal_shortcuts: bool = True,
+        stop_sensitive: bool = False,
     ) -> SearchResult:
         self._calls += 1
         result = super().run(
@@ -213,6 +220,7 @@ class _DeclineThenRun(_ImmediateWorker):
             info_cb=info_cb,
             include_ponder=include_ponder,
             allow_terminal_shortcuts=allow_terminal_shortcuts,
+            stop_sensitive=stop_sensitive,
         )
 
         if self._calls == 1 or self.decline_main:
