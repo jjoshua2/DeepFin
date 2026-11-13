@@ -726,6 +726,12 @@ def test_hung_fresh_root_eval_is_bounded_and_parked(capsys) -> None:
 # --- the `go` wait is bounded by that go's own clock (round 4) ---------------
 
 
+def _go(text: str) -> CmdGo:
+    cmd = parse_command(text)
+    assert isinstance(cmd, CmdGo)
+    return cmd
+
+
 def _stuck_then_go(monkeypatch, second_go: str) -> tuple[float, str, chess.Board, threading.Event, Engine]:
     """A search that will not stop, then `position` + ``second_go``.
 
@@ -756,7 +762,7 @@ def _finish(release: threading.Event, engine: Engine) -> None:
 
 def test_go_with_a_clock_waits_only_its_own_budget_for_a_stuck_search(monkeypatch, capsys) -> None:
     elapsed, cmd, board, release, engine = _stuck_then_go(monkeypatch, "go movetime 2000")
-    budget = engine._go_wait_budget_s(parse_command(cmd))  # type: ignore[arg-type]
+    budget = engine._go_wait_budget_s(_go(cmd))
     assert budget == pytest.approx(0.197)  # a tenth of the 1970 ms deadline
     assert elapsed < budget + 0.5, elapsed  # not the 3 s (in production 30 s) join
     out = capsys.readouterr().out
@@ -778,23 +784,23 @@ def test_wait_plus_fresh_eval_fit_inside_a_short_clock(movetime: int) -> None:
     """The 0.1 s wait floor shrinks on a sub-second clock: wait + a fallback's
     fresh eval (a tenth of what is left) never exceed the deadline."""
     engine = Engine(MagicMock(), options=EngineOptions())
-    cmd = parse_command(f"go movetime {movetime}")
+    cmd = _go(f"go movetime {movetime}")
     limits = engine_mod.limits_from_go(
-        cmd.args, side_to_move_is_white=True,  # type: ignore[union-attr]
+        cmd.args, side_to_move_is_white=True,
         move_overhead_ms=EngineOptions().move_overhead_ms,
     )
     assert limits.deadline_ms is not None
     deadline_s = limits.deadline_ms / 1000.0
-    wait = engine._go_wait_budget_s(cmd)  # type: ignore[arg-type]
+    wait = engine._go_wait_budget_s(cmd)
     assert wait <= 0.25 * deadline_s + 1e-9
     engine._go_received_at = time.monotonic() - wait  # the whole wait was spent
-    fresh = engine._failed_go_fresh_eval_budget_s(cmd)  # type: ignore[arg-type]
+    fresh = engine._failed_go_fresh_eval_budget_s(cmd)
     assert fresh is not None
     assert wait + fresh < deadline_s
     # The fresh budget is a tenth of what is LEFT since `go` arrived, not of
     # the whole deadline: with half the clock gone it is at most 5 %.
     engine._go_received_at = time.monotonic() - 0.5 * deadline_s
-    fresh = engine._failed_go_fresh_eval_budget_s(cmd)  # type: ignore[arg-type]
+    fresh = engine._failed_go_fresh_eval_budget_s(cmd)
     assert fresh is not None
     assert fresh <= 0.05 * deadline_s + 1e-6
 
@@ -803,9 +809,9 @@ def test_failed_go_fresh_eval_is_bounded_by_this_gos_clock(monkeypatch, capsys) 
     engine, _worker = _failing_go_engine()
     seen: list[float | None] = []
 
-    def spy(_board, _searchmoves, budget_s):
+    def spy(board: chess.Board, searchmoves: tuple[str, ...], budget_s: float | None) -> None:
+        del board, searchmoves
         seen.append(budget_s)
-        return None
 
     monkeypatch.setattr(engine, "_bounded_fresh_eval", spy)
     engine.dispatch(CmdPosition(None, ("e2e4",)))
@@ -813,4 +819,5 @@ def test_failed_go_fresh_eval_is_bounded_by_this_gos_clock(monkeypatch, capsys) 
     _join_search(engine)
     assert len(_bestmoves(capsys.readouterr().out)) == 1
     (budget,) = seen
-    assert budget is not None and budget <= 0.009 + 1e-9  # not the fixed 150 ms
+    assert budget is not None
+    assert budget <= 0.009 + 1e-9  # not the fixed 150 ms
