@@ -154,8 +154,6 @@ def engine_fixture(enabled=False, parallel='pucv', devices=2):
     engine._rebuild_evaluator, engine._rebuild_multi_gpu_pucv_factories = observed_rebuild, factories
     engine._warmup_dirty = False
     engine._wait_for_search = lambda: None
-    engine._setoption_may_build = lambda _name: False  # no in-play recovery in this harness
-    engine._deferred_setoptions = []
     engine._reinstall_configured_search_path = lambda **kw: None
     engine._try_install_root_parallel_gumbel = lambda: None
     engine._SETOPTION_HANDLERS = {'usemultigpupucv': methods['Engine._set_use_multi_gpu_pucv']}

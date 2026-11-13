@@ -347,6 +347,7 @@ def test_failed_leaf_gather_keeps_the_previous_gather(make_engine, monkeypatch, 
 @pytest.mark.parametrize(("setter", "arg", "field"), [
     ("set_walker_gather", 4, "_walker_gather"),
     ("set_vloss_weight", 9, "_vloss_weight"),
+    ("set_num_threads", 3, "_n_walkers"),
     ("rebuild_puct_helpers", None, None),
 ])
 def test_worker_setters_build_before_they_swap(monkeypatch, setter, arg, field) -> None:

@@ -172,28 +172,35 @@ phase C tells us what the additional seven GPUs are worth.
   *before* `readyok`, so the GUI reports a failed engine start instead of
   playing a game on an unsearched fallback.
 - **A failed search never loses on time.** The move is answered from the
-  network's root policy, every such move prints `info string WARNING search
-  failed on N consecutive move(s)`, and after the first one a replacement
-  evaluator is built in the background (at most once per failure streak, at
-  most twice per process). It goes in at the next `go` only once fully built;
-  until then moves keep searching on the current evaluator, and `position` /
-  `go` never wait for it. Any non-zero count is worth a report.
-- **Unhealthy state.** A failed rebuild, a spent rebuild budget, or 3 fallback
-  moves in a row (including replies to a `go` that could not start a search)
-  print `info string WARNING engine unhealthy: ...`. The engine keeps answering
-  every `go`. Only at a game boundary -- `ucinewgame`, or an `isready` after it
-  and before that game's first `go` -- it reruns the strict startup warmup and
-  either prints `engine health check passed` or prints `engine health check
-  failed ...` (and `deepfin: engine health check failed` on stderr) and exits
-  non-zero *before* `readyok`, so the GUI restarts a fresh process for the next
-  game. A mid-game `isready` always answers `readyok` at once. A GUI that never
-  sends `ucinewgame` never reaches this exit after its first `go`.
-- **Options during a recovery build.** An option that builds an evaluator or a
-  pool (e.g. `MaxBatch`, `SearchWalkers`, `UseMultiGpuPUCV`, `CPuct` on a PUCT
-  path) arriving while a background rebuild is in flight is answered with
-  `info string setoption <name>: deferred ...` and applied at the next game
-  boundary; nothing waits and no two builds run at once. Other options apply
-  immediately.
+  network's root policy and every such move prints `info string WARNING search
+  failed on N consecutive move(s)`. Nothing is rebuilt during a game. Any
+  non-zero count is worth a report.
+- **Unhealthy state.** 3 fallback moves in a row (a failed search, a reply to a
+  `go` that could not start a search, or a reply while a stuck search still
+  holds the worker) print `info string WARNING engine unhealthy: ...` once. The
+  engine keeps answering every `go`. At the next game boundary -- `ucinewgame`,
+  or, for a GUI that never sends it, `position startpos` with no moves -- the
+  next `isready` (or the `ucinewgame` itself) announces `engine unhealthy (...):
+  rebuilding the evaluator and rerunning the strict startup check`, rebuilds the
+  evaluator synchronously (no clock is running), and reruns the strict startup
+  warmup. It then prints `engine health check passed`, or prints `engine health
+  check failed ...` (and `deepfin: engine health check failed` on stderr) and
+  exits non-zero *before* `readyok`, so the GUI restarts a fresh process for the
+  next game. A mid-game `isready` always answers `readyok` promptly and never
+  exits. A GUI that starts games from a FEN and never sends `ucinewgame` gets no
+  health check until restart (it still gets every move answered).
+- **Options mid-game.** A `setoption` that rebuilds an evaluator or a pool
+  (e.g. `MaxBatch`, `SearchWalkers`, `UseMultiGpuPUCV`) is applied at once,
+  synchronously, between moves; if the rebuild fails the previous settings and
+  evaluator stay. The next `isready` re-warms the search path before the clock.
+- **One bad GPU on a multi-GPU host.** There is no degrade-to-the-healthy-GPUs
+  path. If a multi-GPU pool cannot be (re)installed after a `setoption`, the
+  engine first restores the previous pool; if that also fails it falls back to
+  classic Gumbel on ONE GPU and says so in an info string. It stays on one GPU
+  until the process is restarted (or the GUI sends `UseMultiGpuPUCV` /
+  `SearchParallel` again): a game-boundary rebuild rebuilds what the options
+  name, which is then the single-GPU path. A pool that fails at startup fails
+  the strict startup check and the engine exits before `readyok`.
 - **A search that ignores `stop`.** After 1 s the engine answers that `go` from
   the fallback; the stuck search is parked and every later `go` answers at
   once (within a tenth of its clock) for the board the GUI sent, until the
