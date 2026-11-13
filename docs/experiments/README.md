@@ -10,7 +10,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
-- [2026-11-13: Core policy and resolved-outcome baseline](2026-11-13-core-outcome-policy-baseline.md) — scientific protocol frozen before collection, with separate per-stage execution admission; two conditional eight-generation legs target successive confirmed gains. Capacity and arena engineering establish no research gain.
+- [2026-11-13: Core policy and resolved-outcome baseline](2026-11-13-core-outcome-policy-baseline.md) — ongoing under the unchanged frozen protocol: G2 interim score 36.5234% versus original A39 (paired 95% interval 31.9793–41.0676%), a clear early regression after 1,024 updates; no promotion or G2 harm stop. Fixed minimum-G4/full-G8 rules continue.
 
 - [2026-11-13: Larger fresh-data outcome regime](2026-11-13-rl-larger-outcome-regime.md) — E4 completed: 192 games and 129 updates per arm; all three screens technically qualified, bundle contrast unresolved, neither arm donor-utility eligible. No confirmation or adoption; donor retained.
 

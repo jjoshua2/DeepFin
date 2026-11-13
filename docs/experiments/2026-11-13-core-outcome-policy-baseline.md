@@ -207,3 +207,70 @@ engineering receipts alone do not admit research:
 | `lc0-style-baseline-design-draft-v6/manifest.json` | `d92a3aec12aa649204a85e54e8c7065d8a0a83151f153e0b315b2d3af4bfdc93` |
 | `core-baseline-scientific-freeze-v1/protocol.json` | `dd16774a4cf1cd9f0765501d135355fcac82cb8be7ef09bb27a050d34dbeae49` |
 | `core-baseline-scientific-freeze-v1/binding-proof.json` | `15dc4298932e5bc3788ec91a6487698911832f73633a7dbf039d6253fee19b01` |
+
+
+## 2026-11-13 18:05 UTC — G2 interim readout; experiment ongoing
+
+**ONGOING: clear conditional early regression, no promotion or harm stop.** The
+first registered diagnostic compared the generation-2, step-1,024 checkpoint
+with immutable original A39. All 256 games / 128 color pairs qualified. The
+candidate scored **53 wins, 81 draws and 122 losses: 36.5234375%**, with paired
+normal approximate 95% bounds **[31.97931425985534%, 41.06756074014466%]**.
+The interval is below 50% under this fixed book and profile. This is not a full
+eight-generation verdict, a general recipe or mechanism verdict, or external
+Elo. No confirmation is eligible, and the champion remains unchanged.
+
+G1 and G2 together delivered all **512 planned games**, **51,332 audited eligible
+rows** (24,827 + 26,505), **1,024 updates** and **262,144 sampled training views**.
+These are training-window observations, not a fixed held-out strength ruler.
+Unweighted auxiliary loss metrics and label-availability fractions do not mean
+those objectives or SF/search value shares were active; the source-qualified
+recipe still has only policy and resolved-outcome WDL weights enabled.
+
+| Checkpoint / endpoint | Global updates | Audited rows accumulated | Result / readiness from first G1 owner |
+| --- | ---: | ---: | --- |
+| G1 final | 512 | 24,827 | checkpoint ready at 1,906.168774 s |
+| G2 final | 1,024 | 51,332 | checkpoint ready at 4,163.230231 s |
+| G2 diagnostic | 1,024 | 51,332 | score .365234375; CPU-verified evidence ready at 5,138.042137 s (85.6 min) |
+
+The diagnostic itself cost **788.936835 GPU-owner seconds** and **15.467622
+CPU-owner seconds**; these are stage wall times, not GPU-active time or the
+whole pipeline cost. The banked curve point separates checkpoint-ready and
+CPU-evidence-ready times. It does not turn training throughput or loss into a
+strength proxy.
+
+Runtime source remains L `090b5143315a0faef7ab0ac1a90e2d5cebf3b929`, with the
+pinned R7 owner source `ba9d6de1987902e1759d984532a4c63f091b9269`. The matched
+arena used Gumbel64 with noise on, the 175-input BF16/strict-TB profile, an
+observed 32-game pool and 1,024 uncapped leaf rows. The reader checked full
+history, legality, endings, counts and model custody; independent metadata and
+pair arithmetic review accepted the result. Neither numerical identity across
+GPU runs nor universal concurrency safety is implied.
+
+The frozen science `dd16774a…` is unchanged. G2 has no promotion or severe-harm
+stop rule. At this snapshot, fixed G3 collection was already live from the same
+step-1,024 private actor. Continue the predeclared minimum adaptation through
+local G4: only **G4 interval upper < .35** triggers the severe-harm stop, aside
+from correctness, nonfinite, control or resource failures. Otherwise retain the
+fixed G8 endpoint and conditional fresh confirmation. No endpoint, data,
+optimizer, recipe or actor selection changed in response to this interim result.
+Earlier E4 and donor results remain separate and unpooled; the long-term
+Rofchade/Stockfish/Lc0 milestones remain unachieved.
+
+The following external references are relative to the shared
+`rl-week-one-20261112-v1` operations artifact root. The trained candidate is
+`1ae760db745aebf9129f966b08310a32519e558e628c09c4d16fcb9f3b1b6371`;
+original A39 remains
+`a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0`.
+
+| Artifact | SHA256 |
+| --- | --- |
+| `core-baseline-research-g01-audit-results-v1/readout.json` | `f5a36590bf16efd3001db06d7f8c0048251c3bd893d5a13bb82a944e9923e7b9` |
+| `core-baseline-research-g02-audit-results-v1/readout.json` | `1bead1274fe918376cc540e9d353832ac25f8a8faf3121d2816116a0c0f06c6a` |
+| `core-baseline-research-g01-learner-results-v1/boundary.json` | `2c6670d4388e99514f6cdcd412576cdfc45263718747826cd3b2c84317482a8b` |
+| `core-baseline-research-g02-learner-results-v1/boundary.json` | `25bc02fa476324eabe540bc2d4aa586016aa1ef7e3100dd2806d30889637a693` |
+| `core-baseline-research-g01-delivery-review-v1/review.json` | `d2786886c8690663373e9da6d6743891797c91d45360017feda0a339461bc2a9` |
+| `core-baseline-research-arena-leg1-diagnostic-g2-readout-v1/readout.json` | `517cbe31a8ea4dfb60fc6160488845b2642272a54cd43c423ccff0b7b4f6d3cc` |
+| `core-baseline-research-arena-diagnostic-g2-independent-actual-review-v1/review.json` | `0a290c63fdba9170eb6687062bfff2d00bd60bd7e3651fe7335379c7c7d15658` |
+| `core-baseline-research-arena-bindings-v1/leg1-diagnostic-g2/root-readout-acceptance.json` | `ed5ccaf4bf6a66a8a51aa6517d4de350c8b12d63b1f689a6678e6ee415867cc1` |
+| `core-baseline-research-arena-bindings-v1/leg1-diagnostic-g2/curve-point.csv` | `04b1cada968c1f74cda25076f75984770a6c8e6c9c23cfd57dab67ae6a16adbb` |
