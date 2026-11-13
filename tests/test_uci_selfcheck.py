@@ -910,7 +910,7 @@ def test_setup_build_ext_records_only_rebuilt_extensions(
         os.utime(out, ns=(1_000_000_000, 1_000_000_000))
     rebuilt = "chess_anti_engine.mcts._mcts_tree"
 
-    def fake_run(self) -> None:
+    def fake_run(_self) -> None:
         outputs[rebuilt].write_bytes(b"new build")
 
     monkeypatch.setattr(setuptools_build_ext, "run", fake_run)
