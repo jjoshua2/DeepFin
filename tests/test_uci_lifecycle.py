@@ -215,7 +215,13 @@ def test_ponder_transition_does_not_start_real_search_when_cancelled_or_expired(
     bestmoves = [line.split()[1] for line in output.splitlines() if line.startswith("bestmove ")]
     assert len(bestmoves) == 1
     assert chess.Move.from_uci(bestmoves[0]) in real_board.legal_moves
-    assert "ponder_transition_" in output
+    if reason == "stop":
+        # The 5 ms join parks the search and the fallback answers the go; the
+        # orphan's later transition line would land after that answer, so it
+        # is silenced (a parked search prints nothing).
+        assert "ponder_transition_" not in output
+    else:
+        assert "ponder_transition_" in output
 
 
 def test_stop_during_root_advance_survives_phase_event_replacement(monkeypatch):
