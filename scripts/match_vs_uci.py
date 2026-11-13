@@ -969,12 +969,25 @@ class MatchResume:
     truncated_tail: bool
 
 
+_OPENING_IDENTITY_KEYS = ("opening_history_version", "opening_panel_sha256")
+
+
 def load_match_resume(
     path: Path, *, settings: Mapping[str, Any], openings: Sequence[chess.Board],
 ) -> MatchResume:
     """Reload finished games, refusing anything that is not the same match."""
     log = read_game_log(path)
     diffs = fingerprint_differences(log.settings, settings)
+    missing_identity = [k for k in _OPENING_IDENTITY_KEYS if k not in log.settings]
+    if diffs and missing_identity:
+        # Still refused; "re-run without the changes" is impossible here.
+        raise SystemExit(
+            f"--resume: {path} predates opening-history identity (no "
+            f"{', '.join(missing_identity)} in its settings), so it cannot prove "
+            f"which opening history its games were played from:\n"
+            + "\n".join(diffs)
+            + "\n  This log cannot be continued; restart the match in a new log."
+        )
     if diffs:
         raise SystemExit(refuse_settings_mismatch_message(
             path, differences=diffs, resume_flag="--resume",
