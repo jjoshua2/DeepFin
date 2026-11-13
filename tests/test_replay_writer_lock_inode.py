@@ -197,20 +197,33 @@ def test_real_lock_swapped_between_open_and_flock_is_refused(
     shards.mkdir()
     lock = shards / ".writer.lock"
     real_flock = disk.fcntl.flock
-    swapped: list[bool] = []
+    real_close = disk.os.close
+    swapped: list[int] = []
+    unlocked: list[int] = []
+    closed: list[int] = []
 
     def swap_then_flock(fd: int, operation: int) -> None:
         if operation & disk.fcntl.LOCK_EX and not swapped:
-            swapped.append(True)
+            swapped.append(fd)
             lock.unlink()
             lock.write_text("")  # a fresh regular file under the same name
+        if operation == disk.fcntl.LOCK_UN:
+            unlocked.append(fd)
         real_flock(fd, operation)
 
+    def close_spy(fd: int) -> None:
+        closed.append(fd)
+        real_close(fd)
+
     monkeypatch.setattr(disk.fcntl, "flock", swap_then_flock)
+    monkeypatch.setattr(disk.os, "close", close_spy)
     owner = _real_owner(shards)
     with pytest.raises(RuntimeError, match="replaced while being claimed"):
         disk.DiskReplayBuffer._claim_writer(owner)
-    assert swapped == [True]
+    assert len(swapped) == 1
+    # The refused claim releases what it took: unlock, then close, that fd.
+    assert unlocked == swapped
+    assert closed == swapped
     assert owner._writer_lock_fd is None
     assert lock.read_text() == ""  # nothing stamped into the new file
     monkeypatch.undo()

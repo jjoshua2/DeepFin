@@ -556,10 +556,12 @@ def _move_back(rec: dict[str, Any], shard_dir: Path, quar_dir: Path) -> str:
         return "skip"
 
     link_text = rec.get("link_text")
+    legacy_link = False
     if link_text is None and src.is_symlink() and not src.exists():
         # Old journal: the relative link text was moved verbatim and dangles
         # here. It was written for the window, so resolve it there.
         link_text = os.readlink(src)
+        legacy_link = True
         if not _link_target(link_text, shard_dir).exists():
             return (f"REFUSE: {src} is a dangling link {link_text!r} from a journal "
                     f"without link_text, and it does not resolve from {shard_dir} "
@@ -571,6 +573,16 @@ def _move_back(rec: dict[str, Any], shard_dir: Path, quar_dir: Path) -> str:
         if not src.is_symlink():
             return f"REFUSE: {src} should be the quarantined link and is not"
         target = _link_target(link_text, shard_dir)
+        if not legacy_link:
+            # The journal's text is only trusted when it lands exactly where the
+            # link apply quarantined points. Checked BEFORE anything is hashed,
+            # so an edited journal can neither plant another path in the window
+            # nor make restore read one.
+            quarantined = _link_target(os.readlink(src), quar_dir)
+            if target != quarantined:
+                return (f"REFUSE: journal link_text {link_text!r} for {dest.name} "
+                        f"resolves to {target}, but the quarantined link points at "
+                        f"{quarantined}; the journal does not describe this entry.")
         if not target.exists():
             return (f"REFUSE: link {link_text!r} for {dest.name} would dangle: "
                     f"{target} is missing")

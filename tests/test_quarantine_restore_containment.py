@@ -1,6 +1,7 @@
 """Restore uses only synthetic directories; mutation spies guard refusals."""
 import json
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -247,3 +248,88 @@ def test_direct_move_refuses_unchecked_names(tmp_path: Path, monkeypatch: pytest
     calls = forbid_mutations(monkeypatch)
     assert qds._move_back({"name": "../victim"}, tmp_path, tmp_path).startswith("REFUSE")
     assert calls == []
+
+
+def _linked_quarantine(tmp_path: Path) -> tuple[Path, Path, list[dict[str, Any]]]:
+    window = _window(tmp_path, linked=True)
+    quar = tmp_path / "elsewhere" / "quarantine"
+    assert _apply(window, quar) == 0
+    return window, quar, json.loads((quar / qds.MANIFEST_NAME).read_text())["shards"]
+
+
+def test_a_linked_target_changed_after_apply_refuses_restore(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """MUTATION: skip the target digest check -- the changed shard is linked back."""
+    window, quar, records = _linked_quarantine(tmp_path)
+    target = Path(records[0]["original_path"])
+    victim = next(p for p in sorted(target.rglob("*")) if p.is_file())
+    data = bytearray(victim.read_bytes())
+    data[-1] ^= 0xFF
+    victim.write_bytes(bytes(data))
+    assert qds.do_restore(window, quar) == 2
+    assert "digest" in capsys.readouterr().out
+    assert not (window / records[0]["name"]).is_symlink()
+
+
+@pytest.mark.parametrize("edit", ["other_shard", "absolute", "escaping"])
+def test_an_edited_link_text_is_refused_before_anything_is_hashed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str], edit: str,
+) -> None:
+    """The journal's text must land where the quarantined link points.
+
+    With sha256 absent nothing else would catch an edited ``link_text``: it
+    would plant another shard (or any path) in the window, or hash ``/etc``.
+    MUTATION: drop the tie check -- ``other_shard`` is planted and the others
+    get hashed.
+    """
+    window, quar, records = _linked_quarantine(tmp_path)
+    man = json.loads((quar / qds.MANIFEST_NAME).read_text())
+    other = sorted(Path(r["original_path"]) for r in records)[-1]
+    text = {
+        "other_shard": os.path.relpath(other, window),
+        "absolute": str(tmp_path / "data"),
+        "escaping": "../../../data",
+    }[edit]
+    for rec in man["shards"]:
+        rec.pop("sha256", None)
+    man["shards"][0]["link_text"] = text
+    (quar / qds.MANIFEST_NAME).write_text(json.dumps(man))
+    first = man["shards"][0]["name"]
+    hashed: list[Path] = []
+    real_digest = qds.digest
+    monkeypatch.setattr(qds, "digest", lambda p: hashed.append(Path(p)) or real_digest(p))
+    assert qds.do_restore(window, quar) == 2
+    out = capsys.readouterr().out
+    assert "the journal does not describe this entry" in out
+    assert not (window / first).is_symlink()
+    tampered = qds._link_target(text, window)
+    assert all(qds._link_target(str(h), window) != tampered for h in hashed)
+
+
+def test_a_dangling_link_already_at_the_destination_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """MUTATION: drop the dangling-destination refusal -- os.symlink raises over it."""
+    window, quar, records = _linked_quarantine(tmp_path)
+    os.symlink("../nowhere/" + records[0]["name"], window / records[0]["name"])
+    assert qds.do_restore(window, quar) == 2
+    assert "dangling link" in capsys.readouterr().out
+    assert (quar / records[0]["name"]).is_symlink(), "the quarantined entry must survive"
+
+
+def test_a_quarantined_entry_that_is_not_a_link_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The journal says link; the entry is a real directory -- refuse, move nothing."""
+    window, quar, records = _linked_quarantine(tmp_path)
+    entry = quar / records[0]["name"]
+    target = Path(records[0]["original_path"])
+    entry.unlink()
+    shutil.copytree(target, entry)
+    assert qds.do_restore(window, quar) == 2
+    assert "should be the quarantined link" in capsys.readouterr().out
+    assert entry.is_dir()
+    assert not entry.is_symlink()
+    assert not (window / records[0]["name"]).exists()
