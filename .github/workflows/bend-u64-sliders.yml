@@ -2,6 +2,7 @@ name: Bend U64 sliders
 
 on:
   pull_request:
+    branches: [bend]
     paths:
       - "native/bend_engine/bitboard_probe/**"
       - "tests/test_bend_u64_report.py"

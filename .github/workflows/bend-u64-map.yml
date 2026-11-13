@@ -1,6 +1,7 @@
 name: Bend numeric map
 on:
   pull_request:
+    branches: [bend]
     paths:
       - '.github/workflows/bend-u64-map.yml'
       - 'native/bend_engine/u64_map_probe/**'
@@ -16,7 +17,7 @@ on:
       - 'pyproject.toml'
       - 'uv.lock'
   push:
-    branches: [main]
+    branches: [bend]
     paths:
       - '.github/workflows/bend-u64-map.yml'
       - 'native/bend_engine/u64_map_probe/**'

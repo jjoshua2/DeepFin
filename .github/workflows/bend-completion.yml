@@ -1,6 +1,7 @@
 name: Bend completion regression
 on:
   pull_request:
+    branches: [bend]
     paths:
       - '.github/workflows/bend-completion.yml'
       - 'native/bend_engine/**'
@@ -13,7 +14,7 @@ on:
       - '.python-version'
       - 'scripts/lint.sh'
   push:
-    branches: [main]
+    branches: [bend]
     paths:
       - '.github/workflows/bend-completion.yml'
       - 'native/bend_engine/**'

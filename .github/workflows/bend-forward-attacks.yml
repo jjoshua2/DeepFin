@@ -1,6 +1,7 @@
 name: Bend forward attacks
 on:
   pull_request:
+    branches: [bend]
     paths:
       - '.github/workflows/bend-forward-attacks.yml'
       - 'native/bend_engine/standalone/proofs/**'

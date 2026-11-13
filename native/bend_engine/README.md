@@ -11,6 +11,47 @@ Python/C extension.
 
 Nothing here is on a production UCI, selfplay, training, or inference path.
 
+## Branch workflow: Bend lives on `bend`
+
+Since 2026-11-13 the Bend track is not on `main`. It continues on this
+long-lived `bend` branch of the same repository, which carries all of `main`
+plus Bend, until it is ready for its own repository. Tag `pre-slim-20261113` is
+the last `main` that still carried Bend.
+
+- **New work:** branch from `origin/bend` and open the PR against `bend`. The
+  `bend-*` workflows trigger on pull requests targeting `bend` and on pushes to
+  `bend` (each still limited by its path filter); they do not run for `main`.
+- **Staying current with main:** merge `main` into `bend` periodically with
+  `scripts/sync_bend_with_main.sh` from a clean checkout of `bend`, review the
+  result, then push it (directly, or as a PR into `bend`):
+
+  ```sh
+  git fetch origin
+  git switch bend && git merge --ff-only origin/bend
+  scripts/sync_bend_with_main.sh            # merges origin/main
+  git push origin bend
+  ```
+
+- **Why not a plain `git merge origin/main`:** on `main` the Bend files were
+  deleted, so a plain merge deletes every Bend file that `bend` has not changed
+  since the merge base. It does that silently, with no conflict. Bend files that
+  `bend` did change show up as modify/delete conflicts ("deleted by them"). In
+  both cases the resolution is the same: keep Bend's copy. The script merges
+  without committing, restores every path listed in
+  [`branch_paths.txt`](branch_paths.txt) from the pre-merge `bend` commit (this
+  also resolves those conflicts), lists any other file the merge deletes, and
+  commits only when no conflict is left. It exits 2 if a conflict outside the
+  Bend paths remains; resolve that one by hand and `git commit --no-edit`.
+  Once a merge that includes the removal from `main` is committed, later
+  merges no longer try to delete Bend files, but keep using the script: it is
+  a no-op on the Bend paths then.
+- **Adding Bend files outside `native/bend_engine/`:** add the path or glob to
+  `branch_paths.txt`, or the next sync will not protect it.
+- **Known side effect of the first sync:** `main` removed the Bend records' lines
+  from `docs/experiments/README.md`, and that edit merges into `bend` like any
+  other. The records themselves stay; re-add the index lines on `bend` if they
+  are wanted.
+
 ## Bend toolchain
 
 CI reads `https://bend-lang.com/dl/latest.json` for the current version and

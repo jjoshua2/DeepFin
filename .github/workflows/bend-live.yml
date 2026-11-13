@@ -1,6 +1,7 @@
 name: Bend live-root regression
 on:
   pull_request:
+    branches: [bend]
     paths:
       - '.github/workflows/bend-live.yml'
       - 'native/bend_engine/**/*.bend'
@@ -17,7 +18,7 @@ on:
       - 'uv.lock'
       - '.python-version'
   push:
-    branches: [main]
+    branches: [bend]
     paths:
       - '.github/workflows/bend-live.yml'
       - 'native/bend_engine/**/*.bend'

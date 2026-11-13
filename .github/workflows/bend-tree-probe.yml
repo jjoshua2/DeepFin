@@ -2,6 +2,7 @@ name: Bend MCTS tree probe
 
 on:
   pull_request:
+    branches: [bend]
     paths:
       - "native/bend_engine/tree_probe/**"
       - "native/bend_engine/install_bend.sh"

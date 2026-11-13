@@ -2,6 +2,7 @@ name: Bend chess probe
 
 on:
   pull_request:
+    branches: [bend]
     paths:
       - "native/bend_engine/**"
       - "tests/test_bend_chess_probe.py"
