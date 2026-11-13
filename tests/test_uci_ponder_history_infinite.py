@@ -164,9 +164,9 @@ def test_ponder_transition_controls_preserve_history_without_dispatch(
     fallback_boards: list[chess.Board] = []
     original = engine._bestmove_fallback
 
-    def fallback(board: chess.Board, moves: tuple[str, ...] = ()) -> tuple[str, str]:
+    def fallback(board: chess.Board, moves: tuple[str, ...] = (), **kw) -> tuple[str, str]:
         fallback_boards.append(board.copy(stack=True))
-        return original(board, moves)
+        return original(board, moves, **kw)
 
     monkeypatch.setattr(engine, '_bestmove_fallback', fallback)
     try:

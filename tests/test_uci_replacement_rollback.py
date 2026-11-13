@@ -55,7 +55,9 @@ def _expected_path(options: EngineOptions) -> str:
         return "rpg"
     if options.use_multi_gpu_pucv:
         return "pucv_pool"
-    return "walker" if options.threads > 1 else "gumbel"
+    if options.threads > 1:
+        return "walker"
+    return "pucv" if options.use_vl else "gumbel"
 
 
 def _assert_searches_and_reports_truthfully(engine: Engine, capsys) -> str:
@@ -249,3 +251,203 @@ def test_unrestorable_pool_falls_back_to_a_consistent_single_evaluator_path(make
     assert engine._options.search_parallel == "pucv"
     assert _assert_searches_and_reports_truthfully(engine, capsys) == "gumbel"
 
+
+
+# --- PUCT-family / VLossWeight / UseVL / LeafGather routes (round 3) ----------
+#
+# These rebuilt the walker pool / PucvChunker close-then-build, and wrote the new
+# value into worker state (`_cfg`, `_use_pucv`, `_vloss_weight`) BEFORE the build,
+# outside the `EngineOptions` snapshot: a failed `setoption CPuct 2.5` left options
+# at 1.75, the worker config at 2.5 and the walker pool CLOSED.
+
+
+def _search_engine(*, walkers: int, use_vl: bool = False) -> Engine:
+    engine = _engine(walkers=walkers, multi=False)
+    if use_vl:
+        engine.dispatch(parse_command("setoption name UseVL value true"))
+        assert engine._worker.realized_search_path() == "pucv"
+    return engine
+
+
+@pytest.mark.parametrize(("option", "field", "value"), [
+    ("CPuct", "c_puct", "2.5"),
+    ("CPuctFactor", "cpuct_factor", "1.0"),
+    ("CPuctBase", "cpuct_base", "20000"),
+    ("FpuReduction", "fpu_reduction", "0.7"),
+])
+@pytest.mark.parametrize(("walkers", "use_vl", "builder"), [
+    (2, False, "_build_walker_pool"),
+    (1, True, "_build_pucv"),
+])
+def test_failed_puct_family_rebuild_keeps_options_worker_config_and_helpers(
+    make_engine, monkeypatch, capsys, option, field, value, walkers, use_vl, builder,
+) -> None:
+    engine = make_engine(walkers=walkers, multi=False)
+    if use_vl:
+        engine.dispatch(parse_command("setoption name UseVL value true"))
+    worker = engine._worker
+    path = worker.realized_search_path()
+    pool, pucv = worker._walker_pool, worker._pucv
+    before_opt = engine._options.search_value(field)
+    before_cfg = getattr(worker._cfg, field)
+    calls = _fail(monkeypatch, builder)
+    capsys.readouterr()
+    engine.dispatch(parse_command(f"setoption name {option} value {value}"))
+    assert calls[0] >= 1
+    assert engine._options.search_value(field) == before_opt
+    assert getattr(worker._cfg, field) == before_cfg  # worker state rolled back too
+    # The live descent object (whatever the rollback left installed) carries the
+    # restored value, and nothing installed is closed.
+    assert worker._puct_descent_values()[field] == pytest.approx(before_cfg)
+    assert (worker._walker_pool is None) == (pool is None)
+    assert (worker._pucv is None) == (pucv is None)
+    if worker._walker_pool is not None:
+        assert not worker._walker_pool.closed
+    assert f"previous configuration kept: path={path}" in capsys.readouterr().out
+    assert _assert_searches_and_reports_truthfully(engine, capsys) == path
+
+
+def test_failed_vloss_weight_rebuild_keeps_the_live_walker_pool(make_engine, monkeypatch, capsys) -> None:
+    engine = make_engine(walkers=2, multi=False)
+    pool = engine._worker._walker_pool
+    before = engine._worker._vloss_weight
+    _fail(monkeypatch, "_build_walker_pool")
+    engine.dispatch(parse_command(f"setoption name VLossWeight value {before + 3}"))
+    assert engine._worker._vloss_weight == before
+    assert engine._worker._walker_pool is pool
+    assert not pool.closed
+    assert _assert_searches_and_reports_truthfully(engine, capsys) == "walker"
+
+
+def test_failed_use_vl_does_not_leave_the_pucv_flags_set(make_engine, monkeypatch, capsys) -> None:
+    """Before: `_use_pucv` stayed True, the rollback rebuilt PUCV, and the game
+    was searched with untuned PUCT while options said UseVL=false."""
+    engine = make_engine(walkers=1, multi=False)
+    _fail(monkeypatch, "_build_pucv")
+    engine.dispatch(parse_command("setoption name UseVL value true"))
+    assert engine._options.use_vl is False
+    assert engine._worker._use_pucv is False
+    assert "previous configuration kept: path=gumbel" in capsys.readouterr().out
+    assert _assert_searches_and_reports_truthfully(engine, capsys) == "gumbel"
+
+
+def test_failed_leaf_gather_keeps_the_previous_gather(make_engine, monkeypatch, capsys) -> None:
+    engine = make_engine(walkers=2, multi=False)
+    gather = engine._worker._walker_gather
+    pool = engine._worker._walker_pool
+    _fail(monkeypatch, "_build_walker_pool")
+    engine.dispatch(parse_command("setoption name LeafGather value 4"))
+    assert engine._options.leaf_gather == 1
+    assert engine._worker._walker_gather == gather
+    assert engine._worker._walker_pool is pool
+    assert _assert_searches_and_reports_truthfully(engine, capsys) == "walker"
+
+
+@pytest.mark.parametrize(("setter", "arg", "field"), [
+    ("set_walker_gather", 4, "_walker_gather"),
+    ("set_vloss_weight", 9, "_vloss_weight"),
+    ("rebuild_puct_helpers", None, None),
+])
+def test_worker_setters_build_before_they_swap(monkeypatch, setter, arg, field) -> None:
+    """Setter level, so the transaction's own restore cannot mask a setter that
+    forgets to revert (the reviewer's surviving `set_walker_gather` mutant)."""
+    engine = _engine(walkers=2, multi=False)
+    try:
+        worker = engine._worker
+        pool = worker._walker_pool
+        assert pool is not None
+        before = getattr(worker, field) if field else None
+        _fail(monkeypatch, "_build_walker_pool")
+        with pytest.raises(MemoryError):
+            getattr(worker, setter)(*(() if arg is None else (arg,)))
+        assert worker._walker_pool is pool
+        assert not pool.closed
+        if field:
+            assert getattr(worker, field) == before
+    finally:
+        engine.close()
+
+
+def test_a_closed_walker_pool_counts_as_missing(make_engine) -> None:
+    engine = make_engine(walkers=2, multi=False)
+    worker = engine._worker
+    assert worker.classic_helpers_missing() is False
+    pool = worker._walker_pool
+    assert pool is not None
+    pool.close()
+    assert worker.classic_helpers_missing() is True
+
+
+def test_a_setoption_that_leaves_options_and_path_disagreeing_falls_back(make_engine, monkeypatch, capsys) -> None:
+    """Invariant on SUCCESS too: a handler that 'succeeds' while the realized
+    path differs from what the options name lands on the last resort, loudly."""
+    engine = make_engine(walkers=1, multi=False)
+
+    def desync(self, _value):
+        self._worker.set_use_pucv(True)  # path changes, options do not
+
+    monkeypatch.setitem(Engine._SETOPTION_HANDLERS, "usevl", desync)
+    engine.dispatch(parse_command("setoption name UseVL value true"))
+    out = capsys.readouterr().out
+    assert "realized path=pucv but the options name gumbel" in out
+    assert "fell back to the single-evaluator classic Gumbel path" in out
+    assert engine._worker.realized_search_path() == "gumbel"
+    assert engine._options.use_vl is False
+    assert _assert_searches_and_reports_truthfully(engine, capsys) == "gumbel"
+
+
+def test_rollback_after_a_completed_helper_swap_rebuilds_from_restored_state(
+    make_engine, monkeypatch, capsys,
+) -> None:
+    """VLossWeight rebuilt the walker pool (new weight baked in), THEN a later
+    step raised: restoring the worker field alone would leave the live pool on
+    the failed value. The transaction rebuilds helpers from the restored state."""
+    engine = make_engine(walkers=2, multi=False)
+    before = engine._worker._vloss_weight
+
+    def boom(*_a, **_kw):
+        raise MemoryError("injected after the helper swap")
+
+    monkeypatch.setattr(engine, "_reinstall_configured_search_path", boom)
+    engine.dispatch(parse_command(f"setoption name VLossWeight value {before + 5}"))
+    worker = engine._worker
+    assert worker._vloss_weight == before
+    pool = worker._walker_pool
+    assert pool is not None
+    assert pool._cfg.vloss_weight == before  # the LIVE pool, not just the field
+    assert "previous configuration kept: path=walker" in capsys.readouterr().out
+    assert _assert_searches_and_reports_truthfully(engine, capsys) == "walker"
+
+
+def test_set_use_pucv_sets_its_flags_only_after_the_build(monkeypatch) -> None:
+    engine = _engine(walkers=1, multi=False)
+    try:
+        worker = engine._worker
+        _fail(monkeypatch, "_build_pucv")
+        with pytest.raises(MemoryError):
+            worker.set_use_pucv(True, gather=7)
+        assert worker._use_pucv is False
+        assert worker._pucv is None
+        assert worker._pucv_gather != 7
+    finally:
+        engine.close()
+
+
+def test_a_rollback_that_leaves_the_wrong_path_falls_back_loudly(make_engine, monkeypatch, capsys) -> None:
+    """The invariant also gates the ROLLBACK: a restore that 'succeeds' while
+    the realized path still disagrees with the options is not 'kept'."""
+    engine = make_engine(walkers=1, multi=False)
+
+    def desync_then_fail(self, _value):
+        self._worker.set_use_pucv(True)
+        raise MemoryError("injected after the path changed")
+
+    monkeypatch.setitem(Engine._SETOPTION_HANDLERS, "usevl", desync_then_fail)
+    monkeypatch.setattr(engine, "_ensure_configured_path_installed", lambda **_kw: None)
+    engine.dispatch(parse_command("setoption name UseVL value true"))
+    out = capsys.readouterr().out
+    assert "previous configuration could not be restored" in out
+    assert "realized path=pucv but the options name gumbel" in out
+    assert "previous configuration kept" not in out
+    assert engine._worker.realized_search_path() == "gumbel"
+    assert _assert_searches_and_reports_truthfully(engine, capsys) == "gumbel"

@@ -851,9 +851,14 @@ class SearchWorker:
         mode = 1 if int(mode) == 1 else 0
         if mode == self._pucv_vloss_mode:
             return
+        previous = self._pucv_vloss_mode
         self._pucv_vloss_mode = mode
         if self._pucv is not None:
-            self._pucv = self._build_pucv()
+            try:
+                self._pucv = self._build_pucv()
+            except BaseException:
+                self._pucv_vloss_mode = previous  # old chunker untouched and live
+                raise
         if self._pucv_pool is not None:
             self._pucv_pool._cfg.vloss_mode = mode
         if self._rpg_pool is not None:
@@ -876,20 +881,30 @@ class SearchWorker:
         """
         enabled = bool(enabled)
         previous_gather = self._pucv_gather
-        if gather is not None:
-            self._pucv_gather = max(1, int(gather))
+        new_gather = previous_gather if gather is None else max(1, int(gather))
         if self._rpg_pool is not None or self._pucv_pool is not None:
+            self._pucv_gather = new_gather
             self._use_pucv = enabled
             self._pucv = None
             return
         if (
             enabled == self._use_pucv
-            and self._pucv is not None
-            and previous_gather == self._pucv_gather
+            and (self._pucv is not None) == enabled
+            and previous_gather == new_gather
         ):
+            # Disabling with a chunker still installed is NOT a no-op: the
+            # last-resort fallback relies on this clearing a stray `_pucv`.
             return
+        # Build first, flags after: a failed build must not leave `_use_pucv`
+        # set, or a later rollback rebuilds the PUCV path the options say is off.
+        self._pucv_gather = new_gather
+        try:
+            new_pucv = self._build_pucv() if enabled else None
+        except BaseException:
+            self._pucv_gather = previous_gather
+            raise
         self._use_pucv = enabled
-        self._pucv = self._build_pucv() if enabled else None
+        self._pucv = new_pucv
         self.reset_tree()
 
     def _build_pucv(self) -> PucvChunker | None:
@@ -932,6 +947,67 @@ class SearchWorker:
   # re-reads the request is not evidence about the search. `_puct_descent_values`
   # below closes that; everything it does not cover is `self._cfg`, and that IS
   # the live source for those fields (see the docstring).
+
+    # Worker-side search state a setoption can change. `Engine.dispatch`
+    # snapshots it with `EngineOptions` so a failed setoption restores BOTH
+    # (e.g. `set_gumbel_field` writes `_cfg.c_puct` before the helper rebuild
+    # that can fail). The evaluator, pools and tablebase are not here: they
+    # have their own build-then-swap ownership.
+    _SEARCH_STATE_FIELDS: tuple[str, ...] = (
+        "_n_walkers", "_walker_gather", "_use_pucv", "_pucv_gather",
+        "_vloss_weight", "_eval_cache_entries", "_root_noise_scale",
+        "_chunk_sims", "_pucv_vloss_mode", "_minibatch_size",
+        "_batch_margin_sigmas", "_multi_pv", "_show_wdl", "_max_tree_bytes",
+    )
+
+    def search_state(self) -> tuple[dict[str, object], object]:
+        """A restorable copy of the worker-side search state."""
+        fields_ = {name: getattr(self, name) for name in self._SEARCH_STATE_FIELDS
+                   if hasattr(self, name)}
+        return fields_, dataclasses.replace(self._cfg)
+
+    def restore_search_state(self, state: tuple[dict[str, object], object]) -> bool:
+        """Put ``search_state()`` back; True if anything had changed.
+
+        `_cfg` is restored field by field INTO the live object: the RPG pool
+        reads it by reference, so replacing the object would detach it.
+        """
+        fields_, cfg = state
+        changed = False
+        for name, value in fields_.items():
+            if getattr(self, name) != value:
+                setattr(self, name, value)
+                changed = True
+        for f in dataclasses.fields(cfg):  # pyright: ignore[reportArgumentType]
+            value = getattr(cfg, f.name)
+            if getattr(self._cfg, f.name) != value:
+                setattr(self._cfg, f.name, value)
+                changed = True
+        tree = self._tree
+        if changed and tree is not None:
+            tree.set_cpuct_scaling(
+                float(getattr(self._cfg, "cpuct_factor", 0.0) or 0.0),
+                float(getattr(self._cfg, "cpuct_base", 38739.0) or 38739.0),
+            )
+        return changed
+
+    def classic_helpers_missing(self) -> bool:
+        """The classic path the state names is not (or no longer) installed.
+
+        A CLOSED walker pool counts as missing: `realized_search_path()` would
+        report "walker" while every run raises "WalkerPool is closed".
+        """
+        pool = self._walker_pool
+        if self._n_walkers > 1:
+            return pool is None or pool.closed
+        if pool is not None:
+            return True  # a pool beside a single-walker state
+        return self._use_pucv and self._pucv is None and self._build_pucv_supported()
+
+    def _build_pucv_supported(self) -> bool:
+        ev = self._evaluator
+        return (self._n_walkers == 1 and hasattr(ev, "evaluate_inplace_async")
+                and getattr(ev, "n_slots", 1) >= 2)
 
     def realized_search_path(self) -> str:
         """Which search path a `run()` right now would actually dispatch to.
@@ -1082,11 +1158,30 @@ class SearchWorker:
         MinibatchSize); a rebuilt chunker reallocates the same shapes against
         the same evaluator, so the captured graph stays valid.
         """
-        if self._walker_pool is not None:
-            self._walker_pool.close()
-            self._walker_pool = self._build_walker_pool(self._n_walkers)
+        self._rebuild_classic_helpers()
+
+    def _rebuild_classic_helpers(self) -> None:
+        """Rebuild the installed walker pool / PucvChunker from current state.
+
+        BUILD, THEN SWAP: both replacements are constructed before either old
+        helper is retired, so a raise leaves the old (live, unclosed) helpers in
+        place and the caller reverts the field it changed. Closing first used to
+        leave `_walker_pool` pointing at a CLOSED pool after a failed build, and
+        every later move was a fallback.
+        """
+        new_pool = (
+            self._build_walker_pool(self._n_walkers) if self._walker_pool is not None else None
+        )
+        try:
+            new_pucv = self._build_pucv() if self._pucv is not None else None
+        except BaseException:
+            if new_pool is not None:
+                new_pool.close()
+            raise
+        if new_pool is not None:
+            self._swap_walker_pool(new_pool)
         if self._pucv is not None:
-            self._pucv = self._build_pucv()
+            self._pucv = new_pucv
 
     def set_root_noise_scale(self, scale: float) -> None:
         """Root Gumbel-noise strength for match play. 0 = deterministic.
@@ -1118,12 +1213,13 @@ class SearchWorker:
         n = max(0, int(n))
         if n == self._vloss_weight:
             return
+        previous = self._vloss_weight
         self._vloss_weight = n
-        if self._walker_pool is not None:
-            self._walker_pool.close()
-            self._walker_pool = self._build_walker_pool(self._n_walkers)
-        if self._pucv is not None:
-            self._pucv = self._build_pucv()
+        try:
+            self._rebuild_classic_helpers()
+        except BaseException:
+            self._vloss_weight = previous  # old helpers untouched and live
+            raise
         self.reset_tree()
 
     def set_eval_cache_entries(self, n: int) -> None:
@@ -1136,9 +1232,14 @@ class SearchWorker:
         n = max(0, int(n))
         if n == self._eval_cache_entries:
             return
+        previous = self._eval_cache_entries
         self._eval_cache_entries = n
         if self._pucv is not None:
-            self._pucv = self._build_pucv()
+            try:
+                self._pucv = self._build_pucv()
+            except BaseException:
+                self._eval_cache_entries = previous
+                raise
 
     def set_minibatch_size(self, n: int) -> None:
         """Set the minibatch accumulation target for the C gumbel state

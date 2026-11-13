@@ -17,6 +17,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -26,7 +27,7 @@ import pytest
 
 from chess_anti_engine.mcts.search_options import OPTIONS_BY_NAME
 from chess_anti_engine.uci import engine as engine_mod
-from chess_anti_engine.uci.engine import Engine, EngineOptions, emit_handshake
+from chess_anti_engine.uci.engine import Engine, EngineOptions, SearchNotQuiescent, emit_handshake
 from chess_anti_engine.uci.protocol import (
     CmdGo,
     CmdIsReady,
@@ -602,14 +603,121 @@ def test_go_rejected_as_not_quiescent_is_still_answered_exactly_once(monkeypatch
     assert len(moves) == 1
     assert chess.Move.from_uci(moves[0]) in board.legal_moves
     worker.fresh_root_policy_bestmove.assert_not_called()  # busy evaluator untouched
-    # The stuck search still owns the worker: mutation stays refused...
-    engine.dispatch(CmdPosition(None, ("d2d4",)))
-    assert "command rejected (CmdPosition)" in capsys.readouterr().out
+    # `position` is never rejected while the stuck search owns the worker, and
+    # the next go answers for THAT board at once (no 30 s join per command).
+    engine.dispatch(CmdPosition(None, ("d2d4", "g8f6", "c2c4")))
+    assert "rejected (CmdPosition)" not in capsys.readouterr().out
+    t0 = time.monotonic()
+    engine.dispatch(CmdGo(GoArgs(nodes=64)))
+    _join_search(engine)
+    assert time.monotonic() - t0 < 2.0
+    (move,) = _bestmoves(capsys.readouterr().out)
+    latest = chess.Board()
+    for mv in ("d2d4", "g8f6", "c2c4"):
+        latest.push_uci(mv)
+    assert chess.Move.from_uci(move) in latest.legal_moves
     release.set()
     assert held is not None
     held.join(5)
-    # ...and its late result is not a second answer.
+    # ...and its late result is not another answer.
     assert _bestmoves(capsys.readouterr().out) == []
-    engine.dispatch(CmdPosition(None, ("d2d4",)))  # orphan drained: accepted
-    assert engine._board.peek().uci() == "d2d4"
+    assert engine.worker_is_free()  # the finished orphan no longer counts
     assert engine._orphan_threads == []
+
+
+# --- orphans, worker_is_free, bounded fresh eval (round 3) --------------------
+
+
+def _held_worker(release: threading.Event, entered: threading.Event) -> MagicMock:
+    worker = MagicMock()
+    worker.advance_root.return_value = True
+    worker.root_policy_bestmove.return_value = None
+    worker.realized_search_path.return_value = "gumbel"
+
+    def run(board, **_kw):
+        entered.set()
+        assert release.wait(10)
+        return SearchResult(next(iter(board.legal_moves)).uci(), None, 1, (), 0)
+
+    worker.run.side_effect = run
+    return worker
+
+
+def test_stop_on_a_search_that_will_not_stop_answers_once_for_that_board(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("chess_anti_engine.uci.engine._GO_WAIT_NO_CLOCK_S", 0.1)
+    entered, release = threading.Event(), threading.Event()
+    worker = _held_worker(release, entered)
+    engine = Engine(worker, options=EngineOptions())
+    engine.dispatch(CmdPosition(None, ("e2e4",)))
+    engine.dispatch(parse_command("go movetime 300"))
+    assert entered.wait(5)
+    held = engine._search_thread
+    capsys.readouterr()
+    t0 = time.monotonic()
+    engine.dispatch(parse_command("stop"))
+    assert time.monotonic() - t0 < 1.0
+    (move,) = _bestmoves(capsys.readouterr().out)
+    board = chess.Board()
+    board.push_uci("e2e4")
+    assert chess.Move.from_uci(move) in board.legal_moves
+    release.set()
+    assert held is not None
+    held.join(5)
+    assert _bestmoves(capsys.readouterr().out) == []  # its late result is silenced
+
+
+def test_isready_with_a_live_orphan_answers_at_once_and_touches_nothing(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("chess_anti_engine.uci.engine._GO_WAIT_NO_CLOCK_S", 0.05)
+    entered, release = threading.Event(), threading.Event()
+    worker = _held_worker(release, entered)
+    engine = Engine(worker, options=EngineOptions())
+    engine.dispatch(parse_command("go infinite"))
+    assert entered.wait(5)
+    engine.dispatch(parse_command("stop"))  # parks the search: an orphan now
+    assert not engine.worker_is_free()
+    engine._warmup_dirty = True
+    runs = worker.run.call_count
+    capsys.readouterr()
+    t0 = time.monotonic()
+    engine.dispatch(parse_command("isready"))
+    assert time.monotonic() - t0 < 0.5
+    assert capsys.readouterr().out.splitlines()[-1] == "readyok"
+    assert worker.run.call_count == runs  # no re-warm on a worker the orphan is in
+    assert engine._warmup_dirty is True  # still owed, for the next free isready
+    with pytest.raises(SearchNotQuiescent):
+        engine.warmup_search()
+    release.set()
+    for t in list(engine._orphan_threads):
+        t.join(5)
+    assert engine.worker_is_free()
+
+
+def test_hung_fresh_root_eval_is_bounded_and_parked(capsys) -> None:
+    hang = threading.Event()
+    worker = MagicMock()
+    worker.advance_root.return_value = True
+    worker.root_policy_bestmove.return_value = None
+    worker.run.side_effect = RuntimeError("search fault")
+    worker.fresh_root_policy_bestmove.side_effect = lambda *_a, **_kw: hang.wait(30)
+    engine = Engine(worker, options=EngineOptions())
+    engine.dispatch(CmdPosition(None, ("e2e4", "e7e5", "g1f3")))
+    t0 = time.monotonic()
+    engine.dispatch(parse_command("go wtime 3000 btime 3000"))
+    _join_search(engine)
+    assert time.monotonic() - t0 < 1.0
+    out = capsys.readouterr().out
+    (move,) = _bestmoves(out)
+    assert "fresh root-eval fallback timed out" in out
+    assert "source=first_legal" in out
+    board = chess.Board()
+    for mv in ("e2e4", "e7e5", "g1f3"):
+        board.push_uci(mv)
+    assert chess.Move.from_uci(move) in board.legal_moves
+    # The stuck helper is still inside the evaluator: it owns the worker, and
+    # `__main__` hard-exits rather than finalizing under it.
+    assert engine.has_live_threads()
+    assert not engine.worker_is_free()
+    hang.set()
+    for t in list(engine._orphan_threads):
+        t.join(5)
+    assert not engine.has_live_threads()

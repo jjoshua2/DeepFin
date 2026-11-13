@@ -1439,6 +1439,12 @@ def main() -> int:
             except Exception:
                 pass
         _drain_builder(builder, rc)
+        if eng is not None and getattr(eng, "has_live_threads", lambda: False)() is True:
+  # A search that ignored its stop, or a fallback eval stuck in the evaluator:
+  # finalizing the interpreter under it can abort (exit 134) after a clean quit.
+            print("deepfin: a search thread is still running at shutdown; exiting without it",
+                  file=sys.stderr)
+            _hard_exit(rc)
     return rc
 
 
