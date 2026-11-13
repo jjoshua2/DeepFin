@@ -266,3 +266,74 @@ def test_solved_root_witness_branch_counts_real_simulations(monkeypatch) -> None
           on_chunk=seen.append)
     assert raised
     assert seen[0] == 128, seen  # the chunk really ran 128 sims, not the requested 256
+
+
+def _zero_progress_witness(w: SearchWorker, stop: threading.Event, calls: list[int],
+                           *, give_up_after: int) -> Any:
+    """A `_run_gumbel_chunk` that simulates nothing and raises the witness
+    exception every time. After `give_up_after` calls it sets `stop`, so a
+    regression that retries forever fails on the call count instead of hanging."""
+    from chess_anti_engine.mcts.solved_root import SolvedRootWitnessUnavailable
+
+    def raise_without_work(chunk: int, *args: Any, **kwargs: Any) -> float:
+        del chunk, args, kwargs
+        calls.append(1)
+        if len(calls) >= give_up_after:
+            stop.set()
+        raise SolvedRootWitnessUnavailable(
+            {0: 1}, (None, None, None, None, w._tree, [w._root_id]), {0: 0}, {0: 0},
+        )
+
+    return raise_without_work
+
+
+@pytest.mark.parametrize("bound", ["nodes", "depth"])
+def test_zero_progress_witness_chunk_under_a_bound_ends_the_search(monkeypatch, bound) -> None:
+    from chess_anti_engine.mcts.solved_root import SolvedRootWitnessUnavailable
+
+    w = _worker(chunk=256)
+    board = chess.Board()
+    w.run(board, stop_event=threading.Event(), deadline=Deadline(None), max_nodes=256)
+    stop = threading.Event()
+    calls: list[int] = []
+    monkeypatch.setattr(w, "_run_gumbel_chunk",
+                        _zero_progress_witness(w, stop, calls, give_up_after=200))
+    limits: dict[str, Any] = (
+        {"max_nodes": 4096} if bound == "nodes" else {"max_nodes": None, "max_depth": 30}
+    )
+    with pytest.raises(SolvedRootWitnessUnavailable):
+        w.run(board, stop_event=stop, deadline=Deadline(None), **limits)
+    # The interrupted chunk made no progress, so the bound can never be met:
+    # the first such chunk must end the go (the engine plays the witness
+    # fallback move), not retry until `stop`.
+    assert len(calls) == 1, len(calls)
+    assert not stop.is_set()
+
+
+def test_zero_progress_witness_chunk_without_a_bound_idles(monkeypatch) -> None:
+    from chess_anti_engine.mcts.solved_root import SolvedRootWitnessUnavailable
+
+    w = _worker(chunk=256)
+    board = chess.Board()
+    w.run(board, stop_event=threading.Event(), deadline=Deadline(None), max_nodes=256)
+    stop = threading.Event()
+    calls: list[int] = []
+    monkeypatch.setattr(w, "_run_gumbel_chunk",
+                        _zero_progress_witness(w, stop, calls, give_up_after=10_000))
+    with pytest.raises(SolvedRootWitnessUnavailable):
+        w.run(board, stop_event=stop, deadline=Deadline(300), max_nodes=None, optimum_ms=None)
+    # 300 ms of 10 ms idle waits is ~30 retries; a busy retry loop does thousands.
+    assert len(calls) <= 100, len(calls)
+
+
+def test_search_that_already_reported_gets_no_extra_final_info_line(monkeypatch) -> None:
+    from chess_anti_engine.uci import search as uci_search
+
+    monkeypatch.setattr(uci_search, "_INFO_EMIT_INTERVAL_MS", 0)  # one line per chunk
+    w = _worker(chunk=256)
+    lines: list[dict[str, Any]] = []
+    chunks: list[int] = []
+    w.run(chess.Board(), stop_event=threading.Event(), deadline=Deadline(None),
+          max_nodes=1024, info_cb=lambda **kw: lines.append(kw), on_chunk=chunks.append)
+    assert len(chunks) == 4, chunks
+    assert len(lines) == len(chunks), (len(lines), chunks)

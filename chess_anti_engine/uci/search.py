@@ -2379,10 +2379,12 @@ class SearchWorker:
                 # Count what the interrupted native chunk really simulated
                 # (root visit growth), not the requested chunk.
                 # An incomplete chunk is not yet an exhausted whole go.
-                total_nodes += self._root_visits_added(_visits_before)
+                _witness_grown = self._root_visits_added(_visits_before)
+                total_nodes += _witness_grown
                 witness_checks_total += exc.child_checks.get(0, 0)
                 exc.child_checks[0] = witness_checks_total
-                self._record_batch_ms((time.monotonic() - _chunk_t0) * 1000.0)
+                if _witness_grown > 0:
+                    self._record_batch_ms((time.monotonic() - _chunk_t0) * 1000.0)
                 if on_chunk is not None:
                     on_chunk(total_nodes)
                 pv_indices, _, _ = self._maybe_emit_pv_info(
@@ -2398,6 +2400,17 @@ class SearchWorker:
                     time_margin_ms=self._clock_time_margin_ms(optimum_ms, start_remaining_ms),
                 ) is not None:
                     raise
+                # Same zero-progress rule as a normal chunk (below): an
+                # interrupted chunk that simulated nothing cannot move a node /
+                # depth bound, so retrying would spin forever. Re-raise, which
+                # ends the go with the engine's witness fallback move (the
+                # pre-#1265 terminal behaviour); without a bound, idle on the
+                # stop event instead of spinning a core.
+                if _witness_grown == 0:
+                    if max_nodes is not None or max_depth is not None:
+                        raise
+                    if not stop_event.is_set():
+                        stop_event.wait(_IDLE_CHUNK_WAIT_S)
                 # No preserving move exists yet to justify a visit-margin
                 # abort or a proven-value PV. Continue within the original cap.
                 continue
