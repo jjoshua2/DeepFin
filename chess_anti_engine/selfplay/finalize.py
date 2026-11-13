@@ -171,7 +171,8 @@ def _rescore_with_syzygy(
     overridden when the TB proves the outcome; ``tb_policy_overrides``
     is populated only when ``game.syzygy_rescore_policy`` is enabled.
     """
-    if getattr(state, "strict_tb", None) is not None:
+    strict_tb = getattr(state, "strict_tb", None)
+    if strict_tb is not None:
         # Strict mode never rewrites a whole game's outcome using an earlier
         # theoretical position. Only policy targets may be corrected here.
         if not state.game.syzygy_rescore_policy:
@@ -193,7 +194,7 @@ def _rescore_with_syzygy(
                 rec = records[t]
                 if rec.move_offset != len(replay.move_stack) - starting_len or rec.pov_color != replay.turn:
                     raise ValueError("strict TB policy record/history/POV join mismatch")
-                best = state.strict_tb.policy_move(replay)
+                best = strict_tb.policy_move(replay)
                 if best is not None:
                     action = move_to_index_for_encoding(best, replay, policy_encoding=state.game.policy_encoding)
                     p = np.zeros(policy_size_for_encoding(state.game.policy_encoding), dtype=np.float32)
@@ -1247,8 +1248,9 @@ def _resolve_terminal_result(
 ) -> tuple[str, bool, bool, StockfishResult | None]:
     """Resolve the game's terminal result. Returns (result, was_adjudicated,
     was_tb_adjudicated, sf_res). Updates per-bucket counters in state.stats."""
-    if getattr(state, "strict_tb", None) is not None:
-        witness = state.strict_tb.resolve(
+    strict_tb = getattr(state, "strict_tb", None)
+    if strict_tb is not None:
+        witness = strict_tb.resolve(
             full_history_board(state, i), move_offset=len(state.move_idx_history[i]),
         )
         state.strict_tb_witnesses[i] = witness

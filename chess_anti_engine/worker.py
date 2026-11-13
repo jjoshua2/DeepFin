@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
 from contextlib import nullcontext, suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar, overload
+from typing import TYPE_CHECKING, Any, NamedTuple, TypedDict, TypeVar, overload
 from collections.abc import Callable
 
 import chess
@@ -897,6 +897,11 @@ def main() -> None:
         requests_mod=requests,
     )
     session.run()
+
+
+class _StrictSfOptions(TypedDict, total=False):
+    syzygy_50_move_rule: bool
+    syzygy_probe_limit: int
 
 
 class WorkerSession:
@@ -3811,6 +3816,9 @@ class WorkerSession:
                 with suppress(Exception):
                     self.sf.close()
 
+            strict_sf_options: _StrictSfOptions = (
+                {"syzygy_50_move_rule": True, "syzygy_probe_limit": 6} if strict_tb else {}
+            )
             if sf_workers_use_pool(self.args.sf_workers):
                 self.sf = StockfishPool(
                     path=str(stockfish_path),
@@ -3819,7 +3827,7 @@ class WorkerSession:
                     multipv=int(sf_multipv),
                     hash_mb=int(sf_hash_mb),
                     syzygy_path=sz_path,
-                    **({"syzygy_50_move_rule": True, "syzygy_probe_limit": 6} if strict_tb else {}),
+                    **strict_sf_options,
                     nice=int(self.args.sf_nice),
                 )
             else:
@@ -3829,7 +3837,7 @@ class WorkerSession:
                     multipv=int(sf_multipv),
                     hash_mb=int(sf_hash_mb),
                     syzygy_path=sz_path,
-                    **({"syzygy_50_move_rule": True, "syzygy_probe_limit": 6} if strict_tb else {}),
+                    **strict_sf_options,
                     nice=int(self.args.sf_nice),
                 )
             self.sf_multipv_active = int(sf_multipv)

@@ -5,11 +5,12 @@ needs a checkpoint, an engine executable, tablebase files or a CUDA device.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from concurrent.futures import Future
 from dataclasses import asdict, replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, NotRequired, TypedDict, Unpack, cast
 
 import chess
 import chess.syzygy
@@ -17,6 +18,7 @@ import numpy as np
 import pytest
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
+from chess_anti_engine.inference import BatchEvaluator
 from chess_anti_engine.model import ModelConfig
 from chess_anti_engine.tune.distributed_runtime import build_recommended_worker
 from chess_anti_engine.moves import POLICY_SIZE, move_to_index, move_to_index_for_encoding
@@ -26,10 +28,12 @@ from chess_anti_engine.selfplay import stockfish_turn as sf_turn
 from chess_anti_engine.selfplay.config import DiffFocusConfig, GameConfig, SearchConfig
 from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.selfplay.state import SelfplayState, _NetRecord
+from chess_anti_engine.selfplay.provenance import GameProvenance
 from chess_anti_engine.selfplay.strict_tb import (
     StrictSelfplayTablebase, full_history_board, sf_history_kwargs,
 )
 from chess_anti_engine.stockfish import pool as pool_module
+from chess_anti_engine.stockfish.uci import StockfishUCI
 from chess_anti_engine.tablebase import MatchTablebaseError
 from chess_anti_engine.tune.trainable_config_ops import (
     _play_batch_kwargs, _reload_yaml_into_config, restart_required_config_keys,
@@ -40,7 +44,16 @@ from chess_anti_engine.worker import WorkerSession
 from tests.test_worker_model_update import _bare_worker_session
 
 
-STRICT = {
+class _StrictSettings(TypedDict):
+    syzygy_outcome_mode: str
+    syzygy_path: str
+    syzygy_in_search: bool
+    syzygy_adjudicate: bool
+    syzygy_adjudicate_fraction: float
+    syzygy_rescore_policy: bool
+
+
+STRICT: _StrictSettings = {
     "syzygy_outcome_mode": "rule50_match_v1", "syzygy_path": "synthetic-full-pair",
     "syzygy_in_search": True, "syzygy_adjudicate": True,
     "syzygy_adjudicate_fraction": 1.0, "syzygy_rescore_policy": True,
@@ -51,8 +64,8 @@ CYCLE = ("g1f3", "g8f6", "f3g1", "f6g8")
 
 class SyntheticTables:
     def __init__(self, *, wdl=2, dtz=3):
-        self.wdl = {"KQQQQvK": None}
-        self.dtz = {"KQQQQvK": None}
+        self.wdl: dict[str, object] = {"KQQQQvK": None}
+        self.dtz: dict[str, object] = {"KQQQQvK": None}
         self.wdl_value, self.dtz_value = wdl, dtz
         self.calls: list[tuple[str, str]] = []
         self.closed = 0
@@ -71,7 +84,7 @@ class SyntheticTables:
 
 def session(tables=None) -> Any:
     owner = object.__new__(StrictSelfplayTablebase)
-    owner.tablebase = tables if tables is not None else SyntheticTables()
+    owner.tablebase = cast(chess.syzygy.Tablebase, cast(object, tables if tables is not None else SyntheticTables()))
     owner._closed = False
     owner.asset_inventory_sha256 = "a" * 64
     return owner
@@ -173,7 +186,7 @@ def test_full_history_keeps_opening_claim_boundary_separate_from_encoder_replay(
     assert full.fen() == encoded_replay.fen()
     assert full.can_claim_threefold_repetition()
     assert not encoded_replay.can_claim_threefold_repetition()
-    assert sf_history_kwargs(state, 0)["root_moves"] == CYCLE + CYCLE[:3]
+    assert sf_history_kwargs(state, 0).get("root_moves") == CYCLE + CYCLE[:3]
     assert len(opening.move_stack) == 6  # reconstruction never mutates source
     state.cboards[0] = CBoard.from_board(chess.Board(final.fen().replace(" 7 4", " 0 1")))
     with pytest.raises(ValueError, match="clocks disagree"):
@@ -230,11 +243,11 @@ def test_zeroing_move_permits_a_decisive_result_after_unresolved_clock():
     assert owner.resolve(board, move_offset=1).result == "0-1"  # synthetic STM win is black
 
 
-def test_policy_missing_child_is_error_even_if_root_would_abstain():
+def test_policy_missing_child_is_error_even_if_root_would_abstain(monkeypatch):
     board = history(("g1f3",))
     tables = SyntheticTables()
     original = tables.probe_dtz
-    tables.probe_dtz = lambda child: original(child) if child.fen() == board.fen() else (_ for _ in ()).throw(KeyError("child"))
+    monkeypatch.setattr(tables, "probe_dtz", lambda child: original(child) if child.fen() == board.fen() else (_ for _ in ()).throw(KeyError("child")))
     with pytest.raises(MatchTablebaseError):
         session(tables).policy_move(board)
 
@@ -264,7 +277,35 @@ def test_strict_finalizer_bypasses_last_theoretical_result_and_keeps_policy_only
         finalize_module._rescore_with_syzygy(state, 0, board, [rec], "1-0")
 
 
-def _finite(monkeypatch, *, start=None, owner=None, ready=None, **kwargs):
+class _FiniteOverrides(TypedDict, total=False):
+    target_games: int
+    stop_fn: Callable[[], bool]
+    on_suspend: Callable[[SelfplayState], None]
+    on_game_provenance: Callable[[GameProvenance], None] | None
+    search: SearchConfig
+    game: GameConfig
+
+
+class _FiniteArgs(TypedDict):
+    model: None
+    evaluator: BatchEvaluator
+    device: str
+    rng: np.random.Generator
+    stockfish: StockfishUCI
+    games: int
+    target_games: int
+    on_game_provenance: Callable[[GameProvenance], None] | None
+    search: SearchConfig
+    opening: OpeningConfig
+    diff_focus: DiffFocusConfig
+    game: GameConfig
+    on_state_ready: Callable[[SelfplayState], None] | None
+    stop_fn: NotRequired[Callable[[], bool]]
+    on_suspend: NotRequired[Callable[[SelfplayState], None]]
+
+
+def _finite(monkeypatch, *, start=None, owner=None, ready: Callable[[SelfplayState], None] | None = None,
+            **kwargs: Unpack[_FiniteOverrides]):
     owner = owner or session()
     monkeypatch.setattr(state_module, "StrictSelfplayTablebase", lambda _path: owner)
     start = start if start is not None else chess.Board()
@@ -274,10 +315,10 @@ def _finite(monkeypatch, *, start=None, owner=None, ready=None, **kwargs):
         syzygy_probe_limit=6, syzygy_ready_after_requests=True,
         search=lambda *_a, **_kw: pytest.fail("no SF queries expected"),
     )
-    observed = []
-    params = {
-        "model": None, "evaluator": SimpleNamespace(), "device": "cpu", "rng": np.random.default_rng(7),
-        "stockfish": sf, "games": 1, "target_games": 1, "on_game_provenance": observed.append,
+    observed: list[GameProvenance] = []
+    params: _FiniteArgs = {
+        "model": None, "evaluator": cast(BatchEvaluator, SimpleNamespace()), "device": "cpu", "rng": np.random.default_rng(7),
+        "stockfish": cast(StockfishUCI, sf), "games": 1, "target_games": 1, "on_game_provenance": observed.append,
         "search": SearchConfig(mcts_type="gumbel", simulations=1),
         "opening": OpeningConfig(random_start_plies=0), "diff_focus": DiffFocusConfig(enabled=False),
         "game": GameConfig(**STRICT, max_plies=0, selfplay_fraction=1), "on_state_ready": ready,
@@ -338,8 +379,8 @@ def test_actual_finalizer_delivers_strict_terminal_wdl_in_each_record_pov(monkey
         state.done_arr[0] = 1
     (samples, stats), observed, _owner = _finite(
         monkeypatch, start=start, ready=inject,
-        game=GameConfig(**{**STRICT, "syzygy_rescore_policy": False}, max_plies=10,
-                        selfplay_fraction=1),
+        game=replace(GameConfig(**STRICT), syzygy_rescore_policy=False, max_plies=10,
+                     selfplay_fraction=1),
     )
     assert stats.censored_games == 0
     assert observed[0].result == "0-1"  # fake TB says final black STM wins
@@ -391,7 +432,7 @@ def test_worker_continuous_mode_refuses_before_any_asset_sync():
     worker._install_shutdown_handlers = lambda: None
     worker._shutdown_requested = False
     worker._poll_manifest = lambda: {"recommended_worker": STRICT}
-    worker._sync_assets = lambda _manifest: pytest.fail("model/assets touched")
+    worker._sync_assets = lambda manifest: pytest.fail(f"model/assets touched: {bool(manifest)}")
     worker._cleanup = lambda: None
     with pytest.raises(ValueError, match="finite play_batch only"):
         worker.run()
@@ -424,8 +465,8 @@ def test_sf_queries_and_pending_label_capture_the_actual_full_history():
     move = chess.Move.from_uci("f3g1")
     state.move_idx_history[0].append(move_to_index(move, board))
     state.cboards[0].push_index(state.move_idx_history[0][-1])
-    assert sf_turn._pending_sf_history(pending)["root_moves"] == ("g1f3", "g8f6")
-    assert sf_history_kwargs(state, 0)["root_moves"] == ("g1f3", "g8f6", "f3g1")
+    assert sf_turn._pending_sf_history(pending).get("root_moves") == ("g1f3", "g8f6")
+    assert sf_history_kwargs(state, 0).get("root_moves") == ("g1f3", "g8f6", "f3g1")
     state.game = replace(state.game, sf_label_escalate_q_gap=.1,
                          sf_label_escalate_nodes=20000, sf_label_escalate_max_per_game=1,
                          sf_wdl_use_cp_logistic=False)

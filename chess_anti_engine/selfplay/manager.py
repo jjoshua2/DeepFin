@@ -66,7 +66,8 @@ def _tb_adjudicate_active_games(state: SelfplayState) -> int:
     so the NN continues training on endgame positions with its own labels
     rather than losing endgame skill entirely.
     """
-    if getattr(state, "strict_tb", None) is not None:
+    strict_tb = getattr(state, "strict_tb", None)
+    if strict_tb is not None:
         adjudicated = 0
         for i in range(state.batch_size):
             if state.finalized_arr[i] or i in state.pending_sf_moves:
@@ -74,7 +75,7 @@ def _tb_adjudicate_active_games(state: SelfplayState) -> int:
             if state.done_arr[i]:
                 continue  # finalizer rechecks full-history rules, including caps
             board = full_history_board(state, i)
-            witness = state.strict_tb.resolve(board, move_offset=len(state.move_idx_history[i]))
+            witness = strict_tb.resolve(board, move_offset=len(state.move_idx_history[i]))
             if witness.result == "*":
                 continue  # positive-clock decisive TB remains play-on
             state.strict_tb_witnesses[i] = witness

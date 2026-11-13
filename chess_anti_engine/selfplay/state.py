@@ -921,6 +921,7 @@ class SelfplayState:
         terminal_eval_nodes = cls.terminal_eval_nodes_for(base_nodes)
 
         strict_tb = None
+        tb_result_arr: list[str | None]
         try:
             if game.syzygy_outcome_mode == "rule50_match_v1":
                 assert game.syzygy_path is not None

@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, Protocol, TypedDict
 
 import chess
 import chess.syzygy
@@ -23,7 +24,24 @@ from chess_anti_engine.tablebase import (
 )
 
 if TYPE_CHECKING:
-    from .state import SelfplayState
+    from chess_anti_engine.encoding._lc0_ext import CBoard
+    from .config import GameConfig
+
+
+class _HistoryState(Protocol):
+    """Only the read-only history/config surface needed by these helpers."""
+
+    @property
+    def starting_boards(self) -> Sequence[chess.Board] | None: ...
+
+    @property
+    def move_idx_history(self) -> Sequence[Sequence[int]]: ...
+
+    @property
+    def cboards(self) -> Sequence[CBoard]: ...
+
+    @property
+    def game(self) -> GameConfig: ...
 
 
 @dataclass(frozen=True)
@@ -46,7 +64,7 @@ class TablebaseWitness:
     asset_identity_scope: str = "resolved-file-path,size,mtime_ns;not-content-hash"
 
 
-def full_history_board(state: SelfplayState, slot: int) -> chess.Board:
+def full_history_board(state: _HistoryState, slot: int) -> chess.Board:
     from chess_anti_engine.moves import index_to_move
 
     if state.starting_boards is None:
@@ -69,7 +87,7 @@ class SfHistoryKwargs(TypedDict, total=False):
     root_moves: tuple[str, ...]
 
 
-def sf_history_kwargs(state: SelfplayState, slot: int) -> SfHistoryKwargs:
+def sf_history_kwargs(state: _HistoryState, slot: int) -> SfHistoryKwargs:
     if getattr(state.game, "syzygy_outcome_mode", "theoretical_wdl") != "rule50_match_v1":
         return {}
     board = full_history_board(state, slot)
