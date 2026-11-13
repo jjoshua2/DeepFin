@@ -175,7 +175,10 @@ def test_actual_normal_finite_ponder_hit_releases_without_stop(
         assert worker.boards[1].fen() == expected.fen()
         assert worker.boards[1].move_stack == expected.move_stack
         assert worker.budgets[1] == 3
-        assert worker.results[1].nodes == 3
+        # A single `searchmoves` candidate is decided without simulating (the
+        # Gumbel root returns its sole action), so the REAL node count is 0;
+        # the requested budget (3) used to be reported instead.
+        assert worker.results[1].nodes == 0
         assert bestmoves(capsys.readouterr().out) == [move]
     finally:
         engine.close()
