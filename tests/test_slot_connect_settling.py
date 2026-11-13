@@ -1,7 +1,7 @@
 """Bounded attachment recovery before a POSIX shared-memory slot is sized."""
 from __future__ import annotations
 
-import _posixshmem  # POSIX-only module, like the slot transport under test
+import importlib
 import itertools
 import os
 import threading
@@ -13,6 +13,11 @@ from typing import Any
 import pytest
 
 from chess_anti_engine import inference as inf
+
+# POSIX-only module, like the slot transport under test. Imported by name: on a
+# python-build-standalone interpreter it is compiled in, with no file or stub
+# for the type checker to resolve (see inference._import_posixshmem).
+_posixshmem = importlib.import_module("_posixshmem")
 
 
 def _client(name: str) -> inf.SlotInferenceClient:
