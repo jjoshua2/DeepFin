@@ -352,7 +352,20 @@ per-candidate work on primitive A rather than `PucvChunker`.
 **Keep only as test references:** `gumbel.py run_gumbel_root_many` (the parity
 oracle and the only home of volatility search) and `puct.py`.
 **Delete:** `puct_c.run_mcts_many_c` and the selfplay PUCT branch.
-**Retire or mark experimental:** the walker pool, pucv and the PUCV pool.
+**Retire or mark experimental:** the single-GPU walker pool and single-GPU
+pucv.
+
+**Not to be retired without a match: the multi-GPU modes.** The target
+tournament hardware (TCEC) is 4 GPUs, so a multi-GPU search is the tournament
+path, not an optional mode. The owner recalls a 2-GPU test in which the PUCT
+pool had the highest throughput and classic Gumbel was fastest on one GPU; no
+record of it was found in the ledger or `docs/experiments`, and throughput is
+not playing strength. Which multi-GPU mode (PUCT pool or root-parallel Gumbel)
+wins games at 4 GPUs is unmeasured and is decided by the
+`docs/design_multi_gpu_search.md` §7 ladder on rented hardware — scheduled
+only after the net's strength gap has closed (owner's sequencing, 2026-11-13).
+The consolidation target is therefore two paths: classic Gumbel on one GPU,
+and the multi-GPU mode that wins that ladder.
 
 ### Ordered steps
 
@@ -395,7 +408,8 @@ Sizes: S/M/L. "Risk" says what the step can change.
    set before any training compute (CLAUDE.md experiment rules 1 and 5).
 7. **(M, changes engine strength)** Make classic Gumbel the UCI default
    (`--walkers 1`) and stop `Threads` from selecting the walker pool; mark
-   Threads>1 / UseVL / UseMultiGpuPUCV experimental. **In flight in open PRs**,
+   single-GPU Threads>1 / UseVL experimental (the multi-GPU PUCT pool keeps
+   its status until the ladder is run). **In flight in open PRs**,
    justified by classic Gumbel being the only strength-validated path; step 1
    then measures what the retired default was worth.
 8. **(L, changes engine strength, multi-GPU only)** Rebase RPG's
@@ -403,8 +417,7 @@ Sizes: S/M/L. "Risk" says what the step can change.
    deleting its Python halving copy and the PUCT descent and adding tree
    reuse. Proof: with one group, RPG's root decision bit-identical to classic
    at fixed sims; strength via the `docs/design_multi_gpu_search.md` §7
-   ladder. Then retire `MultiGpuPucvPool` or keep it as a throughput
-   reference only.
+   ladder. `MultiGpuPucvPool` is retired only if it loses that ladder.
 9. **(M, no search change)** Make the classic Gumbel chunk interruptible:
    `continue_gumbel_sims` stops at a batch boundary on a stop event / deadline,
    closing the opaque-chunk clock risk from the 2026-11-12 deployment
