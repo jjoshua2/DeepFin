@@ -817,7 +817,7 @@ its realized value and a LIVE/INERT verdict for the path that will actually
 run:
 
 ```
-info string searchconfig path=gumbel (classic single-thread Gumbel (Threads=1, UseVL off, 1 device))
+info string searchconfig path=gumbel (classic single-thread Gumbel (SearchWalkers=1, UseVL off, 1 device))
 info string searchconfig PolicyTemperature = 1.0 [LIVE]
 info string searchconfig CScale = 0.025 [LIVE]
 info string searchconfig CPuct = 1.75 [INERT] — CPuct does not reach the gumbel path (...)
@@ -841,9 +841,9 @@ it had run. Neuter the rebuild today and `searchconfig` says `CPuct = 2.5
 
 | path | selected by | search |
 |---|---|---|
-| `gumbel` | `Threads 1`, `UseVL false`, one device | classic single-thread Gumbel C |
+| `gumbel` | `SearchWalkers 1` (the default since 2026-11), `UseVL false`, one device | classic single-thread Gumbel C |
 | `rpg` | `SearchParallel gumbel` + ≥2 devices | root-parallel Gumbel; Gumbel at the root, PUCT below it |
-| `walker` | `Threads >1` | PUCT walker pool |
+| `walker` | `SearchWalkers >1` / `--walkers >1` (operator opt-in; the GUI's `Threads` never selects it) | PUCT walker pool |
 | `pucv` | `UseVL true` (+ slot-API evaluator) | single-thread batched-VL PUCT |
 | `pucv_pool` | `UseMultiGpuPUCV true` + ≥2 devices | multi-GPU shared-tree PUCT |
 
@@ -947,8 +947,8 @@ rebuilds whichever helper is installed: `_reinstall_rpg_if_active` for `rpg`,
 `_install_multi_gpu_pucv_pool` for `pucv_pool`, and
 `SearchWorker.rebuild_puct_helpers` for `walker` and `pucv`.
 
-That last branch did not exist until 2026-08-09, and on the **shipped default**
-(`--walkers default=2` → `walker`) the engine printed `FpuReduction set to 9.0`
+That last branch did not exist until 2026-08-09, and on the then-shipped default
+(`--walkers default=2` → `walker`; the default is 1 → `gumbel` since 2026-11) the engine printed `FpuReduction set to 9.0`
 and `searchconfig FpuReduction = 9.0 [LIVE]` while the pool kept descending on
 `1.2`. Worse than dead: the dropped value landed **later**, whenever the next
 unrelated option happened to rebuild — on the `pucv` path a subsequent
@@ -984,7 +984,7 @@ reset the tree, because vloss-adjusted `Q` is not comparable across weights.
 `test_a_mid_tree_puct_change_keeps_the_tree_and_is_a_hybrid` pins the decision
 in both directions.
 
-`VLossWeight`'s delivery on the shipped default (`Threads 2` → `walker`) rests
+`VLossWeight`'s delivery on the walker path (`SearchWalkers 2` → `walker`, the shipped default until 2026-11) rests
 entirely on the pool rebuild inside `SearchWorker.set_vloss_weight`. The
 `_reinstall_configured_search_path()` that `_apply_search_option` calls next
 *looks* like a second cover and is not: with `search_parallel="pucv"`,

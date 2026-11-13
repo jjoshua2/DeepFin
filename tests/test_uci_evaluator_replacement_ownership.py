@@ -13,7 +13,7 @@ from chess_anti_engine.async_safety import note_cleanup
 from chess_anti_engine.inference import DirectGPUEvaluator
 from chess_anti_engine.inference_dispatcher import CUDAOwnerDispatcher
 from chess_anti_engine.uci.__main__ import _make_evaluator_factory
-from chess_anti_engine.uci.engine import Engine
+from chess_anti_engine.uci.engine import Engine, EngineOptions
 from chess_anti_engine.uci.protocol import CmdSetOption
 from chess_anti_engine.uci.search import SearchWorker
 from chess_anti_engine.uci import walker_pool as walkers
@@ -99,7 +99,8 @@ def test_public_replacement_failure_keeps_old_primary_and_retires_new(monkeypatc
     worker = SearchWorker(old.evaluator, device="cpu", n_walkers=2)
     previous_pool = worker._walker_pool
     assert previous_pool is not None
-    engine = Engine(worker, rebuild_evaluator=lambda *_a, **_kw: new.evaluator)
+    engine = Engine(worker, rebuild_evaluator=lambda *_a, **_kw: new.evaluator,
+                    options=EngineOptions(search_walkers=2))  # the worker's 2 walkers
     max_batch_before = engine._options.max_batch
     error = MemoryError("bounded walker input allocation failure")
     cause = ValueError("original allocation cause")
@@ -147,7 +148,8 @@ def test_public_healthy_replacement_preserves_successful_transfer(monkeypatch, k
     worker = SearchWorker(old.evaluator, device="cpu", n_walkers=2)
     previous_pool = worker._walker_pool
     assert previous_pool is not None
-    engine = Engine(worker, rebuild_evaluator=lambda *_a, **_kw: new.evaluator)
+    engine = Engine(worker, rebuild_evaluator=lambda *_a, **_kw: new.evaluator,
+                    options=EngineOptions(search_walkers=2))  # the worker's 2 walkers
     if cleanup_fails:
         old.close_error = RuntimeError("existing suppressed old cleanup failure")
     try:
@@ -176,7 +178,8 @@ def test_public_healthy_replacement_preserves_successful_transfer(monkeypatch, k
 def test_public_same_owner_replacement_does_not_close_borrowed_current_owner(monkeypatch, kind, fault):
     owner = make_owner(monkeypatch, kind)
     worker = SearchWorker(owner.evaluator, device="cpu", n_walkers=2)
-    engine = Engine(worker, rebuild_evaluator=lambda *_a, **_kw: owner.evaluator)
+    engine = Engine(worker, rebuild_evaluator=lambda *_a, **_kw: owner.evaluator,
+                    options=EngineOptions(search_walkers=2))  # the worker's 2 walkers
     error = MemoryError("same-owner walker allocation failure")
     try:
         with monkeypatch.context() as patcher:

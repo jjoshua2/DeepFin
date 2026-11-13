@@ -273,7 +273,8 @@ def phase_fixture(worker):
     phase = definitions('chess_anti_engine/uci/engine.py', ['Engine._run_one_phase'], namespace)['Engine._run_one_phase']
     engine = SimpleNamespace(_worker=worker, _stop_event=threading.Event(), _gil_probe=None,
                              _options=SimpleNamespace(abort_factor=1.0, ponder=False),
-                             _emit_info=lambda **kw: None, _emit_gil_profile=lambda **kw: None)
+                             _emit_info=lambda **kw: None, _emit_gil_profile=lambda **kw: None,
+                             _note_searched_phase=lambda: None)
     limits = SimpleNamespace(deadline_ms=None, max_nodes=20, max_depth=None, optimum_ms=None,
                              searchmoves=('d2d4', 'e2e4'), is_open_ended=lambda: False, infinite=False)
     return lambda: phase(engine, limits, is_ponder=False, board=Board())
