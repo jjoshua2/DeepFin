@@ -65,6 +65,9 @@ def session() -> Any:
     worker._model_watch_thread = None
     worker._model_watch_started = False
     worker._selfplay_session_active = True
+    worker._session_handoff_draining_since_s = None
+    worker._hold_selfplay = False
+    worker._last_selfplay_progress_s = 1_000.0
     worker._check_model_update_locked = lambda: None
     worker._check_model_freshness = lambda: None
     yield worker
@@ -83,6 +86,17 @@ def test_inactive_session_rejects_late_update_callbacks(session: Any) -> None:
     calls: list[str] = []
     session._check_model_update_locked = lambda: calls.append("late-update")
     session._set_selfplay_session_active(False)
+    session._check_model_update()
+    assert calls == []
+
+
+def test_stopped_watch_rejects_update_even_while_session_active(session: Any) -> None:
+    """The stop half of the under-lock re-check: after _cleanup's stop, a late
+    callback must not swap even though the session flag still reads True."""
+    calls: list[str] = []
+    session._check_model_update_locked = lambda: calls.append("late-update")
+    session._model_watch_stop.set()
+    assert session._selfplay_session_active
     session._check_model_update()
     assert calls == []
 
@@ -278,3 +292,57 @@ def test_cleanup_before_first_session_prevents_a_later_watcher_start(
     session._start_model_watch_thread()
     assert session._model_watch_thread is None
     assert not session._model_watch_started
+
+
+def test_teardown_drain_is_not_a_selfplay_stall_but_is_bounded(session: Any) -> None:
+    """A healthy slow swap at teardown must not trip the 300 s stall watchdog
+    (it would os._exit the worker and lose buffered games); a wedged one must
+    still be reported as stalled past _SESSION_HANDOFF_DRAIN_LIMIT_S."""
+    from chess_anti_engine import worker as worker_mod
+
+    limit = worker_mod._SESSION_HANDOFF_DRAIN_LIMIT_S
+    entered, release = threading.Event(), threading.Event()
+
+    def slow_swap() -> None:
+        entered.set()
+        assert release.wait(_BOUND_S)
+
+    session._check_model_update_locked = slow_swap
+    watch = threading.Thread(target=session._check_model_update, name="watch")
+    owner = threading.Thread(
+        target=session._set_selfplay_session_active, args=(False,), name="owner",
+    )
+    watch.start()
+    try:
+        assert entered.wait(_BOUND_S)
+        lock = session._model_watch_lock
+        lock.blocking_attempt.clear()
+        owner.start()
+        assert lock.blocking_attempt.wait(_BOUND_S)
+        assert lock.attempt_threads[-1] == "owner"
+        # Teardown is blocked: the session flag must still be True (no race)...
+        assert session._selfplay_session_active
+        since = session._session_handoff_draining_since_s
+        assert since is not None
+        # ...yet 301 s without selfplay progress is NOT a stall during a drain,
+        assert not session._selfplay_stalled(
+            session._last_selfplay_progress_s + 301.0, 300.0,
+        )
+        assert not session._selfplay_stalled(since + limit - 1.0, 300.0)
+        # while a drain past the explicit bound IS one.
+        assert session._selfplay_stalled(since + limit + 1.0, 300.0)
+    finally:
+        release.set()
+        watch.join(_BOUND_S)
+        if owner.ident is not None:
+            owner.join(_BOUND_S)
+    assert not owner.is_alive()
+    assert not session._selfplay_session_active
+    assert session._session_handoff_draining_since_s is None
+
+
+def test_ordinary_stall_semantics_unchanged_outside_a_drain(session: Any) -> None:
+    assert session._selfplay_stalled(session._last_selfplay_progress_s + 301.0, 300.0)
+    session._set_selfplay_session_active(True)
+    assert session._session_handoff_draining_since_s is None
+    assert session._selfplay_stalled(session._last_selfplay_progress_s + 301.0, 300.0)

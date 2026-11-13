@@ -43,6 +43,7 @@ def _bare_worker_session() -> WorkerSession:
     session._model_watch_lock = threading.Lock()
     session._model_watch_stop = threading.Event()
     session._model_watch_thread = None
+    session._session_handoff_draining_since_s = None
     session._model_stale_since_s = None
     session._model_stale_alarmed = False
     session._selfplay_session_active = True
@@ -1199,6 +1200,7 @@ def _stall_session() -> WorkerSession:
     session._selfplay_session_active = False
     session._hold_selfplay = False
     session._last_selfplay_progress_s = 0.0
+    session._session_handoff_draining_since_s = None
     return session
 
 

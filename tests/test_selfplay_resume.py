@@ -1603,6 +1603,10 @@ def _wired_session(tmp_path: Path) -> Any:
     session._note_selfplay_progress = lambda: None
     session._start_selfplay_stall_watchdog = lambda: None
     session._start_model_watch_thread = lambda: None
+    # Session-boundary handoff state (_set_selfplay_session_active).
+    session._model_watch_lock = threading.Lock()
+    session._model_watch_stop = threading.Event()
+    session._session_handoff_draining_since_s = None
     session._flush_and_upload_after_shard = lambda *a, **k: None
     return session
 
