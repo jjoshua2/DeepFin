@@ -1,0 +1,56 @@
+--- science/v1
++++ science/v2
+@@ -30,7 +30,7 @@
+     "controls": "Honor allglobal/stageSTOP/PAUSE/CANCEL/YIELD/intentionalstop; neverclear oldstopped53 marker; all3leases/custody/deadline/source/index/memory/disk gates refreshed every stage. No paidcompute; allfailures debit study+week ceilings.",
+     "debit_rule": "EveryE4GPUintended owner wall time, successful/failed/interrupted, debits22260total; historical E2/E3 remainweekcharges, not E4charges. Allstudy decidingcaps fixed beforeoutcomes; rootpreflight mayrefuse, never enlarge cap.",
+     "generation": 2400,
+-    "limits": "Root may refine stagecaps BEFOREfinalfreeze. Eachsingleowner<=7200s. This is elapsedGPU-intended stagewall includingstartup/generation/overhead, not CUDAactive time; approximatelytwo-hour expectedpath is not a completion guarantee. No automaticextension.",
++    "limits": "Fixed elapsedGPUintended ownerwall caps include startup/overhead, not CUDAactive time. Everyowner<=7200seconds; no automaticextension, caprefinement or completionguarantee afterfreeze.",
+     "maximum_single_owner_seconds": 7200,
+     "maximum_total": 22260,
+     "offline_scoring": 300,
+@@ -175,7 +175,7 @@
+     "fresh_HOLD_games": 64,
+     "generation_concurrency": "At most16active slots; refill whichever finishes. Slot IDs/order are metadata only; no8/4slotquota.",
+     "old_data": "No old HOLD reuse or old cohort/results pooling; prior E2TB remains closed.",
+-    "source": "Fresh qualified strict-TB-ON collection, fullhistory/POV/provenance and prospective structural/exposure gates; actual UUID/roster/index/books/profile/source hashes pending."
++    "source": "Planned fresh strict-TB-ON collection with fullhistory/POV/provenance and fixed structural/exposure gates. Actual192data must qualify aftergeneration. All knownUUID/roster/index/books/profile/source/config identities are concrete in cohort/source/components before anygame."
+   },
+   "donor": {
+     "path": "/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/baseline/epoch2.pt",
+@@ -295,7 +295,7 @@
+       "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-preparation-v1/commands.template.json",
+       "sha256": "055f0200b0669b58ad9f2a340a6aeef3c12c4c16e7dd5abf02f7d11817b64781"
+     },
+-    "shape": "training fromexact71b4evaluationconfig",
++    "shape": "Pinned71b4 publicarena evaluation-shape config; c78 E4training-generation config is separate and originalarchitecture unchanged. Actualcheckpoint shape/complete494 and publicloader/serving custody mustqualify before endpoints.",
+     "sims": 64,
+     "source": "Frozen R7 same qualified actual public internalarena source/5native images and new820 encodings. Distinct from externalcompiledUCI/Rof clocks; freshactualendpoint/model/custody/history/TB/fault/cap readout qualification mandatory.",
+     "structural_rule_sha256": "50a2eaf11683bc22e1c3e908bf5a7e177bbd988ced3f2f403d7e6e0283c7a45b",
+@@ -331,7 +331,7 @@
+     "opening_pairs": 128
+   },
+   "screens": {
+-    "books": "One frozen fresh128-pair panel shared across3comparisons, scoreblind pairedcolors; fresh500-pair confirmation panel disjoint, with prospective source/identity exclusions. All book/source/seed/CLI/profile hashes pendingfinalfreeze.",
++    "books": "The pinned fresh128pair screen panel is shared across3comparisons with pairedcolors; the pinned fresh500pair confirmation panel is disjoint. All known book/source/seed/CLI/profile identities are fixed in playing/source/components before anygame.",
+     "fixed_all_three": [
+       "FULLB129_vs_FULLA129",
+       "FULLB129_vs_DONOR",
+@@ -410,8 +410,15 @@
+       "sha256": "c78ecaf0bef637f2119abc555d108d5d08697772e554d4b20aa38724892e3ebb"
+     }
+   },
+-  "status": "FROZEN_E4_PREREGISTRATION_V1",
+-  "stop_recovery": "Preserve all failedattempts/partials/rawreceipts and source/model/draw/owner identities. Any requiredtechnical/data/control/cleanup gate failure => unqualified/inconclusive at that stage, no after-result count/seed/dose substitution. No futurecompute authorized by this draft.",
++  "status": "FROZEN_E4_PREREGISTRATION_V2",
++  "stop_recovery": "Preserve everyfailedattempt/partial/rawreceipt and source/model/draw/owner identity. Requiredtechnical/data/control/cleanup failure leaves stageunqualified/inconclusive; no after-result count/seed/dose substitution, scientificrerun orautomaticextension. Separatefiniteadmission is mandatory for everyactualstage.",
++  "supersession_before_data": {
++    "parent": {
++      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-scientific-protocol-final-v1/protocol.json",
++      "sha256": "18f2f8854c9dd29f1b3d273ecc6514ff304d34bd3878e65e682d1038682f82cf"
++    },
++    "reason": "Prepublication prose cleanup only: remove inherited draft pending-binding/refinement language now allknown component identities fixed; clarify separatetrainingconfig/publicarena shape. No numeric/source/template/statistical/seed/selection change; v1neverpublished/research-executed."
++  },
+   "training": {
+     "LR129_actual": {
+       "Aurora": 7.136969439881711e-06,

@@ -1,0 +1,32 @@
+{
+  "status": "E4_IDENTITY_AND_DESIGN_DIRECTION_ONLY_NOT_EXECUTION_AUTHORITY",
+  "created_utc": "2026-11-13T07:40:28.507997+00:00",
+  "collection_uuid": "cd47b230-f32f-4256-a51e-4869f5708bb6",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "donor_sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+  "cohort_games": 192,
+  "TRAIN_games": 128,
+  "HOLD_games": 64,
+  "training_steps_per_arm": 129,
+  "batch_size": 256,
+  "samples_per_arm": 33024,
+  "seeds": {
+    "generation": 2026111340,
+    "rank": 2026111341,
+    "draw": 2026111342,
+    "mirror": 2026111343,
+    "training_common": 2026111344,
+    "screens": 2026111345,
+    "confirmation": 2026111346,
+    "offline_bootstrap": 2026111347
+  },
+  "rank_pool": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-structural-selection-results-v2-f1dadbe4/ranked-pool.json",
+    "sha256": "89319d1456c0f1ed81c1048f3c0bcc86311f58843b6621d5cb3c74a82fb24c85"
+  },
+  "LR_source_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-scheduler-regime-independent-planning-review-v1/review.json",
+    "sha256": "2d3aaef32a8507c25cfbfc26b2e19033bcbc850b936b9a6f71096810a0126f8b"
+  },
+  "next": "Prepare coherent separately reviewed source helpers and final scientific protocol before any E4 compute. E2TB/E3 remain closed."
+}

@@ -1,0 +1,845 @@
+"""Scoped observations around existing real Trainer seams; no job/controller."""
+
+from __future__ import annotations
+
+from collections import Counter
+from copy import deepcopy
+from dataclasses import asdict, is_dataclass
+import hashlib
+import json
+import random
+from pathlib import Path
+import threading
+
+import numpy as np
+
+
+def require(ok, message):
+    if not ok:
+        raise ValueError(message)
+
+
+def plain(value):
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, np.generic):
+        return value.item()
+    if is_dataclass(value):
+        return plain(asdict(value))
+    if isinstance(value, dict):
+        return {str(k): plain(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [plain(v) for v in value]
+    return value
+
+
+def identity(value):
+    return hashlib.sha256(
+        json.dumps(
+            plain(value), sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode()
+    ).hexdigest()
+
+
+def arrays_signature(arrays):
+    result = {}
+    for name, value in sorted(arrays.items()):
+        array = np.asarray(value)
+        require(
+            not array.dtype.hasobject
+            and array.dtype.fields is None
+            and array.dtype.kind in "biufUS",
+            "object/structured/nonprimitive dtype refused by qualified array hash",
+        )
+        result[name] = {
+            "shape": list(array.shape),
+            "dtype": str(array.dtype),
+            "sha256": hashlib.sha256(array.tobytes(order="C")).hexdigest(),
+        }
+    return result
+
+
+def tensors_signature(tensors):
+    import torch
+
+    return {
+        name: {
+            "shape": list(value.shape),
+            "dtype": str(value.dtype),
+            "sha256": hashlib.sha256(
+                value.detach()
+                .contiguous()
+                .reshape(-1)
+                .view(torch.uint8)
+                .cpu()
+                .numpy()
+                .tobytes()
+            ).hexdigest(),
+        }
+        for name, value in sorted(tensors.items())
+    }
+
+
+def rng_state():
+    import torch
+
+    legacy = np.random.get_state()
+    return {
+        "python": plain(random.getstate()),
+        "numpy_global": [
+            legacy[0],
+            legacy[1].tolist(),
+            legacy[2],
+            legacy[3],
+            legacy[4],
+        ],
+        "torch_cpu": torch.get_rng_state().tolist(),
+        "cuda_initialized": torch.cuda.is_initialized(),
+        "torch_cuda0": torch.cuda.get_rng_state(0).tolist()
+        if torch.cuda.is_initialized()
+        else None,
+    }
+
+
+def restore_rng(state):
+    """Use ONCE after fresh construction, before any prefetch/window starts."""
+    import torch
+
+    def tuples(value):
+        return (
+            tuple(tuples(item) for item in value) if isinstance(value, list) else value
+        )
+
+    require(
+        torch.cuda.is_initialized() == state["cuda_initialized"],
+        "RNG device context differs",
+    )
+    random.setstate(tuples(state["python"]))
+    legacy = state["numpy_global"]
+    np.random.set_state(
+        (
+            legacy[0],
+            np.asarray(legacy[1], dtype=np.uint32),
+            legacy[2],
+            legacy[3],
+            legacy[4],
+        )
+    )
+    torch.set_rng_state(torch.tensor(state["torch_cpu"], dtype=torch.uint8))
+    if state["cuda_initialized"]:
+        torch.cuda.set_rng_state(
+            torch.tensor(state["torch_cuda0"], dtype=torch.uint8), 0
+        )
+
+
+class FixedBundleBatches:
+    def __init__(
+        self,
+        arrays,
+        row_ids,
+        indices,
+        *,
+        raw_values,
+        value_metadata,
+        arm,
+        train_game_ids,
+        mirror_state,
+        scope="research",
+    ):
+        require(scope in ("research", "pilot_aa4"), "unknown finite sampler scope")
+        self.steps = 129 if scope == "research" else 4
+        expected_games = 128 if scope == "research" else 1
+        require(
+            len(train_game_ids) == len(set(train_game_ids)) == expected_games,
+            "wrong authorized whole TRAIN game count",
+        )
+        require(
+            len(row_ids) == len(set(row_ids)) > 0
+            and all(row.rsplit(":", 1)[0] in set(train_game_ids) for row in row_ids),
+            "row from outside authorized TRAIN bank",
+        )
+        self.arrays, self.row_ids = arrays, row_ids
+        self.indices = np.asarray(indices, dtype=np.int64)
+        require(
+            self.indices.shape == (self.steps, 256)
+            and np.all((self.indices >= 0) & (self.indices < len(row_ids))),
+            "not fixed129B256 plan",
+        )
+        from train_inputs import (categorical_for_train_arm as categorical_for_arm,
+                                  validate_train_stored_control)
+
+        if scope == "research":
+            require(
+                list(raw_values["physical_row_id"]) == row_ids,
+                "raw value physical order differs",
+            )
+            validate_train_stored_control(raw_values, arrays, metadata=value_metadata)
+            self.categorical_target = categorical_for_arm(
+                raw_values, arm=arm, metadata=value_metadata
+            )
+        else:
+            require(
+                arm == "FULLA"
+                and raw_values is None
+                and value_metadata is None
+                and len(row_ids) == 144,
+                "AAqualification must use exact excluded144rows/originalstoredcategorical only",
+            )
+            self.categorical_target = np.array(arrays["categorical_target"], copy=True)
+        self.arm = arm
+        require(
+            self.categorical_target.shape == arrays["categorical_target"].shape
+            and self.categorical_target.dtype == np.float16,
+            "declared categorical replacement shape/dtype differs",
+        )
+        self.rng = np.random.default_rng(0)
+        self.rng.bit_generator.state = deepcopy(mirror_state)
+        self.local = threading.local()
+        self.draws = []
+
+    def sample_batch_arrays(self, batch_size, *, wdl_balance=True):
+        from scripts.offline_replay_epoch import _slice_arrays
+
+        del wdl_balance
+        token = len(self.draws)
+        require(batch_size == 256 and token < self.steps, "extra/wrong fixed draw")
+        indices = self.indices[token]
+        batch = _slice_arrays(self.arrays, indices)
+        batch["categorical_target"] = np.array(
+            self.categorical_target[indices], copy=True
+        )
+        ids = [self.row_ids[int(i)] for i in indices]
+        self.draws.append(
+            {
+                "token": token,
+                "physical_row_ids": ids,
+                "multiplicities": dict(Counter(ids)),
+                "raw_arrays": arrays_signature(batch),
+            }
+        )
+        self.local.token = token
+        return batch
+
+
+def parameter_map(trainer):
+    aliases = {}
+    for name, param in trainer.model.named_parameters(remove_duplicate=False):
+        aliases.setdefault(id(param), []).append(name.removeprefix("_orig_mod."))
+    canonical = {
+        id(param): (name.removeprefix("_orig_mod."), param)
+        for name, param in trainer.model.named_parameters()
+    }
+    heads = (
+        "policy_own",
+        "policy_soft",
+        "policy_sf",
+        "policy_future",
+        "value_wdl",
+        "value_sf_eval",
+        "value_categorical",
+        "value_categorical_coupled",
+        "volatility",
+        "sf_volatility",
+        "moves_left",
+    )
+    shared = (
+        "blocks",
+        "embed",
+        "_embed_gate_mul_raw",
+        "embed_gate_add",
+        "square_embed_gate_mul_raw",
+        "square_embed_gate_add",
+        "smolgen",
+        "layer_smolgens",
+        "width_adapters",
+        "global_board_preprocess",
+        "global_board_adapter",
+        "pos_adapter",
+        "smolgen_layer_scale",
+        "smolgen_layer_head_scale",
+        "arc_attention_bias",
+        "arc_attention_weight",
+        "dynamic_relation_weight",
+    )
+    mapped, seen = [], set()
+    for index, group in enumerate(trainer.opt.param_groups):
+        for param in group["params"]:
+            key = id(param)
+            require(
+                key in canonical and key not in seen,
+                "unknown/duplicate optimized physical parameter",
+            )
+            seen.add(key)
+            name, _ = canonical[key]
+            prefix = name.split(".")[0]
+            role = (
+                prefix
+                if prefix
+                in (
+                    *heads,
+                    "policy_embedding",
+                    "phase_output_adapter",
+                    "policy_relation_weight",
+                )
+                else ("shared_trunk" if prefix in shared else "UNKNOWN")
+            )
+            mapped.append(
+                {
+                    "name": name,
+                    "aliases": aliases[key],
+                    "shape": list(param.shape),
+                    "dtype": str(param.dtype),
+                    "numel": param.numel(),
+                    "requires_grad": param.requires_grad,
+                    "group": index,
+                    "optimizer_class": type(trainer.opt).__name__,
+                    "state_keys_at_map": sorted(
+                        getattr(trainer.opt, "state", {}).get(param, {})
+                    ),
+                    "route": "aurora" if group.get("use_aurora", False) else "adamw",
+                    "lr": float(group["lr"]),
+                    "weight_decay": float(group.get("weight_decay", 0)),
+                    "role": role,
+                    "categorical_coupled_value_body": role == "value_wdl"
+                    and bool(getattr(trainer.model, "categorical_head_coupled", False)),
+                }
+            )
+    require(
+        seen
+        == {key for key, (_name, param) in canonical.items() if param.requires_grad},
+        "optimized/trainable parameter coverage differs",
+    )
+    require(
+        trainer._optimizer_param_names() == [entry["name"] for entry in mapped],
+        "actual flattened optimizer names differ",
+    )
+    return mapped
+
+
+class ObservePairedTrainer:
+    """One sequential Trainer/window; wrappers restore on every exit."""
+
+    def __init__(
+        self,
+        trainer,
+        sampler,
+        trainer_module,
+        *,
+        selected_names,
+        checkpoint=None,
+        observe_deltas=True,
+    ):
+        self.trainer, self.sampler, self.module = trainer, sampler, trainer_module
+        self.draws = sampler.draws
+        self.steps = sampler.steps
+        self.observe_deltas = bool(observe_deltas)
+        self.math = math_context()
+        require(
+            trainer.rebuild_categorical_target is False
+            and trainer.rebuild_sf_targets is False,
+            "E2 requires common stored-target host path, rebuildOFF",
+        )
+        self.mapping = parameter_map(trainer)
+        require(
+            not any(row["role"] == "UNKNOWN" for row in self.mapping),
+            "functional ownership needs source audit",
+        )
+        parameters = {
+            name.removeprefix("_orig_mod."): param
+            for name, param in trainer.model.named_parameters()
+        }
+        require(
+            1 <= len(selected_names) <= 8
+            and len(set(selected_names)) == len(selected_names),
+            "selected observation set differs",
+        )
+        self.selected = {name: parameters[name] for name in selected_names}
+        require(
+            sum(p.numel() * p.element_size() for p in self.selected.values())
+            <= 64 * 1024**2,
+            "selected copies exceed predeclared64MiB weights",
+        )
+        self.checkpoint = checkpoint
+        self.host, self.loss, self.randomness, self.updates = [], [], [], []
+        self.host_tokens, self.device_tokens, self.preclip, self.tensor_categories = (
+            {},
+            {},
+            {},
+            {},
+        )
+        self.original = {}
+        self.had_instance_attribute = {}
+        self.handles = []
+
+    def __enter__(self):
+        t = self.trainer
+        for name in (
+            "_prepare_host_arrays",
+            "_host_batch_to_tensors",
+            "_apply_feature_group_dropout",
+            "_zclip_step",
+            "_run_optimizer_step",
+        ):
+            self.had_instance_attribute[name] = name in t.__dict__
+            self.original[name] = getattr(t, name)
+        self.had_instance_attribute["opt_step"] = "step" in t.opt.__dict__
+        self.original["opt_step"], self.original["compute_loss"] = (
+            t.opt.step,
+            self.module.compute_loss,
+        )
+
+        def prepare(*args, **kwargs):
+            token = self.sampler.local.token
+            require(token == len(self.host), "out-of-order prepared host token")
+            before = deepcopy(kwargs["rng"].bit_generator.state)
+            batch = self.original["_prepare_host_arrays"](*args, **kwargs)
+            require(
+                arrays_signature({"categorical_target": batch["categorical_target"]})[
+                    "categorical_target"
+                ]
+                == self.sampler.draws[token]["raw_arrays"]["categorical_target"],
+                "host changed declared categorical target",
+            )
+            self.host.append(
+                {
+                    "token": token,
+                    "arrays": arrays_signature(batch),
+                    "mirror_rng_before": before,
+                    "mirror_rng_after": deepcopy(kwargs["rng"].bit_generator.state),
+                }
+            )
+            self.host_tokens[id(batch)] = token
+            return batch
+
+        def transfer(batch):
+            token = self.host_tokens.pop(id(batch))
+            require(
+                arrays_signature(batch) == self.host[token]["arrays"],
+                "prepared host batch changed before H2D",
+            )
+            tensors = self.original["_host_batch_to_tensors"](batch)
+            require(
+                str(tensors["categorical_t"].dtype) == "torch.float32"
+                and np.array_equal(
+                    tensors["categorical_t"].detach().cpu().numpy(),
+                    np.asarray(batch["categorical_target"], dtype=np.float32),
+                ),
+                "H2D categorical differs from declared F16 target",
+            )
+            self.tensor_categories[token] = tensors_signature(
+                {"categorical_t": tensors["categorical_t"]}
+            )
+            self.device_tokens[id(tensors)] = token
+            return tensors
+
+        def dropout(*args, **kwargs):
+            before = identity(rng_state())
+            value = self.original["_apply_feature_group_dropout"](*args, **kwargs)
+            self.randomness.append(
+                {
+                    "kind": "feature_dropout",
+                    "step": t.step,
+                    "before": before,
+                    "after": identity(rng_state()),
+                }
+            )
+            return value
+
+        def before_forward(_module, _args):
+            import torch
+
+            if getattr(t, "device", None) is not None:
+                actual = {
+                    "grad_enabled": torch.is_grad_enabled(),
+                    "cuda_autocast_enabled": torch.is_autocast_enabled("cuda"),
+                    "autocast_dtype": str(torch.get_autocast_dtype("cuda")),
+                    "input_device": str(_args[0].device),
+                    "input_storage_dtype": str(_args[0].dtype),
+                }
+                require(
+                    actual["grad_enabled"]
+                    and actual["cuda_autocast_enabled"]
+                    and actual["autocast_dtype"] == "torch.bfloat16"
+                    and _args[0].is_cuda,
+                    "actual Trainer forward AMP/device context differs",
+                )
+                self.randomness.append(
+                    {"kind": "forward_math_context", "step": t.step, **actual}
+                )
+            self.randomness.append(
+                {
+                    "kind": "forward_before",
+                    "step": t.step,
+                    "state": identity(rng_state()),
+                }
+            )
+
+        def after_forward(_module, _args, _output):
+            self.randomness.append(
+                {
+                    "kind": "forward_after",
+                    "step": t.step,
+                    "state": identity(rng_state()),
+                }
+            )
+
+        def loss(*args, **kwargs):
+            batch = args[1]
+            token = self.device_tokens.pop(id(batch))
+            require(
+                tensors_signature({"categorical_t": batch["categorical_t"]})
+                == self.tensor_categories.pop(token),
+                "actual loss categorical target changed after H2D",
+            )
+            receipt = {
+                "token": token,
+                "trainer_step": t.step,
+                "actual_tensors": tensors_signature(batch),
+                "loss_kwargs": plain(kwargs),
+            }
+            value = self.original["compute_loss"](*args, **kwargs)
+            if "total" in value:
+                receipt["finite_total_loss"] = float(
+                    value["total"].detach().float().cpu()
+                )
+                require(
+                    np.isfinite(receipt["finite_total_loss"]),
+                    "nonfinite actual total loss",
+                )
+            self.loss.append(receipt)
+            return value
+
+        def zclip(*args, **kwargs):
+            if self.observe_deltas and t.step + 1 in (
+                1,
+                min(8, self.steps),
+                self.steps,
+            ):
+                self.preclip = {
+                    name: None
+                    if param.grad is None
+                    else param.grad.detach().cpu().double().numpy().copy()
+                    for name, param in self.selected.items()
+                }
+            return self.original["_zclip_step"](*args, **kwargs)
+
+        def step(*args, **kwargs):
+            import torch
+
+            selected = self.observe_deltas and t.step + 1 in (
+                1,
+                min(8, self.steps),
+                self.steps,
+            )
+            before = (
+                {
+                    name: param.detach().cpu().double().numpy().copy()
+                    for name, param in self.selected.items()
+                }
+                if selected
+                else {}
+            )
+            gradients = (
+                {
+                    name: None
+                    if param.grad is None
+                    else param.grad.detach().cpu().double().numpy().copy()
+                    for name, param in self.selected.items()
+                }
+                if selected
+                else {}
+            )
+            require(
+                t.step == len(self.updates) < self.steps,
+                "extra or inconsistent actual optimizer call",
+            )
+            require(math_context() == self.math, "per-arm math context changed")
+            value = self.original["opt_step"](*args, **kwargs)
+            receipt = {
+                "applied_update": t.step + 1,
+                "lr_used": [float(g["lr"]) for g in t.opt.param_groups],
+                "rng_after": identity(rng_state()),
+                "group_gradient_presence": [
+                    {
+                        "group": index,
+                        "present": sum(
+                            param.grad is not None for param in group["params"]
+                        ),
+                        "none": sum(param.grad is None for param in group["params"]),
+                    }
+                    for index, group in enumerate(t.opt.param_groups)
+                ],
+                "selected": {},
+            }
+            with torch.no_grad():
+                for name, previous in before.items():
+                    delta = (
+                        self.selected[name].detach().cpu().double().numpy() - previous
+                    )
+                    size = float(np.sqrt(np.sum(delta * delta, dtype=np.float64)))
+                    norm = float(np.sqrt(np.sum(previous * previous, dtype=np.float64)))
+                    state = getattr(t.opt, "state", {}).get(self.selected[name], {})
+                    row = {
+                        "optimizer_state_keys_after": sorted(state),
+                        "optimizer_step_counter_after": state.get("step")
+                        if isinstance(state.get("step"), (int, float))
+                        else None,
+                        "weight_norm": norm,
+                        "delta_norm": size,
+                        "relative_delta": size / norm if norm else None,
+                    }
+                    for label, gradient in [
+                        ("preclip", self.preclip[name]),
+                        ("postclip", gradients[name]),
+                    ]:
+                        gn = (
+                            float(
+                                np.sqrt(np.sum(gradient * gradient, dtype=np.float64))
+                            )
+                            if gradient is not None
+                            else None
+                        )
+                        dot = (
+                            float(np.sum(delta * -gradient, dtype=np.float64))
+                            if gradient is not None
+                            else None
+                        )
+                        row[label] = {
+                            "grad_none": gradient is None,
+                            "grad_norm": gn,
+                            "descent_dot": dot,
+                            "descent_cosine": dot / (size * gn)
+                            if size and gn
+                            else None,
+                        }
+                    receipt["selected"][name] = row
+            self.updates.append(receipt)
+            return value
+
+        def optimizer_step(*args, **kwargs):
+            require(
+                t.step == len(self.updates), "retry/skip/counter changed paired window"
+            )
+            if self.checkpoint is not None and t.step in (1, 8):
+                before = identity(rng_state())
+                self.checkpoint(t.step)
+                require(
+                    before == identity(rng_state()), "checkpoint changed main RNG state"
+                )
+            result = self.original["_run_optimizer_step"](*args, **kwargs)
+            if "step_opt_stats" in kwargs:
+                stats = kwargs["step_opt_stats"]
+                require(
+                    result[0] == 1
+                    and stats["samples_seen"] == 256
+                    and np.isfinite(stats["grad_norm"])
+                    and np.isfinite(stats["grad_norm_aurora"]),
+                    "actual microbatch/gradient/dose guard failed",
+                )
+                self.updates[-1]["gradient_norms"] = {
+                    key: float(stats[key]) for key in ("grad_norm", "grad_norm_aurora")
+                }
+            return result
+
+        for name, fn in [
+            ("_prepare_host_arrays", prepare),
+            ("_host_batch_to_tensors", transfer),
+            ("_apply_feature_group_dropout", dropout),
+            ("_zclip_step", zclip),
+            ("_run_optimizer_step", optimizer_step),
+        ]:
+            setattr(t, name, fn)
+        t.opt.step, self.module.compute_loss = step, loss
+        try:
+            self.handles.append(t.model.register_forward_pre_hook(before_forward))
+            self.handles.append(t.model.register_forward_hook(after_forward))
+        except BaseException:
+            self.__exit__(None, None, None)
+            raise
+        return self
+
+    def __exit__(self, *_exception):
+        for name, original in self.original.items():
+            if name not in ("opt_step", "compute_loss"):
+                if self.had_instance_attribute[name]:
+                    setattr(self.trainer, name, original)
+                else:
+                    delattr(self.trainer, name)
+        if self.had_instance_attribute["opt_step"]:
+            self.trainer.opt.step = self.original["opt_step"]
+        else:
+            delattr(self.trainer.opt, "step")
+        self.module.compute_loss = self.original["compute_loss"]
+        for handle in self.handles:
+            handle.remove()
+        self.handles.clear()
+        self.original.clear()
+        self.selected.clear()
+        self.preclip.clear()
+        self.trainer = self.sampler = self.module = self.checkpoint = None
+
+    def assert_complete(self, metrics):
+        require(
+            len(self.host)
+            == len(self.loss)
+            == len(self.updates)
+            == len(self.draws)
+            == self.steps,
+            "paired129 count incomplete",
+        )
+        require(
+            [r["token"] for r in self.host]
+            == [r["token"] for r in self.loss]
+            == list(range(self.steps)),
+            "prefetch/applied token order differs",
+        )
+        require(
+            not self.host_tokens
+            and not self.device_tokens
+            and not self.tensor_categories,
+            "unconsumed batch token",
+        )
+        require(
+            metrics.train_steps_done == self.steps
+            and metrics.train_samples_seen == self.steps * 256
+            and metrics.batches_drawn == self.steps
+            and metrics.transient_cuda_retry_batches
+            == metrics.grad_nonfinite_skip_rate
+            == 0,
+            "unmatched retry/skip/dose",
+        )
+
+
+def assert_pair(left, right, *, contrast="E2FULL"):
+    """Declared E2 differences only: mainWDL search fraction and categorical tensor."""
+    require(contrast in ("E2FULL", "AA_observer_only"), "unknown paired contrast")
+    require(
+        left.steps == right.steps == (129 if contrast == "E2FULL" else 4),
+        "contrast scope/dose mismatch",
+    )
+    require(left.math == right.math, "per-arm math contexts differ")
+    require(
+        len(left.host)
+        == len(right.host)
+        == len(left.loss)
+        == len(right.loss)
+        == left.steps,
+        "incomplete arm receipts",
+    )
+    excluded_host = {"categorical_target"} if contrast == "E2FULL" else set()
+    excluded_device = {"categorical_t"} if contrast == "E2FULL" else set()
+    require(
+        left.randomness == right.randomness, "feature/forward RNG trajectories differ"
+    )
+    for a, b in zip(left.host, right.host, strict=True):
+        require(
+            a["token"] == b["token"]
+            and a["mirror_rng_before"] == b["mirror_rng_before"]
+            and a["mirror_rng_after"] == b["mirror_rng_after"],
+            "host token/augmentation RNG differs",
+        )
+        require(
+            {k: v for k, v in a["arrays"].items() if k not in excluded_host}
+            == {k: v for k, v in b["arrays"].items() if k not in excluded_host},
+            "undeclared posthost field changed",
+        )
+    for a, b in zip(left.loss, right.loss, strict=True):
+        require(
+            a["token"] == b["token"] and a["trainer_step"] == b["trainer_step"],
+            "actual tensor token/step differs",
+        )
+        require(
+            {k: v for k, v in a["actual_tensors"].items() if k not in excluded_device}
+            == {
+                k: v for k, v in b["actual_tensors"].items() if k not in excluded_device
+            },
+            "undeclared actual loss tensor changed",
+        )
+        ka, kb = dict(a["loss_kwargs"]), dict(b["loss_kwargs"])
+        if contrast == "E2FULL":
+            require(
+                ka.pop("search_wdl_frac") == 1
+                and kb.pop("search_wdl_frac") == 0.8
+                and ka == kb
+                and ka["sf_wdl_frac"] == 0,
+                "actual E2 loss map differs beyond declared target share",
+            )
+        else:
+            require(
+                ka == kb and ka["search_wdl_frac"] == 1 and ka["sf_wdl_frac"] == 0,
+                "AAqualification changed actual loss map",
+            )
+            require(
+                a.get("finite_total_loss") == b.get("finite_total_loss"),
+                "AA actual total loss differs",
+            )
+    for a, b in zip(left.draws, right.draws, strict=True):
+        require(
+            a["physical_row_ids"] == b["physical_row_ids"]
+            and a["multiplicities"] == b["multiplicities"],
+            "actual physical draw differs",
+        )
+        require(
+            {k: v for k, v in a["raw_arrays"].items() if k not in excluded_host}
+            == {k: v for k, v in b["raw_arrays"].items() if k not in excluded_host},
+            "undeclared prehost raw field changed",
+        )
+    require(
+        left.mapping == right.mapping,
+        "named optimizer ownership/group/role/initial LR differs",
+    )
+    require(
+        len(left.updates) == len(right.updates) == left.steps,
+        "actual optimizer count differs",
+    )
+    for a, b in zip(left.updates, right.updates, strict=True):
+        require(
+            a["applied_update"] == b["applied_update"]
+            and a["lr_used"] == b["lr_used"]
+            and a["rng_after"] == b["rng_after"],
+            "dose/LR/update RNG pairing differs",
+        )
+        if contrast == "AA_observer_only":
+            require(
+                {k: v for k, v in a.items() if k != "selected"}
+                == {k: v for k, v in b.items() if k != "selected"},
+                "AA common update observations differ",
+            )
+
+
+def release_arm_refs(refs):
+    """Call only after arm function returned CPU receipts and closed its writer."""
+    import gc
+    import torch
+
+    gc.collect()
+    if torch.cuda.is_initialized():
+        torch.cuda.synchronize(0)
+        torch.cuda.empty_cache()
+    require(
+        all(ref() is None for ref in refs),
+        "prior arm model/Trainer/optimizer/parameter still retained",
+    )
+
+
+def math_context():
+    import os
+    import torch
+
+    return {
+        "torch": str(torch.__version__),
+        "default_dtype": str(torch.get_default_dtype()),
+        "float32_matmul_precision": torch.get_float32_matmul_precision(),
+        "cuda_matmul_allow_tf32": torch.backends.cuda.matmul.allow_tf32,
+        "cuda_matmul_allow_fp16_reduced_precision_reduction": torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction,
+        "cuda_matmul_allow_bf16_reduced_precision_reduction": torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction,
+        "cudnn_allow_tf32": torch.backends.cudnn.allow_tf32,
+        "cudnn_deterministic": torch.backends.cudnn.deterministic,
+        "cudnn_benchmark": torch.backends.cudnn.benchmark,
+        "deterministic_algorithms": torch.are_deterministic_algorithms_enabled(),
+        "deterministic_warn_only": torch.is_deterministic_algorithms_warn_only_enabled(),
+        "math_environment": {
+            key: os.environ.get(key)
+            for key in ("NVIDIA_TF32_OVERRIDE", "CUBLAS_WORKSPACE_CONFIG")
+        },
+    }

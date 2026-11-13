@@ -1,0 +1,127 @@
+"""Whole64 scoreblind roots and fresh strict proofs, before any HOLD array reads."""
+from __future__ import annotations
+
+from contextlib import contextmanager
+import hashlib
+import json
+from pathlib import Path
+
+from common import context, digest, require
+
+RESOLVED = ('NATURAL', 'STRICT_TB_ADJUDICATED')
+
+
+def choose_roots(protocol, readout, collector):
+    if not (readout['offline_outcome_roots_qualified'] and readout['heldout_data_qualified']
+            and readout['heldout_verified_resolved_outcomes_qualified']):
+        return None  # Valid censoring/no root never vetoes the primary playing gate.
+    exposure = collector.load_exposure(protocol)
+    train_games = {g['physical_game_id'] for g in protocol['games'] if g['bank'] == 'train'}
+    train = [row for item in readout['completed'].values() if item['bank'] == 'train'
+             for row in item['validation']['rows']]
+    exclusions = {**exposure,
+        'histories': exposure['histories'] | {r['history_sha256'] for r in train},
+        'inputs': exposure['inputs'] | {r[k] for r in train
+            for k in ('stored_input_float16_sha256', 'stored_input_float16_mirror_sha256')}}
+    result = []
+    for game in protocol['games']:
+        if game['bank'] != 'holdout':
+            continue
+        item = readout['completed'][str(game['start_ordinal'])]
+        require(item['bank'] == 'holdout' and item['physical_game_id'] == game['physical_game_id']
+                and game['physical_game_id'] not in train_games, 'HOLDOUT bank entered TRAIN')
+        validation = item['validation']
+        if not (validation['usable_shard'] and validation['resolved_outcome_eligible']
+                and validation['scientific_outcome_class'] in RESOLVED):
+            return None
+        rows = validation['rows']
+        require([r['move_offset'] for r in rows] == sorted(r['move_offset'] for r in rows),
+                'chronological tie-breaking order changed')
+        # Exact producer rule:8..80, UTF8(salt+":"+physical_row_id), min digest;
+        # Python min keeps chronological row order on digest ties.
+        root = collector.select_holdout_root(rows, game, exclusions, protocol['holdout_root_salt'])
+        if root is None:
+            return None
+        require(root == readout['holdout_roots'][str(game['start_ordinal'])],
+                'root changed after scoreblind selection')
+        result.append((game, item, root))
+    require(len(result) == len({r['physical_row_id'] for _g, _i, r in result}) == 64,
+            'not exactly64 whole-game roots')
+    return result
+
+
+def root_board_and_label(actual, root, proof, proof_api):
+    import chess
+    from chess_anti_engine.moves import index_to_move_strict
+    verified = proof_api.require_verified(proof, audit=actual)
+    require(verified['scientific_class'] in RESOLVED and verified['resolved'] is True,
+            'fresh resolved proof required, not origin rename')
+    board = chess.Board(actual['start']['root_fen'])
+    for move in actual['start']['opening_moves']:
+        board.push_uci(move)
+    selected = None
+    for offset, action in enumerate(actual['played_move_indices']):
+        if offset == root['move_offset']:
+            selected = board.copy(stack=True)
+        move = index_to_move_strict(action, board)
+        require(move in board.legal_moves, 'illegal full-history move')
+        board.push(move)
+    require(board.fen() == chess.Board(actual['final_fen']).fen() and actual['tablebase_rescore_result'] is None
+            and actual['result'] == actual['resolved_result'] == verified['result'] != '*',
+            'fresh verified full-history outcome differs')
+    require(selected is not None and selected.ply() == root['ply'], 'selected row outside full history')
+    matches = [r for r in actual['records'] if r['move_offset'] == root['move_offset'] and r['ply_index'] == root['ply']]
+    require(len(matches) == 1 and matches[0]['has_policy'] and not matches[0]['is_sf_refute_opp']
+            and matches[0]['pov_color'] == selected.turn, 'not actual full NET row/POV')
+    history_id = hashlib.sha256(context()['collector'].canonical([selected.root().fen(),
+        [move.uci() for move in selected.move_stack]])).hexdigest()
+    require(history_id == root['history_sha256'], 'selected full-history exclusion identity differs')
+    result = verified['result']
+    label = 1 if result == '1/2-1/2' else (0 if (result == '1-0') == selected.turn else 2)
+    return selected, label
+
+
+def provenance_metadata(protocol, game, item):
+    directory = Path(item['path'])
+    require(directory == Path(protocol['output_root'])/'holdout'/('game-'+str(game['start_ordinal']))
+            and not directory.is_symlink(), 'unexpected HOLDOUT directory')
+    path = directory/'provenance.json'
+    entries = [entry for entry in item['inventory'] if entry['path'] == 'provenance.json']
+    require(len(entries) == 1 and path.is_file() and not path.is_symlink()
+            and all(not parent.is_symlink() for parent in path.parents)
+            and path.stat().st_mode & 0o222 == 0 and path.stat().st_size == entries[0]['bytes']
+            and digest(path) == entries[0]['sha256'], 'unsealed/changed actual HOLD audit')
+    value = json.loads(path.read_text())
+    require(value['planned'] == game, 'planned physical identity changed')
+    return value
+
+
+@contextmanager
+def verified_roots(protocol, readout, selected):
+    """One owned handle/process; all64 fresh proofs precede yield/array access."""
+    from chess_anti_engine.selfplay.config import GameConfig
+    ctx = context()
+    proof_api = ctx['proof_api']
+    game_cfg = GameConfig(**protocol['training_game_config'])
+    verifier = proof_api.VerifiedOutcomeVerifier(path=protocol['tablebase_path'],
+        asset_inventory_sha256=protocol['tablebase_asset_inventory_sha256'],
+        collection_uuid=protocol['collection_uuid'], source_revision=protocol['source_revision'])
+    try:
+        require(len(selected) == 64, 'partial endpoint cannot open HOLD arrays')
+        result = []
+        for game, item, root in selected:
+            provenance = provenance_metadata(protocol, game, item)  # JSON only, no shard/archive hashes or arrays.
+            proof = verifier.verify(provenance['actual'], game, game_cfg)
+            verified = proof_api.require_verified(proof, audit=provenance['actual'])
+            require(verified['scientific_class'] in RESOLVED
+                    and verified['policy_all_eligible_raw_records_reprobed'] is True,
+                    'fresh all-raw resolved proof unavailable')
+            require(verified == item['validation']['verified_outcome']
+                    and proof.proof_sha256 == item['validation']['verified_outcome_sha256'],
+                    'actual producer outcome/class/proof differs from fresh resolve')
+            board, label = root_board_and_label(provenance['actual'], root, proof, proof_api)
+            result.append((game, item, root, provenance, board, label, verified))
+        require(len(result) == 64, 'all64 fresh proofs required before any HOLD arrays')
+        yield result
+    finally:
+        verifier.close()  # Restats owned assets even on verification/array failures.

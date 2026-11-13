@@ -1,0 +1,54 @@
+{
+  "all_other_manifest_fields_fixed": true,
+  "canonical_reader_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-package-v1",
+  "command_late_tokens": [
+    "LATE_ACTUAL_MANIFEST_SHA256",
+    "LATE_ACTUAL_BINDINGS_SHA256"
+  ],
+  "commands": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-preparation-v1/commands.template.json",
+    "sha256": "055f0200b0669b58ad9f2a340a6aeef3c12c4c16e7dd5abf02f7d11817b64781"
+  },
+  "correction_before_data": "Parentmanifest accidentally retained old e9f261 command SHA; actual immutable commands055f matched prep and independently reviewed source. Rebind correctknownSHA before science, not a command or numerical change. New actualE4native receipt replaces historicalB830, original6coreactualarena/publicreader source unchanged.",
+  "endpoint_and_confirmation_bindings": "Actual immutable checkpoint/custody/accepted source/science/closed terminal and result identities only per original endpoint/decision/confirmation templates. No source/book/dose/search/settings/outcome-based changes. Confirmation requires immutable prelaunch selected decision hash and single shared execution stage/output.",
+  "fixed_known_qualifications": {
+    "E4_actual820_and_config": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/readout.json",
+      "sha256": "34cd17f72d78c0cafc8160640bb216a77c3a7c6791bed6a41c37d8b966ddc737"
+    },
+    "decision_inert_actual_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-decision-inert-controls-actual-independent-review-v1/review.json",
+      "sha256": "a5006e5869cceb6acf70f6aebe5437817dd030b843660041625b4f19225342c6"
+    },
+    "decision_source_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-independent-source-review-v1/review.json",
+      "sha256": "ed408f6889cfd443c7673d78c7a152fef49ea033ff2096b7e16d2798302c65cf"
+    },
+    "limited_arena_reuse": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-limited-arena-reuse-root-acceptance-v1/readout.json",
+      "sha256": "b0a2f04aaaa5f44d8439e6b45ed3ccf6446b175099adda8d3a2302a02c2f1f3d"
+    },
+    "native": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/native-origins.json",
+      "sha256": "8d9b629c7f6724b9d863ec6fc6bdadb8f0355be1460ed424c6256e9bc5a35023"
+    },
+    "strict_producer": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-three-case-producer-root-actual-acceptance-v3/readout.json",
+      "sha256": "6e1cab125891bb31eab40cbac7e243716a77bfb107c9214593be9110efb5ded3"
+    }
+  },
+  "manifest_mutable_leaves": [
+    "/science/path",
+    "/science/sha256"
+  ],
+  "manifest_template": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-template-v1/manifest.template.json",
+    "sha256": "370f7fa00259fa77abe005c798355ae1ff5feaca637f71f28a05228a6f7ea056"
+  },
+  "readout_command_templates": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-template-v1/readout-commands.template.json",
+    "sha256": "d202ec7f47ba333f0fc2d8e49300d0f468698b30a0e54c24aea518acc0a37b32"
+  },
+  "status": "PROSPECTIVE_E4_ARENA_FINAL_METADATA_BINDING_CONTRACT",
+  "technicalfailure": "A failed or incomplete endpoint remains unqualified, no force-marking a PASS; all3scientific screens fixed unless technical/globalstop."
+}

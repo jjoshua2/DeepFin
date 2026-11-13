@@ -1,0 +1,33 @@
+{
+  "actual_inert_control_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-sf-observer-inert-controls-actual-independent-review-v1/review.json",
+    "sha256": "069f862d19d3ce8ef8ad478739043d86c2c04812cfed66d44db0142bd4d22f2f"
+  },
+  "bare_alternative": "PRESERVED_UNRUN_NOT_RUNTIME_FALLBACK",
+  "core_source_or_targets_changed": false,
+  "fixed_dispatch_binding": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-sf-observation-dispatch-binding-candidate-v1/binding.candidate.json",
+    "sha256": "c03ae042d83f03464e7dfdf5f77ae59b0d17cc5d6c12198e7aa6aba73c197660"
+  },
+  "generation_or_stage_execution_admitted": false,
+  "independent_dispatch_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-sf-observation-dispatch-independent-source-review-v1/review.json",
+    "sha256": "068c13bd302d7ea236697677a0a5a56dd4ae46360e2c6e65aa1e7eb04286ecc9"
+  },
+  "late_argv_fields": [
+    "LATE_ACTUAL_MANIFEST_SHA256"
+  ],
+  "observer_source_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-sf-raw-observation-independent-source-review-v1/review.json",
+    "sha256": "fb247e20960df1121766e012a05d0a43b29cc0c0901fe44d3dcaf94814ac51a3"
+  },
+  "query_count_or_mask_retention_rng_changes": false,
+  "recorded_utc": "2026-11-13T08:41:07.495551+00:00",
+  "root_direction": "Root SELECTS observed collection argvfa15dfe9 BEFORE science/data; independently accepted dispatch068c13; pin observed exactly in final auditor/selection contract.",
+  "selected_command": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-template-v1/collection-command.observed.template.json",
+    "sha256": "fa15dfe9c5f635884cb6cfb4712e3e0e1f07ec6ced2584289eb1bbc2af226c26"
+  },
+  "status": "RECORDED_ROOT_SELECTED_OBSERVED_E4_COMMAND_BEFORE_SCIENCE_AND_DATA_NOT_STAGE_ADMISSION",
+  "timing_import_order_confounds_and_nonveto_archive": "Final scientific record must prospectively declare; source/inert qualification is not actual R7 live concurrency/teacher-P0 quality."
+}

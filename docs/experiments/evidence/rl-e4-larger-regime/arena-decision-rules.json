@@ -1,0 +1,22 @@
+{
+  "confirmation": "ExactlyONE selected samehash final129 vs same donor on disjoint500pairs/1000games; samepoint/lower rule. Any launch consumes attempt including technical/statistical failure; no other candidate, old A40 fallback, reroll, extension or pooling.",
+  "draft": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-larger-regime-prospective-draft-v2/proposal.DRAFT.json",
+    "sha256": "82073830b8efc52b5e9f3ba6842c5c822e2f261c8a1d9623be6c76b8fc1e0dc6"
+  },
+  "inference_clarification": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-selection-inference-clarification-v1/clarification.json",
+    "sha256": "796e2ebecd7e896c4cf238859cc7461fc0f1a2d9d4a154f3f68757b722d9f4bb"
+  },
+  "inference_scope": "Independent fresh sole selected-candidate confirmation supports that selected candidate-vs-donor testwise claim at specified level. It does not confirm B>A or simultaneous claims about both candidates; screening two does not impose a new multiplicity threshold here. No automatic adoption/Elo/Rofchade/SF/Lc0 milestone.",
+  "mandatory_screens": [
+    "primary=FULLB129_vs_FULLA129",
+    "eligibility=FULLB129_vs_A39",
+    "context=FULLA129_vs_A39 (now utility eligible, not context-only)"
+  ],
+  "offline": "Fresh64 diagnostic only; unavailable does not substitute selection yardstick.",
+  "primary": "point>=.53 AND lower>.5 -> screen-supported bundle advantage ONLY; upper<.5 -> screen-supported bundle disadvantage; otherwise unresolved. Technical invalid separate.",
+  "statistics": "Each game0/.5/1, pair total0/.5/1/1.5/2 divided2; mean, samplevar(n-1),SE=sqrt(var/n), normal95 +/-1.96SE; zero variance interval unavailable/nonpass. Exact previous paired_statistics function reused.",
+  "status": "PROSPECTIVE_E4_DECISION_RULE_SOURCE_ONLY_NOT_EXECUTION_AUTHORITY",
+  "utility": "All3 technically qualified. Independently A and B vsdonor point>=.53 AND lower>.5. Sole eligible selected; both eligible selectB if BvsA point>=.5 elseA (tieB). No eligible or any technical invalid -> NO_CONFIRMATION."
+}
