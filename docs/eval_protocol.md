@@ -61,6 +61,10 @@ PYTHONPATH=. python scripts/arena_standard.py \
   those numbers are not directly comparable with the later named shapes.
 - `matched_time` uses UCI subprocesses. It rejects in-process search flags; configure
   the subprocesses with `--uci-args` and verify the intended implementation is loaded.
+  Before PR #1263 the UCI default was `--walkers 2` (the PUCT walker pool), so
+  `matched_time` Elo and `scripts/validate_time_mgmt.py` readings banked before it
+  measured the walker pool (unless `--uci-args` passed `--walkers 1`), not the classic
+  Gumbel search the engine now ships.
 - Set `CHESS_ANTI_ENGINE_LIVE_CONFIG` when claiming production equivalence; see
   [operations](operations.md). Record each engine's tablebase settings and coverage,
   checkpoint architecture, code revision and effective search shape.

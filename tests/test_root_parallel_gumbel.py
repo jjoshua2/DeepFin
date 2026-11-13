@@ -947,8 +947,8 @@ def test_use_multi_gpu_pucv_forces_search_parallel_pucv() -> None:
         engine.close()
 
 
-def test_threads_under_gumbel_does_not_materialize_walker() -> None:
-    """Threads setoption while SearchParallel=gumbel must not spawn a live
+def test_search_walkers_under_gumbel_does_not_materialize_walker() -> None:
+    """SearchWalkers setoption while SearchParallel=gumbel must not spawn a live
     walker pool beside RPG; the count is stored for leave-gumbel restore."""
     worker = _make_worker()
 
@@ -958,14 +958,14 @@ def test_threads_under_gumbel_does_not_materialize_walker() -> None:
     engine = Engine(
         worker,
         rebuild_multi_gpu_pucv_factories=factories,
-        options=EngineOptions(threads=1),
+        options=EngineOptions(search_walkers=1),
     )
     try:
         engine._set_search_parallel("gumbel")
         assert worker._rpg_pool is not None
         assert worker._walker_pool is None
-        engine._set_threads("4")
-        assert engine._options.threads == 4
+        engine._set_search_walkers("4")
+        assert engine._options.search_walkers == 4
         assert worker._n_walkers == 4
         assert worker._walker_pool is None, "must not allocate walker beside RPG"
         assert worker._rpg_pool is not None
@@ -999,7 +999,7 @@ def test_install_rpg_wires_eval_cache_entries() -> None:
 
 
 def test_option_matrix_multi_gpu_transitions() -> None:
-    """Focused SearchParallel × UseMultiGpuPUCV × MaxBatch/VLGather/Threads/UseVL
+    """Focused SearchParallel × UseMultiGpuPUCV × MaxBatch/VLGather/SearchWalkers/UseVL
     matrix: advertised options and live path must stay consistent across
     transitions (the surface both review passes kept finding bugs on)."""
     def factories(_mb: int, _g: int) -> list[Any]:
@@ -1033,7 +1033,7 @@ def test_option_matrix_multi_gpu_transitions() -> None:
         rebuild_evaluator=rebuild_eval,
         rebuild_multi_gpu_pucv_factories=factories,
         options=EngineOptions(
-            max_batch=64, use_vl=True, vl_gather=32, threads=1,
+            max_batch=64, use_vl=True, vl_gather=32, search_walkers=1,
         ),
     )
     try:
@@ -1071,7 +1071,7 @@ def test_option_matrix_multi_gpu_transitions() -> None:
     finally:
         engine.close()
 
-    # C: gumbel → Threads/UseVL deferred → leave materialises both intents
+    # C: gumbel → SearchWalkers/UseVL deferred → leave materialises both intents
     worker = _make_worker(chunk_sims=32)
     engine = Engine(
         worker,
@@ -1080,20 +1080,20 @@ def test_option_matrix_multi_gpu_transitions() -> None:
     )
     try:
         engine._set_search_parallel("gumbel")
-        engine._set_threads("4")
+        engine._set_search_walkers("4")
         engine._set_use_vl("true")
         assert worker._walker_pool is None
         assert worker._pucv is None
         assert worker._n_walkers == 4
         assert worker._use_pucv is True
         engine._set_search_parallel("pucv")
-        # Threads=4 wins over UseVL (pucv requires n_walkers==1).
+        # SearchWalkers=4 wins over UseVL (pucv requires n_walkers==1).
         assert live_path(worker) == "walker"
         assert worker._n_walkers == 4
     finally:
         engine.close()
 
-    # D: multi-pucv → Threads deferred (no dual walker) → off builds walker
+    # D: multi-pucv → SearchWalkers deferred (no dual walker) → off builds walker
     worker = _make_worker(chunk_sims=32)
     engine = Engine(
         worker,
@@ -1102,7 +1102,7 @@ def test_option_matrix_multi_gpu_transitions() -> None:
     )
     try:
         engine._set_use_multi_gpu_pucv("true")
-        engine._set_threads("4")
+        engine._set_search_walkers("4")
         assert worker._pucv_pool is not None
         assert worker._walker_pool is None, "must not dual-allocate walker beside multi-pucv"
         assert worker._n_walkers == 4

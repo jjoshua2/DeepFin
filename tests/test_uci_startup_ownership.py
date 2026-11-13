@@ -68,6 +68,19 @@ def configure_main(monkeypatch, primary, factory_builder):
     monkeypatch.setattr(main.sys, "stdin", iter(["isready\n", "quit\n"]))
 
 
+def _record_startup_failures(monkeypatch) -> list[BaseException]:
+    """Startup failure is reported and turned into exit code 1, not raised."""
+    reported: list[BaseException] = []
+    real = main._report_startup_failure
+
+    def record(exc):
+        reported.append(exc)
+        real(exc)
+
+    monkeypatch.setattr(main, "_report_startup_failure", record)
+    return reported
+
+
 def clean_probe(workers, primary):
     for worker, walker in workers:
         # Baseline failures retain idle threads; retire them after observations.
@@ -99,9 +112,10 @@ def test_main_secondary_factory_failure_releases_primary_once(monkeypatch, faile
 
     configure_main(monkeypatch, primary, lambda *_a, **_kw: [lambda: factory(0), lambda: factory(1)])
     try:
-        with pytest.raises(RuntimeError) as caught:
-            main.main()
-        assert "secondary factory failure" in str(caught.value)
+        reported = _record_startup_failures(monkeypatch)
+        assert main.main() == 1  # reported and exited non-zero, before readyok
+        assert len(reported) == 1
+        assert "secondary factory failure" in str(reported[0])
         assert primary.close_calls == 1
         assert primary._shutdown.is_set()
         assert not primary._submitter.is_alive()
@@ -132,9 +146,9 @@ def test_main_factory_builder_failure_retires_partial_worker_and_preserves_error
         monkeypatch.setattr(SearchWorker, "close", failed_cleanup)
     configure_main(monkeypatch, primary, factory_builder)
     try:
-        with pytest.raises(RuntimeError) as caught:
-            main.main()
-        assert caught.value is error
+        reported = _record_startup_failures(monkeypatch)
+        assert main.main() == 1
+        assert reported == [error]
         assert primary.close_calls == 1
         assert primary._shutdown.is_set()
         assert not primary._submitter.is_alive()

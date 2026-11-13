@@ -47,7 +47,7 @@ def _engine(*, walkers: int = 1, multi: bool = True) -> Engine:
         worker,
         rebuild_evaluator=rebuild,
         rebuild_multi_gpu_pucv_factories=factories if multi else None,
-        options=EngineOptions(max_batch=64, threads=walkers, vl_gather=32),
+        options=EngineOptions(max_batch=64, search_walkers=walkers, vl_gather=32),
     )
 
 
@@ -56,7 +56,7 @@ def _expected_path(options: EngineOptions) -> str:
         return "rpg"
     if options.use_multi_gpu_pucv:
         return "pucv_pool"
-    if options.threads > 1:
+    if options.search_walkers > 1:
         return "walker"
     return "pucv" if options.use_vl else "gumbel"
 
@@ -151,11 +151,11 @@ def test_failed_eval_cache_rebuild_keeps_the_previous_setup(make_engine, monkeyp
     assert _assert_searches_and_reports_truthfully(engine, capsys) == "walker"
 
 
-def test_failed_threads_tier_cross_keeps_the_previous_setup(make_engine, monkeypatch, capsys) -> None:
+def test_failed_search_walkers_tier_cross_keeps_the_previous_setup(make_engine, monkeypatch, capsys) -> None:
     engine = make_engine(walkers=1)
     _fail(monkeypatch, "_build_walker_pool")
-    engine.dispatch(parse_command("setoption name Threads value 2"))
-    assert engine._options.threads == 1
+    engine.dispatch(parse_command("setoption name SearchWalkers value 2"))
+    assert engine._options.search_walkers == 1
     assert engine._worker._n_walkers == 1
     assert _assert_searches_and_reports_truthfully(engine, capsys) == "gumbel"
 
@@ -347,6 +347,7 @@ def test_failed_leaf_gather_keeps_the_previous_gather(make_engine, monkeypatch, 
 @pytest.mark.parametrize(("setter", "arg", "field"), [
     ("set_walker_gather", 4, "_walker_gather"),
     ("set_vloss_weight", 9, "_vloss_weight"),
+    ("set_num_threads", 3, "_n_walkers"),
     ("rebuild_puct_helpers", None, None),
 ])
 def test_worker_setters_build_before_they_swap(monkeypatch, setter, arg, field) -> None:
@@ -486,3 +487,42 @@ def test_restored_hash_cap_resyncs_the_live_tree_growth_step() -> None:
     w._tree = _Spy(w._tree)  # pyright: ignore[reportAttributeAccessIssue]
     assert w.restore_search_state(snapshot) is True
     assert seen == [expected]
+
+
+# --- the boundary health rebuild is transactional (round 5) ------------------
+
+
+def test_health_rebuild_restores_the_pool_after_a_failed_install(make_engine, monkeypatch, capsys) -> None:
+    engine = make_engine(walkers=1, multi=True)
+    engine.dispatch(parse_command("setoption name UseMultiGpuPUCV value true"))
+    assert engine._worker.realized_search_path() == "pucv_pool"
+    engine._mark_unhealthy("test")
+    _fail(monkeypatch, "install_multi_gpu_pucv", times=1, teardown_first=True)
+    engine._worker._recent_visits_per_ms = 123.0  # a rate measured before (#1270)
+    capsys.readouterr()
+    engine.dispatch(parse_command("isready"))  # not in a game: the boundary
+    out = capsys.readouterr().out
+    assert engine._worker._recent_visits_per_ms == 0.0  # the tree was reset
+    assert "health rebuild: install failed" in out
+    assert "health rebuild failed; previous configuration kept: path=pucv_pool" in out
+    assert "health rebuild: evaluator rebuilt" not in out
+    assert "engine health check passed; unhealthy state cleared" in out
+    assert "DEGRADED" not in out
+    assert _assert_searches_and_reports_truthfully(engine, capsys) == "pucv_pool"
+
+
+def test_health_rebuild_that_cannot_restore_the_pool_says_degraded(make_engine, monkeypatch, capsys) -> None:
+    engine = make_engine(walkers=1, multi=True)
+    engine.dispatch(parse_command("setoption name UseMultiGpuPUCV value true"))
+    engine._mark_unhealthy("test")
+    _fail(monkeypatch, "install_multi_gpu_pucv", times=99, teardown_first=True)
+    engine._worker._recent_visits_per_ms = 123.0
+    capsys.readouterr()
+    engine.dispatch(parse_command("isready"))
+    out = capsys.readouterr().out
+    assert engine._worker._recent_visits_per_ms == 0.0
+    assert "previous configuration could not be restored" in out
+    assert ("engine health check passed on a DEGRADED path (realized path=gumbel but "
+            "the options named pucv_pool before the rebuild)") in out
+    assert "engine health check passed; unhealthy state cleared" not in out
+    assert _assert_searches_and_reports_truthfully(engine, capsys) == "gumbel"

@@ -260,7 +260,9 @@ loads via `DirectGPUEvaluator` with `torch.compile` + CUDA-graph
 warmup; \~5–10 s startup finishes before the first `go`.
 * Syzygy 3-4-5 WDL probing supported (`SyzygyPath`,
 `Syzygy50MoveRule`).
-* UCI options `Threads`, `MaxBatch`, `MinibatchSize`, `MultiPV` are
-live-configurable. Defaults: 2 walker threads, 1024 max batch — the
-proven single-GPU sweet spot.
+* UCI options `MaxBatch`, `MinibatchSize`, `MultiPV` are
+live-configurable. Defaults: 1 search walker (classic Gumbel, the
+validated tournament search), 1024 max batch. `Threads` is accepted and
+reported as having no effect; the walker count is the operator-only
+`SearchWalkers` option / `--walkers` flag.
 

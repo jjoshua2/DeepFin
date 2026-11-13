@@ -337,7 +337,7 @@ def test_use_multi_gpu_pucv_setoption_installs_factories(capsys) -> None:
     assert engine._options.use_multi_gpu_pucv is True
     out = capsys.readouterr().out
     assert "UseMultiGpuPUCV on" in out
-    # Inert-tuning parity with the Threads>1 warning: the pool is plain PUCT,
+    # Inert-tuning parity with the SearchWalkers>1 warning: the pool is plain PUCT,
     # so installing it must surface that c_scale/c_visit stop applying.
     assert "c_scale/c_visit are inactive on the multi-GPU PUCV pool" in out
 
@@ -423,7 +423,7 @@ def test_eval_cache_entries_reinstalls_multi_gpu_pucv(capsys) -> None:
     assert "EvalCacheEntries set to 256" in out
 
 
-def test_threads_tier_cross_rebuilds_evaluator(capsys) -> None:
+def test_search_walkers_tier_cross_rebuilds_evaluator(capsys) -> None:
     worker = MagicMock()
 
     class _DummyEval:
@@ -444,27 +444,27 @@ def test_threads_tier_cross_rebuilds_evaluator(capsys) -> None:
     engine = Engine(
         worker=worker,
         rebuild_evaluator=rebuild,
-        options=EngineOptions(threads=1),
+        options=EngineOptions(search_walkers=1),
     )
 
     # 1 -> 4 crosses the tier: rebuild with the NEW walker count.
-    engine._handle_setoption(CmdSetOption(name="Threads", value="4"))
+    engine._handle_setoption(CmdSetOption(name="SearchWalkers", value="4"))
     assert calls == [(1024, 0, 4)]
     worker.set_evaluator.assert_called_once_with(rebuilt)
     assert "crosses dispatcher tier" in capsys.readouterr().out
 
     # 4 -> 8 stays in the walker-pool tier: no rebuild.
-    engine._handle_setoption(CmdSetOption(name="Threads", value="8"))
+    engine._handle_setoption(CmdSetOption(name="SearchWalkers", value="8"))
     assert len(calls) == 1
     assert "crosses dispatcher tier" not in capsys.readouterr().out
 
     # 8 -> 1 crosses back: rebuild with n_walkers=1.
-    engine._handle_setoption(CmdSetOption(name="Threads", value="1"))
+    engine._handle_setoption(CmdSetOption(name="SearchWalkers", value="1"))
     assert calls[-1] == (1024, 0, 1)
     assert worker.set_evaluator.call_count == 2
 
 
-def test_threads_tier_cross_defers_while_multi_gpu_pool_active(capsys) -> None:
+def test_search_walkers_tier_cross_defers_while_multi_gpu_pool_active(capsys) -> None:
     worker = MagicMock()
     calls: list[int | None] = []
 
@@ -479,8 +479,8 @@ def test_threads_tier_cross_defers_while_multi_gpu_pool_active(capsys) -> None:
     engine = Engine(
         worker=worker,
         rebuild_evaluator=rebuild,
-        options=EngineOptions(threads=1, use_multi_gpu_pucv=True),
+        options=EngineOptions(search_walkers=1, use_multi_gpu_pucv=True),
     )
-    engine._handle_setoption(CmdSetOption(name="Threads", value="4"))
+    engine._handle_setoption(CmdSetOption(name="SearchWalkers", value="4"))
     assert calls == []
     assert "deferred" in capsys.readouterr().out
