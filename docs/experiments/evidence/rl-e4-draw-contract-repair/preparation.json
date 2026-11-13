@@ -1,0 +1,28 @@
+{
+  "status": "SEALED_SOURCE_ONLY_TECHNICAL_CONSUMPTION_CORRECTION_V2_UNRUN_NOT_ADMITTED",
+  "created_utc": "2026-11-13T09:54:25.790102+00:00",
+  "files": {
+    "v1-to-v2-scope.json": "292e88e4f608cfb10f33dffdbe549749b8298bbe697b614c7b7441e9ef721cad",
+    "guard_controls.py": "a5de30161312cb1433033acb7d5118e618caeab3e3b5febd1bc19a2f2b8d4d00",
+    "technical-descriptor.json": "6af973aae6820cf1f39bc2d3c8ae6a7f7687cab02e6e29d7a08252465e12505c",
+    "README.md": "5f5f5e65be38d234a22a687314da2224e03b986a63b1b9d04a49778351f5680c",
+    "v1-to-v2.diff": "5a869d35ab66379f6a81133a513af6a97616334b190282d528542614b657f1f0",
+    "bind_draw_plan.py": "ff24bc622171b8e226e3f05c66800d046fb008713d30991088e68a008b07f47f",
+    "identity-inputs.TEMPLATE.json": "d3e0eba354bf15595c6e095bcc411d6364755e180e96becb78e3f2e036040679",
+    "technical-amendment.DRAFT.json": "b578284b0ce74139be91aaa497181440fddc90828ba2029dd6a7c1d50d73910d",
+    "draw-command.TEMPLATE.json": "6dc3daf0bdef2e52d95d885f9f5e572a661e6479dd8be0970684b2e160c311ed",
+    "guard-only.diff": "ada6125c319789a0c95a9dcfa478d3acd793e1635f422a24d3f7db5fa9f53008",
+    "manifest.json": "905fc0884365d411ce37db8490c1ba7a95718afaf391c2a45eedf9cf662435df",
+    "source-proof.json": "bc55a3d39817d998a8f347fc85a084cddadcf7f82cbacc87a6ed3293b392d2bf",
+    "guard-control-command.json": "e3dad0c0eb12c614f2b9bb7b7cbf9f80099e935995b6801468b53d792917d02d",
+    "technical-publication-interface.json": "b2c437055445311e607fa90bffed5f81b44720de15eeccd358a29cbf1ba3ec63",
+    "guard-control-manifest.json": "120e986d527125902036268ba2f0b7310a70221fb9150e4d05a70d14f85b95ff"
+  },
+  "canonical_new_helper": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-final-v3/bind_draw_plan.py",
+    "sha256": "ff24bc622171b8e226e3f05c66800d046fb008713d30991088e68a008b07f47f"
+  },
+  "canonical_manifest_installed": false,
+  "actual_main_publication_proof": "UNKNOWN_NOT_FABRICATED",
+  "no_imports_tests_jobs_or_actualfreshdata_modelreads": true
+}

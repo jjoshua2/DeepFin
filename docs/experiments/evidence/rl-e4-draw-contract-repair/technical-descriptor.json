@@ -1,0 +1,45 @@
+{
+  "schema": "E4_DRAW_METADATA_CONSUMER_TECHNICAL_CORRECTION_V1",
+  "frozen_science": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-scientific-protocol-final-v2/protocol.json",
+    "sha256": "7cfd6e45b565f39827a1801c828dc302fe5d79f176c7701b004fa7f1adab3478"
+  },
+  "ancestor_template_preparation": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/preparation.json",
+    "sha256": "7160670e77430936e692ea52b282e3c7c9153fd4148ac94748208bd290be1a3a"
+  },
+  "ancestor_source_preparation": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/preparation.json",
+    "sha256": "ee0a188fd885f714c63e05a070df9908b47b8fc7ce3ec00b5a0d8bb1a2d10972"
+  },
+  "ancestor_draw_manifest": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/draw/manifest.TEMPLATE.json",
+    "sha256": "efb0505181b9287a49c26a2e8278926d3fe08cc51de4dbfe44395007b3d4d638"
+  },
+  "ancestor_draw_helper": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/draw/bind_draw_plan.py",
+    "sha256": "4d07f1c83e3d173be3fa8500eaf1f315274722c2f12e78d3552bc863d23561d2"
+  },
+  "paired_protocol_template": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/train/protocol.TEMPLATE.json",
+    "sha256": "d243be34aee5ccb8a40779bb112f8551aee5cd8083cdc77303c0809f57b482bb"
+  },
+  "paired_manifest_template": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/train/manifest.TEMPLATE.json",
+    "sha256": "c4ea9bd6911f1e7cbc52aab0790820496d35801864b8cfa65e9258c262edd5d8"
+  },
+  "ancestor_inputs_template": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/draw/identity-inputs.TEMPLATE.json",
+    "sha256": "fdefbde7a15bf5a7d9960fb9629ba10949fbe95c719017733c8b0d2c2877227b"
+  },
+  "new_helper": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-final-v3/bind_draw_plan.py",
+    "sha256": "ff24bc622171b8e226e3f05c66800d046fb008713d30991088e68a008b07f47f"
+  },
+  "scope": "Only metadata component-key/ancestry recognition. No data/loader/targets/draw/RNG/output/dose/selection change; original science/source artifacts remain immutable.",
+  "new_inputs_template": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/identity-inputs.TEMPLATE.json",
+    "sha256": "d3e0eba354bf15595c6e095bcc411d6364755e180e96becb78e3f2e036040679"
+  },
+  "additional_identity_binding": "technical_publication: actual main publication proof after static helper/descriptor/manifest publication; no publication SHA within these static artifacts."
+}

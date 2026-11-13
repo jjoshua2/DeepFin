@@ -1,12 +1,15 @@
 # E4: outcome-bundle learning in a larger fresh-data regime
 
-Status: preregistered parameters; research execution pending. The fixed structural
-selection has completed
+Status: collection started after preregistration publication. Learning awaits
+the technical metadata correction described below. The fixed structural selection
+has completed
 and received independent acceptance: 192 cohort starts, 128 screening pairs and
 500 confirmation pairs. All 820 actual network encodings and mirrors, the
 canonical collection descriptor and the 129-step config have passed CPU
-qualification and independent review. The public CLI check remains pending.
-No E4 game generation, learning or playing has run. The
+qualification and independent review. The canonical public CLI check passed
+before collection.
+No E4 draw planning, learning or playing had run when that correction was
+identified. The
 [completed E2TB study](2026-11-13-rl-resolved-outcome-bundle.md) established
 no registered playing gain; the [E3 diagnostic](2026-11-13-rl-train-gradient-geometry.md)
 left its primary geometry contrast unresolved. Those studies remain closed and
@@ -147,6 +150,32 @@ Bulk artifacts stay under `~/chess-artifacts/operations/rl-week-one-20261112-v1/
 The week-one and long-term strength program remains active; no strength
 milestone or optimal RL formula is established by this preparation.
 
+## Technical correction before draw planning
+
+A source audit during collection found that the original draw planner expected
+`science.components.draw_plan_binder`, which the registered JSON does not contain.
+The protocol pins the same inputs through the final learning-template packet
+and paired-protocol template. The original guard would raise `KeyError` before
+creating output, importing Torch or loading arrays. Prepublication integration
+review missed this check; its draw-guard compatibility claim
+is superseded by the [finding](evidence/rl-e4-draw-contract-repair/original-finding.json).
+
+The corrected consumer validates that exact frozen reference graph and requires
+a separate published technical amendment authorizing its helper, entrypoint,
+manifest and descriptor. Its five scientific/data identity inputs remain the
+original inputs; a sixth input supplies that publication authority. The
+original protocol and helper remain preserved. This amendment changes source,
+entrypoint and manifest identities and is separate from collection's original
+seven-field binding.
+
+The draw generation, proof and loader logic, seed 2026111342, shape 129 by 256,
+cohort, targets, learning schedule and playing decisions stay fixed. Collection
+continues under its original protocol. The correction requires independent
+review, focused CPU guard controls and main publication before draw execution;
+the ordinary complete-cohort and finite resource gates still apply. See the
+[technical amendment](evidence/rl-e4-draw-contract-repair/amendment.json) and its
+[source proof](evidence/rl-e4-draw-contract-repair/source-proof.json).
+
 ## Frozen record and supporting evidence
 
 The authoritative [protocol](evidence/rl-e4-larger-regime/protocol.json) has SHA256
@@ -154,9 +183,10 @@ The authoritative [protocol](evidence/rl-e4-larger-regime/protocol.json) has SHA
 The [publication manifest](evidence/rl-e4-larger-regime/publication-manifest.json)
 identifies 99 exact source, template and CPU-evidence copies. The
 [independent integration review](evidence/rl-e4-larger-regime/science-integration-review.json)
-accepts the scientific rules and component bindings for publication. Main
-publication, the actual canonical public CLI check and fresh finite resource
-admission remain required before collection.
+accepted the scientific rules and component bindings for publication; its
+draw-guard compatibility claim is corrected above. [PR #1256](https://github.com/jjoshua2/DeepFin/pull/1256)
+published the original record, followed by the canonical public CLI check and
+finite admission for collection.
 
 Actual CPU checks cover all 820 raw/mirror encodings and the effective config,
 12 focused learner/offline boundaries, 15 decision cases and eight passive

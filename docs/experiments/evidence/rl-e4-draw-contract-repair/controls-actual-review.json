@@ -1,0 +1,140 @@
+{
+  "actual_cases": [
+    {
+      "name": "authentic_7cfd_graph_plus_explicit_synthetic_publication_predicate",
+      "result": "PASS"
+    },
+    {
+      "name": "missing_technical_publication",
+      "result": "PASS"
+    },
+    {
+      "name": "unpublished_technical_record_refuses",
+      "result": "PASS"
+    },
+    {
+      "name": "technical_publication_wrong_science",
+      "result": "PASS"
+    },
+    {
+      "name": "technical_publication_wrong_source",
+      "result": "PASS"
+    },
+    {
+      "name": "technical_publication_wrong_helper",
+      "result": "PASS"
+    },
+    {
+      "name": "technical_publication_wrong_manifest",
+      "result": "PASS"
+    },
+    {
+      "name": "technical_publication_wrong_descriptor",
+      "result": "PASS"
+    },
+    {
+      "name": "technical_publication_wrong_entrypoint",
+      "result": "PASS"
+    },
+    {
+      "name": "technical_publication_wrong_ancestor",
+      "result": "PASS"
+    },
+    {
+      "name": "wrong_frozen_scientific_SHA",
+      "result": "PASS"
+    },
+    {
+      "name": "tampered_science_packet_ref",
+      "result": "PASS"
+    },
+    {
+      "name": "tampered_output_manifest_field",
+      "result": "PASS"
+    },
+    {
+      "name": "tampered_paired_manifest_ref",
+      "result": "PASS"
+    },
+    {
+      "name": "wrong_successor_helper_digest",
+      "result": "PASS"
+    },
+    {
+      "name": "extra_manifest_field_refuses",
+      "result": "PASS"
+    },
+    {
+      "name": "packet_file_map_join_refuses",
+      "result": "PASS"
+    },
+    {
+      "name": "EE0_original_helper_file_map_refuses",
+      "result": "PASS"
+    },
+    {
+      "name": "parent_input_template_ref_refuses",
+      "result": "PASS"
+    },
+    {
+      "name": "technical_ancestor_ref_refuses",
+      "result": "PASS"
+    },
+    {
+      "name": "original_helper_bytes_pin_refuses",
+      "result": "PASS"
+    },
+    {
+      "name": "input_template_bytes_pin_refuses",
+      "result": "PASS"
+    }
+  ],
+  "findings": [],
+  "limits": [
+    "This validates actual extracted guard predicates using authentic frozen ancestor metadata and explicitly synthetic in-memory publication, plus labelled object/digest fault injection. It does not establish actual main-publication truth, filesystem-race robustness or actual draw/loader execution.",
+    "No arrays, models, checkpoints, engines, table queries, project imports or new jobs were performed by independent reviewer. Saved metadata/source only; no control rerun.",
+    "Actual technical amendment must still be main-published and independently joined to changed helper/manifest/descriptor/entrypoint before draw. Qualified closed192/128cohort/auditor/root acceptance and separate finiteCPU300 admission remain mandatory.",
+    "No original science7cfd/currentcohort/target/math/RNG/selection change, new data/research rerun, learning/strength/adoption evidence is inferred."
+  ],
+  "owned_closure": {
+    "cpu_seconds": 0.0,
+    "independent_proc_absence": {
+      "1320737": {
+        "expected_birth": null,
+        "proc_exists": false
+      },
+      "1320739": {
+        "expected_birth": 28746483,
+        "proc_exists": false
+      }
+    },
+    "inner_seconds": 100,
+    "outer_seconds": 120,
+    "resource": "cpu",
+    "returncode": 0,
+    "status": "PASS",
+    "wall_seconds": 1.1543848909786902
+  },
+  "reconciliation": {
+    "actual_helper_ff24_and_manifest905f": true,
+    "actual_technical_publication_verified": false,
+    "all22_individual_case_files_equal_summary": true,
+    "all22_unique_saved_names_exact_source_control_call_order": true,
+    "executed_child_argv_exact_reviewed_command": true,
+    "project_modules_loader_draw_model_or_data_execution": false,
+    "publication_predicate_simulation_only": true,
+    "zero_array_path_attempts": true
+  },
+  "references_sha256": {
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-correction-independent-source-review-v2/review.json": "b8a4e4f3c7f2a84207191ffe9c00e06419b4a62b87aa6f6a8031dd5e8b0bc044",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-guard-controls-execution-v2/terminal.json": "7135d03872da6cc915f86f272484671aca39febed87d869f9c6b3936445dfc08",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-guard-controls-results-v2/readout.json": "a1ce2df1ccb49428ce5c4f6c373a9478fb3da021f26d14343c01e5439654f808",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/guard-control-command.json": "e3dad0c0eb12c614f2b9bb7b7cbf9f80099e935995b6801468b53d792917d02d",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/guard-control-manifest.json": "120e986d527125902036268ba2f0b7310a70221fb9150e4d05a70d14f85b95ff",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/guard_controls.py": "a5de30161312cb1433033acb7d5118e618caeab3e3b5febd1bc19a2f2b8d4d00",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/manifest.json": "905fc0884365d411ce37db8490c1ba7a95718afaf391c2a45eedf9cf662435df",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/preparation.json": "3118d14329ecf06f8d84c27d533f6ac72156748568328a08fc9a0738365721b8"
+  },
+  "status": "ACCEPT_ACTUAL22_E4_DRAW_METADATA_GUARD_CONTROLS_ONLY",
+  "utc": "2026-11-13T10:00:30.000403+00:00"
+}
