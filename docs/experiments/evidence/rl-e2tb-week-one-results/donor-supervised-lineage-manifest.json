@@ -1,0 +1,55 @@
+{
+  "all174m_single_teacher_claim": false,
+  "current_study_changed": false,
+  "known_raw_teacher_models": [
+    "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+    "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+    "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+    "809db9c3c8063683bf8e7c08de8fec92ea4e37ad8c68c8b1befbde4bd1958961",
+    "809db9c3c8063683bf8e7c08de8fec92ea4e37ad8c68c8b1befbde4bd1958961"
+  ],
+  "legacy_original100M_exact_teacher_lineage": "UNKNOWN_IN_THIS_BOUNDED_TRACE",
+  "models_arrays_checkpoint_imports_jobs_queries": 0,
+  "note": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/a39-supervised-teacher-lineage-audit-v1/note.md",
+    "sha256": "b2cb9231b85988702731ee40e715650734354b55587bbfcffabb06b3eb0f110b"
+  },
+  "references": {
+    "actual_epoch2_completion_metadata": {
+      "path": "/home/josh/chess-artifacts/operations/all-accumulated-174m-epoch2-sqrt-cooldown-20261109-v1.resume-recovery654213-a4349851abddea4a/training/RESULT.json",
+      "sha256": "af0fd286bf8c659b668bf035cd59e3350cdd7d7dc3f34b68398550c771c0d0c3"
+    },
+    "actual_training_config": {
+      "path": "/mnt/c/Users/jjosh/Documents/Codex/2026-10-13/task-5/all-accumulated-raw-training-launch-v1/ALL-ACCUMULATED-THREE-EPOCH-CONFIG-v1.yaml",
+      "sha256": "d5b00c177e0d454f82053eac6f22d0aba6f6a2e9b146fe43fc59634135c231d8"
+    },
+    "actual_union_selection": {
+      "path": "/mnt/c/Users/jjosh/Documents/Codex/2026-10-13/task-5/all-accumulated-raw-training-launch-v1/ALL-ACCUMULATED-UNION-SELECTION-v1.json",
+      "sha256": "fd8704dc747bbdffe66f4469b33de3f05bb2c33a7097367a3910595e16d033ec"
+    },
+    "ordinary_target_recipes": {
+      "path": "/home/josh/chess-artifacts/operations/successor4-selected1536-explicit-admission-20261104-v1/PLAN.json",
+      "sha256": "e8e6b9a97a415baa170f62b4731a2a8b4248043295b83e43469bb5a65f431a40"
+    },
+    "preserved_A39_copy_receipt": {
+      "path": "/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/baseline/receipt.json",
+      "sha256": "c1fc7af0a079a213abe6074e59f14682ee37eb1a95b6bbb46e8eb0bbc8f53138"
+    },
+    "previous_current_signal_audit": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-teacher-signal-semantic-audit-v1/manifest.json",
+      "sha256": "001cd195f8cadf754dc5376a239c336a8072fe3242dd54b7d0bc563d0585958a"
+    },
+    "raw_source_contracts": {
+      "path": "/mnt/c/Users/jjosh/Documents/Codex/2026-10-13/task-5/all-accumulated-raw-training-launch-v1/ALL-ACCUMULATED-RAW-SELECTION-v1.json",
+      "sha256": "b03c7821e381954cc44990d20a5648794df94286dd8b59ac53a05033f574d8fe"
+    },
+    "recent_raw_contract": {
+      "path": "/mnt/c/Users/jjosh/Documents/Codex/2026-10-08/task/final-raw-bundle-selection-receipt-v1/FINAL-REVIEWED-RAW-BUNDLE-SELECTION-RECEIPT-v1.json",
+      "sha256": "2128232478ab70cd887118dc5ededc37a162eceff4c062d7637da4b42fc2186d"
+    }
+  },
+  "status": "SOURCE_METADATA_ONLY_A39_LINEAGE_AUDIT_NO_NEW_STUDY_OR_ADMISSION",
+  "teacher_family_names": "NOT_ESTABLISHED_BY_THIS_AUDIT",
+  "uncompleted_current_outcomes_read": false,
+  "utc": "2026-11-13T05:54:36.863366+00:00"
+}

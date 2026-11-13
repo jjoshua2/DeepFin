@@ -1,0 +1,239 @@
+{
+  "blocking_findings": [],
+  "checks": {
+    "actual_GPU_forward_calls_predecessor": 7,
+    "all36_mean_deltas_reconcile_to_completed_JSON_means": true,
+    "all6helpers_and_sourceproof_unchanged": true,
+    "all_intervals_finite_ordered": true,
+    "all_outputs_readonly": true,
+    "bootstrap_draws": 10000,
+    "bootstrap_seed": 2026111406,
+    "complete_metrics": 4,
+    "fixed_models": [
+      "DONOR",
+      "FULLA1",
+      "FULLA8",
+      "FULLA40",
+      "FULLB1",
+      "FULLB8",
+      "FULLB40"
+    ],
+    "fixed_paired_comparisons": 9,
+    "identities_exact_to_frozen_root_bank_and_score_stage": true,
+    "independent_bootstrap_units_not448": 64,
+    "model_root_observations": 448,
+    "one_root_per_game": 1,
+    "outcome_classes": {
+      "NATURAL": 33,
+      "STRICT_TB_ADJUDICATED": 31
+    },
+    "per_root_archive_opaque_SHA_exact_not_decoded": true,
+    "physical_games": 64,
+    "playing_gate_or_adoption_changed": false,
+    "raw_prediction7hashes_join_exact": true,
+    "reported_intervals": 36
+  },
+  "closure": {
+    "CPU_seconds": 4.92,
+    "known_births_absent": {
+      "1247605": 26772040
+    },
+    "supervisor_absent": 1247603,
+    "wall_seconds": 7.205779734998941
+  },
+  "collection_uuid": "f1dadbe4-43e2-4cf3-9a93-70a288533b48",
+  "endpoint_context": {
+    "means": {
+      "DONOR": {
+        "draw_Brier": 0.20558443636219714,
+        "expected_score_MSE": 0.0776596298569942,
+        "legal_policy_TV_vs_donor": 0.0,
+        "three_class_WDL_Brier_sum": 0.4636959142572841
+      },
+      "FULLA40": {
+        "draw_Brier": 0.19787159301731175,
+        "expected_score_MSE": 0.0727133766309152,
+        "legal_policy_TV_vs_donor": 0.05224368384662742,
+        "three_class_WDL_Brier_sum": 0.44223414278779805
+      },
+      "FULLB40": {
+        "draw_Brier": 0.1986924232107701,
+        "expected_score_MSE": 0.07150483515467963,
+        "legal_policy_TV_vs_donor": 0.05134537141340099,
+        "three_class_WDL_Brier_sum": 0.4410483051255144
+      }
+    },
+    "paired_endpoint_metrics": {
+      "FULLA40_minus_DONOR": {
+        "draw_Brier": {
+          "bootstrap_draws": 10000,
+          "delta_candidate_minus_reference": -0.00771284334488538,
+          "diagnostic_only": true,
+          "percentile95": [
+            -0.016503091802784,
+            0.0006384109896679082
+          ],
+          "roots_per_game": 1,
+          "seed": 2026111406,
+          "whole_games": 64
+        },
+        "expected_score_MSE": {
+          "bootstrap_draws": 10000,
+          "delta_candidate_minus_reference": -0.004946253226078997,
+          "diagnostic_only": true,
+          "percentile95": [
+            -0.008864990348457315,
+            -0.0011901911683805527
+          ],
+          "roots_per_game": 1,
+          "seed": 2026111406,
+          "whole_games": 64
+        },
+        "three_class_WDL_Brier_sum": {
+          "bootstrap_draws": 10000,
+          "delta_candidate_minus_reference": -0.021461771469486097,
+          "diagnostic_only": true,
+          "percentile95": [
+            -0.039063114341343394,
+            -0.004695314876341447
+          ],
+          "roots_per_game": 1,
+          "seed": 2026111406,
+          "whole_games": 64
+        }
+      },
+      "FULLB40_minus_DONOR": {
+        "draw_Brier": {
+          "bootstrap_draws": 10000,
+          "delta_candidate_minus_reference": -0.0068920131514270105,
+          "diagnostic_only": true,
+          "percentile95": [
+            -0.01913599628435465,
+            0.004385679913730254
+          ],
+          "roots_per_game": 1,
+          "seed": 2026111406,
+          "whole_games": 64
+        },
+        "expected_score_MSE": {
+          "bootstrap_draws": 10000,
+          "delta_candidate_minus_reference": -0.006154794702314577,
+          "diagnostic_only": true,
+          "percentile95": [
+            -0.010749951270750686,
+            -0.002145342387270985
+          ],
+          "roots_per_game": 1,
+          "seed": 2026111406,
+          "whole_games": 64
+        },
+        "three_class_WDL_Brier_sum": {
+          "bootstrap_draws": 10000,
+          "delta_candidate_minus_reference": -0.022647609131769705,
+          "diagnostic_only": true,
+          "percentile95": [
+            -0.04453500934366465,
+            -0.001990290072949427
+          ],
+          "roots_per_game": 1,
+          "seed": 2026111406,
+          "whole_games": 64
+        }
+      },
+      "FULLB40_minus_FULLA40": {
+        "draw_Brier": {
+          "bootstrap_draws": 10000,
+          "delta_candidate_minus_reference": 0.0008208301934583693,
+          "diagnostic_only": true,
+          "percentile95": [
+            -0.005974803628718222,
+            0.007462964191675578
+          ],
+          "roots_per_game": 1,
+          "seed": 2026111406,
+          "whole_games": 64
+        },
+        "expected_score_MSE": {
+          "bootstrap_draws": 10000,
+          "delta_candidate_minus_reference": -0.0012085414762355803,
+          "diagnostic_only": true,
+          "percentile95": [
+            -0.0030352140477651864,
+            0.000496860616300303
+          ],
+          "roots_per_game": 1,
+          "seed": 2026111406,
+          "whole_games": 64
+        },
+        "three_class_WDL_Brier_sum": {
+          "bootstrap_draws": 10000,
+          "delta_candidate_minus_reference": -0.001185837662283607,
+          "diagnostic_only": true,
+          "percentile95": [
+            -0.013611634045507184,
+            0.01101426409156549
+          ],
+          "roots_per_game": 1,
+          "seed": 2026111406,
+          "whole_games": 64
+        }
+      }
+    },
+    "policy_drift_TV": {
+      "FULLA40": 0.05224368384662742,
+      "FULLB40": 0.05134537141340099
+    }
+  },
+  "evidence": {
+    "CPU_terminal": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-readout-execution-v1/terminal.json",
+      "sha256": "7b0dfa1cc8fa421667799985d2db8d12a83cac4efcddf20ee1ffeb277eb6f088"
+    },
+    "actual_diagnostic_readout": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-readout-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/readout.json",
+      "sha256": "8dc6c626206c2e921a1d0fb7301d1684f171dbb9a09ca904ef370dda7df004d6"
+    },
+    "bound_manifest": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-readout-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/manifest.json",
+      "sha256": "fc6058db3661f9928d3ac7197b064f12709416ad5ff3e6af4919d68f9468f3ec"
+    },
+    "bound_protocol": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-readout-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/protocol.json",
+      "sha256": "10af8973b38882bf326b7acbf7e5112500134fb10363086d87a2f9a0d9c25a9b"
+    },
+    "per_root_metrics_archive_opaque_hash_only": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-readout-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/per-root-metrics.npz",
+      "sha256": "51225d3c6bdd54ff64f58aeaf8171ac397e94c3e1a24523ce89d022043d7da64"
+    },
+    "prior_actual_roots_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-roots-and-score-binding-independent-review-v1/review.json",
+      "sha256": "e2215e6bc941a37d5ae4927a62f25bd5ad72c1a1dfc8a4eae93cdf4ba083f45a"
+    },
+    "prior_combined_raw_delivery_reader_binding_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-score-and-reader-binding-independent-review-v1/review.json",
+      "sha256": "3004642992b732f27323378ac9a91209cd382f12a180175ce1b55f78f968e3aa"
+    },
+    "root_launch_admission": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-readout-root-execution-admission-v1/launch-admission.json",
+      "sha256": "b57ee44f41743c4681b291d015609dd27e76cb131d1bfa5acf5a688ba02c5b61"
+    },
+    "source_raw_prediction_readout": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-scoring-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/readout.json",
+      "sha256": "649d34075f8f9795657bd45a8ba56bfc6f581e6301fceabab30f1c98c8a0ae48"
+    }
+  },
+  "interpretation": [
+    "Both final arms have lower expected-score MSE and summed3classWDL Brier error than donor on this fixed64game diagnostic cohort; their reported paired percentile intervals for these differences lie below0. This is a conditional offline observation.",
+    "B40minusA40 expected-score MSE and WDL/drawBrier intervals include0: the diagnostic does not resolve an incremental benefit of the .8search/.2verified-outcome mainWDL+categorical bundle over search-only FULLA.",
+    "Draw-Brier differences from donor for both final arms include0. PolicyTV is drift magnitude, not move quality or strength. No checkpoint/arm/recipe/seed/LR selection or primary-playing gate change follows."
+  ],
+  "limits": [
+    "Reviewer used completed JSON/source metadata and opaque metrics-archive streaming SHA only; no array decode, bootstrap/inference rerun, model/checkpoint read/hash, project/Torch/NumPy/chess imports, probe/GPU/job. Raw-probability recomputation and bootstrap correctness remain exact-source-qualified actual CPU stage work, not repeated here.",
+    "One64game physical cohort and one training realization, shared opening-family dependencies and unknown donor pretraining exposure. Bootstrap does not remove family correlation;36 descriptive intervals are not multiplicity-adjusted or a representative calibration/power claim.",
+    "Recorded33natural+31strictTB mixture is retained, not subsetselected. DeclaredBF16B64 ruler has no independent B1/B64/eagercompiled/repeatforward numerical qualification.",
+    "Technical/diagnostic acceptance only. Actual precommitted playing screens and any single eligible fresh confirmation remain separately required; no Elo/gain/deployment/adoption/optimum-formula claim."
+  ],
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "ACCEPT_COMPLETE64_BY7_PAIRED_OFFLINE_DIAGNOSTIC_READOUT_NO_SELECTION_OR_STRENGTH_ADMISSION",
+  "utc": "2026-11-13T04:34:17.460467+00:00"
+}

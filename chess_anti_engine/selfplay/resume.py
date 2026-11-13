@@ -112,10 +112,11 @@ class SuspendReport:
 
     persisted: int = 0
     # Games we MEANT to persist and could not. Deliberately excludes empty
-    # slots: `_finalize_completed_slots` recycles every finished slot just
-    # before teardown, so at a real suspend most of the table is freshly-empty
-    # and counting those here buries the two readings that matter
-    # (serialize_failed / write_failed) under hundreds of `empty_slot`.
+    # slots (a slot the running loop recycled just before the stop, or a
+    # session that never played a move): counting those here would bury the
+    # two readings that matter (serialize_failed / write_failed). The STOP
+    # teardown itself no longer recycles finished slots, so they stay
+    # finalized and are skipped without being counted at all.
     skipped: int = 0
     # Empty slots, counted separately so the noise stays visible but apart.
     empty_slots: int = 0

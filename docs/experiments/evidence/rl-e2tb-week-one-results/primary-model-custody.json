@@ -1,0 +1,56 @@
+{
+  "assets": {
+    "candidate": {
+      "after_sha256": "8e3038b5db03db7455582e98dde09cd503c30df4ac781f4f5680096f144dc522",
+      "before_sha256": "8e3038b5db03db7455582e98dde09cd503c30df4ac781f4f5680096f144dc522",
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLB/step-40.pt",
+      "readonly_after": true,
+      "readonly_before": true,
+      "sha256": "8e3038b5db03db7455582e98dde09cd503c30df4ac781f4f5680096f144dc522",
+      "stat_after": {
+        "ctime_ns": 1794542404668757302,
+        "dev": 2096,
+        "ino": 14472940,
+        "mtime_ns": 1794542401634239129,
+        "size": 655382347
+      },
+      "stat_before": {
+        "ctime_ns": 1794542404668757302,
+        "dev": 2096,
+        "ino": 14472940,
+        "mtime_ns": 1794542401634239129,
+        "size": 655382347
+      },
+      "step": 40
+    },
+    "reference": {
+      "after_sha256": "534adbeb112d2a5c9b39b7827ffce8eaa9c7d51597ddf91f269cda4ee3818229",
+      "before_sha256": "534adbeb112d2a5c9b39b7827ffce8eaa9c7d51597ddf91f269cda4ee3818229",
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-learning-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/FULLA/step-40.pt",
+      "readonly_after": true,
+      "readonly_before": true,
+      "sha256": "534adbeb112d2a5c9b39b7827ffce8eaa9c7d51597ddf91f269cda4ee3818229",
+      "stat_after": {
+        "ctime_ns": 1794542404644757304,
+        "dev": 2096,
+        "ino": 14563294,
+        "mtime_ns": 1794542378520759678,
+        "size": 655382347
+      },
+      "stat_before": {
+        "ctime_ns": 1794542404644757304,
+        "dev": 2096,
+        "ino": 14563294,
+        "mtime_ns": 1794542378520759678,
+        "size": 655382347
+      },
+      "step": 40
+    }
+  },
+  "candidate_role": "FULLB40",
+  "complete494_model_and_architecture_qualified": true,
+  "endpoint": "primary",
+  "reference_role": "FULLA40",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "ACCEPT_IMMUTABLE_E2TB_ARENA_MODEL_CUSTODY"
+}

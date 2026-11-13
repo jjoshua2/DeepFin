@@ -1,0 +1,27 @@
+{
+  "status": "FUTURE_ROOT_MAIN_PROOF_INTERFACE_NOT_ACTUAL_PUBLICATION",
+  "required": {
+    "status": "MAIN_PUBLISHED_E4_DRAW_METADATA_TECHNICAL_CORRECTION",
+    "frozen_scientific_sha256": "7cfd6e45b565f39827a1801c828dc302fe5d79f176c7701b004fa7f1adab3478",
+    "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+    "collection_uuid": "cd47b230-f32f-4256-a51e-4869f5708bb6",
+    "new_helper": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-final-v3/bind_draw_plan.py",
+      "sha256": "ff24bc622171b8e226e3f05c66800d046fb008713d30991088e68a008b07f47f"
+    },
+    "entrypoint": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-final-v3/bind_draw_plan.py",
+    "new_execution_manifest": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-final-v3/manifest.json",
+      "sha256": "905fc0884365d411ce37db8490c1ba7a95718afaf391c2a45eedf9cf662435df"
+    },
+    "technical_descriptor": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/technical-descriptor.json",
+      "sha256": "6af973aae6820cf1f39bc2d3c8ae6a7f7687cab02e6e29d7a08252465e12505c"
+    },
+    "ancestor_draw_helper": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/draw/bind_draw_plan.py",
+      "sha256": "4d07f1c83e3d173be3fa8500eaf1f315274722c2f12e78d3552bc863d23561d2"
+    }
+  },
+  "root_responsibility": "Actual main merge/copiedblob identity and independent publication proof, not a synthetic actualfile. ProofSHA is NOT stored in statichelper/descriptor/manifest; actualsixthbindingafterpub carriespath+SHA."
+}

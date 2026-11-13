@@ -1,0 +1,49 @@
+{
+  "status": "PROSPECTIVE_SINGLE_FEN_SERIALIZATION_CORRECTION_SOURCE_ONLY_UNRUN_PENDING_INDEPENDENT_VERIFICATION",
+  "parent_source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/offline/strict_roots.py",
+  "parent_sha256": "2b88f17f1fd9d06a8f60d35a3222b90ed6288d7eebd61997e9893fc1aa59b319",
+  "successor_sha256": "5c60108f71d5154a21c7836a2cf48910b0596dd677a240c19ff30c793a18033c",
+  "semantic_change": "Canonical chess.Board FEN normalization on both sides before final board equality; full root/history replay/result/proof checks unchanged. Prevents false HOLD refusal for equivalent native en-passant serialization. No TRAIN/target/retention/selection change.",
+  "placements": [
+    {
+      "phase": "roots",
+      "directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline64-roots-final-v2",
+      "files": {
+        "common.py": "a62e85e22a593028b68ddc673e0fcf24186f08d67059e05863c0e3b7a8598d92",
+        "metrics.py": "8058546e7fa263c5becfae1f4378917d4b1d4f333f32d8e04b94fceefe7a1d56",
+        "strict_roots.py": "5c60108f71d5154a21c7836a2cf48910b0596dd677a240c19ff30c793a18033c",
+        "freeze_roots.py": "40dc49d582326c4d63f06011746f65f052826fb66e579e54cad105eef7a9a956",
+        "score.py": "b8229d1af09cfa19bfda26a85fc4cddc416c6cdf7a05de349789da9fe5214541",
+        "readout.py": "c9f79c370c9c87edd59cd284515b644e30e48f6c9c4046c702be37c437d430e3",
+        "source-proof.json": "3da383ff9d7addf3c3bcc97bfc9bb346ada5d86682bba9a4f4c35ef7c89c966c"
+      }
+    },
+    {
+      "phase": "score",
+      "directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline64-score-final-v2",
+      "files": {
+        "common.py": "a62e85e22a593028b68ddc673e0fcf24186f08d67059e05863c0e3b7a8598d92",
+        "metrics.py": "8058546e7fa263c5becfae1f4378917d4b1d4f333f32d8e04b94fceefe7a1d56",
+        "strict_roots.py": "5c60108f71d5154a21c7836a2cf48910b0596dd677a240c19ff30c793a18033c",
+        "freeze_roots.py": "40dc49d582326c4d63f06011746f65f052826fb66e579e54cad105eef7a9a956",
+        "score.py": "b8229d1af09cfa19bfda26a85fc4cddc416c6cdf7a05de349789da9fe5214541",
+        "readout.py": "c9f79c370c9c87edd59cd284515b644e30e48f6c9c4046c702be37c437d430e3",
+        "source-proof.json": "3da383ff9d7addf3c3bcc97bfc9bb346ada5d86682bba9a4f4c35ef7c89c966c"
+      }
+    },
+    {
+      "phase": "readout",
+      "directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline64-readout-final-v2",
+      "files": {
+        "common.py": "a62e85e22a593028b68ddc673e0fcf24186f08d67059e05863c0e3b7a8598d92",
+        "metrics.py": "8058546e7fa263c5becfae1f4378917d4b1d4f333f32d8e04b94fceefe7a1d56",
+        "strict_roots.py": "5c60108f71d5154a21c7836a2cf48910b0596dd677a240c19ff30c793a18033c",
+        "freeze_roots.py": "40dc49d582326c4d63f06011746f65f052826fb66e579e54cad105eef7a9a956",
+        "score.py": "b8229d1af09cfa19bfda26a85fc4cddc416c6cdf7a05de349789da9fe5214541",
+        "readout.py": "c9f79c370c9c87edd59cd284515b644e30e48f6c9c4046c702be37c437d430e3",
+        "source-proof.json": "3da383ff9d7addf3c3bcc97bfc9bb346ada5d86682bba9a4f4c35ef7c89c966c"
+      }
+    }
+  ],
+  "preserved_v1": "All nested prep and flat-v1 sources remain unchanged/unrun; finaltemplates must reference flat-v2 and new strict_roots SHA. Historical source-proof.json bytes remain parent evidence, not new successor aggregate proof."
+}

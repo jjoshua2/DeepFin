@@ -1,0 +1,32 @@
+{
+  "execution": {
+    "actual_cohort_or_partial_outcome_read": false,
+    "original_draw_run": false,
+    "successor_or_control_run_by_reviewer": false
+  },
+  "finding": {
+    "helper": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-final-v1/bind_draw_plan.py",
+      "sha256": "4d07f1c83e3d173be3fa8500eaf1f315274722c2f12e78d3552bc863d23561d2"
+    },
+    "issue": "Frozen science components has no draw_plan_binder key. Original helper therefore raises KeyError before output creation, project imports, verifier/array reads, or NumPy draws. Collection uses a separate unaffected consumer.",
+    "prior_review_limit": "Final scientific integration review804322 missed this consumed key requirement. That receipt must not be interpreted as original draw executable compatibility; its unchanged science/ref/hash/count/rule observations remain scoped evidence.",
+    "priority": "P1_PRE_DRAW_INTEGRATION",
+    "science": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-scientific-protocol-final-v2/protocol.json",
+      "sha256": "7cfd6e45b565f39827a1801c828dc302fe5d79f176c7701b004fa7f1adab3478"
+    },
+    "source_guard": "    expected_component = {\"helper\": {\"path\": str(HERE / \"bind_draw_plan.py\"), \"sha256\": digest(__file__)},\n        \"manifest\": {\"path\": str(HERE / \"manifest.json\"), \"sha256\": digest(HERE / \"manifest.json\")},\n        \"identity_only_inputs_template\": m[\"inputs_template\"]}\n    require(science[\"components\"][\"draw_plan_binder\"] == expected_component, \"science does not pin this fixed draw binder\")\n"
+  },
+  "no_new_execution_authority": true,
+  "permissible_repair_scope": [
+    "Keep frozen7cfd science/b18 producer protocol/b3fd producer manifest and current collection bytes/results immutable.",
+    "New helper guard must authenticate exact frozen7cfd\u2192finallearning7160\u2192paired d243/c4ea and originaldraw4d07/inputtemplate fdef graph; no arbitrary fallback component/schema acceptance.",
+    "Separately main-publish a technical-consumption amendment identifying actual new helper/manifest-template/late contract before any draw; no science self-hash cycle or fabricated original-source identity.",
+    "Leave numerical RNG129\u00d7256(seed2026111342), loader128proof-before-array, raw/target math, roles, actual cohort, row selection, file output format and all success/stop/scientific rules unchanged.",
+    "No rerun/reseed/replacement/new data. Original guard and prior scientific/technical evidence preserved. Actual closed output admission remains required before any learning.",
+    "Source-only accept/tamper control plan and AST equality can be reviewed now; no imports/tests/jobs/data/model access during live collection."
+  ],
+  "status": "CONFIRMED_ORIGINAL_DRAW_METADATA_CONSUMER_BLOCKER_SUCCESSOR_REVIEW_PENDING",
+  "utc": "2026-11-13T09:42:53.587902+00:00"
+}

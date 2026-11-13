@@ -1,0 +1,123 @@
+{
+  "checks": {
+    "both_affinity20_22": true,
+    "child_argv_exact_bound_measurement_after_wrappers": true,
+    "child_cuda0_threads2": true,
+    "child_cwd_and_pythonpath_R7": true,
+    "child_math_env_unset": true,
+    "child_no_bytecode_no_index_refresh": true,
+    "native5_R7_inode_origins": true,
+    "owner_argv_exact_frozen_command": true,
+    "owner_child_births_stable": true,
+    "owner_child_parent_chain": true
+  },
+  "child": {
+    "birth": 27702409,
+    "cwd": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess",
+    "env": {
+      "CUBLAS_WORKSPACE_CONFIG": null,
+      "CUDA_CACHE_PATH": null,
+      "CUDA_VISIBLE_DEVICES": "0",
+      "GIT_OPTIONAL_LOCKS": "0",
+      "MAX_JOBS": "1",
+      "MKL_NUM_THREADS": "2",
+      "NVIDIA_TF32_OVERRIDE": null,
+      "OMP_NUM_THREADS": "2",
+      "PYTHONDONTWRITEBYTECODE": "1",
+      "PYTHONPATH": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess",
+      "TORCHINDUCTOR_CACHE_DIR": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-execution-v1/inductor-cache",
+      "TORCHINDUCTOR_COMPILE_THREADS": "1",
+      "TORCH_HOME": null,
+      "TRITON_CACHE_DIR": null,
+      "XDG_CACHE_HOME": null
+    },
+    "mapped_native_origins": {
+      "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/encoding/_features_ext.cpython-313-x86_64-linux-gnu.so": {
+        "current_device": 2096,
+        "current_inode": 14528091,
+        "mapped_device": "08:30",
+        "mapped_inode": 14528091,
+        "mapped_inode_matches_file": true
+      },
+      "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/encoding/_lc0_ext.cpython-313-x86_64-linux-gnu.so": {
+        "current_device": 2096,
+        "current_inode": 14528092,
+        "mapped_device": "08:30",
+        "mapped_inode": 14528092,
+        "mapped_inode_matches_file": true
+      },
+      "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/encoding/_perft_ext.cpython-313-x86_64-linux-gnu.so": {
+        "current_device": 2096,
+        "current_inode": 14528093,
+        "mapped_device": "08:30",
+        "mapped_inode": 14528093,
+        "mapped_inode_matches_file": true
+      },
+      "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/mcts/_mcts_tree.cpython-313-x86_64-linux-gnu.so": {
+        "current_device": 2096,
+        "current_inode": 14528095,
+        "mapped_device": "08:30",
+        "mapped_inode": 14528095,
+        "mapped_inode_matches_file": true
+      },
+      "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/nnue/_nnue_ext.cpython-313-x86_64-linux-gnu.so": {
+        "current_device": 2096,
+        "current_inode": 14528096,
+        "mapped_device": "08:30",
+        "mapped_inode": 14528096,
+        "mapped_inode_matches_file": true
+      }
+    },
+    "pid": 1282152,
+    "ppid": 1282119
+  },
+  "created_utc": "2026-11-13T07:07:56.329950+00:00",
+  "frozen_command_sha256": "63519e6786952ec0913699d4d7c3ff5d06d8d4db81ee0202fb1a81ecced1a8ec",
+  "limits": [
+    "One raw live snapshot only, interpretation corrected from stored evidence without reopening proc or polling. No game, model, gradient, array or intermediate result data read.",
+    "Mapped file inode/origin matches observed for all5 native images; no fresh native-byte hash scan, GPUquery, moduleimport or numerical instrumentation. Sourcehash/nativebyte custody relies on accepted prelaunch chain.",
+    "Live observation does not establish completion, gradients/metrics, closure, scientific outcome, numerical qualification or strength."
+  ],
+  "observation_utc": "2026-11-13T07:06:44.428344+00:00",
+  "owner": {
+    "birth": 27702380,
+    "cwd": "/home/josh/.codex/worktrees/rl-prev-quota-recovery-20261112/chess",
+    "env": {
+      "CUBLAS_WORKSPACE_CONFIG": null,
+      "CUDA_CACHE_PATH": null,
+      "CUDA_VISIBLE_DEVICES": null,
+      "GIT_OPTIONAL_LOCKS": "0",
+      "MAX_JOBS": null,
+      "MKL_NUM_THREADS": null,
+      "NVIDIA_TF32_OVERRIDE": null,
+      "OMP_NUM_THREADS": null,
+      "PYTHONDONTWRITEBYTECODE": "1",
+      "PYTHONPATH": null,
+      "TORCHINDUCTOR_CACHE_DIR": null,
+      "TORCHINDUCTOR_COMPILE_THREADS": null,
+      "TORCH_HOME": null,
+      "TRITON_CACHE_DIR": null,
+      "XDG_CACHE_HOME": null
+    },
+    "pid": 1282119,
+    "ppid": 1282118,
+    "scope": "Absolute b728 controller script; cwd descriptive and no model/native imports in owner. CUDAunset/OMPunset valid for metadata-only owner."
+  },
+  "raw_snapshot": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-live-custody-independent-observation-v1/snapshot.json",
+    "sha256": "02f9f635caebd6dd1c1a1f81d513faf15329f2515359825e1523bfab6c1f9612"
+  },
+  "schema": "corrected-interpretation-single-E3-live-process-observation-v2",
+  "source_process_receipt": {
+    "owner_sha256": "b7287b50906b90a6729833f8ee3369d7a544d2d202d365e90f5c66afb275fa13",
+    "resource": "gpu",
+    "seconds": 600,
+    "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269"
+  },
+  "status": "ACCEPT_BOUNDED_LIVE_OWNER_CHILD_CUSTODY_OBSERVATION_NO_RESULT_ACCEPTANCE",
+  "supersedes_interpretation_only": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-live-custody-independent-observation-v1/review.json",
+    "reason": "Prior bothcwdR7 check was a reviewer overconstraint. Accepted owner fixes child cwd=REPO when spawning; controller may launch from oldH. Raw snapshot stays unchanged; no process observation retry.",
+    "sha256": "c5e0ddee891252213b2f919aa2844bd2cb50ca15d56d00a9e54ea8e3dfd63bd2"
+  }
+}

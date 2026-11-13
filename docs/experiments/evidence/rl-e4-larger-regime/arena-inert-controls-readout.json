@@ -1,0 +1,67 @@
+{
+  "status": "PASS_INERT_E4_DECISION_FUNCTION_CONTROLS_ONLY",
+  "cases": [
+    {
+      "name": "both eligible exact BvsA point tie selects B",
+      "status": "PASS"
+    },
+    {
+      "name": "both eligible BvsA belowhalf selects A",
+      "status": "PASS"
+    },
+    {
+      "name": "sole A eligible independently primary",
+      "status": "PASS"
+    },
+    {
+      "name": "sole B eligible independently primary",
+      "status": "PASS"
+    },
+    {
+      "name": "neither eligible no confirmation",
+      "status": "PASS"
+    },
+    {
+      "name": "any technical failure no confirmation",
+      "status": "PASS"
+    },
+    {
+      "name": "zero variance utilities unavailable/nonpass",
+      "status": "PASS"
+    },
+    {
+      "name": "zero variance primary descriptive point tie selects B",
+      "status": "PASS"
+    },
+    {
+      "name": "primary advantage separate classification",
+      "status": "PASS"
+    },
+    {
+      "name": "primary disadvantage separate classification",
+      "status": "PASS"
+    },
+    {
+      "name": "selected A samehash confirmation pass consumed",
+      "status": "PASS"
+    },
+    {
+      "name": "technical confirmation consumes attempt no fallback",
+      "status": "PASS"
+    },
+    {
+      "name": "n-1 paired variance exact two-pair sanity",
+      "status": "PASS"
+    },
+    {
+      "name": "confirmation changed selected hash",
+      "status": "PASS"
+    },
+    {
+      "name": "nonfinal old40 rejected",
+      "status": "PASS"
+    }
+  ],
+  "no_models_engines_arrays_games_project_imports": true,
+  "full_actual_reader_technical_validation_executed": false
+}

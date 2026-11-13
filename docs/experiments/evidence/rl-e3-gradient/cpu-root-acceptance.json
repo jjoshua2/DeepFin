@@ -1,0 +1,18 @@
+{
+  "status": "ROOT_ACCEPTED_SYNTHETIC_CPU_CONTROLS_ONLY_REAL_BF16_GRADIENTS_UNQUALIFIED",
+  "readout": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-cpu-controls-results-v1/readout.json",
+    "sha256": "56086c2dadf47a820f724619b611deaa959901a46be845979b717e370ca3d23b"
+  },
+  "terminal": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-cpu-controls-execution-v1/terminal.json",
+    "sha256": "75883e640aaf0486cac3cc6dbb07d9943d86e83375a8982704930f3a87c5df09"
+  },
+  "source_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-independent-source-review-v2/review.json",
+    "sha256": "0ab9f04b39734d5beebb3b0c1857dcc36137b2462e93a01e3f651a01b165198d"
+  },
+  "scope": "Actual source loss capture with synthetic CPU tensors; no research arrays/models/engines/CUDA; no real-model or strength claim.",
+  "wall_seconds": 4.181765244982671,
+  "closed_owner_stage_count": 85
+}
