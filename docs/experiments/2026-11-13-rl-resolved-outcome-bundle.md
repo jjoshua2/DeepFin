@@ -26,7 +26,7 @@ is authoritative. Its SHA256 is
 `ee24d3b7aa575c3dd2b85061f376a4920d5f9034a2cc358e03ed8312cd1476c0`.
 The [artifact manifest](evidence/rl-e2tb-week-one/artifact-manifest.json) records
 the published evidence and external inputs. External artifacts live under
-`/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1`.
+`~/chess-artifacts/operations/rl-week-one-20261112-v1`.
 
 Both arms start from the exact epoch-two donor
 `a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0`,
