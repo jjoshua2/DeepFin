@@ -903,7 +903,7 @@ def _build_replay_samples(
 ) -> list[ReplaySample]:
     """Materialize one game's per-ply records into ``ReplaySample`` objects.
 
-    Applies sample-weight and keep-prob subsampling, computes WDL /
+    Applies the declared policy-row retention, computes WDL /
     categorical / moves-left / future-policy targets, and substitutes
     TB policy overrides where available.  ``i`` is the slot index, used
     only to read ``state.selfplay_arr[i]`` for the per-sample
@@ -965,7 +965,7 @@ def _build_replay_samples(
             ))
             continue
         row_has_policy = bool(rec.has_policy)
-        if row_has_policy:
+        if row_has_policy and getattr(state.game, "policy_row_retention", "legacy") == "legacy":
             # sample_weight / diff-focus keep_prob are POLICY-difficulty
             # subsampling signals (q-surprise/KL of the search vs the prior),
             # so they only gate policy rows. Value-only fast rows bypass them:

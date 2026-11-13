@@ -628,6 +628,7 @@ _STARTUP_ONLY_TRIAL_KEYS = frozenset({
     "sf_pid_enabled",
     "pause_file",
     "policy_target_temp",
+    "grad_clip_mode",
   # SF-policy-floor SHAPE. Same class as `policy_target_temp` and for a stronger
   # reason: the three are resolved into ONE frozen, validated
   # `SfPolicyFloorParams` in the Trainer constructor, so a live edit provably
@@ -1257,8 +1258,8 @@ def _warn_on_keys_dropped_from_yaml(
 
     The reload is ADD/UPDATE-only: it iterates the fresh yaml and writes
     ``config[k] = v``, so there is no pass that could remove anything. Deleting
-    a line, and writing ``key: null`` (``flatten_run_config_defaults`` drops
-    None before the reloader sees it), are therefore both no-ops — and they are
+    a line, and writing ``key: null`` (except the clipping-cap keys, whose
+    explicit None disables the cap), are therefore both no-ops — and they are
     no-ops the three loud branches below cannot report, because every one of
     them keys off a key the fresh yaml still names (audit T4). An operator who
     removes a line to turn an experiment off gets exactly the silence the

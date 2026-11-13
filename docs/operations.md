@@ -36,6 +36,16 @@ restoring a config alone leaves trained weights and changed replay in place.
 
 ## Driving training
 
+Gradient clipping defaults to `train.grad_clip_mode: zclip`: adaptive ZClip plus
+the configured fixed norm cap. Setting `zclip_max_norm: null` removes only that
+fixed cap. To disable both forms of clipping for an explicitly planned experiment,
+set `grad_clip_mode: none` and `zclip_max_norm: null` together. The trainer still
+measures gradient norms and rejects nonfinite optimizer steps; it leaves gradients
+and ZClip's adaptive state unchanged. The mode requires a restart, and exact
+checkpoint continuation refuses a different mode (older checkpoints mean `zclip`).
+A live cap edit is refused while clipping is disabled. These controls do not
+change the optimizer's parameter groups or weight decay.
+
 `scripts/train.sh` manages the PID file, log, and Ray cleanup.
 
 The train/tune driver raises an error when Ray returns any trial in `ERROR` state,

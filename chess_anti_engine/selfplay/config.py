@@ -188,6 +188,10 @@ class DiffFocusConfig:
 class GameConfig:
     max_plies: int = 240
     selfplay_fraction: float = 0.0
+    # Direct finite-call research control, not a Worker/YAML setting. Keep raw
+    # difficulty diagnostics while bypassing both stochastic policy-row drops.
+    # Fast/value-only eligibility and outcome adjudication are separate controls.
+    policy_row_retention: str = "legacy"
     # Optional curriculum move budget, supported only by the asynchronous
     # StockfishPool route. 0 uses the main SF label/eval node budget.
     sf_move_nodes: int = 0
@@ -385,6 +389,8 @@ class GameConfig:
     blindspot_harvest_out_path: str = ""
 
     def __post_init__(self) -> None:
+        if self.policy_row_retention not in ("legacy", "all_eligible"):
+            raise ValueError("policy_row_retention must be 'legacy' or 'all_eligible'")
         if int(self.sf_label_nodes_cap or 0) > 0 and not self.sf_wdl_use_cp_logistic:
             _LOG.warning(
                 "sf_label_nodes_cap=%d with sf_wdl_use_cp_logistic=false: capped "
