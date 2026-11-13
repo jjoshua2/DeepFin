@@ -28,7 +28,7 @@ def frozen(path: Path, value: Any) -> dict[str, str]:
     return {"path": str(path), "sha256": core.file_sha(path)}
 
 
-def contract(tmp_path: Path) -> tuple[dict[str, Any], dict[str, str]]:
+def contract(tmp_path: Path, *, max_games: int = 1) -> tuple[dict[str, Any], dict[str, str]]:
     cfg = ModelConfig(kind="tiny", input_extra_features="v1", history_rep_fix=True)
     arch = {"_schema_version": ARCH_SCHEMA_VERSION, **asdict(cfg)}
     donor = tmp_path / "donor.pt"
@@ -43,7 +43,8 @@ def contract(tmp_path: Path) -> tuple[dict[str, Any], dict[str, str]]:
          "source_revision": revision,
          "source_files": {p: core.file_sha(core.REPO / p) for p in core.SOURCE_FILES},
          "architecture": arch, "donor": {"path": str(donor), "sha256": core.file_sha(donor)},
-         "batch_size": 2, "games_per_generation": 1, "updates_per_generation": [2, 2],
+         "batch_size": 2, "games_per_generation": 1, "max_games_per_generation": max_games,
+         "updates_per_generation": [2, 2],
          "replay_generations": 4, "seed": 45, "mirror_prob": 0.5,
          "runtime": {"device": "cpu", "use_amp": False, "torch_version": torch.__version__,
                      "numpy_version": np.__version__, "torch_threads": 2, "cuda_devices": 0},
@@ -54,15 +55,17 @@ def contract(tmp_path: Path) -> tuple[dict[str, Any], dict[str, str]]:
 
 
 def generation(tmp_path: Path, c: dict[str, Any], n: int, actor: str,
-               *, network_turn: bool = True) -> dict[str, str]:
+               *, network_turn: bool = True, game_offset: int = 0) -> dict[str, str]:
     rows = 3
-    shard = tmp_path / f"game-{n}.zarr"
+    tag = str(n) if game_offset == 0 else f"{n}-{game_offset}"
+    game_id = n + 1000 * game_offset
+    shard = tmp_path / f"game-{tag}.zarr"
     policy = np.zeros((rows, MODEL_POLICY_SIZE), dtype=np.float16)
     policy[:, 0] = 1
     arrays = {"x": np.ones((rows, infer_input_planes(c["architecture"]["input_extra_features"]), 8, 8), dtype=np.float16),
               "policy_target": policy, "wdl_target": np.array([0, 1, 2], dtype=np.int8),
               "priority": np.ones(rows, dtype=np.float32),
-              "game_id": np.full(rows, n, dtype=np.int64), "ply_index": np.arange(rows, dtype=np.int32),
+              "game_id": np.full(rows, game_id, dtype=np.int64), "ply_index": np.arange(rows, dtype=np.int32),
               "legal_mask": np.ones_like(policy, dtype=np.uint8),
               "_input_history_encoding": np.asarray(c["architecture"]["input_history_encoding"]),
               "_policy_encoding": np.asarray(c["architecture"]["policy_encoding"]),
@@ -77,24 +80,24 @@ def generation(tmp_path: Path, c: dict[str, Any], n: int, actor: str,
                  for p in sorted(shard.rglob("*")) if p.is_file()]
     served = "a" * 64
     common = {"run_uuid": c["run_uuid"], "source_revision": c["source_revision"], "generation": n,
-              "actor_sha256": actor, "physical_game_id": f"{c['run_uuid']}:{n}",
-              "served_state_sha256": served, "game_id": n, "rows": rows}
+              "actor_sha256": actor, "physical_game_id": f"{c['run_uuid']}:{tag}",
+              "served_state_sha256": served, "game_id": game_id, "rows": rows}
     verification = {**common, "resolved": True, "retained_rows": rows, "scientific_class": "NATURAL"}
     outcome = {**common, "schema": "CORE_PRODUCING_OUTCOME_PROOF_V1", "scientific_class": "NATURAL",
                "verification": verification, "proof_sha256": core.digest(verification)}
-    evidence = {"outcome_proof": frozen(tmp_path / f"outcome-{n}.json", outcome),
-                "validation": frozen(tmp_path / f"validation-{n}.json", common),
-                "provenance": frozen(tmp_path / f"provenance-{n}.json", common)}
+    evidence = {"outcome_proof": frozen(tmp_path / f"outcome-{tag}.json", outcome),
+                "validation": frozen(tmp_path / f"validation-{tag}.json", common),
+                "provenance": frozen(tmp_path / f"provenance-{tag}.json", common)}
     admission = {**common, "status": "VERIFIED_RESOLVED_CORE_TRAIN_GAME_V1", "bank": "train",
                  "resolved": True, "full_history_verified": True, "raw_targets_verified": True,
                  "label_class": "NATURAL", "shard_inventory_sha256": core.digest(inventory), "evidence": evidence}
-    game = {"physical_game_id": common["physical_game_id"], "game_id": n, "bank": "train", "rows": rows,
-            "label_class": "NATURAL", "producer_proof": frozen(tmp_path / f"admission-{n}.json", admission),
+    game = {"physical_game_id": common["physical_game_id"], "game_id": game_id, "bank": "train", "rows": rows,
+            "label_class": "NATURAL", "producer_proof": frozen(tmp_path / f"admission-{tag}.json", admission),
             "shard": {"path": str(shard), "files": inventory}}
-    serving = frozen(tmp_path / f"serving-{n}.json", {"actor_sha256": actor,
+    serving = frozen(tmp_path / f"serving-{tag}.json", {"actor_sha256": actor,
                      "pre_state_sha256": served, "post_state_sha256": served,
                      "checkpoint_model_state_sha256": served})
-    return frozen(tmp_path / f"generation-{n}.json", {
+    return frozen(tmp_path / f"generation-{tag}.json", {
         "schema": "ROOT_ACCEPTED_CORE_TRAIN_GENERATION_V1", "run_uuid": c["run_uuid"],
         "source_revision": c["source_revision"], "generation": n, "actor_sha256": actor,
         "actor_serving": serving, "games": [game],
@@ -132,13 +135,17 @@ def parent_binding(tmp_path: Path, cref: dict[str, str], output: str,
 def test_real_trainer_two_generation_continuation_matches_direct_state_and_rng(tmp_path):
     from scripts.offline_epoch_resume import _restore_rng, _rng_state
 
-    c, cref = contract(tmp_path)
+    c, cref = contract(tmp_path, max_games=2)
     one = generation(tmp_path, c, 1, c["donor"]["sha256"])
     first = core.execute(cref, stage(tmp_path, cref, [one], None, "first"))
     assert first["step"] == first["applied_updates"] == 2
     assert first["drawn_rows"] == first["applied_views"] == 4
     parent = parent_binding(tmp_path, cref, "first")
     two = generation(tmp_path, c, 2, first["checkpoint"]["sha256"])
+    extra = generation(tmp_path, c, 2, first["checkpoint"]["sha256"], game_offset=1)
+    combined = json.loads(Path(two["path"]).read_bytes())
+    combined["games"] += json.loads(Path(extra["path"]).read_bytes())["games"]
+    two = frozen(tmp_path / "generation-2-all-eligible.json", combined)
     # Reference directly continues the real Trainer state. The caller also
     # verifies parameter-name identity and restores its explicit RNG sidecar.
     reference = core.make_trainer(c, tmp_path / "reference-log")
@@ -165,7 +172,7 @@ def test_real_trainer_two_generation_continuation_matches_direct_state_and_rng(t
     assert second["metrics"]["opt_lr_max"] == expected_metrics.opt_lr_max
     assert second["final_step"] == second["step"]
     assert second["final_checkpoint"] == second["checkpoint"]
-    assert len(second["membership"]) == 2
+    assert len(second["membership"]) == 3
     # No replay or overwrite of a completed output.
     with pytest.raises(FileExistsError):
         core.execute(cref, second_ref)
@@ -201,6 +208,18 @@ def test_data_refusals_precede_model_construction(tmp_path, monkeypatch, fault):
         core.execute(cref, stage(tmp_path, cref, [bad], None, "refused"))
     assert not called
     assert not (tmp_path / "refused").exists()
+
+
+@pytest.mark.parametrize("count", [0, 3])
+def test_admitted_game_count_must_stay_within_predeclared_bounds(tmp_path, count):
+    c, cref = contract(tmp_path, max_games=2)
+    original = generation(tmp_path, c, 1, c["donor"]["sha256"])
+    gen = json.loads(Path(original["path"]).read_bytes())
+    gen["games"] *= count
+    bad = frozen(tmp_path / "out-of-range-generation.json", gen)
+    stage_ref = stage(tmp_path, cref, [bad], None, "refused-count")
+    with pytest.raises(ValueError, match="minimum/maximum"):
+        core.metadata(c, json.loads(Path(stage_ref["path"]).read_bytes()), cref)
 
 
 def test_no_retry_wrapper_stops_cuda_fault_and_nonfinite_before_next_update(tmp_path, monkeypatch):

@@ -28,7 +28,8 @@ The static contract has these fields, with **no** implicit scientific defaults:
 | `source_files` | Repository-relative file → SHA256; must include `SOURCE_FILES` from the helper |
 | `architecture` | Complete donor architecture including `_schema_version`; no field dropping or migration |
 | `donor` | Original model checkpoint ref; model-only fresh loading occurs once |
-| `batch_size`, `games_per_generation` | Positive fixed counts |
+| `batch_size` | Positive fixed batch size |
+| `games_per_generation`, `max_games_per_generation` | Positive minimum/maximum admitted resolved nonempty game counts; minimum ≤ maximum |
 | `updates_per_generation` | Nonempty list of positive applied-update counts; defines global horizon |
 | `replay_generations` | Exactly `4`, FIFO of complete generations |
 | `seed`, `mirror_prob` | Initial uint32 seed and explicit augmentation probability |
@@ -90,8 +91,12 @@ equal that parent's learner checkpoint SHA (generation 1 uses the original donor
 
 Each generation manifest is issued **by the external data admission/audit**, with
 `schema: ROOT_ACCEPTED_CORE_TRAIN_GENERATION_V1`, `run_uuid`, `source_revision`,
-consecutive `generation`, `actor_sha256`, `actor_serving` ref, and exactly the
-declared number of `games`. Each game contains:
+consecutive `generation`, `actor_sha256`, `actor_serving` ref, and all the actual
+eligible `games` within the declared minimum/maximum. A fixed attempted roster may
+contain censored or empty games; the independently audited admission accounts for
+every attempt and retains **all** resolved nonempty games, without choosing an
+exact-size subset or replacing failures. Qualification may set minimum=maximum.
+Each admitted game contains:
 
 ```json
 {

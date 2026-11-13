@@ -131,7 +131,7 @@ def read_ref(ref: dict[str, Any], *, max_bytes: int = METADATA_LIMIT,
 
 def validate_contract(c: dict[str, Any]) -> None:
     require(set(c) == {"schema", "run_uuid", "source_revision", "source_files", "architecture", "donor",
-                       "batch_size", "games_per_generation", "updates_per_generation", "replay_generations",
+                       "batch_size", "games_per_generation", "max_games_per_generation", "updates_per_generation", "replay_generations",
                        "seed", "runtime", "lr", "mirror_prob", "limits"}, "unknown or missing contract fields")
     require(c["schema"] == "core_finite_learning_v1", "unsupported learning contract")
     require(str(uuid.UUID(c["run_uuid"])) == c["run_uuid"], "invalid run UUID")
@@ -144,6 +144,8 @@ def validate_contract(c: dict[str, Any]) -> None:
     require(c["replay_generations"] == 4, "core replay must retain four whole generations")
     integer(c["batch_size"], "batch size")
     integer(c["games_per_generation"], "games per generation")
+    integer(c["max_games_per_generation"], "maximum games per generation")
+    require(c["games_per_generation"] <= c["max_games_per_generation"], "invalid generation game bounds")
     integer(c["seed"], "seed", 0)
     require(c["seed"] < 2**32, "seed exceeds NumPy legacy RNG range")
     require(set(c["donor"]) == {"path", "sha256"}, "invalid donor reference")
@@ -250,7 +252,8 @@ def metadata(c: dict[str, Any], stage: dict[str, Any], contract_ref: dict[str, s
         require(gen["schema"] == "ROOT_ACCEPTED_CORE_TRAIN_GENERATION_V1", "unadmitted generation")
         require((gen["run_uuid"], gen["source_revision"], gen["generation"]) ==
                 (c["run_uuid"], c["source_revision"], i), "generation identity mismatch")
-        require(len(gen["games"]) == c["games_per_generation"], "incomplete game generation")
+        require(c["games_per_generation"] <= len(gen["games"]) <= c["max_games_per_generation"],
+                "admitted generation game count outside minimum/maximum")
         _, serving = read_ref(gen["actor_serving"])
         served = serving["pre_state_sha256"]
         require(re.fullmatch("[0-9a-f]{64}", served) is not None
