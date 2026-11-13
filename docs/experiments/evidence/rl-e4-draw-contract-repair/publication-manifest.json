@@ -1,0 +1,135 @@
+{
+  "amendment_sha256": "49fb2c0f2dc3dbc5320492180a334c76b785a5c5bdb78c19946eb0cf52c57e22",
+  "copied_files": 21,
+  "files": [
+    {
+      "bytes": 746,
+      "destination": "v1-to-v2-scope.json",
+      "sha256": "292e88e4f608cfb10f33dffdbe549749b8298bbe697b614c7b7441e9ef721cad",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/v1-to-v2-scope.json"
+    },
+    {
+      "bytes": 10144,
+      "destination": "guard_controls.py.txt",
+      "sha256": "a5de30161312cb1433033acb7d5118e618caeab3e3b5febd1bc19a2f2b8d4d00",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/guard_controls.py"
+    },
+    {
+      "bytes": 2896,
+      "destination": "technical-descriptor.json",
+      "sha256": "6af973aae6820cf1f39bc2d3c8ae6a7f7687cab02e6e29d7a08252465e12505c",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/technical-descriptor.json"
+    },
+    {
+      "bytes": 2148,
+      "destination": "README.md",
+      "sha256": "5f5f5e65be38d234a22a687314da2224e03b986a63b1b9d04a49778351f5680c",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/README.md"
+    },
+    {
+      "bytes": 2017,
+      "destination": "preparation.json",
+      "sha256": "3118d14329ecf06f8d84c27d533f6ac72156748568328a08fc9a0738365721b8",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/preparation.json"
+    },
+    {
+      "bytes": 4680,
+      "destination": "v1-to-v2.diff.txt",
+      "sha256": "5a869d35ab66379f6a81133a513af6a97616334b190282d528542614b657f1f0",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/v1-to-v2.diff"
+    },
+    {
+      "bytes": 15681,
+      "destination": "bind_draw_plan.py.txt",
+      "sha256": "ff24bc622171b8e226e3f05c66800d046fb008713d30991088e68a008b07f47f",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/bind_draw_plan.py"
+    },
+    {
+      "bytes": 475,
+      "destination": "identity-inputs.TEMPLATE.json",
+      "sha256": "d3e0eba354bf15595c6e095bcc411d6364755e180e96becb78e3f2e036040679",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/identity-inputs.TEMPLATE.json"
+    },
+    {
+      "bytes": 2550,
+      "destination": "technical-amendment.DRAFT.json",
+      "sha256": "b578284b0ce74139be91aaa497181440fddc90828ba2029dd6a7c1d50d73910d",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/technical-amendment.DRAFT.json"
+    },
+    {
+      "bytes": 1291,
+      "destination": "draw-command.TEMPLATE.json",
+      "sha256": "6dc3daf0bdef2e52d95d885f9f5e572a661e6479dd8be0970684b2e160c311ed",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/draw-command.TEMPLATE.json"
+    },
+    {
+      "bytes": 9031,
+      "destination": "guard-only.diff.txt",
+      "sha256": "ada6125c319789a0c95a9dcfa478d3acd793e1635f422a24d3f7db5fa9f53008",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/guard-only.diff"
+    },
+    {
+      "bytes": 3080,
+      "destination": "manifest.json",
+      "sha256": "905fc0884365d411ce37db8490c1ba7a95718afaf391c2a45eedf9cf662435df",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/manifest.json"
+    },
+    {
+      "bytes": 1499,
+      "destination": "source-proof.json",
+      "sha256": "bc55a3d39817d998a8f347fc85a084cddadcf7f82cbacc87a6ed3293b392d2bf",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/source-proof.json"
+    },
+    {
+      "bytes": 1170,
+      "destination": "guard-control-command.json",
+      "sha256": "e3dad0c0eb12c614f2b9bb7b7cbf9f80099e935995b6801468b53d792917d02d",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/guard-control-command.json"
+    },
+    {
+      "bytes": 1730,
+      "destination": "technical-publication-interface.json",
+      "sha256": "b2c437055445311e607fa90bffed5f81b44720de15eeccd358a29cbf1ba3ec63",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/technical-publication-interface.json"
+    },
+    {
+      "bytes": 520,
+      "destination": "guard-control-manifest.json",
+      "sha256": "120e986d527125902036268ba2f0b7310a70221fb9150e4d05a70d14f85b95ff",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/guard-control-manifest.json"
+    },
+    {
+      "bytes": 7595,
+      "destination": "amendment.json",
+      "sha256": "49fb2c0f2dc3dbc5320492180a334c76b785a5c5bdb78c19946eb0cf52c57e22",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-technical-amendment-final-v1/amendment.json"
+    },
+    {
+      "bytes": 2918,
+      "destination": "original-finding.json",
+      "sha256": "cc2100e2739cf71d7281e9fb27b3ca0692c6c028bac963e9b56563551042219c",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-original-draw-guard-independent-finding-v1/review.json"
+    },
+    {
+      "bytes": 9878,
+      "destination": "source-review.json",
+      "sha256": "b8a4e4f3c7f2a84207191ffe9c00e06419b4a62b87aa6f6a8031dd5e8b0bc044",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-correction-independent-source-review-v2/review.json"
+    },
+    {
+      "bytes": 2580,
+      "destination": "controls-actual-readout.json",
+      "sha256": "a1ce2df1ccb49428ce5c4f6c373a9478fb3da021f26d14343c01e5439654f808",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-guard-controls-results-v2/readout.json"
+    },
+    {
+      "bytes": 5476,
+      "destination": "controls-actual-review.json",
+      "sha256": "d0e2128b27714323902196f667c734600a23183016fa2179200288b577c0f046",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-guard-controls-actual-independent-review-v2/review.json"
+    }
+  ],
+  "no_models_arrays_fresh_data_or_draws": true,
+  "original_scientific_sha256": "7cfd6e45b565f39827a1801c828dc302fe5d79f176c7701b004fa7f1adab3478",
+  "status": "EXACT_E4_DRAW_TECHNICAL_AMENDMENT_SOURCE_AND_GUARD_CONTROL_COPIES"
+}

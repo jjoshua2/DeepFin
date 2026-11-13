@@ -1,0 +1,8 @@
+{
+  "status": "SOURCE_ONLY_UNRUN_NOT_ADMITTED",
+  "control_helper_sha256": "a5de30161312cb1433033acb7d5118e618caeab3e3b5febd1bc19a2f2b8d4d00",
+  "new_draw_helper_sha256": "ff24bc622171b8e226e3f05c66800d046fb008713d30991088e68a008b07f47f",
+  "new_draw_manifest_sha256": "905fc0884365d411ce37db8490c1ba7a95718afaf391c2a45eedf9cf662435df",
+  "python": "/home/josh/chess-artifacts/venvs/rl-transition-managed-20261111-cu130/bin/python",
+  "owner_sha256": "b7287b50906b90a6729833f8ee3369d7a544d2d202d365e90f5c66afb275fa13"
+}
