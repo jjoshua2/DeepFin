@@ -105,8 +105,8 @@ _INFO_EMIT_INTERVAL_MS = 1000
 # mid-chunk. We instead reserve just-in-time *between* chunks — a quiescent
 # point where the pool has joined its barrier and no worker is descending —
 # sized to the next chunk's worst-case growth. reserve() grows via the same
-# internal doubling the mid-chunk realloc would have used, so node_cap /
-# memory_bytes() (and thus the byte-cap and advance_root half-cap behavior) are
+# internal growth the mid-chunk realloc would have used, so node_cap /
+# footprint_bytes() (and thus the Hash cap and advance_root reuse decision) are
 # unchanged: we only move the realloc to a safe point.
 #
 # Worst-case nodes a single concurrent sim adds to the arena, so a chunk of S
@@ -122,6 +122,17 @@ _INFO_EMIT_INTERVAL_MS = 1000
 _MAX_LEGAL_MOVES = 218
 _FORCED_COLLAPSE_DEPTH = 16  # try_forced_collapse depth cap in walker_descend_puct
 _TREE_MAX_LEAF_BRANCHING = 256
+# Hash-capped arena growth: one node-array growth adds at most Hash/64 bytes of
+# node slots (MCTSTree.set_growth_step), so the resident footprint can exceed
+# Hash by at most one step plus one chunk's edges/boards. _TREE_NODE_BYTES
+# mirrors TREE_NODE_BYTES in _mcts_tree.c (pinned by a test against
+# memory_stats()["node_bytes"]).
+_TREE_GROWTH_STEP_DIV = 64
+# `footprint_bytes` / `set_growth_step` / `compact_to_subtree` landed in
+# _mcts_tree ABI 10. UCI-only: the selfplay floor (`_REQUIRED_MCTS_ABI`) is unchanged.
+_REQUIRED_UCI_TREE_MEMORY_ABI = 10
+_TREE_NODE_BYTES = 51
+_MIN_TREE_GROWTH_STEP_NODES = 4096
 assert _TREE_MAX_LEAF_BRANCHING >= _MAX_LEGAL_MOVES + _FORCED_COLLAPSE_DEPTH
 
 # Visit-margin early abort (Lc0 "smart pruning"). Once past the optimum budget
@@ -378,12 +389,14 @@ class SearchWorker:
   # catch a `.so` built between the two changes. The module ABI_VERSION marker covers
   # both — check it at construction and surface the rebuild command.
         _abi = getattr(_mcts_tree_ext, "ABI_VERSION", 0)
-        if _abi < _REQUIRED_MCTS_ABI:
+        _required = max(_REQUIRED_MCTS_ABI, _REQUIRED_UCI_TREE_MEMORY_ABI)
+        if _abi < _required:
             raise RuntimeError(
-                f"compiled _mcts_tree ABI_VERSION={_abi} < required {_REQUIRED_MCTS_ABI} "
+                f"compiled _mcts_tree ABI_VERSION={_abi} < required {_required} "
                 "(missing node_capacity, the start_gumbel_sims root-scale args, "
-                "the audit-W1 transposition-key fix and/or batch_process_ply's "
-                "search_wdl draw-mode args); rebuild the C extension: "
+                "the audit-W1 transposition-key fix, batch_process_ply's "
+                "search_wdl draw-mode args and/or the Hash footprint API); "
+                "rebuild the C extension: "
                 "python3 scripts/build_production_extensions.py"
             )
         self._evaluator = evaluator
@@ -453,10 +466,15 @@ class SearchWorker:
   # Optional Syzygy probe. When set, MCTS leaves in the TB range get
   # their NN wdl overridden with the TB-truth distribution.
         self._tb_probe = None
-  # Soft memory cap: search halts between chunks if tree size exceeds
-  # this. 0 / None = unbounded. Not a hash table — tree growth is all
-  # or nothing, we stop adding rather than evicting.
+  # Soft memory cap (UCI ``Hash``) on the tree's RESIDENT footprint
+  # (``MCTSTree.footprint_bytes()``): the search halts between chunks once the
+  # footprint reaches it, and says so with an ``info string``. 0 = unbounded.
+  # Not a hash table — tree growth is all or nothing, we stop adding rather
+  # than evicting.
         self._max_tree_bytes: int = 0
+  # Why the last `run()` stopped (`_should_stop_search` reason, or "tree_bytes"
+  # from the shared-tree headroom check); None = budget/abort/early return.
+        self.last_stop_reason: str | None = None
   # Minibatch target for the C gumbel state machine. 0 = use the
   # C-side GSS_GPU_BATCH default. Higher = better GPU util on large
   # batches; lower = faster stop latency + fresher tree state on
@@ -525,16 +543,51 @@ class SearchWorker:
             return "pucv", 1
         return "gumbel", 1
 
+    def _tree_footprint_bytes(self) -> int:
+        """Bytes the tree really holds resident (``MCTSTree.footprint_bytes``).
+
+        This — not the allocated capacity ``memory_bytes()`` — is what the Hash
+        cap, ``hashfull`` and the ``advance_root`` reuse decision measure. The
+        capacity figure counted a per-node-id CBoard cache that was ~25x larger
+        than the boards it held and over-reported the tree ~6x against RSS, so
+        a search stopped at ~1/8 of Hash with the clock still full."""
+        return 0 if self._tree is None else int(self._tree.footprint_bytes())
+
+    def _tree_growth_step_nodes(self) -> int:
+        """Node slots one arena growth may add under the Hash cap (0 = doubling).
+
+        Node arrays are zero-filled on growth, so capacity is resident. Plain
+        doubling at a multi-GB arena would add GBs in one step and blow past
+        Hash; capping each step at ``Hash/64`` bounds that overshoot."""
+        if self._max_tree_bytes <= 0:
+            return 0
+        return max(_MIN_TREE_GROWTH_STEP_NODES,
+                   (self._max_tree_bytes // _TREE_GROWTH_STEP_DIV) // _TREE_NODE_BYTES)
+
+    def _sync_tree_growth_step(self) -> None:
+        if self._tree is not None:
+            self._tree.set_growth_step(self._tree_growth_step_nodes())
+
     def _hashfull_permille(self) -> int | None:
         """Tree-memory fill as per-mille of the soft cap (UCI ``hashfull``).
 
-        The cap is ``set_max_tree_mb`` (UCI ``Hash``); ``memory_bytes()`` is the
-        arena's allocated size, the same quantity the byte-cap stop checks. None
-        when the cap is disabled (0) or no tree exists yet."""
+        The cap is ``set_max_tree_mb`` (UCI ``Hash``); the fill is the tree's
+        resident footprint, the same quantity the ``tree_bytes`` stop checks.
+        None when the cap is disabled (0) or no tree exists yet."""
         if self._max_tree_bytes <= 0 or self._tree is None:
             return None
-        used = int(self._tree.memory_bytes())
+        used = self._tree_footprint_bytes()
         return max(0, min(1000, used * 1000 // self._max_tree_bytes))
+
+    def _tree_full_note(self, elapsed_ms: int, deadline: Deadline) -> str:
+        """``info string`` text for a search that stops because the tree is full."""
+        rem = deadline.remaining_ms()
+        left = "no deadline" if rem is None else f"{rem} ms left on the hard deadline"
+        return (
+            f"tree memory full: footprint {self._tree_footprint_bytes() // (1024 * 1024)} MB "
+            f"of Hash {self._max_tree_bytes // (1024 * 1024)} MB (next chunk would exceed it); "
+            f"stopping search at {elapsed_ms} ms ({left}); raise Hash to search longer"
+        )
 
     def set_multi_pv(self, n: int) -> None:
         """Number of top-ranked lines to emit per info tick. 1 = classic
@@ -1314,8 +1367,12 @@ class SearchWorker:
         tb_probe,
         *,
         allowed_root_indices: set[int] | None = None,
+        note: str | None = None,
     ) -> None:
         """Emit one or more ``info`` lines, one per top-ranked PV.
+
+        ``note`` (e.g. the tree-full stop reason) is appended to the first
+        line's ``string`` field, so it reaches the GUI log next to the PV.
 
         When ``self._multi_pv`` == 1 the ``multipv`` field is omitted
         (classic single-PV UCI). When > 1 each line gets ``multipv 1..N``.
@@ -1350,6 +1407,8 @@ class SearchWorker:
                 self.last_single_pucv_cache_stats(),
                 pending_mode=self._pucv_vloss_mode,
             )
+        if note is not None:
+            pucv_info = note if pucv_info is None else f"{pucv_info}; {note}"
         hashfull = self._hashfull_permille()
   # seldepth is the deepest PV any emitted line reaches, kept monotonic across
   # the search so it climbs like a real selective-depth counter.
@@ -1374,8 +1433,10 @@ class SearchWorker:
             )
 
     def set_max_tree_mb(self, mb: int) -> None:
-        """Soft cap on tree memory; 0 disables. Checked between chunks."""
+        """Soft cap on the tree's resident footprint; 0 disables. Checked
+        between chunks; the live tree's growth step follows immediately."""
         self._max_tree_bytes = max(0, int(mb)) * 1024 * 1024
+        self._sync_tree_growth_step()
 
     def set_tb_probe(self, probe) -> None:
         """Install (or replace, or clear with None) the Syzygy probe used for
@@ -1409,14 +1470,15 @@ class SearchWorker:
         Returns True if the whole walk succeeded (tree reusable), False if any
         step fell off the expanded tree (caller must call ``reset_tree``).
 
-        Reuse is also refused once the persistent tree grows past half the
-        memory cap. Rerooting only repoints ``self._root_id`` — the C arena
-        never reclaims the discarded sibling subtrees, so ``memory_bytes()``
-        climbs monotonically across a game. Left unchecked it reaches
-        ``_max_tree_bytes`` mid-game, after which every search halts after its
-        first chunk (``stop_reason == "tree_bytes"``) with the clock still
-        full. Forcing a rebuild here keeps each search bounded and fully
-        budgeted, at the cost of dropping cross-move reuse near the cap.
+        Rerooting in place only repoints ``self._root_id`` — the discarded
+        sibling subtrees stay in the arena, so the footprint climbs across a
+        game. While the arena's resident footprint is below half the Hash cap
+        that is harmless and reuse is in place. At or above half, the arena is
+        compacted to the kept subtree (``compact_to_subtree``: siblings freed,
+        new root id 0) and reused when the KEPT SUBTREE's footprint is at most
+        half the cap; only a kept subtree larger than that is refused (caller
+        rebuilds), so the next search always has at least half of Hash to grow
+        into instead of halting after its first chunk.
         """
         if self._rpg_pool is not None:
   # Root-parallel Gumbel v1: no cross-move tree reuse — fresh per-candidate
@@ -1432,8 +1494,12 @@ class SearchWorker:
             if rid < 0:
                 return False
             b.push(mv)
-        if self._max_tree_bytes > 0 and self._tree.memory_bytes() >= self._max_tree_bytes // 2:
-            return False
+        half_cap = self._max_tree_bytes // 2
+        if self._max_tree_bytes > 0 and self._tree_footprint_bytes() >= half_cap:
+            rid = int(self._tree.compact_to_subtree(int(rid), int(half_cap)))
+            if rid < 0:
+                return False
+        self._sync_tree_growth_step()
         self._root_id = rid
         self._tree_fen = b.fen()
         self._invalidate_root_caches()
@@ -1807,6 +1873,7 @@ class SearchWorker:
         max_nodes: int | None, max_depth: int | None,
         total_nodes: int, pv_len: int,
         time_margin_ms: float = 0.0,
+        tree_growth_bytes: int = 0,
     ) -> str | None:
         """Return the first-firing stop reason, or ``None`` to keep searching.
 
@@ -1819,6 +1886,11 @@ class SearchWorker:
         the hard deadline so an un-interruptible chunk can't overrun it — the
         batch-time-variance guard (see ``_batch_margin_ms``). It ranks with the
         hard-deadline "external" stop, ahead of the work bounds.
+
+        ``tree_growth_bytes`` is the footprint the previous chunk added; the
+        ``"tree_bytes"`` stop fires once the footprint PLUS that projected
+        next-chunk growth would reach the Hash cap, so the resident tree stays
+        under Hash instead of overshooting it by one chunk.
         """
         if stop_event.is_set() or deadline.expired():
             return "external"
@@ -1833,7 +1905,8 @@ class SearchWorker:
         if (
             self._max_tree_bytes > 0
             and self._tree is not None
-            and self._tree.memory_bytes() >= self._max_tree_bytes
+            and self._tree_footprint_bytes() + max(0, int(tree_growth_bytes))
+            >= self._max_tree_bytes
         ):
             return "tree_bytes"
         return None
@@ -1936,17 +2009,18 @@ class SearchWorker:
         ``tree_grow_*`` realloc mid-descent (use-after-free; see
         ``_TREE_MAX_LEAF_BRANCHING``). Two bounds:
 
-        - Slots already reserved but unused (``node_capacity - node_count``) can
-          be filled without any realloc and without changing ``memory_bytes()``,
-          so they are always free to use — even when the tree already sits at the
-          Hash cap. This is what keeps a small ``Hash`` from starving the very
-          first chunk to an unvisited root.
-        - Growing *beyond* the reservation raises ``memory_bytes()``, so that part
-          is capped by the remaining Hash budget. Per-node cost is sized from
-          *capacity* (``memory_bytes()`` is capacity-based); dividing by the live
-          ``node_count`` would over-estimate hugely right after the initial
-          reserve. ``reserve()`` still rounds capacity up by doubling, so the cap
-          stays *soft*, but we never grow past it on purpose."""
+        - Slots already reserved but unused (``node_capacity - node_count``) are
+          already resident (zero-filled on growth) and counted in
+          ``footprint_bytes()``, so filling them costs only their child edges —
+          they are always usable, even when the tree already sits at the Hash
+          cap. This is what keeps a small ``Hash`` from starving the very first
+          chunk to an unvisited root.
+        - Growing *beyond* the reservation adds ``node_bytes`` (+ the CBoard
+          slot index when that cache is on) per slot to the footprint, so that
+          part is capped by the remaining Hash budget, with each slot priced
+          at its full node + child-edge cost. ``reserve()`` grows in steps of at
+          most ``_tree_growth_step_nodes``, so the cap stays soft by at most one
+          step, but we never grow past it on purpose."""
         tree = self._tree
         if tree is None:
             return int(upcoming_sims)
@@ -1958,10 +2032,13 @@ class SearchWorker:
   # 218, the absolute max legal moves), so a chunk adds at most this many nodes.
         need = sims * _TREE_MAX_LEAF_BRANCHING
         if self._max_tree_bytes > 0 and need > free:
-            used = int(tree.memory_bytes())
+            stats = tree.memory_stats()
+            used = int(tree.footprint_bytes())
             remaining = self._max_tree_bytes - used
-            bytes_per_cap_node = max(1, used // max(1, node_cap))
-            growable = int(remaining // bytes_per_cap_node) if remaining > 0 else 0
+            bytes_per_new_node = int(stats["node_bytes"]) + int(stats["child_bytes"]) + (
+                int(stats["cb_slot_bytes"]) if int(stats["cb_slot_cap"]) > 0 else 0
+            )
+            growable = int(remaining // bytes_per_new_node) if remaining > 0 else 0
   # Usable slots = already-reserved free slots (no memory growth) + what we can
   # still grow into under the cap. Free slots are usable even at/over the cap.
             budget = free + max(0, growable)
@@ -2226,6 +2303,7 @@ class SearchWorker:
 
         self._last_gumbel_action_idx = None
         self._seldepth = 0
+        self.last_stop_reason = None
         self._ensure_root_eval_cached(board, tb_probe)
         if allowed_root_indices is not None and self._rpg_pool is not None:
             # Convert an RPG-shaped tree once for this restricted search.
@@ -2265,6 +2343,9 @@ class SearchWorker:
             return False
 
         while True:
+  # Hash-capped growth step on whatever tree the previous chunk left (the
+  # classic Gumbel path creates its tree inside the first chunk).
+            self._sync_tree_growth_step()
             chunk = self._chunk_budget(allowed_root_indices)
             if max_nodes is not None:
                 remaining = max_nodes - total_nodes
@@ -2286,15 +2367,18 @@ class SearchWorker:
             if self._is_shared_tree_path(allowed_root_indices):
                 chunk = self._ensure_shared_tree_headroom(chunk)
                 if chunk <= 0:
+                    self.last_stop_reason = "tree_bytes"
                     if info_cb is not None and self._root_id is not None:
                         self._emit_pv_info(
                             info_cb, board, float(last_value), total_nodes,
                             deadline.elapsed_ms(), tb_probe,
                             allowed_root_indices=allowed_root_indices,
+                            note=self._tree_full_note(deadline.elapsed_ms(), deadline),
                         )
                     break
 
             _chunk_t0 = time.monotonic()
+            _footprint_before = self._tree_footprint_bytes()
             try:
                 last_value, completed = self._run_one_chunk(
                     chunk, board, stop_event, tb_probe, allowed_root_indices,
@@ -2382,16 +2466,20 @@ class SearchWorker:
                 max_nodes=max_nodes, max_depth=max_depth,
                 total_nodes=total_nodes, pv_len=len(pv_indices),
                 time_margin_ms=time_margin_ms,
+                tree_growth_bytes=self._tree_footprint_bytes() - _footprint_before,
             )
             if stop_reason is not None:
-  # Tree-bytes-only stops emit a final info line; other stop reasons
-  # either already emitted via _maybe_emit_pv_info above or want quiet exit.
+                self.last_stop_reason = stop_reason
+  # Tree-bytes stops emit a final info line whose `string` names the reason —
+  # a memory stop before the time budget is spent must never be silent. Other
+  # stop reasons either already emitted via _maybe_emit_pv_info or want quiet exit.
                 if stop_reason == "tree_bytes" and info_cb is not None:
                     assert self._root_id is not None
                     self._emit_pv_info(
                         info_cb, board, float(last_value),
                         total_nodes, elapsed, tb_probe,
                         allowed_root_indices=allowed_root_indices,
+                        note=self._tree_full_note(elapsed, deadline),
                     )
                 break
 

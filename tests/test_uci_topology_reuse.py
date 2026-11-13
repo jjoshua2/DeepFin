@@ -226,6 +226,9 @@ def search_fixture(rpg=True):
         worker._root_pol_logits = [[0.0, 1.0, 2.0]]
         worker._root_wdl_logits = [[0.0, 0.0, 0.0]]
     worker._ensure_root_eval_cached = root_eval
+    # Hash accounting hooks (real tree memory API; the stub tree has none).
+    worker._sync_tree_growth_step = lambda: None
+    worker._tree_footprint_bytes = lambda: 0
     worker._try_tb_shortcut = lambda *_args, **_kwargs: None
     worker._time_capped_chunk = lambda chunk, *_args: chunk
     worker._is_shared_tree_path = lambda _allowed: False

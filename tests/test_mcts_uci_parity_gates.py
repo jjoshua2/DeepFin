@@ -636,7 +636,7 @@ def test_uci_advance_root_reuses_tree_and_preserves_new_root_contract() -> None:
     assert np.array_equal(mask, _expected_root_mask(board))
 
 
-def test_uci_advance_root_refuses_reuse_when_tree_above_half_memory_cap() -> None:
+def test_uci_advance_root_refuses_reuse_when_kept_subtree_above_half_memory_cap() -> None:
     board = chess.Board()
     worker = SearchWorker(
         _ZeroEvaluator(),
@@ -657,7 +657,11 @@ def test_uci_advance_root_refuses_reuse_when_tree_above_half_memory_cap() -> Non
     tree = worker._tree
     old_root = int(worker._root_id)
 
-    worker._max_tree_bytes = max(1, int(tree.memory_bytes()) * 2)
+    # Any compacted tree keeps its fixed buffers (initial node slots + the
+    # transposition table, ~1.2 MB), so a 2-byte cap (half = 1 byte) makes the
+    # kept subtree's footprint exceed half the cap: reuse must be refused and
+    # the tree left untouched.
+    worker._max_tree_bytes = 2
 
     assert not worker.advance_root(board, [first_move])
     assert worker._tree is tree
