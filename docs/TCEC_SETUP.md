@@ -111,7 +111,7 @@ process. Force a mode with `CAE_UCI_MULTI_GPU_COMPILE_MODE`
 |---|---|---|
 | `Hash` | most of the machine's RAM | MCTS tree memory (MB), measured against the tree's resident footprint (~3.3 KB per visit, so 16384 ≈ 5M visits ≈ 5 min at ~17k nps). The tree is the memory consumer; when it fills, the search stops early with `info string tree memory full …`. Provision about **Hash + 150 MB + the eval cache** (`EvalCacheEntries`) of RAM: per-search buffers and allocator slack are outside Hash. A cross-move compaction briefly holds new child arrays beside the old ones; it is only chosen while that transient keeps the tree within Hash + 32 MB, so the provisioning above still holds. One tree addresses at most ~2.1 billion nodes (int32 ids, about 130–280 GB of footprint); Hash above that is unused and the stop says `tree node-id space full`. |
 | `SyzygyPath` | your TB path | 3–7 man WDL/DTZ supported. |
-| `MoveOverheadMs` | your standard | Added per-move safety on top of the internal margin. |
+| `MoveOverheadMs` | your standard | Added per-move safety on top of the internal margin; also sets when the stall watchdog answers (section 7). |
 | `ClockBatchMarginSigmas` | `2` (default) | Self-calibrating clock margin in units of observed GPU-batch-time sigma. Leave at default. |
 | `MultiPV` | supported | For broadcast eval display. |
 | `Ponder` | `false` | Not supported meaningfully; leave off. |
@@ -196,6 +196,30 @@ phase C tells us what the additional seven GPUs are worth.
     incomplete reason=solved_root_without_move_witness ...
     witness_unavailable_roots=N`. This is a property of the position, not a
     fault, and does NOT count toward the unhealthy streak below.
+- **A stalled search is answered by the deadline watchdog.** A clocked `go`
+  (`wtime`/`btime`, or `movetime`) whose search has not produced `bestmove` by
+  its own hard deadline plus a grace is answered by the engine itself, without
+  waiting for or touching the stuck worker -- a GPU batch that never returns,
+  or a tree compaction that overran the move's clock. The search's hard
+  deadline is already the move budget minus `MoveOverheadMs`; the watchdog
+  fires `grace = max(MoveOverheadMs - margin, 10 ms)` after it, with
+  `margin = max(10 ms, MoveOverheadMs / 4)` left before the budget runs out
+  (at the default 30 ms: 20 ms after the search's deadline, 10 ms before the
+  budget). The answer is, in order: the first move of the last PV that search
+  published for this exact position (`source=last_pv`); the cached root policy
+  for this position (`source=root_policy`); the first legal move
+  (`source=first_legal`). It never runs a fresh evaluation, since the
+  evaluator may be the thing that hung. One line says so: `info string WARNING
+  search stalled: no bestmove N ms into a clocked move; deadline watchdog
+  answers unsearched source=... move=... bestmove_fallback_used=N`. The move
+  counts toward the unhealthy streak below; the stuck search is stopped,
+  silenced and parked like one that ignored `stop`, and its late result, if it
+  ever comes, is discarded (exactly one `bestmove` per `go`). After
+  `ponderhit` the watchdog uses the real limits from the moment of
+  `ponderhit`. `go infinite`, `go ponder` (until `ponderhit`), and pure
+  `go nodes` / `go depth` have no watchdog. With `MoveOverheadMs` below 20 ms
+  the watchdog can fire only after the budget is spent, so set it to your
+  usual safety value (a few tens of ms or more), not 0.
 - **Unhealthy state.** 3 counted fallback moves in a row (every kind above except
   the solved-root one), or a failed search-path re-warm at `isready`, print
   `info string WARNING engine unhealthy: ...` once. The engine keeps answering
