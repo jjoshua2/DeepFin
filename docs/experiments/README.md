@@ -10,7 +10,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
-- [2026-11-13: Core policy and resolved-outcome baseline](2026-11-13-core-outcome-policy-baseline.md) — prospective v5 draft, not frozen or admitted; two conditional eight-generation legs target successive confirmed gains. Small two-generation engineering qualification is not research or strength evidence.
+- [2026-11-13: Core policy and resolved-outcome baseline](2026-11-13-core-outcome-policy-baseline.md) — scientific protocol frozen before collection, with separate per-stage execution admission; two conditional eight-generation legs target successive confirmed gains. Capacity and arena engineering establish no research gain.
 
 - [2026-11-13: Larger fresh-data outcome regime](2026-11-13-rl-larger-outcome-regime.md) — E4 completed: 192 games and 129 updates per arm; all three screens technically qualified, bundle contrast unresolved, neither arm donor-utility eligible. No confirmation or adoption; donor retained.
 
