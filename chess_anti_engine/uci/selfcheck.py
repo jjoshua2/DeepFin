@@ -80,14 +80,18 @@ ALLOW_UNVERIFIED_ENV = "DEEPFIN_ALLOW_UNVERIFIED_EXTENSIONS"
 
 # The command that clears a refusal must force a recompile: deleting the .so
 # and rebuilding without --force can copy an old object back out of build/.
-FORCE_REBUILD_COMMAND = "python setup.py build_ext --inplace --force"
+FORCE_REBUILD_COMMAND = "pip install --no-deps -e ."
+# Equivalent where setuptools is installed in the venv (it is not by default on
+# Python 3.12+); the editable reinstall gets setuptools from build isolation.
+SETUP_FORCE_COMMAND = "python setup.py build_ext --inplace --force"
 REBUILD_HINT = (
     "in a source checkout (editable install), recompile the C extensions with "
-    f"`{FORCE_REBUILD_COMMAND}` (production host: "
-    "`python scripts/build_production_extensions.py`, which always forces); "
-    "deleting the .so files and rebuilding without --force can reuse a stale "
-    "object from build/. A regular install: reinstall it from the checkout or "
-    "the wheel (`pip install --force-reinstall --no-deps <checkout or .whl>`)"
+    f"`{FORCE_REBUILD_COMMAND}` (or `uv pip install --no-deps -e .`), which "
+    "compiles every extension from scratch in a temporary build directory; "
+    f"`{SETUP_FORCE_COMMAND}` does the same if setuptools is installed; "
+    "production host: `python scripts/build_production_extensions.py`. "
+    "A regular install: reinstall it from the checkout or the wheel "
+    "(`pip install --force-reinstall --no-deps <checkout or .whl>`)"
 )
 
 # Positions for the encoder parity and move-generation checks: the start

@@ -935,26 +935,30 @@ def _build_tree(dst: Path, *, depends: bool = True, scripts: bool = True) -> Pat
     return dst
 
 
-def _setup_build(root: Path, *extra: str) -> list[str]:
-    """Run the real `setup.py build_ext --inplace`; return the extensions it recorded."""
+def _setup_build(root: Path, *extra: str, ok: bool = True) -> list[str]:
+    """Run the real `setup.py build_ext --inplace`; return the extensions it
+    COMPILED (a record written beside the build/lib object at link time)."""
     env = {k: v for k, v in os.environ.items()
            if not k.startswith("CAE_EXT_") and k not in ("CFLAGS", "LDFLAGS", "LDSHARED")}
     proc = subprocess.run(
         [sys.executable, "setup.py", "build_ext", "--inplace", *extra],
         cwd=root, env=env, capture_output=True, text=True, timeout=600, check=False,
     )
-    assert proc.returncode == 0, proc.stdout[-3000:] + proc.stderr[-3000:]
+    assert (proc.returncode == 0) is ok, proc.stdout[-3000:] + proc.stderr[-3000:]
     return sorted(line.split("/")[-1].split(".")[0]
-                  for line in proc.stdout.splitlines() if line.startswith("build record: /"))
+                  for line in proc.stdout.splitlines() if line.startswith("build record: build/"))
 
 
-def _delete_inplace_objects(root: Path) -> None:
-    """The lazy "clean rebuild": delete the in-place .so files, keep build/."""
+def _delete_inplace_objects(root: Path, *, records: bool = False) -> None:
+    """The lazy "clean rebuild": delete the in-place .so files, keep build/
+    (with ``records``, `rm **/*.so*`, which takes the records too)."""
     suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
     gone = [p for p in (root / "chess_anti_engine").rglob(f"*{suffix}") if p.is_file()]
     assert len(gone) == 5, gone
     for p in gone:
         p.unlink()
+        if records:
+            Path(str(p) + ".build-record.json").unlink(missing_ok=True)
 
 
 def _edit_header(root: Path) -> None:
@@ -983,6 +987,91 @@ def test_setup_header_edit_recompiles_on_a_lazy_rebuild(tmp_path: Path) -> None:
     assert _setup_build(root) == _CBOARD_EXTS  # recompiled; _features_ext does not include it
     assert sc.freshness_problems(root) == []
     assert _setup_build(root) == []  # nothing compiled, nothing (re)recorded
+    # A build/lib object with no record (built by a setup.py older than build
+    # records): copied in place without one, the in-place record it replaces
+    # is removed, and the gate falls back to mtime for it.
+    lc0 = "chess_anti_engine.encoding._lc0_ext"
+    suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
+    lib_record = next((root / "build").rglob(f"_lc0_ext{suffix}.build-record.json"))
+    lib_record.unlink()
+    assert _setup_build(root) == []
+    assert not list((root / "chess_anti_engine").rglob(f"_lc0_ext{suffix}.build-record.json"))
+    rows = {name: (method, problem) for name, method, problem in sc._freshness_rows(root)}
+    assert rows[lc0] == ("mtime", None), rows
+
+
+def test_setup_archive_extracted_header_with_old_mtime_refuses(tmp_path: Path) -> None:
+    """A header changed behind build/'s back with an OLDER mtime (extracting an
+    archive over the tree), then `rm **/*.so*` (records too) and a plain
+    rebuild: nothing compiles, but each object comes back with the record of
+    its own compile, whose hashes no longer match -- refuse, never mtime-pass."""
+    root = _build_tree(tmp_path)
+    assert _setup_build(root) == _ALL_EXTS
+    header = root / _CBOARD_H
+    with header.open("a", encoding="utf-8") as fh:
+        fh.write("/* changed by an archive extract */\n")
+    os.utime(header, ns=(1_000_000_000, 1_000_000_000))  # older than build/lib
+    _delete_inplace_objects(root, records=True)
+    assert _setup_build(root) == []
+    problems = sc.freshness_problems(root)
+    for name in ("_lc0_ext", "_mcts_tree"):
+        assert any(name in p and f"{_CBOARD_H}" in p for p in problems), problems
+
+
+def test_setup_failed_build_then_fix_passes_without_force(tmp_path: Path) -> None:
+    """Shared-header edit plus a compile error in _mcts_tree.c: the build fails
+    after recompiling _lc0_ext. Fix the .c and rebuild: only the extensions
+    not yet rebuilt compile, and the fresh _lc0_ext object is copied in place
+    WITH its new record, so everything passes without --force."""
+    root = _build_tree(tmp_path)
+    assert _setup_build(root) == _ALL_EXTS
+    tree_c = root / "chess_anti_engine" / "mcts" / "_mcts_tree.c"
+    good = tree_c.read_text(encoding="utf-8")
+    _edit_header(root)
+    tree_c.write_text(good + "\n#error simulated build failure\n", encoding="utf-8")
+    _setup_build(root, ok=False)
+    tree_c.write_text(good, encoding="utf-8")
+    assert _setup_build(root) == ["_mcts_tree", "_nnue_ext"]
+    rows = sc._freshness_rows(root)
+    assert all(method == "content" and problem is None for _, method, problem in rows), rows
+
+
+def test_setup_source_change_during_compile_reads_stale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A source edited while its extension compiles: the record keeps the
+    PRE-compile hashes, so the gate refuses until the next build (fails closed)."""
+    import runpy
+
+    import setuptools
+    from setuptools import Distribution
+    from setuptools.command.build_ext import build_ext as setuptools_build_ext
+
+    root = _build_tree(tmp_path)
+    captured: dict = {}
+    monkeypatch.setattr(setuptools, "setup", lambda **kw: captured.update(kw))
+    monkeypatch.chdir(root)
+    for key in [k for k in os.environ if k.startswith("CAE_EXT_")]:
+        monkeypatch.delenv(key)
+    runpy.run_path(str(root / "setup.py"))
+    lc0 = "chess_anti_engine.encoding._lc0_ext"
+    ext = next(e for e in captured["ext_modules"] if e.name == lc0)
+    original = setuptools_build_ext.build_extension
+
+    def compile_then_edit(self, ext_) -> None:
+        original(self, ext_)
+        with (root / _CBOARD_H).open("a", encoding="utf-8") as fh:
+            fh.write("/* edited while compiling */\n")
+
+    monkeypatch.setattr(setuptools_build_ext, "build_extension", compile_then_edit)
+    cmd = captured["cmdclass"]["build_ext"](Distribution({"ext_modules": [ext]}))
+    cmd.inplace = True
+    cmd.ensure_finalized()
+    cmd.run()
+    problems = sc.freshness_problems(root, modules=(lc0,))
+    assert any(_CBOARD_H in p for p in problems), problems
+    out = capsys.readouterr().out
+    assert "a source changed during the compile" in out, out
 
 
 def test_setup_copy_without_compile_gets_no_record(tmp_path: Path) -> None:
@@ -1002,7 +1091,8 @@ def test_setup_copy_without_compile_gets_no_record(tmp_path: Path) -> None:
     problems = sc.freshness_problems(root)
     assert any("_lc0_ext is older than" in p for p in problems), problems
     assert sc.FORCE_REBUILD_COMMAND in sc.REBUILD_HINT
-    cmd = sc.FORCE_REBUILD_COMMAND.split()
+    assert sc.SETUP_FORCE_COMMAND in sc.REBUILD_HINT
+    cmd = sc.SETUP_FORCE_COMMAND.split()
     assert cmd[:2] == ["python", "setup.py"]
     assert _setup_build(root, *cmd[4:]) == _ALL_EXTS
     assert sc.freshness_problems(root) == []
