@@ -15,7 +15,7 @@ import math
 import sys
 import threading
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from typing import TYPE_CHECKING, ClassVar, Protocol
 from collections.abc import Callable
 
@@ -489,6 +489,10 @@ class Engine:
   # The reply-only thread `_answer_failed_go` starts, while it is the current
   # search thread; ponderhit releases it like stop.
         self._fallback_reply_thread: threading.Thread | None = None
+  # Search threads that outlived their join timeout and were superseded by a
+  # fallback reply. They may still own the worker, so the quiescence barrier
+  # waits for them too.
+        self._orphan_threads: list[threading.Thread] = []
 
   # -- main-thread command dispatch -----------------------------------------
 
@@ -496,10 +500,20 @@ class Engine:
         if self._quit_requested or self._closed:
             _println("info string command rejected: engine is shutting down")
             return
+        # A setoption that raises half way (a pool install that tore the old pool
+        # down, a primary swap that failed after a pool rebuild) is rolled back
+        # to these options and the matching installed state. See
+        # `_restore_after_failed_setoption`.
+        snapshot = replace(self._options) if isinstance(cmd, CmdSetOption) else None
         try:
             self._dispatch(cmd)
         except SearchNotQuiescent as exc:
             _println(f"info string command rejected ({type(cmd).__name__}): {exc}")
+            if isinstance(cmd, CmdGo):
+  # The previous search did not stop within the join timeout and still owns the
+  # worker. This `go` must still be answered exactly once, from a fallback that
+  # does not touch the busy worker's evaluator.
+                self._answer_failed_go(cmd, worker_busy=True)
         except Exception as exc:
   # A handler bug or a resource failure must never end the process: a dead
   # engine forfeits every remaining game, a lost option costs nothing. One
@@ -516,8 +530,75 @@ class Engine:
   # `readyok` is the handler's last statement, so it was not printed. A GUI
   # blocks on it; the engine is alive and answers `go`, so say ready.
                 _println(format_readyok())
+            elif snapshot is not None:
+                self._restore_after_failed_setoption(snapshot)
 
-    def _answer_failed_go(self, cmd: CmdGo) -> None:
+    def _restore_after_failed_setoption(self, snapshot: EngineOptions) -> None:
+        """Put the engine back on a working configuration that matches its options.
+
+        Preferred: the configuration before the failed setoption (options from
+        ``snapshot``, the matching pool reinstalled if the failure tore it down;
+        every replacement path keeps the old primary until its swap succeeds).
+        If that cannot be rebuilt either, fall back to the single-evaluator path
+        on the current primary and make the options SAY so -- options that
+        advertise a pool nobody installed are the silent-one-GPU failure.
+        One info string names the outcome and the realized path.
+        """
+        for f in fields(EngineOptions):
+            setattr(self._options, f.name, getattr(snapshot, f.name))
+        try:
+            self._ensure_configured_path_installed()
+            outcome = "previous configuration kept"
+        except Exception as exc:
+            _log.error("restoring the previous configuration failed", exc_info=True)
+            self._options.search_parallel = "pucv"
+            self._options.use_multi_gpu_pucv = False
+            try:
+                self._worker.clear_root_parallel_gumbel()
+                self._worker.clear_multi_gpu_pucv(restore_fallback=False)
+                self._worker.restore_classic_search_path()
+                outcome = (
+                    f"previous configuration could not be restored ({_one_line(exc)}); "
+                    "fell back to the single-evaluator path, multi-GPU pools OFF"
+                )
+            except Exception as exc2:
+                _log.error("single-evaluator fallback failed", exc_info=True)
+                outcome = (
+                    f"no working search path could be installed ({_one_line(exc2)}); "
+                    "moves will be unsearched fallbacks"
+                )
+        self._warmup_dirty = True
+        _println(
+            f"info string setoption failed; {outcome}: "
+            f"path={self._worker.realized_search_path()}"
+        )
+
+    def _ensure_configured_path_installed(self) -> None:
+        """Install the pool the options name if it is missing; raise if impossible."""
+        worker = self._worker
+        rpg = getattr(worker, "_rpg_pool", None)
+        pucv_pool = getattr(worker, "_pucv_pool", None)
+        if self._options.search_parallel == "gumbel":
+            if rpg is None and not self._try_install_root_parallel_gumbel():
+                raise RuntimeError("root-parallel Gumbel pool could not be reinstalled")
+        elif self._options.use_multi_gpu_pucv:
+            if pucv_pool is None and self._install_multi_gpu_pucv_pool() is None:
+                raise RuntimeError("multi-GPU PUCV pool could not be reinstalled")
+        else:
+            # A pool install tears the walker pool / PUCV chunker down before it
+            # builds; if it then failed, the classic helpers are missing too.
+            n_walkers = int(getattr(worker, "_n_walkers", 1))
+            helpers_missing = (
+                (n_walkers > 1 and getattr(worker, "_walker_pool", None) is None)
+                or (n_walkers == 1 and getattr(worker, "_use_pucv", False)
+                    and getattr(worker, "_pucv", None) is None)
+            )
+            if rpg is not None or pucv_pool is not None or helpers_missing:
+                worker.clear_root_parallel_gumbel()
+                worker.clear_multi_gpu_pucv(restore_fallback=False)
+                worker.restore_classic_search_path()
+
+    def _answer_failed_go(self, cmd: CmdGo, *, worker_busy: bool = False) -> None:
         """Guarantee exactly one bestmove for a ``go`` whose handler raised.
 
         If the handler got as far as starting the search thread, that thread owns
@@ -527,9 +608,19 @@ class Engine:
         real search -- a ponder reply waits for ``ponderhit``/``stop``, an
         open-ended one for ``stop`` -- and the same gate drops it if a newer
         ``go`` or ``quit`` supersedes it.
+
+        ``worker_busy``: the go was rejected because the PREVIOUS search did not
+        stop. That thread is parked as an orphan (every later command still
+        waits for it -- see `_wait_for_search`), the new generation silences its
+        stale result, and the fallback reads only the cached prior, never the
+        evaluator the orphan is still using.
         """
         thread = self._search_thread
-        if thread is not None and thread.ident is not None:
+        if worker_busy:
+            if thread is not None and thread.is_alive():
+                self._orphan_threads.append(thread)
+            self._search_thread = None
+        elif thread is not None and thread.ident is not None:
             return
         args = cmd.args
         try:
@@ -552,7 +643,7 @@ class Engine:
         self._bestmove_fallback_used += 1
         reply = threading.Thread(
             target=self._run_failed_go_reply,
-            args=(gen, board, args.searchmoves, args.ponder, open_ended),
+            args=(gen, board, args.searchmoves, args.ponder, open_ended, not worker_busy),
             daemon=True,
         )
         self._search_thread = reply
@@ -563,11 +654,13 @@ class Engine:
   # No thread to wait for UCI's permission: answer now rather than never.
             self._search_thread = None
             self._fallback_reply_thread = None
-            self._run_failed_go_reply(gen, board, args.searchmoves, False, False)
+            self._run_failed_go_reply(
+                gen, board, args.searchmoves, False, False, not worker_busy,
+            )
 
     def _run_failed_go_reply(
         self, gen: int, board: chess.Board, searchmoves: tuple[str, ...],
-        ponder: bool, open_ended: bool,
+        ponder: bool, open_ended: bool, allow_fresh_eval: bool = True,
     ) -> None:
         if ponder:
             self._ponder_release.wait()
@@ -576,7 +669,9 @@ class Engine:
         with self._state_lock:
             if gen != self._search_gen or self._quit_requested:
                 return
-        move, source = self._bestmove_fallback(board, searchmoves)
+        move, source = self._bestmove_fallback(
+            board, searchmoves, allow_fresh_eval=allow_fresh_eval,
+        )
         _println(
             f"info string search not started; bestmove_fallback_used="
             f"{self._bestmove_fallback_used} source={source} move={move}"
@@ -1150,11 +1245,22 @@ class Engine:
             )
             if new_eval is None:
                 return
+        # Both worker steps build before they swap, so a raise leaves the old
+        # pool / evaluator live; undo the first if the second fails.
+        try:
+            self._worker.set_num_threads(n)
+        except Exception:
+            _close_quietly(new_eval)
+            raise
+        if new_eval is not None:
+            try:
+                self._worker.set_evaluator(new_eval)
+            except Exception:
+                self._worker.set_num_threads(old_threads)
+                raise
         self._options.threads = n
-        self._worker.set_num_threads(n)
         self._warmup_dirty = True
         if new_eval is not None:
-            self._worker.set_evaluator(new_eval)
             self._reinstall_configured_search_path()
         _println(
             f"info string Threads set to {n} "
@@ -1205,17 +1311,29 @@ class Engine:
         enabled = value.strip().lower() == "true"
         if not enabled:
             had_pool = getattr(self._worker, "_pucv_pool", None) is not None
-            self._options.use_multi_gpu_pucv = False
-            self._worker.clear_multi_gpu_pucv()
             # Size the primary for the remaining path: RPG still needs only
             # device 0; the routing/walker path uses all devices.
+            # Build the replacement primary BEFORE tearing the pool down: a
+            # failed build leaves pool, primary and options exactly as they were.
+            new_eval = None
             if (
                 self._rebuild_evaluator is not None
                 and self._rebuild_multi_gpu_pucv_factories is not None
             ):
-                new_eval = self._rebuild_evaluator(
-                    self._options.max_batch, self._options.eval_cache_entries,
-                )
+                previous = self._options.use_multi_gpu_pucv
+                self._options.use_multi_gpu_pucv = False
+                try:
+                    new_eval = self._rebuild_or_keep(
+                        "UseMultiGpuPUCV off", self._options.max_batch,
+                        self._options.eval_cache_entries,
+                    )
+                finally:
+                    self._options.use_multi_gpu_pucv = previous
+                if new_eval is None:
+                    return
+            self._options.use_multi_gpu_pucv = False
+            self._worker.clear_multi_gpu_pucv()
+            if new_eval is not None:
                 self._worker.set_evaluator(new_eval)
             self._warmup_dirty = True
             _println("info string UseMultiGpuPUCV off")
@@ -1274,6 +1392,7 @@ class Engine:
             self._options.use_multi_gpu_pucv = False
             _println("info string UseMultiGpuPUCV unavailable — need at least two devices")
             return None
+        new_eval = None
         if rebuild_primary and self._rebuild_evaluator is not None:
             # The entry factory closes over these shared options. Construction
             # must see the intended topology, including when leaving RPG.
@@ -1288,10 +1407,17 @@ class Engine:
                 )
             finally:
                 self._options.use_multi_gpu_pucv, self._options.search_parallel = previous
-            self._worker.set_evaluator(new_eval)
-        self._worker.install_multi_gpu_pucv(
-            factories, gather=gather, as_factories=True,
-        )
+        # Pool first, primary swap last: if the pool install raises, the old
+        # primary is still installed and the new one is retired here.
+        try:
+            self._worker.install_multi_gpu_pucv(
+                factories, gather=gather, as_factories=True,
+            )
+        except BaseException:
+            _close_quietly(new_eval)
+            raise
+        if new_eval is not None:
+            self._worker.set_evaluator(new_eval, keep_pools=True)
         return len(factories)
 
     def _set_pucv_pending_mode(self, value: str) -> None:
@@ -1330,13 +1456,26 @@ class Engine:
                 return
             return
         was_gumbel = self._options.search_parallel == "gumbel"
-        self._options.search_parallel = "pucv"
-        self._worker.clear_root_parallel_gumbel()
+        # Build the replacement primary BEFORE clearing the RPG pool, under the
+        # target topology: a failed build leaves the pool and options as they were.
+        new_eval = None
         if (was_gumbel and not self._options.use_multi_gpu_pucv
                 and self._rebuild_evaluator is not None):
-            self._worker.set_evaluator(self._rebuild_evaluator(
-                self._options.max_batch, self._options.eval_cache_entries,
-            ))
+            previous = self._options.search_parallel
+            self._options.search_parallel = "pucv"
+            try:
+                new_eval = self._rebuild_or_keep(
+                    "SearchParallel pucv", self._options.max_batch,
+                    self._options.eval_cache_entries,
+                )
+            finally:
+                self._options.search_parallel = previous
+            if new_eval is None:
+                return
+        self._options.search_parallel = "pucv"
+        self._worker.clear_root_parallel_gumbel()
+        if new_eval is not None:
+            self._worker.set_evaluator(new_eval)
         self._warmup_dirty = True
         _println("info string SearchParallel pucv")
         # Restore whichever non-RPG path is configured. install_root_parallel
@@ -1369,6 +1508,7 @@ class Engine:
                 "need at least two devices",
             )
             return False
+        new_eval = None
         if rebuild_primary and self._rebuild_evaluator is not None:
             # Preflight factories first, then let the primary factory observe
             # the intended topology, as in the multi-GPU PUCV transition.
@@ -1380,22 +1520,30 @@ class Engine:
                 )
             finally:
                 self._options.search_parallel = previous
-            self._worker.set_evaluator(new_eval)
+        previous_mode = self._options.search_parallel
         self._options.search_parallel = "gumbel"
         # search_parallel is the source of truth while Gumbel is selected:
         # _reinstall_configured_search_path prefers it over use_multi_gpu_pucv
         # so MaxBatch/EvalCache/VLGather rebuilds reinstall RPG, not PUCV.
         # The use_multi_gpu_pucv flag is left intact so switching back to
         # SearchParallel=pucv can restore the multi-GPU PUCV pool.
-        self._worker.install_root_parallel_gumbel(
-            factories, gather=gather, as_factories=True,
-            devices=list(self._search_devices) if self._search_devices else None,
-            info_string_cb=_emit_info_string,
-            open_vpa=int(self._options.rpg_open_vpa),
-            min_vpa=int(self._options.rpg_min_vpa),
-            min_keep=int(self._options.rpg_min_keep),
-            open_budget_frac=float(self._options.rpg_open_budget_frac),
-        )
+        # Pool first, primary swap last (see _install_multi_gpu_pucv_pool).
+        try:
+            self._worker.install_root_parallel_gumbel(
+                factories, gather=gather, as_factories=True,
+                devices=list(self._search_devices) if self._search_devices else None,
+                info_string_cb=_emit_info_string,
+                open_vpa=int(self._options.rpg_open_vpa),
+                min_vpa=int(self._options.rpg_min_vpa),
+                min_keep=int(self._options.rpg_min_keep),
+                open_budget_frac=float(self._options.rpg_open_budget_frac),
+            )
+        except BaseException:
+            self._options.search_parallel = previous_mode
+            _close_quietly(new_eval)
+            raise
+        if new_eval is not None:
+            self._worker.set_evaluator(new_eval, keep_pools=True)
         self._warmup_dirty = True
         _println(
             f"info string SearchParallel gumbel on "
@@ -1585,11 +1733,7 @@ class Engine:
         )
         if new_eval is None:
             return
-        self._options.max_batch = mb
-        self._worker.set_evaluator(new_eval)
-        # set_evaluator clears multi-GPU pools; reinstall from search_parallel
-        # (Gumbel) or use_multi_gpu_pucv — not only the PUCV flag.
-        self._reinstall_configured_search_path()
+        self._install_rebuilt_primary(new_eval, max_batch=mb)
         # The rebuilt evaluator's raw forward is warmed, but the SEARCH-path
         # cudagraph is captured separately — re-warm it before the clock.
         self._warmup_dirty = True
@@ -1610,14 +1754,46 @@ class Engine:
         )
         if new_eval is None:
             return
-        self._options.eval_cache_entries = n
+        previous = self._options.eval_cache_entries
         self._worker.set_eval_cache_entries(n)
-        self._worker.set_evaluator(new_eval)
-        self._reinstall_configured_search_path()
+        try:
+            self._install_rebuilt_primary(new_eval, eval_cache_entries=n)
+        except BaseException:
+            self._worker.set_eval_cache_entries(previous)
+            raise
         # Same as MaxBatch: evaluator rebuilt cold, so the search-path
         # cudagraph must be re-warmed before the first real ``go``.
         self._warmup_dirty = True
         _println(f"info string EvalCacheEntries set to {n}; evaluator rebuilt + warmed")
+
+    def _install_rebuilt_primary(self, new_eval: BatchEvaluator, **option_updates: int) -> None:
+        """Commit ``option_updates`` and make ``new_eval`` the primary, all or nothing.
+
+        Classic path: ``set_evaluator`` builds the walker / PUCV helpers before
+        it swaps, so a raise leaves the old evaluator live. Multi-GPU path: the
+        pool is rebuilt from the new options FIRST and the primary swapped in
+        last with the pool kept; if the pool rebuild raises, the old primary is
+        still installed and the setoption transaction in `dispatch` reinstalls
+        the previous pool. Options are restored here on any raise.
+        """
+        previous = {k: getattr(self._options, k) for k in option_updates}
+        for key, value in option_updates.items():
+            setattr(self._options, key, value)
+        handed_over = False
+        try:
+            if self._multi_gpu_path_active():
+                self._reinstall_configured_search_path()
+                handed_over = True
+                self._worker.set_evaluator(new_eval, keep_pools=True)
+            else:
+                handed_over = True
+                self._worker.set_evaluator(new_eval)
+        except BaseException:
+            for key, value in previous.items():
+                setattr(self._options, key, value)
+            if not handed_over:
+                _close_quietly(new_eval)
+            raise
 
     def _rebuild_or_keep(
         self, what: str, max_batch: int, eval_cache_entries: int,
@@ -2045,6 +2221,7 @@ class Engine:
 
     def _bestmove_fallback(
         self, board: chess.Board, searchmoves: tuple[str, ...],
+        *, allow_fresh_eval: bool = True,
     ) -> tuple[str, str]:
         """``(uci, source)`` for a bestmove the search could not produce.
 
@@ -2067,6 +2244,17 @@ class Engine:
             candidate = None
         if isinstance(candidate, str) and _is_playable_fallback(board, candidate, searchmoves):
             return candidate, "root_policy"
+  # The cache is empty or belongs to another position (a `go` that failed before
+  # its own root eval). One forward pass on THIS board, no search, beats a
+  # square-order move. Skipped when another thread may still own the evaluator.
+        if allow_fresh_eval:
+            try:
+                fresh = self._worker.fresh_root_policy_bestmove(board, searchmoves=searchmoves)
+            except Exception as exc:
+                _println(f"info string fresh root-eval fallback unavailable: {_one_line(exc)}")
+                fresh = None
+            if isinstance(fresh, str) and _is_playable_fallback(board, fresh, searchmoves):
+                return fresh, "fresh_root_eval"
         return _legal_fallback_move(board, searchmoves), "first_legal"
 
     @property
@@ -2159,7 +2347,24 @@ class Engine:
                 raise SearchNotQuiescent("search stop timed out; thread still running; worker unchanged")
         if not self._warmup_done.wait(timeout=_JOIN_TIMEOUT_S):
             raise SearchNotQuiescent("warmup stop timed out; worker unchanged")
+        for orphan in list(self._orphan_threads):
+            orphan.join(timeout=_JOIN_TIMEOUT_S)
+            if orphan.is_alive():
+                raise SearchNotQuiescent(
+                    "an earlier search that missed its stop deadline still owns the worker"
+                )
+            self._orphan_threads.remove(orphan)
         self._search_thread = None
+
+
+def _close_quietly(evaluator: object) -> None:
+    """Retire an evaluator that was built but never installed."""
+    close = getattr(evaluator, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:
+            _log.warning("closing an uninstalled evaluator failed", exc_info=True)
 
 
 def _is_playable_fallback(

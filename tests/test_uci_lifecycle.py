@@ -63,18 +63,39 @@ def test_timeout_rejects_mutation_and_second_run_until_quiescent(held_engine, co
     old_thread, old_stop = engine._search_thread, engine._stop_event
     old_fen, old_gen = engine._board.fen(), engine._search_gen
     engine.dispatch(cmd)
-    assert engine._search_thread is old_thread
-    assert engine._stop_event is old_stop
+    if command == "go":
+        # A rejected go is still answered exactly once, from a reply thread
+        # under a NEW generation (so the held search's late result is
+        # dropped); the held thread is parked as an orphan the barrier still
+        # waits for, and the busy worker's evaluator is not touched.
+        assert engine._search_gen == old_gen + 1
+        assert engine._orphan_threads == [old_thread]
+        reply = engine._search_thread
+        assert reply is not None
+        assert reply is not old_thread
+        reply.join(2)
+        worker.fresh_root_policy_bestmove.assert_not_called()
+        out = capsys.readouterr().out
+        assert "rejected" in out
+        assert len([ln for ln in out.splitlines() if ln.startswith("bestmove ")]) == 1
+    else:
+        assert engine._search_thread is old_thread
+        assert engine._stop_event is old_stop
+        assert engine._search_gen == old_gen
     assert engine._board.fen() == old_fen
-    assert engine._search_gen == old_gen
     assert worker.run.call_count == 1
     worker.reset_tree.assert_not_called()
     worker.advance_root.assert_not_called()
     worker.set_max_tree_mb.assert_not_called()
     assert engine._options.hash_mb == 1024
-    assert "rejected" in capsys.readouterr().out
+    if command != "go":
+        assert "rejected" in capsys.readouterr().out
     release.set()
     threads[0].join(2)
+    held_out = capsys.readouterr().out
+    if command == "go":
+        # The held search finished under a stale generation: it must not answer.
+        assert "bestmove" not in held_out
     engine.dispatch(cmd)
     if command == "position":
         assert engine._board.peek().uci() == "e2e4"

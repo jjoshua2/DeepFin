@@ -1,7 +1,7 @@
 """Actual factory/option bodies with inert devices; no project or GPU imports."""
 from __future__ import annotations
 
-from types import MethodType
+from types import MethodType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -24,8 +24,12 @@ def _fixture(*, enabled: bool = False, parallel: str = "pucv", devices: int = 2)
     methods = definitions(
         "chess_anti_engine/uci/engine.py",
         ["Engine._set_search_parallel", "Engine._try_install_root_parallel_gumbel",
-         "Engine._reinstall_configured_search_path"],
-        {"_println": messages.append, "_emit_info_string": messages.append},
+         "Engine._reinstall_configured_search_path", "Engine._rebuild_or_keep"],
+        {"_println": messages.append, "_emit_info_string": messages.append,
+         "_close_quietly": lambda ev: ev.close() if ev is not None else None,
+         "gc": SimpleNamespace(collect=lambda: 0),
+         "_log": SimpleNamespace(error=lambda *_a, **_k: None),
+         "_one_line": lambda exc: f"{type(exc).__name__}: {exc}"},
     )
     for name, method in methods.items():
         setattr(engine, name.rsplit(".", 1)[-1], MethodType(method, engine))
@@ -37,9 +41,10 @@ def _fixture(*, enabled: bool = False, parallel: str = "pucv", devices: int = 2)
 
     old_set = worker.set_evaluator
 
-    def set_evaluator(evaluator: Any) -> None:
-        clear()
-        old_set(evaluator)
+    def set_evaluator(evaluator: Any, keep_pools: bool = False) -> None:
+        if not keep_pools:
+            clear()
+        old_set(evaluator, keep_pools=keep_pools)
 
     def install(factories: list, **_kwargs: Any) -> None:
         clear()

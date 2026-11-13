@@ -92,16 +92,19 @@ class EvalWorker:
             self._pucv_pool.close()
         self._pucv_pool = None
 
-    def set_evaluator(self, primary):
+    def set_evaluator(self, primary, keep_pools=False):
         old, self.primary = self.primary, primary
-        self.clear_multi_gpu_pucv()
-        self._rpg_pool = None
+        if not keep_pools:
+            self.clear_multi_gpu_pucv()
+            self._rpg_pool = None
         old.close()
 
     def install_multi_gpu_pucv(self, factories, **_kwargs):
         self.pool_factory_calls += 1
         if self.refuse_install:
             raise self.refuse_install
+        # Like SearchWorker.install_multi_gpu_pucv: the pool replaces RPG.
+        self._rpg_pool = None
         self._pucv_pool = Wrapper([factory() for factory in factories])
 
 
@@ -135,9 +138,16 @@ def engine_fixture(enabled=False, parallel='pucv', devices=2):
     if enabled and parallel == 'pucv' and devices >= 2:
         worker._pucv_pool = Wrapper([factory() for factory in factories(64, 8)])
 
-    ns = {'_println': messages.append}
+    def close_quietly(evaluator):
+        if evaluator is not None:
+            evaluator.close()
+
+    ns = {'_println': messages.append, '_close_quietly': close_quietly, 'gc': SimpleNamespace(collect=lambda: 0),
+          '_log': SimpleNamespace(error=lambda *_a, **_k: None),
+          '_one_line': lambda exc: f'{type(exc).__name__}: {exc}'}
     methods = definitions('chess_anti_engine/uci/engine.py',
-                          ['Engine._handle_setoption', 'Engine._set_use_multi_gpu_pucv', 'Engine._install_multi_gpu_pucv_pool'], ns)
+                          ['Engine._handle_setoption', 'Engine._set_use_multi_gpu_pucv', 'Engine._install_multi_gpu_pucv_pool',
+                           'Engine._rebuild_or_keep'], ns)
     cls = type('ActualOptionHandlers', (), {name.rsplit('.', 1)[-1]: fn for name, fn in methods.items()})
     engine: Any = cls()
     engine._worker, engine._options = worker, options
@@ -211,6 +221,7 @@ def search_fixture(rpg=True):
     worker: Any = cls()
     worker._tree = worker._root_id = worker._tree_fen = None
     worker._root_pol_logits = worker._root_wdl_logits = None
+    worker._root_pol_key = None
     worker._rpg_pool = SimpleNamespace(n_groups=2, gather=8) if rpg else None
     worker._pucv_pool = worker._walker_pool = worker._pucv = None
     worker._tb_probe = None
@@ -297,12 +308,17 @@ class TopologyTests(unittest.TestCase):
         old = worker.primary
         error = Refusal('pool-refusal')
         worker.refuse_install = error
+        before = set(map(id, Direct.instances))
         with self.assertRaises(Refusal) as caught:  # noqa: PT027 - stdlib-only inert harness
             engine.command('true')
         assert caught.exception is error
-        assert worker.primary is not old
-        assert all(x.closed == 1 for x in leaves(old))
-        assert all(not x.closed for x in leaves(worker.primary))
+        # Build-then-swap: the pool install failed, so the OLD primary is still
+        # installed and live, and the primary built for the pool was retired.
+        assert worker.primary is old
+        assert all(not x.closed for x in leaves(old))
+        built = [x for x in Direct.instances if id(x) not in before]
+        assert built
+        assert all(x.closed == 1 for x in built)
         assert not engine._options.use_multi_gpu_pucv
         assert not any(' on ' in text for text in messages)
 

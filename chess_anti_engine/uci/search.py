@@ -445,6 +445,10 @@ class SearchWorker:
   # the ~1ms root GPU call.
         self._root_pol_logits: np.ndarray | None = None
         self._root_wdl_logits: np.ndarray | None = None
+  # FEN of the position `_root_pol_logits` was evaluated on. The bestmove
+  # fallback reads the cached prior; without the key a failure on a NEW
+  # position (before its root eval) picked a move from the PREVIOUS root.
+        self._root_pol_key: str | None = None
         self._last_gumbel_action_idx: int | None = None
   # Best-move stability across chunks, for the complexity gate on the early abort
   # (see ``_abort_ready``). Reset at the start of every search.
@@ -551,10 +555,17 @@ class SearchWorker:
         n = max(1, int(n))
         if n == self._walker_gather:
             return
+        if self._walker_pool is None:
+            self._walker_gather = n
+            return
+        previous = self._walker_gather
         self._walker_gather = n
-        if self._walker_pool is not None:
-            self._walker_pool.close()
-            self._walker_pool = self._build_walker_pool(self._n_walkers)
+        try:
+            new_pool = self._build_walker_pool(self._n_walkers)
+        except BaseException:
+            self._walker_gather = previous  # old pool is untouched and live
+            raise
+        self._swap_walker_pool(new_pool)
 
     def install_multi_gpu_pucv(
         self,
@@ -647,14 +658,7 @@ class SearchWorker:
         if not had_pool or not restore_fallback:
             return
         # Restore the path install_multi_gpu_pucv tore down.
-        if self._walker_pool is not None:
-            self._walker_pool.close()
-        self._walker_pool = self._build_walker_pool(self._n_walkers)
-        if self._use_pucv:
-            self._pucv = self._build_pucv()
-        else:
-            self._pucv = None
-        self.reset_tree()
+        self.restore_classic_search_path()
 
     def last_multi_gpu_pucv_stats(self) -> MultiGpuPucvStats | None:
         """Return stats from the most recent multi-GPU PUCV chunk."""
@@ -797,11 +801,23 @@ class SearchWorker:
         this after ``clear_*`` when the configured non-multi-GPU path should
         come back.
         """
-        if self._walker_pool is not None:
-            self._walker_pool.close()
-        self._walker_pool = self._build_walker_pool(self._n_walkers)
-        self._pucv = self._build_pucv() if self._use_pucv else None
+        # Build first, then swap: a failed build leaves the current path live.
+        new_pool = self._build_walker_pool(self._n_walkers)
+        try:
+            new_pucv = self._build_pucv() if self._use_pucv else None
+        except BaseException:
+            if new_pool is not None:
+                new_pool.close()
+            raise
+        self._swap_walker_pool(new_pool)
+        self._pucv = new_pucv
         self.reset_tree()
+
+    def _swap_walker_pool(self, new_pool: WalkerPool | None) -> None:
+        """Install an already-built walker pool, then retire the old one."""
+        old_pool, self._walker_pool = self._walker_pool, new_pool
+        if old_pool is not None and old_pool is not new_pool:
+            old_pool.close()
 
     def realized_rpg_vloss_mode(self) -> tuple[int, ...] | None:
         """Per-group pending accounting the installed RPG pool descends with.
@@ -1212,12 +1228,21 @@ class SearchWorker:
                 with contextlib.suppress(Exception):
                     close()
 
-    def set_evaluator(self, evaluator: BatchEvaluator) -> None:
-        """Swap in a freshly-built (and warmed-up) evaluator. Rebuilds the
-        walker pool so it sees the new reference, resets the tree since
-        cached Q values were computed through the old evaluator. Caller
-        holds the search barrier (same pattern as ``set_num_threads`` /
-        ``set_tb_probe``).
+    def set_evaluator(self, evaluator: BatchEvaluator, *, keep_pools: bool = False) -> None:
+        """Swap in a freshly-built (and warmed-up) evaluator. BUILD, THEN SWAP.
+
+        The walker pool / single-thread PUCV chunker are rebuilt against the
+        new evaluator BEFORE anything is torn down. If that build raises, the
+        worker is exactly as it was -- old evaluator, old helpers, old pools,
+        all live -- the replacement is closed (ownership passed to us with the
+        call), and the error propagates. Only after a successful build are the
+        multi-GPU pools cleared, the helpers swapped and the old evaluator
+        closed. Before, a raise here left `_walker_pool` pointing at the
+        CLOSED old pool and every later search failed ("WalkerPool is closed").
+
+        ``keep_pools=True`` swaps only the primary under an already-installed
+        multi-GPU pool (the pool owns search, so no walker / PUCV helper is
+        built beside it). Caller holds the search barrier.
 
         Closes the outgoing evaluator to release its background threads
         (notably ``BatchCoalescingDispatcher``'s non-daemon submitter).
@@ -1225,39 +1250,40 @@ class SearchWorker:
         submitter per rebuild and block process shutdown.
         """
         old = self._evaluator
+        pools_kept = keep_pools and (self._rpg_pool is not None or self._pucv_pool is not None)
         self._evaluator = evaluator
-        error: BaseException | None = None
+        new_pool: WalkerPool | None = None
+        new_pucv: PucvChunker | None = None
         try:
-            # Teardown only — rebuild walker/pucv against the new evaluator below.
-            # Always rebuild the fallback path here (even if a multi-GPU reinstall
-            # will close the walker next): if install fails we must not leave the
-            # worker with no search path.
-            self.clear_multi_gpu_pucv(restore_fallback=False)
-            self.clear_root_parallel_gumbel()
-            if self._walker_pool is not None:
-                self._walker_pool.close()
-            self._walker_pool = self._build_walker_pool(self._n_walkers)
-            if self._use_pucv:
-                self._pucv = self._build_pucv()
-            else:
-                self._pucv = None
-            self.reset_tree()
+            if not pools_kept:
+                new_pool = self._build_walker_pool(self._n_walkers)
+                new_pucv = self._build_pucv() if self._use_pucv else None
         except BaseException as exc:
-            error = exc
-            raise
-        finally:
-            # The replacement is already owned, even if helper construction fails.
-            # An identical replacement remains the current primary owner.
-            if old is not evaluator:
+            self._evaluator = old
+            if new_pool is not None:
+                with contextlib.suppress(Exception):
+                    new_pool.close()
+            if evaluator is not old:
                 try:
-                    close = getattr(old, "close", None)
+                    close = getattr(evaluator, "close", None)
                     if callable(close):
                         close()
                 except BaseException as cleanup:
-                    if error is not None:
-                        note_cleanup(error, f"outgoing evaluator close failed: {cleanup!r}")
-                    elif not isinstance(cleanup, Exception):
-                        raise
+                    note_cleanup(exc, f"replacement evaluator close failed: {cleanup!r}")
+            raise
+        if not pools_kept:
+            self.clear_multi_gpu_pucv(restore_fallback=False)
+            self.clear_root_parallel_gumbel()
+            self._swap_walker_pool(new_pool)
+            self._pucv = new_pucv
+        self.reset_tree()
+        if old is not evaluator:
+            try:
+                close = getattr(old, "close", None)
+                if callable(close):
+                    close()
+            except Exception:
+                pass  # the replacement is installed; a failed retire is not a failed swap
 
     def set_num_threads(self, n: int) -> None:
         """Rebuild the walker pool at thread count ``n`` (1 = classic Gumbel
@@ -1280,10 +1306,15 @@ class SearchWorker:
             return
         if n == self._n_walkers:
             return
+        previous = self._n_walkers
         self._n_walkers = n
-        if self._walker_pool is not None:
-            self._walker_pool.close()
-        self._walker_pool = self._build_walker_pool(n)
+        # Build first, then swap: a failed build keeps the old count and pool.
+        try:
+            new_pool = self._build_walker_pool(n)
+        except BaseException:
+            self._n_walkers = previous
+            raise
+        self._swap_walker_pool(new_pool)
         # pucv requires single-thread; rebuild against the new walker count
         # (returns None when n != 1, which silently disables the path).
         if self._use_pucv:
@@ -1298,6 +1329,7 @@ class SearchWorker:
 
     def _invalidate_root_caches(self) -> None:
         self._root_pol_logits = None
+        self._root_pol_key = None
         self._root_wdl_logits = None
         self._last_gumbel_action_idx = None
         self._walker_cboard = None
@@ -1509,6 +1541,7 @@ class SearchWorker:
             tb_probe.apply([root_cb], wdl_np)
         self._root_pol_logits = pol_np
         self._root_wdl_logits = wdl_np
+        self._root_pol_key = board.fen()
 
     def _root_policy_move(
         self, board: chess.Board, allowed_root_indices: set[int] | None,
@@ -1516,11 +1549,12 @@ class SearchWorker:
         """Argmax of the CACHED root policy prior over ``board``'s legal moves.
 
         ``None`` when no root eval has been cached (the failure happened before
-        or inside ``_ensure_root_eval_cached``) or nothing survives the
+        or inside ``_ensure_root_eval_cached``), when the cache belongs to a
+        different position than ``board``, or nothing survives the
         ``searchmoves`` filter. Pure bookkeeping — no evaluator call, no tree.
         """
         logits = self._root_pol_logits
-        if logits is None:
+        if logits is None or self._root_pol_key != board.fen():
             return None
   # The cached logits are the RAW head output (compact lc0_1858 on the
   # production net); the C path converts them exactly here before indexing by
@@ -1558,6 +1592,24 @@ class SearchWorker:
         allowed = _allowed_root_indices(board, searchmoves)
         if allowed is not None and not allowed:
             return None
+        move = self._root_policy_move(board, allowed)
+        return move.uci() if move is not None else None
+
+    def fresh_root_policy_bestmove(
+        self, board: chess.Board, *, searchmoves: tuple[str, ...] = (),
+    ) -> str | None:
+        """One root NN eval of ``board`` (no search), then its top legal move.
+
+        The bestmove fallback's second resort, for when the cached prior is
+        missing or belongs to another position. Bounded: one forward call, no
+        tree. Raises whatever the evaluator raises; the caller catches.
+        """
+        allowed = _allowed_root_indices(board, searchmoves)
+        if allowed is not None and not allowed:
+            return None
+        self._root_pol_logits = self._root_wdl_logits = None
+        self._root_pol_key = None
+        self._ensure_root_eval_cached(board, None)
         move = self._root_policy_move(board, allowed)
         return move.uci() if move is not None else None
 
@@ -2231,9 +2283,10 @@ class SearchWorker:
             # Convert an RPG-shaped tree once for this restricted search.
             # Later classic chunks must retain their own tree progress. Keep
             # the current root heads for the declined-root prior fallback.
-            pol, wdl = self._root_pol_logits, self._root_wdl_logits
+            pol, wdl, key = self._root_pol_logits, self._root_wdl_logits, self._root_pol_key
             self.reset_tree()
             self._root_pol_logits, self._root_wdl_logits = pol, wdl
+            self._root_pol_key = key
         self._pre_expand_root_for_pool(
             board,
             allowed_root_indices,

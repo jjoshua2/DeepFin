@@ -489,3 +489,127 @@ def test_pipe_bad_option_then_isready_and_go(tmp_path: Path) -> None:
         if proc.poll() is None:
             proc.kill()
         proc.wait(timeout=5)
+
+
+# --- the bestmove fallback never reads another position's prior ---------------
+
+
+def _real_engine():
+    from chess_anti_engine.mcts.gumbel import GumbelConfig
+    from chess_anti_engine.uci.search import SearchWorker
+    from tests.test_root_parallel_gumbel import _make_evaluator
+
+    worker = SearchWorker(
+        _make_evaluator(max_batch=64), device="cpu",
+        gumbel_cfg=GumbelConfig(
+            input_extra_features="v1", simulations=32, add_noise=False, temperature=0.0,
+        ),
+        chunk_sims=32, n_walkers=1,
+    )
+    return Engine(worker, options=EngineOptions(threads=1))
+
+
+def test_cached_root_prior_is_keyed_by_position() -> None:
+    engine = _real_engine()
+    try:
+        worker = engine._worker
+        a = chess.Board()
+        b = chess.Board()
+        b.push_uci("e2e4")
+        worker._ensure_root_eval_cached(a, None)
+        assert worker.root_policy_bestmove(a) is not None
+        # Same cache, different position: no answer rather than a's move.
+        assert worker.root_policy_bestmove(b) is None
+    finally:
+        engine.close()
+
+
+def test_failed_go_falls_back_to_a_fresh_eval_of_the_current_board(monkeypatch, capsys) -> None:
+    """Repro of the reviewer's FAIL_AT=2 case: the second go dies before its
+    own root eval, while the cache still holds the FIRST search's root."""
+    engine = _real_engine()
+    try:
+        engine.dispatch(parse_command("position startpos moves e2e4"))
+        engine.dispatch(parse_command("go nodes 32"))
+        _join_search(engine)
+        stale_key = engine._worker._root_pol_key
+        assert stale_key is not None
+        monkeypatch.setattr(
+            engine, "_note_leaf_tb_inactive",
+            lambda: (_ for _ in ()).throw(RuntimeError("injected go handler fault")),
+        )
+        engine.dispatch(parse_command("position startpos moves e2e4 e7e5 g1f3"))
+        capsys.readouterr()
+        engine.dispatch(parse_command("go nodes 32"))
+        _join_search(engine)
+        out = capsys.readouterr().out
+        board = chess.Board()
+        for mv in ("e2e4", "e7e5", "g1f3"):
+            board.push_uci(mv)
+        moves = _bestmoves(out)
+        assert len(moves) == 1
+        assert chess.Move.from_uci(moves[0]) in board.legal_moves
+        assert "source=fresh_root_eval" in out
+        # ...and that fresh prior is THIS board's: it names the move the net's
+        # own prior ranks first here.
+        assert engine._worker._root_pol_key == board.fen() != stale_key
+        assert engine._worker.root_policy_bestmove(board) == moves[0]
+    finally:
+        engine.close()
+
+
+def test_fresh_eval_failure_still_answers_first_legal(capsys) -> None:
+    worker = MagicMock()
+    worker.root_policy_bestmove.return_value = None
+    worker.fresh_root_policy_bestmove.side_effect = RuntimeError("evaluator is gone")
+    engine = Engine(worker, options=EngineOptions())
+    move, source = engine._bestmove_fallback(chess.Board(), ())
+    assert source == "first_legal"
+    assert chess.Move.from_uci(move) in chess.Board().legal_moves
+    assert "fresh root-eval fallback unavailable" in capsys.readouterr().out
+
+
+# --- a go rejected because the previous search will not stop ------------------
+
+
+def test_go_rejected_as_not_quiescent_is_still_answered_exactly_once(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("chess_anti_engine.uci.engine._JOIN_TIMEOUT_S", 0.01)
+    worker = MagicMock()
+    worker.advance_root.return_value = True
+    worker.root_policy_bestmove.return_value = None
+    entered, release = threading.Event(), threading.Event()
+
+    def run(board, **_kw):
+        entered.set()
+        assert release.wait(5)
+        return SearchResult(next(iter(board.legal_moves)).uci(), None, 1, (), 0)
+
+    worker.run.side_effect = run
+    engine = Engine(worker, options=EngineOptions())
+    engine.dispatch(CmdPosition(None, ("e2e4",)))
+    engine.dispatch(CmdGo(GoArgs(nodes=64)))
+    assert entered.wait(5)
+    held = engine._search_thread
+    capsys.readouterr()
+
+    engine.dispatch(CmdGo(GoArgs(nodes=64)))  # previous search will not stop
+    _join_search(engine)
+    out = capsys.readouterr().out
+    assert "command rejected (CmdGo)" in out
+    moves = _bestmoves(out)
+    board = chess.Board()
+    board.push_uci("e2e4")
+    assert len(moves) == 1
+    assert chess.Move.from_uci(moves[0]) in board.legal_moves
+    worker.fresh_root_policy_bestmove.assert_not_called()  # busy evaluator untouched
+    # The stuck search still owns the worker: mutation stays refused...
+    engine.dispatch(CmdPosition(None, ("d2d4",)))
+    assert "command rejected (CmdPosition)" in capsys.readouterr().out
+    release.set()
+    assert held is not None
+    held.join(5)
+    # ...and its late result is not a second answer.
+    assert _bestmoves(capsys.readouterr().out) == []
+    engine.dispatch(CmdPosition(None, ("d2d4",)))  # orphan drained: accepted
+    assert engine._board.peek().uci() == "d2d4"
+    assert engine._orphan_threads == []
