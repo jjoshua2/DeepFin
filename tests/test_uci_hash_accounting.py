@@ -16,6 +16,7 @@ from typing import Any
 
 import chess
 import numpy as np
+import pytest
 
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
 from chess_anti_engine.mcts.gumbel import GumbelConfig
@@ -229,10 +230,10 @@ def test_compaction_preserves_search_results() -> None:
         move = chess.Move.from_uci(first.bestmove_uci)
         assert w._tree is not None
         if compact:
-            w._max_tree_bytes = 1  # half-cap 0 => compaction with no size limit
+            w._max_tree_bytes = 1 << 40  # no budget + cheap estimate => compact
         assert w.advance_root(board, [move])
         if compact:
-            assert w._resolve_pending_compaction(Deadline(None), None) == "compacted"
+            assert w._resolve_pending_compaction(Deadline(None), None, stop_sensitive=True) == "compacted"
         w._max_tree_bytes = 0
         after = board.copy()
         after.push(move)
@@ -281,10 +282,10 @@ def test_compaction_remaps_tt_and_continued_search_matches_with_transpositions()
         first = w.run(board, stop_event=threading.Event(), deadline=Deadline(None), max_nodes=4096)
         move = chess.Move.from_uci(first.bestmove_uci)
         if compact:
-            w._max_tree_bytes = 1
+            w._max_tree_bytes = 1 << 40  # no budget + cheap estimate => compact
         assert w.advance_root(board, [move])
         if compact:
-            assert w._resolve_pending_compaction(Deadline(None), None) == "compacted"
+            assert w._resolve_pending_compaction(Deadline(None), None, stop_sensitive=True) == "compacted"
             assert w._tree is not None
             live, max_id = w._tree.tt_entry_stats()
             assert live > 0
@@ -315,9 +316,10 @@ def _arena_above_half_cap(w: SearchWorker) -> tuple[chess.Board, chess.Move]:
     return board, move
 
 
-def test_compaction_too_expensive_for_budget_keeps_tree_when_it_fits(monkeypatch) -> None:
+def test_no_rate_fallback_too_expensive_keeps_tree_when_it_fits(monkeypatch) -> None:
     w = _worker(chunk=256)
     _arena_above_half_cap(w)
+    w._recent_visits_per_ms = 0.0  # no measured growth rate: band fallback
     tree, rid = w._tree, w._root_id
     assert tree is not None
     nodes = tree.node_count()
@@ -328,9 +330,10 @@ def test_compaction_too_expensive_for_budget_keeps_tree_when_it_fits(monkeypatch
     assert tree.node_count() == nodes
 
 
-def test_compaction_too_expensive_and_tree_too_full_rebuilds(monkeypatch) -> None:
+def test_no_rate_fallback_too_expensive_and_tree_too_full_rebuilds(monkeypatch) -> None:
     w = _worker(chunk=256)
     _arena_above_half_cap(w)
+    w._recent_visits_per_ms = 0.0  # no measured growth rate: band fallback
     assert w._tree is not None
     w._max_tree_bytes = int(w._tree.footprint_bytes() / 0.8)  # above the keep fraction
     monkeypatch.setattr(uci_search, "_COMPACTION_MS_PER_GIB", 1e9)
@@ -400,3 +403,87 @@ def test_growth_step_is_bounded_in_absolute_terms() -> None:
     w = _worker()
     w.set_max_tree_mb(65536)
     assert w._tree_growth_step_nodes() == uci_search._MAX_TREE_GROWTH_STEP_BYTES // 51
+
+
+def test_shared_tree_headroom_never_reserves_past_the_node_id_limit(monkeypatch) -> None:
+    """The shared-tree (walker / pool) pre-reserve clamps a chunk to what the
+    int32 id space still holds: one sim may add `_TREE_MAX_LEAF_BRANCHING`
+    nodes, so only `(limit - node_count) // 256` sims fit."""
+    w = _worker()
+    w.run(chess.Board(), stop_event=threading.Event(), deadline=Deadline(None), max_nodes=512)
+    assert w._tree is not None
+    count = w._tree.node_count()
+    branching = uci_search._TREE_MAX_LEAF_BRANCHING
+    monkeypatch.setattr(uci_search, "_TREE_NODE_ID_LIMIT", count + 10 * branching + 5)
+    assert w._ensure_shared_tree_headroom(4096) == 10
+    monkeypatch.setattr(uci_search, "_TREE_NODE_ID_LIMIT", count)
+    assert w._ensure_shared_tree_headroom(4096) == 0
+
+
+def _under_a_sanitizer() -> bool:
+    import os
+
+    if any(k in os.environ for k in ("ASAN_OPTIONS", "CAE_EXT_SANITIZE")):
+        return True
+    if "san" in os.environ.get("LD_PRELOAD", ""):
+        return True
+    with open("/proc/self/maps") as f:
+        return any("libasan" in line or "libtsan" in line for line in f)
+
+
+@pytest.mark.skipif(_under_a_sanitizer(), reason="RLIMIT_AS cannot coexist with ASan's shadow reservations")
+def test_add_root_rolls_back_when_caching_its_board_fails() -> None:
+    """A real allocation failure, not a mock: in a subprocess, fill the CBoard
+    pool to its capacity, cap the address space just above current use, and
+    add one more root. The pool's doubling realloc fails; the root must be
+    rolled back (node_count unchanged) rather than left in the arena unbound."""
+    import subprocess
+    import sys
+
+    code = (
+        "import resource, chess\n"
+        "from chess_anti_engine.mcts._mcts_tree import MCTSTree\n"
+        "from chess_anti_engine.encoding._lc0_ext import CBoard\n"
+        "cb = CBoard.from_board(chess.Board())\n"
+        "t = MCTSTree()\n"
+        "n = 1 << 15\n"
+        "t.reserve(4 * n)\n"  # node arrays + slot index: no growth on add_root
+        "for _ in range(n):\n"
+        "    t.add_root(1, 0.0, cb)\n"
+        "assert t.memory_stats()['cb_pool_count'] == n\n"
+        "vm = [int(l.split()[1]) * 1024 for l in open('/proc/self/status')\n"
+        "      if l.startswith('VmSize:')][0]\n"
+        "resource.setrlimit(resource.RLIMIT_AS, (vm + (16 << 20), resource.RLIM_INFINITY))\n"
+        "before = t.node_count()\n"
+        "try:\n"
+        "    t.add_root(1, 0.0, cb)\n"
+        "    print('no-error', before, t.node_count())\n"
+        "except MemoryError:\n"
+        "    print('MemoryError', before, t.node_count())\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, timeout=120, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    outcome, before, after = proc.stdout.strip().splitlines()[-1].split()
+    assert outcome == "MemoryError"  # the probe really induced the failure
+    assert int(after) == int(before)
+
+
+def test_chunk_sims_is_bounded_by_the_node_id_headroom() -> None:
+    from chess_anti_engine.mcts.search_options import MAX_CHUNK_SIMS, SEARCH_OPTIONS
+    from chess_anti_engine.uci.__main__ import _build_parser
+
+    # One chunk's worst-case growth fits in the headroom the tree_ids stop keeps.
+    assert MAX_CHUNK_SIMS * uci_search._TREE_MAX_LEAF_BRANCHING <= uci_search._TREE_ID_HEADROOM
+    spin = next(o for o in SEARCH_OPTIONS if o.name == "ChunkSims")
+    assert spin.hi == MAX_CHUNK_SIMS
+    parser = _build_parser()
+    assert parser.parse_args(["--chunk-sims", str(MAX_CHUNK_SIMS)]).chunk_sims == MAX_CHUNK_SIMS
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--chunk-sims", str(MAX_CHUNK_SIMS + 1)])
+    w = _worker()
+    with pytest.raises(ValueError, match="exceeds the maximum"):
+        w.set_chunk_sims(MAX_CHUNK_SIMS + 1)
+    with pytest.raises(ValueError, match="exceeds the maximum"):
+        _worker(chunk=MAX_CHUNK_SIMS + 1)

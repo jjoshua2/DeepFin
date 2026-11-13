@@ -337,3 +337,42 @@ def test_search_that_already_reported_gets_no_extra_final_info_line(monkeypatch)
           max_nodes=1024, info_cb=lambda **kw: lines.append(kw), on_chunk=chunks.append)
     assert len(chunks) == 4, chunks
     assert len(lines) == len(chunks), (len(lines), chunks)
+
+
+def test_zero_progress_witness_chunk_stays_out_of_batch_time_stats(monkeypatch) -> None:
+    """A witness-interrupted chunk that simulated nothing took ~0 ms; folding
+    it into the batch-time statistics would shrink the clock margin the real
+    chunks need. One that did simulate is recorded (positive control)."""
+    from chess_anti_engine.mcts.solved_root import SolvedRootWitnessUnavailable
+
+    w = _worker(chunk=256)
+    board = chess.Board()
+    w.run(board, stop_event=threading.Event(), deadline=Deadline(None), max_nodes=256)
+    stop = threading.Event()
+    calls: list[int] = []
+    monkeypatch.setattr(w, "_run_gumbel_chunk",
+                        _zero_progress_witness(w, stop, calls, give_up_after=200))
+    with pytest.raises(SolvedRootWitnessUnavailable):
+        w.run(board, stop_event=stop, deadline=Deadline(None), max_nodes=4096)
+    assert len(calls) == 1
+    assert w._batch_n == 0
+
+    monkeypatch.undo()
+    original = w._run_gumbel_chunk
+    raised: list[bool] = []
+
+    def half_then_raise(chunk: int, *args: Any, **kwargs: Any) -> float:
+        value = original(chunk // 2, *args, **kwargs)
+        if not raised:
+            raised.append(True)
+            raise SolvedRootWitnessUnavailable(
+                {0: 1}, (None, None, None, None, w._tree, [w._root_id]), {}, {0: 0},
+            )
+        return value
+
+    monkeypatch.setattr(w, "_run_gumbel_chunk", half_then_raise)
+    batches: list[int] = []
+    w.run(board, stop_event=threading.Event(), deadline=Deadline(None), max_nodes=256,
+          on_chunk=lambda _n: batches.append(w._batch_n))
+    assert raised
+    assert batches[0] == 1  # the interrupted chunk simulated 128 sims: recorded
