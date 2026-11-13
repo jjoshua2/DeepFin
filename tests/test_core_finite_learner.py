@@ -304,7 +304,7 @@ def test_failed_publication_always_banks_external_marker(tmp_path, monkeypatch, 
                 raise OSError("final directory publication failure")
             original(path)
         monkeypatch.setattr(core, "fsync_directory", fail_parent)
-    with pytest.raises(OSError, match="seal failure|final directory publication failure"):
+    with pytest.raises(OSError, match=r"seal failure|final directory publication failure"):
         core.execute(cref, stage_ref)
     assert (output / "boundary.json").exists() == (fault == "final_fsync")
     marker = core.failure_marker(output)
