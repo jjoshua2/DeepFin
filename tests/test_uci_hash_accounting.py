@@ -132,8 +132,9 @@ def test_hash_capped_search_fills_hash_stays_under_it_and_says_why() -> None:
     cap = cap_mb * _MB
     # Filled the budget (the old accounting stopped near 1/8 of it) ...
     assert footprint >= 0.85 * cap, footprint
-    # ... without exceeding it (projected next-chunk growth is reserved).
-    assert footprint <= cap, footprint
+    # ... and ends within one growth step of it (projected next-chunk growth is
+    # reserved; a node-arena step inside the last chunk is the only overshoot).
+    assert footprint <= cap + w._tree_growth_step_nodes() * 51, footprint
     hashfull = w._hashfull_permille()
     assert hashfull is not None
     assert hashfull >= 850
@@ -141,8 +142,8 @@ def test_hash_capped_search_fills_hash_stays_under_it_and_says_why() -> None:
     # glibc's 32 MB dynamic mmap ceiling, so it lives in the brk heap and each
     # bounded-step realloc copy leaves a reusable hole: measured RSS growth is
     # ~1.5-2x the footprint here (exactly 1.0x with MALLOC_MMAP_THRESHOLD_
-    # pinned). Arrays above 32 MB are mremap'd and add no slack, so the excess
-    # is a bounded constant, not a fraction of a production-size Hash.
+    # pinned). At Hash 64-1024 the measured excess is ~+120 MB, most of it
+    # returned by malloc_trim (slack, not live tree).
     # (No lower bound: in a shared test process the tree can refill heap
     # holes freed by earlier tests.)
     grew = rss[-1] - rss[0]
@@ -199,6 +200,10 @@ def test_advance_root_compacts_to_kept_subtree_when_arena_above_half_cap() -> No
     w._max_tree_bytes = int(footprint / 0.6)
 
     assert w.advance_root(board, [move])
+    assert w._compaction_pending
+    # The compaction runs at the start of the next run(), on that move's clock;
+    # no time budget (nodes / infinite) => always affordable.
+    assert w._resolve_pending_compaction(Deadline(None), None) == "compacted"
     assert w._tree is tree
     assert w._root_id == 0
     assert tree.node_count() == kept_nodes < arena_nodes
@@ -226,6 +231,8 @@ def test_compaction_preserves_search_results() -> None:
         if compact:
             w._max_tree_bytes = 1  # half-cap 0 => compaction with no size limit
         assert w.advance_root(board, [move])
+        if compact:
+            assert w._resolve_pending_compaction(Deadline(None), None) == "compacted"
         w._max_tree_bytes = 0
         after = board.copy()
         after.push(move)
@@ -255,3 +262,130 @@ def test_set_max_tree_mb_applies_growth_step_to_live_tree() -> None:
     assert w._tree.memory_stats()["grow_step_max"] == (1024 * _MB // 64) // 51
     w.set_max_tree_mb(0)
     assert w._tree.memory_stats()["grow_step_max"] == 0
+
+
+def test_compaction_remaps_tt_and_continued_search_matches_with_transpositions() -> None:
+    """After compaction every TT entry addresses a live node, and a continued
+    search that really probes transpositions matches the uncompacted tree.
+
+    A rook endgame transposes constantly. TT hits are counted as `probe_hits`;
+    with history-encoded inputs they end as `context_reject` rather than
+    `reuse`, but a stale (un-remapped) slot changes which probes hit."""
+    from chess_anti_engine.mcts import _mcts_tree as ext
+
+    board = chess.Board("4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1")
+    results = []
+    probe_counts = []
+    for compact in (False, True):
+        w = _worker(chunk=256)
+        first = w.run(board, stop_event=threading.Event(), deadline=Deadline(None), max_nodes=4096)
+        move = chess.Move.from_uci(first.bestmove_uci)
+        if compact:
+            w._max_tree_bytes = 1
+        assert w.advance_root(board, [move])
+        if compact:
+            assert w._resolve_pending_compaction(Deadline(None), None) == "compacted"
+            assert w._tree is not None
+            live, max_id = w._tree.tt_entry_stats()
+            assert live > 0
+            assert max_id < w._tree.node_count()
+        w._max_tree_bytes = 0
+        after = board.copy()
+        after.push(move)
+        before = ext.tt_stats()["probe_hits"]
+        res = w.run(after, stop_event=threading.Event(), deadline=Deadline(None), max_nodes=4096)
+        probe_counts.append(ext.tt_stats()["probe_hits"] - before)
+        assert w._tree is not None
+        assert w._root_id is not None
+        results.append((res.bestmove_uci, _subtree_dump(w._tree, w._root_id, depth=2)))
+    # Transpositions were really probed on both trees (the compacted TT holds
+    # fewer entries — dropped siblings' slots are cleared — so counts differ).
+    assert min(probe_counts) > 0, probe_counts
+    assert results[0] == results[1]
+
+
+def _arena_above_half_cap(w: SearchWorker) -> tuple[chess.Board, chess.Move]:
+    board = chess.Board()
+    first = w.run(board, stop_event=threading.Event(), deadline=Deadline(None), max_nodes=4096)
+    move = chess.Move.from_uci(first.bestmove_uci)
+    assert w._tree is not None
+    w._max_tree_bytes = int(w._tree.footprint_bytes() / 0.6)  # arena at 60% of Hash
+    assert w.advance_root(board, [move])
+    assert w._compaction_pending
+    return board, move
+
+
+def test_compaction_too_expensive_for_budget_keeps_tree_when_it_fits(monkeypatch) -> None:
+    w = _worker(chunk=256)
+    _arena_above_half_cap(w)
+    tree, rid = w._tree, w._root_id
+    nodes = tree.node_count()  # type: ignore[union-attr]
+    monkeypatch.setattr(uci_search, "_COMPACTION_MS_PER_GIB", 1e9)
+    assert w._resolve_pending_compaction(Deadline(60_000), 10_000) == "kept"
+    assert w._tree is tree
+    assert w._root_id == rid
+    assert tree.node_count() == nodes  # type: ignore[union-attr]
+
+
+def test_compaction_too_expensive_and_tree_too_full_rebuilds(monkeypatch) -> None:
+    w = _worker(chunk=256)
+    _arena_above_half_cap(w)
+    assert w._tree is not None
+    w._max_tree_bytes = int(w._tree.footprint_bytes() / 0.8)  # above the keep fraction
+    monkeypatch.setattr(uci_search, "_COMPACTION_MS_PER_GIB", 1e9)
+    assert w._resolve_pending_compaction(Deadline(60_000), 10_000) == "rebuilt"
+    assert w._tree is None
+
+
+def test_cheap_compaction_runs_inside_run_under_the_move_clock() -> None:
+    w = _worker(chunk=256)
+    board, move = _arena_above_half_cap(w)
+    after = board.copy()
+    after.push(move)
+    w.run(after, stop_event=threading.Event(), deadline=Deadline(60_000), max_nodes=256,
+          optimum_ms=30_000)
+    assert w.last_reuse_decision == "compacted"
+    assert not w._compaction_pending
+
+
+def test_child_pool_growth_past_int32_fails_instead_of_hanging() -> None:
+    """`reserve` with a child capacity near 2^31 used to wrap the int32
+    doubling to 0 and spin forever holding the tree lock."""
+    outcome: list[str] = []
+
+    def probe(child_cap: int) -> None:
+        t = MCTSTree()
+        try:
+            t.reserve(4096, child_cap)
+            outcome.append(f"ok {t.memory_stats()['child_cap']}")
+        except MemoryError:
+            outcome.append("MemoryError")
+
+    for cap in (2**31 - 1, 2**30 + 10):
+        th = threading.Thread(target=probe, args=(cap,), daemon=True)
+        th.start()
+        th.join(timeout=30)
+        assert not th.is_alive(), f"reserve(4096, {cap}) hung"
+    assert outcome[0] == "MemoryError"  # beyond the int32 id space: refused
+    assert outcome[1] == "MemoryError" or int(outcome[1].split()[1]) >= 2**30 + 10
+
+
+def test_search_stops_before_node_ids_run_out(monkeypatch) -> None:
+    monkeypatch.setattr(uci_search, "_TREE_NODE_ID_LIMIT", 20_000)
+    w = _worker(chunk=256)
+    strings: list[str] = []
+
+    def info_cb(**kw: Any) -> None:
+        if kw.get("string"):
+            strings.append(str(kw["string"]))
+
+    w.run(chess.Board(), stop_event=threading.Event(), deadline=Deadline(60_000), max_nodes=None,
+          info_cb=info_cb)
+    assert w.last_stop_reason == "tree_ids"
+    assert any("node-id space full" in s for s in strings), strings
+
+
+def test_growth_step_is_bounded_in_absolute_terms() -> None:
+    w = _worker()
+    w.set_max_tree_mb(65536)
+    assert w._tree_growth_step_nodes() == uci_search._MAX_TREE_GROWTH_STEP_BYTES // 51

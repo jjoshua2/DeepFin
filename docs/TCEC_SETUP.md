@@ -109,7 +109,7 @@ process. Force a mode with `CAE_UCI_MULTI_GPU_COMPILE_MODE`
 
 | Option | Recommended | Notes |
 |---|---|---|
-| `Hash` | `16384` | MCTS tree memory (MB). The tree is the memory consumer; small Hash degrades long searches. |
+| `Hash` | most of the machine's RAM | MCTS tree memory (MB), measured against the tree's resident footprint (~3.3 KB per visit, so 16384 ≈ 5M visits ≈ 5 min at ~17k nps). The tree is the memory consumer; when it fills, the search stops early with `info string tree memory full …`. Provision about **Hash + 150 MB + the eval cache** (`EvalCacheEntries`) of RAM: per-search buffers and allocator slack are outside Hash. One tree addresses at most ~2.1 billion nodes (int32 ids, about 130–280 GB of footprint); Hash above that is unused and the stop says `tree node-id space full`. |
 | `SyzygyPath` | your TB path | 3–7 man WDL/DTZ supported. |
 | `MoveOverheadMs` | your standard | Added per-move safety on top of the internal margin. |
 | `ClockBatchMarginSigmas` | `2` (default) | Self-calibrating clock margin in units of observed GPU-batch-time sigma. Leave at default. |

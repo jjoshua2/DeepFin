@@ -210,6 +210,9 @@ static int extract_cboards(PyObject *list, int32_t n,
 
 #define INITIAL_NODE_CAP   4096
 #define INITIAL_CHILD_CAP  65536
+/* Node and child ids are int32: no pool may hold more slots than this. The
+ * UCI search stops (tree_ids) well before node_count gets near it. */
+#define TREE_MAX_SLOTS     ((int64_t)INT32_MAX - 1)
 
 /* Solved-node status, from the node's side-to-move perspective.
  * Stored in TreeData.solved[node_id] as int8_t.
@@ -494,11 +497,11 @@ static void tree_free(TreeData *t) {
 
 
 static int tree_grow_nodes(TreeData *t) {
-    if (t->node_cap >= INT32_MAX - 1) return -1;
+    if (t->node_cap >= TREE_MAX_SLOTS) return -1;
     int64_t want = (int64_t)t->node_cap * 2;
     if (t->grow_step_max > 0 && want - t->node_cap > t->grow_step_max)
         want = (int64_t)t->node_cap + t->grow_step_max;
-    if (want > INT32_MAX - 1) want = INT32_MAX - 1;
+    if (want > TREE_MAX_SLOTS) want = TREE_MAX_SLOTS;
     int32_t new_cap = (int32_t)want;
 
     /* Each realloc is committed to the struct only on success so that an
@@ -710,7 +713,9 @@ static int tree_root_context_match(const TreeData *t, int32_t root,
 static int32_t tree_ht_probe(const TreeData *t, uint64_t hash) {
     int32_t slot = (int32_t)(hash & (uint64_t)t->ht_mask);
     int32_t nid = __atomic_load_n(&t->hash_table[slot], __ATOMIC_ACQUIRE);
-    if (nid >= 0 && t->node_hash[nid] == hash)
+    /* Bound by node_count too: a stale slot (e.g. one a compaction failed to
+     * remap) must read as a miss, never index past the live arena. */
+    if (nid >= 0 && nid < t->node_count && t->node_hash[nid] == hash)
         return nid;
     return -1;
 }
@@ -739,10 +744,17 @@ static void tree_ht_insert(TreeData *t, uint64_t hash, int32_t node_id) {
 
 
 static int tree_grow_children(TreeData *t, int32_t need) {
-    int32_t new_cap = t->child_cap;
-    while (new_cap < t->child_count + need)
-        new_cap *= 2;
-    if (new_cap == t->child_cap) return 0;
+    /* int64 throughout: an int32 `new_cap *= 2` wrapped to 0 past 2^30 and
+     * spun forever holding tree_lock. Child ids are int32, so the pool can
+     * never exceed TREE_MAX_SLOTS entries; a request beyond that fails. */
+    if (need < 0) return -1;
+    int64_t want = (int64_t)t->child_count + (int64_t)need;
+    if (want > TREE_MAX_SLOTS) return -1;
+    int64_t grown = t->child_cap > 0 ? t->child_cap : INITIAL_CHILD_CAP;
+    while (grown < want) grown *= 2;
+    if (grown > TREE_MAX_SLOTS) grown = TREE_MAX_SLOTS;
+    int32_t new_cap = (int32_t)grown;
+    if (new_cap <= t->child_cap) return 0;
 
     /* Commit each realloc only on success — leaves t->* valid on OOM. */
     int32_t *new_action = (int32_t *)realloc(t->child_action, new_cap * sizeof(int32_t));
@@ -782,7 +794,10 @@ static int tree_cb_store(TreeData *t, int32_t nid, const CBoard *cb) {
     int32_t slot = t->cb_slot[nid];
     if (slot < 0) {
         if (t->cb_pool_count >= t->cb_pool_cap) {
-            int32_t new_cap = t->cb_pool_cap ? t->cb_pool_cap * 2 : 256;
+            if (t->cb_pool_cap >= TREE_MAX_SLOTS) return -1;
+            int64_t grown = t->cb_pool_cap ? (int64_t)t->cb_pool_cap * 2 : 256;
+            if (grown > TREE_MAX_SLOTS) grown = TREE_MAX_SLOTS;
+            int32_t new_cap = (int32_t)grown;
             CBoard *np = (CBoard *)realloc(t->cb_pool, (size_t)new_cap * sizeof(CBoard));
             if (!np) return -1;
             t->cb_pool = np;
@@ -2411,8 +2426,12 @@ static PyObject *MCTSTree_add_root(MCTSTreeObject *self, PyObject *args) {
     }
     __atomic_store_n(&self->tree.N[id], N, __ATOMIC_RELAXED);
     atomic_store_double(&self->tree.W[id], W);
-    if (cb && tree_cb_store(&self->tree, id, cb) < 0)
+    if (cb && tree_cb_store(&self->tree, id, cb) < 0) {
+        /* Roll the root back out: a bound-less root left behind would leak a
+         * node and later bind to whatever context searches it first. */
+        self->tree.node_count = id;
         return PyErr_NoMemory();
+    }
     return PyLong_FromLong(id);
 }
 
@@ -3932,6 +3951,20 @@ static PyObject *MCTSTree_memory_stats(MCTSTreeObject *self, PyObject *Py_UNUSED
         "child_bytes", (Py_ssize_t)(sizeof(int32_t) + sizeof(int32_t)),
         "cb_slot_bytes", (Py_ssize_t)sizeof(int32_t),
         "cboard_bytes", (Py_ssize_t)sizeof(CBoard));
+}
+
+/* tt_entry_stats() -> (live_entries, max_node_id). Diagnostic scan of the
+ * transposition table (max_node_id -1 when empty); lets tests assert that
+ * every surviving entry addresses a live node after compaction. */
+static PyObject *MCTSTree_tt_entry_stats(MCTSTreeObject *self, PyObject *Py_UNUSED(args)) {
+    const TreeData *t = &self->tree;
+    long long live = 0;
+    int32_t mx = -1;
+    for (int32_t sl = 0; sl < t->ht_cap; sl++) {
+        int32_t nid = t->hash_table[sl];
+        if (nid >= 0) { live++; if (nid > mx) mx = nid; }
+    }
+    return Py_BuildValue("(Li)", live, (int)mx);
 }
 
 /* set_growth_step(max_nodes) -> None. Cap on node slots one arena growth may
@@ -5767,6 +5800,8 @@ static PyMethodDef MCTSTree_methods[] = {
      "memory_bytes() -> int. Approximate total bytes allocated for tree buffers."},
     {"memory_stats", (PyCFunction)MCTSTree_memory_stats, METH_NOARGS,
      "memory_stats() -> dict. Capacities, live counts and element sizes of the tree buffers."},
+    {"tt_entry_stats", (PyCFunction)MCTSTree_tt_entry_stats, METH_NOARGS,
+     "tt_entry_stats() -> (live_entries, max_node_id). Transposition-table scan (diagnostic)."},
     {"footprint_bytes", (PyCFunction)MCTSTree_footprint_bytes, METH_NOARGS,
      "footprint_bytes() -> int. Bytes the tree really holds resident (the UCI Hash measure)."},
     {"set_growth_step", (PyCFunction)MCTSTree_set_growth_step, METH_VARARGS,

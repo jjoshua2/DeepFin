@@ -122,14 +122,40 @@ _INFO_EMIT_INTERVAL_MS = 1000
 _MAX_LEGAL_MOVES = 218
 _FORCED_COLLAPSE_DEPTH = 16  # try_forced_collapse depth cap in walker_descend_puct
 _TREE_MAX_LEAF_BRANCHING = 256
-# Hash-capped arena growth: one node-array growth adds at most Hash/64 bytes of
-# node slots (MCTSTree.set_growth_step), so the resident footprint can exceed
-# Hash by at most one step plus one chunk's edges/boards. _TREE_NODE_BYTES
+# Hash-capped arena growth: one node-array growth adds at most
+# min(Hash/64, 32 MiB) of node slots (MCTSTree.set_growth_step). The `tree_bytes`
+# stop reserves the previous chunk's growth, so the tree FOOTPRINT ends within
+# one growth step of Hash (measured: 1032.5 MB at Hash 1024, 259 MB at 256).
+# Process RSS is higher than the footprint by memory Hash does not cover:
+# per-search scratch (encode buffers, evaluator tensors, ~60 MB), the eval
+# cache (EvalCacheEntries), and glibc heap slack from tree-array reallocs
+# (measured RSS - footprint: ~+120 MB at Hash 64-1024 on CPU; malloc_trim
+# returns all but ~20-30 MB of it, so it is slack, not live tree). Operators
+# should provision about Hash + 150 MB + the eval cache. _TREE_NODE_BYTES
 # mirrors TREE_NODE_BYTES in _mcts_tree.c (pinned by a test against
 # memory_stats()["node_bytes"]).
 _TREE_GROWTH_STEP_DIV = 64
 _TREE_NODE_BYTES = 51
 _MIN_TREE_GROWTH_STEP_NODES = 4096
+# ... and at most 32 MiB of node slots: growth zero-fills the new slots inside
+# an un-interruptible chunk, measured at ~1 GB/s (16 MiB 8 ms, 32 MiB 20-46 ms,
+# 64 MiB 33-53 ms, 1 GiB ~960 ms per step), so an uncapped Hash/64 step at a
+# 64 GB Hash stalled the search ~1 s in a chunk the batch-time margin never saw.
+_MAX_TREE_GROWTH_STEP_BYTES = 32 * 1024 * 1024
+# Node and child ids are int32. Stop (reason "tree_ids") while this many slots
+# remain, which covers one worst-case chunk of any path (2^25 nodes = 131k sims
+# x 256) — the C pools refuse to grow past INT32_MAX - 1.
+_TREE_ID_HEADROOM = 1 << 25
+_TREE_NODE_ID_LIMIT = (1 << 31) - 1 - _TREE_ID_HEADROOM
+# Deferred compaction at reuse (see `_resolve_pending_compaction`). Measured
+# `compact_to_subtree` cost on CPU: 86-142 ms/GiB of arena (keep 8%-100%),
+# up to ~300 ms/GiB in the independent review's runs; the estimate uses a
+# conservative 400 ms/GiB and compaction runs only if it fits in 5% of the
+# move budget. Otherwise the tree is reused uncompacted while its footprint is
+# below 3/4 of Hash, and rebuilt above that.
+_COMPACTION_MS_PER_GIB = 400.0
+_COMPACTION_BUDGET_FRACTION = 0.05
+_KEEP_UNCOMPACTED_FRACTION = 0.75
 assert _TREE_MAX_LEAF_BRANCHING >= _MAX_LEGAL_MOVES + _FORCED_COLLAPSE_DEPTH
 
 # Visit-margin early abort (Lc0 "smart pruning"). Once past the optimum budget
@@ -392,7 +418,8 @@ class SearchWorker:
                 f"compiled _mcts_tree ABI_VERSION={_abi} < required {_required} "
                 "(missing node_capacity, the start_gumbel_sims root-scale args, "
                 "the audit-W1 transposition-key fix, batch_process_ply's "
-                "search_wdl draw-mode args and/or the Hash footprint API); "
+                "search_wdl draw-mode args and/or the ABI-10 Hash footprint API: "
+                "footprint_bytes / set_growth_step / compact_to_subtree); "
                 "rebuild the C extension: "
                 "python3 scripts/build_production_extensions.py"
             )
@@ -472,6 +499,10 @@ class SearchWorker:
   # Why the last `run()` stopped (`_should_stop_search` reason, or "tree_bytes"
   # from the shared-tree headroom check); None = budget/abort/early return.
         self.last_stop_reason: str | None = None
+  # Set by `advance_root` when the reused arena is at/above Hash/2; resolved
+  # (compact / keep / rebuild) at the start of the next `run()`.
+        self._compaction_pending: bool = False
+        self.last_reuse_decision: str | None = None
   # Minibatch target for the C gumbel state machine. 0 = use the
   # C-side GSS_GPU_BATCH default. Higher = better GPU util on large
   # batches; lower = faster stop latency + fresher tree state on
@@ -550,16 +581,20 @@ class SearchWorker:
         a search stopped at ~1/8 of Hash with the clock still full."""
         return 0 if self._tree is None else int(self._tree.footprint_bytes())
 
+    def _tree_node_count(self) -> int:
+        return 0 if self._tree is None else int(self._tree.node_count())
+
     def _tree_growth_step_nodes(self) -> int:
         """Node slots one arena growth may add under the Hash cap (0 = doubling).
 
         Node arrays are zero-filled on growth, so capacity is resident. Plain
         doubling at a multi-GB arena would add GBs in one step and blow past
-        Hash; capping each step at ``Hash/64`` bounds that overshoot."""
+        Hash; capping each step at ``min(Hash/64, 32 MiB)`` bounds that
+        overshoot and keeps each step's zero-fill stall to tens of ms."""
         if self._max_tree_bytes <= 0:
             return 0
-        return max(_MIN_TREE_GROWTH_STEP_NODES,
-                   (self._max_tree_bytes // _TREE_GROWTH_STEP_DIV) // _TREE_NODE_BYTES)
+        step_bytes = min(self._max_tree_bytes // _TREE_GROWTH_STEP_DIV, _MAX_TREE_GROWTH_STEP_BYTES)
+        return max(_MIN_TREE_GROWTH_STEP_NODES, step_bytes // _TREE_NODE_BYTES)
 
     def _sync_tree_growth_step(self) -> None:
         if self._tree is not None:
@@ -576,10 +611,17 @@ class SearchWorker:
         used = self._tree_footprint_bytes()
         return max(0, min(1000, used * 1000 // self._max_tree_bytes))
 
-    def _tree_full_note(self, elapsed_ms: int, deadline: Deadline) -> str:
+    def _tree_full_note(self, elapsed_ms: int, deadline: Deadline, reason: str = "tree_bytes") -> str:
         """``info string`` text for a search that stops because the tree is full."""
         rem = deadline.remaining_ms()
         left = "no deadline" if rem is None else f"{rem} ms left on the hard deadline"
+        if reason == "tree_ids":
+            nodes = 0 if self._tree is None else int(self._tree.node_count())
+            return (
+                f"tree node-id space full: {nodes} nodes of the int32 id limit at footprint "
+                f"{self._tree_footprint_bytes() // (1024 * 1024)} MB; Hash beyond this cannot "
+                f"be used by one tree; stopping search at {elapsed_ms} ms ({left})"
+            )
         return (
             f"tree memory full: footprint {self._tree_footprint_bytes() // (1024 * 1024)} MB "
             f"of Hash {self._max_tree_bytes // (1024 * 1024)} MB (next chunk would exceed it); "
@@ -1341,6 +1383,7 @@ class SearchWorker:
         self.reset_tree()
 
     def reset_tree(self) -> None:
+        self._compaction_pending = False
         self._tree = None
         self._root_id = None
         self._tree_fen = None
@@ -1470,12 +1513,10 @@ class SearchWorker:
         Rerooting in place only repoints ``self._root_id`` — the discarded
         sibling subtrees stay in the arena, so the footprint climbs across a
         game. While the arena's resident footprint is below half the Hash cap
-        that is harmless and reuse is in place. At or above half, the arena is
-        compacted to the kept subtree (``compact_to_subtree``: siblings freed,
-        new root id 0) and reused when the KEPT SUBTREE's footprint is at most
-        half the cap; only a kept subtree larger than that is refused (caller
-        rebuilds), so the next search always has at least half of Hash to grow
-        into instead of halting after its first chunk.
+        that is harmless and reuse is in place. At or above half, a compaction
+        to the kept subtree is scheduled for the next ``run()`` (which charges
+        it to the move clock and bounds its cost, see
+        ``_resolve_pending_compaction``).
         """
         if self._rpg_pool is not None:
   # Root-parallel Gumbel v1: no cross-move tree reuse — fresh per-candidate
@@ -1491,16 +1532,60 @@ class SearchWorker:
             if rid < 0:
                 return False
             b.push(mv)
-        half_cap = self._max_tree_bytes // 2
-        if self._max_tree_bytes > 0 and self._tree_footprint_bytes() >= half_cap:
-            rid = int(self._tree.compact_to_subtree(int(rid), int(half_cap)))
-            if rid < 0:
-                return False
+  # Compaction is deferred to `run()`, which knows the move's time budget and
+  # runs under its clock (see `_resolve_pending_compaction`).
+        self._compaction_pending = (
+            self._max_tree_bytes > 0
+            and self._tree_footprint_bytes() >= self._max_tree_bytes // 2
+        )
         self._sync_tree_growth_step()
         self._root_id = rid
         self._tree_fen = b.fen()
         self._invalidate_root_caches()
         return True
+
+    def _resolve_pending_compaction(
+        self, deadline: Deadline, optimum_ms: int | None,
+    ) -> str | None:
+        """Carry out (or decline) the compaction ``advance_root`` scheduled.
+
+        Policy, given the arena footprint F, Hash H and the move budget B
+        (``optimum_ms``, else the hard deadline's remaining time, else none):
+        - estimated cost ``F x _COMPACTION_MS_PER_GIB`` fits in
+          ``_COMPACTION_BUDGET_FRACTION x B`` (or there is no time budget:
+          nodes/depth/infinite/ponder): compact to the kept subtree, refusing
+          (and rebuilding) if that subtree is larger than H/2;
+        - too expensive and ``F < _KEEP_UNCOMPACTED_FRACTION x H``: keep the
+          tree uncompacted (reuse without reclaiming the siblings);
+        - too expensive and fuller than that: rebuild from scratch.
+        Returns the decision ("compacted" / "refused" / "kept" / "rebuilt"),
+        also stored as ``last_reuse_decision``; None when nothing was pending.
+        """
+        if not self._compaction_pending:
+            return None
+        self._compaction_pending = False
+        tree, rid = self._tree, self._root_id
+        if tree is None or rid is None or rid < 0 or self._max_tree_bytes <= 0:
+            return None
+        footprint = self._tree_footprint_bytes()
+        est_ms = footprint / float(1 << 30) * _COMPACTION_MS_PER_GIB
+        budget = optimum_ms if optimum_ms is not None else deadline.remaining_ms()
+        if budget is None or est_ms <= _COMPACTION_BUDGET_FRACTION * float(budget):
+            new_rid = int(tree.compact_to_subtree(int(rid), int(self._max_tree_bytes // 2)))
+            if new_rid < 0:
+                decision = "refused"
+                self.reset_tree()
+            else:
+                decision = "compacted"
+                self._root_id = new_rid
+                self._invalidate_root_caches()
+        elif footprint < _KEEP_UNCOMPACTED_FRACTION * self._max_tree_bytes:
+            decision = "kept"
+        else:
+            decision = "rebuilt"
+            self.reset_tree()
+        self.last_reuse_decision = decision
+        return decision
 
     def _try_tb_shortcut(
         self,
@@ -1906,6 +1991,8 @@ class SearchWorker:
             >= self._max_tree_bytes
         ):
             return "tree_bytes"
+        if self._tree_node_count() >= _TREE_NODE_ID_LIMIT:
+            return "tree_ids"
         return None
 
     def _is_shared_tree_path(self, allowed_root_indices: set[int] | None) -> bool:
@@ -2024,6 +2111,10 @@ class SearchWorker:
         sims = max(0, int(upcoming_sims))
         node_count = tree.node_count()
         node_cap = tree.node_capacity()
+  # int32 node/child ids: never reserve past the id limit (C refuses anyway).
+        sims = min(sims, max(0, _TREE_NODE_ID_LIMIT - node_count) // _TREE_MAX_LEAF_BRANCHING)
+        if sims <= 0:
+            return 0
         free = max(0, node_cap - node_count)
   # One sim expands one leaf into up to _TREE_MAX_LEAF_BRANCHING nodes (256 >
   # 218, the absolute max legal moves), so a chunk adds at most this many nodes.
@@ -2233,6 +2324,8 @@ class SearchWorker:
         backed by MCTS data, never a raw priors pick).
         """
         fen = board.fen()
+  # A compaction `advance_root` scheduled runs here, on this move's clock.
+        self._resolve_pending_compaction(deadline, optimum_ms)
         if self._tree is None or self._tree_fen != fen:
             self._tree = None
             self._root_id = None
@@ -2364,13 +2457,21 @@ class SearchWorker:
             if self._is_shared_tree_path(allowed_root_indices):
                 chunk = self._ensure_shared_tree_headroom(chunk)
                 if chunk <= 0:
-                    self.last_stop_reason = "tree_bytes"
+                    tree_now = self._tree
+                    self.last_stop_reason = (
+                        "tree_ids"
+                        if tree_now is not None
+                        and int(tree_now.node_count()) + _TREE_MAX_LEAF_BRANCHING > _TREE_NODE_ID_LIMIT
+                        else "tree_bytes"
+                    )
                     if info_cb is not None and self._root_id is not None:
                         self._emit_pv_info(
                             info_cb, board, float(last_value), total_nodes,
                             deadline.elapsed_ms(), tb_probe,
                             allowed_root_indices=allowed_root_indices,
-                            note=self._tree_full_note(deadline.elapsed_ms(), deadline),
+                            note=self._tree_full_note(
+                                deadline.elapsed_ms(), deadline, self.last_stop_reason,
+                            ),
                         )
                     break
 
@@ -2470,13 +2571,13 @@ class SearchWorker:
   # Tree-bytes stops emit a final info line whose `string` names the reason —
   # a memory stop before the time budget is spent must never be silent. Other
   # stop reasons either already emitted via _maybe_emit_pv_info or want quiet exit.
-                if stop_reason == "tree_bytes" and info_cb is not None:
+                if stop_reason in ("tree_bytes", "tree_ids") and info_cb is not None:
                     assert self._root_id is not None
                     self._emit_pv_info(
                         info_cb, board, float(last_value),
                         total_nodes, elapsed, tb_probe,
                         allowed_root_indices=allowed_root_indices,
-                        note=self._tree_full_note(elapsed, deadline),
+                        note=self._tree_full_note(elapsed, deadline, stop_reason),
                     )
                 break
 
