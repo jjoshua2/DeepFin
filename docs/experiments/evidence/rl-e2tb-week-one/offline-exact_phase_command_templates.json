@@ -26,7 +26,7 @@
       "PYTHONDONTWRITEBYTECODE=1",
       "/home/josh/chess-artifacts/venvs/rl-transition-managed-20261111-cu130/bin/python",
       "-B",
-      "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/roots/freeze_roots.py",
+      "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-roots-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/freeze_roots.py",
       "--manifest-sha256",
       "LATE_PHASE_MANIFEST_SHA256"
     ],
@@ -62,7 +62,7 @@
       "PYTHONDONTWRITEBYTECODE=1",
       "/home/josh/chess-artifacts/venvs/rl-transition-managed-20261111-cu130/bin/python",
       "-B",
-      "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/score/score.py",
+      "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-score-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/score.py",
       "--manifest-sha256",
       "LATE_PHASE_MANIFEST_SHA256"
     ],
@@ -98,7 +98,7 @@
       "PYTHONDONTWRITEBYTECODE=1",
       "/home/josh/chess-artifacts/venvs/rl-transition-managed-20261111-cu130/bin/python",
       "-B",
-      "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/readout/readout.py",
+      "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-readout-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/readout.py",
       "--manifest-sha256",
       "LATE_PHASE_MANIFEST_SHA256"
     ],

@@ -1,0 +1,96 @@
+{
+  "blocking_findings": [],
+  "closed_findings": [
+    {
+      "disposition": "Contractv3 uses3flat phase dirs under globalWROOT, commands match eachphase, actual shared5c6d metadata path+SHA verified. Six helperbytes and one_model remain unchanged.",
+      "prior": "P1 nested offline metadata dependency"
+    },
+    {
+      "disposition": "Current f1 explicit sidecar fixed to protocol.root_bank_output; only status+receiptSHA late. Original stale historical example preserved and not currentconsumer.",
+      "prior": "P2 stale rootbank example"
+    },
+    {
+      "disposition": "Finalsciencev2 pins exact4662 helper/manifest/input-template object plus contract/exactcommand/preparation. Newsource independently traced to qualified TRAINv5 and runner.",
+      "prior_root_gap": "Unpinned fixed draw binder"
+    }
+  ],
+  "draw_binder": {
+    "all_sealed_files_hash_and_size_checked": true,
+    "command": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-preparation-v1/command.TEMPLATE.json",
+      "sha256": "727b88ed5580a0f51c3454eac6ef5d57b9a3f1944923c86ced5c832f881456de"
+    },
+    "contract": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-preparation-v1/binding-contract.json",
+      "sha256": "3034699e8b6d124c1a8af2ba09462460c1f50de9968ced80a2d97872cc6fb302"
+    },
+    "helper": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-preparation-v1/bind_draw_plan.py",
+      "sha256": "4b2a2787d94795d9c38ab0900533a7a9c9e4616e81648317d2ecab23bb3987b1"
+    },
+    "identity_input_keys": [
+      "scientific",
+      "publication",
+      "producer_protocol",
+      "producer_manifest",
+      "cohort"
+    ],
+    "later_installation": "Only after actual closedPASS/independent rootacceptance copy exact planbytes to fixed paired draw_plan_path and bindSHA. Metadata copy cannot admit learning.",
+    "manifest": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-preparation-v1/manifest.json",
+      "sha256": "4a1896729659a4b3c23d812b5b6b5c0f45b34a01b479e6904bb2b9ebbacb011f"
+    },
+    "preparation": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-preparation-v1/preparation.json",
+      "sha256": "523398af29c5cb328950707e4811b3bf7f7dae56305a8ac75d7b03b7084e1e18"
+    },
+    "proof_order": "TRAINv5 loader303-359: whole96/32/628 metadata gate; all32 immutable audit/actual owned proofs/physical row checks completed before first load_shard_arrays or rawNPZ decode. No HOLD loader invoked. One owned verifier closed in finally.",
+    "resource": "CPU300/inner270;20,22/hiddenCUDA/two threads/direct b728owner. Freshoutput and absentfinalplan required. Checkpoint/CUDA/model/Trainer/SF/pool/Worker constructor sentinels; source-only review does not assert they ran.",
+    "rng_and_runner_compatibility": "NumPy2.2.6; exact2026111401 default_rng.integers(0,len(ids),size(40,256),dtypeint64) once; same expression/sourcearray order as pairedrun. Exactly3output fields physical_row_ids,indices,raw_arrays (observer arrays_signature) directly checked by runner. No hostaugmentation/model/training or resampling.",
+    "source_component_exact": true,
+    "source_consumption": "Checked actual source helper guards and exact qualified TRAINv5 base_inputs/load_research_train. Keeps paired-template execution flagsFalse; opens no finaldrawplan/finallearningmanifest, so no cycle. Source science/published component exact before project/data imports."
+  },
+  "limits": [
+    "Source/metadata/AST/text only: no helpers/projects imported, no constructors/tests/array/model/TB/engine/GPU/job execution.",
+    "No actual96cohort, drawplan, training or prediction exists/admitted by this receipt.",
+    "Previous component source review inherited; reviewer authored collector/offline prior helpers, so this is independent root integration and other-author drawbinder review rather than newly independent underlying algorithm validation.",
+    "Future actual source/native/config/science/cohort/draw/checkpoint identities, exposure gates and separate finite owner admission remain required; runtime CPU proofdispatch/serialization/memory/time feasibility not inferred from source."
+  ],
+  "previous_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-final-component-integration-independent-review-v1/review.json",
+    "sha256": "bf553d786b6b2ab0a845c18edb1835dd78d868eb854c87a917ce0d1a1486d372"
+  },
+  "science": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-scientific-protocol-final-v2/protocol.json",
+    "sha256": "ee24d3b7aa575c3dd2b85061f376a4920d5f9034a2cc358e03ed8312cd1476c0"
+  },
+  "science_exact_delta": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-scientific-protocol-final-v2/v1-to-v2.patch",
+    "sha256": "51ad83dd6d7716aa4e8e94cc121a6e009398127dd13933c018e64102942d8243"
+  },
+  "science_integration": {
+    "TRAIN_paired_components_unchanged": true,
+    "collector_component_exact_prior_v2": true,
+    "core_sections_canonical_equal_v1": [
+      "arms",
+      "training",
+      "scientific_decision_rule",
+      "offline",
+      "budget",
+      "donor",
+      "cohort",
+      "seeds",
+      "playing",
+      "source",
+      "question"
+    ],
+    "draw_command_late_index": 29,
+    "hash_graph": "Science -> static drawhelper/manifest/identitytemplate and fixed phase contracts; actual science/cohort identities later -> CPUplan -> finalpairedprotocol -> finalmanifest -> CLI. No finaldraw/manifest required to create plan; science frozen. Offline phases bind predecessor identities without metadata overwrite; collection remains templateidentity sequence.",
+    "hash_mismatches": 0,
+    "numerics_helpers_native_source_math_unchanged": true,
+    "source_and_component_references_checked": 47,
+    "wording_delta": "No second research execution/reroll/extension through this preregistration. Same-observation CPUmetadata/readout correction only; this does not change an estimator/selection/scientific rule."
+  },
+  "status": "ACCEPT_CORRECTED_FINAL_COMPONENT_AND_DRAW_BINDER_SOURCE_INTEGRATION_ONLY",
+  "utc": "2026-11-13T02:39:43.641587+00:00"
+}

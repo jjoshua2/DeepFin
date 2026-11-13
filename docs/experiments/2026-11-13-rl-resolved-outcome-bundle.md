@@ -1,7 +1,7 @@
 # Resolved-outcome value targets at a fixed 40-update dose
 
-Status: preregistration frozen before the 96 research games; independent review,
-main publication and individual stage admissions remain required. No research
+Status: preregistration frozen before the 96 research games and independently
+accepted. Main publication and individual stage admissions remain required. No research
 updates, playing result or candidate adoption have occurred.
 
 The current RL transition has not demonstrated a repeatable strength gain.
@@ -23,7 +23,7 @@ training configuration remain common to both arms.
 
 The machine-readable [preregistration](evidence/rl-e2tb-week-one/preregistration.json)
 is authoritative. Its SHA256 is
-`234e75ee42e174e20420165cae03d94def86c4ae0868e15f5c449f7c5b1f0d60`.
+`ee24d3b7aa575c3dd2b85061f376a4920d5f9034a2cc358e03ed8312cd1476c0`.
 The [artifact manifest](evidence/rl-e2tb-week-one/artifact-manifest.json) records
 the published evidence and external inputs. External artifacts live under
 `/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1`.
@@ -148,7 +148,21 @@ markers; never clear them. Preserve the donor, both failed qualifications and th
 stopped 53-game study. Immutable component templates and explicit identity-only
 binding contracts prevent scientific changes during late binding of cohort,
 draw, checkpoint and publication identities. Technical failure yields an
-unqualified or inconclusive study and a separate diagnosis, not an automatic rerun.
+unqualified or inconclusive study and a separate diagnosis. This preregistration
+allows no second research collection, repeated training, playing or inference
+attempt, or replenished allowance. A finite CPU correction may reuse the same
+banked observations without new games, updates or predictions and without changing
+the estimator or decision rules. A new research execution requires a separate
+prospective study.
+
+The prepublication review corrected offline phase directories so their unchanged
+metadata lookup remains valid, replaced a stale root-bank example with the fixed
+current output, pinned the exact CPU draw-plan binder, and clarified the no-reroll
+rule. The [scientific review](evidence/rl-e2tb-week-one/review-final-science.json) and
+[integration review](evidence/rl-e2tb-week-one/review-final-integration-and-draw-binder.json)
+accepted the final bytes. The superseded candidate is preserved in the evidence
+bundle; no research
+games or updates occurred between candidates. Scientific parameters are unchanged.
 
 ## Readout
 

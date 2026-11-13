@@ -1,0 +1,7 @@
+{
+  "future_bound_status": "ROOT_ACCEPTED_FROZEN64_OFFLINE_ROOTS_BEFORE_PREDICTIONS",
+  "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-root-bank-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48",
+  "receipt_sha256": "UNBOUND",
+  "root_custody_and_no_prior_branch_teacher_prediction_qualification_required": true,
+  "status": "UNBOUND"
+}

@@ -47,8 +47,26 @@
   "no_hash_cycle": "Science pins immutable templates and this contract. Later phases bind actual science/publication and predecessor output identities, then derive protocol hash into manifest and sole finalmanifest token into argv. Frozen science remains unchanged.",
   "no_research_or_GPU_admission": true,
   "runtime_here_by_phase": {
-    "roots": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/roots",
-    "score": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/score",
-    "readout": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/readout"
+    "roots": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-roots-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48",
+    "score": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-score-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48",
+    "readout": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-readout-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48"
+  },
+  "root_bank_binding_template": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-final-binding-contract-v3/root-bank-binding.template.json",
+    "sha256": "d39c0bed2668943f2b1b9f849ff67baf3e1e1915e2f39a41ef24518bb37687cd"
+  },
+  "root_bank_binding_rule": {
+    "fixed_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-root-bank-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48",
+    "allowed_late_leaves": [
+      "/status",
+      "/receipt_sha256"
+    ],
+    "required_status": "ROOT_ACCEPTED_FROZEN64_OFFLINE_ROOTS_BEFORE_PREDICTIONS",
+    "rule": "Only the actual accepted whole64 roots/receipt from fixed root_bank_output. Original offline preparation TB-off example is historical and never consumed as current binding. All other sidecar fields remain template-equal."
+  },
+  "phase_layout_rule": "All three fresh phase directories are flat siblings under global WROOT. This preserves unchanged common.py WROOT=HERE.parent and one_model historic fixed-hash checkpoint architecture metadata lookup. No nested phase directories, code changes or source-proof equivalence extensions.",
+  "historic_shape_metadata": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-game-consumer-actual-readout-v1/checkpoint-metadata.json",
+    "sha256": "5c6d344967cd3714523a24526315feaf1a626b6cb48b59b9021c3400e3a0e49e"
   }
 }

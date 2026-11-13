@@ -1,0 +1,47 @@
+{
+  "status": "SEALED_DRAW_PLAN_SOURCE_PREPARATION_UNBOUND_NOT_ADMITTED",
+  "helper_sha256": "4b2a2787d94795d9c38ab0900533a7a9c9e4616e81648317d2ecab23bb3987b1",
+  "python": "/home/josh/chess-artifacts/venvs/rl-transition-managed-20261111-cu130/bin/python",
+  "owner_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/run_stage_tb_on_runtime_v1.py",
+  "owner_sha256": "b7287b50906b90a6729833f8ee3369d7a544d2d202d365e90f5c66afb275fa13",
+  "TRAIN_code_directory": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-train-paired-preparation-v5",
+  "paired_protocol_template": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired-40-final-template-v2/protocol.TEMPLATE.json",
+    "sha256": "caf75fccdcc75f7aeff736aea653cf1444f2daba00e497ba0a99c40c831296b5"
+  },
+  "paired_manifest_template": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired-40-final-template-v2/manifest.TEMPLATE.json",
+    "sha256": "c4ed5c1f248f4049aacc087b1bb1cffa6111d0704173c14936379a5960d93a12"
+  },
+  "inputs_template": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-preparation-v1/identity-inputs.TEMPLATE.json",
+    "sha256": "fdefbde7a15bf5a7d9960fb9629ba10949fbe95c719017733c8b0d2c2877227b"
+  },
+  "authorities": {
+    "TRAIN_preparation": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-train-paired-preparation-v5/preparation.json",
+      "sha256": "e48e09f5af8c5a29c3c50352714763d0dba3843f8c93434684604855bf5c78fe"
+    },
+    "paired_preparation": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired-40-final-template-v2/preparation.json",
+      "sha256": "2378b824d5e3995229217ce7fa31ae7d5c30db52bd2905bd3a9898bf0c090084"
+    },
+    "paired_binding_contract": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired-40-final-template-v2/binding-contract.json",
+      "sha256": "f44696ce699aba5474a82e690c50decb14ce3bce11a3e47625b1bbd912232376"
+    },
+    "native_qualification": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cpu-qualification-root-acceptance-v3/native-origins.json",
+      "sha256": "b830357fe37a8a5bf83f403de055700fc1be1146bb78d205fc23a62d46ee4abb"
+    },
+    "descriptor_acceptance": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-train-descriptor-root-acceptance-v2/readout.json",
+      "sha256": "bdc2dad8ed53488ec09527e4943325cbbfab479aa74220e18e8e952ce82f5554"
+    },
+    "limited_AA_reuse": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-limited-AA-reuse-root-acceptance-v1/readout.json",
+      "sha256": "4d7f93a63f64a0d6e7d504d3dc4d2bbc9b12504ab4a7e6e4e2f98d247cdd8d82"
+    }
+  },
+  "output_root": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-results-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48"
+}
