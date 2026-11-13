@@ -40,7 +40,7 @@ from chess_anti_engine.mcts.gumbel_c import (
     _SOLVED_ROOT_TB_CHECK_LIMIT,
     run_gumbel_root_many_c,
 )
-from chess_anti_engine.mcts.search_options import SEARCH_OPTIONS
+from chess_anti_engine.mcts.search_options import MAX_CHUNK_SIMS, SEARCH_OPTIONS
 from chess_anti_engine.mcts.root_tactics import immediate_mate_move
 from chess_anti_engine.mcts.puct import _value_scalar_from_wdl_logits
 from chess_anti_engine.mcts.puct_vl import PucvChunker
@@ -157,15 +157,33 @@ _MAX_TREE_GROWTH_STEP_BYTES = 32 * 1024 * 1024
 # x 256) — the C pools refuse to grow past INT32_MAX - 1.
 _TREE_ID_HEADROOM = 1 << 25
 _TREE_NODE_ID_LIMIT = (1 << 31) - 1 - _TREE_ID_HEADROOM
-# Deferred compaction at reuse (see `_resolve_pending_compaction`). Measured
+assert MAX_CHUNK_SIMS * _TREE_MAX_LEAF_BRANCHING <= _TREE_ID_HEADROOM
+# Deferred reuse decision (see `_resolve_pending_compaction`). Measured
 # `compact_to_subtree` cost on CPU: 86-142 ms/GiB of arena (keep 8%-100%),
 # up to ~300 ms/GiB in the independent review's runs; the estimate uses a
-# conservative 400 ms/GiB and compaction runs only if it fits in 5% of the
-# move budget. Otherwise the tree is reused uncompacted while its footprint is
-# below 3/4 of Hash, and rebuilt above that.
+# conservative 400 ms/GiB.
 _COMPACTION_MS_PER_GIB = 400.0
+# With a move budget and a measured growth rate, keep / compact / rebuild is
+# chosen by projected effective search time (see the resolver). Without a rate
+# (the previous search ran fewer than `_REUSE_RATE_MIN_VISITS` visits) the
+# fallback is: compact if the estimate fits in 5% of the budget, else keep the
+# tree uncompacted below 3/4 of Hash and rebuild above that.
+_REUSE_RATE_MIN_VISITS = 1024
 _COMPACTION_BUDGET_FRACTION = 0.05
 _KEEP_UNCOMPACTED_FRACTION = 0.75
+# Ponder (before ponderhit) and `go infinite`: `stop` / `ponderhit` cannot
+# interrupt the C compaction, so a ponder miss would delay `bestmove` — and the
+# next `go`'s clock — by the whole compaction. Compact only while the estimate
+# is at most this; otherwise use the band fallback above. (`go nodes` / `go
+# depth` have no clock and are not capped; see the resolver.)
+_STOP_SENSITIVE_COMPACTION_MAX_MS = 250.0
+# Compaction allocates the new child arrays (2 x int32 per kept child) and a
+# CBoard owner map (int32 per cached board) before freeing the old ones, so
+# RSS peaks at footprint + that transient. Compaction is not chosen when the
+# peak would exceed Hash by more than this (the transient is ~13% of the kept
+# footprint on the walker path, ~2 GB at a 16 GB keep-all, so an unchecked
+# compaction near the cap would break the "Hash + ~150 MB" provisioning rule).
+_COMPACTION_TRANSIENT_MARGIN_BYTES = 32 * 1024 * 1024
 assert _TREE_MAX_LEAF_BRANCHING >= _MAX_LEGAL_MOVES + _FORCED_COLLAPSE_DEPTH
 
 # Visit-margin early abort (Lc0 "smart pruning"). Once past the optimum budget
@@ -241,6 +259,15 @@ _BATCH_MARGIN_MIN_SAMPLES = 2
 # opposite failure (weak near-instant moves). At normal TCs budget >> chunk so
 # this never binds; it only guards the pathological short-TC / high-variance case.
 _MAX_BATCH_MARGIN_FRACTION = 0.5
+
+
+def _checked_chunk_sims(n: int) -> int:
+    """Reject a chunk the int32 tree-id headroom cannot cover (see
+    ``MAX_CHUNK_SIMS``): a classic Gumbel chunk cannot be shrunk once started."""
+    n = int(n)
+    if n > MAX_CHUNK_SIMS:
+        raise ValueError(f"chunk_sims {n} exceeds the maximum {MAX_CHUNK_SIMS}")
+    return n
 
 
 def _visit_gap(actions: np.ndarray, visits: np.ndarray, best_action: int) -> float:
@@ -440,7 +467,7 @@ class SearchWorker:
             add_noise=False,  # no exploration noise at test time
             temperature=0.0,
         )
-        self._chunk_sims = int(chunk_sims)
+        self._chunk_sims = _checked_chunk_sims(chunk_sims)
         self._rng = np.random.default_rng()
   # n_walkers > 1 → PUCT pool with vloss, sequential halving dropped.
   # evaluator MUST be thread-safe (caller wraps with Thread/MultiGPU
@@ -513,10 +540,16 @@ class SearchWorker:
   # Why the last `run()` stopped (`_should_stop_search` reason, or "tree_bytes"
   # from the shared-tree headroom check); None = budget/abort/early return.
         self.last_stop_reason: str | None = None
-  # Set by `advance_root` when the reused arena is at/above Hash/2; resolved
-  # (compact / keep / rebuild) at the start of the next `run()`.
+  # Set by `advance_root` on every in-place reroot under a Hash cap; resolved
+  # (keep / compact / rebuild) at the start of the next `run()`, which knows
+  # the move budget. `last_reuse_inputs` records the numbers the decision used.
         self._compaction_pending: bool = False
         self.last_reuse_decision: str | None = None
+        self.last_reuse_inputs: dict[str, float] = {}
+  # Growth rate measured by the last `run()` that did enough visits: visits per
+  # ms of search and resident tree bytes added per visit. Feeds the reuse rule.
+        self._recent_visits_per_ms: float = 0.0
+        self._recent_bytes_per_visit: float = 0.0
   # Minibatch target for the C gumbel state machine. 0 = use the
   # C-side GSS_GPU_BATCH default. Higher = better GPU util on large
   # batches; lower = faster stop latency + fresher tree state on
@@ -1054,7 +1087,13 @@ class SearchWorker:
     # snapshots it with `EngineOptions` so a failed setoption restores BOTH
     # (e.g. `set_gumbel_field` writes `_cfg.c_puct` before the helper rebuild
     # that can fail). The evaluator, pools and tablebase are not here: they
-    # have their own build-then-swap ownership.
+    # have their own build-then-swap ownership. Deliberately NOT here: the tree
+    # and its reuse state (`_compaction_pending`, `last_reuse_*`) and the
+    # measured growth rate (`_recent_visits_per_ms` / `_recent_bytes_per_visit`).
+    # A setoption that drops them (via `reset_tree` / a Hash change) does not
+    # get them back on rollback: the tree is gone either way, and a rate is
+    # re-measured by the next search -- restoring it could resurrect a rate
+    # measured under a configuration the failed setoption half-changed.
     _SEARCH_STATE_FIELDS: tuple[str, ...] = (
         "_n_walkers", "_walker_gather", "_use_pucv", "_pucv_gather",
         "_vloss_weight", "_eval_cache_entries", "_root_noise_scale",
@@ -1310,7 +1349,7 @@ class SearchWorker:
 
     def set_chunk_sims(self, n: int) -> None:
         """Sims per search chunk. Read fresh by `_chunk_budget` each chunk."""
-        self._chunk_sims = max(1, int(n))
+        self._chunk_sims = max(1, _checked_chunk_sims(n))
 
     def set_vloss_weight(self, n: int) -> None:
         """Virtual-loss weight. Live for the Gumbel chunk (passed per call);
@@ -1530,6 +1569,13 @@ class SearchWorker:
 
     def reset_tree(self) -> None:
         self._compaction_pending = False
+  # Every evaluator swap and search-topology change (MaxBatch / EvalCacheEntries
+  # rebuild, Threads, walkers, VL, multi-GPU / RPG install or teardown) and
+  # `ucinewgame` reset the tree, so a growth rate measured under the old
+  # configuration is dropped here too. A rate measured on a slower setup
+  # would inflate `carried` and keep a full arena.
+        self._recent_visits_per_ms = 0.0
+        self._recent_bytes_per_visit = 0.0
         self._tree = None
         self._root_id = None
         self._tree_fen = None
@@ -1622,7 +1668,11 @@ class SearchWorker:
     def set_max_tree_mb(self, mb: int) -> None:
         """Soft cap on the tree's resident footprint; 0 disables. Checked
         between chunks; the live tree's growth step follows immediately."""
-        self._max_tree_bytes = max(0, int(mb)) * 1024 * 1024
+        new_cap = max(0, int(mb)) * 1024 * 1024
+        if new_cap != self._max_tree_bytes:
+            self._recent_visits_per_ms = 0.0
+            self._recent_bytes_per_visit = 0.0
+        self._max_tree_bytes = new_cap
         self._sync_tree_growth_step()
 
     def set_tb_probe(self, probe) -> None:
@@ -1659,10 +1709,9 @@ class SearchWorker:
 
         Rerooting in place only repoints ``self._root_id`` — the discarded
         sibling subtrees stay in the arena, so the footprint climbs across a
-        game. While the arena's resident footprint is below half the Hash cap
-        that is harmless and reuse is in place. At or above half, a compaction
-        to the kept subtree is scheduled for the next ``run()`` (which charges
-        it to the move clock and bounds its cost, see
+        game. Under a Hash cap the keep / compact / rebuild decision is
+        scheduled for the next ``run()``, which knows the move budget, charges
+        any compaction to the move clock and bounds its cost (see
         ``_resolve_pending_compaction``).
         """
         if self._rpg_pool is not None:
@@ -1679,12 +1728,10 @@ class SearchWorker:
             if rid < 0:
                 return False
             b.push(mv)
-  # Compaction is deferred to `run()`, which knows the move's time budget and
-  # runs under its clock (see `_resolve_pending_compaction`).
-        self._compaction_pending = (
-            self._max_tree_bytes > 0
-            and self._tree_footprint_bytes() >= self._max_tree_bytes // 2
-        )
+  # The reuse decision is deferred to `run()`, which knows the move's time
+  # budget and runs under its clock (see `_resolve_pending_compaction`). Even a
+  # half-empty arena can starve this move if it grows faster than the room left.
+        self._compaction_pending = self._max_tree_bytes > 0
         self._sync_tree_growth_step()
         self._root_id = rid
         self._tree_fen = b.fen()
@@ -1692,21 +1739,44 @@ class SearchWorker:
         return True
 
     def _resolve_pending_compaction(
-        self, deadline: Deadline, optimum_ms: int | None,
+        self, deadline: Deadline, optimum_ms: int | None, *,
+        max_nodes: int | None = None, stop_sensitive: bool = False,
     ) -> str | None:
-        """Carry out (or decline) the compaction ``advance_root`` scheduled.
+        """Carry out the keep / compact / rebuild decision ``advance_root``
+        scheduled. Returns "kept" / "compacted" / "refused" / "rebuilt" (also
+        ``last_reuse_decision``; inputs in ``last_reuse_inputs``), or None when
+        nothing was pending.
 
-        Policy, given the arena footprint F, Hash H and the move budget B
-        (``optimum_ms``, else the hard deadline's remaining time, else none):
-        - estimated cost ``F x _COMPACTION_MS_PER_GIB`` fits in
-          ``_COMPACTION_BUDGET_FRACTION x B`` (or there is no time budget:
-          nodes/depth/infinite/ponder): compact to the kept subtree, refusing
-          (and rebuilding) if that subtree is larger than H/2;
-        - too expensive and ``F < _KEEP_UNCOMPACTED_FRACTION x H``: keep the
-          tree uncompacted (reuse without reclaiming the siblings);
-        - too expensive and fuller than that: rebuild from scratch.
-        Returns the decision ("compacted" / "refused" / "kept" / "rebuilt"),
-        also stored as ``last_reuse_decision``; None when nothing was pending.
+        Inputs: arena footprint F, Hash H, compaction estimate
+        ``est = F x _COMPACTION_MS_PER_GIB``, and the last search's growth
+        rate under the current configuration: v visits/ms and b bytes/visit
+        (r = v*b bytes/ms). The kept subtree holds N_k root visits, i.e.
+        ``K = min(F, N_k * b)`` bytes after compaction.
+
+        Time-budgeted search (``optimum_ms`` or a deadline). B = the budget
+        (``optimum_ms``, else the deadline's remaining time); T = the horizon
+        the search may really run for room purposes: the hard deadline's
+        remaining time when there is one (a clocked search often runs past its
+        optimum toward the hard deadline), else B. ``carried = min(B, N_k/v)``.
+        Pick the largest projected effective search time; ties prefer keep,
+        then compact:
+        - keep:    carried + min(T, (H - F) / r)
+        - compact: carried + min(T - est, (H - K) / r), only if est <= B and
+                   the compaction transient fits (see below)
+        - rebuild: min(T, H / r)
+        No rate yet: compact if ``est <= 5% x B``.
+
+        No time budget:
+        - ponder / ``go infinite`` (``stop_sensitive``): compact only if
+          ``est <= _STOP_SENSITIVE_COMPACTION_MAX_MS`` (stop cannot interrupt it);
+        - ``go nodes N``: keep while ``F + N*b <= H`` (the move fits), else compact
+          (no clock, so the cost only delays the start); without a rate keep
+          below H/2;
+        - ``go depth``: keep below H/2, else compact.
+
+        A compaction is never chosen when ``F + transient > H + margin``
+        (``_compaction_transient_bytes``). Whatever is not decided above (or a
+        compaction ruled out) keeps the tree below 3/4 H and rebuilds above.
         """
         if not self._compaction_pending:
             return None
@@ -1714,25 +1784,106 @@ class SearchWorker:
         tree, rid = self._tree, self._root_id
         if tree is None or rid is None or rid < 0 or self._max_tree_bytes <= 0:
             return None
-        footprint = self._tree_footprint_bytes()
+        hash_bytes = float(self._max_tree_bytes)
+        footprint = float(self._tree_footprint_bytes())
         est_ms = footprint / float(1 << 30) * _COMPACTION_MS_PER_GIB
         budget = optimum_ms if optimum_ms is not None else deadline.remaining_ms()
-        if budget is None or est_ms <= _COMPACTION_BUDGET_FRACTION * float(budget):
-            new_rid = int(tree.compact_to_subtree(int(rid), int(self._max_tree_bytes // 2)))
+        hard = deadline.remaining_ms()
+        horizon = float(max(budget, hard)) if budget is not None and hard is not None else (
+            None if budget is None else float(budget)
+        )
+        v, b = self._recent_visits_per_ms, self._recent_bytes_per_visit
+        carried_visits = float(self._kept_subtree_visits())
+        kept_bytes = min(footprint, carried_visits * b) if b > 0.0 else footprint
+        transient = self._compaction_transient_bytes(footprint, kept_bytes)
+        can_compact = footprint + transient <= hash_bytes + _COMPACTION_TRANSIENT_MARGIN_BYTES
+        inputs: dict[str, float] = {
+            "footprint": footprint, "hash": hash_bytes, "est_ms": est_ms,
+            "budget_ms": -1.0 if budget is None else float(budget),
+            "horizon_ms": -1.0 if horizon is None else horizon,
+            "visits_per_ms": v, "bytes_per_visit": b, "kept_bytes": kept_bytes,
+            "transient_bytes": transient, "can_compact": float(can_compact),
+        }
+        decision = ""
+        if budget is not None and horizon is not None and v > 0.0 and b > 0.0:
+            rate = v * b
+            carried = min(float(budget), carried_visits / v)
+            options = [
+                ("kept", carried + min(horizon, max(0.0, hash_bytes - footprint) / rate)),
+                ("compacted", carried + min(max(0.0, horizon - est_ms),
+                                            max(0.0, hash_bytes - kept_bytes) / rate)),
+                ("rebuilt", min(horizon, hash_bytes / rate)),
+            ]
+            inputs["carried_ms"] = carried
+            inputs.update({f"eff_{name}_ms": eff for name, eff in options})
+            if not can_compact or est_ms > float(budget):
+                options = [o for o in options if o[0] != "compacted"]
+            choice = options[0]
+            for option in options[1:]:
+                if option[1] > choice[1] + 1.0:  # 1 ms tolerance: ties keep the earlier option
+                    choice = option
+            decision = choice[0]
+        elif budget is not None:
+            if est_ms <= _COMPACTION_BUDGET_FRACTION * float(budget):
+                decision = "compacted"
+        elif stop_sensitive:
+            if est_ms <= _STOP_SENSITIVE_COMPACTION_MAX_MS:
+                decision = "compacted"
+        elif max_nodes is not None and b > 0.0:
+            decision = "kept" if footprint + float(max_nodes) * b <= hash_bytes else "compacted"
+        else:
+            decision = "kept" if footprint < 0.5 * hash_bytes else "compacted"
+        if decision == "compacted" and not can_compact:
+            decision = ""
+        if not decision:
+            decision = "kept" if footprint < _KEEP_UNCOMPACTED_FRACTION * hash_bytes else "rebuilt"
+        if decision == "compacted":
+            new_rid = int(tree.compact_to_subtree(int(rid), int(self._max_tree_bytes)))
             if new_rid < 0:
                 decision = "refused"
                 self.reset_tree()
             else:
-                decision = "compacted"
                 self._root_id = new_rid
                 self._invalidate_root_caches()
-        elif footprint < _KEEP_UNCOMPACTED_FRACTION * self._max_tree_bytes:
-            decision = "kept"
-        else:
-            decision = "rebuilt"
+        elif decision == "rebuilt":
             self.reset_tree()
         self.last_reuse_decision = decision
+        self.last_reuse_inputs = inputs
         return decision
+
+    def _compaction_transient_bytes(self, footprint: float, kept_bytes: float) -> float:
+        """Extra resident bytes while ``compact_to_subtree`` runs: the new child
+        arrays (2 x int32 per kept child, pro rata of the arena's children) and
+        the CBoard owner map (int32 per cached board), allocated before the old
+        arrays are freed."""
+        if self._tree is None or footprint <= 0.0:
+            return 0.0
+        stats = self._tree.memory_stats()
+        kept_frac = min(1.0, kept_bytes / footprint)
+        return 8.0 * float(stats["child_count"]) * kept_frac + 4.0 * float(stats["cb_pool_count"])
+
+    def _kept_subtree_visits(self) -> int:
+        """Root visits already searched under the current (rerooted) root."""
+        if self._tree is None or self._root_id is None or self._root_id < 0:
+            return 0
+        _, visits = self._tree.get_children_visits(int(self._root_id))
+        return int(np.asarray(visits, dtype=np.int64).sum())
+
+    def _record_growth_rate(self, visits: int, nodes_before: int, search_ms: float) -> None:
+        """Remember this search's visits/ms and resident bytes per visit for
+        the next move's reuse decision (``_resolve_pending_compaction``).
+        Bytes per visit = nodes added per visit x the arena's footprint per
+        node, which is smooth where footprint growth itself is step-quantised."""
+        if visits < _REUSE_RATE_MIN_VISITS or search_ms <= 0.0 or self._tree is None:
+            return
+        node_count = self._tree_node_count()
+        added = node_count - nodes_before
+        if added <= 0 or node_count <= 0:
+            return
+        self._recent_visits_per_ms = float(visits) / search_ms
+        self._recent_bytes_per_visit = (
+            float(added) / float(visits) * self._tree_footprint_bytes() / float(node_count)
+        )
 
     def _try_tb_shortcut(
         self,
@@ -2523,6 +2674,7 @@ class SearchWorker:
         include_ponder: bool = False,
         allow_terminal_shortcuts: bool = True,
         on_chunk: Callable[[int], None] | None = None,
+        stop_sensitive: bool = False,
     ) -> SearchResult:
         """Search until any of: stop_event set, deadline expired, max_nodes hit,
         PV length ≥ max_depth, or (``optimum_ms`` set) the visit-margin abort
@@ -2533,7 +2685,11 @@ class SearchWorker:
         """
         fen = board.fen()
   # A compaction `advance_root` scheduled runs here, on this move's clock.
-        self._resolve_pending_compaction(deadline, optimum_ms)
+  # `stop_sensitive`: ponder / `go infinite`, where an uninterruptible
+  # compaction would delay the answer to `stop` / `ponderhit`.
+        self._resolve_pending_compaction(
+            deadline, optimum_ms, max_nodes=max_nodes, stop_sensitive=stop_sensitive,
+        )
         if self._tree is None or self._tree_fen != fen:
             self._tree = None
             self._root_id = None
@@ -2611,6 +2767,8 @@ class SearchWorker:
             self.reset_tree()
             self._root_pol_logits, self._root_wdl_logits = pol, wdl
             self._root_pol_key = key
+        _rate_nodes_before = self._tree_node_count()
+        _rate_t0 = time.monotonic()
         self._pre_expand_root_for_pool(
             board,
             allowed_root_indices,
@@ -2851,6 +3009,9 @@ class SearchWorker:
                 allowed_root_indices=allowed_root_indices,
             )
 
+        self._record_growth_rate(
+            total_nodes, _rate_nodes_before, (time.monotonic() - _rate_t0) * 1000.0,
+        )
         return self._build_final_search_result(
             board=board, total_nodes=total_nodes,
             last_value=last_value, tb_probe=tb_probe,

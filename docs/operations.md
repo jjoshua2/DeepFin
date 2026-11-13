@@ -881,7 +881,7 @@ installed descent object. `searchconfig` remains the authority for what a
 | `HalvingDiv` | spin | 2 – 8 | 2 | gumbel, rpg | sequential-halving divisor |
 | `Topk` | spin | 2 – 256 | 32 | gumbel, rpg | root candidates |
 | `GumbelScale` | string | 0 – 5 | 0.0 | gumbel, rpg | root Gumbel-noise strength; 0 = deterministic |
-| `ChunkSims` | spin | 32 – 1048576 | 2048 | all | sims per search chunk |
+| `ChunkSims` | spin | 32 – 131072 | 2048 | all | sims per search chunk (max = the int32 tree-id headroom, 2^25 nodes / 256 per sim) |
 | `VLossWeight` | spin | 0 – 64 | 3 | all | virtual loss on in-flight leaves |
 | `MinibatchSize` | spin | 0 – 8192 | 0 | **gumbel only** | C-side leaf-flush target; 0 = C default |
 | `CPuct` | string | 1e-4 – 100 | 1.75 | walker, pucv, pucv_pool, rpg | PUCT exploration constant |

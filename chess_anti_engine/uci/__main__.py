@@ -40,7 +40,7 @@ from chess_anti_engine.mcts.gumbel import (
     PLAY_SEARCH_VLOSS_WEIGHT,
     GumbelConfig,
 )
-from chess_anti_engine.mcts.search_options import SEARCH_OPTIONS, SearchOption
+from chess_anti_engine.mcts.search_options import MAX_CHUNK_SIMS, SEARCH_OPTIONS, SearchOption
 
 from .engine import (
     _SPIN_BOUNDS,
@@ -737,6 +737,15 @@ def _resolve_multi_gpu_startup(
     return root_gumbel, pucv_fallback, pucv_fallback and not root_gumbel
 
 
+def _chunk_sims_arg(value: str) -> int:
+    """``--chunk-sims``: reject a chunk the int32 tree-id headroom cannot cover
+    (the same ceiling as the ``ChunkSims`` spin option)."""
+    n = int(value)
+    if n > MAX_CHUNK_SIMS:
+        raise argparse.ArgumentTypeError(f"{n} exceeds the maximum {MAX_CHUNK_SIMS}")
+    return n
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """The CLI. Split out of ``main`` so a test can read the REAL defaults.
 
@@ -757,7 +766,7 @@ def _build_parser() -> argparse.ArgumentParser:
   # chunk=512/topk=32/mb=1024 gave ~7.3x startpos nps vs 32/16/32. Chunk cap
   # of 512 (not the full node budget) keeps `stop` latency under ~400ms on
   # single-game CUDA searches.
-    p.add_argument("--chunk-sims", type=int, default=2048,
+    p.add_argument("--chunk-sims", type=_chunk_sims_arg, default=2048,
                    help="sims per start_gumbel_sims call (default: 2048). Higher = fuller GPU batches "
                         "(more NPS) at the cost of coarser stop/abort latency; 2048 favours throughput "
                         "for long time controls while leaving ample chunks per move for the abort.")

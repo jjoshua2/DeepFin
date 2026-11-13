@@ -139,6 +139,11 @@ _PUCT = PLAY_PUCT_DEFAULTS
 
 # The default chunk budget, mirrored from `uci/__main__.py --chunk-sims`.
 DEFAULT_CHUNK_SIMS = 2048
+# Largest chunk the int32 tree-id headroom covers: the UCI search stops while
+# 2^25 node slots remain, and one sim adds at most 256 nodes, so a classic
+# Gumbel chunk (which cannot be shrunk mid-call) must stay <= 2^25 / 256.
+# `uci/search.py` asserts the two stay consistent.
+MAX_CHUNK_SIMS = 131072
 
 SEARCH_OPTIONS: tuple[SearchOption, ...] = (
     # ── Gumbel search shape ────────────────────────────────────────────────
@@ -216,7 +221,7 @@ SEARCH_OPTIONS: tuple[SearchOption, ...] = (
     # ── budget / batching ──────────────────────────────────────────────────
     SearchOption(
         "ChunkSims", "spin", "chunk_sims", DEFAULT_CHUNK_SIMS,
-        _ALL_PATHS, 32, 1048576,
+        _ALL_PATHS, 32, MAX_CHUNK_SIMS,
         "Sims per search chunk. Higher = fuller GPU batches (more nps) at the "
         "cost of coarser stop/abort latency, and it changes the search: the "
         "Gumbel halving schedule and the Topk budget cap are both per-chunk.",

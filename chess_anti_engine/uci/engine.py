@@ -2563,6 +2563,7 @@ class Engine:
                 info_cb=_phase_info_cb,
                 include_ponder=self._options.ponder,
                 allow_terminal_shortcuts=not is_ponder and not limits.is_open_ended(),
+                stop_sensitive=is_ponder or limits.infinite,
             )
             if not is_ponder and last_emitted_nodes[0] != result.nodes:
                 self._emit_info(
