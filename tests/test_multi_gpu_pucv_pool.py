@@ -332,7 +332,7 @@ def test_shared_tree_headroom_pregrows_arena_past_fixed_reserve() -> None:
 
 
 def test_shared_tree_headroom_respects_hash_cap() -> None:
-    """The pre-grow must not push memory_bytes() past the Hash cap: it returns
+    """The pre-grow must not push footprint_bytes() past the Hash cap: it returns
     the sims that fit and 0 (no growth) once the tree is at the cap. A fresh tree
     per case keeps node_count ~ node_cap (as it is in a live search, where each
     chunk fills the prior reservation before the next cap check)."""
@@ -364,10 +364,10 @@ def test_shared_tree_headroom_respects_hash_cap() -> None:
   # not starve to 0 — that would play an unvisited root).
         tree = _fresh()
         worker.set_max_tree_mb(1)
-        before = tree.memory_bytes()
+        before = tree.footprint_bytes()
         sims = worker._ensure_shared_tree_headroom(512)
         assert 0 < sims <= 512
-        assert tree.memory_bytes() == before
+        assert tree.footprint_bytes() == before
     finally:
         worker.close()
 

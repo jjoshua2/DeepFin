@@ -212,7 +212,8 @@ def search_fixture(rpg=True):
               'chess': SimpleNamespace(Move=Move), 'move_to_index': lambda move, _board: {'d2d4':1, 'e2e4':2, 'g1f3':3}[move],
               '_DEFAULT_ABORT_FACTOR': 1.0, '_SOLVED_ROOT_TB_CHECK_LIMIT': 16,
               'SolvedRootWitnessUnavailable': Witness, 'run_gumbel_root_many_c': native_boundary,
-              '_try_immediate_checkmate': lambda *_args, **_kwargs: None, 'SearchResult': SimpleNamespace}
+              '_try_immediate_checkmate': lambda *_args, **_kwargs: None, 'SearchResult': SimpleNamespace,
+              '_TREE_NODE_ID_LIMIT': 1 << 30}
     names = ['SearchWorker.run', 'SearchWorker._run_one_chunk', 'SearchWorker._run_gumbel_chunk',
              'SearchWorker._pre_expand_root_for_pool', 'SearchWorker._chunk_budget',
              'SearchWorker._should_stop_search', 'SearchWorker.reset_tree', '_allowed_root_indices']
@@ -237,6 +238,11 @@ def search_fixture(rpg=True):
         worker._root_pol_logits = [[0.0, 1.0, 2.0]]
         worker._root_wdl_logits = [[0.0, 0.0, 0.0]]
     worker._ensure_root_eval_cached = root_eval
+    # Hash accounting hooks (real tree memory API; the stub tree has none).
+    worker._sync_tree_growth_step = lambda: None
+    worker._tree_footprint_bytes = lambda: 0
+    worker._resolve_pending_compaction = lambda *_args: None
+    worker._tree_node_count = lambda: 0
     worker._try_tb_shortcut = lambda *_args, **_kwargs: None
     worker._time_capped_chunk = lambda chunk, *_args: chunk
     worker._is_shared_tree_path = lambda _allowed: False

@@ -13,6 +13,7 @@ multi-GPU pools (the same fixtures `test_root_parallel_gumbel.py` uses).
 """
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -22,7 +23,7 @@ import pytest
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.uci.engine import Engine, EngineOptions
 from chess_anti_engine.uci.protocol import parse_command
-from chess_anti_engine.uci.search import SearchWorker
+from chess_anti_engine.uci.search import Deadline, SearchWorker
 from tests.test_root_parallel_gumbel import _make_evaluator
 
 
@@ -451,3 +452,37 @@ def test_a_rollback_that_leaves_the_wrong_path_falls_back_loudly(make_engine, mo
     assert "previous configuration kept" not in out
     assert engine._worker.realized_search_path() == "gumbel"
     assert _assert_searches_and_reports_truthfully(engine, capsys) == "gumbel"
+
+
+def test_restored_hash_cap_resyncs_the_live_tree_growth_step() -> None:
+    """A rolled-back `_max_tree_bytes` must reach the live tree's growth step,
+    which `set_max_tree_mb` keeps in step with it; restoring the field alone
+    would leave the tree growing under the abandoned cap."""
+    from tests.test_uci_hash_accounting import _worker as _hash_worker
+
+    w = _hash_worker()
+    w.set_max_tree_mb(64)
+    w.run(chess.Board(), stop_event=threading.Event(), deadline=Deadline(60_000),
+          max_nodes=64, info_cb=lambda **_kw: None)
+    assert w._tree is not None
+    snapshot = w.search_state()
+    expected = w._tree_growth_step_nodes()
+    w.set_max_tree_mb(4096)
+    assert w._tree_growth_step_nodes() != expected
+
+    seen: list[int] = []
+
+    class _Spy:
+        def __init__(self, tree: Any) -> None:
+            self._t = tree
+
+        def set_growth_step(self, n: int) -> None:
+            seen.append(n)
+            self._t.set_growth_step(n)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._t, name)
+
+    w._tree = _Spy(w._tree)  # pyright: ignore[reportAttributeAccessIssue]
+    assert w.restore_search_state(snapshot) is True
+    assert seen == [expected]
