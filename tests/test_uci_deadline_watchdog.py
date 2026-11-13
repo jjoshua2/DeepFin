@@ -330,7 +330,7 @@ def test_fire_time_is_after_the_search_deadline_and_before_the_flag(overhead, gr
         assert fire_ms == pytest.approx(deadline_ms + grace)
         assert armed.started_at == engine._go_received_at
         if overhead >= 20:  # the floor: below 20 ms the engine already races the flag
-            assert fire_ms <= 5000 - 10  # at least the 10 ms margin before the flag
+            assert fire_ms <= 5000 - 10 + 1e-6  # >= 10 ms margin before the flag (float slack)
     finally:
         gate.release.set()
         _join_all(engine)
