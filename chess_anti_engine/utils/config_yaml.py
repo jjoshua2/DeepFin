@@ -284,7 +284,7 @@ _TRAIN_KEYS = (
     "warm_start_lr_max_ratio",
     "lr_schedule", "lr_release_cycle_steps", "lr_release_start_frac", "lr_release_min_scale",
     "lr_release_shape",
-    "grad_clip", "zclip_z_thresh", "zclip_alpha", "zclip_clip_factor", "zclip_max_norm",
+    "grad_clip", "grad_clip_mode", "zclip_z_thresh", "zclip_alpha", "zclip_clip_factor", "zclip_max_norm",
     "use_compile", "compile_mode", "log_level", "swa_start", "swa_freq",
     *TRAINER_WEIGHT_KEYS,
     "sf_wdl_frac_floor", "sf_wdl_floor_at_regret",
@@ -643,7 +643,12 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     if isinstance(tune, dict):
         _apply_tune_section(out, tune)
 
-    flat = {k: v for k, v in out.items() if v is not None}
+    # For clipping caps, explicit null is an operation (disable the cap),
+    # not an absent override. Preserve it through both launch and live reload.
+    flat: dict[str, Any] = {
+        k: v for k, v in out.items()
+        if v is not None or k in {"zclip_max_norm", "grad_clip"}
+    }
     # Validate the effective LR before a live reload can mutate config or its
     # key baseline. Keep the original value: numeric strings and zero retain
     # their existing consumer behavior (`lr: 0` builds the optimizer at LR 0
