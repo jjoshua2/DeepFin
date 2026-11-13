@@ -74,3 +74,26 @@ crash-*
 .env.*
 .ratchet_disabled
 .monitor_fen_disabled
+
+# scratchpad/ is untracked local scratch (see scratchpad/README.md). Its old
+# tracked content is archived (tag pre-slim-20261113). Re-included below: the
+# README and the few files staying code or current docs still read.
+/scratchpad/*
+!/scratchpad/README.md
+!/scratchpad/seed_shift_control.py
+!/scratchpad/fpr_measure.py
+!/scratchpad/bt4/
+/scratchpad/bt4/*
+!/scratchpad/bt4/inspect_bt4.py
+!/scratchpad/bt4_joint20/
+/scratchpad/bt4_joint20/*
+!/scratchpad/bt4_joint20/sf_close_run02/
+/scratchpad/bt4_joint20/sf_close_run02/*
+!/scratchpad/bt4_joint20/sf_close_run02/completed_s100_readout.json
+!/scratchpad/bt4_joint20/sf_close_run02/optional_sharpened_ties_data_qualification.json
+!/scratchpad/bt4_joint20/sf_close_run02/sf-close/
+/scratchpad/bt4_joint20/sf_close_run02/sf-close/*
+!/scratchpad/bt4_joint20/sf_close_run02/sf-close/manifest.json
+!/scratchpad/bt4_joint20/confirmation_openings_v1/
+/scratchpad/bt4_joint20/confirmation_openings_v1/*
+!/scratchpad/bt4_joint20/confirmation_openings_v1/openings.fen

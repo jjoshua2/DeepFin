@@ -47,7 +47,7 @@ def fixture(tmp_path: Path) -> tuple[dict[str, Any], dict[str, Any], dict[str, A
                 'epochs': [{'epoch_index': i+1, 'source_logical_order_sha256': str(i+3)*64,
                              'corpus_logical_order_sha256': str(i+3)*64, 'source_plan_sha256': str(i+5)*64, 'plan': plan(i)} for i in range(2)]}
     (tmp_path/'corpus').mkdir()
-    bank = Path(__file__).resolve().parents[1] / 'scratchpad/bt4_joint20/publication_20260908_followup/training-horizon-runtime/py310_fixture/test_two_epochs_use_every_row_0/two/summary.json'
+    bank = Path(__file__).resolve().parent / 'fixtures/bt4_two_epoch_train/two_epoch_summary.json'
     actual_window = json.loads(bank.read_text())['train_window_metrics'][0]
     assert type(actual_window['transient_cuda_retry_batches']) is float
     batch_rows = _balanced_batch_rows(rows=train.ROWS, batch_size=512, max_game_rows=100)
