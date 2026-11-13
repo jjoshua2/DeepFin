@@ -1,0 +1,70 @@
+{
+  "status": "ACCEPT_R7_ENCODER_COMPATIBILITY_FOR_FROZEN_E2TB_SELECTION",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "source_checkout": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess",
+  "native_images": [
+    {
+      "ELF_recorded_native_and_LTO_flags": true,
+      "build_id": "35283ef7ce37f183826d007bbeafa51a2e99d288",
+      "bytes": 529648,
+      "imported": true,
+      "module": "chess_anti_engine.encoding._features_ext",
+      "path": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/encoding/_features_ext.cpython-313-x86_64-linux-gnu.so",
+      "sha256": "24bfb5b0a1a0adecee32914e349f0e3d09cf828c5df79fedcf3602cd0c4bd041"
+    },
+    {
+      "ELF_recorded_native_and_LTO_flags": true,
+      "build_id": "530fb284ca363995436c1bc0a697ea702b95330f",
+      "bytes": 969768,
+      "imported": true,
+      "module": "chess_anti_engine.encoding._lc0_ext",
+      "path": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/encoding/_lc0_ext.cpython-313-x86_64-linux-gnu.so",
+      "sha256": "54fb0a7f0bb69602c253b13330f4832a22162db8f526c6ab2aa4bf16ab372ebd"
+    },
+    {
+      "ELF_recorded_native_and_LTO_flags": true,
+      "build_id": "de45e33b3259ed26d5c6128b3bc5c8ceb7749c14",
+      "bytes": 213112,
+      "imported": true,
+      "module": "chess_anti_engine.encoding._perft_ext",
+      "path": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/encoding/_perft_ext.cpython-313-x86_64-linux-gnu.so",
+      "sha256": "0434e80c58c2c3562856877dda25c57ddc24230b881465b62ce71b0792a10bec"
+    },
+    {
+      "ELF_recorded_native_and_LTO_flags": true,
+      "build_id": "9ee95a4fbcac7e63a26bd006df40a18e1a99235a",
+      "bytes": 666984,
+      "imported": true,
+      "module": "chess_anti_engine.nnue._nnue_ext",
+      "path": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/nnue/_nnue_ext.cpython-313-x86_64-linux-gnu.so",
+      "sha256": "f6c438a3e8f3631e19f53165f403c06cca351d676d4fb673309b09f5d4388ab7"
+    },
+    {
+      "ELF_recorded_native_and_LTO_flags": true,
+      "build_id": "d3313282d697c16ef13168efa636501b75b6771e",
+      "bytes": 1339584,
+      "imported": true,
+      "module": "chess_anti_engine.mcts._mcts_tree",
+      "path": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/mcts/_mcts_tree.cpython-313-x86_64-linux-gnu.so",
+      "sha256": "da294b4f59e453b7db7bd7c94353d9ecdc4d07925cb56c9e6568675a50e1b476"
+    }
+  ],
+  "actual_cpu_root_acceptance": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cpu-qualification-root-acceptance-v3/readout.json",
+    "sha256": "eea06de82e50f01ea7b33c70e6d7a1fc16493c66abe17d1d7e85925de6b045ac"
+  },
+  "terminal": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cpu-qualification-execution-v3/terminal.json",
+    "sha256": "40c616a383e2947ec6c30f0c8dac16bca5fc648ff485b9787361d9ddc1d7d6fb",
+    "known_births_verified_absent": 1,
+    "supervisor_absent": true,
+    "wall_seconds": 8.237909310002578,
+    "cpu_seconds": 5.79
+  },
+  "all756_encoder_comparisons": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cpu-qualification-results-v3/all756-encoder-comparisons.json",
+    "sha256": "0eba225f1ec0edfbe6deccaa0f94b6b9acd5632d929234efc708b8e4adec914f"
+  },
+  "scope": "Actual native origins and756raw/mirror encoder compatibility plus strict metadata-builder propagation only; realproducer qualification separate.",
+  "training_updates": 0
+}

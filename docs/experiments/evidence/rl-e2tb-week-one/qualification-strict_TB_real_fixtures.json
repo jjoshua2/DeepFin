@@ -1,0 +1,39 @@
+{
+  "status": "ACCEPT_FIXED_STRICT_TB_CONSUMERS_ONLY",
+  "utc": "2026-11-12T23:58:07.438515+00:00",
+  "source_head": "1554c9eff92e28a5bc33eeac85b55ab5130999a7",
+  "terminal_sha256": "4bea1ad78894a8aae1b9951f33eabe17afbaeba5d0d8cef1fa17e18224b661f8",
+  "receipt_sha256": "362c634c4fc4a2e0d82eab5412c8310b05a9e6bff1cc4336cf3985fc203634b6",
+  "author_readout_sha256": "8ce9a267ee4053eecf26eec9831e011cdede3e4324c0349c926c4cd9ad38efbb",
+  "actual_rows": 13,
+  "actual_canonical_inventory": {
+    "kind": "pre_query_owned_noeviction_inventory",
+    "max_fds": null,
+    "canonical_counts": {
+      "wdl": 510,
+      "dtz": 510
+    },
+    "raw_alias_counts": {
+      "wdl": 1000,
+      "dtz": 1000
+    },
+    "asset_inventory_sha256": "207f7bc99c9113b237bee40ef1dc4f64f29bd3524279b6637da31032a2305ae5"
+  },
+  "five_raw_fixture_comparison_pass": true,
+  "positive_clock98_plays_on": true,
+  "six_man_zeroing_resolves": "white win",
+  "fullhistory7_nextmove_and8_current_threefold_natural": true,
+  "policy_only_result_preserved_actual_abstention": true,
+  "known_births_absent": {
+    "1104252": 25124134
+  },
+  "wall_seconds": 3.1508104750246275,
+  "CPU_seconds": 2.01,
+  "limits": [
+    "Actual3/6piece fixed fixtures, canonical3\u20136names; not every4/5piece query or table-content truth.",
+    "Controlled50tests qualify cursed/blessed mapping; no real cursed fixture banked.",
+    "Policy corrected0 rows and conservatively abstained; no target-coverage/improvement claim.",
+    "No actual SF/producer/serialization/MCTS/donor/training/research/gain qualified.",
+    "Actual1554 testonlysuccessor is source binding; stale a0de limitation text in authored plan denotes original production review, not executed head."
+  ]
+}

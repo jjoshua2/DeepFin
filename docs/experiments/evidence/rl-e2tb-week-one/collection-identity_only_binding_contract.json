@@ -1,0 +1,78 @@
+{
+  "actual_json_currently_absent": true,
+  "actual_json_paths": [
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-final-package-v1/protocol.json",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-final-package-v1/manifest.json"
+  ],
+  "allowed_receipt_semantics": "Only final science/publication and still-pending actual R7 qualified TB/SF/excluded-input receipts plus3admission booleans; no guessed GPU receipt or wrapper acceptance.",
+  "binding_graph": [
+    "immutable helpers/starts/profile -> immutable protocol and manifest templates -> immutable binding contract -> scientific JSON and main publication",
+    "actual protocol binds scientific/publication/qualified-consumer/supplement identities and explicit root admission flags",
+    "actual manifest derives actual protocolSHA; CLI binds actual manifestSHA"
+  ],
+  "check_phase": "All3 research admission flags FALSE. Actual collector--check only; no data, model, Trainer, engine, TB constructor, CUDA initialization or runtime root creation.",
+  "execute_phase": "All3 TRUE only after separate root accepted final bindings, main publication, actual qualifications and fresh owner control/resource/lease admission. Metadata binding itself never launches/adopts anything.",
+  "fixed_numeric_summary": {
+    "CUDA": "0",
+    "GPU_affinity": [
+      20,
+      22
+    ],
+    "HOLDOUT": 64,
+    "SF_workers": 2,
+    "TRAIN": 32,
+    "additional_max_plies": 450,
+    "diff_focus_enabled": true,
+    "games": 96,
+    "inner_seconds": 1170,
+    "owner_seconds": 1200,
+    "pure_selfplay_fraction": 1.0,
+    "seed": 20261114,
+    "serving_maxbatch": 1024,
+    "serving_pool": 16,
+    "simulations": 64,
+    "slots": 16
+  },
+  "immutable_files": {
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-final-package-v1/collect96.py": "6fe7fb06db4c87ed089818351178160ca207bc0bee184a31d8a2efcb65301989",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-final-package-v1/predicted-builder-profile.json": "28a12d4c64ee3009746a7702fd08687b0df28af5c0abb888bbd7222a6d28938d",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-final-package-v1/profile-relocation-proof.json": "031311f4ef5a08364c82d2cd1d83354e24a634dcb5f305938b1edc667d64cc12",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-final-package-v1/starts.epd": "f088851ccc29c37a6933d71d97da4250f4d67cfd19d70c83513a30fda938b2f9",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-final-package-v1/value_bundle.py": "08a8ba502e3ef3e1b4e372094a99e993f681278242032aee29b190bd84147f78",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-final-package-v1/verified_outcome.py": "f6340208eec76470d58001717a1a02d01808c38374c53417a5e5ffff0db3cf81",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-final-package-v2/bind_metadata.py": "7354fd14ab0d51367728008f13d8b493b7e224818d7bd97f8c72704110d7265a",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-final-package-v2/manifest.template.json": "e7e4223f4636721a15eb14d18594ddbc5826f01f2b0e994b2977dc702fcda20c",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-final-package-v2/protocol.template.json": "5563027defd33c11cba8e2dee584a56a45c048037c30aaeb6ac573a6035dad67"
+  },
+  "manifest_leaf_rule": "Derived SHA256 of encoded actualprotocol, never supplied independently",
+  "manifest_mutable_leaf": "/protocol_sha256",
+  "no_live_metadata_rewrite": "Binder requires research output_root absent; versions previous actualmetadata pair into fresh record, refuses inconsistent pair, writes protocol then manifest with fsync/atomic file replaces; interrupted pair is not a valid launch and no autoretry.",
+  "protocol_mutable_leaves": [
+    "/scientific_preregistration_path",
+    "/scientific_preregistration_sha256",
+    "/publication_receipt/path",
+    "/publication_receipt/sha256",
+    "/tablebase_qualification/path",
+    "/tablebase_qualification/sha256",
+    "/stockfish_qualification/path",
+    "/stockfish_qualification/sha256",
+    "/excluded_qualification_inputs/path",
+    "/excluded_qualification_inputs/sha256",
+    "/cohort_inputs_bound",
+    "/scientific_final_bound",
+    "/generation_execution_admitted"
+  ],
+  "required_exposure_handoff": "Accepted excluded-input union must include all failed/successful attempts known root/full histories/raw-mirror IDs; unbanked original inputs/forwards remainUNKNOWN. Fixed756/books/seeds unchanged.",
+  "reversal_rule": "Reset exactly13 allowed protocol leaves to template values; encode indent2/sortkeys/newline must recover protocol.template.json byteexact. Reset exactly manifest.protocol_sha256 to template placeholder; encode must recover manifest.template.json byteexact. No source/seed/config/profile/book/resource/numeric/schema/output fields may change.",
+  "runtime_here": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-final-package-v1",
+  "schema": "E2TB_COLLECTION_EXACT_IDENTITY_LATE_BINDING_CONTRACT_V1",
+  "scientific_binding_shape": "Exact stable runtime_here plus protocol_template/manifest_template/identity_only_binding_contract {path,sha256} pointing to v2 metadata HERE; science pins templates and contract, never actual JSON hashes.",
+  "scientific_field": "/components/strict_collection",
+  "status": "FROZEN_SOURCE_ONLY_NO_EXECUTION_ADMISSION",
+  "structural_rule_sha256": "94d7140ee4b86a42127f7c3519fe1a5d9a2c13c2193568013d8313ee7e16ae47",
+  "supersedes_v1_affinity_template_only": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-final-package-v1/preparation.json",
+    "sha256": "c463b25fc4a964dc176c3344f0b8581a654bd3bba7d28127d36b2cf00dfdf709"
+  },
+  "template_metadata_here": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-final-package-v2"
+}

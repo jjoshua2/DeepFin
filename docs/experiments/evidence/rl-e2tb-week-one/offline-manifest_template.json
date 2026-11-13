@@ -1,0 +1,47 @@
+{
+  "additional_source_sha256": {
+    "chess_anti_engine/inference.py": "308ed6dda1d476fb5c9c7251de1575306d133d038fefd4c89a1fb8674313c72c",
+    "chess_anti_engine/moves/encode.py": "4c3227adfc74d9911d1db66e4abf7cb27e19d6fcd9006069f638f53966e7ac6f",
+    "chess_anti_engine/moves/torch_maps.py": "f93ba12976a69729d8a39becf3c11fbd34a678e48365715c250f34b2de7403c9",
+    "chess_anti_engine/replay/shard.py": "29238b4cb61c4c60895826db6b55865baba4044409c6442abf10d038f351212f",
+    "chess_anti_engine/tune/fresh_rl_donor.py": "b7a8237cbe6113c235b7cc91608128886851b55ee681afdbb9b2bc7b8788e8b2",
+    "chess_anti_engine/uci/model_loader.py": "76041fc68a50f4ecacde8e828e7aa4c2fdf593d0403d7aff2bcc02f8af881ea3",
+    "chess_anti_engine/utils/amp.py": "91be05cab22b47fc06e0c06ac15029553cd84c592e0dafd8ceae512783670188",
+    "scripts/paired_compare.py": "6f8ae6bfecd636abfbbd00724e66137cdf640d9f88d8816964e7450ef5b3747c"
+  },
+  "components": {
+    "collector": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collector-preparation-v2/collect96.py",
+      "sha256": "6fe7fb06db4c87ed089818351178160ca207bc0bee184a31d8a2efcb65301989"
+    },
+    "observer": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-train-paired-preparation-v5/paired_observer.py",
+      "sha256": "3b8fab909222ac717ee8ff460e878f5f7519c62678c578bf07498b0ca9c6d505"
+    },
+    "train_inputs": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-train-paired-preparation-v5/train_inputs.py",
+      "sha256": "f35cea34aa0bd0022756539212f1215a748a144c2b9a656f4800a3902e8b22aa"
+    },
+    "verified_outcome": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collector-preparation-v2/verified_outcome.py",
+      "sha256": "f6340208eec76470d58001717a1a02d01808c38374c53417a5e5ffff0db3cf81"
+    }
+  },
+  "components_root_review_scope": "FreshTRAIN/sharedv2 sourcePREP only; independentroot acceptance/finalactualbindings stillrequired; no oldAA/native/data qualification relabeled toR7.",
+  "helpers": {
+    "common.py": "fe19a87af201ecdd9d3a2cadef2105e9d4016afc549f13e9622e9afea484c2e9",
+    "freeze_roots.py": "40dc49d582326c4d63f06011746f65f052826fb66e579e54cad105eef7a9a956",
+    "metrics.py": "8058546e7fa263c5becfae1f4378917d4b1d4f333f32d8e04b94fceefe7a1d56",
+    "readout.py": "285c3c9b1914a7b913ea1de0330394d1c2b36185ffa87e05c24276bc58ca88bf",
+    "score.py": "6d96e964df8e6d0f252b1c602d10d52e5d167fbdf906e8fa5ddc65fd3a63b671",
+    "strict_roots.py": "2b88f17f1fd9d06a8f60d35a3222b90ed6288d7eebd61997e9893fc1aa59b319"
+  },
+  "negative_plan_UNRUN_sha256": "911f2efaa2b42244536aa66f11ed336bece37beb1086bfdc1a76ab001ce44e79",
+  "predecessor_preparation_sha256": "21dc4e5fb667de83a2f431080181a0d87e001048011d738ef050ab3a0d6f2e66",
+  "protocol_sha256": "b2123634a6e3f8eff8a093c7c5c93120df4105e903ac2a7e844e39d95c70e892",
+  "schema": "strict-E2TB-offline64-source-preparation-v3-affinity-and-qualified-TRAIN-metadata",
+  "source_prior_arch_metadata_sha256": "5c6d344967cd3714523a24526315feaf1a626b6cb48b59b9021c3400e3a0e49e",
+  "source_proof_sha256": "521315ed1cf72ab7bc824563f5f96d5917b1867927e684b832dfd6edd44f3082",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "SEALED_UNBOUND_PREPARATION_ONLY_NO_EXECUTION_ADMISSION"
+}

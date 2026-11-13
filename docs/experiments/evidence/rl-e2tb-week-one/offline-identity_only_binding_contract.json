@@ -1,0 +1,54 @@
+{
+  "status": "FROZEN_SOURCE_ONLY_IDENTITY_BINDING_CONTRACT",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "protocol_template": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-preparation-v3/protocol.json",
+    "sha256": "b2123634a6e3f8eff8a093c7c5c93120df4105e903ac2a7e844e39d95c70e892"
+  },
+  "manifest_template": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-preparation-v3/manifest.json",
+    "sha256": "5b36c63d811a91a6f35847251a602a18a24a41a4660af50e071a698a47d1303a"
+  },
+  "allowed_protocol_identity_leaves": [
+    "/checkpoints_binding_path",
+    "/checkpoints_binding_sha256",
+    "/cohort_binding_path",
+    "/cohort_binding_sha256",
+    "/publication_path",
+    "/publication_sha256",
+    "/root_bank_binding_path",
+    "/root_bank_binding_sha256",
+    "/scientific_path",
+    "/scientific_sha256",
+    "/score_helper_path",
+    "/score_readout_sha256",
+    "/score_terminal_path",
+    "/score_terminal_sha256",
+    "/scorer_manifest_sha256",
+    "/scorer_protocol_sha256",
+    "/training_manifest_path",
+    "/training_manifest_sha256",
+    "/training_protocol_path",
+    "/training_protocol_sha256"
+  ],
+  "allowed_protocol_authority_flags": [
+    "/source_inputs_bound",
+    "/science_binding_complete",
+    "/cohort_binding_complete",
+    "/read_bindings_complete",
+    "/score_bindings_complete"
+  ],
+  "allowed_manifest_identity_leaves": [
+    "/protocol_sha256"
+  ],
+  "fixed_fields": "Every other protocol/manifest field, including source, helpers, components, numerics, formulas, snapshot order, seeds, math context, output roots and deadlines, remains canonical-JSON equal to template. No additions/deletions. Copy the six exact helper Python files and source-proof.json into each fresh runtime_here_by_phase directory; paths of component dependencies remain unchanged.",
+  "binding_rules": "Only actual accepted science/publication/producer/cohort/draw/rootbank/checkpoint/closed-scoring identities, never alternate science/settings/checkpoints. Final science.offline and science.seeds must equal original draft exactly. Source flags become true only after actual corresponding qualification and finite stage admission; absence never permits work.",
+  "staging": "CPU freezer binds qualified all96/32/628 metadata and all64 owned proofs before root arrays. Scorer binds accepted immutable full64 root bank and exact donor/A1/A8/A40/B1/B8/B40 checkpoint identities. CPU reader binds complete closed score stage and exact artifacts. Every phase gets a separately preserved protocol/manifest pair; previous phase files never overwritten after stage starts. Any valid HOLD unavailability yields whole diagnostic inconclusive and no inference, no subset. Each phase has its own fixed fresh code/metadata directory from runtime_here_by_phase; no previous metadata or helpers are rewritten.",
+  "no_hash_cycle": "Science pins immutable templates and this contract. Later phases bind actual science/publication and predecessor output identities, then derive protocol hash into manifest and sole finalmanifest token into argv. Frozen science remains unchanged.",
+  "no_research_or_GPU_admission": true,
+  "runtime_here_by_phase": {
+    "roots": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/roots",
+    "score": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/score",
+    "readout": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/readout"
+  }
+}
