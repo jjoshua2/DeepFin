@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from pathlib import Path
 from typing import Any, cast
 
@@ -310,6 +311,8 @@ class _WatchdogStub:
     def __init__(self) -> None:
         self._stall_watchdog_started = False
         self._model_watch_started = False
+        self._model_watch_stop = threading.Event()
+        self._model_watch_thread = None
         self.log = logging.getLogger("test_watchdog_stub")
 
 
