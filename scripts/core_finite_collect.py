@@ -14,9 +14,23 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any, TypedDict
 import uuid
 from unittest.mock import patch
+
+if TYPE_CHECKING:
+    from chess_anti_engine.selfplay.config import DiffFocusConfig, GameConfig, OpponentConfig, SearchConfig, TemperatureConfig
+    from chess_anti_engine.selfplay.opening import OpeningConfig
+
+
+class CollectionConfigs(TypedDict):
+    game: GameConfig
+    search: SearchConfig
+    temp: TemperatureConfig
+    opening: OpeningConfig
+    opponent: OpponentConfig
+    diff_focus: DiffFocusConfig
+
 
 INITIAL_DONOR_SHA256 = 'a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0'
 REQUIRED_SOURCE_FILES = (
@@ -174,7 +188,7 @@ def closed_predecessor(binding: dict[str, Any]) -> dict[str, Any]:
             Path(binding['boundary']['path']) == Path(stage['output']) / 'boundary.json' and
             not Path(stage['output']).with_name(Path(stage['output']).name + '.failed.json').exists() and
             not (Path(stage['output']) / 'boundary.pending.json').exists() and
-            Path(boundary['final_checkpoint']['path']) == Path(stage['output']) / 'learner.pt',
+            Path(boundary['checkpoint']['path']) == Path(stage['output']) / 'learner.pt',
             'closed predecessor stage/contract/history join differs')
     return boundary
 
@@ -199,8 +213,8 @@ def validate_protocol(protocol: dict[str, Any], roster: list[dict[str, Any]]) ->
         parent = closed_predecessor(actor['predecessor'])
         require(parent['status'] == 'COMPLETED_CORE_GENERATION_V1' and parent['run_uuid'] == protocol['run_uuid'] and
                 parent['source_revision'] == protocol['source']['revision'] and parent['generation'] == protocol['generation'] - 1 and
-                parent['final_step'] == actor['expected_checkpoint_step'] and
-                parent['final_checkpoint'] == {'path': actor['path'], 'sha256': actor['sha256']},
+                parent['step'] == actor['expected_checkpoint_step'] and
+                parent['checkpoint'] == {'path': actor['path'], 'sha256': actor['sha256']},
                 'actor is not the preplanned previous-generation final checkpoint')
     require([g['start_ordinal'] for g in roster] == list(range(len(roster))) and
             all(g['bank'] == 'train' and g['physical_game_id'] == protocol['collection_uuid'] + ':' + str(i)
@@ -268,13 +282,13 @@ def project_import_origins(protocol: dict[str, Any]) -> dict[str, Any]:
     for name, module in list(sys.modules.items()):
         if name == 'chess_anti_engine' or name.startswith('chess_anti_engine.'):
             value = getattr(module, '__file__', None)
-            require(value is not None and Path(value).resolve().is_relative_to(repo),
-                    'foreign project import: ' + name)
+            if value is None or not Path(value).resolve().is_relative_to(repo):
+                raise ValueError('foreign project import: ' + name)
             origins[name] = {'path': str(Path(value).resolve()), 'sha256': digest(value)}
     return origins
 
 
-def build_configs(protocol: dict[str, Any], roster: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, Any]]:
+def build_configs(protocol: dict[str, Any], roster: list[dict[str, Any]]) -> tuple[CollectionConfigs, dict[str, Any]]:
     from chess_anti_engine.selfplay.config import DiffFocusConfig, GameConfig, OpponentConfig, SearchConfig, TemperatureConfig
     from chess_anti_engine.selfplay.opening import OpeningConfig, resolve_slot_opening
     from chess_anti_engine.uci.model_loader import model_config_from_arch
@@ -284,7 +298,7 @@ def build_configs(protocol: dict[str, Any], roster: list[dict[str, Any]]) -> tup
 
     values = protocol['configs']
     require(set(values) == {'game', 'search', 'temp', 'opening', 'opponent', 'diff_focus'}, 'unknown config group')
-    cfg = {'game': GameConfig(**values['game']), 'search': SearchConfig(**values['search']),
+    cfg: CollectionConfigs = {'game': GameConfig(**values['game']), 'search': SearchConfig(**values['search']),
            'temp': TemperatureConfig(**values['temp']), 'opening': OpeningConfig(**values['opening']),
            'opponent': OpponentConfig(**values['opponent']), 'diff_focus': DiffFocusConfig(**values['diff_focus'])}
     game, search, opening = cfg['game'], cfg['search'], cfg['opening']
@@ -314,7 +328,9 @@ def build_configs(protocol: dict[str, Any], roster: list[dict[str, Any]]) -> tup
     model_config = model_config_from_arch(protocol['actor']['architecture'])
     require(canonical({'_schema_version': ARCH_SCHEMA_VERSION, **asdict(model_config)}) ==
             canonical(protocol['actor']['architecture']), 'architecture fields would be defaulted or dropped')
-    return cfg, {k: asdict(v) for k, v in cfg.items()}
+    return cfg, {'game': asdict(game), 'search': asdict(search), 'temp': asdict(cfg['temp']),
+                 'opening': asdict(opening), 'opponent': asdict(cfg['opponent']),
+                 'diff_focus': asdict(cfg['diff_focus'])}
 
 
 def verify_execution(protocol: dict[str, Any], protocol_sha256: str, admission: dict[str, Any]) -> None:
@@ -440,14 +456,14 @@ def validate_samples(audit: Any, samples: list[Any], model: Any, game: Any, plan
                 'raw record POV/ply differs')
         expected = encode_cboard_for_model(model, CBoard.from_board(position))
         value = np.asarray(sample.x)
-        require(value.shape == expected.shape == (175, 8, 8) and np.isfinite(value).all() and
+        require(value.shape == expected.shape == (175, 8, 8) and bool(np.isfinite(value).all()) and
                 np.array_equal(value, expected), 'actual full-history175 encoding differs')
         legal = np.zeros(1858, dtype=np.uint8)
         for move in position.legal_moves:
             legal[move_to_index_for_encoding(move, position, policy_encoding=game.policy_encoding)] = 1
         require(sample.legal_mask is not None and np.array_equal(np.asarray(sample.legal_mask).astype(bool), legal.astype(bool)), 'actual legal mask differs')
         policy = np.asarray(sample.policy_target)
-        require(policy.shape == (1858,) and np.isfinite(policy).all() and (policy >= 0).all() and
+        require(policy.shape == (1858,) and bool(np.isfinite(policy).all()) and bool((policy >= 0).all()) and
                 abs(float(policy.sum()) - 1) < 1e-5 and not policy[legal == 0].any(), 'invalid legal Gumbel/TB target')
         verifier.verify_policy_sample(proof, sample, position, game.policy_encoding)
         rows.append({'physical_row_id': planned['physical_game_id'] + ':' + str(i),
@@ -532,7 +548,7 @@ def failure_sample_evidence(samples: list[Any]) -> dict[str, Any]:
 
 
 def execute(protocol: dict[str, Any], protocol_sha256: str, roster: list[dict[str, Any]],
-            cfg: dict[str, Any], profile: dict[str, Any], native: dict[str, Any]) -> int:
+            cfg: CollectionConfigs, profile: dict[str, Any], native: dict[str, Any]) -> int:
     import numpy as np
     import torch
     from chess_anti_engine.core_generation_data import capture_raw_targets, validate_stored_targets
@@ -585,8 +601,9 @@ def execute(protocol: dict[str, Any], protocol_sha256: str, roster: list[dict[st
         origins = {}
         for entry in native['native_images']:
             module = importlib.import_module(entry['module'])
-            require(Path(module.__file__).resolve() == Path(entry['path']).resolve() and
-                    digest(module.__file__) == entry['sha256'], 'foreign native import')
+            module_file = module.__file__
+            if module_file is None or Path(module_file).resolve() != Path(entry['path']).resolve() or digest(module_file) != entry['sha256']:
+                raise ValueError('foreign native import')
             origins[entry['module']] = entry
         write_json(out / 'native-imports.json', origins)
         model, serving = load_actor(protocol)
@@ -598,15 +615,17 @@ def execute(protocol: dict[str, Any], protocol_sha256: str, roster: list[dict[st
             'matmul_tf32': torch.backends.cuda.matmul.allow_tf32,
             'cudnn_tf32': torch.backends.cudnn.allow_tf32,
             'deterministic_algorithms': torch.are_deterministic_algorithms_enabled()}
-        verifier = VerifiedOutcomeVerifier(path=protocol['tablebase']['path'],
+        verification_owner = VerifiedOutcomeVerifier(path=protocol['tablebase']['path'],
             asset_inventory_sha256=protocol['tablebase']['asset_inventory_sha256'],
             collection_uuid=protocol['collection_uuid'], run_uuid=protocol['run_uuid'], generation=protocol['generation'],
             source_revision=protocol['source']['revision'], concurrent_slots=protocol['concurrent_slots'],
             actor_sha256=protocol['actor']['sha256'], served_state_sha256=serving['pre_state_sha256'])
+        verifier = verification_owner
         write_json(out / 'actor-serving-start.json', serving)
 
         encode_tokens = getattr(model, '_encode_tokens', None)
-        require(callable(encode_tokens), 'full actor lacks the qualified token-encoding entrypoint')
+        if not callable(encode_tokens):
+            raise ValueError('full actor lacks the qualified token-encoding entrypoint')
 
         def observed_encode(*args: Any, **kwargs: Any) -> Any:
             require(tuple(args[0].shape[1:]) == (175, 8, 8) and str(args[0].device) == 'cuda:0' and
@@ -648,10 +667,9 @@ def execute(protocol: dict[str, Any], protocol_sha256: str, roster: list[dict[st
             sync_dir(out)
             samples = pending.get(audit.game_id, [])
             try:
-                require(planned is not None and ordinal not in completed and len(samples) == audit.retained_samples,
-                        'unplanned/repeated attempt or pending sample count differs')
-                require(verifier is not None, 'verification owner unavailable')
-                proof = verifier.verify(audit, planned, cfg['game'])
+                if planned is None or ordinal in completed or len(samples) != audit.retained_samples:
+                    raise ValueError('unplanned/repeated attempt or pending sample count differs')
+                proof = verification_owner.verify(audit, planned, cfg['game'])
                 verified = proof.metadata()
                 common = {'run_uuid': protocol['run_uuid'], 'collection_uuid': protocol['collection_uuid'],
                           'source_revision': protocol['source']['revision'], 'generation': protocol['generation'],
@@ -663,7 +681,7 @@ def execute(protocol: dict[str, Any], protocol_sha256: str, roster: list[dict[st
                 write_json(stage / 'outcome-proof.json', {'schema': 'CORE_PRODUCING_OUTCOME_PROOF_V1', **common,
                            'verification': verified, 'proof_sha256': proof.proof_sha256})
                 rows = validate_samples(audit, samples, model, cfg['game'], planned, proof=proof,
-                                        verifier=verifier, slots=protocol['concurrent_slots'])
+                                        verifier=verification_owner, slots=protocol['concurrent_slots'])
                 raw, raw_meta = capture_raw_targets(samples, audit, [r['physical_row_id'] for r in rows], proof=proof, game=cfg['game'])
                 with (stage / 'raw-targets.npz').open('xb') as stream:
                     np.savez_compressed(stream, **raw)
@@ -718,7 +736,8 @@ def execute(protocol: dict[str, Any], protocol_sha256: str, roster: list[dict[st
                 try:
                     validate_stockfish_contract(engine, protocol['tablebase']['path'])
                     birth = proc_birth(engine.proc.pid)
-                    require(birth is not None and engine.proc.poll() is None, 'SF died after explicit readiness')
+                    if birth is None or engine.proc.poll() is not None:
+                        raise ValueError('SF died after explicit readiness')
                     with lock:
                         processes[engine.proc.pid] = (engine.proc, birth)
                         events.append({'pid': engine.proc.pid, 'birth': birth,

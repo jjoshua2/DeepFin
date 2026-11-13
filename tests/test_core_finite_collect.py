@@ -56,7 +56,9 @@ def test_fixed_roster_refuses_replacements_and_foreign_actor(tmp_path: Path, fau
         games[0]['physical_game_id'] = RUN + ':0'
     else:
         p['actor']['sha256'] = '0' * 64
-    with pytest.raises(ValueError):
+    messages = {'duplicate_history': 'duplicate planned opening history',
+                'wrong_donor': 'initial actor must be immutable A39'}
+    with pytest.raises(ValueError, match=messages.get(fault, 'fixed TRAIN attempt identities/order differ')):
         collect.validate_protocol(p, games)
 
 
@@ -72,8 +74,8 @@ def predecessor(tmp_path: Path, p: dict[str, Any]) -> dict[str, Any]:
     p['actor']['path'] = str(tmp_path / 'learner.pt')
     boundary = write('boundary.json', {'status': 'COMPLETED_CORE_GENERATION_V1', 'run_uuid': RUN,
         'source_revision': p['source']['revision'], 'generation': 1, 'contract_sha256': contract['sha256'],
-        'stage': stage, 'parent': None, 'generation_manifests': [], 'final_step': 512,
-        'final_checkpoint': {'path': p['actor']['path'], 'sha256': 'f' * 64}})
+        'stage': stage, 'parent': None, 'generation_manifests': [], 'step': 512,
+        'checkpoint': {'path': p['actor']['path'], 'sha256': 'f' * 64}})
     command = ['python', '-m', 'scripts.core_finite_learner', '--contract', contract['path'],
                '--contract-sha256', contract['sha256'], '--stage', stage['path'], '--stage-sha256', stage['sha256']]
     terminal = write('terminal.json', {'status': 'PASS', 'returncode': 0, 'owned_processes_closed': True,
@@ -86,6 +88,10 @@ def test_later_actor_must_be_previous_closed_final_not_selected_checkpoint(tmp_p
     binding = predecessor(tmp_path, p)
     p['generation'] = 2
     p['actor'].update(kind='learner', sha256='f' * 64, expected_checkpoint_step=512, predecessor=binding)
+    # Actual learner continuation consumes checkpoint/step; aliases are optional.
+    parent = collect.closed_predecessor(binding)
+    assert 'final_checkpoint' not in parent
+    assert 'final_step' not in parent
     collect.validate_protocol(p, roster())
     p['actor']['expected_checkpoint_step'] = 8
     with pytest.raises(ValueError, match='previous-generation'):
@@ -114,7 +120,7 @@ def test_exclusion_refs_fail_before_actor_work(tmp_path: Path) -> None:
     collect.write_json(prior, {'history_sha256': [], 'stored_input_float16_sha256': [],
                               'coverage_scope': 'explicit synthetic empty control', 'donor_pretraining_exposure': 'UNKNOWN'})
     collect.write_json(playing, [{'id': 'held-out-start', 'input_sha256': '0' * 64, 'mirror_sha256': '1' * 64}])
-    p = {'exclusions': {'prior': {'path': str(prior), 'sha256': collect.digest(prior)},
+    p: dict[str, Any] = {'exclusions': {'prior': {'path': str(prior), 'sha256': collect.digest(prior)},
          'playing_starts': {'path': str(playing), 'sha256': collect.digest(playing)},
          'playing_start_count': 1, 'prior_overlap_action': 'report', 'playing_overlap_action': 'refuse'}}
     assert collect.exclusion_inputs(p)[1][0]['id'] == 'held-out-start'

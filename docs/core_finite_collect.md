@@ -76,7 +76,8 @@ learner checkpoint. `actor.predecessor` then has
 `{boundary,owner_terminal,owner_sha256,command}`: two refs plus the exact owner
 hash and child argv. The terminal must be PASS/return 0 with owned closure,
 matching command and owner SHA; contract/stage/boundary joins authenticate the
-previous final checkpoint. Pending-boundary or external failure markers refuse. A child `COMPLETED` label alone is insufficient.
+previous final checkpoint using the learner's canonical `checkpoint`/`step`
+fields; it does not depend on optional `final_checkpoint`/`final_step` aliases. Pending-boundary or external failure markers refuse. A child `COMPLETED` label alone is insufficient.
 No intermediate checkpoint or champion score selects this actor.
 
 One call to the public strict embedded-architecture loader constructs one model.

@@ -52,7 +52,7 @@ def capture_raw_targets(samples: list[Any], audit: Any, row_ids: list[str], *, p
                 continue
             value = np.asarray(source)
             require(value.dtype == np.dtype('float32') and value.shape == (width,) and
-                    np.isfinite(value).all() and (value >= 0).all() and
+                    bool(np.isfinite(value).all()) and bool((value >= 0).all()) and
                     abs(float(value.sum()) - 1) < 1e-5, 'raw target not original float32 simplex: ' + target)
             raw[target][i] = value
             if mask is not None:
@@ -77,7 +77,7 @@ def validate_stored_targets(raw: dict[str, Any], arrays: dict[str, Any], *, proo
                           ('has_policy', 1), ('is_network_turn', 1), ('has_is_network_turn', 1),
                           ('is_selfplay', 1), ('has_is_selfplay', 1), ('has_legal_mask', 1)):
         require(key in arrays and np.asarray(arrays[key]).shape == (n,) and
-                np.all(np.asarray(arrays[key]) == expected), 'stored identity/availability differs: ' + key)
+                bool(np.all(np.asarray(arrays[key]) == expected)), 'stored identity/availability differs: ' + key)
     require(np.array_equal(arrays['ply_index'], np.asarray(plies)), 'stored physical ply differs')
     if 'is_sf_refute_opp' in arrays:
         require(not np.asarray(arrays['is_sf_refute_opp']).any(), 'stored SF-refute row')

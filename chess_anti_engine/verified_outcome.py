@@ -21,7 +21,11 @@ def require(ok: bool, message: str) -> None:
 
 
 def plain(value: Any) -> Any:
-    return asdict(value) if is_dataclass(value) else value
+    if is_dataclass(value):
+        if isinstance(value, type):
+            raise TypeError('asdict() should be called on dataclass instances')
+        return asdict(value)
+    return value
 
 
 def canonical(value: Any) -> bytes:
@@ -154,9 +158,11 @@ class VerifiedOutcomeVerifier:
                     a['resolution'] == 'natural', 'natural wire/rules mismatch')
             label = 'NATURAL'
         elif actual.origin == 'TB_ADJUDICATED':
-            require(natural is None and a['natural_result'] == '*' and a['resolution'] == 'tablebase_adjudication' and
-                    actual.wdl in (-2, -1, 0, 1, 2) and type(actual.dtz) is int, 'strictTB wire/raw class mismatch')
-            require(abs(actual.wdl) != 2 or actual.halfmove_clock == 0, 'positive-clock decisive TB label')
+            raw_wdl = actual.wdl
+            if not (natural is None and a['natural_result'] == '*' and a['resolution'] == 'tablebase_adjudication' and
+                    raw_wdl is not None and raw_wdl in (-2, -1, 0, 1, 2) and type(actual.dtz) is int):
+                raise ValueError('strictTB wire/raw class mismatch')
+            require(abs(raw_wdl) != 2 or actual.halfmove_clock == 0, 'positive-clock decisive TB label')
             label = 'STRICT_TB_ADJUDICATED'
         else:
             require(actual.origin == 'UNRESOLVED' and natural is None and a['resolution'] == 'unresolved' and
@@ -216,7 +222,8 @@ class VerifiedOutcomeVerifier:
         if ply in data['policy_applied_plies'] or ply in data['policy_abstained_plies']:
             best = self.owner.policy_move(position)
             if ply in data['policy_applied_plies']:
-                require(best is not None and best in position.legal_moves, 'declared policy move not strict/legal')
+                if best is None or best not in position.legal_moves:
+                    raise ValueError('declared policy move not strict/legal')
                 action = move_to_index_for_encoding(best, position, policy_encoding=policy_encoding)
                 expected = np.zeros_like(sample.policy_target)
                 expected[int(action)] = 1
