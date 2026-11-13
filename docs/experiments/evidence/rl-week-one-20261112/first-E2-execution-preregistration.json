@@ -1,0 +1,306 @@
+{
+  "arms": {
+    "FULLA": {
+      "categorical": "OriginalrawF32searchQ -> actualHLGauss -> sameproductionF16; everyroworiginalF32andstoredF16controlbitmatch",
+      "main_SF": 0.0,
+      "main_outcome": 0.0,
+      "main_search": 1.0
+    },
+    "FULLB": {
+      "categorical": "HLGauss(.8rawF32searchQ+.2genuineoutcomeQ) -> sameF16cast",
+      "main_SF": 0.0,
+      "main_outcome": 0.2,
+      "main_search": 0.8
+    },
+    "common": "Alloriginalpolicyauxweights/fulltrunk/Aurora+Adam/clipping/LRwarmup/reference state; mainsearchinputs storedF16both; SFandcategoricalhostrebuildOFFboth; noSFopponent/anchor/LR/architecturechange",
+    "units": "Categorical signedQ[-1,1], outcome+1/0/-1STM; expectedscoreW+.5D forreporting only; scalarblend BEFOREHLGauss, not20%CE/gradientmix"
+  },
+  "binding_rule": "Parent plus immutable precollection addendum jointly govern; preserve parent bytes. This composite is the execution preregistration SHA. No research execution admitted by publication.",
+  "budget": {
+    "AAalreadycompleted_actual_seconds": 32.29501065600198,
+    "CPU_TB_qualification_wall_ceiling": 120,
+    "CPU_index_wall_ceiling": 300,
+    "maximum_GPU_stage_seconds": 21060,
+    "policy": "OneGPUexperiment/tripleleases/2conservativeCPUthreads/no paidcompute;allSTOP/PAUSE/CANCEL/YIELD/intentionalstop honored/nevercleared;allfailedstagecostsretained;donor/stoppedneighborspreserved",
+    "stage_seconds": {
+      "AAqualification": 180,
+      "arena_engineering": 180,
+      "collection": 1200,
+      "conditional_confirmation": 7200,
+      "each_of3screens": 3600,
+      "offline": 300,
+      "twoarm_learning_total": 1200
+    },
+    "week_GPU_stage_ceiling": 172800,
+    "week_deadline_utc": "2026-11-19T16:09:20Z"
+  },
+  "cohort": {
+    "HOLDOUT_games": 64,
+    "HOLDOUT_gate": "Whole64games excludedlearner/replay/priorities/normalizers; all64genuine naturalandoneeligibleNETroot/game forcompleteofflineendpoint, else offlineinconclusive only",
+    "TRAIN_games": 32,
+    "TRAIN_gate": "ALL32naturalusable/rawF32originalcontrol/POV/legal/fullhistory qualified else noE2learning",
+    "attempts": 96,
+    "concurrent_slots": 16,
+    "exposure_limit": "Bounded803knownpaths/138822rawrows+actualfilemirrors only. Pretraining/unknownarchives/historicaldropout/families/discarded/unretained/searchpositionsUNKNOWN; no wholetrajectorynovelty",
+    "final_roster_manifest": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-final-roster-v1/manifest.json",
+      "sha256": "24011e8260f76d06252239395de5116dfeca7764eae1bd8ec53cb26ac666525f"
+    },
+    "games": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-final-roster-v1/games.json",
+      "sha256": "6b236c60121780a8833a93ee3cbe794addbf1a5cbbe51df2a042f0fcc1102dbe"
+    },
+    "generation": "One strictA39; pureSP1;64Gumbelsims;450additionalplies afterfull16plyhistory; completeexplicitTBoff includingsearch/adjudication/rescore/SFpaths; everyattemptretained",
+    "old_index": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-exposure-index-results-v1-162f4f8c/index.json",
+      "sha256": "5483fc9361a6e3a8840a5e27f2e1c2d34172c28593b56b88dce9850eee421e2b"
+    },
+    "old_index_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-exposure-index-root-readout-v1/readout.json",
+      "sha256": "777186b263e9ac1e3c995b37058ac546b201aefd71723a596d4846fce3dec2c2"
+    },
+    "other_matches": "Old matchesinTRAIN/unselectedHOLDOUTretainedtrajectoriescount/disclose, notblanketstudyfailure",
+    "playing_start_gate": "Afterall96complete BEFORElearning/scoring: all628fixedplayingstart175F16hashes mustbe absentALL96RETAINEDvalidation.rows raw+filemirror union. Anycollision=>playingendpointunqualified/noE2learning; no postcollectionreplacement",
+    "replacement_rule": "Onlybeforecollection earliestpassing32structuralreserves preservebank/ordinal; final0promotions. No outcome/zero/censored/slow/failedgame replacement",
+    "root_selection": "AFTERallTRAINinputsbanked, offsets8..80 retainedNETrows; excludeoldboundedraw+mirror and allnewTRAINraw+mirror; minSHA(salt+physical_row_id); beforebranchpredictions/teacherscores; noalternategames",
+    "starts": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-final-roster-v1/starts.epd",
+      "sha256": "be37ed7fde66cc9e1799e338d8d79174903e1724e120a77fc82295b746ba6ac9"
+    },
+    "structural_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-roster-books-root-review-v1/review.json",
+      "sha256": "301a074b70b212995879bbe929123b4e4987d068679c154d65260aa56a474505"
+    },
+    "uuid": "162f4f8c-a0ea-4a35-8024-e794eb52663b"
+  },
+  "components": {
+    "TRAIN_loader": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2-value-bundle-preparation-v2/train_inputs.py",
+      "sha256": "2bd8acc93e4a3e70c019bbf853ddbb655b96bc47a1f442b9bb1dd175b5487614"
+    },
+    "collector": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2-value-bundle-preparation-v1/collect96.py",
+      "sha256": "2fc1516ab38d9c5c0598f01066675dee3ee5fb061b3cb2c7d3938db12dcea75d"
+    },
+    "paired_caller": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2-value-bundle-preparation-v2/run_paired.py",
+      "sha256": "c59ea8327546f76c807e2c7b2b221d9e777fb0b2c17cd8cfc1cf5c25e38adfbf"
+    },
+    "paired_observer": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2-value-bundle-preparation-v2/paired_observer.py",
+      "sha256": "92cd4e8f7125acb8dd5d7a3079803f9846efddbbebe4820533e3d9380b78116a"
+    },
+    "postcollection_retained_playing_start_check": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-collector-binding-preparation-v1/check_retained_playing_overlap.py",
+      "sha256": "a610f7fde662081a5bbbb6dad9140907cae15876fd47f6f2de1a8578c083aff1"
+    },
+    "raw_value_factory": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2-value-bundle-preparation-v2/value_bundle.py",
+      "sha256": "4a7a8cbae7f779b00e9ba046b3c83b0da98f4c8a557bf87555b53aba214f684c"
+    },
+    "selected8": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2-value-bundle-preparation-v2/selected-parameters.json",
+      "sha256": "fbb738aaf19b30520ef92a55c93a77eed9971c3904abbb2e18b2479f2a4e79ff"
+    }
+  },
+  "donor": {
+    "path": "/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/baseline/epoch2.pt",
+    "sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0"
+  },
+  "execution_admitted": false,
+  "failure_and_next_decision": "Anytechnical/source/native/data/owner/control/budget/deadline mismatch refusesaffectedstage andpreservespartials. No automaticretry/extension/userstoprestart. Negativeorunclearresultgetsseparateprospectivenextquestion; never goalcompleteforplumbing oroneexperiment.",
+  "frozen_utc": "2026-11-12T22:17:15.781178+00:00",
+  "long_term_goal_achieved": false,
+  "offline": {
+    "bootstrap": {
+      "paired_samples": 10000,
+      "seed": 2026111206,
+      "unit": "wholeheldoutgame/onefrozenroot"
+    },
+    "incomplete_outcomes": "Wholeofflineendpointinconclusive; noavailabilityselectedaccuracyclaim",
+    "metrics": [
+      "expectedscore_squarederror",
+      "drawBrier",
+      "threeclassWDLBrier",
+      "legalpolicyTVagainstDonor"
+    ],
+    "role": "DIAGNOSTICONLY_NOTANYSCREEN_SELECTION_OR_ADOPTION_GATE",
+    "roots": 64,
+    "snapshots": [
+      "donor",
+      "FULLA1",
+      "FULLA8",
+      "FULLA40",
+      "FULLB1",
+      "FULLB8",
+      "FULLB40"
+    ]
+  },
+  "parent_frozen_preregistration": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/first-E2-frozen-preregistration-v1/preregistration.json",
+    "sha256": "7d47cb547d8f1b0b96299dbcc097a31e8d9eab7cfd8522d1904ad88ff8f251d6"
+  },
+  "playing": {
+    "TB": "commonindexed3-6strictroot+leaf+rule50/fullhistoryawareadjud; keepunresolvedpositiveclockdecisive leaves; no silentTBofffallback",
+    "TB_path": "/home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6",
+    "Torch_compile": "off",
+    "book_manifest": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2-playing-books-final-v1-162f4f8c/manifest.json",
+      "sha256": "38956f04ca2ec38cfed699222a91af9fddcdca28a8d9cf06bcad9303cdc5e66e"
+    },
+    "claim_policy": "Actualarena claim_draw=True includesnextmoveclaims; discloseendingstrata",
+    "concurrency": 32,
+    "confirmation": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2-playing-books-final-v1-162f4f8c/confirmation.epd",
+      "sha256": "5eb478420f952692ed69762bf840a479241636cd1f1f8d8a096ff1cc626d15b1"
+    },
+    "eval_max_batch": 1024,
+    "gumbel_noise": "ON fixedarena scale1; differsproductionper-plyschedule",
+    "identities": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2-playing-books-final-v1-162f4f8c/selected-source-identities.json",
+      "sha256": "c11b10edc5c19557a6541db9b2c62259267b86005cdf9941b155be8ec1f05ac6"
+    },
+    "max_additional_plies": 450,
+    "mode": "matched_sims",
+    "scope": "DifferentfromoldTBoffarenasandexternalRof30+.1/noharnessadjud; no crossprofilepooling",
+    "screen": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2-playing-books-final-v1-162f4f8c/screen.epd",
+      "sha256": "974e1c7569727a97bf5d90d356623189795082deb2ca76041d4da4a81045bb67"
+    },
+    "shape": "training fromexact71b4evaluationconfig",
+    "sims": 64,
+    "structural_rule": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2-playing-books-final-selection-rule-v1/rule.json",
+      "sha256": "ea0991c6e8eca33653301113476bc21ded176404bedbd8f9cea6156aac32fdc9"
+    },
+    "temperature": 0.1
+  },
+  "precollection_addendum": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/first-E2-precollection-addendum-v1/addendum.json",
+    "sha256": "8c66d3965f490c4cffd8a99520ab5c2bbe7e31ffb6ecb671bf9da8f88d95343e"
+  },
+  "publication_order": "Publish identical frozen scientific JSON and reviewed prose onmain BEFORE research96collection; every actualstage stillrequires independent readiness/source/resource/control/custody review.",
+  "qualifications": {
+    "AA4_actual_independent": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2-aa4-actual-independent-readout-v1/readout.json",
+      "sha256": "fc114dcb839e834f8c194368f3429db7b9057484ebdea97fd5e677116cd2c9d9"
+    },
+    "AA_scope": "commoncapture withversuswithoutselectedcopies; exact494andnamedopt; not whollyuninstrumented equivalence; excludedpilot only",
+    "TB_requirement": "Beforeplaying: fixed realindexedmaterial/5fixture+root/leaf/rule50/history/zeroing consumer qualification and controlled\u00b11mapping withhonestassetlimits; failedv1/v2readerspreserved; no downgradeprofileafterresults",
+    "arena_engineering_preparation": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/internal-tb6-arena-engineering-preparation-v1/manifest.json",
+      "sha256": "773d09fa2a610f8cbc15d663182c80d72efa7bc4fbf2c549273bcae65215e8bf"
+    },
+    "arena_requirement": "Beforedecidingplaying: complete32same-donor engineeringgames/16oldexcludedpairs undernewTB6profile; owner180/inner155; noqualityclaim/extension; actualsource/TBreceipt binding separatelyreviewed",
+    "two_update_plumbing": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-game-consumer-actual-readout-v1/readout.json",
+      "sha256": "5db8bfb121060ede7d703ec823731f5f61f825baa93885c5f71f6d7833a8098f"
+    }
+  },
+  "question": "At freshA39 and fixed new pureSPdata/40B256 delivery, does genuine20%outcome in BOTH mainWDL+categorical improve playing versus search-only FULLA? One hypothesis, not optimum formula or isolatedhead proof.",
+  "schema": "week1-first-E2-outcome-value-bundle-preregistration-with-precollection-addendum-v2",
+  "scientific_decision_rule": {
+    "all3_screens_fixed": "Runallthree evenprimaryfails, exceptglobalstop/technicalfailure; nooptionalfavorableextensions",
+    "confirmation": {
+      "attempts": 1,
+      "candidate": "SAMEFULLB40hash",
+      "condition": "Onlyif BOTH primaryandeligibilityscreenspasspoint+lowerbound",
+      "games": 1000,
+      "pairs": 500,
+      "reference": "A39",
+      "rule": "Samepoint/lower/count/faultcriteria; freshdisjointpreselectedbook; noA fallback/extension/reroll/pooledengineering"
+    },
+    "context": {
+      "candidate": "FULLA40",
+      "descriptive_only": true,
+      "games": 256,
+      "may_not_promote_A": true,
+      "pairs": 128,
+      "reference": "A39"
+    },
+    "eligibility": {
+      "candidate": "FULLB40",
+      "games": 256,
+      "pairs": 128,
+      "reference": "A39"
+    },
+    "inference": "Conditionalapproximate one-training-realization internalTB6/64-simplaying only; no universalpower/familywise/independentfamily/seedreplicationclaim; external60+1walltime/nonregression/adoption needseparatereviewedevidence",
+    "primary": {
+      "candidate": "FULLB40",
+      "games": 256,
+      "pairs": 128,
+      "reference": "FULLA40"
+    },
+    "success_rule": {
+      "cap_or_fault_or_history_or_custody_failure": "Unqualified/inconclusive; no imputation ofpartialgames",
+      "complete_counts_required": true,
+      "paired_normal95_lower_strictly_above": 0.5,
+      "paired_unit": "Openingpair mean of2color-swapped games; rawarena pairtotal0..2 divided2; samplevariance n-1, SEsqrt(var/n), z1.96",
+      "point_score_at_least": 0.53,
+      "qualified_rule50_TB_adjudications": "Allowed/countseparately",
+      "zero_variance_interval": "UNAVAILABLE, cannotpass"
+    }
+  },
+  "seeds": {
+    "common_Python_numpy_Torch_CPU_CUDA": 2026111203,
+    "common_draw": 2026111201,
+    "confirmation": 2026111205,
+    "engineering_arena": 2026111210,
+    "generation": 20261113,
+    "holdout_root_salt": "E2FULL-root-v1-20261112",
+    "host_mirror": 2026111202,
+    "offline_bootstrap": 2026111206,
+    "restore": "Onceafterfreshconstructionbeforeprefetch; noforcedperstepRNGreset",
+    "screens_all3": 2026111204,
+    "split_salt": "E2FULL-whole-game-bank-v1:20261112"
+  },
+  "source": {
+    "GPU": "RTX5090",
+    "checkout": "/home/josh/.codex/worktrees/rl-game-provenance-20261112/chess",
+    "native_source_authority": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-game-pilot-preparation-v4/manifest.json",
+      "sha256": "b3a775d7bdf53e67d090a55f566adb93226a6c5e743b653908feb830e79ea821"
+    },
+    "owner": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/run_stage_game_provenance_v1.py",
+      "sha256": "4507e6268e04bf096fd2add0dc7a4fc45bb720bc20a7a3ad95e8f1b8f758cbfa"
+    },
+    "playing_shape_config": {
+      "path": "/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/cap40-config-preparation-v1/fe23025d-a55d-4e00-8eae-a001036c0755/evaluation-shape.yaml",
+      "sha256": "71b4cb1be3d4249887f36b640f48c6987f0ca13437f759657b97e160b474eae3"
+    },
+    "python": "/home/josh/chess-artifacts/venvs/rl-transition-managed-20261111-cu130/bin/python",
+    "revision": "6d7f2e6d1b1fc80aa9df2ee5b922eaa3fabf0814",
+    "source_files": {
+      "chess_anti_engine/replay/augment.py": "8d6b8fce791d08401e3aa9c7e4be2234f9f24e421ae58442c65feff1d0e968cf",
+      "chess_anti_engine/selfplay/provenance.py": "4262b173c73924a6d9a89a7bd624d43a6cee61f0bf25b7a96bfdb21090d5ec0b",
+      "chess_anti_engine/tablebase.py": "25e29cf9f698ca34d4ad11734ea950cb91d0fed1108bed8c42f387ad6af044bd",
+      "chess_anti_engine/train/targets.py": "e079df47087b3aa1150c37d261caf03b8b2a6f3196294392fea241bd597ae03c",
+      "chess_anti_engine/train/trainer.py": "dadd881bbd53c9915a8ad3e0ffa5402838e9f5443d572eaf657ee84e3effe7f0",
+      "scripts/arena_standard.py": "589ec669db50e25b6a3d135d7ce448c052dfe258518035010dafd131541bf1f0"
+    },
+    "torch": "2.14.0+cu130",
+    "training_generation_config": {
+      "path": "/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/cap40-config-preparation-v1/fe23025d-a55d-4e00-8eae-a001036c0755/config.yaml",
+      "sha256": "683addc8519057a2f5089a76e43934847c1cd0ba2e860b6e4a2e86cd6dc03faa"
+    }
+  },
+  "status": "FROZEN_E2FULL_VALUE_BUNDLE_PREREGISTERED",
+  "training": {
+    "arms": 2,
+    "batch_size": 256,
+    "cleanup": "ArmAframe return, closewriter/removehooks/clearboundrefs/gc/sync/emptycache; weakrefs model/Trainer/opt/parameters/deviceoptstate dead BEFOREBconstruct",
+    "initial": "Bothfresh494exactdonor/emptyopt/newclip+scheduler/noresume/headreset/SWAoff",
+    "pairing": "Allraw/posthost/lossdevicefields/masks/availability/RNG/physicalmultiplicities/fulloptmap/LR/math/counters equal exceptdeclaredmainfraction/categoricaltargets; extra/retried/skipped/nonfinite updateinvalidates",
+    "sampler": "Oneuniformwithreplacement40x256physicalplan;commonhostmirror anddropout/forwardRNG; notproductionprioritized/curriculumequivalence",
+    "selection": "FULLBstep40 preselected; no choosingA/beststep/seed/LR fromloss/offline/screen",
+    "snapshots": [
+      0,
+      1,
+      8,
+      40
+    ],
+    "updates_each": 40,
+    "views_each": 10240
+  }
+}

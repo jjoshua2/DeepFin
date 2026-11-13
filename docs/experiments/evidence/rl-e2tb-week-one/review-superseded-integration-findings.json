@@ -1,0 +1,67 @@
+{
+  "findings": [
+    {
+      "affected_contract": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-final-binding-contract-v2/binding-contract.json",
+        "sha256": "9928d2c37b6d846db15c43d77847b89c2a7ce65aa517d4a1a1c7975050499c4f"
+      },
+      "cause": "WROOT=HERE.parent, while score.one_model resolves WROOT/fresh-game-consumer-actual-readout-v1/checkpoint-metadata.json. Contractv2 copies helpers into final-bindingsUUID/score, making parent the binding base, not global WROOT. This fails before first model load.",
+      "lines": "14; score.py174",
+      "minimum_root_accepted_correction": "Three separate flat sibling phase directories directly under global WROOT, and matching phase command paths; helper code and historical AST remain unchanged. All other HERE.parent/WROOT uses searched: no further dependency beyond this metadata path.",
+      "priority": "P1",
+      "source": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-preparation-v3/common.py",
+        "sha256": "fe19a87af201ecdd9d3a2cadef2105e9d4016afc549f13e9622e9afea484c2e9"
+      },
+      "title": "Nested offline phase layout breaks historical shape-metadata path"
+    },
+    {
+      "cause": "Example path points to e2-offline64-root-bank-v1-162f4f8c, while protocol.root_bank_output is current e2tb-offline64-root-bank-v1-f1dadbe4-... . Copying it unchanged would target the wrong bank and fail source/cohort checks.",
+      "minimum_root_accepted_correction": "Preserve stale example; add an explicit current-study rootbank template in new contract with binding.path fixed to protocol.root_bank_output and only accepted status/receipt identity late.",
+      "priority": "P2",
+      "source": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-preparation-v3/root-bank-binding.UNBOUND.json",
+        "sha256": "e9cbc15cd6c0daa356d903fe67e4d6480fb70cd12454281c35e32f5d00b8546f"
+      },
+      "title": "Root-bank sidecar retains old TB-off study directory"
+    }
+  ],
+  "limits": [
+    "Source/metadata/AST/text-only; no helper/project imports, constructors, tests, models, arrays, engines, TB queries, GPU or jobs.",
+    "No actual cohort/training/offline/arena admission or strength conclusion.",
+    "Need corrected contracts/commands/scientific successor exactdelta review and pending draw-binder source identity before final integration acceptance; no helper numerical changes needed for identified corrections."
+  ],
+  "otherwise_verified": {
+    "arena": "All4candidate/reference endpoint paths and sourcecwd agree with actualrunner. Each current argv equals prior accepted argv after removing only two math-environment unsets. All CLI flags appear in actual R7 arena parser.20,22/CUDA0 child assignment present; owner budgets and seeds/books unchanged.",
+    "checkpoints": "Callbacks save step-1.pt/step-8.pt only; final trainer.pt saved and hardlinked as step-40.pt. Offline intentionally consumes final trainer.pt with payload40; arena intentionally uses same-byte step-40.pt. No collision or name mismatch.",
+    "collection_actual_source_config_profile_and_affinity": "Stable collector HERE=v1; actual protocol/manifest at HERE; templates/contract/binder=v2;13leaf protocol and1derived manifest whitelist; all20,22/CUDAchild override and mathenv unsets coherent. Current actual CPU/root92e5 remains qualification only.",
+    "command_late_tokens": "Paired declaredindex33 contains exactfinalmanifestplaceholder; offline each declaredindex27 contains phasefinalmanifestplaceholder; actual options/paths valid.",
+    "hash_graph": "Science pins immutable templates/contracts, not future actualJSON. Actualprotocol binds publishedscience/acceptedreceipts; manifest derives protocolSHA; CLI binds manifestSHA. No observed self-hash cycle.",
+    "offline": "Qualified loader/observer hashes match finalTRAIN manifest. Final science.offline and science.seeds byte-value equal pinned draft as common.guard requires. Root8..80/hash salt/exclusion/proof/64gates and7snapshot labels unchanged. Distinct phase metadata pairs prevent overwrite; flat correction needed above.",
+    "paired": "TRAINv5 loaderf35cea/observer3b8/runpairedA5ea match manifest/command; named protocol paths,40B256/draw1401/mirror1402/common1403, sourceba9/ownerb728, math context and20,22 guards coherent. Pipeline starts from fresh donor/qualifiedall32 gates. No HERE.parent dependency in TRAIN helper source.",
+    "ref_mismatches": 0,
+    "science_source_and_component_ref_hashes": 39,
+    "strict_collection_object_exact_v2": true
+  },
+  "review_scope": "Independent review of root-authored final integration/late contracts and other-author TRAIN/arena binding consumption. Reviewer authored collector/offline prior code, so this is not a newly independent review of their underlying algorithms. Full science/statistics/docs reviewed separately by pilot.",
+  "reviewed_science": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-scientific-protocol-final-v1/protocol.json",
+    "sha256": "234e75ee42e174e20420165cae03d94def86c4ae0868e15f5c449f7c5b1f0d60"
+  },
+  "root_identified_remaining_source_preparation": "Root separately identified missing pinned draw-binder packet; author is preparing minimal fixed40x256 CPU metadata helper with TRAINv5. It must join corrected finalscience before96games; this review does not claim it already exists or has been independently reviewed.",
+  "source_pins": {
+    "e2tb-arena-command-preparation-v2/preparation.json": "2de3a7139ba851e8911b6f45dd888ed541a34786e9a41f87c9a10f79777683bf",
+    "e2tb-offline64-final-binding-contract-v2/binding-contract.json": "9928d2c37b6d846db15c43d77847b89c2a7ce65aa517d4a1a1c7975050499c4f",
+    "e2tb-offline64-final-binding-contract-v2/commands.template.json": "45b0fce5658bf8deae7be38483e2c3034ad224db6acb9fc30f14b9b566278b94",
+    "e2tb-offline64-preparation-v3/common.py": "fe19a87af201ecdd9d3a2cadef2105e9d4016afc549f13e9622e9afea484c2e9",
+    "e2tb-offline64-preparation-v3/readout.py": "285c3c9b1914a7b913ea1de0330394d1c2b36185ffa87e05c24276bc58ca88bf",
+    "e2tb-offline64-preparation-v3/score.py": "6d96e964df8e6d0f252b1c602d10d52e5d167fbdf906e8fa5ddc65fd3a63b671",
+    "e2tb-paired-40-final-template-v2/binding-contract.json": "f44696ce699aba5474a82e690c50decb14ce3bce11a3e47625b1bbd912232376",
+    "e2tb-train-paired-preparation-v5/paired_observer.py": "3b8fab909222ac717ee8ff460e878f5f7519c62678c578bf07498b0ca9c6d505",
+    "e2tb-train-paired-preparation-v5/run_paired.py": "a5ea07b2e54c012785fa1c182c9b12fb29689038950e0a46a910a6128bcd6a9f",
+    "e2tb-train-paired-preparation-v5/train_inputs.py": "f35cea34aa0bd0022756539212f1215a748a144c2b9a656f4800a3902e8b22aa"
+  },
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "REQUEST_TWO_METADATA_BINDING_CORRECTIONS_BEFORE_FINAL_COMPONENT_ACCEPTANCE",
+  "utc": "2026-11-13T02:36:09.190493+00:00"
+}

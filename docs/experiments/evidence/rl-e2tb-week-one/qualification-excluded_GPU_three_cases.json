@@ -1,0 +1,100 @@
+{
+  "status": "ACCEPT_R7_EXCLUDED_THREE_CASE_STRICT_PRODUCER",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "utc": "2026-11-13T02:21:04.686305+00:00",
+  "terminal": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-three-case-producer-execution-v3/terminal.json",
+    "sha256": "9e28b1c7af6a6890d4a300ca8da485d2d2ad596ccea1dc7bf62cb8175b7a0ec5"
+  },
+  "actual_readout": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-three-case-producer-results-attempt3-cd2ce2d8-bca5-498e-91ae-013580b1c43f/readout.json",
+    "sha256": "811a074a662c748ec1fd3e555e358e1366432f2b783f9888ae3e0ca247410c28"
+  },
+  "root_admission": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-three-case-producer-root-admission-v3/admission.json",
+    "sha256": "0f186725f5bfb924d50e884f9a2ca56c9f73f3578ef18feb2acb213fe8f80d94"
+  },
+  "case_checks": [
+    {
+      "case": 0,
+      "physical_game_id": "26d5472c-b1be-5db1-a7b7-4e46b21aecdb:0",
+      "scientific_class": "STRICT_TB_ADJUDICATED",
+      "result": "1-0",
+      "raw_records": 1,
+      "retained_rows": 1,
+      "played_plies": 1,
+      "proof_sha256": "4bacf004e8ca87531ed1c19414127fa60b5b61715e1e9deab908afcfc734c4a6",
+      "full_history_sha256": "f0d6192bbaff6c1b9c919bfa5260f949306490e9e85d628ff206871bcdc2278b",
+      "files": 221
+    },
+    {
+      "case": 1,
+      "physical_game_id": "402c44b4-4b82-56fe-9b9b-029dea8ee602:0",
+      "scientific_class": "NATURAL",
+      "result": "1/2-1/2",
+      "raw_records": 0,
+      "retained_rows": 0,
+      "played_plies": 0,
+      "proof_sha256": "8f1da2dce3b1a323240f0f2c90fa77b90ae5f5d9a1bdd5c79401dc65ce9b79f2",
+      "full_history_sha256": "49846f21a3c15a49f182fffafd999c827126c9625b1ccfa0c1fe2ee2784633b5",
+      "files": 6
+    },
+    {
+      "case": 2,
+      "physical_game_id": "e3a75e51-17b6-5691-9e72-bd143c1a92bc:0",
+      "scientific_class": "UNRESOLVED",
+      "result": "*",
+      "raw_records": 0,
+      "retained_rows": 0,
+      "played_plies": 0,
+      "proof_sha256": "220bce77f9e739ed501973a7514d7fd3f3221056cfb3e4280ef25ef3c355b353",
+      "full_history_sha256": "0a328ba53bbe58b6c554fb0fff187a42d6ece3dcf4012baa8781c886578c9be0",
+      "files": 6
+    }
+  ],
+  "inventory_files_checked": 233,
+  "serving": {
+    "calls": 1,
+    "rows": 32,
+    "first_input": {
+      "shape": [
+        32,
+        175,
+        8,
+        8
+      ],
+      "storage_dtype": "torch.float32",
+      "device": "cuda:0",
+      "actual_autocast_dtype": "torch.bfloat16",
+      "grad_enabled": false,
+      "matmul_precision": "highest",
+      "matmul_allow_tf32": false,
+      "deterministic_algorithms": false
+    },
+    "by_case": {
+      "0": 1,
+      "1": 0,
+      "2": 0
+    }
+  },
+  "peak_cuda_allocated_bytes": 916377600,
+  "peak_cuda_reserved_bytes": 1145044992,
+  "owner_wall_seconds": 17.352118465001695,
+  "owner_CPU_seconds": 13.01,
+  "all_owned_births_closed_and_supervisor_absent": true,
+  "tablebase_asset_inventory_sha256": "207f7bc99c9113b237bee40ef1dc4f64f29bd3524279b6637da31032a2305ae5",
+  "asset_identity_scope": "resolved-file-path,size,mtime_ns; not content hash",
+  "storage_scope": "Actual reviewed v5 adapter returned past public real save/load, exact canonical key/dtype/shape/C-byte comparison with four loaded identity values required before prune, metadata and postload raw controls. Root independently checked output inventory and JSON joins; no second array deserialization or fresh proof issuance.",
+  "qualification_scope": "One retained strict-TB row and two valid zero-row cases under explicitly disabled engineering diff-focus; not research thinning equivalence or all-position table truth. Actual independent verifier ran in producer; serialized proof metadata is evidence, never a reusable issuer proof.",
+  "prior_failures": "Attempts1 and2 remain FAILED. Unbanked original input/forward telemetry and original RAM arrays remain UNKNOWN. Separate combined known-input supplement required.",
+  "budget": {
+    "producer_spent_seconds": 41.87411845297902,
+    "original_producer_ceiling": 180,
+    "study_spent_seconds": 41.87411845297902,
+    "study_ceiling": 21060,
+    "week_spent_seconds": 5901.321960497939,
+    "week_ceiling": 172800
+  },
+  "research_training_updates": 0,
+  "research_or_gain_or_adoption_admitted": false
+}

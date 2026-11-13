@@ -113,6 +113,8 @@ from chess_anti_engine.mcts.gumbel import (
 from chess_anti_engine.mcts.puct import _value_scalar_from_wdl_logits as _wdl_to_q
 from chess_anti_engine.mcts.puct_history import puct_history_args
 from chess_anti_engine.mcts.puct_vl import _PLANES, PucvChunker
+from chess_anti_engine.mcts.puct_tb import override_leaf_values
+from chess_anti_engine.tablebase import SyzygyProbe
 from chess_anti_engine.mcts.root_tactics import (
     immediate_terminal_cboard_policy_or_draws,
 )
@@ -295,7 +297,7 @@ class _CandidateArena:
     action: int
     cid: int
     cboard: Any = None  # CBoard after the candidate move; set on first touch
-    terminal_value: float | None = None  # candidate move ends the game
+    terminal_value: float | None = None  # natural terminal or proven TB value
     expanded: bool = False
     # Serializes first expand when late-phase split lets multiple groups
     # co-own this arena (VL descents themselves are tree-mutexed).
@@ -326,6 +328,7 @@ class _SearchState:
     finished_action: int | None = None
     finished_value: float | None = None
     arenas: dict[int, _CandidateArena] = field(default_factory=dict)
+    tb_probe: SyzygyProbe | None = None
 
 
 class RootParallelGumbelPool:
@@ -604,6 +607,7 @@ class RootParallelGumbelPool:
         *,
         target_sims: int,
         stop_event: threading.Event,
+        tb_probe: SyzygyProbe | None = None,
     ) -> tuple[float, int]:
         """One sim-budget chunk of root-parallel Gumbel; returns (root value,
         best action).
@@ -623,6 +627,7 @@ class RootParallelGumbelPool:
             raise RuntimeError("prepare_root() must be called before run()")
         if self._shutdown.is_set():
             raise RuntimeError("RootParallelGumbelPool is closed")
+        st.tb_probe = tb_probe
         if st.finished_action is not None:
             assert st.finished_value is not None
             # No phase or group ran. Signal completion independently of the
@@ -1154,7 +1159,13 @@ class RootParallelGumbelPool:
                 # When remaining < gather the chunker already densifies to
                 # remaining (min(gather, target)); no extra adaptive path.
                 n = min(item.budget - done, 2 * gather)
-                ran = int(chunker.run(st.tree, arena.cid, arena.cboard, n))
+                if st.tb_probe is None:
+                    ran = int(chunker.run(st.tree, arena.cid, arena.cboard, n))
+                else:
+                    ran = int(chunker.run(
+                        st.tree, arena.cid, arena.cboard, n,
+                        tb_probe=st.tb_probe, tb_path_prefix=(st.root_id,),
+                    ))
                 if ran <= 0:
                     break  # solved/terminal below the candidate root
                 done += ran
@@ -1205,6 +1216,11 @@ class RootParallelGumbelPool:
             raise
         pol = pol_t.numpy() if hasattr(pol_t, "numpy") else np.asarray(pol_t)
         wdl = wdl_t.numpy() if hasattr(wdl_t, "numpy") else np.asarray(wdl_t)
+        # This forced first NN result is outside PucvChunker. Apply the same
+        # post-NN/reset-clock rule here, without changing evaluator/cache data.
+        snapshots = ((np.array([0], dtype=np.int32), [cb])
+                     if st.tb_probe is not None else None)
+        wdl, solved = override_leaf_values(st.tb_probe, snapshots, wdl)
         legal = cb.legal_move_indices()
         if legal.size > 0:
             st.tree.expand_from_logits(
@@ -1216,5 +1232,10 @@ class RootParallelGumbelPool:
             )
         q = float(_wdl_to_q(np.asarray(wdl, dtype=np.float32)[0].reshape(-1)))
         st.tree.backprop(np.array([arena.cid], dtype=np.int32), q)
+        if solved is not None and solved[0]:
+            status = int(solved[0])
+            st.tree.mark_solved_path(np.array([st.root_id, arena.cid], dtype=np.int32), status)
+            # Proven TB values share the existing forced-terminal budget path.
+            arena.terminal_value = 0.0 if status == 2 else float(status)
         arena.expanded = True
         return 1

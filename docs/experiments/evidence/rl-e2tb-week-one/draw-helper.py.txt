@@ -1,0 +1,157 @@
+"""One fixed TRAIN-only draw plan; no action occurs at import."""
+from __future__ import annotations
+
+import argparse
+from contextlib import ExitStack
+import hashlib
+import importlib
+import json
+import os
+from pathlib import Path
+import signal
+import sys
+from unittest.mock import patch
+
+HERE = Path(__file__).resolve().parent
+
+
+def require(ok, message):
+    if not ok:
+        raise ValueError(message)
+
+
+def digest(path):
+    with Path(path).open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def checked(ref):
+    require(set(ref) == {"path", "sha256"} and "UNBOUND" not in ref["path"], "identity remains UNBOUND")
+    require(digest(ref["path"]) == ref["sha256"], "bound identity changed")
+    return json.loads(Path(ref["path"]).read_text())
+
+
+def write(path, value):
+    with Path(path).open("x") as stream:
+        json.dump(value, stream, indent=2, sort_keys=True, allow_nan=False)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--execute", action="store_true")
+    ap.add_argument("--manifest-sha256", required=True)
+    ap.add_argument("--bindings", required=True)
+    ap.add_argument("--bindings-sha256", required=True)
+    args = ap.parse_args()
+    require(args.execute, "separate finite CPU admission required")
+    require(digest(HERE / "manifest.json") == args.manifest_sha256, "draw helper manifest changed")
+    m = json.loads((HERE / "manifest.json").read_text())
+    require(digest(__file__) == m["helper_sha256"], "draw helper changed")
+    require(digest(args.bindings) == args.bindings_sha256, "late bindings changed")
+    bindings = json.loads(Path(args.bindings).read_text())
+    require(set(bindings) == {"scientific", "publication", "producer_protocol", "producer_manifest", "cohort"}, "unexpected binding fields")
+    require(Path(sys.executable).resolve() == Path(m["python"]).resolve() and tuple(sys.version_info[:3]) == (3, 13, 15), "interpreter changed")
+    parent = Path(f"/proc/{os.getppid()}/cmdline").read_bytes().decode().split("\0")
+    require(m["owner_path"] in parent and digest(m["owner_path"]) == m["owner_sha256"] and
+            "--seconds" in parent and parent[parent.index("--seconds") + 1] == "300" and
+            "--resource" in parent and parent[parent.index("--resource") + 1] == "cpu", "wrong finite owner")
+    require(sorted(os.sched_getaffinity(0)) == [20, 22] and os.environ.get("CUDA_VISIBLE_DEVICES") == "" and
+            os.environ.get("OMP_NUM_THREADS") == os.environ.get("MKL_NUM_THREADS") == "2" and
+            __debug__ and os.environ.get("PYTHONOPTIMIZE", "0") == "0", "CPU resource contract changed")
+    for ref in m["authorities"].values():
+        require(digest(ref["path"]) == ref["sha256"], "fixed authority changed")
+    protocol = checked(m["paired_protocol_template"])
+    manifest = checked(m["paired_manifest_template"])
+    science, publication, producer, _pm, cohort = [checked(bindings[key]) for key in
+        ("scientific", "publication", "producer_protocol", "producer_manifest", "cohort")]
+    require(science["status"].startswith("FROZEN_E2TB_") and science["source"]["revision"] == protocol["source_revision"] and
+            science["cohort"]["uuid"] == protocol["run_uuid"] and
+            publication["status"] == "MAIN_PUBLISHED_FROZEN_E2TB_SCIENCE" and
+            publication["scientific_sha256"] == bindings["scientific"]["sha256"], "science is not frozen and published")
+    expected_component = {"helper": {"path": str(HERE / "bind_draw_plan.py"), "sha256": digest(__file__)},
+        "manifest": {"path": str(HERE / "manifest.json"), "sha256": digest(HERE / "manifest.json")},
+        "identity_only_inputs_template": m["inputs_template"]}
+    require(science["components"]["draw_plan_binder"] == expected_component, "science does not pin this fixed draw binder")
+    require(producer["scientific_preregistration_sha256"] == bindings["scientific"]["sha256"] and
+            producer["collection_uuid"] == protocol["run_uuid"], "producer scientific identity differs")
+    require(cohort["producer_protocol_sha256"] == bindings["producer_protocol"]["sha256"] and
+            cohort["producer_manifest_sha256"] == bindings["producer_manifest"]["sha256"],
+            "cohort and loader producer identities differ")
+    for key in ("producer_protocol", "producer_manifest", "scientific", "publication", "cohort"):
+        stem = "cohort_binding" if key == "cohort" else key
+        protocol[stem + "_path"] = bindings[key]["path"]
+        protocol[stem + "_sha256"] = bindings[key]["sha256"]
+    require(protocol["execution_binding_complete"] is protocol["execution_admitted"] is False and
+            protocol["steps"] == 40 and protocol["batch_size"] == 256 and protocol["draw_seed"] == 2026111401,
+            "fixed dose or non-execution scope changed")
+    for name, expected in manifest["helpers"].items():
+        require(digest(Path(m["TRAIN_code_directory"]) / name) == expected, "TRAIN helper changed")
+    output = Path(m["output_root"])
+    require(not output.exists() and not Path(protocol["draw_plan_path"]).exists(), "draw output already exists")
+    output.mkdir()
+    attempts = {}
+    def forbidden(name):
+        attempts[name] = 0
+        def refuse(*_a, **_k):
+            attempts[name] += 1
+            raise RuntimeError("FORBIDDEN_DRAW_SIDE_EFFECT:" + name)
+        return refuse
+    signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError("fixed270s CPU draw-plan deadline")))
+    signal.alarm(270)
+    try:
+        sys.path.insert(0, protocol["source_checkout"])
+        sys.path.insert(0, m["TRAIN_code_directory"])
+        import torch
+        torch.set_num_threads(2)
+        torch.set_num_interop_threads(2)
+        require(not torch.cuda.is_initialized(), "CUDA preinitialized")
+        with ExitStack() as stack:
+            for obj, name, label in [(torch, "load", "checkpoint_load"), (torch.cuda, "init", "CUDA_init"),
+                    (torch.cuda, "_lazy_init", "CUDA_lazy_init")]:
+                stack.enter_context(patch.object(obj, name, forbidden(label)))
+            from chess_anti_engine import model as model_api
+            from chess_anti_engine.uci import model_loader
+            from chess_anti_engine.train.trainer import Trainer
+            from chess_anti_engine.stockfish.uci import StockfishUCI
+            from chess_anti_engine.stockfish.pool import StockfishPool
+            from chess_anti_engine.worker import WorkerSession
+            for obj, name, label in [(model_api, "build_model", "model_build"),
+                    (model_loader, "build_model", "loader_model_build"), (Trainer, "__init__", "Trainer_construct"),
+                    (StockfishUCI, "__init__", "SF_construct"), (StockfishPool, "__init__", "SF_pool_construct"),
+                    (WorkerSession, "__init__", "Worker_construct")]:
+                stack.enter_context(patch.object(obj, name, forbidden(label)))
+            modules = {name: importlib.import_module(name) for name in
+                       ("verified_outcome", "value_bundle", "paired_observer", "train_inputs")}
+            for name, module in modules.items():
+                require(Path(module.__file__).resolve() == Path(m["TRAIN_code_directory"]) / (name + ".py"), "foreign helper origin")
+            import numpy as np
+            require(np.__version__ == "2.2.6", "NumPy draw implementation changed")
+            inputs, observer = modules["train_inputs"], modules["paired_observer"]
+            _old, parts = inputs.base_inputs(protocol, manifest)
+            arrays, ids, games, _raw, _metadata, lineage = inputs.load_research_train(cohort, parts)
+            require(len(games) == len(lineage["fresh_proof_sha256"]) == 32 and lineage["heldout_loaded"] is False,
+                    "not freshly proved whole32 TRAIN only")
+            indices = np.random.default_rng(protocol["draw_seed"]).integers(0, len(ids), size=(40, 256), dtype=np.int64)
+            plan = {"physical_row_ids": ids, "indices": indices.tolist(), "raw_arrays": observer.arrays_signature(arrays)}
+            require(not any(attempts.values()) and not torch.cuda.is_initialized(), "forbidden side effect occurred")
+            write(output / "draw-plan.json", plan)
+            write(output / "input-lineage.json", lineage)
+            write(output / "readout.json", {"status": "PASS_FIXED_TRAIN32_DRAW_PLAN_CPU_ONLY",
+                "source_revision": protocol["source_revision"], "source_bindings_sha256": args.bindings_sha256,
+                "draw_plan_sha256": digest(output / "draw-plan.json"), "future_binding_path": protocol["draw_plan_path"],
+                "games": 32, "rows": len(ids), "draw_shape": [40, 256], "draw_seed": 2026111401,
+                "NumPy": np.__version__, "side_effect_attempts": attempts, "CUDA_initialized": False,
+                "draw_plan_installed_into_execution_bindings": False, "learning_admitted": False})
+        parts[0].freeze_tree(output)
+    except BaseException as error:
+        write(output / "failure.json", {"status": "FAILED_DRAW_PLAN_UNQUALIFIED", "error": repr(error), "side_effect_attempts": attempts})
+        raise
+    finally:
+        signal.alarm(0)
+
+
+if __name__ == "__main__":
+    main()

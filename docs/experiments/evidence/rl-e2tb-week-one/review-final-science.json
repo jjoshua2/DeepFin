@@ -1,0 +1,74 @@
+{
+  "blocking_findings": [],
+  "created_utc": "2026-11-13T02:38:43.109360+00:00",
+  "historical_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-scientific-protocol-final-independent-review-v1/review.json",
+    "sha256": "429394ffc685b3096249bb2fd9fbdbc2c18e9bdd7bd38370a533eb15fa5745ef"
+  },
+  "independence_and_limits": "Root-authored science/contracts/commands/docs are independent from this reviewer. Reviewer authored some shared collector/raw-verifier helpers and engineering artifacts, which are not independently reapproved here. Reuses separately accepted root/other-author component evidence. No project imports, arrays/checkpoints/models, engines/TB queries, tests, jobs or GPU work performed.",
+  "new_draw_spec": {
+    "assessment": "Exact fixed common uniform-with-replacement TRAIN-only 40x256 physical plan after existing all96/32/628 and fresh all32 proof gates; includes all physical IDs and raw-array signature; actual paired runner recomputes same plan and requires exact IDs/indices/signature before arms. Inputs only actual science/publication/producer/cohort identities, no final paired manifest/draw-plan cycle. Only accepted exact bytes copied after closed CPU stage; does not admit learning. Helper source read for scientific algorithm/spec and identity/no-reselection boundaries; separate full draw-binder implementation review assigned to other reviewer.",
+    "contract": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-preparation-v1/binding-contract.json",
+      "sha256": "3034699e8b6d124c1a8af2ba09462460c1f50de9968ced80a2d97872cc6fb302"
+    },
+    "fixed_algorithm": "np.random.default_rng(2026111401).integers(0,len(ids),size=(40,256),dtype=np.int64), NumPy2.2.6",
+    "helper": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-preparation-v1/bind_draw_plan.py",
+      "sha256": "4b2a2787d94795d9c38ab0900533a7a9c9e4616e81648317d2ecab23bb3987b1"
+    },
+    "manifest": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-preparation-v1/manifest.json",
+      "sha256": "4a1896729659a4b3c23d812b5b6b5c0f45b34a01b479e6904bb2b9ebbacb011f"
+    }
+  },
+  "pending": [
+    "Main publication of exact final science and updated faithful docs/evidence copies; initial v1 copies are superseded, not current finalv2 proof.",
+    "Separate full draw-binder source review and accepted actual late identities/binding comparison, actual all96 integrity/all32 usable TRAIN/all628 retained-input guard, closed-owner and independent collection acceptance before learning.",
+    "Exact actual checkpoint/root/scoring/arena identities, complete-data readouts and finite individual stage admission remain prospective; design acceptance is not execution/data/model/strength acceptance."
+  ],
+  "reviewed_corrections": {
+    "SCIENCE-FINAL-01": {
+      "commands": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-final-binding-contract-v3/commands.template.json",
+        "sha256": "84c8b476ee0c5735a3926da833b291141b98adf0a320f282d2b8f63e612f7d19"
+      },
+      "contract": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-final-binding-contract-v3/binding-contract.json",
+        "sha256": "105e4f7f9ea4cc6b127ee922fae5786b5db9f25448b49d69e12eb712099aa41a"
+      },
+      "evidence": "Three fresh flat phase HERE directories now have parent exactly global WROOT. Compared all3 commands: each changes only argv[25] phase helper path; six helper bytes unchanged. Fixed current root_bank_output sidecar allows only actual status/receiptSHA; scorer historic architecture metadata actualSHA matches fixed literal.",
+      "resolved": true
+    },
+    "SCIENCE-FINAL-02": {
+      "evidence": "Explicitly forbids second collection/repeated training/playing/inference/replacements/extension/replenished allowance through this preregistration. Only same-observation CPU metadata/readout correction allowed without new games/updates/predictions/estimator/selection/rules; new execution requires separate prospective study.",
+      "resolved": true
+    }
+  },
+  "reviewer": "pilot_path_audit",
+  "schema": "independent-E2TB-final-science-exact-corrective-delta-review-v2",
+  "scientific": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-scientific-protocol-final-v2/protocol.json",
+    "sha256": "ee24d3b7aa575c3dd2b85061f376a4920d5f9034a2cc358e03ed8312cd1476c0"
+  },
+  "status": "ACCEPT_FINAL_SCIENTIFIC_V2_SOURCE_AND_DESIGN_ONLY",
+  "verified": {
+    "donor_checkpoint_opened": false,
+    "freeze_refs": 61,
+    "new_science_hash": "ee24d3b7aa575c3dd2b85061f376a4920d5f9034a2cc358e03ed8312cd1476c0",
+    "noncheckpoint_hashes_verified": 60,
+    "research_jobs_or_imports_by_reviewer": 0,
+    "unchanged_v1_canonical_sections": [
+      "arms",
+      "training",
+      "scientific_decision_rule",
+      "decision_labels",
+      "offline",
+      "seeds",
+      "cohort",
+      "playing",
+      "budget",
+      "source"
+    ]
+  }
+}

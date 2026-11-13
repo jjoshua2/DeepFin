@@ -33,6 +33,7 @@ from chess_anti_engine.encoding.cboard_encode import encode_cboard
 from chess_anti_engine.moves import POLICY_SIZE, index_to_move
 from chess_anti_engine.moves.encode import uci_to_policy_index
 from chess_anti_engine.selfplay.state import SelfplayState, _NetRecord
+from chess_anti_engine.selfplay.strict_tb import SfHistoryKwargs, sf_history_kwargs
 from chess_anti_engine.stockfish.pool import StockfishPool
 from chess_anti_engine.stockfish.wdl import cp_to_wdl as _cp_to_wdl
 from chess_anti_engine.stockfish.wdl import mate_to_effective_cp as _mate_to_effective_cp
@@ -387,6 +388,8 @@ class _PendingSfLabel:
     query_fen: str = ""
     slot: int = -1
     syzygy_path: str | None = None
+    root_fen: str | None = None
+    root_moves: tuple[str, ...] | None = None
     # Set once the escalated re-query replaced ``future``: the ORIGINAL
     # (shallow) StockfishResult, attached later as ``rec.sf_wdl_original``
     # (and the airbag fallback if the deep re-query itself fails).
@@ -639,7 +642,13 @@ def _search_stockfish_sync(
     *,
     nodes: int | None,
     syzygy_path: str | None,
+    root_fen: str | None = None,
+    root_moves: tuple[str, ...] | None = None,
 ) -> Any:
+    if root_fen is not None or root_moves is not None:
+        # Strict callers never fall back to bare FEN on unsupported transport.
+        return stockfish.search(fen, nodes=nodes, syzygy_path=syzygy_path,
+                                root_fen=root_fen, root_moves=root_moves)
     if syzygy_path is None:
         return stockfish.search(fen, nodes=nodes)
     try:
@@ -688,6 +697,8 @@ def queue_resumed_sf_labels(
     Poll dispatches under the normal pool cap. Submission/result failure drops
     the descriptor once; no retry loop or scan of historical gaps is introduced.
     """
+    if getattr(state.game, "syzygy_outcome_mode", "theoretical_wdl") == "rule50_match_v1":
+        raise ValueError("strict TB selfplay does not support resumed label descriptors")
     nodes = int(state.base_nodes)
     cap = int(state.game.sf_label_nodes_cap)
     floor = int(state.game.sf_label_nodes_floor)
@@ -712,12 +723,21 @@ def queue_resumed_sf_labels(
         state.pending_sf_labels.append(pending)
 
 
+def _pending_sf_history(pending: _PendingSfLabel) -> SfHistoryKwargs:
+    if pending.root_fen is None and pending.root_moves is None:
+        return {}
+    if pending.root_fen is None or pending.root_moves is None:
+        raise ValueError("incomplete pending SF history")
+    return {"root_fen": pending.root_fen, "root_moves": pending.root_moves}
+
+
 def _submit_resumed_sf_label(state: SelfplayState, pending: _PendingSfLabel) -> None:
     try:
         if isinstance(state.stockfish, StockfishPool):
             pending.future = state.stockfish.submit(
                 pending.query_fen, nodes=pending.query_nodes,
                 syzygy_path=pending.syzygy_path, fresh=pending.resumed_escalation,
+                **_pending_sf_history(pending),
             )
         else:
             pending.future = Future()
@@ -725,11 +745,13 @@ def _submit_resumed_sf_label(state: SelfplayState, pending: _PendingSfLabel) -> 
                 res = state.stockfish.search(
                     pending.query_fen, nodes=pending.query_nodes,
                     syzygy_path=pending.syzygy_path, fresh=True,
+                    **_pending_sf_history(pending),
                 )
             else:
                 res = _search_stockfish_sync(
                     state.stockfish, pending.query_fen, nodes=pending.query_nodes,
                     syzygy_path=pending.syzygy_path,
+                    **_pending_sf_history(pending),
                 )
             pending.future.set_result(res)
     except Exception as exc:
@@ -767,6 +789,7 @@ def submit_sf_queries(
             state.cboards[idx].fen(),
             nodes=_eff_sf_nodes(state, idx, for_move=for_move, for_label=for_label),
             syzygy_path=_sf_syzygy_path_for_slot(state, idx),
+            **sf_history_kwargs(state, idx),
         )
         for idx in idxs
     }
@@ -785,6 +808,7 @@ def submit_async_curriculum_move_queries(state: SelfplayState, idxs: list[int]) 
             state.cboards[idx].fen(),
             nodes=_eff_sf_nodes(state, idx, for_move=True),
             syzygy_path=_sf_syzygy_path_for_slot(state, idx),
+            **sf_history_kwargs(state, idx),
         )
         submitted += 1
     return submitted
@@ -833,6 +857,7 @@ def submit_async_sf_labels_from_curriculum_moves(state: SelfplayState, idxs: lis
                 query_fen=state.cboards[idx].fen(),
                 slot=int(idx),
                 syzygy_path=_sf_syzygy_path_for_slot(state, idx),
+                **sf_history_kwargs(state, idx),
             ),
         )
         if len(state.pending_sf_labels) > max_pending:
@@ -912,6 +937,7 @@ def finish_sf_annotation_and_moves(
                 state.cboards[idx].fen(),
                 nodes=_eff_sf_nodes(state, idx, for_move=for_move, for_label=label_only),
                 syzygy_path=_sf_syzygy_path_for_slot(state, idx),
+                **sf_history_kwargs(state, idx),
             )
             for idx in idxs
         }
@@ -923,6 +949,7 @@ def finish_sf_annotation_and_moves(
                 state.cboards[idx].fen(),
                 nodes=_eff_sf_nodes(state, idx, for_move=for_move, for_label=label_only),
                 syzygy_path=_sf_syzygy_path_for_slot(state, idx),
+                **sf_history_kwargs(state, idx),
             )
             for idx in idxs
         }
@@ -1332,6 +1359,7 @@ def _maybe_submit_label_escalation(
         nodes=max(1, int(getattr(state.game, "sf_label_escalate_nodes", 0))),
         syzygy_path=pending.syzygy_path,
         fresh=True,
+        **_pending_sf_history(pending),
     )
     return True
 
@@ -1381,6 +1409,7 @@ def submit_async_sf_label_queries(state: SelfplayState, idxs: list[int]) -> int:
             fen,
             nodes=_eff_sf_nodes(state, idx, for_move=False, for_label=True),
             syzygy_path=syzygy_path,
+            **sf_history_kwargs(state, idx),
         )
         pending = _PendingSfLabel(
             future=fut,
@@ -1390,6 +1419,7 @@ def submit_async_sf_label_queries(state: SelfplayState, idxs: list[int]) -> int:
             query_fen=fen,
             slot=int(idx),
             syzygy_path=syzygy_path,
+            **sf_history_kwargs(state, idx),
         )
         state.pending_sf_labels.append(pending)
         if len(state.pending_sf_labels) > max_pending:

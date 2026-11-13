@@ -38,6 +38,7 @@ from chess_anti_engine.selfplay.blindspot_harvest import (
     run_harvest as run_blindspot_harvest,
 )
 from chess_anti_engine.selfplay.game import _result_to_wdl
+from chess_anti_engine.selfplay.strict_tb import full_history_board
 from chess_anti_engine.selfplay.provenance import (
     GameProvenance,
     GameStartProvenance,
@@ -170,6 +171,39 @@ def _rescore_with_syzygy(
     overridden when the TB proves the outcome; ``tb_policy_overrides``
     is populated only when ``game.syzygy_rescore_policy`` is enabled.
     """
+    strict_tb = getattr(state, "strict_tb", None)
+    if strict_tb is not None:
+        # Strict mode never rewrites a whole game's outcome using an earlier
+        # theoretical position. Only policy targets may be corrected here.
+        if not state.game.syzygy_rescore_policy:
+            return result, {}
+        assert state.starting_boards is not None
+        replay = state.starting_boards[i].copy(stack=True)
+        final = full_history_board(state, i)
+        starting_len = len(replay.move_stack)
+        records_at_ply: dict[int, int] = {}
+        for t, record in enumerate(records):
+            if int(record.ply_index) in records_at_ply:
+                raise ValueError("duplicate strict policy record ply")
+            records_at_ply[int(record.ply_index)] = t
+        overrides: dict[int, np.ndarray] = {}
+        abstained = state.strict_tb_policy_abstained.setdefault(i, [])
+        for move in final.move_stack[starting_len:]:
+            t = records_at_ply.get(replay.ply())
+            if t is not None:
+                rec = records[t]
+                if rec.move_offset != len(replay.move_stack) - starting_len or rec.pov_color != replay.turn:
+                    raise ValueError("strict TB policy record/history/POV join mismatch")
+                best = strict_tb.policy_move(replay)
+                if best is not None:
+                    action = move_to_index_for_encoding(best, replay, policy_encoding=state.game.policy_encoding)
+                    p = np.zeros(policy_size_for_encoding(state.game.policy_encoding), dtype=np.float32)
+                    p[int(action)] = 1.0
+                    overrides[t] = p
+                elif chess.popcount(replay.occupied) <= 6 and not replay.castling_rights:
+                    abstained.append(replay.ply())
+            replay.push(move)
+        return result, overrides
     tb_policy_overrides: dict[int, np.ndarray] = {}
     if not state.game.syzygy_path or state.starting_boards is None:
         return result, tb_policy_overrides
@@ -1214,6 +1248,16 @@ def _resolve_terminal_result(
 ) -> tuple[str, bool, bool, StockfishResult | None]:
     """Resolve the game's terminal result. Returns (result, was_adjudicated,
     was_tb_adjudicated, sf_res). Updates per-bucket counters in state.stats."""
+    strict_tb = getattr(state, "strict_tb", None)
+    if strict_tb is not None:
+        witness = strict_tb.resolve(
+            full_history_board(state, i), move_offset=len(state.move_idx_history[i]),
+        )
+        state.strict_tb_witnesses[i] = witness
+        is_tb = witness.origin == "TB_ADJUDICATED"
+        if is_tb:
+            state.stats.tb_adjudicated_games += 1
+        return witness.result, False, is_tb, None
     cb = state.cboards[i]
     tb_stash = state.tb_result_arr[i]
     was_tb_adjudicated = tb_stash is not None
@@ -1495,6 +1539,30 @@ def finalize_game(
         state, i,
     )
     resolved_result = result
+    if getattr(state, "strict_tb", None) is not None and result == "*":
+        state.stats.censored_games += 1
+        if on_game_provenance is not None:
+            assert game_start is not None
+            played = tuple(int(m) for m in state.move_idx_history[i])
+            on_game_provenance(GameProvenance(
+                start=game_start,
+                game_id=_stable_game_id(
+                    start_fen=game_start.start_fen, opening_source=game_start.opening_source,
+                    move_trace=",".join(str(m) for m in played), result="*", total_plies_played=game_plies,
+                ),
+                played_move_indices=played, final_fen=cb.fen(),
+                records=tuple(NetRecordProvenance(
+                    move_offset=int(r.move_offset), ply_index=int(r.ply_index),
+                    pov_color=bool(r.pov_color), has_policy=bool(r.has_policy),
+                    is_sf_refute_opp=bool(r.is_sf_refute_opp),
+                ) for r in state.samples_per_game[i]),
+                result="*", resolved_result="*", natural_result="*", resolution="unresolved",
+                tablebase_rescore_result=None,
+                cap_reached=game_plies-game_start.start_ply >= int(state.game.max_plies),
+                total_plies=game_plies, retained_samples=0, native_result=str(cb.result()),
+                tablebase_witness=state.strict_tb_witnesses[i],
+            ))
+        return
     _log_terminal_anomalies(
         state, i,
         result=result, game_plies=game_plies,
@@ -1582,10 +1650,20 @@ def finalize_game(
                 is_sf_refute_opp=bool(rec.is_sf_refute_opp),
             ) for rec in records),
             result=result, resolved_result=resolved_result,
-            natural_result=str(cb.result()), resolution=resolution,
+            natural_result=(
+                full_history_board(state, i).result(claim_draw=True)
+                if getattr(state, "strict_tb", None) is not None else str(cb.result())
+            ), resolution=resolution,
             tablebase_rescore_result=rescore_results[0] if rescore_results else None,
             cap_reached=game_plies - game_start.start_ply >= int(state.game.max_plies),
             total_plies=game_plies, retained_samples=len(all_samples) - sample_start,
+            native_result=str(cb.result()) if getattr(state, "strict_tb", None) is not None else None,
+            tablebase_witness=getattr(state, "strict_tb_witnesses", {}).get(i),
+            tablebase_policy_applied_plies=(
+                tuple(int(records[t].ply_index) for t in sorted(tb_policy_overrides))
+                if getattr(state, "strict_tb", None) is not None else ()
+            ),
+            tablebase_policy_abstained_plies=tuple(getattr(state, "strict_tb_policy_abstained", {}).get(i, ())),
         )
 
     if on_game_complete is not None:

@@ -46,6 +46,9 @@ class _ImmediateWorker:
     def reset_tree(self) -> None:
         return None
 
+    def leaf_tb_inactive_mode(self) -> str | None:
+        return None  # This stand-in has no installed tablebase.
+
     def advance_root(self, _board: chess.Board, _moves: list[chess.Move]) -> bool:
         return True
 
