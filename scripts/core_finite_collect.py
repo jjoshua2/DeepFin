@@ -114,6 +114,35 @@ def inventory(path: Path, *, seal: bool = False) -> list[dict[str, Any]]:
     return result
 
 
+def failure_marker(out: Path) -> Path:
+    return out.with_name(out.name + '.failed.json')
+
+
+def mark_failure(out: Path, failure: dict[str, Any]) -> None:
+    """Persist failure outside a possibly already sealed output; never overwrite."""
+    marker = failure_marker(out)
+    if marker.exists():
+        return
+    write_json(marker, failure)
+    marker.chmod(0o444)
+    with marker.open('rb') as stream:
+        os.fsync(stream.fileno())
+    sync_dir(marker.parent)
+
+
+def seal_readout(out: Path, readout: dict[str, Any]) -> None:
+    """A published producer readout is not sufficient if its final seal fails."""
+    try:
+        write_json(out / 'readout.json', readout)
+        inventory(out, seal=True)
+    except BaseException as error:
+        mark_failure(out, {'status': 'FAILED_CORE_GENERATION_V1', 'phase': 'final_output_seal',
+                          'error': repr(error), 'run_uuid': readout['run_uuid'],
+                          'generation': readout['generation'], 'learning_admitted': False,
+                          'root_acceptance_issued': False, 'replacement_permitted': False})
+        raise
+
+
 def proc_birth(pid: int) -> int | None:
     try:
         return int(Path('/proc', str(pid), 'stat').read_text().rsplit(')', 1)[1].split()[19])
@@ -196,8 +225,9 @@ def source_guard(protocol: dict[str, Any]) -> dict[str, Any]:
     source = protocol['source']
     repo = Path(source['checkout']).resolve()
     require(Path(__file__).resolve() == repo / 'scripts/core_finite_collect.py', 'foreign collector entrypoint')
-    require(subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo).decode().strip() == source['revision'], 'source revision changed')
-    require(not subprocess.check_output(['git', 'status', '--porcelain'], cwd=repo).strip(), 'source checkout dirty')
+    git_env = dict(os.environ, GIT_OPTIONAL_LOCKS='0')
+    require(subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, env=git_env).decode().strip() == source['revision'], 'source revision changed')
+    require(not subprocess.check_output(['git', 'status', '--porcelain'], cwd=repo, env=git_env).strip(), 'source checkout dirty')
     require(set(REQUIRED_SOURCE_FILES) <= set(source['sha256']), 'incomplete source fingerprint')
     for relative, expected in source['sha256'].items():
         path = (repo / relative).resolve()
@@ -739,11 +769,17 @@ def execute(protocol: dict[str, Any], protocol_sha256: str, roster: list[dict[st
             'replacement_or_outcome_selection': False, 'training_steps': 0,
             'root_acceptance_issued': False, 'learning_admitted': False,
             'elapsed_seconds': time.monotonic() - started, 'verification_handle_closed': True, 'pool_closed': True}
-        write_json(out / 'readout.json', readout)
-        inventory(out, seal=True)
+        seal_readout(out, readout)
         return 0 if overlap['qualified'] else 2
     except BaseException as error:
-        cleanup_errors = []
+        cleanup_errors: list[str] = []
+        failure = {'status': 'FAILED_CORE_GENERATION_V1', 'error': repr(error),
+            'run_uuid': protocol['run_uuid'], 'collection_uuid': protocol['collection_uuid'],
+            'generation': protocol['generation'], 'completed_ordinals': sorted(completed),
+            'uncompleted_ordinals_unknown_start_state': sorted(set(range(protocol['attempts'])) - set(completed)),
+            'cleanup_errors': cleanup_errors, 'root_acceptance_issued': False,
+            'learning_admitted': False, 'replacement_permitted': False}
+        mark_failure(out, failure)
         try:
             lifecycle = close_pool()
             write_json(out / 'stockfish-lifecycle-failed.json', lifecycle)
@@ -754,11 +790,13 @@ def execute(protocol: dict[str, Any], protocol_sha256: str, roster: list[dict[st
                 verifier.close()
             except BaseException as closing:
                 cleanup_errors.append(repr(closing))
-        write_json(out / 'failure.json', {'status': 'FAILED_CORE_GENERATION_V1', 'error': repr(error),
-            'completed_ordinals': sorted(completed), 'uncompleted_ordinals_unknown_start_state':
-                sorted(set(range(protocol['attempts'])) - set(completed)), 'cleanup_errors': cleanup_errors,
-            'root_acceptance_issued': False, 'learning_admitted': False, 'replacement_permitted': False})
-        inventory(out, seal=True)
+        try:
+            write_json(out / 'failure.json', failure)
+            inventory(out, seal=True)
+        except OSError:
+            # The immutable external marker survives even if the final seal has
+            # already made the output root unwritable. Preserve the primary error.
+            pass
         raise
     finally:
         signal.alarm(0)
@@ -796,7 +834,8 @@ def main() -> int:
     native = source_guard(protocol)
     cfg, profile = build_configs(protocol, roster)
     require(hashlib.sha256(canonical(profile)).hexdigest() == protocol['resolved_profile_sha256'], 'actual realized config profile changed')
-    require(not Path(protocol['output_root']).exists(), 'output root already exists')
+    require(not Path(protocol['output_root']).exists() and
+            not failure_marker(Path(protocol['output_root'])).exists(), 'output root or prior failure marker already exists')
     if args.check:
         import torch
         require(not torch.cuda.is_initialized(), 'descriptor check initialized CUDA')

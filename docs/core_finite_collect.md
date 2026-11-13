@@ -4,8 +4,8 @@
 finite `play_batch` API. It supplies reusable producer evidence for the
 [finite learner](core_finite_learner.md), never a root admission or promotion.
 The caller supplies the roster, exploration, horizon, resources and qualified
-source/assets. No scientific data count, LR, evaluation threshold or champion
-selection is chosen here. Gumbel remains explicit; UCI `Threads` is irrelevant.
+source/assets. Git identity/status commands explicitly disable optional locks.
+No scientific data count, LR, evaluation threshold or champion selection is chosen here. Gumbel remains explicit; UCI `Threads` is irrelevant.
 
 ```bash
 python -m scripts.core_finite_collect --check \
@@ -104,7 +104,13 @@ There is no Worker, Tune, continuous mode or interrupted-generation resume.
 then gets original `provenance.json`, `outcome-proof.json`, raw F32 targets and
 metadata, `validation.json`, and a complete sorted shard-file inventory. Failure
 hashes are bounded and explicitly unqualified. All successful game files and
-final output directories are sealed read-only.
+final output directories are sealed read-only. Caught operational/final-seal errors
+write an immutable sibling
+`output_root.failed.json` before attempting internal failure bookkeeping; this
+remains writable to create even when final output sealing has already made the
+output directory read-only. It is never overwritten. A marker forbids reuse or
+admission even when a producer `readout.json` exists. The independent closed-PASS
+owner and full audit remain mandatory; the readout alone admits nothing.
 
 The reusable `VerifiedOutcomeVerifier` owns a second safe strict handle, legally
 replays full history, rechecks native result/clocks and fresh rule50 resolution,

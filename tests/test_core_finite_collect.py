@@ -211,3 +211,56 @@ def test_hashed_json_refuses_ambiguous_duplicate_keys(tmp_path: Path) -> None:
     path.write_text('{"generation":1,"generation":2}')
     with pytest.raises(ValueError, match='duplicate JSON identity key'):
         collect.checked({'path': str(path), 'sha256': collect.digest(path)})
+
+
+@pytest.mark.parametrize('inherited', [None, '1', '0'])
+def test_source_guard_forces_nonlocking_git_calls(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                inherited: str | None) -> None:
+    repo = tmp_path / 'source'
+    monkeypatch.setattr(collect, '__file__', str(repo / 'scripts/core_finite_collect.py'))
+    if inherited is None:
+        monkeypatch.delenv('GIT_OPTIONAL_LOCKS', raising=False)
+    else:
+        monkeypatch.setenv('GIT_OPTIONAL_LOCKS', inherited)
+    monkeypatch.setenv('CORE_COLLECTOR_TEST_CONTEXT', 'preserved')
+    calls = []
+
+    def git(command: list[str], *, cwd: Path, env: dict[str, str]) -> bytes:
+        assert cwd == repo
+        assert env['GIT_OPTIONAL_LOCKS'] == '0'
+        assert env['CORE_COLLECTOR_TEST_CONTEXT'] == 'preserved'
+        calls.append(command)
+        return b'abc\n' if command[1] == 'rev-parse' else b''
+
+    monkeypatch.setattr(collect.subprocess, 'check_output', git)
+    with pytest.raises(ValueError, match='incomplete source fingerprint'):
+        collect.source_guard({'source': {'checkout': str(repo), 'revision': 'abc', 'sha256': {}}})
+    assert calls == [['git', 'rev-parse', 'HEAD'], ['git', 'status', '--porcelain']]
+    assert collect.os.environ.get('GIT_OPTIONAL_LOCKS') == inherited
+
+
+def test_late_final_seal_fault_banks_immutable_external_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    out = tmp_path / 'generation'
+    out.mkdir()
+    original_inventory = collect.inventory
+
+    def fail_after_seal(path: Path, *, seal: bool = False) -> list[dict[str, Any]]:
+        original_inventory(path, seal=seal)
+        assert path.stat().st_mode & 0o222 == 0
+        raise OSError('injected late seal/fsync failure')
+
+    monkeypatch.setattr(collect, 'inventory', fail_after_seal)
+    with pytest.raises(OSError, match='injected late seal'):
+        collect.seal_readout(out, {'status': 'COLLECTED_CORE_GENERATION_V1', 'run_uuid': RUN, 'generation': 1})
+    marker = collect.failure_marker(out)
+    assert marker.parent == out.parent and marker.parent != out
+    assert marker.stat().st_mode & 0o222 == 0
+    failure = collect.checked({'path': str(marker), 'sha256': collect.digest(marker)})
+    assert failure['phase'] == 'final_output_seal'
+    assert failure['status'] == 'FAILED_CORE_GENERATION_V1'
+    assert failure['learning_admitted'] is failure['root_acceptance_issued'] is False
+    # A child readout can exist, but the external failure remains authoritative.
+    assert (out / 'readout.json').exists()
+    previous = marker.read_bytes()
+    collect.mark_failure(out, {'later_error': 'must not overwrite first failure'})
+    assert marker.read_bytes() == previous
