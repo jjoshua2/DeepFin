@@ -209,12 +209,15 @@ phase C tells us what the additional seven GPUs are worth.
   Two thresholds, from the moment the move's clock started:
   - **No progress** (the normal case for a hang): past the search's own hard
     deadline (move budget minus `MoveOverheadMs`) AND no search chunk completed
-    for `S = clamp(4 x chunk time, 50 ms, 2 s)`. The chunk time is the slowest
-    chunk this search has completed; before its first chunk, the previous
-    healthy search's time to its first chunk (root eval and compaction
-    included); with no previous search, `S` is 500 ms. A healthy search
-    completes a chunk every chunk time and stops at the first chunk boundary
-    after its deadline, so it never goes `S` without one.
+    for `S = clamp(4 x chunk time, 300 ms, 2 s)`. The chunk time is the slowest
+    chunk this search has completed; before its second chunk, recent healthy
+    searches' slowest chunk; before its first chunk, recent healthy searches'
+    time to their first chunk (root eval and compaction included). "Recent" is
+    a running maximum that decays by x0.9 per search. With no previous search,
+    `S` is 1 s. A search the watchdog answered never feeds these. A healthy
+    search completes a chunk every chunk time and stops at the first chunk
+    boundary after its deadline; the 300 ms floor covers the gaps measured
+    under heavy CPU load (up to ~110 ms between chunks of ~20 ms).
   - **Last moment** (unconditional): the move's real budget -- `movetime`, or
     the side to move's remaining clock -- minus 3 ms, but never before the
     search's own deadline. The 3 ms is the watchdog's wake-up latency (p99

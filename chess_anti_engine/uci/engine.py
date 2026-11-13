@@ -210,10 +210,12 @@ _FRESH_EVAL_TIMEOUT_S = 0.15
 #   EARLY (needs no progress): past the search's own hard deadline AND no chunk
 #     completed for S = clamp(K x chunk_ms, S_FLOOR, S_CEIL) ms. chunk_ms is the
 #     slowest chunk this search has completed (inter-chunk wall time); before
-#     its second chunk, the previous healthy search's slowest chunk; before its
-#     FIRST chunk, the previous healthy search's phase-start-to-first-chunk
-#     time (root eval, tree setup and compaction included, typically 2-4x a
-#     chunk). With no previous search, S = _WATCHDOG_STALL_NO_ESTIMATE_MS. A
+#     its second chunk, recent healthy searches' slowest chunk; before its
+#     FIRST chunk, recent healthy searches' phase-start-to-first-chunk time
+#     (root eval, tree setup and compaction included, typically 2-4x a chunk).
+#     "Recent" is a running max that decays x0.9 per search, so
+#     one quick search does not shrink the scale. With no previous search,
+#     S = _WATCHDOG_STALL_NO_ESTIMATE_MS. A
 #     search the watchdog answered (silenced) never sets these. A healthy search
 #     completes a chunk every ~chunk_ms and stops at the first chunk boundary
 #     after the deadline, so it is at most one chunk from a heartbeat when it
@@ -228,9 +230,10 @@ _FRESH_EVAL_TIMEOUT_S = 0.15
 #     M ms of its budget at best, and the watchdog's answer is out no later.
 #     A hang is normally caught much earlier, by the EARLY rule.
 _WATCHDOG_STALL_CHUNKS = 4.0
-_WATCHDOG_STALL_FLOOR_MS = 50.0
+_WATCHDOG_STALL_FLOOR_MS = 300.0
 _WATCHDOG_STALL_CEIL_MS = 2000.0
-_WATCHDOG_STALL_NO_ESTIMATE_MS = 500.0
+_WATCHDOG_STALL_NO_ESTIMATE_MS = 1000.0
+_WATCHDOG_SCALE_DECAY = 0.9
 _WATCHDOG_LAST_MOMENT_MS = 3.0
 # `close()` waits this long for a search / helper; a thread still alive after
 # that is left to `__main__`, which hard-exits instead of finalizing under it.
@@ -2775,7 +2778,9 @@ class Engine:
                 beat[2] = max(beat[2], (now - beat[0]) * 1000.0)
             elif threading.current_thread() not in _SILENCED_THREADS:
                 # Phase start to first chunk: root eval, tree setup, compaction.
-                self._prev_first_chunk_ms = (now - beat[0]) * 1000.0
+                self._prev_first_chunk_ms = _decayed_max(
+                    self._prev_first_chunk_ms, (now - beat[0]) * 1000.0,
+                )
             beat[0] = now
             beat[1] += 1.0
             # One tuple, one assignment: the watchdog reads it lock-free.
@@ -2850,7 +2855,8 @@ class Engine:
                                    and deadline_ms is not None),
             )
             if beat[1] >= 2.0 and threading.current_thread() not in _SILENCED_THREADS:
-                self._prev_chunk_ms = beat[2]  # the next search's stall scale
+                # The next search's stall scale.
+                self._prev_chunk_ms = _decayed_max(self._prev_chunk_ms, beat[2])
             if not is_ponder and last_emitted_nodes[0] != result.nodes:
                 self._emit_info(
                     nodes=result.nodes,
@@ -3277,6 +3283,12 @@ def _legal_fallback_move(board: chess.Board, searchmoves: tuple[str, ...]) -> st
 # handshake. Hold a lock across the write+flush so every logical line is atomic
 # on stdout; all UCI output (including __main__'s startup prints) routes here.
 _PRINT_LOCK = threading.Lock()
+
+
+def _decayed_max(previous: float | None, sample: float) -> float:
+    """A running maximum that forgets slowly (x0.9 per search): one fast
+    search must not shrink the stall scale below what recent searches needed."""
+    return sample if previous is None else max(sample, _WATCHDOG_SCALE_DECAY * previous)
 
 
 @dataclass(frozen=True)

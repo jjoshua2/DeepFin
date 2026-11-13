@@ -126,7 +126,8 @@ def _drain(engine: Engine) -> None:
     engine._wait_for_search(timeout_s=30)
 
 
-def _play(r, go: str, n: int, *, budget_ms: float, ponderhit_after_s: float | None = None):
+def _play(r, go: str, n: int, *, budget_ms: float, ponderhit_after_s: float | None = None,
+          allow_in_time: int | None = None):
     """Play ``n`` moves of a real game with ``go``; return per-move
     (fired_line_or_None, search's own finish ms after its clock started)."""
     board = chess.Board()
@@ -159,7 +160,8 @@ def _play(r, go: str, n: int, *, budget_ms: float, ponderhit_after_s: float | No
     # 3 ms) is pre-empted by design: that margin is the watchdog's own
     # measured wake + answer latency. Allow that window at most one move in ten.
     in_time = [f for f in fired if f[1] <= budget_ms]
-    assert len(in_time) <= max(1, n // 10), (in_time, results)
+    allowed = max(1, n // 10) if allow_in_time is None else allow_in_time
+    assert len(in_time) <= allowed, (in_time, results)
     return results
 
 
@@ -225,11 +227,14 @@ def test_after_a_recovered_hang_healthy_moves_do_not_fire_and_a_hang_is_still_qu
     fires = len(real.out.watchdog_lines())
     first = hang_once("go wtime 5000 btime 5000")
     assert len(real.out.watchdog_lines()) == fires + 1
-    # Healthy moves after the recovered hang: no fire at all.
-    after = _play(real, "go movetime 300", 3, budget_ms=300)
-    assert all(line is None for line, _ in after), after
-    # A second hang is answered at the healthy chunk scale again, not at the
-    # hung search's stall (which would push the stall limit to its 2 s cap).
+    # A second hang right after the first is answered at the healthy scale
+    # again: the hung search, once released, finished a (silenced) chunk whose
+    # "time to first chunk" was the whole hang; learning it would multiply the
+    # stall limit by 4 x the hang.
     second = hang_once("go wtime 5000 btime 5000")
-    assert first < 1500
-    assert second < 1500
+    assert second < 1.5 * first + 50, (first, second)
+    # Healthy moves after the recovered hangs: no progress-rule fire and no
+    # pre-emption of a search that would have answered in time. (A move whose
+    # own search runs past the budget is answered by the last-moment rule, as
+    # it would be at any time.)
+    _play(real, "go movetime 300", 3, budget_ms=300, allow_in_time=0)

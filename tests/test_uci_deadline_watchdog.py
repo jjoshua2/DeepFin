@@ -486,67 +486,81 @@ def poll_engine(out):
 
 
 def test_progress_rule_leaves_a_progressing_search_alone(poll_engine) -> None:
-    # Past the deadline, last chunk 30 ms ago, chunks of 40 ms: S = 160 ms.
+    # Past the deadline, last chunk 30 ms ago, chunks of 100 ms: S = 400 ms.
     fired, nxt = _polled(poll_engine, since_start=1.0, deadline_in=-0.1, last_moment_in=10.0,
-                         beat_ago=0.03, beat_chunk_ms=40.0)
+                         beat_ago=0.03, beat_chunk_ms=100.0)
     assert not fired
-    assert nxt == pytest.approx(0.13, abs=0.02)  # looks again when S would run out
+    assert nxt == pytest.approx(0.37, abs=0.02)  # looks again when S would run out
 
 
 def test_progress_rule_fires_on_no_progress_past_the_deadline(poll_engine) -> None:
     fired, _ = _polled(poll_engine, since_start=1.0, deadline_in=-0.1, last_moment_in=10.0,
-                       beat_ago=0.2, beat_chunk_ms=40.0)
+                       beat_ago=0.45, beat_chunk_ms=100.0)
     assert fired
+
+
+def test_progress_rule_has_a_300_ms_floor(poll_engine) -> None:
+    # Tiny chunks (10 ms) still allow 300 ms without one (OS / GIL stalls).
+    fired, nxt = _polled(poll_engine, since_start=1.0, deadline_in=-0.1, last_moment_in=10.0,
+                         beat_ago=0.2, beat_chunk_ms=10.0)
+    assert not fired
+    assert nxt == pytest.approx(0.1, abs=0.02)
 
 
 def test_progress_rule_waits_for_the_deadline(poll_engine) -> None:
     fired, nxt = _polled(poll_engine, since_start=1.0, deadline_in=0.3, last_moment_in=10.0,
-                         beat_ago=5.0, beat_chunk_ms=40.0)
+                         beat_ago=5.0, beat_chunk_ms=100.0)
     assert not fired
     assert nxt == pytest.approx(0.3, abs=0.02)
 
 
 def test_progress_rule_scales_with_the_chunk_time(poll_engine) -> None:
-    # 200 ms without a chunk is a stall for 40 ms chunks, not for 100 ms ones.
+    # 500 ms without a chunk is a stall for 100 ms chunks, not for 200 ms ones.
     fired, _ = _polled(poll_engine, since_start=2.0, deadline_in=-0.1, last_moment_in=10.0,
-                       beat_ago=0.2, beat_chunk_ms=100.0)
+                       beat_ago=0.5, beat_chunk_ms=200.0)
     assert not fired
 
 
 def test_progress_rule_ignores_another_gos_heartbeat(poll_engine) -> None:
     # A fresh heartbeat from a parked search's generation is not progress.
-    fired, _ = _polled(poll_engine, since_start=1.0, deadline_in=-0.1, last_moment_in=10.0,
-                       beat_ago=0.0, beat_chunk_ms=40.0, gen_offset=-1)
+    fired, _ = _polled(poll_engine, since_start=2.0, deadline_in=-0.1, last_moment_in=10.0,
+                       beat_ago=0.0, beat_chunk_ms=100.0, gen_offset=-1)
     assert fired
 
 
 def test_before_its_second_chunk_the_previous_searchs_chunk_time_is_used(poll_engine) -> None:
-    poll_engine._prev_chunk_ms = 20.0  # S = max(50, 80) = 80 ms
+    poll_engine._prev_chunk_ms = 100.0  # S = 400 ms
     fired, _ = _polled(poll_engine, since_start=1.0, deadline_in=-0.1, last_moment_in=10.0,
-                       beat_ago=0.15, beat_chunk_ms=None)
+                       beat_ago=0.45, beat_chunk_ms=None)
     assert fired
 
 
-def test_with_no_chunk_time_at_all_the_stall_limit_is_500_ms(poll_engine) -> None:
+def test_with_no_chunk_time_at_all_the_stall_limit_is_1_s(poll_engine) -> None:
     poll_engine._prev_chunk_ms = None
-    fired, nxt = _polled(poll_engine, since_start=1.0, deadline_in=-0.1, last_moment_in=10.0,
-                         beat_ago=0.15, beat_chunk_ms=None)
+    fired, nxt = _polled(poll_engine, since_start=2.0, deadline_in=-0.1, last_moment_in=10.0,
+                         beat_ago=0.6, beat_chunk_ms=None)
     assert not fired
-    assert nxt == pytest.approx(0.35, abs=0.02)
+    assert nxt == pytest.approx(0.4, abs=0.02)
 
 
 def test_before_any_chunk_the_previous_first_chunk_time_is_used(poll_engine) -> None:
-    # No heartbeat yet in this search; the last healthy search took 60 ms to
-    # its first chunk: S = 240 ms from the clock start.
-    poll_engine._prev_first_chunk_ms = 60.0
+    # No heartbeat yet in this search; recent searches took 100 ms to their
+    # first chunk: S = 400 ms from the clock start.
+    poll_engine._prev_first_chunk_ms = 100.0
     poll_engine._prev_chunk_ms = 5.0  # steady chunks are not the scale here
-    fired, nxt = _polled(poll_engine, since_start=0.2, deadline_in=-0.1, last_moment_in=10.0,
+    fired, nxt = _polled(poll_engine, since_start=0.3, deadline_in=-0.1, last_moment_in=10.0,
                          beat_ago=None, beat_chunk_ms=None)
     assert not fired
-    assert nxt == pytest.approx(0.04, abs=0.02)
-    fired, _ = _polled(poll_engine, since_start=0.25, deadline_in=-0.1, last_moment_in=10.0,
+    assert nxt == pytest.approx(0.1, abs=0.02)
+    fired, _ = _polled(poll_engine, since_start=0.45, deadline_in=-0.1, last_moment_in=10.0,
                        beat_ago=None, beat_chunk_ms=None)
     assert fired
+
+
+def test_one_quick_search_does_not_shrink_the_scale() -> None:
+    assert engine_module._decayed_max(None, 80.0) == 80.0
+    assert engine_module._decayed_max(80.0, 20.0) == pytest.approx(72.0)
+    assert engine_module._decayed_max(80.0, 120.0) == 120.0
 
 
 def test_the_last_moment_fires_even_on_a_progressing_search(poll_engine) -> None:
@@ -557,7 +571,7 @@ def test_the_last_moment_fires_even_on_a_progressing_search(poll_engine) -> None
 
 def test_the_next_look_is_never_after_the_last_moment(poll_engine) -> None:
     fired, nxt = _polled(poll_engine, since_start=1.0, deadline_in=-0.1, last_moment_in=0.05,
-                         beat_ago=0.0, beat_chunk_ms=400.0)
+                         beat_ago=0.0, beat_chunk_ms=400.0)  # S = 1.6 s
     assert not fired
     assert nxt == pytest.approx(0.05, abs=0.02)
 
