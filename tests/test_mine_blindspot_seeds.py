@@ -557,7 +557,7 @@ def test_mine_game_refuses_malformed_opening_ply_count(bad, result) -> None:
     # a corrupt header means the file is suspect, not just this game.
     game = _game(_LINE, result=result)
     game.headers["OpeningPlyCount"] = bad
-    with pytest.raises(ValueError, match="OpeningPlyCount"):
+    with pytest.raises(ValueError, match=r"^t\.pgn: Round 1: OpeningPlyCount"):
         _mine(game, lambda _fen, _nodes: 30)
 
 
@@ -586,7 +586,7 @@ def test_own_eval_join_refuses_csv_whose_move_differs(tmp_path) -> None:
     _g2, other, _f2, _n2, _j2 = _history_game(root_fen=root, book=book, deepfin=deepfin, seed=7)
     path = _write_move_log(tmp_path / "m.csv", [other], deepfin=deepfin)
     bad_ply = next(i + 1 for i, (a, b) in enumerate(zip(records, other)) if a.move != b.move)
-    with pytest.raises(ValueError, match=rf"Round 7: move-log CSV ply {bad_ply} has move "
+    with pytest.raises(ValueError, match=rf"^m\.pgn: Round 7: move-log CSV ply {bad_ply} has move "
                                          rf"'{other[bad_ply - 1].move}' but the PGN game has "
                                          rf"'{records[bad_ply - 1].move}'"):
         _mine_own(game, load_own_evals([str(path)]))
@@ -626,7 +626,7 @@ def test_own_eval_join_pairs_identical_replays_in_file_order(tmp_path) -> None:
                                               deepfin=deepfin))])
     assert _mismatch_own(_mine_own(game_a, own)) == "2000"
     assert _mismatch_own(_mine_own(game_b, own)) == "1500"
-    with pytest.raises(ValueError, match="more PGN copies"):
+    with pytest.raises(ValueError, match=r"^m\.pgn: Round 7: more PGN copies"):
         _mine_own(game_a, own)  # a third copy has no run left to claim
 
 
@@ -671,3 +671,44 @@ def test_own_eval_join_without_move_column_behaves_as_before(tmp_path) -> None:
     with_move = _write_move_log(tmp_path / "v.csv", [rec_a], deepfin=deepfin)
     with pytest.raises(ValueError, match="move' column"):
         load_own_evals([str(with_move), str(path)])
+
+
+def test_own_eval_join_accepts_terminal_null_move_row(tmp_path) -> None:
+    """An illegal/null-move loss: match_vs_uci logs the offending move as one
+    extra CSV row (ply n+1, e.g. "0000") that the PGN never plays. It must
+    join, not be refused as a different game."""
+    from scripts import match_vs_uci as match
+    from scripts.mine_blindspot_seeds import load_own_evals
+
+    root, book, deepfin = _ODD
+    game, records, *_ = _history_game(root_fen=root, book=book, deepfin=deepfin)
+    nxt = len(records) + 1
+    null_row = match.MoveRecord(
+        ply=nxt, color="B" if records[-1].color == "W" else "W", move="0000",
+        elapsed_s=0.01, nodes=None, engine_time_s=None, score_cp=None,
+        white_clock_before_s=None, black_clock_before_s=None,
+        white_clock_after_s=None, black_clock_after_s=None,
+    )
+    own = load_own_evals([str(_write_move_log(tmp_path / "m.csv", [[*records, null_row]],
+                                              deepfin=deepfin))])
+    assert _mismatch_own(_mine_own(game, own)) == "2000"
+    assert own.missing_rows == 0
+
+
+def test_own_eval_join_prefers_complete_replay_over_crash_partial(tmp_path) -> None:
+    """Crash mid-game, then --resume replays it: the CSV holds a partial run (a
+    prefix of the same moves) and then the complete replay. The complete run's
+    evals are the PGN game's, even though the partial run comes first."""
+    from scripts.mine_blindspot_seeds import load_own_evals
+
+    root, book, deepfin = _ODD
+    _gp, partial, *_ = _history_game(root_fen=root, book=book, deepfin=deepfin,
+                                     first_own=999)
+    game, full, *_ = _history_game(root_fen=root, book=book, deepfin=deepfin,
+                                   first_own=2000)
+    assert [r.move for r in partial] == [r.move for r in full]
+    own = load_own_evals([str(_write_move_log(tmp_path / "m.csv", [partial[:10], full],
+                                              deepfin=deepfin))])
+    assert own.replayed_rounds == 1
+    assert _mismatch_own(_mine_own(game, own)) == "2000"
+    assert own.missing_rows == 0

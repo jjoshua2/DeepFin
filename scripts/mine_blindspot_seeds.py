@@ -556,7 +556,10 @@ def mine_game(
     resolved or the post-refute terminal is rejected by the loader, falls
     back to the pre-blunder seed (still useful for the live SF-refute channel).
     """
-    book_plies = opening_ply_count(game)  # validated before any early return
+    try:
+        book_plies = opening_ply_count(game)  # validated before any early return
+    except ValueError as exc:
+        raise ValueError(f"{src}: {exc}") from exc
     color = deepfin_color(game, name_needle)
     if color is None or _is_time_forfeit(game) or not _deepfin_lost(game, color):
         return []
@@ -568,7 +571,12 @@ def mine_game(
     run: dict[int, OwnEvalRow] | None = None
     if own_evals is not None:
         engine_ucis = [m.uci() for m in game.mainline_moves()][book_plies:]
-        run = own_evals.resolve(round_num, engine_ucis)
+        try:
+            run = own_evals.resolve(round_num, engine_ucis)
+        except ValueError as exc:
+            # Name the PGN: a glob that also matched a copied/backup PGN shows
+            # up here as a duplicate round, and the operator needs the file.
+            raise ValueError(f"{src}: {exc}") from exc
 
     board = game.board()
     fens: list[str] = []
