@@ -1,0 +1,39 @@
+{
+  "A_utility_eligible": false,
+  "B_utility_eligible": false,
+  "adoption": false,
+  "all_three_screens_qualified": true,
+  "bindings_sha256": "c6c61eeb2bdea77456ba4f5b2d886c8f0e571f283b1cb21939e717600a174e85",
+  "both_eligible_tie_break": "B if BvsA point>=0.5; otherwise A; exact tie B",
+  "bundle_contrast": "UNRESOLVED",
+  "confirmation_allowed": false,
+  "confirmation_consumed": false,
+  "confirmation_readout": null,
+  "created_unix": 1794569915.0240731,
+  "donor": {
+    "path": "/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/baseline/epoch2.pt",
+    "sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0"
+  },
+  "label": "NO_CONFIRMATION",
+  "no_old_candidate_or_intermediate_fallback": true,
+  "no_pooling_or_Elo_or_external_strength_claim": true,
+  "scientific_sha256": "7cfd6e45b565f39827a1801c828dc302fe5d79f176c7701b004fa7f1adab3478",
+  "scope": "Bundle contrast is screen-supported only; sole selected-model-vs-donor confirmation is a separate testwise claim.",
+  "screen_readouts": {
+    "context": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-readout-results-v1/context/readout.json",
+      "sha256": "46896e2a2a5232ed9ce3e6554d4dc73d0896fc9c4601d150043eb1020ed03572"
+    },
+    "eligibility": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-readout-results-v1/eligibility/readout.json",
+      "sha256": "3711340610bb39169a94d061cb4fafcb95ab013a6176650f7e26dab2669e210b"
+    },
+    "primary": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-readout-results-v1/primary/readout.json",
+      "sha256": "9703d0818c4b42f8becd6c6036eb49bd2f6f3d569f7f317e6d0d55ceb5fe106b"
+    }
+  },
+  "selected_candidate": null,
+  "selected_role": null,
+  "status": "FROZEN_E4_RULE_METADATA_DECISION_ONLY"
+}

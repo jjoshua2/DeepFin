@@ -1,0 +1,151 @@
+{
+  "bindings": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-eligibility-bindings-v1.json",
+    "sha256": "fe96bb1d3c653cbf1e41f3db2c08c171281dbeb4bfd95edd594f01c68fcf4940"
+  },
+  "candidate": {
+    "after_sha256": "c25214721e9c7be65c1f2a41d0eb078723a501ea51beafef579d5aa1d6dc6a4e",
+    "before_sha256": "c25214721e9c7be65c1f2a41d0eb078723a501ea51beafef579d5aa1d6dc6a4e",
+    "model_role": "FULLB129",
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/FULLB/step-129.pt",
+    "readonly_after": true,
+    "readonly_before": true,
+    "sha256": "c25214721e9c7be65c1f2a41d0eb078723a501ea51beafef579d5aa1d6dc6a4e",
+    "stat_after": {
+      "ctime_ns": 1794566258674160179,
+      "dev": 2096,
+      "ino": 14564151,
+      "mtime_ns": 1794566256762160409,
+      "size": 655382347
+    },
+    "stat_before": {
+      "ctime_ns": 1794566258674160179,
+      "dev": 2096,
+      "ino": 14564151,
+      "mtime_ns": 1794566256762160409,
+      "size": 655382347
+    },
+    "step": 129
+  },
+  "checks": {
+    "256_unique_games_128_complete_color_pairs": true,
+    "all_actual_bindings_artifact_and_custody_hashes": true,
+    "header_same_seed1345_matched64_noise_temp_point1_full6_rule50": true,
+    "known_owners_children_currently_absent": [
+      1397510,
+      1397512,
+      1415168,
+      1415170
+    ],
+    "pre_post_SHA_stat_readonly_and_model_roles": true,
+    "qualified_PGN_full16_history_legality_cap_fault_TB_validation_reused": true,
+    "same_frozen_reader_manifest_science_and_exact_eligibility_command": true
+  },
+  "closures": [
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-eligibility-execution-v1/terminal.json",
+      "sha256": "07b8d98d2673b8bb4ae03940fd3461f7b0c459ba74352cf550714a5d51918b21"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-eligibility-readout-execution-v1/terminal.json",
+      "sha256": "f1f7fe4bbfb01d127a5b3f3ae67e2ea8bbcc31d730b51f174fa548f80cf34042"
+    }
+  ],
+  "findings": [],
+  "independent_stdlib_statistics": {
+    "CI95": [
+      0.42056017813506175,
+      0.5130335718649383
+    ],
+    "SE": 0.023590151461703197,
+    "candidate_WDL": [
+      68,
+      103,
+      85
+    ],
+    "denominator": 512,
+    "halfpoints": 239,
+    "pentanomial": [
+      15,
+      30,
+      47,
+      29,
+      7
+    ],
+    "point_at_least_053_and_lower_above_half": false,
+    "qualified_upper_below_half": false,
+    "sample_variance": 0.07123139148622047,
+    "score": 0.466796875
+  },
+  "limits": [
+    "No PGN replay, engine/TB query, model/checkpoint/NPZ read, project import, new job or random rerun.",
+    "Integer game outcomes and paired normal95 recomputed from saved per_game metadata; frozen reader supplies legal-history and strict-TB verification.",
+    "Point score below donor does not establish harm: interval includes .5. No B129 utility eligibility, confirmation or adoption follows.",
+    "All three registered screens remain mandatory; A129 donor context must be completed independently of this point direction.",
+    "Conditional internal matched64 inference for one realization; no external Elo, per-forward precision or per-game served-state assertion."
+  ],
+  "manifest": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-package-v1/manifest.json",
+    "sha256": "2b3c9ad242cbe2d21b6ff0b10ea7a95974f98d071a91067d8891dfbce56fb665"
+  },
+  "maximum_additional_plies": 238,
+  "model_custody": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-eligibility-postexecution-readout-bindings-v1/model-custody.json",
+    "sha256": "dd95fb948e3c1ea1c904c0907b375234cd104b651a88a355caeafc1624db3928"
+  },
+  "readout": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-readout-results-v1/eligibility/readout.json",
+    "sha256": "3711340610bb39169a94d061cb4fafcb95ab013a6176650f7e26dab2669e210b"
+  },
+  "reference": {
+    "after_sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+    "before_sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+    "model_role": "A39",
+    "path": "/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/baseline/epoch2.pt",
+    "readonly_after": true,
+    "readonly_before": true,
+    "sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+    "stat_after": {
+      "ctime_ns": 1794435951764542732,
+      "dev": 2096,
+      "ino": 10308758,
+      "mtime_ns": 1794435951364542774,
+      "size": 665665037
+    },
+    "stat_before": {
+      "ctime_ns": 1794435951764542732,
+      "dev": 2096,
+      "ino": 10308758,
+      "mtime_ns": 1794435951364542774,
+      "size": 665665037
+    },
+    "step": null
+  },
+  "reused_primary_source_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-primary-actual-independent-review-v1/review.json",
+    "sha256": "ae277df8174bffa60243eebaab87a309156834c144b75e1637d4c4bdfd3f44e7"
+  },
+  "rule_flags": {
+    "automatic_75move": 0,
+    "automatic_fivefold": 0,
+    "checkmate": 85,
+    "claimable_fifty": 1,
+    "claimable_threefold": 42,
+    "current_fifty": 0,
+    "current_threefold": 0,
+    "insufficient_material": 0,
+    "stalemate": 0
+  },
+  "scientific_sha256": "7cfd6e45b565f39827a1801c828dc302fe5d79f176c7701b004fa7f1adab3478",
+  "source_reader": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-package-v1/read_endpoint.py",
+    "sha256": "be9d9f5b8b63de3e855b15152c28fb262ab491170916e72c81378fea1af47776"
+  },
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "ACCEPT_QUALIFIED_E4_B129_DONOR_SCREEN_METADATA_AND_PAIRED_STATISTICS",
+  "terminations": {
+    "rules": 128,
+    "syzygy": 128
+  },
+  "verdict": "NO_B129_UTILITY_ELIGIBILITY_DONOR_DIFFERENCE_UNRESOLVED"
+}

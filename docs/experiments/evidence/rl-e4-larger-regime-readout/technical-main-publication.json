@@ -1,0 +1,145 @@
+{
+  "status": "MAIN_PUBLISHED_E4_DRAW_METADATA_TECHNICAL_CORRECTION",
+  "frozen_scientific_sha256": "7cfd6e45b565f39827a1801c828dc302fe5d79f176c7701b004fa7f1adab3478",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "collection_uuid": "cd47b230-f32f-4256-a51e-4869f5708bb6",
+  "new_helper": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-final-v3/bind_draw_plan.py",
+    "sha256": "ff24bc622171b8e226e3f05c66800d046fb008713d30991088e68a008b07f47f"
+  },
+  "entrypoint": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-final-v3/bind_draw_plan.py",
+  "new_execution_manifest": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-final-v3/manifest.json",
+    "sha256": "905fc0884365d411ce37db8490c1ba7a95718afaf391c2a45eedf9cf662435df"
+  },
+  "technical_descriptor": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-metadata-consumer-correction-v2/technical-descriptor.json",
+    "sha256": "6af973aae6820cf1f39bc2d3c8ae6a7f7687cab02e6e29d7a08252465e12505c"
+  },
+  "ancestor_draw_helper": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/draw/bind_draw_plan.py",
+    "sha256": "4d07f1c83e3d173be3fa8500eaf1f315274722c2f12e78d3552bc863d23561d2"
+  },
+  "utc": "2026-11-13T10:29:02.319792+00:00",
+  "PR": 1257,
+  "PR_url": "https://github.com/jjoshua2/DeepFin/pull/1257",
+  "reviewed_head": "6340086fe40e6e014688a5f1b759c508a930ae30",
+  "previous_main": "92c9ffc98e4c9f4092a40f93a87dd79e736633eb",
+  "main_merge": "683e6e028d1adad52fdc47914e2fe7af56693a92",
+  "main_tree": "80e958c664b9346db0abfe82d221a8565fe75a69",
+  "merge_admission": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-technical-main-merge-admission-v1/admission.json",
+    "sha256": "813247a1ad2652953f7dae2d439cf5aca79301d839c913b6b05bec355f2e2550"
+  },
+  "amendment": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-technical-amendment-final-v1/amendment.json",
+    "sha256": "49fb2c0f2dc3dbc5320492180a334c76b785a5c5bdb78c19946eb0cf52c57e22"
+  },
+  "publication_copy_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-technical-amendment-publication-independent-review-v1/review.json",
+    "sha256": "fc81716cfae074062fc7ec39c8fea6d8f61a71bd6cc04ae4dc6ff1b7f5f03822"
+  },
+  "all_expected_final_head_CI_success": true,
+  "CI_run": 43406835348,
+  "all_three_REST_paginated_and_GraphQL_threads_clear": true,
+  "changed_files_all_merge_blobs_equal_reviewed_head": [
+    {
+      "path": "docs/experiments/2026-11-13-rl-larger-outcome-regime.md",
+      "git_blob": "08f3b99d300d56a78f29eb26ba9c6713ea92b899"
+    },
+    {
+      "path": "docs/experiments/evidence/rl-e4-draw-contract-repair/README.md",
+      "git_blob": "b9b399fe0ce16dae29f663f69bc78c960451cb9f"
+    },
+    {
+      "path": "docs/experiments/evidence/rl-e4-draw-contract-repair/amendment.json",
+      "git_blob": "47bc2b060b1c6c117a7b570db47afd70e06abe32"
+    },
+    {
+      "path": "docs/experiments/evidence/rl-e4-draw-contract-repair/bind_draw_plan.py.txt",
+      "git_blob": "e984f34ecd4b305ff3f21249a08e92a7997f3c34"
+    },
+    {
+      "path": "docs/experiments/evidence/rl-e4-draw-contract-repair/controls-actual-readout.json",
+      "git_blob": "f09a96402089fc02ded0227c052c7528f28c7ef6"
+    },
+    {
+      "path": "docs/experiments/evidence/rl-e4-draw-contract-repair/controls-actual-review.json",
+      "git_blob": "0a277f6452128aea43ad7e20dee340f964bb10b4"
+    },
+    {
+      "path": "docs/experiments/evidence/rl-e4-draw-contract-repair/draw-command.TEMPLATE.json",
+      "git_blob": "123016175bd24fbe4f48572cd18afbdead77c61a"
+    },
+    {
+      "path": "docs/experiments/evidence/rl-e4-draw-contract-repair/guard-control-command.json",
+      "git_blob": "73a1e27fab8dd795e9e61da2f148cb4db90e0f9f"
+    },
+    {
+      "path": "docs/experiments/evidence/rl-e4-draw-contract-repair/guard-control-manifest.json",
+      "git_blob": "8845f2672f11931ec2c465e0b671225308ae3bed"
+    },
+    {
+      "path": "docs/experiments/evidence/rl-e4-draw-contract-repair/guard-only.diff.txt",
+      "git_blob": "d827599dbb2c2fafbdb555da83368d6e122683a5"
+    },
+    {
+      "path": "docs/experiments/evidence/rl-e4-draw-contract-repair/guard_controls.py.txt",
+      "git_blob": "41b1ef2e750955fb55a80d68bf552bf1a3a30c67"
+    },
+    {
+      "path": "docs/experiments/evidence/rl-e4-draw-contract-repair/identity-inputs.TEMPLATE.json",
+      "git_blob": "34fb6a6099419cea466e3ebd05bbb25f2e9a2c6c"
+    },
+    {
+      "path": "docs/experiments/evidence/rl-e4-draw-contract-repair/manifest.json",
+      "git_blob": "863108c7576b840854af53bdd1c8b5966b9c38f7"
+    },
+    {
+      "path": "docs/experiments/evidence/rl-e4-draw-contract-repair/original-finding.json",
+      "git_blob": "d3fb5ae383dcec115715ea99d74fe5034086c947"
+    },
+    {
+      "path": "docs/experiments/evidence/rl-e4-draw-contract-repair/preparation.json",
+      "git_blob": "0ab64dad84a27b2c8feec09909a4ffe0ea8fdea0"
+    },
+    {
+      "path": "docs/experiments/evidence/rl-e4-draw-contract-repair/publication-manifest.json",
+      "git_blob": "07cc7fedfad03005b3f61401d51730d5199aade9"
+    },
+    {
+      "path": "docs/experiments/evidence/rl-e4-draw-contract-repair/source-proof.json",
+      "git_blob": "e1c9b87087dbbfff78410d2e311efee86d57e400"
+    },
+    {
+      "path": "docs/experiments/evidence/rl-e4-draw-contract-repair/source-review.json",
+      "git_blob": "342ba8772af78b42cc6900a0b1f08e17f17b7d83"
+    },
+    {
+      "path": "docs/experiments/evidence/rl-e4-draw-contract-repair/technical-amendment.DRAFT.json",
+      "git_blob": "ebdb239822d0a0b84ea8eb3459e9b0fb54a9bc25"
+    },
+    {
+      "path": "docs/experiments/evidence/rl-e4-draw-contract-repair/technical-descriptor.json",
+      "git_blob": "798cb92a9fd8c3acb318eed74e10c7ade0a379d5"
+    },
+    {
+      "path": "docs/experiments/evidence/rl-e4-draw-contract-repair/technical-publication-interface.json",
+      "git_blob": "3e3b8bef370fbae6e850c1f39aef7d348eb19fb6"
+    },
+    {
+      "path": "docs/experiments/evidence/rl-e4-draw-contract-repair/v1-to-v2-scope.json",
+      "git_blob": "0457104f763e81a8684d4c4a7e6c7f38a7f2ec40"
+    },
+    {
+      "path": "docs/experiments/evidence/rl-e4-draw-contract-repair/v1-to-v2.diff.txt",
+      "git_blob": "3063372e5a99195c232559a8340d9f72bf0b77b4"
+    }
+  ],
+  "all21_source_copies_verified_actual_main_bytes": true,
+  "original_science_evidence_git_tree_unchanged": true,
+  "new_manifest_installation_pending": true,
+  "actual_draws": 0,
+  "optimizer_updates": 0,
+  "learning_admitted": false
+}

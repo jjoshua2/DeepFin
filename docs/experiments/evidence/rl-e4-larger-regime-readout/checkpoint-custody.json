@@ -1,0 +1,78 @@
+{
+  "arena_or_offline_execution_admitted": false,
+  "models": [
+    {
+      "all494_model_architecture_qualified": true,
+      "label": "DONOR",
+      "path": "/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/baseline/epoch2.pt",
+      "readonly": true,
+      "sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+      "stat_after": {
+        "ctime_ns": 1794435951764542732,
+        "dev": 2096,
+        "ino": 10308758,
+        "mtime_ns": 1794435951364542774,
+        "size": 665665037
+      },
+      "stat_before": {
+        "ctime_ns": 1794435951764542732,
+        "dev": 2096,
+        "ino": 10308758,
+        "mtime_ns": 1794435951364542774,
+        "size": 665665037
+      },
+      "step": null
+    },
+    {
+      "all494_model_architecture_qualified": true,
+      "label": "FULLA129",
+      "metadata_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-paired129-actual-cpu-readout-v1/FULLA-step-129-metadata.json",
+      "metadata_sha256": "b7f216e38c8a49746a013b719981482aee599daddc9b6e9dc48d4ede4e0486d6",
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/FULLA/trainer.pt",
+      "readonly": true,
+      "sha256": "fe4038db2b2b190a49901350943ab0369e83f0698fcc27f85cc0fa7ba4417b7a",
+      "stat_after": {
+        "ctime_ns": 1794566258650160182,
+        "dev": 2096,
+        "ino": 14672210,
+        "mtime_ns": 1794566212482165141,
+        "size": 655382347
+      },
+      "stat_before": {
+        "ctime_ns": 1794566258650160182,
+        "dev": 2096,
+        "ino": 14672210,
+        "mtime_ns": 1794566212482165141,
+        "size": 655382347
+      },
+      "step": 129
+    },
+    {
+      "all494_model_architecture_qualified": true,
+      "label": "FULLB129",
+      "metadata_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-paired129-actual-cpu-readout-v1/FULLB-step-129-metadata.json",
+      "metadata_sha256": "832e500e2858feed6baf95b0dcec3e3cfa22c99c6fe23167fcf6b4b4e06105e2",
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/FULLB/trainer.pt",
+      "readonly": true,
+      "sha256": "c25214721e9c7be65c1f2a41d0eb078723a501ea51beafef579d5aa1d6dc6a4e",
+      "stat_after": {
+        "ctime_ns": 1794566258674160179,
+        "dev": 2096,
+        "ino": 14564151,
+        "mtime_ns": 1794566256762160409,
+        "size": 655382347
+      },
+      "stat_before": {
+        "ctime_ns": 1794566258674160179,
+        "dev": 2096,
+        "ino": 14564151,
+        "mtime_ns": 1794566256762160409,
+        "size": 655382347
+      },
+      "step": 129
+    }
+  ],
+  "not_post_arena_verification": true,
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "CPU_QUALIFIED_THREE_CHECKPOINTS_BEFORE_ANY_ARENA_LAUNCH"
+}

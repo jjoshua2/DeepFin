@@ -1,0 +1,35 @@
+{
+  "HOLDOUT_games": 64,
+  "HOLDOUT_loaded_for_learning": false,
+  "HOLDOUT_rows": 5284,
+  "TRAIN_games": 128,
+  "TRAIN_rows": 10516,
+  "actual_draw_admitted": false,
+  "actual_updates_admitted": false,
+  "all192_attempts_retained": true,
+  "all192_integrity_qualified": true,
+  "closed_auditor_terminal": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cohort-independent-audit-execution-v1/terminal.json",
+    "sha256": "ab0b4545d7afc4a605b19c2772589df2ab23091471c24f10ea1ec7f11cc3cda0"
+  },
+  "collection_uuid": "cd47b230-f32f-4256-a51e-4869f5708bb6",
+  "independent_actual_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cohort-actual-independent-review-v1/review.json",
+    "sha256": "98d9e4aa96cbe3d2f3f0f499da30a8bfaeadc0e529337788d58ede77ec23ea09"
+  },
+  "independent_arrays_deserialized": false,
+  "independent_sha256": "6b175f2d4f8ad8a93d0b42409d0da96b7e29cd9ae9df06b98f3d092c5355097d",
+  "no_automatic_training_playing_adoption_or_strength_claim": true,
+  "playing_guard_qualified": true,
+  "playing_guard_sha256": "3358969a803329c24c43b1df92efdc696f350c391c9ccaaa199c0c9c74795522",
+  "producer_manifest_sha256": "b3fdbb8bebb46d45363740abae8b63f027988b432afc90a97a62e4ee8ffb0c18",
+  "producer_protocol_sha256": "b18e89f8b41be485f35637087b7bdb90cdbab37da626d8dda4b81b6d19b0e3ba",
+  "readout_sha256": "a8aec347050db01a306452892fc649e4629fe1495e4667ecf274c7220d45552e",
+  "resolved_profile_sha256": "5038469948f3bf4cc42afb16d6c3b3c7f5fde49f97de1b36fa9a3f40d39f6ff0",
+  "scope": "Acceptedall192metadata/proofs/immutableinventories and128TRAIN eligibility only, with independentactualreadout. ProducerrawF32/F16/175 checks remain source-qualified. Unchangedload_research_train must freshlyverifyall128proofs BEFORE arrays then revalidateeveryactualraw/storedcontrol/physicalrow/encoding before draws or anyupdate. NoHOLDpayload learning/modelselection; onefixed64diagnostic stillseparatephase.",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "ROOT_ACCEPTED_E4_128_TRAIN_FOR_PAIRED_FULL129",
+  "technical_draw_correction": "Original4d07unrun; actualff24 correctedmetadata guard requirespublishedtechnicalamendment andsixthauthorityref plusfreshCPUadmission beforedraw. Source7cfd/scientificrules/data unchanged.",
+  "terminal_sha256": "e04fc43ec580af2278f5e19d7a5d2e83c0d14384e3f302e1c889215738402f02",
+  "utc": "2026-11-13T10:13:14.706769+00:00"
+}

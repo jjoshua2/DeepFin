@@ -1,0 +1,262 @@
+{
+  "copied_files": 42,
+  "files": [
+    {
+      "bytes": 13501,
+      "destination": "root-readout.json",
+      "sha256": "36d6fe153522f97a856c63c75b1b79b55ff74b3c546fff2315a99bf216a72607",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-final-root-actual-readout-v1/readout.json"
+    },
+    {
+      "bytes": 55556,
+      "destination": "cohort-audit.json",
+      "sha256": "6b175f2d4f8ad8a93d0b42409d0da96b7e29cd9ae9df06b98f3d092c5355097d",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cohort-independent-audit-results-v1/readout.json"
+    },
+    {
+      "bytes": 8217,
+      "destination": "cohort-review.json",
+      "sha256": "98d9e4aa96cbe3d2f3f0f499da30a8bfaeadc0e529337788d58ede77ec23ea09",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cohort-actual-independent-review-v1/review.json"
+    },
+    {
+      "bytes": 2458,
+      "destination": "cohort-root-acceptance.json",
+      "sha256": "0c5898f09f3a0439097f6ac0539c0b2709475fbd46fb943511ece6a8164cf97b",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cohort-root-data-admission-v1/readout.json"
+    },
+    {
+      "bytes": 975,
+      "destination": "draw-readout.json",
+      "sha256": "36a9a16000fd8db2d23eeb4fef5933a9864c6a538f57e68d475e8015471ded00",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-results-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/readout.json"
+    },
+    {
+      "bytes": 4574,
+      "destination": "draw-review.json",
+      "sha256": "a25ba3d530751e7ca68dd6a917d8d311930bed3209e48767364b4271d0f9b7b9",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-actual-independent-review-v1/review.json"
+    },
+    {
+      "bytes": 21322,
+      "destination": "draw-input-lineage.json",
+      "sha256": "eb61e339c5330d8d628cd300eb1288c48c4aea0c44c4d40a033a1f67076fb9ae",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-results-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/input-lineage.json"
+    },
+    {
+      "bytes": 5181,
+      "destination": "learner-cpu-readout.json",
+      "sha256": "9d0eeef0675c2714f4f7348693e669b645ee652510fb904bce69ab028f04ee22",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-paired129-actual-cpu-readout-v1/readout.json"
+    },
+    {
+      "bytes": 10950,
+      "destination": "learner-review.json",
+      "sha256": "829292f1ddacef1952eb32145636e41a930525d2ffaa8840e9ce36b32c05b8fb",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-paired129-actual-independent-review-v1/review.json"
+    },
+    {
+      "bytes": 3300,
+      "destination": "checkpoints.json",
+      "sha256": "e302139091abf128a48d4d2ff365fd432a4b9a0f251c165d224817eed990c65c",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-paired129-root-actual-acceptance-v1/readout.json"
+    },
+    {
+      "bytes": 2924,
+      "destination": "checkpoint-custody.json",
+      "sha256": "efcd409d57403ab5c34750275045c63a8ffbfb1861ec5cea3318c8a89960b92d",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-paired129-actual-cpu-readout-v1/checkpoint-custody.json"
+    },
+    {
+      "bytes": 2577,
+      "destination": "offline-root-acceptance.json",
+      "sha256": "befeb98a1ad480b0a0b2472fe2b7f6cf14977b1d0b331a7a153bb8e62a954c23",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline-root-actual-acceptance-v1/readout.json"
+    },
+    {
+      "bytes": 2476,
+      "destination": "offline-review.json",
+      "sha256": "4f92c89f811ffd554d6781bdc4970cd6d733e97447e7f75db238b76edda86624",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline-actual-chain-independent-review-v1/review.json"
+    },
+    {
+      "bytes": 18459,
+      "destination": "offline-inference-readout.json",
+      "sha256": "b7a03d4f71c48c23609fc21b549d09428850102efce7c6e2d36314bbdea74b90",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline64-scoring-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/readout.json"
+    },
+    {
+      "bytes": 1884,
+      "destination": "decision.json",
+      "sha256": "97c12c5484840536b44506e3e5f74dfcc2f0450e7d70d9c47b231e521b6b70db",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-readout-results-v1/screens-decision.json"
+    },
+    {
+      "bytes": 5449,
+      "destination": "decision-review.json",
+      "sha256": "e64b7ee6cbcccec8156192d633f067af8a41e5c27b953c7fa4e548e967903b31",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-final-decision-actual-independent-review-v1/review.json"
+    },
+    {
+      "bytes": 6723,
+      "destination": "technical-main-publication.json",
+      "sha256": "6fd58c648fe7729899d641c34f7a52c4e0f13058bdec29000667ad9e3dbdbad3",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-technical-main-publication-v1/publication.json"
+    },
+    {
+      "bytes": 3840,
+      "destination": "technical-publication-review.json",
+      "sha256": "fbe39f139f44f2d2d6c16f861d39ec01fc56e0ae907e423dea86958ff2217e4e",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-technical-main-publication-independent-review-v1/review.json"
+    },
+    {
+      "bytes": 1671,
+      "destination": "collection-terminal.json",
+      "sha256": "e04fc43ec580af2278f5e19d7a5d2e83c0d14384e3f302e1c889215738402f02",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-execution-v1/terminal.json"
+    },
+    {
+      "bytes": 1315,
+      "destination": "learning-terminal.json",
+      "sha256": "3f38a044d3d6504441f95d4bcdc8c5df7c88793e827679ad8aa0762262fce6c5",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-paired-full129-execution-v1/terminal.json"
+    },
+    {
+      "bytes": 1167,
+      "destination": "offline-score-terminal.json",
+      "sha256": "34abd52b7c84aaa21063aea0983ad055145c2ad5047ecd6a6dccb348eadf3b77",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline64-score-execution-v1/terminal.json"
+    },
+    {
+      "bytes": 1169,
+      "destination": "offline-reader-terminal.json",
+      "sha256": "8e3f7afa9cbfdb2997bdcbb29d453ed3f935d87714647768b934f5f22c0cb3ae",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline64-readout-execution-v1/terminal.json"
+    },
+    {
+      "bytes": 1382,
+      "destination": "decision-terminal.json",
+      "sha256": "27dc21200599ed17330e2cb09bfa4080b37719f35611d053bd16bffbb9691b12",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-screens-decision-readout-execution-v1/terminal.json"
+    },
+    {
+      "bytes": 6623,
+      "destination": "training-protocol.json",
+      "sha256": "5b11e8da3eeb5caa76402142cada45571babd06218586763b1b8759ecb6bfd73",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-bindings-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/protocol.json"
+    },
+    {
+      "bytes": 18298,
+      "destination": "training-manifest.json",
+      "sha256": "88f2ff8224638a6eaaebf1e4725b2708038dfa39f43f2e3ff700473cfaf52527",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-bindings-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/manifest.json"
+    },
+    {
+      "bytes": 102424,
+      "destination": "collector-protocol.json",
+      "sha256": "b18e89f8b41be485f35637087b7bdb90cdbab37da626d8dda4b81b6d19b0e3ba",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-package-v1/protocol.json"
+    },
+    {
+      "bytes": 16838,
+      "destination": "collector-manifest.json",
+      "sha256": "b3fdbb8bebb46d45363740abae8b63f027988b432afc90a97a62e4ee8ffb0c18",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-package-v1/manifest.json"
+    },
+    {
+      "bytes": 145867,
+      "destination": "primary-readout.json",
+      "sha256": "9703d0818c4b42f8becd6c6036eb49bd2f6f3d569f7f317e6d0d55ceb5fe106b",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-readout-results-v1/primary/readout.json"
+    },
+    {
+      "bytes": 5646,
+      "destination": "primary-review.json",
+      "sha256": "ae277df8174bffa60243eebaab87a309156834c144b75e1637d4c4bdfd3f44e7",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-primary-actual-independent-review-v1/review.json"
+    },
+    {
+      "bytes": 1185,
+      "destination": "primary-classification.json",
+      "sha256": "e66733dd5401fcda10b06b2bab9a6929bf225d9381872707bf947da2b6140570",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-primary-root-classification-v1/acceptance.json"
+    },
+    {
+      "bytes": 2857,
+      "destination": "primary-terminal.json",
+      "sha256": "a3910e275b24d6eab5dcebf3a080b34849d1fc8bd814aed4143e910ebcf6a305",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-primary-execution-v1/terminal.json"
+    },
+    {
+      "bytes": 1353,
+      "destination": "primary-reader-terminal.json",
+      "sha256": "53fc04f0f81610a3512fdad5133b09d5894e18cfa453d7f345b104a85f7d0583",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-primary-readout-execution-v1/terminal.json"
+    },
+    {
+      "bytes": 146031,
+      "destination": "eligibility-readout.json",
+      "sha256": "3711340610bb39169a94d061cb4fafcb95ab013a6176650f7e26dab2669e210b",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-readout-results-v1/eligibility/readout.json"
+    },
+    {
+      "bytes": 5990,
+      "destination": "eligibility-review.json",
+      "sha256": "37d3bac9a06aa29f172eea98d8c0213e68f31dbde8ba9cd3cb3f93eb951692b5",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-eligibility-actual-independent-review-v1/review.json"
+    },
+    {
+      "bytes": 1249,
+      "destination": "eligibility-classification.json",
+      "sha256": "894ee38cca824a550b65d80fb1245704c5e642f4ac26f8928baf97653cd23113",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-eligibility-root-classification-v1/acceptance.json"
+    },
+    {
+      "bytes": 2832,
+      "destination": "eligibility-terminal.json",
+      "sha256": "07b8d98d2673b8bb4ae03940fd3461f7b0c459ba74352cf550714a5d51918b21",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-eligibility-execution-v1/terminal.json"
+    },
+    {
+      "bytes": 1357,
+      "destination": "eligibility-reader-terminal.json",
+      "sha256": "f1f7fe4bbfb01d127a5b3f3ae67e2ea8bbcc31d730b51f174fa548f80cf34042",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-eligibility-readout-execution-v1/terminal.json"
+    },
+    {
+      "bytes": 145944,
+      "destination": "context-readout.json",
+      "sha256": "46896e2a2a5232ed9ce3e6554d4dc73d0896fc9c4601d150043eb1020ed03572",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-readout-results-v1/context/readout.json"
+    },
+    {
+      "bytes": 6233,
+      "destination": "context-review.json",
+      "sha256": "ebc5fffc34e7d7688f893fe5e0cf7a1635ff3dd4d57ef605b8819ca6d3f8a96b",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-context-actual-independent-review-v1/review.json"
+    },
+    {
+      "bytes": 1187,
+      "destination": "context-classification.json",
+      "sha256": "613736988841d1ae7a170b34d4c69fc4a245d1fa96aa4f6e4d7d98d4bd9ff86b",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-context-root-classification-v1/acceptance.json"
+    },
+    {
+      "bytes": 2816,
+      "destination": "context-terminal.json",
+      "sha256": "c51e2cc3a46ff5f2d1acfb5dfbb5d348abc44c425ae979ac1ceedc5383ed1af0",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-context-execution-v1/terminal.json"
+    },
+    {
+      "bytes": 1353,
+      "destination": "context-reader-terminal.json",
+      "sha256": "e19b7a8795cd76c888e8a32aaf1b29cd032e8954a1959bdd9f07759ec54c6fe9",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-context-readout-execution-v1/terminal.json"
+    }
+  ],
+  "no_models_training_arrays_holdout_payloads_raw_prediction_arrays_or_bulk_game_logs": true,
+  "original_scientific_sha256": "7cfd6e45b565f39827a1801c828dc302fe5d79f176c7701b004fa7f1adab3478",
+  "root_readout_sha256": "36d6fe153522f97a856c63c75b1b79b55ff74b3c546fff2315a99bf216a72607",
+  "status": "EXACT_COMPLETED_E4_READOUT_AND_COMPACT_METADATA_COPIES",
+  "total_copied_bytes": 793153
+}

@@ -1,0 +1,144 @@
+{
+  "bindings": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-primary-bindings-v1.json",
+    "sha256": "f6c4450a7441ad3ab9671601da9b75ff29a6773d469598af7b0b067a3f918c6c"
+  },
+  "candidate": {
+    "after_sha256": "c25214721e9c7be65c1f2a41d0eb078723a501ea51beafef579d5aa1d6dc6a4e",
+    "before_sha256": "c25214721e9c7be65c1f2a41d0eb078723a501ea51beafef579d5aa1d6dc6a4e",
+    "model_role": "FULLB129",
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/FULLB/step-129.pt",
+    "readonly_after": true,
+    "readonly_before": true,
+    "sha256": "c25214721e9c7be65c1f2a41d0eb078723a501ea51beafef579d5aa1d6dc6a4e",
+    "stat_after": {
+      "ctime_ns": 1794566258674160179,
+      "dev": 2096,
+      "ino": 14564151,
+      "mtime_ns": 1794566256762160409,
+      "size": 655382347
+    },
+    "stat_before": {
+      "ctime_ns": 1794566258674160179,
+      "dev": 2096,
+      "ino": 14564151,
+      "mtime_ns": 1794566256762160409,
+      "size": 655382347
+    },
+    "step": 129
+  },
+  "checks": {
+    "256_unique_games_128_complete_color_pairs": true,
+    "actual_bindings_all_artifact_and_custody_ref_hashes": true,
+    "current_owners_and_children_absent": [
+      1385101,
+      1385119,
+      1396181,
+      1396185
+    ],
+    "exact_frozen_primary_command": true,
+    "header_matched64_training_shape_seed1345_noise_temp_point1_full6_rule50": true,
+    "manifest_only_two_science_identity_leaves_changed": true,
+    "pre_post_model_stat_readonly_and_SHA_equal_from_saved_custody": true,
+    "reader_full_PGN_history_legality_strictTB_and_no_fault_or_cap_validation_reused": true
+  },
+  "closures": [
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-primary-execution-v1/terminal.json",
+      "sha256": "a3910e275b24d6eab5dcebf3a080b34849d1fc8bd814aed4143e910ebcf6a305"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-primary-readout-execution-v1/terminal.json",
+      "sha256": "53fc04f0f81610a3512fdad5133b09d5894e18cfa453d7f345b104a85f7d0583"
+    }
+  ],
+  "findings": [],
+  "independent_stdlib_statistics": {
+    "candidate_WDL": [
+      80,
+      99,
+      77
+    ],
+    "halfpoint_denominator": 512,
+    "halfpoints": 259,
+    "pentanomial": [
+      6,
+      32,
+      53,
+      27,
+      10
+    ],
+    "point_at_least_053_and_lower_above_half": false,
+    "qualified_upper_below_half": false,
+    "sample_variance": 0.06049689345472441,
+    "score": 0.505859375,
+    "score_ci95": [
+      0.4632487775527696,
+      0.5484699724472304
+    ],
+    "score_se": 0.021740100738382846
+  },
+  "limits": [
+    "No PGN legality replay, TB probe, model/checkpoint/NPZ read or project import; qualified frozen reader owns those checks.",
+    "Independent result-to-candidate color mapping, complete pair integer outcomes and registered normal95 statistics recomputed from saved per_game metadata only.",
+    "Saved immutable model custody and loader evidence do not establish per-game served-state hashes or per-forward precision/logit finiteness.",
+    "Conditional internal matched64 result for one training realization; no Elo, external-engine strength, causal mechanism, adoption or general superiority claim.",
+    "All three registered screens remain mandatory; this scientific contrast alone selects no candidate and admits no confirmation."
+  ],
+  "manifest": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-package-v1/manifest.json",
+    "sha256": "2b3c9ad242cbe2d21b6ff0b10ea7a95974f98d071a91067d8891dfbce56fb665"
+  },
+  "maximum_additional_plies": 184,
+  "reader": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-package-v1/read_endpoint.py",
+    "sha256": "be9d9f5b8b63de3e855b15152c28fb262ab491170916e72c81378fea1af47776"
+  },
+  "readout": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-readout-results-v1/primary/readout.json",
+    "sha256": "9703d0818c4b42f8becd6c6036eb49bd2f6f3d569f7f317e6d0d55ceb5fe106b"
+  },
+  "reference": {
+    "after_sha256": "fe4038db2b2b190a49901350943ab0369e83f0698fcc27f85cc0fa7ba4417b7a",
+    "before_sha256": "fe4038db2b2b190a49901350943ab0369e83f0698fcc27f85cc0fa7ba4417b7a",
+    "model_role": "FULLA129",
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/FULLA/step-129.pt",
+    "readonly_after": true,
+    "readonly_before": true,
+    "sha256": "fe4038db2b2b190a49901350943ab0369e83f0698fcc27f85cc0fa7ba4417b7a",
+    "stat_after": {
+      "ctime_ns": 1794566258650160182,
+      "dev": 2096,
+      "ino": 14672210,
+      "mtime_ns": 1794566212482165141,
+      "size": 655382347
+    },
+    "stat_before": {
+      "ctime_ns": 1794566258650160182,
+      "dev": 2096,
+      "ino": 14672210,
+      "mtime_ns": 1794566212482165141,
+      "size": 655382347
+    },
+    "step": 129
+  },
+  "rule_flags": {
+    "automatic_75move": 0,
+    "automatic_fivefold": 0,
+    "checkmate": 74,
+    "claimable_fifty": 0,
+    "claimable_threefold": 37,
+    "current_fifty": 0,
+    "current_threefold": 0,
+    "insufficient_material": 0,
+    "stalemate": 0
+  },
+  "scientific_sha256": "7cfd6e45b565f39827a1801c828dc302fe5d79f176c7701b004fa7f1adab3478",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "ACCEPT_QUALIFIED_E4_PRIMARY_SCREEN_METADATA_AND_PAIRED_STATISTICS",
+  "terminations": {
+    "rules": 111,
+    "syzygy": 145
+  },
+  "verdict": "UNRESOLVED_B129_VS_A129_AT_REGISTERED_PROFILE"
+}

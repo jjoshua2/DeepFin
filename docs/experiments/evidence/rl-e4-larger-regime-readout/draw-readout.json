@@ -1,0 +1,29 @@
+{
+  "CUDA_initialized": false,
+  "NumPy": "2.2.6",
+  "draw_plan_installed_into_execution_bindings": false,
+  "draw_plan_sha256": "4b4ed26a7477dbd87ec2fce5be9162f8cd4c5b7f36cb794fb93d7d137990484f",
+  "draw_seed": 2026111342,
+  "draw_shape": [
+    129,
+    256
+  ],
+  "future_binding_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-bindings-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/draw-plan.json",
+  "games": 128,
+  "learning_admitted": false,
+  "rows": 10516,
+  "side_effect_attempts": {
+    "CUDA_init": 0,
+    "CUDA_lazy_init": 0,
+    "SF_construct": 0,
+    "SF_pool_construct": 0,
+    "Trainer_construct": 0,
+    "Worker_construct": 0,
+    "checkpoint_load": 0,
+    "loader_model_build": 0,
+    "model_build": 0
+  },
+  "source_bindings_sha256": "ba2cfba5a05697b95453ccb0006cc36f66c2eaed6618988640ad92c6f97cd7cb",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "PASS_FIXED_TRAIN128_DRAW_PLAN_CPU_ONLY"
+}

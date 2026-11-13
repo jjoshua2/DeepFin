@@ -1,0 +1,117 @@
+{
+  "A_B_final_models_expected_to_differ_no_equality_gate": true,
+  "CPU_reader_closure": "Outer owner terminal and independent root acceptance are still required after this process exits.",
+  "CUDA_initialized": false,
+  "actual_A_B_final_tensor_differences": 476,
+  "checkpoints": [
+    {
+      "arm": "FULLA",
+      "changed_vs_A39_tensors": 0,
+      "model_digest": "d9d3849b485a2ca3c0b1e440b0c8c4fec796ddf6e0824176926cc93c873f80b1",
+      "sha256": "1bad3faf71c4df5649c98e95b2962eab0480063b6d0666484c0fe0e51cd9014b",
+      "step": 0
+    },
+    {
+      "arm": "FULLA",
+      "changed_vs_A39_tensors": 477,
+      "model_digest": "d36ae757652b7488f51f2d4626e8557d80cef7c1fc47afa92ac39eb678dcbd79",
+      "sha256": "e2bf70762583c336fe4d864abc47513dc731c6a4fbb37803cf4c139215886994",
+      "step": 1
+    },
+    {
+      "arm": "FULLA",
+      "changed_vs_A39_tensors": 477,
+      "model_digest": "1e1b1b4b238f9c3de635126538d189e9d590a36a49fba8c5d5ccac5a401f59e5",
+      "sha256": "4ee0a3ab9e49c8158052a98fcfbdd96da13e5ca4138c908c7e9af36a17370330",
+      "step": 8
+    },
+    {
+      "arm": "FULLA",
+      "changed_vs_A39_tensors": 477,
+      "model_digest": "c711217b3e4858de84d2ed3bcf46384d67e5ddf3a102520e2024b03042d83153",
+      "sha256": "fe4038db2b2b190a49901350943ab0369e83f0698fcc27f85cc0fa7ba4417b7a",
+      "step": 129
+    },
+    {
+      "arm": "FULLB",
+      "changed_vs_A39_tensors": 0,
+      "model_digest": "d9d3849b485a2ca3c0b1e440b0c8c4fec796ddf6e0824176926cc93c873f80b1",
+      "sha256": "1bad3faf71c4df5649c98e95b2962eab0480063b6d0666484c0fe0e51cd9014b",
+      "step": 0
+    },
+    {
+      "arm": "FULLB",
+      "changed_vs_A39_tensors": 477,
+      "model_digest": "174a2251bef2e1dfc34bf42b27d8a3622876eb37a2f77425c29081e677cbaf63",
+      "sha256": "12f0ebaffe5ea4285744036e465aebad71f8bc91b93fe56bf8b39d8eb0872759",
+      "step": 1
+    },
+    {
+      "arm": "FULLB",
+      "changed_vs_A39_tensors": 477,
+      "model_digest": "979341762e35ffe414845de47900b2a57a75d19f5b83c03efdb6593bd592b712",
+      "sha256": "a8e4a7ae789ef32070322d8672a0748d002954445be85e9b555f3140d4bb269a",
+      "step": 8
+    },
+    {
+      "arm": "FULLB",
+      "changed_vs_A39_tensors": 477,
+      "model_digest": "c2d7df9ff28bbaf8641674eb3d112d45c2192d9a191961eaf0e3a0f3fad56f08",
+      "sha256": "c25214721e9c7be65c1f2a41d0eb078723a501ea51beafef579d5aa1d6dc6a4e",
+      "step": 129
+    }
+  ],
+  "common_data_RNG_math_ownership_except_declared_categorical_and_WDLshare": true,
+  "effective_fraction_semantics": "search_wdl_effective_frac and sf_wdl_effective_frac are availability diagnostics, not recipe weights. Actual loss kwargs enforce search1/.8 and SF0.",
+  "gradient_metrics": {
+    "FULLA": {
+      "grad_adaptive_clip_rate": 0.031007751937984496,
+      "grad_hard_clip_rate": 0.9844961240310077,
+      "grad_norm_median": 7.669337749481201
+    },
+    "FULLB": {
+      "grad_adaptive_clip_rate": 0.031007751937984496,
+      "grad_hard_clip_rate": 0.9922480620155039,
+      "grad_norm_median": 7.965821743011475
+    }
+  },
+  "learning_or_playing_adoption_admitted": false,
+  "limits": "Technical delivery/checkpoint provenance only; selected8 are not whole-trunk gradient diagnostics, tensor differences/losses do not establish strength. Three-model inference and actual playing are separate.",
+  "model_rows": [
+    {
+      "label": "DONOR",
+      "path": "/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/baseline/epoch2.pt",
+      "sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+      "step": null
+    },
+    {
+      "label": "FULLA129",
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/FULLA/trainer.pt",
+      "sha256": "fe4038db2b2b190a49901350943ab0369e83f0698fcc27f85cc0fa7ba4417b7a",
+      "step": 129
+    },
+    {
+      "label": "FULLB129",
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/FULLB/trainer.pt",
+      "sha256": "c25214721e9c7be65c1f2a41d0eb078723a501ea51beafef579d5aa1d6dc6a4e",
+      "step": 129
+    }
+  ],
+  "models_constructed_or_forwarded": false,
+  "no_skips_or_retries": true,
+  "optimizer_updates_total": 258,
+  "samples_per_arm": 33024,
+  "scientific_sha256": "7cfd6e45b565f39827a1801c828dc302fe5d79f176c7701b004fa7f1adab3478",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "ACCEPT_MATCHED_E4_129_TECHNICAL_DELIVERY_AND_CPU_CHECKPOINTS_ONLY",
+  "terminal": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-paired-full129-execution-v1/terminal.json",
+    "sha256": "3f38a044d3d6504441f95d4bcdc8c5df7c88793e827679ad8aa0762262fce6c5"
+  },
+  "training_readout": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/readout.json",
+    "sha256": "9b14a814fa7ff9bea3d06ba61a6de4f2210f6604763e9ada095c8649aa1ec3b3"
+  },
+  "updates_per_arm": 129,
+  "weakref_cleanup": "Guarded by exact source and prior_arm_refs_closed receipt, not a retrospective live-object observation."
+}

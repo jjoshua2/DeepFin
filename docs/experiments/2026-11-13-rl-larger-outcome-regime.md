@@ -1,19 +1,15 @@
 # E4: outcome-bundle learning in a larger fresh-data regime
 
-Status: collection started after preregistration publication. Learning awaits
-the technical metadata correction described below. The fixed structural selection
-has completed
-and received independent acceptance: 192 cohort starts, 128 screening pairs and
-500 confirmation pairs. All 820 actual network encodings and mirrors, the
-canonical collection descriptor and the 129-step config have passed CPU
-qualification and independent review. The canonical public CLI check passed
-before collection.
-No E4 draw planning, learning or playing had run when that correction was
-identified. The
+Status: **completed with no registered playing gain**. All 192 games qualified,
+both arms completed 129 updates, and all three fixed 256-game screens passed
+technical validation and independent review. The bundle contrast is unresolved;
+neither arm qualifies for donor-utility confirmation. No candidate was selected,
+no confirmation ran, and A39 remains retained. The
 [completed E2TB study](2026-11-13-rl-resolved-outcome-bundle.md) established
 no registered playing gain; the [E3 diagnostic](2026-11-13-rl-train-gradient-geometry.md)
-left its primary geometry contrast unresolved. Those studies remain closed and
-the A39 donor remains retained.
+left its primary geometry contrast unresolved. Those studies remain closed.
+The first-week and long-term strength program remains active; E4 does not
+establish an optimal RL formula or strength against Rofchade, Stockfish or Lc0.
 
 ## Question and controls
 
@@ -148,7 +144,100 @@ coverage, P0 label equivalence or which fallback result stamped a record.
 
 Bulk artifacts stay under `~/chess-artifacts/operations/rl-week-one-20261112-v1/`.
 The week-one and long-term strength program remains active; no strength
-milestone or optimal RL formula is established by this preparation.
+milestone or optimal RL formula is established by preparation alone.
+
+## Actual readout: November 13
+
+The [root readout](evidence/rl-e4-larger-regime-readout/root-readout.json) and
+[fixed decision](evidence/rl-e4-larger-regime-readout/decision.json) record the
+completed experiment. All three endpoints are technically qualified, but none
+passes its registered positive-performance gate:
+
+| Candidate | Reference | Wins–draws–losses | Score | Paired 95% interval | Registered result |
+| --- | --- | ---: | ---: | ---: | --- |
+| FULLB129 | FULLA129 | 80–99–77 | 50.59% | 46.32–54.85% | Bundle contrast unresolved |
+| FULLB129 | A39 | 68–103–85 | 46.68% | 42.06–51.30% | Not utility eligible |
+| FULLA129 | A39 | 71–105–80 | 48.24% | 43.47–53.02% | Not utility eligible |
+
+The intervals use the precommitted 128 color-reversed opening-pair means,
+sample variance with n-1 and z=1.96. Both donor differences also remain
+unresolved for disadvantage: neither upper bound is below 50%. This is no
+registered gain, not a finding of equivalence or proven harm. The separately
+[reviewed decision](evidence/rl-e4-larger-regime-readout/decision-review.json)
+is `NO_CONFIRMATION`, with both eligibility flags false, no selected candidate,
+confirmation allowed/consumed both false and adoption false. The confirmation
+stage and output remained absent. There is no intermediate or old-model fallback.
+
+### Data and applied updates
+
+The [cohort audit](evidence/rl-e4-larger-regime-readout/cohort-audit.json) accepted
+all 192 planned attempts and integrity checks, all 128 TRAIN games, and the
+all-628-playing-starts versus all-192-retained-inputs raw/mirror exclusion gate.
+TRAIN contains 10,516 rows from 68 natural and 60 strict tablebase resolutions;
+HOLD contains 5,284 rows from 33 natural and 31 strict tablebase resolutions.
+There were no outcome-based replacements. All 128 fresh TRAIN proofs preceded
+array consumption; actual raw-F32-Q categorical controls were validated before
+the one fixed draw plan was generated.
+
+The [actual checkpoint audit](evidence/rl-e4-larger-regime-readout/learner-cpu-readout.json)
+and [independent review](evidence/rl-e4-larger-regime-readout/learner-review.json)
+accepted 258 total applied updates, 33,024 samples per arm, matched physical
+draws/host transformations/RNG/math and no skips or retries. Both step-zero
+models equal all 494 donor state tensors and start with empty optimizers and
+no SWA. Final model and stored optimizer tensors passed CPU finiteness and
+ownership checks. Only final step 129 was evaluated for utility. Actual update
+129 used the registered LR tail; the saved next-update peak was not applied.
+
+The hard cap bound on 127/129 updates in FULLA and 128/129 in FULLB. These
+rates concern the auxiliary AdamW parameter group; Aurora's matrix group is
+outside that clipping scope. This is a conditional diagnostic, not evidence
+that the whole trunk's learning rate was capped and not a recipe change.
+
+This was one finite A39 collection followed by learning. The 129-step models
+were not republished to generate another actor generation. Average sampled
+views per retained TRAIN position were 3.1404, compared with 3.3997 in E2TB
+(10,240/3,012). More independent games and total updates did not increase
+average reuse or constitute a sustained closed-loop RL test.
+
+### Whole-64 offline diagnostic
+
+All 64 fixed HOLD roots qualified before branch predictions. Strict complete
+donor/A129/B129 checkpoints were scored sequentially using the declared eager
+BF16 production adapter, batch 64 and stored F16 inputs widened to F32. The
+closed CPU reader recomputed metrics from the raw saved outputs, with 10,000
+paired whole-game bootstrap samples and seed 2026111347.
+
+Expected-score MSE means were 0.116145 for the donor, 0.107774 for FULLA129 and
+0.106350 for FULLB129. B-minus-A was -0.001424 with percentile 95% interval
+[-0.005151, 0.002263]. Every paired value-error interval includes zero. The
+[accepted diagnostic](evidence/rl-e4-larger-regime-readout/offline-root-acceptance.json)
+therefore remains unresolved; policy TV is drift, not playing quality. This
+endpoint neither selected a model nor changed a playing gate. Old HOLD arrays
+stayed closed.
+
+### Cost, custody and interpretation
+
+| GPU-intended stage | Charged owner-wall seconds |
+| --- | ---: |
+| Collection, including freezing/cleanup | 1,140.21 |
+| Both 129-update arms | 125.18 |
+| Whole-64 three-model inference | 13.33 |
+| All three playing screens | 2,266.50 |
+| Total | 3,545.22 |
+
+The six GPU owners and all CPU readouts closed. Total GPU-intended owner time
+was 59.09 minutes, within the 22,260-second E4 cap; learner time was 3.53% of
+that total. Immutable checkpoint SHA/stat/read-only custody and actual loader
+logs join the playing results to their models. The reader does not claim a
+per-game served-state hash or per-forward finite-logit/precision instrumentation.
+The intervals concern one training realization and this internal search profile;
+they establish no Elo or external-engine result.
+
+The next planning direction is a source-grounded LC0-style baseline adapted to
+the available hardware, with a sustained preplanned dose, checkpoints and donor
+comparisons. Departures from LC0 must be stated, and additional shortcuts or
+auxiliary objectives tested individually. That plan is not an executed recipe
+or a new training admission. The cumulative strength ambition remains open.
 
 ## Technical correction before draw planning
 
@@ -169,10 +258,14 @@ entrypoint and manifest identities and is separate from collection's original
 seven-field binding.
 
 The draw generation, proof and loader logic, seed 2026111342, shape 129 by 256,
-cohort, targets, learning schedule and playing decisions stay fixed. Collection
-continues under its original protocol. The correction requires independent
-review, focused CPU guard controls and main publication before draw execution;
-the ordinary complete-cohort and finite resource gates still apply. See the
+cohort, targets, learning schedule and playing decisions stayed fixed. Collection
+completed under its original protocol. The correction passed independent
+review and 22 focused CPU guard controls, then was published in
+[PR #1257](https://github.com/jjoshua2/DeepFin/pull/1257) before the single actual
+draw execution. Synthetic publication-predicate controls did not substitute
+for the separately verified
+[actual main publication](evidence/rl-e4-larger-regime-readout/technical-main-publication.json).
+The complete-cohort and finite resource gates also passed. See the
 [technical amendment](evidence/rl-e4-draw-contract-repair/amendment.json) and its
 [source proof](evidence/rl-e4-draw-contract-repair/source-proof.json).
 
@@ -193,3 +286,9 @@ Actual CPU checks cover all 820 raw/mirror encodings and the effective config,
 observer cases. The [limited A/A reuse receipt](evidence/rl-e4-larger-regime/limited-AA-reuse.json)
 preserves the distinction between historical four-update evidence and these
 new synthetic checks. It does not claim a newly executed 129-update A/A test.
+
+The [completed-readout publication manifest](evidence/rl-e4-larger-regime-readout/publication-manifest.json)
+identifies 42 exact compact metadata copies. Bulk shards, draw arrays, raw
+prediction arrays, checkpoints and game logs remain outside checkouts at the
+paths and hashes recorded by those receipts. All scientific verdicts above
+use the frozen rules; publication adds no new experiment or adoption.

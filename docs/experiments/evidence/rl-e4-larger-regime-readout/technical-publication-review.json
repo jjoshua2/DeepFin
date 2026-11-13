@@ -1,0 +1,67 @@
+{
+  "findings": [],
+  "historical_state": {
+    "installation_now_verified": true,
+    "later_installation_receipt_utc": "2026-11-13T10:29:32.801713+00:00",
+    "publication_receipt_installation_pending_at_102902_UTC": true
+  },
+  "limits": [
+    "Read only Git/GitHub and saved metadata/source bytes; no arrays/checkpoints/models, project imports, tests, probes, CPU heavy job or draw execution.",
+    "Did not rerun guard controls or loader; their previously accepted runtime/source evidence remains separately scoped.",
+    "Publication and bindings do not admit execution or learning; fresh finite root admission and resource preflight remain required.",
+    "Original publication draws/updates zero and installation-pending fields are historical snapshots, not claims about a subsequent stage.",
+    "Installed directory permission wording is not used as a scientific/runtime identity gate."
+  ],
+  "references": {
+    "bindings": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-final-bindings-v1/identities.json",
+      "sha256": "ba2cfba5a05697b95453ccb0006cc36f66c2eaed6618988640ad92c6f97cd7cb"
+    },
+    "command": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-final-bindings-v1/command.json",
+      "sha256": "c9d00f16553f68c918534174be1d0f69cfd6abecc48f49174376d57b73a41863"
+    },
+    "installation": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-final-bindings-v1/installation.json",
+      "sha256": "d6f312f3327242acd41b45493d07587d66177455021a70a8957aea5df6d7974c"
+    },
+    "publication": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-technical-main-publication-v1/publication.json",
+      "sha256": "6fd58c648fe7729899d641c34f7a52c4e0f13058bdec29000667ad9e3dbdbad3"
+    }
+  },
+  "reviewer": "sequential_selfplay",
+  "saved_live_GitHub_and_main_evidence": {
+    "CI-run.json": "2718f5fe0a2f2f325f06f3443b3ed73e52f06eaf023ec6422f614e80eae511e5",
+    "PR.json": "612cc37324fecf789e1addc5d7ec0d3b840f4e640c54ca5be4e0fa3fe343719a",
+    "check-runs.json": "2abd6582d8c94974e7b11cf39470909c1d03e39f9d618c6182e142bf2d55dd75",
+    "inline-comments.json": "93a632246f28a39eedc6577fda8be826f662ca408592e96b1b2b26b4256eea3d",
+    "inline-comments.json-stream": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "issue-comments.json": "93a632246f28a39eedc6577fda8be826f662ca408592e96b1b2b26b4256eea3d",
+    "issue-comments.json-stream": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "main-ref.txt": "c468855a9c2733c827666dc8b0cc0a0b61f046e7dac4b7a63cd29142ec067e1f",
+    "review-threads.json": "cfa99e63e5d5e169ebb931b4e2c477ac1458503170fa058dd8f8f912a338af98",
+    "reviews.json": "93a632246f28a39eedc6577fda8be826f662ca408592e96b1b2b26b4256eea3d",
+    "reviews.json-stream": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+  },
+  "status": "ACCEPT_ACTUAL_MAIN_E4_DRAW_TECHNICAL_PUBLICATION_AND_BOUND_METADATA",
+  "utc": "2026-11-13T10:31:24.185116+00:00",
+  "verified": {
+    "CI_run": 43406835348,
+    "GraphQL_threads_empty": true,
+    "actual_changed_blobs": 23,
+    "actual_external_source_copies": 21,
+    "command_only_declared_late_substitutions": true,
+    "four_exact_head_checks": "success",
+    "guard_required_fields_exact": true,
+    "installed_manifest_exact": true,
+    "main_merge": "683e6e028d1adad52fdc47914e2fe7af56693a92",
+    "main_tree": "80e958c664b9346db0abfe82d221a8565fe75a69",
+    "metadata_assertions": 109,
+    "previous_main": "92c9ffc98e4c9f4092a40f93a87dd79e736633eb",
+    "reviewed_head": "6340086fe40e6e014688a5f1b759c508a930ae30",
+    "science_source_recipe_unchanged": true,
+    "six_refs_hashchecked": true,
+    "three_paginated_feedback_surfaces_empty": true
+  }
+}

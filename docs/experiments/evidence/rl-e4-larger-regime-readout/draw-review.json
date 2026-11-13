@@ -1,0 +1,102 @@
+{
+  "findings": [],
+  "inputs": {
+    "admission": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-root-execution-admission-v1/admission.json",
+      "sha256": "e8d78f4c044f836cb9bda99f7a6a72e26a6df59f84948d10e26a9184bffee2b1"
+    },
+    "bindings": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-final-bindings-v1/identities.json",
+      "sha256": "ba2cfba5a05697b95453ccb0006cc36f66c2eaed6618988640ad92c6f97cd7cb"
+    },
+    "command": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-final-bindings-v1/command.json",
+      "sha256": "c9d00f16553f68c918534174be1d0f69cfd6abecc48f49174376d57b73a41863"
+    },
+    "draw_plan": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-results-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/draw-plan.json",
+      "sha256": "4b4ed26a7477dbd87ec2fce5be9162f8cd4c5b7f36cb794fb93d7d137990484f"
+    },
+    "helper": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-final-v3/bind_draw_plan.py",
+      "sha256": "ff24bc622171b8e226e3f05c66800d046fb008713d30991088e68a008b07f47f"
+    },
+    "lineage": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-results-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/input-lineage.json",
+      "sha256": "eb61e339c5330d8d628cd300eb1288c48c4aea0c44c4d40a033a1f67076fb9ae"
+    },
+    "manifest": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-final-v3/manifest.json",
+      "sha256": "905fc0884365d411ce37db8490c1ba7a95718afaf391c2a45eedf9cf662435df"
+    },
+    "readout": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-results-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/readout.json",
+      "sha256": "36a9a16000fd8db2d23eeb4fef5933a9864c6a538f57e68d475e8015471ded00"
+    },
+    "terminal": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-draw-plan-execution-v1/terminal.json",
+      "sha256": "a7fc0beefedfe81be43c46489faf1caf231661dcb73dc1bb02951eb9f289d873"
+    }
+  },
+  "learning_admitted": false,
+  "limits": [
+    "Metadata/source/JSON review only. No NumPy/Torch/project imports, RNG regeneration, proof reissuance, training-array deserialization, checkpoint/model reads or jobs.",
+    "Fresh-proof issuance order and actual raw/stored F16 control checks are supported by unchanged qualified loader plus actual PASS lineage; reviewer joined hashes/classes/physical rows to saved collection metadata without reperforming those computations.",
+    "raw_arrays are stored shape/dtype/digest signatures; reviewer did not recompute tensor-byte hashes or inspect numerical targets.",
+    "Readout installation/learning false fields are historical at draw creation. This acceptance does not itself install the plan or admit paired129 learning.",
+    "Output file immutable metadata and live process absence were checked; source/runtime files were not changed."
+  ],
+  "reviewer": "sequential_selfplay",
+  "status": "ACCEPT_ACTUAL_FIXED_E4_TRAIN128_DRAW129X256_METADATA_AND_CUSTODY",
+  "utc": "2026-11-13T10:34:39.567337+00:00",
+  "verified": {
+    "CUDA_initialized_reported": false,
+    "HOLD_loaded_reported": false,
+    "TRAIN_games": 128,
+    "actual_spies": {
+      "CUDA_init": 0,
+      "CUDA_lazy_init": 0,
+      "SF_construct": 0,
+      "SF_pool_construct": 0,
+      "Trainer_construct": 0,
+      "Worker_construct": 0,
+      "checkpoint_load": 0,
+      "loader_model_build": 0,
+      "model_build": 0
+    },
+    "assertions": 304,
+    "class_counts": {
+      "NATURAL": 68,
+      "STRICT_TB_ADJUDICATED": 60
+    },
+    "closed_terminal": true,
+    "collection_uuid": "cd47b230-f32f-4256-a51e-4869f5708bb6",
+    "cpu_seconds": 22.77,
+    "draw_shape": [
+      129,
+      256
+    ],
+    "draws_total": 33024,
+    "fresh_proof_entries": 128,
+    "numpy_version_reported": "2.2.6",
+    "process_observations": [
+      {
+        "expected_birth": null,
+        "path_absent": true,
+        "pid": 1329690
+      },
+      {
+        "expected_birth": 28942298,
+        "path_absent": true,
+        "pid": 1329692
+      }
+    ],
+    "proof_hashes_match_stored_collection_metadata": true,
+    "raw_signature_fields": 85,
+    "seed": 2026111342,
+    "source_helpers_and_authorities_unchanged": true,
+    "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+    "unique_physical_rows": 10516,
+    "wall_seconds": 28.488224152009934
+  }
+}
