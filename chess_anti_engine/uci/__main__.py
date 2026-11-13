@@ -1456,11 +1456,16 @@ def main() -> int:
             except Exception:
                 pass
         _drain_builder(builder, rc)
-        if eng is not None and getattr(eng, "background_build_running", lambda: False)() is True:
-            print(
-                "deepfin: evaluator recovery build still running at shutdown; exiting without it",
-                file=sys.stderr,
-            )
+        live = (
+            getattr(eng, "has_live_threads", lambda: False)() is True
+            or getattr(eng, "background_build_running", lambda: False)() is True
+        ) if eng is not None else False
+        if live:
+  # A search that ignored its stop, a fallback eval stuck in the evaluator, or a
+  # recovery build still in torch: finalizing the interpreter under it can abort
+  # (exit 134) after a clean quit.
+            print("deepfin: a search or evaluator build thread is still running at shutdown; "
+                  "exiting without it", file=sys.stderr)
             _hard_exit(rc)
     return rc
 

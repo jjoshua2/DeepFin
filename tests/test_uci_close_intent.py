@@ -193,15 +193,20 @@ def test_cli_eof_suppresses_late_result_without_retiring_live_worker(monkeypatch
     monkeypatch.setattr(uci_main, "_make_evaluator_factory", lambda *_args, **_kwargs: lambda *_a, **_k: object())
     monkeypatch.setattr(uci_main, "_engine_search_kwargs", lambda _args: {})
     monkeypatch.setattr(uci_main, "_build_engine", lambda **_kwargs: engine)
+    exits: list[int] = []
+    monkeypatch.setattr(uci_main, "_hard_exit", exits.append)
+    thread = None
     try:
         assert uci_main.main() == 1, "non-quiescent EOF must report shutdown failure"
-        thread = engine._search_thread
-        assert thread is not None
+        # The search that ignored its stop is parked as an orphan (still owning
+        # the worker), and main leaves without finalizing under it.
+        assert engine._search_thread is None
+        (thread,) = engine._orphan_threads
         assert thread.is_alive()
+        assert exits == [1]
         worker.close.assert_not_called()
     finally:
         release.set()
-        thread = engine._search_thread
         if thread is not None:
             thread.join(2)
     assert not any(line.startswith("bestmove ") for line in output)

@@ -288,47 +288,89 @@ def test_never_two_rebuilds_at_once(capsys) -> None:
     capsys.readouterr()
 
 
-def test_setoption_retires_a_staged_evaluator_built_for_the_old_options(capsys) -> None:
+def test_a_building_setoption_retires_a_staged_evaluator_and_others_do_not(capsys) -> None:
     engine, worker, rebuilt = _flaky_engine()
     worker.run.side_effect = RuntimeError("broken")
     _go(engine)
     _join_recovery(engine)
-    assert engine._staged_evaluator is rebuilt[0]
-    engine.dispatch(parse_command("setoption name MoveOverhead value 50"))
-    assert engine._staged_evaluator is None
     staged = rebuilt[0]
+    assert engine._staged_evaluator is staged
+    engine.dispatch(parse_command("setoption name MultiPV value 2"))  # builds nothing
+    assert engine._staged_evaluator is staged
+    engine.dispatch(parse_command("setoption name LeafGather value 2"))  # may build
+    assert engine._staged_evaluator is None
     assert isinstance(staged, MagicMock)
     staged.close.assert_called_once()
-    assert "staged evaluator discarded (setoption)" in capsys.readouterr().out
+    assert "staged evaluator discarded (setoption LeafGather)" in capsys.readouterr().out
     worker.run.side_effect = _ok
     _go(engine)
     worker.set_evaluator.assert_not_called()
 
 
-def test_build_that_outlives_a_setoption_is_closed_not_staged(monkeypatch, capsys) -> None:
-    import chess_anti_engine.uci.engine as engine_mod
-
-    monkeypatch.setattr(engine_mod, "_JOIN_TIMEOUT_S", 0.1)
+def test_setoptions_never_wait_for_and_never_build_beside_a_recovery_build(capsys) -> None:
+    """The reviewer measured a mid-game `setoption MultiPV 1` costing 8.5 s on our
+    clock (it joined the recovery build), and a building setoption running beside
+    the recovery build once that join timed out."""
     release = threading.Event()
-    built: list[MagicMock] = []
+    active = [0]
+    peak = [0]
+    builds: list[int] = []
 
-    def slow_rebuild(*_a, **_kw):
-        release.wait(10)
-        built.append(MagicMock(name="obsolete"))
-        return built[-1]
+    def counted(max_batch, _cache=0, /, **_kw):
+        active[0] += 1
+        peak[0] = max(peak[0], active[0])
+        builds.append(max_batch)
+        try:
+            if len(builds) == 1:
+                release.wait(10)  # the recovery build
+            return MagicMock(name=f"built-{max_batch}")
+        finally:
+            active[0] -= 1
 
-    engine, worker, _ = _flaky_engine(slow_rebuild)
+    engine, worker, _ = _flaky_engine(counted)
     worker.run.side_effect = RuntimeError("broken")
     _go(engine)
-    engine.dispatch(parse_command("setoption name MoveOverhead value 50"))  # build still running
+    assert engine.background_build_running()
+    t0 = time.monotonic()
+    engine.dispatch(parse_command("setoption name MultiPV value 1"))   # builds nothing
+    engine.dispatch(parse_command("setoption name MaxBatch value 512"))  # would build
+    assert time.monotonic() - t0 < 0.5  # neither waited
+    out = capsys.readouterr().out
+    assert "setoption MaxBatch: deferred" in out
+    assert engine._options.multi_pv == 1
+    assert engine._options.max_batch == 1024  # not applied yet
+    assert builds == [1024]  # nothing built beside the recovery build
     release.set()
     _join_recovery(engine)
-    assert engine._staged_evaluator is None
-    built[0].close.assert_called_once()
+    engine.dispatch(parse_command("ucinewgame"))  # boundary: settled, applied in order
+    assert engine._options.max_batch == 512
+    assert builds == [1024, 512]
+    assert peak[0] == 1
+
+
+def test_mid_game_isready_answers_at_once_even_when_unhealthy(capsys) -> None:
+    """An isready between moves must never run the re-check or exit: on #1263's
+    second cut three fallbacks then a mid-game isready exited the engine."""
+    engine, worker, _ = _flaky_engine()
+    worker.run.side_effect = RuntimeError("broken")
+    for _ in range(3):
+        _go(engine)
+        _join_recovery(engine)
+    assert engine._unhealthy is not None
     capsys.readouterr()
+    worker.run.reset_mock()
+    t0 = time.monotonic()
+    engine.dispatch(parse_command("isready"))
+    assert time.monotonic() - t0 < 0.5
+    out = capsys.readouterr().out
+    assert out.splitlines()[-1] == "readyok"
+    assert "health check" not in out
+    worker.run.assert_not_called()  # no warmup mid-game
+    assert engine.exit_code == 0
+    assert not engine.quit_requested
 
 
-def test_failed_recovery_marks_unhealthy_keeps_playing_and_isready_clears_it(capsys) -> None:
+def test_failed_recovery_marks_unhealthy_keeps_playing_and_ucinewgame_clears_it(capsys) -> None:
     def refuse(*_a, **_kw):
         raise RuntimeError("out of memory")
 
@@ -347,21 +389,24 @@ def test_failed_recovery_marks_unhealthy_keeps_playing_and_isready_clears_it(cap
 
     worker.run.reset_mock()
     worker.run.side_effect = _ok  # the fault was transient
-    engine.dispatch(parse_command("isready"))
+    engine.dispatch(parse_command("ucinewgame"))
     out = capsys.readouterr().out
     assert worker.run.call_args.args[0] == chess.Board()  # the strict startup warmup
     assert "health check passed" in out
-    assert out.splitlines()[-1] == "readyok"
     assert engine._unhealthy is None
     assert engine.exit_code == 0
 
 
-def test_unhealthy_engine_reruns_the_check_at_ucinewgame(capsys) -> None:
+def test_first_isready_after_ucinewgame_reruns_the_check_before_the_first_go(capsys) -> None:
     engine, worker, _ = _flaky_engine()
-    engine._mark_unhealthy("test")
     worker.run.side_effect = _ok
-    engine.dispatch(parse_command("ucinewgame"))
-    assert "health check passed" in capsys.readouterr().out
+    _go(engine)  # in game
+    engine._mark_unhealthy("test")
+    engine._in_game = False  # as after a ucinewgame whose worker was busy
+    engine.dispatch(parse_command("isready"))
+    out = capsys.readouterr().out
+    assert "health check passed" in out
+    assert out.splitlines()[-1] == "readyok"
     assert engine._unhealthy is None
 
 
@@ -409,7 +454,7 @@ def test_failed_health_recheck_exits_nonzero_before_readyok(monkeypatch, capsys)
             if engine._unhealthy is not None and (thread is None or not thread.is_alive()):
                 break
             time.sleep(0.01)
-        yield from ("isready\n", "go nodes 8\n")
+        yield from ("ucinewgame\n", "isready\n", "go nodes 8\n")
 
     monkeypatch.setattr(main.sys, "stdin", stdin())
     assert main.main() == 1
@@ -464,9 +509,11 @@ def test_quit_does_not_sit_out_an_in_flight_rebuild(monkeypatch, capsys) -> None
     assert main.main() == 0
     assert time.monotonic() - t0 < 5.0
     assert exits == [0]
-    assert "recovery build still running at shutdown" in capsys.readouterr().err
+    assert "evaluator build thread is still running at shutdown" in capsys.readouterr().err
     release.set()
     _join_recovery(engine)
+    # The build that outlived shutdown closed its own result (stale epoch).
+    assert engine._staged_evaluator is None
 
 
 # --- (a) exact streak / recovery bookkeeping ----------------------------------
@@ -636,4 +683,54 @@ def test_pipe_default_launch_is_gumbel_and_threads_cannot_move_it(tmp_path: Path
         if proc.poll() is None:
             proc.kill()
         proc.wait(timeout=5)
+
+
+def test_staged_evaluator_is_not_adopted_while_an_orphan_lives(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("chess_anti_engine.uci.engine._GO_WAIT_NO_CLOCK_S", 0.05)
+    engine, worker, rebuilt = _flaky_engine()
+    worker.run.side_effect = RuntimeError("broken")
+    _go(engine)
+    _join_recovery(engine)
+    assert engine._staged_evaluator is rebuilt[0]
+    release = threading.Event()
+    entered = threading.Event()
+
+    def hang(board, **_kw):
+        entered.set()
+        release.wait(10)
+        return _ok(board)
+
+    # Put an orphan in the worker: a search that ignores stop. The staged
+    # evaluator is adopted at THIS go (worker free), so stage another one.
+    worker.run.side_effect = hang
+    engine.dispatch(parse_command("go infinite"))
+    assert entered.wait(5)
+    engine.dispatch(parse_command("stop"))  # parked: an orphan
+    assert not engine.worker_is_free()
+    late = MagicMock(name="late-staged")
+    engine._staged_evaluator = late
+    calls = worker.set_evaluator.call_count
+    engine.dispatch(parse_command("go nodes 8"))  # busy-worker fallback
+    _join(engine)
+    engine.dispatch(parse_command("isready"))
+    assert worker.set_evaluator.call_count == calls  # not swapped under the orphan
+    assert engine._staged_evaluator is late
+    release.set()
+    for t in list(engine._orphan_threads):
+        t.join(5)
+    capsys.readouterr()
+
+
+def test_a_go_whose_handler_always_raises_goes_unhealthy(monkeypatch, capsys) -> None:
+    engine, worker, _ = _flaky_engine()
+
+    def boom(*_a, **_kw):
+        raise RuntimeError("handler fault")
+
+    monkeypatch.setattr(engine, "_note_leaf_tb_inactive", boom)
+    for _ in range(3):
+        _go(engine)
+    out = capsys.readouterr().out
+    assert len(_bestmoves(out)) == 3
+    assert "WARNING engine unhealthy: 3 consecutive moves were fallbacks" in out
 
