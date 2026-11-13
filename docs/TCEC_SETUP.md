@@ -231,7 +231,9 @@ phase C tells us what the additional seven GPUs are worth.
   - root-parallel Gumbel (`SearchParallel gumbel`): max(256, `ChunkSims`,
     max(`ChunkSims`, 1 + 2 x G) x number of groups) nodes;
 
-  where G = min(`VLGather`, `MaxBatch`) is the pools' gather.
+  where G = min(`VLGather`, `MaxBatch`) is the pools' gather and `ChunkSims` is
+  the UCI spin option of that name (default 2048; the startup flag
+  `--chunk-sims` sets its initial value).
 
   That takes milliseconds when the graphs are already captured and a few
   seconds (about 3-4 s measured for a cold Gumbel capture, per device) right
@@ -243,8 +245,11 @@ phase C tells us what the additional seven GPUs are worth.
   (e.g. `MaxBatch`, `SearchWalkers`, `UseMultiGpuPUCV`) is applied at once,
   synchronously, between moves; if the rebuild fails the previous settings and
   evaluator stay. While a search that ignored `stop` still holds the worker,
-  every `setoption` (including `MultiPV`) is rejected at once with `info
-  string command rejected (CmdSetOption): ...` and the previous value stays.
+  `MultiPV` and `UCI_ShowWDL` still apply (they only change what the next info
+  line reports; the engine says `applied while a stuck search still holds the
+  worker`). Every other `setoption` -- including `Hash`, which resizes the tree
+  the stuck search is still using -- is rejected at once with `info string
+  command rejected (CmdSetOption): ...` and the previous value stays.
 - **One bad GPU on a multi-GPU host.** There is no degrade-to-the-healthy-GPUs
   path. If a multi-GPU pool cannot be (re)installed -- after a `setoption`, or
   during the boundary health rebuild -- the engine first restores the previous
@@ -261,7 +266,13 @@ phase C tells us what the additional seven GPUs are worth.
 - **A search that ignores `stop`.** After 1 s the engine answers that `go` from
   the fallback; the stuck search is parked and every later `go` answers at
   once (within a tenth of its clock) for the board the GUI sent, until the
-  stuck search ends.
+  stuck search ends. A parked search prints nothing more: its info lines and
+  warnings are dropped, so they cannot appear in the middle of another move.
+  If it is still stuck at `quit`, the engine waits up to 3 s, then exits; the
+  last lines are `info string quit: a search that ignored stop, or a fallback
+  eval stuck in the evaluator, is still running; exiting with status N without
+  waiting for it` (and the same on stderr). N is 1 when the stuck thread is a
+  search.
 - **Long first move of a fresh process** (~15–30 s even warm-cached for
   `isready` / first search): expected; see section 4. Never happens mid-game
   after a successful `isready`.

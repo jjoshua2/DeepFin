@@ -1499,7 +1499,11 @@ def main() -> int:
         if eng is not None and getattr(eng, "has_live_threads", lambda: False)() is True:
   # A search that ignored its stop, or a fallback eval stuck in the evaluator:
   # finalizing the interpreter under it can abort (exit 134) after a clean quit.
-            print("deepfin: a search thread is still running at shutdown; exiting without it",
+  # The last line on each channel says why the process exits, and with what.
+            why = ("a search that ignored stop, or a fallback eval stuck in the "
+                   "evaluator, is still running")
+            _println(f"info string quit: {why}; exiting with status {rc} without waiting for it")
+            print(f"deepfin: {why} at shutdown; exiting with status {rc} without waiting for it",
                   file=sys.stderr)
             _hard_exit(rc)
     return rc
