@@ -24,6 +24,7 @@ def admission_engine(monkeypatch: pytest.MonkeyPatch) -> Engine:
     engine._recovery_epoch = 0
     engine._recovery_thread = None
     engine._staged_evaluator = None
+    engine._deferred_setoptions = []
     engine._worker = Mock()  # setoption snapshots its search state; no real worker
     monkeypatch.setattr(engine, "_wait_for_search", Mock())
     monkeypatch.setattr(

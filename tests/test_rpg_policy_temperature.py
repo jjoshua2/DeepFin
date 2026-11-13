@@ -229,7 +229,7 @@ def test_policy_temperature_keeps_plain_puct_inert(path: str, capsys: pytest.Cap
             worker.install_multi_gpu_pucv(groups, gather=2)
         # Options must name the path the worker realizes (the setoption invariant).
         engine = Engine(worker, options=EngineOptions(
-            policy_temp=1.0, threads=2 if path == "walker" else 1,
+            policy_temp=1.0, search_walkers=2 if path == "walker" else 1,
             use_vl=path == "pucv", use_multi_gpu_pucv=path == "pucv_pool",
         ))
         worker.run(chess.Board(), stop_event=threading.Event(), deadline=Deadline(None), max_nodes=8)

@@ -401,9 +401,10 @@ def test_first_isready_after_ucinewgame_reruns_the_check_before_the_first_go(cap
     engine, worker, _ = _flaky_engine()
     worker.run.side_effect = _ok
     _go(engine)  # in game
-    engine._mark_unhealthy("test")
-    engine._in_game = False  # as after a ucinewgame whose worker was busy
-    engine.dispatch(parse_command("isready"))
+    engine.dispatch(parse_command("ucinewgame"))  # healthy: nothing to re-check
+    engine._mark_unhealthy("test")  # e.g. a recovery build failing after it
+    capsys.readouterr()
+    engine.dispatch(parse_command("isready"))  # before this game's first go
     out = capsys.readouterr().out
     assert "health check passed" in out
     assert out.splitlines()[-1] == "readyok"
@@ -722,7 +723,7 @@ def test_staged_evaluator_is_not_adopted_while_an_orphan_lives(monkeypatch, caps
 
 
 def test_a_go_whose_handler_always_raises_goes_unhealthy(monkeypatch, capsys) -> None:
-    engine, worker, _ = _flaky_engine()
+    engine, _, _ = _flaky_engine()
 
     def boom(*_a, **_kw):
         raise RuntimeError("handler fault")
