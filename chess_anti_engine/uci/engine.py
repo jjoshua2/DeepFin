@@ -559,6 +559,11 @@ class Engine:
   # search parked as an orphan by `_wait_for_search` still gets its one bestmove.
         self._live_go: tuple[chess.Board, tuple[str, ...]] | None = None
         self._go_received_at: float | None = None
+  # Who answers a go: the generation whose bestmove has been printed. Every
+  # bestmove writer (the search's emit, the reply-only thread, the parked-search
+  # answer at `stop`) claims it under `_state_lock` first, so a go is answered
+  # exactly once under any interleaving.
+        self._claimed_gen = 0
   # Set by `position` / `ucinewgame` when the tree must not be reused; consumed by
   # `_sync_tree_root` at the next `go`, when the worker is free. `position` never
   # touches the worker itself.
@@ -789,6 +794,9 @@ class Engine:
         with self._state_lock:
             self._search_gen += 1
             gen = self._search_gen
+        # Recorded like a search's, so a `stop` that has to park this thread
+        # (stalled before it could answer) answers its go from the main thread.
+        self._live_go = (board.copy(), tuple(args.searchmoves))
         self._bestmove_fallback_used += 1
         self._note_unsearched_reply()
         fresh_budget_s = self._failed_go_fresh_eval_budget_s(cmd)
@@ -831,11 +839,16 @@ class Engine:
         move, source = self._bestmove_fallback(
             board, searchmoves, allow_fresh_eval=allow_fresh_eval, budget_s=fresh_budget_s,
         )
-        _println(
-            f"info string search not started; bestmove_fallback_used="
-            f"{self._bestmove_fallback_used} source={source} move={move}"
-        )
-        _println(format_bestmove(move, ponder=None))
+        # Claimed only once the move is in hand: if this thread stalls inside
+        # the fallback and `stop` parks it, park answers the go instead.
+        if not self._claim_answer(gen):
+            return
+        with _answer_owner():
+            _println(
+                f"info string search not started; bestmove_fallback_used="
+                f"{self._bestmove_fallback_used} source={source} move={move}"
+            )
+            _println(format_bestmove(move, ponder=None))
 
     def _dispatch(self, cmd: Command) -> None:
         if isinstance(cmd, CmdUci):
@@ -2130,7 +2143,11 @@ class Engine:
         self._install_tablebase(v)
 
     # Options whose handler writes only a reporting field read at the next info
-    # emission; safe to apply while an orphan is still inside the worker.
+    # emission; safe to apply while an orphan is still inside the worker. They
+    # still pass through the setoption transaction (snapshot, restore on
+    # failure), which is safe beside a live orphan only because these handlers
+    # cannot raise and never change the search path. A handler that can raise
+    # or rebuild anything must NOT be added here.
     _REPORTING_ONLY_OPTIONS: ClassVar[frozenset[str]] = frozenset({"multipv", "uci_showwdl"})
 
     _SETOPTION_HANDLERS: ClassVar[dict[str, Callable[[Engine, str], None]]] = {
@@ -2356,11 +2373,10 @@ class Engine:
             cancel.wait()
   # Gate the emit: if a newer `go` has started, our result is stale
   # and the new search owns bestmove. Silently drop.
-        with self._state_lock:
-            stale = gen != self._search_gen or self._quit_requested
-        if stale:
-            return
-        self._emit_bestmove(result)
+        if not self._claim_answer(gen):
+            return  # a newer go, quit, or `stop`'s parked answer owns it
+        with _answer_owner():
+            self._emit_bestmove(result)
 
   # -- unhealthy engine: streak, boundary rebuild, strict re-check ------------
   #
@@ -2484,6 +2500,18 @@ class Engine:
     def exit_code(self) -> int:
         """Process exit code the UCI loop should use (1 after a failed health re-check)."""
         return self._exit_code
+
+    def _claim_answer(self, gen: int) -> bool:
+        """Become the one writer of generation ``gen``'s bestmove, or False.
+
+        The winner prints its bestmove inside `_answer_owner()`: a thread parked
+        between its claim and its print is silenced, but the answer it owns
+        must still reach the GUI, since nobody else will answer that go."""
+        with self._state_lock:
+            if self._quit_requested or gen != self._search_gen or self._claimed_gen == gen:
+                return False
+            self._claimed_gen = gen
+            return True
 
     def _counts_for_streak(self) -> bool:
         """False on a parked search: its result was discarded, so it says nothing
@@ -2905,21 +2933,29 @@ class Engine:
         self._live_go = None
 
     def _park_search_thread(self, thread: threading.Thread, *, answer: bool) -> None:
-        """Retire a search that missed its stop: orphan it, silence it, answer it."""
+        """Retire a search that missed its stop: orphan it, silence it, answer it.
+
+        The reply-only thread is answered the same way: its go was already
+        counted when the thread was started, so it is not counted again."""
         with self._state_lock:
+            # Answer only a go nobody has claimed yet (the thread may have
+            # claimed and be about to print; then it prints, as the owner).
+            claim = answer and not self._quit_requested and self._claimed_gen != self._search_gen
+            if claim:
+                self._claimed_gen = self._search_gen
             self._search_gen += 1
-            quitting = self._quit_requested
         if thread not in self._orphan_threads:
             self._orphan_threads.append(thread)
         _SILENCED_THREADS.add(thread)  # its later info lines must not reach stdout
         self._search_thread = None
         live, self._live_go = self._live_go, None
-        if not answer or quitting or live is None or thread is self._fallback_reply_thread:
+        if not claim or live is None:
             return
         board, searchmoves = live
         move, source = self._bestmove_fallback(board, searchmoves, allow_fresh_eval=False)
-        self._bestmove_fallback_used += 1
-        self._note_unsearched_reply()
+        if thread is not self._fallback_reply_thread:
+            self._bestmove_fallback_used += 1
+            self._note_unsearched_reply()
         _println(
             "info string search did not stop in time; answering unsearched "
             f"bestmove_fallback_used={self._bestmove_fallback_used} source={source} move={move}"
@@ -3029,8 +3065,21 @@ _PRINT_LOCK = threading.Lock()
 _SILENCED_THREADS: weakref.WeakSet[threading.Thread] = weakref.WeakSet()
 
 
+# Set on a thread while it prints a bestmove it has claimed (`_claim_answer`).
+_ANSWER_OWNER = threading.local()
+
+
+class _answer_owner:  # lowercase: used like a function, `with _answer_owner():`
+    def __enter__(self) -> None:
+        _ANSWER_OWNER.active = True
+
+    def __exit__(self, *_exc: object) -> None:
+        _ANSWER_OWNER.active = False
+
+
 def _println(s: str) -> None:
-    if threading.current_thread() in _SILENCED_THREADS:
+    if (threading.current_thread() in _SILENCED_THREADS
+            and not getattr(_ANSWER_OWNER, "active", False)):
         return
     with _PRINT_LOCK:
         sys.stdout.write(s + "\n")
