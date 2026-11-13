@@ -1,0 +1,138 @@
+{
+  "checks": {
+    "CPU_PASS_return0_owned_closure_and_actual_birth_absence": true,
+    "actual_decision_flags_match_accepted_screen_statistics": true,
+    "all_three_classifications_exact_current_hashes_and_independent_actual_reviews": true,
+    "bindings_confirmation_None_and_exact_three_roles": true,
+    "fixed_B40_A40_donor_and_same_screen_book_identities": true,
+    "frozen_decision_reader_manifest_and_command_templates_exact": true,
+    "only_flag_derived_bindings_SHA_command_leaf_changed": true
+  },
+  "closed_births": [
+    {
+      "current_birth": null,
+      "expected_birth": 27320832,
+      "pid": 1265597
+    }
+  ],
+  "cpu_seconds": 0.0,
+  "created_utc": "2026-11-13T06:04:29.646450+00:00",
+  "decision": {
+    "label": "UNREAD_FOR_REGISTERED_GAIN_AT40_UPDATE_DOSE",
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-arena-readout-results-v1/screens-decision.json",
+    "sha256": "f630501017c205fbd9239fbc4e5bf8537c48ad61ca93d868a7448754236e0b4e"
+  },
+  "findings": [],
+  "interpretation": "All three screens are technically complete. Both B40 primary and donor-eligibility registered gain criteria failed; neither interval establishes qualified harm/regression. Context remains descriptive. Same preselected B40 receives no confirmation; neither A nor B is promoted or adopted. The frozen label UNREAD_FOR_REGISTERED_GAIN_AT40_UPDATE_DOSE denotes insufficient evidence for registered gain, not unread games or incomplete technical work. The broader week-one/long-term RL goal is not complete.",
+  "limits": [
+    "Metadata/source/binding review only: no game arithmetic rerun, engine/TB queries, model/checkpoint/array decoding, or imports/jobs. Reuses all three independent actual game reviews.",
+    "No general strength/Elo/optimal-formula or no-effect/equivalence claim. Root will separately freeze output and publish final evidence; this review does not authorize new experiments."
+  ],
+  "references": {
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-arena-readout-preparation-v2/commands.TEMPLATE.json": {
+      "mode": "0o444",
+      "sha256": "1600ea83029d031425d7acf94a7fd9099867121858d90afb93358f8026298bdb"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-arena-readout-preparation-v2/decide.py": {
+      "mode": "0o444",
+      "sha256": "06bd2eae02a9bd40b5e54589b42ed309ee2f54a3015372a2d4d92272e7fe96dc"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-arena-readout-preparation-v2/manifest.json": {
+      "mode": "0o444",
+      "sha256": "396744fe6537cdee254daf9b5f9ed5a148521b6502f1a824ed202b87edf2bd6d"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-arena-readout-preparation-v2/read_endpoint.py": {
+      "mode": "0o444",
+      "sha256": "1ba5dfe8ad668ad21a088197392de97d2b9788b45ece1bf2874ab624890f2ed8"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-arena-readout-results-v1/context/readout.json": {
+      "mode": "0o444",
+      "sha256": "c2ddb225ce9068f4668f16b8295052d363ee99c94328ea50cef6ce73f6da679f"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-arena-readout-results-v1/eligibility/readout.json": {
+      "mode": "0o444",
+      "sha256": "3b4ecc6218a861ae27651e9ea1cae75df6826776081a8ba91b2c04647a7e5429"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-arena-readout-results-v1/primary/readout.json": {
+      "mode": "0o444",
+      "sha256": "bac78d586368043db0426d3b134760c8a29834f9b7a89281ee9baf44e6cb8969"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-arena-readout-results-v1/screens-decision.json": {
+      "mode": "0o644",
+      "sha256": "f630501017c205fbd9239fbc4e5bf8537c48ad61ca93d868a7448754236e0b4e"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-context-actual-independent-review-v1/review.json": {
+      "mode": "0o444",
+      "sha256": "5bd189e956b36b51c3295dcd317370a9d4b79b37ece3ff35db4cc3d82b67a2f5"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-context-execution-v1/terminal.json": {
+      "mode": "0o644",
+      "sha256": "560dfd5efea5724ff20ffbe9ce8c152d7c3f4f61bf6646cdabb015024ffb6dfa"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-context-readout-execution-v1/terminal.json": {
+      "mode": "0o644",
+      "sha256": "60e09fe3d905ee72e0a69e3a75def9fffa9e276bfd0b8b68ddb287e12708cb30"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-context-root-actual-readout-v1/classification.json": {
+      "mode": "0o444",
+      "sha256": "6f94fad61e677a72bb992549144314fa39882d9ba3ae61bb493d425a9713593a"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-actual-independent-review-v1/review.json": {
+      "mode": "0o444",
+      "sha256": "ef190472b6d75e1ebc4849858db6c2d00b42e6dc773e5c807c31050661b1ae8a"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-execution-v1/terminal.json": {
+      "mode": "0o644",
+      "sha256": "368bfe38c8096eef6a3ae536bc7ed5046834f39e0c93b178aa491d9d050b85fa"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-readout-execution-v1/terminal.json": {
+      "mode": "0o644",
+      "sha256": "c09de63c0a7519fdbcda30816e4b9c34620a9ddea4dc43b2fc03ba430b3e649d"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-root-actual-readout-v1/classification.json": {
+      "mode": "0o444",
+      "sha256": "3ab245a668342df75b0a007a9d4cccf1a6e98bcafe281ee1fc993d0f4efb3b15"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-primary-actual-independent-review-v1/review.json": {
+      "mode": "0o444",
+      "sha256": "99ba76fe0ffe94133407fa4330a93409ad5e84385107405e9f67c6a2d25094f8"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-primary-execution-v1/terminal.json": {
+      "mode": "0o644",
+      "sha256": "f379266292ccab82f13d3351a16f58c8b8238cc9f7891be7cc0c4cd0ffbfad58"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-primary-readout-execution-v1/terminal.json": {
+      "mode": "0o644",
+      "sha256": "40bffc02c925b5b1c2b29317b6108ccffbdaae48bebd75e5ceca20359f4aae02"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-primary-root-actual-readout-v1/classification.json": {
+      "mode": "0o444",
+      "sha256": "52a30634670d517b89316a89edba2de8a080460b5855342955218cdf58e4756b"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-screens-decision-admission-driver-independent-source-review-v1/review.json": {
+      "mode": "0o444",
+      "sha256": "e3cb40d966e105abb85aa777610049e1fc67588b0795b9ed321eb0029e0e92de"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-screens-decision-bindings-v1.json": {
+      "mode": "0o444",
+      "sha256": "34b6996e0c5f3ccb9b737d1c2390fcf9dbfc8a354de26f2ff71c7f6343010e72"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-screens-decision-execution-v1/terminal.json": {
+      "mode": "0o644",
+      "sha256": "f611ef80e0d5ec694aaa55e4f09bee93f9cbf22dceb80baff35831b239ea9b59"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-screens-decision-root-execution-admission-v1/admission.json": {
+      "mode": "0o444",
+      "sha256": "882646b48c08efb61ad6cc0f5783ad712d7a09ba2085c1d5798c48b7355f65dd"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-screens-decision-root-execution-admission-v1/admit_and_exec.py": {
+      "mode": "0o644",
+      "sha256": "18e853fdb6c2b52b643cfeb0d1eecc4683bf41659985c89e202ebee629a953f8"
+    }
+  },
+  "schema": "independent-e2tb-actual-screen-decision-review-v1",
+  "status": "ACCEPT_ACTUAL_FROZEN_THREE_SCREEN_DECISION_NO_REGISTERED_GAIN",
+  "supervisor_absent": true,
+  "supervisor_pid": 1265580,
+  "wall_seconds": 1.149965964956209
+}
