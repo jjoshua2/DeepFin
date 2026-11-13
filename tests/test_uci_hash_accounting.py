@@ -350,24 +350,34 @@ def test_cheap_compaction_runs_inside_run_under_the_move_clock() -> None:
 
 def test_child_pool_growth_past_int32_fails_instead_of_hanging() -> None:
     """`reserve` with a child capacity near 2^31 used to wrap the int32
-    doubling to 0 and spin forever holding the tree lock."""
-    outcome: list[str] = []
+    doubling to 0 and spin forever holding the tree lock (and the GIL, so the
+    probe runs in a subprocess with a timeout)."""
+    import subprocess
+    import sys
 
-    def probe(child_cap: int) -> None:
-        t = MCTSTree()
-        try:
-            t.reserve(4096, child_cap)
-            outcome.append(f"ok {t.memory_stats()['child_cap']}")
-        except MemoryError:
-            outcome.append("MemoryError")
-
+    code = (
+        "from chess_anti_engine.mcts._mcts_tree import MCTSTree\n"
+        "import sys\n"
+        "t = MCTSTree()\n"
+        "try:\n"
+        "    t.reserve(4096, int(sys.argv[1]))\n"
+        "    print('ok', t.memory_stats()['child_cap'])\n"
+        "except MemoryError:\n"
+        "    print('MemoryError')\n"
+    )
+    outcomes = []
     for cap in (2**31 - 1, 2**30 + 10):
-        th = threading.Thread(target=probe, args=(cap,), daemon=True)
-        th.start()
-        th.join(timeout=30)
-        assert not th.is_alive(), f"reserve(4096, {cap}) hung"
-    assert outcome[0] == "MemoryError"  # beyond the int32 id space: refused
-    assert outcome[1] == "MemoryError" or int(outcome[1].split()[1]) >= 2**30 + 10
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-c", code, str(cap)], capture_output=True, text=True,
+                timeout=60, check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise AssertionError(f"reserve(4096, {cap}) hung") from exc
+        assert proc.returncode == 0, proc.stderr
+        outcomes.append(proc.stdout.strip().splitlines()[-1])
+    assert outcomes[0] == "MemoryError"  # beyond the int32 id space: refused
+    assert outcomes[1] == "MemoryError" or int(outcomes[1].split()[1]) >= 2**30 + 10
 
 
 def test_search_stops_before_node_ids_run_out(monkeypatch) -> None:
