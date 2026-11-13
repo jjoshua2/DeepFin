@@ -181,3 +181,43 @@ def test_real_second_writer_is_refused(tmp_path: Path) -> None:
         assert second._writer_lock_fd is None
     finally:
         disk.DiskReplayBuffer._release_writer(first)
+
+
+def test_real_lock_swapped_between_open_and_flock_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The name is replaced AFTER the pre-lock inode check but BEFORE flock.
+
+    Deterministic: the swap runs inside the first LOCK_EX call. Without the
+    re-check under the lock the claim would succeed on the orphaned inode while
+    a second writer could lock the new file. MUTATION: drop the post-flock
+    ``_require_lock_inode`` -- the claim succeeds and stamps the orphan.
+    """
+    shards = tmp_path / "replay_shards"
+    shards.mkdir()
+    lock = shards / ".writer.lock"
+    real_flock = disk.fcntl.flock
+    swapped: list[bool] = []
+
+    def swap_then_flock(fd: int, operation: int) -> None:
+        if operation & disk.fcntl.LOCK_EX and not swapped:
+            swapped.append(True)
+            lock.unlink()
+            lock.write_text("")  # a fresh regular file under the same name
+        real_flock(fd, operation)
+
+    monkeypatch.setattr(disk.fcntl, "flock", swap_then_flock)
+    owner = _real_owner(shards)
+    with pytest.raises(RuntimeError, match="replaced while being claimed"):
+        disk.DiskReplayBuffer._claim_writer(owner)
+    assert swapped == [True]
+    assert owner._writer_lock_fd is None
+    assert lock.read_text() == ""  # nothing stamped into the new file
+    monkeypatch.undo()
+    # The directory is claimable once nobody is swapping it.
+    retry = _real_owner(shards)
+    disk.DiskReplayBuffer._claim_writer(retry)
+    try:
+        assert retry._writer_lock_fd is not None
+    finally:
+        disk.DiskReplayBuffer._release_writer(retry)

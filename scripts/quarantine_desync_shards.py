@@ -411,6 +411,12 @@ def do_apply(shard_dir: Path, quar_dir: Path, verdicts: list[ShardVerdict],
         rec["original_path"] = str(src.resolve())
         rec["mtime"] = src.stat().st_mtime
         rec["sha256"] = digest(src)
+        if src.is_symlink():
+            # copy_or_link_shard writes RELATIVE links. Moving the link text
+            # unchanged would dangle in any quarantine dir at another depth, so
+            # the journal keeps the original text (restored byte-for-byte) and
+            # the quarantined entry points at the resolved absolute target.
+            rec["link_text"] = os.readlink(src)
         records.append(rec)
 
     manifest: dict[str, Any] = {
@@ -442,7 +448,13 @@ def do_apply(shard_dir: Path, quar_dir: Path, verdicts: list[ShardVerdict],
     print(f"journal written (complete=false): {_manifest_path(quar_dir)}")
 
     for rec in records:
-        shutil.move(str(shard_dir / str(rec["name"])), str(quar_dir / str(rec["name"])))
+        src, dst = shard_dir / str(rec["name"]), quar_dir / str(rec["name"])
+        if "link_text" in rec:
+            target = Path(str(rec["original_path"]))
+            os.symlink(str(target), str(dst), target_is_directory=target.is_dir())
+            os.unlink(src)
+        else:
+            shutil.move(str(src), str(dst))
     print(f"moved {len(records)} shards to {quar_dir}")
 
     if staged is not None and reserve is not None:
@@ -469,11 +481,10 @@ def _restore_path(root: Path, name: Any) -> Path:
     The NAME is what is untrusted: a journal entry must be a bare
     ``shard_*<suffix>`` basename, so ``root / name`` can never leave ``root``.
     The ENTRY may legitimately be a symlink: ``copy_or_link_shard`` builds
-    window directories out of relative symlinks, ``do_apply`` quarantines such
-    a link as-is (``shutil.move`` renames the link, not its target), and the
-    restore must be able to move that same link back. Refusing symlinks here
-    would strand every quarantined linked shard. Content is still checked by
-    ``_move_back``'s digest comparison.
+    window directories out of RELATIVE symlinks. ``do_apply`` journals each
+    link's original text and quarantines it as an absolute link to the same
+    target (valid at any quarantine depth); ``_move_back`` re-creates the
+    original text in the window after an existence and digest check.
 
     Restore is an offline operation: roots and entries must remain quiescent
     throughout it. This preflight is not a lock against concurrent renames.
@@ -482,10 +493,8 @@ def _restore_path(root: Path, name: Any) -> Path:
             or not name.endswith(LOCAL_SHARD_SUFFIX)
             or any(char in name for char in ("/", "\\", ":", "\0"))):
         raise ManifestError(f"invalid restore shard name: {name!r}")
-    path = root / name
-    if path.parent != root or path.name != name:
-        raise ManifestError(f"restore entry escapes its root: {path}")
-    return path
+    # The name rule above already makes `root / name` a direct child of root.
+    return root / name
 
 
 def _validate_restore_manifest(man: dict[str, Any], shard_dir: Path, quar_dir: Path) -> None:
@@ -512,12 +521,24 @@ def _validate_restore_manifest(man: dict[str, Any], shard_dir: Path, quar_dir: P
             raise ManifestError("restore reservation must name a recorded shard")
 
 
+def _link_target(link_text: str, window: Path) -> Path:
+    """Where a link with ``link_text`` resolves when it lives in ``window``."""
+    return (window / link_text).resolve() if not os.path.isabs(link_text) else Path(link_text).resolve()
+
+
 def _move_back(rec: dict[str, Any], shard_dir: Path, quar_dir: Path) -> str:
     """Restore one shard. Returns 'moved', 'skip', or a 'REFUSE: ...' reason.
 
     Idempotent by digest, which is what makes --restore resumable: a shard
     already correctly in place is skipped, while one whose bytes do not match
     the manifest stops the run rather than being silently accepted.
+
+    Linked shards (``copy_or_link_shard`` windows) are restored as a link with
+    the ORIGINAL text, resolved against the window -- so a restored window is
+    byte-for-byte what it was -- after the target is checked for existence and
+    digest. Journals from before ``link_text`` was recorded are restored when
+    the quarantined link still resolves (or resolves against the window) to
+    the banked bytes, and refused loudly when it does not.
     """
     try:
         src = _restore_path(quar_dir, rec.get("name"))
@@ -525,12 +546,44 @@ def _move_back(rec: dict[str, Any], shard_dir: Path, quar_dir: Path) -> str:
     except ManifestError as exc:
         return f"REFUSE: {exc}"
     want = str(rec.get("sha256", ""))
+    if dest.is_symlink() and not dest.exists():
+        return f"REFUSE: {dest} is a dangling link ({os.readlink(dest)!r}); remove it by hand"
     if dest.exists():
         got = digest(dest)
         if want and got != want:
             return (f"REFUSE: {dest} exists but its digest {got[:12]} != manifest "
                     f"{want[:12]}. That is NOT the shard this manifest describes.")
         return "skip"
+
+    link_text = rec.get("link_text")
+    if link_text is None and src.is_symlink() and not src.exists():
+        # Old journal: the relative link text was moved verbatim and dangles
+        # here. It was written for the window, so resolve it there.
+        link_text = os.readlink(src)
+        if not _link_target(link_text, shard_dir).exists():
+            return (f"REFUSE: {src} is a dangling link {link_text!r} from a journal "
+                    f"without link_text, and it does not resolve from {shard_dir} "
+                    f"either (banked target: {rec.get('original_path')!r}). Restore "
+                    f"it by hand.")
+    if link_text is not None:
+        if not isinstance(link_text, str) or not link_text:
+            return f"REFUSE: invalid link_text for {dest.name}: {link_text!r}"
+        if not src.is_symlink():
+            return f"REFUSE: {src} should be the quarantined link and is not"
+        target = _link_target(link_text, shard_dir)
+        if not target.exists():
+            return (f"REFUSE: link {link_text!r} for {dest.name} would dangle: "
+                    f"{target} is missing")
+        got = digest(target)
+        if want and got != want:
+            return (f"REFUSE: {target} digest {got[:12]} != manifest {want[:12]} — "
+                    f"the linked shard changed after it was banked.")
+        os.symlink(link_text, str(dest), target_is_directory=target.is_dir())
+        if os.readlink(dest) != link_text:  # pragma: no cover - OS contract
+            return f"REFUSE: {dest} was written with different link text"
+        src.unlink()
+        return "moved"
+
     if not src.exists():
         return f"REFUSE: {src} is missing and {dest} does not exist"
     got = digest(src)
@@ -559,6 +612,11 @@ def do_restore(shard_dir: Path, quar_dir: Path) -> int:
     records = list(man["shards"])
     tail = [r for r in records if r["name"] == reserve_name]
     head = [r for r in records if r["name"] != reserve_name]
+
+    unverified = [str(r.get("name")) for r in records if not str(r.get("sha256", ""))]
+    for name in unverified:
+        print(f"WARNING: {name}: journal record has no sha256; it is restored "
+              f"WITHOUT a digest check")
 
     moved = skipped = 0
     for rec in head:
@@ -597,6 +655,9 @@ def do_restore(shard_dir: Path, quar_dir: Path) -> int:
 
     print(f"restored {moved} shards to {shard_dir}"
           f"{f' ({skipped} already in place)' if skipped else ''}")
+    if unverified:
+        print(f"WARNING: {len(unverified)} of {len(records)} restored records had no "
+              f"sha256 and were NOT digest-checked")
     _manifest_path(quar_dir).replace(quar_dir / RESTORED_MANIFEST_NAME)
     print(f"manifest retired to {RESTORED_MANIFEST_NAME}")
     return 0

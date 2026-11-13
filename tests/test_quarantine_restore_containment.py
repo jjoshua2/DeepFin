@@ -1,5 +1,6 @@
 """Restore uses only synthetic directories; mutation spies guard refusals."""
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -75,37 +76,127 @@ def test_malformed_or_duplicate_records_refuse_preflight(
     assert calls == []
 
 
-def test_symlinked_shard_window_round_trips_through_apply_and_restore(tmp_path: Path) -> None:
-    """A window built by ``copy_or_link_shard`` (relative symlinks) must restore.
+def _window(tmp_path: Path, linked: bool) -> Path:
+    """Five clean + three dirty shards; ``linked`` builds it the production way.
 
-    ``do_apply`` quarantines a linked shard by renaming the LINK, so restore
-    has to accept a symlink entry or the quarantine is one-way. Window
-    directories of linked shards exist in the production run's replay tree.
-
-    MUTATION: refuse symlink entries in ``_restore_path`` (the #1110 rule) --
-    ``do_restore`` returns 2 and the dirty shards stay stranded in quarantine.
+    ``copy_or_link_shard`` writes RELATIVE links -- production windows hold
+    ones like ``../../../../../data/salvage/.../shard_005121.zarr``.
     """
-    store, window = tmp_path / "store", tmp_path / "replay_shards"
-    store.mkdir()
+    store, window = tmp_path / "data" / "salvage" / "store", tmp_path / "runs" / "t" / "replay_shards"
+    target = store if linked else window
+    target.mkdir(parents=True)
     for i in (100, 101, 102, 103, 104):
-        _write(store, i)
+        _write(target, i)
     for i in (105, 106, 107):
-        _write(store, i, miss_frac=0.6, attached=False)
-    for src in sorted(store.iterdir()):
-        copy_or_link_shard(src, window / src.name)
-    assert all((window / src.name).is_symlink() for src in store.iterdir())
-    before = {p.name: qds.digest(p) for p in qds.iter_shard_paths(window)}
+        _write(target, i, miss_frac=0.6, attached=False)
+    if linked:
+        for src in sorted(store.iterdir()):
+            copy_or_link_shard(src, window / src.name)
+        assert all(not os.path.isabs(os.readlink(p)) for p in window.iterdir())
+    return window
 
-    quar = tmp_path / "q"
+
+def _snapshot(window: Path) -> dict[str, tuple[str, str | None]]:
+    return {
+        p.name: (qds.digest(p), os.readlink(p) if p.is_symlink() else None)
+        for p in qds.iter_shard_paths(window)
+    }
+
+
+QUARANTINE_LAYOUTS = {
+    "same_depth": ("runs", "t", "q"),
+    "deeper": ("runs", "t", "x", "y", "z", "q"),
+    "shallow_other_parent": ("q",),
+    "other_parent": ("elsewhere", "quarantine"),
+}
+
+
+@pytest.mark.parametrize("layout", sorted(QUARANTINE_LAYOUTS))
+@pytest.mark.parametrize("linked", [True, False], ids=["linked", "plain"])
+def test_apply_then_restore_round_trips_byte_for_byte(
+    tmp_path: Path, layout: str, linked: bool,
+) -> None:
+    """Restore puts back exactly what apply took: bytes AND link text.
+
+    MUTATION A: move the link verbatim in ``do_apply`` (main's behaviour) --
+    every layout but ``same_depth`` refuses with "is missing".
+    MUTATION B: restore links by ``shutil.move`` of the quarantined entry --
+    the restored link text is the absolute target, not the original.
+    """
+    window = _window(tmp_path, linked)
+    before = _snapshot(window)
+    quar = tmp_path.joinpath(*QUARANTINE_LAYOUTS[layout])
     assert _apply(window, quar) == 0
     moved = json.loads((quar / qds.MANIFEST_NAME).read_text())["shards"]
     assert moved
-    assert all((quar / rec["name"]).is_symlink() for rec in moved)
+    assert all(("link_text" in rec) == linked for rec in moved)
+    # Every quarantined entry is valid where it sits (so --verify can digest it).
+    assert all((quar / rec["name"]).exists() for rec in moved)
 
     assert qds.do_restore(window, quar) == 0
-    after = {p.name: qds.digest(p) for p in qds.iter_shard_paths(window)}
-    assert after == before
-    assert all((window / rec["name"]).is_symlink() for rec in moved)
+    assert _snapshot(window) == before
+    assert not any((quar / rec["name"]).exists() or (quar / rec["name"]).is_symlink()
+                   for rec in moved)
+
+
+def _downgrade_to_old_journal(quar: Path) -> list[dict[str, Any]]:
+    """Rewrite a new-format quarantine as the pre-link_text code left it."""
+    man = json.loads((quar / qds.MANIFEST_NAME).read_text())
+    for rec in man["shards"]:
+        text = rec.pop("link_text")
+        entry = quar / rec["name"]
+        entry.unlink()
+        os.symlink(text, entry)  # the old code moved the relative text verbatim
+    (quar / qds.MANIFEST_NAME).write_text(json.dumps(man))
+    return man["shards"]
+
+
+def test_old_journal_with_dangling_relative_links_restores_against_the_window(
+    tmp_path: Path,
+) -> None:
+    window = _window(tmp_path, linked=True)
+    before = _snapshot(window)
+    quar = tmp_path / "elsewhere" / "quarantine"
+    assert _apply(window, quar) == 0
+    records = _downgrade_to_old_journal(quar)
+    assert all(not (quar / r["name"]).exists() for r in records), "fixture must dangle"
+    assert qds.do_restore(window, quar) == 0
+    assert _snapshot(window) == before
+
+
+def test_old_journal_link_that_resolves_nowhere_refuses_loudly(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    window = _window(tmp_path, linked=True)
+    quar = tmp_path / "elsewhere" / "quarantine"
+    assert _apply(window, quar) == 0
+    records = _downgrade_to_old_journal(quar)
+    first = quar / records[0]["name"]
+    first.unlink()
+    os.symlink("../nowhere/" + records[0]["name"], first)
+    assert qds.do_restore(window, quar) == 2
+    out = capsys.readouterr().out
+    assert "journal without link_text" in out
+    assert records[0]["original_path"] in out
+    assert not (window / records[0]["name"]).is_symlink()
+
+
+def test_records_without_sha256_restore_with_a_counted_warning(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """MUTATION: drop the warning -- an unverified restore is silent again."""
+    window = _window(tmp_path, linked=False)
+    quar = tmp_path / "q"
+    assert _apply(window, quar) == 0
+    man = json.loads((quar / qds.MANIFEST_NAME).read_text())
+    for rec in man["shards"][:2]:
+        rec.pop("sha256")
+    (quar / qds.MANIFEST_NAME).write_text(json.dumps(man))
+    assert qds.do_restore(window, quar) == 0
+    out = capsys.readouterr().out
+    for rec in man["shards"][:2]:
+        assert f"WARNING: {rec['name']}: journal record has no sha256" in out
+    assert f"WARNING: 2 of {len(man['shards'])} restored records had no sha256" in out
 
 
 def test_valid_move_and_digest_checked_idempotence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
