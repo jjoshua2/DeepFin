@@ -10,7 +10,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
-- [2026-11-13: Core policy and resolved-outcome baseline](2026-11-13-core-outcome-policy-baseline.md) — ongoing: G4 scored 30.6641% versus original A39 (paired 95% interval 26.2414–35.0867%) after 2,048 updates. Negative interim result; exact upper exceeds .35, so the declared G4 harm stop is false. Fixed G5–G8 continue; no promotion or confirmation.
+- [2026-11-13: Core policy and resolved-outcome baseline](2026-11-13-core-outcome-policy-baseline.md) — ongoing: G6 scored 30.8594% versus original A39 (paired 95% interval 26.1687–35.5501%) after 3,072 updates; descriptive negative, no G6 stop/promotion. Actual G5/G6 journals confirm the moving four-generation FIFO window. Fixed G7/G8 continue.
 
 - [2026-11-13: Larger fresh-data outcome regime](2026-11-13-rl-larger-outcome-regime.md) — E4 completed: 192 games and 129 updates per arm; all three screens technically qualified, bundle contrast unresolved, neither arm donor-utility eligible. No confirmation or adoption; donor retained.
 
