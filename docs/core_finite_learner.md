@@ -15,6 +15,9 @@ Inputs must be absolute, immutable files outside checkouts. JSON refs are exactl
 `{"path": "/absolute/path", "sha256": "..."}`. Duplicate JSON keys, changed
 hashes, links, writable payloads, reused outputs, HOLD, and unresolved games refuse.
 Use a new output directory for each generation; it must not already exist.
+Ordinary metadata is capped at 4 MiB. Only the inventory-heavy accepted generation
+manifest has a 32 MiB cap, sufficient for a declared 256-game Zarr roster. Both
+caps are checked before decoding; neither permits an unbounded metadata input.
 
 The static contract has these fields, with **no** implicit scientific defaults:
 
@@ -56,8 +59,32 @@ assertion of numerical equivalence to another framework's NadamW.
 
 A stage has exactly `schema: core_finite_stage_v1`, `contract_sha256`, `generation`,
 `generations` (ordered manifest refs for 1 through this generation), `parent`, and
-`output`. At generation 1 `parent` is null; later it references the preceding
-closed `boundary.json`. Its manifest prefix must be byte-identity-equivalent to
+`output`. At generation 1 `parent` is null; later it is this root-supplied envelope,
+created **after** the preceding actual resource owner has successfully closed:
+
+```json
+{
+  "boundary": {"path": "/previous/output/boundary.json", "sha256": "..."},
+  "owner_terminal": {"path": "/previous/owner/terminal.json", "sha256": "..."},
+  "owner_sha256": "SHA256_OF_EXISTING_RESOURCE_OWNER",
+  "command": ["/qualified/python", "-B", "-m", "scripts.core_finite_learner",
+              "--contract", "/static/learning.json", "--contract-sha256", "...",
+              "--stage", "/previous/stage.json", "--stage-sha256", "..."]
+}
+```
+
+The separately hash-pinned terminal must report `status: PASS`, integer
+`returncode: 0`, `owned_processes_closed: true`, and
+`custody: OWNED_PROCESSES_CLOSED`, matching `supervisor_sha256` and the **exact**
+command. The command's module/contract/stage suffix joins the actual original
+hash-pinned stage recorded in the boundary. Its output, generation, parent and
+data history must match too. Wrapper `source_revision` is deliberately not treated
+as the child's NN source identity: an existing owner can launch from a different
+checkout. Original owner terminals can remain 0644; their pinned bytes and stable
+stat/read are authenticated without modifying their permissions. Root's admission
+owns the independent actual custody review; this child cannot issue that terminal.
+
+The preceding boundary's manifest prefix must be byte-identity-equivalent to
 the parent's recorded refs. The current generation's actor checkpoint SHA must
 equal that parent's learner checkpoint SHA (generation 1 uses the original donor).
 
@@ -131,6 +158,15 @@ and all visible CUDA RNG states. No fixed-corpus epoch cursor is reused.
 Loaded project modules must originate in the pinned checkout. Actual precision,
 determinism and thread backend settings are recorded at the first boundary and
 must match on continuation; this check does not establish cross-device determinism.
+Completion writes/fsyncs a pending boundary, freezes payloads, then exclusively
+links the final boundary name and seals/fsyncs the directory. Any exception after
+output creation always attempts a read-only **external** sibling marker
+`OUTPUT.failed.json`, even if final publication already exposed `boundary.json`.
+It preserves a terminal failure if the output itself is already read-only. Parent
+consumption refuses that marker or a pending boundary and requires the independently
+successful closed owner above; a child's `COMPLETED` file alone is insufficient.
+If the filesystem refuses even the external marker, the error remains nonzero and
+the missing successful owner terminal still prevents continuation.
 
 Continuation uses `resume_bootstrap`'s strict trained-state/name/architecture checks,
 then restores boundary RNG **after** construction/load/replay reconstruction,

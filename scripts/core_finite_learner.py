@@ -52,6 +52,8 @@ SOURCE_FILES = (
     "chess_anti_engine/tune/fresh_rl_donor.py",
     "chess_anti_engine/replay/generation.py", "chess_anti_engine/replay/shard.py",
 )
+METADATA_LIMIT = 4 << 20
+GENERATION_METADATA_LIMIT = 32 << 20
 
 
 def canonical(value: Any) -> str:
@@ -107,13 +109,19 @@ def _object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def read_ref(ref: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
+def read_ref(ref: dict[str, Any], *, max_bytes: int = METADATA_LIMIT,
+             readonly: bool = True) -> tuple[Path, dict[str, Any]]:
     require(set(ref) == {"path", "sha256"}, "invalid file reference")
     path = external(ref["path"])
-    require(path.stat().st_mode & 0o222 == 0, f"input is writable: {path}")
-    require(path.stat().st_size <= 4 << 20, "metadata exceeds 4 MiB")
+    require(not readonly or path.stat().st_mode & 0o222 == 0, f"input is writable: {path}")
+    require(path.stat().st_size <= max_bytes, f"metadata exceeds {max_bytes} byte cap")
     require(file_sha(path) == ref["sha256"], f"metadata hash mismatch: {path}")
+    before = path.stat()
     raw = path.read_bytes()
+    after = path.stat()
+    require((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns, before.st_mode)
+            == (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_mode),
+            "metadata changed during read")
     require(hashlib.sha256(raw).hexdigest() == ref["sha256"], "metadata changed")
     value = json.loads(raw, object_pairs_hook=_object,
                        parse_constant=lambda s: (_ for _ in ()).throw(ValueError(s)))
@@ -184,7 +192,51 @@ def verify_inventory(shard: dict[str, Any]) -> tuple[Path, str]:
     return root, digest(actual)
 
 
-def metadata(c: dict[str, Any], stage: dict[str, Any], contract_sha: str) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+def failure_marker(output: Path) -> Path:
+    # Deliberately outside the output tree: sealing that tree must not prevent
+    # recording an unsuccessful completion-publication attempt.
+    return output.with_name(output.name + ".failed.json")
+
+
+def closed_parent(binding: dict[str, Any], c: dict[str, Any], contract_ref: dict[str, str],
+                  stage: dict[str, Any]) -> dict[str, Any]:
+    require(set(binding) == {"boundary", "owner_terminal", "owner_sha256", "command"},
+            "parent requires an independently closed owner binding")
+    boundary_path, parent = read_ref(binding["boundary"])
+    _, original_stage = read_ref(parent["stage"])
+    prior_output = external(original_stage["output"])
+    require(boundary_path == prior_output / "boundary.json" and not failure_marker(prior_output).exists(),
+            "parent publication is failed or misplaced")
+    require(not (prior_output / "boundary.pending.json").exists(), "parent publication is incomplete")
+    require(original_stage["schema"] == "core_finite_stage_v1"
+            and original_stage["contract_sha256"] == contract_ref["sha256"]
+            and original_stage["generation"] == stage["generation"] - 1
+            and original_stage["generations"] == stage["generations"][:-1]
+            and original_stage["parent"] == parent["parent"], "parent original stage mismatch")
+    command = binding["command"]
+    suffix = ["-m", "scripts.core_finite_learner", "--contract", contract_ref["path"],
+              "--contract-sha256", contract_ref["sha256"], "--stage", parent["stage"]["path"],
+              "--stage-sha256", parent["stage"]["sha256"]]
+    require(isinstance(command, list) and len(command) > len(suffix)
+            and all(isinstance(arg, str) and arg for arg in command)
+            and command[-len(suffix):] == suffix, "parent owner command/stage mismatch")
+    require(re.fullmatch("[0-9a-f]{64}", binding["owner_sha256"]) is not None, "invalid owner source SHA")
+    # The existing owner emits 0644 terminal JSON only after cleanup. Root pins
+    # its stable bytes after closure; do not chmod that independently owned file.
+    _, terminal = read_ref(binding["owner_terminal"], readonly=False)
+    require(terminal.get("status") == "PASS" and type(terminal.get("returncode")) is int
+            and terminal["returncode"] == 0 and terminal.get("owned_processes_closed") is True
+            and terminal.get("custody") == "OWNED_PROCESSES_CLOSED"
+            and terminal.get("supervisor_sha256") == binding["owner_sha256"]
+            and terminal.get("command") == command, "parent owner did not successfully close the exact command")
+    # Its wrapper checkout may differ from the actual child package checkout.
+    # Authenticate child source using the static contract and boundary instead.
+    require(parent["source_revision"] == c["source_revision"], "parent child source mismatch")
+    return parent
+
+
+def metadata(c: dict[str, Any], stage: dict[str, Any], contract_ref: dict[str, str]) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    contract_sha = contract_ref["sha256"]
     require(set(stage) == {"schema", "contract_sha256", "generation", "generations", "parent", "output"},
             "unknown or missing stage fields")
     require(stage["schema"] == "core_finite_stage_v1" and stage["contract_sha256"] == contract_sha,
@@ -194,7 +246,7 @@ def metadata(c: dict[str, Any], stage: dict[str, Any], contract_sha: str) -> tup
     generations = []
     physical_ids: set[str] = set()
     for i, ref in enumerate(stage["generations"], 1):
-        _, gen = read_ref(ref)
+        _, gen = read_ref(ref, max_bytes=GENERATION_METADATA_LIMIT)
         require(gen["schema"] == "ROOT_ACCEPTED_CORE_TRAIN_GENERATION_V1", "unadmitted generation")
         require((gen["run_uuid"], gen["source_revision"], gen["generation"]) ==
                 (c["run_uuid"], c["source_revision"], i), "generation identity mismatch")
@@ -253,7 +305,7 @@ def metadata(c: dict[str, Any], stage: dict[str, Any], contract_sha: str) -> tup
     if g == 1:
         require(stage["parent"] is None, "first generation cannot resume")
     else:
-        _, parent = read_ref(stage["parent"])
+        parent = closed_parent(stage["parent"], c, contract_ref, stage)
         require(parent["status"] == "COMPLETED_CORE_GENERATION_V1" and parent["generation"] == g - 1,
                 "only closed consecutive boundaries may resume")
         require(parent["contract_sha256"] == contract_sha and parent["source_revision"] == c["source_revision"],
@@ -381,13 +433,36 @@ def write_json(path: Path, value: Any) -> None:
         os.fsync(stream.fileno())
 
 
-def seal(path: Path) -> None:
+def seal(path: Path, *, root: bool = True) -> None:
     for file in path.rglob("*"):
         if file.is_file():
             file.chmod(0o444)
     for directory in sorted((p for p in path.rglob("*") if p.is_dir()), reverse=True):
         directory.chmod(0o555)
-    path.chmod(0o555)
+    if root:
+        path.chmod(0o555)
+
+
+def fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def publish_boundary(output: Path, boundary: dict[str, Any]) -> None:
+    pending = output / "boundary.pending.json"
+    write_json(pending, boundary)
+    # Freeze all payloads before exposing the final name. The child still cannot
+    # attest its eventual owner return code or closure; parent binding does that.
+    seal(output, root=False)
+    fsync_directory(output)
+    os.link(pending, output / "boundary.json", follow_symlinks=False)
+    pending.unlink()
+    output.chmod(0o555)
+    fsync_directory(output)
+    fsync_directory(output.parent)
 
 
 def execute(contract_ref: dict[str, str], stage_ref: dict[str, str]) -> dict[str, Any]:
@@ -400,8 +475,9 @@ def execute(contract_ref: dict[str, str], stage_ref: dict[str, str]) -> dict[str
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, env=git_env, text=True).strip()
     require(head == c["source_revision"], "source revision mismatch")
     require(not subprocess.check_output(["git", "diff", "HEAD", "--name-only"], cwd=REPO, env=git_env), "dirty tracked source")
-    generations, parent = metadata(c, stage, contract_ref["sha256"])
+    generations, parent = metadata(c, stage, contract_ref)
     output = external(stage["output"])
+    require(not failure_marker(output).exists(), "failed attempt output cannot be replayed")
     output.mkdir(parents=False, exist_ok=False)
     trainer = None
     drawn = 0
@@ -497,24 +573,30 @@ def execute(contract_ref: dict[str, str], stage_ref: dict[str, str]) -> dict[str
                     "rng": _rng_state(rng, cast(Any, np.random)), "backend": backend,
                     "champion_changed": False,
                     "recovery_scope": "closed generation boundary only; interrupted output is terminal/unqualified"}
-        write_json(output / "boundary.json", boundary)
-        directory_fd = os.open(output, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-        seal(output)
+        publish_boundary(output, boundary)
         return boundary
     except BaseException as exc:
-        if trainer is not None:
-            trainer.writer.close()
-        # Never manufacture a successful boundary from a failed/partial update.
-        if not (output / "boundary.json").exists():
-            write_json(output / "failure.json", {"status": "FAILED_CORE_GENERATION_NO_RECOVERY",
-                       "error": repr(exc), "contract": contract_ref, "stage": stage_ref,
-                       "cause": repr(exc.__cause__),
-                       "drawn_rows": drawn, "completed_optimizer_calls": applied})
+        failure = {"status": "FAILED_CORE_GENERATION_NO_RECOVERY",
+                   "error": repr(exc), "contract": contract_ref, "stage": stage_ref,
+                   "cause": repr(exc.__cause__),
+                   "drawn_rows": drawn, "completed_optimizer_calls": applied}
+        # Always attempt an external marker, even if a final boundary name was
+        # exposed before a chmod/fsync failure. Never invent the owner's terminal.
+        try:
+            marker = failure_marker(output)
+            write_json(marker, failure)
+            marker.chmod(0o444)
+            fsync_directory(marker.parent)
+        except BaseException as marker_error:
+            print(f"Failed to publish failure marker: {marker_error!r}", file=sys.stderr)
+        try:
+            if trainer is not None:
+                trainer.writer.close()
+            if not (output / "failure.json").exists() and output.stat().st_mode & 0o200:
+                write_json(output / "failure.json", failure)
             seal(output)
+        except BaseException as cleanup_error:
+            print(f"Failed to seal failed output: {cleanup_error!r}", file=sys.stderr)
         raise
 
 

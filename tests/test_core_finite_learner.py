@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 from typing import Any
 
 import numpy as np
@@ -101,11 +102,31 @@ def generation(tmp_path: Path, c: dict[str, Any], n: int, actor: str,
 
 
 def stage(tmp_path: Path, cref: dict[str, str], refs: list[dict[str, str]],
-          parent: dict[str, str] | None, label: str) -> dict[str, str]:
+          parent: dict[str, Any] | None, label: str) -> dict[str, str]:
     return frozen(tmp_path / f"stage-{label}.json", {
         "schema": "core_finite_stage_v1", "contract_sha256": cref["sha256"],
         "generation": len(refs), "generations": refs, "parent": parent, "output": str(tmp_path / label),
     })
+
+
+def parent_binding(tmp_path: Path, cref: dict[str, str], output: str,
+                   *, status: str = "PASS") -> dict[str, Any]:
+    boundary_path = tmp_path / output / "boundary.json"
+    boundary = json.loads(boundary_path.read_bytes())
+    command = [sys.executable, "-B", "-m", "scripts.core_finite_learner",
+               "--contract", cref["path"], "--contract-sha256", cref["sha256"],
+               "--stage", boundary["stage"]["path"], "--stage-sha256", boundary["stage"]["sha256"]]
+    owner_sha = "b" * 64
+    # Synthetic trusted-closure fixture, never an actual resource-owner claim.
+    terminal = frozen(tmp_path / f"{output}-terminal.json", {
+        "status": status, "returncode": 0 if status == "PASS" else 1,
+        "owned_processes_closed": True, "custody": "OWNED_PROCESSES_CLOSED",
+        "supervisor_sha256": owner_sha, "command": command,
+        "source_revision": "wrapper-checkout-is-not-child-checkout",
+    })
+    Path(terminal["path"]).chmod(0o644)  # Actual owner terminals need not be sealed.
+    return {"boundary": {"path": str(boundary_path), "sha256": core.file_sha(boundary_path)},
+            "owner_terminal": terminal, "owner_sha256": owner_sha, "command": command}
 
 
 def test_real_trainer_two_generation_continuation_matches_direct_state_and_rng(tmp_path):
@@ -116,8 +137,7 @@ def test_real_trainer_two_generation_continuation_matches_direct_state_and_rng(t
     first = core.execute(cref, stage(tmp_path, cref, [one], None, "first"))
     assert first["step"] == first["applied_updates"] == 2
     assert first["drawn_rows"] == first["applied_views"] == 4
-    parent = {"path": str(tmp_path / "first/boundary.json"),
-              "sha256": core.file_sha(tmp_path / "first/boundary.json")}
+    parent = parent_binding(tmp_path, cref, "first")
     two = generation(tmp_path, c, 2, first["checkpoint"]["sha256"])
     # Reference directly continues the real Trainer state. The caller also
     # verifies parameter-name identity and restores its explicit RNG sidecar.
@@ -253,4 +273,74 @@ def test_failed_state_has_no_completed_boundary(tmp_path, monkeypatch):
         core.execute(cref, stage(tmp_path, cref, [one], None, "failed"))
     assert not (tmp_path / "failed/boundary.json").exists()
     assert json.loads((tmp_path / "failed/failure.json").read_text())["status"] == "FAILED_CORE_GENERATION_NO_RECOVERY"
+    assert core.failure_marker(tmp_path / "failed").is_file()
     assert (tmp_path / "failed/draws.jsonl").stat().st_mode & 0o222 == 0
+
+
+@pytest.mark.parametrize("fault", ["seal", "final_fsync"])
+def test_failed_publication_always_banks_external_marker(tmp_path, monkeypatch, fault):
+    c, cref = contract(tmp_path)
+    one = generation(tmp_path, c, 1, c["donor"]["sha256"])
+    output = tmp_path / "publication"
+    stage_ref = stage(tmp_path, cref, [one], None, "publication")
+    if fault == "seal":
+        original_seal = core.seal
+        def fail_seal(path, **kwargs):
+            if path == output:
+                raise OSError("seal failure")
+            original_seal(path, **kwargs)
+        monkeypatch.setattr(core, "seal", fail_seal)
+    else:
+        original = core.fsync_directory
+        def fail_parent(path):
+            if path == tmp_path:
+                raise OSError("final directory publication failure")
+            original(path)
+        monkeypatch.setattr(core, "fsync_directory", fail_parent)
+    with pytest.raises(OSError):
+        core.execute(cref, stage_ref)
+    assert (output / "boundary.json").exists() == (fault == "final_fsync")
+    marker = core.failure_marker(output)
+    assert marker.is_file() and marker.stat().st_mode & 0o222 == 0
+    assert json.loads(marker.read_bytes())["status"] == "FAILED_CORE_GENERATION_NO_RECOVERY"
+
+
+@pytest.mark.parametrize("fault", ["failed_owner", "wrong_command", "no_closure", "publication_marker"])
+def test_parent_requires_successful_exact_closed_owner_and_no_failure_marker(tmp_path, fault):
+    c, cref = contract(tmp_path)
+    one = generation(tmp_path, c, 1, c["donor"]["sha256"])
+    first = core.execute(cref, stage(tmp_path, cref, [one], None, "first"))
+    parent = parent_binding(tmp_path, cref, "first", status="FAILED" if fault == "failed_owner" else "PASS")
+    if fault in ("wrong_command", "no_closure"):
+        terminal = json.loads(Path(parent["owner_terminal"]["path"]).read_bytes())
+        if fault == "wrong_command":
+            terminal["command"][-1] = "0" * 64
+        else:
+            terminal["owned_processes_closed"] = False
+        parent["owner_terminal"] = frozen(tmp_path / "bad-terminal.json", terminal)
+    if fault == "publication_marker":
+        frozen(core.failure_marker(tmp_path / "first"), {"status": "FAILED_CORE_GENERATION_NO_RECOVERY"})
+    two = generation(tmp_path, c, 2, first["checkpoint"]["sha256"])
+    next_stage = json.loads(Path(stage(tmp_path, cref, [one, two], parent, "refused-parent")["path"]).read_bytes())
+    with pytest.raises(ValueError, match="parent"):
+        core.metadata(c, next_stage, cref)
+
+
+def test_generation_metadata_has_bounded_larger_inventory_cap(tmp_path):
+    # 256 games with a representative246-file Zarr inventory exceed the old
+    # 4MiB generic cap without reading any shard or constructing a model.
+    files = [{"path": f"array-{n:03d}/chunk-000000", "bytes": 16384, "sha256": "a" * 64}
+             for n in range(246)]
+    ref = frozen(tmp_path / "large-generation.json", {"schema": "ROOT_ACCEPTED_CORE_TRAIN_GENERATION_V1",
+                 "games": [{"physical_game_id": f"collection:{n}", "shard": {"files": files}}
+                           for n in range(256)]})
+    assert core.METADATA_LIMIT < Path(ref["path"]).stat().st_size < core.GENERATION_METADATA_LIMIT
+    with pytest.raises(ValueError, match="byte cap"):
+        core.read_ref(ref)
+    assert len(core.read_ref(ref, max_bytes=core.GENERATION_METADATA_LIMIT)[1]["games"]) == 256
+    too_large = tmp_path / "too-large-generation.json"
+    with too_large.open("wb") as stream:
+        stream.truncate(core.GENERATION_METADATA_LIMIT + 1)
+    too_large.chmod(0o444)
+    with pytest.raises(ValueError, match="byte cap"):
+        core.read_ref({"path": str(too_large), "sha256": "0" * 64}, max_bytes=core.GENERATION_METADATA_LIMIT)
