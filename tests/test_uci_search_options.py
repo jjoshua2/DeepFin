@@ -128,7 +128,7 @@ def _make_engine(
         n_walkers=threads,
         vloss_weight=3,
     )
-    options = EngineOptions(threads=threads)
+    options = EngineOptions(search_walkers=threads)
   # Copy worker -> options exactly as `_build_engine` does. Without it the
   # harness diverges from production in a way that MAKES ITS OWN FINDINGS:
   # EngineOptions defaults to the PLAY_PUCT values (c_puct 1.75, fpu 0.33,
@@ -374,7 +374,7 @@ def test_puct_option_is_reported_inert_under_classic_gumbel(
 def test_gumbel_option_is_reported_inert_on_the_walker_pool(
     name: str, capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Threads>1 is plain PUCT: every Gumbel shape knob stops applying.
+    """SearchWalkers>1 is plain PUCT: every Gumbel shape knob stops applying.
 
     The report is asserted behaviourally-by-proxy rather than by a visit-count
     diff, because the walker pool races N threads onto a shared tree and its
@@ -473,7 +473,7 @@ def test_minibatch_size_marks_the_captured_cudagraph_stale(
 
 
 def test_vloss_weight_reaches_the_walker_pool_on_the_shipped_default() -> None:
-    """Threads=2 is the shipped default, and the walker pool copies
+    """SearchWalkers=2 (the shipped default until 2026-11) and the walker pool copies
     `vloss_weight` into `WalkerPoolConfig` at CONSTRUCTION.
 
     So `SearchWorker.set_vloss_weight`'s pool rebuild is the part that makes the

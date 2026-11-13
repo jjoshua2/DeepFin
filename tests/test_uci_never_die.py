@@ -313,11 +313,11 @@ def _oom(*_a, **_kw):
     ("option", "value", "attr"),
     [("MaxBatch", "4096", "max_batch"),
      ("EvalCacheEntries", "1000", "eval_cache_entries"),
-     ("Threads", "1", "threads")],
+     ("SearchWalkers", "1", "search_walkers")],
 )
 def test_failed_rebuild_keeps_previous_evaluator_and_settings(option, value, attr, capsys) -> None:
     worker = MagicMock()
-    options = EngineOptions(threads=2)
+    options = EngineOptions(search_walkers=2)
     engine = Engine(worker, options=options, rebuild_evaluator=_oom)
     before = getattr(options, attr)
 

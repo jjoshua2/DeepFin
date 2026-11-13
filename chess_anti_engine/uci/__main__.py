@@ -116,6 +116,7 @@ def _warmup_evaluator(
     input_history_encoding: str = "legacy",
     input_extra_features: str | None = None,
     compute_relations: bool = False,
+    max_batch: int | None = None,
 ) -> None:
     """Trigger torch.compile + CUDA graph capture for the shapes the UCI
     search will actually hit, so the first `go` doesn't pay compile
@@ -136,8 +137,10 @@ def _warmup_evaluator(
     pay its compile/capture stall on a mid-game root eval, on the clock
     and outside the chunk clock-guard.
 
-    Warmup is skipped silently on failure — the real ``go`` will see the
-    same error and surface it there.
+    STRICT: a failure raises. At startup the builder turns that into a clear
+    error and a non-zero exit before ``readyok``; on a mid-session rebuild
+    (``MaxBatch`` etc.) the engine keeps its previous evaluator. Skipping
+    silently used to hand a cold or broken evaluator to the first ``go``.
     """
     cb = CBoard.from_board(chess.Board())
     encoded = encode_cboard(
@@ -153,6 +156,11 @@ def _warmup_evaluator(
     else:
   # Gumbel path: root eval at 1, bucket flushes at 128.
         batches = [1, 128]
+  # The evaluator cannot take more than ``max_batch`` rows (the search never
+  # submits more), so warm the cap instead of a shape it would refuse. While
+  # warmup was best-effort, MaxBatch 64 silently skipped the 128 shape.
+    if max_batch is not None:
+        batches = sorted({min(int(b), int(max_batch)) for b in batches})
     rel_row = cb.compute_relations() if compute_relations else None
     for batch in batches:
         xs = np.broadcast_to(encoded, (batch, *encoded.shape)).astype(np.float32, copy=True)
@@ -179,8 +187,8 @@ def _warmup_evaluator(
                 legal_flat = np.tile(legal_one, batch)
                 for _ in range(max(1, int(n_devices))):
                     evaluator.evaluate_legal_bf16(xs, legal_flat, legal_counts)
-        except Exception:
-            break
+        except Exception as exc:
+            raise RuntimeError(f"evaluator warmup failed at batch={batch}") from exc
 
 
 def _pucv_warmup_batch_sizes(gather: int) -> list[int]:
@@ -276,7 +284,7 @@ def _make_evaluator_factory(
     use_relations = bool(getattr(models[0], "use_dynamic_relations", False))
     compact_bf16 = os.environ.get("CAE_UCI_COMPACT_BF16", "0") == "1"
 
-  # Live-updatable walker count: the runtime `Threads` setoption crosses
+  # Live-updatable walker count: the runtime `SearchWalkers` setoption crosses
   # the dispatcher tier (CUDAOwner at 1 walker vs BatchCoalescing at >1),
   # so rebuilds must see the NEW count, and later rebuilds (MaxBatch /
   # EvalCacheEntries) must keep it — hence remembered, not re-frozen.
@@ -331,7 +339,7 @@ def _make_evaluator_factory(
                 compiled_models[0], device=active_devices[0],
                 max_batch=max_batch, n_slots=2, input_bf16=compact_bf16, legal_bf16=compact_bf16,
             )
-  # Always wrap in ThreadSafeGPUDispatcher so the UCI `Threads`
+  # Always wrap in ThreadSafeGPUDispatcher so the UCI `SearchWalkers`
   # option can bump walker count at runtime without a race. Lock
   # is uncontended at 1 thread — overhead is ~10ns.
             evaluator = ThreadSafeGPUDispatcher(evaluator)
@@ -363,7 +371,7 @@ def _make_evaluator_factory(
             )
         _warmup_evaluator(
             warm_target, n_walkers=nw, walker_gather=walker_gather,
-            n_devices=len(active_devices),
+            n_devices=len(active_devices), max_batch=max_batch,
             input_history_encoding=input_history_encoding,
             input_extra_features=input_extra_features,
             compute_relations=use_relations,
@@ -856,8 +864,11 @@ def _build_parser() -> argparse.ArgumentParser:
   # sequential-halving semantics. walkers=2 is ~10x the baseline on CUDA
   # (bench_uci_engine --walker-sweep, 2026-04-22) — we default to 2 so the
   # ship path gets the win. --walkers 1 opts into the classic Gumbel path.
-    p.add_argument("--walkers", type=int, default=2,
-                   help="PUCT walker threads (default: 2; 1 = classic Gumbel; >2 = noisy scaling)")
+    p.add_argument("--walkers", type=int, default=1,
+                   help="search walkers (UCI option SearchWalkers): 1 = classic Gumbel, the "
+                        "validated tournament search (default); >1 = PUCT walker pool, where "
+                        "most tuned Gumbel knobs are inert. The UCI `Threads` option never "
+                        "changes this.")
     p.add_argument("--vloss-weight", type=int, default=PLAY_SEARCH_VLOSS_WEIGHT,
                    help="virtual-loss weight, walker AND classic-Gumbel modes "
                         f"(default: {PLAY_SEARCH_VLOSS_WEIGHT}, lc0 default)")
@@ -1149,7 +1160,7 @@ def _startup_engine_options(
     rather than an error.
     """
     options = EngineOptions(
-        threads=_clamp_startup_spin("Threads", "--walkers", args.walkers),
+        search_walkers=_clamp_startup_spin("SearchWalkers", "--walkers", args.walkers),
         leaf_gather=_clamp_startup_spin("LeafGather", "--walker-gather", args.walker_gather),
         use_multi_gpu_pucv=restore_multi_gpu_pucv,
         pucv_pending_mode=str(args.pucv_pending_mode),
@@ -1243,10 +1254,10 @@ def main() -> int:
         building_engine: Engine | None = None
         building_evaluator = None
         try:
-            n_walkers = startup_options.threads
+            n_walkers = startup_options.search_walkers
             walker_gather = startup_options.leaf_gather
   # c_scale / c_visit shape the Gumbel sigma(q) value transform; the PUCT
-  # walker pool (n_walkers > 1, the --walkers/Threads default) selects on
+  # walker pool (n_walkers > 1, opt-in via --walkers/SearchWalkers) selects on
   # raw Q and never reads them, so the tuned c_scale=0.025 win only lands on
   # the classic Gumbel path. Warn so the inert tuning isn't silent. The
   # multi-GPU pucv pool is plain PUCT too and overrides both other paths,
@@ -1255,13 +1266,13 @@ def main() -> int:
                 _println(
                     "info string c-scale/c-visit are Gumbel-only and ignored "
                     "while the multi-GPU PUCV pool is active (plain PUCT); "
-                    "run a single device with Threads/--walkers 1 for the "
+                    "run a single device with SearchWalkers/--walkers 1 for the "
                     "c_scale-tuned classic Gumbel path"
                 )
             elif n_walkers > 1:
                 _println(
                     "info string c-scale/c-visit are Gumbel-only and ignored at "
-                    f"walkers={n_walkers} (PUCT walker pool); set Threads/--walkers 1 "
+                    f"walkers={n_walkers} (PUCT walker pool); set SearchWalkers/--walkers 1 "
                     "for the c_scale-tuned classic Gumbel path"
                 )
             models = _load_models(args.checkpoint, devices)
@@ -1408,8 +1419,9 @@ def main() -> int:
             if not engine_ready.is_set():
                 engine_ready.wait()
             if engine_error[0] is not None:
-                _println(f"info string engine load failed: {engine_error[0]!r}")
-                raise engine_error[0]
+                _report_startup_failure(engine_error[0])
+                rc = 1
+                break
             engine = engine_ref[0]
             assert engine is not None
             try:
@@ -1446,6 +1458,24 @@ def main() -> int:
 # builder cannot be interrupted inside torch.compile / cudagraph capture, and a
 # GUI that quits during startup usually kills us a few seconds later anyway.
 _BUILDER_JOIN_TIMEOUT_S = 3.0
+
+
+def _report_startup_failure(exc: BaseException) -> None:
+    """Say why startup failed, on both channels, before exiting non-zero.
+
+    Exit, not "withhold readyok": cutechess-cli treats an engine that never
+    answers `isready` as unresponsive only after its own timeout and then
+    kills it, while a process that exits is reported at once as a failed
+    engine start (the game is not played on a crippled engine). The TCEC GUI
+    likewise sees a dead pipe immediately. An engine sitting silently on a
+    broken warmup just burns the round's start-up time. Answering readyok over
+    a broken search -- the old behaviour -- was worst of all: every move was
+    then the unsearched fallback.
+    """
+    text = " ".join(f"{type(exc).__name__}: {exc}".split())[:500]
+    logging.getLogger(__name__).error("engine startup failed", exc_info=exc)
+    _println(f"info string engine startup failed: {text}")
+    print(f"deepfin: engine startup failed: {text}", file=sys.stderr, flush=True)
 
 
 def _request_builder_shutdown(event: threading.Event) -> None:

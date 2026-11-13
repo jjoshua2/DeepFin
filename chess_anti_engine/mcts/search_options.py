@@ -23,11 +23,11 @@ reads which pool is installed, not which option was requested, because
 ``UseVL=true`` against an evaluator without the slot API is accepted and then
 falls through to classic Gumbel):
 
-``gumbel``     classic single-thread Gumbel C path (Threads=1, no UseVL,
+``gumbel``     classic single-thread Gumbel C path (SearchWalkers=1, no UseVL,
                no multi-GPU pool). The tuned play shape lives here.
 ``rpg``        root-parallel Gumbel over >=2 devices (SearchParallel=gumbel).
                Root decisions are Gumbel; the intra-candidate descent is PUCT.
-``walker``     PUCT walker pool (Threads>1). Plain PUCT — no Gumbel knob.
+``walker``     PUCT walker pool (SearchWalkers>1). Plain PUCT — no Gumbel knob.
 ``pucv``       single-thread batched-VL PUCT (UseVL=true). Plain PUCT.
 ``pucv_pool``  multi-GPU shared-tree PUCT pool (UseMultiGpuPUCV). Plain PUCT.
 """
@@ -49,9 +49,9 @@ SEARCH_PATHS: tuple[str, ...] = ("gumbel", "rpg", "walker", "pucv", "pucv_pool")
 # Human-facing one-liners, used verbatim in the info-string warnings so an
 # operator reading a match log knows which engine mode swallowed their knob.
 PATH_DESCRIPTIONS: Mapping[str, str] = {
-    "gumbel": "classic single-thread Gumbel (Threads=1, UseVL off, 1 device)",
+    "gumbel": "classic single-thread Gumbel (SearchWalkers=1, UseVL off, 1 device)",
     "rpg": "root-parallel Gumbel (SearchParallel=gumbel, >=2 devices)",
-    "walker": "PUCT walker pool (Threads>1)",
+    "walker": "PUCT walker pool (SearchWalkers>1)",
     "pucv": "single-thread batched-VL PUCT (UseVL=true)",
     "pucv_pool": "multi-GPU PUCT pool (UseMultiGpuPUCV=true)",
 }

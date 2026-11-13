@@ -115,7 +115,7 @@ process. Force a mode with `CAE_UCI_MULTI_GPU_COMPILE_MODE`
 | `ClockBatchMarginSigmas` | `2` (default) | Self-calibrating clock margin in units of observed GPU-batch-time sigma. Leave at default. |
 | `MultiPV` | supported | For broadcast eval display. |
 | `Ponder` | `false` | Not supported meaningfully; leave off. |
-| `Threads` | leave default | GPU engine — CPU threads are not the scaling axis; parallelism is configured via `--walkers`/`--devices` on the command line. |
+| `Threads` | any (ignored) | Accepted because GUIs send it, and answered with an `info string` saying it has **no effect**: DeepFin is a GPU engine and `Threads` never changes the search. The search path is chosen only on the command line (`--walkers`, default 1 = classic Gumbel; `--devices`) or by the operator-only `SearchWalkers` option. |
 | `MaxBatch` / `MinibatchSize` | leave default | Overridden by the autotuned command line if needed. |
 
 ## 6. The 5–10 minute autotune (the "light testing" ask)
@@ -166,6 +166,15 @@ phase C tells us what the additional seven GPUs are worth.
 
 ## 7. Known behaviors / troubleshooting
 
+- **Startup failure exits the process.** If model load, compile or the
+  search warmup fails, the engine prints `info string engine startup failed: ...`
+  and `deepfin: engine startup failed: ...` on stderr and exits non-zero
+  *before* `readyok`, so the GUI reports a failed engine start instead of
+  playing a game on an unsearched fallback.
+- **A failed search never loses on time.** The move is answered from the
+  network's root policy, every such move prints `info string WARNING search
+  failed on N consecutive move(s)`, and after the first one the evaluator is
+  rebuilt once (on the opponent's clock). Any non-zero count is worth a report.
 - **Long first move of a fresh process** (~15–30 s even warm-cached for
   `isready` / first search): expected; see section 4. Never happens mid-game
   after a successful `isready`.

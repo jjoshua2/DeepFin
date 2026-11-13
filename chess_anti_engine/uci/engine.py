@@ -117,6 +117,10 @@ def emit_handshake(options: EngineOptions) -> None:
     )
     _println(f"option name Threads type spin default {options.threads} {_spin_range('Threads')}")
     _println(
+        f"option name SearchWalkers type spin default {options.search_walkers} "
+        f"{_spin_range('SearchWalkers')}"
+    )
+    _println(
         f"option name LeafGather type spin default {options.leaf_gather} "
         f"{_spin_range('LeafGather')}"
     )
@@ -214,6 +218,7 @@ _MIN_HASH_MB = 1024
 _SPIN_BOUNDS: dict[str, tuple[int, int]] = {
     "Hash": (_MIN_HASH_MB, 524288),
     "Threads": (1, 64),
+    "SearchWalkers": (1, 64),
     "LeafGather": (1, 64),
     "RPGOpenVPA": (-1, 4096),
     "RPGMinVPA": (-1, 4096),
@@ -259,16 +264,21 @@ class EngineOptions:
   # would cause. It is NOT a bounded transposition table; we rebuild rather
   # than evict.
     hash_mb: int = 16384
-  # Number of MCTS walker threads. 1 = classic Gumbel path; >1 = PUCT
-  # walker pool with virtual loss. Set via UCI `Threads`.
-    threads: int = 2
+  # The GUI-facing UCI `Threads` value. Stored and echoed, NEVER read by the
+  # search: a GUI sends it from its own CPU-thread setting, and letting it pick
+  # the search algorithm moved tournament play off the validated Gumbel path.
+    threads: int = 1
+  # Number of MCTS walker threads. 1 = classic Gumbel path (the validated
+  # tournament search); >1 = PUCT walker pool with virtual loss, where most
+  # tuned Gumbel knobs are inert. Operator-only: `--walkers` / `SearchWalkers`.
+    search_walkers: int = 1
   # Per-walker leaf gather: each walker does G descents → one NN batch
   # instead of one descent per submit. Amplifies effective batch to
   # N_walkers×G without spawning more threads. 1 = classic. Lc0's
   # canonical value is 8. Set via UCI `LeafGather`.
     leaf_gather: int = 1
   # Single-thread async-pipeline batched-VL PUCT. Active only at
-  # `Threads=1` with a 2-slot inplace-async evaluator. Bench: +112%
+  # `SearchWalkers=1` with a 2-slot inplace-async evaluator. Bench: +112%
   # over sync gumbel walkers=1 (54k vs 26k nps on a 10-layer model).
   # Set via UCI `UseVL`.
     use_vl: bool = False
@@ -435,7 +445,7 @@ class Engine:
         self._worker.set_max_tree_mb(self._options.hash_mb)
         self._leaf_tb_noted: str | None = None
   # Set by setoption handlers that reshape the search path / evaluator
-  # (Threads/UseVL/UseMultiGpuPUCV/LeafGather/VLGather/MaxBatch/
+  # (SearchWalkers/UseVL/UseMultiGpuPUCV/LeafGather/VLGather/MaxBatch/
   # EvalCacheEntries). The build-time ``warmup_search`` runs BEFORE any
   # setoption is applied, so such a change leaves its cudagraph stale;
   # ``_handle_isready`` re-warms the configured path before ``readyok``
@@ -449,6 +459,11 @@ class Engine:
   # with no simulation. Deliberately separate from the fault counter above —
   # see `_report_declined_root`.
         self._prior_only_roots = 0
+  # Search phases in a row that ended in the exception fallback (reset by any
+  # phase that returns a searched result), and whether the one-per-streak
+  # evaluator rebuild is owed. See `_recover_evaluator`.
+        self._consecutive_search_failures = 0
+        self._evaluator_recovery_due = False
         self._board = chess.Board()
         self._search_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -1109,12 +1124,38 @@ class Engine:
         )
 
     def _set_threads(self, value: str) -> None:
+        """`Threads`: accepted (GUIs send it) and reported as having no effect.
+
+        DeepFin is a GPU engine; CPU threads are not its scaling axis, and the
+        search algorithm must not follow a GUI's generic concurrency setting.
+        Stored so the handshake echoes it back, and said out loud -- an accepted
+        and silently ignored value is this repo's signature defect.
+        """
         n = self._parse_clamped_int(value, "Threads")
         if n is None:
             return
-        old_threads = self._options.threads
+        self._options.threads = n
+        _println(
+            f"info string Threads set to {n} — NO EFFECT on the search: the "
+            f"search path is path={self._worker.realized_search_path()} "
+            f"(SearchWalkers={self._options.search_walkers}); walker count is set "
+            "only by SearchWalkers / --walkers"
+        )
+
+    def _set_search_walkers(self, value: str) -> None:
+        """`SearchWalkers` (operator-only): 1 = classic Gumbel, >1 = PUCT walker pool.
+
+        This is the ONLY setoption that selects between those two paths. It used
+        to be `Threads`, which every GUI sends from its own concurrency setting,
+        so a routine `Threads 8` silently moved a tournament engine off the
+        validated Gumbel search onto a pool where most tuned knobs are inert.
+        """
+        n = self._parse_clamped_int(value, "SearchWalkers")
+        if n is None:
+            return
+        old_walkers = self._options.search_walkers
         if self._multi_gpu_path_active():
-            self._options.threads = n
+            self._options.search_walkers = n
             self._worker.set_num_threads(n)
             # Worker stores n_walkers for leave-multi-GPU restore; live
             # dispatch still uses the RPG / multi-GPU PUCV pool.
@@ -1124,7 +1165,7 @@ class Engine:
                 else "UseMultiGpuPUCV"
             )
             _println(
-                f"info string Threads set to {n} "
+                f"info string SearchWalkers set to {n} "
                 f"(deferred — {mode} is active)",
             )
             return
@@ -1137,36 +1178,36 @@ class Engine:
         # failed one leaves the engine exactly as it was.
         new_eval = None
         if (
-            (n == 1) != (old_threads == 1)
+            (n == 1) != (old_walkers == 1)
             and self._rebuild_evaluator is not None
         ):
             _println(
-                f"info string Threads {old_threads}->{n} crosses dispatcher "
+                f"info string SearchWalkers {old_walkers}->{n} crosses dispatcher "
                 "tier; rebuilding evaluator…"
             )
             new_eval = self._rebuild_or_keep(
-                f"Threads {n}", self._options.max_batch,
+                f"SearchWalkers {n}", self._options.max_batch,
                 self._options.eval_cache_entries, n_walkers=n,
             )
             if new_eval is None:
                 return
-        self._options.threads = n
+        self._options.search_walkers = n
         self._worker.set_num_threads(n)
         self._warmup_dirty = True
         if new_eval is not None:
             self._worker.set_evaluator(new_eval)
             self._reinstall_configured_search_path()
         _println(
-            f"info string Threads set to {n} "
+            f"info string SearchWalkers set to {n} "
             f"({'walker pool' if n > 1 else 'classic Gumbel path'})"
         )
         # The walker pool selects on raw Q and never reads c_scale/c_visit (Gumbel
-        # sigma(q) only), so switching to Threads>1 silently drops the tuned
-        # c_scale value. Surface it; Threads=1 restores the c_scale-tuned path.
+        # sigma(q) only), so switching to SearchWalkers>1 silently drops the tuned
+        # c_scale value. Surface it; SearchWalkers=1 restores the c_scale-tuned path.
         if n > 1:
             _println(
                 "info string note: c_scale/c_visit are inactive on the walker pool; "
-                "Threads=1 uses the c_scale-tuned classic Gumbel path"
+                "SearchWalkers=1 uses the c_scale-tuned classic Gumbel path"
             )
 
     def _set_leaf_gather(self, value: str) -> None:
@@ -1198,7 +1239,7 @@ class Engine:
         _println(
             f"info string UseVL {'on' if enabled else 'off'} "
             f"(gather={self._options.vl_gather}; "
-            f"requires Threads=1 + 2-slot async evaluator)"
+            f"requires SearchWalkers=1 + 2-slot async evaluator)"
         )
 
     def _set_use_multi_gpu_pucv(self, value: str) -> None:
@@ -1228,7 +1269,7 @@ class Engine:
                 # install_multi_gpu_pucv tears down walker / UseVL; restore
                 # them the same way leave-Gumbel does. Without this,
                 # gumbel → UseMultiGpuPUCV on (forces sp=pucv) → off leaves
-                # UseVL/Threads flags set but no live path materialised.
+                # UseVL/SearchWalkers flags set but no live path materialised.
                 self._reinstall_configured_search_path(after_leaving_gumbel=True)
             return
         n_devices = self._install_multi_gpu_pucv_pool(rebuild_primary=True)
@@ -1245,12 +1286,12 @@ class Engine:
             f"info string UseMultiGpuPUCV on "
             f"(devices={n_devices} gather={gather})"
         )
-        # Same inertness as the Threads>1 walker pool (see _set_threads): the
+        # Same inertness as the SearchWalkers>1 walker pool: the
         # pool selects with plain PUCT and never reads c_scale/c_visit, so the
         # tuned Gumbel values silently stop applying while it is installed.
         _println(
             "info string note: c_scale/c_visit are inactive on the multi-GPU "
-            "PUCV pool (plain PUCT); a single device with Threads=1 restores "
+            "PUCV pool (plain PUCT); a single device with SearchWalkers=1 restores "
             "the c_scale-tuned classic Gumbel path"
         )
 
@@ -1317,7 +1358,7 @@ class Engine:
         """Switch the multi-GPU search mode: ``gumbel`` installs the
         root-parallel Gumbel pool (>= 2 device factories required, else the
         option reverts to ``pucv``); ``pucv`` tears it down and restores the
-        UseMultiGpuPUCV / Threads / UseVL routing. Single-device configs never
+        UseMultiGpuPUCV / SearchWalkers / UseVL routing. Single-device configs never
         construct the new module — dispatch falls through to the classic
         paths untouched."""
         normalized = value.strip().lower()
@@ -1342,7 +1383,7 @@ class Engine:
         # Restore whichever non-RPG path is configured. install_root_parallel
         # gumbel closed the walker pool and cleared single-thread PUCV, so
         # leaving only clear_root_parallel_gumbel would fall through to
-        # single-thread classic Gumbel even with Threads>1 / UseVL / PUCV on.
+        # single-thread classic Gumbel even with SearchWalkers>1 / UseVL / PUCV on.
         self._reinstall_configured_search_path(after_leaving_gumbel=True)
 
     def _try_install_root_parallel_gumbel(self, *, rebuild_primary: bool = False) -> bool:
@@ -1465,7 +1506,7 @@ class Engine:
         # walker pool and the single-thread PucvChunker used to fall off the
         # end of this chain -- `set_use_pucv(True)` early-returns when pucv is
         # already on, and there was no walker branch at all -- so on the
-        # SHIPPED default (Threads=2 -> walker) four options `searchconfig`
+        # then-shipped default (Threads=2 -> walker) four options `searchconfig`
         # certifies as [LIVE] could not be moved by a `setoption`.
         if self._options.search_parallel == "gumbel":
             self._reinstall_rpg_if_active(reason="CPuct")
@@ -1478,7 +1519,7 @@ class Engine:
         self, *, after_leaving_gumbel: bool = False,
     ) -> None:
         """Reinstall the search path that ``search_parallel`` / multi-GPU /
-        Threads / UseVL currently advertise.
+        SearchWalkers / UseVL currently advertise.
 
         Used after evaluator rebuilds (MaxBatch, EvalCacheEntries) and after
         VLGather reshape so Gumbel mode is not silently dropped when
@@ -1663,6 +1704,7 @@ class Engine:
         "hash": _set_hash,
         "ponder": _set_ponder,
         "threads": _set_threads,
+        "searchwalkers": _set_search_walkers,
         "leafgather": _set_leaf_gather,
         "usevl": _set_use_vl,
         "usemultigpupucv": _set_use_multi_gpu_pucv,
@@ -1754,7 +1796,9 @@ class Engine:
         uses, so the search-path graphs are captured on the dispatcher's
         persistent submitter thread and every later move just replays them.
         One full chunk (the configured ``chunk_sims``) covers the real batch
-        shapes. Best-effort: a real ``go`` surfaces any genuine error.
+        shapes. STRICT on every path: a failure raises. A best-effort warmup
+        used to answer ``readyok`` over a broken search, and every move after
+        that was the unsearched root-policy fallback.
 
         Multi-GPU PUCV caveat: that pool fans a single ``run`` budget across
         every GPU worker through one shared semaphore (each greedily grabs up
@@ -1800,16 +1844,6 @@ class Engine:
                 max_nodes=max_nodes,
                 optimum_ms=None,
                 abort_factor=self._options.abort_factor,
-            )
-        except Exception as exc:
-  # Multi-GPU tournament path: a silent warmup failure leaves cold
-  # workers that then crash on the first clocked go. Surface it so
-  # isready fails loud before the GUI starts the clock. Single-GPU
-  # keeps best-effort (a real go still reports the error).
-            if self._multi_gpu_path_active():
-                raise
-            logging.getLogger(__name__).debug(
-                "warmup_search best-effort failure: %r", exc,
             )
         finally:
             self._worker.reset_tree()
@@ -1868,6 +1902,42 @@ class Engine:
             if gen != self._search_gen or self._quit_requested:
                 return
         self._emit_bestmove(result)
+        if self._evaluator_recovery_due:
+            self._evaluator_recovery_due = False
+            self._recover_evaluator()
+
+    def _recover_evaluator(self) -> None:
+        """Rebuild the evaluator ONCE after the first search failure in a streak.
+
+        Runs on the search thread AFTER the fallback bestmove is out, so the
+        rebuild is paid on the opponent's clock rather than ours; the next
+        command that needs the worker joins this thread first (the normal
+        quiescence barrier). One attempt per failure streak keeps it bounded: a
+        persistent fault keeps playing loud fallbacks instead of rebuilding on
+        every move.
+        """
+        if self._rebuild_evaluator is None:
+            _println(
+                "info string search-failure recovery unavailable: no evaluator "
+                "factory wired; later moves may also be unsearched"
+            )
+            return
+        _println("info string search failed; rebuilding the evaluator once before the next move")
+        new_eval = self._rebuild_or_keep(
+            "search-failure recovery", self._options.max_batch,
+            self._options.eval_cache_entries,
+        )
+        if new_eval is None:
+            return
+        try:
+            self._worker.set_evaluator(new_eval)
+            self._reinstall_configured_search_path()
+        except Exception as exc:
+            _log.error("evaluator install after search failure failed", exc_info=True)
+            _println(f"info string search-failure recovery failed: {_one_line(exc)}")
+            return
+        self._warmup_dirty = True
+        _println("info string search-failure recovery: evaluator rebuilt")
 
     def _run_one_phase(
         self, limits: SearchLimits, *, is_ponder: bool, board: chess.Board,
@@ -1964,6 +2034,7 @@ class Engine:
                 elapsed_s=time.perf_counter() - profile_start,
                 is_ponder=is_ponder,
             )
+            self._consecutive_search_failures = 0
             return result
         except SolvedRootWitnessUnavailable as exc:
             candidate = exc.fallback_actions.get(0)
@@ -1991,13 +2062,22 @@ class Engine:
                 is_ponder=is_ponder,
             )
             _println(f"info string search error: {exc!r}")
+            _log.error("search failed; playing the fallback move", exc_info=True)
             fallback, source = self._bestmove_fallback(board, limits.searchmoves)
             self._bestmove_fallback_used += 1
+            self._consecutive_search_failures += 1
             _println(
                 f"info string bestmove_fallback_used={self._bestmove_fallback_used} "
                 f"source={source} move={fallback} exception={type(exc).__name__} "
                 f"phase={'ponder' if is_ponder else 'main'}"
             )
+            _println(
+                "info string WARNING search failed on "
+                f"{self._consecutive_search_failures} consecutive move(s); this move "
+                "is UNSEARCHED (fallback)"
+            )
+            if self._consecutive_search_failures == 1:
+                self._evaluator_recovery_due = True
             return SearchResult(
                 bestmove_uci=fallback, ponder_uci=None, nodes=0, pv=(), score_cp=0, tbhits=0,
             )
