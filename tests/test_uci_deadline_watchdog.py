@@ -325,9 +325,11 @@ def test_unclocked_searches_are_not_armed(go) -> None:
         engine.close()
 
 
-@pytest.mark.parametrize(("overhead", "grace"), [(0, 10.0), (30, 20.0), (100, 75.0), (1000, 750.0)])
+# overhead 0: the last moment is never before the search's own deadline, which
+# is then the budget itself (an engine with no overhead already races the flag).
+@pytest.mark.parametrize(("overhead", "margin"), [(0, 0.0), (30, 3.0), (100, 3.0), (1000, 3.0)])
 @pytest.mark.usefixtures("out")
-def test_fire_time_is_after_the_search_deadline_and_before_the_flag(overhead, grace) -> None:
+def test_thresholds_are_the_search_deadline_and_the_budget_minus_the_margin(overhead, margin) -> None:
     gate = _Gate()
     worker = _worker()
     worker.run.side_effect = gate
@@ -336,16 +338,228 @@ def test_fire_time_is_after_the_search_deadline_and_before_the_flag(overhead, gr
         engine.dispatch(parse_command("go movetime 5000"))
         armed = engine._watchdog.armed
         assert armed is not None
-        deadline_ms = 5000 - overhead
-        fire_ms = (armed.fire_at - armed.started_at) * 1000
-        assert fire_ms == pytest.approx(deadline_ms + grace)
         assert armed.started_at == engine._go_received_at
-        if overhead >= 20:  # the floor: below 20 ms the engine already races the flag
-            assert fire_ms <= 5000 - 10 + 1e-6  # >= 10 ms margin before the flag (float slack)
+        assert (armed.deadline_at - armed.started_at) * 1000 == pytest.approx(5000 - overhead)
+        assert armed.last_moment_at is not None
+        assert (armed.last_moment_at - armed.started_at) * 1000 == pytest.approx(5000 - margin)
+        assert armed.check_at == armed.deadline_at
     finally:
         gate.release.set()
         _join_all(engine)
         engine.close()
+
+
+@pytest.mark.usefixtures("out")
+def test_a_clock_game_budget_is_the_side_to_moves_remaining_clock() -> None:
+    gate = _Gate()
+    worker = _worker()
+    worker.run.side_effect = gate
+    engine = _engine(worker)
+    try:
+        engine.dispatch(parse_command("position startpos moves e2e4"))  # black to move
+        engine.dispatch(parse_command("go wtime 7000 btime 9000"))
+        armed = engine._watchdog.armed
+        assert armed is not None
+        assert armed.last_moment_at is not None
+        assert (armed.last_moment_at - armed.started_at) * 1000 == pytest.approx(9000 - 3.0)
+    finally:
+        gate.release.set()
+        _join_all(engine)
+        engine.close()
+
+
+@pytest.mark.parametrize(("go", "margin"), [
+    ("go movetime 200", True), ("go wtime 2000 btime 2000", False), ("go nodes 64", False),
+    ("go infinite", False), ("go movetime 200 nodes 64", True),
+])
+@pytest.mark.usefixtures("out")
+def test_only_movetime_asks_the_worker_for_the_fixed_time_stop_margin(go, margin) -> None:
+    worker = _worker()
+    seen: list[dict] = []
+
+    def run(board, **kw):
+        seen.append(kw)
+        if kw["deadline"].deadline_ms is None:
+            kw["stop_event"].wait(5)
+        return _ok(board)
+
+    worker.run.side_effect = run
+    engine = _engine(worker)
+    try:
+        engine.dispatch(parse_command(go))
+        if go == "go infinite":
+            engine.dispatch(parse_command("stop"))
+        _join_all(engine)
+        assert seen[0]["fixed_time_margin"] is margin
+        assert callable(seen[0]["on_chunk"])  # the watchdog heartbeat
+    finally:
+        engine.close()
+
+
+@pytest.mark.usefixtures("out")
+def test_a_ponder_phase_never_asks_for_the_margin_and_ponderhit_does() -> None:
+    worker = _worker()
+    seen: list[dict] = []
+    released = threading.Event()
+
+    def run(board, **kw):
+        seen.append(kw)
+        if len(seen) == 1:
+            kw["stop_event"].wait(5)
+            released.set()
+        return _ok(board)
+
+    worker.run.side_effect = run
+    engine = _engine(worker, ponder=True)
+    try:
+        engine.dispatch(parse_command("position startpos moves e2e4 e7e5"))
+        engine.dispatch(parse_command("go ponder movetime 200"))
+        engine.dispatch(parse_command("ponderhit"))
+        assert released.wait(5)
+        _join_all(engine)
+        assert seen[0]["fixed_time_margin"] is False  # ponder phase
+        assert seen[1]["fixed_time_margin"] is True  # real phase, movetime
+    finally:
+        engine.close()
+
+
+@pytest.mark.usefixtures("out")
+def test_a_heartbeat_is_published_per_chunk_for_the_current_go() -> None:
+    worker = _worker()
+
+    def run(board, **kw):
+        for n in (8, 16, 24):
+            kw["on_chunk"](n)
+        return _ok(board)
+
+    worker.run.side_effect = run
+    engine = _engine(worker)
+    try:
+        engine.dispatch(parse_command("go movetime 200"))
+        _join_all(engine)
+        beat = engine._heartbeat
+        assert beat is not None
+        assert beat[0] == engine._search_gen
+        assert beat[2] is not None  # a chunk time after the second chunk
+        assert engine._prev_chunk_ms == beat[2]
+        assert engine._prev_first_chunk_ms is not None
+    finally:
+        engine.close()
+
+
+# -- the progress rule, decided deterministically by `_watchdog_poll` --------
+
+
+def _polled(engine, *, since_start: float, deadline_in: float, last_moment_in: float | None,
+            beat_ago: float | None, beat_chunk_ms: float | None, gen_offset: int = 0):
+    """Poll a synthetic entry for the engine's current go; times in seconds
+    relative to now. Returns ``(fired, next_check_in_s)``."""
+    now = time.monotonic()
+    gen = engine._search_gen
+    thread = threading.Thread(target=lambda: None)
+    entry = engine_module._WatchdogEntry(
+        gen=gen, check_at=now, deadline_at=now + deadline_in,
+        last_moment_at=None if last_moment_in is None else now + last_moment_in,
+        board=chess.Board(), searchmoves=(), thread=thread,
+        stops=(threading.Event(),), started_at=now - since_start,
+    )
+    engine._heartbeat = (None if beat_ago is None
+                         else (gen + gen_offset, now - beat_ago, beat_chunk_ms))
+    before = engine._watchdog_fires
+    nxt = engine._watchdog_poll(entry)
+    fired = engine._watchdog_fires > before
+    return fired, (None if nxt is None else nxt - time.monotonic())
+
+
+@pytest.fixture
+def poll_engine(out):
+    del out  # stdout capture only
+    gate = _Gate()
+    worker = _worker()
+    worker.run.side_effect = gate
+    engine = _engine(worker)
+    engine.dispatch(parse_command("go movetime 600000"))  # a live, unanswered go
+    assert gate.entered.wait(5)
+    yield engine
+    gate.release.set()
+    engine.close()
+
+
+def test_progress_rule_leaves_a_progressing_search_alone(poll_engine) -> None:
+    # Past the deadline, last chunk 30 ms ago, chunks of 40 ms: S = 160 ms.
+    fired, nxt = _polled(poll_engine, since_start=1.0, deadline_in=-0.1, last_moment_in=10.0,
+                         beat_ago=0.03, beat_chunk_ms=40.0)
+    assert not fired
+    assert nxt == pytest.approx(0.13, abs=0.02)  # looks again when S would run out
+
+
+def test_progress_rule_fires_on_no_progress_past_the_deadline(poll_engine) -> None:
+    fired, _ = _polled(poll_engine, since_start=1.0, deadline_in=-0.1, last_moment_in=10.0,
+                       beat_ago=0.2, beat_chunk_ms=40.0)
+    assert fired
+
+
+def test_progress_rule_waits_for_the_deadline(poll_engine) -> None:
+    fired, nxt = _polled(poll_engine, since_start=1.0, deadline_in=0.3, last_moment_in=10.0,
+                         beat_ago=5.0, beat_chunk_ms=40.0)
+    assert not fired
+    assert nxt == pytest.approx(0.3, abs=0.02)
+
+
+def test_progress_rule_scales_with_the_chunk_time(poll_engine) -> None:
+    # 200 ms without a chunk is a stall for 40 ms chunks, not for 100 ms ones.
+    fired, _ = _polled(poll_engine, since_start=2.0, deadline_in=-0.1, last_moment_in=10.0,
+                       beat_ago=0.2, beat_chunk_ms=100.0)
+    assert not fired
+
+
+def test_progress_rule_ignores_another_gos_heartbeat(poll_engine) -> None:
+    # A fresh heartbeat from a parked search's generation is not progress.
+    fired, _ = _polled(poll_engine, since_start=1.0, deadline_in=-0.1, last_moment_in=10.0,
+                       beat_ago=0.0, beat_chunk_ms=40.0, gen_offset=-1)
+    assert fired
+
+
+def test_before_its_second_chunk_the_previous_searchs_chunk_time_is_used(poll_engine) -> None:
+    poll_engine._prev_chunk_ms = 20.0  # S = max(50, 80) = 80 ms
+    fired, _ = _polled(poll_engine, since_start=1.0, deadline_in=-0.1, last_moment_in=10.0,
+                       beat_ago=0.15, beat_chunk_ms=None)
+    assert fired
+
+
+def test_with_no_chunk_time_at_all_the_stall_limit_is_500_ms(poll_engine) -> None:
+    poll_engine._prev_chunk_ms = None
+    fired, nxt = _polled(poll_engine, since_start=1.0, deadline_in=-0.1, last_moment_in=10.0,
+                         beat_ago=0.15, beat_chunk_ms=None)
+    assert not fired
+    assert nxt == pytest.approx(0.35, abs=0.02)
+
+
+def test_before_any_chunk_the_previous_first_chunk_time_is_used(poll_engine) -> None:
+    # No heartbeat yet in this search; the last healthy search took 60 ms to
+    # its first chunk: S = 240 ms from the clock start.
+    poll_engine._prev_first_chunk_ms = 60.0
+    poll_engine._prev_chunk_ms = 5.0  # steady chunks are not the scale here
+    fired, nxt = _polled(poll_engine, since_start=0.2, deadline_in=-0.1, last_moment_in=10.0,
+                         beat_ago=None, beat_chunk_ms=None)
+    assert not fired
+    assert nxt == pytest.approx(0.04, abs=0.02)
+    fired, _ = _polled(poll_engine, since_start=0.25, deadline_in=-0.1, last_moment_in=10.0,
+                       beat_ago=None, beat_chunk_ms=None)
+    assert fired
+
+
+def test_the_last_moment_fires_even_on_a_progressing_search(poll_engine) -> None:
+    fired, _ = _polled(poll_engine, since_start=1.0, deadline_in=-0.1, last_moment_in=-0.001,
+                       beat_ago=0.0, beat_chunk_ms=40.0)
+    assert fired
+
+
+def test_the_next_look_is_never_after_the_last_moment(poll_engine) -> None:
+    fired, nxt = _polled(poll_engine, since_start=1.0, deadline_in=-0.1, last_moment_in=0.05,
+                         beat_ago=0.0, beat_chunk_ms=400.0)
+    assert not fired
+    assert nxt == pytest.approx(0.05, abs=0.02)
 
 
 def test_a_healthy_short_movetime_search_never_fires(out) -> None:
@@ -664,7 +878,7 @@ def test_watchdog_answer_cost_is_far_below_margin(out) -> None:
         engine._watchdog_fire(entry)
         cost_ms = (time.perf_counter() - t0) * 1000
         assert out.bestmoves() == ["g1f3"]
-        assert cost_ms < engine_module._WATCHDOG_MIN_MARGIN_MS / 2
+        assert cost_ms < engine_module._WATCHDOG_LAST_MOMENT_MS / 2
     finally:
         gate.release.set()
         engine.close()
@@ -692,3 +906,55 @@ def test_the_watchdog_thread_is_one_and_stops_on_close() -> None:
         engine._search_thread.join(5)
     assert engine._watchdog.thread is thread
     assert not thread.is_alive()
+
+
+def test_watchdog_wake_latency_under_gil_contention_fits_the_last_moment_margin() -> None:
+    """The last-moment margin must cover how late the watchdog thread wakes
+    while another Python thread holds the GIL (measured here, in-process)."""
+    lateness: list[float] = []
+    done = threading.Event()
+    n = 100
+
+    def poll(entry):
+        lateness.append((time.monotonic() - entry.check_at) * 1000.0)
+        if len(lateness) >= n:
+            done.set()
+        return None
+
+    stop = threading.Event()
+
+    def hog() -> None:
+        # Holds the GIL in pure Python half the time, 1 ms at a stretch. (The
+        # wake-up waits for the holder's current stretch: measured p99 0.4 ms
+        # here, 2.2 ms with 2 ms stretches, 8 ms with a thread that never
+        # sleeps -- see the TCEC_SETUP caveat.)
+        x = 0
+        while not stop.is_set():
+            end = time.perf_counter() + 0.001
+            while time.perf_counter() < end:
+                x += 1
+            time.sleep(0.001)
+
+    watchdog = engine_module._DeadlineWatchdog(poll)
+    hog_thread = threading.Thread(target=hog, daemon=True)
+    hog_thread.start()
+    try:
+        for i in range(n):
+            now = time.monotonic()
+            watchdog.arm(engine_module._WatchdogEntry(
+                gen=1, check_at=now + 0.005, deadline_at=now, last_moment_at=None,
+                board=chess.Board(), searchmoves=(), thread=threading.current_thread(),
+                stops=(), started_at=now,
+            ))
+            deadline = time.monotonic() + 2.0
+            while len(lateness) < i + 1 and time.monotonic() < deadline:
+                time.sleep(0.001)
+        assert done.wait(5)
+    finally:
+        stop.set()
+        hog_thread.join(5)
+        watchdog.close()
+    lateness.sort()
+    p99 = lateness[int(len(lateness) * 0.99) - 1]
+    # Answer cost is < 0.5 ms (`test_watchdog_answer_cost_is_far_below_margin`).
+    assert p99 + 0.5 < engine_module._WATCHDOG_LAST_MOMENT_MS, lateness

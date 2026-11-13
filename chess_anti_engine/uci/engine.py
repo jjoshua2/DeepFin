@@ -49,6 +49,7 @@ from .protocol import (
     CmdUci,
     CmdUciNewGame,
     Command,
+    GoArgs,
     InfoFields,
     format_bestmove,
     format_id_lines,
@@ -203,23 +204,34 @@ _GO_WAIT_NO_CLOCK_S = 1.0
 # tenth of the remaining clock), then first-legal. A hung evaluator must not
 # withhold the bestmove.
 _FRESH_EVAL_TIMEOUT_S = 0.15
-# Deadline watchdog (see `_DeadlineWatchdog`). The search's hard deadline is
-# the move budget minus MoveOverheadMs; the watchdog answers a clocked `go`
-# that has no bestmove at (budget - margin) = deadline + (overhead - margin):
-# after the search's own hard stop, with `margin` left before the GUI's flag
-# for the answer itself and its transmission.
-#   margin = max(_WATCHDOG_MIN_MARGIN_MS, overhead / 4)
-#   grace  = max(overhead - margin, _WATCHDOG_MIN_GRACE_MS)   (past the deadline)
-# The 10 ms floor is two GIL switch intervals (5 ms each: how late the
-# watchdog thread can wake while a search thread holds the GIL) over the
-# measured cost of the answer (a snapshot or cached-prior read and two printed
-# lines: ~0.1 ms on CPU, `test_watchdog_answer_cost_is_far_below_margin`). At
-# the default overhead of 30 ms it fires 20 ms after the search's deadline.
-# The grace floor keeps a healthy search that is just stopping from being
-# pre-empted when MoveOverheadMs is below 20 ms: that engine already races the
-# flag, and a watchdog firing at or after it loses nothing over none.
-_WATCHDOG_MIN_MARGIN_MS = 10.0
-_WATCHDOG_MIN_GRACE_MS = 10.0
+# Deadline watchdog (see `_DeadlineWatchdog`): it answers a clocked `go` the
+# search is not going to answer in time, and leaves a search that is making
+# progress alone. Two thresholds, both from the moment the clock started:
+#   EARLY (needs no progress): past the search's own hard deadline AND no chunk
+#     completed for S = clamp(K x chunk_ms, S_FLOOR, S_CEIL) ms. chunk_ms is the
+#     slowest chunk this search has completed (inter-chunk wall time); before
+#     its second chunk, the previous healthy search's slowest chunk; before its
+#     FIRST chunk, the previous healthy search's phase-start-to-first-chunk
+#     time (root eval, tree setup and compaction included, typically 2-4x a
+#     chunk). With no previous search, S = _WATCHDOG_STALL_NO_ESTIMATE_MS. A
+#     search the watchdog answered (silenced) never sets these. A healthy search
+#     completes a chunk every ~chunk_ms and stops at the first chunk boundary
+#     after the deadline, so it is at most one chunk from a heartbeat when it
+#     answers.
+#   LAST MOMENT (unconditional): the move's real budget (movetime, or the
+#     remaining clock) minus M = _WATCHDOG_LAST_MOMENT_MS, never before the
+#     search's own deadline. M is the watchdog's wake-up latency plus its
+#     answer: wake latency measured during real CPU searches is p99 0.37 /
+#     max 0.73 ms, and p99 2.2 ms beside a Python thread holding the GIL half
+#     the time; the answer (snapshot or cached-prior read, two lines) is under
+#     0.5 ms. A search that has not answered by then would answer in the last
+#     M ms of its budget at best, and the watchdog's answer is out no later.
+#     A hang is normally caught much earlier, by the EARLY rule.
+_WATCHDOG_STALL_CHUNKS = 4.0
+_WATCHDOG_STALL_FLOOR_MS = 50.0
+_WATCHDOG_STALL_CEIL_MS = 2000.0
+_WATCHDOG_STALL_NO_ESTIMATE_MS = 500.0
+_WATCHDOG_LAST_MOMENT_MS = 3.0
 # `close()` waits this long for a search / helper; a thread still alive after
 # that is left to `__main__`, which hard-exits instead of finalizing under it.
 _SHUTDOWN_JOIN_S = 3.0
@@ -587,7 +599,21 @@ class Engine:
   # from its own thread and uses it only for the position it is keyed to.
         self._pv_snapshot: tuple[str, str] | None = None
         self._watchdog_fires = 0
-        self._watchdog = _DeadlineWatchdog(self._watchdog_fire)
+        self._watchdog = _DeadlineWatchdog(self._watchdog_poll)
+  # Search heartbeat: ``(gen, monotonic time of the last completed chunk,
+  # slowest inter-chunk time in ms or None)``, one tuple swapped by a single
+  # assignment from the search thread's per-chunk callback; read lock-free by
+  # the watchdog, which uses it only when ``gen`` is the armed go's.
+        self._heartbeat: tuple[int, float, float | None] | None = None
+  # The slowest chunk of the last search that completed normally: the stall
+  # scale before the current search has timed a chunk of its own.
+        self._prev_chunk_ms: float | None = None
+  # The same for the stretch from phase start to the first chunk, which also
+  # holds the root eval, tree setup and any compaction: the stall scale while
+  # the current search has not completed a chunk at all.
+        self._prev_first_chunk_ms: float | None = None
+  # The real budget of the pending ponder go (movetime or remaining clock).
+        self._pending_real_budget_ms: int | None = None
   # Set by `position` / `ucinewgame` when the tree must not be reused; consumed by
   # `_sync_tree_root` at the next `go`, when the worker is free. `position` never
   # touches the worker itself.
@@ -1175,6 +1201,11 @@ class Engine:
             )
         else:
             self._pending_real_limits = None
+        self._pending_real_budget_ms = (
+            self._move_budget_ms(replace(cmd.args, ponder=False),
+                                 white_to_move=self._board.turn == chess.WHITE)
+            if cmd.args.ponder else None
+        )
         with self._state_lock:
             self._search_gen += 1
             gen = self._search_gen
@@ -1192,10 +1223,22 @@ class Engine:
             # `go nodes` / `go depth` have no deadline and are not armed.
             self._arm_watchdog(
                 gen, started_at=go_received_at, deadline_ms=limits.deadline_ms,
+                budget_ms=self._move_budget_ms(
+                    cmd.args, white_to_move=self._board.turn == chess.WHITE,
+                ),
                 board=self._board, searchmoves=tuple(cmd.args.searchmoves),
                 thread=self._search_thread, stops=(self._stop_event, self._cancel_event),
             )
         self._search_thread.start()
+
+    @staticmethod
+    def _move_budget_ms(args: GoArgs, *, white_to_move: bool) -> int | None:
+        """What the GUI allows this move: ``movetime``, else the side to move's
+        remaining clock, else None (no clock: no last-moment threshold)."""
+        if args.movetime_ms is not None:
+            return int(args.movetime_ms)
+        remaining = args.wtime_ms if white_to_move else args.btime_ms
+        return None if remaining is None else int(remaining)
 
     def _go_wait_budget_s(self, cmd: CmdGo) -> float:
         try:
@@ -1271,6 +1314,7 @@ class Engine:
             live = self._live_go
             self._arm_watchdog(
                 gen, started_at=self._ponderhit_at, deadline_ms=real.deadline_ms,
+                budget_ms=self._pending_real_budget_ms,
                 board=self._board, searchmoves=live[1] if live is not None else (),
                 thread=self._search_thread, stops=(self._cancel_event,),
             )
@@ -2559,14 +2603,13 @@ class Engine:
             self._claimed_gen = gen
             return True
 
-    def _watchdog_grace_ms(self) -> float:
-        """How long past the search's hard deadline the watchdog waits."""
-        overhead = float(self._options.move_overhead_ms)
-        margin = max(_WATCHDOG_MIN_MARGIN_MS, overhead / 4.0)
-        return max(overhead - margin, _WATCHDOG_MIN_GRACE_MS)
+    @staticmethod
+    def _watchdog_last_moment_ms() -> float:
+        return _WATCHDOG_LAST_MOMENT_MS
 
     def _arm_watchdog(
         self, gen: int, *, started_at: float, deadline_ms: int | None,
+        budget_ms: int | None,
         board: chess.Board, searchmoves: tuple[str, ...],
         thread: threading.Thread | None, stops: tuple[threading.Event, ...],
     ) -> None:
@@ -2574,14 +2617,60 @@ class Engine:
         depth: ``deadline_ms is None``) gets no watchdog."""
         if deadline_ms is None or thread is None:
             return
-        fire_at = started_at + (float(deadline_ms) + self._watchdog_grace_ms()) / 1000.0
+        deadline_at = started_at + float(deadline_ms) / 1000.0
+        last_moment_at = None
+        if budget_ms is not None:
+            last_moment_at = max(
+                deadline_at,
+                started_at + (float(budget_ms) - self._watchdog_last_moment_ms()) / 1000.0,
+            )
         self._watchdog.arm(_WatchdogEntry(
-            gen=gen, fire_at=fire_at, board=board.copy(), searchmoves=searchmoves,
+            gen=gen, check_at=deadline_at, deadline_at=deadline_at,
+            last_moment_at=last_moment_at, board=board.copy(), searchmoves=searchmoves,
             thread=thread, stops=stops, started_at=started_at,
         ))
 
-    def _watchdog_fire(self, entry: _WatchdogEntry) -> None:
-        """Runs on the watchdog thread. Never touches the worker's evaluator."""
+    def _watchdog_stall_ms(self, chunk_ms: float | None, *, any_chunk: bool) -> float:
+        """How long without a completed chunk counts as a stall."""
+        if chunk_ms is None:
+            chunk_ms = self._prev_chunk_ms if any_chunk else self._prev_first_chunk_ms
+        if chunk_ms is None:
+            return _WATCHDOG_STALL_NO_ESTIMATE_MS
+        return min(_WATCHDOG_STALL_CEIL_MS,
+                   max(_WATCHDOG_STALL_FLOOR_MS, _WATCHDOG_STALL_CHUNKS * chunk_ms))
+
+    def _watchdog_poll(self, entry: _WatchdogEntry) -> float | None:
+        """Runs on the watchdog thread at ``entry.check_at``. Answers the go
+        now (returns None), or returns when to look again."""
+        with self._state_lock:
+            if (self._quit_requested or entry.gen != self._search_gen
+                    or self._claimed_gen == entry.gen):
+                return None  # answered, superseded or quitting: drop the entry
+        now = time.monotonic()
+        if entry.last_moment_at is not None and now >= entry.last_moment_at:
+            budget_left = int((entry.last_moment_at - entry.started_at) * 1000
+                              + self._watchdog_last_moment_ms())
+            self._watchdog_fire(entry, f"no bestmove {self._watchdog_last_moment_ms():.0f} ms "
+                                       f"before the {budget_left} ms budget")
+            return None
+        last_at, chunk_ms, any_chunk = entry.started_at, None, False
+        beat = self._heartbeat
+        if beat is not None and beat[0] == entry.gen and beat[1] >= entry.started_at:
+            last_at, chunk_ms, any_chunk = beat[1], beat[2], True
+        stall_s = self._watchdog_stall_ms(chunk_ms, any_chunk=any_chunk) / 1000.0
+        if now >= entry.deadline_at and now - last_at >= stall_s:
+            self._watchdog_fire(
+                entry, f"no search progress for {int((now - last_at) * 1000)} ms "
+                       f"(stall limit {int(stall_s * 1000)} ms) past the deadline",
+            )
+            return None
+        next_at = max(entry.deadline_at, last_at + stall_s)
+        if entry.last_moment_at is not None:
+            next_at = min(next_at, entry.last_moment_at)
+        return next_at
+
+    def _watchdog_fire(self, entry: _WatchdogEntry, reason: str = "stalled") -> None:
+        """Answer ``entry``'s go. Never touches the worker's evaluator."""
         if not self._claim_answer(entry.gen):
             return  # already answered (the search won, `stop`, a newer go, quit)
         # The stuck search's later output and streak bookkeeping are dropped;
@@ -2603,7 +2692,7 @@ class Engine:
         elapsed_ms = int((time.monotonic() - entry.started_at) * 1000)
         with _answer_owner():
             _println(
-                f"info string WARNING search stalled: no bestmove {elapsed_ms} ms into a "
+                f"info string WARNING search stalled: {reason}; {elapsed_ms} ms into a "
                 f"clocked move; deadline watchdog answers unsearched source={source} "
                 f"move={move} bestmove_fallback_used={self._bestmove_fallback_used}"
             )
@@ -2674,6 +2763,23 @@ class Engine:
             self._gil_probe.reset()
 
         board_fen = board.fen()
+        beat_gen = self._search_gen  # this phase's go (ponderhit keeps the gen)
+        # [last chunk end, chunks completed, slowest inter-chunk ms]. The first
+        # chunk's time from phase start includes root eval / compaction, so
+        # it is a heartbeat but not a chunk-time sample.
+        beat: list[float] = [time.monotonic(), 0.0, 0.0]
+
+        def _phase_on_chunk(_total_nodes: int) -> None:
+            now = time.monotonic()
+            if beat[1] >= 1.0:
+                beat[2] = max(beat[2], (now - beat[0]) * 1000.0)
+            elif threading.current_thread() not in _SILENCED_THREADS:
+                # Phase start to first chunk: root eval, tree setup, compaction.
+                self._prev_first_chunk_ms = (now - beat[0]) * 1000.0
+            beat[0] = now
+            beat[1] += 1.0
+            # One tuple, one assignment: the watchdog reads it lock-free.
+            self._heartbeat = (beat_gen, now, beat[2] if beat[1] >= 2.0 else None)
 
         def _phase_info_cb(
             *,
@@ -2737,7 +2843,14 @@ class Engine:
                 include_ponder=self._options.ponder,
                 allow_terminal_shortcuts=not is_ponder and not limits.is_open_ended(),
                 stop_sensitive=is_ponder or limits.infinite,
+                on_chunk=_phase_on_chunk,
+                # `movetime`: stop one measured chunk before the deadline, as
+                # clock games already do, instead of overrunning it by a chunk.
+                fixed_time_margin=(not is_ponder and optimum_ms is None
+                                   and deadline_ms is not None),
             )
+            if beat[1] >= 2.0 and threading.current_thread() not in _SILENCED_THREADS:
+                self._prev_chunk_ms = beat[2]  # the next search's stall scale
             if not is_ponder and last_emitted_nodes[0] != result.nodes:
                 self._emit_info(
                     nodes=result.nodes,
@@ -3169,7 +3282,9 @@ _PRINT_LOCK = threading.Lock()
 @dataclass(frozen=True)
 class _WatchdogEntry:
     gen: int
-    fire_at: float
+    check_at: float  # when the watchdog next looks (see `Engine._watchdog_poll`)
+    deadline_at: float  # the search's own hard deadline
+    last_moment_at: float | None  # budget minus the answer margin; None: no clock
     board: chess.Board
     searchmoves: tuple[str, ...]
     thread: threading.Thread
@@ -3181,13 +3296,15 @@ class _DeadlineWatchdog:
     """One long-lived daemon thread per engine, started at the first arm.
 
     Holds at most ONE armed entry (the current go's clocked phase; arming
-    replaces it) and calls ``fire(entry)`` when its time comes. A timed wait on
-    a Condition, not a thread per go: arming and disarming are notifications.
+    replaces it) and calls ``poll(entry)`` at ``entry.check_at``; ``poll``
+    answers the go (returns None) or returns the next time to look. A timed
+    wait on a Condition, not a thread per go: arming and disarming are
+    notifications.
     ``close()`` stops and joins it; nothing else holds a reference.
     """
 
-    def __init__(self, fire: Callable[[_WatchdogEntry], None]) -> None:
-        self._fire = fire
+    def __init__(self, poll: Callable[[_WatchdogEntry], float | None]) -> None:
+        self._poll = poll
         self._cond = threading.Condition()
         self._entry: _WatchdogEntry | None = None
         self._closed = False
@@ -3236,7 +3353,7 @@ class _DeadlineWatchdog:
                     if entry is None:
                         self._cond.wait()
                         continue
-                    remaining = entry.fire_at - time.monotonic()
+                    remaining = entry.check_at - time.monotonic()
                     if remaining > 0:
                         self._cond.wait(remaining)
                         continue
@@ -3245,9 +3362,14 @@ class _DeadlineWatchdog:
                 else:
                     return
             try:
-                self._fire(entry)
+                next_at = self._poll(entry)
             except Exception:
                 _log.error("deadline watchdog failed", exc_info=True)
+                next_at = None
+            if next_at is not None:
+                with self._cond:
+                    if self._entry is None and not self._closed:  # not re-armed meanwhile
+                        self._entry = replace(entry, check_at=next_at)
 
 
 # Threads parked as orphans (a search that missed its stop, a hung fresh-eval

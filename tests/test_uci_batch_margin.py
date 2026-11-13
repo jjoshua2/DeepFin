@@ -136,3 +136,17 @@ def test_expired_outranks_margin_and_no_margin_is_noop() -> None:
         stop_event=ev, deadline=healthy, max_nodes=None, max_depth=None,
         total_nodes=1, pv_len=1, time_margin_ms=0.0,
     ) is None
+
+
+def test_movetime_margin_applies_only_when_opted_in_and_from_one_sample() -> None:
+    # UCI movetime (engine passes fixed_time_margin=True): reserve the measured
+    # chunk from the FIRST sample, capped like a clock game; nothing otherwise.
+    w = _bare_worker()
+    assert w._clock_time_margin_ms(None, 1000, fixed_time=True) == 0.0  # no sample yet
+    w._record_batch_ms(30.0)
+    assert w._clock_time_margin_ms(None, 1000) == 0.0
+    assert w._clock_time_margin_ms(None, 1000, fixed_time=True) == 30.0
+    assert w._clock_time_margin_ms(None, None, fixed_time=True) == 0.0  # no deadline
+    assert w._clock_time_margin_ms(None, 40, fixed_time=True) == _MAX_BATCH_MARGIN_FRACTION * 40
+    # A clock game still needs two samples, unchanged.
+    assert w._clock_time_margin_ms(optimum_ms=500, start_remaining_ms=1000) == 0.0

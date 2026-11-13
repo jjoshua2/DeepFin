@@ -202,29 +202,59 @@ phase C tells us what the additional seven GPUs are worth.
     witness_unavailable_roots=N`. This is a property of the position, not a
     fault, and does NOT count toward the unhealthy streak below.
 - **A stalled search is answered by the deadline watchdog.** A clocked `go`
-  (`wtime`/`btime`, or `movetime`) whose search has not produced `bestmove` by
-  its own hard deadline plus a grace is answered by the engine itself, without
-  waiting for or touching the stuck worker -- a GPU batch that never returns,
-  or a tree compaction that overran the move's clock. The search's hard
-  deadline is already the move budget minus `MoveOverheadMs`; the watchdog
-  fires `grace = max(MoveOverheadMs - margin, 10 ms)` after it, with
-  `margin = max(10 ms, MoveOverheadMs / 4)` left before the budget runs out
-  (at the default 30 ms: 20 ms after the search's deadline, 10 ms before the
-  budget). The answer is, in order: the first move of the last PV that search
-  published for this exact position (`source=last_pv`); the cached root policy
-  for this position (`source=root_policy`); the first legal move
-  (`source=first_legal`). It never runs a fresh evaluation, since the
-  evaluator may be the thing that hung. One line says so: `info string WARNING
-  search stalled: no bestmove N ms into a clocked move; deadline watchdog
-  answers unsearched source=... move=... bestmove_fallback_used=N`. The move
-  counts toward the unhealthy streak below; the stuck search is stopped,
-  silenced and parked like one that ignored `stop`, and its late result, if it
-  ever comes, is discarded (exactly one `bestmove` per `go`). After
-  `ponderhit` the watchdog uses the real limits from the moment of
-  `ponderhit`. `go infinite`, `go ponder` (until `ponderhit`), and pure
-  `go nodes` / `go depth` have no watchdog. With `MoveOverheadMs` below 20 ms
-  the watchdog can fire only after the budget is spent, so set it to your
-  usual safety value (a few tens of ms or more), not 0.
+  (`wtime`/`btime`, or `movetime`) that the search is not going to answer in
+  time is answered by the engine itself, without waiting for or touching the
+  stuck worker -- a GPU batch that never returns, or a tree compaction that
+  overran the move's clock. A search that is making progress is left alone.
+  Two thresholds, from the moment the move's clock started:
+  - **No progress** (the normal case for a hang): past the search's own hard
+    deadline (move budget minus `MoveOverheadMs`) AND no search chunk completed
+    for `S = clamp(4 x chunk time, 50 ms, 2 s)`. The chunk time is the slowest
+    chunk this search has completed; before its first chunk, the previous
+    healthy search's time to its first chunk (root eval and compaction
+    included); with no previous search, `S` is 500 ms. A healthy search
+    completes a chunk every chunk time and stops at the first chunk boundary
+    after its deadline, so it never goes `S` without one.
+  - **Last moment** (unconditional): the move's real budget -- `movetime`, or
+    the side to move's remaining clock -- minus 3 ms, but never before the
+    search's own deadline. The 3 ms is the watchdog's wake-up latency (p99
+    0.37 ms during real searches, p99 2.2 ms beside a Python thread holding
+    the GIL half the time) plus its answer (under 0.5 ms). A search that has
+    not answered by then would answer in the final 3 ms of its budget at
+    best; the watchdog's answer is out no later than that search's would have
+    been. This threshold is for a search that keeps making progress but too
+    slowly; a hang is normally answered by the first rule, soon after the
+    deadline. At a very short `movetime` (less than about 4 chunk times
+    beyond the overhead) only the last-moment rule can fire, so a hang is
+    answered 3 ms before the budget and the pipe to the GUI must fit in that.
+
+  `movetime` searches now also stop one measured chunk before their deadline
+  (as clock games already did), instead of overrunning it by up to a chunk.
+
+  The answer is, in order: the first move of the last PV that search published
+  for this exact position (`source=last_pv`); the cached root policy for this
+  position (`source=root_policy`); the first legal move (`source=first_legal`).
+  It never runs a fresh evaluation, since the evaluator may be the thing that
+  hung. One line says which threshold fired: `info string WARNING search
+  stalled: no search progress for N ms (stall limit S ms) past the deadline;
+  ...` or `... no bestmove 3 ms before the B ms budget; ...`, then `deadline
+  watchdog answers unsearched source=... move=... bestmove_fallback_used=N`.
+  The move counts toward the unhealthy streak below. The stuck search is
+  stopped and silenced, and the next command that needs the worker parks it
+  like one that ignored `stop`; its late result, if it ever comes, is
+  discarded (exactly one `bestmove` per `go`). After `ponderhit` the watchdog
+  uses the real limits from the moment of `ponderhit`. `go infinite`, `go
+  ponder` (until `ponderhit`), and pure `go nodes` / `go depth` have no
+  watchdog.
+
+  Caveat: the watchdog is a Python thread. A hang inside a C call that holds
+  the GIL stalls the watchdog too. Its wake-up waits for whichever thread
+  holds the GIL to release it: measured p99 0.4 ms beside a thread holding it
+  1 ms at a stretch, 2.2 ms at 2 ms stretches, 8 ms beside a thread that
+  never releases it voluntarily (5 ms switch interval), 16 ms with two such
+  threads. The engine itself runs no such thread during a search (p99 0.37 ms
+  measured), but anything that does would make the last-moment answer late
+  by that much.
 - **Unhealthy state.** 3 counted fallback moves in a row (every kind above except
   the solved-root one), or a failed search-path re-warm at `isready`, print
   `info string WARNING engine unhealthy: ...` once. The engine keeps answering
