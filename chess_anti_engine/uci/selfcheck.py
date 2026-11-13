@@ -82,11 +82,12 @@ ALLOW_UNVERIFIED_ENV = "DEEPFIN_ALLOW_UNVERIFIED_EXTENSIONS"
 # and rebuilding without --force can copy an old object back out of build/.
 FORCE_REBUILD_COMMAND = "python setup.py build_ext --inplace --force"
 REBUILD_HINT = (
-    "recompile the C extensions from this source tree with "
+    "in a source checkout (editable install), recompile the C extensions with "
     f"`{FORCE_REBUILD_COMMAND}` (production host: "
     "`python scripts/build_production_extensions.py`, which always forces); "
     "deleting the .so files and rebuilding without --force can reuse a stale "
-    "object from build/"
+    "object from build/. A regular install: reinstall it from the checkout or "
+    "the wheel (`pip install --force-reinstall --no-deps <checkout or .whl>`)"
 )
 
 # Positions for the encoder parity and move-generation checks: the start
