@@ -158,6 +158,10 @@ class WalkerPool:
     def __exit__(self, *_args) -> None:
         self.close()
 
+    @property
+    def closed(self) -> bool:
+        return self._shutdown.is_set()
+
     def close(self) -> None:
         """Wake walkers with shutdown=True; let them exit. Idempotent."""
         if self._shutdown.is_set():

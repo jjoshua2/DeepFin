@@ -172,7 +172,7 @@ def test_rpg_deeper_temperature_reaches_native_priors(
 def test_live_rpg_temperature_reuses_raw_cached_outputs(compact: bool) -> None:
     with _worker(compact=compact, cache=True) as (worker, groups):
         worker.install_root_parallel_gumbel(groups, gather=2)
-        engine = Engine(worker, options=EngineOptions(policy_temp=1.0))
+        engine = Engine(worker, options=EngineOptions(policy_temp=1.0, search_parallel="gumbel"))
         _prepare(worker)
         old_tree, _, chunker = _touch(worker, groups, 2)
         raw_cache = chunker._cache
@@ -227,7 +227,11 @@ def test_policy_temperature_keeps_plain_puct_inert(path: str, capsys: pytest.Cap
             worker.set_use_pucv(True, gather=2)
         else:
             worker.install_multi_gpu_pucv(groups, gather=2)
-        engine = Engine(worker, options=EngineOptions(policy_temp=1.0))
+        # Options must name the path the worker realizes (the setoption invariant).
+        engine = Engine(worker, options=EngineOptions(
+            policy_temp=1.0, threads=2 if path == "walker" else 1,
+            use_vl=path == "pucv", use_multi_gpu_pucv=path == "pucv_pool",
+        ))
         worker.run(chess.Board(), stop_event=threading.Event(), deadline=Deadline(None), max_nodes=8)
         root = worker._tree
         assert root is not None

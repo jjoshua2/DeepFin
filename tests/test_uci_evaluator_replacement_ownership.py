@@ -79,42 +79,62 @@ def assert_no_walkers():
     assert not any(t.name.startswith("walker-") and t.is_alive() for t in threading.enumerate())
 
 
+def _notes(error: BaseException) -> tuple[str, ...]:
+    """Cleanup notes on any Python: `__notes__` (3.11+) or the 3.10 fallback."""
+    return (*getattr(error, "__notes__", ()), *getattr(error, "_async_cleanup_notes", ()))
+
+
 @pytest.mark.parametrize("kind", ["async", "factory"])
 @pytest.mark.parametrize("cleanup", [None, "exception", "interrupt"])
-def test_public_replacement_failure_retires_old_and_preserves_primary(monkeypatch, kind, cleanup):
+def test_public_replacement_failure_keeps_old_primary_and_retires_new(monkeypatch, kind, cleanup):
+    """BUILD, THEN SWAP: a replacement whose helpers fail to build is not adopted.
+
+    The old evaluator and its walker pool stay installed and LIVE, the options
+    keep describing them, and the replacement (whose ownership passed with the
+    call) is closed exactly once. Before, the old pool was closed first and the
+    worker kept pointing at it, so every later search failed.
+    """
     old = make_owner(monkeypatch, kind)
     new = make_owner(monkeypatch, kind)
     worker = SearchWorker(old.evaluator, device="cpu", n_walkers=2)
     previous_pool = worker._walker_pool
     assert previous_pool is not None
     engine = Engine(worker, rebuild_evaluator=lambda *_a, **_kw: new.evaluator)
+    max_batch_before = engine._options.max_batch
     error = MemoryError("bounded walker input allocation failure")
     cause = ValueError("original allocation cause")
     note_cleanup(error, "existing cleanup note")
     if cleanup is not None:
-        old.close_error = RuntimeError("old cleanup failure") if cleanup == "exception" else KeyboardInterrupt("old cleanup interrupt")
+        new.close_error = RuntimeError("new cleanup failure") if cleanup == "exception" else KeyboardInterrupt("new cleanup interrupt")
     try:
         with monkeypatch.context() as patcher:
             fault_allocation(patcher, error, cause)
+            # `_dispatch`, not `dispatch`: the public entry contains handler
+            # failures so the engine survives them (test_uci_never_die.py);
+            # this test is about ownership and the exception itself.
             with pytest.raises(MemoryError) as caught:
-                engine.dispatch(CmdSetOption(name="MaxBatch", value="64"))
+                engine._dispatch(CmdSetOption(name="MaxBatch", value="64"))
         assert caught.value is error
         assert caught.value.__cause__ is cause
-        assert "existing cleanup note" in getattr(caught.value, "__notes__", ())
-        assert old.close_calls == 1
-        assert not old.thread.is_alive()
-        assert worker._evaluator is new.evaluator
-        assert engine._options.max_batch == 64
-        assert new.close_calls == 0
-        assert new.thread.is_alive()
-        assert not any(t.is_alive() for t in previous_pool._threads)
-        assert_no_walkers()
+        # Ownership facts, runnable on every Python version:
+        assert worker._evaluator is old.evaluator
+        assert old.close_calls == 0
+        assert old.thread.is_alive()
+        assert worker._walker_pool is previous_pool
+        assert all(t.is_alive() for t in previous_pool._threads)
+        live_walkers = {t for t in threading.enumerate() if t.name.startswith("walker-") and t.is_alive()}
+        assert live_walkers == set(previous_pool._threads)  # nothing half-built left running
+        assert engine._options.max_batch == max_batch_before
+        assert new.close_calls == 1
+        assert not new.thread.is_alive()
+        assert "existing cleanup note" in _notes(caught.value)
         if cleanup is not None:
-            assert any("outgoing evaluator close failed" in note for note in getattr(caught.value, "__notes__", ()))
+            assert any("replacement evaluator close failed" in note for note in _notes(caught.value))
         engine.close()
         assert old.close_calls == 1
         assert new.close_calls == 1
-        assert not new.thread.is_alive()
+        assert not old.thread.is_alive()
+        assert_no_walkers()
     finally:
         clean(engine, old, new)
 
@@ -162,8 +182,9 @@ def test_public_same_owner_replacement_does_not_close_borrowed_current_owner(mon
         with monkeypatch.context() as patcher:
             if fault:
                 fault_allocation(patcher, error, ValueError("same-owner cause"))
+                # `_dispatch`: the public `dispatch` contains handler failures.
                 with pytest.raises(MemoryError) as caught:
-                    engine.dispatch(CmdSetOption(name="MaxBatch", value="64"))
+                    engine._dispatch(CmdSetOption(name="MaxBatch", value="64"))
                 assert caught.value is error
             else:
                 engine.dispatch(CmdSetOption(name="MaxBatch", value="64"))

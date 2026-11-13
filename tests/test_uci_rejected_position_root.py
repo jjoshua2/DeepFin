@@ -71,9 +71,9 @@ def test_rejected_fen_discards_old_root_before_startpos_go(mode, fen, monkeypatc
     try:
         engine.dispatch(parse_command("position fen " + fen))
         assert engine._board.fen() == chess.Board().fen()
-        assert worker._tree is None
-        assert worker._root_id is None
-        assert worker._tree_fen is None
+        # `position` never touches the worker; the old root is discarded by the
+        # next `go` (asserted below: that search does not get `old_tree`).
+        assert engine._force_tree_reset is True
         assert "rejected FEN" in capsys.readouterr().out
         assert worker._walker_pool is not None
 

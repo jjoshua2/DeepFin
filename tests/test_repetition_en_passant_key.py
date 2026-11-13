@@ -1186,15 +1186,22 @@ def test_rejection_path_clears_the_applied_tree_state() -> None:
     from chess_anti_engine.uci.engine import Engine
     from chess_anti_engine.uci.protocol import CmdPosition
 
-    engine = Engine(worker=MagicMock())
+    worker = MagicMock()
+    engine = Engine(worker=worker)
     engine._applied_fen = "some/earlier w - - 0 1"
     engine._applied_moves = (chess.Move.from_uci("e2e4"),)
     engine._handle_position(CmdPosition(fen="4k3/8/8/8/8/8/8/8 w - - 0 1", moves=()))
 
-    assert engine._applied_fen is None
-    assert engine._applied_moves == ()
+    # `position` never touches the tree (it may run beside an orphaned search):
+    # the reset is owed to the next `go`, whose `_sync_tree_root` honours it.
+    assert engine._force_tree_reset is True
     assert engine._pending_fen is None
     assert engine._pending_moves == []
+    engine._sync_tree_root([])
+    worker.reset_tree.assert_called_once()
+    assert engine._applied_fen is None
+    assert engine._applied_moves == ()
+    assert engine._force_tree_reset is False
 
 
 # --- eval/puzzles.py: the same predicate, the same two shapes ---------------
