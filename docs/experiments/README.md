@@ -10,7 +10,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
-- [2026-11-13: TRAIN objective-gradient geometry](2026-11-13-rl-train-gradient-geometry.md) — E3 diagnostic preparation on 32 fixed TRAIN roots; no execution or playing claim.
+- [2026-11-13: TRAIN objective-gradient geometry](2026-11-13-rl-train-gradient-geometry.md) — completed E3 diagnostic on 32 fixed TRAIN roots; primary alignment effect unresolved, no playing or recipe claim.
 
 - [2026-11-13: Resolved-outcome RL value bundle](2026-11-13-rl-resolved-outcome-bundle.md) — completed 40-update paired study with strict outcomes and three qualified playing screens; no registered gain, donor retained.
 

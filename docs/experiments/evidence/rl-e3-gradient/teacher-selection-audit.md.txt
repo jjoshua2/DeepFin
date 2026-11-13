@@ -1,0 +1,30 @@
+# SF annotation selection effects and the two donor-teacher artifacts
+
+Read-only source/JSON audit. No current arena outcomes, arrays/shards/NPZ/checkpoints, models, project imports, engine/TB probes or jobs were read/run. No source, protocol, target weights or stage authorization changes.
+
+## Actual E2TB selection path
+
+Resolved generation enables diff-focus, q_weight6, pol_scale3.5, slope3, min_keep.025; normalizer isOFF. In both actual native `_mcts_tree.c:5668–5708` and Python fallback `network_turn.py:955–989`, raw difficulty is6*abs(completed-searchQ−raw-networkQ)+3.5*KL(network prior,MCTS policy), and keep probability isclamp(3*difficulty,.025,1). The value and policy are the network/MCTS/TB-corrected search family, not SF labels. Soft-resign sample_weight (`network_turn.py:582–598`) separately depends on consecutive low raw-network win probabilities, also not SF.
+
+`finalize.py:964–977` uses those two probabilities to drop policy-bearing rows. Its SF/search disagreement is calculated later (`1049–1056`) and attached to the retained ReplaySample as priority_sf_search_gap (`1159`). No stockfish_turn mutation of these keep probabilities/priorities is on the ordinary annotation path; its only literal neutral priority/weight/keep assignments belong to a separate SF-refute-row producer, excluded by actual96 all-NET/non-refute proof scope. Thus the stored SF-gap column cannot retroactively alter this producer thinning.
+
+A separate production replay mechanism CAN use SF labels even with zero SF loss weights: `replay/disk_buffer.py:880–942` computes either stored abs SF–search gap or signed overoptimism, then `_shape_shuffle_priority` adds it only when sf_gap_priority_weight>0. But actual frozen YAML and strict mirror set replay_sf_gap_priority_weight0, and this experiment never uses DiskReplay's prioritized sampling path. The actual paired runner recomputes one NumPy uniform40x256 index matrix (`run_paired.py:425–439`); `paired_observer.py:200–215` slices those exact indices. Stored priority_sf_search_gap is not a determinant of its draw plan.
+
+Therefore there is no source-evidenced SF-numeric selection/thinning/replay-priority influence in this actual experiment through these routes. SF annotations are still materialized for diagnostics/availability and could fail a label-integrity check or consume scheduling/wall time; this is not a counterfactual proof that disabling the SF process would preserve every runtime event/RNG trajectory. The actual source still uses strictTB corrections/search/adjudication/policy rescoring, which are separate from SF annotations.
+
+The retained dataset IS nonuniform: own-MCTS disagreement and network soft resignation select rows before uniform learner draws. Uniform sampling of retained rows does not undo that upstream selection or restore discarded SF-disagreement positions. Zero SF loss weights alone would not imply annotation-blind data in general; here that conclusion additionally depends on actual gap weight0 and the direct uniform sampler. No claim of optimality or causal explanation for the current playing results follows.
+
+## Exact relationship of the two teacher hashes
+
+A bounded linked-reference trace now resolves more than the previous contract-only audit. The accepted positive-wave chain pins the producer body (sourceSHA5010d9c…), whose lines15–16 bind teacher809d… to `/home/josh/chess-artifacts/bt4-fp16-conversion-20261018-v1/attempt-01/BT4-it332-vanilla-winner.fp16-internal-fp32-io.onnx`. The8KB conversion receipt directly records:
+
+- Source `/home/josh/projects/chess/data/lc0/onnx/BT4-it332-vanilla-winner.onnx`, SHA1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0.
+- Derived FP16-internal/FP32-I/O ONNX, SHA809db9c3c8063683bf8e7c08de8fec92ea4e37ad8c68c8b1befbde4bd1958961; keep_io_typesTrue,456 FP16 initializers.
+
+So these are documented original/conversion variants of the same named BT4-it332-vanilla-winner artifact, not evidence of two independently trained teacher networks. The conversion receipt itself is static-only/no-inference/qualificationFalse; it does not establish numerical equivalence. Later accepted producer contracts/actual metadata identify which variant generated which rows. This audit did not open or freshly hash either ONNX or requalify their outputs.
+
+The historical profile header calls both actors bt4_root_policy_no_search, temperature1 at generation, native unmodified root WDL; downstream prepared policy isT.5. ONNX Runtime CUDA/CPU provider names are documented. `docs/bt4.md` independently describes the shipped BT4 Leela reference, including multiple winner/q/st towers. That provides project naming context, but this bounded chain does not establish the exact protobuf→ONNX export/head mapping or training pedigree from filename alone. In particular 'winner' in a filename is not a newly verified graph-head selection. No Stockfish teacher, MCTS search effort, universal teacher coverage for original100M, or original-versus-converted bit-equivalence should be inferred.
+
+## Implication for a later information/gradient diagnostic
+
+Keep three questions distinct: whether existing SF annotations add information at the exact sampled P0/played P1; whether that information reaches retained rows/draws; and whether a nonzero objective term delivers a useful gradient. Current metadata/source answers the routing questions above, not teacher truth or gradient utility. Any next diagnostic should state its teacher variant, position/POV/transform, coverage and actual weighted objective—not merely the sf/search field names. The current fixed study remains authoritative and unchanged.
