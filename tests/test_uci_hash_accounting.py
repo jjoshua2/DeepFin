@@ -233,7 +233,7 @@ def test_compaction_preserves_search_results() -> None:
             w._max_tree_bytes = 1 << 40  # no budget + cheap estimate => compact
         assert w.advance_root(board, [move])
         if compact:
-            assert w._resolve_pending_compaction(Deadline(None), None) == "compacted"
+            assert w._resolve_pending_compaction(Deadline(None), None, stop_sensitive=True) == "compacted"
         w._max_tree_bytes = 0
         after = board.copy()
         after.push(move)
@@ -285,7 +285,7 @@ def test_compaction_remaps_tt_and_continued_search_matches_with_transpositions()
             w._max_tree_bytes = 1 << 40  # no budget + cheap estimate => compact
         assert w.advance_root(board, [move])
         if compact:
-            assert w._resolve_pending_compaction(Deadline(None), None) == "compacted"
+            assert w._resolve_pending_compaction(Deadline(None), None, stop_sensitive=True) == "compacted"
             assert w._tree is not None
             live, max_id = w._tree.tt_entry_stats()
             assert live > 0
@@ -420,6 +420,18 @@ def test_shared_tree_headroom_never_reserves_past_the_node_id_limit(monkeypatch)
     assert w._ensure_shared_tree_headroom(4096) == 0
 
 
+def _under_a_sanitizer() -> bool:
+    import os
+
+    if any(k in os.environ for k in ("ASAN_OPTIONS", "CAE_EXT_SANITIZE")):
+        return True
+    if "san" in os.environ.get("LD_PRELOAD", ""):
+        return True
+    with open("/proc/self/maps") as f:
+        return any("libasan" in line or "libtsan" in line for line in f)
+
+
+@pytest.mark.skipif(_under_a_sanitizer(), reason="RLIMIT_AS cannot coexist with ASan's shadow reservations")
 def test_add_root_rolls_back_when_caching_its_board_fails() -> None:
     """A real allocation failure, not a mock: in a subprocess, fill the CBoard
     pool to its capacity, cap the address space just above current use, and

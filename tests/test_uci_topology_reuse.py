@@ -250,7 +250,7 @@ def search_fixture(rpg=True):
     # Hash accounting hooks (real tree memory API; the stub tree has none).
     worker._sync_tree_growth_step = lambda: None
     worker._tree_footprint_bytes = lambda: 0
-    worker._resolve_pending_compaction = lambda *_args: None
+    worker._resolve_pending_compaction = lambda *_args, **_kwargs: None
     worker._tree_node_count = lambda: 0
     worker._record_growth_rate = lambda *_args: None
     worker._try_tb_shortcut = lambda *_args, **_kwargs: None
@@ -275,7 +275,7 @@ def phase_fixture(worker):
                              _options=SimpleNamespace(abort_factor=1.0, ponder=False),
                              _emit_info=lambda **kw: None, _emit_gil_profile=lambda **kw: None)
     limits = SimpleNamespace(deadline_ms=None, max_nodes=20, max_depth=None, optimum_ms=None,
-                             searchmoves=('d2d4', 'e2e4'), is_open_ended=lambda: False)
+                             searchmoves=('d2d4', 'e2e4'), is_open_ended=lambda: False, infinite=False)
     return lambda: phase(engine, limits, is_ponder=False, board=Board())
 
 
