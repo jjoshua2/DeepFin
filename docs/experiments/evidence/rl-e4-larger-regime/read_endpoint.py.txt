@@ -1,0 +1,144 @@
+"""Banked-only fixed E4 arena reader; never executes search or loads a model."""
+import argparse,ast,collections,hashlib,importlib,json,math,os,pathlib,signal,subprocess,sys,time
+HERE=pathlib.Path(__file__).resolve().parent
+W=HERE.parent
+SOURCE=pathlib.Path('/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess')
+REV='ba9d6de1987902e1759d984532a4c63f091b9269'
+
+def require(x,message):
+ if not x:raise ValueError(message)
+def sha(p):
+ h=hashlib.sha256()
+ with pathlib.Path(p).open('rb') as f:
+  for block in iter(lambda:f.read(1048576),b''):h.update(block)
+ return h.hexdigest()
+def pairs_unique(pairs):
+ out={}
+ for k,v in pairs:require(k not in out,'duplicate JSON key');out[k]=v
+ return out
+def loads(s):return json.loads(s,object_pairs_hook=pairs_unique,parse_constant=lambda x:(_ for _ in ()).throw(ValueError(x)))
+def load(p):return loads(pathlib.Path(p).read_text())
+def jsonl(p):
+ raw=pathlib.Path(p).read_bytes();require(raw.endswith(b'\n'),'nonterminated JSONL');lines=raw.decode().splitlines();require(lines and all(x.strip() for x in lines),'empty JSONL');return [loads(x) for x in lines]
+def equal(actual,expected,context):
+ for k,v in expected.items():require(k in actual and actual[k]==v and type(actual[k]) is type(v),f'{context}.{k}: expected {v!r}, observed {actual.get(k)!r}')
+def parser_only(arena):
+ main=next(x for x in ast.parse((SOURCE/'scripts/arena_standard.py').read_text()).body if isinstance(x,ast.FunctionDef) and x.name=='main');prefix=[]
+ for n in main.body:
+  prefix.append(n)
+  if isinstance(n,ast.Assign) and isinstance(n.value,ast.Call) and isinstance(n.value.func,ast.Attribute) and n.value.func.attr=='parse_args':n.value.args=[ast.Name(id='argv',ctx=ast.Load())];break
+ else:raise ValueError('actual parser boundary missing')
+ prefix.append(ast.Return(value=ast.Name(id='args',ctx=ast.Load())));fn=ast.FunctionDef(name='_parse',args=ast.arguments(posonlyargs=[],args=[ast.arg(arg='argv')],kwonlyargs=[],kw_defaults=[],defaults=[]),body=prefix,decorator_list=[]);namespace=dict(vars(arena));exec(compile(ast.fix_missing_locations(ast.Module(body=[fn],type_ignores=[])),'actual-parser-only','exec'),namespace);return namespace['_parse']
+def checked(ref):
+ require(set(ref)=={'path','sha256'} and 'UNBOUND' not in ref['path'],'identity remains UNBOUND')
+ require(sha(ref['path'])==ref['sha256'],'bound artifact changed: '+ref['path']);return load(ref['path'])
+def cpu_owner(m):
+ parent=pathlib.Path('/proc',str(os.getppid()),'cmdline').read_bytes().decode().split('\0')
+ require(m['owner']['path'] in parent and sha(m['owner']['path'])==m['owner']['sha256'],'wrong reader owner')
+ require('--seconds' in parent and parent[parent.index('--seconds')+1]=='300' and '--resource' in parent and parent[parent.index('--resource')+1]=='cpu','wrong reader finite bounds')
+ require(sorted(os.sched_getaffinity(0))==[20,22] and os.environ.get('CUDA_VISIBLE_DEVICES')=='' and os.environ.get('OMP_NUM_THREADS')==os.environ.get('MKL_NUM_THREADS')=='2' and __debug__,'reader resource contract differs')
+def paired_statistics(pair_totals):
+ require(len(pair_totals)>=2 and all(x in (0.,.5,1.,1.5,2.) for x in pair_totals),'invalid fixed pairs')
+ xs=[x/2. for x in pair_totals];n=len(xs);mu=math.fsum(xs)/n
+ variance=math.fsum((x-mu)**2 for x in xs)/(n-1);se=math.sqrt(variance/n)
+ available=variance>0.;lo=mu-1.96*se if available else None;hi=mu+1.96*se if available else None
+ return {'pairs':n,'pair_totals':pair_totals,'pair_means':xs,'score':mu,'sample_variance':variance,'score_se':se,'score_ci95':[lo,hi],'interval_available':available,'interval_status':'available_normal_approximation' if available else 'unavailable_zero_empirical_variance','passes_registered_point_and_lower':bool(available and mu>=.53 and lo>.5),'qualified_upper_below_half':bool(available and hi<.5)}
+def inspect(binding,m):
+ fields={'endpoint','terminal','stage_log','artifacts','model_custody','readout_admission'}
+ require(set(binding)==fields|({'selection'} if binding['endpoint']=='confirmation' else set()),'binding field set differs')
+ cp=checked(m['commands']);selection=None
+ if binding['endpoint']=='confirmation':
+  selection=checked(binding['selection'])
+  require(selection['status']=='FROZEN_E4_RULE_METADATA_DECISION_ONLY' and selection['confirmation_allowed'] is True and selection['confirmation_consumed'] is False and selection['scientific_sha256']==m['science']['sha256'] and selection['selected_role'] in ('FULLA129','FULLB129'),'confirmation lacks fixed selected endpoint')
+  endpoint=cp['confirmation_variants'][selection['selected_role']]
+ else:endpoint=next((x for x in cp['commands'] if x['contrast']==binding['endpoint']),None)
+ require(endpoint is not None,'unknown endpoint')
+ count,npairs=endpoint['games'],endpoint['pairs'];require((count,npairs)==((1000,500) if binding['endpoint']=='confirmation' else (256,128)),'fixed horizon differs')
+ science=checked(m['science']);require(science['status'].startswith('FROZEN_E4_'),'E4 science is not frozen')
+ command=endpoint['argv'];child=command[command.index('--')+1:];terminal_path=pathlib.Path(binding['terminal']['path']);terminal=checked(binding['terminal'])
+ expected_stage=W/('e4-'+binding['endpoint']+'-execution-v1');require(terminal_path==expected_stage/'terminal.json' and pathlib.Path(binding['stage_log']['path'])==expected_stage/'stage.log','wrong owner artifacts')
+ equal(terminal,{'status':'PASS','returncode':0,'owned_processes_closed':True,'custody':'OWNED_PROCESSES_CLOSED','source_revision':REV,'supervisor_sha256':m['owner']['sha256'],'resource':'gpu','seconds':endpoint['owner_seconds'],'cwd':str(SOURCE),'command':child},'terminal')
+ require(terminal['known_processes'],'missing birth inventory')
+ for pid,birth in terminal['known_processes'].items():
+  path=pathlib.Path('/proc')/pid/'stat';require(not path.exists() or int(path.read_text().rsplit(')',1)[1].split()[19])!=birth,'recorded process birth alive')
+ require(not pathlib.Path('/proc',str(terminal['supervisor_pid'])).exists(),'arena supervisor still present')
+ require(subprocess.check_output(['git','rev-parse','HEAD'],cwd=SOURCE,text=True).strip()==REV and not subprocess.check_output(['git','status','--porcelain'],cwd=SOURCE,text=True),'frozen source changed')
+ cp=checked(m['commands'])
+ for f,h in cp['source_sha256'].items():require(sha(SOURCE/f)==h,'source hash changed '+f)
+ for ref in m['qualifications'].values():checked(ref)
+ require(sha(endpoint['book']['path'])==endpoint['book']['sha256'] and sha(cp['evaluation_shape']['path'])==cp['evaluation_shape']['sha256'],'book/shape changed')
+ admission=checked(binding['readout_admission']);custody=checked(binding['model_custody'])
+ equal(admission,{'status':'ROOT_ACCEPTED_CLOSED_E4_ARENA_FOR_READOUT','source_revision':REV,'endpoint':binding['endpoint'],'scientific_sha256':m['science']['sha256'],'terminal_sha256':binding['terminal']['sha256'],'model_custody_sha256':binding['model_custody']['sha256']},'readout admission')
+ if selection is not None:
+  equal(admission,{'selection_sha256':binding['selection']['sha256']},'confirmation selection admission')
+  chosen=selection['selected_candidate'];actual=custody['assets']['candidate']
+  require(chosen['path']==actual['path'] and chosen['sha256']==actual['sha256'] and chosen['step']==actual['step']==129,'confirmation changed selected129 checkpoint')
+ equal(custody,{'status':'ACCEPT_IMMUTABLE_E4_ARENA_MODEL_CUSTODY','source_revision':REV,'endpoint':binding['endpoint'],'complete494_model_and_architecture_qualified':True,'candidate_role':endpoint['candidate'],'reference_role':endpoint['reference']},'model custody')
+ require(set(custody['assets'])=={'candidate','reference'},'missing asset custody')
+ for role in ('candidate','reference'):
+  asset=custody['assets'][role];path=pathlib.Path(asset['path']);require(asset['path']==child[child.index('--'+role)+1],'checkpoint path differs')
+  require(asset['before_sha256']==asset['after_sha256']==asset['sha256'] and asset['readonly_before'] is asset['readonly_after'] is True and asset['stat_before']==asset['stat_after'],'checkpoint not immutable throughout arena')
+  require(not path.is_symlink() and not path.stat().st_mode & 0o222 and sha(path)==asset['sha256'],'checkpoint changed after arena')
+  st=path.stat();require({'dev':st.st_dev,'ino':st.st_ino,'size':st.st_size,'mtime_ns':st.st_mtime_ns,'ctime_ns':st.st_ctime_ns}==asset['stat_after'],'asset stat changed')
+  if (endpoint[role]=='A39'):require(asset['sha256']==m['A39_sha256'],'wrong immutable donor')
+  else:require(asset['step']==129,'nonfinal candidate or reference')
+ for name,filename in [('games','games.jsonl'),('pgn','games.pgn'),('result','result.jsonl')]:
+  require(pathlib.Path(binding['artifacts'][name]['path'])==pathlib.Path(endpoint['outputs'])/filename,'wrong result artifact');require(sha(binding['artifacts'][name]['path'])==binding['artifacts'][name]['sha256'],'result artifact changed')
+ os.environ['CHESS_ANTI_ENGINE_LIVE_CONFIG']=cp['evaluation_shape']['path'];sys.path.insert(0,str(SOURCE));arena=importlib.import_module('scripts.arena_standard');require(pathlib.Path(arena.__file__).resolve()==SOURCE/'scripts/arena_standard.py','foreign arena source')
+ args=parser_only(arena)(child[child.index('scripts/arena_standard.py')+1:]);side,ref=arena.resolve_sides_from_args(args);require(side==ref,'side shapes differ')
+ import numpy as np,chess,chess.pgn,torch
+ require(not torch.cuda.is_initialized(),'reader initialized CUDA');torch.set_num_threads(2)
+ openings=arena.load_fen_openings(args.openings_fen,n_pairs=npairs,rng=np.random.default_rng(args.seed));require(len(openings)==npairs,'opening count shrunk')
+ protocol={'shape':cp['evaluation_shape'],'panels':endpoint['book']}
+ settings=arena.arena_game_log_settings(mode=args.mode,candidate=args.candidate,reference=args.reference,games=args.games,seed=args.seed,openings_path=str(args.openings_fen),openings_kind='fen',opening_plies=None,sims_candidate=args.sims,sims_reference=args.sims,ms_per_move=None,max_plies=args.max_plies,temperature=args.temperature,gumbel_add_noise=not args.no_gumbel_noise,search_candidate=side,search_reference=ref,volatility_candidate=None,uci_args=args.uci_args,syzygy_path=args.syzygy,tb_max_pieces=args.syzygy_max_pieces)
+ allrows=jsonl(args.games_out);header=allrows[0];rows=allrows[1:];require(len(rows)==count,'incomplete fixed endpoint: owner PASS does not qualify partial games');equal(header,{'kind':'header','version':1,'driver':'arena_standard','settings':settings,'fingerprint':arena.settings_fingerprint(settings)},'header');require('info' not in header,'unexpected SPRT info')
+ lookup={}
+ for r in rows:
+  require(type(r.get('pair_id')) is int and type(r.get('half')) is int,'noninteger game identity');key=r['pair_id'],r['half'];require(key not in lookup and key[0] in range(npairs) and key[1] in (0,1),'duplicate/out-of-range game');lookup[key]=r
+ require(len(lookup)==count,'missing pair halves');pair_scores=[sum(lookup[p,h]['score_candidate'] for h in (0,1)) for p in range(npairs)]
+ native=arena.read_game_log(args.games_out);require(not native.truncated_tail and native.header==header and native.games==rows,'native reader disagreement')
+ agrees,why=arena.verify_game_log_on_disk(args.games_out,settings=settings,openings=openings,expected_pair_scores=pair_scores,expected_pair_ids=list(range(npairs)));require(agrees,'native disk verification: '+why)
+ from chess_anti_engine.tablebase import open_strict_match_tablebase,rule50_match_result
+ tb=open_strict_match_tablebase(args.syzygy,max_pieces=6);seen=set();outcomes=collections.Counter();terminations=collections.Counter();rule_flags=collections.Counter();per_game=[];canonical=[];tb_checked=0
+ try:
+  with pathlib.Path(args.pgn_out).open() as stream:
+   while (game:=chess.pgn.read_game(stream)) is not None:
+    require(not game.errors,'PGN parse error');canonical.append(game.accept(chess.pgn.StringExporter(headers=True,variations=False,comments=False))+'\n\n');h=game.headers;key=int(h['PairId']),int(h['PairHalf']);require(key in lookup and key not in seen,'extra/duplicate PGN');seen.add(key);r=lookup[key];opening=openings[key[0]];root,history=arena._opening_history(opening);require(len(history)==16,'opening history length changed');score=arena.score_from_result(r['result'],a_is_white=key[1]==0)
+    equal(r,{'kind':'game','opening_index':key[0],'opening_fen':opening.fen(),'start_fen':opening.fen(),'opening_root_fen':root,'opening_uci':list(history),'a_is_white':key[1]==0,'score_candidate':score,'seed':args.seed,'compile':'off','eval_hoist':'1024','chunk':None,'loop':'rolling'},'game')
+    names=[args.pgn_candidate_name or arena.engine_name_from_checkpoint(args.candidate,fallback="candidate"),args.pgn_reference_name or arena.engine_name_from_checkpoint(args.reference,fallback="reference")];require(names==[args.pgn_candidate_name or arena.engine_name_from_checkpoint(args.candidate,fallback='candidate'),args.pgn_reference_name or arena.engine_name_from_checkpoint(args.reference,fallback='reference')],'PGN role names differ')
+    equal(dict(h),{'Round':f'{key[0]+1}.{key[1]+1}','White':names[0 if key[1]==0 else 1],'Black':names[1 if key[1]==0 else 0],'Result':r['result'],'Event':args.label,'ArenaLabel':args.label,'ArenaMode':'matched_sims','GitSha':REV,'ConfigHash':protocol['shape']['sha256'][:12],'WhiteSearch':side.describe(),'BlackSearch':side.describe(),'EvaluatorHoist':'1024','OpeningRootFEN':root,'OpeningUCI':json.dumps(list(history),separators=(',',':')),'PlayedUCISHA256':r.get('played_uci_sha256'),'Termination':r['termination'],'Plies':str(r['plies']),'GameDurationSec':f"{r['duration_s']:.2f}",'SyzygyProtocol':arena.SYZYGY_MATCH_PROTOCOL,'SyzygyMaxPieces':'6'},'PGN')
+    require('ResumeReplay' not in h,'resumed PGN');require(game.board().fen()==opening.fen(),'PGN start FEN mismatch');moves=list(game.mainline_moves());require(type(r['plies']) is int and len(moves)==r['plies']<=450,'additional ply count mismatch');require(arena._played_uci_sha256(moves)==r['played_uci_sha256'],'played move hash mismatch')
+    board=opening.copy(stack=True)
+    for move in moves:
+     require(not board.is_game_over(claim_draw=True),'played after natural terminal');require(rule50_match_result(board,tb,max_pieces=6) is None,'played after resolved strict TB root');require(move in board.legal_moves,'illegal fullhistory suffix');board.push(move)
+    if r['termination']=='rules':require(board.is_game_over(claim_draw=True) and board.result(claim_draw=True)==r['result'],'rules ending mismatch')
+    elif r['termination']=='syzygy':
+     require(not board.is_game_over(claim_draw=True),'natural result mislabeled syzygy');require(rule50_match_result(board,tb,max_pieces=6)==r['result'],'TB ending mismatch');tb_checked+=1
+    else:raise ValueError('cap/fault/unrecognized termination: '+str(r['termination']))
+    flags={'checkmate':board.is_checkmate(),'stalemate':board.is_stalemate(),'insufficient_material':board.is_insufficient_material(),'automatic_75move':board.is_seventyfive_moves(),'automatic_fivefold':board.is_fivefold_repetition(),'current_threefold':board.is_repetition(3),'claimable_threefold':board.can_claim_threefold_repetition(),'current_fifty':board.is_fifty_moves(),'claimable_fifty':board.can_claim_fifty_moves()}
+    for flag,v in flags.items():rule_flags[flag]+=int(v)
+    outcomes['A_wins' if score==1 else 'A_losses' if score==0 else 'draws']+=1;terminations[r['termination']]+=1;per_game.append({'pair_id':key[0],'half':key[1],'result':r['result'],'termination':r['termination'],'additional_plies':len(moves),'final_fen':board.fen(),'rule_flags':flags})
+ finally:tb.close()
+ require(seen==set(lookup),'PGN does not contain all fixed games');require(pathlib.Path(args.pgn_out).read_text()==''.join(canonical),'extra/truncated/noncanonical PGN')
+ resultrows=jsonl(args.out);require(len(resultrows)==1,'result must contain one attempt');result=resultrows[0]
+ expected={'games':count,'pairs':npairs,'games_requested':count,'label':args.label,'git_sha':REV,'config_hash':protocol['shape']['sha256'][:12],'config_name':pathlib.Path(protocol['shape']['path']).name,'config_authoritative':True,'max_seconds':float(endpoint['inner_seconds']),'truncated':False,'game_log':str(args.games_out),'game_log_fingerprint':header['fingerprint'],'game_log_agrees':True,'resumed_pairs':0,'resumed_orphan_pairs':0,'compile':'off','compile_values':['off'],'mixed_compile':False,'eval_hoist':'1024','eval_hoist_values':['1024'],'mixed_eval_hoist':False,'eval_max_batch':1024,'eval_leaf_cap_uncapped':1024,'eval_leaf_cap_bound':False,'max_concurrent_games':32,'arena_pool_size':32,'device':'cuda','candidate':args.candidate,'reference':args.reference,'syzygy_protocol':arena.SYZYGY_MATCH_PROTOCOL,'syzygy_path':args.syzygy,'syzygy_max_pieces':6,'search_candidate':side.as_record(),'search_reference':ref.as_record(),'argv':child[child.index('scripts/arena_standard.py'):]}
+ equal(result,expected,'result');counts=arena.pentanomial_counts(pair_scores);require(result['pentanomial']==dict(zip(('WW','WD_DW','DD_WL','LD_DL','LL'),counts)),'aggregate pair counts differ');require(result['syzygy_this_invocation']['pairs_completed']==npairs,'TB aggregate incomplete')
+ stage=pathlib.Path(binding['stage_log']['path']);require(sha(stage)==binding['stage_log']['sha256'],'stage log changed');trace=stage.read_text();require('[arena] both checkpoints loaded' in trace,'missing actual two-model loader evidence');require('[arena] inference-only heads: candidate=True reference=True' in trace,'missing inference profile evidence')
+ fault_markers=['Traceback (most recent call last)','search_error','search incomplete reason=','search_incomplete','fallback_count=1','CUDA out of memory','nonfinite','nan loss']
+ faults=[x for x in fault_markers if x.lower() in trace.lower()];require(not faults,'fault markers: '+str(faults));require(not torch.cuda.is_initialized(),'CUDA initialized by reader')
+ statistics=paired_statistics(pair_scores)
+ require(result['score']==round(statistics['score'],5) and result['score_se']==round(statistics['score_se'],5),'public rounded summary differs')
+ for item in binding['artifacts'].values():require(sha(item['path'])==item['sha256'],'result changed during readout')
+ return {'status':'PASS_QUALIFIED_E4_ARENA_ENDPOINT','technical_qualified':True,'endpoint':binding['endpoint'],'source_revision':REV,'scientific_sha256':m['science']['sha256'],'games':count,'pairs':npairs,'statistics':statistics,'model_identities':custody,'book':endpoint['book'],'outcome_counts':dict(outcomes),'terminations':dict(terminations),'rule_flags':dict(rule_flags),'per_game':sorted(per_game,key=lambda x:(x['pair_id'],x['half'])),'owner_terminal':binding['terminal'],'artifacts':binding['artifacts'],'stage_log':binding['stage_log'],'selection':binding.get('selection'),'limits':['Model paths are joined to immutable pre/post asset custody and source loader logs; no per-game served-state hash or per-forward precision/finite-logit instrumentation exists.','Pair interval is conditional approximate normal95 for one training realization and profile. No Elo/adoption/external strength verdict.']}
+def main():
+ ap=argparse.ArgumentParser();ap.add_argument('--manifest-sha256',required=True);ap.add_argument('--bindings',required=True);ap.add_argument('--bindings-sha256',required=True);args=ap.parse_args()
+ require(sha(HERE/'manifest.json')==args.manifest_sha256,'reader manifest changed');m=load(HERE/'manifest.json');require(sha(__file__)==m['reader_sha256'],'reader changed');cpu_owner(m)
+ require(sha(args.bindings)==args.bindings_sha256,'endpoint bindings changed');binding=load(args.bindings);require(binding['endpoint'] in ('primary','eligibility','context','confirmation'),'unknown endpoint')
+ output=pathlib.Path(m['readout_output_root'])/binding['endpoint']/'readout.json';require(not output.exists(),'refusing readout overwrite');signal.signal(signal.SIGALRM,lambda *_:(_ for _ in ()).throw(TimeoutError('fixed270s readout deadline')));signal.alarm(270)
+ try:report=inspect(binding,m);code=0
+ except (Exception,SystemExit) as e:report={'status':'UNQUALIFIED_OR_INCONCLUSIVE_E4_ARENA_READOUT','endpoint':binding['endpoint'],'reason':f'{type(e).__name__}: {e}','no_partial_score_release':True};code=2
+ finally:signal.alarm(0)
+ report.update(reader_sha256=sha(__file__),bindings_sha256=args.bindings_sha256,created_unix=time.time());output.parent.mkdir(parents=True,exist_ok=True)
+ with output.open('x')as stream:json.dump(report,stream,indent=2,sort_keys=True,allow_nan=False);stream.write('\n');stream.flush();os.fsync(stream.fileno())
+ return code
+if __name__=='__main__':raise SystemExit(main())

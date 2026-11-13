@@ -1,0 +1,23 @@
+{
+  "status": "ACCEPT_ALL820_R7_NATIVE_E4_RAW_AND_PRODUCTION_MIRROR_ENCODINGS",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "collection_uuid": "cd47b230-f32f-4256-a51e-4869f5708bb6",
+  "selected820": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-structural-selection-results-v1-cd47b230/selected820.json",
+    "sha256": "544237b04888b2a20d5b1237200dab14b27afad05123fe7e048c132e7a6c7a84"
+  },
+  "comparisons": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-results-v1/all820-encoder-comparisons.json",
+    "sha256": "2ad59f8c19d41f52c02cc297d33b4c1498a665fe86c9ba7ac28d8bc7263d1b54"
+  },
+  "actual_independent_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-actual-independent-review-v1/review.json",
+    "sha256": "fe5f631f864827e800771a3ac5cd050e999ec206769556600f0005857c9175dc"
+  },
+  "closed_terminal": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-execution-v1/terminal.json",
+    "sha256": "95d9dcac229682896bc2d898d82f242ebe32cea8aec7b0e90d074a083ebb22fc"
+  },
+  "all820_exact": true,
+  "scope": "New820actualencoding and mirrors only; structural/parent/history/exposure filters retain known-union limits. No new or oldHOLD replay-array reads."
+}

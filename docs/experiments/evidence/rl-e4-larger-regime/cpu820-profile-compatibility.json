@@ -1,0 +1,18 @@
+{
+  "status": "ACCEPT_E4_CANONICAL_PROFILE_EXACT_E2_RECIPE_EXCEPT_OPENING_PATH",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "old_profile": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cohort-runtime-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/resolved-profile.json",
+    "sha256": "c6659d6077ceb677e2fe50a99929c0d9b87c2271bef9c5e4908b345baaf78ee3"
+  },
+  "new_profile": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-results-v1/actual-builder-profile.json",
+    "sha256": "9e9ca115e387b49bc7734248dc6edae5b3bf9e88c0d25a62889b4d05aefff734"
+  },
+  "canonical_profile_sha256": "87fca0ba2283a82642af48b37823f54d4d1bf77c8016ef4c193102db4a253700",
+  "only_changed_leaf": "/pilot/opening/opening_fen_list_path",
+  "old_value": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-final-package-v1/starts.epd",
+  "new_value": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-package-v1/starts.epd",
+  "all_other_leaves_equal": true,
+  "limits": "No new actual model/TB/SF/search runtime equivalence test; prior qualified exact source consumers are historical evidence. Seed, cohort IDs/count and learning horizon are declared E4 changes outside this serving descriptor."
+}

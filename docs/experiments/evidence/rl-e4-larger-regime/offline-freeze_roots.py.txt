@@ -1,0 +1,222 @@
+"""Future admitted cohort→immutable64 raw roots, before any branch predictions."""
+
+from __future__ import annotations
+import argparse
+import json
+from pathlib import Path
+import sys
+import signal
+
+import numpy as np
+
+from common import (
+    HERE,
+    checked_json,
+    cohort_metadata,
+    digest,
+    guard,
+    hash_input,
+    require,
+    verify_owner,
+    write_json,
+)
+
+
+from strict_roots import choose_roots, verified_roots
+
+
+def freeze(protocol, inputs, parts):
+    from chess_anti_engine.moves import move_to_index_for_encoding
+    from chess_anti_engine.replay.shard import open_shard_arrays
+    from common import context
+
+    require(protocol["cohort_binding_complete"] is True, "root freezing UNBOUND")
+    verify_owner(protocol, resource="cpu", seconds=120, affinity=[20, 22], cuda="")
+    binding = checked_json(
+        protocol["cohort_binding_path"], protocol["cohort_binding_sha256"]
+    )
+    cp, readout = cohort_metadata(binding)
+    collector = context()["collector"]
+    selected = choose_roots(cp, readout, collector)
+    out = Path(protocol["root_bank_output"])
+    require(not out.exists(), "frozen root bank exists")
+    out.mkdir()
+    write_json(
+        out / "runtime-process.json",
+        {
+            "pid": __import__("os").getpid(),
+            "birth": parts[0].proc_birth(__import__("os").getpid()),
+        },
+    )
+    if selected is None:
+        write_json(
+            out / "receipt.json",
+            {
+                "status": "INCONCLUSIVE_WHOLE_OFFLINE_ENDPOINT_NO_COMPLETE64_ELIGIBLE_VERIFIED_RESOLVED_GAMES",
+                "all_roots_retained": False,
+                "models_loaded": 0,
+                "heldout_arrays_read": False,
+                "primary_playing_gate_changed": False,
+                "cohort_binding": binding,
+                "descriptive_class_counts": readout.get("class_counts"),
+            },
+        )
+        parts[0].freeze_tree(out)
+        return 2
+    x, legal, labels, identities = [], [], [], []
+    with verified_roots(cp, readout, selected) as verified_items:
+        for game, item, root, provenance, board, label, verified in verified_items:
+            directory = Path(item["path"])
+            require(
+                directory
+                == Path(cp["output_root"])
+                / "holdout"
+                / ("game-" + str(game["start_ordinal"])),
+                "unexpected heldout directory",
+            )
+            inputs.inventory(directory, item["inventory"])
+            index = int(root["physical_row_id"].rsplit(":", 1)[1])
+            require(
+                item["validation"]["rows"][index]["physical_row_id"]
+                == root["physical_row_id"],
+                "physical index/order changed",
+            )
+            with open_shard_arrays(directory / "shard", lazy=True, validate=True) as (
+                arrays,
+                _meta,
+            ):
+                for name in (
+                    "has_policy",
+                    "is_network_turn",
+                    "has_is_network_turn",
+                    "has_legal_mask",
+                    "has_ply_index",
+                    "has_game_id",
+                ):
+                    require(
+                        int(arrays[name][index]) == 1,
+                        "missing actual NET/policy/identity flag: " + name,
+                    )
+                current = np.array(arrays["x"][index], copy=True)
+                mask = np.array(arrays["legal_mask"][index], dtype=np.uint8, copy=True)
+                require(
+                    hash_input(current) == root["stored_input_float16_sha256"],
+                    "raw175F16 root identity differs",
+                )
+                expected = np.zeros(1858, dtype=np.uint8)
+                for move in board.legal_moves:
+                    expected[
+                        move_to_index_for_encoding(move, board, policy_encoding="lc0_1858")
+                    ] = 1
+                require(
+                    mask.shape == (1858,) and np.array_equal(mask, expected) and mask.any(),
+                    "full legal1858 mask differs",
+                )
+                require(
+                    int(arrays["wdl_target"][index]) == label
+                    and int(arrays["ply_index"][index]) == board.ply()
+                    and int(arrays["game_id"][index]) == provenance["actual"]["game_id"],
+                    "outcome/ply/content-game label differs",
+                )
+            x.append(current)
+            legal.append(mask)
+            labels.append(label)
+            identities.append(
+                {
+                    **root,
+                    "start_ordinal": game["start_ordinal"],
+                    "bank": "holdout",
+                    "position_fen": board.fen(),
+                    "pov_white": bool(board.turn),
+                    "verified_resolved_outcome_wdl_label": label,
+                    "scientific_outcome_class": verified["scientific_class"],
+                    "fresh_verified_outcome": verified,
+                    "source_game_inventory": item["inventory"],
+                    "source_game_path": str(directory),
+                }
+            )
+    with (out / "roots.npz").open("xb") as stream:
+        np.savez_compressed(
+            stream,
+            x=np.stack(x),
+            legal_mask=np.stack(legal),
+            wdl_target=np.asarray(labels, np.int8),
+        )
+    write_json(out / "identities.json", identities)
+    write_json(
+        out / "receipt.json",
+        {
+            "status": "FROZEN64_VERIFIED_RESOLVED_HOLDOUT_ROOTS_BEFORE_BRANCH_PREDICTIONS",
+            "source_revision": protocol["source_revision"],
+            "cohort_binding": binding,
+            "root_count": 64,
+            "physical_game_count": 64,
+            "root_arrays_sha256": digest(out / "roots.npz"),
+            "identities_sha256": digest(out / "identities.json"),
+            "producer_readout_sha256": binding["readout_sha256"],
+            "all64_verified_resolved_eligible": True,
+            "outcome_classes": {name: sum(row["scientific_outcome_class"] == name for row in identities)
+                for name in ("NATURAL", "STRICT_TB_ADJUDICATED")},
+            "all64_fresh_owned_proofs_before_any_HOLD_arrays": True,
+            "TRAIN_or_replay_or_sampler_written": False,
+            "branch_or_teacher_predictions": 0,
+            "primary_playing_gate_changed": False,
+            "raw_input_precision": "storedF16 widenedtoF32 bysameproductionadapter; noaugment/reencode/rebuild",
+        },
+    )
+    parts[0].freeze_tree(out)
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--manifest-sha256", required=True)
+    parser.add_argument("--check", action="store_true")
+    args = parser.parse_args()
+    require(
+        digest(HERE / "manifest.json") == args.manifest_sha256,
+        "offline manifest changed",
+    )
+    manifest = json.loads((HERE / "manifest.json").read_text())
+    protocol = checked_json(HERE / "protocol.json", manifest["protocol_sha256"])
+    inputs, _observer, parts = guard(manifest, protocol)
+    if args.check:
+        require(
+            not __import__("torch").cuda.is_initialized(),
+            "source check initialized CUDA",
+        )
+        print("PASS_OFFLINE_SOURCE_ONLY_NO_DATA_MODEL_GPU")
+        return 0
+    require(protocol["cohort_binding_complete"] is True, "root freezing UNBOUND")
+    signal.signal(
+        signal.SIGALRM,
+        lambda *_: (_ for _ in ()).throw(
+            TimeoutError("offline root freezer105secondalarm")
+        ),
+    )
+    signal.alarm(105)
+    try:
+        return freeze(protocol, inputs, parts)
+    except BaseException as exc:
+        output = Path(protocol["root_bank_output"])
+        marker = output / "runtime-process.json"
+        own = json.loads(marker.read_text()) if marker.is_file() else {}
+        if own.get("pid") == __import__("os").getpid() and own.get("birth") == parts[
+            0
+        ].proc_birth(__import__("os").getpid()):
+            write_json(
+                output / "failure.json",
+                {
+                    "status": "UNQUALIFIED_PARTIAL_ROOT_FREEZE",
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                },
+            )
+            parts[0].freeze_tree(output)
+        raise
+    finally:
+        signal.alarm(0)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

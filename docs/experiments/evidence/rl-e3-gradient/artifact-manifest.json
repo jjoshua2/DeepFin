@@ -1,0 +1,119 @@
+{
+  "status": "FROZEN_PREMEASUREMENT_E3_EVIDENCE_CPU_CONTROLS_ONLY",
+  "files": [
+    {
+      "path": "scientific.json",
+      "source_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-final-bindings-v1-1fb23ace-676a-485e-94b1-10f54b4d4a3a/scientific.json",
+      "bytes": 18544,
+      "sha256": "6260995b5661cb4c8718749e5fac60f38de527dc4c37ce05fd2edc1082af87eb",
+      "copy": "EXACT_BYTES"
+    },
+    {
+      "path": "runtime-protocol.json",
+      "source_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-final-bindings-v1-1fb23ace-676a-485e-94b1-10f54b4d4a3a/runtime-protocol.json",
+      "bytes": 3880,
+      "sha256": "a4446cbf2ff5e459eee5428e97d0ffe1a24e32040bb7af52001fe6555bbe804d",
+      "copy": "EXACT_BYTES"
+    },
+    {
+      "path": "command.json",
+      "source_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-final-bindings-v1-1fb23ace-676a-485e-94b1-10f54b4d4a3a/command.json",
+      "bytes": 2063,
+      "sha256": "63519e6786952ec0913699d4d7c3ff5d06d8d4db81ee0202fb1a81ecced1a8ec",
+      "copy": "EXACT_BYTES"
+    },
+    {
+      "path": "root-roster.json",
+      "source_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-score-blind-root-roster-v1/selection.json",
+      "bytes": 12387,
+      "sha256": "e87058c7ad071f1baab6e085dcb756cf7e05bb706f18d23cd1fe86c375d00146",
+      "copy": "EXACT_BYTES"
+    },
+    {
+      "path": "source-manifest.json",
+      "source_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-preparation-v2/manifest.json",
+      "bytes": 5692,
+      "sha256": "bb6f1d9b089381aee2d7f04efec2637ca66b094bf257c6bdd3c9b049ecb6bbe6",
+      "copy": "EXACT_BYTES"
+    },
+    {
+      "path": "expected-trunk-map.json",
+      "source_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-preparation-v2/expected-trunk-map.json",
+      "bytes": 70699,
+      "sha256": "219d77e26feba07d8f1baf6b615d2f17c783692b5e3f8029af77bdbf689e75f3",
+      "copy": "EXACT_BYTES"
+    },
+    {
+      "path": "measure.py.txt",
+      "source_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-preparation-v2/measure.py",
+      "bytes": 28069,
+      "sha256": "2ac588680327ea12d2a020858487b7b79187e331ea42cb2cd9dba6cf77923c9e",
+      "copy": "EXACT_BYTES"
+    },
+    {
+      "path": "source-review.json",
+      "source_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-independent-source-review-v2/review.json",
+      "bytes": 3744,
+      "sha256": "0ab9f04b39734d5beebb3b0c1857dcc36137b2462e93a01e3f651a01b165198d",
+      "copy": "EXACT_BYTES"
+    },
+    {
+      "path": "superseded-source-findings.json",
+      "source_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-independent-source-review-v1/review.json",
+      "bytes": 6314,
+      "sha256": "102bf9feb7ce0e13c8ade00d4f1196e232121cb6682d4c9b7d2a7d1c554122c1",
+      "copy": "EXACT_BYTES"
+    },
+    {
+      "path": "v1-to-v2.patch",
+      "source_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-implementation-preparation-v2/v1-to-v2.patch",
+      "bytes": 4216,
+      "sha256": "899a2f9c06c780e76f963db5052fb3f569af53ee4a876a11156647a3840da95e",
+      "copy": "EXACT_BYTES"
+    },
+    {
+      "path": "scientific-review.json",
+      "source_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-candidate-v2-independent-scientific-review-v1/review.json",
+      "bytes": 6765,
+      "sha256": "6e0249757de85e396001a1d70182c7aab1221968e5165cc790aad5d7431a7a45",
+      "copy": "EXACT_BYTES"
+    },
+    {
+      "path": "roster-independent-review.json",
+      "source_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2-publication-e3-roster-independent-review-v1/review.json",
+      "bytes": 33449,
+      "sha256": "fc98e0431913577a273ce98089e46866d3ba609b0522dd308a7053fc4b7c3eca",
+      "copy": "EXACT_BYTES"
+    },
+    {
+      "path": "cpu-controls.py.txt",
+      "source_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-cpu-controls.py",
+      "bytes": 4915,
+      "sha256": "087306786d5013fb5e80710f6c4fdb6ecdcff6d762448c311939919f949174d2",
+      "copy": "EXACT_BYTES"
+    },
+    {
+      "path": "cpu-readout.json",
+      "source_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-cpu-controls-results-v1/readout.json",
+      "bytes": 725,
+      "sha256": "56086c2dadf47a820f724619b611deaa959901a46be845979b717e370ca3d23b",
+      "copy": "EXACT_BYTES"
+    },
+    {
+      "path": "cpu-terminal.json",
+      "source_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-cpu-controls-execution-v1/terminal.json",
+      "bytes": 1346,
+      "sha256": "75883e640aaf0486cac3cc6dbb07d9943d86e83375a8982704930f3a87c5df09",
+      "copy": "EXACT_BYTES"
+    },
+    {
+      "path": "cpu-root-acceptance.json",
+      "source_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-cpu-controls-root-acceptance-v1/readout.json",
+      "bytes": 1015,
+      "sha256": "de4ff0277ba04c712f374ba6ed476a622e555b8b451d557a01ad54689d77df25",
+      "copy": "EXACT_BYTES"
+    }
+  ],
+  "GPU_execution_yet": false,
+  "limits": "External bulk artifacts remain outside checkouts. No new model gradient, playing or strength result."
+}

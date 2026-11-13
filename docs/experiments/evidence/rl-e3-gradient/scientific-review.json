@@ -1,0 +1,99 @@
+{
+  "candidate": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-protocol-candidate-v2/protocol.CANDIDATE.json",
+    "sha256": "98d40d213c45f1d1ac541d23e51933bec989f3902f647263aa8f413ef248f271"
+  },
+  "checked_metadata_refs": [
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-score-blind-root-roster-v1/selection.json",
+      "sha256": "e87058c7ad071f1baab6e085dcb756cf7e05bb706f18d23cd1fe86c375d00146"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-results-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/draw-plan.json",
+      "sha256": "6a4fcb7136d24955bcb1ea11a6f79a3659226d1771fdca661442e169bbfccdb5"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-results-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/input-lineage.json",
+      "sha256": "a8b940861c5630c2c4615ef9ae95d03f41bf52dde18b4b3ffd7823274f6abbbe"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired40-actual-cpu-readout-v1/FULLA-step-40-metadata.json",
+      "sha256": "a9bd4f106735bdb0696ea4b9b6dfdb7fdc028c452be233756a1118f321bf9073"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired40-actual-cpu-readout-v1/FULLB-step-40-metadata.json",
+      "sha256": "209ff872f8cb3ae747f1643286c737bf28f9374cf2c98179aa9fa0f5b61c34de"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired40-actual-cpu-readout-v1/checkpoint-custody.json",
+      "sha256": "89c7654160f9083b40c6635f3037753f9c8a84e49cf547f9ef477df9fb86de05"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired-full40-root-actual-acceptance-v1/checkpoints-binding.json",
+      "sha256": "1d0cc47cda40bdddb82edcb0f9a5ea978925222e74950de71994398ef4e20dbe"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired-full40-root-actual-acceptance-v1/readout.json",
+      "sha256": "9dec3ef8f4986820d13e1a56b003f233c700e441938df7fa123d3748cb0fdeee"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-design-independent-review-v1/review.json",
+      "sha256": "105005a1c5ff8aade1975328dc5c832f11d8a364f26553ac4d18700b144384c4"
+    }
+  ],
+  "created_utc": "2026-11-13T06:48:07.989173+00:00",
+  "findings": [],
+  "human_record": {
+    "index_sha256": "e52f830d2b84e6ca20854d59d1138c4046d5d5771827546726f4ee966f199f9e",
+    "path": "/home/josh/.codex/worktrees/rl-final-integration-20261112/chess/docs/experiments/2026-11-13-rl-train-gradient-geometry.md",
+    "scope": "Preparation draft matches scientific candidate intent; final exact protocol/evidence copies/publication not yet reviewed.",
+    "sha256": "12a3955b00d8a97bd06f10a4fe5998fc70dd712b90b17b475903a1adcad79574"
+  },
+  "interpretation": "A conditional per-game target-bundle geometry measurement on retained ingestedTRAIN support; no strength/optimality/causal playing or applied optimizer geometry claim. Changed objective-gradient alignment is not success in the long-term engine goal. Closed E2 playing study and retained donor remain unchanged.",
+  "limits": [
+    "Read-only source/JSON/Markdown review. No array/model/checkpoint bytes, imports/runtime constructors/queries/forwards/gradients/tests/jobs, no source/Git/index writes.",
+    "1e-5and1e-12 are prospective chosen resolution rules rather than source-proven global numerical-error bounds. Candidate is not itself an execution grant."
+  ],
+  "manifest": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e3-gradient-protocol-candidate-v2/manifest.json",
+    "sha256": "ffd6bfb5dc9f60aed89d055a9d9d8131783d5aee23373a4345e0086d8be1f3fd"
+  },
+  "prior105005_findings_reconciled": [
+    {
+      "candidate": "New E3salt and independently verified fixed32roster/source metadata/sentinel are pinned.",
+      "prior_finding": "Old proposal salt/ordering"
+    },
+    {
+      "candidate": "Exact423/57,533,899/ordered mapSHA pinned. phase adapterFalse+absent required;16alias tied generator dedup. Coupled token_proj/net.0 versus WDLonlynet.2 explicit.",
+      "prior_finding": "Whole shared-trunk map/phase adapter/ties"
+    },
+    {
+      "candidate": "Actual weighted_terms captured, exactly source-ordered leftfold skipping0weights bitexact per row/map; grouped scalar residual distinct. Source masks/denominators/fallbacks/targetquantization and rebuild state explicit.",
+      "prior_finding": "Source component reduction/fallback vs diagnostic losses"
+    },
+    {
+      "candidate": "Exactly6actualcombined-total sentinel gradients added,600total gradient calls/99forward fixed; residual diagnostic only due BF16cotangent rounding, primary separately summedW+C stated.",
+      "prior_finding": "Total-gradient controls missing calls"
+    },
+    {
+      "candidate": "Exact identities/forward/None/zero coverage plus prospective1e-5repeatgradient/cosdrift and1e-12undefined primary floor; no empirical backend bound inferred, no retuning/retry.",
+      "prior_finding": "Repeat determinism assumption"
+    },
+    {
+      "candidate": "Fresh empty nonstepping optimizer object permitted for actual preparation/map; state adoption/steps/scheduler advance/parameter/checkpoint updates forbidden.",
+      "prior_finding": "Optimizer object versus state"
+    },
+    {
+      "candidate": "PrimaryDONORonly equalgamepaired10000bootstrapseed2026111501; endpoints/layers/tags descriptive; no masks/exclusions/rootreplacement/HOLD/strength/recipe selection. Conditional retainedTRAIN/onecohort/familylimits explicit.",
+      "prior_finding": "Inference/sampling scope"
+    }
+  ],
+  "remaining_requirements": [
+    "Seal/independently review concrete helper, fixed command and actual source/native/config/math/loader/custody bindings.",
+    "Resolve all implementation-specific earlyfail/cleanup/loss-family identity checks in source and a separately admitted finite qualification if required.",
+    "Final immutable protocol/publication and fresh parent-owned finite-stage admission before any model/array/gradient work."
+  ],
+  "schema": "independent-E3-candidate-v2-scientific-component-review-v1",
+  "source_capture_api_limit": "Proposed sys.setprofile capture of actual compute_loss return locals is a concrete implementation route, not independently qualified yet. Exact code identity, differentiable weighted_terms/masks and finally-restoration must be verified against actual helper before execution; no helper SHA/command fabricated here.",
+  "status": "ACCEPT_SCIENTIFIC_COMPONENT_ONLY_NO_IMPLEMENTATION_OR_EXECUTION_ACCEPTANCE"
+}

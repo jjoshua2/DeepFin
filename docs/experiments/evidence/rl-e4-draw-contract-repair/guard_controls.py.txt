@@ -1,0 +1,142 @@
+"""Prospective stdlib-only draw metadata guard controls. No action at import."""
+import argparse
+import ast
+from copy import deepcopy
+import hashlib
+import json
+import os
+from pathlib import Path
+import signal
+import sys
+
+ROOT = Path('/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1')
+PREP = ROOT / 'e4-draw-metadata-consumer-correction-v2'
+TARGET = ROOT / 'e4-draw-plan-final-v3/bind_draw_plan.py'
+OUT = ROOT / 'e4-draw-guard-controls-results-v2'
+OWNER = ROOT / 'run_stage_tb_on_runtime_v1.py'
+
+def sha(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+def require(ok, message):
+    if not ok:
+        raise ValueError(message)
+
+def main():
+    parser = argparse.ArgumentParser();parser.add_argument('--manifest-sha256',required=True);args=parser.parse_args()
+    require(sha(PREP/'guard-control-manifest.json')==args.manifest_sha256,'control manifest changed')
+    m=json.loads((PREP/'guard-control-manifest.json').read_text())
+    require(sha(__file__)==m['control_helper_sha256'] and sha(TARGET)==m['new_draw_helper_sha256'],'source changed')
+    require(Path(sys.executable).resolve()==Path(m['python']).resolve() and tuple(sys.version_info[:3])==(3,13,15),'interpreter changed')
+    parent=Path('/proc',str(os.getppid()),'cmdline').read_bytes().decode().split('\0')
+    require(str(OWNER) in parent and sha(OWNER)==m['owner_sha256'] and parent[parent.index('--seconds')+1]=='120'
+            and parent[parent.index('--resource')+1]=='cpu','wrong finite owner')
+    require(sorted(os.sched_getaffinity(0))==[20,22] and os.environ.get('CUDA_VISIBLE_DEVICES')==''
+            and os.environ.get('OMP_NUM_THREADS')==os.environ.get('MKL_NUM_THREADS')=='2','CPU resources changed')
+    OUT.mkdir(exist_ok=False)
+    signal.signal(signal.SIGALRM,lambda *_:(_ for _ in ()).throw(TimeoutError('100s guard controls')));signal.alarm(100)
+    rows=[];array_calls=[]
+    try:
+        tree=ast.parse(TARGET.read_text())
+        names={'require','digest','checked','verify_frozen_components'}
+        selected=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in names]
+        require({n.name for n in selected}==names,'actual guard functions missing')
+        ns={'Path':Path,'hashlib':hashlib,'json':json,'HERE':TARGET.parent,'__file__':str(TARGET)}
+        exec(compile(ast.Module(body=selected,type_ignores=[]),str(TARGET),'exec'),ns)
+        real_checked,actual_digest=ns['checked'],ns['digest']
+        science=json.loads((ROOT/'e4-scientific-protocol-final-v2/protocol.json').read_text())
+        manifest=json.loads((PREP/'manifest.json').read_text())
+        require(sha(PREP/'manifest.json')==m['new_draw_manifest_sha256'],'manifest identity changed')
+        sci_sha='7cfd6e45b565f39827a1801c828dc302fe5d79f176c7701b004fa7f1adab3478'
+        guard=ns['verify_frozen_components']
+        synthetic_publication=json.loads((PREP/'technical-publication-interface.json').read_text())['required']
+        publication_ref={'path':str(OUT/'IN_MEMORY_ONLY_NOT_PUBLISHED.json'),
+            'sha256':hashlib.sha256(json.dumps(synthetic_publication,sort_keys=True).encode()).hexdigest()}
+        def baseline_checked(ref):
+            if ref==publication_ref:return deepcopy(synthetic_publication)
+            return real_checked(ref)
+        actual_checked=baseline_checked;ns['checked']=baseline_checked
+        manifest_sha=sha(PREP/'manifest.json')
+        def save(name):
+            rows.append({'name':name,'result':'PASS'})
+            (OUT/('case-'+str(len(rows))+'.json')).write_text(json.dumps(rows[-1])+'\n')
+        guard(science,manifest,sci_sha,publication_ref,manifest_sha);save('authentic_7cfd_graph_plus_explicit_synthetic_publication_predicate')
+        def arrays_forbidden():
+            array_calls.append(1);raise AssertionError('ARRAY_PATH_FORBIDDEN')
+        def refuses(name,s=None,v=None,h=sci_sha,t=publication_ref,fragment=''):
+            try:
+                guard(science if s is None else s,manifest if v is None else v,h,t,manifest_sha)
+                arrays_forbidden()
+            except ValueError as error:
+                require(fragment in str(error),'wrong refusal layer:'+str(error));save(name)
+            require(not array_calls,'array path reached')
+        refuses('missing_technical_publication',t=None,fragment='publication reference')
+        def pub_fault(name,mutate,fragment):
+            before=deepcopy(synthetic_publication)
+            mutate(synthetic_publication)
+            try:refuses(name,fragment=fragment)
+            finally:synthetic_publication.clear();synthetic_publication.update(before)
+        pub_fault('unpublished_technical_record_refuses',lambda d:d.__setitem__('status','UNPUBLISHED_DRAFT'), 'not published')
+        pub_fault('technical_publication_wrong_science',lambda d:d.__setitem__('frozen_scientific_sha256','0'*64), 'not published')
+        pub_fault('technical_publication_wrong_source',lambda d:d.__setitem__('source_revision','0'*40), 'not published')
+        pub_fault('technical_publication_wrong_helper',lambda d:d['new_helper'].__setitem__('sha256','0'*64), 'published technical')
+        pub_fault('technical_publication_wrong_manifest',lambda d:d['new_execution_manifest'].__setitem__('sha256','0'*64), 'published technical')
+        pub_fault('technical_publication_wrong_descriptor',lambda d:d['technical_descriptor'].__setitem__('sha256','0'*64), 'published technical')
+        pub_fault('technical_publication_wrong_entrypoint',lambda d:d.__setitem__('entrypoint','UNPUBLISHED_OTHER_ENTRYPOINT'), 'published technical')
+        pub_fault('technical_publication_wrong_ancestor',lambda d:d['ancestor_draw_helper'].__setitem__('sha256','0'*64), 'published technical')
+        refuses('wrong_frozen_scientific_SHA',h='0'*64,fragment='scientific identity')
+        changed=deepcopy(science);changed['components']['learning_draw_checkpoint_offline_templates']['sha256']='0'*64
+        refuses('tampered_science_packet_ref',s=changed,fragment='scientific content')
+        changed=deepcopy(manifest);changed['output_root']='/UNQUALIFIED_DIFFERENT_DRAW_OUTPUT'
+        refuses('tampered_output_manifest_field',v=changed,fragment='beyond declared technical')
+        changed=deepcopy(manifest);changed['paired_protocol_template']['sha256']='0'*64
+        refuses('tampered_paired_manifest_ref',v=changed,fragment='beyond declared technical')
+        changed=deepcopy(manifest);changed['helper_sha256']='0'*64
+        refuses('wrong_successor_helper_digest',v=changed,fragment='successor helper')
+        changed=deepcopy(manifest);changed['permit_HOLD']=True
+        refuses('extra_manifest_field_refuses',v=changed,fragment='beyond declared technical')
+        # Explicit reader-object fault injection after authentic file/hash checks:
+        # exercise transitive joins without editing immutable packet files.
+        def object_fault(name,path_suffix,mutate,fragment):
+            def checked(ref):
+                result=actual_checked(ref)
+                if ref['path'].endswith(path_suffix):
+                    result=deepcopy(result);mutate(result)
+                return result
+            ns['checked']=checked
+            try:refuses(name,fragment=fragment)
+            finally:ns['checked']=actual_checked
+        object_fault('packet_file_map_join_refuses','e4-learning-final-template-v1/preparation.json',
+            lambda d:d['files'].__setitem__('draw/manifest.TEMPLATE.json','0'*64),'packet file-map')
+        object_fault('EE0_original_helper_file_map_refuses','e4-learning-preparation-v1/preparation.json',
+            lambda d:d['files'].__setitem__('draw/bind_draw_plan.py','0'*64),'source/input-template file-map')
+        object_fault('parent_input_template_ref_refuses','e4-learning-final-template-v1/draw/manifest.TEMPLATE.json',
+            lambda d:d['inputs_template'].__setitem__('sha256','0'*64),'manifest ancestry')
+        object_fault('technical_ancestor_ref_refuses','e4-draw-metadata-consumer-correction-v2/technical-descriptor.json',
+            lambda d:d['ancestor_draw_helper'].__setitem__('sha256','0'*64),'correction ancestry')
+        def digest_fault(name,suffix,fragment):
+            ns['digest']=lambda path:'0'*64 if str(path).endswith(suffix) else actual_digest(path)
+            try:refuses(name,fragment=fragment)
+            finally:ns['digest']=actual_digest
+        digest_fault('original_helper_bytes_pin_refuses','e4-learning-preparation-v1/draw/bind_draw_plan.py','original draw helper changed')
+        digest_fault('input_template_bytes_pin_refuses','e4-learning-preparation-v1/draw/identity-inputs.TEMPLATE.json','bound identity changed')
+        # Actual future publication is NOT fabricated: only a labelled in-memory fixture above.
+        # Missing obsolete component is the authentic frozen science case;
+        # no fake component is inserted and no array/loader module is imported.
+        require(not any(k=='torch' or k=='numpy' or k.startswith('chess_anti_engine') for k in sys.modules),'forbidden import')
+        receipt={'status':'PASS_E4_DRAW_METADATA_GUARD_CONTROLS_ONLY','cases':rows,'array_path_attempts':len(array_calls),
+            'helper_sha256':sha(TARGET),'manifest_sha256':sha(PREP/'manifest.json'),
+            'module_imports_or_loader_draw_model_data_execution':False,
+            'actual_technical_publication_verified':False,'publication_predicate_simulation_only':True,
+            'scope':'Actual guard/helper source extracted and executed only; authentic frozen metadata plus explicit object/digest fault injection. Not filesystem-race testing or actual draw/loader qualification.'}
+        (OUT/'readout.json').write_text(json.dumps(receipt,indent=2)+'\n')
+    except BaseException as error:
+        (OUT/'failure.json').write_text(json.dumps({'status':'FAILED_GUARD_CONTROLS','error':repr(error),'cases':rows})+'\n');raise
+    finally:
+        signal.alarm(0)
+        for f in OUT.iterdir():
+            with f.open('rb') as stream:os.fsync(stream.fileno())
+            f.chmod(0o444)
+        fd=os.open(OUT,os.O_RDONLY|os.O_DIRECTORY);os.fsync(fd);os.close(fd);OUT.chmod(0o555)
+
+if __name__=='__main__':main()

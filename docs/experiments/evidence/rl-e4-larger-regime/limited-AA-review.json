@@ -1,0 +1,123 @@
+{
+  "findings": [],
+  "limits": [
+    "Historical four-update AA relative observation at R6 plus exact consumed original model/Trainer/optimizer source, source-reviewed E4 adapters and focused actualsynthetic128/129 boundaries; NOT a new R7AA,129-update bitwise equivalence, hostmirror/optimizer runtime test, seed replication or playing gain.",
+    "Native5currentimports and all820actual encodings/mirrors are accepted separately; no universal numericalbinary parity or model/engine runtime claim.",
+    "Fresh192cohort allintegrity/128TRAINproofs, fixedcommonphysicaldraws, finalscience/mainpublication and finiteactualstageadmission remain mandatory. OldHOLD closed, no old corpus learning or adoption.",
+    "The component is a scoped reuse of historical R6 four-update common-capture versus selected-copies A/A, unchanged consumed math sources, reviewed E4 adapters, and new synthetic 128/129 boundaries. It is not a newly executed R7 A/A or a claim of 129-update bitwise equivalence.",
+    "No new project imports, actual models/Trainer/optimizer/serialization, arrays, checkpoint reads, table/engine queries, numerical tests or jobs were run by this review. Historical native and numerical differences are not inferred away by Python source equality.",
+    "Final science/publication and actual cohort/draw/learning/offline/arena evidence and finite stage admissions remain separate. No learning, strength, adoption or universal noninterference claim."
+  ],
+  "reconciliation": {
+    "E4_observer_and_loader_hashes_match_source_review": true,
+    "actual_94_Trainer_kwargs_canonical_sha256": "660c9ff5ec28b14d45563bee842376b424fc94a509b313c6bd7787fefbc5405e",
+    "actual_E4_820_config_and_native_refs_match_prior_acceptances": true,
+    "all_twelve_saved_control_rows_exact_copy": true,
+    "historical_AA_status": "ACCEPT_AA4_RELATIVE_DELTA_OBSERVER_QUALIFICATION_ONLY",
+    "historical_AA_updates_per_arm": 4,
+    "selected_eight_names_roles_routes_shapes_dtype_bytes_match_historical_manifest": true,
+    "whole_21_consumed_model_Trainer_optimizer_source_current_and_immutable_R6_bytes_exact": [
+      {
+        "path": "chess_anti_engine/model/__init__.py",
+        "sha256": "fcb5d18946d14a4066ce95dd68dd8ffc68fa017d9f4fb35220ade8316006ea11"
+      },
+      {
+        "path": "chess_anti_engine/model/tiny.py",
+        "sha256": "a859677a41fde6ace61ff0679f6a410b2939a94b56dd26838a09d178589f8e30"
+      },
+      {
+        "path": "chess_anti_engine/model/transformer.py",
+        "sha256": "484f092c0dfb124761c515e15c569ef9db0029d574ad61a7a08ce4c80c078f97"
+      },
+      {
+        "path": "chess_anti_engine/train/__init__.py",
+        "sha256": "9132a45ee3d819e0dd2c0964db2a52bf1a5c204a0e589c62dd46b982fdc8d03c"
+      },
+      {
+        "path": "chess_anti_engine/train/async_eval.py",
+        "sha256": "420613b37480dbd32a6923f0f4eafff11ce10d1efc70766a05745a855660b8d7"
+      },
+      {
+        "path": "chess_anti_engine/train/aurora.py",
+        "sha256": "85db0725102ed4d61759d7ada5e872a0c2673a5580b4821d2a39bf1d141468df"
+      },
+      {
+        "path": "chess_anti_engine/train/compile_probe.py",
+        "sha256": "77a61d72b76f26b05fe41a114b8ad11e3e39b41439d9b7011dbc3b6719dbf118"
+      },
+      {
+        "path": "chess_anti_engine/train/constants.py",
+        "sha256": "1e3c3793047f1a65f3e262b9406b92a4cf0d6a86b135b5b9f581787640d76c73"
+      },
+      {
+        "path": "chess_anti_engine/train/eval_ruler.py",
+        "sha256": "d2ccab8e6e7c250b0c02a3ef8847c51bc39ee6b444d165dfe49f9cc9512c83fc"
+      },
+      {
+        "path": "chess_anti_engine/train/losses.py",
+        "sha256": "a70ec504f7a852e639aa9e954000925fb0aeeaeb97304d1e7f1c7fc4f4205820"
+      },
+      {
+        "path": "chess_anti_engine/train/muon.py",
+        "sha256": "b4753c536f3bb906b0a50dd26a5bfa9bf332393d577b15688f1da8be4104bbd4"
+      },
+      {
+        "path": "chess_anti_engine/train/soda.py",
+        "sha256": "425153ba95ffe057d4b221fc796aac0e111f24e5f6a49db20b1a909bcbed75a6"
+      },
+      {
+        "path": "chess_anti_engine/train/sparse_sf_ce.py",
+        "sha256": "0666aaad143b2f3b8579792b87cdc81ce4c48cf20cbb6c46c769c631174f5d3b"
+      },
+      {
+        "path": "chess_anti_engine/train/target_builder.py",
+        "sha256": "9234a205c56bd23cf8cc1bafa37119c797ef4d04c47e1495990b14e150d456f6"
+      },
+      {
+        "path": "chess_anti_engine/train/targets.py",
+        "sha256": "e079df47087b3aa1150c37d261caf03b8b2a6f3196294392fea241bd597ae03c"
+      },
+      {
+        "path": "chess_anti_engine/train/trainer.py",
+        "sha256": "dadd881bbd53c9915a8ad3e0ffa5402838e9f5443d572eaf657ee84e3effe7f0"
+      },
+      {
+        "path": "chess_anti_engine/train/value_blend_guard.py",
+        "sha256": "4e3a55714fa4847e2ab4f2d88f9881b4202b563b9c1c9ff3320f246236d66b25"
+      },
+      {
+        "path": "chess_anti_engine/uci/model_loader.py",
+        "sha256": "76041fc68a50f4ecacde8e828e7aa4c2fdf593d0403d7aff2bcc02f8af881ea3"
+      },
+      {
+        "path": "chess_anti_engine/encoding/model_inputs.py",
+        "sha256": "8e5c7f1b122b50c2ef53a8cd1756adfbcbc812aaf4b08487ac2c7e28ff37821a"
+      },
+      {
+        "path": "chess_anti_engine/encoding/cboard_encode.py",
+        "sha256": "9fe7123de8c3ce74d328dc92200b8d5018a1bd4a6d3ed2dc21204c9b95e373b7"
+      },
+      {
+        "path": "scripts/offline_replay_epoch.py",
+        "sha256": "228486bfec87da077177f58502e307af524ea0dc40a521d8fcab3b3b8697ecc2"
+      }
+    ]
+  },
+  "references_sha256": {
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2-aa4-qualification-preparation-v1/manifest.json": "f6f90b0ee67256f59c320509fc6dd710290f01d0463038e4ef42bc59f01d1384",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-train-paired-preparation-v5/AA-source-equivalence.json": "74f8811fc74e2c538d1ecd86022474031aa1b7fc5360d7b73324c3864f3115ab",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-results-v1/readout.json": "645bf79f3de25131e9c449280441e52874ae97f159ebd35adf04d6ed6ddb6502",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-results-v1/trainer-kwargs.json": "4e99fadaec05b53a8a306a9feca222cccf27085c0b589a200ba9cd6930c7d325",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/native-origins.json": "8d9b629c7f6724b9d863ec6fc6bdadb8f0355be1460ed424c6256e9bc5a35023",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/readout.json": "34cd17f72d78c0cafc8160640bb216a77c3a7c6791bed6a41c37d8b966ddc737",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learner-boundary-control-execution-v3/terminal.json": "ad888d89f6d6065cbcbfe39737aa0365f26f907daba3b22035cf7d0a082468a0",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learner-boundary-control-results-v3/receipt.json": "8a7841a831af2cb05501ff33903f82a24e1afd4fecbc38056c0b1df6d1818234",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learner-boundary-controls-actual-independent-review-v3/review.json": "876ecda70bed0f114cc86ecd65095fb7c9108661ac250a8b150fd4e264063def",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/source-proof.json": "3da383ff9d7addf3c3bcc97bfc9bb346ada5d86682bba9a4f4c35ef7c89c966c",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/train/selected-parameters.json": "fbb738aaf19b30520ef92a55c93a77eed9971c3904abbb2e18b2479f2a4e79ff",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-limited-paired-reuse-root-acceptance-v1/controls-readout.json": "e251f642e36964b00307a19a5f4e64563c04db23546a9a83a16c9e43f1285f86",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-limited-paired-reuse-root-acceptance-v1/readout.json": "9579e8c03924826ae865acff161e9f8170382f36e0b0bdaec60149cb5dc8d927"
+  },
+  "status": "ACCEPT_E4_LIMITED_HISTORICAL_AA_AND_SYNTHETIC_BOUNDARY_COMPONENT_REUSE_ONLY",
+  "utc": "2026-11-13T08:48:10.573765+00:00"
+}

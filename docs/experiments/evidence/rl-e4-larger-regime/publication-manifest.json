@@ -1,0 +1,605 @@
+{
+  "copied_bytes": 889573,
+  "copied_files": 99,
+  "files": [
+    {
+      "bytes": 33497,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/protocol.json",
+      "sha256": "7cfd6e45b565f39827a1801c828dc302fe5d79f176c7701b004fa7f1adab3478",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-scientific-protocol-final-v2/protocol.json"
+    },
+    {
+      "bytes": 5108,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/science-prepublication-wording.patch.txt",
+      "sha256": "3b1218c7166ac617cf71ab3c2d4effcd7456b20bdbc2152b3456406bcd606a56",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-scientific-protocol-final-v2/v1-to-v2.patch"
+    },
+    {
+      "bytes": 1378,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/identity.json",
+      "sha256": "1b4d6d9db14638fa5ccfb434d598fb4a9b5d186f349d3a6ff74af651256c20f7",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-study-identity-v1/identity.json"
+    },
+    {
+      "bytes": 565,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/inference-scope.json",
+      "sha256": "796e2ebecd7e896c4cf238859cc7461fc0f1a2d9d4a154f3f68757b722d9f4bb",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-selection-inference-clarification-v1/clarification.json"
+    },
+    {
+      "bytes": 2256,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/structural-rule.json",
+      "sha256": "50a2eaf11683bc22e1c3e908bf5a7e177bbd988ced3f2f403d7e6e0283c7a45b",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-structural-preparation-v2/rule.json"
+    },
+    {
+      "bytes": 873,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/structural-selection-manifest.json",
+      "sha256": "7db17da357fc524d6b1862fc45fab9a3fad2745fd4c5b54d4eec889051825724",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-structural-selection-results-v1-cd47b230/manifest.json"
+    },
+    {
+      "bytes": 2059,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/structural-root-acceptance.json",
+      "sha256": "44b89043cd19df0207748248d3f0d7174be76e2af5135a6965f9b70133ebb004",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-structural-root-actual-acceptance-v1/readout.json"
+    },
+    {
+      "bytes": 4130,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/structural-actual-review.json",
+      "sha256": "4d630b8a56bae855d48bfd629409d729c4ebdd5b7d277291c51624b4d350f8a9",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-structural-actual-independent-review-v1/review.json"
+    },
+    {
+      "bytes": 2112,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/cpu820-root-acceptance.json",
+      "sha256": "34cd17f72d78c0cafc8160640bb216a77c3a7c6791bed6a41c37d8b966ddc737",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/readout.json"
+    },
+    {
+      "bytes": 10232,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/cpu820-native-origins.json",
+      "sha256": "8d9b629c7f6724b9d863ec6fc6bdadb8f0355be1460ed424c6256e9bc5a35023",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/native-origins.json"
+    },
+    {
+      "bytes": 1379,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/cpu820-encoding-compatibility.json",
+      "sha256": "0b50797c0bdbcb7f1a7d65d8df54283abbe197af66d4d2268775194b659a0811",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/producer-encoding-compatibility.json"
+    },
+    {
+      "bytes": 1335,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/cpu820-profile-compatibility.json",
+      "sha256": "86abfae294282de956320a8e76aaeeb16c753c097bc804b7992757bfd87cb2c1",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/profile-compatibility.json"
+    },
+    {
+      "bytes": 11936,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/cpu820-actual-profile.json",
+      "sha256": "9e9ca115e387b49bc7734248dc6edae5b3bf9e88c0d25a62889b4d05aefff734",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-results-v1/actual-builder-profile.json"
+    },
+    {
+      "bytes": 3445,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/cpu820-trainer-kwargs.json",
+      "sha256": "4e99fadaec05b53a8a306a9feca222cccf27085c0b589a200ba9cd6930c7d325",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-results-v1/trainer-kwargs.json"
+    },
+    {
+      "bytes": 3873,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/cpu820-actual-review.json",
+      "sha256": "fe5f631f864827e800771a3ac5cd050e999ec206769556600f0005857c9175dc",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-actual-independent-review-v1/review.json"
+    },
+    {
+      "bytes": 102217,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/collection-protocol.template.json",
+      "sha256": "ff9befc67974238680c1ad59785ad495cf1dbc02292cbce0313faee4660a6ef9",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-template-v1/protocol.template.json"
+    },
+    {
+      "bytes": 16838,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/collection-manifest.template.json",
+      "sha256": "e703b36355451d275f9584fe4799a60a3efd583c75e2d98c68c52a608fcad4c9",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-template-v1/manifest.template.json"
+    },
+    {
+      "bytes": 3494,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/collection-binding-contract.json",
+      "sha256": "f21908156f0e1ecda25a3587f9c33dfa92032890f7a497247b79aa5fd8a3bed4",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-template-v1/binding-contract.json"
+    },
+    {
+      "bytes": 2474,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/collection-command.template.json",
+      "sha256": "fa15dfe9c5f635884cb6cfb4712e3e0e1f07ec6ced2584289eb1bbc2af226c26",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-template-v1/collection-command.observed.template.json"
+    },
+    {
+      "bytes": 2126,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/collection-command-selection.json",
+      "sha256": "ab04e5a9ad62a9f5b5971dc65c8c2073c9d60b67b856551890da033a93dc1e59",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-observed-collection-command-selection-v1/selection.json"
+    },
+    {
+      "bytes": 5598,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/collection-template-review.json",
+      "sha256": "baddc36d03a5faec5a450bec72bf62d1db3442e44783feafe27f5bf59993a064",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collector-final-template-independent-review-v1/review.json"
+    },
+    {
+      "bytes": 5545,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/cohort-auditor-manifest.template.json",
+      "sha256": "e244fbb5391edc5bf01e5a3a0287d36972512295d2e39ab9749fbed6d9000539",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cohort-auditor-final-template-v1/manifest.template.json"
+    },
+    {
+      "bytes": 1207,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/cohort-auditor-command.template.json",
+      "sha256": "be90e95f7165ade6630138179923d298023eac761a7a07f00c274f362202c952",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cohort-auditor-final-template-v1/command.TEMPLATE.json"
+    },
+    {
+      "bytes": 8517,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/cohort-auditor-template-review.json",
+      "sha256": "6e3fed977f66df742a673dd7a7f052b80f82450283ab4823cbeff6315c702a2a",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cohort-auditor-final-template-independent-review-v1/review.json"
+    },
+    {
+      "bytes": 11550,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/learning-source-proof.json",
+      "sha256": "3da383ff9d7addf3c3bcc97bfc9bb346ada5d86682bba9a4f4c35ef7c89c966c",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/source-proof.json"
+    },
+    {
+      "bytes": 6776,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/learning-source-review.json",
+      "sha256": "35b9c873aa18af42394e2c2dfed8294d2bf6722c73f24c28bb482bd34620f5ce",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-independent-source-review-v1/review.json"
+    },
+    {
+      "bytes": 3117,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/learning-final-template-review.json",
+      "sha256": "1c62c13733e14a03ee0ad96cb6e9795bc72e33098872d4345540b1cce4d75a1b",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-final-learning-template-independent-review-v2/review.json"
+    },
+    {
+      "bytes": 2795,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/learning-final-template-handoff.json",
+      "sha256": "5de37a2094ab5dc5d48160bd61e4591c78dc0dafaa5384dfcc979000c4f8b5c2",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/handoff.json"
+    },
+    {
+      "bytes": 1641,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/learning-canonical-source-placement.json",
+      "sha256": "35fb1c14b0a0cdd88ef84589c23dd1f312686f3dfa08fa9433481c1ff837ee31",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/canonical-source-placement.json"
+    },
+    {
+      "bytes": 885,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/offline-science-contract.json",
+      "sha256": "8fd1712bbbef89140d74eb5d35c29bcdfa692a47a244348ef76b8ad98136e3c7",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/offline-science-contract.EXACT.json"
+    },
+    {
+      "bytes": 3428,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/offline-fen-correction.json",
+      "sha256": "6dc0fdcefabe1872e3ee2a44b0a383e063e6250ad6f3f87f8607daa33a3fb5a5",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline-final-fen-correction-v1/correction.json"
+    },
+    {
+      "bytes": 3053,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/boundary-actual-readout.json",
+      "sha256": "8a7841a831af2cb05501ff33903f82a24e1afd4fecbc38056c0b1df6d1818234",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learner-boundary-control-results-v3/receipt.json"
+    },
+    {
+      "bytes": 6352,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/boundary-actual-review.json",
+      "sha256": "876ecda70bed0f114cc86ecd65095fb7c9108661ac250a8b150fd4e264063def",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learner-boundary-controls-actual-independent-review-v3/review.json"
+    },
+    {
+      "bytes": 3810,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/boundary-root-readout.json",
+      "sha256": "e251f642e36964b00307a19a5f4e64563c04db23546a9a83a16c9e43f1285f86",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-limited-paired-reuse-root-acceptance-v1/controls-readout.json"
+    },
+    {
+      "bytes": 3072,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/limited-AA-reuse.json",
+      "sha256": "9579e8c03924826ae865acff161e9f8170382f36e0b0bdaec60149cb5dc8d927",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-limited-paired-reuse-root-acceptance-v1/readout.json"
+    },
+    {
+      "bytes": 8132,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/limited-AA-review.json",
+      "sha256": "5c80b246de19a6eaaf44193a8c17ad1e6058d1968293a72047e2758587ba0b9f",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-limited-paired-reuse-independent-review-v1/review.json"
+    },
+    {
+      "bytes": 21285,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/arena-commands.template.json",
+      "sha256": "055f0200b0669b58ad9f2a340a6aeef3c12c4c16e7dd5abf02f7d11817b64781",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-preparation-v1/commands.template.json"
+    },
+    {
+      "bytes": 2080,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/arena-decision-rules.json",
+      "sha256": "d2babaef8c5f227000c159c7caf61df385398d98ab3a382a017fb2761c6cd895",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-preparation-v1/decision-rules.json"
+    },
+    {
+      "bytes": 2655,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/arena-manifest.template.json",
+      "sha256": "370f7fa00259fa77abe005c798355ae1ff5feaca637f71f28a05228a6f7ea056",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-template-v1/manifest.template.json"
+    },
+    {
+      "bytes": 3616,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/arena-binding-contract.json",
+      "sha256": "403865c97736baf455071d18ed485083aadbd2238772acd57037c51af7359ceb",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-template-v1/binding-contract.json"
+    },
+    {
+      "bytes": 6173,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/arena-readout-commands.template.json",
+      "sha256": "d202ec7f47ba333f0fc2d8e49300d0f468698b30a0e54c24aea518acc0a37b32",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-template-v1/readout-commands.template.json"
+    },
+    {
+      "bytes": 2829,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/arena-source-review.json",
+      "sha256": "ed408f6889cfd443c7673d78c7a152fef49ea033ff2096b7e16d2798302c65cf",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-independent-source-review-v1/review.json"
+    },
+    {
+      "bytes": 5348,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/arena-template-review.json",
+      "sha256": "d42a6c3261c8b3e71134f07dfeb57633c887f07958d56127a34f6b7e3f3bd2ae",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-template-independent-review-v1/review.json"
+    },
+    {
+      "bytes": 1611,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/arena-inert-controls-readout.json",
+      "sha256": "404b4a764cc2b17e95e9f9212015c7d64d93c3bb03d55aa985c73eda5fd34eef",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-decision-inert-controls-results-v1/readout.json"
+    },
+    {
+      "bytes": 2377,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/arena-inert-controls-review.json",
+      "sha256": "a5006e5869cceb6acf70f6aebe5437817dd030b843660041625b4f19225342c6",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-decision-inert-controls-actual-independent-review-v1/review.json"
+    },
+    {
+      "bytes": 2362,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/observer-binding.json",
+      "sha256": "c03ae042d83f03464e7dfdf5f77ae59b0d17cc5d6c12198e7aa6aba73c197660",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-sf-observation-dispatch-binding-candidate-v1/binding.candidate.json"
+    },
+    {
+      "bytes": 3347,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/observer-source-review.json",
+      "sha256": "fb247e20960df1121766e012a05d0a43b29cc0c0901fe44d3dcaf94814ac51a3",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-sf-raw-observation-independent-source-review-v1/review.json"
+    },
+    {
+      "bytes": 2699,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/observer-dispatch-review.json",
+      "sha256": "068c13bd302d7ea236697677a0a5a56dd4ae46360e2c6e65aa1e7eb04286ecc9",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-sf-observation-dispatch-independent-source-review-v1/review.json"
+    },
+    {
+      "bytes": 1234,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/observer-inert-controls-readout.json",
+      "sha256": "6d4ae66ea75d3cbb2ed39303148ddcf860a2ede8d80279720ad2eac71adf6e68",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-sf-observation-inert-controls-results-v1/readout.json"
+    },
+    {
+      "bytes": 2282,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/observer-inert-controls-review.json",
+      "sha256": "069f862d19d3ce8ef8ad478739043d86c2c04812cfed66d44db0142bd4d22f2f",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-sf-observer-inert-controls-actual-independent-review-v1/review.json"
+    },
+    {
+      "bytes": 13263,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/select_inputs.py.txt",
+      "sha256": "2cdd0ce00875a16ecca9663f5ad9137f9fbe71b88c0455a915ad2290317284ed",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-structural-preparation-v2/select_inputs.py"
+    },
+    {
+      "bytes": 52338,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/collect192.py.txt",
+      "sha256": "b2fe1f8107ae025ac4151525660da8c6a6b402ed8baa0d770143d2841bd274fd",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-package-v1/collect192.py"
+    },
+    {
+      "bytes": 4241,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/known_e2.py.txt",
+      "sha256": "ddb0b57ad7cb561a4e4cc5994a2328f16627dc2cc2f47b28e3969bbb1d5f82e5",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-package-v1/known_e2.py"
+    },
+    {
+      "bytes": 8962,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/value_bundle.py.txt",
+      "sha256": "08a8ba502e3ef3e1b4e372094a99e993f681278242032aee29b190bd84147f78",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-package-v1/value_bundle.py"
+    },
+    {
+      "bytes": 12338,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/verified_outcome.py.txt",
+      "sha256": "f6340208eec76470d58001717a1a02d01808c38374c53417a5e5ffff0db3cf81",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-package-v1/verified_outcome.py"
+    },
+    {
+      "bytes": 20643,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/audit_cohort.py.txt",
+      "sha256": "cd0e559b9b3833e80f3fdcc8aa436a90d464fa8a964bee6bfad2d38b7f14cb87",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cohort-auditor-final-v1/audit_cohort.py"
+    },
+    {
+      "bytes": 25849,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/train_inputs.py.txt",
+      "sha256": "a95420782bf03b47cc4028a65eb8cac73b3d548f1e3eac725bb116721bc9e95f",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/train/train_inputs.py"
+    },
+    {
+      "bytes": 30905,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/paired_observer.py.txt",
+      "sha256": "ed38901e300ae0d8b4c72e040373f2bcfc0775470dcdf38e719c03442cee8afe",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/train/paired_observer.py"
+    },
+    {
+      "bytes": 21926,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/run_paired.py.txt",
+      "sha256": "39ffdb2579fcfe3d5ae237e889120c0bb3e42a6e16c6bd280a8ddbd4b7900f55",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/train/run_paired.py"
+    },
+    {
+      "bytes": 2092,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/selected-parameters.json",
+      "sha256": "fbb738aaf19b30520ef92a55c93a77eed9971c3904abbb2e18b2479f2a4e79ff",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/train/selected-parameters.json"
+    },
+    {
+      "bytes": 9300,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/bind_draw_plan.py.txt",
+      "sha256": "4d07f1c83e3d173be3fa8500eaf1f315274722c2f12e78d3552bc863d23561d2",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/draw/bind_draw_plan.py"
+    },
+    {
+      "bytes": 25668,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/audit_paired129.py.txt",
+      "sha256": "00333589bc09630debd497bb97a53de79f6a0c5f887cc99abfd2182f91c15d49",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/checkpoint/audit_paired129.py"
+    },
+    {
+      "bytes": 33471,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/learner-boundary-controls.py.txt",
+      "sha256": "412fe9af4a3932c98a8f25d045402018d0432d4b75eaef440767c5d133fe9f51",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learner-boundary-control-preparation-v3/controls.py"
+    },
+    {
+      "bytes": 20615,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/read_endpoint.py.txt",
+      "sha256": "be9d9f5b8b63de3e855b15152c28fb262ab491170916e72c81378fea1af47776",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-package-v1/read_endpoint.py"
+    },
+    {
+      "bytes": 7763,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/decide.py.txt",
+      "sha256": "34f3cb2045edc125b871a79f1d51624fe38d661ce5e621d2fab7684f5d72ef7e",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-package-v1/decide.py"
+    },
+    {
+      "bytes": 4281,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/arena-controls.py.txt",
+      "sha256": "0f4b0238852c9284f5b236f71986b87f2dc55b184e08f5c5ad248e73a55fe26e",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-package-v1/controls.py"
+    },
+    {
+      "bytes": 24447,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/observe_sf.py.txt",
+      "sha256": "dda3ef2140f042d529960ab226bf5cf01e2352fbb4568f27d3b61f016cea4da6",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-sf-raw-observation-implementation-v1/observe_sf.py"
+    },
+    {
+      "bytes": 11421,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/observer-controls.py.txt",
+      "sha256": "cd2ce09070f4c78200639f97912c2f252733b8ff0de6d7896143376f485ae4c2",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-sf-raw-observation-implementation-v1/controls.py"
+    },
+    {
+      "bytes": 2848,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/dispatch.py.txt",
+      "sha256": "b31afe2f16e7d5305a3ffd830582f12f4a8d606cecf84fe46236f5780a9ef8bd",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-sf-observation-dispatch-preparation-v1/dispatch.py"
+    },
+    {
+      "bytes": 6081,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/train-protocol.TEMPLATE.json",
+      "sha256": "d243be34aee5ccb8a40779bb112f8551aee5cd8083cdc77303c0809f57b482bb",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/train/protocol.TEMPLATE.json"
+    },
+    {
+      "bytes": 25480,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/train-fixed-field-projections.json",
+      "sha256": "42a95d535ed2e5db93ed28674bd41360798d2c186393540f08b91cd1afc52f48",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/train/fixed-field-projections.json"
+    },
+    {
+      "bytes": 2163,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/train-command.TEMPLATE.json",
+      "sha256": "b67ea740e4dab4c57f7cb4f5bc3bdc04987c90db36d05665278bb5b0888d968d",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/train/command.TEMPLATE.json"
+    },
+    {
+      "bytes": 14063,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/train-binding-contract.json",
+      "sha256": "dd3f8bd412677cf4572ace2fdfebc98b8c07d0767da440df37646da1759969e8",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/train/binding-contract.json"
+    },
+    {
+      "bytes": 18241,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/train-manifest.TEMPLATE.json",
+      "sha256": "c4ea9bd6911f1e7cbc52aab0790820496d35801864b8cfa65e9258c262edd5d8",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/train/manifest.TEMPLATE.json"
+    },
+    {
+      "bytes": 1589,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/train-cohort-binding.TEMPLATE.json",
+      "sha256": "cb4eb5249139a24f5c50bf30adeca3c6dfca29a08763568d7a48954fccd3dc6c",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/train/cohort-binding.TEMPLATE.json"
+    },
+    {
+      "bytes": 1216,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/draw-command.TEMPLATE.json",
+      "sha256": "d13284e59370d1ba25dfb464cea9b0b53a5e1c78a34f283681022c218703ee80",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/draw/command.TEMPLATE.json"
+    },
+    {
+      "bytes": 2797,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/draw-manifest.TEMPLATE.json",
+      "sha256": "efb0505181b9287a49c26a2e8278926d3fe08cc51de4dbfe44395007b3d4d638",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/draw/manifest.TEMPLATE.json"
+    },
+    {
+      "bytes": 1256,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/checkpoint-command.TEMPLATE.json",
+      "sha256": "2b16ef92a71fe248d7de07bf98d1e81e44b1bc1bd830f1613f70ff064599fd32",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/checkpoint/command.TEMPLATE.json"
+    },
+    {
+      "bytes": 3392,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/checkpoint-manifest.TEMPLATE.json",
+      "sha256": "19799aa6b238d86c1010a663b65760cff9edadba144ec691a4074ac9263456b1",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/checkpoint/manifest.TEMPLATE.json"
+    },
+    {
+      "bytes": 7395,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/offline-roots-protocol.TEMPLATE.json",
+      "sha256": "87eb4354cc5bcb7eebb5d559611a27288500a29a0867bee92ff3014b28815c87",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/offline-roots/protocol.TEMPLATE.json"
+    },
+    {
+      "bytes": 1099,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/offline-roots-command.TEMPLATE.json",
+      "sha256": "3768e2ff39d59c28040cfaa0415c0946bd7fa5e634b95cb60cb12d94b3275de6",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/offline-roots/command.TEMPLATE.json"
+    },
+    {
+      "bytes": 1738,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/offline-roots-binding-contract.json",
+      "sha256": "c1002b4b6bab754fc0ac6cc909ff54558b353aed095a5778f090d8bb1e45a279",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/offline-roots/binding-contract.json"
+    },
+    {
+      "bytes": 4531,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/offline-roots-manifest.TEMPLATE.json",
+      "sha256": "dd70d841606ebbfad80023864ad4e510aba932f7715f8593377fcaee7223af98",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/offline-roots/manifest.TEMPLATE.json"
+    },
+    {
+      "bytes": 7395,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/offline-score-protocol.TEMPLATE.json",
+      "sha256": "87eb4354cc5bcb7eebb5d559611a27288500a29a0867bee92ff3014b28815c87",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/offline-score/protocol.TEMPLATE.json"
+    },
+    {
+      "bytes": 1093,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/offline-score-command.TEMPLATE.json",
+      "sha256": "e50a7f6f36230720859a0e868b568aca643abb3a16d2179885e14f21fc1cd768",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/offline-score/command.TEMPLATE.json"
+    },
+    {
+      "bytes": 1738,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/offline-score-binding-contract.json",
+      "sha256": "b61dc344abaf859d7437f82e9c6651ef9c107ac9e87f85c60c8b501820d20b28",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/offline-score/binding-contract.json"
+    },
+    {
+      "bytes": 4531,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/offline-score-manifest.TEMPLATE.json",
+      "sha256": "dd70d841606ebbfad80023864ad4e510aba932f7715f8593377fcaee7223af98",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/offline-score/manifest.TEMPLATE.json"
+    },
+    {
+      "bytes": 7395,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/offline-readout-protocol.TEMPLATE.json",
+      "sha256": "87eb4354cc5bcb7eebb5d559611a27288500a29a0867bee92ff3014b28815c87",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/offline-readout/protocol.TEMPLATE.json"
+    },
+    {
+      "bytes": 1099,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/offline-readout-command.TEMPLATE.json",
+      "sha256": "52a9441623ec470e244fc853d998ec2713d9589679f02f1aaef5f7b108064240",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/offline-readout/command.TEMPLATE.json"
+    },
+    {
+      "bytes": 1740,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/offline-readout-binding-contract.json",
+      "sha256": "6a51728e3db48ccb7fc005bb16278bfe4ccbfdacf972601153b0aabb17b98912",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/offline-readout/binding-contract.json"
+    },
+    {
+      "bytes": 4531,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/offline-readout-manifest.TEMPLATE.json",
+      "sha256": "dd70d841606ebbfad80023864ad4e510aba932f7715f8593377fcaee7223af98",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-final-template-v1/offline-readout/manifest.TEMPLATE.json"
+    },
+    {
+      "bytes": 7210,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/offline-common.py.txt",
+      "sha256": "a62e85e22a593028b68ddc673e0fcf24186f08d67059e05863c0e3b7a8598d92",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline64-score-final-v2/common.py"
+    },
+    {
+      "bytes": 2447,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/offline-metrics.py.txt",
+      "sha256": "8058546e7fa263c5becfae1f4378917d4b1d4f333f32d8e04b94fceefe7a1d56",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline64-score-final-v2/metrics.py"
+    },
+    {
+      "bytes": 7169,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/offline-strict_roots.py.txt",
+      "sha256": "5c60108f71d5154a21c7836a2cf48910b0596dd677a240c19ff30c793a18033c",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline64-score-final-v2/strict_roots.py"
+    },
+    {
+      "bytes": 8425,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/offline-freeze_roots.py.txt",
+      "sha256": "40dc49d582326c4d63f06011746f65f052826fb66e579e54cad105eef7a9a956",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline64-score-final-v2/freeze_roots.py"
+    },
+    {
+      "bytes": 19588,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/offline-score.py.txt",
+      "sha256": "b8229d1af09cfa19bfda26a85fc4cddc416c6cdf7a05de349789da9fe5214541",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline64-score-final-v2/score.py"
+    },
+    {
+      "bytes": 8162,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/offline-readout.py.txt",
+      "sha256": "c9f79c370c9c87edd59cd284515b644e30e48f6c9c4046c702be37c437d430e3",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline64-score-final-v2/readout.py"
+    },
+    {
+      "bytes": 34000,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/science-integration-review.json",
+      "sha256": "80432209beaa7c8a2c53403d1b44cff76d9666f14f37ff736299cec9cdaab5eb",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-final-science-component-integration-independent-review-v1/review.json"
+    },
+    {
+      "bytes": 2935,
+      "destination": "docs/experiments/evidence/rl-e4-larger-regime/science-root-publication-acceptance.json",
+      "sha256": "75cae6e6109d988d5b1062d7a8b07e9474af768bec2bf0f96c5fb092be06502d",
+      "source": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-final-science-root-publication-acceptance-v1/readout.json"
+    }
+  ],
+  "scientific_sha256": "7cfd6e45b565f39827a1801c828dc302fe5d79f176c7701b004fa7f1adab3478",
+  "scope": "Frozen one-shot source/template/statistical decision and CPU evidence only. Models/weights/replay arrays/bulk research output remain outsidecheckouts. Sourcepaths retained as historicalprovenance. No newE4game/optimizer/playing results or mainpublication proof in this manifest.",
+  "self_hash": "This manifest does not contain itself; exactGitblob and externalpublication proof identify its bytes.",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "EXACT_FROZEN_E4_PREREGISTRATION_SOURCE_TEMPLATE_AND_CPU_EVIDENCE_COPIES"
+}

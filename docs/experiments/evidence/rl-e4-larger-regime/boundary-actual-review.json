@@ -1,0 +1,135 @@
+{
+  "actual_cases": [
+    {
+      "Trainer_created": false,
+      "actual_Trainer_host_mirror_executed": false,
+      "batch": 256,
+      "draws_each": 129,
+      "identical_mirror_RNG": true,
+      "name": "actual_observer_proof_dispatch_and_common129_draws",
+      "result": "PASS"
+    },
+    {
+      "name": "actual192_metadata_gate_censored64HOLD_allowed",
+      "result": "PASS"
+    },
+    {
+      "expected_rejection": "TRAIN/source/ALL192/playing gate not qualified",
+      "name": "TRAIN_censored_refuses_whole128",
+      "result": "PASS"
+    },
+    {
+      "expected_rejection": "not fixed192/128TRAIN/64HOLD",
+      "name": "missing192_integrity_refuses",
+      "result": "PASS"
+    },
+    {
+      "HOLD_opens": 0,
+      "name": "actual_load_all128_proofs_before_deserialization",
+      "proof_calls": 128,
+      "raw_reads": 128,
+      "result": "PASS",
+      "shard_reads": 128
+    },
+    {
+      "expected_rejection": "CONTROL_128TH_PROOF_REJECTED",
+      "name": "128th_proof_refusal_no_arrays",
+      "result": "PASS"
+    },
+    {
+      "name": "actual_caller_hardlink_no_extra_Save_or_RNG",
+      "result": "PASS"
+    },
+    {
+      "last_epoch": 120,
+      "name": "actual_LR129_tail_and_saved130_peak_no_optimizer_steps",
+      "result": "PASS"
+    },
+    {
+      "actual_saved_checkpoint_or_Trainer_created": false,
+      "callback_steps": [
+        1,
+        8
+      ],
+      "caller_save_expressions": [
+        "directory / 'step-0.pt'",
+        "directory / 'trainer.pt'",
+        "directory / ('step-' + str(step) + '.pt')"
+      ],
+      "name": "actual129_callback_calls_and_snapshot0_1_8_129_contract",
+      "pre_step_calls": 129,
+      "result": "PASS"
+    },
+    {
+      "actual_final_fen": "4k3/8/8/8/P7/8/8/KQ6 b - a3 0 1",
+      "actual_fresh_verifier_issued_proof": true,
+      "canonical_final_fen": "4k3/8/8/8/P7/8/8/KQ6 b - - 0 1",
+      "controlled_fake_TB_owner": true,
+      "label": 0,
+      "name": "actual_offline_root_equivalent_native_EP_fullhistory_qualifies",
+      "result": "PASS"
+    },
+    {
+      "expected_rejection": "proof/audit mismatch",
+      "name": "actual_offline_root_genuinely_different_final_board_refuses",
+      "result": "PASS"
+    },
+    {
+      "handles": 3,
+      "name": "all_controlled_verification_handles_closed",
+      "result": "PASS"
+    }
+  ],
+  "findings": [],
+  "limits": [
+    "Explicit fake owned TB backend; actual constructor/verify/issued proofs/native encodings/raw factory/128segment dispatch/synthetic sampler exercised. Shard loading is an explicit in-memory fixture substitution: actual proof/validate ordering is exercised, not public shard deserialization. Not real table truth, Trainer host mirror/optimizer execution, actual cohort admission or scientific/gain evidence.",
+    "Actual synthetic common Generator draws are checked; real Trainer host augmentation/dropout/optimizer/model checkpoint execution is outside this stage.",
+    "The no-extra-save/RNG and snapshot naming evidence combines actual extracted callback/control execution with reviewed caller source and stub-file hardlink; it is not an actual trained checkpoint qualification.",
+    "Reviewer read only JSON/source and current /proc absence; no helper imports, reruns, project execution, models, arrays, engines, table probes or GPU work.",
+    "This acceptance supports prospective component binding only; it does not admit a research cohort, learning execution, playing results, adoption, or an Elo-gain claim."
+  ],
+  "owned_closure": {
+    "cpu_seconds": 7.15,
+    "independent_proc_absence": {
+      "1303736": {
+        "expected_birth": null,
+        "proc_exists": false
+      },
+      "1303738": {
+        "expected_birth": 28276674,
+        "proc_exists": false
+      }
+    },
+    "owned_processes_closed": true,
+    "owner_terminal_status": "PASS",
+    "returncode": 0,
+    "wall_seconds": 11.264073285041377
+  },
+  "reconciliation": {
+    "HOLD_payload_opens": 0,
+    "actual_E4_native_and_descriptor_refs_match": true,
+    "all_12_unique_cases_pass": true,
+    "all_preparation_components_and_target_authorities_hash_verified": true,
+    "batch_size": 256,
+    "controlled_verifier_handles_closed": 3,
+    "delivered_row_slots_per_arm": 33024,
+    "draws_each": 129,
+    "executed_child_command_exact_reviewed_command": true,
+    "proofs_before_shard_and_raw_fixture_loads": 128,
+    "total_synthetic_metadata_games": 192,
+    "training_physical_games": 128
+  },
+  "references_sha256": {
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learner-boundary-control-execution-v3/process.json": "29b3c18020c0a938bcb0e06b87a217bcc47d67f90dfab04123ed4821c0c930d8",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learner-boundary-control-execution-v3/terminal.json": "ad888d89f6d6065cbcbfe39737aa0365f26f907daba3b22035cf7d0a082468a0",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learner-boundary-control-preparation-v3/command.json": "bd1fcbee95fc4a18849e31b03b60fa58b0e5d242b54107194bde529feae0037d",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learner-boundary-control-preparation-v3/controls.py": "412fe9af4a3932c98a8f25d045402018d0432d4b75eaef440767c5d133fe9f51",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learner-boundary-control-preparation-v3/manifest.json": "239b8cbb0143dc4742094343d4add93a2b799ddb6ddc4a60c871c999255a4896",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learner-boundary-control-preparation-v3/preparation.json": "60b9552a17c658f911411ff30f4d82e58b4e90b3c42abda477e766d2d7a2a06b",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learner-boundary-control-results-v3/receipt.json": "8a7841a831af2cb05501ff33903f82a24e1afd4fecbc38056c0b1df6d1818234",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learner-boundary-controls-independent-source-review-v3/review.json": "296d0a12e908e2c2e3fbd0ae9e8f82baf6cfd4148dd1634e576fe9b816a22165",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learner-boundary-controls-root-admission-v3/admission.json": "06dfcb1dae9b3f7159a90289ca7def4d38f81b890430b97192de53a743d82ac0"
+  },
+  "status": "ACCEPT_ACTUAL_E4_SYNTHETIC128_PROOF129_DRAW_BOUNDARY_CONTROLS_ONLY",
+  "utc": "2026-11-13T08:45:12.033898+00:00"
+}

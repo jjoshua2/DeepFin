@@ -1,0 +1,90 @@
+{
+  "freeze": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/tb-on-runtime-source-freeze-v1/freeze.json",
+    "sha256": "6366f1e755fb5cdb72fac8b209423c1ef1ca32d932d091720d0fb8f464516055"
+  },
+  "hash_basis_reconciliation": {
+    "basis": "The exact saved tracked-source-index.txt is plain newline-delimited git ls-files --stage output. It is NOT the binary .git index.",
+    "conclusion": "6a70 versus ed65 is a comparison of different serialization artifacts, not evidence of a frozen-entry change or bad/stale freeze digest. f8dc is the NUL-delimited stage serialization.",
+    "current_NUL_HEAD_ls_tree_sha256": "61728be00bcccde4f5b150a858c6aad00ea2eae90b00e61a4761ae99f01f0823",
+    "current_NUL_ls_files_stage_sha256": "f8dc21fc910a5864d50411cc062511c92ea6aee5849d195697e6c345195cd695",
+    "current_plain_listing_byteexact_saved_frozen_listing": true,
+    "current_plain_ls_files_stage_sha256": "6a70dcb4aed59d1ff92c2ee2bca9fdde972c11c5d360c21d7a1b451a891b2e81",
+    "current_raw_DIRC_index_sha256": "ed65bd27adf3d4d6f66d06c18324d699351628ec84381665be7cf61ad466a1bc",
+    "freeze_recorded_tracked_index_sha256": "6a70dcb4aed59d1ff92c2ee2bca9fdde972c11c5d360c21d7a1b451a891b2e81",
+    "raw_index_format_version": 2,
+    "raw_index_header_count": 6254,
+    "raw_index_path": "/home/josh/projects/chess/.git/worktrees/chess9/index"
+  },
+  "originals_preserved": true,
+  "prior_independent_source_and_native_check": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-bound-launch-independent-review-v1/review.json",
+    "sha256": "8a71ae041ada7259e29a367e7725b2cc2ba41b6d6224e964443267428dfe8d91"
+  },
+  "raw_snapshot_observation": {
+    "before_and_after_SHA_equal": true,
+    "before_and_after_stat_equal": true,
+    "bytes": 853466,
+    "ctime_ns": 1794530117879415699,
+    "freeze_UTC": "2026-11-13T00:35:17.936204+00:00",
+    "inode": 14527670,
+    "mtime_UTC": "2026-11-13T00:35:17.874091+00:00",
+    "mtime_ns": 1794530117874090842,
+    "mtime_precedes_freeze_timestamp": true,
+    "raw_binary_baseline_at_freeze": "NOT_RECORDED_BY_6a70; do not invent proof of historical rawbyte equality"
+  },
+  "runtime_checkout": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess",
+  "saved_frozen_semantic_listing": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/tb-on-runtime-source-freeze-v1/tracked-source-index.txt",
+    "sha256": "6a70dcb4aed59d1ff92c2ee2bca9fdde972c11c5d360c21d7a1b451a891b2e81"
+  },
+  "scientific_source_admissibility": "Frozen HEAD, complete saved semantic index, normal flags and clean working status still satisfy the scientific Git identity checks. The manifest135production-source/native-input and native5bytehash contracts remain independently required; root reports its fresh checks exact and prior independent launch review8a71 recorded all135+5 exact. This receipt does not waive any tracked source, mode, blob, stage or native mismatch.",
+  "scope_limits": [
+    "No index/source/HEAD/branch/binding/control mutation; all Git review commands used GIT_OPTIONAL_LOCKS=0 and rawindex stayed unchanged.",
+    "No currentcohort data/outcomes/arrays/weights/modelcontents read; no helper/projectimports, training/inference/engine/TB query or ownerstage launched.",
+    "Historical unrecorded rawindex bytes cannot be reconstructed from semantic listing. Exact semantic equality is independently proved; no contrary rawhistory claim fabricated."
+  ],
+  "source_guard_trace": {
+    "GIT_OPTIONAL_LOCKS_explicitly_set_by_helper": false,
+    "commands": [
+      [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      [
+        "git",
+        "status",
+        "--porcelain"
+      ]
+    ],
+    "could_refresh_index_stat_cache": "Default git status may refresh stat cache if needed; that is a possible behavior, not observed evidence here. Current rawmtime predatesfreeze and bytes/stats stable throughout review. No claim that default status wrote the index.",
+    "helper": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-collection-final-package-v1/collect96.py",
+      "sha256": "6fe7fb06db4c87ed089818351178160ca207bc0bee184a31d8a2efcb65301989"
+    },
+    "lines": "119-120 before source hashes; calls720 atCLI launch and652 after collection",
+    "tracked_source_or_entry_changes_tolerated": false
+  },
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "ACCEPT_FROZEN_SEMANTIC_INDEX_AND_HEAD_IDENTITY_NO_ENTRY_CHANGE",
+  "strict_entry_checks": {
+    "all_stage0": true,
+    "exact_mode_blob_path_equality_to_HEAD": true,
+    "git_status_porcelain_empty": true,
+    "ls_files_v_flags": {
+      "H": 6254
+    },
+    "missing_added_changed_entries": 0,
+    "mode_counts": {
+      "100644": 6144,
+      "100755": 109,
+      "120000": 1
+    },
+    "optional_Git_locks_disabled_for_every_review_command": true,
+    "skip_worktree_or_assume_unchanged_flags": 0,
+    "unique_HEAD_entries": 6254,
+    "unique_index_entries": 6254
+  },
+  "utc": "2026-11-13T03:51:41.278198+00:00"
+}

@@ -1,0 +1,164 @@
+"""UNRUN E4 fixed-pool metadata selector; no catalogue/array/model/engine work."""
+from __future__ import annotations
+import argparse
+import ast
+import hashlib
+import importlib.util
+import json
+import math
+import os
+from pathlib import Path
+import resource
+import signal
+import subprocess
+import sys
+import types
+
+HERE = Path(__file__).resolve().parent
+METADATA_BYTES = 0
+METADATA_CAP = 128 * 1024**2
+
+
+def require(ok, why):
+    if not ok:
+        raise ValueError(why)
+
+
+def canonical(value):
+    return json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
+
+
+def sha(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def checked(ref):
+    global METADATA_BYTES
+    p = Path(ref['path']); require(p.is_file() and not p.is_symlink() and p.stat().st_size <= 64 * 1024**2, 'regular bounded metadata/source required')
+    METADATA_BYTES += p.stat().st_size
+    require(METADATA_BYTES <= METADATA_CAP, 'selector JSON aggregate cap')
+    before = p.stat(); data = p.read_bytes(); after = p.stat()
+    require((before.st_dev,before.st_ino,before.st_size,before.st_mtime_ns,before.st_ctime_ns) ==
+            (after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns,after.st_ctime_ns) and
+            hashlib.sha256(data).hexdigest() == ref['sha256'], 'metadata mutation or identity mismatch')
+    return json.loads(data)
+
+
+def module(name, ref):
+    require(sha(ref['path']) == ref['sha256'] and name not in sys.modules, 'source identity/namespace')
+    spec = importlib.util.spec_from_file_location(name, ref['path']); value = importlib.util.module_from_spec(spec)
+    sys.modules[name] = value; spec.loader.exec_module(value); return value
+
+
+def execute(binding):
+    require(binding.get('status') == 'BOUND_REVIEWED_E4_STRUCTURAL_SELECTION', 'selection UNBOUND')
+    m = checked({'path':str(HERE / 'manifest.json'),'sha256':binding['manifest_sha256']})
+    require(sha(__file__) == m['helper_sha256'] and sha(HERE / 'known_e2.py') == m['known_e2_sha256'], 'helper changed')
+    rule = checked(m['rule']); identity = checked(rule['study_identity'])
+    refs = checked(m['known_exposure'])
+    review = checked(binding['independent_review']); compatibility = checked(binding['source_compatibility'])
+    require(review['status'].startswith('ACCEPT') and review['helper_sha256'] == m['helper_sha256'], 'unreviewed selector')
+    require(compatibility['status'].startswith('ACCEPT') and compatibility['source_revision'] == identity['source_revision'] and
+            compatibility['raw175_and_file_mirror_compatible'] is True, 'source/descriptor not qualified')
+    root = Path(binding['source_checkout'])
+    require(subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip() == identity['source_revision'] and
+            not subprocess.check_output(['git','status','--porcelain'],cwd=root).strip(), 'not clean frozen R7')
+    require({'scripts/match_vs_uci.py','scripts/arena_standard.py','chess_anti_engine/moves/encode.py','chess_anti_engine/encoding/model_inputs.py','chess_anti_engine/replay/augment.py'} <= set(binding['source_files']) and len(binding['native_images']) == 5, 'source/native pins UNBOUND')
+    for name,digest in binding['source_files'].items(): require(sha(root/name) == digest, 'source changed')
+    for image in binding['native_images']: require(sha(image['path']) == image['sha256'], 'native image changed')
+    require(compatibility['source_files'] == binding['source_files'] and compatibility['native_images'] == binding['native_images'], 'source/native proof mismatches')
+    require(sys.implementation.name == 'cpython' and sys.version_info[:3] == (3,13,15) and os.environ.get('CUDA_VISIBLE_DEVICES') == '' and set(os.sched_getaffinity(0)) == {20,22}, 'resource profile')
+    require(all(os.environ.get(k) == '2' for k in ('OMP_NUM_THREADS','MKL_NUM_THREADS','OPENBLAS_NUM_THREADS')), 'thread controls')
+    owner = Path('/proc',str(os.getppid()),'cmdline').read_bytes().decode().split('\0')
+    require(binding['owner_path'] in owner and sha(binding['owner_path']) == binding['owner_sha256'], 'owner identity')
+    for flag,value in (('--name','e4-structural-selection-execution-v1'),('--seconds','300'),('--resource','cpu')):
+        require(flag in owner and owner[owner.index(flag)+1] == value, 'finite owner scope')
+    signal.signal(signal.SIGALRM,lambda *_: (_ for _ in ()).throw(TimeoutError('270s structural deadline')));signal.alarm(270)
+    resource.setrlimit(resource.RLIMIT_AS,(4*1024**3,4*1024**3))
+    resource.setrlimit(resource.RLIMIT_FSIZE,(32*1024**2,32*1024**2))
+    sys.path.insert(0,str(root))
+    import known_e2 as previous_api
+    require(Path(previous_api.__file__).resolve() == HERE/'known_e2.py', 'foreign known E2 metadata module')
+    known_e2 = previous_api.known_e2
+    prior = known_e2(refs['known_e2'])
+    index = checked(refs['known803']['index']); accepted = checked(refs['known803']['readout'])
+    require(index['coverage_status'] == 'COMPLETE_DECLARED803_PRIMARY_RAW_PLUS_FILE_MIRROR' and index['all_fixed_sources_complete'] is True and
+            accepted['accepted_index_sha256'] == refs['known803']['index']['sha256'], 'old803 scope unqualified')
+    inputs = set(index['stored_input_float16_sha256']) | prior['inputs']; histories = set(index['history_sha256']) | prior['histories']
+    for key in ('known53','engineering'):
+        item = checked(refs[key]); inputs.update(item['stored_input_float16_sha256']); histories.update(item['history_sha256'])
+    retired = checked(refs['old_retired'])['rows'] + checked(refs['all_old_selected756'])
+    old_h,old_e,old_p = set(),set(),set()
+    for row in retired:
+        old_h.add(row['root_fen']+' | '+' '.join(row['opening_moves']));old_e.add(row['normalized_terminal_EPD']);old_p.update(row['source_parent_ids'])
+        inputs.add(row['stored175F16_input_sha256'])
+        if row.get('stored175F16_mirror_sha256'): inputs.add(row['stored175F16_mirror_sha256'])
+    # All previous inherited exclusions are preserved by each banked row's exact static_rejection.
+    pool = checked(rule['fixed_pool']); require(len(pool) == 4096, 'fixed4096 pool changed')
+    ranked = []
+    for original,row in enumerate(pool):
+        require(len(row['opening_moves']) == 16 and row['parent_count'] == len(row['source_parents']) > 0 and
+                sorted(p['id'] for p in row['source_parents']) == row['source_parent_ids'] and
+                hashlib.sha256(row['history'].encode()).hexdigest() == row['source_group_id'], 'pool identity/weight')
+        u=(int(hashlib.sha256((rule['rank_salt']+'\0'+row['source_group_id']).encode()).hexdigest(),16)+1)/(2**256+1)
+        ranked.append(dict(row,e4_weighted_race_key=-math.log(u)/row['parent_count'],original_pool_rank=original))
+    ranked.sort(key=lambda r:(r['e4_weighted_race_key'],r['source_group_id']))
+    old_selector = module('qualified_e2tb_selector',m['qualified_selector'])
+    rows=[]
+    for row in ranked:
+        value=dict(row); pair={row['stored175F16_input_sha256'],row['stored175F16_mirror_sha256']}
+        if value['static_rejection'] is None and (row['history'] in old_h or row['normalized_terminal_EPD'] in old_e or set(row['source_parent_ids']) & old_p):
+            value['static_rejection']='retired_start_parent_history_or_EPD'
+        rows.append(value)
+    chosen,rejected=old_selector.select_rows(rows,inputs,histories,total=820,cap=4096)
+    selected=[dict(rows[i],accepted_rank=j,candidate_id=rule['collection_uuid']+':candidate:'+str(j),role='cohort' if j<192 else 'screen' if j<320 else 'confirmation') for j,i in enumerate(chosen)]
+    ranked_ids=sorted(range(192),key=lambda i:(hashlib.sha256((rule['split_salt']+'\0'+rule['collection_uuid']+':'+str(i)).encode()).digest(),i))
+    train=set(ranked_ids[:128])
+    games=[{'start_ordinal':i,'physical_game_id':rule['collection_uuid']+':'+str(i),'bank':'train' if i in train else 'holdout','root_fen':r['root_fen'],'opening_moves':r['opening_moves']} for i,r in enumerate(selected[:192])]
+    # Exact public history/color loaders, matching the prior qualified route.
+    import numpy as np
+    import chess
+    pkg=types.ModuleType('chess_anti_engine.mcts');pkg.__path__=[str(root/'chess_anti_engine/mcts')]
+    require('chess_anti_engine.mcts' not in sys.modules,'fresh mcts namespace');sys.modules[pkg.__name__]=pkg
+    from scripts import match_vs_uci as driver
+    pkg=types.ModuleType('chess_anti_engine.selfplay');pkg.__path__=[str(root/'chess_anti_engine/selfplay')];sys.modules[pkg.__name__]=pkg
+    namespace={'Path':Path,'chess':chess,'np':np}
+    arena_ast=old_selector.extract_functions(root/'scripts/arena_standard.py',['_load_unique_fen_boards','load_fen_openings','_opening_history'],namespace)
+    tree=ast.parse((root/'scripts/arena_standard.py').read_text()); paired=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='play_paired_games_matched_sims')
+    loops=[n for n in paired.body if isinstance(n,ast.For) and isinstance(n.target,ast.Name) and n.target.id=='opening' and isinstance(n.iter,ast.Name) and n.iter.id=='openings']
+    require(len(loops)==1,'arena schedule changed'); color_loop=loops[0]
+    out=Path(binding['output_root']);out.mkdir(exist_ok=False);output_bytes=0
+    def save(name,value):
+        nonlocal output_bytes
+        data=value if isinstance(value,bytes) else canonical(value)+b'\n'; output_bytes+=len(data)
+        require(output_bytes<=32*1024**2,'output cap')
+        with (out/name).open('xb') as f:f.write(data);f.flush();os.fsync(f.fileno())
+    save('ranked-pool.json',rows);save('selected820.json',selected);save('games.json',games)
+    books={}
+    for role,book in (('cohort',selected[:192]),('screen',selected[192:320]),('confirmation',selected[320:])):
+        save(role+'.epd',('\n'.join(r['history'] for r in book)+'\n').encode())
+        boards=driver._load_openings(out/(role+'.epd'))
+        hist=lambda b:b.root().fen()+' | '+' '.join(m.uci() for m in b.move_stack)
+        require([hist(b) for b in boards]==[r['history'] for r in book] and all(len(b.move_stack)==16 and b.is_valid() and not b.is_game_over(claim_draw=True) and len(list(b.legal_moves))>1 for b in boards),'public fullhistory/legal book')
+        if role!='cohort':
+            arena=namespace['load_fen_openings'](out/(role+'.epd'),n_pairs=len(book),rng=np.random.default_rng(identity['seeds']['screens' if role=='screen' else 'confirmation']))
+            require([hist(b) for b in arena]==[r['history'] for r in book],'public arena ordering')
+            colors=dict(namespace,openings=arena,boards=[],a_plays_white=[],start_fens=[],opening_roots=[],opening_stacks=[],start_offsets=[])
+            exec(compile(ast.Module(body=[color_loop],type_ignores=[]),str(root/'scripts/arena_standard.py'),'exec'),colors)
+            expected=[(i,white) for i in range(len(book)) for white in (True,False)]
+            require(colors['a_plays_white']==[white for _,white in expected] and [hist(b) for b in colors['boards']]==[book[i]['history'] for i,_ in expected] and colors['start_offsets']==[16]*(2*len(book)), 'actual arena color/history schedule')
+            require([driver._game_schedule(i,boards) for i in range(2*len(book))]==[(white,j) for j,white in expected],'public UCI color schedule')
+        books[role]={'starts_or_pairs':len(book),'sha256':sha(out/(role+'.epd')),'ordered_public_driver_digest':driver._opening_panel_digest(boards)}
+    require('torch' not in sys.modules,'unexpected Torch import')
+    require(subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip() == identity['source_revision'] and not subprocess.check_output(['git','status','--porcelain'],cwd=root).strip(),'source changed during selector')
+    for name,digest in binding['source_files'].items():require(sha(root/name)==digest,'source changed during selector')
+    for image in binding['native_images']:require(sha(image['path'])==image['sha256'],'native changed during selector')
+    save('selection.json',{'status':'COMPLETE_E4_STRUCTURAL_METADATA_SELECTION_ONLY','collection_uuid':rule['collection_uuid'],'rule_sha256':m['rule']['sha256'],'accepted':820,'pool':4096,'rejections_before820':rejected,'books':books,'bindings':binding,'arena_AST_sha256':arena_ast,'known_E2_games':prior['games'],'known_E2_rows':prior['retained_rows'],'arrays_models_engines_probes_or_targets_read':False,'encoding':'banked fixed pool raw/filemirror identities; actual selected820 R7 encoding qualification still required before generation','no_replacement_reseed_or_pool_extension':True})
+    save('manifest.json',{'status':'COMPLETE_E4_STRUCTURAL_METADATA_SELECTION_ONLY','collection_uuid':rule['collection_uuid'],'files':{p.name:sha(p) for p in out.iterdir()},'helper_sha256':sha(__file__),'rule_sha256':m['rule']['sha256']})
+    for p in out.iterdir():p.chmod(0o444)
+    fd=os.open(out,os.O_RDONLY|os.O_DIRECTORY);os.fsync(fd);os.close(fd);out.chmod(0o555);signal.alarm(0)
+
+
+if __name__=='__main__':
+    p=argparse.ArgumentParser();p.add_argument('--bindings',required=True);p.add_argument('--bindings-sha256',required=True);p.add_argument('--execute',action='store_true');a=p.parse_args()
+    require(a.execute,'explicit execute required');execute(checked({'path':a.bindings,'sha256':a.bindings_sha256}))

@@ -1,0 +1,297 @@
+{
+  "status": "SOURCE_ONLY_ADAPTER_DIFF_NOT_RUNTIME_QUALIFICATION",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "files": {
+    "train/value_bundle.py": {
+      "predecessor": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-train-paired-preparation-v5/value_bundle.py",
+        "sha256": "08a8ba502e3ef3e1b4e372094a99e993f681278242032aee29b190bd84147f78"
+      },
+      "new_sha256": "08a8ba502e3ef3e1b4e372094a99e993f681278242032aee29b190bd84147f78",
+      "byte_identical": true,
+      "functions_AST_unchanged": [
+        "require",
+        "capture_raw",
+        "validate_stored_control",
+        "categorical_for_arm",
+        "save_raw",
+        "arm_flat_config"
+      ],
+      "functions_AST_changed": [],
+      "diff": null
+    },
+    "train/verified_outcome.py": {
+      "predecessor": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-train-paired-preparation-v5/verified_outcome.py",
+        "sha256": "f6340208eec76470d58001717a1a02d01808c38374c53417a5e5ffff0db3cf81"
+      },
+      "new_sha256": "f6340208eec76470d58001717a1a02d01808c38374c53417a5e5ffff0db3cf81",
+      "byte_identical": true,
+      "functions_AST_unchanged": [
+        "require",
+        "plain",
+        "canonical",
+        "fingerprint",
+        "VerifiedOutcome",
+        "VerifiedOutcome.metadata",
+        "require_verified",
+        "VerifiedOutcomeVerifier",
+        "VerifiedOutcomeVerifier.__init__",
+        "VerifiedOutcomeVerifier.close",
+        "VerifiedOutcomeVerifier.verify",
+        "VerifiedOutcomeVerifier.verify_policy_sample"
+      ],
+      "functions_AST_changed": [],
+      "diff": null
+    },
+    "train/train_inputs.py": {
+      "predecessor": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-train-paired-preparation-v5/train_inputs.py",
+        "sha256": "f35cea34aa0bd0022756539212f1215a748a144c2b9a656f4800a3902e8b22aa"
+      },
+      "new_sha256": "a95420782bf03b47cc4028a65eb8cac73b3d548f1e3eac725bb116721bc9e95f",
+      "byte_identical": false,
+      "functions_AST_unchanged": [
+        "require",
+        "digest",
+        "checked_json",
+        "canonical",
+        "proc_birth",
+        "freeze_tree",
+        "inventory",
+        "record_positions",
+        "validate_train_stored_control",
+        "categorical_for_train_arm"
+      ],
+      "functions_AST_changed": [
+        "base_inputs",
+        "cohort_metadata",
+        "validate_loaded_game",
+        "load_research_train",
+        "segments"
+      ],
+      "diff": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/train/train_inputs.py.diff",
+        "sha256": "64ed5db6ebd31e3c648d7bf7cedfb55cf2a2abf125ba6f3d50eadda720a26035"
+      }
+    },
+    "train/paired_observer.py": {
+      "predecessor": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-train-paired-preparation-v5/paired_observer.py",
+        "sha256": "3b8fab909222ac717ee8ff460e878f5f7519c62678c578bf07498b0ca9c6d505"
+      },
+      "new_sha256": "ed38901e300ae0d8b4c72e040373f2bcfc0775470dcdf38e719c03442cee8afe",
+      "byte_identical": false,
+      "functions_AST_unchanged": [
+        "require",
+        "plain",
+        "identity",
+        "arrays_signature",
+        "tensors_signature",
+        "rng_state",
+        "restore_rng",
+        "FixedBundleBatches.sample_batch_arrays",
+        "parameter_map",
+        "ObservePairedTrainer.__init__",
+        "ObservePairedTrainer.__enter__",
+        "ObservePairedTrainer.__exit__",
+        "release_arm_refs",
+        "math_context"
+      ],
+      "functions_AST_changed": [
+        "FixedBundleBatches",
+        "FixedBundleBatches.__init__",
+        "ObservePairedTrainer",
+        "ObservePairedTrainer.assert_complete",
+        "assert_pair"
+      ],
+      "diff": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/train/paired_observer.py.diff",
+        "sha256": "7c9923ecf32642d958ef8b4c2955c91c7b0841e5d42b1703a5430e5193d9ed2e"
+      }
+    },
+    "train/run_paired.py": {
+      "predecessor": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-train-paired-preparation-v5/run_paired.py",
+        "sha256": "a5ea07b2e54c012785fa1c182c9b12fb29689038950e0a46a910a6128bcd6a9f"
+      },
+      "new_sha256": "39ffdb2579fcfe3d5ae237e889120c0bb3e42a6e16c6bd280a8ddbd4b7900f55",
+      "byte_identical": false,
+      "functions_AST_unchanged": [
+        "write_json",
+        "owner",
+        "named_optimizer_signature",
+        "selection_matches"
+      ],
+      "functions_AST_changed": [
+        "guard",
+        "run_one_arm",
+        "execute",
+        "main"
+      ],
+      "diff": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/train/run_paired.py.diff",
+        "sha256": "61eac71df674479c0db8c359fd18369919a4dbe7e211cd6c4cdce95eb4322b45"
+      }
+    },
+    "draw/bind_draw_plan.py": {
+      "predecessor": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-preparation-v1/bind_draw_plan.py",
+        "sha256": "4b2a2787d94795d9c38ab0900533a7a9c9e4616e81648317d2ecab23bb3987b1"
+      },
+      "new_sha256": "4d07f1c83e3d173be3fa8500eaf1f315274722c2f12e78d3552bc863d23561d2",
+      "byte_identical": false,
+      "functions_AST_unchanged": [
+        "require",
+        "digest",
+        "checked",
+        "write"
+      ],
+      "functions_AST_changed": [
+        "main"
+      ],
+      "diff": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/draw/bind_draw_plan.py.diff",
+        "sha256": "02c335ba828872bf6e04a1b37cc613334b669a7136287d611627dd5003d16024"
+      }
+    },
+    "checkpoint/audit_paired129.py": {
+      "predecessor": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-paired40-readout-preparation-v1/audit_paired40.py",
+        "sha256": "20c37f676f6d9063600d7ea526f7ebb490a3806268d38ff8df0cf6fc30642173"
+      },
+      "new_sha256": "00333589bc09630debd497bb97a53de79f6a0c5f887cc99abfd2182f91c15d49",
+      "byte_identical": false,
+      "functions_AST_unchanged": [
+        "require",
+        "sha",
+        "canonical",
+        "identity",
+        "checked",
+        "write",
+        "stat_key"
+      ],
+      "functions_AST_changed": [
+        "main"
+      ],
+      "diff": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/checkpoint/audit_paired129.py.diff",
+        "sha256": "3b14c49cd54fe8d2e7dadec3b70e13e7de1bbbc4a430d911a31b3562d61f0adf"
+      }
+    },
+    "offline/common.py": {
+      "predecessor": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-preparation-v3/common.py",
+        "sha256": "fe19a87af201ecdd9d3a2cadef2105e9d4016afc549f13e9622e9afea484c2e9"
+      },
+      "new_sha256": "a62e85e22a593028b68ddc673e0fcf24186f08d67059e05863c0e3b7a8598d92",
+      "byte_identical": false,
+      "functions_AST_unchanged": [
+        "require",
+        "digest",
+        "checked_json",
+        "write_json",
+        "module",
+        "hash_input",
+        "verify_owner"
+      ],
+      "functions_AST_changed": [
+        "guard",
+        "context",
+        "cohort_metadata"
+      ],
+      "diff": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/offline/common.py.diff",
+        "sha256": "26567410e50a5be29a0e4af28e3739eaa9f64f949cd3ce5a88b6bba42925faa7"
+      }
+    },
+    "offline/freeze_roots.py": {
+      "predecessor": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-preparation-v3/freeze_roots.py",
+        "sha256": "40dc49d582326c4d63f06011746f65f052826fb66e579e54cad105eef7a9a956"
+      },
+      "new_sha256": "40dc49d582326c4d63f06011746f65f052826fb66e579e54cad105eef7a9a956",
+      "byte_identical": true,
+      "functions_AST_unchanged": [
+        "freeze",
+        "main"
+      ],
+      "functions_AST_changed": [],
+      "diff": null
+    },
+    "offline/strict_roots.py": {
+      "predecessor": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-preparation-v3/strict_roots.py",
+        "sha256": "2b88f17f1fd9d06a8f60d35a3222b90ed6288d7eebd61997e9893fc1aa59b319"
+      },
+      "new_sha256": "2b88f17f1fd9d06a8f60d35a3222b90ed6288d7eebd61997e9893fc1aa59b319",
+      "byte_identical": true,
+      "functions_AST_unchanged": [
+        "choose_roots",
+        "root_board_and_label",
+        "provenance_metadata",
+        "verified_roots"
+      ],
+      "functions_AST_changed": [],
+      "diff": null
+    },
+    "offline/metrics.py": {
+      "predecessor": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-preparation-v3/metrics.py",
+        "sha256": "8058546e7fa263c5becfae1f4378917d4b1d4f333f32d8e04b94fceefe7a1d56"
+      },
+      "new_sha256": "8058546e7fa263c5becfae1f4378917d4b1d4f333f32d8e04b94fceefe7a1d56",
+      "byte_identical": true,
+      "functions_AST_unchanged": [
+        "probabilities",
+        "per_root"
+      ],
+      "functions_AST_changed": [],
+      "diff": null
+    },
+    "offline/score.py": {
+      "predecessor": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-preparation-v3/score.py",
+        "sha256": "6d96e964df8e6d0f252b1c602d10d52e5d167fbdf906e8fa5ddc65fd3a63b671"
+      },
+      "new_sha256": "b8229d1af09cfa19bfda26a85fc4cddc416c6cdf7a05de349789da9fe5214541",
+      "byte_identical": false,
+      "functions_AST_unchanged": [
+        "check_root_bank",
+        "one_model",
+        "main"
+      ],
+      "functions_AST_changed": [
+        "verify_training_binding",
+        "score"
+      ],
+      "diff": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/offline/score.py.diff",
+        "sha256": "6b59d9d3d81de0a36de8d525d2f2f2aff0d009d4a2da93d9f53ed975546c424c"
+      }
+    },
+    "offline/readout.py": {
+      "predecessor": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-preparation-v3/readout.py",
+        "sha256": "285c3c9b1914a7b913ea1de0330394d1c2b36185ffa87e05c24276bc58ca88bf"
+      },
+      "new_sha256": "c9f79c370c9c87edd59cd284515b644e30e48f6c9c4046c702be37c437d430e3",
+      "byte_identical": false,
+      "functions_AST_unchanged": [
+        "main"
+      ],
+      "functions_AST_changed": [
+        "summarize",
+        "read"
+      ],
+      "diff": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-preparation-v1/offline/readout.py.diff",
+        "sha256": "21ee8d35f3eb25e124179b31a7349a2485a8b3b69f3f4afc211da1884d60ec08"
+      }
+    }
+  },
+  "method": "Host stdlib ast.parse/dump compared within one interpreter; no helper/project imports/tests. Raw file pins authoritative.",
+  "scope": "UUID/counts128of192/dose129/newseeds/three-model nominations and full release-tail readout; unchanged raw F32->HLgauss math/proof source retained.",
+  "runtime_changes": "None in R7; all source helpers are external prospective adapters.",
+  "historical_reuse": "Prior E2 controls/AA/checkpoint/offline qualifications remain historical. Reviewed limited reuse and new focused controls are pending, no relabeled E4 execution."
+}

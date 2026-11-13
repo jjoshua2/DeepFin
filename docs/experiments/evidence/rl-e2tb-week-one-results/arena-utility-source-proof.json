@@ -1,0 +1,42 @@
+{
+  "TB_ruler": "Exact f634 WDL-then-DTZ registered table.path resolved-set/sorted tuple(path,size,mtime_ns), compact json SHA. Owned python-chess Tablebase(max_fds=None), orderedadd_directory; require data/fd uninitialized and no reads, no probe call. Registered aliases/overwrite semantics preserve accepted207f rather than raw physicalglob5ea6.",
+  "added_import": "sys (stdlib)",
+  "changed_functions": [
+    "tb_stamp",
+    "main"
+  ],
+  "index_source": {
+    "chess_version": "1.11.2",
+    "python_version": [
+      3,
+      13,
+      15
+    ],
+    "source": {
+      "path": "/home/josh/chess-artifacts/venvs/rl-transition-managed-20261111-cu130/lib/python3.13/site-packages/chess/syzygy.py",
+      "sha256": "e10e74b0b8174e85428945a975dfc2d67f521c6c5d941e998bdfca26f9ebf754"
+    }
+  },
+  "late_cancellation": "After owner.returncode exists, handler recordssignal+FAILEDstatus and raises into shared exception wait/refusal, preventing posthash/adapter publication/return0. Final settlement also forcesFAILED if anysignal/error recorded. Ordinary liveowner handler remains nonraising and pidfd-forwarding.",
+  "parent_preparation": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-screen-launch-settlement-preparation-v3/preparation.json",
+    "sha256": "5aa35dda962338a8b57cfb7f517e5af416d41b43dde5e58f0cbded1d8d2a6e55"
+  },
+  "parent_reported_readonly_metadata_result": "1020 registered resolved files (510 eachWDL/DTZ) match207f, python-chess1.11.2; not reproduced by this source-only preparation.",
+  "patch_sha256": "35fa7568f7775215f442a65bafac29d7a95f144430f58bbea0161e23cff1a94d",
+  "source_model_tests_jobs_probes_by_author": 0,
+  "source_sha256": "279a73c697b9b2f0aa30c63a77ea586a464441c2518196777af5eba3db886f41",
+  "status": "SOURCE_ONLY_UNRUN_REGISTERED_INDEX_AND_LATE_CANCEL_CORRECTION_V4",
+  "unchanged_functions_AST": {
+    "birth": true,
+    "checked": true,
+    "fixed_identities": true,
+    "model_asset": true,
+    "read": true,
+    "ref": true,
+    "require": true,
+    "sha": true,
+    "stamp": true,
+    "write": true
+  }
+}

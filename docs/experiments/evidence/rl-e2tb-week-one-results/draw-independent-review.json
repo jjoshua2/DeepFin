@@ -1,0 +1,137 @@
+{
+  "actual_execution": {
+    "CPU_seconds": 10.94,
+    "CUDA_initialized": false,
+    "command_exact": true,
+    "draw_installed_at_execution_time": false,
+    "known_births": {
+      "1162875": {
+        "current_birth": null,
+        "expected_birth": 26543995,
+        "owned_birth_absent": true
+      },
+      "1162885": {
+        "current_birth": null,
+        "expected_birth": 26544298,
+        "owned_birth_absent": true
+      }
+    },
+    "learning_admitted": false,
+    "owner_sha256": "b7287b50906b90a6729833f8ee3369d7a544d2d202d365e90f5c66afb275fa13",
+    "side_effect_attempts": {
+      "CUDA_init": 0,
+      "CUDA_lazy_init": 0,
+      "SF_construct": 0,
+      "SF_pool_construct": 0,
+      "Trainer_construct": 0,
+      "Worker_construct": 0,
+      "checkpoint_load": 0,
+      "loader_model_build": 0,
+      "model_build": 0
+    },
+    "supervisor_pid_absent": 1162873,
+    "wall_seconds": 12.328513055981603
+  },
+  "all_six_cohort_identity_sha_joins_exact": {
+    "playing_guard": "929b7536d716eb7e990bb0a16861b9452af358df55512368ab1dd70c9b4d4f9a",
+    "producer_manifest": "52d09aff20eda45603313417e49e6b1ce327da5084b21543f1509cf571a450a9",
+    "producer_protocol": "409b9673130f4b368b6b6368e9f9983309ff6addcca71dba5d5e8c90531812e3",
+    "readout": "b8ff226e0532ff1c0ee2627e6875c6f05ad4f0a3a5885f6cf35d75a913bfc906",
+    "resolved_profile": "c6659d6077ceb677e2fe50a99929c0d9b87c2271bef9c5e4908b345baaf78ee3",
+    "terminal": "265910df9b6bb8ee17b9f8c172d7fc46d72ae231b8007d470a6385f817b4adfd"
+  },
+  "blocking_findings": [],
+  "collection_uuid": "f1dadbe4-43e2-4cf3-9a93-70a288533b48",
+  "draw_metadata": {
+    "NumPy": "2.2.6",
+    "delivered_rows": 10240,
+    "distinct_drawn_rows": 2914,
+    "draw_stream_regenerated_by_reviewer": false,
+    "indices_int_and_in_range": true,
+    "input_dtype": "float16",
+    "input_shape": [
+      3012,
+      175,
+      8,
+      8
+    ],
+    "maximum_index": 3011,
+    "minimum_index": 0,
+    "raw_array_signatures": 85,
+    "raw_signatures_recomputed_by_reviewer": false,
+    "seed": 2026111401,
+    "shape": [
+      40,
+      256
+    ]
+  },
+  "evidence": {
+    "bindings": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-final-bindings-v1/identities.json",
+      "sha256": "546f0e3a7067528ff5f55642ff304eab8e73084fd77952cc14b0a42ae7cbe87f"
+    },
+    "cohort_binding": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cohort-root-actual-acceptance-v1/cohort-binding.json",
+      "sha256": "bf0d048e4b76d3b06e442d3a87028192ae5e6d7d2f605626a1146aad07a0efa4"
+    },
+    "draw_plan": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-results-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/draw-plan.json",
+      "sha256": "6a4fcb7136d24955bcb1ea11a6f79a3659226d1771fdca661442e169bbfccdb5"
+    },
+    "helper": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-preparation-v1/bind_draw_plan.py",
+      "sha256": "4b2a2787d94795d9c38ab0900533a7a9c9e4616e81648317d2ecab23bb3987b1"
+    },
+    "independent_actual_audit_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cohort-audit-actual-independent-review-v1/review.json",
+      "sha256": "89982932fce89c6b892741f628cb840be0f4d508dfa480ccd1857fb2cb6c0d6d"
+    },
+    "independent_cohort_audit": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cohort-independent-audit-results-v1/readout.json",
+      "sha256": "6599f57d3e18adf2806f3cc1deb7a6431e12084f4db5ca60e63145f61197431d"
+    },
+    "input_lineage": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-results-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/input-lineage.json",
+      "sha256": "a8b940861c5630c2c4615ef9ae95d03f41bf52dde18b4b3ffd7823274f6abbbe"
+    },
+    "manifest": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-preparation-v1/manifest.json",
+      "sha256": "4a1896729659a4b3c23d812b5b6b5c0f45b34a01b479e6904bb2b9ebbacb011f"
+    },
+    "readout": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-results-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/readout.json",
+      "sha256": "76c720b20e03f963f3857f3bd3262b6757aebe84a91caf54d3c6a5fe3ec2eb79"
+    },
+    "root_cohort_acceptance": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cohort-root-actual-acceptance-v1/readout.json",
+      "sha256": "7d66832c79e5942460279f97cc08d7f8e690d68d73d9c1d5a2501e36a786c486"
+    },
+    "terminal": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-draw-plan-execution-v1/terminal.json",
+      "sha256": "a6820b4e834c16f4d3afb0087b115f5aa8c9a38aa859e7f6948a20c134721b6f"
+    }
+  },
+  "fixed_helper_and_TRAINv5_sources_exact": true,
+  "fixed_scientific_component_exact": true,
+  "semantic_limits": [
+    "Reviewer used stdlib JSON/source/metadata hashes only; no project imports, arrays/checkpoints/models/engines/GPU/jobs and no random redraw.",
+    "Actual PASS execution traversed unchanged source-qualified TRAINv5 load_research_train: all32 fresh owned verifier proofs before TRAIN array decode, per-game array/raw/control validation and concat, no HOLD arrays. This receipt reconciles actual reported lineage and signatures; it does not independently redo that array validation.",
+    "No optimizer updates, target-bundle learning/strength/gain/adoption admission. Root must separately bind exact fixed plan and paired execution."
+  ],
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "ACCEPT_CLOSED_CPU_FIXED_TRAIN32_DRAW_METADATA_ONLY",
+  "utc": "2026-11-13T03:55:38.526177+00:00",
+  "whole_TRAIN32_lineage": {
+    "classes": {
+      "NATURAL": 15,
+      "STRICT_TB_ADJUDICATED": 17
+    },
+    "complete_ordered_ids_match_independent_game_row_counts": true,
+    "fresh_proof_digests": 32,
+    "games": 32,
+    "heldout_loaded": false,
+    "proof_digests_exact_to_independent_audit": true,
+    "rows": 3012,
+    "unique_physical_rows": 3012
+  }
+}

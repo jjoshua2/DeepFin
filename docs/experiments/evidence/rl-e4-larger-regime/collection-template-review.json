@@ -1,0 +1,74 @@
+{
+  "status": "ACCEPT_E4_KNOWN_COLLECTOR_TEMPLATES_AND_SELECTED_OBSERVED_COMMAND_SOURCE_METADATA_ONLY",
+  "created_utc": "2026-11-13T08:42:56.015527+00:00",
+  "author_independence": "Reviewer did not author collector/templates/dispatch; underlying TRAIN source authored in a separate lane is not self-approved here.",
+  "findings": [],
+  "inputs": {
+    "preparation.json": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-template-v1/preparation.json",
+      "sha256": "8ecc68e9928ee5dc9eb1784280f9e79f59b02c5f77e6a16904cf4236275a4fcf"
+    },
+    "protocol.template.json": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-template-v1/protocol.template.json",
+      "sha256": "ff9befc67974238680c1ad59785ad495cf1dbc02292cbce0313faee4660a6ef9"
+    },
+    "manifest.template.json": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-template-v1/manifest.template.json",
+      "sha256": "e703b36355451d275f9584fe4799a60a3efd583c75e2d98c68c52a608fcad4c9"
+    },
+    "binding-contract.json": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-template-v1/binding-contract.json",
+      "sha256": "f21908156f0e1ecda25a3587f9c33dfa92032890f7a497247b79aa5fd8a3bed4"
+    },
+    "collection-command.observed.template.json": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-template-v1/collection-command.observed.template.json",
+      "sha256": "fa15dfe9c5f635884cb6cfb4712e3e0e1f07ec6ced2584289eb1bbc2af226c26"
+    },
+    "known-identity-projection.json": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-template-v1/known-identity-projection.json",
+      "sha256": "280ace7c6d92fb521fe1d0086e81700cd44780695d4390754a1938da54e8b563"
+    }
+  },
+  "scope_reconciled": [
+    "AlltemplatefileSHAs/bytes,allknownconfigc78/canonicalprofile87fca/native8d9/encoder0b50/structural7db/games45cf/root44b8/sourcefiles/native5/owner/starts/helperpins independentlyjoined.",
+    "ALL192games byteexact acceptedgames; globalSHA256 split seed+NUL+physicalID yields128TRAIN/64HOLD;16dynamic slots noquotas.",
+    "Only7 declared protocolleaves late; manifestONLYprotocolSHA. Knownconfig/starts/profile/source/native/target/exposure identities concrete; actualsourceguard/main consume fixedvalues.",
+    "Canonicalactualbuilder profile fromCPUaccepted34cd, profilecompat86ab, encoding0b50; pathHeredescriptor is canonical starts, not temporarycopy.",
+    "Selected observedfa15 argv: directowner2400/childtaskset20,22/CUDA0/unsetprecisionenv/OMP+MKL2/exactdispatchb31+bindingc03, onlyactualmanifestSHA late.",
+    "Dispatch source read: sameprocesscore.main, originalcanonicalHERE andrestoredargv, originalownerremainsparent; fixedbinding containsobserver/source/reviewidentities butnot science/coremanifestSHA, avoidinghashcycle.",
+    "Rootselectedobservedcommand; barealternative remains historicalnonselected. No postdata observed/bare switching allowed."
+  ],
+  "reused_evidence": {
+    "dispatch_independent_source_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-sf-observation-dispatch-independent-source-review-v1/review.json",
+      "sha256": "068c13bd302d7ea236697677a0a5a56dd4ae46360e2c6e65aa1e7eb04286ecc9"
+    },
+    "observer_source_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-sf-raw-observation-independent-source-review-v1/review.json",
+      "sha256": "fb247e20960df1121766e012a05d0a43b29cc0c0901fe44d3dcaf94814ac51a3"
+    },
+    "observer_inert_actual_independent_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-sf-observer-inert-controls-actual-independent-review-v1/review.json",
+      "sha256": "069f862d19d3ce8ef8ad478739043d86c2c04812cfed66d44db0142bd4d22f2f"
+    },
+    "CPU_acceptance": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/readout.json",
+      "sha256": "34cd17f72d78c0cafc8160640bb216a77c3a7c6791bed6a41c37d8b966ddc737"
+    },
+    "profile_compatibility": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/profile-compatibility.json",
+      "sha256": "86abfae294282de956320a8e76aaeeb16c753c097bc804b7992757bfd87cb2c1"
+    },
+    "producer_encoding_compatibility": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cpu-config-encoding-root-actual-acceptance-v1/producer-encoding-compatibility.json",
+      "sha256": "0b50797c0bdbcb7f1a7d65d8df54283abbe197af66d4d2268775194b659a0811"
+    }
+  },
+  "limits": [
+    "No project/helper imports,tests,engines/TBqueries/models/checkpoint/arrayreads,sourcechanges or jobs. Stdlib metadata/source/nativeasset hash reconciliation only.",
+    "Donorcheckpointidentity joined existing acceptedcustody; no donorbytesread and no liveGPU/servingproof here.",
+    "ActualcanonicalCLI--check,finalscience/publication/finiteadmission,closedproducer/outcome/rawdata/learning/strength qualifications remain separate. Templatesare not runtimeadmission.",
+    "Observer may affect importtiming/batching; archivefailure/incompleteness is nonveto per independently acceptedobserver/source/inertproof, not guaranteedcompleteSF/P0teachertruth.",
+    "Noactualbinding/manifest/protocolinstalled and no cohortdata/playingoutcomes inspected."
+  ]
+}
