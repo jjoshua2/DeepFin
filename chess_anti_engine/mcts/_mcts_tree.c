@@ -7021,8 +7021,7 @@ PyMODINIT_FUNC PyInit__mcts_tree(void) {
      * 8 = explicit incomplete survivors for bounded caller witness recovery.
      * 9 = optional PUCT leaf input-history mode (legacy/root/root-legacy-meta).
      * 10 = dense CBoard cache + footprint_bytes()/memory_stats()/
-     * set_growth_step()/compact_to_subtree() (UCI Hash accounting). Only the
-     * UCI SearchWorker requires 10; the selfplay/training floor stays 9. */
+     * set_growth_step()/compact_to_subtree() (UCI Hash accounting). */
     if (PyModule_AddIntConstant(m, "ABI_VERSION", 10) < 0) {
         Py_DECREF(m);
         return NULL;

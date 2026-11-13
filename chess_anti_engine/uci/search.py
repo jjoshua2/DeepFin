@@ -128,9 +128,6 @@ _TREE_MAX_LEAF_BRANCHING = 256
 # mirrors TREE_NODE_BYTES in _mcts_tree.c (pinned by a test against
 # memory_stats()["node_bytes"]).
 _TREE_GROWTH_STEP_DIV = 64
-# `footprint_bytes` / `set_growth_step` / `compact_to_subtree` landed in
-# _mcts_tree ABI 10. UCI-only: the selfplay floor (`_REQUIRED_MCTS_ABI`) is unchanged.
-_REQUIRED_UCI_TREE_MEMORY_ABI = 10
 _TREE_NODE_BYTES = 51
 _MIN_TREE_GROWTH_STEP_NODES = 4096
 assert _TREE_MAX_LEAF_BRANCHING >= _MAX_LEGAL_MOVES + _FORCED_COLLAPSE_DEPTH
@@ -389,7 +386,7 @@ class SearchWorker:
   # catch a `.so` built between the two changes. The module ABI_VERSION marker covers
   # both — check it at construction and surface the rebuild command.
         _abi = getattr(_mcts_tree_ext, "ABI_VERSION", 0)
-        _required = max(_REQUIRED_MCTS_ABI, _REQUIRED_UCI_TREE_MEMORY_ABI)
+        _required = _REQUIRED_MCTS_ABI
         if _abi < _required:
             raise RuntimeError(
                 f"compiled _mcts_tree ABI_VERSION={_abi} < required {_required} "
