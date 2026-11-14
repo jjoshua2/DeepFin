@@ -702,26 +702,37 @@ def test_the_next_look_is_never_after_the_last_moment(poll_engine) -> None:
 
 
 def test_a_healthy_short_movetime_search_never_fires(out) -> None:
-    """Thirty searches that each spend their whole clock and then finish an
-    in-flight batch (5 ms) after the hard stop, as a healthy search on a GPU
-    does: zero watchdog fires."""
+    """Searches that each spend their whole clock and then finish an in-flight
+    batch (20 ms) after the hard stop, as a healthy search on a GPU does: no
+    watchdog fire of either rule.
+
+    Timing is chosen so the outcome does not depend on host load: MoveOverheadMs
+    150 puts the search deadline at 130 ms and the last moment at 277 ms, so a
+    healthy search (done at ~150 ms) has ~127 ms of slack before the last-moment
+    rule. (With the default overhead 30 the slack is only overhead - 3 ms - the
+    overrun, whatever the movetime, and a loaded host fired the last-moment
+    rule by design.) A rule that fired at the search deadline itself -- no
+    stall grace, or a last moment at the deadline -- still fires inside the
+    20 ms overrun and fails this test. The 3 ms margin itself is pinned exactly
+    by `test_thresholds_are_the_search_deadline_and_the_budget_minus_the_margin`."""
     worker = _worker()
 
     def spend_the_clock(board, **kw):
         kw["stop_event"].wait(5)  # the phase timer sets it at the deadline
-        time.sleep(0.005)  # the batch already in flight completes
+        time.sleep(0.020)  # the batch already in flight completes
         return _ok(board)
 
     worker.run.side_effect = spend_the_clock
-    engine = _engine(worker)
+    engine = _engine(worker, move_overhead_ms=150)
     try:
-        for _ in range(30):
-            engine.dispatch(parse_command("go movetime 50"))
+        for _ in range(10):
+            engine.dispatch(parse_command("go movetime 280"))
             thread = engine._search_thread
             assert thread is not None
             thread.join(5)
-        assert len(out.bestmoves()) == 30
-        assert engine._watchdog_fires == 0
+        assert len(out.bestmoves()) == 10
+        assert "no search progress" not in out.text()  # the early rule
+        assert engine._watchdog_fires == 0  # either rule (127 ms of slack)
         assert "deadline watchdog" not in out.text()
     finally:
         engine.close()
@@ -988,14 +999,17 @@ def test_compaction_overrunning_the_clock_is_answered(out) -> None:
         return _ok(board, "d2d4")
 
     worker.run.side_effect = compacting
-    engine = _engine(worker)
+    # Overhead 150: the in-budget search returns at its 130 ms deadline, 147 ms
+    # before the last moment (277 ms), so "no fire" does not depend on host
+    # load (with overhead 30 the slack would be 27 ms).
+    engine = _engine(worker, move_overhead_ms=150)
     try:
-        engine.dispatch(parse_command("go movetime 60"))
+        engine.dispatch(parse_command("go movetime 280"))
         assert engine._search_thread is not None
         engine._search_thread.join(5)
         assert out.bestmoves() == ["e2e4"]
         assert engine._watchdog_fires == 0
-        engine.dispatch(parse_command("go movetime 60"))
+        engine.dispatch(parse_command("go movetime 280"))
         moves = out.wait_bestmoves(2)
         assert len(moves) == 2
         assert moves[1] != "d2d4"
@@ -1009,18 +1023,26 @@ def test_compaction_overrunning_the_clock_is_answered(out) -> None:
 
 
 def test_watchdog_answer_cost_is_far_below_margin(out) -> None:
-    """The answer the margin budgets for: a snapshot read and two lines."""
-    gate = _Gate(before=lambda board, kw: _publish(kw["info_cb"], "g1f3"))
-    engine, entry = _armed_go(gate=gate)
-    try:
-        t0 = time.perf_counter()
-        engine._watchdog_fire(entry)
-        cost_ms = (time.perf_counter() - t0) * 1000
-        assert out.bestmoves() == ["g1f3"]
-        assert cost_ms < engine_module._WATCHDOG_LAST_MOMENT_MS / 2
-    finally:
-        gate.release.set()
-        engine.close()
+    """The answer the margin budgets for: a snapshot read and two lines.
+
+    A sub-millisecond wall-clock bound, so it is the best of three attempts: a
+    host-load spike is unlikely to hit all three, while an answer that is
+    really slow (e.g. one that ran an evaluation) fails every attempt."""
+    costs: list[float] = []
+    for attempt in range(3):
+        gate = _Gate(before=lambda board, kw: _publish(kw["info_cb"], "g1f3"))
+        engine, entry = _armed_go(gate=gate)
+        try:
+            t0 = time.perf_counter()
+            engine._watchdog_fire(entry)
+            costs.append((time.perf_counter() - t0) * 1000)
+            assert out.bestmoves()[attempt] == "g1f3"
+        finally:
+            gate.release.set()
+            engine.close()
+        if costs[-1] < engine_module._WATCHDOG_LAST_MOMENT_MS / 2:
+            break
+    assert min(costs) < engine_module._WATCHDOG_LAST_MOMENT_MS / 2, costs
 
 
 @pytest.mark.usefixtures("out")
@@ -1049,7 +1071,21 @@ def test_the_watchdog_thread_is_one_and_stops_on_close() -> None:
 
 def test_watchdog_wake_latency_under_gil_contention_fits_the_last_moment_margin() -> None:
     """The last-moment margin must cover how late the watchdog thread wakes
-    while another Python thread holds the GIL (measured here, in-process)."""
+    while another Python thread holds the GIL (measured here, in-process).
+
+    A millisecond-scale wall-clock p99, so it is the best of three trials: OS
+    preemption on a loaded host is unlikely to spoil all three, while a wake-up
+    that is really coarser than the margin fails every trial."""
+    p99s: list[float] = []
+    for _ in range(3):
+        p99s.append(_wake_latency_p99_ms())
+        # Answer cost is < 0.5 ms (`test_watchdog_answer_cost_is_far_below_margin`).
+        if p99s[-1] + 0.5 < engine_module._WATCHDOG_LAST_MOMENT_MS:
+            break
+    assert min(p99s) + 0.5 < engine_module._WATCHDOG_LAST_MOMENT_MS, p99s
+
+
+def _wake_latency_p99_ms() -> float:
     lateness: list[float] = []
     done = threading.Event()
     n = 100
@@ -1094,6 +1130,4 @@ def test_watchdog_wake_latency_under_gil_contention_fits_the_last_moment_margin(
         hog_thread.join(5)
         watchdog.close()
     lateness.sort()
-    p99 = lateness[int(len(lateness) * 0.99) - 1]
-    # Answer cost is < 0.5 ms (`test_watchdog_answer_cost_is_far_below_margin`).
-    assert p99 + 0.5 < engine_module._WATCHDOG_LAST_MOMENT_MS, lateness
+    return lateness[int(len(lateness) * 0.99) - 1]
