@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 
 import chess
 import numpy as np
@@ -97,9 +97,11 @@ class _Faulty:
 
 
 class _BlockingEvent:
-    """A completion receipt whose wait never ends until the test releases it."""
+    """A completion receipt whose wait never ends until the test releases it.
 
-    def __init__(self, owner: _Faulty) -> None:
+    ``owner`` is any fake device with ``entered`` / ``release`` events."""
+
+    def __init__(self, owner: Any) -> None:
         self._owner = owner
 
     def synchronize(self) -> None:
@@ -724,7 +726,7 @@ class _HangThenBadReceipt:
             call = self.calls
         pol, wdl, event = self._inner.evaluate_inplace_async(*args, **kwargs)
         if call == self.after + 1:
-            return pol, wdl, _BlockingEvent(cast("_Faulty", self))
+            return pol, wdl, _BlockingEvent(self)
         if call == self.after + 2:
             return pol, wdl, _UndrainableEvent()
         return pol, wdl, event
