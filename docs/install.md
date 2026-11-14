@@ -10,7 +10,7 @@ manager). Training and selfplay installs are described in the README and
 - CPython **3.10.12 – 3.13**, standard (GIL-enabled) build. 3.13 is what CI and
   the development lock use; 3.10 is what the production host runs. Newer
   interpreters are untested and `deepfin --selfcheck` reports them as FAIL.
-- A C compiler (`gcc`) and the Python headers, to build the five C extensions.
+- A C compiler (`gcc`) and the Python headers, to build the six C extensions.
 - For GPU play: an NVIDIA driver plus a PyTorch build whose CUDA version supports
   the card. An RTX 50-series (Blackwell, `sm_120`) card needs a build made with
   CUDA 12.8 or newer; the `cu124` wheel index stops at torch 2.6.0. The self-check's

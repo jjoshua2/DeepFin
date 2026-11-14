@@ -1735,8 +1735,8 @@ class Engine:
             )
         except ValueError:
             _println(
-                f"info string {opt.name}: {text!r} is not a "
-                f"{'integer' if opt.kind == 'spin' else 'number'}; "
+                f"info string {opt.name}: {text!r} is not "
+                f"{'an integer' if opt.kind == 'spin' else 'a number'}; "
                 f"keeping {self._options.search_value(opt.field)}"
             )
             return None
