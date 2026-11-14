@@ -1414,33 +1414,43 @@ class SearchWorker:
         self._batch_mean_ms += delta / self._batch_n
         self._batch_m2_ms += delta * (dt_ms - self._batch_mean_ms)
 
-    def _batch_margin_ms(self) -> float:
+    def _batch_margin_ms(self, min_samples: int = _BATCH_MARGIN_MIN_SAMPLES) -> float:
         """Clock reserve = mean + K*std of measured chunk time.
 
-        Returns 0 until ``_BATCH_MARGIN_MIN_SAMPLES`` chunks have run (no
-        estimate yet) or when the margin is disabled (sigmas <= 0)."""
+        Returns 0 until ``min_samples`` chunks have run (no estimate yet) or
+        when the margin is disabled (sigmas <= 0). With one sample the reserve
+        is that chunk's time (no spread estimate yet)."""
         if (
             self._batch_margin_sigmas <= 0.0
-            or self._batch_n < _BATCH_MARGIN_MIN_SAMPLES
+            or self._batch_n < max(1, min_samples)
         ):
             return 0.0
+        if self._batch_n < 2:
+            return self._batch_mean_ms
         var = self._batch_m2_ms / (self._batch_n - 1)
         std = var ** 0.5 if var > 0.0 else 0.0
         return self._batch_mean_ms + self._batch_margin_sigmas * std
 
     def _clock_time_margin_ms(
         self, optimum_ms: int | None, start_remaining_ms: int | None,
+        *, fixed_time: bool = False,
     ) -> float:
         """Capped batch-time reserve passed to the stop check.
 
-        Zero unless this is a clock game (``optimum_ms`` set) — ``movetime`` /
-        ``nodes`` / ``depth`` searches run their exact requested work. Capped at
+        Zero unless this is a clock game (``optimum_ms`` set) or ``fixed_time``
+        (UCI ``movetime``, opted in by the engine) — ``nodes`` / ``depth`` and
+        other callers' fixed-deadline searches run their exact requested work. Capped at
         ``_MAX_BATCH_MARGIN_FRACTION`` of the move's starting budget so a bad
         early chunk estimate can't reserve away the whole move.
         """
         if optimum_ms is None:
-            return 0.0
-        m = self._batch_margin_ms()
+            if not (fixed_time and start_remaining_ms is not None):
+                return 0.0
+            # A short movetime may fit only one or two chunks: reserve from the
+            # first measured one rather than overrun the deadline by the second.
+            m = self._batch_margin_ms(min_samples=1)
+        else:
+            m = self._batch_margin_ms()
         if m > 0.0 and start_remaining_ms is not None:
             m = min(m, _MAX_BATCH_MARGIN_FRACTION * float(start_remaining_ms))
         return m
@@ -2675,6 +2685,7 @@ class SearchWorker:
         allow_terminal_shortcuts: bool = True,
         on_chunk: Callable[[int], None] | None = None,
         stop_sensitive: bool = False,
+        fixed_time_margin: bool = False,
     ) -> SearchResult:
         """Search until any of: stop_event set, deadline expired, max_nodes hit,
         PV length ≥ max_depth, or (``optimum_ms`` set) the visit-margin abort
@@ -2682,6 +2693,11 @@ class SearchWorker:
 
         Returns when at least one chunk has run (so bestmove is always
         backed by MCTS data, never a raw priors pick).
+
+        ``fixed_time_margin``: apply the batch-time stop margin to a deadline
+        with no ``optimum_ms`` too (UCI ``movetime``), so the search stops one
+        measured chunk BEFORE the deadline instead of overrunning it by up to a
+        chunk. Off by default: other callers keep their exact behaviour.
         """
         fen = board.fen()
   # A compaction `advance_root` scheduled runs here, on this move's clock.
@@ -2895,7 +2911,7 @@ class SearchWorker:
                     stop_event=stop_event, deadline=deadline,
                     max_nodes=max_nodes, max_depth=max_depth,
                     total_nodes=total_nodes, pv_len=len(pv_indices),
-                    time_margin_ms=self._clock_time_margin_ms(optimum_ms, start_remaining_ms),
+                    time_margin_ms=self._clock_time_margin_ms(optimum_ms, start_remaining_ms, fixed_time=fixed_time_margin),
                 ) is not None:
                     raise
                 # Same zero-progress rule as a normal chunk (below): an
@@ -2958,7 +2974,7 @@ class SearchWorker:
 
   # Batch-time-variance clock margin: clock games only, capped so a bad early
   # estimate can't reserve away the whole move (see `_clock_time_margin_ms`).
-            time_margin_ms = self._clock_time_margin_ms(optimum_ms, start_remaining_ms)
+            time_margin_ms = self._clock_time_margin_ms(optimum_ms, start_remaining_ms, fixed_time=fixed_time_margin)
             stop_reason = self._should_stop_search(
                 stop_event=stop_event, deadline=deadline,
                 max_nodes=max_nodes, max_depth=max_depth,
