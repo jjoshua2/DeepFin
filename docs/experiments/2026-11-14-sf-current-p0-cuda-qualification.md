@@ -19,7 +19,7 @@ Python 3.13 environment, six qualified native images and two CPU threads.
 The qualified loaded Python/native inputs match published source; the entire
 local runtime is not claimed identical to the later main tree.
 
-Both GPU owners had a 300-second hard cap and 270-second inner limit, under
+All three GPU owners had a 300-second hard cap and 270-second inner limit, under
 separate, newly identified resource scopes. All actual wall time, including
 the failed owner, counts toward the week budget. They used synthetic Tiny
 networks, batch size 2, float32 tensors and no AMP. Default backend settings
