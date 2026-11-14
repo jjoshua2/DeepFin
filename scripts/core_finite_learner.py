@@ -21,8 +21,6 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 import uuid
 
 if TYPE_CHECKING:
-    from scripts.retained_search_finite_learner import SearchProfile
-
     class P0Profile(Protocol):
         """Internal callback shape without importing the caller that uses it."""
 
@@ -44,6 +42,29 @@ if TYPE_CHECKING:
         def wrap(self, replay: Any, c: dict[str, Any]) -> Any: ...
 
         def decorate_boundary(self, boundary: dict[str, Any], c: dict[str, Any], stage: dict[str, Any]) -> None: ...
+
+
+    class RetainedSearchProfile(Protocol):
+        """Retained-search callback shape, independent of its public caller."""
+
+        @property
+        def STAGE(self) -> str: ...
+
+        @property
+        def BOUNDARY(self) -> str: ...
+
+        def validate_and_project(self, c: dict[str, Any], stage: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]: ...
+
+        def closed_parent(self, binding: dict[str, Any], c: dict[str, Any], contract_ref: dict[str, str],
+                          stage: dict[str, Any]) -> dict[str, Any]: ...
+
+        def validate_arrays(self, arrays: dict[str, Any], rows: int) -> None: ...
+
+        def bind_checkpoint(self, path: Path, c: dict[str, Any], contract_ref: dict[str, str]) -> None: ...
+
+        def check_checkpoint(self, ref: dict[str, str], c: dict[str, Any], contract_ref: dict[str, str]) -> None: ...
+
+        def decorate_boundary(self, boundary: dict[str, Any], c: dict[str, Any]) -> None: ...
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -264,7 +285,7 @@ def closed_parent(binding: dict[str, Any], c: dict[str, Any], contract_ref: dict
 
 def metadata(c: dict[str, Any], stage: dict[str, Any], contract_ref: dict[str, str],
              *, _sf_p0: P0Profile | None = None,
-             _retained_search: SearchProfile | None = None) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+             _retained_search: RetainedSearchProfile | None = None) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     fixed_bank = _sf_p0 is not None or _retained_search is not None
     contract_sha = contract_ref["sha256"]
     stage_keys = {"schema", "contract_sha256", "generation", "generations", "parent", "output"}
@@ -433,7 +454,7 @@ def backend_profile(torch: Any) -> dict[str, Any]:
 
 
 def load_replay(c: dict[str, Any], generations: list[dict[str, Any]], rng: Any, on_draw: Any,
-                *, _retained_search: SearchProfile | None = None) -> Any:
+                *, _retained_search: RetainedSearchProfile | None = None) -> Any:
     import numpy as np
     from chess_anti_engine.model import infer_input_planes
     from chess_anti_engine.replay.generation import GenerationChunk, GenerationReplay
@@ -528,7 +549,7 @@ def execute(contract_ref: dict[str, str], stage_ref: dict[str, str]) -> dict[str
 
 def _execute(contract_ref: dict[str, str], stage_ref: dict[str, str],
              *, sf_p0: P0Profile | None = None,
-             retained_search: SearchProfile | None = None) -> dict[str, Any]:
+             retained_search: RetainedSearchProfile | None = None) -> dict[str, Any]:
     """Shared engine; separately versioned finite families opt in explicitly."""
     require(sf_p0 is None or retained_search is None, "target families cannot be combined")
     _, c = read_ref(contract_ref)
