@@ -20,6 +20,7 @@ from chess_anti_engine.mcts.gumbel import (
     warn_volatility_python_path,
 )
 from chess_anti_engine.mcts.puct import run_mcts_many
+from chess_anti_engine.utils.search_type import normalize_mcts_type
 from chess_anti_engine.moves import index_to_move_fast, index_to_move_strict
 from chess_anti_engine.selfplay.opening import OpeningConfig, make_starting_board
 
@@ -144,6 +145,7 @@ def pick_moves_for_boards(
     ROOT submit is NOT bucketed against it, so size ``max_batch`` at or above
     the largest board count any one call will be handed.
     """
+    mcts_type = normalize_mcts_type(mcts_type)
     if tb_probe is not None and str(mcts_type) != "gumbel":
         raise ValueError("Tablebase-guided match search requires the compiled Gumbel path")
     input_history_encoding = str(getattr(model, "input_history_encoding", "legacy"))
@@ -324,7 +326,7 @@ def play_match_batch(
     games: int,
     max_plies: int,
     a_plays_white: list[bool] | None = None,
-    mcts_type: str = "puct",
+    mcts_type: str = "gumbel",
     mcts_simulations: int = 200,
     mcts_simulations_a: int | None = None,
     mcts_simulations_b: int | None = None,

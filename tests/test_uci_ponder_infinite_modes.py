@@ -232,7 +232,11 @@ def test_actual_stop_before_hit_cancels_warm_owner_and_late_hit_is_ignored(
             thread.join(3)
             assert not thread.is_alive()
         assert len(worker.boards) == 1
-        assert bestmoves(capsys.readouterr().out) == [worker.results[0].bestmove_uci]
+        # A ponder miss answers for the GUI's position (Black to move after
+        # e2e4), inside this go's searchmoves -- not the warm search's
+        # pre-reply (White) move.
+        assert bestmoves(capsys.readouterr().out) == ['e7e5']
+        assert worker.results[0].bestmove_uci != 'e7e5'
         dispatch_line(engine, 'ponderhit')
         assert len(worker.boards) == 1
         assert bestmoves(capsys.readouterr().out) == []

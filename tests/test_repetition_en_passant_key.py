@@ -1005,8 +1005,8 @@ def test_handle_position_actually_applies_the_king_guard(
     A predicate that ``_handle_position`` never calls leaves every test above
     green while the engine still searches the board -- this repo's signature
     defect. Drive the real handler and assert the operator-visible outcome: the
-    same "rejected FEN ...; using the start position" line the unparseable-FEN
-    case emits, and ``_board`` actually reset.
+    same "position: rejected (...); keeping the previous position" line the
+    unparseable-FEN case emits, and ``_board`` NOT replaced by the bad board.
     """
     from unittest.mock import MagicMock
 
@@ -1021,17 +1021,20 @@ def test_handle_position_actually_applies_the_king_guard(
     engine._handle_position(CmdPosition(fen=fen, moves=()))
 
     out = capsys.readouterr().out
-    assert "info string position: rejected FEN" in out, f"{label}: {out!r}"
-    assert "using the start position" in out, f"{label}: {out!r}"
+    assert "info string position: rejected (" in out, f"{label}: {out!r}"
+    assert "keeping the previous position" in out, f"{label}: {out!r}"
     assert "king" in out, f"{label}: message does not name the condition: {out!r}"
     assert engine._board == chess.Board(), label
+    assert engine._position_error is not None, label
 
 
-def test_handle_position_still_accepts_a_weird_but_legal_fen(capsys) -> None:
-    """Negative control for the wiring test.
+def test_handle_position_rejects_a_status_invalid_fen(capsys) -> None:
+    """The engine (not the narrow king predicate) rejects a FEN python-chess
+    calls invalid, naming the flag: the side NOT to move is in check here.
 
-    Without it, a handler that rejected everything would satisfy every
-    assertion above.
+    It used to accept these for EPD / puzzle drivers; their FEN files contain
+    none (0 of 4,941 distinct FENs flagged), and this root class is what let a
+    legal-looking move list capture a king.
     """
     from unittest.mock import MagicMock
 
@@ -1039,14 +1042,34 @@ def test_handle_position_still_accepts_a_weird_but_legal_fen(capsys) -> None:
     from chess_anti_engine.uci.protocol import CmdPosition
 
     fen = "4k3/8/8/8/8/8/8/3KR3 w - - 0 1"  # side not to move is in check
-    assert chess.Board(fen).status() != chess.STATUS_VALID
+    assert chess.Board(fen).status() == chess.STATUS_OPPOSITE_CHECK
 
     engine = Engine(worker=MagicMock())
     engine._handle_position(CmdPosition(fen=fen, moves=()))
 
     out = capsys.readouterr().out
-    assert "rejected FEN" not in out, out
+    assert "is not a legal position: opposite check" in out, out
+    assert engine._board == chess.Board()
+
+
+def test_handle_position_still_accepts_an_ordinary_legal_fen(capsys) -> None:
+    """Negative control for the wiring tests: a handler that rejected
+    everything would satisfy every assertion above."""
+    from unittest.mock import MagicMock
+
+    from chess_anti_engine.uci.engine import Engine
+    from chess_anti_engine.uci.protocol import CmdPosition
+
+    fen = "4k3/8/8/8/8/8/4R3/3K4 b - - 0 1"  # lopsided, black to move, legal
+    assert chess.Board(fen).status() == chess.STATUS_VALID
+
+    engine = Engine(worker=MagicMock())
+    engine._handle_position(CmdPosition(fen=fen, moves=()))
+
+    out = capsys.readouterr().out
+    assert "rejected" not in out, out
     assert engine._board == chess.Board(fen)
+    assert engine._position_error is None
 
 
 # ---------------------------------------------------------------------------
@@ -1070,12 +1093,12 @@ _KING_CAPTURE_FEN = "4k2r/8/8/8/3p4/8/2P5/4R1K1 w - - 0 1"
 _KING_CAPTURE_MOVES = ("e1e8", "h8h7", "c2c4")
 
 
-def test_the_root_of_the_king_capture_line_is_deliberately_accepted() -> None:
-    """The premise: the FEN guard must NOT reject this root.
+def test_the_root_of_the_king_capture_line_passes_the_king_predicate() -> None:
+    """The premise: the narrow king PREDICATE does not reject this root.
 
-    If it did, the move-loop guard would be untested for the reason that
-    matters -- the position would never get past the FEN check in the first
-    place -- and this whole class would be closed by over-rejection instead.
+    The engine now rejects it on ``Board.status()`` (opposite check), so the
+    move-loop guard is defence in depth; its tests below lift the status
+    check to reach it.
     """
     from chess_anti_engine.utils.bitboards import unsearchable_king_reason
 
@@ -1104,16 +1127,22 @@ def test_move_loop_truncates_before_a_king_capture_reaches_the_board(capsys) -> 
     from chess_anti_engine.utils.bitboards import unsearchable_king_reason
 
     engine = Engine(worker=MagicMock())
+    # Today the root is rejected on status (opposite check) before any move:
     engine._handle_position(
         CmdPosition(fen=_KING_CAPTURE_FEN, moves=_KING_CAPTURE_MOVES),
     )
+    assert "is not a legal position: opposite check" in capsys.readouterr().out
+    # Defence in depth: with the status check lifted, the move-loop guard
+    # still stops the king capture.
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(chess.Board, "status", lambda _self: chess.STATUS_VALID)
+        engine._handle_position(
+            CmdPosition(fen=_KING_CAPTURE_FEN, moves=_KING_CAPTURE_MOVES),
+        )
 
     out = capsys.readouterr().out
-    # The FEN itself was accepted -- the truncation path fired, not the fall-back.
-    assert "rejected FEN" not in out, out
-    assert "ignored" in out, f"move loop did not truncate: {out!r}"
-    assert "unsearchable" in out, (
-        f"truncated for the wrong reason -- 'illegal in ...' is imprecise for "
+    assert "rejected (move 1 'e1e8' leaves an unsearchable position" in out, (
+        f"rejected for the wrong reason -- 'illegal in ...' is imprecise for "
         f"this cause and would also fire on an ordinary bad move: {out!r}"
     )
 
@@ -1122,9 +1151,9 @@ def test_move_loop_truncates_before_a_king_capture_reaches_the_board(capsys) -> 
         f"a board the C and Python halves disagree about reached self._board, "
         f"which _handle_go passes to search verbatim: {stored.fen()}"
     )
-    # Truncated at the offending push, keeping everything before it.
+    # Rejected as a whole: the previous (start) position stays.
     assert engine._pending_moves == [], engine._pending_moves
-    assert stored == chess.Board(_KING_CAPTURE_FEN)
+    assert stored == chess.Board()
 
 
 def test_the_king_capture_line_really_would_have_merged_keys() -> None:
@@ -1165,8 +1194,7 @@ def test_move_loop_guard_does_not_disturb_an_ordinary_game(capsys) -> None:
     engine._handle_position(CmdPosition(fen=chess.STARTING_FEN, moves=moves))
 
     out = capsys.readouterr().out
-    assert "rejected FEN" not in out, out
-    assert "ignored" not in out, out
+    assert "rejected" not in out, out
     expected = chess.Board()
     for uci in moves:
         expected.push(chess.Move.from_uci(uci))
@@ -1174,13 +1202,11 @@ def test_move_loop_guard_does_not_disturb_an_ordinary_game(capsys) -> None:
     assert len(engine._pending_moves) == 4
 
 
-def test_rejection_path_clears_the_applied_tree_state() -> None:
-    """MG7: the rejection path's ``_applied_*`` reset was uncovered.
-
-    Benign today because ``_pending_fen = None`` forces a ``reset_tree()``, but
-    an uncovered reset is one refactor away from leaving the engine advancing a
-    tree built for a different position.
-    """
+def test_rejection_path_changes_no_position_or_tree_state() -> None:
+    """A rejected `position` keeps the previous one EXACTLY: board, pending
+    position, applied tree state and the reset flag are all untouched (the go
+    that follows answers 0000 and never reaches the tree), and `position`
+    never touches the worker (it may run beside an orphaned search)."""
     from unittest.mock import MagicMock
 
     from chess_anti_engine.uci.engine import Engine
@@ -1188,20 +1214,23 @@ def test_rejection_path_clears_the_applied_tree_state() -> None:
 
     worker = MagicMock()
     engine = Engine(worker=worker)
-    engine._applied_fen = "some/earlier w - - 0 1"
+    engine._handle_position(CmdPosition(fen=None, moves=("e2e4",)))
+    engine._applied_fen = None
     engine._applied_moves = (chess.Move.from_uci("e2e4"),)
+    snapshot = (
+        engine._board.copy(), engine._pending_fen, list(engine._pending_moves),
+        engine._applied_fen, engine._applied_moves, engine._force_tree_reset,
+    )
+    worker.reset_mock()
+
     engine._handle_position(CmdPosition(fen="4k3/8/8/8/8/8/8/8 w - - 0 1", moves=()))
 
-    # `position` never touches the tree (it may run beside an orphaned search):
-    # the reset is owed to the next `go`, whose `_sync_tree_root` honours it.
-    assert engine._force_tree_reset is True
-    assert engine._pending_fen is None
-    assert engine._pending_moves == []
-    engine._sync_tree_root([])
-    worker.reset_tree.assert_called_once()
-    assert engine._applied_fen is None
-    assert engine._applied_moves == ()
-    assert engine._force_tree_reset is False
+    assert (
+        engine._board, engine._pending_fen, engine._pending_moves,
+        engine._applied_fen, engine._applied_moves, engine._force_tree_reset,
+    ) == snapshot
+    assert engine._position_error is not None
+    assert worker.mock_calls == []
 
 
 # --- eval/puzzles.py: the same predicate, the same two shapes ---------------
@@ -1341,8 +1370,8 @@ def test_load_epd_reports_why_lines_were_skipped(tmp_path, caplog) -> None:
 
 
 
-def test_move_loop_TRUNCATES_rather_than_skipping_the_offending_move(capsys) -> None:
-    """``break``, not ``continue``: everything after the bad push is dropped.
+def test_move_loop_REJECTS_rather_than_skipping_the_offending_move(capsys) -> None:
+    """Reject, not ``continue``: nothing after (or before) the bad push is kept.
 
     Skipping one move and carrying on desynchronises the game -- the engine then
     searches a position that never occurred, and answers it confidently. The
@@ -1367,14 +1396,16 @@ def test_move_loop_TRUNCATES_rather_than_skipping_the_offending_move(capsys) -> 
     )
 
     engine = Engine(worker=MagicMock())
-    engine._handle_position(
-        CmdPosition(fen=_KING_CAPTURE_FEN, moves=("e1e8", "c2c3")),
-    )
+    with pytest.MonkeyPatch.context() as mp:  # reach the move-loop guard
+        mp.setattr(chess.Board, "status", lambda _self: chess.STATUS_VALID)
+        engine._handle_position(
+            CmdPosition(fen=_KING_CAPTURE_FEN, moves=("e1e8", "c2c3")),
+        )
 
     out = capsys.readouterr().out
-    assert "ignored 2 of 2 move(s)" in out, out
+    assert "rejected (move 1 'e1e8'" in out, out
     assert engine._pending_moves == [], (
         "the loop skipped the offending move and kept going -- the engine is "
         "now searching a position the caller never sent"
     )
-    assert engine._board == root
+    assert engine._board == chess.Board()  # the previous position, untouched
