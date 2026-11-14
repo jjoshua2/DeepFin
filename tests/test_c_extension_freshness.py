@@ -558,3 +558,57 @@ def test_tree_extension_is_rebuilt_when_the_seam_contract_changes(tmp_path: Path
         "chess_anti_engine.mcts._mcts_tree is older than "
         "chess_anti_engine/mcts/_value_provider.h"
     ) in issues
+
+
+# ======================================================================
+# Optional extensions: missing is allowed, present-but-stale is not
+# ======================================================================
+
+_OPTIONAL = [s.module for s in EXTENSION_SPECS if s.optional]
+
+
+def test_the_tablebase_prober_is_optional_until_production_imports_it() -> None:
+    assert _OPTIONAL == ["chess_anti_engine.tb._tb_ext"]
+    assert all(not s.optional for s in EXTENSION_SPECS if s.module not in _OPTIONAL)
+
+
+def test_a_missing_optional_extension_is_not_an_issue(tmp_path: Path) -> None:
+    _write_all_sources(tmp_path, mtime_ns=10)
+    _write_all_extensions(tmp_path, mtime_ns=20)
+    for module in _OPTIONAL:
+        _extension_output(tmp_path, module).unlink()
+
+    assert check_extensions(tmp_path) == []
+
+
+def test_an_absent_optional_extension_is_not_reported_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    import sys
+
+    from scripts import check_c_extensions_fresh as mod
+
+    _write_all_sources(tmp_path, mtime_ns=10)
+    _write_all_extensions(tmp_path, mtime_ns=20)
+    monkeypatch.setattr(sys, "argv", ["check", "--root", str(tmp_path)])
+    assert mod.main() == 0
+    assert capsys.readouterr().out.strip() == "C extensions are present and up to date."
+
+    for module in _OPTIONAL:
+        _extension_output(tmp_path, module).unlink()
+    assert mod.main() == 0
+    out = capsys.readouterr().out
+    assert "present and up to date." not in out.replace("Required C extensions are present", "")
+    assert "optional extension(s) not built: chess_anti_engine.tb._tb_ext" in out
+
+
+def test_a_stale_optional_extension_is_still_an_issue(tmp_path: Path) -> None:
+    _write_all_sources(tmp_path, mtime_ns=10)
+    _write_all_extensions(tmp_path, mtime_ns=20)
+    _write(tmp_path / "chess_anti_engine/tb/fathom/src/tbprobe.c", mtime_ns=30)
+
+    issues = check_extensions(tmp_path)
+
+    assert issues == [
+        "chess_anti_engine.tb._tb_ext is older than chess_anti_engine/tb/fathom/src/tbprobe.c"
+    ]
