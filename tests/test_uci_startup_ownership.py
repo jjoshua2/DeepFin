@@ -36,8 +36,8 @@ class CpuEvaluator:
 
 
 class CountingDispatcher(BatchCoalescingDispatcher):
-    def __init__(self, *, fail_close=False):
-        super().__init__(CpuEvaluator(), max_batch=64)
+    def __init__(self, *, fail_close=False, inner=None):
+        super().__init__(inner if inner is not None else CpuEvaluator(), max_batch=64)
         self.close_calls = 0
         self.fail_close = fail_close
 
@@ -95,9 +95,10 @@ def clean_probe(workers, primary):
             pass
 
 
-@pytest.mark.parametrize("failed_index", [0, 1])
 @pytest.mark.parametrize("cleanup_fails", [False, True])
-def test_main_secondary_factory_failure_releases_primary_once(monkeypatch, failed_index, cleanup_fails):
+def test_main_every_secondary_factory_failing_releases_primary_once(monkeypatch, cleanup_fails):
+    """With every device failing there is nothing to degrade onto: startup is
+    reported, exits 1 before readyok, and releases everything it owned."""
     primary = CountingDispatcher(fail_close=cleanup_fails)
     workers = record_workers(monkeypatch)
     helpers = [CpuEvaluator(), CpuEvaluator()]
@@ -105,10 +106,9 @@ def test_main_secondary_factory_failure_releases_primary_once(monkeypatch, faile
     error = RuntimeError("secondary factory failure")
 
     def factory(index):
+        del index
         factory_threads.append(threading.current_thread())
-        if index == failed_index:
-            raise error
-        return helpers[index]
+        raise error
 
     configure_main(monkeypatch, primary, lambda *_a, **_kw: [lambda: factory(0), lambda: factory(1)])
     try:
@@ -119,14 +119,65 @@ def test_main_secondary_factory_failure_releases_primary_once(monkeypatch, faile
         assert primary.close_calls == 1
         assert primary._shutdown.is_set()
         assert not primary._submitter.is_alive()
-        assert factory_threads
+        assert len(factory_threads) == 2
         assert not any(t.is_alive() for t in factory_threads)
         assert len(workers) == 1
         assert not any(t.is_alive() for t in workers[0][1]._threads)
-        assert helpers[1 - failed_index].close_calls == 1
-        assert helpers[failed_index].close_calls == 0
+        assert [h.close_calls for h in helpers] == [0, 0]
     finally:
         clean_probe(workers, primary)
+
+
+@pytest.mark.parametrize("failed_index", [0, 1])
+def test_main_one_secondary_factory_failing_starts_degraded(monkeypatch, capsys, failed_index):
+    """One of N devices failing at startup no longer refuses to start: the
+    engine answers readyok on the others and says DEGRADED (a selfcheck failure
+    marker) before it; the failed device's thread is gone, the survivor is
+    closed exactly once at quit."""
+    primary = CountingDispatcher(inner=_FullPolicyEvaluator())
+    workers = record_workers(monkeypatch)
+    helpers = [_FullPolicyEvaluator(), _FullPolicyEvaluator()]
+    factory_threads = []
+
+    def factory(index):
+        factory_threads.append(threading.current_thread())
+        if index == failed_index:
+            raise RuntimeError("secondary factory failure")
+        return helpers[index]
+
+    configure_main(monkeypatch, primary, lambda *_a, **_kw: [lambda: factory(0), lambda: factory(1)])
+    try:
+        reported = _record_startup_failures(monkeypatch)
+        assert main.main() == 0
+        assert reported == []
+        out = capsys.readouterr().out
+        degraded = [ln for ln in out.splitlines() if "multi-GPU DEGRADED" in ln]
+        assert len(degraded) == 1, out
+        assert "failed at startup" in degraded[0]
+        assert "1 of 2" in degraded[0]
+        assert out.index(degraded[0]) < out.index("readyok")
+        assert not factory_threads[failed_index].is_alive()
+        assert helpers[failed_index].close_calls == 0
+        assert helpers[1 - failed_index].close_calls == 1
+        assert primary.close_calls == 1
+    finally:
+        clean_probe(workers, primary)
+
+
+class _FullPolicyEvaluator(CpuEvaluator):
+    """An evaluator whose answers a real (tiny) search can consume."""
+
+    def evaluate_encoded(self, xs, relations=None):
+        del relations
+        return np.zeros((len(xs), 4672), np.float32), np.zeros((len(xs), 3), np.float32)
+
+    def evaluate_inplace_async(self, batch, *, slot=0, relations=None):
+        del slot, relations
+        return np.zeros((batch, 4672), np.float32), np.zeros((batch, 3), np.float32), None
+
+    def get_input_buffer(self, batch, *, slot=0):
+        del slot
+        return np.zeros((batch, 146, 8, 8), np.float32)  # the default v1 planes
 
 
 @pytest.mark.parametrize("cleanup_fails", [False, True])

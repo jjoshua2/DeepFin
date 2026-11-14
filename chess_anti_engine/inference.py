@@ -568,12 +568,20 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         n_slots: int = 1,
         input_bf16: bool = False,
         legal_bf16: bool = True,
+        pad_to_compiled_buckets: bool = False,
     ) -> None:
         super().__init__(model, device=device, use_amp=use_amp, amp_dtype=amp_dtype)
         self._max_batch = int(max_batch)
         if n_slots < 1:
             raise ValueError(f"n_slots must be >= 1, got {n_slots}")
         self._n_slots = int(n_slots)
+        # Compiled (torch.compile / cudagraph) evaluators round every dense
+        # forward up to ``compiled_forward_rows`` so the set of shapes the graph
+        # ever sees is finite and can be warmed before ``readyok``; the caller's
+        # rows are sliced back out. Off (the default) forwards the exact count,
+        # bit-identical to every evaluator built before this flag existed.
+        self._pad_to_buckets = bool(pad_to_compiled_buckets)
+        self.shape_ledger = ShapeLedger(str(device))
 
         _pin = self._use_cuda
         self._input_bf16 = bool(input_bf16 and self._use_cuda and use_amp)
@@ -584,15 +592,18 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         # the existing selfplay/broker behavior.
         self._legal_bf16 = bool(legal_bf16)
         _channels = input_plane_count(getattr(model, "input_extra_features", None))
+        # Padding rows are read before any caller writes them; zero them once so
+        # a padded forward never runs on uninitialised memory.
+        _alloc_in = torch.zeros if self._pad_to_buckets else torch.empty
         self._pinned_inputs: list[torch.Tensor] = [
-            torch.empty(
+            _alloc_in(
                 (self._max_batch, _channels, _BOARD_H, _BOARD_W),
                 dtype=torch.float32, pin_memory=_pin,
             ) for _ in range(self._n_slots)
         ]
         self._pinned_inputs_bf16: list[torch.Tensor] | None = (
             [
-                torch.empty(
+                _alloc_in(
                     (self._max_batch, _channels, _BOARD_H, _BOARD_W),
                     dtype=torch.bfloat16, pin_memory=True,
                 ) for _ in range(self._n_slots)
@@ -629,6 +640,36 @@ class DirectGPUEvaluator(LocalModelEvaluator):
     @property
     def n_slots(self) -> int:
         return self._n_slots
+
+    @property
+    def pads_to_compiled_buckets(self) -> bool:
+        return self._pad_to_buckets
+
+    def reachable_forward_rows(self, max_rows: int | None = None) -> tuple[int, ...]:
+        """Forward shapes this evaluator can run for up to ``max_rows`` live rows.
+
+        Padding off: every count is its own shape, so this is ``1..max_rows`` --
+        callers warm the compiled path only when padding is on.
+        """
+        top = self._max_batch if max_rows is None else min(int(max_rows), self._max_batch)
+        if not self._pad_to_buckets:
+            return tuple(range(1, top + 1))
+        return reachable_forward_rows(top, self._max_batch)
+
+    def _forward_rows(self, bsz: int, entry: str) -> int:
+        """Padded forward row count for ``bsz`` live rows, noted in the ledger."""
+        rows = compiled_forward_rows(bsz, self._max_batch) if self._pad_to_buckets else int(bsz)
+        if rows > 0:
+            self.shape_ledger.note(entry, rows)
+        return rows
+
+    @staticmethod
+    def _pad_relations(relations: np.ndarray | None, bsz: int, rows: int) -> np.ndarray | None:
+        if relations is None or rows <= bsz:
+            return relations
+        padded = np.zeros((rows, *relations.shape[1:]), dtype=relations.dtype)
+        padded[:bsz] = relations[:bsz]
+        return padded
 
     @property
     def supports_input_bf16_bits(self) -> bool:
@@ -704,7 +745,14 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             raise ValueError(f"batch {bsz} > max {self._max_batch}")
         if not 0 <= slot < self._n_slots:
             raise ValueError(f"slot {slot} out of range [0, {self._n_slots})")
-        return self._run_forward(bsz, copy_out=copy_out, slot=slot, relations=relations)
+        rows = self._forward_rows(bsz, "sync")
+        if rows == bsz:
+            return self._run_forward(bsz, copy_out=copy_out, slot=slot, relations=relations)
+        pol, wdl = self._run_forward(
+            rows, copy_out=copy_out, slot=slot,
+            relations=self._pad_relations(relations, bsz, rows),
+        )
+        return pol[:bsz], wdl[:bsz]
 
     def evaluate_encoded(
         self, x: np.ndarray, relations: np.ndarray | None = None, *, copy_out: bool = True,
@@ -717,7 +765,14 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             raise ValueError(f"batch {bsz} > max {self._max_batch}")
 
         self._stage_encoded_input(x, bsz)
-        return self._run_forward(bsz, copy_out=copy_out, slot=0, relations=relations)
+        rows = self._forward_rows(bsz, "sync")
+        if rows == bsz:
+            return self._run_forward(bsz, copy_out=copy_out, slot=0, relations=relations)
+        pol, wdl = self._run_forward(
+            rows, copy_out=copy_out, slot=0,
+            relations=self._pad_relations(relations, bsz, rows),
+        )
+        return pol[:bsz], wdl[:bsz]
 
     def _run_forward(
         self, bsz: int, *, copy_out: bool = True, slot: int = 0,
@@ -770,11 +825,25 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         if bsz > self._max_batch:
             raise ValueError(f"batch {bsz} > max {self._max_batch}")
 
-        if not self._use_cuda:
-            return super().evaluate_encoded_async(x, relations=relations)
-
+        if not self._pad_to_buckets:
+            if not self._use_cuda:
+                self.shape_ledger.note("async", int(bsz))
+                return super().evaluate_encoded_async(x, relations=relations)
+            self._stage_encoded_input(x, bsz)
+            self.shape_ledger.note("async", int(bsz))
+            return self._async_forward(bsz, slot=0, relations=relations)
+        # Padding: stage into the pinned slot so the pad rows have a home, then
+        # run the bucket shape and hand back the live rows only.
         self._stage_encoded_input(x, bsz)
-        return self._async_forward(bsz, slot=0, relations=relations)
+        rows = self._forward_rows(bsz, "async")
+        rel = self._pad_relations(relations, bsz, rows)
+        if not self._use_cuda:
+            pol_t, wdl_t, event = super().evaluate_encoded_async(
+                self._pinned_inputs_np[0][:rows], relations=rel,
+            )
+        else:
+            pol_t, wdl_t, event = self._async_forward(rows, slot=0, relations=rel)
+        return pol_t[:bsz], wdl_t[:bsz], event
 
     def evaluate_inplace_async(
         self, bsz: int, *, slot: int = 0, relations: np.ndarray | None = None,
@@ -792,10 +861,20 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             raise ValueError(f"batch {bsz} > max {self._max_batch}")
         if not 0 <= slot < self._n_slots:
             raise ValueError(f"slot {slot} out of range [0, {self._n_slots})")
+        rows = self._forward_rows(bsz, "async")
+        if rows == bsz:
+            if not self._use_cuda:
+                xb = self._pinned_inputs_np[slot][:bsz]
+                return super().evaluate_encoded_async(xb, relations=relations)
+            return self._async_forward(bsz, slot=slot, relations=relations)
+        rel = self._pad_relations(relations, bsz, rows)
         if not self._use_cuda:
-            xb = self._pinned_inputs_np[slot][:bsz]
-            return super().evaluate_encoded_async(xb, relations=relations)
-        return self._async_forward(bsz, slot=slot, relations=relations)
+            pol_t, wdl_t, event = super().evaluate_encoded_async(
+                self._pinned_inputs_np[slot][:rows], relations=rel,
+            )
+        else:
+            pol_t, wdl_t, event = self._async_forward(rows, slot=slot, relations=rel)
+        return pol_t[:bsz], wdl_t[:bsz], event
 
     def evaluate_inplace_legal_bf16_async(
         self, bsz: int, legal_flat: np.ndarray, legal_counts: np.ndarray, *, slot: int = 0,
@@ -956,6 +1035,104 @@ _COMPILED_BATCH_BUCKETS = (
 _COMPILED_LEGAL_POLICY_BUCKETS = (
     32_768, 65_536, 131_072, 262_144, 524_288,
 )
+
+
+def compiled_forward_rows(rows: int, cap: int) -> int:
+    """The forward batch a bucket-padding ``DirectGPUEvaluator`` runs for ``rows``.
+
+    THE source of truth for which batch shapes reach a compiled model: the
+    evaluator pads through this function, and warmup enumerates it
+    (``reachable_forward_rows``). Size 1 stays 1 (root evaluations; dynamo
+    specialises 0/1 anyway); every other count rounds up to the next
+    ``_COMPILED_BATCH_BUCKETS`` entry, capped at ``cap`` (the evaluator's
+    ``max_batch``), and a count above the largest bucket runs at ``cap``. The
+    image over ``1..cap`` is therefore finite: the buckets below ``cap`` plus
+    ``cap`` itself.
+    """
+    n = int(rows)
+    if n <= 1:
+        return max(0, n)
+    c = int(cap)
+    for bucket in _COMPILED_BATCH_BUCKETS:
+        if bucket >= n:
+            return min(bucket, c)
+    return c
+
+
+def reachable_forward_rows(max_rows: int, cap: int) -> tuple[int, ...]:
+    """Every shape ``compiled_forward_rows`` can produce for 1..``max_rows`` rows.
+
+    Enumerated through the padding function itself rather than re-derived, so
+    the warm set cannot drift from what the runtime submits.
+    """
+    top = min(int(max_rows), int(cap))
+    return tuple(sorted({compiled_forward_rows(n, cap) for n in range(1, top + 1)}))
+
+
+# Called as ``hook(label, entry, rows)`` for a batch shape first seen AFTER the
+# evaluator's warmup armed its ledger. UCI installs one that prints an
+# ``info string``; without a hook the event is logged at WARNING.
+_COLD_SHAPE_HOOK: Any = None
+
+
+def set_cold_shape_hook(hook: Any) -> None:
+    """Install (or clear, with None) the first-seen-shape-after-warmup reporter."""
+    global _COLD_SHAPE_HOOK
+    _COLD_SHAPE_HOOK = hook
+
+
+class ShapeLedger:
+    """Forward batch shapes one evaluator has run, plus the post-warmup guard.
+
+    Every forward notes its (padded) row count. ``arm()`` is called once the
+    evaluator's warmup has covered every reachable shape; after that a shape not
+    yet in the ledger means a compile / cudagraph capture is happening on the
+    clock, which is reported once per shape through ``_COLD_SHAPE_HOOK``. The
+    hot path is one set lookup.
+    """
+
+    def __init__(self, label: str) -> None:
+        self.label = str(label)
+        self._seen: set[int] = set()
+        self._armed = False
+        self._lock = threading.Lock()
+        self.cold_shapes: list[tuple[str, int]] = []
+
+    def note(self, entry: str, rows: int) -> None:
+        if rows in self._seen:
+            return
+        with self._lock:
+            if rows in self._seen:
+                return
+            self._seen.add(rows)
+            armed = self._armed
+            if armed:
+                self.cold_shapes.append((entry, rows))
+        if not armed:
+            return
+        hook = _COLD_SHAPE_HOOK
+        if hook is not None:
+            try:
+                hook(self.label, entry, rows)
+                return
+            except Exception:
+                log.debug("cold-shape hook raised", exc_info=True)
+        log.warning(
+            "first-seen batch shape after warmup: device=%s entry=%s batch=%d",
+            self.label, entry, rows,
+        )
+
+    def seen(self) -> frozenset[int]:
+        with self._lock:
+            return frozenset(self._seen)
+
+    def arm(self) -> None:
+        with self._lock:
+            self._armed = True
+
+    @property
+    def armed(self) -> bool:
+        return self._armed
 
 
 # --- Optional forward size histogram (bucket-design diagnostic) ------------

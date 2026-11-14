@@ -13,6 +13,24 @@ This is the pool-level multi-GPU primitive. The single-GPU PucvChunker
 stays as a leaner code path for `Threads=1` UCI; this kicks in when the
 user wires multiple devices.
 
+Degrade path (one device failing must not cost the move or the game):
+  - A worker whose evaluator RAISES mid-search is dropped for the rest of the
+    pool's life. Its in-flight leaves have their virtual loss released (the
+    same ``_release_outstanding`` cleanup as before), their budget tokens go
+    back to the shared semaphore so the surviving workers search them, and the
+    run returns normally. Only when no worker is left does ``run`` raise, which
+    the engine answers with its existing fallback bestmove.
+  - A worker stuck inside ONE device call (submit or completion wait) for
+    longer than ``stall_threshold_s()`` is ABANDONED: the run thread releases
+    its in-flight virtual loss under the pool lock and stops waiting for it.
+    The stuck thread re-checks under the same lock when (if ever) the call
+    returns and then exits without touching the tree, so the release happens
+    exactly once.
+  - A factory that fails at startup leaves the pool running on the others
+    (DEGRADED); only when every factory fails does construction raise.
+  - Every drop is announced once through ``drain_notes()``; the failed
+    evaluator stays quarantined (``async_safety``) so nothing reuses it.
+
 Why a new class instead of extending WalkerPool: walker_pool's hot path
 is ``walker_descend_puct`` (single leaf → ONE submit per gather) on a
 shared evaluator. Multi-GPU pucv runs ``batch_descend_puct`` (G leaves →
@@ -38,10 +56,69 @@ from chess_anti_engine.mcts._mcts_tree import MCTSTree
 from chess_anti_engine.mcts.puct_history import puct_history_args
 from chess_anti_engine.mcts.puct_tb import LeafSnapshots, descend_batch, mark_batch_solved, override_leaf_values
 from chess_anti_engine.tablebase import SyzygyProbe
-from chess_anti_engine.async_safety import drain_failed_receipts, ensure_usable, note_cleanup, pending_receipt, submit_async
+from chess_anti_engine.async_safety import (
+    drain_failed_receipts,
+    ensure_usable,
+    note_cleanup,
+    pending_receipt,
+    poison,
+    submit_async,
+)
 from chess_anti_engine.mcts.puct_vl import _PLANES, _alloc_buffers, _release_outstanding
 
 _log = logging.getLogger(__name__)
+
+# Floor of the stuck-device threshold. The threshold actually used is the larger
+# of this and ``_STALL_SLOWEST_CALL_FACTOR`` x the slowest device call any worker
+# of this pool has completed, so a slow-but-healthy device (CPU tests, a big
+# batch on a small card) is never mistaken for a dead one.
+_STALL_FLOOR_S = 1.0
+_STALL_SLOWEST_CALL_FACTOR = 10.0
+# Once the job's stop event is set (``stop``, the deadline watchdog) nobody waits
+# for search results any more, and a search still blocked on one device would
+# hold the worker past the next ``go`` (it would be parked and that move
+# answered unsearched). Under a stop the threshold drops to the larger of this
+# and ``_STOP_STALL_SLOWEST_CALL_FACTOR`` x the slowest completed call.
+_STOP_STALL_FLOOR_S = 0.25
+_STOP_STALL_SLOWEST_CALL_FACTOR = 5.0
+# How often ``run`` re-checks for a stuck worker while it waits; a normal
+# completion wakes it at once through the condition variable.
+_RUN_POLL_S = 0.05
+
+# The text every device drop is announced with. "DEGRADED" is one of the
+# selfcheck's failure markers, so ``--selfcheck`` reports a degraded start.
+DEVICE_DROPPED_NOTE = (
+    "WARNING multi-GPU DEGRADED: device {label} {what} ({reason}); "
+    "searching on {live} of {total} devices"
+)
+ALL_DEVICES_FAILED = "multi-GPU pool: every device has failed"
+
+
+class _Abandoned(Exception):
+    """Raised inside a worker whose stuck device call outlived its abandonment."""
+
+
+class _WorkerQuarantine:
+    """Per-worker stand-in for the pool in ``async_safety`` poisoning.
+
+    A failed worker's evaluator and buffers are quarantined on this object, not
+    on the pool, so the other workers stay usable."""
+
+    def __init__(self, idx: int) -> None:
+        self.idx = idx
+
+
+def _is_poisoned(owner: Any) -> bool:
+    try:
+        ensure_usable(owner)
+    except RuntimeError:
+        return True
+    return False
+
+
+def _one_line(exc: BaseException, limit: int = 160) -> str:
+    text = " ".join(f"{type(exc).__name__}: {exc}".split())
+    return text if len(text) <= limit else text[: limit - 3] + "..."
 
 
 @dataclass
@@ -62,6 +139,11 @@ class MultiGpuPucvConfig:
   # Transport dynamic board-relation matrices per leaf (model.use_dynamic_relations).
     compute_relations: bool = False
     input_history_encoding: str = "legacy"
+  # Floor (seconds) of the stuck-device threshold; see ``stall_threshold_s``.
+  # None = the module's ``_STALL_FLOOR_S``.
+    stall_floor_s: float | None = None
+  # Names used in the drop announcements (e.g. "cuda:1"); default "#k".
+    device_labels: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -123,6 +205,17 @@ class _Job:
     budget: threading.Semaphore
     stop_event: threading.Event
     tb_probe: SyzygyProbe | None = None
+
+
+@dataclass
+class _EvalJob:
+    """One root evaluation routed to a single live worker's own evaluator."""
+    worker: int
+    xs: np.ndarray
+    relations: np.ndarray | None
+    done: threading.Event
+    result: tuple[np.ndarray, np.ndarray] | None = None
+    error: BaseException | None = None
 
 
 class MultiGpuPucvPool:
@@ -193,19 +286,37 @@ class MultiGpuPucvPool:
             self._evals = list(evaluators)
         self._cfg = cfg
 
-  # Same sync structure as WalkerPool: per-worker wake event + Barrier
-  # for completion. Persistent threads, no per-chunk spawn cost. With
-  # factories, an extra Barrier(n+1) gates run() until every worker has
+  # Per-worker wake event; completion is a condition variable over the set
+  # of workers still running the current job, so a dead or stuck worker
+  # can be taken out of the wait (a Barrier cannot lose a party). With
+  # factories, a Barrier(n+1) gates construction until every worker has
   # built its evaluator (compile + cudagraph capture happen here, can
   # take 5-30s on first cold run depending on compile_mode).
+        n = cfg.n_gpus
         self._job_lock = threading.Lock()
         self._job: _Job | None = None
-        self._wakes = [threading.Event() for _ in range(cfg.n_gpus)]
-        self._done = threading.Barrier(cfg.n_gpus + 1)
-        self._init_done = threading.Barrier(cfg.n_gpus + 1)
+        self._eval_job: _EvalJob | None = None
+        self._wakes = [threading.Event() for _ in range(n)]
+        self._cv = threading.Condition()
+        self._running: set[int] = set()
+        self._live = [True] * n
+        self._abandoned = [False] * n
+        self._busy_since: list[float | None] = [None] * n
+        self._outstanding: list[dict[int, int]] = [{} for _ in range(n)]
+        self._worker_bufs: list[list[dict[str, np.ndarray]]] = [[] for _ in range(n)]
+        self._integrated = [0] * n
+        self._quarantine = [_WorkerQuarantine(k) for k in range(n)]
+        self._slowest_call_s = 0.0
+        self._notes: list[str] = []
+        self._labels = tuple(
+            cfg.device_labels[k] if k < len(cfg.device_labels) else f"#{k}"
+            for k in range(n)
+        )
+        self._init_done = threading.Barrier(n + 1)
         self._shutdown = threading.Event()
         self._errors: list[BaseException] = []
         self._init_errors: list[BaseException] = []
+        self._init_error_by_worker: dict[int, BaseException] = {}
         self._stats_lock = threading.Lock()
         self._run_started = 0.0
         self._cache = (
@@ -241,8 +352,16 @@ class MultiGpuPucvPool:
             th.start()
         self._init_done.wait()
         if self._init_errors:
-            self.close()
-            raise self._init_errors[0]
+            failed = sorted(self._init_error_by_worker)
+            if len(failed) >= n or not failed:
+                # Every device failed (or a failure not tied to one worker):
+                # nothing to degrade onto -- refuse exactly as before.
+                self.close()
+                raise self._init_errors[0]
+            for k in failed:
+                self._live[k] = False
+            for k in failed:
+                self._note_drop(k, "failed at startup", _one_line(self._init_error_by_worker[k]))
 
     def __enter__(self) -> MultiGpuPucvPool:
         return self
@@ -252,8 +371,31 @@ class MultiGpuPucvPool:
 
     @property
     def n_devices(self) -> int:
-        """Number of GPU worker evaluators driving the shared tree."""
+        """Number of LIVE GPU worker evaluators driving the shared tree."""
+        return sum(self._live)
+
+    @property
+    def n_configured_devices(self) -> int:
+        """Workers the pool was built with, live or not."""
         return self._cfg.n_gpus
+
+    def failed_devices(self) -> tuple[str, ...]:
+        """Labels of the workers this pool has dropped."""
+        return tuple(self._labels[k] for k, alive in enumerate(self._live) if not alive)
+
+    def drain_notes(self) -> list[str]:
+        """Pop the pending device-drop announcements (each is produced once)."""
+        with self._cv:
+            notes, self._notes = self._notes, []
+        return notes
+
+    def stall_threshold_s(self) -> float:
+        """Seconds one device call may block before its worker is abandoned."""
+        floor = self._cfg.stall_floor_s
+        return max(
+            float(_STALL_FLOOR_S if floor is None else floor),
+            _STALL_SLOWEST_CALL_FACTOR * self._slowest_call_s,
+        )
 
     @property
     def gather(self) -> int:
@@ -266,8 +408,101 @@ class MultiGpuPucvPool:
         self._shutdown.set()
         for ev in self._wakes:
             ev.set()
-        for th in self._threads:
+        for k, th in enumerate(self._threads):
+            if self._abandoned[k]:
+                continue  # stuck inside a device call; never joinable
             th.join(timeout=2.0)
+
+    # -- failure bookkeeping (callers hold no lock unless named *_locked) --
+
+    def _note_drop(self, idx: int, what: str, reason: str) -> None:
+        msg = DEVICE_DROPPED_NOTE.format(
+            label=self._labels[idx], what=what, reason=reason,
+            live=sum(self._live), total=self._cfg.n_gpus,
+        )
+        _log.error("%s", msg)
+        with self._cv:
+            self._notes.append(msg)
+
+    def _device_call_begin(self, idx: int) -> None:
+        with self._cv:
+            if self._abandoned[idx]:
+                raise _Abandoned()
+            self._busy_since[idx] = time.monotonic()
+
+    def _device_call_end(self, idx: int) -> None:
+        """Close a device call; raise ``_Abandoned`` if the pool gave up on it.
+
+        Runs under the same lock as the abandonment, so either this worker
+        resumes (and owns its outstanding cleanup) or the run thread already
+        released that cleanup and this worker never touches the tree again."""
+        with self._cv:
+            since = self._busy_since[idx]
+            self._busy_since[idx] = None
+            if self._abandoned[idx]:
+                raise _Abandoned()
+            if since is not None:
+                took = time.monotonic() - since
+                if took > self._slowest_call_s:
+                    self._slowest_call_s = took
+
+    def _abandon_stuck_locked(self, job: _Job | None) -> None:
+        """Abandon every running worker stuck in one device call too long."""
+        limit = self.stall_threshold_s()
+        if job is not None and job.stop_event.is_set():
+            limit = min(limit, max(
+                _STOP_STALL_FLOOR_S, _STOP_STALL_SLOWEST_CALL_FACTOR * self._slowest_call_s,
+            ))
+        now = time.monotonic()
+        for k in sorted(self._running):
+            since = self._busy_since[k]
+            if since is None or now - since <= limit:
+                continue
+            self._abandoned[k] = True
+            self._live[k] = False
+            self._running.discard(k)
+            outstanding = self._outstanding[k]
+            if job is not None and outstanding:
+                in_flight = sum(outstanding.values())
+                try:
+                    _release_outstanding(
+                        job.tree, self._worker_bufs[k], outstanding,
+                        self._cfg.vloss_weight, None,
+                    )
+                except BaseException:
+                    _log.exception("releasing a stuck worker's virtual loss failed")
+                outstanding.clear()
+                if not job.stop_event.is_set():
+                    job.budget.release(in_flight)
+            evaluator = self._evals[k] if k < len(self._evals) else None
+            poison(self._quarantine[k], evaluator, self._worker_bufs[k])
+            self._worker_stats[k] = MultiGpuPucvWorkerStats(
+                worker_index=k, leaves=self._integrated[k],
+            )
+            msg = DEVICE_DROPPED_NOTE.format(
+                label=self._labels[k], what="stopped answering",
+                reason=f"one device call blocked for {now - since:.1f}s > {limit:.1f}s",
+                live=sum(self._live), total=self._cfg.n_gpus,
+            )
+            _log.error("%s", msg)
+            self._notes.append(msg)
+
+    def _fail_worker(self, idx: int, exc: BaseException, job: _Job | None) -> None:
+        """A worker's search raised: drop it, keep the pool going on the rest."""
+        with self._cv:
+            if self._abandoned[idx]:
+                return
+            self._live[idx] = False
+            self._errors.append(exc)
+            in_flight = sum(self._outstanding[idx].values())
+            self._outstanding[idx].clear()
+        if job is not None and in_flight and not job.stop_event.is_set():
+            job.budget.release(in_flight)
+        if _is_poisoned(self._quarantine[idx]) and not any(self._live):
+            # The last worker died with an unquiesced evaluator: the pool as a
+            # whole is now unusable, exactly as before the degrade path.
+            poison(self, self._quarantine[idx], exc)
+        self._note_drop(idx, "failed mid-search", _one_line(exc))
 
     def last_stats(self) -> MultiGpuPucvStats:
         """Return stats from the most recent completed run.
@@ -294,8 +529,13 @@ class MultiGpuPucvPool:
         an early stop would inflate the nps estimate that sizes the next
         time-capped chunk."""
         ensure_usable(self)
-        for evaluator in self._evals:
-            ensure_usable(evaluator)
+        live = [k for k, alive in enumerate(self._live) if alive]
+        if not live:
+            raise RuntimeError(
+                f"{ALL_DEVICES_FAILED} ({', '.join(self.failed_devices())})"
+            )
+        for k in live:
+            ensure_usable(self._evals[k])
         if target_sims <= 0:
             return 0
         if self._shutdown.is_set():
@@ -310,17 +550,27 @@ class MultiGpuPucvPool:
             ]
             if self._cache is not None:
                 self._cache_run_start = self._cache.stats()
-            self._job = _Job(
+            job = _Job(
                 tree=tree, root_id=root_id, root_cboard=root_cboard,
                 budget=threading.Semaphore(target_sims),
                 stop_event=stop_event, tb_probe=tb_probe,
             )
-        for ev in self._wakes:
-            ev.set()
-        self._done.wait()
+            self._job = job
+            with self._cv:
+                self._running = set(live)
+        for k in live:
+            self._wakes[k].set()
+        with self._cv:
+            while self._running:
+                self._cv.wait(timeout=_RUN_POLL_S)
+                self._abandon_stuck_locked(job)
 
-        if self._errors:
-            raise self._errors[0]
+        if not any(self._live):
+            if self._errors:
+                raise self._errors[0]
+            raise RuntimeError(
+                f"{ALL_DEVICES_FAILED} ({', '.join(self.failed_devices())})"
+            )
         elapsed = time.perf_counter() - self._run_started
         cache_hits = 0
         cache_misses = 0
@@ -351,6 +601,101 @@ class MultiGpuPucvPool:
   # leaves ARE the completed sims. Tokens never acquired (early stop)
   # are correctly excluded.
         return self._last_stats.leaves
+
+    def evaluate_root(
+        self, xs: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Evaluate a (1, C, 8, 8) root on a surviving worker's own evaluator.
+
+        The degrade path for the PRIMARY evaluator (root evals run on
+        ``devices[0]`` outside the pool): when it fails, the search can still
+        get its root prior from any live device. Runs on the worker's own
+        thread (cudagraph thread affinity). Call only between ``run`` calls.
+        A worker that raises or stays stuck past ``stall_threshold_s`` is
+        dropped and the next live one is tried; raises once none is left.
+        """
+        ensure_usable(self)
+        last: BaseException | None = None
+        for k in range(self._cfg.n_gpus):
+            if not self._live[k]:
+                continue
+            job = _EvalJob(worker=k, xs=xs, relations=relations, done=threading.Event())
+            self._eval_job = job
+            stuck = False
+            try:
+                self._wakes[k].set()
+                limit = self.stall_threshold_s()
+                while not job.done.wait(_RUN_POLL_S):
+                    if not self._threads[k].is_alive():
+                        self._live[k] = False
+                        last = RuntimeError(f"device {self._labels[k]} worker exited")
+                        break
+                    with self._cv:
+                        since = self._busy_since[k]
+                        # Same rule as a search: only a worker still INSIDE its
+                        # device call is abandoned, under the lock it re-checks.
+                        if (since is not None and not job.done.is_set()
+                                and time.monotonic() - since > limit):
+                            self._abandoned[k] = True
+                            self._live[k] = False
+                            stuck = True
+                            break
+            finally:
+                self._eval_job = None
+            if stuck:
+                poison(self._quarantine[k], self._evals[k])
+                self._note_drop(
+                    k, "stopped answering",
+                    f"root evaluation blocked for more than {limit:.1f}s",
+                )
+                last = TimeoutError(f"device {self._labels[k]} root evaluation stuck")
+                continue
+            if not job.done.is_set():
+                continue
+            if job.error is not None:
+                last = job.error
+                continue
+            assert job.result is not None
+            return job.result
+        raise RuntimeError(
+            f"{ALL_DEVICES_FAILED} ({', '.join(self.failed_devices())})"
+        ) from last
+
+    def _run_eval_job(self, idx: int, job: _EvalJob, evaluator: Any) -> bool:
+        """Run ``job`` on this worker. False = this worker is now retired."""
+        quarantine = self._quarantine[idx]
+        receipt = None
+        try:
+            buf = evaluator.get_input_buffer(1, slot=0)
+            buf_np = buf.numpy() if hasattr(buf, "numpy") else np.asarray(buf)
+            buf_np.reshape(job.xs.shape)[...] = job.xs
+            self._device_call_begin(idx)
+            try:
+                if job.relations is None:
+                    receipt = submit_async(evaluator, 1, slot=0)
+                else:
+                    receipt = submit_async(evaluator, 1, slot=0, relations=job.relations)
+                pol_t, wdl_t, event = receipt
+                if event is not None:
+                    event.synchronize()
+            finally:
+                self._device_call_end(idx)
+            pol = pol_t.numpy() if hasattr(pol_t, "numpy") else np.asarray(pol_t)
+            wdl = wdl_t.numpy() if hasattr(wdl_t, "numpy") else np.asarray(wdl_t)
+            job.result = (np.array(pol[:1], dtype=np.float32), np.array(wdl[:1], dtype=np.float32))
+            return True
+        except _Abandoned:
+            return False
+        except BaseException as exc:
+            if receipt is not None:
+                drain_failed_receipts(evaluator, quarantine, [receipt], exc)
+            with self._cv:
+                self._live[idx] = False
+            self._note_drop(idx, "failed a root evaluation", _one_line(exc))
+            job.error = exc
+            return False
+        finally:
+            job.done.set()
 
     def _worker_loop(self, idx: int) -> None:
         cfg = self._cfg
@@ -394,8 +739,11 @@ class MultiGpuPucvPool:
             ]
         except BaseException as exc:
             self._init_errors.append(exc)
+            self._init_error_by_worker[idx] = exc
         self._init_done.wait()
-        if self._init_errors:
+        # Only THIS worker's failure retires it: with the degrade path the
+        # others keep running (construction raises only if all of them failed).
+        if idx in self._init_error_by_worker:
             if self._factories is not None:
                 self._evals[idx] = None
                 close = getattr(evaluator, "close", None)
@@ -407,22 +755,37 @@ class MultiGpuPucvPool:
                 evaluator = None
             bufs.clear()
             return
+        self._worker_bufs[idx] = bufs
 
         while True:
             my_wake.wait()
             my_wake.clear()
-            if self._shutdown.is_set():
+            if self._shutdown.is_set() or not self._live[idx]:
                 return
+            eval_job = self._eval_job
+            if eval_job is not None and eval_job.worker == idx:
+                if not self._run_eval_job(idx, eval_job, evaluator):
+                    return  # abandoned or failed: this worker is retired
+                continue
             job = self._job
             if job is None:
                 continue
             try:
                 self._pipeline_until_done(idx, job, evaluator, bufs, gather)
+            except _Abandoned:
+                # The run thread already released this worker's virtual loss
+                # and stopped waiting for it; touch nothing, just leave.
+                return
             except BaseException as exc:
-                _log.exception("pucv-gpu-%d raised; requesting pool stop", idx)
-                self._errors.append(exc)
-                job.stop_event.set()
-            self._done.wait()
+                _log.exception("pucv-gpu-%d raised; dropping this device", idx)
+                self._fail_worker(idx, exc, job)
+                with self._cv:
+                    self._running.discard(idx)
+                    self._cv.notify_all()
+                return
+            with self._cv:
+                self._running.discard(idx)
+                self._cv.notify_all()
 
     def _pipeline_until_done(
         self,
@@ -459,7 +822,12 @@ class MultiGpuPucvPool:
   # removes it, and the evaluator between them can raise; the tree outlives
   # this call, so an unguarded escape biases it permanently
   # (SHARED_BROKER_AUDIT B7 -- reproduced on the WalkerPool twin).
-        outstanding: dict[int, int] = {}
+  # Shared with the run thread, which releases it if this worker is abandoned
+  # inside a stuck device call (see ``_abandon_stuck_locked``).
+        outstanding: dict[int, int] = self._outstanding[idx]
+        outstanding.clear()
+        self._integrated[idx] = 0
+        quarantine = self._quarantine[idx]
         receipts: dict[int, Any] = {}
         tb_batches: dict[int, LeafSnapshots | None] = {}
         # Own the exact async result before pending metadata or registration can fail.
@@ -498,10 +866,14 @@ class MultiGpuPucvPool:
                     max_batch = max(max_batch, n)
                     n_term = int(b["is_term"][:n].sum())
                     terminal_leaves += n_term
-                    next_handle = self._prepare_submit(
-                        evaluator, next_slot, next_local, n, enc_view, b, rel,
-                        n_term=n_term, receipt_cell=unregistered_receipt,
-                    )
+                    self._device_call_begin(idx)
+                    try:
+                        next_handle = self._prepare_submit(
+                            evaluator, next_slot, next_local, n, enc_view, b, rel,
+                            n_term=n_term, receipt_cell=unregistered_receipt,
+                        )
+                    finally:
+                        self._device_call_end(idx)
                 else:
                     next_handle = None
 
@@ -510,9 +882,13 @@ class MultiGpuPucvPool:
                     unregistered_receipt[0] = None
 
                 if pending is not None:
-                    b_cur, p_n, pol, wdl, submit_t = self._finish_pending(
-                        pending, bufs,
-                    )
+                    self._device_call_begin(idx)
+                    try:
+                        b_cur, p_n, pol, wdl, submit_t = self._finish_pending(
+                            pending, bufs,
+                        )
+                    finally:
+                        self._device_call_end(idx)
                     receipts.pop(int(pending[1]), None)
                     if submit_t > 0.0:
                         wait_seconds += time.perf_counter() - submit_t
@@ -526,27 +902,35 @@ class MultiGpuPucvPool:
                         b_cur["is_term"], pol, wdl, vloss,
                     )
                     outstanding.pop(int(pending[1]), None)
+                    self._integrated[idx] += int(p_n)
                     tb_batches.pop(int(pending[1]), None)
                     mark_batch_solved(tree, b_cur, solved)
 
                 pending = next_handle
+        except _Abandoned:
+            # Stuck device: draining its receipts could block forever, and the
+            # run thread already quarantined the evaluator and released the
+            # virtual loss (``outstanding`` is empty now).
+            raise
         except BaseException as error:
             if unregistered_receipt[0] is not None and receipts.get(next_local) is not unregistered_receipt[0]:
-                drain_failed_receipts(evaluator, self, unregistered_receipt, error)
-            drain_failed_receipts(evaluator, self, receipts.values(), error)
+                drain_failed_receipts(evaluator, quarantine, unregistered_receipt, error)
+            drain_failed_receipts(evaluator, quarantine, receipts.values(), error)
             raise
         finally:
             _release_outstanding(tree, bufs, outstanding, vloss, sys.exc_info()[1])
-
-        self._worker_stats[idx] = MultiGpuPucvWorkerStats(
-            worker_index=idx,
-            batches=batches,
-            leaves=leaves,
-            terminal_leaves=terminal_leaves,
-            max_batch=max_batch,
-            wait_seconds=wait_seconds,
-            wall_seconds=time.perf_counter() - wall_start,
-        )
+            if not self._abandoned[idx]:
+                # A failed worker reports what it INTEGRATED: its in-flight
+                # leaves never landed and their tokens went back to the budget.
+                self._worker_stats[idx] = MultiGpuPucvWorkerStats(
+                    worker_index=idx,
+                    batches=batches,
+                    leaves=self._integrated[idx] if sys.exc_info()[1] is not None else leaves,
+                    terminal_leaves=terminal_leaves,
+                    max_batch=max_batch,
+                    wait_seconds=wait_seconds,
+                    wall_seconds=time.perf_counter() - wall_start,
+                )
 
     def _prepare_submit(
         self,

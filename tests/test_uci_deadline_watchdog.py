@@ -252,8 +252,11 @@ class _Wedged:
 
 def test_multi_gpu_cpu_cpu_one_hung_evaluator_still_answers(out) -> None:
     """A real two-device pool on cpu,cpu; device 1's evaluator wedges on its
-    first batch, so the search never returns. The watchdog answers from the
-    root prior the primary already cached, without touching any evaluator."""
+    first batch. Either the pool's stop-aware stall check abandons device 1
+    and the search answers from its own tree (announcing the drop), or -- if
+    the deadline watchdog gets there first -- the watchdog answers from the
+    root prior the primary already cached. Both are legal, searched-or-prior
+    answers; never first_legal, never two bestmoves."""
     from chess_anti_engine.inference import DirectGPUEvaluator
     from chess_anti_engine.inference_dispatcher import ThreadSafeGPUDispatcher
     from chess_anti_engine.mcts.gumbel import GumbelConfig
@@ -289,7 +292,9 @@ def test_multi_gpu_cpu_cpu_one_hung_evaluator_still_answers(out) -> None:
         board.push_uci("e2e4")
         _legal(board, moves)
         text = out.text()
-        assert "deadline watchdog answers unsearched" in text
+        watchdog = "deadline watchdog answers unsearched" in text
+        degraded = "multi-GPU DEGRADED: device #1 stopped answering" in text
+        assert watchdog or degraded, text
         assert "source=first_legal" not in text  # the cached prior or a PV answered
         release.set()
         _join_all(engine)

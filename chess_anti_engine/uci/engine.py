@@ -22,6 +22,7 @@ from collections.abc import Callable
 
 import chess
 
+from chess_anti_engine.inference import set_cold_shape_hook
 from chess_anti_engine.mcts.solved_root import SolvedRootWitnessUnavailable
 from chess_anti_engine.moves import index_to_move, move_to_index
 from chess_anti_engine.mcts.search_options import (
@@ -594,6 +595,14 @@ class Engine:
         gil_profile: bool = False,
     ) -> None:
         self._worker = worker
+  # A compiled evaluator that meets a batch shape its warmup did not run
+  # compiles / captures on the clock; say so (once per shape and device).
+        set_cold_shape_hook(_report_cold_shape)
+  # Where the multi-GPU pool's degrade-path announcements go (a dropped
+  # device), and the device names they use; every later pool install reuses it.
+        configure_notes = getattr(worker, "configure_device_notes", None)
+        if callable(configure_notes):
+            configure_notes(emit_info_string_unless_silenced, tuple(search_devices or ()))
   # Factory that takes a max_batch and returns a warmed-up evaluator
   # (model + devices + coalesce flag are captured at construction).
   # When None, the MaxBatch setoption silently no-ops.
@@ -3873,3 +3882,25 @@ def _emit_info_string(s: str) -> None:
     per-phase lines). Runs on the search thread at phase barriers, protected
     by the same stdout lock as every other UCI line."""
     _println(f"info string {s}")
+
+
+def _report_cold_shape(label: str, entry: str, rows: int) -> None:
+    """`ShapeLedger` hook: a compiled batch shape first seen after warmup."""
+    _println(
+        f"info string WARNING first-seen batch shape after warmup: device={label} "
+        f"entry={entry} batch={rows}; its compile / CUDA-graph capture ran on the "
+        "search clock (please report: the warm set missed a reachable shape)"
+    )
+
+
+def emit_info_string_unless_silenced(s: str) -> bool:
+    """Like `_emit_info_string`, but report whether the line went out.
+
+    A parked or watchdog-answered search thread is silenced; a one-time
+    announcement (a dropped GPU) from such a thread must wait for the next
+    search rather than vanish."""
+    if (threading.current_thread() in _SILENCED_THREADS
+            and not getattr(_ANSWER_OWNER, "active", False)):
+        return False
+    _println(f"info string {s}")
+    return True

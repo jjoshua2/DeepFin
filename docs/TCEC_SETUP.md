@@ -157,7 +157,14 @@ one is visible). The engine inherits the prewarm's environment, so
 `--compile-cache-dir`, pass the same one so that directory is the one warmed.
 
 `readyok` is sent only after the search path is warmed, so give the engine a generous start / `isready` allowance in
-the GUI. `scripts/tcec_autotune.sh --checkpoint ... [--devices ...]` sweeps batching
+the GUI. With torch.compile on, every evaluator rounds each batch up to a fixed
+ladder of sizes (`_COMPILED_BATCH_BUCKETS` in `inference.py`, capped at the
+evaluator's `MaxBatch`), and the warm-up runs every size of that ladder on every
+device before `readyok`, one `info string warmup ...: batch ... (.../..., ...s)`
+line per size (device, batch size, progress, seconds so far). A size the warm-up did not cover would be compiled during a move;
+if that ever happens the engine says so once per size and device:
+`info string WARNING first-seen batch shape after warmup: device=... entry=... batch=...`.
+That line is a bug report, not a setting to tune. `scripts/tcec_autotune.sh --checkpoint ... [--devices ...]` sweeps batching
 and parallel-search settings for nps **(GPU, not run)**; nps is not playing strength,
 and its output is a throughput report, not a recommended configuration.
 
@@ -365,6 +372,25 @@ The result is one of: `info string engine health check passed; unhealthy state c
 on stderr) and exit 1 before `readyok`. A GUI that never
 sends `isready` between games gets no re-check.
 
+**One GPU failing on the multi-GPU PUCV pool.** A device whose evaluator raises
+(CUDA out of memory, device lost, any error) during a search is dropped; its
+unfinished leaves are given back to the other devices, the move is still searched
+and answered in time, and later moves search on the devices that are left. A device
+that blocks inside one GPU call for longer than a threshold (at least 1 s, and at
+least 10 times the slowest call that device pool has completed; once the move has
+been stopped or answered, at least 0.25 s and 5 times the slowest call) is dropped
+the same way, so a hung GPU costs at most the move it hung in. The first device (`devices[0]`) also does the root evaluations; if that fails,
+they move to a remaining device. Each drop is announced once:
+`info string WARNING multi-GPU DEGRADED: device ... failed mid-search ...; searching on ... of ... devices`
+(or `... stopped answering ...`). A dropped device is not retried until the pool is
+rebuilt (an option that rebuilds it, or a restart). If every device has failed, each
+`go` is answered from the fallback described above.
+At startup, a device that fails to build or warm leaves the engine running DEGRADED
+on the others, announced with `... failed at startup ...` before `readyok`; the
+self-check treats that line as a failure. Only when every device fails does startup
+fail (exit 1). These paths were exercised with fake CPU devices and injected faults
+only (see the GPU-only checks).
+
 **Options mid-game.** An option that rebuilds is applied at once, between moves; if
 the rebuild fails, `info string ...: evaluator rebuild failed (...); keeping the
 previous evaluator and settings`. While a stuck search holds the worker only
@@ -375,12 +401,16 @@ tournament play and is not recommended: leave `Ponder` false.
 
 ## 9. Known limits, stated plainly
 
-- **No degrade path when one of several GPUs fails.** If the multi-GPU pool cannot
-  be (re)installed the engine restores the previous pool, else falls back to classic
-  Gumbel on one GPU and says so
+- **The degrade path covers the multi-GPU PUCV pool only** (section 8, the default
+  with several `--devices`). With `--search-parallel gumbel`, or with
+  `--no-multi-gpu-pucv` (a debugging path), a failing GPU fails the search: that
+  `go` and the later ones are answered from the fallback, and the engine marks
+  itself unhealthy and rebuilds at the next game boundary (section 8). A GPU
+  that hangs while the engine builds its evaluator (startup, or a rebuild after an
+  option change) is not timed out: compiling can legitimately take many minutes.
+  If an option change cannot install the pool at all the engine restores the
+  previous pool, else falls back to classic Gumbel on one GPU and says so
   (`previous configuration could not be restored ...; fell back to the single-evaluator classic Gumbel path`).
-  It does not continue on the remaining healthy GPUs. A pool that fails at startup
-  fails the strict startup check (exit 1).
 - **Multi-GPU playing strength has never been validated.** The multi-GPU paths
   were built and measured for throughput; all search tuning was done on one GPU with
   classic Gumbel. On the multi-GPU PUCV pool most Gumbel options are inert (PUCT
@@ -421,9 +451,16 @@ tournament machine with the real network `<C>`, a free GPU and no other load.
 7. **GUI behaviour on the boundary exit** (#1263): whether the GUI reports a failed
    engine start for the next game, rather than hanging, when the engine exits 1 at a
    boundary. Unverified for any GUI.
-8. **One bad GPU** (#1263): make one device's pool factory fail and enable
-   `UseMultiGpuPUCV`; expect `previous configuration kept` or the one-GPU fallback
-   line, and a searched move.
+8. **One bad GPU** (#1263, updated by the degrade-path change): make one device's
+   pool factory fail and enable `UseMultiGpuPUCV`; expect one
+   `multi-GPU DEGRADED: device ... failed at startup` line, `searchconfig` still on
+   `path=pucv_pool`, and a searched move. Then fail a device MID-search on real
+   GPUs (an injected raise in its evaluator, and separately a device made to stop
+   answering, e.g. a kernel that never finishes): one `DEGRADED` line, a searched
+   `bestmove` within the move's time, and searched moves afterwards. Record the
+   stuck-device threshold the pool used (`stall_threshold_s`, at least 1 s) against
+   the real per-batch GPU latency; it was sized on CPU only. Repeat with
+   `devices[0]` failing (root evaluations move to another device).
 9. **Hash on the real net** (#1264): `go movetime 120000` with `Hash 16384`; RSS
    growth should stay within Hash + about 150 MB + the eval cache. On the 4-GPU
    machine with Hash >= 64 GB, a long `go infinite` then `stop`: `info` lines at a
@@ -442,7 +479,10 @@ tournament machine with the real network `<C>`, a free GPU and no other load.
 13. **Watchdog false fires** (#1276): 200 moves of `go movetime 1000` at
     `ChunkSims 512`, also with clocks and with several devices: expect no
     `deadline watchdog` line and 200 `bestmove` lines. Then a wedged device-1
-    evaluator: one `WARNING search stalled` line and exactly one `bestmove`.
+    evaluator: exactly one `bestmove`, with one `multi-GPU DEGRADED ... stopped
+    answering` line (and, when the move is shorter than the stuck-device
+    threshold, one `WARNING search stalled` line before it), and the following
+    moves searched on the remaining devices.
     The GPU chunk-time distribution decides the false-fire rate, so record it:
     per-chunk wall times (`--log-level DEBUG`) and the gap from the search
     deadline to `bestmove`.
@@ -455,6 +495,16 @@ tournament machine with the real network `<C>`, a free GPU and no other load.
 16. **Multi-GPU pool speed** (#1263): the pool's final `nps` on `go nodes 16384`
     was expected to be within noise of the code before #1263 on the same GPUs; that
     was never measured.
-17. **The GPU wheel's architecture list** (#1273): the `torch` self-check reads the
+17. **Bucket warm-up on the real net** (degrade-path change): time `uci` to
+    `readyok` with the default `max-autotune` and `MaxBatch 1024` (15 batch sizes
+    on the primary, up to 11 per pool device at `VLGather 512`), on one GPU and on
+    all four; it must fit the GUI's start allowance. Then play 20 or more moves on
+    each search path and confirm no `first-seen batch shape after warmup` line.
+    Whether CUDA-graph capture of the extra sizes fits in GPU memory beside the
+    model at `MaxBatch 8192` was not measured. Padding each batch up to its bucket
+    gave bit-identical searches on CPU; on GPU the padded rows can change kernel
+    choice, so compare node counts and moves of a fixed-node search against the
+    previous build.
+18. **The GPU wheel's architecture list** (#1273): the `torch` self-check reads the
     installed wheel's arch list, but the arch lists of the cu124 and cu130 wheels
     were never read, so this page makes no claim about which cards either covers.

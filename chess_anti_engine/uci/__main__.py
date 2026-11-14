@@ -18,7 +18,8 @@ import math
 import os
 import sys
 import threading
-from typing import TypedDict
+import time
+from typing import Any, TypedDict
 
 if __name__ == "__main__":
   # `python -m chess_anti_engine.uci` lands here BEFORE the imports below, which
@@ -38,6 +39,7 @@ import numpy as np
 from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding.cboard_encode import encode_cboard
 from chess_anti_engine.inference import DirectGPUEvaluator
+from chess_anti_engine.inference import DirectGPUEvaluator as _RealDirectGPUEvaluator
 from chess_anti_engine.inference_cache import EncodedEvalCache
 from chess_anti_engine.inference_dispatcher import (
     BatchCoalescingDispatcher,
@@ -45,6 +47,7 @@ from chess_anti_engine.inference_dispatcher import (
     MultiGPUDispatcher,
     ThreadSafeGPUDispatcher,
     bootstrap_cudagraph_tls,
+    supports_inplace_api,
 )
 from chess_anti_engine.mcts.gumbel import (
     PLAY_PUCT_DEFAULTS,
@@ -120,6 +123,60 @@ def resolve_multi_gpu_compile_mode(
     return compile_mode
 
 
+def direct_evaluators(chain) -> list:
+    """Every bucket-padding ``DirectGPUEvaluator`` under a dispatcher chain.
+
+    Walks the wrapper attributes the UCI chain is built from
+    (``EncodedEvalCache._inner``, ``CUDAOwnerDispatcher._inner``,
+    ``BatchCoalescingDispatcher._inner``, ``ThreadSafeGPUDispatcher._eval``,
+    ``MultiGPUDispatcher._evals``). Only padding evaluators are returned:
+    they are the ones whose shape set is finite and therefore warmable.
+    """
+    found: list = []
+    seen: set[int] = set()
+    stack = [chain]
+    while stack:
+        node = stack.pop()
+        if node is None or id(node) in seen:
+            continue
+        seen.add(id(node))
+        # The real class, not the module name: tests swap ``DirectGPUEvaluator``
+        # for fakes, which keep the endpoint-only warmup they were written for.
+        if isinstance(node, _RealDirectGPUEvaluator):
+            if node.pads_to_compiled_buckets:
+                found.append(node)
+            continue
+        for attr in ("_inner", "_eval"):
+            child = node.__dict__.get(attr) if hasattr(node, "__dict__") else None
+            if child is not None:
+                stack.append(child)
+        children = node.__dict__.get("_evals") if hasattr(node, "__dict__") else None
+        if isinstance(children, list):
+            stack.extend(reversed(children))
+    return found
+
+
+def _bucket_warm_progress(label: str, i: int, n: int, rows: int, started: float) -> None:
+    _println(
+        f"info string warmup {label}: batch {rows} ({i}/{n}, "
+        f"{time.monotonic() - started:.1f}s)"
+    )
+
+
+def _verify_and_arm(directs, max_rows_by_eval) -> None:
+    """Strict: every reachable shape is in each ledger; then arm the guard."""
+    for ev in directs:
+        want = set(ev.reachable_forward_rows(max_rows_by_eval(ev)))
+        missing = sorted(want - set(ev.shape_ledger.seen()))
+        if missing:
+            raise RuntimeError(
+                f"evaluator warmup incomplete on {ev.shape_ledger.label}: "
+                f"batch shapes {missing} were never run"
+            )
+    for ev in directs:
+        ev.shape_ledger.arm()
+
+
 def _warmup_evaluator(
     evaluator,
     *,
@@ -168,6 +225,15 @@ def _warmup_evaluator(
         input_history_encoding=input_history_encoding,
         input_extra_features=input_extra_features,
     )
+    directs = direct_evaluators(evaluator)
+    if directs:
+        # Compiled chain: the padded shape set is finite, so warm ALL of it
+        # (not the two endpoints) and arm the first-seen-shape guard.
+        _warmup_compiled_buckets(
+            evaluator, directs, cb=cb, encoded=encoded,
+            n_devices=n_devices, compute_relations=compute_relations,
+        )
+        return
     if n_walkers > 1:
   # batch=1 covers the pre-gather single-descent phase (e.g. when
   # budget runs out mid-gather). walker_gather is the per-walker
@@ -211,6 +277,62 @@ def _warmup_evaluator(
             raise RuntimeError(f"evaluator warmup failed at batch={batch}") from exc
 
 
+def _warmup_compiled_buckets(
+    chain, directs, *, cb, encoded, n_devices: int, compute_relations: bool,
+) -> None:
+    """Run every reachable padded batch shape through ``chain`` on every device.
+
+    The shape set comes from the evaluators' own padding function
+    (``DirectGPUEvaluator.reachable_forward_rows`` -> ``compiled_forward_rows``)
+    over their full ``max_batch``, which bounds every search path that can
+    reach this chain (classic Gumbel leaves, root evals, walkers, UseVL, the
+    eval cache's misses). Each shape goes through the entry the search uses on
+    this chain -- the pinned in-place async path when the chain has one, the
+    synchronous path otherwise -- and batch 1 (root evals) always through the
+    synchronous one. Already-seen shapes are skipped, so a re-warm of the same
+    evaluator costs nothing. STRICT: a failure, or a shape that never reached
+    a device, raises before ``readyok``.
+    """
+    shapes = sorted(set().union(*(ev.reachable_forward_rows() for ev in directs)))
+    use_async = supports_inplace_api(chain)
+    rel_row = cb.compute_relations() if compute_relations else None
+    labels = ",".join(ev.shape_ledger.label for ev in directs)
+    started = time.monotonic()
+    todo = [r for r in shapes if not all(r in ev.shape_ledger.seen() for ev in directs)]
+    for i, rows in enumerate(todo, 1):
+        _bucket_warm_progress(labels, i, len(todo), rows, started)
+        xs = np.broadcast_to(encoded, (rows, *encoded.shape)).astype(np.float32, copy=True)
+        rels = None if rel_row is None else np.broadcast_to(rel_row, (rows, *rel_row.shape)).copy()
+        try:
+            for _ in range(max(1, int(n_devices))):
+                if use_async and rows != 1:
+                    buf = chain.get_input_buffer(rows, slot=0)
+                    buf[:] = xs
+                    if rels is None:
+                        _pol, _wdl, event = chain.evaluate_inplace_async(rows, slot=0)
+                    else:
+                        _pol, _wdl, event = chain.evaluate_inplace_async(rows, slot=0, relations=rels)
+                    if event is not None:
+                        event.synchronize()
+                elif rels is None:
+                    chain.evaluate_encoded(xs)
+                else:
+                    chain.evaluate_encoded(xs, relations=rels)
+            if (
+                rel_row is None
+                and bool(getattr(chain, "supports_legal_bf16", False))
+                and hasattr(chain, "evaluate_legal_bf16")
+            ):
+                legal_one = cb.legal_move_indices().astype(np.int32, copy=False)
+                legal_counts = np.full((rows,), legal_one.size, dtype=np.int32)
+                legal_flat = np.tile(legal_one, rows)
+                for _ in range(max(1, int(n_devices))):
+                    chain.evaluate_legal_bf16(xs, legal_flat, legal_counts)
+        except Exception as exc:
+            raise RuntimeError(f"evaluator warmup failed at batch={rows}") from exc
+    _verify_and_arm(directs, lambda _ev: None)
+
+
 def _pucv_warmup_batch_sizes(gather: int) -> list[int]:
     """Batch sizes MultiGpuPucvPool / RPG submit in the steady state.
 
@@ -248,26 +370,44 @@ def _warmup_pucv_evaluator(
         input_extra_features=input_extra_features,
     )
     rel_row = cb.compute_relations() if compute_relations else None
-    batches = _pucv_warmup_batch_sizes(gather)
     n_slots = min(2, int(getattr(evaluator, "n_slots", 1)))
-    for batch in batches:
-        for slot in range(n_slots):
-            try:
-                buf = evaluator.get_input_buffer(batch, slot=slot)
-                buf[:] = np.broadcast_to(encoded, (batch, *encoded.shape))
-                if rel_row is None:
-                    _pol, _wdl, event = evaluator.evaluate_inplace_async(batch, slot=slot)
-                else:
-                    rels = np.broadcast_to(rel_row, (batch, *rel_row.shape)).copy()
-                    _pol, _wdl, event = evaluator.evaluate_inplace_async(
-                        batch, slot=slot, relations=rels,
-                    )
-                if event is not None:
-                    event.synchronize()
-            except Exception:
-                if strict:
-                    raise
-                return
+    padded = isinstance(evaluator, _RealDirectGPUEvaluator) and evaluator.pads_to_compiled_buckets
+    if padded:
+        # Compiled pool/RPG worker: it submits 1..gather rows (budget
+        # remainders, cache-miss subsets, RPG's batch-1 expansions), padded to
+        # a finite ladder. Warm every shape of it on slot 0 and the historical
+        # endpoints (1 and the full gather) on both slots, then arm the guard.
+        shapes = evaluator.reachable_forward_rows(gather)
+        endpoints = {shapes[0], shapes[-1]}
+        work = [(b, s) for b in shapes for s in range(n_slots) if s == 0 or b in endpoints]
+    else:
+        work = [(b, s) for b in _pucv_warmup_batch_sizes(gather) for s in range(n_slots)]
+    started = time.monotonic()
+    n_shapes = len({b for b, _ in work})
+    shape_no = 0
+    for batch, slot in work:
+        if padded and slot == 0:
+            shape_no += 1
+            if batch not in evaluator.shape_ledger.seen():
+                _bucket_warm_progress(evaluator.shape_ledger.label, shape_no, n_shapes, batch, started)
+        try:
+            buf = evaluator.get_input_buffer(batch, slot=slot)
+            buf[:] = np.broadcast_to(encoded, (batch, *encoded.shape))
+            if rel_row is None:
+                _pol, _wdl, event = evaluator.evaluate_inplace_async(batch, slot=slot)
+            else:
+                rels = np.broadcast_to(rel_row, (batch, *rel_row.shape)).copy()
+                _pol, _wdl, event = evaluator.evaluate_inplace_async(
+                    batch, slot=slot, relations=rels,
+                )
+            if event is not None:
+                event.synchronize()
+        except Exception:
+            if strict:
+                raise
+            return
+    if padded:
+        _verify_and_arm([evaluator], lambda _ev: gather)
 
 
 def _load_models(checkpoint: str, devices: list[str]):
@@ -344,12 +484,18 @@ def _make_evaluator_factory(
             ]
         else:
             compiled_models = list(active_models)
+  # Compiled evaluators pad every forward to the bucket ladder so the shape
+  # set is finite and warmup can cover all of it (``_warmup_compiled_buckets``).
+  # Eager evaluators forward exact counts, exactly as before. Passed only when
+  # on, so evaluator stand-ins without the parameter keep working.
+        pad_kw: dict[str, Any] = {"pad_to_compiled_buckets": True} if compile_mode else {}
 
         if len(active_devices) > 1:
             evaluators = [
                 DirectGPUEvaluator(
                     m, device=d, max_batch=max_batch, n_slots=2,
                     input_bf16=compact_bf16, legal_bf16=compact_bf16,
+                    **pad_kw,
                 )
                 for m, d in zip(compiled_models, active_devices)
             ]
@@ -358,6 +504,7 @@ def _make_evaluator_factory(
             evaluator = DirectGPUEvaluator(
                 compiled_models[0], device=active_devices[0],
                 max_batch=max_batch, n_slots=2, input_bf16=compact_bf16, legal_bf16=compact_bf16,
+                **pad_kw,
             )
   # Always wrap in ThreadSafeGPUDispatcher so the UCI `SearchWalkers`
   # option can bump walker count at runtime without a race. Lock
@@ -510,9 +657,10 @@ def _compile_and_warm_pucv_evaluator(
                 )
             else:
                 compiled = model
+            pad_kw: dict[str, Any] = {"pad_to_compiled_buckets": True} if mode else {}
             evaluator = DirectGPUEvaluator(
                 compiled, device=device, max_batch=max_batch, n_slots=2,
-                input_bf16=compact_bf16, legal_bf16=compact_bf16,
+                input_bf16=compact_bf16, legal_bf16=compact_bf16, **pad_kw,
             )
             _warmup_pucv_evaluator(
                 evaluator,
