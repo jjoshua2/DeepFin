@@ -83,7 +83,7 @@ The accepted baseline book SHA is `5f7cf2f5eba9fea78be61edc3ca30a128184cad6147e1
 ## Closed engineering qualification — November 14, 2026
 
 The exposed engineering color pair closed technically qualified: **0 wins, 1 draw,
-1 loss**, score25% over one pair. Its paired interval is unavailable because there
+1 loss**, score 25% over one pair. Its paired interval is unavailable because there
 is only one pair. This input was an already exposed readiness fixture; its score
 has no role in advancement, and is not pooled with the fixed baseline or any prior
 Rofchade/internal result.
@@ -95,28 +95,28 @@ no time, illegal/null or max-plies faults. The reader reconciled saved PGN, JSON
 move CSV and UCI histories/clocks/results without a new tablebase-truth probe.
 The driver uses `claim_draw=True`, including legal next-move draw claims.
 
-The actual observed compiled R5 profile retained two walkers/gather1, maximum
-batch1024, two slots and F32 input/legal transport. All105320 observed autocast
-contexts were BF16;119 clocked non-tablebase phases performed neural graph work.
-The complete494-entry/175-plane/61,444,448-unique-parameter served state matched
+The actual observed compiled R5 profile retained two walkers and gather 1, maximum
+batch 1024, two slots and F32 input/legal transport. All 105,320 observed autocast
+contexts were BF16; 119 clocked non-tablebase phases performed neural graph work.
+The complete 494-entry/175-plane/61,444,448-unique-parameter served state matched
 before and after the run within this observer, hash
 `fe08c87b2c9f59607237bc5afebf6c1bf93c4f6643667d564ff8f5571fa10c6f`.
 This hash is not equated with the internal arena's different state-hash method;
 no unwrapped or cross-instrument numerical equivalence is claimed.
 
 The same live Stockfish PID/birth explicitly exported its current default network
-successfully before and after play, with ready barriers and identical95144073-byte
-content SHA`ab28990d4ea3d5c97f7d3918bc5dd5061609330369fe00c2d93a34d4777b5552`.
+successfully before and after play, with ready barriers and identical 95,144,073-byte
+content SHA `ab28990d4ea3d5c97f7d3918bc5dd5061609330369fe00c2d93a34d4777b5552`.
 This observed identity is now required in the fresh baseline process before
 warmup/scored play. Embedded-versus-external storage origin and original NNUE file
 byte identity remain unknown. Independent actual review accepted the compact
 technical evidence with no findings; it did not independently reread raw game,
 network or model payloads.
 
-The preregistration was on main through[PR#1324](https://github.com/jjoshua2/DeepFin/pull/1324),
-actual merge`1960e43bb2a511ac69237d05228ef2a295d721d5` and reviewed head
+The preregistration was on main through [PR #1324](https://github.com/jjoshua2/DeepFin/pull/1324),
+actual merge `1960e43bb2a511ac69237d05228ef2a295d721d5` and reviewed head
 `2d1be669606ffd4a09c38863afcb3e7636297bd2`, before engineering began at
-2026-11-14 23:21:20.684UTC. Closed root and independent technical acceptance enabled
+2026-11-14 23:21:20.684 UTC. Closed root and independent technical acceptance enabled
 the unchanged fixed eight-game/four-pair baseline. No score-based gate, model
 adoption or broader goal-completion claim is introduced.
 
