@@ -480,7 +480,7 @@ def test_launch_stamps_the_worker_log_paths_the_refusal_names(
     stub.returncode = C_CORE_REFUSAL_EXIT_CODE
     with pytest.raises(CCoreIncompleteError) as exc:
         distributed_runtime._raise_if_c_core_refusal(
-            proc, idx=3, trial_id="t",  # pyright: ignore[reportArgumentType]
+            proc, idx=3, trial_id="t",
         )
     assert str(root / "worker.out") in str(exc.value)
     assert str(root / "worker.log") in str(exc.value)
