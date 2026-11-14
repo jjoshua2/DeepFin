@@ -30,7 +30,7 @@
 #include <pthread.h>
 #include <string.h>
 
-#include "_cboard_impl.h"
+#include "../encoding/_cboard_impl.h"
 #include "_tb_fathom.h"
 
 /* PyCBoard layout -- must match _lc0_ext.c's typedef exactly (the same
@@ -169,8 +169,13 @@ static int pos_from_fen(const char *fen, DfTbPos *pos) {
         }
         if (!digits) goto bad;
         pos->rule50 = clock;
-        /* The fullmove number (if any) is not used. */
-        if (*p != '\0' && *p != ' ') goto bad;
+        /* An optional fullmove number, read and discarded; nothing after it. */
+        if (*p == ' ') {
+            p++;
+            if (*p < '0' || *p > '9') goto bad;
+            while (*p >= '0' && *p <= '9') p++;
+        }
+        if (*p != '\0') goto bad;
     } else if (*p != '\0') {
         goto bad;
     }

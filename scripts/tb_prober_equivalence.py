@@ -237,7 +237,7 @@ def _dtz_ignoring_fifty(child: chess.Board, tb: chess.syzygy.Tablebase) -> int:
 
 
 def py_root(board: chess.Board, tb: chess.syzygy.Tablebase) -> list[tuple[str, int, int, bool]] | None:
-    from chess_anti_engine.tablebase import _dtz_of_played_move  # pyright: ignore[reportPrivateUsage]
+    from chess_anti_engine.tablebase import _dtz_of_played_move
 
     rows = []
     for move in list(board.legal_moves):
@@ -255,7 +255,7 @@ def py_root(board: chess.Board, tb: chess.syzygy.Tablebase) -> list[tuple[str, i
 
 
 def compare_root(board: chess.Board, py_rows, c_rows) -> dict[str, Any]:
-    from chess_anti_engine.tablebase import _rule50_dtz_key  # pyright: ignore[reportPrivateUsage]
+    from chess_anti_engine.tablebase import _rule50_dtz_key
 
     out: dict[str, Any] = {"ok": True, "fifty_moves": 0, "n_moves": 0, "why": ""}
     if py_rows is None or c_rows is None:
