@@ -255,6 +255,11 @@ class EncodedEvalCache:
         the in-place path (its search was uncapped too).
         """
         inner = self._inner
+        # An inner that is itself on the copying path but declares a cap (the
+        # multi-device ``MultiGPUDispatcher`` chain) keeps it under the cache.
+        declared = getattr(inner, "search_leaf_row_cap", None)
+        if isinstance(declared, int) and not isinstance(declared, bool):
+            return declared
         if not supports_inplace_api(inner) or int(getattr(inner, "n_slots", 1)) < 1:
             return None
         cap = getattr(inner, "_max_batch", None)

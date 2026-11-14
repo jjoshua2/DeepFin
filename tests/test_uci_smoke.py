@@ -41,7 +41,10 @@ def tiny_checkpoint(tmp_path: Path) -> Path:
     return _make_tiny_checkpoint(tmp_path)
 
 
-def _spawn_engine(checkpoint: Path, *, compiled: bool = False) -> subprocess.Popen[str]:
+def _spawn_engine(
+    checkpoint: Path, *, compiled: bool = False, devices: str = "cpu",
+    extra: tuple[str, ...] = (),
+) -> subprocess.Popen[str]:
     env = os.environ.copy()
     env.setdefault("PYTHONPATH", ".")
     if compiled:
@@ -55,8 +58,9 @@ def _spawn_engine(checkpoint: Path, *, compiled: bool = False) -> subprocess.Pop
     # stdout is a pipe rather than a tty.
     return subprocess.Popen(
         [sys.executable, "-u", "-m", "chess_anti_engine.uci",
-         "--checkpoint", str(checkpoint), "--device", "cpu",
-         "--compile" if compiled else "--no-compile"],
+         "--checkpoint", str(checkpoint),
+         *(("--device", devices) if "," not in devices else ("--devices", devices)),
+         "--compile" if compiled else "--no-compile", *extra],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, bufsize=1, env=env,
     )
@@ -259,3 +263,34 @@ def test_stop_interrupts_search(tiny_checkpoint: Path) -> None:
         if proc.poll() is None:
             proc.kill()
         proc.wait(timeout=5)
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "compiled"])
+def test_multi_device_routing_chain_starts(tiny_checkpoint: Path, compiled: bool) -> None:
+    """``--devices cpu,cpu --no-multi-gpu-pucv --max-batch 256`` (the
+    MultiGPUDispatcher routing chain) must reach ``readyok`` and search. It
+    used to exit 1 at startup two ways: compiled, ``'MultiGPUDispatcher' object
+    has no attribute 'evaluate_encoded_async'``; eager or compiled at a MaxBatch
+    below the Gumbel leaf buffer, ``batch 384 > max 256``."""
+    proc = _spawn_engine(
+        tiny_checkpoint, compiled=compiled, devices="cpu,cpu",
+        extra=("--no-multi-gpu-pucv", "--max-batch", "256"),
+    )
+    reader = _LineReader(proc)
+    try:
+        _send(proc, "uci")
+        reader.read_until("uciok")
+        _send(proc, "isready")
+        transcript = reader.read_until("readyok", timeout_s=240.0)
+        assert not any("startup failed" in line for line in transcript), transcript
+        _send(proc, "position startpos")
+        _send(proc, "go nodes 64")
+        lines = reader.read_until("bestmove", timeout_s=60.0)
+        best = lines[-1].split()[1]
+        assert chess.Move.from_uci(best) in chess.Board().legal_moves
+        _send(proc, "quit")
+        assert proc.wait(timeout=30) == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
