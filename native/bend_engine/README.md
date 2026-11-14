@@ -36,6 +36,10 @@ the last `main` that still carried Bend.
 
   The script refuses a detached HEAD, a dirty tree, and any branch other than
   `bend` unless `--branch` names the current branch.
+
+  Merge sync PRs into `bend` with a merge commit, never squash or rebase: a
+  squash drops `main` from `bend`'s history, so the next sync re-evaluates the
+  Bend deletions against a stale merge base.
 - **Why not a plain `git merge origin/main`:** on `main` the Bend files were
   deleted, so a plain merge deletes every Bend file that `bend` has not changed
   since the merge base. It does that silently, with no conflict. Bend files that
