@@ -1,4 +1,4 @@
-"""``tests/conftest.py`` keeps Trainer's default ``./tb`` out of the checkout.
+"""``tests/conftest.py`` keeps checkout-relative defaults out of the checkout.
 
 The redirect must catch only the omitted-``log_dir`` default and leave an
 explicit ``log_dir`` exactly where the caller put it.
@@ -22,7 +22,7 @@ def test_an_omitted_log_dir_lands_outside_the_working_directory() -> None:
     try:
         where = _writer_dir(trainer)
         assert where != (Path.cwd() / "tb").resolve()
-        assert where.name.startswith("trainer_default_tb")
+        assert where.name == "trainer_default_tb"
     finally:
         trainer.writer.close()
 
@@ -52,3 +52,11 @@ def test_a_lazily_imported_trainer_is_patched_too(monkeypatch: pytest.MonkeyPatc
         assert getattr(fresh.SummaryWriter, "_cae_default_tb_redirect", False)
     finally:
         sys.modules[name] = original
+
+
+def test_the_arena_game_log_default_is_outside_the_checkout() -> None:
+    import scripts.arena_standard as arena
+
+    repo = Path(__file__).resolve().parents[1]
+    assert not arena.DEFAULT_GAME_LOG_DIR.resolve().is_relative_to(repo)
+    assert arena.DEFAULT_GAME_LOG_DIR.name == "arena_games"
