@@ -3051,7 +3051,7 @@ class SearchWorker:
                     # Outcome-only selection can otherwise emit another WIN
                     # with a longer mate (or only a tablebase WDL proof).
                     assert self._mate_witness_action is not None
-                    allowed_root_indices = {self._mate_witness_action}
+                    allowed_root_indices = set[int]((self._mate_witness_action,))
                 elif int(completed) == 0 and self._root_solved_status() != 0:
                     # `go mate N` on a root already proven (won with no mate in
                     # <= N found, drawn, or lost) that the search cannot grow:

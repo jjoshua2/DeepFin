@@ -29,16 +29,16 @@ def test_mate_witness_overrides_competing_win(
         def get_solved_status(self, node):
             return 1 if node == 0 else -1
 
-        def get_children_visits(self, node):
+        def get_children_visits(self, _node):
             return np.array([short, other]), np.array([5, 100])
 
-        def find_child(self, node, action):
+        def find_child(self, _node, action):
             return action
 
         def node_count(self):
             return 3
 
-        def set_cpuct_scaling(self, factor, base):
+        def set_cpuct_scaling(self, _factor, _base):
             pass
 
     worker = object.__new__(search.SearchWorker)
@@ -101,14 +101,14 @@ def test_mate_witness_overrides_competing_win(
         lambda **kwargs: "nodes" if kwargs["total_nodes"] >= 2 else None,
     )
 
-    def chunk(*args, **kwargs):
+    def chunk(*_args, **_kwargs):
         worker._last_gumbel_action_idx = other if gumbel else None
         return 1.0, 1
 
     monkeypatch.setattr(worker, "_run_one_chunk", chunk)
-    deadline = cast(search.Deadline, SimpleNamespace(
+    deadline = cast(search.Deadline, cast(object, SimpleNamespace(
         remaining_ms=lambda: 10000, elapsed_ms=lambda: 0, expired=lambda: False,
-    ))
+    )))
     final = worker.run(
         board, stop_event=threading.Event(), deadline=deadline, max_nodes=2,
         mate_moves=2, allow_terminal_shortcuts=False,
