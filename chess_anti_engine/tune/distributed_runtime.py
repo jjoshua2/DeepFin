@@ -1565,8 +1565,11 @@ def _ensure_distributed_workers(
             try:
                 _raise_if_c_core_refusal(out[idx], idx=idx, trial_id=trial_id)
             except CCoreIncompleteError:
-                for proc in launched:
-                    _stop_process(proc)
+                # _stop_worker_processes also sweeps each stopped worker's
+                # orphaned Stockfish engines. Nothing it raises may replace
+                # the refusal, which is what the operator has to read.
+                with contextlib.suppress(Exception):
+                    _stop_worker_processes(launched)
                 raise
             print(
                 f"[trial] restarting distributed worker idx={idx} "
