@@ -1033,7 +1033,7 @@ def test_the_tool_does_not_print_the_wrong_number_CLAUDE_md_warns_about() -> Non
     2026-08-15) moved this tree's `configs/pbt2_small.yaml` from 63,084,128 to
     61,444,448 trainable params, and the re-measurement commit (`0f5b9a6ae`,
     whose message banks the pair 63,084,128 -> 61,444,448 / 78,812,768 ->
-    77,173,088) swept `CLAUDE.md`, `tcec.md` and `tests/test_param_count.py` --
+    77,173,088) swept `CLAUDE.md`, `tcec.md` (since removed) and `tests/test_param_count.py` --
     but not this file, nor `scripts/widen_ffn_aligned.py`. Both went on quoting
     `main`'s numbers against a live-yaml build. That is precisely the "the copy
     nobody recomputes is the one that gets cited" defect this test is about, so
