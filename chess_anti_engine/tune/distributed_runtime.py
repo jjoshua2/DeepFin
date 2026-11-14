@@ -1527,6 +1527,10 @@ def _ensure_distributed_workers(
 ) -> list[subprocess.Popen[bytes]]:
     want = max(0, int(config.get("distributed_workers_per_trial", 0)))
     out = list(procs)
+    # Refusal scan BEFORE any relaunch: ``out`` is a copy, so a worker relaunched
+    # at an earlier index would never reach the caller's list (and never be
+    # cleaned up) if a later index then raised.
+    _raise_on_any_c_core_refusal(out[:want], trial_id=trial_id)
     for idx in range(want):
         desired_signature = _worker_launch_signature(
             config=config, trial_id=trial_id, worker_index=idx,
@@ -1576,6 +1580,13 @@ def _ensure_distributed_workers(
     return out[:want]
 
 
+def _raise_on_any_c_core_refusal(procs: list[subprocess.Popen[bytes]], *, trial_id: str) -> None:
+    """Raise for the first EXITED worker whose code is the C-core refusal."""
+    for idx, proc in enumerate(procs):
+        if proc.poll() is not None:
+            _raise_if_c_core_refusal(proc, idx=idx, trial_id=trial_id)
+
+
 def _raise_if_c_core_refusal(proc: subprocess.Popen[bytes], *, idx: int, trial_id: str) -> None:
     """A worker that exited with the C-core refusal code is fatal for the trial.
 
@@ -1622,6 +1633,9 @@ def revive_dead_selfplay_processes(
     the phase boundary where it already happens.
     """
     revived = False
+    # Refusal scan first: launch nothing (not even the broker) for a fleet that
+    # is about to be declared fatal.
+    _raise_on_any_c_core_refusal(worker_procs, trial_id=trial_id)
 
     broker = broker_proc_box[0]
     if broker is not None and broker.poll() is not None:

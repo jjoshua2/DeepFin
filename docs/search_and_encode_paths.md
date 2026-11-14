@@ -358,7 +358,8 @@ and `MCTSTree` methods, and the `_mcts_tree` ABI (`gumbel_c._REQUIRED_MCTS_ABI`)
 and `hasattr`/`getattr` probes of extension symbols and fails when one is
 neither required nor in `GUARDED_OPTIONAL_ALLOWLIST` (guards: `except` ImportError /
 ModuleNotFoundError / AttributeError / Exception / BaseException / bare, around
-`from <ext> import`, `import <ext> [as m]`, `importlib.import_module("<ext>")` or an
+`from <ext> import` (absolute or relative, e.g. `from ._lc0_ext import CBoard`),
+`import <ext> [as m]`, `importlib.import_module("<ext>")` or an
 attribute read). A second scan requires every extension symbol the package imports or
 reads, guarded or not, to be in the required set.
 
@@ -368,12 +369,27 @@ Deploying main therefore requires rebuilding the extensions first; main's `gumbe
 already refused ABI < 10 before this change, and the startup checks above now refuse
 at launch instead of at the first search.
 
+**Owner-facing consequence once main is deployed: a worker exiting 78 mid-run ENDS
+the trial.** The supervisor raises instead of relaunching it, Ray does not retry
+(no `max_failures` is set anywhere, so Tune's default of 0 applies), and
+`scripts/watchdog_loop.sh` auto-recovers only a STALLED run, not a CRASHED one.
+The realistic triggers are a rebuild or a partially written `.so` in the live
+tree while a run is going (a relaunched worker imports the new or half-written
+file), or the Python interpreter updated under a running trial. **Never rebuild
+extensions in a tree with a live run**; build in a separate checkout and switch
+only at a planned restart.
+
+`_tb_ext` (#1296) is optional and not imported by production code today, so it
+is not in `REQUIRED_EXTENSIONS`; it must be added there (and its symbols to
+`REQUIRED_SYMBOLS`) in the same change that makes a production path import it.
+
 | Entry point | Check | On failure |
 |---|---|---|
 | UCI engine | `uci/selfcheck.enforce_startup_gate` (shared `extension_problems` + content freshness + non-zero feature planes) | exit 2, "refusing to start" (bypass `DEEPFIN_ALLOW_UNVERIFIED_EXTENSIONS=1`, development only) |
 | `run.py` train/tune | `ext_check.require_c_core` before `run_tune` | message on stderr naming each missing symbol, exit `C_CORE_REFUSAL_EXIT_CODE` (78) |
 | `worker.py` | `ext_check.require_c_core` after argument/config merge; with `--self-update` the refusal is deferred to the first manifest poll, after the self-update check (an applicable wheel re-execs and re-checks) | message naming each missing symbol and whether self-update was attempted, exit 78 |
-| trial supervisor (`tune/distributed_runtime.py`) | a worker that exited 78 | not relaunched: `CCoreIncompleteError` ends the trial (both the mid-iteration revive and the phase-boundary `_ensure_distributed_workers`); every other exit code is relaunched as before |
+| trial supervisor (`tune/distributed_runtime.py`) | a worker that exited 78 | not relaunched: `CCoreIncompleteError` ends the trial (both the mid-iteration revive and the phase-boundary `_ensure_distributed_workers`, each scanning for 78 before relaunching anything); every other exit code is relaunched as before |
+| `worker_pool.py --respawn` | a child that exited 78 | not respawned (logged once); the pool exits 78 when every child has refused; other exit codes respawn as before |
 | `scripts/train.sh` | `check_c_extensions_fresh.py --check-symbols` (presence, mtime, gcc, LTO recipe, plus symbols + ABI in a child interpreter); `scripts/graceful_restart.py` preflight passes the same flags | refuses to start (bypass `TRAIN_SKIP_C_EXT_CHECK=1`) |
 | `play_batch` (any caller: worker, `tune/trainable_phases.py` eval games, scripts) | `_require_compiled_search` (gumbel_c / puct_c imported) and `SelfplayState.create` → `_probe_c_extensions` (tree, per-ply, encoders incl. bf16, `classify_games`, `temperature_resample`) | `CCoreIncompleteError` |
 | point of use | network turn (Python Gumbel / PUCT search, Python per-ply recorder), arena move selection (`match.py`), `run_gumbel_root_many_c` (bf16 encoders; a compact-legal bf16 evaluator on a tree without the legal-bf16 methods; `GSS_HALVING_REV`; `tt_stats`), the selfplay tree reset (`reset_compact`), `puct_c` (no CBoard), `encode.py`, `plane_decode.py`, `cboard_encode.py`, `moves/encode.py`, `root_tactics.py` | `CCoreIncompleteError` via `ext_check.refuse_fallback`; the refusal for an unimportable `gumbel_c`/`puct_c` carries the original ImportError text |

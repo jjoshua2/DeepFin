@@ -443,15 +443,18 @@ def _report_guard_health() -> None:
     now = _time.monotonic()
     if now < _tt_health_next_check:
         return
-    _tt_health_next_check = now + _TT_HEALTH_INTERVAL_S
 
+    # Presence check BEFORE arming the throttle: a refusal that a caller catches
+    # must not buy 60 s of silent calls on the incomplete build.
     tt_stats = getattr(_mcts_tree_ext, "tt_stats", None)
     if tt_stats is None:
         refuse_fallback(
             "run_gumbel_root_many_c", "_mcts_tree.tt_stats",
             "skipping the transposition-guard health report",
         )
+        _tt_health_next_check = now + _TT_HEALTH_INTERVAL_S
         return
+    _tt_health_next_check = now + _TT_HEALTH_INTERVAL_S
     try:
         tt = tt_stats()
         reject = int(tt["reject"])
@@ -510,12 +513,14 @@ def _report_halving_rev() -> None:
     global _halving_rev_reported
     if _halving_rev_reported:
         return
-    _halving_rev_reported = True
+    # Latch only after the presence check: a refusal that a caller catches must
+    # not make every later call on the incomplete build silent.
     if not hasattr(_mcts_tree_ext, "GSS_HALVING_REV"):
         refuse_fallback(
             "run_gumbel_root_many_c", "_mcts_tree.GSS_HALVING_REV",
             "assuming the legacy root-halving rule",
         )
+    _halving_rev_reported = True
     rev = int(getattr(_mcts_tree_ext, "GSS_HALVING_REV", _GSS_HALVING_REV_LEGACY))
     if rev >= 3:
         rule = "fresh root_qs + current-search root priors (mctx / gumbel.py reference)"

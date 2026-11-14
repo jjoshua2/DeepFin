@@ -668,7 +668,7 @@ def _self_update_would_run(args: argparse.Namespace) -> bool:
     return bool(getattr(args, "self_update", False)) and os.environ.get("CAE_SELF_UPDATED") != "1"
 
 
-def _require_c_core_or_exit(log: logging.Logger, *, note: str) -> None:
+def _require_c_core_or_exit(*, note: str) -> None:
     """Refuse to run on a stale or partial C extension build.
 
     The selfplay code would otherwise reach a Python fallback (or a
@@ -685,9 +685,10 @@ def _require_c_core_or_exit(log: logging.Logger, *, note: str) -> None:
     try:
         require_c_core("worker startup")
     except CCoreIncompleteError as exc:
-        message = f"{exc}\n{note}"
-        log.error("%s", message)
-        print(message, file=sys.stderr, flush=True)
+        # stderr only, once: the supervisor captures it into worker.out
+        # (stderr=STDOUT). A log.error here as well printed it twice there when
+        # no --log-file handler exists (logging's lastResort also writes stderr).
+        print(f"{exc}\n{note}", file=sys.stderr, flush=True)
         raise SystemExit(C_CORE_REFUSAL_EXIT_CODE) from None
 
 
@@ -956,7 +957,6 @@ def main() -> None:
             )
     else:
         _require_c_core_or_exit(
-            log,
             note=(
                 _C_CORE_NOTE_ALREADY_UPDATED
                 if bool(getattr(args, "self_update", False))
@@ -3793,7 +3793,7 @@ class WorkerSession:
   # refusal from main() fires now, before any asset sync or selfplay.
         if self._c_core_check_deferred:
             self._c_core_check_deferred = False
-            _require_c_core_or_exit(self.log, note=_C_CORE_NOTE_NO_APPLICABLE_UPDATE)
+            _require_c_core_or_exit(note=_C_CORE_NOTE_NO_APPLICABLE_UPDATE)
   # Self-update may not have returned; if we're still here and behind, exit.
         if compat.protocol_mismatch:
             raise SystemExit(f"Protocol mismatch: worker={PROTOCOL_VERSION} server_required={compat.req_proto}")

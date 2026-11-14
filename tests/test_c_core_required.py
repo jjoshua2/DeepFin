@@ -11,6 +11,8 @@ import ast
 import importlib
 import importlib.util
 import logging
+import os
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -69,7 +71,23 @@ _SWALLOWING_HANDLERS = {
 }
 
 
-def _ext_aliases(tree: ast.AST) -> dict[str, str]:
+def _package_of(path: Path) -> str:
+    """Dotted package a source file's relative imports resolve against."""
+    parts = list(path.relative_to(REPO_ROOT).with_suffix("").parts)
+    parts.pop()  # the module itself; for __init__ this leaves the package
+    return ".".join(parts)
+
+
+def _abs_module(node: ast.ImportFrom, pkg: str) -> str | None:
+    """``node``'s module as an absolute dotted name (``from ._lc0_ext import x`` too)."""
+    if not node.level:
+        return node.module
+    base = pkg.split(".")
+    base = base[: len(base) - (node.level - 1)] if node.level > 1 else base
+    return ".".join([*base, node.module] if node.module else base)
+
+
+def _ext_aliases(tree: ast.AST, pkg: str = "") -> dict[str, str]:
     """Local names bound to a required extension module (``import x as m`` etc.)."""
     aliases: dict[str, str] = {}
     for node in ast.walk(tree):
@@ -77,9 +95,9 @@ def _ext_aliases(tree: ast.AST) -> dict[str, str]:
             for alias in node.names:
                 if alias.name in _EXT_MODULES:
                     aliases[alias.asname or alias.name] = alias.name
-        elif isinstance(node, ast.ImportFrom) and node.module:
+        elif isinstance(node, ast.ImportFrom) and _abs_module(node, pkg):
             for alias in node.names:
-                full = f"{node.module}.{alias.name}"
+                full = f"{_abs_module(node, pkg)}.{alias.name}"
                 if full in _EXT_MODULES:
                     aliases[alias.asname or alias.name] = full
     return aliases
@@ -95,22 +113,25 @@ def _swallows(node: ast.Try) -> bool:
     return False
 
 
-def _ext_reads(node: ast.AST, aliases: dict[str, str]) -> list[tuple[int, str]]:
+def _ext_reads(node: ast.AST, aliases: dict[str, str], pkg: str = "") -> list[tuple[int, str]]:
     """(line, name) for every extension symbol ``node`` imports or reads.
 
-    ``from <ext> import name``, ``<alias>.name`` / ``<dotted ext>.name``, and a
-    whole-module import (``import <ext> [as m]`` / ``importlib.import_module("<ext>")``)
-    reported as the module's own dotted name.
+    ``from <ext> import name`` (absolute or relative, e.g. ``from ._lc0_ext import
+    CBoard``), ``<alias>.name`` / ``<dotted ext>.name``, and a whole-module import
+    (``import <ext> [as m]`` / ``importlib.import_module("<ext>")``) reported as the
+    module's own dotted name.
     """
     out: list[tuple[int, str]] = []
     for sub in ast.walk(node):
-        if isinstance(sub, ast.ImportFrom) and sub.module in _EXT_MODULES:
-            out += [(sub.lineno, alias.name) for alias in sub.names]
-        elif isinstance(sub, ast.ImportFrom) and sub.module:
-            out += [
-                (sub.lineno, f"{sub.module}.{alias.name}") for alias in sub.names
-                if f"{sub.module}.{alias.name}" in _EXT_MODULES
-            ]
+        if isinstance(sub, ast.ImportFrom):
+            mod = _abs_module(sub, pkg)
+            if mod in _EXT_MODULES:
+                out += [(sub.lineno, alias.name) for alias in sub.names]
+            elif mod:
+                out += [
+                    (sub.lineno, f"{mod}.{alias.name}") for alias in sub.names
+                    if f"{mod}.{alias.name}" in _EXT_MODULES
+                ]
         elif isinstance(sub, ast.Import):
             out += [(sub.lineno, alias.name) for alias in sub.names if alias.name in _EXT_MODULES]
         elif (
@@ -140,7 +161,8 @@ def _guarded_probes() -> list[tuple[str, int, str]]:
     for path in sorted(PACKAGE.rglob("*.py")):
         rel = str(path.relative_to(REPO_ROOT))
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        aliases = _ext_aliases(tree)
+        pkg = _package_of(path)
+        aliases = _ext_aliases(tree, pkg)
         for node in ast.walk(tree):
             if (
                 isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
@@ -152,7 +174,7 @@ def _guarded_probes() -> list[tuple[str, int, str]]:
                 found.append((rel, node.lineno, node.args[1].value))
             if isinstance(node, ast.Try) and _swallows(node):
                 for stmt in node.body:
-                    found += [(rel, ln, name) for ln, name in _ext_reads(stmt, aliases)]
+                    found += [(rel, ln, name) for ln, name in _ext_reads(stmt, aliases, pkg)]
     return found
 
 
@@ -162,7 +184,8 @@ def _all_ext_references() -> list[tuple[str, int, str]]:
     for path in sorted(PACKAGE.rglob("*.py")):
         rel = str(path.relative_to(REPO_ROOT))
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        found += [(rel, ln, name) for ln, name in _ext_reads(tree, _ext_aliases(tree))]
+        pkg = _package_of(path)
+        found += [(rel, ln, name) for ln, name in _ext_reads(tree, _ext_aliases(tree, pkg), pkg)]
     return found
 
 
@@ -180,7 +203,13 @@ def test_every_guarded_c_symbol_is_required_or_allow_listed() -> None:
     allowed = set(ext_check.GUARDED_OPTIONAL_ALLOWLIST)
     probes = _guarded_probes()
     unlisted = sorted({(f, ln, n) for f, ln, n in probes if n not in _accepted_names()})
-    assert not unlisted, f"guarded C symbols not in ext_check's required set: {unlisted}"
+    assert not unlisted, (
+        f"package code treats these C extension symbols as optional: {unlisted}. "
+        "Either add each one to chess_anti_engine/ext_check.py REQUIRED_SYMBOLS "
+        "(or REQUIRED_CBOARD_METHODS / REQUIRED_MCTSTREE_METHODS) so every entry point "
+        "refuses a build without it, or, if it is genuinely not a C fallback, add it "
+        "to GUARDED_OPTIONAL_ALLOWLIST there with a comment giving the reason."
+    )
     # The scan is live: it sees the known sites (a scan that finds nothing
     # would pass the assertion above vacuously).
     names = {n for _, _, n in probes}
@@ -202,8 +231,17 @@ def test_every_c_symbol_the_package_uses_is_required() -> None:
     """
     refs = _all_ext_references()
     unlisted = sorted({(f, ln, n) for f, ln, n in refs if n not in _accepted_names()})
-    assert not unlisted, f"extension symbols used but not required: {unlisted}"
+    assert not unlisted, (
+        f"package code uses these C extension symbols but the startup check does not "
+        f"require them: {unlisted}. Add each one to chess_anti_engine/ext_check.py "
+        "REQUIRED_SYMBOLS (or REQUIRED_CBOARD_METHODS / REQUIRED_MCTSTREE_METHODS) so a "
+        "build without it is refused at startup instead of failing mid-session; if it "
+        "is genuinely not a C requirement, add it to GUARDED_OPTIONAL_ALLOWLIST there "
+        "with a comment giving the reason."
+    )
     names = {n for _, _, n in refs}
+    # The relative import in encoding/perft.py is seen, not only absolute ones.
+    assert ("chess_anti_engine/encoding/perft.py", "CBoard") in {(f, n) for f, _, n in refs}
     for known in ("prepare_sf_multipv", "batch_compute_relations", "SWDL_DRAW_NET_RAW",
                   "SWDL_DRAW_PARAMETRIC_Q", "GSS_MAX_CANDS", "MCTSTree", "CBoard"):
         assert known in names, known
@@ -241,6 +279,11 @@ _SYNTHETIC_PATTERNS = {
         "except ImportError:\n    t = None\n",
         {"chess_anti_engine.mcts._mcts_tree", "slider_selftest"},
     ),
+    "relative_import_in_try": (
+        "try:\n    from ._lc0_ext import slider_selftest\n"
+        "except ImportError:\n    slider_selftest = None\n",
+        {"slider_selftest"},
+    ),
     "import_module_in_try": (
         "import importlib\n"
         "try:\n    importlib.import_module('chess_anti_engine.encoding._features_ext')\n"
@@ -257,8 +300,9 @@ def test_scan_catches_each_guarded_pattern(
     """The scanner itself, on one synthetic module per pattern it must see."""
     source, want = _SYNTHETIC_PATTERNS[pattern]
     fake_pkg = tmp_path / "chess_anti_engine"
-    fake_pkg.mkdir()
-    (fake_pkg / "newmod.py").write_text(source)
+    (fake_pkg / "encoding").mkdir(parents=True)
+    # Under encoding/ so the relative pattern resolves to encoding._lc0_ext.
+    (fake_pkg / "encoding" / "newmod.py").write_text(source)
     monkeypatch.setattr(sys.modules[__name__], "PACKAGE", fake_pkg)
     monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
     names = {n for _, _, n in _guarded_probes()}
@@ -277,11 +321,15 @@ def test_reference_scan_sees_unguarded_imports_and_reads(
         "x = t.SLIDER_BACKEND\ny = t2.tt_stats\n"
         "z = chess_anti_engine.encoding._features_ext.compute_extra_features\n"
     )
+    (fake_pkg / "encoding").mkdir()
+    (fake_pkg / "encoding" / "rel.py").write_text("from ._lc0_ext import RELATIVE_ONLY\n")
     monkeypatch.setattr(sys.modules[__name__], "PACKAGE", fake_pkg)
     monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
     names = {n for _, _, n in _all_ext_references()}
     assert {"slider_selftest", "SLIDER_BACKEND", "tt_stats", "compute_extra_features"} <= names
-    assert {n for n in names if n not in _accepted_names()} == {"slider_selftest", "SLIDER_BACKEND"}
+    assert {n for n in names if n not in _accepted_names()} == {
+        "slider_selftest", "SLIDER_BACKEND", "RELATIVE_ONLY",
+    }
 
 
 @pytest.mark.parametrize(
@@ -579,8 +627,11 @@ def test_gumbel_c_refuses_missing_halving_rev(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr(gumbel_c, "_halving_rev_reported", False)
     monkeypatch.delattr(mcts_tree, "GSS_HALVING_REV")
-    with pytest.raises(CCoreIncompleteError, match="GSS_HALVING_REV"):
-        gumbel_c._report_halving_rev()
+    # Twice: a caught refusal must not latch the report and silence the next call.
+    for _ in range(2):
+        with pytest.raises(CCoreIncompleteError, match="GSS_HALVING_REV"):
+            gumbel_c._report_halving_rev()
+    assert gumbel_c._halving_rev_reported is False
 
 
 def test_gumbel_c_refuses_missing_tt_stats(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -588,8 +639,11 @@ def test_gumbel_c_refuses_missing_tt_stats(monkeypatch: pytest.MonkeyPatch) -> N
 
     monkeypatch.setattr(gumbel_c, "_tt_health_next_check", 0.0)
     monkeypatch.delattr(mcts_tree, "tt_stats")
-    with pytest.raises(CCoreIncompleteError, match="tt_stats"):
-        gumbel_c._report_guard_health()
+    # Twice: a caught refusal must not arm the 60 s throttle and silence the next call.
+    for _ in range(2):
+        with pytest.raises(CCoreIncompleteError, match="tt_stats"):
+            gumbel_c._report_guard_health()
+    assert gumbel_c._tt_health_next_check == 0.0
 
 
 def test_tree_reset_refuses_without_reset_compact() -> None:
@@ -638,6 +692,93 @@ def test_refusals_carry_the_original_import_error(monkeypatch: pytest.MonkeyPatc
         _arena(monkeypatch, "_HAS_GUMBEL_C", "gumbel")
 
 
+# Run in a fresh interpreter: the consumers capture the ImportError text at
+# THEIR import, so the only faithful way to pin it is to make the runner module
+# genuinely unimportable before the consumer is first imported.
+_IMPORT_TEXT_PROBE = r"""
+import sys
+import numpy as np
+import torch
+
+torch.set_num_threads(2)
+blocked, consumer, branch = sys.argv[1], sys.argv[2], sys.argv[3]
+sys.modules["chess_anti_engine.mcts." + blocked] = None
+
+from chess_anti_engine.ext_check import CCoreIncompleteError
+
+
+def run():
+    if consumer == "arena":
+        from chess_anti_engine.moves import POLICY_SIZE
+        from chess_anti_engine.selfplay import match
+
+        class _Dummy(torch.nn.Module):
+            def forward(self, x):
+                bs = int(x.shape[0])
+                return {"policy_own": torch.zeros((bs, POLICY_SIZE)), "wdl": torch.zeros((bs, 3))}
+
+        m = _Dummy().eval()
+        match.play_match_batch(
+            m, m, device="cpu", rng=np.random.default_rng(0), games=2, max_plies=2,
+            a_plays_white=[True, False], mcts_type=branch, mcts_simulations=2,
+        )
+        return
+    from chess_anti_engine.selfplay import manager, play_batch
+    from chess_anti_engine.selfplay.config import (
+        DiffFocusConfig, GameConfig, SearchConfig, TemperatureConfig,
+    )
+    from tests.selfplay_helpers import FakeStockfish, UniformPolicyValueModel
+
+    if consumer == "network_turn":
+        # Past play_batch's up-front check, so the dispatch site itself refuses.
+        manager._require_compiled_search = lambda: None
+    sims = 2 if branch == "gumbel" else 80  # PUCT runs only above max(64, fast)
+    play_batch(
+        UniformPolicyValueModel().eval(), device="cpu", rng=np.random.default_rng(0),
+        stockfish=FakeStockfish([0.0, 1.0, 0.0]), games=2,
+        temp=TemperatureConfig(temperature=1.0),
+        search=SearchConfig(simulations=sims, playout_cap_fraction=1.0,
+                            fast_simulations=2, mcts_type=branch),
+        diff_focus=DiffFocusConfig(enabled=False),
+        game=GameConfig(max_plies=4, selfplay_fraction=1.0),
+    )
+
+
+try:
+    run()
+except CCoreIncompleteError as exc:
+    print("REFUSED::" + str(exc).replace("\n", " "))
+else:
+    print("NO_REFUSAL")
+"""
+
+
+@pytest.mark.parametrize(("blocked", "consumer", "branch", "site"), [
+    ("gumbel_c", "play_batch", "gumbel", "play_batch"),
+    ("puct_c", "play_batch", "puct", "play_batch"),
+    ("gumbel_c", "network_turn", "gumbel", "selfplay network turn"),
+    ("puct_c", "network_turn", "puct", "selfplay network turn"),
+    ("gumbel_c", "arena", "gumbel", "arena move selection"),
+    ("puct_c", "arena", "puct", "arena move selection"),
+])
+def test_refusal_carries_the_real_import_error_text(
+    blocked: str, consumer: str, branch: str, site: str,
+) -> None:
+    root = Path(__file__).resolve().parents[1]
+    env = dict(os.environ, CUDA_VISIBLE_DEVICES="", OMP_NUM_THREADS="2",
+               PYTHONPATH=os.pathsep.join([str(root), os.environ.get("PYTHONPATH", "")]))
+    proc = subprocess.run(
+        [sys.executable, "-c", _IMPORT_TEXT_PROBE, blocked, consumer, branch],
+        cwd=root, env=env, capture_output=True, text=True, timeout=300, check=False,
+    )
+    refused = [ln for ln in proc.stdout.splitlines() if ln.startswith("REFUSED::")]
+    assert refused, f"no refusal (rc={proc.returncode}):\n{proc.stdout}\n{proc.stderr[-3000:]}"
+    message = refused[0]
+    assert site in message, message
+    # The interpreter's own text for an import blocked via sys.modules[name] = None.
+    assert f"import of chess_anti_engine.mcts.{blocked} halted; None in sys.modules" in message, message
+
+
 # ── worker / training / train.sh gate ──────────────────────────────────────
 
 
@@ -666,6 +807,7 @@ def _worker_main_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, extra: lis
 
 def test_worker_startup_refuses_without_self_update(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     from chess_anti_engine import worker
 
@@ -677,7 +819,9 @@ def test_worker_startup_refuses_without_self_update(
     assert info.value.code == ext_check.C_CORE_REFUSAL_EXIT_CODE
     err = capsys.readouterr().err
     assert "classify_games" in err
-    assert "Self-update was not attempted" in err
+    # Printed once (stderr reaches worker.out); a log record as well doubled it there.
+    assert err.count("Self-update was not attempted") == 1
+    assert not [r for r in caplog.records if "Self-update was not attempted" in r.getMessage()]
     assert built == [], "a session was built on an incomplete C core"
 
 
