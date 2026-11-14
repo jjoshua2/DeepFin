@@ -215,6 +215,7 @@ def test_actual_worker_host_loss_preserves_scale_masks_fallback_and_single_draw(
             expected = ([.7, .2, .1] if variant == "native" else np.array([.6, .25, .15], dtype=np.float16).astype(np.float32)) if row == 1 else np.eye(3)[row]
             np.testing.assert_allclose(batch["sf_wdl"][index], expected, atol=1e-7)
     assert result["sf_p0_sample_counts"]["rows"] == result["drawn_rows"] == 4
+    assert 0 < qualified < 4  # A real teacher row AND outcome fallback reached loss.
     assert result["sf_p0_teacher_mass"] == qualified * alpha
     assert result["sf_p0_outcome_mass"] + result["sf_p0_teacher_mass"] == 4
     assert result["segment"] == 1
@@ -398,3 +399,42 @@ def test_sidecar_resident_cap_refuses_before_npy_load(tmp_path: Path, monkeypatc
     monkeypatch.setattr(schema, "load_npy", lambda *_: pytest.fail("loaded before resident cap"))
     with pytest.raises(ValueError, match="pre-load decoded byte cap"):
         profile.wrap(replay, c)
+
+
+def test_forced_ids_cover_both_fallback_classes_in_actual_host_and_loss(tmp_path: Path) -> None:
+    from chess_anti_engine.replay.generation import DrawnRow
+    from chess_anti_engine.replay.shard import load_shard_arrays
+
+    c, cref, _, gen = setup(tmp_path, alpha=.5, variant="native", mirror=1)
+    accepted = accepted_carrier(tmp_path, c, gen)
+    profile = finite.P0Profile()
+    c, s = profile.validate_and_project(c, read(stage(tmp_path, cref, gen, accepted)))
+    generations, _ = core.metadata(c, s, cref, _sf_p0=profile)
+    profile.prepare(c, s, generations)
+    replay = core.load_replay(c, generations, np.random.default_rng(7), profile.on_draw)
+    profile.wrap(replay, c)
+    game = generations[0]["games"][0]
+    arrays, _ = load_shard_arrays(game["shard"]["path"], lazy=False, validate=True)
+    original = {key: value.tobytes() for key, value in arrays.items()}
+    source = core.digest(game["shard"]["files"])
+    batch = profile.overlay(arrays, tuple(DrawnRow(1, source, i) for i in range(3)))
+    assert [row["source_join"]["status"] for row in profile.index[source].rows] == [
+        "UNAVAILABLE", "SOURCE_CONTEXT_REDUCED_LABEL", "INVALID_REDUCED_LABEL"]
+    trainer = core.make_trainer(c, tmp_path / "forced-log", sf_p0_alpha=.5)
+    try:
+        host = trainer._prepare_host_arrays(batch, rng=np.random.default_rng(7), mirror_prob=1)
+        tensors = trainer._host_batch_to_tensors(host)
+        output = trainer.model(tensors["x"])
+        losses = trainer_module.compute_loss(output, tensors, **trainer._loss_kwargs)
+        np.testing.assert_array_equal(tensors["has_sf_wdl"].cpu().numpy(), [0, 1, 0])
+        np.testing.assert_array_equal(tensors["wdl_t"].cpu().numpy(), [0, 1, 2])
+        expected = torch.tensor([[1, 0, 0], [.35, .6, .05], [0, 0, 1]], dtype=torch.float32)
+        ce = -(expected * torch.log_softmax(output["wdl"].float(), -1)).sum(-1).mean()
+        torch.testing.assert_close(losses["blended_wdl_ce"], ce)
+        torch.testing.assert_close(losses["total"], losses["policy_ce"] + ce)
+        np.testing.assert_array_equal(tensors["sf_eval_pv_checked"].cpu().numpy(), [0, 1, 0])
+        assert original == {key: value.tobytes() for key, value in arrays.items()}
+        assert profile.counts["qualified"] == 1
+        assert profile.counts["outcome_fallback_rows"] == 2
+    finally:
+        trainer.writer.close()

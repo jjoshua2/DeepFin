@@ -94,8 +94,12 @@ alone does not qualify the direct CLI's no-Torch/native guards. At source
 `cf3c71aad826c4fc35ec9031f4450d946748c36b`, all 33 focused cases and the separate
 owned four-row direct producer/validator chain closed PASS. The synthetic CLI's
 independent actual review accepted the closed chain without findings. This native-derived
-fixture does not qualify actual original-G1 CP-logistic payloads or teacher quality;
-actual G1 produce/validate remain unrun. See the [dated qualification record](experiments/2026-11-14-sf-current-p0-sidecar-qualification.md).
+fixture alone does not qualify original-G1 CP-logistic payloads or teacher quality.
+The separate actual fixed-G1 produce/validate phases have now closed PASS for all
+256 games / 24,827 rows, including stored CP-logistic observations. Root data-only
+acceptance and independent actual review are accepted without findings at the
+recorded cutoff. This still does not admit labels to learning or establish teacher quality.
+See the [dated qualification record](experiments/2026-11-14-sf-current-p0-sidecar-qualification.md).
 The CLI refuses project native images; ignored author-checkout images are not
 adopted or rebuilt by this tool.
 

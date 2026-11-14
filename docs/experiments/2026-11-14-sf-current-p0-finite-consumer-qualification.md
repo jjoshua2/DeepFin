@@ -10,9 +10,10 @@ the final targeted source recheck. Root subsequently reported the actual origina
 carrier producer closed PASS in 117.036560642 seconds, with all 256 games / 24,827
 rows; its separate validator was running at this preparation cutoff. Candidate
 `6533a39bf465ae57ba035a373a7e46c580faeeca7377c12fa787fe7b240dde45`
-is not root-postclosure accepted data. Actual carrier acceptance/review and every
-consumer execution remain separate prerequisites; no consumer data/model result
-is claimed here.
+is not root-postclosure accepted data. Carrier qualification subsequently completed under root data-only acceptance
+and independent actual review without findings; see the carrier record for the
+later 2026-11-14 15:48:54 UTC cutoff. Every
+consumer execution remains separate; no consumer data/model result is claimed here.
 
 ## Question and fixed controls
 
@@ -56,7 +57,11 @@ draw/mirror RNG sequence; coherent pre-prune diagnostics; strict family/profile
 and closed-parent refusal; immutable source/row joins and pre-load memory caps.
 Synthetic serialized root/review documents are explicitly fiction. Their tiny
 models/CPU updates are proposed test controls, not research learning or proof
-that original-G1 targets improve play. All these new controls remain unrun.
+that original-G1 targets improve play. The current candidate has 22 authored cases, all unrun: the extra forced-ID
+host/loss case guarantees unavailable, qualified and invalid coverage; each
+actual-worker positive case also requires a qualified row and outcome fallback.
+This strengthens the initial 21-case source-reviewed snapshot without treating
+source review as numerical qualification.
 
 The boundary must report every sampled row, qualified/invalid/unavailable
 statuses and actual teacher/outcome mass, with no denominator filtering or extra
