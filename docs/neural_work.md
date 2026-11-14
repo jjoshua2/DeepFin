@@ -172,8 +172,8 @@ strength samples or mix throughput profiles with timing disabled/enabled.
 Ordinary focused tests:
 
 ```sh
-python -m pytest tests/test_neural_work.py tests/test_broker_served_count.py \
-  tests/test_inference_slot_protocol.py
+python -m pytest tests/test_neural_work.py tests/test_neural_search_benchmark.py \
+  tests/test_broker_served_count.py tests/test_inference_slot_protocol.py
 ```
 
 `work_probe.bend` is a small optional compiled observer check; compile it with
