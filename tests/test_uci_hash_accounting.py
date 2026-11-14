@@ -79,6 +79,35 @@ def test_node_bytes_constant_matches_c() -> None:
 
 
 def test_footprint_counts_live_cache_entries_and_tracks_rss() -> None:
+    # Earlier tests can leave reusable allocator arenas: refilling them grows
+    # the tree footprint without growing process RSS. Exec a fresh interpreter
+    # so the original RSS bounds measure this tree, not the suite's heap history.
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    code = (
+        "import runpy, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "import torch\n"
+        "torch.set_num_threads(2)\n"
+        "runpy.run_path(sys.argv[2])[sys.argv[3]]()\n"
+    )
+    env = dict(os.environ, CUDA_VISIBLE_DEVICES="")
+    for key in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+                "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+        env[key] = "2"
+    proc = subprocess.run(
+        [sys.executable, "-I", "-B", "-c", code, str(root), str(Path(__file__).resolve()),
+         _check_footprint_counts_live_cache_entries_and_tracks_rss.__name__],
+        cwd=root, env=env, capture_output=True, text=True, timeout=120, check=False,
+    )
+    assert proc.returncode == 0, (proc.stdout, proc.stderr)
+
+
+def _check_footprint_counts_live_cache_entries_and_tracks_rss() -> None:
     w = _worker(chunk=512)
     board = chess.Board()
     stop = threading.Event()
