@@ -52,9 +52,14 @@ class GoArgs:
     searchmoves: tuple[str, ...] = ()
   # UCI `go mate N`: search for a mate in N moves (see `limits_from_go`).
     mate: int | None = None
-  # Tokens that could not be parsed (e.g. `movetime abc`), as
-  # "<keyword> <value>"; the engine names them on an `info string`.
+  # Values dropped as unusable -- unparseable (`movetime abc`), missing
+  # (`movetime` then another keyword), or out of range (`mate 0`) -- as
+  # "<keyword> <value>"; the engine names them on an `info string`, and a dropped
+  # BOUND keyword gets the implicit cap (see `limits_from_go`).
     errors: tuple[str, ...] = ()
+  # Values used only after rounding toward zero (`movetime 999.9` -> 999), as
+  # "<keyword> <sent> -> <used>"; the engine names them on an `info string`.
+    truncated: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -119,11 +124,12 @@ _INT_KEYS = {
 }
 
 
-def _parse_go_int(text: str) -> int | None:
-    """An integer token; a float with an integral value (``1000.0``) also
-    counts. None when the token is not a finite number."""
+def _parse_go_int(text: str) -> tuple[int, bool] | None:
+    """``(value, exact)`` for a numeric token: an integer, or a finite float
+    rounded toward zero (``exact`` False unless it was integral, so ``1000.0``
+    is exact and ``999.9`` is not). None when the token is not a finite number."""
     try:
-        return int(text)
+        return int(text), True
     except ValueError:
         pass
     try:
@@ -132,13 +138,14 @@ def _parse_go_int(text: str) -> int | None:
         return None
     if value != value or value in (float("inf"), float("-inf")):
         return None
-    return int(value)
+    return int(value), value.is_integer()
 
 
 def _parse_go(tokens: list[str]) -> GoArgs:
     kwargs: dict[str, Any] = {}
     searchmoves: list[str] = []
     errors: list[str] = []
+    truncated: list[str] = []
     i = 0
     while i < len(tokens):
         tok = tokens[i]
@@ -153,10 +160,17 @@ def _parse_go(tokens: list[str]) -> GoArgs:
                 errors.append(f"{tok} (no value)")
                 i += 1
                 continue
-            value = _parse_go_int(tokens[i + 1])
-            if value is None:
+            parsed = _parse_go_int(tokens[i + 1])
+            if parsed is None:
+                errors.append(f"{tok} {tokens[i + 1]}")
+            elif tok == "mate" and parsed[0] <= 0:
+                # "Mate in 0 / -2 moves" names no search: dropped like an
+                # unparseable value (so with no other bound the cap applies).
                 errors.append(f"{tok} {tokens[i + 1]}")
             else:
+                value, exact = parsed
+                if not exact:
+                    truncated.append(f"{tok} {tokens[i + 1]} -> {value}")
                 kwargs[_INT_KEYS[tok]] = value
             i += 2
         elif tok == "searchmoves":
@@ -170,6 +184,8 @@ def _parse_go(tokens: list[str]) -> GoArgs:
         kwargs["searchmoves"] = tuple(searchmoves)
     if errors:
         kwargs["errors"] = tuple(errors)
+    if truncated:
+        kwargs["truncated"] = tuple(truncated)
     return GoArgs(**kwargs)
 
 

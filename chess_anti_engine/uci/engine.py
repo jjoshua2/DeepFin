@@ -23,7 +23,7 @@ from collections.abc import Callable
 import chess
 
 from chess_anti_engine.mcts.solved_root import SolvedRootWitnessUnavailable
-from chess_anti_engine.moves import index_to_move
+from chess_anti_engine.moves import index_to_move, move_to_index
 from chess_anti_engine.mcts.search_options import (
     branch_note,
     OPTIONS_BY_NAME,
@@ -265,6 +265,46 @@ def _one_line(exc: BaseException, limit: int = 300) -> str:
     """
     text = " ".join(f"{type(exc).__name__}: {exc}".split())
     return text if len(text) <= limit else text[: limit - 3] + "..."
+
+# Status flags of an UNREACHABLE but playable position: legal moves exist and
+# the king predicate holds, but the C move generator's assumptions are not
+# guaranteed, so `_validated_position` accepts these only when the C board and
+# python-chess agree on the legal-move set (`_movegen_disagreement`).
+_TOLERATED_STATUS = (
+    chess.STATUS_TOO_MANY_WHITE_PAWNS
+    | chess.STATUS_TOO_MANY_BLACK_PAWNS
+    | chess.STATUS_TOO_MANY_WHITE_PIECES
+    | chess.STATUS_TOO_MANY_BLACK_PIECES
+    | chess.STATUS_IMPOSSIBLE_CHECK
+    | chess.STATUS_TOO_MANY_CHECKERS
+)
+
+
+def _status_names(status: int) -> str:
+    return ", ".join(
+        str(flag.name).lower().replace("_", " ")
+        for flag in chess.Status
+        if flag and flag & status
+    )
+
+
+def _movegen_disagreement(board: chess.Board) -> str | None:
+    """None when ``CBoard`` and python-chess generate the same legal moves for
+    ``board`` (as 4672 action ids), else a one-line description of the diff."""
+    from chess_anti_engine.encoding._lc0_ext import CBoard
+
+    try:
+        c_ids = {int(i) for i in CBoard.from_board(board).legal_move_indices()}
+    except Exception as exc:
+        return f"the C board cannot load it ({_one_line(exc)})"
+    py_ids = {move_to_index(mv, board) for mv in board.legal_moves}
+    if c_ids == py_ids:
+        return None
+    return (
+        f"the C move generator disagrees with python-chess "
+        f"({len(c_ids)} vs {len(py_ids)} legal moves)"
+    )
+
 
 # Advertised (and now enforced) floor for the `Hash` UCI option, in MB. Keep this
 # in step with the `min` field `emit_handshake` prints — the two disagreeing is
@@ -835,7 +875,7 @@ class Engine:
             return
         if self._position_error is not None:
             # No fallback move either: it would be for a board the GUI did not send.
-            self._refuse_go_for_rejected_position()
+            self._refuse_go_for_rejected_position(cmd.args)
             return
         args = cmd.args
         try:
@@ -1023,7 +1063,9 @@ class Engine:
                 "position; go answers bestmove 0000 until a valid position arrives"
             )
             return
-        new_board, parsed = validated
+        new_board, parsed, root_fen, notes = validated
+        for note in notes:
+            _println(f"info string position: normalised {note}")
         self._position_error = None
         self._board = new_board
   # Game boundary for a GUI that never sends `ucinewgame`: the standard start
@@ -1039,7 +1081,7 @@ class Engine:
             self._in_game = False
   # Record intent; the tree is advanced in _handle_go so ponder mode
   # can choose to stop one ply short.
-        self._pending_fen = cmd.fen
+        self._pending_fen = root_fen
         self._pending_moves = parsed
   # `_popped_ponder_move` is left alone: a live ponder search reads it at
   # ponderhit, and every `go` sets it afresh.
@@ -1047,27 +1089,41 @@ class Engine:
     @staticmethod
     def _validated_position(
         cmd: CmdPosition,
-    ) -> tuple[chess.Board, list[chess.Move]] | str:
-        """``(board, moves)`` for a `position` the engine can take exactly as
-        sent, else the reason it cannot.
+    ) -> tuple[chess.Board, list[chess.Move], str | None, tuple[str, ...]] | str:
+        """``(board, moves, root_fen, notes)`` for a `position` the engine can
+        answer, else the reason it cannot.
 
-        Rejected: a malformed command (``cmd.error``); a FEN python-chess will
-        not parse; a FEN that is not a legal chess position -- ``Board.status()``
-        not VALID (missing / extra kings, pawns on the back rank, the side NOT to
-        move in check, castling rights without the king and rook on their
-        squares, an en-passant square no double push could have made, too many
-        pieces or checkers); and any move in ``moves`` that is not legal where it
-        is played.
+        ``root_fen`` is the FEN every later rebuild of the root uses (tree sync,
+        the ponder board, and through them the C board and the net's planes):
+        ``cmd.fen`` unchanged for a ``Board.status()``-VALID root, the NORMALISED
+        FEN otherwise, so python-chess, the C board and the planes all see the
+        same castling rights and en-passant square. ``notes`` names each
+        normalisation, for one `info string` apiece.
 
-        ⚑ This used to ACCEPT status-invalid FENs, to serve EPD / puzzle /
-        blind-spot drivers said to send them. Measured before tightening it: of
-        4,941 distinct FENs in data/audit_set_v1.jsonl and every data/blindspot_*
-        file (167,936 records), python-chess flags ZERO -- the drivers send legal
-        positions. And a status-invalid root is exactly what let a legal-looking
-        move list capture a king (the move-loop guard below).
+        Normalised (a legal answer exists; python-chess's own move generation
+        already ignores these, the C board did not): castling rights without the
+        king and rook on their squares -> ``clean_castling_rights()``; an
+        en-passant square no double push could have made -> none.
+
+        Rejected (no answer exists, or the C board cannot search it): a
+        malformed command (``cmd.error``); an unparseable FEN; missing / extra
+        kings, an empty board, pawns on the back rank, the side NOT to move in
+        check (``unsearchable_king_reason`` too); any status flag this method
+        does not know; and any move in ``moves`` that is not legal where it is
+        played.
+
+        Tolerated only when the C board agrees (too many pieces / pawns, an
+        impossible check, too many checkers -- legal moves exist, but the
+        position is unreachable, so the C move generator's assumptions are not
+        guaranteed): accepted iff ``CBoard`` and python-chess produce the same
+        legal-move set on the root and on every board the move list reaches,
+        else rejected with that reason.
         """
         if cmd.error is not None:
             return cmd.error
+        notes: list[str] = []
+        root_fen: str | None = cmd.fen
+        tolerated = False
         if cmd.fen is None:
             start = chess.Board()
         else:
@@ -1077,16 +1133,39 @@ class Engine:
                 return f"FEN {cmd.fen!r}: {exc}"
             status = start.status()
             if status != chess.STATUS_VALID:
-                flags = ", ".join(
-                    str(flag.name).lower().replace("_", " ")
-                    for flag in chess.Status
-                    if flag and flag in status
-                )
-                return f"FEN {cmd.fen!r} is not a legal position: {flags}"
+                if status & chess.STATUS_BAD_CASTLING_RIGHTS:
+                    # The FEN's own field: `castling_xfen()` already prints
+                    # the cleaned rights.
+                    fields = cmd.fen.split()
+                    before = fields[2] if len(fields) > 2 else "?"
+                    start.castling_rights = start.clean_castling_rights()
+                    notes.append(
+                        f"castling rights {before} -> {start.castling_xfen()} "
+                        "(a right without its king/rook on the home square)"
+                    )
+                if status & chess.STATUS_INVALID_EP_SQUARE and start.ep_square is not None:
+                    notes.append(
+                        f"en-passant square {chess.square_name(start.ep_square)} "
+                        "is impossible -> none"
+                    )
+                    start.ep_square = None
+                status = start.status()
+                hard = status & ~_TOLERATED_STATUS
+                if hard:
+                    return f"FEN {cmd.fen!r} is not a legal position: {_status_names(hard)}"
+                tolerated = bool(status)
+                root_fen = start.fen(en_passant="fen")
             king = unsearchable_king_reason(start)
             if king is not None:
                 return f"FEN {cmd.fen!r}: {king}"
         board = start.copy(stack=False)
+        if tolerated:
+            disagreement = _movegen_disagreement(board)
+            if disagreement is not None:
+                return (
+                    f"FEN {cmd.fen!r} is unreachable ({_status_names(board.status())}) "
+                    f"and {disagreement}"
+                )
         parsed: list[chess.Move] = []
         for ply, uci in enumerate(cmd.moves, start=1):
             try:
@@ -1101,15 +1180,19 @@ class Engine:
   # looking FEN + move list into a kingless board (measured:
   # 4k2r/8/8/8/3p4/8/2P5/4R1K1 w - - 0 1 moves e1e8 h8h7 c2c4 gave a board the
   # Python and C halves disagree about -- the key-MERGING divergence
-  # _cboard_impl.h's precondition (i) is about). The VALID check above rejects
-  # that root now, and legal play from a VALID position cannot reach one, so
-  # this cannot fire today; it stays because that argument is a property of the
-  # current rules, and the check is cheap.
+  # _cboard_impl.h's precondition (i) is about). OPPOSITE_CHECK roots are
+  # rejected above, and legal play from a VALID position cannot reach one; this
+  # stays because that argument is a property of the current rules, and an
+  # unreachable (tolerated) root weakens it.
             post_reason = unsearchable_king_reason(board)
             if post_reason is not None:
                 return f"move {ply} {uci!r} leaves an unsearchable position ({post_reason})"
+            if tolerated:
+                disagreement = _movegen_disagreement(board)
+                if disagreement is not None:
+                    return f"after move {ply} {uci!r}: {disagreement}"
             parsed.append(mv)
-        return board, parsed
+        return board, parsed, root_fen, tuple(notes)
 
     def _sync_tree_root(self, target_moves: list[chess.Move]) -> None:
         """Descend (or reset) the worker's tree so its root matches
@@ -1152,7 +1235,7 @@ class Engine:
         # busy-worker fallback for the latest board.
         self._wait_for_search(timeout_s=self._go_wait_budget_s(cmd))
         if self._position_error is not None:
-            self._refuse_go_for_rejected_position()
+            self._refuse_go_for_rejected_position(cmd.args)
             return
         self._report_go_args(cmd)
   # Ponder mode: search at the position BEFORE opponent's predicted
@@ -1244,7 +1327,7 @@ class Engine:
             )
         self._search_thread.start()
 
-    def _refuse_go_for_rejected_position(self) -> None:
+    def _refuse_go_for_rejected_position(self, args: GoArgs) -> None:
         """Answer this `go` with ``bestmove 0000``: the last `position` was
         rejected, and any move would be for a board the GUI did not send.
 
@@ -1254,19 +1337,54 @@ class Engine:
         legal and silently wrong. ``0000`` is UCI's null move: the GUI rejects it
         at once and the game log shows the `info string` naming the rejection,
         rather than the engine flagging on time or playing an unrelated move.
-        Answered immediately even for `go ponder` / `go infinite` (nothing will
-        ever be searched for this go). One writer, through the usual claim."""
+
+        Timing obeys UCI like any search: `go ponder` holds the answer until
+        ``ponderhit`` / ``stop``, `go infinite` until ``stop`` (a reply-only
+        thread, released by the same events as `_run_failed_go_reply`); every
+        other `go` answers at once. One writer, through the usual claim."""
+        self._stop_event = threading.Event()
+        self._cancel_event = threading.Event()
+        self._ponderhit_at = None
+        self._ponderhit_event = threading.Event()
+        self._ponder_release = threading.Event()
+        self._pending_real_limits = None
+        self._popped_ponder_move = None
         with self._state_lock:
             self._search_gen += 1
             gen = self._search_gen
-        self._live_go = None
+        self._live_go = None  # nothing to fall back to: no move is legal to send
+        reason = self._position_error
+        _println(
+            f"info string go refused: the last position command was rejected "
+            f"({reason}); send a valid position"
+        )
+        if not (args.ponder or args.infinite):
+            self._print_refusal(gen)
+            return
+        hold = self._ponder_release if args.ponder else self._cancel_event
+        reply = threading.Thread(
+            target=self._held_refusal, args=(gen, hold), daemon=True,
+        )
+        self._search_thread = reply
+        self._fallback_reply_thread = reply
+        try:
+            reply.start()
+        except Exception:
+            self._search_thread = None
+            self._fallback_reply_thread = None
+            self._print_refusal(gen)
+
+    def _held_refusal(self, gen: int, hold: threading.Event) -> None:
+        hold.wait()
+        self._print_refusal(gen)
+
+    def _print_refusal(self, gen: int) -> None:
+        with self._state_lock:
+            if gen != self._search_gen or self._quit_requested:
+                return
         if not self._claim_answer(gen):
             return
         with _answer_owner():
-            _println(
-                f"info string go refused: the last position command was rejected "
-                f"({self._position_error}); send a valid position"
-            )
             _println(format_bestmove("0000"))
 
     def _report_go_args(self, cmd: CmdGo) -> None:
@@ -1274,8 +1392,14 @@ class Engine:
         args = cmd.args
         if args.errors:
             _println(
-                "info string go: ignored unparseable "
+                "info string go: ignored unusable value(s) "
                 + ", ".join(repr(e) for e in args.errors)
+                + (" (mate needs N >= 1)" if any(e.startswith("mate ") for e in args.errors) else "")
+            )
+        if args.truncated:
+            _println(
+                "info string go: non-integer value(s) rounded toward zero: "
+                + ", ".join(args.truncated)
             )
         if args.searchmoves:
             illegal = []
@@ -1294,11 +1418,16 @@ class Engine:
                     + ("; nothing left to search, answering bestmove 0000)" if kept == 0 else ")")
                 )
         if args.ponder or args.infinite:
-            if args.mate is not None:
+            if args.mate is not None and args.infinite:
                 _println(
-                    f"info string go: mate {args.mate} with "
-                    f"{'ponder' if args.ponder else 'infinite'}: searching until stop"
-                    + (" / ponderhit" if args.ponder else "")
+                    f"info string go: mate {args.mate} with infinite: the mate stop is "
+                    "not applied; searching until stop"
+                )
+            elif args.mate is not None:
+                _println(
+                    f"info string go: mate {args.mate} with ponder: pondering until "
+                    f"ponderhit / stop; after ponderhit the search stops once a mate in "
+                    f"<= {args.mate} is proven"
                 )
             return
         try:
@@ -2569,6 +2698,9 @@ class Engine:
   # an orphan for good -- every later move a busy-worker fallback.
         cancel = cancel_event if cancel_event is not None else self._cancel_event
         release = ponder_release if ponder_release is not None else self._ponder_release
+        # The predicted reply this ponder search stopped one ply short of; read
+        # now, before ponderhit's handoff clears it.
+        popped_at_start = self._popped_ponder_move if limits.ponder else None
   # Ponder search: no deadline yet; runs until ponderhit or stop.
         result = self._run_one_phase(
             limits, is_ponder=limits.ponder, board=board, clock_started_at=go_received_at,
@@ -2627,6 +2759,12 @@ class Engine:
                 gen=gen,
             )
             limits = real_limits
+        elif limits.ponder and popped_at_start is not None:
+            # `stop` during ponder (a ponder miss): the search ran on the board
+            # BEFORE the predicted reply, so its move is the opponent's. UCI
+            # still owes a bestmove for the GUI's position (that board plus the
+            # predicted reply) -- a GUI may check it is legal before discarding it.
+            result = self._ponder_miss_result(result, board, popped_at_start)
         # A completed infinite search is still owned by the GUI until stop.
         # Pool failures can set _stop_event without cancelling that ownership.
         # After ponderhit, use the real phase's limits so finite searches emit.
@@ -3239,6 +3377,33 @@ class Engine:
             wdl=wdl,
             string=string,
         )))
+
+    def _ponder_miss_result(
+        self, result: SearchResult, ponder_board: chess.Board, popped: chess.Move,
+    ) -> SearchResult:
+        """``result`` re-targeted to the GUI's board after a `stop` in ponder.
+
+        Our reply from the ponder PV when it starts with the predicted move;
+        else the usual fallback (cached root prior / first legal), never a fresh
+        eval -- the GUI discards this move, so no time is spent on it. The
+        ponder root's `root_declined` is not carried over: the published move is
+        not that root's raw prior, so it must not count as a prior-only root."""
+        real_board = ponder_board.copy(stack=True)
+        real_board.push(popped)
+        pv = tuple(result.pv or ())
+        if len(pv) >= 2 and pv[0] == popped.uci() and _is_playable_fallback(real_board, pv[1], ()):
+            move, source, new_pv = pv[1], "ponder_pv", pv[1:]
+        else:
+            move, source = self._bestmove_fallback(real_board, (), allow_fresh_eval=False)
+            new_pv = ()
+        _println(
+            f"info string ponder miss: stop before ponderhit; the ponder search was for "
+            f"the position before {popped.uci()}, so bestmove is for the GUI's position "
+            f"(source={source} move={move})"
+        )
+        return replace(
+            result, bestmove_uci=move, ponder_uci=None, pv=new_pv, root_declined=None,
+        )
 
     def _emit_bestmove(self, result: SearchResult) -> None:
         self._report_declined_root(result)

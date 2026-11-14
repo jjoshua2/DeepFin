@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, ClassVar, cast
 from unittest.mock import MagicMock
 
 import chess
+import chess.syzygy
 import numpy as np
 import pytest
 import torch
@@ -30,9 +31,12 @@ from chess_anti_engine.moves import move_to_index
 from chess_anti_engine.uci.engine import Engine, EngineOptions
 from chess_anti_engine.uci.protocol import CmdGo, CmdPosition, CmdSetOption, GoArgs, parse_command
 from chess_anti_engine.uci.search import (
+    _MATE_WALK_NODE_LIMIT,
     SearchResult,
     SearchWorker,
+    _MateWalk,
     _proven_line_mate,
+    _proven_line_mates,
     _proven_mate_plies,
 )
 from chess_anti_engine.uci.time_manager import GO_IMPLICIT_CAP_MS, Deadline, limits_from_go
@@ -147,6 +151,78 @@ def test_go_mate_never_stops_an_infinite_or_ponder_search(args: GoArgs) -> None:
     limits = limits_from_go(args, side_to_move_is_white=True)
     assert limits.mate_moves is None
     assert limits.is_open_ended()
+
+
+@pytest.mark.parametrize("line", ["go mate abc", "go mate", "go mate 0", "go mate -2"])
+def test_an_unusable_mate_value_with_no_other_bound_gets_the_implicit_cap(line: str) -> None:
+    args = _go_args(line)
+    assert args.mate is None
+    assert args.errors
+    limits = limits_from_go(args, side_to_move_is_white=True)
+    assert limits.implicit_cap
+    assert limits.deadline_ms == GO_IMPLICIT_CAP_MS
+    assert limits.mate_moves is None
+
+
+def test_mate_zero_is_announced_as_ignored(out) -> None:
+    engine = Engine(_worker())
+    try:
+        _go(engine, "go mate 0 nodes 64")
+        assert "go: ignored unusable value(s) 'mate 0' (mate needs N >= 1)" in out.text()
+    finally:
+        engine.close()
+
+
+@pytest.mark.parametrize(
+    ("line", "field", "value", "note"),
+    [
+        ("go movetime 999.9", "movetime_ms", 999, "movetime 999.9 -> 999"),
+        ("go nodes 1.5", "nodes", 1, "nodes 1.5 -> 1"),
+    ],
+)
+def test_a_non_integer_value_is_truncated_and_announced(out, line: str, field: str, value: int, note: str) -> None:
+    args = _go_args(line)
+    assert getattr(args, field) == value
+    assert args.truncated == (note,)
+    engine = Engine(_worker())
+    try:
+        _go(engine, line)
+        assert f"go: non-integer value(s) rounded toward zero: {note}" in out.text()
+    finally:
+        engine.close()
+
+
+def test_an_integral_float_stays_silent() -> None:
+    args = _go_args("go movetime 1000.0 nodes 5e2")
+    assert args.movetime_ms == 1000
+    assert args.nodes == 500
+    assert args.truncated == ()
+    assert args.errors == ()
+
+
+def test_go_mate_ponder_applies_the_mate_stop_after_ponderhit(out) -> None:
+    worker = _worker()
+    seen: list[dict] = []
+    release = threading.Event()
+
+    def run(board, **kw):
+        seen.append(kw)
+        if len(seen) == 1:  # the ponder phase: open-ended until ponderhit
+            kw["stop_event"].wait(5)
+        return _ok(board)
+
+    worker.run.side_effect = run
+    engine = Engine(worker, options=EngineOptions(ponder=True))
+    try:
+        engine.dispatch(parse_command("position startpos moves e2e4 e7e5"))
+        engine.dispatch(parse_command("go ponder mate 3 wtime 5000 btime 5000"))
+        assert "after ponderhit the search stops once a mate in <= 3 is proven" in out.text()
+        engine.dispatch(parse_command("ponderhit"))
+        assert out.wait_bestmoves(1)
+        release.set()
+        assert [kw["mate_moves"] for kw in seen] == [None, 3]
+    finally:
+        engine.close()
 
 
 def test_the_engine_hands_mate_to_the_worker(out) -> None:
@@ -309,8 +385,8 @@ def test_walk_needs_every_defence_proven() -> None:
     tree = _Tree(fen, {0: (-1, {"g8h8": 1}), 1: (1, {})})  # only Kh8 listed
     as_tree = cast("MCTSTree", cast(object, tree))
     assert board.legal_moves.count() > 1
-    assert _proven_mate_plies(as_tree, 1, tree.boards[1].copy(), {}, [1000]) == 1
-    assert _proven_mate_plies(as_tree, 0, board.copy(), {}, [1000]) is None
+    assert _proven_mate_plies(as_tree, 1, tree.boards[1].copy(), _MateWalk(1000)) == 1
+    assert _proven_mate_plies(as_tree, 0, board.copy(), _MateWalk(1000)) is None
 
 
 def test_a_solved_leaf_that_is_not_checkmate_has_no_distance() -> None:
@@ -338,6 +414,337 @@ def test_a_transposition_cycle_proves_nothing() -> None:
     assert _mate(tree, "a1a2") is None
 
 
+def _mate_in_one(board: chess.Board) -> chess.Move | None:
+    for move in board.legal_moves:
+        if _mates(board, move):
+            return move
+    return None
+
+
+def _mate_in_two(board: chess.Board) -> chess.Move | None:
+    for move in board.legal_moves:
+        board.push(move)
+        try:
+            replies = list(board.legal_moves)
+            if replies and all(_after(board, r, _mate_in_one) is not None for r in replies):
+                return move
+        finally:
+            board.pop()
+    return None
+
+
+def _after(board: chess.Board, move: chess.Move, fn):
+    board.push(move)
+    try:
+        return fn(board)
+    finally:
+        board.pop()
+
+
+# Black to move, exactly two defences: Kb1 allows Rh1# (mate in one), Kd1 only
+# a mate in two. A LOSS node's distance is its LONGEST proven defence.
+_TWO_DEFENCES = "8/5K2/8/8/8/7R/4R3/2k5 b - - 0 1"
+
+
+def _two_defences_tree() -> _Tree:
+    board = chess.Board(_TWO_DEFENCES)
+    spec: dict[int, tuple[int, dict[str, int]]] = {}
+    nxt = [0]
+
+    def new_id() -> int:
+        nid = nxt[0]
+        nxt[0] += 1
+        return nid
+
+    def win(b: chess.Board) -> int:
+        nid = new_id()
+        if _mate_in_one(b) is not None:
+            spec[nid] = (1, {})  # the mate-in-one shortcut needs no children
+            return nid
+        move = _mate_in_two(b)
+        assert move is not None
+        spec[nid] = (1, {})
+        spec[nid] = (1, {move.uci(): _after(b, move, loss)})
+        return nid
+
+    def loss(b: chess.Board) -> int:
+        nid = new_id()
+        spec[nid] = (-1, {})
+        if b.is_checkmate():
+            return nid
+        spec[nid] = (-1, {m.uci(): _after(b, m, win) for m in list(b.legal_moves)})
+        return nid
+
+    assert loss(board) == 0
+    return _Tree(_TWO_DEFENCES, spec)
+
+
+def test_a_loss_node_takes_its_longest_defence() -> None:
+    tree = _two_defences_tree()
+    board = chess.Board(_TWO_DEFENCES)
+    assert [_after(board, m, lambda b: _mate_in_one(b) is not None) for m in board.legal_moves] \
+        .count(True) == 1
+    plies = _proven_mate_plies(cast("MCTSTree", cast(object, tree)), 0, board.copy(), _MateWalk())
+    # Kd1 (1) + mate in two (3) = 4 plies; the short defence (Kb1) would give 2.
+    assert plies == 4
+
+
+def test_the_walk_stops_at_its_budget_on_a_finite_tree() -> None:
+    """The two-defences proof needs more than 3 node visits: a 3-visit walk is
+    exhausted after exactly 3 and answers None; an ample one finishes."""
+    tree = cast("MCTSTree", cast(object, _two_defences_tree()))
+    board = chess.Board(_TWO_DEFENCES)
+    walk = _MateWalk(budget=3)
+    assert _proven_mate_plies(tree, 0, board.copy(), walk) is None
+    assert walk.exhausted
+    assert walk.visits == 3
+    ample = _MateWalk()
+    assert _proven_mate_plies(tree, 0, board.copy(), ample) == 4
+    assert not ample.exhausted
+    assert 3 < ample.visits < 50
+
+
+class _LazySolvedTree:
+    """A fully expanded proven tree generated on demand: every node solved
+    (``root_status`` on even plies, its opposite on odd), every legal move a
+    child, no checkmate anywhere -- the worst case for the mate walk. Counts
+    status reads."""
+
+    def __init__(self, fen: str, root_status: int = 1) -> None:
+        self.root_status = root_status
+        self.boards = {0: chess.Board(fen)}
+        self.depth = {0: 0}
+        self.kids: dict[int, dict[int, int]] = {}
+        self.status_reads = 0
+
+    def get_solved_status(self, nid: int) -> int:
+        self.status_reads += 1
+        return self.root_status if self.depth[nid] % 2 == 0 else -self.root_status
+
+    def _expand(self, nid: int) -> dict[int, int]:
+        if nid not in self.kids:
+            board = self.boards[nid]
+            self.kids[nid] = {}
+            for move in board.legal_moves:
+                child = len(self.boards)
+                nb = board.copy(stack=False)
+                nb.push(move)
+                self.boards[child] = nb
+                self.depth[child] = self.depth[nid] + 1
+                self.kids[nid][int(move_to_index(move, board))] = child
+        return self.kids[nid]
+
+    def get_children_visits(self, nid: int):
+        actions = np.array(sorted(self._expand(nid)), dtype=np.int32)
+        return actions, np.ones(actions.size, dtype=np.int32)
+
+    def find_child(self, nid: int, action: int) -> int:
+        return self._expand(nid).get(int(action), -1)
+
+    def node_count(self) -> int:
+        return len(self.boards)
+
+
+_DEEP_FEN = "4k3/8/8/8/8/8/8/R3K2R w - - 0 1"
+
+
+def test_one_walk_bounds_the_cost_of_every_root_line() -> None:
+    """One `_MateWalk` shared by all root lines: total node visits stay at the
+    budget (per-line budgets did 24 x 4,000 here, ~10 s on the search thread),
+    and once exhausted every line reads no distance."""
+    tree = _LazySolvedTree(_DEEP_FEN)
+    as_tree = cast("MCTSTree", cast(object, tree))
+    board = chess.Board(_DEEP_FEN)
+    actions, _ = tree.get_children_visits(0)
+    assert actions.size == 24
+    walk = _MateWalk()
+    mates = [_proven_line_mate(as_tree, 0, board, int(a), walk) for a in actions]
+    assert walk.exhausted
+    assert walk.visits == _MATE_WALK_NODE_LIMIT
+    assert mates == [None] * actions.size
+    # Status reads: one per visit plus the per-child checks a visit makes
+    # (measured ~16.7k here; per-line budgets read ~235k).
+    assert tree.status_reads < 8 * _MATE_WALK_NODE_LIMIT
+
+
+def test_one_info_emission_shares_one_budget_across_its_lines() -> None:
+    tree = _LazySolvedTree(_DEEP_FEN)
+    actions, _ = tree.get_children_visits(0)
+    lines: list[int | None] = [int(a) for a in actions]
+    lines.append(None)
+    mates = _proven_line_mates(cast("MCTSTree", cast(object, tree)), 0, chess.Board(_DEEP_FEN), lines)
+    assert mates == [None] * len(lines)
+    assert tree.status_reads < 8 * _MATE_WALK_NODE_LIMIT
+
+
+def test_one_info_emission_still_reports_a_proven_mate() -> None:
+    tree = _Tree(_MATE_IN_2, {0: (1, {"e2e8": 1}), 1: (-1, {"a8e8": 2}), 2: (1, {"e1e8": 3}), 3: (-1, {})})
+    board = tree.boards[0]
+    action = int(move_to_index(chess.Move.from_uci("e2e8"), board))
+    as_tree = cast("MCTSTree", cast(object, tree))
+    assert _proven_line_mates(as_tree, 0, board, [action, None]) == [2, None]
+    assert _proven_line_mates(None, None, board, [action]) == [None]
+
+
+def _mate_check_host(tree: object) -> SearchWorker:
+    """Just the attributes `SearchWorker._proven_mate_within` reads."""
+    host = SimpleNamespace(_tree=tree, _root_id=0, _mate_check_key=None, last_mate_walk_visits=0)
+    return cast("SearchWorker", cast(object, host))
+
+
+class _StaticLazyTree(_LazySolvedTree):
+    """A real tree does not grow while it is walked; this one only does so
+    lazily, so report a fixed size (what the search would see between chunks)."""
+
+    size = 1
+
+    def node_count(self) -> int:
+        return self.size
+
+
+def test_the_go_mate_check_shares_one_budget_and_skips_an_unchanged_tree() -> None:
+    tree = _StaticLazyTree(_DEEP_FEN)
+    host = _mate_check_host(tree)
+    board = chess.Board(_DEEP_FEN)
+    within = SearchWorker._proven_mate_within
+    assert within(host, board, 5, None) is None
+    assert host.last_mate_walk_visits == _MATE_WALK_NODE_LIMIT
+    assert tree.status_reads < 8 * _MATE_WALK_NODE_LIMIT
+    # Same tree, root status and size: no second walk.
+    reads = tree.status_reads
+    assert within(host, board, 5, None) is None
+    assert tree.status_reads - reads == 1  # the root status read only
+    # The tree grew (a chunk ran): walk again, inside the same budget.
+    tree.size = 2
+    reads = tree.status_reads
+    assert within(host, board, 5, None) is None
+    assert 1 < tree.status_reads - reads < 8 * _MATE_WALK_NODE_LIMIT
+
+
+class _CountingTree(_Tree):
+    def node_count(self) -> int:
+        return len(self.boards)
+
+
+def test_an_exhausted_walk_reports_no_distance_rather_than_a_partial_one() -> None:
+    """Mate in two through e2e8; with too small a budget the walk must answer
+    None, never a distance from the part it managed to read."""
+    spec = {
+        0: (1, {"e2e8": 1}),
+        1: (-1, {"a8e8": 2}),
+        2: (1, {"e1e8": 3}),
+        3: (-1, {}),
+    }
+    tree = _Tree(_MATE_IN_2, spec)
+    as_tree = cast("MCTSTree", cast(object, tree))
+    board = tree.boards[0]
+    action = int(move_to_index(chess.Move.from_uci("e2e8"), board))
+    assert _proven_line_mate(as_tree, 0, board, action, _MateWalk()) == 2
+    starved = _MateWalk(budget=1)
+    assert _proven_line_mate(as_tree, 0, board, action, starved) is None
+    assert starved.exhausted
+
+
+class _ProofPlusDeepSibling:
+    """The `_MATE_IN_2` proof (Re8+ Rxe8 Rxe8#) at node 0, plus ONE more
+    winning-looking child of node 0 -- a later action than e2e8 -- whose LOSS
+    subtree is a fully expanded lazy tree with no mate in it (ids >= 1000)."""
+
+    _OFFSET = 1000
+
+    def __init__(self) -> None:
+        self.proof = _Tree(_MATE_IN_2, {0: (1, {"e2e8": 1}), 1: (-1, {"a8e8": 2}),
+                                        2: (1, {"e1e8": 3}), 3: (-1, {})})
+        board = self.proof.boards[0]
+        self.mate_action = int(move_to_index(chess.Move.from_uci("e2e8"), board))
+        later = sorted(
+            (int(move_to_index(m, board)), m) for m in board.legal_moves
+            if int(move_to_index(m, board)) > self.mate_action and not board.gives_check(m)
+        )
+        self.deep_action, move = later[0]
+        after = board.copy(stack=False)
+        after.push(move)
+        self.deep = _LazySolvedTree(after.fen(), root_status=-1)
+
+    def get_solved_status(self, nid: int) -> int:
+        if nid >= self._OFFSET:
+            return self.deep.get_solved_status(nid - self._OFFSET)
+        return self.proof.get_solved_status(nid)
+
+    def get_children_visits(self, nid: int):
+        if nid >= self._OFFSET:
+            return self.deep.get_children_visits(nid - self._OFFSET)
+        actions, visits = self.proof.get_children_visits(nid)
+        if nid == 0:
+            actions = np.array(sorted([*actions.tolist(), self.deep_action]), dtype=np.int32)
+            visits = np.ones(actions.size, dtype=np.int32)
+        return actions, visits
+
+    def find_child(self, nid: int, action: int) -> int:
+        if nid >= self._OFFSET:
+            child = self.deep.find_child(nid - self._OFFSET, action)
+            return -1 if child < 0 else child + self._OFFSET
+        if nid == 0 and int(action) == self.deep_action:
+            return self._OFFSET
+        return self.proof.find_child(nid, action)
+
+
+def test_a_node_whose_walk_ran_out_gives_no_distance_even_with_a_finished_child() -> None:
+    """Node 0's first winning child (e2e8) is fully proven (mate in 3 plies);
+    the later sibling's subtree then exhausts the budget. A distance read from
+    the finished part would be an upper bound, not what was asked: None."""
+    tree = _ProofPlusDeepSibling()
+    as_tree = cast("MCTSTree", cast(object, tree))
+    board = tree.proof.boards[0]
+    assert tree.mate_action < tree.deep_action
+    # With the sibling unsolved, the same walk finishes: mate in 3 plies.
+    unsolved = _ProofPlusDeepSibling()
+    unsolved.deep = _LazySolvedTree(tree.deep.boards[0].fen(), root_status=0)
+    assert _proven_mate_plies(cast("MCTSTree", cast(object, unsolved)), 0, board.copy(), _MateWalk()) == 3
+    starved = _MateWalk(budget=50)
+    assert _proven_mate_plies(as_tree, 0, board.copy(), starved) is None
+    assert starved.exhausted
+    assert 0 not in starved.memo  # nothing half-walked left behind as an answer
+
+
+def test_go_mate_searchmoves_ignores_a_mate_through_an_excluded_move() -> None:
+    tree = _CountingTree(_MATE_IN_2, {
+        0: (1, {"e2e8": 1, "h2h3": 4}),
+        1: (-1, {"a8e8": 2}),
+        2: (1, {"e1e8": 3}),
+        3: (-1, {}),
+        4: (0, {}),
+    })
+    board = tree.boards[0]
+    mate_idx = int(move_to_index(chess.Move.from_uci("e2e8"), board))
+    other_idx = int(move_to_index(chess.Move.from_uci("h2h3"), board))
+    within = SearchWorker._proven_mate_within
+    assert within(_mate_check_host(tree), board, 2, None) == 2
+    assert within(_mate_check_host(tree), board, 2, {mate_idx}) == 2
+    assert within(_mate_check_host(tree), board, 2, {other_idx}) is None
+    assert within(_mate_check_host(tree), board, 1, None) is None
+
+
+def test_go_mate_on_a_longer_proven_mate_stops_instead_of_idling() -> None:
+    """`go mate 1` on a mate in two with no node bound: once the root is
+    proven and the search cannot grow it, stop -- not idle to the cap."""
+    import time
+
+    worker = _tiny_worker()
+    try:
+        t0 = time.monotonic()
+        result = worker.run(
+            chess.Board(_MATE_IN_2), stop_event=threading.Event(),
+            deadline=Deadline(30_000), max_nodes=None, mate_moves=1,
+        )
+        elapsed = time.monotonic() - t0
+        assert worker.last_stop_reason == "mate_solved_root"
+        assert elapsed < 15.0
+        assert result.score_mate == 2
+    finally:
+        worker.close()
+
+
 # --- 2. position rejection --------------------------------------------------
 
 _BAD_POSITIONS = {
@@ -349,9 +756,9 @@ _BAD_POSITIONS = {
     "missing king": "position fen rnbq1bnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQ - 0 1",
     "pawn on the back rank": "position fen rnbqkbnP/pppppppp/8/8/8/8/PPPPPPP1/RNBQKBNR w KQq - 0 1",
     "side not to move in check": "position fen 4k3/8/8/8/8/8/4R3/4K3 w - - 0 1",
-    "castling rights without rooks": "position fen 4k3/8/8/8/8/8/8/R3K3 w KQkq - 0 1",
     "bad castling field": "position fen 4k3/8/8/8/8/8/8/R3K3 w KQkqX - 0 1",
-    "impossible en passant": "position fen rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq e6 0 1",
+    "two white kings": "position fen 4k3/8/8/8/8/8/8/3KK3 w - - 0 1",
+    "empty board": "position fen 8/8/8/8/8/8/8/8 w - - 0 1",
     "illegal move in the list": "position startpos moves e2e4 e7e5 e1e3 g8f6",
     "unparseable move in the list": "position startpos moves e2e4 xx",
 }
@@ -418,14 +825,278 @@ def test_the_busy_worker_route_also_refuses(out) -> None:
         engine.close()
 
 
-def test_a_go_ponder_after_a_rejected_position_still_answers(out) -> None:
+@pytest.mark.parametrize("release", ["ponderhit", "stop"])
+def test_a_go_ponder_after_a_rejected_position_holds_0000_until_released(out, release: str) -> None:
+    """UCI: a pondering engine answers only after ponderhit / stop -- the
+    refusal too."""
     engine = Engine(_worker(), options=EngineOptions(ponder=True))
     try:
         engine.dispatch(parse_command("position foo"))
-        _go(engine, "go ponder wtime 1000 btime 1000")
-        assert out.bestmoves() == ["0000"]
+        engine.dispatch(parse_command("go ponder wtime 1000 btime 1000"))
+        assert "go refused" in out.text()
+        assert out.wait_bestmoves(1, timeout=0.3) == []
+        engine.dispatch(parse_command(release))
+        assert out.wait_bestmoves(1) == ["0000"]
     finally:
         engine.close()
+
+
+def test_a_go_infinite_after_a_rejected_position_holds_0000_until_stop(out) -> None:
+    engine = Engine(_worker())
+    try:
+        engine.dispatch(parse_command("position foo"))
+        engine.dispatch(parse_command("go infinite"))
+        assert out.wait_bestmoves(1, timeout=0.3) == []
+        engine.dispatch(parse_command("ponderhit"))  # not a release for infinite
+        assert out.wait_bestmoves(1, timeout=0.3) == []
+        engine.dispatch(parse_command("stop"))
+        assert out.wait_bestmoves(1) == ["0000"]
+    finally:
+        engine.close()
+
+
+def test_a_finite_go_after_a_rejected_position_answers_at_once(out) -> None:
+    engine = Engine(_worker())
+    try:
+        engine.dispatch(parse_command("position foo"))
+        engine.dispatch(parse_command("go movetime 50"))
+        assert out.wait_bestmoves(1, timeout=1.0) == ["0000"]
+    finally:
+        engine.close()
+
+
+def _ponder_worker(pv_for) -> MagicMock:
+    """The ponder phase waits for its stop, then returns a result for the
+    board it searched (the one BEFORE the predicted reply)."""
+    worker = _worker()
+
+    def run(board, **kw):
+        kw["stop_event"].wait(5)
+        pv = pv_for(board)
+        return SearchResult(pv[0], pv[1] if len(pv) > 1 else None, 8, pv, 0)
+
+    worker.run.side_effect = run
+    return worker
+
+
+@pytest.mark.parametrize(
+    ("pv", "expect"),
+    [
+        (("e7e5", "g1f3"), "g1f3"),  # PV through the predicted reply: our planned answer
+        (("b7b5", "a2a3"), None),    # PV elsewhere: a fallback move for the real board
+    ],
+)
+def test_stop_on_a_ponder_miss_answers_for_the_gui_board(out, pv, expect) -> None:
+    """`position startpos moves e2e4 e7e5` + `go ponder` searches the board
+    after e2e4 (Black to move). On `stop` the bestmove must be legal in the
+    GUI's position (White to move), not Black's search move."""
+    engine = Engine(_ponder_worker(lambda _b: pv), options=EngineOptions(ponder=True))
+    try:
+        engine.dispatch(parse_command("position startpos moves e2e4 e7e5"))
+        engine.dispatch(parse_command("go ponder wtime 5000 btime 5000"))
+        engine.dispatch(parse_command("stop"))
+        (move,) = out.wait_bestmoves(1)
+        gui = chess.Board()
+        gui.push_uci("e2e4")
+        gui.push_uci("e7e5")
+        assert chess.Move.from_uci(move) in gui.legal_moves, move
+        if expect is not None:
+            assert move == expect
+        line = next(ln for ln in out.lines if ln.startswith("bestmove"))
+        assert "ponder" not in line.split()[2:]
+    finally:
+        engine.close()
+
+
+def test_ponderhit_still_answers_from_the_real_phase(out) -> None:
+    calls: list[chess.Board] = []
+
+    def pv_for(board: chess.Board) -> tuple[str, ...]:
+        calls.append(board.copy())
+        return ("e7e5", "g1f3") if board.turn == chess.BLACK else ("g1f3", "b8c6")
+
+    engine = Engine(_ponder_worker(pv_for), options=EngineOptions(ponder=True))
+    try:
+        engine.dispatch(parse_command("position startpos moves e2e4 e7e5"))
+        engine.dispatch(parse_command("go ponder wtime 5000 btime 5000"))
+        engine.dispatch(parse_command("ponderhit"))
+        (move,) = out.wait_bestmoves(1)
+        assert move == "g1f3"
+        assert [b.turn for b in calls] == [chess.BLACK, chess.WHITE]
+    finally:
+        engine.close()
+
+
+# --- 2b. status-invalid but answerable positions are normalised -------------
+
+# Reviewer's regressions: main answered each with a legal move; a blanket
+# status rejection forfeited them with 0000.
+_NORMALISED = {
+    "white rooks, phantom black rights": (
+        "position fen 4k3/8/8/8/8/8/8/R3K2R w KQkq - 0 1", chess.BB_A1 | chess.BB_H1),
+    "black rooks, phantom white rights": (
+        "position fen r3k2r/8/8/8/8/8/8/4K3 w KQkq - 0 1", chess.BB_A8 | chess.BB_H8),
+    "missing h1 rook": (
+        "position fen rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBN1 w KQkq - 0 1",
+        chess.BB_A1 | chess.BB_A8 | chess.BB_H8),
+    "phantom rights then a move": (
+        "position fen 4k3/8/8/8/8/8/8/R3K2R b KQkq - 0 1 moves e8d8", chess.BB_A1 | chess.BB_H1),
+}
+
+
+def _searched_boards(worker: MagicMock) -> list[chess.Board]:
+    return [call.args[0] for call in worker.run.call_args_list]
+
+
+@pytest.mark.parametrize("label", sorted(_NORMALISED))
+def test_stale_castling_rights_are_normalised_everywhere(label: str, out) -> None:
+    """One set of rights for python-chess, the board the search is handed (the
+    C board and the net's planes are built from it) and every later rebuild of
+    the root from `_pending_fen` (tree sync, ponder)."""
+    from chess_anti_engine.encoding._lc0_ext import CBoard
+
+    line, rights = _NORMALISED[label]
+    worker = _worker()
+    engine = Engine(worker)
+    try:
+        engine.dispatch(parse_command(line))
+        text = out.text()
+        assert "rejected" not in text, text
+        assert "info string position: normalised castling rights KQkq -> " in text
+        assert engine._board.castling_rights == rights
+        assert engine._board.status() == chess.STATUS_VALID
+        assert engine._pending_fen is not None
+        assert chess.Board(engine._pending_fen).castling_rights == rights
+        _go(engine, "go nodes 64")
+        (searched,) = _searched_boards(worker)
+        assert searched.castling_rights == rights
+        assert searched.move_stack == engine._board.move_stack
+        assert searched.root().castling_rights == chess.Board(engine._pending_fen).castling_rights
+        c_bits = int(CBoard.from_board(searched).castling)
+        want = (
+            (1 if rights & chess.BB_H1 else 0) | (2 if rights & chess.BB_A1 else 0)
+            | (4 if rights & chess.BB_H8 else 0) | (8 if rights & chess.BB_A8 else 0)
+        )
+        assert c_bits == want
+        (move,) = out.bestmoves()
+        assert chess.Move.from_uci(move) in engine._board.legal_moves
+    finally:
+        engine.close()
+
+
+def test_an_impossible_en_passant_square_is_dropped(out) -> None:
+    worker = _worker()
+    engine = Engine(worker)
+    try:
+        engine.dispatch(parse_command(
+            "position fen rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq e6 0 1"))
+        assert "normalised en-passant square e6 is impossible -> none" in out.text()
+        assert engine._board.ep_square is None
+        assert engine._pending_fen is not None
+        assert chess.Board(engine._pending_fen).ep_square is None
+        _go(engine, "go nodes 64")
+        (searched,) = _searched_boards(worker)
+        assert searched.ep_square is None
+    finally:
+        engine.close()
+
+
+_VALID_FENS = (
+    chess.STARTING_FEN,
+    "rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 3",  # a real ep square
+    "r3k2r/8/8/8/8/8/8/R3K2R b Kq - 4 20",
+    "8/8/4k3/8/8/4K3/4P3/8 w - - 0 1",
+    "  4k3/8/8/8/8/8/8/4K3   w   -   -   0   1",
+)
+
+
+@pytest.mark.parametrize("fen", _VALID_FENS)
+def test_a_valid_position_is_taken_exactly_as_sent(fen: str, out) -> None:
+    """For a status-VALID root nothing changes vs main: the stored root FEN is
+    the GUI's string itself and the board is python-chess's parse of it."""
+    engine = Engine(_worker())
+    try:
+        cmd = _position(f"position fen {fen}")
+        engine.dispatch(cmd)
+        assert "normalised" not in out.text()
+        assert "rejected" not in out.text()
+        assert engine._pending_fen is cmd.fen
+        parsed = chess.Board(cmd.fen)
+        assert engine._board == parsed
+        assert engine._board.castling_rights == parsed.castling_rights
+        assert engine._board.ep_square == parsed.ep_square
+    finally:
+        engine.close()
+
+
+_UNREACHABLE_FEN = "4k3/8/8/8/8/P7/PPPPPPPP/QQQQKQQQ w - - 0 1"
+
+
+def test_an_unreachable_position_is_accepted_when_the_c_board_agrees(out) -> None:
+    board = chess.Board(_UNREACHABLE_FEN)  # 9 white pawns, 17 white men
+    assert board.status() & chess.STATUS_TOO_MANY_WHITE_PAWNS
+    assert board.status() & chess.STATUS_TOO_MANY_WHITE_PIECES
+    worker = _worker()
+    engine = Engine(worker)
+    try:
+        engine.dispatch(parse_command(f"position fen {board.fen()}"))
+        assert "rejected" not in out.text()
+        _go(engine, "go nodes 64")
+        (move,) = out.bestmoves()
+        assert chess.Move.from_uci(move) in board.legal_moves
+    finally:
+        engine.close()
+
+
+def test_an_unreachable_position_the_c_board_disagrees_on_is_rejected(monkeypatch, out) -> None:
+    board = chess.Board(_UNREACHABLE_FEN)
+    seen: list[str] = []
+
+    def disagree(b: chess.Board) -> str:
+        seen.append(b.fen())
+        return "the C move generator disagrees with python-chess (1 vs 2 legal moves)"
+
+    monkeypatch.setattr(engine_module, "_movegen_disagreement", disagree)
+    engine = Engine(_worker())
+    try:
+        engine.dispatch(parse_command(f"position fen {board.fen()}"))
+        assert "rejected" in out.text()
+        assert "C move generator disagrees" in out.text()
+        assert seen
+        # A VALID root is never put through the comparison.
+        seen.clear()
+        engine.dispatch(parse_command("position startpos moves e2e4"))
+        assert seen == []
+        assert engine._position_error is None
+    finally:
+        engine.close()
+
+
+def test_movegen_disagreement_reports_a_c_board_that_differs(monkeypatch) -> None:
+    import chess_anti_engine.encoding._lc0_ext as lc0_ext
+
+    real = lc0_ext.CBoard
+
+    class _Short:
+        def __init__(self, board: chess.Board) -> None:
+            self._ids = real.from_board(board).legal_move_indices()[1:]
+
+        @classmethod
+        def from_board(cls, board: chess.Board) -> _Short:
+            return cls(board)
+
+        def legal_move_indices(self):
+            return self._ids
+
+    monkeypatch.setattr(lc0_ext, "CBoard", _Short)
+    reason = engine_module._movegen_disagreement(chess.Board())
+    assert reason is not None
+    assert "19 vs 20 legal moves" in reason
+
+
+def test_movegen_disagreement_reads_both_generators() -> None:
+    assert engine_module._movegen_disagreement(chess.Board(_UNREACHABLE_FEN)) is None
+    assert engine_module._movegen_disagreement(chess.Board()) is None
 
 
 # --- 4. Syzygy50MoveRule reaches the root shortcut --------------------------
@@ -465,6 +1136,56 @@ def test_selfplay_default_is_unchanged(monkeypatch) -> None:
     picked = tbmod.try_tb_root_move(board, "stub")
     assert picked is not None
     assert tbmod.probe_best_move(board, "stub") == picked[0]
+
+
+class _FiftyBoundaryTable:
+    """Probe stub for a root at halfmove 99 (`_FIFTY_FEN`). The pawn pushes zero
+    the counter into a BLESSED loss for Black (wdl -1: a cursed win, dtz 101 for
+    the mover); every quiet move lands on halfmove 100 where the table (fresh
+    counter) still says White wins in 30. With the 50-move rule the quiet
+    children are already drawn (`is_fifty_moves`), so the cursed-win pawn push
+    outranks them; without it the quiet win in 30 is shortest."""
+
+    def probe_wdl(self, _board: chess.Board) -> int:
+        return -1
+
+    def probe_dtz(self, _board: chess.Board) -> int:
+        return -29
+
+
+_FIFTY_FEN = "7k/8/8/8/8/8/P7/KR6 w - - 99 150"
+
+
+def test_dtz_of_played_move_default_counts_the_fifty_move_draw() -> None:
+    """Selfplay's `strict_tb` and the root ranking call this with the DEFAULT:
+    a child whose counter has run out is a draw (0), whatever the table says."""
+    board = chess.Board(_FIFTY_FEN)
+    board.push(chess.Move.from_uci("b1b2"))
+    assert board.halfmove_clock == 100
+    assert board.is_fifty_moves()
+    table = cast("chess.syzygy.Tablebase", cast(object, _FiftyBoundaryTable()))
+    assert tbmod._dtz_of_played_move(board, table) == 0
+    assert tbmod._dtz_of_played_move(board, table, rule50=True) == 0
+    assert tbmod._dtz_of_played_move(board, table, rule50=False) == 30
+
+
+def test_probe_best_move_default_follows_the_fifty_move_ranking(monkeypatch) -> None:
+    """`probe_best_move` (training labels via selfplay/finalize.py) must keep the
+    50-move-aware ranking: here it and plain DTZ pick DIFFERENT moves."""
+    monkeypatch.setattr(tbmod, "get_tablebase", lambda _path: _FiftyBoundaryTable())
+    board = chess.Board(_FIFTY_FEN)
+    rule50 = tbmod._select_dtz_move(board, "stub", rule50=True)
+    plain = tbmod._select_dtz_move(board, "stub", rule50=False)
+    assert rule50 is not None
+    assert plain is not None
+    assert board.piece_type_at(rule50[0].from_square) == chess.PAWN
+    assert rule50[1] == 101
+    assert board.piece_type_at(plain[0].from_square) != chess.PAWN
+    assert plain[1] == 30
+    assert tbmod.probe_best_move(board, "stub") == rule50[0]
+    picked = tbmod.try_tb_root_move(board, "stub")
+    assert picked is not None
+    assert picked[0] == rule50[0]
 
 
 @pytest.mark.parametrize(("value", "score"), [("true", 0), ("false", 41890)])
@@ -565,7 +1286,7 @@ def test_an_unparseable_go_bound_is_named_and_capped(out) -> None:
     engine = Engine(worker)
     try:
         _go(engine, "go movetime abc")
-        assert "go: ignored unparseable 'movetime abc'" in out.text()
+        assert "go: ignored unusable value(s) 'movetime abc'" in out.text()
         assert seen[-1]["deadline"].remaining_ms() is not None
     finally:
         engine.close()
