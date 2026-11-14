@@ -134,6 +134,7 @@ def test_encode_full_batch_oversized_buffer() -> None:
     assert np.all(out[n:] == 0.5)
 
 
+@pytest.mark.usefixtures("python_reference_paths")
 @pytest.mark.parametrize("input_extra_features", _EXTRA_FEATURES)
 def test_encode_cboard_batch_fallback_matches(
     monkeypatch: pytest.MonkeyPatch, input_extra_features: str,
@@ -201,6 +202,7 @@ def test_encode_full_batch_error_paths() -> None:
         encode_full_batch([cb], good, 0, 99)
 
 
+@pytest.mark.usefixtures("python_reference_paths")
 @pytest.mark.parametrize("history", ["old", "root_pov", "  ROOT_META  "])
 @pytest.mark.parametrize("batch_symbol", [True, False])
 def test_history_selection_matches_python_planes(

@@ -120,6 +120,7 @@ def test_forced_reply_fixture_is_legal_and_nonterminal(fen):
         assert len(board.piece_map()) == 7
 
 
+@pytest.mark.usefixtures("python_reference_paths")
 @pytest.mark.parametrize("c_ply", [True, False])
 def test_forced_turn_keeps_original_pending_record_and_position(monkeypatch, c_ply):
     pool = HeldPool()

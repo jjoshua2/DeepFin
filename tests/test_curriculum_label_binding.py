@@ -103,6 +103,7 @@ def _through_forced_turn(state, pool, monkeypatch):
     return rec, p1, correct
 
 
+@pytest.mark.usefixtures("python_reference_paths")
 @pytest.mark.parametrize("refute", [False, True])
 @pytest.mark.parametrize("c_ply", [False, True])
 @pytest.mark.parametrize("mode", ["move", "floor"])
@@ -128,6 +129,7 @@ def test_delayed_curriculum_label_is_not_rebound_after_forced_net_turn(
     _assert_wdl(rec, [0.1, 0.0, 0.9])
 
 
+@pytest.mark.usefixtures("python_reference_paths")
 @pytest.mark.parametrize("c_ply", [False, True])
 def test_shared_move_future_keeps_correct_ordinary_label(tmp_path, monkeypatch, c_ply):
     state, pool = _state(tmp_path, c_ply=c_ply, mode="reuse")

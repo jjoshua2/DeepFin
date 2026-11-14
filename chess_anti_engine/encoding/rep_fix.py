@@ -36,14 +36,23 @@ why it holds; anything new fails loudly instead of silently mis-encoding.
 """
 from __future__ import annotations
 
+import importlib
 import logging
 
 _LOG = logging.getLogger(__name__)
 _current: bool | None = None
+_ENCODER_MODULES: tuple[str, ...] = (
+    "chess_anti_engine.encoding._lc0_ext",
+    "chess_anti_engine.mcts._mcts_tree",
+)
 
 
 class RepFixFlipError(RuntimeError):
     """A live-board-unsafe flip of the process-global ``history_rep_fix`` flag."""
+
+
+class RepFixUnavailableError(RuntimeError):
+    """An encoder extension cannot be set: it would stay in the other regime."""
 
 
 def current() -> bool | None:
@@ -52,11 +61,12 @@ def current() -> bool | None:
 
 
 def apply(enabled: bool, *, boards_discarded: bool = False) -> None:
-    """Set the repetition-fix flag in every encoder extension that exposes it.
+    """Set the repetition-fix flag in both encoder extensions (all or nothing).
 
-    Idempotent and cheap; safe to call once per batch. Missing setters (e.g. an
-    extension built before this change) are skipped with a one-time warning so a
-    stale build fails visibly rather than silently encoding the wrong planes.
+    Idempotent and cheap; safe to call once per batch. Raises
+    :class:`RepFixUnavailableError`, before setting anything, if either
+    encoder module cannot be imported or lacks the setter: skipping one would
+    leave the two encoders in different history regimes.
 
     ``boards_discarded=True`` certifies that no ``CBoard`` constructed or pushed
     under the previous value is still alive — required for any call that CHANGES
@@ -77,22 +87,34 @@ def apply(enabled: bool, *, boards_discarded: bool = False) -> None:
             "boards_discarded=True if no board built under the old value is "
             "still alive."
         )
-    applied = 0
-    for mod_name in ("chess_anti_engine.encoding._lc0_ext", "chess_anti_engine.mcts._mcts_tree"):
+    # Resolve EVERY setter before touching any: a module that could not be
+    # set would leave that encoder in the other history regime (a mixed
+    # regime is silent data corruption), so refuse before the first flip.
+    setters = []
+    problems = []
+    for mod_name in _ENCODER_MODULES:
         try:
-            mod = __import__(mod_name, fromlist=["set_history_rep_fix"])
-        except Exception:
+            mod = importlib.import_module(mod_name)
+        except Exception as exc:
+            problems.append(f"{mod_name} is not importable ({exc})")
             continue
         setter = getattr(mod, "set_history_rep_fix", None)
         if setter is None:
-            _LOG.warning(
-                "%s lacks set_history_rep_fix; rebuild the C extensions to use "
-                "history_rep_fix (encoding may diverge from the configured value)",
-                mod_name,
-            )
+            problems.append(f"{mod_name} lacks set_history_rep_fix (built from older source)")
             continue
+        setters.append(setter)
+    if problems:
+        from chess_anti_engine.ext_check import REBUILD_HINT
+
+        raise RepFixUnavailableError(
+            f"history_rep_fix={enabled} cannot be applied to every encoder: "
+            + "; ".join(problems)
+            + ". Refusing: the encoders would disagree on the repetition-plane "
+            "regime. Rebuild: " + REBUILD_HINT
+        )
+    for setter in setters:
         setter(enabled)
-        applied += 1
+    applied = len(setters)
     _current = enabled
     if enabled and applied:
         _LOG.info("history_rep_fix enabled in %d encoder module(s)", applied)

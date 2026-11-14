@@ -341,7 +341,7 @@ def test_preflight_argv_matches_train_sh() -> None:
     )
     for token in _C_EXT_CHECK_ARGV:
         assert token in block, f"{token!r} is in the preflight but not in train.sh"
-    for flag in ("--min-gcc-major", "--require-production-recipe", "--quiet"):
+    for flag in ("--min-gcc-major", "--require-production-recipe", "--quiet", "--check-symbols"):
         if flag in block:
             assert flag in _C_EXT_CHECK_ARGV, f"{flag!r} is in train.sh but not the preflight"
 

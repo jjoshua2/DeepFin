@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 import chess
 import numpy as np
 
+from chess_anti_engine.ext_check import refuse_fallback
+
 from .lc0 import (
     _HAS_LC0_C_EXT,
     encode_lc0_full,
@@ -44,6 +46,10 @@ def _encode_lc0_planes(
     if use_full_lc0:
         if _HAS_LC0_C_EXT:
             return encode_lc0_full_c(board, input_history_encoding=input_history_encoding)
+        refuse_fallback(
+            "encode_position", "_lc0_ext.encode_piece_planes",
+            "the pure-Python LC0 piece planes",
+        )
         return encode_lc0_full(board, input_history_encoding=input_history_encoding)
     return encode_lc0_reduced(board)
 
@@ -105,6 +111,10 @@ def _extra_feature_planes(
 ) -> np.ndarray:
     if _HAS_C_EXT:
         return extra_feature_planes_c(board, version=input_extra_features)
+    refuse_fallback(
+        "encode_position", "_features_ext.compute_extra_features",
+        "the pure-Python feature planes",
+    )
     return extra_feature_planes_fast(board, version=input_extra_features)
 
 
