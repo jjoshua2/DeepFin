@@ -229,7 +229,8 @@ def test_one_factory_failing_at_startup_starts_degraded() -> None:
         raise RuntimeError("CUDA out of memory (injected at startup)")
 
     pool = MultiGpuPucvPool(
-        MultiGpuPucvConfig(n_gpus=3, gather=8, device_labels=("cuda:0", "cuda:1", "cuda:2")),
+        MultiGpuPucvConfig(n_gpus=3, gather=8, device_labels=("cuda:0", "cuda:1", "cuda:2"),
+                           degrade_on_startup_failure=True),
         evaluator_factories=[lambda: good[0], broken, lambda: good[1]],
     )
     try:
@@ -250,7 +251,7 @@ def test_every_factory_failing_at_startup_still_refuses() -> None:
         raise RuntimeError("no device")
 
     with pytest.raises(RuntimeError, match="no device"):
-        MultiGpuPucvPool(MultiGpuPucvConfig(n_gpus=2, gather=8),
+        MultiGpuPucvPool(MultiGpuPucvConfig(n_gpus=2, gather=8, degrade_on_startup_failure=True),
                          evaluator_factories=[broken, broken])
 
 

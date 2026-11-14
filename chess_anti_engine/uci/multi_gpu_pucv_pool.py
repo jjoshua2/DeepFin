@@ -26,8 +26,13 @@ Degrade path (one device failing must not cost the move or the game):
     The stuck thread re-checks under the same lock when (if ever) the call
     returns and then exits without touching the tree, so the release happens
     exactly once.
-  - A factory that fails at startup leaves the pool running on the others
-    (DEGRADED); only when every factory fails does construction raise.
+  - With ``degrade_on_startup_failure`` (set by the UCI engine) a worker that
+    fails at startup leaves the pool running on the others (DEGRADED); only
+    when every worker fails does construction raise. The class default stays
+    strict: any startup failure raises and retires every owned evaluator.
+  - A quiesced failure (evaluator still usable) on the LAST live worker is
+    not a drop: there is nothing to degrade onto, so the run re-raises and
+    the next run reuses the device, exactly as before the degrade path.
   - Every drop is announced once through ``drain_notes()``; the failed
     evaluator stays quarantined (``async_safety``) so nothing reuses it.
 
@@ -144,6 +149,11 @@ class MultiGpuPucvConfig:
     stall_floor_s: float | None = None
   # Names used in the drop announcements (e.g. "cuda:1"); default "#k".
     device_labels: tuple[str, ...] = ()
+  # False (default): any worker failing at startup fails construction and
+  # every owned evaluator is retired. True: start DEGRADED on the workers that
+  # built (construction still raises if every worker failed). The UCI engine
+  # sets True; see SearchWorker.install_multi_gpu_pucv.
+    degrade_on_startup_failure: bool = False
 
 
 @dataclass(frozen=True)
@@ -315,6 +325,7 @@ class MultiGpuPucvPool:
         self._init_done = threading.Barrier(n + 1)
         self._shutdown = threading.Event()
         self._errors: list[BaseException] = []
+        self._retained_error: BaseException | None = None
         self._init_errors: list[BaseException] = []
         self._init_error_by_worker: dict[int, BaseException] = {}
         self._stats_lock = threading.Lock()
@@ -353,9 +364,10 @@ class MultiGpuPucvPool:
         self._init_done.wait()
         if self._init_errors:
             failed = sorted(self._init_error_by_worker)
-            if len(failed) >= n or not failed:
-                # Every device failed (or a failure not tied to one worker):
-                # nothing to degrade onto -- refuse exactly as before.
+            if not cfg.degrade_on_startup_failure or len(failed) >= n or not failed:
+                # Strict construction (the class default), every device failed,
+                # or a failure not tied to one worker: refuse exactly as before.
+                # Every worker has already retired its own evaluator.
                 self.close()
                 raise self._init_errors[0]
             for k in failed:
@@ -487,15 +499,24 @@ class MultiGpuPucvPool:
             _log.error("%s", msg)
             self._notes.append(msg)
 
-    def _fail_worker(self, idx: int, exc: BaseException, job: _Job | None) -> None:
-        """A worker's search raised: drop it, keep the pool going on the rest."""
+    def _fail_worker(self, idx: int, exc: BaseException, job: _Job | None) -> bool:
+        """A worker's search raised: drop it, keep the pool going on the rest.
+
+        Returns True when the worker is RETAINED instead: its failure was
+        quiesced (its evaluator is still usable) and no other worker is live.
+        Then there is nothing to degrade onto, so the run re-raises the error
+        and the next run reuses the device -- the pre-degrade semantics."""
         with self._cv:
             if self._abandoned[idx]:
-                return
-            self._live[idx] = False
+                return False
             self._errors.append(exc)
             in_flight = sum(self._outstanding[idx].values())
             self._outstanding[idx].clear()
+            others = any(alive for k, alive in enumerate(self._live) if k != idx)
+            if not others and not _is_poisoned(self._quarantine[idx]):
+                self._retained_error = exc
+                return True
+            self._live[idx] = False
         if job is not None and in_flight and not job.stop_event.is_set():
             job.budget.release(in_flight)
         if _is_poisoned(self._quarantine[idx]) and not any(self._live):
@@ -503,6 +524,7 @@ class MultiGpuPucvPool:
             # whole is now unusable, exactly as before the degrade path.
             poison(self, self._quarantine[idx], exc)
         self._note_drop(idx, "failed mid-search", _one_line(exc))
+        return False
 
     def last_stats(self) -> MultiGpuPucvStats:
         """Return stats from the most recent completed run.
@@ -543,6 +565,7 @@ class MultiGpuPucvPool:
 
         with self._job_lock:
             self._errors = []
+            self._retained_error = None
             self._run_started = time.perf_counter()
             self._worker_stats = [
                 MultiGpuPucvWorkerStats(worker_index=k)
@@ -565,6 +588,8 @@ class MultiGpuPucvPool:
                 self._cv.wait(timeout=_RUN_POLL_S)
                 self._abandon_stuck_locked(job)
 
+        if self._retained_error is not None:
+            raise self._retained_error
         if not any(self._live):
             if self._errors:
                 raise self._errors[0]
@@ -741,9 +766,13 @@ class MultiGpuPucvPool:
             self._init_errors.append(exc)
             self._init_error_by_worker[idx] = exc
         self._init_done.wait()
-        # Only THIS worker's failure retires it: with the degrade path the
-        # others keep running (construction raises only if all of them failed).
-        if idx in self._init_error_by_worker:
+        # Strict construction retires every worker on any failure. With
+        # ``degrade_on_startup_failure`` only THIS worker's failure retires it
+        # and the others keep running (construction raises only if all failed).
+        retire = idx in self._init_error_by_worker or (
+            bool(self._init_errors) and not cfg.degrade_on_startup_failure
+        )
+        if retire:
             if self._factories is not None:
                 self._evals[idx] = None
                 close = getattr(evaluator, "close", None)
@@ -777,12 +806,14 @@ class MultiGpuPucvPool:
                 # and stopped waiting for it; touch nothing, just leave.
                 return
             except BaseException as exc:
-                _log.exception("pucv-gpu-%d raised; dropping this device", idx)
-                self._fail_worker(idx, exc, job)
+                _log.exception("pucv-gpu-%d raised", idx)
+                retained = self._fail_worker(idx, exc, job)
                 with self._cv:
                     self._running.discard(idx)
                     self._cv.notify_all()
-                return
+                if not retained:
+                    return
+                continue
             with self._cv:
                 self._running.discard(idx)
                 self._cv.notify_all()

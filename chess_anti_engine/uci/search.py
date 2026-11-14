@@ -776,6 +776,9 @@ class SearchWorker:
                 device_labels if device_labels is not None
                 else getattr(self, "_device_labels", ())
             )),
+            # UCI: one device failing to build must not cost the game -- start
+            # on the rest (announced; --selfcheck reports it).
+            degrade_on_startup_failure=True,
         )
         if info_string_cb is not None:
             self._device_note_cb = info_string_cb
