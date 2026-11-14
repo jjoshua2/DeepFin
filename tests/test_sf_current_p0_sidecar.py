@@ -37,6 +37,8 @@ def read(reference: dict[str, str]) -> Any:
 def fiction(tmp_path: Path, *, kept: tuple[int, ...] = (0, 1, 2, 3), corrupt: str = "",
             no_reduced_native: bool = False) -> tuple[dict[str, Any], dict[str, str], dict[str, Any], list[dict[str, Any]]]:
     helpers = runpy.run_path(str(Path(__file__).with_name("test_sf_banked_p0_census.py")))
+    bindings = tmp_path / "bindings"
+    bindings.mkdir()
     base = tmp_path / "fiction"
     base.mkdir()
     p, generation, _producer = helpers["fixture"](base, kept=kept, corrupt=corrupt)
@@ -68,12 +70,12 @@ def fiction(tmp_path: Path, *, kept: tuple[int, ...] = (0, 1, 2, 3), corrupt: st
         "scripts/sf_banked_p0_census.py", "chess_anti_engine/moves/encode.py", "chess_anti_engine/stockfish/wdl.py")}
     p["auditor_source"] = {"revision": "2" * 40, "files": files}
     p["qualification_scope"] = "SYNTHETIC_NOT_REAL_AUTHORITY"
-    census_protocol = ref(tmp_path / "fiction-census-protocol.json", p)
+    census_protocol = ref(tmp_path / "bindings" / "fiction-census-protocol.json", p)
     audit.census(p, protocol_ref=census_protocol)
     report_ref = carrier.reference(Path(p["output_root"]) / "readout.json")
     command = ["python", "-m", "scripts.sf_banked_p0_census", "--protocol", census_protocol["path"],
                "--protocol-sha256", census_protocol["sha256"]]
-    census_terminal = ref(tmp_path / "fiction-census-terminal.json", {
+    census_terminal = ref(tmp_path / "bindings" / "fiction-census-terminal.json", {
         "status": "PASS", "returncode": 0, "resource": "cpu", "seconds": 900,
         "owned_processes_closed": True, "custody": "OWNED_PROCESSES_CLOSED", "command": command,
         "supervisor_sha256": "b" * 64, "known_processes": {"999999991": 1}})
@@ -87,17 +89,17 @@ def fiction(tmp_path: Path, *, kept: tuple[int, ...] = (0, 1, 2, 3), corrupt: st
     terminal = read(census_terminal)
     terminal["command"] = command
     census_terminal = replace(census_terminal, terminal)
-    acceptance = ref(tmp_path / "fiction-root-acceptance.json", {
+    acceptance = ref(tmp_path / "bindings" / "fiction-root-acceptance.json", {
         "status": "ROOT_ACCEPTS_CLOSED_FIXED_G1_CENSUS_DATA_ONLY", "scope": "SYNTHETIC_NOT_REAL_AUTHORITY",
         "readout": report_ref, "protocol": census_protocol, "terminal": census_terminal,
         "rows": report["per_row_evidence"]})
-    review = ref(tmp_path / "fiction-review.json", {"status": "ACCEPT_ACTUAL_METADATA_NO_FINDINGS_DATA_ONLY",
+    review = ref(tmp_path / "bindings" / "fiction-review.json", {"status": "ACCEPT_ACTUAL_METADATA_NO_FINDINGS_DATA_ONLY",
         "findings": [], "readout": report_ref, "protocol": census_protocol, "root_acceptance": acceptance})
-    selection = ref(tmp_path / "fiction-direction.json", {"status": carrier.SELECTION,
+    selection = ref(tmp_path / "bindings" / "fiction-direction.json", {"status": carrier.SELECTION,
         "execution_admitted": False, "training_recipe_selected": False,
         "evidence": {"census_root": acceptance, "census_independent": review,
-                     "metadata_readout": {"path": str(tmp_path / "unused-metadata.json"), "sha256": "d" * 64},
-                     "metadata_independent": {"path": str(tmp_path / "unused-metadata-review.json"), "sha256": "e" * 64}},
+                     "metadata_readout": {"path": str(tmp_path / "bindings" / "unused-metadata.json"), "sha256": "d" * 64},
+                     "metadata_independent": {"path": str(tmp_path / "bindings" / "unused-metadata-review.json"), "sha256": "e" * 64}},
         "scope": "SYNTHETIC_NOT_REAL_AUTHORITY"})
     protocol = {"schema": carrier.PROTOCOL, "scope": "SYNTHETIC_ONLY", "phase": "produce", "selection": selection,
         "census_protocol": census_protocol, "census_readout": report_ref, "census_acceptance": acceptance,
@@ -108,7 +110,7 @@ def fiction(tmp_path: Path, *, kept: tuple[int, ...] = (0, 1, 2, 3), corrupt: st
                    "row_bytes": 1 << 20, "game_metadata_bytes": 8 << 20,
                    "carrier_game_bytes": 8 << 20, "carrier_total_bytes": 32 << 20},
         "candidate": None, "producer_owner": None, "output_root": str(tmp_path / "carrier")}
-    protocol_ref = ref(tmp_path / "fiction-produce.json", protocol)
+    protocol_ref = ref(tmp_path / "bindings" / "fiction-produce.json", protocol)
     old_rows = [json.loads(line) for line in Path(report["per_row_evidence"]["path"]).read_text().splitlines()]
     return protocol, protocol_ref, generation, old_rows
 
@@ -141,15 +143,15 @@ def completed_candidate(tmp_path: Path, **kwargs: Any) -> tuple[dict[str, Any], 
     candidate = carrier.reference(Path(p["output_root"]) / "manifest.json")
     command = ["python", "-m", "scripts.sf_current_p0_sidecar", "--protocol", p_ref["path"],
                "--protocol-sha256", p_ref["sha256"]]
-    produce_admission = carrier.reference(tmp_path / "fiction-produce-admission.json")
+    produce_admission = carrier.reference(Path(p_ref["path"]).with_name("fiction-produce-admission.json"))
     command.extend(["--admission", produce_admission["path"], "--admission-sha256", produce_admission["sha256"]])
-    terminal = ref(tmp_path / "fiction-produce-terminal.json", {"status": "PASS", "returncode": 0,
+    terminal = ref(tmp_path / "bindings" / "fiction-produce-terminal.json", {"status": "PASS", "returncode": 0,
         "resource": "cpu", "seconds": 300, "command": command, "supervisor_sha256": "b" * 64,
         "known_processes": {"999999993": 1}, "owned_processes_closed": True, "custody": "OWNED_PROCESSES_CLOSED"})
     v = copy.deepcopy(p)
     v.update(phase="validate", candidate=candidate, output_root=str(tmp_path / "validation"),
              producer_owner={"terminal": terminal, "command": command, "owner_sha256": "b" * 64})
-    return v, ref(tmp_path / "fiction-validate.json", v)
+    return v, ref(tmp_path / "bindings" / "fiction-validate.json", v)
 
 
 def test_exact_policy_bytes_distinct_value_povs_and_complete_denominator(tmp_path: Path) -> None:
@@ -191,8 +193,8 @@ def test_real_direction_shape_without_audit_uuid_and_distinct_synthetic_chain(tm
     carrier.direction_selection(selected, {**p, "scope": "FIXED_ORIGINAL_G1"})
     # The real direction points at real-G1 receipts, whereas the synthetic
     # input has its own accepted fictional census chain. They are not aliases.
-    selected["evidence"]["census_root"] = {"path": str(tmp_path / "real-G1-root.json"), "sha256": "a" * 64}
-    selected["evidence"]["census_independent"] = {"path": str(tmp_path / "real-G1-review.json"), "sha256": "b" * 64}
+    selected["evidence"]["census_root"] = {"path": str(tmp_path / "bindings" / "real-G1-root.json"), "sha256": "a" * 64}
+    selected["evidence"]["census_independent"] = {"path": str(tmp_path / "bindings" / "real-G1-review.json"), "sha256": "b" * 64}
     p["selection"] = replace(p["selection"], selected)
     # Complete metadata consumer also sees the real shape, rather than a test-
     # invented audit_uuid. Tiny source remains explicitly fictional/synthetic.
@@ -205,7 +207,7 @@ def test_real_direction_shape_without_audit_uuid_and_distinct_synthetic_chain(tm
 def test_foreign_direction_bridge_refuses_before_source_arrays(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, key: str) -> None:
     p, p_ref, _, _ = fiction(tmp_path)
     selected = read(p["selection"])
-    selected["evidence"][key] = {"path": str(tmp_path / "foreign.json"), "sha256": "f" * 64}
+    selected["evidence"][key] = {"path": str(tmp_path / "bindings" / "foreign.json"), "sha256": "f" * 64}
     p["selection"] = replace(p["selection"], selected)
     p["scope"] = "FIXED_ORIGINAL_G1"
     monkeypatch.setattr(audit, "open_arrays", lambda *_: pytest.fail("payload before direction bridge"))
@@ -279,10 +281,10 @@ def test_authority_or_role_refusal_precedes_array_open(tmp_path: Path, monkeypat
 @pytest.mark.parametrize("fault", ["missing", "wrong_protocol", "wrong_source", "wrong_phase", "pending"])
 def test_exact_phase_admission_precedes_source_arrays(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str) -> None:
     p, p_ref, _, _ = fiction(tmp_path)
-    a_ref = fiction_admission(p, p_ref, tmp_path / "fiction-bad-admission.json")
+    a_ref = fiction_admission(p, p_ref, tmp_path / "bindings" / "fiction-bad-admission.json")
     admission = read(a_ref)
     if fault == "missing":
-        a_ref = {"path": str(tmp_path / "missing.json"), "sha256": "0" * 64}
+        a_ref = {"path": str(tmp_path / "bindings" / "missing.json"), "sha256": "0" * 64}
     else:
         if fault == "wrong_protocol":
             admission["protocol"] = {**p_ref, "sha256": "0" * 64}
@@ -338,7 +340,7 @@ def test_semantic_vector_tamper_refuses_even_with_rehashed_inventory(tmp_path: P
         if item["path"] == "game-000000/policy_f16.npy":
             item["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
     p["candidate"] = replace(p["candidate"], candidate)
-    p_ref = ref(tmp_path / "fiction-rehashed-validate.json", p)
+    p_ref = ref(tmp_path / "bindings" / "fiction-rehashed-validate.json", p)
     with pytest.raises(ValueError, match=r"qualified carrier policy|vector bytes"):
         run_validator(p, p_ref)
     assert Path(p["output_root"] + ".failed.json").exists()
@@ -363,7 +365,7 @@ def test_candidate_owner_and_seal_gate(tmp_path: Path, monkeypatch: pytest.Monke
                         "late_marker": "candidate seal/failure marker",
                         "unknown_file": "candidate complete inventory"}[failure]
     with pytest.raises(ValueError, match=expected_message):
-        run_validator(p, ref(tmp_path / "fiction-failure-validate.json", p))
+        run_validator(p, ref(tmp_path / "bindings" / "fiction-failure-validate.json", p))
     assert not Path(p["output_root"]).exists()
 
 
