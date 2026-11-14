@@ -680,7 +680,10 @@ def test_concurrent_lifecycle_keeps_path_and_tables_coherent(tables, tmp_path: P
             barrier = threading.Barrier(2)
             errors: list[BaseException] = []
 
-            def run(action: Callable[[], object]) -> None:
+            def run(
+                action: Callable[[], object], barrier: threading.Barrier,
+                errors: list[BaseException],
+            ) -> None:
                 barrier.wait()
                 try:
                     action()
@@ -691,13 +694,14 @@ def test_concurrent_lifecycle_keeps_path_and_tables_coherent(tables, tmp_path: P
                 except BaseException as exc:
                     errors.append(exc)
 
-            a = threading.Thread(target=run, args=(first,), daemon=True)
-            b = threading.Thread(target=run, args=(lambda: _tb_ext.init(path),), daemon=True)
+            a = threading.Thread(target=run, args=(first, barrier, errors), daemon=True)
+            b = threading.Thread(target=run, args=(lambda: _tb_ext.init(path), barrier, errors), daemon=True)
             a.start()
             b.start()
             a.join(timeout=10)
             b.join(timeout=10)
-            assert not a.is_alive() and not b.is_alive(), "table lifecycle deadlock"
+            assert not a.is_alive(), "table lifecycle deadlock"
+            assert not b.is_alive(), "table lifecycle deadlock"
             assert not errors, errors
             # These reads occur only after both writers have completed.
             assert (_tb_ext.path() is None) == (_tb_ext.largest() == 0)
