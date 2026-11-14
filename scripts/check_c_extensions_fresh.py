@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
-"""Fail when in-place C extensions are missing or older than their sources."""
+"""Fail when in-place C extensions are missing or older than their sources.
+
+With ``--check-symbols`` (``scripts/train.sh`` passes it) the extensions are
+also imported and every required symbol and the ``_mcts_tree`` ABI checked.
+"""
 
 from __future__ import annotations
 
 import argparse
 import importlib.machinery
+import json
+import os
 import re
 import struct
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -295,6 +303,41 @@ def check_extensions(
     return issues
 
 
+_SYMBOL_PROBE = (
+    "import json\n"
+    "from chess_anti_engine.ext_check import extension_problems\n"
+    "print(json.dumps(extension_problems()))\n"
+)
+
+
+def symbol_problems(root: Path, *, python: str | None = None, timeout_s: float = 300.0) -> list[str]:
+    """Import + required-symbol + ABI problems of the extensions under ``root``.
+
+    Runs ``chess_anti_engine.ext_check.extension_problems`` (the check the UCI
+    startup gate, the worker and ``run.py`` share) in a child interpreter with
+    ``root`` first on ``sys.path``, so it inspects the checkout being gated
+    rather than whatever this process imported.
+    """
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(root) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    try:
+        proc = subprocess.run(
+            [python or sys.executable, "-c", _SYMBOL_PROBE],
+            cwd=root, env=env, capture_output=True, text=True, timeout=timeout_s, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return [f"symbol/ABI check timed out after {timeout_s:.0f}s"]
+    lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
+    if proc.returncode != 0 or not lines:
+        tail = " | ".join(proc.stderr.strip().splitlines()[-3:])
+        return [f"symbol/ABI check could not run (exit {proc.returncode}): {tail}"]
+    try:
+        problems = json.loads(lines[-1])
+    except json.JSONDecodeError:
+        return [f"symbol/ABI check printed no result: {lines[-1][:200]}"]
+    return [str(p) for p in problems]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path.cwd(), help="Repository root to inspect.")
@@ -310,13 +353,23 @@ def main() -> int:
             "-march (recorded with LTO), plus an LTO translation producer record."
         ),
     )
+    parser.add_argument(
+        "--check-symbols", action="store_true",
+        help=(
+            "Also import the extensions and require every symbol and the ABI "
+            "that chess_anti_engine.ext_check lists (the UCI startup gate's check)."
+        ),
+    )
     args = parser.parse_args()
 
+    root = args.root.resolve()
     issues = check_extensions(
-        args.root.resolve(),
+        root,
         min_gcc_major=args.min_gcc_major,
         require_production_recipe=args.require_production_recipe,
     )
+    if args.check_symbols and not any(issue.endswith(" is missing") for issue in issues):
+        issues += symbol_problems(root)
     if issues:
         print("C extension freshness check failed:")
         for issue in issues:

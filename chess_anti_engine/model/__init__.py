@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import torch
 
-from chess_anti_engine.encoding import encode_position, input_plane_count
+from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.encoding import rep_fix
 from chess_anti_engine.encoding.features import (
     EXTRA_FEATURES_V1,
@@ -489,12 +489,14 @@ def model_config_to_manifest_dict(cfg: ModelConfig) -> dict:
 
 
 def infer_input_planes(input_extra_features: str | None = None) -> int:
-  # Use startpos to infer plane count.
-    import chess
+    """Input plane count for ``input_extra_features`` (alias of ``input_plane_count``).
 
-    b = chess.Board()
-    x = encode_position(b, add_features=True, input_extra_features=input_extra_features)
-    return int(x.shape[0])
+    This used to run the Python encoder on the start position just to read the
+    plane count; the arithmetic gives the same integer for every registered
+    version and raises the same ``ValueError`` for an unknown one
+    (``tests/test_c_core_required.py``).
+    """
+    return input_plane_count(input_extra_features)
 
 
 def _attach_runtime_model_metadata(model: torch.nn.Module, cfg: ModelConfig) -> torch.nn.Module:
@@ -531,7 +533,7 @@ def build_model(cfg: ModelConfig) -> torch.nn.Module:
             f"(got {cfg.dynamic_relation_count}); the relation set is fixed "
             "by the C extension / shard schema"
         )
-    in_planes = infer_input_planes(cfg.input_extra_features)
+    in_planes = input_plane_count(cfg.input_extra_features)
     if cfg.kind == "tiny":
         return _attach_runtime_model_metadata(TinyNet(in_planes=in_planes), cfg)
     if cfg.kind == "transformer":

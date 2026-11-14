@@ -382,6 +382,7 @@ def _via_python(game: GameConfig) -> np.ndarray:
 @pytest.mark.parametrize(
     ("slope", "width"), [(PROD_SLOPE, PROD_WIDTH), (0.012, 45.0)],
 )
+@pytest.mark.usefixtures("python_reference_paths")
 def test_c_and_python_ply_paths_agree(mode: str, slope: float, width: float) -> None:
     """Both REAL append paths, same inputs, both modes.
 
