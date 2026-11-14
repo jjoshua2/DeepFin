@@ -16,7 +16,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
-- [2026-11-14: Current-P0 SF sidecar engineering qualification](2026-11-14-sf-current-p0-sidecar-qualification.md) — prospective producer/validator qualification for all 256 original-G1 games / 24,827 rows; exact source/context/byte/mask carrier checks, focused tests and direct CLIs unrun. Data-only 2,700-second CPU ceiling, no training recipe, query, model or playing-strength adoption.
+- [2026-11-14: Current-P0 SF sidecar engineering qualification](2026-11-14-sf-current-p0-sidecar-qualification.md) — 33 focused tests and the native-derived four-row producer/validator CLI chain passed; actual 256-game / 24,827-row original-G1 production and validation remain unrun. Data-only 2,700-second CPU ceiling, no training recipe, query, model or playing-strength adoption.
 
 - [2026-11-14: Banked original-G1 Stockfish P0 evidence census](2026-11-14-sf-banked-g1-p0-evidence-census.md) — completed data-only audit of all 256 games / 24,827 rows: 24,205 internally consistent source-context joins, 127 invalid joins and 495 unavailable. Recorded field presence and explicit regret are not teacher-target/training eligibility; independent actual census and metadata reviews accepted, no recipe or playing-strength adoption.
 
