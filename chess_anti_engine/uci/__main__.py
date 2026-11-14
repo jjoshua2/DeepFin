@@ -891,11 +891,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--gil-profile", action="store_true",
         help="emit per-search delayed-GIL-reacquisition telemetry as UCI info strings",
     )
-  # --walkers > 1 switches from the Gumbel-chunked path to a PUCT walker
-  # pool with virtual loss. Better dispatch-bound throughput, no
-  # sequential-halving semantics. walkers=2 is ~10x the baseline on CUDA
-  # (bench_uci_engine --walker-sweep, 2026-04-22) — we default to 2 so the
-  # ship path gets the win. --walkers 1 opts into the classic Gumbel path.
+  # SearchWalkers / --walkers defaults to 1: classic Gumbel search.
+  # Explicit values > 1 select the PUCT walker pool with virtual loss,
+  # without sequential-halving semantics. UCI Threads does not select this route.
     p.add_argument("--walkers", type=int, default=1,
                    help="search walkers (UCI option SearchWalkers): 1 = classic Gumbel, the "
                         "validated tournament search (default); >1 = PUCT walker pool, where "
