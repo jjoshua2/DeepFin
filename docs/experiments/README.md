@@ -2,6 +2,10 @@
 
 - [2026-09-19: Workspace storage migration and queued-job adoption](2026-09-19-workspace-storage.md)
 
+Bend engine records and their evidence live on the `bend` branch (see
+[development](../development.md#bend-branch)); tag `pre-slim-20261113` holds the
+last `main` that carried them.
+
 Start here for experiment planning and readouts. [Project guidance](../../CLAUDE.md)
 holds durable constraints; [evaluation](../eval_protocol.md) explains which
 measurements support which claims.
@@ -11,7 +15,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
-- [2026-11-14: Full-state lower-rate on-policy continuation](2026-11-14-low-lr-on-policy-continuation.md) — prospective reviewed proposal: preserve LOW512 state, add seven fixed on-policy generations to step 4,096, then conditionally continue to 8,192 only after a fresh confirmed gain. V2 source and prospective role proposal independently accepted; root adoption/admissions pending. No new training or predictions yet.
+- [2026-11-14: Full-state lower-rate on-policy continuation](2026-11-14-low-lr-on-policy-continuation.md) — ongoing: G2 resumed through step 1,024 on inherited G1 plus new on-policy G2; the descriptive donor diagnostic scored 49.21875% over 256 games (paired 95% interval 44.2990–54.1385%, includes parity). No gain, equivalence, promotion or confirmation; G3 collecting under the unchanged fixed horizon.
 
 - [2026-11-14: Fixed LOW512 versus original A39 successor](2026-11-14-low512-donor-screen.md) — completed qualified screen nonpass: 48.9258% versus A39 over 512 games (paired 95% interval 45.8184–52.0332%, includes parity). No confirmation eligible, allocated or consumed; donor retained, no playing gain or equivalence claim.
 
@@ -45,15 +49,6 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | --- | --- |
 | [Indexed bootstrap dose preparation](2026-10-04-indexed-bootstrap-dose-preparation.md) | Original-shard nested row loading, bounded metadata and CPU regression evidence; full scientific qualification pending |
 | [Local arena adapter reuse source packet](2026-10-10-local-arena-adapter-reuse.md) | Reviewed operational adapter reuse, 11 isolated CPU contracts and future-launch preparation; no live adoption |
-| [Actual multi-bit scan_after full-Ply count](2026-10-03-bend-scan-after-count.md) | Actual arbitrary-mask scan_after full-Ply occurrence count with duplicate-tail preservation; legal target geometry and full-generator correctness remain open
-| [Closed actual multi-bit scan_after count](2026-10-03-bend-scan-after-closed-count.md) | Exact per-query in-range bit contribution plus arbitrary full-Ply tail count, checked through actual Chess.destinations and scan_after; legal geometry remains separate
-| [Actual destination factorization](2026-10-02-bend-destination-factorization.md) | Local checked ordinary-emission structure, full-Ply multiplicity and arbitrary-array scan pair; independent bitboard inventory and whole generator remain open |
-| [Actual U64 zero-predicate bridge](2026-10-02-bend-bitboard-zero-bridge.md) | Unconditional actual zero-to-structural-Word predicate bridge with two semantic controls; ctz range/selection remain open |
-| [Actual U64 ctz structural selector](2026-10-02-bend-bitboard-ctz-structural.md) | Universal Word lowbit/popcount index theorem, actual U64 ctz equality, and nonzero range/selected-bit bridges; depends on the zero bridge in PR #991 |
-| [Actual bitboard inventory at zero and singleton masks](2026-10-02-bend-bitboard-inventory.md) | Exact actual `bit_squares` zero/singleton outputs and one-hot `scan_after`/`scan`/`legal_moves` caller composition; arbitrary multi-bit inventory and whole-generator correctness remain open |
-| [Off-home king castling exclusion](2026-10-02-bend-king-away.md) | Qualified arbitrary-array actual optimized generator empty flag-2 projection under bounded off-home moving-king singleton; public-builder/history/full-generator obligations remain |
-| [Forward attack composition](2026-10-01-bend-forward-attacks.md) | Qualified source-forward witness bridge, complete initialized query pairs and direct castling composition; actual public-builder/history/ordinary/skip/full-generator obligations remain |
-| [Complete generator contract and builder blocker](2026-10-01-bend-generator-contract.md) | Actual public-builder equality exceeded the 600-second hosted bound; zero accepted laws and zero executed controls; explicit end-to-end target and residual obligations |
 | [Audited 50M bootstrap expansion](2026-09-17-audited-scale-bootstrap.md) | Historical saved-audit V50 and explicit 50–60M contract; missing source binding and isolated scheduler recovered with both histories, no new experiment or training launch |
 | [D-lite paired-pack auditor exit-aware wait](2026-10-01-sf-dlite-auditor-exit-wait.md) | One-hunk supervised-wait candidate and real-child CPU checks; no live audit, data, or admission credit |
 | [Ceres direct-compact synthetic sink](2026-09-30-ceres-direct-compact-synthetic-sink.md) | 26-arm tiny full-head synthetic CPU screen: noisy +2.000% median sink-wall saving, semantic ZIP parity, no live adoption or measured production gain |
@@ -62,47 +57,12 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [Ceres stored-feed-once root preparation](2026-09-29-ceres-root-feedonce.md) | Tracked CPU root binder exercised by saved-game readback, exact 2,022-root replay parity and narrow 16.81% saved-root prep saving; fresh actor adoption pending |
 | [Ceres saved19 negative-threefold CPU gate](2026-09-30-ceres-saved19-threefold-gate.md) | 19 saved full-history games / 2,022 roots: exact natural/strict outcome and root parity; 1.3706x narrow gate timing, no whole-root or live gain claim |
 | [D-lite historical donor adaptation](2026-09-30-sf-dlite-historical-donor-adapter.md) | Main-archived patch against pinned historical game-epoch runtime; exact donor/paired-pack/consumed-batch gates CPU-reviewed, no training or strength credit |
-| [Sequential castling checks](2026-09-27-bend-castle-checked-pipeline.md) | Three initialized producer/full-filter contracts with threaded arrays and geometric retained-move safety; modular194/622; full optimized generator remains separate |
-| [Initialized castling-stage geometry](2026-09-27-bend-castle-stage-geometry.md) | One complete initialized check composition at all three king stages; six classified controls; saved singleton variant preserved; modular191/606,not a safe-castling verdict |
-| [Castling mover-king invariants](2026-09-26-bend-castle-king-invariants.md) | Four public singleton/side/stage-check contracts; derived transit and final premises; modular190/600; attack reversal and full legality composition remain separate |
-| [Initialized attack composition](2026-09-26-bend-initialized-attacked.md) | Three source contracts composing initialized six-piece masks, attacked and singleton in_check; complete-array results; target-centred geometry, not complete castling legality |
-| [Attack state reconciliation](2026-09-26-bend-attack-state-reconciliation.md) | Preserves all15 saved alternative files; catches delayed and unused-slot table loss; no duplicate public-law counts |
-| [Initialized non-slider geometry](2026-09-26-bend-initialized-leaper-geometry.md) | Three source contracts connect coordinate masks to actual extras storage and initialized pawn/knight/king queries; full attacked composition remains separate |
-| [Attack witnesses and king selection](2026-09-26-bend-attack-witness.md) | Actual attack aggregation equals per-square witnesses; explicit singleton-king in_check bridge; mask geometry remains separate; modular180/543 |
-| [Blocker-aware slider reversal](2026-09-27-bend-slider-reversal.md) | Arbitrary shared-occupancy geometric/computed rook,bishop,queen-union reciprocity; complete-mask native oracle; modular207/706 |
-| [Leaper reversal publication](2026-09-27-bend-leaper-reversal-publication.md) | Two saved reversal laws and17 controls freshly hosted-qualified with current destination proofs retained; modular205/689 |
-| [Accepted castling destination](2026-09-27-bend-accepted-castle-destination.md) | Three actual retained/full-generator destination-check and initialized geometric-safety laws; full consumer,17 controls and four native modes qualified; modular203/672 |
-| [Optimization-safe table verifier](2026-09-27-bend-table-verifier-publication.md) | Mandatory result validation, stale-report protection and follow-up import compatibility; both active suites freshly requalified; no new formal-law count |
-| [Post-generation geometric check](2026-09-27-bend-generator-followup.md) | Query composition preserving exact generated lists and table; saved three-law alternative archived; qualification recorded separately |
-| [Generator table preservation](2026-09-27-bend-generator-table-preservation.md) | Five arbitrary-array storage contracts through actual queries, scan, castling and full optimized generator; full-buffer native tests and hosted qualification passed; modular198/640 |
-| [Castling sequence publication](2026-09-27-bend-castle-sequence-publication.md) | Exact saved two-law sequence published and freshly hosted-qualified, including lint; modular193/623, not full optimized legal_moves |
-| [Initialized castling sequence](2026-09-27-bend-castle-sequence.md) | Two source laws for actual producer/checked-filter table threading and exact geometric decisions; local193/623, lint unqualified, not yet published |
-| [Generated castling mandatory checks](2026-09-26-bend-castle-safety.md) | Six source laws prove required child-check execution and complete generator equivalence to explicit forced castling checks; four-mode native qualification; modular177/524, lint unqualified |
-| [Full-generator castling provenance](2026-09-26-bend-castle-chain.md) | Five actual scan/filter/both-side/full-generator laws; castling member guard and update preservation; local171/505 with lint unqualified |
-| [Actual castling emission](2026-09-26-bend-castle-emission.md) | Six actual-source output/tail, guard, route and derived update-preservation laws; current-table native producer checks; modular166/487; final legal_moves safety remains separate |
-| [Castling producer geometry](2026-09-26-bend-castle-producer-geometry.md) | Six route/mask geometry laws plus exact source-link anchors; modular160/470; list-membership/legal-soundness theorem remains open |
-| [Castling update contracts](2026-09-26-bend-castling-update.md) | Two public laws for exact raw flag-two update and conditional representation preservation; 17 controls, four native modes; modular154/470, not legal castling |
-| [Public en-passant updates](2026-09-25-bend-en-passant-update.md) | Two actual flag1 update/partition laws promoted unchanged,17 controls and four native modes; modular152/453,not move legality |
-| [Ordinary moves and promotions](2026-09-25-bend-move-promotion-publication.md) | Publishes both saved suites unchanged; fresh9-law/35-control qualification and complete native Board updates; modular150/436,not move legality |
 | [Ceres fixed32 WSL recovery](2026-09-30-ceres-wsl-recovery.md) | Resumed exact chunks 0–6 after WSL crash; first new chunk 7 source, strict, ledger and archive PASS with zero admission; current boot uses bounded shared physical I/O telemetry |
 | [Ceres run09 first durable chunk](2026-09-30-ceres-run09-first-durable-chunk.md) | Sealed 0–50 prefix reused; fixed32 chunk 51 CUDA and local durable markers pass, 125,489 unique feeds, zero admission; independent external archive audit pending |
 | [Ceres fixed32 source timing observation](2026-09-30-ceres-source-phase-observation.md) | Closed run-8 phase evidence, one independently replayed ZIP shard, and a CPU-checked observation-only successor patch; no live change or corpus credit |
 | [SF / BT4 / Ceres teacher adjudication](2026-09-11-teacher-adjudication-audit.md) | Broader saved-search audit of policy regret, ranking constraints, routing, optional Ceres complementarity/value calibration and a bounded Ceres-on-G10 selection; no inference/training result |
-| [Promotion and en-passant updates](2026-09-25-bend-special-move-updates.md) | Four new actual special-update contracts plus requalified saved ordinary suite; modular150/436; castling and legal-move conditions remain separate |
-| [Accepted parser frontiers](2026-09-25-bend-parser-frontier.md) | Four actual-source laws derive fresh bounded insertion and accepted-placement consistency; modular141/401 with separate exact-source compiler recovery |
-| [Parser prefix safety](2026-09-25-bend-parser-prefix-safety.md) | Five actual placement-parser laws for prefix composition, sticky invalidity, metadata and typed transitions; modular137/384; parser-wide freshness and full FEN validity remain open |
-| [Whole-board reconstruction](2026-09-24-bend-whole-board-roundtrip.md) | Five source contracts for lossless Board snapshots, coordinate order and injectivity; actual decoder native checks; structural snapshot lowering remains unqualified; modular132/367 |
-| [Occupied decoder and abstract squares](2026-09-24-bend-occupied-decoder.md) | Four universal source laws connect actual occupied decoding to independent local square states; modular127/350; parser and move semantics remain open |
 | [Corrected full58k BT4/Ceres selected targets](2026-09-30-full58820-corrected-selected-targets.md) | Banked CPU reconstruction and independent direct readback of all 58,820 targets; corrected Ceres batch-profile top-1, zero corpus or strength credit |
 | [Ceres active128 frozen-source quality](2026-09-30-ceres-active128-frozen-quality.md) | 52,820 exact shared feeds, corrected FP16 target TV maximum 0.226679 fails the frozen 0.05 policy gate; source and CPU reader timings, no promotion |
-| [Board partition and fresh insertion](2026-09-24-bend-board-representation.md) | Six source contracts for actual board consistency, exact insertion and metadata framing; modular123/332; move legality and reachability remain open |
-| [Full-table boundary](2026-09-24-bend-full-table-boundary.md) | Two uniform full-table lookup laws, separate public-builder recipe guard and late-block omission regression; modular117/315; no closed-builder equality claim |
-| [Independent blocker rays and initialized lookup](2026-09-24-bend-independent-rays.md) | Five source laws connect arbitrary-occupancy production rays, mask irrelevance and actual initialized lookup to independent coordinates; modular115/295 and bounded native qualification |
-| [Four public lookup contracts](2026-09-24-bend-lookup-publication.md) | Preserves saved lookup sources and independent step/mask foundations; hosted modular110/276 with repository lint; arbitrary-occupancy attack geometry remains open |
-| [Stored slider data](2026-09-23-bend-stored-data.md) | Three actual-array contracts preserve computed entries through later metadata/blocks and extras; modular qualification106/260; actual lookup and independent rays remain open |
-| [Stored table headers](2026-09-23-bend-stored-headers.md) | Correct mask/prefix values through actual later blocks and extras; three public laws, one promoted; final data/ray refinement remains open |
-| [Extras-stage preservation](2026-09-23-bend-extras-preservation.md) | Two hosted-qualified actual-array laws preserve headers and slider-data locations through extras; full source aggregate100/226; reinforced eight-buffer native tests catch protected-cell copying; stored-header and ray refinement remain separate |
-| [Computed fill contents](2026-09-23-bend-fill-contents.md) | Actual bounded fill interior values and full returned-array pairs; three source laws checked locally; full aggregate/lint/hosted qualification and complete builder/ray refinement remain separate |
 | [Ceres live128 proof-writer A/B/B/A](2026-09-29-ceres-live128-writer-abba.md) | Four full-prefix 128-game arms, exact semantic/all-attempt parity and 8.75% source-stage saving; no full-pipeline or 500M gain claim |
 | [Full 58,820-row BT4/Ceres batch profiles](2026-09-29-full58820-batch-profiles.md) | Separate audited BT4 and Ceres four-arm fixed-input screens: 28.558% and 74.070% call-core savings; numerical quality bounds, no integrated throughput or corpus credit |
 | [D-lite scalar SF value plan](2026-09-29-dlite-scalar-value-plan.md) | Prospective separate value contrast, representative one/eight-engine cost screen and shared CPU/GPU month-budget limits |
@@ -143,19 +103,9 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [Ceres saved32 proof-reuse writer ABBA](2026-09-29-ceres-saved32-writer-abba.md) | Eight CPU arms: same 4,751 decoded rows and publication records, 34.48% faster saved32 writer interval; no live source-generation gain |
 | [Ceres selected-label guard cadence](2026-09-27-ceres-selected-guard-cadence.md) | Four-arm selected-4K GPU A/B/A/B: exact target parity and 17.76% lower arm wall; no production or 500M throughput claim |
 | [Ceres v8 feed-store CPU screen](2026-09-27-ceres-v8-feed-store-screen.md) | Bounded synthetic all-attempt feed Mapping/RSS screen, sparse and incompressible; frozen v8 unchanged, no full-path or adoption claim |
-| [Opt-in measured live gather policy](2026-09-26-measured-live-dispatch.md) | Exact-package gather recommendations, bounded runtime application and equal-work controls; speed validation separate |
-| [Native batch service-time profile](2026-09-25-native-service-profile.md) | CPU callback occupancy curves with retained warmups and fixed-package equal-work estimates; no runtime dispatch or GPU claim |
-| [Persistent live CPU-model composition](2026-09-25-live-model-composition.md) | Actual AOTI checkpoint across generation reuse and shared forwards; strict independent oracle, no GPU or strength claim |
-| [Persistent live-cohort recovery](2026-09-25-live-cohort-recovery.md) | PR5d: generation-safe lifecycle reconciled with FIFO, completion waits and configurable arenas; qualification recorded separately |
-| [Async cohort root deadlines](2026-09-23-cohort-deadlines.md) | PR5c: per-root expiry, preadmission row compaction and charged physical retirement; opt-in CPU cohorts |
-| [Asynchronous bounded cohorts](2026-09-23-async-cohort.md) | PR5b: CPU batch worker, per-root cancellation and physical accounting; actual model parity, no dynamic root admission or speed claim |
-| [Bounded Bend multi-root batching](2026-09-22-native-multi-root.md) | PR5a: real selected-leaf CPU cohorts, serial tree parity and physical work accounting; no live scheduler or GPU/speed claim |
-| [Native asynchronous selected-leaf search](2026-09-22-native-async-search.md) | PR4b: composed CPU engine, responsive stop/readiness, cancellation and physical retirement; no GPU/speed claim |
 | [BT4/Ceres full-prefix source pilots and 500M capacity](2026-09-27-500m-source-capacity.md) | Strict complete-game source rates, corrected BT4 batching histogram, illustrative 30-day gap and zero-credit mixed-source admission gate |
 | [Owner versus fair teacher route preregistration](2026-09-28-owner-vs-fair-teacher-route-prereg-v4.md) | Independently reviewed source-only matched-row protocol and conditional owner-reuse arithmetic; registered launch held, zero credit |
 | [Ceres v11 sink 10% optimization screen](2026-09-28-ceres-sink-10pct-screen.md) | Read-only saved-receipt/source bound: no safe single low-risk verifier edit proves 10% source-wall saving; timer-only next step |
-| [Native async lifecycle](2026-09-22-native-async-lifecycle.md) | Bounded worker ownership, exact cancellation/retirement and separate real CPU-model qualification; no asynchronous UCI or GPU claim |
-| [Native policy-map and buffer reuse](2026-09-22-native-buffer-reuse.md) | Linear Bend-owned reusable storage, packed transport and opt-in diagnostics; bounded CPU qualification |
 | [BT4 root worker CUDA qualification](2026-09-23-bt4-root-worker-gpu-qualification.md) | Preregistered tiny real-model 7-to-6 correctness and accepted-row writer-cost pilots under shared GPU lease; no GPU run yet |
 | [BT4 opt-in root-policy worker](2026-09-23-bt4-root-policy-worker.md) | Experimental CPU-capable ONNX generator and atomic whole-game writer with strict rule50 six-man outcomes, raw teacher retention and >=7-piece rows; fake CPU checks only, no searched actor or replay consumer |
 | [BT4 in-memory root-policy stepper](2026-09-23-bt4-root-policy-stepper.md) | Batch-friendly root-policy game state with explicit historical or rule50-aware six-man outcome mode, exact float32 source retention, outcome backfill and whole-game discard; CPU fakes only, no generator wiring |
@@ -176,15 +126,6 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [BT4 own-game teacher source](2026-09-23-bt4-own-game-source.md) | Full strict ordinary-bank replay and 752-row reusable policy/native-WDL source; no training admission |
 | [SF-rooted rule-aware corpus outcome mode](2026-09-23-sf-rule50-corpus-mode.md) | Explicit theoretical versus strict six-man rule-aware labels, UCI request guard and derived provenance; synthetic tests plus one bounded real-Stockfish search fixture |
 | [BT4 verified-session foundation](2026-09-23-bt4-verified-session-foundation.md) | CPU fake-session artifact, head, provider and exact-feed checks; no writer, real model run or throughput claim |
-| [Bend slider-mask populations and sizes](2026-09-21-bend-slider-mask-bounds.md) | Eight scalar laws: all 128 actual masks, safe U32 block sizes, arbitrary-occupancy lookup-index bounds; offsets/affine table refinement remain separate |
-| [Bend exact U32 slider indices](2026-09-21-bend-exact-slider-indices.md) | Eight source-bound scalar index, ordinal and recurrence laws; initialized affine storage and full Chess.slide refinement remain separate |
-| [Actual affine-array and builder storage laws](2026-09-22-bend-table-storage.md) | Eight source-bound actual-array read/write, initialization and builder-shape laws; bounds, nonaliasing and complete lookup refinement remain separate |
-| [Normalized storage separation](2026-09-22-bend-storage-separation.md) | Four actual-array/fill frame laws under normalized path separation; preserves other slots and separation, with prefix certificates and final ray geometry still open |
-| [Actual prefix intervals](2026-09-22-bend-prefix-intervals.md) | Six source laws connect ordered, widened prefix arithmetic to the actual complete-array table loop; interior path certificates and final ray geometry remain separate |
-| [Bounded address normalization](2026-09-22-bend-address-normalization.md) | Five source laws eliminate the actual allocation mask for all bounded addresses and connect real affine APIs; tree-route injectivity and final contents remain separate |
-| [Complete-tree route separation](2026-09-22-bend-complete-tree-routes.md) | Four real-array laws derive separated leaf paths and other-index preservation from complete shape and bounded unequal addresses; actual initialization/builders supply shape |
-| [Whole fill intervals](2026-09-22-bend-fill-intervals.md) | Six laws derive actual fill-clear certificates from numeric budgets and prove every complete slider block preserves outside queried values; stored headers and final contents/geometry remain separate |
-| [Relative table address bounds](2026-09-22-bend-relative-address-bounds.md) | Six source laws bound certified prefix-plus-index addresses and preserve other blocks through actual array writes; full fills and initialized lookup geometry remain separate |
 | [BT4 CPU prefetch](2026-09-21-bt4-cpu-prefetch.md) | Opt-in one-batch CPU preparation overlap with bounded cleanup and exact feed/output parity; no GPU throughput or live-adoption claim |
 | [NumPy THP hot-load screen](2026-09-23-numpy-thp-hotload.md) | Bounded ABBA loader screen found no benefit from disabling current madvise huge-page advice; no production default change |
 | [BT4 raw JSON projection](2026-09-21-bt4-raw-json-projection.md) | Guarded projected decoding preserves consumed values and hashes; 1.67x CPU preparation on one banked shard, no GPU/live adoption claim |
@@ -198,29 +139,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [PFS-inspired frontier advancement](2026-09-14-pfs-frontier-advancement.md) | Proposed frozen-checkpoint search tests: diagnose admission, halving and interior bottlenecks; no runs or default changes |
 | [BT4 generation outcome policy](2026-09-22-bt4-outcome-policy.md) | Standalone six-man theoretical adjudication and unresolved-game discard contract; fake-tablebase CPU tests only, no generator wiring or real games |
 | [Full-width SF d8/d6 generation](2026-09-22-sf-shallow-generation.md) | Two equal-wall CPU generation arms; eligible rows, closed games, startup costs and limits; no strength or root-only generation claim |
-| [Bend subset successor and full ordinal proof](2026-09-21-bend-subset-successor.md) | Actual U64 borrow, compact successor, full Nat-indexed order/coverage/nonduplication and period; affine tables remain separate |
-| [Bend compact-index bijection](2026-09-21-bend-compact-index-bijection.md) | Nine new universal PEXT/PDEP range/inverse/bijection laws; carry-rippler ordering remains separate |
-| [Bend subset source laws](2026-09-21-bend-subset-source-laws.md) | Eight initial production-step laws with negative controls and independent native table checks; full P1 ordering/refinement still open |
-| [Bend-owned native neural leaves](2026-09-21-bend-native-leaf.md) | Actual search inputs and legal priors in Bend, native model execution without Python runtime; CPU fixture only |
-| [Bend policy/input composition](2026-09-21-bend-policy-composition.md) | Recovered Bend policy vocabulary paired with complete input from one Game; no inference or Python runtime |
 | [Packed Zarr exact-sampler qualification](2026-09-20-packed-zarr-exact.md) | 131,072 identical ordered rows at batch256; external ZIP consumer12.537s vs NVMe directory10.953s; opt-in ordinary reader, no live adoption |
-| [Bend complete feature inputs](2026-09-20-bend-classical-encoding.md) | Complete 146/175-plane inputs authored in Bend, exact C parity and current U64 compiler; no model/policy execution |
-| [Bend neural history encoding](2026-09-20-bend-history-encoding.md) | Bend-authored 112-plane history/metadata block with exact Python/C comparisons; partial input, no neural inference |
-| [Bend-owned draw rules](2026-09-20-bend-owned-draws.md) | Standalone native history identity and automatic root/leaf draws, no Python runtime; claims/encoding remain separate |
-| [September 20 standalone compiler adoption](2026-09-20-bend-compiler-adoption.md) | Pin the Bend-owned engine to upstream-synced U64 2.0.20; immutable source/cache contract and runtime requalification |
-| [Bend-owned standalone](2026-09-20-bend-standalone.md) | Bend UCI/FEN/history/table/evaluator ownership; static interpreter-free runtime, diagnostic only |
-| [Bend UCI interface](2026-09-20-bend-uci-interface.md) | Opt-in bounded UCI frontend, actual native search/client checks and stop isolation; no full-UCI, GPU or strength claim |
-| [Bend optional claims](2026-09-20-bend-claim-options.md) | Explicit zero-valued claim choice preserving legal continuations; native and host contracts, opt-in only |
-| [Bend search draws](2026-09-19-bend-search-draws.md) | History-aware automatic leaf draws, terminal-zero cache and native backup; optional claims remain separate |
-| [Bend neural play](2026-09-19-bend-neural-play.md) | Native evaluator across played roots, bounded multi-game queue and host draw policy; CPU lifecycle gate, not trained strength or throughput |
-| [Bend root advancement](2026-09-19-bend-root-advancement.md) | Same-process legal play/search, transactional epoch-bound root changes and retained host history; fresh trees, no subtree reuse or GPU claim |
-| [Bend checkpoint preflight and retention](2026-09-18-bend-checkpoint-preflight.md) | Fail-closed readiness, exact-checkpoint package reuse and retained failure evidence; no trained/CUDA execution claim |
-| [Bend checkpoint qualification](2026-09-18-bend-checkpoint-qualification.md) | Explicit checkpoint architecture/weights, native transformer CPU qualification, guarded CUDA BF16 path; no trained/GPU performance claim |
-| [Bend evaluator batching](2026-09-18-bend-evaluator-batching.md) | Bounded cross-search CPU batches, cancellation and epoch isolation; no trained/CUDA or throughput claim |
-| [Bend neural boundary](2026-09-18-bend-neural-boundary.md) | Real history/policy encoding and persistent native CPU AOTI smoke joined to Bend search; untrained TinyNet, no CUDA or production claim |
-| [Bend search sessions](2026-09-18-bend-search-sessions.md) | Persistent bounded Bend PUCT with external test policy/WDL, cancellation/reply validation and reset; CPU functionality gate, no neural or production claim |
-| [Bend scalar branches](2026-09-18-bend-scalar-branches.md) | Profile-guided scalar U64/list selection; allocation mechanism and paired perft confirmation, no production adoption |
-| [Bend perft native baseline](2026-09-18-bend-perft-baseline.md) | Paired old/new Bend versus CBoard, conservative king-safety filter; CPU-only, no production adoption |
 | [Ceres CPU semantics oracle](2026-09-13-ceres-cpu-semantics.md) | CPU oracle complete after comparator-only recovery: 144 histories match bytes; 131 value cases quantify FP16 getter differences, no neural parity claim |
 | [Saved joint raw-label eligibility](2026-09-13-saved-joint-raw-eligibility.md) | 21.40M saved joint-label raw candidates outside covered rosters; 512-shard audit complete: 4,219,426 eligible / 4,249,935 raw rows; 88 exact exclusions qualified; 4,219,426-row / 516-shard derivation launched, no completion or training admission |
 | [Bounded raw scale labels](2026-09-13-bounded-raw-scale-labels.md) | Completed 184 raw shards / 1,527,153 rows in 2638.682s; 12-group limit exhausted; baseline audit complete: 1,517,925 eligible rows, 30 phase-zero support failures and 9,198 no-result drops; exact filtered derivation complete: 1,517,925 rows / 186 derived shards; joint saved-policy/native-WDL adapter complete; B100 materialization complete after a preserved pre-writer command failure; metadata establishes 1,517,925 additional physical-source rows beyond existing 35M; potential 36,832,502-row union remains unadmitted |
@@ -322,25 +241,8 @@ For durable knowledge, use [model heads](../model_heads.md),
 links to supporting experiments. The `experiment-readout` Skill covers the reusable
 analysis workflow.
 
-- [Native fixed-batch boundary (PR3a)](2026-09-22-native-batch-boundary.md) — bounded full/partial batch qualification; CUDA remains separate.
-- [Native CUDA/BF16 backend implementation and qualification limits](2026-09-22-native-cuda-backend.md)
-- [FIFO cohort integration](2026-09-23-fifo-cohort-integration.md): ready-root queue adoption with exact parent scheduling, tree, cancellation and deadline checks.
-
-- [Matched full-coordinator FIFO timing](2026-09-23-fifo-runner-timing.md): exact list/FIFO sources, optimized callback runner, strict realized-work checks and paired timings; no model/GPU claim.
-- [Bounded completion notification](2026-09-23-bounded-completion-wait.md): notification versus fixed pending sleep, matched callback runner and retained control/deadline checks.
-- [Explicit bounded search arenas](2026-09-24-bounded-search-arenas.md): opt-in fixed node capacity, safe pending sentinels, and actual search beyond 4,096 nodes; no dynamic growth or deployment.
-
-- [Bounded arena memory and initialization-cost screen](2026-09-24-arena-memory-screen.md): equal-work per-child peak RSS and process timing across capacities; no model/GPU or live-memory budget claim.
 - [Ceres CPU history reductions](2026-09-21-ceres-history-reductions.md) — exact-byte CPU encoder comparison.
 Current evidence correction and scale plan: [September 16 bootstrap audit](2026-09-16-bootstrap-status-audit.md).
 - [2026-09-20: External storage and BT4 labeling efficiency](2026-09-20-storage-loader.md)
-- [Owning FIFO and search early-exit screen](2026-09-23-bend-collections-screen.md): isolated native collection/traversal checks; no scheduler adoption.
-
-- [Bounded owning ring and calibrated collection comparison](2026-09-23-bend-owning-collections.md): Search.Tree payloads, layout failure/workaround, and matched-work timings; no scheduler adoption.
-
-- [Numeric-map shared-slot performance screen](2026-09-24-numeric-map-screen.md): hash versus dense scan, exact dictionary controls and matched hit/miss/churn loops; no engine/cache adoption.
-- [CBoard-key map replay](2026-09-24-chess-key-map-replay.md): actual source-derived position keys, exact dictionary replay and explicit history/EP cache-identity limits; no performance or cache-adoption claim.
-- [Matched CBoard-key map timing](2026-09-24-chess-map-timing.md): unchanged chess-derived key fixtures and explicit CPU target; paired hash-versus-scan operation timings, not production search/cache throughput.
-- [Legal-move cache cost screen](2026-09-26-move-cache-cost-screen.md): matched cached/direct work at controlled reuse, cold lifetimes and oversized allocation; local measurements, not engine speedups.
 
 - [BT4 run11 variable-batch scheduling opportunity](2026-09-27-bt4-batching-opportunity.md): fixed-wave tail, conditional rolling-call arithmetic, and 128-game A/B compatibility HOLD.
