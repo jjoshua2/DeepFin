@@ -1,5 +1,16 @@
 # Full-state lower-rate on-policy continuation
 
+Current status at **2026-11-14 06:22:53 UTC: ONGOING through the fixed G8 horizon**.
+G3 and G4 collection, independent data audits and full-state learner continuation
+completed through step 2,048. The qualified G4 donor diagnostic scored
+**52.9296875% over 256 games, paired 95% interval 48.1105005605–57.7488744395%**.
+It is descriptive: no supported gain, equivalence, clean regression, promotion
+or confirmation. The registered G4 severe-harm condition is false. Root reports
+fixed G5 collection running from that same step-2,048 actor; no G5 data or model
+result is claimed. The strength goal remains unmet. See the [G3/G4 readout](#2026-11-14-completed-g3-and-g4-descriptive-g4-diagnostic).
+
+## Earlier status snapshot — 2026-11-14 04:04 UTC
+
 Current status at **2026-11-14 04:04 UTC: ONGOING**. G2 collection, independent
 CPU data audit and full-state learner continuation completed. The fixed G2
 A39 diagnostic was technically qualified: **82W/88D/86L over 256 games,
@@ -327,3 +338,133 @@ for this documentation update.
 | `core-baseline-lowLR-leg1-diagnostic-g2-readout-v1/readout.json` | `b0d1e48b777c384e9a4f9b18efedcfd4ab045f9cc66974522b016e2fa6111e16` |
 | `core-baseline-lowLR-continuation-bindings-v1/leg1-diagnostic-g2/root-readout-acceptance.json` | `00b9e05443840628ebf300efe72c00485b44ccf1fbd29532fc7a7932efe49b82` |
 | `core-baseline-lowLR-leg1-diagnostic-g2-independent-actual-review-v1/review.json` | `12c2399e2d209f4a3badc1f18b04378cc1b47a21061e1a2623c245bc18d0c374` |
+
+
+## 2026-11-14: Completed G3 and G4; descriptive G4 diagnostic
+
+**Cutoff: 2026-11-14 06:22:53 UTC.** G3 and G4 completed on the unchanged V2
+specification `12ad1fc7…`, original `cc17ac07…` contract path, L `090b5143…` and
+owner R7 `ba9d6de1…`. Independent reviews accepted the closed data and learner
+metadata, followed by the complete fixed G4 diagnostic. No scientific rule,
+source, role, seed, checkpoint-selection rule or horizon changed.
+
+| Completed stage | Actual delivery | Owner wall seconds |
+| --- | --- | ---: |
+| G3 low-parent collection | All 256 fixed attempts; 104 natural / 152 strict-TB / 0 unresolved | GPU 1,632.392473 |
+| G3 independent CPU data audit | 256 eligible games / 25,757 rows; data-only root promotion `7bc8ba9c…` | CPU 70.882020 |
+| G3 full-state learner | Step 1,024 → 1,536; 512 updates / 131,072 views | GPU 437.560464 |
+| G4 low-parent collection | All 256 fixed attempts; 111 natural / 145 strict-TB / 0 unresolved | GPU 1,885.560283 |
+| G4 independent CPU data audit | 256 eligible games / 26,303 rows; data-only root promotion `e80d8600…` | CPU 76.088461 |
+| G4 full-state learner | Step 1,536 → 2,048; 512 updates / 131,072 views | GPU 464.058021 |
+| Fixed G4 versus A39 diagnostic | All 256 games / 128 color pairs; 113 rules / 143 strict-TB endings | GPU 767.041080; CPU readback 15.532970 |
+
+G3's checkpoint is SHA256
+`8eb3aa69fde8da409c0a9c211e251d85c52f7c18aa403061ba5d750807290def`,
+boundary `514c95df1520bb66910cdedff256ba9053d6ba0b93f4111200b074a4b23ba81f`.
+Inherited G1 plus low-parent G2/G3 totalled **768 physical games / 76,594 audited
+rows / 1,536 updates / 393,216 views**. Its 512 complete batch-256 draws comprised
+41,980 G1, 44,980 G2 and 44,112 G3 rows, covering all 768 chunks and 62,752
+distinct sampled physical rows, with no out-of-window source or row.
+
+G4's checkpoint is SHA256
+`8fe45bf71be92cbd2ba06fc1acd0104f5be397b24411b7b15d532c76fed28aff`,
+boundary `b8d41968dbb3e1099abdce48236913d7471703ac37e0766ffc1ff397f10e6f35`.
+Cumulative inherited G1 plus low-parent G2–G4 are **1,024 physical games /
+102,897 audited rows / 2,048 updates / 524,288 views**. All four generations
+remain in FIFO; no generation has yet been evicted. The G4 journal reconciled
+all 512 batches / 131,072 draws: **31,891 G1, 33,318 G2, 32,422 G3 and 33,441 G4**,
+all 1,024 chunks and 74,129 distinct sampled physical rows. No high-actor G2
+was relabelled or used. The closed G4 CPU audit reports 1,446,741,895 decoded
+bytes; policy-TB eligible/applied/abstained retained-record counts were all zero.
+The 145 strict-TB final outcomes were verified, without a new retained-row
+TB policy-correction exercise.
+
+Both continuations retain full saved state, exact parent/contract/backend and
+boundary RNG metadata under the qualified source. Root verified complete
+checkpoint bytes; independent metadata/journal review did not reload tensors,
+recompute GPU/RNG transitions or establish GPU bitidentity. G4's 512-step metrics
+were finite, with skips/retries/clips all zero, mean gradient norm 5.245727 and
+mean LR 2.947967400e-6. They describe a changing training window, not fixed-heldout
+or playing-strength evidence. Nonzero auxiliary diagnostics remain separate
+from the unchanged policy-1/outcome-WDL-1 objective and twelve zero weights.
+
+### Fixed G4 diagnostic and continuation decision
+
+The scheduled step-2,048 model faced immutable A39 on intentionally reused
+DIAG128, seed **2026111534**. Complete paired readback and independent review
+reconciled **88W/95D/73L over 256 games / 128 color pairs**, score **.529296875**,
+unbiased paired variance **.07738296628937008**, and approximate 95% bounds
+**[.4811050056052596, .5774887443947404]**. Pentanomial counts in ascending
+pair-total order 0/.5/1/1.5/2 are **[12, 24, 41, 39, 12]**. All 256 PGNs and
+24,237 additional SAN plies joined the fixed histories; endings were 113 rules
+and 143 strict-TB. Both GPU and CPU owners closed PASS. Recorded serving
+remained 494 states / 61,444,448 parameters per model, strict embedded
+architecture, 175-plane BF16 inference with float32 transport, pool 32 and leaf
+capacity 1,024. No model load or new TB probe was needed for independent review.
+
+The interval contains parity. This establishes **no supported gain, equivalence
+or clean regression**, causal LR/optimality conclusion, general-recipe verdict
+or external Rofchade/Stockfish/Lc0 milestone. It is descriptive, with no pooling,
+model/champion adoption or eligible/allocated/consumed confirmation. The registered
+severe-harm test is **false** because the upper bound is not below .35. Continuing
+fixed G5 follows that predeclared rule, rather than favorable selection of this
+point estimate. No G8 threshold, horizon or recipe changed, and the correlated
+G2/G4 snapshots are not independent replications or a pooled recovery claim.
+
+At the root-verified cutoff, G5 collection was running from the same `8fe45bf7…`
+step-2,048 actor, fixed UUID `5c0e801b-3ea3-5a7b-b246-d314051b6110`, seed
+**2026111505**, TRAIN half 1 and 256 fixed attempts. This is a root-reported stage
+status only; no G5 payload was inspected and no G5 data, learner or model result
+is asserted. Fixed G6 descriptive, G8 screen and conditional confirmation, plus
+all technical/resource/deadline stops, remain unchanged.
+
+### Preserved review history and evidence
+
+The G3 root review initially treated a legitimate read-only `tb/` directory as
+a file; `b29e56ff…` preserves that reviewer-only predicate correction. Two G4
+diagnostic root-review predicates also required correction: model identity has
+three fields and excludes the PGN label (`4b759571…`); the reader file is 0444
+while its qualified parent directory is 0755 (`e5ddb79a…`). These were review
+schema errors, not runtime faults. Source, data and readout stayed unchanged;
+no GPU/CPU rerun or numerical result reroll repaired them.
+
+The independent G4 diagnostic receipt's `root_acceptance_at_review: null` retains
+its historical meaning; root `d71e74c0…` is a separate acceptance receipt. Root
+receipts sealed before independent completion retain their original pending
+labels. References below use the same operations artifact root. No checkpoint/
+array payloads, project imports, probes or jobs were used to author this update.
+
+| G3/G4 completed evidence | SHA256 |
+| --- | --- |
+| `core-baseline-lowLR-g03-collection-GPU-execution-v1/terminal.json` | `c44f1a15172d0beeb44c0909d3a2ecaa480030ef8fb412e6ad13851fc8f35bde` |
+| `core-baseline-lowLR-g03-collection-results-v1/readout.json` | `f205350994ca69fbd905cd586b765af66222d22ede18550704f50e7138cedcfd` |
+| `core-baseline-lowLR-g03-audit-results-v1/readout.json` | `60b257fa2fe380b9cd29c3b23603cdc09d801c91bf16524e2d8bbf54a5238c4e` |
+| `core-baseline-lowLR-g03-audit-independent-actual-review-v1/review.json` | `e380fe09338f58cfcf5fa3def467696707e016a0eb3c100ca45f47437daea414` |
+| `core-baseline-lowLR-continuation-bindings-v1/g03/audit-root-promotion.json` | `7bc8ba9c9a82539cdae99a04f8d87cf312bf951aa06e174e4461770a37dd7e71` |
+| `core-baseline-lowLR-g03-learner-results-v1/boundary.json` | `514c95df1520bb66910cdedff256ba9053d6ba0b93f4111200b074a4b23ba81f` |
+| `core-baseline-lowLR-continuation-bindings-v1/g03/learner-root-metadata-acceptance.json` | `c5064166920846cccba572fc77ad31cc097e6259814f1185fdb1de8d48051a0d` |
+| `core-baseline-lowLR-g03-learner-independent-actual-review-v1/review.json` | `2aaf4a5f98d590d80119df4a4b5365593eb1c1710b714a87d052d8ed055ed0e1` |
+| `core-baseline-lowLR-g03-root-learner-review-attempt1-v1/reviewer-predicate-correction.json` | `b29e56ff600f3e7936946095d4cf7d1d1dc51cf274bdbd94536e6df4e9bcf72a` |
+| `core-baseline-lowLR-g04-collection-GPU-execution-v1/terminal.json` | `9364b7e15ef773c4a2f686b9d84c77f2f7c2238d2a7e174a91afdcbca751744d` |
+| `core-baseline-lowLR-g04-collection-results-v1/readout.json` | `8116aeb16d163ae092035ab59a95c13b11cd836e0b594b1c4957b7d557056a2d` |
+| `core-baseline-lowLR-g04-audit-CPU-execution-v1/terminal.json` | `87358e3c8dba0a8185f7d0afe084ac1d6845d860e21b1227d02dd5f4646e524a` |
+| `core-baseline-lowLR-g04-audit-results-v1/readout.json` | `a4eaca2d0926c3570b8d442963ea2613416684c8e550ce3418850965d8299ede` |
+| `core-baseline-lowLR-g04-audit-results-v1/generation.json` | `ff7a2341cced51fa02f617b0b9038df5a1f812226284e6088ddda9ace4a957d1` |
+| `core-baseline-lowLR-continuation-bindings-v1/g04/audit-root-metadata-acceptance.json` | `e8558a631e4563d715505ee12b8d2ed695b0984c3626f925ba21f24ea65e5a68` |
+| `core-baseline-lowLR-g04-audit-independent-actual-review-v1/review.json` | `acae7d78188ed28fc37625b952ec845c8ada9ce3b47888223c161a9e6b1f5939` |
+| `core-baseline-lowLR-continuation-bindings-v1/g04/audit-root-promotion.json` | `e80d8600cff6dbc55f220d3ca1718394b30786403b8f5b78f438a8be1788f156` |
+| `core-baseline-lowLR-continuation-bindings-v1/g04/learning-stage.json` | `e820dea4884050c9d5e215719c386c0d55d6b7bd0044402ddd2aebb816e20153` |
+| `core-baseline-lowLR-continuation-bindings-v1/g04/learner-descriptor.json` | `ab7ba7c3ce3bc807c96816694c7d794794406a92dac7debd08ed3f0bbac02799` |
+| `core-baseline-lowLR-g04-learner-GPU-execution-v1/terminal.json` | `eddbe439220ac1f208d79e34bf101dbdf891e1c77eed9b26469a432cabf1b85b` |
+| `core-baseline-lowLR-g04-learner-results-v1/boundary.json` | `b8d41968dbb3e1099abdce48236913d7471703ac37e0766ffc1ff397f10e6f35` |
+| `core-baseline-lowLR-continuation-bindings-v1/g04/learner-root-metadata-acceptance.json` | `c7f05d85f79a6bccda521383b57bf56cfd2f7358b5d7203b759fa626831501bc` |
+| `core-baseline-lowLR-g04-learner-independent-actual-review-v1/review.json` | `fe710e0e996772cf8d809fc3d26f5f9c8bccc255df500ac21a96be42f4c9dd46` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-diagnostic-g4/protocol.json` | `7b6ba2afc95c8097411b10a1c63767151b7223a860fad2c81b843976c11b1bec` |
+| `core-baseline-lowLR-leg1-diagnostic-g4-GPU-execution-v1/terminal.json` | `ca2e017066385a490805170c00c5e934cb5a337af6bb4e7c8c5f66e72e976914` |
+| `core-baseline-lowLR-leg1-diagnostic-g4-CPU-execution-v1/terminal.json` | `af5c97986de544aef713058ab898ee0b05dcfeaa425bb23f1f24489c3b9c5700` |
+| `core-baseline-lowLR-leg1-diagnostic-g4-results-v1/serving.json` | `7207d19637ff1475239e43ef08adc9627bf489bd84dd8e0ecb616f77ec87fd45` |
+| `core-baseline-lowLR-leg1-diagnostic-g4-readout-v1/readout.json` | `53c2fb5248698d8b4591d5f633e3cb13226928c0eeb611a625cea1d2f3811a4b` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-diagnostic-g4/root-readout-acceptance.json` | `d71e74c05387eb33b5a508ec3590b71e27261dde1cd0cd1772e0ed6f58b6feee` |
+| `core-baseline-lowLR-leg1-diagnostic-g4-independent-actual-review-v1/review.json` | `cae841d44f98ff8dcd2ce8380fc7ce912a59ed5a90cff4cba3ecbdce6f4f79aa` |
+| `core-baseline-lowLR-leg1-diagnostic-g4-root-review-attempt1-v1/reviewer-predicate-correction.json` | `4b75957169238d35864cba4019a139fd1d918e762dc13dbbcda1bf47cfe4e1d5` |
+| `core-baseline-lowLR-leg1-diagnostic-g4-root-review-attempt2-v1/reviewer-predicate-correction.json` | `e5ddb79a5c40a66f74b80c5b9d971e2872a690b5ce987221a28c5103294cab4e` |
