@@ -24,6 +24,7 @@ What these tests are for, in order of what they would catch:
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
@@ -472,6 +473,52 @@ def test_the_probes_pass_bars_match_the_pre_registered_thresholds():
     assert probe.CHECKED_MIN == 0.5
     # 0.207461 is the whole-quarantine-set truth the band was drawn around.
     assert probe.POISONED_MIN < 0.207461 < probe.POISONED_MAX
+
+
+def test_the_probe_never_writes_tensorboard_into_the_cwd(tmp_path, monkeypatch):
+    """`Trainer` defaults its TensorBoard writer to a cwd-relative `./tb`, so
+    running the probe from the repo root used to drop a `tb/` directory into
+    the checkout. The probe must write to `--tb-dir`, or to a temporary
+    directory it removes, and never to the cwd. The empty-arm exit path builds
+    the Trainer (and so its writer) before returning, which is all this needs.
+
+    The log dir is read off the Trainer's OWN constructor argument, not off the
+    filesystem alone: tests/conftest.py redirects a defaulted `./tb` to a
+    session temp dir, so a cwd-emptiness check by itself cannot see the defect.
+    """
+    from tests.script_loading import load_script_module
+
+    probe = load_script_module("sf_no_multipv_probe.py")
+    seen: list[object] = []
+    real_trainer = probe.Trainer
+
+    def _spy_trainer(*args, **kwargs):
+        seen.append(kwargs.get("log_dir"))
+        return real_trainer(*args, **kwargs)
+
+    monkeypatch.setattr(probe, "Trainer", _spy_trainer)
+    cwd = tmp_path / "cwd"
+    tmp_root = tmp_path / "tmp"
+    empty = tmp_path / "empty"
+    for d in (cwd, tmp_root, empty):
+        d.mkdir()
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr(probe.tempfile, "tempdir", str(tmp_root))
+    base = ["--poisoned-dir", str(empty), "--clean-dir", str(empty)]
+
+    assert probe.main(base) == 1                     # empty arm: FAIL exit
+    default_dir = seen[-1]
+    assert isinstance(default_dir, Path)
+    assert default_dir.parent == tmp_root            # a temp dir, not the cwd
+    assert default_dir.name.startswith("sf_no_multipv_probe_tb_")
+    assert not default_dir.exists()                  # removed on exit
+    assert list(cwd.iterdir()) == []
+
+    tb_dir = tmp_path / "explicit_tb"
+    assert probe.main([*base, "--tb-dir", str(tb_dir)]) == 1
+    assert seen[-1] == tb_dir
+    assert any(tb_dir.iterdir())                     # the writer used --tb-dir
+    assert list(cwd.iterdir()) == []
 
 
 def _fake_compute_loss_keys(losses_mod) -> set[str]:

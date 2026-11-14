@@ -640,7 +640,7 @@ def count_distinct_params(state: dict[str, Any]) -> int:
     (``ops/live-20260725``); ``main``'s copy of ``configs/pbt2_small.yaml``
     reads 78,812,768 against 63,084,128. The bt4heads promotion (``86492fa26``)
     moved it and ``0f5b9a6ae`` re-measured, but that commit swept only
-    ``CLAUDE.md``, ``tcec.md`` and ``tests/test_param_count.py`` — this
+    ``CLAUDE.md``, ``tcec.md`` (since removed) and ``tests/test_param_count.py`` — this
     docstring kept quoting ``main``'s pair for two weeks. The OVERCOUNT is the
     branch-invariant half: 15 × 1,048,576 holds in both worlds, because the
     whole 1,639,680 delta landed on untied params.
