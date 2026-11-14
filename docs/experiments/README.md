@@ -16,7 +16,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
-- [2026-11-14: Full-state lower-rate on-policy continuation](2026-11-14-low-lr-on-policy-continuation.md) — ongoing through fixed G8: G4 completed step 2,048; its descriptive donor diagnostic scored 52.9296875% over 256 games (paired 95% interval 48.1105–57.7489%, includes parity). Registered severe harm is false; fixed G5 is collecting. No supported gain, model promotion or confirmation.
+- [2026-11-14: Full-state lower-rate on-policy continuation](2026-11-14-low-lr-on-policy-continuation.md) — ongoing through fixed G8: G6 completed step 3,072; its qualified reused-panel donor diagnostic scored 43.359375% over 256 games (paired 95% interval 38.4232–48.2955%, below parity). Negative descriptive result; no G6 efficacy/harm gate, gain, confirmation or adoption. Fixed G7/G8 unchanged.
 
 - [2026-11-14: Fixed LOW512 versus original A39 successor](2026-11-14-low512-donor-screen.md) — completed qualified screen nonpass: 48.9258% versus A39 over 512 games (paired 95% interval 45.8184–52.0332%, includes parity). No confirmation eligible, allocated or consumed; donor retained, no playing gain or equivalence claim.
 

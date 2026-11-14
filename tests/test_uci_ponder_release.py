@@ -69,6 +69,7 @@ class _ImmediateWorker:
         stop_sensitive: bool = False,
         on_chunk: object = None,
         fixed_time_margin: bool = False,
+        mate_moves: int | None = None,
     ) -> SearchResult:
         del (
             stop_event,
@@ -83,6 +84,7 @@ class _ImmediateWorker:
             stop_sensitive,
             on_chunk,
             fixed_time_margin,
+            mate_moves,
         )
         move = next(iter(board.legal_moves)).uci()
         self.turns.append(board.turn)
@@ -123,6 +125,7 @@ class _BlockingWorker(_ImmediateWorker):
         stop_sensitive: bool = False,
         on_chunk: object = None,
         fixed_time_margin: bool = False,
+        mate_moves: int | None = None,
     ) -> SearchResult:
         self._calls += 1
         if self._calls == 1:
@@ -144,6 +147,7 @@ class _BlockingWorker(_ImmediateWorker):
             stop_sensitive=stop_sensitive,
             on_chunk=on_chunk,
             fixed_time_margin=fixed_time_margin,
+            mate_moves=mate_moves,
         )
 
 
@@ -171,6 +175,7 @@ class _FaultThenRun(_ImmediateWorker):
         stop_sensitive: bool = False,
         on_chunk: object = None,
         fixed_time_margin: bool = False,
+        mate_moves: int | None = None,
     ) -> SearchResult:
         self._calls += 1
         if self._calls == 1:
@@ -192,6 +197,7 @@ class _FaultThenRun(_ImmediateWorker):
             stop_sensitive=stop_sensitive,
             on_chunk=on_chunk,
             fixed_time_margin=fixed_time_margin,
+            mate_moves=mate_moves,
         )
 
 
@@ -220,6 +226,7 @@ class _DeclineThenRun(_ImmediateWorker):
         stop_sensitive: bool = False,
         on_chunk: object = None,
         fixed_time_margin: bool = False,
+        mate_moves: int | None = None,
     ) -> SearchResult:
         self._calls += 1
         result = super().run(
@@ -237,6 +244,7 @@ class _DeclineThenRun(_ImmediateWorker):
             stop_sensitive=stop_sensitive,
             on_chunk=on_chunk,
             fixed_time_margin=fixed_time_margin,
+            mate_moves=mate_moves,
         )
 
         if self._calls == 1 or self.decline_main:
@@ -312,9 +320,28 @@ def test_early_ponder_holds_bestmove_until_ponderhit(monkeypatch: pytest.MonkeyP
     assert worker.moves[0] != worker.moves[1]
 
 
-def test_stop_after_early_ponder_emits_the_pre_reply_move(
+def _gui_board() -> chess.Board:
+    """The GUI's position in `_start_ponder` (predicted reply included)."""
+    board = chess.Board()
+    board.push_uci("e2e4")
+    board.push_uci("e7e5")
+    return board
+
+
+def _assert_gui_legal(lines: list[str]) -> str:
+    (line,) = _bestmoves(lines)
+    move = line.split()[1]
+    assert chess.Move.from_uci(move) in _gui_board().legal_moves, line
+    return move
+
+
+def test_stop_after_early_ponder_answers_for_the_gui_position(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """`stop` without ponderhit is a ponder miss. The early result is the
+    OPPONENT's move (the board before the predicted reply); the bestmove UCI
+    still owes is for the GUI's position (P2 audit finding 7: it used to be the
+    pre-reply move)."""
     lines = _capture(monkeypatch)
     worker = _ImmediateWorker()
     engine = _engine(worker)
@@ -323,8 +350,9 @@ def test_stop_after_early_ponder_emits_the_pre_reply_move(
     engine.dispatch(CmdStop())
     thread = engine._search_thread
     assert thread is None or not thread.is_alive()
-    assert _bestmoves(lines) == [f"bestmove {worker.moves[0]}"]
+    assert _assert_gui_legal(lines) != worker.moves[0]
     assert worker.turns == [chess.BLACK]
+    assert any("ponder miss: stop before ponderhit" in ln for ln in lines)
 
 
 def test_quit_during_held_ponder_does_not_hang(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -385,7 +413,7 @@ def test_pool_fault_during_ponder_holds_until_ponderhit(
     assert worker.moves[0] == "g1h3"
 
 
-def test_stop_after_pool_fault_emits_one_pre_reply_fallback(
+def test_stop_after_pool_fault_emits_one_fallback_for_the_gui_position(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     lines = _capture(monkeypatch)
@@ -397,9 +425,7 @@ def test_stop_after_pool_fault_emits_one_pre_reply_fallback(
     thread = engine._search_thread
     assert thread is None or not thread.is_alive()
     assert worker.turns == []
-    pre_reply = chess.Board()
-    pre_reply.push_uci("e2e4")
-    assert _bestmoves(lines) == [f"bestmove {next(iter(pre_reply.legal_moves)).uci()}"]
+    _assert_gui_legal(lines)
     assert engine.bestmove_fallback_used == 1
     diagnostics = [line for line in lines if "bestmove_fallback_used=" in line]
     assert len(diagnostics) == 1
@@ -425,9 +451,12 @@ def test_non_ponder_search_still_publishes_immediately(
     assert _bestmoves(lines) == [f"bestmove {worker.moves[0]}"]
 
 
+# stop-prior: the ponder root (Black to move) was declined, but on a ponder
+# miss the published move is for the GUI's position (White), not that root's
+# raw prior -- so it is not a prior-only root (count 0) and is a White move.
 @pytest.mark.parametrize(
     ("stop", "decline_main", "expected_count", "expected_move"),
-    [(False, False, 0, "g1h3"), (True, False, 1, "g8h6"), (False, True, 1, "g1h3")],
+    [(False, False, 0, "g1h3"), (True, False, 0, None), (False, True, 1, "g1h3")],
     ids=["ponderhit-searched", "stop-prior", "ponderhit-main-prior"],
 )
 def test_prior_only_counter_counts_only_the_published_result(
@@ -435,7 +464,7 @@ def test_prior_only_counter_counts_only_the_published_result(
     stop: bool,
     decline_main: bool,
     expected_count: int,
-    expected_move: str,
+    expected_move: str | None,
 ) -> None:
     lines = _capture(monkeypatch)
     worker = _DeclineThenRun(decline_main=decline_main)
@@ -451,6 +480,8 @@ def test_prior_only_counter_counts_only_the_published_result(
         engine.dispatch(CmdStop() if stop else CmdPonderHit())
         thread.join(timeout=2.0)
     assert not thread.is_alive()
+    if expected_move is None:
+        expected_move = _assert_gui_legal(lines)
     assert _bestmoves(lines) == [f"bestmove {expected_move}"]
     assert engine.prior_only_roots == expected_count
     assert engine.bestmove_fallback_used == 0

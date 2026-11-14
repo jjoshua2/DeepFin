@@ -96,6 +96,7 @@ from chess_anti_engine.selfplay.diff_focus_norm import DiffFocusNormalizer
 from chess_anti_engine.selfplay.manager import BatchStats
 from chess_anti_engine.selfplay.state import build_diff_focus_normalizer
 from chess_anti_engine.train.target_builder import SfTargetParams
+from chess_anti_engine.utils.search_type import normalize_mcts_type
 from chess_anti_engine.selfplay.match import play_match_batch
 from chess_anti_engine.selfplay.resume import (
     count_unclaimed_resume_files,
@@ -811,7 +812,7 @@ def main() -> None:
   # selfplay: if omitted, defaults come from server manifest `recommended_worker`.
     ap.add_argument("--games-per-batch", type=int, default=None)
     ap.add_argument("--max-plies", type=int, default=None)
-    ap.add_argument("--mcts", type=str, default=None, choices=["puct", "gumbel"])
+    ap.add_argument("--mcts", type=normalize_mcts_type, default=None, choices=["puct", "gumbel"])
     ap.add_argument("--mcts-simulations", type=int, default=None)
     ap.add_argument("--playout-cap-fraction", type=float, default=None)
     ap.add_argument("--fast-simulations", type=int, default=None)
@@ -4121,7 +4122,7 @@ class WorkerSession:
         arena_cfg = task.get("arena") or {}
         batch_games = int(arena_cfg.get("batch_games", 8))
         max_plies_arena = int(arena_cfg.get("max_plies", 240))
-        mcts_type_arena = str(arena_cfg.get("mcts", "puct"))
+        mcts_type_arena = normalize_mcts_type(arena_cfg.get("mcts", "gumbel"))
         mcts_sims_arena = int(arena_cfg.get("mcts_simulations", 200))
         c_puct_arena = float(arena_cfg.get("c_puct", 2.5))
         swap_sides = bool(arena_cfg.get("swap_sides", True))
@@ -4678,7 +4679,7 @@ class WorkerSession:
             ),
             "search": SearchConfig(
                 simulations=self._resolve_reco(reco, "mcts_simulations", 50, int),
-                mcts_type=self._resolve_reco(reco, "mcts", "puct", str),
+                mcts_type=self._resolve_reco(reco, "mcts", "gumbel", normalize_mcts_type),
                 playout_cap_fraction=self._resolve_reco(reco, "playout_cap_fraction", 0.25),
                 full_ply_pair_fraction=self._resolve_reco(
                     reco, "full_ply_pair_fraction", 0.0,

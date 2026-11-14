@@ -394,6 +394,19 @@ class SelfplaySearchShape:
         }
 
 
+def selfplay_search_is_gumbel(search: SearchConfig, simulations: int) -> bool:
+    """Whether production selfplay runs Gumbel (else PUCT) at this budget.
+
+    The one statement of the selfplay dispatch rule: Gumbel when the config
+    says so, and also for any budget at or below ``max(64, fast_simulations)``
+    even under ``mcts_type="puct"``. Public so other consumers that must
+    "search the way configured selfplay does" (the training puzzle eval)
+    call the rule instead of re-deriving it.
+    """
+    gumbel_low_sims = max(64, int(search.fast_simulations))
+    return (str(search.mcts_type) == "gumbel") or (int(simulations) <= int(gumbel_low_sims))
+
+
 def build_selfplay_search_shape(
     *, search: SearchConfig, game: GameConfig, simulations: int,
 ) -> SelfplaySearchShape:
@@ -1166,8 +1179,7 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
         sub_sims = [int(sims_per[j]) for j in group]
         sim_count = max(sub_sims)
 
-        gumbel_low_sims = max(64, int(search.fast_simulations))
-        use_gumbel = (str(search.mcts_type) == "gumbel") or (int(sim_count) <= int(gumbel_low_sims))
+        use_gumbel = selfplay_search_is_gumbel(search, int(sim_count))
         sub_pol = pol_logits[group, :]
         sub_wdl = wdl_logits_raw[group, :]
         diag_sub: list[dict[str, float] | None]

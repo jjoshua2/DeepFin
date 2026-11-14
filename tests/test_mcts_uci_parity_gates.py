@@ -42,6 +42,7 @@ class _ZeroEvaluator:
 @dataclass
 class _FakeTbProbe:
     _path: str = "fake-tb"
+    cursed_as_draw: bool = True
     hits: int = 0
     probes: int = 0
     max_pieces: int = 32
@@ -403,7 +404,10 @@ def test_uci_tb_solved_root_shortcuts_without_evaluating(monkeypatch: pytest.Mon
     best = next(iter(board.legal_moves))
     calls: list[str] = []
 
-    def fake_try_tb_root_move(probe_board: chess.Board, _path: str) -> tuple[chess.Move, int] | None:
+    def fake_try_tb_root_move(
+        probe_board: chess.Board, _path: str, *, rule50: bool = True,
+    ) -> tuple[chess.Move, int] | None:
+        assert rule50 is True  # the probe's Syzygy50MoveRule default
         calls.append(probe_board.fen())
         if probe_board.is_game_over():
             return None

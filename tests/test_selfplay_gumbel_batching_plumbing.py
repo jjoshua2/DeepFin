@@ -365,7 +365,8 @@ _GATE_EVAL_NOT_SET: dict[str, str] = {
 # sentinel rather than widening a skip.
 _SENTINELS: dict[str, tuple[str, object]] = {
     "simulations": ("mcts_simulations", 137),
-    "mcts_type": ("mcts", "gumbel"),
+    # Must differ from the SearchConfig default ("gumbel" since 2026-11-14).
+    "mcts_type": ("mcts", "puct"),
     "playout_cap_fraction": ("playout_cap_fraction", 0.37),
     "full_ply_pair_fraction": ("full_ply_pair_fraction", 0.41),
     "fast_simulations": ("fast_simulations", 13),

@@ -70,6 +70,13 @@ def test_cli_puct_override_is_rejected_before_dispatch(tmp_path, monkeypatch, fl
         _startup(tmp_path, monkeypatch, {flag: True, "mcts": "gumbel"}, ["--mcts", "puct"])
 
 
+def test_startup_without_mcts_anywhere_publishes_gumbel(tmp_path, monkeypatch):
+    """Neither the yaml nor the CLI names a search: the run is Gumbel."""
+    calls = _startup(tmp_path, monkeypatch, {}, [])
+    assert len(calls) == 1
+    assert calls[0]["mcts"] == "gumbel"
+
+
 def test_plain_puct_startup_is_preserved(tmp_path, monkeypatch):
     calls = _startup(tmp_path, monkeypatch, {}, ["--mcts", "puct"])
     assert len(calls) == 1

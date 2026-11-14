@@ -1,4 +1,5 @@
-"""Rejected FEN fallback must discard the previously searched root."""
+"""A rejected FEN must never be searched: the next go answers 0000 without
+touching the tree, and the next VALID position is served normally."""
 from __future__ import annotations
 
 import chess
@@ -64,17 +65,16 @@ def _searched_engine(mode):
 
 @pytest.mark.parametrize("mode", ["legacy", "lc0_root", "lc0_root_legacy_meta"])
 @pytest.mark.parametrize("fen", _INVALID_FENS)
-def test_rejected_fen_discards_old_root_before_startpos_go(mode, fen, monkeypatch, capsys):
+def test_rejected_fen_answers_0000_and_never_reaches_the_tree(mode, fen, monkeypatch, capsys):
     engine, worker = _searched_engine(mode)
-    old_tree = worker._tree
+    old_board = engine._board.copy()
     captured = []
     try:
+        capsys.readouterr()
         engine.dispatch(parse_command("position fen " + fen))
-        assert engine._board.fen() == chess.Board().fen()
-        # `position` never touches the worker; the old root is discarded by the
-        # next `go` (asserted below: that search does not get `old_tree`).
-        assert engine._force_tree_reset is True
-        assert "rejected FEN" in capsys.readouterr().out
+        assert engine._board == old_board  # the previous position, kept
+        assert engine._force_tree_reset is False
+        assert "position: rejected" in capsys.readouterr().out
         assert worker._walker_pool is not None
 
         def capture(**kwargs):
@@ -83,9 +83,15 @@ def test_rejected_fen_discards_old_root_before_startpos_go(mode, fen, monkeypatc
 
         monkeypatch.setattr(worker._walker_pool, "run", capture)
         engine.dispatch(parse_command("go nodes 1"))
+        out = capsys.readouterr().out
+        assert "go refused: the last position command was rejected" in out
+        assert out.strip().splitlines()[-1] == "bestmove 0000"
+        assert captured == []  # nothing was searched
+        # The next valid position is served by a normal search again.
+        engine.dispatch(parse_command("position startpos"))
+        engine.dispatch(parse_command("go nodes 1"))
         _join(engine)
         assert len(captured) == 1
-        assert captured[0][0] is not old_tree
         assert captured[0][1] == CBoard.from_board(chess.Board()).fen()
     finally:
         engine.close()
