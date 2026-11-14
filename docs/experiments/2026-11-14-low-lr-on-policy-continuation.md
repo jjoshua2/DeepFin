@@ -1,5 +1,20 @@
 # Full-state lower-rate on-policy continuation
 
+Current status at **2026-11-14 04:04 UTC: ONGOING**. G2 collection, independent
+CPU data audit and full-state learner continuation completed. The fixed G2
+A39 diagnostic was technically qualified: **82W/88D/86L over 256 games,
+score 49.21875%, paired 95% interval 44.2989710828–54.1385289172%**. It is
+descriptive, with no gain, equivalence, clean regression, promotion or
+confirmation claim. G3 collection is running from the same step-1,024 actor;
+that status was supplied by the owning run, without inspecting G3 data here.
+The strength goal remains unmet. See the [dated G2 readout](#2026-11-14-g2-completion-and-descriptive-diagnostic).
+
+## Preregistration snapshot — before adoption and new data
+
+The following prospective text and evidence retain their original publication
+status. The dated readout below records later adoption and execution; it changes
+no scientific rule, source pin, role, count, seed or horizon.
+
 Status: **PROSPECTIVE REVIEWED PROPOSAL — NOT FROZEN, ADOPTED, ADMITTED OR
 EXECUTED.** V2 source and the actual prospective role proposal have independent
 acceptance. The scoped recorded-use audit is evidence, not role release.
@@ -224,3 +239,91 @@ operations artifacts; source/audit/proposal evidence creates no execution author
 | `core-baseline-lowLR-continuation-bindings-v1/role-disposition.json` | `fb9fccf3615ebd6e8aa1fdc3ec3054cd23d83375e69ec315fe490933a7fe4023` |
 | `core-baseline-lowLR-continuation-bindings-v1/role-disposition-review.json` | `43be8bb2268e3fe4a0a2935ca60b2bf948107286543b517c00e614a762002044` |
 | `core-baseline-lowLR-continuation-role-disposition-independent-review-v1/review.json` | `6971a0e797b10601f4cfa7e66f6109c5e5aa96876d28567c59d2ae24598d6cce` |
+
+
+## 2026-11-14: G2 completion and descriptive diagnostic
+
+**Cutoff: 2026-11-14 04:04 UTC.** The reviewed ready PR was published and its
+remote bytes verified at 02:20:42 UTC, before root role adoption at 02:22:39
+and new data. PR [#1289](https://github.com/jjoshua2/DeepFin/pull/1289) subsequently
+merged at `bf0afdb410126a1ffaf7878b3cd691b0ec8bfa9e`, with all four CI jobs
+passing and complete feedback checks empty. That main merge occurred **after
+G2 collection started**; it is not retroactively described as pre-launch main
+publication. The V2 specification `12ad1fc7…`, manifest `b10f5f5b…`, original
+`cc17ac07…` contract path, L `090b5143…` and owner R7 `ba9d6de1…` remain pinned.
+Later changes to main are not runtime adoption.
+
+| Completed stage | Actual delivery | Owner wall seconds |
+| --- | --- | ---: |
+| New low-parent G2 collection | All 256 fixed attempts; no replacement | GPU 1,589.507718 |
+| Independent CPU data audit | All 256 eligible; 26,010 rows; 107 natural / 149 strict-TB / 0 unresolved | CPU 66.892230 |
+| Full-state learner continuation | Step 512 → 1,024; 512 updates × batch 256 = 131,072 views | GPU 358.975789 |
+| Fixed G2 versus A39 diagnostic | All 256 games / 128 color pairs; 117 rules / 139 strict-TB endings | GPU 659.474557; CPU readback 14.453168 |
+
+The data promotion `c90f281e…` admits the closed audited generation only; it
+promotes no model or champion. Original G1 plus new low-parent G2 total
+**512 games / 50,837 audited rows / 1,024 updates / 262,144 views**, including
+the inherited first 512 updates. Original high-actor G2 was not relabelled or
+used. The new model is `learner.pt` SHA256
+`89e9804d23384dd8833609fd59f277200e24ff1167d249dda63977a99057e1c0`,
+boundary SHA256 `46d7ec5eb04f32bb9fc5da48357613499a8b92540f261cca0ba07e4e2f232a44`.
+
+The pinned learner restores complete saved LOW512 model/optimizer/scheduler/
+step/peak-LR/ZClip state, reconstructs replay, then restores boundary RNG before
+sampling. Its closed boundary retains the exact parent, backend and contract.
+Independent metadata review reconstructed all **512 shard chunks / 50,837 rows**
+and checked every journal draw: 64,538 inherited-G1 and 66,534 new-G2 draws,
+all 512 complete batches, no out-of-window source or row. Root separately
+verified the checkpoint's full-file hash; the independent review did not reload
+tensors or assert GPU bitidentity/interrupted-epoch recovery.
+
+Learner metrics recorded zero nonfinite skips, retries and clips; mean gradient
+norm 4.484922 and mean LR 2.993775905e-6. Mean total loss 1.567210148 agrees
+with policy plus outcome-WDL loss within 4.8e-9. Nonzero auxiliary loss or
+SF/search availability metrics do not make those objectives active: the pinned
+consumer retains policy 1 / genuine-outcome WDL 1, twelve other weights 0 and
+SF/search WDL shares 0. These training-window metrics are not heldout or strength
+proxies and do not establish an LR failure mechanism.
+
+The diagnostic independently reconciled all 257 JSONL records, 256 PGNs and
+128 opening/color pairs. **82W/88D/86L gives .4921875**, unbiased paired variance
+.08064714566929133 and normal-approximate 95% bounds
+[.44298971082813166, .5413852891718683]. Pentanomial counts in ascending pair-total
+order 0/.5/1/1.5/2 are **[13, 31, 45, 25, 14]**. Both owners closed PASS. Actual
+serving observations bind the unchanged step-1,024 candidate and immutable A39,
+494 states / 61,444,448 parameters each, strict embedded architecture,
+175-plane BF16 inference with float32 transport, pool 32 and leaf capacity 1,024.
+The admitted CPU reader verified full-history legality and rule50-aware TB endings;
+the independent metadata review reused that physics without new probes.
+
+DIAG128 is intentionally reused and the interval contains parity. This supplies
+**no supported gain, equivalence or clean regression**, no allocated/consumed
+confirmation, no promotion, and no causal LR or general-recipe verdict. Do not
+pool it with prior correlated diagnostics, the original negative G8, or the
+completed LOW512/A39 nonpass. G2 has no severe-harm or promotion decision.
+At this cutoff G3 was collecting with the same `89e9804d…` actor under separate
+root admission; the predeclared G4 severe-harm exception, fixed G8 endpoint,
+conditional confirmation and all technical/resource/deadline stops remain.
+No recipe change or external Rofchade/Stockfish/Lc0 milestone follows this readout.
+
+The references below are relative to the same operations artifact root as the
+preregistration table. Root receipts that were sealed before independent review
+retain their historical pending labels; the corresponding completed independent
+receipts are separate. Reviewers share source history with the collector, as
+disclosed in their receipts. No model/array payloads or project imports were used
+for this documentation update.
+
+| Completed evidence | SHA256 |
+| --- | --- |
+| `core-baseline-lowLR-continuation-prereg-main-publication-v1/publication.json` | `6c6eaa3f226d10f242cb8e6dec7e56be4532c3dad55fc29961f9be1afc191d0a` |
+| `core-baseline-lowLR-continuation-bindings-v1/role-adoption.json` | `dc1ff297fb4edf0ad84b965d11a18217f1b154e775edde158c11c4b448653be1` |
+| `core-baseline-lowLR-g02-collection-GPU-execution-v1/terminal.json` | `a7a3e67a952555d8b0876707047d3f217c06b23e288dde8f0072653f5680ea4c` |
+| `core-baseline-lowLR-g02-audit-results-v1/readout.json` | `9f2d582c716a708de9f1545b7ae5e822d15a98c904a6ba6ad9e201bee4aa1d25` |
+| `core-baseline-lowLR-g02-audit-independent-actual-review-v1/review.json` | `5e32a39974ccfc88b9b143514f69bfa2f20330164fa8d030265d603935e1b546` |
+| `core-baseline-lowLR-continuation-bindings-v1/g02/audit-root-promotion.json` | `c90f281e0826019b9fc38c4cd62a46bc428a218fae3d3b0ac9e2dd34ad9177e8` |
+| `core-baseline-lowLR-g02-learner-results-v1/boundary.json` | `46d7ec5eb04f32bb9fc5da48357613499a8b92540f261cca0ba07e4e2f232a44` |
+| `core-baseline-lowLR-continuation-bindings-v1/g02/learner-root-metadata-acceptance.json` | `83d5f2c7f3eaf2acb323730424aebed1fb8b7866963f1b412049ecdb715d2027` |
+| `core-baseline-lowLR-g02-learner-independent-actual-review-v1/review.json` | `b2dd20155c621a56df354e8147d3277fb4cf425c6a1419e37175c34ad5eaf77b` |
+| `core-baseline-lowLR-leg1-diagnostic-g2-readout-v1/readout.json` | `b0d1e48b777c384e9a4f9b18efedcfd4ab045f9cc66974522b016e2fa6111e16` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-diagnostic-g2/root-readout-acceptance.json` | `00b9e05443840628ebf300efe72c00485b44ccf1fbd29532fc7a7932efe49b82` |
+| `core-baseline-lowLR-leg1-diagnostic-g2-independent-actual-review-v1/review.json` | `12c2399e2d209f4a3badc1f18b04378cc1b47a21061e1a2623c245bc18d0c374` |
