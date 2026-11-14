@@ -1,5 +1,15 @@
 # Current-P0 SF sidecar engineering qualification
 
+Current status: **SYNTHETIC QUALIFICATION COMPLETED; ACTUAL ORIGINAL-G1
+PRODUCE/VALIDATE UNRUN.** The focused suite and direct synthetic producer/validator
+closed PASS. The focused independent review is accepted; the separate synthetic
+CLI independent review is pending at the closed-chain cutoff, 2026-11-14
+15:06:33 UTC. No consumer, teacher recipe, training admission or strength claim
+follows. The original pre-execution preregistration below is preserved; its UNRUN
+states describe that earlier cutoff. See the [completed synthetic readout](#completed-synthetic-qualification-2026-11-14).
+
+## Original preregistration
+
 Status: **PROSPECTIVE ENGINEERING PREREGISTRATION — SOURCE CANDIDATE, TESTS AND
 DIRECT CLIs UNRUN, EXECUTION NOT ADMITTED.** Root selected this bounded data-only
 qualification before opening original payloads for it. No teacher-training
@@ -126,3 +136,69 @@ arrays or row journal were read while authoring this record.
 | Minimal design V2 | `core-SF-current-P0-sidecar-design-v2/manifest.json` | `f525c1c40f218566f4e02871255e60b10d4d3f47de81c78d0508f4ea069312be` |
 | Independent design review | `core-SF-current-P0-sidecar-design-independent-review-v1/review.json` | `cd5684566e835315145976a1b99a865f1c965f3e47540c78bb588079e300bc8a` |
 | Existing fixture reuse scope | `core-SF-current-P0-sidecar-synthetic-fixture-reuse-plan-v1/manifest.json` | `a8addc9ae5d882e76367f910f83ccbd9b842f4cff41147336a8bea8d81edc4ea` |
+
+## Completed synthetic qualification (2026-11-14)
+
+At source `cf3c71aad826c4fc35ec9031f4450d946748c36b`, scoped Ruff,
+basedpyright and Vulture passed, followed by **33 passed cases, zero failures,
+errors or skips**. All owned processes closed. The managed runtime had no project
+native images, used two Torch threads in the pytest harness and did not initialize
+CUDA. The independent focused review accepted this evidence without findings.
+
+Two earlier engineering failures remain part of the record:
+
+| Closed attempt / phase | Owner seconds | Result |
+| --- | ---: | --- |
+| `1e7d2e69…`: static gate | 3.252786363 | Failed before pytest; all 33 cases unrun |
+| `faa9c3f7…`: corrected static gate, fixture tests | 10.444883140 | Static PASS; 19 passed / 14 failed / zero skips |
+| `cf3c71aa…`: corrected fixture layout | 12.547439141 | Static PASS; all 33 passed |
+| Same source: direct synthetic producer | 1.189301605 | Closed PASS, one game / four rows |
+| Same source: direct synthetic validator | 1.189577190 | Closed PASS, complete candidate/source comparison |
+
+The first correction addressed scoped style/type diagnostics. Every second-attempt
+failure was the correct output/input-overlap refusal: synthetic control metadata
+was placed in the parent of the requested output. The final test-only correction
+moved those bindings to a sibling directory. No production path guard was weakened,
+no case was removed, and the earlier 19 passes are not added to the 33 unique cases.
+
+The subsequent direct CLI chain used the unchanged, explicitly fictional historical
+four-row input. It exercised the direct CPU-parent/runtime guards separately from
+the Torch-using pytest harness; its no-Torch/ORT/project-native guards remained
+satisfied.
+The producer retained all four rows: three source-context joins with all three
+qualified-field masks true and one nojoin with all three masks false. The separate
+validator freshly reopened original fixture payloads and compared the complete
+candidate's identities, inventories, shapes/dtypes, counts and vector bytes.
+Both child outputs remain candidates; root closed-chain acceptance covers only this
+synthetic engineering scope. Its independent actual review is pending at this cutoff.
+
+This positive fixture uses **native-derived stored WDL, not CP-logistic**. Its
+fictional producer revision (`1` repeated 40 times), historical census revision
+`70db0b6f…` and current sidecar revision remain distinct. It does not measure original
+G1 carrier coverage, invalid-label frequency, teacher quality or target adequacy.
+Focused unit branches and this four-row chain are separate evidence; their rows
+are not added to the fixed 24,827-row population. Runtime guards and independent
+process comparison do not establish universal import/I/O monitoring or independently
+authored teacher semantics.
+
+All five closed owners charged **28.623987439088523 CPU-owner seconds** against the
+unchanged 2,700-second engineering ceiling, including both failures. The two actual
+original-G1 phases remain **UNRUN**, each prospectively capped at 900 outer / 870
+inner seconds and requiring its own exact binding, fresh controls and root admission
+after main publication. No actual G1 payloads were opened for this documentation
+update. No finite consumer, mixture/head/value choice, LR/dose, teacher query,
+training, data promotion or playing-strength adoption follows from these results.
+
+The following compact receipts supplement the original preregistration evidence;
+bulk paths remain relative to the same external root.
+
+| Completed evidence | Path | SHA256 |
+| --- | --- | --- |
+| Corrected source packet | `core-SF-current-P0-sidecar-implementation-v4/manifest.json` | `7325c059b98098e98955d465f127835bdd43b4ec68a5735fb4ce4a2d49120598` |
+| Focused root acceptance | `core-SF-current-P0-sidecar-root-validation-v1/closed-focused-tests.json` | `1e9f60f83c9cfdae13fecfeda2fde9f13296c129cbf045f43880d58b4384bfaa` |
+| Focused independent actual review | `core-SF-current-P0-sidecar-focused-independent-actual-review-v1/review.json` | `36abf5acee43abb3ba7ee08f721233db3f2fcafce96b3a37832a293237eea821` |
+| Preserved static failure | `core-SF-current-P0-sidecar-root-validation-v1/failed-static-attempt.json` | `e93185f9be35f7811c4f9ad9bde009f8b9472644374ef0590adf4dfcaa006521` |
+| Preserved fixture failure | `core-SF-current-P0-sidecar-root-validation-v1/failed-fixture-attempt.json` | `a716ce1ad1277e7ca092b0c35d6f27bc297a2b0630afaff636e5c54c10c3f3f8` |
+| Closed synthetic chain root acceptance | `core-SF-current-P0-sidecar-synthetic-bindings-v1/closed-chain.json` | `8122a1a70a4b0996bc67b9af0845f631e47e67d2e0c2f0b269a31bba6d91c7f8` |
+| Synthetic producer candidate | `core-SF-current-P0-sidecar-synthetic-candidate-v1/manifest.json` | `804f478236681bc02886668fd7e02990d2cbc8a88c74c05cf38cf9401cb6138a` |
+| Synthetic validator readout | `core-SF-current-P0-sidecar-synthetic-validation-v1/readout.json` | `42c5c53fde08231c146a18ed78ac9781a9b6ff1fafb99b0bb5d83dbf20f1e35f` |
