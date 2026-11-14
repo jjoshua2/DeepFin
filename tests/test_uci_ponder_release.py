@@ -69,6 +69,7 @@ class _ImmediateWorker:
         stop_sensitive: bool = False,
         on_chunk: object = None,
         fixed_time_margin: bool = False,
+        mate_moves: int | None = None,
     ) -> SearchResult:
         del (
             stop_event,
@@ -83,6 +84,7 @@ class _ImmediateWorker:
             stop_sensitive,
             on_chunk,
             fixed_time_margin,
+            mate_moves,
         )
         move = next(iter(board.legal_moves)).uci()
         self.turns.append(board.turn)
@@ -123,6 +125,7 @@ class _BlockingWorker(_ImmediateWorker):
         stop_sensitive: bool = False,
         on_chunk: object = None,
         fixed_time_margin: bool = False,
+        mate_moves: int | None = None,
     ) -> SearchResult:
         self._calls += 1
         if self._calls == 1:
@@ -144,6 +147,7 @@ class _BlockingWorker(_ImmediateWorker):
             stop_sensitive=stop_sensitive,
             on_chunk=on_chunk,
             fixed_time_margin=fixed_time_margin,
+            mate_moves=mate_moves,
         )
 
 
@@ -171,6 +175,7 @@ class _FaultThenRun(_ImmediateWorker):
         stop_sensitive: bool = False,
         on_chunk: object = None,
         fixed_time_margin: bool = False,
+        mate_moves: int | None = None,
     ) -> SearchResult:
         self._calls += 1
         if self._calls == 1:
@@ -192,6 +197,7 @@ class _FaultThenRun(_ImmediateWorker):
             stop_sensitive=stop_sensitive,
             on_chunk=on_chunk,
             fixed_time_margin=fixed_time_margin,
+            mate_moves=mate_moves,
         )
 
 
@@ -220,6 +226,7 @@ class _DeclineThenRun(_ImmediateWorker):
         stop_sensitive: bool = False,
         on_chunk: object = None,
         fixed_time_margin: bool = False,
+        mate_moves: int | None = None,
     ) -> SearchResult:
         self._calls += 1
         result = super().run(
@@ -237,6 +244,7 @@ class _DeclineThenRun(_ImmediateWorker):
             stop_sensitive=stop_sensitive,
             on_chunk=on_chunk,
             fixed_time_margin=fixed_time_margin,
+            mate_moves=mate_moves,
         )
 
         if self._calls == 1 or self.decline_main:

@@ -143,13 +143,15 @@ def engine_fixture(enabled=False, parallel='pucv', devices=2):
         if evaluator is not None:
             evaluator.close()
 
-    ns = {'_println': messages.append, '_close_quietly': close_quietly, 'gc': SimpleNamespace(collect=lambda: 0),
+    ns: dict[str, Any] = {'_println': messages.append, '_close_quietly': close_quietly, 'gc': SimpleNamespace(collect=lambda: 0),
           '_log': SimpleNamespace(error=lambda *_a, **_k: None),
           '_one_line': lambda exc: f'{type(exc).__name__}: {exc}'}
+    ns['OPTIONS_BY_NAME'] = {}
     methods = definitions('chess_anti_engine/uci/engine.py',
                           ['Engine._handle_setoption', 'Engine._set_use_multi_gpu_pucv', 'Engine._install_multi_gpu_pucv_pool',
-                           'Engine._rebuild_or_keep'], ns)
+                           'Engine._rebuild_or_keep', 'Engine._parse_check'], ns)
     cls = type('ActualOptionHandlers', (), {name.rsplit('.', 1)[-1]: fn for name, fn in methods.items()})
+    setattr(cls, '_parse_check', staticmethod(methods['Engine._parse_check']))  # `definitions` drops decorators
     engine: Any = cls()
     engine._worker, engine._options = worker, options
     engine._rebuild_evaluator, engine._rebuild_multi_gpu_pucv_factories = observed_rebuild, factories
@@ -281,7 +283,7 @@ def phase_fixture(worker):
                              _note_searched_phase=lambda: None)
     limits = SimpleNamespace(deadline_ms=None, max_nodes=20, max_depth=None, optimum_ms=None,
                              searchmoves=('d2d4', 'e2e4'), is_open_ended=lambda: False, infinite=False,
-                             fixed_time=False)
+                             fixed_time=False, mate_moves=None)
     return lambda: phase(engine, limits, is_ponder=False, board=Board())
 
 

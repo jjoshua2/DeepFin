@@ -9,7 +9,6 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
-import contextlib
 
 
 @dataclass(frozen=True)
@@ -32,6 +31,10 @@ class CmdPosition:
   # fen is None for startpos
     fen: str | None
     moves: tuple[str, ...] = ()
+  # Why the command itself is malformed (no `startpos`/`fen`, a FEN with fewer
+  # than four or more than six fields, a stray token before `moves`), or None.
+  # The engine rejects such a command instead of guessing a position.
+    error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -47,6 +50,11 @@ class GoArgs:
     movestogo: int | None = None
     infinite: bool = False
     searchmoves: tuple[str, ...] = ()
+  # UCI `go mate N`: search for a mate in N moves (see `limits_from_go`).
+    mate: int | None = None
+  # Tokens that could not be parsed (e.g. `movetime abc`), as
+  # "<keyword> <value>"; the engine names them on an `info string`.
+    errors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -107,12 +115,30 @@ _INT_KEYS = {
     "winc": "winc_ms",
     "binc": "binc_ms",
     "movestogo": "movestogo",
+    "mate": "mate",
 }
+
+
+def _parse_go_int(text: str) -> int | None:
+    """An integer token; a float with an integral value (``1000.0``) also
+    counts. None when the token is not a finite number."""
+    try:
+        return int(text)
+    except ValueError:
+        pass
+    try:
+        value = float(text)
+    except ValueError:
+        return None
+    if value != value or value in (float("inf"), float("-inf")):
+        return None
+    return int(value)
 
 
 def _parse_go(tokens: list[str]) -> GoArgs:
     kwargs: dict[str, Any] = {}
     searchmoves: list[str] = []
+    errors: list[str] = []
     i = 0
     while i < len(tokens):
         tok = tokens[i]
@@ -122,9 +148,16 @@ def _parse_go(tokens: list[str]) -> GoArgs:
         elif tok == "infinite":
             kwargs["infinite"] = True
             i += 1
-        elif tok in _INT_KEYS and i + 1 < len(tokens):
-            with contextlib.suppress(ValueError):
-                kwargs[_INT_KEYS[tok]] = int(tokens[i + 1])
+        elif tok in _INT_KEYS:
+            if i + 1 >= len(tokens) or tokens[i + 1] in _GO_KEYWORDS:
+                errors.append(f"{tok} (no value)")
+                i += 1
+                continue
+            value = _parse_go_int(tokens[i + 1])
+            if value is None:
+                errors.append(f"{tok} {tokens[i + 1]}")
+            else:
+                kwargs[_INT_KEYS[tok]] = value
             i += 2
         elif tok == "searchmoves":
             i += 1
@@ -135,18 +168,22 @@ def _parse_go(tokens: list[str]) -> GoArgs:
             i += 1
     if searchmoves:
         kwargs["searchmoves"] = tuple(searchmoves)
+    if errors:
+        kwargs["errors"] = tuple(errors)
     return GoArgs(**kwargs)
 
 
 _GO_KEYWORDS = frozenset({
     "ponder", "infinite", "searchmoves",
-    "movetime", "nodes", "depth",
+    "movetime", "nodes", "depth", "mate",
     "wtime", "btime", "winc", "binc", "movestogo",
 })
 
 
-def _parse_fen_fields(tokens: list[str], *, start: int) -> tuple[str | None, int]:
-    """``(fen, next_index)`` for the FEN beginning at ``tokens[start]``.
+def _parse_fen_fields(
+    tokens: list[str], *, start: int,
+) -> tuple[str | None, int, str | None]:
+    """``(fen, next_index, error)`` for the FEN beginning at ``tokens[start]``.
 
     A full FEN is six space-separated fields (pieces stm castling ep halfmove
     fullmove), but EPD-derived tooling routinely sends only the first four or
@@ -154,26 +191,32 @@ def _parse_fen_fields(tokens: list[str], *, start: int) -> tuple[str | None, int
     POSITION and the engine then returned a confidently-scored move for a
     completely different board, with no diagnostic anywhere. Pad the missing
     move counters instead — they affect 50-move / repetition bookkeeping, not
-    the position. Fewer than four fields is not a FEN, so ``(None, start)``
-    (still start-position, but now the caller's `chess.Board` parse is what
-    rejects it, and that path prints an `info string`).
+    the position. Fewer than four fields, or more than six before ``moves``, is
+    not a FEN: ``error`` says so and the engine rejects the command. (Both used
+    to be silent: fewer than four selected the START POSITION, and a seventh
+    token was dropped.)
     """
-    end = min(len(tokens), start + 6)
-    if "moves" in tokens[start:end]:
-        end = tokens.index("moves", start)
+    end = tokens.index("moves", start) if "moves" in tokens[start:] else len(tokens)
     fields = tokens[start:end]
     if len(fields) < 4:
-        return None, start
+        return None, end, (
+            f"FEN has {len(fields)} field(s), need 4-6: {' '.join(fields)!r}"
+        )
+    if len(fields) > 6:
+        return None, end, (
+            f"FEN has {len(fields)} fields, at most 6 before 'moves': "
+            f"{' '.join(fields)!r}"
+        )
     if len(fields) == 4:
         fields = [*fields, "0", "1"]
     elif len(fields) == 5:
         fields = [*fields, "1"]
-    return " ".join(fields), end
+    return " ".join(fields), end, None
 
 
 def _parse_position(tokens: list[str]) -> CmdPosition:
     if not tokens:
-        return CmdPosition(fen=None)
+        return CmdPosition(fen=None, error="no position given (expected 'startpos' or 'fen')")
     fen: str | None = None
     moves: list[str] = []
     i = 0
@@ -181,12 +224,25 @@ def _parse_position(tokens: list[str]) -> CmdPosition:
         fen = None
         i = 1
     elif tokens[0] == "fen":
-        fen, i = _parse_fen_fields(tokens, start=1)
+        fen, i, error = _parse_fen_fields(tokens, start=1)
+        if error is not None:
+            return CmdPosition(fen=None, error=error)
     elif "/" in tokens[0]:
   # Bare FEN with no `fen` keyword. Non-standard but common in EPD-derived
   # tooling; the alternative is answering for the START POSITION.
-        fen, i = _parse_fen_fields(tokens, start=0)
-    if i < len(tokens) and tokens[i] == "moves":
+        fen, i, error = _parse_fen_fields(tokens, start=0)
+        if error is not None:
+            return CmdPosition(fen=None, error=error)
+    else:
+        return CmdPosition(
+            fen=None, error=f"expected 'startpos' or 'fen', got {tokens[0]!r}",
+        )
+    if i < len(tokens):
+        if tokens[i] != "moves":
+            return CmdPosition(
+                fen=None,
+                error=f"unexpected {' '.join(tokens[i:])!r} after the position",
+            )
         moves = list(tokens[i + 1:])
     return CmdPosition(fen=fen, moves=tuple(moves))
 
