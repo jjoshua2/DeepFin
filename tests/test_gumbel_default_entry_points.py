@@ -134,9 +134,9 @@ def test_play_match_batch_without_mcts_type_plays_the_compiled_gumbel_search(
     assert set(calls) == {"gumbel_c"}, calls
 
 
-def test_worker_arena_task_without_mcts_plays_the_compiled_gumbel_search(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-) -> None:
+def _run_worker_arena(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, arena_cfg: dict[str, Any],
+) -> tuple[list[str], dict[str, Any]]:
     from chess_anti_engine.worker import WorkerSession
 
     calls = _record_match_routes(monkeypatch)
@@ -160,13 +160,30 @@ def test_worker_arena_task_without_mcts_plays_the_compiled_gumbel_search(
     session.cache_dir = tmp_path
     monkeypatch.setattr("chess_anti_engine.worker.time.sleep", lambda _s: None)
 
-    task = {"type": "arena", "arena": {"batch_games": 2, "max_plies": 4, "mcts_simulations": 100}}
+    task = {"type": "arena", "arena": {"batch_games": 2, "max_plies": 4, "mcts_simulations": 100, **arena_cfg}}
     WorkerSession._run_arena(session, {"best_model": {"sha256": best_sha}}, task)
+    (payload_path,) = list(tmp_path.glob("*.json"))
+    return calls, json.loads(payload_path.read_text())
 
+
+def test_worker_arena_task_without_mcts_plays_the_compiled_gumbel_search(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    calls, payload = _run_worker_arena(monkeypatch, tmp_path, {})
     assert calls, "no search ran"
     assert set(calls) == {"gumbel_c"}, calls
-    (payload_path,) = list(tmp_path.glob("*.json"))
-    assert json.loads(payload_path.read_text())["mcts"] == "gumbel"
+    assert payload["mcts"] == "gumbel"
+
+
+@pytest.mark.parametrize("value", ["puct", "PUCT"])
+def test_worker_arena_task_honours_an_explicit_puct(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, value: str,
+) -> None:
+    """An explicit ``arena.mcts`` reaches the search (any case) and is recorded normalised."""
+    calls, payload = _run_worker_arena(monkeypatch, tmp_path, {"mcts": value})
+    assert calls, "no search ran"
+    assert set(calls) == {"puct_c"}, calls
+    assert payload["mcts"] == "puct"
 
 
 # --------------------------------------------------------------------------
@@ -325,8 +342,11 @@ def test_training_puzzle_eval_runs_the_production_selfplay_search_shape(
 @pytest.mark.parametrize(("mcts", "sims", "route"), [
     ("gumbel", 200, "gumbel_c"),
     ("puct", 200, "puct_c"),
-    # Selfplay's dispatch runs Gumbel at or below max(64, fast) even under puct.
+    # Selfplay's dispatch runs Gumbel at or below max(64, fast) even under puct;
+    # 64 itself is Gumbel (`<=`), 65 is PUCT.
     ("puct", 32, "gumbel_c"),
+    ("puct", 64, "gumbel_c"),
+    ("puct", 65, "puct_c"),
 ])
 def test_training_puzzle_eval_follows_the_selfplay_dispatch_rule(
     monkeypatch: pytest.MonkeyPatch, mcts: str, sims: int, route: str,
@@ -337,3 +357,168 @@ def test_training_puzzle_eval_follows_the_selfplay_dispatch_rule(
     calls = _record_puzzle_routes(monkeypatch)
     _run_training_puzzle_phase(tc)
     assert [c["route"] for c in calls] == [route]
+
+
+def test_selfplay_dispatch_rule_boundary_is_inclusive() -> None:
+    from chess_anti_engine.selfplay.config import SearchConfig
+    from chess_anti_engine.selfplay.network_turn import selfplay_search_is_gumbel
+
+    puct = SearchConfig(mcts_type="puct", fast_simulations=8)
+    assert selfplay_search_is_gumbel(puct, 64)
+    assert not selfplay_search_is_gumbel(puct, 65)
+    wide_fast = SearchConfig(mcts_type="puct", fast_simulations=100)
+    assert selfplay_search_is_gumbel(wide_fast, 100)
+    assert not selfplay_search_is_gumbel(wide_fast, 101)
+
+
+def test_puzzle_gumbel_route_forwards_both_runner_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from chess_anti_engine.eval import puzzles as puzzles_mod
+
+    calls = _record_puzzle_routes(monkeypatch)
+    puzzles_mod.run_puzzle_eval(
+        _DummyModel(), _one_puzzle_suite(), device="cpu", mcts_simulations=3, batch_size=1,
+        gumbel_target_batch=3, gumbel_vloss_weight=2,
+    )
+    assert [c["route"] for c in calls] == ["gumbel_c"]
+    assert calls[0]["target_batch"] == 3
+    assert calls[0]["vloss_weight"] == 2
+
+
+@pytest.mark.parametrize(("search", "route"), [
+    ("puct", "puct_c"), ("python_puct_reference", "puct_python"),
+])
+def test_puzzle_puct_routes_search_with_the_given_mcts_cfg(
+    monkeypatch: pytest.MonkeyPatch, search: str, route: str,
+) -> None:
+    from chess_anti_engine.eval import puzzles as puzzles_mod
+    from chess_anti_engine.mcts import MCTSConfig
+
+    calls = _record_puzzle_routes(monkeypatch)
+    puzzles_mod.run_puzzle_eval(
+        _DummyModel(), _one_puzzle_suite(), device="cpu", mcts_simulations=7, batch_size=1,
+        search=search,
+        mcts_cfg=MCTSConfig(fpu_reduction=0.77, fpu_at_root=0.33, c_puct=3.1, temperature=1.0),
+    )
+    assert [c["route"] for c in calls] == [route]
+    cfg = calls[0]["cfg"]
+    assert (cfg.fpu_reduction, cfg.fpu_at_root, cfg.c_puct) == (0.77, 0.33, 3.1)
+    assert cfg.simulations == 7
+    assert cfg.temperature == 0.0
+    assert cfg.dirichlet_eps == 0.0
+
+
+@pytest.mark.parametrize(("search", "patch_target"), [
+    ("gumbel", "gumbel_c.run_gumbel_root_many_c"),
+    ("puct", "puct_c.run_mcts_many_c"),
+    ("python_puct_reference", "puzzles.run_mcts_many"),
+])
+def test_puzzle_answers_do_not_depend_on_the_rng(
+    monkeypatch: pytest.MonkeyPatch, search: str, patch_target: str,
+) -> None:
+    """A yardstick: the same position must get the same answer whatever the rng.
+
+    Real searches (spied, not stubbed) on a position with many legal moves; the
+    PUCT routes used to keep MCTSConfig's default Dirichlet root noise.
+    """
+    from chess_anti_engine.eval import puzzles as puzzles_mod
+    from chess_anti_engine.mcts import gumbel_c, puct_c
+
+    module = {"gumbel_c": gumbel_c, "puct_c": puct_c, "puzzles": puzzles_mod}[patch_target.split(".")[0]]
+    name = patch_target.split(".")[1]
+    real = getattr(module, name)
+    answers: list[list[int]] = []
+
+    def spy(*args, **kwargs):
+        result = real(*args, **kwargs)
+        answers.append([int(a) for a in result[1]])
+        return result
+
+    monkeypatch.setattr(module, name, spy)
+    board = chess.Board("r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4")
+    suite = puzzles_mod.PuzzleSuite(
+        puzzles=[puzzles_mod.Puzzle(board=board, best_moves=[chess.Move.from_uci("e1g1")])], name="unit",
+    )
+    for seed in range(6):
+        puzzles_mod.run_puzzle_eval(
+            _DummyModel(), suite, device="cpu", mcts_simulations=16, batch_size=1,
+            rng=np.random.default_rng(seed), search=search,
+        )
+    assert len(answers) == 6
+    assert all(a == answers[0] for a in answers), answers
+
+
+# --------------------------------------------------------------------------
+# Search-type values are normalised at every config boundary
+# --------------------------------------------------------------------------
+
+
+def test_mixed_case_search_types_are_normalised_and_garbage_is_refused() -> None:
+    from chess_anti_engine.model import ModelConfig
+    from chess_anti_engine.selfplay.config import SearchConfig
+    from chess_anti_engine.tune.distributed_runtime import (
+        build_recommended_worker,
+        check_dynamic_relations_transport,
+    )
+    from chess_anti_engine.tune.trial_config import TrialConfig
+
+    assert SearchConfig(mcts_type="Gumbel").mcts_type == "gumbel"
+    assert SearchConfig(mcts_type=" PUCT ").mcts_type == "puct"
+    assert TrialConfig.from_dict({"mcts": "GUMBEL"}).mcts == "gumbel"
+    reco = build_recommended_worker(
+        config={"mcts": "Gumbel"}, model_cfg=ModelConfig(), sf_nodes=1, mcts_simulations=1,
+    )
+    assert reco["mcts"] == "gumbel"
+    with pytest.raises(ValueError, match="mcts"):
+        check_dynamic_relations_transport({"use_dynamic_relations": True, "mcts": "Puct"})
+    for bad in ("gumble", "", "alphazero"):
+        with pytest.raises(ValueError, match="mcts"):
+            SearchConfig(mcts_type=bad)
+        with pytest.raises(ValueError, match="mcts"):
+            TrialConfig.from_dict({"mcts": bad})
+
+
+def test_mixed_case_gumbel_dispatches_to_gumbel_above_the_cutoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``Gumbel`` at 200 sims must not fall through ``== "gumbel"`` into PUCT."""
+    from chess_anti_engine.tune.trial_config import TrialConfig
+
+    tc = TrialConfig.from_dict({"mcts": "Gumbel", "puzzle_interval": 1, "puzzle_simulations": 200})
+    calls = _record_puzzle_routes(monkeypatch)
+    _run_training_puzzle_phase(tc)
+    assert [c["route"] for c in calls] == ["gumbel_c"]
+
+
+def test_play_match_batch_normalises_a_mixed_case_search_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _record_match_routes(monkeypatch)
+    model = _DummyModel().eval()
+    match_mod.play_match_batch(
+        model, model, device="cpu", rng=np.random.default_rng(0), mcts_type="Gumbel",
+        games=2, max_plies=2, mcts_simulations=100, temperature=0.0,
+    )
+    assert calls, "no search ran"
+    assert set(calls) == {"gumbel_c"}, calls
+
+
+def test_arena_cli_accepts_a_mixed_case_search_type(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    from chess_anti_engine import arena as arena_mod
+
+    calls = _record_match_routes(monkeypatch)
+    monkeypatch.setattr(arena_mod, "build_model", lambda _cfg: _DummyModel())
+    monkeypatch.setattr(arena_mod, "load_state_dict_tolerant", lambda *_a, **_k: None)
+    monkeypatch.setattr(arena_mod, "_load_state_dict", lambda _p: {})
+    monkeypatch.setattr(sys, "argv", [
+        "arena", "--latest-model", "unused-a.pt", "--best-model", "unused-b.pt",
+        "--device", "cpu", "--games", "2", "--max-plies", "2", "--mcts-simulations", "100",
+        "--mcts", "PUCT",
+    ])
+    arena_mod.main()
+    assert calls, "no search ran"
+    assert set(calls) == {"puct_c"}, calls
+    capsys.readouterr()

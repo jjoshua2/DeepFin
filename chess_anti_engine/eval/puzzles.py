@@ -489,6 +489,11 @@ def run_puzzle_eval(
             base_cfg,
             simulations=int(mcts_simulations),
             temperature=0.0,
+            # No root noise: MCTSConfig defaults to dirichlet_eps 0.25, which
+            # both PUCT searches mix into the root prior from ``rng``. Before
+            # 2026-11-14 the puzzle PUCT path kept it, so its answers depended
+            # on the rng, not only on the net.
+            dirichlet_eps=0.0,
             input_extra_features=(
                 getattr(model, "input_extra_features", None) or base_cfg.input_extra_features),
             input_history_encoding=(

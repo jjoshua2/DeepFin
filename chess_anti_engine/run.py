@@ -9,6 +9,7 @@ from chess_anti_engine.broker_hang import pin_nvml_cuda_check
 from chess_anti_engine.tune.salvage import export_seed_pool as _run_salvage
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 from chess_anti_engine.utils.architecture import DEFAULT_PHASE_PIECE_THRESHOLDS
+from chess_anti_engine.utils.search_type import normalize_mcts_type
 
 
 
@@ -645,7 +646,7 @@ def main() -> None:
     ap.add_argument("--mcts-ramp-exponent", type=float, default=2.0)
 
     ap.add_argument("--mcts-simulations", type=int, default=800)
-    ap.add_argument("--mcts", type=str, default="gumbel", choices=["gumbel", "puct"])
+    ap.add_argument("--mcts", type=normalize_mcts_type, default="gumbel", choices=["gumbel", "puct"])
     ap.add_argument("--min-replay-size", type=int, default=0)
     ap.add_argument("--lr", type=_learning_rate_arg, default=3e-4)
     ap.add_argument("--w-volatility", type=float, default=0.05)
