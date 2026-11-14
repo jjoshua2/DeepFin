@@ -34,6 +34,7 @@ def reference(path: Path) -> dict[str, str]:
 
 class NoForbiddenImports(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname: str, path: Any = None, target: Any = None) -> None:
+        del path, target  # Keep the importlib finder callback signature.
         if fullname == "torch" or fullname.startswith(("torch.", "onnxruntime", "chess_anti_engine.train")):
             raise ImportError("forbidden sidecar import: " + fullname)
         return None
@@ -247,6 +248,7 @@ def expected_game(audit: Any, item: dict[str, Any], generation: dict[str, Any], 
         if status != "UNAVAILABLE":
             previous = by_id.get(join["predecessor_row"])
             require(previous is not None and fresh[previous]["input_identity"]["ply"] + 1 == row["input_identity"]["ply"], "actual predecessor identity")
+            assert previous is not None  # Validated above; keep the row index narrowed.
             query = fresh[previous]["own_P1_query_context"]
             require(all(query[k] == row["input_identity"][k] for k in ("fen", "STM_white", "history_sha256")), "P0 query/fullhistory")
             values = {name: audit.field(arrays, name, previous)[0] for name in needed}
@@ -461,19 +463,22 @@ def validate(p: dict[str, Any], protocol_ref: dict[str, str], admission_ref: dic
 
     phase_authority(p, protocol_ref, admission_ref)
     audit, census, report, generation, producer = inputs(p)
-    require(p["phase"] == "validate" and p["candidate"] is not None and p["producer_owner"] is not None, "validator phase")
+    candidate_ref = p["candidate"]
+    owner = p["producer_owner"]
+    require(p["phase"] == "validate" and candidate_ref is not None and owner is not None, "validator phase")
+    assert candidate_ref is not None  # Validated above before carrier access.
+    assert owner is not None
     # Authenticate compact lineage and CLOSED producer before touching carrier
     # numeric payloads, including their inventory hashes.
-    candidate = audit.checked(p["candidate"], p["limits"]["metadata_bytes"])
+    candidate = audit.checked(candidate_ref, p["limits"]["metadata_bytes"])
     producer_p = audit.checked(candidate["producer_protocol"], p["limits"]["metadata_bytes"])
     require(producer_p["phase"] == "produce"
-            and Path(producer_p["output_root"]) / "manifest.json" == Path(p["candidate"]["path"]),
+            and Path(producer_p["output_root"]) / "manifest.json" == Path(candidate_ref["path"]),
             "candidate producer output/protocol")
     phase_authority(producer_p, candidate["producer_protocol"], candidate["execution_admission"])
     for key in p:
         if key not in {"phase", "candidate", "producer_owner", "output_root", "runtime"}:
             require(p[key] == producer_p[key], "validator changed producing source/context contract: " + key)
-    owner = p["producer_owner"]
     require(owner["owner_sha256"] == producer_p["runtime"]["owner"]["sha256"],
             "producer terminal owner differs from pinned runtime owner")
     terminal = audit.checked(owner["terminal"], p["limits"]["metadata_bytes"], readonly=False)
@@ -482,7 +487,7 @@ def validate(p: dict[str, Any], protocol_ref: dict[str, str], admission_ref: dic
             "--protocol-sha256", candidate["producer_protocol"]["sha256"], "--admission",
             candidate["execution_admission"]["path"], "--admission-sha256", candidate["execution_admission"]["sha256"]],
             "producer command protocol/admission")
-    require(candidate_inventory(audit, p["candidate"], p["limits"]) == candidate,
+    require(candidate_inventory(audit, candidate_ref, p["limits"]) == candidate,
             "candidate changed before payload validation")
     require(candidate["scope"] == p["scope"] and candidate["census_readout"] == p["census_readout"]
             and candidate["census_protocol"] == p["census_protocol"] and candidate["source"] == p["source"]
@@ -490,7 +495,7 @@ def validate(p: dict[str, Any], protocol_ref: dict[str, str], admission_ref: dic
             and candidate["generation_manifest"] == census["generation_manifest"], "candidate source lineage")
     require(candidate["rows"] == report["rows"] and candidate["physical_games"] == len(generation["games"])
             and len(candidate["games"]) == len(generation["games"]), "candidate full population")
-    root = Path(p["candidate"]["path"]).parent
+    root = Path(candidate_ref["path"]).parent
     output = fresh_output(p, generation, report)
     output.mkdir()
     try:
@@ -517,12 +522,12 @@ def validate(p: dict[str, Any], protocol_ref: dict[str, str], admission_ref: dic
                     counts["qualified_" + field + ":" + str(value)] += 1
             del arrays, loaded, expected, actual, old_rows
         require(rows == candidate["rows"] and dict(sorted(counts.items())) == candidate["counts"], "candidate counts/denominator")
-        require(candidate_inventory(audit, p["candidate"], p["limits"]) == candidate, "candidate custody changed")
+        require(candidate_inventory(audit, candidate_ref, p["limits"]) == candidate, "candidate custody changed")
         if final_guard is not None:
             final_guard()
         result = {"status": "VALIDATION_CANDIDATE_CURRENT_P0_SF_SIDECAR_V1", "scope": p["scope"],
                   "protocol": protocol_ref, "execution_admission": admission_ref,
-                  "candidate": p["candidate"], "rows": rows, "physical_games": len(candidate["games"]),
+                  "candidate": candidate_ref, "rows": rows, "physical_games": len(candidate["games"]),
                   "source_payload_and_vector_bytes_recomputed": True, "wire_authenticated": False,
                   "training_admitted": False, "root_postclosure_acceptance_required": True,
                   "limits": "Independent process revalidation, shared source algorithms; not an independently authored target-quality proof."}

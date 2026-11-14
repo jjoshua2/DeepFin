@@ -39,7 +39,7 @@ def fiction(tmp_path: Path, *, kept: tuple[int, ...] = (0, 1, 2, 3), corrupt: st
     helpers = runpy.run_path(str(Path(__file__).with_name("test_sf_banked_p0_census.py")))
     base = tmp_path / "fiction"
     base.mkdir()
-    p, generation, producer = helpers["fixture"](base, kept=kept, corrupt=corrupt)
+    p, generation, _producer = helpers["fixture"](base, kept=kept, corrupt=corrupt)
     item = generation["games"][0]
     if no_reduced_native:
         shard = Path(item["shard"]["path"])
@@ -158,7 +158,7 @@ def test_exact_policy_bytes_distinct_value_povs_and_complete_denominator(tmp_pat
     folder = Path(p["output_root"]) / "game-000000"
     arrays = {k: schema.load_npy(folder / (k + ".npy"), k, 4, 8 << 20) for k in schema.FIELDS}
     original = zarr.open_group(generation["games"][0]["shard"]["path"], mode="r")
-    assert arrays["policy_f16"][1].tobytes() == original["sf_policy_target"][0].tobytes()
+    assert arrays["policy_f16"][1].tobytes() == np.asarray(original["sf_policy_target"][0]).tobytes()
     np.testing.assert_array_equal(arrays["native_wdl_permille_i16"][1], [700, 200, 100])
     np.testing.assert_array_equal(arrays["stored_record_wdl_f16"][1], np.array([.1, .2, .7], dtype=np.float16))
     np.testing.assert_array_equal(arrays["stored_query_wdl_f16"][1], np.array([.7, .2, .1], dtype=np.float16))
@@ -339,7 +339,7 @@ def test_semantic_vector_tamper_refuses_even_with_rehashed_inventory(tmp_path: P
             item["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
     p["candidate"] = replace(p["candidate"], candidate)
     p_ref = ref(tmp_path / "fiction-rehashed-validate.json", p)
-    with pytest.raises(ValueError, match="qualified carrier policy|vector bytes"):
+    with pytest.raises(ValueError, match=r"qualified carrier policy|vector bytes"):
         run_validator(p, p_ref)
     assert Path(p["output_root"] + ".failed.json").exists()
 
@@ -359,7 +359,10 @@ def test_candidate_owner_and_seal_gate(tmp_path: Path, monkeypatch: pytest.Monke
         root.chmod(0o755)
         (root / "unexpected").write_text("unlisted")
         root.chmod(0o555)
-    with pytest.raises(ValueError):
+    expected_message = {"failed_owner": "not exact closed CPU owner",
+                        "late_marker": "candidate seal/failure marker",
+                        "unknown_file": "candidate complete inventory"}[failure]
+    with pytest.raises(ValueError, match=expected_message):
         run_validator(p, ref(tmp_path / "fiction-failure-validate.json", p))
     assert not Path(p["output_root"]).exists()
 
