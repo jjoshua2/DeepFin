@@ -19,6 +19,7 @@ import numpy as np
 from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.inference import trial_slot_prefix
 from chess_anti_engine.mcts.gumbel import SELFPLAY_GUMBEL_C_SCALE
+from chess_anti_engine.utils.search_type import normalize_mcts_type
 from chess_anti_engine.model import ModelConfig, model_config_to_manifest_dict
 from chess_anti_engine.moves import policy_size_for_encoding
 from chess_anti_engine.replay import ArrayReplayBuffer, DiskReplayBuffer
@@ -301,7 +302,7 @@ def build_recommended_worker(
     return {
         "games_per_batch": int(config.get("selfplay_batch", 4)),
         "max_plies": int(config.get("max_plies", 240)),
-        "mcts": str(config.get("mcts", "puct")),
+        "mcts": normalize_mcts_type(config.get("mcts", "gumbel")),
         "mcts_simulations": int(mcts_simulations),
         "playout_cap_fraction": float(config.get("playout_cap_fraction", 0.25)),
         "full_ply_pair_fraction": float(config.get("full_ply_pair_fraction", 0.0)),
@@ -1286,7 +1287,7 @@ def check_dynamic_relations_transport(config: dict) -> None:
     ]
     if str(config.get("distributed_worker_aot_dir") or "").strip():
         offenders.append("distributed_worker_aot_dir")
-    if str(config.get("mcts", "puct")).lower() != "gumbel":
+    if normalize_mcts_type(config.get("mcts", "gumbel")) != "gumbel":
         offenders.append("mcts != gumbel (PUCT paths don't transport relations)")
     if offenders:
         raise ValueError(

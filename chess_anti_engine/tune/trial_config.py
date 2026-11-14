@@ -13,6 +13,7 @@ from chess_anti_engine.mcts.gumbel import (
     POLICY_TEMP_MIN,
     SELFPLAY_GUMBEL_C_SCALE,
 )
+from chess_anti_engine.utils.search_type import normalize_mcts_type
 from chess_anti_engine.stockfish.wdl import SEARCH_WDL_DRAW_MODES, SEARCH_WDL_DRAW_NET_RAW
 from chess_anti_engine.train.constants import DEFAULT_GUMBEL_TOPK, normalize_gumbel_topk
 from chess_anti_engine.train.losses import SfPolicyFloorParams, SfShapeParams
@@ -284,7 +285,7 @@ class TrialConfig:
     selfplay_fraction: float = 0.0
     slot_oversubscribe: float = 1.0
     max_plies: int = 240
-    mcts: str = "puct"
+    mcts: str = "gumbel"
     mcts_simulations: int = 50
     mcts_start_simulations: int = 50
     mcts_ramp_steps: int = 10_000
@@ -767,7 +768,7 @@ class TrialConfig:
                 config.get("slot_oversubscribe", 1.0), name="slot_oversubscribe",
             ),
             max_plies=int(config.get("max_plies", 240)),
-            mcts=str(config.get("mcts", "puct")),
+            mcts=normalize_mcts_type(config.get("mcts", "gumbel")),
             mcts_simulations=int(config.get("mcts_simulations", 50)),
             mcts_start_simulations=int(config.get("mcts_start_simulations", 50)),
             mcts_ramp_steps=int(config.get("mcts_ramp_steps", 10_000)),

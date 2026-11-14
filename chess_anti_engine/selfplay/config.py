@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from chess_anti_engine.encoding.features import EXTRA_FEATURES_V2_THREATS
 from chess_anti_engine.mcts.gumbel import DEFAULT_VOLATILITY_ANCHOR, SELFPLAY_GUMBEL_C_SCALE
+from chess_anti_engine.utils.search_type import normalize_mcts_type
 from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY
 from chess_anti_engine.moves import MODEL_POLICY_ENCODING
 from chess_anti_engine.stockfish.wdl import (
@@ -39,7 +40,7 @@ class TemperatureConfig:
 @dataclass(frozen=True)
 class SearchConfig:
     simulations: int = 50
-    mcts_type: str = "puct"
+    mcts_type: str = "gumbel"
     playout_cap_fraction: float = 0.25
     # Research bet (default 0.0 = off, byte-identical iid schedule): fraction
     # of base full plies that FORCE the slot's next net turn full too. The
@@ -118,6 +119,10 @@ class SearchConfig:
   # but costs ~8x the GPU round trips. Kept only as a control arm.
     gumbel_target_batch: int = 0
     gumbel_vloss_weight: int = 0
+
+    def __post_init__(self) -> None:
+        # Dispatch compares ``== "gumbel"``: "Gumbel" would silently run PUCT.
+        object.__setattr__(self, "mcts_type", normalize_mcts_type(self.mcts_type))
 
 
 @dataclass(frozen=True)

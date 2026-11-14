@@ -36,6 +36,7 @@ from chess_anti_engine.model import (
     load_state_dict_tolerant,
 )
 from chess_anti_engine.uci.model_loader import model_config_from_arch
+from chess_anti_engine.utils.search_type import normalize_mcts_type
 
 WORKER_PY = Path(__file__).resolve().parents[1] / "chess_anti_engine/worker.py"
 
@@ -173,6 +174,7 @@ def harness() -> Any:
         "_download_and_verify_shared": forbidden, "_worker_headers": forbidden,
         "OpeningConfig": SimpleNamespace,
         "play_match_batch": match,
+        "normalize_mcts_type": normalize_mcts_type,
     }
     h.session = _build_session(env)
     h.refused_cls = h.session.refused_cls
