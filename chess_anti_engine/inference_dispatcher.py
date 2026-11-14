@@ -301,6 +301,15 @@ class CUDAOwnerDispatcher:
     def async_backend(self) -> Any:
         return self._inner
 
+    @property
+    def search_leaf_row_cap(self) -> int | None:
+        """Forward the inner's Gumbel leaf-row cap (see
+        ``MultiGPUDispatcher.search_leaf_row_cap``); None when it has none."""
+        cap = getattr(self._inner, "search_leaf_row_cap", None)
+        if isinstance(cap, bool) or not isinstance(cap, int):
+            return None
+        return cap
+
     def get_input_buffer(self, bsz: int, slot: int = 0) -> np.ndarray:
         return self._inner.get_input_buffer(bsz, slot=slot)
 
@@ -658,6 +667,49 @@ class MultiGPUDispatcher:
         finally:
             with self._select_lock:
                 self._inflight[idx] -= 1
+
+    def evaluate_encoded_async(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
+        """The async entry, run SYNCHRONOUSLY: the result is copied out and no
+        completion event is returned.
+
+        ``CUDAOwnerDispatcher`` (the compiled single-submitter wrapper) always
+        exposes ``evaluate_encoded_async`` and classic Gumbel takes its async
+        path whenever that attribute exists, so ``--devices a,b --compile
+        --no-multi-gpu-pucv`` died at startup with an AttributeError here. A
+        true async hand-off would return views of the PICKED device's pinned
+        slot after its lock is released, where a concurrent call routed to the
+        same device could overwrite them; owned copies cannot race. The lost
+        overlap only affects this non-default multi-device routing chain.
+        """
+        pol, wdl = self.evaluate_encoded(x, relations=relations)
+        return (
+            torch.from_numpy(np.array(pol, dtype=np.float32, copy=True)),
+            torch.from_numpy(np.array(wdl, dtype=np.float32, copy=True)),
+            None,
+        )
+
+    @property
+    def search_leaf_row_cap(self) -> int | None:
+        """The largest batch EVERY device accepts (its ``max_batch``).
+
+        This dispatcher has no pinned in-place API, so classic Gumbel takes its
+        copying path, where the leaf buffer is NOT capped at the evaluator's
+        ``_max_batch`` unless the evaluator advertises this (as
+        ``EncodedEvalCache`` does). Without it ``MaxBatch`` below the leaf
+        buffer (e.g. ``--max-batch 256``) handed a device a 384-row batch and
+        startup failed with ``batch 384 > max 256``. The cap is what the
+        single-device in-place path already applies, so both chains run the
+        same search shape; at ``MaxBatch`` >= the leaf buffer it changes nothing.
+        """
+        caps = [
+            getattr(e, "_max_batch", getattr(e, "max_batch", None)) for e in self._evals
+        ]
+        ints = [int(c) for c in caps if isinstance(c, int) and not isinstance(c, bool) and c > 0]
+        if len(ints) != len(caps):
+            return None
+        return min(ints)
 
     def _pick_device(self) -> int:
         with self._select_lock:
