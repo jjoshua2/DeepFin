@@ -2,6 +2,10 @@
 
 - [2026-09-19: Workspace storage migration and queued-job adoption](2026-09-19-workspace-storage.md)
 
+Bend engine records and their evidence live on the `bend` branch (see
+[development](../development.md#bend-branch)); tag `pre-slim-20261113` holds the
+last `main` that carried them.
+
 Start here for experiment planning and readouts. [Project guidance](../../CLAUDE.md)
 holds durable constraints; [evaluation](../eval_protocol.md) explains which
 measurements support which claims.
@@ -10,6 +14,10 @@ Evidence for records before 2026-10-25 that no staying code, current doc or late
 For future bootstrap choices, see the [adaptive decision policy](2026-09-08-bootstrap-next-value-and-policy-contrasts.md#september-13-adaptive-decisions-for-the-remaining-bootstrap-research): registered result classification and the next research decision are separate.
 
 ## Records
+
+- [2026-11-14: Full-state lower-rate on-policy continuation](2026-11-14-low-lr-on-policy-continuation.md) — prospective reviewed proposal: preserve LOW512 state, add seven fixed on-policy generations to step 4,096, then conditionally continue to 8,192 only after a fresh confirmed gain. V2 source and prospective role proposal independently accepted; root adoption/admissions pending. No new training or predictions yet.
+
+- [2026-11-14: Fixed LOW512 versus original A39 successor](2026-11-14-low512-donor-screen.md) — completed qualified screen nonpass: 48.9258% versus A39 over 512 games (paired 95% interval 45.8184–52.0332%, includes parity). No confirmation eligible, allocated or consumed; donor retained, no playing gain or equivalence claim.
 
 - [2026-11-13: Fixed G1 lower-LR probe and G2 WDL adjunct](2026-11-13-fixed-g1-lr-g2-wdl.md) — completed: LOW512 scored 57.03125% versus banked HIGH512 on reused diagnostic pairs (95% interval 52.0518–62.0107%); whole-G2 descriptive NLL/Brier order LOW512, A39, HIGH512. No A39 playing-gain, online recovery, optimal-LR or adoption claim; original baseline negative preserved.
 

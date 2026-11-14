@@ -77,9 +77,9 @@ if [[ -n "$confirm_branch" ]]; then
 elif [[ "$current" != "bend" ]]; then
     die "current branch is '$current'; run on bend, or confirm a sync branch with --branch $current"
 fi
+if git rev-parse --verify --quiet MERGE_HEAD >/dev/null; then die "a merge is already in progress"; fi
 [[ -z "$(git status --porcelain --untracked-files=no)" ]] \
     || die "working tree has uncommitted changes; commit or stash first"
-if git rev-parse --verify --quiet MERGE_HEAD >/dev/null; then die "a merge is already in progress"; fi
 
 paths_file="native/bend_engine/branch_paths.txt"
 [[ -f "$paths_file" ]] || die "$paths_file not found; run this on the bend branch"

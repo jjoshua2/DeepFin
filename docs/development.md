@@ -254,3 +254,18 @@ for later shell consumers relies on trusted owners preserving admitted ancestry;
 it does not protect against the same UID, root, or a trusted owner changing modes.
 The review snapshot remains working-copy isolation, not a security sandbox, and
 this change does not address prompt injection or authorize running a model.
+
+## Bend branch
+
+The Bend engine track (`native/bend_engine/`, its `bend-*` CI workflows,
+`tests/test_bend_*.py`, `docs/bend_*.md` and its experiment records and evidence)
+is not on `main`. It continues on the long-lived `bend` branch of this repository
+until it is ready for its own repository; `main` carries the Python package and
+its C extensions only.
+
+- To work on Bend, branch from `origin/bend` and open the PR against `bend`.
+- `bend` stays current by merging `main` into it periodically. The first merge
+  after Bend left `main` would, done as a plain `git merge`, silently delete Bend's
+  files from `bend`; use `scripts/sync_bend_with_main.sh` on `bend`, which merges
+  and keeps Bend's copies (procedure in `native/bend_engine/README.md` there).
+- Tag `pre-slim-20261113` is the last `main` that still carried Bend.

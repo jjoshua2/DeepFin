@@ -15,6 +15,7 @@ from typing import Any, ClassVar
 import threading
 import time
 import unittest
+from chess_anti_engine.uci.engine import _decayed_max as _engine_decayed_max
 
 SOURCE = Path(os.environ.get('UCI_TEST_SOURCE', str(Path(__file__).resolve().parents[1])))
 MODULE_HASHES = {}
@@ -257,7 +258,7 @@ def search_fixture(rpg=True):
     worker._time_capped_chunk = lambda chunk, *_args: chunk
     worker._is_shared_tree_path = lambda _allowed: False
     worker._maybe_emit_pv_info = lambda **kw: ([], 0, 0)
-    worker._clock_time_margin_ms = lambda *_args: 0.0
+    worker._clock_time_margin_ms = lambda *_args, **_kwargs: 0.0
     worker._abort_ready = lambda *_args: False
     worker._build_final_search_result = lambda **kw: SimpleNamespace(nodes=kw['total_nodes'],
         bestmove_uci='d2d4', ponder_uci=None, pv=('d2d4',), score_cp=0, tbhits=0, score_mate=None)
@@ -269,14 +270,18 @@ def phase_fixture(worker):
     class Witness(Exception):
         pass
     namespace = {'Deadline': Deadline, 'time': time, 'SolvedRootWitnessUnavailable': Witness,
-                     '_println': lambda text: None}
+                     '_println': lambda text: None, 'threading': threading,
+                     '_SILENCED_THREADS': set(), '_decayed_max': _engine_decayed_max}
     phase = definitions('chess_anti_engine/uci/engine.py', ['Engine._run_one_phase'], namespace)['Engine._run_one_phase']
     engine = SimpleNamespace(_worker=worker, _stop_event=threading.Event(), _gil_probe=None,
+                             _search_gen=0, _heartbeat=None, _prev_chunk_ms=None,
+                             _prev_first_chunk_ms=None,
                              _options=SimpleNamespace(abort_factor=1.0, ponder=False),
                              _emit_info=lambda **kw: None, _emit_gil_profile=lambda **kw: None,
                              _note_searched_phase=lambda: None)
     limits = SimpleNamespace(deadline_ms=None, max_nodes=20, max_depth=None, optimum_ms=None,
-                             searchmoves=('d2d4', 'e2e4'), is_open_ended=lambda: False, infinite=False)
+                             searchmoves=('d2d4', 'e2e4'), is_open_ended=lambda: False, infinite=False,
+                             fixed_time=False)
     return lambda: phase(engine, limits, is_ponder=False, board=Board())
 
 

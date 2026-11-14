@@ -80,6 +80,10 @@ class SearchLimits:
     infinite: bool = False
     ponder: bool = False  # no deadline until ponderhit
     searchmoves: tuple[str, ...] = ()
+    # UCI `movetime`: an exact time budget. The engine asks the search for a
+    # chunk-sized stop margin only then (never inferred from a missing
+    # `optimum_ms`, which the time-management OFF arm also produces).
+    fixed_time: bool = False
 
     def is_open_ended(self) -> bool:
         return self.infinite or self.ponder or (
@@ -225,6 +229,7 @@ def limits_from_go(
         max_nodes=args.nodes,
         max_depth=args.depth,
         searchmoves=tuple(args.searchmoves),
+        fixed_time=is_movetime,
     )
 
 

@@ -116,7 +116,7 @@ process. Force a mode with `CAE_UCI_MULTI_GPU_COMPILE_MODE`
 |---|---|---|
 | `Hash` | most of the machine's RAM | MCTS tree memory (MB), measured against the tree's resident footprint (~3.3 KB per visit, so 16384 ≈ 5M visits ≈ 5 min at ~17k nps). The tree is the memory consumer; when it fills, the search stops early with `info string tree memory full …`. Provision about **Hash + 150 MB + the eval cache** (`EvalCacheEntries`) of RAM: per-search buffers and allocator slack are outside Hash. A cross-move compaction briefly holds new child arrays beside the old ones; it is only chosen while that transient keeps the tree within Hash + 32 MB, so the provisioning above still holds. One tree addresses at most ~2.1 billion nodes (int32 ids, about 130–280 GB of footprint); Hash above that is unused and the stop says `tree node-id space full`. |
 | `SyzygyPath` | your TB path | 3–7 man WDL/DTZ supported. |
-| `MoveOverheadMs` | your standard | Added per-move safety on top of the internal margin. |
+| `MoveOverheadMs` | your standard | Added per-move safety on top of the internal margin; also sets when the stall watchdog answers (section 7). |
 | `ClockBatchMarginSigmas` | `2` (default) | Self-calibrating clock margin in units of observed GPU-batch-time sigma. Leave at default. |
 | `MultiPV` | supported | For broadcast eval display. |
 | `Ponder` | `false` | Not supported meaningfully; leave off. |
@@ -201,6 +201,70 @@ phase C tells us what the additional seven GPUs are worth.
     incomplete reason=solved_root_without_move_witness ...
     witness_unavailable_roots=N`. This is a property of the position, not a
     fault, and does NOT count toward the unhealthy streak below.
+- **A stalled search is answered by the deadline watchdog.** A clocked `go`
+  (`wtime`/`btime`, or `movetime`) that the search is not going to answer in
+  time is answered by the engine itself, without waiting for or touching the
+  stuck worker -- a GPU batch that never returns, or a tree compaction that
+  overran the move's clock. A search that is making progress is left alone.
+  Two thresholds, from the moment the move's clock started:
+  - **No progress** (the normal case for a hang): past the search's own hard
+    deadline (move budget minus `MoveOverheadMs`) AND no search chunk completed
+    for `S = clamp(4 x chunk time, 300 ms, 2 s)`. The chunk time is the slowest
+    chunk this search has completed; before its second chunk, recent healthy
+    searches' slowest chunk; before its first chunk, recent healthy searches'
+    time to their first chunk (root eval and compaction included). "Recent" is
+    a running maximum that decays by x0.9 per search. With no previous search,
+    `S` is 1 s. A search the watchdog answered never feeds these (both samples
+    are taken only when a search finishes without being answered). A healthy
+    search completes a chunk every chunk time and stops at the first chunk
+    boundary after its deadline; the 300 ms floor covers the gaps measured
+    under heavy CPU load (up to ~110 ms between chunks of ~20 ms).
+  - **Last moment** (unconditional): the move's real budget -- `movetime`, or
+    the side to move's remaining clock -- minus 3 ms, but never before the
+    search's own deadline. The 3 ms is the watchdog's wake-up latency (p99
+    0.37 ms during real searches, p99 0.4 ms beside a Python thread holding
+    the GIL in 1 ms stretches) plus its answer (under 0.5 ms). A search that
+    has not answered by then would answer in the final 3 ms of its budget at
+    best; the watchdog's answer goes out no later than that search's would
+    have -- a statement about timing only: **the move it plays is a fallback**
+    (`last_pv`, the root policy, or the first legal move), not the searched
+    move that search was about to produce. This threshold is for a search that
+    keeps making progress but too slowly; a hang is normally answered by the
+    first rule, soon after the deadline. It can pre-empt a healthy search when
+    a single chunk is about as long as the whole move (measured on CPU with
+    the default `ChunkSims` 2048 at `movetime 200`: 2 of 12 moves); with GPU
+    chunk times that does not arise. At a very short `movetime` (less than
+    about 4 chunk times beyond the overhead) only the last-moment rule can
+    fire, so a hang is answered 3 ms before the budget and the pipe to the GUI
+    must fit in that.
+
+  `movetime` searches now also stop one measured chunk before their deadline
+  (as clock games already did), instead of overrunning it by up to a chunk.
+
+  The answer is, in order: the first move of the last PV that search published
+  for this exact position (`source=last_pv`); the cached root policy for this
+  position (`source=root_policy`); the first legal move (`source=first_legal`).
+  It never runs a fresh evaluation, since the evaluator may be the thing that
+  hung. One line says which threshold fired: `info string WARNING search
+  stalled: no search progress for N ms (stall limit S ms) past the deadline;
+  ...` or `... no bestmove 3 ms before the B ms budget; ...`, then `deadline
+  watchdog answers unsearched source=... move=... bestmove_fallback_used=N`.
+  The move counts toward the unhealthy streak below. The stuck search is
+  stopped and silenced, and the next command that needs the worker parks it
+  like one that ignored `stop`; its late result, if it ever comes, is
+  discarded (exactly one `bestmove` per `go`). After `ponderhit` the watchdog
+  uses the real limits from the moment of `ponderhit`. `go infinite`, `go
+  ponder` (until `ponderhit`), and pure `go nodes` / `go depth` have no
+  watchdog.
+
+  Caveat: the watchdog is a Python thread. A hang inside a C call that holds
+  the GIL stalls the watchdog too. Its wake-up waits for whichever thread
+  holds the GIL to release it: measured p99 0.4 ms beside a thread holding it
+  1 ms at a stretch, 2.2 ms at 2 ms stretches, 8 ms beside a thread that
+  never releases it voluntarily (5 ms switch interval), 16 ms with two such
+  threads. The engine itself runs no such thread during a search (p99 0.37 ms
+  measured), but anything that does would make the last-moment answer late
+  by that much.
 - **Unhealthy state.** 3 counted fallback moves in a row (every kind above except
   the solved-root one), or a failed search-path re-warm at `isready`, print
   `info string WARNING engine unhealthy: ...` once. The engine keeps answering

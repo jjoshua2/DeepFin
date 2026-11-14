@@ -145,6 +145,45 @@ def test_change_on_both_sides_is_left_for_the_operator(repo: Path) -> None:
     assert _git(repo, "rev-parse", "HEAD") == before
 
 
+def test_clean_textual_merge_on_both_sides_is_still_left_for_the_operator(repo: Path) -> None:
+    # Different hunks of one Bend file: git merges them without a conflict, but
+    # the script must not commit main's and bend's edits together unreviewed.
+    lines = [f"line {i}\n" for i in range(12)]
+    _git(repo, "switch", "-q", "main")
+    _git(repo, "reset", "-q", "--hard", "HEAD~1")
+    _write(repo, "native/bend_engine/engine.bend", "".join(lines))
+    _commit(repo, "main+bend base: multi-line Bend file")
+    _git(repo, "switch", "-q", "bend")
+    _git(repo, "reset", "-q", "--hard", "main")
+    _git(repo, "switch", "-q", "main")
+    _write(repo, "native/bend_engine/engine.bend", "".join(["main top\n", *lines[1:]]))
+    _commit(repo, "main: edit top hunk")
+    _git(repo, "switch", "-q", "bend")
+    _write(repo, "native/bend_engine/engine.bend", "".join([*lines[:-1], "bend bottom\n"]))
+    _commit(repo, "bend: edit bottom hunk")
+    before = _git(repo, "rev-parse", "HEAD")
+    res = _sync(repo, "main")
+    assert res.returncode == 2, res.stdout + res.stderr
+    assert "native/bend_engine/engine.bend" in res.stderr
+    assert _merging(repo)
+    assert _git(repo, "rev-parse", "HEAD") == before
+    assert not _git(repo, "diff", "--name-only", "--diff-filter=U")   # git merged it cleanly
+
+
+def test_merge_in_progress_is_reported_as_such(repo: Path) -> None:
+    _write(repo, "native/bend_engine/install.sh", "install bend-side\n")
+    _commit(repo, "bend: edit install")
+    _git(repo, "switch", "-q", "main")
+    _git(repo, "reset", "-q", "--hard", "HEAD~1")
+    _write(repo, "native/bend_engine/install.sh", "install main-side\n")
+    _commit(repo, "main: edit install")
+    _git(repo, "switch", "-q", "bend")
+    assert _sync(repo, "main").returncode == 2
+    res = _sync(repo, "main")
+    assert res.returncode == 1
+    assert "merge is already in progress" in res.stderr
+
+
 def test_add_add_on_a_bend_path_is_left_for_the_operator(repo: Path) -> None:
     _first_sync(repo)
     _git(repo, "switch", "-q", "main")
