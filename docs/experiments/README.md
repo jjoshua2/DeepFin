@@ -16,6 +16,8 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
+- [2026-11-14: Banked original-G1 Stockfish P0 evidence census](2026-11-14-sf-banked-g1-p0-evidence-census.md) — prospective data-only census of all 256 original-G1 TRAIN games / 24,827 retained rows; source reviewed and 40 synthetic cases passed (independent actual review pending). Actual census unrun and root input authority unbound; no teacher-training regimen, label admission or playing-strength claim.
+
 - [2026-11-14: Full-state lower-rate on-policy continuation](2026-11-14-low-lr-on-policy-continuation.md) — ongoing through fixed G8: G6 completed step 3,072; its qualified reused-panel donor diagnostic scored 43.359375% over 256 games (paired 95% interval 38.4232–48.2955%, below parity). Negative descriptive result; no G6 efficacy/harm gate, gain, confirmation or adoption. Fixed G7/G8 unchanged.
 
 - [2026-11-14: Fixed LOW512 versus original A39 successor](2026-11-14-low512-donor-screen.md) — completed qualified screen nonpass: 48.9258% versus A39 over 512 games (paired 95% interval 45.8184–52.0332%, includes parity). No confirmation eligible, allocated or consumed; donor retained, no playing gain or equivalence claim.
