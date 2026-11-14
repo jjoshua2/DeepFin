@@ -209,8 +209,10 @@ def test_old_and_new_public_contracts_refuse_cross_family(tmp_path: Path) -> Non
     with pytest.raises(ValueError, match="not the retained-search learning family"):
         finite.execute(legacy, old.stage(tmp_path, legacy, [gen], None, "legacy"))
     poisoned = {**c, "sf_p0": {"alpha": 1}}
+    combined_ref = old.frozen(tmp_path / "bindings/combined-contract.json", poisoned)
+    combined_stage = stage(tmp_path, combined_ref, gen, label="combined-stage")
     with pytest.raises(ValueError, match="unknown or missing contract fields"):
-        finite.execute(old.frozen(tmp_path / "bindings/combined.json", poisoned), stage(tmp_path, cref, gen, label="combined"))
+        finite.execute(combined_ref, combined_stage)
 
 
 def test_actual_same_family_continuation_keeps_bank_and_restores_full_state(tmp_path: Path) -> None:
@@ -270,11 +272,16 @@ def test_wholly_absent_search_component_uses_outcome_in_actual_worker(tmp_path: 
 
     def observed(outputs: Any, batch: Any, **kwargs: Any) -> Any:
         assert kwargs["search_wdl_frac"] == 1
-        assert torch.count_nonzero(batch["has_search_wdl"]) == 0
+        assert "search_wdl" not in batch
+        assert "has_search_wdl" not in batch
         actual = original(outputs, batch, **kwargs)
         target = torch.nn.functional.one_hot(batch["wdl_t"], 3).float()
         expected = -(target * torch.log_softmax(outputs["wdl"].float(), -1)).sum(-1).mean()
         torch.testing.assert_close(actual["blended_wdl_ce"], expected)
+        torch.testing.assert_close(actual["total"], actual["policy_ce"] + expected)
+        grad = torch.autograd.grad(actual["blended_wdl_ce"], outputs["wdl"], retain_graph=True)[0]
+        expected_grad = (torch.softmax(outputs["wdl"].float(), -1) - target) / target.shape[0]
+        torch.testing.assert_close(grad, expected_grad)
         seen.append(True)
         return actual
 
