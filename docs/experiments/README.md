@@ -11,11 +11,12 @@ holds durable constraints; [evaluation](../eval_protocol.md) explains which
 measurements support which claims.
 Gaps that remain after a pull request merges are listed in [pull-request follow-ups](../pr_followups.md).
 Evidence for records before 2026-10-25 that no staying code, current doc or later record reads (and that is not Bend-related) moved out of git on 2026-11-13: it lives in the `repo-slim-20261113` artifacts archive on the project host under the same relative path (`docs/experiments/evidence/...`, `docs/experiments/artifacts/...`, listed in its `MANIFEST.sha256`) and is recoverable from tag `pre-slim-20261113`, e.g. `git show pre-slim-20261113:docs/experiments/evidence/<path>`. A record link to such a file is therefore dangling in a fresh checkout by design.
+One-off research drivers in `scripts/` that only pre-cut-off records or the frozen ledger cite (and their dedicated tests) moved out of git on 2026-11-14 to the same archive under `scripts/` and `tests/`; recover one with `git show pre-slim-20261113:scripts/<name>`. See [`scripts/README.md`](../../scripts/README.md).
 For future bootstrap choices, see the [adaptive decision policy](2026-09-08-bootstrap-next-value-and-policy-contrasts.md#september-13-adaptive-decisions-for-the-remaining-bootstrap-research): registered result classification and the next research decision are separate.
 
 ## Records
 
-- [2026-11-14: Full-state lower-rate on-policy continuation](2026-11-14-low-lr-on-policy-continuation.md) — prospective reviewed proposal: preserve LOW512 state, add seven fixed on-policy generations to step 4,096, then conditionally continue to 8,192 only after a fresh confirmed gain. V2 source and prospective role proposal independently accepted; root adoption/admissions pending. No new training or predictions yet.
+- [2026-11-14: Full-state lower-rate on-policy continuation](2026-11-14-low-lr-on-policy-continuation.md) — ongoing through fixed G8: G4 completed step 2,048; its descriptive donor diagnostic scored 52.9296875% over 256 games (paired 95% interval 48.1105–57.7489%, includes parity). Registered severe harm is false; fixed G5 is collecting. No supported gain, model promotion or confirmation.
 
 - [2026-11-14: Fixed LOW512 versus original A39 successor](2026-11-14-low512-donor-screen.md) — completed qualified screen nonpass: 48.9258% versus A39 over 512 games (paired 95% interval 45.8184–52.0332%, includes parity). No confirmation eligible, allocated or consumed; donor retained, no playing gain or equivalence claim.
 
