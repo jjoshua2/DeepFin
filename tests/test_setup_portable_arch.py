@@ -57,7 +57,10 @@ def _extension_compile_args(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
     monkeypatch.setattr(platform, "machine", lambda: "x86_64")
     runpy.run_path(str(REPO_ROOT / "setup.py"))
     extensions = captured["ext_modules"]
-    assert len(extensions) == 5
+    # Every extension setup.py builds, as the freshness guard registers them.
+    from scripts.check_c_extensions_fresh import EXTENSION_SPECS
+
+    assert len(extensions) == len(EXTENSION_SPECS) == 6
     return [list(getattr(ext, "extra_compile_args")) for ext in extensions]
 
 
