@@ -114,6 +114,7 @@ class SearchProfile:
             return  # Entire absent component is the existing genuine-outcome fallback.
         core.require(mask is not None and mask.shape == (rows,) and mask.dtype == np.uint8
                      and np.all((mask == 0) | (mask == 1)), "retained-search missing/invalid availability mask")
+        assert mask is not None
         if value is None:
             core.require(not np.any(mask), "retained-search claimed label is absent")
             return
