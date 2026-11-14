@@ -3,8 +3,16 @@
 Status: **PROSPECTIVE SOURCE CANDIDATE; NEW TESTS/CLI UNRUN; NO EXECUTION OR
 SCIENTIFIC TRAINING RECIPE ADMITTED.** This implements the selected engineering
 capability after the [carrier qualification](2026-11-14-sf-current-p0-sidecar-qualification.md).
-Actual original-G1 carrier production/validation and acceptance remain separate
-prerequisites; their results are not assumed here.
+The first consumer source snapshot `6b3f164931caddc7c1ad0ae07956e7ee8d165917`
+has independent source acceptance without findings; its 21 authored cases remain
+unrun. Later source-origin/status checks and stronger full-resume controls need
+the final targeted source recheck. Root subsequently reported the actual original-G1
+carrier producer closed PASS in 117.036560642 seconds, with all 256 games / 24,827
+rows; its separate validator was running at this preparation cutoff. Candidate
+`6533a39bf465ae57ba035a373a7e46c580faeeca7377c12fa787fe7b240dde45`
+is not root-postclosure accepted data. Actual carrier acceptance/review and every
+consumer execution remain separate prerequisites; no consumer data/model result
+is claimed here.
 
 ## Question and fixed controls
 
@@ -88,3 +96,4 @@ See [usage and exact contract schemas](../sf_current_p0_finite_learner.md).
 | Selected engineering direction | `core-SF-current-P0-sidecar-direction-selection-v1/decision.json` | `273b43f7134ed98d6823b9291dcc37ef6d8a91766b04aad4cda235ca2263798c` |
 | Accepted minimal design V2 | `core-SF-current-P0-sidecar-design-v2/manifest.json` | `f525c1c40f218566f4e02871255e60b10d4d3f47de81c78d0508f4ea069312be` |
 | Independent design review | `core-SF-current-P0-sidecar-design-independent-review-v1/review.json` | `cd5684566e835315145976a1b99a865f1c965f3e47540c78bb588079e300bc8a` |
+| First consumer source review (snapshot `6b3f1649…`) | `core-SF-current-P0-finite-consumer-independent-source-review-v1/review.json` | `1d66b9c51ee5e0f4dbc534a6855a3db0530ce7ef68dd7e7234f92b925f1c2741` |
