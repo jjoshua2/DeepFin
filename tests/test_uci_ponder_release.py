@@ -67,6 +67,8 @@ class _ImmediateWorker:
         include_ponder: bool = False,
         allow_terminal_shortcuts: bool = True,
         stop_sensitive: bool = False,
+        on_chunk: object = None,
+        fixed_time_margin: bool = False,
     ) -> SearchResult:
         del (
             stop_event,
@@ -79,6 +81,8 @@ class _ImmediateWorker:
             include_ponder,
             allow_terminal_shortcuts,
             stop_sensitive,
+            on_chunk,
+            fixed_time_margin,
         )
         move = next(iter(board.legal_moves)).uci()
         self.turns.append(board.turn)
@@ -117,6 +121,8 @@ class _BlockingWorker(_ImmediateWorker):
         include_ponder: bool = False,
         allow_terminal_shortcuts: bool = True,
         stop_sensitive: bool = False,
+        on_chunk: object = None,
+        fixed_time_margin: bool = False,
     ) -> SearchResult:
         self._calls += 1
         if self._calls == 1:
@@ -136,6 +142,8 @@ class _BlockingWorker(_ImmediateWorker):
             include_ponder=include_ponder,
             allow_terminal_shortcuts=allow_terminal_shortcuts,
             stop_sensitive=stop_sensitive,
+            on_chunk=on_chunk,
+            fixed_time_margin=fixed_time_margin,
         )
 
 
@@ -161,6 +169,8 @@ class _FaultThenRun(_ImmediateWorker):
         include_ponder: bool = False,
         allow_terminal_shortcuts: bool = True,
         stop_sensitive: bool = False,
+        on_chunk: object = None,
+        fixed_time_margin: bool = False,
     ) -> SearchResult:
         self._calls += 1
         if self._calls == 1:
@@ -180,6 +190,8 @@ class _FaultThenRun(_ImmediateWorker):
             include_ponder=include_ponder,
             allow_terminal_shortcuts=allow_terminal_shortcuts,
             stop_sensitive=stop_sensitive,
+            on_chunk=on_chunk,
+            fixed_time_margin=fixed_time_margin,
         )
 
 
@@ -206,6 +218,8 @@ class _DeclineThenRun(_ImmediateWorker):
         include_ponder: bool = False,
         allow_terminal_shortcuts: bool = True,
         stop_sensitive: bool = False,
+        on_chunk: object = None,
+        fixed_time_margin: bool = False,
     ) -> SearchResult:
         self._calls += 1
         result = super().run(
@@ -221,6 +235,8 @@ class _DeclineThenRun(_ImmediateWorker):
             include_ponder=include_ponder,
             allow_terminal_shortcuts=allow_terminal_shortcuts,
             stop_sensitive=stop_sensitive,
+            on_chunk=on_chunk,
+            fixed_time_margin=fixed_time_margin,
         )
 
         if self._calls == 1 or self.decline_main:
