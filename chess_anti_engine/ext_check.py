@@ -58,6 +58,8 @@ REQUIRED_SYMBOLS: dict[str, tuple[str, ...]] = {
         "encode_piece_planes",
         # encoding/rep_fix.py
         "set_history_rep_fix",
+        # selfplay/finalize.py (imported unguarded)
+        "prepare_sf_multipv",
     ),
     FEATURES_EXT: (
         "compute_extra_features", "compute_relation_matrices",
@@ -75,6 +77,9 @@ REQUIRED_SYMBOLS: dict[str, tuple[str, ...]] = {
         "set_history_rep_fix",
         # gumbel_c reports the root sequential-halving rule it loaded
         "GSS_HALVING_REV",
+        # imported or read unguarded by network_turn / gumbel_c
+        "batch_compute_relations", "SWDL_DRAW_NET_RAW", "SWDL_DRAW_PARAMETRIC_Q",
+        "GSS_MAX_CANDS", "tt_stats",
     ),
 }
 REQUIRED_CBOARD_METHODS: tuple[str, ...] = (
@@ -118,6 +123,13 @@ REBUILD_HINT = (
     "A regular install: reinstall it from the checkout or the wheel "
     "(`pip install --force-reinstall --no-deps <checkout or .whl>`)"
 )
+
+
+# Process exit status of a startup refusal (worker, run.py): sysexits'
+# EX_CONFIG. Distinct from a crash (1) and from the UCI gate's 2, so a
+# supervisor can tell "this build can never run" from a transient failure: tune/distributed_runtime.py treats it as fatal for the
+# trial instead of relaunching the worker into the same refusal.
+C_CORE_REFUSAL_EXIT_CODE = 78
 
 
 class CCoreIncompleteError(RuntimeError):

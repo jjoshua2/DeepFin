@@ -562,7 +562,13 @@ def _probe_c_extensions() -> _CExtensionCaps:
     slot classifier silently; it now raises unless the caller is inside
     ``ext_check.python_reference_paths`` (tests of the reference path).
     """
-    from chess_anti_engine.ext_check import MCTS_TREE_EXT, missing_symbols, refuse_fallback
+    from chess_anti_engine.ext_check import (
+        MCTS_TREE_EXT,
+        REQUIRED_MCTSTREE_METHODS,
+        missing_symbols,
+        refuse_fallback,
+    )
+    import chess_anti_engine.mcts._mcts_tree as _tree_ext
 
     _missing = missing_symbols(MCTS_TREE_EXT, (
         "MCTSTree", "batch_process_ply",
@@ -571,6 +577,14 @@ def _probe_c_extensions() -> _CExtensionCaps:
         "batch_encode_146_lc0_root_legacy_meta_bf16",
         "classify_games", "temperature_resample",
     ))
+    # The tree's own methods: without them gumbel_c / the tree reset would
+    # take a degraded path (fp32 leaves, uncompacted reset, no TB descent).
+    _tree_cls = getattr(_tree_ext, "MCTSTree", None)
+    if _tree_cls is not None:
+        _missing += [
+            f"MCTSTree.{name}" for name in REQUIRED_MCTSTREE_METHODS
+            if not hasattr(_tree_cls, name)
+        ]
     if _missing:
         refuse_fallback(
             "SelfplayState.create", _missing,

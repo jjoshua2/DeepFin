@@ -17,6 +17,7 @@ from typing import Any
 import numpy as np
 
 from chess_anti_engine.encoding import input_plane_count
+from chess_anti_engine.ext_check import C_CORE_REFUSAL_EXIT_CODE, CCoreIncompleteError
 from chess_anti_engine.inference import trial_slot_prefix
 from chess_anti_engine.mcts.gumbel import SELFPLAY_GUMBEL_C_SCALE
 from chess_anti_engine.model import ModelConfig, model_config_to_manifest_dict
@@ -1546,6 +1547,7 @@ def _ensure_distributed_workers(
             )
             continue
         if idx < len(out) and out[idx].poll() is not None:
+            _raise_if_c_core_refusal(out[idx], idx=idx, trial_id=trial_id)
             print(
                 f"[trial] restarting distributed worker idx={idx} "
                 f"exit_code={out[idx].returncode} trial={trial_id}"
@@ -1571,6 +1573,26 @@ def _ensure_distributed_workers(
             print(f"[trial] stopping excess worker pid={p.pid} trial={trial_id}")
             p.terminate()
     return out[:want]
+
+
+def _raise_if_c_core_refusal(proc: subprocess.Popen[bytes], *, idx: int, trial_id: str) -> None:
+    """A worker that exited with the C-core refusal code is fatal for the trial.
+
+    Relaunching it would hit the same refusal on every poll (the build cannot
+    change underneath the trial), so raise with the reason instead. Every
+    other exit code is relaunched exactly as before.
+    """
+    if proc.returncode != C_CORE_REFUSAL_EXIT_CODE:
+        return
+    message = (
+        f"distributed worker idx={idx} refused to start: the compiled C core is "
+        f"incomplete (exit code {C_CORE_REFUSAL_EXIT_CODE}; the worker log names "
+        f"the missing symbols). Not relaunching; trial={trial_id} stops. Rebuild "
+        "the extensions (python scripts/build_production_extensions.py) and restart."
+    )
+    print(f"[trial] {message}", flush=True)
+    log.error("%s", message)
+    raise CCoreIncompleteError(message)
 
 
 def revive_dead_selfplay_processes(
@@ -1631,6 +1653,7 @@ def revive_dead_selfplay_processes(
     for idx, proc in enumerate(worker_procs):
         if proc.poll() is None:
             continue
+        _raise_if_c_core_refusal(proc, idx=idx, trial_id=trial_id)
         print(
             f"[trial] distributed worker idx={idx} exited "
             f"(code={proc.returncode}) mid-iteration; relaunching",
@@ -2213,6 +2236,8 @@ def _ingest_distributed_selfplay(
         next_poll_cb = now + float(on_poll_interval_s)
         try:
             on_poll()
+        except CCoreIncompleteError:
+            raise  # a worker refused on an incomplete C core: fatal, see _raise_if_c_core_refusal
         except Exception:
             log.exception("ingest on_poll callback failed; continuing to wait")
 

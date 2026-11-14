@@ -50,21 +50,27 @@ from chess_anti_engine.mcts.puct import run_mcts_many
 from chess_anti_engine.mcts.sampling import sample_action_with_temperature
 from chess_anti_engine.mcts.solved_root import SolvedRootWitnessUnavailable
 
+# The ImportError text is kept: a refusal (manager._require_compiled_search
+# and the dispatch below) names what actually failed to import.
 try:
     from chess_anti_engine.mcts.puct_c import run_mcts_many_c as _run_mcts_many_c
     _HAS_C_TREE = True
-except ImportError:
+    _C_TREE_IMPORT_ERROR: str | None = None
+except ImportError as _exc:
     _run_mcts_many_c = run_mcts_many
     _HAS_C_TREE = False
+    _C_TREE_IMPORT_ERROR = f"{type(_exc).__name__}: {_exc}"
 
 try:
     from chess_anti_engine.mcts.gumbel_c import (
         run_gumbel_root_many_c as _run_gumbel_root_many_c,
     )
     _HAS_GUMBEL_C = True
-except ImportError:
+    _GUMBEL_C_IMPORT_ERROR: str | None = None
+except ImportError as _exc:
     _run_gumbel_root_many_c = None
     _HAS_GUMBEL_C = False
+    _GUMBEL_C_IMPORT_ERROR = f"{type(_exc).__name__}: {_exc}"
 
 from chess_anti_engine.moves import (
     POLICY_SIZE,
@@ -1251,7 +1257,8 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
                     # Volatility selects the Python search by config; a missing
                     # compiled Gumbel runner must not select it silently.
                     refuse_fallback(
-                        "selfplay network turn", "mcts.gumbel_c (MCTSTree/_mcts_tree)",
+                        "selfplay network turn",
+                        f"mcts.gumbel_c ({_GUMBEL_C_IMPORT_ERROR or 'not imported'})",
                         "the pure-Python Gumbel search",
                     )
                 sub_boards = [state.replay_board(net_idxs[j]) for j in group]
@@ -1289,7 +1296,8 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
             sub_boards = [state.replay_board(net_idxs[j]) for j in group]
             if not _HAS_C_TREE:
                 refuse_fallback(
-                    "selfplay network turn", "mcts.puct_c (MCTSTree/_mcts_tree)",
+                    "selfplay network turn",
+                    f"mcts.puct_c ({_C_TREE_IMPORT_ERROR or 'not imported'})",
                     "the pure-Python PUCT search",
                 )
             _puct_fn = _run_mcts_many_c if _HAS_C_TREE else run_mcts_many

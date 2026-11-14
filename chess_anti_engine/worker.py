@@ -646,20 +646,48 @@ def _resolve_worker_password(args, cfg: dict) -> str:
     return getpass.getpass("Password: ")
 
 
-def _require_c_core_or_exit(log: logging.Logger) -> None:
-    """Refuse to start on a stale or partial C extension build.
+_C_CORE_NOTE_NO_SELF_UPDATE = (
+    "Self-update was not attempted (--self-update is off). Rebuild the "
+    "extensions in this checkout: python scripts/build_production_extensions.py "
+    "(or pip install --no-deps -e .)."
+)
+_C_CORE_NOTE_ALREADY_UPDATED = (
+    "A self-update was already applied in this run (CAE_SELF_UPDATED=1) and "
+    "the installed wheel is still incomplete; reinstall or rebuild it."
+)
+_C_CORE_NOTE_NO_APPLICABLE_UPDATE = (
+    "Self-update was attempted at the first manifest poll and no applicable "
+    "worker wheel was offered. Rebuild the extensions: python "
+    "scripts/build_production_extensions.py (or pip install --no-deps -e .)."
+)
 
-    The selfplay code would otherwise reach a Python fallback (or, now, a
-    point-of-use refusal mid-session); one check here names every missing
-    symbol before any work is fetched.
+
+def _self_update_would_run(args: argparse.Namespace) -> bool:
+    """Mirror of ``WorkerSession._self_update_enabled`` usable before a session exists."""
+    return bool(getattr(args, "self_update", False)) and os.environ.get("CAE_SELF_UPDATED") != "1"
+
+
+def _require_c_core_or_exit(log: logging.Logger, *, note: str) -> None:
+    """Refuse to run on a stale or partial C extension build.
+
+    The selfplay code would otherwise reach a Python fallback (or a
+    point-of-use refusal mid-session); this names every missing symbol before
+    any selfplay work. Exits with ``ext_check.C_CORE_REFUSAL_EXIT_CODE`` so the
+    trial supervisor stops relaunching this worker into the same refusal.
     """
-    from chess_anti_engine.ext_check import CCoreIncompleteError, require_c_core
+    from chess_anti_engine.ext_check import (
+        C_CORE_REFUSAL_EXIT_CODE,
+        CCoreIncompleteError,
+        require_c_core,
+    )
 
     try:
         require_c_core("worker startup")
     except CCoreIncompleteError as exc:
-        log.error("%s", exc)
-        raise SystemExit(str(exc)) from None
+        message = f"{exc}\n{note}"
+        log.error("%s", message)
+        print(message, file=sys.stderr, flush=True)
+        raise SystemExit(C_CORE_REFUSAL_EXIT_CODE) from None
 
 
 def main() -> None:
@@ -898,7 +926,6 @@ def main() -> None:
 
     log = _setup_worker_logging(args)
     log.info("worker starting version=%s protocol=%s", str(PACKAGE_VERSION), int(PROTOCOL_VERSION))
-    _require_c_core_or_exit(log)
 
     work_dir = Path(args.work_dir)
     cfg_path = Path(args.config) if args.config is not None else (work_dir / "worker.yaml")
@@ -908,6 +935,33 @@ def main() -> None:
     pinned_games_per_batch_cli = args.games_per_batch is not None
 
     _merge_cli_with_yaml_defaults(args, cfg)
+
+  # C-core check. With self-update enabled the refusal waits for the first
+  # manifest poll (WorkerSession._poll_manifest), so a stale install can still
+  # be fixed by the server's wheel: nothing that needs the C core runs before
+  # that point (session construction, lease, pending-shard upload and the
+  # manifest fetch are pure Python). Without self-update, refuse now.
+    defer_c_core_check = False
+    if _self_update_would_run(args):
+        from chess_anti_engine.ext_check import extension_problems
+
+        startup_problems = extension_problems()
+        if startup_problems:
+            defer_c_core_check = True
+            log.warning(
+                "C core incomplete (%s); --self-update is on, so the refusal is "
+                "deferred until the first manifest's self-update check",
+                "; ".join(startup_problems),
+            )
+    else:
+        _require_c_core_or_exit(
+            log,
+            note=(
+                _C_CORE_NOTE_ALREADY_UPDATED
+                if bool(getattr(args, "self_update", False))
+                else _C_CORE_NOTE_NO_SELF_UPDATE
+            ),
+        )
 
     if args.username is None:
         raise SystemExit("--username is required (or set username in worker config)")
@@ -944,6 +998,7 @@ def main() -> None:
         pinned_games_per_batch_cli=pinned_games_per_batch_cli,
         requests_mod=requests,
     )
+    session._c_core_check_deferred = defer_c_core_check
     session.run()
 
 
@@ -999,6 +1054,9 @@ class WorkerSession:
   # and adding defaults would mint two more two-source-of-truth pairs.
     _shutdown_requested: bool = False
     _shutdown_signal: int = 0
+  # Set by main() when --self-update deferred the C-core refusal to the first
+  # manifest poll (see main and _poll_manifest).
+    _c_core_check_deferred: bool = False
 
     def __init__(
         self,
@@ -3730,6 +3788,11 @@ class WorkerSession:
         manifest = r.json()
         compat = self._check_manifest_compat(manifest)
         self._maybe_self_update_from_manifest(manifest, compat)
+  # Self-update did not exec (no applicable wheel): the deferred C-core
+  # refusal from main() fires now, before any asset sync or selfplay.
+        if self._c_core_check_deferred:
+            self._c_core_check_deferred = False
+            _require_c_core_or_exit(self.log, note=_C_CORE_NOTE_NO_APPLICABLE_UPDATE)
   # Self-update may not have returned; if we're still here and behind, exit.
         if compat.protocol_mismatch:
             raise SystemExit(f"Protocol mismatch: worker={PROTOCOL_VERSION} server_required={compat.req_proto}")

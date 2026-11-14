@@ -445,11 +445,18 @@ def _report_guard_health() -> None:
         return
     _tt_health_next_check = now + _TT_HEALTH_INTERVAL_S
 
+    tt_stats = getattr(_mcts_tree_ext, "tt_stats", None)
+    if tt_stats is None:
+        refuse_fallback(
+            "run_gumbel_root_many_c", "_mcts_tree.tt_stats",
+            "skipping the transposition-guard health report",
+        )
+        return
     try:
-        tt = _mcts_tree_ext.tt_stats()
+        tt = tt_stats()
         reject = int(tt["reject"])
         context_reject = int(tt.get("context_reject", 0))
-    except (AttributeError, KeyError, TypeError):
+    except (KeyError, TypeError):
         return  # pre-fix .so; the ABI guard above already covers that case
     current = (
         reject,
@@ -504,6 +511,11 @@ def _report_halving_rev() -> None:
     if _halving_rev_reported:
         return
     _halving_rev_reported = True
+    if not hasattr(_mcts_tree_ext, "GSS_HALVING_REV"):
+        refuse_fallback(
+            "run_gumbel_root_many_c", "_mcts_tree.GSS_HALVING_REV",
+            "assuming the legacy root-halving rule",
+        )
     rev = int(getattr(_mcts_tree_ext, "GSS_HALVING_REV", _GSS_HALVING_REV_LEGACY))
     if rev >= 3:
         rule = "fresh root_qs + current-search root priors (mctx / gumbel.py reference)"
@@ -998,6 +1010,24 @@ def run_gumbel_root_many_c(
         batch_encode_bf16 is not None
         and bool(getattr(eval_impl, "supports_input_bf16_bits", False))
     )
+  # An evaluator that can take compact-legal bf16 leaves, on a tree that lacks
+  # the C methods for them, used to fall back to dense fp32 leaves below with
+  # no message (hasattr guards at the leaf loop). The evaluator lacking the
+  # transport is legitimate and still runs fp32; the TREE lacking it is a stale
+  # build and is refused.
+  # Same instance-level probe as the leaf loop (wrappers forward attributes).
+    _tree_probe: object = tree if tree is not None else MCTSTree
+    if _has_legal_bf16 and not cfg.compute_relations:
+        _missing_tree = [
+            f"MCTSTree.{name}" for name in (
+                "get_pending_legal_indices", "continue_gumbel_sims_legal_bf16",
+            ) if not hasattr(_tree_probe, name)
+        ]
+        if _missing_tree:
+            refuse_fallback(
+                "run_gumbel_root_many_c", _missing_tree,
+                "dense fp32 leaves for a compact-legal bf16 evaluator",
+            )
   # All async-capable evaluators conform to the protocol; _has_async is the runtime check.
     _async_eval = cast("AsyncBatchEvaluator", eval_impl)
     _use_pipeline = _has_async and n_boards >= 64 and not cfg.compute_relations  # relations ride the single-loop fallback path

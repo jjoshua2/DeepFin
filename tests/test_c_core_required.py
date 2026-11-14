@@ -62,22 +62,85 @@ def _extension_object_names() -> set[str]:
     return names
 
 
-_EXT_MODULE_SUFFIXES = ("._lc0_ext", "._features_ext", "._mcts_tree")
+_EXT_MODULES = tuple(ext_check.REQUIRED_EXTENSIONS)
+# Handlers that turn a missing symbol into a quiet alternative path.
+_SWALLOWING_HANDLERS = {
+    "ImportError", "ModuleNotFoundError", "AttributeError", "Exception", "BaseException",
+}
+
+
+def _ext_aliases(tree: ast.AST) -> dict[str, str]:
+    """Local names bound to a required extension module (``import x as m`` etc.)."""
+    aliases: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in _EXT_MODULES:
+                    aliases[alias.asname or alias.name] = alias.name
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            for alias in node.names:
+                full = f"{node.module}.{alias.name}"
+                if full in _EXT_MODULES:
+                    aliases[alias.asname or alias.name] = full
+    return aliases
+
+
+def _swallows(node: ast.Try) -> bool:
+    for handler in node.handlers:
+        if handler.type is None:  # bare except
+            return True
+        types = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+        if {t.id for t in types if isinstance(t, ast.Name)} & _SWALLOWING_HANDLERS:
+            return True
+    return False
+
+
+def _ext_reads(node: ast.AST, aliases: dict[str, str]) -> list[tuple[int, str]]:
+    """(line, name) for every extension symbol ``node`` imports or reads.
+
+    ``from <ext> import name``, ``<alias>.name`` / ``<dotted ext>.name``, and a
+    whole-module import (``import <ext> [as m]`` / ``importlib.import_module("<ext>")``)
+    reported as the module's own dotted name.
+    """
+    out: list[tuple[int, str]] = []
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.ImportFrom) and sub.module in _EXT_MODULES:
+            out += [(sub.lineno, alias.name) for alias in sub.names]
+        elif isinstance(sub, ast.ImportFrom) and sub.module:
+            out += [
+                (sub.lineno, f"{sub.module}.{alias.name}") for alias in sub.names
+                if f"{sub.module}.{alias.name}" in _EXT_MODULES
+            ]
+        elif isinstance(sub, ast.Import):
+            out += [(sub.lineno, alias.name) for alias in sub.names if alias.name in _EXT_MODULES]
+        elif (
+            isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
+            and sub.func.attr == "import_module" and sub.args
+            and isinstance(sub.args[0], ast.Constant) and sub.args[0].value in _EXT_MODULES
+        ):
+            out.append((sub.lineno, str(sub.args[0].value)))
+        elif isinstance(sub, ast.Attribute):
+            base = ast.unparse(sub.value)
+            if base in aliases or base in _EXT_MODULES:
+                out.append((sub.lineno, sub.attr))
+    return out
 
 
 def _guarded_probes() -> list[tuple[str, int, str]]:
     """Every (file, line, name) where package code treats a C symbol as optional.
 
-    Two shapes: ``hasattr(x, "name")`` / ``getattr(x, "name", ...)`` whose name
-    exists on an extension module, ``CBoard`` or ``MCTSTree``; and a
-    ``from <extension> import name`` inside a ``try`` that handles an
-    ImportError (or Exception).
+    ``hasattr(x, "name")`` / ``getattr(x, "name", ...)`` whose name exists on an
+    extension module, ``CBoard`` or ``MCTSTree``; and any extension import or
+    attribute read inside a ``try`` whose handler swallows ImportError,
+    ModuleNotFoundError, AttributeError, Exception, BaseException or anything
+    (bare ``except``).
     """
     on_ext = _extension_object_names()
     found: list[tuple[str, int, str]] = []
     for path in sorted(PACKAGE.rglob("*.py")):
         rel = str(path.relative_to(REPO_ROOT))
         tree = ast.parse(path.read_text(encoding="utf-8"))
+        aliases = _ext_aliases(tree)
         for node in ast.walk(tree):
             if (
                 isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
@@ -87,24 +150,24 @@ def _guarded_probes() -> list[tuple[str, int, str]]:
                 and node.args[1].value in on_ext
             ):
                 found.append((rel, node.lineno, node.args[1].value))
-            if isinstance(node, ast.Try):
-                handled = set()
-                for handler in node.handlers:
-                    types = (
-                        handler.type.elts if isinstance(handler.type, ast.Tuple)
-                        else [handler.type]
-                    )
-                    handled |= {t.id for t in types if isinstance(t, ast.Name)}
-                if not handled & {"ImportError", "ModuleNotFoundError", "Exception"}:
-                    continue
+            if isinstance(node, ast.Try) and _swallows(node):
                 for stmt in node.body:
-                    for sub in ast.walk(stmt):
-                        if (
-                            isinstance(sub, ast.ImportFrom) and sub.module
-                            and sub.module.endswith(_EXT_MODULE_SUFFIXES)
-                        ):
-                            found += [(rel, sub.lineno, alias.name) for alias in sub.names]
+                    found += [(rel, ln, name) for ln, name in _ext_reads(stmt, aliases)]
     return found
+
+
+def _all_ext_references() -> list[tuple[str, int, str]]:
+    """Every extension symbol the package imports or reads, guarded or not."""
+    found: list[tuple[str, int, str]] = []
+    for path in sorted(PACKAGE.rglob("*.py")):
+        rel = str(path.relative_to(REPO_ROOT))
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        found += [(rel, ln, name) for ln, name in _ext_reads(tree, _ext_aliases(tree))]
+    return found
+
+
+def _accepted_names() -> set[str]:
+    return _all_required_names() | set(ext_check.GUARDED_OPTIONAL_ALLOWLIST) | set(_EXT_MODULES)
 
 
 def test_every_guarded_c_symbol_is_required_or_allow_listed() -> None:
@@ -114,10 +177,9 @@ def test_every_guarded_c_symbol_is_required_or_allow_listed() -> None:
     method tuples) so every entry point refuses a build without it, or add it
     to ``GUARDED_OPTIONAL_ALLOWLIST`` with the reason it is not a C fallback.
     """
-    required = _all_required_names()
     allowed = set(ext_check.GUARDED_OPTIONAL_ALLOWLIST)
     probes = _guarded_probes()
-    unlisted = sorted({(f, ln, n) for f, ln, n in probes if n not in required | allowed})
+    unlisted = sorted({(f, ln, n) for f, ln, n in probes if n not in _accepted_names()})
     assert not unlisted, f"guarded C symbols not in ext_check's required set: {unlisted}"
     # The scan is live: it sees the known sites (a scan that finds nothing
     # would pass the assertion above vacuously).
@@ -125,26 +187,101 @@ def test_every_guarded_c_symbol_is_required_or_allow_listed() -> None:
     for known in ("batch_process_ply", "classify_games", "encode_full", "encode_full_batch",
                   "root_terminal_actions", "set_history_rep_fix", "batch_encode_146_bf16",
                   "legal_move_policy_indices", "encode_piece_planes", "compute_extra_features",
-                  "continue_gumbel_sims_legal_bf16", "reset_compact", "batch_descend_puct_tb"):
+                  "continue_gumbel_sims_legal_bf16", "reset_compact", "batch_descend_puct_tb",
+                  "tt_stats", "GSS_HALVING_REV"):
         assert known in names, known
     # Every allow-list entry is still used, so it cannot quietly cover a new site.
-    assert allowed <= names, allowed - names
+    assert allowed <= names | {n for _, _, n in _all_ext_references()}, allowed - names
 
 
-def test_scan_catches_a_new_guarded_probe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Mutation of the scanner's input: a new hasattr fallback is reported."""
+def test_every_c_symbol_the_package_uses_is_required() -> None:
+    """Unguarded imports/reads too: a symbol the code needs must be in the startup check.
+
+    Otherwise a build lacking it passes every startup gate and fails later, at
+    import or mid-session.
+    """
+    refs = _all_ext_references()
+    unlisted = sorted({(f, ln, n) for f, ln, n in refs if n not in _accepted_names()})
+    assert not unlisted, f"extension symbols used but not required: {unlisted}"
+    names = {n for _, _, n in refs}
+    for known in ("prepare_sf_multipv", "batch_compute_relations", "SWDL_DRAW_NET_RAW",
+                  "SWDL_DRAW_PARAMETRIC_Q", "GSS_MAX_CANDS", "MCTSTree", "CBoard"):
+        assert known in names, known
+
+
+_SYNTHETIC_PATTERNS = {
+    "hasattr_probe": (
+        "import chess_anti_engine.mcts._mcts_tree as t\n"
+        "if hasattr(t, 'slider_selftest'):\n    pass\n",
+        {"slider_selftest"},
+    ),
+    "import_error_from_import": (
+        "try:\n    from chess_anti_engine.encoding._lc0_ext import slider_selftest\n"
+        "except ImportError:\n    slider_selftest = None\n",
+        {"slider_selftest"},
+    ),
+    "attribute_error_read": (
+        "import chess_anti_engine.mcts._mcts_tree as t\n"
+        "try:\n    t.slider_selftest()\nexcept AttributeError:\n    pass\n",
+        {"slider_selftest"},
+    ),
+    "bare_except_import": (
+        "try:\n    from chess_anti_engine.mcts._mcts_tree import slider_selftest\n"
+        "except:\n    pass\n",
+        {"slider_selftest"},
+    ),
+    "base_exception_import": (
+        "try:\n    from chess_anti_engine.mcts._mcts_tree import slider_selftest\n"
+        "except BaseException:\n    pass\n",
+        {"slider_selftest"},
+    ),
+    "import_as_in_try": (
+        "try:\n    import chess_anti_engine.encoding._perft_like as m\n"
+        "    import chess_anti_engine.mcts._mcts_tree as t\n    t.slider_selftest\n"
+        "except ImportError:\n    t = None\n",
+        {"chess_anti_engine.mcts._mcts_tree", "slider_selftest"},
+    ),
+    "import_module_in_try": (
+        "import importlib\n"
+        "try:\n    importlib.import_module('chess_anti_engine.encoding._features_ext')\n"
+        "except Exception:\n    pass\n",
+        {"chess_anti_engine.encoding._features_ext"},
+    ),
+}
+
+
+@pytest.mark.parametrize("pattern", sorted(_SYNTHETIC_PATTERNS))
+def test_scan_catches_each_guarded_pattern(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pattern: str,
+) -> None:
+    """The scanner itself, on one synthetic module per pattern it must see."""
+    source, want = _SYNTHETIC_PATTERNS[pattern]
     fake_pkg = tmp_path / "chess_anti_engine"
     fake_pkg.mkdir()
-    (fake_pkg / "newmod.py").write_text(
-        "import chess_anti_engine.mcts._mcts_tree as t\n"
-        "if hasattr(t, 'tt_stats'):\n    pass\n"
-        "try:\n    from chess_anti_engine.encoding._lc0_ext import prepare_sf_multipv\n"
-        "except ImportError:\n    prepare_sf_multipv = None\n"
-    )
+    (fake_pkg / "newmod.py").write_text(source)
     monkeypatch.setattr(sys.modules[__name__], "PACKAGE", fake_pkg)
     monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
     names = {n for _, _, n in _guarded_probes()}
-    assert names == {"tt_stats", "prepare_sf_multipv"}
+    assert names == want
+
+
+def test_reference_scan_sees_unguarded_imports_and_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_pkg = tmp_path / "chess_anti_engine"
+    fake_pkg.mkdir()
+    (fake_pkg / "newmod.py").write_text(
+        "from chess_anti_engine.encoding._lc0_ext import slider_selftest\n"
+        "import chess_anti_engine.mcts._mcts_tree as t\n"
+        "from chess_anti_engine.mcts import _mcts_tree as t2\n"
+        "x = t.SLIDER_BACKEND\ny = t2.tt_stats\n"
+        "z = chess_anti_engine.encoding._features_ext.compute_extra_features\n"
+    )
+    monkeypatch.setattr(sys.modules[__name__], "PACKAGE", fake_pkg)
+    monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
+    names = {n for _, _, n in _all_ext_references()}
+    assert {"slider_selftest", "SLIDER_BACKEND", "tt_stats", "compute_extra_features"} <= names
+    assert {n for n in names if n not in _accepted_names()} == {"slider_selftest", "SLIDER_BACKEND"}
 
 
 @pytest.mark.parametrize(
@@ -192,6 +329,23 @@ def test_uci_gate_uses_the_shared_tables(monkeypatch: pytest.MonkeyPatch) -> Non
     assert sc.REBUILD_HINT == ext_check.REBUILD_HINT
     monkeypatch.delattr(mcts_tree, "batch_process_ply")
     assert any("batch_process_ply" in p for p in sc.startup_problems(check_freshness=False))
+
+
+def _raise_inside_opt_in(reason: str) -> None:
+    with python_reference_paths(reason):
+        raise RuntimeError(reason)
+
+
+def test_opt_in_is_released_when_the_body_raises() -> None:
+    assert not ext_check.python_reference_allowed()
+    with pytest.raises(RuntimeError, match="single"):
+        _raise_inside_opt_in("single")
+    assert not ext_check.python_reference_allowed()
+    with python_reference_paths("outer"):
+        with pytest.raises(RuntimeError, match="inner"):
+            _raise_inside_opt_in("inner")
+        assert ext_check.python_reference_allowed(), "outer opt-in lost after inner raise"
+    assert not ext_check.python_reference_allowed()
 
 
 def test_opt_in_needs_a_reason_and_is_scoped() -> None:
@@ -372,29 +526,262 @@ def test_gumbel_c_refuses_missing_bf16_encoders(monkeypatch: pytest.MonkeyPatch)
         )
 
 
+@pytest.mark.parametrize("method", ext_check.REQUIRED_MCTSTREE_METHODS)
+def test_selfplay_probe_refuses_a_tree_missing_a_method(
+    monkeypatch: pytest.MonkeyPatch, method: str,
+) -> None:
+    from chess_anti_engine.selfplay.state import _probe_c_extensions
+
+    real = mcts_tree.MCTSTree
+    stand_in = type("MCTSTree", (), {
+        m: getattr(real, m) for m in dir(real) if m != method and not m.startswith("__")
+    })
+    monkeypatch.setattr(mcts_tree, "MCTSTree", stand_in)
+    with pytest.raises(CCoreIncompleteError, match=f"MCTSTree.{method}"):
+        _probe_c_extensions()
+
+
+class _LegalBf16Evaluator:
+    supports_legal_bf16 = True
+
+    def evaluate_legal_bf16(self, *_a: Any) -> Any:  # never reached
+        raise AssertionError("evaluated before the tree check")
+
+
+class _PlainEvaluator:
+    def evaluate_encoded(self, *_a: Any) -> Any:
+        raise RuntimeError("plain evaluator reached evaluation")
+
+
+def test_gumbel_c_refuses_a_tree_without_the_legal_bf16_methods() -> None:
+    from chess_anti_engine.mcts import gumbel_c
+    from chess_anti_engine.mcts.gumbel import GumbelConfig
+
+    tree = cast(Any, _Without(mcts_tree.MCTSTree(), "continue_gumbel_sims_legal_bf16"))
+    kwargs: dict[str, Any] = {
+        "device": "cpu", "rng": np.random.default_rng(0), "cfg": GumbelConfig(), "tree": tree,
+    }
+    with pytest.raises(CCoreIncompleteError, match="continue_gumbel_sims_legal_bf16"):
+        gumbel_c.run_gumbel_root_many_c(
+            None, [chess.Board()], evaluator=cast(Any, _LegalBf16Evaluator()), **kwargs,
+        )
+    # An evaluator without the compact transport legitimately runs fp32: the
+    # tree check does not fire (it fails later, at evaluation, for this stub).
+    with pytest.raises(RuntimeError, match="plain evaluator") as info:
+        gumbel_c.run_gumbel_root_many_c(
+            None, [chess.Board()], evaluator=cast(Any, _PlainEvaluator()), **kwargs,
+        )
+    assert not isinstance(info.value, CCoreIncompleteError)
+
+
+def test_gumbel_c_refuses_missing_halving_rev(monkeypatch: pytest.MonkeyPatch) -> None:
+    from chess_anti_engine.mcts import gumbel_c
+
+    monkeypatch.setattr(gumbel_c, "_halving_rev_reported", False)
+    monkeypatch.delattr(mcts_tree, "GSS_HALVING_REV")
+    with pytest.raises(CCoreIncompleteError, match="GSS_HALVING_REV"):
+        gumbel_c._report_halving_rev()
+
+
+def test_gumbel_c_refuses_missing_tt_stats(monkeypatch: pytest.MonkeyPatch) -> None:
+    from chess_anti_engine.mcts import gumbel_c
+
+    monkeypatch.setattr(gumbel_c, "_tt_health_next_check", 0.0)
+    monkeypatch.delattr(mcts_tree, "tt_stats")
+    with pytest.raises(CCoreIncompleteError, match="tt_stats"):
+        gumbel_c._report_guard_health()
+
+
+def test_tree_reset_refuses_without_reset_compact() -> None:
+    from chess_anti_engine.selfplay.manager import _reset_search_tree
+
+    calls: list[str] = []
+
+    class _OldTree:
+        def reset(self) -> None:
+            calls.append("reset")
+
+    with pytest.raises(CCoreIncompleteError, match="reset_compact"):
+        _reset_search_tree(_OldTree())
+    assert calls == []
+    with python_reference_paths("reference reset"):
+        _reset_search_tree(_OldTree())
+    assert calls == ["reset"]
+
+
+def test_puct_c_refuses_without_cboard(monkeypatch: pytest.MonkeyPatch) -> None:
+    from chess_anti_engine.mcts import puct_c
+    from chess_anti_engine.mcts.puct import MCTSConfig
+    from tests.selfplay_helpers import UniformPolicyValueModel
+
+    monkeypatch.setattr(puct_c, "_HAS_CBOARD", False)
+    with pytest.raises(CCoreIncompleteError, match="CBoard"):
+        puct_c.run_mcts_many_c(
+            UniformPolicyValueModel().eval(), [chess.Board()], device="cpu",
+            rng=np.random.default_rng(0), cfg=MCTSConfig(simulations=2),
+        )
+
+
+def test_refusals_carry_the_original_import_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    from chess_anti_engine.selfplay import match as match_mod
+    from chess_anti_engine.selfplay import network_turn as nt
+    from chess_anti_engine.selfplay import play_batch
+
+    monkeypatch.setattr(nt, "_HAS_GUMBEL_C", False)
+    monkeypatch.setattr(nt, "_GUMBEL_C_IMPORT_ERROR", "ImportError: cannot import name 'X' (boom)")
+    kwargs = _play_batch_kwargs()
+    model = kwargs.pop("model")
+    with pytest.raises(CCoreIncompleteError, match="boom"):
+        play_batch(model, **kwargs)
+    monkeypatch.setattr(match_mod, "_GUMBEL_C_IMPORT_ERROR", "ImportError: arena-boom")
+    with pytest.raises(CCoreIncompleteError, match="arena-boom"):
+        _arena(monkeypatch, "_HAS_GUMBEL_C", "gumbel")
+
+
 # ── worker / training / train.sh gate ──────────────────────────────────────
 
 
-def test_worker_startup_refuses_before_reading_config(
+def _worker_main_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, extra: list[str]) -> list[Any]:
+    """Drive worker.main() up to (not into) the session; returns the sessions built."""
+    from chess_anti_engine import worker
+
+    monkeypatch.setattr(worker, "_configure_worker_torch_env", lambda: None)
+    monkeypatch.setattr(worker, "_setup_worker_logging", lambda args: logging.getLogger("t"))
+    built: list[Any] = []
+
+    class _FakeSession:
+        def __init__(self, *_a: Any, **_kw: Any) -> None:
+            built.append(self)
+
+        def run(self) -> None:
+            pass
+
+    monkeypatch.setattr(worker, "WorkerSession", _FakeSession)
+    monkeypatch.setattr(sys, "argv", [
+        "worker", "--work-dir", str(tmp_path), "--username", "u", "--password", "p",
+        "--stockfish-path", "/inert/sf", "--no-save-config", *extra,
+    ])
+    return built
+
+
+def test_worker_startup_refuses_without_self_update(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    from chess_anti_engine import worker
+
+    monkeypatch.delenv("CAE_SELF_UPDATED", raising=False)
+    monkeypatch.delattr(mcts_tree, "classify_games")
+    built = _worker_main_env(monkeypatch, tmp_path, [])
+    with pytest.raises(SystemExit) as info:
+        worker.main()
+    assert info.value.code == ext_check.C_CORE_REFUSAL_EXIT_CODE
+    err = capsys.readouterr().err
+    assert "classify_games" in err
+    assert "Self-update was not attempted" in err
+    assert built == [], "a session was built on an incomplete C core"
+
+
+def test_worker_with_self_update_defers_the_refusal(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     from chess_anti_engine import worker
 
+    monkeypatch.delenv("CAE_SELF_UPDATED", raising=False)
     monkeypatch.delattr(mcts_tree, "classify_games")
-    monkeypatch.setattr(worker, "_configure_worker_torch_env", lambda: None)
-    monkeypatch.setattr(worker, "_setup_worker_logging", lambda args: logging.getLogger("t"))
+    built = _worker_main_env(monkeypatch, tmp_path, ["--self-update"])
+    worker.main()
+    assert len(built) == 1
+    assert built[0]._c_core_check_deferred is True
 
-    def forbidden(*_a: Any, **_kw: Any) -> Any:
-        raise AssertionError("worker read its config before the C core check")
 
-    monkeypatch.setattr(worker, "load_worker_config", forbidden)
-    monkeypatch.setattr(sys, "argv", ["worker", "--work-dir", str(tmp_path)])
-    with pytest.raises(SystemExit, match="classify_games"):
+def test_worker_complete_build_with_self_update_does_not_defer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    from chess_anti_engine import worker
+
+    monkeypatch.delenv("CAE_SELF_UPDATED", raising=False)
+    built = _worker_main_env(monkeypatch, tmp_path, ["--self-update"])
+    worker.main()
+    assert built[0]._c_core_check_deferred is False
+
+
+def test_worker_after_a_self_update_refuses_at_startup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    from chess_anti_engine import worker
+
+    monkeypatch.setenv("CAE_SELF_UPDATED", "1")
+    monkeypatch.delattr(mcts_tree, "classify_games")
+    built = _worker_main_env(monkeypatch, tmp_path, ["--self-update"])
+    with pytest.raises(SystemExit) as info:
         worker.main()
+    assert info.value.code == ext_check.C_CORE_REFUSAL_EXIT_CODE
+    assert "already applied" in capsys.readouterr().err
+    assert built == []
+
+
+class _ManifestResponse:
+    status_code = 200
+
+    def json(self) -> dict[str, Any]:
+        return {"protocol_version": None}
+
+
+def _poll_session(calls: list[str]) -> Any:
+    """A WorkerSession with just enough state for _poll_manifest."""
+    from types import SimpleNamespace
+
+    from chess_anti_engine import worker
+
+    sess = cast(Any, object.__new__(worker.WorkerSession))
+    sess.inference_client = object()
+    sess.fixed_trial_id = "t"
+    sess.cfg = {}
+    sess.log = logging.getLogger("t")
+    sess.args = SimpleNamespace(poll_seconds=0.0)
+    sess.trial_api_prefix = "/api"
+    sess.worker_id = "w"
+    sess.lease_id = None
+    sess.manifest_state = "active"
+    sess.manifest_state_elapsed_s = None
+    sess._manifest_poll_failures = 0
+    sess._server_url_for = lambda path: path
+    sess._upload_pending_shards = lambda **_kw: None
+    sess._upload_pending_arena_results = lambda: None
+    sess._requests = SimpleNamespace(get=lambda *a, **kw: _ManifestResponse())
+    sess._check_manifest_compat = lambda m: SimpleNamespace(
+        protocol_mismatch=False, version_too_old=False, req_proto=None, min_worker_version=None,
+    )
+    sess._maybe_self_update_from_manifest = lambda m, c: calls.append("self_update")
+    sess._check_pause_selfplay = lambda m: (calls.append("pause_check"), False)[1]
+    return sess
+
+
+def test_deferred_refusal_fires_after_the_self_update_check(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    calls: list[str] = []
+    sess = _poll_session(calls)
+    sess._c_core_check_deferred = True
+    monkeypatch.delattr(mcts_tree, "classify_games")
+    with pytest.raises(SystemExit) as info:
+        sess._poll_manifest()
+    assert info.value.code == ext_check.C_CORE_REFUSAL_EXIT_CODE
+    assert calls == ["self_update"], "refused before trying the update, or ran past it"
+    assert "no applicable worker wheel" in capsys.readouterr().err
+
+
+def test_deferred_check_passes_on_a_complete_build() -> None:
+    calls: list[str] = []
+    sess = _poll_session(calls)
+    sess._c_core_check_deferred = True
+    assert sess._poll_manifest() == {"protocol_version": None}
+    assert calls == ["self_update", "pause_check"]
+    assert sess._c_core_check_deferred is False
 
 
 def test_run_main_refuses_before_booting_training(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
 ) -> None:
     from chess_anti_engine import run
 
@@ -415,8 +802,10 @@ def test_run_main_refuses_before_booting_training(
     monkeypatch.setattr(run.torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(run.torch.backends.cuda.matmul, "allow_tf32", run.torch.backends.cuda.matmul.allow_tf32)
     monkeypatch.setattr(run.torch.backends.cudnn, "allow_tf32", run.torch.backends.cudnn.allow_tf32)
-    with pytest.raises(SystemExit, match="batch_encode_146_bf16"):
+    with pytest.raises(SystemExit) as info:
         run.main()
+    assert info.value.code == ext_check.C_CORE_REFUSAL_EXIT_CODE
+    assert "batch_encode_146_bf16" in capsys.readouterr().err
 
 
 def _load_gate_script() -> ModuleType:
@@ -443,6 +832,18 @@ def test_train_gate_symbol_check_sees_a_partial_build(tmp_path: Path, monkeypatc
     monkeypatch.setenv("PYTHONPATH", str(tmp_path))
     problems = gate.symbol_problems(REPO_ROOT)
     assert any("classify_games" in p for p in problems), problems
+
+
+def test_train_gate_inspects_the_root_it_is_given(tmp_path: Path) -> None:
+    """--root decides which checkout is imported, not the script's own location."""
+    gate = _load_gate_script()
+    pkg = tmp_path / "chess_anti_engine"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "ext_check.py").write_text(
+        "def extension_problems():\n    return ['stub root: _mcts_tree lacks X']\n"
+    )
+    assert gate.symbol_problems(tmp_path) == ["stub root: _mcts_tree lacks X"]
 
 
 def test_train_gate_main_runs_symbol_check_only_when_asked(

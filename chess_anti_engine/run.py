@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import torch
@@ -726,11 +727,16 @@ def main() -> None:
 
     # Refuse a stale or partial C extension build before booting the server,
     # broker, worker and trainer (the same check the worker and UCI run).
-    from chess_anti_engine.ext_check import CCoreIncompleteError, require_c_core
+    from chess_anti_engine.ext_check import (
+        C_CORE_REFUSAL_EXIT_CODE,
+        CCoreIncompleteError,
+        require_c_core,
+    )
     try:
         require_c_core(f"run --mode {args.mode}")
     except CCoreIncompleteError as exc:
-        raise SystemExit(str(exc)) from None
+        print(str(exc), file=sys.stderr, flush=True)
+        raise SystemExit(C_CORE_REFUSAL_EXIT_CODE) from None
 
   # Both train and tune modes go through run_tune — train just forces
   # scheduler=none and num_samples=1 so there's no hyperparameter search.

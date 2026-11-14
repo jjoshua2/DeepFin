@@ -286,6 +286,24 @@ def _wait_for_starved_sf(
         )
 
 
+def _reset_search_tree(tree: Any) -> None:
+    """Drop every node of the selfplay tree, compacting its arena.
+
+    ``MCTSTree.reset_compact`` is required (``ext_check``); an old build
+    without it used to fall back to ``reset()`` silently, and is now refused
+    unless the caller opted in to the reference paths.
+    """
+    reset_compact = getattr(tree, "reset_compact", None)
+    if reset_compact is not None:
+        reset_compact()
+        return
+    refuse_fallback(
+        "play_batch tree reset", "MCTSTree.reset_compact",
+        "MCTSTree.reset() without compaction",
+    )
+    tree.reset()
+
+
 def _require_compiled_search() -> None:
     """Refuse a play_batch whose compiled search runners failed to import.
 
@@ -297,12 +315,17 @@ def _require_compiled_search() -> None:
     """
     # Read at call time (not bound at import) so the flags a stale build set
     # at import are what is checked.
-    from chess_anti_engine.selfplay.network_turn import _HAS_C_TREE, _HAS_GUMBEL_C
+    from chess_anti_engine.selfplay.network_turn import (
+        _C_TREE_IMPORT_ERROR,
+        _GUMBEL_C_IMPORT_ERROR,
+        _HAS_C_TREE,
+        _HAS_GUMBEL_C,
+    )
 
     missing = [
-        name for name, ok in (
-            ("mcts.gumbel_c.run_gumbel_root_many_c", _HAS_GUMBEL_C),
-            ("mcts.puct_c.run_mcts_many_c", _HAS_C_TREE),
+        f"{name} ({err or 'not imported'})" for name, ok, err in (
+            ("mcts.gumbel_c.run_gumbel_root_many_c", _HAS_GUMBEL_C, _GUMBEL_C_IMPORT_ERROR),
+            ("mcts.puct_c.run_mcts_many_c", _HAS_C_TREE, _C_TREE_IMPORT_ERROR),
         ) if not ok
     ]
     if missing:
@@ -678,11 +701,7 @@ def play_batch(
                 and state.mcts_tree.node_count() > 500_000
             ):
                 t0 = time.perf_counter()
-                reset_compact = getattr(state.mcts_tree, "reset_compact", None)
-                if reset_compact is not None:
-                    reset_compact()
-                else:  # pragma: no cover - compatibility with old extension builds
-                    state.mcts_tree.reset()
+                _reset_search_tree(state.mcts_tree)
                 for _i in range(len(state.root_ids)):
                     state.root_ids[_i] = -1
                 if on_timing is not None:

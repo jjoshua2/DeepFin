@@ -23,19 +23,24 @@ from chess_anti_engine.mcts.puct import run_mcts_many
 from chess_anti_engine.moves import index_to_move_fast, index_to_move_strict
 from chess_anti_engine.selfplay.opening import OpeningConfig, make_starting_board
 
+# The ImportError text is kept for the refusal message below.
 try:
     from chess_anti_engine.mcts.puct_c import run_mcts_many_c as _run_mcts_many_c
     _HAS_C_TREE = True
-except ImportError:
+    _C_TREE_IMPORT_ERROR: str | None = None
+except ImportError as _exc:
     _HAS_C_TREE = False
+    _C_TREE_IMPORT_ERROR = f"{type(_exc).__name__}: {_exc}"
 
 try:
     from chess_anti_engine.mcts.gumbel_c import (
         run_gumbel_root_many_c as _run_gumbel_root_many_c,
     )
     _HAS_GUMBEL_C = True
-except ImportError:
+    _GUMBEL_C_IMPORT_ERROR: str | None = None
+except ImportError as _exc:
     _HAS_GUMBEL_C = False
+    _GUMBEL_C_IMPORT_ERROR = f"{type(_exc).__name__}: {_exc}"
 
 if TYPE_CHECKING:
     from chess_anti_engine.tablebase import SyzygyProbe
@@ -214,7 +219,8 @@ def pick_moves_for_boards(
                 # Volatility arms select the Python search by config; a missing
                 # compiled runner must not select it silently.
                 refuse_fallback(
-                    "arena move selection", "mcts.gumbel_c (MCTSTree/_mcts_tree)",
+                    "arena move selection",
+                    f"mcts.gumbel_c ({_GUMBEL_C_IMPORT_ERROR or 'not imported'})",
                     "the pure-Python Gumbel search",
                 )
             result = run_gumbel_root_many(
@@ -225,7 +231,8 @@ def pick_moves_for_boards(
     else:
         if not _HAS_C_TREE:
             refuse_fallback(
-                "arena move selection", "mcts.puct_c (MCTSTree/_mcts_tree)",
+                "arena move selection",
+                f"mcts.puct_c ({_C_TREE_IMPORT_ERROR or 'not imported'})",
                 "the pure-Python PUCT search",
             )
         puct_fn = _run_mcts_many_c if _HAS_C_TREE else run_mcts_many
