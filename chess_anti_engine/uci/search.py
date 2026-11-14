@@ -544,6 +544,7 @@ class SearchWorker:
   # status, node count) of the last mate walk, so an unchanged tree is not
   # re-walked; and the node visits that walk spent (test / diagnostics read).
         self._mate_check_key: tuple[int, int, int, int] | None = None
+        self._mate_witness_action: int | None = None
         self.last_mate_walk_visits: int = 0
   # Set by `advance_root` on every in-place reroot under a Hash cap; resolved
   # (keep / compact / rebuild) at the start of the next `run()`, which knows
@@ -2337,6 +2338,7 @@ class SearchWorker:
         root's solved status or the tree's size changed since the last check
         (an idle solved root -- nothing left to expand -- would otherwise re-walk
         every `_IDLE_CHUNK_WAIT_S`)."""
+        self._mate_witness_action = None
         tree, root_id = self._tree, self._root_id
         if tree is None or root_id is None:
             return None
@@ -2350,14 +2352,19 @@ class SearchWorker:
         actions, _ = tree.get_children_visits(root_id)
         walk = _MateWalk()
         best: int | None = None
+        witness: int | None = None
         for action in actions.tolist():
             if allowed_root_indices is not None and int(action) not in allowed_root_indices:
                 continue
             mate = _proven_line_mate(tree, root_id, board, int(action), walk)
             if mate is not None and mate > 0 and (best is None or mate < best):
                 best = mate
+                witness = int(action)
         self.last_mate_walk_visits = walk.visits
-        return best if best is not None and best <= mate_moves else None
+        if best is not None and best <= mate_moves:
+            self._mate_witness_action = witness
+            return best
+        return None
 
     def _should_stop_search(
         self,
@@ -2828,6 +2835,7 @@ class SearchWorker:
         self._seldepth = 0
         self.last_stop_reason = None
         self._mate_check_key = None
+        self._mate_witness_action = None
         self._ensure_root_eval_cached(board, tb_probe)
         if allowed_root_indices is not None and self._rpg_pool is not None:
             # Convert an RPG-shaped tree once for this restricted search.
@@ -3039,6 +3047,11 @@ class SearchWorker:
             if stop_reason is None and mate_moves is not None:
                 if self._proven_mate_within(board, mate_moves, allowed_root_indices) is not None:
                     stop_reason = "mate"
+                    # Preserve the move whose proof satisfied this mate bound.
+                    # Outcome-only selection can otherwise emit another WIN
+                    # with a longer mate (or only a tablebase WDL proof).
+                    assert self._mate_witness_action is not None
+                    allowed_root_indices = set[int]((self._mate_witness_action,))
                 elif int(completed) == 0 and self._root_solved_status() != 0:
                     # `go mate N` on a root already proven (won with no mate in
                     # <= N found, drawn, or lost) that the search cannot grow:
