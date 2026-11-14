@@ -1,7 +1,7 @@
 # Retained-search main-WDL finite capability
 
-**Source preparation only. Tests, runtime qualification and scientific use are
-UNRUN.** No bank, dose, scientific seed, learning rate or experiment is selected by
+**Synthetic CPU software qualification accepted; full A39/G1/CUDA qualification
+and scientific use remain UNRUN.** No bank, dose, scientific seed, learning rate or experiment is selected by
 this capability. It exposes one existing target-source control through a new
 strict family; it does not restore a historical multitask recipe or select a winner.
 
@@ -88,11 +88,50 @@ objective or target quality. Closed producer output is not model promotion,
 checkpoint adoption or strength evidence.
 
 Source pins include the core required set plus this entry point, replay buffer,
-dataset and augmentation. Future root qualification must run the focused tests
-plus old core/SF guard regressions, scoped static checks, native/runtime/source
-custody and CPU packaging/continuation controls before any scientific contract or
+dataset and augmentation. The focused tests, old core/SF guard regressions,
+scoped static checks, native/runtime/source custody and synthetic CPU
+packaging/continuation controls passed as recorded below. A real-model GPU/data
+qualification and a separate prospective protocol remain required before scientific
 learning admission. The authored tests exercise the real finite worker, host and
 loss: CE and gradient changes, zero-state/RNG equivalence, mirror and physical-ID
 alignment, outcome fallback, invalid storage, strict share/family guards and
-same-family continuation. All are currently UNRUN. No global YAML/default,
+same-family continuation. No global YAML/default,
 `CORE_KWARGS`, shared loss or legacy CLI contract was changed.
+
+
+## Accepted synthetic CPU qualification — November 14, 2026
+
+At source `1b2de99f6fdb4c55c220295c9a4ae295224fe060`, scoped Ruff,
+basedpyright and Vulture passed, and all **66 tests passed with no skips/errors**:
+23 retained-search cases, 21 legacy core cases and 22 SF-current-P0 cases. The
+actual finite worker and host loss were exercised, including analytic CE/gradient,
+outcome fallback, unchanged share-zero state/RNG/journal and same-family restore.
+Torch used two threads; CUDA remained uninitialized. Final source/native/plan and
+admission checks completed; all owned processes closed. Independent actual review
+accepted the result with no findings.
+
+The six native images were built at original source
+`67022011ecb0082de0948bce2dd5cc4cbfd30a60`. An explicit reviewed transfer retained
+that build identity while authenticating the later test-only corrections and all
+unchanged native inputs. No image was relabeled as newly built. One static lint
+failure and a later 64-pass/two-failure fixture run remain preserved. The final
+passing owner used 19.791205023997463 seconds; total CPU owner wall, including the
+cold build and both failures, was **70.7656186169479 / 600 seconds**.
+
+This is tiny synthetic CPU software evidence. It does not qualify full A39/G1,
+GPU precision/backward/serialization/restore, a real learning recipe, model delivery,
+playing strength or adoption. No scientific bank, dose, seed or budget is selected.
+Documentation publication does not change the tested Python/native code.
+
+Evidence uses `~/chess-artifacts/operations/rl-week-one-20261112-v1/`; bulk fixtures
+and output stay outside Git.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `core-retained-search-mainWDL-consumer-source-preparation-v4/manifest.json` | `23f7500cd3416013e6ca7eff8cfb6327ba063a7e3f96df19a51f6586cb882475` |
+| `core-retained-search-mainWDL-consumer-independent-source-review-v4/review.json` | `e4f2c3ed50ee36e4f3f6ebf99b439a87cbe86f9c270781b4022e1fed9b46abe2` |
+| `core-retained-search-mainWDL-consumer-CPU-qualification-preparation-v3/manifest.json` | `74b6db7f4b0d570e62760c2ecb979463e1b075154a149336ba0765db0d90d8ca` |
+| `core-retained-search-mainWDL-consumer-CPU-qualification-independent-source-review-v3/review.json` | `04f9d750c746898521169f0aac2e65ce3c5a1fdf3ff0df358aff2f63c6ff33db` |
+| `core-retained-search-mainWDL-consumer-CPU-qualification-bindings-v1/test-only-source-transfer-v3.json` | `94f243f261469c6497151b8f98f8c671ca509951df1c79870ee6846c05a40844` |
+| `core-retained-search-mainWDL-consumer-CPU-qualification-bindings-v1/focused-root-acceptance-v3.json` | `7c6f43dbbc74b70133eadb84a7f0b5a53c992d9d4a2e799db0f2111c4cdc4b3e` |
+| `core-retained-search-mainWDL-consumer-independent-actual-review-v1/review.json` | `4d9da02ffa1208a0fda9c291b031a29c56e200b34a5083c33b074059de509e8a` |
