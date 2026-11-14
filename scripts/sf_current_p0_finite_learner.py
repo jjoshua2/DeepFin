@@ -49,7 +49,6 @@ def validate_profile(p: dict[str, Any]) -> None:
 
 @dataclass
 class SidecarGame:
-    game: dict[str, Any]
     rows: list[dict[str, Any]]
     arrays: dict[str, Any]
 
@@ -86,12 +85,13 @@ class P0Profile:
         self.entries: list[tuple[dict[str, Any], Path, list[dict[str, Any]]]] = []
         self.index: dict[str, SidecarGame] = {}
         self.counts: Counter[str] = Counter()
-        self.alpha = 0.0
         self.variant = ""
         self.custody: dict[str, Any] | None = None
 
     def validate_and_project(self, c: dict[str, Any], stage: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
         """Validate new wire schemas, then use the shared engine's internal names."""
+        core.require(Path(__file__).resolve() == core.REPO / "scripts/sf_current_p0_finite_learner.py",
+                     "SF-P0 caller imported from another checkout")
         core.require(c.get("schema") == CONTRACT and "updates_per_segment" in c
                      and "updates_per_generation" not in c, "not the SF-P0 learning family")
         validate_profile(c["sf_p0"])
@@ -157,7 +157,11 @@ class P0Profile:
         from scripts import sf_banked_p0_census as audit
         from scripts import sf_current_p0_sidecar as carrier
 
-        self.alpha, self.variant = c["sf_p0"]["alpha"], c["sf_p0"]["value_variant"]
+        core.require(Path(audit.__file__).resolve() == core.REPO / "scripts/sf_banked_p0_census.py"
+                     and Path(carrier.__file__).resolve() == core.REPO / "scripts/sf_current_p0_sidecar.py",
+                     "SF-P0 evidence helpers imported from another checkout")
+        core.require(not self.entries and self.custody is None, "SF-P0 profile already prepared")
+        self.variant = c["sf_p0"]["value_variant"]
         cap = c["sf_p0"]["limits"]["metadata_bytes"]
         refs = stage["sf_p0_sidecars"][0]
         core.require(set(refs) == {"root_acceptance", "independent_review"}, "SF-P0 root/review references")
@@ -231,6 +235,14 @@ class P0Profile:
                 core.require(row["original_row_index"] == i and row["physical_game_id"] == game["physical_game_id"]
                              and row["game_id"] == game["game_id"]
                              and row["physical_row_id"] == game["physical_game_id"] + ":" + str(i), "SF-P0 row identities")
+                status = row["source_join"]["status"]
+                flags = row["qualified_flags"]
+                core.require(status in {"SOURCE_CONTEXT_REDUCED_LABEL", "SOURCE_CONTEXT_NO_REDUCED_LABEL",
+                                        "INVALID_REDUCED_LABEL", "UNAVAILABLE"}
+                             and set(flags) == {"policy", "stored_wdl", "native_wdl"}
+                             and all(type(v) is bool for v in flags.values())
+                             and (status not in {"INVALID_REDUCED_LABEL", "UNAVAILABLE"} or not any(flags.values())),
+                             "SF-P0 complete status/mask metadata")
             self.entries.append((game, folder, metadata["rows_detail"]))
 
     def on_draw(self, rows: Any) -> None:
@@ -241,6 +253,9 @@ class P0Profile:
         import numpy as np
         from scripts import sf_current_p0_sidecar_schema as schema
 
+        core.require(not self.index, "SF-P0 replay already wrapped")
+        core.require(Path(schema.__file__).resolve() == core.REPO / "scripts/sf_current_p0_sidecar_schema.py",
+                     "SF-P0 schema imported from another checkout")
         selected = "native_wdl_permille_i16" if self.variant == "native" else "stored_query_wdl_f16"
         flag = "qualified_native_wdl" if self.variant == "native" else "qualified_stored_wdl"
         fields = [selected, flag, "legal_mask_u8", "predecessor_meta_i32", "observed_predecessor_meta",
@@ -257,7 +272,7 @@ class P0Profile:
             core.require(resident <= c["sf_p0"]["limits"]["resident_bytes"], "SF-P0 resident byte cap")
             source = core.digest(game["shard"]["files"])
             core.require(source not in self.index, "duplicate SF-P0 original source chunk")
-            self.index[source] = SidecarGame(game, rows, arrays)
+            self.index[source] = SidecarGame(rows, arrays)
         core.require([(g, source, n) for g, source, n in replay.membership]
                      == [(1, core.digest(game["shard"]["files"]), game["rows"]) for game, _, _ in self.entries],
                      "SF-P0 physical membership mismatch")
@@ -277,6 +292,7 @@ class P0Profile:
 
     def overlay(self, batch: dict[str, Any], drawn: Any) -> dict[str, Any]:
         import numpy as np
+        from scripts.sf_current_p0_sidecar_schema import array_digest
 
         n = len(drawn)
         out = dict(batch)
@@ -304,7 +320,6 @@ class P0Profile:
             core.require(int(batch["game_id"][i]) == row["game_id"]
                          and int(batch["ply_index"][i]) == identity["ply"], "SF-P0 sampled game/ply identity")
             # array_digest is byte identity, not a re-encoding or teacher query.
-            from scripts.sf_current_p0_sidecar_schema import array_digest
             core.require(array_digest(np.asarray(batch["x"][i], dtype=np.float16)) == identity["input_F16_sha256"]
                          and array_digest(batch["legal_mask"][i]) == row["legal_mask_sha256"]
                          and np.array_equal(batch["legal_mask"][i], a["legal_mask_u8"][draw.row_index]), "SF-P0 sampled input/legal identity")
@@ -328,6 +343,7 @@ class P0Profile:
                 out["has_" + target][i] = observed
             self.counts["rows"] += 1
             self.counts["qualified"] += present
+            self.counts["outcome_fallback_rows"] += 1 - present
             self.counts["status:" + status] += 1
         return out
 

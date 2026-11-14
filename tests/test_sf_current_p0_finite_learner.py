@@ -285,13 +285,34 @@ def parent_binding(tmp_path: Path, cref: dict[str, str], segment: int) -> dict[s
             "owner_sha256": "b" * 64, "command": command}
 
 
-def test_same_family_full_resume_fixed_data_and_legacy_parent_refusal(tmp_path: Path) -> None:
+def test_same_family_full_resume_fixed_data_and_legacy_parent_refusal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     c, cref, legacyref, gen = setup(tmp_path, alpha=.5)
     accepted = accepted_carrier(tmp_path, c, gen)
     first = finite.execute(cref, stage(tmp_path, cref, gen, accepted))
+    checkpoint = torch.load(first["checkpoint"]["path"], map_location="cpu", weights_only=False)
     parent = parent_binding(tmp_path, cref, 1)
     second_ref = stage(tmp_path, cref, gen, accepted, segment=2, parent=parent)
+    original_make = core.make_trainer
+
+    def checked_make(*args: Any, **kwargs: Any) -> Any:
+        trainer = original_make(*args, **kwargs)
+        original_train = trainer.train_steps
+
+        def checked_train(replay: Any, **training: Any) -> Any:
+            from scripts.offline_epoch_resume import _rng_state
+            assert trainer.step == first["step"]
+            require_equal(trainer.model.state_dict(), checkpoint["model"], "restored model")
+            require_equal(trainer.opt.state_dict(), checkpoint["opt"], "restored optimizer")
+            require_equal(trainer._scheduler.state_dict(), checkpoint["scheduler"], "restored scheduler")
+            assert _rng_state(replay.rng, np.random) == first["rng"]
+            return original_train(replay, **training)
+
+        trainer.train_steps = checked_train
+        return trainer
+
+    monkeypatch.setattr(core, "make_trainer", checked_make)
     second = finite.execute(cref, second_ref)
+    monkeypatch.setattr(core, "make_trainer", original_make)
     assert first["step"] == 2
     assert second["step"] == second["final_step"] == 4
     assert second["segment"] == 2
