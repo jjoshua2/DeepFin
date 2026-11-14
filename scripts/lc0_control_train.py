@@ -74,7 +74,8 @@ downstream can raise the frac, and the only way past guard 1 also skipped the
 assert. So `--allow-leak` on a production-blend config now runs the steps,
 prints the realized leak, and then EXITS 1 WITHOUT A CHECKPOINT. That is the
 demonstration; `scratchpad/lc0_positive_control/RIG_VERIFICATION_20260816.md`
-records it.
+records it (moved out of git to the repo-slim-20261113 artifacts archive;
+recoverable from tag `pre-slim-20261113`).
 
 ⚑ AND UNDER `--allow-leak` THE PARTIAL-CORPUS REFUSAL IS A PRINT, SO A MIXED
 CORPUS *IS* REACHABLE — check 3 is the only thing left, and it is what actually

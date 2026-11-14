@@ -412,3 +412,78 @@ completed diagnostic. Earlier negative E4 and donor results remain separate.
 | `core-baseline-research-arena-leg1-diagnostic-g6-readout-v1/readout.json` | `7610432a8a22da75365791607fe35b1f62bb53d35f59e8cb11336ef6abc47876` |
 | `core-baseline-research-arena-bindings-v1/leg1-diagnostic-g6/root-readout-acceptance.json` | `1783b838533c92b28e9d148d53269bfc6a3894d70d2788624b639e1d5919e6ae` |
 | `core-baseline-research-arena-diagnostic-g6-independent-actual-review-v1/review.json` | `1c5b46768cbc124dad7cb42e6476f8141732ebca926bb3d9a74ad025cfca2ebb` |
+
+
+## 2026-11-13 22:57 UTC — G8 terminal nonpass; no confirmation or second leg
+
+**LEG 1 COMPLETED: technically qualified terminal negative.** The fixed G8
+step-4,096 candidate scored **52 wins, 120 draws and 340 losses** against
+immutable original A39 over all **512 games / 256 color pairs**: mean **.21875**,
+paired normal approximate 95% interval
+**[.19030425270421453, .24719574729578547]**. Pair-total counts for
+{0, .5, 1, 1.5, 2} were {111, 82, 48, 14, 1}. Endings were 324 rules resolutions
+and 188 qualified TB resolutions. The strict technical reader passed; the
+registered strength endpoint **did not pass** either gain threshold.
+
+No confirmation was eligible or consumed, no C1 was established, and the
+conditional second leg did not run. There is no alternate-checkpoint fallback,
+promotion, adoption or external-engine win claim. The long-term strength goal
+and two-successive-gains milestone remain unmet. This is a negative result for
+the frozen eight-generation recipe, data, horizon and playing profile; it does
+not establish an optimal recipe, identify a causal LR failure or condemn all
+policy/outcome RL. Correlated G2/G4/G6 diagnostics are not pooled with this
+terminal panel or treated as independent replications. Earlier E4/donor records
+remain separate.
+
+G7 and G8 each completed all 256 planned collection attempts, audit and 512
+learner updates with the preplanned previous-generation actor. G7 had no
+scheduled arena; G8 alone supplied terminal eligibility. The final leg totals
+were **2,048 games, 203,794 audited eligible rows, 4,096 updates and 1,048,576
+sampled views**. Actual active FIFO membership continued to advance:
+
+| Generation | New eligible rows | Active generations | Active rows | Final global step |
+| --- | ---: | --- | ---: | ---: |
+| G7 | 24,982 | 4–7 | 102,209 | 3,584 |
+| G8 | 25,041 | 5–8 | 101,668 | 4,096 |
+
+The G8 journal checked all 512 × 256 recorded preaugmentation physical draws
+against the exact saved 5–8 membership; none came from evicted generations 1–4.
+Independent pipeline/FIFO metadata review accepted closure and lineage. It did
+not decode postmirror tensors, replay optimizer arithmetic, establish statistical
+uniformity or re-read checkpoint payloads. Training-window losses remain
+training observations, not a held-out strength proxy.
+
+The terminal arena used **1,504.941275 GPU-owner seconds** and **23.660658
+CPU-owner seconds**. From the first G1 owner, G8 checkpoint readiness took
+**21,429.064381 seconds**, and qualified terminal evidence took
+**23,030.740921 seconds**. These distinguish stage wall, checkpoint readiness and
+evidence readiness; none is CUDA-active time or an ETA. Matched Gumbel64/noise-on,
+175-plane float32 input/BF16-autocast, float32 policy/WDL transport and strict-TB
+serving retained the observed 32-game pool / 1,024 uncapped leaf-row profile.
+The original `dd16774a…` science, `c53eac58…` contract, L `090b5143…` and R7 owner
+`ba9d6de1…` remain unchanged. No GPU determinism or universal throughput claim
+follows. Independent actual metadata and complete 512-game/256-pair arithmetic
+review accepted the terminal nonpass and custody joins, reusing the qualified
+strict CPU physics readback; it ran no new probes or checkpoint/array reads.
+
+At this readout, the separately source-accepted ten-times-lower-LR probe on the
+same G1 data/seed for 512 updates plus a direct 256-game diagnostic remained
+**unrun and not freshly admitted**. It is a separate exploratory question with
+its own closure/admission dependencies, not a completed result or a change to
+this frozen baseline.
+
+G8 candidate SHA256 is
+`47bed4f13e32340266d597d4fd4b7c40d2f13c60c2461d1b466fd2c476ad1689`;
+reference A39 remains `a39f900c…`. External references use the same operations
+artifact root. Pipeline receipts preserve their original pre-arena statuses;
+the subsequent terminal reader and acceptance supply the completed verdict.
+
+| Artifact | SHA256 |
+| --- | --- |
+| `core-baseline-research-g07-bound-v1/full-generation-readout.json` | `9cb8133b5b269fb1e98f8b889c4f818d1ed81053550bd5e54e00c2c3adf111f6` |
+| `core-baseline-research-g08-bound-v1/full-generation-readout.json` | `886679646b699a0d01ec20af5e317aaca30454c97c1348f68b9336b52b0c2171` |
+| `core-baseline-research-g08-bound-v1/FIFO-journal-readback.json` | `138e0a4544cc384322cad83b4c999b1fa8617d7fe499369aaf3c2860bae59de9` |
+| `core-baseline-research-g08-pipeline-FIFO-independent-actual-review-v1/review.json` | `81a5f0aaf69985fbaedd4e4643cd4b8042a2caf8650a3fafc1671d843cb6df3f` |
+| `core-baseline-research-arena-leg1-terminal-readout-v1/readout.json` | `3b88d5f4bff1d2c569015cd139c94f1e3c357a3a4da047fd3699cc4e410987f9` |
+| `core-baseline-research-arena-bindings-v1/leg1-terminal/root-readout-acceptance.json` | `d7dfefc02bba8e785c92dfc4171db707ba6b83c13704694382c5ca003cbc0173` |
+| `core-baseline-research-arena-leg1-terminal-independent-actual-review-v1/review.json` | `b048e12250521abea3857c7b7544e99615ceb6b2e655fd4297796b082e5e46b6` |

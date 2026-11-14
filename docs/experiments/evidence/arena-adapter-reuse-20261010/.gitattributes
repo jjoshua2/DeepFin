@@ -1,4 +1,0 @@
-*.py -text
-*.patch -text -diff
-*.json text eol=lf
-baseline/** -text -diff
