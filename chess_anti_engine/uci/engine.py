@@ -73,6 +73,7 @@ _ENGINE_NAME = "DeepFin"
 _ENGINE_AUTHOR = "jjosh"
 
 if TYPE_CHECKING:
+    from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
     from chess_anti_engine.inference import BatchEvaluator
 
 
@@ -280,6 +281,12 @@ _TOLERATED_STATUS = (
 )
 
 
+def _combo_refusal(option: str, value: str, choices: tuple[str, ...], current: str) -> str:
+    """The `info string` for a combo value the option does not have."""
+    return (f"info string {option}: {value.strip()!r} is not one of "
+            f"{' / '.join(choices)}; keeping {current}")
+
+
 def _status_names(status: int) -> str:
     return ", ".join(
         str(flag.name).lower().replace("_", " ")
@@ -288,22 +295,75 @@ def _status_names(status: int) -> str:
     )
 
 
+_CASTLING_BITS = ((1, chess.H1), (2, chess.A1), (4, chess.H8), (8, chess.A8))  # C: K Q k q
+
+
+def _py_board_state(board: chess.Board) -> tuple[int | bool | None, ...]:
+    """Everything the C board holds about a position, read from python-chess."""
+    rights = board.clean_castling_rights()
+    return (
+        int(board.occupied_co[chess.WHITE]), int(board.occupied_co[chess.BLACK]),
+        int(board.pawns), int(board.knights), int(board.bishops), int(board.rooks),
+        int(board.queens), int(board.kings), board.ep_square,
+        sum(bit for bit, sq in _CASTLING_BITS if rights & chess.BB_SQUARES[sq]),
+        bool(board.turn),
+    )
+
+
+def _c_board_state(cb: _CBoard) -> tuple[int | bool | None, ...]:
+    """The same fields as `_py_board_state`, read from a ``CBoard``."""
+    ep = cb.ep_square
+    return (
+        int(cb.occ_white), int(cb.occ_black), int(cb.pawns), int(cb.knights),
+        int(cb.bishops), int(cb.rooks), int(cb.queens), int(cb.kings),
+        None if ep is None else int(ep), int(cb.castling), bool(cb.turn),
+    )
+
+
 def _movegen_disagreement(board: chess.Board) -> str | None:
-    """None when ``CBoard`` and python-chess generate the same legal moves for
-    ``board`` (as 4672 action ids), else a one-line description of the diff."""
+    """None when ``CBoard`` and python-chess hold the same position for
+    ``board``, generate the same legal moves (as 4672 action ids), and reach
+    the same position after every one of them (all six piece bitboards, both
+    colour masks, en-passant square, castling rights, side to move); else a
+    one-line description of the first difference."""
     from chess_anti_engine.encoding._lc0_ext import CBoard
 
     try:
-        c_ids = {int(i) for i in CBoard.from_board(board).legal_move_indices()}
+        cb = CBoard.from_board(board)
+        c_ids = {int(i) for i in cb.legal_move_indices()}
     except Exception as exc:
         return f"the C board cannot load it ({_one_line(exc)})"
+    if _c_board_state(cb) != _py_board_state(board):
+        return "the C board disagrees with python-chess on the position itself"
     py_ids = {move_to_index(mv, board) for mv in board.legal_moves}
-    if c_ids == py_ids:
-        return None
-    return (
-        f"the C move generator disagrees with python-chess "
-        f"({len(c_ids)} vs {len(py_ids)} legal moves)"
-    )
+    if c_ids != py_ids:
+        return (
+            f"the C move generator disagrees with python-chess "
+            f"({len(c_ids)} vs {len(py_ids)} legal moves)"
+        )
+    for move in board.legal_moves:
+        after = board.copy(stack=False)
+        after.push(move)
+        c_after = cb.copy()
+        c_after.push_index(move_to_index(move, board))
+        if _c_board_state(c_after) != _py_board_state(after):
+            return f"the C board disagrees with python-chess on {move.uci()}'s result"
+    return None
+
+
+def _ep_square_is_real(board: chess.Board) -> bool:
+    """The en-passant square is one a double push COULD have left: on the
+    right rank, the enemy pawn that pushed stands behind it, and a capture on
+    it is legal. Only the squares the push passed over can be wrong (occupied
+    start square), which python-chess and the C board both ignore."""
+    ep = board.ep_square
+    if ep is None:
+        return False
+    us = board.turn
+    if chess.square_rank(ep) != (5 if us == chess.WHITE else 2):
+        return False
+    behind = ep - 8 if us == chess.WHITE else ep + 8
+    return board.piece_at(behind) == chess.Piece(chess.PAWN, not us) and board.has_legal_en_passant()
 
 
 # Advertised (and now enforced) floor for the `Hash` UCI option, in MB. Keep this
@@ -1065,7 +1125,7 @@ class Engine:
             return
         new_board, parsed, root_fen, notes = validated
         for note in notes:
-            _println(f"info string position: normalised {note}")
+            _println(f"info string position: {note}")
         self._position_error = None
         self._board = new_board
   # Game boundary for a GUI that never sends `ucinewgame`: the standard start
@@ -1103,7 +1163,17 @@ class Engine:
         Normalised (a legal answer exists; python-chess's own move generation
         already ignores these, the C board did not): castling rights without the
         king and rook on their squares -> ``clean_castling_rights()``; an
-        en-passant square no double push could have made -> none.
+        "impossible" en-passant square -> none, unless `_ep_square_is_real`.
+
+        An impossible en-passant square that is real in every other respect
+        (right rank, the enemy pawn that double-pushed behind it, a capture on
+        it legal; only the push's start square is occupied, as in
+        ``4k3/8/8/8/3pP3/8/4P3/4K3 b - e3``) is KEPT, so ``moves d4e3`` plays
+        on; the root is then tolerated, below. Every other impossible square
+        is dropped with a note, never rejected: python-chess also allows a
+        "capture" on an empty square with nothing, or a non-pawn, behind it
+        (``4k3/8/8/8/3pN3/8/8/4K3 b - e3``), and the C board resolves that
+        capture differently.
 
         Rejected (no answer exists, or the C board cannot search it): a
         malformed command (``cmd.error``); an unparseable FEN; missing / extra
@@ -1113,11 +1183,16 @@ class Engine:
         played.
 
         Tolerated only when the C board agrees (too many pieces / pawns, an
-        impossible check, too many checkers -- legal moves exist, but the
-        position is unreachable, so the C move generator's assumptions are not
-        guaranteed): accepted iff ``CBoard`` and python-chess produce the same
-        legal-move set on the root and on every board the move list reaches,
-        else rejected with that reason.
+        impossible check, too many checkers, a kept impossible-but-capturable
+        ep square -- legal moves exist, but the position is unreachable, so the
+        C move generator's assumptions are not guaranteed): accepted iff
+        ``CBoard`` and python-chess produce the same legal-move set, and the
+        same board after every en-passant capture, on the root and on every
+        board the move list reaches (`_movegen_disagreement`), else rejected
+        with that reason. Deeper in the search tree nothing re-checks: the C
+        generator caps a node at ``CBOARD_MAX_LEGAL_MOVES`` (256) and truncates
+        silently past it, which only an unreachable root can reach; the played
+        move is still always from an agreeing root's set.
         """
         if cmd.error is not None:
             return cmd.error
@@ -1140,17 +1215,27 @@ class Engine:
                     before = fields[2] if len(fields) > 2 else "?"
                     start.castling_rights = start.clean_castling_rights()
                     notes.append(
-                        f"castling rights {before} -> {start.castling_xfen()} "
+                        f"normalised castling rights {before} -> {start.castling_xfen()} "
                         "(a right without its king/rook on the home square)"
                     )
+                tolerable = _TOLERATED_STATUS
                 if status & chess.STATUS_INVALID_EP_SQUARE and start.ep_square is not None:
-                    notes.append(
-                        f"en-passant square {chess.square_name(start.ep_square)} "
-                        "is impossible -> none"
-                    )
-                    start.ep_square = None
+                    square = chess.square_name(start.ep_square)
+                    if _ep_square_is_real(start):
+                        # Only the push's start square is occupied: the capture
+                        # is a real one, so keep the square (behind the movegen
+                        # gate) rather than reject a move list playing it.
+                        tolerable |= chess.STATUS_INVALID_EP_SQUARE
+                        notes.append(
+                            f"kept en-passant square {square}: unreachable by a double "
+                            "push, but the pushed pawn is behind it and a capture on it "
+                            "is legal"
+                        )
+                    else:
+                        notes.append(f"normalised en-passant square {square} is impossible -> none")
+                        start.ep_square = None
                 status = start.status()
-                hard = status & ~_TOLERATED_STATUS
+                hard = status & ~tolerable
                 if hard:
                     return f"FEN {cmd.fen!r} is not a legal position: {_status_names(hard)}"
                 tolerated = bool(status)
@@ -2075,6 +2160,8 @@ class Engine:
     def _set_pucv_pending_mode(self, value: str) -> None:
         normalized = value.strip().lower().replace("_", "-")
         if normalized not in ("legacy", "virtual-mean"):
+            _println(_combo_refusal("PUCVPendingMode", value, ("legacy", "virtual-mean"),
+                                    self._options.pucv_pending_mode))
             return
         self._options.pucv_pending_mode = normalized
         self._worker.set_pucv_vloss_mode(1 if normalized == "virtual-mean" else 0)
@@ -2100,6 +2187,8 @@ class Engine:
         paths untouched."""
         normalized = value.strip().lower()
         if normalized not in ("pucv", "gumbel"):
+            _println(_combo_refusal("SearchParallel", value, ("pucv", "gumbel"),
+                                    self._options.search_parallel))
             return
         if normalized == "gumbel":
             if not self._try_install_root_parallel_gumbel(
@@ -2759,7 +2848,9 @@ class Engine:
                 gen=gen,
             )
             limits = real_limits
-        elif limits.ponder and popped_at_start is not None:
+        elif limits.ponder and popped_at_start is not None and gen == self._search_gen:
+            # (A superseded search -- parked, or a newer go owns the worker --
+            # must not read the worker's tree; its answer is dropped anyway.)
             # `stop` during ponder (a ponder miss): the search ran on the board
             # BEFORE the predicted reply, so its move is the opponent's. UCI
             # still owes a bestmove for the GUI's position (that board plus the
@@ -3386,9 +3477,13 @@ class Engine:
     ) -> SearchResult:
         """``result`` re-targeted to the GUI's board after a `stop` in ponder.
 
-        Our reply from the ponder PV when it starts with the predicted move;
-        else the usual fallback (cached root prior / first legal), never a fresh
-        eval -- the GUI discards this move, so no time is spent on it. The
+        Our reply, in order: from the ponder PV when it starts with the
+        predicted move; else the most-visited move below the predicted move in
+        the ponder tree (`SearchWorker.child_bestmove`, visit counts only);
+        else the usual fallback with no fresh eval -- whose cached root prior
+        belongs to the PONDER root, so in practice that last resort is the
+        first legal move. No new evaluation on this path: the GUI discards this
+        move, so no time is spent on it. The
         ponder root's `root_declined` is not carried over: the published move is
         not that root's raw prior, so it must not count as a prior-only root.
         ``searchmoves`` (the go's own, which name moves of the GUI's position)
@@ -3396,14 +3491,25 @@ class Engine:
         real_board = ponder_board.copy(stack=True)
         real_board.push(popped)
         pv = tuple(result.pv or ())
+        new_pv: tuple[str, ...] = ()
         if (len(pv) >= 2 and pv[0] == popped.uci()
                 and _is_playable_fallback(real_board, pv[1], searchmoves)):
             move, source, new_pv = pv[1], "ponder_pv", pv[1:]
         else:
-            move, source = self._bestmove_fallback(
-                real_board, searchmoves, allow_fresh_eval=False,
-            )
-            new_pv = ()
+            child = getattr(self._worker, "child_bestmove", None)
+            try:
+                below = (
+                    child(ponder_board, popped, searchmoves=searchmoves)
+                    if callable(child) else None
+                )
+            except Exception:
+                below = None
+            if isinstance(below, str) and _is_playable_fallback(real_board, below, searchmoves):
+                move, source = below, "ponder_tree"
+            else:
+                move, source = self._bestmove_fallback(
+                    real_board, searchmoves, allow_fresh_eval=False,
+                )
         _println(
             f"info string ponder miss: stop before ponderhit; the ponder search was for "
             f"the position before {popped.uci()}, so bestmove is for the GUI's position "

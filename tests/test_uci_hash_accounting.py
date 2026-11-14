@@ -11,6 +11,7 @@ reclaims the discarded siblings instead of refusing reuse at half the cap.
 from __future__ import annotations
 
 import hashlib
+import platform
 import threading
 from typing import Any
 
@@ -26,6 +27,14 @@ from chess_anti_engine.uci.search import SearchWorker
 from chess_anti_engine.uci.time_manager import Deadline
 
 _MB = 1024 * 1024
+
+# The RSS ruler below pins glibc's mmap threshold (MALLOC_MMAP_THRESHOLD_); an
+# allocator that ignores it leaves heap slack in RSS (the capped search measured
+# 2.85-2.97x its footprint growth unpinned, against a 1.2x bound).
+_needs_glibc = pytest.mark.skipif(
+    platform.libc_ver()[0] != "glibc",
+    reason="RSS-vs-footprint check needs glibc to honour MALLOC_MMAP_THRESHOLD_",
+)
 
 
 class _SpreadEvaluator:
@@ -78,36 +87,9 @@ def test_node_bytes_constant_matches_c() -> None:
     assert c_node_bytes == uci_search._TREE_NODE_BYTES
 
 
-def test_footprint_counts_live_cache_entries_and_tracks_rss() -> None:
-    # Earlier tests can leave reusable allocator arenas: refilling them grows
-    # the tree footprint without growing process RSS. Exec a fresh interpreter
-    # so the original RSS bounds measure this tree, not the suite's heap history.
-    import os
-    import subprocess
-    import sys
-    from pathlib import Path
-
-    root = Path(__file__).resolve().parents[1]
-    code = (
-        "import runpy, sys\n"
-        "sys.path.insert(0, sys.argv[1])\n"
-        "import torch\n"
-        "torch.set_num_threads(2)\n"
-        "runpy.run_path(sys.argv[2])[sys.argv[3]]()\n"
-    )
-    env = dict(os.environ, CUDA_VISIBLE_DEVICES="")
-    for key in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
-                "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
-        env[key] = "2"
-    proc = subprocess.run(
-        [sys.executable, "-I", "-B", "-c", code, str(root), str(Path(__file__).resolve()),
-         _check_footprint_counts_live_cache_entries_and_tracks_rss.__name__],
-        cwd=root, env=env, capture_output=True, text=True, timeout=120, check=False,
-    )
-    assert proc.returncode == 0, (proc.stdout, proc.stderr)
-
-
-def _check_footprint_counts_live_cache_entries_and_tracks_rss() -> None:
+def _footprint_growth_probe() -> dict[str, Any]:
+    """Grow one tree by a second search; report footprint and RSS before/after
+    (run through ``_run_probe_in_fresh_process``)."""
     w = _worker(chunk=512)
     board = chess.Board()
     stop = threading.Event()
@@ -116,9 +98,24 @@ def _check_footprint_counts_live_cache_entries_and_tracks_rss() -> None:
     assert tree is not None
     f0, rss0 = int(tree.footprint_bytes()), _rss_bytes()
     w.run(board, stop_event=stop, deadline=Deadline(None), max_nodes=24576)
-    stats = tree.memory_stats()
     f1, rss1 = int(tree.footprint_bytes()), _rss_bytes()
+    w.set_max_tree_mb(1024)
+    return {
+        "f0": f0, "f1": f1, "rss0": rss0, "rss1": rss1,
+        "stats": dict(tree.memory_stats()),
+        "hashfull": w._hashfull_permille(),
+    }
 
+
+@_needs_glibc
+def test_footprint_counts_live_cache_entries_and_tracks_rss() -> None:
+    r = _run_probe_in_fresh_process("_footprint_growth_probe")
+    f0, f1, stats = r["f0"], r["f1"], r["stats"]
+
+    # Growth of the footprint matches measured RSS growth.
+    df, drss = f1 - f0, r["rss1"] - r["rss0"]
+    assert df > 8 * _MB
+    assert 0.85 * df <= drss <= 1.15 * df + 4 * _MB, (df, drss)
     assert f1 == _expected_footprint(stats)
     # One cached board per evaluated leaf (+ root), not one per node id.
     visits = 4096 + 24576
@@ -126,60 +123,104 @@ def _check_footprint_counts_live_cache_entries_and_tracks_rss() -> None:
     assert stats["cb_pool_count"] < stats["node_count"] // 8
     # Real per-visit cost is a few KB; the old capacity figure was ~41 KB.
     assert f1 / visits < 4096
-    # Growth of the footprint matches measured RSS growth within tolerance.
-    df, drss = f1 - f0, rss1 - rss0
-    assert df > 8 * _MB
-    assert 0.5 * df <= drss <= 1.5 * df + 4 * _MB, (df, drss)
     # hashfull reports the same quantity.
-    w.set_max_tree_mb(1024)
-    assert w._hashfull_permille() == f1 * 1000 // (1024 * _MB)
+    assert r["hashfull"] == f1 * 1000 // (1024 * _MB)
 
 
-def test_hash_capped_search_fills_hash_stays_under_it_and_says_why() -> None:
-    cap_mb = 24
+_CAPPED_HASH_MB = 24
+
+
+def _capped_search_probe() -> dict[str, Any]:
+    """A Hash-capped search from the start position, run to its stop; reports
+    the stop, the footprint, and (RSS, footprint) after every chunk."""
     w = _worker(chunk=1024)  # chunk growth (~3.4 MB) >> growth step (0.4 MB)
-    w.set_max_tree_mb(cap_mb)
-    board = chess.Board()
+    w.set_max_tree_mb(_CAPPED_HASH_MB)
     strings: list[str] = []
-    rss: list[int] = []
+    samples: list[tuple[int, int]] = []
 
     def info_cb(**kw: Any) -> None:
         if kw.get("string"):
             strings.append(str(kw["string"]))
 
     def on_chunk(_nodes: int) -> None:
-        rss.append(_rss_bytes())
+        samples.append((_rss_bytes(), w._tree_footprint_bytes()))
 
     deadline = Deadline(120_000)
     result = w.run(
-        board, stop_event=threading.Event(), deadline=deadline, max_nodes=None,
+        chess.Board(), stop_event=threading.Event(), deadline=deadline, max_nodes=None,
         info_cb=info_cb, on_chunk=on_chunk,
     )
-    assert w.last_stop_reason == "tree_bytes"
-    assert not deadline.expired()
-    assert w._tree is not None
-    footprint = int(w._tree.footprint_bytes())
+    return {
+        "stop_reason": w.last_stop_reason,
+        "deadline_expired": deadline.expired(),
+        "footprint": w._tree_footprint_bytes(),
+        "growth_step_nodes": w._tree_growth_step_nodes(),
+        "hashfull": w._hashfull_permille(),
+        "nodes": result.nodes,
+        "strings": strings,
+        "samples": samples,
+    }
+
+
+def _run_probe_in_fresh_process(name: str) -> dict[str, Any]:
+    """Run ``name()`` from this module in a new interpreter; return its result.
+
+    RSS is only a usable ruler in a fresh process: in the shared pytest process
+    the tree refills heap pages earlier tests already made resident, so RSS
+    growth depended on test order (CI: 25 MB of RSS for 96 MB of tree). The
+    mmap threshold is pinned, which turns off glibc's dynamic threshold: every
+    tree array is then its own mapping and a growth realloc moves it (mremap)
+    instead of copying it inside the heap and leaving a reusable hole, so RSS
+    growth measures the tree alone.
+    """
+    import json
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    code = (
+        "import json, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "import tests.test_uci_hash_accounting as m\n"
+        "print(json.dumps(getattr(m, sys.argv[2])()))\n"
+    )
+    env = {**os.environ, "MALLOC_MMAP_THRESHOLD_": "65536", "OMP_NUM_THREADS": "1"}
+    proc = subprocess.run(
+        [sys.executable, "-c", code, str(root), name], capture_output=True, text=True,
+        timeout=300, check=False, env=env, cwd=root,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+@_needs_glibc
+def test_hash_capped_search_fills_hash_stays_under_it_and_says_why() -> None:
+    r = _run_probe_in_fresh_process("_capped_search_probe")
+    cap_mb = _CAPPED_HASH_MB
+    assert r["stop_reason"] == "tree_bytes"
+    assert not r["deadline_expired"]
+    footprint = int(r["footprint"])
     cap = cap_mb * _MB
     # Filled the budget (the old accounting stopped near 1/8 of it) ...
     assert footprint >= 0.85 * cap, footprint
     # ... and ends within one growth step of it (projected next-chunk growth is
     # reserved; a node-arena step inside the last chunk is the only overshoot).
-    assert footprint <= cap + w._tree_growth_step_nodes() * 51, footprint
-    hashfull = w._hashfull_permille()
-    assert hashfull is not None
-    assert hashfull >= 850
-    # RSS grew by about the tree. At this small Hash every tree array is under
-    # glibc's 32 MB dynamic mmap ceiling, so it lives in the brk heap and each
-    # bounded-step realloc copy leaves a reusable hole: measured RSS growth is
-    # ~1.5-2x the footprint here (exactly 1.0x with MALLOC_MMAP_THRESHOLD_
-    # pinned). At Hash 64-1024 the measured excess is ~+120 MB, most of it
-    # returned by malloc_trim (slack, not live tree).
-    # (No lower bound: in a shared test process the tree can refill heap
-    # holes freed by earlier tests.)
-    grew = rss[-1] - rss[0]
-    assert grew <= 2 * cap + 8 * _MB, grew
-    assert result.nodes > 4096
-    assert any("tree memory full" in s and f"Hash {cap_mb} MB" in s for s in strings), strings
+    assert footprint <= cap + int(r["growth_step_nodes"]) * 51, footprint
+    assert r["hashfull"] is not None
+    assert r["hashfull"] >= 850
+    # RSS grew by the tree's footprint growth over the same chunks: measured
+    # 1.02-1.05x with the mmap threshold pinned. (Unpinned, brk-heap realloc
+    # holes made it 2.85-2.97x at this Hash in a fresh process -- allocator
+    # slack, which docs/TCEC_SETUP.md budgets as "Hash + 150 MB" of RAM.)
+    (rss0, foot0), (rss1, foot1) = r["samples"][0], r["samples"][-1]
+    dfoot, drss = foot1 - foot0, rss1 - rss0
+    assert dfoot > 8 * _MB, dfoot
+    assert 0.85 * dfoot <= drss <= 1.2 * dfoot + 4 * _MB, (dfoot, drss)
+    assert r["nodes"] > 4096
+    assert any("tree memory full" in s and f"Hash {cap_mb} MB" in s
+               for s in r["strings"]), r["strings"]
 
 
 def test_ample_hash_runs_to_the_deadline() -> None:
