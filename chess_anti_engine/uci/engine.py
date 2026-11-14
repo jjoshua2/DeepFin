@@ -2764,7 +2764,9 @@ class Engine:
             # BEFORE the predicted reply, so its move is the opponent's. UCI
             # still owes a bestmove for the GUI's position (that board plus the
             # predicted reply) -- a GUI may check it is legal before discarding it.
-            result = self._ponder_miss_result(result, board, popped_at_start)
+            result = self._ponder_miss_result(
+                result, board, popped_at_start, tuple(limits.searchmoves),
+            )
         # A completed infinite search is still owned by the GUI until stop.
         # Pool failures can set _stop_event without cancelling that ownership.
         # After ponderhit, use the real phase's limits so finite searches emit.
@@ -3380,6 +3382,7 @@ class Engine:
 
     def _ponder_miss_result(
         self, result: SearchResult, ponder_board: chess.Board, popped: chess.Move,
+        searchmoves: tuple[str, ...] = (),
     ) -> SearchResult:
         """``result`` re-targeted to the GUI's board after a `stop` in ponder.
 
@@ -3387,14 +3390,19 @@ class Engine:
         else the usual fallback (cached root prior / first legal), never a fresh
         eval -- the GUI discards this move, so no time is spent on it. The
         ponder root's `root_declined` is not carried over: the published move is
-        not that root's raw prior, so it must not count as a prior-only root."""
+        not that root's raw prior, so it must not count as a prior-only root.
+        ``searchmoves`` (the go's own, which name moves of the GUI's position)
+        restrict it exactly as they restrict a searched answer."""
         real_board = ponder_board.copy(stack=True)
         real_board.push(popped)
         pv = tuple(result.pv or ())
-        if len(pv) >= 2 and pv[0] == popped.uci() and _is_playable_fallback(real_board, pv[1], ()):
+        if (len(pv) >= 2 and pv[0] == popped.uci()
+                and _is_playable_fallback(real_board, pv[1], searchmoves)):
             move, source, new_pv = pv[1], "ponder_pv", pv[1:]
         else:
-            move, source = self._bestmove_fallback(real_board, (), allow_fresh_eval=False)
+            move, source = self._bestmove_fallback(
+                real_board, searchmoves, allow_fresh_eval=False,
+            )
             new_pv = ()
         _println(
             f"info string ponder miss: stop before ponderhit; the ponder search was for "
