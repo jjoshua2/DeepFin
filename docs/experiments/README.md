@@ -16,6 +16,12 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
+- [2026-11-14: SF-P0 CUDA qualification and repeatability](2026-11-14-sf-current-p0-cuda-qualification.md) — original exact-zero GPU control failed; separate eight-update diagnostic found old-versus-old default-CUDA variation; two separately scoped positive teacher assertions passed. Original NONPASS retained; no model-equivalence tolerance, A39/G1/AMP qualification or strength claim.
+
+- [2026-11-14: Fixed-G1 SF-P0 main-WDL finite-consumer qualification](2026-11-14-sf-current-p0-finite-consumer-qualification.md) — 22 new consumer and 21 legacy CPU controls passed with zero skips; exact zero bypass, masked outcome fallback and strict same-family continuation. The recorded cutoff does not qualify direct CLI, original-G1 model use or GPU behavior; no recipe, learning or strength admission.
+
+- [2026-11-14: Current-P0 SF sidecar engineering qualification](2026-11-14-sf-current-p0-sidecar-qualification.md) — 33 focused tests, the four-row CLI chain and complete 256-game / 24,827-row original-G1 carrier passed; root data-only acceptance and independent actual review accepted. All rows/masks retained; no training recipe, model or playing-strength adoption.
+
 - [2026-11-14: Banked original-G1 Stockfish P0 evidence census](2026-11-14-sf-banked-g1-p0-evidence-census.md) — completed data-only audit of all 256 games / 24,827 rows: 24,205 internally consistent source-context joins, 127 invalid joins and 495 unavailable. Recorded field presence and explicit regret are not teacher-target/training eligibility; independent actual census and metadata reviews accepted, no recipe or playing-strength adoption.
 
 - [2026-11-14: Full-state lower-rate on-policy continuation](2026-11-14-low-lr-on-policy-continuation.md) — first leg closed at G8 / step 4,096: qualified terminal nonpass, 46.2890625% versus A39 over 512 games (paired 95% interval 43.1009–49.4772%). No C1 eligibility/allocation/consumption, conditional second leg, retry or adoption; study donor/incumbent unchanged and broader goal active.

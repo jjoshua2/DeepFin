@@ -17,8 +17,31 @@ import random
 import re
 import sys
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 import uuid
+
+if TYPE_CHECKING:
+    class P0Profile(Protocol):
+        """Internal callback shape without importing the caller that uses it."""
+
+        @property
+        def STAGE(self) -> str: ...
+
+        @property
+        def BOUNDARY(self) -> str: ...
+
+        def validate_and_project(self, c: dict[str, Any], stage: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]: ...
+
+        def closed_parent(self, binding: dict[str, Any], c: dict[str, Any], contract_ref: dict[str, str],
+                          stage: dict[str, Any]) -> dict[str, Any]: ...
+
+        def prepare(self, c: dict[str, Any], stage: dict[str, Any], generations: list[dict[str, Any]]) -> None: ...
+
+        def on_draw(self, rows: Any) -> None: ...
+
+        def wrap(self, replay: Any, c: dict[str, Any]) -> Any: ...
+
+        def decorate_boundary(self, boundary: dict[str, Any], c: dict[str, Any], stage: dict[str, Any]) -> None: ...
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -237,21 +260,28 @@ def closed_parent(binding: dict[str, Any], c: dict[str, Any], contract_ref: dict
     return parent
 
 
-def metadata(c: dict[str, Any], stage: dict[str, Any], contract_ref: dict[str, str]) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+def metadata(c: dict[str, Any], stage: dict[str, Any], contract_ref: dict[str, str],
+             *, _sf_p0: P0Profile | None = None) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     contract_sha = contract_ref["sha256"]
-    require(set(stage) == {"schema", "contract_sha256", "generation", "generations", "parent", "output"},
+    stage_keys = {"schema", "contract_sha256", "generation", "generations", "parent", "output"}
+    if _sf_p0 is not None:
+        stage_keys.add("sf_p0_sidecars")
+    require(set(stage) == stage_keys,
             "unknown or missing stage fields")
-    require(stage["schema"] == "core_finite_stage_v1" and stage["contract_sha256"] == contract_sha,
+    stage_schema = "core_finite_stage_v1" if _sf_p0 is None else _sf_p0.STAGE
+    require(stage["schema"] == stage_schema and stage["contract_sha256"] == contract_sha,
             "stage contract mismatch")
     g = integer(stage["generation"], "generation")
-    require(g <= len(c["updates_per_generation"]) and len(stage["generations"]) == g, "generation horizon mismatch")
+    data_count = g if _sf_p0 is None else 1
+    require(g <= len(c["updates_per_generation"]) and len(stage["generations"]) == data_count, "generation horizon mismatch")
+    data_identity = c if _sf_p0 is None else c["sf_p0"]["data_identity"]
     generations = []
     physical_ids: set[str] = set()
     for i, ref in enumerate(stage["generations"], 1):
         _, gen = read_ref(ref, max_bytes=GENERATION_METADATA_LIMIT)
         require(gen["schema"] == "ROOT_ACCEPTED_CORE_TRAIN_GENERATION_V1", "unadmitted generation")
         require((gen["run_uuid"], gen["source_revision"], gen["generation"]) ==
-                (c["run_uuid"], c["source_revision"], i), "generation identity mismatch")
+                (data_identity["run_uuid"], data_identity["source_revision"], i), "generation identity mismatch")
         require(c["games_per_generation"] <= len(gen["games"]) <= c["max_games_per_generation"],
                 "admitted generation game count outside minimum/maximum")
         _, serving = read_ref(gen["actor_serving"])
@@ -267,7 +297,7 @@ def metadata(c: dict[str, Any], stage: dict[str, Any], contract_ref: dict[str, s
             _, proof = read_ref(game["producer_proof"])
             expected = {"status": "VERIFIED_RESOLVED_CORE_TRAIN_GAME_V1", "bank": "train",
                         "physical_game_id": pid, "game_id": game["game_id"], "rows": game["rows"],
-                        "source_revision": c["source_revision"], "actor_sha256": gen["actor_sha256"],
+                        "source_revision": data_identity["source_revision"], "actor_sha256": gen["actor_sha256"],
                         "resolved": True, "full_history_verified": True, "raw_targets_verified": True,
                         "label_class": game["label_class"], "shard_inventory_sha256": digest(game["shard"]["files"])}
             require(all(proof.get(k) == v and type(proof.get(k)) is type(v) for k, v in expected.items()),
@@ -282,7 +312,7 @@ def metadata(c: dict[str, Any], stage: dict[str, Any], contract_ref: dict[str, s
                     "missing original producing evidence")
             for kind, evidence in proof["evidence"].items():
                 _, original = read_ref(evidence)
-                identity = {"source_revision": c["source_revision"], "run_uuid": c["run_uuid"],
+                identity = {"source_revision": data_identity["source_revision"], "run_uuid": data_identity["run_uuid"],
                             "generation": i, "physical_game_id": pid, "game_id": game["game_id"],
                             "rows": game["rows"], "actor_sha256": gen["actor_sha256"], "served_state_sha256": served}
                 require(all(original.get(k) == v and type(original.get(k)) is type(v)
@@ -308,22 +338,26 @@ def metadata(c: dict[str, Any], stage: dict[str, Any], contract_ref: dict[str, s
     if g == 1:
         require(stage["parent"] is None, "first generation cannot resume")
     else:
-        parent = closed_parent(stage["parent"], c, contract_ref, stage)
-        require(parent["status"] == "COMPLETED_CORE_GENERATION_V1" and parent["generation"] == g - 1,
+        parent = (closed_parent(stage["parent"], c, contract_ref, stage) if _sf_p0 is None
+                  else _sf_p0.closed_parent(stage["parent"], c, contract_ref, stage))
+        parent_status = "COMPLETED_CORE_GENERATION_V1" if _sf_p0 is None else _sf_p0.BOUNDARY
+        require(parent["status"] == parent_status and parent["generation"] == g - 1,
                 "only closed consecutive boundaries may resume")
         require(parent["contract_sha256"] == contract_sha and parent["source_revision"] == c["source_revision"],
                 "parent contract/source mismatch")
         require(parent["run_uuid"] == c["run_uuid"] and parent["donor"] == c["donor"], "parent donor/run mismatch")
-        require(parent["generation_manifests"] == stage["generations"][:-1], "parent data history changed")
+        prior_data = stage["generations"][:-1] if _sf_p0 is None else stage["generations"]
+        require(parent["generation_manifests"] == prior_data, "parent data history changed")
         require(parent["step"] == sum(c["updates_per_generation"][:g - 1]), "parent dose mismatch")
-        require(generations[-1]["actor_sha256"] == parent["checkpoint"]["sha256"], "actor/parent checkpoint mismatch")
+        if _sf_p0 is None:
+            require(generations[-1]["actor_sha256"] == parent["checkpoint"]["sha256"], "actor/parent checkpoint mismatch")
         checkpoint = external(parent["checkpoint"]["path"])
         require(checkpoint.stat().st_mode & 0o222 == 0
                 and file_sha(checkpoint) == parent["checkpoint"]["sha256"], "parent checkpoint changed or writable")
     return generations, parent
 
 
-def make_trainer(c: dict[str, Any], log_dir: Path) -> Any:
+def make_trainer(c: dict[str, Any], log_dir: Path, *, sf_p0_alpha: float | None = None) -> Any:
     import torch
     from chess_anti_engine.model import ARCH_SCHEMA_VERSION, build_model, model_config_from_manifest_dict
     from chess_anti_engine.train import Trainer
@@ -353,9 +387,10 @@ def make_trainer(c: dict[str, Any], log_dir: Path) -> Any:
     require(canonical({"_schema_version": ARCH_SCHEMA_VERSION, **asdict(cfg)}) == canonical(arch),
             "architecture fields would be defaulted or dropped")
     lr = c["lr"]
+    kwargs = CORE_KWARGS if sf_p0_alpha is None else {**CORE_KWARGS, "sf_wdl_frac": sf_p0_alpha}
     return NoRetryTrainer(
         build_model(cfg), model_config=cfg, log_dir=log_dir,
-        **CORE_KWARGS, device=c["runtime"]["device"], use_amp=c["runtime"]["use_amp"],
+        **kwargs, device=c["runtime"]["device"], use_amp=c["runtime"]["use_amp"],
         lr=lr["peak"], lr_eta_min=lr["floor"], warmup_steps=lr["warmup_steps"],
         warmup_lr_start=lr["warmup_start"], lr_schedule="cosine", lr_T0=lr["first_period"],
         lr_T_mult=1, mirror_prob=c["mirror_prob"],
@@ -470,16 +505,30 @@ def publish_boundary(output: Path, boundary: dict[str, Any]) -> None:
 
 
 def execute(contract_ref: dict[str, str], stage_ref: dict[str, str]) -> dict[str, Any]:
+    return _execute(contract_ref, stage_ref)
+
+
+def _execute(contract_ref: dict[str, str], stage_ref: dict[str, str],
+             *, sf_p0: P0Profile | None = None) -> dict[str, Any]:
+    """Shared engine; only the separately versioned SF-P0 caller opts in."""
     _, c = read_ref(contract_ref)
     _, stage = read_ref(stage_ref)
-    validate_contract(c)
+    if sf_p0 is None:
+        validate_contract(c)
+    else:
+        c, stage = sf_p0.validate_and_project(c, stage)
+    active_sf_p0 = sf_p0 is not None and c["sf_p0"]["alpha"] > 0
     # A Git read cannot refresh the pinned worktree index.
     import subprocess
     git_env = dict(os.environ, GIT_OPTIONAL_LOCKS="0")
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, env=git_env, text=True).strip()
     require(head == c["source_revision"], "source revision mismatch")
     require(not subprocess.check_output(["git", "diff", "HEAD", "--name-only"], cwd=REPO, env=git_env), "dirty tracked source")
-    generations, parent = metadata(c, stage, contract_ref)
+    generations, parent = (metadata(c, stage, contract_ref) if sf_p0 is None
+                           else metadata(c, stage, contract_ref, _sf_p0=sf_p0))
+    if active_sf_p0:
+        assert sf_p0 is not None
+        sf_p0.prepare(c, stage, generations)
     output = external(stage["output"])
     require(not failure_marker(output).exists(), "failed attempt output cannot be replayed")
     output.mkdir(parents=False, exist_ok=False)
@@ -504,7 +553,8 @@ def execute(contract_ref: dict[str, str], stage_ref: dict[str, str]) -> dict[str
         np.random.seed(c["seed"])
         torch.manual_seed(c["seed"])
         rng = np.random.default_rng(c["seed"])
-        trainer = make_trainer(c, output / "tb")
+        trainer = (make_trainer(c, output / "tb") if not active_sf_p0
+                   else make_trainer(c, output / "tb", sf_p0_alpha=c["sf_p0"]["alpha"]))
         import_custody()
         if parent is None:
             from chess_anti_engine.model import ARCH_SCHEMA_VERSION
@@ -536,8 +586,14 @@ def execute(contract_ref: dict[str, str], stage_ref: dict[str, str]) -> dict[str
                 journal.flush()
                 os.fsync(journal.fileno())
                 drawn += len(rows)
+                if active_sf_p0:
+                    assert sf_p0 is not None
+                    sf_p0.on_draw(rows)
 
             replay = load_replay(c, generations, rng, on_draw)
+            if active_sf_p0:
+                assert sf_p0 is not None
+                replay = sf_p0.wrap(replay, c)
             import_custody()
             # Restore AFTER model construction/load and source reconstruction.
             # The reused helper's 'mask' field is NumPy's global RandomState here.
@@ -577,6 +633,8 @@ def execute(contract_ref: dict[str, str], stage_ref: dict[str, str]) -> dict[str
                     "rng": _rng_state(rng, cast(Any, np.random)), "backend": backend,
                     "champion_changed": False,
                     "recovery_scope": "closed generation boundary only; interrupted output is terminal/unqualified"}
+        if sf_p0 is not None:
+            sf_p0.decorate_boundary(boundary, c, stage)
         publish_boundary(output, boundary)
         return boundary
     except BaseException as exc:
