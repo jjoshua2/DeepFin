@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from chess_anti_engine.selfplay.config import SearchConfig
 from chess_anti_engine.moves import COMPACT_TO_FULL_POLICY, POLICY_SIZE, policy_batch_to_encoding
@@ -23,9 +24,6 @@ def test_gumbel_temp_zero_preserves_search_survivor() -> None:
         actions,
         [0.0],
         np.random.default_rng(1),
-        c_temp_resample=None,
-        use_c_resample=False,
-        preserve_zero_temperature_actions=True,
     )
 
     assert actions == [7]
@@ -45,25 +43,6 @@ def test_compact_policy_logits_expand_before_ply_processing() -> None:
     assert float(expanded[0, invalid].max()) == -1e9
 
 
-def test_puct_temp_zero_uses_policy_argmax() -> None:
-    probs = np.zeros((4672,), dtype=np.float32)
-    probs[3] = 0.9
-    probs[7] = 0.1
-    actions = [7]
-
-    _resample_actions_with_temperature(
-        [probs],
-        actions,
-        [0.0],
-        np.random.default_rng(1),
-        c_temp_resample=None,
-        use_c_resample=False,
-        preserve_zero_temperature_actions=False,
-    )
-
-    assert actions == [3]
-
-
 def test_gumbel_positive_temperature_resamples_from_policy() -> None:
     probs = np.zeros((4672,), dtype=np.float32)
     probs[3] = 1.0
@@ -75,9 +54,6 @@ def test_gumbel_positive_temperature_resamples_from_policy() -> None:
         actions,
         [1.0],
         np.random.default_rng(1),
-        c_temp_resample=None,
-        use_c_resample=False,
-        preserve_zero_temperature_actions=True,
     )
 
     assert actions == [3]
@@ -113,9 +89,6 @@ def test_low_positive_temperature_is_numerically_stable() -> None:
         actions,
         [0.001],
         np.random.default_rng(1),
-        c_temp_resample=None,
-        use_c_resample=False,
-        preserve_zero_temperature_actions=True,
     )
 
     assert actions == [7]
@@ -130,12 +103,29 @@ def test_gumbel_low_positive_temperature_falls_back_to_survivor_when_degenerate(
         actions,
         [0.001],
         np.random.default_rng(1),
-        c_temp_resample=None,
-        use_c_resample=False,
-        preserve_zero_temperature_actions=True,
     )
 
     assert actions == [7]
+
+
+@pytest.mark.parametrize(("survivor", "other"), [(7, 3), (3, 7)])
+def test_non_finite_policy_falls_back_to_the_survivor_not_the_argmax(
+    survivor: int, other: int,
+) -> None:
+    """A non-finite weight makes the sampler fall back to ``argmax_idx``.
+
+    That index must point at the halving survivor inside ``legal``, whichever
+    side of the other move it sits on. Pointing it at the policy argmax (the
+    old PUCT rule) or one slot off would play ``other``.
+    """
+    probs = np.zeros((4672,), dtype=np.float32)
+    probs[other] = np.inf
+    probs[survivor] = 0.1
+    actions = [survivor]
+
+    _resample_actions_with_temperature([probs], actions, [0.5], np.random.default_rng(1))
+
+    assert actions == [survivor]
 
 
 def test_scheduled_gumbel_scale_decays_by_full_move_number() -> None:

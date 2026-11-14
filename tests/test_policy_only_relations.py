@@ -71,7 +71,7 @@ def test_policy_only_checkpoint_match_uses_learned_bias(policy_only_checkpoint):
     actions = pick_moves_for_boards(
         model, [board], device="cpu", rng=np.random.default_rng(0),
         mcts_type="gumbel", mcts_simulations=4, temperature=0.0,
-        c_puct=1.5, gumbel_add_noise=False, evaluator=evaluator,
+        gumbel_add_noise=False, evaluator=evaluator,
     )
     assert len(actions) == 1
     root_relations, root_policy = evaluator.calls[0]
@@ -186,7 +186,6 @@ def test_policy_only_era_probe_requires_relation_rows(monkeypatch):
 
 
 @pytest.mark.parametrize("unsupported", [
-    {"mcts": "puct"},
     {"distributed_worker_aot_dir": "/unused"},
     {"distributed_inference_broker_enabled": True},
     {"distributed_inference_shared_broker": True},

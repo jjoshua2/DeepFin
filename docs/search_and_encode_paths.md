@@ -1,17 +1,20 @@
 # Search and encode paths: map and consolidation plan
 
-**As of commit `863f12aa9` on `main` (2026-11-13).** Every `file:line` reference
-below is as of that commit; later commits will move them. Paths are relative to
+**Mapped at commit `863f12aa9` on `main` (2026-11-13); the selfplay, encode and
+gate statements were re-verified at `9a5afddcb` and updated for the
+refuse-instead-of-fall-back change (section 8); the section-1 driver rows 1-5 were
+re-verified line by line at `040ff8a96`.** `file:line` references are as
+of those commits; later commits will move them. Paths are relative to
 `chess_anti_engine/` unless they start with `scripts/`, `docs/` or `tests/`.
 
 Purpose: the reference for collapsing the codebase to ONE search path and ONE
 encode path shared by selfplay and the match engine, so a fix or speedup lands
 once. Sections 1-7 are the map; the last section is the ordered plan.
 
-PRs in flight at the time of writing change the UCI default to classic Gumbel
-(`--walkers 1`) and stop `Threads` from selecting the walker pool. That flip is
-made on the grounds that classic Gumbel is the only strength-validated search
-path (section 1). The map below describes `863f12aa9`, before those PRs.
+Since `863f12aa9` the UCI default has changed to classic Gumbel (`--walkers 1`,
+`uci/__main__.py:899`) and `Threads` no longer selects the walker pool, on the
+grounds that classic Gumbel is the only strength-validated search path
+(section 1). Rows below that still describe the walker default are marked.
 
 ---
 
@@ -34,13 +37,16 @@ true game over, plus a 2-fold repetition scored as a draw, lc0 style).
 
 ### Drivers
 
+Line references in rows 1-5 were verified against `main` at `32fc19a85` merged
+with PR #1305 (the PUCT retirement); re-check them before relying on them.
+
 | # | Driver | Language | Primitive | Callers |
 |---|---|---|---|---|
-| 1 | `mcts/gumbel_c.py:810 run_gumbel_root_many_c` | Python over C | A | **Production selfplay** (`selfplay/network_turn.py:1200`); arena matched_sims (`selfplay/match.py:186`, used by `scripts/arena_standard.py`, `scripts/match_vs_handicapped_sf.py`, `arena.py`, `scripts/match_checkpoints.py`, the worker arena task); UCI classic mode (`uci/search.py:2440`); `eval/puzzles.py:440`; `scripts/audit_targets.py`; `scripts/search_gain_probe.py`; `scripts/diagnose_gumbel_roots.py`; benches; 35 test files |
-| 2 | `mcts/gumbel.py:1726 run_gumbel_root_many` | Pure Python, python-chess boards, own `Node` tree | — | Selfplay fallback only when the C extension is missing (volatility search is refused at yaml load, `utils/config_yaml.py:~805`); `match.py:212` when volatility is on; `scripts/audit_targets.py`; `scripts/lc0_adapter_probe.py`; `scripts/gumbel_scale_probe.py`; `bench/play_batch_timing.py`; 17 test files incl. the parity test `tests/test_mcts_uci_parity_gates.py` |
-| 3 | `mcts/puct_c.py:78 run_mcts_many_c` | Python over C | B | Selfplay PUCT branch (`network_turn.py:1273`, unreachable while `mcts: gumbel`); `match.py:218` when `mcts_type="puct"`, which is the **default** of the worker arena task (`worker.py:4137`, `arena_cfg.get("mcts", "puct")`) and of the `arena.py` CLI (:149) |
-| 4 | `mcts/puct.py:337 run_mcts_many` | Pure Python, own tree | — | Fallback for #3; `eval/puzzles.py:464`; benches; 7 test files |
-| 5 | `uci/walker_pool.py WalkerPool` | Python threads over C | C | **Default UCI launch at this commit** (`uci/__main__.py:850` `--walkers` default 2; `EngineOptions.threads=2`, `uci/engine.py:217`) |
+| 1 | `mcts/gumbel_c.py:829 run_gumbel_root_many_c` | Python over C | A | **Production selfplay** (`selfplay/network_turn.py:1186`); arena matched_sims (`selfplay/match.py:183`, used by `scripts/arena_standard.py`, `scripts/match_vs_handicapped_sf.py`, `arena.py`, `scripts/match_checkpoints.py`, the worker arena task); UCI classic mode (`uci/search.py:3163`); `eval/puzzles.py:454` (the default puzzle search, and the training puzzle eval, which runs the compiled search selfplay runs, `tune/trainable_phases.py:228`); `scripts/audit_targets.py`; `scripts/search_gain_probe.py`; `scripts/diagnose_gumbel_roots.py`; benches; 35 test files |
+| 2 | `mcts/gumbel.py:1726 run_gumbel_root_many` | Pure Python, python-chess boards, own `Node` tree | — | Selfplay (`network_turn.py:1235`) and arena (`match.py:217`) only when volatility search is configured (refused for selfplay at yaml load, `utils/config_yaml.py`) or inside the explicit `ext_check.python_reference_paths` opt-in; a stale build that cannot import the C runner is **refused** (section 8). Research: `scripts/audit_targets.py`, `scripts/lc0_adapter_probe.py`, `scripts/gumbel_scale_probe.py`, `bench/play_batch_timing.py`; 17 test files incl. the parity test `tests/test_mcts_uci_parity_gates.py` |
+| 3 | ~~`mcts/puct_c.py run_mcts_many_c`~~ | — | B | **Deleted 2026-11-14** (step 4). It was the selfplay PUCT branch (only under an explicit `mcts: puct` above `max(64, fast_simulations)` sims), `match.py` under an explicit `mcts_type="puct"`, and `eval/puzzles.py` `search="puct"`. `puct` is now refused at every one of those boundaries (`utils/search_type.require_gumbel_search`). Present on `main` up to the merge of #1305 (any `main` commit before that merge, e.g. the merge commit's first parent); also in tag `pre-slim-20261113`. The UCI PUCT engines (#5-#8) never used it |
+| 4 | ~~`mcts/puct.py run_mcts_many`~~ | — | — | **Deleted 2026-11-14** with #3, together with `MCTSConfig`/`run_mcts`. `mcts/puct.py` keeps only the tree primitives #2 is built on (`Node`, `_expand_sparse`, `_backprop`, `_terminal_value`) and `_value_scalar_from_wdl_logits`, which the UCI engine reads |
+| 5 | `uci/walker_pool.py WalkerPool` | Python threads over C | C | UCI `--walkers > 1` / `SearchWalkers` only (default now 1, `uci/__main__.py:897`); it was the default launch at `863f12aa9` |
 | 6 | `mcts/puct_vl.py:74 PucvChunker` | Python 2-slot async pipeline over C | D | UCI `UseVL=true` at 1 thread (`uci/search.py:879`); also the per-candidate engine inside #8 |
 | 7 | `uci/multi_gpu_pucv_pool.py MultiGpuPucvPool` | One Python thread per GPU over C | D | UCI with `--devices` listing >= 2 devices; switched on automatically (`__main__.py:866`, `search.py:610`) |
 | 8 | `uci/root_parallel_gumbel.py RootParallelGumbelPool` | Python orchestration + Python halving | D | UCI `SearchParallel=gumbel` with >= 2 devices (`search.py:671`) |
@@ -48,10 +54,10 @@ true game over, plus a 2-fold repetition scored as a draw, lc0 style).
 
 What each driver re-implements:
 
-- **#2 and #4** decide terminality with python-chess `board.is_game_over()`
-  (`gumbel.py:1259`, `puct.py:402`): no claimable draws, no 2-fold rule, so
-  their terminal semantics differ from every C path.
-- **#3** decides leaf terminality in Python too (`puct_c.py:228`).
+- **#2** decides terminality with python-chess `board.is_game_over()`
+  (`gumbel.py:1259`): no claimable draws, no 2-fold rule, so its terminal
+  semantics differ from every C path. (#3 and #4 did the same in Python until
+  they were deleted on 2026-11-14.)
 - **#8** re-implements completed-Q scoring, the halving schedule and final
   selection in Python (sharing `halving_keep_count` and
   `_select_top_m_with_gumbel` from `gumbel.py`). Its inner descent is PUCT,
@@ -67,10 +73,12 @@ What each driver re-implements:
 - **Production selfplay: #1.** The production yaml sets `mcts: gumbel`,
   `gumbel_vloss_weight: 1`, `gumbel_c_scale: 0.1`, `syzygy_in_search: true`
   (read the live yaml for the current sims/topk/policy_temp — do not copy them
-  from here). The PUCT branch is unreachable: `use_gumbel` is true whenever the
-  type is gumbel or sims <= max(64, fast_simulations) (`network_turn.py:1170`).
-- **Default UCI launch: #5**, the PUCT walker pool with 2 walkers. It ignores
-  every Gumbel knob and prints a warning saying so (`__main__.py:1230`).
+  from here). Since 2026-11-14 there is no PUCT branch to reach: the
+  `max(64, fast_simulations)` dispatch rule (`selfplay_search_is_gumbel`) was
+  deleted with #3, and `mcts: puct` is refused (fatal at launch, declined on a
+  live reload).
+- **Default UCI launch: #1** (classic Gumbel, `--walkers 1`). At `863f12aa9` it
+  was #5, the PUCT walker pool with 2 walkers.
 
 ### Recorded strength validation
 
@@ -92,8 +100,7 @@ What each driver re-implements:
 
 ## 2. Config surface
 
-Config objects: `GumbelConfig` (`mcts/gumbel.py:323`); `MCTSConfig`
-(`mcts/puct.py:43`); selfplay `SearchConfig` (`selfplay/config.py`);
+Config objects: `GumbelConfig` (`mcts/gumbel.py:323`); selfplay `SearchConfig` (`selfplay/config.py`);
 `SelfplaySearchShape` (`selfplay/network_turn.py`, which exists because
 `vloss_weight` and `target_batch` are runner arguments, not `GumbelConfig`
 fields); `WalkerPoolConfig`, `MultiGpuPucvConfig`, `RootParallelGumbelConfig`;
@@ -110,31 +117,33 @@ refused on the C path (`gumbel.py:135`, `:246`); `C_ONLY_GUMBEL_KNOBS =
 
 Columns: SC = selfplay C (#1), Ar = arena C (#1), UG = UCI Gumbel (#1),
 Py = Python Gumbel (#2), RPG = #8, W = walker (#5), V = pucv (#6),
-Pool = #7, PC = `run_mcts_many_c` (#3). Y = honoured, – = dropped/inert,
-R = refused loudly.
+Pool = #7. Y = honoured, – = dropped/inert, R = refused loudly. (The PC
+column, `run_mcts_many_c` (#3), was dropped when #3 was deleted on 2026-11-14.
+The selfplay `fpu_reduction` / `fpu_at_root` yaml keys are dead keys since then:
+`trainable_config_ops._DEAD_CONFIG_KEY_INERT_VALUES`.)
 
-| Field | SC | Ar | UG | Py | RPG | W | V | Pool | PC |
-|---|---|---|---|---|---|---|---|---|---|
-| simulations | Y | Y | Y (per chunk) | Y | Y (per chunk) | Y | Y | Y | Y |
-| topk | Y | Y | Y | Y | Y | – | – | – | – |
-| c_scale / c_visit (descent) | Y | Y | Y | Y | root fallback only | – | – | – | – |
-| c_scale_root / c_visit_root / q_visit_exp_root | Y | Y | Y | Y | Y | – | – | – | – |
-| halving_div | Y | Y | Y | Y | Y | – | – | – | – |
-| policy_temp | Y (disables bf16 compact leaves) | Y | Y | Y | Y (`set_policy_temp`, rpg:1150) | – | – (method exists on `PucvChunker`; only RPG calls it) | – | – (no field) |
-| add_noise / gumbel_scale | Y per game | Y | Y (`root_noise_scale`) | Y | Y | – | – | – | Dirichlet only |
-| temperature | 0, then per-game resample | Y | forced 0 | Y | 0 | – | – | – | Y (visits) |
-| full_tree | Y | Y | Y | R | – | – | – | – | – |
-| target_max_visit_cap / target_untempered_prior / target_q_rescale | Y (stored target only) | n/a | n/a | Y | n/a | – | – | – | – |
-| volatility_* | R (yaml loader) | R / reroutes to Py | – | Y | – | – | – | – | – |
-| vloss_weight | Y (yaml) | Y (explicit arg) | Y (3) | – | Y | Y | Y | Y | – |
-| target_batch / MinibatchSize | Y | Y | Y | – | – | – | – | – | – |
-| c_puct | – (inert) | – | – | – | Y (descent) | Y | Y | Y | Y |
-| cpuct_factor / cpuct_base | – | – | – | – | Y | Y | Y | Y | – (no field) |
-| fpu_reduction | – | – | – | – | Y | Y | Y | Y | Y |
-| fpu_at_root | – (yaml key inert) | – | – | – | read, pinned 0.0 | read, pinned 0.0 | read, pinned 0.0 | read, pinned 0.0 | Y |
-| tb_probe in leaves | Y | Y | Y | R | Y | Y | Y | Y | – |
-| compute_relations | Y | Y | Y | Y | Y | Y | Y | Y | R (`puct_c.py:94`) |
-| input_history_encoding / extra features | Y | Y | Y | Y | Y | Y | Y | Y | Y |
+| Field | SC | Ar | UG | Py | RPG | W | V | Pool |
+|---|---|---|---|---|---|---|---|---|
+| simulations | Y | Y | Y (per chunk) | Y | Y (per chunk) | Y | Y | Y |
+| topk | Y | Y | Y | Y | Y | – | – | – |
+| c_scale / c_visit (descent) | Y | Y | Y | Y | root fallback only | – | – | – |
+| c_scale_root / c_visit_root / q_visit_exp_root | Y | Y | Y | Y | Y | – | – | – |
+| halving_div | Y | Y | Y | Y | Y | – | – | – |
+| policy_temp | Y (disables bf16 compact leaves) | Y | Y | Y | Y (`set_policy_temp`, rpg:1150) | – | – (method exists on `PucvChunker`; only RPG calls it) | – |
+| add_noise / gumbel_scale | Y per game | Y | Y (`root_noise_scale`) | Y | Y | – | – | – |
+| temperature | 0, then per-game resample | Y | forced 0 | Y | 0 | – | – | – |
+| full_tree | Y | Y | Y | R | – | – | – | – |
+| target_max_visit_cap / target_untempered_prior / target_q_rescale | Y (stored target only) | n/a | n/a | Y | n/a | – | – | – |
+| volatility_* | R (yaml loader) | R / reroutes to Py | – | Y | – | – | – | – |
+| vloss_weight | Y (yaml) | Y (explicit arg) | Y (3) | – | Y | Y | Y | Y |
+| target_batch / MinibatchSize | Y | Y | Y | – | – | – | – | – |
+| c_puct | – (inert) | – | – | – | Y (descent) | Y | Y | Y |
+| cpuct_factor / cpuct_base | – | – | – | – | Y | Y | Y | Y |
+| fpu_reduction | – | – | – | – | Y | Y | Y | Y |
+| fpu_at_root | – (dead yaml key) | – | – | – | read, pinned 0.0 | read, pinned 0.0 | read, pinned 0.0 | read, pinned 0.0 |
+| tb_probe in leaves | Y | Y | Y | R | Y | Y | Y | Y |
+| compute_relations | Y | Y | Y | Y | Y | Y | Y | Y |
+| input_history_encoding / extra features | Y | Y | Y | Y | Y | Y | Y | Y |
 
 **`fpu_at_root` on the PUCT engines (settled by reading).** Every UCI PUCT
 engine carries the value into its C descent: `WalkerPoolConfig.fpu_at_root`
@@ -159,14 +168,15 @@ except RPG drops policy_temp entirely.
   `batch_encode_146[_lc0_root[_legacy_meta]][_bf16]` (`_mcts_tree.c:6610-6626`)
   and the leaf encoders inside the Gumbel state machine and the walker/batch
   descents (`cboard_encode_planes_into*`, :4130-4200). Used by the selfplay root
-  batch (`network_turn.py:505-529`), `gumbel_c` leaves, `puct_c`, and every
+  batch (`network_turn.py:505-529`), `gumbel_c` leaves, and every
   UCI descent.
 - **E2 — C encoders compiled into `_lc0_ext`.** `CBoard.encode_full` /
   `encode_*` and `encode_full_batch` (`_lc0_ext.c:979-997`), reached through
   `encoding/cboard_encode.py encode_cboard` / `encode_cboard_batch`. Used for
-  the UCI root eval (`uci/search.py _ensure_root_eval_cached`), the selfplay
-  fallback (`network_turn.py:553`), `stockfish_turn`, `resume`, RPG and
-  `model_inputs`.
+  the UCI root eval (`uci/search.py _ensure_root_eval_cached`), the production
+  selfplay `record_lc0_root_input` side row (`network_turn.py:723`,
+  `encode_cboard_batch`), `stockfish_turn`, `resume`, RPG, `model_inputs` and
+  the worker's broker warmup probe.
 - **E1 and E2 are the same headers compiled twice** (`_cboard_impl.h`,
   `_features_impl.h`), each with its own global state — which is why
   `encoding/rep_fix.py apply` must set the flag in both modules.
@@ -176,30 +186,44 @@ except RPG drops policy_temp entirely.
   `_features_ext.compute_extra_features`. Repetition planes are computed in
   Python with full look-back (`encoding/lc0.py:583 _check_repetitions`), so
   **E3 always encodes the `history_rep_fix=on` regime regardless of the global
-  flag.** Used by the Python searches (#2, #4), `puct_c`'s no-CBoard
-  fallback, `eval/puzzles.py`, `model/__init__.py`, and the selfplay
-  `record_lc0_root_input` side row (`network_turn.py:928`).
+  flag.** Used by the Python Gumbel search (#2),
+  `eval/puzzles.py`, the `deepfin --selfcheck` oracle
+  (`uci/selfcheck.py _python_reference_planes`), research scripts, and the
+  side row of the Python per-ply reference recorder (`network_turn.py:924`;
+  never the production recorder, which uses E2). `build_model` no longer
+  encodes a position to count planes (it uses `input_plane_count`), and the
+  worker broker warmup probe uses E2; both were shown bit-identical
+  (`tests/test_c_core_required.py`).
 - **E4 — pure-Python features** (`encoding/features.py
-  extra_feature_planes_fast`), the fallback when the extension is missing.
-  Separately, `encode_cboard` writes **all-zero extra planes** when both
-  `encode_full` and `_features_ext` are absent (`cboard_encode.py:~95`): a
-  silent-null fallback.
+  extra_feature_planes_fast`): a test oracle. When `_features_ext` lacks a
+  symbol, E3 (`encode.py _extra_feature_planes`) and the replay v1→v2 upgrade
+  (`plane_decode.recompute_extra_planes`) now **refuse** instead of using it,
+  unless inside `ext_check.python_reference_paths`. The old all-zero
+  feature-plane branch of `encode_cboard` is deleted: a board without
+  `encode_full` is refused, and under the opt-in a missing features extension
+  is still an error.
 - **History handling.** `CBoard.from_board` reads python-chess's private
   `board._stack` (`_lc0_ext.c:415`). `cboard_from_board_fast`
-  (`cboard_encode.py:29`) builds a board with no history; it is `puct_c`'s
-  fallback. The trainer repairs stored planes (`train/trainer.py`,
+  (`cboard_encode.py:29`) builds a board with no history; it was `puct_c`'s
+  fallback (deleted 2026-11-14). The trainer repairs stored planes (`train/trainer.py`,
   `lc0.py x_to_lc0_planes` / `fill_lc0_history_repeat`). Selfplay also has the
   C ply recorder `batch_process_ply` (`_mcts_tree.c:5511`).
+- **`rep_fix.apply` is all-or-nothing:** it resolves the setter in both
+  `_lc0_ext` and `_mcts_tree` first and raises `RepFixUnavailableError`
+  (setting neither) if either module cannot be imported or lacks
+  `set_history_rep_fix`; it used to skip that module with a warning, leaving
+  the two encoders in different regimes.
 - **rep_fix application points:** `model/__init__.py:518` (`build_model`, also
-  the UCI route via `uci/model_loader.py`); `selfplay/manager.py:421`;
-  `selfplay/match.py:157` (re-applied every move, per model);
+  the UCI route via `uci/model_loader.py`); `selfplay/manager.py:466`;
+  `selfplay/match.py:155` (re-applied every move, per model);
   `scripts/net_source.py:582` (ONNX); `scripts/shared_teacher_owner.py:282`,
   `scripts/generate_bootstrap.py:140/228`, `scripts/gen_sf_rooted_corpus.py:1807`,
   `scripts/gen_random_selfplay_shards.py:2343`,
   `scripts/bt4_root_policy_worker.py:1192`, `scripts/nnue_*_readout.py`,
   `scripts/fuzz_*`.
 - **The buffer plane-count guard** `check_encode_buffer_planes` is repeated at
-  each evaluator-sourced encode site; `puct_c.py:265` calls itself the eighth.
+  each evaluator-sourced encode site (the eighth was `puct_c.py:265`, deleted
+  2026-11-14).
 
 ## 4. Board representation (python-chess usage)
 
@@ -250,7 +274,7 @@ python-chess APIs the engine runtime relies on:
 - **ONNX:** `onnx/load.py` wraps `onnxruntime` as an `nn.Module` (4672-wide
   policy, Ceres input), used via `scripts/net_source.py` and the lc0 adapter.
 - **Python searches** fall back to `LocalModelEvaluator` (`gumbel.py`,
-  `puct.py`, `puct_c.py:107`, `selfplay/state.py:870`).
+  `selfplay/state.py:870`).
 
 ## 6. Tablebase probing per path
 
@@ -290,8 +314,7 @@ Other probing:
   `selfplay/manager.py`, `selfplay/strict_tb.py` via `tb_adjudicate_result` /
   `rescore_game_samples` / `rule50_match_*`. In `rule50_match_v1` mode strict
   selfplay runs only on the C Gumbel path (`network_turn.py:1076`).
-- **Unsupported:** the Python searches refuse tablebases (`match.py:141/181`);
-  `run_mcts_many_c` has none.
+- **Unsupported:** the Python search refuses tablebases (`match.py`).
 
 ## 7. Duplicated-logic hot spots
 
@@ -322,6 +345,68 @@ Other probing:
 9. **Deleted descent knobs** are still passed to C as literals
    (`gumbel.py:351`).
 
+## 8. C-core completeness gates (refuse, never fall back)
+
+A missing `_mcts_tree` was always a hard `ImportError` (`network_turn.py`
+imports it unguarded). The silent degradations came from a **stale or partial
+build**: a symbol missing from an otherwise importable extension selected the
+Python search, the Python per-ply recorder (which drops seed history), the
+Python slot classifier, fp32 instead of bf16 leaf transport, Python feature
+planes or legal-move generation, the Python terminal scan, all-zero feature
+planes, or a rep_fix regime set in only one encoder.
+
+One definition of "complete" now lives in `chess_anti_engine/ext_check.py`:
+`REQUIRED_EXTENSIONS`, `REQUIRED_SYMBOLS` (per module), the required `CBoard`
+and `MCTSTree` methods, and the `_mcts_tree` ABI (`gumbel_c._REQUIRED_MCTS_ABI`).
+`tests/test_c_core_required.py` scans the package for `try: from <ext> import`
+and `hasattr`/`getattr` probes of extension symbols and fails when one is
+neither required nor in `GUARDED_OPTIONAL_ALLOWLIST` (guards: `except` ImportError /
+ModuleNotFoundError / AttributeError / Exception / BaseException / bare, around
+`from <ext> import` (absolute or relative, e.g. `from ._lc0_ext import CBoard`),
+`import <ext> [as m]`, `importlib.import_module("<ext>")` or an
+attribute read). A second scan requires every extension symbol the package imports or
+reads, guarded or not, to be in the required set.
+
+**Deploy precondition (measured on the live build, branch `ops/live`, 2026-11-14):**
+its `_mcts_tree` reports `ABI_VERSION` 4 and lacks `MCTSTree.batch_descend_puct_tb`.
+Deploying main therefore requires rebuilding the extensions first; main's `gumbel_c`
+already refused ABI < 10 before this change, and the startup checks above now refuse
+at launch instead of at the first search.
+
+**Owner-facing consequence once main is deployed: a worker exiting 78 mid-run ENDS
+the trial.** The supervisor raises instead of relaunching it, Ray does not retry
+(no `max_failures` is set anywhere, so Tune's default of 0 applies), and
+`scripts/watchdog_loop.sh` auto-recovers only a STALLED run, not a CRASHED one.
+The realistic triggers are a rebuild or a partially written `.so` in the live
+tree while a run is going (a relaunched worker imports the new or half-written
+file), or the Python interpreter updated under a running trial. **Never rebuild
+extensions in a tree with a live run**; build in a separate checkout and switch
+only at a planned restart.
+
+`_tb_ext` (#1296) is optional and not imported by production code today, so it
+is not in `REQUIRED_EXTENSIONS`; it must be added there (and its symbols to
+`REQUIRED_SYMBOLS`) in the same change that makes a production path import it.
+
+| Entry point | Check | On failure |
+|---|---|---|
+| UCI engine | `uci/selfcheck.enforce_startup_gate` (shared `extension_problems` + content freshness + non-zero feature planes) | exit 2, "refusing to start" (bypass `DEEPFIN_ALLOW_UNVERIFIED_EXTENSIONS=1`, development only) |
+| `run.py` train/tune | `ext_check.require_c_core` before `run_tune` | message on stderr naming each missing symbol, exit `C_CORE_REFUSAL_EXIT_CODE` (78) |
+| `worker.py` | `ext_check.require_c_core` after argument/config merge; with `--self-update` the refusal is deferred to the first manifest poll, after the self-update check (an applicable wheel re-execs and re-checks) | message naming each missing symbol and whether self-update was attempted, exit 78 |
+| trial supervisor (`tune/distributed_runtime.py`) | a worker that exited 78 | not relaunched: `CCoreIncompleteError` ends the trial (both the mid-iteration revive and the phase-boundary `_ensure_distributed_workers`, each scanning for 78 before relaunching anything); every other exit code is relaunched as before |
+| `worker_pool.py --respawn` | a child that exited 78 | not respawned (logged once); the pool exits 78 when every child has refused; other exit codes respawn as before |
+| `scripts/train.sh` | `check_c_extensions_fresh.py --check-symbols` (presence, mtime, gcc, LTO recipe, plus symbols + ABI in a child interpreter); `scripts/graceful_restart.py` preflight passes the same flags | refuses to start (bypass `TRAIN_SKIP_C_EXT_CHECK=1`) |
+| `play_batch` (any caller: worker, `tune/trainable_phases.py` eval games, scripts) | `_require_compiled_search` (gumbel_c imported) and `SelfplayState.create` → `_probe_c_extensions` (tree, per-ply, encoders incl. bf16, `classify_games`, `temperature_resample`) | `CCoreIncompleteError` |
+| point of use | network turn (Python Gumbel search, Python per-ply recorder), arena move selection (`match.py`), `run_gumbel_root_many_c` (bf16 encoders; a compact-legal bf16 evaluator on a tree without the legal-bf16 methods; `GSS_HALVING_REV`; `tt_stats`), the selfplay tree reset (`reset_compact`), `encode.py`, `plane_decode.py`, `cboard_encode.py`, `moves/encode.py`, `root_tactics.py` | `CCoreIncompleteError` via `ext_check.refuse_fallback`; the refusal for an unimportable `gumbel_c` carries the original ImportError text |
+| `rep_fix.apply` | both setters present before either is called | `RepFixUnavailableError` |
+
+The Python reference implementations stay importable as parity oracles.
+Running one **in place of** a missing C symbol requires
+`ext_check.python_reference_paths(reason)`, a context manager no production
+module enters (tests use the `python_reference_paths` fixture in
+`tests/conftest.py`). Config-selected Python paths are unchanged: volatility
+search still selects the Python Gumbel search, and the Python slot classifier
+remains the normal path for SF-refute plies (`state.py`).
+
 ---
 
 ## Target architecture
@@ -350,8 +435,10 @@ python-chess-free protocol layer, and multi-GPU as RPG running its
 per-candidate work on primitive A rather than `PucvChunker`.
 
 **Keep only as test references:** `gumbel.py run_gumbel_root_many` (the parity
-oracle and the only home of volatility search) and `puct.py`.
-**Delete:** `puct_c.run_mcts_many_c` and the selfplay PUCT branch.
+oracle and the only home of volatility search) and the tree primitives it uses
+in `puct.py`.
+**Delete — done 2026-11-14:** `puct_c.run_mcts_many_c`, the pure-Python PUCT
+search and the selfplay PUCT branch.
 **Retire or mark experimental:** the single-GPU walker pool and single-GPU
 pucv.
 
@@ -383,16 +470,25 @@ Sizes: S/M/L. "Risk" says what the step can change.
 2. **(S, no behaviour change)** Fold the three `_ensure_*_root_expanded`
    methods into one helper. Proof: UCI tests plus a byte-identical fixed-node
    move log before/after.
-3. **(S, no behaviour change)** Make selfplay refuse to start when the C Gumbel
-   extension is missing instead of falling back to the Python path (the yaml
-   loader already makes the volatility route unreachable). Proof:
-   `tests/test_e2e_smoke.py -k gumbel_selfplay_smoke`; production never takes
-   the fallback, so training data cannot change.
+3. **(S, no behaviour change) — done (section 8).** Selfplay, arena, worker,
+   training and the encoders refuse a stale or partial build instead of
+   falling back to a Python path. Proof: a fixed-seed CPU `play_batch` digest
+   over every recorded array, identical before and after, plus the parity
+   suites and `tests/test_e2e_smoke.py`.
 4. **(S, measurement instruments only)** Flip the worker arena task default
    (`worker.py:4137`) and the `arena.py --mcts` default from puct to gumbel,
    then delete `run_mcts_many_c` and the selfplay PUCT branch; keep `puct.py`
    as a test reference. Changes those arena rulers, not training data; note
-   the ruler break in the record.
+   the ruler break in the record. **Done 2026-11-14**, in two PRs. First
+   every search-type default became `gumbel` (`docs/eval_protocol.md`). Then
+   `mcts: puct` was refused at every selfplay/arena/puzzle boundary, and
+   `run_mcts_many_c`, the pure-Python PUCT search, the selfplay PUCT branch and
+   the `max(64, fast)` dispatch rule were deleted. The reason to refuse rather
+   than keep it: explicit PUCT selfplay recorded almost no rows at production
+   shape, because the default-on `DiffFocusConfig` thresholds are calibrated to
+   Gumbel's KL scale and silently discarded about 92% of PUCT rows
+   (root-caused in the PR #1295 review). `puct.py` keeps only the tree
+   primitives the Python Gumbel reference uses.
 5. **(M, no behaviour change)** Extract one pipelined PUCT runner shared by
    `PucvChunker` and `MultiGpuPucvPool`. Proof:
    `tests/test_async_pipeline_safety.py`, `tests/test_pucv_leaf_tablebase.py`,
@@ -409,7 +505,7 @@ Sizes: S/M/L. "Risk" says what the step can change.
 7. **(M, changes engine strength)** Make classic Gumbel the UCI default
    (`--walkers 1`) and stop `Threads` from selecting the walker pool; mark
    single-GPU Threads>1 / UseVL experimental (the multi-GPU PUCT pool keeps
-   its status until the ladder is run). **In flight in open PRs**,
+   its status until the ladder is run). **Done since `863f12aa9`**,
    justified by classic Gumbel being the only strength-validated path; step 1
    then measures what the retired default was worth.
 8. **(L, changes engine strength, multi-GPU only)** Rebase RPG's
@@ -425,8 +521,8 @@ Sizes: S/M/L. "Risk" says what the step can change.
    tests plus a slow-evaluator test.
 10. **(M, must be bit-identical)** One encoder source: build the encoder only
     in `_lc0_ext` and have `_mcts_tree` call it through a capsule, so there is
-    one rep_fix flag; make E3 regime-aware or test-only; delete the
-    zero-feature fallback in `cboard_encode`. Proof:
+    one rep_fix flag; make E3 regime-aware or test-only (the zero-feature
+    fallback in `cboard_encode` is already deleted, section 8). Proof:
     `scripts/fuzz_batch_encode_diff.py` / `scripts/fuzz_cboard_diff.py` under
     both rep_fix values, and bit-identity of production-shape encodes. Not
     bit-identical = a training-target change needing a record.

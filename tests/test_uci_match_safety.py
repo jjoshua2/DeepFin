@@ -12,7 +12,9 @@ PRODUCTION path emits, not about internal state:
   raising ``node_id out of range`` into the U2 handler.
 * U3: ``movestogo 1`` gets the clock it is owed.
 * U5/U6: a short FEN is parsed rather than silently replaced by the start
-  position, and a truncated move list is announced.
+  position, and a bad FEN or move list is rejected as a whole, keeping the
+  previous position (it used to fall back to the start position / the legal
+  prefix of the moves and search THAT).
 * U7: the advertised ``Hash`` minimum is the enforced one.
 """
 from __future__ import annotations
@@ -560,42 +562,47 @@ def test_startpos_is_unchanged() -> None:
     assert cmd.moves == ("e2e4", "e7e5")
 
 
-def test_unparseable_fen_is_announced_before_falling_back_to_startpos(capsys) -> None:
+def test_unparseable_fen_is_rejected_and_the_previous_position_kept(capsys) -> None:
     engine = Engine(worker=MagicMock())
+    engine._handle_position(CmdPosition(fen=None, moves=("e2e4",)))
+    before = engine._board.copy()
 
     engine._handle_position(CmdPosition(fen="not/a/fen w - - 0 1", moves=()))
 
     out = capsys.readouterr().out
-    assert "info string position: rejected FEN" in out
-    assert "using the start position" in out
-    assert engine._board == chess.Board()
+    assert "info string position: rejected (FEN 'not/a/fen w - - 0 1'" in out
+    assert "keeping the previous position" in out
+    assert engine._board == before
+    assert engine._position_error is not None
 
 
 # --- U6: truncated move lists ----------------------------------------------
 
 
 @pytest.mark.parametrize(
-    ("moves", "applied"),
+    ("moves", "bad_ply"),
     [
-        (("e2e4", "e7e5", "e1e8", "g1f3"), 2),  # illegal third move
-        (("e7e8Q",), 0),                        # uppercase promotion
-        (("e2e4", "0000", "e7e5"), 1),          # null move mid-list
+        (("e2e4", "e7e5", "e1e8", "g1f3"), 3),  # illegal third move
+        (("e7e8Q",), 1),                        # uppercase promotion
+        (("e2e4", "0000", "e7e5"), 2),          # null move mid-list
     ],
 )
-def test_truncated_move_list_is_announced(
-    moves: tuple[str, ...], applied: int, capsys,
+def test_bad_move_list_rejects_the_whole_position(
+    moves: tuple[str, ...], bad_ply: int, capsys,
 ) -> None:
-    """Red on main: `break` with no diagnostic. The engine then searches a
-    position n plies behind the game and emits a move that is likely illegal
-    there — a forfeit, delivered silently."""
+    """The legal prefix is NOT applied: searching it answered for a position
+    n plies behind the game (it used to, with an info string). The whole
+    command is rejected, naming the offending ply, and the previous position
+    stays."""
     engine = Engine(worker=MagicMock())
+    engine._handle_position(CmdPosition(fen=None, moves=("d2d4",)))
+    capsys.readouterr()
 
     engine._handle_position(CmdPosition(fen=None, moves=moves))
 
     out = capsys.readouterr().out
-    assert "info string position: ignored" in out
-    assert f"ignored {len(moves) - applied} of {len(moves)} move(s)" in out
-    assert len(engine._board.move_stack) == applied
+    assert "info string position: rejected (move " + str(bad_ply) in out
+    assert [m.uci() for m in engine._board.move_stack] == ["d2d4"]
 
 
 def test_complete_move_list_says_nothing(capsys) -> None:

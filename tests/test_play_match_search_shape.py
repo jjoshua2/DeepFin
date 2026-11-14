@@ -12,6 +12,7 @@ from typing import Any
 
 import chess
 import numpy as np
+import pytest
 import torch
 
 from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS, GumbelConfig
@@ -68,6 +69,7 @@ def _run(monkeypatch: Any, **kwargs: Any) -> list[GumbelConfig]:
     return seen
 
 
+@pytest.mark.usefixtures("python_reference_paths")
 def test_defaults_to_the_play_shape(monkeypatch: Any) -> None:
     cfg = _run(monkeypatch)[0]
     for key, want in PLAY_SEARCH_DEFAULTS.items():
@@ -77,42 +79,26 @@ def test_defaults_to_the_play_shape(monkeypatch: Any) -> None:
     assert cfg.topk != GumbelConfig().topk
 
 
+@pytest.mark.usefixtures("python_reference_paths")
 def test_caller_sim_budget_is_never_overridden(monkeypatch: Any) -> None:
     """PLAY_SEARCH_DEFAULTS carries no `simulations`; keep it that way."""
     assert "simulations" not in PLAY_SEARCH_DEFAULTS
     assert _run(monkeypatch)[0].simulations == 7
 
 
+@pytest.mark.usefixtures("python_reference_paths")
 def test_explicit_overrides_win(monkeypatch: Any) -> None:
     cfg = _run(monkeypatch, gumbel_overrides={"c_scale": 0.5, "topk": 4})[0]
     assert cfg.c_scale == 0.5
     assert cfg.topk == 4
 
 
+@pytest.mark.usefixtures("python_reference_paths")
 def test_empty_dict_forces_the_dataclass_defaults(monkeypatch: Any) -> None:
     """An explicit {} is the escape hatch back to bare GumbelConfig()."""
     cfg = _run(monkeypatch, gumbel_overrides={})[0]
     assert cfg.c_scale == GumbelConfig().c_scale
     assert cfg.topk == GumbelConfig().topk
-
-
-def test_puct_matches_are_unaffected(monkeypatch: Any) -> None:
-    """The overrides are Gumbel knobs; the PUCT path must not see them."""
-    seen = _capture_cfgs(monkeypatch)
-    model = _DummyModel().eval()
-    stats = play_match_batch(
-        model, model,
-        device="cpu",
-        rng=np.random.default_rng(0),
-        games=2,
-        max_plies=4,
-        a_plays_white=[True, False],
-        mcts_type="puct",
-        mcts_simulations=1,
-        temperature=0.0,
-    )
-    assert not seen, "PUCT match must not route through the Gumbel search"
-    assert stats.games == 2
 
 
 def test_board_fixture_is_sane() -> None:

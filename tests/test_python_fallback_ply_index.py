@@ -103,6 +103,7 @@ def _append_python_net_move(
     return state.samples_per_game[0][-1]
 
 
+@pytest.mark.usefixtures("python_reference_paths")
 def test_python_fallback_records_absolute_fen_ply_like_c_path() -> None:
     # A FEN-created board has no local move-stack history, but its fullmove
     # counter still places it at an absolute game ply. The production CBoard
@@ -146,6 +147,7 @@ def test_python_fallback_records_absolute_fen_ply_like_c_path() -> None:
     assert rec.ply_index != len(board.move_stack)
 
 
+@pytest.mark.usefixtures("python_reference_paths")
 def test_python_fallback_ply_survives_an_intervening_curriculum_sf_ply() -> None:
     """A fallback SF move stays synchronized before the following net move."""
     state = _state_from_fen(_FEN_PLY_136)
@@ -177,6 +179,7 @@ def test_python_fallback_ply_survives_an_intervening_curriculum_sf_ply() -> None
     assert board.fen() == state.cboards[0].fen()
 
 
+@pytest.mark.usefixtures("python_reference_paths")
 def test_python_fallback_queen_check_mask_and_reply_match_cboard() -> None:
     fen = "4k3/8/8/8/8/8/4Q3/4K3 w - - 0 1"
     state = _state_from_fen(fen)

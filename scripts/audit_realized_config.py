@@ -873,8 +873,12 @@ _RECO_SERVER_RESOLVED: dict[str, str] = {
 # worker will never do. `test_reco_worker_defaults_match_dataclasses` pins
 # these numbers to the real dataclass fields so the table cannot rot.
 _RECO_WORKER_DEFAULT: dict[str, object] = {
-    "fpu_reduction": 1.2,          # SearchConfig.fpu_reduction
-    "fpu_at_root": 1.0,            # SearchConfig.fpu_at_root
+  # Dead keys since the selfplay PUCT retirement (2026-11-14): nothing reads
+  # them at any value, and these are their inert values in
+  # trainable_config_ops._DEAD_CONFIG_KEY_INERT_VALUES. A non-inert value is
+  # also reported by the DEAD-KEY section (and refused at restart).
+    "fpu_reduction": 1.2,
+    "fpu_at_root": 1.0,
     "temperature_drop_plies": 0,   # TemperatureConfig.drop_plies
     "temperature_after": 0.0,      # TemperatureConfig.after
     "categorical_bins": 32,        # GameConfig.categorical_bins

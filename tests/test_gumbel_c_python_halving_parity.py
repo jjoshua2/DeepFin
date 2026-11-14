@@ -64,6 +64,7 @@ import pytest
 from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding.encode import input_plane_count
 from chess_anti_engine.encoding.lc0 import c_input_history_mode
+from chess_anti_engine.ext_check import CCoreIncompleteError, python_reference_paths
 from chess_anti_engine.mcts import _mcts_tree as _mcts_tree_ext
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
 from chess_anti_engine.mcts.gumbel import (
@@ -584,9 +585,15 @@ def test_the_loaded_extension_announces_its_halving_revision(
     assert "carried root priors" in rev2
 
     # A pre-fix .so has no such constant, and that IS revision 1 — not unknown.
+    # Production refuses that build (ext_check requires GSS_HALVING_REV); the
+    # legacy report is still what the opt-in reference path prints.
     monkeypatch.delattr(_mcts_tree_ext, "GSS_HALVING_REV", raising=False)
     monkeypatch.setattr(gumbel_c_mod, "_halving_rev_reported", False)
-    gumbel_c_mod._report_halving_rev()
+    with pytest.raises(CCoreIncompleteError, match="GSS_HALVING_REV"):
+        gumbel_c_mod._report_halving_rev()
+    monkeypatch.setattr(gumbel_c_mod, "_halving_rev_reported", False)
+    with python_reference_paths("legacy halving-rev report"):
+        gumbel_c_mod._report_halving_rev()
     legacy = capsys.readouterr().err
     assert "gss_halving_rev=1" in legacy
     assert "W[root]/N[root]" in legacy

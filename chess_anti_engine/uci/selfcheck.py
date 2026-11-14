@@ -13,10 +13,13 @@ This module also owns the engine's startup gate (:func:`enforce_startup_gate`),
 called from ``uci/__main__.py`` before the first protocol line. It refuses to
 start on a missing, ABI-incompatible or stale required extension, or a feature
 encoder that yields all-zero planes, instead of letting the engine play on a
-silently degraded install. The gate is scoped to the UCI entry point:
-selfplay and training share these extensions but never call it.
+silently degraded install. Its import + symbol + ABI part is the shared
+``chess_anti_engine.ext_check.extension_problems``, which the worker,
+``run.py`` (train/tune) and the ``train.sh`` gate run as well; the content
+freshness and feature-plane checks below are specific to this gate.
 
-Only the standard library is imported at module level, so the self-check can
+Only the standard library (and the stdlib-only ``ext_check``) is imported at
+module level, so the self-check can
 report a broken torch or a missing extension as a FAIL line rather than dying
 on import.
 """
@@ -42,6 +45,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from chess_anti_engine import ext_check as _ext_check
+
 if TYPE_CHECKING:
     import chess
     import numpy as np
@@ -53,46 +58,18 @@ Status = Literal["PASS", "FAIL", "SKIP"]
 MIN_PYTHON: tuple[int, int, int] = (3, 10, 12)
 MAX_PYTHON_EXCLUSIVE: tuple[int, int] = (3, 14)
 
-# The extensions the UCI engine needs to play. setup.py also builds
-# `_perft_ext` (diagnostic) and `_nnue_ext` (NNUE research search); the engine
-# imports neither, so neither gates startup.
-REQUIRED_EXTENSIONS: tuple[str, ...] = (
-    "chess_anti_engine.encoding._lc0_ext",
-    "chess_anti_engine.encoding._features_ext",
-    "chess_anti_engine.mcts._mcts_tree",
-)
-
-# Symbols the Python side calls on each extension. `_mcts_tree` also carries a
-# numeric ABI (`ABI_VERSION` vs `gumbel_c._REQUIRED_MCTS_ABI`); the encoders
-# carry no version number, so the symbol set is their ABI contract, and the
-# behavioural encoder check below is what proves the code behind it.
-REQUIRED_SYMBOLS: dict[str, tuple[str, ...]] = {
-    "chess_anti_engine.encoding._lc0_ext": ("CBoard", "encode_full_batch"),
-    "chess_anti_engine.encoding._features_ext": (
-        "compute_extra_features", "compute_relation_matrices",
-    ),
-    "chess_anti_engine.mcts._mcts_tree": ("MCTSTree", "ABI_VERSION", "batch_encode_146"),
-}
-REQUIRED_CBOARD_METHODS: tuple[str, ...] = ("encode_full", "legal_move_indices")
+# The extension/symbol/ABI tables and the rebuild instructions are shared with
+# selfplay, the worker and training: one definition in `chess_anti_engine.ext_check`.
+REQUIRED_EXTENSIONS: tuple[str, ...] = _ext_check.REQUIRED_EXTENSIONS
+REQUIRED_SYMBOLS: dict[str, tuple[str, ...]] = _ext_check.REQUIRED_SYMBOLS
+REQUIRED_CBOARD_METHODS: tuple[str, ...] = _ext_check.REQUIRED_CBOARD_METHODS
+REQUIRED_MCTSTREE_METHODS: tuple[str, ...] = _ext_check.REQUIRED_MCTSTREE_METHODS
+FORCE_REBUILD_COMMAND = _ext_check.FORCE_REBUILD_COMMAND
+SETUP_FORCE_COMMAND = _ext_check.SETUP_FORCE_COMMAND
+REBUILD_HINT = _ext_check.REBUILD_HINT
 
 # Development escape hatch for the startup gate (never for an operator).
 ALLOW_UNVERIFIED_ENV = "DEEPFIN_ALLOW_UNVERIFIED_EXTENSIONS"
-
-# The command that clears a refusal must force a recompile: deleting the .so
-# and rebuilding without --force can copy an old object back out of build/.
-FORCE_REBUILD_COMMAND = "pip install --no-deps -e ."
-# Equivalent where setuptools is installed in the venv (it is not by default on
-# Python 3.12+); the editable reinstall gets setuptools from build isolation.
-SETUP_FORCE_COMMAND = "python setup.py build_ext --inplace --force"
-REBUILD_HINT = (
-    "in a source checkout (editable install), recompile the C extensions with "
-    f"`{FORCE_REBUILD_COMMAND}` (or `uv pip install --no-deps -e .`), which "
-    "compiles every extension from scratch in a temporary build directory; "
-    f"`{SETUP_FORCE_COMMAND}` does the same if setuptools is installed; "
-    "production host: `python scripts/build_production_extensions.py`. "
-    "A regular install: reinstall it from the checkout or the wheel "
-    "(`pip install --force-reinstall --no-deps <checkout or .whl>`)"
-)
 
 # Positions for the encoder parity and move-generation checks: the start
 # position, Kiwipete (castling, pins, promotions nearby), an en-passant
@@ -277,41 +254,17 @@ def freshness_problems(root: Path, modules: Sequence[str] = REQUIRED_EXTENSIONS)
 
 
 def required_abi() -> int:
-    from chess_anti_engine.mcts.gumbel_c import _REQUIRED_MCTS_ABI
-
-    return int(_REQUIRED_MCTS_ABI)
+    return _ext_check.required_abi()
 
 
 def extension_problems(
     *, abi_required: Callable[[], int] | None = None,
 ) -> list[str]:
-    """Import + symbol + ABI problems for every required extension."""
+    """Import + symbol + ABI problems for every required extension (see ``ext_check``)."""
+    # Resolve `required_abi` here, at call time, so patching this module's
+    # name (as the tests do) still reaches the shared check.
     abi_fn = required_abi if abi_required is None else abi_required
-    problems: list[str] = []
-    for name in REQUIRED_EXTENSIONS:
-        try:
-            module = importlib.import_module(name)
-        except ImportError as exc:
-            problems.append(f"{name} is not importable ({exc})")
-            continue
-        missing = [sym for sym in REQUIRED_SYMBOLS[name] if not hasattr(module, sym)]
-        if name.endswith("._lc0_ext") and hasattr(module, "CBoard"):
-            missing += [
-                f"CBoard.{meth}" for meth in REQUIRED_CBOARD_METHODS
-                if not hasattr(module.CBoard, meth)
-            ]
-        if missing:
-            problems.append(f"{name} lacks {', '.join(missing)} (built from older source)")
-        if name.endswith("._mcts_tree"):
-            abi = int(getattr(module, "ABI_VERSION", 0))
-            try:
-                need = abi_fn()
-            except ImportError:
-                # gumbel_c needs the other extensions; their failure is reported above.
-                continue
-            if abi < need:
-                problems.append(f"{name} ABI_VERSION={abi} < required {need}")
-    return problems
+    return _ext_check.extension_problems(abi_required=abi_fn)
 
 
 def _python_reference_planes(board: chess.Board, version: str) -> np.ndarray:

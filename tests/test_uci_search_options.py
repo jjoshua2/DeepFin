@@ -574,7 +574,7 @@ def test_searchconfig_reports_a_value_the_setoption_actually_applied(
         ("setoption name PolicyTemperature value nan", "out of range"),
         ("setoption name CScale value nan", "out of range"),
         ("setoption name Topk value 1", "out of range"),
-        ("setoption name HalvingDiv value 1.5", "not a integer"),
+        ("setoption name HalvingDiv value 1.5", "not an integer"),
     ],
 )
 def test_a_rejected_value_says_so_and_keeps_the_old_one(

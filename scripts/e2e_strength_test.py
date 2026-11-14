@@ -224,7 +224,6 @@ def main():
         "search": SearchConfig(
             simulations=args.mcts_simulations, mcts_type="gumbel",
             playout_cap_fraction=0.25, fast_simulations=8,
-            fpu_reduction=1.2, fpu_at_root=1.0,
         ),
         "opening": OpeningConfig(random_start_plies=4),
         "diff_focus": DiffFocusConfig(),

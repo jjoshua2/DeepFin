@@ -5,7 +5,7 @@ Measures wall-clock time for each phase of the self-play loop at 64 boards:
   2. GPU forward pass (various batch sizes, with/without compile)
   3. legal_move_mask / legal_move_indices
   4. Board replay (python-chess copy+push vs CBoard copy+push_index)
-  5. End-to-end MCTS (puct Python, puct C-tree, gumbel)
+  5. End-to-end MCTS (gumbel Python reference, gumbel C)
   6. cProfile of a single MCTS run to pinpoint hotspots
 
 Run:
@@ -27,17 +27,11 @@ import torch
 
 from chess_anti_engine.encoding import encode_position, encode_positions_batch
 from chess_anti_engine.inference import LocalModelEvaluator
-from chess_anti_engine.mcts import GumbelConfig, MCTSConfig
+from chess_anti_engine.mcts import GumbelConfig
 from chess_anti_engine.mcts.gumbel import run_gumbel_root_many
-from chess_anti_engine.mcts.puct import run_mcts_many
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.moves.encode import legal_move_indices, legal_move_mask
 from chess_anti_engine.utils.amp import inference_autocast
-
-try:
-    from chess_anti_engine.mcts.puct_c import run_mcts_many_c as _run_mcts_many_c
-except ImportError:
-    _run_mcts_many_c = None
 
 try:
     from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c as _run_gumbel_root_many_c
@@ -245,17 +239,6 @@ def bench_mcts_e2e(
         speedup = t_gumbel_py / t_gumbel_c if t_gumbel_c > 0 else 0
         print(f"  Gumbel speedup:         {speedup:.2f}x")
 
-    # PUCT C tree (for reference)
-    puct_c = _run_mcts_many_c
-    if puct_c is not None:
-        def _puct_c():
-            return puct_c(
-                model, boards, device=device, rng=np.random.default_rng(42),
-                cfg=MCTSConfig(simulations=sims), evaluator=evaluator,
-            )
-        t = _timer_cuda(_puct_c, device, repeats, warmup=2)
-        print(f"  PUCT (C tree+CBoard):   {t*1000:8.1f} ms  ({t/n*1000:.1f} ms/board, {n/t:.1f} boards/sec)")
-
 
 def profile_mcts(
     model: torch.nn.Module,
@@ -272,15 +255,9 @@ def profile_mcts(
     if mcts_type == "gumbel_c" and _run_gumbel_root_many_c is not None:
         _run_gumbel_root_many_c(model, boards[:2], device=device, rng=rng,
                                 cfg=GumbelConfig(simulations=4), evaluator=evaluator)
-    elif mcts_type == "gumbel":
+    else:
         run_gumbel_root_many(model, boards[:2], device=device, rng=rng,
                              cfg=GumbelConfig(simulations=4), evaluator=evaluator)
-    elif mcts_type == "puct_c" and _run_mcts_many_c is not None:
-        _run_mcts_many_c(model, boards[:2], device=device, rng=rng,
-                         cfg=MCTSConfig(simulations=4), evaluator=evaluator)
-    else:
-        run_mcts_many(model, boards[:2], device=device, rng=rng,
-                      cfg=MCTSConfig(simulations=4), evaluator=evaluator)
 
     if device.startswith("cuda"):
         torch.cuda.synchronize()
@@ -292,15 +269,9 @@ def profile_mcts(
     if mcts_type == "gumbel_c" and _run_gumbel_root_many_c is not None:
         _run_gumbel_root_many_c(model, boards, device=device, rng=rng2,
                                 cfg=GumbelConfig(simulations=sims), evaluator=evaluator)
-    elif mcts_type == "gumbel":
+    else:
         run_gumbel_root_many(model, boards, device=device, rng=rng2,
                              cfg=GumbelConfig(simulations=sims), evaluator=evaluator)
-    elif mcts_type == "puct_c" and _run_mcts_many_c is not None:
-        _run_mcts_many_c(model, boards, device=device, rng=rng2,
-                         cfg=MCTSConfig(simulations=sims), evaluator=evaluator)
-    else:
-        run_mcts_many(model, boards, device=device, rng=rng2,
-                      cfg=MCTSConfig(simulations=sims), evaluator=evaluator)
 
     if device.startswith("cuda"):
         torch.cuda.synchronize()
@@ -323,7 +294,7 @@ def main() -> None:
     ap.add_argument("--ffn-mult", type=float, default=2)
     ap.add_argument("--simulations", type=int, default=64)
     ap.add_argument("--boards", type=int, default=64)
-    ap.add_argument("--mcts", type=str, default="gumbel_c", choices=["puct", "puct_c", "gumbel", "gumbel_c"])
+    ap.add_argument("--mcts", type=str, default="gumbel_c", choices=["gumbel", "gumbel_c"])
     ap.add_argument("--repeats", type=int, default=5)
     ap.add_argument("--compile", action="store_true")
     ap.add_argument("--profile-only", action="store_true", help="Skip micro-benchmarks, only run cProfile")

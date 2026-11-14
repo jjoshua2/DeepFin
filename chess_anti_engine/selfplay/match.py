@@ -11,39 +11,34 @@ import numpy as np
 import torch
 
 from chess_anti_engine.encoding import rep_fix
-from chess_anti_engine.mcts import GumbelConfig, MCTSConfig
+from chess_anti_engine.ext_check import refuse_fallback
+from chess_anti_engine.mcts import GumbelConfig
 from chess_anti_engine.mcts.gumbel import (
     PLAY_SEARCH_DEFAULTS,
     run_gumbel_root_many,
     volatility_search_enabled,
     warn_volatility_python_path,
 )
-from chess_anti_engine.mcts.puct import run_mcts_many
+from chess_anti_engine.utils.search_type import require_gumbel_search
 from chess_anti_engine.moves import index_to_move_fast, index_to_move_strict
 from chess_anti_engine.selfplay.opening import OpeningConfig, make_starting_board
 
-try:
-    from chess_anti_engine.mcts.puct_c import run_mcts_many_c as _run_mcts_many_c
-    _HAS_C_TREE = True
-except ImportError:
-    _HAS_C_TREE = False
-
+# The ImportError text is kept for the refusal message below.
 try:
     from chess_anti_engine.mcts.gumbel_c import (
         run_gumbel_root_many_c as _run_gumbel_root_many_c,
     )
     _HAS_GUMBEL_C = True
-except ImportError:
+    _GUMBEL_C_IMPORT_ERROR: str | None = None
+except ImportError as _exc:
     _HAS_GUMBEL_C = False
+    _GUMBEL_C_IMPORT_ERROR = f"{type(_exc).__name__}: {_exc}"
 
 if TYPE_CHECKING:
     from chess_anti_engine.tablebase import SyzygyProbe
     from chess_anti_engine.inference import BatchEvaluator
     from chess_anti_engine.mcts.gumbel_c import (
         run_gumbel_root_many_c as _run_gumbel_root_many_c,
-    )
-    from chess_anti_engine.mcts.puct_c import (
-        run_mcts_many_c as _run_mcts_many_c,
     )
 
 
@@ -82,7 +77,7 @@ def result_from_a_pov(result: str, *, a_is_white: bool) -> int:
 def pick_moves_for_boards(
     model: torch.nn.Module, sub_boards: list[chess.Board], *,
     device: str, rng: np.random.Generator,
-    mcts_type: str, mcts_simulations: int, temperature: float, c_puct: float,
+    mcts_type: str, mcts_simulations: int, temperature: float,
     gumbel_add_noise: bool,
     volatility_q_scale: float = 0.0,
     volatility_fpu: float = 0.0,
@@ -93,7 +88,10 @@ def pick_moves_for_boards(
     evaluator: BatchEvaluator | None = None,
     tb_probe: SyzygyProbe | None = None,
 ) -> list[int]:
-    """Run gumbel- or PUCT-MCTS for one model on a list of boards.
+    """Run the Gumbel search for one model on a list of boards.
+
+    ``mcts_type`` must be ``"gumbel"``; ``"puct"`` was retired for arena use on
+    2026-11-14 and is refused (``utils.search_type.require_gumbel_search``).
 
     Non-zero ``volatility_q_scale``/``volatility_fpu`` switch on
     volatility-aware Gumbel search, which forces the Python search path
@@ -120,7 +118,7 @@ def pick_moves_for_boards(
     through. ``None`` (the default) is today's behaviour and every other caller
     keeps it: each search entry point then builds a THROWAWAY
     ``LocalModelEvaluator`` per call (``mcts/gumbel_c.run_gumbel_root_many_c``
-    and the three other entries reached below). On CUDA that is a fresh, lazily
+    and the Python Gumbel reference reached below for volatility arms). On CUDA that is a fresh, lazily
     created stream per side per ply; torch hands streams out of a fixed
     round-robin pool of 32 per device and the caching allocator partitions
     segments BY STREAM, so a two-model arena cycles the whole pool in 16 plies
@@ -131,15 +129,15 @@ def pick_moves_for_boards(
     ``LocalModelEvaluator`` has no such attribute, so the leaf batch grows with
     concurrency without bound.
 
-    It is forwarded to whichever search path this call takes — all four entry
+    It is forwarded to whichever search path this call takes — both entry
     points accept ``evaluator`` — so it is never accepted here and quietly
     dropped below. ⚑ A ``DirectGPUEvaluator`` RAISES when a submit exceeds its
     ``max_batch`` (``get_input_buffer`` / ``evaluate_encoded``) and the C gumbel
     ROOT submit is NOT bucketed against it, so size ``max_batch`` at or above
     the largest board count any one call will be handed.
     """
-    if tb_probe is not None and str(mcts_type) != "gumbel":
-        raise ValueError("Tablebase-guided match search requires the compiled Gumbel path")
+    # One search for arena/gate/eval matches: compiled Gumbel. "puct" is refused.
+    require_gumbel_search(mcts_type)
     input_history_encoding = str(getattr(model, "input_history_encoding", "legacy"))
     input_extra_features = str(getattr(model, "input_extra_features", "v1"))
     policy_encoding = str(getattr(model, "policy_encoding", "lc0_1858"))
@@ -150,84 +148,77 @@ def pick_moves_for_boards(
     # cycle, and the last build_model otherwise wins for both sides.
     # Idempotent and cheap when unchanged.
     # boards_discarded: every C search entry point rebuilds its CBoards from the
-    # python board at the start of each call (gumbel_c/puct_c ``CBoard.from_board``),
+    # python board at the start of each call (gumbel_c ``CBoard.from_board``),
     # so no board pushed under the other model's flag value outlives this apply.
     # A future long-lived-CBoard optimisation on this path invalidates that and
     # must revisit the guard rather than keep the keyword.
     rep_fix.apply(
         bool(getattr(model, "history_rep_fix", False)), boards_discarded=True,
     )
-    if str(mcts_type) == "gumbel":
-        gumbel_cfg = GumbelConfig(
-            simulations=int(mcts_simulations), temperature=float(temperature),
-            add_noise=bool(gumbel_add_noise),
-            input_history_encoding=input_history_encoding,
-            input_extra_features=input_extra_features,
-            policy_encoding=policy_encoding,
-            compute_relations=use_dynamic_relations,
-            volatility_q_scale=float(volatility_q_scale),
-            volatility_fpu=float(volatility_fpu),
+    gumbel_cfg = GumbelConfig(
+        simulations=int(mcts_simulations), temperature=float(temperature),
+        add_noise=bool(gumbel_add_noise),
+        input_history_encoding=input_history_encoding,
+        input_extra_features=input_extra_features,
+        policy_encoding=policy_encoding,
+        compute_relations=use_dynamic_relations,
+        volatility_q_scale=float(volatility_q_scale),
+        volatility_fpu=float(volatility_fpu),
+    )
+    if volatility_anchor is not None:
+        gumbel_cfg = dataclasses.replace(
+            gumbel_cfg, volatility_anchor=float(volatility_anchor),
         )
-        if volatility_anchor is not None:
-            gumbel_cfg = dataclasses.replace(
-                gumbel_cfg, volatility_anchor=float(volatility_anchor),
-            )
-        if gumbel_overrides:
-            # Per-side gumbel knob overrides for config sweeps (arena_standard):
-            # c_scale, c_visit, c_visit_root, c_scale_root, topk, halving_div, etc.
-            # NOT c_puct/fpu_reduction/cpuct_*: inert in a Gumbel search, and
-            # arena_standard now refuses them (mcts.gumbel.INERT_GUMBEL_KNOBS).
-            gumbel_cfg = dataclasses.replace(gumbel_cfg, **gumbel_overrides)
-        if tb_probe is not None and (not _HAS_GUMBEL_C or volatility_search_enabled(gumbel_cfg)):
-            raise ValueError("Tablebase guidance is unsupported on the Python Gumbel path")
-        if volatility_search_enabled(gumbel_cfg):
-            warn_volatility_python_path()
-        if _HAS_GUMBEL_C and not volatility_search_enabled(gumbel_cfg):
-            result = _run_gumbel_root_many_c(
-                model, sub_boards, device=device, rng=rng, cfg=gumbel_cfg,
-                evaluator=evaluator,
-                tb_probe=tb_probe,
-                allow_terminal_root_shortcuts=True,
-                vloss_weight=int(gumbel_vloss_weight),
-                target_batch=int(gumbel_target_batch),
-            )
-        else:
-            if int(gumbel_vloss_weight) or int(gumbel_target_batch):
-                # Fail loud instead of quietly searching without them: silently
-                # dropping these is the exact defect this plumbing fixes, and a
-                # dropped vloss_weight changes a quarter of the moves at 256 sims.
-                raise ValueError(
-                    "gumbel_vloss_weight/gumbel_target_batch are C-path only "
-                    "(run_gumbel_root_many has no equivalent); got "
-                    f"vloss_weight={int(gumbel_vloss_weight)} "
-                    f"target_batch={int(gumbel_target_batch)} on the Python path "
-                    f"(_HAS_GUMBEL_C={_HAS_GUMBEL_C}, volatility="
-                    f"{volatility_search_enabled(gumbel_cfg)}). Pass 0 for both, "
-                    "or run the C path. In an arena, zero them on BOTH sides "
-                    "(--cand-vloss-weight 0 AND --ref-vloss-weight 0): zeroing "
-                    "only the candidate leaves the reference on the C path at "
-                    "the shape's vloss_weight, so the volatility A/B is "
-                    "confounded by virtual loss."
-                )
-            result = run_gumbel_root_many(
-                model, sub_boards, device=device, rng=rng, cfg=gumbel_cfg,
-                evaluator=evaluator,
-            )
-        _probs, actions, _values, _masks = result[:4]
+    if gumbel_overrides:
+        # Per-side gumbel knob overrides for config sweeps (arena_standard):
+        # c_scale, c_visit, c_visit_root, c_scale_root, topk, halving_div, etc.
+        # NOT c_puct/fpu_reduction/cpuct_*: inert in a Gumbel search, and
+        # arena_standard now refuses them (mcts.gumbel.INERT_GUMBEL_KNOBS).
+        gumbel_cfg = dataclasses.replace(gumbel_cfg, **gumbel_overrides)
+    if tb_probe is not None and (not _HAS_GUMBEL_C or volatility_search_enabled(gumbel_cfg)):
+        raise ValueError("Tablebase guidance is unsupported on the Python Gumbel path")
+    if volatility_search_enabled(gumbel_cfg):
+        warn_volatility_python_path()
+    if _HAS_GUMBEL_C and not volatility_search_enabled(gumbel_cfg):
+        result = _run_gumbel_root_many_c(
+            model, sub_boards, device=device, rng=rng, cfg=gumbel_cfg,
+            evaluator=evaluator,
+            tb_probe=tb_probe,
+            allow_terminal_root_shortcuts=True,
+            vloss_weight=int(gumbel_vloss_weight),
+            target_batch=int(gumbel_target_batch),
+        )
     else:
-        puct_fn = _run_mcts_many_c if _HAS_C_TREE else run_mcts_many
-        _probs, actions, _values, _masks = puct_fn(
-            model, sub_boards, device=device, rng=rng,
-            cfg=MCTSConfig(
-                simulations=int(mcts_simulations), temperature=float(temperature),
-                c_puct=float(c_puct), dirichlet_eps=0.0,
-                input_history_encoding=input_history_encoding,
-                input_extra_features=input_extra_features,
-                policy_encoding=policy_encoding,
-                compute_relations=use_dynamic_relations,
-            ),
+        if int(gumbel_vloss_weight) or int(gumbel_target_batch):
+            # Fail loud instead of quietly searching without them: silently
+            # dropping these is the exact defect this plumbing fixes, and a
+            # dropped vloss_weight changes a quarter of the moves at 256 sims.
+            raise ValueError(
+                "gumbel_vloss_weight/gumbel_target_batch are C-path only "
+                "(run_gumbel_root_many has no equivalent); got "
+                f"vloss_weight={int(gumbel_vloss_weight)} "
+                f"target_batch={int(gumbel_target_batch)} on the Python path "
+                f"(_HAS_GUMBEL_C={_HAS_GUMBEL_C}, volatility="
+                f"{volatility_search_enabled(gumbel_cfg)}). Pass 0 for both, "
+                "or run the C path. In an arena, zero them on BOTH sides "
+                "(--cand-vloss-weight 0 AND --ref-vloss-weight 0): zeroing "
+                "only the candidate leaves the reference on the C path at "
+                "the shape's vloss_weight, so the volatility A/B is "
+                "confounded by virtual loss."
+            )
+        if not _HAS_GUMBEL_C:
+            # Volatility arms select the Python search by config; a missing
+            # compiled runner must not select it silently.
+            refuse_fallback(
+                "arena move selection",
+                f"mcts.gumbel_c ({_GUMBEL_C_IMPORT_ERROR or 'not imported'})",
+                "the pure-Python Gumbel search",
+            )
+        result = run_gumbel_root_many(
+            model, sub_boards, device=device, rng=rng, cfg=gumbel_cfg,
             evaluator=evaluator,
         )
+    _probs, actions, _values, _masks = result[:4]
     return [int(a) for a in actions]
 
 
@@ -304,12 +295,11 @@ def play_match_batch(
     games: int,
     max_plies: int,
     a_plays_white: list[bool] | None = None,
-    mcts_type: str = "puct",
+    mcts_type: str = "gumbel",
     mcts_simulations: int = 200,
     mcts_simulations_a: int | None = None,
     mcts_simulations_b: int | None = None,
     temperature: float = 0.1,
-    c_puct: float = 2.5,
     gumbel_add_noise: bool = True,
     opening_cfg: OpeningConfig | None = None,
     gumbel_overrides: dict[str, float] | None = None,
@@ -342,6 +332,8 @@ def play_match_batch(
     and record the measurement VOID rather than let it propagate — an uncaught
     raise takes the host process down over one unscorable match.
     """
+    # Refuse a retired search type before building openings, not on ply 1.
+    mcts_type = require_gumbel_search(mcts_type)
     g = int(games)
     if g <= 0:
         raise ValueError("games must be > 0")
@@ -370,7 +362,7 @@ def play_match_batch(
             model, [boards[i] for i in idxs],
             device=device, rng=rng,
             mcts_type=mcts_type, mcts_simulations=sims,
-            temperature=temperature, c_puct=c_puct,
+            temperature=temperature,
             gumbel_add_noise=bool(gumbel_add_noise),
             gumbel_overrides=play_overrides,
         )

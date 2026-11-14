@@ -69,7 +69,7 @@ def test_feature_dropout_reload_source_contract():
         StartupIntentError, validate_declared, validate_saved_overlay,
     )
     from chess_anti_engine.tune.trainable_config_ops import (
-        _SF_BUDGET_TOPOLOGY_KEYS, _decline_sf_budget_topology_edit,
+        _SF_BUDGET_TOPOLOGY_KEYS, _decline_invalid_mcts_edit, _decline_sf_budget_topology_edit,
     )
     reload_warnings: list[object] = []
     safe_builtins = dict(vars(builtins))
@@ -80,7 +80,7 @@ def test_feature_dropout_reload_source_contract():
             return NS(flatten_run_config_defaults=lambda x: x, load_yaml_file=lambda _p: {})
         return real_import(name, globals, locals, fromlist, level)
     safe_builtins['__import__'] = inert_import
-    reload_ns: dict[str, object] = {'__builtins__': safe_builtins, '_warn_on_keys_dropped_from_yaml': lambda **_kw: None, '_LAST_RELOAD_YAML_KEYS': {}, 'log': NS(warning=lambda *a: reload_warnings.append(a)), 'StartupIntentError': StartupIntentError, 'validate_declared': validate_declared, 'validate_saved_overlay': validate_saved_overlay, '_SF_BUDGET_TOPOLOGY_KEYS': _SF_BUDGET_TOPOLOGY_KEYS, '_decline_sf_budget_topology_edit': _decline_sf_budget_topology_edit}
+    reload_ns: dict[str, object] = {'__builtins__': safe_builtins, '_warn_on_keys_dropped_from_yaml': lambda **_kw: None, '_LAST_RELOAD_YAML_KEYS': {}, 'log': NS(warning=lambda *a: reload_warnings.append(a)), 'StartupIntentError': StartupIntentError, 'validate_declared': validate_declared, 'validate_saved_overlay': validate_saved_overlay, '_SF_BUDGET_TOPOLOGY_KEYS': _SF_BUDGET_TOPOLOGY_KEYS, '_decline_sf_budget_topology_edit': _decline_sf_budget_topology_edit, '_decline_invalid_mcts_edit': _decline_invalid_mcts_edit}
     exec(compile(ast.fix_missing_locations(ast.Module(body=[ast.ImportFrom(module='__future__', names=[ast.alias(name='annotations')], level=0), reload_fn], type_ignores=[])), 'actual-reload', 'exec'), reload_ns)
     config = {'feature_dropout_p': 0.3, 'fdp_mobility': 0.8}
     reload_config = reload_ns['_reload_yaml_into_config']

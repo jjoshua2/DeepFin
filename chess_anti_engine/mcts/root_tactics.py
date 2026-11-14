@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import chess
 import numpy as np
 
+from chess_anti_engine.ext_check import refuse_fallback
 from chess_anti_engine.moves import POLICY_SIZE, move_to_index
 
 if TYPE_CHECKING:
@@ -96,6 +97,10 @@ def immediate_terminal_cboard_policy_or_draws(
             return one_hot_root_policy(int(mate_action)), set()
         return None, set(np.asarray(draw_actions, dtype=np.int32).astype(int).tolist())
 
+    refuse_fallback(
+        "immediate_terminal_cboard_policy_or_draws", "CBoard.root_terminal_actions",
+        "the Python per-child terminal scan",
+    )
     draws: set[int] = set()
     for action in legal_arr:
         child = root_cb.copy()

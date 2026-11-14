@@ -540,6 +540,11 @@ class SearchWorker:
   # Why the last `run()` stopped (`_should_stop_search` reason, or "tree_bytes"
   # from the shared-tree headroom check); None = budget/abort/early return.
         self.last_stop_reason: str | None = None
+  # `go mate N` bookkeeping (`_proven_mate_within`): the (tree, root, solved
+  # status, node count) of the last mate walk, so an unchanged tree is not
+  # re-walked; and the node visits that walk spent (test / diagnostics read).
+        self._mate_check_key: tuple[int, int, int, int] | None = None
+        self.last_mate_walk_visits: int = 0
   # Set by `advance_root` on every in-place reroot under a Hash cap; resolved
   # (keep / compact / rebuild) at the start of the next `run()`, which knows
   # the move budget. `last_reuse_inputs` records the numbers the decision used.
@@ -770,9 +775,10 @@ class SearchWorker:
 
         ``install_multi_gpu_pucv`` closes ``_walker_pool`` and nulls ``_pucv``
         so the pool is the sole search path. Dropping the pool without
-        rebuilding those fallbacks leaves the advertised default
-        ``Threads=2`` on the single-thread Gumbel path (and leaves
-        ``UseVL`` inert even though ``_use_pucv`` is still set).
+        rebuilding those fallbacks leaves configured ``SearchWalkers > 1``
+        on the classic Gumbel path, or ``UseVL`` inert while ``_use_pucv``
+        is still set. Routing follows ``SearchWalkers`` / ``--walkers`` and
+        ``UseVL``, not ``Threads``.
 
         Pass ``restore_fallback=False`` from callers that immediately rebuild
         the path they want (``install_multi_gpu_pucv``, ``set_evaluator``) so
@@ -1658,7 +1664,10 @@ class SearchWorker:
         self._seldepth = max(
             self._seldepth, max((len(pv_idx) for _, _, pv_idx in lines), default=0),
         )
-        for rank, q, pv_idx in lines:
+        mates = _proven_line_mates(
+            self._tree, self._root_id, board, [pv_idx[0] if pv_idx else None for _, _, pv_idx in lines],
+        )
+        for (rank, q, pv_idx), score_mate in zip(lines, mates, strict=True):
             uci_pv = _uci_pv(board, pv_idx)
             wdl = _q_to_wdl_permille(q, draw_rate) if self._show_wdl else None
             info_cb(
@@ -1667,7 +1676,7 @@ class SearchWorker:
                 score_cp=q_to_cp(0.5 * (q + 1.0)),
                 pv=uci_pv,
                 tbhits=tbhits,
-                score_mate=None,
+                score_mate=score_mate,
                 multipv=rank if emit_multipv else None,
                 wdl=wdl,
                 string=pucv_info if rank == 1 else None,
@@ -2019,6 +2028,41 @@ class SearchWorker:
         move = self._root_policy_move(board, allowed)
         return move.uci() if move is not None else None
 
+    def child_bestmove(
+        self, board: chess.Board, move: chess.Move, *, searchmoves: tuple[str, ...] = (),
+    ) -> str | None:
+        """The most-visited move at the node ``board`` + ``move`` of the CURRENT
+        tree (``board`` must be its root), or ``None``: no tree for ``board``, no
+        such child, or no visited child inside ``searchmoves``.
+
+        Reads visit counts only -- no evaluation, no search. ``Engine`` uses it
+        on a ponder miss: the ponder tree's root is the position BEFORE the
+        predicted reply, and the reply's subtree is the GUI's position. Call
+        only while no search runs on this worker."""
+        tree, root_id = self._tree, self._root_id
+        if tree is None or root_id is None or self._tree_fen != board.fen():
+            return None
+        try:
+            node = int(tree.find_child(root_id, int(move_to_index(move, board))))
+            if node < 0:
+                return None
+            actions, visits = tree.get_children_visits(node)
+        except Exception:
+            return None
+        after = board.copy(stack=False)
+        after.push(move)
+        allowed = _allowed_root_indices(after, searchmoves)
+        best: int | None = None
+        best_visits = 0
+        for action, n in zip(actions.tolist(), visits.tolist(), strict=True):
+            if allowed is not None and int(action) not in allowed:
+                continue
+            if int(n) > best_visits:
+                best, best_visits = int(action), int(n)
+        if best is None:
+            return None
+        return index_to_move(best, after).uci()
+
     def fresh_root_policy_bestmove(
         self, board: chess.Board, *, searchmoves: tuple[str, ...] = (),
     ) -> str | None:
@@ -2307,8 +2351,49 @@ class SearchWorker:
             pv=_uci_pv(board, pv_indices),
             score_cp=q_to_cp(0.5 * (last_value + 1.0)),
             tbhits=tb_probe.hits if tb_probe is not None else 0,
-            score_mate=None,
+            score_mate=(
+                _proven_line_mate(self._tree, self._root_id, board, bestmove_idx)
+                if bestmove_idx >= 0 else None
+            ),
         )
+
+    def _root_solved_status(self) -> int:
+        tree, root_id = self._tree, self._root_id
+        if tree is None or root_id is None:
+            return 0
+        return int(tree.get_solved_status(root_id))
+
+    def _proven_mate_within(
+        self, board: chess.Board, mate_moves: int,
+        allowed_root_indices: set[int] | None,
+    ) -> int | None:
+        """The shortest proven mate (in moves) at the root if it is <= ``mate_moves``,
+        else None. Free unless the root itself is proven won; then one shared
+        `_MateWalk` budget for all root actions, and no walk at all unless the
+        root's solved status or the tree's size changed since the last check
+        (an idle solved root -- nothing left to expand -- would otherwise re-walk
+        every `_IDLE_CHUNK_WAIT_S`)."""
+        tree, root_id = self._tree, self._root_id
+        if tree is None or root_id is None:
+            return None
+        status = int(tree.get_solved_status(root_id))
+        key = (id(tree), int(root_id), status, int(tree.node_count()))
+        if key == self._mate_check_key:
+            return None
+        self._mate_check_key = key
+        if status != 1:
+            return None
+        actions, _ = tree.get_children_visits(root_id)
+        walk = _MateWalk()
+        best: int | None = None
+        for action in actions.tolist():
+            if allowed_root_indices is not None and int(action) not in allowed_root_indices:
+                continue
+            mate = _proven_line_mate(tree, root_id, board, int(action), walk)
+            if mate is not None and mate > 0 and (best is None or mate < best):
+                best = mate
+        self.last_mate_walk_visits = walk.visits
+        return best if best is not None and best <= mate_moves else None
 
     def _should_stop_search(
         self,
@@ -2686,6 +2771,7 @@ class SearchWorker:
         on_chunk: Callable[[int], None] | None = None,
         stop_sensitive: bool = False,
         fixed_time_margin: bool = False,
+        mate_moves: int | None = None,
     ) -> SearchResult:
         """Search until any of: stop_event set, deadline expired, max_nodes hit,
         PV length ≥ max_depth, or (``optimum_ms`` set) the visit-margin abort
@@ -2698,6 +2784,9 @@ class SearchWorker:
         with no ``optimum_ms`` too (UCI ``movetime``), so the search stops one
         measured chunk BEFORE the deadline instead of overrunning it by up to a
         chunk. Off by default: other callers keep their exact behaviour.
+
+        ``mate_moves`` (UCI ``go mate N``): also stop as soon as a mate in
+        <= N moves is proven at the root (see ``_proven_line_mate``).
         """
         fen = board.fen()
   # A compaction `advance_root` scheduled runs here, on this move's clock.
@@ -2774,6 +2863,7 @@ class SearchWorker:
         self._last_gumbel_action_idx = None
         self._seldepth = 0
         self.last_stop_reason = None
+        self._mate_check_key = None
         self._ensure_root_eval_cached(board, tb_probe)
         if allowed_root_indices is not None and self._rpg_pool is not None:
             # Convert an RPG-shaped tree once for this restricted search.
@@ -2982,6 +3072,15 @@ class SearchWorker:
                 time_margin_ms=time_margin_ms,
                 tree_growth_bytes=self._tree_footprint_bytes() - _footprint_before,
             )
+            if stop_reason is None and mate_moves is not None:
+                if self._proven_mate_within(board, mate_moves, allowed_root_indices) is not None:
+                    stop_reason = "mate"
+                elif int(completed) == 0 and self._root_solved_status() != 0:
+                    # `go mate N` on a root already proven (won with no mate in
+                    # <= N found, drawn, or lost) that the search cannot grow:
+                    # no later chunk can prove anything new, so idling to the
+                    # implicit cap would only burn the clock.
+                    stop_reason = "mate_solved_root"
             if stop_reason is not None:
                 self.last_stop_reason = stop_reason
   # Tree-bytes stops emit a final info line whose `string` names the reason —
@@ -3323,6 +3422,166 @@ def _proof_preserving_mask(
     return keep if bool(keep.any()) else None
 
 
+# UCI `score mate N`. The tree stores proven OUTCOMES (the solved lattice:
+# WIN / LOSS / DRAW per node, from checkmate / stalemate leaves and tablebase
+# hits) but no distances, so a distance is only known where the proof can be
+# walked down to checkmate leaves. A WIN node takes its shortest proven
+# winning child; a LOSS node needs EVERY legal move expanded and proven, and
+# takes the longest. Tablebase-solved leaves carry no distance (Syzygy has
+# WDL/DTZ, not DTM), so a proof that rests on one gives no `score mate`. The
+# result is the length of a forced mate the search has proven against every
+# defence -- an upper bound on the true distance, exactly as an alpha-beta
+# engine's mate score is. One exact shortcut: a WIN node whose side to move has
+# a mate in one ON THE BOARD is distance 1 even if the search never expanded
+# that edge (measured: without it a mated-in-1 root read "mate -3", the proof
+# having found a longer mate first).
+#
+# Bounded: ONE `_MateWalk` budget of `_MATE_WALK_NODE_LIMIT` node visits is
+# shared by everything one report needs (every multipv line of an info
+# emission; every root action of a `go mate` check), so the cost on the search
+# thread is bounded per report, not per line (per-line budgets measured 10 s on a
+# fully expanded synthetic tree). Once the budget runs out the walk is
+# EXHAUSTED: every line it has not already finished reports no distance (cp),
+# never a distance from a partial walk. Past `_MATE_WALK_MAX_PLIES` a branch
+# simply has no distance.
+_MATE_WALK_NODE_LIMIT = 4_000
+_MATE_WALK_MAX_PLIES = 128
+
+
+class _MateWalk:
+    """Memo + node-visit budget shared by every line of one report."""
+
+    __slots__ = ("budget", "exhausted", "memo", "visits")
+
+    def __init__(self, budget: int = _MATE_WALK_NODE_LIMIT) -> None:
+        self.memo: dict[int, int | None] = {}
+        self.budget = int(budget)
+        self.visits = 0
+        self.exhausted = False
+
+
+def _proven_mate_plies(
+    tree: MCTSTree, node_id: int, board: chess.Board,
+    walk: _MateWalk, depth: int = 0,
+) -> int | None:
+    """Plies to checkmate from ``node_id`` inside its proven subtree, or None.
+
+    ``board`` is the node's position (pushed and popped in place). Only
+    SOLVED_WIN (1) / SOLVED_LOSS (-1) nodes have a distance; a leaf counts only
+    if it really is checkmate. Returns None once ``walk`` is exhausted."""
+    if walk.exhausted:
+        return None
+    if node_id in walk.memo:
+        return walk.memo[node_id]
+    status = tree.get_solved_status(node_id)
+    if status not in (1, -1):
+        return None
+    if depth > _MATE_WALK_MAX_PLIES:
+        return None
+    if walk.visits >= walk.budget:
+        walk.exhausted = True
+        return None
+    walk.visits += 1
+    walk.memo[node_id] = None  # in progress: a transposition cycle proves nothing
+    actions, _ = tree.get_children_visits(node_id)
+    result: int | None
+    if status == 1 and _has_mate_in_one(board):
+        result = 1  # exact, expanded or not (a tablebase-solved leaf included)
+    elif actions.size == 0:
+        result = 0 if status == -1 and board.is_checkmate() else None
+    elif status == 1:
+        result = None
+        for action in actions.tolist():
+            child = tree.find_child(node_id, int(action))
+            if child < 0 or tree.get_solved_status(child) != -1:
+                continue
+            board.push(index_to_move(int(action), board))
+            try:
+                d = _proven_mate_plies(tree, child, board, walk, depth + 1)
+            finally:
+                board.pop()
+            if d is not None and (result is None or d + 1 < result):
+                result = d + 1
+    elif actions.size != board.legal_moves.count():
+        result = None  # a LOSS proof must cover every legal move
+    else:
+        result = 0
+        for action in actions.tolist():
+            child = tree.find_child(node_id, int(action))
+            if child < 0 or tree.get_solved_status(child) != 1:
+                result = None
+                break
+            board.push(index_to_move(int(action), board))
+            try:
+                d = _proven_mate_plies(tree, child, board, walk, depth + 1)
+            finally:
+                board.pop()
+            if d is None:
+                result = None
+                break
+            result = max(result, d + 1)
+    if walk.exhausted:
+        # A partial walk proves nothing about this node; drop the marker so no
+        # later lookup reads it as a finished answer.
+        walk.memo.pop(node_id, None)
+        return None
+    walk.memo[node_id] = result
+    return result
+
+
+def _has_mate_in_one(board: chess.Board) -> bool:
+    for move in board.legal_moves:
+        if board.gives_check(move):
+            board.push(move)
+            mate = board.is_checkmate()
+            board.pop()
+            if mate:
+                return True
+    return False
+
+
+def _proven_line_mate(
+    tree: MCTSTree, root_id: int, board: chess.Board, action: int,
+    walk: _MateWalk | None = None,
+) -> int | None:
+    """UCI ``score mate`` value for the line that starts with root ``action``:
+    +N when the side to move mates in N moves along a proven line, -N when it
+    is mated in N, None when the search has proven no distance for it -- or
+    when ``walk`` (shared by the caller's other lines) ran out of budget."""
+    walk = _MateWalk() if walk is None else walk
+    if walk.exhausted:
+        return None
+    child = tree.find_child(root_id, int(action))
+    if child < 0:
+        return None
+    status = tree.get_solved_status(child)
+    if status not in (1, -1):
+        return None
+    after = board.copy(stack=False)
+    after.push(index_to_move(int(action), after))
+    d = _proven_mate_plies(tree, child, after, walk)  # None whenever the walk ran out
+    if d is None:
+        return None
+    plies = d + 1
+    # The child is LOSS: we deliver mate on an odd ply. WIN: we are mated on an even one.
+    return (plies + 1) // 2 if status == -1 else -(plies // 2)
+
+
+def _proven_line_mates(
+    tree: MCTSTree | None, root_id: int | None, board: chess.Board,
+    first_actions: list[int | None],
+) -> list[int | None]:
+    """`_proven_line_mate` for each line of one info emission (None for a line
+    with no first move), all under ONE shared `_MateWalk` budget."""
+    if tree is None or root_id is None:
+        return [None] * len(first_actions)
+    walk = _MateWalk()
+    return [
+        None if action is None else _proven_line_mate(tree, root_id, board, int(action), walk)
+        for action in first_actions
+    ]
+
+
 def _child_visit_order(
     tree: MCTSTree, node_id: int, actions: np.ndarray, visits: np.ndarray,
 ) -> np.ndarray:
@@ -3416,7 +3675,10 @@ def _try_tb_root_bestmove(
 ) -> SearchResult | None:
     """Return a SearchResult built from the TB's DTZ-optimal move at root,
     or None if the position isn't TB-eligible (or the probe fails)."""
-    root = try_tb_root_move(board, tb_probe._path)
+    # The probe carries UCI `Syzygy50MoveRule` (as `cursed_as_draw`), so the
+    # root shortcut and the leaf probes of one search follow the same rule.
+    rule50 = bool(tb_probe.cursed_as_draw)
+    root = try_tb_root_move(board, tb_probe._path, rule50=rule50)
     if root is None:
         return None
     best, wdl_val = root
@@ -3431,7 +3693,7 @@ def _try_tb_root_bestmove(
     elif wdl_val <= -2:
         score_cp = _TB_LOSS_CP
     else:
-        score_cp = 0  # draw (includes cursed/blessed in our convention)
+        score_cp = 0  # draw (cursed/blessed too, unless Syzygy50MoveRule is off)
 
     ponder_uci = None
     if include_ponder:
@@ -3439,7 +3701,7 @@ def _try_tb_root_bestmove(
         # Re-runs try_tb_root_move; still cheap (a few legal-move probes).
         board_after = board.copy(stack=False)
         board_after.push(best)
-        ponder = try_tb_root_move(board_after, tb_probe._path)
+        ponder = try_tb_root_move(board_after, tb_probe._path, rule50=rule50)
         ponder_uci = ponder[0].uci() if ponder is not None else None
 
     return SearchResult(

@@ -112,7 +112,7 @@ class _NarrowSlotEvaluator:
         self._buf = np.zeros((self._max_batch, planes, 8, 8), dtype=np.float32)
 
     # gumbel_c's in-place gate is supports_inplace_api(), which needs all three
-    # slot methods present; puct_c/network_turn need only get_input_buffer.
+    # slot methods present; network_turn needs only get_input_buffer.
     def get_input_buffer(self, n: int, slot: int = 0) -> np.ndarray:
         assert 0 <= slot < self.n_slots
         return self._buf[:n]
@@ -152,27 +152,6 @@ class _NarrowSlotEvaluator:
         raise AssertionError(
             f"evaluate_encoded(shape={x.shape}, relations={relations is not None}) "
             "must not be reached on a plane-count mismatch"
-        )
-
-
-def test_puct_c_inplace_branch_rejects_a_narrow_slot() -> None:
-    """``run_mcts_many_c``'s in-place branch takes its plane count from the
-    evaluator and its fallback branch from the config — so a disagreement used
-    to change the encoding with the BATCH SIZE. It must raise instead."""
-    import chess
-
-    from chess_anti_engine.mcts.puct import MCTSConfig
-    from chess_anti_engine.mcts.puct_c import run_mcts_many_c
-
-    cfg = MCTSConfig(
-        simulations=2, input_extra_features="v2_threats",
-        input_history_encoding="lc0_root_legacy_meta",
-    )
-    with pytest.raises(ValueError, match="run_mcts_many_c root inplace"):
-        run_mcts_many_c(
-            None, [chess.Board()], device="cpu",
-            rng=np.random.default_rng(0), cfg=cfg,
-            evaluator=cast("Any", _NarrowSlotEvaluator(input_plane_count("v1"))),
         )
 
 
@@ -234,80 +213,3 @@ def test_selfplay_root_inplace_branch_rejects_a_narrow_slot() -> None:
     )
     with pytest.raises(ValueError, match=r"selfplay root inplace \(fp32\)"):
         _evaluate_root_batch(cast("Any", state), [0])
-
-
-class _WideRootNarrowLeafEvaluator:
-    """Wide (v2) root slot, narrow (v1) LEAF slot.
-
-    Contrived on purpose: it is the only shape that lets the leaf branch be
-    observed at all, because the root check would otherwise fire first. The
-    finding it pins is not "an evaluator does this" but "this call site had no
-    check", which is the state PR #321 left ``puct_c.py:264`` in while its
-    merged ledger entry claimed all evaluator-sourced sites were guarded.
-    """
-
-    n_slots = 2
-    _max_batch = 64
-    supports_input_bf16_bits = False
-    supports_legal_bf16 = False
-
-    def __init__(self) -> None:
-        self._wide = np.zeros(
-            (self._max_batch, input_plane_count("v2_threats"), 8, 8), dtype=np.float32,
-        )
-        self._narrow = np.zeros(
-            (self._max_batch, input_plane_count("v1"), 8, 8), dtype=np.float32,
-        )
-        self.calls = 0
-
-    def get_input_buffer(self, n: int, slot: int = 0) -> np.ndarray:
-        assert 0 <= slot < self.n_slots
-        self.calls += 1
-        buf = self._wide if self.calls == 1 else self._narrow
-        return buf[:n]
-
-    def evaluate_inplace(
-        self, n: int, slot: int = 0, *, copy_out: bool = True,
-        relations: np.ndarray | None = None,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        assert 0 <= slot < self.n_slots
-        assert copy_out
-        assert relations is None
-        return (
-            np.zeros((n, 4672), dtype=np.float32),
-            np.zeros((n, 3), dtype=np.float32),
-        )
-
-    def evaluate_encoded(
-        self, x: np.ndarray, relations: np.ndarray | None = None,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        raise AssertionError(
-            f"the in-place branch must be taken (shape={x.shape}, "
-            f"relations={relations is not None})"
-        )
-
-
-def test_puct_c_leaf_inplace_branch_rejects_a_narrow_slot() -> None:
-    """The EIGHTH evaluator-sourced encode site (``puct_c.py``, leaf in-place).
-
-    #321 guarded seven and its ledger entry said "all 7 evaluator-sourced call
-    sites"; this one was the eighth and was unguarded. Same hazard as the root
-    branch directly above it: the C encoder reads the plane count off the
-    buffer and never sees ``cfg.input_extra_features``.
-    """
-    import chess
-
-    from chess_anti_engine.mcts.puct import MCTSConfig
-    from chess_anti_engine.mcts.puct_c import run_mcts_many_c
-
-    cfg = MCTSConfig(
-        simulations=4, input_extra_features="v2_threats",
-        input_history_encoding="lc0_root_legacy_meta",
-    )
-    ev = _WideRootNarrowLeafEvaluator()
-    with pytest.raises(ValueError, match="run_mcts_many_c leaf inplace"):
-        run_mcts_many_c(
-            None, [chess.Board()], device="cpu",
-            rng=np.random.default_rng(0), cfg=cfg, evaluator=cast("Any", ev),
-        )
-    assert ev.calls >= 2, "the root branch must have passed for this to mean anything"

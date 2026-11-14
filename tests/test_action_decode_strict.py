@@ -428,8 +428,10 @@ def test_puzzle_eval_raises_instead_of_scoring_a_substitute(
 
     Laundering here reports the substituted move's miss as a puzzle the net got
     wrong, so an action-space regression reads as a strength regression.
+    ``run_puzzle_eval`` has one route since 2026-11-14 (compiled Gumbel).
     """
     from chess_anti_engine.eval import puzzles as puzzles_mod
+    from chess_anti_engine.mcts import gumbel_c
 
     board = chess.Board()
     suite = puzzles_mod.PuzzleSuite(
@@ -440,7 +442,7 @@ def test_puzzle_eval_raises_instead_of_scoring_a_substitute(
     def _undecodable(_model, boards, **_kw):
         return (None, [NO_LUT_ENTRY_ID] * len(boards))
 
-    monkeypatch.setattr(puzzles_mod, "run_mcts_many", _undecodable)
+    monkeypatch.setattr(gumbel_c, "run_gumbel_root_many_c", _undecodable)
 
     with pytest.raises(ActionDecodeError):
         puzzles_mod.run_puzzle_eval(
@@ -476,6 +478,9 @@ def test_arena_run_voids_the_run_and_writes_no_result(
         lambda *a, **k: _NullNet(),
     )
     monkeypatch.setattr(arena, "play_paired_games_matched_sims_rolling", _boom)
+    # The default game log lives under the checkout's runs/; a second run would
+    # then refuse "game log already exists" before reaching the code under test.
+    monkeypatch.setattr(arena, "DEFAULT_GAME_LOG_DIR", tmp_path / "arena_games")
     side = arena.resolve_search_shape("training")
 
     with pytest.raises(SystemExit) as excinfo:

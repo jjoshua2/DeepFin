@@ -14,6 +14,7 @@ import numpy as np
 import torch
 
 from chess_anti_engine.encoding import rep_fix
+from chess_anti_engine.ext_check import refuse_fallback
 from chess_anti_engine.inference import BatchEvaluator
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.selfplay.config import (
@@ -285,6 +286,49 @@ def _wait_for_starved_sf(
         )
 
 
+def _reset_search_tree(tree: Any) -> None:
+    """Drop every node of the selfplay tree, compacting its arena.
+
+    ``MCTSTree.reset_compact`` is required (``ext_check``); an old build
+    without it used to fall back to ``reset()`` silently, and is now refused
+    unless the caller opted in to the reference paths.
+    """
+    reset_compact = getattr(tree, "reset_compact", None)
+    if reset_compact is not None:
+        reset_compact()
+        return
+    refuse_fallback(
+        "play_batch tree reset", "MCTSTree.reset_compact",
+        "MCTSTree.reset() without compaction",
+    )
+    tree.reset()
+
+
+def _require_compiled_search() -> None:
+    """Refuse a play_batch whose compiled search runners failed to import.
+
+    ``network_turn`` imports ``gumbel_c`` under ``try`` and used to
+    run the pure-Python search when either failed (a stale or partial build),
+    with no warning. The missing per-ply / classify symbols are refused by
+    ``SelfplayState.create``. Volatility arms still select the Python Gumbel
+    search by config; that is not a fallback and is not refused here.
+    """
+    # Read at call time (not bound at import) so the flags a stale build set
+    # at import are what is checked.
+    from chess_anti_engine.selfplay.network_turn import (
+        _GUMBEL_C_IMPORT_ERROR,
+        _HAS_GUMBEL_C,
+    )
+
+    missing = [
+        f"{name} ({err or 'not imported'})" for name, ok, err in (
+            ("mcts.gumbel_c.run_gumbel_root_many_c", _HAS_GUMBEL_C, _GUMBEL_C_IMPORT_ERROR),
+        ) if not ok
+    ]
+    if missing:
+        refuse_fallback("play_batch", missing, "the pure-Python search")
+
+
 def play_batch(
     model: torch.nn.Module | None,
     *,
@@ -385,12 +429,13 @@ def play_batch(
         pooled=isinstance(stockfish, StockfishPool),
     )
     validate_selfplay_syzygy(asdict(game))
+    _require_compiled_search()
     if game.syzygy_outcome_mode == "rule50_match_v1":
         if on_game_provenance is None:
             raise ValueError("rule50_match_v1 requires on_game_provenance, including censored/zero-row attempts")
         if (stop_fn is not None and int(target_games) <= 0) or on_suspend is not None:
             raise ValueError("rule50_match_v1 requires finite play_batch without suspend/resume")
-        if search.mcts_type != "gumbel" or search.volatility_q_scale or search.volatility_fpu:
+        if search.volatility_q_scale or search.volatility_fpu:
             raise ValueError("rule50_match_v1 requires the compiled Gumbel TB consumer")
         from chess_anti_engine.selfplay.network_turn import _HAS_GUMBEL_C
         if not _HAS_GUMBEL_C:
@@ -653,11 +698,7 @@ def play_batch(
                 and state.mcts_tree.node_count() > 500_000
             ):
                 t0 = time.perf_counter()
-                reset_compact = getattr(state.mcts_tree, "reset_compact", None)
-                if reset_compact is not None:
-                    reset_compact()
-                else:  # pragma: no cover - compatibility with old extension builds
-                    state.mcts_tree.reset()
+                _reset_search_tree(state.mcts_tree)
                 for _i in range(len(state.root_ids)):
                     state.root_ids[_i] = -1
                 if on_timing is not None:
