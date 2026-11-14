@@ -1,5 +1,14 @@
 # Current-P0 SF sidecar engineering qualification
 
+Current status: **ORIGINAL-G1 CARRIER PRODUCE/VALIDATE COMPLETED, ROOT DATA-ONLY
+ACCEPTANCE AND INDEPENDENT ACTUAL REVIEW ACCEPTED.** All 256 games /
+24,827 rows were retained; the final review cutoff is 2026-11-14 15:48:54 UTC.
+No consumer execution, recipe, training or strength
+admission follows. The original preregistration and earlier synthetic cutoff
+below remain historical evidence. See the [actual carrier readout](#completed-original-g1-carrier-2026-11-14).
+
+## Earlier synthetic cutoff
+
 Current status: **SYNTHETIC QUALIFICATION COMPLETED; ACTUAL ORIGINAL-G1
 PRODUCE/VALIDATE UNRUN.** The focused suite and direct synthetic producer/validator
 closed PASS. Both the focused and separate synthetic CLI independent actual
@@ -204,3 +213,58 @@ bulk paths remain relative to the same external root.
 | Synthetic producer candidate | `core-SF-current-P0-sidecar-synthetic-candidate-v1/manifest.json` | `804f478236681bc02886668fd7e02990d2cbc8a88c74c05cf38cf9401cb6138a` |
 | Synthetic validator readout | `core-SF-current-P0-sidecar-synthetic-validation-v1/readout.json` | `42c5c53fde08231c146a18ed78ac9781a9b6ff1fafb99b0bb5d83dbf20f1e35f` |
 | Synthetic CLI independent actual review | `core-SF-current-P0-sidecar-CLI-independent-actual-review-v1/review.json` | `e27b5672f71aa0264a04ab739cca6c71d53150fef72159e465e0a2ef08a5d2d8` |
+
+## Completed original G1 carrier (2026-11-14)
+
+After main publication at `76b0222eab02afa3cdc221a3ce17912ea94aece1`, both
+actual fixed-G1 owners closed PASS using the published, source-qualified CF3
+carrier code. The producer took **117.03656064200914 seconds**; the separate
+validator took **73.1617957460112 seconds**. Root's data-only acceptance is closed;
+its separate independent actual review accepted the closed complete carrier
+without findings. This is metadata/custody review, not a second numerical rerun.
+
+| Full-population carrier classification | Rows | Each qualified-field mask |
+| --- | ---: | --- |
+| Internally consistent source-context joins | 24,205 | Policy, native WDL and stored WDL true |
+| Invalid reduced-label joins | 127 | All three false; reasons/observations retained |
+| No retained predecessor join | 495 | All three false; unavailable evidence retained |
+| Total | 24,827 | 622 false-mask rows remain in place |
+
+All **256 original TRAIN games** are represented by **3,328 per-game payload
+files / 243,289,065 bytes**, plus the 478,247-byte candidate manifest
+(**243,767,312 bytes total**). Fresh original-payload
+revalidation matched the accepted census; the separate validator reopened the
+original source and complete carrier and recomputed all identities, source
+context, vector bytes/dtypes/shapes, masks, inventory and population counts.
+This includes the actual G1 stored CP-logistic route, separately from native
+permille observations; the earlier four-row positive fixture was native-derived.
+No source labels, original data, masks or denominator were rewritten to improve
+coverage. Invalidity remains the declared cross-field classification, with the
+historical cause unknown without wire; no parser repair or salvage is inferred.
+
+The carrier retains same-predecessor F16 policy, stored record/query-POV WDL,
+native counts and diagnostics with explicit original identities. It is source-
+context evidence, not wire authentication, full-PV/bound/effort recovery, teacher
+truth or an admitted training mask. The validator is a separate process using
+shared algorithms; neither its child status nor root's data-only acceptance
+selects a consumer recipe. No model, optimizer, teacher query or playing test
+was run in these phases.
+
+Total charged engineering owner time, including both earlier failed synthetic
+attempts and the completed synthetic chain, is **218.82234382710885 / 2,700 CPU
+seconds**. The original phase caps remain 900 outer / 870 inner seconds each;
+unused ceiling is not new execution authority. A separately versioned finite
+main-WDL capability is source-only, with its controls still unrun; numeric alpha,
+value variant, LR, seed, scientific state boundary and dose remain unselected.
+Nothing here establishes teacher adequacy or playing gain.
+
+The following compact metadata receipts were checked for this documentation;
+no numeric payloads or row journals were opened by the documentation author.
+
+| Actual evidence | Relative external path | SHA256 |
+| --- | --- | --- |
+| Carrier main publication before actual phases | `core-SF-current-P0-sidecar-main-publication-v1/publication.json` | `b7a12bde84e41c488e79c80484226c9b91c19fb461ee22b79c8a299fc021fd51` |
+| Actual complete candidate | `core-SF-current-P0-sidecar-G1-candidate-v1/manifest.json` | `6533a39bf465ae57ba035a373a7e46c580faeeca7377c12fa787fe7b240dde45` |
+| Actual separate validator | `core-SF-current-P0-sidecar-G1-validation-v1/readout.json` | `57c600674489a117ca13807e9c4c1690f0ebd6c5ab87824cafa6c31bcbab36b2` |
+| Root closed data-only acceptance | `core-SF-current-P0-sidecar-G1-bindings-v1/root-acceptance.json` | `e771d4055dd11464367cdfef3375316ecedeb27ad93a35df0a3a8f085904c8f7` |
+| Independent actual full-carrier review | `core-SF-current-P0-sidecar-G1-independent-actual-review-v1/review.json` | `af3be4c11b337692b8fc65d9cef806f3cd29e0e99ca34bca04f9779a2ba8da19` |
