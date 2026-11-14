@@ -30,13 +30,16 @@ is the only site that does not depend on the next test author remembering.
 from __future__ import annotations
 
 import contextlib
+import importlib.abc
+import importlib.machinery
 import os
 import re
 import sys
 import threading
 import time
+import types
 import weakref
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -506,3 +509,100 @@ def python_reference_paths() -> Iterator[None]:
 
     with _opt_in("test exercises the Python reference path"):
         yield
+
+
+
+# ── Test runs must not write into the checkout ───────────────────────────────
+#
+# Two production defaults are relative to the checkout and are right for
+# production but wrong for a test process:
+#
+# * ``Trainer`` writes ``SummaryWriter(log_dir=str(log_dir or "tb"))``: with no
+#   ``log_dir`` the events go to ``./tb`` in the CURRENT DIRECTORY, i.e. the
+#   checkout pytest runs from (127 event files per full-suite run). Production
+#   always passes ``log_dir`` (``tune/trainable.py`` -> ``<work_dir>/tb``).
+# * ``scripts/arena_standard.py`` banks every game under
+#   ``DEFAULT_GAME_LOG_DIR = REPO_ROOT / "runs" / "arena_games"``; a test that
+#   drives ``run_arena`` without patching it appends to ``runs/`` in the checkout.
+#
+# The defaults are left alone; only the TEST process redirects them to a
+# session temp dir. An explicit ``log_dir`` passes through untouched, and a test
+# that monkeypatches ``DEFAULT_GAME_LOG_DIR`` itself still wins.
+#
+# Each patch is applied when its module is imported (a meta-path finder wraps
+# the loader), or at once if it already is, so a test that imports the module
+# lazily is covered and a test that never touches it pays nothing.
+
+_TRAINER_MODULE = "chess_anti_engine.train.trainer"
+_ARENA_MODULE = "scripts.arena_standard"
+_TB_DEFAULT = "tb"
+_checkout_redirect_root: Path | None = None
+
+
+def _redirect_trainer_default_tb(module: types.ModuleType) -> None:
+    real = getattr(module, "SummaryWriter")
+    if getattr(real, "_cae_default_tb_redirect", False):
+        return
+
+    def _summary_writer(*args: object, **kwargs: object) -> object:
+        root = _checkout_redirect_root
+        if root is not None and kwargs.get("log_dir") == _TB_DEFAULT and not args:
+            kwargs["log_dir"] = str(root / "trainer_default_tb")
+        return real(*args, **kwargs)
+
+    setattr(_summary_writer, "_cae_default_tb_redirect", True)
+    setattr(module, "SummaryWriter", _summary_writer)
+
+
+def _redirect_arena_game_log_dir(module: types.ModuleType) -> None:
+    if _checkout_redirect_root is not None:
+        setattr(module, "DEFAULT_GAME_LOG_DIR", _checkout_redirect_root / "arena_games")
+
+
+_CHECKOUT_REDIRECTS = {
+    _TRAINER_MODULE: _redirect_trainer_default_tb,
+    _ARENA_MODULE: _redirect_arena_game_log_dir,
+}
+
+
+class _CheckoutRedirectImportHook(importlib.abc.MetaPathFinder):
+    """Meta-path finder: patch a redirected module right after it executes."""
+
+    def find_spec(
+        self,
+        fullname: str,
+        path: Sequence[str] | None,
+        target: types.ModuleType | None = None,
+    ) -> importlib.machinery.ModuleSpec | None:
+        del target
+        patch = _CHECKOUT_REDIRECTS.get(fullname)
+        if patch is None:
+            return None
+        spec = importlib.machinery.PathFinder.find_spec(fullname, path)
+        if spec is None or spec.loader is None:
+            return spec
+        loader = spec.loader
+        original_exec = loader.exec_module
+
+        def _exec_module(module: types.ModuleType) -> None:
+            original_exec(module)
+            patch(module)
+
+        setattr(loader, "exec_module", _exec_module)
+        return spec
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _test_writes_stay_outside_the_checkout(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    global _checkout_redirect_root
+    _checkout_redirect_root = tmp_path_factory.mktemp("checkout_redirects")
+    hook = _CheckoutRedirectImportHook()
+    sys.meta_path.insert(0, hook)
+    for name, patch in _CHECKOUT_REDIRECTS.items():
+        if name in sys.modules:
+            patch(sys.modules[name])
+    try:
+        yield
+    finally:
+        with contextlib.suppress(ValueError):
+            sys.meta_path.remove(hook)

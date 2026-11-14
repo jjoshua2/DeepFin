@@ -954,7 +954,7 @@ def _delete_inplace_objects(root: Path, *, records: bool = False) -> None:
     (with ``records``, `rm **/*.so*`, which takes the records too)."""
     suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
     gone = [p for p in (root / "chess_anti_engine").rglob(f"*{suffix}") if p.is_file()]
-    assert len(gone) == 5, gone
+    assert len(gone) == len(_ALL_EXTS), gone
     for p in gone:
         p.unlink()
         if records:
@@ -970,8 +970,9 @@ def _edit_header(root: Path) -> None:
         fh.write("/* header-only edit */\n")
 
 
-_ALL_EXTS = ["_features_ext", "_lc0_ext", "_mcts_tree", "_nnue_ext", "_perft_ext"]
-_CBOARD_EXTS = ["_lc0_ext", "_mcts_tree", "_nnue_ext", "_perft_ext"]
+_ALL_EXTS = ["_features_ext", "_lc0_ext", "_mcts_tree", "_nnue_ext", "_perft_ext", "_tb_ext"]
+# _tb_ext includes _cboard_impl.h for the CBoard struct layout.
+_CBOARD_EXTS = ["_lc0_ext", "_mcts_tree", "_nnue_ext", "_perft_ext", "_tb_ext"]
 
 
 def test_setup_header_edit_recompiles_on_a_lazy_rebuild(tmp_path: Path) -> None:
@@ -1031,7 +1032,7 @@ def test_setup_failed_build_then_fix_passes_without_force(tmp_path: Path) -> Non
     tree_c.write_text(good + "\n#error simulated build failure\n", encoding="utf-8")
     _setup_build(root, ok=False)
     tree_c.write_text(good, encoding="utf-8")
-    assert _setup_build(root) == ["_mcts_tree", "_nnue_ext"]
+    assert _setup_build(root) == ["_mcts_tree", "_nnue_ext", "_tb_ext"]
     rows = sc._freshness_rows(root)
     assert all(method == "content" and problem is None for _, method, problem in rows), rows
 
@@ -1112,7 +1113,7 @@ def test_setup_without_scripts_builds_without_records(
     monkeypatch.chdir(root)
     ns = runpy.run_path(str(root / "setup.py"))
     assert ns["_FRESHNESS_TOOL"] is None
-    assert len(captured["ext_modules"]) == 5
+    assert len(captured["ext_modules"]) == len(_ALL_EXTS)
     assert all(ext.depends == [] for ext in captured["ext_modules"])
 
 
