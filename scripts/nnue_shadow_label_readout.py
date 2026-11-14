@@ -1748,7 +1748,8 @@ def assert_cells_are_row_aligned(out_dir: Path, cells: tuple[str, ...]) -> dict[
     """Every cell must hold the SAME rows in the SAME order.
 
     ⚑ THIS IS WHAT MAKES THE COMPARISON PAIRED, AND IT IS NOT FREE.
-    ``scratchpad/az_purity/score_shard_labels.py`` samples a cell by ROW
+    ``scratchpad/az_purity/score_shard_labels.py`` (moved out of git to the
+    repo-slim-20261113 artifacts archive; tag ``pre-slim-20261113``) samples a cell by ROW
     ORDINAL over its shards sorted by name -- so two cells are scored on the
     same positions only if their shard names, their per-shard row counts and
     their row order all match.  Nothing downstream checks it, and a cell that
