@@ -23,7 +23,7 @@ import shutil
 import subprocess
 import sys
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import chess
@@ -664,3 +664,40 @@ def test_concurrent_probes_agree_with_serial(tables) -> None:
     assert not errors
     for out in results.values():
         assert out == serial
+
+
+@needs_tables
+def test_concurrent_lifecycle_keeps_path_and_tables_coherent(tables, tmp_path: Path) -> None:
+    """After competing lifecycle calls finish, metadata must match table custody.
+
+    This stress check supplements deterministic lock-interleaving validation;
+    scheduling alone is not guaranteed to expose a broken implementation.
+    """
+    path, _ = tables
+    empty = str(tmp_path)
+    for first in (lambda: _tb_ext.init(path), _tb_ext.free, lambda: _tb_ext.init(empty)):
+        for _ in range(4):
+            barrier = threading.Barrier(2)
+            errors: list[BaseException] = []
+
+            def run(action: Callable[[], object]) -> None:
+                barrier.wait()
+                try:
+                    action()
+                except ValueError as exc:
+                    # An existing but empty table directory is expected to fail.
+                    if "no Syzygy tables found" not in str(exc):
+                        errors.append(exc)
+                except BaseException as exc:
+                    errors.append(exc)
+
+            a = threading.Thread(target=run, args=(first,), daemon=True)
+            b = threading.Thread(target=run, args=(lambda: _tb_ext.init(path),), daemon=True)
+            a.start()
+            b.start()
+            a.join(timeout=10)
+            b.join(timeout=10)
+            assert not a.is_alive() and not b.is_alive(), "table lifecycle deadlock"
+            assert not errors, errors
+            # These reads occur only after both writers have completed.
+            assert (_tb_ext.path() is None) == (_tb_ext.largest() == 0)

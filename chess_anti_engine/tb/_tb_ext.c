@@ -45,7 +45,10 @@ static PyTypeObject *g_cboard_type = NULL;
 
 static pthread_rwlock_t g_tables_lock = PTHREAD_RWLOCK_INITIALIZER;
 static pthread_mutex_t g_root_lock = PTHREAD_MUTEX_INITIALIZER;
-static PyObject *g_path = NULL;  /* str of the last successful init, or NULL */
+/* C-owned metadata shares the table lock and lifecycle. Never wait for the
+ * GIL while holding its write lock: largest()/path() hold the GIL while
+ * acquiring a read lock. */
+static char *g_path = NULL;
 
 static int ensure_cboard_type(void) {
     if (g_cboard_type) return 0;
@@ -365,18 +368,25 @@ static PyObject *tb_init_py(PyObject *self, PyObject *args) {
         Py_DECREF(keep);
         return NULL;
     }
+    char *new_path = path[0] != '\0' ? strdup(path) : NULL;
+    if (path[0] != '\0' && new_path == NULL) {
+        Py_DECREF(keep);
+        return PyErr_NoMemory();
+    }
     int rc;
     unsigned largest;
     Py_BEGIN_ALLOW_THREADS
     pthread_rwlock_wrlock(&g_tables_lock);
     rc = df_tb_init(path);
     largest = df_tb_largest();
+    free(g_path);
+    g_path = (rc == 0 && largest > 0) ? new_path : NULL;
+    if (g_path != new_path) free(new_path);
     pthread_rwlock_unlock(&g_tables_lock);
     Py_END_ALLOW_THREADS
     if (rc != 0) {
         PyErr_Format(PyExc_RuntimeError, "Fathom tb_init failed for %s", path);
         Py_DECREF(keep);
-        Py_CLEAR(g_path);
         return NULL;
     }
     if (path[0] != '\0' && largest == 0) {
@@ -385,11 +395,9 @@ static PyObject *tb_init_py(PyObject *self, PyObject *args) {
          * now empty, and path() says so. */
         PyErr_Format(PyExc_ValueError, "no Syzygy tables found under %s", path);
         Py_DECREF(keep);
-        Py_CLEAR(g_path);
         return NULL;
     }
-    if (path[0] == '\0') Py_CLEAR(keep);
-    Py_XSETREF(g_path, keep);
+    Py_DECREF(keep);
     return PyLong_FromUnsignedLong(largest);
 }
 
@@ -397,9 +405,10 @@ static PyObject *tb_free_py(PyObject *self, PyObject *Py_UNUSED(ignored)) {
     Py_BEGIN_ALLOW_THREADS
     pthread_rwlock_wrlock(&g_tables_lock);
     df_tb_free();
+    free(g_path);
+    g_path = NULL;
     pthread_rwlock_unlock(&g_tables_lock);
     Py_END_ALLOW_THREADS
-    Py_CLEAR(g_path);
     Py_RETURN_NONE;
 }
 
@@ -412,8 +421,10 @@ static PyObject *tb_largest_py(PyObject *self, PyObject *Py_UNUSED(ignored)) {
 }
 
 static PyObject *tb_path_py(PyObject *self, PyObject *Py_UNUSED(ignored)) {
-    if (!g_path) Py_RETURN_NONE;
-    return Py_NewRef(g_path);
+    pthread_rwlock_rdlock(&g_tables_lock);
+    PyObject *result = g_path ? PyUnicode_FromString(g_path) : Py_NewRef(Py_None);
+    pthread_rwlock_unlock(&g_tables_lock);
+    return result;
 }
 
 static PyObject *tb_probe_wdl_py(PyObject *self, PyObject *obj) {
