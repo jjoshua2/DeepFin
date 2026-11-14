@@ -323,6 +323,14 @@ def check_extensions(
     return issues
 
 
+def absent_optional_extensions(root: Path) -> list[str]:
+    """Optional extensions with no built output (not a failure, but not 'present')."""
+    return [
+        spec.module for spec in EXTENSION_SPECS
+        if spec.optional and _first_existing(_extension_outputs(root, spec.module)) is None
+    ]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path.cwd(), help="Repository root to inspect.")
@@ -352,7 +360,14 @@ def main() -> int:
         print("Run: python3 scripts/build_production_extensions.py")
         return 1
     if not args.quiet:
-        print("C extensions are present and up to date.")
+        absent = absent_optional_extensions(args.root.resolve())
+        if absent:
+            print(
+                "Required C extensions are present and up to date; "
+                f"optional extension(s) not built: {', '.join(absent)}.",
+            )
+        else:
+            print("C extensions are present and up to date.")
     return 0
 
 

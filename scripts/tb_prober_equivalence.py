@@ -18,6 +18,13 @@ and every expected difference):
                  (see ``ep_must_be_refused`` for the one case the C prober
                  refuses where python-chess applies a nonsense capture);
 * ``terminal``   checkmates and stalemates reached by one move from ``random``.
+* ``ep_a1``      a FEN whose ep field is ``a1`` -- "no ep" for both readers;
+* ``ep_origin_occupied``  a capturable ep square with an enemy pawn on ep-/+8
+                 but ep+/-8 occupied: python-chess's status() calls it invalid,
+                 both probers still capture the real pawn and must agree;
+* ``castling_letters``  random ``KQkq`` letter sets on boards with and without
+                 back-rank rooks/kings: the FEN reader must map them exactly as
+                 python-chess's parser does (clean, stale and absent rights).
 
 Root moves: for the first ``--root-per-class`` ``random`` positions of each
 class, every legal move's DTZ (from the mover's view) and Fathom's
@@ -201,13 +208,13 @@ def gen_bogus_ep(rng: random.Random, cls: str) -> chess.Board | None:
         return None
     stm = board.turn
     if rng.random() < 0.5:
-        board.ep_square = rng.randrange(1, 64)
+        board.ep_square = rng.randrange(0, 64) or None  # python-chess: 0 is no ep
         return board
     capture_rank = 4 if stm else 3
     victims = [sq for sq in chess.SquareSet(board.occupied_co[not stm])
                if chess.square_rank(sq) == capture_rank]
     if not victims:
-        board.ep_square = rng.randrange(1, 64)
+        board.ep_square = rng.randrange(0, 64) or None  # python-chess: 0 is no ep
         return board
     victim = rng.choice(victims)
     side = [f for f in (chess.square_file(victim) - 1, chess.square_file(victim) + 1) if 0 <= f < 8]
@@ -226,13 +233,93 @@ def gen_bogus_ep(rng: random.Random, cls: str) -> chess.Board | None:
 def ep_must_be_refused(board: chess.Board) -> bool:
     """The C prober refuses (ValueError) exactly these ep positions.
 
-    python-chess would apply a pseudo-legal ep capture onto a structurally
-    impossible square (removing whatever is on ep-8/ep+8, possibly the king);
-    the C prober treats that board as illegal instead, which is also what
-    python-chess's own ``status()`` says (STATUS_INVALID_EP_SQUARE). Every
-    other ep square gives python-chess's values exactly.
+    A side-to-move pawn can capture onto the ep square, but the square behind
+    it (ep-8 / ep+8, which the capture removes) is not an enemy pawn.
+    python-chess would apply that nonsense capture (removing a knight, or the
+    king); the C prober treats the board as illegal instead, as python-chess's
+    own ``status()`` does (STATUS_INVALID_EP_SQUARE). Every other ep square --
+    including a real enemy pawn with something standing on ep+8/ep-8, which
+    python-chess's status() also calls invalid -- gives python-chess's values.
     """
-    return bool(board.status() & chess.STATUS_INVALID_EP_SQUARE) and any(board.generate_pseudo_legal_ep())
+    if not board.ep_square or not any(board.generate_pseudo_legal_ep()):
+        return False
+    behind = board.ep_square - 8 if board.turn else board.ep_square + 8
+    return not board.pawns & board.occupied_co[not board.turn] & chess.BB_SQUARES[behind]
+
+
+def expected_answers(tb: chess.syzygy.Tablebase, board: chess.Board):
+    """(answer for the FEN path, answer for the CBoard path), each (wdl, dtz).
+
+    Both are python-chess's answer, except: an ep square ``ep_must_be_refused``
+    flags is REFUSED on both paths; and CBoard keeps corner castling bits only,
+    so a right on a non-corner rook (python-chess KeyError) is invisible to it
+    -- its expected answer is the board with the corner rights alone.
+    """
+    if ep_must_be_refused(board):
+        return (REFUSED, REFUSED), (REFUSED, REFUSED)
+    want = py_probe(tb, board)
+    cb_want = want
+    if board.castling_rights & ~chess.BB_CORNERS:
+        corner_only = board.copy(stack=False)
+        corner_only.castling_rights = board.castling_rights & chess.BB_CORNERS
+        cb_want = py_probe(tb, corner_only)
+    return want, cb_want
+
+
+def _with_field(fen: str, index: int, value: str) -> str:
+    parts = fen.split(" ")
+    parts[index] = value
+    return " ".join(parts)
+
+
+def gen_ep_a1(rng: random.Random, cls: str) -> str | None:
+    """A FEN whose ep field is ``a1`` (square 0): "no ep" for python-chess."""
+    board = gen_random(rng, cls)
+    return None if board is None else _with_field(board.fen(), 3, "a1")
+
+
+def gen_ep_origin_occupied(rng: random.Random, cls: str) -> chess.Board | None:
+    """A real double push, then some piece placed on the square it came from.
+
+    python-chess's status() calls this ep square invalid, but the capture only
+    removes the enemy pawn, so both probers must give the same value.
+    """
+    board = gen_ep(rng, cls)
+    if board is None or board.ep_square is None:
+        return None
+    origin = board.ep_square + (8 if board.turn else -8)
+    movers = [sq for sq in chess.SquareSet(board.occupied)
+              if board.piece_type_at(sq) not in (chess.KING, chess.PAWN)]
+    if not movers or board.piece_at(origin) is not None:
+        return None
+    sq = rng.choice(movers)
+    piece = board.remove_piece_at(sq)
+    assert piece is not None
+    board.set_piece_at(origin, piece)
+    plain = board.copy(stack=False)
+    plain.ep_square = None
+    return board if plain.is_valid() else None
+
+
+_CASTLING_LETTERS = ["K", "Q", "k", "q", "KQ", "kq", "Kk", "Qq", "KQkq", "Kq", "Qk"]
+
+
+def gen_castling_letters(rng: random.Random, cls: str) -> str | None:
+    """A FEN with castling letters the placement may not back (python-chess's
+    parser keeps, drops or re-targets each letter by its own rules)."""
+    board = gen_random(rng, cls)
+    if board is None:
+        return None
+    if rng.random() < 0.5:  # sometimes put a king on its home square
+        color = rng.random() < 0.5
+        king = board.king(color)
+        home = chess.E1 if color else chess.E8
+        if king is not None and board.piece_at(home) is None:
+            board.remove_piece_at(king)
+            board.set_piece_at(home, chess.Piece(chess.KING, color))
+            if not board.is_valid():
+                return None
+    return _with_field(board.fen(), 2, rng.choice(_CASTLING_LETTERS))
 
 
 def terminal_children(board: chess.Board) -> list[chess.Board]:
@@ -380,17 +467,21 @@ def run_class(job: tuple[str, str, int, int, int, int]) -> dict[str, Any]:
         tb = _PY_TB[syzygy_path] = open_python_tablebase(syzygy_path)
 
     rng = random.Random(f"{seed}:{cls}")
-    boards: list[tuple[str, chess.Board]] = []
+    boards: list[tuple[str, chess.Board, str]] = []
     seen: set[str] = set()
 
-    def add(cat: str, b: chess.Board | None) -> bool:
+    def add(cat: str, b: chess.Board | str | None) -> bool:
+        """``b`` is a board, or a FEN string (classes whose FEN text matters)."""
         if b is None:
             return False
-        key = b.fen(en_passant="fen")
-        if key in seen:
+        if isinstance(b, str):
+            fen, board = b, chess.Board(b)
+        else:
+            fen, board = b.fen(en_passant="fen"), b
+        if fen in seen:
             return False
-        seen.add(key)
-        boards.append((cat, b))
+        seen.add(fen)
+        boards.append((cat, board, fen))
         return True
 
     randoms: list[chess.Board] = []
@@ -402,7 +493,10 @@ def run_class(job: tuple[str, str, int, int, int, int]) -> dict[str, Any]:
             assert b is not None
             randoms.append(b)
     for gen, cat, want in ((gen_ep, "ep", per_class // 8), (gen_castling, "castling", 8),
-                           (gen_bogus_ep, "bogus_ep", per_class // 8)):
+                           (gen_bogus_ep, "bogus_ep", per_class // 8),
+                           (gen_ep_a1, "ep_a1", per_class // 40),
+                           (gen_ep_origin_occupied, "ep_origin_occupied", per_class // 16),
+                           (gen_castling_letters, "castling_letters", per_class // 16)):
         got = tries = 0
         while got < want and tries < want * 200:
             tries += 1
@@ -420,13 +514,9 @@ def run_class(job: tuple[str, str, int, int, int, int]) -> dict[str, Any]:
 
     rows = []
     mismatches = []
-    for cat, b in boards:
-        refuse = ep_must_be_refused(b)
-        if refuse:
-            py_wdl = py_dtz = REFUSED
-        else:
-            py_wdl, py_dtz = py_probe(tb, b)
-        fen = b.fen(en_passant="fen")
+    for cat, b, fen in boards:
+        (py_wdl, py_dtz), cb_want = expected_answers(tb, b)
+        noncorner = bool(b.castling_rights & ~chess.BB_CORNERS)
         cb = CBoard.from_board(b)
         c_wdl = _c_call(_tb_ext.probe_wdl_fen, fen)
         c_dtz = _c_call(_tb_ext.probe_dtz_fen, fen)
@@ -434,9 +524,9 @@ def run_class(job: tuple[str, str, int, int, int, int]) -> dict[str, Any]:
         cb_dtz = _c_call(_tb_ext.probe_dtz, cb)
         row = {"key": fen, "cls": cls, "cat": cat, **_flags(b),
                "py_wdl": py_wdl, "py_dtz": py_dtz, "c_wdl": c_wdl, "c_dtz": c_dtz,
-               "cb_wdl": cb_wdl, "cb_dtz": cb_dtz}
+               "cb_wdl": cb_wdl, "cb_dtz": cb_dtz, "cb_noncorner_castling": noncorner}
         rows.append(row)
-        if not (py_wdl == c_wdl == cb_wdl and py_dtz == c_dtz == cb_dtz):
+        if not ((py_wdl, py_dtz) == (c_wdl, c_dtz) and cb_want == (cb_wdl, cb_dtz)):
             mismatches.append(row)
 
     root_rows = []
@@ -557,6 +647,8 @@ def main() -> int:
                     cats.append("stalemate")
                 if row["py_wdl"] in (1, -1):
                     cats.append("cursed_win" if row["py_wdl"] == 1 else "blessed_loss")
+                if row["cb_noncorner_castling"]:
+                    cats.append("cboard_noncorner_castling")
                 if row["py_wdl"] == REFUSED:
                     cats.append("refused_impossible_ep")
                 if row["py_wdl"] is None:

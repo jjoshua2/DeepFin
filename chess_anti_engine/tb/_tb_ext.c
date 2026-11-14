@@ -29,6 +29,8 @@
 #include <Python.h>
 #include <pthread.h>
 #include <string.h>
+#include <limits.h>
+#include <stdlib.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -92,6 +94,54 @@ static int fen_square(const char *s) {
     return (s[1] - '1') * 8 + (s[0] - 'a');
 }
 
+static int df_lsb(uint64_t b) { return b ? __builtin_ctzll(b) : -1; }
+static int df_msb(uint64_t b) { return b ? 63 - __builtin_clzll(b) : -1; }
+
+/* Castling letters exactly as python-chess's Board._set_castling_fen reads them
+ * (standard letters only), so the FEN path refuses precisely the positions
+ * python-chess's probe refuses (it tests the raw castling_rights, unclean):
+ *   q/Q: the leftmost back-rank rook if left of the king; nothing if the king
+ *        is present and there is no rook; else the a-file corner;
+ *   k/K: the rightmost back-rank rook if right of the king; else the h-file
+ *        corner (also when there is no rook -- python-chess's msb(0) is -1).
+ * Bits: 1/2/4/8 for a right on h1/a1/h8/a8; 16 for a right on any other square
+ * (a non-corner rook, which CBoard -- corner bits only -- cannot represent).
+ * Like python-chess's FEN_CASTLING_REGEX: upper-case letters first, at most
+ * four of each case. Shredder file letters are refused as malformed. */
+static int castling_from_fen(const char *f, size_t n, DfTbPos *pos) {
+    int seen_lower = 0, upper = 0, lower = 0;
+    for (size_t i = 0; i < n; i++) {
+        char c = f[i];
+        int white = (c == 'K' || c == 'Q');
+        if (!white && c != 'k' && c != 'q') return -1;
+        if (white) {
+            if (seen_lower || ++upper > 4) return -1;
+        } else {
+            seen_lower = 1;
+            if (++lower > 4) return -1;
+        }
+        const uint64_t own = white ? pos->white : pos->black;
+        const uint64_t backrank = white ? 0xFFULL : 0xFF00000000000000ULL;
+        const uint64_t rooks = own & pos->rooks & backrank;
+        const int king = df_msb(own & pos->kings);
+        uint64_t add;
+        if (c == 'q' || c == 'Q') {
+            if (king >= 0 && df_lsb(rooks) < king) add = rooks & (0 - rooks);
+            else add = backrank & 0x0101010101010101ULL;
+        } else {
+            const int rook = df_msb(rooks);
+            if (king >= 0 && king < rook) add = 1ULL << rook;
+            else add = backrank & 0x8080808080808080ULL;
+        }
+        if (add & (1ULL << 7)) pos->castling |= 1u;
+        if (add & 1ULL) pos->castling |= 2u;
+        if (add & (1ULL << 63)) pos->castling |= 4u;
+        if (add & (1ULL << 56)) pos->castling |= 8u;
+        if (add & ~((1ULL << 7) | 1ULL | (1ULL << 63) | (1ULL << 56))) pos->castling |= 16u;
+    }
+    return 0;
+}
+
 /* Minimal FEN reader: placement, side, castling, ep, optional halfmove clock.
  * Square numbering a1=0 .. h8=63, the same as CBoard and python-chess. */
 static int pos_from_fen(const char *fen, DfTbPos *pos) {
@@ -137,31 +187,21 @@ static int pos_from_fen(const char *fen, DfTbPos *pos) {
     if (*p == '-') {
         p++;
     } else {
-        for (; *p && *p != ' '; p++) {
-            switch (*p) {
-                case 'K': pos->castling |= 1u; break;
-                case 'Q': pos->castling |= 2u; break;
-                case 'k': pos->castling |= 4u; break;
-                case 'q': pos->castling |= 8u; break;
-                default: goto bad;
-            }
-        }
+        const char *flags = p;
+        while (*p && *p != ' ') p++;
+        if (castling_from_fen(flags, (size_t)(p - flags), pos) < 0) goto bad;
     }
     if (*p != ' ') goto bad;
     p++;
-    /* Castling flags are kept RAW, never cleaned: python-chess's probe tests
-     * board.castling_rights as parsed (a stale "K" with the king off e1 still
-     * raises KeyError there) and CBoard.from_board copies the raw flags, so a
-     * cleaned FEN reader would be the one path that disagrees. */
     if (*p == '-') {
         p++;
     } else {
         int sq = fen_square(p);
         if (sq < 0) goto bad;
-        /* Any square parses; the probe gate decides whether it is possible
-         * (a1 = square 0 is "none" internally, so it is mapped to the
-         * always-impossible 64). */
-        pos->ep = sq == 0 ? 64u : (unsigned)sq;
+        /* Any square parses; the probe gate decides whether it is possible.
+         * a1 (square 0) means "none", as it does for python-chess
+         * (ep_square 0 is falsy there) and for CBoard's 0-based reader. */
+        pos->ep = (unsigned)sq;
         p += 2;
     }
     if (*p == ' ') {
@@ -262,37 +302,68 @@ static PyObject *probe_root_core(const DfTbPos *pos, int has_repeated, int use_r
 
 /* Every component of a non-empty path must be a readable directory. Checked
  * BEFORE Fathom re-initialises, so a bad path leaves the old table set loaded.
- * Fathom itself would skip a missing directory silently and report success. */
-static int check_components(const char *path) {
+ * Fathom itself would skip a missing directory silently and report success.
+ *
+ * Each component is resolved with realpath(): Fathom opens tables lazily, on
+ * the first probe of each material, so a relative component would be
+ * re-resolved against whatever the cwd is THEN -- after a chdir every probe
+ * would silently return None. Returns a new str of the absolute path list. */
+static PyObject *absolute_components(const char *path) {
+    PyObject *parts = PyList_New(0);
+    if (!parts) return NULL;
     const char *start = path;
     for (;;) {
         const char *end = strchr(start, DF_TB_SEP);
         size_t len = end ? (size_t)(end - start) : strlen(start);
-        char dir[4096];
+        char dir[PATH_MAX];
+        char resolved[PATH_MAX];
         if (len == 0 || len >= sizeof dir) {
             PyErr_Format(PyExc_ValueError,
                          "Syzygy path has an empty or oversized component: %s", path);
-            return -1;
+            goto fail;
         }
         memcpy(dir, start, len);
         dir[len] = '\0';
         struct stat st;
-        if (stat(dir, &st) != 0 || !S_ISDIR(st.st_mode) || access(dir, R_OK | X_OK) != 0) {
+        if (realpath(dir, resolved) == NULL || stat(resolved, &st) != 0 || !S_ISDIR(st.st_mode) ||
+            access(resolved, R_OK | X_OK) != 0 || strchr(resolved, DF_TB_SEP) != NULL) {
             PyErr_Format(PyExc_ValueError,
                          "Syzygy path component is not a readable directory: %s", dir);
-            return -1;
+            goto fail;
         }
-        if (!end) return 0;
+        PyObject *item = PyUnicode_FromString(resolved);
+        if (!item || PyList_Append(parts, item) < 0) {
+            Py_XDECREF(item);
+            goto fail;
+        }
+        Py_DECREF(item);
+        if (!end) break;
         start = end + 1;
     }
+    {
+        char sep[2] = {DF_TB_SEP, '\0'};
+        PyObject *glue = PyUnicode_FromString(sep);
+        if (!glue) goto fail;
+        PyObject *joined = PyUnicode_Join(glue, parts);
+        Py_DECREF(glue);
+        Py_DECREF(parts);
+        return joined;
+    }
+fail:
+    Py_DECREF(parts);
+    return NULL;
 }
 
 static PyObject *tb_init_py(PyObject *self, PyObject *args) {
-    const char *path;
-    if (!PyArg_ParseTuple(args, "s", &path)) return NULL;
-    if (path[0] != '\0' && check_components(path) < 0) return NULL;
-    PyObject *keep = PyUnicode_FromString(path);
+    const char *given;
+    if (!PyArg_ParseTuple(args, "s", &given)) return NULL;
+    PyObject *keep = given[0] != '\0' ? absolute_components(given) : PyUnicode_FromString("");
     if (!keep) return NULL;
+    const char *path = PyUnicode_AsUTF8(keep);
+    if (!path) {
+        Py_DECREF(keep);
+        return NULL;
+    }
     int rc;
     unsigned largest;
     Py_BEGIN_ALLOW_THREADS
@@ -302,18 +373,18 @@ static PyObject *tb_init_py(PyObject *self, PyObject *args) {
     pthread_rwlock_unlock(&g_tables_lock);
     Py_END_ALLOW_THREADS
     if (rc != 0) {
+        PyErr_Format(PyExc_RuntimeError, "Fathom tb_init failed for %s", path);
         Py_DECREF(keep);
         Py_CLEAR(g_path);
-        PyErr_Format(PyExc_RuntimeError, "Fathom tb_init failed for %s", path);
         return NULL;
     }
     if (path[0] != '\0' && largest == 0) {
         /* Accepted-and-ignored is this repo's signature defect: a path that
          * loads nothing is an error, not "no tablebases". The table set is
          * now empty, and path() says so. */
+        PyErr_Format(PyExc_ValueError, "no Syzygy tables found under %s", path);
         Py_DECREF(keep);
         Py_CLEAR(g_path);
-        PyErr_Format(PyExc_ValueError, "no Syzygy tables found under %s", path);
         return NULL;
     }
     if (path[0] == '\0') Py_CLEAR(keep);

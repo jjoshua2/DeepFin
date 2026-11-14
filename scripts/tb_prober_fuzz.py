@@ -81,6 +81,12 @@ def inputs(seed: int, n: int):
         if rng.random() < 0.2:
             board.castling_rights = rng.choice([chess.BB_CORNERS, chess.BB_H1, chess.BB_A8 | chess.BB_H1, 0])
         fen = board.fen(en_passant="fen")
+        parts = fen.split(" ")
+        if rng.random() < 0.05:
+            parts[3] = "a1"  # square 0: "no ep" for python-chess and CBoard
+        if rng.random() < 0.15:  # castling letters the placement may not back
+            parts[2] = rng.choice(["K", "Q", "k", "q", "KQ", "kq", "KQkq", "Qq", "Kk"])
+        fen = " ".join(parts)
         if rng.random() < 0.1:
             fen = _mutate_text(rng, fen)
         yield fen

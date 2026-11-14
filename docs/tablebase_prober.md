@@ -32,17 +32,27 @@ All results are from the side to move's point of view.
 
 | call | returns |
 |---|---|
-| `init(path)` | Loads tables from a `:`-separated directory list (`;` on Windows, Fathom's own separator) and returns the largest man count found. Every directory is searched, and the first that holds a file wins. A second call replaces the table set; `init("")` clears it. **Raises `ValueError`** if a component is empty or not a readable directory (the old table set stays loaded), or if the path loads no table at all (the table set is then empty and `path()` is `None`). Fathom alone would skip a missing directory silently. |
+| `init(path)` | Loads tables from a `:`-separated directory list (`;` on Windows, Fathom's own separator) and returns the largest man count found. Every directory is searched, and the first that holds a file wins. A second call replaces the table set; `init("")` clears it. **Raises `ValueError`** if a component is empty or not a readable directory (the old table set stays loaded), or if the path loads no table at all (the table set is then empty and `path()` is `None`). Fathom alone would skip a missing directory silently. Each component is resolved with `realpath()` and Fathom gets absolute paths (it opens table files lazily, so a relative path would break after a `chdir`); `path()` reports that absolute form. |
 | `largest()`, `path()`, `free()` | Introspection and release. |
 | `probe_wdl(cboard)` / `probe_wdl_fen(fen)` | -2 loss, -1 blessed loss, 0 draw, 1 cursed win, 2 win |
 | `probe_dtz(cboard)` / `probe_dtz_fen(fen)` | DTZ, python-chess `probe_dtz` convention |
 | `probe_root(cboard, has_repeated=False, use_rule50=True)` / `probe_root_fen` | `[(uci, dtz, rank, score), ...]`, one entry per legal move; `[]` at a mate or stalemate root |
 | `fen_bitboards(fen)`, `cboard_bitboards(cb)` | the parsed input, for tests |
 
-`None` means the position cannot be probed here: it has castling rights (the
-raw flags, uncleaned, exactly as python-chess's probe and `CBoard.from_board`
-read them), more men than the loaded tables, or its table is missing from
-every directory.
+`None` means the position cannot be probed here: it has castling rights, more
+men than the loaded tables, or its table is missing from every directory.
+Castling rights are read the way each input already carries them. A CBoard's
+flags are used raw, as `CBoard.from_board` copied them. A FEN's castling field
+is mapped to rook squares exactly as python-chess's FEN parser does
+(`_set_castling_fen`), so the FEN path reaches the verdict `chess.Board(fen)`
+reaches on clean, stale and absent rights. That parser is asymmetric for stale
+letters: `Q`/`q` with no rook on the back rank adds nothing (the position
+becomes probeable), while `K`/`k` with no such rook still sets the corner right
+(the position stays unprobeable). A letter that lands on a non-corner rook
+makes the FEN unprobeable (`None`; python-chess raises `KeyError`). The castling
+field accepts `KQkq` letters only, uppercase before lowercase and at most four
+per side; anything else is a malformed FEN (`ValueError`). python-chess also
+accepts Shredder file letters (`A`-`H`), which this reader rejects.
 python-chess raises `KeyError`/`MissingTableError` in the same cases. An
 illegal position (Fathom's `is_valid`: wrong king count, side not to move in
 check, pawn on a back rank, overlapping bitboards, or the impossible en-passant
@@ -81,14 +91,22 @@ checked on first use.
     `generate_pseudo_legal_ep`): the square is dropped. python-chess's probe
     ignores it too, so values are equal. This covers the ordinary "double push
     with no capturer" and any impossible square nobody can capture onto.
-  - **A capturer exists and the square is possible** (python-chess's
-    `_valid_ep_square`: rank 6/3, an enemy pawn on ep∓8, ep±8 empty): passed
-    through. Both probers resolve the capture identically.
-  - **A capturer exists but the square is impossible:** python-chess applies a
-    nonsense capture, removing a knight or the king from ep∓8. The C prober
-    raises `ValueError` instead, the same verdict as python-chess's own
-    `status()` (`STATUS_INVALID_EP_SQUARE`). This is the only input on which
-    the two probers deliberately answer differently.
+  - **A capturer exists and an enemy pawn stands on ep∓8:** passed through.
+    Both probers then capture that pawn, and their values are equal. This
+    includes squares python-chess's `status()` calls invalid because the
+    origin square ep±8 is occupied, or the square is on the wrong rank: the
+    capture is still well defined (it removes a real pawn), python-chess
+    probes it, and so does the C prober. The equivalence harness's
+    `ep_origin_occupied` class checks this case.
+  - **A capturer exists but ep∓8 is not an enemy pawn** (empty, or another
+    piece): python-chess applies a nonsense capture, removing a knight or the
+    king from ep∓8, and its answer is not a table value for any real position.
+    The C prober raises `ValueError` instead. This is the only refused ep
+    class. python-chess's own `status()` also flags these positions
+    (`STATUS_INVALID_EP_SQUARE`).
+  - A FEN ep field of `a1` means "no ep square" in both readers (python-chess
+    stores square 0 and its ep logic treats 0 as none); a CBoard cannot carry
+    an a1 ep square at all.
 
 **Root ranking: 50-move aware.** `probe_root` returns, per legal move:
 
@@ -123,6 +141,44 @@ harness checks that move against `_dtz_ignoring_fifty` (the same function
 without that short-circuit), so the comparison is still exact. Whoever
 switches the UCI root shortcut must keep the repo's claim rule on top of
 Fathom's numbers.
+
+## Where the two probers answer differently
+
+On every legal position within the loaded tables, the two probers return the
+same WDL, DTZ and root values. They deliberately differ on these inputs:
+
+1. **The refused ep class** above: a capturer exists but ep∓8 is not an enemy
+   pawn. python-chess returns a value for a nonsense capture; C raises
+   `ValueError`.
+2. **Illegal positions** (Fathom's `is_valid`, listed under API): python-chess
+   often returns values for them; C raises `ValueError`.
+3. **Positions with more men than the loaded tables** (including 7+ men):
+   python-chess sometimes still answers by resolving a capture that leads into
+   the tables (its `probe_ab` capture cutoff), and C returns `None`. With
+   only 3-4 man tables loaded this also hits 5-man positions with such a
+   capture. The C prober never answers above `largest()`.
+4. **Non-corner castling rights on a CBoard** (a right on a rook that is not
+   on its corner, e.g. `K` with the rook on f1): python-chess raises
+   `KeyError`, but `CBoard.from_board` keeps corner bits only, so the CBoard
+   path probes the position without that right and returns a value. The FEN
+   path refuses it (`None`), the same "no answer" as python-chess.
+5. **Shredder castling letters** in a FEN: python-chess parses them, C raises
+   `ValueError` (malformed FEN).
+
+Beyond these, the root's fifty-move-claim rule (above) is a difference in
+convention, not in table values.
+
+## Wiring rules for the switch PRs
+
+- **Catch `ValueError` at the root probe and treat it as "no TB".** A UCI
+  `position` command can deliver any of the refused or illegal inputs above;
+  the engine must fall through to search, never crash.
+- **Pass the production pair in full.** `init("<...>/syzygy_3-4-5")` alone
+  returns 6 and raises nothing: 6-man WDL works (its WDL files are in that
+  directory) and 6-man DTZ returns `None` (its DTZ files are in the second
+  directory). The wiring must check DTZ availability for the largest class
+  (for example, probe the DTZ of one known 6-man position after `init`) rather
+  than trusting `largest()`.
 
 ## Thread safety, fork, platforms
 
@@ -159,6 +215,11 @@ file and skips that file. Tables are opened `O_RDONLY` and mapped `PROT_READ`.
   skip in CI with a printed reason, because CI ships no tables. Wherever tables
   are found (`$CAE_SYZYGY_PATH`, the production pair, or
   `data/syzygy_3-4man`), they run, and a disagreement fails.
+- The committed crash fuzz (`scripts/tb_prober_fuzz.py`, and the fuzz test)
+  only exercises probes when tables are present, so CI never runs it. What
+  protects CI is the table-free refusal test: the illegal and refused-ep
+  inputs raise `ValueError` before any table is touched, with no tables
+  loaded.
 
 ## Follow-ups (not in this PR)
 

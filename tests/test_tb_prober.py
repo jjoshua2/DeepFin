@@ -36,14 +36,17 @@ from chess_anti_engine.utils.syzygy import default_syzygy_path, missing_tablebas
 from scripts.tb_prober_equivalence import (
     compare_root,
     ep_must_be_refused,
+    expected_answers,
     gen_bogus_ep,
     gen_castling,
+    gen_castling_letters,
+    gen_ep_a1,
+    gen_ep_origin_occupied,
     gen_edge_king,
     gen_ep,
     gen_random,
     material_classes,
     open_python_tablebase,
-    py_probe,
     py_root,
     terminal_children,
 )
@@ -62,6 +65,8 @@ def _python_bitboards(board: chess.Board) -> tuple[int, ...]:
     for bit, sq in ((1, chess.H1), (2, chess.A1), (4, chess.H8), (8, chess.A8)):
         if rights & chess.BB_SQUARES[sq]:
             castling |= bit
+    if rights & ~chess.BB_CORNERS:
+        castling |= 16  # a right on a non-corner rook
     return (
         board.occupied_co[chess.WHITE], board.occupied_co[chess.BLACK],
         board.kings, board.queens, board.rooks, board.bishops, board.knights, board.pawns,
@@ -140,8 +145,60 @@ def test_fen_and_cboard_readers_match_python_chess() -> None:
     assert any(b.castling_rights != b.clean_castling_rights() for b in boards)  # stale flags
     for board in boards:
         want = _python_bitboards(board)
-        assert _tb_ext.fen_bitboards(_raw_fen(board)) == want, _raw_fen(board)
-        assert _tb_ext.cboard_bitboards(CBoard.from_board(board)) == want, board.fen()
+        # The FEN text is judged against python-chess's parse of that text (its
+        # parser may drop or re-target a letter); the CBoard against the board.
+        fen = _raw_fen(board)
+        assert _tb_ext.fen_bitboards(fen) == _python_bitboards(chess.Board(fen)), fen
+        cb_want = (*want[:10], want[10] & 15, want[11])  # CBoard: corner bits only
+        assert _tb_ext.cboard_bitboards(CBoard.from_board(board)) == cb_want, board.fen()
+
+
+def test_fen_castling_letters_follow_python_chess_parser() -> None:
+    """Each letter is kept, dropped or re-targeted exactly as python-chess's
+    Board._set_castling_fen does, so the FEN path refuses what its probe refuses."""
+    rng = random.Random(3)
+    fens = [f for f in (gen_castling_letters(rng, c) for c in ["KRvK", "KRRvKR", "KQvKR", "KRvKN", "KPvK"] * 80) if f]
+    fens += ["8/7K/8/8/5k2/8/8/8 b Qq - 0 1", "4k3/8/8/8/8/8/8/4KR2 w K - 0 1",
+             "4k3/8/8/8/8/8/8/3K3R w KQkq - 0 1", "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1"]
+    kinds = set()
+    for fen in fens:
+        want = _python_bitboards(chess.Board(fen))
+        assert _tb_ext.fen_bitboards(fen) == want, fen
+        kinds.add((bool(want[10] & 15), bool(want[10] & 16), "-" not in fen.split()[2]))
+    assert (False, False, True) in kinds  # letters python-chess drops entirely
+    assert (False, True, True) in kinds   # re-targeted to a non-corner rook
+    assert (True, False, True) in kinds   # kept on a corner
+
+
+def test_ep_on_a1_means_no_ep_like_python_chess() -> None:
+    fen = "8/8/8/1P6/8/1k6/4K3/8 w - a1 0 1"
+    assert not chess.Board(fen).ep_square
+    assert _tb_ext.fen_bitboards(fen)[8] == 0
+    assert _tb_ext.probe_wdl_fen(fen) == _tb_ext.probe_wdl_fen(fen.replace(" a1 ", " - "))
+
+
+def test_relative_path_survives_a_chdir(tmp_path: Path) -> None:
+    """Fathom opens tables lazily; a relative component would be re-resolved
+    against the cwd of the first probe. init() must hand it absolute paths."""
+    if _TABLES is None:
+        pytest.skip("no Syzygy tables here: the lazy-open path cannot be exercised")
+    first = _TABLES.split(":")[0]
+    rel = os.path.relpath(first, tmp_path)
+    code = (
+        "import os, sys\n"
+        "from chess_anti_engine.tb import _tb_ext\n"
+        f"os.chdir({str(tmp_path)!r})\n"
+        f"n = _tb_ext.init({rel!r})\n"
+        "assert os.path.isabs(_tb_ext.path()), _tb_ext.path()\n"
+        "os.chdir('/')\n"
+        "print(n, _tb_ext.probe_dtz_fen('8/2K5/4B3/3N4/8/8/4k3/8 b - - 0 1'))\n"
+    )
+    proc = subprocess.run([sys.executable, "-c", code], cwd=REPO_ROOT, capture_output=True, text=True,
+                          timeout=120, check=False, env={**os.environ, "PYTHONPATH": str(REPO_ROOT)})
+    assert proc.returncode == 0, proc.stderr
+    largest, dtz = proc.stdout.split()
+    assert int(largest) >= 4
+    assert dtz == "-53"
 
 
 def test_init_refuses_a_path_that_loads_nothing(tmp_path: Path) -> None:
@@ -193,6 +250,12 @@ def test_malformed_fen_raises(fen: str) -> None:
     with pytest.raises(ValueError, match="malformed FEN"):
         _tb_ext.fen_bitboards(fen)
 
+
+# Round-2 review cases: each must equal python-chess.
+A1_FEN = "8/8/8/1P6/8/1k6/4K3/8 w - a1 0 1"          # ep a1 = none
+ORIGIN_FEN = "8/8/8/8/3pP3/1K6/4N3/4k3 b - e3 0 1"   # real pawn on e4, knight on e2
+LETTERS_FEN = "8/7K/8/8/5k2/8/8/8 b Qq - 0 1"        # letters python-chess's parser drops
+NONCORNER_FEN = "4k3/8/8/8/8/8/8/4KR2 w K - 0 1"     # right on f1: python-chess KeyError
 
 # The review's crash: Fathom's ep capture deletes whatever stands on ep-8, here
 # the black king, and the probe segfaulted (exit 139) on every entry point.
@@ -269,6 +332,12 @@ def test_only_the_module_init_symbol_is_exported() -> None:
 
 def test_fathom_notice_ships_in_the_package(tmp_path: Path) -> None:
     """MIT requires the notice with every copy: it must be package data."""
+    import setuptools
+
+    major = int(setuptools.__version__.split(".")[0])
+    if major < 61:
+        pytest.skip(f"setuptools {setuptools.__version__} < 61 cannot read [tool.setuptools.package-data] "
+                    "from pyproject.toml (build-system requires >= 70)")
     proc = subprocess.run([sys.executable, "setup.py", "-q", "egg_info", "--egg-base", str(tmp_path)],
                           cwd=REPO_ROOT, capture_output=True, text=True, timeout=600, check=False)
     assert proc.returncode == 0, proc.stderr[-2000:]
@@ -364,18 +433,36 @@ def test_wdl_and_dtz_equal_python_chess(tables) -> None:
     assert largest >= 4
     boards = _class_sample(path, largest, per_class=12, seed=11, odd_inputs=True)
     boards += [chess.Board(WRONG_DTZ_FEN), chess.Board(CRASH_FEN)]
+    # Every item is (FEN text, python-chess's parse of it): a board whose raw
+    # castling mask was set directly may not survive the text round trip.
+    items = [(_raw_fen(b), chess.Board(_raw_fen(b))) for b in boards]
+    rng = random.Random(29)
+    for cls in _covered_classes(path, largest)[:60]:
+        for gen in (gen_ep_a1, gen_castling_letters):
+            fen = gen(rng, cls)
+            if fen:
+                items.append((fen, chess.Board(fen)))
+        origin = gen_ep_origin_occupied(rng, cls)
+        if origin is not None:
+            items.append((_raw_fen(origin), chess.Board(_raw_fen(origin))))
+    items += [(f, chess.Board(f)) for f in (A1_FEN, ORIGIN_FEN, LETTERS_FEN, NONCORNER_FEN)
+              if chess.popcount(chess.Board(f).occupied) <= largest]
     seen = {"black": 0, "ep": 0, "castling": 0, "stale_castling": 0, "bogus_ep_ignored": 0,
-            "bogus_ep_refused": 0, "mate": 0, "clock99": 0, "probed": 0}
+            "bogus_ep_refused": 0, "origin_occupied": 0, "noncorner": 0, "mate": 0, "clock99": 0,
+            "probed": 0}
     bad = []
-    for board in boards:
+    for fen, board in items:
         refuse = ep_must_be_refused(board)
-        want = ("ValueError", "ValueError") if refuse else py_probe(tb, board)
-        fen = _raw_fen(board)
+        want, cb_want = expected_answers(tb, board)
         cb = CBoard.from_board(board)
         got = (_c_or_refused(_tb_ext.probe_wdl_fen, fen), _c_or_refused(_tb_ext.probe_dtz_fen, fen),
                _c_or_refused(_tb_ext.probe_wdl, cb), _c_or_refused(_tb_ext.probe_dtz, cb))
-        if got != (*want, *want):
-            bad.append((fen, want, got))
+        if got != (*want, *cb_want):
+            bad.append((fen, want, cb_want, got))
+        seen["origin_occupied"] += (not refuse and bool(board.ep_square)
+                                    and bool(board.occupied & chess.BB_SQUARES[board.ep_square + (8 if board.turn else -8)])
+                                    if board.ep_square and 16 <= board.ep_square < 48 else False)
+        seen["noncorner"] += bool(board.castling_rights & ~chess.BB_CORNERS)
         invalid_ep = bool(board.status() & chess.STATUS_INVALID_EP_SQUARE)
         seen["black"] += board.turn == chess.BLACK
         seen["ep"] += not invalid_ep and board.has_legal_en_passant()
@@ -471,6 +558,25 @@ def test_root_score_follows_use_rule50_and_rank_follows_the_clock(tables) -> Non
     assert first(0, has_repeated=True)[:3] == ("a1a2", 60, 940)       # 1000 - (60 + 0)
     cb = CBoard.from_board(chess.Board(ROOT_KBN.format(clock=90)))
     assert next(r for r in _tb_ext.probe_root(cb, use_rule50=False) or [] if r[0] == "a1a2")[3] == mate_score
+
+
+@needs_tables
+def test_round_two_review_positions(tables) -> None:
+    path, tb = tables
+    largest = _tb_ext.init(path)
+    for fen, want in ((A1_FEN, (2, 1)), (ORIGIN_FEN, (2, 1)), (LETTERS_FEN, (0, 0))):
+        board = chess.Board(fen)
+        if chess.popcount(board.occupied) > largest:
+            continue  # above the loaded tables (the 3-4 man smoke set): not a table answer
+        assert (tb.get_wdl(board), tb.get_dtz(board)) == want, fen
+        assert (_tb_ext.probe_wdl_fen(fen), _tb_ext.probe_dtz_fen(fen)) == want, fen
+        cb = CBoard.from_board(board)
+        assert (_tb_ext.probe_wdl(cb), _tb_ext.probe_dtz(cb)) == want, fen
+    # The one castling difference, by design: CBoard cannot see an f1 right.
+    board = chess.Board(NONCORNER_FEN)
+    assert tb.get_wdl(board) is None
+    assert _tb_ext.probe_wdl_fen(NONCORNER_FEN) is None
+    assert _tb_ext.probe_wdl(CBoard.from_board(board)) == 2
 
 
 @needs_tables

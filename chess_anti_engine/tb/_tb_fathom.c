@@ -57,13 +57,13 @@ static void df_to_pos(const DfTbPos *in, Pos *out) {
  *    python-chess's probe ignores the square, so it is dropped here too. This
  *    is the normal "double push with no capturer" case, and also any
  *    impossible square nobody can capture onto;
- *  - a capturer exists and the square is structurally possible
- *    (python-chess's Board._valid_ep_square: rank 6/3, an enemy pawn on ep∓8,
- *    ep±8 empty): a real ep capture, passed through;
- *  - a capturer exists but the square is impossible: python-chess would apply
- *    a nonsense capture (removing a knight, or the king, from ep∓8). Neither
- *    answer means anything, so the position is refused as illegal -- the same
- *    verdict as python-chess's is_valid() (STATUS_INVALID_EP_SQUARE). */
+ *  - a capturer exists and an enemy pawn stands on ep∓8: a real ep capture,
+ *    passed through (even if ep±8 is occupied, which python-chess's
+ *    _valid_ep_square calls invalid: the capture never touches that square);
+ *  - a capturer exists but ep∓8 is not an enemy pawn: python-chess would apply
+ *    a nonsense capture (removing a knight, or the king, from ep∓8), so the
+ *    position is refused as illegal (python-chess's is_valid() agrees:
+ *    STATUS_INVALID_EP_SQUARE). */
 static int df_ep_square(const DfTbPos *in) {
     unsigned ep = in->ep;
     if (ep == 0) return 0;
@@ -84,12 +84,13 @@ static int df_ep_square(const DfTbPos *in) {
         if (file < 7 && ep + 9 < 64) from |= 1ULL << (ep + 9);
     }
     if (!(from & capture_rank & in->pawns & us)) return 0;
-    const unsigned rank = ep / 8;
-    if (rank != (in->turn ? 5u : 2u)) return -1;
-    const unsigned pushed = in->turn ? ep - 8 : ep + 8;   /* the double-pushed pawn */
-    const unsigned origin = in->turn ? ep + 8 : ep - 8;   /* where it came from */
+    /* A capturer on the capture rank implies ep is on rank 6/3, so ep∓8 is on
+     * the board. The capture removes exactly that square's piece: if it is an
+     * enemy pawn the capture is well-formed (whatever stands on ep±8 is never
+     * touched -- python-chess and Fathom give the same value), otherwise it is
+     * the nonsense capture that deleted a king. */
+    const unsigned pushed = in->turn ? ep - 8 : ep + 8;
     if (!(in->pawns & them & (1ULL << pushed))) return -1;
-    if (occ & (1ULL << origin)) return -1;
     return (int)ep;
 }
 
@@ -104,6 +105,11 @@ static int df_gate(const DfTbPos *in, Pos *pos) {
     pos->ep = (uint8_t)ep;
     if (!is_valid(pos)) return DF_TB_INVALID;
     if (in->castling != 0) return DF_TB_UNAVAILABLE;
+    /* Above the loaded tables: None. python-chess (up to 7 men) sometimes
+     * still answers through a capture that reaches the tables, and Fathom
+     * would sometimes answer through an ep capture python-chess never tries
+     * first -- neither is a table answer, so this is a documented difference
+     * (docs/tablebase_prober.md), not mirrored. */
     if ((unsigned)popcount(pos->white | pos->black) > TB_LARGEST) return DF_TB_UNAVAILABLE;
     return DF_TB_OK;
 }
