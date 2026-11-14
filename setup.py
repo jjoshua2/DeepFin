@@ -17,6 +17,7 @@ Environment variables:
 import importlib.util
 import os
 import platform
+import shutil
 from pathlib import Path
 
 from setuptools import setup, Extension
@@ -302,24 +303,34 @@ class build_ext_with_record(_build_ext):
     built file and of each source in its dependency list, so the UCI engine's
     startup gate can tell a real source edit from a timestamp-only change.
 
-    ⚑ A RECORD IS A CLAIM THAT THE COMPILER RAN ON THESE BYTES. setuptools
-    builds into build/lib and, for an in-place build, copies the result into
-    the source tree whether or not it recompiled anything -- so "the in-place
-    file changed" does not mean "rebuilt" (delete the .so, rebuild, and the
-    copy is the old object). An extension gets a record only when its linked
-    output in build/lib was rewritten during this run, and the hashes are of
-    the sources as they were just before that compile (if a source changed
-    while it compiled, no record). An extension that was skipped or merely
-    copied keeps whatever record it had; nothing is refreshed.
+    ⚑ A RECORD TRAVELS WITH THE OBJECT OF THE COMPILE THAT PRODUCED IT.
+    setuptools compiles into build/lib and, for an in-place build (editable
+    installs, scripts/build_production_extensions.py), then copies every
+    object into the source tree -- compiled this run or not. So:
 
-    The record goes beside the in-place file for an in-place build (editable
-    installs, scripts/build_production_extensions.py) and beside the build/lib
-    file otherwise (it then ships in the wheel).
+    - the record is written beside the build/lib object the moment that
+      object is linked, with the source hashes taken just BEFORE the compile
+      (if a source changes while it compiles, the record therefore reads
+      stale until the next build -- it fails closed, never open);
+    - whenever setuptools copies an object in place, its record is copied
+      with it, and an in-place record is deleted when the build/lib object
+      has none.
+
+    An in-place object therefore always carries the record of its own
+    compile: a header edited behind build/lib's back (an older mtime, as
+    extracting an archive over the tree gives) reads stale even though
+    nothing recompiled, and an object compiled by a build that later failed
+    on another extension carries its new record, not the old one.
+
+    A build/lib object with no record (built by a setup.py older than build
+    records, e.g. the production host's existing build/) is copied in place
+    without one when setuptools decides it is up to date; the gate then uses
+    its mtime fallback ("no build record"), against the object's own build
+    time, which the copy preserves. The next compile of it writes a record.
+    Wheels ship the build/lib record beside each extension.
     """
 
     _RECORD_MODULE = None
-    # Set fresh at the start of every run(); build_extension adds to it.
-    _compiled_inputs: dict[str, dict[str, str]] | None = None
 
     @classmethod
     def _record_module(cls):
@@ -336,21 +347,6 @@ class build_ext_with_record(_build_ext):
             return None
         return (st.st_ino, st.st_mtime_ns, st.st_size)
 
-    def run(self) -> None:
-        self._compiled_inputs = {}
-        super().run()
-        record_mod = self._record_module()
-        if record_mod is None or not _EXT_DEPENDENCIES:
-            print("build record: helper modules not found; no records written")
-            return
-        base = Path.cwd() if self.inplace else Path(self.build_lib)
-        for name, input_hashes in (self._compiled_inputs or {}).items():
-            path = base / self.get_ext_filename(name)
-            if not path.is_file():
-                continue
-            written = record_mod.write_record(path, module=name, input_hashes=input_hashes)
-            print(f"build record: {written}")
-
     def build_extension(self, ext) -> None:
         record_mod = self._record_module()
         deps = _EXT_DEPENDENCIES.get(ext.name)
@@ -363,13 +359,41 @@ class build_ext_with_record(_build_ext):
         before = self._stamp(output)
         hashes = record_mod.hash_inputs(_ROOT, deps)
         super().build_extension(ext)
-        if hashes is None or self._stamp(output) in (None, before):
-            return  # skipped as up to date (nothing compiled) or inputs missing
-        if record_mod.hash_inputs(_ROOT, deps) != hashes:
-            print(f"build record: {ext.name}: a source changed during the compile; no record")
+        if self._stamp(output) in (None, before):
+            return  # skipped as up to date: nothing compiled, keep its record
+        record = record_mod.record_path(output)
+        if hashes is None:
+            record.unlink(missing_ok=True)  # an input is missing: no claim at all
             return
-        if self._compiled_inputs is not None:
-            self._compiled_inputs[ext.name] = hashes
+        written = record_mod.write_record(output, module=ext.name, input_hashes=hashes)
+        print(f"build record: {written}")
+        if record_mod.hash_inputs(_ROOT, deps) != hashes:
+            print(f"build record: {ext.name}: a source changed during the compile; "
+                  "the record keeps the pre-compile hashes, so it reads stale until rebuilt")
+
+    def copy_extensions_to_source(self) -> None:
+        super().copy_extensions_to_source()
+        record_mod = self._record_module()
+        if record_mod is None:
+            return
+        build_py = self.get_finalized_command("build_py")
+        for ext in self.extensions:
+            fullname = self.get_ext_fullname(ext.name)
+            filename = self.get_ext_filename(fullname)
+            package = ".".join(fullname.split(".")[:-1])
+            regular = Path(self.build_lib) / filename
+            package_dir = getattr(build_py, "get_package_dir")(package)  # build_py, typed as Command
+            inplace = Path(package_dir) / Path(filename).name
+            if not regular.is_file():
+                continue  # not copied
+            src_record = record_mod.record_path(regular)
+            dst_record = record_mod.record_path(inplace)
+            if src_record.is_file():
+                shutil.copy2(src_record, dst_record)
+                print(f"build record: {dst_record} (copied with its object)")
+            elif dst_record.exists():
+                dst_record.unlink()  # it described some other object
+                print(f"build record: removed {dst_record}; {regular} has no record")
 
 
 setup(
