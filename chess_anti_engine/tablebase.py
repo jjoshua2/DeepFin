@@ -273,7 +273,9 @@ _DTZ_BEFORE_ZEROING = {2: 1, 1: 101, 0: 0, -1: -101, -2: -1}
 _TB_PROBE_ERRORS = (KeyError, chess.syzygy.MissingTableError, IndexError)
 
 
-def _dtz_of_played_move(child: chess.Board, tablebase: chess.syzygy.Tablebase) -> int:
+def _dtz_of_played_move(
+    child: chess.Board, tablebase: chess.syzygy.Tablebase, *, rule50: bool = True,
+) -> int:
     """DTZ of the move that produced ``child``, from the mover's perspective.
 
     ``child`` is the position after the move. A zeroing move (counter already
@@ -282,6 +284,10 @@ def _dtz_of_played_move(child: chess.Board, tablebase: chess.syzygy.Tablebase) -
     Checkmate outranks a 50-move claim on the same position; a claimable
     draw is distance 0 because the tables assume a fresh counter and do not
     know this game's history.
+
+    ``rule50=False`` (UCI ``Syzygy50MoveRule=false``): a child whose 50-move
+    counter has run out is not a draw, so only stalemate, insufficient material
+    and threefold repetition count as already drawn.
     """
     if child.is_checkmate():
         return 1
@@ -292,7 +298,7 @@ def _dtz_of_played_move(child: chess.Board, tablebase: chess.syzygy.Tablebase) -
     if (
         child.is_stalemate()
         or child.is_insufficient_material()
-        or child.is_fifty_moves()
+        or (rule50 and child.is_fifty_moves())
         or child.is_repetition(3)
     ):
         return 0
@@ -345,10 +351,25 @@ def _wdl_adjusted_for_rule50(dtz: int, halfmove_clock: int) -> int:
     return 0
 
 
+def _plain_dtz_key(dtz: int) -> tuple[int, int]:
+    """Higher is better, with NO 50-move rule: any win beats any draw beats any
+    loss, the shortest win and the longest loss first. Cursed wins / blessed
+    losses (|dtz| > 100) are plain wins / losses here."""
+    if dtz > 0:
+        return (2, -dtz)
+    if dtz < 0:
+        return (-2, -dtz)
+    return (0, 0)
+
+
 def _select_dtz_move(
-    board: chess.Board, syzygy_path: str,
+    board: chess.Board, syzygy_path: str, *, rule50: bool = True,
 ) -> tuple[chess.Move, int] | None:
-    """Best legal move and its DTZ from the mover's perspective."""
+    """Best legal move and its DTZ from the mover's perspective.
+
+    ``rule50`` (default True, the selfplay / training convention): rank by the
+    50-move-aware Stockfish buckets of :func:`_rule50_dtz_key`. False ranks by
+    plain DTZ (:func:`_plain_dtz_key`) for 50-move-free play."""
     if not is_tb_eligible(board):
         return None
     # Automatic draws have already ended the game. A claimable draw may
@@ -366,7 +387,7 @@ def _select_dtz_move(
         board.push(move)
         try:
             try:
-                dtz = _dtz_of_played_move(board, tablebase)
+                dtz = _dtz_of_played_move(board, tablebase, rule50=rule50)
             except _TB_PROBE_ERRORS:
                 # Incomplete children cannot prove this root shortcut optimal.
                 return None
@@ -377,7 +398,7 @@ def _select_dtz_move(
                 return None
         finally:
             board.pop()
-        key = _rule50_dtz_key(dtz, halfmove)
+        key = _rule50_dtz_key(dtz, halfmove) if rule50 else _plain_dtz_key(dtz)
         if best_key is None or key > best_key:
             best_key = key
             best_move = move
@@ -447,7 +468,7 @@ def tb_adjudicate_result(
 
 
 def try_tb_root_move(
-    board: chess.Board, syzygy_path: str,
+    board: chess.Board, syzygy_path: str, *, rule50: bool = True,
 ) -> tuple[chess.Move, int] | None:
     """Return the DTZ-optimal move and the rule50-adjusted WDL of that move.
 
@@ -460,11 +481,17 @@ def try_tb_root_move(
     Raw ``probe_wdl`` assumes the counter is zero and is not what this returns.
 
     Used by UCI's root shortcut to bypass MCTS when the root is in TB range.
+
+    ``rule50=False`` (UCI ``Syzygy50MoveRule=false``) picks by plain DTZ and
+    returns +2 / -2 for any win / loss, cursed or blessed included, 0 for a
+    draw: there is no counter to run out.
     """
-    picked = _select_dtz_move(board, syzygy_path)
+    picked = _select_dtz_move(board, syzygy_path, rule50=rule50)
     if picked is None:
         return None
     move, dtz = picked
+    if not rule50:
+        return move, (2 if dtz > 0 else -2 if dtz < 0 else 0)
     child = board.copy(stack=False)
     child.push(move)
     # A zeroing move resets the counter; mate ends the game before a claim.
@@ -564,6 +591,13 @@ class SyzygyProbe:
                 raise MatchTablebaseError("rule50-aware search lacks requested WDL/DTZ capacity")
         self.hits = 0
         self.probes = 0
+
+    @property
+    def cursed_as_draw(self) -> bool:
+        """True when cursed wins / blessed losses count as draws (50-move-rule
+        play). UCI's root shortcut reads this, so the root and the leaves of
+        one search always follow the same ``Syzygy50MoveRule``."""
+        return self._cursed_as_draw
 
     def reset_counts(self) -> None:
         self.hits = 0

@@ -64,6 +64,14 @@ _INCREMENT_SPEND_FRACTION = 0.5
 # baseline reachable on one binary so an A/B gauntlet can compare old vs new.
 # Values are clamped to (0, 1]; 1.0 keeps the soft target at the hard deadline.
 _OPTIMUM_FRACTION = 0.7
+# `go mate N` with no other bound (no movetime / clock / nodes / depth, not
+# infinite): UCI gives no stopping rule but "a mate was found", and an MCTS
+# search may never prove one, so without a cap it searched forever and never
+# answered. The search stops as soon as a mate in <= N is proven at the root,
+# else at this cap. The same cap bounds a `go` whose only bound tokens could not
+# be parsed (`go movetime abc`): the GUI asked for a bounded search.
+GO_IMPLICIT_CAP_MS = 60_000
+_BOUND_KEYWORDS = ("movetime", "wtime", "btime", "nodes", "depth", "mate")
 
 
 @dataclass(frozen=True)
@@ -76,7 +84,7 @@ class SearchLimits:
     deadline_ms: int | None = None  # hard wall-clock budget in ms
     optimum_ms: int | None = None  # soft target; early-exit on a stable best move
     max_nodes: int | None = None  # total MCTS sims
-    max_depth: int | None = None  # treat UCI depth as sims (coarse v1)
+    max_depth: int | None = None  # UCI depth: stop once the PV is this many plies
     infinite: bool = False
     ponder: bool = False  # no deadline until ponderhit
     searchmoves: tuple[str, ...] = ()
@@ -84,6 +92,11 @@ class SearchLimits:
     # chunk-sized stop margin only then (never inferred from a missing
     # `optimum_ms`, which the time-management OFF arm also produces).
     fixed_time: bool = False
+    # UCI `go mate N`: stop as soon as a mate in <= N moves is proven at the
+    # root. Never set for ponder / infinite, which must run until stop.
+    mate_moves: int | None = None
+    # The deadline is GO_IMPLICIT_CAP_MS because the go named no usable bound.
+    implicit_cap: bool = False
 
     def is_open_ended(self) -> bool:
         return self.infinite or self.ponder or (
@@ -114,6 +127,7 @@ def limits_from_go(
         return SearchLimits(infinite=True, searchmoves=tuple(args.searchmoves))
 
     deadline_ms: int | None = None
+    implicit_cap = False
     movetime_ms = args.movetime_ms
     is_movetime = movetime_ms is not None
     if movetime_ms is not None:
@@ -199,6 +213,13 @@ def limits_from_go(
     if deadline_ms is not None and move_overhead_ms > 0:
         deadline_ms = max(_MIN_DEADLINE_MS, deadline_ms - int(move_overhead_ms))
 
+    if deadline_ms is None and args.nodes is None and args.depth is None and (
+        args.mate is not None
+        or any(e.split()[0] in _BOUND_KEYWORDS for e in args.errors)
+    ):
+        deadline_ms = GO_IMPLICIT_CAP_MS
+        implicit_cap = True
+
   # Soft target the visit-margin abort aims for. Only pure clock searches get
   # one: `movetime` is an explicit "search exactly this long" instruction, and
   # an explicit `nodes`/`depth` bound means the caller (a benchmark or GUI that
@@ -216,6 +237,7 @@ def limits_from_go(
     if (
         deadline_ms is not None
         and not is_movetime
+        and not implicit_cap  # a mate hunt must not bank on a settled best move
         and args.nodes is None
         and args.depth is None
         and optimum_fraction > 0.0
@@ -230,6 +252,8 @@ def limits_from_go(
         max_depth=args.depth,
         searchmoves=tuple(args.searchmoves),
         fixed_time=is_movetime,
+        mate_moves=args.mate if args.mate is not None and args.mate > 0 else None,
+        implicit_cap=implicit_cap,
     )
 
 
