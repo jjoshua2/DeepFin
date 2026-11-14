@@ -92,7 +92,8 @@ def test_main_deletion_is_restored_and_second_run_is_a_noop(repo: Path) -> None:
     assert (repo / "tests/test_bend_a.py").read_text() == "a v1\n"
     assert "restored from bend  (main deleted)     native/bend_engine/engine.bend" in res.stdout
     again = _sync(repo, "main")
-    assert again.returncode == 0 and "already up to date" in again.stdout
+    assert again.returncode == 0
+    assert "already up to date" in again.stdout
 
 
 def test_later_sync_takes_main_changes_and_keeps_bend(repo: Path) -> None:
@@ -140,7 +141,8 @@ def test_change_on_both_sides_is_left_for_the_operator(repo: Path) -> None:
     assert res.returncode == 2, res.stdout + res.stderr
     assert "native/bend_engine/install.sh" in res.stderr
     assert "LEFT FOR OPERATOR" in res.stdout
-    assert _merging(repo) and _git(repo, "rev-parse", "HEAD") == before
+    assert _merging(repo)
+    assert _git(repo, "rev-parse", "HEAD") == before
 
 
 def test_add_add_on_a_bend_path_is_left_for_the_operator(repo: Path) -> None:
@@ -171,16 +173,19 @@ def test_main_added_file_under_a_bend_path_is_kept(repo: Path) -> None:
 def test_refuses_detached_head(repo: Path) -> None:
     _git(repo, "switch", "-q", "--detach", "bend")
     res = _sync(repo, "main")
-    assert res.returncode == 1 and "detached" in res.stderr
+    assert res.returncode == 1
+    assert "detached" in res.stderr
     assert not _merging(repo)
 
 
 def test_refuses_an_unconfirmed_branch_and_accepts_a_confirmed_one(repo: Path) -> None:
     _git(repo, "switch", "-q", "-c", "sync/main-test", "bend")
     res = _sync(repo, "main")
-    assert res.returncode == 1 and "--branch sync/main-test" in res.stderr
+    assert res.returncode == 1
+    assert "--branch sync/main-test" in res.stderr
     wrong = _sync(repo, "--branch", "sync/other", "main")
-    assert wrong.returncode == 1 and not _merging(repo)
+    assert wrong.returncode == 1
+    assert not _merging(repo)
     ok = _sync(repo, "--branch", "sync/main-test", "main")
     assert ok.returncode == 0, ok.stdout + ok.stderr
     assert (repo / "native/bend_engine/engine.bend").exists()
@@ -189,5 +194,6 @@ def test_refuses_an_unconfirmed_branch_and_accepts_a_confirmed_one(repo: Path) -
 def test_refuses_a_dirty_tree(repo: Path) -> None:
     _write(repo, "shared.txt", "uncommitted\n")
     res = _sync(repo, "main")
-    assert res.returncode == 1 and "uncommitted" in res.stderr
+    assert res.returncode == 1
+    assert "uncommitted" in res.stderr
     assert not _merging(repo)
