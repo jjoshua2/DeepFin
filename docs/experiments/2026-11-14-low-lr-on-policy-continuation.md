@@ -1,5 +1,17 @@
 # Full-state lower-rate on-policy continuation
 
+Current status at **2026-11-14 10:46:06 UTC: FIRST LEG CLOSED — TERMINAL NONPASS**.
+The fixed G8 / step-4,096 model scored **46.2890625% versus A39 over 512 games,
+paired 95% interval 43.1008804810–49.4772445190%**. The qualified screen failed
+the registered point/lower-bound rule. C1 was neither eligible, allocated nor
+consumed; no second leg, retry, pooling, extension or model adoption follows.
+A39 remains this study’s unchanged donor/incumbent. This is negative evidence
+for the tested recipe/checkpoint/horizon/internal profile, not a universal
+regression or external-strength verdict. The broader goal remains active.
+See the [G8 terminal readout](#2026-11-14-g8-terminal-nonpass-closes-the-first-leg).
+
+## Earlier status snapshot — 2026-11-14 08:20:47 UTC
+
 Current status at **2026-11-14 08:20:47 UTC: ONGOING through the fixed G8 horizon**.
 G5/G6 data and learner continuation completed through step 3,072. The qualified
 G6 donor diagnostic scored **43.359375% over 256 games, paired 95% interval
@@ -648,3 +660,193 @@ not a new independent numerical, tensor-restoration or physics qualification.
 | `core-baseline-lowLR-continuation-bindings-v1/leg1-diagnostic-g6/root-readout-acceptance.json` | `af5483e2b92f4d3d50deb0038f63fe3084fa4c1b4309be0398c51ca45aae54a0` |
 | `core-baseline-lowLR-leg1-diagnostic-g6-independent-actual-review-v1/review.json` | `0d317d14489aaec8527955fe7a4066be60676d7be496cc955ab94a021435fb09` |
 | `core-baseline-lowLR-g06-diagnostic-closed-cost-census-v1/readout.json` | `a30647d08ff832d456fa8aa0caa1eaa613af17256eee71ff0a5fb2a395f58393` |
+
+
+## 2026-11-14: G8 terminal nonpass closes the first leg
+
+**Evidence cutoff: 2026-11-14 10:46:06 UTC**, the formal first-leg decision
+`a962c98d…`, after strict CPU qualification, root readout `dab6b9f3…` and
+independent actual acceptance `75230c0f…`. This closes the selected 0803 first
+leg at its fixed G8 / step-4,096 checkpoint; the broader strength goal stays
+**ACTIVE**. No scientific rule, source, learning contract, role, seed, horizon
+or checkpoint-selection choice changed to obtain this result.
+
+### Closed G7/G8 data and learning delivery
+
+| Completed stage | Actual accepted delivery | Owner wall seconds |
+| --- | --- | ---: |
+| G7 low-parent collection | All 256 attempts; 102 natural / 154 strict-TB / 0 unresolved | GPU 1,662.771766 |
+| G7 qualified CPU data audit plus independent metadata review | 256 eligible games / 26,623 rows; data-only promotion `5679b763…` | CPU 70.777646 |
+| G7 full-state learner | Step 3,072 → 3,584; 512 updates / 131,072 views | GPU 632.873183 |
+| G8 low-parent collection | All 256 attempts; 111 natural / 145 strict-TB / 0 unresolved | GPU 1,457.005536 |
+| G8 qualified CPU data audit plus independent metadata review | 256 eligible games / 27,191 rows; data-only promotion `1a97eef5…` | CPU 71.035226 |
+| G8 full-state learner | Step 3,584 → 4,096; 512 updates / 131,072 views | GPU 598.432825 |
+| Fixed G8 versus A39 terminal screen | All 512 games / 256 color pairs; 220 rules / 292 strict-TB endings | GPU 1,567.616621; CPU readback 25.811681 |
+
+There was no G7 diagnostic: the predeclared schedule used G2/G4/G6 diagnostics
+and this fixed G8 terminal. G7 checkpoint SHA256 is
+`738d5e266c9e121e2cc562f48a3e0e294b790b446d249c2552f5391a78810e34`,
+with boundary `a3fc2707…`, root metadata acceptance `beebe1e9…` and independent
+metadata/journal review `86906996…`. G8 collection used that exact closed G7
+actor, not an earlier or adaptively selected checkpoint.
+
+The fixed final G8 checkpoint SHA256 is
+`e4d3e7a9f3f1723414ec085a8f726dc5612442693a57035c0b4be738478ab395`,
+boundary `5648151f…`, root learner receipt `536c561d…`, independent learner
+review `ff05c13c…` and learner byte-custody receipt `0049970b…`. G8 audit root
+`282f846f…` and independent review `c6395ca6…` reconcile all 256 attempts /
+27,191 rows; the qualified auditor reports 1,495,589,359 decoded bytes. This is
+data-only acceptance, not model promotion or an independently repeated physics
+implementation.
+
+Full eight-generation ancestry contains **2,048 physical games / 208,478
+audited rows**. Active replay is only **FIFO G5–G8: 1,024 chunks / 105,581 rows**;
+G1–G4 remain ancestry, not current replay. G8's 512 batch-256 journal reconciled
+**32,208 G5 / 32,390 G6 / 32,942 G7 / 33,532 G8** draws, totalling 131,072,
+with all 1,024 chunks and 75,418 distinct sampled physical rows. No old high-actor
+G2 bank was substituted. Including initial LOW512, delivery reached **4,096
+applied updates / 1,048,576 views** under the original absolute `cc17ac07…`
+contract, V2 specification `12ad1fc7…`, manifest `b10f5f5b…`, L `090b5143…`
+and owner R7 `ba9d6de1…`.
+
+Saved parent/backend/full-state/RNG metadata and whole-generation replay
+reconstruction remain authenticated under the qualified caller. G7/G8 metrics
+were finite, with zero skipped/retried/clipped updates. Nonzero unweighted
+auxiliary/availability metrics do not change the policy-1/outcome-WDL-1 objective
+or twelve zero loss weights. Independent metadata/journal checks do not reopen
+model/optimizer tensors, prove an exact RNG transition or establish GPU
+bitidentity. Training-window losses and throughput are not strength evidence.
+
+G8's learner root verification streamed the checkpoint **once**, recorded in
+`0049970b…`; later fresh arena prelaunch custody is a separate second stream.
+This is distinct from the preserved G6 reviewer correction and its two root
+review streams. The earlier G6 null-root snapshot, unknown first hash/failed
+subconjunct and later supplement remain unchanged in the historical section.
+
+Metadata-review corrections also remain visible. The G8 audit review records a
+preview-hash serialization mismatch (`e9ac3d67…`, referenced by `c6395ca6…`):
+the reviewer used compact canonical JSON instead of the frozen indented/sorted
+JSON plus newline. A root class-count comparison initially represented a zero
+bin differently (`6c4ab0d5…`). The terminal independent review's support
+`c7b09439…` records a temporary variable-shadowing error in its metadata script.
+These were review predicates, not helper, training, producer or strict-reader
+failures; no helper/numerical/experimental rerun or result reroll repaired them.
+
+### Fixed terminal result and registered decision
+
+The exact G8 step-4,096 model faced immutable A39 on **CONTEXT256: 512 games /
+256 color pairs**, seed **2026111551**. This was the first terminal screen,
+fresh **within the adopted scoped recorded-use coverage**, not a universal
+non-use attestation. External/unbanked/pretraining/unretained exposure and
+opening-family correlation remain limitations. Protocol `c82c4793…`, reader
+bindings `69d8bcab…`, GPU/CPU admissions and the same matched-Gumbel64 profile
+bind the fixed candidate, donor and complete opening histories.
+
+Strict CPU readout `d746ad2e…`, root `dab6b9f3…` and independent actual review
+`75230c0f…` agree on **128W / 218D / 166L**, score **.462890625** over 512 games,
+unbiased paired variance **.06773514093137255**, radius **.03188182018959095**
+and approximate paired 95% interval **[.43100880481040904, .49477244518959096]**.
+Ascending pentanomial counts for pair totals 0/.5/1/1.5/2 are
+**[28, 63, 97, 55, 13]**. All games and color pairs qualified, with 220 rules /
+292 strict-TB endings and 50,284 additional SAN plies. Recorded serving retained
+full 494-state / 61,444,448-parameter custody per model, strict embedded
+architecture, 175-plane float32 input under CUDA BF16 autocast and float32
+policy/WDL transport, rolling pool 32 and leaf capacity 1,024. Qualified reader
+history/legal/TB physics and serving evidence are reused; documentation did not
+repeat them or deserialize model bytes.
+
+**TERMINAL NONPASS.** The registered condition required both point **≥ .53**
+and paired lower bound **> .5**; neither passes. The interval is below parity on
+this fixed conditional panel. The formal first leg is closed with **no C1
+eligibility, allocation or consumed attempt**. Therefore there is no conditional
+G9–G16 continuation or second leg, and the six conditional endpoints (three
+leg-2 diagnostics, leg-2 terminal, leg-2 confirmation and post-C2 context) remain
+unrun. No retry, reseed, checkpoint reselection, pooling, extension or automatic
+adoption is allowed by this nonpass. Unspent conditional ceilings are not budget
+credit or entitlement to replacement experiments.
+
+This is negative evidence for the current checkpoint/recipe/horizon/internal
+playing profile, not a universal regression, optimal-formula conclusion,
+confirmed gain or Rofchade/Stockfish/Lc0 strength proof. It is not a recovery
+claim pooled with the prior LOW512 screen or G2/G4/G6 diagnostics. A39 remains
+**this study’s unchanged donor/incumbent**; no global production-champion claim
+is made. The separately pinned external Rofchade baseline remains negative
+at 1 win / 24 draws / 39 losses ([earlier record](2026-11-12-rl-week-one.md#november-12-substantive-baseline-and-learning-readiness)); this internal terminal does not
+replace that ruler or meet the broader objective.
+
+### Costs, publication and next evidence task
+
+Census `0617b350…` records **219 closed week-root owners**, including prior
+failed attempts. Charged week owner wall totals are **54,397.19204277109 GPU
+seconds / 2,329.1631856848253 CPU seconds**; the 0803 first-leg scope is
+**18,538.677422121982 GPU seconds / 578.651496662118 CPU seconds**. These are
+owner wall costs, not GPU kernel time or an ETA. The 172,800-second week GPU cap,
+November 19 16:09:20 UTC deadline and all controls remain unchanged.
+
+Historical `B/publication.json` (`c7fcda1d…`) remains the original reviewed-ready
+PR publication before adoption/data. Separate G6 main publication `3b258826…`
+records that later merged readout; neither is retroactively substituted for the
+other. As of this cutoff, the unrelated UCI comment-only PR #1304 had independent
+source review `d44364eb…` and CI pending, with no merge or runtime adoption
+claimed here. Source readiness and comment cleanup are not playing-strength
+evidence.
+
+The selected next work is **data-only qualification** of fixed original G1
+TRAIN SF-P0 evidence, decision `3278a917…`, source plan `47d8ab88…` and independent
+review `7552bf41…`. Auditor code is assigned separately to `sequential_selfplay`;
+its tests and fixed census are unrun at this cutoff. No teacher recipe, transform,
+mix/dose, learning dataset or coverage-success percentage is selected, and no
+learning or strength claim follows from the source plan. The broader goal
+remains active; this paragraph starts no new trial.
+
+All earlier preregistration and G2/G4/G6 text below the current-status wrapper
+is preserved byte-exact as historical evidence. New compact metadata references
+below are freshly hashed. The six oversized historical JSON citations retain
+their prior accepted compact-review provenance; they were not reopened or freshly
+full-hashed for this update. No raw PGN/journal, array, checkpoint, model, wire or
+nested payload was read. The author shares underlying metadata-wrapper/source
+qualification history, so this is not a new independent numerical, tensor-state,
+RNG or physics qualification. Root retains publication and execution authority.
+
+| G7/G8 terminal compact metadata evidence | SHA256 |
+| --- | --- |
+| `core-baseline-lowLR-g07-collection-GPU-execution-v1/terminal.json` | `ef2a0fad4907ef42b821a566fcdfaca1d62169e99bb5def6928365d8e78648b9` |
+| `core-baseline-lowLR-g07-audit-CPU-execution-v1/terminal.json` | `718769cd66b0d2a06c4b46d66e1aef9860dd792e5650b93aa8204e0e3aab1417` |
+| `core-baseline-lowLR-g07-audit-independent-actual-review-v1/review.json` | `e88876dcabbf6d6f84b7636e0abf0fe263d0430f0aef115794d630b5a4bf9bf3` |
+| `core-baseline-lowLR-continuation-bindings-v1/g07/audit-root-metadata-acceptance.json` | `4687a770ad7189e9e429e13dd2233c0358daddc3b8d3549cdc343b6d565e0d62` |
+| `core-baseline-lowLR-continuation-bindings-v1/g07/audit-root-promotion.json` | `5679b76339610227f0d43841b00e409bc36e187828e8e05b187511a8b3de4fec` |
+| `core-baseline-lowLR-g07-learner-GPU-execution-v1/terminal.json` | `69bf3de071b79b7da701fea77592e24baa45417f98cb5c217931ee6e6903ed63` |
+| `core-baseline-lowLR-g07-learner-results-v1/boundary.json` | `a3fc270782d6d03903d4d2cd800996f6368854a26341769c47cfe1c78a02097e` |
+| `core-baseline-lowLR-continuation-bindings-v1/g07/learner-root-metadata-acceptance.json` | `beebe1e92b8e8f8a3fc1e5638593f5f2d4bf4d8fc23805018ad8657b5d63a332` |
+| `core-baseline-lowLR-g07-learner-independent-actual-review-v1/review.json` | `869069960798189a85275bc165f3845c2175776b2c00a504c1920f53f213c892` |
+| `core-baseline-lowLR-g08-collection-GPU-execution-v1/terminal.json` | `da46eac1694d5d8b2e863ec2c519b04a10585ee3d144b3ee791806ccc0977da9` |
+| `core-baseline-lowLR-g08-audit-CPU-execution-v1/terminal.json` | `b211e01de030da9e0fb40dc3ca6d1fee8cc6e1c08200094f903297a552223776` |
+| `core-baseline-lowLR-g08-audit-independent-actual-review-v1/review.json` | `c6395ca6b214efba982992542ef668750b276b7463af016606a445d12daffb36` |
+| `core-baseline-lowLR-continuation-bindings-v1/g08/audit-root-metadata-acceptance.json` | `282f846fcc1316a9afd6c27d2a3a4609833a248ca8a51b0214e498843e26512c` |
+| `core-baseline-lowLR-continuation-bindings-v1/g08/audit-root-promotion.json` | `1a97eef535ac7a313e39a59e1650a932b0a51cacccb4215e820c4341ddef2ec4` |
+| `core-baseline-lowLR-g08-learner-GPU-execution-v1/terminal.json` | `66317b253c4950f647342fac174081a7442f7bc22f1102f62ef957ce8a9df1e6` |
+| `core-baseline-lowLR-g08-learner-results-v1/boundary.json` | `5648151fbe2e79b0a3b8d706dd7a90214fd6fbae01e0cec8ec8aeea0664c9d9c` |
+| `core-baseline-lowLR-continuation-bindings-v1/g08/learner-root-metadata-acceptance.json` | `536c561d22b278789233ac3c48bf6b0f0faed17536d2c3d65c6c629f84ad0210` |
+| `core-baseline-lowLR-g08-learner-independent-actual-review-v1/review.json` | `ff05c13cbacdb34e82b961b92f9a2ee345871a706ea60e6b9cb9208dd3ba7659` |
+| `core-baseline-lowLR-continuation-bindings-v1/g08/learner-checkpoint-root-byte-custody.json` | `0049970b6455a7170b6d6c531cc3cb30117d1248f9a7db3d5e573a9ba839422e` |
+| `core-baseline-lowLR-g08-root-audit-review-attempt1-v1/reviewer-predicate-correction.json` | `6c4ab0d54fc27a4456d9a76aeeaf269db680908194eb3ae083d6668bbde0e6c5` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-terminal/protocol.json` | `c82c47931b2437b42f1fd5146f3f4e0b4325904eb269e2bb7e5e87a768af1ef5` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-terminal/gpu-admission.json` | `ea5d12d59be191ea53e85a966c24414a7026034abb8209c9709cda1e72d01c75` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-terminal/cpu-admission.json` | `40dfc057278e4e415060b30b86055b10a75c589770d7bb9fde0cfff9ce1fe3f5` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-terminal/reader-bindings.json` | `69d8bcab03efca9c3395edff97d845fd36782ea17e10f6b129f3c762eeee26f1` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-terminal/prelaunch-model-custody.json` | `1b4bcd8639b723aba8355c7b60703d1f189edf93b77d34b0dc44a3ca2149d721` |
+| `core-baseline-lowLR-leg1-terminal-prelaunch-binding-independent-review-v1/review.json` | `c82d38016b4457b8ab5c827d7d316b2bd0d9e420660637220a47c5539c14f1a3` |
+| `core-baseline-lowLR-leg1-terminal-GPU-execution-v1/terminal.json` | `688bd1257207df243476c4d3700104f19a716200a8a5f1ec701e189bce26faf3` |
+| `core-baseline-lowLR-leg1-terminal-CPU-execution-v1/terminal.json` | `0b8c3d5364991ca48507fca061e0ee3a8f69628f430e7b6e90bb7099dfea4ca2` |
+| `core-baseline-lowLR-leg1-terminal-results-v1/serving.json` | `81b832737518f2dc50497212ea0d80db908e3849df02674db526ed64d333c735` |
+| `core-baseline-lowLR-leg1-terminal-readout-v1/readout.json` | `d746ad2ec0bfa31063f8b8997da9b9b1243c12a33b1bd0bc754b4d9519032fdf` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-terminal/root-readout-acceptance.json` | `dab6b9f3f03d3826309e366b0525261de9265ea915eb0b4b527b0881742a731e` |
+| `core-baseline-lowLR-leg1-terminal-independent-actual-review-v1/review.json` | `75230c0f56214b944aedaddd986ccd1dfb37baad4d056159efb09ca6fc58f1fa` |
+| `core-baseline-lowLR-leg1-terminal-independent-actual-review-v1/support.json` | `c7b09439c3c62b77779cb5aafd11459c57bf64bf352d2fa5f14147e0eb1f95a9` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-terminal/root-first-leg-decision.json` | `a962c98dd0a888240396ecc7833a608fb2daefb78f66588067cfee56289a33a0` |
+| `core-baseline-lowLR-leg1-terminal-closed-cost-census-v1/readout.json` | `0617b350f5dd4da6faf6290683b0c0b7773f32ce1dd7fefe3f1d4200cdd9b710` |
+| `core-baseline-lowLR-g06-readout-main-publication-v1/publication.json` | `3b258826dc11508a96b7d5dabd63c2c71741861309c5950616982cb8eac3f0e8` |
+| `core-SF-banked-G1-data-qualification-selection-v1/decision.json` | `3278a9177246fdfdea2098f19b1504cd3112b457c5fe59868d0442c588a32e3a` |
+| `core-future-SF-P1-to-P0-banked-join-source-plan-v1/source-evidence-manifest.json` | `47d8ab8876025252dc6a755b271696caa8ae7a83ece175121257cbf1fe39476d` |
+| `core-future-SF-P1-to-P0-banked-join-independent-source-review-v1/review.json` | `7552bf4143454cf7159340233b85074b118d9c199791ffa7cd3df9c1c38251b9` |
+| `uci-search-routing-comment-independent-review-v1/review.json` | `d44364eb8f7aa3b102efffdb69b551f290cd1f11dd75a27b7192cc5c704c2db8` |
