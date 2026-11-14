@@ -32,7 +32,7 @@ All results are from the side to move's point of view.
 
 | call | returns |
 |---|---|
-| `init(path)` | Loads tables from a `:`-separated directory list (`;` on Windows, Fathom's own separator) and returns the largest man count found. Every directory is searched, and the first that holds a file wins. A second call replaces the table set; `init("")` clears it. **Raises `ValueError`** if a component is empty or not a readable directory (the old table set stays loaded), or if the path loads no table at all (the table set is then empty and `path()` is `None`). Fathom alone would skip a missing directory silently. Each component is resolved with `realpath()` and Fathom gets absolute paths (it opens table files lazily, so a relative path would break after a `chdir`); `path()` reports that absolute form. |
+| `init(path)` | Loads tables from a `:`-separated directory list (`;` on Windows, Fathom's own separator) and returns the largest man count found. Every directory is searched, and the first that holds a file wins. A second call replaces the table set; `init("")` clears it. **Raises `ValueError`** if a component is empty or not a readable directory (the old table set stays loaded), or if the path loads no table at all (the table set is then empty and `path()` is `None`). Fathom alone would skip a missing directory silently. Each component is resolved with `realpath()` and Fathom gets absolute paths (it opens table files lazily, so a relative path would break after a `chdir`); `path()` reports that absolute form, **with symlinks resolved**. The production directories are symlinks, so `path()` names their targets, not the configured strings: compare it against `os.path.realpath` of each component, never against the raw path. |
 | `largest()`, `path()`, `free()` | Introspection and release. |
 | `probe_wdl(cboard)` / `probe_wdl_fen(fen)` | -2 loss, -1 blessed loss, 0 draw, 1 cursed win, 2 win |
 | `probe_dtz(cboard)` / `probe_dtz_fen(fen)` | DTZ, python-chess `probe_dtz` convention |
@@ -50,8 +50,8 @@ letters: `Q`/`q` with no rook on the back rank adds nothing (the position
 becomes probeable), while `K`/`k` with no such rook still sets the corner right
 (the position stays unprobeable). A letter that lands on a non-corner rook
 makes the FEN unprobeable (`None`; python-chess raises `KeyError`). The castling
-field accepts `KQkq` letters only, uppercase before lowercase and at most four
-per side; anything else is a malformed FEN (`ValueError`). python-chess also
+field accepts `KQkq` letters only, uppercase before lowercase and at most two
+per side (python-chess 1.11's `FEN_CASTLING_REGEX`); anything else is a malformed FEN (`ValueError`). python-chess also
 accepts Shredder file letters (`A`-`H`), which this reader rejects.
 python-chess raises `KeyError`/`MissingTableError` in the same cases. An
 illegal position (Fathom's `is_valid`: wrong king count, side not to move in
@@ -164,6 +164,9 @@ same WDL, DTZ and root values. They deliberately differ on these inputs:
    path refuses it (`None`), the same "no answer" as python-chess.
 5. **Shredder castling letters** in a FEN: python-chess parses them, C raises
    `ValueError` (malformed FEN).
+6. **FEN whitespace:** C requires exactly one space between FEN fields;
+   python-chess accepts runs of spaces. A double space is a malformed FEN
+   (`ValueError`) here.
 
 Beyond these, the root's fifty-move-claim rule (above) is a difference in
 convention, not in table values.

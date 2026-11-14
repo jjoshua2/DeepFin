@@ -106,8 +106,9 @@ static int df_msb(uint64_t b) { return b ? 63 - __builtin_clzll(b) : -1; }
  *        corner (also when there is no rook -- python-chess's msb(0) is -1).
  * Bits: 1/2/4/8 for a right on h1/a1/h8/a8; 16 for a right on any other square
  * (a non-corner rook, which CBoard -- corner bits only -- cannot represent).
- * Like python-chess's FEN_CASTLING_REGEX: upper-case letters first, at most
- * four of each case. Shredder file letters are refused as malformed. */
+ * Like python-chess 1.11's FEN_CASTLING_REGEX: upper-case letters first, at
+ * most TWO of each case ("QQQ" is malformed there and here). Shredder file
+ * letters are refused as malformed. */
 static int castling_from_fen(const char *f, size_t n, DfTbPos *pos) {
     int seen_lower = 0, upper = 0, lower = 0;
     for (size_t i = 0; i < n; i++) {
@@ -115,10 +116,10 @@ static int castling_from_fen(const char *f, size_t n, DfTbPos *pos) {
         int white = (c == 'K' || c == 'Q');
         if (!white && c != 'k' && c != 'q') return -1;
         if (white) {
-            if (seen_lower || ++upper > 4) return -1;
+            if (seen_lower || ++upper > 2) return -1;
         } else {
             seen_lower = 1;
-            if (++lower > 4) return -1;
+            if (++lower > 2) return -1;
         }
         const uint64_t own = white ? pos->white : pos->black;
         const uint64_t backrank = white ? 0xFFULL : 0xFF00000000000000ULL;

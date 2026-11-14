@@ -460,7 +460,10 @@ def run_class(job: tuple[str, str, int, int, int, int]) -> dict[str, Any]:
     from chess_anti_engine.encoding._lc0_ext import CBoard
     from chess_anti_engine.tb import _tb_ext
 
-    if _tb_ext.path() != syzygy_path:
+    # path() reports symlink-resolved absolute components; compare like with like
+    # or every class job would re-init the tables.
+    resolved = os.pathsep.join(os.path.realpath(c) for c in syzygy_path.split(os.pathsep))
+    if _tb_ext.path() != resolved:
         _tb_ext.init(syzygy_path)
     tb = _PY_TB.get(syzygy_path)
     if tb is None:

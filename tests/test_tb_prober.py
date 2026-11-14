@@ -170,6 +170,29 @@ def test_fen_castling_letters_follow_python_chess_parser() -> None:
     assert (True, False, True) in kinds   # kept on a corner
 
 
+@pytest.mark.parametrize("castling", ["QQQ", "KKK", "Kkkk", "qqq", "KQkqq"])
+def test_fen_castling_field_capped_at_two_letters_per_case(castling: str) -> None:
+    """python-chess 1.11's FEN_CASTLING_REGEX allows at most two letters per
+    case; a third is malformed there and must be malformed here too."""
+    fen = f"4k3/8/8/8/8/8/8/4KQ2 w {castling} - 0 1"
+    with pytest.raises(ValueError, match="invalid castling"):
+        chess.Board(fen)
+    with pytest.raises(ValueError, match="malformed FEN"):
+        _tb_ext.fen_bitboards(fen)
+    with pytest.raises(ValueError, match="malformed FEN"):
+        _tb_ext.probe_wdl_fen(fen)
+    ok = f"4k3/8/8/8/8/8/8/4KQ2 w {castling[:2]} - 0 1"
+    assert _tb_ext.fen_bitboards(ok) == _python_bitboards(chess.Board(ok))
+
+
+def test_fen_needs_single_spaces_unlike_python_chess() -> None:
+    """Documented difference: python-chess accepts runs of spaces."""
+    fen = "8/8/8/8/8/8/8/K6k  w - - 0 1"
+    assert chess.Board(fen).fen() == "8/8/8/8/8/8/8/K6k w - - 0 1"
+    with pytest.raises(ValueError, match="malformed FEN"):
+        _tb_ext.probe_wdl_fen(fen)
+
+
 def test_ep_on_a1_means_no_ep_like_python_chess() -> None:
     fen = "8/8/8/1P6/8/1k6/4K3/8 w - a1 0 1"
     assert not chess.Board(fen).ep_square
@@ -256,6 +279,14 @@ A1_FEN = "8/8/8/1P6/8/1k6/4K3/8 w - a1 0 1"          # ep a1 = none
 ORIGIN_FEN = "8/8/8/8/3pP3/1K6/4N3/4k3 b - e3 0 1"   # real pawn on e4, knight on e2
 LETTERS_FEN = "8/7K/8/8/5k2/8/8/8 b Qq - 0 1"        # letters python-chess's parser drops
 NONCORNER_FEN = "4k3/8/8/8/8/8/8/4KR2 w K - 0 1"     # right on f1: python-chess KeyError
+# Round-3: 4-man origin-occupied ep (a king on ep+/-8), one pair per side to
+# move, so the 3-4 man smoke set covers the pass-through on both branches.
+ORIGIN_4MAN = (
+    ("8/8/8/8/3pP3/8/4K3/7k b - e3 0 1", (0, 0)),   # black to move, white king on e2
+    ("8/8/8/8/3pP3/8/4k3/K7 b - e3 0 1", (2, 1)),   # black to move, black king on e2
+    ("7k/3K4/8/3pP3/8/8/8/8 w - d6 0 1", (2, 1)),   # white to move, white king on d7
+    ("K7/3k4/8/3pP3/8/8/8/8 w - d6 0 1", (0, 0)),   # white to move, black king on d7
+)
 
 # The review's crash: Fathom's ep capture deletes whatever stands on ep-8, here
 # the black king, and the probe segfaulted (exit 139) on every entry point.
@@ -564,7 +595,7 @@ def test_root_score_follows_use_rule50_and_rank_follows_the_clock(tables) -> Non
 def test_round_two_review_positions(tables) -> None:
     path, tb = tables
     largest = _tb_ext.init(path)
-    for fen, want in ((A1_FEN, (2, 1)), (ORIGIN_FEN, (2, 1)), (LETTERS_FEN, (0, 0))):
+    for fen, want in ((A1_FEN, (2, 1)), (ORIGIN_FEN, (2, 1)), (LETTERS_FEN, (0, 0)), *ORIGIN_4MAN):
         board = chess.Board(fen)
         if chess.popcount(board.occupied) > largest:
             continue  # above the loaded tables (the 3-4 man smoke set): not a table answer
