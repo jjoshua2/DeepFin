@@ -71,3 +71,24 @@ External artifacts use `~/chess-artifacts/operations/rl-week-one-20261112-v1/`. 
 | `core-A512-A39-control-diagnostic-bindings-v1/resource-selection.json` | `ab5a3be72fce427260c8badd6b71f092e29d63886aba0d7c428df3844b0db40f` |
 | `core-SF-current-P0-native020-pilot-closeout-v1/decision.json` | `8c43fc5a052a1b701705b56a59266de73f325b2833e76934b07e4cab1c8ce2fc` |
 | `core-SF-current-P0-native020-playing-readout-main-publication-v1/publication.json` | `7b80b7e359f0e8842e3071c2509ab3523efedc5c4c4f303b48b5afec56ac7dbd` |
+
+
+## Closed readout — November 14, 2026
+
+The registered diagnostic completed all **1000 games / 500 color pairs**: A512 won 300, drew 413 and lost 287 against unchanged A39. Its score was **50.65%**, with the registered paired approximate 95% interval **[48.348010390918184%, 52.95198960908181%]**. Pair variance was 0.06897069138276554. The fixed classifier returned **UNRESOLVED_CONTROL_CONTRAST**: neither the upward nor downward rule passed.
+
+This provides no confirmed improvement or regression at the tested fixed-bank 512-update horizon. It does not establish equivalence, no effect, teacher quality, an optimal recipe, global Elo or an external-engine milestone. The longer-horizon RL regressions remain unexplained. A39 remains the donor; A512 and B512 remain unadopted. This closes this diagnostic, while the first-week and longer strength goals remain active.
+
+Both owners closed PASS. GPU owner wall was **2650.5146221950417 / 4500 seconds**; the separate CPU game reader used **40.23353753297124 / 3600 seconds**. The already reported metadata/guard engineering cost remains **7.551579177961685 / 360 seconds**. All 446 rule terminations and 554 strict Syzygy terminations passed the prescribed game/history/role/PGN audit. The serving process loaded both complete 494-entry, 175-key, 61,444,448-unique-parameter models, used the fixed eager BF16/F32 transport profile, and performed zero updates. Served-state hashes matched the accepted CPU checkpoint state before and after serving: A512 `e67a51c23751272eb42369d27e7bd5c8055d707e8e228a1c3498e8a28118464f`, A39 `9796079cd73bef73ba2f5d5f2ad0779704498832e34a7c2a880f0d0b7f305229`.
+
+The prospective record was merged through [PR #1323](https://github.com/jjoshua2/DeepFin/pull/1323), main commit `f24e1582b6a1629d310f0d2444bab2957b07ad3d`, before the GPU owner began at 2026-11-14 21:40:50.931 UTC. Independent actual review accepted the closed endpoint with no findings, using the compact reports, pinned source and terminal evidence; it did not independently reread the bulk raw payloads.
+
+No further admissions, retries, reseeds, extensions, checkpoint selection or pooling are allowed under this closed study. All 500 consumed diagnostic roles remain protected. The prior native-.2 pilot remains closed NONPASS, with its unused 500 confirmation roles protected; this diagnostic cannot rescue it or authorize confirmation.
+
+| Closed evidence under the same external artifact root | SHA-256 |
+| --- | --- |
+| `core-A512-A39-control-diagnostic-prereg-main-publication-v1/publication.json` | `5cfe080224544ab286b6f2caede9849ea0c8c2b637f764fce2a07a3e1be6cdb6` |
+| `core-A512-A39-control-diagnostic-bindings-v1/A512_vs_A39_control_characterization/root-acceptance.json` | `4cb84e73fec6dbde474da12c96d0daa25f67e43af67185f6b3979cb5f396876d` |
+| `core-A512-A39-control-diagnostic-readout-v1/readout.json` | `2e2ff30794fbcbe3bfa3041555fb5ea83e31484ab99e9b10ee6fcc40a409384a` |
+| `core-A512-A39-control-diagnostic-independent-actual-review-v1/review.json` | `1724126399f214db376232e75124c4438e4a319fcbdaca6911535416b4175a9e` |
+| `core-A512-A39-control-diagnostic-closeout-v1/decision.json` | `1d370c335c21124cb34b691e91cd6be5e81c49b2fbc8d300e8d38df96d48a89a` |
