@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from chess_anti_engine.selfplay.config import SearchConfig
 from chess_anti_engine.moves import COMPACT_TO_FULL_POLICY, POLICY_SIZE, policy_batch_to_encoding
@@ -105,6 +106,26 @@ def test_gumbel_low_positive_temperature_falls_back_to_survivor_when_degenerate(
     )
 
     assert actions == [7]
+
+
+@pytest.mark.parametrize(("survivor", "other"), [(7, 3), (3, 7)])
+def test_non_finite_policy_falls_back_to_the_survivor_not_the_argmax(
+    survivor: int, other: int,
+) -> None:
+    """A non-finite weight makes the sampler fall back to ``argmax_idx``.
+
+    That index must point at the halving survivor inside ``legal``, whichever
+    side of the other move it sits on. Pointing it at the policy argmax (the
+    old PUCT rule) or one slot off would play ``other``.
+    """
+    probs = np.zeros((4672,), dtype=np.float32)
+    probs[other] = np.inf
+    probs[survivor] = 0.1
+    actions = [survivor]
+
+    _resample_actions_with_temperature([probs], actions, [0.5], np.random.default_rng(1))
+
+    assert actions == [survivor]
 
 
 def test_scheduled_gumbel_scale_decays_by_full_move_number() -> None:

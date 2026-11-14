@@ -93,9 +93,10 @@ PYTHONPATH=. python scripts/arena_standard.py \
   the worker and the play-batch bench, `arena.mcts`, the `mcts` config key (fatal at
   launch, declined on a live reload), `SearchConfig`, `play_match_batch` and
   `run_puzzle_eval`. An **explicit-PUCT arena reading** (`--mcts puct` / `arena.mcts:
-  puct`) can no longer be reproduced on `main`; reproduce it from tag
-  `pre-slim-20261113` or from `5ed4d23a2`, the last `main` commit that had
-  `mcts/puct_c.py`. The UCI engine's PUCT paths (walker pool, pucv, multi-GPU pool,
+  puct`) can no longer be reproduced on `main` after the merge of #1305. Reproduce
+  it from tag `pre-slim-20261113`, or from any `main` commit up to and including
+  `acad58f57` (the commit before the merge of #1305); `mcts/puct_c.py` exists on
+  `main` until that merge. The UCI engine's PUCT paths (walker pool, pucv, multi-GPU pool,
   root-parallel Gumbel) are separate and unchanged.
 - **Puzzle eval is not comparable across 2026-11-14.** The training puzzle eval
   (`puzzle_interval > 0`, off in production) used to call `run_puzzle_eval` with no

@@ -37,16 +37,16 @@ true game over, plus a 2-fold repetition scored as a draw, lc0 style).
 
 ### Drivers
 
-Line references in rows 1-5 were verified against `main` at `10c1d7075` merged
+Line references in rows 1-5 were verified against `main` at `acad58f57` merged
 with PR #1305 (the PUCT retirement); re-check them before relying on them.
 
 | # | Driver | Language | Primitive | Callers |
 |---|---|---|---|---|
-| 1 | `mcts/gumbel_c.py:829 run_gumbel_root_many_c` | Python over C | A | **Production selfplay** (`selfplay/network_turn.py:1182`); arena matched_sims (`selfplay/match.py:183`, used by `scripts/arena_standard.py`, `scripts/match_vs_handicapped_sf.py`, `arena.py`, `scripts/match_checkpoints.py`, the worker arena task); UCI classic mode (`uci/search.py:3127`); `eval/puzzles.py:454` (the default puzzle search, and the training puzzle eval, which runs the compiled search selfplay runs, `tune/trainable_phases.py:228`); `scripts/audit_targets.py`; `scripts/search_gain_probe.py`; `scripts/diagnose_gumbel_roots.py`; benches; 35 test files |
-| 2 | `mcts/gumbel.py:1726 run_gumbel_root_many` | Pure Python, python-chess boards, own `Node` tree | — | Selfplay (`network_turn.py:1231`) and arena (`match.py:217`) only when volatility search is configured (refused for selfplay at yaml load, `utils/config_yaml.py`) or inside the explicit `ext_check.python_reference_paths` opt-in; a stale build that cannot import the C runner is **refused** (section 8). Research: `scripts/audit_targets.py`, `scripts/lc0_adapter_probe.py`, `scripts/gumbel_scale_probe.py`, `bench/play_batch_timing.py`; 17 test files incl. the parity test `tests/test_mcts_uci_parity_gates.py` |
-| 3 | ~~`mcts/puct_c.py run_mcts_many_c`~~ | — | B | **Deleted 2026-11-14** (step 4). It was the selfplay PUCT branch (only under an explicit `mcts: puct` above `max(64, fast_simulations)` sims), `match.py` under an explicit `mcts_type="puct"`, and `eval/puzzles.py` `search="puct"`. `puct` is now refused at every one of those boundaries (`utils/search_type.require_gumbel_search`). Last on `main` at `5ed4d23a2`; also in tag `pre-slim-20261113`. The UCI PUCT engines (#5-#8) never used it |
+| 1 | `mcts/gumbel_c.py:829 run_gumbel_root_many_c` | Python over C | A | **Production selfplay** (`selfplay/network_turn.py:1186`); arena matched_sims (`selfplay/match.py:183`, used by `scripts/arena_standard.py`, `scripts/match_vs_handicapped_sf.py`, `arena.py`, `scripts/match_checkpoints.py`, the worker arena task); UCI classic mode (`uci/search.py:3163`); `eval/puzzles.py:454` (the default puzzle search, and the training puzzle eval, which runs the compiled search selfplay runs, `tune/trainable_phases.py:228`); `scripts/audit_targets.py`; `scripts/search_gain_probe.py`; `scripts/diagnose_gumbel_roots.py`; benches; 35 test files |
+| 2 | `mcts/gumbel.py:1726 run_gumbel_root_many` | Pure Python, python-chess boards, own `Node` tree | — | Selfplay (`network_turn.py:1235`) and arena (`match.py:217`) only when volatility search is configured (refused for selfplay at yaml load, `utils/config_yaml.py`) or inside the explicit `ext_check.python_reference_paths` opt-in; a stale build that cannot import the C runner is **refused** (section 8). Research: `scripts/audit_targets.py`, `scripts/lc0_adapter_probe.py`, `scripts/gumbel_scale_probe.py`, `bench/play_batch_timing.py`; 17 test files incl. the parity test `tests/test_mcts_uci_parity_gates.py` |
+| 3 | ~~`mcts/puct_c.py run_mcts_many_c`~~ | — | B | **Deleted 2026-11-14** (step 4). It was the selfplay PUCT branch (only under an explicit `mcts: puct` above `max(64, fast_simulations)` sims), `match.py` under an explicit `mcts_type="puct"`, and `eval/puzzles.py` `search="puct"`. `puct` is now refused at every one of those boundaries (`utils/search_type.require_gumbel_search`). Present on `main` up to the merge of #1305 (any `main` commit up to and including `acad58f57`); also in tag `pre-slim-20261113`. The UCI PUCT engines (#5-#8) never used it |
 | 4 | ~~`mcts/puct.py run_mcts_many`~~ | — | — | **Deleted 2026-11-14** with #3, together with `MCTSConfig`/`run_mcts`. `mcts/puct.py` keeps only the tree primitives #2 is built on (`Node`, `_expand_sparse`, `_backprop`, `_terminal_value`) and `_value_scalar_from_wdl_logits`, which the UCI engine reads |
-| 5 | `uci/walker_pool.py WalkerPool` | Python threads over C | C | UCI `--walkers > 1` / `SearchWalkers` only (default now 1, `uci/__main__.py:899`); it was the default launch at `863f12aa9` |
+| 5 | `uci/walker_pool.py WalkerPool` | Python threads over C | C | UCI `--walkers > 1` / `SearchWalkers` only (default now 1, `uci/__main__.py:897`); it was the default launch at `863f12aa9` |
 | 6 | `mcts/puct_vl.py:74 PucvChunker` | Python 2-slot async pipeline over C | D | UCI `UseVL=true` at 1 thread (`uci/search.py:879`); also the per-candidate engine inside #8 |
 | 7 | `uci/multi_gpu_pucv_pool.py MultiGpuPucvPool` | One Python thread per GPU over C | D | UCI with `--devices` listing >= 2 devices; switched on automatically (`__main__.py:866`, `search.py:610`) |
 | 8 | `uci/root_parallel_gumbel.py RootParallelGumbelPool` | Python orchestration + Python halving | D | UCI `SearchParallel=gumbel` with >= 2 devices (`search.py:671`) |
@@ -100,8 +100,7 @@ What each driver re-implements:
 
 ## 2. Config surface
 
-Config objects: `GumbelConfig` (`mcts/gumbel.py:323`); `MCTSConfig`
-(`mcts/puct.py:43`); selfplay `SearchConfig` (`selfplay/config.py`);
+Config objects: `GumbelConfig` (`mcts/gumbel.py:323`); selfplay `SearchConfig` (`selfplay/config.py`);
 `SelfplaySearchShape` (`selfplay/network_turn.py`, which exists because
 `vloss_weight` and `target_batch` are runner arguments, not `GumbelConfig`
 fields); `WalkerPoolConfig`, `MultiGpuPucvConfig`, `RootParallelGumbelConfig`;
@@ -175,7 +174,7 @@ except RPG drops policy_temp entirely.
   `encode_*` and `encode_full_batch` (`_lc0_ext.c:979-997`), reached through
   `encoding/cboard_encode.py encode_cboard` / `encode_cboard_batch`. Used for
   the UCI root eval (`uci/search.py _ensure_root_eval_cached`), the production
-  selfplay `record_lc0_root_input` side row (`network_turn.py:747`,
+  selfplay `record_lc0_root_input` side row (`network_turn.py:723`,
   `encode_cboard_batch`), `stockfish_turn`, `resume`, RPG, `model_inputs` and
   the worker's broker warmup probe.
 - **E1 and E2 are the same headers compiled twice** (`_cboard_impl.h`,
@@ -190,7 +189,7 @@ except RPG drops policy_temp entirely.
   flag.** Used by the Python Gumbel search (#2),
   `eval/puzzles.py`, the `deepfin --selfcheck` oracle
   (`uci/selfcheck.py _python_reference_planes`), research scripts, and the
-  side row of the Python per-ply reference recorder (`network_turn.py:937`;
+  side row of the Python per-ply reference recorder (`network_turn.py:924`;
   never the production recorder, which uses E2). `build_model` no longer
   encodes a position to count planes (it uses `input_plane_count`), and the
   worker broker warmup probe uses E2; both were shown bit-identical
@@ -215,8 +214,8 @@ except RPG drops policy_temp entirely.
   `set_history_rep_fix`; it used to skip that module with a warning, leaving
   the two encoders in different regimes.
 - **rep_fix application points:** `model/__init__.py:518` (`build_model`, also
-  the UCI route via `uci/model_loader.py`); `selfplay/manager.py:421`;
-  `selfplay/match.py:157` (re-applied every move, per model);
+  the UCI route via `uci/model_loader.py`); `selfplay/manager.py:466`;
+  `selfplay/match.py:155` (re-applied every move, per model);
   `scripts/net_source.py:582` (ONNX); `scripts/shared_teacher_owner.py:282`,
   `scripts/generate_bootstrap.py:140/228`, `scripts/gen_sf_rooted_corpus.py:1807`,
   `scripts/gen_random_selfplay_shards.py:2343`,

@@ -9,7 +9,8 @@ route to the PUCT search now raises ``PUCT_RETIRED_MESSAGE``:
   the worker's reco resolver;
 * ``pick_moves_for_boards`` / ``play_match_batch`` and the worker arena task;
 * the ``--mcts`` options of ``run.py`` (``tests/test_run_relation_preflight.py``),
-  the worker, ``arena.py`` and the play-batch bench;
+  the worker, ``arena.py``, the play-batch bench, ``scripts/bench_vs_sf.py`` and
+  ``scripts/match_checkpoints.py``;
 * ``run_puzzle_eval``.
 
 A live yaml reload that brings ``puct`` is DECLINED (old value kept, the trial
@@ -65,8 +66,9 @@ def test_puct_is_still_a_word_but_not_a_search(value: str) -> None:
         require_gumbel_search(value)
     _assert_retired(exc)
     # An unknown value keeps the generic message, not the retirement one.
-    with pytest.raises(ValueError, match="must be one of"):
+    with pytest.raises(ValueError, match="must be 'gumbel'") as unknown:
         require_gumbel_search("gumbell")
+    assert "puct" not in str(unknown.value)
 
 
 # --------------------------------------------------------------------------
@@ -247,6 +249,20 @@ def test_play_batch_bench_refuses_puct(
     _assert_retired(vexc)
 
 
+@pytest.mark.parametrize("module", ["scripts.bench_vs_sf", "scripts.match_checkpoints"])
+def test_script_clis_refuse_puct_at_parse_time(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], module: str,
+) -> None:
+    import importlib
+
+    script = importlib.import_module(module)
+    monkeypatch.setattr(sys, "argv", [module, "--mcts", "puct"])
+    with pytest.raises(SystemExit) as exc:
+        script.main()
+    assert exc.value.code == 2
+    assert PUCT_RETIRED_MESSAGE in capsys.readouterr().err
+
+
 # --------------------------------------------------------------------------
 # Puzzle eval
 # --------------------------------------------------------------------------
@@ -259,13 +275,13 @@ def test_run_puzzle_eval_refuses_every_old_puct_route(
     from chess_anti_engine.eval import puzzles as puzzles_mod
 
     calls = _record_puzzle_routes(monkeypatch)
-    with pytest.raises(ValueError, match=r"retired|must be one of") as exc:
+    with pytest.raises(ValueError, match=r"retired|must be 'gumbel'") as exc:
         puzzles_mod.run_puzzle_eval(
             _DummyModel(), _one_puzzle_suite(), device="cpu", mcts_simulations=3,
             batch_size=1, search=value,
         )
     if value == "python_puct_reference":
-        assert "must be one of" in str(exc.value)
+        assert "must be 'gumbel'" in str(exc.value)
     else:
         _assert_retired(exc)
     assert calls == []

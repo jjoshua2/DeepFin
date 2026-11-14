@@ -32,7 +32,9 @@ def normalize_mcts_type(value: object) -> str:
     """
     text = str(value).strip().lower()
     if text not in MCTS_TYPES:
-        raise ValueError(f"mcts/mcts_type must be one of {MCTS_TYPES} (any case), got {value!r}")
+        # Names only the accepted value: "puct" is recognised so that it gets
+        # PUCT_RETIRED_MESSAGE instead, not offered as an option.
+        raise ValueError(f"mcts/mcts_type must be 'gumbel' (any case), got {value!r}")
     return text
 
 

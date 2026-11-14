@@ -1,8 +1,12 @@
 """Run one network turn for a batch of network-assigned slots.
 
-The C fast paths (``batch_encode_146``, ``batch_process_ply``,
-``temperature_resample``) consume plain Python lists of ``CBoard``
-objects + numpy arrays by reference; the zero-copy inplace path writes
+The C fast paths (``batch_encode_146``, ``batch_process_ply``) consume
+plain Python lists of ``CBoard`` objects + numpy arrays by reference.
+``temperature_resample`` is still a required C symbol (in
+``ext_check.REQUIRED_SYMBOLS`` and probed by ``selfplay/state.py``; the
+``scripts/core_finite_collect.py`` gate depends on that requirement, so keep
+it), but nothing in selfplay calls it since the PUCT retirement (2026-11-14):
+temperature resampling is Python-only. The zero-copy inplace path writes
 into the evaluator's pinned buffer. Torch-compile shape-stability
 buckets are kept as a module constant so the evaluator sees a stable
 set of batch shapes.
