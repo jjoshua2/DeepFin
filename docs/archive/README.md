@@ -15,4 +15,3 @@ written.
 | `AUDIT_2026-06.md` | search and training correctness audit, June 2026 | `docs/` |
 | `threaded_dispatcher_results.md` | ThreadedDispatcher A/B, 2026-04-28; superseded 2026-07-18 | `docs/` |
 | `cast425_handoff.md` | CAST / issue #425 MultiPV-6 tail handoff, 2026-08-16 | `docs/` |
-| `tcec_questionnaire_draft.md` | draft answers to the TCEC author questionnaire (not maintained; out of date) | repository root (`tcec.md`) |

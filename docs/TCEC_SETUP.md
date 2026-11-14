@@ -8,9 +8,14 @@ Every statement here was checked against the code on `main`. Commands marked
 **(CPU, run)** were run on a CPU host while writing this page. Commands marked
 **(GPU, not run)** need a GPU and have not been run for this page; they are also
 collected in [GPU-only checks](#gpu-only-and-unloaded-machine-checks-never-run).
-`tests/test_tcec_setup_doc.py` fails when this page names an option, flag, exit
-code, command or `info string` the code does not have, or omits a UCI option the
-engine exposes.
+`tests/test_tcec_setup_doc.py` checks this page against the code. It fails when:
+the options table differs from the engine's `uci` output (names, types, defaults,
+spin ranges, combo values) or a string option's range differs from the code; a
+named flag does not exist, or a flag default differs from the parser; an exit code
+differs from what the entry points really return; a quoted UCI command does not
+parse; a quoted engine message does not exist in the code; or the watchdog,
+`stop` and `Threads` statements differ from the code. The "Effect" and "Rebuilds"
+columns are written from reading the code and are not checked by the test.
 
 ## 1. Requirements
 
@@ -46,10 +51,19 @@ python -m chess_anti_engine.uci --selfcheck --fast --device cpu \
   --checkpoint /path/to/trainer.pt --syzygy /path/to/syzygy                                  # (CPU, run)
 ```
 
-printed one `PASS` line per component (`python`, `torch`, `extensions`,
-`freshness`, `encoder`, `movegen`, `search`, `checkpoint`, `syzygy`, `uci`) and
-`SELFCHECK PASS (uci: fast: --no-compile (does NOT cover the default compiled play path))`,
-exit 0. Without `--fast` the UCI exchange runs the default compiled play path, so a
+prints one line per component (`python`, `torch`, `extensions`, `freshness`,
+`encoder`, `movegen`, `search`, `checkpoint`, `syzygy`, `uci`) and a summary, and
+exits 0. What `freshness` says depends on how the engine was installed (both run on
+CPU with a small test network):
+
+- From a source checkout (editable install, or `PYTHONPATH` at the checkout):
+  `PASS  freshness   source content matches the build record for _lc0_ext, _features_ext, _mcts_tree`
+  and `SELFCHECK PASS (uci: fast: --no-compile (does NOT cover the default compiled play path))`.
+- From a regular install (`pip install ".[match]"`, as install.md describes):
+  `SKIP  freshness   not a source checkout (regular wheel install): no sources to compare; the ABI/symbol and behavioural checks still apply`
+  and `SELFCHECK PASS (uci: fast: --no-compile (does NOT cover the default compiled play path); 1 skipped: freshness)`.
+
+A SKIP is not a failure; the exit status is 0 unless something FAILs. Without `--fast` the UCI exchange runs the default compiled play path, so a
 cold compile happens inside the check (minutes on a real net; `--uci-timeout`
 raises the 900 s reply limit). The self-check's own flags are `--json`,
 `--checkpoint`, `--syzygy`, `--device`, `--devices`, `--fast`, `--uci-timeout` and
@@ -130,10 +144,11 @@ refuse to start (exit 1, the reason on stderr).
 
 **Compile warm-up.** The first start after install compiles the network
 (minutes under `max-autotune`); the cache makes later starts faster.
-`scripts/uci_prewarm.py --checkpoint /path/to/trainer.pt` (add the same
-`--devices` / `--multi-gpu-pucv` / `--search-parallel` / `--compile-mode` /
-`--max-batch` / `--chunk-sims` / `--walkers` you will register) drives the real UCI
-path once to fill it **(GPU, not run)**. `readyok` is sent only after the
+`scripts/uci_prewarm.py --checkpoint /path/to/trainer.pt` drives the real UCI path
+once to fill it **(GPU, not run)**. Give it exactly the engine flags you will
+register (`--devices`, `--multi-gpu-pucv`, `--search-parallel`, `--compile-mode`,
+`--max-batch`, `--chunk-sims`, `--vl-gather`, `--walkers`): a flag you leave out is
+left out of the engine command too, so the engine's own default applies. `readyok` is sent only after the
 search path is warmed, so give the engine a generous start / `isready` allowance in
 the GUI. `scripts/tcec_autotune.sh --checkpoint ... [--devices ...]` sweeps batching
 and parallel-search settings for nps **(GPU, not run)**; nps is not playing strength,
@@ -171,29 +186,43 @@ between moves, and on failure the previous settings and evaluator stay).
 | `LogFile` | string | `<empty>` | Also write the engine log to this file. | no |
 | `Ponder` | check | false | Adds the ponder move to `bestmove`; not recommended (section 8). | no |
 | `PolicyTemperature` | string 0.5..5.0 | 1.0 | Prior temperature. | no |
-| `CScale` | string | 0.025 | Gumbel descent value scale. | no |
-| `CVisit` | string | 50.0 | Gumbel descent `c_visit`. | no |
-| `CScaleRoot` | string | 7.0 | Root-only `c_scale`. | no |
-| `CVisitRoot` | string | 900.0 | Root-only `c_visit`. | no |
-| `QVisitExpRoot` | string | -1.0 | Root exponent; < 0 = log root transform. | no |
+| `CScale` | string 0.0001..100.0 | 0.025 | Gumbel descent value scale. | no |
+| `CVisit` | string 0.0..100000.0 | 50.0 | Gumbel descent `c_visit`. | no |
+| `CScaleRoot` | string -1.0..1000.0 | 7.0 | Root-only `c_scale`. | no |
+| `CVisitRoot` | string -1.0..100000.0 | 900.0 | Root-only `c_visit`. | no |
+| `QVisitExpRoot` | string -10.0..99.0 | -1.0 | Root exponent; < 0 = log root transform. | no |
 | `HalvingDiv` | spin 2..8 | 2 | Sequential-halving divisor. | no |
 | `Topk` | spin 2..256 | 32 | Gumbel root candidates. | no |
-| `GumbelScale` | string 0..5 | 0.0 | Root noise; 0 = deterministic. | no |
+| `GumbelScale` | string 0.0..5.0 | 0.0 | Root noise; 0 = deterministic. | no |
 | `ChunkSims` | spin 32..131072 | 2048 | Simulations per chunk. | no |
 | `VLossWeight` | spin 0..64 | 3 | Virtual loss on in-flight leaves. | no |
 | `MinibatchSize` | spin 0..8192 | 0 | Leaves batched by the C Gumbel search; 0 = its default. Classic Gumbel only. | no |
-| `CPuct` | string | 1.75 | PUCT constant; PUCT paths only. | PUCT helpers |
-| `CPuctFactor` | string | 3.89 | Same. | PUCT helpers |
-| `CPuctBase` | string | 38739.0 | Same. | PUCT helpers |
-| `FpuReduction` | string | 0.33 | Same. | PUCT helpers |
+| `CPuct` | string 0.0001..100.0 | 1.75 | PUCT constant; PUCT paths only. | PUCT helpers |
+| `CPuctFactor` | string 0.0..100.0 | 3.89 | Same. | PUCT helpers |
+| `CPuctBase` | string 1.0..1000000000.0 | 38739.0 | Same. | PUCT helpers |
+| `FpuReduction` | string -10.0..10.0 | 0.33 | Same. | PUCT helpers |
 
 Leave every search option at its default unless told otherwise; the defaults are
 the tuned values. A search option that cannot affect the live search path says so
 (`info string ... NO EFFECT on the live search ...`). The non-standard command `searchconfig` prints
 every realized search parameter as `info string searchconfig ...` lines, each
 marked `LIVE`, `INERT` or `BRANCH`, read off the running worker: use it to confirm
-the engine runs what the GUI configured (`info string searchconfig path=...` first). An unknown option, a missing value, or a
-value outside an option's range is answered with an `info string` and changes
+the engine runs what the GUI configured (`info string searchconfig path=...` first).
+
+Every value the engine cannot use is answered with an `info string`; what happens
+to the setting depends on the option:
+
+| Options | A value outside the range | A value that does not parse |
+|---|---|---|
+| `Hash`, `Threads`, `SearchWalkers`, `LeafGather`, `VLGather`, `MaxBatch`, `EvalCacheEntries`, `MultiPV`, `MoveOverheadMs`, `RPGOpenVPA`, `RPGMinVPA`, `RPGMinKeep` | clamped to the nearest bound, then applied: `info string Hash 512 is below the advertised minimum 1024; using 1024` | ignored: `info string Hash: 'abc' is not an integer; ignored` |
+| `ClockBatchMarginSigmas` | below 0 is clamped: `info string ClockBatchMarginSigmas -1.0 is below 0; using 0.0` | kept: `... is not a number; keeping ...` |
+| The search options: `PolicyTemperature`, `CScale`, `CVisit`, `CScaleRoot`, `CVisitRoot`, `QVisitExpRoot`, `HalvingDiv`, `Topk`, `GumbelScale`, `ChunkSims`, `VLossWeight`, `MinibatchSize`, `CPuct`, `CPuctFactor`, `CPuctBase`, `FpuReduction` | refused, the current value kept: `info string Topk: 1 is out of range [2, 256]; keeping 32` | kept: `... is not a number; keeping ...` |
+| `RPGOpenBudgetFrac` | refused, kept: `... is not a number in (0, 1]; keeping 0.5` | the same |
+| `UseVL`, `UseMultiGpuPUCV`, `UCI_ShowWDL`, `Syzygy50MoveRule`, `Ponder` | not applicable | kept: `... expected true/false, got 'maybe'; keeping false` |
+| `SearchParallel`, `PUCVPendingMode` | not applicable | refused, kept: `info string SearchParallel: 'bogus' is not one of pucv / gumbel; keeping pucv` |
+
+An unknown option (`info string setoption 'Foo': unknown option, ignored`) or a
+missing value (`info string setoption Hash: no value given, ignored`) changes
 nothing.
 
 ## 5. Time management in plain terms
@@ -256,9 +285,15 @@ wins and losses, at the leaves and at the root. Setting it answers
 **Positions.** A `position` the engine can answer is taken; one it cannot is
 rejected as a whole:
 
-- Castling rights without the king and rook on their squares, and an impossible
-  en-passant square, are normalised, each with
-  `info string position: normalised ...`.
+- Castling rights without the king and rook on their squares are cleaned:
+  `info string position: normalised castling rights ...`.
+- An en-passant square no double push could have left is dropped:
+  `info string position: normalised en-passant square ... is impossible -> none`.
+  The one exception is a square that is real except that the pushed pawn's start
+  square is occupied (the opponent's pawn stands just beyond it and a capture on it
+  is legal): it is kept, so a move list that plays the capture is accepted, and
+  `info string position: kept en-passant square ...` says so. Either way the
+  position is answered, never rejected for its en-passant square.
 - Missing or extra kings, pawns on the back rank, the side not to move in check,
   an unparseable FEN, a malformed command, and an illegal move in the move list are
   rejected: `info string position: rejected (...); keeping the previous position; go
@@ -346,7 +381,7 @@ tournament play and is not recommended: leave `Ponder` false.
 ### GPU-only and unloaded-machine checks never run
 
 Collected from the pull requests that built the current engine (#1261, #1263,
-#1264, #1265, #1270, #1273, #1275, #1276, #1294). None has been run. Run them on the
+#1264, #1265, #1270, #1273, #1275, #1276, #1294, #1300). None has been run. Run them on the
 tournament machine with the real network `<C>`, a free GPU and no other load.
 
 1. **Self-check on the real hardware** (#1273): `deepfin --selfcheck --device cuda:0
@@ -357,6 +392,11 @@ tournament machine with the real network `<C>`, a free GPU and no other load.
    system libstdc++, the default compiled self-check failed with
    `GLIBCXX_3.4.32 not found` inside torch.compile. Run the default (compiled)
    self-check on the target host before registering; `--fast` does not cover this.
+   If it FAILs this way, put a C++ compiler that matches the system libstdc++
+   first on `PATH` and run the self-check again, or run the engine with
+   `--no-compile`. Whether `--no-compile` is acceptable for tournament play is
+   unmeasured: its speed and strength have not been compared with the compiled
+   path.
 3. **Stop latency** (#1261): play time-managed games and check the output never
    contains `search did not stop in time` or `parked`; the 1 s `stop` bound and the
    0.1 s minimum `go` wait were sized from CPU measurements.
@@ -376,11 +416,14 @@ tournament machine with the real network `<C>`, a free GPU and no other load.
    line, and a searched move.
 9. **Hash on the real net** (#1264): `go movetime 120000` with `Hash 16384`; RSS
    growth should stay within Hash + about 150 MB + the eval cache. On the 4-GPU
-   machine with Hash >= 64 GB, a long `go infinite` then `stop`: regular `info`
-   cadence, and `tree memory full` if the footprint reaches Hash.
+   machine with Hash >= 64 GB, a long `go infinite` then `stop`: `info` lines at a
+   regular cadence (each tree growth step was measured on CPU to stall about 50 ms
+   at most), and `tree memory full` if the footprint reaches Hash. Above about
+   130 GB of walker-path footprint, expect `tree node-id space full` instead.
 10. **Tree reuse over a game** (#1264, #1270): a 10- to 20-move game at
     `go wtime 600000 btime 600000`; reuse on every move, and no `tree memory full`
-    before the hash is full.
+    before the hash is full. Repeat at `Hash 4096`, where the tree fills it within
+    a game, so the reuse decision moves from keeping the subtree to compacting it.
 11. **Forced moves and ponder release** (#1265): a position with one legal move at
     `go wtime 60000 btime 60000 winc 1000 binc 1000` answers within one small chunk;
     `go ponder` there answers only after `ponderhit`.
@@ -390,9 +433,18 @@ tournament machine with the real network `<C>`, a free GPU and no other load.
     `ChunkSims 512`, also with clocks and with several devices: expect no
     `deadline watchdog` line and 200 `bestmove` lines. Then a wedged device-1
     evaluator: one `WARNING search stalled` line and exactly one `bestmove`.
+    The GPU chunk-time distribution decides the false-fire rate, so record it:
+    per-chunk wall times (`--log-level DEBUG`) and the gap from the search
+    deadline to `bestmove`.
 14. **Short `movetime` on a loaded CPU** (#1294 review): `go movetime 200` from the
     start position on a busy CPU tripped the deadline watchdog into the root-policy
     fallback. Repeat on the unloaded tournament machine and confirm it does not.
-15. **The UCI compliance changes on the real net** (#1275, #1294 were CPU-only):
+15. **The UCI compliance changes on the real net** (#1275, #1294, #1300 were CPU-only):
     `go mate N`, position normalisation and rejection, and the ponder-miss answer
     were verified with a tiny network on CPU only.
+16. **Multi-GPU pool speed** (#1263): the pool's final `nps` on `go nodes 16384`
+    was expected to be within noise of the code before #1263 on the same GPUs; that
+    was never measured.
+17. **The GPU wheel's architecture list** (#1273): the `torch` self-check reads the
+    installed wheel's arch list, but the arch lists of the cu124 and cu130 wheels
+    were never read, so this page makes no claim about which cards either covers.

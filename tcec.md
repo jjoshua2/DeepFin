@@ -1,8 +1,3 @@
-> **Archived 2026-11-14.** A draft of answers to the TCEC author questionnaire, moved
-> from the repository root. Not maintained, and several statements are out of date
-> (for example, it calls the repository private; it is public). The operator guide is
-> [docs/TCEC_SETUP.md](../TCEC_SETUP.md).
-
 # TCEC Author Questionnaire — DeepFin
 
 > Draft answers based on the current state of the repository.
