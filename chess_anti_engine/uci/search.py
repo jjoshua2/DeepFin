@@ -775,9 +775,10 @@ class SearchWorker:
 
         ``install_multi_gpu_pucv`` closes ``_walker_pool`` and nulls ``_pucv``
         so the pool is the sole search path. Dropping the pool without
-        rebuilding those fallbacks leaves the advertised default
-        ``Threads=2`` on the single-thread Gumbel path (and leaves
-        ``UseVL`` inert even though ``_use_pucv`` is still set).
+        rebuilding those fallbacks leaves configured ``SearchWalkers > 1``
+        on the classic Gumbel path, or ``UseVL`` inert while ``_use_pucv``
+        is still set. Routing follows ``SearchWalkers`` / ``--walkers`` and
+        ``UseVL``, not ``Threads``.
 
         Pass ``restore_fallback=False`` from callers that immediately rebuild
         the path they want (``install_multi_gpu_pucv``, ``set_evaluator``) so
