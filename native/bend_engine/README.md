@@ -22,31 +22,47 @@ the last `main` that still carried Bend.
   `bend-*` workflows trigger on pull requests targeting `bend` and on pushes to
   `bend` (each still limited by its path filter); they do not run for `main`.
 - **Staying current with main:** merge `main` into `bend` periodically with
-  `scripts/sync_bend_with_main.sh` from a clean checkout of `bend`, review the
-  result, then push it (directly, or as a PR into `bend`):
+  `scripts/sync_bend_with_main.sh`. Do it on a sync branch cut from `bend` and
+  merge that through a PR into `bend`, not by pushing to `bend`: the PR runs
+  `ci.yml` (the full pytest suite, `tests/test_bend_*` included) and the Bend
+  workflows on the merged tree.
 
   ```sh
   git fetch origin
-  git switch bend && git merge --ff-only origin/bend
-  scripts/sync_bend_with_main.sh            # merges origin/main
-  git push origin bend
+  git switch -c sync/main-YYYYMMDD origin/bend
+  scripts/sync_bend_with_main.sh --branch sync/main-YYYYMMDD   # merges origin/main
+  git push -u origin sync/main-YYYYMMDD    # then open a PR into bend
   ```
 
+  The script refuses a detached HEAD, a dirty tree, and any branch other than
+  `bend` unless `--branch` names the current branch.
 - **Why not a plain `git merge origin/main`:** on `main` the Bend files were
   deleted, so a plain merge deletes every Bend file that `bend` has not changed
   since the merge base. It does that silently, with no conflict. Bend files that
-  `bend` did change show up as modify/delete conflicts ("deleted by them"). In
-  both cases the resolution is the same: keep Bend's copy. The script merges
-  without committing, restores every path listed in
-  [`branch_paths.txt`](branch_paths.txt) from the pre-merge `bend` commit (this
-  also resolves those conflicts), lists any other file the merge deletes, and
-  commits only when no conflict is left. It exits 2 if a conflict outside the
-  Bend paths remains; resolve that one by hand and `git commit --no-edit`.
-  Once a merge that includes the removal from `main` is committed, later
-  merges no longer try to delete Bend files, but keep using the script: it is
-  a no-op on the Bend paths then.
+  `bend` did change show up as modify/delete conflicts ("deleted by them"); for
+  those, too, the right resolution is Bend's copy. The script merges without
+  committing and handles each path matched by [`branch_paths.txt`](branch_paths.txt)
+  whose `main` side differs from the merge base:
+  - `main` deleted it: restored from `bend` (this also resolves the
+    modify/delete conflict);
+  - `main` changed or added it and `bend` did not touch it: `main`'s version is
+    kept, as in any merge;
+  - both sides changed it to different contents (including add/add): left as
+    git's merge result or conflict, nothing is committed, and the script exits 2
+    listing the paths, so the operator decides.
+
+  It prints one summary line per such path, lists non-Bend files the merge
+  deletes, and commits only when nothing is left for the operator (exit 0).
+  Exit 2 means review, resolve, then `git commit --no-edit` or
+  `git merge --abort`. After the first sync that includes the removal from
+  `main` is committed, later merges no longer try to delete Bend files, so the
+  script normally restores nothing. It still reports and guards any Bend path
+  that `main` changes.
 - **Adding Bend files outside `native/bend_engine/`:** add the path or glob to
-  `branch_paths.txt`, or the next sync will not protect it.
+  `branch_paths.txt`. A file that has only ever existed on `bend` is never
+  deleted by a merge of `main`, but listing it keeps the rules above (and their
+  summary) applying to it if `main` ever creates or touches that path.
+  `tests/test_sync_bend_with_main.py` pins the script's behaviour.
 - **Known side effect of the first sync:** `main` removed the Bend records' lines
   from `docs/experiments/README.md`, and that edit merges into `bend` like any
   other. The records themselves stay; re-add the index lines on `bend` if they
