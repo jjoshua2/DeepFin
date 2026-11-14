@@ -373,6 +373,47 @@ def test_ensure_workers_raises_before_relaunching_an_earlier_dead_worker(
     assert launched == []
 
 
+def test_ensure_workers_stops_its_own_launches_when_a_worker_refuses_mid_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """idx 1 is alive at the up-front scan and exits 78 before the loop reaches it.
+
+    idx 0 (dead, code 1) has already been relaunched by then; that process lives
+    only in the function's local copy, so it must be stopped before the raise.
+    """
+
+    class _DiesDuringLoop(_FakeProc):
+        def __init__(self) -> None:
+            super().__init__(pid=3, returncode=None, launch_signature="sig")
+            self.polls = 0
+
+        def poll(self) -> int | None:
+            self.polls += 1
+            if self.polls > 1:  # alive for the scan, refused afterwards
+                self.returncode = C_CORE_REFUSAL_EXIT_CODE
+            return self.returncode
+
+    launched: list[_FakeProc] = []
+    stopped: list[_FakeProc] = []
+
+    def _fake_launch(*, worker_index: int, **_rest: object) -> _FakeProc:
+        proc = _FakeProc(pid=900 + worker_index, launch_signature="sig")
+        launched.append(proc)
+        return proc
+
+    monkeypatch.setattr(distributed_runtime, "_launch_distributed_worker", _fake_launch)
+    monkeypatch.setattr(distributed_runtime, "_worker_launch_signature", lambda **_kw: "sig")
+    monkeypatch.setattr(distributed_runtime, "_stop_process", stopped.append)
+    procs: list[object] = [_FakeProc(pid=2, returncode=1, launch_signature="sig"), _DiesDuringLoop()]
+    with pytest.raises(CCoreIncompleteError, match="idx=1"):
+        distributed_runtime._ensure_distributed_workers(
+            config={"distributed_workers_per_trial": 2}, trial_dir=tmp_path, trial_id="t",
+            procs=procs,  # pyright: ignore[reportArgumentType]
+        )
+    assert len(launched) == 1  # idx 0 was relaunched before idx 1 refused
+    assert stopped == launched  # ... and is not leaked
+
+
 def test_revive_raises_before_relaunching_the_broker_or_an_earlier_worker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

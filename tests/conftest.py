@@ -30,13 +30,16 @@ is the only site that does not depend on the next test author remembering.
 from __future__ import annotations
 
 import contextlib
+import importlib.abc
+import importlib.machinery
 import os
 import re
 import sys
 import threading
 import time
+import types
 import weakref
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -506,3 +509,76 @@ def python_reference_paths() -> Iterator[None]:
 
     with _opt_in("test exercises the Python reference path"):
         yield
+
+
+# ── Trainer's default TensorBoard dir must not land in the checkout ───────────
+#
+# ``Trainer`` writes ``SummaryWriter(log_dir=str(log_dir or "tb"))``: with no
+# ``log_dir`` the events go to ``./tb`` in the CURRENT DIRECTORY, i.e. the
+# checkout pytest runs from (127 event files per full-suite run). Production
+# always passes ``log_dir`` (``tune/trainable.py`` -> ``<work_dir>/tb``), so the
+# default is left alone and only the TEST process redirects that one relative
+# default to a session temp dir. An explicit ``log_dir`` passes through untouched.
+#
+# The patch is applied when ``chess_anti_engine.train.trainer`` is imported (a
+# finder wraps its loader), or at once if it already is, so a test that imports
+# the trainer lazily is covered and a test that never touches it pays nothing.
+
+_TRAINER_MODULE = "chess_anti_engine.train.trainer"
+_TB_DEFAULT = "tb"
+_tb_redirect_dir: Path | None = None
+
+
+def _redirect_trainer_default_tb(module: object) -> None:
+    real = getattr(module, "SummaryWriter")
+    if getattr(real, "_cae_default_tb_redirect", False):
+        return
+
+    def _summary_writer(*args: object, **kwargs: object) -> object:
+        if _tb_redirect_dir is not None and kwargs.get("log_dir") == _TB_DEFAULT and not args:
+            kwargs["log_dir"] = str(_tb_redirect_dir)
+        return real(*args, **kwargs)
+
+    setattr(_summary_writer, "_cae_default_tb_redirect", True)
+    setattr(module, "SummaryWriter", _summary_writer)
+
+
+class _TrainerImportHook(importlib.abc.MetaPathFinder):
+    """Meta-path finder: patch the trainer module right after it executes."""
+
+    def find_spec(
+        self,
+        fullname: str,
+        path: Sequence[str] | None,
+        target: types.ModuleType | None = None,
+    ) -> importlib.machinery.ModuleSpec | None:
+        del target
+        if fullname != _TRAINER_MODULE:
+            return None
+        spec = importlib.machinery.PathFinder.find_spec(fullname, path)
+        if spec is None or spec.loader is None:
+            return spec
+        loader = spec.loader
+        original_exec = loader.exec_module
+
+        def _exec_module(module: types.ModuleType) -> None:
+            original_exec(module)
+            _redirect_trainer_default_tb(module)
+
+        setattr(loader, "exec_module", _exec_module)
+        return spec
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _trainer_default_tb_outside_checkout(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    global _tb_redirect_dir
+    _tb_redirect_dir = tmp_path_factory.mktemp("trainer_default_tb")
+    hook = _TrainerImportHook()
+    sys.meta_path.insert(0, hook)
+    if _TRAINER_MODULE in sys.modules:
+        _redirect_trainer_default_tb(sys.modules[_TRAINER_MODULE])
+    try:
+        yield
+    finally:
+        with contextlib.suppress(ValueError):
+            sys.meta_path.remove(hook)
