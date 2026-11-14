@@ -161,6 +161,11 @@ def _ponder_engine(monkeypatch, *, advance_ms=0):
     worker.advance_root.side_effect = advance
     worker.root_policy_bestmove.return_value = None
     engine = Engine(worker, options=EngineOptions(move_overhead_ms=0))
+    # These tests step a fake clock past the deadline while the worker is held
+    # at a gate: to the deadline watchdog that is a stall, and it would answer
+    # before the search reaches the path under test. The watchdog's ponderhit
+    # behaviour is tested in tests/test_uci_deadline_watchdog.py.
+    monkeypatch.setattr(engine._watchdog, "arm", lambda _entry: None)
     engine.dispatch(CmdPosition(None, ("e2e4", "e7e5")))
     engine.dispatch(CmdGo(GoArgs(ponder=True, movetime_ms=100)))
     assert entered.wait(1)
