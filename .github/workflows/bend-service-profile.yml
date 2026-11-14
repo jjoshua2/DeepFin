@@ -1,6 +1,7 @@
 name: Native service-profile regression
 on:
   pull_request:
+    branches: [bend]
     paths:
       - 'native/bend_engine/service_profile/**'
       - 'tests/test_bend_service_profile.py'

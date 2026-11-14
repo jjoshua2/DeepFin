@@ -2,6 +2,7 @@ name: Bend legal moves and perft
 
 on:
   pull_request:
+    branches: [bend]
     paths:
       - "native/bend_engine/legal_probe/**"
       - "native/bend_engine/bitboard_probe/**"

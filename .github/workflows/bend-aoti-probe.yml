@@ -2,6 +2,7 @@ name: Bend AOTI probe
 
 on:
   pull_request:
+    branches: [bend]
     paths:
       - "native/bend_engine/aoti_probe/**"
       - "native/bend_engine/cuda_parity/**"

@@ -2,6 +2,7 @@ name: Bend Gumbel search probe
 
 on:
   pull_request:
+    branches: [bend]
     paths:
       - "native/bend_engine/search_probe/**"
       - "native/bend_engine/install_bend.sh"

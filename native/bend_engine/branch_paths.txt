@@ -1,0 +1,53 @@
+# Paths that belong to the Bend track. They exist on `bend` and not on `main`.
+# scripts/sync_bend_with_main.sh guards every path these patterns match when
+# main is merged in (see its header and native/bend_engine/README.md). A pattern
+# ending in '/' matches everything under that directory; any other pattern is a
+# shell glob in which '*' also matches '/'. Blank lines and lines starting with
+# '#' are ignored. Add new Bend-only locations outside native/bend_engine/ here.
+native/bend_engine/
+.github/workflows/bend-*.yml
+tests/test_bend_*.py
+tests/test_neural_search_benchmark.py
+scripts/bench_neural_search.py
+scripts/sync_bend_with_main.sh
+tests/test_sync_bend_with_main.py
+docs/bend_*.md
+evidence/
+docs/experiments/*bend*
+# Bend records and evidence whose names do not say "bend":
+docs/experiments/2026-09-22-native-async-lifecycle.md
+docs/experiments/2026-09-22-native-async-search.md
+docs/experiments/2026-09-22-native-batch-boundary.md
+docs/experiments/2026-09-22-native-buffer-reuse.md
+docs/experiments/2026-09-22-native-cuda-backend.md
+docs/experiments/2026-09-22-native-multi-root.md
+docs/experiments/2026-09-23-async-cohort.md
+docs/experiments/2026-09-23-bounded-completion-wait.md
+docs/experiments/2026-09-23-cohort-deadlines.md
+docs/experiments/2026-09-23-fifo-cohort-integration.md
+docs/experiments/2026-09-23-fifo-runner-timing.md
+docs/experiments/2026-09-24-arena-memory-screen.md
+docs/experiments/2026-09-24-bounded-search-arenas.md
+docs/experiments/2026-09-24-chess-key-map-replay.md
+docs/experiments/2026-09-24-chess-map-timing.md
+docs/experiments/2026-09-24-live-cohort-lifecycle.md
+docs/experiments/2026-09-24-numeric-map-screen.md
+docs/experiments/2026-09-25-live-cohort-recovery.md
+docs/experiments/2026-09-25-live-model-composition.md
+docs/experiments/2026-09-25-native-service-profile.md
+docs/experiments/2026-09-26-measured-live-dispatch.md
+docs/experiments/2026-09-26-move-cache-cost-screen.md
+docs/experiments/evidence/arena-memory-screen/
+docs/experiments/evidence/bounded-completion-wait/
+docs/experiments/evidence/bounded-search-arenas/
+docs/experiments/evidence/chess-key-map-replay/
+docs/experiments/evidence/chess-map-timing/
+docs/experiments/evidence/fifo-cohort-integration/
+docs/experiments/evidence/fifo-runner-timing/
+docs/experiments/evidence/live-cohort-recovery/
+docs/experiments/evidence/live-model-composition/
+docs/experiments/evidence/measured-live-dispatch/
+docs/experiments/evidence/move-cache-cost-screen/
+docs/experiments/evidence/native-service-profile/
+docs/experiments/evidence/numeric-map-screen/
+docs/experiments/evidence/session-cache-main-reconciliation.json

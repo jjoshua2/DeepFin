@@ -2,6 +2,7 @@ name: Bend search sessions
 on:
   workflow_dispatch:
   pull_request:
+    branches: [bend]
     paths:
       - '.github/workflows/bend-search-sessions.yml'
       - 'native/bend_engine/session_probe/**'

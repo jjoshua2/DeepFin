@@ -1,8 +1,17 @@
 name: Bend owning collections
 on:
   push:
-    branches: [work/bend-collections-owning-20260923]
+    branches: [bend]
+    paths:
+      - '.github/workflows/bend-collections.yml'
+      - 'native/bend_engine/collections_probe/**'
+      - 'native/bend_engine/session_probe/Search.bend'
+      - 'native/bend_engine/legal_probe/Chess.bend'
+      - 'native/bend_engine/install_ci_bend.sh'
+      - 'native/bend_engine/bitboard_probe/run_probe.py'
+      - 'tests/test_bend*collections.py'
   pull_request:
+    branches: [bend]
     paths:
       - '.github/workflows/bend-collections.yml'
       - 'native/bend_engine/collections_probe/**'

@@ -2,6 +2,7 @@ name: Bend native neural boundary
 on:
   workflow_dispatch:
   pull_request:
+    branches: [bend]
     paths:
       - '.github/workflows/bend-neural-boundary.yml'
       - 'native/bend_engine/neural_probe/**'

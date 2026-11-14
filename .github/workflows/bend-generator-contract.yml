@@ -1,6 +1,7 @@
 name: Bend generator contract
 on:
   pull_request:
+    branches: [bend]
     paths:
       - '.github/workflows/bend-generator-contract.yml'
       - 'native/bend_engine/standalone/proofs/generator_contract/**'

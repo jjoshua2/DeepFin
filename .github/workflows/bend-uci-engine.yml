@@ -1,6 +1,7 @@
 name: Bend UCI engine
 on:
   pull_request:
+    branches: [bend]
     paths:
       - '.github/workflows/bend-uci-engine.yml'
       - 'native/bend_engine/standalone/**'
@@ -12,7 +13,7 @@ on:
       - 'pyproject.toml'
       - 'uv.lock'
   push:
-    branches: [main]
+    branches: [bend]
     paths:
       - '.github/workflows/bend-uci-engine.yml'
       - 'native/bend_engine/standalone/**'
