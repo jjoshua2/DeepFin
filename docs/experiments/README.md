@@ -16,7 +16,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
-- [2026-11-14: Fixed-G1 current-P0 native SF-WDL .2 pilot](2026-11-14-sf-current-p0-native020-pilot.md) — prospective fresh-A39 matched alpha0/.2, 512-update arms, descriptive HOLD64 and mandatory disjoint B/A and B/A39 screens; sole same-hash fresh confirmation conditional on both passing. Science unrun; no strength or optimal-recipe claim.
+- [2026-11-14: Fixed-G1 current-P0 native SF-WDL .2 pilot](2026-11-14-sf-current-p0-native020-pilot.md) — both fresh-A39 alpha0/.2 arms completed 512 updates with matching journals and accepted saved-state audits; common HOLD64 is descriptive only. Mandatory disjoint playing screens are in progress; no strength or optimal-recipe claim.
 
 - [2026-11-14: Actual A39/G1 SF-P0 consumer qualification](2026-11-14-sf-current-p0-a39-g1-qualification.md) — four real-network B256/BF16 engineering updates completed under matched structural controls; the positive branch exercised qualified, invalid and unavailable rows with measured health coverage. Root and independent actual acceptance; no research-dose, model-equivalence or strength claim.
 

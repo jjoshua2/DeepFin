@@ -112,3 +112,62 @@ The catalogue V1 selector failed after producing three unqualified candidate boo
 The initial 13-case PLAY metadata guard run closed FAILED in 1.2024840479716659 CPU-owner seconds: 12 passed, one errored before its intended assertion because a synthetic selector fixture omitted required stage/output fields. The runtime rules were unchanged. Its immutable failed receipt is `core-SF-current-P0-pilot-playing-guard-controls-bindings-v1/root-failure.json`, SHA `d0a876fba9c393ea9feea2f25dd483acbe4154eaf0dcce256646cfad2e848619`. A separately reviewed fixture-only correction and closed passing control owner are required before playing admission; neither run supplies model, serving or strength evidence.
 
 See the [actual consumer qualification](2026-11-14-sf-current-p0-a39-g1-qualification.md), [CUDA limitation](2026-11-14-sf-current-p0-cuda-qualification.md), [carrier qualification](2026-11-14-sf-current-p0-sidecar-qualification.md) and [active week-one program](2026-11-12-rl-week-one.md). All scientific outputs and external-engine milestones remain unmeasured at registration.
+
+
+## Closed technical readouts — November 14
+
+The preregistration above is preserved as published in [#1320](https://github.com/jjoshua2/DeepFin/pull/1320), merged at `2072c0eb883f80c1b58404200dbc002dbb4272f5`. Root sealed main/publication proof before the first scientific owner. Both fresh training arms, both saved-state audits and the common HOLD64 diagnostic have now closed and received different-author independent acceptance. The scheduled playing comparisons are in progress; there is no playing-strength result, confirmation allocation or model adoption at this cutoff.
+
+| Closed phase | Applied observations | Actual owner wall seconds |
+| --- | --- | ---: |
+| A512 outcome-only GPU training | 512 updates, B256, 131,072 sampled views | 239.82721242198022 |
+| B512 native-SF .2 GPU training | 512 updates, B256, 131,072 sampled views | 256.38904482102953 |
+| A512 CPU saved-state audit | One complete strict CPU load, no forward or update | 6.359377945016604 |
+| B512 CPU saved-state audit | One complete strict CPU load, no forward or update | 6.365470149030443 |
+| Common HOLD64 GPU scoring | All three fixed models freshly scored on the same 64 inputs | 14.573127019044477 |
+| Common HOLD64 CPU readback | All 64 paired roots, unchanged formulas and complete observation joins | 6.35863158601569 |
+
+Closed scientific GPU wall is 510.7893842620542/9600 seconds, excluding the active playing owner. Closed scientific CPU-reader wall is 6.35863158601569/7500 seconds. The two separately selected CPU serialization audits used 12.724848094047047/600 engineering seconds; those costs are preserved separately. All six owners closed successfully; the root post-closure census contains 259 closed stages. No stopped predecessor or failed earlier control was resumed or retrospectively passed.
+
+Both arms kept all 256 original G1 games / 24,827 rows. Their complete 512-by-256 draw journals are identical: SHA `72d99144f0f332cb51d2bb93d4ca189ad3e85429897ebda584dbb0983843360d`, 131,072 valid physical row references across all 256 source chunks, with 24,702 distinct rows drawn. Every reference passed source membership and local row bounds; no full-row-coverage requirement or reroll was added. Final five-family RNG snapshots, backend and replay membership metadata match. This is recorded structural/RNG evidence, without a CUDA model-bit or numerical RNG-transition claim.
+
+A512 kept null sidecars, empty new-P0 sample counters, zero teacher mass and 131,072 outcome mass. Its original inactive P1 availability/health diagnostics were not required to be zero. B512 sampled 127,766 qualified native opinions, 673 INVALID opinions and 2,633 UNAVAILABLE opinions; the latter 3,306 draws used genuine-outcome fallback. Teacher mass was 25,553.2 and outcome mass 105,518.8. Its reported PV-checked fraction was 127,766/131,072 and PV-orphan fraction zero. No skipped, retried or clipped update was reported in either arm. These are actual sampled counts, without substituting full-bank coverage or claiming deeper teacher adequacy.
+
+The actual scientific checkpoint SHAs are A512 `b346d95fe976e6ab1c35524faee52f9e1e77cc7d6e721ee798ff539b719a4a18` and B512 `1934e6b3ad0bddc40a65c630e4eb68e7bed5af902128cf29d2a8c8eefb24c3f6`. Each separate CPU audit observed all 494 saved state entries finite and exactly equal in names, shapes, dtypes and values after the public R7 strict complete loader; 175 input planes and 61,444,448 unique parameters. Each payload had 479 named optimizer parameters and 438 actual state entries containing 1,752 finite tensors, with every present state counter at 512 and saved cosine position 255 after warmup. Absent state names were retained without reassignment. Each audit performed one deserialization/build/strict load and zero forward, Trainer construction, optimizer construction/restore, update or CUDA initialization. The CPU audit does not observe historical activation/logit dtype. BF16 remains the explicit source-selected training route; actual future L playing-serving observations and CPU game audits remain separate.
+
+The CPU audit's initial source-only tuple/list representation check was corrected to canonical JSON comparison and independently accepted before either audit ran; V1 remains unrun. The PLAY authority's initial metadata path was corrected to its frozen canonical path before any playing phase admission. Both corrections preserved the science, numerical source, seeds, data, books and deciding rules.
+
+### Common reused-HOLD64 diagnostic
+
+All three models were freshly scored using the same R7 instrument and exact existing 64-root bank; historical donor logits were not spliced in. The reader recomputed legal-policy/WDL probabilities from the banked logits and authenticated the full input/label/order/model joins. It retained every paired root.
+
+| Model | Three-class Brier sum | Expected-score MSE | Draw Brier | Legal-policy TV versus freshly scored A39 |
+| --- | ---: | ---: | ---: | ---: |
+| A39 | 0.535487285 | 0.116145126 | 0.202131355 | 0.000000000 |
+| A512 | 0.535991738 | 0.101564443 | 0.221908568 | 0.093488047 |
+| B512 | 0.532876736 | 0.103765655 | 0.216896951 | 0.093608636 |
+
+The registered primary empirical B512-minus-A512 Brier difference is **−0.0031150022562502497** across these 64 paired roots. The paired B512-minus-donor difference is −0.0026105487572906766. Expected-score MSE and draw Brier do not uniformly order the models. These are finite-bank descriptive observations: no population interval, bootstrap, CE extension, teacher-quality verdict, Brier kill or strength-selection rule was introduced. Both mandatory playing screens retain their registered conditions and fixed checkpoints regardless of these values.
+
+### Compact evidence for the closed phases
+
+All paths below have the same external artifact root declared above. Raw checkpoint/logit/paired-root files remain outside Git. Independent actual reviews reconciled authenticated metadata, source contracts and closed owner evidence; they did not independently deserialize the models or recompute raw prediction metrics.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `core-SF-current-P0-native020-pilot-prereg-publication-v1/publication.json` | `bef9bc752b3fab68bd41fad2c45442d29411a30370b6478f3a4d804c5b51bc3f` |
+| `core-SF-current-P0-native020-pilot-bindings-v1/A512/root-acceptance.json` | `c8cb91c3ee367494f8e78e4e32bd9cc602cfc59be435da8f50559ba956f7e1c1` |
+| `core-SF-current-P0-native020-A512-independent-actual-review-v1/review.json` | `134684c44b41ff3183a1cc64f318bba8fa1922e44f363af804636fbab55049ea` |
+| `core-SF-current-P0-native020-pilot-bindings-v1/B512/root-acceptance.json` | `cb0156ae976bcbb8b2b7c47aa95616b64ac458b0079d314a7f10b6e6a0b7653e` |
+| `core-SF-current-P0-native020-B512-independent-actual-review-v1/review.json` | `732c07e7603007f49f4d034ddaa22cc88c5222198680a6c34777aa5868e929c3` |
+| `core-SF-current-P0-native020-pilot-bindings-v1/checkpoint-audit-selection.json` | `1281e99275aad22fb7df990202801f39740c2780e31f7f4b9ad6ba4915df17fa` |
+| `core-SF-current-P0-native020-arm512-CPU-state-audit-independent-source-review-v2/review.json` | `54a75a00620aa672cc7e770115460f9e1f6a3cc67bc7f8250e453daac6fc2b60` |
+| `core-SF-current-P0-native020-A512-CPU-state-audit-results-v1/readout.json` | `b1c85e024db449baaf57018efdac668d621a1ac2b8d49b9d8a705073f135f837` |
+| `core-SF-current-P0-native020-B512-CPU-state-audit-results-v1/readout.json` | `f8fde96f69abd3c89b6861c45aa6566e9014080d870ced5eb7aebdcdcbdafe3a` |
+| `core-SF-current-P0-native020-pilot-bindings-v1/holdout/root-acceptance.json` | `9523a3c7c965620106a6aafff1e137abde12910ff55b8dc86b68c873670da173` |
+| `core-SF-current-P0-pilot-HOLD64-readout-v1/readout.json` | `e9d927f42a31379cad6018692d2273d4b4a6ada3ae661e7891760a73f9f4f84b` |
+| `core-SF-current-P0-native020-HOLD64-independent-actual-review-v1/review.json` | `cd804282df99ded630a5ab4f53f81e1e7c24ac29c4b9743276bd7268edbf97df` |
+| `core-SF-current-P0-native020-pilot-bindings-v1/model-authorities-root-record-v2.json` | `44ec40526edc03f8caf252d04a9c8921ebe265d3e275dc84646bbd78d89fc74c` |
+| `core-SF-current-P0-native020-model-authority-interface-independent-review-v1/review.json` | `9bfcf98aad979e2cb4ae5430e3d5c5bd9da9920632e990fa87ac7003fb4fc1d6` |
+
+Playing serving observations, strict game-reader decisions, confirmation eligibility and any resulting experiment decision are pending. No external-engine milestone or optimum-RL-formula claim follows from these technical readouts.
