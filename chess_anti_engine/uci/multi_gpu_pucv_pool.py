@@ -57,7 +57,7 @@ import threading
 import time
 from dataclasses import dataclass
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 from collections.abc import Callable
 
 import numpy as np
@@ -74,6 +74,7 @@ from chess_anti_engine.async_safety import (
     note_cleanup,
     pending_receipt,
     poison,
+    release_quarantine,
     submit_async,
 )
 from chess_anti_engine.mcts.puct_vl import _PLANES, _alloc_buffers, _release_outstanding
@@ -83,16 +84,20 @@ _log = logging.getLogger(__name__)
 # Floor of the MID-SEARCH stuck-device threshold. The threshold used for device
 # k is the larger of this and ``_STALL_SLOWEST_CALL_FACTOR`` x the slowest call
 # device k has completed, seeded from its steady-state (second-pass) warmup
-# timings (``warm_steady_call_s``). Why 5 s, deliberately conservative: while a
-# search is running, a stuck device costs only throughput -- the surviving
-# devices keep searching and the deadline watchdog still answers on time --
-# whereas a FALSE drop costs a whole GPU until it is restored at the next
-# ``go``. Healthy one-off stalls (a CUDA-graph record on a shape's first real
-# call, a GC pause, a driver/OS hiccup) are well under a second; 5 s is above
-# all of them yet short against a TCEC move, so a genuinely wedged device is
-# still shed long before the game is at risk.
+# timings (``warm_steady_call_s``). Why 5 s, deliberately conservative: WHILE THE
+# OTHER DEVICES STILL HAVE WORK, a stuck device costs only throughput -- the
+# survivors keep searching -- whereas a FALSE drop costs a whole GPU until it is
+# restored at the next ``go``. Healthy one-off stalls (a CUDA-graph record on a
+# shape's first real call, a GC pause, a driver/OS hiccup) are well under a
+# second. Once the survivors have drained the job's budget and sit idle, the
+# patience buys nothing (the run cannot return while a worker is stuck), so the
+# STOP threshold applies at once instead (see ``_abandon_stuck_locked``).
 _STALL_FLOOR_S = 5.0
 _STALL_SLOWEST_CALL_FACTOR = 10.0
+# Hard ceiling of the mid-search threshold. The slowest-call baseline only ever
+# grows (one healthy 4 s call would otherwise mean 40 s of patience for the
+# rest of the pool's life); no decay machinery, just a cap.
+_STALL_CEILING_S = 30.0
 # Once the job's stop event is set (``stop``, the deadline watchdog) nobody waits
 # for search results any more, and a search still blocked on one device would
 # hold the worker past the next ``go`` (it would be parked and that move
@@ -100,6 +105,10 @@ _STALL_SLOWEST_CALL_FACTOR = 10.0
 # and ``_STOP_STALL_SLOWEST_CALL_FACTOR`` x the slowest completed call.
 _STOP_STALL_FLOOR_S = 0.25
 _STOP_STALL_SLOWEST_CALL_FACTOR = 5.0
+# Hard ceiling of the stop-time threshold: however slow a call the device once
+# completed, a wedged device can never hold a stopped search (and so the next
+# ``go``) for more than this.
+_STOP_STALL_CEILING_S = 1.0
 # How often ``run`` re-checks for a stuck worker while it waits; a normal
 # completion wakes it at once through the condition variable.
 _RUN_POLL_S = 0.05
@@ -454,7 +463,10 @@ class MultiGpuPucvPool:
                 self._abandoned[k] = False
                 self._busy_since[k] = None
                 self._outstanding[k].clear()
-                self._quarantine[k] = _WorkerQuarantine(k)
+                # The drain succeeded: release (not replace) this worker's
+                # quarantine, so repeated stall/restore cycles do not pile up
+                # entries in the process-wide quarantine list.
+                release_quarantine(self._quarantine[k])
                 self._drop_reason[k] = None
                 self._live[k] = True
                 restored.append(k)
@@ -481,14 +493,18 @@ class MultiGpuPucvPool:
         floor = self._cfg.stall_floor_s
         return max(
             float(_STALL_FLOOR_S if floor is None else floor),
-            _STALL_SLOWEST_CALL_FACTOR * self._slowest(idx),
+            min(_STALL_CEILING_S, _STALL_SLOWEST_CALL_FACTOR * self._slowest(idx)),
         )
 
     def stop_stall_threshold_s(self, idx: int | None = None) -> float:
-        """The shorter threshold once the job is stopped (see module constants)."""
-        return min(self.stall_threshold_s(idx), max(
-            _STOP_STALL_FLOOR_S, _STOP_STALL_SLOWEST_CALL_FACTOR * self._slowest(idx),
-        ))
+        """The shorter threshold once nothing waits on the stuck worker (the job
+        is stopped, or every other device is idle); never above
+        ``_STOP_STALL_CEILING_S``."""
+        return min(
+            _STOP_STALL_CEILING_S,
+            self.stall_threshold_s(idx),
+            max(_STOP_STALL_FLOOR_S, _STOP_STALL_SLOWEST_CALL_FACTOR * self._slowest(idx)),
+        )
 
     @property
     def gather(self) -> int:
@@ -581,12 +597,35 @@ class MultiGpuPucvPool:
                 self._late_ok[idx] = False
 
     def _abandon_stuck_locked(self, job: _Job | None) -> None:
-        """Abandon every running worker stuck in one device call too long."""
+        """Abandon every running worker stuck in one device call too long.
+
+        The short (stop) threshold applies when the job is stopped, or when
+        every live device that is NOT stuck has already finished this job (it
+        drained the budget and sits idle) while each worker still running is
+        inside a call older than the stop threshold: ``run`` cannot return
+        while a worker is stuck, so mid-search patience would only burn the
+        move. The survivors cannot instead take over a stuck worker's leaves
+        while it might still answer -- its batch is under virtual loss in the
+        tree and its late answer would integrate twice -- so abandoning it
+        (which releases that virtual loss under this lock and hands its
+        tokens back) IS the take-over. A healthy slow call that coincides
+        with a drained budget is dropped this way too, and restored at the
+        next search start once it answers. With no idle survivor (one device
+        left) the long threshold still applies: dropping it gains nothing."""
         stopped = job is not None and job.stop_event.is_set()
         now = time.monotonic()
+        idle_survivor = any(
+            alive and j not in self._running for j, alive in enumerate(self._live)
+        )
+        nobody_progressing = idle_survivor and bool(self._running) and all(
+            self._busy_since[k] is not None
+            and now - cast(float, self._busy_since[k]) > self.stop_stall_threshold_s(k)
+            for k in self._running
+        )
+        short = stopped or nobody_progressing
         for k in sorted(self._running):
             since = self._busy_since[k]
-            limit = self.stop_stall_threshold_s(k) if stopped else self.stall_threshold_s(k)
+            limit = self.stop_stall_threshold_s(k) if short else self.stall_threshold_s(k)
             if since is None or now - since <= limit:
                 continue
             self._abandoned[k] = True

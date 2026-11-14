@@ -120,7 +120,9 @@ def run_control(kind: str, cache: int, boundary: str, completion_failure: str = 
             frame.f_trace_opcodes = True
             ins = instructions[frame.f_code].get(frame.f_lasti)
             local = frame.f_locals
-            line = linecache.getline(frame.f_code.co_filename, frame.f_lineno).strip()
+            # f_lineno can be None (e.g. a @contextmanager frame on 3.10).
+            lineno = frame.f_lineno
+            line = linecache.getline(frame.f_code.co_filename, lineno).strip() if lineno is not None else ""
             is_registration = event == "opcode" and ins is not None and ins.opname == "STORE_SUBSCR" and line.startswith("receipts[")
             is_alias = event == "line" and line == "unregistered_receipt[0] = None"
             cell = local.get("unregistered_receipt", local.get("receipt_cell"))

@@ -19,6 +19,7 @@ import chess
 import numpy as np
 import pytest
 
+import chess_anti_engine.async_safety as async_safety
 import chess_anti_engine.uci.engine as engine_module
 import chess_anti_engine.uci.multi_gpu_pucv_pool as pool_module
 from chess_anti_engine.encoding._lc0_ext import CBoard
@@ -56,6 +57,7 @@ class _Faulty:
     device), then answers normally -- the late answer must corrupt nothing.
     ``mode="hang_sync"``: the submission returns, but waiting for its completion
     blocks until ``release`` (a kernel that never finishes).
+    ``mode="hang_raise"``: like ``hang``, but when released the call RAISES.
     """
 
     def __init__(self, inner: Any, *, mode: str, after: int = 0) -> None:
@@ -80,6 +82,8 @@ class _Faulty:
         if self.mode == "raise":
             raise RuntimeError("CUDA error: an illegal memory access was encountered (injected)")
         assert self.release.wait(30)
+        if self.mode == "hang_raise":
+            raise RuntimeError("CUDA error: device lost after a stall (injected)")
 
     def evaluate_inplace_async(self, *args: Any, **kwargs: Any) -> Any:
         if self.mode == "hang_sync":
@@ -529,14 +533,31 @@ def _wait_for(predicate, timeout: float = 10.0) -> bool:
     return predicate()
 
 
+class _Paced:
+    """A healthy device that takes ``per_call`` s on every submission, so it is
+    still busy with the job while another device sits in a slow call."""
+
+    def __init__(self, inner: Any, per_call: float) -> None:
+        self._inner = inner
+        self.per_call = per_call
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def evaluate_inplace_async(self, *args: Any, **kwargs: Any) -> Any:
+        time.sleep(self.per_call)
+        return self._inner.evaluate_inplace_async(*args, **kwargs)
+
+
 def test_production_floor_keeps_a_device_with_one_slow_first_call() -> None:
     """The reviewer's repro at the shipped constants: a healthy device whose
-    first call after warmup takes 1.2 s must not be dropped (before: dropped
-    for the life of the pool by the old 1 s floor)."""
+    first call after warmup takes 1.2 s must not be dropped while the other
+    device still has work (before: dropped for the life of the pool by the old
+    1 s floor)."""
     slow = _OnceSlow(_evaluator(), k=1, delay=1.2)
     pool = MultiGpuPucvPool(
         MultiGpuPucvConfig(n_gpus=2, gather=8, device_labels=("g0", "g1")),
-        evaluators=[_evaluator(), slow],
+        evaluators=[_Paced(_evaluator(), 0.06), slow],  # ~38 batches: busy > 2 s
     )
     try:
         assert pool.stall_threshold_s() >= 5.0
@@ -561,7 +582,7 @@ def test_threshold_scales_with_the_seeded_steady_state_call(monkeypatch) -> None
     slow.warm_steady_call_s = 0.5
     pool = MultiGpuPucvPool(
         MultiGpuPucvConfig(n_gpus=2, gather=8, device_labels=("g0", "g1")),
-        evaluators=[_evaluator(), slow],
+        evaluators=[_Paced(_evaluator(), 0.06), slow],
     )
     try:
         assert pool._slowest_call_s[1] == pytest.approx(0.5)
@@ -582,14 +603,18 @@ def test_stalled_device_is_restored_after_its_call_returns(monkeypatch, where) -
         evaluators=[_evaluator(), stuck],
     )
     try:
+        quarantined = len(async_safety._quarantine)
         _run(pool, 300)
         assert pool.failed_devices() == ("cpu:1",)
+        assert len(async_safety._quarantine) == quarantined + 1
         assert "stopped answering" in (pool.degraded_summary() or "")
         pool.drain_notes()
         assert pool.restore_recovered_devices() == ()  # still stuck: nothing to restore
         stuck.release.set()
         assert _wait_for(lambda: pool._restorable[1])
         assert pool.restore_recovered_devices() == ("cpu:1",)
+        # Released, not replaced: a flapping device does not grow the list.
+        assert len(async_safety._quarantine) == quarantined
         notes = pool.drain_notes()
         assert len(notes) == 1
         assert notes[0].startswith("multi-GPU RESTORED: device cpu:1")
@@ -756,4 +781,103 @@ def test_a_late_clean_answer_with_an_undrainable_receipt_is_not_restored(monkeyp
         assert pool.failed_devices() == ("cpu:1",)
     finally:
         dev.release.set()
+        pool.close()
+
+
+# -- round 2: idle survivors, caps, stall-then-raise ----------------------------
+
+
+def test_a_stuck_device_does_not_cost_the_move_once_the_others_are_idle(out) -> None:
+    """At the SHIPPED 5 s floor, device 1 hangs early in a 2 s move. The other
+    device drains each chunk's budget and goes idle, so patience buys nothing:
+    the stuck worker is abandoned at the stop threshold and the move is
+    SEARCHED (before: the run waited 5 s and the watchdog answered unsearched
+    from the root policy)."""
+    stuck = _Faulty(_evaluator(), mode="hang", after=2)
+    engine, worker = _engine_with_pool([_evaluator(), stuck])
+    try:
+        move, took = _searched_go(engine, out, "e2e4", 2000, 1)
+        assert stuck.entered.is_set()
+        assert _legal_after("e2e4", move)
+        assert took < 2.0 + 0.5
+        assert not any(marker in out.text() for marker in _UNSEARCHED), out.text()
+        assert worker.failed_pool_devices() == ("cpu:1",)
+        stuck.release.set()
+        pool: Any = worker._pucv_pool
+        assert _wait_for(lambda: pool._restorable[1])  # the stall was not a fault
+    finally:
+        stuck.release.set()
+        engine.close()
+        worker.close()
+
+
+def test_a_healthy_slow_call_on_a_drained_budget_is_dropped_then_restored() -> None:
+    """The accepted cost of the idle-survivor rule: a healthy 1.2 s call that
+    lands when the other device has already finished the job is dropped at the
+    stop threshold, and restored at the next search start once it answers."""
+    slow = _OnceSlow(_evaluator(), k=1, delay=1.2)
+    pool = MultiGpuPucvPool(
+        MultiGpuPucvConfig(n_gpus=2, gather=8, device_labels=("g0", "g1")),
+        evaluators=[_evaluator(), slow],
+    )
+    try:
+        started = time.monotonic()
+        _run(pool, 100)
+        assert time.monotonic() - started < 1.2  # did not wait out the slow call
+        assert pool.failed_devices() == ("g1",)
+        assert _wait_for(lambda: pool._restorable[1])
+        assert pool.restore_recovered_devices() == ("g1",)
+        assert pool.failed_devices() == ()
+    finally:
+        pool.close()
+
+
+def test_one_device_left_keeps_the_long_threshold() -> None:
+    """With no idle survivor there is nothing to hand the work to: a single
+    device's slow call is waited out, not dropped."""
+    slow = _OnceSlow(_evaluator(), k=2, delay=1.2)
+    pool = MultiGpuPucvPool(
+        MultiGpuPucvConfig(n_gpus=1, gather=8, device_labels=("g0",)),
+        evaluators=[slow],
+    )
+    try:
+        assert _run(pool, 100)[0] == 100
+        assert pool.failed_devices() == ()
+    finally:
+        pool.close()
+
+
+def test_thresholds_are_capped_however_slow_a_call_once_was() -> None:
+    pool = MultiGpuPucvPool(
+        MultiGpuPucvConfig(n_gpus=2, gather=8, device_labels=("g0", "g1")),
+        evaluators=[_evaluator(), _evaluator()],
+    )
+    try:
+        pool._slowest_call_s[1] = 4.0  # one healthy 4 s call
+        assert pool.stall_threshold_s(1) == pytest.approx(30.0)  # not 40 s
+        assert pool.stop_stall_threshold_s(1) == pytest.approx(1.0)  # not 20 s
+        pool._slowest_call_s[0] = 0.01
+        assert pool.stall_threshold_s(0) == pytest.approx(5.0)
+        assert pool.stop_stall_threshold_s(0) == pytest.approx(0.25)
+    finally:
+        pool.close()
+
+
+def test_a_stalled_call_that_then_raises_is_not_restorable(monkeypatch) -> None:
+    monkeypatch.setattr(pool_module, "_STALL_FLOOR_S", 0.3)
+    bad = _Faulty(_evaluator(), mode="hang_raise", after=1)
+    pool = MultiGpuPucvPool(
+        MultiGpuPucvConfig(n_gpus=2, gather=8, device_labels=("cpu:0", "cpu:1")),
+        evaluators=[_Paced(_evaluator(), 0.05), bad],
+    )
+    try:
+        _run(pool, 300)
+        assert pool.failed_devices() == ("cpu:1",)
+        bad.release.set()  # the stuck call now RAISES
+        assert _wait_for(lambda: not pool._threads[1].is_alive(), timeout=5.0)
+        assert not pool._restorable[1]
+        assert pool.restore_recovered_devices() == ()
+        assert pool.failed_devices() == ("cpu:1",)
+    finally:
+        bad.release.set()
         pool.close()
