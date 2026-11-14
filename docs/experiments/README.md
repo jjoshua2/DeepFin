@@ -10,6 +10,7 @@ Start here for experiment planning and readouts. [Project guidance](../../CLAUDE
 holds durable constraints; [evaluation](../eval_protocol.md) explains which
 measurements support which claims.
 Gaps that remain after a pull request merges are listed in [pull-request follow-ups](../pr_followups.md).
+Evidence for records before 2026-10-25 that no staying code, current doc or later record reads (and that is not Bend-related) moved out of git on 2026-11-13: it lives in the `repo-slim-20261113` artifacts archive on the project host under the same relative path (`docs/experiments/evidence/...`, `docs/experiments/artifacts/...`, listed in its `MANIFEST.sha256`) and is recoverable from tag `pre-slim-20261113`, e.g. `git show pre-slim-20261113:docs/experiments/evidence/<path>`. A record link to such a file is therefore dangling in a fresh checkout by design.
 For future bootstrap choices, see the [adaptive decision policy](2026-09-08-bootstrap-next-value-and-policy-contrasts.md#september-13-adaptive-decisions-for-the-remaining-bootstrap-research): registered result classification and the next research decision are separate.
 
 ## Records

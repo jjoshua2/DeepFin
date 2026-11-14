@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from scratchpad.sfpolicy_compare import arm_contrast_closed_form as contrast
+from tests.fixtures.sfpolicy_compare import arm_contrast_closed_form as contrast
 from scripts import sim_gather_policy as gather
 
 
