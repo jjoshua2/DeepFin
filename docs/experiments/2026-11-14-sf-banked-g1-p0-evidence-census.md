@@ -1,5 +1,14 @@
 # Banked original-G1 Stockfish P0 evidence census
 
+Current status at **2026-11-14 13:34 UTC**: **COMPLETED DATA-ONLY CENSUS AND
+DESCRIPTIVE METADATA READOUT; BOTH INDEPENDENT ACTUAL REVIEWS ACCEPTED.** The
+fixed population remains 256 original-G1 TRAIN games / 24,827 retained rows.
+No labels, training mask, teacher regimen, dataset/model or playing-strength
+adoption follows. The preregistration below is retained as its historical cutoff;
+the completed readout follows it.
+
+## Preregistration snapshot — November 14, 11:48 UTC
+
 Status at **2026-11-14 11:48 UTC**: **PROSPECTIVE DATA-ONLY PREREGISTRATION —
 SOURCE REVIEWED; 40 SYNTHETIC CASES PASSED, ACTUAL CENSUS UNRUN.** Root accepted
 the closed synthetic validation; its independent actual review is pending. The
@@ -175,3 +184,127 @@ result reroll.
 Actual root input authority and final census protocol/commands/admission remain
 **UNBOUND**; actual G1 census observations remain **UNRUN**. Independent actual
 review of the completed synthetic validation is pending at this cutoff.
+
+## Completed readout — November 14, 13:34 UTC
+
+The one admitted census completed under protocol `e84bec43…`, with all **256
+physical games and 24,827 retained rows** accounted for. The CPU owner closed
+PASS in **57.474276367 seconds**. Root acceptance and independent actual review
+accepted the closed source/custody/report evidence with no findings. That review
+used source and compact metadata; it did not independently reparse the complete
+row stream or repeat the producer reconstruction. The separately selected
+metadata reader then reconciled predecessor context, joint field flags,
+per-game order/identities and all row/game denominators against the same banked
+census stream. Its CPU owner closed PASS in **2.214515074 seconds**; root and
+independent actual metadata acceptance are recorded separately.
+
+### Current-P0 evidence, with the whole denominator retained
+
+| Retained-predecessor route | Rows | Policy / stored WDL / native WDL presence |
+| --- | ---: | --- |
+| Source-context reduced label, internally consistent | 24,205 | True / True / True |
+| Invalid reduced label, retained in the report | 127 | True / True / True |
+| No retained actual-ply predecessor join | 495 | NOT_RECORDED_NO_JOIN; flags absent |
+| Total | 24,827 | No row removed or imputed |
+
+The first two rows sum to **24,332 raw-presence joins**, including all 127 invalid
+cases. Presence is not training eligibility, a complete teacher policy or native
+value correctness. Among those invalid joins, 125 have metadata-versus-PV1 score
+disagreement and 111 have native-WDL disagreement. These reasons overlap in the
+127 rows; summing them as 236 distinct invalid rows would be wrong. Zero-count
+strata remain in the metadata output. In particular, source-tier names were not
+used to infer missing booleans or native-value availability.
+
+Stored explicit-P0 policy is absent in **all 24,827 rows**. Explicit-P0 regret is
+present in **24,332**, with 495 unavailable; it is the source-shifted regret field,
+not a policy distribution, wire-authenticated teacher or newly reconstructed
+strong target. The census's **24,761 own-record P1 labels** describe another
+orientation/context and are not a count of current-P0 joined labels. Stored WDL
+uses the producer's CP-logistic conversion and POV flip in F16; native permille
+metadata is separately reported. No new value transform was chosen.
+
+These are source-reconstructed full-history joins, not recovered original query
+wire. Full PVs, bound flags, escalation, query identifiers and per-PV actual
+requested/returned effort remain unknown. Partial sparse support, quantization,
+possible clipping and invalid/unavailable evidence remain explicit. The result
+answers what evidence survives in this fixed corpus; it establishes no minimum
+coverage cutoff, training-side mask, label adequacy, teacher mixture or strength.
+No input arrays or the row journal were reopened to author this documentation.
+
+### Producing critic and execution provenance
+
+The original declared critic's executable SHA256 is
+`2764e7ef36bee844347586c8025ba81464315352128ef250f8c609f76044a68e`.
+A separate measured installed-identity receipt joins that exact hash to
+`Stockfish dev-20260420-ed651aab`. The producing protocol declares 5,000 nodes,
+MultiPV 8, Hash 16 MiB, two workers and a 10-second read timeout. The identity
+receipt SHA begins `37e9a8d4`; it is not the binary SHA. This establishes the
+hash/advertised-identity join, not historical per-query wire/effort, external
+network overrides, source-to-binary equivalence, target quality or a claim that
+the critic was a newer/current Stockfish build. No new teacher query was made
+by the census or metadata reader.
+
+The executed auditor was frozen S source `70db0b6f…`; all 13 consumed source
+files match the published PR1310 merge `b18cef3d…`. Producing numerical source
+remains L `090b5143…`. The direct CLI exercised the real CPU-parent, source and
+before/final forbidden-import guards without Torch/ORT or project native images.
+This does not qualify ignored native images in the author checkout. The **40
+synthetic test cases**, **four-row direct-CLI fixture** and **four-row metadata
+fixture** are distinct engineering checks; their observations are not additional
+research rows or independent research populations.
+
+The premeasurement selection `a22b41dd…` explicitly added the CPU **60/45-second
+synthetic metadata check** and **120/90-second actual metadata readout** before
+real census observations. They were not silently treated as original template
+phases; the single census remained **900/870 seconds**. Actual qualification
+owners totalled **10.098529545 seconds**; adding census 57.474276367 and metadata
+2.214515074 gives **69.787320986 owner-seconds**, within the 1,200-second aggregate
+prospective ceiling. GPU use for these phases was zero. This is scoped audit
+cost accounting, not a whole-week cost total or future compute entitlement.
+
+The original census limits remained 128 MiB per metadata file, 64 MiB decoded
+arrays per game, 128,000 inventory files per game and a 256 MiB row report. The
+extra stdlib metadata reader bounded inputs to 32 MiB per metadata file,
+256 MiB JSONL total, 1 MiB per line, and 1,024 rows / 8 MiB per game. It streamed
+one game's row metadata at a time and retained global IDs plus small game counts,
+without decoding arrays or constructing a training sidecar.
+
+Two mechanical failures remain preserved. CI for historical head `1708189c…`
+failed the portable-path test because this record used an absolute home path;
+the prose-only `~/…` correction preceded the successful full-CI main publication.
+Separately, root's first attempt to place a metadata binding inside the sealed
+0555 preparation directory raised PermissionError before any write/admission or
+numeric execution. Root preserved that packet and used a separate execution
+directory. Neither event changed source/scientific rules, data, counts or targets,
+and neither caused a census/measurement reroll. Earlier source-review fixes and
+the preregistration's original cutoffs remain historical evidence above.
+
+The census and metadata readout are complete; **no training, teacher regimen,
+model/champion promotion, CONF allocation, new playing result or Elo gain is
+admitted by them**. Prior negative/unresolved playing results and the unchanged
+long-term strength goal remain in force. Any follow-up needs its own scientific
+decision; there is no automatic learning or query continuation from these counts.
+
+Bulk evidence root remains `~/chess-artifacts/operations/rl-week-one-20261112-v1`.
+The table binds compact receipts; the row journal and per-game CSV hashes are
+carried by their authenticated reports without being rehashed for this doc edit.
+
+| Evidence | Relative path | SHA256 |
+| --- | --- | --- |
+| Published source/preregistration and full CI | `core-SF-banked-G1-auditor-main-publication-v1/publication.json` | `ffd8dea4326e832114794441bbece38eb6be3340033943581b0ca57e7c2d4586` |
+| Fixed census protocol | `core-SF-banked-G1-census-bindings-v1/protocol.json` | `e84bec43e5d43c91bf0c699906dc8debabcccb47dbddb7a519f999e5466eda08` |
+| Closed census owner | `core-SF-banked-G1-census-CPU-execution-v1/terminal.json` | `fbc005a4c6a162442fde252dc0b56f5011d133ad647b08a04604298ac70d6728` |
+| Complete census report | `core-SF-banked-G1-census-results-v1/readout.json` | `61e7f34ab9ed38e3a48508be5e0469b9f2bbaa05bc00702705d69a3e088887f7` |
+| Root closed census acceptance | `core-SF-banked-G1-census-bindings-v1/root-readout-acceptance.json` | `8ef06ac0b5f54069946d4c515a70e65950750980c63c1c1d86b0f7659ba05ccd` |
+| Independent actual census review | `core-SF-banked-G1-census-independent-actual-review-v1/review.json` | `9c8f2188fc7573f2043e9b9c45a933c6f2d3934cc283d5ac7953008a24e09f16` |
+| Premeasurement metadata phase selection | `core-SF-banked-G1-metadata-readout-selection-v1/decision.json` | `a22b41dded02df9d56c8b92e57d2830e093b9b3290a2542c9800de33b9f4c5e7` |
+| Metadata protocol | `core-SF-banked-G1-metadata-actual-root-execution-v1/protocol.json` | `dbae00993fb452435a194402bf7a5f29474eedce0af36a54d25ad09797450fa3` |
+| Closed metadata owner | `core-SF-banked-G1-metadata-actual-CPU-execution-v1/terminal.json` | `c5fdb81ef1c2f13f5f047ee8e741d113cb4d11dc3169378c4ab77d11a8ba5739` |
+| Current-P0 joint metadata report | `core-SF-banked-G1-metadata-actual-results-v1/readout.json` | `43ba50696e129fea5113d965d798e0bba6a57baff14da1315bc645547f644ac7` |
+| Root metadata acceptance | `core-SF-banked-G1-metadata-actual-root-execution-v1/root-readout-acceptance.json` | `66a2de44317404f2d628dd1a86f80eb3c397027aa2c13fb00eb050adceeafe32` |
+| Independent actual metadata review | `core-SF-banked-G1-metadata-actual-independent-review-v1/review.json` | `c11afb133c2aac8c701514f28e0093c7d0a2f81fdc9a99a0d9246a5c406e5c01` |
+| Independent direct-CLI fixture review | `core-SF-banked-G1-CLI-synthetic-actual-independent-review-v1/review.json` | `71b16ee68b943468738247fd1ce061227d50c8e89fdee09f688ec18032778887` |
+| Independent metadata-fixture review | `core-SF-banked-G1-metadata-synthetic-independent-actual-review-v1/review.json` | `9af48248da7843f91e3499b1935f01217f7a0d41283f294f817588cdf1000227` |
+| Original declared critic / measured identity join | `external-reference-engine-identity-preparation-v1/original-G1-declared-critic-identity-join.json` | `37e9a8d431101ee6eed68cbec51a44fdfcdf60bb3abcbe72c7512b42c233fb9b` |
+| Preserved failed head-170 CI | `core-SF-banked-G1-main-publication-CI-path-correction-v1/failure.json` | `9f0473ea50e7a766692da7674c20c19a2008b0032148c4c211f28450247544ed` |
+| Preserved root preparation path correction | `core-SF-banked-G1-metadata-actual-root-execution-v1/preparation-path-correction.json` | `647d683c214786b563e35bf225181629419f196e45bc4ed80ff1978169a8041d` |

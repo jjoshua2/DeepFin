@@ -16,7 +16,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
-- [2026-11-14: Banked original-G1 Stockfish P0 evidence census](2026-11-14-sf-banked-g1-p0-evidence-census.md) — prospective data-only census of all 256 original-G1 TRAIN games / 24,827 retained rows; source reviewed and 40 synthetic cases passed (independent actual review pending). Actual census unrun and root input authority unbound; no teacher-training regimen, label admission or playing-strength claim.
+- [2026-11-14: Banked original-G1 Stockfish P0 evidence census](2026-11-14-sf-banked-g1-p0-evidence-census.md) — completed data-only audit of all 256 games / 24,827 rows: 24,205 internally consistent source-context joins, 127 invalid joins and 495 unavailable. Recorded field presence and explicit regret are not teacher-target/training eligibility; independent actual census and metadata reviews accepted, no recipe or playing-strength adoption.
 
 - [2026-11-14: Full-state lower-rate on-policy continuation](2026-11-14-low-lr-on-policy-continuation.md) — first leg closed at G8 / step 4,096: qualified terminal nonpass, 46.2890625% versus A39 over 512 games (paired 95% interval 43.1009–49.4772%). No C1 eligibility/allocation/consumption, conditional second leg, retry or adoption; study donor/incumbent unchanged and broader goal active.
 
