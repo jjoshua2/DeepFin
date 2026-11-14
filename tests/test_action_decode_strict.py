@@ -485,6 +485,9 @@ def test_arena_run_voids_the_run_and_writes_no_result(
         lambda *a, **k: _NullNet(),
     )
     monkeypatch.setattr(arena, "play_paired_games_matched_sims_rolling", _boom)
+    # The default game log lives under the checkout's runs/; a second run would
+    # then refuse "game log already exists" before reaching the code under test.
+    monkeypatch.setattr(arena, "DEFAULT_GAME_LOG_DIR", tmp_path / "arena_games")
     side = arena.resolve_search_shape("training")
 
     with pytest.raises(SystemExit) as excinfo:
