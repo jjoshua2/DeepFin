@@ -23,6 +23,10 @@ from pathlib import Path
 class ExtensionSpec:
     module: str
     dependencies: tuple[str, ...]
+    # OPTIONAL: no production code imports it yet, so a checkout that has not
+    # rebuilt since it was added must still pass. Present-but-stale is still
+    # an error; only "missing" is allowed.
+    optional: bool = False
 
 
 # setup.py is a compile input, not merely packaging metadata: it owns extension
@@ -108,6 +112,29 @@ EXTENSION_SPECS: tuple[ExtensionSpec, ...] = (
             "chess_anti_engine/encoding/_bitboard_planes_impl.h",
             "chess_anti_engine/encoding/_slider_attacks_impl.h",
         ),
+    ),
+    # Syzygy prober (vendored Fathom). Two translation units: _tb_ext.c (the
+    # Python glue; only it is walked by the include-coverage test) and
+    # _tb_fathom.c, which includes the unmodified Fathom sources -- so the
+    # second unit and everything it pulls in are listed by hand. tbconfig.h is
+    # reached through an angle-bracket include the walker does not follow.
+    ExtensionSpec(
+        "chess_anti_engine.tb._tb_ext",
+        (
+            _SETUP_DEP,
+            "chess_anti_engine/tb/_tb_ext.c",
+            "chess_anti_engine/tb/_tb_fathom.c",
+            "chess_anti_engine/tb/_tb_fathom.h",
+            "chess_anti_engine/tb/fathom/src/tbprobe.c",
+            "chess_anti_engine/tb/fathom/src/tbprobe.h",
+            "chess_anti_engine/tb/fathom/src/tbchess.c",
+            "chess_anti_engine/tb/fathom/src/tbconfig.h",
+            "chess_anti_engine/tb/fathom/src/stdendian.h",
+            "chess_anti_engine/encoding/_cboard_impl.h",
+            "chess_anti_engine/encoding/_bitboard_planes_impl.h",
+            "chess_anti_engine/encoding/_slider_attacks_impl.h",
+        ),
+        optional=True,  # until a production call site imports it
     ),
 )
 
@@ -275,7 +302,8 @@ def check_extensions(
     for spec in EXTENSION_SPECS:
         output = _first_existing(_extension_outputs(root, spec.module))
         if output is None:
-            issues.append(f"{spec.module} is missing")
+            if not spec.optional:
+                issues.append(f"{spec.module} is missing")
             continue
         if min_gcc_major is not None:
             compiler_major = _gcc_major(output)
@@ -301,6 +329,14 @@ def check_extensions(
             if dep.stat().st_mtime_ns > output_mtime:
                 issues.append(f"{spec.module} is older than {dep_rel}")
     return issues
+
+
+def absent_optional_extensions(root: Path) -> list[str]:
+    """Optional extensions with no built output (not a failure, but not 'present')."""
+    return [
+        spec.module for spec in EXTENSION_SPECS
+        if spec.optional and _first_existing(_extension_outputs(root, spec.module)) is None
+    ]
 
 
 _SYMBOL_PROBE = (
@@ -377,7 +413,14 @@ def main() -> int:
         print("Run: python3 scripts/build_production_extensions.py")
         return 1
     if not args.quiet:
-        print("C extensions are present and up to date.")
+        absent = absent_optional_extensions(root)
+        if absent:
+            print(
+                "Required C extensions are present and up to date; "
+                f"optional extension(s) not built: {', '.join(absent)}.",
+            )
+        else:
+            print("C extensions are present and up to date.")
     return 0
 
 
