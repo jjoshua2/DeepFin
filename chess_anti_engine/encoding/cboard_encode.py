@@ -10,6 +10,7 @@ import numpy as np
 import chess_anti_engine.encoding._lc0_ext as _lc0_ext
 from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding.features import extra_feature_plane_count
+from chess_anti_engine.ext_check import REBUILD_HINT, CCoreIncompleteError, refuse_fallback
 from chess_anti_engine.encoding.lc0 import (
     LC0_HISTORY_ROOT_LEGACY_META,
     c_input_history_mode as lc0_root_history_mode,
@@ -74,8 +75,11 @@ def encode_cboard(
 ) -> np.ndarray:
     """Encode a CBoard into (C, 8, 8) float32 (C = 146 v1 / 175 v2_threats).
 
-    Prefer the fused CBoard.encode_full() path when available. Fall back to
-    CBoard.encode_planes() + the existing features extension otherwise.
+    Uses the fused ``CBoard.encode_full()``. A board without it (a stale
+    build) is refused; under ``ext_check.python_reference_paths`` the
+    reference composition ``CBoard.encode_planes()`` + the features extension
+    runs instead. A missing features extension is always an error: this used
+    to return all-zero feature planes, which the net reads as a real position.
     """
     hist_enc = normalize_lc0_history_encoding(input_history_encoding)
     use_lc0_root = uses_lc0_root_history(hist_enc)
@@ -83,17 +87,20 @@ def encode_cboard(
     encode_full = getattr(cb, "encode_full", None)
     if encode_full is not None:
         return encode_full(lc0_root_history_mode(hist_enc), n_extra)
+    refuse_fallback(
+        "encode_cboard", "CBoard.encode_full",
+        "CBoard.encode_planes() + per-board feature planes",
+    )
+    if not _HAS_FEATURES_C:
+        raise CCoreIncompleteError(
+            "encode_cboard: _features_ext.compute_extra_features is unavailable; "
+            "refusing to emit all-zero feature planes. Rebuild: " + REBUILD_HINT
+        )
 
   # LC0 112 planes — all in C
     lc0 = (cb.encode_planes_lc0_root() if use_lc0_root else cb.encode_planes())
     if hist_enc == LC0_HISTORY_ROOT_LEGACY_META:
         apply_lc0_root_legacy_meta_planes_cboard(lc0, cb)
-
-    if not _HAS_FEATURES_C:
-  # No features C ext — return LC0 only with zero features
-        out = np.zeros((112 + n_extra, 8, 8), dtype=np.float32)
-        out[:112] = lc0
-        return out
 
   # Extract bitboard values for features extension
     is_white = cb.turn  # True = WHITE
@@ -136,9 +143,10 @@ def encode_cboard_batch(
 ) -> np.ndarray:
     """Encode N CBoards into (N, C, 8, 8) float32 (C = 146 v1 / 175 v2_threats).
 
-    Prefer the module-level C ``encode_full_batch`` path (one Python->C call
-    into a contiguous buffer). On stale extension builds that lack the symbol,
-    fall back to stacking per-board ``encode_cboard`` results.
+    Uses the module-level C ``encode_full_batch`` (one Python->C call into a
+    contiguous buffer). A stale build that lacks the symbol is refused; under
+    ``ext_check.python_reference_paths`` per-board ``encode_cboard`` results
+    are stacked instead (the reference the batch path is tested against).
     """
     n_extra = extra_feature_plane_count(input_extra_features)
     n_planes = 112 + n_extra
@@ -152,7 +160,10 @@ def encode_cboard_batch(
         out = np.empty((n, n_planes, 8, 8), dtype=np.float32)
         encode_full_batch(boards, out, hist_mode, n_extra)
         return out
-
+    refuse_fallback(
+        "encode_cboard_batch", "_lc0_ext.encode_full_batch",
+        "stacking per-board encode_cboard results",
+    )
     return np.stack(
         [
             encode_cboard(

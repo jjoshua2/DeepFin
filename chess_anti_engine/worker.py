@@ -49,7 +49,9 @@ from chess_anti_engine.mcts.gumbel import (
     SELFPLAY_GUMBEL_C_SCALE,
     policy_temp_active,
 )
-from chess_anti_engine.encoding import encode_positions_batch, input_plane_count
+from chess_anti_engine.encoding import input_plane_count
+from chess_anti_engine.encoding._lc0_ext import CBoard
+from chess_anti_engine.encoding.cboard_encode import encode_cboard_batch
 from chess_anti_engine.moves.encode import legal_move_indices
 from chess_anti_engine.inference import (
     AOTEvaluator,
@@ -96,6 +98,7 @@ from chess_anti_engine.selfplay.diff_focus_norm import DiffFocusNormalizer
 from chess_anti_engine.selfplay.manager import BatchStats
 from chess_anti_engine.selfplay.state import build_diff_focus_normalizer
 from chess_anti_engine.train.target_builder import SfTargetParams
+from chess_anti_engine.utils.search_type import normalize_mcts_type
 from chess_anti_engine.selfplay.match import play_match_batch
 from chess_anti_engine.selfplay.resume import (
     count_unclaimed_resume_files,
@@ -644,6 +647,51 @@ def _resolve_worker_password(args, cfg: dict) -> str:
     return getpass.getpass("Password: ")
 
 
+_C_CORE_NOTE_NO_SELF_UPDATE = (
+    "Self-update was not attempted (--self-update is off). Rebuild the "
+    "extensions in this checkout: python scripts/build_production_extensions.py "
+    "(or pip install --no-deps -e .)."
+)
+_C_CORE_NOTE_ALREADY_UPDATED = (
+    "A self-update was already applied in this run (CAE_SELF_UPDATED=1) and "
+    "the installed wheel is still incomplete; reinstall or rebuild it."
+)
+_C_CORE_NOTE_NO_APPLICABLE_UPDATE = (
+    "Self-update was attempted at the first manifest poll and no applicable "
+    "worker wheel was offered. Rebuild the extensions: python "
+    "scripts/build_production_extensions.py (or pip install --no-deps -e .)."
+)
+
+
+def _self_update_would_run(args: argparse.Namespace) -> bool:
+    """Mirror of ``WorkerSession._self_update_enabled`` usable before a session exists."""
+    return bool(getattr(args, "self_update", False)) and os.environ.get("CAE_SELF_UPDATED") != "1"
+
+
+def _require_c_core_or_exit(*, note: str) -> None:
+    """Refuse to run on a stale or partial C extension build.
+
+    The selfplay code would otherwise reach a Python fallback (or a
+    point-of-use refusal mid-session); this names every missing symbol before
+    any selfplay work. Exits with ``ext_check.C_CORE_REFUSAL_EXIT_CODE`` so the
+    trial supervisor stops relaunching this worker into the same refusal.
+    """
+    from chess_anti_engine.ext_check import (
+        C_CORE_REFUSAL_EXIT_CODE,
+        CCoreIncompleteError,
+        require_c_core,
+    )
+
+    try:
+        require_c_core("worker startup")
+    except CCoreIncompleteError as exc:
+        # stderr only, once: the supervisor captures it into worker.out
+        # (stderr=STDOUT). A log.error here as well printed it twice there when
+        # no --log-file handler exists (logging's lastResort also writes stderr).
+        print(f"{exc}\n{note}", file=sys.stderr, flush=True)
+        raise SystemExit(C_CORE_REFUSAL_EXIT_CODE) from None
+
+
 def main() -> None:
     _configure_worker_torch_env()
     ap = argparse.ArgumentParser(description="Distributed selfplay worker")
@@ -811,7 +859,7 @@ def main() -> None:
   # selfplay: if omitted, defaults come from server manifest `recommended_worker`.
     ap.add_argument("--games-per-batch", type=int, default=None)
     ap.add_argument("--max-plies", type=int, default=None)
-    ap.add_argument("--mcts", type=str, default=None, choices=["puct", "gumbel"])
+    ap.add_argument("--mcts", type=normalize_mcts_type, default=None, choices=["puct", "gumbel"])
     ap.add_argument("--mcts-simulations", type=int, default=None)
     ap.add_argument("--playout-cap-fraction", type=float, default=None)
     ap.add_argument("--fast-simulations", type=int, default=None)
@@ -890,6 +938,32 @@ def main() -> None:
 
     _merge_cli_with_yaml_defaults(args, cfg)
 
+  # C-core check. With self-update enabled the refusal waits for the first
+  # manifest poll (WorkerSession._poll_manifest), so a stale install can still
+  # be fixed by the server's wheel: nothing that needs the C core runs before
+  # that point (session construction, lease, pending-shard upload and the
+  # manifest fetch are pure Python). Without self-update, refuse now.
+    defer_c_core_check = False
+    if _self_update_would_run(args):
+        from chess_anti_engine.ext_check import extension_problems
+
+        startup_problems = extension_problems()
+        if startup_problems:
+            defer_c_core_check = True
+            log.warning(
+                "C core incomplete (%s); --self-update is on, so the refusal is "
+                "deferred until the first manifest's self-update check",
+                "; ".join(startup_problems),
+            )
+    else:
+        _require_c_core_or_exit(
+            note=(
+                _C_CORE_NOTE_ALREADY_UPDATED
+                if bool(getattr(args, "self_update", False))
+                else _C_CORE_NOTE_NO_SELF_UPDATE
+            ),
+        )
+
     if args.username is None:
         raise SystemExit("--username is required (or set username in worker config)")
     if args.stockfish_path is None and not bool(args.stockfish_from_server):
@@ -925,6 +999,7 @@ def main() -> None:
         pinned_games_per_batch_cli=pinned_games_per_batch_cli,
         requests_mod=requests,
     )
+    session._c_core_check_deferred = defer_c_core_check
     session.run()
 
 
@@ -980,6 +1055,9 @@ class WorkerSession:
   # and adding defaults would mint two more two-source-of-truth pairs.
     _shutdown_requested: bool = False
     _shutdown_signal: int = 0
+  # Set by main() when --self-update deferred the C-core refusal to the first
+  # manifest poll (see main and _poll_manifest).
+    _c_core_check_deferred: bool = False
 
     def __init__(
         self,
@@ -3711,6 +3789,11 @@ class WorkerSession:
         manifest = r.json()
         compat = self._check_manifest_compat(manifest)
         self._maybe_self_update_from_manifest(manifest, compat)
+  # Self-update did not exec (no applicable wheel): the deferred C-core
+  # refusal from main() fires now, before any asset sync or selfplay.
+        if self._c_core_check_deferred:
+            self._c_core_check_deferred = False
+            _require_c_core_or_exit(note=_C_CORE_NOTE_NO_APPLICABLE_UPDATE)
   # Self-update may not have returned; if we're still here and behind, exit.
         if compat.protocol_mismatch:
             raise SystemExit(f"Protocol mismatch: worker={PROTOCOL_VERSION} server_required={compat.req_proto}")
@@ -4121,7 +4204,7 @@ class WorkerSession:
         arena_cfg = task.get("arena") or {}
         batch_games = int(arena_cfg.get("batch_games", 8))
         max_plies_arena = int(arena_cfg.get("max_plies", 240))
-        mcts_type_arena = str(arena_cfg.get("mcts", "puct"))
+        mcts_type_arena = normalize_mcts_type(arena_cfg.get("mcts", "gumbel"))
         mcts_sims_arena = int(arena_cfg.get("mcts_simulations", 200))
         c_puct_arena = float(arena_cfg.get("c_puct", 2.5))
         swap_sides = bool(arena_cfg.get("swap_sides", True))
@@ -4678,7 +4761,7 @@ class WorkerSession:
             ),
             "search": SearchConfig(
                 simulations=self._resolve_reco(reco, "mcts_simulations", 50, int),
-                mcts_type=self._resolve_reco(reco, "mcts", "puct", str),
+                mcts_type=self._resolve_reco(reco, "mcts", "gumbel", normalize_mcts_type),
                 playout_cap_fraction=self._resolve_reco(reco, "playout_cap_fraction", 0.25),
                 full_ply_pair_fraction=self._resolve_reco(
                     reco, "full_ply_pair_fraction", 0.0,
@@ -5285,8 +5368,10 @@ class WorkerSession:
         try:
             game_cfg = cfgs["game"]
             board = chess.Board()
-            x = encode_positions_batch(
-                [board],
+            # The production C encoder (bit-identical to the Python E3 encoder
+            # on the start position for every history/feature mode).
+            x = encode_cboard_batch(
+                [CBoard.from_board(board)],
                 input_history_encoding=str(game_cfg.input_history_encoding),
                 input_extra_features=str(game_cfg.input_extra_features),
             )

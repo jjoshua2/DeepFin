@@ -1,5 +1,16 @@
 # Full-state lower-rate on-policy continuation
 
+Current status at **2026-11-14 08:20:47 UTC: ONGOING through the fixed G8 horizon**.
+G5/G6 data and learner continuation completed through step 3,072. The qualified
+G6 donor diagnostic scored **43.359375% over 256 games, paired 95% interval
+38.4232053599–48.2955446401%**: negative descriptive underperformance on this
+conditional reused DIAG128 panel. It is not a clean/general regression or causal
+LR verdict. G6 has no efficacy or severe-harm gate; fixed G7/G8 remain unchanged.
+No gain, confirmation, model promotion or adoption is claimed. Root is preparing
+G7; its actual data/models are unknown here. See the [G5/G6 readout](#2026-11-14-completed-g5-and-g6-negative-descriptive-g6-diagnostic).
+
+## Earlier status snapshot — 2026-11-14 06:22:53 UTC
+
 Current status at **2026-11-14 06:22:53 UTC: ONGOING through the fixed G8 horizon**.
 G3 and G4 collection, independent data audits and full-state learner continuation
 completed through step 2,048. The qualified G4 donor diagnostic scored
@@ -468,3 +479,172 @@ array payloads, project imports, probes or jobs were used to author this update.
 | `core-baseline-lowLR-leg1-diagnostic-g4-independent-actual-review-v1/review.json` | `cae841d44f98ff8dcd2ce8380fc7ce912a59ed5a90cff4cba3ecbdce6f4f79aa` |
 | `core-baseline-lowLR-leg1-diagnostic-g4-root-review-attempt1-v1/reviewer-predicate-correction.json` | `4b75957169238d35864cba4019a139fd1d918e762dc13dbbcda1bf47cfe4e1d5` |
 | `core-baseline-lowLR-leg1-diagnostic-g4-root-review-attempt2-v1/reviewer-predicate-correction.json` | `e5ddb79a5c40a66f74b80c5b9d971e2872a690b5ce987221a28c5103294cab4e` |
+
+
+## 2026-11-14: Completed G5 and G6; negative descriptive G6 diagnostic
+
+**Evidence cutoff: 2026-11-14 08:20:47 UTC**, the accepted independent G6
+readout review. G5 and G6 data and learner delivery, followed by the fixed G6
+strict CPU readback and root/independent actual acceptance, completed under the
+unchanged V2 specification `12ad1fc7…`, manifest `b10f5f5b…`, original absolute
+`cc17ac07…` contract, L `090b5143…` and owner R7 `ba9d6de1…`.
+G4's record was published by PR #1298, merged as `1cc80bc9…` with proof
+`623bedb1…`; publication did not adopt runtime code or change the recipe.
+
+| Completed stage | Actual accepted delivery | Owner wall seconds |
+| --- | --- | ---: |
+| G5 low-parent collection | All 256 attempts; 105 natural / 151 strict-TB / 0 unresolved | GPU 1,508.099043 |
+| G5 qualified CPU data audit plus independent metadata review | 256 eligible games / 25,732 rows; data-only promotion `f39eeea9…` | CPU 68.636316 |
+| G5 full-state learner | Step 2,048 → 2,560; 512 updates / 131,072 views | GPU 486.996459 |
+| G6 low-parent collection | All 256 attempts; 114 natural / 142 strict-TB / 0 unresolved | GPU 1,448.541396 |
+| G6 qualified CPU data audit plus independent metadata review | 256 eligible games / 26,035 rows; data-only promotion `ec02395f…` | CPU 81.949602 |
+| G6 full-state learner | Step 2,560 → 3,072; 512 updates / 131,072 views | GPU 588.061360 |
+| Fixed G6 versus A39 diagnostic | All 256 games / 128 color pairs; 124 rules / 132 strict-TB endings | GPU 793.708849; CPU readback 16.592178 |
+
+G5 checkpoint SHA256 is
+`e11e592b112fa99af30c4fe162808012b371bd603f1b1caa3bc0b6ed903cf1d5`,
+boundary `1a32a6b7…`, root acceptance `ee3aeec1…` and independent metadata
+review `63ab54e1…`. Five-generation ancestry retained 1,280 physical games /
+128,629 audited rows. Replay itself was only G2–G5: 1,024 chunks / 103,802 rows,
+with original G1 evicted from active FIFO but retained in ancestry. Its 512
+complete batch-256 draws were 32,928 G2 / 32,367 G3 / 33,301 G4 / 32,476 G5;
+all 1,024 chunks were drawn, with 74,595 distinct sampled physical rows.
+
+G6 checkpoint SHA256 is
+`61f10e48e298f771a22c55f8544400a03c5083cec1a6aa59d8e1d97cceeffa87`,
+boundary `b15d0f3d…`, terminal `fb176290…`, later root acceptance `615349d2…`,
+independent metadata review `7b7c5210…` and supplement `5baf0c95…`.
+Full six-generation ancestry is **1,536 physical games / 154,664 audited rows**.
+The active FIFO is only **G3–G6: 1,024 chunks / 103,827 rows**; G1/G2 are no longer
+active replay. The full 512 batch-256 journal reconciled 131,072 draws:
+**32,669 G3 / 33,248 G4 / 32,482 G5 / 32,673 G6**, all 1,024 chunks and 74,439
+distinct sampled physical rows. No original high-actor G2 bank was substituted.
+Cumulative training through G6 is **3,072 applied updates / 786,432 views**,
+including the initial LOW512; G5 and G6 each applied 512 updates / 131,072 views.
+
+Both continuations preserve the exact closed low-parent state and contract,
+reconstruct prescribed replay before restoring boundary RNG, and retain
+backend/parent/RNG metadata continuity under the qualified source. Independent
+reviews reconcile saved metadata and draw identities; they do not deserialize
+model/optimizer tensors, replay exact RNG transitions or establish GPU
+bitidentity. G5/G6 scalar metrics were finite, with zero skipped/retried/clipped
+updates. G6 mean LR was 2.858043151e-6 and mean gradient norm 5.178045;
+these changing-window metrics are neither fixed-heldout fit nor playing strength.
+Nonzero auxiliary/availability diagnostics do not change policy-1/outcome-WDL-1
+and twelve zero loss weights. G6 had zero eligible/applied/abstained retained
+TB-policy records; its 142 strict-TB final outcomes do not establish a new
+nonvacuous retained-row policy-correction exercise.
+
+### Preserved G6 root checkpoint-review correction
+
+`3057e219…` preserves a reviewer-only composite assertion failure after a full
+checkpoint stream. Whole `os.stat_result` equality includes access time, so it
+is inappropriate as an immutable-custody predicate. However, the exact failed
+subconjunct and first computed hash/before-after stats were not banked and remain
+**unknown**; no specific access-time change is asserted as observed. The later
+root receipt `615349d2…` banked a fresh second complete hash matching the producer
+and stable device/inode/size/mtime/ctime/mode. There were explicitly **two complete
+root streams**, not one. Numerical execution, model/data, source and observations
+were unchanged; no retraining, new checkpoint, reseed, resample or experiment
+rerun repaired this metadata-review error.
+
+The earlier independent learner receipt retains
+`root_metadata_acceptance_at_review: null` as a historical snapshot.
+Supplement `5baf0c95…` binds the later root evidence without rewriting that
+receipt or implying that its author independently rehashed checkpoint bytes.
+The documentation uses existing root/independent metadata and stat evidence;
+no model or checkpoint payload was opened for this update.
+
+### G6 result and unchanged continuation rule
+
+Actual protocol `2ccabed2…` binds the exact G6 step-3,072 checkpoint versus
+immutable A39 on intentionally reused DIAG128, seed **2026111536**, 256 games /
+128 color pairs and the unchanged matched-Gumbel64 profile. The strict CPU
+reader and independent actual review accepted **69W/84D/103L**, score
+**.43359375**, unbiased paired variance **.08118540846456693**, radius
+**.04936169640057779** and approximate paired 95% interval
+**[.3842320535994222, .4829554464005778]**. Ascending pentanomial counts for
+pair totals 0/.5/1/1.5/2 are **[17, 43, 35, 23, 10]**. All 256 games / 128 pairs
+completed; endings were 124 rules / 132 strict-TB, with 25,427 additional SAN
+plies. Both owners closed PASS. Recorded serving retained 494 states /
+61,444,448 parameters per model, strict embedded architecture, 175-plane
+float32 inputs under CUDA BF16 autocast, float32 policy/WDL transport,
+32-game rolling pool and 1,024 leaf rows. Actual source-qualified reader
+physics and serving evidence are reused; documentation did not reimplement
+legality/TB verification, reload models or rerun inference.
+
+This is **negative descriptive underperformance on this conditional reused
+DIAG128 panel**: the interval is below parity. It does not establish a clean or
+general training regression, recovery, causal LR effect, optimum, external
+Rofchade/Stockfish/Lc0 milestone, fresh confirmation, gain or equivalence.
+No model/champion adoption, confirmation eligibility/allocation/consumption,
+checkpoint selection, pooling or favorable early promotion follows. Previous
+negative screens and G2/G4 snapshots remain separate, correlated observations.
+
+**G6 has no efficacy or severe-harm gate**, regardless of score or interval.
+The registered upper < .35 safety exception applies only local G4 (and
+conditional second-leg G12). The fixed G7 → G8 horizon therefore remains
+unchanged, subject to technical/resource/deadline stops and the accepted G6
+readout dependency. The first fresh screen remains G8 / step 4,096, with the
+same point ≥ .53 and paired lower > .5 rule and conditional sole fresh CONFIRM1.
+Root reports preparing G7; no G7 launch, data or model result is asserted here.
+The strength goal remains unmet and A39 remains this study’s unchanged donor/incumbent.
+
+Root readout `af5483e2…` retains its pending-independent label as a historical
+receipt; separate independent acceptance `0d317d14…` was available at this cutoff
+and explicitly binds that root receipt. This is distinct from the earlier
+learner review's historically null root field. No receipt was rewritten to
+imply a different review or sealing order.
+
+### Closed cost snapshot and evidence
+
+Census `a30647d0…`, timestamped 2026-11-14 08:19:45.276221 UTC, records **211
+closed week-root owners**, including failed attempts: **48,478.49211211607
+GPU-owner seconds / 2,161.538633844757 CPU-owner seconds**, including G6's arena
+and CPU readback. It is a point-in-time closed-owner census, not an ETA or budget
+entitlement. The 172,800 GPU-second week cap and 2026-11-19 16:09:20 UTC deadline
+remain unchanged. It makes no claim about later stages or unrelated processes.
+
+All earlier published preregistration, G2 and G4 text remains historical and
+byte-exact beneath the current-status wrapper. Paths below use the existing
+operations artifact root. This update reads only bounded JSON metadata and
+published docs, not raw games, nested payloads, arrays or checkpoint bytes.
+The author shares authorship of continuation metadata/arena wrappers; this is
+not a new independent numerical, tensor-restoration or physics qualification.
+
+| G5/G6 completed metadata evidence | SHA256 |
+| --- | --- |
+| `core-baseline-lowLR-continuation-preparation-v2/specification.json` | `12ad1fc72714a3eb75c1adc519b7e56a8c80e40e9a8f0e45708479bbb8bc226e` |
+| `core-baseline-lowLR-continuation-preparation-v2/manifest.json` | `b10f5f5becd47a422359523ada96283b1d6805b68543035d8522a5a258038dd4` |
+| `core-baseline-fixed-G1-LR-probe-preparation-v1/learning-lowLR.json` | `cc17ac07c143eec18a42f28182ea21909ad8eb8a2a53fa844a3e201ba30da0ca` |
+| `core-baseline-lowLR-g04-readout-main-publication-v1/publication.json` | `623bedb19cde73daefd665947d74a062f88588dbb8c2a5ce0b3d5c8a7da4443f` |
+| `core-baseline-lowLR-g05-collection-GPU-execution-v1/terminal.json` | `bdd41bdc11b468d197eb7d0f364ae521b5d1a5edad99b65968c673cc856462d1` |
+| `core-baseline-lowLR-g05-audit-CPU-execution-v1/terminal.json` | `ea902e48d9cc554ce6606a04d8d89dd245f99e1be98d3f5923ffc42dd66b13cd` |
+| `core-baseline-lowLR-g05-audit-independent-actual-review-v1/review.json` | `08cdb25890124359bb2920e7c7115d051737be4a806380ef2c26a600a68a977d` |
+| `core-baseline-lowLR-continuation-bindings-v1/g05/audit-root-metadata-acceptance.json` | `cb0f9ba62cc23a788268c12b606056b335a4e4d89b340a10e7836f345ad4d180` |
+| `core-baseline-lowLR-continuation-bindings-v1/g05/audit-root-promotion.json` | `f39eeea9255d58f11ef813dc81bced0c18fd352810459f15444265697840cde5` |
+| `core-baseline-lowLR-g05-learner-GPU-execution-v1/terminal.json` | `17371df9ea675d43881de84a56481e57107fdce8ec2237ae40d77e105d69c8e0` |
+| `core-baseline-lowLR-g05-learner-results-v1/boundary.json` | `1a32a6b73c4aa1ab649b2aa06b420b94ed84ac0a9ea3635671d3f381d4e59430` |
+| `core-baseline-lowLR-continuation-bindings-v1/g05/learner-root-metadata-acceptance.json` | `ee3aeec1ea2134ab962820133e26d4afa2f739f3b42be902fe8bcb7bc5715458` |
+| `core-baseline-lowLR-g05-learner-independent-actual-review-v1/review.json` | `63ab54e19b2cab3b66f8f452842dcfbc935edf287380742ccd5befd2f48db05f` |
+| `core-baseline-lowLR-g06-collection-GPU-execution-v1/terminal.json` | `1baf1ebdb95e4908ed2ce428305103e2b216bf0a5592989e64d04cd67032db75` |
+| `core-baseline-lowLR-g06-audit-CPU-execution-v1/terminal.json` | `f798f7e655380f3d8ae381ca67b9d33d959807cc13b2fc9097f5729ea917b7dd` |
+| `core-baseline-lowLR-g06-audit-independent-actual-review-v1/review.json` | `dc4a363964693c3028820598322ae13c3148778d6c7e0187de898761a1f31c61` |
+| `core-baseline-lowLR-continuation-bindings-v1/g06/audit-root-metadata-acceptance.json` | `f05b1b8f976de71b884eb20428f0b82c79fc3c051efeadf40621bf0cbd42ddb2` |
+| `core-baseline-lowLR-continuation-bindings-v1/g06/audit-root-promotion.json` | `ec02395fb0c8ed1acd98249b9198b14d87ae80b6ec61c6506ce29d2dd62b81c2` |
+| `core-baseline-lowLR-g06-learner-GPU-execution-v1/terminal.json` | `fb17629045e3a303c4292ad724067fee3b7e4f8c45f11fd83d29a1d763a5e727` |
+| `core-baseline-lowLR-g06-learner-results-v1/boundary.json` | `b15d0f3d196ac4957959549f3e6020c88a4ccf524bdaf6b5cca39c2cee8f1c8c` |
+| `core-baseline-lowLR-continuation-bindings-v1/g06/learner-root-metadata-acceptance.json` | `615349d21c882f40758130afc56715c8a7d6b1e69c43ca23c81607df541eca90` |
+| `core-baseline-lowLR-g06-learner-independent-actual-review-v1/review.json` | `7b7c52105f28fde54ba2f1f395bcb401640194a4304edf9297128635abba61dc` |
+| `core-baseline-lowLR-g06-learner-root-verification-supplement-v1/review.json` | `5baf0c95111467840f1f3a2f515c18721019b82613d3fe5d9ceff10f09a9e5d7` |
+| `core-baseline-lowLR-g06-root-learner-review-attempt1-v1/reviewer-predicate-correction.json` | `3057e2192dcbd9691a847a4634029a331706c254895c36c26a22b03c496e9b79` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-diagnostic-g6/protocol.json` | `2ccabed2065a48fc9788fc6b388b75292aadf6d81ff41ac84bea249d21ee0444` |
+| `core-baseline-lowLR-leg1-diagnostic-g6-GPU-execution-v1/terminal.json` | `25acaff13441d1a1be6643cab5dda58bb910c4e244436ee144491f3a3bb1730a` |
+| `core-baseline-lowLR-leg1-diagnostic-g6-CPU-execution-v1/terminal.json` | `21ee7a84f4f34c36cd03a6b051be95800adda7738c0b56641dc2be9fb7c12ae2` |
+| `core-baseline-lowLR-leg1-diagnostic-g6-results-v1/serving.json` | `a080abd471a27b6d0f44e17f9cf70644e820b9c46945b54e00da9c3ba6bc108d` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-diagnostic-g6/cpu-admission.json` | `a1f4303d2615573f28af5e24ce8e39f54d5dbb20e7fd33f75ab68aca1b71fceb` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-diagnostic-g6/reader-bindings.json` | `b1e575454b39108938a05826601f4ca94d6c7137d122ce39580812ae306a80a9` |
+| `core-baseline-lowLR-leg1-diagnostic-g6-readout-v1/readout.json` | `5a20845581c5e55f086b91f655f8157a903b77f29646474d67dcccd627a71f4c` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-diagnostic-g6/root-readout-acceptance.json` | `af5483e2b92f4d3d50deb0038f63fe3084fa4c1b4309be0398c51ca45aae54a0` |
+| `core-baseline-lowLR-leg1-diagnostic-g6-independent-actual-review-v1/review.json` | `0d317d14489aaec8527955fe7a4066be60676d7be496cc955ab94a021435fb09` |
+| `core-baseline-lowLR-g06-diagnostic-closed-cost-census-v1/readout.json` | `a30647d08ff832d456fa8aa0caa1eaa613af17256eee71ff0a5fb2a395f58393` |

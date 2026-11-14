@@ -421,15 +421,18 @@ class _NullNet(torch.nn.Module):
         raise AssertionError("the search is stubbed; the net must not be called")
 
 
+@pytest.mark.parametrize("search", ["gumbel", "puct", "python_puct_reference"])
 def test_puzzle_eval_raises_instead_of_scoring_a_substitute(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, search: str,
 ) -> None:
     """The puzzle suite is a yardstick: a substitute must not be graded.
 
     Laundering here reports the substituted move's miss as a puzzle the net got
     wrong, so an action-space regression reads as a strength regression.
+    Every route ``run_puzzle_eval`` can take is covered, the default included.
     """
     from chess_anti_engine.eval import puzzles as puzzles_mod
+    from chess_anti_engine.mcts import gumbel_c, puct_c
 
     board = chess.Board()
     suite = puzzles_mod.PuzzleSuite(
@@ -440,11 +443,17 @@ def test_puzzle_eval_raises_instead_of_scoring_a_substitute(
     def _undecodable(_model, boards, **_kw):
         return (None, [NO_LUT_ENTRY_ID] * len(boards))
 
-    monkeypatch.setattr(puzzles_mod, "run_mcts_many", _undecodable)
+    target = {
+        "gumbel": (gumbel_c, "run_gumbel_root_many_c"),
+        "puct": (puct_c, "run_mcts_many_c"),
+        "python_puct_reference": (puzzles_mod, "run_mcts_many"),
+    }[search]
+    monkeypatch.setattr(*target, _undecodable)
 
     with pytest.raises(ActionDecodeError):
         puzzles_mod.run_puzzle_eval(
             _NullNet(), suite, device="cpu", mcts_simulations=1, batch_size=1,
+            search=search,
         )
 
 
@@ -476,6 +485,9 @@ def test_arena_run_voids_the_run_and_writes_no_result(
         lambda *a, **k: _NullNet(),
     )
     monkeypatch.setattr(arena, "play_paired_games_matched_sims_rolling", _boom)
+    # The default game log lives under the checkout's runs/; a second run would
+    # then refuse "game log already exists" before reaching the code under test.
+    monkeypatch.setattr(arena, "DEFAULT_GAME_LOG_DIR", tmp_path / "arena_games")
     side = arena.resolve_search_shape("training")
 
     with pytest.raises(SystemExit) as excinfo:

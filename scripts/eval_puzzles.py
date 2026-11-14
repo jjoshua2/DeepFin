@@ -319,6 +319,9 @@ def main() -> None:
                 rng=rng,
                 rating_buckets=args.rating_buckets,
                 gumbel_cfg=gcfg,
+                # "search" mode is the compiled PUCT driver. It was the
+                # pure-Python PUCT until 2026-11-14 (not comparable across).
+                search="gumbel" if mode == "gumbel" else "puct",
             )
             if mode == "gumbel":
                 sims_label = (
@@ -328,7 +331,7 @@ def main() -> None:
                     f"q_visit_exp_root={args.gumbel_qexp_root} topk={args.gumbel_topk}"
                 )
             else:
-                sims_label = f"{args.sims} sims puct"
+                sims_label = f"{args.sims} sims puct_c"
         _print(f"puzzle:{mode}", result, time.time() - t0, sims_label=sims_label)
         if log_path is not None:
             _append_log(

@@ -11,6 +11,7 @@ import numpy as np
 import torch
 
 from chess_anti_engine.encoding import rep_fix
+from chess_anti_engine.ext_check import refuse_fallback
 from chess_anti_engine.mcts import GumbelConfig, MCTSConfig
 from chess_anti_engine.mcts.gumbel import (
     PLAY_SEARCH_DEFAULTS,
@@ -19,22 +20,28 @@ from chess_anti_engine.mcts.gumbel import (
     warn_volatility_python_path,
 )
 from chess_anti_engine.mcts.puct import run_mcts_many
+from chess_anti_engine.utils.search_type import normalize_mcts_type
 from chess_anti_engine.moves import index_to_move_fast, index_to_move_strict
 from chess_anti_engine.selfplay.opening import OpeningConfig, make_starting_board
 
+# The ImportError text is kept for the refusal message below.
 try:
     from chess_anti_engine.mcts.puct_c import run_mcts_many_c as _run_mcts_many_c
     _HAS_C_TREE = True
-except ImportError:
+    _C_TREE_IMPORT_ERROR: str | None = None
+except ImportError as _exc:
     _HAS_C_TREE = False
+    _C_TREE_IMPORT_ERROR = f"{type(_exc).__name__}: {_exc}"
 
 try:
     from chess_anti_engine.mcts.gumbel_c import (
         run_gumbel_root_many_c as _run_gumbel_root_many_c,
     )
     _HAS_GUMBEL_C = True
-except ImportError:
+    _GUMBEL_C_IMPORT_ERROR: str | None = None
+except ImportError as _exc:
     _HAS_GUMBEL_C = False
+    _GUMBEL_C_IMPORT_ERROR = f"{type(_exc).__name__}: {_exc}"
 
 if TYPE_CHECKING:
     from chess_anti_engine.tablebase import SyzygyProbe
@@ -138,6 +145,7 @@ def pick_moves_for_boards(
     ROOT submit is NOT bucketed against it, so size ``max_batch`` at or above
     the largest board count any one call will be handed.
     """
+    mcts_type = normalize_mcts_type(mcts_type)
     if tb_probe is not None and str(mcts_type) != "gumbel":
         raise ValueError("Tablebase-guided match search requires the compiled Gumbel path")
     input_history_encoding = str(getattr(model, "input_history_encoding", "legacy"))
@@ -209,12 +217,26 @@ def pick_moves_for_boards(
                     "the shape's vloss_weight, so the volatility A/B is "
                     "confounded by virtual loss."
                 )
+            if not _HAS_GUMBEL_C:
+                # Volatility arms select the Python search by config; a missing
+                # compiled runner must not select it silently.
+                refuse_fallback(
+                    "arena move selection",
+                    f"mcts.gumbel_c ({_GUMBEL_C_IMPORT_ERROR or 'not imported'})",
+                    "the pure-Python Gumbel search",
+                )
             result = run_gumbel_root_many(
                 model, sub_boards, device=device, rng=rng, cfg=gumbel_cfg,
                 evaluator=evaluator,
             )
         _probs, actions, _values, _masks = result[:4]
     else:
+        if not _HAS_C_TREE:
+            refuse_fallback(
+                "arena move selection",
+                f"mcts.puct_c ({_C_TREE_IMPORT_ERROR or 'not imported'})",
+                "the pure-Python PUCT search",
+            )
         puct_fn = _run_mcts_many_c if _HAS_C_TREE else run_mcts_many
         _probs, actions, _values, _masks = puct_fn(
             model, sub_boards, device=device, rng=rng,
@@ -304,7 +326,7 @@ def play_match_batch(
     games: int,
     max_plies: int,
     a_plays_white: list[bool] | None = None,
-    mcts_type: str = "puct",
+    mcts_type: str = "gumbel",
     mcts_simulations: int = 200,
     mcts_simulations_a: int | None = None,
     mcts_simulations_b: int | None = None,

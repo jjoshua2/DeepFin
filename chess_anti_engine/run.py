@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import torch
@@ -9,6 +10,7 @@ from chess_anti_engine.broker_hang import pin_nvml_cuda_check
 from chess_anti_engine.tune.salvage import export_seed_pool as _run_salvage
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 from chess_anti_engine.utils.architecture import DEFAULT_PHASE_PIECE_THRESHOLDS
+from chess_anti_engine.utils.search_type import normalize_mcts_type
 
 
 
@@ -645,7 +647,7 @@ def main() -> None:
     ap.add_argument("--mcts-ramp-exponent", type=float, default=2.0)
 
     ap.add_argument("--mcts-simulations", type=int, default=800)
-    ap.add_argument("--mcts", type=str, default="puct", choices=["puct", "gumbel"])
+    ap.add_argument("--mcts", type=normalize_mcts_type, default="gumbel", choices=["gumbel", "puct"])
     ap.add_argument("--min-replay-size", type=int, default=0)
     ap.add_argument("--lr", type=_learning_rate_arg, default=3e-4)
     ap.add_argument("--w-volatility", type=float, default=0.05)
@@ -723,6 +725,19 @@ def main() -> None:
 
     if args.stockfish_path is None:
         raise SystemExit("--stockfish-path is required (or set stockfish.path in --config)")
+
+    # Refuse a stale or partial C extension build before booting the server,
+    # broker, worker and trainer (the same check the worker and UCI run).
+    from chess_anti_engine.ext_check import (
+        C_CORE_REFUSAL_EXIT_CODE,
+        CCoreIncompleteError,
+        require_c_core,
+    )
+    try:
+        require_c_core(f"run --mode {args.mode}")
+    except CCoreIncompleteError as exc:
+        print(str(exc), file=sys.stderr, flush=True)
+        raise SystemExit(C_CORE_REFUSAL_EXIT_CODE) from None
 
   # Both train and tune modes go through run_tune — train just forces
   # scheduler=none and num_samples=1 so there's no hyperparameter search.

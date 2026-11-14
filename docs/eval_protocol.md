@@ -78,6 +78,28 @@ PYTHONPATH=. python scripts/arena_standard.py \
   An external kill alone may lose the final buffered report.
 - Results append to `runs/arena_results.jsonl`. Budget shared CPU/GPU resources before
   launching; a simulation count or allocator fraction is not a safety guarantee.
+- **Search-type defaults are Gumbel since 2026-11-14.** `chess_anti_engine/arena.py`
+  (`--mcts`), `play_match_batch`, the worker arena task (`arena.mcts`), `run.py --mcts`,
+  `SearchConfig.mcts_type` and the `mcts` config key all used to default to PUCT; they
+  now default to `gumbel`, the search the production yaml runs. `--mcts puct` still
+  selects the compiled PUCT driver; the value is case-insensitive and normalised, and
+  anything other than `gumbel`/`puct` is refused. `scripts/arena_standard.py` and
+  `scripts/match_checkpoints.py` always defaulted to Gumbel and are unaffected. Only
+  `chess_anti_engine/arena.py` and the worker arena task changed ruler: a reading from
+  either banked before that date without an explicit `--mcts` / `arena.mcts` measured
+  PUCT and is not comparable with one after it.
+- **Puzzle eval is not comparable across 2026-11-14.** The training puzzle eval
+  (`puzzle_interval > 0`, off in production) used to call `run_puzzle_eval` with no
+  search arguments, i.e. the pure-Python PUCT search. It now runs the compiled search
+  configured selfplay runs (`selfplay_search_is_gumbel`; with Gumbel, the selfplay
+  search shape including `gumbel_target_batch`/`gumbel_vloss_weight`) at temperature 0
+  and no root noise. The PUCT routes now also zero `dirichlet_eps`: the old puzzle PUCT
+  path kept `MCTSConfig`'s default 0.25 Dirichlet root noise, so its answers depended on
+  the rng. `run_puzzle_eval`'s own default became the compiled Gumbel search,
+  and `scripts/eval_puzzles.py --mode search` became the compiled PUCT driver (its log
+  label is now `puct_c`). The pure-Python PUCT survives only as
+  `search="python_puct_reference"`, a test reference. Puzzle accuracies banked before
+  and after this change measure different searches and must not be compared.
 
 ## Historical instruments and measurement notes
 

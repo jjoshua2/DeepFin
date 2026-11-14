@@ -51,7 +51,11 @@ def network_budget_case(name, draws, mcts) -> dict[str, Any]:
     state: Any = SimpleNamespace(
         boards=boards, cboards=[CBoard.from_board(b) for b in boards],
         model=None, device="cpu", evaluator=InertEvaluator(), rng=Draws(draws),
-        search=SearchConfig(mcts_type=mcts, simulations=128, fast_simulations=8, playout_cap_fraction=0.5),
+        search=SearchConfig(
+            simulations=128, fast_simulations=8, playout_cap_fraction=0.5,
+            # None = leave mcts_type at the dataclass default.
+            **({} if mcts is None else {"mcts_type": mcts}),
+        ),
         temp=TemperatureConfig(temperature=0.0, decay_moves=0, endgame=0.0),
         game=GameConfig(input_extra_features="v1", record_prior_top1=False),
         diff_focus=DiffFocusConfig(enabled=False), diff_focus_norm=None,
@@ -153,6 +157,7 @@ def worker_failure_case(failed_tid) -> dict[str, Any]:
             "selfplay_threads": 2, "control_driver_threads": 1}
 
 
+@pytest.mark.usefixtures("python_reference_paths")
 @pytest.mark.parametrize("draws", [[0.1, 0.9], [0.9, 0.1], [0.1, 0.1], [0.9, 0.9]])
 @pytest.mark.parametrize("mcts", ["puct", "gumbel"])
 def test_real_network_dispatch_honors_each_playout_budget(draws, mcts):
@@ -176,6 +181,15 @@ def test_real_network_dispatch_honors_each_playout_budget(draws, mcts):
     assert row["record_has_policy"] == [d < 0.5 for d in draws]
     assert row["records"] == [1, 1]
     assert row["board_plies"] == [1, 1]
+
+
+@pytest.mark.usefixtures("python_reference_paths")
+def test_default_search_config_dispatches_to_gumbel_above_the_low_sim_cutoff():
+    """``SearchConfig()`` left at its ``mcts_type`` default runs Gumbel, at a
+    budget (128 > max(64, fast)) where a PUCT default would have run PUCT."""
+    row = network_budget_case("default", [0.1, 0.1], None)
+    assert [call["runner"] for call in row["calls"]] == ["gumbel"]
+    assert row["calls"][0]["per_game_simulations"] == [128, 128]
 
 
 @pytest.mark.parametrize("failed_tid", [0, 1])
