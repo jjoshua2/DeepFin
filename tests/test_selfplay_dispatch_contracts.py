@@ -153,6 +153,7 @@ def worker_failure_case(failed_tid) -> dict[str, Any]:
             "selfplay_threads": 2, "control_driver_threads": 1}
 
 
+@pytest.mark.usefixtures("python_reference_paths")
 @pytest.mark.parametrize("draws", [[0.1, 0.9], [0.9, 0.1], [0.1, 0.1], [0.9, 0.9]])
 @pytest.mark.parametrize("mcts", ["puct", "gumbel"])
 def test_real_network_dispatch_honors_each_playout_budget(draws, mcts):

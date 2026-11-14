@@ -277,6 +277,7 @@ def test_the_python_gumbel_fallback_is_handed_it_too(
     assert seen[0]["evaluator"] is stub
 
 
+@pytest.mark.usefixtures("python_reference_paths")
 def test_the_puct_path_is_handed_it_too(monkeypatch: pytest.MonkeyPatch) -> None:
     """mcts_type='puct' is a different entry point with the same kwarg."""
     seen: list[dict[str, Any]] = []

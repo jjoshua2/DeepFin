@@ -24,6 +24,7 @@ import chess
 import numpy as np
 
 from chess_anti_engine.encoding import check_encode_buffer_planes, input_plane_count
+from chess_anti_engine.ext_check import refuse_fallback
 from chess_anti_engine.mcts._mcts_tree import (
     SWDL_DRAW_NET_RAW,
     SWDL_DRAW_PARAMETRIC_Q,
@@ -882,7 +883,16 @@ def _append_records_via_python(
     is_full: np.ndarray, sample_weights: list[float],
     diff_focus,
 ) -> None:
-    """Python fallback per-ply loop (only runs when C ply path is unavailable)."""
+    """Python reference per-ply loop (only runs when C ply path is unavailable).
+
+    Refuses outside ``ext_check.python_reference_paths``: it replays without
+    seed history and encodes its side row with a different encoder.
+    """
+    if net_idxs:
+        refuse_fallback(
+            "selfplay network turn", "batch_process_ply/batch_encode_146* (state.has_c_ply=False)",
+            "the Python per-ply recorder",
+        )
     lg_buf = np.empty(POLICY_SIZE, dtype=np.float64)
     swdl_buf = np.empty(3, dtype=np.float32)
     df_enabled = bool(diff_focus.enabled)
@@ -1237,6 +1247,13 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
                             slot, result, exc.child_checks.get(local_j, 0),
                         )
             else:
+                if not _HAS_GUMBEL_C:
+                    # Volatility selects the Python search by config; a missing
+                    # compiled Gumbel runner must not select it silently.
+                    refuse_fallback(
+                        "selfplay network turn", "mcts.gumbel_c (MCTSTree/_mcts_tree)",
+                        "the pure-Python Gumbel search",
+                    )
                 sub_boards = [state.replay_board(net_idxs[j]) for j in group]
                 _gumbel_result = run_gumbel_root_many(
                     state.model,
@@ -1270,6 +1287,11 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
             # active, boards[idx] stays at the starting position — rebuild
             # current state from move_idx_history (handled inside replay_board).
             sub_boards = [state.replay_board(net_idxs[j]) for j in group]
+            if not _HAS_C_TREE:
+                refuse_fallback(
+                    "selfplay network turn", "mcts.puct_c (MCTSTree/_mcts_tree)",
+                    "the pure-Python PUCT search",
+                )
             _puct_fn = _run_mcts_many_c if _HAS_C_TREE else run_mcts_many
             p_sub, a_sub, v_sub, m_sub = _puct_fn(
                 state.model,

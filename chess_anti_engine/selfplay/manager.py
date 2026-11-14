@@ -14,6 +14,7 @@ import numpy as np
 import torch
 
 from chess_anti_engine.encoding import rep_fix
+from chess_anti_engine.ext_check import refuse_fallback
 from chess_anti_engine.inference import BatchEvaluator
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.selfplay.config import (
@@ -285,6 +286,29 @@ def _wait_for_starved_sf(
         )
 
 
+def _require_compiled_search() -> None:
+    """Refuse a play_batch whose compiled search runners failed to import.
+
+    ``network_turn`` imports ``gumbel_c``/``puct_c`` under ``try`` and used to
+    run the pure-Python search when either failed (a stale or partial build),
+    with no warning. The missing per-ply / classify symbols are refused by
+    ``SelfplayState.create``. Volatility arms still select the Python Gumbel
+    search by config; that is not a fallback and is not refused here.
+    """
+    # Read at call time (not bound at import) so the flags a stale build set
+    # at import are what is checked.
+    from chess_anti_engine.selfplay.network_turn import _HAS_C_TREE, _HAS_GUMBEL_C
+
+    missing = [
+        name for name, ok in (
+            ("mcts.gumbel_c.run_gumbel_root_many_c", _HAS_GUMBEL_C),
+            ("mcts.puct_c.run_mcts_many_c", _HAS_C_TREE),
+        ) if not ok
+    ]
+    if missing:
+        refuse_fallback("play_batch", missing, "the pure-Python search")
+
+
 def play_batch(
     model: torch.nn.Module | None,
     *,
@@ -385,6 +409,7 @@ def play_batch(
         pooled=isinstance(stockfish, StockfishPool),
     )
     validate_selfplay_syzygy(asdict(game))
+    _require_compiled_search()
     if game.syzygy_outcome_mode == "rule50_match_v1":
         if on_game_provenance is None:
             raise ValueError("rule50_match_v1 requires on_game_provenance, including censored/zero-row attempts")

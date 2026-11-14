@@ -29,6 +29,7 @@ from numpy.typing import NDArray
 from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding import check_encode_buffer_planes, input_plane_count
 from chess_anti_engine.async_safety import drain_failed_receipts
+from chess_anti_engine.ext_check import refuse_fallback
 from chess_anti_engine.inference_dispatcher import supports_inplace_api
 from chess_anti_engine.mcts._mcts_tree import batch_compute_relations
 from chess_anti_engine.encoding.lc0 import (
@@ -908,6 +909,17 @@ def run_gumbel_root_many_c(
             "python3 scripts/build_production_extensions.py"
         )
     _c_candidate_cap = int(_mcts_tree_ext.GSS_MAX_CANDS)
+  # The bf16 encoders are imported under `try` (older builds lacked them);
+  # without them the leaf transport would silently downgrade to fp32 inputs.
+    if (
+        batch_encode_146_bf16 is None
+        or batch_encode_146_lc0_root_bf16 is None
+        or batch_encode_146_lc0_root_legacy_meta_bf16 is None
+    ):
+        refuse_fallback(
+            "run_gumbel_root_many_c", "batch_encode_146*_bf16",
+            "fp32 encoder transport instead of the bf16 compact leaves",
+        )
 
   # Operator surface for the audit-W1/W2 guards. Here rather than in a caller
   # because this is the choke point EVERY C-path consumer goes through —

@@ -557,7 +557,25 @@ def _probe_c_extensions() -> _CExtensionCaps:
     Each block is independent — partial availability is fine. ``batch_process_ply``
     and the encoders are imported together so the ``None``-fallbacks can't drift
     (drift would break the xs_batch invariant in the network turn).
+
+    A missing symbol used to select the Python search / per-ply recorder /
+    slot classifier silently; it now raises unless the caller is inside
+    ``ext_check.python_reference_paths`` (tests of the reference path).
     """
+    from chess_anti_engine.ext_check import MCTS_TREE_EXT, missing_symbols, refuse_fallback
+
+    _missing = missing_symbols(MCTS_TREE_EXT, (
+        "MCTSTree", "batch_process_ply",
+        "batch_encode_146", "batch_encode_146_lc0_root", "batch_encode_146_lc0_root_legacy_meta",
+        "batch_encode_146_bf16", "batch_encode_146_lc0_root_bf16",
+        "batch_encode_146_lc0_root_legacy_meta_bf16",
+        "classify_games", "temperature_resample",
+    ))
+    if _missing:
+        refuse_fallback(
+            "SelfplayState.create", _missing,
+            "the Python Gumbel search / Python per-ply recorder / Python slot classifier",
+        )
     mcts_tree = None
     try:
         from chess_anti_engine.mcts._mcts_tree import MCTSTree as _MCTSTree

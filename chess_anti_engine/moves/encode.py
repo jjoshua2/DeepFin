@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import chess
 import numpy as np
 
+from chess_anti_engine.ext_check import refuse_fallback
 from chess_anti_engine.utils.bitboards import orient_square
 
 try:
@@ -796,6 +797,10 @@ def legal_move_mask(board: chess.Board) -> np.ndarray:
         if idx.size > 0:
             mask[idx] = True
         return mask
+    refuse_fallback(
+        "legal_move_mask", "_lc0_ext.legal_move_policy_indices",
+        "python-chess legal-move generation",
+    )
     lut = _MOVE_INDEX_LUT[int(board.turn)]
     for m in board.legal_moves:
         if m.promotion is not None and m.promotion in UNDERPROMO_TO_IDX:
@@ -830,6 +835,10 @@ def legal_move_indices(board: chess.Board) -> np.ndarray:
     """Return sorted int32 array of legal policy indices."""
     if _HAS_LC0_C_EXT:
         return _legal_move_indices_c(board)
+    refuse_fallback(
+        "legal_move_indices", "_lc0_ext.legal_move_policy_indices",
+        "python-chess legal-move generation",
+    )
     return _legal_move_indices_py(board)
 
 

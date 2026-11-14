@@ -724,6 +724,14 @@ def main() -> None:
     if args.stockfish_path is None:
         raise SystemExit("--stockfish-path is required (or set stockfish.path in --config)")
 
+    # Refuse a stale or partial C extension build before booting the server,
+    # broker, worker and trainer (the same check the worker and UCI run).
+    from chess_anti_engine.ext_check import CCoreIncompleteError, require_c_core
+    try:
+        require_c_core(f"run --mode {args.mode}")
+    except CCoreIncompleteError as exc:
+        raise SystemExit(str(exc)) from None
+
   # Both train and tune modes go through run_tune — train just forces
   # scheduler=none and num_samples=1 so there's no hyperparameter search.
     base = _build_tune_config_dict(args)

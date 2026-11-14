@@ -49,7 +49,9 @@ from chess_anti_engine.mcts.gumbel import (
     SELFPLAY_GUMBEL_C_SCALE,
     policy_temp_active,
 )
-from chess_anti_engine.encoding import encode_positions_batch, input_plane_count
+from chess_anti_engine.encoding import input_plane_count
+from chess_anti_engine.encoding._lc0_ext import CBoard
+from chess_anti_engine.encoding.cboard_encode import encode_cboard_batch
 from chess_anti_engine.moves.encode import legal_move_indices
 from chess_anti_engine.inference import (
     AOTEvaluator,
@@ -644,6 +646,22 @@ def _resolve_worker_password(args, cfg: dict) -> str:
     return getpass.getpass("Password: ")
 
 
+def _require_c_core_or_exit(log: logging.Logger) -> None:
+    """Refuse to start on a stale or partial C extension build.
+
+    The selfplay code would otherwise reach a Python fallback (or, now, a
+    point-of-use refusal mid-session); one check here names every missing
+    symbol before any work is fetched.
+    """
+    from chess_anti_engine.ext_check import CCoreIncompleteError, require_c_core
+
+    try:
+        require_c_core("worker startup")
+    except CCoreIncompleteError as exc:
+        log.error("%s", exc)
+        raise SystemExit(str(exc)) from None
+
+
 def main() -> None:
     _configure_worker_torch_env()
     ap = argparse.ArgumentParser(description="Distributed selfplay worker")
@@ -880,6 +898,7 @@ def main() -> None:
 
     log = _setup_worker_logging(args)
     log.info("worker starting version=%s protocol=%s", str(PACKAGE_VERSION), int(PROTOCOL_VERSION))
+    _require_c_core_or_exit(log)
 
     work_dir = Path(args.work_dir)
     cfg_path = Path(args.config) if args.config is not None else (work_dir / "worker.yaml")
@@ -5285,8 +5304,10 @@ class WorkerSession:
         try:
             game_cfg = cfgs["game"]
             board = chess.Board()
-            x = encode_positions_batch(
-                [board],
+            # The production C encoder (bit-identical to the Python E3 encoder
+            # on the start position for every history/feature mode).
+            x = encode_cboard_batch(
+                [CBoard.from_board(board)],
                 input_history_encoding=str(game_cfg.input_history_encoding),
                 input_extra_features=str(game_cfg.input_extra_features),
             )

@@ -11,6 +11,7 @@ import numpy as np
 import torch
 
 from chess_anti_engine.encoding import rep_fix
+from chess_anti_engine.ext_check import refuse_fallback
 from chess_anti_engine.mcts import GumbelConfig, MCTSConfig
 from chess_anti_engine.mcts.gumbel import (
     PLAY_SEARCH_DEFAULTS,
@@ -209,12 +210,24 @@ def pick_moves_for_boards(
                     "the shape's vloss_weight, so the volatility A/B is "
                     "confounded by virtual loss."
                 )
+            if not _HAS_GUMBEL_C:
+                # Volatility arms select the Python search by config; a missing
+                # compiled runner must not select it silently.
+                refuse_fallback(
+                    "arena move selection", "mcts.gumbel_c (MCTSTree/_mcts_tree)",
+                    "the pure-Python Gumbel search",
+                )
             result = run_gumbel_root_many(
                 model, sub_boards, device=device, rng=rng, cfg=gumbel_cfg,
                 evaluator=evaluator,
             )
         _probs, actions, _values, _masks = result[:4]
     else:
+        if not _HAS_C_TREE:
+            refuse_fallback(
+                "arena move selection", "mcts.puct_c (MCTSTree/_mcts_tree)",
+                "the pure-Python PUCT search",
+            )
         puct_fn = _run_mcts_many_c if _HAS_C_TREE else run_mcts_many
         _probs, actions, _values, _masks = puct_fn(
             model, sub_boards, device=device, rng=rng,
