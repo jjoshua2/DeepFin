@@ -18,6 +18,21 @@ The caller supplies a readonly, hash-pinned JSON object with schema
 - `generation_manifest`, `producer_protocol`: exact `{path, sha256}` references.
   The manifest uses `ROOT_ACCEPTED_CORE_TRAIN_GENERATION_V1`, including original
   authenticated per-game proof wrappers, inventories, provenance and validation.
+- `selection`: the root's hash-pinned fixed TRAIN data-qualification decision,
+  joined to this audit UUID, generation manifest, producing source and all row/game
+  counts. Selection is not an execution admission.
+- `input_authority`: a separate readonly root record with schema
+  `SF_BANKED_P0_INPUT_AUTHORITY_V1`, status `ROOT_AUTHENTICATED_INPUT_AUTHORITY`,
+  `audit_uuid`, exact `selection`, `generation_manifest`, and `population` equal to
+  `expected`. Its `source_audit` contains `protocol` and `readout` refs plus
+  `owner: {terminal, owner_sha256, command}`. The original CPU audit must be closed
+  PASS with its exact `scripts.core_finite_admit` command, no live owned births or
+  failure marker. Protocol/readout/generation/producer/owner/count identities join
+  before any numeric payload load or output allocation. A candidate's
+  `ROOT_ACCEPTED` schema or pending-root child readout is not root acceptance:
+  the audit writes those before its final seal and owner closure. Root may
+  authenticate an already accepted legacy generation through this narrow record;
+  the census neither invents that authority nor repeats TB verification.
 - `expected`: exact `run_uuid`, producing `source_revision`, `generation`,
   `physical_games` and retained `rows`. Every game must be TRAIN and nonempty;
   identity corruption, duplicates and denominator mismatches refuse. No sampling
@@ -58,6 +73,10 @@ the same full history. Adjacent retained rows across a gap do not qualify. Regre
 is not a distribution; neither explicit P0 field supplies native P0 WDL.
 The regret transform itself is not rebuilt by this census; its stored range,
 source identity and shift context are reported without claiming numerical parity.
+An absent optional payload/flag pair is unavailable. A surviving payload without
+its presence flag is malformed/ambiguous, even if other SF fields are valid. It
+keeps its row but invalidates that reduced-label route. Ordinary flag-zero rows
+remain absent separately. Both P1 and explicit-P0 reports preserve these field facts.
 
 The census preserves exact storage semantics: F16 vectors, U8 masks/flags,48×5
 int16 sparse candidates and int32 record metadata. Native permille WDL stays
@@ -70,6 +89,9 @@ and availability flags do not prove a complete or wire-authenticated teacher.
 Query IDs/history, raw bounds/full PV, escalation and requested/actual candidate
 budgets unavailable from CORE remain UNKNOWN. Full wire is not a prerequisite
 for the narrower source-reconstructed reduced-score tier.
+The public Python move helper can import its optional native module. This tool
+invokes no native mapping/search/encoding kernel; that does not qualify an existing
+ignored image. Root must still bind/qualify the actual CPU import environment.
 
 `rows.jsonl` preserves every retained-row denominator and references predecessor
 rows. `readout.json` records every game, all structural raw records and overlapping

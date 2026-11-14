@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 import hashlib
 import json
 import math
@@ -143,7 +143,7 @@ def field(arrays: Any, name: str, i: int) -> tuple[Any, list[str]]:
 
     flag, dtype, tail = SF_FIELDS[name]
     if flag not in arrays:
-        return None, [name + ":missing_flag"]
+        return None, [name + (":invalid_payload_without_flag" if name in arrays else ":absent_storage_pair")]
     f = arrays[flag]
     if f.dtype != np.dtype("u1") or f.shape != (arrays["x"].shape[0],) or int(f[i]) not in (0, 1):
         return None, [name + ":invalid_flag"]
@@ -158,6 +158,17 @@ def field(arrays: Any, name: str, i: int) -> tuple[Any, list[str]]:
     if not np.isfinite(value).all():
         return None, [name + ":nonfinite"]
     return value, []
+
+
+def invalid_reasons(reasons: list[str]) -> list[str]:
+    tokens = ("invalid", "mismatch", "malformed", "duplicate", "illegal", "inconsistent", "disagreement",
+              "flag_without", "storage_dtype", "nonfinite", "nonpadding", "disabled_source", "no_actual_ply_raw_predecessor")
+    return sorted({r for r in reasons if any(token in r for token in tokens)})
+
+
+def storage_presence(arrays: Any, names: Iterable[str]) -> dict[str, dict[str, bool]]:
+    return {name: {"payload_stored": name in arrays, "flag_stored": SF_FIELDS[name][0] in arrays}
+            for name in names}
 
 
 def native_wdl(w: int, d: int) -> list[int] | None:
@@ -279,7 +290,6 @@ def label_evidence(arrays: Any, i: int, legal: set[int], game: dict[str, Any]) -
     if (sparse is not None and moves["sf_move_index"] is not None
             and moves["sf_move_index"] not in {r["move"] for r in sparse["candidates"]}):
         reasons.append("bestmove_not_in_retained_PV:partial_or_fallback_UNKNOWN")
-    invalid = [r for r in reasons if any(t in r for t in ("invalid", "mismatch", "malformed", "duplicate", "illegal", "inconsistent", "disagreement", "flag_without", "storage_dtype", "nonfinite", "nonpadding"))]
     return {"stored_sf_wdl_record_POV": None if wdl is None else wdl.tolist(),
             "next_P0_STM_vector_from_one_POV_flip": None if wdl is None else wdl[::-1].tolist(),
             "WDL_relation": comparison, "native_query_STM_WDL_permille": native,
@@ -287,7 +297,8 @@ def label_evidence(arrays: Any, i: int, legal: set[int], game: dict[str, Any]) -
             "policy_present": policy is not None, "query_legal_mask_present": mask is not None,
             "source_reconstructed_context_only": True, "wire_query_history": UNKNOWN,
             "bound_flags": UNKNOWN, "actual_requested_nodes": UNKNOWN, "escalation": UNKNOWN,
-            "fallback_provenance": UNKNOWN, "reasons": sorted(set(reasons)), "invalid_reasons": sorted(set(invalid))}
+            "fallback_provenance": UNKNOWN, "stored_field_contract": storage_presence(arrays, values),
+            "reasons": sorted(set(reasons)), "invalid_reasons": invalid_reasons(reasons)}
 
 
 def explicit_p0(arrays: Any, i: int, legal: set[int], raw_predecessor: bool,
@@ -305,12 +316,16 @@ def explicit_p0(arrays: Any, i: int, legal: set[int], raw_predecessor: bool,
         reasons.append("explicit_P0:disabled_source_policy_flag")
     if regret is not None and not game["record_sf_p0_regret"]:
         reasons.append("explicit_P0:disabled_source_regret_flag")
-    return {"policy_present": policy is not None, "regret_present": regret is not None,
+    invalid = invalid_reasons(reasons)
+    return {"status": "INVALID_REDUCED_LABEL" if invalid else (
+                "STORED_SOURCE_SHIFT_CONTEXT" if policy is not None or regret is not None else "UNAVAILABLE"),
+            "policy_present": policy is not None, "regret_present": regret is not None,
             "policy_F16_sha256": None if policy is None else hashlib.sha256(policy.tobytes()).hexdigest(),
             "regret_F16_sha256": None if regret is None else hashlib.sha256(regret.tobytes()).hexdigest(),
             "regret_is_probability": False, "native_P0_WDL_supplied_by_these_fields": False,
             "source_shift_before_thinning": True,
-            "regret_transform_reconstructed": False, "reasons": reasons}
+            "regret_transform_reconstructed": False, "reasons": reasons, "invalid_reasons": invalid,
+            "stored_field_contract": storage_presence(arrays, ("sf_p0_policy_target", "sf_p0_regret"))}
 
 
 def game_documents(item: dict[str, Any], generation: dict[str, Any], cap: int) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -327,6 +342,7 @@ def game_documents(item: dict[str, Any], generation: dict[str, Any], cap: int) -
     require(all(wrapper.get(k) == v and type(wrapper.get(k)) is type(v) for k, v in common.items()), "wrapper identity mismatch")
     require(wrapper["resolved"] is True and wrapper["full_history_verified"] is True
             and wrapper["raw_targets_verified"] is True, "unqualified original data")
+    require(wrapper["audit_protocol"] == generation["audit_protocol"], "wrapper source-audit protocol mismatch")
     require(digest(item["shard"]["files"]) == wrapper["shard_inventory_sha256"], "shard/wrapper inventory join")
     docs = {k: checked(v, cap) for k, v in wrapper["evidence"].items()}
     require({"outcome_proof", "provenance", "validation"} <= docs.keys(), "original evidence absent")
@@ -495,6 +511,67 @@ def runtime_guard(runtime: dict[str, Any]) -> None:
     require(not any(k == "torch" or k.startswith(("torch.", "onnxruntime", "chess_anti_engine.train")) for k in sys.modules), "forbidden runtime import")
 
 
+def input_authority(protocol: dict[str, Any], generation: dict[str, Any]) -> None:
+    """A candidate schema is not root promotion or successful CPU closure."""
+    cap = protocol["limits"]["metadata_bytes"]
+    require(isinstance(protocol.get("selection"), dict) and isinstance(protocol.get("input_authority"), dict),
+            "missing root input authority/selection")
+    selection = checked(protocol["selection"], cap)
+    expected = protocol["expected"]
+    require(selection["status"] ==
+            "ROOT_SELECTS_FIXED_TRAIN_DATA_QUALIFICATION_ONLY_SOURCE_AND_TEST_PREPARATION_NOT_EXECUTION_ADMISSION"
+            and selection["audit_uuid"] == protocol["audit_uuid"], "foreign data qualification selection")
+    population = selection["population"]
+    require(population["generation_manifest"] == protocol["generation_manifest"]
+            and population["physical_games"] == expected["physical_games"]
+            and population["retained_rows"] == expected["rows"]
+            and population["source_revision"] == expected["source_revision"]
+            and population["role"] == "TRAIN_ONLY_ALL_ROWS_FIXED_CENSUS_NO_SAMPLING_OR_SUBSTITUTION",
+            "selection population mismatch")
+    authority = checked(protocol["input_authority"], cap)
+    require(authority["schema"] == "SF_BANKED_P0_INPUT_AUTHORITY_V1"
+            and authority["status"] == "ROOT_AUTHENTICATED_INPUT_AUTHORITY"
+            and authority["audit_uuid"] == protocol["audit_uuid"]
+            and authority["selection"] == protocol["selection"]
+            and authority["generation_manifest"] == protocol["generation_manifest"]
+            and authority["population"] == expected, "unpromoted/foreign root input authority")
+    source_audit = authority["source_audit"]
+    audited = checked(source_audit["protocol"], cap)
+    report = checked(source_audit["readout"], cap)
+    owner = source_audit["owner"]
+    terminal = checked(owner["terminal"], cap, readonly=False)
+    require(generation["audit_protocol"] == source_audit["protocol"]
+            and audited["producer_protocol"] == protocol["producer_protocol"], "source-audit protocol mismatch")
+    output = Path(audited["output_root"])
+    require(source_audit["readout"]["path"] == str(output / "readout.json")
+            and protocol["generation_manifest"]["path"] == str(output / "generation.json")
+            and not output.with_name(output.name + ".failed.json").exists(), "source-audit output/failure marker mismatch")
+    require(report["status"] == "AUDITED_CORE_TRAIN_GENERATION_CANDIDATE_PENDING_ROOT_CLOSURE_V1"
+            and report["root_postclosure_promotion_required"] is True
+            and report["audit_protocol"] == source_audit["protocol"]
+            and report["generation_manifest"] == protocol["generation_manifest"]
+            and report["eligible_games"] == expected["physical_games"]
+            and report["eligible_rows"] == expected["rows"], "source-audit readout mismatch")
+    require(terminal["status"] == "PASS" and type(terminal["returncode"]) is int and terminal["returncode"] == 0
+            and terminal["owned_processes_closed"] is True and terminal["custody"] == "OWNED_PROCESSES_CLOSED"
+            and terminal["resource"] == "cpu" and terminal["command"] == owner["command"]
+            and terminal["supervisor_sha256"] == owner["owner_sha256"] == audited["runtime"]["owner"]["sha256"]
+            and terminal["seconds"] == audited["runtime"]["seconds"], "source-audit CPU owner not exact closed PASS")
+    command = owner["command"]
+    require(command[-6:] == ["-m", "scripts.core_finite_admit", "--protocol", source_audit["protocol"]["path"],
+                            "--protocol-sha256", source_audit["protocol"]["sha256"]], "source-audit exact child command mismatch")
+    births = terminal["known_processes"]
+    require(bool(births), "source-audit owned births absent")
+    for pid, birth in births.items():
+        require(str(pid).isdigit() and type(birth) is int and birth > 0, "source-audit birth identity")
+        path = Path("/proc", str(pid), "stat")
+        require(not path.exists() or int(path.read_text().rsplit(")", 1)[1].split()[19]) != birth,
+                "source-audit owned birth still live")
+    supervisor = Path("/proc", str(terminal["supervisor_pid"]), "stat")
+    require(not supervisor.exists() or int(supervisor.read_text().rsplit(")", 1)[1].split()[19]) > min(births.values()),
+            "source-audit supervisor may still be historical owner")
+
+
 def generation_inputs(protocol: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     cap = protocol["limits"]["metadata_bytes"]
     generation = checked(protocol["generation_manifest"], cap)
@@ -529,6 +606,7 @@ def generation_inputs(protocol: dict[str, Any]) -> tuple[dict[str, Any], dict[st
     require(admission["status"] == "ROOT_ADMITS_CORE_GENERATION_V1"
             and admission["protocol_sha256"] == protocol["producer_protocol"]["sha256"]
             and admission["actor_sha256"] == generation["actor_sha256"], "closed producer identity admission mismatch")
+    input_authority(protocol, generation)
     return generation, producer
 
 
@@ -612,6 +690,7 @@ def census(protocol: dict[str, Any], *, final_guard: Callable[[], None] | None =
         report = {"status": "COMPLETE_SF_BANKED_P0_EVIDENCE_CENSUS_DATA_ONLY", "audit_uuid": protocol["audit_uuid"],
                   "protocol": protocol_ref, "protocol_canonical_sha256": digest(protocol),
                   "auditor_source": protocol.get("auditor_source"), "producer_protocol": protocol["producer_protocol"],
+                  "selection": protocol["selection"], "input_authority": protocol["input_authority"],
                   "declared_stockfish_config_not_actual_effort": producer.get("stockfish"),
                   "generation_manifest": protocol["generation_manifest"], "games": games, "rows": n,
                   "physical_games": len(games), "overlapping_reason_counts": dict(sorted(counts.items())),

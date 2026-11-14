@@ -21,6 +21,13 @@ def write_ref(path: Path, value: Any) -> dict[str, str]:
     return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
 
 
+def replace_ref(ref: dict[str, str], value: Any) -> dict[str, str]:
+    """Finish or deliberately corrupt a fixture before invoking the auditor."""
+    path = Path(ref["path"])
+    path.chmod(0o644)
+    return write_ref(path, value)
+
+
 def inventory(root: Path) -> list[dict[str, Any]]:
     return [{"path": str(p.relative_to(root)), "bytes": p.stat().st_size,
              "sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
@@ -110,6 +117,13 @@ def fixture(tmp_path: Path, *, kept: tuple[int, ...] = (0, 1, 2, 3),
         arrays["sf_multipv_raw"][0] = audit.PAD
     elif corrupt == "missing":
         del arrays["sf_wdl"]
+    elif corrupt == "missing_flag":
+        del arrays["has_sf_wdl"]
+    elif corrupt == "absent_pair":
+        del arrays["has_sf_wdl"]
+        del arrays["sf_wdl"]
+    elif corrupt == "P0_missing_flag":
+        del arrays["has_sf_p0_regret"]
     elif corrupt == "duplicate_PV":
         arrays["sf_multipv_raw"][0, 1] = arrays["sf_multipv_raw"][0, 0]
     elif corrupt == "native_flip":
@@ -146,10 +160,10 @@ def fixture(tmp_path: Path, *, kept: tuple[int, ...] = (0, 1, 2, 3),
     evidence = {"outcome_proof": write_ref(directory / "outcome-proof.json", proof),
                 "provenance": write_ref(directory / "provenance.json", provenance),
                 "validation": write_ref(directory / "validation.json", validation)}
-    wrapper = {**common, "status": "VERIFIED_RESOLVED_CORE_TRAIN_GAME_V1", "resolved": True,
+    wrapper: dict[str, Any] = {**common, "status": "VERIFIED_RESOLVED_CORE_TRAIN_GAME_V1", "resolved": True,
                "full_history_verified": True, "raw_targets_verified": True,
                "shard_inventory_sha256": audit.digest(files), "evidence": evidence}
-    item = {"physical_game_id": "synthetic:0", "game_id": 7, "bank": "train", "label_class": "NATURAL",
+    item: dict[str, Any] = {"physical_game_id": "synthetic:0", "game_id": 7, "bank": "train", "label_class": "NATURAL",
             "rows": n, "producer_proof": write_ref(root / "game-0.json", wrapper),
             "shard": {"path": str(shard), "files": files}}
     generation: dict[str, Any] = {**{k: common[k] for k in ("run_uuid", "source_revision", "generation", "actor_sha256")},
@@ -172,7 +186,7 @@ def fixture(tmp_path: Path, *, kept: tuple[int, ...] = (0, 1, 2, 3),
     terminal = {"status": "PASS", "returncode": 0, "owned_processes_closed": True, "custody": "OWNED_PROCESSES_CLOSED",
                 "command": command, "supervisor_sha256": "b" * 64, "seconds": 3600, "resource": "gpu",
                 "known_processes": {"999999991": 1}}
-    protocol = {"schema": "SF_BANKED_P0_CENSUS_V1", "audit_uuid": "f47bab16-fca5-46b8-bb7b-d1d2d3dff172",
+    protocol: dict[str, Any] = {"schema": "SF_BANKED_P0_CENSUS_V1", "audit_uuid": "f47bab16-fca5-46b8-bb7b-d1d2d3dff172",
                 "generation_manifest": gen_ref, "producer_protocol": producer_ref,
                 "expected": {**{k: common[k] for k in ("run_uuid", "source_revision", "generation")},
                              "physical_games": 1, "rows": n},
@@ -181,6 +195,37 @@ def fixture(tmp_path: Path, *, kept: tuple[int, ...] = (0, 1, 2, 3),
                 "output_root": str(tmp_path / "report"),
                 "limits": {"metadata_bytes": 32 << 20, "game_decoded_bytes": 32 << 20,
                            "inventory_files": 1000, "report_bytes": 8 << 20}}
+    # Synthetic root authority is distinct from the child candidate schema.
+    audit_ref = write_ref(root / "source-audit-protocol.json", {
+        "producer_protocol": producer_ref, "output_root": str(root),
+        "runtime": {"seconds": 1800, "owner": {"sha256": "e" * 64}}})
+    wrapper["audit_protocol"] = audit_ref
+    item["producer_proof"] = replace_ref(item["producer_proof"], wrapper)
+    generation["audit_protocol"] = audit_ref
+    protocol["generation_manifest"] = replace_ref(protocol["generation_manifest"], generation)
+    source_readout = write_ref(root / "readout.json", {
+        "status": "AUDITED_CORE_TRAIN_GENERATION_CANDIDATE_PENDING_ROOT_CLOSURE_V1",
+        "root_postclosure_promotion_required": True, "audit_protocol": audit_ref,
+        "generation_manifest": protocol["generation_manifest"], "eligible_games": 1, "eligible_rows": n})
+    audit_command = ["python", "-m", "scripts.core_finite_admit", "--protocol", audit_ref["path"],
+                     "--protocol-sha256", audit_ref["sha256"]]
+    cpu_terminal = write_ref(root / "source-audit-terminal.json", {
+        "status": "PASS", "returncode": 0, "owned_processes_closed": True,
+        "custody": "OWNED_PROCESSES_CLOSED", "resource": "cpu", "seconds": 1800,
+        "command": audit_command, "supervisor_sha256": "e" * 64,
+        "known_processes": {"999999992": 1}, "supervisor_pid": 999999990})
+    protocol["selection"] = write_ref(root / "selection.json", {
+        "status": "ROOT_SELECTS_FIXED_TRAIN_DATA_QUALIFICATION_ONLY_SOURCE_AND_TEST_PREPARATION_NOT_EXECUTION_ADMISSION",
+        "audit_uuid": protocol["audit_uuid"], "population": {
+            "generation_manifest": protocol["generation_manifest"], "physical_games": 1,
+            "retained_rows": n, "source_revision": common["source_revision"],
+            "role": "TRAIN_ONLY_ALL_ROWS_FIXED_CENSUS_NO_SAMPLING_OR_SUBSTITUTION"}})
+    protocol["input_authority"] = write_ref(root / "input-authority.json", {
+        "schema": "SF_BANKED_P0_INPUT_AUTHORITY_V1", "status": "ROOT_AUTHENTICATED_INPUT_AUTHORITY",
+        "audit_uuid": protocol["audit_uuid"], "selection": protocol["selection"],
+        "generation_manifest": protocol["generation_manifest"], "population": protocol["expected"],
+        "source_audit": {"protocol": audit_ref, "readout": source_readout,
+                         "owner": {"terminal": cpu_terminal, "owner_sha256": "e" * 64, "command": audit_command}}})
     return protocol, generation, producer
 
 
@@ -239,6 +284,78 @@ def test_invalid_labels_keep_the_denominator(tmp_path: Path, corrupt: str, reaso
     rows = rows_of(protocol, generation, producer)
     assert len(rows) == 4
     assert any(reason in r for r in rows[0]["own_record_P1"]["invalid_reasons"])
+
+
+def test_payload_without_flag_is_invalid_even_with_other_valid_fields(tmp_path: Path) -> None:
+    protocol, generation, producer = fixture(tmp_path, corrupt="missing_flag")
+    rows = rows_of(protocol, generation, producer)
+    assert len(rows) == 4
+    assert rows[0]["own_record_P1"]["policy_present"] is True
+    assert "sf_wdl:invalid_payload_without_flag" in rows[0]["own_record_P1"]["invalid_reasons"]
+    assert rows[0]["own_record_P1"]["stored_field_contract"]["sf_wdl"] == {
+        "payload_stored": True, "flag_stored": False}
+    assert rows[1]["retained_predecessor_P1_join"]["status"] == "INVALID_REDUCED_LABEL"
+
+
+def test_both_absent_optional_members_stay_unavailable(tmp_path: Path) -> None:
+    protocol, generation, producer = fixture(tmp_path, corrupt="absent_pair")
+    rows = rows_of(protocol, generation, producer)
+    label = rows[0]["own_record_P1"]
+    assert len(rows) == 4
+    assert label["stored_sf_wdl_record_POV"] is None
+    assert "sf_wdl:absent_storage_pair" in label["reasons"]
+    assert label["invalid_reasons"] == []
+    assert rows[1]["retained_predecessor_P1_join"]["status"] == "SOURCE_CONTEXT_REDUCED_LABEL"
+
+
+def test_explicit_P0_flag_ambiguity_is_also_invalid(tmp_path: Path) -> None:
+    protocol, generation, producer = fixture(tmp_path, corrupt="P0_missing_flag")
+    rows = rows_of(protocol, generation, producer)
+    assert len(rows) == 4
+    explicit = rows[1]["explicit_stored_P0"]
+    assert explicit["status"] == "INVALID_REDUCED_LABEL"
+    assert "sf_p0_regret:invalid_payload_without_flag" in explicit["invalid_reasons"]
+
+
+@pytest.mark.parametrize("fault", ["missing", "pending_root", "pending_CPU", "failed_CPU", "unclosed_CPU",
+                                  "wrong_manifest", "wrong_protocol", "wrong_readout", "wrong_command", "foreign_authority"])
+def test_root_authority_refuses_before_payload_or_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str) -> None:
+    protocol, _, _ = fixture(tmp_path)
+    authority = json.loads(Path(protocol["input_authority"]["path"]).read_bytes())
+    source = authority["source_audit"]
+    if fault == "missing":
+        del protocol["input_authority"]
+    elif fault == "pending_root":
+        authority["status"] = "PENDING_ROOT_CLOSURE"
+    elif fault in ("pending_CPU", "failed_CPU", "unclosed_CPU"):
+        terminal = json.loads(Path(source["owner"]["terminal"]["path"]).read_bytes())
+        if fault == "pending_CPU":
+            terminal.update(status="RUNNING", returncode=None, owned_processes_closed=False)
+        elif fault == "failed_CPU":
+            terminal.update(status="FAILED", returncode=1)
+        else:
+            terminal["owned_processes_closed"] = False
+        source["owner"]["terminal"] = replace_ref(source["owner"]["terminal"], terminal)
+    elif fault == "wrong_manifest":
+        authority["generation_manifest"] = {**authority["generation_manifest"], "sha256": "0" * 64}
+    elif fault == "wrong_protocol":
+        foreign = json.loads(Path(source["protocol"]["path"]).read_bytes())
+        foreign["producer_protocol"] = {**foreign["producer_protocol"], "sha256": "0" * 64}
+        source["protocol"] = write_ref(tmp_path / "input" / "foreign-source-audit.json", foreign)
+    elif fault == "wrong_readout":
+        readout = json.loads(Path(source["readout"]["path"]).read_bytes())
+        readout["generation_manifest"] = {**readout["generation_manifest"], "sha256": "0" * 64}
+        source["readout"] = replace_ref(source["readout"], readout)
+    elif fault == "wrong_command":
+        source["owner"]["command"] = [*source["owner"]["command"][:-1], "0" * 64]
+    else:
+        authority["audit_uuid"] = "11111111-1111-4111-8111-111111111111"
+    if fault != "missing":
+        protocol["input_authority"] = replace_ref(protocol["input_authority"], authority)
+    monkeypatch.setattr(audit, "open_arrays", lambda *_: pytest.fail("unaccepted audit reached payload decoder"))
+    with pytest.raises(ValueError, match=r"authority|hash mismatch|source-audit"):
+        audit.census(protocol)
+    assert not Path(protocol["output_root"]).exists()
 
 
 def test_fallback_possible_is_not_wire_provenance(tmp_path: Path) -> None:
