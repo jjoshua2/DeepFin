@@ -2,9 +2,8 @@
 
 Current status: **SYNTHETIC QUALIFICATION COMPLETED; ACTUAL ORIGINAL-G1
 PRODUCE/VALIDATE UNRUN.** The focused suite and direct synthetic producer/validator
-closed PASS. The focused independent review is accepted; the separate synthetic
-CLI independent review is pending at the closed-chain cutoff, 2026-11-14
-15:06:33 UTC. No consumer, teacher recipe, training admission or strength claim
+closed PASS. Both the focused and separate synthetic CLI independent actual
+reviews are accepted without findings at the 2026-11-14 15:08:53 UTC cutoff. No consumer, teacher recipe, training admission or strength claim
 follows. The original pre-execution preregistration below is preserved; its UNRUN
 states describe that earlier cutoff. See the [completed synthetic readout](#completed-synthetic-qualification-2026-11-14).
 
@@ -170,7 +169,9 @@ qualified-field masks true and one nojoin with all three masks false. The separa
 validator freshly reopened original fixture payloads and compared the complete
 candidate's identities, inventories, shapes/dtypes, counts and vector bytes.
 Both child outputs remain candidates; root closed-chain acceptance covers only this
-synthetic engineering scope. Its independent actual review is pending at this cutoff.
+synthetic engineering scope. Its separate independent actual review accepted the
+closed chain without findings, including source/command/owner joins and opaque
+payload hashes; it did not independently rerun numeric validation or trace all I/O.
 
 This positive fixture uses **native-derived stored WDL, not CP-logistic**. Its
 fictional producer revision (`1` repeated 40 times), historical census revision
@@ -202,3 +203,4 @@ bulk paths remain relative to the same external root.
 | Closed synthetic chain root acceptance | `core-SF-current-P0-sidecar-synthetic-bindings-v1/closed-chain.json` | `8122a1a70a4b0996bc67b9af0845f631e47e67d2e0c2f0b269a31bba6d91c7f8` |
 | Synthetic producer candidate | `core-SF-current-P0-sidecar-synthetic-candidate-v1/manifest.json` | `804f478236681bc02886668fd7e02990d2cbc8a88c74c05cf38cf9401cb6138a` |
 | Synthetic validator readout | `core-SF-current-P0-sidecar-synthetic-validation-v1/readout.json` | `42c5c53fde08231c146a18ed78ac9781a9b6ff1fafb99b0bb5d83dbf20f1e35f` |
+| Synthetic CLI independent actual review | `core-SF-current-P0-sidecar-CLI-independent-actual-review-v1/review.json` | `e27b5672f71aa0264a04ab739cca6c71d53150fef72159e465e0a2ef08a5d2d8` |
