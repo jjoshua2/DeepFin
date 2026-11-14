@@ -276,7 +276,7 @@ def test_pick_moves_applies_model_rep_fix_flag(monkeypatch):
         match_mod.pick_moves_for_boards(
             model, [chess.Board()], device="cpu", rng=rng,
             mcts_type="gumbel", mcts_simulations=2, temperature=1.0,
-            c_puct=2.5, gumbel_add_noise=False,
+            gumbel_add_noise=False,
         )
         assert applied == [flag]
 
@@ -423,7 +423,7 @@ def test_match_path_passes_no_cboards_so_its_flip_exemption_holds(monkeypatch):
     scenario the E3 guard exists for), so pin it here instead: this test goes red
     the moment match.py hands the search a pre-built board.
 
-    Both search families are checked, because the exemption is claimed for both.
+    Only the Gumbel family remains (selfplay/arena PUCT retired 2026-11-14).
     """
     import chess
 
@@ -437,9 +437,7 @@ def test_match_path_passes_no_cboards_so_its_flip_exemption_holds(monkeypatch):
         return ([np.zeros(1)] * n, [0] * n, [0.0] * n, [np.zeros(1)] * n)
 
     monkeypatch.setattr(match_mod, "_run_gumbel_root_many_c", _record)
-    monkeypatch.setattr(match_mod, "_run_mcts_many_c", _record)
     monkeypatch.setattr(match_mod, "run_gumbel_root_many", _record)
-    monkeypatch.setattr(match_mod, "run_mcts_many", _record)
 
     model = cast("Any", type("M", (), {
         "input_history_encoding": "lc0_root_legacy_meta",
@@ -449,12 +447,12 @@ def test_match_path_passes_no_cboards_so_its_flip_exemption_holds(monkeypatch):
         "history_rep_fix": True,
     })())
     boards = [chess.Board()]
-    for mcts_type in ("gumbel", "puct"):
+    for mcts_type in ("gumbel",):
         calls.clear()
         match_mod.pick_moves_for_boards(
             model, boards, device="cpu", rng=np.random.default_rng(0),
             mcts_type=mcts_type, mcts_simulations=2, temperature=1.0,
-            c_puct=2.5, gumbel_add_noise=False,
+            gumbel_add_noise=False,
         )
         assert calls, f"no search invoked for {mcts_type}"
         assert "cboards" not in calls[0], (

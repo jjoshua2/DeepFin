@@ -604,5 +604,12 @@ def _test_writes_stay_outside_the_checkout(tmp_path_factory: pytest.TempPathFact
     try:
         yield
     finally:
+        # Untested on purpose: it runs after the last test, and a missed removal
+        # is harmless. It only matters for an in-process re-run (pytest.main
+        # twice), where a second hook would stack in front of the first. The
+        # import system stops at the first finder that returns a spec, so only
+        # one hook ever wraps a loader, and both patches are idempotent: the
+        # trainer patch checks its `_cae_default_tb_redirect` marker, and the
+        # arena patch assigns a constant.
         with contextlib.suppress(ValueError):
             sys.meta_path.remove(hook)

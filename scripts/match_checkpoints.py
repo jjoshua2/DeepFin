@@ -16,6 +16,7 @@ import numpy as np
 from chess_anti_engine.selfplay.match import play_match_batch
 from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
+from chess_anti_engine.utils.search_type import gumbel_search_cli_arg
 
 _LOG_DIR = Path("runs/matches")
 
@@ -37,7 +38,7 @@ def main() -> None:
                    help="MCTS sims/move for model B; defaults to --sims")
     p.add_argument("--temperature", type=float, default=0.1)
     p.add_argument("--max-plies", type=int, default=300)
-    p.add_argument("--mcts", default="gumbel", choices=["gumbel", "puct"])
+    p.add_argument("--mcts", type=gumbel_search_cli_arg, default="gumbel")
     p.add_argument("--no-gumbel-noise", action="store_true",
                    help="Disable root Gumbel noise for deterministic strength matches")
     p.add_argument("--device", default="cuda")

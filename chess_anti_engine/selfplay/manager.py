@@ -307,7 +307,7 @@ def _reset_search_tree(tree: Any) -> None:
 def _require_compiled_search() -> None:
     """Refuse a play_batch whose compiled search runners failed to import.
 
-    ``network_turn`` imports ``gumbel_c``/``puct_c`` under ``try`` and used to
+    ``network_turn`` imports ``gumbel_c`` under ``try`` and used to
     run the pure-Python search when either failed (a stale or partial build),
     with no warning. The missing per-ply / classify symbols are refused by
     ``SelfplayState.create``. Volatility arms still select the Python Gumbel
@@ -316,16 +316,13 @@ def _require_compiled_search() -> None:
     # Read at call time (not bound at import) so the flags a stale build set
     # at import are what is checked.
     from chess_anti_engine.selfplay.network_turn import (
-        _C_TREE_IMPORT_ERROR,
         _GUMBEL_C_IMPORT_ERROR,
-        _HAS_C_TREE,
         _HAS_GUMBEL_C,
     )
 
     missing = [
         f"{name} ({err or 'not imported'})" for name, ok, err in (
             ("mcts.gumbel_c.run_gumbel_root_many_c", _HAS_GUMBEL_C, _GUMBEL_C_IMPORT_ERROR),
-            ("mcts.puct_c.run_mcts_many_c", _HAS_C_TREE, _C_TREE_IMPORT_ERROR),
         ) if not ok
     ]
     if missing:
@@ -438,7 +435,7 @@ def play_batch(
             raise ValueError("rule50_match_v1 requires on_game_provenance, including censored/zero-row attempts")
         if (stop_fn is not None and int(target_games) <= 0) or on_suspend is not None:
             raise ValueError("rule50_match_v1 requires finite play_batch without suspend/resume")
-        if search.mcts_type != "gumbel" or search.volatility_q_scale or search.volatility_fpu:
+        if search.volatility_q_scale or search.volatility_fpu:
             raise ValueError("rule50_match_v1 requires the compiled Gumbel TB consumer")
         from chess_anti_engine.selfplay.network_turn import _HAS_GUMBEL_C
         if not _HAS_GUMBEL_C:

@@ -101,25 +101,6 @@ def test_empty_dict_forces_the_dataclass_defaults(monkeypatch: Any) -> None:
     assert cfg.topk == GumbelConfig().topk
 
 
-def test_puct_matches_are_unaffected(monkeypatch: Any) -> None:
-    """The overrides are Gumbel knobs; the PUCT path must not see them."""
-    seen = _capture_cfgs(monkeypatch)
-    model = _DummyModel().eval()
-    stats = play_match_batch(
-        model, model,
-        device="cpu",
-        rng=np.random.default_rng(0),
-        games=2,
-        max_plies=4,
-        a_plays_white=[True, False],
-        mcts_type="puct",
-        mcts_simulations=1,
-        temperature=0.0,
-    )
-    assert not seen, "PUCT match must not route through the Gumbel search"
-    assert stats.games == 2
-
-
 def test_board_fixture_is_sane() -> None:
     """Guard the fixture itself: a startpos must have legal moves to pick."""
     assert len(list(chess.Board().legal_moves)) == 20

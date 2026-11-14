@@ -20,7 +20,7 @@ from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.ext_check import C_CORE_REFUSAL_EXIT_CODE, CCoreIncompleteError
 from chess_anti_engine.inference import trial_slot_prefix
 from chess_anti_engine.mcts.gumbel import SELFPLAY_GUMBEL_C_SCALE
-from chess_anti_engine.utils.search_type import normalize_mcts_type
+from chess_anti_engine.utils.search_type import require_gumbel_search
 from chess_anti_engine.model import ModelConfig, model_config_to_manifest_dict
 from chess_anti_engine.moves import policy_size_for_encoding
 from chess_anti_engine.replay import ArrayReplayBuffer, DiskReplayBuffer
@@ -303,7 +303,7 @@ def build_recommended_worker(
     return {
         "games_per_batch": int(config.get("selfplay_batch", 4)),
         "max_plies": int(config.get("max_plies", 240)),
-        "mcts": normalize_mcts_type(config.get("mcts", "gumbel")),
+        "mcts": require_gumbel_search(config.get("mcts", "gumbel")),
         "mcts_simulations": int(mcts_simulations),
         "playout_cap_fraction": float(config.get("playout_cap_fraction", 0.25)),
         "full_ply_pair_fraction": float(config.get("full_ply_pair_fraction", 0.0)),
@@ -1290,8 +1290,6 @@ def check_dynamic_relations_transport(config: dict) -> None:
     ]
     if str(config.get("distributed_worker_aot_dir") or "").strip():
         offenders.append("distributed_worker_aot_dir")
-    if normalize_mcts_type(config.get("mcts", "gumbel")) != "gumbel":
-        offenders.append("mcts != gumbel (PUCT paths don't transport relations)")
     if offenders:
         raise ValueError(
             "dynamic relations require worker-local direct inference on the "
@@ -1567,8 +1565,11 @@ def _ensure_distributed_workers(
             try:
                 _raise_if_c_core_refusal(out[idx], idx=idx, trial_id=trial_id)
             except CCoreIncompleteError:
-                for proc in launched:
-                    _stop_process(proc)
+                # _stop_worker_processes also sweeps each stopped worker's
+                # orphaned Stockfish engines. Nothing it raises may replace
+                # the refusal, which is what the operator has to read.
+                with contextlib.suppress(Exception):
+                    _stop_worker_processes(launched)
                 raise
             print(
                 f"[trial] restarting distributed worker idx={idx} "

@@ -32,21 +32,21 @@ def test_probe_reaches_compiled_search(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(match, '_run_gumbel_root_many_c', search)
     result = match.pick_moves_for_boards(
         DummyModel(), [chess.Board()], device='cpu', rng=np.random.default_rng(1),
-        mcts_type='gumbel', mcts_simulations=2, temperature=0, c_puct=2.5,
+        mcts_type='gumbel', mcts_simulations=2, temperature=0,
         gumbel_add_noise=False, tb_probe=probe,
     )
     assert len(result) == 1
     assert seen == [probe]
 
 
-@pytest.mark.parametrize('route', ['puct', 'python', 'volatility'])
+@pytest.mark.parametrize('route', ['python', 'volatility'])
 def test_unsupported_search_refuses_probe(monkeypatch: pytest.MonkeyPatch, route: str) -> None:
     monkeypatch.setattr(match, '_HAS_GUMBEL_C', route != 'python')
     with pytest.raises(ValueError, match=r'[Tt]ablebase'):
         match.pick_moves_for_boards(
             DummyModel(), [chess.Board()], device='cpu', rng=np.random.default_rng(1),
-            mcts_type='puct' if route == 'puct' else 'gumbel', mcts_simulations=2,
-            temperature=0, c_puct=2.5, gumbel_add_noise=False,
+            mcts_type='gumbel', mcts_simulations=2,
+            temperature=0, gumbel_add_noise=False,
             volatility_q_scale=1 if route == 'volatility' else 0,
             tb_probe=cast(SyzygyProbe, object()),
         )

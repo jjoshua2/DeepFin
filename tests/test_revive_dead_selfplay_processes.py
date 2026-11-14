@@ -404,6 +404,11 @@ def test_ensure_workers_stops_its_own_launches_when_a_worker_refuses_mid_loop(
     monkeypatch.setattr(distributed_runtime, "_launch_distributed_worker", _fake_launch)
     monkeypatch.setattr(distributed_runtime, "_worker_launch_signature", lambda **_kw: "sig")
     monkeypatch.setattr(distributed_runtime, "_stop_process", stopped.append)
+    swept: list[int] = []
+    monkeypatch.setattr(
+        distributed_runtime, "terminate_engines_owned_by",
+        lambda pid: (swept.append(pid), [])[1],
+    )
     procs: list[object] = [_FakeProc(pid=2, returncode=1, launch_signature="sig"), _DiesDuringLoop()]
     with pytest.raises(CCoreIncompleteError, match="idx=1"):
         distributed_runtime._ensure_distributed_workers(
@@ -412,6 +417,73 @@ def test_ensure_workers_stops_its_own_launches_when_a_worker_refuses_mid_loop(
         )
     assert len(launched) == 1  # idx 0 was relaunched before idx 1 refused
     assert stopped == launched  # ... and is not leaked
+    # Stopped through _stop_worker_processes, which also sweeps the stopped
+    # worker's orphaned Stockfish engines.
+    assert swept == [900]
+
+
+def test_a_failing_mid_loop_cleanup_does_not_replace_the_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The operator must read the C-core refusal, not a cleanup error."""
+
+    class _DiesDuringLoop(_FakeProc):
+        def __init__(self) -> None:
+            super().__init__(pid=3, returncode=None, launch_signature="sig")
+            self.polls = 0
+
+        def poll(self) -> int | None:
+            self.polls += 1
+            if self.polls > 1:
+                self.returncode = C_CORE_REFUSAL_EXIT_CODE
+            return self.returncode
+
+    def _cleanup_fails(_procs: object) -> None:
+        raise OSError("cleanup exploded")
+
+    monkeypatch.setattr(
+        distributed_runtime, "_launch_distributed_worker",
+        lambda *, worker_index, **_kw: _FakeProc(pid=900 + worker_index, launch_signature="sig"),
+    )
+    monkeypatch.setattr(distributed_runtime, "_worker_launch_signature", lambda **_kw: "sig")
+    monkeypatch.setattr(distributed_runtime, "_stop_worker_processes", _cleanup_fails)
+    procs: list[object] = [_FakeProc(pid=2, returncode=1, launch_signature="sig"), _DiesDuringLoop()]
+    with pytest.raises(CCoreIncompleteError, match="idx=1"):
+        distributed_runtime._ensure_distributed_workers(
+            config={"distributed_workers_per_trial": 2}, trial_dir=tmp_path, trial_id="t",
+            procs=procs,  # pyright: ignore[reportArgumentType]
+        )
+
+
+def test_launch_stamps_the_worker_log_paths_the_refusal_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_raise_if_c_core_refusal`` reads ``_cae_worker_log_paths`` off the proc."""
+    stub = _FakeProc(pid=4242)
+    spawned: list[dict[str, object]] = []
+
+    def _fake_spawn(**kwargs: object) -> _FakeProc:
+        spawned.append(kwargs)
+        return stub
+
+    monkeypatch.setattr(distributed_runtime, "_spawn_with_reap", _fake_spawn)
+    # The command line is not under test here (it needs a full server config).
+    monkeypatch.setattr(distributed_runtime, "_build_distributed_worker_cmd", lambda **_kw: ["true"])
+    proc = distributed_runtime._launch_distributed_worker(
+        config={}, trial_dir=tmp_path, trial_id="t", worker_index=3,
+    )
+    assert proc is stub
+    root = distributed_runtime._distributed_worker_artifacts_root(tmp_path) / "worker_03"
+    assert getattr(proc, "_cae_worker_log_paths", None) == (root / "worker.out", root / "worker.log")
+    assert spawned[0]["log_path"] == root / "worker.out"
+    # ... and the refusal message actually names them.
+    stub.returncode = C_CORE_REFUSAL_EXIT_CODE
+    with pytest.raises(CCoreIncompleteError) as exc:
+        distributed_runtime._raise_if_c_core_refusal(
+            proc, idx=3, trial_id="t",
+        )
+    assert str(root / "worker.out") in str(exc.value)
+    assert str(root / "worker.log") in str(exc.value)
 
 
 def test_revive_raises_before_relaunching_the_broker_or_an_earlier_worker(

@@ -1,8 +1,12 @@
 """Run one network turn for a batch of network-assigned slots.
 
-The C fast paths (``batch_encode_146``, ``batch_process_ply``,
-``temperature_resample``) consume plain Python lists of ``CBoard``
-objects + numpy arrays by reference; the zero-copy inplace path writes
+The C fast paths (``batch_encode_146``, ``batch_process_ply``) consume
+plain Python lists of ``CBoard`` objects + numpy arrays by reference.
+``temperature_resample`` is still a required C symbol (in
+``ext_check.REQUIRED_SYMBOLS`` and probed by ``selfplay/state.py``; the
+``scripts/core_finite_collect.py`` gate depends on that requirement, so keep
+it), but nothing in selfplay calls it since the PUCT retirement (2026-11-14):
+temperature resampling is Python-only. The zero-copy inplace path writes
 into the evaluator's pinned buffer. Torch-compile shape-stability
 buckets are kept as a module constant so the evaluator sees a stable
 set of batch shapes.
@@ -40,27 +44,17 @@ from chess_anti_engine.encoding.lc0 import (
     normalize_lc0_history_encoding,
     uses_lc0_root_history,
 )
-from chess_anti_engine.mcts import GumbelConfig, MCTSConfig
+from chess_anti_engine.mcts import GumbelConfig
 from chess_anti_engine.mcts.gumbel import (
     run_gumbel_root_many,
     volatility_search_enabled,
     warn_volatility_python_path,
 )
-from chess_anti_engine.mcts.puct import run_mcts_many
 from chess_anti_engine.mcts.sampling import sample_action_with_temperature
 from chess_anti_engine.mcts.solved_root import SolvedRootWitnessUnavailable
 
 # The ImportError text is kept: a refusal (manager._require_compiled_search
 # and the dispatch below) names what actually failed to import.
-try:
-    from chess_anti_engine.mcts.puct_c import run_mcts_many_c as _run_mcts_many_c
-    _HAS_C_TREE = True
-    _C_TREE_IMPORT_ERROR: str | None = None
-except ImportError as _exc:
-    _run_mcts_many_c = run_mcts_many
-    _HAS_C_TREE = False
-    _C_TREE_IMPORT_ERROR = f"{type(_exc).__name__}: {_exc}"
-
 try:
     from chess_anti_engine.mcts.gumbel_c import (
         run_gumbel_root_many_c as _run_gumbel_root_many_c,
@@ -189,51 +183,31 @@ def _resample_actions_with_temperature(
     actions: list[int],
     temps: list[float],
     rng: np.random.Generator,
-    *,
-    c_temp_resample: Any | None,
-    use_c_resample: bool,
-    preserve_zero_temperature_actions: bool,
 ) -> None:
-    """Apply final move temperature to search policies in-place.
+    """Apply final move temperature to Gumbel search policies in-place.
 
     Gumbel's temperature-0 action is the sequential-halving survivor, not the
-    argmax of the returned improved policy. ``preserve_zero_temperature_actions``
-    keeps that survivor and only resamples when the requested temperature is
-    positive.
+    argmax of the returned improved policy, so a temperature <= 0 keeps the
+    survivor and only a positive temperature resamples (falling back to the
+    survivor when the policy is degenerate). The PUCT variant (argmax at
+    temperature 0, and the C ``temperature_resample`` helper that treated
+    t == 1 as a no-op because PUCT had already sampled) went with the selfplay
+    PUCT search on 2026-11-14.
     """
     temps_arr = np.array(temps, dtype=np.float64)
-    if preserve_zero_temperature_actions:
-        need_resample = temps_arr > 0.0
-    else:
-        need_resample = temps_arr != 1.0
+    need_resample = temps_arr > 0.0
     if not need_resample.any():
         return
 
     p_stack = np.stack(probs_list)  # (G, 4672)
-    if use_c_resample and not preserve_zero_temperature_actions:
-        # The C helper treats t == 1 as a no-op, which is correct for PUCT
-        # because its search call already sampled at temperature 1. Gumbel
-        # uses the Python path so t == 1 can sample from the improved policy
-        # after starting from the halving survivor.
-        actions_arr = np.array(actions, dtype=np.int32)
-        rand_arr = rng.random(len(temps))
-        assert c_temp_resample is not None
-        c_temp_resample(p_stack, temps_arr, actions_arr, rand_arr)
-        for gi in range(len(actions)):
-            actions[gi] = int(actions_arr[gi])
-        return
-
     for gi in need_resample.nonzero()[0]:
         p = p_stack[gi]
         t = float(temps_arr[gi])
         legal = np.flatnonzero(p > 0)
         if len(legal) == 0:
             continue
-        if preserve_zero_temperature_actions:
-            matches = np.flatnonzero(legal == int(actions[gi]))
-            fallback_idx = int(matches[0]) if matches.size else 0
-        else:
-            fallback_idx = int(np.argmax(p[legal]))
+        matches = np.flatnonzero(legal == int(actions[gi]))
+        fallback_idx = int(matches[0]) if matches.size else 0
         actions[gi] = sample_action_with_temperature(
             rng,
             legal,
@@ -399,19 +373,6 @@ class SelfplaySearchShape:
             "target_batch": int(self.target_batch),
             "vloss_weight": int(self.vloss_weight),
         }
-
-
-def selfplay_search_is_gumbel(search: SearchConfig, simulations: int) -> bool:
-    """Whether production selfplay runs Gumbel (else PUCT) at this budget.
-
-    The one statement of the selfplay dispatch rule: Gumbel when the config
-    says so, and also for any budget at or below ``max(64, fast_simulations)``
-    even under ``mcts_type="puct"``. Public so other consumers that must
-    "search the way configured selfplay does" (the training puzzle eval)
-    call the rule instead of re-deriving it.
-    """
-    gumbel_low_sims = max(64, int(search.fast_simulations))
-    return (str(search.mcts_type) == "gumbel") or (int(simulations) <= int(gumbel_low_sims))
 
 
 def build_selfplay_search_shape(
@@ -1103,7 +1064,7 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
         return
 
     if (getattr(state.game, "syzygy_outcome_mode", "theoretical_wdl") == "rule50_match_v1"
-            and (state.search.mcts_type != "gumbel" or not _HAS_GUMBEL_C
+            and (not _HAS_GUMBEL_C
                  or state.search.volatility_q_scale or state.search.volatility_fpu
                  or getattr(state, "strict_tb", None) is None)):
         raise ValueError("strict TB selfplay cannot fall back to a search without its TB consumer")
@@ -1187,25 +1148,22 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
         if not idxs:
             return
 
-        # Gumbel accepts per-game budgets; PUCT callers group equal budgets.
-        # Apply each game's temperature after search.
+        # Gumbel accepts per-game budgets. Apply each game's temperature after search.
         group = idxs
         sub_cboards = [state.cboards[net_idxs[j]] for j in group]
         sub_temps = [temps[j] for j in group]
         sub_sims = [int(sims_per[j]) for j in group]
         sim_count = max(sub_sims)
 
-        use_gumbel = selfplay_search_is_gumbel(search, int(sim_count))
         sub_pol = pol_logits[group, :]
         sub_wdl = wdl_logits_raw[group, :]
         diag_sub: list[dict[str, float] | None]
 
-        if use_gumbel:
-            sub_noise = [per_game_noise[j] for j in group] if per_game_noise is not None else None
-            sub_scale = [
-                float(per_game_gumbel_scale[j])
-                for j in group
-            ] if per_game_gumbel_scale is not None else [float(search.gumbel_scale) for _ in group]
+        sub_noise = [per_game_noise[j] for j in group] if per_game_noise is not None else None
+        sub_scale = [
+            float(per_game_gumbel_scale[j])
+            for j in group
+        ] if per_game_gumbel_scale is not None else [float(search.gumbel_scale) for _ in group]
           # ⚑ ONE object supplies EVERY config-derived argument the C runner
           # gets. `cfg=`, `target_batch=` and `vloss_weight=` used to be three
           # independent expressions here, and the two that were not
@@ -1213,128 +1171,94 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
           # certified itself "field-complete over GumbelConfig". Sourcing them
           # from one shape is what makes that certification a claim about this
           # call site.
-            search_shape = build_selfplay_search_shape(
-                search=search, game=state.game, simulations=int(sim_count),
-            )
-            gumbel_cfg = search_shape.cfg
-            if volatility_search_enabled(gumbel_cfg):
-                warn_volatility_python_path()
-            used_gumbel_c = _HAS_GUMBEL_C and not volatility_search_enabled(gumbel_cfg)
-            if used_gumbel_c:
-                # Map group indices to game-level root IDs for tree reuse.
-                sub_root_ids = [state.root_ids[net_idxs[j]] for j in group] if state.mcts_tree is not None else None
-                gumbel_c_fn = cast(Any, _run_gumbel_root_many_c)
-                try:
-                    _gumbel_result = gumbel_c_fn(
-                        state.model,
-                        sub_cboards,
-                        device=state.device,
-                        rng=rng,
-                        evaluator=eval_impl,
-                        pre_pol_logits=sub_pol,
-                        pre_wdl_logits=sub_wdl,
-                        per_game_simulations=sub_sims,
-                        per_game_add_noise=sub_noise,
-                        per_game_gumbel_scale=sub_scale,
-                        cboards=sub_cboards,
-                        tree=state.mcts_tree,
-                        root_node_ids=sub_root_ids,
-                        tb_probe=state.tb_probe if state.game.syzygy_in_search else None,
-                        allow_terminal_root_shortcuts=True,
-                        return_diagnostics=True,
-                        witness_stop_fn=witness_stop_fn,
-                        **search_shape.runner_kwargs(),
-                    )
-                except SolvedRootWitnessUnavailable as exc:
-                    _gumbel_result = exc.partial_result
-                    for local_j, status in exc.outcomes.items():
-                        row = group[local_j]
-                        slot = net_idxs[row]
-                        if status == 2:
-                            result = "1/2-1/2"
-                        else:
-                            white_wins = (status == 1) == bool(state.cboards[slot].turn)
-                            result = "1-0" if white_wins else "0-1"
-                        # Emergency adjudication from an existing search proof,
-                        # independent of the ordinary TB play-through roll.
-                        state.tb_result_arr[slot] = result
-                        state.done_arr[slot] = 1
-                        adjudicated_rows.add(row)
-                        logging.getLogger(__name__).warning(
-                            "search witness exhausted: adjudicating slot %d result=%s child_checks=%d",
-                            slot, result, exc.child_checks.get(local_j, 0),
-                        )
-            else:
-                if not _HAS_GUMBEL_C:
-                    # Volatility selects the Python search by config; a missing
-                    # compiled Gumbel runner must not select it silently.
-                    refuse_fallback(
-                        "selfplay network turn",
-                        f"mcts.gumbel_c ({_GUMBEL_C_IMPORT_ERROR or 'not imported'})",
-                        "the pure-Python Gumbel search",
-                    )
-                sub_boards = [state.replay_board(net_idxs[j]) for j in group]
-                _gumbel_result = run_gumbel_root_many(
+        search_shape = build_selfplay_search_shape(
+            search=search, game=state.game, simulations=int(sim_count),
+        )
+        gumbel_cfg = search_shape.cfg
+        if volatility_search_enabled(gumbel_cfg):
+            warn_volatility_python_path()
+        used_gumbel_c = _HAS_GUMBEL_C and not volatility_search_enabled(gumbel_cfg)
+        if used_gumbel_c:
+            # Map group indices to game-level root IDs for tree reuse.
+            sub_root_ids = [state.root_ids[net_idxs[j]] for j in group] if state.mcts_tree is not None else None
+            gumbel_c_fn = cast(Any, _run_gumbel_root_many_c)
+            try:
+                _gumbel_result = gumbel_c_fn(
                     state.model,
-                    sub_boards,
+                    sub_cboards,
                     device=state.device,
                     rng=rng,
-                    cfg=gumbel_cfg,
                     evaluator=eval_impl,
                     pre_pol_logits=sub_pol,
                     pre_wdl_logits=sub_wdl,
                     per_game_simulations=sub_sims,
                     per_game_add_noise=sub_noise,
                     per_game_gumbel_scale=sub_scale,
+                    cboards=sub_cboards,
+                    tree=state.mcts_tree,
+                    root_node_ids=sub_root_ids,
+                    tb_probe=state.tb_probe if state.game.syzygy_in_search else None,
+                    allow_terminal_root_shortcuts=True,
                     return_diagnostics=True,
+                    witness_stop_fn=witness_stop_fn,
+                    **search_shape.runner_kwargs(),
                 )
-            # C diagnostics return tree/root ids before diagnostics; Python diagnostics do not.
-            p_sub, a_sub, v_sub, m_sub = _gumbel_result[:4]
-            if used_gumbel_c and len(_gumbel_result) >= 7:
-                diag_sub = cast(list[dict[str, float] | None], _gumbel_result[6])
-            elif (not used_gumbel_c) and len(_gumbel_result) >= 5:
-                diag_sub = cast(list[dict[str, float] | None], _gumbel_result[4])
-            else:
-                diag_sub = [None] * len(group)
-            # Store returned root IDs for tree reuse
-            if state.mcts_tree is not None and len(_gumbel_result) >= 6:
-                _ret_root_ids = _gumbel_result[5]
-                for gi, jj in enumerate(group):
-                    state.root_ids[net_idxs[jj]] = _ret_root_ids[gi]
+            except SolvedRootWitnessUnavailable as exc:
+                _gumbel_result = exc.partial_result
+                for local_j, status in exc.outcomes.items():
+                    row = group[local_j]
+                    slot = net_idxs[row]
+                    if status == 2:
+                        result = "1/2-1/2"
+                    else:
+                        white_wins = (status == 1) == bool(state.cboards[slot].turn)
+                        result = "1-0" if white_wins else "0-1"
+                    # Emergency adjudication from an existing search proof,
+                    # independent of the ordinary TB play-through roll.
+                    state.tb_result_arr[slot] = result
+                    state.done_arr[slot] = 1
+                    adjudicated_rows.add(row)
+                    logging.getLogger(__name__).warning(
+                        "search witness exhausted: adjudicating slot %d result=%s child_checks=%d",
+                        slot, result, exc.child_checks.get(local_j, 0),
+                    )
         else:
-            # PUCT needs python-chess boards.  When the C fast path is
-            # active, boards[idx] stays at the starting position — rebuild
-            # current state from move_idx_history (handled inside replay_board).
-            sub_boards = [state.replay_board(net_idxs[j]) for j in group]
-            if not _HAS_C_TREE:
+            if not _HAS_GUMBEL_C:
+                # Volatility selects the Python search by config; a missing
+                # compiled Gumbel runner must not select it silently.
                 refuse_fallback(
                     "selfplay network turn",
-                    f"mcts.puct_c ({_C_TREE_IMPORT_ERROR or 'not imported'})",
-                    "the pure-Python PUCT search",
+                    f"mcts.gumbel_c ({_GUMBEL_C_IMPORT_ERROR or 'not imported'})",
+                    "the pure-Python Gumbel search",
                 )
-            _puct_fn = _run_mcts_many_c if _HAS_C_TREE else run_mcts_many
-            p_sub, a_sub, v_sub, m_sub = _puct_fn(
+            sub_boards = [state.replay_board(net_idxs[j]) for j in group]
+            _gumbel_result = run_gumbel_root_many(
                 state.model,
                 sub_boards,
                 device=state.device,
                 rng=rng,
-                cfg=MCTSConfig(
-                    simulations=int(sim_count),
-                    temperature=1.0,
-                    fpu_reduction=float(search.fpu_reduction),
-                    fpu_at_root=float(search.fpu_at_root),
-                    input_history_encoding=state.game.input_history_encoding,
-                    input_extra_features=state.game.input_extra_features,
-                    policy_encoding=state.game.policy_encoding,
-                    compute_relations=bool(state.game.record_relations),
-                ),
+                cfg=gumbel_cfg,
                 evaluator=eval_impl,
                 pre_pol_logits=sub_pol,
                 pre_wdl_logits=sub_wdl,
-                cboards=sub_cboards,
+                per_game_simulations=sub_sims,
+                per_game_add_noise=sub_noise,
+                per_game_gumbel_scale=sub_scale,
+                return_diagnostics=True,
             )
+        # C diagnostics return tree/root ids before diagnostics; Python diagnostics do not.
+        p_sub, a_sub, v_sub, m_sub = _gumbel_result[:4]
+        if used_gumbel_c and len(_gumbel_result) >= 7:
+            diag_sub = cast(list[dict[str, float] | None], _gumbel_result[6])
+        elif (not used_gumbel_c) and len(_gumbel_result) >= 5:
+            diag_sub = cast(list[dict[str, float] | None], _gumbel_result[4])
+        else:
             diag_sub = [None] * len(group)
-
+        # Store returned root IDs for tree reuse
+        if state.mcts_tree is not None and len(_gumbel_result) >= 6:
+            _ret_root_ids = _gumbel_result[5]
+            for gi, jj in enumerate(group):
+                state.root_ids[net_idxs[jj]] = _ret_root_ids[gi]
         # Re-select actions with per-game temperature from the returned policy.
         # For Gumbel, temperature <= 0 must preserve the sequential-halving
         # survivor returned by the search instead of taking policy argmax.
@@ -1345,9 +1269,6 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
             active_actions,
             [sub_temps[j] for j in active],
             rng,
-            c_temp_resample=state.c_temp_resample,
-            use_c_resample=bool(state.has_classify_c),
-            preserve_zero_temperature_actions=bool(use_gumbel),
         )
 
         for j, action in zip(active, active_actions, strict=True):
@@ -1359,10 +1280,7 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
             actions[jj] = a
             values_list[jj] = float(v)
             masks_list[jj] = m
-            gumbel_diags[jj] = (
-                _refresh_gumbel_action_diag(diag_sub[local_j], p, int(a))
-                if use_gumbel else diag_sub[local_j]
-            )
+            gumbel_diags[jj] = _refresh_gumbel_action_diag(diag_sub[local_j], p, int(a))
             # Advance tree root to chosen move's child for next-ply reuse
             if state.mcts_tree is not None:
                 game_idx = net_idxs[jj]
@@ -1382,26 +1300,13 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
         for j in all_idxs
     ]
     noise_py = [scale > 0.0 for scale in scale_py]
-    groups = [all_idxs]
-    if (
-        str(search.mcts_type) != "gumbel"
-        and max(combined_sims) > max(64, int(search.fast_simulations))
-        and len(set(combined_sims)) > 1
-    ):
-        # PUCT has a scalar budget. Keep each budget in its own call so a
-        # fast row does not inherit the full-search maximum. Low-budget
-        # groups retain the existing standalone Gumbel routing.
-        groups = [
-            [j for j in all_idxs if combined_sims[j] == simulations]
-            for simulations in dict.fromkeys(combined_sims)
-        ]
-    for group in groups:
-        _run_mcts_group(
-            group,
-            combined_sims,
-            per_game_noise=noise_py,
-            per_game_gumbel_scale=scale_py,
-        )
+    # One call: the Gumbel runner takes per-game budgets.
+    _run_mcts_group(
+        all_idxs,
+        combined_sims,
+        per_game_noise=noise_py,
+        per_game_gumbel_scale=scale_py,
+    )
 
     if adjudicated_rows:
         keep = [j for j in range(len(net_idxs)) if j not in adjudicated_rows]

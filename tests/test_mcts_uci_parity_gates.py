@@ -10,8 +10,6 @@ import numpy as np
 import pytest
 
 from chess_anti_engine.mcts.gumbel import GumbelConfig, run_gumbel_root_many
-from chess_anti_engine.mcts.puct import MCTSConfig, run_mcts_many
-from chess_anti_engine.mcts.puct_c import run_mcts_many_c
 from chess_anti_engine.moves import POLICY_ENCODING_LC0_1858, POLICY_SIZE, move_to_index
 from chess_anti_engine.uci import search as uci_search
 from chess_anti_engine.uci.search import SearchWorker
@@ -116,50 +114,6 @@ def _assert_uci_line_is_legal(board: chess.Board, line: tuple[str, ...]) -> None
         replay.push(move)
 
 
-def test_puct_cross_impl_root_outputs_match_edge_case_oracles() -> None:
-    boards = _edge_case_boards()
-    pre_pol, pre_wdl = _root_logits(len(boards))
-    cfg = MCTSConfig(simulations=0, dirichlet_eps=0.0, temperature=0.0)
-
-    py_probs, py_actions, py_values, py_masks = run_mcts_many(
-        None,
-        boards,
-        device="cpu",
-        rng=np.random.default_rng(7),
-        cfg=cfg,
-        evaluator=_ZeroEvaluator(),
-        pre_pol_logits=pre_pol,
-        pre_wdl_logits=pre_wdl,
-    )
-    c_probs, c_actions, c_values, c_masks = run_mcts_many_c(
-        None,
-        boards,
-        device="cpu",
-        rng=np.random.default_rng(7),
-        cfg=cfg,
-        evaluator=_ZeroEvaluator(),
-        pre_pol_logits=pre_pol,
-        pre_wdl_logits=pre_wdl,
-    )
-
-    assert py_actions == c_actions
-    np.testing.assert_allclose(py_values, c_values, atol=0.0)
-    for board, py_prob, c_prob, py_value, c_value, py_mask, c_mask in zip(
-        boards, py_probs, c_probs, py_values, c_values, py_masks, c_masks, strict=True,
-    ):
-        expected_mask = _expected_root_mask(board)
-        expected_value = _expected_root_value(board)
-        assert py_value == expected_value
-        assert c_value == expected_value
-        assert np.array_equal(py_mask, expected_mask)
-        assert np.array_equal(c_mask, expected_mask)
-        assert np.array_equal(py_mask, c_mask)
-        np.testing.assert_allclose(py_prob, c_prob, atol=0.0)
-        assert np.count_nonzero(py_prob[~py_mask]) == 0
-        assert np.count_nonzero(c_prob[~c_mask]) == 0
-
-
-@pytest.mark.skipif(run_gumbel_root_many_c is None, reason="gumbel_c extension not available")
 def test_gumbel_cross_impl_root_outputs_match_edge_case_oracles() -> None:
     boards = _edge_case_boards()
     pre_pol, pre_wdl = _root_logits(len(boards))

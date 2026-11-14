@@ -30,6 +30,7 @@ from chess_anti_engine.selfplay.config import (
 from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.selfplay.state import CompletedGameBatch
 from chess_anti_engine.stockfish import StockfishPool
+from chess_anti_engine.utils.search_type import gumbel_search_cli_arg
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 from chess_anti_engine.utils.engine_discovery import ENV_VAR, stockfish_candidates
 
@@ -99,7 +100,7 @@ def main() -> None:
     p.add_argument("--sf-multipv", type=int, default=40,
                    help="SF MultiPV (must be >1 for regret to have effect; default=40 matches production)")
     p.add_argument("--temperature", type=float, default=0.1)
-    p.add_argument("--mcts", default="gumbel", choices=["gumbel", "puct"])
+    p.add_argument("--mcts", type=gumbel_search_cli_arg, default="gumbel")
     p.add_argument("--device", default="cuda")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--label", default="model")

@@ -16,7 +16,7 @@ from chess_anti_engine.model import (
     normalize_ffn_mult_by_layer,
     normalize_phase_piece_thresholds,
 )
-from chess_anti_engine.utils.search_type import normalize_mcts_type
+from chess_anti_engine.utils.search_type import gumbel_search_cli_arg
 from chess_anti_engine.selfplay.match import play_match_batch
 
 
@@ -147,9 +147,8 @@ def main() -> None:
     ap.add_argument("--games", type=int, default=50)
     ap.add_argument("--max-plies", type=int, default=200)
 
-    ap.add_argument("--mcts", type=normalize_mcts_type, default="gumbel", choices=["gumbel", "puct"])
+    ap.add_argument("--mcts", type=gumbel_search_cli_arg, default="gumbel")
     ap.add_argument("--mcts-simulations", type=int, default=200)
-    ap.add_argument("--c-puct", type=float, default=2.5)
 
     ap.add_argument("--seed", type=int, default=0)
 
@@ -210,7 +209,6 @@ def main() -> None:
         mcts_type=str(args.mcts),
         mcts_simulations=int(args.mcts_simulations),
         temperature=0.0,
-        c_puct=float(args.c_puct),
     )
 
     winrate = (float(stats.a_win) + 0.5 * float(stats.a_draw)) / float(max(1, stats.games))
