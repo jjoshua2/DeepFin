@@ -16,6 +16,10 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
+- [2026-11-14: Fixed-G1 current-P0 native SF-WDL .2 pilot](2026-11-14-sf-current-p0-native020-pilot.md) — both fresh-A39 alpha0/.2 arms completed 512 updates with matching journals and accepted saved-state audits; common HOLD64 is descriptive only. Mandatory disjoint playing screens are in progress; no strength or optimal-recipe claim.
+
+- [2026-11-14: Actual A39/G1 SF-P0 consumer qualification](2026-11-14-sf-current-p0-a39-g1-qualification.md) — four real-network B256/BF16 engineering updates completed under matched structural controls; the positive branch exercised qualified, invalid and unavailable rows with measured health coverage. Root and independent actual acceptance; no research-dose, model-equivalence or strength claim.
+
 - [2026-11-14: SF-P0 CUDA qualification and repeatability](2026-11-14-sf-current-p0-cuda-qualification.md) — original exact-zero GPU control failed; separate eight-update diagnostic found old-versus-old default-CUDA variation; two separately scoped positive teacher assertions passed. Original NONPASS retained; no model-equivalence tolerance, A39/G1/AMP qualification or strength claim.
 
 - [2026-11-14: Fixed-G1 SF-P0 main-WDL finite-consumer qualification](2026-11-14-sf-current-p0-finite-consumer-qualification.md) — 22 new consumer and 21 legacy CPU controls passed with zero skips; exact zero bypass, masked outcome fallback and strict same-family continuation. The recorded cutoff does not qualify direct CLI, original-G1 model use or GPU behavior; no recipe, learning or strength admission.
