@@ -995,6 +995,8 @@ def _launch_distributed_worker(
         reap_terms=["--trial-id", str(trial_id), "--work-dir", str(worker_root)],
         reap_label=f"distributed workers (trial={trial_id} idx={worker_index:02d})",
     )
+    # Read by _raise_if_c_core_refusal so a refusal names the files to open.
+    setattr(proc, "_cae_worker_log_paths", (worker_out, worker_log))
     setattr(
         proc,
         "_cae_worker_launch_signature",
@@ -1529,6 +1531,21 @@ def _ensure_distributed_workers(
     # at an earlier index would never reach the caller's list (and never be
     # cleaned up) if a later index then raised.
     _raise_on_any_c_core_refusal(out[:want], trial_id=trial_id)
+    # A worker alive at that scan can still exit 78 before the loop reaches it.
+    # Anything launched in this call lives only in ``out`` until we return, so
+    # on that raise those processes are stopped here, not leaked.
+    launched: list[subprocess.Popen[bytes]] = []
+
+    def _launch(idx: int) -> subprocess.Popen[bytes]:
+        proc = _launch_distributed_worker(
+            config=config,
+            trial_dir=trial_dir,
+            trial_id=trial_id,
+            worker_index=idx,
+        )
+        launched.append(proc)
+        return proc
+
     for idx in range(want):
         desired_signature = _worker_launch_signature(
             config=config, trial_id=trial_id, worker_index=idx,
@@ -1542,34 +1559,22 @@ def _ensure_distributed_workers(
                 f"config_changed=true trial={trial_id}"
             )
             _stop_process(out[idx])
-            out[idx] = _launch_distributed_worker(
-                config=config,
-                trial_dir=trial_dir,
-                trial_id=trial_id,
-                worker_index=idx,
-            )
+            out[idx] = _launch(idx)
             continue
         if idx < len(out) and out[idx].poll() is not None:
-            _raise_if_c_core_refusal(out[idx], idx=idx, trial_id=trial_id)
+            try:
+                _raise_if_c_core_refusal(out[idx], idx=idx, trial_id=trial_id)
+            except CCoreIncompleteError:
+                for proc in launched:
+                    _stop_process(proc)
+                raise
             print(
                 f"[trial] restarting distributed worker idx={idx} "
                 f"exit_code={out[idx].returncode} trial={trial_id}"
             )
-            out[idx] = _launch_distributed_worker(
-                config=config,
-                trial_dir=trial_dir,
-                trial_id=trial_id,
-                worker_index=idx,
-            )
+            out[idx] = _launch(idx)
         elif idx >= len(out):
-            out.append(
-                _launch_distributed_worker(
-                    config=config,
-                    trial_dir=trial_dir,
-                    trial_id=trial_id,
-                    worker_index=idx,
-                )
-            )
+            out.append(_launch(idx))
   # Kill excess workers if count decreased
     for p in out[want:]:
         if p.poll() is None:
@@ -1594,11 +1599,16 @@ def _raise_if_c_core_refusal(proc: subprocess.Popen[bytes], *, idx: int, trial_i
     """
     if proc.returncode != C_CORE_REFUSAL_EXIT_CODE:
         return
+    paths = getattr(proc, "_cae_worker_log_paths", None)
+    where = (
+        "; the missing symbols are named in " + " and ".join(str(p) for p in paths)
+        if paths else "; the worker's stderr names the missing symbols"
+    )
     message = (
         f"distributed worker idx={idx} refused to start: the compiled C core is "
-        f"incomplete (exit code {C_CORE_REFUSAL_EXIT_CODE}; the worker log names "
-        f"the missing symbols). Not relaunching; trial={trial_id} stops. Rebuild "
-        "the extensions (python scripts/build_production_extensions.py) and restart."
+        f"incomplete (exit code {C_CORE_REFUSAL_EXIT_CODE}{where}). Not relaunching; "
+        f"trial={trial_id} stops. Rebuild the extensions "
+        "(python scripts/build_production_extensions.py) and restart."
     )
     print(f"[trial] {message}", flush=True)
     log.error("%s", message)

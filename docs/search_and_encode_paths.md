@@ -2,7 +2,8 @@
 
 **Mapped at commit `863f12aa9` on `main` (2026-11-13); the selfplay, encode and
 gate statements were re-verified at `9a5afddcb` and updated for the
-refuse-instead-of-fall-back change (section 8).** `file:line` references are as
+refuse-instead-of-fall-back change (section 8); the section-1 driver rows 1-5 were
+re-verified line by line at `040ff8a96`.** `file:line` references are as
 of those commits; later commits will move them. Paths are relative to
 `chess_anti_engine/` unless they start with `scripts/`, `docs/` or `tests/`.
 
@@ -36,10 +37,13 @@ true game over, plus a 2-fold repetition scored as a draw, lc0 style).
 
 ### Drivers
 
+Line references in rows 1-5 were verified against `main` at `10c1d7075` merged
+with PR #1305 (the PUCT retirement); re-check them before relying on them.
+
 | # | Driver | Language | Primitive | Callers |
 |---|---|---|---|---|
-| 1 | `mcts/gumbel_c.py:824 run_gumbel_root_many_c` | Python over C | A | **Production selfplay** (`selfplay/network_turn.py:1226`); arena matched_sims (`selfplay/match.py:194`, used by `scripts/arena_standard.py`, `scripts/match_vs_handicapped_sf.py`, `arena.py`, `scripts/match_checkpoints.py`, the worker arena task); UCI classic mode (`uci/search.py:2440`); `eval/puzzles.py:476` (the default puzzle search, and the training puzzle eval, which runs the compiled search selfplay runs, `tune/trainable_phases.py:228`); `scripts/audit_targets.py`; `scripts/search_gain_probe.py`; `scripts/diagnose_gumbel_roots.py`; benches; 35 test files |
-| 2 | `mcts/gumbel.py:1726 run_gumbel_root_many` | Pure Python, python-chess boards, own `Node` tree | — | Selfplay (`network_turn.py:1277`) and arena (`match.py:228`) only when volatility search is configured (refused for selfplay at yaml load, `utils/config_yaml.py`) or inside the explicit `ext_check.python_reference_paths` opt-in; a stale build that cannot import the C runner is **refused** (section 8). Research: `scripts/audit_targets.py`, `scripts/lc0_adapter_probe.py`, `scripts/gumbel_scale_probe.py`, `bench/play_batch_timing.py`; 17 test files incl. the parity test `tests/test_mcts_uci_parity_gates.py` |
+| 1 | `mcts/gumbel_c.py:829 run_gumbel_root_many_c` | Python over C | A | **Production selfplay** (`selfplay/network_turn.py:1182`); arena matched_sims (`selfplay/match.py:183`, used by `scripts/arena_standard.py`, `scripts/match_vs_handicapped_sf.py`, `arena.py`, `scripts/match_checkpoints.py`, the worker arena task); UCI classic mode (`uci/search.py:3127`); `eval/puzzles.py:454` (the default puzzle search, and the training puzzle eval, which runs the compiled search selfplay runs, `tune/trainable_phases.py:228`); `scripts/audit_targets.py`; `scripts/search_gain_probe.py`; `scripts/diagnose_gumbel_roots.py`; benches; 35 test files |
+| 2 | `mcts/gumbel.py:1726 run_gumbel_root_many` | Pure Python, python-chess boards, own `Node` tree | — | Selfplay (`network_turn.py:1231`) and arena (`match.py:217`) only when volatility search is configured (refused for selfplay at yaml load, `utils/config_yaml.py`) or inside the explicit `ext_check.python_reference_paths` opt-in; a stale build that cannot import the C runner is **refused** (section 8). Research: `scripts/audit_targets.py`, `scripts/lc0_adapter_probe.py`, `scripts/gumbel_scale_probe.py`, `bench/play_batch_timing.py`; 17 test files incl. the parity test `tests/test_mcts_uci_parity_gates.py` |
 | 3 | ~~`mcts/puct_c.py run_mcts_many_c`~~ | — | B | **Deleted 2026-11-14** (step 4). It was the selfplay PUCT branch (only under an explicit `mcts: puct` above `max(64, fast_simulations)` sims), `match.py` under an explicit `mcts_type="puct"`, and `eval/puzzles.py` `search="puct"`. `puct` is now refused at every one of those boundaries (`utils/search_type.require_gumbel_search`). Last on `main` at `5ed4d23a2`; also in tag `pre-slim-20261113`. The UCI PUCT engines (#5-#8) never used it |
 | 4 | ~~`mcts/puct.py run_mcts_many`~~ | — | — | **Deleted 2026-11-14** with #3, together with `MCTSConfig`/`run_mcts`. `mcts/puct.py` keeps only the tree primitives #2 is built on (`Node`, `_expand_sparse`, `_backprop`, `_terminal_value`) and `_value_scalar_from_wdl_logits`, which the UCI engine reads |
 | 5 | `uci/walker_pool.py WalkerPool` | Python threads over C | C | UCI `--walkers > 1` / `SearchWalkers` only (default now 1, `uci/__main__.py:899`); it was the default launch at `863f12aa9` |
