@@ -1314,6 +1314,42 @@ def test_movegen_disagreement_reports_a_c_board_that_differs(monkeypatch) -> Non
     assert "19 vs 20 legal moves" in reason
 
 
+@pytest.mark.parametrize(
+    ("field", "wrong"),
+    [
+        ("castling", lambda v: int(v) ^ 1),             # loses White's kingside right
+        ("ep_square", lambda v: chess.E3 if v is None else None),
+        ("turn", lambda v: not v),
+    ],
+)
+def test_movegen_disagreement_reports_a_c_board_whose_state_differs(
+    monkeypatch, field: str, wrong,
+) -> None:
+    """Same pieces, same moves, but the C board holds a different castling
+    right / en-passant square / side to move: the gate must see it."""
+    import chess_anti_engine.encoding._lc0_ext as lc0_ext
+
+    real = lc0_ext.CBoard
+
+    class _Off:
+        def __init__(self, cb) -> None:
+            self._cb = cb
+
+        @classmethod
+        def from_board(cls, board: chess.Board) -> _Off:
+            return cls(real.from_board(board))
+
+        def copy(self) -> _Off:
+            return _Off(self._cb.copy())
+
+        def __getattr__(self, name: str):
+            value = getattr(self._cb, name)
+            return wrong(value) if name == field else value
+
+    monkeypatch.setattr(lc0_ext, "CBoard", _Off)
+    assert engine_module._movegen_disagreement(chess.Board()) is not None
+
+
 def test_movegen_disagreement_reads_both_generators() -> None:
     assert engine_module._movegen_disagreement(chess.Board(_UNREACHABLE_FEN)) is None
     assert engine_module._movegen_disagreement(chess.Board()) is None
@@ -1476,6 +1512,8 @@ def test_syzygy50moverule_on_the_real_smoke_tables(out, value: str, score: int) 
         ("Syzygy50MoveRule", "on", "Syzygy50MoveRule: expected true/false"),
         ("ClockBatchMarginSigmas", "abc", "ClockBatchMarginSigmas: 'abc' is not a number"),
         ("RPGOpenBudgetFrac", "2", "RPGOpenBudgetFrac: '2' is not a number in (0, 1]"),
+        ("Topk", "abc", "Topk: 'abc' is not an integer; keeping 32"),
+        ("PolicyTemperature", "abc", "PolicyTemperature: 'abc' is not a number; keeping 1.0"),
         ("RPGOpenVPA", "8", "NO EFFECT on the live search (path=gumbel)"),
         ("LeafGather", "8", "NO EFFECT on the live search (path=gumbel)"),
     ],
