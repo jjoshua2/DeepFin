@@ -16,7 +16,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
-- [2026-11-14: Full-state lower-rate on-policy continuation](2026-11-14-low-lr-on-policy-continuation.md) — prospective reviewed proposal: preserve LOW512 state, add seven fixed on-policy generations to step 4,096, then conditionally continue to 8,192 only after a fresh confirmed gain. V2 source and prospective role proposal independently accepted; root adoption/admissions pending. No new training or predictions yet.
+- [2026-11-14: Full-state lower-rate on-policy continuation](2026-11-14-low-lr-on-policy-continuation.md) — ongoing: G2 resumed through step 1,024 on inherited G1 plus new on-policy G2; the descriptive donor diagnostic scored 49.21875% over 256 games (paired 95% interval 44.2990–54.1385%, includes parity). No gain, equivalence, promotion or confirmation; G3 collecting under the unchanged fixed horizon.
 
 - [2026-11-14: Fixed LOW512 versus original A39 successor](2026-11-14-low512-donor-screen.md) — completed qualified screen nonpass: 48.9258% versus A39 over 512 games (paired 95% interval 45.8184–52.0332%, includes parity). No confirmation eligible, allocated or consumed; donor retained, no playing gain or equivalence claim.
 
