@@ -1,6 +1,8 @@
 # Finite current-P0 SF main-WDL capability
 
-Status: source candidate; all new tests and entry points are unrun. This is a
+At the 2026-11-14 16:17:24 UTC readout cutoff, 22 consumer and 21 legacy CPU
+cases passed, with zero skips; direct CLI,
+original-G1 model use and GPU behavior remain unqualified. This is a
 separate finite learning family, not a production YAML option or an admitted
 training recipe. Policy anchoring is deferred. Alpha, native-versus-stored value,
 learner run UUID, LR, seed, dose and scientific initialization remain unselected.
@@ -125,4 +127,4 @@ actual loss availability. The child cannot attest its own eventual owner closure
 later continuation requires the external exact closed owner binding. No boundary
 changes a champion or constitutes a strength/adoption decision.
 
-See the [prospective engineering record](experiments/2026-11-14-sf-current-p0-finite-consumer-qualification.md).
+See the [engineering preregistration and completed CPU readout](experiments/2026-11-14-sf-current-p0-finite-consumer-qualification.md).

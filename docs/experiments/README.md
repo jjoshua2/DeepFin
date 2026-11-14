@@ -16,7 +16,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
-- [2026-11-14: Fixed-G1 SF-P0 main-WDL finite-consumer qualification](2026-11-14-sf-current-p0-finite-consumer-qualification.md) — Prospective versioned capability and unrun synthetic controls; exact zero bypass, fixed original data and strict same-family continuation. No mixture/recipe, learning or strength admission.
+- [2026-11-14: Fixed-G1 SF-P0 main-WDL finite-consumer qualification](2026-11-14-sf-current-p0-finite-consumer-qualification.md) — 22 new consumer and 21 legacy CPU controls passed with zero skips; exact zero bypass, masked outcome fallback and strict same-family continuation. The recorded cutoff does not qualify direct CLI, original-G1 model use or GPU behavior; no recipe, learning or strength admission.
 
 - [2026-11-14: Current-P0 SF sidecar engineering qualification](2026-11-14-sf-current-p0-sidecar-qualification.md) — 33 focused tests, the four-row CLI chain and complete 256-game / 24,827-row original-G1 carrier passed; root data-only acceptance and independent actual review accepted. All rows/masks retained; no training recipe, model or playing-strength adoption.
 
