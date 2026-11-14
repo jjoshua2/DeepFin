@@ -94,12 +94,16 @@ def fiction(tmp_path: Path, *, kept: tuple[int, ...] = (0, 1, 2, 3), corrupt: st
     review = ref(tmp_path / "fiction-review.json", {"status": "ACCEPT_ACTUAL_METADATA_NO_FINDINGS_DATA_ONLY",
         "findings": [], "readout": report_ref, "protocol": census_protocol, "root_acceptance": acceptance})
     selection = ref(tmp_path / "fiction-direction.json", {"status": carrier.SELECTION,
-        "audit_uuid": p["audit_uuid"], "execution_admitted": False, "training_recipe_selected": False,
+        "execution_admitted": False, "training_recipe_selected": False,
+        "evidence": {"census_root": acceptance, "census_independent": review,
+                     "metadata_readout": {"path": str(tmp_path / "unused-metadata.json"), "sha256": "d" * 64},
+                     "metadata_independent": {"path": str(tmp_path / "unused-metadata-review.json"), "sha256": "e" * 64}},
         "scope": "SYNTHETIC_NOT_REAL_AUTHORITY"})
     protocol = {"schema": carrier.PROTOCOL, "scope": "SYNTHETIC_ONLY", "phase": "produce", "selection": selection,
         "census_protocol": census_protocol, "census_readout": report_ref, "census_acceptance": acceptance,
         "census_review": review, "census_terminal": census_terminal, "census_command": command,
-        "source": {"revision": "3" * 40, "files": files}, "runtime": {"owner_seconds": 300},
+        "source": {"revision": "3" * 40, "files": files}, "runtime": {"owner_seconds": 300,
+            "owner": {"path": str(tmp_path / "fiction-owner.py"), "sha256": "b" * 64}},
         "limits": {"metadata_bytes": 32 << 20, "game_decoded_bytes": 32 << 20, "inventory_files": 1000,
                    "row_bytes": 1 << 20, "game_metadata_bytes": 8 << 20,
                    "carrier_game_bytes": 8 << 20, "carrier_total_bytes": 32 << 20},
@@ -177,6 +181,37 @@ def test_separate_validator_reopens_original_and_complete_carrier(tmp_path: Path
     assert result["rows"] == 4
     assert result["source_payload_and_vector_bytes_recomputed"] is True
     assert result["training_admitted"] is False
+
+
+def test_real_direction_shape_without_audit_uuid_and_distinct_synthetic_chain(tmp_path: Path) -> None:
+    p, _, _, _ = fiction(tmp_path)
+    selected = read(p["selection"])
+    assert "audit_uuid" not in selected
+    assert set(selected["evidence"]) == {"census_root", "census_independent", "metadata_readout", "metadata_independent"}
+    carrier.direction_selection(selected, {**p, "scope": "FIXED_ORIGINAL_G1"})
+    # The real direction points at real-G1 receipts, whereas the synthetic
+    # input has its own accepted fictional census chain. They are not aliases.
+    selected["evidence"]["census_root"] = {"path": str(tmp_path / "real-G1-root.json"), "sha256": "a" * 64}
+    selected["evidence"]["census_independent"] = {"path": str(tmp_path / "real-G1-review.json"), "sha256": "b" * 64}
+    p["selection"] = replace(p["selection"], selected)
+    # Complete metadata consumer also sees the real shape, rather than a test-
+    # invented audit_uuid. Tiny source remains explicitly fictional/synthetic.
+    _, census, report, generation, _ = carrier.inputs(p)
+    assert census["audit_uuid"] == report["audit_uuid"]
+    assert len(generation["games"]) == 1
+
+
+@pytest.mark.parametrize("key", ["census_root", "census_independent"])
+def test_foreign_direction_bridge_refuses_before_source_arrays(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, key: str) -> None:
+    p, p_ref, _, _ = fiction(tmp_path)
+    selected = read(p["selection"])
+    selected["evidence"][key] = {"path": str(tmp_path / "foreign.json"), "sha256": "f" * 64}
+    p["selection"] = replace(p["selection"], selected)
+    p["scope"] = "FIXED_ORIGINAL_G1"
+    monkeypatch.setattr(audit, "open_arrays", lambda *_: pytest.fail("payload before direction bridge"))
+    with pytest.raises(ValueError, match="direction census acceptance/review bridge"):
+        run_producer(p, p_ref)
+    assert not Path(p["output_root"]).exists()
 
 
 def test_thinned_retained_rows_are_not_actual_ply_predecessors(tmp_path: Path) -> None:
@@ -329,6 +364,20 @@ def test_candidate_owner_and_seal_gate(tmp_path: Path, monkeypatch: pytest.Monke
     assert not Path(p["output_root"]).exists()
 
 
+def test_matching_terminal_owner_cannot_override_producer_runtime_pin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    p, p_ref = completed_candidate(tmp_path)
+    owner = p["producer_owner"]
+    terminal = read(owner["terminal"])
+    owner["owner_sha256"] = "c" * 64
+    terminal["supervisor_sha256"] = "c" * 64
+    owner["terminal"] = replace(owner["terminal"], terminal)
+    assert terminal["supervisor_sha256"] == owner["owner_sha256"]
+    monkeypatch.setattr(carrier, "candidate_inventory", lambda *_: pytest.fail("carrier payload before runtime-owner join"))
+    with pytest.raises(ValueError, match="pinned runtime owner"):
+        run_validator(p, p_ref)
+    assert not Path(p["output_root"]).exists()
+
+
 def test_unsafe_npy_header_refuses_before_numpy_load(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     p = tmp_path / "bad.npy"
     header = repr({"descr": "|O", "fortran_order": False, "shape": (1, 1858)}).encode() + b"\n"
@@ -345,6 +394,25 @@ def test_decoded_carrier_cap_precedes_new_numeric_allocation(tmp_path: Path, mon
     monkeypatch.setattr(schema, "arrays_for_rows", lambda *_: pytest.fail("carrier allocation exceeded cap"))
     with pytest.raises(ValueError, match="allocation cap"):
         carrier.expected_game(audit, generation["games"][0], generation, producer, cap, old_rows)
+
+
+@pytest.mark.parametrize("marker_kind", ["directory", "file"])
+def test_output_inside_another_checkout_refuses_before_mkdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, marker_kind: str) -> None:
+    p, p_ref, _, _ = fiction(tmp_path)
+    checkout = tmp_path / "different-checkout"
+    checkout.mkdir()
+    marker = checkout / ".git"
+    if marker_kind == "directory":
+        marker.mkdir()
+    else:
+        marker.write_text("gitdir: /synthetic/external/common/worktrees/other\n")
+    output = checkout / "uncreated-parent" / "new-carrier"
+    p["output_root"] = str(output)
+    monkeypatch.setattr(audit, "open_arrays", lambda *_: pytest.fail("source arrays before checkout-output refusal"))
+    with pytest.raises(ValueError, match="inside a Git checkout"):
+        run_producer(p, p_ref)
+    assert not output.exists()
+    assert not output.parent.exists()
 
 
 def test_output_input_overlap_and_late_failure_marker(tmp_path: Path) -> None:

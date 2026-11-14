@@ -122,14 +122,23 @@ def phase_authority(p: dict[str, Any], protocol_ref: dict[str, str], admission_r
             and admission["census_readout"] == p["census_readout"], "sidecar phase not exactly root-admitted")
 
 
+def direction_selection(selected: dict[str, Any], p: dict[str, Any]) -> None:
+    """The real direction pins census receipts; it has no top-level audit UUID."""
+    require(selected["status"] == SELECTION and selected["execution_admitted"] is False
+            and selected["training_recipe_selected"] is False, "engineering selection scope")
+    if p["scope"] == "FIXED_ORIGINAL_G1":
+        evidence = selected["evidence"]
+        require(evidence["census_root"] == p["census_acceptance"]
+                and evidence["census_independent"] == p["census_review"], "direction census acceptance/review bridge")
+
+
 def inputs(p: dict[str, Any]) -> tuple[Any, dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
     from scripts import sf_banked_p0_census as audit
 
     limits(p)
     cap = p["limits"]["metadata_bytes"]
     selected = audit.checked(p["selection"], cap)
-    require(selected["status"] == SELECTION and selected["execution_admitted"] is False
-            and selected["training_recipe_selected"] is False, "engineering selection scope")
+    direction_selection(selected, p)
     census = audit.checked(p["census_protocol"], cap)
     report = audit.checked(p["census_readout"], cap)
     acceptance = audit.checked(p["census_acceptance"], cap)
@@ -165,7 +174,7 @@ def inputs(p: dict[str, Any]) -> tuple[Any, dict[str, Any], dict[str, Any], dict
     require(p["census_command"][-4:] == ["--protocol", p["census_protocol"]["path"], "--protocol-sha256", p["census_protocol"]["sha256"]], "census command binding")
     require(report["status"] == "COMPLETE_SF_BANKED_P0_EVIDENCE_CENSUS_DATA_ONLY"
             and report["protocol"] == p["census_protocol"] and report["generation_manifest"] == census["generation_manifest"]
-            and report["audit_uuid"] == census["audit_uuid"] == selected["audit_uuid"]
+            and report["audit_uuid"] == census["audit_uuid"]
             and report["rows"] == census["expected"]["rows"]
             and report["physical_games"] == census["expected"]["physical_games"], "fixed census report")
     require(audit.file_sha(REPO / "scripts/sf_banked_p0_census.py", readonly=False)
@@ -192,6 +201,9 @@ def fresh_output(p: dict[str, Any], generation: dict[str, Any], report: dict[str
     require(output.is_absolute() and not output.exists() and output.resolve() == output
             and not output.with_name(output.name + ".failed.json").exists()
             and not output.is_relative_to(REPO) and not REPO.is_relative_to(output), "fresh external ordinary output")
+    for ancestor in (output, *output.parents):
+        marker = ancestor / ".git"
+        require(not marker.exists() and not marker.is_symlink(), "output inside a Git checkout")
     inputs_roots = [Path(g["shard"]["path"]).parent for g in generation["games"]]
     inputs_roots.extend(Path(g["producer_proof"]["path"]).parent for g in generation["games"])
     inputs_roots.extend(Path(report[k]["path"]).parent for k in (
@@ -462,6 +474,8 @@ def validate(p: dict[str, Any], protocol_ref: dict[str, str], admission_ref: dic
         if key not in {"phase", "candidate", "producer_owner", "output_root", "runtime"}:
             require(p[key] == producer_p[key], "validator changed producing source/context contract: " + key)
     owner = p["producer_owner"]
+    require(owner["owner_sha256"] == producer_p["runtime"]["owner"]["sha256"],
+            "producer terminal owner differs from pinned runtime owner")
     terminal = audit.checked(owner["terminal"], p["limits"]["metadata_bytes"], readonly=False)
     closed(terminal, owner["command"], owner["owner_sha256"], producer_p["runtime"]["owner_seconds"])
     require(owner["command"][-8:] == ["--protocol", candidate["producer_protocol"]["path"],
