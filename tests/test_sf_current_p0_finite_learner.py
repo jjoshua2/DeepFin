@@ -4,7 +4,7 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -305,7 +305,7 @@ def test_same_family_full_resume_fixed_data_and_legacy_parent_refusal(tmp_path: 
             require_equal(trainer.model.state_dict(), checkpoint["model"], "restored model")
             require_equal(trainer.opt.state_dict(), checkpoint["opt"], "restored optimizer")
             require_equal(trainer._scheduler.state_dict(), checkpoint["scheduler"], "restored scheduler")
-            assert _rng_state(replay.rng, np.random) == first["rng"]
+            assert _rng_state(replay.rng, cast(Any, np.random)) == first["rng"]  # The helper also accepts NumPy's global RNG module.
             return original_train(replay, **training)
 
         trainer.train_steps = checked_train

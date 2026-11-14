@@ -17,11 +17,31 @@ import random
 import re
 import sys
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 import uuid
 
 if TYPE_CHECKING:
-    from scripts.sf_current_p0_finite_learner import P0Profile
+    class P0Profile(Protocol):
+        """Internal callback shape without importing the caller that uses it."""
+
+        @property
+        def STAGE(self) -> str: ...
+
+        @property
+        def BOUNDARY(self) -> str: ...
+
+        def validate_and_project(self, c: dict[str, Any], stage: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]: ...
+
+        def closed_parent(self, binding: dict[str, Any], c: dict[str, Any], contract_ref: dict[str, str],
+                          stage: dict[str, Any]) -> dict[str, Any]: ...
+
+        def prepare(self, c: dict[str, Any], stage: dict[str, Any], generations: list[dict[str, Any]]) -> None: ...
+
+        def on_draw(self, rows: Any) -> None: ...
+
+        def wrap(self, replay: Any, c: dict[str, Any]) -> Any: ...
+
+        def decorate_boundary(self, boundary: dict[str, Any], c: dict[str, Any], stage: dict[str, Any]) -> None: ...
 
 
 REPO = Path(__file__).resolve().parents[1]
