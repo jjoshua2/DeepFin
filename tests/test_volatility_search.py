@@ -331,7 +331,7 @@ def test_match_picker_forces_python_path(monkeypatch, caplog):
     match_mod.pick_moves_for_boards(
         model, boards, device="cpu", rng=np.random.default_rng(0),
         mcts_type="gumbel", mcts_simulations=4, temperature=0.0,
-        c_puct=2.5, gumbel_add_noise=False,
+        gumbel_add_noise=False,
     )
     assert called == {"c": 1, "py": 0}
 
@@ -339,7 +339,7 @@ def test_match_picker_forces_python_path(monkeypatch, caplog):
         match_mod.pick_moves_for_boards(
             model, boards, device="cpu", rng=np.random.default_rng(0),
             mcts_type="gumbel", mcts_simulations=4, temperature=0.0,
-            c_puct=2.5, gumbel_add_noise=False, volatility_q_scale=0.5,
+            gumbel_add_noise=False, volatility_q_scale=0.5,
         )
     assert called == {"c": 1, "py": 1}
     assert any("Python search path" in r.message for r in caplog.records)

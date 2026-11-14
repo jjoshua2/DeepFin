@@ -211,7 +211,7 @@ def test_the_evaluator_reaches_the_c_search_entry_by_identity(
     match_mod.pick_moves_for_boards(
         _DummyModel().eval(), [chess.Board()],
         device="cpu", rng=np.random.default_rng(0),
-        mcts_type="gumbel", mcts_simulations=2, temperature=0.0, c_puct=2.5,
+        mcts_type="gumbel", mcts_simulations=2, temperature=0.0,
         gumbel_add_noise=False, evaluator=stub,
     )
     assert seen, "the C search was never invoked"
@@ -240,7 +240,7 @@ def test_omitting_it_lands_as_an_explicit_none_at_the_search(
     match_mod.pick_moves_for_boards(
         _DummyModel().eval(), [chess.Board()],
         device="cpu", rng=np.random.default_rng(0),
-        mcts_type="gumbel", mcts_simulations=2, temperature=0.0, c_puct=2.5,
+        mcts_type="gumbel", mcts_simulations=2, temperature=0.0,
         gumbel_add_noise=False,
     )
     assert seen
@@ -268,33 +268,12 @@ def test_the_python_gumbel_fallback_is_handed_it_too(
     match_mod.pick_moves_for_boards(
         _DummyModel().eval(), [chess.Board()],
         device="cpu", rng=np.random.default_rng(0),
-        mcts_type="gumbel", mcts_simulations=2, temperature=0.0, c_puct=2.5,
+        mcts_type="gumbel", mcts_simulations=2, temperature=0.0,
         gumbel_add_noise=False,
         volatility_q_scale=0.5,  # forces the Python path
         evaluator=stub,
     )
     assert seen, "the Python gumbel search was never invoked"
-    assert seen[0]["evaluator"] is stub
-
-
-def test_the_puct_path_is_handed_it_too(monkeypatch: pytest.MonkeyPatch) -> None:
-    """mcts_type='puct' is a different entry point with the same kwarg."""
-    seen: list[dict[str, Any]] = []
-
-    def fake(_model: Any, boards: list[chess.Board], **kwargs: Any):
-        seen.append(kwargs)
-        return _fake_search_result(boards)
-
-    monkeypatch.setattr(match_mod, "_HAS_C_TREE", False)
-    monkeypatch.setattr(match_mod, "run_mcts_many", fake)
-    stub = _StubEvaluator("puct")
-    match_mod.pick_moves_for_boards(
-        _DummyModel().eval(), [chess.Board()],
-        device="cpu", rng=np.random.default_rng(0),
-        mcts_type="puct", mcts_simulations=2, temperature=0.0, c_puct=2.5,
-        gumbel_add_noise=False, evaluator=stub,
-    )
-    assert seen, "the PUCT search was never invoked"
     assert seen[0]["evaluator"] is stub
 
 

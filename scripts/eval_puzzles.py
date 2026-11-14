@@ -232,7 +232,8 @@ def main() -> None:
         "--mode",
         type=_parse_modes,
         default=("policy", "value"),
-        help="Comma-separated modes from {policy,value,search}; default policy,value",
+        help="Comma-separated modes from {policy,value,search,gumbel} (search = gumbel "
+             "since 2026-11-14); default policy,value",
     )
     p.add_argument(
         "--log-csv",
@@ -304,13 +305,14 @@ def main() -> None:
                 rating_buckets=args.rating_buckets,
             )
             sims_label = "value-only push-eval"
-        else:  # "search" (PUCT) or "gumbel" — MCTS move-selection accuracy
+        else:  # "search" or "gumbel": the compiled Gumbel search (one search since 2026-11-14)
             from chess_anti_engine.eval import run_puzzle_eval  # local: avoids MCTS import on the common path
             import numpy as np
             rng = np.random.default_rng(42)
-            gcfg = None
-            if mode == "gumbel":
-                gcfg = build_gumbel_config_from_args(args)
+            # "search" was PUCT (pure Python, then compiled) until 2026-11-14;
+            # it is now an alias of "gumbel". Readings across that date are
+            # not comparable (docs/eval_protocol.md).
+            gcfg = build_gumbel_config_from_args(args)
             result = run_puzzle_eval(
                 model, suite,
                 device=args.device,
@@ -320,15 +322,12 @@ def main() -> None:
                 rating_buckets=args.rating_buckets,
                 gumbel_cfg=gcfg,
             )
-            if mode == "gumbel":
-                sims_label = (
-                    f"{args.sims} sims gumbel c_scale={args.gumbel_c_scale} "
-                    f"c_visit={args.gumbel_c_visit} c_visit_root={args.gumbel_cvisit_root} "
-                    f"c_scale_root={args.gumbel_cscale_root} "
-                    f"q_visit_exp_root={args.gumbel_qexp_root} topk={args.gumbel_topk}"
-                )
-            else:
-                sims_label = f"{args.sims} sims puct"
+            sims_label = (
+                f"{args.sims} sims gumbel c_scale={args.gumbel_c_scale} "
+                f"c_visit={args.gumbel_c_visit} c_visit_root={args.gumbel_cvisit_root} "
+                f"c_scale_root={args.gumbel_cscale_root} "
+                f"q_visit_exp_root={args.gumbel_qexp_root} topk={args.gumbel_topk}"
+            )
         _print(f"puzzle:{mode}", result, time.time() - t0, sims_label=sims_label)
         if log_path is not None:
             _append_log(

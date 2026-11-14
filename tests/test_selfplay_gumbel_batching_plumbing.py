@@ -299,28 +299,10 @@ def _worker_reco_keys() -> dict[str, str | None]:
 # also invalidated from the other side -- an exempt field that reappears in the
 # published reco fails `test_exempt_fields_are_not_published`.
 _INTENTIONALLY_NOT_CONFIGURABLE: dict[str, str] = {
-    # PUCT-only. network_turn.py builds a GumbelConfig for the production search
-    # and never forwards either one, so publishing them would create a knob that
-    # is reachable and still unread -- strictly worse than a documented gap.
-    #
-    # This reason holds ONLY while the production config runs `mcts: gumbel`:
-    # network_turn.py takes the PUCT branch for a non-gumbel mcts_type at full
-    # sim counts, and that branch DOES read both fields -- at which point they
-    # would be read from the dataclass default and a yaml edit would be
-    # accepted and ignored, the canonical defect. `mcts` is itself a live-
-    # editable allowlisted key, so the dependency is pinned by
-    # `test_the_fpu_exemption_depends_on_a_pinned_mcts_gumbel`.
-    #
-    # Note the reason is about the DISTRIBUTED path only: _play_batch_kwargs
-    # does set both from TrialConfig for gate/eval matches.
-    "fpu_reduction": (
-        "PUCT path only; the Gumbel production search never reads it "
-        "(valid only while configs/pbt2_small.yaml pins mcts: gumbel)"
-    ),
-    "fpu_at_root": (
-        "PUCT path only; Gumbel uses gumbel_scale root noise instead "
-        "(valid only while configs/pbt2_small.yaml pins mcts: gumbel)"
-    ),
+    # `fpu_reduction` / `fpu_at_root` were exempt here as "PUCT path only"
+    # until the selfplay PUCT search was retired (2026-11-14); the fields are
+    # gone from SearchConfig and the yaml keys are registered dead keys
+    # (trainable_config_ops._DEAD_CONFIG_KEY_INERT_VALUES).
     # NOT merely unread -- FATAL. A non-zero volatility_q_scale/volatility_fpu
     # makes volatility_search_enabled() true, which drops network_turn.py off
     # the C path onto mcts.gumbel.run_gumbel_root_many, which raises ValueError
@@ -347,6 +329,13 @@ _INTENTIONALLY_NOT_CONFIGURABLE: dict[str, str] = {
     ),
 }
 
+# SearchConfig fields with exactly ONE accepted value, so no sentinel distinct
+# from the default exists. `mcts_type` is a refusal boundary since the selfplay
+# PUCT retirement (2026-11-14): publisher -> reco -> worker must deliver
+# "gumbel" and must REFUSE "puct", which
+# `test_the_single_valued_search_type_is_refused_end_to_end` drives for real.
+_SINGLE_VALUED: dict[str, str] = {"mcts_type": "mcts"}
+
 # Worker SearchConfig kwargs that are NOT a plain `_resolve_reco(reco, "k", ...)`.
 # Empty on purpose: an unexplained entry here is the decorative-literal defect.
 _WORKER_NOT_A_RECO_KEY: dict[str, str] = {}
@@ -365,7 +354,6 @@ _GATE_EVAL_NOT_SET: dict[str, str] = {
 # sentinel rather than widening a skip.
 _SENTINELS: dict[str, tuple[str, object]] = {
     "simulations": ("mcts_simulations", 137),
-    "mcts_type": ("mcts", "gumbel"),
     "playout_cap_fraction": ("playout_cap_fraction", 0.37),
     "full_ply_pair_fraction": ("full_ply_pair_fraction", 0.41),
     "fast_simulations": ("fast_simulations", 13),
@@ -414,7 +402,7 @@ def _realized_search(config: dict[str, object]) -> SearchConfig:
 def test_the_sentinel_table_covers_exactly_the_configurable_fields() -> None:
     """Neither table may drift from SearchConfig; together they must partition it."""
     declared = {f.name for f in dataclasses.fields(SearchConfig)}
-    covered = set(_SENTINELS) | set(_INTENTIONALLY_NOT_CONFIGURABLE)
+    covered = set(_SENTINELS) | set(_INTENTIONALLY_NOT_CONFIGURABLE) | set(_SINGLE_VALUED)
     assert covered == declared, (
         f"SearchConfig fields with no sentinel and no exemption: "
         f"{sorted(declared - covered)}; stale table entries: "
@@ -445,6 +433,17 @@ def test_a_yaml_value_actually_reaches_the_worker_search_config() -> None:
             f"worker: SearchConfig.{field} realized as {realized!r}. The knob "
             f"is accepted and ignored."
         )
+
+
+def test_the_single_valued_search_type_is_refused_end_to_end() -> None:
+    """``mcts`` reaches the worker as "gumbel" (any case) and "puct" is refused."""
+    from chess_anti_engine.utils.search_type import PUCT_RETIRED_MESSAGE
+
+    for field, yaml_key in _SINGLE_VALUED.items():
+        assert getattr(_realized_search({yaml_key: "Gumbel"}), field) == "gumbel"
+        with pytest.raises(ValueError, match="retired") as exc:
+            _realized_search({yaml_key: "puct"})
+        assert str(exc.value) == PUCT_RETIRED_MESSAGE
 
 
 def test_publisher_and_worker_agree_on_every_default() -> None:
@@ -648,27 +647,6 @@ def test_every_configurable_value_survives_into_the_gate_eval_search_config() ->
 # ---------------------------------------------------------------------------
 # The two exemption reasons that depend on facts outside this file
 # ---------------------------------------------------------------------------
-
-
-def test_the_fpu_exemption_depends_on_a_pinned_mcts_gumbel() -> None:
-    """`fpu_*` are exempt because the Gumbel search never reads them.
-
-    That is true only while the production config runs Gumbel: at full sim
-    counts a non-gumbel `mcts` takes network_turn.py's PUCT branch, which DOES
-    read `search.fpu_reduction` / `search.fpu_at_root` -- and the worker never
-    resolves either from the reco, so a yaml edit would be accepted and ignored.
-    Pin the dependency rather than leave the exemption inherited.
-    """
-    raw = yaml.safe_load(_PRODUCTION_YAML.read_text(encoding="utf-8"))
-    assert raw["selfplay"]["mcts"] == "gumbel", (
-        "production mcts is no longer gumbel -- the fpu_reduction/fpu_at_root "
-        "exemption in _INTENTIONALLY_NOT_CONFIGURABLE no longer holds; the PUCT "
-        "branch reads both and nothing can set them."
-    )
-    src = Path(inspect.getfile(network_turn)).read_text(encoding="utf-8")
-    assert "search.fpu_reduction" in src, (
-        "no PUCT reader of fpu_reduction left; re-derive the exemption reason"
-    )
 
 
 def test_volatility_search_is_rejected_at_config_load() -> None:

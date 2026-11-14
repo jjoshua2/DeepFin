@@ -26,6 +26,8 @@ from typing import TYPE_CHECKING
 import chess
 import numpy as np
 
+from chess_anti_engine.ext_check import refuse_fallback
+
 from .features import (
     _HAS_C_EXT,
     extra_feature_plane_count,
@@ -157,6 +159,10 @@ def recompute_extra_planes(
                 True, ep_square, n_extra,
             )
         else:
+            refuse_fallback(
+                "recompute_extra_planes", "_features_ext.compute_extra_features",
+                "the pure-Python feature planes",
+            )
             board = _board_from_bitboards(pieces_us, pieces_them, ep_square)
             out[i] = extra_feature_planes_fast(board, version=version)
     return out

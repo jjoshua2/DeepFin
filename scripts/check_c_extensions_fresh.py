@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
-"""Fail when in-place C extensions are missing or older than their sources."""
+"""Fail when in-place C extensions are missing or older than their sources.
+
+With ``--check-symbols`` (``scripts/train.sh`` passes it) the extensions are
+also imported and every required symbol and the ``_mcts_tree`` ABI checked.
+"""
 
 from __future__ import annotations
 
 import argparse
 import importlib.machinery
+import json
+import os
 import re
 import struct
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,6 +23,10 @@ from pathlib import Path
 class ExtensionSpec:
     module: str
     dependencies: tuple[str, ...]
+    # OPTIONAL: no production code imports it yet, so a checkout that has not
+    # rebuilt since it was added must still pass. Present-but-stale is still
+    # an error; only "missing" is allowed.
+    optional: bool = False
 
 
 # setup.py is a compile input, not merely packaging metadata: it owns extension
@@ -100,6 +112,29 @@ EXTENSION_SPECS: tuple[ExtensionSpec, ...] = (
             "chess_anti_engine/encoding/_bitboard_planes_impl.h",
             "chess_anti_engine/encoding/_slider_attacks_impl.h",
         ),
+    ),
+    # Syzygy prober (vendored Fathom). Two translation units: _tb_ext.c (the
+    # Python glue; only it is walked by the include-coverage test) and
+    # _tb_fathom.c, which includes the unmodified Fathom sources -- so the
+    # second unit and everything it pulls in are listed by hand. tbconfig.h is
+    # reached through an angle-bracket include the walker does not follow.
+    ExtensionSpec(
+        "chess_anti_engine.tb._tb_ext",
+        (
+            _SETUP_DEP,
+            "chess_anti_engine/tb/_tb_ext.c",
+            "chess_anti_engine/tb/_tb_fathom.c",
+            "chess_anti_engine/tb/_tb_fathom.h",
+            "chess_anti_engine/tb/fathom/src/tbprobe.c",
+            "chess_anti_engine/tb/fathom/src/tbprobe.h",
+            "chess_anti_engine/tb/fathom/src/tbchess.c",
+            "chess_anti_engine/tb/fathom/src/tbconfig.h",
+            "chess_anti_engine/tb/fathom/src/stdendian.h",
+            "chess_anti_engine/encoding/_cboard_impl.h",
+            "chess_anti_engine/encoding/_bitboard_planes_impl.h",
+            "chess_anti_engine/encoding/_slider_attacks_impl.h",
+        ),
+        optional=True,  # until a production call site imports it
     ),
 )
 
@@ -267,7 +302,8 @@ def check_extensions(
     for spec in EXTENSION_SPECS:
         output = _first_existing(_extension_outputs(root, spec.module))
         if output is None:
-            issues.append(f"{spec.module} is missing")
+            if not spec.optional:
+                issues.append(f"{spec.module} is missing")
             continue
         if min_gcc_major is not None:
             compiler_major = _gcc_major(output)
@@ -295,6 +331,49 @@ def check_extensions(
     return issues
 
 
+def absent_optional_extensions(root: Path) -> list[str]:
+    """Optional extensions with no built output (not a failure, but not 'present')."""
+    return [
+        spec.module for spec in EXTENSION_SPECS
+        if spec.optional and _first_existing(_extension_outputs(root, spec.module)) is None
+    ]
+
+
+_SYMBOL_PROBE = (
+    "import json\n"
+    "from chess_anti_engine.ext_check import extension_problems\n"
+    "print(json.dumps(extension_problems()))\n"
+)
+
+
+def symbol_problems(root: Path, *, python: str | None = None, timeout_s: float = 300.0) -> list[str]:
+    """Import + required-symbol + ABI problems of the extensions under ``root``.
+
+    Runs ``chess_anti_engine.ext_check.extension_problems`` (the check the UCI
+    startup gate, the worker and ``run.py`` share) in a child interpreter with
+    ``root`` first on ``sys.path``, so it inspects the checkout being gated
+    rather than whatever this process imported.
+    """
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(root) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    try:
+        proc = subprocess.run(
+            [python or sys.executable, "-c", _SYMBOL_PROBE],
+            cwd=root, env=env, capture_output=True, text=True, timeout=timeout_s, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return [f"symbol/ABI check timed out after {timeout_s:.0f}s"]
+    lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
+    if proc.returncode != 0 or not lines:
+        tail = " | ".join(proc.stderr.strip().splitlines()[-3:])
+        return [f"symbol/ABI check could not run (exit {proc.returncode}): {tail}"]
+    try:
+        problems = json.loads(lines[-1])
+    except json.JSONDecodeError:
+        return [f"symbol/ABI check printed no result: {lines[-1][:200]}"]
+    return [str(p) for p in problems]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path.cwd(), help="Repository root to inspect.")
@@ -310,13 +389,23 @@ def main() -> int:
             "-march (recorded with LTO), plus an LTO translation producer record."
         ),
     )
+    parser.add_argument(
+        "--check-symbols", action="store_true",
+        help=(
+            "Also import the extensions and require every symbol and the ABI "
+            "that chess_anti_engine.ext_check lists (the UCI startup gate's check)."
+        ),
+    )
     args = parser.parse_args()
 
+    root = args.root.resolve()
     issues = check_extensions(
-        args.root.resolve(),
+        root,
         min_gcc_major=args.min_gcc_major,
         require_production_recipe=args.require_production_recipe,
     )
+    if args.check_symbols and not any(issue.endswith(" is missing") for issue in issues):
+        issues += symbol_problems(root)
     if issues:
         print("C extension freshness check failed:")
         for issue in issues:
@@ -324,7 +413,14 @@ def main() -> int:
         print("Run: python3 scripts/build_production_extensions.py")
         return 1
     if not args.quiet:
-        print("C extensions are present and up to date.")
+        absent = absent_optional_extensions(root)
+        if absent:
+            print(
+                "Required C extensions are present and up to date; "
+                f"optional extension(s) not built: {', '.join(absent)}.",
+            )
+        else:
+            print("C extensions are present and up to date.")
     return 0
 
 

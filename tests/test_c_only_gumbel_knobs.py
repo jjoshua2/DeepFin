@@ -247,7 +247,7 @@ def test_the_volatility_reroute_hits_the_same_guard(
             match_mod.pick_moves_for_boards(
                 _Model().eval(), [chess.Board()], device="cpu",
                 rng=np.random.default_rng(0), mcts_type="gumbel",
-                mcts_simulations=4, temperature=0.0, c_puct=2.5,
+                mcts_simulations=4, temperature=0.0,
                 gumbel_add_noise=False,
                 volatility_q_scale=1.0,
                 gumbel_overrides={"full_tree": 0.0},

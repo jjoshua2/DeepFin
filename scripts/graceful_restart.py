@@ -261,7 +261,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 # test_preflight_argv_matches_train_sh pins the two together.
 _C_EXT_CHECK_ARGV = (
     "scripts/check_c_extensions_fresh.py", "--quiet",
-    "--min-gcc-major", "15", "--require-production-recipe",
+    "--min-gcc-major", "15", "--require-production-recipe", "--check-symbols",
 )
 
 _DEFAULT_RESUME_CMD = "./scripts/train.sh restart"

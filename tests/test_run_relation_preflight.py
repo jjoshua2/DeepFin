@@ -11,6 +11,7 @@ import pytest
 from chess_anti_engine import run
 from chess_anti_engine.model import ModelConfig
 from chess_anti_engine.tune.distributed_runtime import build_recommended_worker
+from chess_anti_engine.utils.search_type import PUCT_RETIRED_MESSAGE
 
 
 def _startup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, config: dict[str, Any],
@@ -65,15 +66,32 @@ def test_cli_gumbel_override_is_validated_and_published(tmp_path, monkeypatch, f
 
 
 @pytest.mark.parametrize("flag", ["use_dynamic_relations", "policy_dynamic_relations", "record_relations"])
-def test_cli_puct_override_is_rejected_before_dispatch(tmp_path, monkeypatch, flag):
-    with pytest.raises(ValueError, match="mcts != gumbel"):
+def test_cli_puct_override_is_rejected_before_dispatch(tmp_path, monkeypatch, capsys, flag):
+    """puct is refused by ``--mcts`` itself (retired 2026-11-14), before any dispatch."""
+    with pytest.raises(SystemExit) as exc:
         _startup(tmp_path, monkeypatch, {flag: True, "mcts": "gumbel"}, ["--mcts", "puct"])
+    assert exc.value.code == 2
+    assert PUCT_RETIRED_MESSAGE in capsys.readouterr().err
 
 
-def test_plain_puct_startup_is_preserved(tmp_path, monkeypatch):
-    calls = _startup(tmp_path, monkeypatch, {}, ["--mcts", "puct"])
+def test_startup_without_mcts_anywhere_publishes_gumbel(tmp_path, monkeypatch):
+    """Neither the yaml nor the CLI names a search: the run is Gumbel."""
+    calls = _startup(tmp_path, monkeypatch, {}, [])
     assert len(calls) == 1
-    assert calls[0]["mcts"] == "puct"
+    assert calls[0]["mcts"] == "gumbel"
+
+
+@pytest.mark.parametrize(("config", "cli"), [
+    ({}, ["--mcts", "puct"]),
+    ({}, ["--mcts", "PUCT"]),
+    # A yaml `mcts:` reaches argparse via set_defaults, which runs `type=` on it.
+    ({"mcts": "puct"}, []),
+])
+def test_plain_puct_startup_is_refused(tmp_path, monkeypatch, capsys, config, cli):
+    with pytest.raises(SystemExit) as exc:
+        _startup(tmp_path, monkeypatch, config, cli)
+    assert exc.value.code == 2
+    assert PUCT_RETIRED_MESSAGE in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("unsupported", [

@@ -249,20 +249,23 @@ def test_emit_bestmove_includes_ponder_when_option_true(capsys) -> None:
     assert "bestmove e2e4 ponder e7e5" in out
 
 
-def test_invalid_position_fen_clears_pending_state() -> None:
+def test_invalid_position_fen_keeps_the_previous_position_state() -> None:
+    """A rejected `position` changes nothing: the previous board and pending
+    position stay, and the next `go` answers `bestmove 0000` (see
+    tests/test_uci_compliance_p2.py). It used to reset to the start position."""
     engine = Engine(worker=MagicMock())
     engine._handle_position(CmdPosition(fen=None, moves=("e2e4",)))
 
     assert engine._pending_moves == [chess.Move.from_uci("e2e4")]
+    before = engine._board.copy()
 
     engine._handle_position(CmdPosition(fen="not a valid fen", moves=()))
 
-    assert engine._board == chess.Board()
+    assert engine._board == before
     assert engine._pending_fen is None
-    assert engine._pending_moves == []
-    assert engine._applied_fen is None
-    assert engine._applied_moves == ()
+    assert engine._pending_moves == [chess.Move.from_uci("e2e4")]
     assert engine._popped_ponder_move is None
+    assert engine._position_error is not None
 
 
 def test_isready_does_not_stop_active_search(capsys) -> None:

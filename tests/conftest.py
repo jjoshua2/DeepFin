@@ -30,13 +30,16 @@ is the only site that does not depend on the next test author remembering.
 from __future__ import annotations
 
 import contextlib
+import importlib.abc
+import importlib.machinery
 import os
 import re
 import sys
 import threading
 import time
+import types
 import weakref
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -467,8 +470,9 @@ def pytest_runtest_protocol() -> Iterator[None]:
 
     ``rep_fix`` is imported lazily: a conftest is loaded on EVERY pytest
     invocation and this package pulls in numpy and chess, and an environment
-    without the compiled encoders should reach ``apply`` (which skips missing
-    setters with a warning) rather than fail at collection. On the common path,
+    without the compiled encoders should fail in the test that needs them
+    (``apply`` raises ``RepFixUnavailableError`` on a missing setter) rather
+    than at collection. On the common path,
     where the test left the flag alone, nothing is called at all. The hook takes
     no parameters because pluggy passes an implementation only the hookspec
     arguments it actually declares, and this one needs none.
@@ -489,3 +493,123 @@ def pytest_runtest_protocol() -> Iterator[None]:
     rep_fix.apply(bool(before), boards_discarded=True)
     if before is None:
         rep_fix._current = None
+
+
+@pytest.fixture
+def python_reference_paths() -> Iterator[None]:
+    """Opt this test in to the Python reference paths (``ext_check``).
+
+    Production refuses to substitute a Python search, per-ply recorder or
+    encoder for a missing C symbol. Tests that deliberately exercise those
+    reference implementations (by forcing ``has_c_ply=False``, patching
+    ``_HAS_GUMBEL_C``/``_HAS_C_TREE`` off, or deleting an extension symbol to
+    test the reference composition) request this fixture.
+    """
+    from chess_anti_engine.ext_check import python_reference_paths as _opt_in
+
+    with _opt_in("test exercises the Python reference path"):
+        yield
+
+
+
+# ── Test runs must not write into the checkout ───────────────────────────────
+#
+# Two production defaults are relative to the checkout and are right for
+# production but wrong for a test process:
+#
+# * ``Trainer`` writes ``SummaryWriter(log_dir=str(log_dir or "tb"))``: with no
+#   ``log_dir`` the events go to ``./tb`` in the CURRENT DIRECTORY, i.e. the
+#   checkout pytest runs from (127 event files per full-suite run). Production
+#   always passes ``log_dir`` (``tune/trainable.py`` -> ``<work_dir>/tb``).
+# * ``scripts/arena_standard.py`` banks every game under
+#   ``DEFAULT_GAME_LOG_DIR = REPO_ROOT / "runs" / "arena_games"``; a test that
+#   drives ``run_arena`` without patching it appends to ``runs/`` in the checkout.
+#
+# The defaults are left alone; only the TEST process redirects them to a
+# session temp dir. An explicit ``log_dir`` passes through untouched, and a test
+# that monkeypatches ``DEFAULT_GAME_LOG_DIR`` itself still wins.
+#
+# Each patch is applied when its module is imported (a meta-path finder wraps
+# the loader), or at once if it already is, so a test that imports the module
+# lazily is covered and a test that never touches it pays nothing.
+
+_TRAINER_MODULE = "chess_anti_engine.train.trainer"
+_ARENA_MODULE = "scripts.arena_standard"
+_TB_DEFAULT = "tb"
+_checkout_redirect_root: Path | None = None
+
+
+def _redirect_trainer_default_tb(module: types.ModuleType) -> None:
+    real = getattr(module, "SummaryWriter")
+    if getattr(real, "_cae_default_tb_redirect", False):
+        return
+
+    def _summary_writer(*args: object, **kwargs: object) -> object:
+        root = _checkout_redirect_root
+        if root is not None and kwargs.get("log_dir") == _TB_DEFAULT and not args:
+            kwargs["log_dir"] = str(root / "trainer_default_tb")
+        return real(*args, **kwargs)
+
+    setattr(_summary_writer, "_cae_default_tb_redirect", True)
+    setattr(module, "SummaryWriter", _summary_writer)
+
+
+def _redirect_arena_game_log_dir(module: types.ModuleType) -> None:
+    if _checkout_redirect_root is not None:
+        setattr(module, "DEFAULT_GAME_LOG_DIR", _checkout_redirect_root / "arena_games")
+
+
+_CHECKOUT_REDIRECTS = {
+    _TRAINER_MODULE: _redirect_trainer_default_tb,
+    _ARENA_MODULE: _redirect_arena_game_log_dir,
+}
+
+
+class _CheckoutRedirectImportHook(importlib.abc.MetaPathFinder):
+    """Meta-path finder: patch a redirected module right after it executes."""
+
+    def find_spec(
+        self,
+        fullname: str,
+        path: Sequence[str] | None,
+        target: types.ModuleType | None = None,
+    ) -> importlib.machinery.ModuleSpec | None:
+        del target
+        patch = _CHECKOUT_REDIRECTS.get(fullname)
+        if patch is None:
+            return None
+        spec = importlib.machinery.PathFinder.find_spec(fullname, path)
+        if spec is None or spec.loader is None:
+            return spec
+        loader = spec.loader
+        original_exec = loader.exec_module
+
+        def _exec_module(module: types.ModuleType) -> None:
+            original_exec(module)
+            patch(module)
+
+        setattr(loader, "exec_module", _exec_module)
+        return spec
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _test_writes_stay_outside_the_checkout(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    global _checkout_redirect_root
+    _checkout_redirect_root = tmp_path_factory.mktemp("checkout_redirects")
+    hook = _CheckoutRedirectImportHook()
+    sys.meta_path.insert(0, hook)
+    for name, patch in _CHECKOUT_REDIRECTS.items():
+        if name in sys.modules:
+            patch(sys.modules[name])
+    try:
+        yield
+    finally:
+        # Untested on purpose: it runs after the last test, and a missed removal
+        # is harmless. It only matters for an in-process re-run (pytest.main
+        # twice), where a second hook would stack in front of the first. The
+        # import system stops at the first finder that returns a spec, so only
+        # one hook ever wraps a loader, and both patches are idempotent: the
+        # trainer patch checks its `_cae_default_tb_redirect` marker, and the
+        # arena patch assigns a constant.
+        with contextlib.suppress(ValueError):
+            sys.meta_path.remove(hook)

@@ -615,7 +615,7 @@ Current notes:
   benchmark body for invalid board/simulation/repeat/node/batch/device values.
 - Focused profiling validation after F041 passed:
   `python3 -m py_compile` for the touched profile scripts plus invalid-argument
-  smoke checks for `profile_selfplay.py`, `profile_mcts_detail.py`,
+  smoke checks for `profile_selfplay.py`, `profile_mcts_detail.py` (removed in #1305),
   `profile_uci_search.py`, and `profile_worker_inference.py`.
 - Finding F042 opened/fixed in this cycle: `scripts/cuda_sanity_check.py`
   could hang forever in multi-worker mode if a spawned process died before
@@ -1935,7 +1935,7 @@ Suggested profiling commands:
 ```bash
 python -m pytest tests/test_encode_optimization.py
 python scripts/profile_mcts.py
-python scripts/profile_mcts_detail.py
+python scripts/profile_mcts_detail.py  # removed in #1305
 python scripts/profile_selfplay.py
 python scripts/profile_training.py
 python scripts/profile_distributed.py

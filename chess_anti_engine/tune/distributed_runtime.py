@@ -17,8 +17,10 @@ from typing import Any
 import numpy as np
 
 from chess_anti_engine.encoding import input_plane_count
+from chess_anti_engine.ext_check import C_CORE_REFUSAL_EXIT_CODE, CCoreIncompleteError
 from chess_anti_engine.inference import trial_slot_prefix
 from chess_anti_engine.mcts.gumbel import SELFPLAY_GUMBEL_C_SCALE
+from chess_anti_engine.utils.search_type import require_gumbel_search
 from chess_anti_engine.model import ModelConfig, model_config_to_manifest_dict
 from chess_anti_engine.moves import policy_size_for_encoding
 from chess_anti_engine.replay import ArrayReplayBuffer, DiskReplayBuffer
@@ -301,7 +303,7 @@ def build_recommended_worker(
     return {
         "games_per_batch": int(config.get("selfplay_batch", 4)),
         "max_plies": int(config.get("max_plies", 240)),
-        "mcts": str(config.get("mcts", "puct")),
+        "mcts": require_gumbel_search(config.get("mcts", "gumbel")),
         "mcts_simulations": int(mcts_simulations),
         "playout_cap_fraction": float(config.get("playout_cap_fraction", 0.25)),
         "full_ply_pair_fraction": float(config.get("full_ply_pair_fraction", 0.0)),
@@ -993,6 +995,8 @@ def _launch_distributed_worker(
         reap_terms=["--trial-id", str(trial_id), "--work-dir", str(worker_root)],
         reap_label=f"distributed workers (trial={trial_id} idx={worker_index:02d})",
     )
+    # Read by _raise_if_c_core_refusal so a refusal names the files to open.
+    setattr(proc, "_cae_worker_log_paths", (worker_out, worker_log))
     setattr(
         proc,
         "_cae_worker_launch_signature",
@@ -1286,8 +1290,6 @@ def check_dynamic_relations_transport(config: dict) -> None:
     ]
     if str(config.get("distributed_worker_aot_dir") or "").strip():
         offenders.append("distributed_worker_aot_dir")
-    if str(config.get("mcts", "puct")).lower() != "gumbel":
-        offenders.append("mcts != gumbel (PUCT paths don't transport relations)")
     if offenders:
         raise ValueError(
             "dynamic relations require worker-local direct inference on the "
@@ -1525,6 +1527,25 @@ def _ensure_distributed_workers(
 ) -> list[subprocess.Popen[bytes]]:
     want = max(0, int(config.get("distributed_workers_per_trial", 0)))
     out = list(procs)
+    # Refusal scan BEFORE any relaunch: ``out`` is a copy, so a worker relaunched
+    # at an earlier index would never reach the caller's list (and never be
+    # cleaned up) if a later index then raised.
+    _raise_on_any_c_core_refusal(out[:want], trial_id=trial_id)
+    # A worker alive at that scan can still exit 78 before the loop reaches it.
+    # Anything launched in this call lives only in ``out`` until we return, so
+    # on that raise those processes are stopped here, not leaked.
+    launched: list[subprocess.Popen[bytes]] = []
+
+    def _launch(idx: int) -> subprocess.Popen[bytes]:
+        proc = _launch_distributed_worker(
+            config=config,
+            trial_dir=trial_dir,
+            trial_id=trial_id,
+            worker_index=idx,
+        )
+        launched.append(proc)
+        return proc
+
     for idx in range(want):
         desired_signature = _worker_launch_signature(
             config=config, trial_id=trial_id, worker_index=idx,
@@ -1538,39 +1559,63 @@ def _ensure_distributed_workers(
                 f"config_changed=true trial={trial_id}"
             )
             _stop_process(out[idx])
-            out[idx] = _launch_distributed_worker(
-                config=config,
-                trial_dir=trial_dir,
-                trial_id=trial_id,
-                worker_index=idx,
-            )
+            out[idx] = _launch(idx)
             continue
         if idx < len(out) and out[idx].poll() is not None:
+            try:
+                _raise_if_c_core_refusal(out[idx], idx=idx, trial_id=trial_id)
+            except CCoreIncompleteError:
+                # _stop_worker_processes also sweeps each stopped worker's
+                # orphaned Stockfish engines. Nothing it raises may replace
+                # the refusal, which is what the operator has to read.
+                with contextlib.suppress(Exception):
+                    _stop_worker_processes(launched)
+                raise
             print(
                 f"[trial] restarting distributed worker idx={idx} "
                 f"exit_code={out[idx].returncode} trial={trial_id}"
             )
-            out[idx] = _launch_distributed_worker(
-                config=config,
-                trial_dir=trial_dir,
-                trial_id=trial_id,
-                worker_index=idx,
-            )
+            out[idx] = _launch(idx)
         elif idx >= len(out):
-            out.append(
-                _launch_distributed_worker(
-                    config=config,
-                    trial_dir=trial_dir,
-                    trial_id=trial_id,
-                    worker_index=idx,
-                )
-            )
+            out.append(_launch(idx))
   # Kill excess workers if count decreased
     for p in out[want:]:
         if p.poll() is None:
             print(f"[trial] stopping excess worker pid={p.pid} trial={trial_id}")
             p.terminate()
     return out[:want]
+
+
+def _raise_on_any_c_core_refusal(procs: list[subprocess.Popen[bytes]], *, trial_id: str) -> None:
+    """Raise for the first EXITED worker whose code is the C-core refusal."""
+    for idx, proc in enumerate(procs):
+        if proc.poll() is not None:
+            _raise_if_c_core_refusal(proc, idx=idx, trial_id=trial_id)
+
+
+def _raise_if_c_core_refusal(proc: subprocess.Popen[bytes], *, idx: int, trial_id: str) -> None:
+    """A worker that exited with the C-core refusal code is fatal for the trial.
+
+    Relaunching it would hit the same refusal on every poll (the build cannot
+    change underneath the trial), so raise with the reason instead. Every
+    other exit code is relaunched exactly as before.
+    """
+    if proc.returncode != C_CORE_REFUSAL_EXIT_CODE:
+        return
+    paths = getattr(proc, "_cae_worker_log_paths", None)
+    where = (
+        "; the missing symbols are named in " + " and ".join(str(p) for p in paths)
+        if paths else "; the worker's stderr names the missing symbols"
+    )
+    message = (
+        f"distributed worker idx={idx} refused to start: the compiled C core is "
+        f"incomplete (exit code {C_CORE_REFUSAL_EXIT_CODE}{where}). Not relaunching; "
+        f"trial={trial_id} stops. Rebuild the extensions "
+        "(python scripts/build_production_extensions.py) and restart."
+    )
+    print(f"[trial] {message}", flush=True)
+    log.error("%s", message)
+    raise CCoreIncompleteError(message)
 
 
 def revive_dead_selfplay_processes(
@@ -1599,6 +1644,9 @@ def revive_dead_selfplay_processes(
     the phase boundary where it already happens.
     """
     revived = False
+    # Refusal scan first: launch nothing (not even the broker) for a fleet that
+    # is about to be declared fatal.
+    _raise_on_any_c_core_refusal(worker_procs, trial_id=trial_id)
 
     broker = broker_proc_box[0]
     if broker is not None and broker.poll() is not None:
@@ -1631,6 +1679,7 @@ def revive_dead_selfplay_processes(
     for idx, proc in enumerate(worker_procs):
         if proc.poll() is None:
             continue
+        _raise_if_c_core_refusal(proc, idx=idx, trial_id=trial_id)
         print(
             f"[trial] distributed worker idx={idx} exited "
             f"(code={proc.returncode}) mid-iteration; relaunching",
@@ -2213,6 +2262,8 @@ def _ingest_distributed_selfplay(
         next_poll_cb = now + float(on_poll_interval_s)
         try:
             on_poll()
+        except CCoreIncompleteError:
+            raise  # a worker refused on an incomplete C core: fatal, see _raise_if_c_core_refusal
         except Exception:
             log.exception("ingest on_poll callback failed; continuing to wait")
 

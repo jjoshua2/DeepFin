@@ -30,7 +30,6 @@ from chess_anti_engine.model import ModelConfig
 from chess_anti_engine.selfplay.config import (
     DiffFocusConfig,
     GameConfig,
-    SearchConfig,
     TemperatureConfig,
 )
 from chess_anti_engine.tune.distributed_runtime import build_recommended_worker
@@ -242,13 +241,18 @@ def test_union_diff_ignores_yaml_int_vs_json_float() -> None:
 def test_reco_worker_defaults_match_the_real_dataclasses() -> None:
     """The allowlist stores numbers; make them the dataclass's numbers.
 
-    Without this, a change to (say) ``SearchConfig.fpu_reduction`` would leave
+    Without this, a change to (say) ``TemperatureConfig.after`` would leave
     the audit comparing the yaml against a value nothing uses, and the check
-    would pass while the config lied.
+    would pass while the config lied. ``fpu_reduction`` / ``fpu_at_root`` have
+    no dataclass field since the selfplay PUCT retirement; they are pinned to
+    their dead-key inert values instead.
     """
+    from chess_anti_engine.tune.trainable_config_ops import dead_config_key_inert_values
+
+    dead_inert = dead_config_key_inert_values()
+    for dead_key in ("fpu_reduction", "fpu_at_root"):
+        assert _RECO_WORKER_DEFAULT[dead_key] == dead_inert[dead_key], dead_key
     yaml_to_field: dict[str, tuple[type, str]] = {
-        "fpu_reduction": (SearchConfig, "fpu_reduction"),
-        "fpu_at_root": (SearchConfig, "fpu_at_root"),
         "temperature_drop_plies": (TemperatureConfig, "drop_plies"),
         "temperature_after": (TemperatureConfig, "after"),
         "categorical_bins": (GameConfig, "categorical_bins"),
@@ -259,7 +263,7 @@ def test_reco_worker_defaults_match_the_real_dataclasses() -> None:
         "diff_focus_slope": (DiffFocusConfig, "slope"),
         "diff_focus_min": (DiffFocusConfig, "min_keep"),
     }
-    assert set(yaml_to_field) == set(_RECO_WORKER_DEFAULT)
+    assert set(yaml_to_field) | {"fpu_reduction", "fpu_at_root"} == set(_RECO_WORKER_DEFAULT)
 
     for yaml_key, (cls, field_name) in yaml_to_field.items():
         actual = getattr(cls(), field_name)

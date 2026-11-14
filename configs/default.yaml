@@ -68,7 +68,7 @@ selfplay:
   opening_book_prob: 1.0
   random_start_plies: 0
 
-  mcts: puct
+  mcts: gumbel  # was puct until the selfplay PUCT search was retired (2026-11-14)
   mcts_simulations: 100
   playout_cap_fraction: 0.25
   fast_simulations: 8

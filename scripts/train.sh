@@ -109,7 +109,7 @@ check_c_extensions() {
         return 0
     fi
     if ! PYTHONPATH=. python3 scripts/check_c_extensions_fresh.py --quiet \
-        --min-gcc-major 15 --require-production-recipe; then
+        --min-gcc-major 15 --require-production-recipe --check-symbols; then
         echo "Refusing to start training on these C extensions." >&2
         echo "  Bypass (runs whatever is built): TRAIN_SKIP_C_EXT_CHECK=1 $0 ..." >&2
         return 1

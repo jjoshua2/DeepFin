@@ -1,5 +1,54 @@
 # Full-state lower-rate on-policy continuation
 
+Current status at **2026-11-14 10:46:06 UTC: FIRST LEG CLOSED — TERMINAL NONPASS**.
+The fixed G8 / step-4,096 model scored **46.2890625% versus A39 over 512 games,
+paired 95% interval 43.1008804810–49.4772445190%**. The qualified screen failed
+the registered point/lower-bound rule. C1 was neither eligible, allocated nor
+consumed; no second leg, retry, pooling, extension or model adoption follows.
+A39 remains this study’s unchanged donor/incumbent. This is negative evidence
+for the tested recipe/checkpoint/horizon/internal profile, not a universal
+regression or external-strength verdict. The broader goal remains active.
+See the [G8 terminal readout](#2026-11-14-g8-terminal-nonpass-closes-the-first-leg).
+
+## Earlier status snapshot — 2026-11-14 08:20:47 UTC
+
+Current status at **2026-11-14 08:20:47 UTC: ONGOING through the fixed G8 horizon**.
+G5/G6 data and learner continuation completed through step 3,072. The qualified
+G6 donor diagnostic scored **43.359375% over 256 games, paired 95% interval
+38.4232053599–48.2955446401%**: negative descriptive underperformance on this
+conditional reused DIAG128 panel. It is not a clean/general regression or causal
+LR verdict. G6 has no efficacy or severe-harm gate; fixed G7/G8 remain unchanged.
+No gain, confirmation, model promotion or adoption is claimed. Root is preparing
+G7; its actual data/models are unknown here. See the [G5/G6 readout](#2026-11-14-completed-g5-and-g6-negative-descriptive-g6-diagnostic).
+
+## Earlier status snapshot — 2026-11-14 06:22:53 UTC
+
+Current status at **2026-11-14 06:22:53 UTC: ONGOING through the fixed G8 horizon**.
+G3 and G4 collection, independent data audits and full-state learner continuation
+completed through step 2,048. The qualified G4 donor diagnostic scored
+**52.9296875% over 256 games, paired 95% interval 48.1105005605–57.7488744395%**.
+It is descriptive: no supported gain, equivalence, clean regression, promotion
+or confirmation. The registered G4 severe-harm condition is false. Root reports
+fixed G5 collection running from that same step-2,048 actor; no G5 data or model
+result is claimed. The strength goal remains unmet. See the [G3/G4 readout](#2026-11-14-completed-g3-and-g4-descriptive-g4-diagnostic).
+
+## Earlier status snapshot — 2026-11-14 04:04 UTC
+
+Current status at **2026-11-14 04:04 UTC: ONGOING**. G2 collection, independent
+CPU data audit and full-state learner continuation completed. The fixed G2
+A39 diagnostic was technically qualified: **82W/88D/86L over 256 games,
+score 49.21875%, paired 95% interval 44.2989710828–54.1385289172%**. It is
+descriptive, with no gain, equivalence, clean regression, promotion or
+confirmation claim. G3 collection is running from the same step-1,024 actor;
+that status was supplied by the owning run, without inspecting G3 data here.
+The strength goal remains unmet. See the [dated G2 readout](#2026-11-14-g2-completion-and-descriptive-diagnostic).
+
+## Preregistration snapshot — before adoption and new data
+
+The following prospective text and evidence retain their original publication
+status. The dated readout below records later adoption and execution; it changes
+no scientific rule, source pin, role, count, seed or horizon.
+
 Status: **PROSPECTIVE REVIEWED PROPOSAL — NOT FROZEN, ADOPTED, ADMITTED OR
 EXECUTED.** V2 source and the actual prospective role proposal have independent
 acceptance. The scoped recorded-use audit is evidence, not role release.
@@ -224,3 +273,580 @@ operations artifacts; source/audit/proposal evidence creates no execution author
 | `core-baseline-lowLR-continuation-bindings-v1/role-disposition.json` | `fb9fccf3615ebd6e8aa1fdc3ec3054cd23d83375e69ec315fe490933a7fe4023` |
 | `core-baseline-lowLR-continuation-bindings-v1/role-disposition-review.json` | `43be8bb2268e3fe4a0a2935ca60b2bf948107286543b517c00e614a762002044` |
 | `core-baseline-lowLR-continuation-role-disposition-independent-review-v1/review.json` | `6971a0e797b10601f4cfa7e66f6109c5e5aa96876d28567c59d2ae24598d6cce` |
+
+
+## 2026-11-14: G2 completion and descriptive diagnostic
+
+**Cutoff: 2026-11-14 04:04 UTC.** The reviewed ready PR was published and its
+remote bytes verified at 02:20:42 UTC, before root role adoption at 02:22:39
+and new data. PR [#1289](https://github.com/jjoshua2/DeepFin/pull/1289) subsequently
+merged at `bf0afdb410126a1ffaf7878b3cd691b0ec8bfa9e`, with all four CI jobs
+passing and complete feedback checks empty. That main merge occurred **after
+G2 collection started**; it is not retroactively described as pre-launch main
+publication. The V2 specification `12ad1fc7…`, manifest `b10f5f5b…`, original
+`cc17ac07…` contract path, L `090b5143…` and owner R7 `ba9d6de1…` remain pinned.
+Later changes to main are not runtime adoption.
+
+| Completed stage | Actual delivery | Owner wall seconds |
+| --- | --- | ---: |
+| New low-parent G2 collection | All 256 fixed attempts; no replacement | GPU 1,589.507718 |
+| Independent CPU data audit | All 256 eligible; 26,010 rows; 107 natural / 149 strict-TB / 0 unresolved | CPU 66.892230 |
+| Full-state learner continuation | Step 512 → 1,024; 512 updates × batch 256 = 131,072 views | GPU 358.975789 |
+| Fixed G2 versus A39 diagnostic | All 256 games / 128 color pairs; 117 rules / 139 strict-TB endings | GPU 659.474557; CPU readback 14.453168 |
+
+The data promotion `c90f281e…` admits the closed audited generation only; it
+promotes no model or champion. Original G1 plus new low-parent G2 total
+**512 games / 50,837 audited rows / 1,024 updates / 262,144 views**, including
+the inherited first 512 updates. Original high-actor G2 was not relabelled or
+used. The new model is `learner.pt` SHA256
+`89e9804d23384dd8833609fd59f277200e24ff1167d249dda63977a99057e1c0`,
+boundary SHA256 `46d7ec5eb04f32bb9fc5da48357613499a8b92540f261cca0ba07e4e2f232a44`.
+
+The pinned learner restores complete saved LOW512 model/optimizer/scheduler/
+step/peak-LR/ZClip state, reconstructs replay, then restores boundary RNG before
+sampling. Its closed boundary retains the exact parent, backend and contract.
+Independent metadata review reconstructed all **512 shard chunks / 50,837 rows**
+and checked every journal draw: 64,538 inherited-G1 and 66,534 new-G2 draws,
+all 512 complete batches, no out-of-window source or row. Root separately
+verified the checkpoint's full-file hash; the independent review did not reload
+tensors or assert GPU bitidentity/interrupted-epoch recovery.
+
+Learner metrics recorded zero nonfinite skips, retries and clips; mean gradient
+norm 4.484922 and mean LR 2.993775905e-6. Mean total loss 1.567210148 agrees
+with policy plus outcome-WDL loss within 4.8e-9. Nonzero auxiliary loss or
+SF/search availability metrics do not make those objectives active: the pinned
+consumer retains policy 1 / genuine-outcome WDL 1, twelve other weights 0 and
+SF/search WDL shares 0. These training-window metrics are not heldout or strength
+proxies and do not establish an LR failure mechanism.
+
+The diagnostic independently reconciled all 257 JSONL records, 256 PGNs and
+128 opening/color pairs. **82W/88D/86L gives .4921875**, unbiased paired variance
+.08064714566929133 and normal-approximate 95% bounds
+[.44298971082813166, .5413852891718683]. Pentanomial counts in ascending pair-total
+order 0/.5/1/1.5/2 are **[13, 31, 45, 25, 14]**. Both owners closed PASS. Actual
+serving observations bind the unchanged step-1,024 candidate and immutable A39,
+494 states / 61,444,448 parameters each, strict embedded architecture,
+175-plane BF16 inference with float32 transport, pool 32 and leaf capacity 1,024.
+The admitted CPU reader verified full-history legality and rule50-aware TB endings;
+the independent metadata review reused that physics without new probes.
+
+DIAG128 is intentionally reused and the interval contains parity. This supplies
+**no supported gain, equivalence or clean regression**, no allocated/consumed
+confirmation, no promotion, and no causal LR or general-recipe verdict. Do not
+pool it with prior correlated diagnostics, the original negative G8, or the
+completed LOW512/A39 nonpass. G2 has no severe-harm or promotion decision.
+At this cutoff G3 was collecting with the same `89e9804d…` actor under separate
+root admission; the predeclared G4 severe-harm exception, fixed G8 endpoint,
+conditional confirmation and all technical/resource/deadline stops remain.
+No recipe change or external Rofchade/Stockfish/Lc0 milestone follows this readout.
+
+The references below are relative to the same operations artifact root as the
+preregistration table. Root receipts that were sealed before independent review
+retain their historical pending labels; the corresponding completed independent
+receipts are separate. Reviewers share source history with the collector, as
+disclosed in their receipts. No model/array payloads or project imports were used
+for this documentation update.
+
+| Completed evidence | SHA256 |
+| --- | --- |
+| `core-baseline-lowLR-continuation-prereg-main-publication-v1/publication.json` | `6c6eaa3f226d10f242cb8e6dec7e56be4532c3dad55fc29961f9be1afc191d0a` |
+| `core-baseline-lowLR-continuation-bindings-v1/role-adoption.json` | `dc1ff297fb4edf0ad84b965d11a18217f1b154e775edde158c11c4b448653be1` |
+| `core-baseline-lowLR-g02-collection-GPU-execution-v1/terminal.json` | `a7a3e67a952555d8b0876707047d3f217c06b23e288dde8f0072653f5680ea4c` |
+| `core-baseline-lowLR-g02-audit-results-v1/readout.json` | `9f2d582c716a708de9f1545b7ae5e822d15a98c904a6ba6ad9e201bee4aa1d25` |
+| `core-baseline-lowLR-g02-audit-independent-actual-review-v1/review.json` | `5e32a39974ccfc88b9b143514f69bfa2f20330164fa8d030265d603935e1b546` |
+| `core-baseline-lowLR-continuation-bindings-v1/g02/audit-root-promotion.json` | `c90f281e0826019b9fc38c4cd62a46bc428a218fae3d3b0ac9e2dd34ad9177e8` |
+| `core-baseline-lowLR-g02-learner-results-v1/boundary.json` | `46d7ec5eb04f32bb9fc5da48357613499a8b92540f261cca0ba07e4e2f232a44` |
+| `core-baseline-lowLR-continuation-bindings-v1/g02/learner-root-metadata-acceptance.json` | `83d5f2c7f3eaf2acb323730424aebed1fb8b7866963f1b412049ecdb715d2027` |
+| `core-baseline-lowLR-g02-learner-independent-actual-review-v1/review.json` | `b2dd20155c621a56df354e8147d3277fb4cf425c6a1419e37175c34ad5eaf77b` |
+| `core-baseline-lowLR-leg1-diagnostic-g2-readout-v1/readout.json` | `b0d1e48b777c384e9a4f9b18efedcfd4ab045f9cc66974522b016e2fa6111e16` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-diagnostic-g2/root-readout-acceptance.json` | `00b9e05443840628ebf300efe72c00485b44ccf1fbd29532fc7a7932efe49b82` |
+| `core-baseline-lowLR-leg1-diagnostic-g2-independent-actual-review-v1/review.json` | `12c2399e2d209f4a3badc1f18b04378cc1b47a21061e1a2623c245bc18d0c374` |
+
+
+## 2026-11-14: Completed G3 and G4; descriptive G4 diagnostic
+
+**Cutoff: 2026-11-14 06:22:53 UTC.** G3 and G4 completed on the unchanged V2
+specification `12ad1fc7…`, original `cc17ac07…` contract path, L `090b5143…` and
+owner R7 `ba9d6de1…`. Independent reviews accepted the closed data and learner
+metadata, followed by the complete fixed G4 diagnostic. No scientific rule,
+source, role, seed, checkpoint-selection rule or horizon changed.
+
+| Completed stage | Actual delivery | Owner wall seconds |
+| --- | --- | ---: |
+| G3 low-parent collection | All 256 fixed attempts; 104 natural / 152 strict-TB / 0 unresolved | GPU 1,632.392473 |
+| G3 independent CPU data audit | 256 eligible games / 25,757 rows; data-only root promotion `7bc8ba9c…` | CPU 70.882020 |
+| G3 full-state learner | Step 1,024 → 1,536; 512 updates / 131,072 views | GPU 437.560464 |
+| G4 low-parent collection | All 256 fixed attempts; 111 natural / 145 strict-TB / 0 unresolved | GPU 1,885.560283 |
+| G4 independent CPU data audit | 256 eligible games / 26,303 rows; data-only root promotion `e80d8600…` | CPU 76.088461 |
+| G4 full-state learner | Step 1,536 → 2,048; 512 updates / 131,072 views | GPU 464.058021 |
+| Fixed G4 versus A39 diagnostic | All 256 games / 128 color pairs; 113 rules / 143 strict-TB endings | GPU 767.041080; CPU readback 15.532970 |
+
+G3's checkpoint is SHA256
+`8eb3aa69fde8da409c0a9c211e251d85c52f7c18aa403061ba5d750807290def`,
+boundary `514c95df1520bb66910cdedff256ba9053d6ba0b93f4111200b074a4b23ba81f`.
+Inherited G1 plus low-parent G2/G3 totalled **768 physical games / 76,594 audited
+rows / 1,536 updates / 393,216 views**. Its 512 complete batch-256 draws comprised
+41,980 G1, 44,980 G2 and 44,112 G3 rows, covering all 768 chunks and 62,752
+distinct sampled physical rows, with no out-of-window source or row.
+
+G4's checkpoint is SHA256
+`8fe45bf71be92cbd2ba06fc1acd0104f5be397b24411b7b15d532c76fed28aff`,
+boundary `b8d41968dbb3e1099abdce48236913d7471703ac37e0766ffc1ff397f10e6f35`.
+Cumulative inherited G1 plus low-parent G2–G4 are **1,024 physical games /
+102,897 audited rows / 2,048 updates / 524,288 views**. All four generations
+remain in FIFO; no generation has yet been evicted. The G4 journal reconciled
+all 512 batches / 131,072 draws: **31,891 G1, 33,318 G2, 32,422 G3 and 33,441 G4**,
+all 1,024 chunks and 74,129 distinct sampled physical rows. No high-actor G2
+was relabelled or used. The closed G4 CPU audit reports 1,446,741,895 decoded
+bytes; policy-TB eligible/applied/abstained retained-record counts were all zero.
+The 145 strict-TB final outcomes were verified, without a new retained-row
+TB policy-correction exercise.
+
+Both continuations retain full saved state, exact parent/contract/backend and
+boundary RNG metadata under the qualified source. Root verified complete
+checkpoint bytes; independent metadata/journal review did not reload tensors,
+recompute GPU/RNG transitions or establish GPU bitidentity. G4's 512-step metrics
+were finite, with skips/retries/clips all zero, mean gradient norm 5.245727 and
+mean LR 2.947967400e-6. They describe a changing training window, not fixed-heldout
+or playing-strength evidence. Nonzero auxiliary diagnostics remain separate
+from the unchanged policy-1/outcome-WDL-1 objective and twelve zero weights.
+
+### Fixed G4 diagnostic and continuation decision
+
+The scheduled step-2,048 model faced immutable A39 on intentionally reused
+DIAG128, seed **2026111534**. Complete paired readback and independent review
+reconciled **88W/95D/73L over 256 games / 128 color pairs**, score **.529296875**,
+unbiased paired variance **.07738296628937008**, and approximate 95% bounds
+**[.4811050056052596, .5774887443947404]**. Pentanomial counts in ascending
+pair-total order 0/.5/1/1.5/2 are **[12, 24, 41, 39, 12]**. All 256 PGNs and
+24,237 additional SAN plies joined the fixed histories; endings were 113 rules
+and 143 strict-TB. Both GPU and CPU owners closed PASS. Recorded serving
+remained 494 states / 61,444,448 parameters per model, strict embedded
+architecture, 175-plane BF16 inference with float32 transport, pool 32 and leaf
+capacity 1,024. No model load or new TB probe was needed for independent review.
+
+The interval contains parity. This establishes **no supported gain, equivalence
+or clean regression**, causal LR/optimality conclusion, general-recipe verdict
+or external Rofchade/Stockfish/Lc0 milestone. It is descriptive, with no pooling,
+model/champion adoption or eligible/allocated/consumed confirmation. The registered
+severe-harm test is **false** because the upper bound is not below .35. Continuing
+fixed G5 follows that predeclared rule, rather than favorable selection of this
+point estimate. No G8 threshold, horizon or recipe changed, and the correlated
+G2/G4 snapshots are not independent replications or a pooled recovery claim.
+
+At the root-verified cutoff, G5 collection was running from the same `8fe45bf7…`
+step-2,048 actor, fixed UUID `5c0e801b-3ea3-5a7b-b246-d314051b6110`, seed
+**2026111505**, TRAIN half 1 and 256 fixed attempts. This is a root-reported stage
+status only; no G5 payload was inspected and no G5 data, learner or model result
+is asserted. Fixed G6 descriptive, G8 screen and conditional confirmation, plus
+all technical/resource/deadline stops, remain unchanged.
+
+### Preserved review history and evidence
+
+The G3 root review initially treated a legitimate read-only `tb/` directory as
+a file; `b29e56ff…` preserves that reviewer-only predicate correction. Two G4
+diagnostic root-review predicates also required correction: model identity has
+three fields and excludes the PGN label (`4b759571…`); the reader file is 0444
+while its qualified parent directory is 0755 (`e5ddb79a…`). These were review
+schema errors, not runtime faults. Source, data and readout stayed unchanged;
+no GPU/CPU rerun or numerical result reroll repaired them.
+
+The independent G4 diagnostic receipt's `root_acceptance_at_review: null` retains
+its historical meaning; root `d71e74c0…` is a separate acceptance receipt. Root
+receipts sealed before independent completion retain their original pending
+labels. References below use the same operations artifact root. No checkpoint/
+array payloads, project imports, probes or jobs were used to author this update.
+
+| G3/G4 completed evidence | SHA256 |
+| --- | --- |
+| `core-baseline-lowLR-g03-collection-GPU-execution-v1/terminal.json` | `c44f1a15172d0beeb44c0909d3a2ecaa480030ef8fb412e6ad13851fc8f35bde` |
+| `core-baseline-lowLR-g03-collection-results-v1/readout.json` | `f205350994ca69fbd905cd586b765af66222d22ede18550704f50e7138cedcfd` |
+| `core-baseline-lowLR-g03-audit-results-v1/readout.json` | `60b257fa2fe380b9cd29c3b23603cdc09d801c91bf16524e2d8bbf54a5238c4e` |
+| `core-baseline-lowLR-g03-audit-independent-actual-review-v1/review.json` | `e380fe09338f58cfcf5fa3def467696707e016a0eb3c100ca45f47437daea414` |
+| `core-baseline-lowLR-continuation-bindings-v1/g03/audit-root-promotion.json` | `7bc8ba9c9a82539cdae99a04f8d87cf312bf951aa06e174e4461770a37dd7e71` |
+| `core-baseline-lowLR-g03-learner-results-v1/boundary.json` | `514c95df1520bb66910cdedff256ba9053d6ba0b93f4111200b074a4b23ba81f` |
+| `core-baseline-lowLR-continuation-bindings-v1/g03/learner-root-metadata-acceptance.json` | `c5064166920846cccba572fc77ad31cc097e6259814f1185fdb1de8d48051a0d` |
+| `core-baseline-lowLR-g03-learner-independent-actual-review-v1/review.json` | `2aaf4a5f98d590d80119df4a4b5365593eb1c1710b714a87d052d8ed055ed0e1` |
+| `core-baseline-lowLR-g03-root-learner-review-attempt1-v1/reviewer-predicate-correction.json` | `b29e56ff600f3e7936946095d4cf7d1d1dc51cf274bdbd94536e6df4e9bcf72a` |
+| `core-baseline-lowLR-g04-collection-GPU-execution-v1/terminal.json` | `9364b7e15ef773c4a2f686b9d84c77f2f7c2238d2a7e174a91afdcbca751744d` |
+| `core-baseline-lowLR-g04-collection-results-v1/readout.json` | `8116aeb16d163ae092035ab59a95c13b11cd836e0b594b1c4957b7d557056a2d` |
+| `core-baseline-lowLR-g04-audit-CPU-execution-v1/terminal.json` | `87358e3c8dba0a8185f7d0afe084ac1d6845d860e21b1227d02dd5f4646e524a` |
+| `core-baseline-lowLR-g04-audit-results-v1/readout.json` | `a4eaca2d0926c3570b8d442963ea2613416684c8e550ce3418850965d8299ede` |
+| `core-baseline-lowLR-g04-audit-results-v1/generation.json` | `ff7a2341cced51fa02f617b0b9038df5a1f812226284e6088ddda9ace4a957d1` |
+| `core-baseline-lowLR-continuation-bindings-v1/g04/audit-root-metadata-acceptance.json` | `e8558a631e4563d715505ee12b8d2ed695b0984c3626f925ba21f24ea65e5a68` |
+| `core-baseline-lowLR-g04-audit-independent-actual-review-v1/review.json` | `acae7d78188ed28fc37625b952ec845c8ada9ce3b47888223c161a9e6b1f5939` |
+| `core-baseline-lowLR-continuation-bindings-v1/g04/audit-root-promotion.json` | `e80d8600cff6dbc55f220d3ca1718394b30786403b8f5b78f438a8be1788f156` |
+| `core-baseline-lowLR-continuation-bindings-v1/g04/learning-stage.json` | `e820dea4884050c9d5e215719c386c0d55d6b7bd0044402ddd2aebb816e20153` |
+| `core-baseline-lowLR-continuation-bindings-v1/g04/learner-descriptor.json` | `ab7ba7c3ce3bc807c96816694c7d794794406a92dac7debd08ed3f0bbac02799` |
+| `core-baseline-lowLR-g04-learner-GPU-execution-v1/terminal.json` | `eddbe439220ac1f208d79e34bf101dbdf891e1c77eed9b26469a432cabf1b85b` |
+| `core-baseline-lowLR-g04-learner-results-v1/boundary.json` | `b8d41968dbb3e1099abdce48236913d7471703ac37e0766ffc1ff397f10e6f35` |
+| `core-baseline-lowLR-continuation-bindings-v1/g04/learner-root-metadata-acceptance.json` | `c7f05d85f79a6bccda521383b57bf56cfd2f7358b5d7203b759fa626831501bc` |
+| `core-baseline-lowLR-g04-learner-independent-actual-review-v1/review.json` | `fe710e0e996772cf8d809fc3d26f5f9c8bccc255df500ac21a96be42f4c9dd46` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-diagnostic-g4/protocol.json` | `7b6ba2afc95c8097411b10a1c63767151b7223a860fad2c81b843976c11b1bec` |
+| `core-baseline-lowLR-leg1-diagnostic-g4-GPU-execution-v1/terminal.json` | `ca2e017066385a490805170c00c5e934cb5a337af6bb4e7c8c5f66e72e976914` |
+| `core-baseline-lowLR-leg1-diagnostic-g4-CPU-execution-v1/terminal.json` | `af5c97986de544aef713058ab898ee0b05dcfeaa425bb23f1f24489c3b9c5700` |
+| `core-baseline-lowLR-leg1-diagnostic-g4-results-v1/serving.json` | `7207d19637ff1475239e43ef08adc9627bf489bd84dd8e0ecb616f77ec87fd45` |
+| `core-baseline-lowLR-leg1-diagnostic-g4-readout-v1/readout.json` | `53c2fb5248698d8b4591d5f633e3cb13226928c0eeb611a625cea1d2f3811a4b` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-diagnostic-g4/root-readout-acceptance.json` | `d71e74c05387eb33b5a508ec3590b71e27261dde1cd0cd1772e0ed6f58b6feee` |
+| `core-baseline-lowLR-leg1-diagnostic-g4-independent-actual-review-v1/review.json` | `cae841d44f98ff8dcd2ce8380fc7ce912a59ed5a90cff4cba3ecbdce6f4f79aa` |
+| `core-baseline-lowLR-leg1-diagnostic-g4-root-review-attempt1-v1/reviewer-predicate-correction.json` | `4b75957169238d35864cba4019a139fd1d918e762dc13dbbcda1bf47cfe4e1d5` |
+| `core-baseline-lowLR-leg1-diagnostic-g4-root-review-attempt2-v1/reviewer-predicate-correction.json` | `e5ddb79a5c40a66f74b80c5b9d971e2872a690b5ce987221a28c5103294cab4e` |
+
+
+## 2026-11-14: Completed G5 and G6; negative descriptive G6 diagnostic
+
+**Evidence cutoff: 2026-11-14 08:20:47 UTC**, the accepted independent G6
+readout review. G5 and G6 data and learner delivery, followed by the fixed G6
+strict CPU readback and root/independent actual acceptance, completed under the
+unchanged V2 specification `12ad1fc7…`, manifest `b10f5f5b…`, original absolute
+`cc17ac07…` contract, L `090b5143…` and owner R7 `ba9d6de1…`.
+G4's record was published by PR #1298, merged as `1cc80bc9…` with proof
+`623bedb1…`; publication did not adopt runtime code or change the recipe.
+
+| Completed stage | Actual accepted delivery | Owner wall seconds |
+| --- | --- | ---: |
+| G5 low-parent collection | All 256 attempts; 105 natural / 151 strict-TB / 0 unresolved | GPU 1,508.099043 |
+| G5 qualified CPU data audit plus independent metadata review | 256 eligible games / 25,732 rows; data-only promotion `f39eeea9…` | CPU 68.636316 |
+| G5 full-state learner | Step 2,048 → 2,560; 512 updates / 131,072 views | GPU 486.996459 |
+| G6 low-parent collection | All 256 attempts; 114 natural / 142 strict-TB / 0 unresolved | GPU 1,448.541396 |
+| G6 qualified CPU data audit plus independent metadata review | 256 eligible games / 26,035 rows; data-only promotion `ec02395f…` | CPU 81.949602 |
+| G6 full-state learner | Step 2,560 → 3,072; 512 updates / 131,072 views | GPU 588.061360 |
+| Fixed G6 versus A39 diagnostic | All 256 games / 128 color pairs; 124 rules / 132 strict-TB endings | GPU 793.708849; CPU readback 16.592178 |
+
+G5 checkpoint SHA256 is
+`e11e592b112fa99af30c4fe162808012b371bd603f1b1caa3bc0b6ed903cf1d5`,
+boundary `1a32a6b7…`, root acceptance `ee3aeec1…` and independent metadata
+review `63ab54e1…`. Five-generation ancestry retained 1,280 physical games /
+128,629 audited rows. Replay itself was only G2–G5: 1,024 chunks / 103,802 rows,
+with original G1 evicted from active FIFO but retained in ancestry. Its 512
+complete batch-256 draws were 32,928 G2 / 32,367 G3 / 33,301 G4 / 32,476 G5;
+all 1,024 chunks were drawn, with 74,595 distinct sampled physical rows.
+
+G6 checkpoint SHA256 is
+`61f10e48e298f771a22c55f8544400a03c5083cec1a6aa59d8e1d97cceeffa87`,
+boundary `b15d0f3d…`, terminal `fb176290…`, later root acceptance `615349d2…`,
+independent metadata review `7b7c5210…` and supplement `5baf0c95…`.
+Full six-generation ancestry is **1,536 physical games / 154,664 audited rows**.
+The active FIFO is only **G3–G6: 1,024 chunks / 103,827 rows**; G1/G2 are no longer
+active replay. The full 512 batch-256 journal reconciled 131,072 draws:
+**32,669 G3 / 33,248 G4 / 32,482 G5 / 32,673 G6**, all 1,024 chunks and 74,439
+distinct sampled physical rows. No original high-actor G2 bank was substituted.
+Cumulative training through G6 is **3,072 applied updates / 786,432 views**,
+including the initial LOW512; G5 and G6 each applied 512 updates / 131,072 views.
+
+Both continuations preserve the exact closed low-parent state and contract,
+reconstruct prescribed replay before restoring boundary RNG, and retain
+backend/parent/RNG metadata continuity under the qualified source. Independent
+reviews reconcile saved metadata and draw identities; they do not deserialize
+model/optimizer tensors, replay exact RNG transitions or establish GPU
+bitidentity. G5/G6 scalar metrics were finite, with zero skipped/retried/clipped
+updates. G6 mean LR was 2.858043151e-6 and mean gradient norm 5.178045;
+these changing-window metrics are neither fixed-heldout fit nor playing strength.
+Nonzero auxiliary/availability diagnostics do not change policy-1/outcome-WDL-1
+and twelve zero loss weights. G6 had zero eligible/applied/abstained retained
+TB-policy records; its 142 strict-TB final outcomes do not establish a new
+nonvacuous retained-row policy-correction exercise.
+
+### Preserved G6 root checkpoint-review correction
+
+`3057e219…` preserves a reviewer-only composite assertion failure after a full
+checkpoint stream. Whole `os.stat_result` equality includes access time, so it
+is inappropriate as an immutable-custody predicate. However, the exact failed
+subconjunct and first computed hash/before-after stats were not banked and remain
+**unknown**; no specific access-time change is asserted as observed. The later
+root receipt `615349d2…` banked a fresh second complete hash matching the producer
+and stable device/inode/size/mtime/ctime/mode. There were explicitly **two complete
+root streams**, not one. Numerical execution, model/data, source and observations
+were unchanged; no retraining, new checkpoint, reseed, resample or experiment
+rerun repaired this metadata-review error.
+
+The earlier independent learner receipt retains
+`root_metadata_acceptance_at_review: null` as a historical snapshot.
+Supplement `5baf0c95…` binds the later root evidence without rewriting that
+receipt or implying that its author independently rehashed checkpoint bytes.
+The documentation uses existing root/independent metadata and stat evidence;
+no model or checkpoint payload was opened for this update.
+
+### G6 result and unchanged continuation rule
+
+Actual protocol `2ccabed2…` binds the exact G6 step-3,072 checkpoint versus
+immutable A39 on intentionally reused DIAG128, seed **2026111536**, 256 games /
+128 color pairs and the unchanged matched-Gumbel64 profile. The strict CPU
+reader and independent actual review accepted **69W/84D/103L**, score
+**.43359375**, unbiased paired variance **.08118540846456693**, radius
+**.04936169640057779** and approximate paired 95% interval
+**[.3842320535994222, .4829554464005778]**. Ascending pentanomial counts for
+pair totals 0/.5/1/1.5/2 are **[17, 43, 35, 23, 10]**. All 256 games / 128 pairs
+completed; endings were 124 rules / 132 strict-TB, with 25,427 additional SAN
+plies. Both owners closed PASS. Recorded serving retained 494 states /
+61,444,448 parameters per model, strict embedded architecture, 175-plane
+float32 inputs under CUDA BF16 autocast, float32 policy/WDL transport,
+32-game rolling pool and 1,024 leaf rows. Actual source-qualified reader
+physics and serving evidence are reused; documentation did not reimplement
+legality/TB verification, reload models or rerun inference.
+
+This is **negative descriptive underperformance on this conditional reused
+DIAG128 panel**: the interval is below parity. It does not establish a clean or
+general training regression, recovery, causal LR effect, optimum, external
+Rofchade/Stockfish/Lc0 milestone, fresh confirmation, gain or equivalence.
+No model/champion adoption, confirmation eligibility/allocation/consumption,
+checkpoint selection, pooling or favorable early promotion follows. Previous
+negative screens and G2/G4 snapshots remain separate, correlated observations.
+
+**G6 has no efficacy or severe-harm gate**, regardless of score or interval.
+The registered upper < .35 safety exception applies only local G4 (and
+conditional second-leg G12). The fixed G7 → G8 horizon therefore remains
+unchanged, subject to technical/resource/deadline stops and the accepted G6
+readout dependency. The first fresh screen remains G8 / step 4,096, with the
+same point ≥ .53 and paired lower > .5 rule and conditional sole fresh CONFIRM1.
+Root reports preparing G7; no G7 launch, data or model result is asserted here.
+The strength goal remains unmet and A39 remains this study’s unchanged donor/incumbent.
+
+Root readout `af5483e2…` retains its pending-independent label as a historical
+receipt; separate independent acceptance `0d317d14…` was available at this cutoff
+and explicitly binds that root receipt. This is distinct from the earlier
+learner review's historically null root field. No receipt was rewritten to
+imply a different review or sealing order.
+
+### Closed cost snapshot and evidence
+
+Census `a30647d0…`, timestamped 2026-11-14 08:19:45.276221 UTC, records **211
+closed week-root owners**, including failed attempts: **48,478.49211211607
+GPU-owner seconds / 2,161.538633844757 CPU-owner seconds**, including G6's arena
+and CPU readback. It is a point-in-time closed-owner census, not an ETA or budget
+entitlement. The 172,800 GPU-second week cap and 2026-11-19 16:09:20 UTC deadline
+remain unchanged. It makes no claim about later stages or unrelated processes.
+
+All earlier published preregistration, G2 and G4 text remains historical and
+byte-exact beneath the current-status wrapper. Paths below use the existing
+operations artifact root. This update reads only bounded JSON metadata and
+published docs, not raw games, nested payloads, arrays or checkpoint bytes.
+The author shares authorship of continuation metadata/arena wrappers; this is
+not a new independent numerical, tensor-restoration or physics qualification.
+
+| G5/G6 completed metadata evidence | SHA256 |
+| --- | --- |
+| `core-baseline-lowLR-continuation-preparation-v2/specification.json` | `12ad1fc72714a3eb75c1adc519b7e56a8c80e40e9a8f0e45708479bbb8bc226e` |
+| `core-baseline-lowLR-continuation-preparation-v2/manifest.json` | `b10f5f5becd47a422359523ada96283b1d6805b68543035d8522a5a258038dd4` |
+| `core-baseline-fixed-G1-LR-probe-preparation-v1/learning-lowLR.json` | `cc17ac07c143eec18a42f28182ea21909ad8eb8a2a53fa844a3e201ba30da0ca` |
+| `core-baseline-lowLR-g04-readout-main-publication-v1/publication.json` | `623bedb19cde73daefd665947d74a062f88588dbb8c2a5ce0b3d5c8a7da4443f` |
+| `core-baseline-lowLR-g05-collection-GPU-execution-v1/terminal.json` | `bdd41bdc11b468d197eb7d0f364ae521b5d1a5edad99b65968c673cc856462d1` |
+| `core-baseline-lowLR-g05-audit-CPU-execution-v1/terminal.json` | `ea902e48d9cc554ce6606a04d8d89dd245f99e1be98d3f5923ffc42dd66b13cd` |
+| `core-baseline-lowLR-g05-audit-independent-actual-review-v1/review.json` | `08cdb25890124359bb2920e7c7115d051737be4a806380ef2c26a600a68a977d` |
+| `core-baseline-lowLR-continuation-bindings-v1/g05/audit-root-metadata-acceptance.json` | `cb0f9ba62cc23a788268c12b606056b335a4e4d89b340a10e7836f345ad4d180` |
+| `core-baseline-lowLR-continuation-bindings-v1/g05/audit-root-promotion.json` | `f39eeea9255d58f11ef813dc81bced0c18fd352810459f15444265697840cde5` |
+| `core-baseline-lowLR-g05-learner-GPU-execution-v1/terminal.json` | `17371df9ea675d43881de84a56481e57107fdce8ec2237ae40d77e105d69c8e0` |
+| `core-baseline-lowLR-g05-learner-results-v1/boundary.json` | `1a32a6b73c4aa1ab649b2aa06b420b94ed84ac0a9ea3635671d3f381d4e59430` |
+| `core-baseline-lowLR-continuation-bindings-v1/g05/learner-root-metadata-acceptance.json` | `ee3aeec1ea2134ab962820133e26d4afa2f739f3b42be902fe8bcb7bc5715458` |
+| `core-baseline-lowLR-g05-learner-independent-actual-review-v1/review.json` | `63ab54e19b2cab3b66f8f452842dcfbc935edf287380742ccd5befd2f48db05f` |
+| `core-baseline-lowLR-g06-collection-GPU-execution-v1/terminal.json` | `1baf1ebdb95e4908ed2ce428305103e2b216bf0a5592989e64d04cd67032db75` |
+| `core-baseline-lowLR-g06-audit-CPU-execution-v1/terminal.json` | `f798f7e655380f3d8ae381ca67b9d33d959807cc13b2fc9097f5729ea917b7dd` |
+| `core-baseline-lowLR-g06-audit-independent-actual-review-v1/review.json` | `dc4a363964693c3028820598322ae13c3148778d6c7e0187de898761a1f31c61` |
+| `core-baseline-lowLR-continuation-bindings-v1/g06/audit-root-metadata-acceptance.json` | `f05b1b8f976de71b884eb20428f0b82c79fc3c051efeadf40621bf0cbd42ddb2` |
+| `core-baseline-lowLR-continuation-bindings-v1/g06/audit-root-promotion.json` | `ec02395fb0c8ed1acd98249b9198b14d87ae80b6ec61c6506ce29d2dd62b81c2` |
+| `core-baseline-lowLR-g06-learner-GPU-execution-v1/terminal.json` | `fb17629045e3a303c4292ad724067fee3b7e4f8c45f11fd83d29a1d763a5e727` |
+| `core-baseline-lowLR-g06-learner-results-v1/boundary.json` | `b15d0f3d196ac4957959549f3e6020c88a4ccf524bdaf6b5cca39c2cee8f1c8c` |
+| `core-baseline-lowLR-continuation-bindings-v1/g06/learner-root-metadata-acceptance.json` | `615349d21c882f40758130afc56715c8a7d6b1e69c43ca23c81607df541eca90` |
+| `core-baseline-lowLR-g06-learner-independent-actual-review-v1/review.json` | `7b7c52105f28fde54ba2f1f395bcb401640194a4304edf9297128635abba61dc` |
+| `core-baseline-lowLR-g06-learner-root-verification-supplement-v1/review.json` | `5baf0c95111467840f1f3a2f515c18721019b82613d3fe5d9ceff10f09a9e5d7` |
+| `core-baseline-lowLR-g06-root-learner-review-attempt1-v1/reviewer-predicate-correction.json` | `3057e2192dcbd9691a847a4634029a331706c254895c36c26a22b03c496e9b79` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-diagnostic-g6/protocol.json` | `2ccabed2065a48fc9788fc6b388b75292aadf6d81ff41ac84bea249d21ee0444` |
+| `core-baseline-lowLR-leg1-diagnostic-g6-GPU-execution-v1/terminal.json` | `25acaff13441d1a1be6643cab5dda58bb910c4e244436ee144491f3a3bb1730a` |
+| `core-baseline-lowLR-leg1-diagnostic-g6-CPU-execution-v1/terminal.json` | `21ee7a84f4f34c36cd03a6b051be95800adda7738c0b56641dc2be9fb7c12ae2` |
+| `core-baseline-lowLR-leg1-diagnostic-g6-results-v1/serving.json` | `a080abd471a27b6d0f44e17f9cf70644e820b9c46945b54e00da9c3ba6bc108d` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-diagnostic-g6/cpu-admission.json` | `a1f4303d2615573f28af5e24ce8e39f54d5dbb20e7fd33f75ab68aca1b71fceb` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-diagnostic-g6/reader-bindings.json` | `b1e575454b39108938a05826601f4ca94d6c7137d122ce39580812ae306a80a9` |
+| `core-baseline-lowLR-leg1-diagnostic-g6-readout-v1/readout.json` | `5a20845581c5e55f086b91f655f8157a903b77f29646474d67dcccd627a71f4c` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-diagnostic-g6/root-readout-acceptance.json` | `af5483e2b92f4d3d50deb0038f63fe3084fa4c1b4309be0398c51ca45aae54a0` |
+| `core-baseline-lowLR-leg1-diagnostic-g6-independent-actual-review-v1/review.json` | `0d317d14489aaec8527955fe7a4066be60676d7be496cc955ab94a021435fb09` |
+| `core-baseline-lowLR-g06-diagnostic-closed-cost-census-v1/readout.json` | `a30647d08ff832d456fa8aa0caa1eaa613af17256eee71ff0a5fb2a395f58393` |
+
+
+## 2026-11-14: G8 terminal nonpass closes the first leg
+
+**Evidence cutoff: 2026-11-14 10:46:06 UTC**, the formal first-leg decision
+`a962c98d…`, after strict CPU qualification, root readout `dab6b9f3…` and
+independent actual acceptance `75230c0f…`. This closes the selected 0803 first
+leg at its fixed G8 / step-4,096 checkpoint; the broader strength goal stays
+**ACTIVE**. No scientific rule, source, learning contract, role, seed, horizon
+or checkpoint-selection choice changed to obtain this result.
+
+### Closed G7/G8 data and learning delivery
+
+| Completed stage | Actual accepted delivery | Owner wall seconds |
+| --- | --- | ---: |
+| G7 low-parent collection | All 256 attempts; 102 natural / 154 strict-TB / 0 unresolved | GPU 1,662.771766 |
+| G7 qualified CPU data audit plus independent metadata review | 256 eligible games / 26,623 rows; data-only promotion `5679b763…` | CPU 70.777646 |
+| G7 full-state learner | Step 3,072 → 3,584; 512 updates / 131,072 views | GPU 632.873183 |
+| G8 low-parent collection | All 256 attempts; 111 natural / 145 strict-TB / 0 unresolved | GPU 1,457.005536 |
+| G8 qualified CPU data audit plus independent metadata review | 256 eligible games / 27,191 rows; data-only promotion `1a97eef5…` | CPU 71.035226 |
+| G8 full-state learner | Step 3,584 → 4,096; 512 updates / 131,072 views | GPU 598.432825 |
+| Fixed G8 versus A39 terminal screen | All 512 games / 256 color pairs; 220 rules / 292 strict-TB endings | GPU 1,567.616621; CPU readback 25.811681 |
+
+There was no G7 diagnostic: the predeclared schedule used G2/G4/G6 diagnostics
+and this fixed G8 terminal. G7 checkpoint SHA256 is
+`738d5e266c9e121e2cc562f48a3e0e294b790b446d249c2552f5391a78810e34`,
+with boundary `a3fc2707…`, root metadata acceptance `beebe1e9…` and independent
+metadata/journal review `86906996…`. G8 collection used that exact closed G7
+actor, not an earlier or adaptively selected checkpoint.
+
+The fixed final G8 checkpoint SHA256 is
+`e4d3e7a9f3f1723414ec085a8f726dc5612442693a57035c0b4be738478ab395`,
+boundary `5648151f…`, root learner receipt `536c561d…`, independent learner
+review `ff05c13c…` and learner byte-custody receipt `0049970b…`. G8 audit root
+`282f846f…` and independent review `c6395ca6…` reconcile all 256 attempts /
+27,191 rows; the qualified auditor reports 1,495,589,359 decoded bytes. This is
+data-only acceptance, not model promotion or an independently repeated physics
+implementation.
+
+Full eight-generation ancestry contains **2,048 physical games / 208,478
+audited rows**. Active replay is only **FIFO G5–G8: 1,024 chunks / 105,581 rows**;
+G1–G4 remain ancestry, not current replay. G8's 512 batch-256 journal reconciled
+**32,208 G5 / 32,390 G6 / 32,942 G7 / 33,532 G8** draws, totalling 131,072,
+with all 1,024 chunks and 75,418 distinct sampled physical rows. No old high-actor
+G2 bank was substituted. Including initial LOW512, delivery reached **4,096
+applied updates / 1,048,576 views** under the original absolute `cc17ac07…`
+contract, V2 specification `12ad1fc7…`, manifest `b10f5f5b…`, L `090b5143…`
+and owner R7 `ba9d6de1…`.
+
+Saved parent/backend/full-state/RNG metadata and whole-generation replay
+reconstruction remain authenticated under the qualified caller. G7/G8 metrics
+were finite, with zero skipped/retried/clipped updates. Nonzero unweighted
+auxiliary/availability metrics do not change the policy-1/outcome-WDL-1 objective
+or twelve zero loss weights. Independent metadata/journal checks do not reopen
+model/optimizer tensors, prove an exact RNG transition or establish GPU
+bitidentity. Training-window losses and throughput are not strength evidence.
+
+G8's learner root verification streamed the checkpoint **once**, recorded in
+`0049970b…`; later fresh arena prelaunch custody is a separate second stream.
+This is distinct from the preserved G6 reviewer correction and its two root
+review streams. The earlier G6 null-root snapshot, unknown first hash/failed
+subconjunct and later supplement remain unchanged in the historical section.
+
+Metadata-review corrections also remain visible. The G8 audit review records a
+preview-hash serialization mismatch (`e9ac3d67…`, referenced by `c6395ca6…`):
+the reviewer used compact canonical JSON instead of the frozen indented/sorted
+JSON plus newline. A root class-count comparison initially represented a zero
+bin differently (`6c4ab0d5…`). The terminal independent review's support
+`c7b09439…` records a temporary variable-shadowing error in its metadata script.
+These were review predicates, not helper, training, producer or strict-reader
+failures; no helper/numerical/experimental rerun or result reroll repaired them.
+
+### Fixed terminal result and registered decision
+
+The exact G8 step-4,096 model faced immutable A39 on **CONTEXT256: 512 games /
+256 color pairs**, seed **2026111551**. This was the first terminal screen,
+fresh **within the adopted scoped recorded-use coverage**, not a universal
+non-use attestation. External/unbanked/pretraining/unretained exposure and
+opening-family correlation remain limitations. Protocol `c82c4793…`, reader
+bindings `69d8bcab…`, GPU/CPU admissions and the same matched-Gumbel64 profile
+bind the fixed candidate, donor and complete opening histories.
+
+Strict CPU readout `d746ad2e…`, root `dab6b9f3…` and independent actual review
+`75230c0f…` agree on **128W / 218D / 166L**, score **.462890625** over 512 games,
+unbiased paired variance **.06773514093137255**, radius **.03188182018959095**
+and approximate paired 95% interval **[.43100880481040904, .49477244518959096]**.
+Ascending pentanomial counts for pair totals 0/.5/1/1.5/2 are
+**[28, 63, 97, 55, 13]**. All games and color pairs qualified, with 220 rules /
+292 strict-TB endings and 50,284 additional SAN plies. Recorded serving retained
+full 494-state / 61,444,448-parameter custody per model, strict embedded
+architecture, 175-plane float32 input under CUDA BF16 autocast and float32
+policy/WDL transport, rolling pool 32 and leaf capacity 1,024. Qualified reader
+history/legal/TB physics and serving evidence are reused; documentation did not
+repeat them or deserialize model bytes.
+
+**TERMINAL NONPASS.** The registered condition required both point **≥ .53**
+and paired lower bound **> .5**; neither passes. The interval is below parity on
+this fixed conditional panel. The formal first leg is closed with **no C1
+eligibility, allocation or consumed attempt**. Therefore there is no conditional
+G9–G16 continuation or second leg, and the six conditional endpoints (three
+leg-2 diagnostics, leg-2 terminal, leg-2 confirmation and post-C2 context) remain
+unrun. No retry, reseed, checkpoint reselection, pooling, extension or automatic
+adoption is allowed by this nonpass. Unspent conditional ceilings are not budget
+credit or entitlement to replacement experiments.
+
+This is negative evidence for the current checkpoint/recipe/horizon/internal
+playing profile, not a universal regression, optimal-formula conclusion,
+confirmed gain or Rofchade/Stockfish/Lc0 strength proof. It is not a recovery
+claim pooled with the prior LOW512 screen or G2/G4/G6 diagnostics. A39 remains
+**this study’s unchanged donor/incumbent**; no global production-champion claim
+is made. The separately pinned external Rofchade baseline remains negative
+at 1 win / 24 draws / 39 losses ([earlier record](2026-11-12-rl-week-one.md#november-12-substantive-baseline-and-learning-readiness)); this internal terminal does not
+replace that ruler or meet the broader objective.
+
+### Costs, publication and next evidence task
+
+Census `0617b350…` records **219 closed week-root owners**, including prior
+failed attempts. Charged week owner wall totals are **54,397.19204277109 GPU
+seconds / 2,329.1631856848253 CPU seconds**; the 0803 first-leg scope is
+**18,538.677422121982 GPU seconds / 578.651496662118 CPU seconds**. These are
+owner wall costs, not GPU kernel time or an ETA. The 172,800-second week GPU cap,
+November 19 16:09:20 UTC deadline and all controls remain unchanged.
+
+Historical `B/publication.json` (`c7fcda1d…`) remains the original reviewed-ready
+PR publication before adoption/data. Separate G6 main publication `3b258826…`
+records that later merged readout; neither is retroactively substituted for the
+other. As of this cutoff, the unrelated UCI comment-only PR #1304 had independent
+source review `d44364eb…` and CI pending, with no merge or runtime adoption
+claimed here. Source readiness and comment cleanup are not playing-strength
+evidence.
+
+The selected next work is **data-only qualification** of fixed original G1
+TRAIN SF-P0 evidence, decision `3278a917…`, source plan `47d8ab88…` and independent
+review `7552bf41…`. Auditor code is assigned separately to `sequential_selfplay`;
+its tests and fixed census are unrun at this cutoff. No teacher recipe, transform,
+mix/dose, learning dataset or coverage-success percentage is selected, and no
+learning or strength claim follows from the source plan. The broader goal
+remains active; this paragraph starts no new trial.
+
+All earlier preregistration and G2/G4/G6 text below the current-status wrapper
+is preserved byte-exact as historical evidence. New compact metadata references
+below are freshly hashed. The six oversized historical JSON citations retain
+their prior accepted compact-review provenance; they were not reopened or freshly
+full-hashed for this update. No raw PGN/journal, array, checkpoint, model, wire or
+nested payload was read. The author shares underlying metadata-wrapper/source
+qualification history, so this is not a new independent numerical, tensor-state,
+RNG or physics qualification. Root retains publication and execution authority.
+
+| G7/G8 terminal compact metadata evidence | SHA256 |
+| --- | --- |
+| `core-baseline-lowLR-g07-collection-GPU-execution-v1/terminal.json` | `ef2a0fad4907ef42b821a566fcdfaca1d62169e99bb5def6928365d8e78648b9` |
+| `core-baseline-lowLR-g07-audit-CPU-execution-v1/terminal.json` | `718769cd66b0d2a06c4b46d66e1aef9860dd792e5650b93aa8204e0e3aab1417` |
+| `core-baseline-lowLR-g07-audit-independent-actual-review-v1/review.json` | `e88876dcabbf6d6f84b7636e0abf0fe263d0430f0aef115794d630b5a4bf9bf3` |
+| `core-baseline-lowLR-continuation-bindings-v1/g07/audit-root-metadata-acceptance.json` | `4687a770ad7189e9e429e13dd2233c0358daddc3b8d3549cdc343b6d565e0d62` |
+| `core-baseline-lowLR-continuation-bindings-v1/g07/audit-root-promotion.json` | `5679b76339610227f0d43841b00e409bc36e187828e8e05b187511a8b3de4fec` |
+| `core-baseline-lowLR-g07-learner-GPU-execution-v1/terminal.json` | `69bf3de071b79b7da701fea77592e24baa45417f98cb5c217931ee6e6903ed63` |
+| `core-baseline-lowLR-g07-learner-results-v1/boundary.json` | `a3fc270782d6d03903d4d2cd800996f6368854a26341769c47cfe1c78a02097e` |
+| `core-baseline-lowLR-continuation-bindings-v1/g07/learner-root-metadata-acceptance.json` | `beebe1e92b8e8f8a3fc1e5638593f5f2d4bf4d8fc23805018ad8657b5d63a332` |
+| `core-baseline-lowLR-g07-learner-independent-actual-review-v1/review.json` | `869069960798189a85275bc165f3845c2175776b2c00a504c1920f53f213c892` |
+| `core-baseline-lowLR-g08-collection-GPU-execution-v1/terminal.json` | `da46eac1694d5d8b2e863ec2c519b04a10585ee3d144b3ee791806ccc0977da9` |
+| `core-baseline-lowLR-g08-audit-CPU-execution-v1/terminal.json` | `b211e01de030da9e0fb40dc3ca6d1fee8cc6e1c08200094f903297a552223776` |
+| `core-baseline-lowLR-g08-audit-independent-actual-review-v1/review.json` | `c6395ca6b214efba982992542ef668750b276b7463af016606a445d12daffb36` |
+| `core-baseline-lowLR-continuation-bindings-v1/g08/audit-root-metadata-acceptance.json` | `282f846fcc1316a9afd6c27d2a3a4609833a248ca8a51b0214e498843e26512c` |
+| `core-baseline-lowLR-continuation-bindings-v1/g08/audit-root-promotion.json` | `1a97eef535ac7a313e39a59e1650a932b0a51cacccb4215e820c4341ddef2ec4` |
+| `core-baseline-lowLR-g08-learner-GPU-execution-v1/terminal.json` | `66317b253c4950f647342fac174081a7442f7bc22f1102f62ef957ce8a9df1e6` |
+| `core-baseline-lowLR-g08-learner-results-v1/boundary.json` | `5648151fbe2e79b0a3b8d706dd7a90214fd6fbae01e0cec8ec8aeea0664c9d9c` |
+| `core-baseline-lowLR-continuation-bindings-v1/g08/learner-root-metadata-acceptance.json` | `536c561d22b278789233ac3c48bf6b0f0faed17536d2c3d65c6c629f84ad0210` |
+| `core-baseline-lowLR-g08-learner-independent-actual-review-v1/review.json` | `ff05c13cbacdb34e82b961b92f9a2ee345871a706ea60e6b9cb9208dd3ba7659` |
+| `core-baseline-lowLR-continuation-bindings-v1/g08/learner-checkpoint-root-byte-custody.json` | `0049970b6455a7170b6d6c531cc3cb30117d1248f9a7db3d5e573a9ba839422e` |
+| `core-baseline-lowLR-g08-root-audit-review-attempt1-v1/reviewer-predicate-correction.json` | `6c4ab0d54fc27a4456d9a76aeeaf269db680908194eb3ae083d6668bbde0e6c5` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-terminal/protocol.json` | `c82c47931b2437b42f1fd5146f3f4e0b4325904eb269e2bb7e5e87a768af1ef5` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-terminal/gpu-admission.json` | `ea5d12d59be191ea53e85a966c24414a7026034abb8209c9709cda1e72d01c75` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-terminal/cpu-admission.json` | `40dfc057278e4e415060b30b86055b10a75c589770d7bb9fde0cfff9ce1fe3f5` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-terminal/reader-bindings.json` | `69d8bcab03efca9c3395edff97d845fd36782ea17e10f6b129f3c762eeee26f1` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-terminal/prelaunch-model-custody.json` | `1b4bcd8639b723aba8355c7b60703d1f189edf93b77d34b0dc44a3ca2149d721` |
+| `core-baseline-lowLR-leg1-terminal-prelaunch-binding-independent-review-v1/review.json` | `c82d38016b4457b8ab5c827d7d316b2bd0d9e420660637220a47c5539c14f1a3` |
+| `core-baseline-lowLR-leg1-terminal-GPU-execution-v1/terminal.json` | `688bd1257207df243476c4d3700104f19a716200a8a5f1ec701e189bce26faf3` |
+| `core-baseline-lowLR-leg1-terminal-CPU-execution-v1/terminal.json` | `0b8c3d5364991ca48507fca061e0ee3a8f69628f430e7b6e90bb7099dfea4ca2` |
+| `core-baseline-lowLR-leg1-terminal-results-v1/serving.json` | `81b832737518f2dc50497212ea0d80db908e3849df02674db526ed64d333c735` |
+| `core-baseline-lowLR-leg1-terminal-readout-v1/readout.json` | `d746ad2ec0bfa31063f8b8997da9b9b1243c12a33b1bd0bc754b4d9519032fdf` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-terminal/root-readout-acceptance.json` | `dab6b9f3f03d3826309e366b0525261de9265ea915eb0b4b527b0881742a731e` |
+| `core-baseline-lowLR-leg1-terminal-independent-actual-review-v1/review.json` | `75230c0f56214b944aedaddd986ccd1dfb37baad4d056159efb09ca6fc58f1fa` |
+| `core-baseline-lowLR-leg1-terminal-independent-actual-review-v1/support.json` | `c7b09439c3c62b77779cb5aafd11459c57bf64bf352d2fa5f14147e0eb1f95a9` |
+| `core-baseline-lowLR-continuation-bindings-v1/leg1-terminal/root-first-leg-decision.json` | `a962c98dd0a888240396ecc7833a608fb2daefb78f66588067cfee56289a33a0` |
+| `core-baseline-lowLR-leg1-terminal-closed-cost-census-v1/readout.json` | `0617b350f5dd4da6faf6290683b0c0b7773f32ce1dd7fefe3f1d4200cdd9b710` |
+| `core-baseline-lowLR-g06-readout-main-publication-v1/publication.json` | `3b258826dc11508a96b7d5dabd63c2c71741861309c5950616982cb8eac3f0e8` |
+| `core-SF-banked-G1-data-qualification-selection-v1/decision.json` | `3278a9177246fdfdea2098f19b1504cd3112b457c5fe59868d0442c588a32e3a` |
+| `core-future-SF-P1-to-P0-banked-join-source-plan-v1/source-evidence-manifest.json` | `47d8ab8876025252dc6a755b271696caa8ae7a83ece175121257cbf1fe39476d` |
+| `core-future-SF-P1-to-P0-banked-join-independent-source-review-v1/review.json` | `7552bf4143454cf7159340233b85074b118d9c199791ffa7cd3df9c1c38251b9` |
+| `uci-search-routing-comment-independent-review-v1/review.json` | `d44364eb8f7aa3b102efffdb69b551f290cd1f11dd75a27b7192cc5c704c2db8` |

@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 import contextlib
 
+from chess_anti_engine.ext_check import C_CORE_REFUSAL_EXIT_CODE
+
 
 def build_worker_command(*, worker_args: list[str], worker_dir: Path, shared_cache_dir: Path) -> list[str]:
     if any(arg == "--work-dir" or arg.startswith("--work-dir=") for arg in worker_args):
@@ -101,6 +103,11 @@ def main() -> None:
 
     children: list[subprocess.Popen[bytes]] = []
     commands: list[list[str]] = []
+    # Children that exited with the C-core refusal code: a stale/partial
+    # extension build in this checkout. Respawning cannot fix that (the same
+    # .so is loaded again), so they are left down instead of relaunched forever.
+    refused: set[int] = set()
+    all_refused = False
     try:
         for idx in range(num_workers):
             worker_dir = pool_dir / f"worker_{idx:02d}"
@@ -123,7 +130,20 @@ def main() -> None:
                     stop = True
                 continue
             for idx, proc in enumerate(children):
-                if proc.poll() is None:
+                if idx in refused:
+                    continue
+                rc = proc.poll()
+                if rc is None:
+                    continue
+                if rc == C_CORE_REFUSAL_EXIT_CODE:
+                    refused.add(idx)
+                    print(
+                        f"[worker_pool] worker_{idx:02d} exited {rc}: it refused to run "
+                        "on an incomplete C extension build. Not respawning it; rebuild "
+                        "the extensions (see the worker's message) and restart the pool.",
+                        file=sys.stderr,
+                        flush=True,
+                    )
                     continue
                 if stop:
                     break
@@ -131,8 +151,13 @@ def main() -> None:
                 if stop:
                     break
                 children[idx] = subprocess.Popen(commands[idx], cwd=str(Path(__file__).resolve().parents[1]))  # long-lived child process
+            if len(refused) == len(children):
+                all_refused = True
+                stop = True
     finally:
         _terminate_children(children)
+    if all_refused:
+        raise SystemExit(C_CORE_REFUSAL_EXIT_CODE)
 
 
 if __name__ == "__main__":

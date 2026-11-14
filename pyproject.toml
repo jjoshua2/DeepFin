@@ -43,6 +43,12 @@ build-backend = "setuptools.build_meta"
 include = ["chess_anti_engine*"]
 exclude = ["runs*", "tests*"]
 
+# The vendored Fathom prober's MIT licence requires its notice to travel with
+# every copy, so it ships in the sdist and the wheel (this is Fathom's licence,
+# not a project licence). tests/test_tb_prober.py checks the egg-info manifest.
+[tool.setuptools.package-data]
+"chess_anti_engine.tb" = ["fathom/LICENSE", "fathom/VENDORED.md", "fathom/README.md"]
+
 [project.optional-dependencies]
 # Accelerator selection for the locked development environment (uv sources below).
 cpu = ["torch==2.14.0"]

@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 
 import chess_anti_engine.tune.distributed_runtime as distributed_runtime
+from chess_anti_engine.ext_check import C_CORE_REFUSAL_EXIT_CODE, CCoreIncompleteError
 from chess_anti_engine.replay import ArrayReplayBuffer
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
 from chess_anti_engine.tune.distributed_runtime import (
@@ -271,3 +272,250 @@ def test_revive_does_not_restart_a_live_worker_whose_config_changed(
     )
 
     assert revived is False
+
+
+# ── C-core refusal exit code: fatal, never relaunched ─────────────────────
+
+def test_revive_does_not_relaunch_a_worker_that_refused_on_the_c_core(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale build refuses on every launch; relaunching it would spin forever."""
+    monkeypatch.setattr(
+        distributed_runtime, "_launch_distributed_worker",
+        lambda **_kw: pytest.fail("relaunched a worker that refused on the C core"),
+    )
+    refused = _FakeProc(pid=2, returncode=C_CORE_REFUSAL_EXIT_CODE)
+    with pytest.raises(CCoreIncompleteError, match="refused to start"):
+        revive_dead_selfplay_processes(
+            config={"distributed_workers_per_trial": 1},
+            trial_id="t", trial_dir=tmp_path, publish_dir=tmp_path,
+            broker_proc_box=[None],
+            worker_procs=[refused],  # pyright: ignore[reportArgumentType]
+        )
+
+
+@pytest.mark.parametrize("code", [1, 2, -9, -15, 0])
+def test_revive_still_relaunches_every_other_exit_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int,
+) -> None:
+    launched: list[int] = []
+
+    def _fake_launch(*, worker_index: int, **_rest: object) -> _FakeProc:
+        launched.append(worker_index)
+        return _FakeProc(pid=900 + worker_index)
+
+    monkeypatch.setattr(distributed_runtime, "_launch_distributed_worker", _fake_launch)
+    workers: list[object] = [_FakeProc(pid=2, returncode=code)]
+    assert revive_dead_selfplay_processes(
+        config={"distributed_workers_per_trial": 1},
+        trial_id="t", trial_dir=tmp_path, publish_dir=tmp_path,
+        broker_proc_box=[None],
+        worker_procs=workers,  # pyright: ignore[reportArgumentType]
+    ) is True
+    assert launched == [0]
+
+
+@pytest.mark.parametrize(
+    ("code", "fatal"), [(C_CORE_REFUSAL_EXIT_CODE, True), (1, False), (-9, False)],
+)
+def test_ensure_workers_treats_only_the_refusal_code_as_fatal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int, fatal: bool,
+) -> None:
+    launched: list[int] = []
+
+    def _fake_launch(*, worker_index: int, **_rest: object) -> _FakeProc:
+        launched.append(worker_index)
+        return _FakeProc(pid=900 + worker_index, launch_signature="sig")
+
+    monkeypatch.setattr(distributed_runtime, "_launch_distributed_worker", _fake_launch)
+    monkeypatch.setattr(distributed_runtime, "_worker_launch_signature", lambda **_kw: "sig")
+    procs: list[object] = [_FakeProc(pid=2, returncode=code, launch_signature="sig")]
+    def call() -> None:
+        distributed_runtime._ensure_distributed_workers(
+            config={"distributed_workers_per_trial": 1}, trial_dir=tmp_path, trial_id="t",
+            procs=procs,  # pyright: ignore[reportArgumentType]
+        )
+
+    if fatal:
+        with pytest.raises(CCoreIncompleteError):
+            call()
+        assert launched == []
+    else:
+        call()
+        assert launched == [0]
+
+
+def test_ensure_workers_raises_before_relaunching_an_earlier_dead_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """idx 0 died with 1, idx 1 refused (78): raise first, launch nothing.
+
+    ``_ensure_distributed_workers`` works on a copy of the caller's list, so a
+    relaunch of idx 0 before idx 1 raised would be an orphan nobody cleans up.
+    """
+    launched: list[int] = []
+
+    def _fake_launch(*, worker_index: int, **_rest: object) -> _FakeProc:
+        launched.append(worker_index)
+        return _FakeProc(pid=900 + worker_index, launch_signature="sig")
+
+    monkeypatch.setattr(distributed_runtime, "_launch_distributed_worker", _fake_launch)
+    monkeypatch.setattr(distributed_runtime, "_worker_launch_signature", lambda **_kw: "sig")
+    procs: list[object] = [
+        _FakeProc(pid=2, returncode=1, launch_signature="sig"),
+        _FakeProc(pid=3, returncode=C_CORE_REFUSAL_EXIT_CODE, launch_signature="sig"),
+    ]
+    with pytest.raises(CCoreIncompleteError, match="idx=1"):
+        distributed_runtime._ensure_distributed_workers(
+            config={"distributed_workers_per_trial": 2}, trial_dir=tmp_path, trial_id="t",
+            procs=procs,  # pyright: ignore[reportArgumentType]
+        )
+    assert launched == []
+
+
+def test_ensure_workers_stops_its_own_launches_when_a_worker_refuses_mid_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """idx 1 is alive at the up-front scan and exits 78 before the loop reaches it.
+
+    idx 0 (dead, code 1) has already been relaunched by then; that process lives
+    only in the function's local copy, so it must be stopped before the raise.
+    """
+
+    class _DiesDuringLoop(_FakeProc):
+        def __init__(self) -> None:
+            super().__init__(pid=3, returncode=None, launch_signature="sig")
+            self.polls = 0
+
+        def poll(self) -> int | None:
+            self.polls += 1
+            if self.polls > 1:  # alive for the scan, refused afterwards
+                self.returncode = C_CORE_REFUSAL_EXIT_CODE
+            return self.returncode
+
+    launched: list[_FakeProc] = []
+    stopped: list[_FakeProc] = []
+
+    def _fake_launch(*, worker_index: int, **_rest: object) -> _FakeProc:
+        proc = _FakeProc(pid=900 + worker_index, launch_signature="sig")
+        launched.append(proc)
+        return proc
+
+    monkeypatch.setattr(distributed_runtime, "_launch_distributed_worker", _fake_launch)
+    monkeypatch.setattr(distributed_runtime, "_worker_launch_signature", lambda **_kw: "sig")
+    monkeypatch.setattr(distributed_runtime, "_stop_process", stopped.append)
+    swept: list[int] = []
+    monkeypatch.setattr(
+        distributed_runtime, "terminate_engines_owned_by",
+        lambda pid: (swept.append(pid), [])[1],
+    )
+    procs: list[object] = [_FakeProc(pid=2, returncode=1, launch_signature="sig"), _DiesDuringLoop()]
+    with pytest.raises(CCoreIncompleteError, match="idx=1"):
+        distributed_runtime._ensure_distributed_workers(
+            config={"distributed_workers_per_trial": 2}, trial_dir=tmp_path, trial_id="t",
+            procs=procs,  # pyright: ignore[reportArgumentType]
+        )
+    assert len(launched) == 1  # idx 0 was relaunched before idx 1 refused
+    assert stopped == launched  # ... and is not leaked
+    # Stopped through _stop_worker_processes, which also sweeps the stopped
+    # worker's orphaned Stockfish engines.
+    assert swept == [900]
+
+
+def test_a_failing_mid_loop_cleanup_does_not_replace_the_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The operator must read the C-core refusal, not a cleanup error."""
+
+    class _DiesDuringLoop(_FakeProc):
+        def __init__(self) -> None:
+            super().__init__(pid=3, returncode=None, launch_signature="sig")
+            self.polls = 0
+
+        def poll(self) -> int | None:
+            self.polls += 1
+            if self.polls > 1:
+                self.returncode = C_CORE_REFUSAL_EXIT_CODE
+            return self.returncode
+
+    def _cleanup_fails(_procs: object) -> None:
+        raise OSError("cleanup exploded")
+
+    monkeypatch.setattr(
+        distributed_runtime, "_launch_distributed_worker",
+        lambda *, worker_index, **_kw: _FakeProc(pid=900 + worker_index, launch_signature="sig"),
+    )
+    monkeypatch.setattr(distributed_runtime, "_worker_launch_signature", lambda **_kw: "sig")
+    monkeypatch.setattr(distributed_runtime, "_stop_worker_processes", _cleanup_fails)
+    procs: list[object] = [_FakeProc(pid=2, returncode=1, launch_signature="sig"), _DiesDuringLoop()]
+    with pytest.raises(CCoreIncompleteError, match="idx=1"):
+        distributed_runtime._ensure_distributed_workers(
+            config={"distributed_workers_per_trial": 2}, trial_dir=tmp_path, trial_id="t",
+            procs=procs,  # pyright: ignore[reportArgumentType]
+        )
+
+
+def test_launch_stamps_the_worker_log_paths_the_refusal_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_raise_if_c_core_refusal`` reads ``_cae_worker_log_paths`` off the proc."""
+    stub = _FakeProc(pid=4242)
+    spawned: list[dict[str, object]] = []
+
+    def _fake_spawn(**kwargs: object) -> _FakeProc:
+        spawned.append(kwargs)
+        return stub
+
+    monkeypatch.setattr(distributed_runtime, "_spawn_with_reap", _fake_spawn)
+    # The command line is not under test here (it needs a full server config).
+    monkeypatch.setattr(distributed_runtime, "_build_distributed_worker_cmd", lambda **_kw: ["true"])
+    proc = distributed_runtime._launch_distributed_worker(
+        config={}, trial_dir=tmp_path, trial_id="t", worker_index=3,
+    )
+    assert proc is stub
+    root = distributed_runtime._distributed_worker_artifacts_root(tmp_path) / "worker_03"
+    assert getattr(proc, "_cae_worker_log_paths", None) == (root / "worker.out", root / "worker.log")
+    assert spawned[0]["log_path"] == root / "worker.out"
+    # ... and the refusal message actually names them.
+    stub.returncode = C_CORE_REFUSAL_EXIT_CODE
+    with pytest.raises(CCoreIncompleteError) as exc:
+        distributed_runtime._raise_if_c_core_refusal(
+            proc, idx=3, trial_id="t",
+        )
+    assert str(root / "worker.out") in str(exc.value)
+    assert str(root / "worker.log") in str(exc.value)
+
+
+def test_revive_raises_before_relaunching_the_broker_or_an_earlier_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launched: list[str] = []
+    monkeypatch.setattr(
+        distributed_runtime, "_launch_distributed_worker",
+        lambda *, worker_index, **_kw: launched.append(f"worker{worker_index}"),
+    )
+    monkeypatch.setattr(
+        distributed_runtime, "_ensure_inference_broker",
+        lambda **_kw: launched.append("broker"),
+    )
+    with pytest.raises(CCoreIncompleteError, match="idx=1"):
+        revive_dead_selfplay_processes(
+            config={"distributed_workers_per_trial": 2},
+            trial_id="t", trial_dir=tmp_path, publish_dir=tmp_path,
+            broker_proc_box=[_FakeProc(pid=1, returncode=1)],  # pyright: ignore[reportArgumentType]
+            worker_procs=[  # pyright: ignore[reportArgumentType]
+                _FakeProc(pid=2, returncode=1),
+                _FakeProc(pid=3, returncode=C_CORE_REFUSAL_EXIT_CODE),
+            ],
+        )
+    assert launched == []
+
+
+def test_ingest_wait_loop_lets_the_c_core_refusal_through(tmp_path: Path) -> None:
+    """Other on_poll failures are swallowed (test above); this one ends the trial."""
+
+    def _refused() -> None:
+        raise CCoreIncompleteError("worker refused")
+
+    with pytest.raises(CCoreIncompleteError, match="worker refused"):
+        _run_starved_ingest(tmp_path, on_poll=_refused, on_poll_interval_s=0.0)

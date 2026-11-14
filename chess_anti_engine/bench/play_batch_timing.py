@@ -9,9 +9,8 @@ import torch
 
 from chess_anti_engine.encoding import encode_position, encode_positions_batch
 from chess_anti_engine.inference import _policy_output
-from chess_anti_engine.mcts import GumbelConfig, MCTSConfig
+from chess_anti_engine.mcts import GumbelConfig
 from chess_anti_engine.mcts.gumbel import run_gumbel_root_many
-from chess_anti_engine.mcts.puct import run_mcts_many
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.moves import (
     POLICY_SIZE,
@@ -26,6 +25,7 @@ from chess_anti_engine.selfplay.network_turn import _policy_kl
 from chess_anti_engine.selfplay.temperature import apply_policy_temperature
 from chess_anti_engine.stockfish import StockfishPool, StockfishUCI
 from chess_anti_engine.train.targets import hlgauss_target
+from chess_anti_engine.utils.search_type import gumbel_search_cli_arg, require_gumbel_search
 
 
 def _run_mcts_for_subset(
@@ -38,16 +38,10 @@ def _run_mcts_for_subset(
     device: str,
     rng: np.random.Generator,
 ):
-    if mcts_type == "gumbel":
-        cfg = GumbelConfig(simulations=int(simulations), temperature=float(temperature))
-        return run_gumbel_root_many(model, sub_boards, device=device, rng=rng, cfg=cfg)
-    return run_mcts_many(
-        model,
-        sub_boards,
-        device=device,
-        rng=rng,
-        cfg=MCTSConfig(simulations=int(simulations), temperature=float(temperature)),
-    )
+    # The PUCT route was retired on 2026-11-14 (one search: Gumbel).
+    require_gumbel_search(mcts_type)
+    cfg = GumbelConfig(simulations=int(simulations), temperature=float(temperature))
+    return run_gumbel_root_many(model, sub_boards, device=device, rng=rng, cfg=cfg)
 
 
 def _build_replay_sample(
@@ -267,7 +261,7 @@ def play_batch_timed(
     temperature: float,
     max_plies: int,
     mcts_simulations: int = 50,
-    mcts_type: str = "puct",
+    mcts_type: str = "gumbel",
     playout_cap_fraction: float = 0.25,
     fast_simulations: int = 8,
 ) -> tuple[list[ReplaySample], BatchStats, dict[str, float]]:
@@ -359,7 +353,7 @@ def main() -> None:
     ap.add_argument("--games", type=int, default=2)
     ap.add_argument("--max-plies", type=int, default=60)
     ap.add_argument("--temperature", type=float, default=1.25)
-    ap.add_argument("--mcts", type=str, default="puct", choices=["puct", "gumbel"])
+    ap.add_argument("--mcts", type=gumbel_search_cli_arg, default="gumbel")
     ap.add_argument("--mcts-simulations", type=int, default=16)
     ap.add_argument("--playout-cap-fraction", type=float, default=0.25)
     ap.add_argument("--fast-simulations", type=int, default=8)

@@ -419,17 +419,6 @@ def test_optimizer_state_splices_fresh_relation_params(tmp_path):
     t2.opt.step()  # must not shape-crash
 
 
-def test_puct_paths_raise_with_relations():
-    from chess_anti_engine.mcts.puct import MCTSConfig, run_mcts_many
-    from chess_anti_engine.mcts.puct_c import run_mcts_many_c
-
-    m = _model(use_relations=True)
-    cfg = MCTSConfig(simulations=1, compute_relations=True)
-    for fn in (run_mcts_many, run_mcts_many_c):
-        with pytest.raises(NotImplementedError, match="PUCT"):
-            fn(m, [chess.Board()], device="cpu", rng=np.random.default_rng(0), cfg=cfg)
-
-
 def test_python_gumbel_fallback_transports_relations():
     """The no-C gumbel fallback must pass relations to the evaluator."""
     from chess_anti_engine.mcts.gumbel import GumbelConfig, run_gumbel_root_many
@@ -470,13 +459,14 @@ def test_dynamic_relation_count_validated():
         ))
 
 
-def test_transport_check_rejects_puct_and_aot():
+def test_transport_check_rejects_aot_and_broker():
+    # The mcts clause went with the selfplay PUCT search (2026-11-14): puct is
+    # refused at every config boundary before this check runs
+    # (tests/test_puct_retired.py), so only the transport clauses remain.
     from chess_anti_engine.tune.distributed_runtime import check_dynamic_relations_transport
 
     base = {"use_dynamic_relations": True, "mcts": "gumbel"}
     check_dynamic_relations_transport(dict(base))  # ok
-    with pytest.raises(ValueError, match="mcts"):
-        check_dynamic_relations_transport({**base, "mcts": "puct"})
     with pytest.raises(ValueError, match="aot"):
         check_dynamic_relations_transport({**base, "distributed_worker_aot_dir": "/x"})
     with pytest.raises(ValueError, match="broker"):

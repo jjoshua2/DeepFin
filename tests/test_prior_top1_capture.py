@@ -209,6 +209,7 @@ def test_c_path_captures_the_independently_computed_masked_argmax() -> None:
         assert rec.prior_top1_prob == pytest.approx(prob, abs=1e-9)
 
 
+@pytest.mark.usefixtures("python_reference_paths")
 def test_python_path_captures_the_independently_computed_masked_argmax() -> None:
     state, inp, boards = _run_python(GameConfig())
     for i, rec in enumerate(_records(state)):
@@ -217,6 +218,7 @@ def test_python_path_captures_the_independently_computed_masked_argmax() -> None
         assert rec.prior_top1_prob == pytest.approx(prob, abs=1e-9)
 
 
+@pytest.mark.usefixtures("python_reference_paths")
 @requires_c
 def test_both_ply_paths_capture_identical_values() -> None:
     """``_append_records_via_python`` only runs when the C extension is missing;
@@ -229,6 +231,7 @@ def test_both_ply_paths_capture_identical_values() -> None:
         assert c_rec.prior_top1_prob == pytest.approx(py_rec.prior_top1_prob, abs=1e-12)
 
 
+@pytest.mark.usefixtures("python_reference_paths")
 @requires_c
 @pytest.mark.parametrize("runner", [_run_c, _run_python])
 def test_flag_off_captures_nothing_on_either_path(runner) -> None:

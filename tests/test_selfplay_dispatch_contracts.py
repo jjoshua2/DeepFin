@@ -51,7 +51,11 @@ def network_budget_case(name, draws, mcts) -> dict[str, Any]:
     state: Any = SimpleNamespace(
         boards=boards, cboards=[CBoard.from_board(b) for b in boards],
         model=None, device="cpu", evaluator=InertEvaluator(), rng=Draws(draws),
-        search=SearchConfig(mcts_type=mcts, simulations=128, fast_simulations=8, playout_cap_fraction=0.5),
+        search=SearchConfig(
+            simulations=128, fast_simulations=8, playout_cap_fraction=0.5,
+            # None = leave mcts_type at the dataclass default.
+            **({} if mcts is None else {"mcts_type": mcts}),
+        ),
         temp=TemperatureConfig(temperature=0.0, decay_moves=0, endgame=0.0),
         game=GameConfig(input_extra_features="v1", record_prior_top1=False),
         diff_focus=DiffFocusConfig(enabled=False), diff_focus_norm=None,
@@ -66,18 +70,13 @@ def network_budget_case(name, draws, mcts) -> dict[str, Any]:
     )
     state.replay_board = lambda index: SelfplayState.replay_board(state, index)
     calls = []
-    def puct(_model, sub_boards, **kwargs):
-        calls.append({"runner": "puct", "boards": len(sub_boards),
-                      "cfg_simulations": kwargs["cfg"].simulations,
-                      "per_game_simulations": kwargs.get("per_game_simulations")})
-        return search_output(sub_boards)
     def gumbel(_model, sub_boards, **kwargs):
         calls.append({"runner": "gumbel", "boards": len(sub_boards),
                       "cfg_simulations": kwargs["cfg"].simulations,
                       "per_game_simulations": kwargs.get("per_game_simulations")})
         return (*search_output(sub_boards), [None] * len(sub_boards))
-    with patch.object(nt, "_HAS_C_TREE", True), patch.object(nt, "_HAS_GUMBEL_C", False), \
-            patch.object(nt, "_run_mcts_many_c", puct), patch.object(nt, "run_gumbel_root_many", gumbel):
+    with patch.object(nt, "_HAS_GUMBEL_C", False), \
+            patch.object(nt, "run_gumbel_root_many", gumbel):
         nt.run_network_turn(state, [0, 1])
     return {"name": name, "draws": draws, "mcts": mcts, "calls": calls,
             "record_has_policy": [records[-1].has_policy for records in state.samples_per_game],
@@ -153,26 +152,23 @@ def worker_failure_case(failed_tid) -> dict[str, Any]:
             "selfplay_threads": 2, "control_driver_threads": 1}
 
 
+@pytest.mark.usefixtures("python_reference_paths")
 @pytest.mark.parametrize("draws", [[0.1, 0.9], [0.9, 0.1], [0.1, 0.1], [0.9, 0.9]])
-@pytest.mark.parametrize("mcts", ["puct", "gumbel"])
+@pytest.mark.parametrize("mcts", [None, "gumbel"])
 def test_real_network_dispatch_honors_each_playout_budget(draws, mcts):
+    """One search call per turn, carrying each game's own playout budget.
+
+    The selfplay PUCT search was retired on 2026-11-14, so a mixed full/fast
+    batch is no longer split into a PUCT group and a Gumbel group: both budgets
+    ride one Gumbel call as ``per_game_simulations``. ``None`` leaves
+    ``mcts_type`` at the dataclass default.
+    """
     row = network_budget_case("regression", draws, mcts)
-    if mcts == "puct" and len(set(row["expected_per_game_budget"])) > 1:
-        expected = [
-            {"runner": "puct", "boards": 1, "cfg_simulations": 128, "per_game_simulations": None},
-            {"runner": "gumbel", "boards": 1, "cfg_simulations": 8, "per_game_simulations": [8]},
-        ] if draws[0] < 0.5 else [
-            {"runner": "gumbel", "boards": 1, "cfg_simulations": 8, "per_game_simulations": [8]},
-            {"runner": "puct", "boards": 1, "cfg_simulations": 128, "per_game_simulations": None},
-        ]
-        assert row["calls"] == expected
-    else:
-        assert len(row["calls"]) == 1
-        call = row["calls"][0]
-        if call["runner"] == "gumbel":
-            assert call["per_game_simulations"] == row["expected_per_game_budget"]
-        else:
-            assert call["cfg_simulations"] == 128
+    assert len(row["calls"]) == 1
+    call = row["calls"][0]
+    assert call["runner"] == "gumbel"
+    assert call["boards"] == 2
+    assert call["per_game_simulations"] == row["expected_per_game_budget"]
     assert row["record_has_policy"] == [d < 0.5 for d in draws]
     assert row["records"] == [1, 1]
     assert row["board_plies"] == [1, 1]

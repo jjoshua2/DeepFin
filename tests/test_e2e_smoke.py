@@ -12,7 +12,8 @@ What is verified:
   5. Trainer.train_steps() returns finite loss on every component
   6. Checkpoint save → load → train preserves step counter and produces
      identical loss structure
-  7. Gumbel MCTS path exercised alongside PUCT
+  7. Gumbel MCTS path (the module fixture always ran Gumbel: at 4 sims the old
+     `mcts_type="puct"` fell under the low-sim Gumbel rule; PUCT was retired 2026-11-14)
 """
 
 from __future__ import annotations
@@ -102,7 +103,7 @@ def selfplay_samples():
         samples, stats = play_batch(
             model, device="cpu", rng=rng, stockfish=sf, games=3,
             temp=TemperatureConfig(temperature=1.0),
-            search=SearchConfig(simulations=4, mcts_type="puct", playout_cap_fraction=0.5, fast_simulations=2),
+            search=SearchConfig(simulations=4, mcts_type="gumbel", playout_cap_fraction=0.5, fast_simulations=2),
             diff_focus=DiffFocusConfig(min_keep=1.0),
             game=GameConfig(max_plies=30, sf_policy_temp=0.25, sf_policy_label_smooth=0.05, categorical_bins=32, hlgauss_sigma=0.04),
         )
