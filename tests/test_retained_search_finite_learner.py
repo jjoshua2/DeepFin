@@ -111,7 +111,8 @@ def test_actual_worker_host_loss_has_search_ce_gradient_and_single_draw_effect(t
     calls: list[dict[str, Any]] = []
 
     def observed(outputs: Any, batch: Any, **kwargs: Any) -> Any:
-        assert kwargs["search_wdl_frac"] == 1 and kwargs["sf_wdl_frac"] == 0
+        assert kwargs["search_wdl_frac"] == 1
+        assert kwargs["sf_wdl_frac"] == 0
         assert kwargs["w_policy"] == kwargs["w_wdl"] == 1
         assert all(v == 0 for k, v in kwargs.items() if k.startswith("w_") and k not in {"w_policy", "w_wdl"})
         assert kwargs["sf_policy_floor"].w == kwargs["sf_shape"].w == 0
@@ -127,7 +128,8 @@ def test_actual_worker_host_loss_has_search_ce_gradient_and_single_draw_effect(t
         grad = torch.autograd.grad(actual["blended_wdl_ce"], outputs["wdl"], retain_graph=True)[0]
         expected_grad = (torch.softmax(outputs["wdl"].float(), -1) - target) / target.shape[0]
         torch.testing.assert_close(grad, expected_grad)
-        control = original(outputs, batch, **{**kwargs, "search_wdl_frac": 0.0})
+        control_kwargs: dict[str, Any] = {**kwargs, "search_wdl_frac": 0.0}
+        control = original(outputs, batch, **control_kwargs)
         control_grad = torch.autograd.grad(control["blended_wdl_ce"], outputs["wdl"], retain_graph=True)[0]
         if bool(mask.any()):
             assert not torch.equal(actual["blended_wdl_ce"], control["blended_wdl_ce"])
@@ -216,8 +218,10 @@ def test_actual_same_family_continuation_keeps_bank_and_restores_full_state(tmp_
     first = finite.execute(cref, stage(tmp_path, cref, gen))
     parent = parent_binding(tmp_path, cref, first)
     second = finite.execute(cref, stage(tmp_path, cref, gen, 2, parent))
-    assert first["segment"] == 1 and second["segment"] == 2
-    assert first["step"] == 2 and second["step"] == 4
+    assert first["segment"] == 1
+    assert second["segment"] == 2
+    assert first["step"] == 2
+    assert second["step"] == 4
     assert first["membership"] == second["membership"]
     assert second["generation_manifests"] == [gen]
     assert all(row[0] == 1 for row in second["membership"])
@@ -233,7 +237,7 @@ def test_actual_same_family_continuation_keeps_bank_and_restores_full_state(tmp_
 
 @pytest.mark.parametrize("fault", ["family", "profile", "missing"])
 def test_checkpoint_metadata_refuses_before_optimizer_restoration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str) -> None:
-    c, cref, _, gen = setup(tmp_path)
+    _c, cref, _, gen = setup(tmp_path)
     first = finite.execute(cref, stage(tmp_path, cref, gen))
     path = Path(first["checkpoint"]["path"])
     state = torch.load(path, map_location="cpu", weights_only=True)
