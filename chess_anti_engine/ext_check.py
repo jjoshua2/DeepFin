@@ -99,10 +99,6 @@ REQUIRED_MCTSTREE_METHODS: tuple[str, ...] = (
 # Names that the coverage scan finds probed with hasattr/getattr and that also
 # exist on an extension object, but are NOT optional C symbols:
 GUARDED_OPTIONAL_ALLOWLIST: dict[str, str] = {
-    # `cfg.compute_relations` is an MCTSConfig/GumbelConfig field read with a
-    # default (mcts/puct.py, mcts/puct_c.py); it only shares its name with the
-    # CBoard method.
-    "compute_relations": "config field read on a config object, not an extension probe",
     # `module.__file__` is read for provenance (source/bt4_npz_unit_v1.py).
     "__file__": "module provenance, present on every module",
 }

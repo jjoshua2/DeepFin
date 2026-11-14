@@ -23,9 +23,6 @@ def test_gumbel_temp_zero_preserves_search_survivor() -> None:
         actions,
         [0.0],
         np.random.default_rng(1),
-        c_temp_resample=None,
-        use_c_resample=False,
-        preserve_zero_temperature_actions=True,
     )
 
     assert actions == [7]
@@ -45,25 +42,6 @@ def test_compact_policy_logits_expand_before_ply_processing() -> None:
     assert float(expanded[0, invalid].max()) == -1e9
 
 
-def test_puct_temp_zero_uses_policy_argmax() -> None:
-    probs = np.zeros((4672,), dtype=np.float32)
-    probs[3] = 0.9
-    probs[7] = 0.1
-    actions = [7]
-
-    _resample_actions_with_temperature(
-        [probs],
-        actions,
-        [0.0],
-        np.random.default_rng(1),
-        c_temp_resample=None,
-        use_c_resample=False,
-        preserve_zero_temperature_actions=False,
-    )
-
-    assert actions == [3]
-
-
 def test_gumbel_positive_temperature_resamples_from_policy() -> None:
     probs = np.zeros((4672,), dtype=np.float32)
     probs[3] = 1.0
@@ -75,9 +53,6 @@ def test_gumbel_positive_temperature_resamples_from_policy() -> None:
         actions,
         [1.0],
         np.random.default_rng(1),
-        c_temp_resample=None,
-        use_c_resample=False,
-        preserve_zero_temperature_actions=True,
     )
 
     assert actions == [3]
@@ -113,9 +88,6 @@ def test_low_positive_temperature_is_numerically_stable() -> None:
         actions,
         [0.001],
         np.random.default_rng(1),
-        c_temp_resample=None,
-        use_c_resample=False,
-        preserve_zero_temperature_actions=True,
     )
 
     assert actions == [7]
@@ -130,9 +102,6 @@ def test_gumbel_low_positive_temperature_falls_back_to_survivor_when_degenerate(
         actions,
         [0.001],
         np.random.default_rng(1),
-        c_temp_resample=None,
-        use_c_resample=False,
-        preserve_zero_temperature_actions=True,
     )
 
     assert actions == [7]

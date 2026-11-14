@@ -3,7 +3,8 @@
 * The ``--mcts`` CLI options of ``run.py`` and the worker accept any case and
   hand the consumer the normalised value.
 * The relations-transport guard treats ``"Gumbel"`` as Gumbel (it must NOT
-  refuse it).
+  refuse it). Its ``mcts`` clause went with the selfplay PUCT search
+  (2026-11-14); ``puct`` is refused upstream (``tests/test_puct_retired.py``).
 * A live yaml reload with an invalid ``mcts`` keeps the previous value and the
   trial's next ``TrialConfig.from_dict`` still succeeds; at launch the same
   value is fatal. (``mcts: null`` is dropped by the flattener: it means unset.)
@@ -22,9 +23,9 @@ from tests.test_run_relation_preflight import _startup
 def test_run_cli_mcts_is_case_insensitive_and_published_normalised(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls = _startup(tmp_path, monkeypatch, {}, ["--mcts", "PUCT"])
+    calls = _startup(tmp_path, monkeypatch, {}, ["--mcts", "GUMBEL"])
     assert len(calls) == 1
-    assert calls[0]["mcts"] == "puct"
+    assert calls[0]["mcts"] == "gumbel"
 
 
 def test_worker_cli_mcts_is_case_insensitive_and_normalised(
@@ -52,8 +53,6 @@ def test_relations_transport_guard_accepts_mixed_case_gumbel() -> None:
     from chess_anti_engine.tune.distributed_runtime import check_dynamic_relations_transport
 
     check_dynamic_relations_transport({"use_dynamic_relations": True, "mcts": "Gumbel"})
-    with pytest.raises(ValueError, match="mcts != gumbel"):
-        check_dynamic_relations_transport({"use_dynamic_relations": True, "mcts": "PUCT"})
 
 
 # --------------------------------------------------------------------------
@@ -66,7 +65,7 @@ def _write_yaml(path: Path, mcts_line: str) -> str:
     return str(path)
 
 
-@pytest.mark.parametrize("bad", ["mcts: gumbell", "mcts: ''", "mcts: off"])
+@pytest.mark.parametrize("bad", ["mcts: gumbell", "mcts: ''", "mcts: off", "mcts: puct", "mcts: PUCT"])
 def test_live_reload_with_an_invalid_mcts_keeps_the_old_value_and_the_trial_continues(
     tmp_path: Path, bad: str, capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -98,9 +97,12 @@ def test_a_null_mcts_is_dropped_by_the_flattener_so_reload_keeps_the_old_value(t
     from chess_anti_engine.tune.trial_config import TrialConfig
 
     path = _write_yaml(tmp_path / "live.yaml", "mcts: null")
-    config: dict[str, Any] = {"mcts": "puct"}
+    # The kept value is observable only if it differs from the default, and
+    # gumbel is the only valid value -- so assert the key is untouched instead.
+    config: dict[str, Any] = {"mcts": "Gumbel"}
     _reload_yaml_into_config(config, path, live_reload=True)
-    assert TrialConfig.from_dict(config).mcts == "puct"
+    assert config["mcts"] == "Gumbel"
+    assert TrialConfig.from_dict(config).mcts == "gumbel"
     launch: dict[str, Any] = {}
     _reload_yaml_into_config(launch, path)
     assert TrialConfig.from_dict(launch).mcts == "gumbel"
@@ -111,15 +113,20 @@ def test_live_reload_with_a_mixed_case_mcts_applies_it(tmp_path: Path) -> None:
     from chess_anti_engine.tune.trial_config import TrialConfig
 
     config: dict[str, Any] = {"mcts": "gumbel"}
-    _reload_yaml_into_config(config, _write_yaml(tmp_path / "live.yaml", "mcts: PUCT"), live_reload=True)
-    assert TrialConfig.from_dict(config).mcts == "puct"
+    _reload_yaml_into_config(config, _write_yaml(tmp_path / "live.yaml", "mcts: GUMBEL"), live_reload=True)
+    assert config["mcts"] == "GUMBEL"
+    assert TrialConfig.from_dict(config).mcts == "gumbel"
 
 
-def test_launch_with_an_invalid_mcts_is_fatal(tmp_path: Path) -> None:
+@pytest.mark.parametrize(("bad", "match"), [
+    ("mcts: gumbell", "mcts"),
+    ("mcts: puct", "retired"),
+])
+def test_launch_with_an_invalid_mcts_is_fatal(tmp_path: Path, bad: str, match: str) -> None:
     from chess_anti_engine.tune.trainable_config_ops import _reload_yaml_into_config
     from chess_anti_engine.tune.trial_config import TrialConfig
 
     config: dict[str, Any] = {}
-    _reload_yaml_into_config(config, _write_yaml(tmp_path / "launch.yaml", "mcts: gumbell"))
-    with pytest.raises(ValueError, match="mcts"):
+    _reload_yaml_into_config(config, _write_yaml(tmp_path / "launch.yaml", bad))
+    with pytest.raises(ValueError, match=match):
         TrialConfig.from_dict(config)

@@ -36,7 +36,7 @@ from chess_anti_engine.train.trainer import resolve_sf_target_params
 from chess_anti_engine.tune.distributed_runtime import distributed_worker_sf_workers
 from chess_anti_engine.tune.trainable_metrics import _dynamic_sf_wdl_weight
 from chess_anti_engine.tune.trial_config import DifficultyState, TrialConfig
-from chess_anti_engine.utils.search_type import normalize_mcts_type
+from chess_anti_engine.utils.search_type import require_gumbel_search
 import contextlib
 
 log = logging.getLogger(__name__)
@@ -235,8 +235,6 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             playout_cap_fraction=tc.playout_cap_fraction,
             full_ply_pair_fraction=tc.full_ply_pair_fraction,
             fast_simulations=tc.fast_simulations,
-            fpu_reduction=tc.fpu_reduction,
-            fpu_at_root=tc.fpu_at_root,
             gumbel_topk=tc.gumbel_topk,
             gumbel_policy_temp=tc.gumbel_policy_temp,
             gumbel_target_batch=tc.gumbel_target_batch,
@@ -730,11 +728,19 @@ _LIVE_RELOAD_SKIPPED_KEYS = frozenset({
 #
 # Their inert values are the ones the production yaml ships (pbt2_small.yaml
 # :1077-1079), so this refusal cannot fire on the live config as it stands.
+#
+# `fpu_reduction` / `fpu_at_root` (2026-11-14): the selfplay/arena PUCT search
+# was their only reader, and it was retired. The production Gumbel search never
+# read either, and the distributed worker never resolved them from the reco.
+# Their inert values are the old `SearchConfig` defaults, which every
+# checked-in config that still carries the keys ships; production sets neither.
 _DEAD_CONFIG_KEY_INERT_VALUES: dict[str, object] = {
     "replay_sf_gap_priority_signed": False,
     "gate_threshold": 0.50,
     "gate_interval": 1,
     "gate_mcts_sims": 1,
+    "fpu_reduction": 1.2,
+    "fpu_at_root": 1.0,
 }
 
 # Why each dead key is dead, in the words the refusal needs. Keyed by the same
@@ -766,6 +772,16 @@ _DEAD_CONFIG_KEY_REASONS: dict[str, str] = {
         "simulation is raw policy argmax rather than the quantity production "
         "plays. The anchored gate plays no games at all: it splits the games "
         "the loop already played by publishing model"
+    ),
+    "fpu_reduction": (
+        "its only reader was the selfplay/arena PUCT search, retired on "
+        "2026-11-14 (selfplay, arena and puzzle eval run compiled Gumbel only). "
+        "The UCI engine's PUCT pools take FPU from their own --fpu-reduction "
+        "option, never from this key"
+    ),
+    "fpu_at_root": (
+        "its only reader was the selfplay/arena PUCT search, retired on "
+        "2026-11-14. Gumbel uses gumbel_scale root noise instead"
     ),
 }
 
@@ -1467,10 +1483,10 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
 def _decline_invalid_mcts_edit(config: dict, before: object, missing: object) -> None:
     """Keep the previous ``mcts`` when a live reload brings an invalid one.
 
-    ``TrialConfig.from_dict`` validates ``mcts`` (``normalize_mcts_type``), and
+    ``TrialConfig.from_dict`` validates ``mcts`` (``require_gumbel_search``), and
     it runs inside the iteration loop right after this reload, so a typo
-    (``gumbell``), a blank or ``off`` (YAML ``False``) would otherwise kill the
-    trial mid-iteration (CLAUDE.md category b). Same pattern as the SF budget
+    (``gumbell``), a blank, ``off`` (YAML ``False``) or the retired ``puct``
+    would otherwise kill the trial mid-iteration (CLAUDE.md category b). Same pattern as the SF budget
     decline: refuse that key only, keep the old value, apply every other edit,
     and say so at ERROR on stdout (``[trial] ERROR``, the trial log) and in the
     log. At launch nothing declines: ``from_dict`` raises, which is the right
@@ -1479,7 +1495,7 @@ def _decline_invalid_mcts_edit(config: dict, before: object, missing: object) ->
     if "mcts" not in config:
         return
     try:
-        normalize_mcts_type(config["mcts"])
+        require_gumbel_search(config["mcts"])
         return
     except ValueError as exc:
         reason = str(exc)

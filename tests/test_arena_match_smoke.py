@@ -29,7 +29,7 @@ def test_play_match_batch_smoke():
         games=2,
         max_plies=6,
         a_plays_white=[True, False],
-        mcts_type="puct",
+        mcts_type="gumbel",
         mcts_simulations=1,
         temperature=0.0,
     )
@@ -63,37 +63,8 @@ def test_pick_moves_uses_model_input_history_encoding(monkeypatch):
         mcts_type="gumbel",
         mcts_simulations=1,
         temperature=0.0,
-        c_puct=2.5,
         gumbel_add_noise=False,
     )
 
     assert seen["input_history_encoding"] == "lc0_root_legacy_meta"
-    assert seen["policy_encoding"] == POLICY_ENCODING_LC0_1858
-
-
-@pytest.mark.usefixtures("python_reference_paths")
-def test_pick_moves_uses_model_policy_encoding_for_puct(monkeypatch):
-    seen = {}
-
-    def fake_puct(_model, _boards, *, cfg, **_kwargs):
-        seen["policy_encoding"] = cfg.policy_encoding
-        return [np.zeros(POLICY_SIZE, dtype=np.float32)], [0], [0.0], [np.ones(POLICY_SIZE, dtype=bool)]
-
-    model = DummyModel().eval()
-    setattr(model, "policy_encoding", POLICY_ENCODING_LC0_1858)
-    monkeypatch.setattr(match_mod, "_HAS_C_TREE", False)
-    monkeypatch.setattr(match_mod, "run_mcts_many", fake_puct)
-
-    match_mod.pick_moves_for_boards(
-        model,
-        [__import__("chess").Board()],
-        device="cpu",
-        rng=np.random.default_rng(0),
-        mcts_type="puct",
-        mcts_simulations=1,
-        temperature=0.0,
-        c_puct=2.5,
-        gumbel_add_noise=False,
-    )
-
     assert seen["policy_encoding"] == POLICY_ENCODING_LC0_1858

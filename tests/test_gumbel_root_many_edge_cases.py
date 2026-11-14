@@ -15,7 +15,7 @@ from chess_anti_engine.mcts.gumbel import (
     run_gumbel_root_many,
 )
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
-from chess_anti_engine.mcts.puct import Node, _select_child
+from chess_anti_engine.mcts.puct import Node
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.moves import (
     POLICY_ENCODING_LC0_1858,
@@ -930,27 +930,6 @@ def test_completed_q_uses_parent_perspective_for_visited_child():
 
     q = _completed_q(root_q=0.1, root=root, action=0)
     assert q == -0.5
-
-
-def test_puct_select_child_uses_parent_perspective_for_visited_children():
-    root = Node(chess.Board(), parent=None, prior=1.0)
-    root.N = 10
-    root.W = 0.0
-    root.expanded = True
-
-    bad_for_root = Node(None, parent=root, prior=0.5, action_idx=0)
-    bad_for_root.N = 5
-    bad_for_root.W = 4.0  # child.Q = +0.8 => root-perspective Q = -0.8
-
-    good_for_root = Node(None, parent=root, prior=0.5, action_idx=1)
-    good_for_root.N = 5
-    good_for_root.W = -4.0  # child.Q = -0.8 => root-perspective Q = +0.8
-
-    root.children = {0: bad_for_root, 1: good_for_root}
-
-    action, chosen = _select_child(root, c_puct=0.0, fpu_reduction=1.2)
-    assert action == 1
-    assert chosen is good_for_root
 
 
 def test_gumbel_root_many_draw_terminal_root_returns_zero_policy():

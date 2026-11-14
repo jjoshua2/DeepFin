@@ -81,25 +81,36 @@ PYTHONPATH=. python scripts/arena_standard.py \
 - **Search-type defaults are Gumbel since 2026-11-14.** `chess_anti_engine/arena.py`
   (`--mcts`), `play_match_batch`, the worker arena task (`arena.mcts`), `run.py --mcts`,
   `SearchConfig.mcts_type` and the `mcts` config key all used to default to PUCT; they
-  now default to `gumbel`, the search the production yaml runs. `--mcts puct` still
-  selects the compiled PUCT driver; the value is case-insensitive and normalised, and
-  anything other than `gumbel`/`puct` is refused. `scripts/arena_standard.py` and
+  now default to `gumbel`, the search the production yaml runs. `scripts/arena_standard.py` and
   `scripts/match_checkpoints.py` always defaulted to Gumbel and are unaffected. Only
   `chess_anti_engine/arena.py` and the worker arena task changed ruler: a reading from
   either banked before that date without an explicit `--mcts` / `arena.mcts` measured
   PUCT and is not comparable with one after it.
+- **Selfplay/arena PUCT is retired (2026-11-14, later the same day).** The compiled
+  selfplay/arena PUCT driver (`run_mcts_many_c`) and the pure-Python PUCT search were
+  deleted; selfplay, arena and puzzle eval have one search, compiled Gumbel. `puct` (any
+  case) is now refused at every boundary that took it: `--mcts` on `arena.py`, `run.py`,
+  the worker and the play-batch bench, `arena.mcts`, the `mcts` config key (fatal at
+  launch, declined on a live reload), `SearchConfig`, `play_match_batch` and
+  `run_puzzle_eval`. An **explicit-PUCT arena reading** (`--mcts puct` / `arena.mcts:
+  puct`) can no longer be reproduced on `main`; reproduce it from tag
+  `pre-slim-20261113` or from `5ed4d23a2`, the last `main` commit that had
+  `mcts/puct_c.py`. The UCI engine's PUCT paths (walker pool, pucv, multi-GPU pool,
+  root-parallel Gumbel) are separate and unchanged.
 - **Puzzle eval is not comparable across 2026-11-14.** The training puzzle eval
   (`puzzle_interval > 0`, off in production) used to call `run_puzzle_eval` with no
-  search arguments, i.e. the pure-Python PUCT search. It now runs the compiled search
-  configured selfplay runs (`selfplay_search_is_gumbel`; with Gumbel, the selfplay
-  search shape including `gumbel_target_batch`/`gumbel_vloss_weight`) at temperature 0
-  and no root noise. The PUCT routes now also zero `dirichlet_eps`: the old puzzle PUCT
-  path kept `MCTSConfig`'s default 0.25 Dirichlet root noise, so its answers depended on
-  the rng. `run_puzzle_eval`'s own default became the compiled Gumbel search,
-  and `scripts/eval_puzzles.py --mode search` became the compiled PUCT driver (its log
-  label is now `puct_c`). The pure-Python PUCT survives only as
-  `search="python_puct_reference"`, a test reference. Puzzle accuracies banked before
-  and after this change measure different searches and must not be compared.
+  search arguments, i.e. the pure-Python PUCT search. It now runs the compiled Gumbel
+  search with the selfplay search shape (including
+  `gumbel_target_batch`/`gumbel_vloss_weight`) at temperature 0 and no root noise. The
+  old puzzle PUCT path kept `MCTSConfig`'s default 0.25 Dirichlet root noise, so its
+  answers depended on the rng. `run_puzzle_eval` accepts only `search="gumbel"`; `puct`
+  is refused and `python_puct_reference` no longer exists.
+  **`scripts/eval_puzzles.py --mode search` is now Gumbel-only**: it is an alias of
+  `--mode gumbel` (same search, same `gumbel` log label). It was the pure-Python PUCT
+  until 2026-11-14 and the compiled PUCT driver briefly that day, so a `--mode search`
+  reading banked before the retirement is **not comparable** with one after it. Puzzle
+  accuracies banked before and after this change measure different searches and must not
+  be compared.
 
 ## Historical instruments and measurement notes
 

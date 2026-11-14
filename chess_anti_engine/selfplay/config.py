@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from chess_anti_engine.encoding.features import EXTRA_FEATURES_V2_THREATS
 from chess_anti_engine.mcts.gumbel import DEFAULT_VOLATILITY_ANCHOR, SELFPLAY_GUMBEL_C_SCALE
-from chess_anti_engine.utils.search_type import normalize_mcts_type
+from chess_anti_engine.utils.search_type import require_gumbel_search
 from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY
 from chess_anti_engine.moves import MODEL_POLICY_ENCODING
 from chess_anti_engine.stockfish.wdl import (
@@ -53,8 +53,6 @@ class SearchConfig:
     # coverage for free. 1.0 = every base full is paired (~2x coverage).
     full_ply_pair_fraction: float = 0.0
     fast_simulations: int = 8
-    fpu_reduction: float = 1.2
-    fpu_at_root: float = 1.0
     gumbel_topk: int = 16
     # Clamps max_visit when sizing sigma(q) for the STORED training target
     # only -- 'search deep, trust it like a shallow search'. The played move
@@ -121,8 +119,9 @@ class SearchConfig:
     gumbel_vloss_weight: int = 0
 
     def __post_init__(self) -> None:
-        # Dispatch compares ``== "gumbel"``: "Gumbel" would silently run PUCT.
-        object.__setattr__(self, "mcts_type", normalize_mcts_type(self.mcts_type))
+        # Selfplay has one search, compiled Gumbel: "puct" is refused, and a
+        # mixed-case "Gumbel" is normalised.
+        object.__setattr__(self, "mcts_type", require_gumbel_search(self.mcts_type))
 
 
 @dataclass(frozen=True)

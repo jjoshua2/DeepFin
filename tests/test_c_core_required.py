@@ -467,7 +467,7 @@ def test_play_batch_refuses_a_missing_per_ply_symbol(monkeypatch: pytest.MonkeyP
         play_batch(model, **kwargs)
 
 
-@pytest.mark.parametrize("flag", ["_HAS_GUMBEL_C", "_HAS_C_TREE"])
+@pytest.mark.parametrize("flag", ["_HAS_GUMBEL_C"])
 def test_play_batch_refuses_when_a_compiled_runner_did_not_import(
     monkeypatch: pytest.MonkeyPatch, flag: str,
 ) -> None:
@@ -483,7 +483,8 @@ def test_play_batch_refuses_when_a_compiled_runner_did_not_import(
 
 @pytest.mark.parametrize(("flag", "mcts_type", "sims", "what"), [
     ("_HAS_GUMBEL_C", "gumbel", 2, "pure-Python Gumbel search"),
-    ("_HAS_C_TREE", "puct", 80, "pure-Python PUCT search"),
+    # Above the old max(64, fast) cutoff, where PUCT used to run: still Gumbel.
+    ("_HAS_GUMBEL_C", "gumbel", 80, "pure-Python Gumbel search"),
 ])
 def test_network_turn_refuses_the_python_search_at_point_of_use(
     monkeypatch: pytest.MonkeyPatch, flag: str, mcts_type: str, sims: int, what: str,
@@ -547,7 +548,7 @@ def _arena(monkeypatch: pytest.MonkeyPatch, flag: str, mcts_type: str) -> None:
     )
 
 
-@pytest.mark.parametrize(("flag", "mcts_type"), [("_HAS_GUMBEL_C", "gumbel"), ("_HAS_C_TREE", "puct")])
+@pytest.mark.parametrize(("flag", "mcts_type"), [("_HAS_GUMBEL_C", "gumbel")])
 def test_arena_refuses_a_missing_compiled_runner(
     monkeypatch: pytest.MonkeyPatch, flag: str, mcts_type: str,
 ) -> None:
@@ -555,7 +556,7 @@ def test_arena_refuses_a_missing_compiled_runner(
         _arena(monkeypatch, flag, mcts_type)
 
 
-@pytest.mark.parametrize(("flag", "mcts_type"), [("_HAS_GUMBEL_C", "gumbel"), ("_HAS_C_TREE", "puct")])
+@pytest.mark.parametrize(("flag", "mcts_type"), [("_HAS_GUMBEL_C", "gumbel")])
 @pytest.mark.usefixtures("python_reference_paths")
 def test_arena_reference_search_runs_with_opt_in(
     monkeypatch: pytest.MonkeyPatch, flag: str, mcts_type: str,
@@ -663,19 +664,6 @@ def test_tree_reset_refuses_without_reset_compact() -> None:
     assert calls == ["reset"]
 
 
-def test_puct_c_refuses_without_cboard(monkeypatch: pytest.MonkeyPatch) -> None:
-    from chess_anti_engine.mcts import puct_c
-    from chess_anti_engine.mcts.puct import MCTSConfig
-    from tests.selfplay_helpers import UniformPolicyValueModel
-
-    monkeypatch.setattr(puct_c, "_HAS_CBOARD", False)
-    with pytest.raises(CCoreIncompleteError, match="CBoard"):
-        puct_c.run_mcts_many_c(
-            UniformPolicyValueModel().eval(), [chess.Board()], device="cpu",
-            rng=np.random.default_rng(0), cfg=MCTSConfig(simulations=2),
-        )
-
-
 def test_refusals_carry_the_original_import_error(monkeypatch: pytest.MonkeyPatch) -> None:
     from chess_anti_engine.selfplay import match as match_mod
     from chess_anti_engine.selfplay import network_turn as nt
@@ -732,7 +720,7 @@ def run():
     if consumer == "network_turn":
         # Past play_batch's up-front check, so the dispatch site itself refuses.
         manager._require_compiled_search = lambda: None
-    sims = 2 if branch == "gumbel" else 80  # PUCT runs only above max(64, fast)
+    sims = 2
     play_batch(
         UniformPolicyValueModel().eval(), device="cpu", rng=np.random.default_rng(0),
         stockfish=FakeStockfish([0.0, 1.0, 0.0]), games=2,
@@ -755,11 +743,8 @@ else:
 
 @pytest.mark.parametrize(("blocked", "consumer", "branch", "site"), [
     ("gumbel_c", "play_batch", "gumbel", "play_batch"),
-    ("puct_c", "play_batch", "puct", "play_batch"),
     ("gumbel_c", "network_turn", "gumbel", "selfplay network turn"),
-    ("puct_c", "network_turn", "puct", "selfplay network turn"),
     ("gumbel_c", "arena", "gumbel", "arena move selection"),
-    ("puct_c", "arena", "puct", "arena move selection"),
 ])
 def test_refusal_carries_the_real_import_error_text(
     blocked: str, consumer: str, branch: str, site: str,

@@ -13,7 +13,7 @@ from chess_anti_engine.mcts.gumbel import (
     POLICY_TEMP_MIN,
     SELFPLAY_GUMBEL_C_SCALE,
 )
-from chess_anti_engine.utils.search_type import normalize_mcts_type
+from chess_anti_engine.utils.search_type import require_gumbel_search
 from chess_anti_engine.stockfish.wdl import SEARCH_WDL_DRAW_MODES, SEARCH_WDL_DRAW_NET_RAW
 from chess_anti_engine.train.constants import DEFAULT_GUMBEL_TOPK, normalize_gumbel_topk
 from chess_anti_engine.train.losses import SfPolicyFloorParams, SfShapeParams
@@ -294,8 +294,6 @@ class TrialConfig:
     playout_cap_fraction: float = 0.25
     full_ply_pair_fraction: float = 0.0
     fast_simulations: int = 8
-    fpu_reduction: float = 1.2
-    fpu_at_root: float = 1.0
     gumbel_topk: int = 16
   # lc0 PolicyTemperature on the SELFPLAY search prior; 1.0 = no-op.
   # See SearchConfig.gumbel_policy_temp for the cost note.
@@ -768,7 +766,7 @@ class TrialConfig:
                 config.get("slot_oversubscribe", 1.0), name="slot_oversubscribe",
             ),
             max_plies=int(config.get("max_plies", 240)),
-            mcts=normalize_mcts_type(config.get("mcts", "gumbel")),
+            mcts=require_gumbel_search(config.get("mcts", "gumbel")),
             mcts_simulations=int(config.get("mcts_simulations", 50)),
             mcts_start_simulations=int(config.get("mcts_start_simulations", 50)),
             mcts_ramp_steps=int(config.get("mcts_ramp_steps", 10_000)),
@@ -777,8 +775,6 @@ class TrialConfig:
             playout_cap_fraction=float(config.get("playout_cap_fraction", 0.25)),
             full_ply_pair_fraction=float(config.get("full_ply_pair_fraction", 0.0)),
             fast_simulations=int(config.get("fast_simulations", 8)),
-            fpu_reduction=float(config.get("fpu_reduction", 1.2)),
-            fpu_at_root=float(config.get("fpu_at_root", 1.0)),
             gumbel_topk=normalize_gumbel_topk(
                 config.get("gumbel_topk", DEFAULT_GUMBEL_TOPK),
             ),

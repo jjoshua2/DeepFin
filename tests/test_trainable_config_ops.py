@@ -648,11 +648,13 @@ def test_restart_required_keys_match_the_reloader(
     def _mutate(key: str, value: object) -> object:
         if isinstance(value, bool):
             return not value
-        # `mcts` takes only gumbel/puct: "<value>_CHANGED" is DECLINED as invalid
-        # on a live reload (`_decline_invalid_mcts_edit`), which would read here
-        # as restart-required. Flip to the other valid value instead.
+        # `mcts` has exactly one valid value since puct was retired
+        # (2026-11-14): any edit is DECLINED as invalid on a live reload
+        # (`_decline_invalid_mcts_edit`), which would read here as
+        # restart-required. Nothing is observable, so leave it unchanged (the
+        # loop skips it); `tests/test_puct_retired.py` pins the decline.
         if key == "mcts":
-            return "puct" if value == "gumbel" else "gumbel"
+            return value
         if key in loader_unit_fraction_keys and isinstance(value, (int, float)):
             return float(value) / 2 if value > 0 else 0.5
         if isinstance(value, (int, float)):

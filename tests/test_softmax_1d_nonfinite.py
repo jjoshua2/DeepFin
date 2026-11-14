@@ -3,8 +3,9 @@
 `softmax_1d`'s docstring promises a uniform fallback that "avoids
 divide-by-zero corrupting the downstream MCTS prior or SF policy target", and
 it names exactly the callers that had the problem: `mcts/puct.py:27`
-(`softmax_1d(logits[legal_idx])`), `mcts/gumbel.py:48`, and
-`selfplay/stockfish_turn.py:40`.
+(`softmax_1d(logits[legal_idx])`, deleted with the selfplay PUCT search on
+2026-11-14 together with its two end-to-end tests here), `mcts/gumbel.py:48`,
+and `selfplay/stockfish_turn.py:40`.
 
 The guard was `if s <= 0`. **`nan <= 0` is False.** So a single nan logit
 walked straight through it: `np.max` over a vector containing one nan is nan,
@@ -115,49 +116,9 @@ def test_the_all_zero_case_still_returns_uniform() -> None:
 def test_the_result_is_float32_on_every_path() -> None:
     """The fallback and the normal path must agree on dtype.
 
-    `mcts/puct.py` feeds this straight into the tree's prior array; a float64
+    `mcts/gumbel.py` feeds this straight into the tree's prior array; a float64
     escaping through one branch is the kind of thing that shows up much later
     as a dtype error in an unrelated place.
     """
     assert softmax_1d(np.array([1.0, 2.0], dtype=np.float64)).dtype == np.float32
     assert softmax_1d(np.array([1.0, np.nan], dtype=np.float64)).dtype == np.float32
-
-
-def test_the_documented_caller_gets_a_usable_prior() -> None:
-    """End-to-end through `mcts/puct.py:_softmax_legal`, the named caller.
-
-    Asserting on the helper alone leaves open whether the caller reaches it
-    with the shape assumed here: it passes `logits[legal_idx]`, a GATHER, so
-    the nan only matters when it lands on a legal move. It does here.
-    """
-    from chess_anti_engine.mcts.puct import _softmax_legal
-
-    logits = np.array([0.1, np.nan, 0.3, 0.4], dtype=np.float32)
-    legal_idx = np.array([0, 1, 2], dtype=np.int64)
-
-    prior = _softmax_legal(logits, legal_idx)
-
-    assert np.isfinite(prior).all(), (
-        "the MCTS prior must never contain nan; this is the exact call the "
-        "fallback's docstring says it protects"
-    )
-    assert float(prior.sum()) == pytest.approx(1.0)
-
-
-def test_a_nan_on_an_ILLEGAL_move_does_not_disturb_the_prior() -> None:
-    """The other half of the gather: an out-of-set nan must be irrelevant.
-
-    Without this, `_softmax_legal` returning uniform for every position with a
-    nan ANYWHERE in the 1858-wide logit vector would look like a pass.
-    """
-    from chess_anti_engine.mcts.puct import _softmax_legal
-
-    logits = np.array([0.1, 0.2, 0.3, np.nan], dtype=np.float32)
-    legal_idx = np.array([0, 1, 2], dtype=np.int64)
-
-    prior = _softmax_legal(logits, legal_idx)
-
-    legal = np.array([0.1, 0.2, 0.3], dtype=np.float32)
-    expected = np.exp(legal - legal.max())
-    expected = expected / expected.sum()
-    assert prior == pytest.approx(expected.astype(np.float32), rel=1e-6)

@@ -798,7 +798,6 @@ def play_chunk(
                 mcts_type="gumbel",
                 mcts_simulations=int(sims),
                 temperature=float(temperature),
-                c_puct=2.5,
                 gumbel_add_noise=bool(gumbel_add_noise),
                 gumbel_overrides=overrides_with_volatility(side, None),
                 gumbel_vloss_weight=side.vloss_weight,

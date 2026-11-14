@@ -323,7 +323,7 @@ def test_the_python_search_refuses_to_silently_drop_them() -> None:
         match_mod.pick_moves_for_boards(
             _DummyModel().eval(), [chess.Board()],
             device="cpu", rng=np.random.default_rng(0),
-            mcts_type="gumbel", mcts_simulations=2, temperature=0.0, c_puct=2.5,
+            mcts_type="gumbel", mcts_simulations=2, temperature=0.0,
             gumbel_add_noise=False,
             volatility_q_scale=0.5,  # forces the Python path
             gumbel_vloss_weight=1,

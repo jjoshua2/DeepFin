@@ -423,7 +423,9 @@ def test_owned_handle_closes_if_state_construction_after_open_fails(monkeypatch)
 
 @pytest.mark.parametrize("kwargs", [
     {"target_games": 0, "stop_fn": lambda: False}, {"on_suspend": lambda _state: None},
-    {"on_game_provenance": None}, {"search": SearchConfig(mcts_type="puct")},
+    # A volatility arm (Python Gumbel, no TB consumer); `mcts_type="puct"` is now
+    # refused by SearchConfig itself (retired 2026-11-14).
+    {"on_game_provenance": None}, {"search": SearchConfig(volatility_q_scale=0.5)},
 ])
 def test_unsupported_routes_refuse_before_state_creation(monkeypatch, kwargs):
     monkeypatch.setattr(SelfplayState, "create", lambda **_kw: pytest.fail("opened state"))
