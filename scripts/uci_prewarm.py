@@ -46,6 +46,7 @@ def _engine_cmd(
     max_batch: int | None,
     chunk_sims: int | None,
     walkers: int | None,
+    compile_cache_dir: str | None = None,
 ) -> list[str]:
     """The engine command line: an engine flag is passed only when given."""
     cmd = [
@@ -64,8 +65,10 @@ def _engine_cmd(
             cmd.extend([flag, str(value)])
     if devices:
         cmd.extend(["--devices", devices])
-    else:
-        cmd.extend(["--device", device or "cuda"])
+    elif device is not None:
+        cmd.extend(["--device", device])
+    if compile_cache_dir is not None:
+        cmd.extend(["--compile-cache-dir", compile_cache_dir])
     if multi_gpu_pucv:
         cmd.append("--multi-gpu-pucv")
     if no_compile:
@@ -171,7 +174,10 @@ def _run_once(
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--checkpoint", required=True)
-    p.add_argument("--device", default="cuda")
+    # Engine flags default to None = not passed: the engine's own default runs
+    # (`--device auto` picks "cuda" when a GPU is visible). The engine inherits
+    # this process's environment, DEEPFIN_COMPILE_CACHE included.
+    p.add_argument("--device", default=None)
     p.add_argument("--devices", default=None,
                    help="comma-separated multi-GPU list, e.g. cuda:0,cuda:1")
     p.add_argument("--multi-gpu-pucv", action="store_true",
@@ -182,6 +188,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="requested compile mode (default: the engine's); multi-GPU may "
                         "rewrite cudagraph modes")
     p.add_argument("--no-compile", action="store_true")
+    p.add_argument("--compile-cache-dir", default=None,
+                   help="the engine's --compile-cache-dir; pass the one you register")
     p.add_argument("--vl-gather", type=int, default=None)
     p.add_argument("--max-batch", type=int, default=None)
     p.add_argument("--chunk-sims", type=int, default=None)
@@ -201,7 +209,7 @@ def main() -> int:
     multi = bool(args.multi_gpu_pucv or (args.devices and "," in args.devices))
     print(
         f"# prewarm checkpoint={args.checkpoint} "
-        f"devices={args.devices or args.device} "
+        f"devices={args.devices or args.device or 'engine default'} "
         f"multi_gpu={multi} compile_mode={args.compile_mode or 'engine default'!r} "
         f"repeat={args.repeat}",
         flush=True,
@@ -221,6 +229,7 @@ def main() -> int:
                 max_batch=args.max_batch,
                 chunk_sims=args.chunk_sims,
                 walkers=args.walkers,
+                compile_cache_dir=args.compile_cache_dir,
             ),
             nodes=int(args.nodes),
             ready_timeout_s=float(args.ready_timeout_s),

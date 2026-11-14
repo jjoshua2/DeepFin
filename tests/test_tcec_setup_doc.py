@@ -78,6 +78,8 @@ _DOC_PROBES = (
     "setoption name Hash value abc",
     "setoption name ClockBatchMarginSigmas value -1",
     "setoption name Topk value 1",
+    "setoption name Topk value abc",
+    "setoption name PolicyTemperature value abc",
     "setoption name RPGOpenBudgetFrac value 2",
     "setoption name UCI_ShowWDL value maybe",
     "setoption name SearchParallel value bogus",
@@ -242,6 +244,10 @@ def test_the_search_options_row_is_the_registry_and_each_refuses(run: _Run) -> N
     assert row[1].startswith("refused")
     for name in SEARCH:
         assert _refused(run, name), (name, _reply(run, name))
+    # A value that does not parse: "an integer" for a spin, "a number" for a string.
+    for cmd in ("setoption name Topk value abc", "setoption name PolicyTemperature value abc"):
+        (reply,) = run.replies[cmd]
+        assert f"`{reply}`" in row[2], (reply, row[2])
 
 
 def test_the_remaining_class_rows_match_the_engine(run: _Run) -> None:
@@ -257,6 +263,54 @@ def test_the_remaining_class_rows_match_the_engine(run: _Run) -> None:
     assert rows[frozenset(combos)][2].startswith("refused")
     for name in checks | combos:
         assert _refused(run, name), (name, _reply(run, name))
+
+
+# --- install facts ------------------------------------------------------------
+
+
+def _extension_count() -> int:
+    tree = ast.parse((ROOT / "setup.py").read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.keyword) and node.arg == "ext_modules":
+            assert isinstance(node.value, ast.List)
+            return len(node.value.elts)
+    raise AssertionError("setup.py has no ext_modules")
+
+
+@pytest.mark.parametrize("doc", ["docs/TCEC_SETUP.md", "docs/install.md"])
+def test_the_c_extension_count_is_setup_pys(doc: str) -> None:
+    words = {3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight", 9: "nine"}
+    flat = " ".join((ROOT / doc).read_text(encoding="utf-8").split())
+    count_word = "|".join([*words.values(), r"\d+"])
+    stated = re.findall(rf"\b({count_word}) C extensions\b", flat)
+    assert stated, doc
+    assert set(stated) == {words[_extension_count()]}, (doc, stated)
+
+
+# --- the en-passant rule as the page states it ---------------------------------
+
+
+def test_the_en_passant_prose_matches_the_rule() -> None:
+    from chess_anti_engine.uci.engine import Engine
+
+    assert "the opponent's pawn stands just beyond it and a capture on it is legal" in FLAT
+    assert "never rejected for its en-passant square" in FLAT
+    assert "is rejected as an illegal move" in FLAT
+
+    def validated(position: str):
+        cmd = parse_command(position)
+        assert not isinstance(cmd, (CmdUnknown, CmdGo))
+        return Engine._validated_position(cmd)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+
+    kept = validated("position fen 4k3/8/8/8/3pP3/8/4P3/4K3 b - e3 0 1")
+    assert not isinstance(kept, str)
+    assert kept[0].ep_square is not None  # the opponent's pawn beyond it: kept
+    other = validated("position fen 4k3/8/8/8/3pN3/8/8/4K3 b - e3 0 1")
+    assert not isinstance(other, str)
+    assert other[0].ep_square is None  # any other piece beyond it: dropped, answered
+    refused = validated("position fen 4k3/8/8/8/3p4/8/8/4K3 b - e3 0 1 moves d4e3")
+    assert isinstance(refused, str)
+    assert "illegal" in refused
 
 
 # --- command-line flags -------------------------------------------------------

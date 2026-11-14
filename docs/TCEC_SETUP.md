@@ -21,7 +21,7 @@ columns are written from reading the code and are not checked by the test.
 
 - Linux x86-64, an NVIDIA GPU, and a PyTorch build whose CUDA version supports the
   card ([install.md](install.md) has the details, including RTX 50-series).
-- CPython 3.10.12 to 3.13, `gcc` and the Python headers (five C extensions are
+- CPython 3.10.12 to 3.13, `gcc` and the Python headers (six C extensions are
   compiled at install).
 - The network file (`trainer.pt`), passed on the command line.
 - Disk for PyTorch and a torch.compile cache that grows to a few GB under
@@ -63,7 +63,9 @@ CPU with a small test network):
   `SKIP  freshness   not a source checkout (regular wheel install): no sources to compare; the ABI/symbol and behavioural checks still apply`
   and `SELFCHECK PASS (uci: fast: --no-compile (does NOT cover the default compiled play path); 1 skipped: freshness)`.
 
-A SKIP is not a failure; the exit status is 0 unless something FAILs. Without `--fast` the UCI exchange runs the default compiled play path, so a
+A SKIP is not a failure; the exit status is 0 unless something FAILs.
+
+Without `--fast` the UCI exchange runs the default compiled play path, so a
 cold compile happens inside the check (minutes on a real net; `--uci-timeout`
 raises the 900 s reply limit). The self-check's own flags are `--json`,
 `--checkpoint`, `--syzygy`, `--device`, `--devices`, `--fast`, `--uci-timeout` and
@@ -146,10 +148,15 @@ refuse to start (exit 1, the reason on stderr).
 (minutes under `max-autotune`); the cache makes later starts faster.
 `scripts/uci_prewarm.py --checkpoint /path/to/trainer.pt` drives the real UCI path
 once to fill it **(GPU, not run)**. Give it exactly the engine flags you will
-register (`--devices`, `--multi-gpu-pucv`, `--search-parallel`, `--compile-mode`,
-`--max-batch`, `--chunk-sims`, `--vl-gather`, `--walkers`): a flag you leave out is
-left out of the engine command too, so the engine's own default applies. `readyok` is sent only after the
-search path is warmed, so give the engine a generous start / `isready` allowance in
+register (`--device` or `--devices`, `--multi-gpu-pucv`, `--search-parallel`,
+`--compile-mode`, `--compile-cache-dir`, `--max-batch`, `--chunk-sims`,
+`--vl-gather`, `--walkers`): a flag you leave out is left out of the engine command
+too, so the engine's own default applies (`--device auto`, which picks the GPU when
+one is visible). The engine inherits the prewarm's environment, so
+`DEEPFIN_COMPILE_CACHE` carries over; if you register a non-default
+`--compile-cache-dir`, pass the same one so that directory is the one warmed.
+
+`readyok` is sent only after the search path is warmed, so give the engine a generous start / `isready` allowance in
 the GUI. `scripts/tcec_autotune.sh --checkpoint ... [--devices ...]` sweeps batching
 and parallel-search settings for nps **(GPU, not run)**; nps is not playing strength,
 and its output is a throughput report, not a recommended configuration.
@@ -216,7 +223,7 @@ to the setting depends on the option:
 |---|---|---|
 | `Hash`, `Threads`, `SearchWalkers`, `LeafGather`, `VLGather`, `MaxBatch`, `EvalCacheEntries`, `MultiPV`, `MoveOverheadMs`, `RPGOpenVPA`, `RPGMinVPA`, `RPGMinKeep` | clamped to the nearest bound, then applied: `info string Hash 512 is below the advertised minimum 1024; using 1024` | ignored: `info string Hash: 'abc' is not an integer; ignored` |
 | `ClockBatchMarginSigmas` | below 0 is clamped: `info string ClockBatchMarginSigmas -1.0 is below 0; using 0.0` | kept: `... is not a number; keeping ...` |
-| The search options: `PolicyTemperature`, `CScale`, `CVisit`, `CScaleRoot`, `CVisitRoot`, `QVisitExpRoot`, `HalvingDiv`, `Topk`, `GumbelScale`, `ChunkSims`, `VLossWeight`, `MinibatchSize`, `CPuct`, `CPuctFactor`, `CPuctBase`, `FpuReduction` | refused, the current value kept: `info string Topk: 1 is out of range [2, 256]; keeping 32` | kept: `... is not a number; keeping ...` |
+| The search options: `PolicyTemperature`, `CScale`, `CVisit`, `CScaleRoot`, `CVisitRoot`, `QVisitExpRoot`, `HalvingDiv`, `Topk`, `GumbelScale`, `ChunkSims`, `VLossWeight`, `MinibatchSize`, `CPuct`, `CPuctFactor`, `CPuctBase`, `FpuReduction` | refused, the current value kept: `info string Topk: 1 is out of range [2, 256]; keeping 32` | kept: `info string Topk: 'abc' is not an integer; keeping 32` (spin), `info string PolicyTemperature: 'abc' is not a number; keeping 1.0` (string) |
 | `RPGOpenBudgetFrac` | refused, kept: `... is not a number in (0, 1]; keeping 0.5` | the same |
 | `UseVL`, `UseMultiGpuPUCV`, `UCI_ShowWDL`, `Syzygy50MoveRule`, `Ponder` | not applicable | kept: `... expected true/false, got 'maybe'; keeping false` |
 | `SearchParallel`, `PUCVPendingMode` | not applicable | refused, kept: `info string SearchParallel: 'bogus' is not one of pucv / gumbel; keeping pucv` |
@@ -293,7 +300,10 @@ rejected as a whole:
   square is occupied (the opponent's pawn stands just beyond it and a capture on it
   is legal): it is kept, so a move list that plays the capture is accepted, and
   `info string position: kept en-passant square ...` says so. Either way the
-  position is answered, never rejected for its en-passant square.
+  position is answered, never rejected for its en-passant square. A move list
+  that then plays an "en-passant capture" with nothing to capture is rejected as
+  an illegal move, as any illegal move is: `moves d4e3` after
+  `4k3/8/8/8/3p4/8/8/4K3 b - e3 0 1` (no pawn on e4).
 - Missing or extra kings, pawns on the back rank, the side not to move in check,
   an unparseable FEN, a malformed command, and an illegal move in the move list are
   rejected: `info string position: rejected (...); keeping the previous position; go

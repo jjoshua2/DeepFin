@@ -15,7 +15,8 @@ from types import ModuleType
 ROOT = Path(__file__).resolve().parents[1]
 
 _ENGINE_FLAGS = ("--chunk-sims", "--max-batch", "--walkers", "--vl-gather",
-                 "--search-parallel", "--compile-mode")
+                 "--search-parallel", "--compile-mode", "--device", "--devices",
+                 "--compile-cache-dir")
 
 
 def _prewarm() -> ModuleType:
@@ -35,6 +36,7 @@ def _cmd(argv: list[str]) -> list[str]:
         multi_gpu_pucv=bool(a.multi_gpu_pucv), search_parallel=a.search_parallel,
         compile_mode=a.compile_mode, no_compile=bool(a.no_compile), vl_gather=a.vl_gather,
         max_batch=a.max_batch, chunk_sims=a.chunk_sims, walkers=a.walkers,
+        compile_cache_dir=a.compile_cache_dir,
     )
 
 
@@ -56,3 +58,21 @@ def test_given_engine_flags_are_passed_through_unchanged() -> None:
     assert pairs["--search-parallel"] == "gumbel"
     assert pairs["--compile-mode"] == "default"
     assert pairs["--devices"] == "cuda:0,cuda:1"
+
+
+def test_device_and_compile_cache_dir_pass_through_only_when_given() -> None:
+    pairs = dict(pairwise(_cmd(["--checkpoint", "net.pt", "--device", "cuda:1",
+                                "--compile-cache-dir", "/srv/cache"])))
+    assert pairs["--device"] == "cuda:1"
+    assert pairs["--compile-cache-dir"] == "/srv/cache"
+
+
+def test_the_engine_inherits_the_environment() -> None:
+    """DEEPFIN_COMPILE_CACHE reaches the engine: it is started without env=."""
+    import ast
+
+    tree = ast.parse((ROOT / "scripts" / "uci_prewarm.py").read_text(encoding="utf-8"))
+    popens = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+              and isinstance(n.func, ast.Attribute) and n.func.attr == "Popen"]
+    assert popens
+    assert all(kw.arg != "env" for call in popens for kw in call.keywords)
