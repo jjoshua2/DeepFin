@@ -152,7 +152,7 @@ external Elo claim. Earlier baseline and successor negative/unresolved results
 remain unchanged; the long-term strength objective is not fulfilled by this
 census. Any training or strength follow-up needs a separate reviewed decision.
 
-Bulk evidence root: `/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1`.
+Bulk evidence root: `~/chess-artifacts/operations/rl-week-one-20261112-v1`.
 Paths below are relative to that root. No actual G1 payload was read to author
 this record. V1 source findings were corrected prospectively in V2: the candidate
 schema needed closed-audit/root authority, and payload-without-flag needed an
