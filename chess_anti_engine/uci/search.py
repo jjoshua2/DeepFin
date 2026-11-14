@@ -2027,6 +2027,41 @@ class SearchWorker:
         move = self._root_policy_move(board, allowed)
         return move.uci() if move is not None else None
 
+    def child_bestmove(
+        self, board: chess.Board, move: chess.Move, *, searchmoves: tuple[str, ...] = (),
+    ) -> str | None:
+        """The most-visited move at the node ``board`` + ``move`` of the CURRENT
+        tree (``board`` must be its root), or ``None``: no tree for ``board``, no
+        such child, or no visited child inside ``searchmoves``.
+
+        Reads visit counts only -- no evaluation, no search. ``Engine`` uses it
+        on a ponder miss: the ponder tree's root is the position BEFORE the
+        predicted reply, and the reply's subtree is the GUI's position. Call
+        only while no search runs on this worker."""
+        tree, root_id = self._tree, self._root_id
+        if tree is None or root_id is None or self._tree_fen != board.fen():
+            return None
+        try:
+            node = int(tree.find_child(root_id, int(move_to_index(move, board))))
+            if node < 0:
+                return None
+            actions, visits = tree.get_children_visits(node)
+        except Exception:
+            return None
+        after = board.copy(stack=False)
+        after.push(move)
+        allowed = _allowed_root_indices(after, searchmoves)
+        best: int | None = None
+        best_visits = 0
+        for action, n in zip(actions.tolist(), visits.tolist(), strict=True):
+            if allowed is not None and int(action) not in allowed:
+                continue
+            if int(n) > best_visits:
+                best, best_visits = int(action), int(n)
+        if best is None:
+            return None
+        return index_to_move(best, after).uci()
+
     def fresh_root_policy_bestmove(
         self, board: chess.Board, *, searchmoves: tuple[str, ...] = (),
     ) -> str | None:

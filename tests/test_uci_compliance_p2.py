@@ -27,7 +27,7 @@ import torch
 
 import chess_anti_engine.tablebase as tbmod
 import chess_anti_engine.uci.engine as engine_module
-from chess_anti_engine.moves import move_to_index
+from chess_anti_engine.moves import index_to_move, move_to_index
 from chess_anti_engine.uci.engine import Engine, EngineOptions
 from chess_anti_engine.uci.protocol import CmdGo, CmdPosition, CmdSetOption, GoArgs, parse_command
 from chess_anti_engine.uci.search import (
@@ -745,6 +745,24 @@ def test_go_mate_on_a_longer_proven_mate_stops_instead_of_idling() -> None:
         worker.close()
 
 
+def test_a_solved_root_that_still_grows_does_not_stop_on_mate_solved_root(monkeypatch) -> None:
+    """The `mate_solved_root` stop needs BOTH a solved root and a chunk that
+    grew nothing. Here the root reads as solved (no mate in <= N) while every
+    chunk still completes visits: the search must run to its node bound."""
+    worker = _tiny_worker()
+    try:
+        monkeypatch.setattr(worker, "_root_solved_status", lambda: 1)
+        monkeypatch.setattr(worker, "_proven_mate_within", lambda *_a, **_k: None)
+        result = worker.run(
+            chess.Board(), stop_event=threading.Event(), deadline=Deadline(30_000),
+            max_nodes=256, mate_moves=1,
+        )
+        assert worker.last_stop_reason != "mate_solved_root"
+        assert result.nodes >= 256
+    finally:
+        worker.close()
+
+
 # --- 2. position rejection --------------------------------------------------
 
 _BAD_POSITIONS = {
@@ -908,6 +926,99 @@ def test_stop_on_a_ponder_miss_answers_for_the_gui_board(out, pv, expect) -> Non
         engine.close()
 
 
+def test_a_ponder_miss_without_a_pv_reply_reads_the_ponder_tree(out) -> None:
+    """PV not through the predicted reply: the answer comes from the ponder
+    tree's subtree for the GUI position (visit counts), not a new evaluation
+    and not the first legal move."""
+    worker = _ponder_worker(lambda _b: ("b7b5", "a2a3"))
+    worker.child_bestmove.return_value = "g1f3"
+    engine = Engine(worker, options=EngineOptions(ponder=True))
+    try:
+        engine.dispatch(parse_command("position startpos moves e2e4 e7e5"))
+        engine.dispatch(parse_command("go ponder wtime 5000 btime 5000"))
+        engine.dispatch(parse_command("stop"))
+        assert out.wait_bestmoves(1) == ["g1f3"]
+        assert "source=ponder_tree move=g1f3" in out.text()
+        (call,) = worker.child_bestmove.call_args_list
+        board, popped = call.args
+        assert board.turn == chess.BLACK
+        assert popped == chess.Move.from_uci("e7e5")
+        worker.fresh_root_policy_bestmove.assert_not_called()
+    finally:
+        engine.close()
+
+
+def test_a_superseded_ponder_search_never_reads_the_worker_tree(out, monkeypatch) -> None:
+    """A ponder search whose generation is no longer current (parked after
+    `stop`, or a newer `go` owns the worker) must not compute a ponder-miss
+    answer: that reads the worker's tree while another search may own it, and
+    `_claim_answer` drops the answer anyway."""
+    worker = _ponder_worker(lambda _b: ("b7b5", "a2a3"))
+    engine = Engine(worker, options=EngineOptions(ponder=True))
+    try:
+        board = chess.Board()
+        board.push_uci("e2e4")
+        engine._popped_ponder_move = chess.Move.from_uci("e7e5")
+        stale = SearchResult("b7b5", "a2a3", 8, ("b7b5", "a2a3"), 0)
+        monkeypatch.setattr(engine, "_run_one_phase", lambda *a, **k: stale)
+        misses: list[object] = []
+        answer = SearchResult("g1f3", None, 8, ("g1f3",), 0)
+
+        def miss(*a: object, **_k: object) -> SearchResult:
+            misses.append(a)
+            return answer
+
+        monkeypatch.setattr(engine, "_ponder_miss_result", miss)
+        release = threading.Event()
+        release.set()
+        limits = limits_from_go(GoArgs(ponder=True, wtime_ms=5000, btime_ms=5000),
+                                side_to_move_is_white=False)
+        engine._run_search(limits, engine._search_gen - 1, board, ponder_release=release)
+        assert misses == []
+        worker.child_bestmove.assert_not_called()
+        assert out.bestmoves() == []
+        # Control: the same call at the current generation does take the path.
+        engine._popped_ponder_move = chess.Move.from_uci("e7e5")
+        engine._run_search(limits, engine._search_gen, board, ponder_release=release,
+                           cancel_event=release)
+        assert len(misses) == 1
+    finally:
+        engine.close()
+
+
+def test_child_bestmove_reads_the_most_visited_reply_from_a_real_tree() -> None:
+    worker = _tiny_worker()
+    try:
+        board = chess.Board()
+        board.push_uci("e2e4")
+        worker.run(board, stop_event=threading.Event(), deadline=Deadline(None), max_nodes=512)
+        tree, root = worker._tree, worker._root_id
+        assert tree is not None
+        assert root is not None
+        actions, visits = tree.get_children_visits(root)
+        reply = index_to_move(int(actions[int(np.argmax(visits))]), board)
+        node = tree.find_child(root, int(move_to_index(reply, board)))
+        kids, kid_visits = tree.get_children_visits(node)
+        assert kids.size > 0
+        after = board.copy()
+        after.push(reply)
+        want = index_to_move(int(kids[int(np.argmax(kid_visits))]), after).uci()
+        assert worker.child_bestmove(board, reply) == want
+        assert chess.Move.from_uci(want) in after.legal_moves
+        # searchmoves restrict it; a board that is not the tree's root reads nothing.
+        other = next(m.uci() for m in after.legal_moves if m.uci() != want)
+        assert worker.child_bestmove(board, reply, searchmoves=(other,)) in (other, None)
+        # A board that is not the tree's root reads nothing -- even a move whose
+        # (side-relative) action id IS a root child: the mirror of the reply,
+        # played from the start position, has the reply's id.
+        mirror = chess.Move(chess.square_mirror(reply.from_square), chess.square_mirror(reply.to_square))
+        assert mirror in chess.Board().legal_moves
+        assert int(move_to_index(mirror, chess.Board())) == int(move_to_index(reply, board))
+        assert worker.child_bestmove(chess.Board(), mirror) is None
+    finally:
+        worker.close()
+
+
 def test_ponderhit_still_answers_from_the_real_phase(out) -> None:
     calls: list[chess.Board] = []
 
@@ -982,6 +1093,110 @@ def test_stale_castling_rights_are_normalised_everywhere(label: str, out) -> Non
         assert chess.Move.from_uci(move) in engine._board.legal_moves
     finally:
         engine.close()
+
+
+# Impossible ep squares that are real except for the push's occupied start
+# square: (fen, ep square, the capture).
+_KEPT_EP = (
+    ("4k3/8/8/8/3pP3/8/4P3/4K3 b - e3 0 1", chess.E3, "d4e3"),
+    ("4k3/3p4/8/3pP3/8/8/8/4K3 w - d6 0 1", chess.D6, "e5d6"),
+)
+
+# python-chess "captures" en passant with no pawn of the opponent behind the
+# square too: nothing, a non-pawn, an own piece, the king.
+_DROPPED_EP = (
+    "4k3/8/8/8/3pN3/8/8/4K3 b - e3 0 1",
+    "4k3/8/8/8/3pB3/8/8/4K3 b - e3 0 1",
+    "4k3/8/8/3Pn3/8/8/8/4K3 w - e6 0 1",
+    "4k3/8/8/8/3pK3/8/8/8 b - e3 0 1",
+    "4k3/8/8/8/3pb3/8/8/4K3 b - e3 0 1",
+    "4k3/8/8/8/3pp3/8/8/4K3 b - e3 0 1",
+    "4k3/8/8/8/3pQ3/8/8/4K3 b - e3 0 1",
+    "4k3/8/8/8/3pR3/8/8/4K3 b - e3 0 1",
+    "4k3/8/8/8/3p4/8/8/4K3 b - e3 0 1",
+)
+
+
+def _c_matches_python_after_every_move(board: chess.Board) -> None:
+    """Independent of the engine's gate: every field of the C board equals
+    python-chess's at the root and after every legal move."""
+    from chess_anti_engine.encoding._lc0_ext import CBoard
+
+    def state(b: chess.Board) -> tuple:
+        return (b.occupied_co[chess.WHITE], b.occupied_co[chess.BLACK], b.pawns,
+                b.knights, b.bishops, b.rooks, b.queens, b.kings, b.ep_square, b.turn)
+
+    def c_state(cb) -> tuple:
+        return (cb.occ_white, cb.occ_black, cb.pawns, cb.knights, cb.bishops, cb.rooks,
+                cb.queens, cb.kings, cb.ep_square, bool(cb.turn))
+
+    cb = CBoard.from_board(board)
+    assert c_state(cb) == state(board)
+    assert sorted(int(i) for i in cb.legal_move_indices()) == sorted(
+        move_to_index(mv, board) for mv in board.legal_moves)
+    for mv in board.legal_moves:
+        after = board.copy(stack=False)
+        after.push(mv)
+        c_after = CBoard.from_board(board)
+        c_after.push_index(move_to_index(mv, board))
+        assert c_state(c_after) == state(after), mv.uci()
+
+
+@pytest.mark.parametrize(("fen", "square", "capture"), _KEPT_EP)
+def test_an_unreachable_ep_square_with_its_pushed_pawn_is_kept_everywhere(
+    fen: str, square: int, capture: str, out,
+) -> None:
+    """Dropping it would reject the capture, which python-chess accepts (main
+    answered e1d1). Kept: python-chess, the searched board, `_pending_fen`, the
+    C board and every position after a legal move all agree."""
+    from chess_anti_engine.encoding._lc0_ext import CBoard
+
+    assert chess.Board(fen).status() & chess.STATUS_INVALID_EP_SQUARE
+    worker = _worker()
+    engine = Engine(worker)
+    try:
+        engine.dispatch(parse_command(f"position fen {fen}"))
+        assert f"kept en-passant square {chess.square_name(square)}" in out.text()
+        assert engine._board.ep_square == square
+        assert engine._pending_fen is not None
+        assert chess.Board(engine._pending_fen).ep_square == square
+        assert CBoard.from_board(engine._board).ep_square == square
+        _c_matches_python_after_every_move(engine._board)
+        engine.dispatch(parse_command(f"position fen {fen} moves {capture}"))
+        assert "rejected" not in out.text()
+        assert engine._board.piece_at(square) is not None
+        _c_matches_python_after_every_move(engine._board)
+        _go(engine, "go nodes 64")
+        searched = _searched_boards(worker)[-1]
+        assert searched.move_stack == [chess.Move.from_uci(capture)]
+        (move,) = out.bestmoves()
+        assert chess.Move.from_uci(move) in engine._board.legal_moves
+    finally:
+        engine.close()
+
+
+@pytest.mark.parametrize("fen", _DROPPED_EP)
+def test_an_ep_square_without_its_pushed_pawn_is_dropped_never_rejected(fen: str) -> None:
+    cmd = parse_command(f"position fen {fen}")
+    assert isinstance(cmd, CmdPosition)
+    result = Engine._validated_position(cmd)
+    assert not isinstance(result, str), result
+    board, _moves, root_fen, notes = result
+    assert board.ep_square is None
+    assert root_fen is not None
+    assert chess.Board(root_fen).ep_square is None
+    assert any(n.startswith("normalised en-passant square") for n in notes), notes
+    _c_matches_python_after_every_move(board)
+
+
+@pytest.mark.parametrize("fen", _DROPPED_EP[:8])
+def test_the_gate_catches_a_c_board_an_ep_capture_leaves_inconsistent(fen: str) -> None:
+    """Called on the un-normalised board, the movegen gate must see what the
+    C board does with these captures: a phantom knight/bishop/king/queen/rook
+    type bit, or an own piece removed. Comparing only occupancy and pawns
+    passed the first four."""
+    reason = engine_module._movegen_disagreement(chess.Board(fen))
+    assert reason is not None, fen
 
 
 def test_an_impossible_en_passant_square_is_dropped(out) -> None:
@@ -1078,15 +1293,20 @@ def test_movegen_disagreement_reports_a_c_board_that_differs(monkeypatch) -> Non
     real = lc0_ext.CBoard
 
     class _Short:
+        """The real board, but its generator drops one move."""
+
         def __init__(self, board: chess.Board) -> None:
-            self._ids = real.from_board(board).legal_move_indices()[1:]
+            self._cb = real.from_board(board)
 
         @classmethod
         def from_board(cls, board: chess.Board) -> _Short:
             return cls(board)
 
         def legal_move_indices(self):
-            return self._ids
+            return self._cb.legal_move_indices()[1:]
+
+        def __getattr__(self, name: str):
+            return getattr(self._cb, name)
 
     monkeypatch.setattr(lc0_ext, "CBoard", _Short)
     reason = engine_module._movegen_disagreement(chess.Board())
@@ -1327,3 +1547,39 @@ def test_position_parse_errors() -> None:
     padded = _position("position fen 4k3/8/8/8/8/8/8/4K3 w - -")
     assert padded.error is None
     assert padded.fen == "4k3/8/8/8/8/8/8/4K3 w - - 0 1"
+
+
+# --- combo options answer a value they do not have -----------------------------
+
+
+@pytest.mark.parametrize(
+    ("option", "field", "current"),
+    [("PUCVPendingMode", "pucv_pending_mode", "legacy"),
+     ("SearchParallel", "search_parallel", "pucv")],
+)
+def test_a_combo_value_the_option_does_not_have_is_answered_and_changes_nothing(
+    out, option: str, field: str, current: str,
+) -> None:
+    worker = _worker()
+    engine = Engine(worker)
+    try:
+        assert getattr(engine._options, field) == current
+        engine.dispatch(parse_command(f"setoption name {option} value bogus"))
+        assert f"info string {option}: 'bogus' is not one of" in out.text(), out.text()
+        assert f"; keeping {current}" in out.text(), out.text()
+        assert getattr(engine._options, field) == current
+        worker.set_pucv_vloss_mode.assert_not_called()
+    finally:
+        engine.close()
+
+
+def test_a_valid_combo_value_is_not_refused(out) -> None:
+    worker = _worker()
+    engine = Engine(worker)
+    try:
+        engine.dispatch(parse_command("setoption name PUCVPendingMode value virtual-mean"))
+        assert "is not one of" not in out.text()
+        assert engine._options.pucv_pending_mode == "virtual-mean"
+        worker.set_pucv_vloss_mode.assert_called_once_with(1)
+    finally:
+        engine.close()
