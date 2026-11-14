@@ -20,7 +20,7 @@ Scripts removed under this rule, and their dedicated tests, are:
 - archived on the project host under
   `~/chess-artifacts/repo-slim-20261113/scripts/` and `.../tests/`, with the same
   relative paths and listed in that directory's `MANIFEST.sha256`;
-- kept in git history at tag `pre-slim-20261113` (also branch `bend`).
+- kept in git history at tag `pre-slim-20261113`.
 
 To bring one back:
 
