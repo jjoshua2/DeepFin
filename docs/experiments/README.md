@@ -11,7 +11,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
-- [2026-11-14: Fixed LOW512 versus original A39 successor](2026-11-14-low512-donor-screen.md) — prospective source/role proposal independently reviewed; root adoption, role release and all execution admissions pending. Fixed 512-game screen and conditional sole 1,000-game same-hash confirmation; no training, predictions or gain yet.
+- [2026-11-14: Fixed LOW512 versus original A39 successor](2026-11-14-low512-donor-screen.md) — completed qualified screen nonpass: 48.9258% versus A39 over 512 games (paired 95% interval 45.8184–52.0332%, includes parity). No confirmation eligible, allocated or consumed; donor retained, no playing gain or equivalence claim.
 
 - [2026-11-13: Fixed G1 lower-LR probe and G2 WDL adjunct](2026-11-13-fixed-g1-lr-g2-wdl.md) — completed: LOW512 scored 57.03125% versus banked HIGH512 on reused diagnostic pairs (95% interval 52.0518–62.0107%); whole-G2 descriptive NLL/Brier order LOW512, A39, HIGH512. No A39 playing-gain, online recovery, optimal-LR or adoption claim; original baseline negative preserved.
 

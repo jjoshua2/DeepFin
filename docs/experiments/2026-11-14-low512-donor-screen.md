@@ -1,5 +1,11 @@
 # Fixed LOW512 versus original A39 successor
 
+Current status: **COMPLETED SCREEN NONPASS, TECHNICALLY QUALIFIED**. LOW512
+scored .4892578125 against A39; paired 95% bounds include parity. Roles were
+adopted and the fixed screen ran under separate admission. No confirmation was
+eligible, allocated or consumed; donor retained, no promotion or supported gain. The
+preregistration snapshot below is historical; the completed readout follows.
+
 Status at preregistration: **PROSPECTIVE_REVIEWED_PROPOSAL — NOT ADOPTED, NOT RELEASED, NOT
 ADMITTED OR EXECUTED.** Source and the exact scoped role-disposition proposal
 have independent acceptance. Publication records the proposal before root
@@ -66,7 +72,7 @@ Rofchade/Stockfish/Lc0 objectives remain unmet.
 The exact proposal retains the existing TERMINAL2 and CONFIRM2 bytes. **After
 reviewed root adoption only**, retire their old conditional claims and assign
 aliases `LOW512_A39_SCREEN` and `LOW512_A39_SOLE_CONFIRMATION`. No such retirement
-or release has happened at this record's snapshot. All other original roles
+or release had happened at the preregistration snapshot. All other original roles
 remain reserved. Screen/confirmation protocol binding follows the adopted
 identity; the source packet cannot self-adopt the proposal.
 
@@ -116,3 +122,74 @@ release, root adoption, execution admission or a result:
 | `core-baseline-roster-consumer-results-v1-b0db4b6b-2bb3-4753-80d6-96825decbbee/terminal2.epd` | `3b9fc3673d4c4181d94a57116031502f4574633b1e1f64d9a981285c5694230a` |
 | `core-baseline-roster-consumer-results-v1-b0db4b6b-2bb3-4753-80d6-96825decbbee/confirm2.epd` | `2e5472f5ebec3000b164e013cec45cc455aae923c5ba2b3872777d6b17185702` |
 | `core-baseline-roster-consumer-results-v1-b0db4b6b-2bb3-4753-80d6-96825decbbee/playing-guard.json` | `9466be7f62a39ac099acc6b1de1a244c77817e7a2f6e1d7b11d300b46ff1d8e2` |
+
+
+## 2026-11-14 01:12 UTC — completed donor screen; no confirmation
+
+The fixed screen completed **512 games / 256 color pairs**, technically
+qualified: **147 wins, 207 draws and 158 losses** for LOW512 versus immutable
+A39. Mean score was **.4892578125**, paired normal approximate 95% interval
+**[.45818409026139667, .5203315347386034]**, with unbiased pair variance
+**.06434493719362745**. Pair-total counts for {0, .5, 1, 1.5, 2} were
+{18, 66, 98, 57, 17}. Endings were 239 rules resolutions and 273 qualified TB
+resolutions; observed serving retained the 32-game pool / 1,024 leaf-row profile.
+
+**Technical PASS / SCREEN_NONPASS:** neither required gain threshold passed.
+The interval includes parity. This is not proof of equivalence, a clean
+regression or general recipe ineffectiveness. The lower descriptive corpus
+loss and LOW512-versus-HIGH512 result did **not establish A39 playing gain** at
+this fixed checkpoint/horizon. No pooling with DIAGNOSTIC128, G2 loss or the
+original G8 panel changes this outcome. There is no online-RL recovery, C1,
+confirmation, two-successive-gains, external Elo or optimal-LR claim.
+
+No confirmation was eligible or allocated, and the attempt was **not consumed**.
+CONFIRM2 remains assigned to this completed successor and **unplayed**; it is
+not silently released elsewhere. No alternative screen, seed or book for this
+same checkpoint is authorized. A possible separately reviewed on-policy
+lower-LR continuation from the full saved step-512 state is only under
+consideration: no next study is selected, frozen or admitted, and resumed
+training has not occurred. Immutable A39 and all prior negative/unresolved
+records remain intact.
+
+### Actual adoption and publication chronology
+
+| Event, 2026-11-14 UTC | Recorded time |
+| --- | --- |
+| Reviewed ready PR 1286 created | 00:35:04 |
+| Published PR document bytes verified | 00:37:40.192544 |
+| Reviewed role disposition adopted | 00:40:01.526634 |
+| Screen resource preflight | 00:40:01.808817 |
+| GPU owner started | 00:40:13.303489 |
+
+The banked `17076cd2…` publication proof explicitly recorded **main merge
+pending**. The exact reviewed proposal was public before adoption and
+predictions; main merge `0a97884c…` and all four passing CI jobs completed later
+**during the screen**. They were not retroactively prerequisites already
+satisfied at launch. Actual adoption applied only the two declared aliases;
+source, frozen screen protocol `a6b86ca8…`, model hashes and criteria were
+unchanged. The independent binding review checked the recorded chronology and
+whole-template inverse; adoption itself did not grant resource ownership or
+execution permission.
+
+GPU owner wall was **1,483.217908 seconds**, with strict CPU readback
+**24.681984 seconds**; both owners closed PASS. These are stage wall times,
+not CUDA-active time or an ETA. Source, assets, full history, legality, paired
+counts, served-state/file custody and closure qualified under the pinned
+reader. Independent actual metadata and complete 512-game/256-pair arithmetic
+review accepted the qualified screen nonpass, served-state/custody joins and
+closed owners, reusing strict CPU physics readback. It also verified later main
+publication while preserving the initial prelaunch PR proof. No model/payload
+inspection or new compute was performed to author this documentation.
+
+Additional external identities use the same operations artifact root:
+
+| Artifact | SHA256 |
+| --- | --- |
+| `core-baseline-low512-A39-successor-prereg-main-publication-v1/preregistration-published-pr.json` | `17076cd23fd1938b7355f16a4b26d1d28b79970b6db4a84b3ecb269a71c3b616` |
+| `core-baseline-low512-A39-successor-prereg-main-publication-v1/publication.json` | `38c0601ffc5582484c98e8cb7d480de06a2c8ec5cd39079344688a1c72e54a6d` |
+| `core-baseline-low512-A39-successor-bindings-v1/role-adoption.json` | `fdc7300ad9bb97f18f1b13610d9961a88228a067b158b7bfdbc238940c460b2f` |
+| `core-baseline-low512-A39-successor-bindings-v1/low512-A39-screen/protocol.json` | `a6b86ca80ffdbf9c3e4c95d86273dd8ce1c019c64d3560ae80b7d2493e6ab2f8` |
+| `core-baseline-low512-A39-screen-actual-binding-independent-review-v1/review.json` | `57047ecbfd05fecd7882298098439170b1208ab55e2ad02b23ce2475b710d061` |
+| `core-baseline-low512-A39-screen-readout-v1/readout.json` | `74da2199314a56540f34a067a51c13e2d34d796de5b4b9ee958d973a40f61395` |
+| `core-baseline-low512-A39-successor-bindings-v1/low512-A39-screen/root-readout-acceptance.json` | `99d8826e791e6b774e4864d4ba7b3c69e81dbb09ca05edda62a645596062a78e` |
+| `core-baseline-low512-A39-screen-independent-actual-review-v1/review.json` | `e2b2015798f52858611cb65498b889905d2981fff9d35bfcfcb1f8aac533a21c` |
