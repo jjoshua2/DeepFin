@@ -14,6 +14,9 @@ and every expected difference):
                  clock 0 (half), 99 (a fifth) or 1..98;
 * ``ep``         a double pawn push just happened, en-passant square set;
 * ``castling``   castling rights present -- neither prober may answer;
+* ``bogus_ep``   a legal board given an arbitrary, often impossible, ep square
+                 (see ``ep_must_be_refused`` for the one case the C prober
+                 refuses where python-chess applies a nonsense capture);
 * ``terminal``   checkmates and stalemates reached by one move from ``random``.
 
 Root moves: for the first ``--root-per-class`` ``random`` positions of each
@@ -185,6 +188,53 @@ def gen_edge_king(rng: random.Random, cls: str) -> chess.Board | None:
     return board if board.is_valid() else None
 
 
+def gen_bogus_ep(rng: random.Random, cls: str) -> chess.Board | None:
+    """A legal board given an en-passant square that may be IMPOSSIBLE.
+
+    Half the time any square; otherwise a "victim" square: a side-to-move pawn
+    beside an opponent piece on the capture rank (often the king), with the ep
+    square behind that piece. Fathom's ep capture deletes whatever stands on
+    ep-8/ep+8, so this is the case that used to crash it.
+    """
+    board = gen_random(rng, cls)
+    if board is None:
+        return None
+    stm = board.turn
+    if rng.random() < 0.5:
+        board.ep_square = rng.randrange(1, 64)
+        return board
+    capture_rank = 4 if stm else 3
+    victims = [sq for sq in chess.SquareSet(board.occupied_co[not stm])
+               if chess.square_rank(sq) == capture_rank]
+    if not victims:
+        board.ep_square = rng.randrange(1, 64)
+        return board
+    victim = rng.choice(victims)
+    side = [f for f in (chess.square_file(victim) - 1, chess.square_file(victim) + 1) if 0 <= f < 8]
+    capturer = chess.square(rng.choice(side), capture_rank)
+    if board.piece_at(capturer) is None and board.pawns & board.occupied_co[stm] and rng.random() < 0.8:
+        # Move one of the side-to-move's pawns next to the victim.
+        mover = rng.choice(list(chess.SquareSet(board.pawns & board.occupied_co[stm])))
+        board.remove_piece_at(mover)
+        board.set_piece_at(capturer, chess.Piece(chess.PAWN, stm))
+    board.ep_square = victim + (8 if stm else -8)
+    plain = board.copy(stack=False)
+    plain.ep_square = None
+    return board if plain.is_valid() else None  # only the ep square may be wrong
+
+
+def ep_must_be_refused(board: chess.Board) -> bool:
+    """The C prober refuses (ValueError) exactly these ep positions.
+
+    python-chess would apply a pseudo-legal ep capture onto a structurally
+    impossible square (removing whatever is on ep-8/ep+8, possibly the king);
+    the C prober treats that board as illegal instead, which is also what
+    python-chess's own ``status()`` says (STATUS_INVALID_EP_SQUARE). Every
+    other ep square gives python-chess's values exactly.
+    """
+    return bool(board.status() & chess.STATUS_INVALID_EP_SQUARE) and any(board.generate_pseudo_legal_ep())
+
+
 def terminal_children(board: chess.Board) -> list[chess.Board]:
     out = []
     for move in list(board.legal_moves):
@@ -198,6 +248,16 @@ def terminal_children(board: chess.Board) -> list[chess.Board]:
 
 
 # ---------------------------------------------------------------- probing
+
+REFUSED = "ValueError"
+
+
+def _c_call(fn, arg) -> int | str | None:
+    try:
+        return fn(arg)
+    except ValueError:
+        return REFUSED
+
 
 def py_probe(tb: chess.syzygy.Tablebase, board: chess.Board) -> tuple[int | None, int | None]:
     try:
@@ -289,15 +349,21 @@ def compare_root(board: chess.Board, py_rows, c_rows) -> dict[str, Any]:
 
 
 def _flags(board: chess.Board) -> dict[str, Any]:
-    legal = list(board.legal_moves)
+    def safe(fn, default):
+        try:
+            return fn()
+        except Exception:  # an impossible ep square can confuse python-chess
+            return default
+
+    legal = safe(lambda: list(board.legal_moves), [])
     return {
         "stm": "w" if board.turn else "b",
         "clock": board.halfmove_clock,
-        "ep_legal": board.has_legal_en_passant(),
+        "ep_legal": safe(board.has_legal_en_passant, False),
         "has_capture": any(board.is_capture(m) for m in legal),
         "has_pawn_move": any(board.piece_type_at(m.from_square) == chess.PAWN for m in legal),
-        "mate": board.is_checkmate(),
-        "stalemate": board.is_stalemate(),
+        "mate": safe(board.is_checkmate, False),
+        "stalemate": safe(board.is_stalemate, False),
         "men": chess.popcount(board.occupied),
     }
 
@@ -335,7 +401,8 @@ def run_class(job: tuple[str, str, int, int, int, int]) -> dict[str, Any]:
         if add("random", b):
             assert b is not None
             randoms.append(b)
-    for gen, cat, want in ((gen_ep, "ep", per_class // 8), (gen_castling, "castling", 8)):
+    for gen, cat, want in ((gen_ep, "ep", per_class // 8), (gen_castling, "castling", 8),
+                           (gen_bogus_ep, "bogus_ep", per_class // 8)):
         got = tries = 0
         while got < want and tries < want * 200:
             tries += 1
@@ -354,13 +421,17 @@ def run_class(job: tuple[str, str, int, int, int, int]) -> dict[str, Any]:
     rows = []
     mismatches = []
     for cat, b in boards:
-        py_wdl, py_dtz = py_probe(tb, b)
+        refuse = ep_must_be_refused(b)
+        if refuse:
+            py_wdl = py_dtz = REFUSED
+        else:
+            py_wdl, py_dtz = py_probe(tb, b)
         fen = b.fen(en_passant="fen")
-        c_wdl = _tb_ext.probe_wdl_fen(fen)
-        c_dtz = _tb_ext.probe_dtz_fen(fen)
         cb = CBoard.from_board(b)
-        cb_wdl = _tb_ext.probe_wdl(cb)
-        cb_dtz = _tb_ext.probe_dtz(cb)
+        c_wdl = _c_call(_tb_ext.probe_wdl_fen, fen)
+        c_dtz = _c_call(_tb_ext.probe_dtz_fen, fen)
+        cb_wdl = _c_call(_tb_ext.probe_wdl, cb)
+        cb_dtz = _c_call(_tb_ext.probe_dtz, cb)
         row = {"key": fen, "cls": cls, "cat": cat, **_flags(b),
                "py_wdl": py_wdl, "py_dtz": py_dtz, "c_wdl": c_wdl, "c_dtz": c_dtz,
                "cb_wdl": cb_wdl, "cb_dtz": cb_dtz}
@@ -405,7 +476,7 @@ def throughput(rows: list[dict[str, Any]], syzygy_path: str) -> dict[str, Any]:
 
     _tb_ext.init(syzygy_path)
     tb = open_python_tablebase(syzygy_path)
-    probeable = [r["key"] for r in rows if r["py_wdl"] is not None and r["py_dtz"] is not None]
+    probeable = [r["key"] for r in rows if isinstance(r["py_wdl"], int) and isinstance(r["py_dtz"], int)]
     boards = [chess.Board(fen) for fen in probeable]
     cbs = [CBoard.from_board(b) for b in boards]
 
@@ -486,6 +557,8 @@ def main() -> int:
                     cats.append("stalemate")
                 if row["py_wdl"] in (1, -1):
                     cats.append("cursed_win" if row["py_wdl"] == 1 else "blessed_loss")
+                if row["py_wdl"] == REFUSED:
+                    cats.append("refused_impossible_ep")
                 if row["py_wdl"] is None:
                     cats.append("not_probeable")
                 for cat in cats:

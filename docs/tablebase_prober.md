@@ -32,19 +32,23 @@ All results are from the side to move's point of view.
 
 | call | returns |
 |---|---|
-| `init(path)` | Loads tables from a `:`-separated directory list and returns the largest man count found. Every directory is searched, and the first that holds a file wins. A second call replaces the table set; `init("")` clears it. |
+| `init(path)` | Loads tables from a `:`-separated directory list (`;` on Windows, Fathom's own separator) and returns the largest man count found. Every directory is searched, and the first that holds a file wins. A second call replaces the table set; `init("")` clears it. **Raises `ValueError`** if a component is empty or not a readable directory (the old table set stays loaded), or if the path loads no table at all (the table set is then empty and `path()` is `None`). Fathom alone would skip a missing directory silently. |
 | `largest()`, `path()`, `free()` | Introspection and release. |
 | `probe_wdl(cboard)` / `probe_wdl_fen(fen)` | -2 loss, -1 blessed loss, 0 draw, 1 cursed win, 2 win |
 | `probe_dtz(cboard)` / `probe_dtz_fen(fen)` | DTZ, python-chess `probe_dtz` convention |
 | `probe_root(cboard, has_repeated=False, use_rule50=True)` / `probe_root_fen` | `[(uci, dtz, rank, score), ...]`, one entry per legal move; `[]` at a mate or stalemate root |
 | `fen_bitboards(fen)`, `cboard_bitboards(cb)` | the parsed input, for tests |
 
-`None` means the position cannot be probed here: it has castling rights, more
-men than the loaded tables, or its table is missing from every directory.
+`None` means the position cannot be probed here: it has castling rights (the
+raw flags, uncleaned, exactly as python-chess's probe and `CBoard.from_board`
+read them), more men than the loaded tables, or its table is missing from
+every directory.
 python-chess raises `KeyError`/`MissingTableError` in the same cases. An
 illegal position (Fathom's `is_valid`: wrong king count, side not to move in
-check, pawn on a back rank, overlapping bitboards) or a malformed FEN raises
-`ValueError`.
+check, pawn on a back rank, overlapping bitboards, or the impossible en-passant
+square described below) or a malformed FEN raises `ValueError`. This holds from
+import: the module builds Fathom's attack tables on load, so the legality check
+works before the first `init()`.
 
 The CBoard is read in place, with no python-chess object involved. The
 `PyCBoard` struct layout is shared with `_lc0_ext` the same way `_mcts_tree`
@@ -69,8 +73,22 @@ checked on first use.
   counter was just reset. Fathom's public `tb_probe_wdl` refuses a nonzero
   `rule50`, so the wrapper calls the internal function and documents the
   python-chess contract instead.
-- En passant: a legal ep capture is resolved inside both probers. An ep square
-  with no legal capture changes nothing.
+- En passant. Fathom trusts the ep square it is given, and its ep capture
+  removes whatever stands on ep∓8. An impossible square can therefore delete a
+  king (a segfault in the probe) or invent a capture (a wrong DTZ). The wrapper
+  handles every ep square in one gate shared by the FEN and CBoard paths:
+  - **No side-to-move pawn can capture onto it** (python-chess's
+    `generate_pseudo_legal_ep`): the square is dropped. python-chess's probe
+    ignores it too, so values are equal. This covers the ordinary "double push
+    with no capturer" and any impossible square nobody can capture onto.
+  - **A capturer exists and the square is possible** (python-chess's
+    `_valid_ep_square`: rank 6/3, an enemy pawn on ep∓8, ep±8 empty): passed
+    through. Both probers resolve the capture identically.
+  - **A capturer exists but the square is impossible:** python-chess applies a
+    nonsense capture, removing a knight or the king from ep∓8. The C prober
+    raises `ValueError` instead, the same verdict as python-chess's own
+    `status()` (`STATUS_INVALID_EP_SQUARE`). This is the only input on which
+    the two probers deliberately answer differently.
 
 **Root ranking: 50-move aware.** `probe_root` returns, per legal move:
 
@@ -88,6 +106,12 @@ dtz = 0: 0                                   (has_repeated=False)
 ```
 
 These are the same buckets as the repo's `tablebase._rule50_dtz_key`.
+`has_repeated=True` drops a win out of the 1000 bucket (rank
+`1000 - (dtz + clock)`). **`use_rule50` changes only the score, never the
+rank.** With it off, every win scores as a mate and every loss as mated, but
+the rank stays clock-aware. For example, `8/8/8/4k3/8/8/8/KBN5 w - - 90 1`
+gives `a1a2` = `(60, 850, 450)` with `use_rule50=True` and
+`(60, 850, 31744)` with `use_rule50=False`.
 
 **The one root difference from the repo's python-chess root logic is
 documented, not tolerated.** `tablebase._dtz_of_played_move` returns 0 for a
@@ -100,7 +124,7 @@ without that short-circuit), so the comparison is still exact. Whoever
 switches the UCI root shortcut must keep the repo's claim rule on top of
 Fathom's numbers.
 
-## Thread safety
+## Thread safety, fork, platforms
 
 Fathom's tables are process-global, so `_tb_ext` is a process-wide singleton:
 
@@ -112,6 +136,12 @@ Fathom's tables are process-global, so `_tb_ext` is a process-wide singleton:
 - `probe_root` also holds a module mutex. Fathom documents `tb_probe_root` as
   not thread-safe, and the lock makes concurrent calls serialise instead of
   relying on callers.
+
+Fork: there is no `pthread_atfork` handler. Do not fork while another thread
+is probing, because the child could inherit a held lock. Call `init()` again in
+a forked child before probing; the mappings are inherited, but nothing else
+should be assumed. Windows is untested. The path separator follows Fathom's
+(`;`), and the directory check uses POSIX `stat`/`access`.
 
 Upstream behaviours to know about: if `mmap` of a table fails, Fathom calls
 `exit()`. It prints `info string Incomplete tablebase file` for a truncated
@@ -141,7 +171,11 @@ frozen input set, because a difference at a selfplay leaf is a target change.
    cursed-as-draw mapping. Gate: identical override rows on a frozen leaf set.
 2. **UCI root DTZ shortcut** (`try_tb_root_move` / `_select_dtz_move`).
    Replace it with `probe_root`, keeping the repo's fifty-move-claim rule and
-   its distance tie-break inside Fathom's win bucket. When the engine first
+   its distance tie-break inside Fathom's win bucket. At clock ≥ 99, the
+   repo's pick fell outside Fathom's top rank in 205 of the 544 positions with
+   fifty-claim moves that the independent review measured. All 205 were in the
+   same result band. Wiring rule: keep the repo's claim score and use Fathom's
+   rank only as the tie-break. When the engine first
    imports `_tb_ext`, add it to `uci/selfcheck.py`'s `REQUIRED_EXTENSIONS`.
 3. **Strict match status** (`rule50_match_status`, `selfplay/strict_tb.py`).
 4. **Selfplay adjudication and rescoring** (`probe_wdl`,

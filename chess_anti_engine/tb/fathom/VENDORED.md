@@ -8,6 +8,16 @@
   notice and permission notice to accompany all copies or substantial portions,
   so `LICENSE` and the per-file headers are kept verbatim.
 
+`src/stdendian.h` carries no licence header of its own. Its first lines name
+its origin as `https://gist.github.com/michaeljclark/3b4fd912f6fa8bb598b3`,
+"modified" by Fathom. That gist could not be fetched (the GitHub API returns
+"Not Found", checked 2026-11-14), so its original terms are unrecorded. It is
+vendored as part of upstream Fathom under Fathom's `LICENSE`.
+
+The notice ships with the package: `pyproject.toml` lists `fathom/LICENSE`,
+`fathom/VENDORED.md` and `fathom/README.md` as package data, so they are in
+the sdist and the wheel.
+
 ## Files
 
 Copied byte-for-byte from the upstream tree at that commit (`src/` keeps the

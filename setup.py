@@ -313,7 +313,10 @@ tb_ext = Extension(
     sources=["chess_anti_engine/tb/_tb_ext.c", "chess_anti_engine/tb/_tb_fathom.c"],
     # fathom/src for tbprobe.h's `#include <tbconfig.h>`.
     include_dirs=["chess_anti_engine/tb/fathom/src"],
-    extra_compile_args=_ext_compile_args(),
+    # Export only PyInit__tb_ext: Fathom's tb_init/tb_probe_* are extern and
+    # would otherwise be global dynamic symbols that could interpose with
+    # another library's Fathom (or Stockfish's tbprobe) in the same process.
+    extra_compile_args=[*_ext_compile_args(), "-fvisibility=hidden"],
     extra_link_args=[*_ext_link_args(), "-pthread"],
 )
 

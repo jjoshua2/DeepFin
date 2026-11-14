@@ -29,6 +29,8 @@
 #include <Python.h>
 #include <pthread.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "../encoding/_cboard_impl.h"
 #include "_tb_fathom.h"
@@ -147,14 +149,19 @@ static int pos_from_fen(const char *fen, DfTbPos *pos) {
     }
     if (*p != ' ') goto bad;
     p++;
+    /* Castling flags are kept RAW, never cleaned: python-chess's probe tests
+     * board.castling_rights as parsed (a stale "K" with the king off e1 still
+     * raises KeyError there) and CBoard.from_board copies the raw flags, so a
+     * cleaned FEN reader would be the one path that disagrees. */
     if (*p == '-') {
         p++;
     } else {
         int sq = fen_square(p);
         if (sq < 0) goto bad;
-        int r = sq / 8;
-        if (r != (pos->turn ? 5 : 2)) goto bad;
-        pos->ep = (unsigned)sq;
+        /* Any square parses; the probe gate decides whether it is possible
+         * (a1 = square 0 is "none" internally, so it is mapped to the
+         * always-impossible 64). */
+        pos->ep = sq == 0 ? 64u : (unsigned)sq;
         p += 2;
     }
     if (*p == ' ') {
@@ -247,9 +254,43 @@ static PyObject *probe_root_core(const DfTbPos *pos, int has_repeated, int use_r
 
 /* ------------------------------------------------------------- functions */
 
+#ifdef _WIN32
+#define DF_TB_SEP ';'   /* Fathom's own SEP_CHAR on Windows */
+#else
+#define DF_TB_SEP ':'
+#endif
+
+/* Every component of a non-empty path must be a readable directory. Checked
+ * BEFORE Fathom re-initialises, so a bad path leaves the old table set loaded.
+ * Fathom itself would skip a missing directory silently and report success. */
+static int check_components(const char *path) {
+    const char *start = path;
+    for (;;) {
+        const char *end = strchr(start, DF_TB_SEP);
+        size_t len = end ? (size_t)(end - start) : strlen(start);
+        char dir[4096];
+        if (len == 0 || len >= sizeof dir) {
+            PyErr_Format(PyExc_ValueError,
+                         "Syzygy path has an empty or oversized component: %s", path);
+            return -1;
+        }
+        memcpy(dir, start, len);
+        dir[len] = '\0';
+        struct stat st;
+        if (stat(dir, &st) != 0 || !S_ISDIR(st.st_mode) || access(dir, R_OK | X_OK) != 0) {
+            PyErr_Format(PyExc_ValueError,
+                         "Syzygy path component is not a readable directory: %s", dir);
+            return -1;
+        }
+        if (!end) return 0;
+        start = end + 1;
+    }
+}
+
 static PyObject *tb_init_py(PyObject *self, PyObject *args) {
     const char *path;
     if (!PyArg_ParseTuple(args, "s", &path)) return NULL;
+    if (path[0] != '\0' && check_components(path) < 0) return NULL;
     PyObject *keep = PyUnicode_FromString(path);
     if (!keep) return NULL;
     int rc;
@@ -262,7 +303,17 @@ static PyObject *tb_init_py(PyObject *self, PyObject *args) {
     Py_END_ALLOW_THREADS
     if (rc != 0) {
         Py_DECREF(keep);
+        Py_CLEAR(g_path);
         PyErr_Format(PyExc_RuntimeError, "Fathom tb_init failed for %s", path);
+        return NULL;
+    }
+    if (path[0] != '\0' && largest == 0) {
+        /* Accepted-and-ignored is this repo's signature defect: a path that
+         * loads nothing is an error, not "no tablebases". The table set is
+         * now empty, and path() says so. */
+        Py_DECREF(keep);
+        Py_CLEAR(g_path);
+        PyErr_Format(PyExc_ValueError, "no Syzygy tables found under %s", path);
         return NULL;
     }
     if (path[0] == '\0') Py_CLEAR(keep);
@@ -411,6 +462,10 @@ static struct PyModuleDef tb_moduledef = {
 };
 
 PyMODINIT_FUNC PyInit__tb_ext(void) {
+    /* Fathom builds its attack tables on the first tb_init. Its is_valid()
+     * (the illegal-position check every probe runs) reads them, so without
+     * this an in-check position read as legal until the first init(). */
+    df_tb_init("");
     PyObject *module = PyModule_Create(&tb_moduledef);
     if (!module) return NULL;
     if (PyModule_AddIntConstant(module, "MAX_ROOT_MOVES", DF_TB_MAX_ROOT_MOVES) < 0 ||

@@ -46,13 +46,62 @@ static void df_to_pos(const DfTbPos *in, Pos *out) {
     out->turn = in->turn ? true : false;
 }
 
+/* En-passant square handed to Fathom: 0 = none, -1 = refuse the position.
+ *
+ * ⚑ Fathom trusts pos->ep. Its ep capture removes whatever stands on ep∓8, so a
+ * bogus square can delete a KING (a segfault inside the probe) or invent a
+ * capture that changes the DTZ. Three cases, mirroring python-chess:
+ *
+ *  - no side-to-move pawn can capture onto the square (python-chess's
+ *    generate_pseudo_legal_ep: ep empty, a capturer on rank 5/4 attacking it):
+ *    python-chess's probe ignores the square, so it is dropped here too. This
+ *    is the normal "double push with no capturer" case, and also any
+ *    impossible square nobody can capture onto;
+ *  - a capturer exists and the square is structurally possible
+ *    (python-chess's Board._valid_ep_square: rank 6/3, an enemy pawn on ep∓8,
+ *    ep±8 empty): a real ep capture, passed through;
+ *  - a capturer exists but the square is impossible: python-chess would apply
+ *    a nonsense capture (removing a knight, or the king, from ep∓8). Neither
+ *    answer means anything, so the position is refused as illegal -- the same
+ *    verdict as python-chess's is_valid() (STATUS_INVALID_EP_SQUARE). */
+static int df_ep_square(const DfTbPos *in) {
+    unsigned ep = in->ep;
+    if (ep == 0) return 0;
+    if (ep >= 64u) return -1;
+    const uint64_t us = in->turn ? in->white : in->black;
+    const uint64_t them = in->turn ? in->black : in->white;
+    const uint64_t occ = in->white | in->black;
+    const unsigned file = ep % 8;
+    if (occ & (1ULL << ep)) return 0;  /* python-chess: no ep move at all */
+    /* Squares from which a side-to-move pawn attacks ep, on its capture rank. */
+    const uint64_t capture_rank = in->turn ? 0x000000FF00000000ULL : 0x00000000FF000000ULL;
+    uint64_t from = 0;
+    if (in->turn) {
+        if (file > 0 && ep >= 9) from |= 1ULL << (ep - 9);
+        if (file < 7 && ep >= 7) from |= 1ULL << (ep - 7);
+    } else {
+        if (file > 0 && ep + 7 < 64) from |= 1ULL << (ep + 7);
+        if (file < 7 && ep + 9 < 64) from |= 1ULL << (ep + 9);
+    }
+    if (!(from & capture_rank & in->pawns & us)) return 0;
+    const unsigned rank = ep / 8;
+    if (rank != (in->turn ? 5u : 2u)) return -1;
+    const unsigned pushed = in->turn ? ep - 8 : ep + 8;   /* the double-pushed pawn */
+    const unsigned origin = in->turn ? ep + 8 : ep - 8;   /* where it came from */
+    if (!(in->pawns & them & (1ULL << pushed))) return -1;
+    if (occ & (1ULL << origin)) return -1;
+    return (int)ep;
+}
+
 /* Common gate: invalid positions are refused before Fathom sees them (its
  * search-time entry points assume a legal position), castling rights and
  * positions above the loaded tables are "unavailable" exactly like
  * python-chess's KeyError. */
 static int df_gate(const DfTbPos *in, Pos *pos) {
     df_to_pos(in, pos);
-    if (pos->ep >= 64u) return DF_TB_INVALID;
+    int ep = df_ep_square(in);
+    if (ep < 0) return DF_TB_INVALID;
+    pos->ep = (uint8_t)ep;
     if (!is_valid(pos)) return DF_TB_INVALID;
     if (in->castling != 0) return DF_TB_UNAVAILABLE;
     if ((unsigned)popcount(pos->white | pos->black) > TB_LARGEST) return DF_TB_UNAVAILABLE;

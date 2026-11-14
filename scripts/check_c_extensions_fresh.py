@@ -15,6 +15,10 @@ from pathlib import Path
 class ExtensionSpec:
     module: str
     dependencies: tuple[str, ...]
+    # OPTIONAL: no production code imports it yet, so a checkout that has not
+    # rebuilt since it was added must still pass. Present-but-stale is still
+    # an error; only "missing" is allowed.
+    optional: bool = False
 
 
 # setup.py is a compile input, not merely packaging metadata: it owns extension
@@ -122,6 +126,7 @@ EXTENSION_SPECS: tuple[ExtensionSpec, ...] = (
             "chess_anti_engine/encoding/_bitboard_planes_impl.h",
             "chess_anti_engine/encoding/_slider_attacks_impl.h",
         ),
+        optional=True,  # until a production call site imports it
     ),
 )
 
@@ -289,7 +294,8 @@ def check_extensions(
     for spec in EXTENSION_SPECS:
         output = _first_existing(_extension_outputs(root, spec.module))
         if output is None:
-            issues.append(f"{spec.module} is missing")
+            if not spec.optional:
+                issues.append(f"{spec.module} is missing")
             continue
         if min_gcc_major is not None:
             compiler_major = _gcc_major(output)
