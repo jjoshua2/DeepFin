@@ -836,6 +836,38 @@ class SearchWorker:
         pool = self._pucv_pool
         return () if pool is None else pool.failed_devices()
 
+    def pool_degraded_summary(self) -> str | None:
+        """``multi-GPU degraded: k of n devices (...)`` while a pool device is
+        dropped; None when healthy or with no pool. Read by the per-search
+        line, ``isready`` and ``searchconfig``."""
+        pool: Any = getattr(self, "_pucv_pool", None)
+        summary = getattr(pool, "degraded_summary", None)
+        if not callable(summary):
+            return None
+        text = summary()
+        return text if isinstance(text, str) else None
+
+    def _start_of_search_device_report(self) -> None:
+        pool: Any = getattr(self, "_pucv_pool", None)
+        restore = getattr(pool, "restore_recovered_devices", None)
+        if callable(restore):
+            try:
+                restore()
+            except Exception:
+                _log.exception("multi-GPU device restore failed")
+        self._flush_device_notes()
+        summary = self.pool_degraded_summary()
+        cb = getattr(self, "_device_note_cb", None)
+        if summary is None:
+            return
+        if cb is None:
+            _log.warning("%s", summary)
+            return
+        try:
+            cb(summary)
+        except Exception:
+            _log.debug("device note emitter raised", exc_info=True)
+
     def clear_multi_gpu_pucv(self, *, restore_fallback: bool = True) -> None:
         """Tear down the multi-GPU pool; optionally restore walker/pucv routing.
 
@@ -2888,9 +2920,12 @@ class SearchWorker:
         <= N moves is proven at the root (see ``_proven_line_mate``).
         """
         fen = board.fen()
-  # A degrade note a parked (silenced) search could not print goes out now.
+  # Multi-GPU degrade bookkeeping, once per search: re-admit devices whose
+  # stalled call came back clean, print pending drop/restore notes (including
+  # one a parked, silenced search could not print), then -- while still
+  # degraded -- say so on EVERY search, not just once.
         if getattr(self, "_device_notes", None) or self._pucv_pool is not None:
-            self._flush_device_notes()
+            self._start_of_search_device_report()
   # A compaction `advance_root` scheduled runs here, on this move's clock.
   # `stop_sensitive`: ponder / `go infinite`, where an uninterruptible
   # compaction would delay the answer to `stop` / `ponderhit`.

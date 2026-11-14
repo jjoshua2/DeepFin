@@ -1088,7 +1088,25 @@ class Engine:
                     self._mark_unhealthy("the search-path re-warm at isready failed")
                 else:
                     self._warmup_dirty = False
+        # A degraded multi-GPU pool is reported, never treated as unhealthy:
+        # the engine keeps playing on the devices it has.
+        degraded = self._pool_degraded_summary()
+        if degraded is not None:
+            _println(f"info string {degraded}")
         _println(format_readyok())
+
+    def _pool_degraded_summary(self) -> str | None:
+        """The worker's multi-GPU degraded line, or None (healthy / no pool /
+        a test double that does not implement it)."""
+        get = getattr(self._worker, "pool_degraded_summary", None)
+        if not callable(get):
+            return None
+        try:
+            text = get()
+        except Exception:
+            _log.debug("pool_degraded_summary raised", exc_info=True)
+            return None
+        return text if isinstance(text, str) else None
 
     def _handle_newgame(self) -> None:
         self._in_game = False
@@ -1818,6 +1836,12 @@ class Engine:
             f"info string searchconfig path={path} "
             f"({PATH_DESCRIPTIONS.get(path, path)})"
         )
+        failed = getattr(self._worker, "failed_pool_devices", None)
+        failed_devices = failed() if callable(failed) else ()
+        if isinstance(failed_devices, tuple) and failed_devices:
+            _println(
+                f"info string searchconfig {self._pool_degraded_summary() or 'multi-GPU degraded'}"
+            )
         for name, value, status, why in realized_rows(path, values):
             suffix = f" — {why}" if why else ""
             _println(f"info string searchconfig {name} = {value} [{status}]{suffix}")

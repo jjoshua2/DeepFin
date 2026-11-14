@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import chess
 import numpy as np
@@ -479,3 +479,279 @@ def test_engine_primary_failure_moves_root_evals_to_the_pool(out) -> None:
     finally:
         engine.close()
         worker.close()
+
+
+# -- false drops, restore, visibility (review of the first cut) ------------------
+
+
+class _OnceSlow:
+    """A HEALTHY device whose ``k``-th submission takes ``delay`` s (a
+    CUDA-graph record on a shape's first real call, a GC pause, an OS stall);
+    every other call is normal."""
+
+    def __init__(self, inner: Any, *, k: int, delay: float) -> None:
+        self._inner = inner
+        self.k = k
+        self.delay = delay
+        self.calls = 0
+        # What the UCI pool warmup stamps on an evaluator (None = unseeded).
+        self.warm_steady_call_s: float | None = None
+        self._lock = threading.Lock()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def evaluate_inplace_async(self, *args: Any, **kwargs: Any) -> Any:
+        with self._lock:
+            self.calls += 1
+            call = self.calls
+        if call == self.k:
+            time.sleep(self.delay)
+        return self._inner.evaluate_inplace_async(*args, **kwargs)
+
+
+def _run(pool: MultiGpuPucvPool, sims: int) -> tuple[int, MCTSTree]:
+    tree, rid, cb = _seed_tree()
+    done = pool.run(tree=tree, root_id=rid, root_cboard=cb, target_sims=sims,
+                    stop_event=threading.Event())
+    _assert_no_vloss(tree)
+    return done, tree
+
+
+def _wait_for(predicate, timeout: float = 10.0) -> bool:
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return predicate()
+
+
+def test_production_floor_keeps_a_device_with_one_slow_first_call() -> None:
+    """The reviewer's repro at the shipped constants: a healthy device whose
+    first call after warmup takes 1.2 s must not be dropped (before: dropped
+    for the life of the pool by the old 1 s floor)."""
+    slow = _OnceSlow(_evaluator(), k=1, delay=1.2)
+    pool = MultiGpuPucvPool(
+        MultiGpuPucvConfig(n_gpus=2, gather=8, device_labels=("g0", "g1")),
+        evaluators=[_evaluator(), slow],
+    )
+    try:
+        assert pool.stall_threshold_s() >= 5.0
+        done, _ = _run(pool, 300)
+        assert slow.calls >= 1  # the slow call happened
+        assert done == 300
+        assert pool.failed_devices() == ()
+        assert pool.drain_notes() == []
+        calls = slow.calls
+        assert _run(pool, 300)[0] == 300
+        assert slow.calls > calls  # still live: it searches the next run too
+    finally:
+        pool.close()
+
+
+def test_threshold_scales_with_the_seeded_steady_state_call(monkeypatch) -> None:
+    """With a low floor, the threshold is carried by 10x the device's seeded
+    (second-pass warmup) call time: a 1.2 s call on a device whose steady call
+    is 0.5 s is slow-but-healthy, so it stays."""
+    monkeypatch.setattr(pool_module, "_STALL_FLOOR_S", 0.3)
+    slow = _OnceSlow(_evaluator(), k=1, delay=1.2)
+    slow.warm_steady_call_s = 0.5
+    pool = MultiGpuPucvPool(
+        MultiGpuPucvConfig(n_gpus=2, gather=8, device_labels=("g0", "g1")),
+        evaluators=[_evaluator(), slow],
+    )
+    try:
+        assert pool._slowest_call_s[1] == pytest.approx(0.5)
+        assert pool.stall_threshold_s(1) == pytest.approx(5.0)
+        done, _ = _run(pool, 300)
+        assert done == 300
+        assert pool.failed_devices() == ()
+    finally:
+        pool.close()
+
+
+@pytest.mark.parametrize("where", ["hang", "hang_sync"])
+def test_stalled_device_is_restored_after_its_call_returns(monkeypatch, where) -> None:
+    monkeypatch.setattr(pool_module, "_STALL_FLOOR_S", 0.3)
+    stuck = _Faulty(_evaluator(), mode=where, after=1)
+    pool = MultiGpuPucvPool(
+        MultiGpuPucvConfig(n_gpus=2, gather=8, device_labels=("cpu:0", "cpu:1")),
+        evaluators=[_evaluator(), stuck],
+    )
+    try:
+        _run(pool, 300)
+        assert pool.failed_devices() == ("cpu:1",)
+        assert "stopped answering" in (pool.degraded_summary() or "")
+        pool.drain_notes()
+        assert pool.restore_recovered_devices() == ()  # still stuck: nothing to restore
+        stuck.release.set()
+        assert _wait_for(lambda: pool._restorable[1])
+        assert pool.restore_recovered_devices() == ("cpu:1",)
+        notes = pool.drain_notes()
+        assert len(notes) == 1
+        assert notes[0].startswith("multi-GPU RESTORED: device cpu:1")
+        assert "2 of 2" in notes[0]
+        assert pool.failed_devices() == ()
+        assert pool.degraded_summary() is None
+        calls = stuck.calls
+        done, _ = _run(pool, 300)
+        assert done == 300
+        assert stuck.calls > calls  # the restored device searches again
+        assert pool.failed_devices() == ()
+    finally:
+        stuck.release.set()
+        pool.close()
+
+
+def test_a_late_answer_never_reaches_the_shared_eval_cache(monkeypatch) -> None:
+    """A device stuck waiting for its batch answers after it was abandoned:
+    that result must not be stored in the eval cache the survivors share."""
+    monkeypatch.setattr(pool_module, "_STALL_FLOOR_S", 0.3)
+    stuck = _Faulty(_evaluator(), mode="hang_sync", after=1)
+    pool = MultiGpuPucvPool(
+        MultiGpuPucvConfig(n_gpus=2, gather=8, eval_cache_entries=4096,
+                           device_labels=("cpu:0", "cpu:1")),
+        evaluators=[_evaluator(), stuck],
+    )
+    try:
+        _run(pool, 300)
+        assert pool.failed_devices() == ("cpu:1",)
+        cache: Any = pool._cache
+        late_puts: list[Any] = []
+        real_put = cache.put
+        monkeypatch.setattr(cache, "put", lambda *a, **k: (late_puts.append(a), real_put(*a, **k)))
+        stuck.release.set()
+        assert _wait_for(lambda: pool._restorable[1])
+        assert late_puts == []
+    finally:
+        stuck.release.set()
+        pool.close()
+
+
+def test_a_device_that_raised_is_not_restored() -> None:
+    bad = _Faulty(_evaluator(), mode="raise", after=2)
+    pool = MultiGpuPucvPool(
+        MultiGpuPucvConfig(n_gpus=2, gather=8, device_labels=("cpu:0", "cpu:1")),
+        evaluators=[_evaluator(), bad],
+    )
+    try:
+        _run(pool, 300)
+        assert pool.failed_devices() == ("cpu:1",)
+        time.sleep(0.2)
+        assert pool.restore_recovered_devices() == ()
+        assert pool.failed_devices() == ("cpu:1",)
+        assert "failed mid-search" in (pool.degraded_summary() or "")
+    finally:
+        pool.close()
+
+
+def _degraded_go_lines(out: _Out) -> list[str]:
+    return [ln for ln in out.text().splitlines() if ln.startswith("info string multi-GPU degraded:")]
+
+
+def test_engine_says_degraded_on_every_go_isready_and_searchconfig(out) -> None:
+    bad = _Faulty(_evaluator(), mode="raise", after=3)
+    engine, worker = _engine_with_pool([_evaluator(), bad, _evaluator()])
+    try:
+        _searched_go(engine, out, "e2e4", 600, 1)
+        assert worker.failed_pool_devices() == ("cpu:1",)
+        assert _degraded_go_lines(out) == []  # the drop happened DURING that search
+        _searched_go(engine, out, "e2e4 e7e5", 400, 2)
+        _searched_go(engine, out, "e2e4 e7e5 g1f3", 400, 3)
+        lines = _degraded_go_lines(out)
+        assert len(lines) == 2  # one per later search
+        assert "2 of 3 devices" in lines[0]
+        assert "cpu:1 failed: failed mid-search" in lines[0]
+        engine.dispatch(parse_command("isready"))
+        assert len(_degraded_go_lines(out)) == 3
+        engine.dispatch(parse_command("searchconfig"))
+        assert any(
+            ln.startswith("info string searchconfig multi-GPU degraded: 2 of 3 devices")
+            for ln in out.text().splitlines()
+        )
+        assert "unhealthy" not in out.text().lower()
+    finally:
+        engine.close()
+        worker.close()
+
+
+def test_engine_restores_a_stalled_device_on_the_next_go(out, monkeypatch) -> None:
+    monkeypatch.setattr(pool_module, "_STALL_FLOOR_S", 0.4)
+    stuck = _Faulty(_evaluator(), mode="hang", after=2)
+    engine, worker = _engine_with_pool([_evaluator(), stuck])
+    try:
+        _searched_go(engine, out, "g1f3", 2000, 1)
+        assert worker.failed_pool_devices() == ("cpu:1",)
+        stuck.release.set()
+        pool: Any = worker._pucv_pool
+        assert _wait_for(lambda: pool._restorable[1])
+        calls = stuck.calls
+        move2, _ = _searched_go(engine, out, "g1f3 g8f6", 800, 2)
+        assert _legal_after("g1f3 g8f6", move2)
+        restored = [ln for ln in out.text().splitlines() if "multi-GPU RESTORED" in ln]
+        assert len(restored) == 1
+        assert restored[0].startswith("info string multi-GPU RESTORED: device cpu:1")
+        assert worker.failed_pool_devices() == ()
+        assert stuck.calls > calls
+        assert _degraded_go_lines(out) == []  # restored before the per-go report
+    finally:
+        stuck.release.set()
+        engine.close()
+        worker.close()
+
+
+class _HangThenBadReceipt:
+    """Submission ``after+1`` hangs in its completion wait; submission
+    ``after+2`` (already in flight while the worker waits) can never be
+    drained. The late answer to the first comes back clean, but the device
+    did not quiesce, so it must NOT be restored."""
+
+    def __init__(self, inner: Any, *, after: int) -> None:
+        self._inner = inner
+        self.after = after
+        self.calls = 0
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self._lock = threading.Lock()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def evaluate_inplace_async(self, *args: Any, **kwargs: Any) -> Any:
+        with self._lock:
+            self.calls += 1
+            call = self.calls
+        pol, wdl, event = self._inner.evaluate_inplace_async(*args, **kwargs)
+        if call == self.after + 1:
+            return pol, wdl, _BlockingEvent(cast("_Faulty", self))
+        if call == self.after + 2:
+            return pol, wdl, _UndrainableEvent()
+        return pol, wdl, event
+
+
+class _UndrainableEvent:
+    def synchronize(self) -> None:
+        raise RuntimeError("CUDA error: unspecified launch failure (injected at drain)")
+
+
+def test_a_late_clean_answer_with_an_undrainable_receipt_is_not_restored(monkeypatch) -> None:
+    monkeypatch.setattr(pool_module, "_STALL_FLOOR_S", 0.3)
+    dev = _HangThenBadReceipt(_evaluator(), after=1)
+    pool = MultiGpuPucvPool(
+        MultiGpuPucvConfig(n_gpus=2, gather=8, device_labels=("cpu:0", "cpu:1")),
+        evaluators=[_evaluator(), dev],
+    )
+    try:
+        _run(pool, 300)
+        assert dev.entered.is_set()
+        assert dev.calls >= 3  # the undrainable submission really was in flight
+        assert pool.failed_devices() == ("cpu:1",)
+        dev.release.set()
+        assert _wait_for(lambda: not pool._threads[1].is_alive(), timeout=5.0)
+        assert not pool._restorable[1]
+        assert pool.restore_recovered_devices() == ()
+        assert pool.failed_devices() == ("cpu:1",)
+    finally:
+        dev.release.set()
+        pool.close()

@@ -161,7 +161,10 @@ the GUI. With torch.compile on, every evaluator rounds each batch up to a fixed
 ladder of sizes (`_COMPILED_BATCH_BUCKETS` in `inference.py`, capped at the
 evaluator's `MaxBatch`), and the warm-up runs every size of that ladder on every
 device before `readyok`, one `info string warmup ...: batch ... (.../..., ...s)`
-line per size (device, batch size, progress, seconds so far). A size the warm-up did not cover would be compiled during a move;
+line per size (device, batch size, progress, seconds so far). Each multi-GPU pool
+device runs its sizes twice (`pass 1/2` pays the compile and CUDA-graph capture,
+`pass 2/2` is timed): the second pass is that device's steady-state cost, which
+the stuck-device check in section 8 scales from. A size the warm-up did not cover would be compiled during a move;
 if that ever happens the engine says so once per size and device:
 `info string WARNING first-seen batch shape after warmup: device=... entry=... batch=...`.
 That line is a bug report, not a setting to tune. `scripts/tcec_autotune.sh --checkpoint ... [--devices ...]` sweeps batching
@@ -376,13 +379,25 @@ sends `isready` between games gets no re-check.
 (CUDA out of memory, device lost, any error) during a search is dropped; its
 unfinished leaves are given back to the other devices, the move is still searched
 and answered in time, and later moves search on the devices that are left. A device
-that blocks inside one GPU call for longer than a threshold (at least 1 s, and at
-least 10 times the slowest call that device pool has completed; once the move has
-been stopped or answered, at least 0.25 s and 5 times the slowest call) is dropped
-the same way, so a hung GPU costs at most the move it hung in. The first device (`devices[0]`) also does the root evaluations; if that fails,
+that blocks inside one GPU call for too long is dropped the same way. While the
+move is still being searched "too long" is at least 5 s, and at least 10 times the
+slowest call that device has completed, starting from its timed warm-up pass. That
+is deliberately patient: a stuck device only costs speed while the others search
+and the watchdog still answers on time, whereas dropping a healthy GPU costs a
+whole device. Once the move has been stopped or answered the limit drops to at
+least 0.25 s and 5 times the slowest call, so a hung GPU cannot hold up the next
+`go`. The first device (`devices[0]`) also does the root evaluations; if that fails,
 they move to a remaining device. Each drop is announced once:
 `info string WARNING multi-GPU DEGRADED: device ... failed mid-search ...; searching on ... of ... devices`
-(or `... stopped answering ...`). A dropped device is not retried until the pool is
+(or `... stopped answering ...`). While any device is dropped, every `go`, every
+`isready` and `searchconfig` also say so:
+`info string multi-GPU degraded: ... of ... devices (... failed: ...)`. The engine
+is not marked unhealthy for this; it keeps playing on the devices it has.
+A device dropped for **stopping answering** whose stuck call later comes back
+without an error is re-admitted at the start of the next `go`, announced once with
+`info string multi-GPU RESTORED: device ... answered again after its stall; searching on ... of ... devices`
+(the late result itself is thrown away; it never reaches the search tree or the
+evaluation cache). A device that **raised** is not retried until the pool is
 rebuilt (an option that rebuilds it, or a restart). If every device has failed, each
 `go` is answered from the fallback described above.
 At startup, a device that fails to build or warm leaves the engine running DEGRADED
@@ -411,6 +426,13 @@ tournament play and is not recommended: leave `Ponder` false.
   If an option change cannot install the pool at all the engine restores the
   previous pool, else falls back to classic Gumbel on one GPU and says so
   (`previous configuration could not be restored ...; fell back to the single-evaluator classic Gumbel path`).
+- **`go searchmoves` does not use the pool.** It runs classic Gumbel on the first
+  device (`devices[0]`), so a failed first device is not rerouted for that command:
+  it is answered from the fallback (section 8).
+- **`--selfcheck --fast` does not test the warm-up.** `--fast` forces
+  `--no-compile`, so bucket padding, the warm-up of every size and its completeness
+  check are not exercised. The self-check without `--fast` runs the default
+  compiled path and does exercise them.
 - **Multi-GPU playing strength has never been validated.** The multi-GPU paths
   were built and measured for throughput; all search tuning was done on one GPU with
   classic Gumbel. On the multi-GPU PUCV pool most Gumbel options are inert (PUCT
@@ -497,8 +519,12 @@ tournament machine with the real network `<C>`, a free GPU and no other load.
     was never measured.
 17. **Bucket warm-up on the real net** (degrade-path change): time `uci` to
     `readyok` with the default `max-autotune` and `MaxBatch 1024` (15 batch sizes
-    on the primary, up to 11 per pool device at `VLGather 512`), on one GPU and on
-    all four; it must fit the GUI's start allowance. Then play 20 or more moves on
+    on the primary, up to 11 per pool device at `VLGather 512`, each pool size run
+    twice), on one GPU and on all four; it must fit the GUI's start allowance.
+    Measure the first real call of each size after `readyok` (CUDA-graph replay
+    should make it no slower than the timed `pass 2/2` call), and over at least one
+    full long-time-control game confirm no `multi-GPU DEGRADED` line appears on
+    healthy GPUs (no false drop at the 5 s / 10x-slowest-call threshold). Then play 20 or more moves on
     each search path and confirm no `first-seen batch shape after warmup` line.
     Whether CUDA-graph capture of the extra sizes fits in GPU memory beside the
     model at `MaxBatch 8192` was not measured. Padding each batch up to its bucket

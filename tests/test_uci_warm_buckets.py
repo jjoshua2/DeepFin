@@ -56,7 +56,7 @@ def test_padding_function_image_is_the_enumerated_ladder() -> None:
     """Runtime padding and the warm enumeration are one function: for every
     cap, every row count lands on a shape of `reachable_forward_rows`, and that
     set is exactly the buckets below the cap plus the cap (plus 1)."""
-    for cap in (64, 100, 300, 512, 1024, 5000, 8192):
+    for cap in (17, 64, 97, 100, 300, 512, 1024, 5000, 8192):
         ladder = set(reachable_forward_rows(cap, cap))
         expect = {1, cap} | {b for b in _COMPILED_BATCH_BUCKETS if b < cap}
         assert ladder == expect, cap
@@ -83,11 +83,19 @@ def test_padding_evaluator_runs_only_ladder_shapes_and_returns_live_rows() -> No
         np.testing.assert_allclose(p_pol, q_pol, rtol=1e-5, atol=1e-5)
         np.testing.assert_allclose(p_wdl, q_wdl, rtol=1e-5, atol=1e-5)
         padded.get_input_buffer(n, slot=1)[:] = x
-        pol_t, _wdl_t, _ = padded.evaluate_inplace_async(n, slot=1)
+        pol_t, wdl_t, _ = padded.evaluate_inplace_async(n, slot=1)
         assert pol_t.shape[0] == n
+        assert wdl_t.shape[0] == n
         np.testing.assert_allclose(pol_t.numpy(), q_pol, rtol=1e-5, atol=1e-5)
-        pol_t, _, _ = padded.evaluate_encoded_async(x)
+        np.testing.assert_allclose(wdl_t.numpy(), q_wdl, rtol=1e-5, atol=1e-5)
+        pol_t, wdl_t, _ = padded.evaluate_encoded_async(x)
         assert pol_t.shape[0] == n
+        assert wdl_t.shape[0] == n
+        np.testing.assert_allclose(wdl_t.numpy(), q_wdl, rtol=1e-5, atol=1e-5)
+        padded.get_input_buffer(n, slot=0)[:] = x
+        pol_s, wdl_s = padded.evaluate_inplace(n, slot=0)
+        assert pol_s.shape[0] == n
+        assert wdl_s.shape[0] == n
     assert padded.shape_ledger.seen() <= set(reachable_forward_rows(40, 40))
     assert plain.shape_ledger.seen() == {1, 2, 15, 16, 17, 33, 40}
 
@@ -115,7 +123,9 @@ def test_primary_factory_warms_every_reachable_shape(cold) -> None:
 @pytest.mark.usefixtures("no_compile", "cold")
 def test_multi_device_primary_chain_warms_every_device() -> None:
     """--no-multi-gpu-pucv routing chain (MultiGPUDispatcher): every shape on
-    EVERY device, not just the ones the round-robin happened to visit."""
+    EVERY device, not just the ones the round-robin happened to visit. (This
+    pins the factory's warm-up only: before #1319 the full engine could not
+    start on this chain at all.)"""
     build = uci_main._make_evaluator_factory(
         [_model(), _model(), _model()], ["cpu", "cpu", "cpu"], True, 1, 1,
         compile_mode="default",
@@ -237,3 +247,99 @@ def test_real_searches_after_warmup_meet_no_cold_shape(cold) -> None:
         assert cold == []
     finally:
         worker.close()
+
+
+def test_compact_legal_path_pads_through_the_ladder_and_notes_its_own_graph() -> None:
+    """At a cap that is not a rung (400), 390 rows must run AT the cap (the old
+    helper ran the raw 390, an unwarmable shape), and the compact-legal graph
+    keeps its own ledger set (it is a different compiled graph)."""
+    model = _model()
+    padded = DirectGPUEvaluator(model, device="cpu", max_batch=400, n_slots=2, use_amp=False,
+                                legal_bf16=True, pad_to_compiled_buckets=True)
+    plain = DirectGPUEvaluator(model, device="cpu", max_batch=400, n_slots=2, use_amp=False,
+                               legal_bf16=True)
+    rng = np.random.default_rng(1)
+    n = 390
+    x = rng.random((n, 146, 8, 8), dtype=np.float32)
+    legal_one = chess_legal_indices()
+    counts = np.full((n,), legal_one.size, dtype=np.int32)
+    flat = np.tile(legal_one, n)
+    p_pol, p_wdl = padded.evaluate_legal_bf16(x, flat, counts)
+    q_pol, q_wdl = plain.evaluate_legal_bf16(x, flat, counts)
+    assert p_wdl.shape[0] == n
+    np.testing.assert_array_equal(p_pol, q_pol)
+    np.testing.assert_allclose(p_wdl, q_wdl, rtol=1e-5, atol=1e-5)
+    assert compiled_forward_rows(n, 400) == 400
+    assert padded.shape_ledger.seen("legal") == {400}
+    assert plain.shape_ledger.seen("legal") == {n}
+
+
+def chess_legal_indices() -> np.ndarray:
+    from chess_anti_engine.encoding._lc0_ext import CBoard
+
+    return CBoard.from_board(chess.Board()).legal_move_indices().astype(np.int32)
+
+
+class _SlowFirstCall(DirectGPUEvaluator):
+    """A padding evaluator whose FIRST call of each (shape, slot) costs 0.25 s,
+    the stand-in for a compile / CUDA-graph record."""
+
+    def __init__(self, *a: Any, **kw: Any) -> None:
+        super().__init__(*a, **kw)
+        self.first_seen: set[tuple[int, int]] = set()
+
+    def evaluate_inplace_async(self, bsz, *, slot=0, relations=None):
+        if (bsz, slot) not in self.first_seen:
+            self.first_seen.add((bsz, slot))
+            import time as _time
+
+            _time.sleep(0.25)
+        return super().evaluate_inplace_async(bsz, slot=slot, relations=relations)
+
+
+def test_pool_warmup_runs_every_shape_twice_and_seeds_from_the_second_pass(capsys) -> None:
+    ev = _SlowFirstCall(_model(), device="cpu", max_batch=64, n_slots=2, use_amp=False,
+                        pad_to_compiled_buckets=True)
+    steady = uci_main._warmup_pucv_evaluator(ev, gather=40, strict=True)
+    assert isinstance(steady, float)
+    assert 0.0 < steady < 0.25  # pass-2 timing, never the compile-inflated pass 1
+    assert ev.shape_ledger.armed
+    out = capsys.readouterr().out
+    shapes = ev.reachable_forward_rows(40)
+    for pass_no in (1, 2):
+        lines = [ln for ln in out.splitlines() if f"pass {pass_no}/2: batch" in ln]
+        assert len(lines) == len(shapes), pass_no
+
+
+@pytest.mark.usefixtures("no_compile", "cold")
+def test_pool_factory_seeds_the_stall_baseline_into_the_pool() -> None:
+    """End to end through the production factory builder: the warmup's
+    steady-state timing reaches the pool's per-device stall baseline."""
+    from chess_anti_engine.uci.multi_gpu_pucv_pool import MultiGpuPucvConfig, MultiGpuPucvPool
+
+    build = uci_main._make_multi_gpu_pucv_factory_builder(
+        [_model(), _model()], ["cpu", "cpu"], compile_mode="max-autotune",
+    )
+    pool = MultiGpuPucvPool(MultiGpuPucvConfig(n_gpus=2, gather=40),
+                            evaluator_factories=build(64, 40))
+    try:
+        for k, ev in enumerate(pool._evals):
+            seed = ev.warm_steady_call_s
+            assert isinstance(seed, float)
+            assert seed > 0.0
+            assert pool._slowest_call_s[k] >= seed
+    finally:
+        pool.close()
+
+
+def test_verification_refuses_a_cold_compact_legal_graph() -> None:
+    """The dense ladder warm does not warm the compact-legal graph: when the
+    warm-up covered the legal path, a missing legal shape refuses to start."""
+    ev = DirectGPUEvaluator(_model(), device="cpu", max_batch=64, n_slots=2, use_amp=False,
+                            legal_bf16=True, pad_to_compiled_buckets=True)
+    for rows in ev.reachable_forward_rows():
+        ev.evaluate_encoded(np.zeros((rows, 146, 8, 8), dtype=np.float32))
+    assert ev.shape_ledger.seen("legal") == frozenset()
+    uci_main._verify_and_arm([ev], lambda _ev: None)  # dense only: complete
+    with pytest.raises(RuntimeError, match="legal graph"):
+        uci_main._verify_and_arm([ev], lambda _ev: None, legal=True)

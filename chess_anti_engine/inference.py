@@ -582,6 +582,9 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         # bit-identical to every evaluator built before this flag existed.
         self._pad_to_buckets = bool(pad_to_compiled_buckets)
         self.shape_ledger = ShapeLedger(str(device))
+        # Slowest steady-state (second-pass) warmup call, set by the UCI pool
+        # warmup; MultiGpuPucvPool seeds its stuck-device threshold from it.
+        self.warm_steady_call_s: float | None = None
 
         _pin = self._use_cuda
         self._input_bf16 = bool(input_bf16 and self._use_cuda and use_amp)
@@ -906,12 +909,27 @@ class DirectGPUEvaluator(LocalModelEvaluator):
                 f"compact legal policy has {n_legal} entries > "
                 f"{self._pinned_legal_pols_bf16_bits[slot].shape[0]} capacity"
             )
+        # Padding: the compact-legal forward is its own compiled graph, padded
+        # through the same ``compiled_forward_rows`` ladder as the dense one and
+        # noted in its own ledger set. Pad rows carry zero legal moves, so the
+        # compact policy output is unchanged; WDL is sliced back to ``bsz``.
+        fwd_rows = (
+            compiled_forward_rows(bsz, self._max_batch) if self._pad_to_buckets else int(bsz)
+        )
+        if fwd_rows > 0:
+            self.shape_ledger.note("legal_bf16", fwd_rows, graph="legal")
         if not self._use_cuda:
             pol, wdl = self.evaluate_inplace(bsz, copy_out=True, slot=slot)
             rows = np.repeat(np.arange(bsz, dtype=np.int64), counts.astype(np.int64, copy=False))
             compact = pol[rows, flat.astype(np.int64, copy=False)].astype(np.float32, copy=False)
             bits = torch.from_numpy(compact).to(torch.bfloat16).view(torch.uint16)
             return bits, torch.from_numpy(wdl), None
+        if fwd_rows > bsz:
+            counts = np.pad(counts, (0, fwd_rows - bsz))
+            pol_t, wdl_t, event = self._async_forward_legal_bf16(
+                fwd_rows, flat, counts, n_legal, slot=slot,
+            )
+            return pol_t, wdl_t[:bsz], event
         return self._async_forward_legal_bf16(bsz, flat, counts, n_legal, slot=slot)
 
     @property
@@ -941,7 +959,14 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         if flat.ndim != 1:
             raise ValueError(f"legal_flat must be 1D, got {flat.ndim}D")
         self._stage_encoded_input(x, real_n, slot=0)
-        padded = _compiled_padded_batch_size(real_n, capacity=self._max_batch)
+        # A padding evaluator pads inside ``evaluate_inplace_legal_bf16_async``
+        # (``compiled_forward_rows``: a count past the last rung below the cap
+        # runs AT the cap, never at its raw size). The legacy pre-pad below is
+        # kept bit-for-bit for non-padding evaluators.
+        padded = (
+            real_n if self._pad_to_buckets
+            else _compiled_padded_batch_size(real_n, capacity=self._max_batch)
+        )
         if padded > real_n:
             counts = np.pad(counts, (0, padded - real_n))
         pol_t, wdl_t, event = self.evaluate_inplace_legal_bf16_async(
@@ -1093,18 +1118,22 @@ class ShapeLedger:
 
     def __init__(self, label: str) -> None:
         self.label = str(label)
-        self._seen: set[int] = set()
+        # One shape set per compiled graph: the dense forward and the compact
+        # legal-policy forward (``evaluate_*legal_bf16*``) are different traced
+        # graphs, so a dense batch-400 capture does not warm the legal one.
+        self._seen_by_graph: dict[str, set[int]] = {"dense": set(), "legal": set()}
         self._armed = False
         self._lock = threading.Lock()
         self.cold_shapes: list[tuple[str, int]] = []
 
-    def note(self, entry: str, rows: int) -> None:
-        if rows in self._seen:
+    def note(self, entry: str, rows: int, *, graph: str = "dense") -> None:
+        seen = self._seen_by_graph[graph]
+        if rows in seen:
             return
         with self._lock:
-            if rows in self._seen:
+            if rows in seen:
                 return
-            self._seen.add(rows)
+            seen.add(rows)
             armed = self._armed
             if armed:
                 self.cold_shapes.append((entry, rows))
@@ -1122,9 +1151,9 @@ class ShapeLedger:
             self.label, entry, rows,
         )
 
-    def seen(self) -> frozenset[int]:
+    def seen(self, graph: str = "dense") -> frozenset[int]:
         with self._lock:
-            return frozenset(self._seen)
+            return frozenset(self._seen_by_graph[graph])
 
     def arm(self) -> None:
         with self._lock:

@@ -163,16 +163,24 @@ def _bucket_warm_progress(label: str, i: int, n: int, rows: int, started: float)
     )
 
 
-def _verify_and_arm(directs, max_rows_by_eval) -> None:
-    """Strict: every reachable shape is in each ledger; then arm the guard."""
+def _verify_and_arm(directs, max_rows_by_eval, *, legal: bool = False) -> None:
+    """Strict: every reachable shape is in each ledger; then arm the guard.
+
+    ``legal``: the compact legal-policy graph was warmed too, so its own shape
+    set must be complete on every evaluator that supports it."""
     for ev in directs:
         want = set(ev.reachable_forward_rows(max_rows_by_eval(ev)))
-        missing = sorted(want - set(ev.shape_ledger.seen()))
-        if missing:
-            raise RuntimeError(
-                f"evaluator warmup incomplete on {ev.shape_ledger.label}: "
-                f"batch shapes {missing} were never run"
-            )
+        graphs = ["dense"]
+        if legal and bool(getattr(ev, "supports_legal_bf16", False)):
+            graphs.append("legal")
+        for graph in graphs:
+            missing = sorted(want - set(ev.shape_ledger.seen(graph)))
+            if missing:
+                which = "" if graph == "dense" else f" ({graph} graph)"
+                raise RuntimeError(
+                    f"evaluator warmup incomplete on {ev.shape_ledger.label}{which}: "
+                    f"batch shapes {missing} were never run"
+                )
     for ev in directs:
         ev.shape_ledger.arm()
 
@@ -296,9 +304,23 @@ def _warmup_compiled_buckets(
     shapes = sorted(set().union(*(ev.reachable_forward_rows() for ev in directs)))
     use_async = supports_inplace_api(chain)
     rel_row = cb.compute_relations() if compute_relations else None
+    warm_legal = (
+        rel_row is None
+        and bool(getattr(chain, "supports_legal_bf16", False))
+        and hasattr(chain, "evaluate_legal_bf16")
+    )
     labels = ",".join(ev.shape_ledger.label for ev in directs)
     started = time.monotonic()
-    todo = [r for r in shapes if not all(r in ev.shape_ledger.seen() for ev in directs)]
+
+    def cold(rows: int) -> bool:
+        for ev in directs:
+            if rows not in ev.shape_ledger.seen():
+                return True
+            if warm_legal and ev.supports_legal_bf16 and rows not in ev.shape_ledger.seen("legal"):
+                return True
+        return False
+
+    todo = [r for r in shapes if cold(r)]
     for i, rows in enumerate(todo, 1):
         _bucket_warm_progress(labels, i, len(todo), rows, started)
         xs = np.broadcast_to(encoded, (rows, *encoded.shape)).astype(np.float32, copy=True)
@@ -318,11 +340,7 @@ def _warmup_compiled_buckets(
                     chain.evaluate_encoded(xs)
                 else:
                     chain.evaluate_encoded(xs, relations=rels)
-            if (
-                rel_row is None
-                and bool(getattr(chain, "supports_legal_bf16", False))
-                and hasattr(chain, "evaluate_legal_bf16")
-            ):
+            if warm_legal:
                 legal_one = cb.legal_move_indices().astype(np.int32, copy=False)
                 legal_counts = np.full((rows,), legal_one.size, dtype=np.int32)
                 legal_flat = np.tile(legal_one, rows)
@@ -330,18 +348,20 @@ def _warmup_compiled_buckets(
                     chain.evaluate_legal_bf16(xs, legal_flat, legal_counts)
         except Exception as exc:
             raise RuntimeError(f"evaluator warmup failed at batch={rows}") from exc
-    _verify_and_arm(directs, lambda _ev: None)
+    _verify_and_arm(directs, lambda _ev: None, legal=warm_legal)
 
 
 def _pucv_warmup_batch_sizes(gather: int) -> list[int]:
-    """Batch sizes MultiGpuPucvPool / RPG submit in the steady state.
+    """Endpoint shapes {1, gather} for a NON-padding (eager) pool/RPG worker.
 
-    Full-gather is the common case; batch=1 covers root / short-budget
-    edges. CUDA graphs are process-local (not disk-cached), so every
-    isready re-captures — keep this set minimal for the tournament
-    ~30s warm-launch budget. Mid-size remainders recompile once mid-
-    search under the factory lock's warm shapes only if they appear;
-    production gather-aligned budgets rarely need them.
+    Used only when the evaluator does not pad (no ``torch.compile``): an eager
+    forward has no per-shape compile or CUDA-graph capture, so the endpoints
+    just exercise the path. A compiled worker pads every submission through
+    ``compiled_forward_rows`` and ``_warmup_pucv_evaluator`` warms its WHOLE
+    finite ladder (``reachable_forward_rows(gather)``) instead, so no shape is
+    first met on the search clock. Either way every shape is run twice: pass 1
+    pays compile / capture, pass 2 is the steady-state timing that seeds the
+    pool's stuck-device threshold (``warm_steady_call_s``).
     """
     g = max(1, int(gather))
     return sorted({1, g})
@@ -355,8 +375,15 @@ def _warmup_pucv_evaluator(
     input_extra_features: str | None = None,
     compute_relations: bool = False,
     strict: bool = False,
-) -> None:
-    """Warm the exact inplace-async shapes used by MultiGpuPucvPool.
+) -> float | None:
+    """Warm the exact inplace-async shapes used by MultiGpuPucvPool, TWICE.
+
+    Pass 1 runs every shape once (compile / CUDA-graph capture happen here).
+    Pass 2 runs the same shapes again and times each call (submit + wait):
+    that is the device's steady-state cost, and the slowest pass-2 call is
+    returned so the pool can seed its stuck-device threshold from it. Pass-1
+    timings are never used -- a compile-inflated seed would make the threshold
+    meaningless. Returns None when a non-strict warmup gave up.
 
     ``strict=True`` re-raises the first failure so multi-GPU factory install
     cannot silently return a cold evaluator that then crashes on the first
@@ -384,30 +411,36 @@ def _warmup_pucv_evaluator(
         work = [(b, s) for b in _pucv_warmup_batch_sizes(gather) for s in range(n_slots)]
     started = time.monotonic()
     n_shapes = len({b for b, _ in work})
-    shape_no = 0
-    for batch, slot in work:
-        if padded and slot == 0:
-            shape_no += 1
-            if batch not in evaluator.shape_ledger.seen():
-                _bucket_warm_progress(evaluator.shape_ledger.label, shape_no, n_shapes, batch, started)
-        try:
-            buf = evaluator.get_input_buffer(batch, slot=slot)
-            buf[:] = np.broadcast_to(encoded, (batch, *encoded.shape))
-            if rel_row is None:
-                _pol, _wdl, event = evaluator.evaluate_inplace_async(batch, slot=slot)
-            else:
-                rels = np.broadcast_to(rel_row, (batch, *rel_row.shape)).copy()
-                _pol, _wdl, event = evaluator.evaluate_inplace_async(
-                    batch, slot=slot, relations=rels,
-                )
-            if event is not None:
-                event.synchronize()
-        except Exception:
-            if strict:
-                raise
-            return
+    label = getattr(getattr(evaluator, "shape_ledger", None), "label", "pool")
+    steady = 0.0
+    for pass_no in (1, 2):
+        shape_no = 0
+        for batch, slot in work:
+            if padded and slot == 0:
+                shape_no += 1
+                _bucket_warm_progress(f"{label} pass {pass_no}/2", shape_no, n_shapes, batch, started)
+            try:
+                buf = evaluator.get_input_buffer(batch, slot=slot)
+                buf[:] = np.broadcast_to(encoded, (batch, *encoded.shape))
+                t0 = time.monotonic()
+                if rel_row is None:
+                    _pol, _wdl, event = evaluator.evaluate_inplace_async(batch, slot=slot)
+                else:
+                    rels = np.broadcast_to(rel_row, (batch, *rel_row.shape)).copy()
+                    _pol, _wdl, event = evaluator.evaluate_inplace_async(
+                        batch, slot=slot, relations=rels,
+                    )
+                if event is not None:
+                    event.synchronize()
+                if pass_no == 2:
+                    steady = max(steady, time.monotonic() - t0)
+            except Exception:
+                if strict:
+                    raise
+                return None
     if padded:
         _verify_and_arm([evaluator], lambda _ev: gather)
+    return steady
 
 
 def _load_models(checkpoint: str, devices: list[str]):
@@ -662,7 +695,7 @@ def _compile_and_warm_pucv_evaluator(
                 compiled, device=device, max_batch=max_batch, n_slots=2,
                 input_bf16=compact_bf16, legal_bf16=compact_bf16, **pad_kw,
             )
-            _warmup_pucv_evaluator(
+            steady = _warmup_pucv_evaluator(
                 evaluator,
                 gather=gather,
                 input_history_encoding=input_history_encoding,
@@ -670,6 +703,8 @@ def _compile_and_warm_pucv_evaluator(
                 compute_relations=use_relations,
                 strict=True,
             )
+            if isinstance(steady, float):
+                evaluator.warm_steady_call_s = steady
             if i > 0:
                 _println(
                     f"info string multi-GPU: cudagraph warmup failed on "
