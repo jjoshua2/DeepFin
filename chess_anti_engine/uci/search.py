@@ -499,6 +499,8 @@ class SearchWorker:
   # Caller is responsible for building the per-GPU evaluators (typically
   # via ``_make_evaluator_factory`` repeated per device).
         self._pucv_pool: MultiGpuPucvPool | None = None
+        # Pool workers still stuck in a device call after their pool closed.
+        self._wedged_device_threads: list[threading.Thread] = []
         self._pucv_pool_evals: list[Any] = []
         self._pucv_pool_cboard: CBoard | None = None
   # Degrade-path announcements (a dropped device, a failed primary) waiting
@@ -831,6 +833,20 @@ class SearchWorker:
                 kept.append(note)
         self._device_notes = kept
 
+    def _close_pucv_pool(self, pool: Any) -> None:
+        """Close a multi-GPU pool, remembering any worker still wedged in a
+        device call after it (see ``has_wedged_device_threads``)."""
+        pool.close()
+        live = getattr(pool, "live_worker_threads", None)
+        if callable(live):
+            wedged: list[threading.Thread] = list(getattr(self, "_wedged_device_threads", ()))
+            wedged.extend(cast("list[threading.Thread]", live()))
+            self._wedged_device_threads = wedged
+
+    def has_wedged_device_threads(self) -> bool:
+        """A closed pool left a worker stuck inside a device call."""
+        return any(th.is_alive() for th in getattr(self, "_wedged_device_threads", ()))
+
     def failed_pool_devices(self) -> tuple[str, ...]:
         """Devices the multi-GPU pool has dropped (empty when healthy / no pool)."""
         pool = self._pucv_pool
@@ -885,7 +901,7 @@ class SearchWorker:
         """
         had_pool = self._pucv_pool is not None or bool(self._pucv_pool_evals)
         if self._pucv_pool is not None:
-            self._pucv_pool.close()
+            self._close_pucv_pool(self._pucv_pool)
             self._pucv_pool = None
         for ev in self._pucv_pool_evals:
             close = getattr(ev, "close", None)
@@ -1571,7 +1587,7 @@ class SearchWorker:
             self._walker_pool = None
         self.clear_root_parallel_gumbel()
         if self._pucv_pool is not None:
-            self._pucv_pool.close()
+            self._close_pucv_pool(self._pucv_pool)
             self._pucv_pool = None
   # Each per-GPU evaluator may also need close() (BatchCoalescingDispatcher
   # submitter etc.).
@@ -3361,6 +3377,12 @@ class SearchWorker:
         assert self._root_id is not None
         assert self._pucv_pool is not None
         assert self._pucv_pool_cboard is not None
+        # Re-admit a device whose stalled call has since answered: a false
+        # drop then costs one slow call, not the rest of the move. Lock-free
+        # no-op on the healthy path (nothing restorable).
+        restore = getattr(self._pucv_pool, "restore_recovered_devices", None)
+        if callable(restore):
+            restore()
         try:
             completed = self._pucv_pool.run(
                 tree=self._tree,

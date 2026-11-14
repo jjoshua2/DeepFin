@@ -3601,7 +3601,20 @@ class Engine:
         finalizing the interpreter under a live thread.
         """
         with self._state_lock:
-            return not self._search_free_locked()
+            if not self._search_free_locked():
+                return True
+        # A multi-GPU pool worker left inside a device call by a dropped
+        # (wedged) device: finalizing under it can abort the process too.
+        wedged = getattr(self._worker, "has_wedged_device_threads", None)
+        return callable(wedged) and wedged() is True
+
+    def only_wedged_device_threads(self) -> bool:
+        """The only live threads are pool workers wedged in a device call."""
+        with self._state_lock:
+            if not self._search_free_locked():
+                return False
+        wedged = getattr(self._worker, "has_wedged_device_threads", None)
+        return callable(wedged) and wedged() is True
 
     def _wait_for_search(
         self, *, timeout_s: float | None = None, answer_parked: bool = False,

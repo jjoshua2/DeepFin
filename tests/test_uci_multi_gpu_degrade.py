@@ -812,18 +812,19 @@ def test_a_stuck_device_does_not_cost_the_move_once_the_others_are_idle(out) -> 
 
 
 def test_a_healthy_slow_call_on_a_drained_budget_is_dropped_then_restored() -> None:
-    """The accepted cost of the idle-survivor rule: a healthy 1.2 s call that
-    lands when the other device has already finished the job is dropped at the
-    stop threshold, and restored at the next search start once it answers."""
-    slow = _OnceSlow(_evaluator(), k=1, delay=1.2)
+    """The accepted cost of the idle-survivor rule: a healthy call slower than
+    the 1 s idle floor that lands when the other device has already finished
+    the job is dropped, and restored (next chunk / search) once it answers."""
+    slow = _OnceSlow(_evaluator(), k=1, delay=1.6)
     pool = MultiGpuPucvPool(
         MultiGpuPucvConfig(n_gpus=2, gather=8, device_labels=("g0", "g1")),
         evaluators=[_evaluator(), slow],
     )
     try:
+        assert pool.idle_stall_threshold_s(1) == pytest.approx(1.0)
         started = time.monotonic()
         _run(pool, 100)
-        assert time.monotonic() - started < 1.2  # did not wait out the slow call
+        assert time.monotonic() - started < 1.5  # did not wait out the slow call
         assert pool.failed_devices() == ("g1",)
         assert _wait_for(lambda: pool._restorable[1])
         assert pool.restore_recovered_devices() == ("g1",)
@@ -881,3 +882,93 @@ def test_a_stalled_call_that_then_raises_is_not_restorable(monkeypatch) -> None:
     finally:
         bad.release.set()
         pool.close()
+
+
+
+@pytest.mark.parametrize("delay", [0.3, 0.6])
+def test_a_tail_hiccup_under_the_idle_floor_is_kept(delay) -> None:
+    """Shipped constants, survivor already idle (small budget): a healthy
+    0.3 s / 0.6 s hiccup is waited out, not dropped (the bare 0.25 s stop
+    threshold used to drop it until the next search)."""
+    slow = _OnceSlow(_evaluator(), k=2, delay=delay)
+    slow.warm_steady_call_s = 0.017
+    pool = MultiGpuPucvPool(
+        MultiGpuPucvConfig(n_gpus=2, gather=8, device_labels=("g0", "g1")),
+        evaluators=[_evaluator(), slow],
+    )
+    try:
+        assert _run(pool, 300)[0] == 300
+        assert pool.failed_devices() == ()
+        assert pool.drain_notes() == []
+    finally:
+        pool.close()
+
+
+def test_a_dropped_slow_device_is_back_at_the_next_chunk_of_the_same_go(out) -> None:
+    """A healthy 1.2 s call with the survivor idle is dropped at the 1 s idle
+    floor; once it answers, the NEXT CHUNK of the same search re-admits it, so
+    within one `go` the device searches again. One DEGRADED and one RESTORED
+    line; the move is searched."""
+    slow = _OnceSlow(_evaluator(), k=3, delay=1.2)
+    engine, worker = _engine_with_pool([_evaluator(), slow])
+    try:
+        move, _ = _searched_go(engine, out, "d2d4", 4000, 1)
+        assert _legal_after("d2d4", move)
+        text = out.text()
+        assert not any(marker in text for marker in _UNSEARCHED), text
+        assert len(_degraded_lines(out)) == 1
+        restored = [ln for ln in text.splitlines() if "multi-GPU RESTORED" in ln]
+        assert len(restored) == 1
+        # It searched again within the SAME go: calls after the slow one, and
+        # the restore was printed before that go's bestmove.
+        assert slow.calls > 3 + 2
+        assert text.index("multi-GPU RESTORED") < text.index(f"bestmove {move}")
+        assert worker.failed_pool_devices() == ()
+    finally:
+        engine.close()
+        worker.close()
+
+
+def test_a_progressing_worker_keeps_the_mid_search_patience_for_a_stuck_one() -> None:
+    """Three devices: g0 finished the job (idle), g1 is still running and
+    making progress (inside a YOUNG call), g2 is stuck 2 s. The idle-survivor
+    rule needs EVERY running worker stuck past the idle floor; with g1
+    progressing, g2 keeps the 5 s mid-search patience."""
+    pool = MultiGpuPucvPool(
+        MultiGpuPucvConfig(n_gpus=3, gather=8, device_labels=("g0", "g1", "g2")),
+        evaluators=[_evaluator(), _evaluator(), _evaluator()],
+    )
+    try:
+        now = time.monotonic()
+        with pool._cv:
+            pool._running = {1, 2}
+            pool._busy_since[1] = now - 0.2  # progressing
+            pool._busy_since[2] = now - 2.0  # stuck, under the 5 s patience
+            pool._abandon_stuck_locked(None)
+            assert not pool._abandoned[2]
+            assert pool._live == [True, True, True]
+            # Once g1 is ALSO stuck past the idle floor, nobody progresses.
+            pool._busy_since[1] = now - 1.5
+            pool._abandon_stuck_locked(None)
+            assert pool._abandoned[2]
+            pool._running = set()
+            pool._busy_since = [None, None, None]
+    finally:
+        pool.close()
+
+
+def test_close_joins_an_abandoned_worker_whose_call_returns_shortly() -> None:
+    """A worker abandoned inside a call that returns ~0.5 s later is joined by
+    close() (bounded), so no pool thread is still inside the evaluator when the
+    interpreter finalizes; only a genuinely wedged one would be left alive."""
+    slow = _OnceSlow(_evaluator(), k=1, delay=1.5)
+    pool = MultiGpuPucvPool(
+        MultiGpuPucvConfig(n_gpus=2, gather=8, device_labels=("g0", "g1")),
+        evaluators=[_evaluator(), slow],
+    )
+    try:
+        _run(pool, 100)
+        assert pool.failed_devices() == ("g1",)
+    finally:
+        pool.close()
+    assert pool.live_worker_threads() == []

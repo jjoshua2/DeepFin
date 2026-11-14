@@ -384,13 +384,13 @@ other devices still have work, "too long" is at least 5 s, and at least 10 times
 the slowest call that device has completed (starting from its timed warm-up pass),
 but never more than 30 s. That is deliberately patient: while the others keep
 searching, a stuck device costs only speed, whereas dropping a healthy GPU costs a
-whole device. As soon as the other devices have finished their share and sit idle,
-or the move has been stopped or answered, waiting buys nothing, so the limit drops
-to at least 0.25 s and 5 times the slowest call, never more than 1 s; a hung GPU
-therefore costs at most about a second of the move it hung in and cannot hold up
-the next `go`. A healthy but slow call that happens to land when the others are
-already idle is dropped by that short limit too, and restored at the next `go`
-once it answers (below). The first device (`devices[0]`) also does the root evaluations; if that fails,
+whole device. Once the move has been stopped or answered, waiting buys nothing, so
+the limit drops to at least 0.25 s and 5 times the slowest call, never more than
+1 s; a hung GPU cannot hold up the next `go`. When the other devices have finished
+their share and sit idle while one device is still inside a call, the limit is 1 s:
+an idle-survivor stall over 1 s is dropped and re-admitted at the next chunk once
+it answers (shorter hiccups are waited out), so a hung GPU costs about a second of
+the move it hung in. The first device (`devices[0]`) also does the root evaluations; if that fails,
 they move to a remaining device. Each drop is announced once:
 `info string WARNING multi-GPU DEGRADED: device ... failed mid-search ...; searching on ... of ... devices`
 (or `... stopped answering ...`). While any device is dropped, every `go`, every
@@ -398,7 +398,8 @@ they move to a remaining device. Each drop is announced once:
 `info string multi-GPU degraded: ... of ... devices (... failed: ...)`. The engine
 is not marked unhealthy for this; it keeps playing on the devices it has.
 A device dropped for **stopping answering** whose stuck call later comes back
-without an error is re-admitted at the start of the next `go`, announced once with
+without an error is re-admitted before the next search chunk (within the same
+`go` if it is still searching, otherwise at the next one), announced once with
 `info string multi-GPU RESTORED: device ... answered again after its stall; searching on ... of ... devices`
 (the late result itself is thrown away; it never reaches the search tree or the
 evaluation cache). A device that **raised** is not retried until the pool is

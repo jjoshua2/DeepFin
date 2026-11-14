@@ -1683,6 +1683,8 @@ def main() -> int:
   # The last line on each channel says why the process exits, and with what.
             why = ("a search that ignored stop, or a fallback eval stuck in the "
                    "evaluator, is still running")
+            if getattr(eng, "only_wedged_device_threads", lambda: False)() is True:
+                why = "a multi-GPU worker is still stuck inside a dropped device's call"
             _println(f"info string quit: {why}; exiting with status {rc} without waiting for it")
             print(f"deepfin: {why} at shutdown; exiting with status {rc} without waiting for it",
                   file=sys.stderr)

@@ -1136,3 +1136,121 @@ def _wake_latency_p99_ms() -> float:
         watchdog.close()
     lateness.sort()
     return lateness[int(len(lateness) * 0.99) - 1]
+
+
+_QUIT_WITH_A_WEDGED_DEVICE_DRIVER = r'''
+import sys
+import threading
+from types import SimpleNamespace
+
+import torch
+
+from chess_anti_engine.inference import DirectGPUEvaluator
+from chess_anti_engine.inference_dispatcher import ThreadSafeGPUDispatcher
+from chess_anti_engine.mcts.gumbel import GumbelConfig
+from chess_anti_engine.model import ModelConfig, build_model
+from chess_anti_engine.uci import __main__ as uci_main
+from chess_anti_engine.uci.engine import Engine, EngineOptions
+from chess_anti_engine.uci.search import SearchWorker
+
+torch.set_num_threads(1)
+
+
+def evaluator():
+    cfg = ModelConfig(input_extra_features="v1", embed_dim=16, num_layers=1,
+                      num_heads=2, ffn_mult=2.0)
+    model = build_model(cfg)
+    model.eval()
+    return ThreadSafeGPUDispatcher(DirectGPUEvaluator(
+        model, device="cpu", max_batch=64, use_amp=False, n_slots=2,
+    ))
+
+
+class NeverReturns:
+    """Device whose batch call never returns: it spins in torch (GIL released
+    inside each op), the shape that used to abort interpreter finalization."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def __getattr__(self, name):
+        attr = getattr(self._inner, name)
+        if not callable(attr) or not name.startswith("evaluate"):
+            return attr
+
+        def wedged(*_a, **_k):
+            a = torch.ones(64, 64)
+            while True:
+                a = torch.mm(a, a).clamp_(-1.0, 1.0)
+
+        return wedged
+
+
+worker = SearchWorker(
+    evaluator(), device="cpu",
+    gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False),
+    chunk_sims=64, n_walkers=1,
+)
+worker.install_multi_gpu_pucv(
+    [evaluator(), NeverReturns(evaluator())], gather=8, as_factories=False,
+)
+engine = Engine(worker, options=EngineOptions())
+engine.warmup_search = lambda: None
+sys.argv = ["deepfin", "--checkpoint", "dummy"]
+uci_main._pick_device = lambda _device: "cpu"
+uci_main._resolve_multi_gpu_startup = lambda *_a: (False, False, False)
+uci_main._startup_engine_options = lambda *_a, **_k: SimpleNamespace(
+    eval_cache_entries=0, max_batch=1, vl_gather=1, use_multi_gpu_pucv=False,
+    search_parallel="pucv", search_walkers=1, leaf_gather=1,
+)
+uci_main._load_models = lambda *_a: [SimpleNamespace()]
+uci_main._make_evaluator_factory = lambda *_a, **_k: lambda *_x, **_y: object()
+uci_main._engine_search_kwargs = lambda _args: {}
+uci_main._build_engine = lambda **_k: engine
+sys.exit(uci_main.main())
+'''
+
+
+def test_quit_with_a_never_returning_device_exits_zero(tmp_path) -> None:
+    """Subprocess engine on a cpu,cpu pool whose device 1 never returns from
+    its batch call: go is answered, quit exits 0 with the reason printed --
+    never the finalization abort (rc 134, "terminate called without an active
+    exception") a still-running abandoned worker used to cause."""
+    import os
+    import subprocess
+    import sys
+
+    driver = tmp_path / "driver.py"
+    driver.write_text(_QUIT_WITH_A_WEDGED_DEVICE_DRIVER)
+    env = dict(os.environ, CUDA_VISIBLE_DEVICES="", PYTHONUNBUFFERED="1",
+               OMP_NUM_THREADS="1", MKL_NUM_THREADS="1")
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env["PYTHONPATH"] = repo + os.pathsep + env.get("PYTHONPATH", "")
+    proc = subprocess.Popen(
+        [sys.executable, str(driver)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True, env=env, cwd=str(tmp_path),
+    )
+    try:
+        assert proc.stdin is not None
+        assert proc.stdout is not None
+        proc.stdin.write("position startpos moves e2e4\ngo movetime 2000\n")
+        proc.stdin.flush()
+        lines = []
+        for line in proc.stdout:
+            lines.append(line.rstrip("\n"))
+            if line.startswith("bestmove"):
+                break
+        assert any(ln.startswith("bestmove") for ln in lines), lines
+        proc.stdin.write("quit\n")
+        proc.stdin.flush()
+        rest, err = proc.communicate(timeout=60)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.communicate()
+    text = "\n".join(lines) + "\n" + rest
+    assert "terminate called" not in err, err
+    assert proc.returncode == 0, (proc.returncode, text, err)
+    assert "multi-GPU DEGRADED: device #1 stopped answering" in text, text
+    assert ("info string quit: a multi-GPU worker is still stuck inside a dropped "
+            "device's call; exiting with status 0") in text, text

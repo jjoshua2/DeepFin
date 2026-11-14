@@ -109,6 +109,15 @@ _STOP_STALL_SLOWEST_CALL_FACTOR = 5.0
 # completed, a wedged device can never hold a stopped search (and so the next
 # ``go``) for more than this.
 _STOP_STALL_CEILING_S = 1.0
+# Floor of the IDLE-SURVIVOR threshold (the others have finished the job and
+# wait on one worker; see ``_abandon_stuck_locked``). A chunk is only a few
+# batches per device, so the others go idle almost at once; at the bare stop
+# threshold (0.25 s) any healthy hiccup over a quarter second would drop a GPU.
+# One second keeps ordinary hiccups and still bounds the wasted time per chunk;
+# a stall past it is dropped and re-admitted at the next chunk once it answers.
+_IDLE_SURVIVOR_STALL_FLOOR_S = _STOP_STALL_CEILING_S
+# ``close`` waits at most this long (shared) for abandoned workers to exit.
+_CLOSE_ABANDONED_JOIN_S = 1.0
 # How often ``run`` re-checks for a stuck worker while it waits; a normal
 # completion wakes it at once through the condition variable.
 _RUN_POLL_S = 0.05
@@ -449,6 +458,8 @@ class MultiGpuPucvPool:
         Call only between runs (the UCI engine calls it at the start of each
         search). The parked worker gets a fresh quarantine object; its late
         result was already discarded. Each restore is announced once."""
+        if not any(self._restorable):
+            return ()  # healthy path: no lock, no allocation beyond the scan
         restored: list[int] = []
         with self._cv:
             if self._shutdown.is_set():
@@ -506,6 +517,10 @@ class MultiGpuPucvPool:
             max(_STOP_STALL_FLOOR_S, _STOP_STALL_SLOWEST_CALL_FACTOR * self._slowest(idx)),
         )
 
+    def idle_stall_threshold_s(self, idx: int | None = None) -> float:
+        """Threshold while every other live device is idle on this job."""
+        return max(_IDLE_SURVIVOR_STALL_FLOOR_S, self.stop_stall_threshold_s(idx))
+
     @property
     def gather(self) -> int:
         """Per-worker leaf gather: the most tokens a worker grabs per batch."""
@@ -517,10 +532,25 @@ class MultiGpuPucvPool:
         self._shutdown.set()
         for ev in self._wakes:
             ev.set()
+        abandoned_deadline = time.monotonic() + _CLOSE_ABANDONED_JOIN_S
         for k, th in enumerate(self._threads):
             if self._abandoned[k] and not self._restorable[k]:
-                continue  # stuck inside a device call; never joinable
+                # Abandoned inside a device call. If that call has returned (or
+                # does so shortly) the thread exits at once on ``_shutdown``;
+                # join it within a short shared budget so it is not still
+                # inside torch when the interpreter finalizes (that aborts the
+                # process). A genuinely wedged one stays alive; see
+                # ``live_worker_threads``.
+                th.join(timeout=max(0.0, abandoned_deadline - time.monotonic()))
+                continue
             th.join(timeout=2.0)
+
+    def live_worker_threads(self) -> list[threading.Thread]:
+        """Worker threads still alive (after ``close``: wedged in a device call).
+
+        The UCI process hard-exits after its normal shutdown when any remain,
+        instead of finalizing the interpreter under a thread inside torch."""
+        return [th for th in self._threads if th.is_alive()]
 
     # -- failure bookkeeping (callers hold no lock unless named *_locked) --
 
@@ -599,19 +629,23 @@ class MultiGpuPucvPool:
     def _abandon_stuck_locked(self, job: _Job | None) -> None:
         """Abandon every running worker stuck in one device call too long.
 
-        The short (stop) threshold applies when the job is stopped, or when
-        every live device that is NOT stuck has already finished this job (it
-        drained the budget and sits idle) while each worker still running is
-        inside a call older than the stop threshold: ``run`` cannot return
-        while a worker is stuck, so mid-search patience would only burn the
-        move. The survivors cannot instead take over a stuck worker's leaves
-        while it might still answer -- its batch is under virtual loss in the
-        tree and its late answer would integrate twice -- so abandoning it
-        (which releases that virtual loss under this lock and hands its
-        tokens back) IS the take-over. A healthy slow call that coincides
-        with a drained budget is dropped this way too, and restored at the
-        next search start once it answers. With no idle survivor (one device
-        left) the long threshold still applies: dropping it gains nothing."""
+        Three thresholds:
+          - job stopped: ``stop_stall_threshold_s`` (<= 1 s);
+          - IDLE SURVIVOR -- some live device has finished this job and sits
+            idle, and EVERY worker still running is inside a call older than
+            ``idle_stall_threshold_s`` (>= 1 s): ``run`` cannot return while a
+            worker is stuck, so mid-search patience would only burn the move;
+          - otherwise (someone is still making progress): the mid-search
+            ``stall_threshold_s`` (>= 5 s).
+        The survivors cannot instead take over a stuck worker's leaves while it
+        might still answer -- its batch is under virtual loss in the tree and
+        its late answer would integrate twice -- so abandoning it (which
+        releases that virtual loss under this lock and hands its tokens back)
+        IS the take-over. A healthy call slower than 1 s that lands when the
+        others are idle is dropped this way too, and re-admitted at the next
+        chunk (``restore_recovered_devices``) once it answers. With no idle
+        survivor (one device left) the long threshold applies: dropping it
+        gains nothing."""
         stopped = job is not None and job.stop_event.is_set()
         now = time.monotonic()
         idle_survivor = any(
@@ -619,13 +653,17 @@ class MultiGpuPucvPool:
         )
         nobody_progressing = idle_survivor and bool(self._running) and all(
             self._busy_since[k] is not None
-            and now - cast(float, self._busy_since[k]) > self.stop_stall_threshold_s(k)
+            and now - cast(float, self._busy_since[k]) > self.idle_stall_threshold_s(k)
             for k in self._running
         )
-        short = stopped or nobody_progressing
         for k in sorted(self._running):
             since = self._busy_since[k]
-            limit = self.stop_stall_threshold_s(k) if short else self.stall_threshold_s(k)
+            if stopped:
+                limit = self.stop_stall_threshold_s(k)
+            elif nobody_progressing:
+                limit = self.idle_stall_threshold_s(k)
+            else:
+                limit = self.stall_threshold_s(k)
             if since is None or now - since <= limit:
                 continue
             self._abandoned[k] = True
