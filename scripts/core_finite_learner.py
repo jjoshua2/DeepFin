@@ -44,6 +44,29 @@ if TYPE_CHECKING:
         def decorate_boundary(self, boundary: dict[str, Any], c: dict[str, Any], stage: dict[str, Any]) -> None: ...
 
 
+    class RetainedSearchProfile(Protocol):
+        """Retained-search callback shape, independent of its public caller."""
+
+        @property
+        def STAGE(self) -> str: ...
+
+        @property
+        def BOUNDARY(self) -> str: ...
+
+        def validate_and_project(self, c: dict[str, Any], stage: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]: ...
+
+        def closed_parent(self, binding: dict[str, Any], c: dict[str, Any], contract_ref: dict[str, str],
+                          stage: dict[str, Any]) -> dict[str, Any]: ...
+
+        def validate_arrays(self, arrays: dict[str, Any], rows: int) -> None: ...
+
+        def bind_checkpoint(self, path: Path, c: dict[str, Any], contract_ref: dict[str, str]) -> None: ...
+
+        def check_checkpoint(self, ref: dict[str, str], c: dict[str, Any], contract_ref: dict[str, str]) -> None: ...
+
+        def decorate_boundary(self, boundary: dict[str, Any], c: dict[str, Any]) -> None: ...
+
+
 REPO = Path(__file__).resolve().parents[1]
 CORE_KWARGS: dict[str, Any] = {
     "optimizer": "nadamw", "weight_decay_mode": "weight_decay",
@@ -261,20 +284,24 @@ def closed_parent(binding: dict[str, Any], c: dict[str, Any], contract_ref: dict
 
 
 def metadata(c: dict[str, Any], stage: dict[str, Any], contract_ref: dict[str, str],
-             *, _sf_p0: P0Profile | None = None) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+             *, _sf_p0: P0Profile | None = None,
+             _retained_search: RetainedSearchProfile | None = None) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    fixed_bank = _sf_p0 is not None or _retained_search is not None
     contract_sha = contract_ref["sha256"]
     stage_keys = {"schema", "contract_sha256", "generation", "generations", "parent", "output"}
     if _sf_p0 is not None:
         stage_keys.add("sf_p0_sidecars")
     require(set(stage) == stage_keys,
             "unknown or missing stage fields")
-    stage_schema = "core_finite_stage_v1" if _sf_p0 is None else _sf_p0.STAGE
+    stage_schema = (_retained_search.STAGE if _retained_search is not None else
+                    "core_finite_stage_v1" if _sf_p0 is None else _sf_p0.STAGE)
     require(stage["schema"] == stage_schema and stage["contract_sha256"] == contract_sha,
             "stage contract mismatch")
     g = integer(stage["generation"], "generation")
-    data_count = g if _sf_p0 is None else 1
+    data_count = 1 if fixed_bank else g
     require(g <= len(c["updates_per_generation"]) and len(stage["generations"]) == data_count, "generation horizon mismatch")
-    data_identity = c if _sf_p0 is None else c["sf_p0"]["data_identity"]
+    data_identity = (c["retained_search"]["data_identity"] if _retained_search is not None else
+                     c if _sf_p0 is None else c["sf_p0"]["data_identity"])
     generations = []
     physical_ids: set[str] = set()
     for i, ref in enumerate(stage["generations"], 1):
@@ -338,18 +365,21 @@ def metadata(c: dict[str, Any], stage: dict[str, Any], contract_ref: dict[str, s
     if g == 1:
         require(stage["parent"] is None, "first generation cannot resume")
     else:
-        parent = (closed_parent(stage["parent"], c, contract_ref, stage) if _sf_p0 is None
+        parent = (_retained_search.closed_parent(stage["parent"], c, contract_ref, stage)
+                  if _retained_search is not None else
+                  closed_parent(stage["parent"], c, contract_ref, stage) if _sf_p0 is None
                   else _sf_p0.closed_parent(stage["parent"], c, contract_ref, stage))
-        parent_status = "COMPLETED_CORE_GENERATION_V1" if _sf_p0 is None else _sf_p0.BOUNDARY
+        parent_status = (_retained_search.BOUNDARY if _retained_search is not None else
+                         "COMPLETED_CORE_GENERATION_V1" if _sf_p0 is None else _sf_p0.BOUNDARY)
         require(parent["status"] == parent_status and parent["generation"] == g - 1,
                 "only closed consecutive boundaries may resume")
         require(parent["contract_sha256"] == contract_sha and parent["source_revision"] == c["source_revision"],
                 "parent contract/source mismatch")
         require(parent["run_uuid"] == c["run_uuid"] and parent["donor"] == c["donor"], "parent donor/run mismatch")
-        prior_data = stage["generations"][:-1] if _sf_p0 is None else stage["generations"]
+        prior_data = stage["generations"] if fixed_bank else stage["generations"][:-1]
         require(parent["generation_manifests"] == prior_data, "parent data history changed")
         require(parent["step"] == sum(c["updates_per_generation"][:g - 1]), "parent dose mismatch")
-        if _sf_p0 is None:
+        if not fixed_bank:
             require(generations[-1]["actor_sha256"] == parent["checkpoint"]["sha256"], "actor/parent checkpoint mismatch")
         checkpoint = external(parent["checkpoint"]["path"])
         require(checkpoint.stat().st_mode & 0o222 == 0
@@ -357,7 +387,8 @@ def metadata(c: dict[str, Any], stage: dict[str, Any], contract_ref: dict[str, s
     return generations, parent
 
 
-def make_trainer(c: dict[str, Any], log_dir: Path, *, sf_p0_alpha: float | None = None) -> Any:
+def make_trainer(c: dict[str, Any], log_dir: Path, *, sf_p0_alpha: float | None = None,
+                 retained_search_share: float | None = None) -> Any:
     import torch
     from chess_anti_engine.model import ARCH_SCHEMA_VERSION, build_model, model_config_from_manifest_dict
     from chess_anti_engine.train import Trainer
@@ -387,7 +418,12 @@ def make_trainer(c: dict[str, Any], log_dir: Path, *, sf_p0_alpha: float | None 
     require(canonical({"_schema_version": ARCH_SCHEMA_VERSION, **asdict(cfg)}) == canonical(arch),
             "architecture fields would be defaulted or dropped")
     lr = c["lr"]
+    require(sf_p0_alpha is None or retained_search_share is None, "target families cannot be combined")
     kwargs = CORE_KWARGS if sf_p0_alpha is None else {**CORE_KWARGS, "sf_wdl_frac": sf_p0_alpha}
+    if retained_search_share is not None:
+        require(type(retained_search_share) in (int, float) and retained_search_share in (0, 1),
+                "retained search share must be zero or one")
+        kwargs = {**CORE_KWARGS, "search_wdl_frac": retained_search_share}
     return NoRetryTrainer(
         build_model(cfg), model_config=cfg, log_dir=log_dir,
         **kwargs, device=c["runtime"]["device"], use_amp=c["runtime"]["use_amp"],
@@ -417,7 +453,8 @@ def backend_profile(torch: Any) -> dict[str, Any]:
             "interop_threads": torch.get_num_interop_threads()}
 
 
-def load_replay(c: dict[str, Any], generations: list[dict[str, Any]], rng: Any, on_draw: Any) -> Any:
+def load_replay(c: dict[str, Any], generations: list[dict[str, Any]], rng: Any, on_draw: Any,
+                *, _retained_search: RetainedSearchProfile | None = None) -> Any:
     import numpy as np
     from chess_anti_engine.model import infer_input_planes
     from chess_anti_engine.replay.generation import GenerationChunk, GenerationReplay
@@ -449,6 +486,8 @@ def load_replay(c: dict[str, Any], generations: list[dict[str, Any]], rng: Any, 
                     "loaded policy encoding mismatch")
             require(history_rep_fix_from_arrays(arrays) == c["architecture"]["history_rep_fix"],
                     "loaded repetition encoding mismatch")
+            if _retained_search is not None:
+                _retained_search.validate_arrays(arrays, game["rows"])
             require(verify_inventory(game["shard"])[1] == sha, "shard changed during eager load")
             for array in arrays.values():
                 array.setflags(write=False)
@@ -509,23 +548,27 @@ def execute(contract_ref: dict[str, str], stage_ref: dict[str, str]) -> dict[str
 
 
 def _execute(contract_ref: dict[str, str], stage_ref: dict[str, str],
-             *, sf_p0: P0Profile | None = None) -> dict[str, Any]:
-    """Shared engine; only the separately versioned SF-P0 caller opts in."""
+             *, sf_p0: P0Profile | None = None,
+             retained_search: RetainedSearchProfile | None = None) -> dict[str, Any]:
+    """Shared engine; separately versioned finite families opt in explicitly."""
+    require(sf_p0 is None or retained_search is None, "target families cannot be combined")
     _, c = read_ref(contract_ref)
     _, stage = read_ref(stage_ref)
-    if sf_p0 is None:
+    if retained_search is not None:
+        c, stage = retained_search.validate_and_project(c, stage)
+    elif sf_p0 is None:
         validate_contract(c)
     else:
         c, stage = sf_p0.validate_and_project(c, stage)
     active_sf_p0 = sf_p0 is not None and c["sf_p0"]["alpha"] > 0
+    active_search = retained_search is not None and c["retained_search"]["search_share"] == 1
     # A Git read cannot refresh the pinned worktree index.
     import subprocess
     git_env = dict(os.environ, GIT_OPTIONAL_LOCKS="0")
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, env=git_env, text=True).strip()
     require(head == c["source_revision"], "source revision mismatch")
     require(not subprocess.check_output(["git", "diff", "HEAD", "--name-only"], cwd=REPO, env=git_env), "dirty tracked source")
-    generations, parent = (metadata(c, stage, contract_ref) if sf_p0 is None
-                           else metadata(c, stage, contract_ref, _sf_p0=sf_p0))
+    generations, parent = metadata(c, stage, contract_ref, _sf_p0=sf_p0, _retained_search=retained_search)
     if active_sf_p0:
         assert sf_p0 is not None
         sf_p0.prepare(c, stage, generations)
@@ -553,8 +596,9 @@ def _execute(contract_ref: dict[str, str], stage_ref: dict[str, str],
         np.random.seed(c["seed"])
         torch.manual_seed(c["seed"])
         rng = np.random.default_rng(c["seed"])
-        trainer = (make_trainer(c, output / "tb") if not active_sf_p0
-                   else make_trainer(c, output / "tb", sf_p0_alpha=c["sf_p0"]["alpha"]))
+        trainer = (make_trainer(c, output / "tb", retained_search_share=1) if active_search else
+                   make_trainer(c, output / "tb") if not active_sf_p0 else
+                   make_trainer(c, output / "tb", sf_p0_alpha=c["sf_p0"]["alpha"]))
         import_custody()
         if parent is None:
             from chess_anti_engine.model import ARCH_SCHEMA_VERSION
@@ -576,6 +620,8 @@ def _execute(contract_ref: dict[str, str], stage_ref: dict[str, str],
             from scripts.bootstrap_checkpoint_resume import resume_bootstrap
             require(Path(inspect.getfile(resume_bootstrap)).resolve() == REPO / "scripts/bootstrap_checkpoint_resume.py",
                     "resume helper came from another checkout")
+            if retained_search is not None:
+                retained_search.check_checkpoint(parent["checkpoint"], c, contract_ref)
             resume_bootstrap(trainer, external(parent["checkpoint"]["path"]), parent["checkpoint"]["sha256"],
                              parent["step"], c["seed"])
 
@@ -590,7 +636,8 @@ def _execute(contract_ref: dict[str, str], stage_ref: dict[str, str],
                     assert sf_p0 is not None
                     sf_p0.on_draw(rows)
 
-            replay = load_replay(c, generations, rng, on_draw)
+            replay = (load_replay(c, generations, rng, on_draw, _retained_search=retained_search)
+                      if active_search else load_replay(c, generations, rng, on_draw))
             if active_sf_p0:
                 assert sf_p0 is not None
                 replay = sf_p0.wrap(replay, c)
@@ -617,6 +664,8 @@ def _execute(contract_ref: dict[str, str], stage_ref: dict[str, str],
             torch.cuda.synchronize()
         checkpoint = output / "learner.pt"
         trainer.save(checkpoint)
+        if retained_search is not None:
+            retained_search.bind_checkpoint(checkpoint, c, contract_ref)
         trainer.writer.close()
         with checkpoint.open("rb") as stream:
             os.fsync(stream.fileno())
@@ -635,6 +684,8 @@ def _execute(contract_ref: dict[str, str], stage_ref: dict[str, str],
                     "recovery_scope": "closed generation boundary only; interrupted output is terminal/unqualified"}
         if sf_p0 is not None:
             sf_p0.decorate_boundary(boundary, c, stage)
+        if retained_search is not None:
+            retained_search.decorate_boundary(boundary, c)
         publish_boundary(output, boundary)
         return boundary
     except BaseException as exc:
