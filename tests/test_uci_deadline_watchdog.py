@@ -368,12 +368,20 @@ def test_a_clock_game_budget_is_the_side_to_moves_remaining_clock() -> None:
         engine.close()
 
 
-@pytest.mark.parametrize(("go", "margin"), [
-    ("go movetime 200", True), ("go wtime 2000 btime 2000", False), ("go nodes 64", False),
-    ("go infinite", False), ("go movetime 200 nodes 64", True),
+@pytest.mark.parametrize(("go", "margin", "opts"), [
+    ("go movetime 200", True, {}),
+    ("go wtime 2000 btime 2000", False, {}),
+    ("go nodes 64", False, {}),
+    ("go infinite", False, {}),
+    ("go movetime 200 nodes 64", True, {}),
+    # Time management OFF (the A/B baseline arm): a clock game has no
+    # optimum_ms, and must still not get the margin -- that arm reproduces
+    # the pre-time-management engine exactly.
+    ("go wtime 2000 btime 2000", False, {"optimum_fraction": 0.0}),
+    ("go wtime 2000 btime 2000 nodes 64", False, {}),
 ])
 @pytest.mark.usefixtures("out")
-def test_only_movetime_asks_the_worker_for_the_fixed_time_stop_margin(go, margin) -> None:
+def test_only_movetime_asks_the_worker_for_the_fixed_time_stop_margin(go, margin, opts) -> None:
     worker = _worker()
     seen: list[dict] = []
 
@@ -384,7 +392,7 @@ def test_only_movetime_asks_the_worker_for_the_fixed_time_stop_margin(go, margin
         return _ok(board)
 
     worker.run.side_effect = run
-    engine = _engine(worker)
+    engine = _engine(worker, **opts)
     try:
         engine.dispatch(parse_command(go))
         if go == "go infinite":
@@ -447,6 +455,112 @@ def test_a_heartbeat_is_published_per_chunk_for_the_current_go() -> None:
         engine.close()
 
 
+def _silenced_phase(engine, *, first_chunk_s: float, then_chunks: int, gap_s: float) -> None:
+    """Drive one movetime phase whose search the watchdog answers (silences)
+    mid-run: a first chunk after ``first_chunk_s``, then the thread is
+    silenced, then ``then_chunks`` more chunks ``gap_s`` apart."""
+    worker = engine._worker
+
+    def run(board, **kw):
+        time.sleep(first_chunk_s)
+        kw["on_chunk"](8)
+        engine_module._SILENCED_THREADS.add(threading.current_thread())
+        for i in range(then_chunks):
+            time.sleep(gap_s)
+            kw["on_chunk"](16 + 8 * i)
+        return _ok(board)
+
+    worker.run.side_effect = run
+    engine.dispatch(parse_command("go movetime 60000"))
+    _join_all(engine)
+
+
+@pytest.mark.usefixtures("out")
+def test_a_search_the_watchdog_answered_never_teaches_the_chunk_scale() -> None:
+    engine = _engine(_worker())
+    try:
+        engine._prev_chunk_ms = 20.0
+        engine._prev_first_chunk_ms = 60.0
+        # One chunk, silenced, then a 150 ms "chunk" (a hang between chunks).
+        _silenced_phase(engine, first_chunk_s=0.0, then_chunks=2, gap_s=0.15)
+        assert engine._prev_chunk_ms == 20.0
+        assert engine._prev_first_chunk_ms == 60.0
+    finally:
+        engine.close()
+
+
+@pytest.mark.usefixtures("out")
+def test_a_slow_first_chunk_then_a_hang_does_not_teach_the_first_chunk_scale() -> None:
+    engine = _engine(_worker())
+    try:
+        engine._prev_first_chunk_ms = 60.0
+        _silenced_phase(engine, first_chunk_s=0.2, then_chunks=0, gap_s=0.0)
+        assert engine._prev_first_chunk_ms == 60.0
+    finally:
+        engine.close()
+
+
+@pytest.mark.usefixtures("out")
+def test_a_healthy_phase_commits_both_samples() -> None:
+    worker = _worker()
+
+    def run(board, **kw):
+        time.sleep(0.05)
+        kw["on_chunk"](8)
+        time.sleep(0.03)
+        kw["on_chunk"](16)
+        return _ok(board)
+
+    worker.run.side_effect = run
+    engine = _engine(worker)
+    try:
+        engine.dispatch(parse_command("go movetime 60000"))
+        _join_all(engine)
+        assert engine._prev_first_chunk_ms is not None
+        assert engine._prev_first_chunk_ms >= 45.0
+        assert engine._prev_chunk_ms is not None
+        assert engine._prev_chunk_ms >= 25.0
+    finally:
+        engine.close()
+
+
+def test_the_heartbeat_carries_the_threads_own_generation(out) -> None:
+    """`_run_one_phase` stamps the heartbeat with the generation it is given
+    (the go's), not whatever `_search_gen` is when the phase starts."""
+    worker = _worker()
+    seen: list = []
+
+    def run(board, **kw):
+        kw["on_chunk"](8)
+        seen.append(engine._heartbeat)
+        return _ok(board)
+
+    worker.run.side_effect = run
+    engine = _engine(worker)
+    try:
+        engine._search_gen = 41
+        limits = engine_module.SearchLimits(deadline_ms=1000, fixed_time=True)
+        engine._run_one_phase(limits, is_ponder=False, board=chess.Board(), gen=7)
+        assert seen[0][0] == 7
+    finally:
+        engine.close()
+    del out
+
+
+def test_the_budget_in_the_info_string_is_exact(out) -> None:
+    gate = _Gate()
+    worker = _worker()
+    worker.run.side_effect = gate
+    engine = _engine(worker)
+    try:
+        engine.dispatch(parse_command("go movetime 200"))
+        assert len(out.wait_bestmoves(1)) == 1
+        assert "before the 200 ms budget" in out.text()
+    finally:
+        gate.release.set()
+        engine.close()
+
+
 # -- the progress rule, decided deterministically by `_watchdog_poll` --------
 
 
@@ -460,6 +574,7 @@ def _polled(engine, *, since_start: float, deadline_in: float, last_moment_in: f
     entry = engine_module._WatchdogEntry(
         gen=gen, check_at=now, deadline_at=now + deadline_in,
         last_moment_at=None if last_moment_in is None else now + last_moment_in,
+        budget_ms=None,
         board=chess.Board(), searchmoves=(), thread=thread,
         stops=(threading.Event(),), started_at=now - since_start,
     )
@@ -561,6 +676,16 @@ def test_one_quick_search_does_not_shrink_the_scale() -> None:
     assert engine_module._decayed_max(None, 80.0) == 80.0
     assert engine_module._decayed_max(80.0, 20.0) == pytest.approx(72.0)
     assert engine_module._decayed_max(80.0, 120.0) == 120.0
+
+
+def test_a_pre_ponderhit_heartbeat_of_the_same_go_is_not_progress(poll_engine) -> None:
+    # The ponder phase's last chunk (same generation) came 0.45 s ago, before
+    # ponderhit 0.35 s ago: the real phase has completed no chunk yet, so the
+    # first-chunk scale (400 ms) applies from ponderhit -- not a stall yet.
+    poll_engine._prev_first_chunk_ms = 100.0
+    fired, _ = _polled(poll_engine, since_start=0.35, deadline_in=-0.1, last_moment_in=10.0,
+                       beat_ago=0.45, beat_chunk_ms=100.0)
+    assert not fired
 
 
 def test_the_last_moment_fires_even_on_a_progressing_search(poll_engine) -> None:
@@ -956,7 +1081,7 @@ def test_watchdog_wake_latency_under_gil_contention_fits_the_last_moment_margin(
         for i in range(n):
             now = time.monotonic()
             watchdog.arm(engine_module._WatchdogEntry(
-                gen=1, check_at=now + 0.005, deadline_at=now, last_moment_at=None,
+                gen=1, check_at=now + 0.005, deadline_at=now, last_moment_at=None, budget_ms=None,
                 board=chess.Board(), searchmoves=(), thread=threading.current_thread(),
                 stops=(), started_at=now,
             ))

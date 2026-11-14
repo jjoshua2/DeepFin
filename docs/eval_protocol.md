@@ -64,7 +64,12 @@ PYTHONPATH=. python scripts/arena_standard.py \
   Before PR #1263 the UCI default was `--walkers 2` (the PUCT walker pool), so
   `matched_time` Elo and `scripts/validate_time_mgmt.py` readings banked before it
   measured the walker pool (unless `--uci-args` passed `--walkers 1`), not the classic
-  Gumbel search the engine now ships.
+  Gumbel search the engine now ships. Since PR #1276 a UCI `movetime` search stops one
+  measured chunk before its deadline instead of overrunning it by up to a chunk
+  (measured on CPU, chunk 256: median time-to-bestmove 919 vs 996 ms at `movetime
+  1000`, 61 vs 88 ms at `movetime 100`; before, 4 of 15 and 5 of 20 moves overran the
+  budget, after, none). `matched_time` / movetime results banked before #1276 are
+  therefore not comparable with results after it. Clock games are unchanged.
 - Set `CHESS_ANTI_ENGINE_LIVE_CONFIG` when claiming production equivalence; see
   [operations](operations.md). Record each engine's tablebase settings and coverage,
   checkpoint architecture, code revision and effective search shape.

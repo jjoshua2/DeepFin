@@ -2405,6 +2405,7 @@ class Engine:
   # Ponder search: no deadline yet; runs until ponderhit or stop.
         result = self._run_one_phase(
             limits, is_ponder=limits.ponder, board=board, clock_started_at=go_received_at,
+            gen=gen,
         )
   # The worker can return before the GUI does. A mated root, a tablebase
   # hit, a declined draw, a full hash, or a search exception is not a
@@ -2456,6 +2457,7 @@ class Engine:
                 self._applied_moves = (*self._applied_moves, popped)
             result = self._run_one_phase(
                 real_limits, is_ponder=False, board=real_board, started_at=started_at,
+                gen=gen,
             )
             limits = real_limits
         # A completed infinite search is still owned by the GUI until stop.
@@ -2629,7 +2631,8 @@ class Engine:
             )
         self._watchdog.arm(_WatchdogEntry(
             gen=gen, check_at=deadline_at, deadline_at=deadline_at,
-            last_moment_at=last_moment_at, board=board.copy(), searchmoves=searchmoves,
+            last_moment_at=last_moment_at, budget_ms=budget_ms,
+            board=board.copy(), searchmoves=searchmoves,
             thread=thread, stops=stops, started_at=started_at,
         ))
 
@@ -2651,10 +2654,8 @@ class Engine:
                 return None  # answered, superseded or quitting: drop the entry
         now = time.monotonic()
         if entry.last_moment_at is not None and now >= entry.last_moment_at:
-            budget_left = int((entry.last_moment_at - entry.started_at) * 1000
-                              + self._watchdog_last_moment_ms())
             self._watchdog_fire(entry, f"no bestmove {self._watchdog_last_moment_ms():.0f} ms "
-                                       f"before the {budget_left} ms budget")
+                                       f"before the {entry.budget_ms} ms budget")
             return None
         last_at, chunk_ms, any_chunk = entry.started_at, None, False
         beat = self._heartbeat
@@ -2739,7 +2740,11 @@ class Engine:
         self, limits: SearchLimits, *, is_ponder: bool, board: chess.Board,
         started_at: float | None = None,
         clock_started_at: float | None = None,
+        gen: int | None = None,
     ) -> SearchResult:
+        """``gen``: the go this phase belongs to (`_run_search` passes its own,
+        as it does its events); it stamps the watchdog heartbeat. Direct callers
+        with no go of their own (warmup, tests) get the current generation."""
         deadline_ms = None if is_ponder else limits.deadline_ms
         max_nodes = None if is_ponder else limits.max_nodes
         max_depth = None if is_ponder else limits.max_depth
@@ -2766,21 +2771,20 @@ class Engine:
             self._gil_probe.reset()
 
         board_fen = board.fen()
-        beat_gen = self._search_gen  # this phase's go (ponderhit keeps the gen)
-        # [last chunk end, chunks completed, slowest inter-chunk ms]. The first
-        # chunk's time from phase start includes root eval / compaction, so
-        # it is a heartbeat but not a chunk-time sample.
-        beat: list[float] = [time.monotonic(), 0.0, 0.0]
+        beat_gen = self._search_gen if gen is None else gen
+        # [last chunk end, chunks completed, slowest inter-chunk ms, phase start
+        # to first chunk ms]. The first chunk's time includes root eval / tree
+        # setup / compaction, so it is a heartbeat and its own sample, not a
+        # chunk-time sample. Both samples are committed to the next search's
+        # scale only when this phase finishes un-silenced (below).
+        beat: list[float] = [time.monotonic(), 0.0, 0.0, 0.0]
 
         def _phase_on_chunk(_total_nodes: int) -> None:
             now = time.monotonic()
             if beat[1] >= 1.0:
                 beat[2] = max(beat[2], (now - beat[0]) * 1000.0)
-            elif threading.current_thread() not in _SILENCED_THREADS:
-                # Phase start to first chunk: root eval, tree setup, compaction.
-                self._prev_first_chunk_ms = _decayed_max(
-                    self._prev_first_chunk_ms, (now - beat[0]) * 1000.0,
-                )
+            else:
+                beat[3] = (now - beat[0]) * 1000.0
             beat[0] = now
             beat[1] += 1.0
             # One tuple, one assignment: the watchdog reads it lock-free.
@@ -2851,12 +2855,15 @@ class Engine:
                 on_chunk=_phase_on_chunk,
                 # `movetime`: stop one measured chunk before the deadline, as
                 # clock games already do, instead of overrunning it by a chunk.
-                fixed_time_margin=(not is_ponder and optimum_ms is None
-                                   and deadline_ms is not None),
+                fixed_time_margin=not is_ponder and limits.fixed_time,
             )
-            if beat[1] >= 2.0 and threading.current_thread() not in _SILENCED_THREADS:
-                # The next search's stall scale.
-                self._prev_chunk_ms = _decayed_max(self._prev_chunk_ms, beat[2])
+            if threading.current_thread() not in _SILENCED_THREADS:
+                # The next search's stall scale -- never from a search the
+                # watchdog answered: its stall would be learned as a chunk.
+                if beat[1] >= 1.0:
+                    self._prev_first_chunk_ms = _decayed_max(self._prev_first_chunk_ms, beat[3])
+                if beat[1] >= 2.0:
+                    self._prev_chunk_ms = _decayed_max(self._prev_chunk_ms, beat[2])
             if not is_ponder and last_emitted_nodes[0] != result.nodes:
                 self._emit_info(
                     nodes=result.nodes,
@@ -3297,6 +3304,7 @@ class _WatchdogEntry:
     check_at: float  # when the watchdog next looks (see `Engine._watchdog_poll`)
     deadline_at: float  # the search's own hard deadline
     last_moment_at: float | None  # budget minus the answer margin; None: no clock
+    budget_ms: int | None  # the move's real budget (movetime or remaining clock)
     board: chess.Board
     searchmoves: tuple[str, ...]
     thread: threading.Thread

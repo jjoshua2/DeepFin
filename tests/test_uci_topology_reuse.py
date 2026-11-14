@@ -280,7 +280,8 @@ def phase_fixture(worker):
                              _emit_info=lambda **kw: None, _emit_gil_profile=lambda **kw: None,
                              _note_searched_phase=lambda: None)
     limits = SimpleNamespace(deadline_ms=None, max_nodes=20, max_depth=None, optimum_ms=None,
-                             searchmoves=('d2d4', 'e2e4'), is_open_ended=lambda: False, infinite=False)
+                             searchmoves=('d2d4', 'e2e4'), is_open_ended=lambda: False, infinite=False,
+                             fixed_time=False)
     return lambda: phase(engine, limits, is_ponder=False, board=Board())
 
 

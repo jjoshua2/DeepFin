@@ -214,22 +214,29 @@ phase C tells us what the additional seven GPUs are worth.
     searches' slowest chunk; before its first chunk, recent healthy searches'
     time to their first chunk (root eval and compaction included). "Recent" is
     a running maximum that decays by x0.9 per search. With no previous search,
-    `S` is 1 s. A search the watchdog answered never feeds these. A healthy
+    `S` is 1 s. A search the watchdog answered never feeds these (both samples
+    are taken only when a search finishes without being answered). A healthy
     search completes a chunk every chunk time and stops at the first chunk
     boundary after its deadline; the 300 ms floor covers the gaps measured
     under heavy CPU load (up to ~110 ms between chunks of ~20 ms).
   - **Last moment** (unconditional): the move's real budget -- `movetime`, or
     the side to move's remaining clock -- minus 3 ms, but never before the
     search's own deadline. The 3 ms is the watchdog's wake-up latency (p99
-    0.37 ms during real searches, p99 2.2 ms beside a Python thread holding
-    the GIL half the time) plus its answer (under 0.5 ms). A search that has
-    not answered by then would answer in the final 3 ms of its budget at
-    best; the watchdog's answer is out no later than that search's would have
-    been. This threshold is for a search that keeps making progress but too
-    slowly; a hang is normally answered by the first rule, soon after the
-    deadline. At a very short `movetime` (less than about 4 chunk times
-    beyond the overhead) only the last-moment rule can fire, so a hang is
-    answered 3 ms before the budget and the pipe to the GUI must fit in that.
+    0.37 ms during real searches, p99 0.4 ms beside a Python thread holding
+    the GIL in 1 ms stretches) plus its answer (under 0.5 ms). A search that
+    has not answered by then would answer in the final 3 ms of its budget at
+    best; the watchdog's answer goes out no later than that search's would
+    have -- a statement about timing only: **the move it plays is a fallback**
+    (`last_pv`, the root policy, or the first legal move), not the searched
+    move that search was about to produce. This threshold is for a search that
+    keeps making progress but too slowly; a hang is normally answered by the
+    first rule, soon after the deadline. It can pre-empt a healthy search when
+    a single chunk is about as long as the whole move (measured on CPU with
+    the default `ChunkSims` 2048 at `movetime 200`: 2 of 12 moves); with GPU
+    chunk times that does not arise. At a very short `movetime` (less than
+    about 4 chunk times beyond the overhead) only the last-moment rule can
+    fire, so a hang is answered 3 ms before the budget and the pipe to the GUI
+    must fit in that.
 
   `movetime` searches now also stop one measured chunk before their deadline
   (as clock games already did), instead of overrunning it by up to a chunk.
