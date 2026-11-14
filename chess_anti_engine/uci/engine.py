@@ -73,6 +73,7 @@ _ENGINE_NAME = "DeepFin"
 _ENGINE_AUTHOR = "jjosh"
 
 if TYPE_CHECKING:
+    from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
     from chess_anti_engine.inference import BatchEvaluator
 
 
@@ -280,6 +281,12 @@ _TOLERATED_STATUS = (
 )
 
 
+def _combo_refusal(option: str, value: str, choices: tuple[str, ...], current: str) -> str:
+    """The `info string` for a combo value the option does not have."""
+    return (f"info string {option}: {value.strip()!r} is not one of "
+            f"{' / '.join(choices)}; keeping {current}")
+
+
 def _status_names(status: int) -> str:
     return ", ".join(
         str(flag.name).lower().replace("_", " ")
@@ -288,36 +295,75 @@ def _status_names(status: int) -> str:
     )
 
 
+_CASTLING_BITS = ((1, chess.H1), (2, chess.A1), (4, chess.H8), (8, chess.A8))  # C: K Q k q
+
+
+def _py_board_state(board: chess.Board) -> tuple[int | bool | None, ...]:
+    """Everything the C board holds about a position, read from python-chess."""
+    rights = board.clean_castling_rights()
+    return (
+        int(board.occupied_co[chess.WHITE]), int(board.occupied_co[chess.BLACK]),
+        int(board.pawns), int(board.knights), int(board.bishops), int(board.rooks),
+        int(board.queens), int(board.kings), board.ep_square,
+        sum(bit for bit, sq in _CASTLING_BITS if rights & chess.BB_SQUARES[sq]),
+        bool(board.turn),
+    )
+
+
+def _c_board_state(cb: _CBoard) -> tuple[int | bool | None, ...]:
+    """The same fields as `_py_board_state`, read from a ``CBoard``."""
+    ep = cb.ep_square
+    return (
+        int(cb.occ_white), int(cb.occ_black), int(cb.pawns), int(cb.knights),
+        int(cb.bishops), int(cb.rooks), int(cb.queens), int(cb.kings),
+        None if ep is None else int(ep), int(cb.castling), bool(cb.turn),
+    )
+
+
 def _movegen_disagreement(board: chess.Board) -> str | None:
-    """None when ``CBoard`` and python-chess generate the same legal moves for
-    ``board`` (as 4672 action ids), else a one-line description of the diff."""
+    """None when ``CBoard`` and python-chess hold the same position for
+    ``board``, generate the same legal moves (as 4672 action ids), and reach
+    the same position after every one of them (all six piece bitboards, both
+    colour masks, en-passant square, castling rights, side to move); else a
+    one-line description of the first difference."""
     from chess_anti_engine.encoding._lc0_ext import CBoard
 
     try:
-        c_ids = {int(i) for i in CBoard.from_board(board).legal_move_indices()}
+        cb = CBoard.from_board(board)
+        c_ids = {int(i) for i in cb.legal_move_indices()}
     except Exception as exc:
         return f"the C board cannot load it ({_one_line(exc)})"
+    if _c_board_state(cb) != _py_board_state(board):
+        return "the C board disagrees with python-chess on the position itself"
     py_ids = {move_to_index(mv, board) for mv in board.legal_moves}
     if c_ids != py_ids:
         return (
             f"the C move generator disagrees with python-chess "
             f"({len(c_ids)} vs {len(py_ids)} legal moves)"
         )
-    # An en-passant capture on an unreachable square may capture nothing (no
-    # double-pushed pawn behind it): both boards must agree on what it leaves.
     for move in board.legal_moves:
-        if not board.is_en_passant(move):
-            continue
         after = board.copy(stack=False)
         after.push(move)
-        c_after = CBoard.from_board(board)
+        c_after = cb.copy()
         c_after.push_index(move_to_index(move, board))
-        if (int(c_after.occ_white), int(c_after.occ_black), int(c_after.pawns)) != (
-            int(after.occupied_co[chess.WHITE]), int(after.occupied_co[chess.BLACK]),
-            int(after.pawns),
-        ):
+        if _c_board_state(c_after) != _py_board_state(after):
             return f"the C board disagrees with python-chess on {move.uci()}'s result"
     return None
+
+
+def _ep_square_is_real(board: chess.Board) -> bool:
+    """The en-passant square is one a double push COULD have left: on the
+    right rank, the enemy pawn that pushed stands behind it, and a capture on
+    it is legal. Only the squares the push passed over can be wrong (occupied
+    start square), which python-chess and the C board both ignore."""
+    ep = board.ep_square
+    if ep is None:
+        return False
+    us = board.turn
+    if chess.square_rank(ep) != (5 if us == chess.WHITE else 2):
+        return False
+    behind = ep - 8 if us == chess.WHITE else ep + 8
+    return board.piece_at(behind) == chess.Piece(chess.PAWN, not us) and board.has_legal_en_passant()
 
 
 # Advertised (and now enforced) floor for the `Hash` UCI option, in MB. Keep this
@@ -1117,14 +1163,17 @@ class Engine:
         Normalised (a legal answer exists; python-chess's own move generation
         already ignores these, the C board did not): castling rights without the
         king and rook on their squares -> ``clean_castling_rights()``; an
-        en-passant square no double push could have made AND on which no
-        capture is legal -> none.
+        "impossible" en-passant square -> none, unless `_ep_square_is_real`.
 
-        An "impossible" en-passant square on which a capture IS legal
-        (``has_legal_en_passant()``; python-chess only checks the square is
-        empty and a capturer stands on the right rank, so ``d4e3`` is legal in
-        ``4k3/8/8/8/3p4/8/8/4K3 b - e3``) is KEPT: dropping it would reject a
-        move list python-chess accepts. The root is then tolerated, below.
+        An impossible en-passant square that is real in every other respect
+        (right rank, the enemy pawn that double-pushed behind it, a capture on
+        it legal; only the push's start square is occupied, as in
+        ``4k3/8/8/8/3pP3/8/4P3/4K3 b - e3``) is KEPT, so ``moves d4e3`` plays
+        on; the root is then tolerated, below. Every other impossible square
+        is dropped with a note, never rejected: python-chess also allows a
+        "capture" on an empty square with nothing, or a non-pawn, behind it
+        (``4k3/8/8/8/3pN3/8/8/4K3 b - e3``), and the C board resolves that
+        capture differently.
 
         Rejected (no answer exists, or the C board cannot search it): a
         malformed command (``cmd.error``); an unparseable FEN; missing / extra
@@ -1172,14 +1221,15 @@ class Engine:
                 tolerable = _TOLERATED_STATUS
                 if status & chess.STATUS_INVALID_EP_SQUARE and start.ep_square is not None:
                     square = chess.square_name(start.ep_square)
-                    if start.has_legal_en_passant():
-                        # A legal capture exists: python-chess accepts it in
-                        # the move list, so keep the square (behind the
-                        # movegen gate) rather than reject that move.
+                    if _ep_square_is_real(start):
+                        # Only the push's start square is occupied: the capture
+                        # is a real one, so keep the square (behind the movegen
+                        # gate) rather than reject a move list playing it.
                         tolerable |= chess.STATUS_INVALID_EP_SQUARE
                         notes.append(
                             f"kept en-passant square {square}: unreachable by a double "
-                            "push, but a capture on it is legal"
+                            "push, but the pushed pawn is behind it and a capture on it "
+                            "is legal"
                         )
                     else:
                         notes.append(f"normalised en-passant square {square} is impossible -> none")
@@ -2110,6 +2160,8 @@ class Engine:
     def _set_pucv_pending_mode(self, value: str) -> None:
         normalized = value.strip().lower().replace("_", "-")
         if normalized not in ("legacy", "virtual-mean"):
+            _println(_combo_refusal("PUCVPendingMode", value, ("legacy", "virtual-mean"),
+                                    self._options.pucv_pending_mode))
             return
         self._options.pucv_pending_mode = normalized
         self._worker.set_pucv_vloss_mode(1 if normalized == "virtual-mean" else 0)
@@ -2135,6 +2187,8 @@ class Engine:
         paths untouched."""
         normalized = value.strip().lower()
         if normalized not in ("pucv", "gumbel"):
+            _println(_combo_refusal("SearchParallel", value, ("pucv", "gumbel"),
+                                    self._options.search_parallel))
             return
         if normalized == "gumbel":
             if not self._try_install_root_parallel_gumbel(

@@ -26,13 +26,29 @@ _REGRESSIONS = (
     "fen 4k3/8/8/8/8/8/8/R3K2R b KQkq - 0 1 moves e8d8",
 )
 
-# Follow-up review: an "impossible" ep square on which a capture is legal is
-# kept, so the capture in the move list is accepted (pre-#1294 main: e1d1).
+# An "impossible" ep square that is real except for its occupied start square
+# (the double-pushed pawn stands behind it, a capture is legal) is kept, so the
+# capture in the move list is accepted (pre-#1294 main: e1d1).
 _KEPT_EP = (
     "fen 4k3/8/8/8/3pP3/8/4P3/4K3 b - e3 0 1 moves d4e3",
-    "fen 4k3/8/8/8/3p4/8/8/4K3 b - e3 0 1 moves d4e3",
     "fen 4k3/8/8/8/3pP3/8/4P3/4K3 b - e3 0 1",
-    "fen 4k3/8/8/8/3p4/8/8/4K3 b - e3 0 1",
+    "fen 4k3/3p4/8/3pP3/8/8/8/4K3 w - d6 0 1 moves e5d6",
+)
+
+# Second review: python-chess also "captures" en passant with no pawn behind
+# the square -- nothing, a non-pawn (left as a phantom type bit by the C
+# board), the side to move's own piece, even the king. Each is dropped with
+# the normalisation note (main's behaviour), never rejected.
+_DROPPED_EP = (
+    "4k3/8/8/8/3pN3/8/8/4K3 b - e3 0 1",
+    "4k3/8/8/8/3pB3/8/8/4K3 b - e3 0 1",
+    "4k3/8/8/3Pn3/8/8/8/4K3 w - e6 0 1",
+    "4k3/8/8/8/3pK3/8/8/8 b - e3 0 1",
+    "4k3/8/8/8/3pb3/8/8/4K3 b - e3 0 1",
+    "4k3/8/8/8/3pp3/8/8/4K3 b - e3 0 1",
+    "4k3/8/8/8/3pQ3/8/8/4K3 b - e3 0 1",
+    "4k3/8/8/8/3pR3/8/8/4K3 b - e3 0 1",
+    "4k3/8/8/8/3p4/8/8/4K3 b - e3 0 1",
 )
 
 _HARD = (
@@ -50,9 +66,9 @@ class _Engine:
         send_line(self.proc, "isready")
         self.reader.read_until("readyok", timeout_s=120.0)
 
-    def answer(self, position: str) -> tuple[str, list[str]]:
+    def answer(self, position: str, go: str = "go nodes 16") -> tuple[str, list[str]]:
         send_line(self.proc, f"position {position}")
-        send_line(self.proc, "go nodes 16")
+        send_line(self.proc, go)
         lines = self.reader.read_until("bestmove", timeout_s=60.0)
         return lines[-1].split()[1], lines
 
@@ -160,8 +176,29 @@ def test_a_capturable_unreachable_ep_square_is_kept(engine: _Engine, position: s
     move, lines = engine.answer(position)
     assert move != "0000", lines
     assert chess.Move.from_uci(move) in _gui_board(position).legal_moves, lines
-    assert any("kept en-passant square e3" in ln for ln in lines), lines
+    assert any("position: kept en-passant square" in ln for ln in lines), lines
     assert not any("rejected" in ln for ln in lines), lines
+
+
+@pytest.mark.parametrize("fen", _DROPPED_EP)
+def test_an_ep_square_without_its_pushed_pawn_is_dropped_and_answered(
+    engine: _Engine, fen: str,
+) -> None:
+    move, lines = engine.answer(f"fen {fen}", go="go nodes 64")
+    assert move != "0000", lines
+    clean = chess.Board(fen)
+    clean.ep_square = None
+    assert chess.Move.from_uci(move) in clean.legal_moves, lines
+    assert any("position: normalised en-passant square" in ln for ln in lines), lines
+    assert not any("rejected" in ln for ln in lines), lines
+
+
+def test_a_capture_onto_a_dropped_ep_square_is_illegal_as_on_main(engine: _Engine) -> None:
+    """Nothing to capture: the square is dropped, so ``d4e3`` is not a legal
+    move and the move list is refused (main did the same)."""
+    move, lines = engine.answer("fen 4k3/8/8/8/3p4/8/8/4K3 b - e3 0 1 moves d4e3")
+    assert move == "0000", lines
+    assert any("move 1 'd4e3' is illegal" in ln for ln in lines), lines
 
 
 def test_a_move_list_reaching_a_board_the_c_generator_truncates_is_rejected(engine: _Engine) -> None:

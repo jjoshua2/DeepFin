@@ -11,6 +11,7 @@ reclaims the discarded siblings instead of refusing reuse at half the cap.
 from __future__ import annotations
 
 import hashlib
+import platform
 import threading
 from typing import Any
 
@@ -26,6 +27,14 @@ from chess_anti_engine.uci.search import SearchWorker
 from chess_anti_engine.uci.time_manager import Deadline
 
 _MB = 1024 * 1024
+
+# The RSS ruler below pins glibc's mmap threshold (MALLOC_MMAP_THRESHOLD_); an
+# allocator that ignores it leaves heap slack in RSS (the capped search measured
+# 2.85-2.97x its footprint growth unpinned, against a 1.2x bound).
+_needs_glibc = pytest.mark.skipif(
+    platform.libc_ver()[0] != "glibc",
+    reason="RSS-vs-footprint check needs glibc to honour MALLOC_MMAP_THRESHOLD_",
+)
 
 
 class _SpreadEvaluator:
@@ -98,6 +107,7 @@ def _footprint_growth_probe() -> dict[str, Any]:
     }
 
 
+@_needs_glibc
 def test_footprint_counts_live_cache_entries_and_tracks_rss() -> None:
     r = _run_probe_in_fresh_process("_footprint_growth_probe")
     f0, f1, stats = r["f0"], r["f1"], r["stats"]
@@ -185,6 +195,7 @@ def _run_probe_in_fresh_process(name: str) -> dict[str, Any]:
     return json.loads(proc.stdout.strip().splitlines()[-1])
 
 
+@_needs_glibc
 def test_hash_capped_search_fills_hash_stays_under_it_and_says_why() -> None:
     r = _run_probe_in_fresh_process("_capped_search_probe")
     cap_mb = _CAPPED_HASH_MB
