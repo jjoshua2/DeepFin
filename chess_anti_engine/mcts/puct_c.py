@@ -23,6 +23,7 @@ from chess_anti_engine.encoding.lc0 import (
     normalize_lc0_history_encoding,
     uses_lc0_root_history,
 )
+from chess_anti_engine.ext_check import refuse_fallback
 from chess_anti_engine.inference import BatchEvaluator, LocalModelEvaluator
 from chess_anti_engine.mcts._mcts_tree import (
     MCTSTree,
@@ -113,6 +114,11 @@ def run_mcts_many_c(
 
   # ── 1. Root evaluation ───────────────────────────────────────────────
     use_cboard = _HAS_CBOARD
+    if not use_cboard:
+        refuse_fallback(
+            "run_mcts_many_c", "_lc0_ext.CBoard / cboard_encode",
+            "python-chess boards with the Python encoder",
+        )
     root_cboards: list[CBoard] | None = (cboards if cboards is not None else [CBoard.from_board(b) for b in boards]) if use_cboard else None
     hist_enc = normalize_lc0_history_encoding(cfg.input_history_encoding)
     if hist_enc == LC0_HISTORY_ROOT_LEGACY_META:

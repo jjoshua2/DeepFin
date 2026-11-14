@@ -24,6 +24,7 @@ import chess
 import numpy as np
 
 from chess_anti_engine.encoding import check_encode_buffer_planes, input_plane_count
+from chess_anti_engine.ext_check import refuse_fallback
 from chess_anti_engine.mcts._mcts_tree import (
     SWDL_DRAW_NET_RAW,
     SWDL_DRAW_PARAMETRIC_Q,
@@ -49,21 +50,27 @@ from chess_anti_engine.mcts.puct import run_mcts_many
 from chess_anti_engine.mcts.sampling import sample_action_with_temperature
 from chess_anti_engine.mcts.solved_root import SolvedRootWitnessUnavailable
 
+# The ImportError text is kept: a refusal (manager._require_compiled_search
+# and the dispatch below) names what actually failed to import.
 try:
     from chess_anti_engine.mcts.puct_c import run_mcts_many_c as _run_mcts_many_c
     _HAS_C_TREE = True
-except ImportError:
+    _C_TREE_IMPORT_ERROR: str | None = None
+except ImportError as _exc:
     _run_mcts_many_c = run_mcts_many
     _HAS_C_TREE = False
+    _C_TREE_IMPORT_ERROR = f"{type(_exc).__name__}: {_exc}"
 
 try:
     from chess_anti_engine.mcts.gumbel_c import (
         run_gumbel_root_many_c as _run_gumbel_root_many_c,
     )
     _HAS_GUMBEL_C = True
-except ImportError:
+    _GUMBEL_C_IMPORT_ERROR: str | None = None
+except ImportError as _exc:
     _run_gumbel_root_many_c = None
     _HAS_GUMBEL_C = False
+    _GUMBEL_C_IMPORT_ERROR = f"{type(_exc).__name__}: {_exc}"
 
 from chess_anti_engine.moves import (
     POLICY_SIZE,
@@ -895,7 +902,16 @@ def _append_records_via_python(
     is_full: np.ndarray, sample_weights: list[float],
     diff_focus,
 ) -> None:
-    """Python fallback per-ply loop (only runs when C ply path is unavailable)."""
+    """Python reference per-ply loop (only runs when C ply path is unavailable).
+
+    Refuses outside ``ext_check.python_reference_paths``: it replays without
+    seed history and encodes its side row with a different encoder.
+    """
+    if net_idxs:
+        refuse_fallback(
+            "selfplay network turn", "batch_process_ply/batch_encode_146* (state.has_c_ply=False)",
+            "the Python per-ply recorder",
+        )
     lg_buf = np.empty(POLICY_SIZE, dtype=np.float64)
     swdl_buf = np.empty(3, dtype=np.float32)
     df_enabled = bool(diff_focus.enabled)
@@ -1249,6 +1265,14 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
                             slot, result, exc.child_checks.get(local_j, 0),
                         )
             else:
+                if not _HAS_GUMBEL_C:
+                    # Volatility selects the Python search by config; a missing
+                    # compiled Gumbel runner must not select it silently.
+                    refuse_fallback(
+                        "selfplay network turn",
+                        f"mcts.gumbel_c ({_GUMBEL_C_IMPORT_ERROR or 'not imported'})",
+                        "the pure-Python Gumbel search",
+                    )
                 sub_boards = [state.replay_board(net_idxs[j]) for j in group]
                 _gumbel_result = run_gumbel_root_many(
                     state.model,
@@ -1282,6 +1306,12 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
             # active, boards[idx] stays at the starting position — rebuild
             # current state from move_idx_history (handled inside replay_board).
             sub_boards = [state.replay_board(net_idxs[j]) for j in group]
+            if not _HAS_C_TREE:
+                refuse_fallback(
+                    "selfplay network turn",
+                    f"mcts.puct_c ({_C_TREE_IMPORT_ERROR or 'not imported'})",
+                    "the pure-Python PUCT search",
+                )
             _puct_fn = _run_mcts_many_c if _HAS_C_TREE else run_mcts_many
             p_sub, a_sub, v_sub, m_sub = _puct_fn(
                 state.model,

@@ -36,6 +36,7 @@ from chess_anti_engine.train.trainer import resolve_sf_target_params
 from chess_anti_engine.tune.distributed_runtime import distributed_worker_sf_workers
 from chess_anti_engine.tune.trainable_metrics import _dynamic_sf_wdl_weight
 from chess_anti_engine.tune.trial_config import DifficultyState, TrialConfig
+from chess_anti_engine.utils.search_type import normalize_mcts_type
 import contextlib
 
 log = logging.getLogger(__name__)
@@ -1340,6 +1341,7 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
         }
         missing = object()
         sf_budget_before = {k: config.get(k, missing) for k in _SF_BUDGET_TOPOLOGY_KEYS}
+        mcts_before = config.get("mcts", missing)
         for k, v in fresh.items():
             if k in searched or k.startswith("pb2_bounds_"):
                 continue
@@ -1451,6 +1453,7 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
                 continue
             config[k] = v
         if live_reload:
+            _decline_invalid_mcts_edit(config, mcts_before, missing)
             try:
                 _decline_sf_budget_topology_edit(config, sf_budget_before, missing)
             except Exception as exc:  # fail CLOSED: never keep an unchecked combination
@@ -1459,6 +1462,41 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
         raise
     except Exception as exc:
         log.warning("YAML reload failed (%s): %s", yaml_path, exc)
+
+
+def _decline_invalid_mcts_edit(config: dict, before: object, missing: object) -> None:
+    """Keep the previous ``mcts`` when a live reload brings an invalid one.
+
+    ``TrialConfig.from_dict`` validates ``mcts`` (``normalize_mcts_type``), and
+    it runs inside the iteration loop right after this reload, so a typo
+    (``gumbell``), a blank or ``off`` (YAML ``False``) would otherwise kill the
+    trial mid-iteration (CLAUDE.md category b). Same pattern as the SF budget
+    decline: refuse that key only, keep the old value, apply every other edit,
+    and say so at ERROR on stdout (``[trial] ERROR``, the trial log) and in the
+    log. At launch nothing declines: ``from_dict`` raises, which is the right
+    answer for a config that never ran. Must not raise.
+    """
+    if "mcts" not in config:
+        return
+    try:
+        normalize_mcts_type(config["mcts"])
+        return
+    except ValueError as exc:
+        reason = str(exc)
+    attempted = config["mcts"]
+    if before is missing:
+        config.pop("mcts", None)
+    else:
+        config["mcts"] = before
+    message = (
+        f"YAML reload: mcts={attempted!r} is invalid ({reason}) and NOT applied; "
+        f"kept {config.get('mcts', '<unset: default gumbel>')!r}. Unrelated edits in "
+        "this save were applied. A restart with this yaml will REFUSE to start."
+    )
+    with contextlib.suppress(Exception):
+        print(f"[trial] ERROR {message}", flush=True)
+    with contextlib.suppress(Exception):
+        log.error(message)
 
 
 def _revert_sf_budget_topology_edit(

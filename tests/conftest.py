@@ -467,8 +467,9 @@ def pytest_runtest_protocol() -> Iterator[None]:
 
     ``rep_fix`` is imported lazily: a conftest is loaded on EVERY pytest
     invocation and this package pulls in numpy and chess, and an environment
-    without the compiled encoders should reach ``apply`` (which skips missing
-    setters with a warning) rather than fail at collection. On the common path,
+    without the compiled encoders should fail in the test that needs them
+    (``apply`` raises ``RepFixUnavailableError`` on a missing setter) rather
+    than at collection. On the common path,
     where the test left the flag alone, nothing is called at all. The hook takes
     no parameters because pluggy passes an implementation only the hookspec
     arguments it actually declares, and this one needs none.
@@ -489,3 +490,19 @@ def pytest_runtest_protocol() -> Iterator[None]:
     rep_fix.apply(bool(before), boards_discarded=True)
     if before is None:
         rep_fix._current = None
+
+
+@pytest.fixture
+def python_reference_paths() -> Iterator[None]:
+    """Opt this test in to the Python reference paths (``ext_check``).
+
+    Production refuses to substitute a Python search, per-ply recorder or
+    encoder for a missing C symbol. Tests that deliberately exercise those
+    reference implementations (by forcing ``has_c_ply=False``, patching
+    ``_HAS_GUMBEL_C``/``_HAS_C_TREE`` off, or deleting an extension symbol to
+    test the reference composition) request this fixture.
+    """
+    from chess_anti_engine.ext_check import python_reference_paths as _opt_in
+
+    with _opt_in("test exercises the Python reference path"):
+        yield

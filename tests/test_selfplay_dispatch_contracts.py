@@ -157,6 +157,7 @@ def worker_failure_case(failed_tid) -> dict[str, Any]:
             "selfplay_threads": 2, "control_driver_threads": 1}
 
 
+@pytest.mark.usefixtures("python_reference_paths")
 @pytest.mark.parametrize("draws", [[0.1, 0.9], [0.9, 0.1], [0.1, 0.1], [0.9, 0.9]])
 @pytest.mark.parametrize("mcts", ["puct", "gumbel"])
 def test_real_network_dispatch_honors_each_playout_budget(draws, mcts):
@@ -182,6 +183,7 @@ def test_real_network_dispatch_honors_each_playout_budget(draws, mcts):
     assert row["board_plies"] == [1, 1]
 
 
+@pytest.mark.usefixtures("python_reference_paths")
 def test_default_search_config_dispatches_to_gumbel_above_the_low_sim_cutoff():
     """``SearchConfig()`` left at its ``mcts_type`` default runs Gumbel, at a
     budget (128 > max(64, fast)) where a PUCT default would have run PUCT."""

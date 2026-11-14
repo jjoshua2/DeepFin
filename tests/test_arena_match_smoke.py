@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import torch
 
 from chess_anti_engine.moves import POLICY_ENCODING_LC0_1858, POLICY_SIZE
@@ -39,6 +40,7 @@ def test_play_match_batch_smoke():
     assert stats.a_as_black == 1
 
 
+@pytest.mark.usefixtures("python_reference_paths")
 def test_pick_moves_uses_model_input_history_encoding(monkeypatch):
     seen = {}
 
@@ -69,6 +71,7 @@ def test_pick_moves_uses_model_input_history_encoding(monkeypatch):
     assert seen["policy_encoding"] == POLICY_ENCODING_LC0_1858
 
 
+@pytest.mark.usefixtures("python_reference_paths")
 def test_pick_moves_uses_model_policy_encoding_for_puct(monkeypatch):
     seen = {}
 

@@ -648,6 +648,11 @@ def test_restart_required_keys_match_the_reloader(
     def _mutate(key: str, value: object) -> object:
         if isinstance(value, bool):
             return not value
+        # `mcts` takes only gumbel/puct: "<value>_CHANGED" is DECLINED as invalid
+        # on a live reload (`_decline_invalid_mcts_edit`), which would read here
+        # as restart-required. Flip to the other valid value instead.
+        if key == "mcts":
+            return "puct" if value == "gumbel" else "gumbel"
         if key in loader_unit_fraction_keys and isinstance(value, (int, float)):
             return float(value) / 2 if value > 0 else 0.5
         if isinstance(value, (int, float)):

@@ -15,7 +15,12 @@ For YAML changes, trace `utils/config_yaml.py`, `tune/trial_config.py`, the relo
 path in `tune/trainable_config_ops.py`, and the actual consumer. An unknown key can
 reject a whole mid-run reload while leaving the old config active; at launch there is
 no old config to fall back to. A schema-known value can still fail validation and kill
-a trial, reach an unchecked consumer, or be skipped by live reload. Removing a key
+a trial, reach an unchecked consumer, or be skipped by live reload. One key is
+declined rather than fatal mid-run: an invalid `selfplay.mcts` (anything but
+`gumbel`/`puct` in any case, including blank and `off`, which YAML reads as `false`)
+is not applied on live reload. The previous value is kept, `[trial] ERROR YAML reload:
+mcts=... NOT applied` is printed to the trial log, and the other edits in the save still
+apply. At launch the same value refuses to start. Removing a key
 may not remove its previous overlay. Validate a copy with
 `flatten_run_config_defaults` and `TrialConfig.from_dict`, then check the consumer and
 verify the realized setting after adoption. Parsing alone proves none of those effects.

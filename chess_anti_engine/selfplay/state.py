@@ -557,7 +557,39 @@ def _probe_c_extensions() -> _CExtensionCaps:
     Each block is independent — partial availability is fine. ``batch_process_ply``
     and the encoders are imported together so the ``None``-fallbacks can't drift
     (drift would break the xs_batch invariant in the network turn).
+
+    A missing symbol used to select the Python search / per-ply recorder /
+    slot classifier silently; it now raises unless the caller is inside
+    ``ext_check.python_reference_paths`` (tests of the reference path).
     """
+    from chess_anti_engine.ext_check import (
+        MCTS_TREE_EXT,
+        REQUIRED_MCTSTREE_METHODS,
+        missing_symbols,
+        refuse_fallback,
+    )
+    import chess_anti_engine.mcts._mcts_tree as _tree_ext
+
+    _missing = missing_symbols(MCTS_TREE_EXT, (
+        "MCTSTree", "batch_process_ply",
+        "batch_encode_146", "batch_encode_146_lc0_root", "batch_encode_146_lc0_root_legacy_meta",
+        "batch_encode_146_bf16", "batch_encode_146_lc0_root_bf16",
+        "batch_encode_146_lc0_root_legacy_meta_bf16",
+        "classify_games", "temperature_resample",
+    ))
+    # The tree's own methods: without them gumbel_c / the tree reset would
+    # take a degraded path (fp32 leaves, uncompacted reset, no TB descent).
+    _tree_cls = getattr(_tree_ext, "MCTSTree", None)
+    if _tree_cls is not None:
+        _missing += [
+            f"MCTSTree.{name}" for name in REQUIRED_MCTSTREE_METHODS
+            if not hasattr(_tree_cls, name)
+        ]
+    if _missing:
+        refuse_fallback(
+            "SelfplayState.create", _missing,
+            "the Python Gumbel search / Python per-ply recorder / Python slot classifier",
+        )
     mcts_tree = None
     try:
         from chess_anti_engine.mcts._mcts_tree import MCTSTree as _MCTSTree
