@@ -26,6 +26,15 @@ _REGRESSIONS = (
     "fen 4k3/8/8/8/8/8/8/R3K2R b KQkq - 0 1 moves e8d8",
 )
 
+# Follow-up review: an "impossible" ep square on which a capture is legal is
+# kept, so the capture in the move list is accepted (pre-#1294 main: e1d1).
+_KEPT_EP = (
+    "fen 4k3/8/8/8/3pP3/8/4P3/4K3 b - e3 0 1 moves d4e3",
+    "fen 4k3/8/8/8/3p4/8/8/4K3 b - e3 0 1 moves d4e3",
+    "fen 4k3/8/8/8/3pP3/8/4P3/4K3 b - e3 0 1",
+    "fen 4k3/8/8/8/3p4/8/8/4K3 b - e3 0 1",
+)
+
 _HARD = (
     chess.STATUS_NO_WHITE_KING | chess.STATUS_NO_BLACK_KING | chess.STATUS_TOO_MANY_KINGS
     | chess.STATUS_PAWNS_ON_BACKRANK | chess.STATUS_OPPOSITE_CHECK | chess.STATUS_EMPTY
@@ -144,3 +153,21 @@ def test_status_invalid_but_playable_fens_always_get_a_legal_move(engine: _Engin
     if clean.status() & chess.STATUS_INVALID_EP_SQUARE:
         clean.ep_square = None
     assert chess.Move.from_uci(move) in clean.legal_moves, (fen, lines)
+
+
+@pytest.mark.parametrize("position", _KEPT_EP)
+def test_a_capturable_unreachable_ep_square_is_kept(engine: _Engine, position: str) -> None:
+    move, lines = engine.answer(position)
+    assert move != "0000", lines
+    assert chess.Move.from_uci(move) in _gui_board(position).legal_moves, lines
+    assert any("kept en-passant square e3" in ln for ln in lines), lines
+    assert not any("rejected" in ln for ln in lines), lines
+
+
+def test_a_move_list_reaching_a_board_the_c_generator_truncates_is_rejected(engine: _Engine) -> None:
+    """The root agrees; after e4h7 python-chess has 267 legal moves and the C
+    generator caps at 256 (CBOARD_MAX_LEGAL_MOVES): rejected, `bestmove 0000`."""
+    move, lines = engine.answer(
+        "fen QQQQQQnk/Q5RP/Q6Q/Q6Q/Q3b2Q/Q6Q/Q6Q/KQQQQQQQ b - - 0 1 moves e4h7")
+    assert move == "0000", lines
+    assert any("after move 1 'e4h7'" in ln and "256 vs 267 legal moves" in ln for ln in lines), lines

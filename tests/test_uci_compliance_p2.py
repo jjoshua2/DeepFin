@@ -27,7 +27,7 @@ import torch
 
 import chess_anti_engine.tablebase as tbmod
 import chess_anti_engine.uci.engine as engine_module
-from chess_anti_engine.moves import move_to_index
+from chess_anti_engine.moves import index_to_move, move_to_index
 from chess_anti_engine.uci.engine import Engine, EngineOptions
 from chess_anti_engine.uci.protocol import CmdGo, CmdPosition, CmdSetOption, GoArgs, parse_command
 from chess_anti_engine.uci.search import (
@@ -745,6 +745,24 @@ def test_go_mate_on_a_longer_proven_mate_stops_instead_of_idling() -> None:
         worker.close()
 
 
+def test_a_solved_root_that_still_grows_does_not_stop_on_mate_solved_root(monkeypatch) -> None:
+    """The `mate_solved_root` stop needs BOTH a solved root and a chunk that
+    grew nothing. Here the root reads as solved (no mate in <= N) while every
+    chunk still completes visits: the search must run to its node bound."""
+    worker = _tiny_worker()
+    try:
+        monkeypatch.setattr(worker, "_root_solved_status", lambda: 1)
+        monkeypatch.setattr(worker, "_proven_mate_within", lambda *_a, **_k: None)
+        result = worker.run(
+            chess.Board(), stop_event=threading.Event(), deadline=Deadline(30_000),
+            max_nodes=256, mate_moves=1,
+        )
+        assert worker.last_stop_reason != "mate_solved_root"
+        assert result.nodes >= 256
+    finally:
+        worker.close()
+
+
 # --- 2. position rejection --------------------------------------------------
 
 _BAD_POSITIONS = {
@@ -908,6 +926,61 @@ def test_stop_on_a_ponder_miss_answers_for_the_gui_board(out, pv, expect) -> Non
         engine.close()
 
 
+def test_a_ponder_miss_without_a_pv_reply_reads_the_ponder_tree(out) -> None:
+    """PV not through the predicted reply: the answer comes from the ponder
+    tree's subtree for the GUI position (visit counts), not a new evaluation
+    and not the first legal move."""
+    worker = _ponder_worker(lambda _b: ("b7b5", "a2a3"))
+    worker.child_bestmove.return_value = "g1f3"
+    engine = Engine(worker, options=EngineOptions(ponder=True))
+    try:
+        engine.dispatch(parse_command("position startpos moves e2e4 e7e5"))
+        engine.dispatch(parse_command("go ponder wtime 5000 btime 5000"))
+        engine.dispatch(parse_command("stop"))
+        assert out.wait_bestmoves(1) == ["g1f3"]
+        assert "source=ponder_tree move=g1f3" in out.text()
+        (call,) = worker.child_bestmove.call_args_list
+        board, popped = call.args
+        assert board.turn == chess.BLACK
+        assert popped == chess.Move.from_uci("e7e5")
+        worker.fresh_root_policy_bestmove.assert_not_called()
+    finally:
+        engine.close()
+
+
+def test_child_bestmove_reads_the_most_visited_reply_from_a_real_tree() -> None:
+    worker = _tiny_worker()
+    try:
+        board = chess.Board()
+        board.push_uci("e2e4")
+        worker.run(board, stop_event=threading.Event(), deadline=Deadline(None), max_nodes=512)
+        tree, root = worker._tree, worker._root_id
+        assert tree is not None
+        assert root is not None
+        actions, visits = tree.get_children_visits(root)
+        reply = index_to_move(int(actions[int(np.argmax(visits))]), board)
+        node = tree.find_child(root, int(move_to_index(reply, board)))
+        kids, kid_visits = tree.get_children_visits(node)
+        assert kids.size > 0
+        after = board.copy()
+        after.push(reply)
+        want = index_to_move(int(kids[int(np.argmax(kid_visits))]), after).uci()
+        assert worker.child_bestmove(board, reply) == want
+        assert chess.Move.from_uci(want) in after.legal_moves
+        # searchmoves restrict it; a board that is not the tree's root reads nothing.
+        other = next(m.uci() for m in after.legal_moves if m.uci() != want)
+        assert worker.child_bestmove(board, reply, searchmoves=(other,)) in (other, None)
+        # A board that is not the tree's root reads nothing -- even a move whose
+        # (side-relative) action id IS a root child: the mirror of the reply,
+        # played from the start position, has the reply's id.
+        mirror = chess.Move(chess.square_mirror(reply.from_square), chess.square_mirror(reply.to_square))
+        assert mirror in chess.Board().legal_moves
+        assert int(move_to_index(mirror, chess.Board())) == int(move_to_index(reply, board))
+        assert worker.child_bestmove(chess.Board(), mirror) is None
+    finally:
+        worker.close()
+
+
 def test_ponderhit_still_answers_from_the_real_phase(out) -> None:
     calls: list[chess.Board] = []
 
@@ -982,6 +1055,79 @@ def test_stale_castling_rights_are_normalised_everywhere(label: str, out) -> Non
         assert chess.Move.from_uci(move) in engine._board.legal_moves
     finally:
         engine.close()
+
+
+_KEPT_EP = (
+    "4k3/8/8/8/3pP3/8/4P3/4K3 b - e3 0 1",  # e2 occupied: no double push, capture legal
+    "4k3/8/8/8/3p4/8/8/4K3 b - e3 0 1",     # no pawn on e4 at all: python-chess still allows d4e3
+)
+
+
+@pytest.mark.parametrize("fen", _KEPT_EP)
+def test_an_unreachable_but_capturable_ep_square_is_kept_everywhere(fen: str, out) -> None:
+    """Dropping it would reject `moves d4e3`, which python-chess accepts (main
+    answered e1d1). Kept: python-chess, the searched board, `_pending_fen`, the
+    C board and its post-capture position all agree."""
+    from chess_anti_engine.encoding._lc0_ext import CBoard
+
+    assert chess.Board(fen).status() & chess.STATUS_INVALID_EP_SQUARE
+    worker = _worker()
+    engine = Engine(worker)
+    try:
+        engine.dispatch(parse_command(f"position fen {fen}"))
+        assert "kept en-passant square e3" in out.text()
+        assert engine._board.ep_square == chess.E3
+        assert engine._pending_fen is not None
+        assert chess.Board(engine._pending_fen).ep_square == chess.E3
+        assert CBoard.from_board(engine._board).ep_square == chess.E3
+        engine.dispatch(parse_command(f"position fen {fen} moves d4e3"))
+        assert "rejected" not in out.text()
+        assert engine._board.piece_at(chess.E3) == chess.Piece(chess.PAWN, chess.BLACK)
+        _go(engine, "go nodes 64")
+        searched = _searched_boards(worker)[-1]
+        assert searched.move_stack == [chess.Move.from_uci("d4e3")]
+        (move,) = out.bestmoves()
+        assert chess.Move.from_uci(move) in engine._board.legal_moves
+    finally:
+        engine.close()
+
+
+def test_an_ep_capture_the_c_board_resolves_differently_is_rejected(monkeypatch) -> None:
+    """The movegen gate also compares the board an en-passant capture leaves."""
+    import chess_anti_engine.encoding._lc0_ext as lc0_ext
+
+    real = lc0_ext.CBoard
+
+    class _Phantom:
+        def __init__(self, cb) -> None:
+            self._cb = cb
+
+        @classmethod
+        def from_board(cls, board: chess.Board) -> _Phantom:
+            return cls(real.from_board(board))
+
+        def legal_move_indices(self):
+            return self._cb.legal_move_indices()
+
+        def push_index(self, idx: int) -> None:
+            self._cb.push_index(idx)
+
+        @property
+        def occ_white(self) -> int:
+            return int(self._cb.occ_white) | int(chess.BB_E4)  # a phantom pawn left behind
+
+        @property
+        def occ_black(self) -> int:
+            return int(self._cb.occ_black)
+
+        @property
+        def pawns(self) -> int:
+            return int(self._cb.pawns) | int(chess.BB_E4)
+
+    monkeypatch.setattr(lc0_ext, "CBoard", _Phantom)
+    reason = engine_module._movegen_disagreement(chess.Board(_KEPT_EP[1]))
+    assert reason is not None
+    assert "d4e3" in reason
 
 
 def test_an_impossible_en_passant_square_is_dropped(out) -> None:
