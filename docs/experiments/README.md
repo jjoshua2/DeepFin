@@ -10,6 +10,8 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
+- [2026-11-13: Fixed G1 lower-LR probe and G2 WDL adjunct](2026-11-13-fixed-g1-lr-g2-wdl.md) — completed: LOW512 scored 57.03125% versus banked HIGH512 on reused diagnostic pairs (95% interval 52.0518–62.0107%); whole-G2 descriptive NLL/Brier order LOW512, A39, HIGH512. No A39 playing-gain, online recovery, optimal-LR or adoption claim; original baseline negative preserved.
+
 - [2026-11-13: Core policy and resolved-outcome baseline](2026-11-13-core-outcome-policy-baseline.md) — completed leg-1 terminal nonpass: G8 scored 21.875% versus original A39 (paired 95% interval 19.0304–24.7196%) after 4,096 updates / 2,048 games. No eligible or consumed confirmation, C1, second leg or adoption; long-term strength goal remains unmet.
 
 - [2026-11-13: Larger fresh-data outcome regime](2026-11-13-rl-larger-outcome-regime.md) — E4 completed: 192 games and 129 updates per arm; all three screens technically qualified, bundle contrast unresolved, neither arm donor-utility eligible. No confirmation or adoption; donor retained.
