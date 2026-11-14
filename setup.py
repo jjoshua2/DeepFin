@@ -296,6 +296,28 @@ nnue_ext = Extension(
     extra_link_args=_ext_link_args(openmp=True),
 )
 
+# Syzygy prober: the vendored Fathom (MIT, chess_anti_engine/tb/fathom/,
+# unmodified) compiled in _tb_fathom.c, wrapped by _tb_ext.c. Pure C, so it
+# avoids the host's C++ runtime mismatch. Nothing in production imports it
+# yet (docs/tablebase_prober.md).
+#
+# ⚑ NO fast-slider macros, deliberately. define_macros apply to EVERY source
+# of an Extension, and Fathom's tbchess.c defines its own bishop_attacks /
+# rook_attacks / queen_attacks: the macros would silently rename Fathom's
+# functions inside _tb_fathom.c. _tb_ext.c includes _cboard_impl.h only for the
+# CBoard struct layout and calls no movegen or slider code, so the macros
+# would buy nothing there either.
+tb_ext = Extension(
+    "chess_anti_engine.tb._tb_ext",
+    depends=_depends("chess_anti_engine.tb._tb_ext"),
+    sources=["chess_anti_engine/tb/_tb_ext.c", "chess_anti_engine/tb/_tb_fathom.c"],
+    # fathom/src for tbprobe.h's `#include <tbconfig.h>`.
+    include_dirs=["chess_anti_engine/encoding", "chess_anti_engine/tb/fathom/src"],
+    extra_compile_args=_ext_compile_args(),
+    extra_link_args=[*_ext_link_args(), "-pthread"],
+)
+
+
 class build_ext_with_record(_build_ext):
     """build_ext that writes a build record for every extension it COMPILED.
 
@@ -397,6 +419,6 @@ class build_ext_with_record(_build_ext):
 
 
 setup(
-    ext_modules=[features_ext, lc0_ext, perft_ext, mcts_tree_ext, nnue_ext],
+    ext_modules=[features_ext, lc0_ext, perft_ext, mcts_tree_ext, nnue_ext, tb_ext],
     cmdclass={"build_ext": build_ext_with_record},
 )

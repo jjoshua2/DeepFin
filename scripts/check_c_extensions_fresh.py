@@ -101,6 +101,28 @@ EXTENSION_SPECS: tuple[ExtensionSpec, ...] = (
             "chess_anti_engine/encoding/_slider_attacks_impl.h",
         ),
     ),
+    # Syzygy prober (vendored Fathom). Two translation units: _tb_ext.c (the
+    # Python glue; only it is walked by the include-coverage test) and
+    # _tb_fathom.c, which includes the unmodified Fathom sources -- so the
+    # second unit and everything it pulls in are listed by hand. tbconfig.h is
+    # reached through an angle-bracket include the walker does not follow.
+    ExtensionSpec(
+        "chess_anti_engine.tb._tb_ext",
+        (
+            _SETUP_DEP,
+            "chess_anti_engine/tb/_tb_ext.c",
+            "chess_anti_engine/tb/_tb_fathom.c",
+            "chess_anti_engine/tb/_tb_fathom.h",
+            "chess_anti_engine/tb/fathom/src/tbprobe.c",
+            "chess_anti_engine/tb/fathom/src/tbprobe.h",
+            "chess_anti_engine/tb/fathom/src/tbchess.c",
+            "chess_anti_engine/tb/fathom/src/tbconfig.h",
+            "chess_anti_engine/tb/fathom/src/stdendian.h",
+            "chess_anti_engine/encoding/_cboard_impl.h",
+            "chess_anti_engine/encoding/_bitboard_planes_impl.h",
+            "chess_anti_engine/encoding/_slider_attacks_impl.h",
+        ),
+    ),
 )
 
 
