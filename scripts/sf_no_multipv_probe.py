@@ -21,14 +21,18 @@ this runs the PRODUCTION path — shard on disk → ``Trainer._prepare_host_arra
 dataclass the reporter publishes. Agreement between the two is the point: it is
 what licenses reading the live column against the gate's per-shard numbers.
 
-Read-only. Shards are opened ``mode="r"`` through the normal loader and nothing
-is written, moved or deleted.
+Read-only with respect to the shards: they are opened ``mode="r"`` through the
+normal loader and nothing is written, moved or deleted. The only write is the
+``Trainer``'s TensorBoard writer, which would otherwise default to a
+cwd-relative ``./tb`` (inside the checkout when run from the repo root). It goes
+to ``--tb-dir`` when given, else to a temporary directory removed on exit.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -230,7 +234,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--limit", type=int, default=0, help="shards per arm; 0 = all")
     ap.add_argument("--batch-size", type=int, default=512)
     ap.add_argument("--verbose", action="store_true")
+    ap.add_argument(
+        "--tb-dir", type=Path, default=None,
+        help="TensorBoard log dir for the throwaway Trainer (default: a temporary "
+             "directory removed on exit; never the cwd)",
+    )
     args = ap.parse_args(argv)
+    if args.tb_dir is not None:
+        return _run(args, args.tb_dir)
+    with tempfile.TemporaryDirectory(prefix="sf_no_multipv_probe_tb_") as tmp:
+        return _run(args, Path(tmp))
+
+
+def _run(args: argparse.Namespace, tb_dir: Path) -> int:
 
     torch.manual_seed(0)
     # The model is irrelevant to the columns under test — they are built from
@@ -239,7 +255,14 @@ def main(argv: list[str] | None = None) -> int:
     # what runs. `input_extra_features` defaults to v2_threats (175 planes),
     # which is what production shards carry.
     model = build_model(ModelConfig(embed_dim=32, num_layers=1, num_heads=2, use_smolgen=False))
-    trainer = Trainer(model, device="cpu", lr=1e-3)
+    trainer = Trainer(model, device="cpu", lr=1e-3, log_dir=tb_dir)
+    try:
+        return _probe(args, trainer)
+    finally:
+        trainer.writer.close()
+
+
+def _probe(args: argparse.Namespace, trainer: Trainer) -> int:
 
     poisoned_paths = _select_shards(
         args.poisoned_dir,

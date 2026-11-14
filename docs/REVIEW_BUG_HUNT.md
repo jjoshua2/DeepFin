@@ -561,7 +561,8 @@ Current notes:
   a temporary config so interrupted runs do not alter the source YAML.
 - Focused polling/watchdog validation after F036 passed:
   `bash -n` across `scripts/*.sh` and `scripts/deepfin`,
-  `python3 -m py_compile scripts/pbt_30m_poll.py scripts/pbt_hourly_audit.py`,
+  `python3 -m py_compile scripts/pbt_30m_poll.py scripts/pbt_hourly_audit.py`
+  (`pbt_30m_poll.py` archived 2026-11-14),
   and `--help` for both Python poll/audit helpers.
 - Finding F037 opened/fixed in this cycle: several benchmark/analysis scripts
   defaulted to machine-specific Stockfish, AOT, replay, or result paths under
@@ -973,8 +974,8 @@ become either a finding or an explicit open question.
 | Tune/PBT runtime | High | deep | `chess_anti_engine/tune/*` |
 | UCI engine | High | deep | `chess_anti_engine/uci/*` |
 | Evaluation and benchmarks | Medium | deep | `chess_anti_engine/eval/*`, `chess_anti_engine/bench/*`, `scripts/bench_*.py`, `scripts/profile_*.py`, `scripts/e2e_strength_test.py` |
-| Operational scripts | Medium | deep | `scripts/*.sh`, `scripts/graceful_restart.py`, `scripts/generate_bootstrap.py`, `scripts/train_bootstrap.py`, `scripts/status.py`, `scripts/diagnose.py`, `scripts/pbt_*`, `scripts/*audit*`, `scripts/match_checkpoints.py`, `scripts/reinit_value_heads.py`, `scripts/blunder_check*.py` |
-| Documentation/specs | Low | deep | `README.md`, `AGENTS.md`, `CLAUDE.md`, `prompt.md`, `spec.md`, `future_ideas.md`, `TRAINING_LOG.md`, `bench_results.md`, `docs/*`, `tcec.md` |
+| Operational scripts | Medium | deep | `scripts/*.sh`, `scripts/graceful_restart.py`, `scripts/generate_bootstrap.py`, `scripts/train_bootstrap.py`, `scripts/status.py`, `scripts/diagnose.py`, `scripts/pbt_*`, `scripts/*audit*`, `scripts/match_checkpoints.py`, `scripts/reinit_value_heads.py`, `scripts/blunder_check*.py` (archived 2026-11-14) |
+| Documentation/specs | Low | deep | `README.md`, `AGENTS.md`, `CLAUDE.md`, `prompt.md`, `spec.md`, `future_ideas.md`, `TRAINING_LOG.md`, `bench_results.md`, `docs/*`, `tcec.md` (archived 2026-11-14) |
 | Tests | High | deep | `tests/*` |
 
 ## Component Checklists
@@ -1642,21 +1643,21 @@ Files:
 - [x] `scripts/eval_puzzles.py`
 - [x] `scripts/generate_bootstrap.py`
 - [x] `scripts/graceful_restart.py`
-- [x] `scripts/hourly_pbt_audit.sh`
+- [x] `scripts/hourly_pbt_audit.sh` (archived 2026-11-14)
 - [x] `scripts/lint.sh`
 - [x] `scripts/match_checkpoints.py`
 - [x] `scripts/monitor_pbt.sh`
-- [x] `scripts/pbt_30m_poll.py`
+- [x] `scripts/pbt_30m_poll.py` (archived 2026-11-14)
 - [x] `scripts/pbt_hourly_audit.py`
-- [x] `scripts/poll_pbt_30m.sh`
+- [x] `scripts/poll_pbt_30m.sh` (archived 2026-11-14)
 - [x] `scripts/profile_distributed.py`
 - [x] `scripts/profile_play_batch.py`
 - [x] `scripts/reinit_value_heads.py`
 - [x] `scripts/status.py`
 - [x] `scripts/train.sh`
 - [x] `scripts/train_bootstrap.py`
-- [x] `scripts/blunder_check.py`
-- [x] `scripts/blunder_check_cp.py`
+- [x] `scripts/blunder_check.py` (archived 2026-11-14)
+- [x] `scripts/blunder_check_cp.py` (archived 2026-11-14)
 
 Correctness/reliability:
 
@@ -1764,7 +1765,7 @@ Files:
 - [x] `TRAINING_LOG.md`
 - [x] `bench_results.md`
 - [x] `docs/experiments/value_head_arch.md`
-- [x] `tcec.md`
+- [x] `tcec.md` (archived 2026-11-14)
 
 Review:
 
