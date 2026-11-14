@@ -171,3 +171,50 @@ All paths below have the same external artifact root declared above. Raw checkpo
 | `core-SF-current-P0-native020-model-authority-interface-independent-review-v1/review.json` | `9bfcf98aad979e2cb4ae5430e3d5c5bd9da9920632e990fa87ac7003fb4fc1d6` |
 
 Playing serving observations, strict game-reader decisions, confirmation eligibility and any resulting experiment decision are pending. No external-engine milestone or optimum-RL-formula claim follows from these technical readouts.
+
+
+## Playing readouts — November 14
+
+### B512 versus matched outcome-only A512
+
+The first mandatory endpoint closed as **technically qualified SCREEN NONPASS**. Over 256 games / 128 opening colorpairs, B512 scored **77W / 103D / 76L**, or **0.501953125**, with the exact registered paired normal approximate95% interval **[0.45730085396333087, 0.5466053960366691]**. Both the point>=.53 and lower>.5 conditions failed. This does not establish equivalence, a general absence of teacher benefit, or an optimal share/dose/recipe. The first gate cannot be erased by the later donor comparison.
+
+The unchanged GPU owner completed in 709.4145954669802 seconds; the separate strict CPU reader completed in 15.597019565990195 seconds. Actual L090 serving observations authenticated both complete494/175/61,444,448 models, exact checkpoint-versus-served pre/post state hashes, F32 inputs under BF16 autocast and dense F32 transport, pool32/leaf1024, unchanged model assets, zero training updates and released weak model references. Those are observations for this actual phase, without asserting whole-runtime R7/L090/D6 equivalence.
+
+The CPU reader qualified all 256 game/history/PGN/colorpair and strict result joins:104 rule resolutions and152 Syzygy resolutions, with no unresolved-game draw imputation. It loaded zero models and initialized no CUDA. The original16-ply opening histories and additional450-ply bound were retained. Root and different-author independent actual review accepted the technical result against source42eb; reported aggregate statistics were not replaced by posthoc estimates or raw-data recomputation outside the owned reader.
+
+Confirmation is **ineligible, unallocated and unconsumed**. No first-screen extension, retry, new seed, alternate checkpoint, alternate A candidate, pooled panel or model adoption was issued. The second mandatory B512/A39 screen was completed on its already frozen distinct 256-pair book, seed 2026111752, exact same B512 hash and unchanged deciding rule; its result follows below.
+
+| First-screen artifact | SHA-256 |
+| --- | --- |
+| `core-SF-current-P0-native020-pilot-bindings-v1/arena/screen_B_vs_A/protocol.json` | `c8690c431a307ecebec46355d872423e4d669cf5433986994ca780e4af0f18da` |
+| `core-SF-current-P0-native020-pilot-bindings-v1/arena/screen_B_vs_A/root-acceptance.json` | `6a83d770a188fea4de8d359ca491efccba7be6bbdcf1d04e91359584f831c3cf` |
+| `core-SF-current-P0-native020-screen_B_vs_A-readout-v1/readout.json` | `f58efc85cad2b3bcec9ae84c430a9d986f853538c375559e88c84d826cb1ba6b` |
+| `core-SF-current-P0-native020-screen_B_vs_A-independent-actual-review-v1/review.json` | `feed15a12e6064bf43f6930f024473c203bd353b9fd5fe91009b77a22c264a41` |
+
+The complete technical readouts above were published separately in [#1321](https://github.com/jjoshua2/DeepFin/pull/1321), main merge `40c4725733148a883b2458e2fa38033158476e08`; publication receipt `core-SF-current-P0-native020-technical-readout-main-publication-v1/publication.json`, SHA `4868f848173974ab9f1ca1324b3a030bfdf34ee1e048b6238b8c700278e133b2`. That publication did not issue a new experiment, confirmation, model adoption or goal completion.
+
+
+### B512 versus original donor A39
+
+The second mandatory endpoint also closed as **technically qualified SCREEN NONPASS**. Over 512 games / 256 opening color pairs, B512 scored **160W / 204D / 148L**, or **0.51171875**, with the registered approximate paired 95% interval **[0.4783115072415896, 0.5451259927584103]**. Both the point ≥ .53 and lower > .5 conditions failed. This panel does not establish donor superiority, equivalence or an absence of benefit at other doses or recipes.
+
+The GPU owner completed in 1298.0319283289718 seconds; the separate CPU reader completed in 23.816715608001687 seconds. The same B512 checkpoint was served in both mandatory screens. Actual L090 observations authenticated complete checkpoint loading and unchanged served model state before and after play, 175 F32 input planes under BF16 autocast with F32 transport, the 32-game pool and two-slot evaluator with maximum leaf batch 1024. The reference payload reported its actual historical step 680276. No training update occurred in either arena.
+
+The reader qualified all 512 game/history/PGN/color-pair and result joins: 225 rule resolutions and 287 Syzygy resolutions, with no unresolved games imputed as draws. It loaded zero models and initialized no CUDA. Root and different-author independent actual review accepted the closed technical result. These observations qualify this particular instrument and phase; they do not establish equivalence between complete runtime revisions.
+
+### Pilot decision and remaining goal
+
+Both preregistered mandatory screens failed their deciding criteria. The pilot is **closed, qualified NONPASS**, with no gain claim or model adoption. A39 remains the donor; A512 and B512 remain private, unadopted artifacts. Confirmation is permanently ineligible for this study: zero allocations and zero consumption, with all 500 unused confirmation opening pairs protected. There is no retry, reseed, checkpoint substitution, panel extension, pooling or alternate-A adoption under this study.
+
+Actual scientific GPU owner wall was **2518.2359080580063 / 9600 seconds**. Scientific CPU readers used **45.77236676000757 / 7500 seconds**, and the separately selected serialization audits used **12.724848094047047 / 600 engineering seconds**. The closing root census contained 263 closed stages, with no remaining scientific owner. Historical failed engineering attempts and their costs remain recorded above.
+
+This closes the native-.2 pilot, while the broader strength goal remains active. Neither beating multicore Rofchade nor approaching Stockfish or Leela has been demonstrated. The missing A512-versus-A39 contrast cannot be inferred transitively from these two B512 panels. Any measurement of that contrast requires a separate prospective diagnostic, fresh protected opening roles, independent source/data acceptance, publication and a new bounded resource scope. It cannot rescue this pilot or promote its control.
+
+| Closing artifact | SHA-256 |
+| --- | --- |
+| `core-SF-current-P0-native020-pilot-bindings-v1/arena/screen_B_vs_A39/protocol.json` | `48350be1d0d2486436b39aba053ac4a388fd9df68e198b9c7161886c001bf2ed` |
+| `core-SF-current-P0-native020-pilot-bindings-v1/arena/screen_B_vs_A39/root-acceptance.json` | `dec880f31cb157872f81f703cf3be3e904ea937ff3722fa35d9bfd6fc6e01a7f` |
+| `core-SF-current-P0-native020-screen_B_vs_A39-readout-v1/readout.json` | `a9f0c61c05cd91a5ab3b3f58221232f2ab3a8406af8eeb83b7542a3b3534985e` |
+| `core-SF-current-P0-native020-screen_B_vs_A39-independent-actual-review-v1/review.json` | `0a7f1fc76e564a6eed5ad6a38c6d809cc754a338749af64cfff6cb96c24b6ea6` |
+| `core-SF-current-P0-native020-pilot-closeout-v1/decision.json` | `8c43fc5a052a1b701705b56a59266de73f325b2833e76934b07e4cab1c8ce2fc` |

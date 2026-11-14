@@ -16,7 +16,9 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
-- [2026-11-14: Fixed-G1 current-P0 native SF-WDL .2 pilot](2026-11-14-sf-current-p0-native020-pilot.md) — both fresh-A39 alpha0/.2 arms completed 512 updates with matching journals and accepted saved-state audits; common HOLD64 is descriptive only. Mandatory disjoint playing screens are in progress; no strength or optimal-recipe claim.
+- [2026-11-14: Outcome-only A512 versus A39 control diagnostic](2026-11-14-a512-a39-control-diagnostic.md) — complete prospective 1000-game / 500-pair diagnostic on newly qualified roles; fixed existing control/donor, symmetric classification, no training, confirmation or adoption. Predictions unrun at registration.
+
+- [2026-11-14: Fixed-G1 current-P0 native SF-WDL .2 pilot](2026-11-14-sf-current-p0-native020-pilot.md) — both fresh-A39 alpha0/.2 arms completed 512 updates with matching journals and accepted saved-state audits; common HOLD64 is descriptive only. Both qualified screens were NONPASS: 50.1953% versus A512 over 256 games and 51.1719% versus A39 over 512. Pilot closed; donor retained, unused confirmation protected, no gain, adoption or optimal-recipe claim.
 
 - [2026-11-14: Actual A39/G1 SF-P0 consumer qualification](2026-11-14-sf-current-p0-a39-g1-qualification.md) — four real-network B256/BF16 engineering updates completed under matched structural controls; the positive branch exercised qualified, invalid and unavailable rows with measured health coverage. Root and independent actual acceptance; no research-dose, model-equivalence or strength claim.
 
