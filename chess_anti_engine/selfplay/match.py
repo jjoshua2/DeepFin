@@ -304,7 +304,7 @@ def play_match_batch(
     games: int,
     max_plies: int,
     a_plays_white: list[bool] | None = None,
-    mcts_type: str = "puct",
+    mcts_type: str = "gumbel",
     mcts_simulations: int = 200,
     mcts_simulations_a: int | None = None,
     mcts_simulations_b: int | None = None,

@@ -284,7 +284,7 @@ class TrialConfig:
     selfplay_fraction: float = 0.0
     slot_oversubscribe: float = 1.0
     max_plies: int = 240
-    mcts: str = "puct"
+    mcts: str = "gumbel"
     mcts_simulations: int = 50
     mcts_start_simulations: int = 50
     mcts_ramp_steps: int = 10_000
@@ -767,7 +767,7 @@ class TrialConfig:
                 config.get("slot_oversubscribe", 1.0), name="slot_oversubscribe",
             ),
             max_plies=int(config.get("max_plies", 240)),
-            mcts=str(config.get("mcts", "puct")),
+            mcts=str(config.get("mcts", "gumbel")),
             mcts_simulations=int(config.get("mcts_simulations", 50)),
             mcts_start_simulations=int(config.get("mcts_start_simulations", 50)),
             mcts_ramp_steps=int(config.get("mcts_ramp_steps", 10_000)),

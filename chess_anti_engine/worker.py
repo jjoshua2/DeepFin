@@ -4121,7 +4121,7 @@ class WorkerSession:
         arena_cfg = task.get("arena") or {}
         batch_games = int(arena_cfg.get("batch_games", 8))
         max_plies_arena = int(arena_cfg.get("max_plies", 240))
-        mcts_type_arena = str(arena_cfg.get("mcts", "puct"))
+        mcts_type_arena = str(arena_cfg.get("mcts", "gumbel"))
         mcts_sims_arena = int(arena_cfg.get("mcts_simulations", 200))
         c_puct_arena = float(arena_cfg.get("c_puct", 2.5))
         swap_sides = bool(arena_cfg.get("swap_sides", True))
@@ -4678,7 +4678,7 @@ class WorkerSession:
             ),
             "search": SearchConfig(
                 simulations=self._resolve_reco(reco, "mcts_simulations", 50, int),
-                mcts_type=self._resolve_reco(reco, "mcts", "puct", str),
+                mcts_type=self._resolve_reco(reco, "mcts", "gumbel", str),
                 playout_cap_fraction=self._resolve_reco(reco, "playout_cap_fraction", 0.25),
                 full_ply_pair_fraction=self._resolve_reco(
                     reco, "full_ply_pair_fraction", 0.0,

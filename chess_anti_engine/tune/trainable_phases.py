@@ -225,6 +225,47 @@ def _arm_mean_regret(ingest_summary: dict, side: str) -> float:
     return float(ingest_summary.get(f"gate_{side}_regret_weighted", 0.0)) / games
 
 
+def _puzzle_search_kwargs(tc: TrialConfig) -> dict[str, Any]:
+    """The ``run_puzzle_eval`` search arguments: the compiled search selfplay runs.
+
+    Selfplay's own dispatch rule (``selfplay_search_is_gumbel``) picks the
+    route at ``puzzle_simulations``, and the Gumbel route is handed the same
+    ``SelfplaySearchShape`` production selfplay builds (config plus the two C
+    runner arguments); ``run_puzzle_eval`` then forces temperature 0 and no
+    root noise. Before 2026-11-14 this phase called ``run_puzzle_eval`` with no
+    search arguments, i.e. the pure-Python PUCT search, so puzzle numbers from
+    either side of that change are not comparable (``docs/eval_protocol.md``).
+    """
+    from chess_anti_engine.mcts import MCTSConfig
+    from chess_anti_engine.selfplay.network_turn import (
+        build_selfplay_search_shape,
+        selfplay_search_is_gumbel,
+    )
+
+    kw = _play_batch_kwargs(tc)
+    search, game = kw["search"], kw["game"]
+    sims = int(tc.puzzle_simulations)
+    if selfplay_search_is_gumbel(search, sims):
+        shape = build_selfplay_search_shape(search=search, game=game, simulations=sims)
+        return {
+            "search": "gumbel",
+            "gumbel_cfg": shape.cfg,
+            "gumbel_target_batch": int(shape.target_batch),
+            "gumbel_vloss_weight": int(shape.vloss_weight),
+        }
+    return {
+        "search": "puct",
+        "mcts_cfg": MCTSConfig(
+            simulations=sims,
+            fpu_reduction=float(search.fpu_reduction),
+            fpu_at_root=float(search.fpu_at_root),
+            input_history_encoding=game.input_history_encoding,
+            input_extra_features=game.input_extra_features,
+            policy_encoding=game.policy_encoding,
+        ),
+    }
+
+
 def _run_puzzle_eval_if_due(
     model: torch.nn.Module,
     puzzle_suite,
@@ -241,7 +282,10 @@ def _run_puzzle_eval_if_due(
     if iteration_zero_based % tc.puzzle_interval != 0:
         return _defaults
     from chess_anti_engine.eval import run_puzzle_eval
-    pr = run_puzzle_eval(model, puzzle_suite, device=device, mcts_simulations=tc.puzzle_simulations, rng=rng)
+    pr = run_puzzle_eval(
+        model, puzzle_suite, device=device, mcts_simulations=tc.puzzle_simulations, rng=rng,
+        **_puzzle_search_kwargs(tc),
+    )
     return {
         "puzzle_accuracy": pr.accuracy,
         "puzzle_correct": pr.correct,

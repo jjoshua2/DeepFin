@@ -39,7 +39,7 @@ class TemperatureConfig:
 @dataclass(frozen=True)
 class SearchConfig:
     simulations: int = 50
-    mcts_type: str = "puct"
+    mcts_type: str = "gumbel"
     playout_cap_fraction: float = 0.25
     # Research bet (default 0.0 = off, byte-identical iid schedule): fraction
     # of base full plies that FORCE the slot's next net turn full too. The

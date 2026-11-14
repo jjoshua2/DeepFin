@@ -645,7 +645,7 @@ def main() -> None:
     ap.add_argument("--mcts-ramp-exponent", type=float, default=2.0)
 
     ap.add_argument("--mcts-simulations", type=int, default=800)
-    ap.add_argument("--mcts", type=str, default="puct", choices=["puct", "gumbel"])
+    ap.add_argument("--mcts", type=str, default="gumbel", choices=["gumbel", "puct"])
     ap.add_argument("--min-replay-size", type=int, default=0)
     ap.add_argument("--lr", type=_learning_rate_arg, default=3e-4)
     ap.add_argument("--w-volatility", type=float, default=0.05)

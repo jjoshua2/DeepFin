@@ -33,6 +33,12 @@ from chess_anti_engine.utils.bitboards import unsearchable_king_reason
 
 _log = logging.getLogger(__name__)
 
+# The searches ``run_puzzle_eval`` can answer with. "gumbel" (compiled) is the
+# default and what the training puzzle eval uses when selfplay is configured
+# Gumbel; "puct" is the compiled PUCT driver; "python_puct_reference" is the
+# pure-Python PUCT kept as a test/parity reference, never a production route.
+PUZZLE_SEARCHES: tuple[str, ...] = ("gumbel", "puct", "python_puct_reference")
+
 # Default rating buckets for Lichess-style evaluation, matching the LC0 blog
 # (https://lczero.org/blog/2024/02/...) coarse buckets.
 DEFAULT_RATING_BUCKETS: tuple[tuple[int, int], ...] = (
@@ -379,6 +385,10 @@ def run_puzzle_eval(
     rng: np.random.Generator | None = None,
     rating_buckets: tuple[tuple[int, int], ...] = DEFAULT_RATING_BUCKETS,
     gumbel_cfg: GumbelConfig | None = None,
+    search: str = "gumbel",
+    mcts_cfg: MCTSConfig | None = None,
+    gumbel_target_batch: int = 0,
+    gumbel_vloss_weight: int = 0,
 ) -> PuzzleResult:
     """Evaluate the model on a puzzle suite.
 
@@ -396,23 +406,46 @@ def run_puzzle_eval(
         rng: Numpy RNG; a default is created if None.
         rating_buckets: Half-open ``[low, high)`` bands. Ignored when no
             puzzle has a rating set.
+        search: which search answers the puzzle. ``"gumbel"`` (the default)
+            is the compiled Gumbel search (``run_gumbel_root_many_c``) with
+            ``gumbel_cfg`` (``GumbelConfig()`` when None) plus the two C
+            runner arguments ``gumbel_target_batch``/``gumbel_vloss_weight``.
+            ``"puct"`` is the compiled PUCT driver (``run_mcts_many_c``) with
+            ``mcts_cfg`` (``MCTSConfig()`` when None). ``"python_puct_reference"``
+            is the pure-Python ``run_mcts_many``: a test/parity reference only,
+            never a production route. Until 2026-11-14 the default (no
+            ``gumbel_cfg``) was that pure-Python PUCT search, so puzzle numbers
+            from before and after that change are not comparable
+            (``docs/eval_protocol.md``).
 
     Returns:
         PuzzleResult with total, correct, accuracy, and (when applicable)
         bucketed accuracy.
     """
+    if search not in PUZZLE_SEARCHES:
+        raise ValueError(f"run_puzzle_eval: unknown search {search!r}; expected one of {PUZZLE_SEARCHES}")
+    if search != "gumbel" and (
+        gumbel_cfg is not None or int(gumbel_target_batch) or int(gumbel_vloss_weight)
+    ):
+        # A Gumbel knob handed to a PUCT search would be accepted and ignored.
+        raise ValueError(
+            f"run_puzzle_eval: gumbel_cfg/gumbel_target_batch/gumbel_vloss_weight "
+            f"apply only to search='gumbel', got search={search!r}"
+        )
+    if search == "gumbel" and mcts_cfg is not None:
+        raise ValueError("run_puzzle_eval: mcts_cfg applies only to the PUCT searches")
     if rng is None:
         rng = np.random.default_rng(42)
 
     model.eval()
-    # Gumbel search (uses the c_scale/c_visit/c_visit_root/topk knobs; NOT
-    # c_puct/fpu_reduction -- see mcts.gumbel.INERT_GUMBEL_KNOBS) when a
-    # GumbelConfig is supplied; else the legacy PUCT path. Both return actions at
-    # result[1]. Force deterministic move selection (temp 0, no root noise) so the
-    # screen measures strength, not exploration.
-    if gumbel_cfg is not None:
+    # Force deterministic move selection (temp 0, no root noise) so the screen
+    # measures strength, not exploration. Every route returns actions at
+    # result[1], in the full 4672 action space.
+    if search == "gumbel":
         import dataclasses
-        from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
+        from chess_anti_engine.mcts import gumbel_c
+        if gumbel_cfg is None:
+            gumbel_cfg = GumbelConfig()
         # Thread the model's own encoding from the checkpoint so the C tree
         # encodes the right plane count (v1/v2/v3 widths), history layout, and
         # policy-head size (1858 vs 4672). Without this the cfg falls back to
@@ -435,33 +468,47 @@ def run_puzzle_eval(
                 bool(getattr(model, "use_dynamic_relations", False))
                 or gumbel_cfg.compute_relations),
         )
+        g_target_batch = int(gumbel_target_batch)
+        g_vloss_weight = int(gumbel_vloss_weight)
 
         def _search(bs: list[chess.Board]):
-            return run_gumbel_root_many_c(model, bs, device=device, rng=rng, cfg=g_cfg)[1]
-
-        # C gumbel returns full 4672 action ids (logits expanded before search).
+            # Attribute lookup at call time, so the realized route is observable.
+            return gumbel_c.run_gumbel_root_many_c(
+                model, bs, device=device, rng=rng, cfg=g_cfg,
+                target_batch=g_target_batch, vloss_weight=g_vloss_weight,
+            )[1]
     else:
         # Thread the checkpoint's own encoding into the PUCT config for the same
         # reason the gumbel branch does (above): MCTSConfig defaults to v1/legacy/
         # az_4672, so a v2_threats (175-plane), compact-1858, or non-legacy-history
         # net would otherwise be encoded with the wrong plane count and crash at the
         # embed matmul (175x384 vs 64x146). Fall back to the cfg defaults per field.
-        cfg = MCTSConfig(
-            simulations=mcts_simulations,
+        import dataclasses
+        base_cfg = mcts_cfg if mcts_cfg is not None else MCTSConfig()
+        cfg = dataclasses.replace(
+            base_cfg,
+            simulations=int(mcts_simulations),
             temperature=0.0,
             input_extra_features=(
-                getattr(model, "input_extra_features", None) or MCTSConfig.input_extra_features),
+                getattr(model, "input_extra_features", None) or base_cfg.input_extra_features),
             input_history_encoding=(
-                getattr(model, "input_history_encoding", None) or MCTSConfig.input_history_encoding),
+                getattr(model, "input_history_encoding", None) or base_cfg.input_history_encoding),
             # PUCT can't transport dynamic relations; carry the model's flag so a
-            # relation-aware checkpoint trips run_mcts_many's fail-loud guard
+            # relation-aware checkpoint trips the searches' fail-loud guard
             # instead of being silently scored without its trained relation bias
             # (the gumbel branch handles relations explicitly above).
             compute_relations=bool(getattr(model, "use_dynamic_relations", False)),
         )
 
-        def _search(bs: list[chess.Board]):
-            return run_mcts_many(model, bs, device=device, rng=rng, cfg=cfg)[1]
+        if search == "puct":
+            from chess_anti_engine.mcts import puct_c
+
+            def _search(bs: list[chess.Board]):
+                return puct_c.run_mcts_many_c(model, bs, device=device, rng=rng, cfg=cfg)[1]
+        else:  # "python_puct_reference": test/parity reference only
+
+            def _search(bs: list[chess.Board]):
+                return run_mcts_many(model, bs, device=device, rng=rng, cfg=cfg)[1]
 
     total = len(suite)
     correct_flags = [False] * total

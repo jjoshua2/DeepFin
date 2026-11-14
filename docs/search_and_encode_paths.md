@@ -38,8 +38,8 @@ true game over, plus a 2-fold repetition scored as a draw, lc0 style).
 |---|---|---|---|---|
 | 1 | `mcts/gumbel_c.py:810 run_gumbel_root_many_c` | Python over C | A | **Production selfplay** (`selfplay/network_turn.py:1200`); arena matched_sims (`selfplay/match.py:186`, used by `scripts/arena_standard.py`, `scripts/match_vs_handicapped_sf.py`, `arena.py`, `scripts/match_checkpoints.py`, the worker arena task); UCI classic mode (`uci/search.py:2440`); `eval/puzzles.py:440`; `scripts/audit_targets.py`; `scripts/search_gain_probe.py`; `scripts/diagnose_gumbel_roots.py`; benches; 35 test files |
 | 2 | `mcts/gumbel.py:1726 run_gumbel_root_many` | Pure Python, python-chess boards, own `Node` tree | — | Selfplay fallback only when the C extension is missing (volatility search is refused at yaml load, `utils/config_yaml.py:~805`); `match.py:212` when volatility is on; `scripts/audit_targets.py`; `scripts/lc0_adapter_probe.py`; `scripts/gumbel_scale_probe.py`; `bench/play_batch_timing.py`; 17 test files incl. the parity test `tests/test_mcts_uci_parity_gates.py` |
-| 3 | `mcts/puct_c.py:78 run_mcts_many_c` | Python over C | B | Selfplay PUCT branch (`network_turn.py:1273`, unreachable while `mcts: gumbel`); `match.py:218` when `mcts_type="puct"`, which is the **default** of the worker arena task (`worker.py:4137`, `arena_cfg.get("mcts", "puct")`) and of the `arena.py` CLI (:149) |
-| 4 | `mcts/puct.py:337 run_mcts_many` | Pure Python, own tree | — | Fallback for #3; `eval/puzzles.py:464`; benches; 7 test files |
+| 3 | `mcts/puct_c.py:78 run_mcts_many_c` | Python over C | B | Selfplay PUCT branch (`network_turn.py`, only under an explicit `mcts: puct` above `max(64, fast_simulations)` sims); `match.py` when `mcts_type="puct"` is passed explicitly (the worker arena task and the `arena.py` CLI default to `gumbel` since 2026-11-14); `eval/puzzles.py` `search="puct"` (`scripts/eval_puzzles.py --mode search`, and the training puzzle eval under a PUCT selfplay config). Kept: an explicit `mcts: puct` is a supported config (`configs/default.yaml`, `run.py --mcts puct`), and without it that selection would fall to the pure-Python #4. The UCI PUCT engines (#5-#8) do not use it |
+| 4 | `mcts/puct.py:337 run_mcts_many` | Pure Python, own tree | — | Fallback for #3; `eval/puzzles.py` `search="python_puct_reference"` (test reference only); benches; 7 test files |
 | 5 | `uci/walker_pool.py WalkerPool` | Python threads over C | C | **Default UCI launch at this commit** (`uci/__main__.py:850` `--walkers` default 2; `EngineOptions.threads=2`, `uci/engine.py:217`) |
 | 6 | `mcts/puct_vl.py:74 PucvChunker` | Python 2-slot async pipeline over C | D | UCI `UseVL=true` at 1 thread (`uci/search.py:879`); also the per-candidate engine inside #8 |
 | 7 | `uci/multi_gpu_pucv_pool.py MultiGpuPucvPool` | One Python thread per GPU over C | D | UCI with `--devices` listing >= 2 devices; switched on automatically (`__main__.py:866`, `search.py:610`) |
@@ -392,7 +392,11 @@ Sizes: S/M/L. "Risk" says what the step can change.
    (`worker.py:4137`) and the `arena.py --mcts` default from puct to gumbel,
    then delete `run_mcts_many_c` and the selfplay PUCT branch; keep `puct.py`
    as a test reference. Changes those arena rulers, not training data; note
-   the ruler break in the record.
+   the ruler break in the record. **Done in part 2026-11-14:** every search-type
+   default is now `gumbel` (`docs/eval_protocol.md`). `run_mcts_many_c` and the
+   selfplay PUCT branch were **kept**: an explicit `mcts: puct` is still a
+   supported config, and deleting the compiled driver would route it to the
+   pure-Python search. Deleting them needs `mcts: puct` refused first.
 5. **(M, no behaviour change)** Extract one pipelined PUCT runner shared by
    `PucvChunker` and `MultiGpuPucvPool`. Proof:
    `tests/test_async_pipeline_safety.py`, `tests/test_pucv_leaf_tablebase.py`,

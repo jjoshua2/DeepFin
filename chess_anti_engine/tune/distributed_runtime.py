@@ -301,7 +301,7 @@ def build_recommended_worker(
     return {
         "games_per_batch": int(config.get("selfplay_batch", 4)),
         "max_plies": int(config.get("max_plies", 240)),
-        "mcts": str(config.get("mcts", "puct")),
+        "mcts": str(config.get("mcts", "gumbel")),
         "mcts_simulations": int(mcts_simulations),
         "playout_cap_fraction": float(config.get("playout_cap_fraction", 0.25)),
         "full_ply_pair_fraction": float(config.get("full_ply_pair_fraction", 0.0)),
@@ -1286,7 +1286,7 @@ def check_dynamic_relations_transport(config: dict) -> None:
     ]
     if str(config.get("distributed_worker_aot_dir") or "").strip():
         offenders.append("distributed_worker_aot_dir")
-    if str(config.get("mcts", "puct")).lower() != "gumbel":
+    if str(config.get("mcts", "gumbel")).lower() != "gumbel":
         offenders.append("mcts != gumbel (PUCT paths don't transport relations)")
     if offenders:
         raise ValueError(

@@ -146,7 +146,7 @@ def main() -> None:
     ap.add_argument("--games", type=int, default=50)
     ap.add_argument("--max-plies", type=int, default=200)
 
-    ap.add_argument("--mcts", type=str, default="puct", choices=["puct", "gumbel"])
+    ap.add_argument("--mcts", type=str, default="gumbel", choices=["gumbel", "puct"])
     ap.add_argument("--mcts-simulations", type=int, default=200)
     ap.add_argument("--c-puct", type=float, default=2.5)
 
