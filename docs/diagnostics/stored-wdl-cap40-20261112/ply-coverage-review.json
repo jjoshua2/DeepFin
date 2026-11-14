@@ -1,0 +1,55 @@
+{
+  "exact_pair_list_matches": true,
+  "inference_or_engine_run": false,
+  "input_receipt_sha256": "e0e61ac7c6246261d344ac2459c6e01b8512784d64ca49d50b24f843f9ce6249",
+  "inputs": {
+    "frozen-plan.json": "5f79f49a70d35629dbfa2842080666207e7daf1c93b07180cb6ffe2d294127fb",
+    "raw-ply.npz": "02584ec490c967419d01611d4f0423c71915bb395a4926698200d63c6753ec46",
+    "result.json": "71df61e36146f66f1a0900a0003db16decce7ad60042b36b706639624bb55072"
+  },
+  "limitations": [
+    "Key coverage only: not legal transition, played action, full history or child-position qualification.",
+    "27 rows have no retained exact successor key; no silent replacement or subset scoring authorized.",
+    "No model or checkpoint identity validation claimed.",
+    "Resource limits and read-time source checks reviewed in runner and consistent in receipts, not an independent execution replay."
+  ],
+  "matching_child_pids_at_review": [],
+  "recomputed": {
+    "ambiguous_successors": 0,
+    "candidate_pairs": 227,
+    "duplicate_keys": 0,
+    "missing_successors": 27,
+    "per_supplied_game": {
+      "4574726265432138265": {
+        "candidate_pairs": 86,
+        "missing_successors": 11,
+        "rows": 97
+      },
+      "5641434355974801433": {
+        "candidate_pairs": 80,
+        "missing_successors": 7,
+        "rows": 87
+      },
+      "6842486203887630397": {
+        "candidate_pairs": 61,
+        "missing_successors": 9,
+        "rows": 70
+      }
+    },
+    "present_valid_rows": 254,
+    "rows": 254,
+    "unique_valid_keys": 254
+  },
+  "recorded_limits": {
+    "AS": 8589934592,
+    "CPU": 120,
+    "CUDA": "",
+    "threads": 1,
+    "wall": 150
+  },
+  "row_group_and_source_metadata_bindings_match": true,
+  "rows_sha256": "28fc79b056266bf728c51b8e093312dbe24004b449ec649d295d269cc83e16a5",
+  "schema": "independent-ply-key-coverage-review-v1",
+  "source_corpus_read": false,
+  "source_revision": "4bad8b1026c5262ef44bd4ae58330e41d2f1af3c"
+}

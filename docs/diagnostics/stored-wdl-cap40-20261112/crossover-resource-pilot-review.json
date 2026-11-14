@@ -1,0 +1,36 @@
+{
+  "candidate_sha256": "4d27ffddf751b77bdac3b76613f76d9fba3473f77e21bb1dbb0180467e986d23",
+  "complete_child_accounting": {
+    "cpu_seconds": 15.493699,
+    "method": "RUSAGE_CHILDREN CPU delta around sole child; cumulative RSS maximum conservative upper bound; monotonic Popen-through-reap wall",
+    "peak_rss_upper_bound_bytes": 3481047040,
+    "prior_child_peak_rss_bytes": 21614592,
+    "wall_seconds": 15.554947261000052
+  },
+  "evaluated_positions": 65,
+  "evaluation_calls": 16,
+  "interpretation": [
+    "One nonterminal mixed-cell resource sample passes frozen ceilings; not semantic identity/repeat/batch qualification.",
+    "State immutability and exact search-root encoding are assertions from the reviewed execution path, not independently rerun inference.",
+    "Twenty-four similar serial cold runs would nominally cost24times this observation; not a measured bound or permission for24searches.",
+    "A subsequent schedule needs per-child hard limits, aggregate CPU/wall/search/forward budgets, fail-closed receipt controls, and no retries/automatic expansion."
+  ],
+  "limits": {
+    "AS": 17179869184,
+    "CPU": 60,
+    "CUDA": "",
+    "threads": 1,
+    "wall": 90
+  },
+  "matching_child_pids": [],
+  "model_or_search_rerun": false,
+  "model_row_forwards": 130,
+  "plan_sha256": "c248f50c7586ea82abcd440c03c5e8b67125e5632d534f3860414aaeb5cebe00",
+  "policy_length": 4672,
+  "policy_sum": 1.0000000069495059,
+  "reported_model_state_hashes_unchanged": true,
+  "resource_gate_recomputed": true,
+  "result_sha256": "eeb108da489531326e39a82bf7ebb39b8078fd4a70396d2a61e6369e9fbe2446",
+  "schema": "independent-crossover-resource-pilot-review-v1",
+  "search_cpu_seconds": 8.422421834000001
+}

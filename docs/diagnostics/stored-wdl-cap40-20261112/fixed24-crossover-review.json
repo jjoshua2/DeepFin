@@ -1,0 +1,206 @@
+{
+  "all12_controls_pass": true,
+  "completed_searches": 24,
+  "corrected_result_sha256": "3b13937121de565034e6b706d6d50c3ff944aa2d85547663590c42f86cb9a4b0",
+  "independently_recomputed_controls": {
+    "r0_CC:repeat": {
+      "action_equal": true,
+      "policy_maxabs": 0.0,
+      "q_abs": 0.0
+    },
+    "r0_DD:repeat": {
+      "action_equal": true,
+      "policy_maxabs": 0.0,
+      "q_abs": 0.0
+    },
+    "r1_CC:repeat": {
+      "action_equal": true,
+      "policy_maxabs": 0.0,
+      "q_abs": 0.0
+    },
+    "r1_DD:repeat": {
+      "action_equal": true,
+      "policy_maxabs": 0.0,
+      "q_abs": 0.0
+    },
+    "r2_CC:batch": {
+      "action_equal": true,
+      "policy_maxabs": 7.450580596923828e-09,
+      "q_abs": 1.4287723247574657e-08
+    },
+    "r2_CC:identity": {
+      "action_equal": true,
+      "policy_maxabs": 0.0,
+      "q_abs": 0.0
+    },
+    "r2_CC:repeat": {
+      "action_equal": true,
+      "policy_maxabs": 0.0,
+      "q_abs": 0.0
+    },
+    "r2_CD:batch": {
+      "action_equal": true,
+      "policy_maxabs": 2.3283064365386963e-09,
+      "q_abs": 1.812210425472527e-08
+    },
+    "r2_DC:batch": {
+      "action_equal": true,
+      "policy_maxabs": 1.7881393432617188e-07,
+      "q_abs": 2.1030316203762833e-09
+    },
+    "r2_DD:batch": {
+      "action_equal": true,
+      "policy_maxabs": 5.960464477539063e-08,
+      "q_abs": 2.343110585417696e-08
+    },
+    "r2_DD:identity": {
+      "action_equal": true,
+      "policy_maxabs": 0.0,
+      "q_abs": 0.0
+    },
+    "r2_DD:repeat": {
+      "action_equal": true,
+      "policy_maxabs": 0.0,
+      "q_abs": 0.0
+    }
+  },
+  "limitations": [
+    "Three correlated opening positions, one shared seed and64simulations; not representative or independent evidence.",
+    "Returned scalarQ and policy shifts across mixed evaluators are diagnostic output differences, not playing strength or causal explanation of training.",
+    "Actual root/history/state invariants are consistent execution receipts; models/search were not rerun.",
+    "Controls passed within atol1e-6 plus rtol1e-5; exact action/mask equality.",
+    "Initial aggregation failed after all24 searches; corrected using saved artifacts only."
+  ],
+  "model_or_search_rerun": false,
+  "original_parent_wall_seconds": null,
+  "owned_child_CPU_sum": 270.220098,
+  "pass_receipt_sha256": {
+    "r0_CC": "4fcc128e756e5a80248fb3096ce6402c1be47cce6e54daa7ac2617f9a4546c75",
+    "r0_CC_repeat": "7397929413841089e360780d1296e95edd0c558061797e38fc1addcd66738b41",
+    "r0_CD": "7d92ce389603cdb215d57f70318da8eeaa7599ea0b9cb0cccae6cc4b7fa5a44e",
+    "r0_DC": "a74ab875fe5e3dac4c17f3e5a015b8b186dc5f8a9a50fe161a2b42a4cbe24eeb",
+    "r0_DD": "fdbdd3308d18bfb7248725c608e1fcf747aaff623d61f152583874e5e6a3dc0b",
+    "r0_DD_repeat": "7efd41233931226777502d88f91d80d131029ec1c19255c2cb098e83e20b33d8",
+    "r1_CC": "3a7e9a13ef9c965bbdd2ae7804e742991c3ab0d982d2717e0f5e20adbaa23b2c",
+    "r1_CC_repeat": "337999c0b06f84694820fd724a2ab4d78c21bd686b8cfc72621d511a25f678c6",
+    "r1_CD": "04175d64ebc78c5781e664d279644c523337c28135a76ab66369ad6e5902cf51",
+    "r1_DC": "1390239c54d83ed923ce0c488cd9f4e8a7fed2d1f9027ab892f183f871f25778",
+    "r1_DD": "9b6e9c0122254985809fe69943b3a347d1af79fe46e0b27afb6407426585f111",
+    "r1_DD_repeat": "05651868a5ee6e246ec3ea26c18bcb93cea8cb80c4f27247f45cace5b3de9ea2",
+    "r2_CC": "b9464bae5471b90b8786f8fde698aae48467ccb9e7786eab1bd7873c58e3f89e",
+    "r2_CC_batch1": "739ded3077e2559a3aa1057ed4e1e14f38cf1484058c94055fbc560b160af325",
+    "r2_CC_identity": "8060b5be7f94159ddbd999e15c69d05477fa664738f00c3f25d904be208c19e6",
+    "r2_CC_repeat": "822cd67dcc513ef4f71ac23011944db3d8803704fa4d33f75a790b13755278fd",
+    "r2_CD": "8fa8f15d12da7fa9e8f114768db957fc530c1b55a54eebea911bb29084cb688b",
+    "r2_CD_batch1": "e933bd50fbe2c2b0a0d41bf43e1e0c989d4fdba9c5da419a8999d0317247efbf",
+    "r2_DC": "8b2a72ff6acfe630d2d26f4fea5fb4f519a6d62bdcdf09e0e75a3c3956ee7cbf",
+    "r2_DC_batch1": "321d24aa53f58b1cefa445c1bf950bd3adfe0593cb0051b6268896a819884d20",
+    "r2_DD": "ef32ec7a63c7fadbd3b9be1b6686247e9d55a8299e3a68ed3598e86f9e0403d1",
+    "r2_DD_batch1": "c91c5f3dfc6657e3e7e12e70a29edcdb6b76e60763ed9c0abbc1ca53327775ac",
+    "r2_DD_identity": "baa0b1a493ca00562ae400eefdbbdad3432c06ccee19bb7fef8c14890aefeb87",
+    "r2_DD_repeat": "2b909a9a3295fd08a45cd6da89fffb3e003e1b51cd7937d5d0e62feef1e60a56"
+  },
+  "plan_sha256": "3151e2b44ae3664b3cfcc37fd41e87c8daf7bbd64127b8990242435afd4cc7af",
+  "root_cell_observations": [
+    {
+      "cells": {
+        "CC": {
+          "action_index": 501,
+          "root_scalar_Q": 0.02134597388748905
+        },
+        "CD": {
+          "action_index": 501,
+          "root_scalar_Q": 0.04749888049313357
+        },
+        "DC": {
+          "action_index": 501,
+          "root_scalar_Q": 0.023532751328247715
+        },
+        "DD": {
+          "action_index": 501,
+          "root_scalar_Q": 0.04877437614025891
+        }
+      },
+      "joint_Q_interaction": -0.0009112817936333256,
+      "policy_TV_vs_DD": {
+        "CC": 0.3738727924008032,
+        "CD": 0.36121200477718673,
+        "DC": 0.21354792902545228,
+        "DD": 0.0
+      },
+      "policy_switch_Q_delta_at_Dvalue": -0.001275495647125341,
+      "root": 0,
+      "trace": [],
+      "value_switch_Q_delta_at_Dpolicy": -0.025241624812011195
+    },
+    {
+      "cells": {
+        "CC": {
+          "action_index": 804,
+          "root_scalar_Q": -0.022721939335345148
+        },
+        "CD": {
+          "action_index": 501,
+          "root_scalar_Q": -0.05971729826650932
+        },
+        "DC": {
+          "action_index": 804,
+          "root_scalar_Q": -0.015956409878293422
+        },
+        "DD": {
+          "action_index": 804,
+          "root_scalar_Q": -0.05500443262864594
+        }
+      },
+      "joint_Q_interaction": -0.0020526638191883523,
+      "policy_TV_vs_DD": {
+        "CC": 0.07180077517623218,
+        "CD": 0.11069443220667097,
+        "DC": 0.1177291170904482,
+        "DD": 0.0
+      },
+      "policy_switch_Q_delta_at_Dvalue": -0.004712865637863377,
+      "root": 1,
+      "trace": [
+        "g1f3"
+      ],
+      "value_switch_Q_delta_at_Dpolicy": 0.03904802275035252
+    },
+    {
+      "cells": {
+        "CC": {
+          "action_index": 804,
+          "root_scalar_Q": 0.04202504443043802
+        },
+        "CD": {
+          "action_index": 804,
+          "root_scalar_Q": 0.05638161165263946
+        },
+        "DC": {
+          "action_index": 804,
+          "root_scalar_Q": 0.025487922087754782
+        },
+        "DD": {
+          "action_index": 804,
+          "root_scalar_Q": 0.05605449399397582
+        }
+      },
+      "joint_Q_interaction": 0.016210004684019598,
+      "policy_TV_vs_DD": {
+        "CC": 0.17387681875193106,
+        "CD": 0.1775968086649442,
+        "DC": 0.0835232068018037,
+        "DD": 0.0
+      },
+      "policy_switch_Q_delta_at_Dvalue": 0.0003271176586636393,
+      "root": 2,
+      "trace": [
+        "g1f3",
+        "d7d5"
+      ],
+      "value_switch_Q_delta_at_Dpolicy": -0.03056657190622104
+    }
+  ],
+  "schema": "independent-fixed24-correction-review-v1",
+  "semantic_correction": "Fourth returned array is4672boolean legal mask; no search WDL distribution exists. Original mislabeled receipts remain unchanged."
+}
