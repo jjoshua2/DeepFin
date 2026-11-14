@@ -805,6 +805,67 @@ def _worker_main_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, extra: lis
     return built
 
 
+_WORKER_ENTRY_PROBE = r"""
+import runpy
+import sys
+
+import chess_anti_engine.mcts._mcts_tree as tree
+
+del tree.classify_games  # a partial build: one required symbol missing
+sys.argv = ["chess_anti_engine.worker", *sys.argv[1:]]
+runpy.run_module("chess_anti_engine.worker", run_name="__main__", alter_sys=True)
+"""
+
+
+def test_worker_entry_point_refusal_lands_once_in_worker_out_and_worker_log(tmp_path: Path) -> None:
+    """The real entry point, launched the way the supervisor launches it.
+
+    stdout+stderr go to one file (the supervisor's ``worker.out``, stderr=STDOUT)
+    and ``--log-file`` names ``worker.log``: the refusal must be in each exactly once.
+    """
+    root = Path(__file__).resolve().parents[1]
+    worker_out = tmp_path / "worker.out"
+    worker_log = tmp_path / "worker.log"
+    env = dict(os.environ, CUDA_VISIBLE_DEVICES="", OMP_NUM_THREADS="2",
+               PYTHONPATH=os.pathsep.join([str(root), os.environ.get("PYTHONPATH", "")]))
+    env.pop("CAE_SELF_UPDATED", None)
+    with worker_out.open("wb") as out:
+        proc = subprocess.run(
+            [sys.executable, "-c", _WORKER_ENTRY_PROBE,
+             "--work-dir", str(tmp_path / "work"), "--username", "u", "--password", "p",
+             "--stockfish-path", "/inert/sf", "--no-save-config",
+             "--log-file", str(worker_log), "--log-level", "info"],
+            cwd=root, env=env, stdout=out, stderr=subprocess.STDOUT, timeout=300, check=False,
+        )
+    out_text = worker_out.read_text(encoding="utf-8", errors="replace")
+    log_text = worker_log.read_text(encoding="utf-8", errors="replace") if worker_log.exists() else ""
+    assert proc.returncode == ext_check.C_CORE_REFUSAL_EXIT_CODE, out_text[-3000:]
+    marker = "Self-update was not attempted"
+    assert out_text.count(marker) == 1, out_text[-3000:]
+    assert log_text.count(marker) == 1, log_text[-3000:]
+    assert "classify_games" in out_text
+    assert "classify_games" in log_text
+
+
+def test_supervisor_refusal_names_the_worker_out_and_log_paths(tmp_path: Path) -> None:
+    from chess_anti_engine.tune import distributed_runtime
+
+    class _Exited:
+        returncode = ext_check.C_CORE_REFUSAL_EXIT_CODE
+
+        def poll(self) -> int:
+            return self.returncode
+
+    proc = _Exited()
+    setattr(proc, "_cae_worker_log_paths", (tmp_path / "worker.out", tmp_path / "worker.log"))
+    with pytest.raises(CCoreIncompleteError) as info:
+        distributed_runtime._raise_if_c_core_refusal(
+            cast(Any, proc), idx=0, trial_id="t",
+        )
+    assert str(tmp_path / "worker.out") in str(info.value)
+    assert str(tmp_path / "worker.log") in str(info.value)
+
+
 def test_worker_startup_refuses_without_self_update(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
     caplog: pytest.LogCaptureFixture,
