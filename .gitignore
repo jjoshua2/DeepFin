@@ -89,6 +89,9 @@ crash-*
 !/scratchpad/bt4/inspect_bt4.py
 !/scratchpad/bt4_joint20/
 /scratchpad/bt4_joint20/*
+!/scratchpad/bt4_joint20/hybrid_endpoint_run01/
+/scratchpad/bt4_joint20/hybrid_endpoint_run01/*
+!/scratchpad/bt4_joint20/hybrid_endpoint_run01/README.md
 !/scratchpad/bt4_joint20/sf_close_run02/
 /scratchpad/bt4_joint20/sf_close_run02/*
 !/scratchpad/bt4_joint20/sf_close_run02/completed_s100_readout.json
