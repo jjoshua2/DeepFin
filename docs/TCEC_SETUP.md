@@ -297,7 +297,8 @@ from the root.
 
 Every component must be a readable directory and the path must load at least one
 table. Otherwise the engine prints
-`info string error: SyzygyPath '<path>' REFUSED by the C tablebase prober (...); tablebase probing disabled`
+`info string error: SyzygyPath ... REFUSED by the C tablebase prober ...; tablebase probing disabled`
+(naming the path and the reason)
 and plays on WITHOUT tablebases (leaves and root alike) until a good
 `SyzygyPath` is set. A missing directory in the list is refused, not skipped.
 `setoption name SyzygyPath value <empty>` turns tablebases off:
