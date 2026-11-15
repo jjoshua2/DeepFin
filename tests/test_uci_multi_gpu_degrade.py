@@ -149,7 +149,7 @@ class _OrderedPool(MultiGpuPucvPool):
             self.first_idle.set()
 
 
-@pytest.mark.parametrize("target,fails,finish_before_first_wait", [
+@pytest.mark.parametrize(("target", "fails", "finish_before_first_wait"), [
     pytest.param(1, False, False, id="healthy_single_token"),
     pytest.param(3, False, False, id="healthy_cumulative"),
     pytest.param(1, True, False, id="returned_single_token"),
@@ -208,11 +208,14 @@ def test_returned_final_tokens_rewake_idle_survivor_with_cumulative_stats(
         if finish_before_first_wait:
             with pool._cv:
                 assert pool._cv.wait_for(lambda: not pool._running, timeout=5)
-            assert pool.failed_devices() == ("#0",) and not answers
+            assert pool.failed_devices() == ("#0",)
+            assert not answers
             release_coordinator.set()
         thread.join(timeout=5)
-        assert not thread.is_alive() and not errors
-        assert answers == [target] and not stop.is_set()
+        assert not thread.is_alive()
+        assert not errors
+        assert answers == [target]
+        assert not stop.is_set()
         stats = pool.last_stats()
         assert stats.target_sims == stats.leaves == target
         assert stats.workers[1].leaves == (target if fails else target - 1)
@@ -222,7 +225,8 @@ def test_returned_final_tokens_rewake_idle_survivor_with_cumulative_stats(
         if fails:
             assert pool.failed_devices() == ("#0",)
             assert pool.restore_recovered_devices() == ()
-            assert not pool._late_ok[0] and not pool._restorable[0]
+            assert not pool._late_ok[0]
+            assert not pool._restorable[0]
         # The next job must reset the counters rather than inherit this job's
         # completed passes. A failed device must never be called again.
         calls = bad.calls
@@ -230,7 +234,8 @@ def test_returned_final_tokens_rewake_idle_survivor_with_cumulative_stats(
                         target_sims=4, stop_event=threading.Event()) == 4
         assert pool.last_stats().leaves == 4
         if fails:
-            assert pool.last_stats().workers[1].leaves == 4 and bad.calls == calls
+            assert pool.last_stats().workers[1].leaves == 4
+            assert bad.calls == calls
         _assert_no_vloss(tree)
     finally:
         release_coordinator.set()
@@ -280,7 +285,9 @@ def test_last_quiesced_worker_error_is_not_retried_within_the_job() -> None:
         with pytest.raises(ValueError, match="CPU buffer preparation") as caught:
             pool.run(tree=tree, root_id=rid, root_cboard=cb,
                      target_sims=4, stop_event=threading.Event())
-        assert caught.value is error and ev.calls == 1 and pool.n_devices == 1
+        assert caught.value is error
+        assert ev.calls == 1
+        assert pool.n_devices == 1
         _assert_no_vloss(tree)
         assert pool.run(tree=tree, root_id=rid, root_cboard=cb,
                         target_sims=4, stop_event=threading.Event()) == 4
@@ -364,11 +371,15 @@ def test_failure_drain_is_watchdog_visible_and_never_restorable(monkeypatch, rou
         with pool._cv:
             pool._cv.notify_all()
         assert done.wait(5), "failure cleanup escaped the device-call watchdog"
-        assert not errors and len(answers) == 1 and pool._abandoned[0]
+        assert not errors
+        assert len(answers) == 1
+        assert pool._abandoned[0]
         if route == "pipeline":
-            assert answers == [4] and pool.last_stats().leaves == 4
+            assert answers == [4]
+            assert pool.last_stats().leaves == 4
         else:
-            assert answers[0][0].shape == (1, 4672) and answers[0][1].shape == (1, 3)
+            assert answers[0][0].shape == (1, 4672)
+            assert answers[0][1].shape == (1, 3)
         _assert_no_vloss(tree)
         before = tree.get_children_visits(rid)[1].copy()
         assert pool._cache is not None
@@ -377,7 +388,8 @@ def test_failure_drain_is_watchdog_visible_and_never_restorable(monkeypatch, rou
         if fails:
             pool._threads[0].join(timeout=5)
             assert not pool._threads[0].is_alive()
-            assert not pool._late_ok[0] and not pool._restorable[0]
+            assert not pool._late_ok[0]
+            assert not pool._restorable[0]
             assert pool.restore_recovered_devices() == ()
         else:
             assert _wait_for(lambda: pool._restorable[0], timeout=5)
