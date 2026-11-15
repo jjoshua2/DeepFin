@@ -9,6 +9,7 @@ import pytest
 
 from chess_anti_engine.inference_dispatcher import BatchCoalescingDispatcher
 from chess_anti_engine.uci import __main__ as main
+from chess_anti_engine.uci import wedge
 from chess_anti_engine.uci.engine import Engine
 from chess_anti_engine.uci.search import SearchWorker
 
@@ -132,8 +133,10 @@ def test_main_every_secondary_factory_failing_releases_primary_once(monkeypatch,
 def test_main_one_secondary_factory_failing_starts_degraded(monkeypatch, capsys, failed_index):
     """One of N devices failing at startup no longer refuses to start: the
     engine answers readyok on the others and says DEGRADED (a selfcheck failure
-    marker) before it; the failed device's thread is gone, the survivor is
-    closed exactly once at quit."""
+    marker) before it. That drop is a device fault (``uci.wedge``): the failed
+    device's thread does not end but parks, and the survivor's evaluator is
+    kept for its (parked) worker, never closed. (The real ``quit`` then leaves
+    with ``os._exit``; conftest makes that return so ``main()`` can be read.)"""
     primary = CountingDispatcher(inner=_FullPolicyEvaluator())
     workers = record_workers(monkeypatch)
     helpers = [_FullPolicyEvaluator(), _FullPolicyEvaluator()]
@@ -156,9 +159,11 @@ def test_main_one_secondary_factory_failing_starts_degraded(monkeypatch, capsys,
         assert "failed at startup" in degraded[0]
         assert "1 of 2" in degraded[0]
         assert out.index(degraded[0]) < out.index("readyok")
-        assert not factory_threads[failed_index].is_alive()
+        failed = factory_threads[failed_index]
+        assert not failed.is_alive() or failed in wedge.parked_threads()
+        assert wedge.device_fault() is not None
         assert helpers[failed_index].close_calls == 0
-        assert helpers[1 - failed_index].close_calls == 1
+        assert helpers[1 - failed_index].close_calls == 0
         assert primary.close_calls == 1
     finally:
         clean_probe(workers, primary)

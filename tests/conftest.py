@@ -616,12 +616,24 @@ def _test_writes_stay_outside_the_checkout(tmp_path_factory: pytest.TempPathFact
 
 
 @pytest.fixture(autouse=True)
-def _reset_uci_wedge_latch():
+def _reset_uci_wedge_latch(monkeypatch):
     """Each test is a fresh engine session for the multi-GPU wedge latch
-    (``chess_anti_engine.uci.wedge``): a device wedged in one test must not be
-    left out of, or make workers park in, the next. Imports no torch."""
+    (``chess_anti_engine.uci.wedge``): a device wedged or failed in one test
+    must not be left out of, or make workers park in, the next. Imports no torch.
+
+    In-process ``uci.__main__.main()`` calls: after a device fault the real
+    ``quit`` leaves with ``os._exit`` (no interpreter teardown), which would end
+    the pytest process. While the module is loaded, ``_hard_exit`` becomes a
+    recorder that returns, so ``main()`` falls through to its ordinary close
+    and returns its status. The real exit is covered by the subprocess tests
+    (``tests/test_uci_degrade_gaps_subprocess.py``)."""
+    import sys
+
     from chess_anti_engine.uci import wedge
 
+    uci_main = sys.modules.get("chess_anti_engine.uci.__main__")
+    if uci_main is not None:
+        monkeypatch.setattr(uci_main, "_hard_exit", lambda rc: None)
     wedge.reset_session_for_tests()
     yield
     wedge.reset_session_for_tests()
