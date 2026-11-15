@@ -86,7 +86,9 @@ def join_game(game: dict[str, Any], generation: dict[str, Any], rows: list[dict[
     for i, (row, original) in enumerate(zip(rows, original_rows, strict=True)):
         identity = row["input_identity"]
         rec = by_offset.get(identity["move_offset"])
-        core.require(rec is not None and rec["ply_index"] == identity["ply"] == original["ply"]
+        if rec is None:
+            raise ValueError("eligibility original physical row/ply join")
+        core.require(rec["ply_index"] == identity["ply"] == original["ply"]
                      and rec["move_offset"] == original["move_offset"] and rec["is_sf_refute_opp"] is False
                      and row["original_row_index"] == i
                      and row["physical_row_id"] == original["physical_row_id"] == game["physical_game_id"] + ":" + str(i),
