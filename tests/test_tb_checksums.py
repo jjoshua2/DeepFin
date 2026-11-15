@@ -310,9 +310,9 @@ def _fake_uci_for_checksum_gate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
     return log
 
 
-@pytest.mark.parametrize("failure", (
+@pytest.mark.parametrize("failure", [
     "mismatch", "malformed-list", "unverified-required", "disabled-required",
-))
+])
 def test_selfcheck_checksum_gate_fail_blocks_both_table_loading_routes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
 ) -> None:
@@ -354,7 +354,7 @@ def test_selfcheck_checksum_gate_fail_blocks_both_table_loading_routes(
         check.assert_called_once()
 
 
-@pytest.mark.parametrize("verification", ("pass", "disabled", "unverified"))
+@pytest.mark.parametrize("verification", ["pass", "disabled", "unverified"])
 def test_selfcheck_checksum_gate_pass_and_skip_keep_existing_loading_policy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verification: str,
 ) -> None:
@@ -396,7 +396,7 @@ def test_selfcheck_checksum_gate_no_table_path_keeps_uci_without_tables(
     assert not any(line.startswith("setoption name SyzygyPath") for line in log.read_text().splitlines())
 
 
-@pytest.mark.parametrize("corrupt", (False, True))
+@pytest.mark.parametrize("corrupt", [False, True])
 def test_selfcheck_checksum_gate_no_uci_retains_explicit_skip(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, corrupt: bool,
 ) -> None:
