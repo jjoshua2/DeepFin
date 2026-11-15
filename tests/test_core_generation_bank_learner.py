@@ -211,7 +211,7 @@ def test_real_payload_refusals_precede_model_construction(tmp_path: Path, monkey
     binding = bank(tmp_path, c, 2, c["initial_model"], 9000, corruption=corruption)
     called = []
     monkeypatch.setattr(core, "make_trainer", lambda *_args: called.append(True))
-    with pytest.raises(ValueError, match="identity|integer|duplicate|illegal"):
+    with pytest.raises(ValueError, match=r"identity|integer|duplicate|illegal"):
         learner.execute(cref, stage(tmp_path, cref, [binding], None, "bad"))
     assert called == []
     assert not (tmp_path / "bad/boundary.json").exists()
@@ -248,7 +248,7 @@ def test_new_family_contract_and_bank_seams_fail_closed(tmp_path: Path, fault: s
     if fault == "old_contract":
         c["schema"] = "core_finite_learning_v1"
         cref = frozen(tmp_path / "wrong-family.json", c)
-    with pytest.raises(ValueError, match="logical|actor provenance|contract|binding"):
+    with pytest.raises(ValueError, match=r"logical|actor provenance|contract|binding"):
         learner.execute(cref, stage(tmp_path, cref, banks, None, "refused"))
     assert not (tmp_path / "refused/boundary.json").exists()
 
