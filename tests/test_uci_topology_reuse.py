@@ -157,6 +157,11 @@ def engine_fixture(enabled=False, parallel='pucv', devices=2):
     cls = type('ActualOptionHandlers', (), {name.rsplit('.', 1)[-1]: fn for name, fn in methods.items()})
     setattr(cls, '_parse_check', staticmethod(methods['Engine._parse_check']))  # `definitions` drops decorators
     engine: Any = cls()
+    # Real helpers (module globals intact): unchanged-value no-op and the
+    # post-fault rebuild cap the setters call.
+    from chess_anti_engine.uci.engine import Engine as _RealEngine
+    engine._unchanged = _RealEngine._unchanged
+    engine._rebuild_refused_after_fault = _RealEngine._rebuild_refused_after_fault
     engine._worker, engine._options = worker, options
     engine._rebuild_evaluator, engine._rebuild_multi_gpu_pucv_factories = observed_rebuild, factories
     engine._warmup_dirty = False

@@ -2160,9 +2160,12 @@ class Engine:
         if parsed is None:
             return
         enabled = parsed
+        pool_live = getattr(self._worker, "_pucv_pool", None) is not None
         if enabled == self._options.use_multi_gpu_pucv and (
-                not enabled or self._options.search_parallel != "gumbel"):
-            # (on while SearchParallel=gumbel is a switch of pools, not a resend)
+                not enabled or (self._options.search_parallel != "gumbel" and pool_live)):
+            # "on" is a resend only while the pool is installed: on while
+            # SearchParallel=gumbel switches pools, and leaving gumbel calls
+            # this to reinstall the pool the RPG install tore down.
             self._unchanged("UseMultiGpuPUCV", "on" if enabled else "off")
             return
         if self._rebuild_refused_after_fault("UseMultiGpuPUCV"):
@@ -2319,7 +2322,10 @@ class Engine:
             _println(_combo_refusal("SearchParallel", value, ("pucv", "gumbel"),
                                     self._options.search_parallel))
             return
-        if normalized == self._options.search_parallel:
+        if normalized == self._options.search_parallel and (
+                normalized == "pucv" or getattr(self._worker, "_rpg_pool", None) is not None):
+            # "gumbel" is a resend only while the root-parallel pool is live
+            # (after a retirement it rebuilds the pool, as documented).
             self._unchanged("SearchParallel", normalized)
             return
         if self._rebuild_refused_after_fault("SearchParallel"):

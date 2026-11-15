@@ -1370,6 +1370,9 @@ def test_resending_a_rebuilding_option_at_its_current_value_rebuilds_nothing(
     engine, calls = _rebuild_probe_engine(monkeypatch)
     engine._options.search_parallel = search_parallel
     engine._options.use_multi_gpu_pucv = search_parallel == "pucv"
+    # The pool those options name is installed (a resend, not a reinstall).
+    live = "_pucv_pool" if search_parallel == "pucv" else "_rpg_pool"
+    monkeypatch.setattr(engine._worker, live, SimpleNamespace(n_devices=2), raising=False)
     lines = _resend_lines(engine)
     capsys.readouterr()
     for line in lines:
@@ -1551,3 +1554,19 @@ def test_device_call_runner_bootstraps_cudagraph_tls_only_for_cuda(monkeypatch, 
     finally:
         runner.close(2.0)
     assert len(calls) == expected
+
+
+@pytest.mark.parametrize(("line", "search_parallel", "expect"), [
+    ("setoption name SearchParallel value gumbel", "gumbel", "_try_install_root_parallel_gumbel"),
+    ("setoption name UseMultiGpuPUCV value true", "pucv", "_install_multi_gpu_pucv_pool"),
+])
+def test_resending_a_pool_mode_whose_pool_is_gone_still_installs_it(
+        monkeypatch, line, search_parallel, expect) -> None:
+    """The unchanged-value no-op applies only while the named pool is live:
+    after an RPG retirement (or when leaving gumbel re-enables the multi-GPU
+    pool) the same value must rebuild it."""
+    engine, calls = _rebuild_probe_engine(monkeypatch)
+    engine._options.search_parallel = search_parallel
+    engine._options.use_multi_gpu_pucv = True
+    engine.dispatch(parse_command(line))
+    assert expect in calls, calls
