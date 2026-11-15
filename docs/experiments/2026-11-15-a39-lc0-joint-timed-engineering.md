@@ -29,7 +29,7 @@ e1g1 f8e7 f1e1 b7b5 a4b3 d7d6 c2c3 e8g8
 
 No role, protected book or pool is read or allocated. Generate the ephemeral EPD from this literal full history, preserving the start position and every move.
 
-1. Run the 13 selected source-predicate controls before asset hashing, GPU queries or engine work in the same GPU owner. Require zero failures, errors, skips, expected failures or unexpected successes. They cover effective/default option and clock predicates, including meaningful negative cases; they do not themselves test CUDA or complete clock replay.
+1. Complete inherited source/API/native-image byte custody, then run the 13 selected source-predicate controls before checkpoint/Lc0 binary/network asset hashing, GPU queries or engine work in the same GPU owner. Require zero failures, errors, skips, expected failures or unexpected successes. They cover effective/default option and reported-engine-time/missingness predicates, including meaningful negative cases; they do not themselves test CUDA or complete clock replay.
 2. Open and warm A39 at the standard start with 64 reported nodes. Retain it while opening/configuring/warming Lc0 with 128 reported nodes. Warmup timeout is120 seconds. Reported-node thresholds can overshoot; no exact-visit claim is made.
 3. While both original processes remain live, perform A39 then Lc0 reciprocal searches on the exposed full history, at64/128 reported nodes respectively. Require legal returned moves and positive completed work, unchanged PID/birth identity and actual resource/affinity observations. Capture aggregate GPU memory before and after reciprocal work.
 4. Play exactly two color-swapped games from that same history through unchanged R5 `scripts/match_vs_uci.py`: **60,000 ms base + 1,000 ms increment**, zero grace, at most450 additional plies. The schedule has no applied external-seed interface; this does not promise bitwise deterministic searches. There is no depth/node handicap on the timed `go` commands.
@@ -55,7 +55,7 @@ All records below use `~/chess-artifacts/operations/rl-week-one-20261112-v1/`:
 
 | Record | SHA-256 |
 | --- | --- |
-| `external-A39-Lc0-joint-timed-engineering-selection-v1/decision.json` | `ca773a3359cbbdf28445333c7766d633055f7be4354412d391f1d2db576a10f5` |
+| `external-A39-Lc0-joint-timed-engineering-selection-v2/decision.json` | `b272ee7a6aabe5e85dfb8222d8c27b58f3b7d9253ae4cfc5554a92a495eb0ae0` |
 | `external-A39-Lc0-joint-timed-engineering-source-preparation-v2/manifest.json` | `403126f6732793a5b2c65781ad102fdabc4192daa009393914c4a51127c145d6` |
 | `external-A39-Lc0-joint-timed-engineering-source-preparation-v2/profile.TEMPLATE.json` | `2421dc38b5eb62303b593d48dac2bb149e6eb3419eb495ee6b50b93b0475290f` |
 | `external-A39-Lc0-joint-timed-engineering-independent-source-review-v2/review.json` | `bb2404b227cb07c5431dfb3d118a5ac20b75816c6944bb56dfe31090553271cd` |
