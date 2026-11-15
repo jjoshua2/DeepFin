@@ -383,9 +383,13 @@ file), or the Python interpreter updated under a running trial. **Never rebuild
 extensions in a tree with a live run**; build in a separate checkout and switch
 only at a planned restart.
 
-`_tb_ext` (#1296) is optional and not imported by production code today, so it
-is not in `REQUIRED_EXTENSIONS`; it must be added there (and its symbols to
-`REQUIRED_SYMBOLS`) in the same change that makes a production path import it.
+`_tb_ext` (#1296) is imported by the UCI engine only (its root DTZ shortcut,
+`uci/tb_root.py`). It is therefore required by the UCI startup gate and the
+self-check (`uci/selfcheck.UCI_EXTRA_SYMBOLS`, freshness included), but not in the
+shared `REQUIRED_EXTENSIONS`: selfplay, the worker and training do not import
+it, and listing it there would make a worker refuse to start over a module it
+never loads. Move it there in the change that makes one of those paths import
+it.
 
 | Entry point | Check | On failure |
 |---|---|---|

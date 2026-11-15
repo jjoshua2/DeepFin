@@ -744,6 +744,19 @@ static void add_to_hash(struct BaseEntry *ptr, uint64_t key)
   atomic_init(&tbHash[idx].error, false);
 }
 
+/* DEEPFIN-LOCAL (see ../VENDORED.md, "Local patch"): remember each table's
+ * name so the wrapper can initialise EVERY table eagerly at load
+ * (df_tb_validate_table in _tb_fathom.c) instead of on the first probe of
+ * that material, mid-game. */
+static struct { struct BaseEntry *be; char name[16]; } dfTables[TB_MAX_PIECE + TB_MAX_PAWN];
+static int dfNumTables;
+/* DEEPFIN-LOCAL: end of the mapped file init_table is parsing, read by the
+ * bounds checks in setup_pairs / calc_symLen (init runs under tbMutex). */
+static const uint8_t *dfTbEnd;
+static uint32_t dfNumSyms;
+static int dfSymBad;
+static int dfSymDepth;
+
 #define pchr(i) piece_to_char[QUEEN - (i)]
 #define Swap(a,b) {int tmp=a;a=b;b=tmp;}
 
@@ -813,6 +826,13 @@ static void init_tb(char *str)
   add_to_hash(be, key);
   if (key != key2)
     add_to_hash(be, key2);
+  /* DEEPFIN-LOCAL: name registry (see dfTables). */
+  if (dfNumTables < TB_MAX_PIECE + TB_MAX_PAWN) {
+    dfTables[dfNumTables].be = be;
+    strncpy(dfTables[dfNumTables].name, str, sizeof(dfTables[0].name) - 1);
+    dfTables[dfNumTables].name[sizeof(dfTables[0].name) - 1] = 0;
+    dfNumTables++;
+  }
 }
 
 #define PIECE(x) ((struct PieceEntry *)(x))
@@ -873,6 +893,7 @@ bool tb_init(const char *path)
 
     pathString = NULL;
     numWdl = numDtm = numDtz = 0;
+    dfNumTables = 0;  /* DEEPFIN-LOCAL */
   }
 
   TB_LARGEST = 0;
@@ -904,6 +925,7 @@ bool tb_init(const char *path)
   LOCK_INIT(tbMutex);
 
   tbNumPiece = tbNumPawn = 0;
+  dfNumTables = 0;  /* DEEPFIN-LOCAL */
   TB_MaxCardinality = TB_MaxCardinalityDTM = 0;
 
   if (!pieceEntry) {
@@ -1469,8 +1491,17 @@ static void calc_symLen(struct PairsData *d, uint32_t s, char *tmp)
     d->symLen[s] = 0;
   else {
     uint32_t s1 = ((w[1] & 0xf) << 8) | w[0];
+    /* DEEPFIN-LOCAL: a corrupt symbol table must not index past the
+     * symbols or recurse without end. */
+    if (dfSymBad || s1 >= dfNumSyms || s2 >= dfNumSyms || ++dfSymDepth > (int)dfNumSyms) {
+      dfSymBad = 1;
+      d->symLen[s] = 0;
+      tmp[s] = 1;
+      return;
+    }
     if (!tmp[s1]) calc_symLen(d, s1, tmp);
     if (!tmp[s2]) calc_symLen(d, s2, tmp);
+    dfSymDepth--;  /* DEEPFIN-LOCAL */
     d->symLen[s] = d->symLen[s1] + d->symLen[s2] + 1;
   }
   tmp[s] = 1;
@@ -1482,9 +1513,12 @@ static struct PairsData *setup_pairs(uint8_t **ptr, size_t tb_size,
   struct PairsData *d;
   uint8_t *data = *ptr;
 
+  /* DEEPFIN-LOCAL: header bounds; NULL = corrupt table (init_table fails). */
+  if (data + 12 > dfTbEnd) return NULL;
   *flags = data[0];
   if (data[0] & 0x80) {
     d = (struct PairsData*)malloc(sizeof(struct PairsData));
+    if (d == NULL) return NULL;  /* DEEPFIN-LOCAL */
     d->idxBits = 0;
     d->constValue[0] = type == WDL ? data[1] : 0;
     d->constValue[1] = 0;
@@ -1500,8 +1534,17 @@ static struct PairsData *setup_pairs(uint8_t **ptr, size_t tb_size,
   int maxLen = data[8];
   int minLen = data[9];
   int h = maxLen - minLen + 1;
+  /* DEEPFIN-LOCAL: reject a header no real table has before it sizes a
+   * malloc or a shift, and keep every table it describes inside the file. */
+  if (h < 1 || h > 64 || minLen < 1 || blockSize > 31 || idxBits < 1 || idxBits > 63
+      || data + 12 + 2 * h > dfTbEnd)
+    return NULL;
   uint32_t numSyms = (uint32_t)read_le_u16(data + 10 + 2 * h);
+  if (numSyms >= TB_MAX_SYMS
+      || (size_t)(dfTbEnd - data) < 12 + 2 * (size_t)h + 3 * (size_t)numSyms + (numSyms & 1))
+    return NULL;
   d = (struct PairsData*)malloc(sizeof(struct PairsData) + h * sizeof(uint64_t) + numSyms);
+  if (d == NULL) return NULL;  /* DEEPFIN-LOCAL */
   d->blockSize = blockSize;
   d->idxBits = idxBits;
   d->offset = (uint16_t *)(&data[10]);
@@ -1518,9 +1561,16 @@ static struct PairsData *setup_pairs(uint8_t **ptr, size_t tb_size,
   assert(numSyms < TB_MAX_SYMS);
   char tmp[TB_MAX_SYMS];
   memset(tmp, 0, numSyms);
+  dfNumSyms = numSyms;  /* DEEPFIN-LOCAL */
+  dfSymBad = 0;
+  dfSymDepth = 0;
   for (uint32_t s = 0; s < numSyms; s++)
     if (!tmp[s])
       calc_symLen(d, s, tmp);
+  if (dfSymBad) {  /* DEEPFIN-LOCAL */
+    free(d);
+    return NULL;
+  }
 
   d->base[h - 1] = 0;
   for (int i = h - 2; i >= 0; i--)
@@ -1542,11 +1592,20 @@ static bool init_table(struct BaseEntry *be, const char *str, int type)
   uint8_t *data = (uint8_t*)map_tb(str, tbSuffix[type], &be->mapping[type]);
   if (!data) return false;
 
-  if (read_le_u32(data) != tbMagic[type]) {
+  /* DEEPFIN-LOCAL: a file too short for its header is corrupt. */
+  if (be->mapping[type] < 16 || read_le_u32(data) != tbMagic[type]) {
     fprintf(stderr, "Corrupted table.\n");
     unmap_file((void*)data, be->mapping[type]);
     return false;
   }
+  const uint8_t *df_begin = data;
+#ifndef _WIN32
+  dfTbEnd = data + be->mapping[type];
+#else
+  dfTbEnd = (const uint8_t *)-1;  /* no size here: checks are inert */
+#endif
+#define DF_CORRUPT() do { fprintf(stderr, "Corrupted table %s%s.\n", str, tbSuffix[type]); \
+    be->data[type] = NULL; unmap_file((void*)df_begin, be->mapping[type]); return false; } while (0)
 
   be->data[type] = data;
 
@@ -1573,15 +1632,17 @@ static bool init_table(struct BaseEntry *be, const char *str, int type)
   for (int t = 0; t < num; t++) {
     uint8_t flags;
     ei[t].precomp = setup_pairs(&data, tb_size[t][0], size[t][0], &flags, type);
+    if (ei[t].precomp == NULL) DF_CORRUPT();  /* DEEPFIN-LOCAL */
     if (type == DTZ) {
       if (!be->hasPawns)
         PIECE(be)->dtzFlags = flags;
       else
         PAWN(be)->dtzFlags[t] = flags;
     }
-    if (split)
+    if (split) {
       ei[num + t].precomp = setup_pairs(&data, tb_size[t][1], size[t][1], &flags, type);
-    else if (type != DTZ)
+      if (ei[num + t].precomp == NULL) DF_CORRUPT();  /* DEEPFIN-LOCAL */
+    } else if (type != DTZ)
       ei[num + t].precomp = NULL;
   }
 
@@ -1592,11 +1653,13 @@ static bool init_table(struct BaseEntry *be, const char *str, int type)
                                              : &PIECE(be)->dtmMapIdx;
     for (int t = 0; t < num; t++) {
       for (int i = 0; i < 2; i++) {
+        if (data + 2 > dfTbEnd) DF_CORRUPT();  /* DEEPFIN-LOCAL */
         mapIdx[t][0][i] = (uint16_t)(data + 1 - (uint8_t*)map);
         data += 2 + 2 * read_le_u16(data);
       }
       if (split) {
         for (int i = 0; i < 2; i++) {
+          if (data + 2 > dfTbEnd) DF_CORRUPT();  /* DEEPFIN-LOCAL */
           mapIdx[t][1][i] = (uint16_t)(data + 1 - (uint8_t*)map);
           data += 2 + 2 * read_le_u16(data);
         }
@@ -1615,12 +1678,14 @@ static bool init_table(struct BaseEntry *be, const char *str, int type)
       if (flags[t] & 2) {
         if (!(flags[t] & 16)) {
           for (int i = 0; i < 4; i++) {
+            if (data + 1 > dfTbEnd) DF_CORRUPT();  /* DEEPFIN-LOCAL */
             mapIdx[t][i] = (uint16_t)(data + 1 - (uint8_t *)map);
             data += 1 + data[0];
           }
         } else {
           data += (uintptr_t)data & 0x01;
           for (int i = 0; i < 4; i++) {
+            if (data + 2 > dfTbEnd) DF_CORRUPT();  /* DEEPFIN-LOCAL */
             mapIdx[t][i] = (uint16_t)((uint16_t*)data + 1 - (uint16_t *)map);
             data += 2 + 2 * read_le_u16(data);
           }
@@ -1629,6 +1694,25 @@ static bool init_table(struct BaseEntry *be, const char *str, int type)
     }
     data += (uintptr_t)data & 0x01;
   }
+
+  /* DEEPFIN-LOCAL: the index, size and data sections the header describes
+   * must fit in the file (overflow-safe; alignment padding included). */
+  {
+    if (data > dfTbEnd) DF_CORRUPT();
+    /* Replays the pointer walk below on offsets (the mapping is page
+     * aligned, so offset alignment is address alignment). */
+    const size_t total = (size_t)(dfTbEnd - df_begin);
+    size_t off = (size_t)(data - df_begin);
+    for (int k = 0; k < 3; k++)
+      for (int t = 0; t < num; t++)
+        for (int half = 0; half < (split ? 2 : 1); half++) {
+          if (k == 2) off = (off + 0x3f) & ~(size_t)0x3f;
+          size_t add = size[t][half][k];
+          if (off + add < off || off + add > total) DF_CORRUPT();
+          off += add;
+        }
+  }
+#undef DF_CORRUPT
 
   for (int t = 0; t < num; t++) {
     ei[t].precomp->indexTable = data;
