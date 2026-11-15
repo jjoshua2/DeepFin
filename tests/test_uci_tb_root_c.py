@@ -1088,9 +1088,10 @@ def test_rule50_rebuild_and_clear_release_one_owner_once(fake_c) -> None:
 
 
 def test_unload_without_owner_or_generation_still_forces_a_free(fake_c) -> None:
-    owner = object()
+    owner = _Owner()
+    other = _Owner()
     tables = tb_root.load("stub-tables", owner=owner)
-    assert tb_root.unload(tables.generation, owner=object()) is False  # not the owner
+    assert tb_root.unload(tables.generation, owner=other) is False  # not the owner
     assert fake_c.path() is not None
     assert tb_root.unload() is True
     assert fake_c.path() is None
@@ -1130,11 +1131,42 @@ def test_a_refusal_prints_exactly_twice_by_the_first_readyok_then_once_per_isrea
         engine.close()
 
 
+class _Owner:
+    """A weak-referenceable stand-in for an engine owning the C tables."""
+
+
+@pytest.mark.usefixtures("out", "py_table")
+def test_an_owner_collected_without_close_does_not_pin_the_tables(fake_c) -> None:
+    """An engine dropped without ``close()`` must not count forever: once it is
+    garbage-collected, the remaining owner's release frees the set."""
+    import gc
+
+    dropped = _Owner()
+    tables = tb_root.load("stub-tables", owner=dropped)
+    e, _ = _engine()
+    try:
+        e.dispatch(CmdSetOption(name="SyzygyPath", value="stub-tables"))
+        assert e._tb_generation == tables.generation
+        del dropped
+        gc.collect()
+    finally:
+        e.close()
+    assert fake_c.path() is None
+    assert tb_root.loaded() is None
+
+
+#: Stray names written by ``_stray_dir`` beyond the three special cases: more
+#: than any short cap, so a refusal that names only the first few is caught.
+_PLAIN_STRAYS = ("notes.rtbw", "old1.rtbw", "old2.rtbw", "old3.rtbw", "readme.rtbz", "x.rtbz")
+_STRAYS = (*_PLAIN_STRAYS, "KvKR.rtbw", "KBvK.rtbw")
+
+
 def _stray_dir(d: Path, *, tables: tuple[str, ...]) -> Path:
     d.mkdir()
     for name in tables:
         (d / name).write_bytes(b"\0" * 80)
-    (d / "notes.rtbw").write_text("my notes")
+    for name in _PLAIN_STRAYS:
+        (d / name).write_text("my notes")
     (d / "KvKR.rtbw").write_bytes(b"\0" * 80)
     os.symlink(d / "gone" / "KBvK.rtbw", d / "KBvK.rtbw")
     return d
@@ -1151,8 +1183,10 @@ def test_stray_files_refuse_the_path_naming_each_and_saying_remove_or_rename(
     with pytest.raises(tb_root.RootTablebaseError) as info:
         tb_root.load(str(d))
     msg = str(info.value)
-    assert ("3 file(s) in the table directories are not loadable Syzygy tables; remove or rename "
-            "each one") in msg
+    assert (f"{len(_STRAYS)} file(s) in the table directories are not loadable Syzygy tables; "
+            "remove or rename each one") in msg
+    for name in _PLAIN_STRAYS:
+        assert f"{d / name} (not a Syzygy table name)" in msg
     assert f"{d / 'notes.rtbw'} (not a Syzygy table name)" in msg
     assert f"{d / 'KvKR.rtbw'} (mirrored name; the table is KRvK.rtbw)" in msg
     assert f"{d / 'KBvK.rtbw'} (broken symlink -> " in msg
@@ -1162,7 +1196,7 @@ def test_stray_files_refuse_the_path_naming_each_and_saying_remove_or_rename(
         engine.dispatch(CmdSetOption(name="SyzygyPath", value=str(d)))
         line = next(ln for ln in out.lines if "REFUSED by the C tablebase prober" in ln)
         assert len(line) > 600
-        for name in ("notes.rtbw", "KvKR.rtbw", "KBvK.rtbw"):
+        for name in _STRAYS:
             assert str(d / name) in line, line
         assert "remove or rename" in line
         assert line.endswith("; tablebase probing disabled")
@@ -1186,5 +1220,5 @@ def test_stray_files_beside_real_tables_refuse_the_path(tmp_path: Path) -> None:
     assert verdict, (proc.stdout, proc.stderr[-2000:])
     assert verdict[0].startswith("REFUSED"), (proc.stdout, proc.stderr[-2000:])
     assert "remove or rename" in verdict[0]
-    for name in ("notes.rtbw", "KvKR.rtbw", "KBvK.rtbw"):
+    for name in _STRAYS:
         assert str(d / name) in verdict[0]
