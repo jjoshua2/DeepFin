@@ -388,3 +388,10 @@ def test_same_family_continuation_tags_and_cross_contract_refusal(tmp_path: Path
     state = torch.load(checkpoint, map_location="cpu", weights_only=True)
     assert state[finite.CHECKPOINT_KEY] == finite.checkpoint_identity(c, cref)
     assert state["step"] == 4
+
+
+def test_marker_sets_preserve_both_authenticated_classes() -> None:
+    actual = {"tablebase_policy_applied_plies": [5], "tablebase_policy_abstained_plies": [6]}
+    verified = {"policy_applied_plies": [5], "policy_abstained_plies": [6], "policy_eligible_raw_records": 2,
+                "policy_all_eligible_raw_records_reprobed": True, "policy_censored_bypass": False}
+    assert eligibility.marker_sets(actual, verified, {5, 6}) == ({5}, {6})
