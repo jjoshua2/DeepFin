@@ -32,8 +32,10 @@ class _FakeDirectEvaluator:
         n_slots: int,
         input_bf16: bool = False,
         legal_bf16: bool = True,
+        pad_to_compiled_buckets: bool = False,
     ) -> None:
         del model, device, n_slots
+        self.pad_to_compiled_buckets = bool(pad_to_compiled_buckets)
         self._max_batch = int(max_batch)
         self.input_bf16 = bool(input_bf16)
         self.supports_legal_bf16 = bool(legal_bf16)
@@ -219,10 +221,12 @@ class _RecordingDirectEvaluator(_FakeDirectEvaluator):
         n_slots: int,
         input_bf16: bool = False,
         legal_bf16: bool = True,
+        pad_to_compiled_buckets: bool = False,
     ) -> None:
         super().__init__(
             model, device=device, max_batch=max_batch, n_slots=n_slots,
             input_bf16=input_bf16, legal_bf16=legal_bf16,
+            pad_to_compiled_buckets=pad_to_compiled_buckets,
         )
         self.device = device
         self.batch_sizes: list[int] = []

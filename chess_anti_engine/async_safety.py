@@ -38,6 +38,16 @@ def poison(owner: Any, *retained: Any) -> None:
     _quarantine.append((owner, *retained))
 
 
+def release_quarantine(owner: Any) -> None:
+    """Lift ``owner``'s quarantine after a successful drain of every receipt it
+    held (the proof of free buffers this module requires for reuse). For a
+    helper object that was itself the poisoned owner, e.g. the multi-GPU pool's
+    per-worker stand-in; the caller keeps ``owner`` alive, so its id cannot be
+    reused while it is in ``_poisoned``."""
+    _poisoned.discard(id(owner))
+    _quarantine[:] = [entry for entry in _quarantine if entry[0] is not owner]
+
+
 def _mark_quiesced(error: BaseException, owner: Any) -> None:
     owners = getattr(error, "_async_quiesced_owners", ())
     setattr(error, "_async_quiesced_owners", (*owners, id(owner)))
