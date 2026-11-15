@@ -6,15 +6,17 @@ from dataclasses import asdict
 import hashlib
 import importlib
 import json
+import math
 import os
 from pathlib import Path
+import re
 import signal
 import stat
 import subprocess
 import sys
 import threading
 import time
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 import uuid
 from unittest.mock import patch
 
@@ -193,6 +195,186 @@ def closed_predecessor(binding: dict[str, Any]) -> dict[str, Any]:
     return boundary
 
 
+
+BANK_LINEAGE_SCHEMA = 'core_generation_bank_actor_lineage_v1'
+BANK_CHECKPOINT_KEY = 'core_generation_bank_learner_v1'
+BANK_PARENT_SOURCE_FILES = {
+    'scripts/core_finite_learner.py', 'scripts/bootstrap_checkpoint_resume.py', 'scripts/offline_epoch_resume.py',
+    'chess_anti_engine/train/trainer.py', 'chess_anti_engine/train/losses.py', 'chess_anti_engine/config_keys.py',
+    'chess_anti_engine/tune/fresh_rl_donor.py', 'chess_anti_engine/replay/generation.py', 'chess_anti_engine/replay/shard.py',
+    'scripts/core_generation_bank_learner.py', 'scripts/core_generation_bank_acceptance.py',
+}
+
+BANK_CONTRACT_FIELDS = {'schema', 'run_uuid', 'source_revision', 'source_files', 'architecture', 'initial_model',
+    'initial_actor_step', 'first_generation', 'batch_size', 'games_per_generation', 'max_games_per_generation',
+    'updates_per_segment', 'replay_generations', 'seed', 'runtime', 'lr', 'mirror_prob', 'limits', 'bank_limits'}
+
+
+def _bank_external(value: Any) -> Path:
+    require(type(value) is str, 'invalid bank artifact path')
+    path = Path(cast(str, value))
+    require(path.is_absolute() and path.resolve() == path
+            and not any((parent / '.git').exists() for parent in (path, *path.parents)), 'bank artifact must be canonical and external')
+    return path
+
+
+def _bank_ref(ref: Any) -> Path:
+    require(isinstance(ref, dict) and set(ref) == {'path', 'sha256'} and type(ref['sha256']) is str
+            and re.fullmatch('[0-9a-f]{64}', ref['sha256']) is not None, 'invalid bank metadata reference')
+    path = _bank_external(ref['path'])
+    require(path.suffix == '.json', 'bank identity must be JSON metadata')
+    return path
+
+
+def _bank_checked(ref: dict[str, Any], *, readonly: bool = True) -> dict[str, Any]:
+    """Bounded stable metadata only; no historical source or checkpoint decode."""
+    path = _bank_ref(ref)
+    def stamp(value: os.stat_result) -> tuple[int, ...]:
+        return tuple(getattr(value, key) for key in ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_ctime_ns', 'st_mode'))
+    before = path.lstat()
+    require(stat.S_ISREG(before.st_mode) and before.st_size <= (32 << 20)
+            and (not readonly or (before.st_mode & 0o222) == 0), 'bank metadata must be bounded regular readonly JSON')
+    flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
+    with os.fdopen(os.open(path, flags), 'rb') as stream:
+        require(stamp(os.fstat(stream.fileno())) == stamp(before), 'bank metadata changed before open')
+        raw = stream.read(before.st_size + 1)
+        require(stamp(os.fstat(stream.fileno())) == stamp(before), 'bank metadata changed while reading')
+    require(len(raw) == before.st_size and stamp(path.lstat()) == stamp(before) and path.resolve() == path
+            and hashlib.sha256(raw).hexdigest() == ref['sha256'], 'bank metadata changed or hash differs')
+    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in items:
+            require(key not in value, 'duplicate bank metadata key')
+            value[key] = item
+        return value
+    def number(value: str) -> float:
+        parsed = float(value)
+        require(math.isfinite(parsed), 'nonfinite bank metadata number')
+        return parsed
+    def constant(_value: str) -> Any:
+        raise ValueError('nonfinite bank metadata constant')
+    value = json.loads(raw, object_pairs_hook=pairs, parse_float=number, parse_constant=constant)
+    require(isinstance(value, dict), 'bank identity metadata must be an object')
+    return value
+
+
+def bank_lineage_identity(actor: dict[str, Any]) -> dict[str, Any]:
+    """The one supported adjacent family; never an arbitrary compatibility flag."""
+    require(set(actor) == {'kind', 'path', 'sha256', 'expected_checkpoint_step', 'architecture', 'predecessor', 'lineage'}
+            and actor['kind'] == 'bank_learner', 'invalid bank actor fields')
+    lineage = actor['lineage']
+    require(isinstance(lineage, dict) and set(lineage) == {'schema', 'run_uuid', 'source_revision', 'contract_sha256', 'segment', 'logical_generation'}
+            and lineage['schema'] == BANK_LINEAGE_SCHEMA, 'invalid bank actor lineage schema/fields')
+    require(type(lineage['run_uuid']) is str and str(uuid.UUID(lineage['run_uuid'])) == lineage['run_uuid'], 'invalid bank learner UUID')
+    for key, size in (('source_revision', 40), ('contract_sha256', 64)):
+        require(type(lineage[key]) is str and re.fullmatch('[0-9a-f]{' + str(size) + '}', lineage[key]) is not None,
+                'invalid bank learner digest: ' + key)
+    for key in ('segment', 'logical_generation'):
+        require(type(lineage[key]) is int and lineage[key] > 0, 'invalid bank learner integer: ' + key)
+    require(type(actor['expected_checkpoint_step']) is int and actor['expected_checkpoint_step'] > 0,
+            'bank actor requires a positive completed optimizer step')
+    require(type(actor['sha256']) is str and re.fullmatch('[0-9a-f]{64}', actor['sha256']) is not None,
+            'invalid bank actor checkpoint SHA')
+    require(type(actor['path']) is str and _bank_external(actor['path']).name == 'learner.pt',
+            'invalid bank actor path')
+    return {key: lineage[key] for key in ('run_uuid', 'source_revision', 'contract_sha256', 'segment', 'logical_generation')}
+
+
+def closed_bank_predecessor(protocol: dict[str, Any]) -> dict[str, Any]:
+    """Authenticate a real bank-learner boundary without executing its old source."""
+    actor = protocol['actor']
+    identity = bank_lineage_identity(actor)
+    require(type(protocol['generation']) is int and protocol['generation'] > 1
+            and identity['logical_generation'] == protocol['generation'] - 1, 'bank actor is not logically adjacent')
+    binding = actor['predecessor']
+    require(isinstance(binding, dict) and set(binding) == {'boundary', 'owner_terminal', 'owner_sha256', 'command'},
+            'bank predecessor requires closed owner envelope')
+    boundary = _bank_checked(binding['boundary'])
+    terminal = _bank_checked(binding['owner_terminal'], readonly=False)
+    command = binding['command']
+    require(isinstance(command, list) and len(command) > 10 and all(type(arg) is str and arg for arg in command)
+            and command[-10:-7] == ['-m', 'scripts.core_generation_bank_learner', '--contract']
+            and command[-6:] == ['--contract-sha256', identity['contract_sha256'], '--stage', boundary['stage']['path'],
+                                  '--stage-sha256', boundary['stage']['sha256']], 'bank predecessor command differs')
+    require(type(binding['owner_sha256']) is str and re.fullmatch('[0-9a-f]{64}', binding['owner_sha256']) is not None
+            and terminal['status'] == 'PASS' and type(terminal['returncode']) is int and terminal['returncode'] == 0
+            and terminal['owned_processes_closed'] is True and terminal['custody'] == 'OWNED_PROCESSES_CLOSED'
+            and terminal['supervisor_sha256'] == binding['owner_sha256'] and terminal['command'] == command,
+            'bank predecessor owner not closed PASS')
+    contract = _bank_checked({'path': command[-7], 'sha256': identity['contract_sha256']})
+    stage = _bank_checked(boundary['stage'])
+    require(set(contract) == BANK_CONTRACT_FIELDS and contract['schema'] == 'core_generation_bank_learning_v1'
+            and stage['schema'] == 'core_generation_bank_stage_v1'
+            and set(stage) == {'schema', 'contract_sha256', 'segment', 'banks', 'parent', 'output'}, 'bank predecessor contract/stage schema differs')
+    require(contract['run_uuid'] == boundary['run_uuid'] == identity['run_uuid']
+            and contract['source_revision'] == boundary['source_revision'] == identity['source_revision']
+            and boundary['contract_sha256'] == stage['contract_sha256'] == identity['contract_sha256']
+            and type(stage['segment']) is int and stage['segment'] == boundary['segment'] == identity['segment']
+            and type(boundary['segment']) is int and boundary['status'] == 'COMPLETED_CORE_GENERATION_BANK_SEGMENT_V1',
+            'bank predecessor family/run/source/segment differs')
+    pins = contract['source_files']
+    require(isinstance(pins, dict) and pins.keys() >= BANK_PARENT_SOURCE_FILES,
+            'bank predecessor source pins missing')
+    for name, expected in pins.items():
+        require(type(name) is str and name != '' and not Path(name).is_absolute() and '..' not in Path(name).parts
+                and str(Path(name)) == name and type(expected) is str and re.fullmatch('[0-9a-f]{64}', expected) is not None,
+                'invalid historical bank learner source pin')
+    first, segment = contract['first_generation'], identity['segment']
+    updates = contract['updates_per_segment']
+    require(type(first) is int and first > 0 and isinstance(updates, list) and len(updates) >= segment
+            and all(type(value) is int and value > 0 for value in updates), 'invalid bank predecessor generation/dose')
+    require(type(boundary['logical_generation']) is int and first + segment - 1 == boundary['logical_generation'] == identity['logical_generation']
+            and type(boundary['step']) is int and boundary['step'] == sum(updates[:segment]) == actor['expected_checkpoint_step']
+            and type(boundary['step_start']) is int and boundary['step_start'] == sum(updates[:segment - 1])
+            and type(boundary['applied_updates']) is int and boundary['applied_updates'] == updates[segment - 1],
+            'bank predecessor logical generation/optimizer step differs')
+    require(type(contract['batch_size']) is int and contract['batch_size'] > 0
+            and type(boundary['applied_views']) is int and boundary['applied_views'] == updates[segment - 1] * contract['batch_size']
+            and type(boundary['drawn_rows']) is int and boundary['drawn_rows'] == boundary['applied_views'], 'bank predecessor applied view count differs')
+    require(isinstance(stage['banks'], list) and len(stage['banks']) == segment
+            and stage['banks'] == boundary['accepted_banks'] and stage['parent'] == boundary['parent']
+            and (stage['parent'] is None if segment == 1 else isinstance(stage['parent'], dict)), 'bank predecessor stage/history differs')
+    identities = boundary['bank_identities']
+    require(isinstance(identities, list) and len(identities) == segment, 'bank predecessor logical bank history differs')
+    for index, row in enumerate(identities):
+        require(isinstance(row, dict) and set(row) == {'run_uuid', 'collection_uuid', 'generation', 'source_revision',
+                'architecture', 'actor_sha256', 'actor_checkpoint_step'} and type(row['generation']) is int
+                and row['generation'] == first + index and canonical(row['architecture']) == canonical(contract['architecture']),
+                'bank predecessor logical bank history differs')
+        for key in ('run_uuid', 'collection_uuid'):
+            require(type(row[key]) is str and str(uuid.UUID(row[key])) == row[key], 'invalid bank history UUID')
+        for key, length in (('source_revision', 40), ('actor_sha256', 64)):
+            require(type(row[key]) is str and re.fullmatch('[0-9a-f]{' + str(length) + '}', row[key]) is not None,
+                    'invalid bank history digest')
+        require(type(row['actor_checkpoint_step']) is int and row['actor_checkpoint_step'] ==
+                (contract['initial_actor_step'] if index == 0 else sum(updates[:index])), 'bank history actor step differs')
+    for bank in stage['banks']:
+        require(isinstance(bank, dict) and set(bank) == {'root_acceptance', 'independent_review'}, 'invalid bank predecessor acceptance history')
+        for ref in bank.values():
+            _bank_ref(ref)  # Preserve exact history pins; no bank payload is reopened.
+    initial = contract['initial_model']
+    require(isinstance(initial, dict) and set(initial) == {'path', 'sha256'} and type(initial['sha256']) is str
+            and re.fullmatch('[0-9a-f]{64}', initial['sha256']) is not None, 'invalid historical initial model reference')
+    _bank_external(initial['path'])  # A metadata identity, never reopen the historical weights.
+    require(boundary['initial_model'] == contract['initial_model'] and type(contract['initial_actor_step']) is int
+            and contract['initial_actor_step'] >= 0 and type(boundary['initial_actor_step']) is int
+            and boundary['initial_actor_step'] == contract['initial_actor_step']
+            and identities[0]['actor_sha256'] == contract['initial_model']['sha256']
+            and identities[0]['actor_checkpoint_step'] == contract['initial_actor_step']
+            and canonical(contract['architecture']) == canonical(actor['architecture']), 'bank predecessor bootstrap/architecture differs')
+    output = _bank_external(stage['output'])
+    require(output.is_absolute() and Path(binding['boundary']['path']) == output / 'boundary.json'
+            and not failure_marker(output).exists() and not (output / 'boundary.pending.json').exists()
+            and boundary['checkpoint'] == {'path': actor['path'], 'sha256': actor['sha256']}
+            and Path(actor['path']) == output / 'learner.pt', 'bank predecessor output/checkpoint differs')
+    for ref, value, readonly in ((binding['boundary'], boundary, True), (binding['owner_terminal'], terminal, False),
+                                 ({'path': command[-7], 'sha256': identity['contract_sha256']}, contract, True), (boundary['stage'], stage, True)):
+        require(_bank_checked(ref, readonly=readonly) == value, 'bank predecessor metadata changed during join')
+    # Owner wrapper and present producer revisions are deliberately NOT compared
+    # with the historical learner revision. Its contract pin authenticates it.
+    return boundary
+
+
 def validate_protocol(protocol: dict[str, Any], roster: list[dict[str, Any]]) -> None:
     require(protocol['schema'] == 'CORE_FINITE_GENERATION_V1', 'wrong generation protocol schema')
     require(str(uuid.UUID(protocol['run_uuid'])) == protocol['run_uuid'] and
@@ -201,11 +383,13 @@ def validate_protocol(protocol: dict[str, Any], roster: list[dict[str, Any]]) ->
         require(type(protocol[key]) is int and protocol[key] >= (0 if key == 'seed' else 1), 'invalid integer: ' + key)
     require(protocol['concurrent_slots'] <= protocol['attempts'] == len(roster), 'roster/attempt/slot count differs')
     actor = protocol['actor']
-    require(actor['kind'] in ('donor', 'learner') and type(actor['expected_checkpoint_step']) is int and
+    require(actor['kind'] in ('donor', 'learner', 'bank_learner') and type(actor['expected_checkpoint_step']) is int and
             actor['expected_checkpoint_step'] >= 0 and len(actor['sha256']) == 64, 'actor identity contract')
     require(actor['architecture']['_schema_version'] == 20 and
             actor['architecture']['input_extra_features'] == 'v2_threats', 'full A39 architecture contract required')
-    if protocol['generation'] == 1:
+    if actor['kind'] == 'bank_learner':
+        closed_bank_predecessor(protocol)
+    elif protocol['generation'] == 1:
         require(actor['kind'] == 'donor' and actor['sha256'] == INITIAL_DONOR_SHA256 and
                 actor['predecessor'] is None, 'initial actor must be immutable A39, not a selected candidate')
     else:
@@ -376,6 +560,8 @@ def load_actor(protocol: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
     from chess_anti_engine.uci import model_loader
 
     actor = protocol['actor']
+    if actor['kind'] == 'bank_learner':
+        closed_bank_predecessor(protocol)
     path = Path(actor['path'])
     before = path.lstat()
     before_stamp = file_stamp(path)
@@ -393,6 +579,10 @@ def load_actor(protocol: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
                 type(payload.get('step')) is int and payload['step'] == actor['expected_checkpoint_step'],
                 'actor embedded architecture/historical checkpoint step differs')
         require(isinstance(payload.get('model'), dict) and len(payload['model']) == 494, 'incomplete494 actor checkpoint')
+        if actor['kind'] == 'bank_learner':
+            tag = payload.get(BANK_CHECKPOINT_KEY)
+            require(isinstance(tag, dict) and canonical(tag) == canonical(bank_lineage_identity(actor)), 'loaded bank actor family tag differs')
+            observed.update(bank_learner_tag=tag, actor_lineage=actor['lineage'], predecessor_boundary=actor['predecessor']['boundary'])
         observed.update(checkpoint_step=payload['step'], checkpoint_model_state_sha256=state_sha256(payload['model']))
         return payload
 
@@ -843,6 +1033,8 @@ def main() -> int:
     parser.add_argument('--report', type=Path)
     args = parser.parse_args()
     protocol = checked({'path': str(args.protocol), 'sha256': args.protocol_sha256})
+    if protocol['actor']['kind'] == 'bank_learner':
+        protocol = _bank_checked({'path': str(args.protocol), 'sha256': args.protocol_sha256})
     roster = checked(protocol['roster'])
     require(digest(protocol['starts']['path']) == protocol['starts']['sha256'], 'starts changed')
     validate_protocol(protocol, roster)

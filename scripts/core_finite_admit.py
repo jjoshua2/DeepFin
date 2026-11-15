@@ -388,6 +388,7 @@ def _execute(protocol_ref: dict[str, str], *, data_only: bool) -> dict[str, Any]
             learning.validate_contract(contract)
             require("scripts/core_finite_admit.py" in contract["source_files"], "audit source is not pinned")
         _, producer = learning.read_ref(p["producer_protocol"])
+        require(data_only or producer["actor"]["kind"] != "bank_learner", "bank learner actor requires recipe-independent data audit")
         if data_only:
             data_producer_identity(contract, producer)
         require(contract["run_uuid"] == producer["run_uuid"] and contract["source_revision"] == producer["source"]["revision"]
@@ -439,6 +440,12 @@ def _execute(protocol_ref: dict[str, str], *, data_only: bool) -> dict[str, Any]
                 serving["checkpoint_model_state_sha256"] and len(served) == 64 and serving["state_tensors"] == 494
                 and serving["model_build_count"] == 1 and serving["checkpoint_step"] == producer["actor"]["expected_checkpoint_step"]
                 and serving["logical_generation"] == producer["generation"] and serving["forwards"]["calls"] > 0, "actor serving evidence differs")
+        if producer["actor"]["kind"] == "bank_learner":
+            actor = producer["actor"]
+            require(serving.get("actor_kind") == "bank_learner"
+                    and canonical(serving.get("actor_lineage")) == canonical(actor["lineage"])
+                    and canonical(serving.get("bank_learner_tag")) == canonical(collection.bank_lineage_identity(actor))
+                    and serving.get("predecessor_boundary") == actor["predecessor"]["boundary"], "bank actor serving lineage differs")
         actor = learning.external(producer["actor"]["path"])
         require(learning.file_sha(actor) == producer["actor"]["sha256"] and collection.file_stamp(actor) == serving["checkpoint_stat"], "actor file changed")
         _, lifecycle = learning.read_ref(ref(producer_root / "stockfish-lifecycle.json"))
