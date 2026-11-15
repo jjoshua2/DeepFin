@@ -55,6 +55,7 @@ from chess_anti_engine.mcts.gumbel import (
     GumbelConfig,
 )
 from chess_anti_engine.mcts.search_options import MAX_CHUNK_SIMS, SEARCH_OPTIONS, SearchOption
+from chess_anti_engine.utils.thread_join import join_thread, os_joined
 
 from .engine import (
     _SPIN_BOUNDS,
@@ -478,7 +479,8 @@ def _load_models(checkpoint: str, devices: list[str]):
     evaluator rebuilds (e.g., when the UCI ``MaxBatch`` option changes)."""
     if len(devices) > 1:
   # Parallel load — each is hundreds of MB of weight copy + CUDA init.
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(devices)) as pool:
+        # The loader threads ran torch (CUDA init): wait for their OS threads too.
+        with os_joined(concurrent.futures.ThreadPoolExecutor(max_workers=len(devices))) as pool:
             return list(pool.map(
                 lambda d: load_model_from_checkpoint(checkpoint, device=d),
                 devices,
@@ -1926,9 +1928,9 @@ def _drain_builder(builder: threading.Thread, rc: int) -> None:
     chance to close what it built, and if it is still running, flush stdout and
     exit with ``rc`` without finalizing anything it holds.
     """
-    if not builder.is_alive():
-        return
-    builder.join(timeout=_BUILDER_JOIN_TIMEOUT_S)
+    # An already-ended builder returns at once from the join; the OS-thread wait
+    # (utils/thread_join) still runs: it ran torch work and teardown follows.
+    join_thread(builder, _BUILDER_JOIN_TIMEOUT_S)
     if builder.is_alive():
         print(
             "deepfin: startup build still running at shutdown; exiting without it",

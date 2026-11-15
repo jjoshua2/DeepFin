@@ -38,6 +38,7 @@ from chess_anti_engine.tablebase import SyzygyProbe, get_tablebase
 from chess_anti_engine.uci import tb_root, wedge
 from chess_anti_engine.utils.bitboards import unsearchable_king_reason
 from chess_anti_engine.utils.gil_probe import GilContentionProbe
+from chess_anti_engine.utils.thread_join import await_os_thread_exit, join_thread
 
 from .protocol import (
     CmdGo,
@@ -3835,17 +3836,23 @@ class Engine:
             self._cancel_event.set()
             self._stop_event.set()
             self._ponder_release.set()
-            thread.join(timeout=max(0.0, end - time.monotonic()))
+            # OS-thread wait (utils/thread_join): the search ran evaluator work and
+            # ``quit`` closes the evaluators next.
+            join_thread(thread, max(0.0, end - time.monotonic()))
             if thread.is_alive():
                 self._park_search_thread(thread, answer=answer_parked)
                 raise SearchNotQuiescent(
                     f"search did not stop within {budget:.1f}s; parked; worker unchanged"
                 )
+        elif thread is not None:
+            # Ended on its own (``quit`` right after its ``bestmove``): its OS
+            # thread may still be in torch's thread-local teardown.
+            await_os_thread_exit(thread)
         if not self._warmup_done.wait(timeout=max(0.0, end - time.monotonic())):
             raise SearchNotQuiescent("warmup stop timed out; worker unchanged")
         for orphan in list(self._orphan_threads):
             wait = 0.0 if timeout_s is None else max(0.0, end - time.monotonic())
-            orphan.join(timeout=wait)
+            join_thread(orphan, wait)
             if orphan.is_alive():
                 raise SearchNotQuiescent(
                     "an earlier search that missed its stop deadline still owns the worker"
@@ -3911,7 +3918,7 @@ class Engine:
         # fallback would grow without bound).
         helper = threading.Thread(target=run, daemon=True, name="uci-fresh-eval")
         helper.start()
-        helper.join(timeout=max(0.0, timeout))
+        join_thread(helper, max(0.0, timeout))
         if helper.is_alive():
             with self._state_lock:
                 self._orphan_threads.append(helper)
@@ -4057,7 +4064,7 @@ class _DeadlineWatchdog:
             self._cond.notify()
             thread = self._thread
         if thread is not None and thread is not threading.current_thread():
-            thread.join(timeout=timeout_s)
+            join_thread(thread, timeout_s)
 
     def _loop(self) -> None:
         while True:

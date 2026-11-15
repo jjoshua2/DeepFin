@@ -48,6 +48,7 @@ import torch
 
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.train.compile_probe import apply_compile
+from chess_anti_engine.utils.thread_join import join_thread
 import contextlib
 
 log = logging.getLogger(__name__)
@@ -540,6 +541,6 @@ class AsyncTestEval:
         with contextlib.suppress(queue.Empty):
             self._work_q.get_nowait()
         self._work_q.put(None)
-        thread.join(timeout=timeout)
+        join_thread(thread, timeout)  # + its OS thread (utils/thread_join): it ran torch
         with self._lock:
             self._thread = None

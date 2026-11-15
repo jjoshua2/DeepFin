@@ -45,6 +45,7 @@ from chess_anti_engine.neural_work import WorkCounters
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE, POLICY_SIZE
 from chess_anti_engine.moves.torch_maps import compact_to_full_index_for as _compact_to_full_index_for
 from chess_anti_engine.utils.amp import inference_autocast
+from chess_anti_engine.utils.thread_join import os_joined
 import contextlib
 
 log = logging.getLogger(__name__)
@@ -1495,7 +1496,7 @@ def load_aot_packages(
     def _load(item: tuple[int, Path]) -> tuple[int, Any]:
         return item[0], _aoti_load_package(str(item[1]))
 
-    with ThreadPoolExecutor(max_workers=min(4, len(pkgs))) as pool:
+    with os_joined(ThreadPoolExecutor(max_workers=min(4, len(pkgs)))) as pool:  # AOTI loads: torch
         models = dict(pool.map(_load, list(pkgs.items())))
     log.info(
         "AOT packages loaded from %s: buckets=%s",

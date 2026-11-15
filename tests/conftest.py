@@ -625,7 +625,11 @@ class InProcessHardExit(BaseException):
     UCI ``quit`` -- so the run would look green with every later test unrun."""
 
 
-_PYTEST_PID = os.getpid()
+# The pid of the pytest process (an xdist worker is its own), set by
+# ``pytest_configure``, which only a pytest process runs. Not taken at import:
+# a ``spawn`` multiprocessing child that imports a test module imports this
+# conftest afresh, and must not mistake itself for the pytest process.
+_PYTEST_PID: int | None = None
 _REAL_OS_EXIT = os._exit
 _INTERCEPTED_HARD_EXITS: list[str] = []
 _SESSION_STATE = {"started": False, "finished": False}
@@ -633,9 +637,9 @@ _SESSION_STATE = {"started": False, "finished": False}
 
 def _guarded_os_exit(status: int) -> None:
     # Forked children (multiprocessing, os.fork in tests) inherit this wrapper
-    # but have their own pid: they get the real exit. Spawned subprocesses are
-    # new interpreters and never see it.
-    if os.getpid() != _PYTEST_PID:
+    # but have their own pid, and spawned children never ran pytest_configure:
+    # both get the real exit.
+    if _PYTEST_PID is None or os.getpid() != _PYTEST_PID:
         _REAL_OS_EXIT(status)
     where = os.environ.get("PYTEST_CURRENT_TEST", "<outside any test>")
     _INTERCEPTED_HARD_EXITS.append(f"os._exit({status}) in {where}")
@@ -648,8 +652,41 @@ def _guarded_os_exit(status: int) -> None:
 os._exit = _guarded_os_exit
 
 
+def pytest_configure() -> None:
+    global _PYTEST_PID
+    _PYTEST_PID = os.getpid()
+
+
 def pytest_sessionstart() -> None:
     _SESSION_STATE["started"] = True
+
+
+_EXIT_MARK = pytest.StashKey[int]()
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    item.stash[_EXIT_MARK] = len(_INTERCEPTED_HARD_EXITS)
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(item: pytest.Item):
+    """Fail the offending test's own report when an ``os._exit`` was
+    intercepted during it (setup, call or teardown), even if the code under
+    test swallowed the ``InProcessHardExit``. The session-level check below
+    cannot do this under xdist: a worker's ``session.exitstatus`` never reaches
+    the controller, so a swallowed exit there read as a green run."""
+    report = yield
+    new = _INTERCEPTED_HARD_EXITS[item.stash.get(_EXIT_MARK, len(_INTERCEPTED_HARD_EXITS)):]
+    item.stash[_EXIT_MARK] = len(_INTERCEPTED_HARD_EXITS)
+    if new and report.passed:
+        report.outcome = "failed"
+        report.longrepr = (
+            "conftest: intercepted in-process " + "; ".join(new)
+            + " (the code under test swallowed InProcessHardExit; outside pytest this "
+            "would have ended the process)"
+        )
+    return report
 
 
 def pytest_sessionfinish(session: pytest.Session) -> None:

@@ -20,6 +20,7 @@ when given), and ``quit`` must exit 0 -- never 134 / -11.
 """
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import subprocess
@@ -33,7 +34,19 @@ import torch
 
 from chess_anti_engine.model import ModelConfig, build_model
 
-_DRIVER = r'''
+def _fault_target(mode: str, where: str, role: str, chain_role: str) -> bool:
+    """Whether the driver turns this evaluator bad (its source is pasted into
+    ``_DRIVER``). ``FAULT_MODE=none`` injects nothing, and an empty
+    ``FAULT_WHERE`` names no target: pool/RPG evaluators have an empty chain
+    role, which an unfiltered ``"".split(",") == [""]`` used to match."""
+    if mode == "none":
+        return False
+    targets = {t for t in where.split(",") if t}
+    return (role in targets or chain_role in targets
+            or ("all-pool" in targets and role.startswith(("pool:", "rpg:"))))
+
+
+_DRIVER = inspect.getsource(_fault_target) + r'''
 import os, sys, threading
 import torch
 from chess_anti_engine.uci import __main__ as uci_main
@@ -81,9 +94,7 @@ class Faulty(Real):
             self._chain_role = f"chain:{idx}"
         else:
             self._chain_role = ""
-        targets = set(WHERE.split(","))
-        self._bad = (role in targets or self._chain_role in targets
-                     or ("all-pool" in targets and role.startswith(("pool:", "rpg:"))))
+        self._bad = _fault_target(MODE, WHERE, role, self._chain_role)
         self._calls = 0
         if self._bad:
             for name in dir(Real):
@@ -497,3 +508,22 @@ def test_quit_after_a_raise_and_a_pool_rebuild_names_the_fault_not_a_stuck_call(
     assert "still stuck" not in text, text[-3000:]
     assert "terminate called" not in err, err
     assert rc == 0, (rc, text[-3000:], err[-3000:])
+
+
+@pytest.mark.parametrize(("mode", "where", "role", "chain_role", "bad"), [
+    ("none", "pool:1", "pool:1", "", False),       # ``none`` injects no fault, even when targeted
+    ("none", "", "pool:0", "", False),
+    ("raise", "", "pool:1", "", False),            # empty FAULT_WHERE: no target at all
+    ("stall", "", "rpg:0", "", False),
+    ("raise", "", "primary", "chain:0", False),
+    ("raise", "pool:1", "pool:1", "", True),
+    ("raise", "pool:1", "pool:0", "", False),
+    ("stall", "chain:1", "build", "chain:1", True),
+    ("raise", "all-pool", "rpg:1", "", True),
+    ("raise", "all-pool", "primary", "chain:0", False),
+])
+def test_driver_fault_targeting(mode, where, role, chain_role, bad) -> None:
+    assert _fault_target(mode, where, role, chain_role) is bad
+    # The driver runs this very function (pasted source), not a copy.
+    compile(_DRIVER, "driver.py", "exec")
+    assert "self._bad = _fault_target(MODE, WHERE, role, self._chain_role)" in _DRIVER

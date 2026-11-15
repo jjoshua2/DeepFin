@@ -10,6 +10,13 @@ manager). Training and selfplay installs are described in the README and
 - CPython **3.10.12 – 3.13**, standard (GIL-enabled) build. 3.13 is what CI and
   the development lock use; 3.10 is what the production host runs. Newer
   interpreters are untested and `deepfin --selfcheck` reports them as FAIL.
+  On CPython 3.10 – 3.12, `Thread.join` returns while the finished thread's OS
+  thread may still be running torch's per-thread teardown; closing evaluators or
+  exiting under it can segfault (observed with torch 2.11, not with 2.14, though
+  both leave the OS thread running for milliseconds after the join). The
+  code waits for the OS thread (`chess_anti_engine/utils/thread_join.py`), and a
+  CI job runs those tests on CPython 3.10. CPython 3.13 joins the OS thread
+  itself and is not exposed.
 - A C compiler (`gcc`) and the Python headers, to build the six C extensions.
 - For GPU play: an NVIDIA driver plus a PyTorch build whose CUDA version supports
   the card. An RTX 50-series (Blackwell, `sm_120`) card needs a build made with

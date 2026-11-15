@@ -15,6 +15,8 @@ from concurrent.futures import Future
 from dataclasses import dataclass, field
 from typing import Generic, TypeVar
 
+from chess_anti_engine.utils.thread_join import join_thread
+
 Input = TypeVar("Input")
 Output = TypeVar("Output")
 
@@ -106,7 +108,7 @@ class TeacherDispatcher(Generic[Input, Output]):
         with self._cond:
             self._closing = self._flush = True
             self._cond.notify_all()
-        self._thread.join(timeout)
+        join_thread(self._thread, timeout)  # + its OS thread: the backend may run torch
         if self._thread.is_alive():
             raise TimeoutError("teacher backend still running; ownership retained")
 

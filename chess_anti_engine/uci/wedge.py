@@ -42,12 +42,13 @@ on a 2-device pool); a restart frees them.
 from __future__ import annotations
 
 import functools
-import os
 import threading
 import time
 import types
 from collections.abc import Callable
 from typing import Any, TypeVar, cast
+
+from chess_anti_engine.utils.thread_join import await_os_thread_exit
 
 _lock = threading.Lock()
 _changed = threading.Condition(_lock)  # notified when a wedge clears
@@ -184,34 +185,14 @@ def parking(fn: _F) -> _F:
     return cast("_F", run)
 
 
-# Cap on waiting for an ended thread's OS thread to exit (``_await_os_exit``).
-_OS_EXIT_WAIT_S = 1.0
-
-
 def _await_os_exit(thread: threading.Thread) -> None:
     """After ``thread`` ended, wait (bounded) until its OS thread is gone.
 
-    ``Thread.join`` / ``is_alive`` report a thread ended as soon as its Python
-    thread state is torn down, but the OS thread still runs its C/C++
-    thread-local destructors after that -- torch's among them. Measured on
-    the RPG raise path (PR #1333 round 3, torch 2.11 on CPU): the root-parallel
-    group thread was still alive about 0.6 ms after its ``join`` returned, and
-    letting the caller go on (close the evaluators, and at ``quit`` finalize
-    the interpreter) under it segfaulted in the garbage collector at exit in
-    about 1 run in 4 with the parking latch disabled; waiting here for the OS
-    thread made it 0 in 60. Python 3.10-3.12 (the engine's interpreter here);
-    from 3.13 ``Thread.join`` joins the OS thread itself and this finds it gone.
-    Linux only (``/proc/self/task``); elsewhere a no-op.
-    """
-    tid = getattr(thread, "native_id", None)
-    if tid is None or thread.is_alive():
-        return
-    task = f"/proc/self/task/{tid}"
-    # Not bounded by the caller's join timeout: the thread has ended, its OS
-    # thread is about to (a reused tid at worst costs the cap).
-    stop = time.monotonic() + _OS_EXIT_WAIT_S
-    while os.path.exists(task) and time.monotonic() < stop:
-        time.sleep(0.0005)
+    The RPG-raise segfault's root cause (PR #1333 round 3): ``Thread.join``
+    returns under the OS thread's C/C++ thread-local destructors on CPython
+    3.10-3.12. The shared helper (:mod:`chess_anti_engine.utils.thread_join`)
+    holds the wait, its cap and the once-per-thread warning on a cap hit."""
+    await_os_thread_exit(thread)
 
 
 def join_unless_wedged(thread: threading.Thread, timeout: float) -> None:
