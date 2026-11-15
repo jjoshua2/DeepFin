@@ -133,7 +133,7 @@ Synthetic tests use fictional trusted receipts, tiny actual model/Trainer state
 and real serialized replay payloads. They do not qualify the original producer's
 full494/175 architecture or any real bank. Tests cover a real G2 update and journal,
 model-only bootstrap, deep metadata conversion, payload refusal before model
-construction, adjacent resume against a direct uninterrupted reference, five RNG
+construction, adjacent resume against a direct checkpoint continuation reference, five RNG
 states, and contract/bank/owner failures. Existing legacy and primitive replay
 regressions remain relevant. Author-side execution, tests and lint are unrun;
 all numerical qualification belongs to the root's later owned CPU phase.

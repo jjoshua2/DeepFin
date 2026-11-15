@@ -172,7 +172,7 @@ def test_real_g2_update_keeps_logical_segment_and_optimizer_counters_distinct(tm
     assert candidate["learning_admitted"] is False
 
 
-def test_adjacent_resume_matches_actual_uninterrupted_trainer_and_five_rng_streams(tmp_path: Path):
+def test_adjacent_resume_matches_direct_checkpoint_continuation_and_five_rng_streams(tmp_path: Path):
     from scripts.offline_epoch_resume import _restore_rng, _rng_state
 
     c, cref = contract(tmp_path)
