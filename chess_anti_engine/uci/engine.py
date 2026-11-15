@@ -617,6 +617,11 @@ class Engine:
         self._gil_probe = GilContentionProbe(interval_s=0.010) if gil_profile else None
         self._worker.set_max_tree_mb(self._options.hash_mb)
         self._leaf_tb_noted: str | None = None
+  # The C table-set generation this engine loaded (``tb_root``), released on
+  # clear/close only while it is still the loaded one; and the refusal line
+  # of a SyzygyPath the C prober refused, repeated on every isready.
+        self._tb_generation: int | None = None
+        self._tb_refusal: str | None = None
   # Set by setoption handlers that reshape the search path / evaluator
   # (SearchWalkers/UseVL/UseMultiGpuPUCV/LeafGather/VLGather/MaxBatch/
   # EvalCacheEntries). The build-time ``warmup_search`` runs BEFORE any
@@ -1094,6 +1099,10 @@ class Engine:
         degraded = self._pool_degraded_summary()
         if degraded is not None:
             _println(f"info string {degraded}")
+        # A refused SyzygyPath means NO tablebases: say so on every isready.
+        refusal = self._tb_refusal
+        if refusal is not None:
+            _println(refusal)
         _println(format_readyok())
 
     def _pool_degraded_summary(self) -> str | None:
@@ -2687,10 +2696,15 @@ class Engine:
     }
 
     def _clear_tablebases(self) -> None:
-        """Tablebases off everywhere: leaf probe, root shortcut, C table set."""
+        """Tablebases off everywhere: leaf probe, root shortcut, and the C
+        table set if this engine loaded the current one (another engine in
+        the process may own a later one; ``tb_root.unload`` checks)."""
         self._worker.set_tb_probe(None)
         self._worker.set_tb_root(None)
-        tb_root.unload()
+        generation = self._tb_generation
+        if generation is not None:
+            tb_root.unload(generation)
+        self._tb_generation = None
 
     def _install_tablebase(self, path: str) -> None:
         """Load ``path`` into BOTH tablebase consumers, or into neither.
@@ -2706,6 +2720,7 @@ class Engine:
         Re-running it for the same path (``Syzygy50MoveRule``) keeps the open
         C tables and rebuilds both consumers with the new rule.
         """
+        self._tb_refusal = None
         if not path:
             self._clear_tablebases()
             _println("info string SyzygyPath cleared; tablebase probing disabled")
@@ -2714,10 +2729,12 @@ class Engine:
             tables = tb_root.load(path)
         except tb_root.RootTablebaseError as exc:
             self._clear_tablebases()
-            _println(
+            # Repeated on every `isready` while this path stays configured.
+            self._tb_refusal = (
                 f"info string error: SyzygyPath {path!r} REFUSED by the C tablebase prober "
-                f"({_one_line(exc)}); tablebase probing disabled"
+                f"({_one_line(exc, limit=600)}); tablebase probing disabled"
             )
+            _println(self._tb_refusal)
             return
         tb = get_tablebase(path)
         if tb is None:
@@ -2727,7 +2744,8 @@ class Engine:
         rule50 = self._options.syzygy_50_move_rule
         probe = SyzygyProbe(path, cursed_as_draw=rule50)
         self._worker.set_tb_probe(probe)
-        self._worker.set_tb_root(tb_root.RootTablebase(tables, rule50=rule50))
+        self._worker.set_tb_root(tb_root.RootTablebase(tables, rule50=rule50), notice=_println)
+        self._tb_generation = tables.generation
         _println(
             f"info string SyzygyPath loaded from {path!r}: "
             f"{probe.n_wdl} WDL + {probe.n_dtz} DTZ tables, "
@@ -3602,8 +3620,9 @@ class Engine:
         if self._gil_probe is not None:
             self._gil_probe.close()
         self._worker.close()
-        if self._options.syzygy_path:
-            tb_root.unload()
+        generation = self._tb_generation
+        if generation is not None:
+            tb_root.unload(generation)  # only if it is still this engine's table set
         self._closed = True
 
   # -- helpers --------------------------------------------------------------

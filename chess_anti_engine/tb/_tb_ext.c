@@ -420,6 +420,49 @@ static PyObject *tb_table_counts_py(PyObject *self, PyObject *Py_UNUSED(ignored)
     return Py_BuildValue("(III)", n_wdl, n_dtz, largest_dtz);
 }
 
+static PyObject *tb_table_names_py(PyObject *self, PyObject *Py_UNUSED(ignored)) {
+    pthread_rwlock_rdlock(&g_tables_lock);
+    int n = df_tb_num_tables();
+    PyObject *list = PyList_New(0);
+    for (int i = 0; list && i < n; i++) {
+        int has_dtz = 0;
+        const char *name = df_tb_table_name(i, &has_dtz);
+        PyObject *item = name ? Py_BuildValue("(sO)", name, has_dtz ? Py_True : Py_False) : NULL;
+        if (!item || PyList_Append(list, item) < 0) {
+            Py_XDECREF(item);
+            Py_CLEAR(list);
+        } else {
+            Py_DECREF(item);
+        }
+    }
+    pthread_rwlock_unlock(&g_tables_lock);
+    return list;
+}
+
+static PyObject *tb_validate_table_py(PyObject *self, PyObject *args) {
+    int i, rc, failed_dtz = 0, has_dtz = 0;
+    char name[24];
+    if (!PyArg_ParseTuple(args, "i", &i)) return NULL;
+    Py_BEGIN_ALLOW_THREADS
+    pthread_rwlock_rdlock(&g_tables_lock);
+    const char *n = df_tb_table_name(i, &has_dtz);
+    if (n) {
+        strncpy(name, n, sizeof name - 1);
+        name[sizeof name - 1] = 0;
+        rc = df_tb_validate_table(i, &failed_dtz);
+    } else {
+        rc = -1;
+    }
+    pthread_rwlock_unlock(&g_tables_lock);
+    Py_END_ALLOW_THREADS
+    if (rc == -1) {
+        PyErr_SetString(PyExc_IndexError, "table index out of range");
+        return NULL;
+    }
+    if (rc == DF_TB_OK) Py_RETURN_NONE;
+    return PyUnicode_FromFormat("%s%s", name, failed_dtz ? ".rtbz" : ".rtbw");
+}
+
 static PyObject *tb_path_py(PyObject *self, PyObject *Py_UNUSED(ignored)) {
     if (!g_path) Py_RETURN_NONE;
     return Py_NewRef(g_path);
@@ -512,6 +555,12 @@ static PyMethodDef tb_methods[] = {
     {"free", tb_free_py, METH_NOARGS, "Unmap every table (largest() becomes 0)."},
     {"largest", tb_largest_py, METH_NOARGS, "Largest man count with a WDL table."},
     {"path", tb_path_py, METH_NOARGS, "Path string of the current table set, or None."},
+    {"table_names", tb_table_names_py, METH_NOARGS,
+     "table_names() -> list[(name, has_dtz)] of the tables the last init registered."},
+    {"validate_table", tb_validate_table_py, METH_VARARGS,
+     "validate_table(i) -> None | str. Initialise table i's WDL and DTZ files now "
+     "(Fathom otherwise does it on the first probe of that material). Returns the "
+     "failing file name ('KQvKR.rtbz') if one is corrupt; the table is then unusable."},
     {"table_counts", tb_table_counts_py, METH_NOARGS,
      "table_counts() -> (n_wdl, n_dtz, largest_dtz): WDL tables loaded, how many "
      "of them found a DTZ table in some directory of the path, and the largest man "

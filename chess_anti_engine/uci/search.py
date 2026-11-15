@@ -57,10 +57,9 @@ from .root_parallel_gumbel import (
     resolve_rpg_schedule_knobs,
 )
 from chess_anti_engine.moves import index_to_move, move_to_index
-from chess_anti_engine.tablebase import SyzygyProbe
 
 from .score import q_to_cp
-from .tb_root import RootTablebase
+from .tb_root import RootTablebase, RootTablebaseError
 from .time_manager import Deadline
 from .walker_pool import WalkerPool, WalkerPoolConfig
 import contextlib
@@ -546,6 +545,7 @@ class SearchWorker:
   # Root DTZ shortcut on the C prober (``tb_root``); the engine installs it
   # beside ``_tb_probe`` and clears both together.
         self._tb_root: RootTablebase | None = None
+        self._tb_root_notice: Callable[[str], object] | None = None
   # Soft memory cap (UCI ``Hash``) on the tree's RESIDENT footprint
   # (``MCTSTree.footprint_bytes()``): the search halts between chunks once the
   # footprint reaches it, and says so with an ``info string``. 0 = unbounded.
@@ -1825,11 +1825,16 @@ class SearchWorker:
         self._tb_probe = probe
         self.reset_tree()
 
-    def set_tb_root(self, root: RootTablebase | None) -> None:
+    def set_tb_root(
+        self, root: RootTablebase | None, *, notice: Callable[[str], object] | None = None,
+    ) -> None:
         """Install (or clear) the root DTZ shortcut. It answers a tablebase
         root before any tree exists, so the tree is left alone. Caller holds
-        the search barrier, as for ``set_tb_probe``."""
+        the search barrier, as for ``set_tb_probe``. ``notice`` prints an
+        ``info string`` line (the engine's printer) when the shortcut has to
+        be dropped mid-session."""
         self._tb_root = root
+        self._tb_root_notice = notice
 
     def leaf_tb_inactive_mode(self) -> str | None:
         """The realized search path whose leaves never see the installed Syzygy probe.
@@ -2032,7 +2037,6 @@ class SearchWorker:
     def _try_tb_shortcut(
         self,
         board: chess.Board,
-        tb_probe,
         deadline: Deadline,
         info_cb: InfoCallback | None,
         *,
@@ -2047,7 +2051,19 @@ class SearchWorker:
         tb_root = self._tb_root
         if tb_root is None:
             return None
-        short = _try_tb_root_bestmove(board, tb_root, tb_probe, include_ponder=include_ponder)
+        try:
+            short = _try_tb_root_bestmove(board, tb_root, include_ponder=include_ponder)
+        except RootTablebaseError as exc:
+            # The C table set changed under this handle (another engine in the
+            # process re-loaded or freed it). Never answer from it: drop the
+            # shortcut, say so once, and search this root normally.
+            self._tb_root = None
+            message = (f"info string root tablebase shortcut disabled ({exc}); "
+                       "searching instead; set SyzygyPath again to restore it")
+            _log.warning("%s", message)
+            if self._tb_root_notice is not None:
+                self._tb_root_notice(message)
+            return None
         if short is None:
             return None
         if info_cb is not None:
@@ -3005,7 +3021,6 @@ class SearchWorker:
             if allowed_root_indices is not None
             else self._try_tb_shortcut(
                 board,
-                tb_probe,
                 deadline,
                 info_cb,
                 include_ponder=include_ponder,
@@ -3845,8 +3860,7 @@ def _allowed_root_indices(board: chess.Board, root_moves: tuple[str, ...]) -> se
 
 
 def _try_tb_root_bestmove(
-    board: chess.Board, tb_root: RootTablebase, tb_probe: SyzygyProbe | None, *,
-    include_ponder: bool,
+    board: chess.Board, tb_root: RootTablebase, *, include_ponder: bool,
 ) -> SearchResult | None:
     """Return a SearchResult built from the TB's DTZ-optimal move at root,
     or None if the position isn't TB-eligible (or the probe fails).
@@ -3861,11 +3875,8 @@ def _try_tb_root_bestmove(
         return None
     best, wdl_val = root
 
-  # Count the root probe toward tbhits so downstream info emission shows
-  # a non-zero hit count (MCTS path isn't run in the shortcut).
-    if tb_probe is not None:
-        tb_probe.probes += 1
-        tb_probe.hits += 1
+  # tbhits of the shortcut's answer is the SearchResult's own `tbhits=1`
+  # below (the root probe); no tree runs, so no leaf counter is involved.
 
     if wdl_val >= 2:
         score_cp = _TB_WIN_CP

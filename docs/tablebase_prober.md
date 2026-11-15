@@ -232,7 +232,8 @@ file and skips that file. Tables are opened `O_RDONLY` and mapped `PROT_READ`.
 The engine's root DTZ shortcut (`search._try_tb_root_bestmove`) calls
 `RootTablebase.root_move`, which makes ONE `probe_root_fen` call for the per-move
 DTZ of every legal root move and then reproduces
-`tablebase.try_tb_root_move` exactly:
+`tablebase.try_tb_root_move`'s choice (two differences, both "searched
+instead of answered", are listed after this list):
 
 - the claim rules of `_dtz_of_played_move` are applied from the python-chess
   board on top of Fathom's numbers: a mating move is distance 1; a move into
@@ -245,6 +246,48 @@ DTZ of every legal root move and then reproduces
   (shortest win / longest loss, then move order), not Fathom's;
 - the reported WDL is `try_tb_root_move`'s (`_wdl_adjusted_for_rule50`).
 
+Two differences from `try_tb_root_move`, both "python-chess answered, the
+engine now searches"; neither changes a move that is answered:
+
+1. More men than the loaded tables: python-chess sometimes resolved such a
+   root through a capture into the tables, the C prober never answers above
+   `largest()`. Example: `8/8/8/2br4/3P2k1/4B3/2p5/4K3 w - - 95 40` (7 men)
+   with 6-man tables.
+2. WDL table present, DTZ table absent: python-chess could still rank the
+   root when every child resolved by zeroing moves; `probe_root` needs the
+   DTZ table. Example: `7n/8/4k3/8/6P1/5p1K/1p6/8 w - - 5 40` with only the
+   first directory of the production pair. The engine warns at load when WDL
+   tables lack DTZ.
+
+### Eager validation at load
+
+Fathom initialises a table on the first probe of its material. A corrupt
+file therefore used to fail on move 60 instead of at `setoption`; one random
+tail overwrite of `KQvKR.rtbw` made `setup_pairs` malloc a garbage size and
+write through NULL (SIGSEGV, forfeit). Now:
+
+- `tb_root.load` initialises EVERY registered table's WDL and DTZ file
+  (`_tb_ext.validate_table`, the same `init_table` the first probe would run).
+  Cost on the production pair (510 WDL + 510 DTZ): 0.16 s with the files in
+  page cache, 0.01 s for `init` itself; it reads only each file's header and
+  symbol table. A failure refuses the path, naming the file.
+- A small marked local patch to the vendored `tbprobe.c` (see
+  `fathom/VENDORED.md`, "Local patch") makes `init_table` fail cleanly
+  instead of crashing for the header-level corruptions: allocation failure,
+  an implausible header, a symbol table that indexes past itself or loops,
+  and index/size/data sections that do not fit in the file. A local fuzz
+  (300 corrupted copies of smoke-set tables: random tails, header bytes,
+  scattered bytes) crashed validation 0 times (237 refused, 63 accepted:
+  those corruptions sit in compressed data, which no header check sees).
+- Table files present in the directories that Fathom did not register (it
+  drops a file whose size is not 16 mod 64 with only an `info string
+  Incomplete tablebase file` on stdout) also refuse the path, named.
+- **What is still possible:** a file whose corruption is in its compressed
+  data passes validation and can still crash or mis-answer at probe time.
+  Stockfish and every other Fathom user share this. Verify the set against
+  published checksums; `deepfin --selfcheck --syzygy` runs the full
+  validation in a child process.
+
 `try_tb_root_move` itself no longer has a production caller; it is the
 reference `tests/test_uci_tb_root_c.py` compares against: per-move DTZ, chosen
 move and WDL, both `Syzygy50MoveRule` settings, over ~1,700 roots on the
@@ -253,14 +296,20 @@ stalemates in one, threefold-repetition children, both colours to move). The
 test SKIPs without tables.
 
 Engine wiring (`Engine._install_tablebase`): `SyzygyPath` loads the C table set
-first. A refusal (a component that is not a readable directory, or no table at
-all) frees the C tables, clears BOTH the root shortcut and the python-chess leaf
-probe, and prints `info string error: SyzygyPath ... REFUSED by the C tablebase
-prober (...)`. A good path prints `info string Syzygy root prober: C Fathom ...`
+first, validating every table (below). A refusal (a component that is not a
+readable directory, no table at all, a corrupt table, or a table file Fathom
+did not load) frees the C tables, clears BOTH the root shortcut and the
+python-chess leaf probe, and prints `info string error: SyzygyPath ... REFUSED
+by the C tablebase prober (...)`, repeated before every `readyok` while that
+path stays configured. A good path prints `info string Syzygy root prober: C Fathom ...`
 with the table counts, and a warning when some WDL tables have no DTZ (the
 split production pair given by halves). `Syzygy50MoveRule` rebuilds the handle
-on the same tables; a new `SyzygyPath` re-initialises them, and a handle built
-for an earlier table set refuses to probe. `Engine.close()` frees the tables.
+on the same tables; a new `SyzygyPath` re-initialises them. A handle built for
+an earlier table set (another engine in the same process re-loaded it) is
+never probed: the search drops the shortcut with one `info string root
+tablebase shortcut disabled ...` and searches the root normally.
+`Engine.close()` and clearing `SyzygyPath` free the C tables only while they
+are still the set this engine loaded.
 `go searchmoves` skips the shortcut, as before. An input the C prober refuses
 (`ValueError`) is "no TB answer" and the search plays.
 

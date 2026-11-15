@@ -728,9 +728,47 @@ def _probe_wdl_raw(syzygy_path: str, fen: str) -> int:
     return py
 
 
+SYZYGY_VALIDATE_TIMEOUT_S = 600.0
+
+
+def validate_tables_subprocess(
+    path: str, timeout_s: float = SYZYGY_VALIDATE_TIMEOUT_S, *,
+    command: Sequence[str] | None = None,
+) -> str:
+    """Initialise every table of ``path`` in a CHILD process, as the engine
+    does at ``setoption name SyzygyPath``. A corrupt table that would crash
+    the engine then crashes the child, and the check names the last table it
+    attempted instead of taking the self-check down."""
+    from chess_anti_engine.uci import tb_root
+
+    proc = subprocess.run(
+        [*(command or (sys.executable, "-m", "chess_anti_engine.uci.tb_root")), path],
+        capture_output=True, text=True, timeout=timeout_s, check=False,
+    )
+    lines = proc.stdout.splitlines()
+    ok = [ln for ln in lines if ln.startswith(tb_root.VALIDATE_OK)]
+    failed = [ln for ln in lines if ln.startswith(tb_root.VALIDATE_FAIL)]
+    started = [ln for ln in lines if ln.startswith(tb_root.VALIDATE_START)]
+    if proc.returncode == 0 and ok:
+        return ok[-1].removeprefix(tb_root.VALIDATE_OK)
+    if failed:
+        raise CheckFailed("table validation: " + failed[-1].removeprefix(tb_root.VALIDATE_FAIL))
+    last = started[-1].removeprefix(tb_root.VALIDATE_START) if started else "(none started)"
+    tail = _one_line(proc.stderr.strip().splitlines()[-1]) if proc.stderr.strip() else ""
+    raise CheckFailed(
+        f"table validation crashed (exit {proc.returncode}) while initialising table {last}: "
+        f"that file is corrupt; replace it (verify the set against published checksums)"
+        + (f"; stderr: {tail}" if tail else "")
+    )
+
+
 def check_syzygy(
     path: str | None, *, probe: Callable[[str, str], int] = _probe_wdl_raw,
+    validate: Callable[[str], str] | None = None,
 ) -> str:
+    """``validate`` defaults to :func:`validate_tables_subprocess` whenever
+    ``probe`` is the real prober (tests that inject a fake ``probe`` probe
+    stand-in files no real prober could load)."""
     if not path:
         raise CheckSkipped("no --syzygy path given")
     dirs = [d.strip() for d in path.split(os.pathsep) if d.strip()]
@@ -740,6 +778,9 @@ def check_syzygy(
     tables = {f.name for d in dirs for f in Path(d).iterdir() if f.suffix == ".rtbw"}
     if not tables:
         raise CheckFailed(f"no .rtbw (WDL) tables under {dirs}")
+    if validate is None and probe is _probe_wdl_raw:
+        validate = validate_tables_subprocess
+    validated = validate(path) if validate is not None else None
 
     def _probe(fen: str, want: int) -> None:
         try:
@@ -763,6 +804,8 @@ def check_syzygy(
             skipped.append(f"{men}-man ({table}.rtbw not in the path)")
     detail = (f"{len(dirs)} director{'y' if len(dirs) == 1 else 'ies'}, {len(tables)} WDL tables; "
               f"probe correctly: {', '.join(probed)}")
+    if validated is not None:
+        detail += f"; every table initialised in a child process ({validated})"
     if skipped:
         detail += f"; not probed: {', '.join(skipped)}"
     if probe is _probe_wdl_raw:

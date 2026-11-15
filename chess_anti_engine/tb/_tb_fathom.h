@@ -50,6 +50,16 @@ unsigned df_tb_largest(void);
  * DTZ table in some directory of the path (Fathom's numWdl / numDtz), and the
  * largest man count among the WDL tables that do. */
 void df_tb_counts(unsigned *n_wdl, unsigned *n_dtz, unsigned *largest_dtz);
+/* Tables registered by the last init (DEEPFIN-LOCAL registry in tbprobe.c). */
+int df_tb_num_tables(void);
+/* Name (e.g. "KQvKR") of table i, and whether it has a DTZ file. NULL if out
+ * of range. */
+const char *df_tb_table_name(int i, int *has_dtz);
+/* Initialise table i's WDL and (if present) DTZ file now, as the first probe of
+ * that material would. Returns DF_TB_OK, or DF_TB_UNAVAILABLE with *failed_dtz
+ * saying which file failed (the table is then marked unusable, exactly as a
+ * failed lazy init marks it). Caller holds the shared tables lock. */
+int df_tb_validate_table(int i, int *failed_dtz);
 /* Release every mapping. Caller must hold exclusive access. */
 void df_tb_free(void);
 

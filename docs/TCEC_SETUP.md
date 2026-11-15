@@ -295,12 +295,29 @@ any listed directory the engine adds `info string warning: ... WDL tables have n
 DTZ table in SyzygyPath ...`: those materials are searched instead of answered
 from the root.
 
-Every component must be a readable directory and the path must load at least one
-table. Otherwise the engine prints
+Loading a path initialises every table file in it (about 0.2 s for the
+production 6-man pair with the files cached). Every component must be a
+readable directory, the path must load at least one table, every table must
+parse, and every `.rtbw` / `.rtbz` file in the directories must be one the
+prober loaded (a file whose size is wrong is dropped by the prober and
+refused here, named). Otherwise the engine prints
 `info string error: SyzygyPath ... REFUSED by the C tablebase prober ...; tablebase probing disabled`
 (naming the path and the reason)
 and plays on WITHOUT tablebases (leaves and root alike) until a good
-`SyzygyPath` is set. A missing directory in the list is refused, not skipped.
+`SyzygyPath` is set; the same line is repeated before every `readyok` while the
+refused path stays configured. A missing directory in the list is refused, not
+skipped.
+
+**Before an event, check the files.** Verify the Syzygy set against the
+published checksums of its download source, then run
+`deepfin --selfcheck --syzygy /tb/first:/tb/second`: its `syzygy` component
+initialises every table in a child process and FAILs naming a corrupt or
+dropped file (or, if the child crashes, the table it was initialising). The
+validation checks each file's header and layout only. **A file whose
+corruption lies inside its compressed data passes validation and can still
+crash the engine when that material is probed**; Stockfish and every other
+engine built on the same Fathom/Syzygy code share this, which is why the
+checksum step matters.
 `setoption name SyzygyPath value <empty>` turns tablebases off:
 `info string SyzygyPath cleared; tablebase probing disabled`. Changing
 `SyzygyPath` mid-session reloads both probers for the next search.

@@ -82,6 +82,8 @@ class _FakeCExt:
         self.largest = largest
         self.inits: list[str] = []
         self.root_calls: list[str] = []
+        self.validated: list[int] = []
+        self.corrupt: dict[int, str] = {}
         self._path: str | None = None
 
     def init(self, path: str) -> int:
@@ -102,6 +104,13 @@ class _FakeCExt:
 
     def table_counts(self) -> tuple[int, int, int]:
         return (2, 2, self.largest) if self._path else (0, 0, 0)
+
+    def table_names(self) -> list[tuple[str, bool]]:
+        return [("KQvK", True), ("KRvK", True)] if self._path else []
+
+    def validate_table(self, i: int) -> str | None:
+        self.validated.append(i)
+        return self.corrupt.get(i)
 
     def probe_root_fen(self, fen: str, has_repeated: bool = False, use_rule50: bool = True):
         # tb_root reads only the per-move DTZ, which neither flag changes; it
@@ -771,3 +780,250 @@ def test_startup_gate_requires_the_c_tablebase_prober(monkeypatch) -> None:
     problems = sc.extension_problems()
     assert any(p.startswith(f"{sc.TB_EXT} lacks table_counts") for p in problems), problems
     assert sc.TB_EXT in sc.UCI_EXTENSIONS
+
+
+# ------------------------------------------- review follow-ups (table-free)
+
+
+def test_load_validates_every_table_and_refuses_a_corrupt_one(fake_c) -> None:
+    tables = tb_root.load("stub-good")
+    assert fake_c.validated == [0, 1]
+    assert tables.n_wdl == 2
+    fake_c.corrupt = {1: "KRvK.rtbz"}
+    with pytest.raises(tb_root.RootTablebaseError, match=r"corrupt .*KRvK\.rtbz"):
+        tb_root.load("stub-bad")
+    assert fake_c.path() is None
+    assert tb_root.loaded() is None
+
+
+def test_reported_wdl_at_halfmove_100_after_a_winning_zeroing_move(fake_c) -> None:
+    """Counter 100: every quiet move is a 50-move claim (0); the pawn push
+    zeroes the counter and wins in 1, so the reported WDL is a full win (2),
+    judged at counter 0, not at 100."""
+    board = chess.Board("7k/8/8/8/8/8/P7/KR6 w - - 100 150")
+    fake_c.rows = lambda b: [
+        (m.uci(), 1 if b.piece_type_at(m.from_square) == chess.PAWN else 30, 0, 0)
+        for m in b.legal_moves
+    ]
+    fake_c.largest = 5
+    picked = tb_root.RootTablebase(tb_root.load("stub"), rule50=True).root_move(board)
+    assert picked is not None
+    assert board.piece_type_at(picked[0].from_square) == chess.PAWN
+    assert picked[1] == 2
+
+
+def test_equal_moves_break_ties_by_python_chess_move_order(fake_c) -> None:
+    board = chess.Board(_KRK_FEN)
+    fake_c.rows = lambda b: [(m.uci(), 30, 0, 0) for m in b.legal_moves]
+    picked = tb_root.RootTablebase(tb_root.load("stub"), rule50=True).root_move(board)
+    assert picked is not None
+    assert picked[0] == next(iter(board.legal_moves))
+    assert picked[0] != list(board.legal_moves)[-1]
+
+
+def test_a_threefold_child_is_a_draw_whatever_the_table_says(fake_c) -> None:
+    """After two a1a2/h8g8/a2a1/g8h8 cycles, a1a2 repeats a position for the
+    third time: distance 0, so a longer real win beats the table's win in 3."""
+    board = chess.Board(_KRK_FEN)
+    for uci in ("a1a2", "h8g8", "a2a1", "g8h8") * 2:
+        board.push_uci(uci)
+    fake_c.rows = lambda b: [(m.uci(), 3 if m.uci() == "a1a2" else 30, 0, 0) for m in b.legal_moves]
+    handle = tb_root.RootTablebase(tb_root.load("stub"), rule50=True)
+    dtz = {m.uci(): d for m, d in handle.move_dtz(board) or []}
+    assert dtz["a1a2"] == 0
+    picked = handle.root_move(board)
+    assert picked is not None
+    assert picked[0].uci() != "a1a2"
+    assert picked[1] == 2
+
+
+def test_stale_handle_falls_through_to_search_and_close_keeps_the_other_engines_tables(
+    out, fake_c, py_table,
+) -> None:
+    """Two engines in one process share Fathom's single table set."""
+    first, first_worker = _engine()
+    second, second_worker = _engine()
+    try:
+        first.dispatch(CmdSetOption(name="SyzygyPath", value="stub-a"))
+        second.dispatch(CmdSetOption(name="SyzygyPath", value="stub-b"))  # re-init
+        first.dispatch(parse_command(f"position fen {_KRK_FEN}"))
+        _go(first, "go nodes 64")
+        notes = [ln for ln in out.lines if "root tablebase shortcut disabled" in ln]
+        assert len(notes) == 1, out.lines
+        assert first_worker._tb_root is None
+        assert out.bestmoves(), out.lines
+        assert fake_c.root_calls == []  # the stale handle never reached C
+        assert "bestmove_fallback_used" not in out.text()
+        assert py_table.calls == [] or all(c.startswith("wdl ") for c in py_table.calls)
+        first.close()
+        loaded = tb_root.loaded()
+        assert loaded is not None
+        assert loaded.configured == "stub-b"
+        assert fake_c.path() is not None
+        assert second_worker._tb_root is not None
+        second.dispatch(parse_command(f"position fen {_KRK_FEN}"))
+        _go(second, "go nodes 64")
+        assert out.bestmoves()[-1] == _C_BEST
+    finally:
+        first.close()
+        second.close()
+    assert fake_c.path() is None
+
+
+def test_a_refused_path_is_repeated_on_every_isready(out, tmp_path: Path) -> None:
+    engine, _ = _engine()
+    try:
+        engine.dispatch(CmdSetOption(name="SyzygyPath", value=str(tmp_path)))
+        for _ in range(2):
+            out.lines.clear()
+            engine.dispatch(parse_command("isready"))
+            lines = list(out.lines)
+            assert lines[-1] == "readyok", lines
+            assert any("REFUSED by the C tablebase prober" in ln for ln in lines[:-1]), lines
+        engine.dispatch(CmdSetOption(name="SyzygyPath", value="<empty>"))
+        out.lines.clear()
+        engine.dispatch(parse_command("isready"))
+        assert not any("REFUSED" in ln for ln in out.lines), out.lines
+    finally:
+        engine.close()
+
+
+def test_selfcheck_names_the_table_a_crashing_validation_child_was_on(tmp_path: Path) -> None:
+    from chess_anti_engine.uci import selfcheck as sc
+
+    crash = (
+        "import os, signal, sys\n"
+        f"print({tb_root.VALIDATE_START!r} + 'KQvK', flush=True)\n"
+        f"print({tb_root.VALIDATE_START!r} + 'KQvKR', flush=True)\n"
+        "os.kill(os.getpid(), signal.SIGSEGV)\n"
+    )
+    with pytest.raises(sc.CheckFailed, match=r"crashed \(exit -11\) while initialising table KQvKR"):
+        sc.validate_tables_subprocess(str(tmp_path), command=[sys.executable, "-c", crash])
+
+
+# --------------------------------------- review follow-ups (smoke tables)
+
+
+def _smoke_set() -> Path | None:
+    for root in syzygy_roots():
+        smoke = root / "data" / "syzygy_3-4man"
+        if not missing_tablebase_dirs(str(smoke)):
+            return smoke
+    return None
+
+
+_SMOKE = _smoke_set()
+needs_smoke = pytest.mark.skipif(
+    _SMOKE is None,
+    reason="3-4 man smoke Syzygy set (data/syzygy_3-4man) not present (CI ships none): "
+           "the corrupt-table refusal tests are NOT run",
+)
+_CORRUPT_STEMS = ("KQvK", "KRvK", "KQvKR", "KBvK", "KNvK")
+_KQKR_FEN = "8/8/2k5/8/8/3K4/1Q6/7r b - - 0 1"
+
+
+def _corrupt_set(directory: Path, *, mode: str) -> str:
+    """Five smoke tables copied; KQvKR corrupted (random tail) or truncated."""
+    assert _SMOKE is not None
+    directory.mkdir()
+    for stem in _CORRUPT_STEMS:
+        for ext in (".rtbw", ".rtbz"):
+            (directory / f"{stem}{ext}").write_bytes((_SMOKE / f"{stem}{ext}").read_bytes())
+    rng = random.Random(20261115)
+    for ext in (".rtbw", ".rtbz"):
+        f = directory / f"KQvKR{ext}"
+        data = bytearray(f.read_bytes())
+        if mode == "random":
+            data[16:] = bytes(rng.randrange(256) for _ in range(len(data) - 16))
+        else:
+            data = data[:-7]  # size no longer 16 mod 64: Fathom drops it
+        f.write_bytes(bytes(data))
+    return str(directory)
+
+
+_CHILD = textwrap.dedent("""
+    import sys
+    import chess
+    from chess_anti_engine.uci import tb_root
+    try:
+        tables = tb_root.load(sys.argv[1])
+    except tb_root.RootTablebaseError as exc:
+        print("REFUSED", exc, flush=True)
+        sys.exit(0)
+    # Only reached if validation missed it: probe the corrupt material.
+    print("LOADED", flush=True)
+    print(tb_root.RootTablebase(tables, rule50=True).root_move(chess.Board(sys.argv[2])), flush=True)
+""")
+
+
+@needs_smoke
+@pytest.mark.parametrize(("mode", "named", "why"), [
+    ("random", "KQvKR.rtbw", "corrupt"),
+    ("truncated", "KQvKR.rtbw", "were not loaded"),
+])
+def test_a_corrupt_table_is_refused_at_load_before_any_probe(
+    tmp_path: Path, mode: str, named: str, why: str,
+) -> None:
+    path = _corrupt_set(tmp_path / "tb", mode=mode)
+    proc = subprocess.run(
+        [sys.executable, "-c", _CHILD, path, _KQKR_FEN], capture_output=True, text=True,
+        timeout=120, env=dict(os.environ, CUDA_VISIBLE_DEVICES="", PYTHONPATH=str(REPO_ROOT)),
+        check=False,
+    )
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr[-2000:])
+    verdict = [ln for ln in proc.stdout.splitlines() if not ln.startswith("info string ")]
+    assert verdict, proc.stdout
+    assert verdict[0].startswith("REFUSED"), proc.stdout
+    assert named in verdict[0]
+    assert why in verdict[0]
+
+
+@needs_smoke
+def test_selfcheck_fails_naming_the_corrupt_table(tmp_path: Path) -> None:
+    from chess_anti_engine.uci import selfcheck as sc
+
+    path = _corrupt_set(tmp_path / "tb", mode="random")
+    with pytest.raises(sc.CheckFailed, match=r"KQvKR\.rtbw"):
+        sc.check_syzygy(path)
+
+
+def _spawn_engine(tmp_path: Path) -> subprocess.Popen[str]:
+    from chess_anti_engine.uci.selfcheck import _write_tiny_checkpoint
+
+    ckpt = _write_tiny_checkpoint(tmp_path)
+    env = dict(os.environ, CUDA_VISIBLE_DEVICES="", PYTHONPATH=str(REPO_ROOT))
+    cmd = [sys.executable, "-u", "-m", "chess_anti_engine.uci", "--checkpoint", str(ckpt),
+           "--no-compile", "--device", "cpu", "--compile-cache-dir", str(tmp_path / "cache")]
+    return subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
+
+
+@needs_smoke
+def test_engine_refuses_a_corrupt_set_before_readyok_and_keeps_playing(tmp_path: Path) -> None:
+    """The real entry point: the refusal is printed before `readyok` (twice:
+    at setoption and at isready), and the corrupt material is then SEARCHED,
+    never probed, so the engine answers and exits 0."""
+    path = _corrupt_set(tmp_path / "tb", mode="random")
+    proc = _spawn_engine(tmp_path)
+    lines: list[str] = []
+    try:
+        assert proc.stdin is not None
+        proc.stdin.write("uci\n")
+        proc.stdin.flush()
+        _read_until(proc, lines, "uciok", 180)
+        proc.stdin.write(f"setoption name SyzygyPath value {path}\nisready\n")
+        proc.stdin.flush()
+        _read_until(proc, lines, "readyok", 180)
+        refused = [ln for ln in lines if "REFUSED by the C tablebase prober" in ln]
+        assert len(refused) == 2, lines[-20:]
+        assert "KQvKR.rtbw" in refused[0]
+        proc.stdin.write(f"position fen {_KQKR_FEN}\ngo nodes 32\n")
+        proc.stdin.flush()
+        _read_until(proc, lines, "bestmove", 180)
+        proc.stdin.write("quit\n")
+        proc.stdin.flush()
+        assert proc.wait(timeout=60) == 0, lines[-20:]
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)

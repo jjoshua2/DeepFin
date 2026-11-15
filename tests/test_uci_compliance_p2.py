@@ -1466,6 +1466,12 @@ class _CursedCExt:
     def table_counts(self) -> tuple[int, int, int]:
         return (1, 1, 3) if self._path else (0, 0, 0)
 
+    def table_names(self) -> list[tuple[str, bool]]:
+        return [("KRvK", True)] if self._path else []
+
+    def validate_table(self, _i: int) -> str | None:
+        return None
+
     def probe_root_fen(self, fen: str, has_repeated: bool = False, use_rule50: bool = True):
         assert has_repeated is False  # tb_root applies the repo's own claim rules
         assert use_rule50 is True
