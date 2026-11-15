@@ -115,11 +115,85 @@ static int df_gate(const DfTbPos *in, Pos *pos) {
 }
 
 int df_tb_init(const char *path) {
-    return tb_init(path) ? 0 : -1;
+    int rc = tb_init(path) ? 0 : -1;
+    /* Fathom printf()s "info string Incomplete tablebase file ..." for a
+     * dropped table; flush it now so it lands next to the load lines. */
+    fflush(stdout);
+    return rc;
+}
+
+int df_tb_num_tables(void) {
+    return dfNumTables;
+}
+
+const char *df_tb_table_name(int i, int *has_dtz) {
+    if (i < 0 || i >= dfNumTables) return NULL;
+    *has_dtz = dfTables[i].be->hasDtz ? 1 : 0;
+    return dfTables[i].name;
+}
+
+static void df_mark_error(struct BaseEntry *be) {
+    for (int h = 0; h < (1 << TB_HASHBITS); h++)
+        if (tbHash[h].ptr == be)
+            atomic_store_explicit(&tbHash[h].error, true, memory_order_relaxed);
+}
+
+static int df_has_error(struct BaseEntry *be) {
+    for (int h = 0; h < (1 << TB_HASHBITS); h++)
+        if (tbHash[h].ptr == be && atomic_load_explicit(&tbHash[h].error, memory_order_relaxed))
+            return 1;
+    return 0;
+}
+
+int df_tb_validate_table(int i, int *failed_dtz) {
+    *failed_dtz = 0;
+    if (i < 0 || i >= dfNumTables) return DF_TB_UNAVAILABLE;
+    struct BaseEntry *be = dfTables[i].be;
+    for (int type = WDL; type <= DTZ; type += DTZ - WDL) {
+        if (type == DTZ && !be->hasDtz) break;
+        int ok = 1;
+        LOCK(tbMutex);
+        if (df_has_error(be)) {
+            ok = 0;
+        } else if (!atomic_load_explicit(&be->ready[type], memory_order_relaxed)) {
+            if (init_table(be, dfTables[i].name, type))
+                atomic_store_explicit(&be->ready[type], true, memory_order_release);
+            else {
+                df_mark_error(be);
+                ok = 0;
+            }
+        }
+        UNLOCK(tbMutex);
+        if (!ok) {
+            *failed_dtz = type == DTZ;
+            return DF_TB_UNAVAILABLE;
+        }
+    }
+    return DF_TB_OK;
 }
 
 unsigned df_tb_largest(void) {
     return TB_LARGEST;
+}
+
+void df_tb_counts(unsigned *n_wdl, unsigned *n_dtz, unsigned *largest_dtz) {
+    unsigned top = 0;
+    /* After a clearing init (tb_init("") / tb_free) Fathom zeroes numWdl but
+     * leaves tbNumPiece/tbNumPawn stale, and tb_free NULLs the entry arrays:
+     * only walk them while a table set is loaded. */
+    if (numWdl == 0 || pieceEntry == NULL || pawnEntry == NULL) {
+        *n_wdl = 0;
+        *n_dtz = 0;
+        *largest_dtz = 0;
+        return;
+    }
+    for (int i = 0; i < tbNumPiece; i++)
+        if (pieceEntry[i].be.hasDtz && pieceEntry[i].be.num > top) top = pieceEntry[i].be.num;
+    for (int i = 0; i < tbNumPawn; i++)
+        if (pawnEntry[i].be.hasDtz && pawnEntry[i].be.num > top) top = pawnEntry[i].be.num;
+    *n_wdl = (unsigned)numWdl;
+    *n_dtz = (unsigned)numDtz;
+    *largest_dtz = top;
 }
 
 void df_tb_free(void) {

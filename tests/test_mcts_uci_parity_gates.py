@@ -38,6 +38,15 @@ class _ZeroEvaluator:
 
 
 @dataclass
+class _FakeTbRoot:
+    """Stands in for ``uci.tb_root.RootTablebase`` (the C root shortcut)."""
+
+    rule50 = True
+
+    def __init__(self, root_move) -> None:
+        self.root_move = root_move
+
+
 class _FakeTbProbe:
     _path: str = "fake-tb"
     cursed_as_draw: bool = True
@@ -353,24 +362,21 @@ def test_gumbel_cross_impl_matches_with_a_non_degenerate_root_prior(
         np.testing.assert_allclose(py_prob, c_prob, atol=0.0)
 
 
-def test_uci_tb_solved_root_shortcuts_without_evaluating(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_uci_tb_solved_root_shortcuts_without_evaluating() -> None:
     board = chess.Board("8/8/8/8/8/8/4k3/R3K3 w - - 0 1")
     best = next(iter(board.legal_moves))
     calls: list[str] = []
 
-    def fake_try_tb_root_move(
-        probe_board: chess.Board, _path: str, *, rule50: bool = True,
-    ) -> tuple[chess.Move, int] | None:
-        assert rule50 is True  # the probe's Syzygy50MoveRule default
+    def fake_root_move(probe_board: chess.Board) -> tuple[chess.Move, int] | None:
         calls.append(probe_board.fen())
         if probe_board.is_game_over():
             return None
         return next(iter(probe_board.legal_moves)), 2
 
-    monkeypatch.setattr(uci_search, "try_tb_root_move", fake_try_tb_root_move)
     evaluator = _ZeroEvaluator()
     worker = SearchWorker(evaluator, device="cpu", chunk_sims=4)
     worker.set_tb_probe(_FakeTbProbe())
+    worker.set_tb_root(_FakeTbRoot(fake_root_move))  # pyright: ignore[reportArgumentType]
 
     result = worker.run(
         board,
@@ -506,21 +512,18 @@ def test_uci_build_engine_threads_policy_encoding_into_gumbel_config() -> None:
     assert engine._worker._cfg.policy_encoding == POLICY_ENCODING_LC0_1858
 
 
-def test_uci_searchmoves_bypass_tb_shortcut_and_filter_bestmove(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_uci_searchmoves_bypass_tb_shortcut_and_filter_bestmove() -> None:
     board = chess.Board()
     allowed_move = chess.Move.from_uci("e2e4")
     assert allowed_move in board.legal_moves
     allowed_idx = int(move_to_index(allowed_move, board))
     tb_calls = 0
 
-    def fake_try_tb_root_move(_board: chess.Board, _path: str) -> tuple[chess.Move, int] | None:
+    def fake_root_move(_board: chess.Board) -> tuple[chess.Move, int] | None:
         nonlocal tb_calls
         tb_calls += 1
         return next(iter(board.legal_moves)), 2
 
-    monkeypatch.setattr(uci_search, "try_tb_root_move", fake_try_tb_root_move)
     evaluator = _ZeroEvaluator()
     worker = SearchWorker(
         evaluator,
@@ -529,6 +532,7 @@ def test_uci_searchmoves_bypass_tb_shortcut_and_filter_bestmove(
         gumbel_cfg=GumbelConfig(simulations=1, topk=8, temperature=0.0, add_noise=False),
     )
     worker.set_tb_probe(_FakeTbProbe())
+    worker.set_tb_root(_FakeTbRoot(fake_root_move))  # pyright: ignore[reportArgumentType]
 
     result = worker.run(
         board,
