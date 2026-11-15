@@ -566,6 +566,8 @@ _FAKE_ENGINE = textwrap.dedent("""
         if cmd == "uci":
             print("id name fake"); print("uciok", flush=True)
         elif cmd == "isready":
+            # What the real compiled engine prints once its bucket warm-up is verified.
+            print("info string warmup verified: fake ran all 1 batch shapes; first-seen-shape guard armed")
             print("readyok", flush=True)
         elif cmd.startswith("go"):
             print("{extra}", flush=True)

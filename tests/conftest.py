@@ -29,6 +29,7 @@ is the only site that does not depend on the next test author remembering.
 """
 from __future__ import annotations
 
+import atexit
 import contextlib
 import importlib.abc
 import importlib.machinery
@@ -613,3 +614,98 @@ def _test_writes_stay_outside_the_checkout(tmp_path_factory: pytest.TempPathFact
         # arena patch assigns a constant.
         with contextlib.suppress(ValueError):
             sys.meta_path.remove(hook)
+
+
+class InProcessHardExit(BaseException):
+    """``os._exit`` was called from the pytest process itself.
+
+    A ``BaseException`` so ``except Exception`` in the code under test cannot
+    swallow it. Raised instead of exiting: a real ``os._exit`` in this process
+    ends the whole run with the status the caller chose -- ``0`` for a clean
+    UCI ``quit`` -- so the run would look green with every later test unrun."""
+
+
+_PYTEST_PID = os.getpid()
+_REAL_OS_EXIT = os._exit
+_INTERCEPTED_HARD_EXITS: list[str] = []
+_SESSION_STATE = {"started": False, "finished": False}
+
+
+def _guarded_os_exit(status: int) -> None:
+    # Forked children (multiprocessing, os.fork in tests) inherit this wrapper
+    # but have their own pid: they get the real exit. Spawned subprocesses are
+    # new interpreters and never see it.
+    if os.getpid() != _PYTEST_PID:
+        _REAL_OS_EXIT(status)
+    where = os.environ.get("PYTEST_CURRENT_TEST", "<outside any test>")
+    _INTERCEPTED_HARD_EXITS.append(f"os._exit({status}) in {where}")
+    raise InProcessHardExit(
+        f"os._exit({status}) called inside the pytest process ({where}); it would "
+        "have ended the run silently. Stub the caller (see _reset_uci_wedge_latch)."
+    )
+
+
+os._exit = _guarded_os_exit
+
+
+def pytest_sessionstart() -> None:
+    _SESSION_STATE["started"] = True
+
+
+def pytest_sessionfinish(session: pytest.Session) -> None:
+    """Fail the run if any test reached ``os._exit`` in-process, even when the
+    code under test caught the ``InProcessHardExit`` it raised."""
+    _SESSION_STATE["finished"] = True
+    if _INTERCEPTED_HARD_EXITS and session.exitstatus == 0:
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+    for line in _INTERCEPTED_HARD_EXITS:
+        sys.stderr.write(f"conftest: intercepted in-process {line}\n")
+
+
+def _check_session_reached_its_end() -> None:
+    # A run that started but is exiting without ``pytest_sessionfinish`` was
+    # ended from inside (an exit path that bypassed pytest): never let it
+    # leave with a status that reads as success.
+    if (_SESSION_STATE["started"] and not _SESSION_STATE["finished"]
+            and os.getpid() == _PYTEST_PID):
+        sys.stderr.write("conftest: the pytest session ended before pytest_sessionfinish; "
+                         "exiting 3\n")
+        sys.stderr.flush()
+        _REAL_OS_EXIT(3)
+
+
+atexit.register(_check_session_reached_its_end)
+
+
+@pytest.fixture(autouse=True)
+def _reset_uci_wedge_latch():
+    """Each test is a fresh engine session for the multi-GPU wedge latch
+    (``chess_anti_engine.uci.wedge``): a device wedged or failed in one test
+    must not be left out of, or make workers park in, the next. Imports no torch.
+
+    In-process ``uci.__main__.main()`` calls: after a device fault the real
+    ``quit`` leaves with ``os._exit`` (no interpreter teardown), which would end
+    the pytest process. While the module is loaded, ``_hard_exit`` becomes a
+    recorder that returns, so ``main()`` falls through to its ordinary close
+    and returns its status. The real exit is covered by the subprocess tests
+    (``tests/test_uci_degrade_gaps_subprocess.py``). A module imported only
+    inside a test escapes this stub; the module-level ``os._exit`` guard above
+    then raises ``InProcessHardExit`` and fails the run instead of ending it."""
+    import sys
+
+    from chess_anti_engine.uci import wedge
+
+    # Patched by hand, not via ``monkeypatch``: an autouse fixture requesting
+    # ``monkeypatch`` reorders its teardown against other fixtures (it undid a
+    # test's ``signal.signal`` patch only after that test's handler restore).
+    uci_main = sys.modules.get("chess_anti_engine.uci.__main__")
+    real_hard_exit = getattr(uci_main, "_hard_exit", None) if uci_main is not None else None
+    if real_hard_exit is not None:
+        setattr(uci_main, "_hard_exit", lambda rc: None)
+    wedge.reset_session_for_tests()
+    try:
+        yield
+    finally:
+        wedge.reset_session_for_tests()
+        if real_hard_exit is not None:
+            setattr(uci_main, "_hard_exit", real_hard_exit)

@@ -34,6 +34,7 @@ from chess_anti_engine.uci.multi_gpu_pucv_pool import (
     MultiGpuPucvConfig,
     MultiGpuPucvPool,
 )
+from chess_anti_engine.uci import wedge
 from chess_anti_engine.uci.protocol import parse_command
 from chess_anti_engine.uci.search import SearchWorker
 from chess_anti_engine.uci.selfcheck import UCI_FAILURE_MARKERS, _failure_lines
@@ -386,8 +387,7 @@ def test_failure_drain_is_watchdog_visible_and_never_restorable(monkeypatch, rou
         cache_before = pool._cache.stats()
         bad.event.release.set()
         if fails:
-            pool._threads[0].join(timeout=5)
-            assert not pool._threads[0].is_alive()
+            assert _wait_for(lambda: _ended_or_parked(pool._threads[0]), timeout=5)
             assert not pool._late_ok[0]
             assert not pool._restorable[0]
             assert pool.restore_recovered_devices() == ()
@@ -801,6 +801,12 @@ def _run(pool: MultiGpuPucvPool, sims: int) -> tuple[int, MCTSTree]:
     return done, tree
 
 
+def _ended_or_parked(thread: threading.Thread) -> bool:
+    """A worker that would have ended: after a device fault this session the
+    ``wedge`` latch parks it (alive, blocked) instead of letting it exit."""
+    return not thread.is_alive() or thread in wedge.parked_threads()
+
+
 def _wait_for(predicate, timeout: float = 10.0) -> bool:
     end = time.monotonic() + timeout
     while time.monotonic() < end:
@@ -1052,7 +1058,7 @@ def test_a_late_clean_answer_with_an_undrainable_receipt_is_not_restored(monkeyp
         assert dev.calls >= 3  # the undrainable submission really was in flight
         assert pool.failed_devices() == ("cpu:1",)
         dev.release.set()
-        assert _wait_for(lambda: not pool._threads[1].is_alive(), timeout=5.0)
+        assert _wait_for(lambda: _ended_or_parked(pool._threads[1]), timeout=5.0)
         assert not pool._restorable[1]
         assert pool.restore_recovered_devices() == ()
         assert pool.failed_devices() == ("cpu:1",)
@@ -1152,7 +1158,7 @@ def test_a_stalled_call_that_then_raises_is_not_restorable(monkeypatch) -> None:
         _run(pool, 300)
         assert pool.failed_devices() == ("cpu:1",)
         bad.release.set()  # the stuck call now RAISES
-        assert _wait_for(lambda: not pool._threads[1].is_alive(), timeout=5.0)
+        assert _wait_for(lambda: _ended_or_parked(pool._threads[1]), timeout=5.0)
         assert not pool._restorable[1]
         assert pool.restore_recovered_devices() == ()
         assert pool.failed_devices() == ("cpu:1",)
@@ -1235,9 +1241,9 @@ def test_a_progressing_worker_keeps_the_mid_search_patience_for_a_stuck_one() ->
 
 
 def test_close_joins_an_abandoned_worker_whose_call_returns_shortly() -> None:
-    """A worker abandoned inside a call that returns ~0.5 s later is joined by
-    close() (bounded), so no pool thread is still inside the evaluator when the
-    interpreter finalizes; only a genuinely wedged one would be left alive."""
+    """A worker abandoned inside a call that returns ~0.5 s later is not left
+    inside the evaluator after close(): it ends, or (after the device fault,
+    see ``uci.wedge``) parks outside the call."""
     slow = _OnceSlow(_evaluator(), k=1, delay=1.5)
     pool = MultiGpuPucvPool(
         MultiGpuPucvConfig(n_gpus=2, gather=8, device_labels=("g0", "g1")),
@@ -1248,4 +1254,4 @@ def test_close_joins_an_abandoned_worker_whose_call_returns_shortly() -> None:
         assert pool.failed_devices() == ("g1",)
     finally:
         pool.close()
-    assert pool.live_worker_threads() == []
+    assert _wait_for(lambda: all(_ended_or_parked(th) for th in pool.live_worker_threads()))

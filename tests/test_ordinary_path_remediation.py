@@ -428,6 +428,10 @@ def test_successful_rpg_startup_transfers_close_ownership_before_worker_resumes(
     paused = [threading.Event(), threading.Event()]
     release = threading.Event()
     held_threads = []
+    # Failures inside the group threads: an ``assert`` there only raises in
+    # that thread (a pytest warning, not a failure), so they are collected
+    # and asserted on the test's own thread.
+    thread_failures: list[str] = []
     real_wait = threading.Barrier.wait
     real_join = threading.Thread.join
     worker = SearchWorker(primary, device="cpu", n_walkers=1, chunk_sims=8)
@@ -440,7 +444,9 @@ def test_successful_rpg_startup_transfers_close_ownership_before_worker_resumes(
         if isinstance(owner, RootParallelGumbelPool) and barrier is owner._init_done:
             held_threads.append(thread)
             paused[int(thread.name.rsplit("-", 1)[1])].set()
-            assert release.wait(3), "caller did not reach pool join after ownership transfer"
+            if not release.wait(3):
+                thread_failures.append(
+                    f"{thread.name}: caller did not reach pool join after ownership transfer")
         return result
 
     def join(thread, *args, **kwargs):
@@ -479,6 +485,7 @@ def test_successful_rpg_startup_transfers_close_ownership_before_worker_resumes(
             pool.close()
         for thread in held_threads:
             real_join(thread, timeout=3)
+    assert thread_failures == []
 
 
 class _TinyModel(torch.nn.Module):

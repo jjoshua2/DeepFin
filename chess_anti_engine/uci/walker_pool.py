@@ -42,6 +42,7 @@ from chess_anti_engine.mcts._mcts_tree import MCTSTree
 from chess_anti_engine.mcts.puct_history import puct_history_args
 from chess_anti_engine.mcts.vloss import release_paths
 from chess_anti_engine.tablebase import SyzygyProbe
+from chess_anti_engine.uci import wedge
 
 _log = logging.getLogger(__name__)
 
@@ -127,7 +128,9 @@ class WalkerPool:
 
         self._threads = [
             threading.Thread(
-                target=self._worker_loop,
+                # Persistent and runs evaluator work: after a device fault it
+                # parks instead of ending (``uci.wedge``).
+                target=wedge.parking(self._worker_loop),
                 args=(i,),
                 name=f"walker-{i}",
                 daemon=True,
@@ -172,7 +175,7 @@ class WalkerPool:
   # Walkers won't hit the barrier in shutdown mode, so don't wait on it.
         for th in self._started_threads:
   # daemon=True; bounded join just ensures clean teardown for tests.
-            th.join(timeout=2.0)
+            wedge.join_unless_wedged(th, 2.0)  # ended, or parked after a device fault
 
     def run(
         self,

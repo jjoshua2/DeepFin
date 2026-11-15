@@ -16,6 +16,7 @@ from chess_anti_engine.inference import DirectGPUEvaluator
 from chess_anti_engine.inference_dispatcher import CUDAOwnerDispatcher, ThreadSafeGPUDispatcher
 from chess_anti_engine.mcts import gumbel_c, puct_vl
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
+from chess_anti_engine.uci import wedge
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.uci import __main__ as main
 from chess_anti_engine.uci import root_parallel_gumbel as rpg
@@ -60,8 +61,18 @@ def cleanup(owners):
             owner.close()
 
 
+def _ended_or_parked(thread):
+    """After a device fault (any failure bringing a device up counts) the UCI
+    ``wedge`` latch parks evaluator threads instead of letting them end.
+    Without a fault, parked is not acceptable: the thread must have ended."""
+    if wedge.device_fault() is None:
+        return not thread.is_alive()
+    return not thread.is_alive() or thread in wedge.parked_threads()
+
+
 def assert_pool_threads_retired():
-    assert not any(t.name.startswith(("rpg-group-", "walker-")) for t in threading.enumerate())
+    assert all(_ended_or_parked(t) for t in threading.enumerate()
+               if t.name.startswith(("rpg-group-", "walker-")))
 
 
 @pytest.mark.parametrize("stage", ["buffers", "factory", "validation", "interrupt"])
@@ -101,7 +112,7 @@ def test_public_builder_retires_every_startup_owned_helper(monkeypatch, stage, f
             assert caught.value.__cause__ is cause
         assert primary.close_calls == 0  # Public builder retains caller's primary.
         assert created
-        assert all(owner.close_calls == 1 and not owner._owner.is_alive() for owner in created)
+        assert all(owner.close_calls == 1 and _ended_or_parked(owner._owner) for owner in created)
         assert all(owner.closed_on[0].startswith("rpg-group-") for owner in created)
         assert not worker_errors
         assert_pool_threads_retired()
@@ -127,9 +138,10 @@ def test_successful_public_builder_transfers_helpers_for_single_close():
         engine = build(primary, factory)
         assert all(owner.close_calls == 0 and owner._owner.is_alive() for owner in created)
         engine.close()
+        assert wedge.device_fault() is None  # the no-fault path: threads must END
         assert primary.close_calls == 1
         assert not primary._owner.is_alive()
-        assert all(owner.close_calls == 1 and not owner._owner.is_alive() for owner in created)
+        assert all(owner.close_calls == 1 and _ended_or_parked(owner._owner) for owner in created)
         assert_pool_threads_retired()
     finally:
         cleanup([primary, *created])
@@ -160,6 +172,7 @@ def test_borrowed_helpers_remain_caller_owned(monkeypatch, fault):
             pool.run(target_sims=4, stop_event=threading.Event())
             assert sum(pool.last_stats().group_sims) == 4
             pool.close()
+            assert wedge.device_fault() is None
         assert all(owner.close_calls == 0 and owner._owner.is_alive() for owner in owners)
         assert_pool_threads_retired()
     finally:
