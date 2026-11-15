@@ -466,14 +466,14 @@ def backend_profile(torch: Any) -> dict[str, Any]:
 
 
 def load_replay(c: dict[str, Any], generations: list[dict[str, Any]], rng: Any, on_draw: Any,
-                *, _retained_search: RetainedSearchProfile | None = None) -> Any:
+                *, _retained_search: RetainedSearchProfile | None = None, first_generation: int = 1) -> Any:
     import numpy as np
     from chess_anti_engine.model import infer_input_planes
     from chess_anti_engine.replay.generation import GenerationChunk, GenerationReplay
     from chess_anti_engine.replay.shard import load_shard_arrays
     from chess_anti_engine.replay.shard import history_rep_fix_from_arrays
 
-    replay = GenerationReplay(generations=4, rng=rng, on_draw=on_draw)
+    replay = GenerationReplay(generations=4, rng=rng, on_draw=on_draw, first_generation=first_generation)
     byte_counts: list[int] = []
     for gen in generations:
         chunks = []
