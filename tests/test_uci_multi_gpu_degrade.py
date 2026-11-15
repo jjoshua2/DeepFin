@@ -149,9 +149,16 @@ class _OrderedPool(MultiGpuPucvPool):
             self.first_idle.set()
 
 
-@pytest.mark.parametrize("target", [1, 3])
-@pytest.mark.parametrize("fails", [False, True])
-def test_returned_final_tokens_rewake_idle_survivor_with_cumulative_stats(target, fails) -> None:
+@pytest.mark.parametrize("target,fails,finish_before_first_wait", [
+    pytest.param(1, False, False, id="healthy_single_token"),
+    pytest.param(3, False, False, id="healthy_cumulative"),
+    pytest.param(1, True, False, id="returned_single_token"),
+    pytest.param(3, True, False, id="returned_token_cumulative"),
+    pytest.param(1, True, True, id="both_initial_passes_finished_before_first_wait"),
+])
+def test_returned_final_tokens_rewake_idle_survivor_with_cumulative_stats(
+    monkeypatch, target, fails, finish_before_first_wait,
+) -> None:
     """The survivor is demonstrably asleep BEFORE the final token is returned.
 
     target=3 also gives it two completed leaves before re-entry, so resetting
@@ -164,6 +171,22 @@ def test_returned_final_tokens_rewake_idle_survivor_with_cumulative_stats(target
     stop = threading.Event()
     answers: list[int] = []
     errors: list[BaseException] = []
+    coordinator_paused = threading.Event()
+    release_coordinator = threading.Event()
+    if finish_before_first_wait:
+        original_set = pool._wakes[1].set
+        first_wake = [True]
+
+        def wake_then_pause() -> None:
+            original_set()
+            if first_wake[0]:
+                first_wake[0] = False
+                # run() has woken both actual workers but has not entered
+                # its completion condition yet. Let both first passes end.
+                coordinator_paused.set()
+                assert release_coordinator.wait(5)
+
+        monkeypatch.setattr(pool._wakes[1], "set", wake_then_pause)
 
     def search() -> None:
         try:
@@ -175,11 +198,18 @@ def test_returned_final_tokens_rewake_idle_survivor_with_cumulative_stats(target
     thread = threading.Thread(target=search, daemon=True)
     thread.start()
     try:
+        if finish_before_first_wait:
+            assert coordinator_paused.wait(5)
         assert pool.first_idle.wait(5)
         with pool._cv:
             assert pool._cv.wait_for(lambda: 1 not in pool._running, timeout=5)
         assert pool._worker_stats[1].leaves == target - 1
         bad.release.set()
+        if finish_before_first_wait:
+            with pool._cv:
+                assert pool._cv.wait_for(lambda: not pool._running, timeout=5)
+            assert pool.failed_devices() == ("#0",) and not answers
+            release_coordinator.set()
         thread.join(timeout=5)
         assert not thread.is_alive() and not errors
         assert answers == [target] and not stop.is_set()
@@ -203,6 +233,7 @@ def test_returned_final_tokens_rewake_idle_survivor_with_cumulative_stats(target
             assert pool.last_stats().workers[1].leaves == 4 and bad.calls == calls
         _assert_no_vloss(tree)
     finally:
+        release_coordinator.set()
         bad.release.set()
         thread.join(timeout=5)
         pool.close()

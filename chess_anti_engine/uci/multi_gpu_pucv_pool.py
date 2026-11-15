@@ -819,10 +819,12 @@ class MultiGpuPucvPool:
         for k in live:
             self._wakes[k].set()
         with self._cv:
-            while self._running:
+            while True:
+                self._wake_idle_for_budget_locked(job)
+                if not self._running:
+                    break
                 self._cv.wait(timeout=_RUN_POLL_S)
                 self._abandon_stuck_locked(job)
-                self._wake_idle_for_budget_locked(job)
 
         if self._retained_error is not None:
             raise self._retained_error
