@@ -1158,18 +1158,23 @@ def test_the_primary_warm_call_sends_real_root_inputs(relations: bool) -> None:
 
 
 class _RaiseWhenArmed:
-    """Healthy until ``armed`` is set; then every ``evaluate*`` raises."""
+    """Healthy until ``armed`` is set; then, after ``skip`` more calls (the
+    move's root evaluation), every ``evaluate*`` raises -- inside the search
+    chunk, not at the root."""
 
-    def __init__(self, inner: Any) -> None:
+    def __init__(self, inner: Any, skip: int = 1) -> None:
         self._inner = inner
         self.armed = threading.Event()
         self.raised = 0
+        self._skip = skip
 
     def __getattr__(self, name: str) -> Any:
         attr = getattr(self._inner, name)
         if callable(attr) and name.startswith("evaluate"):
             def gated(*a: Any, **k: Any) -> Any:
-                if self.armed.is_set():
+                if self.armed.is_set() and self._skip > 0:
+                    self._skip -= 1
+                elif self.armed.is_set():
                     self.raised += 1
                     raise RuntimeError("CUDA error: device lost (injected, second failure)")
                 return attr(*a, **k)
