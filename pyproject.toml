@@ -47,7 +47,7 @@ exclude = ["runs*", "tests*"]
 # every copy, so it ships in the sdist and the wheel (this is Fathom's licence,
 # not a project licence). tests/test_tb_prober.py checks the egg-info manifest.
 [tool.setuptools.package-data]
-"chess_anti_engine.tb" = ["fathom/LICENSE", "fathom/VENDORED.md", "fathom/README.md"]
+"chess_anti_engine.tb" = ["fathom/LICENSE", "fathom/VENDORED.md", "fathom/README.md", "syzygy_standard_3-4-5-6.md5"]
 
 [project.optional-dependencies]
 # Accelerator selection for the locked development environment (uv sources below).

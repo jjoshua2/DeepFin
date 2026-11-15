@@ -70,7 +70,7 @@ install whose C extensions are missing. Each component prints `PASS`, `FAIL` or
 `SKIP` with a reason; the last line is `SELFCHECK PASS` or `SELFCHECK FAIL`
 followed by which engine configuration the UCI exchange used and which
 components were skipped, e.g.
-`SELFCHECK PASS (uci: default play path, torch.compile on; 2 skipped: checkpoint, syzygy)`.
+`SELFCHECK PASS (uci: default play path, torch.compile on; 3 skipped: checkpoint, syzygy-checksums, syzygy)`.
 A SKIP is not a pass for that component. The exit status is 0 only when nothing
 failed.
 
@@ -98,6 +98,7 @@ the cost of writing to it.
 | `movegen` | C move generation disagrees with python-chess or perft. Rebuild; report if it persists. |
 | `search` | A short C Gumbel search on a random tiny net did not complete in the C tree. |
 | `checkpoint` | The engine's own loader refused the network, left a model tensor at random initialisation, or a forward pass gave NaN/inf. Migrations the loader applies (a `torch.compile` key prefix, fused q/k/v, zero-padded v2 input columns) are listed as notes on a PASS. SKIP without `--checkpoint`. |
+| `syzygy-checksums` | A Syzygy file's checksum differs from its checksum list (replace the named file), a table file cannot be read, or a checksum list has a malformed or conflicting line. Lists: `--syzygy-checksums`, else lists found in the directories, else the shipped standard 3-4-5-6-man manifest. Files no list covers are `NOT VERIFIED` (a SKIP naming them; a FAIL with `--syzygy-require-checksums`). SKIP without `--syzygy`. See [TCEC_SETUP.md](TCEC_SETUP.md), section 7. |
 | `syzygy` | A listed directory does not exist, holds no `.rtbw` tables, the engine's C prober (the root shortcut) refuses the path, or a known position probed to the wrong result by either prober (python-chess for search leaves, C for the root). 3-man positions are always probed; a 5-man and a 6-man position are probed when those tables are in the path. SKIP without `--syzygy`. |
 | `uci` | The engine refused or failed to start (the line quotes its reason and the root cause from its log, e.g. a compiler or libstdc++ mismatch inside `torch.compile`), did not answer `uciok`/`readyok`/`bestmove`, played an illegal move, reported an unsearched or degraded move, or exited non-zero after `quit`. |
 

@@ -161,6 +161,14 @@ class SelfcheckOptions:
     # --no-compile for the UCI exchange (fast, but not the default play path).
     fast: bool = False
     uci_timeout_s: float | None = None
+    # Syzygy checksum verification (``check_syzygy_checksums``): explicit lists
+    # (--syzygy-checksums, repeatable; "builtin" names the shipped manifest),
+    # off with --no-syzygy-checksums, NOT VERIFIED -> FAIL with
+    # --syzygy-require-checksums.
+    syzygy_checksums: tuple[str, ...] = ()
+    verify_syzygy_checksums: bool = True
+    require_syzygy_checksums: bool = False
+    syzygy_checksum_threads: int = 4
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
@@ -171,15 +179,15 @@ def _one_line(text: str, limit: int = 400) -> str:
     return flat if len(flat) <= limit else flat[: limit - 3] + "..."
 
 
-def _run_check(name: str, fn: Callable[[], str]) -> CheckResult:
+def _run_check(name: str, fn: Callable[[], str], *, limit: int = 400) -> CheckResult:
     try:
-        return CheckResult(name, "PASS", _one_line(fn()))
+        return CheckResult(name, "PASS", _one_line(fn(), limit))
     except CheckSkipped as exc:
-        return CheckResult(name, "SKIP", _one_line(str(exc)))
+        return CheckResult(name, "SKIP", _one_line(str(exc), limit))
     except CheckFailed as exc:
-        return CheckResult(name, "FAIL", _one_line(str(exc)))
+        return CheckResult(name, "FAIL", _one_line(str(exc), limit))
     except Exception as exc:  # any other error inside a check is a failure of that check
-        return CheckResult(name, "FAIL", _one_line(f"{type(exc).__name__}: {exc}"))
+        return CheckResult(name, "FAIL", _one_line(f"{type(exc).__name__}: {exc}", limit))
 
 
 def source_root() -> Path | None:
@@ -729,6 +737,8 @@ def _probe_wdl_raw(syzygy_path: str, fen: str) -> int:
 
 
 SYZYGY_VALIDATE_TIMEOUT_S = 600.0
+# The checksum line names EVERY bad or unverified file; it is not cut at 400.
+SYZYGY_CHECKSUM_DETAIL_LIMIT = 200_000
 
 
 def validate_tables_subprocess(
@@ -741,25 +751,99 @@ def validate_tables_subprocess(
     attempted instead of taking the self-check down."""
     from chess_anti_engine.uci import tb_root
 
-    proc = subprocess.run(
-        [*(command or (sys.executable, "-m", "chess_anti_engine.uci.tb_root")), path],
-        capture_output=True, text=True, timeout=timeout_s, check=False,
-    )
+    def _last_started(lines: Sequence[str]) -> str:
+        started = [ln for ln in lines if ln.startswith(tb_root.VALIDATE_START)]
+        return started[-1].removeprefix(tb_root.VALIDATE_START) if started else "(none started)"
+
+    try:
+        proc = subprocess.run(
+            [*(command or (sys.executable, "-m", "chess_anti_engine.uci.tb_root")), path],
+            capture_output=True, text=True, timeout=timeout_s, check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # run() killed the child; what it printed so far is in exc.stdout
+        # (bytes even with text=True). Name the table it hung on, as for a crash.
+        raw = cast(Any, exc.stdout) or b""  # typed bytes; a str is tolerated too
+        partial = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
+        raise CheckFailed(
+            f"table validation hung (no result within {timeout_s:g} s, child killed) while "
+            f"initialising table {_last_started(partial.splitlines())}: that file is likely "
+            "corrupt; replace it (verify the set with --syzygy-checksums)"
+        ) from exc
     lines = proc.stdout.splitlines()
     ok = [ln for ln in lines if ln.startswith(tb_root.VALIDATE_OK)]
     failed = [ln for ln in lines if ln.startswith(tb_root.VALIDATE_FAIL)]
-    started = [ln for ln in lines if ln.startswith(tb_root.VALIDATE_START)]
     if proc.returncode == 0 and ok:
         return ok[-1].removeprefix(tb_root.VALIDATE_OK)
     if failed:
         raise CheckFailed("table validation: " + failed[-1].removeprefix(tb_root.VALIDATE_FAIL))
-    last = started[-1].removeprefix(tb_root.VALIDATE_START) if started else "(none started)"
+    last = _last_started(lines)
     tail = _one_line(proc.stderr.strip().splitlines()[-1]) if proc.stderr.strip() else ""
     raise CheckFailed(
         f"table validation crashed (exit {proc.returncode}) while initialising table {last}: "
         f"that file is corrupt; replace it (verify the set against published checksums)"
         + (f"; stderr: {tail}" if tail else "")
     )
+
+
+def _checksum_progress(stream: Any) -> Callable[[int, int, int, int], None]:
+    start = time.monotonic()
+
+    def report(done: int, total: int, done_b: int, total_b: int) -> None:
+        elapsed = max(time.monotonic() - start, 1e-9)
+        pct = 100.0 * done_b / total_b if total_b else 100.0
+        stream.write(
+            f"syzygy-checksums: {done_b / 1e9:.1f}/{total_b / 1e9:.1f} GB ({pct:.0f}%), "
+            f"{done}/{total} files, {done_b / 1e6 / elapsed:.0f} MB/s\n")
+        stream.flush()
+
+    return report
+
+
+def check_syzygy_checksums(
+    path: str | None, lists: Sequence[str] = (), *, enabled: bool = True,
+    require: bool = False, threads: int = 4, progress_stream: Any = None,
+) -> str:
+    """Hash every ``.rtbw`` / ``.rtbz`` in ``path`` against a checksum list.
+
+    The only defence against corruption inside a table's compressed data,
+    which the header validation of ``check_syzygy`` cannot see. Lists: the
+    explicit ``lists`` if given, else ``*.md5`` / ``checksum*`` / ``md5`` /
+    ``sha256`` files in the directories, else the shipped standard 3-4-5-6-man
+    manifest (``chess_anti_engine/tb/checksums.py``).
+
+    FAIL: a mismatch, an unreadable table file, or a list that does not parse
+    completely. Otherwise any table file no list covers -- or verification
+    turned off -- is ``NOT VERIFIED``: a SKIP that names every such file, or a
+    FAIL with ``require`` (``--syzygy-require-checksums``, for event preflight).
+    """
+    if not path:
+        raise CheckSkipped("no --syzygy path given")
+    if not enabled:
+        msg = "NOT VERIFIED: checksum verification turned off (--no-syzygy-checksums)"
+        if require:
+            raise CheckFailed(msg + " and --syzygy-require-checksums given")
+        raise CheckSkipped(msg)
+    from chess_anti_engine.tb import checksums
+
+    dirs = [d.strip() for d in path.split(os.pathsep) if d.strip()]
+    absent = [d for d in dirs if not Path(d).is_dir()]
+    if not dirs or absent:
+        raise CheckFailed(f"Syzygy directories do not exist: {absent or path!r}")
+    merged, origin = checksums.resolve_lists(dirs, lists)
+    stream = progress_stream if progress_stream is not None else sys.stderr
+    report = checksums.verify(dirs, merged, origin, threads=threads,
+                              progress=_checksum_progress(stream))
+    detail = checksums.describe(report)
+    if report.files == 0:
+        raise CheckFailed(f"no .rtbw/.rtbz table files under {dirs}")
+    if report.failed:
+        raise CheckFailed(detail)
+    if report.unverified:
+        if require:
+            raise CheckFailed(detail + " (--syzygy-require-checksums)")
+        raise CheckSkipped(detail)
+    return detail
 
 
 def check_syzygy(
@@ -1020,10 +1104,28 @@ def run_selfcheck(opts: SelfcheckOptions) -> list[CheckResult]:
         # it independent of the torch/CUDA result above.
         _run_check("search", lambda: check_search("cpu")),
         _run_check("checkpoint", lambda: check_checkpoint(opts.checkpoint, devices[0])),
-        _run_check("syzygy", lambda: check_syzygy(opts.syzygy_path)),
     ]
+    # A failed checksum check must stop both table-loading routes. SKIP keeps
+    # the explicit NOT VERIFIED policy (including --no-syzygy-checksums).
+    checksum_result = _run_check("syzygy-checksums", lambda: check_syzygy_checksums(
+        opts.syzygy_path, opts.syzygy_checksums, enabled=opts.verify_syzygy_checksums,
+        require=opts.require_syzygy_checksums, threads=opts.syzygy_checksum_threads,
+    ), limit=SYZYGY_CHECKSUM_DETAIL_LIMIT)
+    results.append(checksum_result)
+    checksums_failed = checksum_result.status == "FAIL"
+    if checksums_failed:
+        results.append(CheckResult(
+            "syzygy", "SKIP", "blocked by syzygy-checksums FAIL; tables were not probed",
+        ))
+    else:
+        results.append(_run_check("syzygy", lambda: check_syzygy(opts.syzygy_path)))
     if opts.run_uci:
-        results.append(_run_check("uci", lambda: check_uci(opts)))
+        if checksums_failed:
+            results.append(CheckResult(
+                "uci", "SKIP", "blocked by syzygy-checksums FAIL; UCI subprocess was not started",
+            ))
+        else:
+            results.append(_run_check("uci", lambda: check_uci(opts)))
     else:
         results.append(CheckResult("uci", "SKIP", "--no-uci given"))
     return results
@@ -1086,6 +1188,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--syzygy", dest="syzygy_path", default=None,
                    help="Syzygy directories, os.pathsep-separated; probed directly and given "
                         "to the engine as SyzygyPath")
+    p.add_argument("--syzygy-checksums", dest="syzygy_checksums", action="append", default=None,
+                   metavar="LIST",
+                   help="checksum list (md5sum/sha256sum format) to verify every Syzygy file "
+                        "against; repeatable; 'builtin' = the shipped standard 3-4-5-6-man "
+                        "manifest. Default: lists found in the --syzygy directories, else builtin")
+    p.add_argument("--syzygy-require-checksums", dest="require_syzygy_checksums",
+                   action="store_true",
+                   help="FAIL (not SKIP) when any Syzygy file is NOT VERIFIED by a checksum "
+                        "list; use for event preflight")
+    p.add_argument("--no-syzygy-checksums", dest="verify_syzygy_checksums", action="store_false",
+                   help="skip the Syzygy checksum pass (reported as NOT VERIFIED)")
+    p.add_argument("--syzygy-checksum-threads", dest="syzygy_checksum_threads", type=int,
+                   default=4, help="files hashed in parallel (default 4; disk-bound)")
     p.add_argument("--device", default="auto", help="cpu|cuda|cuda:N (default: auto)")
     p.add_argument("--devices", default=None,
                    help="comma-separated device list for multi-GPU hosts; overrides --device")
@@ -1113,6 +1228,10 @@ def parse_options(argv: Sequence[str]) -> tuple[SelfcheckOptions, bool]:
         devices=devices, run_uci=bool(args.run_uci),
         engine_args=tuple(engine_args), fast=bool(args.fast),
         uci_timeout_s=args.uci_timeout_s,
+        syzygy_checksums=tuple(args.syzygy_checksums or ()),
+        verify_syzygy_checksums=bool(args.verify_syzygy_checksums),
+        require_syzygy_checksums=bool(args.require_syzygy_checksums),
+        syzygy_checksum_threads=int(args.syzygy_checksum_threads),
     )
     return opts, bool(args.json)
 

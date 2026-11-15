@@ -16,7 +16,9 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
-- [2026-11-15: Retained-search WDL target census of the fixed G1 bank](2026-11-15-retained-search-target-bank-census.md) — prospective model-free all-256-game / 24,827-row diagnostic of archived F32, stored F16 and normalization effects. All 35 synthetic controls and corpus compute remain unrun; no training, teacher/target choice, playing-strength or adoption claim.
+- [2026-11-15: A39/Lc0 joint GPU and timed-driver engineering](2026-11-15-a39-lc0-joint-timed-engineering.md) — selected prospective 900-second GPU / 120-second CPU technical check, 13 controls and one exposed 60+1 pair. All phases unrun and unadmitted; no strength, opponent-TB parity or adoption claim.
+
+- [2026-11-15: Retained-search WDL target census of the fixed G1 bank](2026-11-15-retained-search-target-bank-census.md) — CLOSED QUALIFIED: all 35 local controls and 256 games / 24,827 rows passed in 36.32 CPU seconds, zero GPU. Archived-to-normalized aggregate residual changes are tiny; disagreement with recorded outcomes is much larger far from the stop. Finite-bank descriptions only; no causal, training, strength or adoption claim.
 
 - [2026-11-15: Retained-search main-WDL fixed-G1 512-update pilot](2026-11-15-retained-search-mainwdl-512-pilot.md) — CLOSED NONPASS: B scored .453 against matched A and .4555 against A39, each over 1,000 games / 500 pairs with paired 95% upper bounds below .5. Both endpoints technically qualified; no confirmation or adoption, donor retained.
 
