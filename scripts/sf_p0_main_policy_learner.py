@@ -246,8 +246,8 @@ class MainPolicyProfile:
         out = dict(batch)
         out["policy_target"] = batch["policy_target"].copy()
         n = len(drawn)
-        batch_counts: Counter[str] = Counter({k: 0 for k in ("rows", "original_policy_supervised", "qualified_teacher",
-            "structurally_eligible", "replaced", "original_fallback", "replaced_vector_changed", "replaced_normalized_f32_changed")})
+        batch_counts: Counter[str] = Counter(dict.fromkeys(("rows", "original_policy_supervised", "qualified_teacher",
+            "structurally_eligible", "replaced", "original_fallback", "replaced_vector_changed", "replaced_normalized_f32_changed"), 0))
         core.require(batch["has_policy"].shape == (n,) and np.isin(batch["has_policy"], [0, 1]).all(),
                      "main-policy original supervision mask")
         for i, draw in enumerate(drawn):

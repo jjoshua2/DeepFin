@@ -105,7 +105,7 @@ def join_game(game: dict[str, Any], generation: dict[str, Any], rows: list[dict[
         core.require(hashlib.sha256(legal).hexdigest() == row["legal_mask_sha256"], "eligibility P0 legal identity")
         pieces = len(position.piece_map())
         tb = identity["ply"] in applied | abstained
-        core.require(not tb or pieces <= 6 and not position.castling_rights, "contradictory original TB marker/material")
+        core.require(not tb or (pieces <= 6 and not position.castling_rights), "contradictory original TB marker/material")
         result.append({"original_has_policy": rec["has_policy"], "piece_count": pieces,
                        "TB_applied": identity["ply"] in applied, "TB_abstained": identity["ply"] in abstained,
                        "structurally_eligible": rec["has_policy"] and pieces >= MIN_PIECES and not tb})
