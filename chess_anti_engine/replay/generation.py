@@ -35,21 +35,27 @@ class GenerationReplay:
     preserve the SAME RNG object, which Trainer also uses for augmentation.
     ``on_draw`` records sampled physical identities before augmentation. A
     prefetched or rejected batch is still a draw, not proof of an applied view.
+    ``first_generation`` identifies the first logical bank (default 1). The
+    caller must authenticate that bank and its lineage before using it; this
+    sampler checks admission order, not provenance.
     This direct finite-caller adapter is not a Worker/YAML replay backend.
     """
 
     def __init__(
         self, *, generations: int, rng: np.random.Generator,
+        first_generation: int = 1,
         on_draw: Callable[[tuple[DrawnRow, ...]], None] | None = None,
     ) -> None:
         if type(generations) is not int or generations <= 0:
             raise ValueError("generations must be a positive integer")
+        if type(first_generation) is not int or first_generation <= 0:
+            raise ValueError("first_generation must be a positive integer")
         self.rng = rng
         self._limit = generations
         self._on_draw = on_draw
         self._window: tuple[tuple[int, tuple[GenerationChunk, ...]], ...] = ()
         self._seen_sources: set[str] = set()
-        self._last_generation = 0
+        self._last_generation = first_generation - 1
         self._buffer = ArrayReplayBuffer(0, rng=rng)
         self._ranges: list[tuple[int, GenerationChunk, int]] = []
         self._ends = np.empty(0, dtype=np.int64)
