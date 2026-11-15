@@ -128,6 +128,240 @@ def _assert_no_vloss(tree: MCTSTree) -> None:
         assert tree.get_virtual_loss(nid) == 0, f"virtual loss leaked on node {nid}"
 
 
+class _OrderedPool(MultiGpuPucvPool):
+    """Force worker 0 to own work before worker 1 can drain the remaining budget."""
+
+    def __init__(self, bad: Any, cfg: MultiGpuPucvConfig) -> None:
+        self.bad = bad
+        self.first_idle = threading.Event()
+        self.passes = [0, 0]
+        super().__init__(cfg, evaluators=[bad, _evaluator()])
+
+    def _pipeline_until_done(
+        self, idx: int, job: Any, evaluator: Any,
+        bufs: list[dict[str, np.ndarray]], gather: int,
+    ) -> None:
+        if idx == 1 and self.passes[idx] == 0:
+            assert self.bad.entered.wait(5)
+        self.passes[idx] += 1
+        super()._pipeline_until_done(idx, job, evaluator, bufs, gather)
+        if idx == 1 and self.passes[idx] == 1:
+            self.first_idle.set()
+
+
+@pytest.mark.parametrize("target", [1, 3])
+@pytest.mark.parametrize("fails", [False, True])
+def test_returned_final_tokens_rewake_idle_survivor_with_cumulative_stats(target, fails) -> None:
+    """The survivor is demonstrably asleep BEFORE the final token is returned.
+
+    target=3 also gives it two completed leaves before re-entry, so resetting
+    its per-job counters on the second pipeline pass cannot pass this test.
+    The healthy control releases the original owner without returning tokens.
+    """
+    bad = _Faulty(_evaluator(), mode="hang_raise" if fails else "hang")
+    pool = _OrderedPool(bad, MultiGpuPucvConfig(n_gpus=2, gather=1, stall_floor_s=30.0))
+    tree, rid, cb = _seed_tree()
+    stop = threading.Event()
+    answers: list[int] = []
+    errors: list[BaseException] = []
+
+    def search() -> None:
+        try:
+            answers.append(pool.run(tree=tree, root_id=rid, root_cboard=cb,
+                                    target_sims=target, stop_event=stop))
+        except BaseException as error:
+            errors.append(error)
+
+    thread = threading.Thread(target=search, daemon=True)
+    thread.start()
+    try:
+        assert pool.first_idle.wait(5)
+        with pool._cv:
+            assert pool._cv.wait_for(lambda: 1 not in pool._running, timeout=5)
+        assert pool._worker_stats[1].leaves == target - 1
+        bad.release.set()
+        thread.join(timeout=5)
+        assert not thread.is_alive() and not errors
+        assert answers == [target] and not stop.is_set()
+        stats = pool.last_stats()
+        assert stats.target_sims == stats.leaves == target
+        assert stats.workers[1].leaves == (target if fails else target - 1)
+        assert stats.workers[1].batches == (target if fails else target - 1)
+        assert pool.passes[1] == (2 if fails else 1)
+        _assert_no_vloss(tree)
+        if fails:
+            assert pool.failed_devices() == ("#0",)
+            assert pool.restore_recovered_devices() == ()
+            assert not pool._late_ok[0] and not pool._restorable[0]
+        # The next job must reset the counters rather than inherit this job's
+        # completed passes. A failed device must never be called again.
+        calls = bad.calls
+        assert pool.run(tree=tree, root_id=rid, root_cboard=cb,
+                        target_sims=4, stop_event=threading.Event()) == 4
+        assert pool.last_stats().leaves == 4
+        if fails:
+            assert pool.last_stats().workers[1].leaves == 4 and bad.calls == calls
+        _assert_no_vloss(tree)
+    finally:
+        bad.release.set()
+        thread.join(timeout=5)
+        pool.close()
+
+
+class _FailureDrainEvent:
+    """First wait raises; the failure-drain wait blocks until explicitly released."""
+
+    def __init__(self, *, fails: bool) -> None:
+        self.fails = fails
+        self.calls = 0
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def synchronize(self) -> None:
+        self.calls += 1
+        if self.fails and self.calls == 1:
+            raise RuntimeError("injected completion failure before blocked cleanup")
+        self.entered.set()
+        assert self.release.wait(5)
+
+
+def test_last_quiesced_worker_error_is_not_retried_within_the_job() -> None:
+    error = ValueError("injected CPU buffer preparation failure")
+
+    class OnceBadBuffer:
+        def __init__(self) -> None:
+            self.inner = _evaluator()
+            self.calls = 0
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self.inner, name)
+
+        def get_input_buffer(self, *args: Any, **kwargs: Any) -> Any:
+            self.calls += 1
+            if self.calls == 1:
+                raise error  # No asynchronous submission: the owner stays usable.
+            return self.inner.get_input_buffer(*args, **kwargs)
+
+    ev = OnceBadBuffer()
+    pool = MultiGpuPucvPool(MultiGpuPucvConfig(n_gpus=1, gather=1), evaluators=[ev])
+    tree, rid, cb = _seed_tree()
+    try:
+        with pytest.raises(ValueError, match="CPU buffer preparation") as caught:
+            pool.run(tree=tree, root_id=rid, root_cboard=cb,
+                     target_sims=4, stop_event=threading.Event())
+        assert caught.value is error and ev.calls == 1 and pool.n_devices == 1
+        _assert_no_vloss(tree)
+        assert pool.run(tree=tree, root_id=rid, root_cboard=cb,
+                        target_sims=4, stop_event=threading.Event()) == 4
+        assert pool.last_stats().leaves == 4
+        _assert_no_vloss(tree)
+    finally:
+        pool.close()
+
+
+class _FailureDrainEvaluator:
+    def __init__(self, *, fails: bool) -> None:
+        self.inner = _evaluator()
+        self.event = _FailureDrainEvent(fails=fails)
+        self.entered = self.event.entered
+        self.calls = 0
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.inner, name)
+
+    def evaluate_inplace_async(self, *args: Any, **kwargs: Any) -> Any:
+        self.calls += 1
+        policy, wdl, event = self.inner.evaluate_inplace_async(*args, **kwargs)
+        if self.calls == 1:
+            # Complete the real CPU evaluator before injecting its replacement
+            # completion receipt; no model/tree/cache operation is mocked.
+            if event is not None:
+                event.synchronize()
+            return policy, wdl, self.event
+        return policy, wdl, event
+
+
+@pytest.mark.parametrize("route", ["root", "pipeline"])
+@pytest.mark.parametrize("fails", [False, True])
+def test_failure_drain_is_watchdog_visible_and_never_restorable(monkeypatch, route, fails) -> None:
+    """Exercise both real entry paths; a direct hang is the positive control.
+
+    The pool's watchdog clock advances only after the receipt is blocked and
+    the healthy pipeline is idle. This pins the 20ms threshold without racing
+    a slow CI host's actual CPU forward against a wall-clock deadline.
+    """
+    now = [0.0]
+    monkeypatch.setattr(pool_module, "time", SimpleNamespace(
+        monotonic=lambda: now[0], perf_counter=time.perf_counter,
+    ))
+    monkeypatch.setattr(pool_module, "_RUN_POLL_S", 0.002)
+    monkeypatch.setattr(pool_module, "_STOP_STALL_FLOOR_S", 0.02)
+    monkeypatch.setattr(pool_module, "_IDLE_SURVIVOR_STALL_FLOOR_S", 0.02)
+    bad = _FailureDrainEvaluator(fails=fails)
+    pool = _OrderedPool(bad, MultiGpuPucvConfig(
+        n_gpus=2, gather=1, stall_floor_s=0.02, eval_cache_entries=8,
+    ))
+    tree, rid, cb = _seed_tree()
+    done = threading.Event()
+    errors: list[BaseException] = []
+    answers: list[Any] = []
+
+    def search() -> None:
+        try:
+            if route == "root":
+                answers.append(pool.evaluate_root(np.zeros((1, 146, 8, 8), dtype=np.float32)))
+            else:
+                answers.append(pool.run(tree=tree, root_id=rid, root_cboard=cb,
+                                        target_sims=4, stop_event=threading.Event()))
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            done.set()
+
+    thread = threading.Thread(target=search, daemon=True)
+    thread.start()
+    try:
+        assert bad.entered.wait(5)
+        if route == "pipeline":
+            assert pool.first_idle.wait(5)
+            with pool._cv:
+                assert pool._cv.wait_for(lambda: 1 not in pool._running, timeout=5)
+        assert bad.event.calls == (2 if fails else 1)
+        # Advance beyond the configured threshold while keeping cleanup held.
+        # Before the fix, only the direct-hang control has a busy marker.
+        now[0] = 0.1
+        with pool._cv:
+            pool._cv.notify_all()
+        assert done.wait(5), "failure cleanup escaped the device-call watchdog"
+        assert not errors and len(answers) == 1 and pool._abandoned[0]
+        if route == "pipeline":
+            assert answers == [4] and pool.last_stats().leaves == 4
+        else:
+            assert answers[0][0].shape == (1, 4672) and answers[0][1].shape == (1, 3)
+        _assert_no_vloss(tree)
+        before = tree.get_children_visits(rid)[1].copy()
+        assert pool._cache is not None
+        cache_before = pool._cache.stats()
+        bad.event.release.set()
+        if fails:
+            pool._threads[0].join(timeout=5)
+            assert not pool._threads[0].is_alive()
+            assert not pool._late_ok[0] and not pool._restorable[0]
+            assert pool.restore_recovered_devices() == ()
+        else:
+            assert _wait_for(lambda: pool._restorable[0], timeout=5)
+            assert pool.restore_recovered_devices() == ("#0",)
+        # Neither late completion nor late cleanup may integrate or populate
+        # shared cache, or release the same virtual loss a second time.
+        np.testing.assert_array_equal(tree.get_children_visits(rid)[1], before)
+        assert pool._cache.stats() == cache_before
+        _assert_no_vloss(tree)
+    finally:
+        bad.event.release.set()
+        thread.join(timeout=5)
+        pool.close()
+
+
 # -- pool mechanics -----------------------------------------------------------
 
 
