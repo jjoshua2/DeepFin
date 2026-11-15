@@ -354,7 +354,7 @@ def test_legacy_recipe_audit_rejects_bank_actor_without_new_schema_alias(tmp_pat
         'runtime': {'device': 'cpu', 'use_amp': False, 'torch_version': 'unused', 'numpy_version': 'unused', 'torch_threads': 2, 'cuda_devices': 0},
         'lr': {'peak': 1e-4, 'floor': 1e-4, 'warmup_steps': 0, 'warmup_start': 1e-4, 'first_period': 2},
         'limits': {'max_rows': 1, 'max_decoded_window_bytes': 8 << 20}}
-    p = {**case.protocol, 'schema': 'CORE_FINITE_ADMISSION_V1', 'learner_contract': frozen(tmp_path / 'recipe.json', c)}
+    p: dict[str, Any] = {**case.protocol, 'schema': 'CORE_FINITE_ADMISSION_V1', 'learner_contract': frozen(tmp_path / 'recipe.json', c)}
     del p['data_spec']
     with pytest.raises(ValueError, match=r'requires recipe-independent data audit'):
         audit.execute(frozen(tmp_path / 'legacy-bank-actor-audit.json', p))

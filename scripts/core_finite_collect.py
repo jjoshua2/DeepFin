@@ -218,7 +218,7 @@ def _bank_external(value: Any) -> Path:
     return path
 
 
-def _bank_ref(ref: dict[str, Any]) -> Path:
+def _bank_ref(ref: Any) -> Path:
     require(isinstance(ref, dict) and set(ref) == {'path', 'sha256'} and type(ref['sha256']) is str
             and re.fullmatch('[0-9a-f]{64}', ref['sha256']) is not None, 'invalid bank metadata reference')
     path = _bank_external(ref['path'])
@@ -316,7 +316,7 @@ def closed_bank_predecessor(protocol: dict[str, Any]) -> dict[str, Any]:
     require(isinstance(pins, dict) and pins.keys() >= BANK_PARENT_SOURCE_FILES,
             'bank predecessor source pins missing')
     for name, expected in pins.items():
-        require(type(name) is str and name and not Path(name).is_absolute() and '..' not in Path(name).parts
+        require(type(name) is str and name != '' and not Path(name).is_absolute() and '..' not in Path(name).parts
                 and str(Path(name)) == name and type(expected) is str and re.fullmatch('[0-9a-f]{64}', expected) is not None,
                 'invalid historical bank learner source pin')
     first, segment = contract['first_generation'], identity['segment']
