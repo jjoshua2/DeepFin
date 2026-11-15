@@ -294,3 +294,41 @@ def test_multi_device_routing_chain_starts(tiny_checkpoint: Path, compiled: bool
         if proc.poll() is None:
             proc.kill()
             proc.wait(timeout=10)
+
+
+def test_pool_vlgather_change_mid_game_does_not_crash(tiny_checkpoint: Path) -> None:
+    """Regression: on main before the full bucket warm-up, this sequence
+    segfaulted (rc -11, 3 of 3) -- after `setoption VLGather 96` the rebuilt
+    pool's two worker threads met a cold batch shape and compiled it
+    concurrently on the next `go`. With every reachable shape warmed per
+    device before `readyok`, no compile happens during the search."""
+    proc = _spawn_engine(
+        tiny_checkpoint, compiled=True, devices="cpu,cpu",
+        extra=("--max-batch", "256", "--vl-gather", "200"),
+    )
+    reader = _LineReader(proc)
+    try:
+        _send(proc, "uci")
+        reader.read_until("uciok")
+        _send(proc, "isready")
+        reader.read_until("readyok", timeout_s=300.0)
+        _send(proc, "position startpos moves e2e4")
+        _send(proc, "go nodes 300")
+        reader.read_until("bestmove", timeout_s=120.0)
+        _send(proc, "setoption name VLGather value 96")
+        _send(proc, "isready")
+        reader.read_until("readyok", timeout_s=300.0)
+        _send(proc, "position startpos moves e2e4 e7e5")
+        _send(proc, "go nodes 300")
+        lines = reader.read_until("bestmove", timeout_s=120.0)
+        board = chess.Board()
+        board.push_uci("e2e4")
+        board.push_uci("e7e5")
+        assert chess.Move.from_uci(lines[-1].split()[1]) in board.legal_moves
+        assert not any("first-seen batch shape" in line for line in lines), lines
+        _send(proc, "quit")
+        assert proc.wait(timeout=30) == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)

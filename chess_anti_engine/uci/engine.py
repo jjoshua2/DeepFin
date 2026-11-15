@@ -22,6 +22,7 @@ from collections.abc import Callable
 
 import chess
 
+from chess_anti_engine.inference import set_cold_shape_hook
 from chess_anti_engine.mcts.solved_root import SolvedRootWitnessUnavailable
 from chess_anti_engine.moves import index_to_move, move_to_index
 from chess_anti_engine.mcts.search_options import (
@@ -594,6 +595,14 @@ class Engine:
         gil_profile: bool = False,
     ) -> None:
         self._worker = worker
+  # A compiled evaluator that meets a batch shape its warmup did not run
+  # compiles / captures on the clock; say so (once per shape and device).
+        set_cold_shape_hook(_report_cold_shape)
+  # Where the multi-GPU pool's degrade-path announcements go (a dropped
+  # device), and the device names they use; every later pool install reuses it.
+        configure_notes = getattr(worker, "configure_device_notes", None)
+        if callable(configure_notes):
+            configure_notes(emit_info_string_unless_silenced, tuple(search_devices or ()))
   # Factory that takes a max_batch and returns a warmed-up evaluator
   # (model + devices + coalesce flag are captured at construction).
   # When None, the MaxBatch setoption silently no-ops.
@@ -1079,7 +1088,25 @@ class Engine:
                     self._mark_unhealthy("the search-path re-warm at isready failed")
                 else:
                     self._warmup_dirty = False
+        # A degraded multi-GPU pool is reported, never treated as unhealthy:
+        # the engine keeps playing on the devices it has.
+        degraded = self._pool_degraded_summary()
+        if degraded is not None:
+            _println(f"info string {degraded}")
         _println(format_readyok())
+
+    def _pool_degraded_summary(self) -> str | None:
+        """The worker's multi-GPU degraded line, or None (healthy / no pool /
+        a test double that does not implement it)."""
+        get = getattr(self._worker, "pool_degraded_summary", None)
+        if not callable(get):
+            return None
+        try:
+            text = get()
+        except Exception:
+            _log.debug("pool_degraded_summary raised", exc_info=True)
+            return None
+        return text if isinstance(text, str) else None
 
     def _handle_newgame(self) -> None:
         self._in_game = False
@@ -1809,6 +1836,12 @@ class Engine:
             f"info string searchconfig path={path} "
             f"({PATH_DESCRIPTIONS.get(path, path)})"
         )
+        failed = getattr(self._worker, "failed_pool_devices", None)
+        failed_devices = failed() if callable(failed) else ()
+        if isinstance(failed_devices, tuple) and failed_devices:
+            _println(
+                f"info string searchconfig {self._pool_degraded_summary() or 'multi-GPU degraded'}"
+            )
         for name, value, status, why in realized_rows(path, values):
             suffix = f" — {why}" if why else ""
             _println(f"info string searchconfig {name} = {value} [{status}]{suffix}")
@@ -3568,7 +3601,20 @@ class Engine:
         finalizing the interpreter under a live thread.
         """
         with self._state_lock:
-            return not self._search_free_locked()
+            if not self._search_free_locked():
+                return True
+        # A multi-GPU pool worker left inside a device call by a dropped
+        # (wedged) device: finalizing under it can abort the process too.
+        wedged = getattr(self._worker, "has_wedged_device_threads", None)
+        return callable(wedged) and wedged() is True
+
+    def only_wedged_device_threads(self) -> bool:
+        """The only live threads are pool workers wedged in a device call."""
+        with self._state_lock:
+            if not self._search_free_locked():
+                return False
+        wedged = getattr(self._worker, "has_wedged_device_threads", None)
+        return callable(wedged) and wedged() is True
 
     def _wait_for_search(
         self, *, timeout_s: float | None = None, answer_parked: bool = False,
@@ -3873,3 +3919,25 @@ def _emit_info_string(s: str) -> None:
     per-phase lines). Runs on the search thread at phase barriers, protected
     by the same stdout lock as every other UCI line."""
     _println(f"info string {s}")
+
+
+def _report_cold_shape(label: str, entry: str, rows: int) -> None:
+    """`ShapeLedger` hook: a compiled batch shape first seen after warmup."""
+    _println(
+        f"info string WARNING first-seen batch shape after warmup: device={label} "
+        f"entry={entry} batch={rows}; its compile / CUDA-graph capture ran on the "
+        "search clock (please report: the warm set missed a reachable shape)"
+    )
+
+
+def emit_info_string_unless_silenced(s: str) -> bool:
+    """Like `_emit_info_string`, but report whether the line went out.
+
+    A parked or watchdog-answered search thread is silenced; a one-time
+    announcement (a dropped GPU) from such a thread must wait for the next
+    search rather than vanish."""
+    if (threading.current_thread() in _SILENCED_THREADS
+            and not getattr(_ANSWER_OWNER, "active", False)):
+        return False
+    _println(f"info string {s}")
+    return True
