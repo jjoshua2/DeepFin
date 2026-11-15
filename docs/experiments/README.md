@@ -16,6 +16,8 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
+- [2026-11-15: Retained-search main-WDL fixed-G1 512-update pilot](2026-11-15-retained-search-mainwdl-512-pilot.md) — complete prospective matched fresh outcome/search-WDL arms, fixed donor anchor and sole conditional donor confirmation. Actual 67 metadata controls and 1500 protected opening groups accepted; full-model engineering, training and playing unrun at registration.
+
 - [2026-11-14: A39 versus pinned eight-thread Stockfish timed baseline](2026-11-14-a39-sf-timed-baseline.md) — closed qualified descriptive 60+1 baseline: 0W/4D/4L over eight games/four pairs, score 25%; registered interval unavailable because all four pairs scored draw/loss. Separate engineering pair qualified. Donor retained; no learning gain, Elo, parity or milestone claim.
 
 - [2026-11-14: Outcome-only A512 versus A39 control diagnostic](2026-11-14-a512-a39-control-diagnostic.md) — closed qualified UNRESOLVED: 300W/413D/287L over 1000 games / 500 pairs, 50.65% with paired approximate 95% interval [48.3480%, 52.9520%]. Donor retained; no confirmation, adoption, gain or equivalence claim.
