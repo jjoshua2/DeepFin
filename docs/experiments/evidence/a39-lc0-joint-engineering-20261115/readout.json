@@ -1,0 +1,81 @@
+{
+  "schema": "CLOSED_A39_LC0_JOINT_ENGINEERING_FAILURE_PUBLIC_READOUT_V1",
+  "status": "FAILED_NO_JOINT_TIMED_OR_STRENGTH_QUALIFICATION",
+  "study_uuid": "62f2f80b-a693-4c8c-9f43-9a492c70eb47",
+  "GPU": {
+    "owner_status": "FAILED",
+    "cap_seconds": 900,
+    "actual_owner_wall_seconds": 419.5493537489674,
+    "controls_passed": 13,
+    "required_games": 2,
+    "producer_reported_rule_games": 1,
+    "fixed_pair_complete": false,
+    "all_owned_processes_closed": true,
+    "unused_credit": "CLOSED_NO_AUTOMATIC_REALLOCATION"
+  },
+  "strict_CPU120_reader": "UNRUN_FIXED_PAIR_INCOMPLETE_NO_CLOCK_HISTORY_AUDIT_CREDIT",
+  "separate_CPU_diagnosis": {
+    "cap_seconds": 60,
+    "actual_owner_wall_seconds": 1.2197601619991474,
+    "owner_status": "PASS",
+    "controls_passed": 6,
+    "raw_inputs": "Selected closed wire/observer/compact records and stage log only; no games/PGN/moves/book/cache/model/network/native payloads.",
+    "actual_review_scope": "Compact produced report plus source/admission/closure metadata; no independent raw replay."
+  },
+  "recorded_engine_exits": {
+    "A39": 0,
+    "Lc0": -6
+  },
+  "Lc0_recorded_native_failure": {
+    "type": "std::system_error",
+    "message": "Resource temporarily unavailable"
+  },
+  "cause_and_exact_resource": "UNKNOWN",
+  "neighbor_contention_and_1333_causality": "NOT_ESTABLISHED",
+  "A39_observed_submitter_cleanup": {
+    "all_stopped": true,
+    "hook_cleanup_errors": [],
+    "observed_phases": 91
+  },
+  "missing_after_games_GPU_snapshot": true,
+  "named_WSL_stub_VMA_byte_identity": "UNKNOWN",
+  "score_interval_Elo_baseline_hardware_parity_or_optimum_claim": false,
+  "automatic_GPU_retry": false,
+  "A39_retained": true,
+  "references": {
+    "study_closeout": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/external-A39-Lc0-joint-timed-engineering-bindings-v1/closeout.json",
+      "sha256": "b7376e8d43cca2f2f41a08f310ac78f1ce3c1926eba8e93737c6648c7d506b9d"
+    },
+    "original_GPU_terminal": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/external-A39-Lc0-joint-timed-engineering-GPU-execution-v1/terminal.json",
+      "sha256": "5c902856c9de40f41fc1fac791d2ea8138881bbf70a2bae946d163f3e80d700e"
+    },
+    "original_producer_receipt": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/external-A39-Lc0-joint-timed-engineering-results-v1/receipt.json",
+      "sha256": "ae3bf9fbd1900ff48b939c6052c1cad58e8ea9547b86cdef61ac0fa367b133d1"
+    },
+    "diagnostic_source_manifest": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/external-A39-Lc0-joint-failure-diagnostic-source-preparation-v3/manifest.json",
+      "sha256": "56acd00f555b95d8251f1f1038449b59c1fca302114283e7f4276b390e5da6bf"
+    },
+    "diagnostic_protocol": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/external-A39-Lc0-joint-failure-diagnostic-bindings-v2/protocol.json",
+      "sha256": "1706692472add1d83ced75569a36f8f4812126d5878218a809f6101512e617ae"
+    },
+    "diagnostic_report": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/external-A39-Lc0-joint-failure-diagnostic-results-v2/readout.json",
+      "sha256": "5e86891103033a942a0dc39a22238e16767b3166c84a04892cf34015d09f4d61"
+    },
+    "diagnostic_root": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/external-A39-Lc0-joint-failure-diagnostic-bindings-v2/root-acceptance.json",
+      "sha256": "927857933475a210500d323ac5cc941d6d129656687192ece5ae27a38c3becee"
+    },
+    "diagnostic_independent_actual": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/external-A39-Lc0-joint-failure-diagnostic-independent-actual-review-v1/review.json",
+      "sha256": "5b512d8d94e2e2f2f7c0d61c797131b4e0e96eef01ccd4b6af6b2a5e100229c6"
+    }
+  },
+  "reference_projection": "Home paths displayed as ~/ only; SHA256 identities refer to original immutable external metadata bytes.",
+  "goal_complete": false
+}

@@ -16,7 +16,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
-- [2026-11-15: A39/Lc0 joint GPU and timed-driver engineering](2026-11-15-a39-lc0-joint-timed-engineering.md) — selected prospective 900-second GPU / 120-second CPU technical check, 13 controls and one exposed 60+1 pair. All phases unrun and unadmitted; no strength, opponent-TB parity or adoption claim.
+- [2026-11-15: A39/Lc0 joint GPU and timed-driver engineering](2026-11-15-a39-lc0-joint-timed-engineering.md#closed-readout--november-15-2026) — FAILED after 419.549/900 GPU seconds: 13 controls and reciprocal work passed, but only one game completed; Lc0 aborted with a native resource error. Separate CPU diagnosis accepted; cause unknown, no joint/timed or strength qualification and no automatic retry.
 
 - [2026-11-15: Retained-search WDL target census of the fixed G1 bank](2026-11-15-retained-search-target-bank-census.md) — CLOSED QUALIFIED: all 35 local controls and 256 games / 24,827 rows passed in 36.32 CPU seconds, zero GPU. Archived-to-normalized aggregate residual changes are tiny; disagreement with recorded outcomes is much larger far from the stop. Finite-bank descriptions only; no causal, training, strength or adoption claim.
 
