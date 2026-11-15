@@ -62,3 +62,56 @@ External records use `~/chess-artifacts/operations/rl-week-one-20261112-v1/`:
 | `core-retained-search-target-census-source-preparation-v1/manifest.json` | `dbc25acf6428f3ca8349535c71f228617d7a2c0dbd6dfd8bc5df77c79f0550e5` |
 
 The initial private profile names the reviewed code-only commit above. The frozen numerical source retains the reviewed reader/test bytes. Publication removes redundant parentheses, makes existing Boolean grouping explicit and spells permission modes in octal to satisfy CI; its reader must have the exact same parsed Python AST, independently reviewed, while its tests remain byte-exact. The publication proof binds both source identities and this narrow equivalence; it does not claim whole-checkout or native-runtime equivalence. Subsequent source-head/path metadata transfers require explicit review before execution. These changes do not alter the selected population, functions, masks, strata or CPU ceiling. The separate publication record binds the final protocol, source and main proof; no publication digest is placed inside that protocol.
+
+## Completed readout — 2026-11-15
+
+**CLOSED QUALIFIED finite census.** All 35 local synthetic cases passed without failure, error or skip, followed by all 256 physical TRAIN games / 24,827 rows in the same CPU owner. No row was missing or invalid. Recorded endings were 114 natural and 142 strict-TB adjudications. The owner passed and closed normally after **36.320596805016976 CPU seconds / 600**, with zero GPU work. This adds no training, checkpoint adoption or playing-strength result.
+
+Preregistration/source PR [#1331](https://github.com/jjoshua2/DeepFin/pull/1331) merged at `67205d4b7002f517f7954e1ebbb53c9fba01ed53` before the local phase. All four hosted checks passed at `a935f70ff48223f02d9ec0e3875ed9acee88be93`, and fully paged issue comments, reviews, inline comments and nested threads had no findings. The numerical source remained frozen at `0e51afea7007e3258aae26f909be118e92d17c88`: reader `2e7c21ad…`, tests `a56f7d30…`. The styled main reader `76934973…` has the exact same whole-module Python AST; the tests are byte-exact. This is the reviewed transfer described above, with no native-runtime adoption.
+
+The [complete aggregate evidence](evidence/retained-search-target-census-20261115/readout.json) preserves every preregistered cell, function, denominator and quantile from the accepted compact report. Numerical statistics are exact; reference paths use `~/`. The census reader authenticated 65,045 input files / 170,273,500 bytes inside the owner. Legality, history, encoding and resolved-outcome proofs remain inherited from the original accepted bank; this was no new engine/tablebase replay or data promotion.
+
+### Representation effects
+
+These are row means over all 24,827 rows. Q is W−L; residuals use the genuine recorded STM outcome.
+
+| Representation | Q squared residual | Draw squared residual | Full-vector squared residual |
+| --- | ---: | ---: | ---: |
+| Archived F32 | 0.298290614 | 0.194085882 | 0.440274130 |
+| Stored F16 widened, unnormalized | 0.298290957 | 0.194087998 | 0.440276364 |
+| F32 source normalization of stored F16 | 0.298290763 | 0.194086460 | 0.440275071 |
+
+The archived-to-normalized change in full-vector mean squared residual is about `9.41e-7`; the equal-game means are 0.424635252 and 0.424636232, respectively. Stored F16 row mass ranges from 0.999633789 to 1.000366211. These finite-bank aggregate differences deprioritize a storage/normalization-only explanation of the pilot regression. They do not prove Torch/GPU bit identity or rule out every precision effect.
+
+Exact zero W-or-L occurs in 22.5440% of rows in all three representations. The fixed numerical-boundary statistic is 22.5480% for archived and normalized targets, versus 5.7156% for unnormalized stored F16: its tolerance is sensitive to rounded mass. None of these is a clipping frequency. Unclipped bestQ and the complete original root WDL/search visits were not archived.
+
+### Recorded outcome and stop distance
+
+The following table uses the normalized-F16 source formula and row weighting. All stop distances were available; UNKNOWN cells contain zero rows and null metrics. Contributing game counts differ by stratum and are not independent samples.
+
+| Plies to recorded stop | Rows | Contributing games | Q squared residual | Draw squared residual | Full-vector squared residual |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 0–4 | 954 | 256 | 0.009540285 | 0.026313750 | 0.044240768 |
+| 5–16 | 3,015 | 256 | 0.047420819 | 0.062151183 | 0.116937184 |
+| 17–64 | 11,878 | 256 | 0.244756392 | 0.181039043 | 0.393936760 |
+| 65+ | 8,980 | 236 | 0.484005918 | 0.273464772 | 0.652200117 |
+
+The distance pattern is present in both recorded ending classes. Overall full-vector row means are 0.419336796 for natural endings and 0.454232047 for strict-TB adjudications; their equal-game means are 0.409486217 and 0.436798921. The complete natural/TB-by-distance cross, all three representations, genuine outcome classes and both weighting schemes remain in the evidence.
+
+Disagreement with the eventual actor-path outcome is much larger far from the recorded stop. This is descriptive, not a causal diagnosis of the playing regression. A soft conditional value can disagree with one realized outcome without being wrong about the position. TB stop distance is distance to adjudication, with later play unknown. These observations select no distance filter, resampling scheme, teacher, value transform, dose or learning rate, and provide no population interval or optimum-RL claim. Any next learning intervention needs its own prospective consumer/effect tests and fresh controlled playing evidence. A39 remains retained.
+
+### Acceptance and limits
+
+Root acceptance and independent actual review both passed. Independent review authenticated the compact receipts and checked aggregate finiteness, ordered quantiles and partition/sum consistency. It did not independently reconstruct raw-row quantiles or per-game/equal-game means from bulk observations.
+
+The producer banked `per-game.json` with scalar sums/counts, size **4,530,616 bytes**. Root and reviewer applied their 4 MiB metadata guard before any body read or hash, so its body remains unread outside the producing owner and its SHA is UNKNOWN. Its path/stat record is preserved; no second corpus run or unguarded oversized read was used to obtain a hash. The accepted compact aggregate is 222,188 bytes and SHA `7ec3cf498f33e16a27fd8aef428ee1a9da975c3e9e19878ea23723df6ba90a4f`.
+
+External records below use the same `~/chess-artifacts/operations/rl-week-one-20261112-v1/` root:
+
+| Record | SHA-256 |
+| --- | --- |
+| `core-retained-search-WDL-bank-decomposition-bindings-v1/protocol.json` | `4dfd93d8b03cb236b867d818d54e38b55cc007f90ff5c3a41ab7e073767e07c7` |
+| `core-retained-search-WDL-bank-decomposition-prereg-main-publication-v1/publication.json` | `b16deff10282230532ecdff62bcefa253081a85c1ab8f2dbebbd6c39680c7dc3` |
+| `core-retained-search-WDL-bank-decomposition-bindings-v1/root-acceptance.json` | `6e7b99f08195dece40005a305f8f29aa44415dff5c3c6ca351c49bc0e84c87e1` |
+| `core-retained-search-target-census-independent-actual-review-v1/review.json` | `4acd90e2fcef094ecbc5ff85bc130e41686bff199420574d144541922bd0bea1` |
+| `core-retained-search-WDL-bank-decomposition-bindings-v1/closeout.json` | `187ed6e905e41f2e983197924b51c377700dcb17261bfef10ccf15415872727c` |
