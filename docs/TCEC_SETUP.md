@@ -555,7 +555,8 @@ that ran torch work alive for about 0.2 to 8 ms after its join returns. CPython
 3.13 joins the OS thread itself and is not exposed.
 Every join of a thread that ran evaluator work before evaluators are closed or
 the process exits waits for the OS thread (at most 1 s; if that cap is hit it
-logs one warning to stderr naming the thread and carries on). Such a worker parks instead (blocked, no CPU) until the
+logs one warning to stderr naming the thread, at most once a minute for thread
+pools, and carries on). Such a worker parks instead (blocked, no CPU) until the
 process exits. What stays parked, with the evaluator and
 buffers it holds: one thread per device of each pool, routing chain or
 root-parallel pool closed after the fault, and one call thread per primary

@@ -39,6 +39,13 @@ def keys() -> Iterator[list[Any]]:
         _LIBC.pthread_key_delete(key)
 
 
+@pytest.fixture(autouse=True)
+def _fresh_pool_warn_rate_limit(monkeypatch) -> None:
+    """Each test starts with no pool warning issued recently."""
+    monkeypatch.setitem(thread_join._pool_warn, "last", float("-inf"))
+    monkeypatch.setitem(thread_join._pool_warn, "suppressed", 0)
+
+
 def _slow_tls_exit(keys: list[Any], usec: int) -> None:
     """Thread body: register a TLS value whose destructor sleeps ``usec`` --
     run by the C runtime after Python considers the thread ended."""
@@ -400,3 +407,79 @@ def test_os_joined_shares_one_cap_across_its_workers(keys, monkeypatch) -> None:
     elapsed = time.monotonic() - started
     if sys.version_info < (3, 13):
         assert elapsed < 0.5, elapsed  # one 0.2 s cap, not three
+
+
+def _stuck_pool_shutdown(keys: list[Any], usec: int, n: int = 2,
+                         workers: list[threading.Thread] | None = None) -> float:
+    barrier = threading.Barrier(n)
+
+    def body() -> None:
+        barrier.wait(5)
+        if workers is not None:
+            workers.append(threading.current_thread())
+        _slow_tls_exit(keys, usec)
+
+    started = time.monotonic()
+    with thread_join.os_joined(ThreadPoolExecutor(max_workers=n)) as pool:
+        for f in [pool.submit(body) for _ in range(n)]:
+            f.result()
+    return time.monotonic() - started
+
+
+def _cap_warnings(caplog) -> list[str]:
+    return [r.getMessage() for r in caplog.records
+            if r.levelno == logging.WARNING and r.name == thread_join.__name__]
+
+
+@pytest.mark.skipif(sys.version_info >= (3, 13), reason=(
+    "from 3.13 the join itself waits out the teardown; the join-race CI leg runs this on 3.10"))
+def test_a_stuck_pool_teardown_costs_the_cap_once_and_logs_once(keys, caplog) -> None:
+    """``os_joined`` sets its bound from the module cap: a teardown longer than
+    the cap is a cap hit -- about 1 s, then exactly one warning naming the workers."""
+    caplog.set_level(logging.WARNING, logger=thread_join.__name__)
+    workers: list[threading.Thread] = []
+    elapsed = _stuck_pool_shutdown(keys, 1_500_000, workers=workers)
+    assert thread_join.OS_EXIT_WAIT_S - 0.05 < elapsed < thread_join.OS_EXIT_WAIT_S + 0.4, elapsed
+    warnings = _cap_warnings(caplog)
+    assert len(warnings) == 1, warnings
+    assert "2 worker thread(s)" in warnings[0], warnings
+    # A cap hit is remembered like any other: never waited for again.
+    started = time.monotonic()
+    assert [thread_join.await_os_thread_exit(t) for t in workers] == [False, False]
+    assert time.monotonic() - started < 0.05
+
+
+@pytest.mark.skipif(sys.version_info >= (3, 13), reason=(
+    "from 3.13 the join itself waits out the teardown; the join-race CI leg runs this on 3.10"))
+def test_join_thread_with_a_full_cap_deadline_logs_a_stuck_teardown(keys, caplog) -> None:
+    """A deadline that allowed the whole cap at the call: running out is a cap
+    hit (warned once), even though the join itself used a little of it."""
+    caplog.set_level(logging.WARNING, logger=thread_join.__name__)
+    worker = threading.Thread(target=_slow_tls_exit, args=(keys, 1_500_000), daemon=True,
+                              name="stuck-deadline")
+    worker.start()
+    started = time.monotonic()
+    thread_join.join_thread(worker, 5.0, deadline=started + thread_join.OS_EXIT_WAIT_S)
+    elapsed = time.monotonic() - started
+    assert elapsed < thread_join.OS_EXIT_WAIT_S + 0.4, elapsed
+    assert sum("stuck-deadline" in m for m in _cap_warnings(caplog)) == 1
+    thread_join.join_thread(worker, 5.0, deadline=time.monotonic() + thread_join.OS_EXIT_WAIT_S)
+    assert sum("stuck-deadline" in m for m in _cap_warnings(caplog)) == 1  # remembered
+
+
+@pytest.mark.skipif(sys.version_info >= (3, 13), reason=(
+    "from 3.13 the join itself waits out the teardown; the join-race CI leg runs this on 3.10"))
+def test_pool_cap_hits_are_logged_at_a_bounded_rate(keys, monkeypatch, caplog) -> None:
+    """A persistent stuck teardown in a per-batch pool: one warning per
+    ``POOL_WARN_INTERVAL_S``, the next one counting the shutdowns not logged."""
+    caplog.set_level(logging.WARNING, logger=thread_join.__name__)
+    monkeypatch.setattr(thread_join, "OS_EXIT_WAIT_S", 0.1)
+    for _ in range(3):
+        _stuck_pool_shutdown(keys, 400_000)
+    assert len(_cap_warnings(caplog)) == 1
+    monkeypatch.setitem(thread_join._pool_warn, "last",
+                        time.monotonic() - thread_join.POOL_WARN_INTERVAL_S - 1)
+    _stuck_pool_shutdown(keys, 400_000)
+    warnings = _cap_warnings(caplog)
+    assert len(warnings) == 2, warnings
+    assert "2 more pool shutdown(s)" in warnings[1], warnings
