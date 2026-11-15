@@ -1,5 +1,7 @@
 """C Syzygy tablebase prober (vendored Fathom) -- see docs/tablebase_prober.md.
 
-Not on any production path yet: ``chess_anti_engine.tablebase`` (python-chess)
-remains the prober every caller uses, and the test oracle for this one.
+One production caller: the UCI engine's root DTZ shortcut
+(``chess_anti_engine.uci.tb_root``). Every other caller (search leaves,
+selfplay, training) still uses ``chess_anti_engine.tablebase`` (python-chess),
+which is also the test oracle for this one.
 """

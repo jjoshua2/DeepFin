@@ -1,11 +1,13 @@
 # C Syzygy prober (`chess_anti_engine.tb._tb_ext`)
 
-Status: **built and proven equal to python-chess; not used by any production
-path.** Every tablebase call site still goes through
+Status: **built and proven equal to python-chess; one production caller, the
+UCI engine's root DTZ shortcut** (`chess_anti_engine/uci/tb_root.py`, see
+"UCI root shortcut" below). Every other tablebase call site still goes through
 `chess_anti_engine/tablebase.py` and `chess.syzygy`. This extension exists so
 those call sites can move off python-chess one at a time (the follow-up list
-is at the end). It is not in the UCI startup gate's `REQUIRED_EXTENSIONS`,
-because the engine does not import it yet.
+is at the end). The UCI startup gate and `deepfin --selfcheck` require it
+(`uci/selfcheck.UCI_EXTRA_SYMBOLS`); the shared `REQUIRED_EXTENSIONS` that
+also gates the worker and training does not, because they do not import it.
 
 ## What was added
 
@@ -34,6 +36,7 @@ All results are from the side to move's point of view.
 |---|---|
 | `init(path)` | Loads tables from a `:`-separated directory list (`;` on Windows, Fathom's own separator) and returns the largest man count found. Every directory is searched, and the first that holds a file wins. A second call replaces the table set; `init("")` clears it. **Raises `ValueError`** if a component is empty or not a readable directory (the old table set stays loaded), or if the path loads no table at all (the table set is then empty and `path()` is `None`). Fathom alone would skip a missing directory silently. Each component is resolved with `realpath()` and Fathom gets absolute paths (it opens table files lazily, so a relative path would break after a `chdir`); `path()` reports that absolute form, **with symlinks resolved**. The production directories are symlinks, so `path()` names their targets, not the configured strings: compare it against `os.path.realpath` of each component, never against the raw path. |
 | `largest()`, `path()`, `free()` | Introspection and release. |
+| `table_counts()` | `(n_wdl, n_dtz, largest_dtz)`: WDL tables loaded (a material and its colour mirror are one table), how many of them found a DTZ table in some directory, and the largest man count among those. `(0, 0, 0)` with nothing loaded. |
 | `probe_wdl(cboard)` / `probe_wdl_fen(fen)` | -2 loss, -1 blessed loss, 0 draw, 1 cursed win, 2 win |
 | `probe_dtz(cboard)` / `probe_dtz_fen(fen)` | DTZ, python-chess `probe_dtz` convention |
 | `probe_root(cboard, has_repeated=False, use_rule50=True)` / `probe_root_fen` | `[(uci, dtz, rank, score), ...]`, one entry per legal move; `[]` at a mate or stalemate root |
@@ -224,6 +227,92 @@ file and skips that file. Tables are opened `O_RDONLY` and mapped `PROT_READ`.
   inputs raise `ValueError` before any table is touched, with no tables
   loaded.
 
+## UCI root shortcut (`uci/tb_root.py`)
+
+The engine's root DTZ shortcut (`search._try_tb_root_bestmove`) calls
+`RootTablebase.root_move`, which makes ONE `probe_root_fen` call for the per-move
+DTZ of every legal root move and then reproduces
+`tablebase.try_tb_root_move`'s choice (two differences, both "searched
+instead of answered", are listed after this list):
+
+- the claim rules of `_dtz_of_played_move` are applied from the python-chess
+  board on top of Fathom's numbers: a mating move is distance 1; a move into
+  stalemate, insufficient material, threefold repetition (from the board's move
+  stack, which Fathom never sees) or, with `Syzygy50MoveRule` on, a run-out
+  50-move counter is distance 0;
+- moves are ranked with the repo's own `_rule50_dtz_key` / `_plain_dtz_key`
+  over python-chess's legal-move order, first best wins. Fathom's rank and
+  score are not used at all, so the tie-break inside a bucket is the repo's
+  (shortest win / longest loss, then move order), not Fathom's;
+- the reported WDL is `try_tb_root_move`'s (`_wdl_adjusted_for_rule50`).
+
+Two differences from `try_tb_root_move`, both "python-chess answered, the
+engine now searches"; neither changes a move that is answered:
+
+1. More men than the loaded tables: python-chess sometimes resolved such a
+   root through a capture into the tables, the C prober never answers above
+   `largest()`. Example: `8/8/8/2br4/3P2k1/4B3/2p5/4K3 w - - 95 40` (7 men)
+   with 6-man tables.
+2. WDL table present, DTZ table absent: python-chess could still rank the
+   root when every child resolved by zeroing moves; `probe_root` needs the
+   DTZ table. Example: `7n/8/4k3/8/6P1/5p1K/1p6/8 w - - 5 40` with only the
+   first directory of the production pair. The engine warns at load when WDL
+   tables lack DTZ.
+
+### Eager validation at load
+
+Fathom initialises a table on the first probe of its material. A corrupt
+file therefore used to fail on move 60 instead of at `setoption`; one random
+tail overwrite of `KQvKR.rtbw` made `setup_pairs` malloc a garbage size and
+write through NULL (SIGSEGV, forfeit). Now:
+
+- `tb_root.load` initialises EVERY registered table's WDL and DTZ file
+  (`_tb_ext.validate_table`, the same `init_table` the first probe would run).
+  Cost on the production pair (510 WDL + 510 DTZ): 0.16 s with the files in
+  page cache, 0.01 s for `init` itself; it reads only each file's header and
+  symbol table. A failure refuses the path, naming the file.
+- A small marked local patch to the vendored `tbprobe.c` (see
+  `fathom/VENDORED.md`, "Local patch") makes `init_table` fail cleanly
+  instead of crashing for the header-level corruptions: allocation failure,
+  an implausible header, a symbol table that indexes past itself or loops,
+  and index/size/data sections that do not fit in the file. A local fuzz
+  (300 corrupted copies of smoke-set tables: random tails, header bytes,
+  scattered bytes) crashed validation 0 times (237 refused, 63 accepted:
+  those corruptions sit in compressed data, which no header check sees).
+- Table files present in the directories that Fathom did not register (it
+  drops a file whose size is not 16 mod 64 with only an `info string
+  Incomplete tablebase file` on stdout) also refuse the path, named.
+- **What is still possible:** a file whose corruption is in its compressed
+  data passes validation and can still crash or mis-answer at probe time.
+  Stockfish and every other Fathom user share this. Verify the set against
+  published checksums; `deepfin --selfcheck --syzygy` runs the full
+  validation in a child process.
+
+`try_tb_root_move` itself no longer has a production caller; it is the
+reference `tests/test_uci_tb_root_c.py` compares against: per-move DTZ, chosen
+move and WDL, both `Syzygy50MoveRule` settings, over ~1,700 roots on the
+production pair (en passant, clocks 90-99, cursed/blessed results, mates and
+stalemates in one, threefold-repetition children, both colours to move). The
+test SKIPs without tables.
+
+Engine wiring (`Engine._install_tablebase`): `SyzygyPath` loads the C table set
+first, validating every table (below). A refusal (a component that is not a
+readable directory, no table at all, a corrupt table, or a table file Fathom
+did not load) frees the C tables, clears BOTH the root shortcut and the
+python-chess leaf probe, and prints `info string error: SyzygyPath ... REFUSED
+by the C tablebase prober (...)`, repeated before every `readyok` while that
+path stays configured. A good path prints `info string Syzygy root prober: C Fathom ...`
+with the table counts, and a warning when some WDL tables have no DTZ (the
+split production pair given by halves). `Syzygy50MoveRule` rebuilds the handle
+on the same tables; a new `SyzygyPath` re-initialises them. A handle built for
+an earlier table set (another engine in the same process re-loaded it) is
+never probed: the search drops the shortcut with one `info string root
+tablebase shortcut disabled ...` and searches the root normally.
+`Engine.close()` and clearing `SyzygyPath` free the C tables only while they
+are still the set this engine loaded.
+`go searchmoves` skips the shortcut, as before. An input the C prober refuses
+(`ValueError`) is "no TB answer" and the search plays.
+
 ## Follow-ups (not in this PR)
 
 Each switch is its own PR. Each one must prove bit-identical outputs on a
@@ -233,14 +322,9 @@ frozen input set, because a difference at a selfplay leaf is a target change.
    `chess.Board(cb.fen())` for every eligible leaf, which puts python-chess on
    the search hot path. Replace it with `_tb_ext.probe_wdl(cb)`, keeping the
    cursed-as-draw mapping. Gate: identical override rows on a frozen leaf set.
-2. **UCI root DTZ shortcut** (`try_tb_root_move` / `_select_dtz_move`).
-   Replace it with `probe_root`, keeping the repo's fifty-move-claim rule and
-   its distance tie-break inside Fathom's win bucket. At clock ≥ 99, the
-   repo's pick fell outside Fathom's top rank in 205 of the 544 positions with
-   fifty-claim moves that the independent review measured. All 205 were in the
-   same result band. Wiring rule: keep the repo's claim score and use Fathom's
-   rank only as the tie-break. When the engine first
-   imports `_tb_ext`, add it to `uci/selfcheck.py`'s `REQUIRED_EXTENSIONS`.
+2. ~~**UCI root DTZ shortcut**~~: done (section above). The UCI root eval
+   (`SearchWorker._ensure_root_eval_cached`) still overrides the root's WDL
+   through `SyzygyProbe.apply`, i.e. item 1.
 3. **Strict match status** (`rule50_match_status`, `selfplay/strict_tb.py`).
 4. **Selfplay adjudication and rescoring** (`probe_wdl`,
    `tb_adjudicate_result`, `rescore_game_samples`).

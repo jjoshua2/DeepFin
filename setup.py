@@ -296,10 +296,11 @@ nnue_ext = Extension(
     extra_link_args=_ext_link_args(openmp=True),
 )
 
-# Syzygy prober: the vendored Fathom (MIT, chess_anti_engine/tb/fathom/,
-# unmodified) compiled in _tb_fathom.c, wrapped by _tb_ext.c. Pure C, so it
-# avoids the host's C++ runtime mismatch. Nothing in production imports it
-# yet (docs/tablebase_prober.md).
+# Syzygy prober: the vendored Fathom (MIT, chess_anti_engine/tb/fathom/, with
+# one small marked local patch, see its VENDORED.md) compiled in _tb_fathom.c,
+# wrapped by _tb_ext.c. Pure C, so it avoids the host's C++ runtime mismatch.
+# The UCI engine's root DTZ shortcut imports it (uci/tb_root.py,
+# docs/tablebase_prober.md).
 #
 # ⚑ NO fast-slider macros, deliberately. define_macros apply to EVERY source
 # of an Extension, and Fathom's tbchess.c defines its own bishop_attacks /
