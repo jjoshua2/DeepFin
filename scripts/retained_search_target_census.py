@@ -94,12 +94,12 @@ class Inputs:
         require(isinstance(files, list) and 0 < len(files) <= limits['max_inventory_files'], 'inventory file count')
         names = [row['path'] for row in files]
         require(names == sorted(set(names)), 'duplicate/unsorted inventory')
-        require(sum((row['bytes'] for row in files)) <= limits['max_inventory_bytes'], 'inventory total bytes')
+        require(sum(row['bytes'] for row in files) <= limits['max_inventory_bytes'], 'inventory total bytes')
         actual: list[str] = []
         for (directory, dirs, entries) in os.walk(root, followlinks=False):
             base = Path(directory)
-            require(not any(((base / name).is_symlink() for name in dirs + entries)), 'inventory symlink')
-            actual.extend(((base / name).relative_to(root).as_posix() for name in entries))
+            require(not any((base / name).is_symlink() for name in dirs + entries), 'inventory symlink')
+            actual.extend((base / name).relative_to(root).as_posix() for name in entries)
             require(len(actual) <= limits['max_inventory_files'], 'undeclared inventory size')
         require(sorted(actual) == names, 'added/omitted inventory member')
         for row in files:
@@ -134,7 +134,7 @@ def authenticate(p: dict[str, Any], inputs: Inputs) -> dict[str, Any]:
     require(promotion['status'] == 'ROOT_PROMOTES_CLOSED_AUDIT_GENERATION_FOR_RESEARCH_LEARNER_V1' and promotion['generation'] == p['generation_manifest'] and (promotion['attempts'] == promotion['eligible_games'] == scope['physical_TRAIN_games']) and (promotion['eligible_rows'] == scope['rows']), 'original postclosure promotion mismatch')
     audit = inputs.json(promotion['audit_protocol'])
     limits = audit['limits']
-    require(all((type(v) is int and v > 0 for v in limits.values())) and limits['max_metadata_bytes'] <= MAX_METADATA and (limits['max_raw_decoded_bytes_per_game'] <= 64 << 20) and (limits['max_shard_decoded_bytes_per_game'] <= 64 << 20), 'inherited bounded input limits')
+    require(all(type(v) is int and v > 0 for v in limits.values()) and limits['max_metadata_bytes'] <= MAX_METADATA and (limits['max_raw_decoded_bytes_per_game'] <= 64 << 20) and (limits['max_shard_decoded_bytes_per_game'] <= 64 << 20), 'inherited bounded input limits')
     cap = limits['max_metadata_bytes']
     terminal = inputs.json(promotion['audit_closed_owner'], cap, readonly=False)
     closed(terminal, promotion['exact_command'], audit['runtime']['owner']['sha256'], 'cpu', audit['runtime']['seconds'])
@@ -145,11 +145,11 @@ def authenticate(p: dict[str, Any], inputs: Inputs) -> dict[str, Any]:
     require(Path(p['generation_manifest']['path']) == audit_output / 'generation.json' and Path(promotion['audit_readout']['path']) == audit_output / 'readout.json', 'audit output namespace')
     generation = inputs.json(p['generation_manifest'], cap)
     identity = authority['data_identity']
-    require(generation['schema'] == 'ROOT_ACCEPTED_CORE_TRAIN_GENERATION_V1' and generation['audit_protocol'] == promotion['audit_protocol'] and all((generation[k] == identity[k] for k in ('source_revision', 'run_uuid'))), 'generation identity mismatch')
+    require(generation['schema'] == 'ROOT_ACCEPTED_CORE_TRAIN_GENERATION_V1' and generation['audit_protocol'] == promotion['audit_protocol'] and all(generation[k] == identity[k] for k in ('source_revision', 'run_uuid')), 'generation identity mismatch')
     games = generation['games']
-    require(len(games) == scope['physical_TRAIN_games'] and sum((g['rows'] for g in games)) == scope['rows'] and (len({g['physical_game_id'] for g in games}) == len(games)) and (len({g['game_id'] for g in games}) == len(games)) and all((g['bank'] == 'train' and type(g['rows']) is int and (g['rows'] > 0) for g in games)), 'complete TRAIN population/unique games')
+    require(len(games) == scope['physical_TRAIN_games'] and sum(g['rows'] for g in games) == scope['rows'] and (len({g['physical_game_id'] for g in games}) == len(games)) and (len({g['game_id'] for g in games}) == len(games)) and all(g['bank'] == 'train' and type(g['rows']) is int and (g['rows'] > 0) for g in games), 'complete TRAIN population/unique games')
     producer = inputs.json(audit['producer_protocol'], cap)
-    require(all((producer[k] == generation[k] for k in ('run_uuid', 'generation'))) and producer['source']['revision'] == identity['source_revision'] and (producer['actor']['sha256'] == generation['actor_sha256']), 'original producer identity')
+    require(all(producer[k] == generation[k] for k in ('run_uuid', 'generation')) and producer['source']['revision'] == identity['source_revision'] and (producer['actor']['sha256'] == generation['actor_sha256']), 'original producer identity')
     po = audit['producer_owner']
     pt = inputs.json(po['terminal'], cap, readonly=False)
     closed(pt, po['command'], po['owner_sha256'], 'gpu', producer['owner']['seconds'])
@@ -161,7 +161,7 @@ def authenticate(p: dict[str, Any], inputs: Inputs) -> dict[str, Any]:
     require(full['path'] == producer['output_root'], 'producer inventory root')
     inputs.inventory(full, limits)
     readout = inputs.json(audit['producer_readout'], cap)
-    require(readout['status'] == 'COLLECTED_CORE_GENERATION_V1' and readout['protocol_sha256'] == audit['producer_protocol']['sha256'] and all((readout[k] == producer[k] for k in ('run_uuid', 'collection_uuid', 'generation', 'attempts'))) and (readout['source_revision'] == identity['source_revision']) and (readout['actor_sha256'] == generation['actor_sha256']) and (readout['all_planned_attempts_accounted'] is True) and (readout['training_steps'] == 0) and (readout['root_acceptance_issued'] is False) and (readout['learning_admitted'] is False), 'original readout identity')
+    require(readout['status'] == 'COLLECTED_CORE_GENERATION_V1' and readout['protocol_sha256'] == audit['producer_protocol']['sha256'] and all(readout[k] == producer[k] for k in ('run_uuid', 'collection_uuid', 'generation', 'attempts')) and (readout['source_revision'] == identity['source_revision']) and (readout['actor_sha256'] == generation['actor_sha256']) and (readout['all_planned_attempts_accounted'] is True) and (readout['training_steps'] == 0) and (readout['root_acceptance_issued'] is False) and (readout['learning_admitted'] is False), 'original readout identity')
     root = Path(producer['output_root'])
     require(not root.with_name(root.name + '.failed.json').exists() and (not (root / 'failure.json').exists()) and (not list(root.glob('.attempt-*'))) and (not list(root.glob('failed-*.json'))), 'failed/partial producer')
     resolved_path = root / 'resolved-profile.json'
@@ -179,7 +179,7 @@ def raw_targets(path: Path, n: int, bins: int, cap: int) -> dict[str, Any]:
     expected = {'policy_target_raw': (np.dtype('f4'), (n, 1858)), 'outcome_wdl': (np.dtype('i1'), (n,)), 'pov_white': (np.dtype('u1'), (n,)), 'search_wdl_raw': (np.dtype('f4'), (n, 3)), 'has_search_raw': (np.dtype('u1'), (n,)), 'categorical_raw': (np.dtype('f4'), (n, bins)), 'has_categorical_raw': (np.dtype('u1'), (n,))}
     with zipfile.ZipFile(path) as archive:
         entries = archive.infolist()
-        require(len(entries) == 8 and {v.filename for v in entries} == {v + '.npy' for v in RAW_KEYS} and (sum((v.file_size for v in entries)) <= cap), 'raw archive members/decoded bound')
+        require(len(entries) == 8 and {v.filename for v in entries} == {v + '.npy' for v in RAW_KEYS} and (sum(v.file_size for v in entries) <= cap), 'raw archive members/decoded bound')
         for item in entries:
             require(not item.flag_bits & 1 and item.compress_type in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED), 'raw archive codec')
             with archive.open(item) as stream:
@@ -213,8 +213,8 @@ def stored_arrays(shard: dict[str, Any], n: int, cap: int) -> Any:
         require(dtype.kind in 'biuf' and (not dtype.hasobject) and (not value.get('filters')), 'unsafe Zarr dtype/filter')
         compressor = value.get('compressor')
         require(compressor is None or compressor.get('id') in COMPRESSORS, 'unsafe Zarr compressor')
-        require(isinstance(shape, list) and isinstance(chunks, list) and (1 <= len(shape) <= 4) and (shape[0] == n) and (len(shape) == len(chunks)) and all((type(x) is int and x > 0 for x in shape + chunks)), 'Zarr shape/chunk bound')
-        total += math.prod(((a + b - 1) // b * b for (a, b) in zip(shape, chunks, strict=True))) * dtype.itemsize
+        require(isinstance(shape, list) and isinstance(chunks, list) and (1 <= len(shape) <= 4) and (shape[0] == n) and (len(shape) == len(chunks)) and all(type(x) is int and x > 0 for x in shape + chunks), 'Zarr shape/chunk bound')
+        total += math.prod((a + b - 1) // b * b for (a, b) in zip(shape, chunks, strict=True)) * dtype.itemsize
         require(total <= cap, 'Zarr padded decoded bound')
     return zarr.open_group(str(root), mode='r')
 
@@ -256,18 +256,18 @@ def game_vectors(item: dict[str, Any], context: dict[str, Any], inputs: Inputs) 
     require(end_class in END_CLASSES, 'unresolved/unknown end class')
     common = {'run_uuid': producer['run_uuid'], 'collection_uuid': producer['collection_uuid'], 'source_revision': generation['source_revision'], 'generation': generation['generation'], 'actor_sha256': generation['actor_sha256'], 'served_state_sha256': context['served'], 'physical_game_id': item['physical_game_id'], 'game_id': item['game_id'], 'rows': n, 'bank': 'train', 'scientific_class': end_class}
     for doc in [completed, *docs.values()]:
-        require(all((doc.get(k) == v and type(doc.get(k)) is type(v) for (k, v) in common.items())), 'per-game source/role/common identity')
-    require(all((wrapper[k] == common[k] for k in common if k not in ('collection_uuid', 'scientific_class'))) and wrapper['label_class'] == item['label_class'], 'wrapper game identity')
+        require(all(doc.get(k) == v and type(doc.get(k)) is type(v) for (k, v) in common.items()), 'per-game source/role/common identity')
+    require(all(wrapper[k] == common[k] for k in common if k not in ('collection_uuid', 'scientific_class')) and wrapper['label_class'] == item['label_class'], 'wrapper game identity')
     require(validation == completed['validation'] and validation['schema'] == 'VERIFIED_CORE_GAME_METADATA_V1' and (validation['full_history_verified'] is True) and (validation['resolved'] is True) and (validation['raw_targets_verified'] is True) and (validation['usable_shard'] is True) and (validation['all_eligible_policy_rows_retained'] is True) and (validation['policy_row_retention'] == 'all_eligible') and (metadata['raw_targets_verified'] is True), 'retention/validation mismatch')
     audit = provenance['actual']
     verified = proof['verification']
     require(provenance['schema'] == 'CORE_GAME_PROVENANCE_V1' and metadata['schema'] == 'CORE_RAW_TARGETS_V1' and (proof['schema'] == 'CORE_PRODUCING_OUTCOME_PROOF_V1') and (verified['audit_sha256'] == digest(audit)) and (proof['proof_sha256'] == digest(verified)) and (metadata['verified_outcome'] == verified) and (metadata['verified_outcome_sha256'] == proof['proof_sha256']) and (validation['verified_outcome_sha256'] == proof['proof_sha256']) and (verified['scientific_class'] == end_class) and (verified['resolved'] is True) and (verified['result'] == audit['result']) and (verified['retained_rows'] == n), 'inherited outcome/audit hash join')
-    require(end_class == 'NATURAL' and audit['resolution'] == 'natural' and (audit['natural_result'] == audit['result']) or (end_class == 'STRICT_TB_ADJUDICATED' and audit['resolution'] == 'tablebase_adjudication' and (audit['natural_result'] == '*')), 'recorded end class/resolution')
-    require(all((verified[k] == common[k] for k in ('run_uuid', 'collection_uuid', 'generation', 'source_revision', 'physical_game_id', 'game_id', 'actor_sha256', 'served_state_sha256'))), 'verified proof identity')
+    require((end_class == 'NATURAL' and audit['resolution'] == 'natural' and (audit['natural_result'] == audit['result'])) or (end_class == 'STRICT_TB_ADJUDICATED' and audit['resolution'] == 'tablebase_adjudication' and (audit['natural_result'] == '*')), 'recorded end class/resolution')
+    require(all(verified[k] == common[k] for k in ('run_uuid', 'collection_uuid', 'generation', 'source_revision', 'physical_game_id', 'game_id', 'actor_sha256', 'served_state_sha256')), 'verified proof identity')
     require(provenance['planned']['physical_game_id'] == item['physical_game_id'] and audit['start']['root_fen'] == provenance['planned']['root_fen'] and (audit['start']['opening_moves'] == provenance['planned']['opening_moves']), 'planned original history')
     rows = validation['rows_detail']
     records = audit['records']
-    require(len(rows) == n and audit['retained_samples'] == n and (audit['game_id'] == item['game_id']) and (not any((v['is_sf_refute_opp'] for v in records))), 'retained record denominator')
+    require(len(rows) == n and audit['retained_samples'] == n and (audit['game_id'] == item['game_id']) and (not any(v['is_sf_refute_opp'] for v in records)), 'retained record denominator')
     eligible = [v for v in records if v['has_policy'] and (not v['is_sf_refute_opp'])]
     require(len(eligible) == n and [v['ply'] for v in rows] == [v['ply_index'] for v in eligible] and (len({v['ply'] for v in rows}) == len({v['move_offset'] for v in rows}) == n), 'chronological physical ply/move join')
     raw_path = directory / 'raw-targets.npz'
@@ -296,7 +296,7 @@ def game_vectors(item: dict[str, Any], context: dict[str, Any], inputs: Inputs) 
         require(type(row['ply']) is int and row['ply'] >= 0 and (type(row['move_offset']) is int) and (row['move_offset'] >= 0) and (row['ply'] == audit['start']['start_ply'] + row['move_offset']) and (record['move_offset'] == row['move_offset']) and (type(record['pov_color']) is bool) and (raw['pov_white'][i] in (0, 1)) and (bool(raw['pov_white'][i]) == record['pov_color'] == (row['ply'] % 2 == 0)), 'raw POV/physical ply')
         expected_outcome = 1 if result == '1/2-1/2' else 0 if (result == '1-0') == record['pov_color'] else 2
         require(int(outcome[i]) == expected_outcome, 'outcome result/POV mismatch')
-        require(row['physical_row_id'] == str(raw['physical_row_id'][i]) and all((isinstance(row[k], str) and len(row[k]) == 64 for k in ('history_sha256', 'stored_input_float16_sha256', 'stored_input_float16_mirror_sha256'))), 'inherited row/history/input identities')
+        require(row['physical_row_id'] == str(raw['physical_row_id'][i]) and all(isinstance(row[k], str) and len(row[k]) == 64 for k in ('history_sha256', 'stored_input_float16_sha256', 'stored_input_float16_mirror_sha256')), 'inherited row/history/input identities')
         bins.append(distance_bin(stop_distance(row, audit)))
     return (values, stored.astype(np.float32), outcome, bins)
 
@@ -332,14 +332,14 @@ def aggregate(banked: list[dict[str, Any]]) -> dict[str, Any]:
     return result
 
 def fresh_output(output: Path, roots: list[Path]) -> None:
-    require(output.is_absolute() and output.resolve() == output and (not output.exists()) and (not output.is_symlink()) and (not output.with_name(output.name + '.failed.json').exists()) and (not output.with_name(output.name + '.failed.json').is_symlink()) and (not any(((q / '.git').exists() or (q / '.git').is_symlink() for q in (output, *output.parents)))) and all((not output.is_relative_to(q) and (not q.is_relative_to(output)) for q in roots)), 'fresh external disjoint output')
+    require(output.is_absolute() and output.resolve() == output and (not output.exists()) and (not output.is_symlink()) and (not output.with_name(output.name + '.failed.json').exists()) and (not output.with_name(output.name + '.failed.json').is_symlink()) and (not any((q / '.git').exists() or (q / '.git').is_symlink() for q in (output, *output.parents))) and all(not output.is_relative_to(q) and (not q.is_relative_to(output)) for q in roots), 'fresh external disjoint output')
 
 def write_json(path: Path, value: Any) -> None:
     with path.open('xb') as stream:
         stream.write(canonical(value) + b'\n')
         stream.flush()
         os.fsync(stream.fileno())
-    path.chmod(292)
+    path.chmod(0o444)
 
 def census(p: dict[str, Any], *, final_guard: Callable[[], None]=lambda : None) -> dict[str, Any]:
     """All gates precede usable output. A technical fault emits UNQUALIFIED only."""
@@ -391,7 +391,7 @@ def census(p: dict[str, Any], *, final_guard: Callable[[], None]=lambda : None) 
         result = {'status': 'QUALIFIED_ALL_BANK_WDL_TARGET_DESCRIPTIONS_ROOT_CLOSURE_REQUIRED', 'study_uuid': p['study_uuid'], 'selection': p['selection'], 'clarification': p['clarification'], 'generation_manifest': p['generation_manifest'], 'physical_games': len(games), 'rows': available, 'available_rows': available, 'missing_rows': 0, 'invalid_rows': 0, 'end_class_games': dict(end_counts), 'quantile_levels': list(QUANTILES), 'quantile_method': 'linear_unweighted_finite_rows', 'equal_game_scope': 'mean of per-game means among G_s games with >=1 row in that stratum; no CIs', 'metric_arithmetic': 'F64 after originalF32/storedF16-widening/source-formula-F32-normalization', 'stored_f16_metrics': 'algebraic for unnormalized vector, including negative_sum_p_log_p', 'boundary_mass_is_not_clipping_frequency': True, 'distance_is_to_recorded_stop_not_future_TB_ending': True, 'full_legal_outcome_proof': 'Inherited exact accepted original proofs, no new game/TB/native replay', 'source_to_Torch_GPU_bitidentity': 'UNQUALIFIED_NOT_REPLAYED', 'playing_strength_or_training_adoption': False, 'statistics': stats, 'software': {'python': sys.version, 'numpy': np.__version__}, 'input_files_authenticated': len(inputs.seen), 'input_bytes_hashed': inputs.bytes_hashed}
         write_json(output / 'per-game.json', per_game)
         write_json(output / 'readout.json', result)
-        output.chmod(365)
+        output.chmod(0o555)
         return result
     except BaseException as error:
         marker = output.with_name(output.name + '.failed.json')
@@ -413,8 +413,8 @@ def source_guard(source: dict[str, Any]) -> None:
 
 def runtime_guard(p: dict[str, Any], protocol: dict[str, str], publication: dict[str, str], admission: dict[str, str]) -> None:
     require(p['schema'] == 'RETAINED_SEARCH_TARGET_CENSUS_V1' and p['runtime']['inner_seconds'] == 540 and (p['runtime']['owner_seconds'] == 600) and __debug__, 'fixed census CPU caps/schema')
-    require(os.environ.get('CUDA_VISIBLE_DEVICES') == '' and os.sched_getaffinity(0) == {20, 22} and all((os.environ.get(k) == '2' for k in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS'))), 'CPU-only regime')
-    require(not any((n == k or n.startswith(k + '.') for n in sys.modules for k in ('torch', 'onnxruntime', 'chess_anti_engine'))), 'forbidden runtime import')
+    require(os.environ.get('CUDA_VISIBLE_DEVICES') == '' and os.sched_getaffinity(0) == {20, 22} and all(os.environ.get(k) == '2' for k in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS')), 'CPU-only regime')
+    require(not any(n == k or n.startswith(k + '.') for n in sys.modules for k in ('torch', 'onnxruntime', 'chess_anti_engine')), 'forbidden runtime import')
     source_guard(p['reader_source'])
     inputs = Inputs()
     pub = inputs.json(publication, 4 << 20)
