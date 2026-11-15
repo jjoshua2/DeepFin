@@ -177,8 +177,8 @@ references. It also preserves the separate source-only metadata size-guard
 exception; that read supplied no new per-row or playing evidence. Original raw
 observations and all earlier negative results remain banked.
 
-The selected next diagnostic is a separately preregistered, model-free census of
-the entire fixed bank: separate W−L and draw residuals against genuine outcomes,
+The selected next diagnostic, requiring its own preregistration before execution,
+is a model-free census of the entire fixed bank: separate W−L and draw residuals against genuine outcomes,
 and distinguish original F32, physical F16 and loss-normalized representations.
 That can describe target geometry and representation effects; it cannot prove the
 cause of these playing regressions or select a stronger model by itself. No new
