@@ -683,6 +683,10 @@ def pytest_runtest_makereport(item: pytest.Item):
     # swallowed exit, or an xfail-marked test that then failed (XFAIL reads green).
     if new and not report.failed:
         report.outcome = "failed"
+        # pytest counts a failure only without ``wasxfail`` (_pytest/main.py):
+        # left in place, a flipped xfail reads FAILED yet the run exits 0.
+        if hasattr(report, "wasxfail"):
+            del report.wasxfail
         report.longrepr = (
             "conftest: intercepted in-process " + "; ".join(new)
             + " (the code under test swallowed InProcessHardExit; outside pytest this "

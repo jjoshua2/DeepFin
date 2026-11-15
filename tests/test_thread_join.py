@@ -213,16 +213,63 @@ def test_a_reused_tid_with_a_different_start_time_ends_the_wait_at_once(live_tid
     assert time.monotonic() - started < 0.05
 
 
-def test_the_wait_is_bounded_by_the_callers_budget_and_never_repeated(live_tid, caplog) -> None:
+def test_a_caller_budget_that_runs_out_is_neither_logged_nor_remembered(live_tid, caplog) -> None:
+    """A tiny budget (``go movetime 1``) running out is not a cap hit: no
+    warning, and a later call with more budget still waits."""
     caplog.set_level(logging.WARNING, logger=thread_join.__name__)
-    ghost = _EndedThread(live_tid, name="ghost")
+    ghost = _EndedThread(live_tid, name="ghost-budget")
+    for _ in range(2):
+        started = time.monotonic()
+        assert thread_join.await_os_thread_exit(ghost, cap_s=0.05) is False  # pyright: ignore[reportArgumentType]
+        elapsed = time.monotonic() - started
+        assert 0.04 < elapsed < 0.5, elapsed  # waited the budget again: not memoised
+    assert not [r for r in caplog.records if "ghost-budget" in r.getMessage()]
+
+
+def test_the_wait_never_exceeds_the_cap_and_a_cap_hit_is_logged_once_and_remembered(
+        live_tid, caplog) -> None:
+    """A reused tid with no start time to compare: a 5 s caller budget still
+    waits only the 1 s cap, logs once, and is never waited for again."""
+    caplog.set_level(logging.WARNING, logger=thread_join.__name__)
+    ghost = _EndedThread(live_tid, name="ghost-cap")
     started = time.monotonic()
-    assert thread_join.await_os_thread_exit(ghost, cap_s=0.05) is False  # pyright: ignore[reportArgumentType]
-    assert time.monotonic() - started < 0.5  # the budget, not the 1 s cap
+    assert thread_join.await_os_thread_exit(ghost, cap_s=5.0) is False  # pyright: ignore[reportArgumentType]
+    elapsed = time.monotonic() - started
+    assert thread_join.OS_EXIT_WAIT_S - 0.05 < elapsed < thread_join.OS_EXIT_WAIT_S + 0.5, elapsed
     started = time.monotonic()
-    assert thread_join.await_os_thread_exit(ghost) is False  # pyright: ignore[reportArgumentType]
-    assert time.monotonic() - started < 0.05  # given up once: not waited for again
-    assert sum("ghost" in r.getMessage() for r in caplog.records) == 1
+    assert thread_join.await_os_thread_exit(ghost, cap_s=5.0) is False  # pyright: ignore[reportArgumentType]
+    assert time.monotonic() - started < 0.05
+    assert sum("ghost-cap" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_task_start_time_is_the_threads_own_start_tick_and_stable() -> None:
+    """Field 22 of /proc/self/task/<tid>/stat, in clock ticks since boot: a
+    wrong field would make every wait end at once as "tid reused"."""
+    release = threading.Event()
+    t = threading.Thread(target=release.wait, daemon=True)
+    t.start()
+    try:
+        assert t.native_id is not None
+        first = thread_join.task_start_time(t.native_id)
+        with open("/proc/uptime") as f:
+            uptime_ticks = float(f.read().split()[0]) * os.sysconf("SC_CLK_TCK")
+        assert first is not None
+        assert abs(first - uptime_ticks) <= 10, (first, uptime_ticks)  # started just now
+        time.sleep(0.05)
+        assert thread_join.task_start_time(t.native_id) == first
+    finally:
+        release.set()
+        t.join(5)
+
+
+def test_a_start_time_noted_at_thread_start_is_used_after_it_ended(live_tid) -> None:
+    ghost = _EndedThread(live_tid)
+    real = thread_join.task_start_time(live_tid)
+    assert real is not None
+    thread_join._noted[ghost] = real + 1  # pyright: ignore[reportArgumentType]  # noted for the earlier task
+    started = time.monotonic()
+    assert thread_join.await_os_thread_exit(ghost, cap_s=5.0) is True  # pyright: ignore[reportArgumentType]
+    assert time.monotonic() - started < 0.05
 
 
 def test_a_thread_seen_gone_is_not_waited_for_again_even_if_its_tid_is_reused(live_tid) -> None:

@@ -83,7 +83,7 @@ def test_a_lazily_imported_uci_main_hard_exit_fails_the_test_instead_of_ending_p
     assert "PASSED test_probe_exit.py::test_b_a_later_test_still_runs" in text, text
 
 
-_XFAIL_AND_SKIP_PROBE = textwrap.dedent('''
+_XFAIL_PROBE = textwrap.dedent('''
     import os
     import pytest
 
@@ -94,6 +94,14 @@ _XFAIL_AND_SKIP_PROBE = textwrap.dedent('''
         except BaseException:
             pass
         raise AssertionError("expected failure")
+
+    def test_c_a_later_test_still_runs():
+        assert True
+''')
+
+_SKIP_PROBE = textwrap.dedent('''
+    import os
+    import pytest
 
     def test_b_swallows_then_skips():
         try:
@@ -107,14 +115,18 @@ _XFAIL_AND_SKIP_PROBE = textwrap.dedent('''
 ''')
 
 
+# One case per probe run, so each asserts its own exit status: in one file a
+# skip case's failure would mask an xfail case that still exits 0.
 @pytest.mark.parametrize("xdist", [False, True])
-def test_a_swallowed_os_exit_fails_an_xfail_or_skipped_test_too(tmp_path, xdist):
-    extra = ("-n", "2") if xdist else ()
+@pytest.mark.parametrize(("source", "name"), [
+    (_XFAIL_PROBE, "test_a_swallows_then_fails_as_xfail"),
+    (_SKIP_PROBE, "test_b_swallows_then_skips"),
+], ids=["xfail", "skip"])
+def test_a_swallowed_os_exit_fails_an_xfail_or_skipped_test_too(tmp_path, xdist, source, name):
     if xdist:
         pytest.importorskip("xdist")
-    rc, text = _run_probe(tmp_path, _XFAIL_AND_SKIP_PROBE, *extra)
-    assert "FAILED test_probe_exit.py::test_a_swallows_then_fails_as_xfail" in text, text
-    assert "FAILED test_probe_exit.py::test_b_swallows_then_skips" in text, text
+    rc, text = _run_probe(tmp_path, source, *(("-n", "2") if xdist else ()))
+    assert f"FAILED test_probe_exit.py::{name}" in text, text
     assert "PASSED test_probe_exit.py::test_c_a_later_test_still_runs" in text, text
     assert rc != 0, text
 

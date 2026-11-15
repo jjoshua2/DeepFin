@@ -38,7 +38,7 @@ from chess_anti_engine.tablebase import SyzygyProbe, get_tablebase
 from chess_anti_engine.uci import tb_root, wedge
 from chess_anti_engine.utils.bitboards import unsearchable_king_reason
 from chess_anti_engine.utils.gil_probe import GilContentionProbe
-from chess_anti_engine.utils.thread_join import await_os_thread_exit, join_thread
+from chess_anti_engine.utils.thread_join import await_os_thread_exit, join_thread, note_started
 
 from .protocol import (
     CmdGo,
@@ -1467,6 +1467,9 @@ class Engine:
                 thread=self._search_thread, stops=(self._stop_event, self._cancel_event),
             )
         self._search_thread.start()
+        # Its task start time, for the OS-thread wait once it has ended
+        # (``_wait_for_search``): a reused tid then costs nothing.
+        note_started(self._search_thread)
 
     def _refuse_go_for_rejected_position(self, args: GoArgs) -> None:
         """Answer this `go` with ``bestmove 0000``: the last `position` was
@@ -3847,8 +3850,14 @@ class Engine:
         elif thread is not None:
             # Ended on its own (``quit`` right after its ``bestmove``): its OS
             # thread may still be in torch's thread-local teardown. Reached on
-            # every go/stop/setoption too: bounded by this call's budget, and a
-            # thread whose wait expired once is never waited for again.
+            # every go/stop/setoption too, so bounded by this call's budget and
+            # checked against the start time noted at its start (a reused tid
+            # costs nothing). Only ``go`` passes a budget below the 1 s cap (its
+            # clock share, ~0 for ``go movetime 1``); running out there is
+            # harmless: the go path closes no evaluator -- the next search
+            # reuses them -- and the lingering thread is only finishing its own
+            # thread-local teardown. The paths that close evaluators (setoption
+            # rebuilds, ucinewgame, quit) wait with budgets of 1 s or more.
             await_os_thread_exit(thread, cap_s=max(0.0, end - time.monotonic()))
         if not self._warmup_done.wait(timeout=max(0.0, end - time.monotonic())):
             raise SearchNotQuiescent("warmup stop timed out; worker unchanged")

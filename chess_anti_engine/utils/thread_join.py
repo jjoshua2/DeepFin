@@ -48,6 +48,11 @@ _gave_up: weakref.WeakSet[threading.Thread] = weakref.WeakSet()
 # command for the same ended thread) returns at once, even if the tid is reused.
 _gone: weakref.WeakSet[threading.Thread] = weakref.WeakSet()
 
+# Task start times recorded by ``note_started`` for threads that are joined
+# (or found ended) later, when the caller can no longer read it.
+_noted_lock = threading.Lock()
+_noted: weakref.WeakKeyDictionary[threading.Thread, int] = weakref.WeakKeyDictionary()
+
 _E = TypeVar("_E", bound=ThreadPoolExecutor)
 
 
@@ -65,6 +70,19 @@ def task_start_time(tid: int) -> int | None:
         return int(data[data.rindex(b")") + 2:].split()[19])
     except (ValueError, IndexError):
         return None
+
+
+def note_started(thread: threading.Thread) -> None:
+    """Record ``thread``'s task start time right after ``thread.start()``, so a
+    later :func:`await_os_thread_exit` on it -- even once it has ended -- stops
+    at once if its tid has been reused. No-op if it already ended."""
+    tid = thread.native_id
+    if tid is None or not thread.is_alive():
+        return
+    start_time = task_start_time(tid)
+    if start_time is not None and thread.is_alive():
+        with _noted_lock:
+            _noted[thread] = start_time
 
 
 def _give_up_once(thread: threading.Thread, cap_s: float) -> None:
@@ -92,7 +110,10 @@ def await_os_thread_exit(
     Returns True when there is nothing left to wait for (the OS thread is gone,
     the thread never started, it is still running -- the caller's join timed
     out, which is the caller's business -- or not Linux). Returns False when
-    the bound expired: logged once, and that thread is never waited for again."""
+    the bound expired. Only spending the full :data:`OS_EXIT_WAIT_S` is a cap
+    hit: logged once, and that thread is never waited for again. A smaller
+    caller budget that runs out (a tiny clock) is neither logged nor
+    remembered, so a later call with more budget still waits."""
     tid = getattr(thread, "native_id", None)
     if tid is None or thread.is_alive():
         return True
@@ -100,6 +121,9 @@ def await_os_thread_exit(
         return True
     if thread in _gave_up:
         return False
+    if start_time is None:
+        with _noted_lock:
+            start_time = _noted.get(thread)
     cap = OS_EXIT_WAIT_S if cap_s is None else min(OS_EXIT_WAIT_S, max(0.0, cap_s))
     stop = time.monotonic() + cap
     while True:
@@ -109,7 +133,8 @@ def await_os_thread_exit(
                 _gone.add(thread)
             return True
         if time.monotonic() >= stop:
-            _give_up_once(thread, cap)
+            if cap >= OS_EXIT_WAIT_S:
+                _give_up_once(thread, cap)
             return False
         time.sleep(_POLL_S)
 

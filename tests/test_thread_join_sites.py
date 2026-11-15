@@ -277,6 +277,78 @@ def test_worker_selfplay_thread_pool(slow_thread_exit, monkeypatch) -> None:
         _assert_os_thread_gone(t)
 
 
+def test_uci_ended_search_wait_with_a_zero_budget_does_not_give_up_for_good(caplog) -> None:
+    """``go movetime 1``: the previous search's OS thread is still in its
+    teardown and the go budget is ~0. The wait returns at once without a
+    warning, and a later call with a real budget (quit) still waits it out."""
+    import logging
+
+    from chess_anti_engine.uci.engine import Engine
+    from chess_anti_engine.utils import thread_join
+
+    caplog.set_level(logging.WARNING, logger=thread_join.__name__)
+    search = threading.Thread(target=lambda: None, daemon=True, name="search-zero-budget")
+    search.start()
+    while search.is_alive():
+        time.sleep(0.0005)
+    fake = _engine_like(_search_thread=search)
+    fake._warmup_done.set()
+    started = time.monotonic()
+    Engine._wait_for_search(fake, timeout_s=0.0)  # pyright: ignore[reportArgumentType]
+    assert time.monotonic() - started < 0.05
+    if sys.version_info < (3, 13):
+        assert os.path.exists(f"/proc/self/task/{search.native_id}")  # still tearing down
+    assert not [r for r in caplog.records if "search-zero-budget" in r.getMessage()]
+    fake._search_thread = search
+    Engine._wait_for_search(fake, timeout_s=5.0)  # pyright: ignore[reportArgumentType]
+    _assert_os_thread_gone(search)
+
+
+def test_uci_go_notes_the_search_threads_start_time(monkeypatch) -> None:
+    """The ``go`` path records the search thread's task start time, so the
+    ended-search wait can tell a reused tid (costs nothing) from a linger."""
+    from unittest.mock import MagicMock
+
+    import chess_anti_engine.uci.engine as engine_module
+    from chess_anti_engine.uci.engine import Engine, EngineOptions
+    from chess_anti_engine.uci.protocol import parse_command
+    from chess_anti_engine.uci.search import SearchResult
+    from chess_anti_engine.utils import thread_join
+
+    lines: list[str] = []
+    monkeypatch.setattr(engine_module, "sys", SimpleNamespace(
+        stdout=SimpleNamespace(write=lambda s: lines.append(s) or len(s), flush=lambda: None),
+        stderr=sys.stderr))
+    entered, release = threading.Event(), threading.Event()
+
+    def run(board: chess.Board, **_kw: Any) -> SearchResult:
+        entered.set()
+        assert release.wait(10)
+        move = next(iter(board.legal_moves)).uci()
+        return SearchResult(move, None, 8, (move,), 0)
+
+    worker = MagicMock()
+    worker._chunk_sims = 16
+    worker._pucv_pool = worker._rpg_pool = None
+    worker.advance_root.return_value = True
+    worker.root_policy_bestmove.return_value = None
+    worker.realized_search_path.return_value = "gumbel"
+    worker.run.side_effect = run
+    engine = Engine(worker, options=EngineOptions())
+    try:
+        engine.dispatch(parse_command("position startpos"))
+        engine.dispatch(parse_command("go infinite"))
+        assert entered.wait(5)
+        thread = engine._search_thread
+        assert thread is not None
+        assert thread.native_id is not None
+        assert thread_join._noted.get(thread) == thread_join.task_start_time(thread.native_id)
+    finally:
+        release.set()
+        engine.dispatch(parse_command("stop"))
+        engine.close()
+
+
 class _GhostThread:
     """An ended search thread whose tid now names another live task."""
 
@@ -288,7 +360,7 @@ class _GhostThread:
         return False
 
 
-def test_uci_wait_for_an_ended_search_is_bounded_by_the_budget_and_not_repeated() -> None:
+def test_uci_wait_for_an_ended_search_is_bounded_and_honours_a_noted_start_time() -> None:
     """``_wait_for_search`` runs on every go/stop/setoption: for an ended search
     thread whose tid was reused, the OS-thread wait spends at most the call's own
     budget, once; later calls do not wait again."""
@@ -305,10 +377,25 @@ def test_uci_wait_for_an_ended_search_is_bounded_by_the_budget_and_not_repeated(
         started = time.monotonic()
         Engine._wait_for_search(fake, timeout_s=0.1)  # pyright: ignore[reportArgumentType]
         assert time.monotonic() - started < 0.5  # the 0.1 s budget, not the 1 s cap
-        fake._search_thread = ghost  # the engine keeps answering commands
+        fake._search_thread = ghost  # stop / setoption default to a 30 s budget
         started = time.monotonic()
-        Engine._wait_for_search(fake, timeout_s=5.0)  # pyright: ignore[reportArgumentType]
-        assert time.monotonic() - started < 0.05  # given up once: never waited for again
+        Engine._wait_for_search(fake, timeout_s=30.0)  # pyright: ignore[reportArgumentType]
+        assert time.monotonic() - started < 1.5  # clamped to the 1 s cap
+        fake._search_thread = ghost
+        started = time.monotonic()
+        Engine._wait_for_search(fake, timeout_s=30.0)  # pyright: ignore[reportArgumentType]
+        assert time.monotonic() - started < 0.05  # a cap hit is not repeated
+
+        # With the start time noted at its start (the go path), a reused tid costs nothing.
+        from chess_anti_engine.utils import thread_join
+        noted = _GhostThread(other.native_id)
+        real = thread_join.task_start_time(other.native_id)
+        assert real is not None
+        thread_join._noted[noted] = real - 1  # pyright: ignore[reportArgumentType]
+        fake._search_thread = noted
+        started = time.monotonic()
+        Engine._wait_for_search(fake, timeout_s=30.0)  # pyright: ignore[reportArgumentType]
+        assert time.monotonic() - started < 0.05
     finally:
         release.set()
         other.join(5)
