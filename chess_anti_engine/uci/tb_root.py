@@ -47,6 +47,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -91,8 +92,27 @@ class LoadedTables:
 _state_lock = threading.Lock()
 _loaded: LoadedTables | None = None
 _generation = 0
-# ``id(owner)`` of every engine holding the loaded generation (see ``load``).
-_owners: set[int] = set()
+# Every engine holding the loaded generation (see ``load``), by WEAK reference:
+# an engine garbage-collected without ``close()`` stops counting (pruned at the
+# next release), so it can never pin the tables for the rest of the process,
+# and a recycled ``id()`` cannot impersonate it (the dead reference is replaced).
+_owners: dict[int, weakref.ref[object]] = {}
+
+
+def _add_owner(owner: object) -> None:
+    _owners[id(owner)] = weakref.ref(owner)
+
+
+def _live_owners() -> list[object]:
+    """Prune collected owners; the live ones (caller holds ``_state_lock``)."""
+    live: list[object] = []
+    for key, ref in list(_owners.items()):
+        obj = ref()
+        if obj is None:
+            del _owners[key]
+        else:
+            live.append(obj)
+    return live
 
 
 def normalise_path(path: str) -> str:
@@ -244,11 +264,11 @@ def load(path: str, *, owner: object | None = None) -> LoadedTables:
     with _state_lock:
         if _loaded is not None and _loaded.configured == wanted and _tb_ext.path() == _loaded.resolved:
             if owner is not None:
-                _owners.add(id(owner))
+                _add_owner(owner)
             return _loaded
         _generation += 1
         _loaded = None
-        _owners = set()
+        _owners = {}
         try:
             largest = int(_tb_ext.init(wanted))
         except (ValueError, RuntimeError) as exc:
@@ -269,7 +289,7 @@ def load(path: str, *, owner: object | None = None) -> LoadedTables:
             generation=_generation,
         )
         if owner is not None:
-            _owners.add(id(owner))
+            _add_owner(owner)
         return _loaded
 
 
@@ -289,10 +309,12 @@ def unload(generation: int | None = None, *, owner: object | None = None) -> boo
         if generation is not None and (_loaded is None or _loaded.generation != generation):
             return False
         if generation is not None and owner is not None:
-            _owners.discard(id(owner))
-            if _owners:
+            ref = _owners.get(id(owner))
+            if ref is not None and ref() is owner:
+                del _owners[id(owner)]
+            if _live_owners():
                 return False
-        _owners = set()
+        _owners = {}
         _generation += 1
         _loaded = None
         _tb_ext.free()

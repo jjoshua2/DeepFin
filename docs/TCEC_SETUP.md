@@ -316,8 +316,8 @@ layout only. In the independent review's fuzz of 300 randomly corrupted tables
 (PR #1327), validation refused about 167 (roughly half); about 63 were accepted
 and harmless; **62 to 67 (about one in five) were accepted and then answered
 WRONG WDL/DTZ with no warning**; 2 to 3 crashed the prober at probe time; and
-one probe hung once. Stockfish and every other engine built on the same
-Fathom/Syzygy code share this. Only a checksum of every byte finds a corruption
+one probe hung once. Every Syzygy prober shares this, because none of them
+checksums the data. Only a checksum of every byte finds a corruption
 inside a table's compressed data, so the checksum step below is required, not
 optional.
 
@@ -340,13 +340,19 @@ optional.
    cover all of them), else the manifest shipped with the engine for the standard
    3-4-5-6-man set (`chess_anti_engine/tb/syzygy_standard_3-4-5-6.md5`: the
    lichess mirror's `https://tablebase.lichess.ovh/tables/standard/md5`, every
-   table up to 6 men, cross-checked line for line against an independently
-   downloaded copy's `3-4-5-6.md5` and against the files themselves). It FAILs
+   table up to 6 men; it has the same 1020 entries as an independently
+   downloaded copy's `3-4-5-6.md5`, and matches the files themselves).
+   **A list found in a table directory takes precedence over the built-in
+   manifest and is not cross-checked against it**, so a list regenerated
+   locally from the files (`md5sum *.rtb? > checksum.md5`) proves nothing. Use
+   the list that came with the download, or pass `--syzygy-checksums builtin`
+   for the standard 3-4-5-6-man set. It FAILs
    naming every mismatched or unreadable file and every malformed list line.
    A file that no list covers (for example 7-man tables checked against the
    built-in manifest), or no list at all, is `NOT VERIFIED: ...`, naming the
-   files: a SKIP without `--syzygy-require-checksums`, a FAIL with it, so use the
-   flag for an event. Listed tables absent from the path are named but are not
+   files: a SKIP without `--syzygy-require-checksums`, a FAIL with it. **Without
+   the flag an uncovered set is only a SKIP and the run still ends
+   `SELFCHECK PASS`**, so use the flag for an event. Listed tables absent from the path are named but are not
    a failure (a list usually covers more than one install holds).
    `--no-syzygy-checksums` skips the pass (reported as `NOT VERIFIED`).
    Measured on the production 3-4-5-6-man pair (1,385 files including the
@@ -383,6 +389,9 @@ a broken symlink, or a file of incomplete size. The refusal names every such
 file and says what to do: `remove or rename each one` (for a mirrored name, the
 message gives the real table name; for an incomplete file, re-download it).
 Fix the directory and send `setoption name SyzygyPath value ...` again.
+The refusal `info string` can be several thousand characters long, and some
+GUIs truncate long lines; the self-check prints the same refusal in full, so
+`deepfin --selfcheck --no-uci --syzygy ...` is the reliable place to read it.
 
 `Syzygy50MoveRule` (default `true`): with it on, a win that the 50-move rule turns
 into a draw counts as a draw. With it off, cursed wins and blessed losses count as
