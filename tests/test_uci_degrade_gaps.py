@@ -1305,7 +1305,10 @@ def test_walker_and_owner_threads_park_after_a_device_fault() -> None:
     walkers = WalkerPool(WalkerPoolConfig(n_walkers=2, c_puct=1.0, fpu_at_root=0.0,
                                           fpu_reduction=0.0, input_planes=146), _direct())
     owner = CUDAOwnerDispatcher(_direct())
-    walkers.close()
-    owner.close()
+    started = time.monotonic()
+    walkers.close()  # returns once each walker parked: no 2 s join per walker
+    owner.close()  # no 30 s join of a parked owner
+    # Plain joins would take >= 4 s (2 s per walker) and 30 s for the owner.
+    assert time.monotonic() - started < 3.5
     threads = [*walkers._threads, owner._owner]
     assert _wait_for(lambda: all(th in wedge.parked_threads() for th in threads), timeout=5)
