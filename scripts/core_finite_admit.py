@@ -1,7 +1,8 @@
 """Independent CPU audit of one closed finite collector generation.
 
-Outputs are accepted-schema CANDIDATES. Root promotes their pinned bytes only
-after this audit's own owner closes PASS; the child cannot attest future closure.
+Outputs are CANDIDATES requiring separate postclosure promotion. Legacy accepted-
+schema labels stay unchanged; the recipe-free route uses distinct, unpromoted
+statuses. The child cannot attest the future closure of its own audit owner.
 """
 from __future__ import annotations
 
@@ -12,10 +13,12 @@ import importlib
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import sys
 from types import SimpleNamespace
 from typing import Any
+import uuid
 import zipfile
 
 from scripts import core_finite_learner as learning
@@ -24,6 +27,48 @@ require = learning.require
 canonical = learning.canonical
 digest = learning.digest
 METADATA_CAP = 128 << 20
+DATA_PROTOCOL = "CORE_FINITE_DATA_ADMISSION_V1"
+DATA_SPEC = "core_generation_data_spec_v1"
+DATA_CANDIDATE = "CORE_TRAIN_GENERATION_DATA_CANDIDATE_V1"
+DATA_GAME_CANDIDATE = "VERIFIED_RESOLVED_CORE_DATA_GAME_CANDIDATE_V1"
+
+
+def validate_data_spec(spec: dict[str, Any]) -> None:
+    """Validate data assertions and source closure without any learning recipe."""
+    require(set(spec) == {"schema", "run_uuid", "collection_uuid", "generation", "source_revision", "source_files",
+                          "architecture", "actor_sha256", "actor_checkpoint_step", "games_per_generation",
+                          "max_games_per_generation"} and spec["schema"] == DATA_SPEC, "invalid data specification fields/schema")
+    for key in ("run_uuid", "collection_uuid"):
+        require(type(spec[key]) is str and str(uuid.UUID(spec[key])) == spec[key], "invalid canonical " + key)
+    learning.integer(spec["generation"], "logical generation")
+    learning.integer(spec["actor_checkpoint_step"], "actor checkpoint step", 0)
+    require(type(spec["source_revision"]) is str and re.fullmatch("[0-9a-f]{40}", spec["source_revision"]) is not None,
+            "invalid data source revision")
+    require(type(spec["actor_sha256"]) is str and re.fullmatch("[0-9a-f]{64}", spec["actor_sha256"]) is not None,
+            "invalid actor SHA256")
+    require(isinstance(spec["architecture"], dict) and bool(spec["architecture"]), "missing data architecture")
+    minimum = learning.integer(spec["games_per_generation"], "games per generation")
+    maximum = learning.integer(spec["max_games_per_generation"], "maximum games per generation")
+    require(minimum <= maximum, "invalid data generation game bounds")
+    pins = spec["source_files"]
+    required = set(learning.SOURCE_FILES) | {"scripts/core_finite_admit.py", "scripts/core_generation_data_admit.py"}
+    require(isinstance(pins, dict) and required <= pins.keys(), "missing data source pins")
+    for name, expected in pins.items():
+        require(type(name) is str and not Path(name).is_absolute(), "invalid data source path")
+        path = learning.REPO / name
+        require(path.resolve() == path and path.is_relative_to(learning.REPO) and not path.is_symlink(), "invalid data source path")
+        require(type(expected) is str and re.fullmatch("[0-9a-f]{64}", expected) is not None,
+                "invalid data source SHA256")
+        require(learning.file_sha(path) == expected, "data source mismatch: " + name)
+
+
+def data_producer_identity(spec: dict[str, Any], producer: dict[str, Any]) -> None:
+    require(all(spec[key] == producer[key] for key in ("run_uuid", "collection_uuid", "generation"))
+            and spec["source_revision"] == producer["source"]["revision"]
+            and canonical(spec["architecture"]) == canonical(producer["actor"]["architecture"])
+            and spec["actor_sha256"] == producer["actor"]["sha256"]
+            and spec["actor_checkpoint_step"] == producer["actor"]["expected_checkpoint_step"],
+            "data specification/producer identity differs")
 
 
 def ref(path: Path) -> dict[str, str]:
@@ -311,12 +356,13 @@ def verify_game(item: dict[str, Any], planned: dict[str, Any], producer: dict[st
             "proof_sha256": proof.proof_sha256}, decoded
 
 
-def execute(protocol_ref: dict[str, str]) -> dict[str, Any]:
+def _execute(protocol_ref: dict[str, str], *, data_only: bool) -> dict[str, Any]:
     require(Path(__file__).resolve() == learning.REPO / "scripts/core_finite_admit.py", "foreign auditor entrypoint")
     _, p = learning.read_ref(protocol_ref)
-    require(set(p) == {"schema", "learner_contract", "producer_protocol", "producer_readout", "producer_inventory",
+    specification_key = "data_spec" if data_only else "learner_contract"
+    require(set(p) == {"schema", specification_key, "producer_protocol", "producer_readout", "producer_inventory",
                        "producer_owner", "gates", "runtime", "output_root", "limits"}
-            and p["schema"] == "CORE_FINITE_ADMISSION_V1", "invalid audit protocol")
+            and p["schema"] == (DATA_PROTOCOL if data_only else "CORE_FINITE_ADMISSION_V1"), "invalid audit protocol")
     runtime_guard(p)
     caps = p["limits"]
     require(set(caps) == {"max_metadata_bytes", "max_inventory_files", "max_inventory_bytes",
@@ -335,10 +381,15 @@ def execute(protocol_ref: dict[str, str]) -> dict[str, Any]:
         from chess_anti_engine.encoding import rep_fix
         from chess_anti_engine.verified_outcome import VerifiedOutcomeVerifier
 
-        _, contract = learning.read_ref(p["learner_contract"])
-        learning.validate_contract(contract)
-        require("scripts/core_finite_admit.py" in contract["source_files"], "audit source is not pinned")
+        _, contract = learning.read_ref(p[specification_key])
+        if data_only:
+            validate_data_spec(contract)
+        else:
+            learning.validate_contract(contract)
+            require("scripts/core_finite_admit.py" in contract["source_files"], "audit source is not pinned")
         _, producer = learning.read_ref(p["producer_protocol"])
+        if data_only:
+            data_producer_identity(contract, producer)
         require(contract["run_uuid"] == producer["run_uuid"] and contract["source_revision"] == producer["source"]["revision"]
                 and Path(producer["source"]["checkout"]).resolve() == learning.REPO,
                 "collector and learner must use the same final integrated source")
@@ -428,6 +479,10 @@ def execute(protocol_ref: dict[str, str]) -> dict[str, Any]:
         learning.import_custody()
         require(learning.file_sha(actor) == producer["actor"]["sha256"], "actor changed during CPU audit")
         learning.verify_inventory(full_inventory)
+        if data_only:
+            _, final_spec = learning.read_ref(p["data_spec"])
+            require(final_spec == contract, "data specification changed during audit")
+            validate_data_spec(final_spec)
         games = []
         for game in eligible:
             path = output / ("game-" + game["physical_game_id"].rsplit(":", 1)[1] + ".json")
@@ -436,12 +491,21 @@ def execute(protocol_ref: dict[str, str]) -> dict[str, Any]:
                         "game_id", "bank", "rows", "label_class", "evidence", "shard_inventory_sha256")},
                        "resolved": True, "full_history_verified": True, "raw_targets_verified": True,
                        "audit_protocol": protocol_ref}
+            if data_only:
+                wrapper.update(status=DATA_GAME_CANDIDATE, data_spec=p["data_spec"],
+                               collection_uuid=producer["collection_uuid"], logical_generation=producer["generation"],
+                               actor_checkpoint_step=producer["actor"]["expected_checkpoint_step"],
+                               candidate_only=True, learning_admitted=False, root_postclosure_promotion_required=True)
             learning.write_json(path, wrapper)
             games.append({key: game[key] for key in ("physical_game_id", "game_id", "bank", "rows", "label_class", "shard")} | {"producer_proof": ref(path)})
         manifest = {"schema": "ROOT_ACCEPTED_CORE_TRAIN_GENERATION_V1", "run_uuid": producer["run_uuid"],
                     "source_revision": contract["source_revision"], "generation": producer["generation"],
                     "actor_sha256": producer["actor"]["sha256"], "actor_serving": readout["actor_serving"], "games": games,
                     "audit_protocol": protocol_ref, "root_postclosure_promotion_required": True}
+        if data_only:
+            manifest.update(schema=DATA_CANDIDATE, data_spec=p["data_spec"], collection_uuid=producer["collection_uuid"],
+                            logical_generation=producer["generation"], actor_checkpoint_step=producer["actor"]["expected_checkpoint_step"],
+                            candidate_only=True, learning_admitted=False)
         learning.write_json(output / "generation.json", manifest)
         result = {"status": "AUDITED_CORE_TRAIN_GENERATION_CANDIDATE_PENDING_ROOT_CLOSURE_V1", "audit_protocol": protocol_ref,
                   "generation_manifest": ref(output / "generation.json"), "attempts": len(audited), "audited": audited,
@@ -450,6 +514,11 @@ def execute(protocol_ref: dict[str, str]) -> dict[str, Any]:
                   "models_constructed": 0, "forwards": 0, "optimizer_updates": 0,
                   "side_effect_count_scope": "source call graph; not instrumented constructor/forward counters",
                   "policy_limit": "original F32 observation plus legal/strictTB recheck; no independent Gumbel replay"}
+        if data_only:
+            result.update(status="AUDITED_CORE_DATA_GENERATION_CANDIDATE_PENDING_ROOT_CLOSURE_V1",
+                          data_spec=p["data_spec"], collection_uuid=producer["collection_uuid"],
+                          logical_generation=producer["generation"], actor_checkpoint_step=producer["actor"]["expected_checkpoint_step"],
+                          candidate_only=True, learning_admitted=False)
         learning.write_json(output / "readout.json", result)
         learning.seal(output)
         learning.fsync_directory(output)
@@ -457,7 +526,8 @@ def execute(protocol_ref: dict[str, str]) -> dict[str, Any]:
         return result
     except BaseException as error:
         marker = learning.failure_marker(output)
-        learning.write_json(marker, {"status": "FAILED_CORE_ADMISSION_V1", "error": repr(error), "protocol": protocol_ref,
+        learning.write_json(marker, {"status": "FAILED_CORE_DATA_ADMISSION_V1" if data_only else "FAILED_CORE_ADMISSION_V1",
+                                    "error": repr(error), "protocol": protocol_ref,
                                     "root_postclosure_promotion_required": True, "learning_admitted": False})
         marker.chmod(0o444)
         learning.fsync_directory(marker.parent)
@@ -466,6 +536,16 @@ def execute(protocol_ref: dict[str, str]) -> dict[str, Any]:
         signal.alarm(0)
         if verifier is not None:
             verifier.close()
+
+
+def execute(protocol_ref: dict[str, str]) -> dict[str, Any]:
+    """Legacy recipe-bound protocol only; output identities remain unchanged."""
+    return _execute(protocol_ref, data_only=False)
+
+
+def execute_data(protocol_ref: dict[str, str]) -> dict[str, Any]:
+    """Recipe-independent assertions, candidate data only; never learning admission."""
+    return _execute(protocol_ref, data_only=True)
 
 
 def main(argv: list[str] | None = None) -> int:
