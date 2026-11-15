@@ -1,0 +1,345 @@
+{
+  "CONF": "RESERVED_DATA_ROLE_ONLY_NOT_ALLOCATED_OR_CONSUMED",
+  "actual_metadata_CPU_wall_seconds": {
+    "aggregate_cap": 360,
+    "controls": 1.215635385015048,
+    "selector": 7.397416774008889
+  },
+  "adapter": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-full-A39-adapter-preparation-v5/manifest.json",
+    "sha256": "2cb379f9736be0f7492a0aac56234a33e77110fb39e5e462134342f7c0f7425d"
+  },
+  "adapter_source_review": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-full-A39-adapter-independent-source-review-v3/review.json",
+    "sha256": "ea6b41189305160bae398b51cdea90f718c011f682c9af407dba64231d285ebd"
+  },
+  "controls": {
+    "actual_independent": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-guard-controls-independent-actual-review-v1/review.json",
+      "sha256": "e74fd12e43cebd4d971e233acb5b7d047a2566eedaa8743a3a782080211ed5e5"
+    },
+    "actual_root": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v1/guard-controls/root-acceptance.json",
+      "sha256": "1b4fcff67c820a0107f44765a88f7f97f341d01a681d26605ab301bd0b2dd5da"
+    },
+    "actual_status": "CLOSED70PASS_0FAIL_ERROR_SKIP_EXPECTEDFAIL_UNEXPECTSUCCESS; CPU1.215635385015048s/60 softwareguards_only_no_role_model_credit",
+    "adapter14_cases_are_included_not_extra_owner": true,
+    "case_count": 70,
+    "inner_seconds": 45,
+    "only_one_combined_owner": true,
+    "owner_seconds": 60,
+    "source_manifest": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-role-playing-preparation-v2/controls-manifest.json",
+      "sha256": "98bdedea55bf5d1713a510b9e3a06e6669895efdc64941dccbaf7cd9f7895dc3"
+    }
+  },
+  "direction": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-preparation-selection-v1/decision.json",
+    "sha256": "d871cf4e06c0dce8b5e748bb97c1d384ef3897bc943dd618b2674373aad7ba9b"
+  },
+  "eligibility_and_replacement_counts": "UNKNOWN_UNRUN",
+  "frozen_scientific_protocol": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-scientific-freeze-v1/protocol.json",
+    "sha256": "5f533a7c43530bcea0e3edc12010f19f438c8a837aec0c01cf196fe57b3bc874"
+  },
+  "full_model_engineering_science_PLAY": "UNRUN_UNADMITTED",
+  "has_policy_false_scope": "Fixed-bank full-worker load_replay requires original has_policy==1. Direct false-mask fallback controls do not relax that admission.",
+  "metadata_inspection_selection": {
+    "after_owned_EOF_birth_closure_and_stat_first": true,
+    "all_other_metadata_cap_bytes": 4194304,
+    "exact_GPU_readout_and_failure_marker_paths_only": true,
+    "maximum_bytes": 16777216,
+    "no_raw_payload_or_source_math_resource_execution_change": true,
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-metadata-inspection-selection-v1/decision.json",
+    "sha256": "24d0bcd443e3e8286025242288616652903f0a1b3395324f066d6808831a0745"
+  },
+  "no_strength_teacher_superiority_or_adoption_claim": true,
+  "operational_selection": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-operational-selection-v3/decision.json",
+    "sha256": "1b6fd100b120ba80b12915c3ae2d86407225dc85a11d3bd95a51d794ed250bcf"
+  },
+  "original_population": {
+    "identity": "Original G1 TRAIN, source090b / runb0db; no relabel or expansion",
+    "physical_games": 256,
+    "rows": 24827
+  },
+  "prospective_design": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-prospective-design-selection-v1/decision.json",
+    "sha256": "87d694ba62111a0c26c50f3926f5944ecca6ce5ddd5a25362736933446c9070d"
+  },
+  "prospective_resources": {
+    "CPU_owner_seconds": 16560,
+    "GPU_owner_seconds": 19800,
+    "GPU_scope_plan": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v1/GPU-scope-plan.json",
+      "sha256": "3d658fac876b989b9dc2420c2845ac132d3c003f7e7ecac19592b8371d1657d1"
+    },
+    "GPU_scope_uuid": "e8f5a210-545c-4e48-a732-ebf40458aa98",
+    "scope_is_not_admission": true
+  },
+  "protocol_template": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-science-preparation-v1/protocol.TEMPLATE.json",
+    "sha256": "ab09e7f33a2c41017c83bf4f1bb02c3c1432c848eb650736fed5236921db8bfa"
+  },
+  "public_joint_cached_start_matches": 0,
+  "public_joint_raw_mirror_outside_cache": "UNKNOWN",
+  "publication_note": "Complete prospective preregistration of frozen scientific protocol; actual MAIN publication is separately authenticated by root after CI/feedback/merge. No full-model or per-phase execution authority from this evidence file.",
+  "qualified_consumer_commit": "06de80c2f18980c0d0d7687ead02e8d2525cefe5",
+  "qualified_runtime_commit": "69516d560d5700a48855d814b1b9f59ee68ca989",
+  "role_PLAY_source": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-role-playing-preparation-v2/manifest.json",
+    "sha256": "910cf3d6199f632ea4088ae69681e4edabe95058ea387f4ed8852e37786f3cdd"
+  },
+  "role_PLAY_source_review": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-role-playing-independent-source-review-v2/review.json",
+    "sha256": "440f70580124de22b0de3a7299740ad3b74865f6d8c34fb3e209b31d876a7b4d"
+  },
+  "role_data": {
+    "books": {
+      "A_vs_A39_DIAGNOSTIC": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-role-selector-results-v1/a_vs_a39_diagnostic.epd",
+        "sha256": "90b616aa893771142233c71a7b9d14101b0ae0d17a52e0318161dec56bcc597b"
+      },
+      "B_vs_A": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-role-selector-results-v1/b_vs_a.epd",
+        "sha256": "006a1db8cd8edd74a3a8eb18bce15f9f509e9d1935e85ed6ad55c4ad139e3833"
+      },
+      "B_vs_A39": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-role-selector-results-v1/b_vs_a39.epd",
+        "sha256": "173bdba70aed78d9c01bafe86d994f6ea581cbacb45c209da0ab306bed695382"
+      },
+      "CONF_B_vs_A39": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-role-selector-results-v1/conf_b_vs_a39.epd",
+        "sha256": "b9d7feb35fafa76e5295701e9e28cf7a395e366d2635758fa8eabea20711fa28"
+      }
+    },
+    "freshness_scope": "Namedacceptedretainedtraining/usemetadata+protectedstartidentitiesonly. Laterplayedtrajectoryandunretainedsearchraw/mirroroutsideenumeratedindex,external/pretraining/broaderfamilyexposureUNKNOWN. No universalunseen claim.",
+    "independent_review": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v1/roles/independent-review.json",
+      "sha256": "c816a882d9e2f64534cd8503fef3d888748d2161f0236dc696a8d5d6dced2991"
+    },
+    "playing_guard": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-role-selector-results-v1/playing-guard.json",
+      "sha256": "d15bbff2c27c80599ef65e574d84959df7f5b2e015499fb8c7195a3952e152e4"
+    },
+    "preservation_proof": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-role-selector-results-v1/preservation-proof.json",
+      "sha256": "93f76ab1e1dc5f29f4c557d738e1916018f50468250248b20466e36bb895772b"
+    },
+    "result_manifest": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-role-selector-results-v1/manifest.json",
+      "sha256": "98e72c10db56324f4fd2db843a05e9d3b093b3882da79ff7e43424829b643df2"
+    },
+    "role_counts": {
+      "A_vs_A39_DIAGNOSTIC": 500,
+      "B_vs_A": 500,
+      "B_vs_A39": 500,
+      "CONF_B_vs_A39": 500
+    },
+    "roles": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-role-selector-results-v1/roles.json",
+      "sha256": "4ee74a61d6cdd1ae2069c50c98cc859bd8295727064696bb24d78b4d7a7e7e38"
+    },
+    "root_acceptance": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v1/roles/root-acceptance.json",
+      "sha256": "0ed190b70b8b7270ef278a1c38ad7fd8cc5c68b134e76f6758df6222bb28a5ae"
+    },
+    "selection_state": "ROOT_AND_INDEPENDENT_ACCEPTED_CLOSED_PASS_FOUR500_ROLES_DATA_ONLY_PLAYING_NOT_ADMITTED_CONF_RESERVED_NOT_ALLOCATED",
+    "selector_readout": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-role-selector-results-v1/readout.json",
+      "sha256": "94a5731724f36808b14e048482189b765e75eeb0e3bc65f9af4c8f43ec4a68ec"
+    },
+    "unknown_exposure": [
+      "Later played trajectories, including incomplete joint timed games, and unretained search inputs outside the enumerated metadata index remain UNKNOWN.",
+      "External/unbanked or unrecorded inference exposure remains UNKNOWN.",
+      "Donor pretraining and broader opening-family exposure remain UNKNOWN.",
+      "Public standardstart/full16 starts are protected by fullhistory/terminalEPD and complete cached matches only; raw/mirror identity outside those cached matches remains UNKNOWN without reencoding."
+    ]
+  },
+  "root_scientific_freeze": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-scientific-freeze-v1/root-freeze.json",
+    "sha256": "12620e6ebdbdfc4bdfb4d633790722b370b27f704493d0950c3fccb5ee90e107"
+  },
+  "schema": "SF_P0_MAIN_POLICY_512_PILOT_PUBLIC_SOURCE_EVIDENCE_V1",
+  "science_source_review": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-science-independent-source-review-v1/review.json",
+    "sha256": "e888bbd92d57ceaa2478cecf6872d704e6b1755d12fb8e14b66e0d6670b62ac8"
+  },
+  "sealed_science_source_bundle": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-science-preparation-v1/manifest.json",
+    "sha256": "ad11739b922c5a06b63046a0639e17f6822e929eb31798770fef00120e34c592"
+  },
+  "source_author_executed_imports_tests_jobs_or_payload_reads": false,
+  "source_consumer": {
+    "MAIN_source_publication": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-consumer-main-publication-v1/publication.json",
+      "sha256": "29a84df44d2b35dbcac30657f4f35dac74f03cdf1f7c13cfb2547d725114e90b"
+    },
+    "consumer_source_capsule": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-consumer-source-preparation-v8/manifest.json",
+      "sha256": "afdbbf8909cabe2b0574b71a37fcb8a02012ee0646c47625622c8511d5fc583b"
+    },
+    "consumer_source_review": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-consumer-final-independent-code-profile-review-v6/review.json",
+      "sha256": "7c9e79c4848192219bf08e399ad6d09159e070ec28a1ae4191b1b7d0234ea384"
+    },
+    "native_reuse": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v1/native-reuse.json",
+      "sha256": "380b8fb718c84001a4fb3aa98929afd1617a4e47c751bbd705d5eb1d832f4925"
+    },
+    "publication_head51bed_is_doc_only_not_runtime_identity": true,
+    "qualified_consumer_head": "06de80c2f18980c0d0d7687ead02e8d2525cefe5",
+    "qualified_runtime_head": "69516d560d5700a48855d814b1b9f59ee68ca989",
+    "software_closeout": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v1/software-closeout.json",
+      "sha256": "3f6f8a6cbd9889c4f63b4e9b728fb27ed5462909ff9d445b43227e4b70a8d256"
+    },
+    "software_independent": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-overlay-software-independent-actual-review-v1/review.json",
+      "sha256": "9a189f65396d7ef54eb39c3d6fdcb529136dc149ce78fe7285441eb0ff465496"
+    },
+    "software_root": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v1/software-root-acceptance.json",
+      "sha256": "9028f002c8f2bfcf87338d4cd91506e976d2936331497792f3a1666fa9d29f23"
+    },
+    "source": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-full-A39-adapter-preparation-v4/source-roster.json",
+      "sha256": "d2703d80e2cf213a179959bc9564b0f1c11680545c90988485cbd6a339554603"
+    },
+    "source_publication_transfer": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-consumer-main-publication-v1/qualified-source-to-publication-head-transfer.json",
+      "sha256": "792d6b305e6e3ab0a210d61ddd2cef211a841e25bae887045e1c87de2d1eaaa9"
+    },
+    "source_publication_transfer_review": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-consumer-source-publication-independent-review-v1/review.json",
+      "sha256": "3ae6817e3c307f6e8e9ba216cb3de0b65446b3082f38fabc9bc9f7c5e6432dfe"
+    }
+  },
+  "status": "FROZEN_PROSPECTIVE_STUDY_ALL_FULL_MODEL_PHASES_UNRUN_NO_EXECUTION_AUTHORITY",
+  "study_uuid": "5456e5e8-23c1-48a0-a4bc-cab6841f5170",
+  "technical_recovery_amendment": {
+    "CPU_program_ceiling": 16620,
+    "GPU_program_ceiling_including_historical_failed_owner": 20400,
+    "actual_role_reselection_encoding_or_parent70_rerun": false,
+    "all_model_and_scientific_results": "OriginalengineeringFAILED; correctedengineering/science/PLAYUNRUN_UNADMITTED; eligibilitycountsUNKNOWN",
+    "complete_amended_MAIN_and_fresh_admissions_required": true,
+    "corrected_adapter_manifest": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-full-A39-adapter-preparation-v6/manifest.json",
+      "sha256": "f19688c8a30c37727231f296d5aa8ade365e018abc8ca529b63f976ad9e889c3"
+    },
+    "failed_actual_wall_charged": true,
+    "failure": "Observer indexed policy after unchanged original_loss; production fullmodel emits policy_own; no checkpoint/completedboundary/share1/science/PLAY result",
+    "fresh_future_GPU_scope_cap": 19800,
+    "frozen_scientific_protocol": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-scientific-freeze-v2/protocol.json",
+      "sha256": "019a12bb5b76147671a54daa104b76198743768eb4ae1f40d87a8ba642138d0e"
+    },
+    "future_GPU_scope": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v2/GPU-scope-plan.json",
+      "sha256": "a632fd50126f3fafaadcfb4669ebf13f41a0d0f1470b4e2a687ead80eaa1f8bf"
+    },
+    "interface_qualification": {
+      "actual_CPU_owner_wall_seconds": 3.2997688190080225,
+      "actual_readout": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-observer-interface-results-v1/readout.json",
+        "sha256": "af9bf811a71abbfeb923aea20916230cd8cf1878aaf19c0bdfa897185c289857"
+      },
+      "actual_root_status": "CLOSED11_PASS_ROOT_AND_INDEPENDENT_ACCEPTED_SYNTHETIC_CPU_ONLY",
+      "actual_terminal": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-observer-interface-CPU-execution-v1/terminal.json",
+        "sha256": "f7ebafa4938d028b69ac84a16e23ae6f2dd96a529aac1007d96f71cfc86cd3af"
+      },
+      "case_count": 11,
+      "enforcement": "ROOT_EXTERNAL_PRE_ADMISSION_REQUIREMENT_FROM_RECOVERY2093; unchanged adapter common.py does not read these CPU receipts",
+      "independent_review": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-observer-interface-independent-actual-review-v1/review.json",
+        "sha256": "d18c21c639dc629baa8f746b0edb46532be63c91f8e7f79988bad8a82d802b49"
+      },
+      "no_fullmodel_GPU_native_or_bank_qualification": true,
+      "not_a_70_or_30_rerun": true,
+      "required_independent_status": "ACCEPT_CLOSED_SF_MAIN_POLICY_OBSERVER_INTERFACE_CPU_NO_FINDINGS",
+      "required_root_status": "ROOT_ACCEPTS_CLOSED_SF_MAIN_POLICY_OBSERVER_INTERFACE_CPU_V1",
+      "root_acceptance": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-observer-interface-bindings-v1/root-acceptance.json",
+        "sha256": "d474992e82b45620cb7f934d4fae2cd06dcc76935b212174e5536412de84ee6b"
+      },
+      "scope": "Exact nested callback + unchanged actual CPU production loss, synthetic two-row1858 tensors. CUDA RNG getter stubbed [] only; no encoding/native/model/Trainer/AMP/full-A39/bank/optimizer qualification.",
+      "source_capsule": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-observer-interface-qualification-preparation-v2/manifest.json",
+        "sha256": "5bb43fe319bb2a883e0c543d2b9ea56d1a4a683dd11b8c48838233fd55563362"
+      },
+      "source_review": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-observer-interface-independent-source-review-v2/review.json",
+        "sha256": "60029dc5b093b9b20e7a08870f52743c2cc783cf8e7a97ee8e59fb20352de968"
+      }
+    },
+    "metadata_inspection_selection": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-metadata-inspection-selection-v2/decision.json",
+      "sha256": "639ad274517cae90946c33bf3343e2793a7e5964aea1e2715d81bb7f4aa48ddd"
+    },
+    "nonbinding_path_prose_clarification": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-science-v2-path-coordination-clarification-v1/clarification.json",
+      "sha256": "5d75ecf41a70ca829503c56695011795b6e0105186b4a9e960e54cc3d92ed036"
+    },
+    "optional_native_blocker": "3 attempts / 2 distinct names, no native images imported",
+    "original_MAIN_publication": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v1/publication.json",
+      "sha256": "47c88afc38a59553bf10370a1d2c1b04e1db35fe1477167ba976cc58747517ba"
+    },
+    "original_failed_closeout": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v1/engineering-v1-failed-closeout.json",
+      "sha256": "4be90b7efaaac2b88601b8073e6d00022d682a24528aa2b383aa54ae1c846990"
+    },
+    "original_failed_independent": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-engineering-v1-failure-independent-actual-review-v1/review.json",
+      "sha256": "46f069c0198393a53bc1d5c04f5ac80bd788a883ee97033e8cc5fa2694c4d6da"
+    },
+    "original_owner_wall_seconds": 56.086261332035065,
+    "original_published_fields_are_historical_cutoff": true,
+    "original_scientific_protocol": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-scientific-freeze-v1/protocol.json",
+      "sha256": "5f533a7c43530bcea0e3edc12010f19f438c8a837aec0c01cf196fe57b3bc874"
+    },
+    "role_PLAY_projection": {
+      "arena_manifest": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-role-playing-preparation-v3/arena/manifest.json",
+        "sha256": "3f84c1e13c46c6d8ef67f662f2567dd079941b8b7652db1bfd07b5fcf60a15da"
+      },
+      "manifest": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-role-playing-preparation-v3/manifest.json",
+        "sha256": "580615bfe5a2c4dc6a6fd472cabef17347f488faff8aaad6d730c1bdeaf14547"
+      },
+      "parent70_not_rerun": true,
+      "selector_and_role_records_original_V2_not_reexecuted": true,
+      "source_review": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-role-playing-independent-source-review-v3/review.json",
+        "sha256": "8ebdc03743362394eb94e3cc7af59d04c01cfc5664690db4f9c01a01ba086e09"
+      }
+    },
+    "root_scientific_freeze": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-scientific-freeze-v2/root-freeze.json",
+      "sha256": "b71b5bb02d970504a0dbedd9bac805886fb3528f935cd1fd6b4d35b2f11bc131"
+    },
+    "same_study_uuid": "5456e5e8-23c1-48a0-a4bc-cab6841f5170",
+    "science_source_review": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-science-independent-source-review-v2/review.json",
+      "sha256": "936d36eae208944addfe5a2be8226832c6e958029b584971dab39069991b9d56"
+    },
+    "scientific_A_B_contract_stage_bytes_unchanged": true,
+    "sealed_science_source_bundle": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-science-preparation-v2/manifest.json",
+      "sha256": "2e3b31c057f9c8f981f7555fee11785e8bab88670f7b4f13eb48926222295c0a"
+    },
+    "selection": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-technical-recovery-selection-v1/decision.json",
+      "sha256": "2093d3e1b05b6b0790cd19b12c6fae107137ea37f53b5dd58b6a51fdb7d5283a"
+    },
+    "source_author_numeric_or_project_execution_or_payload_read": false,
+    "source_template": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-science-preparation-v2/protocol.TEMPLATE.json",
+      "sha256": "514ef1025c352e9d0bd0edc8e969a58be12aa3e63a2e7c569d369dd48484f9a5"
+    },
+    "status": "SEALED_SOURCE_TECHNICAL_AMENDMENT_NOT_NEW_GPU_OR_SCIENCE_AUTHORITY",
+    "unused_closed_ceiling_not_credit": true
+  }
+}
