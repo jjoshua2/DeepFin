@@ -306,11 +306,13 @@ def validate_accepted_generation(root_ref: dict[str, str], independent_ref: dict
     require(len(games) == len(eligible) == readout["eligible_games"] and len(eligible) >= gates["min_resolved_games"]
             and type(readout["eligible_games"]) is int and readout["class_counts"] == counts
             and all(type(value) is int for value in readout["class_counts"].values()), "eligible/class counts differ")
-    ids: set[str] = set()
+    ids: set[int] = set()
     for game, checked in zip(games, eligible, strict=True):
         require(set(game) == {"physical_game_id", "game_id", "bank", "rows", "label_class", "shard", "producer_proof"}, "invalid game entry")
+        require(type(game["game_id"]) is int and 0 <= game["game_id"] < 2**63
+                and type(checked["game_id"]) is int, "invalid game ID")
         require(all(game[key] == checked[key] for key in ("physical_game_id", "game_id", "bank", "rows", "label_class", "shard"))
-                and type(game["game_id"]) is str and game["game_id"] and game["game_id"] not in ids
+                and game["game_id"] not in ids
                 and type(game["rows"]) is int and game["bank"] == "train" and game["label_class"] ==
                 {"NATURAL": "NATURAL", "STRICT_TB_ADJUDICATED": "TB_ADJUDICATED"}.get(checked["scientific_class"]), "game membership differs")
         ids.add(game["game_id"])

@@ -84,7 +84,9 @@ failure marker. All fixed physical attempts must occur once in ordinal order.
 Every eligible game is retained in that order, with unique game IDs, train bank,
 matching rows, scientific/label class, shard descriptor and game wrapper. Each
 wrapper must retain the candidate-only status and identity, verified history/raw
-flags, original evidence references, inventory digest and serving-state identity.
+flags, original evidence references, inventory digest and serving-state identity. Game
+IDs match the producer's `_stable_game_id`: strict Python integers satisfying
+`0 <= game_id < 2**63`, including zero; booleans, floats and strings are refused.
 It reconciles class counts, all eligible rows, min/max game and row gates, decoded
 byte ceiling, and the audit's source-scoped zero side-effect declarations.
 Those declarations remain source-scoped rather than instrumented counters.
@@ -118,7 +120,8 @@ partial bank. No caller callback, project numeric import or runtime launcher is
 involved.
 
 New tests use synthetic JSON graphs with deliberately nonexistent payload paths.
-They cover positive generation2 membership, all eligible retention, distinct
+They cover positive generation2 membership, zero/max63-bit integer game IDs, an
+actual-emitter source contract check, wrong-type/range ID refusal, all eligible retention, distinct
 owner/child revisions, immutable output and unchanged candidate bytes; rehashed
 identity/closure/command/schema/gate/membership faults; reference, path, size and
 final-custody failures. Existing public-auditor tests separately cover actual

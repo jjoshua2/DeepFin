@@ -1,6 +1,7 @@
 """Synthetic postclosure JSON graphs; no native, model, replay or audit execution."""
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 from pathlib import Path
@@ -11,7 +12,7 @@ import pytest
 from scripts import core_generation_bank_acceptance as acceptance
 
 
-def graph(tmp_path: Path, *, fault: str = "") -> tuple[dict[str, str], dict[str, str], Path]:
+def graph(tmp_path: Path, *, fault: str = "", game_ids: tuple[int, int] = (0, 2**63 - 1)) -> tuple[dict[str, str], dict[str, str], Path]:
     def write(name: str, value: dict[str, Any]) -> dict[str, str]:
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -79,7 +80,7 @@ def graph(tmp_path: Path, *, fault: str = "") -> tuple[dict[str, str], dict[str,
             continue
         item: dict[str, Any] = {"eligible": True, "run_uuid": run, "collection_uuid": collection, "generation": 2,
             "source_revision": revision, "actor_sha256": "c" * 64, "served_state_sha256": "d" * 64,
-            "physical_game_id": collection + ":" + str(i), "bank": "train", "game_id": "game" + str(i), "rows": 2,
+            "physical_game_id": collection + ":" + str(i), "bank": "train", "game_id": game_ids[i], "rows": 2,
             "scientific_class": kind, "label_class": "NATURAL" if i == 0 else "TB_ADJUDICATED",
             "shard": {"path": "/NEVER-OPEN/shard" + str(i), "files": [{"path": "model.npy", "bytes": 10, "sha256": "6" * 64}]},
             "evidence": {key: {"path": "/NEVER-OPEN/" + key + ".json", "sha256": "7" * 64}
@@ -89,7 +90,11 @@ def graph(tmp_path: Path, *, fault: str = "") -> tuple[dict[str, str], dict[str,
         if fault == "inventory" and i == 0:
             item["shard_inventory_sha256"] = "0" * 64
         if fault == "duplicate_game" and i == 1:
-            item["game_id"] = "game0"
+            item["game_id"] = game_ids[0]
+        invalid_ids: dict[str, Any] = {"id_string": "0", "id_bool": False, "id_negative": -1,
+                                       "id_range": 2**63, "id_float": 0.0}
+        if i == 0 and fault in invalid_ids:
+            item["game_id"] = invalid_ids[fault]
         wrapper = {key: item[key] for key in ("run_uuid", "generation", "source_revision", "actor_sha256", "served_state_sha256",
             "physical_game_id", "game_id", "bank", "rows", "label_class", "evidence", "shard_inventory_sha256")}
         wrapper.update(common, status="VERIFIED_RESOLVED_CORE_DATA_GAME_CANDIDATE_V1", resolved=True,
@@ -171,6 +176,7 @@ def test_complete_postclosure_view_keeps_generation_and_all_eligible_games(tmp_p
     view = validate(root, review)
     assert view.identity["generation"] == 2
     assert len(view.games) == 2  # Minimum1 does not filter out the second eligible game.
+    assert tuple(game["game_id"] for game in view.games) == (0, 2**63 - 1)
     assert view.evidence["eligible_rows"] == 4
     assert view.evidence["learning_admitted"] is False
     assert view.evidence["audit_owner"]["source_revision"] != view.identity["source_revision"]
@@ -183,7 +189,7 @@ def test_complete_postclosure_view_keeps_generation_and_all_eligible_games(tmp_p
 @pytest.mark.parametrize("fault", ["recipe", "source_pin", "bool_generation", "actor_step", "collection", "producer_source",
     "architecture", "serving", "inventory", "protocol", "row_gate", "duplicate_game", "wrapper", "wrapper_alias", "missing_attempt",
     "missing_eligible", "candidate_alias", "admitted", "totals", "command", "failed", "gpu", "unclosed", "eof", "supervisor",
-    "births", "review", "wrong_root", "failure_marker"])
+    "births", "review", "wrong_root", "failure_marker", "id_string", "id_bool", "id_negative", "id_range", "id_float"])
 def test_rehashed_but_inconsistent_graph_is_refused(tmp_path: Path, fault: str):
     root, review, _ = graph(tmp_path, fault=fault)
     expected = {
@@ -196,6 +202,8 @@ def test_rehashed_but_inconsistent_graph_is_refused(tmp_path: Path, fault: str):
         "totals": "row gate", "command": "audit command", "failed": "closed CPU PASS", "gpu": "closed CPU PASS",
         "unclosed": "closed CPU PASS", "eof": "root closure", "supervisor": "root closure", "births": "root closure",
         "review": "independent acceptance", "wrong_root": "independent acceptance", "failure_marker": "failed audit output",
+        "id_string": "invalid game ID", "id_bool": "invalid game ID", "id_negative": "invalid game ID",
+        "id_range": "invalid game ID", "id_float": "invalid game ID",
     }
     with pytest.raises(ValueError, match=expected[fault]):
         validate(root, review)
@@ -255,3 +263,19 @@ def test_invalid_json_constants_and_duplicate_keys_refused(tmp_path: Path, raw: 
     root["sha256"] = hashlib.sha256(raw).hexdigest()
     with pytest.raises(ValueError, match="duplicate|nonfinite"):
         validate(root, review)
+
+
+def test_actual_emitter_game_id_representation_is_accepted(tmp_path: Path):
+    # Execute only this stdlib-only function's actual source, never import selfplay.
+    source = Path(__file__).resolve().parents[1] / "chess_anti_engine/selfplay/finalize.py"
+    tree = ast.parse(source.read_text(), filename=str(source))
+    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_stable_game_id")
+    namespace: dict[str, Any] = {"hashlib": hashlib}
+    exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), "exec"), namespace)
+    game_id = namespace["_stable_game_id"](start_fen="synthetic-start", opening_source="synthetic",
+        move_trace="synthetic-trace", result="1/2-1/2", total_plies_played=0)
+    assert type(game_id) is int
+    assert 0 <= game_id < 2**63
+    root, review, _ = graph(tmp_path, game_ids=(game_id, (game_id + 1) % 2**63))
+    view = validate(root, review)
+    assert view.games[0]["game_id"] == game_id
