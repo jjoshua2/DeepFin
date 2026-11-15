@@ -1027,3 +1027,198 @@ def test_engine_refuses_a_corrupt_set_before_readyok_and_keeps_playing(tmp_path:
         if proc.poll() is None:
             proc.kill()
             proc.wait(timeout=10)
+
+
+# ------------------------------- follow-ups to the #1327 independent review
+
+
+@pytest.mark.usefixtures("py_table")
+def test_two_engines_on_one_path_share_tables_until_the_last_one_closes(out, fake_c) -> None:
+    """Same SyzygyPath -> same generation. The first engine to close must not
+    free the tables the second is still using; the last one must."""
+    d, _ = _engine()
+    e, e_worker = _engine()
+    try:
+        d.dispatch(CmdSetOption(name="SyzygyPath", value="stub-tables"))
+        e.dispatch(CmdSetOption(name="SyzygyPath", value="stub-tables"))
+        assert fake_c.inits == ["stub-tables"]  # one init, one shared generation
+        assert d._tb_generation == e._tb_generation
+        d.close()
+        assert fake_c.path() is not None
+        assert tb_root.loaded() is not None
+        e.dispatch(parse_command(f"position fen {_KRK_FEN}"))
+        _go(e, "go nodes 64")
+        assert not [ln for ln in out.lines if "root tablebase shortcut disabled" in ln], out.lines
+        assert e_worker._tb_root is not None
+        assert fake_c.root_calls == [_KRK_FEN]
+        assert out.bestmoves()[-1] == _C_BEST
+    finally:
+        d.close()
+        e.close()
+    assert fake_c.path() is None  # the last owner freed them
+    assert tb_root.loaded() is None
+    # And a fresh engine can load the same path again after the last close.
+    f, _ = _engine()
+    try:
+        f.dispatch(CmdSetOption(name="SyzygyPath", value="stub-tables"))
+        assert fake_c.inits == ["stub-tables", "stub-tables"]
+        assert fake_c.path() is not None
+    finally:
+        f.close()
+    assert fake_c.path() is None
+
+
+@pytest.mark.usefixtures("out", "py_table")
+def test_rule50_rebuild_and_clear_release_one_owner_once(fake_c) -> None:
+    """Re-installing the same path (Syzygy50MoveRule) must not count the engine
+    twice: one clear by D then still leaves E's tables, and E's clear frees."""
+    d, _ = _engine()
+    e, _ = _engine()
+    try:
+        d.dispatch(CmdSetOption(name="SyzygyPath", value="stub-tables"))
+        d.dispatch(CmdSetOption(name="Syzygy50MoveRule", value="false"))
+        e.dispatch(CmdSetOption(name="SyzygyPath", value="stub-tables"))
+        e.dispatch(CmdSetOption(name="SyzygyPath", value="<empty>"))
+        assert fake_c.path() is not None  # D still holds it
+        d.dispatch(CmdSetOption(name="SyzygyPath", value="<empty>"))
+        assert fake_c.path() is None
+    finally:
+        d.close()
+        e.close()
+
+
+def test_unload_without_owner_or_generation_still_forces_a_free(fake_c) -> None:
+    owner = _Owner()
+    other = _Owner()
+    tables = tb_root.load("stub-tables", owner=owner)
+    assert tb_root.unload(tables.generation, owner=other) is False  # not the owner
+    assert fake_c.path() is not None
+    assert tb_root.unload() is True
+    assert fake_c.path() is None
+
+
+def test_selfcheck_names_the_table_a_hanging_validation_child_was_on(tmp_path: Path) -> None:
+    from chess_anti_engine.uci import selfcheck as sc
+
+    hang = (
+        "import time\n"
+        f"print({tb_root.VALIDATE_START!r} + 'KQvK', flush=True)\n"
+        f"print({tb_root.VALIDATE_START!r} + 'KRvKN', flush=True)\n"
+        "time.sleep(60)\n"
+    )
+    with pytest.raises(sc.CheckFailed, match=r"hung \(no result within 2 s, child killed\) "
+                                             r"while initialising table KRvKN"):
+        sc.validate_tables_subprocess(str(tmp_path), timeout_s=2,
+                                      command=[sys.executable, "-c", hang])
+
+
+def test_a_refusal_prints_exactly_twice_by_the_first_readyok_then_once_per_isready(
+    out, tmp_path: Path,
+) -> None:
+    """Deliberate: once at `setoption`, once before `readyok` (engine.py,
+    _install_tablebase). Two by the first readyok, never three."""
+    engine, _ = _engine()
+    try:
+        engine.dispatch(CmdSetOption(name="SyzygyPath", value=str(tmp_path)))
+        engine.dispatch(parse_command("isready"))
+        refused = [ln for ln in out.lines if "REFUSED by the C tablebase prober" in ln]
+        assert len(refused) == 2, out.lines
+        assert out.lines[-1] == "readyok"
+        out.lines.clear()
+        engine.dispatch(parse_command("isready"))
+        assert sum("REFUSED" in ln for ln in out.lines) == 1, out.lines
+    finally:
+        engine.close()
+
+
+class _Owner:
+    """A weak-referenceable stand-in for an engine owning the C tables."""
+
+
+@pytest.mark.usefixtures("out", "py_table")
+def test_an_owner_collected_without_close_does_not_pin_the_tables(fake_c) -> None:
+    """An engine dropped without ``close()`` must not count forever: once it is
+    garbage-collected, the remaining owner's release frees the set."""
+    import gc
+
+    dropped = _Owner()
+    tables = tb_root.load("stub-tables", owner=dropped)
+    e, _ = _engine()
+    try:
+        e.dispatch(CmdSetOption(name="SyzygyPath", value="stub-tables"))
+        assert e._tb_generation == tables.generation
+        del dropped
+        gc.collect()
+    finally:
+        e.close()
+    assert fake_c.path() is None
+    assert tb_root.loaded() is None
+
+
+#: Stray names written by ``_stray_dir`` beyond the three special cases: more
+#: than any short cap, so a refusal that names only the first few is caught.
+_PLAIN_STRAYS = ("notes.rtbw", "old1.rtbw", "old2.rtbw", "old3.rtbw", "readme.rtbz", "x.rtbz")
+_STRAYS = (*_PLAIN_STRAYS, "KvKR.rtbw", "KBvK.rtbw")
+
+
+def _stray_dir(d: Path, *, tables: tuple[str, ...]) -> Path:
+    d.mkdir()
+    for name in tables:
+        (d / name).write_bytes(b"\0" * 80)
+    for name in _PLAIN_STRAYS:
+        (d / name).write_text("my notes")
+    (d / "KvKR.rtbw").write_bytes(b"\0" * 80)
+    os.symlink(d / "gone" / "KBvK.rtbw", d / "KBvK.rtbw")
+    return d
+
+
+@pytest.mark.usefixtures("py_table")
+def test_stray_files_refuse_the_path_naming_each_and_saying_remove_or_rename(
+    out, fake_c, tmp_path: Path,
+) -> None:
+    # A long directory name: the engine's refusal line must name every file in
+    # full, so it is not cut at the 600 characters other info lines get.
+    d = _stray_dir(tmp_path / ("tb-" + "x" * 150),
+                   tables=("KQvK.rtbw", "KQvK.rtbz", "KRvK.rtbw", "KRvK.rtbz"))
+    with pytest.raises(tb_root.RootTablebaseError) as info:
+        tb_root.load(str(d))
+    msg = str(info.value)
+    assert (f"{len(_STRAYS)} file(s) in the table directories are not loadable Syzygy tables; "
+            "remove or rename each one") in msg
+    for name in _PLAIN_STRAYS:
+        assert f"{d / name} (not a Syzygy table name)" in msg
+    assert f"{d / 'notes.rtbw'} (not a Syzygy table name)" in msg
+    assert f"{d / 'KvKR.rtbw'} (mirrored name; the table is KRvK.rtbw)" in msg
+    assert f"{d / 'KBvK.rtbw'} (broken symlink -> " in msg
+    assert fake_c.path() is None  # all tablebases off, no partial set
+    engine, _ = _engine()
+    try:
+        engine.dispatch(CmdSetOption(name="SyzygyPath", value=str(d)))
+        line = next(ln for ln in out.lines if "REFUSED by the C tablebase prober" in ln)
+        assert len(line) > 600
+        for name in _STRAYS:
+            assert str(d / name) in line, line
+        assert "remove or rename" in line
+        assert line.endswith("; tablebase probing disabled")
+    finally:
+        engine.close()
+
+
+@needs_smoke
+def test_stray_files_beside_real_tables_refuse_the_path(tmp_path: Path) -> None:
+    assert _SMOKE is not None
+    d = tmp_path / "tb"
+    _stray_dir(d, tables=())
+    for name in ("KQvK.rtbw", "KQvK.rtbz"):
+        (d / name).write_bytes((_SMOKE / name).read_bytes())
+    proc = subprocess.run(
+        [sys.executable, "-c", _CHILD, str(d), "8/8/8/8/8/2k5/8/KQ6 w - - 0 1"],
+        capture_output=True, text=True, timeout=120,
+        env=dict(os.environ, CUDA_VISIBLE_DEVICES="", PYTHONPATH=str(REPO_ROOT)), check=False,
+    )
+    verdict = [ln for ln in proc.stdout.splitlines() if not ln.startswith("info string ")]
+    assert verdict, (proc.stdout, proc.stderr[-2000:])
+    assert verdict[0].startswith("REFUSED"), (proc.stdout, proc.stderr[-2000:])
+    assert "remove or rename" in verdict[0]
+    for name in _STRAYS:
+        assert str(d / name) in verdict[0]

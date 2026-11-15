@@ -260,6 +260,11 @@ class SearchNotQuiescent(TimeoutError):
     """The search still owns the worker; mutation and teardown must wait."""
 
 
+#: An ``info string`` SyzygyPath refusal is not cut before this: it names every
+#: stray file the operator must remove or rename.
+_TB_REFUSAL_LIMIT = 8000
+
+
 def _one_line(exc: BaseException, limit: int = 300) -> str:
     """``Type: message`` on one line, for an ``info string``.
 
@@ -2703,7 +2708,7 @@ class Engine:
         self._worker.set_tb_root(None)
         generation = self._tb_generation
         if generation is not None:
-            tb_root.unload(generation)
+            tb_root.unload(generation, owner=self)
         self._tb_generation = None
 
     def _install_tablebase(self, path: str) -> None:
@@ -2726,13 +2731,17 @@ class Engine:
             _println("info string SyzygyPath cleared; tablebase probing disabled")
             return
         try:
-            tables = tb_root.load(path)
+            tables = tb_root.load(path, owner=self)
         except tb_root.RootTablebaseError as exc:
             self._clear_tablebases()
-            # Repeated on every `isready` while this path stays configured.
+            # Printed here AND before every `readyok` while this path stays
+            # configured, so a GUI's first `isready` after `setoption` shows it
+            # twice. Deliberate: some GUIs log only the isready exchange. Never
+            # a third time per isready (tests/test_uci_tb_root_c.py pins 2).
+            # The limit keeps every named stray file (tb_root.validate_loaded).
             self._tb_refusal = (
                 f"info string error: SyzygyPath {path!r} REFUSED by the C tablebase prober "
-                f"({_one_line(exc, limit=600)}); tablebase probing disabled"
+                f"({_one_line(exc, limit=_TB_REFUSAL_LIMIT)}); tablebase probing disabled"
             )
             _println(self._tb_refusal)
             return
@@ -3622,7 +3631,9 @@ class Engine:
         self._worker.close()
         generation = self._tb_generation
         if generation is not None:
-            tb_root.unload(generation)  # only if it is still this engine's table set
+            # Only if it is still this engine's table set and no other engine
+            # in the process still holds it (tb_root owner refcount).
+            tb_root.unload(generation, owner=self)
         self._closed = True
 
   # -- helpers --------------------------------------------------------------

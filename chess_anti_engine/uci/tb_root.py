@@ -34,7 +34,9 @@ claim oracle here; ``chess.syzygy`` is not used on this path.
 
 Fathom's table set is one per process (``_tb_ext`` is a singleton). This module
 owns it for the engine: :func:`load` (re)initialises it, :func:`unload` frees
-it, and every :class:`RootTablebase` handle remembers the generation it was
+it. Engines sharing one ``SyzygyPath`` share one generation, so each engine
+loads and releases as an OWNER (``owner=``): the set is freed only when its
+last owner releases it, never under another engine still using it. Every :class:`RootTablebase` handle remembers the generation it was
 built for, so a handle that outlived a re-init refuses to probe instead of
 answering from somebody else's tables. ``_tb_ext.probe_root`` serialises
 concurrent calls itself (a C mutex); the engine probes only from its single
@@ -45,6 +47,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -89,6 +92,27 @@ class LoadedTables:
 _state_lock = threading.Lock()
 _loaded: LoadedTables | None = None
 _generation = 0
+# Every engine holding the loaded generation (see ``load``), by WEAK reference:
+# an engine garbage-collected without ``close()`` stops counting (pruned at the
+# next release), so it can never pin the tables for the rest of the process,
+# and a recycled ``id()`` cannot impersonate it (the dead reference is replaced).
+_owners: dict[int, weakref.ref[object]] = {}
+
+
+def _add_owner(owner: object) -> None:
+    _owners[id(owner)] = weakref.ref(owner)
+
+
+def _live_owners() -> list[object]:
+    """Prune collected owners; the live ones (caller holds ``_state_lock``)."""
+    live: list[object] = []
+    for key, ref in list(_owners.items()):
+        obj = ref()
+        if obj is None:
+            del _owners[key]
+        else:
+            live.append(obj)
+    return live
 
 
 def normalise_path(path: str) -> str:
@@ -106,22 +130,48 @@ def loaded() -> LoadedTables | None:
         return _loaded
 
 
-def _table_files(path: str) -> tuple[set[str], set[str]]:
-    """(WDL stems, DTZ stems) of the table files in ``path``'s directories."""
-    wdl: set[str] = set()
-    dtz: set[str] = set()
+def _table_files(path: str) -> dict[str, list[str]]:
+    """Every ``.rtbw`` / ``.rtbz`` file name in ``path``'s directories -> its full paths."""
+    files: dict[str, list[str]] = {}
     for part in path.split(os.pathsep):
         try:
-            names = os.listdir(part)
+            names = sorted(os.listdir(part))
         except OSError:
             continue
         for name in names:
-            stem, ext = os.path.splitext(name)
-            if ext == ".rtbw":
-                wdl.add(stem)
-            elif ext == ".rtbz":
-                dtz.add(stem)
-    return wdl, dtz
+            if name.endswith((".rtbw", ".rtbz")):
+                files.setdefault(name, []).append(os.path.join(part, name))
+    return files
+
+
+#: Incomplete-size files named before "and N more" (a truncated download can
+#: drop hundreds; the fix for all of them is the same re-download).
+_INCOMPLETE_SHOWN = 20
+
+
+def _why_dropped(full: str) -> tuple[str, str]:
+    """(category, reason) for a table file the C prober did not register."""
+    import chess.syzygy
+
+    name = os.path.basename(full)
+    stem = name.rsplit(".", 1)[0]
+    if os.path.islink(full) and not os.path.exists(full):
+        return "stray", f"{full} (broken symlink -> {os.readlink(full)})"
+    if not chess.syzygy.is_tablename(stem):
+        try:
+            canonical = chess.syzygy.normalize_tablename(stem)
+        except (ValueError, KeyError, IndexError):
+            canonical = None
+        if canonical and canonical != stem and chess.syzygy.is_tablename(canonical):
+            return "stray", f"{full} (mirrored name; the table is {canonical}{name[len(stem):]})"
+        return "stray", f"{full} (not a Syzygy table name)"
+    try:
+        size = os.path.getsize(full)
+    except OSError as exc:
+        return "unreadable", f"{full} ({exc.strerror or exc})"
+    if size % 64 != 16:
+        return "incomplete", f"{full} ({size} bytes, not 16 mod 64: incomplete)"
+    return "unreadable", f"{full} (not opened by the prober: unreadable?)"
 
 
 def _refusal(what: str, names: list[str]) -> str:
@@ -156,20 +206,44 @@ def validate_loaded(
             corrupt.append(failed)
     if corrupt:
         problems.append(_refusal("are corrupt (their headers do not parse)", corrupt))
-    wdl_files, dtz_files = _table_files(path)
+    files = _table_files(path)
     loaded_wdl = {name for name, _ in names}
     loaded_dtz = {name for name, has_dtz in names if has_dtz}
-    dropped = sorted(f"{s}.rtbw" for s in wdl_files - loaded_wdl)
-    dropped += sorted(f"{s}.rtbz" for s in (dtz_files & loaded_wdl) - loaded_dtz)
-    if dropped:
-        problems.append(_refusal(
-            "were not loaded by the C prober (incomplete file size, unreadable, or not a "
-            "canonical table name)", dropped,
-        ))
+    dropped: list[str] = []
+    for fname, paths in sorted(files.items()):
+        stem, ext = fname.rsplit(".", 1)
+        if (ext == "rtbw" and stem not in loaded_wdl) or (
+                ext == "rtbz" and stem in loaded_wdl and stem not in loaded_dtz):
+            dropped += paths
+        elif ext == "rtbz" and stem not in loaded_wdl:
+            # A DTZ file with no WDL partner: Fathom never opens it. A stray
+            # name or a broken link is still the operator's to fix.
+            dropped += [p for p in paths if _why_dropped(p)[0] == "stray"]
+    by_kind: dict[str, list[str]] = {}
+    for full in dropped:
+        kind, reason = _why_dropped(full)
+        by_kind.setdefault(kind, []).append(reason)
+    # Every stray file is named: the operator must act on each one.
+    if by_kind.get("stray"):
+        stray = by_kind["stray"]
+        problems.append(
+            f"{len(stray)} file(s) in the table directories are not loadable Syzygy tables; "
+            f"remove or rename each one (all tablebases stay OFF until then): "
+            + ", ".join(stray))
+    if by_kind.get("incomplete"):
+        bad = by_kind["incomplete"]
+        shown = ", ".join(bad[:_INCOMPLETE_SHOWN]) + (
+            f" and {len(bad) - _INCOMPLETE_SHOWN} more" if len(bad) > _INCOMPLETE_SHOWN else "")
+        problems.append(f"{len(bad)} table file(s) were not loaded by the C prober (incomplete "
+                        f"download; re-download or remove each): {shown}")
+    if by_kind.get("unreadable"):
+        bad = by_kind["unreadable"]
+        problems.append(f"{len(bad)} table file(s) were not loaded by the C prober; fix the "
+                        f"permissions, or remove or rename each: " + ", ".join(bad))
     return problems
 
 
-def load(path: str) -> LoadedTables:
+def load(path: str, *, owner: object | None = None) -> LoadedTables:
     """(Re)initialise the process's C table set from ``path`` and validate it.
 
     Raises :class:`RootTablebaseError` when a component is not a readable
@@ -177,16 +251,24 @@ def load(path: str) -> LoadedTables:
     directories was not loaded (:func:`validate_loaded`); the C table set is
     then empty (never a partial or stale set the caller did not ask for).
     Re-loading the path that is already loaded keeps the open tables.
+
+    ``owner`` (an engine) is recorded as holding the returned generation; it
+    must hand the same object to :func:`unload`. Loading a DIFFERENT path
+    re-initialises the one C table set: every earlier owner's handles go stale
+    (they refuse to probe) and their releases become no-ops.
     """
-    global _loaded, _generation
+    global _loaded, _generation, _owners
     wanted = normalise_path(path)
     if not wanted:
         raise RootTablebaseError(f"SyzygyPath {path!r} names no directory")
     with _state_lock:
         if _loaded is not None and _loaded.configured == wanted and _tb_ext.path() == _loaded.resolved:
+            if owner is not None:
+                _add_owner(owner)
             return _loaded
         _generation += 1
         _loaded = None
+        _owners = {}
         try:
             largest = int(_tb_ext.init(wanted))
         except (ValueError, RuntimeError) as exc:
@@ -206,20 +288,33 @@ def load(path: str) -> LoadedTables:
             n_wdl=int(n_wdl), n_dtz=int(n_dtz), largest_dtz=int(largest_dtz),
             generation=_generation,
         )
+        if owner is not None:
+            _add_owner(owner)
         return _loaded
 
 
-def unload(generation: int | None = None) -> bool:
+def unload(generation: int | None = None, *, owner: object | None = None) -> bool:
     """Free the C table set (``SyzygyPath`` cleared, or the engine closing).
 
     With ``generation``, only when that is still the loaded table set: an
     engine releasing ITS tables must not free a set another engine in the same
-    process loaded after it. Returns whether anything was freed.
+    process loaded after it. With ``owner`` too, that owner is released and the
+    set is freed only if no other owner still holds it (two engines on one
+    ``SyzygyPath``: the first to close must not take the second's tables).
+    Without ``generation`` the set is freed unconditionally. Returns whether
+    anything was freed.
     """
-    global _loaded, _generation
+    global _loaded, _generation, _owners
     with _state_lock:
         if generation is not None and (_loaded is None or _loaded.generation != generation):
             return False
+        if generation is not None and owner is not None:
+            ref = _owners.get(id(owner))
+            if ref is not None and ref() is owner:
+                del _owners[id(owner)]
+            if _live_owners():
+                return False
+        _owners = {}
         _generation += 1
         _loaded = None
         _tb_ext.free()

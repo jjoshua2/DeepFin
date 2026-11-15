@@ -373,7 +373,8 @@ def test_fathom_notice_ships_in_the_package(tmp_path: Path) -> None:
                           cwd=REPO_ROOT, capture_output=True, text=True, timeout=600, check=False)
     assert proc.returncode == 0, proc.stderr[-2000:]
     sources = next(tmp_path.glob("*.egg-info")).joinpath("SOURCES.txt").read_text().splitlines()
-    for rel in ("fathom/LICENSE", "fathom/VENDORED.md"):
+    # ... and the checksum manifest the selfcheck falls back to (tb/checksums.py).
+    for rel in ("fathom/LICENSE", "fathom/VENDORED.md", "syzygy_standard_3-4-5-6.md5"):
         assert f"chess_anti_engine/tb/{rel}" in sources
 
 
