@@ -274,7 +274,7 @@ def entry_case(tmp_path: Path, monkeypatch, *, generation: int = 2, fault: str |
     starts.chmod(0o444)
     cfg = {"game": f.game, "search": SearchConfig(simulations=64, fast_simulations=64, playout_cap_fraction=1),
            "temp": TemperatureConfig(), "opening": OpeningConfig(opening_fen_list_path=str(starts), opening_fen_dole_per_iter=1),
-           "opponent": OpponentConfig(), "diff_focus": DiffFocusConfig()}
+           "opponent": OpponentConfig(), "diff_focus": DiffFocusConfig(enabled=False)}
     profile = {key: asdict(value) for key, value in cfg.items()}
     producer: dict[str, Any] = {**f.producer, "schema": "CORE_FINITE_GENERATION_V1", "attempts": 1, "concurrent_slots": 1, "seed": 0,
         "actor": {"kind": "donor" if generation == 1 else "learner", **checkpoint, "expected_checkpoint_step": 7,
@@ -448,7 +448,12 @@ def test_data_entry_source_and_gate_assertions_take_effect(tmp_path: Path, monke
 def test_data_entry_preserves_closed_producer_and_full_attempt_guards(tmp_path: Path, monkeypatch, fault):
     case = entry_case(tmp_path, monkeypatch, fault=fault)
     pref = bind_data_case(tmp_path, case)
-    with pytest.raises((ValueError, FileNotFoundError)):
+    messages = {"owner_unclosed": "producer owner not exact closed PASS", "owner_missing": "absent-terminal.json",
+                "producer_failure": "failed/partial producer publication", "lifecycle": "producer engine/verifier closure absent",
+                "serving_step": "actor serving evidence differs", "readout_collection": "producer readout identity/status differs",
+                "attempt_accounting": "not every fixed attempt accounted", "exclusions": "playing/exposure gate differs or failed"}
+    error = FileNotFoundError if fault == "owner_missing" else ValueError
+    with pytest.raises(error, match=messages[fault]):
         data_admit.execute(pref)
 
 
