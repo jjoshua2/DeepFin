@@ -139,6 +139,7 @@ Every engine flag, with the default the argument parser really has:
 | `--compile` / `--no-compile` | compile on | torch.compile the model. |
 | `--compile-mode` | `max-autotune` | torch.compile mode. |
 | `--compile-cache-dir` | `~/.cache/deepfin/worker_cache` | Compile cache root (env `DEEPFIN_COMPILE_CACHE`). |
+| `--device-startup-timeout` | 1800.0 | Seconds a device's evaluator build / warm-up may go without progress before it is dropped (section 8); 0 = no limit. |
 | `--selfcheck` | off | Run the install check instead of the engine (section 2). |
 
 A search-option flag outside the range its UCI option accepts makes the engine
@@ -449,6 +450,62 @@ self-check treats that line as a failure. Only when every device fails does star
 fail (exit 1). These paths were exercised with fake CPU devices and injected faults
 only (see the GPU-only checks).
 
+A device that **stops answering several times in one move** (every call just over
+the 1 s limit) would otherwise print a `DEGRADED` / `RESTORED` pair every chunk.
+After 2 drops within one `go` it stays out until the next `go`, said once:
+`info string WARNING multi-GPU device ... stalled ... times during this search; kept out until the next go (... of ... devices)`.
+The next `go` re-admits it (with the `RESTORED` line) if its last call came back.
+
+**A device whose evaluator build or warm-up hangs at startup.** Each device's
+warm-up reports progress after every batch size it completes. A device that makes
+no progress for `--device-startup-timeout` seconds (default 1800, 30 minutes:
+far above one cold `max-autotune` compile step, so a healthy cold start is never
+dropped) is dropped with `... failed at startup (TimeoutError: evaluator build/warm-up made no progress ...)`
+and the engine reaches `readyok` on the others, DEGRADED as above. Devices waiting
+for their turn to compile (they compile one at a time) are not counted as stuck,
+and a hung device's turn is handed to the next. The same limit applies to the
+`--no-multi-gpu-pucv` routing chain's warm-up. When no device comes up (every pool
+device hangs, or the only device or the primary evaluator hangs, so nothing at all
+progresses for the timeout plus 60 s), startup fails: `info string engine startup failed: ...` with the reason
+`startup made no progress for ...`, and exit 1, never a silent hang. A thread stuck in a hung build does not block
+`quit` (the process exits with the status it would have had). With
+`--search-parallel gumbel` a hung device fails the start (exit 1): that mode's
+start is strict, as for a device that raises. A `0` timeout waits forever (the
+behaviour before this limit existed).
+
+**The primary evaluator beside the pool.** The first device also evaluates every
+root and runs `go searchmoves` (classic Gumbel, which honours the restriction).
+Its calls are watched like a pool device's: if it raises or a call blocks for more
+than 1 s, root evaluations and `searchmoves` searches move to the surviving pool
+devices, announced once
+(`info string WARNING multi-GPU DEGRADED: the primary (root-eval) evaluator ...; root evaluations and searchmoves now run on the surviving pool devices`)
+and repeated on the per-`go` degraded line. A `searchmoves` search interrupted by
+the failure is rerun on the pool with the same restriction, so its `bestmove` is
+still one of the `searchmoves`. On the pool devices each `searchmoves` batch is
+capped at `VLGather` rows (the sizes they warmed), a narrower search than on a
+healthy primary. A failed primary is not re-admitted until it is rebuilt (an
+option that rebuilds it, or a restart).
+
+**`--no-multi-gpu-pucv` (the routing chain).** Each device's calls run on that
+device's own thread. A device that raises, or whose call blocks for more than 1 s
+while another device is live (at least 5 s, and at least 10 times its slowest
+call, when it is the last one), is dropped, the batch it was given is redone on
+another device, and the move is searched; announced and repeated exactly as on the
+pool, and re-admitted after a stall the same way (with the same 2-drops-per-`go`
+limit). If every device fails, each `go` is answered from the fallback.
+
+**`--search-parallel gumbel` (root-parallel Gumbel).** Its candidate subtrees
+cannot continue without the failed device, so a device that raises, or blocks one
+search step for more than 1 s while another device is idle (at least 5 s while all
+are busy), **retires** root-parallel Gumbel: the same move continues on the
+classic path (classic Gumbel, or the configured walkers / `UseVL`) on the primary
+evaluator, `devices[0]`, and later moves stay there. Announced once
+(`info string WARNING multi-GPU DEGRADED: root-parallel Gumbel device ... failed mid-search ...; this and later moves search classic Gumbel on the primary evaluator until the pool is rebuilt`,
+or `... stopped answering ...`) and on every `go`, `isready` and `searchconfig`
+(`multi-GPU degraded: root-parallel Gumbel retired after device ...`). If the
+failed device was `devices[0]`, the classic search fails too and the move comes
+from the fallback.
+
 **Options mid-game.** An option that rebuilds is applied at once, between moves; if
 the rebuild fails, `info string ...: evaluator rebuild failed (...); keeping the
 previous evaluator and settings`. While a stuck search holds the worker only
@@ -459,26 +516,34 @@ tournament play and is not recommended: leave `Ponder` false.
 
 ## 9. Known limits, stated plainly
 
-- **The degrade path covers the multi-GPU PUCV pool only** (section 8, the default
-  with several `--devices`). With `--search-parallel gumbel`, or with
-  `--no-multi-gpu-pucv` (a debugging path), a failing GPU fails the search: that
-  `go` and the later ones are answered from the fallback, and the engine marks
-  itself unhealthy and rebuilds at the next game boundary (section 8). A GPU
-  that hangs while the engine builds its evaluator (startup, or a rebuild after an
-  option change) is not timed out: compiling can legitimately take many minutes.
-  If an option change cannot install the pool at all the engine restores the
-  previous pool, else falls back to classic Gumbel on one GPU and says so
+- **Degrade paths differ by mode** (section 8). The multi-GPU PUCV pool (the
+  default with several `--devices`) and the `--no-multi-gpu-pucv` routing chain
+  drop a failing device and keep searching on the rest. `--search-parallel gumbel`
+  retires itself and continues on classic Gumbel on `devices[0]`: one device's
+  failure costs that mode's parallelism, not just the device. A GPU that hangs
+  while building or warming its evaluator is timed out after
+  `--device-startup-timeout` seconds without progress (section 8); before that
+  limit, a startup with a hung device waits. If an option change cannot install
+  the pool at all the engine restores the previous pool, else falls back to
+  classic Gumbel on one GPU and says so
   (`previous configuration could not be restored ...; fell back to the single-evaluator classic Gumbel path`).
+- **A device that raised is not retried** until the pool (or chain) is rebuilt;
+  a device dropped for stopping answering is re-admitted once its call returns.
 - **`--no-multi-gpu-pucv` with several devices evaluates one call at a time.** It
   routes each batch to one device synchronously; it is a debugging path, not a
   way to use several GPUs at speed.
-- **`go searchmoves` does not use the pool.** It runs classic Gumbel on the first
-  device (`devices[0]`), so a failed first device is not rerouted for that command:
-  it is answered from the fallback (section 8).
+- **`go searchmoves` does not use the pool's tree search.** It runs classic Gumbel
+  on the first device (`devices[0]`); if that device fails, the same restricted
+  search runs on the other devices (section 8), with batches capped at `VLGather`.
 - **`--selfcheck --fast` does not test the warm-up.** `--fast` forces
   `--no-compile`, so bucket padding, the warm-up of every size and its completeness
-  check are not exercised. The self-check without `--fast` runs the default
-  compiled path and does exercise them.
+  check are not exercised, and its summary says so. **Before an event run the
+  self-check without `--fast`** (with the event's `--devices` and flags): it runs
+  the default compiled path, requires the engine's
+  `info string warmup verified: ...` line for every evaluator (every batch size
+  warmed and checked, the first-seen-size guard armed), fails on any
+  `first-seen batch shape after warmup` line, and reports
+  `bucket warm-up verified on N evaluator(s)` when it passes.
 - **Multi-GPU playing strength has never been validated.** The multi-GPU paths
   were built and measured for throughput; all search tuning was done on one GPU with
   classic Gumbel. On the multi-GPU PUCV pool most Gumbel options are inert (PUCT
@@ -519,7 +584,7 @@ tournament machine with the real network `<C>`, a free GPU and no other load.
 7. **GUI behaviour on the boundary exit** (#1263): whether the GUI reports a failed
    engine start for the next game, rather than hanging, when the engine exits 1 at a
    boundary. Unverified for any GUI.
-8. **One bad GPU** (#1263, updated by the degrade-path change): make one device's
+8. **One bad GPU** (#1263, updated by the degrade-path changes): make one device's
    pool factory fail and enable `UseMultiGpuPUCV`; expect one
    `multi-GPU DEGRADED: device ... failed at startup` line, `searchconfig` still on
    `path=pucv_pool`, and a searched move. Then fail a device MID-search on real
@@ -528,7 +593,13 @@ tournament machine with the real network `<C>`, a free GPU and no other load.
    `bestmove` within the move's time, and searched moves afterwards. Record the
    stuck-device threshold the pool used (`stall_threshold_s`, at least 1 s) against
    the real per-batch GPU latency; it was sized on CPU only. Repeat with
-   `devices[0]` failing (root evaluations move to another device).
+   `devices[0]` failing (root evaluations and `go searchmoves` move to another
+   device; the `searchmoves` bestmove must stay inside the list). Repeat the raise
+   and the hang with `--no-multi-gpu-pucv` and with `--search-parallel gumbel`
+   (expect the root-parallel Gumbel retirement line and searched moves on
+   `devices[0]`), and `quit` while the hung kernel is still running: exit 0.
+   Confirm that a GPU whose calls run just over 1 s is held out after 2 drops in a
+   move (one `kept out until the next go` line), not flapping every chunk.
 9. **Hash on the real net** (#1264): `go movetime 120000` with `Hash 16384`; RSS
    growth should stay within Hash + about 150 MB + the eval cache. On the 4-GPU
    machine with Hash >= 64 GB, a long `go infinite` then `stop`: `info` lines at a
@@ -577,6 +648,14 @@ tournament machine with the real network `<C>`, a free GPU and no other load.
     gave bit-identical searches on CPU; on GPU the padded rows can change kernel
     choice, so compare node counts and moves of a fixed-node search against the
     previous build.
-18. **The GPU wheel's architecture list** (#1273): the `torch` self-check reads the
+18. **Startup hang timeout on the real net** (degrade-gaps change): record the
+    longest gap between two `info string warmup ...` lines in a cold
+    `max-autotune` start on each GPU (the first size of each device pays the whole
+    compile). `--device-startup-timeout` (1800 s) must stay well above it; it was
+    sized from the code's own note that a cold compile "can exceed 10 min", not
+    measured. Then hang one device's build (e.g. a CUDA call that never returns in
+    its factory) with a short `--device-startup-timeout`: `readyok` on the others
+    with the `failed at startup` line; and with every device hung, exit 1.
+19. **The GPU wheel's architecture list** (#1273): the `torch` self-check reads the
     installed wheel's arch list, but the arch lists of the cu124 and cu130 wheels
     were never read, so this page makes no claim about which cards either covers.

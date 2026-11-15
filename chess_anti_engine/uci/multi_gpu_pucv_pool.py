@@ -78,6 +78,7 @@ from chess_anti_engine.async_safety import (
     submit_async,
 )
 from chess_anti_engine.mcts.puct_vl import _PLANES, _alloc_buffers, _release_outstanding
+from chess_anti_engine.uci.startup_progress import StartupContext, startup_context
 
 _log = logging.getLogger(__name__)
 
@@ -121,6 +122,8 @@ _CLOSE_ABANDONED_JOIN_S = 1.0
 # How often ``run`` re-checks for a stuck worker while it waits; a normal
 # completion wakes it at once through the condition variable.
 _RUN_POLL_S = 0.05
+# How often the constructor re-checks the startup no-progress clocks.
+_STARTUP_POLL_S = 0.5
 
 # The text every device drop is announced with. "DEGRADED" is one of the
 # selfcheck's failure markers, so ``--selfcheck`` reports a degraded start.
@@ -132,6 +135,17 @@ ALL_DEVICES_FAILED = "multi-GPU pool: every device has failed"
 DEVICE_RESTORED_NOTE = (
     "multi-GPU RESTORED: device {label} answered again after its stall; "
     "searching on {live} of {total} devices"
+)
+# Flap limit: a device dropped for a stall this many times within ONE search
+# (one ``go``) is not re-admitted again until the next ``go``. Without it, a
+# device whose calls keep taking just over the idle threshold prints a
+# DEGRADED / RESTORED pair every chunk. Two keeps the "a false drop costs one
+# chunk" recovery for a one-off hiccup, and caps the chatter at two drops, one
+# restore and one hold line per move.
+DEVICE_FLAP_LIMIT = 2
+DEVICE_HELD_NOTE = (
+    "WARNING multi-GPU device {label} stalled {count} times during this search; "
+    "kept out until the next go ({live} of {total} devices)"
 )
 
 
@@ -190,6 +204,12 @@ class MultiGpuPucvConfig:
   # built (construction still raises if every worker failed). The UCI engine
   # sets True; see SearchWorker.install_multi_gpu_pucv.
     degrade_on_startup_failure: bool = False
+  # Seconds one worker's evaluator factory may go WITHOUT PROGRESS (a
+  # ``startup_progress.beat()``: one warm-up shape done) before the worker is
+  # timed out as a startup failure. None (default) = wait forever, the
+  # historical behaviour. Time spent waiting for the compile turn another
+  # worker holds does not count (``startup_progress.StartupTurn``).
+    startup_timeout_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -359,12 +379,24 @@ class MultiGpuPucvPool:
         # ... and its other receipts drained: the parked worker can be restored.
         self._restorable = [False] * n
         self._drop_reason: list[str | None] = [None] * n
+        # Stall drops of each device within the current search (``begin_search``
+        # resets them); at ``DEVICE_FLAP_LIMIT`` the device is held out.
+        self._stall_drops_this_search = [0] * n
+        self._held_announced = [False] * n
         self._notes: list[str] = []
         self._labels = tuple(
             cfg.device_labels[k] if k < len(cfg.device_labels) else f"#{k}"
             for k in range(n)
         )
-        self._init_done = threading.Barrier(n + 1)
+        # Startup handshake: each worker sets its ``_built`` event once its
+        # factory returned or raised; the constructor waits for all of them
+        # (bounded by ``startup_timeout_s`` of NO PROGRESS per worker), decides
+        # which workers start, then releases them all via ``_init_decided``.
+        # Not a Barrier: a worker hung inside its factory never arrives.
+        self._built = [threading.Event() for _ in range(n)]
+        self._init_decided = threading.Event()
+        self._startup_ctx = [StartupContext(self._labels[k]) for k in range(n)]
+        self._startup_timed_out: set[int] = set()
         self._shutdown = threading.Event()
         self._errors: list[BaseException] = []
         self._retained_error: BaseException | None = None
@@ -403,7 +435,7 @@ class MultiGpuPucvPool:
         ]
         for th in self._threads:
             th.start()
-        self._init_done.wait()
+        self._await_startup()
         if self._init_errors:
             failed = sorted(self._init_error_by_worker)
             if not cfg.degrade_on_startup_failure or len(failed) >= n or not failed:
@@ -416,6 +448,47 @@ class MultiGpuPucvPool:
                 self._live[k] = False
             for k in failed:
                 self._note_drop(k, "failed at startup", _one_line(self._init_error_by_worker[k]))
+
+    def _await_startup(self) -> None:
+        """Wait until every worker has built (or failed to build) its evaluator.
+
+        A worker whose factory makes no progress for ``startup_timeout_s`` is
+        recorded as a startup failure ("made no progress ..."), its compile
+        turn is handed on, and it is abandoned: if its factory ever returns,
+        the worker retires what it built and exits; until then
+        ``live_worker_threads`` reports it, so the UCI process hard-exits at
+        quit instead of finalizing under it. Then every worker is released."""
+        timeout = self._cfg.startup_timeout_s
+        try:
+            while True:
+                pending = [k for k, ev in enumerate(self._built) if not ev.is_set()]
+                if not pending:
+                    return
+                if timeout is None:
+                    self._built[pending[0]].wait()
+                    continue
+                now = time.monotonic()
+                for k in pending:
+                    idle = self._startup_ctx[k].idle_for(now)
+                    if idle <= timeout:
+                        continue
+                    with self._cv:
+                        if self._built[k].is_set():
+                            continue  # finished just now: not a timeout
+                        exc = TimeoutError(
+                            f"evaluator build/warm-up made no progress for {idle:.0f}s "
+                            f"(device startup timeout {timeout:g}s)"
+                        )
+                        self._startup_timed_out.add(k)
+                        self._abandoned[k] = True
+                        self._init_errors.append(exc)
+                        self._init_error_by_worker[k] = exc
+                        self._built[k].set()
+                    self._startup_ctx[k].revoke_turns()
+                    _log.error("multi-GPU device %s timed out at startup: %s", self._labels[k], exc)
+                self._built[pending[0]].wait(min(_STARTUP_POLL_S, max(0.01, timeout / 4)))
+        finally:
+            self._init_decided.set()
 
     def __enter__(self) -> MultiGpuPucvPool:
         return self
@@ -452,12 +525,21 @@ class MultiGpuPucvPool:
             f"({'; '.join(failed)})"
         )
 
+    def begin_search(self) -> None:
+        """A new search (``go``) starts: reset the per-search flap counters."""
+        with self._cv:
+            self._stall_drops_this_search = [0] * self._cfg.n_gpus
+            self._held_announced = [False] * self._cfg.n_gpus
+
     def restore_recovered_devices(self) -> tuple[str, ...]:
         """Re-admit every device dropped for a stall whose call came back clean.
 
         Call only between runs (the UCI engine calls it at the start of each
-        search). The parked worker gets a fresh quarantine object; its late
-        result was already discarded. Each restore is announced once."""
+        search and before every chunk). The parked worker gets a fresh
+        quarantine object; its late result was already discarded. Each restore
+        is announced once. A device that stalled ``DEVICE_FLAP_LIMIT`` times
+        in the current search stays out until ``begin_search`` (announced
+        once)."""
         if not any(self._restorable):
             return ()  # healthy path: no lock, no allocation beyond the scan
         restored: list[int] = []
@@ -468,6 +550,16 @@ class MultiGpuPucvPool:
                 if not (self._restorable[k] and not self._live[k]):
                     continue
                 if not self._threads[k].is_alive():
+                    continue
+                if self._stall_drops_this_search[k] >= DEVICE_FLAP_LIMIT:
+                    if not self._held_announced[k]:
+                        self._held_announced[k] = True
+                        msg = DEVICE_HELD_NOTE.format(
+                            label=self._labels[k], count=self._stall_drops_this_search[k],
+                            live=sum(self._live), total=self._cfg.n_gpus,
+                        )
+                        _log.warning("%s", msg)
+                        self._notes.append(msg)
                     continue
                 self._restorable[k] = False
                 self._late_ok[k] = False
@@ -544,6 +636,19 @@ class MultiGpuPucvPool:
                 th.join(timeout=max(0.0, abandoned_deadline - time.monotonic()))
                 continue
             th.join(timeout=2.0)
+
+    def worker_row_cap(self) -> int:
+        """The most rows ``evaluate_rows`` may submit: the gather, which every
+        worker warmed (and armed its shape guard for), capped by each live
+        worker's ``max_batch``."""
+        cap = self.gather
+        for k, alive in enumerate(self._live):
+            if not alive or k >= len(self._evals) or self._evals[k] is None:
+                continue
+            mb = getattr(self._evals[k], "max_batch", getattr(self._evals[k], "_max_batch", None))
+            if isinstance(mb, int) and not isinstance(mb, bool) and mb > 0:
+                cap = min(cap, mb)
+        return max(1, cap)
 
     def live_worker_threads(self) -> list[threading.Thread]:
         """Worker threads still alive (after ``close``: wedged in a device call).
@@ -707,6 +812,7 @@ class MultiGpuPucvPool:
             self._abandoned[k] = True
             self._late_ok[k] = False
             self._live[k] = False
+            self._stall_drops_this_search[k] += 1
             self._running.discard(k)
             outstanding = self._outstanding[k]
             if job is not None and outstanding:
@@ -877,6 +983,20 @@ class MultiGpuPucvPool:
         A worker that raises or stays stuck past ``stall_threshold_s`` is
         dropped and the next live one is tried; raises once none is left.
         """
+        return self.evaluate_rows(xs, relations)
+
+    def evaluate_rows(
+        self, xs: np.ndarray, relations: np.ndarray | None = None, *,
+        idle_limit: bool = False,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """``evaluate_root`` for any (B, C, 8, 8) batch, B <= ``gather``.
+
+        Used by the classic-Gumbel ``searchmoves`` search once the primary
+        evaluator has failed (``PoolRowsEvaluator``). ``idle_limit``: nothing
+        else progresses while the caller waits, so a stuck worker is dropped at
+        the idle-survivor threshold (1 s) when another worker is live, as in a
+        search; otherwise the mid-search threshold, as for root evaluations.
+        """
         ensure_usable(self)
         last: BaseException | None = None
         for k in range(self._cfg.n_gpus):
@@ -887,7 +1007,11 @@ class MultiGpuPucvPool:
             stuck = False
             try:
                 self._wakes[k].set()
-                limit = self.stall_threshold_s(k)
+                others = any(alive for j, alive in enumerate(self._live) if j != k)
+                limit = (
+                    self.idle_stall_threshold_s(k) if idle_limit and others
+                    else self.stall_threshold_s(k)
+                )
                 while not job.done.wait(_RUN_POLL_S):
                     if not self._threads[k].is_alive():
                         self._live[k] = False
@@ -910,7 +1034,7 @@ class MultiGpuPucvPool:
                 poison(self._quarantine[k], self._evals[k])
                 self._note_drop(
                     k, "stopped answering",
-                    f"root evaluation blocked for more than {limit:.1f}s",
+                    f"evaluation blocked for more than {limit:.1f}s",
                 )
                 last = TimeoutError(f"device {self._labels[k]} root evaluation stuck")
                 continue
@@ -929,20 +1053,23 @@ class MultiGpuPucvPool:
         """Run ``job`` on this worker. False = this worker is now retired."""
         receipt = None
         try:
-            buf = evaluator.get_input_buffer(1, slot=0)
+            bsz = int(job.xs.shape[0])
+            buf = evaluator.get_input_buffer(bsz, slot=0)
             buf_np = buf.numpy() if hasattr(buf, "numpy") else np.asarray(buf)
             buf_np.reshape(job.xs.shape)[...] = job.xs
             with self._device_call(idx):
                 if job.relations is None:
-                    receipt = submit_async(evaluator, 1, slot=0)
+                    receipt = submit_async(evaluator, bsz, slot=0)
                 else:
-                    receipt = submit_async(evaluator, 1, slot=0, relations=job.relations)
+                    receipt = submit_async(evaluator, bsz, slot=0, relations=job.relations)
                 pol_t, wdl_t, event = receipt
                 if event is not None:
                     event.synchronize()
             pol = pol_t.numpy() if hasattr(pol_t, "numpy") else np.asarray(pol_t)
             wdl = wdl_t.numpy() if hasattr(wdl_t, "numpy") else np.asarray(wdl_t)
-            job.result = (np.array(pol[:1], dtype=np.float32), np.array(wdl[:1], dtype=np.float32))
+            job.result = (
+                np.array(pol[:bsz], dtype=np.float32), np.array(wdl[:bsz], dtype=np.float32),
+            )
             return True
         except _Abandoned:
             # The result is discarded (never handed to the caller); a clean
@@ -956,7 +1083,7 @@ class MultiGpuPucvPool:
                     return False
             with self._cv:
                 self._live[idx] = False
-            self._note_drop(idx, "failed a root evaluation", _one_line(exc))
+            self._note_drop(idx, "failed an evaluation", _one_line(exc))
             job.error = exc
             return False
         finally:
@@ -976,7 +1103,10 @@ class MultiGpuPucvPool:
   # state lives where it'll be replayed. Crucial: compile builds
   # tree_manager_containers in TLS on first forward; calling from
   # another thread asserts in cudagraph_trees.py:get_obj.
-                evaluator = self._factories[idx]()
+  # The startup context lets the factory's warm-up report progress (and
+  # wait for the compile turn without its no-progress clock running).
+                with startup_context(self._startup_ctx[idx]):
+                    evaluator = self._factories[idx]()
                 if not hasattr(evaluator, "evaluate_inplace_async"):
                     raise TypeError(
                         f"factory[{idx}] returned an evaluator missing "
@@ -1011,15 +1141,21 @@ class MultiGpuPucvPool:
                 ),
             ]
         except BaseException as exc:
-            self._init_errors.append(exc)
-            self._init_error_by_worker[idx] = exc
-        self._init_done.wait()
+            with self._cv:
+                if idx not in self._startup_timed_out:
+                    self._init_errors.append(exc)
+                    self._init_error_by_worker[idx] = exc
+        with self._cv:
+            self._built[idx].set()
+        self._init_decided.wait()
         # Strict construction retires every worker on any failure. With
         # ``degrade_on_startup_failure`` only THIS worker's failure retires it
         # and the others keep running (construction raises only if all failed).
-        retire = idx in self._init_error_by_worker or (
-            bool(self._init_errors) and not cfg.degrade_on_startup_failure
-        )
+        # A worker timed out at startup retires even if its factory came back.
+        with self._cv:
+            retire = idx in self._init_error_by_worker or (
+                bool(self._init_errors) and not cfg.degrade_on_startup_failure
+            )
         if retire:
             if self._factories is not None:
                 self._evals[idx] = None

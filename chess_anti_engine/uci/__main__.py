@@ -44,7 +44,6 @@ from chess_anti_engine.inference_cache import EncodedEvalCache
 from chess_anti_engine.inference_dispatcher import (
     BatchCoalescingDispatcher,
     CUDAOwnerDispatcher,
-    MultiGPUDispatcher,
     ThreadSafeGPUDispatcher,
     bootstrap_cudagraph_tls,
     supports_inplace_api,
@@ -66,6 +65,8 @@ from .engine import (
     _println,
     emit_handshake,
 )
+from . import startup_progress
+from .device_guard import DegradingMultiGPUDispatcher, find_degrade_source
 from .model_loader import load_model_from_checkpoint
 from .protocol import CmdQuit, CmdUci, parse_command
 from .search import SearchWorker
@@ -84,7 +85,10 @@ _MULTI_GPU_NO_CUDAGRAPH_MODE = "default"
 # races dynamo + the CUDA caching allocator even with per-thread TLS
 # bootstrapped; serial capture is a few minutes cold and seconds warm.
 # Concurrent REPLAY after capture is the multi-GPU NPS win.
-_MULTI_GPU_COMPILE_LOCK = threading.Lock()
+# A ``StartupTurn``: a plain mutex, except that a device whose build makes no
+# progress for ``--device-startup-timeout`` has its turn revoked and handed to
+# the next device, so one hung GPU cannot starve the ones queued behind it.
+_MULTI_GPU_COMPILE_LOCK = startup_progress.StartupTurn()
 
 
 def resolve_multi_gpu_compile_mode(
@@ -150,6 +154,11 @@ def direct_evaluators(chain) -> list:
             child = node.__dict__.get(attr) if hasattr(node, "__dict__") else None
             if child is not None:
                 stack.append(child)
+        # A degrading routing chain: only the devices still in service (a
+        # device dropped during warm-up is not warmed and not checked).
+        if isinstance(node, DegradingMultiGPUDispatcher):
+            stack.extend(reversed(node.live_evaluators()))
+            continue
         children = node.__dict__.get("_evals") if hasattr(node, "__dict__") else None
         if isinstance(children, list):
             stack.extend(reversed(children))
@@ -157,6 +166,8 @@ def direct_evaluators(chain) -> list:
 
 
 def _bucket_warm_progress(label: str, i: int, n: int, rows: int, started: float) -> None:
+    # Each announced shape means the previous one finished: startup progress.
+    startup_progress.beat()
     _println(
         f"info string warmup {label}: batch {rows} ({i}/{n}, "
         f"{time.monotonic() - started:.1f}s)"
@@ -183,6 +194,16 @@ def _verify_and_arm(directs, max_rows_by_eval, *, legal: bool = False) -> None:
                 )
     for ev in directs:
         ev.shape_ledger.arm()
+    startup_progress.beat()
+    # The observable proof the strict check ran (``--selfcheck`` requires it on
+    # the compiled path): every evaluator, its shape count, guard armed.
+    for ev in directs:
+        n = len(ev.reachable_forward_rows(max_rows_by_eval(ev)))
+        _println(
+            f"info string warmup verified: {ev.shape_ledger.label} ran all {n} batch "
+            f"shapes{' (dense + legal graphs)' if legal and getattr(ev, 'supports_legal_bf16', False) else ''}; "
+            "first-seen-shape guard armed"
+        )
 
 
 def _warmup_evaluator(
@@ -234,6 +255,7 @@ def _warmup_evaluator(
         input_extra_features=input_extra_features,
     )
     directs = direct_evaluators(evaluator)
+    chain_source = find_degrade_source(evaluator)
     if directs:
         # Compiled chain: the padded shape set is finite, so warm ALL of it
         # (not the two endpoints) and arm the first-seen-shape guard.
@@ -241,6 +263,8 @@ def _warmup_evaluator(
             evaluator, directs, cb=cb, encoded=encoded,
             n_devices=n_devices, compute_relations=compute_relations,
         )
+        if chain_source is not None:
+            chain_source.arm()
         return
     if n_walkers > 1:
   # batch=1 covers the pre-gather single-descent phase (e.g. when
@@ -283,6 +307,9 @@ def _warmup_evaluator(
                     evaluator.evaluate_legal_bf16(xs, legal_flat, legal_counts)
         except Exception as exc:
             raise RuntimeError(f"evaluator warmup failed at batch={batch}") from exc
+        startup_progress.beat()
+    if chain_source is not None:
+        chain_source.arm()
 
 
 def _warmup_compiled_buckets(
@@ -348,7 +375,9 @@ def _warmup_compiled_buckets(
                     chain.evaluate_legal_bf16(xs, legal_flat, legal_counts)
         except Exception as exc:
             raise RuntimeError(f"evaluator warmup failed at batch={rows}") from exc
-    _verify_and_arm(directs, lambda _ev: None, legal=warm_legal)
+    # Re-walk the chain: a degrading routing chain may have dropped a device
+    # during the warm-up; the strict check covers the devices still in service.
+    _verify_and_arm(direct_evaluators(chain) or directs, lambda _ev: None, legal=warm_legal)
 
 
 def _pucv_warmup_batch_sizes(gather: int) -> list[int]:
@@ -432,6 +461,7 @@ def _warmup_pucv_evaluator(
                     )
                 if event is not None:
                     event.synchronize()
+                startup_progress.beat()
                 if pass_no == 2:
                     steady = max(steady, time.monotonic() - t0)
             except Exception:
@@ -459,6 +489,7 @@ def _load_models(checkpoint: str, devices: list[str]):
 def _make_evaluator_factory(
     models, devices, coalesce, n_walkers, walker_gather,
     *, compile_mode: str | None = None,
+    device_startup_timeout_s: float | None = None,
 ):
     """Return a ``build(max_batch) -> evaluator`` closure. The models are
     captured once at startup; each call constructs fresh evaluator
@@ -532,7 +563,15 @@ def _make_evaluator_factory(
                 )
                 for m, d in zip(compiled_models, active_devices)
             ]
-            evaluator = MultiGPUDispatcher(evaluators)
+  # The degrading dispatcher: a device that raises or stops answering is
+  # dropped (announced) and its batch redone on another; during the warm-up
+  # below a call may take up to the device startup timeout.
+            names = [str(d) for d in active_devices]
+            labels = [n if names.count(n) == 1 else f"{n}#{k}" for k, n in enumerate(names)]
+            evaluator = DegradingMultiGPUDispatcher(
+                evaluators, labels=labels, devices=names,
+                startup_timeout_s=device_startup_timeout_s,
+            )
         else:
             evaluator = DirectGPUEvaluator(
                 compiled_models[0], device=active_devices[0],
@@ -778,6 +817,7 @@ def _build_engine(
     rebuild_multi_gpu_pucv_factories=None,
     options: EngineOptions | None = None,
     gil_profile: bool = False,
+    device_startup_timeout_s: float | None = None,
 ) -> Engine:
     worker = SearchWorker(
         evaluator,
@@ -810,6 +850,9 @@ def _build_engine(
         eval_cache_entries=eval_cache_entries,
     )
     try:
+        # Every pool install (now and on later rebuilds) times out a device
+        # whose build makes no progress, instead of hanging before readyok.
+        worker.set_device_startup_timeout(device_startup_timeout_s)
         worker.set_root_noise_scale(root_noise_scale)
         # Same default Engine applies when options is None; resolved here too so
         # the RPG install below reads concrete knobs.
@@ -931,6 +974,17 @@ def _resolve_multi_gpu_startup(
         pucv_flag, n_devices, announce=not root_gumbel,
     )
     return root_gumbel, pucv_fallback, pucv_fallback and not root_gumbel
+
+
+def _startup_timeout_arg(value: str) -> float | None:
+    """``--device-startup-timeout``: seconds > 0, or 0 for no limit."""
+    try:
+        n = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a number of seconds") from exc
+    if not math.isfinite(n) or n < 0:
+        raise argparse.ArgumentTypeError(f"{value!r} must be >= 0 (0 = no limit)")
+    return None if n == 0 else n
 
 
 def _chunk_sims_arg(value: str) -> int:
@@ -1137,6 +1191,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--compile-mode", default="max-autotune",
                    help="torch.compile mode: max-autotune (default; ~52k nps benchmark) | "
                    "reduce-overhead (~44k nps; faster cold compile) | default (eager-ish)")
+    p.add_argument("--device-startup-timeout", dest="device_startup_timeout_s",
+                   type=_startup_timeout_arg,
+                   default=startup_progress.DEFAULT_DEVICE_STARTUP_TIMEOUT_S,
+                   help="seconds one device's evaluator build / warm-up may go WITHOUT "
+                        "PROGRESS (no warm-up batch shape completed) before it is dropped "
+                        "(multi-GPU: the engine starts on the other devices) or, with no "
+                        "device left, startup fails with exit 1 instead of hanging; "
+                        "0 = wait forever (default: "
+                        f"{startup_progress.DEFAULT_DEVICE_STARTUP_TIMEOUT_S:.0f}, far above one "
+                        "cold max-autotune compile step)")
     p.add_argument("--compile-cache-dir",
                    default=os.environ.get(
                        "DEEPFIN_COMPILE_CACHE",
@@ -1465,6 +1529,9 @@ def main() -> int:
   # Any command other than uci/quit blocks on `engine_ready` below, which
   # gives us correct `readyok` semantics (readyok only fires once the
   # engine truly exists) for free.
+    device_startup_timeout_s = getattr(
+        args, "device_startup_timeout_s", startup_progress.DEFAULT_DEVICE_STARTUP_TIMEOUT_S,
+    )
     engine_ref: list[Engine | None] = [None]
     engine_error: list[BaseException | None] = [None]
     engine_ready = threading.Event()
@@ -1530,6 +1597,7 @@ def main() -> int:
                 models, devices, coalesce=bool(args.coalesce),
                 n_walkers=n_walkers, walker_gather=walker_gather,
                 compile_mode=primary_compile_mode,
+                device_startup_timeout_s=device_startup_timeout_s,
             )
             build_pucv_factories = (
                 _make_multi_gpu_pucv_factory_builder(
@@ -1586,6 +1654,7 @@ def main() -> int:
                 rebuild_multi_gpu_pucv_factories=build_pucv_factories,
                 options=startup_options,
                 gil_profile=bool(args.gil_profile),
+                device_startup_timeout_s=device_startup_timeout_s,
             )
   # Warm the SEARCH path (not just the evaluator) before reporting ready, so
   # the first real `go` doesn't pay cudagraph capture mid-move and forfeit on
@@ -1638,7 +1707,14 @@ def main() -> int:
                     eng.dispatch(cmd)
                 break
             if not engine_ready.is_set():
-                engine_ready.wait()
+                stalled = _await_builder(engine_ready, device_startup_timeout_s)
+                if stalled is not None:
+                    # The build is stuck inside a device call (no device made
+                    # progress for the whole timeout): fail loudly, never hang.
+                    # The builder thread cannot be interrupted, so leave
+                    # without finalizing under it.
+                    _report_startup_failure(stalled)
+                    _hard_exit(1)
             if engine_error[0] is not None:
                 _report_startup_failure(engine_error[0])
                 rc = 1
@@ -1714,6 +1790,30 @@ def _report_startup_failure(exc: BaseException) -> None:
     logging.getLogger(__name__).error("engine startup failed", exc_info=exc)
     _println(f"info string engine startup failed: {text}")
     print(f"deepfin: engine startup failed: {text}", file=sys.stderr, flush=True)
+
+
+def _await_builder(ready: threading.Event, timeout_s: float | None) -> TimeoutError | None:
+    """Wait for the startup build; a ``TimeoutError`` if it stops progressing.
+
+    Progress is any ``startup_progress.beat()`` (a warm-up shape done on any
+    device, a device dropped). The limit is the per-device timeout plus
+    ``BUILDER_TIMEOUT_GRACE_S``, so a multi-GPU pool first gets to drop a hung
+    device and start on the others; this fires only when the whole startup is
+    stuck (one device, the primary evaluator, or every device hung)."""
+    if timeout_s is None:
+        ready.wait()
+        return None
+    limit = float(timeout_s) + startup_progress.BUILDER_TIMEOUT_GRACE_S
+    startup_progress.beat()  # the clock starts when someone first waits
+    while not ready.wait(min(1.0, limit)):
+        idle = time.monotonic() - startup_progress.last_beat()
+        if idle > limit:
+            return TimeoutError(
+                f"startup made no progress for {idle:.0f}s (device startup timeout "
+                f"{float(timeout_s):g}s + {startup_progress.BUILDER_TIMEOUT_GRACE_S:g}s): "
+                "an evaluator build or warm-up is stuck inside a device call"
+            )
+    return None
 
 
 def _request_builder_shutdown(event: threading.Event) -> None:

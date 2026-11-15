@@ -119,8 +119,49 @@ from chess_anti_engine.mcts.root_tactics import (
     immediate_terminal_cboard_policy_or_draws,
 )
 from chess_anti_engine.moves import POLICY_SIZE
+from chess_anti_engine.uci.startup_progress import StartupContext, startup_context
 
 _log = logging.getLogger(__name__)
+
+# How often the orchestrator re-checks for a stuck group while a phase runs.
+_PHASE_POLL_S = 0.05
+# After a group fails, how long the orchestrator waits for the OTHER groups'
+# in-flight items to stop (they poll the job stop between gather batches).
+_FAILURE_DRAIN_S = 2.0
+# How often the constructor re-checks the startup no-progress clocks.
+_STARTUP_POLL_S = 0.5
+
+
+class RPGDeviceFailure(RuntimeError):
+    """One root-parallel Gumbel group (device) raised or stopped answering.
+
+    The pool cannot continue without that group (its candidates' subtrees are
+    half-updated), so the caller retires the pool; ``SearchWorker`` then
+    continues the same search on the classic single-evaluator path."""
+
+    def __init__(self, label: str, what: str, reason: str) -> None:
+        super().__init__(f"device {label} {what} ({reason})")
+        self.label = label
+        self.what = what
+        self.reason = reason
+
+
+class _JobStop:
+    """The engine's stop event OR'd with the pool's own failure stop.
+
+    A failing group used to ``set()`` the ENGINE's stop event, which ended the
+    whole ``go``; now it stops only this pool's job, and the search can carry
+    on elsewhere."""
+
+    def __init__(self, outer: threading.Event) -> None:
+        self.outer = outer
+        self.inner = threading.Event()
+
+    def is_set(self) -> bool:
+        return self.inner.is_set() or self.outer.is_set()
+
+    def set(self) -> None:
+        self.inner.set()
 
 
 # --- pure halving-schedule arithmetic (mirrors _mcts_tree.c) ------------------
@@ -352,6 +393,7 @@ class RootParallelGumbelPool:
         devices: Sequence[str] | None = None,
         rng: np.random.Generator | None = None,
         info_string_cb: Callable[[str], None] | None = None,
+        startup_timeout_s: float | None = None,
     ) -> None:
         puct_history_args(gumbel_cfg.input_history_encoding)
         if cfg.n_groups < 1:
@@ -402,7 +444,7 @@ class RootParallelGumbelPool:
         self._pending_lock = threading.Lock()
         self._pending = 0
         self._phase_done = threading.Event()
-        self._job_stop: threading.Event | None = None
+        self._job_stop: _JobStop | None = None
 
         # Ownership: exclusive one-group-per-candidate by default (design §2).
         # Late-phase split uses a refcount so multiple groups may co-own one
@@ -422,8 +464,33 @@ class RootParallelGumbelPool:
         )
 
         self._errors: list[BaseException] = []
+        self._error_groups: list[int] = []
+        self._last_failure: RPGDeviceFailure | None = None
         self._init_errors: list[BaseException] = []
         self._init_done = threading.Barrier(cfg.n_groups + 1)
+        # Startup: per-group "built" flags and progress contexts, so a group
+        # whose factory hangs is timed out (``startup_timeout_s``) instead of
+        # holding the constructor at the barrier forever.
+        self._startup_timeout_s = startup_timeout_s
+        self._built = [threading.Event() for _ in range(cfg.n_groups)]
+        names = [
+            str(self._devices[k]) if self._devices is not None else f"#{k}"
+            for k in range(cfg.n_groups)
+        ]
+        # Repeated device names (``--devices cpu,cpu``) get ``#k`` so every
+        # announcement names exactly one group.
+        self._labels = tuple(
+            n if names.count(n) == 1 else f"{n}#{k}" for k, n in enumerate(names)
+        )
+        self._startup_ctx = [StartupContext(self._labels[k]) for k in range(cfg.n_groups)]
+        # Stuck-group watch: when each group entered its current device-bound
+        # step (None = not in one), its slowest completed step, and the groups
+        # abandoned inside a step (their threads may never come back).
+        self._busy_since: list[float | None] = [None] * cfg.n_groups
+        self._slowest_step_s = [0.0] * cfg.n_groups
+        self._in_item = [False] * cfg.n_groups
+        self._abandoned: set[int] = set()
+        self._watch_lock = threading.Lock()
         self._shutdown = threading.Event()
         self._chunkers: list[PucvChunker | None] = [None] * cfg.n_groups
         self._threads = [
@@ -446,10 +513,43 @@ class RootParallelGumbelPool:
             except BaseException as cleanup:
                 note_cleanup(error, f"partial group startup cleanup failed: {cleanup!r}")
             raise
-        self._init_done.wait()
+        self._await_built()
+        try:
+            self._init_done.wait()
+        except threading.BrokenBarrierError:
+            if not self._init_errors:
+                raise
+            # ``_await_built`` timed a group out and broke the barrier.
         if self._init_errors:
             self.close()
             raise self._init_errors[0]
+
+    def _await_built(self) -> None:
+        """Wait for every group's factory, timing out one that makes no
+        progress for ``startup_timeout_s``. RPG start is strict: a timed-out
+        group is a startup failure (the barrier is broken, every group retires
+        and the constructor raises), never a hang."""
+        timeout = self._startup_timeout_s
+        if timeout is None:
+            return
+        while True:
+            pending = [k for k, ev in enumerate(self._built) if not ev.is_set()]
+            if not pending:
+                return
+            now = time.monotonic()
+            for k in pending:
+                idle = self._startup_ctx[k].idle_for(now)
+                if idle <= timeout or self._built[k].is_set():
+                    continue
+                self._init_errors.insert(0, TimeoutError(
+                    f"root-parallel Gumbel device {self._labels[k]}: evaluator build/warm-up "
+                    f"made no progress for {idle:.0f}s (device startup timeout {timeout:g}s)"
+                ))
+                self._abandoned.add(k)
+                self._startup_ctx[k].revoke_turns()
+                self._init_done.abort()
+                return
+            self._built[pending[0]].wait(min(_STARTUP_POLL_S, max(0.01, timeout / 4)))
 
     def __enter__(self) -> RootParallelGumbelPool:
         return self
@@ -466,16 +566,31 @@ class RootParallelGumbelPool:
         """Per-candidate leaf gather used by each group's PucvChunker."""
         return max(1, int(self._cfg.gather))
 
-    def close(self) -> None:
+    def close(self, *, abandoned_join_s: float = 1.0) -> None:
+        """Stop every group. ``abandoned_join_s``: the shared wait for groups
+        abandoned inside a device step (0 when retiring the pool mid-search:
+        the move's clock must not wait for a device that is known stuck)."""
         if self._shutdown.is_set():
             return
         self._shutdown.set()
         for _ in self._threads:
             self._work_q.put(None)
-        for th in self._started_threads:
+        abandoned_deadline = time.monotonic() + max(0.0, abandoned_join_s)
+        for k, th in enumerate(self._threads):
+            if th not in self._started_threads:
+                continue
+            if k in self._abandoned:
+                # Stuck inside a device step: a short shared wait, then leave
+                # it (``live_worker_threads``; the UCI process hard-exits).
+                th.join(timeout=max(0.0, abandoned_deadline - time.monotonic()))
+                continue
             th.join(timeout=2.0)
         # Unblock any orchestrator stuck at a phase barrier mid-close.
         self._phase_done.set()
+
+    def live_worker_threads(self) -> list[threading.Thread]:
+        """Group threads still alive (after ``close``: wedged in a device step)."""
+        return [th for th in self._started_threads if th.is_alive()]
 
     def last_stats(self) -> RootParallelGumbelStats:
         with self._stats_lock:
@@ -620,6 +735,11 @@ class RootParallelGumbelPool:
         completed (decisions from partial budgets — classic-equivalent).
         """
         ensure_usable(self)
+        if self._abandoned:
+            # A group was abandoned inside a device step: this pool's tree and
+            # that group are gone for good. The caller retires the pool.
+            k = min(self._abandoned)
+            raise RPGDeviceFailure(self._labels[k], "stopped answering", "abandoned earlier")
         for evaluator in self._evals:
             ensure_usable(evaluator)
         st = self._state
@@ -661,7 +781,9 @@ class RootParallelGumbelPool:
         with self._stats_lock:
             self._group_sims = [0] * self._cfg.n_groups
         self._errors = []
-        self._job_stop = stop_event
+        self._error_groups = []
+        job_stop = _JobStop(stop_event)
+        self._job_stop = job_stop
 
         phases: list[RootParallelPhase] = []
         phase_index = 0
@@ -677,8 +799,7 @@ class RootParallelGumbelPool:
                 for a in remaining
             ]
             sims_done = self._dispatch_phase(items)
-            if self._errors:
-                raise self._errors[0]
+            self._raise_group_failure()
             stopped = stop_event.is_set()
             budget = max(0, budget - open_vpa * n_cands)
             # Keep every candidate — open is scout, not a SH round.
@@ -726,8 +847,7 @@ class RootParallelGumbelPool:
                 for a in remaining[:n_dispatched]
             ]
             sims_done = self._dispatch_phase(items)
-            if self._errors:
-                raise self._errors[0]
+            self._raise_group_failure()
             stopped = stop_event.is_set()
             remaining = self._score_and_halve(st, remaining, gumbels)
             budget -= vpa * n_dispatched
@@ -896,9 +1016,100 @@ class RootParallelGumbelPool:
         self._phase_done.clear()
         for it in work:
             self._work_q.put(it)
-        self._phase_done.wait()
+        while not self._phase_done.wait(_PHASE_POLL_S):
+            if self._shutdown.is_set():
+                break
+            stuck = self._find_stuck_group()
+            if stuck is not None:
+                self._abandon_group(*stuck)
+                break
         with self._stats_lock:
             return self._phase_sims
+
+    def _stall_limit_s(self, k: int, *, stopped: bool, idle_other: bool) -> float:
+        from chess_anti_engine.uci.device_guard import (
+            idle_survivor_threshold_s,
+            mid_search_threshold_s,
+        )
+        slowest = self._slowest_step_s[k]
+        if stopped or idle_other:
+            return idle_survivor_threshold_s(slowest)
+        return mid_search_threshold_s(slowest)
+
+    def _find_stuck_group(self) -> tuple[int, float, float] | None:
+        """A group inside one device-bound step for too long, or None.
+
+        The pool's rule: while another group still works the patient
+        mid-search threshold (>= 5 s); once the job is stopped or another
+        group sits idle, the 1 s idle-survivor threshold."""
+        job = self._job_stop
+        stopped = job is not None and job.is_set()
+        now = time.monotonic()
+        with self._watch_lock:
+            busy = list(self._busy_since)
+            in_item = list(self._in_item)
+        idle_other = any(not x for k, x in enumerate(in_item) if k not in self._abandoned)
+        for k, since in enumerate(busy):
+            if since is None or k in self._abandoned:
+                continue
+            limit = self._stall_limit_s(k, stopped=stopped, idle_other=idle_other)
+            if now - since > limit:
+                return k, now - since, limit
+        return None
+
+    def _abandon_group(self, k: int, took: float, limit: float) -> None:
+        """Give up on group ``k`` stuck in a device step; let the others stop."""
+        with self._watch_lock:
+            self._abandoned.add(k)
+        self._errors.append(RPGDeviceFailure(
+            self._labels[k], "stopped answering",
+            f"one device step blocked for {took:.1f}s > {limit:.1f}s",
+        ))
+        self._error_groups.append(k)
+        job = self._job_stop
+        if job is not None:
+            job.set()
+        # The stuck group's own item never completes; wait (bounded) for the
+        # others to drain theirs before the caller drops this pool's tree.
+        deadline = time.monotonic() + _FAILURE_DRAIN_S
+        while time.monotonic() < deadline:
+            with self._pending_lock:
+                if self._pending <= 1:
+                    return
+            time.sleep(_PHASE_POLL_S / 5)
+
+    def _raise_group_failure(self) -> None:
+        """Re-raise a group's failure. A group that RAISED re-raises its own
+        exception (the pool's public contract); ``last_group_failure`` then
+        names the device. A stuck group raises ``RPGDeviceFailure``."""
+        if not self._errors:
+            return
+        first = self._errors[0]
+        if isinstance(first, RPGDeviceFailure):
+            self._last_failure = first
+            raise first
+        k = self._error_groups[0] if self._error_groups else -1
+        label = self._labels[k] if 0 <= k < len(self._labels) else "?"
+        text = " ".join(f"{type(first).__name__}: {first}".split())[:160]
+        self._last_failure = RPGDeviceFailure(label, "failed mid-search", text)
+        raise first
+
+    def last_group_failure(self) -> RPGDeviceFailure | None:
+        """The device failure behind the last ``run`` that raised, if any."""
+        return self._last_failure
+
+    def _device_step_begin(self, k: int) -> None:
+        with self._watch_lock:
+            self._busy_since[k] = time.monotonic()
+
+    def _device_step_end(self, k: int) -> None:
+        with self._watch_lock:
+            since = self._busy_since[k]
+            self._busy_since[k] = None
+            if since is not None:
+                took = time.monotonic() - since
+                if took > self._slowest_step_s[k]:
+                    self._slowest_step_s[k] = took
 
     def _score_and_halve(
         self,
@@ -1029,7 +1240,8 @@ class RootParallelGumbelPool:
                         # before the factory compiles/captures anything.
                         import torch
                         torch.cuda.set_device(device)
-                evaluator = self._factories[idx]()
+                with startup_context(self._startup_ctx[idx]):
+                    evaluator = self._factories[idx]()
                 if not hasattr(evaluator, "evaluate_inplace_async"):
                     raise TypeError(
                         f"factory[{idx}] returned an evaluator missing "
@@ -1060,6 +1272,7 @@ class RootParallelGumbelPool:
             )
         except BaseException as exc:
             self._init_errors.append(exc)
+        self._built[idx].set()
         try:
             self._init_done.wait()
         except threading.BrokenBarrierError:
@@ -1088,6 +1301,8 @@ class RootParallelGumbelPool:
             if item is None or self._shutdown.is_set():
                 return
             stop_event = self._job_stop
+            with self._watch_lock:
+                self._in_item[idx] = True
             try:
                 sims = self._run_item(idx, evaluator, chunker, item, stop_event)
                 with self._stats_lock:
@@ -1096,9 +1311,13 @@ class RootParallelGumbelPool:
             except BaseException as exc:  # surfaced by run() after the barrier
                 _log.exception("rpg-group-%d raised; requesting stop", idx)
                 self._errors.append(exc)
+                self._error_groups.append(idx)
                 if stop_event is not None:
                     stop_event.set()
             finally:
+                with self._watch_lock:
+                    self._in_item[idx] = False
+                    self._busy_since[idx] = None
                 with self._pending_lock:
                     self._pending -= 1
                     if self._pending <= 0:
@@ -1110,7 +1329,7 @@ class RootParallelGumbelPool:
         evaluator: Any,
         chunker: PucvChunker,
         item: _WorkItem,
-        stop_event: threading.Event | None,
+        stop_event: _JobStop | threading.Event | None,
     ) -> int:
         if stop_event is not None and stop_event.is_set():
             return 0
@@ -1127,7 +1346,11 @@ class RootParallelGumbelPool:
                 if stop_event is not None and stop_event.is_set():
                     return 0
                 if not arena.expanded:
-                    done += self._expand_candidate(evaluator, arena, st)
+                    self._device_step_begin(group_idx)
+                    try:
+                        done += self._expand_candidate(evaluator, arena, st)
+                    finally:
+                        self._device_step_end(group_idx)
             if arena.terminal_value is not None:
                 # Classic semantics: every forced sim into a terminal child
                 # backprops the terminal value (visit counts keep accruing so
@@ -1159,13 +1382,17 @@ class RootParallelGumbelPool:
                 # When remaining < gather the chunker already densifies to
                 # remaining (min(gather, target)); no extra adaptive path.
                 n = min(item.budget - done, 2 * gather)
-                if st.tb_probe is None:
-                    ran = int(chunker.run(st.tree, arena.cid, arena.cboard, n))
-                else:
-                    ran = int(chunker.run(
-                        st.tree, arena.cid, arena.cboard, n,
-                        tb_probe=st.tb_probe, tb_path_prefix=(st.root_id,),
-                    ))
+                self._device_step_begin(group_idx)
+                try:
+                    if st.tb_probe is None:
+                        ran = int(chunker.run(st.tree, arena.cid, arena.cboard, n))
+                    else:
+                        ran = int(chunker.run(
+                            st.tree, arena.cid, arena.cboard, n,
+                            tb_probe=st.tb_probe, tb_path_prefix=(st.root_id,),
+                        ))
+                finally:
+                    self._device_step_end(group_idx)
                 if ran <= 0:
                     break  # solved/terminal below the candidate root
                 done += ran

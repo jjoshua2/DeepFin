@@ -133,6 +133,13 @@ UCI_FAILURE_MARKERS: tuple[str, ...] = (
     "DEGRADED",
     "REFUSED by the C tablebase prober",
 )
+# On the compiled path the engine pads every forward to a fixed bucket ladder,
+# warms every bucket before ``readyok`` and then verifies that each evaluator
+# ran all of them (one ``warmup verified`` line per evaluator). The non-fast
+# self-check REQUIRES those lines, and fails on any shape first met after the
+# warm-up: this is the check that the padded / compiled path is complete.
+WARMUP_VERIFIED_MARKER = "info string warmup verified:"
+FIRST_SEEN_SHAPE_MARKER = "first-seen batch shape after warmup"
 
 
 @dataclass(frozen=True)
@@ -836,7 +843,8 @@ def uci_mode(opts: SelfcheckOptions) -> str:
     flags = " ".join(opts.engine_args)
     given = f" with engine flags `{flags}`" if flags else ""
     if opts.fast:
-        return f"fast: --no-compile{given} (does NOT cover the default compiled play path)"
+        return (f"fast: --no-compile{given} (does NOT cover the default compiled play path: "
+                "no bucket padding, warm-up or shape check; run without --fast before an event)")
     if "--no-compile" in opts.engine_args:
         return f"operator flags{given}"
     return f"default play path, torch.compile on{given}"
@@ -994,8 +1002,24 @@ def check_uci(
             raise CheckFailed(f"bestmove {token} is not legal in the start position")
         if proc.returncode != 0:
             raise CheckFailed(f"engine exited {proc.returncode} after quit")
+        warm_note = ""
+        if compiled:
+            verified = [ln for ln in out.lines if ln.startswith(WARMUP_VERIFIED_MARKER)]
+            if not verified:
+                raise CheckFailed(
+                    f"engine ({uci_mode(opts)}) never printed {WARMUP_VERIFIED_MARKER!r}: "
+                    "the compiled path did not run (or did not verify) its bucket warm-up"
+                )
+            cold = [ln for ln in out.lines if FIRST_SEEN_SHAPE_MARKER in ln]
+            if cold:
+                raise CheckFailed(
+                    f"engine ({uci_mode(opts)}) met a batch shape its warm-up missed: {cold[0].strip()}"
+                )
+            warm_note = (f", bucket warm-up verified on {len(verified)} evaluator(s), "
+                         "no shape first met after it")
         return (f"uci/uciok, isready/readyok, go nodes {UCI_GO_NODES} -> bestmove {token} "
-                f"({label}, {uci_mode(opts)}, {time.monotonic() - started:.1f}s, subprocess)")
+                f"({label}, {uci_mode(opts)}{warm_note}, "
+                f"{time.monotonic() - started:.1f}s, subprocess)")
 
 
 # ── driver ─────────────────────────────────────────────────────────────────

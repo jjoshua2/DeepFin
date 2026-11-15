@@ -115,6 +115,7 @@ def engine_fixture(enabled=False, parallel='pucv', devices=2):
     models = [SimpleNamespace(input_history_encoding='legacy', input_extra_features='v1') for _ in range(devices)]
     device_names = ['inert:' + str(i) for i in range(devices)]
     namespace: dict[str, Any] = {'os': os, 'DirectGPUEvaluator': Direct, 'MultiGPUDispatcher': Wrapper,
+                     'DegradingMultiGPUDispatcher': Wrapper,
                      'ThreadSafeGPUDispatcher': Wrapper, 'CUDAOwnerDispatcher': Wrapper,
                      'BatchCoalescingDispatcher': Wrapper, 'EncodedEvalCache': Wrapper,
                      '_warmup_evaluator': lambda *_args, **_kwargs: None}
@@ -219,6 +220,7 @@ def search_fixture(rpg=True):
               '_try_immediate_checkmate': lambda *_args, **_kwargs: None, 'SearchResult': SimpleNamespace,
               '_TREE_NODE_ID_LIMIT': 1 << 30}
     names = ['SearchWorker.run', 'SearchWorker._run_one_chunk', 'SearchWorker._run_gumbel_chunk',
+             'SearchWorker._run_gumbel_chunk_inner',
              'SearchWorker._pre_expand_root_for_pool', 'SearchWorker._chunk_budget',
              'SearchWorker._should_stop_search', 'SearchWorker.reset_tree', '_allowed_root_indices',
              'SearchWorker._root_visits_added', 'SearchWorker._root_visit_snapshot',
@@ -257,6 +259,7 @@ def search_fixture(rpg=True):
     worker._tree_node_count = lambda: 0
     worker._record_growth_rate = lambda *_args: None
     worker._try_tb_shortcut = lambda *_args, **_kwargs: None
+    worker._chain_degrade_source = lambda: None  # no routing-chain degrade source
     worker._time_capped_chunk = lambda chunk, *_args: chunk
     worker._is_shared_tree_path = lambda _allowed: False
     worker._maybe_emit_pv_info = lambda **kw: ([], 0, 0)
