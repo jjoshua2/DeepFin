@@ -553,7 +553,8 @@ them. Per-`go` search threads still end after each move. `quit` after a fault
 exits with the status it would have had without closing anything:
 `info string quit: a device failed this session (...); exiting with status ... without closing the evaluators`
 (or, while a device call is still stuck,
-`info string quit: a multi-GPU worker is still stuck inside a dropped device's call; exiting with status ... without waiting for it`).
+`info string quit: ...; exiting with status ... without waiting for it`, the reason
+reading `a multi-GPU worker is still stuck inside a dropped device's call`).
 It first stops the search: a search that never ended (every device stuck)
 gives status 1, otherwise 0.
 An option that rebuilds the evaluators after a device got stuck (or was dropped

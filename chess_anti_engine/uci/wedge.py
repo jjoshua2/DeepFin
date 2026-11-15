@@ -174,6 +174,9 @@ def join_unless_wedged(thread: threading.Thread, timeout: float) -> None:
     After a device fault ending workers park instead of exiting, so a plain
     join would only spend the timeout. This waits (at most ``timeout``) until
     the thread has ended or parked, so its cleanup has run when it returns."""
+    if device_fault() is None and not any_wedged():
+        thread.join(timeout=timeout)  # no fault: workers end normally
+        return
     deadline = time.monotonic() + max(0.0, timeout)
     with _lock:
         while thread.is_alive() and thread not in _parked:

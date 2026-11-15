@@ -1897,10 +1897,10 @@ def _announce_wedged_exit(rc: int) -> None:
 
 
 def _announce_fault_exit(fault: str, rc: int) -> None:
-    why = f"a device failed this session ({fault})"
-    _println(f"info string quit: {why}; exiting with status {rc} without closing the evaluators")
-    print(f"deepfin: {why}; exiting with status {rc} without closing the evaluators",
-          file=sys.stderr)
+    _println(f"info string quit: a device failed this session ({fault}); "
+             f"exiting with status {rc} without closing the evaluators")
+    print(f"deepfin: a device failed this session ({fault}); "
+          f"exiting with status {rc} without closing the evaluators", file=sys.stderr)
 
 
 def _hard_exit(rc: int) -> None:
