@@ -66,21 +66,78 @@ def test_real_trainer_sampling_ignores_priorities_and_result_classes(tmp_path) -
     trainer.writer.close()
 
 
-def test_failed_refill_keeps_window_rng_and_admission_cursor() -> None:
-    replay = GenerationReplay(generations=1, rng=np.random.default_rng(7))
-    replay.admit_generation(1, [_chunk(1, 3)])
+@pytest.mark.parametrize("first_generation", [1, 2])
+def test_failed_refill_keeps_window_rng_and_admission_cursor(first_generation: int) -> None:
+    replay = GenerationReplay(generations=1, rng=np.random.default_rng(7), first_generation=first_generation)
+    replay.admit_generation(first_generation, [_chunk(first_generation, 3)])
     before = replay.rng.bit_generator.state
-    broken = _chunk(2, 2)
+    broken = _chunk(first_generation + 1, 2)
     del broken.arrays["policy_target"]
     with pytest.raises(ValueError, match="missing required fields"):
-        replay.admit_generation(2, [broken])
-    assert replay.membership == ((1, f"{1:064x}", 3),)
+        replay.admit_generation(first_generation + 1, [broken])
+    assert replay.membership == ((first_generation, f"{first_generation:064x}", 3),)
     assert replay.rng.bit_generator.state == before
-    replay.admit_generation(2, [_chunk(2, 2)])
+    replay.admit_generation(first_generation + 1, [_chunk(first_generation + 1, 2)])
     assert len(replay) == 2
     # Eviction does not permit ingestion of the same physical source again.
     with pytest.raises(ValueError, match="already admitted"):
-        replay.admit_generation(3, [_chunk(1, 3)])
+        replay.admit_generation(first_generation + 2, [_chunk(first_generation, 3)])
+    assert replay.membership == ((first_generation + 1, f"{first_generation + 1:064x}", 2),)
+    assert replay.rng.bit_generator.state == before
+    replay.admit_generation(first_generation + 2, [_chunk(first_generation + 2, 1)])
+    assert replay.membership == ((first_generation + 2, f"{first_generation + 2:064x}", 1),)
+
+
+def test_explicit_first_generation_preserves_logical_draws_and_rng() -> None:
+    rng = np.random.default_rng(123)
+    expected_rng = np.random.default_rng(123)
+    draws = []
+    before = rng.bit_generator.state
+    replay = GenerationReplay(generations=2, rng=rng, first_generation=2, on_draw=draws.append)
+    for generation in (1, 3, 4):
+        with pytest.raises(ValueError, match="consecutive"):
+            replay.admit_generation(generation, [_chunk(generation, 1)])
+        assert replay.membership == ()
+        assert rng.bit_generator.state == before
+    replay.admit_generation(2, [_chunk(2, 3)])
+    assert replay.membership == ((2, f"{2:064x}", 3),)
+    assert rng.bit_generator.state == before
+    expected = expected_rng.choice(3, size=16, replace=True)
+    batch = replay.sample_batch_arrays(16)
+    np.testing.assert_array_equal(batch["x"][:, 0, 0, 0], 200 + expected)
+    assert [r.generation for r in draws[0]] == [2] * 16
+    assert [r.row_index for r in draws[0]] == expected.tolist()
+    assert all(r.source_sha256 == f"{2:064x}" for r in draws[0])
+    assert rng.bit_generator.state == expected_rng.bit_generator.state
+
+    replay.admit_generation(3, [_chunk(3, 2)])
+    assert replay.membership == ((2, f"{2:064x}", 3), (3, f"{3:064x}", 2))
+    assert rng.bit_generator.state == expected_rng.bit_generator.state
+    for generation in (1, 2, 3, 5):
+        with pytest.raises(ValueError, match="consecutive"):
+            replay.admit_generation(generation, [_chunk(99, 1)])
+        assert replay.membership == ((2, f"{2:064x}", 3), (3, f"{3:064x}", 2))
+        assert rng.bit_generator.state == expected_rng.bit_generator.state
+    replay.admit_generation(4, [_chunk(4, 4)])
+    assert replay.membership == ((3, f"{3:064x}", 2), (4, f"{4:064x}", 4))
+    assert rng.bit_generator.state == expected_rng.bit_generator.state
+    ids = np.concatenate([300 + np.arange(2), 400 + np.arange(4)])
+    expected = expected_rng.choice(len(ids), size=32, replace=True)
+    batch = replay.sample_batch_arrays(32)
+    np.testing.assert_array_equal(batch["x"][:, 0, 0, 0], ids[expected])
+    assert [r.generation * 100 + r.row_index for r in draws[1]] == ids[expected].tolist()
+    assert all(r.source_sha256 == f"{r.generation:064x}" for r in draws[1])
+    assert replay.rng is rng
+    assert rng.bit_generator.state == expected_rng.bit_generator.state
+
+
+@pytest.mark.parametrize("first_generation", [0, -1, True, False, 1.5, 2.0, "2", None, np.int64(2)])
+def test_invalid_first_generation_rejected(first_generation: object) -> None:
+    rng = np.random.default_rng(1)
+    before = rng.bit_generator.state
+    with pytest.raises(ValueError, match="first_generation must be a positive integer"):
+        GenerationReplay(generations=4, rng=rng, first_generation=cast(Any, first_generation))
+    assert rng.bit_generator.state == before
 
 
 def test_multiple_chunks_map_local_physical_indices() -> None:
