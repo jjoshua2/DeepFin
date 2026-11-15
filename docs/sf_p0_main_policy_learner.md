@@ -104,8 +104,24 @@ and selected rows receive the original carrier F16 bytes. Every other batch fiel
 including integer outcome WDL and original supervision mask, is preserved. Trainer
 then applies its existing single mirror to input, policy and legal metadata. There
 is no extra mirror/RNG draw, in-place source change, policy reconstruction from PVs,
-new temperature, or teacher-only loss denominator. The unchanged soft-CE path widens
-and normalizes the existing F16 vectors using its current F32 implementation.
+new temperature, or teacher-only loss denominator.
+
+A/zero keeps original G1 F16 main-policy bytes through unwrapped replay. B copies
+raw carrier F16 bytes only onto eligible rows before the shared mirror; every B
+fallback row keeps the original A bytes. In both arms the unchanged host preparation
+uses `collate_arrays` to widen the selected F16 vector to Torch F32. Same-width
+`align_policy_target` is identity. The common loss masks logits to the current
+legal actions and `soft_cross_entropy` divides the F32 target by
+`row_sum.clamp_min(1e-8)`.
+Authenticated targets have zero illegal mass, so that sum equals their legal mass.
+`policy_target_temp=1` is the unchanged identity path. Thus B introduces no separate
+pre-normalization or temperature: both selected target sources receive the same
+existing loss-time row normalization. Preserving A's original F16 bytes before the
+shared host/loss stages does not mean bypassing that original F32 normalization.
+The raw stored teacher is a source-constructed reduced SF distribution; widening
+or normalization does not recover unquantized SF probabilities, effort or wire
+truth. The NumPy F32 contrast counter is descriptive and is not a claim of identical
+Torch/CUDA reduction order or gradient bits.
 
 Boundary receipts contain bank counts, per-draw-batch and aggregate qualified,
 structurally eligible, replaced, original-fallback and original-supervision

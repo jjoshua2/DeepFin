@@ -218,7 +218,7 @@ def test_zero_public_worker_is_unwrapped_and_matches_legacy_with_poisoned_sideca
         finite.execute(cref, old.frozen(tmp_path / "bindings/poisoned-stage.json", poisoned))
 
 
-@pytest.mark.parametrize("mirror", (0.0, 1.0))
+@pytest.mark.parametrize("mirror", [0.0, 1.0])
 def test_actual_worker_host_main_ce_analytic_gradient_fallback_and_single_mirror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
                                                                               mirror: float) -> None:
     c, cref, _, gen, source, positions, details = setup(tmp_path, mirror=mirror)
@@ -303,7 +303,7 @@ def test_actual_worker_host_main_ce_analytic_gradient_fallback_and_single_mirror
     assert core.CORE_KWARGS["sf_wdl_frac"] == core.CORE_KWARGS["search_wdl_frac"] == 0
 
 
-@pytest.mark.parametrize("marker", ("applied", "abstained"))
+@pytest.mark.parametrize("marker", ["applied", "abstained"])
 def test_tb_markers_and_material_keep_original_bytes_and_mask_without_resampling(tmp_path: Path, marker: str) -> None:
     c, _, _, gen, source, positions, details = setup(tmp_path, tb=True, tb_marker=marker)
     refs = accepted(tmp_path, c, gen, positions, details, invalid=False)
@@ -334,7 +334,7 @@ def test_tb_markers_and_material_keep_original_bytes_and_mask_without_resampling
     assert result["policy_target"][1].tobytes() == source["policy_target"][1].tobytes()
 
 
-@pytest.mark.parametrize("fault", ("missing", "foreign", "duplicate", "disagreement", "overlap", "not_reprobed"))
+@pytest.mark.parametrize("fault", ["missing", "foreign", "duplicate", "disagreement", "overlap", "not_reprobed"])
 def test_strict_marker_lists_fail_closed(fault: str) -> None:
     actual = {"tablebase_policy_applied_plies": [5], "tablebase_policy_abstained_plies": [6]}
     verified = {"policy_applied_plies": [5], "policy_abstained_plies": [6], "policy_eligible_raw_records": 2,
@@ -359,7 +359,7 @@ def test_strict_marker_lists_fail_closed(fault: str) -> None:
             eligibility.marker_sets(actual, verified, {5, 6})
 
 
-@pytest.mark.parametrize("share", (False, True, -.1, .2, 2, float("nan")))
+@pytest.mark.parametrize("share", [False, True, -.1, .2, 2, float("nan")])
 def test_only_explicit_zero_or_full_replacement_profile(share: Any) -> None:
     with pytest.raises(ValueError, match="teacher share must be zero or one"):
         finite.validate_profile({"schema": finite.PROFILE, "scope": "SYNTHETIC_ONLY", "teacher_share": share,
@@ -374,7 +374,7 @@ def test_old_public_contracts_do_not_admit_new_family(tmp_path: Path) -> None:
         finite.execute(legacy, stage(tmp_path, legacy, gen))
 
 
-@pytest.mark.parametrize("fault", ("nan", "negative", "empty", "illegal"))
+@pytest.mark.parametrize("fault", ["nan", "negative", "empty", "illegal"])
 def test_bad_true_qualified_vector_refuses_before_model_construction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
                                                                    fault: str) -> None:
     c, cref, _, gen, _, positions, details = setup(tmp_path)
@@ -384,7 +384,7 @@ def test_bad_true_qualified_vector_refuses_before_model_construction(tmp_path: P
         finite.execute(cref, stage(tmp_path, cref, gen, refs))
 
 
-@pytest.mark.parametrize("fault", ("fen", "history_sha256", "input_F16_sha256", "legal", "ply", "row"))
+@pytest.mark.parametrize("fault", ["fen", "history_sha256", "input_F16_sha256", "legal", "ply", "row"])
 def test_authenticated_but_crossed_context_refuses_before_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
                                                              fault: str) -> None:
     c, cref, _, gen, _, positions, details = setup(tmp_path)
