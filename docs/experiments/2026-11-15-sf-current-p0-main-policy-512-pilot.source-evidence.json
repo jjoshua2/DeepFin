@@ -57,7 +57,7 @@
       "B-teacher512": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-B-teacher512-results-v2"
     },
     "frozen_scientific_protocol": {
-      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-scientific-freeze-v3/protocol.json",
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-scientific-freeze-v3/protocol.json",
       "sha256": "a8c394b756f6457d4bbe44c4a7eee3d778fa6c746529948cf25e3d95db7e61fc"
     },
     "future_GPU_scope_cap": 19800,
@@ -109,15 +109,15 @@
       "sha256": "20d0f83acb038c79b676d2850fbed5640788128576e0cc228ca906be14887e8f"
     },
     "root_scientific_freeze": {
-      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-scientific-freeze-v3/root-freeze.json",
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-scientific-freeze-v3/root-freeze.json",
       "sha256": "89ef796ad7a2e782ddcc777b5bb29a537918af0841530767a2f1ccde6b36acef"
     },
     "science_source_review": {
-      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-science-independent-source-review-v3/review.json",
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-science-independent-source-review-v3/review.json",
       "sha256": "bdd16f67d6263d021ff3f2efb145c27467ba09165959806874668ac0c414802b"
     },
     "sealed_science_source_bundle": {
-      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-science-preparation-v3/manifest.json",
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-science-preparation-v3/manifest.json",
       "sha256": "8aafbc145fad19828a3164cd0629e66cf4431399199a58648681f35b09cb82a5"
     },
     "second_failed_closeout": {
@@ -134,7 +134,7 @@
     },
     "source_capsule_and_qualified_runtime_unchanged": true,
     "source_coordination_clarification": {
-      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-science-v3-role-coordination-clarification-v1/clarification.json",
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-science-v3-role-coordination-clarification-v1/clarification.json",
       "sha256": "2fe79fe8a0b05daebdc17329f1ad1c2752f835223c755e85086bcd2130b07047"
     },
     "source_status_at_preparation": "SEALED_S3_SOURCE_PREPARATION_THIRD_ENGINEERING_SELECTED_NOT_ADMITTED",
