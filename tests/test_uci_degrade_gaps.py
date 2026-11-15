@@ -51,6 +51,7 @@ from chess_anti_engine.uci.root_parallel_gumbel import (
 from chess_anti_engine.uci.search import SearchWorker
 from tests.test_uci_multi_gpu_degrade import (
     _UNSEARCHED,
+    _ended_or_parked,
     _engine_with_pool,
     _evaluator,
     _Faulty,
@@ -406,8 +407,8 @@ def test_pool_startup_hang_starts_degraded_and_the_hung_build_retires_later() ->
         assert _run(pool, 100)[0] == 100  # the survivor searches
         pool.close()
         assert pool._threads[1] in pool.live_worker_threads()  # still in its factory
-        release.set()  # the hung build returns: it retires what it built and exits
-        assert _wait_for(lambda: not pool._threads[1].is_alive(), timeout=10)
+        release.set()  # the hung build returns: it retires what it built and parks
+        assert _wait_for(lambda: _ended_or_parked(pool._threads[1]), timeout=10)
         assert pool._evals[1] is None
     finally:
         release.set()
@@ -534,8 +535,7 @@ def test_searchmoves_keeps_its_restriction_when_the_primary_fails(out, mode, aft
 
 
 def test_a_primary_stall_on_the_root_eval_moves_root_evals_to_the_pool(out) -> None:
-    # after=1: the install-time warm call answers; the first root eval hangs.
-    primary = _AllFaulty(_evaluator(), mode="hang", after=1)
+    primary = _AllFaulty(_evaluator(), mode="hang", after=0)
     engine, worker = _engine_with_pool([_evaluator(), _evaluator()], primary=primary)
     try:
         move, _ = _go(engine, out, "d2d4", "go movetime 2500", 1)
@@ -720,9 +720,10 @@ def test_one_slow_call_under_a_survivor_is_kept_by_the_pool() -> None:
 # ── review round 1: the wedge latch, RPG primary / GPU0, primary restore ───
 
 
-def test_wedge_latch_parks_an_ending_worker_until_the_wedge_clears() -> None:
-    """While a thread is marked wedged, a worker wrapped by ``wedge.parking``
-    does not end: it parks, and ends once the wedge clears."""
+def test_wedge_latch_parks_an_ending_worker_for_the_rest_of_the_session() -> None:
+    """Once a thread has been marked wedged (a device fault), a worker
+    wrapped by ``wedge.parking`` does not end: it parks, and stays parked
+    after the wedge clears (only the test-session reset releases it)."""
     release = threading.Event()
 
     def stuck() -> None:
@@ -741,6 +742,10 @@ def test_wedge_latch_parks_an_ending_worker_until_the_wedge_clears() -> None:
         assert worker in wedge.parked_threads()
         assert wedge.wedged_earlier("t1") == "test device call"
         release.set()
+        assert _wait_for(lambda: not wedge.any_wedged(), timeout=5)
+        time.sleep(1.2)  # past the latch's 1 s re-check
+        assert worker in wedge.parked_threads()
+        wedge.reset_session_for_tests()
         assert _wait_for(lambda: not worker.is_alive(), timeout=5)
         ended.set()
     finally:
@@ -748,10 +753,29 @@ def test_wedge_latch_parks_an_ending_worker_until_the_wedge_clears() -> None:
     assert ended.is_set()
 
 
+def test_a_raise_alone_makes_ending_workers_park_and_join_skip() -> None:
+    """Round-2 BLOCKER: no wedge is needed. After a device fault that is only
+    a raise, ending workers park and ``join_unless_wedged`` does not wait."""
+    assert wedge.device_fault() is None
+    first = threading.Thread(target=wedge.parking(lambda: None), daemon=True)
+    first.start()
+    first.join(5)
+    assert not first.is_alive()  # before any fault, workers end normally
+    wedge.note_device_fault("device g1 raised")
+    assert wedge.device_fault() == "device g1 raised"
+    worker = threading.Thread(target=wedge.parking(lambda: None), daemon=True)
+    worker.start()
+    assert _wait_for(lambda: worker in wedge.parked_threads(), timeout=5)
+    started = time.monotonic()
+    wedge.join_unless_wedged(worker, 3.0)
+    assert time.monotonic() - started < 1.0
+    assert worker.is_alive()
+
+
 def test_pool_close_with_a_wedged_worker_parks_the_healthy_one() -> None:
     """``close`` while a worker is stuck inside a device call: the healthy
-    worker parks (no join wait), the stuck one stays; both end once the call
-    comes back."""
+    worker parks (no join wait), the stuck one stays; once the call comes
+    back it parks too (the session had a device fault)."""
     hung = _Faulty(_evaluator(), mode="hang", after=1)
     pool = MultiGpuPucvPool(
         MultiGpuPucvConfig(n_gpus=2, gather=8, device_labels=("g0", "g1")),
@@ -769,7 +793,8 @@ def test_pool_close_with_a_wedged_worker_parks_the_healthy_one() -> None:
     finally:
         hung.release.set()
         pool.close()
-    assert _wait_for(lambda: not any(th.is_alive() for th in pool._threads), timeout=10)
+    assert _wait_for(lambda: all(_ended_or_parked(th) for th in pool._threads), timeout=10)
+    assert not wedge.any_wedged()
 
 
 def test_guarded_primary_reports_the_inner_batch_cap() -> None:
@@ -917,11 +942,14 @@ class _SlowOnceEncoded:
 
 def test_primary_is_warmed_at_install_and_restored_after_a_clean_stall(out) -> None:
     """MINOR 3: the primary's call thread runs one measured call at install
-    (seeding its stall limit); a primary dropped for a stall whose late call
-    comes back clean is re-admitted at the next go, announced."""
-    primary = _SlowOnceEncoded(_evaluator(), k=2, delay=2.0)  # call 1 = install warm call
+    (``warm_primary_runner``, which the UCI install sites call before
+    readyok), seeding its stall limit; a primary dropped for a stall whose
+    late call comes back clean is re-admitted at the next go, announced."""
+    primary = _SlowOnceEncoded(_evaluator(), k=2, delay=2.0)  # call 1 = the warm call
     engine, worker = _engine_with_pool([_evaluator(), _evaluator()], primary=primary)
     try:
+        assert primary.calls == 0  # the library install itself makes no call
+        worker.warm_primary_runner()
         runner = worker._primary_runner
         assert runner is not None
         assert runner.warmed
@@ -1050,3 +1078,128 @@ def test_a_stalled_call_that_returns_clears_its_wedge() -> None:
         assert not wedge.any_wedged()
     finally:
         pool.close()
+
+
+@pytest.mark.parametrize("late", ["return", "raise"])
+def test_a_device_call_runner_stall_that_ends_clears_its_wedge(late: str) -> None:
+    """Round-2 N3: the chain's per-device call threads and the primary's call
+    thread are both ``DeviceCallRunner``s. A call abandoned for a stall marks
+    the thread wedged; once that call ends (late answer or late raise) the mark
+    must clear, or every later ending worker parks and quit hard-exits for a
+    device that is no longer stuck."""
+    gate = threading.Event()
+
+    def slow() -> int:
+        gate.wait(5)
+        if late == "raise":
+            raise RuntimeError("late failure")
+        return 7
+
+    runner = DeviceCallRunner("chain-or-primary", bootstrap=False)
+    try:
+        with pytest.raises(DeviceStalled):
+            runner.call(slow, limit_s=0.2)
+        assert wedge.any_wedged() and runner.wedged()
+        gate.set()
+        assert _wait_for(lambda: not runner.wedged(), timeout=5)
+        assert not wedge.any_wedged()
+        assert runner.restorable is (late == "return")
+    finally:
+        gate.set()
+        runner.close(2.0)
+
+
+class _RecordingEncoded:
+    """Primary wrapper recording what ``evaluate_encoded`` is sent (the inner
+    tiny net ignores relations)."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.sent: list[tuple[np.ndarray, Any]] = []
+
+    def evaluate_encoded(self, x: np.ndarray, relations: Any = None) -> Any:
+        self.sent.append((np.array(x, copy=True), relations))
+        return self._inner.evaluate_encoded(x)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+@pytest.mark.parametrize("relations", [False, True])
+def test_the_primary_warm_call_sends_real_root_inputs(relations: bool) -> None:
+    """Round-2 item 2b: the warm call sends what a real root evaluation sends
+    (startpos with this net's history encoding and extra planes, relations
+    when the net uses them), so the warmed shape / graph is the real one."""
+    import dataclasses
+
+    from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
+
+    primary = _RecordingEncoded(_evaluator())
+    engine, worker = _engine_with_pool([_evaluator(), _evaluator()], primary=primary)
+    try:
+        worker._cfg = dataclasses.replace(worker._cfg, compute_relations=relations)
+        worker.warm_primary_runner()
+        assert len(primary.sent) == 1
+        x, rels = primary.sent[0]
+        cb = CBoard.from_board(chess.Board())
+        want = encode_cboard(cb, input_history_encoding=worker._cfg.input_history_encoding,
+                             input_extra_features=worker._cfg.input_extra_features)
+        assert x.shape[0] == 1 and np.array_equal(x[0], want)
+        if relations:
+            assert rels is not None
+            assert np.array_equal(rels, cb.compute_relations()[None, ...])
+        else:
+            assert rels is None
+    finally:
+        engine.close()
+        worker.close()
+
+
+class _RaiseWhenArmed:
+    """Healthy until ``armed`` is set; then every ``evaluate*`` raises."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.armed = threading.Event()
+        self.raised = 0
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self._inner, name)
+        if callable(attr) and name.startswith("evaluate"):
+            def gated(*a: Any, **k: Any) -> Any:
+                if self.armed.is_set():
+                    self.raised += 1
+                    raise RuntimeError("CUDA error: device lost (injected, second failure)")
+                return attr(*a, **k)
+            return gated
+        return attr
+
+
+def test_a_second_failure_after_rpg_retirement_is_announced_before_bestmove(out) -> None:
+    """Round-2 item 5: root-parallel Gumbel retired after devices[0] failed,
+    classic Gumbel carried by a surviving group; when that carrier fails too
+    its DEGRADED line comes before that move's bestmove, and the per-go
+    summary names the device that carries on now, not the dead one."""
+    first = _Faulty(_evaluator(), mode="raise", after=3)
+    second = _RaiseWhenArmed(_evaluator())
+    engine, worker = _rpg_engine([first, second, _evaluator()])
+    try:
+        move, _ = _go(engine, out, "e2e4", "go nodes 2000", 1, timeout=20)
+        assert _legal_after("e2e4", move)
+        assert worker._rpg_rows_pool is not None  # carried by a surviving group
+        assert "device #1" in (worker.pool_degraded_summary() or "")
+        second.armed.set()
+        move2, _ = _go(engine, out, "e2e4 e7e5", "go nodes 300", 2, timeout=20)
+        assert _legal_after("e2e4 e7e5", move2)
+        assert second.raised >= 1
+        lines = out.text().splitlines()
+        bestmoves = [i for i, ln in enumerate(lines) if ln.startswith("bestmove")]
+        notes = [i for i, ln in enumerate(lines)
+                 if "WARNING multi-GPU DEGRADED: root-parallel Gumbel device #1" in ln]
+        assert notes and bestmoves[0] < notes[0] < bestmoves[1], lines
+        summary = worker.pool_degraded_summary() or ""
+        assert "now searching classic Gumbel on device #2" in summary, summary
+    finally:
+        first.release.set()
+        engine.close()
+        worker.close()

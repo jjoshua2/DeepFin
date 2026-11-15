@@ -981,6 +981,10 @@ class Engine:
         self._bestmove_fallback_used += 1
         self._note_unsearched_reply()
         fresh_budget_s = self._failed_go_fresh_eval_budget_s(cmd)
+        # Not wrapped in ``wedge.parking``: per-go threads end after every
+        # move by design (parking them would leak one thread per move), and
+        # the reviewer's loops measured per-go threads ending every move after
+        # a device fault with 0 crashes when the persistent workers parked.
         reply = threading.Thread(
             target=self._run_failed_go_reply,
             args=(gen, board, args.searchmoves, args.ponder, open_ended, not worker_busy,
@@ -1434,6 +1438,8 @@ class Engine:
             gen = self._search_gen
         self._pv_snapshot = None  # only this go's search may publish one
         self._live_go = (self._board.copy(), tuple(cmd.args.searchmoves))
+        # Per-go search thread: not wrapped in ``wedge.parking`` (it ends after
+        # every move by design; see ``_run_failed_go_reply``'s note).
         self._search_thread = threading.Thread(
             target=self._run_search,
             args=(limits, gen, search_board, go_received_at),
@@ -1489,7 +1495,7 @@ class Engine:
             self._print_refusal(gen)
             return
         hold = self._ponder_release if args.ponder else self._cancel_event
-        reply = threading.Thread(
+        reply = threading.Thread(  # runs no evaluator work: not parked
             target=self._held_refusal, args=(gen, hold), daemon=True,
         )
         self._search_thread = reply
@@ -2203,6 +2209,9 @@ class Engine:
             raise
         if new_eval is not None:
             self._worker.set_evaluator(new_eval, keep_pools=True)
+        warm = getattr(self._worker, "warm_primary_runner", None)
+        if callable(warm):
+            warm()  # the (possibly new) primary's guarded thread, before readyok
         return len(factories)
 
     def _set_pucv_pending_mode(self, value: str) -> None:
@@ -2333,6 +2342,9 @@ class Engine:
             raise
         if new_eval is not None:
             self._worker.set_evaluator(new_eval, keep_pools=True)
+        warm = getattr(self._worker, "warm_primary_runner", None)
+        if callable(warm):
+            warm()  # the (possibly new) primary's guarded thread, before readyok
         self._warmup_dirty = True
         _println(
             f"info string SearchParallel gumbel on "
@@ -3636,6 +3648,19 @@ class Engine:
             tb_root.unload(generation, owner=self)
         self._closed = True
 
+    def quiesce_for_exit(self) -> None:
+        """The search-stopping half of ``close`` without releasing the worker
+        or its evaluators: the exit after a device fault (``uci.wedge``)
+        leaves those to the process exit. Raises ``SearchNotQuiescent`` as
+        ``close`` would, so the exit status is the same."""
+        if self._closed:
+            return
+        with self._state_lock:
+            self._quit_requested = True
+            self._search_gen += 1
+        self._watchdog.close()
+        self._wait_for_search(timeout_s=min(_SHUTDOWN_JOIN_S, _JOIN_TIMEOUT_S))
+
   # -- helpers --------------------------------------------------------------
 
     def worker_is_free(self) -> bool:
@@ -3769,6 +3794,9 @@ class Engine:
             except Exception as exc:
                 box["error"] = exc
 
+        # One evaluator call per fallback reply, ending after it like a per-go
+        # thread: not wrapped in ``wedge.parking`` (one parked thread per
+        # fallback would grow without bound).
         helper = threading.Thread(target=run, daemon=True, name="uci-fresh-eval")
         helper.start()
         helper.join(timeout=max(0.0, timeout))

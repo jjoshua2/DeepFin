@@ -108,7 +108,7 @@ class DeviceCallRunner:
         self._closed = False
         self.slowest_call_s = 0.0
         self.timing = False  # record ``slowest_call_s`` (after warm-up only)
-        self.warmed = False  # one measured call has run (``SearchWorker._warm_primary_runner``)
+        self.warmed = False  # one measured call has run (``SearchWorker.warm_primary_runner``)
         self._ready = threading.Event()
         self._thread = threading.Thread(
             target=wedge.parking(self._loop), name=f"device-call-{label}", daemon=True,
@@ -279,6 +279,7 @@ class DegradingMultiGPUDispatcher(MultiGPUDispatcher):
     def _drop_locked(self, idx: int, what: str, reason: str, *, stalled: bool) -> None:
         if not self._live[idx]:
             return
+        wedge.note_device_fault(f"device {self._labels[idx]} {what}")
         self._live[idx] = False
         self._raised[idx] = self._raised[idx] or not stalled
         if stalled:

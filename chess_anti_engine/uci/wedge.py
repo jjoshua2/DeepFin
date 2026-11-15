@@ -1,32 +1,41 @@
-"""Process-wide latch: while a device thread is wedged, workers park, never exit.
+"""Process-wide latch: after a device fault, evaluator workers park, never exit.
 
-A thread stuck inside a device call (a stalled GPU call the engine gave up
-on, a hung evaluator build) cannot be interrupted. Measured with the real
-entry point on CPU devices: while such a thread is stuck, letting ANOTHER
-thread that ran evaluator / torch work exit races the native teardown of that
-thread against Python running elsewhere and corrupts the process (segfault,
-"terminate called", "'traceback' object is not callable"). It needs a thread
-stuck at the time: the same exits with no wedged thread, or with the exiting
-thread parked instead, never crashed (see PR #1333's review loops).
+Measured with the real entry point on CPU devices (PR #1333 review loops):
+once a device call has ended in an exception -- a device that raised, or a
+stalled call the engine gave up on -- letting threads that ran evaluator /
+torch work END mid-session, or tearing the interpreter down normally at exit,
+intermittently corrupts the process (segfault in the garbage collector at
+``Py_Exit``, "terminate called", type-confused objects such as "'traceback'
+object is not callable"). No wedged thread is needed: a non-``devices[0]``
+root-parallel group that raises crashed 3-6 runs in 55 when the healthy groups
+were closed, 0 in 55 when they were left running. The underlying refcount /
+lifetime error was not found (see the PR for what was ruled out), so the rule
+is structural:
 
-So the rule, applied by every evaluator-running worker the UCI engine owns
-(multi-GPU pool workers, root-parallel Gumbel groups, device-call runners,
-the startup builder): its thread function is wrapped by :func:`parking`, and
-when it would end while any thread is marked wedged it parks forever instead.
-Threads are daemons; a parked thread blocks on an Event and costs no CPU.
-``quit`` with a wedged thread hard-exits without closing anything.
+* every evaluator-running worker the UCI engine owns (multi-GPU pool
+  workers, root-parallel Gumbel groups, device-call runners, the startup
+  builder) has its thread function wrapped by :func:`parking`;
+* once :func:`note_device_fault` has been called this session (every place
+  that drops a device, plus every :func:`mark_wedged`), a worker that would
+  end parks forever instead (blocked on an Event, no CPU, daemon);
+* ``quit`` after a device fault exits with ``os._exit`` (no interpreter
+  teardown) with the status it would have had.
 
-What stays parked, and for how long: each worker thread that would have
-ended while a device thread is wedged (at most one per device per pool /
-runner instance built), plus whatever its frame still references (its
-evaluator, chunker and buffers), until no thread is wedged any more -- for a
-genuinely hung device, until the process exits. A pool rebuilt mid-session
-after a wedge leaves its old workers parked; a rebuild per wedge is the bound.
+Before any fault, threads end and are joined normally.
+
+What stays parked: every worker thread that would have ended after the
+first fault, plus what its frame references (its evaluator, chunker and
+buffers), until the process exits. That is one thread per device of each
+pool / routing chain / root-parallel pool closed after the fault, plus one
+call thread per primary-evaluator runner replaced. Each option change that
+rebuilds the evaluators after a fault adds that many again (two per rebuild
+on a 2-device pool); a restart frees them.
 """
 from __future__ import annotations
 
 import functools
 import threading
+import types
 from collections.abc import Callable
 from typing import Any, TypeVar, cast
 
@@ -35,6 +44,7 @@ _changed = threading.Condition(_lock)  # notified when a wedge clears
 _wedged: dict[threading.Thread, str] = {}
 _wedged_devices: dict[str, str] = {}  # device label -> what wedged, this session
 _parked: list[threading.Thread] = []
+_fault: list[str] = []  # the first device fault this session (empty = none)
 # Parked threads wait on this forever: production never sets it (only the
 # test-session reset does, so one pytest process does not pile up parked
 # threads across tests).
@@ -43,13 +53,30 @@ _release = threading.Event()
 _F = TypeVar("_F", bound=Callable[..., Any])
 
 
+def note_device_fault(what: str) -> None:
+    """A device call ended in an exception, or a device was dropped (``what``
+    says which). From now on ending workers park and ``quit`` hard-exits."""
+    with _lock:
+        if not _fault:
+            _fault.append(what)
+
+
+def device_fault() -> str | None:
+    """The first device fault this session, or None."""
+    with _lock:
+        return _fault[0] if _fault else None
+
+
 def mark_wedged(thread: threading.Thread | None, what: str, *, device: str | None = None) -> None:
     """``thread`` is stuck inside a device call (``what`` says which).
 
     ``device`` (its label) is also remembered for the rest of the session:
     a later pool rebuild leaves that device out at once (``wedged_earlier``)
-    instead of building on it and waiting out the startup timeout."""
+    instead of building on it and waiting out the startup timeout. A wedge
+    is also a device fault (:func:`note_device_fault`)."""
     with _lock:
+        if not _fault:
+            _fault.append(what)
         if thread is not None:
             _wedged[thread] = what
         if device is not None:
@@ -94,26 +121,40 @@ def parked_threads() -> list[threading.Thread]:
 
 
 def park_if_wedged() -> None:
-    """Called by a worker thread that is about to end: park instead while
-    any OTHER thread is wedged (a wedged thread itself never reaches here
-    until its call returns, and then it is cleared first). The parked thread
-    ends once no thread is wedged any more -- the crash needs a thread stuck
-    inside a device call at the time."""
+    """Called by a worker thread that is about to end: after a device fault
+    this session, park until the process exits instead (a wedged thread whose
+    call returns is cleared first, then parks like any other)."""
     me = threading.current_thread()
     clear_wedged(me)
     with _lock:
-        if not _live_wedged_locked():
+        if not _fault and not _live_wedged_locked():
             return
         _parked.append(me)
         release = _release
-        while _live_wedged_locked() and not release.is_set():
+        while not release.is_set():
             _changed.wait(timeout=1.0)
         if me in _parked:
             _parked.remove(me)
 
 
 def parking(fn: _F) -> _F:
-    """Wrap a worker thread's target with :func:`park_if_wedged` on exit."""
+    """Wrap a worker thread's target with :func:`park_if_wedged` on exit.
+
+    A bound method stays a bound method on the same owner (``__self__`` is
+    kept), so code that finds a thread's owner from ``thread._target`` keeps
+    working."""
+    func = getattr(fn, "__func__", None)
+    owner = getattr(fn, "__self__", None)
+    if func is not None and owner is not None:
+
+        @functools.wraps(func)
+        def run_bound(self_obj: Any, *args: Any, **kwargs: Any) -> Any:
+            try:
+                return func(self_obj, *args, **kwargs)
+            finally:
+                park_if_wedged()
+
+        return cast("_F", types.MethodType(run_bound, owner))
 
     @functools.wraps(fn)
     def run(*args: Any, **kwargs: Any) -> Any:
@@ -128,9 +169,9 @@ def parking(fn: _F) -> _F:
 def join_unless_wedged(thread: threading.Thread, timeout: float) -> None:
     """``Thread.join`` that does not wait on a thread that will park.
 
-    With a wedged thread in the process, ending workers park instead of
-    exiting, so joining them would only spend the timeout."""
-    if any_wedged():
+    After a device fault, ending workers park instead of exiting, so
+    joining them would only spend the timeout."""
+    if device_fault() is not None or any_wedged():
         return
     thread.join(timeout=timeout)
 
@@ -143,6 +184,7 @@ def reset_session_for_tests() -> None:
         _wedged.clear()
         _wedged_devices.clear()
         _parked.clear()
+        _fault.clear()
         old, _release = _release, threading.Event()
         old.set()
         _changed.notify_all()

@@ -39,6 +39,7 @@ import numpy as np
 import torch
 
 from chess_anti_engine.inference import BatchEvaluator
+from chess_anti_engine.uci import wedge
 
 
 def supports_inplace_api(evaluator: object) -> bool:
@@ -219,7 +220,10 @@ class CUDAOwnerDispatcher:
         self._state_lock = threading.Lock()
         self._closed = False
         self._owner = threading.Thread(
-            target=self._owner_loop,
+            # Runs every evaluator call: after a device fault in the UCI
+            # engine it parks instead of ending (``uci.wedge``; inert in
+            # selfplay, which never notes a device fault).
+            target=wedge.parking(self._owner_loop),
             name="cuda-owner-dispatcher",
             daemon=True,
         )
@@ -393,7 +397,9 @@ class BatchCoalescingDispatcher:
   # (which was the original ``terminate called without an active
   # exception`` failure mode).
         self._submitter = threading.Thread(
-            target=self._submitter_loop,
+            # Runs every evaluator call: parks after a UCI device fault
+            # (``uci.wedge``; inert in selfplay).
+            target=wedge.parking(self._submitter_loop),
             name="coalesce-submitter",
             daemon=True,
         )

@@ -630,18 +630,16 @@ class MultiGpuPucvPool:
         abandoned_deadline = time.monotonic() + _CLOSE_ABANDONED_JOIN_S
         stuck = [k for k in range(len(self._threads))
                  if self._abandoned[k] and not self._restorable[k]]
-        # Abandoned workers first: one whose call returns shortly clears its
-        # wedge, and the healthy ones then end instead of parking (``wedge``).
         for k in stuck:
-            # If that call has returned (or does so shortly) the thread exits
-            # at once on ``_shutdown``; join it within a short shared budget so
-            # it is not still inside torch when the interpreter finalizes (that
-            # aborts the process). A genuinely wedged one stays alive; see
-            # ``live_worker_threads``.
-            self._threads[k].join(timeout=max(0.0, abandoned_deadline - time.monotonic()))
+            # An abandoned worker means a device fault this session, after
+            # which ending workers park instead of exiting (``wedge``): there
+            # is nothing to join. (Without the latch -- tests -- a call that
+            # returns shortly lets it end within a short shared budget.)
+            wedge.join_unless_wedged(
+                self._threads[k], max(0.0, abandoned_deadline - time.monotonic()))
         for k, th in enumerate(self._threads):
             if k not in stuck:
-                # With a device still wedged, ending workers park: no join.
+                # After a device fault, ending workers park: no join.
                 wedge.join_unless_wedged(th, 2.0)
 
     def worker_row_cap(self) -> int:
@@ -667,6 +665,7 @@ class MultiGpuPucvPool:
     # -- failure bookkeeping (callers hold no lock unless named *_locked) --
 
     def _note_drop(self, idx: int, what: str, reason: str) -> None:
+        wedge.note_device_fault(f"device {self._labels[idx]} {what}")
         msg = DEVICE_DROPPED_NOTE.format(
             label=self._labels[idx], what=what, reason=reason,
             live=sum(self._live), total=self._cfg.n_gpus,
@@ -859,6 +858,7 @@ class MultiGpuPucvPool:
         with self._cv:
             if self._abandoned[idx]:
                 return False
+            wedge.note_device_fault(f"device {self._labels[idx]} raised")
             self._errors.append(exc)
             in_flight = sum(self._outstanding[idx].values())
             self._outstanding[idx].clear()

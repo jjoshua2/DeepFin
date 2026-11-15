@@ -600,12 +600,13 @@ class RootParallelGumbelPool:
         started = [k for k, th in enumerate(self._threads) if th in self._started_threads]
         for k in started:
             if k in self._abandoned:
-                # Stuck inside a device step: a short shared wait, then leave
-                # it (``live_worker_threads``; the UCI process hard-exits).
-                self._threads[k].join(timeout=max(0.0, abandoned_deadline - time.monotonic()))
+                # Abandoned in a device step: a device fault, after which
+                # ending groups park (``wedge``), so nothing to join.
+                wedge.join_unless_wedged(
+                    self._threads[k], max(0.0, abandoned_deadline - time.monotonic()))
         for k in started:
             if k not in self._abandoned:
-                # With a device still wedged, ending groups park: no join.
+                # After a device fault, ending groups park: no join.
                 wedge.join_unless_wedged(self._threads[k], 2.0)
         # Unblock any orchestrator stuck at a phase barrier mid-close.
         self._phase_done.set()
@@ -1229,6 +1230,7 @@ class RootParallelGumbelPool:
         ) from last
 
     def _note_rows_failure(self, k: int, what: str, reason: str) -> None:
+        wedge.note_device_fault(f"RPG device {self._labels[k]} {what}")
         msg = (f"WARNING multi-GPU DEGRADED: root-parallel Gumbel device {self._labels[k]} "
                f"{what} ({reason}); {self.n_devices} usable device(s) left")
         _log.error("%s", msg)
@@ -1429,6 +1431,7 @@ class RootParallelGumbelPool:
                 input_history_encoding=self._gcfg.input_history_encoding,
             )
         except BaseException as exc:
+            wedge.note_device_fault(f"RPG device {self._labels[idx]} failed at startup")
             self._init_errors.append(exc)
         wedge.clear_wedged(threading.current_thread())  # a timed-out build came back
         self._built[idx].set()
@@ -1472,6 +1475,7 @@ class RootParallelGumbelPool:
                     self._phase_sims += sims
             except BaseException as exc:  # surfaced by run() after the barrier
                 _log.exception("rpg-group-%d raised; requesting stop", idx)
+                wedge.note_device_fault(f"RPG device {self._labels[idx]} raised")
                 self._errors.append(exc)
                 self._error_groups.append(idx)
                 if stop_event is not None:

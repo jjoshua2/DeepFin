@@ -840,7 +840,7 @@ class SearchWorker:
             )
         self.reset_tree()
         if self._pucv_pool.n_devices > 0:
-            self._warm_primary_runner()
+            self._ensure_primary_runner()
         self._flush_device_notes()
 
     def set_device_startup_timeout(self, seconds: float | None) -> None:
@@ -979,7 +979,24 @@ class SearchWorker:
         rpg = getattr(self, "_rpg_retired_reason", None)
         if rpg is not None:
             parts.append(f"multi-GPU degraded: {rpg}")
+            carrier = self._rpg_rows_carrier()
+            if carrier is not None:
+                # Truthful after a later failure: what carries classic Gumbel NOW.
+                parts[-1] += f"; now searching classic Gumbel on {carrier}"
         return " | ".join(parts) if parts else None
+
+    def _rpg_rows_carrier(self) -> str | None:
+        """After a retirement that kept the root-parallel pool to carry
+        classic Gumbel (the primary out): which groups carry it now, or that
+        none is left. None when classic Gumbel runs on the primary."""
+        rows = getattr(self, "_rpg_rows_pool", None)
+        if rows is None or not getattr(self, "_primary_failed", False):
+            return None
+        usable = rows.usable_groups() if hasattr(rows, "usable_groups") else []
+        if not usable:
+            return "no device: every root-parallel device has failed"
+        names = [rows.label(k) if hasattr(rows, "label") else str(k) for k in usable]
+        return "device " + ", ".join(names)
 
     def _start_of_search_device_report(self) -> None:
         for source in self._degrade_sources():
@@ -1160,8 +1177,8 @@ class SearchWorker:
         self.reset_tree()
         if multi:
             # The primary is guarded beside the pool (a failure moves root
-            # evaluations onto a surviving group): build + warm its thread now.
-            self._warm_primary_runner()
+            # evaluations onto a surviving group): build its thread now.
+            self._ensure_primary_runner()
 
     def clear_root_parallel_gumbel(self) -> None:
         """Tear down the root-parallel Gumbel pool and revert to the
@@ -1180,10 +1197,22 @@ class SearchWorker:
         """
         self._close_rpg_rows_pool()
         had_pool = self._rpg_pool is not None
+        in_use: set[int] = set()
         if self._rpg_pool is not None:
             self._rpg_pool.close()
+            # A group thread still alive (stuck, or parked after a device
+            # fault, see ``wedge``) keeps its evaluator: never close it.
+            threads = list(getattr(self._rpg_pool, "_threads", ()))
+            in_use = {k for k, th in enumerate(threads) if th.is_alive()}
+            if in_use:
+                self._rpg_retired_keepalive = [
+                    *getattr(self, "_rpg_retired_keepalive", []),
+                    (self._rpg_pool, list(self._rpg_pool_evals)),
+                ]
             self._rpg_pool = None
-        for ev in self._rpg_pool_evals:
+        for k, ev in enumerate(self._rpg_pool_evals):
+            if k in in_use:
+                continue
             close = getattr(ev, "close", None)
             if callable(close):
                 with contextlib.suppress(Exception):
@@ -2358,19 +2387,40 @@ class SearchWorker:
             self._primary_runner = runner
         return runner
 
-    def _warm_primary_runner(self) -> None:
-        """Build the primary's call thread and run one root-sized call on it
-        at install (before ``readyok``): the thread's first device call (per-
-        thread handle setup on a GPU) is not paid on a move's clock, and its
-        stall limit is seeded from a measured call, as pool devices are."""
+    def warm_primary_runner(self) -> None:
+        """Run one root-sized call on the primary's guarded thread.
+
+        The UCI engine calls this once the multi-GPU pool and the primary it
+        guards are both installed (before ``readyok``): the thread's first
+        device call (per-thread handle setup on a GPU) is not paid on a move's
+        clock, and its stall limit is seeded from a measured call, as pool
+        devices are. No-op without a pool beside the primary."""
+        if self._rows_source() is None:
+            return
         runner = self._ensure_primary_runner()
         if getattr(runner, "warmed", False):
             return
         ev = self._evaluator
-        x = np.zeros((1, input_plane_count(self._cfg.input_extra_features), 8, 8), dtype=np.float32)
+        # The same inputs a real root evaluation sends (``_ensure_root_eval_cached``):
+        # startpos encoded with this net's history encoding and extra planes,
+        # plus relations when the net uses them -- so the warmed shape / graph
+        # is the one real calls take.
+        x = np.empty((1, input_plane_count(self._cfg.input_extra_features), 8, 8), dtype=np.float32)
+        cb = CBoard.from_board(chess.Board())
+        x[0] = encode_cboard(
+            cb,
+            input_history_encoding=self._cfg.input_history_encoding,
+            input_extra_features=self._cfg.input_extra_features,
+        )
+        rels = cb.compute_relations()[None, ...] if self._cfg.compute_relations else None
+
+        def warm_call() -> Any:
+            if rels is not None:
+                return ev.evaluate_encoded(x, relations=rels)
+            return ev.evaluate_encoded(x)
+
         try:
-            runner.call(lambda: ev.evaluate_encoded(x),
-                        limit_s=getattr(self, "_device_startup_timeout_s", None))
+            runner.call(warm_call, limit_s=getattr(self, "_device_startup_timeout_s", None))
         except Exception as exc:
             # A primary that cannot answer one call at install is out from the
             # start: root evaluations go to the pool (announced at the first go).
@@ -2402,6 +2452,7 @@ class SearchWorker:
         and ``searchmoves`` to the pool from now on; announce once."""
         if getattr(self, "_primary_failed", False):
             return
+        wedge.note_device_fault("the primary evaluator failed")
         self._primary_failed = True
         what = "stopped answering" if isinstance(exc, DeviceStalled) else "failed"
         reason = " ".join(f"{type(exc).__name__}: {exc}".split())[:160]
@@ -2799,16 +2850,12 @@ class SearchWorker:
                 )
         else:
             carrier = "the primary evaluator"
-            # Close without waiting for a stuck group (it is on this move's
-            # clock). Healthy groups end, or park while a device is wedged.
+            # Stop without waiting for a stuck group (it is on this move's
+            # clock). After a device fault the group threads park instead of
+            # ending (``wedge``), so their evaluators are kept, not closed:
+            # closing them (or letting the threads end) crashed the process.
             pool.close(abandoned_join_s=0.0)
-            for k, ev in enumerate(evals):
-                if k in abandoned:
-                    continue  # never close an evaluator a stuck group is inside
-                close = getattr(ev, "close", None)
-                if callable(close):
-                    with contextlib.suppress(Exception):
-                        close()
+            self._rpg_retired_keepalive = [*getattr(self, "_rpg_retired_keepalive", []), (pool, evals)]
         reason = (f"root-parallel Gumbel retired after device {exc.label} {exc.what} "
                   f"({exc.reason}); searching classic Gumbel on {carrier}")
         _log.error("%s", reason)
@@ -3800,8 +3847,11 @@ class SearchWorker:
                 evaluator=evaluator if evaluator is not None else self._classic_evaluator(),
             )
         finally:
-            # A routing-chain device dropped mid-chunk is announced here.
-            if self._chain_degrade_source() is not None:
+            # A routing-chain device, or a root-parallel group carrying classic
+            # Gumbel after a retirement, dropped mid-chunk is announced here --
+            # before this move's bestmove.
+            if (self._chain_degrade_source() is not None
+                    or getattr(self, "_rpg_rows_pool", None) is not None):
                 self._flush_device_notes()
 
     def _run_gumbel_chunk_inner(

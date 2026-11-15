@@ -916,6 +916,11 @@ def _build_engine(
                 worker.install_multi_gpu_pucv(
                     factories, gather=effective_gather, as_factories=True,
                 )
+      # The primary is guarded beside a multi-GPU pool: warm its call thread now
+      # (one measured call, before readyok) -- not on the first move's clock.
+        warm = getattr(worker, "warm_primary_runner", None)
+        if callable(warm):
+            warm()
       # Advertise what was BUILT, not what EngineOptions happens to default to.
       # These knobs arrive as CLI args and land on the worker; the handshake reads
       # EngineOptions. Copying worker -> options here makes the worker the single
@@ -1779,6 +1784,22 @@ def main() -> int:
   # (see ``wedge``). Say so and leave with the status we would have had.
             _announce_wedged_exit(rc)
             _hard_exit(rc)
+        fault = wedge.device_fault()
+        if fault is not None:
+  # After any device fault, ending evaluator threads or finalizing the
+  # interpreter can crash the process (see ``wedge``): stop the search (same
+  # status as ``close`` would give), then leave without closing anything.
+            quiesce = getattr(eng, "quiesce_for_exit", None) if eng is not None else None
+            if callable(quiesce):
+                try:
+                    quiesce()
+                except SearchNotQuiescent as exc:
+                    _println(f"info string engine shutdown failed: {exc}")
+                    rc = 1
+                except Exception:
+                    pass
+            _announce_fault_exit(fault, rc)
+            _hard_exit(rc)
         if eng is not None:
             try:
                 eng.close()
@@ -1872,6 +1893,13 @@ def _announce_wedged_exit(rc: int) -> None:
     why = "a multi-GPU worker is still stuck inside a dropped device's call"
     _println(f"info string quit: {why}; exiting with status {rc} without waiting for it")
     print(f"deepfin: {why} at shutdown; exiting with status {rc} without waiting for it",
+          file=sys.stderr)
+
+
+def _announce_fault_exit(fault: str, rc: int) -> None:
+    why = f"a device failed this session ({fault})"
+    _println(f"info string quit: {why}; exiting with status {rc} without closing the evaluators")
+    print(f"deepfin: {why}; exiting with status {rc} without closing the evaluators",
           file=sys.stderr)
 
 
