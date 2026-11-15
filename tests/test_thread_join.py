@@ -314,7 +314,11 @@ def test_join_sites_check_the_task_start_time_read_before_the_join(keys, monkeyp
     worker.start()
     started = time.monotonic()
     thread_join.join_thread(worker, 5.0)
-    assert time.monotonic() - started < 0.4  # the 0.6 s destructor was not waited for
+    # From 3.13 Thread.join itself waits out the destructor; only below can the
+    # start-time check be what ends the wait early.
+    exposed = sys.version_info < (3, 13)
+    if exposed:
+        assert time.monotonic() - started < 0.4  # the 0.6 s destructor was not waited for
 
     after_join.clear()
     pool = ThreadPoolExecutor(max_workers=1)
@@ -328,7 +332,8 @@ def test_join_sites_check_the_task_start_time_read_before_the_join(keys, monkeyp
     started = time.monotonic()
     with thread_join.os_joined(pool) as p:
         p.submit(_slow_tls_exit, keys, 600_000).result()
-    assert time.monotonic() - started < 0.4
+    if exposed:
+        assert time.monotonic() - started < 0.4
 
 
 @pytest.mark.skipif(sys.version_info >= (3, 13), reason=(
