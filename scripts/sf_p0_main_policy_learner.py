@@ -234,7 +234,7 @@ class MainPolicyProfile:
         self.pending = rows
     def wrap(self, replay: Any, c: dict[str, Any]) -> PolicyReplay:
         core.require(c["sf_p0_main_policy"]["teacher_share"] == 1, "zero must not wrap replay")
-        core.require(replay.membership == [(1, source, len(entry[0])) for source, entry in self.index.items()],
+        core.require(replay.membership == tuple((1, source, len(entry[0])) for source, entry in self.index.items()),
                      "main-policy original physical membership")
         return PolicyReplay(replay, self)
     def overlay(self, batch: dict[str, Any], drawn: Any) -> dict[str, Any]:
