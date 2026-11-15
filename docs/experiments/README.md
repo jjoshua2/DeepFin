@@ -16,7 +16,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
-- [2026-11-15: Fixed-bank SF current-P0 main-policy 512-update pilot](2026-11-15-sf-current-p0-main-policy-512-pilot.md) — prospective A0/B100 eligible-policy comparison; software 30 and source guards 70 PASS, four 500-pair roles technically qualified. Full-model engineering, training and playing UNRUN; no gain or adoption claim.
+- [2026-11-15: Fixed-bank SF current-P0 main-policy 512-update pilot](2026-11-15-sf-current-p0-main-policy-512-pilot.md#2026-11-15-technical-failure-and-prospective-corrective-amendment) — first engineering observer FAILED before checkpoint; corrected observer passed 11 CPU interface cases with independent acceptance. A prospective corrected engineering attempt is registered; A/B science and playing remain UNRUN.
 
 - [2026-11-15: A39/Lc0 joint GPU and timed-driver engineering](2026-11-15-a39-lc0-joint-timed-engineering.md#closed-readout--november-15-2026) — FAILED after 419.549/900 GPU seconds: 13 controls and reciprocal work passed, but only one game completed; Lc0 aborted with a native resource error. Separate CPU diagnosis accepted; cause unknown, no joint/timed or strength qualification and no automatic retry.
 
