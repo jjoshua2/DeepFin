@@ -313,7 +313,7 @@ def closed_bank_predecessor(protocol: dict[str, Any]) -> dict[str, Any]:
             and type(boundary['segment']) is int and boundary['status'] == 'COMPLETED_CORE_GENERATION_BANK_SEGMENT_V1',
             'bank predecessor family/run/source/segment differs')
     pins = contract['source_files']
-    require(isinstance(pins, dict) and BANK_PARENT_SOURCE_FILES <= pins.keys(),
+    require(isinstance(pins, dict) and pins.keys() >= BANK_PARENT_SOURCE_FILES,
             'bank predecessor source pins missing')
     for name, expected in pins.items():
         require(type(name) is str and name and not Path(name).is_absolute() and '..' not in Path(name).parts
