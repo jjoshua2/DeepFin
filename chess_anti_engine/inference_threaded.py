@@ -25,6 +25,7 @@ from chess_anti_engine.inference import (
 )
 from chess_anti_engine.model import ModelConfig
 from chess_anti_engine.model.transformer import TransformerConfig
+from chess_anti_engine.utils.thread_join import join_thread
 
 logger = logging.getLogger(__name__)
 
@@ -284,7 +285,10 @@ class ThreadedDispatcher:
         with self._cond:
             self._stop = True
             self._cond.notify_all()
-        self._thread.join(timeout=timeout)
+        # The dispatcher thread ran the forwards: wait for its OS thread too
+        # (utils/thread_join), so a caller that then exits does not race its
+        # torch thread-local teardown.
+        join_thread(self._thread, timeout)
 
     @property
     def stats(self) -> dict[str, Any]:

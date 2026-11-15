@@ -76,6 +76,7 @@ from chess_anti_engine.model import (
     model_config_from_manifest_dict,
 )
 from chess_anti_engine.uci.model_loader import model_config_from_arch
+from chess_anti_engine.utils.thread_join import join_thread, os_joined
 from chess_anti_engine.utils.config_yaml import strict_config_bool
 from chess_anti_engine.replay.shard import (
     LOCAL_SHARD_SUFFIX,
@@ -3302,7 +3303,8 @@ class WorkerSession:
         thread = self._model_watch_thread
         if thread is None or thread is threading.current_thread():
             return True
-        thread.join(max(0.0, deadline - time.monotonic()))
+        # + its OS thread (utils/thread_join): it loads weights into the evaluator.
+        join_thread(thread, max(0.0, deadline - time.monotonic()))
         if thread.is_alive():
             self.log.warning(
                 "model watch thread did not exit within %.0fs of shutdown; "
@@ -5120,7 +5122,8 @@ class WorkerSession:
             )
 
         try:
-            with ThreadPoolExecutor(max_workers=n_threads) as pool:
+            # os_joined: the selfplay threads may run evaluator (torch) work.
+            with os_joined(ThreadPoolExecutor(max_workers=n_threads)) as pool:
                 futures = [pool.submit(_run_one_thread, i) for i in range(n_threads)]
                 all_stats = [f.result()[1] for f in futures]
         finally:

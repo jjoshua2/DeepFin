@@ -22,7 +22,10 @@ columns are written from reading the code and are not checked by the test.
 - Linux x86-64, an NVIDIA GPU, and a PyTorch build whose CUDA version supports the
   card ([install.md](install.md) has the details, including RTX 50-series).
 - CPython 3.10.12 to 3.13, `gcc` and the Python headers (six C extensions are
-  compiled at install).
+  compiled at install). On CPython 3.10 to 3.12 a finished thread's operating
+  system thread can still be running torch's per-thread cleanup after Python
+  reports it ended; the engine waits for it before closing anything (see §8).
+  CPython 3.13 is not affected.
 - The network file (`trainer.pt`), passed on the command line.
 - Disk for PyTorch and a torch.compile cache that grows to a few GB under
   `~/.cache/deepfin/worker_cache` (change it with `--compile-cache-dir` or the
@@ -545,7 +548,15 @@ end, and never tears the interpreter down at exit: both intermittently crashed
 the process after a fault (segfaults, PR #1333). The cause found was a join
 returning before the worker's OS thread had run its C++ thread-local
 destructors; joins now wait for the OS thread, and the parking rule stays as a
-second line of defence. Such a worker parks instead (blocked, no CPU) until the
+second line of defence. The exposed combination is CPython 3.10 to 3.12 with a
+torch whose per-thread teardown outlives the join. The crash was observed with
+torch 2.11, not with torch 2.14, although on CPython 3.10 both leave a thread
+that ran torch work alive for about 0.2 to 8 ms after its join returns. CPython
+3.13 joins the OS thread itself and is not exposed.
+Every join of a thread that ran evaluator work before evaluators are closed or
+the process exits waits for the OS thread (at most 1 s; if that cap is hit it
+logs one warning to stderr naming the thread, at most once a minute for thread
+pools, and carries on). Such a worker parks instead (blocked, no CPU) until the
 process exits. What stays parked, with the evaluator and
 buffers it holds: one thread per device of each pool, routing chain or
 root-parallel pool closed after the fault, and one call thread per primary
@@ -555,7 +566,11 @@ devices on CPU; on GPU the old evaluators also keep their device memory); a
 restart frees them. Resending an option at the value already in force rebuilds
 nothing (`info string ... already ...; nothing rebuilt`), so a GUI that
 resends its options does not add any (`SearchParallel gumbel` / `UseMultiGpuPUCV true`
-still rebuild when their pool is gone, e.g. after a root-parallel retirement). Once 16 threads are parked after a fault,
+still rebuild when their pool is gone, e.g. after a root-parallel retirement). The
+other side of that: re-sending the same value no longer re-admits a device that
+raised. That needs an option that rebuilds set to a different value, or an engine
+restart; a device that stopped answering is left out of every rebuild this session,
+so only a restart brings it back. Once 16 threads are parked after a fault,
 an option change that would rebuild is refused and the current value kept
 (`info string WARNING ... not changed: ... parked after a device fault this session ...`).
 Per-`go` search threads still end after each move. `quit` after a fault
@@ -655,7 +670,8 @@ configuration the engine is tuned and measured in.
 **Options mid-game.** An option that rebuilds is applied at once, between moves; if
 the rebuild fails, `info string ...: evaluator rebuild failed (...); keeping the
 previous evaluator and settings`. An option set to the value it already has
-rebuilds nothing (`... already ...; nothing rebuilt`). While a stuck search holds the worker only
+rebuilds nothing (`... already ...; nothing rebuilt`), so it does not re-admit
+a device that raised: use a different value or restart the engine. While a stuck search holds the worker only
 `MultiPV` and `UCI_ShowWDL` apply.
 
 **Ponder** works at the protocol level, but it has not been validated for

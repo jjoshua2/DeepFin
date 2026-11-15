@@ -116,6 +116,36 @@ jobs:
           path: artifacts/validation/*.xml
           if-no-files-found: warn
 
+  # ⚑ WHY THIS LEG EXISTS. On CPython 3.10-3.12 ``Thread.join`` returns while
+  # the finished thread's OS thread is still running its C/C++ thread-local
+  # destructors (torch's); closing evaluators or exiting under that segfaulted
+  # the UCI engine (PR #1333). The fix waits for the OS thread
+  # (chess_anti_engine/utils/thread_join.py). Every other job runs 3.13, whose
+  # ``Thread.join`` joins the OS thread itself, so there the fix's removal is
+  # invisible. This leg runs only the join tests on 3.10 (the production
+  # interpreter), with the engine's minimal install: the tests model the
+  # destructor with a pthread TLS key, so the torch version does not matter.
+  # The client extras the worker-site tests import (pyyaml, zarr, requests) are
+  # installed too, so the worker sites are guarded here as well.
+  join-race-py310:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      # Every package pinned (torch's own dependencies too); see the file for
+      # why uv.lock cannot be used on 3.10.
+      - name: Install the pinned 3.10 environment and build the extensions
+        run: |
+          python -m pip install -r .github/join-race-py310-requirements.txt
+          python -m pip install --no-deps --no-build-isolation -e .
+      # validate.py refuses (fails) this suite on CPython >= 3.13, where the
+      # tests pass with or without the fix.
+      - name: OS-thread join tests (CPython 3.10)
+        run: python scripts/validate.py join-race --require-cpu-wheel
+
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 20
