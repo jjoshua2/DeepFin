@@ -120,9 +120,12 @@ class DeviceCallRunner:
 
     def _loop(self) -> None:
         try:
-            if self._bootstrap:
-                bootstrap_cudagraph_tls()
             dev = self._device
+            # Cudagraph TLS matters only on a CUDA device. On a CPU device the
+            # bootstrap's Inductor import alone (~180k objects left for the
+            # exit-time GC) made every healthy routing-chain ``quit`` ~0.5 s slower.
+            if self._bootstrap and (dev is None or dev.startswith("cuda")):
+                bootstrap_cudagraph_tls()
             if dev is not None and dev.startswith("cuda"):
                 try:
                     torch.cuda.set_device(torch.device(dev).index or 0)

@@ -1312,3 +1312,242 @@ def test_walker_and_owner_threads_park_after_a_device_fault() -> None:
     assert time.monotonic() - started < 3.5
     threads = [*walkers._threads, owner._owner]
     assert _wait_for(lambda: all(th in wedge.parked_threads() for th in threads), timeout=5)
+
+
+def _rebuild_probe_engine(monkeypatch) -> tuple[Engine, list[str]]:
+    """A real Engine (real setoption dispatch) whose every pool / helper
+    rebuild entry point records its name instead of building."""
+    from tests.test_uci_search_options import _make_engine
+
+    engine = _make_engine()
+    calls: list[str] = []
+    for owner, names in (
+        (engine, ("_install_multi_gpu_pucv_pool", "_try_install_root_parallel_gumbel",
+                  "_reinstall_configured_search_path", "_sync_cpuct_to_worker",
+                  "_rebuild_or_keep")),
+        (engine._worker, ("set_num_threads", "set_walker_gather", "set_use_pucv",
+                          "set_pucv_vloss_mode", "set_vloss_weight", "clear_multi_gpu_pucv",
+                          "clear_root_parallel_gumbel")),
+    ):
+        for name in names:
+            monkeypatch.setattr(owner, name, lambda *a, _n=name, **k: calls.append(_n))
+    monkeypatch.setattr(engine, "_rebuild_evaluator", lambda *a, **k: None)
+    # The options below name a multi-GPU path this CPU worker does not have.
+    monkeypatch.setattr(engine, "_path_mismatch", lambda: None)
+    monkeypatch.setattr(engine, "_rebuild_multi_gpu_pucv_factories", lambda *a, **k: [])
+    return engine, calls
+
+
+def _resend_lines(engine: Engine) -> list[str]:
+    o = engine._options
+    on = lambda b: "true" if b else "false"  # noqa: E731
+    return [
+        f"setoption name VLGather value {o.vl_gather}",
+        f"setoption name SearchWalkers value {o.search_walkers}",
+        f"setoption name LeafGather value {o.leaf_gather}",
+        f"setoption name UseVL value {on(o.use_vl)}",
+        f"setoption name UseMultiGpuPUCV value {on(o.use_multi_gpu_pucv)}",
+        f"setoption name PUCVPendingMode value {o.pucv_pending_mode}",
+        f"setoption name SearchParallel value {o.search_parallel}",
+        f"setoption name RPGOpenVPA value {o.rpg_open_vpa}",
+        f"setoption name RPGMinVPA value {o.rpg_min_vpa}",
+        f"setoption name RPGMinKeep value {o.rpg_min_keep}",
+        f"setoption name RPGOpenBudgetFrac value {o.rpg_open_budget_frac}",
+        f"setoption name VLossWeight value {o.search_value('vloss_weight')}",
+        f"setoption name CPuct value {o.search_value('c_puct')}",
+        f"setoption name FpuReduction value {o.search_value('fpu_reduction')}",
+        f"setoption name MaxBatch value {o.max_batch}",
+        f"setoption name EvalCacheEntries value {o.eval_cache_entries}",
+    ]
+
+
+@pytest.mark.parametrize("search_parallel", ["pucv", "gumbel"])
+def test_resending_a_rebuilding_option_at_its_current_value_rebuilds_nothing(
+        monkeypatch, capsys, search_parallel) -> None:
+    """Round 3 item 4: a GUI resends every option; after a device fault each
+    rebuild leaves the old workers parked, so an unchanged value must not
+    rebuild anything -- and says so."""
+    engine, calls = _rebuild_probe_engine(monkeypatch)
+    engine._options.search_parallel = search_parallel
+    engine._options.use_multi_gpu_pucv = search_parallel == "pucv"
+    lines = _resend_lines(engine)
+    capsys.readouterr()
+    for line in lines:
+        engine.dispatch(parse_command(line))
+    out = capsys.readouterr().out
+    assert calls == [], calls
+    # every resend but MaxBatch / EvalCacheEntries (already silent no-ops) says so
+    assert out.count("; nothing rebuilt") == len(lines) - 2, out
+    # ...and a changed value still rebuilds (the probe is live, not inert)
+    engine.dispatch(parse_command(f"setoption name VLGather value {engine._options.vl_gather + 32}"))
+    assert calls, "a changed VLGather rebuilt nothing: the probe cannot see rebuilds"
+
+
+def test_rebuilding_option_changes_are_refused_once_the_parked_cap_is_reached(
+        monkeypatch, capsys) -> None:
+    """Round 3 item 4: after a device fault every rebuild parks the old
+    workers with their evaluators; changes stop (announced, value kept) once
+    ``_PARKED_REBUILD_CAP`` threads are parked."""
+    engine, calls = _rebuild_probe_engine(monkeypatch)
+    engine._options.search_parallel = "gumbel"
+    before = engine._options.vl_gather
+    wedge.note_device_fault("device g1 raised")
+    parked = [threading.current_thread()] * engine_module._PARKED_REBUILD_CAP
+    monkeypatch.setattr(wedge, "parked_threads", lambda: list(parked))
+    capsys.readouterr()
+    engine.dispatch(parse_command(f"setoption name VLGather value {before + 32}"))
+    out = capsys.readouterr().out
+    assert "info string WARNING VLGather not changed:" in out, out
+    assert "restart the engine" in out, out
+    assert engine._options.vl_gather == before
+    assert calls == []
+    parked.pop()  # one under the cap: the change goes through
+    engine.dispatch(parse_command(f"setoption name VLGather value {before + 32}"))
+    assert engine._options.vl_gather == before + 32
+    assert calls == ["_reinstall_configured_search_path"], calls
+
+
+def test_the_per_go_degraded_line_says_a_stalled_device_is_out_until_restart() -> None:
+    """Round 3 item 6: a device that stopped answering (also a false-positive
+    stall drop) is left out of every later rebuild, so the per-go line says
+    only a restart brings it back -- and only while it is out."""
+    engine, worker = _engine_with_pool([_evaluator(), _evaluator()])
+    pool = worker._pucv_pool
+    assert pool is not None
+    try:
+        with pool._cv:
+            pool._live[1] = False
+            pool._drop_reason[1] = "stopped answering (injected)"
+        assert "out until the engine restarts" not in (worker.pool_degraded_summary() or "")
+        wedge.mark_wedged(None, "a stall", device="cpu:1")
+        wedge.mark_wedged(None, "an earlier stall, re-admitted", device="cpu:0")  # serving
+        summary = worker.pool_degraded_summary() or ""
+        assert "device cpu:1 out until the engine restarts" in summary, summary
+        assert "cpu:0" not in summary, summary  # only devices out NOW are named
+        assert "restart between games" in summary, summary
+        with pool._cv:
+            pool._live[1] = True  # re-admitted after its stall: serving again
+        assert worker.pool_degraded_summary() is None
+    finally:
+        engine.close()
+        worker.close()
+
+
+def test_join_after_a_fault_returns_only_once_the_worker_has_cleaned_up_and_parked() -> None:
+    """Round 3 item 5b (M3): after a device fault ``join_unless_wedged`` still
+    waits -- bounded -- until the worker ran its cleanup and parked, so a
+    caller that then closes the worker's evaluator never races the cleanup."""
+    wedge.note_device_fault("device g1 raised")
+    go = threading.Event()
+    cleaned = threading.Event()
+
+    def body() -> None:
+        go.wait(5)
+        time.sleep(0.3)  # cleanup still running when join is called
+        cleaned.set()
+
+    worker = threading.Thread(target=wedge.parking(body), daemon=True)
+    worker.start()
+    go.set()
+    wedge.join_unless_wedged(worker, 5.0)
+    assert cleaned.is_set()
+    assert worker in wedge.parked_threads()
+
+
+@pytest.mark.parametrize("fault", [False, True])
+def test_clearing_rpg_after_a_fault_keeps_the_parked_groups_evaluators(fault: bool) -> None:
+    """Round 3 item 5b (M11): ``clear_root_parallel_gumbel`` after a device
+    fault leaves the group threads parked and never closes the evaluator a
+    parked group still holds; before any fault it closes them all."""
+    evals = [_Closeable(_evaluator()), _Closeable(_evaluator())]
+    worker = SearchWorker(
+        _evaluator(), device="cpu",
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False),
+        chunk_sims=64, n_walkers=1,
+    )
+    try:
+        worker.install_root_parallel_gumbel([lambda ev=ev: ev for ev in evals], gather=8,
+                                            as_factories=True)
+        pool = worker._rpg_pool
+        assert pool is not None
+        if fault:
+            wedge.note_device_fault("RPG device #1 raised")
+        worker.clear_root_parallel_gumbel()
+        if fault:
+            assert _wait_for(lambda: all(th in wedge.parked_threads() for th in pool._threads),
+                             timeout=5)
+            assert [ev.closed for ev in evals] == [0, 0]
+            assert any(kept is pool for kept, _e in worker._rpg_retired_keepalive)
+        else:
+            assert [ev.closed for ev in evals] == [1, 1]
+            assert not any(th.is_alive() for th in pool._threads)
+    finally:
+        worker.close()
+
+
+def _thread_with_a_slow_tls_destructor(keys: list[Any]) -> threading.Thread:
+    """A thread whose OS thread outlives its Python thread state by ~0.2 s: a
+    pthread TLS key whose destructor is libc ``usleep(200000)``, run by the C
+    runtime after Python considers the thread ended -- like torch's C++
+    ``thread_local`` destructors."""
+    import ctypes
+    import ctypes.util
+
+    libc = ctypes.CDLL(ctypes.util.find_library("c"))
+    usleep = ctypes.cast(libc.usleep, ctypes.c_void_p).value
+
+    def body() -> None:
+        key = ctypes.c_uint()
+        assert libc.pthread_key_create(ctypes.byref(key), ctypes.c_void_p(usleep)) == 0
+        keys.append((libc, key))
+        assert libc.pthread_setspecific(key, ctypes.c_void_p(200_000)) == 0
+
+    return threading.Thread(target=body, daemon=True)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="reads /proc/self/task")
+@pytest.mark.parametrize("fault", [False, True])
+def test_join_waits_until_the_os_thread_ran_its_tls_destructors(fault: bool) -> None:
+    """Round 3 item 2, the RPG-raise segfault's root cause: ``Thread.join``
+    returns once the Python thread state is gone, while the OS thread is still
+    running C/C++ thread-local destructors (torch's). ``join_unless_wedged``
+    waits for the OS thread itself, before and after a device fault."""
+    import os
+
+    keys: list[Any] = []
+    try:
+        control = _thread_with_a_slow_tls_destructor(keys)
+        control.start()
+        control.join(5)
+        assert not control.is_alive()
+        # The mechanism exists here: a plain join returns under the destructor.
+        assert os.path.exists(f"/proc/self/task/{control.native_id}")
+        assert _wait_for(lambda: not os.path.exists(f"/proc/self/task/{control.native_id}"),
+                         timeout=5)
+        if fault:
+            wedge.note_device_fault("RPG device #1 raised")
+        worker = _thread_with_a_slow_tls_destructor(keys)
+        worker.start()
+        wedge.join_unless_wedged(worker, 5.0)
+        assert not worker.is_alive()
+        assert not os.path.exists(f"/proc/self/task/{worker.native_id}")
+    finally:
+        for libc, key in keys:
+            libc.pthread_key_delete(key)
+
+
+@pytest.mark.parametrize(("device", "expected"), [("cpu", 0), ("cuda:0", 1), (None, 1)])
+def test_device_call_runner_bootstraps_cudagraph_tls_only_for_cuda(monkeypatch, device, expected) -> None:
+    """Round 3 item 7: the routing chain's per-device call thread imported
+    Inductor (cudagraph TLS bootstrap) on CPU devices too, leaving ~180k
+    objects for the exit GC: a healthy chain ``quit`` took 0.82 s vs 0.32 s."""
+    from chess_anti_engine.uci import device_guard
+
+    calls: list[str] = []
+    monkeypatch.setattr(device_guard, "bootstrap_cudagraph_tls", lambda: calls.append("tls"))
+    runner = device_guard.DeviceCallRunner("d0", device=device)
+    try:
+        assert runner.call(lambda: 7, limit_s=5.0) == 7
+    finally:
+        runner.close(2.0)
+    assert len(calls) == expected

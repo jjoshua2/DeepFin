@@ -505,7 +505,7 @@ without an error is re-admitted before the next search chunk (within the same
 `info string multi-GPU RESTORED: device ... answered again after its stall; searching on ... of ... devices`
 (the late result itself is thrown away; it never reaches the search tree or the
 evaluation cache). A device that **raised** is not retried until the pool is
-rebuilt (an option that rebuilds it, or a restart). If every device has failed, each
+rebuilt (an option change that rebuilds it, or a restart). If every device has failed, each
 `go` is answered from the fallback described above.
 At startup, a device that fails to build or warm leaves the engine running DEGRADED
 on the others, announced with `... failed at startup ...` before `readyok`; the
@@ -542,21 +542,35 @@ behaviour before this limit existed).
 **After a device fault.** Once any device has raised or stopped answering this
 session, the engine never lets a persistent worker thread that ran evaluator work
 end, and never tears the interpreter down at exit: both intermittently crashed
-the process after a fault (segfaults, PR #1333; the underlying lifetime error
-was not found, so the rule is structural). Such a worker parks instead (blocked,
-no CPU) until the process exits. What stays parked, with the evaluator and
+the process after a fault (segfaults, PR #1333). The cause found was a join
+returning before the worker's OS thread had run its C++ thread-local
+destructors; joins now wait for the OS thread, and the parking rule stays as a
+second line of defence. Such a worker parks instead (blocked, no CPU) until the
+process exits. What stays parked, with the evaluator and
 buffers it holds: one thread per device of each pool, routing chain or
 root-parallel pool closed after the fault, and one call thread per primary
-evaluator replaced. Each option that rebuilds the evaluators after a fault adds
-that many again (two threads per rebuild with two devices); a restart frees
-them. Per-`go` search threads still end after each move. `quit` after a fault
+evaluator replaced. Each option change that rebuilds the evaluators after a fault
+adds that many again (two threads and about 30 MB RSS per rebuild with two
+devices on CPU; on GPU the old evaluators also keep their device memory); a
+restart frees them. Resending an option at the value already in force rebuilds
+nothing (`info string ... already ...; nothing rebuilt`), so a GUI that
+resends its options does not add any. Once 16 threads are parked after a fault,
+an option change that would rebuild is refused and the current value kept
+(`info string WARNING ... not changed: ... parked after a device fault this session ...`).
+Per-`go` search threads still end after each move. `quit` after a fault
 exits with the status it would have had without closing anything:
 `info string quit: a device failed this session (...); exiting with status ... without closing the evaluators`
-(or, while a device call is still stuck,
+(or, only while a device call has still not returned,
 `info string quit: ...; exiting with status ... without waiting for it`, the reason
-reading `a multi-GPU worker is still stuck inside a dropped device's call`).
+reading `a multi-GPU worker is still stuck inside a dropped device's call`; a
+worker parked after the fault is not stuck and gives the first line).
 It first stops the search: a search that never ended (every device stuck)
-gives status 1, otherwise 0.
+gives status 1, otherwise 0. Closing a pool after a fault waits, bounded, for
+each worker to finish its cleanup and park; a worker genuinely stuck in a device
+call is not waited for, but closing the CUDA-owner / batch-submitter thread of a
+device that is stuck can wait up to 30 s. That happens only inside an option
+change (between moves, before its `readyok`) or `quit`, never inside a `go`: a
+move's `bestmove` never waits on it.
 An option that rebuilds the evaluators after a device got stuck (or was dropped
 for a stall) this session leaves that device out at once
 (`... left out: it wedged earlier this session (...)`) instead of building on it
@@ -566,7 +580,12 @@ This holds for the rest of the session even when the device later answered
 again: a stall caused by load, not a fault, still keeps that device out of every
 rebuild until a restart. The operator sees it as that `left out` line at each
 rebuild and as the device missing from the `multi-GPU degraded: k of n devices`
-line on every `go`, `isready` and `searchconfig`; restart the engine to re-admit it.
+line on every `go`, `isready` and `searchconfig`, which ends
+`device ... out until the engine restarts (stopped answering this session; restart between games to get it back)`.
+**During an event, a `left out` / `wedged earlier this session` / `out until the
+engine restarts` line means: restart the engine between games** to get the
+device back (the stall may have been a false positive caused by load, see the
+GPU checklist below); nothing else re-admits it.
 
 **The primary evaluator beside the pool.** The first device also evaluates every
 root and runs `go searchmoves` (classic Gumbel, which honours the restriction).
@@ -583,8 +602,8 @@ capped at `VLGather` rows (the sizes they warmed), a narrower search than on a
 healthy primary. A primary dropped for a stall whose late call came back clean
 is re-admitted at the next `go`
 (`multi-GPU RESTORED: the primary (root-eval) evaluator answered again after its stall; root evaluations return to it`);
-one that raised stays out until it is rebuilt (an option that rebuilds it, or a
-restart). The same applies with `--search-parallel gumbel`, where root
+one that raised stays out until it is rebuilt (an option change that rebuilds it,
+or a restart). The same applies with `--search-parallel gumbel`, where root
 evaluations then run on a surviving root-parallel group's own thread.
 
 **`--no-multi-gpu-pucv` (the routing chain).** Each device's calls run on that
@@ -634,7 +653,8 @@ configuration the engine is tuned and measured in.
 
 **Options mid-game.** An option that rebuilds is applied at once, between moves; if
 the rebuild fails, `info string ...: evaluator rebuild failed (...); keeping the
-previous evaluator and settings`. While a stuck search holds the worker only
+previous evaluator and settings`. An option set to the value it already has
+rebuilds nothing (`... already ...; nothing rebuilt`). While a stuck search holds the worker only
 `MultiPV` and `UCI_ShowWDL` apply.
 
 **Ponder** works at the protocol level, but it has not been validated for
@@ -785,3 +805,10 @@ tournament machine with the real network `<C>`, a free GPU and no other load.
 19. **The GPU wheel's architecture list** (#1273): the `torch` self-check reads the
     installed wheel's arch list, but the arch lists of the cu124 and cu130 wheels
     were never read, so this page makes no claim about which cards either covers.
+20. **False device drops over a long game** (degrade-gaps change): a device dropped
+    for a stall is left out until the engine restarts, so a false positive costs
+    that GPU for the rest of the game. On all four GPUs play at least three full
+    long-time-control games (and one with the machine otherwise loaded) and count
+    `stopped answering` / `out until the engine restarts` lines on healthy GPUs:
+    the false-drop rate per game. It was never measured; the 1 s / 5 s /
+    10x-slowest-call thresholds were sized on CPU. Do not retune them without it.

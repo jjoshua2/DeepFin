@@ -231,6 +231,7 @@ def test_main_success_transfers_primary_and_closes_owned_helpers_once(monkeypatc
     monkeypatch.setattr(Engine, "warmup_search", lambda _self: None)
     try:
         assert main.main() == 0
+        assert wedge.device_fault() is None  # the no-fault path: closes, no parking
         assert primary.close_calls == 1
         assert primary._shutdown.is_set()
         assert not primary._submitter.is_alive()
@@ -250,6 +251,7 @@ def test_engine_close_retires_owned_idle_walkers():
     try:
         engine.close()
         engine.close()
+        assert wedge.device_fault() is None
         assert primary.close_calls == 1
         assert pool._shutdown.is_set()
         assert not any(t.is_alive() for t in pool._threads)

@@ -63,7 +63,10 @@ def cleanup(owners):
 
 def _ended_or_parked(thread):
     """After a device fault (any failure bringing a device up counts) the UCI
-    ``wedge`` latch parks evaluator threads instead of letting them end."""
+    ``wedge`` latch parks evaluator threads instead of letting them end.
+    Without a fault, parked is not acceptable: the thread must have ended."""
+    if wedge.device_fault() is None:
+        return not thread.is_alive()
     return not thread.is_alive() or thread in wedge.parked_threads()
 
 
@@ -135,6 +138,7 @@ def test_successful_public_builder_transfers_helpers_for_single_close():
         engine = build(primary, factory)
         assert all(owner.close_calls == 0 and owner._owner.is_alive() for owner in created)
         engine.close()
+        assert wedge.device_fault() is None  # the no-fault path: threads must END
         assert primary.close_calls == 1
         assert not primary._owner.is_alive()
         assert all(owner.close_calls == 1 and _ended_or_parked(owner._owner) for owner in created)
@@ -168,6 +172,7 @@ def test_borrowed_helpers_remain_caller_owned(monkeypatch, fault):
             pool.run(target_sims=4, stop_event=threading.Event())
             assert sum(pool.last_stats().group_sims) == 4
             pool.close()
+            assert wedge.device_fault() is None
         assert all(owner.close_calls == 0 and owner._owner.is_alive() for owner in owners)
         assert_pool_threads_retired()
     finally:

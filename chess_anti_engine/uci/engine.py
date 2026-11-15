@@ -35,7 +35,7 @@ from chess_anti_engine.mcts.search_options import (
     realized_rows,
 )
 from chess_anti_engine.tablebase import SyzygyProbe, get_tablebase
-from chess_anti_engine.uci import tb_root
+from chess_anti_engine.uci import tb_root, wedge
 from chess_anti_engine.utils.bitboards import unsearchable_king_reason
 from chess_anti_engine.utils.gil_probe import GilContentionProbe
 
@@ -242,6 +242,13 @@ _WATCHDOG_LAST_MOMENT_MS = 3.0
 # `close()` waits this long for a search / helper; a thread still alive after
 # that is left to `__main__`, which hard-exits instead of finalizing under it.
 _SHUTDOWN_JOIN_S = 3.0
+
+# After a device fault every rebuilt pool / walker pool leaves its old worker
+# threads parked with their evaluators (``uci.wedge``): about one thread per
+# device and ~30 MB RSS per rebuild on CPU, and the old evaluators' device
+# memory on GPU. Option changes that rebuild are refused (announced) once this
+# many threads are parked; a restart frees them.
+_PARKED_REBUILD_CAP = 16
 
 
 # (options snapshot, `SearchWorker.search_state()` or None for a test double)
@@ -1730,6 +1737,13 @@ class Engine:
         parsed = self._parse_search_value(opt, raw)
         if parsed is None:
             return
+        if (opt.field in self._REBUILDING_SEARCH_FIELDS
+                and parsed == self._options.search_value(opt.field)):
+            self._unchanged(opt.name, parsed)
+            return
+        if (opt.field in self._REBUILDING_SEARCH_FIELDS
+                and self._rebuild_refused_after_fault(opt.name)):
+            return
         self._options.set_search_value(opt.field, parsed)
         self._apply_search_option(opt, parsed)
         path = self._worker.realized_search_path()
@@ -1808,6 +1822,11 @@ class Engine:
             )
             return None
         return value
+
+    # Search options whose apply reinstalls a pool / PUCT helper
+    # (``_apply_search_option``): an unchanged value must not rebuild.
+    _REBUILDING_SEARCH_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {"vloss_weight", "c_puct", "cpuct_factor", "cpuct_base", "fpu_reduction"})
 
     def _apply_search_option(
         self, opt: SearchOption, value: float | int | bool,
@@ -1978,6 +1997,34 @@ class Engine:
             "only by SearchWalkers / --walkers"
         )
 
+    @staticmethod
+    def _unchanged(name: str, value: object) -> None:
+        """A rebuilding option set to the value already in force: nothing is
+        rebuilt. GUIs resend every option at each engine start or game, and a
+        rebuild after a device fault leaves the old workers parked (``wedge``)
+        -- so a resend must never be a rebuild. Said out loud, not dropped."""
+        _println(f"info string {name} already {value}; nothing rebuilt")
+
+    @staticmethod
+    def _rebuild_refused_after_fault(name: str) -> bool:
+        """True (and announced) when a rebuilding option change must be
+        refused: a device fault this session has already left
+        ``_PARKED_REBUILD_CAP`` worker threads parked. The current value
+        stays in force."""
+        fault = wedge.device_fault()
+        if fault is None:
+            return False
+        parked = len(wedge.parked_threads())
+        if parked < _PARKED_REBUILD_CAP:
+            return False
+        _println(
+            f"info string WARNING {name} not changed: {parked} worker threads are "
+            f"parked after a device fault this session ({fault}), the limit is "
+            f"{_PARKED_REBUILD_CAP} (each rebuild parks more and keeps their evaluators); "
+            "restart the engine to change it"
+        )
+        return True
+
     def _set_search_walkers(self, value: str) -> None:
         """`SearchWalkers` (operator-only): 1 = classic Gumbel, >1 = PUCT walker pool.
 
@@ -1990,6 +2037,11 @@ class Engine:
         if n is None:
             return
         old_walkers = self._options.search_walkers
+        if n == old_walkers:
+            self._unchanged("SearchWalkers", n)
+            return
+        if self._rebuild_refused_after_fault("SearchWalkers"):
+            return
         if self._multi_gpu_path_active():
             self._options.search_walkers = n
             self._worker.set_num_threads(n)
@@ -2061,6 +2113,11 @@ class Engine:
         n = self._parse_clamped_int(value, "LeafGather")
         if n is None:
             return
+        if n == self._options.leaf_gather:
+            self._unchanged("LeafGather", n)
+            return
+        if self._rebuild_refused_after_fault("LeafGather"):
+            return
         self._options.leaf_gather = n
         self._worker.set_walker_gather(n)
         self._warmup_dirty = True
@@ -2074,6 +2131,9 @@ class Engine:
         if parsed is None:
             return
         enabled = parsed
+        if enabled == self._options.use_vl:
+            self._unchanged("UseVL", "on" if enabled else "off")
+            return
         self._options.use_vl = enabled
         self._worker.set_use_pucv(enabled, gather=self._options.vl_gather)
         if self._multi_gpu_path_active():
@@ -2100,6 +2160,13 @@ class Engine:
         if parsed is None:
             return
         enabled = parsed
+        if enabled == self._options.use_multi_gpu_pucv and (
+                not enabled or self._options.search_parallel != "gumbel"):
+            # (on while SearchParallel=gumbel is a switch of pools, not a resend)
+            self._unchanged("UseMultiGpuPUCV", "on" if enabled else "off")
+            return
+        if self._rebuild_refused_after_fault("UseMultiGpuPUCV"):
+            return
         if not enabled:
             had_pool = getattr(self._worker, "_pucv_pool", None) is not None
             # Size the primary for the remaining path: RPG still needs only
@@ -2220,6 +2287,11 @@ class Engine:
             _println(_combo_refusal("PUCVPendingMode", value, ("legacy", "virtual-mean"),
                                     self._options.pucv_pending_mode))
             return
+        if normalized == self._options.pucv_pending_mode:
+            self._unchanged("PUCVPendingMode", normalized)
+            return
+        if self._rebuild_refused_after_fault("PUCVPendingMode"):
+            return
         self._options.pucv_pending_mode = normalized
         self._worker.set_pucv_vloss_mode(1 if normalized == "virtual-mean" else 0)
         if self._options.search_parallel == "gumbel":
@@ -2246,6 +2318,11 @@ class Engine:
         if normalized not in ("pucv", "gumbel"):
             _println(_combo_refusal("SearchParallel", value, ("pucv", "gumbel"),
                                     self._options.search_parallel))
+            return
+        if normalized == self._options.search_parallel:
+            self._unchanged("SearchParallel", normalized)
+            return
+        if self._rebuild_refused_after_fault("SearchParallel"):
             return
         if normalized == "gumbel":
             if not self._try_install_root_parallel_gumbel(
@@ -2368,6 +2445,11 @@ class Engine:
         n = self._parse_clamped_int(value, "RPGOpenVPA")
         if n is None:
             return
+        if n == self._options.rpg_open_vpa:
+            self._unchanged("RPGOpenVPA", n)
+            return
+        if self._rebuild_refused_after_fault("RPGOpenVPA"):
+            return
         self._options.rpg_open_vpa = n
         _println(
             f"info string RPGOpenVPA set to {self._options.rpg_open_vpa}"
@@ -2379,6 +2461,11 @@ class Engine:
         n = self._parse_clamped_int(value, "RPGMinVPA")
         if n is None:
             return
+        if n == self._options.rpg_min_vpa:
+            self._unchanged("RPGMinVPA", n)
+            return
+        if self._rebuild_refused_after_fault("RPGMinVPA"):
+            return
         self._options.rpg_min_vpa = n
         _println(
             f"info string RPGMinVPA set to {self._options.rpg_min_vpa}"
@@ -2389,6 +2476,11 @@ class Engine:
     def _set_rpg_min_keep(self, value: str) -> None:
         n = self._parse_clamped_int(value, "RPGMinKeep")
         if n is None:
+            return
+        if n == self._options.rpg_min_keep:
+            self._unchanged("RPGMinKeep", n)
+            return
+        if self._rebuild_refused_after_fault("RPGMinKeep"):
             return
         self._options.rpg_min_keep = n
         _println(
@@ -2407,6 +2499,11 @@ class Engine:
                 f"info string RPGOpenBudgetFrac: {value.strip()!r} is not a number in "
                 f"(0, 1]; keeping {self._options.rpg_open_budget_frac}"
             )
+            return
+        if frac == self._options.rpg_open_budget_frac:
+            self._unchanged("RPGOpenBudgetFrac", frac)
+            return
+        if self._rebuild_refused_after_fault("RPGOpenBudgetFrac"):
             return
         self._options.rpg_open_budget_frac = frac
         _println(
@@ -2479,6 +2576,11 @@ class Engine:
     def _set_vl_gather(self, value: str) -> None:
         n = self._parse_clamped_int(value, "VLGather")
         if n is None:
+            return
+        if n == self._options.vl_gather:
+            self._unchanged("VLGather", n)
+            return
+        if self._rebuild_refused_after_fault("VLGather"):
             return
         self._options.vl_gather = n
         if self._options.search_parallel == "gumbel":
@@ -2569,6 +2671,8 @@ class Engine:
             return
         if mb == self._options.max_batch:
             return
+        if self._rebuild_refused_after_fault("MaxBatch"):
+            return
   # Rebuild is 5-10s (CUDA graph recapture on first forward).
   # User sees the stall only if they poll isready soon after.
         _println(f"info string MaxBatch rebuilding evaluator at {mb}…")
@@ -2588,6 +2692,8 @@ class Engine:
         if n is None:
             return
         if n == self._options.eval_cache_entries:
+            return
+        if self._rebuild_refused_after_fault("EvalCacheEntries"):
             return
         if self._rebuild_evaluator is None:
             _println("info string EvalCacheEntries ignored — no evaluator factory wired")

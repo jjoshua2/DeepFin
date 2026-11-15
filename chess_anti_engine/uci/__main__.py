@@ -1809,8 +1809,12 @@ def main() -> int:
             except Exception:
                 pass
         _drain_builder(builder, rc)
-        if _device_thread_wedged(eng) or wedge.parked_threads():
+        if _device_thread_wedged(eng):
             _announce_wedged_exit(rc)
+            _hard_exit(rc)
+        if wedge.parked_threads() or wedge.device_fault() is not None:
+  # A device failed during the close itself: workers parked, nothing is stuck.
+            _announce_fault_exit(wedge.device_fault() or "a device call failed", rc)
             _hard_exit(rc)
         if eng is not None and getattr(eng, "has_live_threads", lambda: False)() is True:
   # A search that ignored its stop, or a fallback eval stuck in the evaluator:

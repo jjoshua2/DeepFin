@@ -8,9 +8,17 @@ intermittently corrupts the process (segfault in the garbage collector at
 ``Py_Exit``, "terminate called", type-confused objects such as "'traceback'
 object is not callable"). No wedged thread is needed: a non-``devices[0]``
 root-parallel group that raises crashed 3-6 runs in 55 when the healthy groups
-were closed, 0 in 55 when they were left running. The underlying refcount /
-lifetime error was not found (see the PR for what was ruled out), so the rule
-is structural:
+were closed, 0 in 55 when they were left running.
+
+Root cause (found in round 3 by bisecting with this latch switched off, torch
+2.11 on CPU; torch 2.14 never crashed): ``Thread.join`` returns once a
+thread's Python state is gone, while its OS thread is still running C/C++
+thread-local destructors (torch's). Closing the joined group's evaluators and
+finalizing the interpreter under that segfaulted in the exit-time GC in 18 runs
+in 60; :func:`join_unless_wedged` now waits for the OS thread itself
+(``_await_os_exit``), and the same 60 runs had 0 crashes. The latch below stays
+as defence in depth (a crash here forfeits the game; the OS-thread wait covers
+only threads joined through :func:`join_unless_wedged`):
 
 * every evaluator-running worker the UCI engine owns (multi-GPU pool
   workers, root-parallel Gumbel groups, device-call runners, the startup
@@ -34,6 +42,7 @@ on a 2-device pool); a restart frees them.
 from __future__ import annotations
 
 import functools
+import os
 import threading
 import time
 import types
@@ -88,6 +97,13 @@ def wedged_earlier(device: str) -> str | None:
     """What wedged on ``device`` earlier this session, or None."""
     with _lock:
         return _wedged_devices.get(device)
+
+
+def wedged_devices() -> list[str]:
+    """Every device label that wedged this session (left out of every later
+    rebuild until the process restarts), in first-wedge order."""
+    with _lock:
+        return list(_wedged_devices)
 
 
 def clear_wedged(thread: threading.Thread | None) -> None:
@@ -168,22 +184,54 @@ def parking(fn: _F) -> _F:
     return cast("_F", run)
 
 
+# Cap on waiting for an ended thread's OS thread to exit (``_await_os_exit``).
+_OS_EXIT_WAIT_S = 1.0
+
+
+def _await_os_exit(thread: threading.Thread) -> None:
+    """After ``thread`` ended, wait (bounded) until its OS thread is gone.
+
+    ``Thread.join`` / ``is_alive`` report a thread ended as soon as its Python
+    thread state is torn down, but the OS thread still runs its C/C++
+    thread-local destructors after that -- torch's among them. Measured on
+    the RPG raise path (PR #1333 round 3, torch 2.11 on CPU): the root-parallel
+    group thread was still alive about 0.6 ms after its ``join`` returned, and
+    letting the caller go on (close the evaluators, and at ``quit`` finalize
+    the interpreter) under it segfaulted in the garbage collector at exit in
+    about 1 run in 4 with the parking latch disabled; waiting here for the OS
+    thread made it 0 in 60. Linux only (``/proc/self/task``); elsewhere a no-op.
+    """
+    tid = getattr(thread, "native_id", None)
+    if tid is None or thread.is_alive():
+        return
+    task = f"/proc/self/task/{tid}"
+    # Not bounded by the caller's join timeout: the thread has ended, its OS
+    # thread is about to (a reused tid at worst costs the cap).
+    stop = time.monotonic() + _OS_EXIT_WAIT_S
+    while os.path.exists(task) and time.monotonic() < stop:
+        time.sleep(0.0005)
+
+
 def join_unless_wedged(thread: threading.Thread, timeout: float) -> None:
     """``Thread.join`` that also returns once ``thread`` has parked.
 
     After a device fault ending workers park instead of exiting, so a plain
     join would only spend the timeout. This waits (at most ``timeout``) until
-    the thread has ended or parked, so its cleanup has run when it returns."""
+    the thread has ended or parked, so its cleanup has run when it returns.
+    A thread that ended is waited for until its OS thread is gone too
+    (``_await_os_exit``): the RPG-raise segfault's root cause."""
+    deadline = time.monotonic() + max(0.0, timeout)
     if device_fault() is None and not any_wedged():
         thread.join(timeout=timeout)  # no fault: workers end normally
+        _await_os_exit(thread)
         return
-    deadline = time.monotonic() + max(0.0, timeout)
     with _lock:
         while thread.is_alive() and thread not in _parked:
             left = deadline - time.monotonic()
             if left <= 0:
                 return
             _changed.wait(timeout=min(left, 0.05))
+    _await_os_exit(thread)
 
 
 def reset_session_for_tests() -> None:

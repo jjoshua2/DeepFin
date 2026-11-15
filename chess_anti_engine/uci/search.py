@@ -927,8 +927,9 @@ class SearchWorker:
         self._pucv_evals_in_use = set()
 
     def _close_pucv_pool(self, pool: Any) -> None:
-        """Close a multi-GPU pool, remembering any worker still wedged in a
-        device call after it (see ``has_wedged_device_threads``)."""
+        """Close a multi-GPU pool, remembering any worker still alive after
+        it: stuck in a device call, or parked after a device fault -- told
+        apart at quit (see ``has_wedged_device_threads``)."""
         pool.close()
         threads = list(getattr(pool, "_threads", ()))
         self._pucv_evals_in_use = {k for k, th in enumerate(threads) if th.is_alive()}
@@ -940,10 +941,16 @@ class SearchWorker:
 
     def has_wedged_device_threads(self) -> bool:
         """A closed pool left a worker stuck inside a device call, or a
-        device-call thread (routing chain, guarded primary) is stuck in one."""
+        device-call thread (routing chain, guarded primary) is stuck in one.
+
+        A remembered worker that has since parked (``wedge.park_if_wedged``,
+        after a device fault) is not stuck: its call returned and it is blocked
+        on purpose, so ``quit`` reports the fault, not a stuck call."""
         if wedge.any_wedged():
             return True
-        if any(th.is_alive() for th in getattr(self, "_wedged_device_threads", ())):
+        parked = wedge.parked_threads()
+        if any(th.is_alive() and th not in parked
+               for th in getattr(self, "_wedged_device_threads", ())):
             return True
         chain = self._chain_degrade_source()
         if chain is not None and chain.wedged_threads():
@@ -986,6 +993,16 @@ class SearchWorker:
             if carrier is not None:
                 # Truthful after a later failure: what carries classic Gumbel NOW.
                 parts[-1] += f"; now searching classic Gumbel on {carrier}"
+        # (Only devices out now: one re-admitted after its stall is serving.)
+        failed_now = set(self.failed_pool_devices())
+        out_for_session = [lab for lab in wedge.wedged_devices()
+                           if lab in failed_now or rpg is not None]
+        if parts and out_for_session:
+            # A device that stopped answering is left out of every later
+            # rebuild (``wedge.wedged_earlier``) -- also a false-positive stall
+            # drop -- so only a restart brings it back. Say so at every go.
+            names = ", ".join(out_for_session)
+            parts.append(f"device {names} out until the engine restarts (stopped answering this session; restart between games to get it back)")  # one literal: quoted in docs/TCEC_SETUP.md
         return " | ".join(parts) if parts else None
 
     def _rpg_rows_carrier(self) -> str | None:

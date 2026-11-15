@@ -288,6 +288,11 @@ def _run_fault_session(ckpt: Path, tmp_path: Path, path: str, mode: str, go_kind
     # finalizing the interpreter (``uci.wedge``), and says so.
     assert ("info string quit: a device failed this session" in text
             or "info string quit: a multi-GPU worker is still stuck" in text), text[-3000:]
+    if mode == "raise":
+        # Nothing is stuck after a raise: the workers parked, so quit names the
+        # fault, never a stuck call (a parked worker is not a wedged one).
+        assert "info string quit: a device failed this session" in text, text[-3000:]
+        assert "still stuck" not in text, text[-3000:]
     assert "terminate called" not in err, err
     assert rc == 0, (rc, text[-3000:], err[-3000:])
 
@@ -468,3 +473,27 @@ def test_every_device_stalling_answers_from_the_fallback_and_quit_exits_1(ckpt, 
     assert "terminate called" not in err, err
     assert "info string quit:" in text, text[-2000:]
     assert rc == 1, (rc, text[-2000:], err[-2000:])
+
+
+def test_quit_after_a_raise_and_a_pool_rebuild_names_the_fault_not_a_stuck_call(ckpt, tmp_path) -> None:
+    """Round 3 item 3: a pool closed after a raise leaves its workers parked,
+    not stuck. ``quit`` must say a device failed (status 0), never that a
+    worker is still stuck inside a dropped device's call."""
+    sess = _Session(ckpt, tmp_path, _PATHS["pool"], _fault_env("raise", _WHERE["pool"]))
+    try:
+        sess.ready()
+        move, _ = sess.go("position startpos moves e2e4", "go nodes 300")
+        _legal("e2e4", move)
+        sess.send("setoption name VLGather value 64")  # rebuilds: the old pool's workers park
+        sess.send("isready")
+        sess.read_until(lambda ln: ln == "readyok", 120)
+        move2, _ = sess.go("position startpos moves e2e4 e7e5", "go nodes 300")
+        _legal("e2e4 e7e5", move2)
+        rc, text, err = sess.quit()
+    finally:
+        sess.close()
+    assert "WARNING multi-GPU DEGRADED" in text, text
+    assert "info string quit: a device failed this session" in text, text[-3000:]
+    assert "still stuck" not in text, text[-3000:]
+    assert "terminate called" not in err, err
+    assert rc == 0, (rc, text[-3000:], err[-3000:])
