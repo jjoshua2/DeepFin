@@ -1,5 +1,286 @@
 {
   "CONF": "RESERVED_DATA_ROLE_ONLY_NOT_ALLOCATED_OR_CONSUMED",
+  "accepted_screens_and_user_cancellation": {
+    "accounting": {
+      "fresh_scope_actual_GPU_wall_seconds_including_interrupted_owner": 6159.350130785955,
+      "two_historical_failed_engineering_actual_GPU_wall_seconds": 110.01148220698815,
+      "unused_scope_ceiling_is_not_new_execution_authority": true,
+      "week_closed_GPU_wall_seconds_at_stop": 76244.83533011103
+    },
+    "cancellation": {
+      "authority": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-user-cancelled-v1/stop-receipt.json",
+        "sha256": "257e647c292c5dc157aa731e5e1f5f90f04a83ceca83c0b842368cd6c5e53445"
+      },
+      "automatic_resume": false,
+      "replacement_150k_training_or_relabel_authorized": false,
+      "source_only_target_diagnostic": "CANCELLED_UNEXECUTED",
+      "stopped_THREE_changed": false,
+      "study_cancel_marker": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v3/CANCEL",
+        "sha256": "79f5e19fa1161db46a77b84a1ba44b302d762dfa65c4178720e90fd9cf543768"
+      },
+      "successor_recipe_tests_or_audits": false
+    },
+    "complete_amended_preregistration_main": {
+      "PR": 1340,
+      "merge_commit": "da00b3824d187dbcb08454b57b9dc14e13ead73a"
+    },
+    "cutoff_utc": "2026-11-15T15:24:21.104614+00:00",
+    "historical_preregistration_fields_preserved": true,
+    "internal_evaluation": {
+      "color_pairs_per_completed_endpoint": 500,
+      "compile": "off",
+      "games_per_completed_endpoint": 1000,
+      "gumbel_noise": "ON",
+      "leaf_batch_cap": 1024,
+      "mode": "matched_sims",
+      "move_selection_temperature": 0.1,
+      "rolling_pool": 32,
+      "scope": "Fixed internal comparison, no external-engine result",
+      "search_shape": "training",
+      "simulations_per_move": 64
+    },
+    "limits": [
+      "One fixed originalG1 bank, one fresh learner seed and fixed internal search/role profile; not an optimum-formula or teacher-quality verdict.",
+      "Paired approximate normal95 intervals use500 color pairs; not global/familywise guarantees or independent training-game replications.",
+      "Direct A/A39 drift is unmeasured after user cancellation; do not infer it by subtracting the two B screens.",
+      "No confirmation allocation, model adoption, Elo gain or Rofchade/Stockfish/Lc0 milestone. OriginalA39 retained.",
+      "Publication copies existing accepted metadata only; no cancelled study/data audit was resumed."
+    ],
+    "models": {
+      "A": {
+        "actual_applied_views": 131072,
+        "actual_step": 512,
+        "boundary": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-A-original512-results-v2/boundary.json",
+          "sha256": "af364b89d4aaf9c6fd4157b38ab41ff2fb90bcfa33e6e6c0f6da21b0b1ff025f"
+        },
+        "checkpoint": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-A-original512-results-v2/learner.pt",
+          "sha256": "a292e3d7a8136b4a6c84f934ad390bb08108f0ed39279c79ee6421817ed9196c"
+        },
+        "contract": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-science-preparation-v3/A-original512.contract.json",
+          "sha256": "b06d414757c08d6a61a4b9bb5963a069e17accab17b71cbbcb7fac58428ddeaa"
+        },
+        "independent_review": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v3/A512/independent-review.json",
+          "sha256": "64247b314a7a68aa84943c7b8e7dc9f831e59c4c91b78d83af3d72c8ccfc924c"
+        },
+        "root_acceptance": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v3/A512/root-delivery-acceptance.json",
+          "sha256": "38fd114f51a6d6cc0f89850e563b70bca1939416a895e89df25eee7e9b57159a"
+        },
+        "scope": "TECHNICAL_DELIVERY_ONLY_NO_ADOPTION",
+        "stage": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-science-preparation-v3/A-original512.stage.json",
+          "sha256": "0d58d816e6f463b6fcd3b31f02966ccedfabbfd3131bf27e1faa011de598e6d0"
+        }
+      },
+      "B": {
+        "actual_applied_views": 131072,
+        "actual_step": 512,
+        "boundary": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-B-teacher512-results-v2/boundary.json",
+          "sha256": "6303fe692749593fca772ad5701401e52694e47c2b315715270c8efc80afea1f"
+        },
+        "checkpoint": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-B-teacher512-results-v2/learner.pt",
+          "sha256": "ff35dd424d182cae497331c51aa3027df26a455789364750076dee4e4479d2be"
+        },
+        "contract": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-science-preparation-v3/B-teacher512.contract.json",
+          "sha256": "464723b5f3b3253e0406c42ce44f5ec46237bc3793a4fbd6945c1dd82bd11223"
+        },
+        "independent_review": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v3/B512/independent-review.json",
+          "sha256": "555a740ff667bbb909cbfb81ce60e63bf6946fef4d26ab42c0faedcb3cae57ed"
+        },
+        "root_acceptance": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v3/B512/root-delivery-acceptance.json",
+          "sha256": "67d664479908a49f15569851f3018cfff16d7ac4efc681e357494d68c86fb495"
+        },
+        "scope": "TECHNICAL_DELIVERY_ONLY_NO_ADOPTION",
+        "stage": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-science-preparation-v3/B-teacher512.stage.json",
+          "sha256": "d206ce11b84964d5f012102197543c998cab67eab7417972a2fc1566e695f253"
+        }
+      }
+    },
+    "registered_gate": {
+      "all_three_mandatory_endpoints_complete": false,
+      "both_B_screens_pass": false,
+      "paired_approximate_95_lower_strictly_above": 0.5,
+      "point_at_least": 0.53
+    },
+    "screens": {
+      "screen_B_vs_A": {
+        "CPU_command": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v3/arena/screen_B_vs_A/cpu-command.json",
+          "sha256": "3332669f9c63b9e384df5fdbea79835a61117241cbccbc14a9822f8201d90e31"
+        },
+        "GPU_command": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v3/arena/screen_B_vs_A/gpu-command.json",
+          "sha256": "7a02748cda021a03de1c668a38adaa2eb3aaed6f7026fe120fa412d09a495b68"
+        },
+        "GPU_terminal": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-screen-B-A-GPU-execution-v2/terminal.json",
+          "sha256": "ea6ccba37be1f7598f62ef209871424eccc845d8908599ff8564ff7412515213"
+        },
+        "actual_CPU_wall_seconds": 42.63679068896454,
+        "actual_GPU_wall_seconds": 2662.8296209279797,
+        "bindings": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v3/arena/screen_B_vs_A/reader-bindings.json",
+          "sha256": "e1306b6677ede39aae0c42433499299a955770837eae87676fa1d6b7cd50a460"
+        },
+        "counts": {
+          "candidate_losses": 413,
+          "candidate_wins": 245,
+          "draws": 342
+        },
+        "independent_review": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v3/arena/screen_B_vs_A/independent-review.json",
+          "sha256": "7cb65d55c9c733c7b908351ce3b577da213a5ab62ef40df22dee9f0cf683ec80"
+        },
+        "owner_terminal": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-screen-B-A-read-CPU-execution-v2/terminal.json",
+          "sha256": "b6ad536dbf81d4a0ded544f2b9efe980eca71bcbbc87e1d8546bf75fafc2cb9b"
+        },
+        "protocol": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v3/arena/screen_B_vs_A/protocol.json",
+          "sha256": "92c7d7cb8686442c247d338fdfd3e0e27f768ef1f0408bc74c8e7e06a4988304"
+        },
+        "readout": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-screen_B_vs_A-readout-v2/readout.json",
+          "sha256": "c8cc6ae19ae8c60953e233314491c867e08dd563a45b87eb56c008c2315ab434"
+        },
+        "registered_verdict": "NONPASS",
+        "root_acceptance": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v3/arena/screen_B_vs_A/root-acceptance.json",
+          "sha256": "335a51c920f72c952d43f0e3c74ec1ed82d75b18f802aec871e0581eafabe815"
+        },
+        "screen_pass": false,
+        "serving": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-screen_B_vs_A-results-v2/serving.json",
+          "sha256": "6a9a800d31eb865ed6a88ddad84f680f4c4ed6fb50dee04c284b41514bde8cc3"
+        },
+        "statistics": {
+          "confidence": 0.95,
+          "count": 500,
+          "fallback_reason": null,
+          "lower": 0.3917011067489391,
+          "mean": 0.416,
+          "method": "paired_normal_approx_95",
+          "radius": 0.0242988932510609,
+          "upper": 0.44029889325106086,
+          "variance": 0.07684769539078157
+        },
+        "technical_qualified": true
+      },
+      "screen_B_vs_A39": {
+        "CPU_command": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v3/arena/screen_B_vs_A39/cpu-command.json",
+          "sha256": "bdc8f26893bf5a814fbed9d6ebed6ae48f9e52d69b9a63862da153dcaf6a241e"
+        },
+        "GPU_command": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v3/arena/screen_B_vs_A39/gpu-command.json",
+          "sha256": "0e249e6aff1dc220f90fda6b85c55c3fdb66c94e39a06984405c34fbb45e4d30"
+        },
+        "GPU_terminal": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-screen-B-A39-GPU-execution-v2/terminal.json",
+          "sha256": "fa6b4b35fafff0e008e969909ce477108ee8dc3aa71624a1044375548156eeb3"
+        },
+        "actual_CPU_wall_seconds": 41.619570684968494,
+        "actual_GPU_wall_seconds": 2335.8565749980044,
+        "bindings": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v3/arena/screen_B_vs_A39/reader-bindings.json",
+          "sha256": "079d6fa7839381df9bda169c82b8ed7751a7cf01ec842acc5852e23722a49c91"
+        },
+        "counts": {
+          "candidate_losses": 421,
+          "candidate_wins": 274,
+          "draws": 305
+        },
+        "independent_review": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v3/arena/screen_B_vs_A39/independent-review.json",
+          "sha256": "cdc88501cd0314d864333d1a08ed214cbcdbd862faacceffb0d81352350691fa"
+        },
+        "owner_terminal": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-screen-B-A39-read-CPU-execution-v2/terminal.json",
+          "sha256": "63bf7fd4dc8545cc2f994c52c98ec5089cfd83953022142dea5397f807d17cd8"
+        },
+        "protocol": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v3/arena/screen_B_vs_A39/protocol.json",
+          "sha256": "5ab72680a89fd000c069ccc5bae9e51b8a6ed076e584684c72ad672f46554539"
+        },
+        "readout": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-screen_B_vs_A39-readout-v2/readout.json",
+          "sha256": "a2c296fdea0883c7eea71a9970a7274a43646e6799535d5cb8c6cd8345e9defe"
+        },
+        "registered_verdict": "NONPASS",
+        "root_acceptance": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v3/arena/screen_B_vs_A39/root-acceptance.json",
+          "sha256": "3d160cb9e5820f9edab809711fda15b9b767f096b8cd33d5f7e71333a545ac74"
+        },
+        "screen_pass": false,
+        "serving": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-screen_B_vs_A39-results-v2/serving.json",
+          "sha256": "e6dbd32605431b6ef2b1ca49ef1bc00dffd36b47d94f38417b9abf23faa6d950"
+        },
+        "statistics": {
+          "confidence": 0.95,
+          "count": 500,
+          "fallback_reason": null,
+          "lower": 0.4017259543174927,
+          "mean": 0.4265,
+          "method": "paired_normal_approx_95",
+          "radius": 0.024774045682507285,
+          "upper": 0.4512740456825073,
+          "variance": 0.07988251503006012
+        },
+        "technical_qualified": true
+      }
+    },
+    "status": "TWO_TECHNICALLY_ACCEPTED_NONPASS_SCREENS_REMAINDER_USER_CANCELLED_V1",
+    "teacher_generation": {
+      "actual_per_query_node_depth_distribution": "UNKNOWN_UNCENSUSED; reduced source-capable counters do not establish a full per-query wire/effort record",
+      "declared_MultiPV": 8,
+      "declared_hash_MiB": 16,
+      "declared_node_budget_per_query": 5000,
+      "declared_workers": 2,
+      "fixed_depth": false,
+      "new_queries_during_this_study": false,
+      "original_collection_protocol": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-baseline-research-preparation-v1/collection-1.json",
+        "sha256": "03454d686917b14c51220d4f8ae2229c4d01f97738a8d44748b5728ee963d605"
+      }
+    },
+    "third_diagnostic": {
+      "CPU_reader_admitted": false,
+      "actual_GPU_wall_seconds": 528.6283064909512,
+      "command": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v3/arena/diagnostic_A_vs_A39/gpu-command.json",
+        "sha256": "338dfa2efc5185ad8314222bf8615ae876c22a5fc9149675579252efcc524041"
+      },
+      "owned_processes_closed": true,
+      "partial_score": "UNREAD",
+      "status": "USER_CANCELLED_NOT_A_COMPLETED_MEASUREMENT",
+      "stop_control": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-diagnostic-A-A39-GPU-execution-v2/STOP",
+        "sha256": "7d603e172640adbd3460359fc0693bf348006ffd2c975a37ff689334283e4be5"
+      },
+      "stop_receipt": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-user-cancelled-v1/stop-receipt.json",
+        "sha256": "257e647c292c5dc157aa731e5e1f5f90f04a83ceca83c0b842368cd6c5e53445"
+      },
+      "terminal": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-diagnostic-A-A39-GPU-execution-v2/terminal.json",
+        "sha256": "9fe7d249be8dfdb9d61f69404ee0f43a38a73fc6b0ca4cc98e525396ea8f4b2a"
+      },
+      "three_leases_verified_free_and_released_at_stop": true
+    }
+  },
   "actual_metadata_CPU_wall_seconds": {
     "aggregate_cap": 360,
     "controls": 1.215635385015048,
