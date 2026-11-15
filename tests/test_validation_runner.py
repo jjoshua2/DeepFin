@@ -238,7 +238,7 @@ def test_ci_invokes_shared_suites_and_canary_keeps_same_lint_scope() -> None:
 
     ci: dict[str, Any] = yaml.safe_load((validate.ROOT / ".github/workflows/ci.yml").read_text())
     commands = [step.get("run", "") for job in ci["jobs"].values() for step in job["steps"]]
-    for suite in ("cpu", "pext", "capped", "lint"):
+    for suite in ("cpu", "pext", "capped", "lint", "join-race"):
         assert any(f"scripts/validate.py {suite} --require-cpu-wheel" in command for command in commands)
     assert not any("python -m pytest" in command or "ruff check" in command for command in commands)
     canary: dict[str, Any] = yaml.safe_load((validate.ROOT / ".github/workflows/lint-canary.yml").read_text())
@@ -365,3 +365,15 @@ def test_a_failed_preflight_leaves_no_earlier_serial_report(
     monkeypatch.setattr(validate, "preflight", failing_preflight)
     assert validate.main(["cpu", *argv, "--report-dir", str(tmp_path)]) == 1
     assert not stale.exists()
+
+
+def test_join_race_suite_runs_the_join_tests_and_refuses_an_unexposed_interpreter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command = validate.suite_command("join-race")
+    assert "tests/test_thread_join.py" in command
+    assert "tests/test_thread_join_sites.py" in command
+    assert validate.parallel_args("join-race", "auto") == []
+    monkeypatch.setattr(validate, "python_version", lambda: (3, 13))
+    with pytest.raises(RuntimeError, match=r"CPython < 3\.13"):
+        validate.preflight("join-race", "magic", False)

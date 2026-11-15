@@ -140,17 +140,10 @@ jobs:
           python -m pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
           python -m pip install numpy==2.2.6 chess==1.11.2 pytest==9.1.1 setuptools==84.0.0 wheel==0.48.0
           python -m pip install --no-deps --no-build-isolation -e .
-      # FAIL, never skip: on 3.13+ the tests below pass with or without the fix.
-      - name: Require an interpreter whose Thread.join can return before the OS thread exits
-        run: python -c "import sys; assert sys.version_info < (3, 13), sys.version; print(sys.version)"
-      - name: OS-thread join tests
-        env:
-          CUDA_VISIBLE_DEVICES: ""
-        run: >-
-          python -m pytest -p no:cacheprovider -o addopts= -rA
-          tests/test_thread_join.py tests/test_thread_join_sites.py
-          tests/test_uci_degrade_gaps.py::test_join_waits_until_the_os_thread_ran_its_tls_destructors
-          --deselect tests/test_thread_join_sites.py::test_worker_model_watch_stop
+      # validate.py refuses (fails) this suite on CPython >= 3.13, where the
+      # tests pass with or without the fix.
+      - name: OS-thread join tests (CPython 3.10)
+        run: python scripts/validate.py join-race --require-cpu-wheel
 
   lint:
     runs-on: ubuntu-latest

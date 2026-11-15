@@ -125,6 +125,9 @@ def test_os_joined_waits_on_the_exception_path_too(keys) -> None:
     assert not os.path.exists(_task(seen[0]))
 
 
+@pytest.mark.skipif(sys.version_info >= (3, 13), reason=(
+    "from 3.13 Thread.join already waits for the OS thread, so no cap can be hit after it; "
+    "the join-race CI leg runs this on 3.10"))
 def test_a_cap_hit_logs_once_per_thread_and_carries_on(keys, monkeypatch, caplog) -> None:
     monkeypatch.setattr(thread_join, "OS_EXIT_WAIT_S", 0.05)
     caplog.set_level(logging.WARNING, logger=thread_join.__name__)
@@ -144,6 +147,9 @@ def test_a_cap_hit_logs_once_per_thread_and_carries_on(keys, monkeypatch, caplog
         assert _gone_within(_task(t), 5)
 
 
+@pytest.mark.skipif(sys.version_info >= (3, 13), reason=(
+    "from 3.13 Thread.join already waits for the OS thread, so no cap can be hit after it; "
+    "the join-race CI leg runs this on 3.10"))
 def test_wedge_join_uses_the_shared_wait_and_warns_on_a_cap_hit(keys, monkeypatch, caplog) -> None:
     """The UCI path (``wedge.join_unless_wedged``) goes through the same helper:
     a cap hit is a WARNING on the logging path (stderr), never stdout."""

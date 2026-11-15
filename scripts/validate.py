@@ -42,6 +42,17 @@ CAPPED_TESTS = (
     "tests/test_gen_nnue_selfplay_shards.py::test_native_shard_loads_through_the_real_replay_buffer",
     "tests/test_pytest_thread_cap.py",
 )
+# The OS-thread join tests (chess_anti_engine/utils/thread_join.py). Meaningful
+# only on CPython < 3.13, where Thread.join can return before the OS thread has
+# run its thread-local destructors; the join-race CI leg runs them on 3.10 with
+# the engine's minimal install, so the worker-site test (client extras) is
+# deselected there and runs in the cpu suite instead.
+JOIN_RACE_TESTS = (
+    "tests/test_thread_join.py",
+    "tests/test_thread_join_sites.py",
+    "tests/test_uci_degrade_gaps.py::test_join_waits_until_the_os_thread_ran_its_tls_destructors",
+    "--deselect", "tests/test_thread_join_sites.py::test_worker_model_watch_stop",
+)
 THREAD_VARS = (
     "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
     "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS",
@@ -51,7 +62,7 @@ THREAD_VARS = (
 def suite_command(suite: str) -> list[str]:
     if suite == "lint":
         return ["bash", "scripts/lint.sh"]
-    paths = PEXT_TESTS if suite == "pext" else CAPPED_TESTS if suite == "capped" else ()
+    paths = {"pext": PEXT_TESTS, "capped": CAPPED_TESTS, "join-race": JOIN_RACE_TESTS}.get(suite, ())
     return [sys.executable, "-m", "pytest", "-m", "not slow", "--tb=short", "--durations=20", *paths]
 
 
@@ -278,6 +289,11 @@ def configure_compile_environment(env: dict[str, str], cache_root: Path) -> None
         env.setdefault("CXX", "/usr/bin/c++")
 
 
+def python_version() -> tuple[int, int]:
+    """The running interpreter's (major, minor); a seam for the join-race refusal test."""
+    return sys.version_info[0], sys.version_info[1]
+
+
 def preflight(suite: str, backend: str, require_cpu_wheel: bool) -> None:
     checkout_venv = ROOT / ".venv"
     if suite == "lint" and checkout_venv.is_dir() and Path(sys.prefix).resolve() != checkout_venv.resolve():
@@ -288,6 +304,13 @@ def preflight(suite: str, backend: str, require_cpu_wheel: bool) -> None:
             f"lint environment mismatch: invoking environment is {sys.prefix}, "
             f"but scripts/lint.sh selects tools from {checkout_venv}. "
             f"Run: {checkout_venv / 'bin/python'} scripts/validate.py lint"
+        )
+    if suite == "join-race" and python_version() >= (3, 13):
+        # FAIL, never skip: from 3.13 Thread.join joins the OS thread itself,
+        # so these tests pass with or without the wait they guard.
+        raise RuntimeError(
+            f"the join-race suite needs CPython < 3.13 (this is {platform.python_version()}): "
+            "only there can Thread.join return before the OS thread has exited"
         )
     import torch
 
@@ -341,7 +364,7 @@ def apply_change_scope(env: dict[str, str], changed_vs: str | None, workdir: Pat
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("suite", choices=("cpu", "pext", "capped", "lint"))
+    parser.add_argument("suite", choices=("cpu", "pext", "capped", "lint", "join-race"))
     parser.add_argument("--threads", default=os.environ.get("CAE_TEST_THREADS", "2"),
                         help="Positive count or auto; defaults to CAE_TEST_THREADS or 2. capped always uses 2.")
     parser.add_argument("--workers", default=os.environ.get("CAE_TEST_WORKERS"),
