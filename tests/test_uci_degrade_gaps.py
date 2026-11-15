@@ -1523,8 +1523,11 @@ def test_join_waits_until_the_os_thread_ran_its_tls_destructors(fault: bool) -> 
         control.start()
         control.join(5)
         assert not control.is_alive()
-        # The mechanism exists here: a plain join returns under the destructor.
-        assert os.path.exists(f"/proc/self/task/{control.native_id}")
+        if sys.version_info < (3, 13):
+            # The mechanism exists here: a plain join returns under the
+            # destructor. (From Python 3.13 ``Thread.join`` joins the OS thread
+            # itself, so there it cannot linger and only the check below runs.)
+            assert os.path.exists(f"/proc/self/task/{control.native_id}")
         assert _wait_for(lambda: not os.path.exists(f"/proc/self/task/{control.native_id}"),
                          timeout=5)
         if fault:

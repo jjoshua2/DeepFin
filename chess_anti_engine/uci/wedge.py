@@ -199,7 +199,9 @@ def _await_os_exit(thread: threading.Thread) -> None:
     letting the caller go on (close the evaluators, and at ``quit`` finalize
     the interpreter) under it segfaulted in the garbage collector at exit in
     about 1 run in 4 with the parking latch disabled; waiting here for the OS
-    thread made it 0 in 60. Linux only (``/proc/self/task``); elsewhere a no-op.
+    thread made it 0 in 60. Python 3.10-3.12 (the engine's interpreter here);
+    from 3.13 ``Thread.join`` joins the OS thread itself and this finds it gone.
+    Linux only (``/proc/self/task``); elsewhere a no-op.
     """
     tid = getattr(thread, "native_id", None)
     if tid is None or thread.is_alive():
