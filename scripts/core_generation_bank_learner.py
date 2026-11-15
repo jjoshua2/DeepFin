@@ -83,7 +83,8 @@ def metadata(c: dict[str, Any], stage: dict[str, Any], contract_ref: dict[str, s
     physical_ids: set[str] = set()
     for index, binding in enumerate(stage["banks"]):
         core.require(type(binding) is dict and set(binding) == {"root_acceptance", "independent_review"}, "invalid accepted-bank binding")
-        bank = admission.validate_accepted_generation(binding["root_acceptance"], binding["independent_review"], **c["bank_limits"])
+        bank = admission.validate_accepted_generation(cast(dict[str, str], binding["root_acceptance"]),
+            cast(dict[str, str], binding["independent_review"]), **c["bank_limits"])
         identity = plain(bank.identity)
         core.require(identity["generation"] == c["first_generation"] + index, "nonconsecutive logical bank generation")
         core.require(core.canonical(identity["architecture"]) == core.canonical(c["architecture"]), "bank/learner architecture mismatch")
