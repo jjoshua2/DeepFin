@@ -144,7 +144,7 @@ def _spec(spec: dict[str, Any]) -> None:
     require(integer(spec["games_per_generation"], "minimum games") <=
             integer(spec["max_games_per_generation"], "maximum games"), "invalid game bounds")
     pins = spec["source_files"]
-    require(type(pins) is dict and SOURCE_FILES <= pins.keys(), "missing historical source pins")
+    require(type(pins) is dict and pins.keys() >= SOURCE_FILES, "missing historical source pins")
     for name, digest in pins.items():
         require(type(name) is str and name and not Path(name).is_absolute()
                 and str(Path(name)) == name and ".." not in Path(name).parts, "invalid historical source path")

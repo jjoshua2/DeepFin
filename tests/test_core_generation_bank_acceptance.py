@@ -213,7 +213,7 @@ def test_rehashed_but_inconsistent_graph_is_refused(tmp_path: Path, fault: str):
                                    {"max_games": True}, {"max_file_bytes": 129 << 20}])
 def test_reader_and_membership_bounds_are_explicit(tmp_path: Path, limits: dict[str, int]):
     root, review, _ = graph(tmp_path)
-    with pytest.raises(ValueError, match="limit|attempt/gate"):
+    with pytest.raises(ValueError, match=r"limit|attempt/gate"):
         validate(root, review, **limits)
 
 
@@ -261,7 +261,7 @@ def test_invalid_json_constants_and_duplicate_keys_refused(tmp_path: Path, raw: 
     path.write_bytes(raw)
     path.chmod(0o444)
     root["sha256"] = hashlib.sha256(raw).hexdigest()
-    with pytest.raises(ValueError, match="duplicate|nonfinite"):
+    with pytest.raises(ValueError, match=r"duplicate|nonfinite"):
         validate(root, review)
 
 
