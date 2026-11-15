@@ -45,13 +45,12 @@ CAPPED_TESTS = (
 # The OS-thread join tests (chess_anti_engine/utils/thread_join.py). Meaningful
 # only on CPython < 3.13, where Thread.join can return before the OS thread has
 # run its thread-local destructors; the join-race CI leg runs them on 3.10 with
-# the engine's minimal install, so the worker-site test (client extras) is
-# deselected there and runs in the cpu suite instead.
+# the engine's minimal install plus the client extras the worker sites import
+# (.github/join-race-py310-requirements.txt).
 JOIN_RACE_TESTS = (
     "tests/test_thread_join.py",
     "tests/test_thread_join_sites.py",
     "tests/test_uci_degrade_gaps.py::test_join_waits_until_the_os_thread_ran_its_tls_destructors",
-    "--deselect", "tests/test_thread_join_sites.py::test_worker_model_watch_stop",
 )
 THREAD_VARS = (
     "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",

@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import contextlib
 import logging
-import os
 import threading
 import time
 import weakref
@@ -37,21 +36,42 @@ from typing import TypeVar
 _log = logging.getLogger(__name__)
 
 # Cap on waiting for an ended thread's OS thread to exit. The measured linger
-# is milliseconds; a reused tid at worst costs the cap.
+# is milliseconds. A caller with a deadline passes a smaller ``cap_s``.
 OS_EXIT_WAIT_S = 1.0
 _POLL_S = 0.0005
 
-_warned_lock = threading.Lock()
-_warned: weakref.WeakSet[threading.Thread] = weakref.WeakSet()
+# Threads whose wait expired once: never waited for again (a reused tid, or a
+# teardown that really is stuck, would otherwise cost the cap on every call).
+_gave_up_lock = threading.Lock()
+_gave_up: weakref.WeakSet[threading.Thread] = weakref.WeakSet()
+# Threads whose OS thread was seen gone: a later call (a site reached on every
+# command for the same ended thread) returns at once, even if the tid is reused.
+_gone: weakref.WeakSet[threading.Thread] = weakref.WeakSet()
 
 _E = TypeVar("_E", bound=ThreadPoolExecutor)
 
 
-def _warn_cap_once(thread: threading.Thread, cap_s: float) -> None:
-    with _warned_lock:
-        if thread in _warned:
+def task_start_time(tid: int) -> int | None:
+    """``starttime`` (field 22 of ``/proc/self/task/<tid>/stat``, clock ticks
+    since boot) of the task with this tid, or None when there is none. Two
+    tasks that share a tid one after the other have different start times."""
+    try:
+        with open(f"/proc/self/task/{tid}/stat", "rb") as f:
+            data = f.read()
+    except OSError:
+        return None
+    try:
+        # Fields after "(comm)": state is field 3, so starttime is index 19.
+        return int(data[data.rindex(b")") + 2:].split()[19])
+    except (ValueError, IndexError):
+        return None
+
+
+def _give_up_once(thread: threading.Thread, cap_s: float) -> None:
+    with _gave_up_lock:
+        if thread in _gave_up:
             return
-        _warned.add(thread)
+        _gave_up.add(thread)
     _log.warning(
         "thread %r (native id %s) ended but its OS thread was still running %.3g s "
         "after join; carrying on without waiting for it",
@@ -59,51 +79,84 @@ def _warn_cap_once(thread: threading.Thread, cap_s: float) -> None:
     )
 
 
-def await_os_thread_exit(thread: threading.Thread, *, cap_s: float | None = None) -> bool:
+def await_os_thread_exit(
+    thread: threading.Thread, *, cap_s: float | None = None, start_time: int | None = None,
+) -> bool:
     """After ``thread`` ended, wait (bounded) until its OS thread is gone.
+
+    ``cap_s`` (default :data:`OS_EXIT_WAIT_S`, never more) bounds the wait, so a
+    caller with a deadline passes what is left of it. ``start_time``, when the
+    caller read it (:func:`task_start_time`) while the thread was alive, makes
+    the wait stop as soon as the tid names a different task (a reused tid).
 
     Returns True when there is nothing left to wait for (the OS thread is gone,
     the thread never started, it is still running -- the caller's join timed
     out, which is the caller's business -- or not Linux). Returns False when
-    the cap expired, after logging that once per thread."""
+    the bound expired: logged once, and that thread is never waited for again."""
     tid = getattr(thread, "native_id", None)
     if tid is None or thread.is_alive():
         return True
-    task = f"/proc/self/task/{tid}"
-    cap = OS_EXIT_WAIT_S if cap_s is None else max(0.0, cap_s)
+    if thread in _gone:
+        return True
+    if thread in _gave_up:
+        return False
+    cap = OS_EXIT_WAIT_S if cap_s is None else min(OS_EXIT_WAIT_S, max(0.0, cap_s))
     stop = time.monotonic() + cap
-    while os.path.exists(task):
+    while True:
+        seen = task_start_time(tid)
+        if seen is None or (start_time is not None and seen != start_time):
+            with _gave_up_lock:
+                _gone.add(thread)
+            return True
         if time.monotonic() >= stop:
-            _warn_cap_once(thread, cap)
+            _give_up_once(thread, cap)
             return False
         time.sleep(_POLL_S)
-    return True
 
 
-def join_thread(thread: threading.Thread, timeout: float | None = None) -> None:
+def join_thread(
+    thread: threading.Thread, timeout: float | None = None, *, deadline: float | None = None,
+) -> None:
     """``thread.join(timeout)``, then :func:`await_os_thread_exit` if it ended.
 
     Same contract as ``Thread.join``: returns after ``timeout`` with the thread
     still alive if it did not end (check ``is_alive()``); never raises for the
-    OS-thread wait."""
+    OS-thread wait. ``deadline`` (``time.monotonic()`` value) also bounds the
+    OS-thread wait. A thread alive at the call has its task start time read
+    first, so a reused tid ends the wait at once."""
+    tid = thread.native_id if thread.is_alive() else None
+    start_time = task_start_time(tid) if tid is not None else None
     thread.join(timeout)
-    await_os_thread_exit(thread)
+    cap = None if deadline is None else deadline - time.monotonic()
+    await_os_thread_exit(thread, cap_s=cap, start_time=start_time)
 
 
-def await_executor_os_exit(executor: ThreadPoolExecutor) -> None:
-    """:func:`await_os_thread_exit` for every worker thread ``executor`` started
-    (call after its ``shutdown(wait=True)``)."""
-    for thread in list(getattr(executor, "_threads", ())):
-        await_os_thread_exit(thread)
+def _start_times(threads: list[threading.Thread]) -> dict[threading.Thread, int]:
+    out: dict[threading.Thread, int] = {}
+    for thread in threads:
+        tid = thread.native_id
+        if tid is not None and thread.is_alive():
+            start_time = task_start_time(tid)
+            if start_time is not None:
+                out[thread] = start_time
+    return out
 
 
 @contextlib.contextmanager
 def os_joined(executor: _E) -> Generator[_E]:
     """``with os_joined(ThreadPoolExecutor(...)) as pool:`` -- the executor's
-    own ``with`` (``shutdown(wait=True)``), then the OS-thread wait for its
-    workers, on the normal and the exception path alike."""
+    ``shutdown(wait=True)`` (what its own ``with`` does), then the OS-thread
+    wait for its workers, on the normal and the exception path alike. Only
+    workers alive at shutdown are waited for, each checked against its task
+    start time read before the shutdown, so a reused tid costs nothing, and all
+    of them share one :data:`OS_EXIT_WAIT_S` cap."""
     try:
-        with executor:
-            yield executor
+        yield executor
     finally:
-        await_executor_os_exit(executor)
+        alive = _start_times(list(getattr(executor, "_threads", ())))
+        executor.shutdown(wait=True)
+        # One cap for the whole pool, not one per worker: a teardown that is
+        # really stuck costs at most OS_EXIT_WAIT_S per pool shutdown.
+        deadline = time.monotonic() + OS_EXIT_WAIT_S
+        for thread, start_time in alive.items():
+            await_os_thread_exit(thread, cap_s=deadline - time.monotonic(), start_time=start_time)

@@ -1517,12 +1517,7 @@ def main() -> int:
             "GUI launchers typically set DEEPFIN_CKPT in the shell profile."
         )
 
-  # Logs must go to stderr — stdout is reserved for UCI protocol.
-    logging.basicConfig(
-        level=getattr(logging, args.log_level.upper(), logging.WARNING),
-        stream=sys.stderr,
-        format="%(asctime)s %(name)s %(levelname)s %(message)s",
-    )
+    _configure_logging(args.log_level)
 
   # Configure shared inductor + triton cache before any torch.compile
   # call. Mirrors selfplay (worker._configure_shared_compile_cache) so a
@@ -1915,6 +1910,15 @@ def _hard_exit(rc: int) -> None:
         with contextlib.suppress(Exception):
             stream.flush()
     os._exit(rc)
+
+
+def _configure_logging(level_name: str) -> None:
+    """Logs go to stderr: stdout is reserved for the UCI protocol."""
+    logging.basicConfig(
+        level=getattr(logging, level_name.upper(), logging.WARNING),
+        stream=sys.stderr,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    )
 
 
 def _drain_builder(builder: threading.Thread, rc: int) -> None:

@@ -3838,7 +3838,7 @@ class Engine:
             self._ponder_release.set()
             # OS-thread wait (utils/thread_join): the search ran evaluator work and
             # ``quit`` closes the evaluators next.
-            join_thread(thread, max(0.0, end - time.monotonic()))
+            join_thread(thread, max(0.0, end - time.monotonic()), deadline=end)
             if thread.is_alive():
                 self._park_search_thread(thread, answer=answer_parked)
                 raise SearchNotQuiescent(
@@ -3846,13 +3846,15 @@ class Engine:
                 )
         elif thread is not None:
             # Ended on its own (``quit`` right after its ``bestmove``): its OS
-            # thread may still be in torch's thread-local teardown.
-            await_os_thread_exit(thread)
+            # thread may still be in torch's thread-local teardown. Reached on
+            # every go/stop/setoption too: bounded by this call's budget, and a
+            # thread whose wait expired once is never waited for again.
+            await_os_thread_exit(thread, cap_s=max(0.0, end - time.monotonic()))
         if not self._warmup_done.wait(timeout=max(0.0, end - time.monotonic())):
             raise SearchNotQuiescent("warmup stop timed out; worker unchanged")
         for orphan in list(self._orphan_threads):
             wait = 0.0 if timeout_s is None else max(0.0, end - time.monotonic())
-            join_thread(orphan, wait)
+            join_thread(orphan, wait, deadline=end)
             if orphan.is_alive():
                 raise SearchNotQuiescent(
                     "an earlier search that missed its stop deadline still owns the worker"

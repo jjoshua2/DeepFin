@@ -240,3 +240,75 @@ def test_uci_deadline_watchdog_close() -> None:
     dog.close(5.0)
     assert dog._thread is not None
     _assert_os_thread_gone(dog._thread)
+
+
+def test_worker_selfplay_thread_pool(slow_thread_exit, monkeypatch) -> None:
+    """``_run_selfplay_threaded``'s per-batch pool (``os_joined``): every
+    selfplay thread's OS thread is gone when the session returns."""
+    import numpy as np
+
+    from chess_anti_engine import worker as worker_module
+    from chess_anti_engine.worker import WorkerSession
+
+    calls: list[str] = []
+    both = threading.Barrier(2)  # one game per thread: the pool must start two
+
+    def fake_play_batch(*_a: Any, **_k: Any) -> tuple[None, str]:
+        both.wait(5)
+        calls.append(threading.current_thread().name)
+        return None, "stats"
+
+    monkeypatch.setattr(worker_module, "play_batch", fake_play_batch)
+    fake = SimpleNamespace(
+        _selfplay_state_count=lambda games: 2, rng=np.random.default_rng(0), device="cpu",
+        _stop_selfplay=False, log=SimpleNamespace(exception=print),
+        _on_completed_game=None, _record_selfplay_phase_timing=None, _check_model_update=None,
+        _register_live_state=None, _resume_inflight_enabled=False, _suspend_inflight_games=None,
+        _stop_fn=None, _pause_fn=None, _clear_live_states=lambda: None,
+        _aggregate_thread_stats=lambda stats: stats,
+    )
+    out = WorkerSession._run_selfplay_threaded(
+        fake, games_per_batch=2, sf=None, eval_=None, cfgs={})  # pyright: ignore[reportArgumentType]
+    assert out == ["stats", "stats"]
+    workers = [t for t in slow_thread_exit if t.name.startswith("ThreadPoolExecutor")]
+    assert len(workers) == 2
+    assert sorted(calls) == sorted(t.name for t in workers)
+    for t in workers:
+        _assert_os_thread_gone(t)
+
+
+class _GhostThread:
+    """An ended search thread whose tid now names another live task."""
+
+    def __init__(self, native_id: int) -> None:
+        self.native_id = native_id
+        self.name = "ghost-search"
+
+    def is_alive(self) -> bool:
+        return False
+
+
+def test_uci_wait_for_an_ended_search_is_bounded_by_the_budget_and_not_repeated() -> None:
+    """``_wait_for_search`` runs on every go/stop/setoption: for an ended search
+    thread whose tid was reused, the OS-thread wait spends at most the call's own
+    budget, once; later calls do not wait again."""
+    from chess_anti_engine.uci.engine import Engine
+
+    release = threading.Event()
+    other = threading.Thread(target=release.wait, daemon=True)
+    other.start()
+    try:
+        assert other.native_id is not None
+        ghost = _GhostThread(other.native_id)
+        fake = _engine_like(_search_thread=ghost)
+        fake._warmup_done.set()
+        started = time.monotonic()
+        Engine._wait_for_search(fake, timeout_s=0.1)  # pyright: ignore[reportArgumentType]
+        assert time.monotonic() - started < 0.5  # the 0.1 s budget, not the 1 s cap
+        fake._search_thread = ghost  # the engine keeps answering commands
+        started = time.monotonic()
+        Engine._wait_for_search(fake, timeout_s=5.0)  # pyright: ignore[reportArgumentType]
+        assert time.monotonic() - started < 0.05  # given up once: never waited for again
+    finally:
+        release.set()
+        other.join(5)

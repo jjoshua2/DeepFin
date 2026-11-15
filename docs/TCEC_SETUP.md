@@ -564,12 +564,12 @@ adds that many again (two threads and about 30 MB RSS per rebuild with two
 devices on CPU; on GPU the old evaluators also keep their device memory); a
 restart frees them. Resending an option at the value already in force rebuilds
 nothing (`info string ... already ...; nothing rebuilt`), so a GUI that
-resends its options does not add any. The other side of that: re-sending the
-same value no longer re-admits a device that raised. That needs an option that
-rebuilds set to a different value, or an engine restart (a device that stopped
-answering is left out of every rebuild this session, so only a restart brings it
-back) (`SearchParallel gumbel` / `UseMultiGpuPUCV true`
-still rebuild when their pool is gone, e.g. after a root-parallel retirement). Once 16 threads are parked after a fault,
+resends its options does not add any (`SearchParallel gumbel` / `UseMultiGpuPUCV true`
+still rebuild when their pool is gone, e.g. after a root-parallel retirement). The
+other side of that: re-sending the same value no longer re-admits a device that
+raised. That needs an option that rebuilds set to a different value, or an engine
+restart; a device that stopped answering is left out of every rebuild this session,
+so only a restart brings it back. Once 16 threads are parked after a fault,
 an option change that would rebuild is refused and the current value kept
 (`info string WARNING ... not changed: ... parked after a device fault this session ...`).
 Per-`go` search threads still end after each move. `quit` after a fault

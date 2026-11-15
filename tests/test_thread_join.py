@@ -14,6 +14,7 @@ import ctypes.util
 import logging
 import os
 import sys
+import textwrap
 import threading
 import time
 from collections.abc import Iterator
@@ -179,3 +180,171 @@ def test_await_is_a_no_op_for_an_unstarted_or_running_thread() -> None:
     finally:
         release.set()
         running.join(5)
+
+
+class _EndedThread:
+    """An ended thread whose tid now names another live task (a reused tid)."""
+
+    def __init__(self, native_id: int, name: str = "ended") -> None:
+        self.native_id = native_id
+        self.name = name
+
+    def is_alive(self) -> bool:
+        return False
+
+
+@pytest.fixture
+def live_tid() -> Iterator[int]:
+    release = threading.Event()
+    other = threading.Thread(target=release.wait, daemon=True)
+    other.start()
+    assert other.native_id is not None
+    yield other.native_id
+    release.set()
+    other.join(5)
+
+
+def test_a_reused_tid_with_a_different_start_time_ends_the_wait_at_once(live_tid) -> None:
+    ghost = _EndedThread(live_tid)
+    real = thread_join.task_start_time(live_tid)
+    assert real is not None
+    started = time.monotonic()
+    assert thread_join.await_os_thread_exit(ghost, start_time=real + 1) is True  # pyright: ignore[reportArgumentType]
+    assert time.monotonic() - started < 0.05
+
+
+def test_the_wait_is_bounded_by_the_callers_budget_and_never_repeated(live_tid, caplog) -> None:
+    caplog.set_level(logging.WARNING, logger=thread_join.__name__)
+    ghost = _EndedThread(live_tid, name="ghost")
+    started = time.monotonic()
+    assert thread_join.await_os_thread_exit(ghost, cap_s=0.05) is False  # pyright: ignore[reportArgumentType]
+    assert time.monotonic() - started < 0.5  # the budget, not the 1 s cap
+    started = time.monotonic()
+    assert thread_join.await_os_thread_exit(ghost) is False  # pyright: ignore[reportArgumentType]
+    assert time.monotonic() - started < 0.05  # given up once: not waited for again
+    assert sum("ghost" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_a_thread_seen_gone_is_not_waited_for_again_even_if_its_tid_is_reused(live_tid) -> None:
+    done = threading.Thread(target=lambda: None, daemon=True)
+    done.start()
+    done.join(5)
+    assert done.native_id is not None
+    assert _gone_within(_task(done), 5)
+    ghost = _EndedThread(done.native_id)
+    assert thread_join.await_os_thread_exit(ghost) is True  # pyright: ignore[reportArgumentType]
+    ghost.native_id = live_tid  # the tid now names a live task
+    started = time.monotonic()
+    assert thread_join.await_os_thread_exit(ghost) is True  # pyright: ignore[reportArgumentType]
+    assert time.monotonic() - started < 0.05
+
+
+def test_join_sites_check_the_task_start_time_read_before_the_join(keys, monkeypatch) -> None:
+    """``join_thread`` and ``os_joined`` read each live thread's start time before
+    joining; if the tid then names a different task they do not wait."""
+    real = thread_join.task_start_time
+    after_join = threading.Event()
+    def shifted(tid: int) -> int | None:
+        seen = real(tid)
+        return None if seen is None else seen + int(after_join.is_set())
+
+    monkeypatch.setattr(thread_join, "task_start_time", shifted)
+    go = threading.Event()  # keeps the worker alive until join_thread has read its start time
+
+    def body() -> None:
+        go.wait(5)
+        _slow_tls_exit(keys, 600_000)
+
+    worker = threading.Thread(target=body, daemon=True)
+    real_join = worker.join
+
+    def join(timeout: float | None = None) -> None:
+        go.set()
+        real_join(timeout)
+        after_join.set()
+
+    monkeypatch.setattr(worker, "join", join)
+    worker.start()
+    started = time.monotonic()
+    thread_join.join_thread(worker, 5.0)
+    assert time.monotonic() - started < 0.4  # the 0.6 s destructor was not waited for
+
+    after_join.clear()
+    pool = ThreadPoolExecutor(max_workers=1)
+    real_shutdown = pool.shutdown
+
+    def shutdown(wait: bool = True, **kw: Any) -> None:
+        real_shutdown(wait=wait, **kw)
+        after_join.set()
+
+    monkeypatch.setattr(pool, "shutdown", shutdown)
+    started = time.monotonic()
+    with thread_join.os_joined(pool) as p:
+        p.submit(_slow_tls_exit, keys, 600_000).result()
+    assert time.monotonic() - started < 0.4
+
+
+@pytest.mark.skipif(sys.version_info >= (3, 13), reason=(
+    "from 3.13 Thread.join already waits for the OS thread, so no cap can be hit after it; "
+    "the join-race CI leg runs this on 3.10"))
+def test_uci_cap_warning_goes_to_stderr_and_never_to_stdout(tmp_path) -> None:
+    """With the engine's own logging setup, a cap hit on the UCI join path is one
+    WARNING line on stderr and nothing on stdout (the protocol stream)."""
+    import subprocess
+    from pathlib import Path
+
+    script = tmp_path / "uci_cap.py"
+    script.write_text(textwrap.dedent('''
+        import ctypes, ctypes.util, threading
+        from chess_anti_engine.uci import __main__ as uci_main, wedge
+        from chess_anti_engine.utils import thread_join
+        uci_main._configure_logging("warning")
+        thread_join.OS_EXIT_WAIT_S = 0.05
+        libc = ctypes.CDLL(ctypes.util.find_library("c"))
+        usleep = ctypes.cast(libc.usleep, ctypes.c_void_p).value
+        def body():
+            key = ctypes.c_uint()
+            libc.pthread_key_create(ctypes.byref(key), ctypes.c_void_p(usleep))
+            libc.pthread_setspecific(key, ctypes.c_void_p(600000))
+        t = threading.Thread(target=body, name="rpg-group-3")
+        t.start()
+        wedge.join_unless_wedged(t, 5.0)
+    '''))
+    repo = str(Path(__file__).resolve().parents[1])
+    env = dict(os.environ, CUDA_VISIBLE_DEVICES="", PYTHONPATH=repo)
+    done = subprocess.run([sys.executable, str(script)], capture_output=True, text=True,
+                          env=env, timeout=120, check=False)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == "", done.stdout
+    warnings = [ln for ln in done.stderr.splitlines() if "WARNING" in ln and "rpg-group-3" in ln]
+    assert len(warnings) == 1, done.stderr
+
+
+def test_join_thread_deadline_bounds_the_os_thread_wait(keys, caplog) -> None:
+    caplog.set_level(logging.WARNING, logger=thread_join.__name__)
+    worker = threading.Thread(target=_slow_tls_exit, args=(keys, 600_000), daemon=True,
+                              name="deadline-bound")
+    worker.start()
+    started = time.monotonic()
+    thread_join.join_thread(worker, 5.0, deadline=started + 0.1)
+    assert not worker.is_alive()
+    if sys.version_info < (3, 13):  # from 3.13 the join itself waits out the destructor
+        assert time.monotonic() - started < 0.45  # the deadline, not the 0.6 s destructor
+    assert _gone_within(_task(worker), 5)
+
+
+def test_os_joined_shares_one_cap_across_its_workers(keys, monkeypatch) -> None:
+    monkeypatch.setattr(thread_join, "OS_EXIT_WAIT_S", 0.2)
+    barrier = threading.Barrier(3)
+
+    def body() -> None:
+        barrier.wait(5)  # three workers exist, each with a 0.6 s teardown
+        _slow_tls_exit(keys, 600_000)
+
+    started = time.monotonic()
+    with thread_join.os_joined(ThreadPoolExecutor(max_workers=3)) as pool:
+        for f in [pool.submit(body) for _ in range(3)]:
+            f.result()
+    elapsed = time.monotonic() - started
+    if sys.version_info < (3, 13):
+        assert elapsed < 0.5, elapsed  # one 0.2 s cap, not three

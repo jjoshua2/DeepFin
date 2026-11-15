@@ -669,7 +669,7 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
     item.stash[_EXIT_MARK] = len(_INTERCEPTED_HARD_EXITS)
 
 
-@pytest.hookimpl(wrapper=True)
+@pytest.hookimpl(wrapper=True, tryfirst=True)  # outermost: sees the final xfail/skip outcome
 def pytest_runtest_makereport(item: pytest.Item):
     """Fail the offending test's own report when an ``os._exit`` was
     intercepted during it (setup, call or teardown), even if the code under
@@ -679,7 +679,9 @@ def pytest_runtest_makereport(item: pytest.Item):
     report = yield
     new = _INTERCEPTED_HARD_EXITS[item.stash.get(_EXIT_MARK, len(_INTERCEPTED_HARD_EXITS)):]
     item.stash[_EXIT_MARK] = len(_INTERCEPTED_HARD_EXITS)
-    if new and report.passed:
+    # Anything but an existing failure: a pass, a skip raised after the
+    # swallowed exit, or an xfail-marked test that then failed (XFAIL reads green).
+    if new and not report.failed:
         report.outcome = "failed"
         report.longrepr = (
             "conftest: intercepted in-process " + "; ".join(new)
