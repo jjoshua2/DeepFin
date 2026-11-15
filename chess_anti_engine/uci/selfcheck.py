@@ -1104,16 +1104,28 @@ def run_selfcheck(opts: SelfcheckOptions) -> list[CheckResult]:
         # it independent of the torch/CUDA result above.
         _run_check("search", lambda: check_search("cpu")),
         _run_check("checkpoint", lambda: check_checkpoint(opts.checkpoint, devices[0])),
-        # Before `syzygy`: its in-process probes would read a table whose data
-        # is corrupt; this names every bad file first (and never crashes).
-        _run_check("syzygy-checksums", lambda: check_syzygy_checksums(
-            opts.syzygy_path, opts.syzygy_checksums, enabled=opts.verify_syzygy_checksums,
-            require=opts.require_syzygy_checksums, threads=opts.syzygy_checksum_threads,
-        ), limit=SYZYGY_CHECKSUM_DETAIL_LIMIT),
-        _run_check("syzygy", lambda: check_syzygy(opts.syzygy_path)),
     ]
+    # A failed checksum check must stop both table-loading routes. SKIP keeps
+    # the explicit NOT VERIFIED policy (including --no-syzygy-checksums).
+    checksum_result = _run_check("syzygy-checksums", lambda: check_syzygy_checksums(
+        opts.syzygy_path, opts.syzygy_checksums, enabled=opts.verify_syzygy_checksums,
+        require=opts.require_syzygy_checksums, threads=opts.syzygy_checksum_threads,
+    ), limit=SYZYGY_CHECKSUM_DETAIL_LIMIT)
+    results.append(checksum_result)
+    checksums_failed = checksum_result.status == "FAIL"
+    if checksums_failed:
+        results.append(CheckResult(
+            "syzygy", "SKIP", "blocked by syzygy-checksums FAIL; tables were not probed",
+        ))
+    else:
+        results.append(_run_check("syzygy", lambda: check_syzygy(opts.syzygy_path)))
     if opts.run_uci:
-        results.append(_run_check("uci", lambda: check_uci(opts)))
+        if checksums_failed:
+            results.append(CheckResult(
+                "uci", "SKIP", "blocked by syzygy-checksums FAIL; UCI subprocess was not started",
+            ))
+        else:
+            results.append(_run_check("uci", lambda: check_uci(opts)))
     else:
         results.append(CheckResult("uci", "SKIP", "--no-uci given"))
     return results
