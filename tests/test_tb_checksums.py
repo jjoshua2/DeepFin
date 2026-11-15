@@ -13,6 +13,7 @@ import os
 import random
 import sys
 from pathlib import Path
+from unittest.mock import Mock
 
 import chess.syzygy
 import pytest
@@ -264,6 +265,160 @@ def test_selfcheck_flags_reach_the_check(monkeypatch) -> None:
                     "require": True, "threads": 2}
     opts, _ = sc.parse_options(["--syzygy", "/tb/a", "--no-syzygy-checksums"])
     assert opts.verify_syzygy_checksums is False
+
+
+def _stub_non_table_selfchecks(monkeypatch: pytest.MonkeyPatch) -> list[Mock]:
+    checks = []
+    for name in ("check_python", "check_torch", "check_extensions", "check_freshness",
+                 "check_encoder", "check_movegen", "check_search", "check_checkpoint"):
+        check = Mock(return_value="unrelated component stub")
+        monkeypatch.setattr(sc, name, check)
+        checks.append(check)
+    monkeypatch.setattr(sc, "resolve_devices", lambda requested: ["cpu"])
+    return checks
+
+
+_SELFCHECK_GATE_ENGINE = """
+import sys
+with open(sys.argv[1], 'x') as log:
+    for line in sys.stdin:
+        log.write(line)
+        log.flush()
+        cmd = line.strip()
+        if cmd == 'uci':
+            print('uciok', flush=True)
+        elif cmd == 'isready':
+            print('readyok', flush=True)
+        elif cmd.startswith('go '):
+            print('bestmove e2e4', flush=True)
+        elif cmd == 'quit':
+            break
+"""
+
+
+def _fake_uci_for_checksum_gate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Exercise the real check_uci consumer using a table-free protocol child."""
+    log = tmp_path / "fake-uci-input.txt"
+    real_check_uci = sc.check_uci
+
+    def command(checkpoint: str, opts: sc.SelfcheckOptions, cache: str) -> list[str]:
+        assert checkpoint == opts.checkpoint == "unused"
+        assert Path(cache).is_absolute()
+        return [sys.executable, "-c", _SELFCHECK_GATE_ENGINE, str(log)]
+
+    monkeypatch.setattr(sc, "check_uci", lambda opts: real_check_uci(opts, command=command))
+    return log
+
+
+@pytest.mark.parametrize("failure", (
+    "mismatch", "malformed-list", "unverified-required", "disabled-required",
+))
+def test_selfcheck_checksum_gate_fail_blocks_both_table_loading_routes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    checks = _stub_non_table_selfchecks(monkeypatch)
+    d = _tables(tmp_path / "tb", _FILES)
+    lst = tmp_path / "sums.md5"
+    lst.write_text("" if failure == "unverified-required" else _list_text(_FILES))
+    if failure == "mismatch":
+        (d / "KQvK.rtbz").write_bytes(b"corrupted fake table")
+    elif failure == "malformed-list":
+        with lst.open("a") as f:
+            f.write("malformed checksum line\n")
+    probe = Mock(side_effect=AssertionError("rejected tables reached in-process probe"))
+    popen = Mock(side_effect=AssertionError("rejected tables reached UCI child"))
+    monkeypatch.setattr(sc, "check_syzygy", probe)
+    # Keep check_uci real: without the gate it would reach this Popen sentinel.
+    monkeypatch.setattr(sc.subprocess, "Popen", popen)
+    opts = sc.SelfcheckOptions(
+        checkpoint="unused", devices=("cpu",), syzygy_path=str(d),
+        syzygy_checksums=(str(lst),), syzygy_checksum_threads=1,
+        verify_syzygy_checksums=failure != "disabled-required",
+        require_syzygy_checksums=failure.endswith("required"),
+    )
+    results = sc.run_selfcheck(opts)
+    by_name = {r.name: r for r in results}
+    assert sc.overall(results) == "FAIL"
+    assert by_name["syzygy-checksums"].status == "FAIL"
+    expected_cause = {
+        "mismatch": "CHECKSUM MISMATCH", "malformed-list": "malformed checksum line",
+        "unverified-required": "NOT VERIFIED", "disabled-required": "turned off",
+    }[failure]
+    assert expected_cause in by_name["syzygy-checksums"].detail
+    for name in ("syzygy", "uci"):
+        assert by_name[name].status == "SKIP"
+        assert "blocked by syzygy-checksums FAIL" in by_name[name].detail
+    probe.assert_not_called()
+    popen.assert_not_called()
+    for check in checks:
+        check.assert_called_once()
+
+
+@pytest.mark.parametrize("verification", ("pass", "disabled", "unverified"))
+def test_selfcheck_checksum_gate_pass_and_skip_keep_existing_loading_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verification: str,
+) -> None:
+    _stub_non_table_selfchecks(monkeypatch)
+    d = _tables(tmp_path / "tb", _FILES)
+    lst = tmp_path / "sums.md5"
+    lst.write_text("" if verification == "unverified" else _list_text(_FILES))
+    probe = Mock(return_value="stand-in probe; no real table loading")
+    monkeypatch.setattr(sc, "check_syzygy", probe)
+    log = _fake_uci_for_checksum_gate(monkeypatch, tmp_path)
+    opts = sc.SelfcheckOptions(
+        checkpoint="unused", devices=("cpu",), syzygy_path=str(d), fast=True,
+        syzygy_checksums=(str(lst),), syzygy_checksum_threads=1,
+        verify_syzygy_checksums=verification != "disabled",
+    )
+    results = sc.run_selfcheck(opts)
+    by_name = {r.name: r for r in results}
+    assert sc.overall(results) == "PASS"
+    assert by_name["syzygy-checksums"].status == ("PASS" if verification == "pass" else "SKIP")
+    assert by_name["syzygy"].status == "PASS"
+    assert by_name["uci"].status == "PASS"
+    probe.assert_called_once_with(str(d))
+    wire = log.read_text().splitlines()
+    assert f"setoption name SyzygyPath value {d}" in wire
+    assert wire[-1] == "quit"
+
+
+def test_selfcheck_checksum_gate_no_table_path_keeps_uci_without_tables(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_non_table_selfchecks(monkeypatch)
+    log = _fake_uci_for_checksum_gate(monkeypatch, tmp_path)
+    results = sc.run_selfcheck(sc.SelfcheckOptions(checkpoint="unused", devices=("cpu",), fast=True))
+    by_name = {r.name: r for r in results}
+    assert sc.overall(results) == "PASS"
+    assert by_name["syzygy-checksums"].status == "SKIP"
+    assert by_name["syzygy"].status == "SKIP"
+    assert by_name["uci"].status == "PASS"
+    assert not any(line.startswith("setoption name SyzygyPath") for line in log.read_text().splitlines())
+
+
+@pytest.mark.parametrize("corrupt", (False, True))
+def test_selfcheck_checksum_gate_no_uci_retains_explicit_skip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, corrupt: bool,
+) -> None:
+    _stub_non_table_selfchecks(monkeypatch)
+    d = _tables(tmp_path / "tb", _FILES)
+    lst = tmp_path / "sums.md5"
+    lst.write_text(_list_text(_FILES))
+    if corrupt:
+        (d / "KQvK.rtbz").write_bytes(b"corrupted fake table")
+    probe = Mock(return_value="stand-in probe")
+    uci = Mock(side_effect=AssertionError("--no-uci started a child"))
+    monkeypatch.setattr(sc, "check_syzygy", probe)
+    monkeypatch.setattr(sc, "check_uci", uci)
+    results = sc.run_selfcheck(sc.SelfcheckOptions(
+        devices=("cpu",), syzygy_path=str(d), run_uci=False,
+        syzygy_checksums=(str(lst),), syzygy_checksum_threads=1,
+    ))
+    by_name = {r.name: r for r in results}
+    assert sc.overall(results) == ("FAIL" if corrupt else "PASS")
+    assert by_name["uci"] == sc.CheckResult("uci", "SKIP", "--no-uci given")
+    assert probe.call_count == (0 if corrupt else 1)
+    uci.assert_not_called()
 
 
 def test_the_full_list_is_not_cut_at_the_generic_400_chars(tmp_path: Path) -> None:
