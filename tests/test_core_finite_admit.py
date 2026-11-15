@@ -196,7 +196,6 @@ def synthetic_game(tmp_path: Path, monkeypatch, corruption=None, diagnostics="in
 @pytest.mark.parametrize("corruption", [None, "input", "policy", "outcome", "proof"])
 @pytest.mark.parametrize("diagnostics", ["inactive", "active"])
 def test_real_verified_raw_and_zarr_roundtrip_with_fake_owned_tb(tmp_path: Path, monkeypatch, corruption, diagnostics):
-    import numpy as np
     from chess_anti_engine.core_generation_data import validate_stored_targets
     from chess_anti_engine.replay.shard import load_shard_arrays
 
