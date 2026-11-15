@@ -59,7 +59,6 @@ External records use `~/chess-artifacts/operations/rl-week-one-20261112-v1/`:
 | `core-retained-search-mainWDL-512-pilot-bindings-v1/data-bank-authority.json` | `2d8570409214a331323d5c1c9b68e46f1308257608ee9a9b39244f24de8513e5` |
 | `core-retained-search-mainWDL-target-decomposition-feasibility-v1/manifest.json` | `c675ee0a71d904b9ef8c93224c34a01aa00606a8739ec32476094e31235e5d95` |
 | `core-retained-search-target-census-code-independent-source-review-v1/review.json` | `5b515645a4d8d21ad97c246edccb75142a985fa4798f1c75c33bfe3a766d4034` |
-
 | `core-retained-search-target-census-source-preparation-v1/manifest.json` | `dbc25acf6428f3ca8349535c71f228617d7a2c0dbd6dfd8bc5df77c79f0550e5` |
 
 The initial private profile names the reviewed code-only commit above. Any subsequent docs/main integration requires an explicit, reviewed source-head/path metadata transfer with those same reader/test bytes before final execution bindings. It does not change the selected population, functions, masks, strata or CPU ceiling. The separate publication record binds the final protocol, source and main proof; no publication digest is placed inside that protocol.
