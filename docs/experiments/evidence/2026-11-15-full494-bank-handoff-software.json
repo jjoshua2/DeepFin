@@ -1,0 +1,371 @@
+{
+  "GPU": {
+    "allocator": {
+      "cap_bytes": 4294967296,
+      "peak_allocated_bytes": 974753792,
+      "peak_reserved_bytes": 1029701632,
+      "scope": "Torch allocator only, not total process/driver/cuBLAS"
+    },
+    "backend": {
+      "cudnn_benchmark": false,
+      "cudnn_deterministic": false,
+      "cudnn_tf32": true,
+      "deterministic_algorithms": false,
+      "interop_threads": 2,
+      "matmul_precision": "highest",
+      "matmul_tf32": false,
+      "torch_threads": 2
+    },
+    "device": {
+      "free_after_bytes": 32250003456,
+      "free_before_bytes": 32432455680,
+      "name": "NVIDIA GeForce RTX 5090",
+      "total_bytes": 34162343936
+    },
+    "negative_attempts": [
+      {
+        "constructors": 0,
+        "fault": "missing_tag",
+        "injection_scope": "in-memory only after real authenticated weights-only load",
+        "loads": 1,
+        "refusal": "loaded bank actor family tag differs"
+      },
+      {
+        "constructors": 0,
+        "fault": "wrong_tag",
+        "injection_scope": "in-memory only after real authenticated weights-only load",
+        "loads": 1,
+        "refusal": "loaded bank actor family tag differs"
+      }
+    ],
+    "per_pid_memory": {
+      "reason": "no additional per-PID query selected",
+      "status": "UNAVAILABLE"
+    },
+    "positive": {
+      "cuda_autocast": "bfloat16",
+      "forwards": 1,
+      "inference_only_remained_false": true,
+      "input_shape": [
+        1,
+        175,
+        8,
+        8
+      ],
+      "learner_tag_generation": 2,
+      "model_released": true,
+      "no_grad_observed": true,
+      "producer_generation_projection": 3,
+      "raw": {
+        "bf16_linear_calls": 204,
+        "calls": 1,
+        "output_dtypes": {
+          "categorical": "torch.bfloat16",
+          "moves_left": "torch.bfloat16",
+          "policy_future": "torch.float32",
+          "policy_own": "torch.float32",
+          "policy_sf": "torch.float32",
+          "policy_soft": "torch.float32",
+          "sf_eval": "torch.bfloat16",
+          "sf_volatility": "torch.float32",
+          "volatility": "torch.float32",
+          "wdl": "torch.bfloat16"
+        },
+        "raw_wdl_bf16": true
+      },
+      "real_constructors": 1,
+      "real_decodes": 1,
+      "segment": 1,
+      "served_state_unchanged": true,
+      "step": 1,
+      "transport": {
+        "dtype": "float32",
+        "finite": true,
+        "policy_shape": [
+          1,
+          4672
+        ],
+        "wdl_shape": [
+          1,
+          3
+        ]
+      }
+    }
+  },
+  "GPU_independent_actual": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/full494-bank-handoff-software-GPU-independent-actual-review-v1/review.json",
+    "sha256": "8134931e88c2fa966d23ba1eed63e0d7a362bd85ea9aea19eeab3e8cc2032f86"
+  },
+  "actual_learner": {
+    "LR": 1e-05,
+    "applied_optimizer_posthooks": 1,
+    "batch_size": 1,
+    "device": "cpu",
+    "drawn_rows": 1,
+    "entry": "scripts.core_generation_bank_learner",
+    "first_generation": 2,
+    "five_RNG_streams": "in actual boundary; no continuation restoration tested",
+    "mirror_prob": 0,
+    "nonfinite_skip_rate": 0,
+    "seed": 45,
+    "segment": 1,
+    "step": 1,
+    "step_start": 0,
+    "train_samples_seen": 1,
+    "train_steps_done": 1,
+    "transient_retry_batches": 0,
+    "use_amp": false
+  },
+  "architecture": {
+    "_schema_version": 20,
+    "arc_attention_bias": "none",
+    "aux_policy_head_dim": 128,
+    "categorical_head_coupled": true,
+    "dynamic_relation_count": 5,
+    "embed_dim": 512,
+    "embed_dim_by_layer": null,
+    "enable_policy_sf_head": true,
+    "ffn_mult": 1.5,
+    "ffn_mult_by_layer": [
+      1.5,
+      1.5,
+      1.5,
+      1.5,
+      1.5,
+      1.555556,
+      1.65,
+      1.772222,
+      1.894444,
+      1.666667,
+      1.638889,
+      1.905556,
+      1.783333,
+      1.794444,
+      1.744444,
+      1.5
+    ],
+    "history_rep_fix": true,
+    "input_extra_features": "v2_threats",
+    "input_global_embedding": "none",
+    "input_global_embedding_channels": 0,
+    "input_history_encoding": "lc0_root_legacy_meta",
+    "input_pos_encoding": "arc_adapter",
+    "input_square_embedding": "none",
+    "kind": "transformer",
+    "num_heads": 16,
+    "num_layers": 16,
+    "phase_output_adapter": false,
+    "phase_output_adapter_dim": 64,
+    "phase_piece_thresholds": [
+      13,
+      22
+    ],
+    "phase_smolgen": false,
+    "policy_dynamic_relations": false,
+    "policy_embedding_mode": "linear",
+    "policy_encoding": "lc0_1858",
+    "qkv_projection": "split",
+    "smolgen_bias_norm": "center_rms",
+    "smolgen_bias_scale": "layer_head",
+    "smolgen_gen_sz": 256,
+    "smolgen_hidden_channels": 32,
+    "smolgen_hidden_sz": 256,
+    "smolgen_mode": "per_layer",
+    "smolgen_pooling": "flatten",
+    "smolgen_relation_basis": true,
+    "smolgen_relation_coeff_norm": "none",
+    "smolgen_relation_norm": "none",
+    "smolgen_relation_scale": "none",
+    "use_deepnorm": true,
+    "use_dynamic_relations": false,
+    "use_gradient_checkpointing": false,
+    "use_nla": false,
+    "use_qk_rmsnorm": false,
+    "use_smolgen": true
+  },
+  "closure": {
+    "all_known_births_closed": true,
+    "supervisors_closed": true,
+    "supported_EOF_exit0_all_three_phases": true,
+    "three_leases_free": true
+  },
+  "external_artifacts": {
+    "GPU_binding_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/full494-bank-handoff-software-GPU-independent-binding-review-v1/review.json",
+      "sha256": "ea0fba5fd084371d7ccf25b2a5c18f14c0219ce78668f5d0921bfc0e3a146641"
+    },
+    "GPU_independent_actual": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/full494-bank-handoff-software-GPU-independent-actual-review-v1/review.json",
+      "sha256": "8134931e88c2fa966d23ba1eed63e0d7a362bd85ea9aea19eeab3e8cc2032f86"
+    },
+    "GPU_readout": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/full494-bank-handoff-software-GPU-output-v1/readout.json",
+      "sha256": "1ba467cfc1b42170bf9c1fa2414be4d3f764a0d6dbe6bbeadca47776a610946f"
+    },
+    "GPU_root_acceptance": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/full494-bank-handoff-software-bindings-v1/gpu-root-acceptance.json",
+      "sha256": "ac42da0055645f75a4ddf2ffc00b0c4a85f75b9e66834031134ffe6f79a7210f"
+    },
+    "GPU_scope": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/full494-bank-handoff-software-bindings-v1/gpu-scope.json",
+      "sha256": "938550617e41630eba3e64081c9a1052c50ec8a610664a59f03ccfde9defdf28"
+    },
+    "GPU_terminal": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/full494-bank-handoff-software-loader-GPU-v1/terminal.json",
+      "sha256": "5a52a252d8c7f0c7a0b3a00bbe7b34a1111d201202401bccdc4f47351d81ec45"
+    },
+    "design": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/full494-bank-handoff-software-design-v2/design.json",
+      "sha256": "722d8c50e6140bd4b1a5889aab6e093b2161c92082147f9728bcf0065e94ae05"
+    },
+    "helper": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/full494-bank-handoff-software-preparation-v2/handoff.py",
+      "sha256": "ca807afb860f64e6682be016e7ec37d02f9016c3f90baaf1c6247b98dffa9ee5"
+    },
+    "learner_boundary": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/full494-bank-handoff-software-learner-output-v1/boundary.json",
+      "sha256": "af58e8df247f9826fddd7e719544cb8d9ebe29c4c6151ede976ca873e7a195f4"
+    },
+    "learner_independent_actual": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/full494-bank-handoff-software-learner-independent-actual-review-v1/review.json",
+      "sha256": "9429184efd15382c3380fbe73bd7280b07e31a8ace89054469a1dccf1ab7250d"
+    },
+    "learner_root_acceptance": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/full494-bank-handoff-software-bindings-v1/learner-root-acceptance.json",
+      "sha256": "81444b84aafe6d55a9029da9ae6e376fc6d502acba979aba4e7bb3fbe709dc1a"
+    },
+    "native_prepare_final": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/full494-bank-handoff-software-fixture-v1/native-final.json",
+      "sha256": "e0171afa1b664131c2f629fc9c78f09616ae4372f74fbf0bfe703f0132a18cb6"
+    },
+    "prepare_independent_actual": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/full494-bank-handoff-software-prepare-independent-actual-review-v1/review.json",
+      "sha256": "44fb082ce75edcde2e4322ea00d08657150c3cc580f42429805cf60bee7a3bee"
+    },
+    "prepare_readout": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/full494-bank-handoff-software-fixture-v1/readout.json",
+      "sha256": "45f1080cad5b5375ea2a64356cf4f39bd8c2257f0cef3570a0a1df0debdb105e"
+    },
+    "prepare_root_acceptance": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/full494-bank-handoff-software-bindings-v1/prepare-root-acceptance.json",
+      "sha256": "47dac48dabed292c9365eb5127ea3adf5c6d14a614ef55959a143c87b7e364f1"
+    },
+    "source_packet": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/full494-bank-handoff-software-preparation-v2/manifest.json",
+      "sha256": "667d15e1398eba90e24d701de004149fab19efced1d30ef6bee5b2b380c4dd3a"
+    },
+    "source_packet_v1_unrun": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/full494-bank-handoff-software-preparation-v1/manifest.json",
+      "sha256": "e08bacc2ce64c3d747976b394360641e5cdcfbfe075ff92f31318ac2ad6e56d9"
+    },
+    "source_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/full494-bank-handoff-software-independent-source-review-v2/review.json",
+      "sha256": "8e9de8b187993f5615f73adb24a01c0c865e1c4e6e12fecffe2e84fcbc9be217"
+    },
+    "source_review_v1_changes_required": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/full494-bank-handoff-software-independent-source-review-v1/review.json",
+      "sha256": "b83b9b3edaffb7c40b8724833ccff65bfdce3f9d3319e44001450594961e51af"
+    }
+  },
+  "initial_fixture": {
+    "authority": "ALL_INITIAL_PRODUCER_AUDITOR_ROOT_INDEPENDENT_OUTCOME_SERVING_CLAIMS_FICTIONAL_SOFTWARE_ONLY",
+    "legal_count": 20,
+    "original_donor_used": false,
+    "policy_move": "e2e4",
+    "real_collection_or_data_audit": false,
+    "real_games": 0,
+    "rows": 1,
+    "source_position": "standard start",
+    "synthetic_WDL": "DRAW"
+  },
+  "limits": [
+    "No real accepted bank or game, collection, teacher search, research recipe, full loop, second segment, sustained throughput or adoption qualified.",
+    "No Elo or strength comparison; no claim against multicore Rofchade, Stockfish or Lc0.",
+    "Cancelled study and stopped retained queue remain stopped.",
+    "Whole first-week and long-term goals remain active."
+  ],
+  "model": {
+    "aliases": [
+      [
+        "layer_smolgens.0.gen_weight.weight",
+        "layer_smolgens.1.gen_weight.weight",
+        "layer_smolgens.10.gen_weight.weight",
+        "layer_smolgens.11.gen_weight.weight",
+        "layer_smolgens.12.gen_weight.weight",
+        "layer_smolgens.13.gen_weight.weight",
+        "layer_smolgens.14.gen_weight.weight",
+        "layer_smolgens.15.gen_weight.weight",
+        "layer_smolgens.2.gen_weight.weight",
+        "layer_smolgens.3.gen_weight.weight",
+        "layer_smolgens.4.gen_weight.weight",
+        "layer_smolgens.5.gen_weight.weight",
+        "layer_smolgens.6.gen_weight.weight",
+        "layer_smolgens.7.gen_weight.weight",
+        "layer_smolgens.8.gen_weight.weight",
+        "layer_smolgens.9.gen_weight.weight"
+      ]
+    ],
+    "input_planes": 175,
+    "key_shape_dtype_sha256": "0ee887deb126cc0fd9857f8f8e38bab067d983e6f125903f387ddd6c2ca1a524",
+    "naive_state_numel": 77173088,
+    "state_entries": 494,
+    "unique_parameter_numel": 61444448
+  },
+  "native_custody": {
+    "CLI_local_image_hash_or_mapped_byte_attestation": false,
+    "images": 6,
+    "no_writer_assumption": true,
+    "readonly_observed_image_and_record_stamps_bracket_closed_CLI": true,
+    "source_inputs": 31,
+    "source_records_readonly_required": false
+  },
+  "resources": {
+    "CLI_inphase_size_observation": "arrived after terminal; no rawfile/resource query made; saved size checked inside GPU owner",
+    "CPU_owner_wall_seconds": [
+      5.3760395589633845,
+      8.50341650401242
+    ],
+    "GPU_owner_wall_seconds": 12.63914227602072,
+    "Torch_threads": 2,
+    "affinity": [
+      20,
+      22
+    ],
+    "checkpoint_1GiB_single_2GiB_combined": "observed acceptance bounds; no hardwrite or unobservedpeak claim",
+    "host64GiB": "admission/boundary observations; R7continuous8GiB",
+    "inner_seconds": [
+      270,
+      570,
+      270
+    ],
+    "phase_caps_seconds": [
+      300,
+      600,
+      300
+    ],
+    "wall_is_not_kernel_time_or_throughput": true
+  },
+  "saved_state": {
+    "checkpoint_digests_copied_from_owned_metadata": true,
+    "combined_initial_final_checkpoint_observed_bytes": 967880929,
+    "initial_model_state_sha256": "56fe7c4924005d9ad9d09107a90657d2da7e471bc50cda739b782915ca35240c",
+    "optimizer_active_slots": 438,
+    "optimizer_slots_all_step_one": true,
+    "saved_state_complete_finite": true,
+    "state_changed": true,
+    "trained_checkpoint": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/full494-bank-handoff-software-learner-output-v1/learner.pt",
+      "sha256": "caa78e1195a276b0d5e5318e94d6cefda86c4c14b5ba7477944312dc036fc166"
+    },
+    "trained_model_state_sha256": "701b8e199677dfdc0e5d6ded0e4ea65f3a9e272f801506f354d6d4c107ee7b56"
+  },
+  "schema": "full494-bank-handoff-software-readout/v1",
+  "scope_uuid": "d3c7eb08-3dfc-45e7-843c-044cc9b20ecc",
+  "source": {
+    "owner_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+    "published_main_equivalent": "36f85105f8d747f1c89089987fe0813e06b5bd87",
+    "revision": "4d2e1a984525bd053b10fed7085adeb6ecba2c5a",
+    "tree": "c270475db5da51a143ed542b14a2408f5e9be3c3"
+  },
+  "status": "CLOSED_QUALIFIED_SOFTWARE_HANDOFF_ONLY"
+}

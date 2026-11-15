@@ -125,3 +125,14 @@ No actual actor, parent, recipe, population or collection is selected by this
 source increment. No cancelled study is resumed. Author-side project imports,
 tests, lint, builds and runtime/payload access remain unrun; root owns subsequent
 bounded qualification and publication.
+
+## Subsequent full-model software qualification
+
+The [November15 bounded handoff readout](experiments/2026-11-15-full494-bank-handoff-software.md)
+records one genuine public learner update on a synthetic fixture, followed by
+actual full494 actor loading and CUDA BF16 inference from its separately closed
+checkpoint. Both loaded-tag fault controls refused before construction. Its
+initial producer/auditor/root/independent authority graph is explicitly fictional;
+the learner execution and closure are real. This follow-up qualifies that finite
+software route, with separate root/independent actual acceptance. Real collection,
+sustained-loop readiness, recipe/adoption and playing strength remain unqualified.

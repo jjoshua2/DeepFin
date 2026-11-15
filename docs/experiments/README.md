@@ -16,6 +16,8 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
+- [2026-11-15: Full494 accepted-bank learner and CUDA actor handoff](2026-11-15-full494-bank-handoff-software.md) — closed software qualification: one real public-CLI update, genuine closed-parent actor reload, both invalid-tag refusals and one BF16 inference; synthetic initial authority only, no real bank, sustained loop, adoption or playing-strength result.
+
 - [2026-11-15: Fixed-bank SF current-P0 main-policy 512-update pilot](2026-11-15-sf-current-p0-main-policy-512-pilot.md#2026-11-15-accepted-screens-and-user-cancellation) — two accepted NONPASS screens (B/A 0.416; B/A39 0.4265); remaining diagnostic and planned audit cancelled by user; no confirmation, adoption or resume.
 
 - [2026-11-15: A39/Lc0 joint GPU and timed-driver engineering](2026-11-15-a39-lc0-joint-timed-engineering.md#closed-readout--november-15-2026) — FAILED after 419.549/900 GPU seconds: 13 controls and reciprocal work passed, but only one game completed; Lc0 aborted with a native resource error. Separate CPU diagnosis accepted; cause unknown, no joint/timed or strength qualification and no automatic retry.
