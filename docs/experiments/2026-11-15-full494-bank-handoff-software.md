@@ -17,7 +17,7 @@ This document publishes the subsequent technical readout.
 
 The selected architecture was fixed: a transformer with embedding width 512, 16 layers and 16 heads,
 split QKV, per-layer Smolgen, a relation basis and shared generator weights, coupled categorical
-head, linear policy embedding, auxiliary policy width 128, replication-history
+head, linear policy embedding, auxiliary policy width 128, repetition-history
 fix and `v2_threats`. The complete schema 20 manifest is banked in the evidence.
 Counts, keys, shapes, dtypes and shared aliases had to match; padding keys,
 trimming the model or silently changing configuration was forbidden.
