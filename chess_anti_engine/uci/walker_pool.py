@@ -175,7 +175,7 @@ class WalkerPool:
   # Walkers won't hit the barrier in shutdown mode, so don't wait on it.
         for th in self._started_threads:
   # daemon=True; bounded join just ensures clean teardown for tests.
-            th.join(timeout=2.0)
+            wedge.join_unless_wedged(th, 2.0)  # ended, or parked after a device fault
 
     def run(
         self,

@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import functools
 import threading
+import time
 import types
 from collections.abc import Callable
 from typing import Any, TypeVar, cast
@@ -130,6 +131,7 @@ def park_if_wedged() -> None:
         if not _fault and not _live_wedged_locked():
             return
         _parked.append(me)
+        _changed.notify_all()  # ``join_unless_wedged`` waits for this
         release = _release
         while not release.is_set():
             _changed.wait(timeout=1.0)
@@ -167,13 +169,18 @@ def parking(fn: _F) -> _F:
 
 
 def join_unless_wedged(thread: threading.Thread, timeout: float) -> None:
-    """``Thread.join`` that does not wait on a thread that will park.
+    """``Thread.join`` that also returns once ``thread`` has parked.
 
-    After a device fault, ending workers park instead of exiting, so
-    joining them would only spend the timeout."""
-    if device_fault() is not None or any_wedged():
-        return
-    thread.join(timeout=timeout)
+    After a device fault ending workers park instead of exiting, so a plain
+    join would only spend the timeout. This waits (at most ``timeout``) until
+    the thread has ended or parked, so its cleanup has run when it returns."""
+    deadline = time.monotonic() + max(0.0, timeout)
+    with _lock:
+        while thread.is_alive() and thread not in _parked:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return
+            _changed.wait(timeout=min(left, 0.05))
 
 
 def reset_session_for_tests() -> None:

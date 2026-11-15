@@ -2357,7 +2357,8 @@ class SearchWorker:
         Gumbel pool (searching, or kept after retirement to serve the classic
         path); None when there is neither (single device, or all dead)."""
         pool = getattr(self, "_pucv_pool", None)
-        if pool is not None and pool.n_devices > 0:
+        n_pool = getattr(pool, "n_devices", 0) if pool is not None else 0
+        if isinstance(n_pool, int) and n_pool > 0:
             return pool
         for rpg in (getattr(self, "_rpg_pool", None), getattr(self, "_rpg_rows_pool", None)):
             n = getattr(rpg, "n_devices", 0) if rpg is not None else 0

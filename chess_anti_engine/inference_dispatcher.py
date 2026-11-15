@@ -263,7 +263,8 @@ class CUDAOwnerDispatcher:
             self._closed = True
             self._queue.put(None)
         if self._owner.is_alive():
-            self._owner.join(timeout=30.0)
+            # Returns once the owner ended, or parked after a UCI device fault.
+            wedge.join_unless_wedged(self._owner, 30.0)
 
     def __del__(self) -> None:
         with contextlib.suppress(Exception):
@@ -429,7 +430,8 @@ class BatchCoalescingDispatcher:
             request.done.set()
         self._wake.set()
         if self._submitter.is_alive():
-            self._submitter.join(timeout=30.0)
+            # Returns once the submitter ended, or parked after a UCI device fault.
+            wedge.join_unless_wedged(self._submitter, 30.0)
 
     def __del__(self) -> None:
   # Best-effort close on GC, in case caller forgets.
