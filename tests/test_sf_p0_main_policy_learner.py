@@ -25,7 +25,7 @@ from tests import test_core_finite_learner as old
 from tests import test_sf_current_p0_finite_learner as fixture
 
 
-def setup(tmp_path: Path, share: int = 1, mirror: float = .5, *, tb: bool = False) -> tuple[Any, ...]:
+def setup(tmp_path: Path, share: int = 1, mirror: float = .5, *, tb: bool = False, tb_marker: str = "applied") -> tuple[Any, ...]:
     """Real legal histories, invented data/receipts; never actual TRAIN authority."""
     _, _, _, old_gen = fixture.setup(tmp_path, alpha=0, mirror=mirror)
     b = tmp_path / "bindings"
@@ -67,13 +67,15 @@ def setup(tmp_path: Path, share: int = 1, mirror: float = .5, *, tb: bool = Fals
     provenance = fixture.read(wrapper["evidence"]["provenance"])
     actual = {"game_id": game["game_id"], "start": {"root_fen": root.fen(), "opening_moves": [], "start_fen": root.fen(), "start_ply": 0, "is_selfplay": True},
               "records": records, "played_move_indices": actions, "final_fen": board.fen(),
-              "tablebase_policy_applied_plies": [2] if tb else [], "tablebase_policy_abstained_plies": []}
+              "tablebase_policy_applied_plies": [2] if tb and tb_marker == "applied" else [],
+              "tablebase_policy_abstained_plies": [2] if tb and tb_marker == "abstained" else []}
     provenance.update(actual=actual, bank="train")
     outcome = fixture.read(wrapper["evidence"]["outcome_proof"])
     outcome["bank"] = "train"
     verified = outcome["verification"]
     verified.update(schema="CORE_ACTUALLY_VERIFIED_OUTCOME_V1", audit_sha256=core.digest(actual),
-                    policy_applied_plies=[2] if tb else [], policy_abstained_plies=[],
+                    policy_applied_plies=[2] if tb and tb_marker == "applied" else [],
+                    policy_abstained_plies=[2] if tb and tb_marker == "abstained" else [],
                     policy_all_eligible_raw_records_reprobed=True, policy_censored_bypass=False,
                     policy_eligible_raw_records=int(tb))
     outcome["proof_sha256"] = core.digest(verified)
@@ -119,6 +121,8 @@ def accepted(tmp_path: Path, c: dict[str, Any], genref: dict[str, str], position
         row["source_join"]["status"] = ("UNAVAILABLE" if i == 0 else
             "INVALID_REDUCED_LABEL" if i == 2 and invalid else "SOURCE_CONTEXT_REDUCED_LABEL")
         row["qualified_flags"]["policy"] = i > 0 and not (i == 2 and invalid)
+        row["qualified_flags"]["native_wdl"] = False
+        row["qualified_flags"]["stored_wdl"] = False
         if i:
             legal = np.flatnonzero(np.asarray(np.load(folder / "legal_mask_u8.npy", allow_pickle=False))[i])
             policy[i, legal[0]], policy[i, legal[1]] = .25, .75
@@ -142,7 +146,16 @@ def accepted(tmp_path: Path, c: dict[str, Any], genref: dict[str, str], position
         policy[1] = 0
         policy[1, np.flatnonzero(mask == 0)[0]] = 1
     fixture.replace({"path": str(folder / "rows.json"), "sha256": "unused"}, metadata)
-    for name, value in [("policy_f16", policy), ("qualified_policy", np.array([0, 1, int(not invalid)], dtype=np.uint8))]:
+    # Policy qualification is deliberately independent of BOTH WDL variants.
+    for name in ("stored_record_wdl_f16", "stored_query_wdl_f16", "qualified_native_wdl", "qualified_stored_wdl",
+                 "predecessor_meta_i32", "observed_predecessor_meta", "observed_predecessor_pv"):
+        path = folder / (name + ".npy")
+        value = np.zeros_like(np.load(path, allow_pickle=False))
+        path.chmod(0o644)
+        np.save(path, value, allow_pickle=False)
+    for name, value in [("native_wdl_permille_i16", np.full((3, 3), -1, dtype=np.int16)),
+                        ("predecessor_pv_i16", np.tile(np.array([-1, -32768, 0, -1, -1], dtype=np.int16), (3, 48, 1))),
+                        ("policy_f16", policy), ("qualified_policy", np.array([0, 1, int(not invalid)], dtype=np.uint8))]:
         path = folder / (name + ".npy")
         path.chmod(0o644)
         np.save(path, value, allow_pickle=False)
@@ -192,6 +205,7 @@ def test_zero_public_worker_is_unwrapped_and_matches_legacy_with_poisoned_sideca
     assert after["rng"] == before["rng"]
     assert after["draws_sha256"] == before["draws_sha256"]
     assert after["membership"] == before["membership"]
+    assert after["main_policy_batch_counts"] == []
     assert after["main_policy_replaced_rows"] == 0
     assert after["main_policy_original_rows"] == after["drawn_rows"] == 4
     new = torch.load(after["checkpoint"]["path"], map_location="cpu", weights_only=True)
@@ -209,6 +223,10 @@ def test_actual_worker_host_main_ce_analytic_gradient_fallback_and_single_mirror
                                                                               mirror: float) -> None:
     c, cref, _, gen, source, positions, details = setup(tmp_path, mirror=mirror)
     refs = accepted(tmp_path, c, gen, positions, details)
+    metadata = json.loads((tmp_path / "carrier/game-000000/rows.json").read_text())
+    assert metadata["rows_detail"][1]["qualified_flags"] == {"policy": True, "stored_wdl": False, "native_wdl": False}
+    for flag in ("qualified_native_wdl", "qualified_stored_wdl"):
+        assert not np.load(tmp_path / "carrier/game-000000" / (flag + ".npy"), allow_pickle=False).any()
     calls = []
     original = trainer_module.compute_loss
 
@@ -249,7 +267,9 @@ def test_actual_worker_host_main_ce_analytic_gradient_fallback_and_single_mirror
     teacher = np.load(tmp_path / "carrier/game-000000/policy_f16.npy", allow_pickle=False)
     expected_rng = np.random.default_rng(c["seed"])
     replaced = 0
-    for draw, batch in zip(journal, calls, strict=True):
+    receipts = result["main_policy_batch_counts"]
+    assert len(receipts) == 2
+    for number, (draw, batch, receipt) in enumerate(zip(journal, calls, receipts, strict=True)):
         indices = [r["row_index"] for r in draw["rows"]]
         np.testing.assert_array_equal(indices, expected_rng.choice(3, size=2, replace=True))
         if mirror:
@@ -266,7 +286,14 @@ def test_actual_worker_host_main_ce_analytic_gradient_fallback_and_single_mirror
         np.testing.assert_array_equal(batch["legal_mask"], legal)
         np.testing.assert_array_equal(batch["has_policy"], source["has_policy"][indices])
         np.testing.assert_array_equal(batch["wdl_t"], source["wdl_target"][indices])
-        replaced += indices.count(1)
+        expected_replaced = indices.count(1)
+        assert receipt["draw_batch"] == number
+        assert receipt["rows"] == receipt["original_policy_supervised"] == 2
+        assert receipt["qualified_teacher"] == receipt["replaced"] == expected_replaced
+        assert receipt["structurally_eligible"] == indices.count(0) + indices.count(1)
+        assert receipt["original_fallback"] == 2 - expected_replaced
+        assert receipt["replaced_normalized_f32_changed"] == expected_replaced
+        replaced += expected_replaced
     assert len(calls) == len(journal) == 2
     assert 0 < replaced < 4  # Both actual teacher and exact original fallback reach the loss.
     assert result["main_policy_replaced_rows"] == replaced
@@ -276,8 +303,9 @@ def test_actual_worker_host_main_ce_analytic_gradient_fallback_and_single_mirror
     assert core.CORE_KWARGS["sf_wdl_frac"] == core.CORE_KWARGS["search_wdl_frac"] == 0
 
 
-def test_tb_markers_and_material_keep_original_bytes_and_mask_without_resampling(tmp_path: Path) -> None:
-    c, _, _, gen, source, positions, details = setup(tmp_path, tb=True)
+@pytest.mark.parametrize("marker", ("applied", "abstained"))
+def test_tb_markers_and_material_keep_original_bytes_and_mask_without_resampling(tmp_path: Path, marker: str) -> None:
+    c, _, _, gen, source, positions, details = setup(tmp_path, tb=True, tb_marker=marker)
     refs = accepted(tmp_path, c, gen, positions, details, invalid=False)
     profile = finite.MainPolicyProfile()
     profile.prepare(c, {"generations": [gen], "main_policy_sidecars": [refs]}, [fixture.read(gen)])
@@ -297,6 +325,8 @@ def test_tb_markers_and_material_keep_original_bytes_and_mask_without_resampling
     assert profile.counts["replaced"] == 0
     # A correctly authenticated value-only row is not made policy-supervised.
     item = profile.index[source_sha]
+    assert item[2][2]["TB_applied"] is (marker == "applied")
+    assert item[2][2]["TB_abstained"] is (marker == "abstained")
     item[2][1]["original_has_policy"] = False
     source["has_policy"][1] = 0
     result = profile.overlay(source, rows)

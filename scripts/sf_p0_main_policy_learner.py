@@ -291,6 +291,7 @@ class MainPolicyProfile:
             self.counts["TB_candidate"] += int(fact["TB_applied"] or fact["TB_abstained"])
             self.counts["material_le7"] += int(fact["piece_count"] < eligibility.MIN_PIECES)
             self.counts["status:" + row["source_join"]["status"]] += 1
+        self.batches.append({"draw_batch": len(self.batches), **dict(batch_counts)})
         return out
     def decorate_boundary(self, boundary: dict[str, Any], c: dict[str, Any], stage: dict[str, Any]) -> None:
         if c["sf_p0_main_policy"]["teacher_share"]:
