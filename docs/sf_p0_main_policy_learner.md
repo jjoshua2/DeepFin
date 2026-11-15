@@ -1,6 +1,8 @@
 # Fixed-bank reduced SF-P0 main-policy finite consumer
 
-This is a source capability, with tests and runtime qualification **UNRUN**. It
+This software capability has passed 30 synthetic CPU cases, scoped Ruff and
+strict native freshness, ABI, import-origin and final custody checks in a pinned
+test runtime. Full A39/CUDA and original-bank qualification remain **UNRUN**. It
 implements the preparation direction `d871cf4e…`, study UUID
 `5456e5e8-23c1-48a0-a4bc-cab6841f5170`; it is not an execution admission, a complete
 scientific preregistration, or evidence of teacher quality or playing strength.
@@ -133,8 +135,8 @@ implemented. Actual eligibility/contrast counts are UNKNOWN until admitted work.
 
 ## Qualification and runtime projection
 
-The author checkout's native/runtime is unqualified. Preferred future binding is a
-NEW managed clone of qualified J`ee67882c…`, with only these runtime Python files
+The author checkout's native/runtime is unqualified. The tested runtime is a
+separate managed clone of qualified J`ee67882c…`, with only these runtime Python files
 overlaid: modified `scripts/core_finite_learner.py`, new
 `scripts/sf_p0_main_policy_learner.py`, and new
 `scripts/sf_p0_main_policy_eligibility.py`. The focused test file is separate
@@ -152,5 +154,9 @@ primary scale/common WDL, mixed original fallback, explicit TB markers/material,
 false-mask overlay behavior, malformed qualified vectors, crossed context, strict
 family refusal and same-family saved-state continuation. The serialized fixture
 receipts explicitly say SYNTHETIC, not actual data authority. Tests do not qualify
-full A39/CUDA or teacher truth. All cases, scoped lint, hardware qualification and
-actual original-bank eligibility measurements remain UNRUN at source publication.
+full A39/CUDA or teacher truth. The closed CPU run at runtime `69516d56…` passed
+all 30 cases with zero failures, errors or skips, including the two mirror outcomes
+through the actual worker and main CE/analytic-gradient checks. All final custody
+guards passed and its owned processes closed. Hardware/full-A39 CUDA qualification
+and actual original-bank eligibility measurements remain UNRUN. This software
+result grants no training admission or strength claim.
