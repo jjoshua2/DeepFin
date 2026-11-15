@@ -105,3 +105,108 @@ they do not independently reread the raw pool, role rows or books.
 | `B_vs_A` | `b2692478dd355b34e216237a930d03b70a50498e2fd18a1baed46c26b0f3a070` |
 | `B_vs_A39` | `9f7d994d288c08c966c71fe8942f7e170b3db63caf70385fc70e2493cca195cf` |
 | `CONF_B_vs_A39` | `4e296fb8d08ef71ee0be9317adabddbca403b27891f0d6f46bcb8a11109d2f02` |
+
+## Completed readout: both screen gates failed
+
+The preregistration above is preserved. Main publication occurred in PR #1326,
+merge `9625307346fa4f7b5cac4a36c84e808195a092ac`, before model compute.
+Full-model engineering and both scientific deliveries subsequently passed their
+separate GPU, saved-state CPU, root and independent technical checks. Both
+mandatory playing screens completed and passed strict CPU, root and independent
+verification. Both statistical gates failed. This pilot is closed as **NONPASS**,
+with no confirmation or adoption; the broader strength program remains active.
+
+| Closed phase | GPU owner seconds | CPU owner seconds |
+| --- | ---: | ---: |
+| Two fresh two-update engineering prefixes | 102.188943550 | 9.502626075 |
+| A: outcome-only, 512 updates | 242.091628612 | 9.940719472 |
+| B: retained search, 512 updates | 263.337064841 | 6.430047611 |
+| First 1,000-game B/A screen | 3782.985616910 | 56.479312433 |
+| Second 1,000-game B/A39 screen | 3459.047863278 | 53.347999395 |
+
+Both scientific arms applied all 131,072 views with no skipped, retried or clipped
+updates. Their actual sampling journals, boundary random-state records and backend
+metadata match each other under seed 2026111901. Full 494-tensor saved values,
+aliases, optimizer state and counters passed the CPU audits. Engineering exercised
+actual CUDA BF16 autocast with F32 inputs; scientific per-forward dtype is
+source-derived rather than an added 512-step observation. GPU resume remains
+unqualified. Prefix checkpoints are not candidates.
+
+The retained targets were available and nonidentical to genuine outcomes on all
+24,827 bank rows. B applied 131,072 active retained-target views; A applied none.
+This establishes a nonzero exercised intervention, not target quality or utility.
+The scientific checkpoints are A `b140d720f5deae8ebdcf40ec296d20ae997032c8602578995119c6f1e268d3bf`
+and B `f205b4cc9700c219897be66c1322088fa6da57bfded15712d253082aab04169c`.
+
+Each endpoint completed all 1,000 games / 500 opening pairs.
+
+| Endpoint, B's perspective | Wins / draws / losses | Score | Approximate paired 95% interval | Gate |
+| --- | --- | ---: | --- | --- |
+| B512 / A512 | 264 / 378 / 358 | .453 | [.4294906403, .4765093597] | NONPASS |
+| B512 / A39 | 270 / 371 / 359 | .4555 | [.4318512650, .4791487350] | NONPASS |
+
+The first endpoint had 451 natural and 549 strict Syzygy endings; the second had
+448 natural and 552 strict Syzygy endings. No capped or faulted game was accepted.
+
+Each CPU reader checked full histories, legal moves, paired openings, complete
+PGNs, source/settings identities, strict tablebase endings and immutable serving
+weights before releasing its score. Neither loaded models nor initialized CUDA.
+Root and a different-author actual metadata reviewer accepted both closed endpoints.
+Each reported interval uses the frozen paired estimator, with 500 opening groups as
+its sampling units; neither is an independent-game or training-seed interval.
+
+Under this fixed bank, seed, recipe, horizon and playing profile, B performed worse
+than both its matched outcome-only control and unchanged A39. This does not identify
+why, establish the current control's strength against A39, or reject every possible
+use of search targets. The direct current A512/A39 contrast remains unmeasured;
+the historical control used a different seed. No transitive or pooled inference is
+made. Confirmation is ineligible, unallocated and unconsumed. Its 500 reserved
+opening groups remain protected.
+
+As preregistered, the second screen ran after first-screen technical acceptance,
+despite the first statistical NONPASS. All 12 study numerical owners closed.
+Actual study cost, including metadata prerequisites, was **7849.651117191 / 15300
+GPU seconds** and **143.283947377 / 12960 CPU seconds**. Unused phase caps do not
+authorize another attempt or contrast. Neither A nor B has been adopted; the donor
+remains unchanged. There is no external-engine Elo or verified Rofchade, Stockfish
+or Lc0 gain from these internal results.
+
+The [compact readout](evidence/retained-search-mainwdl-512-20261115/readout.json)
+records both endpoints, settings, costs, raw-artifact identities and evidence
+references. It also preserves the separate source-only metadata size-guard
+exception; that read supplied no new per-row or playing evidence. Original raw
+observations and all earlier negative results remain banked.
+
+The selected next diagnostic is a separately preregistered, model-free census of
+the entire fixed bank: separate W−L and draw residuals against genuine outcomes,
+and distinguish original F32, physical F16 and loss-normalized representations.
+That can describe target geometry and representation effects; it cannot prove the
+cause of these playing regressions or select a stronger model by itself. No new
+learning recipe or further training compute is authorized by this closeout.
+
+Compact actual evidence is under the external artifact root declared above.
+Hash references below identify accepted metadata; publication does not reread
+weights, training arrays, books or raw games.
+
+| Actual metadata artifact | SHA-256 |
+| --- | --- |
+| `core-retained-search-mainWDL-512-pilot-main-publication-v1/publication.json` | `b74b9ba67473ae7b6e28ba80be641ca590e7f56f273195950ca43e6e7ee2db0e` |
+| `core-retained-search-mainWDL-512-pilot-bindings-v1/engineering/root-acceptance.json` | `dfbbad84857ec75369e0aca875b03ac547f90daaddbe2599a143914a59d81ec9` |
+| `core-retained-search-mainWDL-512-pilot-bindings-v1/engineering/independent-review.json` | `80f36785910bfd40f222dc9210b749f4a2ea8e3cbda542fc143815e9a8d7e0f3` |
+| `core-retained-search-mainWDL-512-pilot-bindings-v1/A512/root-delivery-acceptance.json` | `9790b27840ba8531762b6d37714abee05ea35f5d641869fa93a3d5520147a2a0` |
+| `core-retained-search-mainWDL-512-pilot-bindings-v1/A512/independent-delivery-review.json` | `794f7505d74668a39daff57803eec5d8c22e20742954d1ec05d72229a04d3a29` |
+| `core-retained-search-mainWDL-512-pilot-bindings-v1/B512/root-delivery-acceptance.json` | `1e2d5f7a6cef71578909d201d50ee1537feaa0ce548f9cf0e3f8a974710ba0c9` |
+| `core-retained-search-mainWDL-512-pilot-bindings-v1/B512/independent-delivery-review.json` | `336dce099f0d18f33e9446df5c6e486a9c69dcc092f8b728a4d90c87791cba1f` |
+| `core-retained-search-mainWDL-512-pilot-screen_B_vs_A-readout-v1/readout.json` | `79e2c8097ff552aaba3f483cce2e555e443c790d7398c4bc32595b10cf4f5472` |
+| `core-retained-search-mainWDL-512-pilot-screen_B_vs_A-results-v1/serving.json` | `d6cb4253c92f138bb2f06ac2dd9bc33e619ed5d6877c8e2d7714dc9097b18dd0` |
+| `core-retained-search-mainWDL-512-pilot-screen-B-A-GPU-execution-v1/terminal.json` | `b66f6e2bcfbb4883e484b0a1548d7375431c14e88e07b3200faede1bc87ff805` |
+| `core-retained-search-mainWDL-512-pilot-screen-B-A-read-CPU-execution-v1/terminal.json` | `958141402fa4a788cbeffa110ba9f41b5c771f913e20697ea5a84c0f03946d67` |
+| `core-retained-search-mainWDL-512-pilot-bindings-v1/arena/screen_B_vs_A/root-acceptance.json` | `feb72fd58947179400fa79f9027974f6dcb0ed196d3fd37bd2dee49a72f1bcaf` |
+| `core-retained-search-mainWDL-512-pilot-bindings-v1/arena/screen_B_vs_A/independent-review.json` | `5aa2e6717958d758303ff4c6172e35c7231397baf5a7f43d4808d4733afee784` |
+| `core-retained-search-mainWDL-512-pilot-screen_B_vs_A39-readout-v1/readout.json` | `b8c42e05bb5b472ec043536a94a40a5b33b59515c0efbed00b3f463f7a34b966` |
+| `core-retained-search-mainWDL-512-pilot-screen_B_vs_A39-results-v1/serving.json` | `8748717cea39b93e24266a0a4bea19cf9e1a44abe10753256fe8886310827f7a` |
+| `core-retained-search-mainWDL-512-pilot-screen-B-A39-GPU-execution-v1/terminal.json` | `4c10c57a32a408d8348ef3bd4fb8b90b11cb2f4fb85ef530b06978a360762673` |
+| `core-retained-search-mainWDL-512-pilot-screen-B-A39-read-CPU-execution-v1/terminal.json` | `28d711850d3c6f15c9d9866923a04a48efd5bbaa017ccfc941e2cb546aea1e4b` |
+| `core-retained-search-mainWDL-512-pilot-bindings-v1/arena/screen_B_vs_A39/root-acceptance.json` | `58aea612079e79f9d7fe245a3a76480c26fc979579969f264c350fd9289d6d18` |
+| `core-retained-search-mainWDL-512-pilot-bindings-v1/arena/screen_B_vs_A39/independent-review.json` | `014075e96d0e1dbe7684d01184e9e8ed1480b238f5b5ef50e8c5cdc0cbe7fdec` |
+| `core-retained-search-mainWDL-512-pilot-bindings-v1/closeout.json` | `56fd747ae5aa41e25d566892d4c705b21d55abaadf14df5e716cad94221901fb` |
