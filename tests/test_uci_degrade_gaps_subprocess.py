@@ -284,6 +284,10 @@ def _run_fault_session(ckpt: Path, tmp_path: Path, path: str, mode: str, go_kind
         sess.close()
     assert text.count("\nbestmove ") + text.startswith("bestmove ") == 2, text
     assert "WARNING multi-GPU DEGRADED" in text, text
+    # After a device fault quit leaves without closing the evaluators or
+    # finalizing the interpreter (``uci.wedge``), and says so.
+    assert ("info string quit: a device failed this session" in text
+            or "info string quit: a multi-GPU worker is still stuck" in text), text[-3000:]
     assert "terminate called" not in err, err
     assert rc == 0, (rc, text[-3000:], err[-3000:])
 
@@ -443,3 +447,24 @@ def test_quit_during_a_stall_exits_zero(ckpt, tmp_path, path, mode) -> None:
     assert rc == 0, (rc, text[-2000:], err[-2000:])
     assert "info string quit:" in text, text[-2000:]
     assert "exiting with status 0" in text, text[-2000:]
+
+
+@pytest.mark.parametrize("path", ["pool", "chain", "rpg"])
+def test_every_device_stalling_answers_from_the_fallback_and_quit_exits_1(ckpt, tmp_path, path) -> None:
+    """Every device (and the primary) stops answering: the deadline watchdog
+    answers the move from the fallback, and ``quit`` -- after the device
+    fault it exits without closing the evaluators -- still reports the search
+    that never ended with status 1, as ``close`` would."""
+    sess = _Session(ckpt, tmp_path, _PATHS[path],
+                    {**_fault_env("block", "all-pool,primary" if path != "chain" else "chain:0,chain:1"),
+                     "FAULT_AFTER": "0"})
+    try:
+        sess.ready()
+        move, _ = sess.go("position startpos moves e2e4", "go movetime 1500", timeout=90)
+        _legal("e2e4", move)
+        rc, text, err = sess.quit(timeout=120)
+    finally:
+        sess.close()
+    assert "terminate called" not in err, err
+    assert "info string quit:" in text, text[-2000:]
+    assert rc == 1, (rc, text[-2000:], err[-2000:])

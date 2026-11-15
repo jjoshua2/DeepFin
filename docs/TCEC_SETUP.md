@@ -554,6 +554,8 @@ exits with the status it would have had without closing anything:
 `info string quit: a device failed this session (...); exiting with status ... without closing the evaluators`
 (or, while a device call is still stuck,
 `info string quit: a multi-GPU worker is still stuck inside a dropped device's call; exiting with status ... without waiting for it`).
+It first stops the search: a search that never ended (every device stuck)
+gives status 1, otherwise 0.
 An option that rebuilds the evaluators after a device got stuck (or was dropped
 for a stall) this session leaves that device out at once
 (`... left out: it wedged earlier this session (...)`) instead of building on it
@@ -595,7 +597,7 @@ answered from the fallback (`bestmove_fallback_used`) and `quit` exits 0. If eve
 device stalls, the last one's call is waited on up to its cap (30 s at most), so
 the deadline watchdog answers that move from the fallback (`source=first_legal`),
 the next `go` finds the worker still owned (`... parked ...`, answered from the
-fallback), and `quit` exits 0 without waiting for the stuck call.
+fallback), and `quit` exits 1 (a search never ended), as with the pool.
 
 **`--search-parallel gumbel` (root-parallel Gumbel).** Its candidate subtrees
 cannot continue without the failed device, so a device that raises, or blocks one

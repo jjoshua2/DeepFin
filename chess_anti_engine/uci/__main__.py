@@ -1778,17 +1778,14 @@ def main() -> int:
             code = getattr(eng, "exit_code", 0)
             if isinstance(code, int) and not isinstance(code, bool):
                 rc = max(rc, code)
-        if _device_thread_wedged(eng):
-  # A device thread is stuck inside a device call: closing pools would end
-  # evaluator-running worker threads under it, which crashes the process
-  # (see ``wedge``). Say so and leave with the status we would have had.
-            _announce_wedged_exit(rc)
-            _hard_exit(rc)
+        wedged = _device_thread_wedged(eng)
         fault = wedge.device_fault()
-        if fault is not None:
-  # After any device fault, ending evaluator threads or finalizing the
-  # interpreter can crash the process (see ``wedge``): stop the search (same
-  # status as ``close`` would give), then leave without closing anything.
+        if wedged or fault is not None:
+  # A device thread is stuck inside a device call, or a device failed this
+  # session: closing pools would end evaluator-running worker threads, and
+  # finalizing the interpreter can crash the process (see ``wedge``). Stop the
+  # search (a search that never ended gives status 1, as ``close`` would),
+  # say why, and leave without closing anything.
             quiesce = getattr(eng, "quiesce_for_exit", None) if eng is not None else None
             if callable(quiesce):
                 try:
@@ -1798,7 +1795,10 @@ def main() -> int:
                     rc = 1
                 except Exception:
                     pass
-            _announce_fault_exit(fault, rc)
+            if wedged or fault is None:
+                _announce_wedged_exit(rc)
+            else:
+                _announce_fault_exit(fault, rc)
             _hard_exit(rc)
         if eng is not None:
             try:

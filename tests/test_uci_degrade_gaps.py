@@ -1206,3 +1206,101 @@ def test_a_second_failure_after_rpg_retirement_is_announced_before_bestmove(out)
         first.release.set()
         engine.close()
         worker.close()
+
+
+class _Closeable:
+    """Evaluator wrapper that counts ``close`` calls."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.closed = 0
+
+    def close(self) -> None:
+        self.closed += 1
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+def test_rpg_raise_retirement_parks_the_groups_and_keeps_their_evaluators(out) -> None:
+    """Round-2 BLOCKER: a non-devices[0] group that RAISES (no wedge) retires
+    root-parallel Gumbel onto the primary. The retired pool's group threads
+    park instead of ending and their evaluators are kept referenced, never
+    closed (ending them crashed the process)."""
+    healthy = _Closeable(_evaluator())
+    bad = _Faulty(_evaluator(), mode="raise", after=3)
+    engine, worker = _rpg_engine([healthy, bad])
+    try:
+        pool = worker._rpg_pool
+        assert pool is not None
+        move, _ = _go(engine, out, "e2e4", "go nodes 2000", 1, timeout=20)
+        assert _legal_after("e2e4", move)
+        assert worker._rpg_pool is None
+        assert worker._rpg_rows_pool is None  # carried by the primary
+        fault = wedge.device_fault()
+        assert fault is not None
+        assert "#1" in fault
+        assert _wait_for(lambda: all(th in wedge.parked_threads() for th in pool._threads), timeout=5)
+        assert any(kept is pool for kept, _evals in worker._rpg_retired_keepalive)
+        assert healthy.closed == 0
+    finally:
+        bad.release.set()
+        engine.close()
+        worker.close()
+
+
+@pytest.mark.parametrize("path", ["pool", "chain", "primary"])
+def test_every_device_drop_notes_a_device_fault(path: str) -> None:
+    """Every place that drops a device notes the session's device fault, so
+    the parking rule and the quit hard-exit apply after a raise alone."""
+    assert wedge.device_fault() is None
+    if path == "pool":
+        pool = MultiGpuPucvPool(
+            MultiGpuPucvConfig(n_gpus=2, gather=8, device_labels=("g0", "g1")),
+            evaluators=[_evaluator(), _Faulty(_evaluator(), mode="raise", after=1)],
+        )
+        try:
+            _run(pool, 100)
+            assert pool.failed_devices() == ("g1",)
+        finally:
+            pool.close()
+        assert "g1" in (wedge.device_fault() or "")
+    elif path == "chain":
+        chain = DegradingMultiGPUDispatcher(
+            [_direct(), _AllFaulty(_direct(), mode="raise", after=0)], labels=["c0", "c1"],
+        )
+        try:
+            chain.arm()
+            x = np.zeros((3, 146, 8, 8), dtype=np.float32)
+            for _ in range(3):
+                chain.evaluate_encoded(x)
+            assert chain.failed_devices() == ("c1",)
+        finally:
+            chain.close()
+        assert "c1" in (wedge.device_fault() or "")
+    else:
+        engine, worker = _engine_with_pool([_evaluator(), _evaluator()],
+                                           primary=_AllFaulty(_evaluator(), mode="raise", after=0))
+        try:
+            worker._note_primary_failed(RuntimeError("primary lost"))
+            assert worker._primary_failed
+        finally:
+            engine.close()
+            worker.close()
+        assert wedge.device_fault() == "the primary evaluator failed"
+
+
+def test_walker_and_owner_threads_park_after_a_device_fault() -> None:
+    """Item 7: the persistent walker-pool and CUDA-owner threads run
+    evaluator work, so after a device fault they park instead of ending."""
+    from chess_anti_engine.inference_dispatcher import CUDAOwnerDispatcher
+    from chess_anti_engine.uci.walker_pool import WalkerPool, WalkerPoolConfig
+
+    wedge.note_device_fault("device g1 raised")
+    walkers = WalkerPool(WalkerPoolConfig(n_walkers=2, c_puct=1.0, fpu_at_root=0.0,
+                                          fpu_reduction=0.0, input_planes=146), _direct())
+    owner = CUDAOwnerDispatcher(_direct())
+    walkers.close()
+    owner.close()
+    threads = [*walkers._threads, owner._owner]
+    assert _wait_for(lambda: all(th in wedge.parked_threads() for th in threads), timeout=5)
