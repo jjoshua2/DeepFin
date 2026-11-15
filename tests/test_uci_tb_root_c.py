@@ -983,7 +983,7 @@ def test_selfcheck_fails_naming_the_corrupt_table(tmp_path: Path) -> None:
     from chess_anti_engine.uci import selfcheck as sc
 
     path = _corrupt_set(tmp_path / "tb", mode="random")
-    with pytest.raises(sc.CheckFailed, match=r"KQvKR\.rtbw"):
+    with pytest.raises(sc.CheckFailed, match=r"^table validation: .*KQvKR\.rtbw"):
         sc.check_syzygy(path)
 
 
