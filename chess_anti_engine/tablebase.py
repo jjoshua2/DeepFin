@@ -4,7 +4,9 @@ Callers:
   - training / selfplay: game rescoring, DTZ-optimal policy targets,
     in-play TB adjudication (end the game at the first TB-eligible
     position), and optional in-search WDL overrides on MCTS leaves.
-  - UCI search: in-search WDL overrides, DTZ-optimal root-move shortcut.
+  - UCI search: in-search WDL overrides. (The UCI DTZ root-move shortcut
+    probes through the C prober in ``uci/tb_root.py``, reusing the ranking
+    helpers here; :func:`try_tb_root_move` is its python-chess reference.)
 
 Both go through :func:`get_tablebase` so one opened handle is shared per
 path. Eligibility, WDL label mapping, the DTZ move picker, the in-search
@@ -480,7 +482,9 @@ def try_tb_root_move(
     a draw reached by that move. Already finished roots return ``None``.
     Raw ``probe_wdl`` assumes the counter is zero and is not what this returns.
 
-    Used by UCI's root shortcut to bypass MCTS when the root is in TB range.
+    No production caller: UCI's root shortcut runs the same choice on C table
+    lookups (``uci/tb_root.py``). This stays as its python-chess reference
+    (``tests/test_uci_tb_root_c.py``).
 
     ``rule50=False`` (UCI ``Syzygy50MoveRule=false``) picks by plain DTZ and
     returns +2 / -2 for any win / loss, cursed or blessed included, 0 for a

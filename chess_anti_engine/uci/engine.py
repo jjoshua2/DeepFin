@@ -35,6 +35,7 @@ from chess_anti_engine.mcts.search_options import (
     realized_rows,
 )
 from chess_anti_engine.tablebase import SyzygyProbe, get_tablebase
+from chess_anti_engine.uci import tb_root
 from chess_anti_engine.utils.bitboards import unsearchable_king_reason
 from chess_anti_engine.utils.gil_probe import GilContentionProbe
 
@@ -2685,34 +2686,61 @@ class Engine:
         "evalcacheentries": _set_eval_cache_entries,
     }
 
-    def _install_tablebase(self, path: str) -> None:
-        """Validate ``path`` by opening the tablebase once, then install a
-        path-backed SyzygyProbe on the worker (or clear it if ``path`` is
-        empty). The open handle is cached in ``chess_anti_engine.tablebase``
-        and shared with training-time rescoring.
+    def _clear_tablebases(self) -> None:
+        """Tablebases off everywhere: leaf probe, root shortcut, C table set."""
+        self._worker.set_tb_probe(None)
+        self._worker.set_tb_root(None)
+        tb_root.unload()
 
-        Calling ``get_tablebase`` unconditionally — including for empty paths
-        — is what closes any previously-cached handle when the user clears
-        or swaps SyzygyPath.
+    def _install_tablebase(self, path: str) -> None:
+        """Load ``path`` into BOTH tablebase consumers, or into neither.
+
+        * Root DTZ shortcut: the C prober (vendored Fathom, ``uci/tb_root.py``),
+          a process-wide table set this (re)initialises. Loaded first: a path
+          it refuses (a component that is not a readable directory, or no table
+          at all) turns tablebases OFF with an ``info string error`` line,
+          rather than playing on with the root shortcut silently missing.
+        * Leaf WDL overrides: ``SyzygyProbe`` (python-chess), its handle cached
+          by path in ``chess_anti_engine.tablebase``.
+
+        Re-running it for the same path (``Syzygy50MoveRule``) keeps the open
+        C tables and rebuilds both consumers with the new rule.
         """
-        tb = get_tablebase(path)
         if not path:
-            self._worker.set_tb_probe(None)
+            self._clear_tablebases()
             _println("info string SyzygyPath cleared; tablebase probing disabled")
             return
+        try:
+            tables = tb_root.load(path)
+        except tb_root.RootTablebaseError as exc:
+            self._clear_tablebases()
+            _println(
+                f"info string error: SyzygyPath {path!r} REFUSED by the C tablebase prober "
+                f"({_one_line(exc)}); tablebase probing disabled"
+            )
+            return
+        tb = get_tablebase(path)
         if tb is None:
-            self._worker.set_tb_probe(None)
+            self._clear_tablebases()
             _println(f"info string SyzygyPath {path!r} did not open any tablebase directories")
             return
-        probe = SyzygyProbe(
-            path, cursed_as_draw=self._options.syzygy_50_move_rule,
-        )
+        rule50 = self._options.syzygy_50_move_rule
+        probe = SyzygyProbe(path, cursed_as_draw=rule50)
         self._worker.set_tb_probe(probe)
+        self._worker.set_tb_root(tb_root.RootTablebase(tables, rule50=rule50))
         _println(
             f"info string SyzygyPath loaded from {path!r}: "
             f"{probe.n_wdl} WDL + {probe.n_dtz} DTZ tables, "
             f"up to {probe.max_pieces}-piece positions"
         )
+        _println(f"info string Syzygy root prober: {tables.describe()}")
+        if tables.n_dtz < tables.n_wdl:
+            _println(
+                f"info string warning: {tables.n_wdl - tables.n_dtz} of {tables.n_wdl} WDL tables "
+                "have no DTZ table in SyzygyPath; the root DTZ shortcut cannot answer those "
+                "materials and they are searched instead (give every directory, e.g. both "
+                "halves of a split 6-man set)"
+            )
         self._leaf_tb_noted = None
         self._note_leaf_tb_inactive()
 
@@ -3574,6 +3602,8 @@ class Engine:
         if self._gil_probe is not None:
             self._gil_probe.close()
         self._worker.close()
+        if self._options.syzygy_path:
+            tb_root.unload()
         self._closed = True
 
   # -- helpers --------------------------------------------------------------

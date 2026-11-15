@@ -1444,12 +1444,44 @@ def test_probe_best_move_default_follows_the_fifty_move_ranking(monkeypatch) -> 
     assert picked[0] == rule50[0]
 
 
+class _CursedCExt:
+    """The C prober (``tb._tb_ext``) as ``uci/tb_root.py`` sees it, answering
+    `_CursedTable`'s KRvK: every root move wins in 30 plies (child dtz -29)."""
+
+    FATHOM_COMMIT = "0" * 40
+
+    def __init__(self) -> None:
+        self._path: str | None = None
+
+    def init(self, path: str) -> int:
+        self._path = path or None
+        return 3 if path else 0
+
+    def free(self) -> None:
+        self._path = None
+
+    def path(self) -> str | None:
+        return self._path
+
+    def table_counts(self) -> tuple[int, int, int]:
+        return (1, 1, 3) if self._path else (0, 0, 0)
+
+    def probe_root_fen(self, fen: str, has_repeated: bool = False, use_rule50: bool = True):
+        assert has_repeated is False  # tb_root applies the repo's own claim rules
+        assert use_rule50 is True
+        return [(m.uci(), 30, 0, 0) for m in chess.Board(fen).legal_moves]
+
+
 @pytest.mark.parametrize(("value", "score"), [("true", 0), ("false", 41890)])
 def test_syzygy50moverule_changes_the_engine_root_shortcut(monkeypatch, out, value: str, score: int) -> None:
-    """The engine path: `setoption` -> the probe the worker holds -> the root
-    shortcut -> the `score` the GUI sees. Read from the worker's own probe."""
+    """The engine path: `setoption` -> the root handle and leaf probe the worker
+    holds -> the root shortcut -> the `score` the GUI sees. Read from the
+    worker's own objects."""
+    from chess_anti_engine.uci import tb_root
+
     monkeypatch.setattr(tbmod, "get_tablebase", lambda _path: _CursedTable())
     monkeypatch.setattr(engine_module, "get_tablebase", lambda _path: _CursedTable())
+    monkeypatch.setattr(tb_root, "_tb_ext", _CursedCExt())
     worker = _tiny_worker()
     engine = Engine(worker)
     try:
@@ -1458,6 +1490,9 @@ def test_syzygy50moverule_changes_the_engine_root_shortcut(monkeypatch, out, val
         probe = worker._tb_probe
         assert probe is not None
         assert probe.cursed_as_draw is (value == "true")
+        root = worker._tb_root
+        assert root is not None
+        assert root.rule50 is (value == "true")
         engine.dispatch(parse_command(f"position fen {_CURSED_FEN}"))
         _go(engine, "go nodes 64")
         infos = [ln for ln in out.lines if ln.startswith("info depth")]

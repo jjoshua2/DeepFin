@@ -57,7 +57,7 @@ exits 0. What `freshness` says depends on how the engine was installed (both run
 CPU with a small test network):
 
 - From a source checkout (editable install, or `PYTHONPATH` at the checkout):
-  `PASS  freshness   source content matches the build record for _lc0_ext, _features_ext, _mcts_tree`
+  `PASS  freshness   source content matches the build record for _lc0_ext, _features_ext, _mcts_tree, _tb_ext`
   and `SELFCHECK PASS (uci: fast: --no-compile (does NOT cover the default compiled play path))`.
 - From a regular install (`pip install ".[match]"`, as install.md describes):
   `SKIP  freshness   not a source checkout (regular wheel install): no sources to compare; the ABI/symbol and behavioural checks still apply`
@@ -276,21 +276,41 @@ tree is reused below the move played (kept, compacted, or rebuilt).
 
 ## 7. Tablebases
 
-`SyzygyPath` takes one or more Syzygy directories joined with `:`; each is opened
-with python-chess's reader. The engine answers with
-`info string SyzygyPath loaded from ...` and the WDL / DTZ table counts and the
-largest piece count, or
-`info string SyzygyPath ... did not open any tablebase directories`. Positions up
-to the largest table set present are probed: at search leaves on every wired
-search path, and at the root, where a tablebase position is answered from DTZ
-without a search.
+`SyzygyPath` takes one or more Syzygy directories joined with `:`. Two probers
+read them. The root, where a tablebase position is answered from DTZ without a
+search, uses the C prober built into the engine (the vendored Fathom, extension
+`chess_anti_engine.tb._tb_ext`); search leaves on every wired search path use
+python-chess's reader. Positions up to the largest table set present are probed.
+A loaded path answers with two lines:
+
+```
+info string SyzygyPath loaded from '/tb/a:/tb/b': 1000 WDL + 1000 DTZ tables, up to 6-piece positions
+info string Syzygy root prober: C Fathom (c9c6fef0): 510 WDL + 510 DTZ tables, WDL up to 6-man, DTZ up to 6-man
+```
+
+The first line counts python-chess's files, the second Fathom's tables (a
+material and its colour mirror are one table there). The second line is the
+proof that the root shortcut is on. When some WDL tables have no DTZ table in
+any listed directory the engine adds `info string warning: ... WDL tables have no
+DTZ table in SyzygyPath ...`: those materials are searched instead of answered
+from the root.
+
+Every component must be a readable directory and the path must load at least one
+table. Otherwise the engine prints
+`info string error: SyzygyPath '<path>' REFUSED by the C tablebase prober (...); tablebase probing disabled`
+and plays on WITHOUT tablebases (leaves and root alike) until a good
+`SyzygyPath` is set. A missing directory in the list is refused, not skipped.
+`setoption name SyzygyPath value <empty>` turns tablebases off:
+`info string SyzygyPath cleared; tablebase probing disabled`. Changing
+`SyzygyPath` mid-session reloads both probers for the next search.
 
 **The production layout is a pair of directories, given together.** The first holds
 the 3- to 6-man WDL tables and the 3- to 5-man DTZ tables, the second the 6-man DTZ
 tables, so both must be in `SyzygyPath` (`/tb/first:/tb/second`). Directory names
 need not describe what is inside them; check by listing. The self-check's
 `--syzygy` takes the same string and probes 3-, 5- and 6-man positions when those
-tables are present.
+tables are present, through both probers, and fails if they disagree or the C
+prober refuses the path.
 
 `Syzygy50MoveRule` (default `true`): with it on, a win that the 50-move rule turns
 into a draw counts as a draw. With it off, cursed wins and blessed losses count as

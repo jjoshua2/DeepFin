@@ -46,6 +46,10 @@ typedef struct {
 int df_tb_init(const char *path);
 /* Largest man count with a WDL table (Fathom's TB_LARGEST). */
 unsigned df_tb_largest(void);
+/* Table files found by the last init: WDL tables, how many of those have a
+ * DTZ table in some directory of the path (Fathom's numWdl / numDtz), and the
+ * largest man count among the WDL tables that do. */
+void df_tb_counts(unsigned *n_wdl, unsigned *n_dtz, unsigned *largest_dtz);
 /* Release every mapping. Caller must hold exclusive access. */
 void df_tb_free(void);
 

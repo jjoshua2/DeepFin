@@ -122,6 +122,26 @@ unsigned df_tb_largest(void) {
     return TB_LARGEST;
 }
 
+void df_tb_counts(unsigned *n_wdl, unsigned *n_dtz, unsigned *largest_dtz) {
+    unsigned top = 0;
+    /* After a clearing init (tb_init("") / tb_free) Fathom zeroes numWdl but
+     * leaves tbNumPiece/tbNumPawn stale, and tb_free NULLs the entry arrays:
+     * only walk them while a table set is loaded. */
+    if (numWdl == 0 || pieceEntry == NULL || pawnEntry == NULL) {
+        *n_wdl = 0;
+        *n_dtz = 0;
+        *largest_dtz = 0;
+        return;
+    }
+    for (int i = 0; i < tbNumPiece; i++)
+        if (pieceEntry[i].be.hasDtz && pieceEntry[i].be.num > top) top = pieceEntry[i].be.num;
+    for (int i = 0; i < tbNumPawn; i++)
+        if (pawnEntry[i].be.hasDtz && pawnEntry[i].be.num > top) top = pawnEntry[i].be.num;
+    *n_wdl = (unsigned)numWdl;
+    *n_dtz = (unsigned)numDtz;
+    *largest_dtz = top;
+}
+
 void df_tb_free(void) {
     tb_free();
 }

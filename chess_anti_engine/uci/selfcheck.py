@@ -61,6 +61,15 @@ MAX_PYTHON_EXCLUSIVE: tuple[int, int] = (3, 14)
 # The extension/symbol/ABI tables and the rebuild instructions are shared with
 # selfplay, the worker and training: one definition in `chess_anti_engine.ext_check`.
 REQUIRED_EXTENSIONS: tuple[str, ...] = _ext_check.REQUIRED_EXTENSIONS
+# The engine alone also needs the C Syzygy prober: its root DTZ shortcut runs on
+# it (`uci/tb_root.py`). Selfplay and training do not import it, so it stays out
+# of the shared list (adding it there would gate the worker on it).
+TB_EXT = "chess_anti_engine.tb._tb_ext"
+UCI_EXTRA_SYMBOLS: dict[str, tuple[str, ...]] = {
+    TB_EXT: ("init", "free", "path", "table_counts", "probe_root_fen", "probe_wdl_fen",
+             "FATHOM_COMMIT"),
+}
+UCI_EXTENSIONS: tuple[str, ...] = REQUIRED_EXTENSIONS + tuple(UCI_EXTRA_SYMBOLS)
 REQUIRED_SYMBOLS: dict[str, tuple[str, ...]] = _ext_check.REQUIRED_SYMBOLS
 REQUIRED_CBOARD_METHODS: tuple[str, ...] = _ext_check.REQUIRED_CBOARD_METHODS
 REQUIRED_MCTSTREE_METHODS: tuple[str, ...] = _ext_check.REQUIRED_MCTSTREE_METHODS
@@ -122,6 +131,7 @@ UCI_FAILURE_MARKERS: tuple[str, ...] = (
     "bestmove_fallback_used=",
     "engine unhealthy",
     "DEGRADED",
+    "REFUSED by the C tablebase prober",
 )
 
 
@@ -208,7 +218,7 @@ MTIME_FALLBACK_NOTE = (
 
 
 def _freshness_rows(
-    root: Path, modules: Sequence[str] = REQUIRED_EXTENSIONS,
+    root: Path, modules: Sequence[str] = UCI_EXTENSIONS,
 ) -> list[tuple[str, str, str | None]]:
     """(module, method, problem-or-None) per extension.
 
@@ -244,7 +254,7 @@ def _freshness_rows(
     return rows
 
 
-def freshness_problems(root: Path, modules: Sequence[str] = REQUIRED_EXTENSIONS) -> list[str]:
+def freshness_problems(root: Path, modules: Sequence[str] = UCI_EXTENSIONS) -> list[str]:
     """Stale-build problems for ``modules`` (content check, mtime fallback)."""
     rows = _freshness_rows(root, modules)
     problems = [problem for _, _, problem in rows if problem]
@@ -260,11 +270,24 @@ def required_abi() -> int:
 def extension_problems(
     *, abi_required: Callable[[], int] | None = None,
 ) -> list[str]:
-    """Import + symbol + ABI problems for every required extension (see ``ext_check``)."""
+    """Import + symbol + ABI problems for every extension the engine needs:
+    the shared set (see ``ext_check``) plus the UCI-only C Syzygy prober."""
     # Resolve `required_abi` here, at call time, so patching this module's
     # name (as the tests do) still reaches the shared check.
     abi_fn = required_abi if abi_required is None else abi_required
-    return _ext_check.extension_problems(abi_required=abi_fn)
+    return _ext_check.extension_problems(abi_required=abi_fn) + uci_extension_problems()
+
+
+def uci_extension_problems() -> list[str]:
+    """Problems with the extensions only the engine needs (``UCI_EXTRA_SYMBOLS``)."""
+    problems: list[str] = []
+    for name, symbols in UCI_EXTRA_SYMBOLS.items():
+        missing = _ext_check.missing_symbols(name, symbols)
+        if missing:
+            problems.append(
+                f"{name} lacks {', '.join(missing)} (not built, or built from older source)"
+            )
+    return problems
 
 
 def _python_reference_planes(board: chess.Board, version: str) -> np.ndarray:
@@ -465,7 +488,7 @@ def check_extensions(*, abi_required: Callable[[], int] | None = None) -> str:
         raise CheckFailed("; ".join(problems) + f"; fix: {REBUILD_HINT}")
     mcts = importlib.import_module("chess_anti_engine.mcts._mcts_tree")
     return (
-        f"{len(REQUIRED_EXTENSIONS)} required extensions import with the expected symbols; "
+        f"{len(UCI_EXTENSIONS)} required extensions import with the expected symbols; "
         f"_mcts_tree ABI_VERSION={mcts.ABI_VERSION} (required {abi_fn()})"
     )
 
@@ -674,7 +697,23 @@ def check_checkpoint(
     return detail
 
 
+def _probe_wdl_c(syzygy_path: str, fen: str) -> int:
+    """WDL from the C prober the engine's root shortcut uses (``uci/tb_root.py``)."""
+    from chess_anti_engine.tb import _tb_ext
+    from chess_anti_engine.uci import tb_root
+
+    try:
+        tb_root.load(syzygy_path)
+    except tb_root.RootTablebaseError as exc:
+        raise CheckFailed(f"the C tablebase prober refuses {syzygy_path!r}: {exc}") from exc
+    got = _tb_ext.probe_wdl_fen(fen)
+    if got is None:
+        raise CheckFailed(f"the C tablebase prober has no table for {fen}")
+    return int(got)
+
+
 def _probe_wdl_raw(syzygy_path: str, fen: str) -> int:
+    """python-chess (the leaf probes) and the C prober (the root shortcut) must agree."""
     import chess
 
     from chess_anti_engine.tablebase import get_tablebase
@@ -682,7 +721,11 @@ def _probe_wdl_raw(syzygy_path: str, fen: str) -> int:
     tb = get_tablebase(syzygy_path)
     if tb is None:
         raise CheckFailed(f"no Syzygy directory in {syzygy_path!r} could be opened")
-    return int(tb.probe_wdl(chess.Board(fen)))
+    py = int(tb.probe_wdl(chess.Board(fen)))
+    c = _probe_wdl_c(syzygy_path, fen)
+    if c != py:
+        raise CheckFailed(f"WDL for {fen}: C prober {c}, python-chess {py}")
+    return py
 
 
 def check_syzygy(
@@ -722,6 +765,14 @@ def check_syzygy(
               f"probe correctly: {', '.join(probed)}")
     if skipped:
         detail += f"; not probed: {', '.join(skipped)}"
+    if probe is _probe_wdl_raw:
+        from chess_anti_engine.uci import tb_root
+
+        loaded = tb_root.loaded()
+        if loaded is not None:
+            detail += f"; root prober {loaded.describe()}"
+            if loaded.n_dtz < loaded.n_wdl:
+                detail += f" ({loaded.n_wdl - loaded.n_dtz} WDL tables without DTZ)"
     return detail
 
 

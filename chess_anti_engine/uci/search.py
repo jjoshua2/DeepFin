@@ -57,9 +57,10 @@ from .root_parallel_gumbel import (
     resolve_rpg_schedule_knobs,
 )
 from chess_anti_engine.moves import index_to_move, move_to_index
-from chess_anti_engine.tablebase import SyzygyProbe, try_tb_root_move
+from chess_anti_engine.tablebase import SyzygyProbe
 
 from .score import q_to_cp
+from .tb_root import RootTablebase
 from .time_manager import Deadline
 from .walker_pool import WalkerPool, WalkerPoolConfig
 import contextlib
@@ -542,6 +543,9 @@ class SearchWorker:
   # Optional Syzygy probe. When set, MCTS leaves in the TB range get
   # their NN wdl overridden with the TB-truth distribution.
         self._tb_probe = None
+  # Root DTZ shortcut on the C prober (``tb_root``); the engine installs it
+  # beside ``_tb_probe`` and clears both together.
+        self._tb_root: RootTablebase | None = None
   # Soft memory cap (UCI ``Hash``) on the tree's RESIDENT footprint
   # (``MCTSTree.footprint_bytes()``): the search halts between chunks once the
   # footprint reaches it, and says so with an ``info string``. 0 = unbounded.
@@ -1821,6 +1825,12 @@ class SearchWorker:
         self._tb_probe = probe
         self.reset_tree()
 
+    def set_tb_root(self, root: RootTablebase | None) -> None:
+        """Install (or clear) the root DTZ shortcut. It answers a tablebase
+        root before any tree exists, so the tree is left alone. Caller holds
+        the search barrier, as for ``set_tb_probe``."""
+        self._tb_root = root
+
     def leaf_tb_inactive_mode(self) -> str | None:
         """The realized search path whose leaves never see the installed Syzygy probe.
 
@@ -2034,9 +2044,10 @@ class SearchWorker:
         to "most-popular NN prior" and yields valid but DTZ-suboptimal play.
         Bypassing MCTS here is a correctness win, not just a speed win.
         """
-        if tb_probe is None:
+        tb_root = self._tb_root
+        if tb_root is None:
             return None
-        short = _try_tb_root_bestmove(board, tb_probe, include_ponder=include_ponder)
+        short = _try_tb_root_bestmove(board, tb_root, tb_probe, include_ponder=include_ponder)
         if short is None:
             return None
         if info_cb is not None:
@@ -3834,22 +3845,27 @@ def _allowed_root_indices(board: chess.Board, root_moves: tuple[str, ...]) -> se
 
 
 def _try_tb_root_bestmove(
-    board: chess.Board, tb_probe: SyzygyProbe, *, include_ponder: bool,
+    board: chess.Board, tb_root: RootTablebase, tb_probe: SyzygyProbe | None, *,
+    include_ponder: bool,
 ) -> SearchResult | None:
     """Return a SearchResult built from the TB's DTZ-optimal move at root,
-    or None if the position isn't TB-eligible (or the probe fails)."""
-    # The probe carries UCI `Syzygy50MoveRule` (as `cursed_as_draw`), so the
-    # root shortcut and the leaf probes of one search follow the same rule.
-    rule50 = bool(tb_probe.cursed_as_draw)
-    root = try_tb_root_move(board, tb_probe._path, rule50=rule50)
+    or None if the position isn't TB-eligible (or the probe fails).
+
+    The tables come from the C prober (``tb_root``); the move choice is
+    ``tablebase.try_tb_root_move``'s. ``tb_root`` carries UCI
+    ``Syzygy50MoveRule``; the engine builds it and the leaf probe from the same
+    option, so the root shortcut and the leaves of one search follow one rule.
+    """
+    root = tb_root.root_move(board)
     if root is None:
         return None
     best, wdl_val = root
 
   # Count the root probe toward tbhits so downstream info emission shows
   # a non-zero hit count (MCTS path isn't run in the shortcut).
-    tb_probe.probes += 1
-    tb_probe.hits += 1
+    if tb_probe is not None:
+        tb_probe.probes += 1
+        tb_probe.hits += 1
 
     if wdl_val >= 2:
         score_cp = _TB_WIN_CP
@@ -3861,10 +3877,10 @@ def _try_tb_root_bestmove(
     ponder_uci = None
     if include_ponder:
         # Ponder move: after our best, what's the opponent's DTZ-optimal reply?
-        # Re-runs try_tb_root_move; still cheap (a few legal-move probes).
+        # One more C root probe.
         board_after = board.copy(stack=False)
         board_after.push(best)
-        ponder = try_tb_root_move(board_after, tb_probe._path, rule50=rule50)
+        ponder = tb_root.root_move(board_after)
         ponder_uci = ponder[0].uci() if ponder is not None else None
 
     return SearchResult(
