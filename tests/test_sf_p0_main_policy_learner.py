@@ -13,6 +13,7 @@ import pytest
 import torch
 
 from chess_anti_engine.moves import COMPACT_MIRROR_POLICY_INV, move_to_index, move_to_index_for_encoding
+from chess_anti_engine.replay.generation import DrawnRow
 from chess_anti_engine.replay.shard import load_shard_arrays, save_local_shard_arrays
 from chess_anti_engine.train import trainer as trainer_module
 from scripts import core_finite_learner as core
@@ -228,7 +229,13 @@ def test_actual_worker_host_main_ce_analytic_gradient_fallback_and_single_mirror
     for flag in ("qualified_native_wdl", "qualified_stored_wdl"):
         assert not np.load(tmp_path / "carrier/game-000000" / (flag + ".npy"), allow_pickle=False).any()
     calls = []
+    drawn_batches: list[tuple[DrawnRow, ...]] = []
     original = trainer_module.compute_loss
+    original_on_draw = finite.MainPolicyProfile.on_draw
+
+    def capture_draw(self: finite.MainPolicyProfile, rows: tuple[DrawnRow, ...]) -> None:
+        original_on_draw(self, rows)
+        drawn_batches.append(tuple(rows))
 
     def observed(outputs: Any, batch: Any, **kwargs: Any) -> Any:
         assert kwargs["sf_wdl_frac"] == kwargs["search_wdl_frac"] == 0
@@ -246,7 +253,10 @@ def test_actual_worker_host_main_ce_analytic_gradient_fallback_and_single_mirror
         grad = torch.autograd.grad(actual["policy_ce"], logits, retain_graph=True)[0]
         expected_grad = (torch.softmax(masked, -1) - target) * legal / target.shape[0]
         torch.testing.assert_close(grad, expected_grad)
-        indices = batch["ply_index"].detach().cpu().numpy()
+        # Physical replay identities belong to the existing draw callback;
+        # collate_arrays intentionally sends only model/loss fields.
+        assert len(drawn_batches) == len(calls) + 1
+        indices = np.asarray([row.row_index for row in drawn_batches[len(calls)]], dtype=np.int64)
         control_target = source["policy_target"][indices].astype(np.float32)
         if mirror:
             control_target = control_target[:, COMPACT_MIRROR_POLICY_INV]
@@ -258,9 +268,10 @@ def test_actual_worker_host_main_ce_analytic_gradient_fallback_and_single_mirror
         outcome = torch.nn.functional.cross_entropy(outputs["wdl"].float(), batch["wdl_t"])
         torch.testing.assert_close(actual["blended_wdl_ce"], outcome)
         torch.testing.assert_close(actual["total"], expected_ce + outcome)
-        calls.append({k: batch[k].detach().cpu().numpy().copy() for k in ("policy_t", "has_policy", "legal_mask", "wdl_t", "ply_index")})
+        calls.append({k: batch[k].detach().cpu().numpy().copy() for k in ("policy_t", "has_policy", "legal_mask", "wdl_t")})
         return actual
 
+    monkeypatch.setattr(finite.MainPolicyProfile, "on_draw", capture_draw)
     monkeypatch.setattr(trainer_module, "compute_loss", observed)
     result = finite.execute(cref, stage(tmp_path, cref, gen, refs))
     journal = [json.loads(x) for x in (tmp_path / "main-segment/draws.jsonl").read_text().splitlines()]
@@ -268,9 +279,15 @@ def test_actual_worker_host_main_ce_analytic_gradient_fallback_and_single_mirror
     expected_rng = np.random.default_rng(c["seed"])
     replaced = 0
     receipts = result["main_policy_batch_counts"]
+    source_sha = core.digest(fixture.read(gen)["games"][0]["shard"]["files"])
     assert len(receipts) == 2
-    for number, (draw, batch, receipt) in enumerate(zip(journal, calls, receipts, strict=True)):
-        indices = [r["row_index"] for r in draw["rows"]]
+    for number, (draw, batch, receipt, captured) in enumerate(zip(journal, calls, receipts, drawn_batches, strict=True)):
+        assert draw["draw_batch"] == number
+        assert draw["rows"] == [{"generation": row.generation, "source_sha256": row.source_sha256,
+                                 "row_index": row.row_index} for row in captured]
+        assert all(row.generation == 1 for row in captured)
+        assert all(row.source_sha256 == source_sha for row in captured)
+        indices = [row.row_index for row in captured]
         np.testing.assert_array_equal(indices, expected_rng.choice(3, size=2, replace=True))
         if mirror:
             expected_rng.random(2)
@@ -294,7 +311,7 @@ def test_actual_worker_host_main_ce_analytic_gradient_fallback_and_single_mirror
         assert receipt["original_fallback"] == 2 - expected_replaced
         assert receipt["replaced_normalized_f32_changed"] == expected_replaced
         replaced += expected_replaced
-    assert len(calls) == len(journal) == 2
+    assert len(calls) == len(journal) == len(drawn_batches) == 2
     assert 0 < replaced < 4  # Both actual teacher and exact original fallback reach the loss.
     assert result["main_policy_replaced_rows"] == replaced
     assert result["main_policy_original_rows"] == 4 - replaced
