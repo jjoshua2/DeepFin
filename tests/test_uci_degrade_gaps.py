@@ -1014,3 +1014,39 @@ def test_a_revoked_compile_turn_holder_still_building_blocks_compiling() -> None
         assert not turn.revoked_holder_running()
     finally:
         leave.set()
+
+
+def test_prebuilt_rpg_evaluators_receive_the_startup_timeout() -> None:
+    """MINOR 7: the ``evaluators=`` (prebuilt) root-parallel Gumbel install
+    hands the device startup timeout to the pool, like the factory path."""
+    worker = SearchWorker(
+        _evaluator(), device="cpu",
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False),
+        chunk_sims=64, n_walkers=1,
+    )
+    try:
+        worker.set_device_startup_timeout(123.0)
+        worker.install_root_parallel_gumbel([_evaluator(), _evaluator()], gather=8, as_factories=False)
+        assert worker._rpg_pool is not None
+        assert worker._rpg_pool._startup_timeout_s == 123.0
+    finally:
+        worker.close()
+
+
+def test_a_stalled_call_that_returns_clears_its_wedge() -> None:
+    """A worker abandoned in a slow call that then answers is no longer
+    wedged (it stays alive, parked for restore): otherwise every ending
+    worker would park and quit would hard-exit for nothing."""
+    slow = _OnceSlow(_evaluator(), k=1, delay=1.5)
+    pool = MultiGpuPucvPool(
+        MultiGpuPucvConfig(n_gpus=2, gather=8, device_labels=("g0", "g1")),
+        evaluators=[_evaluator(), slow],
+    )
+    try:
+        _run(pool, 100)
+        assert pool.failed_devices() == ("g1",)
+        assert _wait_for(lambda: pool._restorable[1], timeout=5)
+        assert pool._threads[1].is_alive()
+        assert not wedge.any_wedged()
+    finally:
+        pool.close()
