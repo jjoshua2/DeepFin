@@ -13,6 +13,137 @@
     "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-full-A39-adapter-independent-source-review-v3/review.json",
     "sha256": "ea6b41189305160bae398b51cdea90f718c011f682c9af407dba64231d285ebd"
   },
+  "bank_cap_recovery_S3_amendment": {
+    "CPU11_and_data_prerequisites_ROOT_enforced_not_common_code_enforced": true,
+    "CPU_data_scope": "Full original bank CPU preparation/admission/membership only; zero draws/numerical model/Trainer/optimizer/checkpointdecode/CUDA; not realized contrast/AMP/GPU fit/strength",
+    "CPU_data_wall_seconds": 69.6205015819869,
+    "CPU_full_bank_independent": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-full-bank-admission-independent-actual-review-v1/review.json",
+      "sha256": "c1170ce24318ace5c4d6b08f7517010782999662b670c510ed31ea70eee07d2e"
+    },
+    "CPU_full_bank_readout": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-full-bank-admission-results-v1/readout.json",
+      "sha256": "0d813a9e0e5db945e40e52599e702409b1e243dd1451c75001398c4cc6ed5198"
+    },
+    "CPU_full_bank_root": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-full-bank-admission-bindings-v1/root-acceptance.json",
+      "sha256": "2177a01dbf0e08235ce995f34b859b0b7411e1f2fe4a0024e4d6e777c21d4284"
+    },
+    "CPU_program_ceiling": 17220,
+    "GPU_program_ceiling": 21000,
+    "RSS_peak_bytes": 2119970816,
+    "actual_roles_and_70_parent_not_rerun": true,
+    "at_publication_cutoff": "Third engineering, science, saved-state audits and playing UNRUN/unadmitted. Publication and CPU data acceptance are not numerical or strength qualification.",
+    "bank_pre_sampling_eligibility": {
+      "raw_qualified_teacher": 24205,
+      "replaceable": 22732,
+      "rows": 24827,
+      "structurally_eligible": 23325
+    },
+    "both_contract_metadata_limits": 134217728,
+    "both_failed_GPU_actual_seconds": 110.01148220698815,
+    "both_science_contract_and_stage_blobs_changed_not_byteexact_S1_S2": true,
+    "decoded_arrays": {
+      "carrier_main_policy_fields": 138410525,
+      "replay_source_window": 1173184023
+    },
+    "fallback_population_rows": 2095,
+    "fresh_engineering_UUIDs": {
+      "share0": "82a98e2e-bc89-4cbe-8eac-736138b82f2b",
+      "share1": "e748f347-0559-4ac5-a9f0-bf9ad0bfb321"
+    },
+    "fresh_model_paths": {
+      "A-original512": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-A-original512-results-v2",
+      "B-teacher512": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-B-teacher512-results-v2"
+    },
+    "frozen_scientific_protocol": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-scientific-freeze-v3/protocol.json",
+      "sha256": "a8c394b756f6457d4bbe44c4a7eee3d778fa6c746529948cf25e3d95db7e61fc"
+    },
+    "future_GPU_scope_cap": 19800,
+    "future_scope": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v3/GPU-scope-plan.json",
+      "sha256": "66ce99aed1823f7d311347bce437635ca175428d47aa334b5b3c3c73a862d580"
+    },
+    "metadata": {
+      "aggregate_and_per_file_cap_bytes": 134217728,
+      "aggregate_bytes": 91426322,
+      "files": 256,
+      "maximum_file_bytes": 724273,
+      "minimum_file_bytes": 101551
+    },
+    "metadata_inspection_selection": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-metadata-inspection-selection-v3/decision.json",
+      "sha256": "0c8f858dc235e935c1d4f6d05cc2586b0bb7198fb78824527911d7ea86346aae"
+    },
+    "new_scientific_freeze_and_MAIN_not_yet_issued_by_source_prep": true,
+    "no_author_project_numeric_imports_tests_probes_jobs_payload_reads": true,
+    "no_closed_unused_ceiling_credit": true,
+    "no_fourth_attempt_or_automatic_retry": true,
+    "parent_S2_publication": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v2/publication.json",
+      "sha256": "f8001b0188b7038fee61387dca9a4b26473c507d930bd4283299da5a7a5418bb"
+    },
+    "parent_S2_scientific_protocol": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-scientific-freeze-v2/protocol.json",
+      "sha256": "019a12bb5b76147671a54daa104b76198743768eb4ae1f40d87a8ba642138d0e"
+    },
+    "rejected_V4_source_no_execution_or_numerical_failure_credit": true,
+    "role_PLAY_source": {
+      "arena_manifest": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-role-playing-preparation-v5/arena/manifest.json",
+        "sha256": "56f25a263903bde6e38eae21b09fafc5b85a0ad8cbf198aba1000e9e82b28079"
+      },
+      "independent_review": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-role-playing-independent-source-review-v5/review.json",
+        "sha256": "25e2220d712806a089f49207ce4471175b66bcf06d530c95a6c238099bb5b189"
+      },
+      "manifest": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-role-playing-preparation-v5/manifest.json",
+        "sha256": "5a348743728c0626e17e42640a02f5d34abd931ba6edfaa7cc98344b61ed63e1"
+      },
+      "old_role_selector_and_book_refs_unchanged_no_execution_credit": true
+    },
+    "role_source_namespace_correction": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-role-source-namespace-correction-v1/decision.json",
+      "sha256": "20d0f83acb038c79b676d2850fbed5640788128576e0cc228ca906be14887e8f"
+    },
+    "root_scientific_freeze": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-scientific-freeze-v3/root-freeze.json",
+      "sha256": "89ef796ad7a2e782ddcc777b5bb29a537918af0841530767a2f1ccde6b36acef"
+    },
+    "science_source_review": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-science-independent-source-review-v3/review.json",
+      "sha256": "bdd16f67d6263d021ff3f2efb145c27467ba09165959806874668ac0c414802b"
+    },
+    "sealed_science_source_bundle": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-science-preparation-v3/manifest.json",
+      "sha256": "8aafbc145fad19828a3164cd0629e66cf4431399199a58648681f35b09cb82a5"
+    },
+    "second_failed_closeout": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bindings-v2/engineering-v2-failed-closeout.json",
+      "sha256": "8224ce5529edb1c6eb38e7f64a45874e9fb730ff26bcf31a174607948ca2e356"
+    },
+    "second_failed_independent": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-engineering-v2-failure-independent-actual-review-v1/review.json",
+      "sha256": "ec0c98b61f9679d02360bd7fac515a103f9d83f4538b1271c01555e72999677e"
+    },
+    "selection": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-bank-cap-recovery-selection-v1/decision.json",
+      "sha256": "d7f6c25531dc8117e4475060e3a7ae3ee348ae0c71cf4304d6e6186ec37bec75"
+    },
+    "source_capsule_and_qualified_runtime_unchanged": true,
+    "source_coordination_clarification": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-science-v3-role-coordination-clarification-v1/clarification.json",
+      "sha256": "2fe79fe8a0b05daebdc17329f1ad1c2752f835223c755e85086bcd2130b07047"
+    },
+    "source_status_at_preparation": "SEALED_S3_SOURCE_PREPARATION_THIRD_ENGINEERING_SELECTED_NOT_ADMITTED",
+    "source_template": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-science-preparation-v3/protocol.TEMPLATE.json",
+      "sha256": "86b6710040842e4e9c303979be8afb8447e428b441da247917379defad5c8c41"
+    },
+    "status": "ROOT_FROZEN_S3_PROSPECTIVE_PREREGISTRATION_PRECOMPUTE_NOT_EXECUTION_AUTHORITY"
+  },
   "controls": {
     "actual_independent": {
       "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-guard-controls-independent-actual-review-v1/review.json",
