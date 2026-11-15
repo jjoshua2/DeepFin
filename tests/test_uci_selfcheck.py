@@ -691,7 +691,7 @@ def test_main_fails_overall_when_any_component_fails(
     out = capsys.readouterr().out.splitlines()
     assert rc == 1
     assert out[-1].startswith("SELFCHECK FAIL (")
-    assert "skipped: checkpoint, syzygy, uci" in out[-1]
+    assert "skipped: checkpoint, syzygy-checksums, syzygy, uci" in out[-1]
     assert any(line.startswith("FAIL") and "python" in line and "simulated" in line for line in out)
     assert any(line.startswith("SKIP") and "uci" in line for line in out)
 
@@ -711,7 +711,7 @@ def test_main_json_matches_results(
     assert by_name["python"] == {"name": "python", "status": "FAIL", "detail": "simulated"}
     assert by_name["encoder"]["status"] == "PASS"
     assert by_name["checkpoint"]["status"] == "SKIP"
-    assert payload["skipped"] == ["checkpoint", "syzygy", "uci"]
+    assert payload["skipped"] == ["checkpoint", "syzygy-checksums", "syzygy", "uci"]
     assert payload["uci_mode"] is None
 
 

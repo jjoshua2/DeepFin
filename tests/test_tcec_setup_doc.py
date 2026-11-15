@@ -525,3 +525,54 @@ def test_every_quoted_engine_message_exists(run: _Run) -> None:
                 continue
             bare = fragment.removeprefix("info string ").removeprefix("deepfin: ")
             assert corpus.has(fragment) or (bare and corpus.has(bare)), (span, fragment)
+
+
+# --- tablebase preflight: the checksum step is a numbered item with a real command ---
+
+
+def _tb_preflight() -> str:
+    section = _section("7. Tablebases")
+    start = section.index("**Tablebase preflight before an event**")
+    return section[start:section.index("**Troubleshooting a refused path.**")]
+
+
+def test_the_tablebase_preflight_starts_with_the_checksum_command() -> None:
+    from chess_anti_engine.uci.selfcheck import parse_options
+
+    pre = _tb_preflight()
+    items = re.findall(r"^(\d+)\. \*\*([^*]+)\*\*", pre, flags=re.MULTILINE)
+    assert items[0] == ("1", "Checksums."), items
+    assert [n for n, _ in items] == [str(i) for i in range(1, len(items) + 1)]
+    commands = re.findall(r"```bash\n\s*(deepfin --selfcheck[^\n]*)\n", pre)
+    assert len(commands) == 1, commands
+    opts, _ = parse_options(commands[0].split()[1:])
+    assert opts.require_syzygy_checksums is True
+    assert opts.verify_syzygy_checksums is True
+    assert opts.syzygy_path == "/tb/first:/tb/second"
+    assert opts.engine_args == ()  # every flag in it is a self-check flag
+
+
+def test_the_residual_risk_of_load_time_validation_is_stated_beside_it() -> None:
+    section = " ".join(_section("7. Tablebases").split())
+    risk = section.index("**Load-time validation is not enough.**")
+    assert risk < section.index("**Tablebase preflight before an event**")
+    for claim in ("refused about 167 (roughly half)",
+                  "about one in five) were accepted and then answered WRONG WDL/DTZ with no warning",
+                  "crashed the prober at probe time"):
+        assert claim in section, claim
+
+
+def test_the_checksum_sources_the_page_names_are_the_codes() -> None:
+    from chess_anti_engine.tb import checksums
+
+    pre = " ".join(_tb_preflight().split())
+    assert f"`chess_anti_engine/tb/{checksums.BUILTIN_MANIFEST}`" in pre
+    assert (ROOT / "chess_anti_engine" / "tb" / checksums.BUILTIN_MANIFEST).is_file()
+    for suffix in (".md5", ".sha256"):
+        assert suffix in checksums._LIST_SUFFIXES
+        assert f"`*{suffix}`" in pre
+    for bare in ("md5", "sha256"):
+        assert bare in checksums._LIST_BARE_NAMES
+        assert f"`{bare}`" in pre
+    assert "`checksum*`" in pre
+    assert f"default {checksums.DEFAULT_THREADS} threads" in pre

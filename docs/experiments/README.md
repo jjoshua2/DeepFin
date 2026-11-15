@@ -16,7 +16,11 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
-- [2026-11-15: Retained-search main-WDL fixed-G1 512-update pilot](2026-11-15-retained-search-mainwdl-512-pilot.md) — complete prospective matched fresh outcome/search-WDL arms, fixed donor anchor and sole conditional donor confirmation. Actual 67 metadata controls and 1500 protected opening groups accepted; full-model engineering, training and playing unrun at registration.
+- [2026-11-15: A39/Lc0 joint GPU and timed-driver engineering](2026-11-15-a39-lc0-joint-timed-engineering.md) — selected prospective 900-second GPU / 120-second CPU technical check, 13 controls and one exposed 60+1 pair. All phases unrun and unadmitted; no strength, opponent-TB parity or adoption claim.
+
+- [2026-11-15: Retained-search WDL target census of the fixed G1 bank](2026-11-15-retained-search-target-bank-census.md) — CLOSED QUALIFIED: all 35 local controls and 256 games / 24,827 rows passed in 36.32 CPU seconds, zero GPU. Archived-to-normalized aggregate residual changes are tiny; disagreement with recorded outcomes is much larger far from the stop. Finite-bank descriptions only; no causal, training, strength or adoption claim.
+
+- [2026-11-15: Retained-search main-WDL fixed-G1 512-update pilot](2026-11-15-retained-search-mainwdl-512-pilot.md) — CLOSED NONPASS: B scored .453 against matched A and .4555 against A39, each over 1,000 games / 500 pairs with paired 95% upper bounds below .5. Both endpoints technically qualified; no confirmation or adoption, donor retained.
 
 - [2026-11-14: A39 versus pinned eight-thread Stockfish timed baseline](2026-11-14-a39-sf-timed-baseline.md) — closed qualified descriptive 60+1 baseline: 0W/4D/4L over eight games/four pairs, score 25%; registered interval unavailable because all four pairs scored draw/loss. Separate engineering pair qualified. Donor retained; no learning gain, Elo, parity or milestone claim.
 

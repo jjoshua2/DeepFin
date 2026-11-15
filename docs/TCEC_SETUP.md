@@ -52,7 +52,8 @@ python -m chess_anti_engine.uci --selfcheck --fast --device cpu \
 ```
 
 prints one line per component (`python`, `torch`, `extensions`, `freshness`,
-`encoder`, `movegen`, `search`, `checkpoint`, `syzygy`, `uci`) and a summary, and
+`encoder`, `movegen`, `search`, `checkpoint`, `syzygy-checksums`, `syzygy`, `uci`)
+and a summary, and
 exits 0. What `freshness` says depends on how the engine was installed (both run on
 CPU with a small test network):
 
@@ -68,8 +69,10 @@ A SKIP is not a failure; the exit status is 0 unless something FAILs.
 Without `--fast` the UCI exchange runs the default compiled play path, so a
 cold compile happens inside the check (minutes on a real net; `--uci-timeout`
 raises the 900 s reply limit). The self-check's own flags are `--json`,
-`--checkpoint`, `--syzygy`, `--device`, `--devices`, `--fast`, `--uci-timeout` and
-`--no-uci`; any other flag is passed to the engine. [install.md](install.md)
+`--checkpoint`, `--syzygy`, `--syzygy-checksums`, `--syzygy-require-checksums`,
+`--no-syzygy-checksums`, `--syzygy-checksum-threads`, `--device`, `--devices`,
+`--fast`, `--uci-timeout` and `--no-uci` (section 7 covers the Syzygy ones); any
+other flag is passed to the engine. [install.md](install.md)
 explains what each FAIL means.
 
 ## 3. Command lines
@@ -309,16 +312,64 @@ and plays on WITHOUT tablebases (leaves and root alike) until a good
 refused path stays configured. A missing directory in the list is refused, not
 skipped.
 
-**Before an event, check the files.** Verify the Syzygy set against the
-published checksums of its download source, then run
-`deepfin --selfcheck --syzygy /tb/first:/tb/second`: its `syzygy` component
-initialises every table in a child process and FAILs naming a corrupt or
-dropped file (or, if the child crashes, the table it was initialising). The
-validation checks each file's header and layout only. **A file whose
-corruption lies inside its compressed data passes validation and can still
-crash the engine when that material is probed**; Stockfish and every other
-engine built on the same Fathom/Syzygy code share this, which is why the
-checksum step matters.
+**Load-time validation is not enough.** It checks each file's header and
+layout only. In the independent review's fuzz of 300 randomly corrupted tables
+(PR #1327), validation refused about 167 (roughly half); about 63 were accepted
+and harmless; **62 to 67 (about one in five) were accepted and then answered
+WRONG WDL/DTZ with no warning**; 2 to 3 crashed the prober at probe time; and
+one probe hung once. Every Syzygy prober shares this, because none of them
+checksums the data. Only a checksum of every byte finds a corruption
+inside a table's compressed data, so the checksum step below is required, not
+optional.
+
+**Tablebase preflight before an event** (with the `SyzygyPath` you will give the GUI):
+
+1. **Checksums.** Run
+
+   ```bash
+   deepfin --selfcheck --no-uci --syzygy /tb/first:/tb/second --syzygy-require-checksums
+   ```
+
+   Its `syzygy-checksums` component hashes every `.rtbw` / `.rtbz` file in every
+   listed directory (duplicates included) against a checksum list, in the
+   GNU `md5sum` / `sha256sum` format the standard Syzygy distribution uses
+   (`<hex>  <name>`, a `*` binary-mode marker, CRLF and relative subpaths such as
+   `6-wdl/KQRvKR.rtbw` are accepted; entries are matched by file name). The list
+   comes from, in order: `--syzygy-checksums <list>` (repeatable; the word
+   `builtin` names the shipped manifest), else every `*.md5`, `*.sha256`,
+   `checksum*`, `md5` or `sha256` file inside the listed directories (one list may
+   cover all of them), else the manifest shipped with the engine for the standard
+   3-4-5-6-man set (`chess_anti_engine/tb/syzygy_standard_3-4-5-6.md5`: the
+   lichess mirror's `https://tablebase.lichess.ovh/tables/standard/md5`, every
+   table up to 6 men; it has the same 1020 entries as an independently
+   downloaded copy's `3-4-5-6.md5`, and matches the files themselves).
+   **A list found in a table directory takes precedence over the built-in
+   manifest and is not cross-checked against it**, so a list regenerated
+   locally from the files (`md5sum *.rtb? > checksum.md5`) proves nothing. Use
+   the list that came with the download, or pass `--syzygy-checksums builtin`
+   for the standard 3-4-5-6-man set. It FAILs
+   naming every mismatched or unreadable file and every malformed list line.
+   A file that no list covers (for example 7-man tables checked against the
+   built-in manifest), or no list at all, is `NOT VERIFIED: ...`, naming the
+   files: a SKIP without `--syzygy-require-checksums`, a FAIL with it. **Without
+   the flag an uncovered set is only a SKIP and the run still ends
+   `SELFCHECK PASS`**, so use the flag for an event. Listed tables absent from the path are named but are not
+   a failure (a list usually covers more than one install holds).
+   `--no-syzygy-checksums` skips the pass (reported as `NOT VERIFIED`).
+   Measured on the production 3-4-5-6-man pair (1,385 files including the
+   6-man WDL tables present in both directories, 234 GB, NVMe, about 26 GB of it
+   in the page cache at the start): 130 s at 1.8 GB/s on the default 4 threads
+   (`--syzygy-checksum-threads`), 2 min 19 s for the whole self-check. Hashing is
+   in the self-check only; the engine never hashes at startup.
+2. **Validation and probes.** The same run's `syzygy` component initialises
+   every table in a child process, as the engine does at `setoption`, and FAILs
+   naming a corrupt or dropped file, or the table the child was on when it
+   crashed or hung; then it probes known 3-, 5- and 6-man positions through both
+   probers. A crash, a hang or a FAIL names the file to replace.
+3. **The engine's own load line.** After `setoption name SyzygyPath value ...`
+   and `isready`, the engine must print the two `SyzygyPath loaded` /
+   `Syzygy root prober` lines above and no `REFUSED` line.
+
 `setoption name SyzygyPath value <empty>` turns tablebases off:
 `info string SyzygyPath cleared; tablebase probing disabled`. Changing
 `SyzygyPath` mid-session reloads both probers for the next search.
@@ -330,6 +381,18 @@ need not describe what is inside them; check by listing. The self-check's
 `--syzygy` takes the same string and probes 3-, 5- and 6-man positions when those
 tables are present, through both probers, and fails if they disagree or the C
 prober refuses the path.
+
+**Troubleshooting a refused path.** Any file ending in `.rtbw` or `.rtbz` in a
+table directory that the prober cannot load refuses the WHOLE path (all
+tablebases off, never a silent partial set): a stray file such as
+`notes.rtbw`, a mirrored name such as `KvKR.rtbw` (the table is `KRvK.rtbw`),
+a broken symlink, or a file of incomplete size. The refusal names every such
+file and says what to do: `remove or rename each one` (for a mirrored name, the
+message gives the real table name; for an incomplete file, re-download it).
+Fix the directory and send `setoption name SyzygyPath value ...` again.
+The refusal `info string` can be several thousand characters long, and some
+GUIs truncate long lines; the self-check prints the same refusal in full, so
+`deepfin --selfcheck --no-uci --syzygy ...` is the reliable place to read it.
 
 `Syzygy50MoveRule` (default `true`): with it on, a win that the 50-move rule turns
 into a draw counts as a draw. With it off, cursed wins and blessed losses count as
