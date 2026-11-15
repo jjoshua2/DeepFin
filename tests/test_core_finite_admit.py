@@ -251,7 +251,9 @@ def entry_case(tmp_path: Path, monkeypatch, *, generation: int = 2, fault: str |
     actor_sha = admit.learning.file_sha(actor_path)
     f = synthetic_game(producer_root, monkeypatch, corruption, generation=generation, actor_sha=actor_sha)
     f.verifier.close()
-    arch = {"_schema_version": ARCH_SCHEMA_VERSION, **asdict(ModelConfig(history_rep_fix=True))}
+    model_config = ModelConfig(history_rep_fix=f.game.history_rep_fix, input_history_encoding=f.game.input_history_encoding,
+                               input_extra_features=f.game.input_extra_features, policy_encoding=f.game.policy_encoding)
+    arch = {"_schema_version": ARCH_SCHEMA_VERSION, **asdict(model_config)}
     prior_contract = frozen(tmp_path / "prior-contract.json", {"run_uuid": f.run, "source_revision": f.source})
     prior_stage = frozen(tmp_path / "prior-stage.json", {"generation": generation - 1, "contract_sha256": prior_contract["sha256"],
                          "generations": [], "parent": None, "output": str(previous)})
