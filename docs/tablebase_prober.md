@@ -284,9 +284,10 @@ write through NULL (SIGSEGV, forfeit). Now:
   Incomplete tablebase file` on stdout) also refuse the path, named.
 - **What is still possible:** a file whose corruption is in its compressed
   data passes validation and can still crash or mis-answer at probe time.
-  Stockfish and every other Fathom user share this. Verify the set against
-  published checksums; `deepfin --selfcheck --syzygy` runs the full
-  validation in a child process.
+  Stockfish and every other Fathom user share this. `deepfin --selfcheck
+  --syzygy <path> --syzygy-require-checksums` hashes every file against a
+  checksum list (`chess_anti_engine/tb/checksums.py`; docs/TCEC_SETUP.md,
+  section 7) and runs the full validation in a child process.
 
 `try_tb_root_move` itself no longer has a production caller; it is the
 reference `tests/test_uci_tb_root_c.py` compares against: per-move DTZ, chosen
