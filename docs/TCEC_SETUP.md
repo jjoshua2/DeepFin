@@ -526,7 +526,10 @@ far above one cold `max-autotune` compile step, so a healthy cold start is never
 dropped) is dropped with `... failed at startup (TimeoutError: evaluator build/warm-up made no progress ...)`
 and the engine reaches `readyok` on the others, DEGRADED as above. Devices waiting
 for their turn to compile (they compile one at a time) are not counted as stuck,
-and a hung device's turn is handed to the next. The same limit applies to the
+and a hung device's turn is handed to the next. The hung device may still wake up
+and compile, so while it is inside its build the devices after it build without
+`torch.compile` (eager, slower), announced with `... builds without torch.compile (eager, slower): a device timed out at startup may still be compiling`:
+two compiles never run at once. The same limit applies to the
 `--no-multi-gpu-pucv` routing chain's warm-up. When no device comes up (every pool
 device hangs, or the only device or the primary evaluator hangs, so nothing at all
 progresses for the timeout plus 60 s), startup fails: `info string engine startup failed: ...` with the reason
@@ -536,38 +539,77 @@ progresses for the timeout plus 60 s), startup fails: `info string engine startu
 start is strict, as for a device that raises. A `0` timeout waits forever (the
 behaviour before this limit existed).
 
+**A device thread that stays stuck.** A call into a device that never returns
+cannot be interrupted. While any device thread is stuck, the engine never lets
+another worker thread that has run evaluator work end (that crashed the process:
+see PR #1333): such a worker parks (blocked, no CPU) until the stuck call
+returns, for a truly hung device until the process exits. What stays parked:
+at most one worker per device per pool (or routing chain) built, and the
+evaluator and buffers it holds. `quit` with a stuck device thread exits at once
+with the status it would have had, without closing anything:
+`info string quit: ...; exiting with status ... without waiting for it`, the reason
+reading `a multi-GPU worker is still stuck inside a dropped device's call`.
+An option that rebuilds the evaluators after a device got stuck (or was dropped
+for a stall) this session leaves that device out at once
+(`... left out: it wedged earlier this session (...)`) instead of building on it
+and waiting out `--device-startup-timeout` before `readyok`; root-parallel Gumbel
+then stays retired (`root-parallel Gumbel stays retired: device ... wedged earlier this session ...`).
+Re-admitting such a device needs a restart.
+
 **The primary evaluator beside the pool.** The first device also evaluates every
 root and runs `go searchmoves` (classic Gumbel, which honours the restriction).
-Its calls are watched like a pool device's: if it raises or a call blocks for more
-than 1 s, root evaluations and `searchmoves` searches move to the surviving pool
+Its calls run on their own thread, warmed by one measured call at startup (so a
+GPU's per-thread setup is not paid on the first move, and the stall limit starts
+from a measured call, as for pool devices). If it raises, or a call blocks for
+more than 1 s, root evaluations and `searchmoves` searches move to the surviving pool
 devices, announced once
 (`info string WARNING multi-GPU DEGRADED: the primary (root-eval) evaluator ...; root evaluations and searchmoves now run on the surviving pool devices`)
 and repeated on the per-`go` degraded line. A `searchmoves` search interrupted by
 the failure is rerun on the pool with the same restriction, so its `bestmove` is
 still one of the `searchmoves`. On the pool devices each `searchmoves` batch is
 capped at `VLGather` rows (the sizes they warmed), a narrower search than on a
-healthy primary. A failed primary is not re-admitted until it is rebuilt (an
-option that rebuilds it, or a restart).
+healthy primary. A primary dropped for a stall whose late call came back clean
+is re-admitted at the next `go`
+(`multi-GPU RESTORED: the primary (root-eval) evaluator answered again after its stall; root evaluations return to it`);
+one that raised stays out until it is rebuilt (an option that rebuilds it, or a
+restart). The same applies with `--search-parallel gumbel`, where root
+evaluations then run on a surviving root-parallel group's own thread.
 
 **`--no-multi-gpu-pucv` (the routing chain).** Each device's calls run on that
 device's own thread. A device that raises, or whose call blocks for more than 1 s
 while another device is live (at least 5 s, and at least 10 times its slowest
-call, when it is the last one), is dropped, the batch it was given is redone on
-another device, and the move is searched; announced and repeated exactly as on the
-pool, and re-admitted after a stall the same way (with the same 2-drops-per-`go`
-limit). If every device fails, each `go` is answered from the fallback.
+call, capped at 30 s, when it is the last one), is dropped, the batch it was
+given is redone on another device, and the move is searched; announced and
+repeated exactly as on the pool, and re-admitted after a stall the same way (with
+the same 2-drops-per-`go` limit). If every device fails, each `go` is answered
+from the fallback (`bestmove_fallback_used`) and `quit` exits 0: the chain's
+calls return (raise) when the last device fails, so the search ends normally.
 
 **`--search-parallel gumbel` (root-parallel Gumbel).** Its candidate subtrees
 cannot continue without the failed device, so a device that raises, or blocks one
 search step for more than 1 s while another device is idle (at least 5 s while all
-are busy), **retires** root-parallel Gumbel: the same move continues on the
-classic path (classic Gumbel, or the configured walkers / `UseVL`) on the primary
-evaluator, `devices[0]`, and later moves stay there. Announced once
-(`info string WARNING multi-GPU DEGRADED: root-parallel Gumbel device ... failed mid-search ...; this and later moves search classic Gumbel on the primary evaluator until the pool is rebuilt`,
+are busy), **retires** root-parallel Gumbel: the same move continues on classic
+Gumbel, and later moves stay there. It runs on the primary evaluator (with the
+configured walkers / `UseVL`) when the failed device is not `devices[0]`. When it
+is `devices[0]` (which the primary shares), or the primary already failed, the
+primary is set aside and classic Gumbel runs on a surviving group's own
+evaluator and thread instead. Announced once, naming the device that carries on
+(`info string WARNING multi-GPU DEGRADED: root-parallel Gumbel device ... failed mid-search ...; this and later moves search classic Gumbel on ... until the pool is rebuilt`,
 or `... stopped answering ...`) and on every `go`, `isready` and `searchconfig`
-(`multi-GPU degraded: root-parallel Gumbel retired after device ...`). If the
-failed device was `devices[0]`, the classic search fails too and the move comes
-from the fallback.
+(`multi-GPU degraded: root-parallel Gumbel retired after device ...`).
+
+**When every device has failed.** No mode can search. With the PUCV pool or
+root-parallel Gumbel, a last device that stops answering cannot be taken away
+from the search thread inside it: the deadline watchdog answers that move from
+the fallback (`source=first_legal`), the next `go` finds the worker still owned
+(`... parked ...`, answered from the fallback), and `quit` exits 1 (a search
+never ended). Devices that raise end the search normally instead: fallback
+answers and `quit` exits 0. The routing chain behaves as described above.
+
+**Which mode to run.** The tournament configuration is the multi-GPU PUCV pool
+(the default with several `--devices`). Root-parallel Gumbel and the routing
+chain are secondary: their degrade paths are tested, but they are not the
+configuration the engine is tuned and measured in.
 
 **Options mid-game.** An option that rebuilds is applied at once, between moves; if
 the rebuild fails, `info string ...: evaluator rebuild failed (...); keeping the

@@ -40,6 +40,7 @@ import torch
 from chess_anti_engine.inference_dispatcher import MultiGPUDispatcher, bootstrap_cudagraph_tls
 from chess_anti_engine.uci import multi_gpu_pucv_pool as _pool
 from chess_anti_engine.uci import startup_progress
+from chess_anti_engine.uci import wedge
 
 _log = __import__("logging").getLogger(__name__)
 
@@ -86,7 +87,8 @@ class DeviceCallRunner:
     the call's eventual result is discarded, and every later ``call`` raises
     ``DeviceStalled`` at once until ``restore``. If the abandoned call comes
     back WITHOUT error, the thread parks and ``restorable`` turns True; if it
-    raises, the thread exits (the device is not restorable).
+    raises, the thread ends (the device is not restorable) -- or, while any
+    device thread is wedged, parks for good instead (``wedge``).
     """
 
     def __init__(self, label: str, *, device: str | None = None, bootstrap: bool = True) -> None:
@@ -102,11 +104,15 @@ class DeviceCallRunner:
         self._lock = threading.Lock()
         self._abandoned = False
         self._late_ok = False
+        self._stuck = False  # abandoned AND still inside that call
         self._closed = False
         self.slowest_call_s = 0.0
         self.timing = False  # record ``slowest_call_s`` (after warm-up only)
+        self.warmed = False  # one measured call has run (``SearchWorker._warm_primary_runner``)
         self._ready = threading.Event()
-        self._thread = threading.Thread(target=self._loop, name=f"device-call-{label}", daemon=True)
+        self._thread = threading.Thread(
+            target=wedge.parking(self._loop), name=f"device-call-{label}", daemon=True,
+        )
         self._thread.start()
         # Thread setup (cudagraph TLS bootstrap imports Inductor: about a
         # second, once) must not count against the first call's stall limit.
@@ -139,6 +145,8 @@ class DeviceCallRunner:
                 late = self._abandoned
                 if late:
                     self._late_ok = ok
+                    self._stuck = False
+                    wedge.clear_wedged(threading.current_thread())
                 done.set()
             if late and not ok:
                 return  # an abandoned call that then raised: not restorable
@@ -160,6 +168,8 @@ class DeviceCallRunner:
                 if not done.is_set():
                     self._abandoned = True
                     self._late_ok = False
+                    self._stuck = True
+                    wedge.mark_wedged(self._thread, f"device {self.label} call", device=self.label)
                     raise DeviceStalled(
                         f"one device call blocked for {time.monotonic() - started:.1f}s "
                         f"> {limit_s:.1f}s"
@@ -190,13 +200,13 @@ class DeviceCallRunner:
 
     def wedged(self) -> bool:
         """Abandoned inside a call that has not returned (thread still in it)."""
-        return self._abandoned and not self._late_ok and self._thread.is_alive()
+        return self._stuck and self._thread.is_alive()
 
     def close(self, timeout: float) -> None:
         with self._lock:
             self._closed = True
         self._q.put(None)
-        self._thread.join(timeout=max(0.0, timeout))
+        wedge.join_unless_wedged(self._thread, max(0.0, timeout))
 
 
 class DegradingMultiGPUDispatcher(MultiGPUDispatcher):

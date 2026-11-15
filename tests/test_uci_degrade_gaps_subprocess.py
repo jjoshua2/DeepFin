@@ -8,8 +8,10 @@ one device bad, chosen by the thread that builds it (pool workers are
 build order). Faults:
 
 - ``raise``: every device call raises (CUDA error) once armed;
-- ``stall``: the call never returns -- it spins in torch, the shape that used
-  to abort interpreter finalization at ``quit`` (rc 134);
+- ``stall``: the call never returns -- ``STALL_KIND=spin`` spins in torch
+  (the shape that used to abort interpreter finalization at ``quit``, rc 134),
+  ``STALL_KIND=block`` blocks without the GIL (the closer model of a CUDA
+  hang);
 - ``startup``: the device's first call (its warm-up) never returns.
 
 A mid-search fault is ARMED by the first ``go`` (so the warm-up is clean).
@@ -43,6 +45,7 @@ torch.set_num_threads(1)
 MODE = os.environ["FAULT_MODE"]          # raise | stall | startup | none
 WHERE = os.environ.get("FAULT_WHERE", "")  # comma list: pool:1, rpg:1, chain:1, primary, all-pool
 AFTER = int(os.environ.get("FAULT_AFTER", "2"))
+STALL_KIND = os.environ.get("STALL_KIND", "spin")  # spin (holds the GIL in torch) | block (GIL-free)
 if os.environ.get("BUILDER_GRACE"):
     startup_progress.BUILDER_TIMEOUT_GRACE_S = float(os.environ["BUILDER_GRACE"])
 ARMED = threading.Event()
@@ -94,6 +97,8 @@ class Faulty(Real):
                 if self._calls > (0 if MODE == "startup" else AFTER):
                     if MODE == "raise":
                         raise RuntimeError("CUDA error: device lost (injected)")
+                    if STALL_KIND == "block":
+                        threading.Event().wait()  # GIL-free: the closer model of a CUDA hang
                     t = torch.ones(64, 64)
                     while True:
                         t = torch.mm(t, t).clamp_(-1.0, 1.0)
@@ -251,8 +256,20 @@ _PATHS = {
 _WHERE = {"pool": "pool:1", "chain": "chain:1", "rpg": "rpg:1"}
 
 
-def _run_fault_session(ckpt: Path, tmp_path: Path, path: str, mode: str, go_kind: str) -> None:
-    sess = _Session(ckpt, tmp_path, _PATHS[path], {"FAULT_MODE": mode, "FAULT_WHERE": _WHERE[path]})
+def _fault_env(mode: str, where: str) -> dict[str, str]:
+    """``mode``: raise | stall (spinning in torch) | block (GIL-free stall)."""
+    env = {"FAULT_MODE": "stall" if mode == "block" else mode, "FAULT_WHERE": where}
+    if mode == "block":
+        env["STALL_KIND"] = "block"
+    return env
+
+
+def _run_fault_session(ckpt: Path, tmp_path: Path, path: str, mode: str, go_kind: str,
+                       where: str | None = None, after: int | None = None) -> None:
+    env = _fault_env(mode, where or _WHERE[path])
+    if after is not None:
+        env["FAULT_AFTER"] = str(after)
+    sess = _Session(ckpt, tmp_path, _PATHS[path], env)
     try:
         sess.ready()
         go, stop_after, restrict = _GOS[go_kind]
@@ -277,17 +294,78 @@ def test_pool_device_fault_under_every_go_kind(ckpt, tmp_path, mode, go_kind) ->
     _run_fault_session(ckpt, tmp_path, "pool", mode, go_kind)
 
 
-@pytest.mark.parametrize("mode", ["raise", "stall"])
+@pytest.mark.parametrize("mode", ["raise", "stall", "block"])
 @pytest.mark.parametrize("go_kind", ["nodes", "movetime", "infinite", "searchmoves"])
 @pytest.mark.parametrize("path", ["chain", "rpg"])
 def test_chain_and_rpg_device_fault(ckpt, tmp_path, path, mode, go_kind) -> None:
     _run_fault_session(ckpt, tmp_path, path, mode, go_kind)
 
 
+@pytest.mark.parametrize("mode", ["raise", "stall", "block"])
+@pytest.mark.parametrize("where", ["primary", "rpg:0,primary"])
+def test_rpg_survives_losing_the_primary_or_gpu0(ckpt, tmp_path, where, mode) -> None:
+    """Root-parallel Gumbel losing the primary evaluator, or devices[0] (its
+    group AND the primary that shares it): searched moves continue on the
+    surviving group, announced, and quit exits 0."""
+    # after=0: the first armed call fails (the primary makes about one root
+    # evaluation per go; its install-time warm call runs before arming).
+    _run_fault_session(ckpt, tmp_path, "rpg", mode, "movetime", where=where, after=0)
+
+
+@pytest.mark.parametrize("path", ["pool", "chain", "rpg"])
+def test_rebuild_after_a_wedge_leaves_the_device_out(ckpt, tmp_path, path) -> None:
+    """A device wedges mid-search, then ``setoption MaxBatch`` rebuilds the
+    evaluators and pool: the wedged device is left out at once (no startup-
+    timeout wait before readyok), the engine keeps searching, quit exits 0."""
+    sess = _Session(ckpt, tmp_path, _PATHS[path], _fault_env("block", _WHERE[path]))
+    try:
+        sess.ready()
+        move, _ = sess.go("position startpos moves e2e4", "go movetime 2500")
+        _legal("e2e4", move)
+        started = time.monotonic()
+        sess.send("setoption name MaxBatch value 512")
+        sess.send("isready")
+        sess.read_until(lambda ln: ln == "readyok", 120)
+        assert time.monotonic() - started < 60
+        move2, got2 = sess.go("position startpos moves e2e4 e7e5", "go nodes 300")
+        _legal("e2e4 e7e5", move2)
+        assert not any("parked" in ln or "search not started" in ln for ln in got2), got2
+        rc, text, err = sess.quit()
+    finally:
+        sess.close()
+    assert "WARNING multi-GPU DEGRADED" in text, text
+    assert "terminate called" not in err, err
+    assert rc == 0, (rc, text[-3000:], err[-3000:])
+
+
+@pytest.mark.parametrize("stall_kind", ["spin", "block"])
+def test_rpg_device_hung_at_startup_exits_1(ckpt, tmp_path, stall_kind) -> None:
+    """Root-parallel Gumbel needs every group: a group whose build hangs fails
+    the start with exit 1 (documented), never an abort or a crash (-6/-11)."""
+    sess = _Session(ckpt, tmp_path, [*_PATHS["rpg"], "--device-startup-timeout", "3"],
+                    {"FAULT_MODE": "startup", "FAULT_WHERE": "rpg:1", "BUILDER_GRACE": "1",
+                     "STALL_KIND": stall_kind})
+    try:
+        sess.send("uci")
+        sess.send("isready")
+        rc = sess.proc.wait(timeout=90)
+        _out, err = sess.proc.communicate(timeout=10)
+        sess.drain()
+    finally:
+        sess.close()
+    text = "\n".join(sess.lines)
+    assert rc == 1, (rc, text[-2000:], (err or "")[-3000:])
+    assert "readyok" not in text
+    assert "engine startup failed" in text, text[-2000:]
+    assert "terminate called" not in (err or ""), err
+
+
+@pytest.mark.parametrize("stall_kind", ["spin", "block"])
 @pytest.mark.parametrize("path", ["pool", "chain"])
-def test_a_device_hung_at_startup_is_dropped_and_the_engine_plays(ckpt, tmp_path, path) -> None:
+def test_a_device_hung_at_startup_is_dropped_and_the_engine_plays(ckpt, tmp_path, path,
+                                                                  stall_kind) -> None:
     sess = _Session(ckpt, tmp_path, [*_PATHS[path], "--device-startup-timeout", "3"],
-                    {"FAULT_MODE": "startup", "FAULT_WHERE": _WHERE[path]})
+                    {"FAULT_MODE": "startup", "FAULT_WHERE": _WHERE[path], "STALL_KIND": stall_kind})
     try:
         started = time.monotonic()
         before = sess.ready(timeout=90)
@@ -347,11 +425,13 @@ def test_every_device_failing_mid_search_still_answers_each_go(ckpt, tmp_path) -
     assert rc == 0, (rc, text[-2000:], err[-2000:])
 
 
+@pytest.mark.parametrize("mode", ["stall", "block"])
 @pytest.mark.parametrize("path", ["pool", "chain", "rpg"])
-def test_quit_during_a_stall_exits_zero(ckpt, tmp_path, path) -> None:
-    """`quit` while a dropped device's thread is still spinning in torch:
-    exit 0 with the reason line, never the finalization abort (134)."""
-    sess = _Session(ckpt, tmp_path, _PATHS[path], {"FAULT_MODE": "stall", "FAULT_WHERE": _WHERE[path]})
+def test_quit_during_a_stall_exits_zero(ckpt, tmp_path, path, mode) -> None:
+    """`quit` while a dropped device's thread is still stuck (spinning in
+    torch, or blocked GIL-free): exit 0 with the reason line, never the
+    finalization abort (134) or a crash (-11)."""
+    sess = _Session(ckpt, tmp_path, _PATHS[path], _fault_env(mode, _WHERE[path]))
     try:
         sess.ready()
         move, _ = sess.go("position startpos moves d2d4", "go movetime 2000")

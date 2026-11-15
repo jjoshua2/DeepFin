@@ -44,6 +44,7 @@ from chess_anti_engine.mcts.search_options import MAX_CHUNK_SIMS, SEARCH_OPTIONS
 from chess_anti_engine.mcts.root_tactics import immediate_mate_move
 from chess_anti_engine.mcts.puct import _value_scalar_from_wdl_logits
 from chess_anti_engine.mcts.puct_vl import PucvChunker
+from .multi_gpu_pucv_pool import ALL_DEVICES_FAILED as MULTI_GPU_ALL_DEVICES_FAILED
 from .multi_gpu_pucv_pool import (
     MultiGpuPucvConfig,
     MultiGpuPucvPool,
@@ -71,6 +72,7 @@ from .score import q_to_cp
 from .tb_root import RootTablebase, RootTablebaseError
 from .time_manager import Deadline
 from .walker_pool import WalkerPool, WalkerPoolConfig
+from . import wedge
 import contextlib
 import logging as _logging
 import time
@@ -434,6 +436,13 @@ def pool_root_support_corruption_count() -> int:
     return _POOL_ROOT_SUPPORT_CORRUPTIONS
 
 
+
+def _unique_labels(names: Any) -> tuple[str, ...]:
+    """Device labels with repeats numbered (``cpu,cpu`` -> ``cpu#0, cpu#1``),
+    so each announcement -- and the wedged-device registry -- names one device."""
+    plain = [str(n) for n in names]
+    return tuple(n if plain.count(n) == 1 else f"{n}#{k}" for k, n in enumerate(plain))
+
 class SearchWorker:
     """Owns one MCTS tree + one evaluator. Single-search at a time."""
 
@@ -511,6 +520,9 @@ class SearchWorker:
         # Pool workers still stuck in a device call after their pool closed.
         self._wedged_device_threads: list[threading.Thread] = []
         self._pucv_pool_evals: list[Any] = []
+        # Indices of a closed pool's evaluators whose worker thread is still
+        # alive (stuck inside it, or parked): never closed under that thread.
+        self._pucv_evals_in_use: set[int] = set()
         self._pucv_pool_cboard: CBoard | None = None
   # Degrade-path announcements (a dropped device, a failed primary) waiting
   # for an `info string`. The emitter returns False when it could not print
@@ -529,9 +541,9 @@ class SearchWorker:
   # Set when the root-parallel Gumbel pool was retired after a device failure
   # (the search continues on the classic path); the per-go degraded line.
         self._rpg_retired_reason: str | None = None
-        # Retired root-parallel Gumbel pools, kept (never closed) for the
-        # process lifetime: see ``_retire_rpg_after_failure``.
-        self._retired_rpg_pools: list[tuple[Any, ...]] = []
+        # A retired root-parallel Gumbel pool kept to serve the classic path
+        # from a surviving group's thread (``_retire_rpg_after_failure``).
+        self._rpg_rows_pool: Any = None
   # (evaluator id, its DegradingMultiGPUDispatcher or None): the routing
   # chain's degrade source, looked up once per evaluator.
         self._chain_source_cache: tuple[int, Any] | None = None
@@ -803,10 +815,10 @@ class SearchWorker:
             input_planes=input_plane_count(self._cfg.input_extra_features),
             compute_relations=bool(self._cfg.compute_relations),
             input_history_encoding=self._cfg.input_history_encoding,
-            device_labels=tuple(str(d) for d in (
+            device_labels=_unique_labels(
                 device_labels if device_labels is not None
                 else getattr(self, "_device_labels", ())
-            )),
+            ),
             # UCI: one device failing to build must not cost the game -- start
             # on the rest (announced; --selfcheck reports it).
             degrade_on_startup_failure=True,
@@ -828,7 +840,7 @@ class SearchWorker:
             )
         self.reset_tree()
         if self._pucv_pool.n_devices > 0:
-            self._ensure_primary_runner()
+            self._warm_primary_runner()
         self._flush_device_notes()
 
     def set_device_startup_timeout(self, seconds: float | None) -> None:
@@ -873,6 +885,10 @@ class SearchWorker:
             drain = getattr(source, "drain_notes", None)
             if callable(drain):
                 notes.extend(cast("list[str]", drain()))
+        for rpg in (getattr(self, "_rpg_pool", None), getattr(self, "_rpg_rows_pool", None)):
+            drain = getattr(rpg, "drain_rows_notes", None)
+            if callable(drain):
+                notes.extend(cast("list[str]", drain()))
         self._device_notes = notes
         if not notes:
             return
@@ -893,10 +909,26 @@ class SearchWorker:
                 kept.append(note)
         self._device_notes = kept
 
+    def _close_pucv_pool_evals(self) -> None:
+        """Close the closed pool's evaluators -- except one whose worker
+        thread is still alive (stuck inside it, or parked by ``wedge``)."""
+        keep = getattr(self, "_pucv_evals_in_use", set())
+        for k, ev in enumerate(self._pucv_pool_evals):
+            if k in keep:
+                continue
+            close = getattr(ev, "close", None)
+            if callable(close):
+                with contextlib.suppress(Exception):
+                    close()
+        self._pucv_pool_evals = []
+        self._pucv_evals_in_use = set()
+
     def _close_pucv_pool(self, pool: Any) -> None:
         """Close a multi-GPU pool, remembering any worker still wedged in a
         device call after it (see ``has_wedged_device_threads``)."""
         pool.close()
+        threads = list(getattr(pool, "_threads", ()))
+        self._pucv_evals_in_use = {k for k, th in enumerate(threads) if th.is_alive()}
         live = getattr(pool, "live_worker_threads", None)
         if callable(live):
             wedged: list[threading.Thread] = list(getattr(self, "_wedged_device_threads", ()))
@@ -906,6 +938,8 @@ class SearchWorker:
     def has_wedged_device_threads(self) -> bool:
         """A closed pool left a worker stuck inside a device call, or a
         device-call thread (routing chain, guarded primary) is stuck in one."""
+        if wedge.any_wedged():
+            return True
         if any(th.is_alive() for th in getattr(self, "_wedged_device_threads", ())):
             return True
         chain = self._chain_degrade_source()
@@ -963,6 +997,7 @@ class SearchWorker:
                     restore()
             except Exception:
                 _log.exception("multi-GPU device restore failed")
+        self._restore_primary_if_recovered()
         self._flush_device_notes()
         summary = self.pool_degraded_summary()
         cb = getattr(self, "_device_note_cb", None)
@@ -995,12 +1030,7 @@ class SearchWorker:
         if self._pucv_pool is not None:
             self._close_pucv_pool(self._pucv_pool)
             self._pucv_pool = None
-        for ev in self._pucv_pool_evals:
-            close = getattr(ev, "close", None)
-            if callable(close):
-                with contextlib.suppress(Exception):
-                    close()
-        self._pucv_pool_evals = []
+        self._close_pucv_pool_evals()
         self._pucv_pool_cboard = None
         if not had_pool or not restore_fallback:
             return
@@ -1046,6 +1076,22 @@ class SearchWorker:
         """
         if not evaluators_or_factories:
             raise ValueError("at least one evaluator/factory required")
+        n_dev = len(evaluators_or_factories)
+        labels = _unique_labels(devices if devices is not None else [f"#{k}" for k in range(n_dev)])
+        wedged = [(lab, wedge.wedged_earlier(lab)) for lab in labels]
+        wedged = [(lab, what) for lab, what in wedged if what is not None]
+        if wedged:
+            # A rebuild after a device wedged this session: root-parallel
+            # Gumbel needs every group, and building on the wedged device would
+            # hang (or fail) the startup. Stay on the classic path, announced.
+            lab, what = wedged[0]
+            self.clear_root_parallel_gumbel()
+            self._rpg_retired_reason = (
+                f"root-parallel Gumbel stays retired: device {lab} wedged earlier this "
+                f"session ({what}); searching classic Gumbel on the primary evaluator"
+            )
+            self.restore_classic_search_path()
+            return
         self.clear_root_parallel_gumbel()
         self._rpg_retired_reason = None
         # Teardown only — install immediately owns the path.
@@ -1109,8 +1155,13 @@ class SearchWorker:
                 evaluators=evaluators_or_factories,
                 devices=devices,
                 info_string_cb=info_string_cb,
+                startup_timeout_s=getattr(self, "_device_startup_timeout_s", None),
             )
         self.reset_tree()
+        if multi:
+            # The primary is guarded beside the pool (a failure moves root
+            # evaluations onto a surviving group): build + warm its thread now.
+            self._warm_primary_runner()
 
     def clear_root_parallel_gumbel(self) -> None:
         """Tear down the root-parallel Gumbel pool and revert to the
@@ -1127,6 +1178,7 @@ class SearchWorker:
         ``gss_score_and_halve`` reading ``W[root]/N[root]`` — no longer holds:
         it takes the fresh ``root_qs``.
         """
+        self._close_rpg_rows_pool()
         had_pool = self._rpg_pool is not None
         if self._rpg_pool is not None:
             self._rpg_pool.close()
@@ -1685,12 +1737,7 @@ class SearchWorker:
             self._pucv_pool = None
   # Each per-GPU evaluator may also need close() (BatchCoalescingDispatcher
   # submitter etc.).
-        for ev in self._pucv_pool_evals:
-            close = getattr(ev, "close", None)
-            if callable(close):
-                with contextlib.suppress(Exception):
-                    close()
-        self._pucv_pool_evals = []
+        self._close_pucv_pool_evals()
         self._retire_primary_runner()
         if close_evaluator:
             ev = self._evaluator
@@ -2247,22 +2294,44 @@ class SearchWorker:
         so losing the first GPU does not cost every later move its search.
         Without a live pool the primary's error propagates unchanged.
         """
-        pool = self._pucv_pool
+        source = self._rows_source()
         primary_failed = getattr(self, "_primary_failed", False)
-        if not (primary_failed and pool is not None and pool.n_devices > 0):
+        if not (primary_failed and source is not None):
             ev = self._evaluator
             try:
                 if rels is not None:
                     return self._primary_call(lambda: ev.evaluate_encoded(xs, relations=rels))
                 return self._primary_call(lambda: ev.evaluate_encoded(xs))
             except Exception as exc:
-                if pool is None or pool.n_devices == 0:
+                if source is None:
                     raise
                 self._note_primary_failed(exc)
-        assert pool is not None
-        result = pool.evaluate_root(xs, rels)
-        self._flush_device_notes()
-        return result
+        source = self._rows_source()
+        if source is None:
+            raise RuntimeError(f"{MULTI_GPU_ALL_DEVICES_FAILED} (primary and every pool device)")
+        try:
+            if source is self._pucv_pool:
+                return source.evaluate_root(xs, rels)
+            # Nothing else progresses while the search waits on its root
+            # evaluation: a stuck group is dropped at the idle-survivor
+            # threshold when another group can take the batch.
+            return source.evaluate_rows(xs, rels, idle_limit=True)
+        finally:
+            self._flush_device_notes()
+
+    def _rows_source(self) -> Any:
+        """What can evaluate rows on surviving devices' own threads once the
+        primary is out: the live multi-GPU PUCV pool, else the root-parallel
+        Gumbel pool (searching, or kept after retirement to serve the classic
+        path); None when there is neither (single device, or all dead)."""
+        pool = getattr(self, "_pucv_pool", None)
+        if pool is not None and pool.n_devices > 0:
+            return pool
+        for rpg in (getattr(self, "_rpg_pool", None), getattr(self, "_rpg_rows_pool", None)):
+            n = getattr(rpg, "n_devices", 0) if rpg is not None else 0
+            if isinstance(n, int) and n > 0:
+                return rpg
+        return None
 
     def _primary_call(self, fn: Callable[[], Any]) -> Any:
         """One primary-evaluator call. With a live multi-GPU pool it runs on
@@ -2271,8 +2340,7 @@ class SearchWorker:
         primary that stops answering raises ``DeviceStalled`` instead of
         hanging the search thread. Without a live pool there is nothing to
         degrade onto and the call runs inline, exactly as before."""
-        pool = getattr(self, "_pucv_pool", None)
-        if pool is None or pool.n_devices == 0:
+        if self._rows_source() is None:
             return fn()
         runner = self._ensure_primary_runner()
         return runner.call(fn, limit_s=idle_survivor_threshold_s(runner.slowest_call_s))
@@ -2289,6 +2357,45 @@ class SearchWorker:
             runner.timing = True
             self._primary_runner = runner
         return runner
+
+    def _warm_primary_runner(self) -> None:
+        """Build the primary's call thread and run one root-sized call on it
+        at install (before ``readyok``): the thread's first device call (per-
+        thread handle setup on a GPU) is not paid on a move's clock, and its
+        stall limit is seeded from a measured call, as pool devices are."""
+        runner = self._ensure_primary_runner()
+        if getattr(runner, "warmed", False):
+            return
+        ev = self._evaluator
+        x = np.zeros((1, input_plane_count(self._cfg.input_extra_features), 8, 8), dtype=np.float32)
+        try:
+            runner.call(lambda: ev.evaluate_encoded(x),
+                        limit_s=getattr(self, "_device_startup_timeout_s", None))
+        except Exception as exc:
+            # A primary that cannot answer one call at install is out from the
+            # start: root evaluations go to the pool (announced at the first go).
+            if self._rows_source() is not None:
+                self._note_primary_failed(exc)
+            else:
+                _log.warning("primary warm call failed", exc_info=True)
+            return
+        runner.warmed = True
+
+    def _restore_primary_if_recovered(self) -> None:
+        """A primary dropped for a STALL whose late call came back clean is
+        re-admitted at the next ``go`` (announced), like pool devices. One that
+        raised, or was set aside with a failed device, stays out."""
+        runner = getattr(self, "_primary_runner", None)
+        if not getattr(self, "_primary_failed", False) or runner is None or not runner.restorable:
+            return
+        runner.restore()
+        self._primary_failed = False
+        self._primary_failure_reason = None
+        self._device_notes = getattr(self, "_device_notes", None) or []
+        self._device_notes.append(
+            "multi-GPU RESTORED: the primary (root-eval) evaluator answered again after its "
+            "stall; root evaluations return to it"
+        )
 
     def _note_primary_failed(self, exc: BaseException) -> None:
         """The primary raised or stalled beside a live pool: route root evals
@@ -2536,8 +2643,7 @@ class SearchWorker:
             # Beside a live multi-GPU pool the primary is one device among
             # several: ``_run_restricted_chunk_beside_pool`` keeps the
             # restriction when it fails, rerunning on the pool's devices.
-            pool = self._pucv_pool
-            if pool is not None and pool.n_devices > 0:
+            if self._rows_source() is not None:
                 return self._run_restricted_chunk_beside_pool(
                     chunk, board, tb_probe, allowed_root_indices,
                     allow_terminal_shortcuts=allow_terminal_shortcuts,
@@ -2622,7 +2728,6 @@ class SearchWorker:
         the pool's surviving devices evaluating the leaves
         (``PoolRowsEvaluator``); later restricted chunks go there directly.
         """
-        assert self._pucv_pool is not None
         if not self._primary_failed:
             guarded = GuardedPrimaryEvaluator(self._evaluator, self._primary_call)
             visits_before = self._root_visit_snapshot()
@@ -2635,18 +2740,21 @@ class SearchWorker:
                 )
                 return value, self._root_visits_added(visits_before)
             except Exception:
-                if guarded.failure is None or self._pucv_pool.n_devices == 0:
+                if guarded.failure is None or self._rows_source() is None:
                     raise  # not the primary's failure (or nothing to degrade onto)
                 self._note_primary_failed(guarded.failure)
                 self._flush_device_notes()
                 self._reset_tree_keep_root_eval(board)
+        source = self._rows_source()
+        if source is None:
+            raise RuntimeError(f"{MULTI_GPU_ALL_DEVICES_FAILED} (primary and every pool device)")
         visits_before = self._root_visit_snapshot()
         try:
             value = self._run_gumbel_chunk(
                 chunk, board, tb_probe, allowed_root_indices,
                 allow_terminal_shortcuts=allow_terminal_shortcuts,
                 witness_stop_fn=witness_stop_fn,
-                evaluator=PoolRowsEvaluator(self._pucv_pool),
+                evaluator=PoolRowsEvaluator(source),
             )
         finally:
             self._flush_device_notes()
@@ -2656,50 +2764,93 @@ class SearchWorker:
         """Retire a root-parallel Gumbel pool one of whose devices failed.
 
         Its candidate subtrees are half-updated and a stuck group may still
-        hold one, so the pool cannot continue; the search carries on with the
-        classic single-evaluator path (the configured walkers / PUCT / Gumbel
-        on the primary, ``devices[0]``). Announced once, then on every go,
+        hold one, so the pool cannot keep searching. The same ``go`` carries on
+        with classic Gumbel:
+
+        - on the primary evaluator, when the failed device is not the
+          primary's (``devices[0]``) and the primary is healthy; the pool is
+          closed (its group threads end -- or park while a device is wedged,
+          see ``wedge``);
+        - otherwise on a surviving group's own evaluator and thread
+          (``evaluate_rows``): the pool is kept to serve those evaluations and
+          the primary is set aside (root evaluations move there too).
+
+        Announced once (naming the device that carries on), then on every go,
         isready and searchconfig until a rebuild reinstalls the pool."""
         pool = self._rpg_pool
         assert pool is not None
-        abandoned = set(getattr(pool, "_abandoned", ()))
+        abandoned: set[int] = {int(k) for k in getattr(pool, "_abandoned", ())}
+        labels: list[str] = [str(lab) for lab in getattr(pool, "_labels", ())]
+        failed_k = labels.index(exc.label) if exc.label in labels else -1
+        primary_shares_device = failed_k == 0
+        pol, wdl, key = self._root_pol_logits, self._root_wdl_logits, self._root_pol_key
+        self._rpg_pool = None
+        evals = list(self._rpg_pool_evals)
+        self._rpg_pool_evals = []
+        usable = pool.usable_groups() if hasattr(pool, "usable_groups") else []
+        use_rows = (primary_shares_device or getattr(self, "_primary_failed", False)) and bool(usable)
+        if use_rows:
+            carrier = f"device {labels[usable[0]] if labels else usable[0]}"
+            self._rpg_rows_pool = pool
+            if not getattr(self, "_primary_failed", False):
+                self._primary_failed = True
+                self._primary_failure_reason = (
+                    f"set aside: it shares device {exc.label}, which {exc.what}"
+                )
+        else:
+            carrier = "the primary evaluator"
+            # Close without waiting for a stuck group (it is on this move's
+            # clock). Healthy groups end, or park while a device is wedged.
+            pool.close(abandoned_join_s=0.0)
+            for k, ev in enumerate(evals):
+                if k in abandoned:
+                    continue  # never close an evaluator a stuck group is inside
+                close = getattr(ev, "close", None)
+                if callable(close):
+                    with contextlib.suppress(Exception):
+                        close()
         reason = (f"root-parallel Gumbel retired after device {exc.label} {exc.what} "
-                  f"({exc.reason}); searching classic Gumbel on the primary evaluator")
+                  f"({exc.reason}); searching classic Gumbel on {carrier}")
         _log.error("%s", reason)
         self._device_notes = getattr(self, "_device_notes", None) or []
         self._device_notes.append(
             f"WARNING multi-GPU DEGRADED: root-parallel Gumbel device {exc.label} {exc.what} "
-            f"({exc.reason}); this and later moves search classic Gumbel on the primary "
-            "evaluator until the pool is rebuilt"
+            f"({exc.reason}); this and later moves search classic Gumbel on {carrier} "
+            "until the pool is rebuilt"
         )
         self._rpg_retired_reason = reason
-        pol, wdl, key = self._root_pol_logits, self._root_wdl_logits, self._root_pol_key
-        # The retired pool is NOT closed: it is kept, with its group threads
-        # parked on their (now unfed) work queue, its chunkers, evaluators and
-        # tree, for the rest of the process. A failed group's evaluator is
-        # quarantined by ``async_safety`` (failed owners stay alive), a stuck
-        # group may still be inside its own, and -- measured end to end with
-        # the real entry point -- stopping the retired pool's group threads
-        # mid-search corrupted the heap: the next classic chunk segfaulted in
-        # the primary's forward in most runs; with the threads left parked it
-        # did not (raise and stall, repeated). Parked daemon threads cost no CPU, and
-        # one retired pool per device failure is a bounded cost.
-        self._retired_rpg_pools.append((pool, pool._state, list(self._rpg_pool_evals), self._tree))
-        self._rpg_pool = None
-        self._rpg_pool_evals = []
-        self.reset_tree()
-        # Only a group stuck inside a device call is a wedged thread (quit
-        # then hard-exits instead of finalizing under it); parked groups are not.
-        stuck = sorted(abandoned)
         threads = list(getattr(pool, "_threads", ()))
         self._wedged_device_threads = list(getattr(self, "_wedged_device_threads", ()))
-        self._wedged_device_threads.extend(threads[k] for k in stuck if k < len(threads))
-        self.restore_classic_search_path()
+        self._wedged_device_threads.extend(threads[k] for k in sorted(abandoned) if k < len(threads))
+        if use_rows:
+            # Walker pool / single-thread PUCV would run on the primary.
+            if self._walker_pool is not None:
+                self._walker_pool.close()
+                self._walker_pool = None
+            self._pucv = None
+            self.reset_tree()
+        else:
+            self.restore_classic_search_path()
         self._tree_fen = board.fen()
         if key == board.fen():
             self._root_pol_logits, self._root_wdl_logits = pol, wdl
             self._root_pol_key = key
         self._flush_device_notes()
+
+    def _classic_evaluator(self) -> Any:
+        """The evaluator classic Gumbel uses: the primary, or -- once the
+        primary is out after a root-parallel Gumbel retirement -- a surviving
+        group's own evaluator via ``evaluate_rows``."""
+        rows = getattr(self, "_rpg_rows_pool", None)
+        if rows is not None and getattr(self, "_primary_failed", False):
+            return PoolRowsEvaluator(rows)
+        return self._evaluator
+
+    def _close_rpg_rows_pool(self) -> None:
+        rows = getattr(self, "_rpg_rows_pool", None)
+        self._rpg_rows_pool = None
+        if rows is not None:
+            rows.close(abandoned_join_s=0.0)
 
     def _root_visit_total(self) -> int:
         """Visits summed over every root child (unfiltered); 0 without a root."""
@@ -3646,7 +3797,7 @@ class SearchWorker:
                 chunk, board, tb_probe, allowed_root_indices,
                 allow_terminal_shortcuts=allow_terminal_shortcuts,
                 witness_stop_fn=witness_stop_fn,
-                evaluator=evaluator if evaluator is not None else self._evaluator,
+                evaluator=evaluator if evaluator is not None else self._classic_evaluator(),
             )
         finally:
             # A routing-chain device dropped mid-chunk is announced here.

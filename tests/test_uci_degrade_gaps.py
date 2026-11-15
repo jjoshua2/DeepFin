@@ -29,7 +29,7 @@ from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.moves import move_to_index
 from chess_anti_engine.uci import __main__ as uci_main
-from chess_anti_engine.uci import startup_progress
+from chess_anti_engine.uci import startup_progress, wedge
 from chess_anti_engine.uci.device_guard import (
     DegradingMultiGPUDispatcher,
     DeviceCallRunner,
@@ -46,6 +46,7 @@ from chess_anti_engine.uci.protocol import parse_command
 from chess_anti_engine.uci.root_parallel_gumbel import (
     RootParallelGumbelConfig,
     RootParallelGumbelPool,
+    RPGDeviceFailure,
 )
 from chess_anti_engine.uci.search import SearchWorker
 from tests.test_uci_multi_gpu_degrade import (
@@ -533,7 +534,8 @@ def test_searchmoves_keeps_its_restriction_when_the_primary_fails(out, mode, aft
 
 
 def test_a_primary_stall_on_the_root_eval_moves_root_evals_to_the_pool(out) -> None:
-    primary = _AllFaulty(_evaluator(), mode="hang", after=0)
+    # after=1: the install-time warm call answers; the first root eval hangs.
+    primary = _AllFaulty(_evaluator(), mode="hang", after=1)
     engine, worker = _engine_with_pool([_evaluator(), _evaluator()], primary=primary)
     try:
         move, _ = _go(engine, out, "d2d4", "go movetime 2500", 1)
@@ -713,3 +715,302 @@ def test_one_slow_call_under_a_survivor_is_kept_by_the_pool() -> None:
     finally:
         pool.close()
 
+
+
+# ── review round 1: the wedge latch, RPG primary / GPU0, primary restore ───
+
+
+def test_wedge_latch_parks_an_ending_worker_until_the_wedge_clears() -> None:
+    """While a thread is marked wedged, a worker wrapped by ``wedge.parking``
+    does not end: it parks, and ends once the wedge clears."""
+    release = threading.Event()
+
+    def stuck() -> None:
+        release.wait(30)
+        wedge.clear_wedged(threading.current_thread())
+
+    hung = threading.Thread(target=stuck, daemon=True)
+    hung.start()
+    wedge.mark_wedged(hung, "test device call", device="t1")
+    ended = threading.Event()
+    worker = threading.Thread(target=wedge.parking(lambda: None), daemon=True)
+    worker.start()
+    try:
+        time.sleep(0.3)
+        assert worker.is_alive()  # parked, not ended
+        assert worker in wedge.parked_threads()
+        assert wedge.wedged_earlier("t1") == "test device call"
+        release.set()
+        assert _wait_for(lambda: not worker.is_alive(), timeout=5)
+        ended.set()
+    finally:
+        release.set()
+    assert ended.is_set()
+
+
+def test_pool_close_with_a_wedged_worker_parks_the_healthy_one() -> None:
+    """``close`` while a worker is stuck inside a device call: the healthy
+    worker parks (no join wait), the stuck one stays; both end once the call
+    comes back."""
+    hung = _Faulty(_evaluator(), mode="hang", after=1)
+    pool = MultiGpuPucvPool(
+        MultiGpuPucvConfig(n_gpus=2, gather=8, device_labels=("g0", "g1")),
+        evaluators=[_evaluator(), hung],
+    )
+    try:
+        _run(pool, 200)
+        assert pool.failed_devices() == ("g1",)
+        assert wedge.any_wedged()
+        started = time.monotonic()
+        pool.close()
+        assert time.monotonic() - started < 1.9  # no 2 s join of a parking worker
+        assert _wait_for(lambda: pool._threads[0] in wedge.parked_threads(), timeout=5)
+        assert pool._threads[1].is_alive()
+    finally:
+        hung.release.set()
+        pool.close()
+    assert _wait_for(lambda: not any(th.is_alive() for th in pool._threads), timeout=10)
+
+
+def test_guarded_primary_reports_the_inner_batch_cap() -> None:
+    """D8: the guard advertises the primary's own cap (the in-place path's),
+    so a guarded searchmoves search has the same leaf shape."""
+    inner = _direct(48)
+    guarded = GuardedPrimaryEvaluator(inner, lambda fn: fn())
+    assert guarded.search_leaf_row_cap == 48
+
+    class _Capped:
+        search_leaf_row_cap = 24
+
+    assert GuardedPrimaryEvaluator(_Capped(), lambda fn: fn()).search_leaf_row_cap == 24
+
+
+def test_pool_evaluate_rows_with_idle_limit_drops_a_stuck_worker_in_about_a_second() -> None:
+    """D9: ``evaluate_rows(idle_limit=True)`` (the failed-primary searchmoves
+    batch) drops a worker stuck in that call at the 1 s idle-survivor
+    threshold, not the >= 5 s mid-search one, and the next worker answers."""
+    hung = _Faulty(_evaluator(), mode="hang", after=0)
+    pool = MultiGpuPucvPool(
+        MultiGpuPucvConfig(n_gpus=2, gather=8, device_labels=("g0", "g1")),
+        evaluators=[hung, _evaluator()],
+    )
+    try:
+        x = np.zeros((2, 146, 8, 8), dtype=np.float32)
+        started = time.monotonic()
+        pol, wdl = pool.evaluate_rows(x, None, idle_limit=True)
+        took = time.monotonic() - started
+        assert pol.shape[0] == 2
+        assert wdl.shape[0] == 2
+        assert took < 3.5, took
+        assert pool.failed_devices() == ("g0",)
+    finally:
+        hung.release.set()
+        pool.close()
+
+
+def test_rpg_abandoning_a_group_stops_the_job() -> None:
+    """D10: abandoning a stuck group stops the running job, so the other
+    groups leave the half-updated tree instead of working on under the
+    caller's classic search."""
+    pool = RootParallelGumbelPool(
+        RootParallelGumbelConfig(n_groups=2, gather=8),
+        GumbelConfig(input_extra_features="v1"),
+        evaluator_factories=[_evaluator, _evaluator],
+    )
+    try:
+        job = threading.Event()
+        pool._job_stop = job  # pyright: ignore[reportAttributeAccessIssue]
+        pool._abandon_group(1, 2.0, 1.0)
+        assert job.is_set()
+        assert 1 in pool._abandoned
+        assert isinstance(pool._errors[0], RPGDeviceFailure)
+    finally:
+        pool.close()
+
+
+class _RaiseAll:
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    def evaluate_encoded(self, *_a: Any, **_k: Any) -> Any:
+        raise RuntimeError("CUDA error: device lost (injected)")
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+class _HangEncoded:
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.release = threading.Event()
+
+    def evaluate_encoded(self, *a: Any, **k: Any) -> Any:
+        self.release.wait(30)
+        return self._inner.evaluate_encoded(*a, **k)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+@pytest.mark.parametrize("bad", ["raise", "hang"])
+def test_rpg_evaluate_rows_runs_on_a_surviving_group(bad) -> None:
+    """``RootParallelGumbelPool.evaluate_rows`` (the classic path after a
+    GPU0 retirement, root evals after a primary failure) runs on a group's
+    own thread; a group that raises is set aside, one that stalls is
+    abandoned (and marked wedged), and the other group answers."""
+    holder: list[Any] = []
+
+    def bad_factory() -> Any:
+        ev = _RaiseAll(_evaluator()) if bad == "raise" else _HangEncoded(_evaluator())
+        holder.append(ev)
+        return ev
+
+    pool = RootParallelGumbelPool(
+        RootParallelGumbelConfig(n_groups=2, gather=8),
+        GumbelConfig(input_extra_features="v1"),
+        evaluator_factories=[bad_factory, _evaluator],
+        devices=["cpu", "cpu"],
+    )
+    try:
+        x = np.zeros((3, 146, 8, 8), dtype=np.float32)
+        # The shared queue may hand a call to either group: call until the bad
+        # group has taken one (and been set aside); every call still answers.
+        for _ in range(20):
+            pol, wdl = pool.evaluate_rows(x, None, idle_limit=True)
+            assert pol.shape[0] == 3
+            assert wdl.shape[0] == 3
+            if 0 not in pool.usable_groups():
+                break
+        assert pool.usable_groups() == [1]
+        if bad == "hang":
+            assert 0 in pool._abandoned
+            assert wedge.wedged_earlier("cpu#0") is not None
+        else:
+            assert 0 in pool._rows_failed
+        assert any("cpu#0" in note for note in pool.drain_rows_notes())
+    finally:
+        for ev in holder:
+            if isinstance(ev, _HangEncoded):
+                ev.release.set()
+        pool.close()
+
+
+class _SlowOnceEncoded:
+    """A primary whose ``k``-th ``evaluate_encoded`` takes ``delay`` s, then
+    answers cleanly (a stall that recovers)."""
+
+    def __init__(self, inner: Any, *, k: int, delay: float) -> None:
+        self._inner = inner
+        self.k = k
+        self.delay = delay
+        self.calls = 0
+
+    def evaluate_encoded(self, *a: Any, **k: Any) -> Any:
+        self.calls += 1
+        if self.calls == self.k:
+            time.sleep(self.delay)
+        return self._inner.evaluate_encoded(*a, **k)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+def test_primary_is_warmed_at_install_and_restored_after_a_clean_stall(out) -> None:
+    """MINOR 3: the primary's call thread runs one measured call at install
+    (seeding its stall limit); a primary dropped for a stall whose late call
+    comes back clean is re-admitted at the next go, announced."""
+    primary = _SlowOnceEncoded(_evaluator(), k=2, delay=2.0)  # call 1 = install warm call
+    engine, worker = _engine_with_pool([_evaluator(), _evaluator()], primary=primary)
+    try:
+        runner = worker._primary_runner
+        assert runner is not None
+        assert runner.warmed
+        assert primary.calls == 1
+        assert runner.slowest_call_s > 0.0
+        move, _ = _go(engine, out, "e2e4", "go movetime 1500", 1)
+        assert _legal_after("e2e4", move)
+        assert worker._primary_failed
+        assert _wait_for(lambda: runner.restorable, timeout=5)
+        move2, _ = _go(engine, out, "e2e4 e7e5", "go movetime 800", 2)
+        assert _legal_after("e2e4 e7e5", move2)
+        assert not worker._primary_failed
+        assert _lines(out, "multi-GPU RESTORED: the primary")
+    finally:
+        engine.close()
+        worker.close()
+
+
+def test_a_device_that_wedged_earlier_is_left_out_of_a_rebuilt_pool() -> None:
+    """MINOR 6: a pool rebuilt after a device wedged this session does not
+    build on it (that build could hang until the startup timeout): the
+    device is dropped at once, announced, and the rest start."""
+    wedge.mark_wedged(None, "device g1 call", device="g1")
+    built: list[int] = []
+
+    def factory(k: int) -> Any:
+        built.append(k)
+        return _evaluator()
+
+    started = time.monotonic()
+    pool = MultiGpuPucvPool(
+        MultiGpuPucvConfig(n_gpus=2, gather=8, device_labels=("g0", "g1"),
+                           degrade_on_startup_failure=True, startup_timeout_s=1800.0),
+        evaluator_factories=[lambda: factory(0), lambda: factory(1)],
+    )
+    try:
+        assert time.monotonic() - started < 10
+        assert built == [0]
+        assert pool.failed_devices() == ("g1",)
+        assert "left out: it wedged earlier this session" in pool.drain_notes()[0]
+    finally:
+        pool.close()
+
+
+def test_rpg_reinstall_after_a_wedge_stays_retired() -> None:
+    """A root-parallel Gumbel rebuild after one of its devices wedged this
+    session keeps the classic path (announced) instead of building on it."""
+    wedge.mark_wedged(None, "RPG device cpu#1 step", device="cpu#1")
+    worker = SearchWorker(
+        _evaluator(), device="cpu",
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False),
+        chunk_sims=64, n_walkers=1,
+    )
+    try:
+        worker.install_root_parallel_gumbel(
+            [_evaluator, _evaluator], gather=8, as_factories=True, devices=["cpu", "cpu"],
+        )
+        assert worker._rpg_pool is None
+        assert "stays retired" in (worker._rpg_retired_reason or "")
+        assert "cpu#1" in (worker.pool_degraded_summary() or "")
+    finally:
+        worker.close()
+
+
+def test_a_revoked_compile_turn_holder_still_building_blocks_compiling() -> None:
+    """MINOR 5: after a holder of the compile turn is timed out and revoked,
+    ``revoked_holder_running`` stays True while it is still inside its build
+    (it may wake up and keep compiling), so later devices build eager; it
+    turns False once that build exits."""
+    turn = startup_progress.StartupTurn()
+    ctx = startup_progress.StartupContext("g1")
+    inside = threading.Event()
+    leave = threading.Event()
+
+    def holder() -> None:
+        with startup_progress.startup_context(ctx), turn:
+            inside.set()
+            leave.wait(30)
+
+    th = threading.Thread(target=holder, daemon=True)
+    th.start()
+    try:
+        assert inside.wait(5)
+        assert not turn.revoked_holder_running()
+        ctx.revoke_turns()
+        assert not turn.locked()  # handed on: the next device may proceed ...
+        assert turn.revoked_holder_running()  # ... but must not compile
+        leave.set()
+        th.join(5)
+        assert not turn.revoked_holder_running()
+    finally:
+        leave.set()

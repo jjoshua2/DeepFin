@@ -78,6 +78,7 @@ from chess_anti_engine.async_safety import (
     submit_async,
 )
 from chess_anti_engine.mcts.puct_vl import _PLANES, _alloc_buffers, _release_outstanding
+from chess_anti_engine.uci import wedge
 from chess_anti_engine.uci.startup_progress import StartupContext, startup_context
 
 _log = logging.getLogger(__name__)
@@ -428,7 +429,7 @@ class MultiGpuPucvPool:
             self._evals = [None] * cfg.n_gpus
         self._threads = [
             threading.Thread(
-                target=self._worker_loop, args=(k,),
+                target=wedge.parking(self._worker_loop), args=(k,),
                 name=f"pucv-gpu-{k}", daemon=True,
             )
             for k in range(cfg.n_gpus)
@@ -481,6 +482,8 @@ class MultiGpuPucvPool:
                         )
                         self._startup_timed_out.add(k)
                         self._abandoned[k] = True
+                        wedge.mark_wedged(self._threads[k], f"device {self._labels[k]} startup",
+                                          device=self._labels[k])
                         self._init_errors.append(exc)
                         self._init_error_by_worker[k] = exc
                         self._built[k].set()
@@ -625,17 +628,21 @@ class MultiGpuPucvPool:
         for ev in self._wakes:
             ev.set()
         abandoned_deadline = time.monotonic() + _CLOSE_ABANDONED_JOIN_S
+        stuck = [k for k in range(len(self._threads))
+                 if self._abandoned[k] and not self._restorable[k]]
+        # Abandoned workers first: one whose call returns shortly clears its
+        # wedge, and the healthy ones then end instead of parking (``wedge``).
+        for k in stuck:
+            # If that call has returned (or does so shortly) the thread exits
+            # at once on ``_shutdown``; join it within a short shared budget so
+            # it is not still inside torch when the interpreter finalizes (that
+            # aborts the process). A genuinely wedged one stays alive; see
+            # ``live_worker_threads``.
+            self._threads[k].join(timeout=max(0.0, abandoned_deadline - time.monotonic()))
         for k, th in enumerate(self._threads):
-            if self._abandoned[k] and not self._restorable[k]:
-                # Abandoned inside a device call. If that call has returned (or
-                # does so shortly) the thread exits at once on ``_shutdown``;
-                # join it within a short shared budget so it is not still
-                # inside torch when the interpreter finalizes (that aborts the
-                # process). A genuinely wedged one stays alive; see
-                # ``live_worker_threads``.
-                th.join(timeout=max(0.0, abandoned_deadline - time.monotonic()))
-                continue
-            th.join(timeout=2.0)
+            if k not in stuck:
+                # With a device still wedged, ending workers park: no join.
+                wedge.join_unless_wedged(th, 2.0)
 
     def worker_row_cap(self) -> int:
         """The most rows ``evaluate_rows`` may submit: the gather, which every
@@ -687,6 +694,7 @@ class MultiGpuPucvPool:
             since = self._busy_since[idx]
             self._busy_since[idx] = None
             if self._abandoned[idx]:
+                wedge.clear_wedged(threading.current_thread())  # the call came back
                 if not failed:
                     self._late_ok[idx] = True
                 raise _Abandoned()
@@ -813,6 +821,8 @@ class MultiGpuPucvPool:
             self._late_ok[k] = False
             self._live[k] = False
             self._stall_drops_this_search[k] += 1
+            wedge.mark_wedged(self._threads[k], f"device {self._labels[k]} call",
+                              device=self._labels[k])
             self._running.discard(k)
             outstanding = self._outstanding[k]
             if job is not None and outstanding:
@@ -1026,6 +1036,8 @@ class MultiGpuPucvPool:
                             self._abandoned[k] = True
                             self._late_ok[k] = False
                             self._live[k] = False
+                            wedge.mark_wedged(self._threads[k], f"device {self._labels[k]} call",
+                              device=self._labels[k])
                             stuck = True
                             break
             finally:
@@ -1099,6 +1111,12 @@ class MultiGpuPucvPool:
         try:
             gather = max(1, int(cfg.gather))
             if self._factories is not None:
+                earlier = wedge.wedged_earlier(self._labels[idx])
+                if earlier is not None:
+                    # A rebuild must not build on a device that already wedged
+                    # this session (its build would likely hang the whole
+                    # startup timeout before readyok): it is simply left out.
+                    raise RuntimeError(f"left out: it wedged earlier this session ({earlier})")
   # Build evaluator on THIS thread so torch.compile + cudagraph
   # state lives where it'll be replayed. Crucial: compile builds
   # tree_manager_containers in TLS on first forward; calling from
@@ -1145,6 +1163,9 @@ class MultiGpuPucvPool:
                 if idx not in self._startup_timed_out:
                     self._init_errors.append(exc)
                     self._init_error_by_worker[idx] = exc
+        # A build timed out as hung that came back is no longer wedged (if it
+        # retires below while another device is wedged, it parks: ``wedge``).
+        wedge.clear_wedged(threading.current_thread())
         with self._cv:
             self._built[idx].set()
         self._init_decided.wait()

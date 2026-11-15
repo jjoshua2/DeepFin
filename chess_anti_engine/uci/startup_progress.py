@@ -56,6 +56,7 @@ class StartupContext:
         self.last_beat = time.monotonic()
         self.waiting = False
         self.revoked = False
+        self.finished = False  # its build/warm-up block has exited
         self._turns: list[StartupTurn] = []
 
     def beat(self) -> None:
@@ -95,6 +96,8 @@ def startup_context(ctx: StartupContext) -> Generator[StartupContext, None, None
         yield ctx
     finally:
         _local.ctx = prev
+        with ctx._lock:
+            ctx.finished = True
 
 
 def beat() -> None:
@@ -124,6 +127,7 @@ class StartupTurn:
     def __init__(self) -> None:
         self._cv = threading.Condition()
         self._holder: object | None = None
+        self._revoked: list[StartupContext] = []
 
     def __enter__(self) -> StartupTurn:
         self.acquire()
@@ -171,7 +175,24 @@ class StartupTurn:
         with self._cv:
             if self._holder is token:
                 self._holder = None
+                if isinstance(token, StartupContext):
+                    self._revoked.append(token)
                 self._cv.notify_all()
+
+    def revoked_holder_running(self) -> bool:
+        """A holder timed out and revoked while holding the turn is still
+        inside its build (it may wake up and keep compiling at any time).
+
+        The turn exists so two threads never compile / capture CUDA graphs at
+        once; after a revocation that can no longer be promised for anything
+        that compiles, so callers then build without compiling (eager)."""
+        with self._cv:
+            revoked = list(self._revoked)
+        for ctx in revoked:
+            with ctx._lock:
+                if not ctx.finished:
+                    return True
+        return False
 
     def locked(self) -> bool:
         """Whether some thread holds the turn (``threading.Lock.locked``)."""

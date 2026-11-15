@@ -15,10 +15,12 @@ from typing import Any, ClassVar
 import threading
 import time
 import unittest
+from chess_anti_engine.uci import wedge as uci_wedge
 from chess_anti_engine.uci.engine import _decayed_max as _engine_decayed_max
 
 SOURCE = Path(os.environ.get('UCI_TEST_SOURCE', str(Path(__file__).resolve().parents[1])))
 MODULE_HASHES = {}
+
 
 
 def definitions(relative, wanted, namespace: dict[str, Any]) -> dict[str, Any]:
@@ -118,7 +120,8 @@ def engine_fixture(enabled=False, parallel='pucv', devices=2):
                      'DegradingMultiGPUDispatcher': Wrapper,
                      'ThreadSafeGPUDispatcher': Wrapper, 'CUDAOwnerDispatcher': Wrapper,
                      'BatchCoalescingDispatcher': Wrapper, 'EncodedEvalCache': Wrapper,
-                     '_warmup_evaluator': lambda *_args, **_kwargs: None}
+                     '_warmup_evaluator': lambda *_args, **_kwargs: None,
+                     'wedge': uci_wedge, '_println': lambda *_args: None}
     defs = definitions('chess_anti_engine/uci/__main__.py', ['_make_evaluator_factory', 'main._build.rebuild_evaluator'], namespace)
     build_eval = defs['_make_evaluator_factory'](models, device_names, False, 1, 8)
     options = SimpleNamespace(use_multi_gpu_pucv=enabled, search_parallel=parallel,
@@ -260,6 +263,8 @@ def search_fixture(rpg=True):
     worker._record_growth_rate = lambda *_args: None
     worker._try_tb_shortcut = lambda *_args, **_kwargs: None
     worker._chain_degrade_source = lambda: None  # no routing-chain degrade source
+    worker._rows_source = lambda: None  # no surviving-device rows source (healthy primary)
+    worker._classic_evaluator = lambda: worker._evaluator
     worker._time_capped_chunk = lambda chunk, *_args: chunk
     worker._is_shared_tree_path = lambda _allowed: False
     worker._maybe_emit_pv_info = lambda **kw: ([], 0, 0)

@@ -65,7 +65,7 @@ from .engine import (
     _println,
     emit_handshake,
 )
-from . import startup_progress
+from . import startup_progress, wedge
 from .device_guard import DegradingMultiGPUDispatcher, find_degrade_source
 from .model_loader import load_model_from_checkpoint
 from .protocol import CmdQuit, CmdUci, parse_command
@@ -554,6 +554,24 @@ def _make_evaluator_factory(
   # on, so evaluator stand-ins without the parameter keep working.
         pad_kw: dict[str, Any] = {"pad_to_compiled_buckets": True} if compile_mode else {}
 
+        chain_labels: list[str] = []
+        if len(active_devices) > 1:
+  # A rebuild after a device wedged this session leaves that device out
+  # (building on it would likely hang until the startup timeout), announced.
+            all_names = [str(d) for d in active_devices]
+            all_labels = [n if all_names.count(n) == 1 else f"{n}#{k}" for k, n in enumerate(all_names)]
+            keep = [k for k, lab in enumerate(all_labels) if wedge.wedged_earlier(lab) is None]
+            chain_labels = all_labels
+            if keep and len(keep) < len(all_labels):
+                for k, lab in enumerate(all_labels):
+                    if k not in keep:
+                        _println(
+                            f"info string WARNING multi-GPU DEGRADED: device {lab} left out of "
+                            f"the rebuild: it wedged earlier this session ({wedge.wedged_earlier(lab)})"
+                        )
+                compiled_models = [compiled_models[k] for k in keep]
+                active_devices = [active_devices[k] for k in keep]
+                chain_labels = [all_labels[k] for k in keep]
         if len(active_devices) > 1:
             evaluators = [
                 DirectGPUEvaluator(
@@ -567,7 +585,7 @@ def _make_evaluator_factory(
   # dropped (announced) and its batch redone on another; during the warm-up
   # below a call may take up to the device startup timeout.
             names = [str(d) for d in active_devices]
-            labels = [n if names.count(n) == 1 else f"{n}#{k}" for k, n in enumerate(names)]
+            labels = list(chain_labels)
             evaluator = DegradingMultiGPUDispatcher(
                 evaluators, labels=labels, devices=names,
                 startup_timeout_s=device_startup_timeout_s,
@@ -672,6 +690,16 @@ def _make_multi_gpu_pucv_factory_builder(
                     torch.cuda.set_device(dev.index or 0)
                 mode = effective_compile_mode
                 with _MULTI_GPU_COMPILE_LOCK:
+                    if mode and _MULTI_GPU_COMPILE_LOCK.revoked_holder_running():
+  # A device timed out holding this turn may still be compiling: compiling here
+  # too would be the concurrent compile the turn exists to prevent. Build eager
+  # (no Inductor compile, no CUDA-graph capture), announced.
+                        _println(
+                            f"info string WARNING multi-GPU DEGRADED: device {d} builds without "
+                            f"torch.compile (eager, slower): a device timed out at startup "
+                            "may still be compiling"
+                        )
+                        mode = None
                     evaluator = _compile_and_warm_pucv_evaluator(
                         m, d,
                         max_batch=max_batch,
@@ -1691,7 +1719,7 @@ def main() -> int:
                     _println(f"info string evaluator startup cleanup failed: {exc!r}")
             engine_ready.set()
 
-    builder = threading.Thread(target=_build, daemon=True, name="deepfin-build")
+    builder = threading.Thread(target=wedge.parking(_build), daemon=True, name="deepfin-build")
     builder.start()
 
     rc = 0
@@ -1745,6 +1773,13 @@ def main() -> int:
             code = getattr(eng, "exit_code", 0)
             if isinstance(code, int) and not isinstance(code, bool):
                 rc = max(rc, code)
+        if _device_thread_wedged(eng):
+  # A device thread is stuck inside a device call: closing pools would end
+  # evaluator-running worker threads under it, which crashes the process
+  # (see ``wedge``). Say so and leave with the status we would have had.
+            _announce_wedged_exit(rc)
+            _hard_exit(rc)
+        if eng is not None:
             try:
                 eng.close()
             except SearchNotQuiescent as exc:
@@ -1753,6 +1788,9 @@ def main() -> int:
             except Exception:
                 pass
         _drain_builder(builder, rc)
+        if _device_thread_wedged(eng) or wedge.parked_threads():
+            _announce_wedged_exit(rc)
+            _hard_exit(rc)
         if eng is not None and getattr(eng, "has_live_threads", lambda: False)() is True:
   # A search that ignored its stop, or a fallback eval stuck in the evaluator:
   # finalizing the interpreter under it can abort (exit 134) after a clean quit.
@@ -1819,6 +1857,22 @@ def _await_builder(ready: threading.Event, timeout_s: float | None) -> TimeoutEr
 def _request_builder_shutdown(event: threading.Event) -> None:
     """Tell the startup builder to stop at its next phase boundary."""
     event.set()
+
+
+def _device_thread_wedged(eng: Any) -> bool:
+    """A device thread (pool worker, RPG group, device-call runner, startup
+    build) is stuck inside a device call."""
+    if wedge.any_wedged():
+        return True
+    check = getattr(eng, "only_wedged_device_threads", None) if eng is not None else None
+    return callable(check) and check() is True
+
+
+def _announce_wedged_exit(rc: int) -> None:
+    why = "a multi-GPU worker is still stuck inside a dropped device's call"
+    _println(f"info string quit: {why}; exiting with status {rc} without waiting for it")
+    print(f"deepfin: {why} at shutdown; exiting with status {rc} without waiting for it",
+          file=sys.stderr)
 
 
 def _hard_exit(rc: int) -> None:

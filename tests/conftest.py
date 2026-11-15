@@ -613,3 +613,15 @@ def _test_writes_stay_outside_the_checkout(tmp_path_factory: pytest.TempPathFact
         # arena patch assigns a constant.
         with contextlib.suppress(ValueError):
             sys.meta_path.remove(hook)
+
+
+@pytest.fixture(autouse=True)
+def _reset_uci_wedge_latch():
+    """Each test is a fresh engine session for the multi-GPU wedge latch
+    (``chess_anti_engine.uci.wedge``): a device wedged in one test must not be
+    left out of, or make workers park in, the next. Imports no torch."""
+    from chess_anti_engine.uci import wedge
+
+    wedge.reset_session_for_tests()
+    yield
+    wedge.reset_session_for_tests()
