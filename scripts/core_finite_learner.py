@@ -67,6 +67,14 @@ if TYPE_CHECKING:
         def decorate_boundary(self, boundary: dict[str, Any], c: dict[str, Any]) -> None: ...
 
 
+    class MainPolicyProfile(P0Profile, Protocol):
+        """Main-policy overlay; neither existing value-profile contract applies."""
+
+        def bind_checkpoint(self, path: Path, c: dict[str, Any], contract_ref: dict[str, str]) -> None: ...
+
+        def check_checkpoint(self, ref: dict[str, str], c: dict[str, Any], contract_ref: dict[str, str]) -> None: ...
+
+
 REPO = Path(__file__).resolve().parents[1]
 CORE_KWARGS: dict[str, Any] = {
     "optimizer": "nadamw", "weight_decay_mode": "weight_decay",
@@ -285,22 +293,25 @@ def closed_parent(binding: dict[str, Any], c: dict[str, Any], contract_ref: dict
 
 def metadata(c: dict[str, Any], stage: dict[str, Any], contract_ref: dict[str, str],
              *, _sf_p0: P0Profile | None = None,
-             _retained_search: RetainedSearchProfile | None = None) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-    fixed_bank = _sf_p0 is not None or _retained_search is not None
+             _retained_search: RetainedSearchProfile | None = None,
+             _main_policy: MainPolicyProfile | None = None) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    fixed_bank = _sf_p0 is not None or _retained_search is not None or _main_policy is not None
     contract_sha = contract_ref["sha256"]
     stage_keys = {"schema", "contract_sha256", "generation", "generations", "parent", "output"}
     if _sf_p0 is not None:
         stage_keys.add("sf_p0_sidecars")
+    if _main_policy is not None:
+        stage_keys.add("main_policy_sidecars")
     require(set(stage) == stage_keys,
             "unknown or missing stage fields")
-    stage_schema = (_retained_search.STAGE if _retained_search is not None else
+    stage_schema = (_main_policy.STAGE if _main_policy is not None else _retained_search.STAGE if _retained_search is not None else
                     "core_finite_stage_v1" if _sf_p0 is None else _sf_p0.STAGE)
     require(stage["schema"] == stage_schema and stage["contract_sha256"] == contract_sha,
             "stage contract mismatch")
     g = integer(stage["generation"], "generation")
     data_count = 1 if fixed_bank else g
     require(g <= len(c["updates_per_generation"]) and len(stage["generations"]) == data_count, "generation horizon mismatch")
-    data_identity = (c["retained_search"]["data_identity"] if _retained_search is not None else
+    data_identity = (c["sf_p0_main_policy"]["data_identity"] if _main_policy is not None else c["retained_search"]["data_identity"] if _retained_search is not None else
                      c if _sf_p0 is None else c["sf_p0"]["data_identity"])
     generations = []
     physical_ids: set[str] = set()
@@ -365,11 +376,12 @@ def metadata(c: dict[str, Any], stage: dict[str, Any], contract_ref: dict[str, s
     if g == 1:
         require(stage["parent"] is None, "first generation cannot resume")
     else:
-        parent = (_retained_search.closed_parent(stage["parent"], c, contract_ref, stage)
+        parent = (_main_policy.closed_parent(stage["parent"], c, contract_ref, stage)
+                  if _main_policy is not None else _retained_search.closed_parent(stage["parent"], c, contract_ref, stage)
                   if _retained_search is not None else
                   closed_parent(stage["parent"], c, contract_ref, stage) if _sf_p0 is None
                   else _sf_p0.closed_parent(stage["parent"], c, contract_ref, stage))
-        parent_status = (_retained_search.BOUNDARY if _retained_search is not None else
+        parent_status = (_main_policy.BOUNDARY if _main_policy is not None else _retained_search.BOUNDARY if _retained_search is not None else
                          "COMPLETED_CORE_GENERATION_V1" if _sf_p0 is None else _sf_p0.BOUNDARY)
         require(parent["status"] == parent_status and parent["generation"] == g - 1,
                 "only closed consecutive boundaries may resume")
@@ -549,18 +561,22 @@ def execute(contract_ref: dict[str, str], stage_ref: dict[str, str]) -> dict[str
 
 def _execute(contract_ref: dict[str, str], stage_ref: dict[str, str],
              *, sf_p0: P0Profile | None = None,
-             retained_search: RetainedSearchProfile | None = None) -> dict[str, Any]:
+             retained_search: RetainedSearchProfile | None = None,
+             main_policy: MainPolicyProfile | None = None) -> dict[str, Any]:
     """Shared engine; separately versioned finite families opt in explicitly."""
-    require(sf_p0 is None or retained_search is None, "target families cannot be combined")
+    require(sum(p is not None for p in (sf_p0, retained_search, main_policy)) <= 1, "target families cannot be combined")
     _, c = read_ref(contract_ref)
     _, stage = read_ref(stage_ref)
-    if retained_search is not None:
+    if main_policy is not None:
+        c, stage = main_policy.validate_and_project(c, stage)
+    elif retained_search is not None:
         c, stage = retained_search.validate_and_project(c, stage)
     elif sf_p0 is None:
         validate_contract(c)
     else:
         c, stage = sf_p0.validate_and_project(c, stage)
     active_sf_p0 = sf_p0 is not None and c["sf_p0"]["alpha"] > 0
+    active_main_policy = main_policy is not None and c["sf_p0_main_policy"]["teacher_share"] == 1
     active_search = retained_search is not None and c["retained_search"]["search_share"] == 1
     # A Git read cannot refresh the pinned worktree index.
     import subprocess
@@ -568,10 +584,13 @@ def _execute(contract_ref: dict[str, str], stage_ref: dict[str, str],
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, env=git_env, text=True).strip()
     require(head == c["source_revision"], "source revision mismatch")
     require(not subprocess.check_output(["git", "diff", "HEAD", "--name-only"], cwd=REPO, env=git_env), "dirty tracked source")
-    generations, parent = metadata(c, stage, contract_ref, _sf_p0=sf_p0, _retained_search=retained_search)
+    generations, parent = metadata(c, stage, contract_ref, _sf_p0=sf_p0, _retained_search=retained_search, _main_policy=main_policy)
     if active_sf_p0:
         assert sf_p0 is not None
         sf_p0.prepare(c, stage, generations)
+    if active_main_policy:
+        assert main_policy is not None
+        main_policy.prepare(c, stage, generations)
     output = external(stage["output"])
     require(not failure_marker(output).exists(), "failed attempt output cannot be replayed")
     output.mkdir(parents=False, exist_ok=False)
@@ -622,6 +641,8 @@ def _execute(contract_ref: dict[str, str], stage_ref: dict[str, str],
                     "resume helper came from another checkout")
             if retained_search is not None:
                 retained_search.check_checkpoint(parent["checkpoint"], c, contract_ref)
+            if main_policy is not None:
+                main_policy.check_checkpoint(parent["checkpoint"], c, contract_ref)
             resume_bootstrap(trainer, external(parent["checkpoint"]["path"]), parent["checkpoint"]["sha256"],
                              parent["step"], c["seed"])
 
@@ -635,12 +656,18 @@ def _execute(contract_ref: dict[str, str], stage_ref: dict[str, str],
                 if active_sf_p0:
                     assert sf_p0 is not None
                     sf_p0.on_draw(rows)
+                if active_main_policy:
+                    assert main_policy is not None
+                    main_policy.on_draw(rows)
 
             replay = (load_replay(c, generations, rng, on_draw, _retained_search=retained_search)
                       if active_search else load_replay(c, generations, rng, on_draw))
             if active_sf_p0:
                 assert sf_p0 is not None
                 replay = sf_p0.wrap(replay, c)
+            if active_main_policy:
+                assert main_policy is not None
+                replay = main_policy.wrap(replay, c)
             import_custody()
             # Restore AFTER model construction/load and source reconstruction.
             # The reused helper's 'mask' field is NumPy's global RandomState here.
@@ -666,6 +693,8 @@ def _execute(contract_ref: dict[str, str], stage_ref: dict[str, str],
         trainer.save(checkpoint)
         if retained_search is not None:
             retained_search.bind_checkpoint(checkpoint, c, contract_ref)
+        if main_policy is not None:
+            main_policy.bind_checkpoint(checkpoint, c, contract_ref)
         trainer.writer.close()
         with checkpoint.open("rb") as stream:
             os.fsync(stream.fileno())
@@ -686,6 +715,8 @@ def _execute(contract_ref: dict[str, str], stage_ref: dict[str, str],
             sf_p0.decorate_boundary(boundary, c, stage)
         if retained_search is not None:
             retained_search.decorate_boundary(boundary, c)
+        if main_policy is not None:
+            main_policy.decorate_boundary(boundary, c, stage)
         publish_boundary(output, boundary)
         return boundary
     except BaseException as exc:
