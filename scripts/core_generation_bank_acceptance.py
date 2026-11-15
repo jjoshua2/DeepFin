@@ -14,7 +14,7 @@ from pathlib import Path
 import re
 import stat
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 import uuid
 
 ROOT_STATUS = "ROOT_ACCEPTS_CLOSED_CORE_GENERATION_DATA_BANK_V1"
@@ -49,7 +49,7 @@ def reference(value: Any) -> Path:
     require(type(value) is dict and set(value) == {"path", "sha256"}, "invalid metadata reference")
     sha(value["sha256"])
     require(type(value["path"]) is str, "invalid metadata path")
-    path = Path(value["path"])
+    path = Path(cast(str, value["path"]))
     require(path.is_absolute() and path.suffix == ".json" and path.resolve() == path, "noncanonical metadata path")
     return path
 
@@ -198,7 +198,7 @@ def _owner(m: _Metadata, root: dict[str, Any], p: dict[str, Any]) -> None:
     require(type(births) is dict and births, "missing owned births")
     for pid, birth in births.items():
         require(type(pid) is str and pid.isdecimal() and str(int(pid)) == pid, "invalid owned PID")
-        integer(int(pid), "owned PID")
+        integer(int(cast(str, pid)), "owned PID")
         integer(birth, "owned birth")
     closure = owner["closure"]
     require(set(closure) == {"supported_eof", "exit_code", "supervisor_pid", "supervisor_closed", "owned_births_closed", "known_processes"}
