@@ -1099,7 +1099,8 @@ def test_a_device_call_runner_stall_that_ends_clears_its_wedge(late: str) -> Non
     try:
         with pytest.raises(DeviceStalled):
             runner.call(slow, limit_s=0.2)
-        assert wedge.any_wedged() and runner.wedged()
+        assert wedge.any_wedged()
+        assert runner.wedged()
         gate.set()
         assert _wait_for(lambda: not runner.wedged(), timeout=5)
         assert not wedge.any_wedged()
@@ -1144,7 +1145,8 @@ def test_the_primary_warm_call_sends_real_root_inputs(relations: bool) -> None:
         cb = CBoard.from_board(chess.Board())
         want = encode_cboard(cb, input_history_encoding=worker._cfg.input_history_encoding,
                              input_extra_features=worker._cfg.input_extra_features)
-        assert x.shape[0] == 1 and np.array_equal(x[0], want)
+        assert x.shape[0] == 1
+        assert np.array_equal(x[0], want)
         if relations:
             assert rels is not None
             assert np.array_equal(rels, cb.compute_relations()[None, ...])
@@ -1196,7 +1198,8 @@ def test_a_second_failure_after_rpg_retirement_is_announced_before_bestmove(out)
         bestmoves = [i for i, ln in enumerate(lines) if ln.startswith("bestmove")]
         notes = [i for i, ln in enumerate(lines)
                  if "WARNING multi-GPU DEGRADED: root-parallel Gumbel device #1" in ln]
-        assert notes and bestmoves[0] < notes[0] < bestmoves[1], lines
+        assert notes, lines
+        assert bestmoves[0] < notes[0] < bestmoves[1], lines
         summary = worker.pool_degraded_summary() or ""
         assert "now searching classic Gumbel on device #2" in summary, summary
     finally:

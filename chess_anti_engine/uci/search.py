@@ -544,6 +544,9 @@ class SearchWorker:
         # A retired root-parallel Gumbel pool kept to serve the classic path
         # from a surviving group's thread (``_retire_rpg_after_failure``).
         self._rpg_rows_pool: Any = None
+        # Retired root-parallel pools (and their evaluators) whose group threads
+        # are parked after a device fault: kept referenced, never closed.
+        self._rpg_retired_keepalive: list[tuple[Any, list[Any]]] = []
   # (evaluator id, its DegradingMultiGPUDispatcher or None): the routing
   # chain's degrade source, looked up once per evaluator.
         self._chain_source_cache: tuple[int, Any] | None = None
