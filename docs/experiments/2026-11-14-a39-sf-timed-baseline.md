@@ -128,3 +128,51 @@ adoption or broader goal-completion claim is introduced.
 | `core-A39-SF20260810-engineering-pair-readout-v1/readout.json` | `b96ca18581223530441e5507de016edcd086e5aa0ffa2baf359b4b238ff3e3e6` |
 | `core-A39-SF20260810-timed-baseline-bindings-v1/engineering/root-acceptance.json` | `d232b94ac9ea934f34513ceb6a1adcb285813de9079fc268ded67cba382abcde` |
 | `core-A39-SF20260810-timed-baseline-bindings-v1/engineering/independent-review.json` | `68d24530886674b22ed975343b7a161cef444da05dacd2b0b813167198e9a626` |
+
+
+## Closed descriptive baseline — November 15, 2026
+
+The precommitted eight-game/four-pair baseline completed **0 wins, 4 draws and
+4 losses: 25%** for unchanged A39 against the pinned eight-thread Stockfish at
+60+1. Every pair contained one draw and one loss: pentanomial [WW,WD,DD-or-WL,LD,LL]
+was [0,0,0,4,0]. The registered R5 method returns **no interval** because empirical
+pair variance is zero. That unavailable interval does not establish precise 25%
+performance; four pairs remain a small conditional descriptive sample. No
+Hoeffding substitute, Elo estimate, parity, regression, learning gain or milestone
+claim is made.
+
+All eight games finished through their recorded rule/claim paths, with no time,
+illegal/null or max-plies faults. The exact closed CPU reader reconciled all
+full-16-opening histories, colors, PGN/JSONL/CSV/UCI moves, clocks and results.
+GPU owner wall was **1479.3855486930115 / 7200 seconds**; its separate CPU reader
+used **2.241575691034086 / 600 seconds**. Both owners closed PASS with all known
+process births closed. Independent actual review accepted the compact reports,
+source and closure evidence without findings; it did not independently reread raw
+game, book, model or network payloads.
+
+The complete 494-entry/175-plane/61,444,448-unique-parameter served model was
+unchanged before and after the baseline under the same observer hash as
+engineering. Actual BF16 autocast was observed 309,972 times, with 323 clocked
+non-tablebase phases performing neural graph work. The new baseline Stockfish
+process exported the same required current-default NNUE content before warmup
+and scored play and again after the games. Its SHA remained
+`ab28990d4ea3d5c97f7d3918bc5dd5061609330369fe00c2d93a34d4777b5552`.
+Storage origin and original NNUE file identity remain unknown.
+
+The study is closed. Across its two distinct phases, scientific GPU owner wall
+was **1967.8870524470112 / 9000 seconds** and CPU readers used
+**3.4565590530401096 / 900 seconds**. The separate preregistration metadata/guard
+cost remains **6.527947383990977 / 360 seconds**. Engineering and baseline scores
+are not pooled, and neither pools with the earlier Rofchade 30+.1 or internal
+64-simulation studies. All four used baseline roles remain protected. No further
+admission, retry, resume, reseed, extension, alternative model/network/source/cache
+or adoption follows from this closed study. A39 remains the donor; the first-week
+and longer strength goals remain active.
+
+| Closed baseline evidence under the same external artifact root | SHA-256 |
+| --- | --- |
+| `core-A39-SF20260810-timed-baseline-bindings-v1/baseline/protocol.json` | `aed1a8d4b9362d121c356ea0e2b7f804c188a6e6d930be5aa7143da296498a1a` |
+| `core-A39-SF20260810-descriptive-baseline-readout-v1/readout.json` | `13da66abc7f7192397ac8c5f1bfe9a5b8cd22fe6a244d8c02db5b530d9537bae` |
+| `core-A39-SF20260810-timed-baseline-bindings-v1/baseline/root-acceptance.json` | `e4339f956a98b0d024eb14883ca727c8b1b6ceff6d8a7a66d4601b56101ce503` |
+| `core-A39-SF20260810-timed-baseline-bindings-v1/baseline/independent-review.json` | `433a8e57bf1bb02dc27cfa19037cf8ca2efa3269756aa370f5e8c4b31518e544` |
+| `core-A39-SF20260810-timed-baseline-closeout-v1/decision.json` | `24c2b139cb0d146a42defcf02b016ecb67e6ddb326e565364c3a21e74f632f8d` |

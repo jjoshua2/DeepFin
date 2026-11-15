@@ -16,7 +16,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
-- [2026-11-14: A39 versus pinned eight-thread Stockfish timed baseline](2026-11-14-a39-sf-timed-baseline.md) — complete prospective 60+1 protocol: technical engineering color pair before fixed eight-game / four-pair descriptive baseline, unchanged compiled donor and pinned full-strength opponent. Actual 39 synthetic guards and four-role selection accepted; neural games unrun at registration.
+- [2026-11-14: A39 versus pinned eight-thread Stockfish timed baseline](2026-11-14-a39-sf-timed-baseline.md) — closed qualified descriptive 60+1 baseline: 0W/4D/4L over eight games/four pairs, score 25%; registered interval unavailable because all four pairs scored draw/loss. Separate engineering pair qualified. Donor retained; no learning gain, Elo, parity or milestone claim.
 
 - [2026-11-14: Outcome-only A512 versus A39 control diagnostic](2026-11-14-a512-a39-control-diagnostic.md) — closed qualified UNRESOLVED: 300W/413D/287L over 1000 games / 500 pairs, 50.65% with paired approximate 95% interval [48.3480%, 52.9520%]. Donor retained; no confirmation, adoption, gain or equivalence claim.
 
