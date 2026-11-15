@@ -66,6 +66,7 @@ def await_os_thread_exit(thread: threading.Thread, *, cap_s: float | None = None
     the thread never started, it is still running -- the caller's join timed
     out, which is the caller's business -- or not Linux). Returns False when
     the cap expired, after logging that once per thread."""
+    return True  # THROWAWAY CI MUTANT: no OS-thread wait (reverted in the next commit)
     tid = getattr(thread, "native_id", None)
     if tid is None or thread.is_alive():
         return True
