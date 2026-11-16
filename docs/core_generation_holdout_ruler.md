@@ -375,3 +375,77 @@ unblended WDL-to-Q source path, not an invented argument. Gumbel fields, vloss
 and target batch remain observations of actual constructed objects and actual
 positive calls on each side. These are required contracts for the future DEV
 helper/reader; this source change has not executed or qualified them.
+
+### D1-T1: one selected K0 saved-endpoint recovery
+
+The additive `core_bank_learner_K0_failed_gpu_closed_cpu_recovery_v1` family is
+restricted to D1 K0 and the exact failed GPU terminal, public boundary and saved
+checkpoint in source selection `116d422c…`. It uses a distinct Root10/ind12
+receipt and a separate closed CPU 600 / 570-second audit. The original GPU
+terminal remains FAILED. It is never an old Root9/ind8 same-GPU PASS receipt.
+
+The Root10 adds `recovery_authority` to the existing nine fields. The independent
+receipt copies all ten facts, substitutes its distinct status, and adds
+`root_acceptance` and `findings`. The authority is a caller-trusted strictref at
+the canonical Root-owned T1 path. It binds the exact source selection, its review,
+a Root-derived publication projection of the actual mechanical amendment, the
+accepted auditor, and the selected trigger. The actual CPU admission must name
+the same authority. Source selection, publication or status alone grants no
+execution or model-delivery authority.
+
+The saved-only proof verifies complete saved metadata/state, active optimizer
+slots, scheduler, ZClip, provenance, recorded five-stream boundary, full replay
+membership and all original journal draws. It carries no reconstructed own-live
+fingerprint or historical final GPU/source/native/runtime/RNG bracket. The
+architecture-matched historical synthetic full494 shape/alias map is explicitly
+`MODEL_LAYOUT_BASIS_ONLY`; it provides no K0 live weights or training credit.
+Current CPU runtime/source/native custody is separate. The scheduler endpoint
+is index 4,095 because the real Trainer updates its scheduler before incrementing
+the completed-update counter to 4,096.
+
+The ordinary CPU and same-GPU families retain their original gates. The corrected
+production D1 prover fingerprint `139ec1c4…` additionally requires its exact
+accepted source review; the original `cceb3d1d…` route remains unchanged. The
+engineering-only two-update prover is never a scientific delivery. Recovery for
+other arms, other failed owners, arbitrary saved survivors, or an unissued Root
+T1 authority is refused. The later 400 / 370-second consumer qualification still
+requires four real model metadata controls (recovered K0 plus three complete GPU
+arms), alongside bank, asset and prefix controls, before DEV/HOLD use. It is not
+a prerequisite that would cyclically block the three remaining training arms.
+
+
+### One explicit no-clip corrective K0 family
+
+The original K0 GPU owner and its first saved-endpoint CPU auditor both remain
+FAILED. A distinct one-case `core_bank_learner_K0_failed_gpu_closed_cpu_recovery_v2`
+route accepts only the same selected endpoint under a new closed CPU590 / 560
+owner, the exact manual corrective decision and review, and the exact prior
+failed CPU graph. It cannot relabel a600-second audit, another failed owner,
+another arm, or the original failed GPU as a complete same-GPU delivery.
+
+The separate Root10/ind12 statuses are
+`ROOT_ACCEPTS_CLOSED_KL_D1_T1_K0_NO_CLIP_CORRECTIVE_ENDPOINT_DELIVERY_V1` and
+`ACCEPT_CLOSED_KL_D1_T1_K0_NO_CLIP_CORRECTIVE_ENDPOINT_DELIVERY_NO_FINDINGS_V1`.
+Authority7 and plan28 remain distinct. Four admission/result fields bind
+`corrective_source_selection`, `corrective_source_selection_review`,
+`previous_CPU_failure` (terminal and closure), and `corrective_publication`.
+The last points to Root's canonical eleven-field
+`ROOT_RECORDS_PUBLIC_IMMUTABLE_NO_CLIP_CORRECTION_PR_V1` record: status,
+corrective_selection, selection_review, design, pull_request, head, tree,
+document_path, document_sha256, independent_source_review, and
+execution_authorized=False. It records an immutable reviewed public policy PR,
+not Main publication or execution authority. Compatible consumer and correction
+must be published on Main before endpoint use or remaining learning; full local
+qualification follows all four accepted deliveries before DEV/HOLD.
+
+The fresh saved proof must report and validate exact disabled clipping:
+`grad_clip_mode=none`, initialized=False, mean/var=None, an empty list buffer,
+and strict integer warmup25. Donor provenance retains exactly mode/SHA/complete
+canonical architecture. This follows the unchanged writer and does not enable
+clipping or modify training. The consumer pins only the independently accepted
+corrective auditor fingerprint and source review. The old600-second route and
+ordinary9/8, production139 and other default checks remain available unchanged;
+the new qualification selects only the corrective v2 family for actual K0.
+No saved-state, own-live or original final GPU evidence is invented by these
+metadata joins. All new cases are fictional metadata fixtures and require actual
+qualification; they establish no learning or playing result.
