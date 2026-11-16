@@ -12,7 +12,7 @@ from collections.abc import Callable, Generator, Iterable, Iterator, Mapping, Se
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
@@ -20,6 +20,9 @@ from zclip import ZClip
 
 from chess_anti_engine.utils.amp import inference_autocast
 from chess_anti_engine.utils.atomic import atomic_write
+
+if TYPE_CHECKING:
+    from .frozen_policy_anchor import FrozenPolicyAnchor
 
 try:
     from torch.utils.tensorboard import SummaryWriter as _ImportedSummaryWriter
@@ -3340,6 +3343,9 @@ class Trainer:
         self.step = 0
         self._tb_log_interval = max(1, int(tb_log_interval))
         self._prefetch_batches = bool(prefetch_batches)
+        # Explicit finite-family opt-in only; no YAML/default/reload surface.
+        self._frozen_policy_anchor: FrozenPolicyAnchor | None = None
+        self._frozen_policy_anchor_identity: dict[str, Any] | None = None
         self._prefetch_split_timing = bool(prefetch_split_timing)
 
         self.use_amp = bool(use_amp)
@@ -5739,6 +5745,40 @@ class Trainer:
         self._log_metrics(metrics, tag)
         return metrics
 
+    def configure_frozen_policy_anchor(self, specification: dict[str, Any]) -> None:
+        """One explicit new-family setup; coefficient0 never touches a reference."""
+        from chess_anti_engine.policy_anchor_spec import validate_spec
+        from .frozen_policy_anchor import FrozenPolicyAnchor
+
+        if self._frozen_policy_anchor_identity is not None or self._model_config is None:
+            raise ValueError("frozen policy anchor requires one complete explicit setup")
+        arch = {"_schema_version": ARCH_SCHEMA_VERSION, **dataclasses.asdict(self._model_config)}
+        identity = validate_spec(specification, arch)
+        if identity["coefficient"] == 0:
+            self._frozen_policy_anchor_identity = identity
+            return
+        if self._prefetch_batches or self.accum_steps != 1 or hasattr(self.model, "_orig_mod") or self.resid_channel_dropout != 0:
+            raise ValueError("frozen policy anchor supports eager single-microbatch replacement replay only")
+        anchor = FrozenPolicyAnchor(identity, self.model)
+        optimized = {id(p) for group in self.opt.param_groups for p in group["params"]}
+        if any(id(p) in optimized for p in anchor.model.parameters()):
+            raise ValueError("reference belongs to student optimizer")
+        self._frozen_policy_anchor = anchor
+        self._frozen_policy_anchor_identity = identity
+
+    def frozen_policy_anchor_state(self) -> dict[str, Any] | None:
+        """Fixed identity only, never duplicate reference weights in student state."""
+        from copy import deepcopy
+
+        if self._frozen_policy_anchor is not None:
+            self._frozen_policy_anchor.custody()
+        return deepcopy(self._frozen_policy_anchor_identity)
+
+    def frozen_policy_anchor_diagnostics(self) -> dict[str, Any] | None:
+        if self._frozen_policy_anchor is None:
+            return None
+        return self._frozen_policy_anchor.diagnostics()
+
     def _apply_feature_group_dropout(self, x: torch.Tensor) -> None:
         """Per-group classical-feature dropout applied in-place on x[:, base:, ...]."""
         base = int(self._base_input_planes)
@@ -5840,9 +5880,15 @@ class Trainer:
                         if exact_epoch
                         else 1.0
                     )
-                    loss = (
-                        losses["total"] * exact_row_scale / self.accum_steps
-                    )
+                    training_total = losses["total"]
+                    if self._frozen_policy_anchor is not None:
+                        if exact_epoch:
+                            raise ValueError("frozen policy anchor refuses exact-epoch replay")
+                        penalty = self._frozen_policy_anchor.penalty(out, batch)
+                        if penalty is not None:
+                            training_total = training_total + penalty
+                        del penalty
+                    loss = training_total * exact_row_scale / self.accum_steps
             with phases.phase("bwd_s"):
                 loss.backward()
 
@@ -5874,7 +5920,7 @@ class Trainer:
             # evaluates its RHS first, so merely reusing the name on the next
             # loop iteration would otherwise keep this batch alive throughout
             # construction of its successor.
-            del batch, out, losses, loss, _rel
+            del batch, out, losses, loss, _rel, training_total
 
         step_opt_stats["samples_seen"] = float(step_samples_seen)
 
@@ -6421,6 +6467,10 @@ class Trainer:
   # trade a true-but-unused record for a special case, and would silently start
   # lying the moment `_ChainedOptimizer.state_dict` learns to emit groups.
         opt_param_names = self._optimizer_param_names()
+        if self._frozen_policy_anchor_identity is not None:
+            from chess_anti_engine.policy_anchor_spec import CHECKPOINT_KEY
+
+            state[CHECKPOINT_KEY] = self.frozen_policy_anchor_state()
         if opt_param_names is not None:
             state["opt_param_names"] = opt_param_names
         if self._model_config is not None:

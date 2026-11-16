@@ -26,6 +26,11 @@ STAGE = "core_generation_bank_stage_v1"
 BOUNDARY = "COMPLETED_CORE_GENERATION_BANK_SEGMENT_V1"
 CHECKPOINT_KEY = "core_generation_bank_learner_v1"
 SOURCE_FILES = (*core.SOURCE_FILES, "scripts/core_generation_bank_acceptance.py", "scripts/core_generation_bank_learner.py")
+ANCHOR_CONTRACT = "core_generation_bank_policy_anchor_v1"
+ANCHOR_STAGE = "core_generation_bank_policy_anchor_stage_v1"
+ANCHOR_BOUNDARY = "COMPLETED_CORE_GENERATION_BANK_POLICY_ANCHOR_SEGMENT_V1"
+ANCHOR_CHECKPOINT_KEY = "core_generation_bank_policy_anchor_v1"
+ANCHOR_SOURCE_FILES = (*SOURCE_FILES, "scripts/core_generation_bank_policy_anchor.py", "chess_anti_engine/train/frozen_policy_anchor.py", "chess_anti_engine/policy_anchor_spec.py")
 
 
 def plain(value: Any) -> Any:
@@ -44,14 +49,18 @@ def settings(c: dict[str, Any]) -> dict[str, Any]:
             "schema": "core_finite_learning_v1", "donor": c["initial_model"], "updates_per_generation": c["updates_per_segment"]}
 
 
-def validate_contract(c: dict[str, Any]) -> dict[str, Any]:
-    core.require(set(c) == {"schema", "run_uuid", "source_revision", "source_files", "architecture", "initial_model",
+def validate_contract(c: dict[str, Any], *, _anchored: bool = False) -> dict[str, Any]:
+    core.require(set(c) == ({"schema", "run_uuid", "source_revision", "source_files", "architecture", "initial_model",
         "initial_actor_step", "first_generation", "batch_size", "games_per_generation", "max_games_per_generation",
-        "updates_per_segment", "replay_generations", "seed", "runtime", "lr", "mirror_prob", "limits", "bank_limits"}
-        and c["schema"] == CONTRACT, "invalid bank learning contract")
+        "updates_per_segment", "replay_generations", "seed", "runtime", "lr", "mirror_prob", "limits", "bank_limits"} | ({"policy_anchor"} if _anchored else set()))
+        and c["schema"] == (ANCHOR_CONTRACT if _anchored else CONTRACT), "invalid bank learning contract")
     core.integer(c["first_generation"], "first logical generation")
     core.integer(c["initial_actor_step"], "initial actor step", 0)
-    core.require(set(SOURCE_FILES) <= set(c["source_files"]), "missing bank learner source pins")
+    core.require(set(ANCHOR_SOURCE_FILES if _anchored else SOURCE_FILES) <= set(c["source_files"]), "missing bank learner source pins")
+    if _anchored:
+        from chess_anti_engine.policy_anchor_spec import validate_spec
+
+        core.require(validate_spec(c["policy_anchor"], c["architecture"]) == c["policy_anchor"], "noncanonical policy anchor")
     core.require(set(c["bank_limits"]) == {"max_file_bytes", "max_total_bytes", "max_games"}, "invalid bank metadata limits")
     for name, value in c["bank_limits"].items():
         core.integer(value, name)
@@ -73,9 +82,9 @@ def source_guard(c: dict[str, Any]) -> None:
     core.require(Path(__file__).resolve() == core.REPO / "scripts/core_generation_bank_learner.py", "foreign bank learner entry")
 
 
-def metadata(c: dict[str, Any], stage: dict[str, Any], contract_ref: dict[str, str]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None]:
+def metadata(c: dict[str, Any], stage: dict[str, Any], contract_ref: dict[str, str], *, _anchored: bool = False) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None]:
     core.require(set(stage) == {"schema", "contract_sha256", "segment", "banks", "parent", "output"}
-                 and stage["schema"] == STAGE and stage["contract_sha256"] == contract_ref["sha256"], "invalid bank learner stage")
+                 and stage["schema"] == (ANCHOR_STAGE if _anchored else STAGE) and stage["contract_sha256"] == contract_ref["sha256"], "invalid bank learner stage")
     segment = core.integer(stage["segment"], "segment")
     core.require(segment <= len(c["updates_per_segment"]) and type(stage["banks"]) is list
                  and len(stage["banks"]) == segment, "bank learner segment horizon mismatch")
@@ -103,14 +112,14 @@ def metadata(c: dict[str, Any], stage: dict[str, Any], contract_ref: dict[str, s
     if segment == 1:
         core.require(stage["parent"] is None, "first segment must bootstrap model only")
     else:
-        parent = closed_parent(stage["parent"], c, contract_ref, stage)
+        parent = closed_parent(stage["parent"], c, contract_ref, stage, _anchored=_anchored)
         core.require(identities[-1]["actor_sha256"] == parent["checkpoint"]["sha256"]
                      and identities[-1]["actor_checkpoint_step"] == parent["step"], "bank actor is not adjacent learner checkpoint")
         core.require(parent["bank_identities"] == identities[:-1], "parent historical bank identities changed")
     return generations, identities, parent
 
 
-def closed_parent(binding: dict[str, Any], c: dict[str, Any], contract_ref: dict[str, str], stage: dict[str, Any]) -> dict[str, Any]:
+def closed_parent(binding: dict[str, Any], c: dict[str, Any], contract_ref: dict[str, str], stage: dict[str, Any], *, _anchored: bool = False) -> dict[str, Any]:
     core.require(type(binding) is dict and set(binding) == {"boundary", "owner_terminal", "owner_sha256", "command"}, "invalid bank parent binding")
     path, parent = core.read_ref(binding["boundary"])
     _, prior = core.read_ref(parent["stage"])
@@ -118,11 +127,11 @@ def closed_parent(binding: dict[str, Any], c: dict[str, Any], contract_ref: dict
     core.require(path == output / "boundary.json" and not core.failure_marker(output).exists()
                  and not (output / "boundary.pending.json").exists(), "failed or incomplete bank parent")
     core.require(set(prior) == {"schema", "contract_sha256", "segment", "banks", "parent", "output"}
-                 and prior["schema"] == STAGE and prior["contract_sha256"] == contract_ref["sha256"]
+                 and prior["schema"] == (ANCHOR_STAGE if _anchored else STAGE) and prior["contract_sha256"] == contract_ref["sha256"]
                  and prior["segment"] == parent["segment"] == stage["segment"] - 1
                  and prior["banks"] == stage["banks"][:-1] == parent["accepted_banks"]
                  and prior["parent"] == parent["parent"], "bank parent original stage mismatch")
-    suffix = ["-m", "scripts.core_generation_bank_learner", "--contract", contract_ref["path"],
+    suffix = ["-m", "scripts.core_generation_bank_policy_anchor" if _anchored else "scripts.core_generation_bank_learner", "--contract", contract_ref["path"],
               "--contract-sha256", contract_ref["sha256"], "--stage", parent["stage"]["path"], "--stage-sha256", parent["stage"]["sha256"]]
     command = binding["command"]
     core.require(type(command) is list and len(command) > len(suffix) and all(type(arg) is str and arg for arg in command)
@@ -133,21 +142,23 @@ def closed_parent(binding: dict[str, Any], c: dict[str, Any], contract_ref: dict
                  and terminal["owned_processes_closed"] is True and terminal["custody"] == "OWNED_PROCESSES_CLOSED"
                  and terminal["supervisor_sha256"] == binding["owner_sha256"] and terminal["command"] == command,
                  "bank parent owner not closed PASS")
-    core.require(parent["status"] == BOUNDARY and parent["contract_sha256"] == contract_ref["sha256"]
+    core.require(parent["status"] == (ANCHOR_BOUNDARY if _anchored else BOUNDARY) and parent["contract_sha256"] == contract_ref["sha256"]
                  and parent["source_revision"] == c["source_revision"] and parent["run_uuid"] == c["run_uuid"]
                  and parent["logical_generation"] == c["first_generation"] + stage["segment"] - 2
                  and parent["step"] == sum(c["updates_per_segment"][:stage["segment"] - 1])
                  and parent["initial_model"] == c["initial_model"] and parent["initial_actor_step"] == c["initial_actor_step"],
                  "bank parent family/contract/source/state mismatch")
+    if _anchored:
+        core.require(parent["policy_anchor"] == c["policy_anchor"], "parent frozen reference identity differs")
     checkpoint = core.external(parent["checkpoint"]["path"])
     core.require(checkpoint == output / "learner.pt" and not (checkpoint.stat().st_mode & 0o222)
                  and core.file_sha(checkpoint) == parent["checkpoint"]["sha256"], "bank parent checkpoint custody differs")
     return parent
 
 
-def checkpoint_identity(c: dict[str, Any], contract_ref: dict[str, str], segment: int) -> dict[str, Any]:
+def checkpoint_identity(c: dict[str, Any], contract_ref: dict[str, str], segment: int, *, _anchored: bool = False) -> dict[str, Any]:
     return {"contract_sha256": contract_ref["sha256"], "run_uuid": c["run_uuid"], "source_revision": c["source_revision"],
-            "segment": segment, "logical_generation": c["first_generation"] + segment - 1}
+            "segment": segment, "logical_generation": c["first_generation"] + segment - 1} | ({"policy_anchor": c["policy_anchor"]} if _anchored else {})
 
 
 def fresh_model(trainer: Any, c: dict[str, Any], torch: Any) -> None:
@@ -171,11 +182,15 @@ def fresh_model(trainer: Any, c: dict[str, Any], torch: Any) -> None:
 
 
 def execute(contract_ref: dict[str, str], stage_ref: dict[str, str]) -> dict[str, Any]:
+    return _execute(contract_ref, stage_ref, _anchored=False)
+
+
+def _execute(contract_ref: dict[str, str], stage_ref: dict[str, str], *, _anchored: bool) -> dict[str, Any]:
     _, c = core.read_ref(contract_ref)
     _, stage = core.read_ref(stage_ref)
-    projected = validate_contract(c)
+    projected = validate_contract(c, _anchored=_anchored)
     source_guard(c)
-    generations, identities, parent = metadata(c, stage, contract_ref)
+    generations, identities, parent = metadata(c, stage, contract_ref, _anchored=_anchored)
     output = core.external(stage["output"])
     core.require(not core.failure_marker(output).exists(), "failed bank segment output cannot be reused")
     output.mkdir(parents=False, exist_ok=False)
@@ -217,13 +232,24 @@ def execute(contract_ref: dict[str, str], stage_ref: dict[str, str]) -> dict[str
                 checkpoint = core.external(parent["checkpoint"]["path"])
                 core.require(core.file_sha(checkpoint) == parent["checkpoint"]["sha256"], "bank parent checkpoint changed")
                 state = torch.load(checkpoint, map_location="cpu", weights_only=True)
-                core.require(state.get(CHECKPOINT_KEY) == checkpoint_identity(c, contract_ref, stage["segment"] - 1), "bank checkpoint family tag mismatch")
+                core.require(state.get(ANCHOR_CHECKPOINT_KEY if _anchored else CHECKPOINT_KEY) == checkpoint_identity(c, contract_ref, stage["segment"] - 1, _anchored=_anchored), "bank checkpoint family tag mismatch")
+                core.require((CHECKPOINT_KEY if _anchored else ANCHOR_CHECKPOINT_KEY) not in state, "ambiguous bank checkpoint family")
+                if _anchored:
+                    from chess_anti_engine.policy_anchor_spec import CHECKPOINT_KEY as REFERENCE_KEY
+
+                    core.require(state.get(REFERENCE_KEY) == c["policy_anchor"], "saved frozen reference identity differs")
                 del state
                 core.require(core.file_sha(checkpoint) == parent["checkpoint"]["sha256"], "bank parent checkpoint changed during tag read")
                 resume_bootstrap(trainer, checkpoint, parent["checkpoint"]["sha256"], parent["step"], c["seed"])
                 # resume_bootstrap seeds Torch; restore ALL five streams afterwards.
-                _restore_rng(parent["rng"], rng, cast(Any, np.random))
-                core.require(core.canonical(_rng_state(rng, cast(Any, np.random))) == core.canonical(parent["rng"]), "bank RNG restoration differs")
+                if not _anchored:
+                    _restore_rng(parent["rng"], rng, cast(Any, np.random))
+                    core.require(core.canonical(_rng_state(rng, cast(Any, np.random))) == core.canonical(parent["rng"]), "bank RNG restoration differs")
+            if _anchored:
+                trainer.configure_frozen_policy_anchor(c["policy_anchor"])
+                if parent is not None:
+                    _restore_rng(parent["rng"], rng, cast(Any, np.random))
+                    core.require(core.canonical(_rng_state(rng, cast(Any, np.random))) == core.canonical(parent["rng"]), "bank RNG restoration differs")
             core.import_custody()
             start = trainer.step
             count = c["updates_per_segment"][stage["segment"] - 1]
@@ -245,8 +271,9 @@ def execute(contract_ref: dict[str, str], stage_ref: dict[str, str]) -> dict[str
         checkpoint = output / "learner.pt"
         trainer.save(checkpoint)
         state = torch.load(checkpoint, map_location="cpu", weights_only=True)
-        core.require(CHECKPOINT_KEY not in state, "bank checkpoint already tagged")
-        state[CHECKPOINT_KEY] = checkpoint_identity(c, contract_ref, stage["segment"])
+        tag_key = ANCHOR_CHECKPOINT_KEY if _anchored else CHECKPOINT_KEY
+        core.require(tag_key not in state, "bank checkpoint already tagged")
+        state[tag_key] = checkpoint_identity(c, contract_ref, stage["segment"], _anchored=_anchored)
         pending = checkpoint.with_name("learner.pt.family.pending")
         with pending.open("xb") as stream:
             torch.save(state, stream)
@@ -257,10 +284,10 @@ def execute(contract_ref: dict[str, str], stage_ref: dict[str, str]) -> dict[str
         trainer.writer.close()
         source_guard(c)
         core.import_custody()
-        final_generations, final_identities, final_parent = metadata(c, stage, contract_ref)
+        final_generations, final_identities, final_parent = metadata(c, stage, contract_ref, _anchored=_anchored)
         core.require(final_generations == generations and final_identities == identities and final_parent == parent,
                      "accepted bank/parent metadata changed during segment")
-        boundary = {"status": BOUNDARY, "run_uuid": c["run_uuid"], "source_revision": c["source_revision"],
+        boundary = {"status": ANCHOR_BOUNDARY if _anchored else BOUNDARY, "run_uuid": c["run_uuid"], "source_revision": c["source_revision"],
             "contract_sha256": contract_ref["sha256"], "stage": stage_ref, "parent": stage["parent"],
             "segment": stage["segment"], "logical_generation": identities[-1]["generation"], "accepted_banks": stage["banks"],
             "bank_identities": identities, "initial_model_policy": "model_only_fresh_optimizer",
@@ -271,11 +298,15 @@ def execute(contract_ref: dict[str, str], stage_ref: dict[str, str]) -> dict[str
             "metrics": asdict(metrics), "rng": _rng_state(rng, cast(Any, np.random)), "backend": backend,
             "recovery_scope": "same-family closed segment boundary only; interrupted output is terminal/unqualified",
             "champion_changed": False, "collector_lineage_qualified": False}
+        if _anchored:
+            boundary.update(policy_anchor=trainer.frozen_policy_anchor_state(), policy_anchor_diagnostics=trainer.frozen_policy_anchor_diagnostics())
         core.publish_boundary(output, boundary)
         return boundary
     except BaseException as error:
-        failure = {"status": "FAILED_CORE_GENERATION_BANK_SEGMENT_NO_RECOVERY_V1", "error": repr(error),
+        failure = {"status": "FAILED_CORE_GENERATION_BANK_POLICY_ANCHOR_NO_RECOVERY_V1" if _anchored else "FAILED_CORE_GENERATION_BANK_SEGMENT_NO_RECOVERY_V1", "error": repr(error),
                    "contract": contract_ref, "stage": stage_ref, "drawn_rows": drawn, "completed_optimizer_calls": applied}
+        if _anchored and trainer is not None:
+            failure["policy_anchor_diagnostics"] = trainer.frozen_policy_anchor_diagnostics()
         try:
             marker = core.failure_marker(output)
             core.write_json(marker, failure)
