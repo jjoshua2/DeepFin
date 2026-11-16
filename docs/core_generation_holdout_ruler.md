@@ -412,3 +412,40 @@ T1 authority is refused. The later 400 / 370-second consumer qualification still
 requires four real model metadata controls (recovered K0 plus three complete GPU
 arms), alongside bank, asset and prefix controls, before DEV/HOLD use. It is not
 a prerequisite that would cyclically block the three remaining training arms.
+
+
+### One explicit no-clip corrective K0 family
+
+The original K0 GPU owner and its first saved-endpoint CPU auditor both remain
+FAILED. A distinct one-case `core_bank_learner_K0_failed_gpu_closed_cpu_recovery_v2`
+route accepts only the same selected endpoint under a new closed CPU590 / 560
+owner, the exact manual corrective decision and review, and the exact prior
+failed CPU graph. It cannot relabel a600-second audit, another failed owner,
+another arm, or the original failed GPU as a complete same-GPU delivery.
+
+The separate Root10/ind12 statuses are
+`ROOT_ACCEPTS_CLOSED_KL_D1_T1_K0_NO_CLIP_CORRECTIVE_ENDPOINT_DELIVERY_V1` and
+`ACCEPT_CLOSED_KL_D1_T1_K0_NO_CLIP_CORRECTIVE_ENDPOINT_DELIVERY_NO_FINDINGS_V1`.
+Authority7 and plan28 remain distinct. Four admission/result fields bind
+`corrective_source_selection`, `corrective_source_selection_review`,
+`previous_CPU_failure` (terminal and closure), and `corrective_publication`.
+The last points to Root's canonical eleven-field
+`ROOT_RECORDS_PUBLIC_IMMUTABLE_NO_CLIP_CORRECTION_PR_V1` record: status,
+corrective_selection, selection_review, design, pull_request, head, tree,
+document_path, document_sha256, independent_source_review, and
+execution_authorized=False. It records an immutable reviewed public policy PR,
+not Main publication or execution authority. Compatible consumer and correction
+must be published on Main before endpoint use or remaining learning; full local
+qualification follows all four accepted deliveries before DEV/HOLD.
+
+The fresh saved proof must report and validate exact disabled clipping:
+`grad_clip_mode=none`, initialized=False, mean/var=None, an empty list buffer,
+and strict integer warmup25. Donor provenance retains exactly mode/SHA/complete
+canonical architecture. This follows the unchanged writer and does not enable
+clipping or modify training. The consumer pins only the independently accepted
+corrective auditor fingerprint and source review. The old600-second route and
+ordinary9/8, production139 and other default checks remain available unchanged;
+the new qualification selects only the corrective v2 family for actual K0.
+No saved-state, own-live or original final GPU evidence is invented by these
+metadata joins. All new cases are fictional metadata fixtures and require actual
+qualification; they establish no learning or playing result.
