@@ -428,3 +428,173 @@ Accepted data, software qualification and HOLD metrics do not establish Elo gain
 a win over multicore Rofchade/Stockfish/Leela, or an optimum RL recipe.
 
 Compact supporting identities: [technical recovery evidence](2026-11-16-fresh-whole-game-technical-recovery-evidence.json).
+
+
+## 2026-11-16 D1: user-directed coefficient sweep and development-first gates
+
+This prospective amendment supersedes the unused R1 A/B/C launch plan for
+future learning and evaluation. R1 was published and its controller reviewed,
+but no R1 execution authority, bindings, admissions or compute were issued.
+Original A remains a closed technical failure before model construction;
+original B/C remain unstarted. No new scientific learner update or playing
+result has been obtained. The prior record and failed artifacts remain intact.
+
+The user requested several KL strengths, a matched no-KL baseline, a meaningful
+training dose, reuse of eligible selfplay, and cheap rejection of poor settings
+before reserved holdout and larger final matches. Root selected D1 before any
+new trained-model outcome. This is a finite comparison, not an optimum-RL claim
+or a multicore Rofchade, Stockfish or Leela strength milestone.
+
+### Fixed learning comparison
+
+Reuse only the accepted 192-game, 17,568-row TRAIN bank. No new collection,
+topup, old-bank substitution or HOLD input is authorized. All four fresh runs
+use unchanged frozen T `bbb4b725a2d5218ffa4630841dd93e8b2884b58d`, original
+immutable A39 model-only initialization, the complete coupled 494-state /
+175-plane architecture, and fresh optimizer/scheduler/ZClip counters at zero.
+Original embedded step 680276 remains provenance.
+
+| D1 arm | Constant LR | Forward KL(original A39 || student) |
+| --- | ---: | ---: |
+| K0 | 3e-6 | 0, null reference and exact bypass |
+| K001 | 3e-6 | .01 |
+| K01 | 3e-6 | .1 |
+| K1 | 3e-6 | 1 |
+
+The decade grid is a coarse prospective range, not a calibrated or optimal
+coefficient. Main policy and genuine-outcome WDL coefficients remain one;
+all 12 auxiliary objectives and SF/search WDL shares remain zero. Positive
+arms use unchanged original A39 as the frozen reference. This objective package
+changes policy weighting relative to WDL as well as the policy target; K1 does
+not isolate preservation at fixed objective balance or imply doubled gradient
+magnitude.
+
+Fix batch32, mirror .5, common seed2026111673, and exactly4096 updates /
+131,072 replacement-sampled views per arm: approximately7.461 views per TRAIN
+row, not complete epochs. Freeze peak=floor=warmup-start=3e-6, warmup0,
+first-period4096. This satisfies the public no-restart horizon guard while
+keeping LR constant. Eager execution, optimizer/groups/masks and architecture
+remain unchanged; no added clipping, loss rescaling, SWA, compile, prefetch,
+dropout or transient retry. Match complete bank membership, draw/mirror journals,
+five RNG streams, backend and initial states across arms. CUDA bit repeatability
+is not assumed.
+
+Each arm has one complete final checkpoint and a3600-second GPU owner /
+3570-second absolute child bound, including passive live-to-saved proof.
+Checkpoint cap is8GiB and journal cap64MiB. Two-update engineering timings
+do not establish sustained throughput or completion within this cap. Timeout
+or technical failure is UNREAD/STOP; never shorten dose, select a partial
+checkpoint, keep only surviving arms, retry or substitute another endpoint.
+
+### Cheap development selection before HOLD
+
+Use exact first80 complete-parent opening pairs from existing `SCREEN_C_A`
+as a common DEV panel for K0/K001/K01/K1 versus A39. Use exact first80 from
+existing `SCREEN_C_B` as a second common DEV panel for K001/K01/K1 versus K0.
+All seven edges are mandatory and fixed before outcomes. Reusing a DEV panel
+across coefficients is deliberate; these results are for screening and selection.
+
+A bounded owned CPU phase must authenticate each original400-pair book and
+complete parent map, materialize the exact80-pair prefix, and prove the actual
+public arena loader consumes all80 in order without skips, deduplication or
+shrinkage. Passing a full400 book with a160-game arena request would instead
+invoke seeded subsampling and is not this protocol. Preserve known TRAIN/HOLD/
+final history, input, mirror and parent protection; no role replacement follows
+an outcome. Unused book entries remain reserved and protected.
+
+Use common seed2026111674 for all four versus-A39 edges and2026111675 for
+the three versus-K0 edges. Each edge requires exactly80 complete reciprocal-color
+pairs /160 games, with GPU900/870 and CPU-reader300-second bounds. Complete and
+technically accept all seven before selection. Report all pair-score points and
+paired normal95 intervals descriptively, without interpreting selected DEV
+scores as significance or pooling them with final matches.
+
+An arm is eligible when its versus-A39 pair-score point is at least.55.
+A positive-KL arm additionally needs its versus-K0 point at least.55. Among
+eligible arms select the highest versus-A39 point; break an exact tie by lower
+KL coefficient. K0 may win. If no arm is eligible, STOP without HOLD. This noisy,
+conservative80-pair screen can reject useful settings; no threshold relaxation,
+extension, checkpoint selection or replacement is allowed.
+
+### Reserved health check and final playing test
+
+Seal the selected winner before HOLD. The existing64-game /5943-row HOLD bank
+was generated by original frozen A39 and audited; its aggregates and metadata
+have been consumed. No newly trained candidate has been scored on it. It is
+reserved for that use, not globally untouched.
+
+Only after DEV advancement score A39, K0 and the winner when distinct, on all
+HOLD rows exactly once with the original deterministic membership and genuine
+outcome ruler. Do not load or score unselected positive-KL models. Retain
+equal-parent FP32 WDL-CE, paired complete-parent PCG64 bootstrap10000 /
+seed2026111680 /percentile95 linear, the48-parent/2000-row minimum and the
+original descriptive metrics. Veto when selected-minus-A39 CE point>.20 nats
+AND bootstrap lower95>0. Missing/nonfinite/invalid evidence is UNREAD/STOP.
+Nonveto establishes neither safety nor noninferiority. K0 health is descriptive
+when another arm wins. No HOLD ranking, fallback or second candidate follows.
+
+If health is readable and nonvetoed, use the same immutable winner on the full
+reserved `CONFIRM_C_A39`400-pair panel versus A39, seed2026111679. A positive-KL
+winner must also face K0 on the full reserved `CONFIRM_C_A`400-pair panel,
+seed2026111677. A K0 winner has only the A39 comparison; omit redundant
+self-play and retire that unused budget. These books have no playing or
+candidate-scoring results; prior metadata qualification and unknown broader
+pretraining/family exposure remain disclosed.
+
+Each required final edge needs all400 complete reciprocal-color pairs,
+point>=.55 AND available paired normal95 lower>.50. Use sample variance n-1,
+mean +/-1.96 SE, clamped[0,1]; n<2, nonfinite or zero variance is UNAVAILABLE
+and cannot pass. Complete all required final edges before efficacy readout.
+Never pool DEV/final games, replace a failed winner, reseed, replay or extend.
+All edges retain Gumbel64 matched-simulation training shape, root noise ON,
+temperature.1, eager BF16/F32 explicit-legal transport, full16-ply opening
+history, strict original3-6-man rule50 TB behavior and450 additional plies.
+Each final GPU owner is3600/3570 seconds and each CPU reader1200 seconds.
+
+Even a full pass supports only conditional single-seed fixed-bank utility versus
+A39 and, for a KL winner, matched no-KL. The quarter-rate comparator is absent
+from D1. There is no general KL optimum, lower-LR comparison or external-engine
+strength conclusion, and no automatic generation2 or adoption.
+
+### Finite costs, readiness and failure preservation
+
+Explicitly retire unused collection caps now that TRAIN/HOLD are closed and
+accepted; no collection reruns are permitted. Reallocate within the existing
+30,900-second study GPU ceiling before new outcomes:
+
+| GPU item | Maximum owner wall seconds |
+| --- | ---: |
+| Closed TRAIN + HOLD + original failed A, actual charged |1455.5775687580463|
+| Four D1 learners |14400|
+| Seven DEV edges |6300|
+| Conditional HOLD scoring |1200|
+| At most two final edges |7200|
+| Total |30555.577568758046|
+
+Leave344.422431241954 seconds unallocated, with no automatic retry. CPU science
+is104.29835316492245 already charged +300 role preparation +900 HOLD reader
++2100 seven DEV readers +2400 two final readers =5804.298353164922, below9600.
+Separate engineering remains capped600GPU/600CPU, with54.84933027205989GPU /
+164.3428476222325CPU actual charged; a future400-second consumer qualification
+must include the new D1 interfaces and cannot borrow an older qualification's
+claim. All failures and cleanup count in their declared ledgers. Preserve the
+172,800-second all-GPU ceiling and stop-new-compute deadline
+2026-11-19T16:09:20Z. No credit from cancelled or historical studies is inherited.
+
+Publication alone admits no execution. Before learning require this amendment
+on main, independent selected-design and source review, exact finite D1
+contracts/prover/controller, existing actual T/I7 + A39/B32 engineering and
+accepted TRAIN/protection, then fresh per-arm binding review, U3/admission,
+known-birth custody, all three leases and resource/deadline/budget gates.
+New scored-consumer qualification is required before its affected DEV/HOLD
+consumer phase; it is not an invented predecessor to otherwise qualified
+training. Merged main changes do not implicitly alter frozen runtimes.
+
+Any technical failure, timeout, control mismatch or UNREAD stops D1 and preserves
+partial observations/costs. It is not a clean scientific negative. No automatic
+resume, replay, retry, dose shortening, topup, survivor selection or fallback is
+authorized. Cancelled THREE/5k/150k work stays stopped. The long-term strength
+objective remains unfinished regardless of D1's result.
+
+Canonical identities and display-only external references accompany this
+amendment in [D1 evidence](2026-11-16-policy-anchor-development-first-evidence.json).
