@@ -21,7 +21,7 @@ def sealed(path: Path, body: Any) -> dict[str, str]:
     return {'path': str(path), 'sha256': collect.digest(path)}
 
 
-def case(tmp_path: Path, *, fault: str = ''):
+def case(tmp_path: Path, *, fault: str = '') -> tuple[dict[str, Any], dict[str, Any]]:
     rows = [('history_sha256', ['1' * 64, '2' * 64]), ('history_sha256', ['3' * 64]),
             ('stored_input_float16_sha256', ['a' * 64, 'b' * 64])]
     if fault == 'duplicate_inside':
@@ -34,7 +34,7 @@ def case(tmp_path: Path, *, fault: str = ''):
         rows[0][1].reverse()
     elif fault == 'invalid_sha':
         rows[0][1][0] = 'x' * 64
-    chunks = []
+    chunks: list[dict[str, Any]] = []
     for ordinal, (kind, values) in enumerate(rows):
         body = {'schema': index.CHUNK_SCHEMA, 'kind': kind, 'values': values}
         if fault == 'recursive' and ordinal == 0:
@@ -53,7 +53,7 @@ def case(tmp_path: Path, *, fault: str = ''):
         chunks[0]['bytes'] = True
     elif fault == 'wrong_bytes':
         chunks[0]['bytes'] += 1
-    manifest = {'schema': index.SCHEMA, 'chunks': chunks, 'unique_counts': {'history_sha256': 3, 'stored_input_float16_sha256': 2},
+    manifest: dict[str, Any] = {'schema': index.SCHEMA, 'chunks': chunks, 'unique_counts': {'history_sha256': 3, 'stored_input_float16_sha256': 2},
                 'serialized_chunk_bytes': sum(row['bytes'] for row in chunks), 'coverage_scope': 'fictional tiny explicit test scope',
                 'donor_pretraining_exposure': 'UNKNOWN'}
     if fault == 'count':
@@ -68,7 +68,7 @@ def case(tmp_path: Path, *, fault: str = ''):
         manifest['fallback'] = True
     elif fault == 'too_many':
         manifest['chunks'] = chunks * 43
-    envelope = {'schema': index.SCHEMA, 'manifest': sealed(tmp_path / 'manifest.json', manifest)}
+    envelope: dict[str, Any] = {'schema': index.SCHEMA, 'manifest': sealed(tmp_path / 'manifest.json', manifest)}
     if fault == 'missing':
         Path(chunks[0]['path']).unlink()
     elif fault == 'hash':
@@ -170,7 +170,7 @@ def test_bad_chunk_direct_execute_stops_before_actor_or_engine(tmp_path: Path, m
     actor_calls = []
     monkeypatch.setattr(collect, 'load_actor', lambda *_: actor_calls.append('forbidden'))
     with pytest.raises(FileNotFoundError):
-        collect.execute(p, 'a' * 64, [], cast(collect.CollectionConfigs, {}), {}, {})
+        collect.execute(p, 'a' * 64, [], cast(collect.CollectionConfigs, cast(object, {})), {}, {})
     assert not actor_calls
 
 
@@ -196,16 +196,16 @@ def test_opt_in_cannot_fallback_or_import_unpinned_helper(tmp_path: Path, fault:
 
 def test_duplicate_manifest_keys_and_changed_input_refused(tmp_path: Path, monkeypatch):
     envelope, manifest = case(tmp_path)
-    real = collect.checked
+    real = index._checked
     def changed(ref):
         value = real(ref)
         if ref == envelope['manifest']:
             Path(ref['path']).chmod(0o644)
         return value
-    monkeypatch.setattr(collect, 'checked', changed)
+    monkeypatch.setattr(index, '_checked', changed)
     with pytest.raises(ValueError, match=r"^exclusion metadata must be readonly regular files$"):
         index.load(envelope)
-    monkeypatch.setattr(collect, 'checked', real)
+    monkeypatch.setattr(index, '_checked', real)
     path = Path(envelope['manifest']['path'])
     path.chmod(0o644)
     raw = json.dumps(manifest).encode().replace(b'"schema":', b'"schema":"duplicate","schema":', 1)

@@ -6,7 +6,7 @@ functions; this module does not load models, open data or issue authority.
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, cast
 
 LABELS = ("A39", "A", "B", "C")
 METRICS = ("wdl_ce", "brier", "score_mse", "policy_ce", "reference_forward_kl")
@@ -102,13 +102,13 @@ def parent_health(games: list[dict[str, Any]]) -> dict[str, Any]:
     differences = np.asarray([(game["models"]["C"]["wdl_ce"] - game["models"]["A39"]["wdl_ce"]) / game["rows"]
                               for game in ordered], dtype=np.float64)
     require(np.isfinite(differences).all(), "UNREAD nonfinite parent differences")
-    before = np.random.get_state()
+    before = cast(tuple[str, Any, int, int, float], np.random.get_state(legacy=True))
     rng = np.random.default_rng(BOOTSTRAP_SEED)
     require(type(rng.bit_generator).__name__ == "PCG64", "wrong bootstrap generator")
     draws = rng.integers(0, len(differences), size=(BOOTSTRAP_REPLICATIONS, len(differences)))
     distribution = differences[draws].mean(axis=1, dtype=np.float64)
     lower, upper = np.quantile(distribution, [0.025, 0.975], method="linear")
-    after = np.random.get_state()
+    after = cast(tuple[str, Any, int, int, float], np.random.get_state(legacy=True))
     require(before[0] == after[0] and np.array_equal(before[1], after[1]) and before[2:] == after[2:], "bootstrap changed global RNG")
     point = float(differences.mean(dtype=np.float64))
     require(all(math.isfinite(value) for value in (point, lower, upper)), "UNREAD invalid bootstrap interval")

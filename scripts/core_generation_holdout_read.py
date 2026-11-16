@@ -15,7 +15,7 @@ from pathlib import Path
 import sys
 import time
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, cast
 
 from scripts import core_generation_holdout_metrics as metrics
 from scripts import core_generation_holdout_ruler as ruler
@@ -38,6 +38,7 @@ def closed_observations(m: ruler.Metadata, p: dict[str, Any]) -> tuple[dict[str,
     # Admission ref is authenticated by the closed owner and exact actual argv.
     command = root["owner"]["command"]
     require(type(command) is list and command.count("--admission") == command.count("--admission-sha256") == 1, "scorer admission argv ambiguous")
+    command = cast(list[str], command)
     admission = {"path": command[command.index("--admission") + 1], "sha256": command[command.index("--admission-sha256") + 1]}
     suffix = ["-m", "scripts.core_generation_holdout_score", "--protocol", root["protocol"]["path"],
               "--protocol-sha256", root["protocol"]["sha256"], "--admission", admission["path"], "--admission-sha256", admission["sha256"]]
@@ -114,12 +115,17 @@ def reconcile_rows(report: dict[str, Any], view: Any, parents: dict[str, str], c
             shared = {key: value for key, value in row.items() if key not in ("model", "wdl_log_probs", "metrics")}
             require(common is None or shared == common, "four-model paired row identity differs")
             common = shared
-            lp, value = row["wdl_log_probs"], row["metrics"]
-            require(type(lp) is list and len(lp) == 3 and all(type(v) in (int, float) and math.isfinite(v) and v <= 0 for v in lp)
-                    and abs(math.fsum(math.exp(v) for v in lp) - 1) <= 2e-5, "invalid WDL log probabilities")
-            require(type(value) is dict and set(value) == set(metrics.METRICS)
-                    and all(type(v) in (int, float) and math.isfinite(v) for v in value.values())
-                    and value["wdl_ce"] == -lp[row["outcome"]], "missing/nonfinite/inconsistent metric")
+            raw_lp, raw_value = row["wdl_log_probs"], row["metrics"]
+            require(type(raw_lp) is list and len(raw_lp) == 3, "invalid WDL log probabilities")
+            lp_items = cast(list[Any], raw_lp)
+            require(all(type(v) in (int, float) and math.isfinite(v) and v <= 0 for v in lp_items), "invalid WDL log probabilities")
+            lp = cast(list[float], lp_items)
+            require(abs(math.fsum(math.exp(v) for v in lp) - 1) <= 2e-5, "invalid WDL log probabilities")
+            require(type(raw_value) is dict and set(raw_value) == set(metrics.METRICS), "missing/nonfinite/inconsistent metric")
+            value_items = cast(dict[str, Any], raw_value)
+            require(all(type(v) in (int, float) and math.isfinite(v) for v in value_items.values()), "missing/nonfinite/inconsistent metric")
+            value = cast(dict[str, float], value_items)
+            require(value["wdl_ce"] == -lp[row["outcome"]], "missing/nonfinite/inconsistent metric")
             if label == "A39":
                 require(value["reference_forward_kl"] == 0, "reference self KL differs")
             for metric in metrics.METRICS:

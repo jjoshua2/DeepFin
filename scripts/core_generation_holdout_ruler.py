@@ -19,7 +19,7 @@ import subprocess
 import sys
 import sysconfig
 import uuid
-from typing import Any
+from typing import Any, cast
 
 from scripts import core_finite_learner as core
 from scripts import core_generation_bank_acceptance as bank
@@ -222,6 +222,7 @@ def model_delivery(m: Metadata, binding: dict[str, Any], label: str) -> dict[str
     membership = b["membership"]
     require(type(membership) is list and membership and all(type(row) is list and len(row) == 3
             and type(row[0]) is int and row[0] == b["logical_generation"] and type(row[2]) is int and row[2] > 0 for row in membership), "invalid full replay membership")
+    membership = cast(list[list[Any]], membership)
     for row in membership:
         bank.sha(row[1])
     train_rows = sum(row[2] for row in membership)
@@ -275,9 +276,12 @@ def training_population(m: Metadata, model: dict[str, Any]) -> Any:
     require(type(stage["banks"]) is list and len(stage["banks"]) == 1, "selected TRAIN bank horizon differs")
     binding = stage["banks"][0]
     require(type(binding) is dict and set(binding) == {"root_acceptance", "independent_review"}, "invalid TRAIN bank binding")
+    binding = cast(dict[str, Any], binding)
     accepted = bank.validate_accepted_generation(binding["root_acceptance"], binding["independent_review"],
         max_file_bytes=m.file_bytes, max_total_bytes=m.total_bytes, max_games=192)
-    require(isinstance(accepted, bank.AcceptedGeneration) and plain(accepted.identity) == model["boundary"]["bank_identities"][0], "TRAIN identity changed after training")
+    # Keep a defensive runtime family check at the external acceptance boundary.
+    require(isinstance(accepted, bank.AcceptedGeneration), "TRAIN identity changed after training")  # pyright: ignore[reportUnnecessaryIsInstance]
+    require(plain(accepted.identity) == model["boundary"]["bank_identities"][0], "TRAIN identity changed after training")
     require(160 <= len(accepted.games) <= 192 and accepted.evidence["eligible_rows"] >= 8000, "selected TRAIN coverage differs")
     membership = [[accepted.identity["generation"], hashlib.sha256(canonical(plain(game["shard"]["files"]))).hexdigest(), game["rows"]] for game in accepted.games]
     require(membership == model["boundary"]["membership"], "TRAIN membership changed after training")
@@ -340,8 +344,9 @@ def source_guard(source: dict[str, Any]) -> None:
     env = dict(os.environ, GIT_OPTIONAL_LOCKS="0")
     require(subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, env=env, text=True).strip() == source["revision"]
             and not subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], cwd=REPO, env=env), "dirty/wrong source revision")
-    for name, expected in files.items():
-        require(type(name) is str and not Path(name).is_absolute() and ".." not in Path(name).parts, "invalid source name")
+    for raw_name, expected in files.items():
+        require(type(raw_name) is str and not Path(raw_name).is_absolute() and ".." not in Path(raw_name).parts, "invalid source name")
+        name = cast(str, raw_name)
         bank.sha(expected)
         require((REPO / name).resolve() == REPO / name and core.file_sha(REPO / name) == expected, "source digest differs")
 
@@ -390,7 +395,8 @@ def native_custody(m: Metadata, basis_ref: dict[str, str], files: dict[str, str]
                 and set(record["inputs"]) == specs[module] and all(files.get(name) == digest for name, digest in record["inputs"].items()), "native record/source differs")
         require(path.name.endswith(str(sysconfig.get_config_var("EXT_SUFFIX"))), "native interpreter ABI suffix differs")
         loaded = importlib.import_module(module)
-        require(Path(loaded.__file__).resolve() == path, "native import origin differs")
+        filename = getattr(loaded, "__file__", None)
+        require(type(filename) is str and Path(filename).resolve() == path, "native import origin differs")
         observed.append({"path": str(path), "sha256": item["sha256"], "stamp": list(before), "record": item["record"]})
     require(modules == set(specs) and not fresh.check_extensions(REPO), "native roster/freshness failed")
     return {"images": observed, "required_symbols_and_numeric_abi": native_symbol_abi()}

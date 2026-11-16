@@ -14,7 +14,7 @@ import json
 import math
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -34,7 +34,7 @@ LIMITS = {"max_rows": 1000, "game_decoded_bytes": 16 << 20, "total_decoded_bytes
           "reference_cache_bytes": 8 << 20, "row_log_bytes": 4 << 20}
 
 
-def tensor_case():
+def tensor_case() -> tuple[dict[str, Any], torch.Tensor, torch.Tensor, torch.Tensor]:
     policy = torch.zeros(3, 1858)
     policy[:, :2] = torch.tensor([0.25, 0.75])
     legal = torch.zeros_like(policy)
@@ -108,7 +108,7 @@ def test_equal_parent_not_pooled_rows():
 
 @pytest.mark.parametrize(("delta", "veto"), [(0.3, True), (0.1, False), (-0.3, False), (0.0, False)])
 def test_fixed_parent_bootstrap_degenerate_local_rng(delta: float, veto: bool):
-    before = np.random.get_state()
+    before = cast(tuple[str, Any, int, int, float], np.random.get_state(legacy=True))
     games = [game_sums(50, 1, delta, index) for index in range(48)]
     result = metrics.parent_health(games)
     interval = result["C_minus_A39_equal_parent_WDL_CE"]
@@ -117,7 +117,7 @@ def test_fixed_parent_bootstrap_degenerate_local_rng(delta: float, veto: bool):
     assert interval["upper95"] == pytest.approx(delta)
     assert result["bootstrap"]["degenerate"] is True
     assert result["severe_damage_veto"] is veto
-    after = np.random.get_state()
+    after = cast(tuple[str, Any, int, int, float], np.random.get_state(legacy=True))
     assert before[0] == after[0]
     assert np.array_equal(before[1], after[1])
     assert before[2:] == after[2:]
@@ -362,7 +362,7 @@ def parent_graph(tmp_path: Path, fault=""):
         review["findings"] = ["unresolved"]
     iref = frozen(tmp_path / "parents-ind.json", review)
     p = {"study_uuid": collection, "design": design, "parents": {"root": rref, "independent": iref}, "holdout": {"root": hroot}}
-    view = SimpleNamespace(identity={"collection_uuid": collection}, games=({"physical_game_id": plans[0]["physical_game_id"]},))
+    view = ruler.hold.AcceptedHoldout(identity={"collection_uuid": collection}, games=({"physical_game_id": plans[0]["physical_game_id"]},), evidence={})
     return p, view
 
 
@@ -426,7 +426,7 @@ def test_actual_hold_auditor_readonly_acceptance_feeds_strict_decoder(tmp_path: 
     assert all(not array.flags.writeable for _, arrays in loaded for array in arrays.values())
 
 
-def owner_fixture(tmp_path: Path, suffix: list[str], resource: str, name: str):
+def owner_fixture(tmp_path: Path, suffix: list[str], resource: str, name: str) -> dict[str, Any]:
     command = ["/fiction/python", "-B", *suffix]
     terminal = {"status": "PASS", "returncode": 0, "owned_processes_closed": True, "custody": "OWNED_PROCESSES_CLOSED",
                 "resource": resource, "seconds": 900, "wall_seconds": 1.0, "command": command,
@@ -448,7 +448,7 @@ def delivery_graph(tmp_path: Path, fault=""):
     sref = frozen(tmp_path / "selected-stage.json", {"schema": "core_generation_bank_policy_anchor_stage_v1",
         "contract_sha256": cref["sha256"], "segment": 1, "parent": None, "banks": ["fictional accepted TRAIN refs"], "output": str(tmp_path / "learner")})
     checkpoint = {"path": str(tmp_path / "learner/learner.pt"), "sha256": "a" * 64}
-    boundary = {"status": ruler.BOUNDARY, "contract_sha256": cref["sha256"], "stage": sref, "checkpoint": checkpoint,
+    boundary: dict[str, Any] = {"status": ruler.BOUNDARY, "contract_sha256": cref["sha256"], "stage": sref, "checkpoint": checkpoint,
         "source_revision": c["source_revision"], "run_uuid": c["run_uuid"], "logical_generation": 1, "segment": 1,
         "initial_model": c["initial_model"], "initial_actor_step": c["initial_actor_step"], "parent": None,
         "step_start": 0, "step": 250, "applied_updates": 250, "applied_views": 8000, "drawn_rows": 8000,
@@ -468,7 +468,7 @@ def delivery_graph(tmp_path: Path, fault=""):
     learner_owner = owner_fixture(tmp_path, learner_suffix, "gpu", "learner")
     cpu_suffix = ["-m", "scripts.fictional_future_saved_state_audit", "--boundary", bref["path"]]
     audit_owner = owner_fixture(tmp_path, cpu_suffix, "cpu", "audit")
-    readout = {"status": "CORE_BANK_LEARNER_SAVED_STATE_AUDIT_PENDING_ROOT_CLOSURE_V1", "contract": cref, "stage": sref,
+    readout: dict[str, Any] = {"status": "CORE_BANK_LEARNER_SAVED_STATE_AUDIT_PENDING_ROOT_CLOSURE_V1", "contract": cref, "stage": sref,
         "boundary": bref, "checkpoint": checkpoint, "source_revision": c["source_revision"], "architecture": c["architecture"],
         "step": 250, "model_state_sha256": "c" * 64, "command_suffix": cpu_suffix,
         "reconciled": dict.fromkeys(("model", "optimizer", "scheduler", "zclip", "counters", "rng", "journal", "membership", "policy_anchor"), True)}
@@ -597,7 +597,7 @@ def test_real_symbol_or_numeric_abi_problem_refuses_ruler(monkeypatch, fault: st
 
 @pytest.mark.parametrize("offset", [0.0, 0.2])
 def test_heterogeneous_equal_parent_bootstrap_matches_independent_count_oracle(offset: float):
-    before = np.random.get_state()
+    before = cast(tuple[str, Any, int, int, float], np.random.get_state(legacy=True))
     games = [game_sums(40 if index < 24 else 200, 1, (0.4 if index < 24 else -0.1) + offset, index) for index in range(48)]
     for index, game in enumerate(games):
         game["parent_id"] = f"parent-{index:02d}"
@@ -618,7 +618,7 @@ def test_heterogeneous_equal_parent_bootstrap_matches_independent_count_oracle(o
     assert row_weighted == pytest.approx(-1 / 60 + offset, abs=1e-12)
     assert abs(row_weighted - interval["point"]) > 0.1
     assert result["severe_damage_veto"] is (offset == 0.2)
-    after = np.random.get_state()
+    after = cast(tuple[str, Any, int, int, float], np.random.get_state(legacy=True))
     assert before[0] == after[0]
     assert np.array_equal(before[1], after[1])
     assert before[2:] == after[2:]

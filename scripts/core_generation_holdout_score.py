@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 import random
 import time
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 from scripts import core_generation_holdout_ruler as ruler
@@ -73,9 +73,12 @@ def load_model(binding: dict[str, Any], *, device: str, complete: bool = False) 
         decoded.append(1)
         require(type(payload) is dict and ruler.canonical(payload.get("arch")) == ruler.canonical(binding["architecture"])
                 and type(payload.get("step")) is int and payload["step"] == binding["step"], "loaded architecture/step differs")
-        require(isinstance(payload.get("model"), dict) and state_sha256(payload["model"]) == binding["model_state_sha256"], "loaded model state differs")
+        state = payload.get("model")
+        require(isinstance(state, dict), "loaded model state differs")
+        state = cast(dict[str, Any], state)
+        require(state_sha256(state) == binding["model_state_sha256"], "loaded model state differs")
         if complete:
-            require(len(payload["model"]) == 494, "not complete494 checkpoint")
+            require(len(state) == 494, "not complete494 checkpoint")
         if binding["tag"] is not None:
             require(payload.get(ruler.ANCHOR_KEY) == binding["tag"] and "core_generation_bank_learner_v1" not in payload
                     and payload.get("frozen_reference_policy_anchor_v1") == binding["tag"]["policy_anchor"], "loaded model family/reference differs")
@@ -297,7 +300,8 @@ def execute(protocol_ref: dict[str, str], admission_ref: dict[str, str]) -> dict
 
         require(str(torch.__version__) == p["runtime"]["torch_version"] and np.__version__ == p["runtime"]["numpy_version"], "numerical versions differ")
         for module in (np, torch):
-            require(Path(module.__file__).resolve().is_relative_to(Path(p["runtime"]["managed_site"])), "foreign numerical origin")
+            filename = getattr(module, "__file__", None)
+            require(type(filename) is str and Path(filename).resolve().is_relative_to(Path(p["runtime"]["managed_site"])), "foreign numerical origin")
         torch.set_num_threads(2)
         require(not torch.cuda.is_initialized(), "CUDA initialized before admission/setup")
         torch.manual_seed(2026111673)
