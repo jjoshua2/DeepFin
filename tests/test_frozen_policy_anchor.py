@@ -157,6 +157,10 @@ def test_actual_backward_delta_observes_mirror_dropout_and_reference_freeze(tmp_
     cfg = ModelConfig(kind="tiny", history_rep_fix=True)
     spec = reference(tmp_path, cfg)
     initial = copy.deepcopy(build_model(cfg).state_dict())
+    # Deterministic unequal logits on ANY three distinct post-mirror legal
+    # actions. This is a real Linear head, not a mocked loss/gradient/forward.
+    initial["policy.2.weight"].zero_()
+    initial["policy.2.bias"].copy_(torch.arange(1858, dtype=initial["policy.2.bias"].dtype))
     base, positive = trainer(cfg, initial), trainer(cfg, initial)
     before_setup = anchor._rng()
     positive.configure_frozen_policy_anchor(spec)
@@ -203,7 +207,7 @@ def test_actual_backward_delta_observes_mirror_dropout_and_reference_freeze(tmp_
     q = legal.float() / legal.sum(-1, keepdim=True)
     expected = torch.zeros_like(logits[1])
     expected[eligible] = spec["coefficient"] * (p - q) / int(eligible.sum())
-    assert float(expected.abs().max()) > 0
+    assert float(expected.abs().max()) > 1e-4
     assert logits[0].grad is not None
     assert logits[1].grad is not None
     torch.testing.assert_close(logits[1].grad - logits[0].grad, expected, rtol=2e-5, atol=2e-7)
