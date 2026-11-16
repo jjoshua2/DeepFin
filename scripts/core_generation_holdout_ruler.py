@@ -667,16 +667,32 @@ def _d1_dev_edge(m: Metadata, binding: dict[str, Any], candidate: str, reference
     require(summary["pair_order_sha256"] == panels[panel]["parent_order_sha256"]
             and summary["history_order_sha256"] == panels[panel]["history_order_sha256"], "D1 DEV exact prefix order differs")
     bank.sha(summary["pair_order_sha256"])
-    bank.reference(summary["game_log"])
+    bulk_reference(summary["game_log"], suffix=".jsonl")
     wdl = summary["wdl_counts"]
     require(wdl == readout["wdl_counts"] and type(wdl) is dict and set(wdl) == {"wins", "draws", "losses"}
             and all(type(value) is int and value >= 0 for value in wdl.values()) and sum(wdl.values()) == 160,
             "D1 DEV complete WDL counts differ")
+    wdl = cast(dict[str, int], wdl)
     point = _d1_paired_point(summary["paired_counts"])
     require(type(summary["paired_score"]) in (int, float) and math.isfinite(summary["paired_score"])
             and summary["paired_score"] == readout["paired_score"] == point
             and (wdl["wins"] + 0.5 * wdl["draws"]) / 160 == point, "D1 DEV paired score differs")
     return point
+
+
+def bulk_reference(value: Any, *, suffix: str) -> Path:
+    """Validate a typed bulk descriptor without opening its payload.
+
+    Canonical-path resolution has the same semantics as metadata references.
+    Payload bytes, size and readonly custody belong to the accepted producer and
+    the later owned consumer; this descriptor check does not attest to them.
+    """
+    require(type(value) is dict and set(value) == {"path", "sha256"}, "invalid bulk reference")
+    bank.sha(value["sha256"])
+    require(type(value["path"]) is str, "invalid bulk path")
+    path = Path(cast(str, value["path"]))
+    require(path.is_absolute() and path.suffix == suffix and path.resolve() == path, "noncanonical bulk path")
+    return path
 
 
 def _d1_role_panels(m: Metadata, binding: dict[str, Any], p: dict[str, Any], design: dict[str, Any]) -> dict[str, Any]:
@@ -704,8 +720,9 @@ def _d1_role_panels(m: Metadata, binding: dict[str, Any], p: dict[str, Any], des
             "D1 role-use readout differs")
     domains = readout["all8role_domains_disjoint"]
     require(type(domains) is dict and set(domains) == {"group", "parent", "history", "epd", "history_sha", "input"}
-            and all(type(count) is int for count in domains.values())
-            and all(domains[key] == 2656 for key in ("group", "history", "epd", "history_sha"))
+            and all(type(count) is int for count in domains.values()), "D1 actual prefix domain counts differ")
+    domains = cast(dict[str, int], domains)
+    require(all(domains[key] == 2656 for key in ("group", "history", "epd", "history_sha"))
             and domains["input"] == 5312 and domains["parent"] >= 2656, "D1 actual prefix domain counts differ")
     admission = m.read(root["owner"]["admission"])
     source_review = m.read(protocol["source_review"])
@@ -734,8 +751,8 @@ def _d1_role_panels(m: Metadata, binding: dict[str, Any], p: dict[str, Any], des
                 and value["selection"] == "exact original ordinals0..79; no rng/subsample/reorder"
                 and value["prefix_start"] == 0 and value["pairs"] == value["complete_parents"] == value["actual_public_loader_count"] == 80
                 and value["source_count"] == 400 and value["no_skips_dedup_shrink"] is True, "D1 exact prefix materialization differs")
-        for name in ("book", "parent_map"):
-            bank.reference(value[name])
+        bulk_reference(value["book"], suffix=".epd")
+        bank.reference(value["parent_map"])
         bank.sha(value["parent_order_sha256"])
         bank.sha(value["history_order_sha256"])
         panels[panel] = value
@@ -787,10 +804,13 @@ def d1_selection(m: Metadata, p: dict[str, Any], donor: dict[str, Any], design: 
     require(canonical(profile["source_only_not_applicable"]) == canonical(d1_collector_only_profile(full_profile)),
             "D1 collector-only label provenance differs")
     require(type(root["dev_source"]) is dict and set(root["dev_source"]) == {"revision", "checkout", "files"}, "invalid D1 DEV source")
-    bank.sha(root["dev_source"]["revision"], 40)
-    require(type(root["dev_source"]["checkout"]) is str and Path(root["dev_source"]["checkout"]).is_absolute(), "invalid D1 DEV checkout")
-    require(type(root["dev_source"]["files"]) is dict and root["dev_source"]["files"], "empty D1 DEV source pins")
-    for name, digest in root["dev_source"]["files"].items():
+    dev_source = cast(dict[str, Any], root["dev_source"])
+    bank.sha(dev_source["revision"], 40)
+    checkout = dev_source["checkout"]
+    require(type(checkout) is str and Path(checkout).is_absolute(), "invalid D1 DEV checkout")
+    require(type(dev_source["files"]) is dict and dev_source["files"], "empty D1 DEV source pins")
+    source_files = cast(dict[Any, Any], dev_source["files"])
+    for name, digest in source_files.items():
         require(type(name) is str and not Path(name).is_absolute() and ".." not in Path(name).parts, "invalid D1 DEV source file")
         bank.sha(digest)
     panels = _d1_role_panels(m, root["role_use"], p, design)

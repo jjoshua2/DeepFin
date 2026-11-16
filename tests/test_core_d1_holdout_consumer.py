@@ -50,7 +50,7 @@ def original_role_graph(tmp: Path) -> tuple[dict[str, Any], dict[str, Any], dict
     return original_books, original_roles, original, independent
 
 
-def role_graph(tmp: Path, design: dict[str, Any], dref: dict[str, str], _source: dict[str, Any], fault: str) -> dict[str, str]:
+def role_graph(tmp: Path, design: dict[str, Any], dref: dict[str, str], _source: dict[str, Any], fault: str) -> dict[str, dict[str, str]]:
     original, original_ind = design["roles"]["root"], design["roles"]["independent"]
     old = json.loads(Path(original["path"]).read_bytes())
     original_books, original_roles = old["books"], old["roles"]
@@ -85,7 +85,7 @@ def role_graph(tmp: Path, design: dict[str, Any], dref: dict[str, str], _source:
 
 
 def edge(tmp: Path, label: str, reference: str, model_refs: dict[str, Any], states: dict[str, str], dref: dict[str, str],
-         source: dict[str, Any], profile: dict[str, str], roles: dict[str, str], fault: str, wins: int) -> dict[str, str]:
+         source: dict[str, Any], profile: dict[str, str], roles: dict[str, dict[str, str]], fault: str, wins: int) -> dict[str, dict[str, str]]:
     name = label + "_vs_" + reference
     helper = {"path": "/fiction/dev-helper.py", "sha256": "8" * 64}
     sr = seal(tmp / (name + "-gpu-source.json"), {"status": "ACCEPT_D1_DEVELOPMENT_GPU_SOURCE_ONLY_NO_FINDINGS_V1", "helper": helper, "source": source, "findings": []})
@@ -262,7 +262,7 @@ def test_D1_equal_parent_bootstrap_uses_selected_contrast_and_local_rng(selected
         rows = 40 if i % 2 == 0 else 60
         difference = 0.2 if i % 2 == 0 else 0.4
         games.append({"physical_game_id": "g" + str(i), "parent_id": "p" + str(i), "rows": rows, "row_identity_sha256": "a" * 64,
-            "models": {label: {metric: rows * (0.1 + difference if label == selected else 0.1) for metric in metrics.METRICS}
+            "models": {label: dict.fromkeys(metrics.METRICS, rows * (0.1 + difference if label == selected else 0.1))
                        for label in labels}})
     health = metrics.parent_health(games, labels=labels, selected_label=selected)
     assert health[selected + "_minus_A39_equal_parent_WDL_CE"]["point"] == pytest.approx(0.3)
@@ -401,3 +401,64 @@ def test_D1_projection_separates_source_only_training_labels(tmp_path: Path, mon
     changed["configs"]["game"].update(categorical_blend_frac=0.7, categorical_search_blend_frac=0.8, syzygy_rescore_policy=False)
     assert ruler.d1_playing_projection(changed) == active
     assert ruler.d1_collector_only_profile(changed) != classified
+
+
+
+@pytest.mark.parametrize("suffix", [".epd", ".jsonl"])
+def test_D1_bulk_reference_accepts_canonical_book_and_game_log_without_payload_io(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, suffix: str) -> None:
+    artifact = tmp_path / ("complete-80" + suffix)
+    parent_map = tmp_path / "complete-80.parents.json"
+    descriptor = {"path": str(artifact), "sha256": "a" * 64}
+
+    def forbidden_read(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("descriptor validation must not open bulk payloads")
+
+    with monkeypatch.context() as guard:
+        guard.setattr(Path, "open", forbidden_read)
+        guard.setattr(Path, "read_bytes", forbidden_read)
+        guard.setattr(Path, "read_text", forbidden_read)
+        assert ruler.bulk_reference(descriptor, suffix=suffix) == artifact
+        assert ruler.bank.reference({"path": str(parent_map), "sha256": "b" * 64}) == parent_map
+        with pytest.raises(ValueError, match="noncanonical metadata path"):
+            ruler.bank.reference(descriptor)
+        with pytest.raises(ValueError, match="noncanonical bulk path"):
+            ruler.bulk_reference({"path": str(parent_map), "sha256": "b" * 64}, suffix=suffix)
+
+
+@pytest.mark.parametrize("suffix", [".epd", ".jsonl"])
+@pytest.mark.parametrize("fault,message", [
+    ("extra", "invalid bulk reference"),
+    ("missing", "invalid bulk reference"),
+    ("digest", "invalid digest"),
+    ("path_type", "invalid bulk path"),
+    ("relative", "noncanonical bulk path"),
+    ("json_suffix", "noncanonical bulk path"),
+    ("parent_alias", "noncanonical bulk path"),
+    ("symlink", "noncanonical bulk path"),
+])
+def test_D1_bulk_reference_refusals(tmp_path: Path, suffix: str, fault: str, message: str) -> None:
+    artifact = tmp_path / ("complete-80" + suffix)
+    descriptor: dict[str, Any] = {"path": str(artifact), "sha256": "a" * 64}
+    if fault == "extra":
+        descriptor["bytes"] = 1
+    elif fault == "missing":
+        descriptor.pop("sha256")
+    elif fault == "digest":
+        descriptor["sha256"] = "g" * 64
+    elif fault == "path_type":
+        descriptor["path"] = 1
+    elif fault == "relative":
+        descriptor["path"] = "relative" + suffix
+    elif fault == "json_suffix":
+        descriptor["path"] = str(tmp_path / "metadata.json")
+    elif fault == "parent_alias":
+        descriptor["path"] = str(tmp_path / "uncreated" / ".." / artifact.name)
+    else:
+        # Tiny future in-owner filesystem control, not a real book/game log.
+        artifact.write_text("fictional descriptor fixture; never read\n")
+        artifact.chmod(0o444)
+        alias = tmp_path / ("alias" + suffix)
+        alias.symlink_to(artifact)
+        descriptor["path"] = str(alias)
+    with pytest.raises(ValueError, match=message):
+        ruler.bulk_reference(descriptor, suffix=suffix)

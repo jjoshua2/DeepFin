@@ -27,3 +27,43 @@ Scores here belong to a fixed internal Gumbel64, noise-on, temperature.1, strict
 
 [Supporting evidence](evidence/2026-11-16-existing-rl-failure-evidence-audit.json) pins the seven published documents at immutable Git revision **d7c990c9…**, nine accepted compact root/independent receipt pairs, all relevant protocol/readout references, exact scores, the WDL aggregate and census values. No raw models, rows, journals, games, books, pools, native images or individual build records were opened. No tests, probes, resource queries, numerical jobs or new experiment proposals were performed. Approved D1/KL/data work remains preserved; it has no new scientific learner outcome in this audit.
 The supporting JSON renders private paths with `~/` for publication and is not a runtime input. Its artifact hashes identify the original external bytes; this public rendering has its own publication identity.
+
+
+## Historical #438 LC0 positive control: qualified context
+
+The retrieved summary records **38,544 steps**, MID at **19,272**, batch **512**,
+run `7c5ee700…`, and `valid_control: true` with no listed validity problems.
+That is a recovered historical record, not a new validation of its weights or
+current software. The following evaluation and match numbers are **reported in
+[the archived ledger](https://github.com/jjoshua2/DeepFin/blob/99ea326297fbac197ad9ff7ba8d05db4cdc9fb87/docs/experiment_ledger.md#L66023-L66048)**,
+not recomputed here:
+
+- Heldout teacher top-1 agreement, 91,842 paired rows: **43.1796% → 46.7967%**,
+  **+3.6171 percentage points**, reported row-level 95% CI **[3.3526, 3.8816]**.
+- Train sample, also 91,842 rows: **45.8951% → 49.5351%**, **+3.6399 points**,
+  reported row-level 95% CI **[3.3764, 3.9035]**.
+- Match B, LAST versus MID: **+196.7 Elo [160.8, 236.9]**, score **.756** over
+  400 games / 200 pairs; reported pentanomial **108 / 8 / 74 / 1 / 9**. The ledger
+  calls it final, not truncated, log-reconciled, no mixed compile, and 875 seconds.
+- Match A, LAST versus production iter-595: **−404.6 Elo [−466.1, −357.0]**,
+  score **.0888** over 400 games. Both matches used the historical matched
+  100-simulation play profile, not this audit's Gumbel64 RL profile.
+
+The named four score JSONs and their four `.json.npz` paths are absent in the
+sealed retrieval's narrow stat-only receipt. No raw scores or games were opened.
+The ledger reports **28,482 heldout game clusters**, but the quoted interval is
+row-level; a clustered interval cannot be recovered or recomputed from this
+summary. The low nominal training exposure, **.2513 views per corpus row**
+(roughly **22.2% ever drawn under a uniform-replacement approximation**), also
+means similar train/heldout slopes do **not** prove zero overfitting. Actual
+sampling coverage was not reconstructed.
+
+This is evidence against the literal claim that the stack cannot learn teacher
+labels: the archive reports improved agreement and improved play relative to
+its own earlier checkpoint. It does not uniquely identify targets, dose,
+optimizer or distribution as the cause of later RL failures. Nor is it current
+A39 RL improvement or verified strength against Rofchade, Stockfish or Leela.
+The eight earlier evidence rows and their limitations remain unchanged; no new
+experiment, match, rescoring or D1 recipe/admission change follows from this
+historical addition. Exact summary/retrieval/absence hashes and immutable ledger
+locations are in the supporting JSON.

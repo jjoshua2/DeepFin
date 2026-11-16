@@ -248,6 +248,161 @@
       "sha256": "0eba1ec899051e7edfda6f78a776032c310f388a30b2703e0926d9adb4192485"
     }
   },
+  "historical_lc0_positive_control_438": {
+    "absence_scope": {
+      "all_absent_as_Root_stat_receipt": true,
+      "named_paths": 8,
+      "raw_files_opened": 0,
+      "scope": "Exactly four named local JSON paths and their four JSON.NPZ paths; not a global claim about every archive/copy."
+    },
+    "archive": {
+      "commit": "99ea326297fbac197ad9ff7ba8d05db4cdc9fb87",
+      "ledger_Git_blob_sha1": "57e89b36dd8c1467c3861c518becb00ebe509ea1",
+      "ledger_path": "docs/experiment_ledger.md",
+      "line_ranges": [
+        [
+          66023,
+          66048
+        ],
+        [
+          66353,
+          66384
+        ],
+        [
+          66404,
+          66425
+        ]
+      ],
+      "metrics_recomputed": false,
+      "registered_prediction_commit_as_ledger_citation": "c609e58183d8d9c58c4a3acaf7cad4bd2d7ecc67",
+      "tag": "pre-slim-20261113"
+    },
+    "checkpoint_references_as_recorded_not_opened": [
+      {
+        "path": "~/projects/chess/runs/lc0_control_20260820/checkpoint_mid.pt",
+        "role": "mid",
+        "sha256": "ca4a7a38f70110e46ef2cb9292e133ea1e11478380a785e0046f44a0aa5523b2"
+      },
+      {
+        "path": "~/projects/chess/runs/lc0_control_20260820/checkpoint.pt",
+        "role": "last",
+        "sha256": "a672dfe8469fb282cbdc18280a515791c533c7d0d907c04787feb60c2fd9fcea"
+      }
+    ],
+    "evidence_status": "SUMMARY_SNAPSHOT_OBSERVED__EVALUATION_AND_MATCH_METRICS_ARCHIVED_LEDGER_REPORTED_NOT_RECOMPUTED",
+    "exposure_caveat": {
+      "actual_replay_may_be_nonuniform": true,
+      "approximation_not_empirical_journal_coverage": true,
+      "interpretation": "Near-equal train/heldout slopes at low exposure do not establish absence of overfit; no raw scores available for row or clustered recomputation.",
+      "nominal_training_views_per_corpus_row_approx": 0.2513,
+      "sampling_coverage_reconstructed": false,
+      "uniform_replacement_ever_drawn_fraction_approx": 0.222,
+      "zero_overfit_proven": false
+    },
+    "interpretation": [
+      "Disfavors literal inability of this historical stack to learn teacher labels; archived MID-to-LAST teacher agreement and internal play improved.",
+      "Does not uniquely diagnose target quality versus dose/optimizer/distribution as the cause of later RL regressions.",
+      "Does not establish currentA39 RL improvement or Rofchade/Stockfish/Leela playing strength; no new experiment or D1 change selected."
+    ],
+    "ledger_reported_matches": {
+      "A_LAST_vs_iter595": {
+        "Elo": -404.6,
+        "games": 400,
+        "reported_95CI_Elo": [
+          -466.1,
+          -357.0
+        ],
+        "reported_final": true,
+        "reported_game_log_agrees": true,
+        "reported_mixed_compile": false,
+        "reported_truncated": false,
+        "score": 0.0888
+      },
+      "B_LAST_vs_MID": {
+        "Elo": 196.7,
+        "games": 400,
+        "pairs": 200,
+        "pentanomial_WW_WDDL_DDWL_LDDL_LL": [
+          108,
+          8,
+          74,
+          1,
+          9
+        ],
+        "reported_95CI_Elo": [
+          160.8,
+          236.9
+        ],
+        "reported_duration_seconds": 875,
+        "reported_final": true,
+        "reported_game_log_agrees": true,
+        "reported_mixed_compile": false,
+        "reported_truncated": false,
+        "score": 0.756
+      },
+      "profile_scope": "Historical internal checkpoint comparisons, matched100simulations/play shape; not currentGumbel64 RL nor external engine strength.",
+      "raw_scores_games_or_matchlogs_reopened": false
+    },
+    "ledger_reported_readouts": {
+      "heldout": {
+        "LAST_top1_percent": 46.7967,
+        "MID_top1_percent": 43.1796,
+        "clustered_CI_recomputed": false,
+        "delta_percentage_points": 3.6171,
+        "paired_rows": 91842,
+        "reported_game_clusters": 28482,
+        "reported_row_level_95CI_pp": [
+          3.3526,
+          3.8816
+        ]
+      },
+      "train": {
+        "LAST_top1_percent": 49.5351,
+        "MID_top1_percent": 45.8951,
+        "delta_percentage_points": 3.6399,
+        "paired_rows": 91842,
+        "reported_row_level_95CI_pp": [
+          3.3764,
+          3.9035
+        ]
+      }
+    },
+    "named_score_path_absence_receipt": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/historical-lc0-control-438-readonly-retrieval-v1/named-score-paths-absence.json",
+      "sha256": "eedc70209ea5a77ca76b2e72f11e17e8aef309aabd071c1b0038099b48c0c3c8"
+    },
+    "observed_summary_fields": {
+      "batch_size": 512,
+      "compute_loss_calls": 38544,
+      "configured_batch_size": 512,
+      "corpus_train_rows": 78531074,
+      "mid_step": 19272,
+      "run_id": "7c5ee700de2d2f4e37095de682bd1a9ae04b4cd51d08dbea24214de310a2be4a",
+      "steps": 38544,
+      "steps_realized": 38544,
+      "trainable_params": 61444448,
+      "valid_control": true,
+      "validity_problems": []
+    },
+    "retrieval": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/historical-lc0-control-438-readonly-retrieval-v1/retrieval.json",
+      "sha256": "67498f35bee2b72bd405e950d69f82b1e14b49ea0b407d125384be1e9af15c53"
+    },
+    "schema": "HISTORICAL_LC0_CONTROL_438_CONTEXT_V1",
+    "snapshot_provenance": {
+      "no_new_model_score_or_game_access": true,
+      "original_readonly_at_retrieval": false,
+      "original_summary": "~/projects/chess/runs/lc0_control_20260820/summary.json",
+      "original_summary_sha256": "8165147524dc2c58ee3bce1d0509ba07f04216bff1e94b087ab02e253f5528cb",
+      "retrieval_authority": "Specific named historical summary requested; stable readonly access preserving original mode, no retry/escalation or broader unsealed access",
+      "snapshot_byte_identical_to_named_source_as_recorded": true
+    },
+    "summary_snapshot": {
+      "bytes": 28127,
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/historical-lc0-control-438-readonly-retrieval-v1/summary.snapshot.json",
+      "sha256": "8165147524dc2c58ee3bce1d0509ba07f04216bff1e94b087ab02e253f5528cb"
+    }
+  },
   "new_numerical_jobs": 0,
   "phase_execution_authorized": false,
   "public_path_rendering": {
