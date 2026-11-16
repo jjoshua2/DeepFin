@@ -185,7 +185,7 @@ all known births, including a separately captured fast Stockfish child.
 ## Evidence, cost and remaining decision
 
 All paths in this table are relative to the external operation root
-`/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1`.
+`~/chess-artifacts/operations/rl-week-one-20261112-v1`.
 Raw checkpoints, native images/records and TB/SF payloads were not reopened to
 write this document. The two owned anchor GPU attempts cost 61.334782295 seconds
 including the failure. At this cutoff all 348 local owners were closed, and the
