@@ -283,21 +283,22 @@ tree is reused below the move played (kept, compacted, or rebuilt).
 
 ## 7. Tablebases
 
-`SyzygyPath` takes one or more Syzygy directories joined with `:`. Two probers
-read them. The root, where a tablebase position is answered from DTZ without a
-search, uses the C prober built into the engine (the vendored Fathom, extension
-`chess_anti_engine.tb._tb_ext`); search leaves on every wired search path use
-python-chess's reader. Positions up to the largest table set present are probed.
-A loaded path answers with two lines:
+`SyzygyPath` takes one or more Syzygy directories joined with `:`. One prober
+reads them: the C prober built into the engine (the vendored Fathom, extension
+`chess_anti_engine.tb._tb_ext`), with one table set per engine process. It
+answers the root, where a tablebase position is played from DTZ without a
+search, the root evaluation, and the search leaves on every wired search path.
+The engine opens no python-chess tablebase. Positions up to the largest table
+set present are probed. A loaded path answers with two lines:
 
 ```
-info string SyzygyPath loaded from '/tb/a:/tb/b': 1000 WDL + 1000 DTZ tables, up to 6-piece positions
+info string SyzygyPath loaded from '/tb/a:/tb/b': 510 WDL + 510 DTZ tables, up to 6-piece positions; leaf prober: C Fathom
 info string Syzygy root prober: C Fathom (c9c6fef0): 510 WDL + 510 DTZ tables, WDL up to 6-man, DTZ up to 6-man
 ```
 
-The first line counts python-chess's files, the second Fathom's tables (a
-material and its colour mirror are one table there). The second line is the
-proof that the root shortcut is on. When some WDL tables have no DTZ table in
+Both lines count Fathom's tables (a material and its colour mirror are one
+table). The first line is the proof that leaf probing is on, the second that
+the root shortcut is on. When some WDL tables have no DTZ table in
 any listed directory the engine adds `info string warning: ... WDL tables have no
 DTZ table in SyzygyPath ...`: those materials are searched instead of answered
 from the root.

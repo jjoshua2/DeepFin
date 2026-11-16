@@ -67,7 +67,7 @@ REQUIRED_EXTENSIONS: tuple[str, ...] = _ext_check.REQUIRED_EXTENSIONS
 TB_EXT = "chess_anti_engine.tb._tb_ext"
 UCI_EXTRA_SYMBOLS: dict[str, tuple[str, ...]] = {
     TB_EXT: ("init", "free", "path", "table_counts", "probe_root_fen", "probe_wdl_fen",
-             "FATHOM_COMMIT"),
+             "generation", "probe_wdl_batch", "FATHOM_COMMIT"),
 }
 UCI_EXTENSIONS: tuple[str, ...] = REQUIRED_EXTENSIONS + tuple(UCI_EXTRA_SYMBOLS)
 REQUIRED_SYMBOLS: dict[str, tuple[str, ...]] = _ext_check.REQUIRED_SYMBOLS
@@ -713,7 +713,8 @@ def check_checkpoint(
 
 
 def _probe_wdl_c(syzygy_path: str, fen: str) -> int:
-    """WDL from the C prober the engine's root shortcut uses (``uci/tb_root.py``)."""
+    """WDL from the C prober the engine plays with (root shortcut ``uci/tb_root.py``,
+    leaf and root-eval overrides ``uci/tb_leaf.py``)."""
     from chess_anti_engine.tb import _tb_ext
     from chess_anti_engine.uci import tb_root
 
@@ -728,7 +729,12 @@ def _probe_wdl_c(syzygy_path: str, fen: str) -> int:
 
 
 def _probe_wdl_raw(syzygy_path: str, fen: str) -> int:
-    """python-chess (the leaf probes) and the C prober (the root shortcut) must agree."""
+    """python-chess (the independent reference) and the C prober must agree.
+
+    The engine itself no longer opens python-chess tables (root, root eval and
+    leaves all probe through C); this differential is the one place on the UCI
+    side that still does, on purpose, so a wrong C answer is caught by a
+    second implementation."""
     import chess
 
     from chess_anti_engine.tablebase import get_tablebase

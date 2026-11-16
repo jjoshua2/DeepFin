@@ -34,7 +34,7 @@ import pytest
 
 import chess_anti_engine.tablebase as tbmod
 import chess_anti_engine.uci.engine as engine_module
-from chess_anti_engine.uci import tb_root
+from chess_anti_engine.uci import tb_leaf, tb_root
 from chess_anti_engine.uci.engine import Engine
 from chess_anti_engine.uci.protocol import CmdSetOption, parse_command
 from chess_anti_engine.uci.search import SearchWorker
@@ -85,6 +85,11 @@ class _FakeCExt:
         self.validated: list[int] = []
         self.corrupt: dict[int, str] = {}
         self._path: str | None = None
+        self._generation = 1
+        # Leaf probes (``uci/tb_leaf.py``): every batch's FENs, and the code
+        # each leaf gets (default 5: "no table", so leaves keep the net's WDL).
+        self.leaf_calls: list[list[str]] = []
+        self.leaf_code: Callable[[str], int] = lambda _fen: 5
 
     def init(self, path: str) -> int:
         self.inits.append(path)
@@ -93,11 +98,23 @@ class _FakeCExt:
             return 0
         if "missing" in path:
             raise ValueError(f"Syzygy path component is not a readable directory: {path}")
+        self._generation += 1
         self._path = "/fake/" + path
         return self.largest
 
     def free(self) -> None:
+        self._generation += 1
         self._path = None
+
+    def generation(self) -> int:
+        return self._generation
+
+    def probe_wdl_batch(self, boards, generation: int) -> bytes | None:
+        if generation != self._generation:
+            return None
+        fens = [cb.fen() for cb in boards]
+        self.leaf_calls.append(fens)
+        return bytes(self.leaf_code(f) for f in fens)
 
     def path(self) -> str | None:
         return self._path
@@ -124,10 +141,10 @@ class _FakeCExt:
 class _RecordingPyTable:
     """python-chess stand-in for ``get_tablebase``: records every probe.
 
-    The leaf probe (``SyzygyProbe``) still opens python-chess; the ROOT must
-    never probe it. Its answers make a python-chess root pick ``a1a2`` -- a
-    different move from the C stand-in's -- so a root routed back to
-    python-chess also changes the bestmove.
+    The UCI engine must never probe it (root shortcut, root eval and leaves
+    all run on the C prober). Its answers make a python-chess root pick
+    ``a1a2`` -- a different move from the C stand-in's -- so a root routed
+    back to python-chess also changes the bestmove.
     """
 
     wdl: ClassVar[dict[str, None]] = {"KRvK": None}
@@ -159,6 +176,7 @@ def _c_rows(board: chess.Board) -> list[tuple[str, int, int, int]]:
 def fake_c(monkeypatch) -> _FakeCExt:
     fake = _FakeCExt(_c_rows)
     monkeypatch.setattr(tb_root, "_tb_ext", fake)
+    monkeypatch.setattr(tb_leaf, "_tb_ext", fake)
     return fake
 
 
@@ -166,7 +184,6 @@ def fake_c(monkeypatch) -> _FakeCExt:
 def py_table(monkeypatch) -> _RecordingPyTable:
     table = _RecordingPyTable()
     monkeypatch.setattr(tbmod, "get_tablebase", lambda _path: table)
-    monkeypatch.setattr(engine_module, "get_tablebase", lambda _path: table)
     return table
 
 
@@ -854,7 +871,7 @@ def test_stale_handle_falls_through_to_search_and_close_keeps_the_other_engines_
         assert out.bestmoves(), out.lines
         assert fake_c.root_calls == []  # the stale handle never reached C
         assert "bestmove_fallback_used" not in out.text()
-        assert py_table.calls == [] or all(c.startswith("wdl ") for c in py_table.calls)
+        assert py_table.calls == []
         first.close()
         loaded = tb_root.loaded()
         assert loaded is not None

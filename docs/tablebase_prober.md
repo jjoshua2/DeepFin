@@ -1,11 +1,14 @@
 # C Syzygy prober (`chess_anti_engine.tb._tb_ext`)
 
-Status: **built and proven equal to python-chess; one production caller, the
-UCI engine's root DTZ shortcut** (`chess_anti_engine/uci/tb_root.py`, see
-"UCI root shortcut" below). Every other tablebase call site still goes through
-`chess_anti_engine/tablebase.py` and `chess.syzygy`. This extension exists so
-those call sites can move off python-chess one at a time (the follow-up list
-is at the end). The UCI startup gate and `deepfin --selfcheck` require it
+Status: **built and proven equal to python-chess; its production callers are
+the UCI engine's tablebase probes**: the root DTZ shortcut
+(`chess_anti_engine/uci/tb_root.py`, "UCI root shortcut" below) and the
+search's leaf and root-eval WDL overrides (`chess_anti_engine/uci/tb_leaf.py`,
+"UCI leaf probe" below). With `SyzygyPath` set the engine opens this one table
+set and no python-chess tablebase. Every non-UCI call site (selfplay, arena,
+worker, training labels) still goes through `chess_anti_engine/tablebase.py`
+and `chess.syzygy`. This extension exists so those call sites can move off
+python-chess one at a time (the follow-up list is at the end). The UCI startup gate and `deepfin --selfcheck` require it
 (`uci/selfcheck.UCI_EXTRA_SYMBOLS`); the shared `REQUIRED_EXTENSIONS` that
 also gates the worker and training does not, because they do not import it.
 
@@ -38,6 +41,8 @@ All results are from the side to move's point of view.
 | `largest()`, `path()`, `free()` | Introspection and release. |
 | `table_counts()` | `(n_wdl, n_dtz, largest_dtz)`: WDL tables loaded (a material and its colour mirror are one table), how many of them found a DTZ table in some directory, and the largest man count among those. `(0, 0, 0)` with nothing loaded. |
 | `probe_wdl(cboard)` / `probe_wdl_fen(fen)` | -2 loss, -1 blessed loss, 0 draw, 1 cursed win, 2 win |
+| `probe_wdl_batch(cboards, generation)` | `bytes`, one code per board: 0..4 = WDL -2..2, 5 = `probe_wdl`'s `None`, 6 = its `ValueError`. **`None`** (nothing probed) when the table set is no longer `generation`. One GIL release and one shared lock for the whole batch. |
+| `generation()` | identity of the loaded table set; changes on every `init()` that reaches Fathom and every `free()` (a path refused before Fathom leaves it unchanged) |
 | `probe_dtz(cboard)` / `probe_dtz_fen(fen)` | DTZ, python-chess `probe_dtz` convention |
 | `probe_root(cboard, has_repeated=False, use_rule50=True)` / `probe_root_fen` | `[(uci, dtz, rank, score), ...]`, one entry per legal move; `[]` at a mate or stalemate root |
 | `fen_bitboards(fen)`, `cboard_bitboards(cb)` | the parsed input, for tests |
@@ -198,6 +203,11 @@ Fathom's tables are process-global, so `_tb_ext` is a process-wide singleton:
 - `probe_root` also holds a module mutex. Fathom documents `tb_probe_root` as
   not thread-safe, and the lock makes concurrent calls serialise instead of
   relying on callers.
+- `probe_wdl_batch` compares the caller's `generation` with the loaded one
+  under the same shared lock as its probes, and `init()`/`free()` bump the
+  generation under the exclusive lock. A caller therefore can neither probe
+  unmapped tables nor be answered from a table set other than the one it was
+  configured for, whatever thread it runs on and however late it runs.
 
 Fork: there is no `pthread_atfork` handler. Do not fork while another thread
 is probing, because the child could inherit a held lock. Call `init()` again in
@@ -314,18 +324,91 @@ are still the set this engine loaded.
 `go searchmoves` skips the shortcut, as before. An input the C prober refuses
 (`ValueError`) is "no TB answer" and the search plays.
 
+## UCI leaf probe (`uci/tb_leaf.py`)
+
+The search's in-tree probe (leaf WDL overrides on every wired UCI search path,
+and the root eval in `SearchWorker._ensure_root_eval_cached`, which also runs
+under `go searchmoves`) is `tb_leaf.CLeafProbe`. It is a subclass of
+`tablebase.SyzygyProbe` so every search path's annotation accepts it, but it
+never calls `SyzygyProbe.__init__` (which opens python-chess) and defines every
+method the search uses. `Engine._install_tablebase` builds it from the table
+set `tb_root.load` returned; `SyzygyProbe` itself is unchanged and is still
+what selfplay, the arena and the worker construct.
+
+`CLeafProbe.apply` is `SyzygyProbe.apply` with one `probe_wdl_batch` call in
+place of a `chess.Board(cb.fen())` + `Tablebase.probe_wdl` per leaf:
+
+- **Eligibility is the caller's, unchanged.** With `indices` the leaves were
+  pre-filtered: classic Gumbel by the C tree (`get_pending_tb_leaves`: no
+  castling, at most `max_pieces` men, any halfmove clock), the walker pool and
+  `puct_tb` (PUCV, pool, RPG) by their clock-0 rule. Without `indices` (the
+  root eval) the probe filters castling and piece count itself, as before.
+  `max_pieces` is the largest WDL table's man count, the value `SyzygyProbe`
+  derived from its `wdl` keys (`LoadedTables.largest_wdl`).
+- **Value, unchanged.** One-hot WIN/DRAW/LOSS logits; with
+  `Syzygy50MoveRule` on (`cursed_as_draw`) a cursed win / blessed loss is a
+  draw, with it off it is decisive. `solved_out` gets 1 / -1 / 2. The
+  halfmove clock is read by neither prober: neither the old nor the new probe
+  considers the 50-move counter or DTZ at a leaf.
+- **Counting, unchanged.** `probes` counts every leaf handed to the prober,
+  `hits` every answered one; `tbhits` in `info` is `hits` (plus the root
+  shortcut's 1). The counters take a lock: the GIL is released inside the
+  batch call and walker / pool threads share one probe.
+- **"No TB answer"**, where the leaf keeps the net's WDL and counts as a probe:
+  every input python-chess raised on (castling rights, a table missing from
+  every directory with no capture cutoff, illegal positions, `KeyError` /
+  `IndexError`) is a C `None` or refusal. On the inputs where python-chess
+  answered and C does not (the list under "Where the two probers answer
+  differently": the refused ep class and illegal positions, which a search
+  below a legal root never produces, and positions above `largest()`, which no
+  caller hands over because every filter uses `max_pieces`), the leaf is "no TB
+  answer". There is no fallback to python-chess.
+- **No cache.** Neither probe caches answers; `override_leaf_values` and the
+  walker pool write into a copy, classic Gumbel into the evaluator's fresh
+  output (section 6 of `docs/search_and_encode_paths.md`), all unchanged.
+
+Lifetime: the probe carries `LoadedTables.c_generation` and passes it to
+`probe_wdl_batch`. After any re-init or free of the C set (another engine in
+the process loading a different path, `SyzygyPath` cleared, `quit`), a batch
+from that probe -- on any pool thread, including a worker abandoned after a
+device fault that is still inside a call -- probes nothing and returns `None`;
+the probe logs one warning and its leaves get no answer. `SearchWorker.run`
+drops a stale probe before the next search, resets the tree (it was grown with
+the old set's values) and prints `info string leaf tablebase probing disabled
+(...)`; `setoption name SyzygyPath` installs a fresh one. `setoption` still
+waits for the search to finish, as before.
+
+Evidence (`tests/test_uci_tb_leaf_c.py`):
+
+- Differential, production pair: 5,247 leaves (2- to 7-man; 181 with castling
+  rights, 32 with an en-passant square, 845 at halfmove 0, 1,091 at 50-99,
+  2,033 at 100+, 90 checkmates/stalemates, 24 cursed wins / blessed losses,
+  1,010 7-man), the root-eval call and the pre-filtered leaf call, both
+  `Syzygy50MoveRule` settings: rows written, solved statuses, hits and probes
+  identical. 7-man leaves handed over as if pre-filtered (no caller does) are
+  the only difference: python-chess answered 666 of them through a capture into
+  the 6-man tables, C answers none. An incomplete set (KQvKR, KQvK, KNvK
+  only) agrees on every leaf, including which ones get no answer.
+- Search identity, production pair: a fixed-seed CPU search (classic Gumbel
+  and the 1-device multi-GPU PUCT pool, both rule settings) from 7- and 8-man
+  roots and `searchmoves` roots gives the same bestmove, score, PV, nodes,
+  `tbhits` and root visit vector with either probe, and the same as `main`.
+- Throughput, production pair, 4,000 5-6-man leaves in batches of 32 through
+  `apply`, pages warm: python-chess 7,260 leaves/s on one thread and 6,835 on
+  four; C 412,977 and 339,844 (57x and 50x). The raw `probe_wdl_batch` call
+  is about 1.0 M leaves/s against 0.54 M for a `probe_wdl` loop.
+
 ## Follow-ups (not in this PR)
 
 Each switch is its own PR. Each one must prove bit-identical outputs on a
 frozen input set, because a difference at a selfplay leaf is a target change.
 
-1. **`SyzygyProbe.apply` leaf WDL** (`tablebase.py`). It builds
-   `chess.Board(cb.fen())` for every eligible leaf, which puts python-chess on
-   the search hot path. Replace it with `_tb_ext.probe_wdl(cb)`, keeping the
-   cursed-as-draw mapping. Gate: identical override rows on a frozen leaf set.
-2. ~~**UCI root DTZ shortcut**~~: done (section above). The UCI root eval
-   (`SearchWorker._ensure_root_eval_cached`) still overrides the root's WDL
-   through `SyzygyProbe.apply`, i.e. item 1.
+1. **`SyzygyProbe.apply` leaf WDL for selfplay / arena** (`tablebase.py`).
+   Done for the UCI engine (`CLeafProbe`, section above, root eval included);
+   selfplay and the arena still build `chess.Board(cb.fen())` per eligible
+   leaf. Switching them is a selfplay-target question: experiment record and
+   identical override rows on a frozen leaf set first.
+2. ~~**UCI root DTZ shortcut**~~: done (section above).
 3. **Strict match status** (`rule50_match_status`, `selfplay/strict_tb.py`).
 4. **Selfplay adjudication and rescoring** (`probe_wdl`,
    `tb_adjudicate_result`, `rescore_game_samples`).

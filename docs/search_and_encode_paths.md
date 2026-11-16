@@ -248,8 +248,16 @@ python-chess APIs the engine runtime relies on:
   `legal_moves`, `gives_check`, `copy`.
 - **`tablebase.py`:** every probe uses `chess.syzygy.Tablebase`, and
   **`SyzygyProbe.apply` builds `chess.Board(cb.fen())` for every
-  tablebase-eligible leaf** (:624) — python-chess in the leaf hot path of every
-  search that uses tablebases.
+  tablebase-eligible leaf** — python-chess in the leaf hot path of selfplay and
+  arena searches that use tablebases. The UCI engine no longer uses it: its
+  leaves and root eval probe through `uci/tb_leaf.CLeafProbe` (the C prober)
+  and its root shortcut through `uci/tb_root.py`. What remains of
+  `chess.syzygy` on the UCI side: the self-check's reference probe
+  (`selfcheck._probe_wdl_raw`, deliberately, to compare both probers) and the
+  table-name helpers `is_tablename` / `normalize_tablename` that
+  `tb_root._why_dropped` uses to explain a refused file (nothing opened or
+  probed). The engine process imports `chess.syzygy` (through
+  `tablebase.py`) but opens no python-chess tablebase.
 - **`_lc0_ext.c:415`:** depends on the private `_stack` attribute.
 
 ## 5. Evaluator / inference paths
@@ -278,8 +286,11 @@ python-chess APIs the engine runtime relies on:
 
 ## 6. Tablebase probing per path
 
-Leaf probing: one class, `SyzygyProbe` (`tablebase.py:484`), but **three
-wirings with two eligibility rules**:
+Leaf probing: one interface, `SyzygyProbe` (`tablebase.py`), with two
+implementations (python-chess `SyzygyProbe` for selfplay and the arena; the C
+`uci/tb_leaf.CLeafProbe` for the UCI engine, same eligibility, values and
+counting, `docs/tablebase_prober.md` "UCI leaf probe"), and **three wirings
+with two eligibility rules**:
 
 | Wiring | Used by | Eligibility | Writes into |
 |---|---|---|---|
@@ -384,7 +395,7 @@ extensions in a tree with a live run**; build in a separate checkout and switch
 only at a planned restart.
 
 `_tb_ext` (#1296) is imported by the UCI engine only (its root DTZ shortcut,
-`uci/tb_root.py`). It is therefore required by the UCI startup gate and the
+`uci/tb_root.py`, and its leaf / root-eval probe, `uci/tb_leaf.py`). It is therefore required by the UCI startup gate and the
 self-check (`uci/selfcheck.UCI_EXTRA_SYMBOLS`, freshness included), but not in the
 shared `REQUIRED_EXTENSIONS`: selfplay, the worker and training do not import
 it, and listing it there would make a worker refuse to start over a module it
@@ -534,9 +545,10 @@ Sizes: S/M/L. "Risk" says what the step can change.
     engine take a `CBoard` plus a move list; UCI move parsing and legality via
     `CBoard.legal_move_indices`; `CBoard.from_board` stops reading `_stack`;
     `SyzygyProbe` probes from `CBoard` fields (a C prober, or at least no
-    `chess.Board` per leaf). Safe if a fixed-node UCI move log stays
-    byte-identical. A prober change also touches selfplay leaves, so it needs
-    bit-identical override rows on a frozen leaf set.
+    `chess.Board` per leaf; **done for the UCI engine**, `uci/tb_leaf.py`).
+    Safe if a fixed-node UCI move log stays byte-identical. Moving selfplay
+    leaves to the C prober is separate: it needs bit-identical override rows
+    on a frozen leaf set and an experiment record.
 
 **Steps that would change selfplay training targets** — each needs an
 experiment record and the deep-SF audit first: step 6 if the rule moves on
