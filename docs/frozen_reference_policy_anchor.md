@@ -41,7 +41,7 @@ historical_source_revision}`. The reference architecture must equal the complete
 normalized student ModelConfig manifest. The actual immutable canonical external
 file's SHA, read-only custody, embedded architecture and integer step are checked;
 the real weights-only public loader constructs a complete separate model. Its
-current loader/caller/math source is pinned by the new contract source_files.
+current loader/caller/math source is pinned by the contract source revision and source_files.
 Historical source may be null (unknown) or a contract-declared40-hex provenance
 value; the code does not infer it from an old payload or authenticate a historical
 training process. There is no fabricated mandatory attestation framework.
