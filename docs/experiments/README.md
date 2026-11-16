@@ -16,6 +16,8 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
+- [2026-11-16: Frozen-reference policy anchor software and asset qualification](2026-11-16-frozen-policy-anchor-software-qualification.md) — CPU software qualified with 38 fresh + 235 carried unique cases; full494 synthetic CUDA and genuine A39 CPU assets separately accepted by root and independent actual reviews. No real bank, collection, recipe, strength or adoption claim.
+
 - [2026-11-15: Full494 accepted-bank learner and CUDA actor handoff](2026-11-15-full494-bank-handoff-software.md) — closed software qualification: one real public-CLI update, genuine closed-parent actor reload, both invalid-tag refusals and one BF16 inference; synthetic initial authority only, no real bank, sustained loop, adoption or playing-strength result.
 
 - [2026-11-15: Fixed-bank SF current-P0 main-policy 512-update pilot](2026-11-15-sf-current-p0-main-policy-512-pilot.md#2026-11-15-accepted-screens-and-user-cancellation) — two accepted NONPASS screens (B/A 0.416; B/A39 0.4265); remaining diagnostic and planned audit cancelled by user; no confirmation, adoption or resume.
