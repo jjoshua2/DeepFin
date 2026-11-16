@@ -16,6 +16,8 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
+- [2026-11-16: Original A39/B32 public policy-anchor learner engineering](2026-11-16-a39-b32-public-anchor-engineering.md) — closed synthetic engineering: original A39, two public B32 updates per λ0/0.1 arm, own-live-to-saved CPU state and matched journals/RNG accepted; fictional bank/outcome authority, no causal strength, transport or research qualification.
+
 - [2026-11-16: Fresh whole-game initial-policy anchor pilot](2026-11-16-fresh-whole-game-policy-anchor-pilot.md) — prospective three-arm design; final roles/configurations and phase bindings pending, no scientific execution.
 
 - [2026-11-16: Frozen-reference policy anchor software and asset qualification](2026-11-16-frozen-policy-anchor-software-qualification.md) — CPU software qualified with 38 fresh + 235 carried unique cases; full494 synthetic CUDA and genuine A39 CPU assets separately accepted by root and independent actual reviews. No real bank, collection, recipe, strength or adoption claim.
