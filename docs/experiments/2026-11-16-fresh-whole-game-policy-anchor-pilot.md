@@ -364,3 +364,67 @@ statistical/recipe choices are already fixed; late binding is not permission to
 retune after observations. The final public MAIN record and descriptor/helper
 binding checks must precede affected compute. Old cancelled 5k/successors/150k,
 retained queues and THREE remain cancelled/stopped.
+
+
+## 2026-11-16: technical stop and prospective recovery R1
+
+The original comparison is technically UNREAD. TRAIN collected and independently
+audited 192 eligible games / 17,568 rows; HOLD collected and independently audited
+64 eligible games / 5,943 rows. The first A owner failed after 6.08346829097718 GPU
+owner-seconds because its bank consumer required a closed CPU-audit terminal to be
+read-only. Source order places this failure before output creation, RNG seeding,
+replay sampling, model/optimizer construction, forwards and updates. Preserve A as
+FAILED; B and C were not started. This is not a negative learning result.
+
+An independently reviewed custody correction changed only the two closed CPU-audit
+terminal modes from0644 to0444. Paths, JSON bytes, hashes, inode identities and
+modification times stayed unchanged; bank/role/protection/contract identities remain
+unchanged. A subsequent engineering owner failed after4.359743445063941 CPU seconds
+while serializing a frozen metadata mapping, after its four genuine bank-API calls
+and native freshness check. It earned no153-case/full-lint/final-qualification credit.
+Both failures and their costs remain in the record.
+
+The corrected engineering qualification recursively serializes plain metadata,
+verifies the existing exact native files, and explicitly sets/verifies/records both
+Torch thread counts as2. It must pass153 reviewed synthetic cases, four separate
+genuine bank-metadata controls, full static checks and final source/native/runtime
+custody in a fresh CPU550/520-second owner. Prior engineering CPU cost is
+42.775648968177855 seconds: adding its entire550-second cap stays below the existing
+600-second ceiling. Synthetic tiny-model/shard fixtures are allowed in the153 tests;
+the four genuine-bank controls remain metadata-only. ROOT observes final host64GiB
+and disk20GiB at acceptance; R7's continuous host-memory floor remains8GiB.
+
+This is an explicit prospective technical amendment under the standing instruction
+to repair the RL pipeline and run bounded comparisons. It selects recovery R1 only
+after this amendment is published and reviewed, corrected qualification has ROOT
+and independent acceptance, and exact new attempts/scopes/admissions are issued.
+Until then R1 is unadmitted. This does not resume or reuse a failed command/scope.
+
+R1 retains the same accepted TRAIN/HOLD data, original A39 donor, complete-parent
+roles, reserved playing panels and frozen learner implementation. N=17,568 and K=549
+remain fixed, with batch32, sampling with replacement, mirror0.5 and common
+seed2026111673. A remains LR3e-6/anchor0; B remains LR7.5e-7/anchor0; C remains
+LR3e-6/original-A39 reference-to-student forward policy-KL coefficient0.1. All loss
+weights and zero auxiliary objectives remain unchanged. Each arm starts afresh from
+A39 with a fresh optimizer/scheduler/Zclip state. No partial checkpoint is resumed.
+Use distinct recovery owner/output/observation/scope identities for all three arms,
+each still bounded900/870 seconds with full saved-state/RNG/membership proof.
+
+No replacement collection, reseeding, role/quota adjustment, precision or dose
+change, metric/threshold change, efficacy peek or checkpoint selection is authorized.
+The original four-model HOLD scoring/reader, equal-parent estimator, paired
+bootstrap, catastrophic veto, three400-pair screens and three conditional fresh
+confirmations remain unchanged. A technical failure stops R1; no further automatic
+recovery or G2 is selected here.
+
+Failed scientific wall time stays charged. Before R1, scientific GPU owner time is
+1,455.5775687580463 seconds; all remaining selected learner/scorer/screen/confirmation
+caps total25,500 seconds, giving26,955.5775687580463 within the original30,900-second
+study ceiling. The weekly172,800-second GPU ceiling and2026-11-19 16:09:20 UTC cutoff
+for starting new compute remain unchanged. Every new phase requires fresh exact
+custody/resource checks, scope and admission.
+
+Accepted data, software qualification and HOLD metrics do not establish Elo gain,
+a win over multicore Rofchade/Stockfish/Leela, or an optimum RL recipe.
+
+Compact supporting identities: [technical recovery evidence](2026-11-16-fresh-whole-game-technical-recovery-evidence.json).

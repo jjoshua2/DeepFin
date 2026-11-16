@@ -1,0 +1,83 @@
+{
+  "R1_execution_authorized_by_this_index": false,
+  "accepted_data": {
+    "HOLD_games": 64,
+    "HOLD_rows": 5943,
+    "TRAIN_games": 192,
+    "TRAIN_rows": 17568
+  },
+  "artifact_root_display_only": "~/chess-artifacts/operations/rl-week-one-20261112-v1",
+  "artifacts": {
+    "HOLD_bank_independent": {
+      "canonical_private_sha256": "602913fe6b997385eb9aa96e023755da8f17c96fa7ff52c759b67f99735f7921",
+      "relative_path": "prospective-whole-game-HOLD-audit-bindings-v1/bank-independent-review.json"
+    },
+    "HOLD_bank_root": {
+      "canonical_private_sha256": "cc840e12968b10ddccde73974bbad8948cea8fbbfe411c307b5e83dd1685d6c4",
+      "relative_path": "prospective-whole-game-HOLD-audit-bindings-v1/bank-root-acceptance.json"
+    },
+    "TRAIN_bank_independent": {
+      "canonical_private_sha256": "af80aba10f8b695ec8f50978ac169afe3cd6115c3a1a488e94df6ae7a18af951",
+      "relative_path": "prospective-whole-game-TRAIN-audit-bindings-v1/bank-independent-review.json"
+    },
+    "TRAIN_bank_root": {
+      "canonical_private_sha256": "4438815792a927f52d5234fdd4b87d067d7af1e6520c9de73696cd10d1316d19",
+      "relative_path": "prospective-whole-game-TRAIN-audit-bindings-v1/bank-root-acceptance.json"
+    },
+    "TRAIN_protection_independent": {
+      "canonical_private_sha256": "d23251f87b1e1d6c485f83a0025cf05cafe90d91a6f3364754f118f3f8ecea68",
+      "relative_path": "prospective-whole-game-TRAIN-audit-bindings-v1/protection-independent-review.json"
+    },
+    "TRAIN_protection_root": {
+      "canonical_private_sha256": "8486a39b8dae27dc10ad894cbac8d5a22e8253ea460f7e84f0f90b21c8db93a9",
+      "relative_path": "prospective-whole-game-TRAIN-audit-bindings-v1/protection-root-acceptance-v2.json"
+    },
+    "engineering_V1_closure": {
+      "canonical_private_sha256": "a677f49eb54f189ceb55b26b256bf02b03a13ce278ab9be934a8af91ec54fac7",
+      "relative_path": "whole-game-scored-consumer-CPU-bindings-v1/unit.closed-custody.json"
+    },
+    "engineering_V1_terminal": {
+      "canonical_private_sha256": "164c7c91456009833414b8ccd29b0cfec76647ffd1f8851e37ae016a86d6d6ad",
+      "relative_path": "whole-game-scored-consumer-CPU-execution-v1/terminal.json"
+    },
+    "engineering_correction_selection": {
+      "canonical_private_sha256": "510f6d6188d880636e51620e65e4af416966e99b0be29c8dd385514dc778c21b",
+      "relative_path": "whole-game-scored-consumer-CPU-root-selection-v2/selection.json"
+    },
+    "public_consumer_fix": {
+      "canonical_private_sha256": "b083e7f15c5bd7550f3992755d076f5e92fc3eedb508ab2db8176d7642ab30c5",
+      "relative_path": "PR1360-main-publication-v1/publication.json"
+    },
+    "receipt_mode_correction": {
+      "canonical_private_sha256": "f335747e772915f7cf1725bf8adfdf9b5e4a2c6978637dce06fee83ec7b55cef",
+      "relative_path": "prospective-whole-game-A-technical-failure-evidence-v1/closed-audit-terminal-mode-correction.json"
+    },
+    "receipt_mode_independent": {
+      "canonical_private_sha256": "8831060813bd6e5149070ecf9eb3872391a662ad5f9a1741ce5929edaa1cf74f",
+      "relative_path": "prospective-whole-game-bank-terminal-mode-independent-actual-review-v1/review.json"
+    },
+    "scientific_A_failure": {
+      "canonical_private_sha256": "82cae36b94dfced297229b03bf9dc2c69d39b08e4038378d481388eab7a3048c",
+      "relative_path": "prospective-whole-game-A-technical-failure-evidence-v1/readout.json"
+    },
+    "scientific_A_terminal": {
+      "canonical_private_sha256": "30bdd13ad30a46451713d9348c187111a73521fede7d196f73c41471796ee4b0",
+      "relative_path": "prospective-whole-game-A-learning-GPU-execution-v1/terminal.json"
+    }
+  },
+  "basis_of_zero_updates": "Source-order failure before RNG/replay/model/output creation; no invented runtime update counter",
+  "failed_costs": {
+    "A_GPU_owner_seconds": 6.08346829097718,
+    "engineering_CPU_owner_seconds": 4.359743445063941
+  },
+  "learning_updates_before_original_A_failure_by_source_order": 0,
+  "path_semantics": "Relative paths locate original private canonical files beneath the display root. SHA256 values identify original bytes; this public index is not a canonical runtime protocol.",
+  "pending_gates": [
+    "corrected550/520 engineering qualification ROOT and independent acceptance",
+    "public prospective amendment and independent review",
+    "distinct recovery attempts/scopes/admissions; no failed command or checkpoint resume"
+  ],
+  "purpose": "Public compact evidence index and prospective gates, not runtime input or numerical authority",
+  "schema": "public_whole_game_technical_recovery_R1_evidence_v1",
+  "strength_or_optimal_recipe_claim": false
+}
