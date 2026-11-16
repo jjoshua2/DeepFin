@@ -227,3 +227,134 @@ closed engineering/role/readiness receipts and immutable phase contracts.
 These bindings must implement the fixed choices above. Any substantive change
 requires a prospective amendment before the affected observations, never a
 post-result rescue. No new science owner is admitted by this draft.
+
+
+## 2026-11-16 pre-science source and role freeze
+
+The original prospective record above is preserved verbatim. This addendum
+replaces its pending-source/roles/configuration description for this study;
+its question, three arms, losses, rates, dose formula, seeds, health veto,
+playing/confirmation gates and science ceilings are unchanged. **Scientific
+collection, training, scoring and playing have not started.** Metadata preparation
+is complete; neither publication nor a prepared descriptor admits execution.
+
+Root selected the final profile and role identities in
+`prospective-whole-game-final-profile-role-root-selection-v1/selection.json`,
+SHA256 `e5faa0b1652146b8bbf0185e868d25a64d1d8c64848b68e5f849c6e138cefa9a`,
+before any scientific outcomes. The [preparation readout](2026-11-16-fresh-whole-game-preparation-readout.md)
+and [compact evidence](2026-11-16-fresh-whole-game-preparation-evidence.json)
+pin the completed cache, role and starts authorities and their independent reviews.
+The entire new 16,384-candidate cache is reserved to this study and protected
+against future studies, including its rejected and unused entries. It is not the
+current TRAIN prior and must not create an own-role self-veto.
+
+### Current source, assets and realized-profile expectations
+
+The scientific runtime is frozen I/T revision
+`bbb4b725a2d5218ffa4630841dd93e8b2884b58d`; the earlier H/31ba paragraph is
+historical. I7 has actual 394-case/full-lint/closed-owner root and independent
+acceptance (`9c5df1f6…` / `e4e6934e…`). Source-map domains are distinct:
+unit map (218 files) `6f9cd298…`; current asset map (219 files) `574c855d…` adds the Lee metadata consumer;
+role map (219 files) `a26a82c3…` instead adds `arena_standard.py` for selected metadata
+functions. Counts do not make these maps interchangeable, nor establish whole
+current-main equivalence or live adoption. Current-I genuine assets have source
+manifest `01b4335e…`, root `6949de24…`, independent actual `43a4c892…` and consumer
+envelopes `5f23c6cd…`. Original A39 remains SHA `a39f900c…`, embedded step 680276;
+no scientific model/optimizer boundary or accepted TRAIN/HOLD bank exists yet.
+
+The [full 109-field profile](2026-11-16-fresh-whole-game-collector-profile.json)
+records all six constructor groups, selected serving fields and exact cohort
+starts substitutions. It preserves selected profile `ab5cf42f…`; the six explicit
+prospective overrides are noise-after .75 and all five temperature endpoints .1.
+There is no omitted-default adoption or additional tuning. Pure selfplay uses
+full/fast simulations 64, playout-cap fraction 1, Gumbel scale .75 at both schedule
+ends, root noise ON and constant temperature .1 on searched/resampled plies.
+Curriculum/refute/diff-focus routes and fast-value/P0-policy label recording
+remain inactive. Diagnostic SF64 requests are observations, not a hard node cap
+or an auxiliary objective.
+
+Both exact starts files preserve 16 legal opening plies. `game.max_plies=450`
+bounds **additional** plies after that history, potentially 466 absolute plies;
+natural or strict-rule50 termination can occur earlier, and an unresolved cap
+remains censored. `concurrent_slots=16` counts simultaneous games;
+`serving.n_slots=1` is the reusable evaluator buffer. Eager BF16 autocast retains
+F32 input/legal/host policy-WDL transport, no padding, configured `max_batch=512`.
+That configuration is not an observed scientific batch size, allocator bound,
+all-operator BF16 claim or demonstrated450-ply runtime fit.
+
+| Cohort | Attempts / minimum resolved nonempty / minimum rows | Source-derived expected six-group SHA256 |
+| --- | --- | --- |
+| TRAIN | 192 / 160 / 8000 | `960e1dc5dc9dcdf09d5ceee6adaba4ae7f1b858fb49add5fc79360dc82b12c21` |
+| HOLD | 64 / 48 / 2000 | `d63a104aa030c1adf4293524fef431eef8f8beb413ebf5225b06add7c5d39b5b` |
+
+These hashes come from static canonical JSON after the accepted starts-path
+substitution. **They are expectations, not observed resolved profiles.** The real
+public `build_configs`/six-asdict equality check remains mandatory inside the
+owned collection. Source-only metadata candidates `13fcd976…` / projection
+`997950ec…` have independent source/metadata review `3b602629…`; this is neither
+collection execution nor positive bank evidence. TRAIN descriptor is `e0511c70…`;
+HOLD template `55785638…` retains only its final prior path/SHA as late leaves.
+That future prior and resulting final HOLD descriptor hash are not invented here.
+
+### Fixed prospective identities and protection wiring
+
+The run UUID is `70d23dfa-c1d8-4f1e-86a0-ee29ae777a8a`; logical generation1 uses
+TRAIN collection `e1d943b5-83da-4e85-a2df-f086c9e680fc` and HOLD collection
+`cdbaedef-d47e-4276-b873-fb17f1f3ccbc`. Accepted pre-outcome role root/independent
+`14c2d63c…` / `88eca945…` pin 192 TRAIN, 64 HOLD and all six panels of 400 pairs with
+complete-parent maps. Accepted starts root/independent `5f6d9847…` / `1671e361…`
+pin the exact ordered full-history bytes. No role is selected or replaced after
+an outcome; all confirmation panels are already frozen, but their execution
+attempt remains conditional and is consumed only at actual confirmation admission.
+
+Root wiring `4d454322…` explicitly binds the real legacy `playing_starts=[]`,
+count 0, SHA `37517e5f…`. **This is not a protection omission or a chunk-as-flat
+alias.** The effective strict chunked TRAIN prior `4b84d19a…` already includes
+OLD+SMOKE, all 64 HOLD starts and all 2,400 starts across six panels. The separate six-panel index
+`a0e7c0a8…` authenticates full-history and raw/mirror identities. HOLDbase
+`3cfdc859…` includes OLD+SMOKE plus panels, excluding HOLD's own starts; copying
+TRAINprior into HOLD would incorrectly self-veto HOLD and is forbidden.
+
+The same planned TRAIN audit (900-second outer / 870-second inner) must run the unchanged genuine
+positive TRAIN data auditor and the reviewed all-trajectory wrapper. It must
+cover every one of 192 attempts and every played root at offsets `0..N`, including final,
+noneligible/no-policy and unresolved positions, at most 86,592 roots. Source
+reconstruction uses actual source encoded 175-plane FP16 and production mirror without a model
+or additional GPU forward. Before deduplication or bank acceptance, any known
+HOLD/panel full-history, rawF16, mirror or literal-EPD collision rejects the whole
+program; there is no row removal, reroll or replacement. A zero-row return from
+the public auditor cannot stand in for complete trajectory protection.
+
+Wrapper V2 source `04b42069…`, helper `3b4a42d7…` and independent source review
+`60c254e1…` are accepted as source only. Its twelve same-owner controls are
+**UNRUN**. It preserves real positive candidate statuses and the existing
+root/independent bank schema, original strict-TB verification handle and streaming
+actor SHA checks. Separate postclosure protection root/independent acceptance is
+also required. Canonically rewrite/validate HOLDbase union the complete actual
+TRAIN index within the same 900 / 870-second budget; do not append unsorted chunks or merge
+TRAINprior wholesale. Until then, final HOLDprior stays UNBOUND and HOLD collection
+cannot be admitted. Reconstructed trajectory roots do not prove coverage of
+unretained internal MCTS leaves or every actual GPU-served input; these and donor
+pretraining/broader exposure remain UNKNOWN.
+
+### Phase authority still required
+
+The unchanged science ceilings are 30,900 GPU and 9600 CPU seconds, all unstarted;
+cache/role/starts CPU below is separate preparation cost. Before each phase,
+root must bind its exact current helper/public suffix, protocol, source/runtime,
+accepted prerequisites, independent binding review, fresh U3/known-birth closure,
+three leases, deadline and actual admission. The finite collection startup guard
+must be source-reviewed and bound before launch: observe at least 8 GiB free on GPU 0 without
+initializing CUDA first, at least 64 GiB host memory at entry/final and 20 GiB free disk, while R7 retains
+its continuous 8 GiB host floor. This is no allocator cap/reservation, continuous
+64 GiB guarantee or 512-row fit claim. Actual phases stop on their selected caps;
+there is no resource, precision, batch, seed or horizon fallback.
+
+Future actual producer readout/inventory/terminal/full child command, positive
+TRAIN bank/protection receipts, final HOLDprior and HOLD descriptor, numeric
+K derived from qualified N, A/B/C contracts/stages/model deliveries, scoring and
+playing phase admissions remain late evidence. The source profile and all
+statistical/recipe choices are already fixed; late binding is not permission to
+retune after observations. The final public MAIN record and descriptor/helper
+binding checks must precede affected compute. Old cancelled 5k/successors/150k,
+retained queues and THREE remain cancelled/stopped.

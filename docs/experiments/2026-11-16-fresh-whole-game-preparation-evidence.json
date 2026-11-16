@@ -1,0 +1,386 @@
+{
+  "expected_profiles": {
+    "HOLD": {
+      "collector_descriptor": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-final-collection-metadata-bindings-v2/HOLD.collector.protocol.TEMPLATE.json",
+        "sha256": "55785638653b13cc02ed0e5e0aa8e88849079320072abe99f64c91ac52555039"
+      },
+      "complete_parent_map": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/HOLD.parents.json",
+        "sha256": "5cde03959e29359b6cf8feac675a9e54dede0d9eef7a6b54f33e53edf0c35d22"
+      },
+      "descriptor_kind": "template; final HOLD-prior path/SHA not yet available",
+      "opening_fen_list_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-role-starts-results-v1/HOLD.starts.epd",
+      "roster": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/HOLD.roster.json",
+        "sha256": "fb732ec938740661a5b959524ac1f05b5c3a9358f7b43a33894423a60c5552e3"
+      },
+      "runtime_observed": false,
+      "source_derived_expected_resolved_profile_sha256": "d63a104aa030c1adf4293524fef431eef8f8beb413ebf5225b06add7c5d39b5b",
+      "starts": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-role-starts-results-v1/HOLD.starts.epd",
+        "sha256": "59417b8933e6721bad79d648147e834dc1ab79d12ef6c002fad5974eb0f10d82"
+      }
+    },
+    "TRAIN": {
+      "collector_descriptor": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-final-collection-metadata-bindings-v2/TRAIN.collector.protocol.CANDIDATE.json",
+        "sha256": "e0511c70e39daf141404be63d5713a8f1dbb6f65b815e965b08d9f4fc9089e04"
+      },
+      "complete_parent_map": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/TRAIN.parents.json",
+        "sha256": "a83d31bebb390b4555ce14719b3186d7533c71ba88e7a22e3ab160d147dda4bd"
+      },
+      "descriptor_kind": "source-only candidate",
+      "opening_fen_list_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-role-starts-results-v1/TRAIN.starts.epd",
+      "roster": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/TRAIN.roster.json",
+        "sha256": "eeea88659e1583da0be971732ff2a0280d802467d8dc8ab5754e7c19a15fc5aa"
+      },
+      "runtime_observed": false,
+      "source_derived_expected_resolved_profile_sha256": "960e1dc5dc9dcdf09d5ceee6adaba4ae7f1b858fb49add5fc79360dc82b12c21",
+      "starts": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-role-starts-results-v1/TRAIN.starts.epd",
+        "sha256": "420f613a93c31eb8285997896f6f2550664c837326e88ea825f3d46ae7564e17"
+      }
+    }
+  },
+  "fresh_cache": {
+    "aggregate_CPU_actual_seconds": 32.56672744906973,
+    "catalogue_groups": 147248,
+    "catalogue_parents": 147248,
+    "controls_passed": 20,
+    "entire_attempted_cache_reserved_for_future_exclusions": true,
+    "fixed_encodes": 16384,
+    "prior_failed_wall_seconds": 1.235697312047705,
+    "prior_index_is_OLD_SMOKE_not_own_new_cache": true,
+    "protected_input_rejections": 16,
+    "successful_owner_seconds": 31.331030137022026,
+    "viable": 16368
+  },
+  "frozen_six_books": {
+    "CONFIRM_C_A": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/CONFIRM_C_A.epd",
+      "sha256": "08ccc41ca40a45aef8d350c11072d8a89a15acb7403c893b0a3f10ac64ec3f87"
+    },
+    "CONFIRM_C_A39": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/CONFIRM_C_A39.epd",
+      "sha256": "7e99de3a1033f1c6d3e3ef89966bda221c3f4f858a7358bc8ee6baa55110898e"
+    },
+    "CONFIRM_C_B": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/CONFIRM_C_B.epd",
+      "sha256": "f48c08bccd1f16f9a9a14db06c008235f23cd7564a923f193f942f2b7003a2ce"
+    },
+    "SCREEN_C_A": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/SCREEN_C_A.epd",
+      "sha256": "04b78bbfe72d4240677a41e448ba0b4d57c966b7be1e51230757581b369c2ec1"
+    },
+    "SCREEN_C_A39": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/SCREEN_C_A39.epd",
+      "sha256": "0454582a3953777fcc4ac02bc40c56bfc3002053ccba937e811cfc260d5134d6"
+    },
+    "SCREEN_C_B": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/SCREEN_C_B.epd",
+      "sha256": "ed314892ddd1333cd6b10794601aa7b8c1cec7b66576b337c666391425b49b11"
+    }
+  },
+  "legacy_gate_semantics": "Real [] count0; not a chunk-as-flat alias. Strict TRAINprior protects OLD+SMOKE+HOLD64+six panels. HOLDbase protects OLD+SMOKE+six panels without self-veto. All192 reconstructed trajectories incl final/unresolved/no-policy must refuse held/panel fullhistory/F16/mirror/EPD collisions before dedup/bank acceptance; complete accepted TRAIN union precedes final HOLD admission.",
+  "reference_root": "~/chess-artifacts/operations/rl-week-one-20261112-v1/",
+  "reference_scope": "Absolute path/hash identifiers copied from stable compact authority metadata. No referenced payload/index/book/roster/model/native file was reopened or hashed by this author.",
+  "references": {
+    "HOLD_base": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/HOLD_base-index.json",
+      "sha256": "3cfdc85971ea6ffda0d347a678ce3f4c5d27f14be961deeced17e9ce1e0293cd"
+    },
+    "HOLD_parent_map": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/HOLD.parents.json",
+      "sha256": "5cde03959e29359b6cf8feac675a9e54dede0d9eef7a6b54f33e53edf0c35d22"
+    },
+    "HOLD_roster": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/HOLD.roster.json",
+      "sha256": "fb732ec938740661a5b959524ac1f05b5c3a9358f7b43a33894423a60c5552e3"
+    },
+    "HOLD_starts": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-role-starts-results-v1/HOLD.starts.epd",
+      "sha256": "59417b8933e6721bad79d648147e834dc1ab79d12ef6c002fad5974eb0f10d82"
+    },
+    "TRAIN_parent_map": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/TRAIN.parents.json",
+      "sha256": "a83d31bebb390b4555ce14719b3186d7533c71ba88e7a22e3ab160d147dda4bd"
+    },
+    "TRAIN_prior": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/TRAIN_prior-index.json",
+      "sha256": "4b84d19a24e01cbdf59dd66c8622099bf010e9bd29378b99c023353c860d4568"
+    },
+    "TRAIN_roster": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/TRAIN.roster.json",
+      "sha256": "eeea88659e1583da0be971732ff2a0280d802467d8dc8ab5754e7c19a15fc5aa"
+    },
+    "TRAIN_starts": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-role-starts-results-v1/TRAIN.starts.epd",
+      "sha256": "420f613a93c31eb8285997896f6f2550664c837326e88ea825f3d46ae7564e17"
+    },
+    "asset": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/collector-current-I-asset-qualification-bindings-v3/root-acceptance.json",
+      "sha256": "6949de242aad6d4b95358d05b1dce26a4b8be22faeb1abe3ba805a20b4773cfb"
+    },
+    "asset_consumer_envelopes": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/collector-current-I-asset-qualification-bindings-v3/consumer-envelopes-v1/manifest.json",
+      "sha256": "5f23c6cd4b9dbec7aa0de41d078cdd38a5a036dd817c6c535f61e2b3a4959220"
+    },
+    "asset_ind": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/collector-current-I-asset-qualification-independent-actual-review-v3/review.json",
+      "sha256": "43a4c892199e56f8c7fda1c416abe9565354a8cf7f3a99e5e4b05b5404d3f451"
+    },
+    "asset_source": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/collector-current-I-asset-qualification-source-v3/manifest.final.json",
+      "sha256": "01b4335e56747d5492bf1c7b67688e3ea31538fa512f8946fe8a9de6fa5196c4"
+    },
+    "asset_source219": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/collector-current-I-asset-qualification-source-v3/source-pins.json",
+      "sha256": "574c855d693676776d3e9d8bba5e24c789d6793e2cda97eee1a1323254852187"
+    },
+    "binder": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-final-collection-metadata-bindings-v2/manifest.json",
+      "sha256": "13fcd976616688429dfcaa3c17489b6ed870a16d6d384d7952e0fb1279535475"
+    },
+    "cache": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-cache-bindings-v2/root-acceptance-v2.json",
+      "sha256": "b71fbcb74054f5d92679fa26a054d5ba2f9e084ac431fc3554343298b177210d"
+    },
+    "cache_ind": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-cache-bindings-v2/independent-review.json",
+      "sha256": "0ed00f8416b3d41de91b29646840202011532a7b39f30ac543b440bb79cbe816"
+    },
+    "cache_readout": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-cache-results-v2/readout.json",
+      "sha256": "2eed6fc2db490bb3eb8414d5f5828028f376b9a52ad9e0d3342ad4b1ff9662dd"
+    },
+    "collection_independent_source_metadata": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-final-collection-independent-source-metadata-review-v1/review.json",
+      "sha256": "3b60262939844dd6097a24fc01718e0db8fd8a84d91a018e15539b43d67cd765"
+    },
+    "design": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-anchor-root-design-selection-v2/design.json",
+      "sha256": "37c4e9cf078e794f853cddfd0a2ee6f7fba339701bc68178ae5804286be298c6"
+    },
+    "empty_legacy_playing_starts": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-scientific-protection-wiring-root-selection-v1/empty-playing-starts.json",
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    "inherited_OLD_SMOKE_index": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-cache-results-v2/exposure-index.json",
+      "sha256": "cebd5e9aead044b7e3c04a4b32fa49a7f7625e23d0ea2d418f37951a8d800991"
+    },
+    "profile": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-anchor-realized-collector-config-source-proposal-v2/collector.profile.TEMPLATE.json",
+      "sha256": "ab5cf42f0d7790d564c88af589f0d47f1455032f379347ef9c3038d68de39242"
+    },
+    "profile_manifest": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-anchor-realized-collector-config-source-proposal-v2/manifest.json",
+      "sha256": "75c2e36ee04882e6a61ecb5fddf38771f93c57e4d3d033bb38abda0f5e5cc068"
+    },
+    "projection": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-final-collection-metadata-bindings-v2/projection.json",
+      "sha256": "997950ec85256cbb867fbfcd58b8189155c79ea5009b1c6921f16fb56a37c4ca"
+    },
+    "role_source219": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-roles-source-preparation-v3/source-pins.json",
+      "sha256": "a26a82c3a811c3993e9d47ea8435666358ebbc1467b3299bc695189759a699e1"
+    },
+    "roles": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-roles-bindings-v1/root-acceptance.json",
+      "sha256": "14c2d63c678f4718c23b40bd84b43957008a232f52bd956058a4253c500da6ca"
+    },
+    "roles_ind": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-roles-bindings-v1/independent-review.json",
+      "sha256": "88eca9455ebd6f045b7a7d6efe8e670756e00a757eff966aecfbb6b3a992252c"
+    },
+    "roles_readout": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/readout.json",
+      "sha256": "d2422dd710d9aec7cf945920f512febde15a463db4dce5ca28de4920bdd3b28a"
+    },
+    "selection": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-final-profile-role-root-selection-v1/selection.json",
+      "sha256": "e5faa0b1652146b8bbf0185e868d25a64d1d8c64848b68e5f849c6e138cefa9a"
+    },
+    "six_panel_index": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/playing-root-protection-index.json",
+      "sha256": "a0e7c0a86a24f6dcd53b86e3a9d62ce19132d9ec410df56c5a694e781def44e0"
+    },
+    "starts": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-role-starts-bindings-v1/root-acceptance.json",
+      "sha256": "5f6d984731d7951bcce4d04f2990e3765bded3002a50f8a827fe43e34bcbed53"
+    },
+    "starts_ind": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-role-starts-bindings-v1/independent-review.json",
+      "sha256": "1671e361cf0b84b6d6ebc632096c34505e017c61086dc8e2449f95f97e4e4c33"
+    },
+    "starts_readout": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-role-starts-results-v1/readout.json",
+      "sha256": "579725328779ae2cccdbb548be8b9b8a2cb60792e227b937a3a662384c6cc58b"
+    },
+    "unit": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/whole-game-anchor-integrated-CPU-bindings-v7/root-acceptance.json",
+      "sha256": "9c5df1f60854e25ab5d4b4fdb791bfc9359cdbb1ffdab3144ccb1deb8ed99933"
+    },
+    "unit_ind": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/whole-game-anchor-integrated-CPU-bindings-v7/independent-review.json",
+      "sha256": "e4e6934eead05957713e4a4b0141af3f09b27bc29ae0ba1e2a6e4571b8c069c4"
+    },
+    "unit_source218": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/whole-game-anchor-integrated-source-preparation-v7/source-pins.json",
+      "sha256": "6f9cd298aaaaeaf40e473d27dd0c12d743ea191f065d3172d7fd4fb2d4ead44f"
+    },
+    "wiring": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-scientific-protection-wiring-root-selection-v1/selection.json",
+      "sha256": "4d45432297cb98caed73f51d2321d79035b8a5149095d19591cc3c9cc5751a71"
+    },
+    "wrapper": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-TRAIN-HOLD-protection-wrapper-source-preparation-v2/manifest.json",
+      "sha256": "04b4206939339a06414e9d314cc31daf17f6bd358858b878f144fe29af362ca6"
+    },
+    "wrapper_controls": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-TRAIN-HOLD-protection-wrapper-source-preparation-v2/controls.py",
+      "sha256": "311c5c8e927f4d7fdd9903a93eccd877da1ee70544445aaa90f7b2d85f191528"
+    },
+    "wrapper_helper": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-TRAIN-HOLD-protection-wrapper-source-preparation-v2/audit_and_protect.py",
+      "sha256": "3b4a42d7805747711f514dd195ace04b6758b4ea3f1c93f3acde70f04bbf840c"
+    },
+    "wrapper_ind": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-TRAIN-HOLD-protection-wrapper-independent-source-review-v2/review.json",
+      "sha256": "60c254e185c55399dfd0d3a84b91df6f025d9c42256517fd912f759896c6d60d"
+    }
+  },
+  "roles": {
+    "all_complete_parents_preserved": true,
+    "all_selected_cross_role_domains_disjoint": [
+      "group",
+      "parent",
+      "history",
+      "epd",
+      "history_sha",
+      "input"
+    ],
+    "all_six_books_frozen_before_outcomes": true,
+    "canonical_prior_counts": {
+      "HOLD_base": {
+        "history_sha256": 421930,
+        "stored_input_float16_sha256": 1091965
+      },
+      "TRAIN_prior": {
+        "history_sha256": 421994,
+        "stored_input_float16_sha256": 1092093
+      }
+    },
+    "controls_passed": 57,
+    "numerical_model_engine_TB_or_encoding_calls": 0,
+    "ordered_counts": [
+      [
+        "TRAIN",
+        192
+      ],
+      [
+        "HOLD",
+        64
+      ],
+      [
+        "SCREEN_C_A",
+        400
+      ],
+      [
+        "SCREEN_C_B",
+        400
+      ],
+      [
+        "SCREEN_C_A39",
+        400
+      ],
+      [
+        "CONFIRM_C_A",
+        400
+      ],
+      [
+        "CONFIRM_C_B",
+        400
+      ],
+      [
+        "CONFIRM_C_A39",
+        400
+      ]
+    ],
+    "owner_CPU_seconds": 27.179214908042923,
+    "selected_total": 2656
+  },
+  "schema": "PUBLIC_PRE_SCIENCE_PREPARATION_AGGREGATE_EVIDENCE_V1",
+  "science": {
+    "CPU_ceiling_seconds": 9600,
+    "GPU_ceiling_seconds": 30900,
+    "HOLD_final_prior": "UNBOUND_UNTIL_ACTUAL_ACCEPTED_ALL192_TRAIN_TRAJECTORY_PROTECTION",
+    "K": "UNBOUND_UNTIL_QUALIFIED_TRAIN_N; fixed formula min(ceil(N/32),1024)",
+    "scientific_collection_training_scoring_or_playing_started": false,
+    "scientific_results": null
+  },
+  "source_domains": {
+    "asset219_unit218_plus_Lee": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/collector-current-I-asset-qualification-source-v3/source-pins.json",
+      "sha256": "574c855d693676776d3e9d8bba5e24c789d6793e2cda97eee1a1323254852187"
+    },
+    "frozen_runtime": "bbb4b725a2d5218ffa4630841dd93e8b2884b58d",
+    "no_whole_current_main_or_live_adoption_equivalence_claim": true,
+    "role219_unit218_plus_arena_standard": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-roles-source-preparation-v3/source-pins.json",
+      "sha256": "a26a82c3a811c3993e9d47ea8435666358ebbc1467b3299bc695189759a699e1"
+    },
+    "unit218": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/whole-game-anchor-integrated-source-preparation-v7/source-pins.json",
+      "sha256": "6f9cd298aaaaeaf40e473d27dd0c12d743ea191f065d3172d7fd4fb2d4ead44f"
+    }
+  },
+  "starts": {
+    "actual_public_metadata_roundtrip": true,
+    "aggregate_roles_plus_starts_CPU_seconds": 28.423675107071176,
+    "numerical_model_engine_TB_native_encoding_or_role_changes": 0,
+    "observations": {
+      "HOLD": {
+        "bytes": 8896,
+        "count": 64,
+        "exact_formula_order_and_public_roundtrip": true,
+        "moves_each": 16,
+        "roster": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/HOLD.roster.json",
+          "sha256": "fb732ec938740661a5b959524ac1f05b5c3a9358f7b43a33894423a60c5552e3"
+        }
+      },
+      "TRAIN": {
+        "bytes": 26688,
+        "count": 192,
+        "exact_formula_order_and_public_roundtrip": true,
+        "moves_each": 16,
+        "roster": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/TRAIN.roster.json",
+          "sha256": "eeea88659e1583da0be971732ff2a0280d802467d8dc8ab5754e7c19a15fc5aa"
+        }
+      }
+    },
+    "owner_CPU_seconds": 1.2444601990282536
+  },
+  "status": "COMPLETED_METADATA_PREPARATION_WITH_SELECTED_UNSTARTED_SCIENCE",
+  "unknown_exposure": [
+    "Later played trajectories, including incomplete joint timed games, and unretained search inputs outside the enumerated metadata index remain UNKNOWN.",
+    "External/unbanked or unrecorded inference exposure remains UNKNOWN.",
+    "Donor pretraining and broader opening-family exposure remain UNKNOWN.",
+    "Public standardstart/full16 starts are protected by fullhistory/terminalEPD and complete cached matches only; raw/mirror identity outside those cached matches remains UNKNOWN without reencoding."
+  ],
+  "wrapper": {
+    "controls_execution": "UNRUN",
+    "methods": 12,
+    "phase_outer_inner_seconds": [
+      900,
+      870
+    ],
+    "same_planned_TRAIN_audit_no_extra_stage": true,
+    "source_review_findings": []
+  }
+}
