@@ -323,6 +323,7 @@ def same_gpu_payload(m: Metadata, root: dict[str, Any], c: dict[str, Any], b: di
     require(type(membership) is list and membership and all(type(row) is list and len(row) == 3
             and type(row[0]) is int and row[0] == 1 and type(row[2]) is int and row[2] > 0 for row in membership),
             "invalid full replay membership")
+    membership = cast(list[list[Any]], membership)
     population = sum(row[2] for row in membership)
     coverage = saved["draw_coverage"]
     require(type(plan["N"]) is int and plan["N"] == population and type(plan["K"]) is int

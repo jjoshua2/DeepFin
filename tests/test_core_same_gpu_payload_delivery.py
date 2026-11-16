@@ -223,7 +223,7 @@ def test_normalized_gpu_admission_cannot_be_used_as_cpu_audit(tmp_path: Path) ->
     metadata = ruler.Metadata(1 << 20, 8 << 20)
     root = metadata.read(binding["root"])
     suffix = metadata.read(root["payload_audit"]["readout"])["public_suffix"]
-    with pytest.raises(ValueError, match="^same-GPU proof admission differs$"):
+    with pytest.raises(ValueError, match=r"^same-GPU proof admission differs$"):
         ruler.closed_owner(metadata, root["learner_owner"], resource="cpu", suffix=suffix,
                            seconds=900, _same_gpu_proof=True)
 
@@ -253,9 +253,10 @@ def test_shared_bindings_apply_new_coverage_after_training_population(tmp_path: 
                 "limits": {"metadata_file_bytes": 1 << 20, "metadata_total_bytes": 8 << 20}}
     metadata = ruler.Metadata(1 << 20, 8 << 20)
     if corrupt:
-        with pytest.raises(ValueError, match="^same-GPU coverage game roster differs$"):
+        with pytest.raises(ValueError, match=r"^same-GPU coverage game roster differs$"):
             ruler.bindings(metadata, protocol)
     else:
         returned, _, delivered = ruler.bindings(metadata, protocol)
-        assert returned is view and set(delivered) == {"A", "B", "C", "A39"}
+        assert returned is view
+        assert set(delivered) == {"A", "B", "C", "A39"}
         metadata.finish()
