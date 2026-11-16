@@ -1,0 +1,262 @@
+{
+  "actual_scientific_profiles_instantiated": false,
+  "additional_plies": 450,
+  "cohort_identity_substitution_only": "Set configs.opening.opening_fen_list_path to the exact cohort path above; SHA256 of canonical UTF8 JSON sort_keys=True,separators=(comma,colon) for all six groups yields the expected hash. Real build_configs/asdict comparison is future owned evidence.",
+  "cohorts": {
+    "HOLD": {
+      "collector_descriptor": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-final-collection-metadata-bindings-v2/HOLD.collector.protocol.TEMPLATE.json",
+        "sha256": "55785638653b13cc02ed0e5e0aa8e88849079320072abe99f64c91ac52555039"
+      },
+      "complete_parent_map": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/HOLD.parents.json",
+        "sha256": "5cde03959e29359b6cf8feac675a9e54dede0d9eef7a6b54f33e53edf0c35d22"
+      },
+      "descriptor_kind": "template; final HOLD-prior path/SHA not yet available",
+      "opening_fen_list_path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-role-starts-results-v1/HOLD.starts.epd",
+      "roster": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/HOLD.roster.json",
+        "sha256": "fb732ec938740661a5b959524ac1f05b5c3a9358f7b43a33894423a60c5552e3"
+      },
+      "runtime_observed": false,
+      "source_derived_expected_resolved_profile_sha256": "d63a104aa030c1adf4293524fef431eef8f8beb413ebf5225b06add7c5d39b5b",
+      "starts": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-role-starts-results-v1/HOLD.starts.epd",
+        "sha256": "59417b8933e6721bad79d648147e834dc1ab79d12ef6c002fad5974eb0f10d82"
+      }
+    },
+    "TRAIN": {
+      "collector_descriptor": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-final-collection-metadata-bindings-v2/TRAIN.collector.protocol.CANDIDATE.json",
+        "sha256": "e0511c70e39daf141404be63d5713a8f1dbb6f65b815e965b08d9f4fc9089e04"
+      },
+      "complete_parent_map": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/TRAIN.parents.json",
+        "sha256": "a83d31bebb390b4555ce14719b3186d7533c71ba88e7a22e3ab160d147dda4bd"
+      },
+      "descriptor_kind": "source-only candidate",
+      "opening_fen_list_path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-role-starts-results-v1/TRAIN.starts.epd",
+      "roster": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/TRAIN.roster.json",
+        "sha256": "eeea88659e1583da0be971732ff2a0280d802467d8dc8ab5754e7c19a15fc5aa"
+      },
+      "runtime_observed": false,
+      "source_derived_expected_resolved_profile_sha256": "960e1dc5dc9dcdf09d5ceee6adaba4ae7f1b858fb49add5fc79360dc82b12c21",
+      "starts": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-role-starts-results-v1/TRAIN.starts.epd",
+        "sha256": "420f613a93c31eb8285997896f6f2550664c837326e88ea825f3d46ae7564e17"
+      }
+    }
+  },
+  "concurrent_game_slots": 16,
+  "configs": {
+    "diff_focus": {
+      "enabled": false,
+      "min_keep": 0.025,
+      "norm_clip": 8.0,
+      "norm_enabled": false,
+      "norm_quantile": 0.5,
+      "norm_shared": false,
+      "norm_slope": 1.62,
+      "norm_warmup": 1024,
+      "norm_window": 8192,
+      "pol_scale": 3.5,
+      "q_weight": 6.0,
+      "slope": 3.0
+    },
+    "game": {
+      "blindspot_harvest_out_path": "",
+      "categorical_bins": 32,
+      "categorical_blend_frac": 0.0,
+      "categorical_search_blend_frac": 0.0,
+      "history_rep_fix": true,
+      "hlgauss_sigma": 0.04,
+      "input_extra_features": "v2_threats",
+      "input_history_encoding": "lc0_root_legacy_meta",
+      "max_plies": 450,
+      "policy_encoding": "lc0_1858",
+      "policy_row_retention": "all_eligible",
+      "record_dense_sf_policy": false,
+      "record_fast_ply_value": false,
+      "record_lc0_root_input": true,
+      "record_prior_top1": true,
+      "record_relations": false,
+      "record_sf_p0_policy": false,
+      "record_sf_p0_regret": false,
+      "search_wdl_draw_mode": "net_raw",
+      "selfplay_fraction": 1.0,
+      "sf_fast_ply_node_scale": 0.25,
+      "sf_label_escalate_max_per_game": 2,
+      "sf_label_escalate_nodes": 0,
+      "sf_label_escalate_q_gap": 0.0,
+      "sf_label_nodes_cap": 0,
+      "sf_label_nodes_floor": 0,
+      "sf_move_nodes": 0,
+      "sf_policy_cp_temp": 16.2,
+      "sf_policy_label_smooth": 0.01,
+      "sf_policy_score_mode": "cp",
+      "sf_policy_temp": 0.012,
+      "sf_wdl_cp_draw_width": 120.0,
+      "sf_wdl_cp_slope": 0.006,
+      "sf_wdl_use_cp_logistic": true,
+      "soft_policy_temp": 2.0,
+      "stockfish_syzygy_path": "~/projects/chess/data/syzygy_3-4-5:~/projects/chess/data/syzygy_6",
+      "syzygy_adjudicate": true,
+      "syzygy_adjudicate_fraction": 1.0,
+      "syzygy_in_search": true,
+      "syzygy_outcome_mode": "rule50_match_v1",
+      "syzygy_path": "~/projects/chess/data/syzygy_3-4-5:~/projects/chess/data/syzygy_6",
+      "syzygy_rescore_policy": true,
+      "timeout_adjudication_threshold": 0.99,
+      "volatility_source": "raw"
+    },
+    "opening": {
+      "opening_book_max_games": 200000,
+      "opening_book_max_games_2": 200000,
+      "opening_book_max_plies": 4,
+      "opening_book_max_plies_2": 16,
+      "opening_book_mix_prob_2": 0.0,
+      "opening_book_path": null,
+      "opening_book_path_2": null,
+      "opening_book_prob": 0.0,
+      "opening_fen_dole_per_iter": 1,
+      "opening_fen_list_path": "EXACT_COHORT_STARTS_PATH_FROM_COHORTS",
+      "opening_fen_net_side_to_move": true,
+      "opening_fen_prob": 0.0,
+      "opening_fen_selfplay_only": true,
+      "opening_fen_sf_refute_frac": 0.0,
+      "opening_fen_sf_refute_plies": 5,
+      "random_start_plies": 0,
+      "sf_refute_full_node_moves": false,
+      "sf_refute_opp_policy_net_blend": 0.0,
+      "sf_refute_record_opp_rows": false
+    },
+    "opponent": {
+      "wdl_regret_limit": null
+    },
+    "search": {
+      "curriculum_gumbel_scale": 0.25,
+      "curriculum_gumbel_scale_after": 0.0,
+      "curriculum_gumbel_scale_decay_moves": 3,
+      "curriculum_gumbel_scale_decay_start_move": 12,
+      "fast_simulations": 64,
+      "full_ply_pair_fraction": 0.0,
+      "gumbel_c_scale": 0.1,
+      "gumbel_policy_temp": 1.0,
+      "gumbel_scale": 0.75,
+      "gumbel_scale_after": 0.75,
+      "gumbel_scale_decay_moves": 3,
+      "gumbel_scale_decay_start_move": 12,
+      "gumbel_target_batch": 0,
+      "gumbel_target_max_visit_cap": 0,
+      "gumbel_target_untempered_prior": false,
+      "gumbel_topk": 16,
+      "gumbel_vloss_weight": 1,
+      "mcts_type": "gumbel",
+      "playout_cap_fraction": 1.0,
+      "simulations": 64,
+      "volatility_anchor": 0.05,
+      "volatility_fpu": 0.0,
+      "volatility_q_scale": 0.0
+    },
+    "temp": {
+      "after": 0.1,
+      "decay_moves": 60,
+      "decay_start_move": 20,
+      "drop_plies": 0,
+      "endgame": 0.1,
+      "selfplay_decay_moves": null,
+      "selfplay_decay_start_move": null,
+      "selfplay_endgame": 0.1,
+      "selfplay_temperature": 0.1,
+      "temperature": 0.1
+    }
+  },
+  "configured_max_batch_is_not_observed_batch": true,
+  "field_counts": {
+    "diff_focus": 12,
+    "game": 44,
+    "opening": 19,
+    "opponent": 1,
+    "search": 23,
+    "temp": 10
+  },
+  "fixed_config_fields": 109,
+  "full_history_plies": 16,
+  "not_runtime_input": true,
+  "public_path_rendering": {
+    "canonical_reconstruction": "Expand each displayed private-home path with that original binding before reconstructing the canonical six-group profile. Exclude this public envelope and public_path_rendering metadata from that profile.",
+    "companions_are_runtime_inputs": false,
+    "expected_profile_hash_scope": "Expected profile hashes were computed by the accepted binder from the original sealed absolute descriptors and selected starts substitutions; they are not hashes of these display-normalized public JSON bytes.",
+    "original_home_binding": "Recover the original private-home binding from the sealed absolute descriptors, not from the home directory of an arbitrary reader.",
+    "path_presentation": "Private home path prefixes are rendered as ~/... for public display only.",
+    "runtime_artifacts_protocols_hashes_and_settings_changed": false,
+    "schema": "PUBLIC_HOME_RELATIVE_DISPLAY_PATHS_V1"
+  },
+  "root_selection": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-final-profile-role-root-selection-v1/selection.json",
+    "sha256": "e5faa0b1652146b8bbf0185e868d25a64d1d8c64848b68e5f849c6e138cefa9a"
+  },
+  "schema": "PUBLIC_PROSPECTIVE_WHOLE_GAME_SELECTED_COLLECTOR_PROFILE_V1",
+  "selected_source_profile": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-anchor-realized-collector-config-source-proposal-v2/collector.profile.TEMPLATE.json",
+    "sha256": "ab5cf42f0d7790d564c88af589f0d47f1455032f379347ef9c3038d68de39242"
+  },
+  "selected_source_profile_manifest": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-anchor-realized-collector-config-source-proposal-v2/manifest.json",
+    "sha256": "75c2e36ee04882e6a61ecb5fddf38771f93c57e4d3d033bb38abda0f5e5cc068"
+  },
+  "serving": {
+    "amp_dtype": "bfloat16",
+    "device": "cuda:0",
+    "input_bf16": false,
+    "legal_bf16": false,
+    "max_batch": 512,
+    "n_slots": 1,
+    "pad_to_compiled_buckets": false,
+    "use_amp": true
+  },
+  "six_selected_overrides": {
+    "/configs/search/gumbel_scale_after": [
+      0.0,
+      0.75
+    ],
+    "/configs/temp/after": [
+      0.0,
+      0.1
+    ],
+    "/configs/temp/endgame": [
+      0.0,
+      0.1
+    ],
+    "/configs/temp/selfplay_endgame": [
+      0.0,
+      0.1
+    ],
+    "/configs/temp/selfplay_temperature": [
+      0.0,
+      0.1
+    ],
+    "/configs/temp/temperature": [
+      0.0,
+      0.1
+    ]
+  },
+  "source_binding_projection": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-final-collection-metadata-bindings-v2/projection.json",
+    "sha256": "997950ec85256cbb867fbfcd58b8189155c79ea5009b1c6921f16fb56a37c4ca"
+  },
+  "source_revision": "bbb4b725a2d5218ffa4630841dd93e8b2884b58d",
+  "status": "SELECTED_STATIC_EXPECTATIONS_NOT_RUNTIME_OBSERVATIONS",
+  "stockfish": {
+    "hash_mb": 16,
+    "multipv": 1,
+    "nodes": 64,
+    "read_timeout_seconds": 20,
+    "threads": {
+      "actual_api": "StockfishUCI implementation uses Threads1; not an extra unsupported collector protocol key",
+      "requested": 1
+    },
+    "workers": 1
+  }
+}
