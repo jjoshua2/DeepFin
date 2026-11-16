@@ -447,6 +447,9 @@ def _unique_labels(names: Any) -> tuple[str, ...]:
 class SearchWorker:
     """Owns one MCTS tree + one evaluator. Single-search at a time."""
 
+    # `_pv_info_key` of the last `_emit_pv_info` in this `run` (None: none yet).
+    _last_pv_info_key: tuple[int, int, int, tuple[tuple[int, ...], ...]] | None = None
+
     def __init__(
         self,
         evaluator: BatchEvaluator,
@@ -1958,11 +1961,16 @@ class SearchWorker:
         *,
         allowed_root_indices: set[int] | None = None,
         note: str | None = None,
+        lead_move: str | None = None,
     ) -> None:
         """Emit one or more ``info`` lines, one per top-ranked PV.
 
         ``note`` (e.g. the tree-full stop reason) is appended to the first
         line's ``string`` field, so it reaches the GUI log next to the PV.
+
+        ``lead_move`` (the final emission of ``run``): rank this root move
+        first (see ``_multipv_lines``), and emit nothing when the previous
+        emission of this ``run`` already showed exactly these lines.
 
         When ``self._multi_pv`` == 1 the ``multipv`` field is omitted
         (classic single-PV UCI). When > 1 each line gets ``multipv 1..N``.
@@ -1978,9 +1986,14 @@ class SearchWorker:
             self._multi_pv,
             root_q,
             allowed_root_indices=allowed_root_indices,
+            lead_action=None if lead_move is None else _uci_to_index(board, lead_move),
         )
         if not lines:
             return
+        key = _pv_info_key(self._tree, self._root_id, total_nodes, lines)
+        if lead_move is not None and not self._is_new_pv_emission(key):
+            return
+        self._last_pv_info_key = key
         emit_multipv = self._multi_pv > 1
         tbhits = tb_probe.hits if tb_probe is not None else 0
         draw_rate = (
@@ -2024,6 +2037,12 @@ class SearchWorker:
                 hashfull=hashfull,
                 seldepth=self._seldepth,
             )
+
+    def _is_new_pv_emission(
+        self, key: tuple[int, int, int, tuple[tuple[int, ...], ...]],
+    ) -> bool:
+        """False when ``key`` is what the last `_emit_pv_info` already showed."""
+        return key != self._last_pv_info_key
 
     def set_max_tree_mb(self, mb: int) -> None:
         """Soft cap on the tree's resident footprint; 0 disables. Checked
@@ -3497,6 +3516,7 @@ class SearchWorker:
         stop_sensitive: bool = False,
         fixed_time_margin: bool = False,
         mate_moves: int | None = None,
+        final_info: bool = True,
     ) -> SearchResult:
         """Search until any of: stop_event set, deadline expired, max_nodes hit,
         PV length ≥ max_depth, or (``optimum_ms`` set) the visit-margin abort
@@ -3512,6 +3532,12 @@ class SearchWorker:
 
         ``mate_moves`` (UCI ``go mate N``): also stop as soon as a mate in
         <= N moves is proven at the root (see ``_proven_line_mate``).
+
+        ``final_info`` (with ``info_cb``): after the last chunk, emit the info
+        lines once more with the returned ``bestmove`` as rank 1 (its own Q and
+        mate score), unless the last emission already showed exactly that. The
+        in-search lines rank by visits; the Gumbel survivor can differ. Off for
+        a ponder phase, whose root is the position before the predicted reply.
         """
         fen = board.fen()
   # Multi-GPU degrade bookkeeping, once per search: re-admit devices whose
@@ -3595,6 +3621,7 @@ class SearchWorker:
 
         self._last_gumbel_action_idx = None
         self._seldepth = 0
+        self._last_pv_info_key = None
         self.last_stop_reason = None
         self._mate_check_key = None
         self._ensure_root_eval_cached(board, tb_probe)
@@ -3847,25 +3874,29 @@ class SearchWorker:
                     break
                 stop_event.wait(_IDLE_CHUNK_WAIT_S)
 
-  # Every search that reached the tree reports at least one info line (score +
-  # pv) before bestmove: a forced root banks after one chunk, long before the
-  # first 1 s info tick, and GUIs / broadcasts expect a line per move.
-        if info_cb is not None and not info_emitted[0] and self._root_id is not None:
-            self._emit_pv_info(
-                info_cb, board, float(last_value), total_nodes,
-                deadline.elapsed_ms(), tb_probe,
-                allowed_root_indices=allowed_root_indices,
-            )
-
         self._record_growth_rate(
             total_nodes, _rate_nodes_before, (time.monotonic() - _rate_t0) * 1000.0,
         )
-        return self._build_final_search_result(
+        result = self._build_final_search_result(
             board=board, total_nodes=total_nodes,
             last_value=last_value, tb_probe=tb_probe,
             allowed_root_indices=allowed_root_indices,
             include_ponder=include_ponder,
         )
+  # Every search that reached the tree reports at least one info line (score +
+  # pv) before bestmove: a forced root banks after one chunk, long before the
+  # first 1 s info tick, and GUIs / broadcasts expect a line per move. With
+  # `final_info` the last line set leads with the move `bestmove` plays: GUIs
+  # and match logs show the last PV and score as the engine's choice.
+        if info_cb is not None and self._root_id is not None and (
+                final_info or not info_emitted[0]):
+            self._emit_pv_info(
+                info_cb, board, float(last_value), total_nodes,
+                deadline.elapsed_ms(), tb_probe,
+                allowed_root_indices=allowed_root_indices,
+                lead_move=result.bestmove_uci if final_info else None,
+            )
+        return result
 
     def _run_walker_chunk(
         self, chunk: int, stop_event: threading.Event, tb_probe=None,
@@ -4379,10 +4410,15 @@ def _multipv_lines(
     n: int,
     root_q_default: float,
     allowed_root_indices: set[int] | None = None,
+    lead_action: int | None = None,
 ) -> list[tuple[int, float, list[int]]]:
     """Return up to ``n`` (rank, q, pv_indices) triples, ranking known WIN/DRAW
     witnesses before visits. Rank is 1-based (UCI convention: ``multipv 1`` = best).
     Each pv_indices preserves known WIN/DRAW proofs before following most visits.
+
+    ``lead_action`` (a root child) is moved to rank 1, the rest keep their order:
+    the final emission puts the move ``bestmove`` plays first, since the Gumbel
+    survivor need not be the visit leader. Absent from the children: no change.
 
     At n=1 this is equivalent to ``_best_move_and_pv`` plus a Q read,
     so callers can always route through this helper.
@@ -4397,7 +4433,12 @@ def _multipv_lines(
         qs = qs[keep]
         if actions.size == 0:
             return []
-    order = _child_visit_order(tree, root_id, actions, visits)[:max(1, int(n))]
+    order = _child_visit_order(tree, root_id, actions, visits)
+    if lead_action is not None:
+        at = np.flatnonzero(actions[order] == int(lead_action))
+        if at.size:
+            order = np.concatenate((order[at[:1]], np.delete(order, int(at[0]))))
+    order = order[:max(1, int(n))]
     out: list[tuple[int, float, list[int]]] = []
     for rank, i in enumerate(order.tolist(), start=1):
         move = int(actions[i])
@@ -4413,6 +4454,15 @@ def _multipv_lines(
             cid = tree.find_child(cid, nxt)
         out.append((rank, q, pv))
     return out
+
+
+def _pv_info_key(
+    tree: MCTSTree, root_id: int, total_nodes: int,
+    lines: list[tuple[int, float, list[int]]],
+) -> tuple[int, int, int, tuple[tuple[int, ...], ...]]:
+    """What one `_emit_pv_info` call showed: same tree, root and node count
+    means the same Q/mate per line, so equal keys mean equal lines (bar time)."""
+    return (id(tree), int(root_id), int(total_nodes), tuple(tuple(pv) for _, _, pv in lines))
 
 
 
@@ -4622,6 +4672,17 @@ def _index_to_uci(board: chess.Board, idx: int) -> str:
         legal = list(board.legal_moves)
         return legal[0].uci() if legal else "0000"
     return index_to_move(int(idx), board).uci()
+
+
+def _uci_to_index(board: chess.Board, uci: str) -> int | None:
+    """Root action index of legal move ``uci``; None for "0000" or anything illegal."""
+    try:
+        move = chess.Move.from_uci(uci)
+    except ValueError:
+        return None
+    if not move or move not in board.legal_moves:
+        return None
+    return int(move_to_index(move, board))
 
 
 def _board_after(board: chess.Board, idx: int) -> chess.Board | None:

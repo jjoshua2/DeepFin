@@ -436,6 +436,13 @@ rejected as a whole:
   `bestmove 0000` (a `go ponder` / `go infinite` holds it until `ponderhit` /
   `stop`). A valid `position` or `ucinewgame` clears it.
 
+**The last PV is the move played.** Before every `bestmove X`, the last `info`
+line with a `pv` (with `MultiPV` above 1, the last `multipv 1` line) starts with X
+and carries X's own score; in-search lines rank moves by visits, and the played
+move need not lead them. A move the search did not produce (a fallback, the
+deadline watchdog, a `stop` during ponder) gets such a line with `depth`, `pv`
+and at most `nodes`: no score.
+
 **Strict startup and exit codes.**
 
 | Exit | When |
