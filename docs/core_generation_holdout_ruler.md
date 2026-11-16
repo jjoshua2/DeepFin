@@ -31,6 +31,27 @@ positive smaller `inner_seconds` before admission. An alarm covers the actual
 body without resetting its deadline. Root also performs actual resource and
 complete-main-preregistration admission; the child does not issue either.
 
+## SCORE/READ phase admission V2
+
+Both entries require `status="ROOT_ADMITS_CORE_HOLDOUT_RULER_PHASE_V2"`.
+The admission has `normalized_command`, the entire actual child argv with only
+its unique `--admission-sha256` value replaced by `SELF_ADMISSION_SHA256`.
+It must not contain the legacy `command` field. Seal this admission first,
+then substitute its actual SHA into the launched child command. The actual
+child must end with the exact public module and four path/SHA flags above;
+all four flags must occur exactly once. Every other token, including the
+interpreter/bootstrap prefix, is compared unchanged. The direct owner must
+have one child separator and the selected stage, resource, cap and owner hash.
+
+V1 required a sealed admission to contain its own actual hash in `command`,
+which could not be constructed by ordinary hash-and-seal authoring. There is no
+V1 fallback. Protocol schemas remain V1; source and phase admissions must be
+bound explicitly to this successor before execution. READ also verifies the
+closed SCORE owner's V2 normalized command, exact terminal child argv and
+full existing closure evidence. Other historical owner routes (legacy CPU
+saved-state audits and the explicit same-GPU learner proof) are unchanged.
+This source correction grants no execution, model-delivery or study authority.
+
 `limits` has positive integer `metadata_file_bytes` (at most128MiB),
 `metadata_total_bytes`, `game_decoded_bytes`, `total_decoded_bytes`, `max_rows`,
 `row_log_bytes` per model, and `reference_cache_bytes`. These are root-bound

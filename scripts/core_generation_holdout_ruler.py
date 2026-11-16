@@ -37,7 +37,7 @@ DELIVERY_ROOT = "ROOT_ACCEPTS_CLOSED_CORE_BANK_LEARNER_DELIVERY_V1"
 DELIVERY_REVIEW = "ACCEPT_CLOSED_CORE_BANK_LEARNER_DELIVERY_NO_FINDINGS_V1"
 SCORE_ROOT = "ROOT_ACCEPTS_CLOSED_CORE_HOLDOUT_SCORING_OBSERVATIONS_V1"
 SCORE_REVIEW = "ACCEPT_CLOSED_CORE_HOLDOUT_SCORING_OBSERVATIONS_NO_FINDINGS_V1"
-ADMISSION = "ROOT_ADMITS_CORE_HOLDOUT_RULER_PHASE_V1"
+ADMISSION = "ROOT_ADMITS_CORE_HOLDOUT_RULER_PHASE_V2"
 SOURCE_REVIEW = "ACCEPT_CORE_HOLDOUT_RULER_SOURCE_ONLY_NO_FINDINGS_V1"
 ANCHOR_KEY = "core_generation_bank_policy_anchor_v1"
 BOUNDARY = "COMPLETED_CORE_GENERATION_BANK_POLICY_ANCHOR_SEGMENT_V1"
@@ -120,7 +120,8 @@ def write(path: Path, value: Any) -> dict[str, str]:
 
 
 def closed_owner(m: Metadata, owner: dict[str, Any], *, resource: str,
-                 suffix: list[str], seconds: int | None = None, _same_gpu_proof: bool = False) -> dict[str, Any]:
+                 suffix: list[str], seconds: int | None = None, _same_gpu_proof: bool = False,
+                 _ruler_phase: bool = False) -> dict[str, Any]:
     """Join a historical owner without confusing its revision with its child."""
     require(set(owner) == {"terminal", "admission", "command", "source_revision", "cwd", "closure"}, "invalid closed owner schema")
     terminal = m.observed(owner["terminal"])
@@ -147,6 +148,7 @@ def closed_owner(m: Metadata, owner: dict[str, Any], *, resource: str,
     for pid, birth in closure["known_processes"].items():
         require(type(pid) is str and pid.isdecimal() and str(int(pid)) == pid and int(pid) > 0
                 and type(birth) is int and birth > 0, "invalid process birth")
+    require(not (_same_gpu_proof and _ruler_phase), "conflicting owner admission routes")
     if _same_gpu_proof:
         require(resource == "gpu" and seconds == cap == 900 and admission["status"] == GPU_PROOF_ADMISSION
                 and admission["execution_authorized"] is True, "same-GPU proof admission differs")
@@ -158,6 +160,11 @@ def closed_owner(m: Metadata, owner: dict[str, Any], *, resource: str,
         normalized[normalized.index("--admission-sha256") + 1] = "SELF_ADMISSION_SHA256"
         require(admission["normalized_child"] == normalized and admission["resource"] == resource
                 and admission["seconds"] == cap and admission["owner"]["sha256"] == terminal["supervisor_sha256"], "same-GPU normalized admission differs")
+    elif _ruler_phase:
+        require(resource == "gpu" and seconds == cap == 1200, "closed ruler phase cap/resource differs")
+        phase_command(admission, admission["protocol"], owner["admission"], command, reader=False)
+        require(admission["resource"] == resource and admission["seconds"] == cap
+                and admission["owner"]["sha256"] == terminal["supervisor_sha256"], "ruler owner admission differs")
     else:
         require(admission["command"] == command and admission["resource"] == resource
                 and admission["seconds"] == cap and admission["owner"]["sha256"] == terminal["supervisor_sha256"], "owner admission differs")
@@ -529,6 +536,24 @@ def native_custody(m: Metadata, basis_ref: dict[str, str], files: dict[str, str]
     return {"images": observed, "required_symbols_and_numeric_abi": native_symbol_abi()}
 
 
+def phase_command(admission: dict[str, Any], protocol_ref: dict[str, str], admission_ref: dict[str, str],
+                  command: list[str], *, reader: bool) -> None:
+    """Authenticate an actual child against a sealed, non-self-referential V2 admission."""
+    module = "scripts.core_generation_holdout_read" if reader else "scripts.core_generation_holdout_score"
+    suffix = ["-m", module, "--protocol", protocol_ref["path"], "--protocol-sha256", protocol_ref["sha256"],
+              "--admission", admission_ref["path"], "--admission-sha256", admission_ref["sha256"]]
+    require(admission["status"] == ADMISSION and admission["protocol"] == protocol_ref and "command" not in admission
+            and type(admission.get("normalized_command")) is list, "phase requires normalized V2 admission")
+    require(type(command) is list and len(command) > len(suffix)
+            and all(type(arg) is str and arg for arg in command)
+            and command[-len(suffix):] == suffix, "ruler phase command suffix differs")
+    for flag in ("--protocol", "--protocol-sha256", "--admission", "--admission-sha256"):
+        require(command.count(flag) == 1, "ruler phase command flags ambiguous")
+    normalized = list(command)
+    normalized[normalized.index("--admission-sha256") + 1] = "SELF_ADMISSION_SHA256"
+    require(admission["normalized_command"] == normalized, "normalized ruler phase command differs")
+
+
 def phase_start(protocol_ref: dict[str, str], admission_ref: dict[str, str], *, reader: bool = False) -> tuple[dict[str, Any], Metadata, Path]:
     m = Metadata(4 << 20, 256 << 20)
     p, admission = m.read(protocol_ref), m.read(admission_ref)
@@ -564,12 +589,9 @@ def phase_start(protocol_ref: dict[str, str], admission_ref: dict[str, str], *, 
     after = pth.lstat()
     require(stamp == (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_mode)
             and raw == (rt["managed_site"] + "\n").encode(), "plain-pth content/custody differs")
-    module = "scripts.core_generation_holdout_read" if reader else "scripts.core_generation_holdout_score"
-    suffix = ["-m", module, "--protocol", protocol_ref["path"], "--protocol-sha256", protocol_ref["sha256"],
-              "--admission", admission_ref["path"], "--admission-sha256", admission_ref["sha256"]]
     require(admission["status"] == ADMISSION and admission["protocol"] == protocol_ref and admission["source"] == p["source"]
             and admission["owner"] == p["owner"] and admission["stage"] == p["stage"] and admission["resource"] == resource
-            and admission["seconds"] == cap and admission["runtime"] == rt and admission["command"][-len(suffix):] == suffix
+            and admission["seconds"] == cap and admission["runtime"] == rt
             and admission["u3"] and admission["scope"], "phase admission differs")
     issued = datetime.fromisoformat(admission["issued_utc"])
     deadline = datetime.fromisoformat(admission["deadline_utc"])
@@ -581,7 +603,8 @@ def phase_start(protocol_ref: dict[str, str], admission_ref: dict[str, str], *, 
     require(p["owner"]["path"] in parent and core.file_sha(Path(p["owner"]["path"])) == p["owner"]["sha256"], "not selected direct owner")
     for flag, value in (("--name", p["stage"]), ("--seconds", str(cap)), ("--resource", resource)):
         require(parent.count(flag) == 1 and parent[parent.index(flag) + 1] == value, "outer owner phase differs")
-    require(parent[parent.index("--") + 1:] == admission["command"], "outer owner child command differs")
+    require(parent.count("--") == 1, "outer owner child separator ambiguous")
+    phase_command(admission, protocol_ref, admission_ref, parent[parent.index("--") + 1:], reader=reader)
     review = m.read(p["source_review"])
     require(review["status"] == SOURCE_REVIEW and review["source"] == p["source"] and review["findings"] == [], "unreviewed ruler source")
     design = m.read(p["design"])
