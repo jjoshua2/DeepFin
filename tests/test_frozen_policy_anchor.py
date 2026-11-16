@@ -83,7 +83,7 @@ def test_analytic_forward_kl_gradient_masks_and_detached_reference():
     assert student.grad is not None
     assert student.grad[0, 2] == 0
     assert reference_logits.grad is None
-    assert float(loss) > 0
+    assert float(loss.detach()) > 0
 
 
 @pytest.mark.parametrize("fault", ["missing", "unflagged", "empty", "width", "nan", "nonbinary", "eligibility"])

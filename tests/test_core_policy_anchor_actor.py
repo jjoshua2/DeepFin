@@ -52,7 +52,7 @@ def test_actual_decode_and_capture_refuse_before_constructor(tmp_path: Path, mon
     project(p)
     actor = p['actor']
     tag = collect.bank_lineage_identity(actor)
-    payload = {'model': {'tensor.' + str(i): torch.tensor([float(i)]) for i in range(494)},
+    payload: dict[str, Any] = {'model': {'tensor.' + str(i): torch.tensor([float(i)]) for i in range(494)},
         'arch': deepcopy(actor['architecture']), 'step': 2, collect.ANCHOR_BANK_CHECKPOINT_KEY: tag,
         'frozen_reference_policy_anchor_v1': disabled()}
     if fault == 'missing':

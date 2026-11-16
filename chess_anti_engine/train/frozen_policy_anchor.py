@@ -135,7 +135,7 @@ class FrozenPolicyAnchor:
         self.stamp = _checkpoint(reference["checkpoint"])
         original_load, original_build = torch.load, model_loader.build_model
         student_storage = {(str(t.device), t.untyped_storage().data_ptr()) for t in (*student.parameters(), *student.buffers()) if t.numel()}
-        loads = 0
+        loads: list[bool] = []
 
         def reject_alias(model: torch.nn.Module) -> None:
             if any((str(t.device), t.untyped_storage().data_ptr()) in student_storage for t in (*model.parameters(), *model.buffers()) if t.numel()):
@@ -147,9 +147,8 @@ class FrozenPolicyAnchor:
             return model
 
         def checked_load(*args: Any, **kwargs: Any) -> Any:
-            nonlocal loads
-            loads += 1
-            if loads != 1 or Path(args[0]) != Path(reference["checkpoint"]["path"]) or kwargs.get("weights_only") is not True:
+            loads.append(True)
+            if len(loads) != 1 or Path(args[0]) != Path(reference["checkpoint"]["path"]) or kwargs.get("weights_only") is not True:
                 raise ValueError("unexpected frozen reference decode")
             payload = original_load(*args, **kwargs)
             if not isinstance(payload, dict) or canonical(payload.get("arch")) != canonical(reference["architecture"]) or type(payload.get("step")) is not int or payload["step"] != reference["checkpoint_step"]:
@@ -159,7 +158,7 @@ class FrozenPolicyAnchor:
         with preserve_rng(), patch.object(torch, "load", checked_load), patch.object(model_loader, "build_model", checked_build):
             model = model_loader.load_model_from_checkpoint(Path(reference["checkpoint"]["path"]),
                 device=str(next(student.parameters()).device), require_complete=True)
-        if loads != 1:
+        if len(loads) != 1:
             raise ValueError("frozen reference was not decoded exactly once")
         if _checkpoint(reference["checkpoint"]) != self.stamp:
             raise ValueError("reference changed during setup")
