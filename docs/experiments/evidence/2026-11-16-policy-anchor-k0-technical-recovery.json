@@ -19,6 +19,36 @@
   },
   "new_phase_namespace": "D1-T1; no reuse of earlier unadmitted A-R1",
   "prospective_recovery_family": "core_bank_learner_K0_failed_gpu_closed_cpu_recovery_v1",
+  "qualification_dependency_order": {
+    "after_all_four_deliveries_before_any_DEV_or_HOLD_consumer_use": [
+      "deliberate minimal frozen-runtime adoption of published consumer blobs",
+      "single bounded400/370 local qualification with full exact unit roster and twelve genuine metadata controls, including all four actual model deliveries",
+      "Root and independent qualification acceptance"
+    ],
+    "before_remaining_three_training": [
+      "actual full-path engineering qualification",
+      "actual K0 CPU recovery audit",
+      "Root and independent acceptance of recovery",
+      "published compatible consumer code with independent source review and hosted CI",
+      "new specific Root T1 training authority and fresh bound admissions"
+    ],
+    "execution_authorized": false,
+    "schema": "ROOT_D1_T1_SOURCE_PREREQUISITE_ORDER_CLARIFICATION_V1",
+    "scope": "Clarifies phrase new Main consumer qualification in source-selection future_continuation; preserves original D1 all-four-model-before-local-Q dependency.",
+    "source_selection": {
+      "path": "rl-week-one-20261112-v1/prospective-KL-D1-K0-technical-recovery-root-source-selection-v1/selection.json",
+      "sha256": "116d422c9d8f14c1401f9da7b3eb07b7da5b93e322c47219f2796f9b8deb3d30"
+    },
+    "status": "SOURCE_ONLY_NO_EXECUTION_AUTHORITY",
+    "unchanged": [
+      "all scientific recipes/data/seed/dose",
+      "all original evaluation/control requirements",
+      "single400-second engineering CPU reservation, no extra qualification",
+      "all resource/cost/deadline bounds",
+      "original technical stop before explicit T1 gates",
+      "no new authority or execution granted"
+    ]
+  },
   "read_boundary_directly_verified": {
     "CUDA_retry_batches": 0.0,
     "applied_updates": 4096,
