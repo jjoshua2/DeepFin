@@ -203,7 +203,7 @@ def test_duplicate_manifest_keys_and_changed_input_refused(tmp_path: Path, monke
             Path(ref['path']).chmod(0o644)
         return value
     monkeypatch.setattr(collect, 'checked', changed)
-    with pytest.raises(ValueError, match="^exclusion metadata must be readonly regular files$"):
+    with pytest.raises(ValueError, match=r"^exclusion metadata must be readonly regular files$"):
         index.load(envelope)
     monkeypatch.setattr(collect, 'checked', real)
     path = Path(envelope['manifest']['path'])
