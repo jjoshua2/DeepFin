@@ -31,13 +31,17 @@ DATA_PROTOCOL = "CORE_FINITE_DATA_ADMISSION_V1"
 DATA_SPEC = "core_generation_data_spec_v1"
 DATA_CANDIDATE = "CORE_TRAIN_GENERATION_DATA_CANDIDATE_V1"
 DATA_GAME_CANDIDATE = "VERIFIED_RESOLVED_CORE_DATA_GAME_CANDIDATE_V1"
+HOLDOUT_DATA_PROTOCOL = "CORE_FINITE_HOLDOUT_DATA_ADMISSION_V1"
+HOLDOUT_DATA_SPEC = "core_generation_holdout_data_spec_v1"
+HOLDOUT_CANDIDATE = "CORE_HOLDOUT_GENERATION_DATA_CANDIDATE_V1"
+HOLDOUT_GAME_CANDIDATE = "VERIFIED_RESOLVED_CORE_HOLDOUT_GAME_CANDIDATE_V1"
 
 
-def validate_data_spec(spec: dict[str, Any]) -> None:
+def _validate_data_spec(spec: dict[str, Any], *, holdout: bool) -> None:
     """Validate data assertions and source closure without any learning recipe."""
     require(set(spec) == {"schema", "run_uuid", "collection_uuid", "generation", "source_revision", "source_files",
                           "architecture", "actor_sha256", "actor_checkpoint_step", "games_per_generation",
-                          "max_games_per_generation"} and spec["schema"] == DATA_SPEC, "invalid data specification fields/schema")
+                          "max_games_per_generation"} and spec["schema"] == (HOLDOUT_DATA_SPEC if holdout else DATA_SPEC), "invalid data specification fields/schema")
     for key in ("run_uuid", "collection_uuid"):
         require(type(spec[key]) is str and str(uuid.UUID(spec[key])) == spec[key], "invalid canonical " + key)
     learning.integer(spec["generation"], "logical generation")
@@ -52,6 +56,8 @@ def validate_data_spec(spec: dict[str, Any]) -> None:
     require(minimum <= maximum, "invalid data generation game bounds")
     pins = spec["source_files"]
     required = set(learning.SOURCE_FILES) | {"scripts/core_finite_admit.py", "scripts/core_generation_data_admit.py"}
+    if holdout:
+        required |= {"scripts/core_finite_holdout_collect.py", "scripts/core_generation_holdout_admit.py"}
     require(isinstance(pins, dict) and required <= pins.keys(), "missing data source pins")
     for name, expected in pins.items():
         require(type(name) is str and not Path(name).is_absolute(), "invalid data source path")
@@ -60,6 +66,14 @@ def validate_data_spec(spec: dict[str, Any]) -> None:
         require(type(expected) is str and re.fullmatch("[0-9a-f]{64}", expected) is not None,
                 "invalid data source SHA256")
         require(learning.file_sha(path) == expected, "data source mismatch: " + name)
+
+
+def validate_data_spec(spec: dict[str, Any]) -> None:
+    _validate_data_spec(spec, holdout=False)
+
+
+def validate_holdout_data_spec(spec: dict[str, Any]) -> None:
+    _validate_data_spec(spec, holdout=True)
 
 
 def data_producer_identity(spec: dict[str, Any], producer: dict[str, Any]) -> None:
@@ -75,11 +89,11 @@ def ref(path: Path) -> dict[str, str]:
     return {"path": str(path), "sha256": learning.file_sha(path)}
 
 
-def check_owner(binding: dict[str, Any], protocol_ref: dict[str, str], producer: dict[str, Any]) -> dict[str, Any]:
+def _check_owner(binding: dict[str, Any], protocol_ref: dict[str, str], producer: dict[str, Any], *, holdout: bool) -> dict[str, Any]:
     require(set(binding) == {"terminal", "owner_sha256", "command"}, "invalid producer owner binding")
     _, terminal = learning.read_ref(binding["terminal"], readonly=False)
     command = binding["command"]
-    suffix = ["-m", "scripts.core_finite_collect", "--execute", "--protocol", protocol_ref["path"],
+    suffix = ["-m", "scripts.core_finite_holdout_collect" if holdout else "scripts.core_finite_collect", "--execute", "--protocol", protocol_ref["path"],
               "--protocol-sha256", protocol_ref["sha256"]]
     # --admission is mandatory on the real collector and is itself hash-pinned.
     require(isinstance(command, list) and all(isinstance(x, str) and x for x in command), "invalid producer command")
@@ -87,7 +101,7 @@ def check_owner(binding: dict[str, Any], protocol_ref: dict[str, str], producer:
             command[-2] == "--admission-sha256" and command[-(len(suffix) + 4):-4] == suffix,
             "producer command does not invoke the exact protocol")
     _, admission = learning.read_ref({"path": command[-3], "sha256": command[-1]})
-    require(admission["status"] == "ROOT_ADMITS_CORE_GENERATION_V1" and
+    require(admission["status"] == ("ROOT_ADMITS_CORE_HOLDOUT_GENERATION_V1" if holdout else "ROOT_ADMITS_CORE_GENERATION_V1") and
             admission["protocol_sha256"] == protocol_ref["sha256"], "producer stage admission changed")
     require(terminal.get("status") == "PASS" and type(terminal.get("returncode")) is int
             and terminal["returncode"] == 0 and terminal.get("owned_processes_closed") is True
@@ -106,6 +120,10 @@ def check_owner(binding: dict[str, Any], protocol_ref: dict[str, str], producer:
             current = None
         require(current != birth, "producer birth still alive")
     return admission
+
+
+def check_owner(binding: dict[str, Any], protocol_ref: dict[str, str], producer: dict[str, Any]) -> dict[str, Any]:
+    return _check_owner(binding, protocol_ref, producer, holdout=False)
 
 
 def gates(protocol: dict[str, Any], contract: dict[str, Any], producer: dict[str, Any],
@@ -229,8 +247,8 @@ def stored_validation_view(arrays: dict[str, Any], raw: dict[str, Any]) -> dict[
     return view
 
 
-def verify_game(item: dict[str, Any], planned: dict[str, Any], producer: dict[str, Any],
-                verifier: Any, game: Any, adapter: Any, caps: dict[str, int]) -> tuple[dict[str, Any], int]:
+def _verify_game(item: dict[str, Any], planned: dict[str, Any], producer: dict[str, Any],
+                verifier: Any, game: Any, adapter: Any, caps: dict[str, int], *, holdout: bool) -> tuple[dict[str, Any], int]:
     import chess
     import numpy as np
     from chess_anti_engine.core_generation_data import capture_raw_targets, validate_stored_targets
@@ -256,7 +274,7 @@ def verify_game(item: dict[str, Any], planned: dict[str, Any], producer: dict[st
     common: dict[str, Any] = {"run_uuid": producer["run_uuid"], "collection_uuid": producer["collection_uuid"],
               "generation": producer["generation"], "source_revision": producer["source"]["revision"],
               "actor_sha256": producer["actor"]["sha256"], "served_state_sha256": verifier.served_state_sha256,
-              "physical_game_id": planned["physical_game_id"], "bank": "train", "game_id": audit_dict["game_id"],
+              "physical_game_id": planned["physical_game_id"], "bank": "holdout" if holdout else "train", "game_id": audit_dict["game_id"],
               "rows": audit_dict["retained_samples"], "scientific_class": issued["scientific_class"]}
     require(all(all(doc.get(key) == value and type(doc.get(key)) is type(value) for key, value in common.items())
                 for doc in [item, *documents.values()]), "source/game/actor/common identity differs")
@@ -356,13 +374,19 @@ def verify_game(item: dict[str, Any], planned: dict[str, Any], producer: dict[st
             "proof_sha256": proof.proof_sha256}, decoded
 
 
-def _execute(protocol_ref: dict[str, str], *, data_only: bool) -> dict[str, Any]:
+def verify_game(item: dict[str, Any], planned: dict[str, Any], producer: dict[str, Any],
+                verifier: Any, game: Any, adapter: Any, caps: dict[str, int]) -> tuple[dict[str, Any], int]:
+    return _verify_game(item, planned, producer, verifier, game, adapter, caps, holdout=False)
+
+
+def _execute(protocol_ref: dict[str, str], *, data_only: bool, holdout: bool = False) -> dict[str, Any]:
     require(Path(__file__).resolve() == learning.REPO / "scripts/core_finite_admit.py", "foreign auditor entrypoint")
     _, p = learning.read_ref(protocol_ref)
+    require(not holdout or data_only, "HOLDOUT has no recipe-bound audit route")
     specification_key = "data_spec" if data_only else "learner_contract"
     require(set(p) == {"schema", specification_key, "producer_protocol", "producer_readout", "producer_inventory",
                        "producer_owner", "gates", "runtime", "output_root", "limits"}
-            and p["schema"] == (DATA_PROTOCOL if data_only else "CORE_FINITE_ADMISSION_V1"), "invalid audit protocol")
+            and p["schema"] == (HOLDOUT_DATA_PROTOCOL if holdout else DATA_PROTOCOL if data_only else "CORE_FINITE_ADMISSION_V1"), "invalid audit protocol")
     runtime_guard(p)
     caps = p["limits"]
     require(set(caps) == {"max_metadata_bytes", "max_inventory_files", "max_inventory_bytes",
@@ -383,7 +407,10 @@ def _execute(protocol_ref: dict[str, str], *, data_only: bool) -> dict[str, Any]
 
         _, contract = learning.read_ref(p[specification_key])
         if data_only:
-            validate_data_spec(contract)
+            if holdout:
+                validate_holdout_data_spec(contract)
+            else:
+                validate_data_spec(contract)
         else:
             learning.validate_contract(contract)
             require("scripts/core_finite_admit.py" in contract["source_files"], "audit source is not pinned")
@@ -395,15 +422,19 @@ def _execute(protocol_ref: dict[str, str], *, data_only: bool) -> dict[str, Any]
                 and Path(producer["source"]["checkout"]).resolve() == learning.REPO,
                 "collector and learner must use the same final integrated source")
         gates(p, contract, producer, None)
-        root_stage = check_owner(p["producer_owner"], p["producer_protocol"], producer)
+        root_stage = _check_owner(p["producer_owner"], p["producer_protocol"], producer, holdout=True) if holdout else check_owner(p["producer_owner"], p["producer_protocol"], producer)
         require(all(root_stage[key] == producer[value] for key, value in
                     (("run_uuid", "run_uuid"), ("generation", "generation"))) and
                 root_stage["source_revision"] == producer["source"]["revision"] and
                 root_stage["actor_sha256"] == producer["actor"]["sha256"], "producer admission identities differ")
         roster = collection.checked(producer["roster"])
         require(learning.file_sha(Path(producer["starts"]["path"])) == producer["starts"]["sha256"], "starts changed")
-        collection.validate_protocol(producer, roster)
-        native = collection.source_guard(producer)
+        if holdout:
+            collection.validate_holdout_protocol(producer, roster)
+            native = collection.holdout_source_guard(producer)
+        else:
+            collection.validate_protocol(producer, roster)
+            native = collection.source_guard(producer)
         for image in native["native_images"]:
             module = importlib.import_module(image["module"])
             filename = getattr(module, "__file__", None)
@@ -425,7 +456,7 @@ def _execute(protocol_ref: dict[str, str], *, data_only: bool) -> dict[str, Any]
                 and sum(row["bytes"] for row in full_inventory["files"]) <= caps["max_inventory_bytes"], "producer inventory budget/root differs")
         learning.verify_inventory(full_inventory)
         readout_path, readout = learning.read_ref(p["producer_readout"], max_bytes=caps["max_metadata_bytes"])
-        require(readout_path == producer_root / "readout.json" and readout["status"] == "COLLECTED_CORE_GENERATION_V1"
+        require(readout_path == producer_root / "readout.json" and readout["status"] == ("COLLECTED_CORE_HOLDOUT_GENERATION_V1" if holdout else "COLLECTED_CORE_GENERATION_V1")
                 and readout["protocol_sha256"] == p["producer_protocol"]["sha256"] and
                 all(readout[key] == producer[key] for key in ("run_uuid", "collection_uuid", "generation", "attempts")) and
                 readout["source_revision"] == contract["source_revision"] and readout["actor_sha256"] == producer["actor"]["sha256"]
@@ -467,7 +498,7 @@ def _execute(protocol_ref: dict[str, str], *, data_only: bool) -> dict[str, Any]
             item = completed[str(i)]
             _, receipt = learning.read_ref(ref(producer_root / f"completed-{i}.json"))
             require(receipt == item and Path(item["path"]) == producer_root / f"game-{i}", "completed receipt/path differs")
-            checked, size = verify_game(item, planned, producer, verifier, cfg["game"], adapter, caps)
+            checked, size = _verify_game(item, planned, producer, verifier, cfg["game"], adapter, caps, holdout=True) if holdout else verify_game(item, planned, producer, verifier, cfg["game"], adapter, caps)
             decoded += size
             require(decoded <= caps["max_total_decoded_bytes"], "total decoded budget exceeded")
             audited.append(checked)
@@ -482,14 +513,20 @@ def _execute(protocol_ref: dict[str, str], *, data_only: bool) -> dict[str, Any]
         gates(p, contract, producer, eligible)
         verifier.close()
         verifier = None
-        collection.source_guard(producer)
+        if holdout:
+            collection.holdout_source_guard(producer)
+        else:
+            collection.source_guard(producer)
         learning.import_custody()
         require(learning.file_sha(actor) == producer["actor"]["sha256"], "actor changed during CPU audit")
         learning.verify_inventory(full_inventory)
         if data_only:
             _, final_spec = learning.read_ref(p["data_spec"])
             require(final_spec == contract, "data specification changed during audit")
-            validate_data_spec(final_spec)
+            if holdout:
+                validate_holdout_data_spec(final_spec)
+            else:
+                validate_data_spec(final_spec)
         games = []
         for game in eligible:
             path = output / ("game-" + game["physical_game_id"].rsplit(":", 1)[1] + ".json")
@@ -499,10 +536,12 @@ def _execute(protocol_ref: dict[str, str], *, data_only: bool) -> dict[str, Any]
                        "resolved": True, "full_history_verified": True, "raw_targets_verified": True,
                        "audit_protocol": protocol_ref}
             if data_only:
-                wrapper.update(status=DATA_GAME_CANDIDATE, data_spec=p["data_spec"],
+                wrapper.update(status=HOLDOUT_GAME_CANDIDATE if holdout else DATA_GAME_CANDIDATE, data_spec=p["data_spec"],
                                collection_uuid=producer["collection_uuid"], logical_generation=producer["generation"],
                                actor_checkpoint_step=producer["actor"]["expected_checkpoint_step"],
                                candidate_only=True, learning_admitted=False, root_postclosure_promotion_required=True)
+            if holdout:
+                wrapper["evaluation_only"] = True
             learning.write_json(path, wrapper)
             games.append({key: game[key] for key in ("physical_game_id", "game_id", "bank", "rows", "label_class", "shard")} | {"producer_proof": ref(path)})
         manifest = {"schema": "ROOT_ACCEPTED_CORE_TRAIN_GENERATION_V1", "run_uuid": producer["run_uuid"],
@@ -510,9 +549,11 @@ def _execute(protocol_ref: dict[str, str], *, data_only: bool) -> dict[str, Any]
                     "actor_sha256": producer["actor"]["sha256"], "actor_serving": readout["actor_serving"], "games": games,
                     "audit_protocol": protocol_ref, "root_postclosure_promotion_required": True}
         if data_only:
-            manifest.update(schema=DATA_CANDIDATE, data_spec=p["data_spec"], collection_uuid=producer["collection_uuid"],
+            manifest.update(schema=HOLDOUT_CANDIDATE if holdout else DATA_CANDIDATE, data_spec=p["data_spec"], collection_uuid=producer["collection_uuid"],
                             logical_generation=producer["generation"], actor_checkpoint_step=producer["actor"]["expected_checkpoint_step"],
                             candidate_only=True, learning_admitted=False)
+        if holdout:
+            manifest["evaluation_only"] = True
         learning.write_json(output / "generation.json", manifest)
         result = {"status": "AUDITED_CORE_TRAIN_GENERATION_CANDIDATE_PENDING_ROOT_CLOSURE_V1", "audit_protocol": protocol_ref,
                   "generation_manifest": ref(output / "generation.json"), "attempts": len(audited), "audited": audited,
@@ -522,10 +563,12 @@ def _execute(protocol_ref: dict[str, str], *, data_only: bool) -> dict[str, Any]
                   "side_effect_count_scope": "source call graph; not instrumented constructor/forward counters",
                   "policy_limit": "original F32 observation plus legal/strictTB recheck; no independent Gumbel replay"}
         if data_only:
-            result.update(status="AUDITED_CORE_DATA_GENERATION_CANDIDATE_PENDING_ROOT_CLOSURE_V1",
+            result.update(status="AUDITED_CORE_HOLDOUT_GENERATION_CANDIDATE_PENDING_ROOT_CLOSURE_V1" if holdout else "AUDITED_CORE_DATA_GENERATION_CANDIDATE_PENDING_ROOT_CLOSURE_V1",
                           data_spec=p["data_spec"], collection_uuid=producer["collection_uuid"],
                           logical_generation=producer["generation"], actor_checkpoint_step=producer["actor"]["expected_checkpoint_step"],
                           candidate_only=True, learning_admitted=False)
+        if holdout:
+            result["evaluation_only"] = True
         learning.write_json(output / "readout.json", result)
         learning.seal(output)
         learning.fsync_directory(output)
@@ -533,7 +576,7 @@ def _execute(protocol_ref: dict[str, str], *, data_only: bool) -> dict[str, Any]
         return result
     except BaseException as error:
         marker = learning.failure_marker(output)
-        learning.write_json(marker, {"status": "FAILED_CORE_DATA_ADMISSION_V1" if data_only else "FAILED_CORE_ADMISSION_V1",
+        learning.write_json(marker, {"status": "FAILED_CORE_HOLDOUT_DATA_ADMISSION_V1" if holdout else "FAILED_CORE_DATA_ADMISSION_V1" if data_only else "FAILED_CORE_ADMISSION_V1",
                                     "error": repr(error), "protocol": protocol_ref,
                                     "root_postclosure_promotion_required": True, "learning_admitted": False})
         marker.chmod(0o444)
@@ -553,6 +596,11 @@ def execute(protocol_ref: dict[str, str]) -> dict[str, Any]:
 def execute_data(protocol_ref: dict[str, str]) -> dict[str, Any]:
     """Recipe-independent assertions, candidate data only; never learning admission."""
     return _execute(protocol_ref, data_only=True)
+
+
+def execute_holdout_data(protocol_ref: dict[str, str]) -> dict[str, Any]:
+    """Fixed HOLDOUT-only candidate route; no learner or TRAIN authority."""
+    return _execute(protocol_ref, data_only=True, holdout=True)
 
 
 def main(argv: list[str] | None = None) -> int:
