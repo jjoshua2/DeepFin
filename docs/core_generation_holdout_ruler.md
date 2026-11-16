@@ -375,3 +375,40 @@ unblended WDL-to-Q source path, not an invented argument. Gumbel fields, vloss
 and target batch remain observations of actual constructed objects and actual
 positive calls on each side. These are required contracts for the future DEV
 helper/reader; this source change has not executed or qualified them.
+
+### D1-T1: one selected K0 saved-endpoint recovery
+
+The additive `core_bank_learner_K0_failed_gpu_closed_cpu_recovery_v1` family is
+restricted to D1 K0 and the exact failed GPU terminal, public boundary and saved
+checkpoint in source selection `116d422c…`. It uses a distinct Root10/ind12
+receipt and a separate closed CPU 600 / 570-second audit. The original GPU
+terminal remains FAILED. It is never an old Root9/ind8 same-GPU PASS receipt.
+
+The Root10 adds `recovery_authority` to the existing nine fields. The independent
+receipt copies all ten facts, substitutes its distinct status, and adds
+`root_acceptance` and `findings`. The authority is a caller-trusted strictref at
+the canonical Root-owned T1 path. It binds the exact source selection, its review,
+a Root-derived publication projection of the actual mechanical amendment, the
+accepted auditor, and the selected trigger. The actual CPU admission must name
+the same authority. Source selection, publication or status alone grants no
+execution or model-delivery authority.
+
+The saved-only proof verifies complete saved metadata/state, active optimizer
+slots, scheduler, ZClip, provenance, recorded five-stream boundary, full replay
+membership and all original journal draws. It carries no reconstructed own-live
+fingerprint or historical final GPU/source/native/runtime/RNG bracket. The
+architecture-matched historical synthetic full494 shape/alias map is explicitly
+`MODEL_LAYOUT_BASIS_ONLY`; it provides no K0 live weights or training credit.
+Current CPU runtime/source/native custody is separate. The scheduler endpoint
+is index 4,095 because the real Trainer updates its scheduler before incrementing
+the completed-update counter to 4,096.
+
+The ordinary CPU and same-GPU families retain their original gates. The corrected
+production D1 prover fingerprint `139ec1c4…` additionally requires its exact
+accepted source review; the original `cceb3d1d…` route remains unchanged. The
+engineering-only two-update prover is never a scientific delivery. Recovery for
+other arms, other failed owners, arbitrary saved survivors, or an unissued Root
+T1 authority is refused. The later 400 / 370-second consumer qualification still
+requires four real model metadata controls (recovered K0 plus three complete GPU
+arms), alongside bank, asset and prefix controls, before DEV/HOLD use. It is not
+a prerequisite that would cyclically block the three remaining training arms.

@@ -1,0 +1,253 @@
+"""Fictional recovery authorities, real public metadata predicates; no payloads.
+
+Only caller-trusted issuer/path anchors are redirected to fixture objects. The
+failed-owner, CPU-owner, amendment, family, saved-proof and coverage predicates
+run unmocked. No real checkpoint/journal/row/native source is opened.
+"""
+from __future__ import annotations
+
+import copy
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from scripts import core_generation_holdout_ruler as ruler
+from tests.test_core_same_gpu_payload_delivery import gpu_graph, seal
+
+
+def read(ref: dict[str, str]) -> Any:
+    return json.loads(Path(ref["path"]).read_bytes())
+
+
+def recovery_graph(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str = "") -> tuple[dict[str, Any], ruler.bank.AcceptedGeneration]:
+    binding, train = gpu_graph(tmp_path, arm="K0", d1=True,
+        design_ref={"path": str(tmp_path / "design.json"), "sha256": ruler.D1_DESIGN_SHA256})
+    original = read(binding["root"])
+    oldproof = read(original["payload_audit"]["readout"])
+    oldplan_ref = oldproof["observer_plan"]
+    oldplan = read(oldplan_ref)
+    oldplan["arm"] = "K0"
+    # The graph writer carries the original plan SHA into every original owner
+    # command/admission when the extra arm field changes that genuine edge.
+    oldplan_ref2 = seal(tmp_path / "original-plan.json", oldplan)
+    failed = copy.deepcopy(original["learner_owner"])
+    original_ad = read(failed["admission"])
+    cmd = failed["command"]
+    cmd[cmd.index("--observer-plan") + 1] = oldplan_ref2["path"]
+    cmd[cmd.index("--observer-plan-sha256") + 1] = oldplan_ref2["sha256"]
+    original_ad["observer_plan"] = oldplan_ref2
+    cmd[cmd.index("--admission") + 1] = str(tmp_path / "original-failed-admission.json")
+    normalized = list(cmd)
+    normalized[normalized.index("--admission-sha256") + 1] = "SELF_ADMISSION_SHA256"
+    original_ad["normalized_child"] = normalized
+    failed["admission"] = seal(tmp_path / "original-failed-admission.json", original_ad)
+    cmd[cmd.index("--admission-sha256") + 1] = failed["admission"]["sha256"]
+    terminal = read(failed["terminal"])
+    terminal.update(status="PASS" if fault == "failed_status" else "FAILED", returncode=1, command=cmd)
+    failed["terminal"] = seal(tmp_path / "original-failed-terminal.json", terminal)
+    failed["closure"]["exit_code"] = 0 if fault == "failed_exit" else 1
+    historical_close = seal(tmp_path / "original-close.json", {
+        "status": "ROOT_OBSERVES_SUPPORTED_EOF_CLOSED_CUSTODY_NO_RESULT_ACCEPTANCE_V1",
+        "terminal": failed["terminal"], "admission": failed["admission"], "closure": failed["closure"],
+        "command": seal(tmp_path / "original-command.json", {"child": cmd})})
+    trigger = {"terminal": failed["terminal"], "closure": historical_close,
+        "public_boundary": original["boundary"], "checkpoint_REFERENCE_ONLY": original["checkpoint"],
+        "helper": oldplan["helper"], "log": {"path": str(tmp_path / "failed-log.txt"), "sha256": "e" * 64},
+        "owner_wall_seconds": terminal["wall_seconds"]}
+    selected = seal(tmp_path / "selected-source.json", {"execution_authorized": False,
+        "design": {"path": str(tmp_path / "design.json"), "sha256": ruler.D1_DESIGN_SHA256}, "trigger": trigger})
+    selection_review = seal(tmp_path / "selection-review.json", {"findings": []})
+    monkeypatch.setattr(ruler, "K0_RECOVERY_SELECTION", selected)
+    monkeypatch.setattr(ruler, "K0_RECOVERY_SELECTION_REVIEW", selection_review)
+    authority_path = str(tmp_path / "root-authority.json")
+    amendment_path = str(tmp_path / "amendment-publication.json")
+    monkeypatch.setattr(ruler, "K0_RECOVERY_AUTHORITY_PATH", authority_path)
+    monkeypatch.setattr(ruler, "K0_RECOVERY_AMENDMENT_PATH", amendment_path)
+    helper = {"path": "/fiction/K0-audit.py", "sha256": ruler.K0_RECOVERY_HELPER}
+    source_review = seal(tmp_path / "audit-source-review.json", {
+        "status": "ACCEPT_KL_D1_K0_SAVED_ENDPOINT_RECOVERY_SOURCE_ONLY_NO_FINDINGS_V1",
+        "helper": helper, "source_pins": oldproof["source_pins"], "findings": []})
+    monkeypatch.setattr(ruler, "K0_RECOVERY_SOURCE_REVIEW", source_review)
+    amendment = seal(Path(amendment_path), {
+        "status": "ROOT_RECORDS_PUBLISHED_D1_T1_MECHANICAL_RECOVERY_AMENDMENT_V1", "selection": selected,
+        "design": read(selected)["design"], "main_revision": "f" * 40,
+        "document_path": "docs/experiments/fictional-recovery.md", "document_sha256": "a" * 64,
+        "independent_source_review": seal(tmp_path / "amendment-review.json", {"findings": []})})
+    authority = seal(Path(authority_path), {
+        "status": "ROOT_AUTHORIZES_KL_D1_T1_K0_SAVED_ENDPOINT_RECOVERY_V1", "selection": selected,
+        "selection_review": selection_review, "amendment": amendment, "auditor": helper,
+        "auditor_source_review": source_review, "trigger": trigger})
+    failed_observation = seal(Path(oldplan["observation"] + ".failed.json"), {
+        "status": "FAILED_KL_DEVELOPMENT_FIRST_D1_PASSIVE_PROOF_NO_DELIVERY_V1",
+        "error": "RuntimeError('saved counters/architecture/reference')"})
+    proof_path = tmp_path / "recovery-proof.json"
+    plan = {"schema": "KL_D1_K0_SAVED_ENDPOINT_RECOVERY_PLAN_V1",
+        "status": "BOUND_KL_D1_K0_SAVED_ENDPOINT_RECOVERY_NOT_DELIVERY_AUTHORITY_V1",
+        "selection": selected, "selection_review": selection_review, "authority": authority, "layout_basis": ruler.K0_LAYOUT_BASIS,
+        "helper": helper, "source_review": source_review, "source_pins": oldproof["source_pins"],
+        **{key: original[key] for key in ("contract", "stage", "boundary", "checkpoint")},
+        "failed_gpu_owner": failed, "original_observer_plan": oldplan_ref2, "failed_observation": failed_observation,
+        "observation": str(proof_path), "limits": {"outer_seconds": 600, "inner_seconds": 570,
+            "checkpoint_file_bytes": 8 << 30, "journal_bytes": 64 << 20, "serialized_read_bytes": 32 << 30, "aggregate_bytes": 4 << 20}}
+    planref = seal(tmp_path / "recovery-plan.json", plan)
+    adpath = tmp_path / "CPU-admission.json"
+    cpu_command = ["/fiction/python", "-I", "-B", helper["path"], "--recovery-plan", planref["path"],
+        "--recovery-plan-sha256", planref["sha256"], "--admission", str(adpath), "--admission-sha256", "SELF_ADMISSION_SHA256"]
+    cpu_ad = {"status": "ROOT_ADMITS_KL_D1_T1_K0_SAVED_ENDPOINT_RECOVERY_CPU_V1", "execution_authorized": True,
+        "recovery_plan": planref, "authority": authority, "resource": "cpu", "seconds": 600,
+        "owner": {"sha256": "e" * 64}, "normalized_child": list(cpu_command), "helper": helper,
+        "source_review": source_review, "source_pins": oldproof["source_pins"]}
+    if fault == "cpu_authority":
+        cpu_ad["authority"] = {**authority, "sha256": "0" * 64}
+    elif fault == "cpu_normalized":
+        cpu_ad["normalized_child"][0] = "/fiction/wrong-python"
+    adref = seal(adpath, cpu_ad)
+    cpu_command[cpu_command.index("--admission-sha256") + 1] = adref["sha256"]
+    cpu_terminal = {**terminal, "status": "PASS", "returncode": 0, "command": cpu_command,
+        "resource": "cpu", "seconds": 600}
+    if fault == "cpu_resource":
+        cpu_terminal["resource"] = "gpu"
+    elif fault == "cpu_cap":
+        cpu_terminal["seconds"] = 601
+    cpu_owner = {"terminal": seal(tmp_path / "CPU-terminal.json", cpu_terminal), "admission": adref, "command": cpu_command,
+        "source_revision": failed["source_revision"], "cwd": failed["cwd"], "closure": {**failed["closure"], "exit_code": 0}}
+    if fault == "cpu_closure":
+        cpu_owner["closure"]["owned_births_closed"] = False
+    proof = {"status": ruler.K0_RECOVERY_PENDING, "arm": "K0", "helper": helper, "source_review": source_review,
+        "source_pins": oldproof["source_pins"], "source_revision": original["source_revision"], "source_checkout": original["source_checkout"],
+        **{key: original[key] for key in ("contract", "stage", "boundary", "checkpoint")},
+        "architecture": read(original["contract"])["architecture"], "step": 4096, "failed_gpu_owner": failed,
+        "recovery_authority": authority, "original_failure_log": trigger["log"], "historical_closure": historical_close,
+        "original_observer_plan": oldplan_ref2, "failed_observation": failed_observation, "recovery_plan": planref,
+        "layout_basis": {**ruler.K0_LAYOUT_BASIS, "scope": "MODEL_LAYOUT_BASIS_ONLY"},
+        "saved_checks": dict.fromkeys(("model", "optimizer", "scheduler", "zclip", "counters", "recorded_rng", "journal", "membership", "policy_anchor", "provenance"), True),
+        "checkpoint_CPU_weights_only_decodes": 1, "own_live_state_reconstructed": False,
+        "historical_final_brackets_reconstructed": False, "historical_reference_immutability_reconstructed": False,
+        **dict.fromkeys(("model_state_sha256", "saved_payload_fingerprint", "key_shape_dtype_sha256", "scheduler_fingerprint", "zclip_fingerprint"), "3" * 64),
+        "optimizer_named_parameters": 479, "active_optimizer_slots": 438, "model_changed_from_authenticated_A39": True,
+        "five_rng_snapshot_sha256": oldproof["five_rng_snapshot_sha256"], "membership_sha256": oldproof["membership_sha256"],
+        "outer_seconds": 600, "absolute_inner_seconds": 570, "elapsed_seconds": 2.0, "CUDA_initialized": False,
+        "current_CPU_RNG_unchanged": True, "Torch_intra": 2, "Torch_interop": 2,
+        "current_native_named_file_bracket": {"fixture": "current-only actual audit witness"},
+        "serialized_read_bytes_total": 100, "serialized_read_bytes_limit": 32 << 30,
+        "serialized_read_bytes_by_category": {"fixture_metadata": 100}, "serialized_read_bytes_by_path": {"fiction.json": 100},
+        "draw_coverage": oldproof["draw_coverage"]}
+    if fault == "old_pass":
+        proof["status"] = ruler.D1_GPU_STATUS
+    elif fault == "own_live":
+        proof["own_live_state_fingerprint"] = "4" * 64
+    elif fault in {"historical_final_brackets_reconstructed", "own_live_state_reconstructed", "historical_reference_immutability_reconstructed"}:
+        proof[fault] = True
+    elif fault in {"membership_sha256", "five_rng_snapshot_sha256"}:
+        proof[fault] = "0" * 64
+    elif fault == "helper":
+        proof["helper"] = {**helper, "sha256": "0" * 64}
+    elif fault == "threads":
+        proof["Torch_interop"] = 1
+    elif fault == "decode":
+        proof["checkpoint_CPU_weights_only_decodes"] = 2
+    elif fault == "saved_checks":
+        proof["saved_checks"]["scheduler"] = False
+    elif fault == "integer_check":
+        proof["saved_checks"]["model"] = 1
+    elif fault == "budget":
+        proof["serialized_read_bytes_total"] += 1
+    elif fault == "views":
+        proof["draw_coverage"]["views"] -= 1
+    elif fault == "drop_game":
+        proof["draw_coverage"]["per_game_aggregate_counts"].pop()
+    root = {**original, "status": ruler.K0_RECOVERY_ROOT, "learner_owner": failed, "recovery_authority": authority,
+        "payload_audit": {"schema": ruler.K0_RECOVERY_SCHEMA, "readout": seal(proof_path, proof), "owner": cpu_owner}}
+    rref = seal(tmp_path / "recovery-root.json", root)
+    review = {**root, "status": ruler.K0_RECOVERY_REVIEW, "root_acceptance": rref, "findings": []}
+    return {"root": rref, "independent": seal(tmp_path / "recovery-review.json", review)}, train
+
+
+def test_specific_K0_recovery_real_delivery_and_full_game_coverage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    binding, train = recovery_graph(tmp_path, monkeypatch)
+    metadata = ruler.Metadata(1 << 20, 16 << 20)
+    model = ruler.model_delivery(metadata, binding, "K0", _d1=True)
+    ruler.same_gpu_game_coverage(metadata, binding, model, train, _d1=True)
+    assert model["step"] == 4096
+    assert len(train.games) == 192
+    root = metadata.read(binding["root"])
+    assert set(root) == {"status", "contract", "stage", "boundary", "checkpoint", "source_revision", "source_checkout", "learner_owner", "payload_audit", "recovery_authority"}
+    assert metadata.observed(root["learner_owner"]["terminal"])["status"] == "FAILED"
+    assert metadata.observed(root["payload_audit"]["owner"]["terminal"])["status"] == "PASS"
+    metadata.finish()
+
+
+@pytest.mark.parametrize(("fault", "message"), [
+    ("old_pass", "K0 saved-endpoint proof identity differs"),
+    ("failed_status", "original failed terminal/identity differs"),
+    ("failed_exit", "original failed closure differs"),
+    ("cpu_resource", "recovery CPU owner not exact closed PASS"),
+    ("cpu_cap", "recovery CPU owner not exact closed PASS"),
+    ("cpu_closure", "recovery CPU closure differs"),
+    ("cpu_authority", "recovery CPU admission/authority differs"),
+    ("cpu_normalized", "recovery CPU normalized admission differs"),
+    ("helper", "unsupported K0 recovery auditor"),
+    ("own_live", "K0 saved-only scope differs"),
+    ("historical_final_brackets_reconstructed", "K0 saved-only scope differs"),
+    ("own_live_state_reconstructed", "K0 saved-only scope differs"),
+    ("historical_reference_immutability_reconstructed", "K0 saved-only scope differs"),
+    ("saved_checks", "K0 saved-only scope differs"),
+    ("integer_check", "K0 saved-only scope differs"),
+    ("decode", "K0 saved-only scope differs"),
+    ("membership_sha256", "K0 recorded RNG/membership differs"),
+    ("five_rng_snapshot_sha256", "K0 recorded RNG/membership differs"),
+    ("threads", "current CPU recovery custody incomplete"),
+    ("budget", "K0 actual serialized-read accounting differs"),
+    ("views", "K0 recovered draw totals differ"),
+])
+def test_rehashed_recovery_proof_refusals(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str, message: str) -> None:
+    binding, _ = recovery_graph(tmp_path, monkeypatch, fault)
+    with pytest.raises(ValueError, match=message):
+        ruler.model_delivery(ruler.Metadata(1 << 20, 16 << 20), binding, "K0", _d1=True)
+
+
+@pytest.mark.parametrize(("label", "d1"), [("K001", True), ("K01", True), ("K1", True), ("K0", False), ("A", False)])
+def test_recovery_never_enters_other_arm_or_legacy_family(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, label: str, d1: bool) -> None:
+    binding, _ = recovery_graph(tmp_path, monkeypatch)
+    with pytest.raises(ValueError, match="K0 recovery is D1 K0 only"):
+        ruler.model_delivery(ruler.Metadata(1 << 20, 16 << 20), binding, label, _d1=d1)
+
+
+def test_recovery_missing_game_refused_after_real_delivery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    binding, train = recovery_graph(tmp_path, monkeypatch, "drop_game")
+    metadata = ruler.Metadata(1 << 20, 16 << 20)
+    model = ruler.model_delivery(metadata, binding, "K0", _d1=True)
+    with pytest.raises(ValueError, match="same-GPU coverage game roster differs"):
+        ruler.same_gpu_game_coverage(metadata, binding, model, train, _d1=True)
+
+
+@pytest.mark.parametrize(("variant", "message"), [
+    ("corrected", ""),
+    ("foreign_review", "corrected D1 prover review differs"),
+    ("engineering", "unsupported same-GPU prover"),
+])
+def test_corrected_4096_prover_explicit_fingerprint_not_engineering(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, variant: str, message: str) -> None:
+    # Factory default selects a fingerprint; restore the actual production
+    # allowlist BEFORE calling the real consumer. No predicate is patched.
+    fingerprint = "acf8aa74c99787bb715538a8842810953bed5f0592fb1e9278c60fdecc2810e7" if variant == "engineering" else ruler.D1_T1_GPU_HELPER
+    with monkeypatch.context() as factory:
+        factory.setattr(ruler, "D1_GPU_HELPER", fingerprint)
+        binding, train = gpu_graph(tmp_path, arm="K001", d1=True,
+            design_ref={"path": str(tmp_path / "design.json"), "sha256": ruler.D1_DESIGN_SHA256})
+    root = read(binding["root"])
+    saved = read(root["payload_audit"]["readout"])
+    if variant == "corrected":
+        # Fictional independent issuer anchor; exact accepted-reference guard
+        # and all review/plan/source/owner joins execute normally afterward.
+        monkeypatch.setattr(ruler, "D1_T1_GPU_SOURCE_REVIEW", saved["source_review"])
+    metadata = ruler.Metadata(1 << 20, 16 << 20)
+    if message:
+        with pytest.raises(ValueError, match=message):
+            ruler.model_delivery(metadata, binding, "K001", _d1=True)
+    else:
+        model = ruler.model_delivery(metadata, binding, "K001", _d1=True)
+        ruler.same_gpu_game_coverage(metadata, binding, model, train, _d1=True)
+        assert model["step"] == 4096
+        metadata.finish()

@@ -72,6 +72,21 @@ D1_EDGE_ROOT = "ROOT_ACCEPTS_CLOSED_POLICY_ANCHOR_D1_DEVELOPMENT_EDGE_V1"
 D1_EDGE_REVIEW = "ACCEPT_CLOSED_POLICY_ANCHOR_D1_DEVELOPMENT_EDGE_NO_FINDINGS_V1"
 
 
+_K0_WROOT = Path.home() / "chess-artifacts" / "operations" / "rl-week-one-20261112-v1"
+K0_RECOVERY_SCHEMA = "core_bank_learner_K0_failed_gpu_closed_cpu_recovery_v1"
+K0_RECOVERY_ROOT = "ROOT_ACCEPTS_CLOSED_KL_D1_T1_K0_SAVED_ENDPOINT_DELIVERY_V1"
+K0_RECOVERY_REVIEW = "ACCEPT_CLOSED_KL_D1_T1_K0_SAVED_ENDPOINT_DELIVERY_NO_FINDINGS_V1"
+K0_RECOVERY_PENDING = "KL_D1_K0_SAVED_ENDPOINT_CPU_AUDIT_PENDING_ROOT_CLOSURE_V1"
+K0_RECOVERY_HELPER = "0a222dae7777bccf7ae859296ed5db7b7485510a8b80afc76fcf98c3eec388c7"
+K0_RECOVERY_SOURCE_REVIEW = {"path": str(_K0_WROOT / 'prospective-KL-D1-K0-saved-endpoint-recovery-independent-source-review-v2/review.json'), "sha256": "dc97189926aa7ede41f8b6dfe504f2fa1edd7dad517042a80d1dfa3ffafe03b9"}
+K0_LAYOUT_BASIS = {"root": {"path": str(_K0_WROOT / 'full494-bank-handoff-software-bindings-v1/prepare-root-acceptance.json'), "sha256": "47dac48dabed292c9365eb5127ea3adf5c6d14a614ef55959a143c87b7e364f1"}, "readout": {"path": str(_K0_WROOT / 'full494-bank-handoff-software-fixture-v1/readout.json'), "sha256": "45f1080cad5b5375ea2a64356cf4f39bd8c2257f0cef3570a0a1df0debdb105e"}}
+K0_RECOVERY_SELECTION = {"path": str(_K0_WROOT / 'prospective-KL-D1-K0-technical-recovery-root-source-selection-v1/selection.json'), "sha256": "116d422c9d8f14c1401f9da7b3eb07b7da5b93e322c47219f2796f9b8deb3d30"}
+K0_RECOVERY_SELECTION_REVIEW = {"path": str(_K0_WROOT / 'prospective-KL-D1-K0-technical-recovery-independent-selection-review-v1/review.json'), "sha256": "272187c62b902bed02cf5f07bbe34f23062c25b67db08e194bb0e810dfc1c329"}
+K0_RECOVERY_AUTHORITY_PATH = str(_K0_WROOT / 'prospective-KL-D1-T1-K0-saved-endpoint-recovery-bindings-v1/root-authority.json')
+K0_RECOVERY_AMENDMENT_PATH = str(_K0_WROOT / 'prospective-KL-D1-T1-K0-saved-endpoint-recovery-bindings-v1/amendment-publication.json')
+D1_T1_GPU_HELPER = "139ec1c4f910e3193ae5d3a2578fd3d3bf667d055b597069c508f6e8c5d3dbf7"
+D1_T1_GPU_SOURCE_REVIEW = {"path": str(_K0_WROOT / 'prospective-KL-development-first-learner-proof-independent-source-review-v2/review.json'), "sha256": "16bb2fffe1b3e535269ffc9efa18d90e53aaec0f50b087cb26edc251118c09b3"}
+
 SOURCE_FILES = (
     "scripts/core_generation_holdout_score.py", "scripts/core_generation_holdout_read.py",
     "scripts/core_generation_holdout_ruler.py", "scripts/core_generation_holdout_metrics.py",
@@ -251,6 +266,9 @@ def model_delivery(m: Metadata, binding: dict[str, Any], label: str, *, _d1: boo
     """Prospective delivery interface; no payload or historical source reread."""
     require(set(binding) == {"root", "independent"}, "invalid model delivery binding")
     root = m.read(binding["root"])
+    if root.get("status") == K0_RECOVERY_ROOT or (type(root.get("payload_audit")) is dict and root["payload_audit"].get("schema") == K0_RECOVERY_SCHEMA):
+        require(_d1 and label == "K0", "K0 recovery is D1 K0 only")
+        return _k0_recovered_model_delivery(m, binding, label)
     review = m.read(binding["independent"])
     keys = {"status", "contract", "stage", "boundary", "checkpoint", "source_revision", "source_checkout", "learner_owner", "payload_audit"}
     require(set(root) == keys and root["status"] == DELIVERY_ROOT, "invalid learner delivery root")
@@ -312,6 +330,60 @@ def model_delivery(m: Metadata, binding: dict[str, Any], label: str, *, _d1: boo
 
 
 
+
+def _k0_recovered_model_delivery(m: Metadata, binding: dict[str, Any], label: str) -> dict[str, Any]:
+    """Only the selected failed K0 plus independent saved-endpoint CPU audit."""
+    _d1 = True
+    require(label == "K0", "K0 recovery is D1 K0 only")
+    require(set(binding) == {"root", "independent"}, "invalid model delivery binding")
+    root = m.read(binding["root"])
+    review = m.read(binding["independent"])
+    keys = {"status", "contract", "stage", "boundary", "checkpoint", "source_revision", "source_checkout", "learner_owner", "payload_audit", "recovery_authority"}
+    require(set(root) == keys and root["status"] == K0_RECOVERY_ROOT, "invalid learner delivery root")
+    require(set(review) == keys | {"root_acceptance", "findings"}
+            and review["status"] == K0_RECOVERY_REVIEW and review["root_acceptance"] == binding["root"] and review["findings"] == []
+            and all(review[key] == root[key] for key in keys - {"status"}), "K0 recovery independent delivery differs")
+    c, s, b = (m.read(root[key]) for key in ("contract", "stage", "boundary"))
+    require(c["schema"] == ANCHOR_KEY and s["schema"] == "core_generation_bank_policy_anchor_stage_v1"
+            and b["status"] == BOUNDARY and s["contract_sha256"] == b["contract_sha256"] == root["contract"]["sha256"]
+            and b["stage"] == root["stage"] and b["checkpoint"] == root["checkpoint"]
+            and c["source_revision"] == b["source_revision"] == root["source_revision"]
+            and type(root["source_checkout"]) is str and Path(root["source_checkout"]).is_absolute(), "model contract/stage/source differs")
+    bank.sha(root["source_revision"], 40)
+    bank.sha(root["checkpoint"]["sha256"])
+    require(b["run_uuid"] == c["run_uuid"] and b["logical_generation"] == c["first_generation"] == 1
+            and b["initial_model"] == c["initial_model"] and b["initial_actor_step"] == c["initial_actor_step"], "fresh model lineage differs")
+    require(type(s["segment"]) is int and s["segment"] == b["segment"] == 1
+            and s["parent"] is None and b["parent"] is None and b["step_start"] == 0
+            and type(b["step"]) is int and b["step"] == b["applied_updates"] == sum(c["updates_per_segment"])
+            and b["applied_views"] == b["step"] * c["batch_size"] and b["policy_anchor"] == c["policy_anchor"], "incomplete fresh selected model endpoint")
+    suffix = ["-m", "scripts.core_generation_bank_policy_anchor", "--contract", root["contract"]["path"], "--contract-sha256", root["contract"]["sha256"],
+              "--stage", root["stage"]["path"], "--stage-sha256", root["stage"]["sha256"]]
+    saved = _k0_recovery_payload(m, root, c, b, suffix)
+    bank.sha(saved["model_state_sha256"])
+    membership = b["membership"]
+    require(type(membership) is list and membership and all(type(row) is list and len(row) == 3
+            and type(row[0]) is int and row[0] == b["logical_generation"] and type(row[2]) is int and row[2] > 0 for row in membership), "invalid full replay membership")
+    membership = cast(list[list[Any]], membership)
+    for row in membership:
+        bank.sha(row[1])
+    train_rows = sum(row[2] for row in membership)
+    require(train_rows >= 8000 and c["updates_per_segment"] == ([4096] if _d1 else [min((train_rows + 31) // 32, 1024)])
+            and (not _d1 or train_rows == 17568)
+            and b["drawn_rows"] == b["applied_views"], "selected dose or journal counts differ")
+    require(b["accepted_banks"] == s["banks"] and len(b["bank_identities"]) == 1, "model bank horizon differs")
+    require(all(set(identity) == {"run_uuid", "collection_uuid", "generation", "source_revision", "architecture", "actor_sha256", "actor_checkpoint_step"}
+                for identity in b["bank_identities"]), "HOLD/unknown identity leaked into learner delivery")
+    checkpoint = core.external(root["checkpoint"]["path"])
+    output = Path(s["output"])
+    require(checkpoint == output / "learner.pt" and not output.with_name(output.name + ".failed.json").exists()
+            and not (output / "boundary.pending.json").exists(), "failed/pending learner endpoint")
+    tag = {key: b[key] for key in ("run_uuid", "source_revision", "segment", "logical_generation", "policy_anchor")}
+    tag["contract_sha256"] = root["contract"]["sha256"]
+    return {"label": label, "checkpoint": root["checkpoint"], "architecture": c["architecture"], "step": b["step"],
+            "tag": tag, "model_state_sha256": saved["model_state_sha256"], "contract": c, "boundary": b, "stage": s}
+
+
 def same_gpu_payload(m: Metadata, root: dict[str, Any], c: dict[str, Any], b: dict[str, Any], suffix: list[str],
                      *, _d1: bool = False) -> dict[str, Any]:
     """Versioned saved proof from the SAME closed learner GPU owner, JSON only."""
@@ -348,9 +420,11 @@ def same_gpu_payload(m: Metadata, root: dict[str, Any], c: dict[str, Any], b: di
     helper = saved["helper"]
     require(type(helper) is dict and set(helper) == {"path", "sha256"} and type(helper["path"]) is str
             and Path(helper["path"]).is_absolute() and Path(helper["path"]).suffix == ".py"
-            and helper["sha256"] in ((D1_GPU_HELPER,) if _d1 else (GPU_PROOF_HELPER_SHA256, GPU_PROOF_THREAD2_HELPER_SHA256))
+            and helper["sha256"] in ((D1_GPU_HELPER, D1_T1_GPU_HELPER) if _d1 else (GPU_PROOF_HELPER_SHA256, GPU_PROOF_THREAD2_HELPER_SHA256))
             and audit["owner"]["command"].count(helper["path"]) == 1,
             "unsupported same-GPU prover")
+    if _d1 and helper["sha256"] == D1_T1_GPU_HELPER:
+        require(saved["source_review"] == D1_T1_GPU_SOURCE_REVIEW, "corrected D1 prover review differs")
     review = m.read(saved["source_review"])
     require(review["status"] == (D1_GPU_SOURCE_REVIEW if _d1 else GPU_PROOF_SOURCE_REVIEW) and review["helper"] == helper
             and review["source_pins"] == saved["source_pins"] and review["findings"] == [], "same-GPU prover source acceptance differs")
@@ -407,7 +481,8 @@ def same_gpu_game_coverage(m: Metadata, binding: dict[str, Any], model: dict[str
     audit = root["payload_audit"]
     if set(audit) == {"readout", "owner"}:
         return
-    require(set(audit) == {"schema", "readout", "owner"} and audit["schema"] == (D1_GPU_SCHEMA if _d1 else GPU_PAYLOAD_SCHEMA), "invalid saved-state audit binding")
+    expected_schema = K0_RECOVERY_SCHEMA if _d1 and model["label"] == "K0" and root["status"] == K0_RECOVERY_ROOT else D1_GPU_SCHEMA if _d1 else GPU_PAYLOAD_SCHEMA
+    require(set(audit) == {"schema", "readout", "owner"} and audit["schema"] == expected_schema, "invalid saved-state audit binding")
     coverage = m.read(audit["readout"])["draw_coverage"]
     rows = coverage["per_game_aggregate_counts"]
     require(type(rows) is list and len(rows) == len(train.games) and type(coverage["games"]) is int
@@ -1057,3 +1132,192 @@ def phase_start(protocol_ref: dict[str, str], admission_ref: dict[str, str], *, 
     require(not output.exists() and not output.with_name(output.name + ".failed.json").exists(), "ruler output already used")
     output.mkdir()
     return p, m, output
+
+
+def _k0_failed_gpu(m: Metadata, owner: dict[str, Any], selection: dict[str, Any], original_plan: dict[str, str]) -> dict[str, Any]:
+    """ONLY this selected FAILED owner; ordinary closed_owner is never weakened."""
+    require(set(owner)=={'terminal','admission','command','source_revision','cwd','closure'}
+            and owner['terminal']==selection['trigger']['terminal'], 'exact failed GPU owner binding')
+    t=m.observed(owner['terminal']); a=m.read(owner['admission']); command=owner['command']
+    require(t['status']=='FAILED' and type(t['returncode']) is int and t['returncode']==1
+            and t['resource']=='gpu' and t['seconds']==3600 and t['wall_seconds']==selection['trigger']['owner_wall_seconds']
+            and t['owned_processes_closed'] is True and t['custody']=='OWNED_PROCESSES_CLOSED'
+            and t['command']==command and t['source_revision']==owner['source_revision'] and t['cwd']==owner['cwd'],
+            'original failed terminal/identity differs')
+    require(type(command) is list and all(type(v) is str and v for v in command), 'failed owner command')
+    for flag,value in (('--admission',owner['admission']['path']),('--admission-sha256',owner['admission']['sha256']),
+                       ('--observer-plan',original_plan['path']),('--observer-plan-sha256',original_plan['sha256'])):
+        require(command.count(flag)==1 and command[command.index(flag)+1]==value, 'failed owner command binding differs')
+    normalized=list(command);normalized[normalized.index('--admission-sha256')+1]='SELF_ADMISSION_SHA256'
+    require(a['status']=='ROOT_ADMITS_KL_DEVELOPMENT_FIRST_D1_LEARNER_GPU_V1' and a['execution_authorized'] is True
+            and a['observer_plan']==original_plan and a['normalized_child']==normalized
+            and a['resource']=='gpu' and a['seconds']==3600 and a['helper']==selection['trigger']['helper']
+            and a['owner']['sha256']==t['supervisor_sha256'], 'original failed admission differs')
+    closure=owner['closure']
+    require(set(closure)=={'supported_eof','exit_code','supervisor_pid','supervisor_closed','owned_births_closed','known_processes'}
+            and closure['supported_eof'] is True and type(closure['exit_code']) is int and closure['exit_code']==1
+            and closure['supervisor_closed'] is True and closure['owned_births_closed'] is True
+            and closure['supervisor_pid']==t['supervisor_pid'] and closure['known_processes']==t['known_processes']
+            and closure['known_processes'], 'original failed closure differs')
+    for pid,born in closure['known_processes'].items():
+        require(type(pid) is str and pid.isdecimal() and str(int(pid))==pid and int(pid)>0
+                and type(born) is int and born>0, 'failed process birth identity')
+    receipt=m.read(selection['trigger']['closure'])
+    require(receipt['status']=='ROOT_OBSERVES_SUPPORTED_EOF_CLOSED_CUSTODY_NO_RESULT_ACCEPTANCE_V1'
+            and receipt['terminal']==owner['terminal'] and receipt['admission']==owner['admission']
+            and all(receipt['closure'][k]==v for k,v in closure.items())
+            and m.read(receipt['command'])['child']==command, 'authenticated historical closure receipt')
+    return a
+
+
+def _k0_recovery_authority(m: Metadata, authority_ref: dict[str, str], helper: dict[str, str], source_review: dict[str, str]) -> dict[str, Any]:
+    require(authority_ref["path"] == K0_RECOVERY_AUTHORITY_PATH, "canonical Root T1 authority required")
+    authority = m.read(authority_ref)
+    selection, selection_review = m.read(K0_RECOVERY_SELECTION), m.read(K0_RECOVERY_SELECTION_REVIEW)
+    require(selection["execution_authorized"] is False and selection["design"]["sha256"] == D1_DESIGN_SHA256
+            and selection_review["findings"] == [], "K0 fixed source selection differs")
+    require(set(authority) == {"status", "selection", "selection_review", "amendment", "auditor", "auditor_source_review", "trigger"}
+            and authority["status"] == "ROOT_AUTHORIZES_KL_D1_T1_K0_SAVED_ENDPOINT_RECOVERY_V1"
+            and authority["selection"] == K0_RECOVERY_SELECTION and authority["selection_review"] == K0_RECOVERY_SELECTION_REVIEW
+            and authority["auditor"] == helper and authority["auditor_source_review"] == source_review
+            and authority["trigger"] == selection["trigger"] and authority["amendment"]["path"] == K0_RECOVERY_AMENDMENT_PATH,
+            "Root T1 recovery authority differs")
+    amendment = m.read(authority["amendment"])
+    require(set(amendment) == {"status", "selection", "design", "main_revision", "document_path", "document_sha256", "independent_source_review"}
+            and amendment["status"] == "ROOT_RECORDS_PUBLISHED_D1_T1_MECHANICAL_RECOVERY_AMENDMENT_V1"
+            and amendment["selection"] == K0_RECOVERY_SELECTION and amendment["design"] == selection["design"]
+            and type(amendment["document_path"]) is str and amendment["document_path"].startswith("docs/experiments/"),
+            "published T1 amendment projection differs")
+    bank.sha(amendment["main_revision"], 40)
+    bank.sha(amendment["document_sha256"])
+    require(m.read(amendment["independent_source_review"])["findings"] == [], "mechanical amendment source review differs")
+    return selection
+
+
+def _k0_closed_cpu_owner(m: Metadata, owner: dict[str, Any], plan_ref: dict[str, str], authority_ref: dict[str, str]) -> dict[str, Any]:
+    """Separate exact CPU600 admission route; closed_owner defaults unchanged."""
+    require(set(owner) == {"terminal", "admission", "command", "source_revision", "cwd", "closure"}, "invalid recovery CPU owner")
+    terminal, admission = m.observed(owner["terminal"]), m.read(owner["admission"])
+    command = owner["command"]
+    suffix = ["--recovery-plan", plan_ref["path"], "--recovery-plan-sha256", plan_ref["sha256"],
+              "--admission", owner["admission"]["path"], "--admission-sha256", owner["admission"]["sha256"]]
+    require(type(command) is list and len(command) > len(suffix) and command[-len(suffix):] == suffix
+            and all(type(v) is str and v for v in command), "recovery CPU command differs")
+    bank.sha(owner["source_revision"], 40)
+    require(type(owner["cwd"]) is str and Path(owner["cwd"]).is_absolute()
+            and terminal["status"] == "PASS" and type(terminal["returncode"]) is int and terminal["returncode"] == 0
+            and terminal["owned_processes_closed"] is True and terminal["custody"] == "OWNED_PROCESSES_CLOSED"
+            and terminal["resource"] == "cpu" and type(terminal["seconds"]) is int and terminal["seconds"] == 600
+            and terminal["source_revision"] == owner["source_revision"] and terminal["cwd"] == owner["cwd"]
+            and terminal["command"] == command, "recovery CPU owner not exact closed PASS")
+    wall = terminal["wall_seconds"]
+    require(type(wall) in (int, float) and math.isfinite(wall) and 0 <= wall <= 600, "recovery CPU wall differs")
+    closure = owner["closure"]
+    require(set(closure) == {"supported_eof", "exit_code", "supervisor_pid", "supervisor_closed", "owned_births_closed", "known_processes"}
+            and closure["supported_eof"] is True and type(closure["exit_code"]) is int and closure["exit_code"] == 0
+            and closure["supervisor_closed"] is True and closure["owned_births_closed"] is True
+            and type(closure["supervisor_pid"]) is int and closure["supervisor_pid"] == terminal["supervisor_pid"]
+            and closure["known_processes"] == terminal["known_processes"] and closure["known_processes"], "recovery CPU closure differs")
+    for pid, birth in closure["known_processes"].items():
+        require(type(pid) is str and pid.isdecimal() and str(int(pid)) == pid and int(pid) > 0
+                and type(birth) is int and birth > 0, "invalid recovery CPU process birth")
+    require(admission["status"] == "ROOT_ADMITS_KL_D1_T1_K0_SAVED_ENDPOINT_RECOVERY_CPU_V1"
+            and admission["execution_authorized"] is True and admission["recovery_plan"] == plan_ref
+            and admission["authority"] == authority_ref and admission["resource"] == "cpu" and admission["seconds"] == 600
+            and admission["owner"]["sha256"] == terminal["supervisor_sha256"], "recovery CPU admission/authority differs")
+    for flag, value in zip(suffix[::2], suffix[1::2], strict=True):
+        require(command.count(flag) == 1 and command[command.index(flag) + 1] == value, "recovery CPU exact flags differ")
+    normalized = list(command)
+    normalized[normalized.index("--admission-sha256") + 1] = "SELF_ADMISSION_SHA256"
+    require(admission["normalized_child"] == normalized, "recovery CPU normalized admission differs")
+    return admission
+
+
+def _k0_recovery_payload(m: Metadata, root: dict[str, Any], c: dict[str, Any], b: dict[str, Any], suffix: list[str]) -> dict[str, Any]:
+    audit = root["payload_audit"]
+    require(set(audit) == {"schema", "readout", "owner"} and audit["schema"] == K0_RECOVERY_SCHEMA, "invalid K0 recovery payload family")
+    saved = m.read(audit["readout"])
+    require(saved["status"] == K0_RECOVERY_PENDING and saved["arm"] == "K0"
+            and all(saved[key] == root[key] for key in ("contract", "stage", "boundary", "checkpoint"))
+            and saved["source_revision"] == root["source_revision"] and saved["source_checkout"] == root["source_checkout"]
+            and saved["architecture"] == c["architecture"] and type(saved["step"]) is int and saved["step"] == 4096
+            and saved["failed_gpu_owner"] == root["learner_owner"] and saved["recovery_authority"] == root["recovery_authority"],
+            "K0 saved-endpoint proof identity differs")
+    require(c["policy_anchor"]["coefficient"] == 0 and c["policy_anchor"]["reference"] is None
+            and c["initial_actor_step"] == 680276 and c["initial_model"]["sha256"] == "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+            "K0 exact disabled-anchor A39 bootstrap differs")
+    helper = saved["helper"]
+    require(type(helper) is dict and set(helper) == {"path", "sha256"} and type(helper["path"]) is str
+            and Path(helper["path"]).is_absolute() and Path(helper["path"]).suffix == ".py"
+            and helper["sha256"] == K0_RECOVERY_HELPER, "unsupported K0 recovery auditor")
+    selection = _k0_recovery_authority(m, root["recovery_authority"], helper, saved["source_review"])
+    trigger = selection["trigger"]
+    require(root["checkpoint"] == trigger["checkpoint_REFERENCE_ONLY"] and root["boundary"] == trigger["public_boundary"]
+            and saved["original_failure_log"] == trigger["log"] and saved["historical_closure"] == trigger["closure"], "K0 recovery exact allowlist differs")
+    failed_ad = _k0_failed_gpu(m, root["learner_owner"], selection, saved["original_observer_plan"])
+    old = m.read(saved["original_observer_plan"])
+    require(old["arm"] == "K0" and old["helper"] == trigger["helper"] and old["contract"] == root["contract"]
+            and old["stage"] == root["stage"] and old["public_suffix"] == suffix
+            and old["source_pins"] == saved["source_pins"] and old["source_review"] == failed_ad["source_review"], "original failed K0 source/plan differs")
+    failed = m.read(saved["failed_observation"])
+    require(saved["failed_observation"]["path"] == old["observation"] + ".failed.json"
+            and failed["status"] == "FAILED_KL_DEVELOPMENT_FIRST_D1_PASSIVE_PROOF_NO_DELIVERY_V1"
+            and "saved counters/architecture/reference" in failed["error"], "failed private K0 observation differs")
+    plan = m.read(saved["recovery_plan"])
+    admission = _k0_closed_cpu_owner(m, audit["owner"], saved["recovery_plan"], root["recovery_authority"])
+    limits = {"outer_seconds": 600, "inner_seconds": 570, "checkpoint_file_bytes": 8 << 30,
+              "journal_bytes": 64 << 20, "serialized_read_bytes": 32 << 30, "aggregate_bytes": 4 << 20}
+    require(plan["schema"] == "KL_D1_K0_SAVED_ENDPOINT_RECOVERY_PLAN_V1"
+            and plan["status"] == "BOUND_KL_D1_K0_SAVED_ENDPOINT_RECOVERY_NOT_DELIVERY_AUTHORITY_V1"
+            and plan["authority"] == root["recovery_authority"] and plan["selection"] == K0_RECOVERY_SELECTION
+            and plan["selection_review"] == K0_RECOVERY_SELECTION_REVIEW and plan["limits"] == limits
+            and plan["layout_basis"] == K0_LAYOUT_BASIS
+            and saved["layout_basis"] == {**K0_LAYOUT_BASIS, "scope": "MODEL_LAYOUT_BASIS_ONLY"}
+            and all(plan[key] == saved[key] == admission[key] for key in ("helper", "source_review", "source_pins"))
+            and all(plan[key] == root[key] for key in ("contract", "stage", "boundary", "checkpoint"))
+            and plan["failed_gpu_owner"] == root["learner_owner"] and plan["original_observer_plan"] == saved["original_observer_plan"]
+            and plan["failed_observation"] == saved["failed_observation"] and plan["observation"] == audit["readout"]["path"]
+            and audit["owner"]["command"].count(helper["path"]) == 1, "K0 recovery plan/admission joins differ")
+    require(saved["source_review"] == K0_RECOVERY_SOURCE_REVIEW, "K0 exact auditor source review differs")
+    sr = m.read(saved["source_review"])
+    require(sr["status"] == "ACCEPT_KL_D1_K0_SAVED_ENDPOINT_RECOVERY_SOURCE_ONLY_NO_FINDINGS_V1"
+            and sr["helper"] == helper and sr["source_pins"] == saved["source_pins"] and sr["findings"] == [], "K0 auditor source acceptance differs")
+    pins = m.read(saved["source_pins"])
+    require(pins["source_revision"] == root["source_revision"] and pins["source_checkout"] == root["source_checkout"]
+            and type(pins["files"]) is dict and len(pins["files"]) == 219, "K0 historical source differs")
+    checks = saved["saved_checks"]
+    require(type(checks) is dict and set(checks) == {"model", "optimizer", "scheduler", "zclip", "counters", "recorded_rng", "journal", "membership", "policy_anchor", "provenance"}
+            and all(value is True for value in checks.values())
+            and saved["checkpoint_CPU_weights_only_decodes"] == 1 and type(saved["checkpoint_CPU_weights_only_decodes"]) is int
+            and saved["own_live_state_reconstructed"] is False and saved["historical_final_brackets_reconstructed"] is False
+            and saved["historical_reference_immutability_reconstructed"] is False and "own_live_state_fingerprint" not in saved,
+            "K0 saved-only scope differs")
+    for key in ("model_state_sha256", "saved_payload_fingerprint", "key_shape_dtype_sha256", "scheduler_fingerprint", "zclip_fingerprint"):
+        bank.sha(saved[key])
+    named = bank.integer(saved["optimizer_named_parameters"], "recovered named optimizer parameters")
+    active = bank.integer(saved["active_optimizer_slots"], "recovered active optimizer slots")
+    require(0 < active <= named and saved["model_changed_from_authenticated_A39"] is True, "K0 saved parameter/update evidence differs")
+    require(saved["five_rng_snapshot_sha256"] == hashlib.sha256(canonical(b["rng"])).hexdigest()
+            and set(b["rng"]) == {"numpy", "mask", "torch_cpu", "torch_cuda", "python"}
+            and saved["membership_sha256"] == hashlib.sha256(canonical(b["membership"])).hexdigest(), "K0 recorded RNG/membership differs")
+    require(type(saved["outer_seconds"]) is int and saved["outer_seconds"] == 600
+            and type(saved["absolute_inner_seconds"]) is int and saved["absolute_inner_seconds"] == 570
+            and type(saved["elapsed_seconds"]) in (int, float) and math.isfinite(saved["elapsed_seconds"]) and 0 <= saved["elapsed_seconds"] < 570
+            and saved["CUDA_initialized"] is False and saved["current_CPU_RNG_unchanged"] is True
+            and type(saved["Torch_intra"]) is int and saved["Torch_intra"] == 2
+            and type(saved["Torch_interop"]) is int and saved["Torch_interop"] == 2
+            and type(saved["current_native_named_file_bracket"]) is dict and saved["current_native_named_file_bracket"], "current CPU recovery custody incomplete")
+    total = bank.integer(saved["serialized_read_bytes_total"], "recovery serialized reads")
+    require(saved["serialized_read_bytes_limit"] == 32 << 30 and total <= 32 << 30
+            and type(saved["serialized_read_bytes_by_category"]) is dict and type(saved["serialized_read_bytes_by_path"]) is dict
+            and all(type(v) is int and v >= 0 for values in (saved["serialized_read_bytes_by_category"], saved["serialized_read_bytes_by_path"]) for v in values.values())
+            and sum(saved["serialized_read_bytes_by_category"].values()) == sum(saved["serialized_read_bytes_by_path"].values()) == total,
+            "K0 actual serialized-read accounting differs")
+    coverage = saved["draw_coverage"]
+    require(type(coverage["population_rows"]) is int and coverage["population_rows"] == 17568
+            and type(coverage["batches"]) is int and coverage["batches"] == 4096
+            and type(coverage["views"]) is int and coverage["views"] == b["drawn_rows"] == b["applied_views"] == 131072
+            and coverage["journal_sha256"] == b["draws_sha256"] and type(coverage["views_per_population_row"]) is float
+            and coverage["views_per_population_row"] == 131072 / 17568, "K0 recovered draw totals differ")
+    return saved
+
