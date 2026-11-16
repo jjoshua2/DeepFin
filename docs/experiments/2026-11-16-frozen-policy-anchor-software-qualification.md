@@ -12,9 +12,9 @@ The [opt-in frozen-reference family](../frozen_reference_policy_anchor.md) adds
 forward KL(reference legal policy || student legal policy) to the actual Trainer
 backward path. The reference is frozen, no-grad and outside the student's
 optimizer. It receives the same eligible post-mirror/dropout inputs and legal
-support. Eligibility is original network-turn × has-policy; illegal and inactive
-logit gradients must remain zero. The coefficient-zero path bypasses all reference
-work. Existing evaluation loss/ruler and old-family contracts remain unchanged.
+support. Eligibility is original network-turn × has-policy; the anchor contribution
+to illegal and inactive logit gradients must remain zero. The coefficient-zero path
+bypasses all reference work. Existing evaluation loss/ruler and old-family contracts remain unchanged.
 
 The question here was whether that software path has the intended causal gradient,
 state, identity and custody behavior. Separate root protocols, source/binding
@@ -75,10 +75,12 @@ continuation references. The actor capture uses inert construction; it does not
 establish full494 CUDA serving. Unit-fixture historical step 9000 is fictional and
 must not be confused with the genuine donor's observed step below.
 
-The final owner verified actual runtime/origins, sole plain-pth content, six native
-images/records and all 31 declared build inputs before imports and again after
-checks. Torch threads were 2 and CUDA remained uninitialized. Its closure plus
-235 prior component passes were independently accepted. Total CPU software cost,
+The final owner checked the interpreter and sole plain-pth content at entry, then
+verified numerical import origins after loading the runtime. It checked six native
+images/records and all 31 declared build inputs before fixture imports and repeated
+the source/native custody checks at the end. Torch threads were 2 and CUDA remained
+uninitialized. Its closure plus 235 prior component passes were independently
+accepted. Total CPU software cost,
 including both failures, was **372.653532524 owner-wall seconds**.
 
 ## Full494 CUDA software result
