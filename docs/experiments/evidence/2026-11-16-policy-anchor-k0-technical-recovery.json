@@ -17,6 +17,102 @@
     "path": "rl-week-one-20261112-v1/prospective-KL-D1-K0-technical-recovery-independent-selection-review-v1/review.json",
     "sha256": "272187c62b902bed02cf5f07bbe34f23062c25b67db08e194bb0e810dfc1c329"
   },
+  "manual_no_clip_corrective_audit": {
+    "actual_corrected_audit_or_saved_ZClip_scalar_values": "UNVERIFIED; future owned audit only",
+    "budgets": {
+      "cutoff_utc": "2026-11-19T16:09:20+00:00",
+      "engineering_CPU_actual": 164.3428476222325,
+      "engineering_CPU_cap": 600,
+      "engineering_GPU_actual": 130.13181344303302,
+      "engineering_GPU_cap": 600,
+      "future_full_consumer_qualification_max": 400,
+      "new_manual_audit_max": 590,
+      "science_CPU_actual_closed": 113.06378713378217,
+      "science_CPU_cap": 9600,
+      "science_CPU_with_remaining_readers_max": 6103.063787133782,
+      "science_GPU_actual_closed": 2970.2697049711132,
+      "science_GPU_cap": 30900,
+      "science_GPU_projected_with_3_arms_and_original_evaluation_caps": 28470.269704971113,
+      "week_CPU_actual": 6427.4937418716145,
+      "week_GPU_actual": 79419.21077309619
+    },
+    "continuation_gate": "Original D1 scientific STOP remains. No remaining3 learner authority until actual corrected audit success, independent recovered endpoint acceptance, published compatible consumer+record/source+hostedCI and new explicit continuation authority. Full localqualification still follows4deliveries beforeDEV/HOLD.",
+    "engineering_actual": {
+      "independent_review": {
+        "path": "rl-week-one-20261112-v1/prospective-KL-D1-T1-prover-engineering-GPU-bindings-v1/independent-review.json",
+        "sha256": "fcf593ec8bef3c6da1d555f0730597fc0a3214d701bfaa0640f78360a7f712c0"
+      },
+      "production_prover_unchanged": true,
+      "repeat_not_selected": true,
+      "root_acceptance": {
+        "path": "rl-week-one-20261112-v1/prospective-KL-D1-T1-prover-engineering-GPU-bindings-v1/root-acceptance.json",
+        "sha256": "13261b9efc50eb9ca0330b416b9c2500bca91d98cfc49e1374417616dbeed1d8"
+      }
+    },
+    "execution_authorized": false,
+    "failed_CPU_attempt": {
+      "closure": {
+        "path": "rl-week-one-20261112-v1/prospective-KL-D1-T1-K0-saved-endpoint-recovery-bindings-v1/cpu.closed-custody.json",
+        "sha256": "345b7897bb29fd47d2321dbb00b7dc7cc458843c9805c1986fd4f57aa732eb4c"
+      },
+      "failure": "saved complete finite ZClip state at auditor saved_state492",
+      "status": "FAILED_RETAINED_NO_MODEL_DELIVERY",
+      "terminal": {
+        "path": "rl-week-one-20261112-v1/prospective-KL-D1-T1-K0-saved-endpoint-recovery-CPU-execution-v1/terminal.json",
+        "sha256": "68fb727eee65fb977553eb96f755bc0e941818697dc8e9304d1bd6de2ffc5ec4"
+      },
+      "wall_seconds": 6.470659800921567
+    },
+    "honesty_limits": [
+      "Actual failing subterm and saved ZClip scalar values are unknown from the compound traceback; source incompatibility is proven, actual corrected saved state must still be checked.",
+      "Current-only CPU custody is not original final GPU custody; no reconstructed unpersisted live fingerprint.",
+      "No efficacy/HOLD/DEV/candidate matches or training since the failure. Full291/12 qualification remains after all4deliveries."
+    ],
+    "independent_selection_review": {
+      "path": "rl-week-one-20261112-v1/prospective-KL-D1-T1-K0-no-clip-corrective-audit-independent-selection-review-v1/review.json",
+      "sha256": "23ff14033034e788e1dd34ef1870cf08c038bf3fc7b5ba1f058fcb425a95d645"
+    },
+    "independent_source_diagnosis": {
+      "path": "rl-week-one-20261112-v1/prospective-KL-D1-T1-K0-saved-endpoint-recovery-independent-failure-diagnosis-v1/review.json",
+      "sha256": "f71cb014c1073aaee16e113213d76da1ddf6792068061c6655a8f14c1a5eb6d0"
+    },
+    "old_owner_count_rule_exception": "Explicit prospective exception to one CPU owner; one manual590/560 check. Earlier600-second owner is FAILED, not rerun or relabeled. Aggregate596.4706598009215 <= original600 reservation.",
+    "prospective_recovery_family": "core_bank_learner_K0_failed_gpu_closed_cpu_recovery_v2",
+    "schema": "D1_T1_ONE_MANUAL_NO_CLIP_CORRECTIVE_AUDIT_PREREGISTRATION_V1",
+    "scope": {
+      "absolute_inner_seconds": 560,
+      "aggregate_CPU_original_attempt_plus_new_cap": 596.4706598009215,
+      "aggregate_output_bytes": 4194304,
+      "checkpoint_file_bytes": 8589934592,
+      "checkpoint_reference_only": {
+        "path": "rl-week-one-20261112-v1/prospective-KL-development-first-K0-learner-results-v1/learner.pt",
+        "sha256": "7955c6799866bf3a18ac910609b3d7847a4d4e3586bde54816de5d63866b29fc"
+      },
+      "journal_bytes": 67108864,
+      "no_K0_retraining": true,
+      "no_model_forward_optimizer_restore_sampling_or_reseeding": true,
+      "outer_seconds": 590,
+      "resource": "cpu",
+      "total_serialized_read_bytes": 34359738368,
+      "unchanged_original_CPU_reservation": 600
+    },
+    "selected_contract": "Validate exact selected immutable finite learner CORE_KWARGS grad_clip_mode none, zclip_max_norm None and fresh inactive ZClip state: exact5keys, initialized isFalse, mean/var isNone, strictlist emptybuffer, strictintwarmup25, savedgrad_clip_mode none. Do not enable clipping, drop state validation, or change training.",
+    "selection": {
+      "path": "rl-week-one-20261112-v1/prospective-KL-D1-T1-K0-no-clip-corrective-audit-root-selection-v1/selection.json",
+      "sha256": "33f0363b5ac6b5cfa95c57a0abef1c9f567f59560e41d4c6997be9ce3e5da3e5"
+    },
+    "source_requirements": [
+      "Independently trace every previously unreached predicate against actual immutable writer, bank/journal and runtime APIs before sealing corrected auditor. No payload/stat/decode outside a future owned audit.",
+      "Preserve original failedGPU and failedCPU, both charged, no success/readout retrofitted into either attempt.",
+      "Fresh corrected auditor/source review and distinct unused phase/binding directory; original used audit phase never reused. Explicit previous failedCPU exact68fb+345b is a controller and consumer prerequisite, not a generic retry rule.",
+      "Root manual corrective decision and independent review pinned by new admission/projection. Original seven-key authority may retain originalselection116d andMainamend164 but binds new auditor/reference; manual correction/previous failure are separately bound in admission and result. No free-floating source status grants execution.",
+      "Record this manual implementation correction and failed audit in a public immutable preregistration/evidence PR before the new audit; publish compatible consumer/correction record onMain before any recovered-model use or remaining learner admission.",
+      "Source+binding independent reviews, updated Root authority and fresh exact census/control/three-lease/U3 admission are mandatory before this one additional audit. This source selection starts no job.",
+      "Do not repeat the passed engineering75.28 run: production139 remains byte-identical; this changes only CPU validation of the same saved endpoint.",
+      "Any further audit failure leaves scientific continuation stopped; no automatic loop, fallback, shortened scientific horizon, new bank or parameter selection."
+    ],
+    "status": "PROSPECTIVE_SOURCE_ONLY_NO_EXECUTION_OR_DELIVERY_AUTHORITY"
+  },
   "new_phase_namespace": "D1-T1; no reuse of earlier unadmitted A-R1",
   "prospective_recovery_family": "core_bank_learner_K0_failed_gpu_closed_cpu_recovery_v1",
   "qualification_dependency_order": {
