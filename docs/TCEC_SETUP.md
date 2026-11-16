@@ -297,8 +297,16 @@ info string Syzygy root prober: C Fathom (c9c6fef0): 510 WDL + 510 DTZ tables, W
 ```
 
 Both lines count Fathom's tables (a material and its colour mirror are one
-table). The first line is the proof that leaf probing is on, the second that
-the root shortcut is on. When some WDL tables have no DTZ table in
+table). The first line says the leaf prober is loaded, the second that the
+root shortcut is on. The first line alone does not prove leaves are probed:
+when the active search path does not use leaf tablebases the engine also
+prints
+
+```
+info string note: leaf tablebase probing is inactive on search path ...; SyzygyPath reaches only the root move shortcut and root eval on this path
+```
+
+Leaf probing is on when the load line appears without that note. When some WDL tables have no DTZ table in
 any listed directory the engine adds `info string warning: ... WDL tables have no
 DTZ table in SyzygyPath ...`: those materials are searched instead of answered
 from the root.
