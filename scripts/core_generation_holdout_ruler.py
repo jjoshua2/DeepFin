@@ -1545,8 +1545,8 @@ def _k0_corrective_decision(m: Metadata, root: dict[str, Any], saved: dict[str, 
     command = terminal["command"]
     require(type(command) is list and all(command.count(flag) == 1 for flag in
             ("--recovery-plan", "--recovery-plan-sha256", "--admission", "--admission-sha256")), "K0 previous CPU flags differ")
-    plan_ref = {"path": command[command.index("--recovery-plan") + 1], "sha256": command[command.index("--recovery-plan-sha256") + 1]}
-    ad_ref = {"path": command[command.index("--admission") + 1], "sha256": command[command.index("--admission-sha256") + 1]}
+    plan_ref = cast(dict[str, str], {"path": command[command.index("--recovery-plan") + 1], "sha256": command[command.index("--recovery-plan-sha256") + 1]})
+    ad_ref = cast(dict[str, str], {"path": command[command.index("--admission") + 1], "sha256": command[command.index("--admission-sha256") + 1]})
     old, old_ad = m.read(plan_ref), m.read(ad_ref)
     normalized = list(command)
     normalized[normalized.index("--admission-sha256") + 1] = "SELF_ADMISSION_SHA256"
