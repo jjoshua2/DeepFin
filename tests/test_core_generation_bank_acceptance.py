@@ -12,7 +12,7 @@ import pytest
 from scripts import core_generation_bank_acceptance as acceptance
 
 
-def graph(tmp_path: Path, *, fault: str = "", game_ids: tuple[int, int] = (0, 2**63 - 1)) -> tuple[dict[str, str], dict[str, str], Path]:
+def graph(tmp_path: Path, *, fault: str = "", game_ids: tuple[int, int] = (0, 2**63 - 1), holdout: bool = False) -> tuple[dict[str, str], dict[str, str], Path]:
     def write(name: str, value: dict[str, Any]) -> dict[str, str]:
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -22,8 +22,10 @@ def graph(tmp_path: Path, *, fault: str = "", game_ids: tuple[int, int] = (0, 2*
         return {"path": str(path), "sha256": hashlib.sha256(raw).hexdigest()}
 
     run, collection, revision = "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222", "a" * 40
-    source = {"revision": revision, "checkout": "/historical-auditor", "source_files": dict.fromkeys(acceptance.SOURCE_FILES, "b" * 64)}
-    spec: dict[str, Any] = {"schema": "core_generation_data_spec_v1", "run_uuid": run, "collection_uuid": collection,
+    source: dict[str, Any] = {"revision": revision, "checkout": "/historical-auditor", "source_files": dict.fromkeys(acceptance.SOURCE_FILES, "b" * 64)}
+    if holdout:
+        source["source_files"].update(dict.fromkeys(("scripts/core_finite_holdout_collect.py", "scripts/core_generation_holdout_admit.py"), "b" * 64))
+    spec: dict[str, Any] = {"schema": "core_generation_holdout_data_spec_v1" if holdout else "core_generation_data_spec_v1", "run_uuid": run, "collection_uuid": collection,
         "generation": 2, "source_revision": revision, "source_files": source["source_files"], "architecture": {"schema": 20, "planes": 175},
         "actor_sha256": "c" * 64, "actor_checkpoint_step": 17, "games_per_generation": 1, "max_games_per_generation": 3}
     if fault == "recipe":
@@ -37,8 +39,8 @@ def graph(tmp_path: Path, *, fault: str = "", game_ids: tuple[int, int] = (0, 2*
                              "architecture": {"schema": 20, "planes": 175}}
     if fault == "actor_step":
         actor["expected_checkpoint_step"] = 18
-    producer: dict[str, Any] = {"schema": "CORE_FINITE_GENERATION_V1", "run_uuid": run, "collection_uuid": collection,
-        "generation": 2, "source": {"revision": revision, "checkout": "/historical-auditor", "sha256": dict.fromkeys(acceptance.SOURCE_FILES, "b" * 64)},
+    producer: dict[str, Any] = {"schema": "CORE_FINITE_HOLDOUT_GENERATION_V1" if holdout else "CORE_FINITE_GENERATION_V1", "run_uuid": run, "collection_uuid": collection,
+        "generation": 2, "source": {"revision": revision, "checkout": "/historical-auditor", "sha256": source["source_files"]},
         "actor": actor, "attempts": 3, "output_root": str(tmp_path / "producer")}
     if fault in {"collection", "producer_source", "architecture"}:
         if fault == "collection":
@@ -55,7 +57,7 @@ def graph(tmp_path: Path, *, fault: str = "", game_ids: tuple[int, int] = (0, 2*
         serving["post_state_sha256"] = "e" * 64
     serving_ref = write("producer/actor-serving.json", serving)
     owner_code = {"path": "/NEVER-OPEN/owner.py", "sha256": "e" * 64}
-    protocol: dict[str, Any] = {"schema": "CORE_FINITE_DATA_ADMISSION_V1", "data_spec": spec_ref,
+    protocol: dict[str, Any] = {"schema": "CORE_FINITE_HOLDOUT_DATA_ADMISSION_V1" if holdout else "CORE_FINITE_DATA_ADMISSION_V1", "data_spec": spec_ref,
         "producer_protocol": producer_ref, "producer_readout": {"path": "/NEVER-OPEN/readout.json", "sha256": "1" * 64},
         "producer_inventory": {"path": "/NEVER-OPEN/inventory.json", "sha256": "2" * 64},
         "producer_owner": {"terminal": {"path": "/NEVER-OPEN/terminal.json", "sha256": "3" * 64},
@@ -71,6 +73,8 @@ def graph(tmp_path: Path, *, fault: str = "", game_ids: tuple[int, int] = (0, 2*
     protocol_ref = write("protocol.json", protocol)
     common = {"data_spec": spec_ref, "audit_protocol": protocol_ref, "collection_uuid": collection, "logical_generation": 2,
         "actor_checkpoint_step": 17, "candidate_only": True, "learning_admitted": False, "root_postclosure_promotion_required": True}
+    if holdout:
+        common["evaluation_only"] = fault != "evaluation_purpose"
     audited: list[dict[str, Any]] = []
     games: list[dict[str, Any]] = []
     for i, kind in enumerate(acceptance.CLASSES):
@@ -80,7 +84,7 @@ def graph(tmp_path: Path, *, fault: str = "", game_ids: tuple[int, int] = (0, 2*
             continue
         item: dict[str, Any] = {"eligible": True, "run_uuid": run, "collection_uuid": collection, "generation": 2,
             "source_revision": revision, "actor_sha256": "c" * 64, "served_state_sha256": "d" * 64,
-            "physical_game_id": collection + ":" + str(i), "bank": "train", "game_id": game_ids[i], "rows": 2,
+            "physical_game_id": collection + ":" + str(i), "bank": "holdout" if holdout else "train", "game_id": game_ids[i], "rows": 2,
             "scientific_class": kind, "label_class": "NATURAL" if i == 0 else "TB_ADJUDICATED",
             "shard": {"path": "/NEVER-OPEN/shard" + str(i), "files": [{"path": "model.npy", "bytes": 10, "sha256": "6" * 64}]},
             "evidence": {key: {"path": "/NEVER-OPEN/" + key + ".json", "sha256": "7" * 64}
@@ -97,7 +101,7 @@ def graph(tmp_path: Path, *, fault: str = "", game_ids: tuple[int, int] = (0, 2*
             item["game_id"] = invalid_ids[fault]
         wrapper = {key: item[key] for key in ("run_uuid", "generation", "source_revision", "actor_sha256", "served_state_sha256",
             "physical_game_id", "game_id", "bank", "rows", "label_class", "evidence", "shard_inventory_sha256")}
-        wrapper.update(common, status="VERIFIED_RESOLVED_CORE_DATA_GAME_CANDIDATE_V1", resolved=True,
+        wrapper.update(common, status="VERIFIED_RESOLVED_CORE_HOLDOUT_GAME_CANDIDATE_V1" if holdout else "VERIFIED_RESOLVED_CORE_DATA_GAME_CANDIDATE_V1", resolved=True,
                        full_history_verified=True, raw_targets_verified=True)
         if fault == "wrapper" and i == 0:
             wrapper["rows"] = 3
@@ -111,14 +115,14 @@ def graph(tmp_path: Path, *, fault: str = "", game_ids: tuple[int, int] = (0, 2*
         audited.pop()
     if fault == "missing_eligible":
         games.pop()
-    candidate = common | {"schema": "CORE_TRAIN_GENERATION_DATA_CANDIDATE_V1", "run_uuid": run, "source_revision": revision,
+    candidate = common | {"schema": "CORE_HOLDOUT_GENERATION_DATA_CANDIDATE_V1" if holdout else "CORE_TRAIN_GENERATION_DATA_CANDIDATE_V1", "run_uuid": run, "source_revision": revision,
         "generation": 2, "actor_sha256": "c" * 64, "actor_serving": serving_ref, "games": games}
     if fault == "candidate_alias":
         candidate["schema"] = "ROOT_ACCEPTED_CORE_TRAIN_GENERATION_V1"
     elif fault == "admitted":
         candidate["learning_admitted"] = True
     candidate_ref = write("audit/generation.json", candidate)
-    readout = common | {"status": "AUDITED_CORE_DATA_GENERATION_CANDIDATE_PENDING_ROOT_CLOSURE_V1",
+    readout = common | {"status": "AUDITED_CORE_HOLDOUT_GENERATION_CANDIDATE_PENDING_ROOT_CLOSURE_V1" if holdout else "AUDITED_CORE_DATA_GENERATION_CANDIDATE_PENDING_ROOT_CLOSURE_V1",
         "generation_manifest": candidate_ref, "attempts": 3, "audited": audited, "eligible_games": 2, "eligible_rows": 4,
         "class_counts": dict.fromkeys(acceptance.CLASSES, 1), "decoded_bytes": 100,
         "models_constructed": 0, "forwards": 0, "optimizer_updates": 0,
@@ -127,7 +131,7 @@ def graph(tmp_path: Path, *, fault: str = "", game_ids: tuple[int, int] = (0, 2*
     if fault == "totals":
         readout["eligible_rows"] = 5
     readout_ref = write("audit/readout.json", readout)
-    command = ["/python", "-B", "-m", "scripts.core_generation_data_admit", "--protocol", protocol_ref["path"],
+    command = ["/python", "-B", "-m", "scripts.core_generation_holdout_admit" if holdout else "scripts.core_generation_data_admit", "--protocol", protocol_ref["path"],
                "--protocol-sha256", protocol_ref["sha256"]]
     if fault == "command":
         command[-1] = "0" * 64
@@ -141,20 +145,24 @@ def graph(tmp_path: Path, *, fault: str = "", game_ids: tuple[int, int] = (0, 2*
     elif fault == "unclosed":
         terminal["owned_processes_closed"] = False
     terminal_ref = write("terminal.json", terminal)
-    admission = {"status": acceptance.ADMISSION_STATUS, "audit_protocol": protocol_ref, "audit_source": source,
+    admission = {"status": acceptance.HOLDOUT_ADMISSION_STATUS if holdout else acceptance.ADMISSION_STATUS, "audit_protocol": protocol_ref, "audit_source": source,
         "command": command, "owner": owner_code, "resource": "cpu", "seconds": 300}
     admission_ref = write("admission.json", admission)
     closure: dict[str, Any] = {"supported_eof": True, "exit_code": 0, "supervisor_pid": 122, "supervisor_closed": True,
                               "owned_births_closed": True, "known_processes": {"123": 456}}
     if fault in {"eof", "supervisor", "births"}:
         closure[{"eof": "supported_eof", "supervisor": "supervisor_closed", "births": "owned_births_closed"}[fault]] = False
-    root = {"status": acceptance.ROOT_STATUS, "audit_protocol": protocol_ref, "data_spec": spec_ref, "readout": readout_ref,
+    root = {"status": acceptance.HOLDOUT_ROOT_STATUS if holdout else acceptance.ROOT_STATUS, "audit_protocol": protocol_ref, "data_spec": spec_ref, "readout": readout_ref,
         "candidate": candidate_ref, "audit_source": source, "learning_admitted": False,
         "audit_owner": {"terminal": terminal_ref, "admission": admission_ref, "command": command,
                         "source_revision": "f" * 40, "cwd": "/separate-owner-checkout", "closure": closure}}
+    if holdout:
+        root["evaluation_only"] = True
     root_ref = write("root.json", root)
-    review = {"status": acceptance.REVIEW_STATUS, "root_acceptance": root_ref, "findings": [],
+    review = {"status": acceptance.HOLDOUT_REVIEW_STATUS if holdout else acceptance.REVIEW_STATUS, "root_acceptance": root_ref, "findings": [],
               **{key: root[key] for key in ("audit_protocol", "data_spec", "readout", "candidate")}}
+    if holdout:
+        review["evaluation_only"] = True
     if fault == "review":
         review["findings"] = ["unresolved"]
     elif fault == "wrong_root":

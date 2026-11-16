@@ -57,7 +57,7 @@ def test_gates_do_not_select_or_replace_games(fault):
 
 
 def synthetic_game(tmp_path: Path, monkeypatch, corruption=None, diagnostics="inactive", *, generation: int = 1,
-                   actor_sha: str = "a" * 64) -> SimpleNamespace:
+                   actor_sha: str = "a" * 64, holdout: bool = False) -> SimpleNamespace:
     import chess
     import numpy as np
     from chess_anti_engine.core_generation_data import capture_raw_targets
@@ -122,7 +122,7 @@ def synthetic_game(tmp_path: Path, monkeypatch, corruption=None, diagnostics="in
         syzygy_outcome_mode="rule50_match_v1", syzygy_path="/synthetic-tables", stockfish_syzygy_path="/synthetic-tables",
         syzygy_in_search=True, syzygy_adjudicate=True, syzygy_adjudicate_fraction=1, syzygy_rescore_policy=True,
         policy_row_retention="all_eligible")
-    planned: dict[str, Any] = {"start_ordinal": 0, "physical_game_id": collection + ":0", "bank": "train",
+    planned: dict[str, Any] = {"start_ordinal": 0, "physical_game_id": collection + ":0", "bank": "holdout" if holdout else "train",
                "root_fen": root.fen(), "opening_moves": []}
     action = move_to_index(move, root)
     gid = _stable_game_id(start_fen=root.fen(), opening_source="test", move_trace=str(action), result="1-0", total_plies_played=1)
@@ -165,7 +165,7 @@ def synthetic_game(tmp_path: Path, monkeypatch, corruption=None, diagnostics="in
     shard = {"path": str(directory / "shard"), "files": collect.inventory(directory / "shard")}
     common = {"run_uuid": run, "collection_uuid": collection, "generation": generation, "source_revision": source,
               "actor_sha256": actor, "served_state_sha256": served, "physical_game_id": planned["physical_game_id"],
-              "bank": "train", "game_id": gid, "rows": 1, "scientific_class": "NATURAL"}
+              "bank": "holdout" if holdout else "train", "game_id": gid, "rows": 1, "scientific_class": "NATURAL"}
     row = {"physical_row_id": row_id, "ply": 0, "move_offset": 0,
            "history_sha256": admit.digest([root.fen(), []]),
            "stored_input_float16_sha256": hashlib_sha(np.asarray(x, dtype="<f2").tobytes()),
@@ -233,7 +233,7 @@ def hashlib_sha(value: bytes) -> str:
 
 
 def entry_case(tmp_path: Path, monkeypatch, *, generation: int = 2, fault: str | None = None,
-               corruption=None, legacy: bool = False) -> SimpleNamespace:
+               corruption=None, legacy: bool = False, holdout: bool = False) -> SimpleNamespace:
     """Real one-game audit data; only runtime/native qualification is external."""
     import torch
     from chess_anti_engine.model import ARCH_SCHEMA_VERSION, ModelConfig
@@ -249,7 +249,7 @@ def entry_case(tmp_path: Path, monkeypatch, *, generation: int = 2, fault: str |
     actor_path.write_bytes(b"synthetic actor identity only; not a checkpoint")
     actor_path.chmod(0o444)
     actor_sha = admit.learning.file_sha(actor_path)
-    f = synthetic_game(producer_root, monkeypatch, corruption, generation=generation, actor_sha=actor_sha)
+    f = synthetic_game(producer_root, monkeypatch, corruption, generation=generation, actor_sha=actor_sha, holdout=holdout)
     f.verifier.close()
     model_config = ModelConfig(history_rep_fix=f.game.history_rep_fix, input_history_encoding=f.game.input_history_encoding,
                                input_extra_features=f.game.input_extra_features, policy_encoding=f.game.policy_encoding)
@@ -278,7 +278,7 @@ def entry_case(tmp_path: Path, monkeypatch, *, generation: int = 2, fault: str |
            "temp": TemperatureConfig(), "opening": OpeningConfig(opening_fen_list_path=str(starts), opening_fen_dole_per_iter=1),
            "opponent": OpponentConfig(), "diff_focus": DiffFocusConfig(enabled=False)}
     profile = {key: asdict(value) for key, value in cfg.items()}
-    producer: dict[str, Any] = {**f.producer, "schema": "CORE_FINITE_GENERATION_V1", "attempts": 1, "concurrent_slots": 1, "seed": 0,
+    producer: dict[str, Any] = {**f.producer, "schema": "CORE_FINITE_HOLDOUT_GENERATION_V1" if holdout else "CORE_FINITE_GENERATION_V1", "attempts": 1, "concurrent_slots": 1, "seed": 0,
         "actor": {"kind": "donor" if generation == 1 else "learner", **checkpoint, "expected_checkpoint_step": 7,
                   "architecture": arch, "predecessor": None if generation == 1 else predecessor},
         "source": {"revision": f.source, "checkout": str(admit.learning.REPO)},
@@ -300,11 +300,16 @@ def entry_case(tmp_path: Path, monkeypatch, *, generation: int = 2, fault: str |
         producer["exclusions"]["playing_starts"] = frozen(tmp_path / "collision.json", [{"id": "synthetic",
             "input_sha256": row["stored_input_float16_sha256"], "mirror_sha256": row["stored_input_float16_mirror_sha256"]}])
         producer["exclusions"]["playing_start_count"] = 1
+    if holdout:
+        producer["source"]["sha256"] = {name: admit.learning.file_sha(admit.learning.REPO / name)
+            for name in (*collect.REQUIRED_SOURCE_FILES, "scripts/core_finite_holdout_collect.py")}
+    if fault == "producer_schema":
+        producer["schema"] = "CORE_FINITE_GENERATION_V1"
     producer_ref = frozen(tmp_path / "producer.json", producer)
-    stage_admission = frozen(tmp_path / "producer-admission.json", {"status": "ROOT_ADMITS_CORE_GENERATION_V1",
+    stage_admission = frozen(tmp_path / "producer-admission.json", {"status": "ROOT_ADMITS_CORE_HOLDOUT_GENERATION_V1" if holdout else "ROOT_ADMITS_CORE_GENERATION_V1",
         "protocol_sha256": producer_ref["sha256"], "run_uuid": f.run, "generation": generation,
         "source_revision": f.source, "actor_sha256": actor_sha})
-    command = ["python", "-m", "scripts.core_finite_collect", "--execute", "--protocol", producer_ref["path"],
+    command = ["python", "-m", "scripts.core_finite_holdout_collect" if holdout else "scripts.core_finite_collect", "--execute", "--protocol", producer_ref["path"],
                "--protocol-sha256", producer_ref["sha256"], "--admission", stage_admission["path"],
                "--admission-sha256", stage_admission["sha256"]]
     terminal = {"status": "PASS", "returncode": 0, "owned_processes_closed": fault != "owner_unclosed",
@@ -319,7 +324,7 @@ def entry_case(tmp_path: Path, monkeypatch, *, generation: int = 2, fault: str |
     frozen(producer_root / "resolved-profile.json", profile)
     frozen(producer_root / "stockfish-lifecycle.json", {"all_observed_births_closed": fault != "lifecycle"})
     frozen(producer_root / "completed-0.json", f.item)
-    readout = {"status": "COLLECTED_CORE_GENERATION_V1", "protocol_sha256": producer_ref["sha256"],
+    readout = {"status": "COLLECTED_CORE_HOLDOUT_GENERATION_V1" if holdout else "COLLECTED_CORE_GENERATION_V1", "protocol_sha256": producer_ref["sha256"],
         "run_uuid": f.run, "collection_uuid": f.collection if fault != "readout_collection" else "x",
         "generation": generation, "attempts": 1, "source_revision": f.source, "actor_sha256": actor_sha,
         "all_planned_attempts_accounted": True, "training_steps": 0, "root_acceptance_issued": False,
@@ -332,11 +337,13 @@ def entry_case(tmp_path: Path, monkeypatch, *, generation: int = 2, fault: str |
         frozen(producer_root / "failure.json", {"status": "FAILED_SYNTHETIC_PRODUCER"})
     inventory = {"path": str(producer_root), "files": collect.inventory(producer_root, seal=True)}
     required = set(admit.learning.SOURCE_FILES) | {"scripts/core_finite_admit.py", "scripts/core_generation_data_admit.py"}
-    spec: dict[str, Any] = {"schema": admit.DATA_SPEC, "run_uuid": f.run, "collection_uuid": f.collection, "generation": generation,
+    if holdout:
+        required |= set(collect.REQUIRED_SOURCE_FILES) | {"scripts/core_finite_holdout_collect.py", "scripts/core_generation_holdout_admit.py"}
+    spec: dict[str, Any] = {"schema": admit.HOLDOUT_DATA_SPEC if holdout else admit.DATA_SPEC, "run_uuid": f.run, "collection_uuid": f.collection, "generation": generation,
         "source_revision": f.source, "source_files": {name: admit.learning.file_sha(admit.learning.REPO / name) for name in required},
         "architecture": arch, "actor_sha256": actor_sha, "actor_checkpoint_step": 7,
         "games_per_generation": 1, "max_games_per_generation": 1}
-    p: dict[str, Any] = {"schema": admit.DATA_PROTOCOL, "data_spec": None, "producer_protocol": producer_ref, "producer_readout": readout_ref,
+    p: dict[str, Any] = {"schema": admit.HOLDOUT_DATA_PROTOCOL if holdout else admit.DATA_PROTOCOL, "data_spec": None, "producer_protocol": producer_ref, "producer_readout": readout_ref,
         "producer_inventory": frozen(tmp_path / "inventory.json", inventory),
         "producer_owner": {"terminal": terminal_ref, "owner_sha256": owner_sha, "command": command},
         "gates": {"attempts": 1, "min_resolved_games": 1, "min_total_rows": 1}, "runtime": {"inner_seconds": 30},
@@ -347,7 +354,7 @@ def entry_case(tmp_path: Path, monkeypatch, *, generation: int = 2, fault: str |
         p["producer_owner"]["terminal"] = {"path": str(tmp_path / "absent-terminal.json"), "sha256": "0" * 64}
     calls = []
     monkeypatch.setattr(admit, "runtime_guard", lambda _p: calls.append("runtime_guard"))
-    monkeypatch.setattr(collect, "source_guard", lambda _p: calls.append("source_guard") or {"native_images": []})
+    monkeypatch.setattr(collect, "holdout_source_guard" if holdout else "source_guard", lambda _p: calls.append("source_guard") or {"native_images": []})
     if not legacy:
         def forbidden_recipe(*_args, **_kwargs):
             pytest.fail("recipe-free auditor called the learner validator or a model/learning path")

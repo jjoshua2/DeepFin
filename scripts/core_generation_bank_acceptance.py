@@ -20,6 +20,9 @@ import uuid
 ROOT_STATUS = "ROOT_ACCEPTS_CLOSED_CORE_GENERATION_DATA_BANK_V1"
 REVIEW_STATUS = "ACCEPT_CLOSED_CORE_GENERATION_DATA_BANK_NO_FINDINGS_V1"
 ADMISSION_STATUS = "ROOT_ADMITS_CORE_GENERATION_DATA_AUDIT_V1"
+HOLDOUT_ROOT_STATUS = "ROOT_ACCEPTS_CLOSED_CORE_GENERATION_HOLDOUT_V1"
+HOLDOUT_REVIEW_STATUS = "ACCEPT_CLOSED_CORE_GENERATION_HOLDOUT_NO_FINDINGS_V1"
+HOLDOUT_ADMISSION_STATUS = "ROOT_ADMITS_CORE_GENERATION_HOLDOUT_AUDIT_V1"
 SOURCE_FILES = frozenset({
     "scripts/core_finite_learner.py", "scripts/bootstrap_checkpoint_resume.py",
     "scripts/offline_epoch_resume.py", "chess_anti_engine/train/trainer.py",
@@ -130,10 +133,19 @@ class AcceptedGeneration:
     evidence: Mapping[str, Any]
 
 
-def _spec(spec: dict[str, Any]) -> None:
+@dataclass(frozen=True)
+class AcceptedHoldout:
+    """Evaluation-only metadata view. Never an AcceptedGeneration/learner bank."""
+
+    identity: Mapping[str, Any]
+    games: tuple[Mapping[str, Any], ...]
+    evidence: Mapping[str, Any]
+
+
+def _spec(spec: dict[str, Any], *, holdout: bool = False) -> None:
     require(set(spec) == {"schema", "run_uuid", "collection_uuid", "generation", "source_revision", "source_files",
                          "architecture", "actor_sha256", "actor_checkpoint_step", "games_per_generation",
-                         "max_games_per_generation"} and spec["schema"] == "core_generation_data_spec_v1", "invalid data spec")
+                         "max_games_per_generation"} and spec["schema"] == ("core_generation_holdout_data_spec_v1" if holdout else "core_generation_data_spec_v1"), "invalid data spec")
     for key in ("run_uuid", "collection_uuid"):
         require(type(spec[key]) is str and str(uuid.UUID(spec[key])) == spec[key], "invalid UUID")
     integer(spec["generation"], "generation")
@@ -144,24 +156,27 @@ def _spec(spec: dict[str, Any]) -> None:
     require(integer(spec["games_per_generation"], "minimum games") <=
             integer(spec["max_games_per_generation"], "maximum games"), "invalid game bounds")
     pins = spec["source_files"]
-    require(type(pins) is dict and pins.keys() >= SOURCE_FILES, "missing historical source pins")
+    required = SOURCE_FILES | ({"scripts/core_finite_holdout_collect.py", "scripts/core_generation_holdout_admit.py"} if holdout else set())
+    require(type(pins) is dict and pins.keys() >= required, "missing historical source pins")
     for name, digest in pins.items():
         require(type(name) is str and name and not Path(name).is_absolute()
                 and str(Path(name)) == name and ".." not in Path(name).parts, "invalid historical source path")
         sha(digest)
 
 
-def _candidate(value: dict[str, Any], spec: dict[str, Any], protocol: dict[str, str], spec_ref: dict[str, str]) -> None:
+def _candidate(value: dict[str, Any], spec: dict[str, Any], protocol: dict[str, str], spec_ref: dict[str, str], *, holdout: bool = False) -> None:
     require(value["audit_protocol"] == protocol and value["data_spec"] == spec_ref
             and value["collection_uuid"] == spec["collection_uuid"] and
             type(value["logical_generation"]) is int and value["logical_generation"] == spec["generation"]
             and type(value["actor_checkpoint_step"]) is int and value["actor_checkpoint_step"] == spec["actor_checkpoint_step"],
             "candidate provenance differs")
+    if holdout:
+        require(value["evaluation_only"] is True, "HOLDOUT purpose changed")
     require(value["candidate_only"] is True and value["learning_admitted"] is False
             and value["root_postclosure_promotion_required"] is True, "candidate authority changed")
 
 
-def _owner(m: _Metadata, root: dict[str, Any], p: dict[str, Any]) -> None:
+def _owner(m: _Metadata, root: dict[str, Any], p: dict[str, Any], *, holdout: bool = False) -> None:
     owner = root["audit_owner"]
     require(set(owner) == {"terminal", "admission", "command", "source_revision", "cwd", "closure"}, "invalid audit owner binding")
     terminal = m.read(owner["terminal"])
@@ -178,7 +193,7 @@ def _owner(m: _Metadata, root: dict[str, Any], p: dict[str, Any]) -> None:
     for cpu in runtime["cpu_affinity"]:
         integer(cpu, "CPU", 0)
     command = owner["command"]
-    suffix = ["-m", "scripts.core_generation_data_admit", "--protocol", root["audit_protocol"]["path"],
+    suffix = ["-m", "scripts.core_generation_holdout_admit" if holdout else "scripts.core_generation_data_admit", "--protocol", root["audit_protocol"]["path"],
               "--protocol-sha256", root["audit_protocol"]["sha256"]]
     require(type(command) is list and all(type(arg) is str and arg for arg in command)
             and len(command) > len(suffix) and command[-len(suffix):] == suffix
@@ -207,14 +222,14 @@ def _owner(m: _Metadata, root: dict[str, Any], p: dict[str, Any]) -> None:
             and type(closure["known_processes"]) is dict and closure["known_processes"] == births
             and all(type(value) is int for value in closure["known_processes"].values()) and type(closure["supervisor_pid"]) is int
             and closure["supervisor_pid"] == integer(terminal["supervisor_pid"], "supervisor PID"), "root closure assertion differs")
-    require(admission["status"] == ADMISSION_STATUS and admission["audit_protocol"] == root["audit_protocol"]
+    require(admission["status"] == (HOLDOUT_ADMISSION_STATUS if holdout else ADMISSION_STATUS) and admission["audit_protocol"] == root["audit_protocol"]
             and admission["audit_source"] == root["audit_source"] and admission["command"] == command
             and admission["owner"] == runtime["owner"] and admission["resource"] == "cpu"
             and type(admission["seconds"]) is int and admission["seconds"] == runtime["seconds"], "audit admission differs")
 
 
-def validate_accepted_generation(root_ref: dict[str, str], independent_ref: dict[str, str], *,
-                                 max_file_bytes: int, max_total_bytes: int, max_games: int) -> AcceptedGeneration:
+def _validate_generation(root_ref: dict[str, str], independent_ref: dict[str, str], *,
+                         max_file_bytes: int, max_total_bytes: int, max_games: int, holdout: bool) -> AcceptedGeneration | AcceptedHoldout:
     """Validate trusted receipt pins and return a readonly candidate-bank view.
 
     Callers authenticate issuers/pins out of band. Bounds count unique JSON bytes,
@@ -224,23 +239,27 @@ def validate_accepted_generation(root_ref: dict[str, str], independent_ref: dict
     integer(max_games, "game limit")
     m = _Metadata(max_file_bytes, max_total_bytes)
     root, review = m.read(root_ref), m.read(independent_ref)
-    require(set(root) == {"status", "audit_protocol", "data_spec", "readout", "candidate", "audit_source", "audit_owner", "learning_admitted"}
-            and root["status"] == ROOT_STATUS and root["learning_admitted"] is False, "invalid root acceptance")
-    require(set(review) == {"status", "root_acceptance", "audit_protocol", "data_spec", "readout", "candidate", "findings"}
-            and review["status"] == REVIEW_STATUS and review["root_acceptance"] == root_ref and review["findings"] == []
+    require(set(root) == ({"status", "audit_protocol", "data_spec", "readout", "candidate", "audit_source", "audit_owner", "learning_admitted"} | ({"evaluation_only"} if holdout else set()))
+            and root["status"] == (HOLDOUT_ROOT_STATUS if holdout else ROOT_STATUS) and root["learning_admitted"] is False, "invalid root acceptance")
+    if holdout:
+        require(root["evaluation_only"] is True, "HOLDOUT root purpose changed")
+    require(set(review) == ({"status", "root_acceptance", "audit_protocol", "data_spec", "readout", "candidate", "findings"} | ({"evaluation_only"} if holdout else set()))
+            and review["status"] == (HOLDOUT_REVIEW_STATUS if holdout else REVIEW_STATUS) and review["root_acceptance"] == root_ref and review["findings"] == []
             and all(review[key] == root[key] for key in ("audit_protocol", "data_spec", "readout", "candidate")), "independent acceptance differs")
+    if holdout:
+        require(review["evaluation_only"] is True, "HOLDOUT review purpose changed")
     p, spec = m.read(root["audit_protocol"]), m.read(root["data_spec"])
     require(set(p) == {"schema", "data_spec", "producer_protocol", "producer_readout", "producer_inventory", "producer_owner",
-                      "gates", "runtime", "output_root", "limits"} and p["schema"] == "CORE_FINITE_DATA_ADMISSION_V1"
+                      "gates", "runtime", "output_root", "limits"} and p["schema"] == ("CORE_FINITE_HOLDOUT_DATA_ADMISSION_V1" if holdout else "CORE_FINITE_DATA_ADMISSION_V1")
             and p["data_spec"] == root["data_spec"], "invalid data audit protocol")
-    _spec(spec)
+    _spec(spec, holdout=holdout)
     source = root["audit_source"]
     require(type(source["checkout"]) is str and Path(source["checkout"]).is_absolute()
             and str(Path(source["checkout"])) == source["checkout"], "invalid historical source checkout")
     require(set(source) == {"revision", "checkout", "source_files"} and source["revision"] == spec["source_revision"]
             and source["source_files"] == spec["source_files"], "audit source differs")
     producer = m.read(p["producer_protocol"])
-    require(producer["schema"] == "CORE_FINITE_GENERATION_V1" and producer["source"]["revision"] == source["revision"]
+    require(producer["schema"] == ("CORE_FINITE_HOLDOUT_GENERATION_V1" if holdout else "CORE_FINITE_GENERATION_V1") and producer["source"]["revision"] == source["revision"]
             and producer["source"]["checkout"] == source["checkout"]
             and producer["actor"]["architecture"] == spec["architecture"] and producer["actor"]["sha256"] == spec["actor_sha256"]
             and type(producer["actor"]["expected_checkpoint_step"]) is int
@@ -256,7 +275,7 @@ def validate_accepted_generation(root_ref: dict[str, str], independent_ref: dict
     require(producer["source"]["sha256"], "missing producer source pins")
     for key in ("producer_readout", "producer_inventory"):
         reference(p[key])  # Bind historical references without opening bulk input metadata.
-    _owner(m, root, p)
+    _owner(m, root, p, holdout=holdout)
     output = Path(p["output_root"])
     require(output.is_absolute() and output.resolve() == output, "noncanonical audit output")
     marker = output.with_name(output.name + ".failed.json")
@@ -264,11 +283,11 @@ def validate_accepted_generation(root_ref: dict[str, str], independent_ref: dict
     require(reference(root["readout"]) == output / "readout.json"
             and reference(root["candidate"]) == output / "generation.json", "audit output paths differ")
     readout, candidate = m.read(root["readout"]), m.read(root["candidate"])
-    require(readout["status"] == "AUDITED_CORE_DATA_GENERATION_CANDIDATE_PENDING_ROOT_CLOSURE_V1"
+    require(readout["status"] == ("AUDITED_CORE_HOLDOUT_GENERATION_CANDIDATE_PENDING_ROOT_CLOSURE_V1" if holdout else "AUDITED_CORE_DATA_GENERATION_CANDIDATE_PENDING_ROOT_CLOSURE_V1")
             and readout["generation_manifest"] == root["candidate"]
-            and candidate["schema"] == "CORE_TRAIN_GENERATION_DATA_CANDIDATE_V1", "candidate schema differs")
+            and candidate["schema"] == ("CORE_HOLDOUT_GENERATION_DATA_CANDIDATE_V1" if holdout else "CORE_TRAIN_GENERATION_DATA_CANDIDATE_V1"), "candidate schema differs")
     for value in (readout, candidate):
-        _candidate(value, spec, root["audit_protocol"], root["data_spec"])
+        _candidate(value, spec, root["audit_protocol"], root["data_spec"], holdout=holdout)
     for key in ("run_uuid", "source_revision", "generation", "actor_sha256"):
         require(type(candidate[key]) is type(spec[key]) and candidate[key] == spec[key], "generation identity differs")
     serving = m.read(candidate["actor_serving"])
@@ -313,15 +332,15 @@ def validate_accepted_generation(root_ref: dict[str, str], independent_ref: dict
                 and type(checked["game_id"]) is int, "invalid game ID")
         require(all(game[key] == checked[key] for key in ("physical_game_id", "game_id", "bank", "rows", "label_class", "shard"))
                 and game["game_id"] not in ids
-                and type(game["rows"]) is int and game["bank"] == "train" and game["label_class"] ==
+                and type(game["rows"]) is int and game["bank"] == ("holdout" if holdout else "train") and game["label_class"] ==
                 {"NATURAL": "NATURAL", "STRICT_TB_ADJUDICATED": "TB_ADJUDICATED"}.get(checked["scientific_class"]), "game membership differs")
         ids.add(game["game_id"])
         wrapper = m.read(game["producer_proof"])
         require(reference(game["producer_proof"]) == output / ("game-" + game["physical_game_id"].rsplit(":", 1)[1] + ".json"), "wrapper path differs")
-        require(wrapper["status"] == "VERIFIED_RESOLVED_CORE_DATA_GAME_CANDIDATE_V1"
+        require(wrapper["status"] == ("VERIFIED_RESOLVED_CORE_HOLDOUT_GAME_CANDIDATE_V1" if holdout else "VERIFIED_RESOLVED_CORE_DATA_GAME_CANDIDATE_V1")
                 and wrapper["resolved"] is True and wrapper["full_history_verified"] is True
                 and wrapper["raw_targets_verified"] is True, "wrapper verification differs")
-        _candidate(wrapper, spec, root["audit_protocol"], root["data_spec"])
+        _candidate(wrapper, spec, root["audit_protocol"], root["data_spec"], holdout=holdout)
         for key in ("run_uuid", "generation", "source_revision", "actor_sha256", "served_state_sha256", "physical_game_id",
                     "game_id", "bank", "rows", "label_class", "evidence", "shard_inventory_sha256"):
             require(type(wrapper[key]) is type(checked[key]) and wrapper[key] == checked[key], "wrapper membership/provenance differs")
@@ -361,7 +380,18 @@ def validate_accepted_generation(root_ref: dict[str, str], independent_ref: dict
     require(not marker.exists() and not marker.is_symlink(), "failure marker appeared")
     identity = {key: spec[key] for key in ("run_uuid", "collection_uuid", "generation", "source_revision", "architecture",
                                          "actor_sha256", "actor_checkpoint_step")}
-    return AcceptedGeneration(frozen(identity), tuple(frozen(game) for game in games),
-                              frozen({"root_acceptance": root_ref, "independent_review": independent_ref,
-                                      "candidate": root["candidate"], "audit_source": source, "audit_owner": root["audit_owner"],
-                                      "eligible_rows": rows, "class_counts": counts, "learning_admitted": False}))
+    evidence = {"root_acceptance": root_ref, "independent_review": independent_ref,
+                "candidate": root["candidate"], "audit_source": source, "audit_owner": root["audit_owner"],
+                "eligible_rows": rows, "class_counts": counts, "learning_admitted": False}
+    if holdout:
+        identity["bank"] = "holdout"
+        evidence["evaluation_only"] = True
+        return AcceptedHoldout(frozen(identity), tuple(frozen(game) for game in games), frozen(evidence))
+    return AcceptedGeneration(frozen(identity), tuple(frozen(game) for game in games), frozen(evidence))
+
+
+def validate_accepted_generation(root_ref: dict[str, str], independent_ref: dict[str, str], *,
+                                 max_file_bytes: int, max_total_bytes: int, max_games: int) -> AcceptedGeneration:
+    """Strict existing TRAIN route; HOLD roots/candidates/wrappers remain refused."""
+    return cast(AcceptedGeneration, _validate_generation(root_ref, independent_ref,
+        max_file_bytes=max_file_bytes, max_total_bytes=max_total_bytes, max_games=max_games, holdout=False))

@@ -237,12 +237,12 @@ def test_actual_public_cli_dispatch_keeps_existing_argv_and_consumes_lineage(tmp
     assert calls == ['admission', p['actor']['lineage']]
 
 
-def audit_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, legacy: bool = False) -> Any:
+def audit_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, legacy: bool = False, holdout: bool = False) -> Any:
     """Reuse real native/raw/Zarr/FakeTB audit, not a replacement audit body."""
     from scripts import core_finite_admit as audit
     from tests.test_core_finite_admit import entry_case
 
-    case = entry_case(tmp_path, monkeypatch, generation=3, legacy=legacy)
+    case = entry_case(tmp_path, monkeypatch, generation=3, legacy=legacy, holdout=holdout)
     _, p = audit.learning.read_ref(case.protocol['producer_protocol'])
     bank_predecessor(tmp_path, p)
     p['source']['sha256'] = dict(case.spec['source_files'])
@@ -259,10 +259,10 @@ def audit_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, legacy: bool 
     readout.update(protocol_sha256=pref['sha256'], actor_serving=serving_ref)
     readout_ref = replace(case.protocol['producer_readout'], readout)
     case.protocol['producer_readout'] = readout_ref
-    ad = frozen(tmp_path / 'bank-producer-admission.json', {'status': 'ROOT_ADMITS_CORE_GENERATION_V1',
+    ad = frozen(tmp_path / 'bank-producer-admission.json', {'status': 'ROOT_ADMITS_CORE_HOLDOUT_GENERATION_V1' if holdout else 'ROOT_ADMITS_CORE_GENERATION_V1',
         'protocol_sha256': pref['sha256'], 'run_uuid': p['run_uuid'], 'generation': p['generation'],
         'source_revision': p['source']['revision'], 'actor_sha256': p['actor']['sha256']})
-    command = ['python', '-m', 'scripts.core_finite_collect', '--execute', '--protocol', pref['path'], '--protocol-sha256', pref['sha256'],
+    command = ['python', '-m', 'scripts.core_finite_holdout_collect' if holdout else 'scripts.core_finite_collect', '--execute', '--protocol', pref['path'], '--protocol-sha256', pref['sha256'],
                '--admission', ad['path'], '--admission-sha256', ad['sha256']]
     _, terminal = audit.learning.read_ref(case.protocol['producer_owner']['terminal'])
     terminal['command'] = command

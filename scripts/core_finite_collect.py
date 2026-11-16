@@ -34,6 +34,10 @@ class CollectionConfigs(TypedDict):
     diff_focus: DiffFocusConfig
 
 
+HOLDOUT_PROTOCOL = 'CORE_FINITE_HOLDOUT_GENERATION_V1'
+HOLDOUT_ADMISSION = 'ROOT_ADMITS_CORE_HOLDOUT_GENERATION_V1'
+
+
 INITIAL_DONOR_SHA256 = 'a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0'
 REQUIRED_SOURCE_FILES = (
     'scripts/core_finite_collect.py', 'chess_anti_engine/verified_outcome.py',
@@ -152,7 +156,7 @@ def seal_readout(out: Path, readout: dict[str, Any]) -> None:
         write_json(out / 'readout.json', readout)
         inventory(out, seal=True)
     except BaseException as error:
-        mark_failure(out, {'status': 'FAILED_CORE_GENERATION_V1', 'phase': 'final_output_seal',
+        mark_failure(out, {'status': 'FAILED_CORE_HOLDOUT_GENERATION_V1' if readout['status'] == 'COLLECTED_CORE_HOLDOUT_GENERATION_V1' else 'FAILED_CORE_GENERATION_V1', 'phase': 'final_output_seal',
                           'error': repr(error), 'run_uuid': readout['run_uuid'],
                           'generation': readout['generation'], 'learning_admitted': False,
                           'root_acceptance_issued': False, 'replacement_permitted': False})
@@ -387,8 +391,8 @@ def closed_bank_predecessor(protocol: dict[str, Any]) -> dict[str, Any]:
     return boundary
 
 
-def validate_protocol(protocol: dict[str, Any], roster: list[dict[str, Any]]) -> None:
-    require(protocol['schema'] == 'CORE_FINITE_GENERATION_V1', 'wrong generation protocol schema')
+def _validate_protocol(protocol: dict[str, Any], roster: list[dict[str, Any]], *, holdout: bool) -> None:
+    require(protocol['schema'] == (HOLDOUT_PROTOCOL if holdout else 'CORE_FINITE_GENERATION_V1'), 'wrong generation protocol schema')
     require(str(uuid.UUID(protocol['run_uuid'])) == protocol['run_uuid'] and
             str(uuid.UUID(protocol['collection_uuid'])) == protocol['collection_uuid'], 'noncanonical run/collection UUID')
     for key in ('generation', 'attempts', 'concurrent_slots', 'seed'):
@@ -413,8 +417,8 @@ def validate_protocol(protocol: dict[str, Any], roster: list[dict[str, Any]]) ->
                 parent['checkpoint'] == {'path': actor['path'], 'sha256': actor['sha256']},
                 'actor is not the preplanned previous-generation final checkpoint')
     require([g['start_ordinal'] for g in roster] == list(range(len(roster))) and
-            all(g['bank'] == 'train' and g['physical_game_id'] == protocol['collection_uuid'] + ':' + str(i)
-                for i, g in enumerate(roster)), 'fixed TRAIN attempt identities/order differ')
+            all(g['bank'] == ('holdout' if holdout else 'train') and g['physical_game_id'] == protocol['collection_uuid'] + ':' + str(i)
+                for i, g in enumerate(roster)), 'fixed HOLDOUT attempt identities/order differ' if holdout else 'fixed TRAIN attempt identities/order differ')
     require(len({g['physical_game_id'] for g in roster}) == len(roster), 'duplicate physical attempt identity')
     require(len({canonical([g['root_fen'], g['opening_moves']]) for g in roster}) == len(roster), 'duplicate planned opening history')
     output = Path(protocol['output_root'])
@@ -431,7 +435,17 @@ def validate_protocol(protocol: dict[str, Any], roster: list[dict[str, Any]]) ->
             protocol['serving']['amp_dtype'] == 'bfloat16', 'qualified eager BF16 serving contract required')
 
 
-def source_guard(protocol: dict[str, Any]) -> dict[str, Any]:
+def validate_protocol(protocol: dict[str, Any], roster: list[dict[str, Any]]) -> None:
+    """Legacy TRAIN descriptor; HOLD schemas/rosters remain refused."""
+    _validate_protocol(protocol, roster, holdout=False)
+
+
+def validate_holdout_protocol(protocol: dict[str, Any], roster: list[dict[str, Any]]) -> None:
+    """Explicit HOLD descriptor with the same actor/lineage/resource predicates."""
+    _validate_protocol(protocol, roster, holdout=True)
+
+
+def _source_guard(protocol: dict[str, Any], *, holdout: bool) -> dict[str, Any]:
     source = protocol['source']
     repo = Path(source['checkout']).resolve()
     require(Path(__file__).resolve() == repo / 'scripts/core_finite_collect.py', 'foreign collector entrypoint')
@@ -439,6 +453,9 @@ def source_guard(protocol: dict[str, Any]) -> dict[str, Any]:
     require(subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, env=git_env).decode().strip() == source['revision'], 'source revision changed')
     require(not subprocess.check_output(['git', 'status', '--porcelain'], cwd=repo, env=git_env).strip(), 'source checkout dirty')
     require(set(REQUIRED_SOURCE_FILES) <= set(source['sha256']), 'incomplete source fingerprint')
+    if holdout:
+        require(protocol['schema'] == HOLDOUT_PROTOCOL and 'scripts/core_finite_holdout_collect.py' in source['sha256'],
+                'incomplete HOLDOUT source fingerprint')
     if protocol['actor']['kind'] == ANCHOR_BANK_KIND:
         require('chess_anti_engine/policy_anchor_spec.py' in source['sha256'], 'incomplete source fingerprint')
     for relative, expected in source['sha256'].items():
@@ -472,6 +489,14 @@ def source_guard(protocol: dict[str, Any]) -> dict[str, Any]:
             sf_qualification['syzygy_path'] == protocol['tablebase']['path'], 'qualified SF binary/TB path differs')
     sys.path.insert(0, str(repo))
     return native
+
+
+def source_guard(protocol: dict[str, Any]) -> dict[str, Any]:
+    return _source_guard(protocol, holdout=False)
+
+
+def holdout_source_guard(protocol: dict[str, Any]) -> dict[str, Any]:
+    return _source_guard(protocol, holdout=True)
 
 
 def project_import_origins(protocol: dict[str, Any]) -> dict[str, Any]:
@@ -531,8 +556,8 @@ def build_configs(protocol: dict[str, Any], roster: list[dict[str, Any]]) -> tup
                  'diff_focus': asdict(cfg['diff_focus'])}
 
 
-def verify_execution(protocol: dict[str, Any], protocol_sha256: str, admission: dict[str, Any]) -> None:
-    require(admission['status'] == 'ROOT_ADMITS_CORE_GENERATION_V1' and
+def _verify_execution(protocol: dict[str, Any], protocol_sha256: str, admission: dict[str, Any], *, holdout: bool) -> None:
+    require(admission['status'] == (HOLDOUT_ADMISSION if holdout else 'ROOT_ADMITS_CORE_GENERATION_V1') and
             admission['protocol_sha256'] == protocol_sha256 and admission['run_uuid'] == protocol['run_uuid'] and
             admission['generation'] == protocol['generation'] and admission['actor_sha256'] == protocol['actor']['sha256'] and
             admission['source_revision'] == protocol['source']['revision'], 'separate root stage admission absent or changed')
@@ -544,6 +569,14 @@ def verify_execution(protocol: dict[str, Any], protocol_sha256: str, admission: 
             os.environ.get('CUDA_VISIBLE_DEVICES') == '0' and
             os.environ.get('OMP_NUM_THREADS') == os.environ.get('MKL_NUM_THREADS') == '2' and
             __debug__ and os.environ.get('PYTHONOPTIMIZE', '0') == '0', 'resource/guard context differs')
+
+
+def verify_execution(protocol: dict[str, Any], protocol_sha256: str, admission: dict[str, Any]) -> None:
+    _verify_execution(protocol, protocol_sha256, admission, holdout=False)
+
+
+def verify_holdout_execution(protocol: dict[str, Any], protocol_sha256: str, admission: dict[str, Any]) -> None:
+    _verify_execution(protocol, protocol_sha256, admission, holdout=True)
 
 
 def state_sha256(state: dict[str, Any]) -> str:
@@ -755,8 +788,8 @@ def failure_sample_evidence(samples: list[Any]) -> dict[str, Any]:
             'learning_eligible': False}
 
 
-def execute(protocol: dict[str, Any], protocol_sha256: str, roster: list[dict[str, Any]],
-            cfg: CollectionConfigs, profile: dict[str, Any], native: dict[str, Any]) -> int:
+def _execute(protocol: dict[str, Any], protocol_sha256: str, roster: list[dict[str, Any]],
+             cfg: CollectionConfigs, profile: dict[str, Any], native: dict[str, Any], *, holdout: bool) -> int:
     import numpy as np
     import torch
     from chess_anti_engine.core_generation_data import capture_raw_targets, validate_stored_targets
@@ -883,7 +916,7 @@ def execute(protocol: dict[str, Any], protocol_sha256: str, roster: list[dict[st
                           'source_revision': protocol['source']['revision'], 'generation': protocol['generation'],
                           'actor_sha256': protocol['actor']['sha256'], 'served_state_sha256': serving['pre_state_sha256'],
                           'physical_game_id': planned['physical_game_id'], 'game_id': audit.game_id,
-                          'bank': 'train', 'rows': len(samples), 'scientific_class': verified['scientific_class']}
+                          'bank': 'holdout' if holdout else 'train', 'rows': len(samples), 'scientific_class': verified['scientific_class']}
                 write_json(stage / 'provenance.json', {'schema': 'CORE_GAME_PROVENANCE_V1', **common,
                            'planned': planned, 'actual': asdict(audit)})
                 write_json(stage / 'outcome-proof.json', {'schema': 'CORE_PRODUCING_OUTCOME_PROOF_V1', **common,
@@ -981,9 +1014,12 @@ def execute(protocol: dict[str, Any], protocol_sha256: str, roster: list[dict[st
         lifecycle = close_pool()
         write_json(out / 'stockfish-lifecycle.json', lifecycle)
         verifier.close()
-        source_guard(protocol)
+        if holdout:
+            holdout_source_guard(protocol)
+        else:
+            source_guard(protocol)
         write_json(out / 'project-imports.json', project_import_origins(protocol))
-        readout = {'status': 'COLLECTED_CORE_GENERATION_V1', 'run_uuid': protocol['run_uuid'],
+        readout = {'status': 'COLLECTED_CORE_HOLDOUT_GENERATION_V1' if holdout else 'COLLECTED_CORE_GENERATION_V1', 'run_uuid': protocol['run_uuid'],
             'collection_uuid': protocol['collection_uuid'], 'generation': protocol['generation'],
             'source_revision': protocol['source']['revision'], 'protocol_sha256': protocol_sha256,
             'actor_sha256': protocol['actor']['sha256'], 'actor_serving': {'path': str(out / 'actor-serving.json'),
@@ -1000,7 +1036,7 @@ def execute(protocol: dict[str, Any], protocol_sha256: str, roster: list[dict[st
         return 0 if overlap['qualified'] else 2
     except BaseException as error:
         cleanup_errors: list[str] = []
-        failure = {'status': 'FAILED_CORE_GENERATION_V1', 'error': repr(error),
+        failure = {'status': 'FAILED_CORE_HOLDOUT_GENERATION_V1' if holdout else 'FAILED_CORE_GENERATION_V1', 'error': repr(error),
             'run_uuid': protocol['run_uuid'], 'collection_uuid': protocol['collection_uuid'],
             'generation': protocol['generation'], 'completed_ordinals': sorted(completed),
             'uncompleted_ordinals_unknown_start_state': sorted(set(range(protocol['attempts'])) - set(completed)),
@@ -1039,7 +1075,7 @@ def execute(protocol: dict[str, Any], protocol_sha256: str, roster: list[dict[st
             torch.cuda.empty_cache()
 
 
-def main() -> int:
+def _main(*, holdout: bool) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument('--check', action='store_true')
@@ -1055,12 +1091,19 @@ def main() -> int:
         protocol = _bank_checked({'path': str(args.protocol), 'sha256': args.protocol_sha256})
     roster = checked(protocol['roster'])
     require(digest(protocol['starts']['path']) == protocol['starts']['sha256'], 'starts changed')
-    validate_protocol(protocol, roster)
+    if holdout:
+        validate_holdout_protocol(protocol, roster)
+    else:
+        validate_protocol(protocol, roster)
     exclusion_inputs(protocol)
     if args.execute:
         require(args.admission is not None and args.admission_sha256 is not None, 'separate finite root admission required')
-        verify_execution(protocol, args.protocol_sha256, checked({'path': str(args.admission), 'sha256': args.admission_sha256}))
-    native = source_guard(protocol)
+        admission = checked({'path': str(args.admission), 'sha256': args.admission_sha256})
+        if holdout:
+            verify_holdout_execution(protocol, args.protocol_sha256, admission)
+        else:
+            verify_execution(protocol, args.protocol_sha256, admission)
+    native = holdout_source_guard(protocol) if holdout else source_guard(protocol)
     cfg, profile = build_configs(protocol, roster)
     require(hashlib.sha256(canonical(profile)).hexdigest() == protocol['resolved_profile_sha256'], 'actual realized config profile changed')
     require(not Path(protocol['output_root']).exists() and
@@ -1068,14 +1111,34 @@ def main() -> int:
     if args.check:
         import torch
         require(not torch.cuda.is_initialized(), 'descriptor check initialized CUDA')
-        report = {'status': 'CHECKED_CORE_GENERATION_DESCRIPTOR_V1', 'source_revision': protocol['source']['revision'],
+        report = {'status': 'CHECKED_CORE_HOLDOUT_GENERATION_DESCRIPTOR_V1' if holdout else 'CHECKED_CORE_GENERATION_DESCRIPTOR_V1', 'source_revision': protocol['source']['revision'],
                   'profile': profile, 'models_created': False, 'engines_created': False,
                   'tablebase_handles_opened': False, 'execution_admitted': False,
                   'project_imports': project_import_origins(protocol)}
         if args.report:
             write_json(args.report, report)
         return 0
-    return execute(protocol, args.protocol_sha256, roster, cfg, profile, native)
+    return execute_holdout(protocol, args.protocol_sha256, roster, cfg, profile, native) if holdout else execute(protocol, args.protocol_sha256, roster, cfg, profile, native)
+
+
+def execute(protocol: dict[str, Any], protocol_sha256: str, roster: list[dict[str, Any]],
+            cfg: CollectionConfigs, profile: dict[str, Any], native: dict[str, Any]) -> int:
+    require(protocol['schema'] == 'CORE_FINITE_GENERATION_V1', 'wrong generation protocol schema')
+    return _execute(protocol, protocol_sha256, roster, cfg, profile, native, holdout=False)
+
+
+def execute_holdout(protocol: dict[str, Any], protocol_sha256: str, roster: list[dict[str, Any]],
+                    cfg: CollectionConfigs, profile: dict[str, Any], native: dict[str, Any]) -> int:
+    validate_holdout_protocol(protocol, roster)
+    return _execute(protocol, protocol_sha256, roster, cfg, profile, native, holdout=True)
+
+
+def main() -> int:
+    return _main(holdout=False)
+
+
+def holdout_main() -> int:
+    return _main(holdout=True)
 
 
 if __name__ == '__main__':
