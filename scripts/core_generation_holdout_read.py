@@ -42,7 +42,7 @@ def closed_observations(m: ruler.Metadata, p: dict[str, Any]) -> tuple[dict[str,
     admission = {"path": command[command.index("--admission") + 1], "sha256": command[command.index("--admission-sha256") + 1]}
     suffix = ["-m", "scripts.core_generation_holdout_score", "--protocol", root["protocol"]["path"],
               "--protocol-sha256", root["protocol"]["sha256"], "--admission", admission["path"], "--admission-sha256", admission["sha256"]]
-    terminal = ruler.closed_owner(m, root["owner"], resource="gpu", suffix=suffix, seconds=1200)
+    terminal = ruler.closed_owner(m, root["owner"], resource="gpu", suffix=suffix, seconds=1200, _ruler_phase=True)
     ad = m.read(admission)
     require(root["owner"]["admission"] == admission and ad["status"] == ruler.ADMISSION and ad["protocol"] == root["protocol"]
             and ad["source"] == protocol["source"] and ad["stage"] == protocol["stage"] and ad["owner"] == protocol["owner"], "scorer admission projection differs")
