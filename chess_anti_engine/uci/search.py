@@ -587,6 +587,10 @@ class SearchWorker:
   # beside ``_tb_probe`` and clears both together.
         self._tb_root: RootTablebase | None = None
         self._tb_root_notice: Callable[[str], object] | None = None
+        # Set while leaf tablebase probing is off because the C table set was
+        # replaced under this engine; repeated before every search until
+        # ``set_tb_probe`` installs (or explicitly clears) a probe.
+        self._tb_leaf_disabled_notice: str | None = None
   # Soft memory cap (UCI ``Hash``) on the tree's RESIDENT footprint
   # (``MCTSTree.footprint_bytes()``): the search halts between chunks once the
   # footprint reaches it, and says so with an ``info string``. 0 = unbounded.
@@ -2041,6 +2045,7 @@ class SearchWorker:
         regimes and could back-propagate stale values. Simpler and correct
         to reset and let the next search rebuild from scratch."""
         self._tb_probe = probe
+        self._tb_leaf_disabled_notice = None
         self.reset_tree()
 
     def _drop_stale_tb_probe(self) -> None:
@@ -2052,16 +2057,23 @@ class SearchWorker:
         leaf is answered from the new set); this makes it visible and stops
         paying for refused batches. The tree goes too: it was grown with TB
         values from the old set. Same notice channel as the root shortcut.
+
+        The notice is repeated before EVERY later search until ``SyzygyPath``
+        is set again (like the refused-path line), so a GUI that logs only
+        part of the session cannot miss that this engine plays without leaf
+        tablebases. Re-installing automatically is not done: loading this
+        engine's path again would re-initialise the one process-wide set and
+        take it from the engine that loaded the newer one.
         """
         probe = self._tb_probe
-        if not isinstance(probe, CLeafProbe) or probe.is_current():
-            return
-        self.set_tb_probe(None)
-        message = ("info string leaf tablebase probing disabled (the C Syzygy table set was "
-                   "re-initialised after it was installed); set SyzygyPath again to restore it")
-        _log.warning("%s", message)
-        if self._tb_root_notice is not None:
-            self._tb_root_notice(message)
+        if isinstance(probe, CLeafProbe) and not probe.is_current():
+            self.set_tb_probe(None)
+            self._tb_leaf_disabled_notice = (
+                "info string leaf tablebase probing disabled (the C Syzygy table set was "
+                "re-initialised after it was installed); set SyzygyPath again to restore it")
+            _log.warning("%s", self._tb_leaf_disabled_notice)
+        if self._tb_leaf_disabled_notice is not None and self._tb_root_notice is not None:
+            self._tb_root_notice(self._tb_leaf_disabled_notice)
 
     def set_tb_root(
         self, root: RootTablebase | None, *, notice: Callable[[str], object] | None = None,

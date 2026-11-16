@@ -243,6 +243,7 @@ def search_fixture(rpg=True):
     worker._rpg_pool = SimpleNamespace(n_groups=2, gather=8) if rpg else None
     worker._pucv_pool = worker._walker_pool = worker._pucv = None
     worker._tb_probe = None
+    worker._tb_leaf_disabled_notice = None
     worker._device, worker._rng, worker._cfg = 'cpu-stub', None, Config()
     worker._root_noise_scale, worker._minibatch_size, worker._vloss_weight = 0.0, 8, 1
     worker._evaluator, worker._chunk_sims, worker._max_tree_bytes = object(), 8, 0

@@ -106,6 +106,9 @@ def tables() -> str:
     return _TABLES
 
 
+_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "syzygy_3man"
+
+
 def _loaded(largest_wdl: int, *, c_generation: int = 7) -> tb_root.LoadedTables:
     return tb_root.LoadedTables(
         configured="stub", resolved="/stub", largest=largest_wdl, n_wdl=2, n_dtz=2,
@@ -299,10 +302,13 @@ def test_a_stale_probe_answers_nothing_and_warns_once(monkeypatch, caplog) -> No
     assert sum("re-initialised" in r.message for r in caplog.records) == 1
 
 
-def test_real_extension_generation_and_batch_contract() -> None:
-    """The real ``_tb_ext`` with no tables (CI): the generation moves on every
-    init/free, a stale generation probes nothing, codes for no-table /
-    illegal / castling positions, argument checking."""
+def test_real_extension_generation_and_batch_contract(tmp_path: Path) -> None:
+    """The real ``_tb_ext`` (CI: no tablebases beyond the committed 3-man
+    fixture): the generation moves on every init/free -- including an
+    ``init(p1)`` -> ``init(p2)`` with no ``free()`` in between, which is how
+    ``tb_root.load`` switches paths when two engines use different ones -- a
+    stale generation probes nothing, codes for no-table / illegal / castling
+    positions, argument checking."""
     tb_root.unload()
     g0 = _tb_ext.generation()
     _tb_ext.free()
@@ -311,6 +317,31 @@ def test_real_extension_generation_and_batch_contract() -> None:
     with pytest.raises(ValueError, match="not a readable directory"):
         _tb_ext.init("/nonexistent-syzygy-dir-for-test")  # refused before Fathom
     assert _tb_ext.generation() == g1  # the old (empty) set stays, same identity
+    krk = CBoard.from_board(chess.Board(_KRK_FEN))
+    only_kq = tmp_path / "kq"
+    only_kq.mkdir()
+    for ext in (".rtbw", ".rtbz"):
+        (only_kq / f"KQvK{ext}").symlink_to(_FIXTURE / f"KQvK{ext}")
+    # init(p1): the fixture answers KRvK (White to move wins: code 4).
+    _tb_ext.init(str(_FIXTURE))
+    g_p1 = _tb_ext.generation()
+    assert g_p1 != g1
+    assert _tb_ext.probe_wdl_batch([krk], g_p1) == bytes([4])
+    # init(p2) with NO free(): a new set, so the p1 generation is dead.
+    _tb_ext.init(str(only_kq))
+    g_p2 = _tb_ext.generation()
+    assert g_p2 != g_p1
+    assert _tb_ext.probe_wdl_batch([krk], g_p1) is None
+    assert _tb_ext.probe_wdl_batch([krk], g_p2) == bytes([5])  # no KRvK table in p2
+    # Table-free: an init that reaches Fathom and loads nothing also moves it.
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    with pytest.raises(ValueError, match="no Syzygy tables"):
+        _tb_ext.init(str(empty))
+    assert _tb_ext.generation() not in (g_p1, g_p2)
+    assert _tb_ext.probe_wdl_batch([krk], g_p2) is None
+    _tb_ext.free()
+    g1 = _tb_ext.generation()
     legal = CBoard.from_board(chess.Board(_KRK_FEN))
     # White to move while Black is in check: illegal (Fathom's is_valid).
     illegal = CBoard.from_board(chess.Board("7k/7R/8/8/8/8/8/K7 w - - 0 1"))
@@ -393,8 +424,9 @@ def test_syzygy50moverule_reaches_the_c_leaf_probe(fake_c) -> None:
 
 def test_a_stale_leaf_probe_is_dropped_before_the_next_search(out, fake_c, py_table) -> None:
     """Another engine re-initialises the one C set: the first engine's next
-    search drops its leaf probe with one notice and never probes the new set
-    with it."""
+    search drops its leaf probe and never probes the new set with it. The
+    notice repeats on EVERY search while leaf probing stays off, and stops
+    once ``SyzygyPath`` is set again (which re-installs a live probe)."""
     first, first_worker = _engine()
     second, _ = _engine()
     try:
@@ -412,8 +444,14 @@ def test_a_stale_leaf_probe_is_dropped_before_the_next_search(out, fake_c, py_ta
         assert fake_c.leaf_calls == []
         assert out.bestmoves(), out.lines
         _go(first, "go nodes 64 searchmoves b1b7 a1a2")
-        assert len([ln for ln in out.lines if "leaf tablebase probing disabled" in ln]) == 1
+        assert len([ln for ln in out.lines if "leaf tablebase probing disabled" in ln]) == 2
         assert py_table.calls == []
+        first.dispatch(CmdSetOption(name="SyzygyPath", value="stub-a"))  # restores it
+        assert isinstance(first_worker._tb_probe, CLeafProbe)
+        assert first_worker._tb_probe.is_current()
+        _go(first, "go nodes 64 searchmoves b1b7 a1a2")
+        assert len([ln for ln in out.lines if "leaf tablebase probing disabled" in ln]) == 2
+        assert fake_c.leaf_calls, "the restored probe reaches the C prober"
     finally:
         first.close()
         second.close()
@@ -715,6 +753,47 @@ def test_leaf_probes_under_concurrent_reinit_never_answer_from_another_set(
     assert not probe.is_current()
 
 
+_IDENTITY_CASES: list[tuple[str, tuple[str, ...]]] = [
+    # 7 men at the root: no shortcut, captures lead into the tables.
+    ("8/8/8/2br4/3P2k1/4B3/2p5/4K3 w - - 95 40", ()),
+    ("8/8/8/2br4/3P2k1/4B3/2p5/4K3 w - - 0 40", ()),
+    ("8/5pk1/6p1/8/3R4/6P1/5PK1/3r4 w - - 0 40", ()),
+    ("2r5/5pk1/8/8/3R4/6P1/5PK1/8 b - - 3 50", ()),
+    ("8/3k4/8/1p1P4/1P1K4/8/7r/7R w - - 0 60", ()),
+    # <= 6 men with searchmoves: the shortcut is skipped, leaves are probed.
+    ("8/8/8/4k3/8/8/4P3/R3K3 w - - 0 1", ("a1a7", "e1d2", "e2e4")),
+    ("8/3k4/8/8/8/1q6/8/K1R5 w - - 30 70", ("c1c3", "c1b1")),
+    ("8/8/8/3k4/8/3KP3/8/8 w - - 0 1", ("e3e4", "d3e2")),
+]
+
+#: (position, go) pairs the UCI subprocess test plays.
+_SUBPROCESS_GOES: list[tuple[str, str]] = [
+    ("8/8/8/2br4/3P2k1/4B3/2p5/4K3 w - - 0 40", "go nodes 400"),
+    ("8/8/8/4k3/8/8/4P3/R3K3 w - - 0 1", "go nodes 300 searchmoves a1a7 e2e4"),
+    ("8/8/8/4k3/8/8/8/KR6 w - - 0 1", "go nodes 64"),
+]
+
+
+def _all_case_fens() -> list[tuple[str, tuple[str, ...]]]:
+    out = list(_IDENTITY_CASES)
+    for fen, go in _SUBPROCESS_GOES:
+        words = go.split()
+        moves = tuple(words[words.index("searchmoves") + 1:]) if "searchmoves" in words else ()
+        out.append((fen, moves))
+    return out
+
+
+def test_every_tb_case_position_is_legal() -> None:
+    """A case list with an illegal FEN (e.g. the side NOT to move in check)
+    silently searches nothing: guard every one, and every searchmove."""
+    for fen, moves in _all_case_fens():
+        board = chess.Board(fen)
+        assert board.is_valid(), (fen, board.status())
+        assert not board.is_game_over(claim_draw=False), fen
+        for uci in moves:
+            assert chess.Move.from_uci(uci) in board.legal_moves, (fen, uci)
+
+
 # Search-level identity: the same fixed-seed search with each leaf probe.
 _IDENTITY = r'''
 import json, sys, threading
@@ -750,23 +829,12 @@ probe = (SyzygyProbe(path, cursed_as_draw=rule50) if probe_kind == "py"
          else CLeafProbe(tables, cursed_as_draw=rule50))
 w.set_tb_probe(probe)
 w.set_tb_root(tb_root.RootTablebase(tables, rule50=rule50))
-CASES = [
-    # 7 men at the root: no shortcut, captures lead into the tables.
-    ("8/8/8/2br4/3P2k1/4B3/2p5/4K3 w - - 95 40", ()),
-    ("8/8/8/2br4/3P2k1/4B3/2p5/4K3 w - - 0 40", ()),
-    ("8/5pk1/6p1/8/3R4/6P1/5PK1/3r4 w - - 0 40", ()),
-    ("2r5/5pk1/8/8/3R4/6P1/5PK1/8 b - - 3 50", ()),
-    ("8/3k4/8/1p1P4/1P1K4/8/7r/7R w - - 0 60", ()),
-    # <= 6 men with searchmoves: the shortcut is skipped, leaves are probed.
-    ("8/8/8/4k3/8/8/4P3/R3K3 w - - 0 1", ("a1a7", "e1d2", "e2e4")),
-    ("8/2k5/8/8/8/1q6/8/K1R5 w - - 30 70", ("c1c3", "c1b1")),
-    ("8/8/8/3k4/8/3KP3/8/8 w - - 0 1", ("e3e4", "d3e2")),
-]
+CASES = json.loads(sys.argv[5])
 out = []
 for fen, moves in CASES:
     w.reset_tree()
     r = w.run(chess.Board(fen), stop_event=threading.Event(), deadline=Deadline(None),
-              max_nodes=600, root_moves=moves)
+              max_nodes=600, root_moves=tuple(moves))
     try:
         mv, vis = w._tree.get_children_visits(w._root_id)
         vis = [int(v) for v in vis]
@@ -796,7 +864,8 @@ def test_search_identity_python_chess_leaf_vs_c_leaf(tables: str, tmp_path: Path
     results = {}
     for kind in ("py", "c"):
         proc = subprocess.run([sys.executable, str(script), tables, mode, kind,
-                               "1" if rule50 else "0"], capture_output=True, text=True, env=env,
+                               "1" if rule50 else "0", json.dumps(_IDENTITY_CASES)],
+                              capture_output=True, text=True, env=env,
                               cwd=str(tmp_path), timeout=900, check=False)
         assert proc.returncode == 0, proc.stderr[-3000:]
         results[kind] = json.loads(proc.stdout.strip().splitlines()[-1])
@@ -889,12 +958,8 @@ def test_uci_subprocess_plays_with_zero_python_chess_syzygy_calls(tables: str,
         proc.stdin.write(f"setoption name SyzygyPath value {tables}\nisready\n")
         proc.stdin.flush()
         _read_until(proc, lines, "readyok", 180)
-        for position, go in (
-            ("fen 8/8/8/2br4/3P2k1/4B3/2p5/4K3 w - - 0 40", "go nodes 400"),
-            ("fen 8/8/8/4k3/8/8/4P3/R3K3 w - - 0 1", "go nodes 300 searchmoves a1a7 e2e4"),
-            ("fen 8/8/8/4k3/8/8/8/KR6 w - - 0 1", "go nodes 64"),
-        ):
-            proc.stdin.write(f"position {position}\n{go}\n")
+        for fen, go in _SUBPROCESS_GOES:
+            proc.stdin.write(f"position fen {fen}\n{go}\n")
             proc.stdin.flush()
             _read_until(proc, lines, "bestmove", 180)
         proc.stdin.write("quit\n")
