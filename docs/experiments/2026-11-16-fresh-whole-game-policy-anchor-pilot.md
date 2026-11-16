@@ -287,8 +287,14 @@ all-operator BF16 claim or demonstrated450-ply runtime fit.
 | TRAIN | 192 / 160 / 8000 | `960e1dc5dc9dcdf09d5ceee6adaba4ae7f1b858fb49add5fc79360dc82b12c21` |
 | HOLD | 64 / 48 / 2000 | `d63a104aa030c1adf4293524fef431eef8f8beb413ebf5225b06add7c5d39b5b` |
 
-These hashes come from static canonical JSON after the accepted starts-path
-substitution. **They are expectations, not observed resolved profiles.** The real
+Both public JSON companions are display records, not runtime inputs. Private
+home paths use `~/...`. Canonical reconstruction must first expand those paths
+using the original private-home binding in the sealed absolute descriptors,
+rather than a reader's home directory. The `public_path_rendering` metadata is
+outside the six-group profile. The accepted binder computed the expected hashes
+from the original absolute descriptors and starts-path substitutions; the
+home-relative public JSON bytes do not have those canonical profile hashes.
+**They are expectations, not observed resolved profiles.** The real
 public `build_configs`/six-asdict equality check remains mandatory inside the
 owned collection. Source-only metadata candidates `13fcd976…` / projection
 `997950ec…` have independent source/metadata review `3b602629…`; this is neither

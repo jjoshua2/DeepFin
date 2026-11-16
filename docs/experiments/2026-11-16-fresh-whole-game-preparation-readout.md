@@ -68,8 +68,13 @@ external inference and donor-pretraining exposure remain explicit.
 ## Compact acceptance identities
 
 Paths below are relative to `~/chess-artifacts/operations/rl-week-one-20261112-v1/`.
-The JSON companion retains full paths/hashes plus starts, rosters, parent maps,
-books, source maps, priors and source-only wrapper/profile bindings.
+The JSON companions retain home-relative display paths and the original hashes
+for starts, rosters, parent maps, books, source maps, priors and source-only
+wrapper/profile bindings. They are not runtime inputs. Their
+`public_path_rendering` metadata requires restoring the original private-home
+binding from the sealed absolute descriptors before canonical reconstruction.
+Expected profile hashes come from the accepted binder's original absolute
+inputs, not from the display-normalized JSON bytes or their public envelopes.
 
 | Authority | Relative file | SHA256 |
 | --- | --- | --- |
