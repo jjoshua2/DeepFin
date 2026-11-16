@@ -47,6 +47,31 @@ GPU_PROOF_ADMISSION = "ROOT_ADMITS_SCIENTIFIC_LEARNER_PASSIVE_PROOF_GPU_V1"
 GPU_PROOF_SOURCE_REVIEW = "ACCEPT_SCIENTIFIC_LEARNER_PASSIVE_PROOF_SOURCE_ONLY_NO_FINDINGS_V1"
 # Versioned pure-metadata consumer for the independently reviewed finite prover.
 GPU_PROOF_HELPER_SHA256 = "7b45088df9ab897dfb0f9cafc6e79bc0f79072c37b1d35dd6e0a8144c9032ba6"
+GPU_PROOF_THREAD2_HELPER_SHA256 = "721cf5d141843ef0db61adb5169e9424e4e7fcbca69758b8dadb8c5321a66b26"
+D1_SCORE_SCHEMA = "CORE_GENERATION_HOLDOUT_SCORE_D1_V1"
+D1_READ_SCHEMA = "CORE_GENERATION_HOLDOUT_READ_D1_V1"
+D1_SCORE_PENDING = "CORE_HOLDOUT_D1_OBSERVATIONS_PENDING_ROOT_CLOSURE_V1"
+D1_READ_PENDING = "CORE_HOLDOUT_D1_HEALTH_PENDING_ROOT_CLOSURE_V1"
+D1_SCORE_ROOT = "ROOT_ACCEPTS_CLOSED_CORE_HOLDOUT_D1_SCORING_OBSERVATIONS_V1"
+D1_SCORE_REVIEW = "ACCEPT_CLOSED_CORE_HOLDOUT_D1_SCORING_OBSERVATIONS_NO_FINDINGS_V1"
+D1_DESIGN_SHA256 = "98770dcd0ac6dffba73608fcad53a23e5a90c929a8432ed74b6d52d615b1c8dd"
+D1_GPU_SCHEMA = "core_bank_learner_same_gpu_payload_proof_D1_v1"
+D1_GPU_STATUS = "KL_DEVELOPMENT_FIRST_D1_GPU_OWN_LIVE_SAVED_PROOF_PENDING_ROOT_CLOSURE_V1"
+D1_GPU_ADMISSION = "ROOT_ADMITS_KL_DEVELOPMENT_FIRST_D1_LEARNER_GPU_V1"
+D1_GPU_SOURCE_REVIEW = "ACCEPT_KL_DEVELOPMENT_FIRST_D1_PASSIVE_PROOF_SOURCE_ONLY_NO_FINDINGS_V1"
+D1_GPU_HELPER = "cceb3d1de58762e8557d7df398c50582c4c56519122e227c99057449d664087d"
+D1_PROFILE_SHA256 = "ab5cf42f0d7790d564c88af589f0d47f1455032f379347ef9c3038d68de39242"
+D1_PROFILE_SELECTION_SHA256 = "e5faa0b1652146b8bbf0185e868d25a64d1d8c64848b68e5f849c6e138cefa9a"
+D1_COEFFICIENTS = {"K0": 0, "K001": 0.01, "K01": 0.1, "K1": 1}
+D1_MATCH_SETTINGS = {"matched_sims": 64, "temperature": 0.1, "root_noise": True, "compile": "off", "autocast": "bf16",
+                     "transport": "float32", "history_plies": 16, "max_additional_plies": 450,
+                     "strict_tb_min": 3, "strict_tb_max": 6, "rule50": True}
+D1_SELECTION_ROOT = "ROOT_ACCEPTS_CLOSED_POLICY_ANCHOR_D1_DEVELOPMENT_SELECTION_V1"
+D1_SELECTION_REVIEW = "ACCEPT_CLOSED_POLICY_ANCHOR_D1_DEVELOPMENT_SELECTION_NO_FINDINGS_V1"
+D1_EDGE_ROOT = "ROOT_ACCEPTS_CLOSED_POLICY_ANCHOR_D1_DEVELOPMENT_EDGE_V1"
+D1_EDGE_REVIEW = "ACCEPT_CLOSED_POLICY_ANCHOR_D1_DEVELOPMENT_EDGE_NO_FINDINGS_V1"
+
+
 SOURCE_FILES = (
     "scripts/core_generation_holdout_score.py", "scripts/core_generation_holdout_read.py",
     "scripts/core_generation_holdout_ruler.py", "scripts/core_generation_holdout_metrics.py",
@@ -121,7 +146,7 @@ def write(path: Path, value: Any) -> dict[str, str]:
 
 def closed_owner(m: Metadata, owner: dict[str, Any], *, resource: str,
                  suffix: list[str], seconds: int | None = None, _same_gpu_proof: bool = False,
-                 _ruler_phase: bool = False) -> dict[str, Any]:
+                 _ruler_phase: bool = False, _d1_proof: bool = False, _d1_dev: bool = False, _d1_role: bool = False) -> dict[str, Any]:
     """Join a historical owner without confusing its revision with its child."""
     require(set(owner) == {"terminal", "admission", "command", "source_revision", "cwd", "closure"}, "invalid closed owner schema")
     terminal = m.observed(owner["terminal"])
@@ -148,8 +173,23 @@ def closed_owner(m: Metadata, owner: dict[str, Any], *, resource: str,
     for pid, birth in closure["known_processes"].items():
         require(type(pid) is str and pid.isdecimal() and str(int(pid)) == pid and int(pid) > 0
                 and type(birth) is int and birth > 0, "invalid process birth")
-    require(not (_same_gpu_proof and _ruler_phase), "conflicting owner admission routes")
-    if _same_gpu_proof:
+    require(sum((_same_gpu_proof, _ruler_phase, _d1_proof, _d1_dev, _d1_role)) <= 1, "conflicting owner admission routes")
+    if _d1_proof or _d1_dev or _d1_role:
+        expected_cap = 3600 if _d1_proof else 900 if resource == "gpu" else 300
+        expected_status = D1_GPU_ADMISSION if _d1_proof else "ROOT_ADMITS_KL_DEVELOPMENT_FIRST_D1_PREFIX_CPU_V1" if _d1_role else (
+            "ROOT_ADMITS_D1_DEVELOPMENT_GPU_V1" if resource == "gpu" else "ROOT_ADMITS_D1_DEVELOPMENT_READER_CPU_V1")
+        require(resource in (("gpu",) if _d1_proof else ("cpu",) if _d1_role else ("gpu", "cpu")) and seconds == cap == expected_cap
+                and admission["status"] == expected_status and admission["execution_authorized"] is True, "D1 owner admission differs")
+        plan_key, plan_flag = ("observer_plan", "--observer-plan") if _d1_proof else ("protocol", "--protocol") if _d1_role else ("development_plan", "--development-plan")
+        for flag, value in (("--admission", owner["admission"]["path"]), ("--admission-sha256", owner["admission"]["sha256"]),
+                            (plan_flag, admission[plan_key]["path"]), (plan_flag + "-sha256", admission[plan_key]["sha256"])):
+            require(command.count(flag) == 1 and command.index(flag) + 1 < len(command)
+                    and command[command.index(flag) + 1] == value, "D1 owner command differs")
+        normalized = list(command)
+        normalized[normalized.index("--admission-sha256") + 1] = "SELF_ADMISSION_SHA256"
+        require(admission["normalized_child"] == normalized and admission["resource"] == resource
+                and admission["seconds"] == cap and admission["owner"]["sha256"] == terminal["supervisor_sha256"], "D1 normalized owner differs")
+    elif _same_gpu_proof:
         require(resource == "gpu" and seconds == cap == 900 and admission["status"] == GPU_PROOF_ADMISSION
                 and admission["execution_authorized"] is True, "same-GPU proof admission differs")
         for flag, value in (("--admission", owner["admission"]["path"]), ("--admission-sha256", owner["admission"]["sha256"]),
@@ -207,7 +247,7 @@ def parent_map(m: Metadata, p: dict[str, Any], view: hold.AcceptedHoldout) -> di
     return ids
 
 
-def model_delivery(m: Metadata, binding: dict[str, Any], label: str) -> dict[str, Any]:
+def model_delivery(m: Metadata, binding: dict[str, Any], label: str, *, _d1: bool = False) -> dict[str, Any]:
     """Prospective delivery interface; no payload or historical source reread."""
     require(set(binding) == {"root", "independent"}, "invalid model delivery binding")
     root = m.read(binding["root"])
@@ -234,6 +274,7 @@ def model_delivery(m: Metadata, binding: dict[str, Any], label: str) -> dict[str
     suffix = ["-m", "scripts.core_generation_bank_policy_anchor", "--contract", root["contract"]["path"], "--contract-sha256", root["contract"]["sha256"],
               "--stage", root["stage"]["path"], "--stage-sha256", root["stage"]["sha256"]]
     audit = root["payload_audit"]
+    require(not _d1 or audit.get("schema") == D1_GPU_SCHEMA, "D1 requires its versioned same-owner proof")
     if set(audit) == {"readout", "owner"}:
         saved = m.read(audit["readout"])
         require(saved["status"] == "CORE_BANK_LEARNER_SAVED_STATE_AUDIT_PENDING_ROOT_CLOSURE_V1", "saved-state audit incomplete")
@@ -245,7 +286,7 @@ def model_delivery(m: Metadata, binding: dict[str, Any], label: str) -> dict[str
                 and type(saved["step"]) is int and saved["step"] == b["step"]
                 and saved["reconciled"] == dict.fromkeys(("model", "optimizer", "scheduler", "zclip", "counters", "rng", "journal", "membership", "policy_anchor"), True), "saved-state audit incomplete")
     else:
-        saved = same_gpu_payload(m, root, c, b, suffix)
+        saved = same_gpu_payload(m, root, c, b, suffix, _d1=_d1)
     bank.sha(saved["model_state_sha256"])
     membership = b["membership"]
     require(type(membership) is list and membership and all(type(row) is list and len(row) == 3
@@ -254,7 +295,8 @@ def model_delivery(m: Metadata, binding: dict[str, Any], label: str) -> dict[str
     for row in membership:
         bank.sha(row[1])
     train_rows = sum(row[2] for row in membership)
-    require(train_rows >= 8000 and c["updates_per_segment"] == [min((train_rows + 31) // 32, 1024)]
+    require(train_rows >= 8000 and c["updates_per_segment"] == ([4096] if _d1 else [min((train_rows + 31) // 32, 1024)])
+            and (not _d1 or train_rows == 17568)
             and b["drawn_rows"] == b["applied_views"], "selected dose or journal counts differ")
     require(b["accepted_banks"] == s["banks"] and len(b["bank_identities"]) == 1, "model bank horizon differs")
     require(all(set(identity) == {"run_uuid", "collection_uuid", "generation", "source_revision", "architecture", "actor_sha256", "actor_checkpoint_step"}
@@ -270,14 +312,16 @@ def model_delivery(m: Metadata, binding: dict[str, Any], label: str) -> dict[str
 
 
 
-def same_gpu_payload(m: Metadata, root: dict[str, Any], c: dict[str, Any], b: dict[str, Any], suffix: list[str]) -> dict[str, Any]:
+def same_gpu_payload(m: Metadata, root: dict[str, Any], c: dict[str, Any], b: dict[str, Any], suffix: list[str],
+                     *, _d1: bool = False) -> dict[str, Any]:
     """Versioned saved proof from the SAME closed learner GPU owner, JSON only."""
     audit = root["payload_audit"]
-    require(set(audit) == {"schema", "readout", "owner"} and audit["schema"] == GPU_PAYLOAD_SCHEMA, "invalid saved-state audit binding")
+    require(set(audit) == {"schema", "readout", "owner"} and audit["schema"] == (D1_GPU_SCHEMA if _d1 else GPU_PAYLOAD_SCHEMA), "invalid saved-state audit binding")
     require(audit["owner"] == root["learner_owner"], "payload proof must share complete learner owner")
-    closed_owner(m, audit["owner"], resource="gpu", suffix=suffix, seconds=900, _same_gpu_proof=True)
+    closed_owner(m, audit["owner"], resource="gpu", suffix=suffix, seconds=3600 if _d1 else 900,
+                 _same_gpu_proof=not _d1, _d1_proof=_d1)
     saved = m.read(audit["readout"])
-    require(saved["status"] == GPU_PAYLOAD_STATUS
+    require(saved["status"] == (D1_GPU_STATUS if _d1 else GPU_PAYLOAD_STATUS)
             and all(saved[key] == root[key] for key in ("contract", "stage", "boundary", "checkpoint"))
             and saved["source_revision"] == root["source_revision"] and saved["source_checkout"] == root["source_checkout"]
             and saved["architecture"] == c["architecture"] and type(saved["step"]) is int and saved["step"] == b["step"]
@@ -285,25 +329,30 @@ def same_gpu_payload(m: Metadata, root: dict[str, Any], c: dict[str, Any], b: di
             and saved["reconciled"] == dict.fromkeys(("model", "optimizer", "scheduler", "zclip", "counters", "rng", "journal", "membership", "policy_anchor"), True), "same-GPU saved-state proof incomplete")
     plan = m.read(saved["observer_plan"])
     admission = m.read(audit["owner"]["admission"])
-    require(plan["schema"] == "SCIENTIFIC_ANCHORED_LEARNER_PASSIVE_PROOF_V1"
-            and plan["status"] == "BOUND_SCIENTIFIC_LEARNER_PASSIVE_PROOF_NOT_DELIVERY_AUTHORITY_V1"
+    require(plan["schema"] == ("SCIENTIFIC_KL_DEVELOPMENT_FIRST_D1_PASSIVE_PROOF_V1" if _d1 else "SCIENTIFIC_ANCHORED_LEARNER_PASSIVE_PROOF_V1")
+            and plan["status"] == ("BOUND_KL_DEVELOPMENT_FIRST_D1_PASSIVE_PROOF_NOT_DELIVERY_AUTHORITY_V1" if _d1 else "BOUND_SCIENTIFIC_LEARNER_PASSIVE_PROOF_NOT_DELIVERY_AUTHORITY_V1")
             and admission["observer_plan"] == saved["observer_plan"]
             and all(saved[key] == plan[key] == admission[key] for key in ("helper", "source_review", "source_pins"))
             and all(plan[key] == root[key] for key in ("contract", "stage")) and plan["public_suffix"] == suffix
             and plan["learner_output"] == str(Path(root["checkpoint"]["path"]).parent)
             and plan["observation"] == audit["readout"]["path"]
-            and plan["limits"] == {"outer_seconds": 900, "inner_seconds": 870, "checkpoint_file_bytes": 8 << 30,
-                                   "journal_bytes": 16 << 20, "aggregate_bytes": 4 << 20}
-            and type(saved["outer_seconds"]) is int and saved["outer_seconds"] == 900
-            and type(saved["absolute_inner_seconds"]) is int and saved["absolute_inner_seconds"] == 870,
+            and plan["limits"] == {"outer_seconds": 3600 if _d1 else 900, "inner_seconds": 3570 if _d1 else 870, "checkpoint_file_bytes": 8 << 30,
+                                   "journal_bytes": (64 if _d1 else 16) << 20, "aggregate_bytes": 4 << 20}
+            and type(saved["outer_seconds"]) is int and saved["outer_seconds"] == (3600 if _d1 else 900)
+            and type(saved["absolute_inner_seconds"]) is int and saved["absolute_inner_seconds"] == (3570 if _d1 else 870),
             "same-GPU plan/admission proof differs")
+    if _d1:
+        bank.reference(plan["design"])
+        require(plan["design"]["sha256"] == D1_DESIGN_SHA256 and plan["arm"] in D1_COEFFICIENTS
+                and c["policy_anchor"]["coefficient"] == D1_COEFFICIENTS[plan["arm"]], "D1 proof arm/design differs")
     helper = saved["helper"]
     require(type(helper) is dict and set(helper) == {"path", "sha256"} and type(helper["path"]) is str
             and Path(helper["path"]).is_absolute() and Path(helper["path"]).suffix == ".py"
-            and helper["sha256"] == GPU_PROOF_HELPER_SHA256 and audit["owner"]["command"].count(helper["path"]) == 1,
+            and helper["sha256"] in ((D1_GPU_HELPER,) if _d1 else (GPU_PROOF_HELPER_SHA256, GPU_PROOF_THREAD2_HELPER_SHA256))
+            and audit["owner"]["command"].count(helper["path"]) == 1,
             "unsupported same-GPU prover")
     review = m.read(saved["source_review"])
-    require(review["status"] == GPU_PROOF_SOURCE_REVIEW and review["helper"] == helper
+    require(review["status"] == (D1_GPU_SOURCE_REVIEW if _d1 else GPU_PROOF_SOURCE_REVIEW) and review["helper"] == helper
             and review["source_pins"] == saved["source_pins"] and review["findings"] == [], "same-GPU prover source acceptance differs")
     pins = m.read(saved["source_pins"])
     require(pins["source_revision"] == root["source_revision"] and pins["source_checkout"] == root["source_checkout"]
@@ -326,6 +375,13 @@ def same_gpu_payload(m: Metadata, root: dict[str, Any], c: dict[str, Any], b: di
             and saved["membership_sha256"] == hashlib.sha256(canonical(b["membership"])).hexdigest()
             and canonical(initial["membership"]) == canonical(b["membership"])
             and saved["actual_backend"] == initial["backend"] == b["backend"], "same-GPU RNG/membership/backend differs")
+    if _d1 or helper["sha256"] == GPU_PROOF_THREAD2_HELPER_SHA256:
+        require(type(saved.get("Torch_intra")) is int and saved["Torch_intra"] == 2
+                and type(saved.get("Torch_interop")) is int and saved["Torch_interop"] == 2
+                and type(initial["backend"]) is dict
+                and type(initial["backend"].get("torch_threads")) is int and initial["backend"]["torch_threads"] == 2
+                and type(initial["backend"].get("interop_threads")) is int and initial["backend"]["interop_threads"] == 2,
+                "same-GPU thread-2 evidence differs")
     membership = b["membership"]
     require(type(membership) is list and membership and all(type(row) is list and len(row) == 3
             and type(row[0]) is int and row[0] == 1 and type(row[2]) is int and row[2] > 0 for row in membership),
@@ -334,7 +390,8 @@ def same_gpu_payload(m: Metadata, root: dict[str, Any], c: dict[str, Any], b: di
     population = sum(row[2] for row in membership)
     coverage = saved["draw_coverage"]
     require(type(plan["N"]) is int and plan["N"] == population and type(plan["K"]) is int
-            and plan["K"] == b["step"] == min((population + 31) // 32, 1024)
+            and plan["K"] == b["step"] == (4096 if _d1 else min((population + 31) // 32, 1024))
+            and (not _d1 or population == 17568)
             and type(coverage["population_rows"]) is int and coverage["population_rows"] == population
             and type(coverage["batches"]) is int and coverage["batches"] == b["step"]
             and type(coverage["views"]) is int and coverage["views"] == b["drawn_rows"] == b["applied_views"]
@@ -344,13 +401,13 @@ def same_gpu_payload(m: Metadata, root: dict[str, Any], c: dict[str, Any], b: di
     return saved
 
 
-def same_gpu_game_coverage(m: Metadata, binding: dict[str, Any], model: dict[str, Any], train: bank.AcceptedGeneration) -> None:
+def same_gpu_game_coverage(m: Metadata, binding: dict[str, Any], model: dict[str, Any], train: bank.AcceptedGeneration, *, _d1: bool = False) -> None:
     """Join the new aggregate roster to the actual accepted TRAIN, no draws read."""
     root = m.read(binding["root"])
     audit = root["payload_audit"]
     if set(audit) == {"readout", "owner"}:
         return
-    require(set(audit) == {"schema", "readout", "owner"} and audit["schema"] == GPU_PAYLOAD_SCHEMA, "invalid saved-state audit binding")
+    require(set(audit) == {"schema", "readout", "owner"} and audit["schema"] == (D1_GPU_SCHEMA if _d1 else GPU_PAYLOAD_SCHEMA), "invalid saved-state audit binding")
     coverage = m.read(audit["readout"])["draw_coverage"]
     rows = coverage["per_game_aggregate_counts"]
     require(type(rows) is list and len(rows) == len(train.games) and type(coverage["games"]) is int
@@ -376,6 +433,8 @@ def same_gpu_game_coverage(m: Metadata, binding: dict[str, Any], model: dict[str
 
 def asset_identity(m: Metadata, donor: dict[str, Any]) -> dict[str, Any]:
     """Join the selected genuine current-H model-only asset authority."""
+    if "schema" in donor:
+        return _current_integrated_asset_identity(m, donor)
     require(set(donor) == {"checkpoint", "architecture", "step", "model_state_sha256", "root", "independent", "asset_source"}, "invalid A39 binding")
     asset, independent = m.read(donor["root"]), m.read(donor["independent"])
     readout = m.read(asset["readout"])
@@ -403,6 +462,47 @@ def asset_identity(m: Metadata, donor: dict[str, Any]) -> dict[str, Any]:
     return {**donor, "label": "A39", "tag": None}
 
 
+def _current_integrated_asset_identity(m: Metadata, donor: dict[str, Any]) -> dict[str, Any]:
+    """Versioned metadata-only original-A39 identity, never a legacy status alias."""
+    require(set(donor) == {"schema", "checkpoint", "architecture", "step", "model_state_sha256", "root",
+                           "independent", "asset_source"}
+            and donor["schema"] == "core_a39_current_integrated_asset_v1", "invalid current-integrated A39 binding")
+    asset, independent = m.read(donor["root"]), m.read(donor["independent"])
+    readout = m.read(asset["readout"])
+    source = donor["asset_source"]
+    require(set(source) == {"revision", "checkout", "source_pins"}, "invalid current-integrated asset source binding")
+    bank.sha(source["revision"], 40)
+    bank.reference(source["source_pins"])
+    require(asset["status"] == "ROOT_ACCEPTS_CURRENT_INTEGRATED_COLLECTOR_CPU_ASSET_READINESS_V1"
+            and independent["status"] == "ACCEPT_CLOSED_CURRENT_INTEGRATED_COLLECTOR_CPU_ASSET_READINESS_NO_FINDINGS_V1"
+            and independent["root_acceptance"] == donor["root"] and independent["findings"] == []
+            and independent["readout"] == asset["readout"]
+            and independent["protocol"] == readout["protocol"] == asset["protocol"]
+            and independent["terminal"] == asset["terminal"], "current-integrated A39 asset acceptance differs")
+    require(all(value["source_revision"] == source["revision"] and value["source_checkout"] == source["checkout"]
+                and value["source_pins"] == source["source_pins"] for value in (asset, independent, readout))
+            and readout["status"] == "COMPLETE_CURRENT_INTEGRATED_COLLECTOR_CPU_ASSET_QUALIFICATION_CHILD_ROOT_CLOSURE_REQUIRED_V1",
+            "current-integrated asset source/readout differs")
+    observed = readout["donor_model_only"]
+    require(asset["donor_model_only"] == observed and observed["actual_CPU_model_only_load"] is True,
+            "current-integrated model-only observation differs")
+    require(type(observed["state_tensors"]) is int and observed["state_tensors"] == 494
+            and observed["counts"] == {"input_planes": 175, "state_entries": 494,
+                                       "unique_parameters": 61444448, "naive_state_elements": 77173088}
+            and observed["optimizer_restore_qualified"] is False, "complete current-integrated A39 observation differs")
+    require(donor["checkpoint"]["sha256"] == "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+            "not original A39 donor")
+    require(observed["sha256"] == donor["checkpoint"]["sha256"] and observed["path"] == donor["checkpoint"]["path"]
+            and type(observed["embedded_step"]) is int and type(donor["step"]) is int
+            and observed["embedded_step"] == donor["step"] == 680276
+            and observed["architecture"] == donor["architecture"]
+            and observed["state_sha256"] == donor["model_state_sha256"]
+            == "9796079cd73bef73ba2f5d5f2ad0779704498832e34a7c2a880f0d0b7f305229",
+            "current-integrated A39 observed identity differs")
+    bank.sha(donor["model_state_sha256"])
+    return {**donor, "label": "A39", "tag": None}
+
+
 def training_population(m: Metadata, model: dict[str, Any]) -> Any:
     """Actual TRAIN acceptance API; HOLD can never be a training-bank token."""
     stage = model["stage"]
@@ -421,7 +521,319 @@ def training_population(m: Metadata, model: dict[str, Any]) -> Any:
     return accepted
 
 
+def is_d1(p: dict[str, Any]) -> bool:
+    return p.get("schema") in (D1_SCORE_SCHEMA, D1_READ_SCHEMA)
+
+
+def protocol_labels(p: dict[str, Any]) -> tuple[str, ...]:
+    return metrics.d1_labels(p["selected_arm"]) if is_d1(p) else metrics.LABELS
+
+
+def _d1_model(m: Metadata, binding: dict[str, Any], label: str, donor: dict[str, Any], design: dict[str, Any]) -> dict[str, Any]:
+    require(label in D1_COEFFICIENTS, "invalid D1 arm")
+    model = model_delivery(m, binding, label, _d1=True)
+    train = training_population(m, model)
+    same_gpu_game_coverage(m, binding, model, train, _d1=True)
+    expected_bank = design["foundations"]["TRAIN_bank"]
+    require(model["stage"]["banks"] == [{"root_acceptance": expected_bank["root"], "independent_review": expected_bank["independent"]}]
+            and len(train.games) == 192 and train.evidence["eligible_rows"] == 17568, "D1 exact accepted TRAIN differs")
+    c = model["contract"]
+    anchor = c["policy_anchor"]
+    weight = D1_COEFFICIENTS[label]
+    require(c["initial_model"] == donor["checkpoint"] and c["initial_actor_step"] == donor["step"]
+            and c["architecture"] == donor["architecture"] and type(c["seed"]) is int and c["seed"] == 2026111673
+            and type(c["batch_size"]) is int and c["batch_size"] == 32 and c["mirror_prob"] == 0.5
+            and canonical(c["updates_per_segment"]) == canonical([4096])
+            and canonical(c["lr"]) == canonical({"peak": 3e-6, "floor": 3e-6, "warmup_start": 3e-6, "warmup_steps": 0, "first_period": 4096}),
+            "D1 exact bootstrap/dose/LR differs")
+    require(set(anchor) == {"schema", "direction", "mask", "coefficient", "reference"}
+            and anchor["schema"] == "frozen_reference_policy_anchor_v1"
+            and anchor["direction"] == "reference_to_student_forward_KL"
+            and anchor["mask"] == "original_network_turn_has_policy_with_explicit_legal_mask_v1"
+            and type(anchor["coefficient"]) in (int, float) and anchor["coefficient"] == weight
+            and (anchor["reference"] is None if weight == 0 else
+                 anchor["reference"]["checkpoint"] == donor["checkpoint"]
+                 and anchor["reference"]["checkpoint_step"] == donor["step"]
+                 and anchor["reference"]["architecture"] == donor["architecture"]), "D1 anchor identity differs")
+    delivery = m.read(binding["root"])
+    saved = m.read(delivery["payload_audit"]["readout"])
+    require(c["source_revision"] == "bbb4b725a2d5218ffa4630841dd93e8b2884b58d"
+            and saved["initial_model_state_sha256"] == donor["model_state_sha256"], "D1 initial model/source differs")
+    return model
+
+
+def _d1_paired_point(counts: Any) -> float:
+    require(type(counts) is list and len(counts) == 5 and all(type(value) is int and value >= 0 for value in counts)
+            and sum(counts) == 80, "D1 DEV requires80 complete paired observations")
+    return sum(index * value for index, value in enumerate(counts)) / 320
+
+
+def d1_playing_projection(profile: dict[str, Any]) -> dict[str, Any]:
+    """Selected active playing inputs, distinct from collector-only recording knobs.
+
+    Future DEV source must observe the actual two search objects/call arguments
+    against this projection; the consumer does not infer observations from flags.
+    The constant .75 selfplay schedule is an explicit flat arena override.
+    """
+    configs = profile["configs"]
+    search, game, temp = configs["search"], configs["game"], configs["temp"]
+    require(search["gumbel_scale"] == search["gumbel_scale_after"] == 0.75
+            and all(temp[key] == 0.1 for key in ("temperature", "after", "endgame", "selfplay_temperature", "selfplay_endgame")),
+            "D1 selected constant noise/temperature differs")
+    return {"gumbel": {"simulations": search["simulations"], "topk": search["gumbel_topk"], "temperature": 0.1,
+                "policy_temp": search["gumbel_policy_temp"], "c_scale": search["gumbel_c_scale"],
+                "target_max_visit_cap": search["gumbel_target_max_visit_cap"], "target_untempered_prior": search["gumbel_target_untempered_prior"],
+                "add_noise": True, "gumbel_scale": search["gumbel_scale"],
+                "input_history_encoding": game["input_history_encoding"], "input_extra_features": game["input_extra_features"],
+                "policy_encoding": game["policy_encoding"], "compute_relations": game["record_relations"],
+                "volatility_q_scale": search["volatility_q_scale"], "volatility_fpu": search["volatility_fpu"], "volatility_anchor": search["volatility_anchor"]},
+            "runner": {"vloss_weight": search["gumbel_vloss_weight"], "target_batch": search["gumbel_target_batch"],
+                       "history_rep_fix": game["history_rep_fix"], "tree_reuse": False},
+            "game": {key: game[key] for key in ("search_wdl_draw_mode", "syzygy_in_search", "syzygy_adjudicate", "syzygy_adjudicate_fraction",
+                       "syzygy_outcome_mode", "syzygy_path")},
+            "max_additional_plies": game["max_plies"], "history_plies": 16,
+            "serving": {"compile": "off", "autocast": "bf16", "transport": "float32", "explicit_legal_mask": True}}
+
+
+def d1_collector_only_profile(profile: dict[str, Any]) -> dict[str, Any]:
+    """Pinned label construction provenance, never observed arena arguments."""
+    return {"configs/game/" + key: {"selected_source_value": profile["configs"]["game"][key],
+                                  "playing_applicability": "NOT_APPLICABLE_LABEL_ONLY"}
+            for key in ("categorical_blend_frac", "categorical_search_blend_frac", "syzygy_rescore_policy")}
+
+
+def _d1_dev_edge(m: Metadata, binding: dict[str, Any], candidate: str, reference: str,
+                 models: dict[str, Any], p: dict[str, Any], profile: dict[str, str], role_use: dict[str, Any],
+                 dev_source: dict[str, Any], panels: dict[str, Any]) -> float:
+    require(set(binding) == {"root", "independent"}, "invalid D1 DEV binding")
+    root, review = m.read(binding["root"]), m.read(binding["independent"])
+    keys = {"status", "study_uuid", "design", "candidate", "reference", "models", "profile", "role_use", "source",
+            "protocol", "reader_protocol", "readout", "summary", "gpu_owner", "reader_owner"}
+    require(set(root) == keys and root["status"] == D1_EDGE_ROOT and root["study_uuid"] == p["study_uuid"]
+            and root["design"] == p["design"] and root["candidate"] == candidate and root["reference"] == reference
+            and root["models"] == {"candidate": models[candidate]["checkpoint"], "reference": models[reference]["checkpoint"]}
+            and root["profile"] == profile and root["role_use"] == role_use and root["source"] == dev_source, "D1 DEV edge identity differs")
+    require(set(review) == keys | {"root_acceptance", "findings"} and review["status"] == D1_EDGE_REVIEW
+            and review["root_acceptance"] == binding["root"] and review["findings"] == []
+            and all(review[key] == root[key] for key in keys - {"status"}), "D1 DEV independent review differs")
+    protocol, reader = m.read(root["protocol"]), m.read(root["reader_protocol"])
+    readout, summary = m.read(root["readout"]), m.read(root["summary"])
+    panel = "vs_A39" if reference == "A39" else "vs_K0"
+    seed = 2026111674 if reference == "A39" else 2026111675
+    for value in (protocol, readout, summary):
+        require(all(value[key] == root[key] for key in ("study_uuid", "design", "candidate", "reference", "models", "profile", "role_use", "source")),
+                "D1 DEV protocol/readout projection differs")
+    require(protocol["schema"] == "CORE_POLICY_ANCHOR_D1_DEVELOPMENT_EDGE_V1" and protocol["panel"] == panel
+            and protocol["seed"] == seed and protocol["opening_book"] == panels[panel]["book"]
+            and protocol["outer_seconds"] == 900 and protocol["inner_seconds"] == 870
+            and reader["schema"] == "CORE_POLICY_ANCHOR_D1_DEVELOPMENT_READER_V1"
+            and reader["protocol"] == root["protocol"] and reader["readout"] == root["readout"]
+            and reader["outer_seconds"] == 300 and reader["inner_seconds"] == 270,
+            "D1 DEV fixed protocol/caps differs")
+    require(m.read(root["gpu_owner"]["admission"])["development_plan"] == root["protocol"]
+            and m.read(root["reader_owner"]["admission"])["development_plan"] == root["reader_protocol"], "D1 DEV owner plan differs")
+    for owner, phase_protocol, required_status in (
+            (root["gpu_owner"], protocol, "ACCEPT_D1_DEVELOPMENT_GPU_SOURCE_ONLY_NO_FINDINGS_V1"),
+            (root["reader_owner"], reader, "ACCEPT_D1_DEVELOPMENT_READER_SOURCE_ONLY_NO_FINDINGS_V1")):
+        admission = m.read(owner["admission"])
+        source_review = m.read(phase_protocol["source_review"])
+        require(admission["helper"] == phase_protocol["helper"] and admission["source_review"] == phase_protocol["source_review"]
+                and source_review["status"] == required_status and source_review["helper"] == phase_protocol["helper"]
+                and source_review["source"] == dev_source and source_review["findings"] == []
+                and owner["command"].count(phase_protocol["helper"]["path"]) == 1, "D1 DEV source helper differs")
+    closed_owner(m, root["gpu_owner"], resource="gpu", suffix=protocol["public_suffix"], seconds=900, _d1_dev=True)
+    closed_owner(m, root["reader_owner"], resource="cpu", suffix=reader["public_suffix"], seconds=300, _d1_dev=True)
+    require(readout["status"] == "D1_DEVELOPMENT_EDGE_PENDING_ROOT_CLOSURE_V1"
+            and summary["status"] == "D1_DEVELOPMENT_EDGE_RECONCILED_PENDING_ROOT_CLOSURE_V1"
+            and summary["protocol"] == root["protocol"] and summary["readout"] == root["readout"]
+            and summary["pairs_completed"] == readout["pairs_completed"] == 80
+            and summary["games_completed"] == readout["games_completed"] == 160
+            and summary["incomplete_pairs"] == readout["incomplete_pairs"] == 0
+            and summary["illegal_or_crashed_games"] == readout["illegal_or_crashed_games"] == 0
+            and summary["reciprocal_colours_complete"] is readout["reciprocal_colours_complete"] is True
+            and summary["pair_order_verified"] is True and summary["all_game_rows_reconciled"] is True,
+            "D1 DEV technical evidence incomplete")
+    expected_projection = m.read(profile)["active_playing_projection"]
+    require(canonical(protocol["active_playing_projection"]) == canonical(expected_projection)
+            and canonical(readout["observed_playing_projection"]) == canonical({"candidate": expected_projection, "reference": expected_projection})
+            and canonical(summary["observed_playing_projection"]) == canonical(readout["observed_playing_projection"])
+            and readout["actual_search_objects_checked"] is True and readout["actual_runner_arguments_checked"] is True,
+            "D1 DEV active playing projection differs")
+    require(summary["paired_counts"] == readout["paired_counts"] and canonical(summary["effective_settings"]) == canonical(readout["effective_settings"])
+            == canonical(D1_MATCH_SETTINGS), "D1 DEV realised profile/counts differ")
+    for side, label in (("candidate", candidate), ("reference", reference)):
+        observed = readout["served_states"][side]
+        require(observed["pre"] == observed["post"] == models[label]["model_state_sha256"], "D1 DEV served state differs")
+    require(summary["pair_order_sha256"] == panels[panel]["parent_order_sha256"]
+            and summary["history_order_sha256"] == panels[panel]["history_order_sha256"], "D1 DEV exact prefix order differs")
+    bank.sha(summary["pair_order_sha256"])
+    bank.reference(summary["game_log"])
+    wdl = summary["wdl_counts"]
+    require(wdl == readout["wdl_counts"] and type(wdl) is dict and set(wdl) == {"wins", "draws", "losses"}
+            and all(type(value) is int and value >= 0 for value in wdl.values()) and sum(wdl.values()) == 160,
+            "D1 DEV complete WDL counts differ")
+    point = _d1_paired_point(summary["paired_counts"])
+    require(type(summary["paired_score"]) in (int, float) and math.isfinite(summary["paired_score"])
+            and summary["paired_score"] == readout["paired_score"] == point
+            and (wdl["wins"] + 0.5 * wdl["draws"]) / 160 == point, "D1 DEV paired score differs")
+    return point
+
+
+def _d1_role_panels(m: Metadata, binding: dict[str, Any], p: dict[str, Any], design: dict[str, Any]) -> dict[str, Any]:
+    """Consume the actual metadata-only prefix producer, never a second role phase."""
+    require(set(binding) == {"root", "independent"}, "invalid D1 role-use binding")
+    root, review = m.read(binding["root"]), m.read(binding["independent"])
+    keys = {"status", "study_uuid", "design", "source_roles", "prefixes", "original_six400_books", "protocol", "readout", "owner"}
+    require(set(root) == keys and root["status"] == "ROOT_ACCEPTS_CLOSED_KL_DEVELOPMENT_FIRST_D1_PREFIX_METADATA_V1"
+            and root["study_uuid"] == p["study_uuid"] and root["design"] == p["design"]
+            and root["source_roles"] == design["roles"], "D1 role-use authority differs")
+    require(set(review) == keys | {"root_acceptance", "findings"}
+            and review["status"] == "ACCEPT_CLOSED_KL_DEVELOPMENT_FIRST_D1_PREFIX_METADATA_NO_FINDINGS_V1"
+            and review["root_acceptance"] == binding["root"] and review["findings"] == []
+            and all(review[key] == root[key] for key in keys - {"status"}), "D1 role-use independent review differs")
+    protocol, readout = m.read(root["protocol"]), m.read(root["readout"])
+    require(protocol["schema"] == "D1_PREFIX_METADATA_CPU_PROTOCOL_V1" and protocol["status"] == "BOUND_D1_PREFIX_METADATA_ONLY_V1"
+            and protocol["design"] == p["design"] and protocol["study_uuid"] == p["study_uuid"]
+            and {"root": protocol["role_root"], "independent": protocol["role_independent"]} == design["roles"]
+            and protocol["limits"]["outer_seconds"] == 300 and protocol["limits"]["inner_seconds"] == 270
+            and readout["status"] == "D1_PREFIX_METADATA_CANDIDATE_PENDING_ROOT_CLOSURE_V1" and readout["protocol"] == root["protocol"]
+            and readout["design"] == p["design"] and readout["role_root"] == protocol["role_root"]
+            and readout["role_independent"] == protocol["role_independent"] and readout["prefixes"] == root["prefixes"]
+            and readout["original_six400_books"] == root["original_six400_books"]
+            and readout["complete_parent_descriptors_preserved"] is True and readout["controls_passed"] == 12,
+            "D1 role-use readout differs")
+    domains = readout["all8role_domains_disjoint"]
+    require(type(domains) is dict and set(domains) == {"group", "parent", "history", "epd", "history_sha", "input"}
+            and all(type(count) is int for count in domains.values())
+            and all(domains[key] == 2656 for key in ("group", "history", "epd", "history_sha"))
+            and domains["input"] == 5312 and domains["parent"] >= 2656, "D1 actual prefix domain counts differ")
+    admission = m.read(root["owner"]["admission"])
+    source_review = m.read(protocol["source_review"])
+    require(admission["protocol"] == root["protocol"] and admission["helper"] == protocol["helper"]
+            and admission["source_review"] == protocol["source_review"] and admission["source_pins"] == protocol["source_pins"]
+            and source_review["status"] == "ACCEPT_KL_DEVELOPMENT_FIRST_D1_PREFIX_SOURCE_ONLY_NO_FINDINGS_V1"
+            and source_review["helper"] == protocol["helper"] and source_review["controls"] == protocol["controls"]
+            and source_review["source_pins"] == protocol["source_pins"] and source_review["findings"] == []
+            and root["owner"]["command"].count(protocol["helper"]["path"]) == 1, "D1 role-use source helper differs")
+    suffix = [protocol["helper"]["path"], "--protocol", root["protocol"]["path"], "--protocol-sha256", root["protocol"]["sha256"],
+              "--admission", root["owner"]["admission"]["path"], "--admission-sha256", root["owner"]["admission"]["sha256"]]
+    closed_owner(m, root["owner"], resource="cpu", suffix=suffix, seconds=300, _d1_role=True)
+    original, original_ind = m.read(design["roles"]["root"]), m.read(design["roles"]["independent"])
+    require(original["status"] == "ROOT_ACCEPTS_CLOSED_PROSPECTIVE_WHOLE_GAME_ROLES_V1"
+            and original_ind["status"] == "ACCEPT_CLOSED_PROSPECTIVE_WHOLE_GAME_ROLES_NO_FINDINGS_V1"
+            and original_ind["root_acceptance"] == design["roles"]["root"] and original_ind["findings"] == []
+            and root["original_six400_books"] == original["books"] and len(original["books"]) == 6, "D1 original role authority differs")
+    require(set(root["prefixes"]) == {"SCREEN_C_A", "SCREEN_C_B"}, "D1 requires both complete DEV panels")
+    panels = {}
+    for panel, selected in (("vs_A39", design["DEV"]["panel_vs_A39"]), ("vs_K0", design["DEV"]["panel_vs_K0"])):
+        value = root["prefixes"][selected["source_role"]]
+        require(set(value) == {"source_role", "original400_book", "original_full_role", "book", "parent_map", "selection", "prefix_start", "pairs",
+                               "complete_parents", "parent_order_sha256", "history_order_sha256", "source_count", "actual_public_loader_count", "no_skips_dedup_shrink"}
+                and value["source_role"] == selected["source_role"] and value["original400_book"] == selected["source_book"]
+                == original["books"][selected["source_role"]] and value["original_full_role"] == original["roles"][selected["source_role"]]
+                and value["selection"] == "exact original ordinals0..79; no rng/subsample/reorder"
+                and value["prefix_start"] == 0 and value["pairs"] == value["complete_parents"] == value["actual_public_loader_count"] == 80
+                and value["source_count"] == 400 and value["no_skips_dedup_shrink"] is True, "D1 exact prefix materialization differs")
+        for name in ("book", "parent_map"):
+            bank.reference(value[name])
+        bank.sha(value["parent_order_sha256"])
+        bank.sha(value["history_order_sha256"])
+        panels[panel] = value
+    consumed = readout["public_consumption"]
+    expected = [(ref, 400) for ref in original["books"].values()] + [(value["book"], 80) for value in root["prefixes"].values()]
+    require(type(consumed) is list and len(consumed) == 8
+            and all(sum(row == {"book": ref, "pairs": count, "actual_public_reads": 1, "full16_history_order_EPD_exact": True}
+                        for row in consumed) == 1 for ref, count in expected), "D1 eight actual public prefix/book reads differ")
+    require(all(root["original_six400_books"][selected["source_role"]] == selected["source_book"]
+                for selected in (design["final"]["vs_A39"], design["final"]["vs_K0_if_positive_KL"])), "D1 reserved final books differ")
+    return panels
+
+def d1_selection(m: Metadata, p: dict[str, Any], donor: dict[str, Any], design: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    binding = p["d1"]
+    require(set(binding) == {"root", "independent"}, "invalid D1 selection binding")
+    root, review = m.read(binding["root"]), m.read(binding["independent"])
+    keys = {"status", "study_uuid", "design", "arms", "dev_edges", "selected_arm", "profile", "role_use", "dev_source"}
+    require(set(root) == keys and root["status"] == D1_SELECTION_ROOT and root["study_uuid"] == p["study_uuid"]
+            and root["design"] == p["design"] and set(root["arms"]) == set(D1_COEFFICIENTS), "invalid D1 selected registry")
+    require(set(review) == keys | {"root_acceptance", "findings"} and review["status"] == D1_SELECTION_REVIEW
+            and review["root_acceptance"] == binding["root"] and review["findings"] == []
+            and all(review[key] == root[key] for key in keys - {"status"}), "D1 selection independent review differs")
+    models = {label: _d1_model(m, root["arms"][label], label, donor, design) for label in D1_COEFFICIENTS}
+    require(len({model["contract"]["run_uuid"] for model in models.values()}) == 4, "D1 arms must have distinct run identities")
+    base = models["K0"]
+    for label in ("K001", "K01", "K1"):
+        model = models[label]
+        require({key: value for key, value in model["contract"].items() if key not in ("run_uuid", "policy_anchor")}
+                == {key: value for key, value in base["contract"].items() if key not in ("run_uuid", "policy_anchor")}
+                and all(model["boundary"][key] == base["boundary"][key] for key in ("membership", "draws_sha256", "rng", "backend")),
+                "D1 arms are not matched")
+    models["A39"] = donor
+    expected = {label + "_vs_A39" for label in D1_COEFFICIENTS} | {label + "_vs_K0" for label in ("K001", "K01", "K1")}
+    require(set(root["dev_edges"]) == expected, "D1 all seven DEV edges required")
+    profile = m.read(root["profile"])
+    require(set(profile) == {"schema", "design", "effective_settings", "full_profile", "selection_authority", "active_playing_projection", "source_only_not_applicable"}
+            and profile["schema"] == "D1_MATCH_PROFILE_V1" and profile["design"] == p["design"]
+            and canonical(profile["effective_settings"]) == canonical(D1_MATCH_SETTINGS), "D1 fixed match profile differs")
+    bank.reference(profile["full_profile"])
+    bank.reference(profile["selection_authority"])
+    require(profile["full_profile"]["sha256"] == D1_PROFILE_SHA256
+            and profile["selection_authority"]["sha256"] == D1_PROFILE_SELECTION_SHA256, "D1 selected profile authority differs")
+    selected = m.read(profile["selection_authority"])
+    require(selected["status"] == "ROOT_SELECTS_FINAL_PROSPECTIVE_COLLECTOR_PROFILE_AND_ROLES_SOURCE_ONLY_V1"
+            and selected["selected_profile"] == profile["full_profile"], "D1 profile selection differs")
+    full_profile = m.read(profile["full_profile"])
+    require(canonical(profile["active_playing_projection"]) == canonical(d1_playing_projection(full_profile)),
+            "D1 active playing projection differs")
+    require(canonical(profile["source_only_not_applicable"]) == canonical(d1_collector_only_profile(full_profile)),
+            "D1 collector-only label provenance differs")
+    require(type(root["dev_source"]) is dict and set(root["dev_source"]) == {"revision", "checkout", "files"}, "invalid D1 DEV source")
+    bank.sha(root["dev_source"]["revision"], 40)
+    require(type(root["dev_source"]["checkout"]) is str and Path(root["dev_source"]["checkout"]).is_absolute(), "invalid D1 DEV checkout")
+    require(type(root["dev_source"]["files"]) is dict and root["dev_source"]["files"], "empty D1 DEV source pins")
+    for name, digest in root["dev_source"]["files"].items():
+        require(type(name) is str and not Path(name).is_absolute() and ".." not in Path(name).parts, "invalid D1 DEV source file")
+        bank.sha(digest)
+    panels = _d1_role_panels(m, root["role_use"], p, design)
+    points = {}
+    for label in D1_COEFFICIENTS:
+        points[label] = _d1_dev_edge(m, root["dev_edges"][label + "_vs_A39"], label, "A39", models, p, root["profile"], root["role_use"], root["dev_source"], panels)
+    comparisons = {label: _d1_dev_edge(m, root["dev_edges"][label + "_vs_K0"], label, "K0", models, p, root["profile"], root["role_use"], root["dev_source"], panels)
+                   for label in ("K001", "K01", "K1")}
+    eligible = [label for label in D1_COEFFICIENTS if points[label] >= 0.55 and (label == "K0" or comparisons[label] >= 0.55)]
+    require(eligible, "D1 no eligible DEV arm; HOLD forbidden")
+    winner = min(eligible, key=lambda label: (-points[label], D1_COEFFICIENTS[label]))
+    require(root["selected_arm"] == p["selected_arm"] == winner, "D1 winner differs from complete DEV selection")
+    return winner, models
+
+
+def d1_bindings(m: Metadata, p: dict[str, Any]) -> tuple[hold.AcceptedHoldout, dict[str, str], dict[str, Any]]:
+    bank.reference(p["design"])
+    require(p["design"]["sha256"] == D1_DESIGN_SHA256, "wrong D1 design")
+    design = m.read(p["design"])
+    require(design["study_uuid"] == p["study_uuid"] and design["design_id"] == "D1", "foreign D1 study")
+    require(p["holdout"] == design["foundations"]["HOLD_bank"], "D1 exact HOLD bank differs")
+    view = hold.validate_accepted_holdout(p["holdout"]["root"], p["holdout"]["independent"],
+        max_file_bytes=p["limits"]["metadata_file_bytes"], max_total_bytes=p["limits"]["metadata_total_bytes"], max_games=64)
+    parents = parent_map(m, p, view)
+    require(view.identity["bank"] == "holdout" and len(view.games) == 64
+            and sum(game["rows"] for game in view.games) == 5943, "D1 whole HOLD coverage differs")
+    labels = protocol_labels(p)
+    require(set(p["models"]) == set(labels), "D1 only selected/control/donor models allowed")
+    require(p["models"]["A39"].get("schema") == "core_a39_current_integrated_asset_v1", "D1 requires current-integrated A39 authority")
+    donor = asset_identity(m, p["models"]["A39"])
+    winner, all_models = d1_selection(m, p, donor, design)
+    selected_root = m.read(p["d1"]["root"])
+    require(all(p["models"][label] == selected_root["arms"][label] for label in labels if label != "A39"), "D1 selected model binding substituted")
+    require(all(all_models[label]["architecture"] == plain(view.identity["architecture"]) for label in labels), "D1 HOLD/model architecture differs")
+    require(all(identity["collection_uuid"] != view.identity["collection_uuid"] for label in D1_COEFFICIENTS
+                for identity in all_models[label]["boundary"]["bank_identities"]), "D1 HOLD collection leaked into learning")
+    require(winner in labels, "missing selected D1 model")
+    return view, parents, {label: all_models[label] for label in labels}
+
+
 def bindings(m: Metadata, p: dict[str, Any]) -> tuple[hold.AcceptedHoldout, dict[str, str], dict[str, Any]]:
+    if is_d1(p):
+        return d1_bindings(m, p)
     view = hold.validate_accepted_holdout(p["holdout"]["root"], p["holdout"]["independent"],
         max_file_bytes=p["limits"]["metadata_file_bytes"], max_total_bytes=p["limits"]["metadata_total_bytes"], max_games=64)
     parents = parent_map(m, p, view)
@@ -557,12 +969,17 @@ def phase_command(admission: dict[str, Any], protocol_ref: dict[str, str], admis
 def phase_start(protocol_ref: dict[str, str], admission_ref: dict[str, str], *, reader: bool = False) -> tuple[dict[str, Any], Metadata, Path]:
     m = Metadata(4 << 20, 256 << 20)
     p, admission = m.read(protocol_ref), m.read(admission_ref)
-    schema = READ_SCHEMA if reader else SCORE_SCHEMA
+    d1 = p.get("schema") in (D1_SCORE_SCHEMA, D1_READ_SCHEMA)
+    schema = (D1_READ_SCHEMA if reader else D1_SCORE_SCHEMA) if d1 else (READ_SCHEMA if reader else SCORE_SCHEMA)
     keys = {"schema", "study_uuid", "design", "holdout", "parents", "models", "source", "runtime", "owner", "stage",
             "outer_seconds", "inner_seconds", "output", "limits", "source_review", "native_basis"}
     if reader:
         keys |= {"scoring"}
+    if d1:
+        keys |= {"d1", "selected_arm"}
     require(set(p) == keys and p["schema"] == schema, "wrong ruler protocol")
+    if d1:
+        require(p["design"]["sha256"] == D1_DESIGN_SHA256 and p["selected_arm"] in D1_COEFFICIENTS, "unselected D1 protocol")
     require(str(uuid.UUID(p["study_uuid"])) == p["study_uuid"], "invalid study UUID")
     resource, cap = ("cpu", 900) if reader else ("gpu", 1200)
     require(type(p["outer_seconds"]) is int and p["outer_seconds"] == cap

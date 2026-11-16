@@ -26,22 +26,26 @@ def seal(path: Path, body: Any) -> dict[str, str]:
     return {"path": str(path), "sha256": hashlib.sha256(raw).hexdigest()}
 
 
-def gpu_graph(tmp_path: Path, fault: str = "", *, arm: str = "A") -> tuple[dict[str, Any], ruler.bank.AcceptedGeneration]:
+def gpu_graph(tmp_path: Path, fault: str = "", *, arm: str = "A", threaded: bool = False, d1: bool = False, design_ref: dict[str, str] | None = None) -> tuple[dict[str, Any], ruler.bank.AcceptedGeneration]:
     """Seal every changed edge, so refusals exercise joins, not stale hashes."""
+    threaded = threaded or d1
+    historical_source = "bbb4b725a2d5218ffa4630841dd93e8b2884b58d" if d1 else HISTORICAL_LEARNER
+    updates, population, game_count = (4096, 17568, 192) if d1 else (250, 8000, 160)
+    initial_state = "9796079cd73bef73ba2f5d5f2ad0779704498832e34a7c2a880f0d0b7f305229" if d1 else "5" * 64
     architecture: dict[str, Any] = {"_schema_version": 20, "input_extra_features": "v2_threats", "fixture": "metadata-only full494 receipt"}
-    initial_model = {"path": "/fiction/original-model.pt", "sha256": "a" * 64}
+    initial_model = {"path": "/fiction/original-model.pt", "sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0" if d1 else "a" * 64}
     anchor: dict[str, Any] = {"schema": "frozen_reference_policy_anchor_v1", "direction": "reference_to_student_forward_KL",
               "mask": "original_network_turn_has_policy_with_explicit_legal_mask_v1", "coefficient": 0.0, "reference": None}
-    if arm == "C":
-        anchor["coefficient"] = 0.1
+    if arm == "C" or (d1 and arm != "K0"):
+        anchor["coefficient"] = ruler.D1_COEFFICIENTS[arm] if d1 else 0.1
         anchor["reference"] = {"checkpoint": initial_model, "architecture": architecture,
                                "checkpoint_step": 680276, "historical_source_revision": None}
     rate = 7.5e-7 if arm == "B" else 3e-6
-    contract: dict[str, Any] = {"schema": ruler.ANCHOR_KEY, "run_uuid": str("ABC".index(arm) + 1) * 8 + "-1111-4111-8111-111111111111",
-                "source_revision": HISTORICAL_LEARNER, "architecture": architecture, "first_generation": 1,
+    contract: dict[str, Any] = {"schema": ruler.ANCHOR_KEY, "run_uuid": str((tuple(ruler.D1_COEFFICIENTS).index(arm) if d1 else "ABC".index(arm)) + 1) * 8 + "-1111-4111-8111-111111111111",
+                "source_revision": historical_source, "architecture": architecture, "first_generation": 1,
                 "initial_model": initial_model, "initial_actor_step": 680276, "batch_size": 32,
-                "updates_per_segment": [250], "policy_anchor": anchor, "seed": 2026111673, "mirror_prob": 0.5,
-                "lr": {"peak": rate, "floor": rate, "warmup_start": rate, "warmup_steps": 0, "first_period": 2048}}
+                "updates_per_segment": [updates], "policy_anchor": anchor, "seed": 2026111673, "mirror_prob": 0.5,
+                "lr": {"peak": rate, "floor": rate, "warmup_start": rate, "warmup_steps": 0, "first_period": 4096 if d1 else 2048}}
     cref = seal(tmp_path / "contract.json", contract)
     bank_binding = {"root_acceptance": {"path": "/fiction/bank-root.json", "sha256": "1" * 64},
                     "independent_review": {"path": "/fiction/bank-review.json", "sha256": "2" * 64}}
@@ -49,18 +53,21 @@ def gpu_graph(tmp_path: Path, fault: str = "", *, arm: str = "A") -> tuple[dict[
     sref = seal(tmp_path / "stage.json", {"schema": "core_generation_bank_policy_anchor_stage_v1", "contract_sha256": cref["sha256"],
         "segment": 1, "parent": None, "banks": [bank_binding], "output": str(output)})
     games: list[dict[str, Any]] = []
-    for index in range(160):
+    for index in range(game_count):
         files = [{"path": "fixture.arrays", "bytes": 1, "sha256": hashlib.sha256(str(index).encode()).hexdigest()}]
-        games.append({"physical_game_id": "fiction:" + str(index), "rows": 50,
+        games.append({"physical_game_id": "fiction:" + str(index), "rows": (92 if index < 96 else 91) if d1 else 50,
                       "shard": {"path": "/fiction/shard-" + str(index), "files": files}})
-    membership = [[1, hashlib.sha256(ruler.canonical(game["shard"]["files"])).hexdigest(), 50] for game in games]
+    membership = [[1, hashlib.sha256(ruler.canonical(game["shard"]["files"])).hexdigest(), game["rows"]] for game in games]
     rng: dict[str, Any] = {"numpy": {"fixture": 1}, "mask": [], "torch_cpu": [], "torch_cuda": [[]], "python": []}
     backend: dict[str, Any] = {"fixture_backend": "eager BF16 source observation"}
+    if threaded:
+        backend.update(torch_threads=1 if fault == "thread_backend_intra" else 2,
+                       interop_threads=1 if fault == "thread_backend_interop" else 2)
     checkpoint = {"path": str(output / "learner.pt"), "sha256": "c" * 64}
     boundary: dict[str, Any] = {"status": ruler.BOUNDARY, "contract_sha256": cref["sha256"], "stage": sref, "checkpoint": checkpoint,
-        "source_revision": HISTORICAL_LEARNER, "run_uuid": contract["run_uuid"], "logical_generation": 1, "segment": 1,
+        "source_revision": historical_source, "run_uuid": contract["run_uuid"], "logical_generation": 1, "segment": 1,
         "initial_model": initial_model, "initial_actor_step": 680276, "parent": None, "step_start": 0,
-        "step": 250, "applied_updates": 250, "applied_views": 8000, "drawn_rows": 8000, "policy_anchor": anchor,
+        "step": updates, "applied_updates": updates, "applied_views": updates * 32, "drawn_rows": updates * 32, "policy_anchor": anchor,
         "membership": membership, "accepted_banks": [bank_binding], "bank_identities": [{"run_uuid": "44444444-4444-4444-8444-444444444444",
             "collection_uuid": "22222222-2222-4222-8222-222222222222", "generation": 1, "source_revision": "d" * 40,
             "architecture": architecture, "actor_sha256": initial_model["sha256"], "actor_checkpoint_step": 680276}],
@@ -68,25 +75,34 @@ def gpu_graph(tmp_path: Path, fault: str = "", *, arm: str = "A") -> tuple[dict[
     bref = seal(tmp_path / "boundary.json", boundary)
     suffix = ["-m", "scripts.core_generation_bank_policy_anchor", "--contract", cref["path"], "--contract-sha256", cref["sha256"],
               "--stage", sref["path"], "--stage-sha256", sref["sha256"]]
-    helper = {"path": "/fiction/source-prover/observe.py", "sha256": ruler.GPU_PROOF_HELPER_SHA256}
+    helper = {"path": "/fiction/source-prover/observe.py",
+              "sha256": ruler.D1_GPU_HELPER if d1 else ruler.GPU_PROOF_THREAD2_HELPER_SHA256 if threaded else ruler.GPU_PROOF_HELPER_SHA256}
+    if threaded and fault == "thread_helper_unknown":
+        helper["sha256"] = "f" * 64
     if fault == "helper":
         helper["sha256"] = "0" * 64
-    pins = seal(tmp_path / "source-pins.json", {"source_revision": "e" * 40 if fault == "historical_source" else HISTORICAL_LEARNER,
+    pins = seal(tmp_path / "source-pins.json", {"source_revision": "e" * 40 if fault == "historical_source" else historical_source,
         "source_checkout": "/fiction/historical-learner", "files": dict.fromkeys((f"fixture-{i}.py" for i in range(219)), "e" * 64)})
-    source_review = seal(tmp_path / "source-review.json", {"status": ruler.GPU_PROOF_SOURCE_REVIEW, "helper": helper,
-        "source_pins": pins, "findings": ["unresolved"] if fault == "source_review" else []})
+    review_helper = {**helper, "sha256": ruler.GPU_PROOF_HELPER_SHA256} if threaded and fault == "thread_review_helper" else helper
+    review_pins = {**pins, "sha256": "0" * 64} if threaded and fault == "thread_review_pins" else pins
+    source_review = seal(tmp_path / "source-review.json", {"status": ruler.D1_GPU_SOURCE_REVIEW if d1 else ruler.GPU_PROOF_SOURCE_REVIEW, "helper": review_helper,
+        "source_pins": review_pins, "findings": ["unresolved"] if fault == "source_review" or (threaded and fault == "thread_review_findings") else []})
     proof_path = tmp_path / "gpu-proof.json"
-    plan = seal(tmp_path / "observer-plan.json", {"schema": "SCIENTIFIC_ANCHORED_LEARNER_PASSIVE_PROOF_V1",
-        "status": "BOUND_SCIENTIFIC_LEARNER_PASSIVE_PROOF_NOT_DELIVERY_AUTHORITY_V1", "helper": helper, "source_review": source_review,
+    plan_body: dict[str, Any] = {"schema": "SCIENTIFIC_KL_DEVELOPMENT_FIRST_D1_PASSIVE_PROOF_V1" if d1 else "SCIENTIFIC_ANCHORED_LEARNER_PASSIVE_PROOF_V1",
+        "status": "BOUND_KL_DEVELOPMENT_FIRST_D1_PASSIVE_PROOF_NOT_DELIVERY_AUTHORITY_V1" if d1 else "BOUND_SCIENTIFIC_LEARNER_PASSIVE_PROOF_NOT_DELIVERY_AUTHORITY_V1", "helper": helper, "source_review": source_review,
         "source_pins": pins, "contract": cref, "stage": sref, "public_suffix": suffix, "learner_output": str(output),
-        "observation": str(proof_path), "N": 8001 if fault == "N" else 8000, "K": 250,
-        "limits": {"outer_seconds": 900, "inner_seconds": 870, "checkpoint_file_bytes": 8 << 30,
-                   "journal_bytes": 16 << 20, "aggregate_bytes": 4 << 20}})
+        "observation": str(proof_path), "N": population + 1 if fault == "N" else population, "K": updates,
+        "limits": {"outer_seconds": 3600 if d1 else 900, "inner_seconds": 3570 if d1 else 870, "checkpoint_file_bytes": 8 << 30,
+                   "journal_bytes": (64 if d1 else 16) << 20, "aggregate_bytes": 4 << 20}}
+    if d1:
+        assert design_ref is not None
+        plan_body.update(design=design_ref, arm=arm)
+    plan = seal(tmp_path / "observer-plan.json", plan_body)
     admission_path = tmp_path / "phase-admission.json"
     normalized = ["/fiction/python", "-I", "-B", helper["path"], "--observer-plan", plan["path"], "--observer-plan-sha256", plan["sha256"],
                   "--admission", str(admission_path), "--admission-sha256", "SELF_ADMISSION_SHA256", "--", *suffix]
-    cap = 901 if fault == "cap" else 900
-    admission: dict[str, Any] = {"status": "wrong" if fault == "admission_status" else ruler.GPU_PROOF_ADMISSION,
+    cap = (3601 if d1 else 901) if fault == "cap" else 3600 if d1 else 900
+    admission: dict[str, Any] = {"status": "wrong" if fault == "admission_status" else ruler.D1_GPU_ADMISSION if d1 else ruler.GPU_PROOF_ADMISSION,
         "execution_authorized": True, "observer_plan": plan, "helper": helper, "source_review": source_review, "source_pins": pins,
         "normalized_child": copy.deepcopy(normalized), "resource": "gpu", "seconds": cap, "owner": {"sha256": "e" * 64}}
     if fault == "normalized":
@@ -107,24 +123,41 @@ def gpu_graph(tmp_path: Path, fault: str = "", *, arm: str = "A") -> tuple[dict[
     rows: list[dict[str, Any]] = []
     for index, game in enumerate(games):
         count, unique = (0, 0) if index == 0 else (100, 30) if index == 1 else (50, 25)
-        rows.append({"physical_game_id": game["physical_game_id"], "population_rows": 50,
-                     "draws": count, "unique_rows": unique, "unique_fraction": unique / 50})
+        if d1:
+            count = 0 if index == 0 else 1872 if index == 1 else 680
+            unique = 0 if index == 0 else game["rows"]
+        rows.append({"physical_game_id": game["physical_game_id"], "population_rows": game["rows"],
+                     "draws": count, "unique_rows": unique, "unique_fraction": unique / game["rows"]})
     unique_total = sum(row["unique_rows"] for row in rows)
-    coverage: dict[str, Any] = {"population_rows": 8000, "batches": 250, "views": 8000, "views_per_population_row": 1.0,
-        "unique_physical_rows_drawn": unique_total, "unique_fraction": unique_total / 8000, "games": 160, "zero_draw_games": 1,
+    coverage: dict[str, Any] = {"population_rows": population, "batches": updates, "views": updates * 32, "views_per_population_row": updates * 32 / population,
+        "unique_physical_rows_drawn": unique_total, "unique_fraction": unique_total / population, "games": game_count, "zero_draw_games": 1,
         "per_game_aggregate_counts": rows, "journal_sha256": boundary["draws_sha256"], "sampling": "uniform with replacement"}
-    proof: dict[str, Any] = {"status": ruler.GPU_PAYLOAD_STATUS, "contract": cref, "stage": sref, "boundary": bref, "checkpoint": checkpoint,
-        "source_revision": HISTORICAL_LEARNER, "source_checkout": "/fiction/historical-learner", "architecture": architecture, "step": 250,
+    proof: dict[str, Any] = {"status": ruler.D1_GPU_STATUS if d1 else ruler.GPU_PAYLOAD_STATUS, "contract": cref, "stage": sref, "boundary": bref, "checkpoint": checkpoint,
+        "source_revision": historical_source, "source_checkout": "/fiction/historical-learner", "architecture": architecture, "step": updates,
         "public_suffix": suffix, "observer_plan": plan, "helper": helper, "source_review": source_review, "source_pins": pins,
-        "outer_seconds": 900, "absolute_inner_seconds": 870, "model_state_sha256": "3" * 64,
+        "outer_seconds": 3600 if d1 else 900, "absolute_inner_seconds": 3570 if d1 else 870, "model_state_sha256": "3" * 64,
         "reconciled": dict.fromkeys(("model", "optimizer", "scheduler", "zclip", "counters", "rng", "journal", "membership", "policy_anchor"), True),
         "own_live_state_fingerprint": "4" * 64, "save_before_equals_after": True, "reference_immutable": True,
         "additional_final_CPU_checkpoint_decodes": 1, "optimizer_named_parameters": 438, "active_optimizer_slots": 438,
-        "initial_model_state_sha256": "5" * 64, "initial": {"model": {"state_entries": 494, "input_planes": 175,
-            "unique_parameter_numel": 61444448, "naive_state_numel": 77173088, "finite": True, "state_sha256": "5" * 64},
+        "initial_model_state_sha256": initial_state, "initial": {"model": {"state_entries": 494, "input_planes": 175,
+            "unique_parameter_numel": 61444448, "naive_state_numel": 77173088, "finite": True, "state_sha256": initial_state},
             "membership": membership, "backend": backend}, "actual_backend": backend,
         "five_rng_snapshot_sha256": hashlib.sha256(ruler.canonical(rng)).hexdigest(),
         "membership_sha256": hashlib.sha256(ruler.canonical(membership)).hexdigest(), "draw_coverage": coverage}
+    if threaded:
+        proof.update(Torch_intra=2, Torch_interop=2)
+        if fault == "thread_missing_intra":
+            del proof["Torch_intra"]
+        elif fault == "thread_missing_interop":
+            del proof["Torch_interop"]
+        elif fault == "thread_intra":
+            proof["Torch_intra"] = 3
+        elif fault == "thread_interop":
+            proof["Torch_interop"] = 3
+        elif fault == "thread_bool_intra":
+            proof["Torch_intra"] = True
+        elif fault == "thread_float_interop":
+            proof["Torch_interop"] = 2.0
     if fault == "cpu_status":
         proof["status"] = "CORE_BANK_LEARNER_SAVED_STATE_AUDIT_PENDING_ROOT_CLOSURE_V1"
     elif fault == "checkpoint":
@@ -157,14 +190,14 @@ def gpu_graph(tmp_path: Path, fault: str = "", *, arm: str = "A") -> tuple[dict[
         coverage["unique_physical_rows_drawn"] -= 1
     elif fault == "zero_games":
         coverage["zero_draw_games"] = 0
-    audit: dict[str, Any] = {"schema": "wrong" if fault == "schema" else ruler.GPU_PAYLOAD_SCHEMA,
+    audit: dict[str, Any] = {"schema": "wrong" if fault == "schema" else ruler.D1_GPU_SCHEMA if d1 else ruler.GPU_PAYLOAD_SCHEMA,
              "readout": seal(proof_path, proof), "owner": copy.deepcopy(owner)}
     if fault == "missing_schema":
         del audit["schema"]
     elif fault == "different_owner":
         audit["owner"]["source_revision"] = "0" * 40
     root: dict[str, Any] = {"status": ruler.DELIVERY_ROOT, "contract": cref, "stage": sref, "boundary": bref, "checkpoint": checkpoint,
-            "source_revision": HISTORICAL_LEARNER, "source_checkout": "/fiction/historical-learner", "learner_owner": owner, "payload_audit": audit}
+            "source_revision": historical_source, "source_checkout": "/fiction/historical-learner", "learner_owner": owner, "payload_audit": audit}
     rref = seal(tmp_path / "delivery-root.json", root)
     review: dict[str, Any] = {"status": ruler.DELIVERY_REVIEW, "root_acceptance": rref, "findings": [],
               **{key: root[key] for key in ("contract", "stage", "boundary", "checkpoint", "payload_audit")}}

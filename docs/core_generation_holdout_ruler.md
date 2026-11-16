@@ -211,3 +211,167 @@ The sole health veto is point>0.20 nats **and** lower95>0. Nontriggering does no
 prove safety/noninferiority, and neither result chooses a best arm or authorizes
 playing. Reader status `CORE_HOLDOUT_HEALTH_PENDING_ROOT_CLOSURE_V1` still needs
 its own actual owner closure and root+independent disposition.
+
+
+## Versioned current-integrated A39 asset descriptor
+
+The strict seven-key A39 descriptor above remains the legacy current-H route.
+Current-integrated receipts require an explicit eighth field:
+`schema="core_a39_current_integrated_asset_v1"`. Unknown versions and extra fields
+are refused. Omitting this field does not adapt current-I receipts to legacy H.
+
+This route requires the exact root, independent and child readout statuses
+`ROOT_ACCEPTS_CURRENT_INTEGRATED_COLLECTOR_CPU_ASSET_READINESS_V1`,
+`ACCEPT_CLOSED_CURRENT_INTEGRATED_COLLECTOR_CPU_ASSET_READINESS_NO_FINDINGS_V1`
+and `COMPLETE_CURRENT_INTEGRATED_COLLECTOR_CPU_ASSET_QUALIFICATION_CHILD_ROOT_CLOSURE_REQUIRED_V1`.
+It joins the root/independent/readout protocol, terminal reference, source revision,
+checkout and source-pin reference, plus the complete model-only observation.
+The fixed original A39 checkpoint and state hashes, actual embedded step 680276,
+complete 494-state/175-input counts and architecture must match the descriptor;
+optimizer restoration must remain unqualified. This validates trusted metadata,
+not another checkpoint load or a new model/optimizer qualification.
+
+`asset_source` continues to identify the historically qualified asset loader and
+its receipt graph. A later scoring/reader consumer has its own source revision.
+The consumer neither relabels historical source as its current checkout nor
+reopens historical source or model bytes in this metadata join. SCORE's actual
+public loader retains its independent full checkpoint/state/architecture checks.
+Current-integrated qualification does not imply PLAY adoption or playing strength.
+
+
+## Exact thread-2 same-owner GPU prover version
+
+The existing GPU payload schema/status and original `7b45088d...` prover route
+remain supported. The consumer additionally accepts only the reviewed prover
+fingerprint `721cf5d141843ef0db61adb5169e9424e4e7fcbca69758b8dadb8c5321a66b26`.
+That private successor sets and asserts Torch intra-op and inter-op threads at
+2 before project/native/NN imports and asserts both at final custody. It emits
+the existing actual `Torch_intra` and `Torch_interop` fields, not a new CPU status.
+
+For that exact fingerprint, both final fields must be strict integers equal to
+2; initial backend `torch_threads` and `interop_threads` must also be strict
+integers equal to 2. The existing equality with the saved boundary and actual
+backend remains required. Original prover receipts do not acquire this new
+requirement retrospectively. Unknown fingerprints, crossed source reviews and
+missing, boolean, floating or wrong thread evidence are refused. All existing
+same-owner GPU 900 / 870-second, root/independent delivery, helper/source/plan,
+checkpoint/state/reference, membership/RNG/journal and coverage joins remain.
+This metadata support does not execute or qualify the prover, alter any learner
+math, or grant model delivery, scientific continuation or playing authority.
+
+
+## Finite D1 development-first consumer
+
+The additive protocols `CORE_GENERATION_HOLDOUT_SCORE_D1_V1` and
+`CORE_GENERATION_HOLDOUT_READ_D1_V1` require the caller-trusted D1 design,
+`selected_arm`, and a `d1` root/independent selection binding. The original
+four-model protocols and defaults retain their original contract and metric
+conventions. This source interface issues no admission or scientific acceptance.
+
+D1 authenticates all four closed learner deliveries as metadata before accepting
+selection: `K0`, `K001`, `K01`, and `K1` have coefficients 0, .01, .1, and 1,
+respectively. Each uses the same accepted 17,568-row TRAIN bank, seed, LR 3e-6,
+batch 32, mirror probability .5, 4,096 updates, and first period 4,096. Thus each
+journal contains 131,072 sampled views with replacement; this is not proof that
+every row was sampled. Complete accepted per-game membership and actual draw
+coverage remain independently reconciled.
+
+The delivery root retains its nine keys and the independent review its eight.
+Only `payload_audit.schema` selects the new route:
+`core_bank_learner_same_gpu_payload_proof_D1_v1`. The proof and learner must have
+identical complete owner objects. The new route requires the exact reviewed D1
+prover fingerprint, D1 admission/source/pending statuses, GPU 3,600 / inner
+3,570 seconds, a 64 MiB journal cap, and actual initial/final intra/inter-op
+thread counts of two. The older CPU audit and two GPU 900-second fingerprints
+remain separate. Historical learner/source pins describe the actual producer;
+they are not rewritten to the current consumer revision.
+
+Selection requires all seven complete 80-pair DEV edges: four arms against A39
+and three positive coefficients against K0. It joins their actual closed GPU
+900-second and CPU 300-second owners, admitted protocols, independently reviewed
+source, delivered checkpoint identities, pre/post served-state fingerprints,
+160 complete reciprocal-colour games, exact pair/history order digests, WDL and
+five-bin paired counts, and recomputed point scores. The exact fixed eligibility
+rule is own score versus A39 at least .55 and, for a positive coefficient,
+score versus K0 at least .55. The winner has the largest eligible A39 score;
+exact ties choose the lower coefficient. No eligible arm refuses HOLD.
+
+The role-use binding consumes the actual D1 prefix producer, not a second role
+phase. Its protocol is `D1_PREFIX_METADATA_CPU_PROTOCOL_V1`; its CPU 300-second
+admission and actual `--protocol` / `--protocol-sha256` flags are joined directly.
+The root has nine keys and its independent review adds root acceptance and
+findings. All six original 400-pair books remain frozen. Two actual first-80
+books and typed complete-parent projections must preserve original ordinals,
+history, order, and complete parent members. The eight genuine public book-read
+observations and actual six-domain count dictionary must reconcile. Group,
+history, terminal EPD and history-SHA counts are each 2,656; raw/mirror inputs
+are 5,312. The source-parent count is a strict integer at least 2,656, because a
+complete group can retain multiple distinct source parents; no exact parent
+count is invented. Boolean, floating, missing, extra or inconsistent counts
+refuse. Books and parent
+payloads are never opened by this metadata consumer. The prefix parent digest
+is SHA256 of canonical `games`; its history digest is SHA256 of the canonical
+ordered list of 80 histories, without a newline. Canonical JSON uses compact
+separators, sorted keys, UTF-8, and the default ASCII escaping.
+
+The DEV profile pins the selected 109-field source descriptor and the explicit
+root selection authority. `d1_playing_projection` derives the active Gumbel,
+runner, input, WDL/TB, history, move-limit and serving settings; both actually
+observed sides must match it. In particular a flat .75 noise scale is explicit:
+the arena's ordinary training-shape default of 1.0 is insufficient. The full
+109 fields remain source provenance, not a claim that an arena observed every
+collector recording, teacher, opening scheduler, or label-only field. Such
+collector-only fields do not become new DEV knobs. The future DEV implementation
+must check actual constructed search objects and runner arguments, including
+both sides, before this interface can receive honest closed evidence.
+
+Only the selected arm, K0 and A39 are loaded or scored; a K0 winner uses only K0
+and A39. Metadata checks on unselected deliveries never load those checkpoints.
+All qualified HOLD rows are scored once with the existing F32 metrics and
+source-qualified identities. The CPU reader remains Torch/model/native-free.
+The equal-parent selected-minus-A39 CE contrast uses the same local PCG64 seed,
+10,000 paired resamples, linear quantiles and severe-damage veto as the original
+ruler. No anchor penalty enters the evaluation metric. An unread report or veto
+cannot authorize final matches. This consumer does not implement DEV matches,
+issue selection receipts, adopt a runtime, or authorize PLAY; final playing
+acceptance remains a separately reviewed, closed evidence path.
+
+The added synthetic tests use explicitly fictional authorities and trust-anchor
+hashes, real versioned consumer predicates and real tiny model loading/scoring.
+Only the previously qualified upstream bank authority is replaced in selection
+fixtures; the D1 saved-proof, per-game coverage, owner, profile, prefix and winner
+predicates run directly. All new cases are source-declared and unrun until a
+root-owned qualification. No actual learner, DEV, HOLD, or strength result is
+implied by this source change.
+
+
+The D1 successor also exercises the public `bindings` dispatch with a sealed,
+acyclic fictional D1 design, real parent-map metadata and real D1 delivery,
+coverage, prefix/profile, all-seven-edge and winner predicates. The established
+upstream HOLD-token and donor-asset APIs are the only additional inert seams.
+Both two-model and three-model selected sets are accepted; any extra unselected
+model refuses before payload work. Future root-owned qualification additionally
+requires two genuine accepted-prefix metadata API controls, without reading
+books or role payloads, in the same fixed 400-second engineering phase.
+
+
+D1 profile classification correction: `categorical_blend_frac`,
+`categorical_search_blend_frac`, and `syzygy_rescore_policy` are training-label
+construction controls in selfplay finalization. They are absent from the arena
+and match APIs. The exact selected descriptor values remain authenticated in
+`profile.source_only_not_applicable`, with `NOT_APPLICABLE_LABEL_ONLY`; they
+are excluded from both sides' required observed active playing projection.
+A profile copy is never evidence of an observed runtime parameter.
+
+The remaining grouped projection describes real semantic checks, not a claim
+that `GameConfig` is an arena argument. `history_rep_fix` requires the actual
+model attribute and delegated `rep_fix.apply(True, boards_discarded=True)` before
+search. `tree_reuse=False` requires actual compiled-runner bound arguments
+`tree=None`, `root_node_ids=None`, and `cboards=None` on the cold per-ply path.
+`syzygy_adjudicate_fraction=1` means no fractional/random filter: the same strict
+fullboard handle is used and the reader must reject a move beyond the earliest
+natural or rule50-aware result across all 160 games. `net_raw` is the actual
+unblended WDL-to-Q source path, not an invented argument. Gumbel fields, vloss
+and target batch remain observations of actual constructed objects and actual
+positive calls on each side. These are required contracts for the future DEV
+helper/reader; this source change has not executed or qualified them.

@@ -1,0 +1,396 @@
+{
+  "accepted_aggregate_evidence": {
+    "WDL": {
+      "independent": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-baseline-fixed-G1-G2-WDL-adjunct-independent-actual-review-v1/review.json",
+        "sha256": "f9c581897d8657b2e551d927adece02e942cf84a059753d41ef1501e52bd3cfe"
+      },
+      "independent_status": "ACCEPT_ACTUAL_WDL_ADJUNCT_BANKED_ROW_ARITHMETIC_AND_V3_SYNTHETIC_CONTROLS_DESCRIPTIVE_ONLY",
+      "protocol": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-baseline-fixed-G1-G2-WDL-adjunct-bindings-v1/protocol.json",
+        "sha256": "1ff6a16d73e9ff8f3a83f2b7b8bb5a2a0eb2d3e9e07a5fc743a5b4b5f40895bb"
+      },
+      "readout": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-baseline-fixed-G1-G2-WDL-adjunct-results-v1/readout.json",
+        "sha256": "b20b66e92e5faf1318c3bf2f4ee58054922ee112b6bc201b4e1fbc82b3afaaf8"
+      },
+      "root": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-baseline-fixed-G1-G2-WDL-adjunct-bindings-v1/root-readout-acceptance.json",
+        "sha256": "4549d7501f5fd2cf90190b34b0ebae267832b5d6ed771b1da8967631710d266f"
+      },
+      "root_status_preserved": "ROOT_ACCEPTED_CLOSED_WDL_DESCRIPTIVE_ADJUNCT_METADATA_AND_AGGREGATES"
+    },
+    "anchor": {
+      "independent": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/frozen-reference-policy-anchor-full494-GPU-independent-actual-review-v1/review.json",
+        "sha256": "17fc46e122169ed8df31127b2614108724702a57f813d5d655f0db0848701824"
+      },
+      "independent_status": "ACCEPT_CLOSED_FROZEN_ANCHOR_FULL494_GPU_SOFTWARE_QUALIFICATION_NO_FINDINGS_V1",
+      "protocol": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/frozen-reference-policy-anchor-full494-GPU-bindings-v2/protocol.json",
+        "sha256": "07a1f09d6a594fdfac67053382fa18a071c9ba362e30fa026fb797a5c2036c9d"
+      },
+      "readout": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/frozen-reference-policy-anchor-full494-GPU-results-v2/readout.json",
+        "sha256": "a89581390141ad5afb41689b617fcaa64bf434f8ca82730791f869f47c8a2a0c"
+      },
+      "root": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/frozen-reference-policy-anchor-full494-GPU-bindings-v2/root-acceptance.json",
+        "sha256": "9f6c9aa82d7e87acbff769109d2dfef04d30bb49f4da7edc1cf516989afa092f"
+      },
+      "root_status_preserved": "ROOT_ACCEPTS_CLOSED_FROZEN_ANCHOR_FULL494_GPU_SOFTWARE_PENDING_INDEPENDENT_REVIEW"
+    },
+    "baselineG8": {
+      "independent": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-baseline-research-arena-leg1-terminal-independent-actual-review-v1/review.json",
+        "sha256": "b048e12250521abea3857c7b7544e99615ceb6b2e655fd4297796b082e5e46b6"
+      },
+      "independent_status": "ACCEPT_ACTUAL_LEG1_TERMINAL_TECHNICAL_PASS_STRENGTH_NONPASS_NO_CONFIRMATION",
+      "protocol": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-baseline-research-arena-bindings-v1/leg1-terminal/protocol.json",
+        "sha256": "f54f0e0ae35e53fdcece2cbf945e669b01f0c0c8e7512d29de1df225d5a9b5bc"
+      },
+      "readout": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-baseline-research-arena-leg1-terminal-readout-v1/readout.json",
+        "sha256": "3b88d5f4bff1d2c569015cd139c94f1e3c357a3a4da047fd3699cc4e410987f9"
+      },
+      "root": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-baseline-research-arena-bindings-v1/leg1-terminal/root-readout-acceptance.json",
+        "sha256": "d7dfefc02bba8e785c92dfc4171db707ba6b83c13704694382c5ca003cbc0173"
+      },
+      "root_status_preserved": "ROOT_ACCEPTED_QUALIFIED_LEG1_TERMINAL_NONPASS_NO_CONFIRMATION_NO_LEG2"
+    },
+    "census": {
+      "independent": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-retained-search-target-census-independent-actual-review-v1/review.json",
+        "sha256": "4acd90e2fcef094ecbc5ff85bc130e41686bff199420574d144541922bd0bea1"
+      },
+      "independent_status": "ACCEPT_CLOSED_COMPLETE_RETAINED_SEARCH_TARGET_CENSUS_NO_FINDINGS",
+      "protocol": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-retained-search-WDL-bank-decomposition-bindings-v1/protocol.json",
+        "sha256": "4dfd93d8b03cb236b867d818d54e38b55cc007f90ff5c3a41ab7e073767e07c7"
+      },
+      "readout": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-retained-search-WDL-bank-decomposition-results-v1/readout.json",
+        "sha256": "7ec3cf498f33e16a27fd8aef428ee1a9da975c3e9e19878ea23723df6ba90a4f"
+      },
+      "root": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-retained-search-WDL-bank-decomposition-bindings-v1/root-acceptance.json",
+        "sha256": "6e7b99f08195dece40005a305f8f29aa44415dff5c3c6ca351c49bc0e84c87e1"
+      },
+      "root_status_preserved": "ROOT_ACCEPTS_CLOSED_COMPLETE_RETAINED_SEARCH_TARGET_CENSUS_V1"
+    },
+    "control": {
+      "independent": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-A512-A39-control-diagnostic-independent-actual-review-v1/review.json",
+        "sha256": "1724126399f214db376232e75124c4438e4a319fcbdaca6911535416b4175a9e"
+      },
+      "independent_status": "ACCEPT_CLOSED_A512_A39_CONTROL_DIAGNOSTIC_ENDPOINT_NO_FINDINGS",
+      "protocol": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-A512-A39-control-diagnostic-bindings-v1/A512_vs_A39_control_characterization/protocol.json",
+        "sha256": "2d194d33625353afb781f9a9aa6ae824a866727da8a790159d0b0fa7c978d6e8"
+      },
+      "readout": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-A512-A39-control-diagnostic-readout-v1/readout.json",
+        "sha256": "2e2ff30794fbcbe3bfa3041555fb5ea83e31484ab99e9b10ee6fcc40a409384a"
+      },
+      "root": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-A512-A39-control-diagnostic-bindings-v1/A512_vs_A39_control_characterization/root-acceptance.json",
+        "sha256": "4cb84e73fec6dbde474da12c96d0daa25f67e43af67185f6b3979cb5f396876d"
+      },
+      "root_status_preserved": "ROOT_ACCEPTS_CLOSED_A512_A39_CONTROL_DIAGNOSTIC_ENDPOINT_V1"
+    },
+    "lowG8": {
+      "independent": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-baseline-lowLR-leg1-terminal-independent-actual-review-v1/review.json",
+        "sha256": "75230c0f56214b944aedaddd986ccd1dfb37baad4d056159efb09ca6fc58f1fa"
+      },
+      "independent_status": "ACCEPT_CLOSED_FIRST_FRESH_G8_TERMINAL_TECHNICAL_PASS_SCREEN_NONPASS",
+      "protocol": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-baseline-lowLR-continuation-bindings-v1/leg1-terminal/protocol.json",
+        "sha256": "c82c47931b2437b42f1fd5146f3f4e0b4325904eb269e2bb7e5e87a768af1ef5"
+      },
+      "readout": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-baseline-lowLR-leg1-terminal-readout-v1/readout.json",
+        "sha256": "d746ad2ec0bfa31063f8b8997da9b9b1243c12a33b1bd0bc754b4d9519032fdf"
+      },
+      "root": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-baseline-lowLR-continuation-bindings-v1/leg1-terminal/root-readout-acceptance.json",
+        "sha256": "dab6b9f3f03d3826309e366b0525261de9265ea915eb0b4b527b0881742a731e"
+      },
+      "root_status_preserved": "ROOT_ACCEPTS_CLOSED_FIXED_G8_FIRST_FRESH_TERMINAL_READOUT_PENDING_INDEPENDENT_ACTUAL_ACCEPTANCE"
+    },
+    "matchedLR": {
+      "independent": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-baseline-fixed-G1-LR-arena-independent-actual-review-v1/review.json",
+        "sha256": "184d0c3f4fece0a08e968cf8f7af39bd4acfa66ec11f0cd30e0cb4e19c26452c"
+      },
+      "independent_status": "ACCEPT_ACTUAL_FIXED_G1_LR_EXPLORATORY_RELATIVE_IMPROVEMENT_ONLY",
+      "protocol": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-baseline-fixed-G1-LR-probe-bindings-v1/fixed-g1-lr0p1-vs-banked-g1/protocol.json",
+        "sha256": "388a6920e769d6acf8f6c882d6af4ae54db9b1a2549f12e451de4a12bdfaef9d"
+      },
+      "readout": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-baseline-fixed-G1-LR0p1-arena-readout-v1/readout.json",
+        "sha256": "e695317e658d4f9976660c21407469acd12201da19e8ff18f9caa42d54ac4276"
+      },
+      "root": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-baseline-fixed-G1-LR-probe-bindings-v1/fixed-g1-lr0p1-vs-banked-g1/root-readout-acceptance.json",
+        "sha256": "7ee0e7016bbebb5dc743a45ed2087cc2d6b3fa52f305adc1ec37cd05d518702c"
+      },
+      "root_status_preserved": "ROOT_ACCEPTED_QUALIFIED_FIXED_G1_LR_RELATIVE_IMPROVEMENT_ONLY"
+    },
+    "retainedBA": {
+      "independent": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-retained-search-mainWDL-512-pilot-bindings-v1/arena/screen_B_vs_A/independent-review.json",
+        "sha256": "5aa2e6717958d758303ff4c6172e35c7231397baf5a7f43d4808d4733afee784"
+      },
+      "independent_status": "ACCEPT_CLOSED_RETAINED_SEARCH_PILOT_ARENA_ENDPOINT_NO_FINDINGS",
+      "protocol": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-retained-search-mainWDL-512-pilot-bindings-v1/arena/screen_B_vs_A/protocol.json",
+        "sha256": "d11987b3475e40f380552399fddcf3e2645320ccabd26a5c71d87349d075528e"
+      },
+      "readout": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-retained-search-mainWDL-512-pilot-screen_B_vs_A-readout-v1/readout.json",
+        "sha256": "79e2c8097ff552aaba3f483cce2e555e443c790d7398c4bc32595b10cf4f5472"
+      },
+      "root": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-retained-search-mainWDL-512-pilot-bindings-v1/arena/screen_B_vs_A/root-acceptance.json",
+        "sha256": "feb72fd58947179400fa79f9027974f6dcb0ed196d3fd37bd2dee49a72f1bcaf"
+      },
+      "root_status_preserved": "ROOT_ACCEPTS_CLOSED_RETAINED_SEARCH_PILOT_ARENA_ENDPOINT_V1"
+    },
+    "retainedBA39": {
+      "independent": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-retained-search-mainWDL-512-pilot-bindings-v1/arena/screen_B_vs_A39/independent-review.json",
+        "sha256": "014075e96d0e1dbe7684d01184e9e8ed1480b238f5b5ef50e8c5cdc0cbe7fdec"
+      },
+      "independent_status": "ACCEPT_CLOSED_RETAINED_SEARCH_PILOT_ARENA_ENDPOINT_NO_FINDINGS",
+      "protocol": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-retained-search-mainWDL-512-pilot-bindings-v1/arena/screen_B_vs_A39/protocol.json",
+        "sha256": "0952734d12b1981987b755dd5d744dcf94d2a9a7b5287e6199974572b80898cc"
+      },
+      "readout": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-retained-search-mainWDL-512-pilot-screen_B_vs_A39-readout-v1/readout.json",
+        "sha256": "b8c42e05bb5b472ec043536a94a40a5b33b59515c0efbed00b3f463f7a34b966"
+      },
+      "root": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/core-retained-search-mainWDL-512-pilot-bindings-v1/arena/screen_B_vs_A39/root-acceptance.json",
+        "sha256": "58aea612079e79f9d7fe245a3a76480c26fc979579969f264c350fd9289d6d18"
+      },
+      "root_status_preserved": "ROOT_ACCEPTS_CLOSED_RETAINED_SEARCH_PILOT_ARENA_ENDPOINT_V1"
+    }
+  },
+  "conclusions": [
+    {
+      "action_on_existing_evidence": "Retain LR-package sensitivity as an evidence-backed clue; do not call lowerLR a cure or SF-label quality the universal cause. No new experiment is selected.",
+      "observations": [
+        "Matched G1 lower-rate package beat HIGH512 and HIGH512 harmed finite-bank outcomeWDL fit.",
+        "Lower-rate on-policy G8 still failed donor-relative terminal gain.",
+        "Original outcome-only failures had adopted SF/search-WDL shares0; weak5k SF policy labels cannot explain those failures."
+      ],
+      "title": "The update regime is implicated; a complete mechanism is not established."
+    },
+    {
+      "action_on_existing_evidence": "Record the tested search-value replacement as negative. Deprioritize normalization-only blame; do not generalize to every search target or claim a known teacher-value error.",
+      "observations": [
+        "Matched B/A lower and upper interval bounds were below parity; target replacement was actually active/nonzero.",
+        "Complete census F32-to-normalized-F16 aggregate residual difference is about9.41e-7.",
+        "Unclipped bestQ, rawrootWDL and fullvisits are missing; one realized outcome is not an optimal-value oracle."
+      ],
+      "title": "The retained-search value target failed this controlled use; a simple storage-only explanation is weak."
+    },
+    {
+      "action_on_existing_evidence": "Keep qualified internal NONPASS results and earlier harness/permission/dtype-assumption failures distinct. Do not label technical failures as negative learning outcomes or infer a head cause from one Elo/score scalar.",
+      "observations": [
+        "The historical A512-A39 direct control is unresolved and cannot be substituted for a different seed/source A512.",
+        "Anchor software checks show real causal gradient/model changes only on synthetic data, not strength.",
+        "Both losses update a shared trunk; coupled categorical/value topology persists despite zero auxiliary coefficient. The existing record does not isolate one failing head."
+      ],
+      "title": "Separate outcome failure, mechanism hypothesis and software failure."
+    }
+  ],
+  "date": "2026-11-16",
+  "documents": {
+    "docs/experiments/2026-11-13-core-outcome-policy-baseline.md": {
+      "bytes": 33203,
+      "git_revision": "d7c990c9b2506b5a18c513a09bc22231b28eae90",
+      "sha256": "f97d2ac09b081d6cde68893bdb092234375a4770e9cbb957a4082e256b7bf242"
+    },
+    "docs/experiments/2026-11-13-fixed-g1-lr-g2-wdl.md": {
+      "bytes": 12345,
+      "git_revision": "d7c990c9b2506b5a18c513a09bc22231b28eae90",
+      "sha256": "06964ab4300abb330bb617062249ef7bd755f92a92ad4c768e953f6c0ceca5ab"
+    },
+    "docs/experiments/2026-11-14-a512-a39-control-diagnostic.md": {
+      "bytes": 15287,
+      "git_revision": "d7c990c9b2506b5a18c513a09bc22231b28eae90",
+      "sha256": "374ecacb23a1af7f44e217e027807d78116ba08243ebc3a079fd99e8b9ebba86"
+    },
+    "docs/experiments/2026-11-14-low-lr-on-policy-continuation.md": {
+      "bytes": 66444,
+      "git_revision": "d7c990c9b2506b5a18c513a09bc22231b28eae90",
+      "sha256": "393b34b9ab925a496da88ed811555529650062e74d066df88388ffc68a141f76"
+    },
+    "docs/experiments/2026-11-15-retained-search-mainwdl-512-pilot.md": {
+      "bytes": 24270,
+      "git_revision": "d7c990c9b2506b5a18c513a09bc22231b28eae90",
+      "sha256": "5093a7bb259cdbf9896ae4f25f47865e2537d0404f38ac3792a6440438119f00"
+    },
+    "docs/experiments/2026-11-15-retained-search-target-bank-census.md": {
+      "bytes": 16102,
+      "git_revision": "d7c990c9b2506b5a18c513a09bc22231b28eae90",
+      "sha256": "1be9945e5791c4310fde2504d38f735964b5fb4ff29daab9c4de9c89b00c8076"
+    },
+    "docs/experiments/2026-11-16-frozen-policy-anchor-software-qualification.md": {
+      "bytes": 16038,
+      "git_revision": "d7c990c9b2506b5a18c513a09bc22231b28eae90",
+      "sha256": "0eba1ec899051e7edfda6f78a776032c310f388a30b2703e0926d9adb4192485"
+    }
+  },
+  "new_numerical_jobs": 0,
+  "phase_execution_authorized": false,
+  "public_path_rendering": {
+    "original_audit_artifacts": {
+      "NOTE.md": {
+        "bytes": 6047,
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/existing-RL-failure-evidence-audit-20261116-v1/NOTE.md",
+        "sha256": "89182841213801ff5463d6a369cd7efe257d9e14999f2a2bfd9c8248a231836f"
+      },
+      "manifest.json": {
+        "bytes": 686,
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/existing-RL-failure-evidence-audit-20261116-v1/manifest.json",
+        "sha256": "656e88f8743ec418bcd8016934116020ed84d616f45d2d93c0949ecad06cc77f"
+      },
+      "readout.json": {
+        "bytes": 25115,
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/existing-RL-failure-evidence-audit-20261116-v1/readout.json",
+        "sha256": "9fc8e7a846d573cec985cf6af5ddb39917651d6b6970de539352f0778b918b97"
+      }
+    },
+    "private_root_display": "~/",
+    "runtime_input": false,
+    "schema": "PUBLIC_ARTIFACT_PATH_DISPLAY_V1",
+    "scope": "Display paths only. Source artifact SHA256 values identify original private bytes, not this rendered public JSON. Resolve an intended path against the original authenticated private record; do not pass this display JSON as a runtime protocol."
+  },
+  "resource_queries": 0,
+  "schema": "EXISTING_RL_FAILURE_EVIDENCE_AUDIT_V1",
+  "scope_limits": [
+    "Source/Git and stable canonical readonly aggregate JSON below4MiB only. No model/weights/shard/row/book/pool/catalogue/index/native image/individual build record/rawgame or PGN read/stat/hash.",
+    "Nine roots and nine corresponding independent receipts authenticated; original pending root status text is preserved and separate independent acceptance supplies completed review.",
+    "The222188-byte retained-target aggregate was read; its4530616-byte per-game file remains unopened. No16MiB exception used.",
+    "Existing proof/custody/numerical/statistical qualifications are inherited, not re-executed. No tests/imported project/Torch/NumPy/lint/build/probe/job or new experimental proposal.",
+    "Reviewer previously reviewed/authored parts of anchor/lineage tooling; this audit reconciles existing accepted evidence and does not present a new independent numerical validation."
+  ],
+  "source_revision_for_published_docs": "d7c990c9b2506b5a18c513a09bc22231b28eae90",
+  "status": "COMPLETED_READONLY_EXISTING_EVIDENCE_NO_NEW_EXPERIMENT_SELECTION",
+  "table": [
+    {
+      "data": "2048 games/203794 cumulative rows; activeG5-G8=101668 rows; changing preceding-generation actors",
+      "id": "baselineG8",
+      "not_identified": "Responsible head, LR-only cause, optimal recipe, external Elo or universal failure of outcome RL.",
+      "observed": "G8 vsA39 .21875, paired95[.19030425270421453,.24719574729578547],52W120D340L/512games256pairs; technicalPASS/statisticalNONPASS",
+      "recipe": "Fresh A39; main policy1 + outcomeWDL1;12aux/SF/searchshares0; NadamW; mirror.5; B256;512updates per generation;8 generations/4096updates/1048576views; four-generation FIFO",
+      "supported": "This tested complete recipe regressed on its fixed internal ruler; exercised FIFO/journal and correct serving are supported."
+    },
+    {
+      "data": "256 G1 games/24827 rows; shared physical drawjournal; one reused DIAG128",
+      "id": "matchedLR",
+      "not_identified": "A39-relative gain; pure overshoot mechanism (LR also scales decoupled decay); general LR optimum/training-seed effect.",
+      "observed": "LOW512 vsHIGH512 .5703125, paired95[.5205179000537302,.6201070999462698],101W90D65L",
+      "recipe": "Same fresh donor/G1 bank/seed/drawjournal/B256/512updates/131072views; peak/floor/warmup-start scaled10x down only",
+      "supported": "Lower-rate package beat the higher-rate package in this controlled comparison."
+    },
+    {
+      "data": "26505 rows/256 games produced by HIGH512 path; fixed single orientation; overlap/pretraining unknown",
+      "id": "WDL",
+      "not_identified": "Policy-versus-value cause; global holdout generalization; playing utility from fit alone.",
+      "observed": {
+        "A39": {
+          "WDL_Brier_sum3_rowweighted_mean": 0.44390599697865757,
+          "outcome_NLL_rowweighted_mean": 0.7745946257994324,
+          "rows": 26505
+        },
+        "HIGH512": {
+          "WDL_Brier_sum3_rowweighted_mean": 0.5833544676154793,
+          "outcome_NLL_rowweighted_mean": 1.3052469370593807,
+          "rows": 26505
+        },
+        "LOW512": {
+          "WDL_Brier_sum3_rowweighted_mean": 0.42862393539172366,
+          "outcome_NLL_rowweighted_mean": 0.726214227287593,
+          "rows": 26505
+        }
+      },
+      "recipe": "No training; A39/HIGH512/LOW512 inference on identical full G2 observations",
+      "supported": "HIGH512 has substantially worse finite-bank outcomeWDL NLL/Brier than donor; LOW512 is lower descriptively."
+    },
+    {
+      "data": "2048 ancestor games/208478 rows; activeG5-G8=105581 rows; differs from high-rate actor data",
+      "id": "lowG8",
+      "not_identified": "Isolated causal LR comparison with highG8; a proof of no useful lower-rate regime.",
+      "observed": "vsA39 .462890625,paired95[.43100880481040904,.49477244518959096],128W218D166L/512games256pairs;NONPASS",
+      "recipe": "Full-state LOW512 continuation; unchanged lowerLR schedule, seven new current-low-actor generations; total4096updates/B256/1048576views",
+      "supported": "Reducing the rate and supplying this longer on-policy continuation did not deliver the required donor gain."
+    },
+    {
+      "data": "All24827 G1 rows have available nonidentical retainedsearchWDL; B131072active views/A0",
+      "id": "retainedBA_and_BA39",
+      "not_identified": "That all search targets are bad; strength of this fresh A versusA39; target quality from one realized outcome.",
+      "observed": "B/A .453[.4294906403493765,.4765093596506235];B/A39 .4555[.431851264969621,.479148735030379];1000games500pairs each;bothNONPASS",
+      "recipe": "Fresh matched A/B; searchWDLshare0 vs1, policy1/WDL1/12aux0; sameG1/seed1901/journal/RNG/backend;512updates/B256/131072views",
+      "supported": "This exercised retainedsearch-value substitution was worse than its own matched outcome-control and donor."
+    },
+    {
+      "data": "One direct500-pair/1000game A512-A39 diagnostic on its own protected book",
+      "id": "control",
+      "not_identified": "Equivalence/no effect; the strength of another study's A512; transitive donor utility from B/A edges.",
+      "observed": ".5065 paired95[.48348010390918184,.5295198960908181],300W413D287L;UNRESOLVED_CONTROL_CONTRAST",
+      "recipe": "Historical outcome-only A512 b346d95f (different from retained A b140d720), fresh optimizer/originalG1; fixed512-update horizon",
+      "supported": "Neither the upward nor downward criterion passed for this checkpoint. A universal claim of large immediate outcome-only degradation is unsupported."
+    },
+    {
+      "data": "All256 G1 games/24827rows;35controlsPASS; compact222188B accepted aggregate",
+      "id": "census",
+      "not_identified": "Unclipped bestQ/root-draw/search-visit quality; clipping frequency; whether soft values are wrong because they disagree with one path outcome.",
+      "observed": {
+        "archived_to_normalized_full_vector_delta": 9.41145704647095e-07,
+        "representations": {
+          "archived_f32": {
+            "Q_squared_residual": 0.29829061356871567,
+            "draw_squared_residual": 0.1940858820584101,
+            "full_vector_squared_residual": 0.4402741298824188
+          },
+          "normalized_f16_source_f32": {
+            "Q_squared_residual": 0.2982907625609071,
+            "draw_squared_residual": 0.19408645997347837,
+            "full_vector_squared_residual": 0.44027507102812347
+          },
+          "stored_f16_widened": {
+            "Q_squared_residual": 0.298290956839167,
+            "draw_squared_residual": 0.1940879978483105,
+            "full_vector_squared_residual": 0.440276363538036
+          }
+        }
+      },
+      "recipe": "Data-only complete retainedtarget F32/F16/normalizedF16 census; no new model or game",
+      "supported": "Aggregate representation change is about9.41e-7: storage/normalization-only explanation is deprioritized. Far-stop target disagreement is descriptive."
+    },
+    {
+      "data": "No real A39 bank/trained playing endpoint",
+      "id": "anchor",
+      "not_identified": "That anchoring prevents regression or improves strength; research lambda; all-BF16 or relative throughput claims.",
+      "observed": "Qualified F32(p-q) residual3.3527612686157227e-8;illegal gradient delta0;430 unique parameter tensors/55383691 elements differ;earlier GPU12.689s assumption failure preserved",
+      "recipe": "Software-only lambda0 vs1; random full494 warmstudentstep1/reference0; one syntheticDRAW/e2e4 row,B1,oneupdate,LR1e-5",
+      "supported": "The actual tested anchor contributes the intended nonzero gradient, reaches optimizer/model weights, and preserves frozen-reference/RNG/state invariants."
+    }
+  ],
+  "unknowns": [
+    "Which combination of policy prior drift, WDL misfit, shared representation drift, optimizer/schedule/decay exposure and actor-conditioned target/data distribution caused each playing result. These are hypotheses, not observed diagnoses.",
+    "No independent strong teacher or globally unseen value ruler is supplied by these banks. Same-outcome rows within games and replacement views are correlated; training views are not new independent games.",
+    "HighG8 versusLowG8 changes actor-generated data along with the regime; repeated DIAG128 checkpoints share openings. Their scores/intervals are not pooled or independent replications.",
+    "Historical A512 b346, retained control b140 and other A512 checkpoints are distinct identities. B/A and B/A39 on separate panels cannot determine a missing A/A39 effect by subtracting score/Elo.",
+    "Internal Gumbel64/noise-on/temperature.1/strictTB profile is the qualified ruler, not external timed-engine strength. A scalar playing contrast aggregates policy/value/search interactions and cannot identify the responsible head.",
+    "The original scientific A failed6.08346829097718 seconds at readonly-terminal admission before model construction/updates. D1 has no new scientific learner outcome in this audit; approved D1/KL/data work is preserved and not evaluated here."
+  ]
+}

@@ -16,6 +16,8 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
+- [2026-11-16: Existing RL failure evidence audit](2026-11-16-existing-rl-failure-evidence-audit.md) — completed existing-evidence synthesis: update-regime sensitivity and qualified conditional regressions; retained-search target negative in its tested use, causal head/mechanism unresolved; no new measurements or experiments selected.
+
 - [2026-11-16: Integrated whole-game tools and original-A39 collector transport](2026-11-16-current-i-whole-game-tools-collector-engineering.md) — closed394-case software, current-source A39 CPU assets and17-attempt/two-ply public HOLD transport plus expected-refusal raw-history audit; no accepted bank, scientific cohort, strength or main-runtime adoption.
 
 - [2026-11-16: Original A39/B32 public policy-anchor learner engineering](2026-11-16-a39-b32-public-anchor-engineering.md) — closed synthetic engineering: original A39, two public B32 updates per λ0/0.1 arm, own-live-to-saved CPU state and matched journals/RNG accepted; fictional bank/outcome authority, no causal strength, transport or research qualification.
