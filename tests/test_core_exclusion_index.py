@@ -105,7 +105,20 @@ def test_actual_chunk_reader_returns_existing_flat_membership_api(tmp_path: Path
     'pretraining', 'manifest_extra', 'too_many', 'missing', 'hash', 'writable', 'symlink'])
 def test_rehashed_bad_graph_never_returns_partial_membership(tmp_path: Path, fault: str):
     envelope, _ = case(tmp_path, fault=fault)
-    with pytest.raises((ValueError, FileNotFoundError)):
+    expected = {
+        'duplicate_inside': '^duplicate/unsorted exclusion identity$', 'duplicate_across': '^duplicate/unsorted exclusion identity$',
+        'duplicate_domain': '^duplicate/unsorted exclusion identity$', 'unsorted': '^duplicate/unsorted exclusion identity$',
+        'invalid_sha': '^invalid exclusion SHA256$', 'recursive': '^exclusion chunk schema/count/bytes differ$',
+        'order': '^duplicate/unsorted exclusion identity$', 'kind_order': '^exclusion chunk kind order differs$',
+        'same_path': '^duplicate/recursive exclusion chunk path$', 'count_bool': '^invalid exclusion count/bytes$',
+        'bytes_bool': '^invalid exclusion count/bytes$', 'wrong_bytes': '^exclusion chunk schema/count/bytes differ$',
+        'count': '^exclusion declared totals differ$', 'total': '^exclusion declared totals differ$',
+        'coverage': '^invalid exclusion manifest$', 'pretraining': '^invalid exclusion manifest$', 'manifest_extra': '^invalid exclusion manifest$',
+        'too_many': '^invalid exclusion chunk/count roster$', 'missing': r"^\[Errno 2\] No such file or directory: ",
+        'hash': '^bound file changed: ', 'writable': '^exclusion metadata must be readonly regular files$',
+        'symlink': '^exclusion metadata must be canonical and external$',
+    }
+    with pytest.raises((ValueError, FileNotFoundError), match=expected[fault]):
         index.load(envelope)
 
 
@@ -116,7 +129,11 @@ def test_exact_small_limit_boundary_and_one_under(tmp_path: Path, field: str):
         chunk=max(item['bytes'] for item in manifest['chunks']), chunks=3, serialized_chunks=manifest['serialized_chunk_bytes'])
     assert index._load(envelope, limits)['history_sha256'] == ['1' * 64, '2' * 64, '3' * 64]
     reduced = replace(limits, **{field: getattr(limits, field) - 1})
-    with pytest.raises(ValueError):
+    expected = {
+        'manifest': '^exclusion metadata byte cap$', 'chunk': '^exclusion chunk byte cap$',
+        'chunks': '^invalid exclusion chunk/count roster$', 'serialized_chunks': '^exclusion serialized chunk total cap$',
+    }
+    with pytest.raises(ValueError, match=expected[field]):
         index._load(envelope, reduced)
 
 
@@ -169,7 +186,11 @@ def test_opt_in_cannot_fallback_or_import_unpinned_helper(tmp_path: Path, fault:
         p['source']['sha256'].clear()
     else:
         p['source']['sha256']['scripts/core_exclusion_index.py'] = 'e' * 64
-    with pytest.raises(ValueError):
+    expected = {
+        'unknown_schema': '^unsupported chunked exclusion envelope$', 'extra_envelope': '^unsupported chunked exclusion envelope$',
+        'missing_helper': '^chunked exclusion helper source mismatch$', 'wrong_helper': '^chunked exclusion helper source mismatch$',
+    }
+    with pytest.raises(ValueError, match=expected[fault]):
         collect.exclusion_inputs(p)
 
 

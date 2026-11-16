@@ -217,7 +217,7 @@ def model_delivery(m: Metadata, binding: dict[str, Any], label: str) -> dict[str
             and all(saved[key] == root[key] for key in ("contract", "stage", "boundary", "checkpoint"))
             and saved["source_revision"] == root["source_revision"] and saved["architecture"] == c["architecture"]
             and type(saved["step"]) is int and saved["step"] == b["step"]
-            and saved["reconciled"] == {key: True for key in ("model", "optimizer", "scheduler", "zclip", "counters", "rng", "journal", "membership", "policy_anchor")}, "saved-state audit incomplete")
+            and saved["reconciled"] == dict.fromkeys(("model", "optimizer", "scheduler", "zclip", "counters", "rng", "journal", "membership", "policy_anchor"), True), "saved-state audit incomplete")
     bank.sha(saved["model_state_sha256"])
     membership = b["membership"]
     require(type(membership) is list and membership and all(type(row) is list and len(row) == 3

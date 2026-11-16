@@ -81,7 +81,13 @@ def test_metric_input_refusals(fault: str):
         outputs["wdl"][0, 0] = torch.nan
     else:
         outputs["policy_own"] = outputs["policy_own"][:, :-1]
-    with pytest.raises(ValueError):
+    expected = {
+        "missing_policy": "^missing policy/WDL outputs$", "none_policy": "^missing policy/WDL outputs$",
+        "missing_wdl": "^missing policy/WDL outputs$", "float_result": "^invalid genuine outcome; no censored draw fallback$",
+        "censored": "^invalid genuine outcome; no censored draw fallback$", "empty_legal": "^invalid legal/target support$",
+        "illegal_target": "^invalid legal/target support$", "nan": "^nonfinite metric inputs$", "wrong_width": "^HOLD metric shape mismatch$",
+    }
+    with pytest.raises(ValueError, match=expected[fault]):
         metrics.row_metrics(outputs, legal, policy, outcome)
 
 
@@ -131,7 +137,12 @@ def test_unread_incomplete_parent_estimator(fault: str):
         games[0]["parent_id"] = games[1]["parent_id"]
     else:
         del games[0]["models"]["C"]
-    with pytest.raises(ValueError):
+    expected = {
+        "few": "^UNREAD insufficient HOLD parents/rows$", "empty": "^empty HOLD observations$",
+        "few_rows": "^UNREAD insufficient HOLD parents/rows$", "nonfinite": "^nonfinite/missing game numerator$",
+        "shared_parent": "^selected one-game-per-parent rule violated$", "missing_model": "^invalid observation denominator/model set$",
+    }
+    with pytest.raises(ValueError, match=expected[fault]):
         metrics.parent_health(games)
 
 
@@ -224,7 +235,11 @@ def test_corrupt_real_decoded_checkpoint_refused_before_real_constructor(tmp_pat
         return build(config)
     monkeypatch.setattr(torch, "load", real_load_with_fault)
     monkeypatch.setattr(model_loader, "build_model", counted)
-    with pytest.raises(ValueError):
+    expected = {
+        "family": "^loaded model family/reference differs$", "reference": "^loaded model family/reference differs$",
+        "step": "^loaded architecture/step differs$", "architecture": "^loaded architecture/step differs$", "state": "^loaded model state differs$",
+    }
+    with pytest.raises(ValueError, match=expected[fault]):
         score.load_model(binding, device="cpu")
     assert not builds
 
@@ -260,7 +275,12 @@ def test_rehashed_observation_faults_refused(tmp_path: Path, fault: str):
     path.write_bytes(b"".join((json.dumps(row, allow_nan=True) + "\n").encode() for row in rows))
     path.chmod(0o444)
     descriptor.update(sha256=hashlib.sha256(path.read_bytes()).hexdigest(), bytes=path.stat().st_size, rows=len(rows))
-    with pytest.raises(ValueError):
+    expected = {
+        "drop": "^dropped/extra model rows$", "order": "^row membership/source/outcome differs$",
+        "bool_outcome": "^row membership/source/outcome differs$", "pair": "^four-model paired row identity differs$",
+        "identity": "^row membership/source/outcome differs$", "metric": "^missing/nonfinite/inconsistent metric$", "nonfinite": "^nonfinite JSON constant$",
+    }
+    with pytest.raises(ValueError, match=expected[fault]):
         reader.reconcile_rows(result, view, parents, LIMITS["row_log_bytes"])
 
 
@@ -296,7 +316,14 @@ def test_actual_decode_then_strict_hold_payload_refusal(tmp_path: Path, monkeypa
             arrays["x"][0, 0, 0, 0] = np.nan
         return arrays, metadata
     monkeypatch.setattr(shard, "load_shard_arrays", decoded_fault)
-    with pytest.raises(ValueError):
+    expected = {
+        "game_id": "^genuine HOLD game/ply/outcome differs; no draw fallback$", "float_result": "^genuine outcome/row identity must be integer$",
+        "censored": "^genuine HOLD game/ply/outcome differs; no draw fallback$", "duplicate_ply": "^genuine HOLD game/ply/outcome differs; no draw fallback$",
+        "network_mask": "^missing active HOLD identity: is_network_turn$", "policy_mask": "^missing active HOLD identity: has_policy$",
+        "empty_legal": "^invalid HOLD legal target/input$", "illegal_mass": "^invalid HOLD legal target/input$",
+        "history": "^HOLD encoding/history differs$", "nonfinite": "^invalid HOLD legal target/input$",
+    }
+    with pytest.raises(ValueError, match=expected[fault]):
         score.load_games(view, LIMITS)
     assert models  # Actual fixture checkpoints are unrelated to data admission.
 
@@ -348,7 +375,12 @@ def test_all_planned_attempt_parents_bound_without_outcome_inference(tmp_path: P
 @pytest.mark.parametrize("fault", ["duplicate_parent", "shared_member", "missing_attempt", "train", "physical", "review"])
 def test_rehashed_parent_graph_refusals(tmp_path: Path, fault: str):
     p, view = parent_graph(tmp_path, fault)
-    with pytest.raises(ValueError):
+    expected = {
+        "duplicate_parent": "^invalid planned parent/game$", "shared_member": "^shared/duplicate complete parent members$",
+        "missing_attempt": "^incomplete planned64 parent map$", "train": "^invalid planned parent/game$",
+        "physical": "^invalid planned parent/game$", "review": "^parent independent review differs$",
+    }
+    with pytest.raises(ValueError, match=expected[fault]):
         ruler.parent_map(ruler.Metadata(1 << 20, 8 << 20), p, view)
 
 
@@ -468,7 +500,12 @@ def test_closed_delivery_distinguishes_owner_and_learner_revisions(tmp_path: Pat
 @pytest.mark.parametrize("fault", ["legacy", "counter", "holdout", "saved_rng", "saved_checkpoint", "closure", "independent"])
 def test_rehashed_delivery_and_saved_state_refusals(tmp_path: Path, fault: str):
     binding = delivery_graph(tmp_path, fault)
-    with pytest.raises(ValueError):
+    expected = {
+        "legacy": "^model contract/stage/source differs$", "counter": "^incomplete fresh selected model endpoint$",
+        "holdout": "^HOLD/unknown identity leaked into learner delivery$", "saved_rng": "^saved-state audit incomplete$",
+        "saved_checkpoint": "^saved-state audit incomplete$", "closure": "^closure evidence differs$", "independent": "^model independent delivery differs$",
+    }
+    with pytest.raises(ValueError, match=expected[fault]):
         ruler.model_delivery(ruler.Metadata(1 << 20, 8 << 20), binding, "A")
 
 
