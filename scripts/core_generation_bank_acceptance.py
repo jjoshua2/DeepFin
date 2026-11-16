@@ -273,6 +273,16 @@ def _validate_generation(root_ref: dict[str, str], independent_ref: dict[str, st
         sha(digest)
         require(spec["source_files"].get(name, digest) == digest, "producer/auditor source pin differs")
     require(producer["source"]["sha256"], "missing producer source pins")
+    prior = producer.get("exclusions", {}).get("prior")
+    index_evidence = None
+    if isinstance(prior, dict) and "schema" in prior:
+        require(set(prior) == {"schema", "manifest"} and prior["schema"] == "core_exclusion_index_v1", "unsupported prior exclusion envelope")
+        reference(prior["manifest"])  # Bound historical metadata, never reopen chunks in a bank view.
+        helper = "scripts/core_exclusion_index.py"
+        digest = producer["source"]["sha256"].get(helper)
+        sha(digest)
+        require(spec["source_files"].get(helper) == digest, "missing or mismatched chunked exclusion audit source pin")
+        index_evidence = {"manifest": prior["manifest"], "source_sha256": digest}
     for key in ("producer_readout", "producer_inventory"):
         reference(p[key])  # Bind historical references without opening bulk input metadata.
     _owner(m, root, p, holdout=holdout)
@@ -383,6 +393,8 @@ def _validate_generation(root_ref: dict[str, str], independent_ref: dict[str, st
     evidence = {"root_acceptance": root_ref, "independent_review": independent_ref,
                 "candidate": root["candidate"], "audit_source": source, "audit_owner": root["audit_owner"],
                 "eligible_rows": rows, "class_counts": counts, "learning_admitted": False}
+    if index_evidence is not None:
+        evidence["exclusion_index"] = index_evidence
     if holdout:
         identity["bank"] = "holdout"
         evidence["evaluation_only"] = True

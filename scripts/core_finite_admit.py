@@ -415,6 +415,11 @@ def _execute(protocol_ref: dict[str, str], *, data_only: bool, holdout: bool = F
             learning.validate_contract(contract)
             require("scripts/core_finite_admit.py" in contract["source_files"], "audit source is not pinned")
         _, producer = learning.read_ref(p["producer_protocol"])
+        prior = producer.get("exclusions", {}).get("prior")
+        if isinstance(prior, dict) and "schema" in prior:
+            helper = "scripts/core_exclusion_index.py"
+            require(helper in contract["source_files"] and contract["source_files"][helper] == producer["source"]["sha256"].get(helper),
+                    "missing or mismatched chunked exclusion audit source pin")
         require(data_only or producer["actor"]["kind"] not in ("bank_learner", collection.ANCHOR_BANK_KIND), "bank learner actor requires recipe-independent data audit")
         if data_only:
             data_producer_identity(contract, producer)
