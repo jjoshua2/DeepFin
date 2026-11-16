@@ -598,3 +598,41 @@ objective remains unfinished regardless of D1's result.
 
 Canonical identities and display-only external references accompany this
 amendment in [D1 evidence](2026-11-16-policy-anchor-development-first-evidence.json).
+
+## D1-T1: prospective recovery of the K0 verification failure
+
+This amendment addresses a mechanical verification failure. The original D1 technical stop remains in force until this amendment is published and the separate implementation, qualification, recovery and admission gates below pass. Publication alone authorizes no job.
+
+### Recorded failure
+
+The K0 GPU owner ended FAILED after 1,514.692136213067 seconds. Its immutable public boundary records 4,096 applied updates and 131,072 sampled views, with zero nonfinite skips or CUDA retries. The public learner saved its checkpoint. No candidate match, HOLD scoring or strength measurement followed.
+
+The private verifier then failed its saved counters/architecture/reference assertion. Independent source review identified a deterministic defect: `ModelConfig` normalizes `ffn_mult_by_layer` and `phase_piece_thresholds` to tuples, and `Trainer.save` preserves those tuples through `dataclasses.asdict`; the JSON contract contains lists. Direct dictionary equality therefore rejects this genuine representation. The correction compares the complete architectures using the existing strict canonical serialization. It drops no keys, inserts no defaults and preserves scalar values. Donor-provenance and policy-anchor checks retain their existing semantics.
+
+The traceback establishes that the preceding saved-versus-live fingerprint and alias assertions were reached and passed. This is source-order evidence; the numerical live fingerprint was not persisted. Later optimizer, journal and final source/native/runtime/RNG checks did not finish. The failed terminal and private failure marker remain immutable and fully charged. This amendment neither converts that owner to PASS nor invents its missing final witnesses.
+
+### Fixed technical checks before continuation
+
+1. Independently review a versioned corrected prover. Preserve the original production dose, data, seed, mathematical recipe and 3,600/3,570-second limits for the three unstarted KL arms.
+2. Qualify its complete path in one separate engineering GPU owner, capped at 400 seconds with a 370-second inner deadline: full A39 architecture, coefficient 0.1, batch 32 and two actual public-learner updates. Exercise frozen-reference handling and every late saved-state/custody guard. Its contract, schema and status are explicitly engineering-only. It supplies no D1 model-delivery or efficacy credit. No shortened production contract or K0 retraining is permitted.
+3. Audit the existing K0 checkpoint in one CPU owner capped at 600/570 seconds. Allow only the exact failed GPU terminal, prover, traceback, completed public boundary and checkpoint identities in the supporting evidence. Decode with `weights_only=True` on CPU, without restoring an optimizer, constructing a model, forwarding, training, sampling or reseeding. Authenticate complete saved architecture, tensors and aliases, named optimizer ownership and active-slot steps, scheduler, clipping state, provenance, boundary RNG and membership, and the full original draw journal. Require 4,096 updates, 131,072 views, 17,568 population rows and 192 games.
+
+The CPU audit may use authenticated historical full-model layout metadata for key/shape/dtype/alias comparison. That metadata supplies no K0 live-state or strength evidence. Its new source/native/runtime brackets describe the CPU audit's current custody, not a retroactive final bracket for the failed GPU process. It cannot reconstruct an unpersisted live fingerprint. File limits are 8 GiB per checkpoint and 64 MiB per journal; total explicitly serialized reads are capped at 32 GiB, aggregate output at 4 MiB. Host and disk guards require 64 GiB and 20 GiB at the declared boundaries; they are not continuous memory or fit guarantees.
+
+Any failed qualification or recovery stops continuation. There is no automatic retry, survivor selection, horizon reduction, checkpoint repair or fallback.
+
+### Explicit recovery family and unchanged scientific comparison
+
+A new K0-only failed-GPU-plus-closed-CPU proof family must carry distinct recovery statuses, both real owner graphs, the exact allowlisted trigger and a newly issued Root recovery authority. A source selection, source review or publication alone is insufficient. The ordinary complete same-GPU delivery route remains unchanged. Independent acceptance must state the recovery limitations rather than label K0 as an ordinary same-GPU PASS.
+
+Only after actual engineering qualification, actual CPU recovery, independent acceptance, published compatible consumer code and its bounded local qualification may a new authority admit the three previously unstarted KL arms. Use new D1-T1 stage names. Preserve the existing K0 weights without rerunning its training.
+
+The four coefficients, A39 initialization, training bank, seed, batch, learning rate, mirror probability and 4,096-update/131,072-view dose remain fixed. The seven development comparisons, fixed opening panels, eligibility and tie rule, selected-model-only HOLD health check, veto and final confirmation requirements remain unchanged. No effectiveness data are read to select this recovery policy. Recovery does not authorize adoption, additional opponents or any strength claim.
+
+### Charged costs and remaining bounds
+
+All closed scientific GPU work, including failed K0, totals 2,970.2697049711132 seconds. Adding the three remaining learner caps (10,800), development (6,300), HOLD scoring (1,200) and final confirmations (7,200) gives 28,470.269704971113 seconds, below the unchanged 30,900-second study cap. Retire K0's unused reservation; it does not authorize another run.
+
+The new engineering GPU cap gives at most 454.8493302720599 seconds against its 600-second aggregate limit. Existing engineering CPU plus the future 400-second consumer qualification remains below 600 seconds. The recovery CPU cap and remaining science readers project to 6,106.593127332861 seconds, below the 9,600-second science CPU cap. Global resource limits, three-lease custody and the November 19, 2026 16:09:20 UTC compute cutoff remain unchanged.
+
+Supporting identities and the independent diagnosis are in [the D1-T1 evidence record](evidence/2026-11-16-policy-anchor-k0-technical-recovery.json). Source artifacts, actual qualification/recovery receipts and a fresh Root authority must be authenticated before execution. This prospective amendment is not an implementation or recovery result.

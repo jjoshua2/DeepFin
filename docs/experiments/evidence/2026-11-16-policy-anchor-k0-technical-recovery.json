@@ -1,0 +1,127 @@
+{
+  "CPU_audit_serialized_read_limits": {
+    "aggregate_output_bytes": 4194304,
+    "checkpoint_file_bytes": 8589934592,
+    "journal_bytes": 67108864,
+    "total_serialized_read_bytes": 34359738368
+  },
+  "effective_science_design": "D1 unchanged; one mechanical technical-recovery exception after Main/source/actual qualification gates",
+  "execution_authorized": false,
+  "historical_full_model_layout_metadata_scope": "Key/shape/dtype/alias layout only; no actual K0 live-state/weight/donor/efficacy credit",
+  "implementation_and_actual_run_bindings": "UNISSUED: require independently reviewed exact code/controls, published mechanical amendment and consumer, independent binding reviews, new Root authority and fresh admissions before compute. No qualification/recovery result claimed.",
+  "independent_diagnosis": {
+    "path": "rl-week-one-20261112-v1/prospective-KL-development-first-K0-independent-failure-diagnosis-v1/review.json",
+    "sha256": "044630ba92dc060e6d45189ad36dc3a1c6c304ae4058e11a1238268c83333ae2"
+  },
+  "independent_source_selection_review": {
+    "path": "rl-week-one-20261112-v1/prospective-KL-D1-K0-technical-recovery-independent-selection-review-v1/review.json",
+    "sha256": "272187c62b902bed02cf5f07bbe34f23062c25b67db08e194bb0e810dfc1c329"
+  },
+  "new_phase_namespace": "D1-T1; no reuse of earlier unadmitted A-R1",
+  "prospective_recovery_family": "core_bank_learner_K0_failed_gpu_closed_cpu_recovery_v1",
+  "read_boundary_directly_verified": {
+    "CUDA_retry_batches": 0.0,
+    "applied_updates": 4096,
+    "applied_views": 131072,
+    "bytes": 50993,
+    "nonfinite_skip_rate": 0.0,
+    "readonly": true,
+    "step": 4096
+  },
+  "saved_architecture_representation_defect": {
+    "contract_fields_as_JSON_lists": true,
+    "correction": "Existing strict canonical full-architecture equality; no omitted keys/defaults/other weakening",
+    "original_full_proof_completed": false,
+    "provenance_and_anchor_comparisons_unchanged": true,
+    "saved_fields_as_tuples": [
+      "ffn_mult_by_layer",
+      "phase_piece_thresholds"
+    ],
+    "source_order_guard_evidence_not_reconstructed_live_hash": true
+  },
+  "schema": "D1_T1_K0_TECHNICAL_RECOVERY_PREREGISTRATION_AND_FAILURE_RECORD_V1",
+  "source_selection": {
+    "path": "rl-week-one-20261112-v1/prospective-KL-D1-K0-technical-recovery-root-source-selection-v1/selection.json",
+    "sha256": "116d422c9d8f14c1401f9da7b3eb07b7da5b93e322c47219f2796f9b8deb3d30"
+  },
+  "source_selection_contents": {
+    "design": {
+      "path": "rl-week-one-20261112-v1/prospective-KL-development-first-root-design-v1/design.json",
+      "sha256": "98770dcd0ac6dffba73608fcad53a23e5a90c929a8432ed74b6d52d615b1c8dd"
+    },
+    "execution_authorized": false,
+    "honesty_limits": [
+      "Original selectedD1 technicalSTOP remains active until a separately reviewed/published specific mechanical amendment and newRoot authority.",
+      "Original FAILED terminal/failed private observation/partial witnesses remain immutable and charged; no complete sameGPU postguard proof exists for K0.",
+      "Original saved-vs-live equality/aliases require was reached and passed before the failed line per source+trace, but its unpersisted numerical live fingerprint and later guards cannot be reconstructed.",
+      "Audit may establish savedcheckpoint integrity and current custody, not retroactive original finalnative/source/runtime/RNG brackets.",
+      "No HOLD/model efficacy/extra opponents/1v64/headswap/new scientific study, no rawpayload access outside owned audit/qualification.",
+      "No admission/clocks/scope/U3/jobs issued by this source selection."
+    ],
+    "hypothesis": "Verifier rawdict comparison fails deterministically because ModelConfig normalizes ffn_mult_by_layer and phase_piece_thresholds to tuples but contractJSON containslists; preservefullkeys/schema/values through existing strict canonical serialization. No diagnosis of training effectiveness.",
+    "limits": {
+      "DEV_GPU_max": 6300,
+      "HOLD_GPU_max": 1200,
+      "cutoff_utc": "2026-11-19T16:09:20+00:00",
+      "engineering_CPU_aggregate_cap": 600,
+      "engineering_CPU_before": 164.3428476222325,
+      "engineering_GPU_aggregate_cap": 600,
+      "engineering_GPU_before": 54.84933027205989,
+      "engineering_GPU_new_max": 400,
+      "final_GPU_max": 7200,
+      "future_consumer_CPU_max": 400,
+      "new_recovery_science_CPU_max": 600,
+      "remaining_3_learner_GPU_max": 10800,
+      "science_CPU_actual_closed": 106.5931273328606,
+      "science_CPU_cap": 9600,
+      "science_CPU_projected_with_remaining_readers": 6106.593127332861,
+      "science_GPU_actual_closed": 2970.2697049711132,
+      "science_GPU_cap": 30900,
+      "science_GPU_projected_total": 28470.269704971113,
+      "week_GPU_actual_closed": 79343.92828992521,
+      "week_GPU_cap": 172800
+    },
+    "schema": "ROOT_D1_ONE_CASE_TECHNICAL_RECOVERY_SOURCE_SELECTION_V1",
+    "selected_source_work": {
+      "consumer": "Distinct explicit failed-GPU+closed-CPU recovery proof family and Root/independent delivery statuses, only for exact terminal/checkpoint/boundary/prover/log above. Do not fabricate original PASS/readout/sameGPU-postguards/unpersisted live hash. Other3 use corrected complete sameGPU prover.",
+      "corrected_prover": "Narrow canonical savedarch comparison only, with honest percheck diagnostics; preserve all original checks/math. No in-place source or actualcontract changes. Separateversioned helper/source review/consumer compatibility.",
+      "engineering": "One separate full-A39 2-update B32 lambda0.1 actualpublic-CLI/full-private-proof qualification, 400GPU outer/370inner, including positive frozen-reference path and all late checks. No model delivery or efficacy credit. Separate engineering-only contract/status/schema, no arbitrary horizon or fake D1 contract.",
+      "future_continuation": "After actualengineering qualification+actualCPUrecovery+Root/independentacceptance+new Main consumer qualification/Root authority, allow only remaining3 unstarted lambda arms, never retry/retrainK0 automatically. Any new technicalfailure STOP; no fallback/shrink/repair/adoption.",
+      "recovery_audit": "One specifically allowlisted existingK0 CPU600/570 audit after preregistered source+independentreview+Main publication. Decode existingcheckpoint weights_only onCPU, no restore/model forward/training/draw/reseed, no checkpoint mutation. Verify saved identities/normalarchitecture/modelstate/fullaliases/optroster+active slots/scheduler/zclip/step4096/provenance and complete original journal131072 views/N17568/192 games/RNGboundary/membership. Source/native/runtime custody observed NOW in audit only.",
+      "source_amendment": "Publish mechanical recovery amendment and originalfailure record before any new recovery/model access or compute. All4 scientific recipes/data/seed/updates/labels/DEV/HOLD/finals unchanged. No efficacy observations before policy fixed."
+    },
+    "status": "SOURCE_PREPARATION_ONLY_NO_EXECUTION_AUTHORITY",
+    "trigger": {
+      "checkpoint_REFERENCE_ONLY": {
+        "path": "rl-week-one-20261112-v1/prospective-KL-development-first-K0-learner-results-v1/learner.pt",
+        "sha256": "7955c6799866bf3a18ac910609b3d7847a4d4e3586bde54816de5d63866b29fc"
+      },
+      "closure": {
+        "path": "rl-week-one-20261112-v1/prospective-KL-development-first-K0-learning-GPU-bindings-v1/gpu.closed-custody.json",
+        "sha256": "0eb0826a72ab5202ce8e0510509b0513f7e727b8265ca2f39fabf2f82d516e04"
+      },
+      "exact_failure": "RuntimeError saved counters/architecture/reference at observe.py505",
+      "helper": {
+        "path": "rl-week-one-20261112-v1/prospective-KL-development-first-learner-proof-source-v1/observe.py",
+        "sha256": "cceb3d1de58762e8557d7df398c50582c4c56519122e227c99057449d664087d"
+      },
+      "log": {
+        "path": "rl-week-one-20261112-v1/prospective-KL-development-first-K0-learning-GPU-bindings-v1/failed-stage-log.snapshot.txt",
+        "sha256": "ee437d481b9f6655a66debc82f1ab035c55c1a9abc9ddf8cbc0a58694edb0e5c"
+      },
+      "owner_wall_seconds": 1514.692136213067,
+      "public_boundary": {
+        "path": "rl-week-one-20261112-v1/prospective-KL-development-first-K0-learner-results-v1/boundary.json",
+        "sha256": "394589742240d649a758a3910137a3cfc110293f6af79361016b5112e9e7ee3e"
+      },
+      "public_steps": 4096,
+      "public_views": 131072,
+      "terminal": {
+        "path": "rl-week-one-20261112-v1/prospective-KL-development-first-K0-learning-GPU-execution-v1/terminal.json",
+        "sha256": "5ad2c4e1d5dfc4888af39d267e222c5ef3b367e3935a37e3bb9210fd87b0b5fd"
+      }
+    },
+    "utc": "2026-11-16T18:22:31.121401+00:00"
+  },
+  "status": "STATIC_PROSPECTIVE_PREREGISTRATION_NO_EXECUTION_OR_DELIVERY_AUTHORITY"
+}
