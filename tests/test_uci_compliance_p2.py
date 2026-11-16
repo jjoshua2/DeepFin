@@ -1452,13 +1452,25 @@ class _CursedCExt:
 
     def __init__(self) -> None:
         self._path: str | None = None
+        self._generation = 1
 
     def init(self, path: str) -> int:
+        self._generation += 1
         self._path = path or None
         return 3 if path else 0
 
     def free(self) -> None:
+        self._generation += 1
         self._path = None
+
+    def generation(self) -> int:
+        return self._generation
+
+    def probe_wdl_batch(self, boards, generation: int) -> bytes | None:
+        """Leaf probes: every KRvK leaf is a win for White (code 4 = WDL +2)."""
+        if generation != self._generation:
+            return None
+        return bytes(4 if cb.fen().split()[1] == "w" else 0 for cb in boards)
 
     def path(self) -> str | None:
         return self._path
@@ -1483,11 +1495,12 @@ def test_syzygy50moverule_changes_the_engine_root_shortcut(monkeypatch, out, val
     """The engine path: `setoption` -> the root handle and leaf probe the worker
     holds -> the root shortcut -> the `score` the GUI sees. Read from the
     worker's own objects."""
-    from chess_anti_engine.uci import tb_root
+    from chess_anti_engine.uci import tb_leaf, tb_root
 
     monkeypatch.setattr(tbmod, "get_tablebase", lambda _path: _CursedTable())
-    monkeypatch.setattr(engine_module, "get_tablebase", lambda _path: _CursedTable())
-    monkeypatch.setattr(tb_root, "_tb_ext", _CursedCExt())
+    fake_c = _CursedCExt()
+    monkeypatch.setattr(tb_root, "_tb_ext", fake_c)
+    monkeypatch.setattr(tb_leaf, "_tb_ext", fake_c)
     worker = _tiny_worker()
     engine = Engine(worker)
     try:

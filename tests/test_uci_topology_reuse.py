@@ -17,6 +17,7 @@ import time
 import unittest
 from chess_anti_engine.uci import wedge as uci_wedge
 from chess_anti_engine.uci.engine import _decayed_max as _engine_decayed_max
+from chess_anti_engine.uci.tb_leaf import CLeafProbe
 
 SOURCE = Path(os.environ.get('UCI_TEST_SOURCE', str(Path(__file__).resolve().parents[1])))
 MODULE_HASHES = {}
@@ -226,8 +227,8 @@ def search_fixture(rpg=True):
               '_DEFAULT_ABORT_FACTOR': 1.0, '_SOLVED_ROOT_TB_CHECK_LIMIT': 16,
               'SolvedRootWitnessUnavailable': Witness, 'run_gumbel_root_many_c': native_boundary,
               '_try_immediate_checkmate': lambda *_args, **_kwargs: None, 'SearchResult': SimpleNamespace,
-              '_TREE_NODE_ID_LIMIT': 1 << 30}
-    names = ['SearchWorker.run', 'SearchWorker._run_one_chunk', 'SearchWorker._run_gumbel_chunk',
+              '_TREE_NODE_ID_LIMIT': 1 << 30, 'CLeafProbe': CLeafProbe}
+    names = ['SearchWorker.run', 'SearchWorker._drop_stale_tb_probe', 'SearchWorker._run_one_chunk', 'SearchWorker._run_gumbel_chunk',
              'SearchWorker._run_gumbel_chunk_inner',
              'SearchWorker._pre_expand_root_for_pool', 'SearchWorker._chunk_budget',
              'SearchWorker._should_stop_search', 'SearchWorker.reset_tree', '_allowed_root_indices',

@@ -30,7 +30,10 @@ SEARCH a root python-chess answered; neither changes an answered move):
   moves. The engine warns at load when WDL tables lack DTZ.
 
 Only the table lookups moved. python-chess is still the move generator and the
-claim oracle here; ``chess.syzygy`` is not used on this path.
+claim oracle here; ``chess.syzygy`` is not used on this path (its table-NAME
+helpers ``is_tablename``/``normalize_tablename`` explain a refused file in
+``_why_dropped``; nothing is opened or probed). The search's leaf and root-eval
+WDL overrides use the same table set through ``uci/tb_leaf.py``.
 
 Fathom's table set is one per process (``_tb_ext`` is a singleton). This module
 owns it for the engine: :func:`load` (re)initialises it, :func:`unload` frees
@@ -82,6 +85,14 @@ class LoadedTables:
     n_dtz: int
     largest_dtz: int
     generation: int
+    #: ``_tb_ext.generation()`` right after this set was initialised: the C
+    #: module's own identity of the table set, which the leaf probe hands to
+    #: ``probe_wdl_batch`` so a re-init can never answer it (``uci/tb_leaf.py``).
+    c_generation: int = 0
+    #: Largest man count among the registered WDL tables (``table_names()``),
+    #: i.e. what python-chess's ``SyzygyProbe`` derived from its ``wdl`` keys.
+    #: ``largest`` is Fathom's ``TB_LARGEST``, which also counts DTM tables.
+    largest_wdl: int = 0
 
     def describe(self) -> str:
         return (f"{PROBER_NAME} ({_tb_ext.FATHOM_COMMIT[:8]}): {self.n_wdl} WDL + "
@@ -262,7 +273,9 @@ def load(path: str, *, owner: object | None = None) -> LoadedTables:
     if not wanted:
         raise RootTablebaseError(f"SyzygyPath {path!r} names no directory")
     with _state_lock:
-        if _loaded is not None and _loaded.configured == wanted and _tb_ext.path() == _loaded.resolved:
+        if (_loaded is not None and _loaded.configured == wanted
+                and _tb_ext.path() == _loaded.resolved
+                and _tb_ext.generation() == _loaded.c_generation):
             if owner is not None:
                 _add_owner(owner)
             return _loaded
@@ -283,10 +296,12 @@ def load(path: str, *, owner: object | None = None) -> LoadedTables:
             _tb_ext.free()
             raise RootTablebaseError("; ".join(problems))
         n_wdl, n_dtz, largest_dtz = _tb_ext.table_counts()
+        largest_wdl = max((len(name) - 1 for name, _ in _tb_ext.table_names()), default=0)
         _loaded = LoadedTables(
             configured=wanted, resolved=resolved, largest=largest,
             n_wdl=int(n_wdl), n_dtz=int(n_dtz), largest_dtz=int(largest_dtz),
-            generation=_generation,
+            generation=_generation, c_generation=int(_tb_ext.generation()),
+            largest_wdl=int(largest_wdl),
         )
         if owner is not None:
             _add_owner(owner)
@@ -357,7 +372,9 @@ class RootTablebase:
         return PROBER_NAME
 
     def _dtz_by_move(self, board: chess.Board) -> dict[str, int] | None:
-        if self.tables.generation != _current_generation() or _tb_ext.path() != self.tables.resolved:
+        if (self.tables.generation != _current_generation()
+                or _tb_ext.generation() != self.tables.c_generation
+                or _tb_ext.path() != self.tables.resolved):
             raise RootTablebaseError(
                 "the C Syzygy table set was re-initialised after this root handle was built"
             )

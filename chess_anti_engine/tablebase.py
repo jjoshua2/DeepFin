@@ -517,7 +517,8 @@ class SyzygyProbe:
 
     Consumes leaves as CBoard objects, writes directly into the wdl ndarray
     the evaluator returned. See ``gumbel_c.py:_tb_override`` for the hook
-    points; both UCI and selfplay share this class.
+    points. Selfplay and the arena use this class; the UCI engine uses
+    ``uci/tb_leaf.CLeafProbe`` (same interface and semantics, C prober).
 
     Cursed-win / blessed-loss treated as DRAWS here — matches 50-move-rule
     play. Training *labels* diverge and treat cursed as decisive; use

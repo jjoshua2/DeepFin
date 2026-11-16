@@ -34,8 +34,7 @@ from chess_anti_engine.mcts.search_options import (
     inert_reason,
     realized_rows,
 )
-from chess_anti_engine.tablebase import SyzygyProbe, get_tablebase
-from chess_anti_engine.uci import tb_root, wedge
+from chess_anti_engine.uci import tb_leaf, tb_root, wedge
 from chess_anti_engine.utils.bitboards import unsearchable_king_reason
 from chess_anti_engine.utils.gil_probe import GilContentionProbe
 from chess_anti_engine.utils.thread_join import await_os_thread_exit, join_thread, note_started
@@ -2847,8 +2846,9 @@ class Engine:
           it refuses (a component that is not a readable directory, or no table
           at all) turns tablebases OFF with an ``info string error`` line,
           rather than playing on with the root shortcut silently missing.
-        * Leaf WDL overrides: ``SyzygyProbe`` (python-chess), its handle cached
-          by path in ``chess_anti_engine.tablebase``.
+        * Leaf and root-eval WDL overrides: ``tb_leaf.CLeafProbe``, the same
+          C table set (python-chess's ``SyzygyProbe`` interface; selfplay keeps
+          the python-chess implementation). No python-chess table is opened.
 
         Re-running it for the same path (``Syzygy50MoveRule``) keeps the open
         C tables and rebuilds both consumers with the new rule.
@@ -2873,20 +2873,15 @@ class Engine:
             )
             _println(self._tb_refusal)
             return
-        tb = get_tablebase(path)
-        if tb is None:
-            self._clear_tablebases()
-            _println(f"info string SyzygyPath {path!r} did not open any tablebase directories")
-            return
         rule50 = self._options.syzygy_50_move_rule
-        probe = SyzygyProbe(path, cursed_as_draw=rule50)
+        probe = tb_leaf.CLeafProbe(tables, cursed_as_draw=rule50)
         self._worker.set_tb_probe(probe)
         self._worker.set_tb_root(tb_root.RootTablebase(tables, rule50=rule50), notice=_println)
         self._tb_generation = tables.generation
         _println(
             f"info string SyzygyPath loaded from {path!r}: "
             f"{probe.n_wdl} WDL + {probe.n_dtz} DTZ tables, "
-            f"up to {probe.max_pieces}-piece positions"
+            f"up to {probe.max_pieces}-piece positions; leaf prober: {probe.prober}"
         )
         _println(f"info string Syzygy root prober: {tables.describe()}")
         if tables.n_dtz < tables.n_wdl:

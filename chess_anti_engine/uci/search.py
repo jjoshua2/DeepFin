@@ -69,6 +69,7 @@ from .device_guard import (
 from chess_anti_engine.moves import index_to_move, move_to_index
 
 from .score import q_to_cp
+from .tb_leaf import CLeafProbe
 from .tb_root import RootTablebase, RootTablebaseError
 from .time_manager import Deadline
 from .walker_pool import WalkerPool, WalkerPoolConfig
@@ -2042,6 +2043,26 @@ class SearchWorker:
         self._tb_probe = probe
         self.reset_tree()
 
+    def _drop_stale_tb_probe(self) -> None:
+        """Before a search: drop a C leaf probe whose table set was replaced.
+
+        Another engine in the process (or anything else calling ``_tb_ext``)
+        re-initialised or freed the one C table set after this probe was
+        built. ``probe_wdl_batch`` already refuses such a probe atomically (no
+        leaf is answered from the new set); this makes it visible and stops
+        paying for refused batches. The tree goes too: it was grown with TB
+        values from the old set. Same notice channel as the root shortcut.
+        """
+        probe = self._tb_probe
+        if not isinstance(probe, CLeafProbe) or probe.is_current():
+            return
+        self.set_tb_probe(None)
+        message = ("info string leaf tablebase probing disabled (the C Syzygy table set was "
+                   "re-initialised after it was installed); set SyzygyPath again to restore it")
+        _log.warning("%s", message)
+        if self._tb_root_notice is not None:
+            self._tb_root_notice(message)
+
     def set_tb_root(
         self, root: RootTablebase | None, *, notice: Callable[[str], object] | None = None,
     ) -> None:
@@ -3495,6 +3516,7 @@ class SearchWorker:
         self._resolve_pending_compaction(
             deadline, optimum_ms, max_nodes=max_nodes, stop_sensitive=stop_sensitive,
         )
+        self._drop_stale_tb_probe()
         if self._tree is None or self._tree_fen != fen:
             self._tree = None
             self._root_id = None

@@ -1,7 +1,8 @@
 /* _tb_ext: Syzygy WDL/DTZ probing in C (vendored Fathom), no python-chess.
  *
- * One production caller so far, the UCI root DTZ shortcut
- * (chess_anti_engine/uci/tb_root.py). It exists so the python-chess prober
+ * Production callers: the UCI engine only -- its root DTZ shortcut
+ * (chess_anti_engine/uci/tb_root.py) and its search-leaf / root-eval WDL
+ * overrides (chess_anti_engine/uci/tb_leaf.py). It exists so the python-chess prober
  * (chess.syzygy, used through chess_anti_engine/tablebase.py) can be replaced
  * call site by call site, each switch behind its own record. Equivalence with
  * python-chess and the WDL/DTZ conventions: docs/tablebase_prober.md.
@@ -11,6 +12,9 @@
  *   probe_wdl -> -2 loss, -1 blessed loss, 0 draw, 1 cursed win, 2 win
  *   probe_dtz -> python-chess probe_dtz convention
  *   probe_root -> [(uci, dtz, rank, score), ...] per legal move, 50-move aware
+ *   probe_wdl_batch -> probe_wdl over a list of CBoards, one GIL release, one
+ *                     shared lock, refused when the table set's generation
+ *                     changed (the UCI search's leaf path, uci/tb_leaf.py)
  * None means "not probeable here": castling rights, more men than the loaded
  * tables, or a table missing from every directory. An illegal position or a
  * malformed FEN raises ValueError.
@@ -47,6 +51,11 @@ static PyTypeObject *g_cboard_type = NULL;
 static pthread_rwlock_t g_tables_lock = PTHREAD_RWLOCK_INITIALIZER;
 static pthread_mutex_t g_root_lock = PTHREAD_MUTEX_INITIALIZER;
 static PyObject *g_path = NULL;  /* str of the last successful init, or NULL */
+/* Bumped (under the exclusive lock) by every init() that reached Fathom and by
+ * every free(): the identity of the table set now loaded. probe_wdl_batch
+ * compares it under the shared lock, so a caller holding the number of the set
+ * it was configured for can never be answered from another set. */
+static unsigned long long g_generation = 1;
 
 static int ensure_cboard_type(void) {
     if (g_cboard_type) return 0;
@@ -372,6 +381,7 @@ static PyObject *tb_init_py(PyObject *self, PyObject *args) {
     pthread_rwlock_wrlock(&g_tables_lock);
     rc = df_tb_init(path);
     largest = df_tb_largest();
+    g_generation++;
     pthread_rwlock_unlock(&g_tables_lock);
     Py_END_ALLOW_THREADS
     if (rc != 0) {
@@ -398,6 +408,7 @@ static PyObject *tb_free_py(PyObject *self, PyObject *Py_UNUSED(ignored)) {
     Py_BEGIN_ALLOW_THREADS
     pthread_rwlock_wrlock(&g_tables_lock);
     df_tb_free();
+    g_generation++;
     pthread_rwlock_unlock(&g_tables_lock);
     Py_END_ALLOW_THREADS
     Py_CLEAR(g_path);
@@ -496,6 +507,86 @@ static PyObject *tb_probe_dtz_fen_py(PyObject *self, PyObject *args) {
     return probe_scalar(&pos, KIND_DTZ);
 }
 
+/* Codes in probe_wdl_batch's result: 0..4 are WDL -2..2 (value + 2). */
+#define DF_TB_CODE_UNAVAILABLE 5
+#define DF_TB_CODE_INVALID 6
+
+static PyObject *tb_generation_py(PyObject *self, PyObject *Py_UNUSED(ignored)) {
+    unsigned long long gen;
+    pthread_rwlock_rdlock(&g_tables_lock);
+    gen = g_generation;
+    pthread_rwlock_unlock(&g_tables_lock);
+    return PyLong_FromUnsignedLongLong(gen);
+}
+
+/* probe_wdl_batch(boards, generation) -> bytes | None.
+ *
+ * The search's leaf path: one call per leaf batch. Every CBoard is read while
+ * the GIL is held (into a private array), then the GIL is released ONCE and
+ * the whole batch is probed under ONE shared lock. If the table set is no
+ * longer ``generation`` (init()/free() ran since the caller was configured)
+ * nothing is probed and None is returned -- checked under the same shared
+ * lock as the probes, so it is atomic with them: no answer can come from a
+ * set the caller was not built for, and init()/free() (exclusive) wait for an
+ * in-flight batch to finish before unmapping anything.
+ *
+ * Byte j of the result is boards[j]'s code: 0..4 = WDL -2..2 (probe_wdl's
+ * value + 2), 5 = unavailable (probe_wdl's None), 6 = refused as illegal
+ * (probe_wdl's ValueError). */
+static PyObject *tb_probe_wdl_batch_py(PyObject *self, PyObject *args) {
+    PyObject *seq_in;
+    unsigned long long expected;
+    if (!PyArg_ParseTuple(args, "OK", &seq_in, &expected)) return NULL;
+    PyObject *seq = PySequence_Fast(seq_in, "probe_wdl_batch expects a sequence of CBoards");
+    if (!seq) return NULL;
+    Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
+    DfTbPos *pos = NULL;
+    if (n > 0) {
+        pos = (DfTbPos *)PyMem_RawMalloc((size_t)n * sizeof(DfTbPos));
+        if (!pos) {
+            Py_DECREF(seq);
+            return PyErr_NoMemory();
+        }
+    }
+    PyObject **items = PySequence_Fast_ITEMS(seq);
+    for (Py_ssize_t i = 0; i < n; i++) {
+        if (pos_from_cboard(items[i], &pos[i]) < 0) {
+            PyMem_RawFree(pos);
+            Py_DECREF(seq);
+            return NULL;
+        }
+    }
+    Py_DECREF(seq);
+    PyObject *out = PyBytes_FromStringAndSize(NULL, n);
+    if (!out) {
+        PyMem_RawFree(pos);
+        return NULL;
+    }
+    unsigned char *codes = (unsigned char *)PyBytes_AS_STRING(out);
+    int stale = 0;
+    Py_BEGIN_ALLOW_THREADS
+    pthread_rwlock_rdlock(&g_tables_lock);
+    if (g_generation != expected) {
+        stale = 1;
+    } else {
+        for (Py_ssize_t i = 0; i < n; i++) {
+            int value = 0;
+            int rc = df_tb_probe_wdl(&pos[i], &value);
+            if (rc == DF_TB_OK) codes[i] = (unsigned char)(value + 2);
+            else if (rc == DF_TB_UNAVAILABLE) codes[i] = DF_TB_CODE_UNAVAILABLE;
+            else codes[i] = DF_TB_CODE_INVALID;
+        }
+    }
+    pthread_rwlock_unlock(&g_tables_lock);
+    Py_END_ALLOW_THREADS
+    PyMem_RawFree(pos);
+    if (stale) {
+        Py_DECREF(out);
+        Py_RETURN_NONE;
+    }
+    return out;
+}
+
 static PyObject *tb_probe_root_py(PyObject *self, PyObject *args, PyObject *kwargs) {
     static char *kwlist[] = {"board", "has_repeated", "use_rule50", NULL};
     PyObject *obj;
@@ -572,6 +663,14 @@ static PyMethodDef tb_methods[] = {
      "probe_dtz(cboard) -> int | None. DTZ for the side to move; ignores the "
      "halfmove clock (python-chess probe_dtz contract)."},
     {"probe_wdl_fen", tb_probe_wdl_fen_py, METH_VARARGS, "probe_wdl for a FEN string."},
+    {"generation", tb_generation_py, METH_NOARGS,
+     "generation() -> int. Identity of the loaded table set: changes on every init() "
+     "that reaches Fathom and every free()."},
+    {"probe_wdl_batch", tb_probe_wdl_batch_py, METH_VARARGS,
+     "probe_wdl_batch(boards, generation) -> bytes | None. probe_wdl over a sequence "
+     "of CBoards in one GIL-free call under one shared lock; byte j is 0..4 for WDL "
+     "-2..2, 5 for None, 6 for an illegal position. None (nothing probed) when the "
+     "table set is no longer `generation`."},
     {"probe_dtz_fen", tb_probe_dtz_fen_py, METH_VARARGS, "probe_dtz for a FEN string."},
     {"probe_root", (PyCFunction)(void (*)(void))tb_probe_root_py, METH_VARARGS | METH_KEYWORDS,
      "probe_root(cboard, has_repeated=False, use_rule50=True) -> "
