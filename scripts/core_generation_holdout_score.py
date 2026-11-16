@@ -164,10 +164,10 @@ def load_games(view: Any, limits: dict[str, int]) -> list[tuple[dict[str, Any], 
 
 class RowLog:
     """Bounded JSONL, source-qualified scalar observations, never dense policies."""
-    def __init__(self, path: Path, cap: int):
+    def __init__(self, path: Path, cap: int, stream: Any):
         self.path = path
         self.cap = cap
-        self.stream = path.open("xb")
+        self.stream = stream
         self.digest = hashlib.sha256()
         self.bytes = 0
         self.rows = 0
@@ -221,60 +221,62 @@ def score_games(games: list[tuple[dict[str, Any], dict[str, Any]]], parents: dic
         pre = state_sha256(model.state_dict())
         require(pre == models[label]["model_state_sha256"], "pre-forward state differs")
         rng = snapshot_rng()
-        log = RowLog(output / (label + ".rows.jsonl"), limits["row_log_bytes"])
-        offset = 0
-        forwards = 0
-        dtypes: dict[str, str] = {}
-        linear_dtypes: set[str] = set()
-        def linear_hook(_module: Any, _args: Any, value: Any) -> None:
-            linear_dtypes.add(str(value.dtype))
-        head = getattr(model, "policy_own", None)
-        hook = head.q.register_forward_hook(linear_hook) if hasattr(head, "q") else None
-        try:
-            with torch.no_grad():
-                for ordinal, (game, arrays) in enumerate(games):
-                    numerators: dict[str, list[float]] = {key: [] for key in metrics.METRICS}
-                    n = game["rows"]
-                    for start in range(0, n, 32):
-                        stop = min(n, start + 32)
-                        # Fixed source rows, no random, mirror, dropout or rebuild.
-                        sliced = {key: value[start:stop] for key, value in arrays.items() if value.ndim > 0 and value.shape[0] == n}
-                        batch = collate_arrays(sliced, device=device)
-                        with inference_autocast(device, enabled=autocast, dtype="bf16"):
+        row_path = output / (label + ".rows.jsonl")
+        with row_path.open("xb") as stream:
+            log = RowLog(row_path, limits["row_log_bytes"], stream)
+            offset = 0
+            forwards = 0
+            dtypes: dict[str, str] = {}
+            linear_dtypes: set[str] = set()
+            def linear_hook(_module: Any, _args: Any, value: Any, _observed: set[str] = linear_dtypes) -> None:
+                _observed.add(str(value.dtype))
+            head = getattr(model, "policy_own", None)
+            hook = head.q.register_forward_hook(linear_hook) if hasattr(head, "q") else None
+            try:
+                with torch.no_grad():
+                    for ordinal, (game, arrays) in enumerate(games):
+                        numerators: dict[str, list[float]] = {key: [] for key in metrics.METRICS}
+                        n = game["rows"]
+                        for start in range(0, n, 32):
+                            stop = min(n, start + 32)
+                            # Fixed source rows, no random, mirror, dropout or rebuild.
+                            sliced = {key: value[start:stop] for key, value in arrays.items() if value.ndim > 0 and value.shape[0] == n}
+                            batch = collate_arrays(sliced, device=device)
+                            with inference_autocast(device, enabled=autocast, dtype="bf16"):
+                                if device.startswith("cuda"):
+                                    require(torch.is_autocast_enabled("cuda") and torch.get_autocast_dtype("cuda") == torch.bfloat16, "BF16 autocast inactive")
+                                outputs = model(batch["x"], **({"relations": batch["relations"]} if "relations" in batch else {}))
+                            require(not torch.is_grad_enabled() and not model.training, "evaluation mode changed")
+                            logits = outputs["policy"] if "policy" in outputs else outputs["policy_own"]
+                            dtypes = {"policy": str(logits.dtype), "wdl": str(outputs["wdl"].dtype), "input": str(batch["x"].dtype)}
                             if device.startswith("cuda"):
-                                require(torch.is_autocast_enabled("cuda") and torch.get_autocast_dtype("cuda") == torch.bfloat16, "BF16 autocast inactive")
-                            outputs = model(batch["x"], **({"relations": batch["relations"]} if "relations" in batch else {}))
-                        require(not torch.is_grad_enabled() and not model.training, "evaluation mode changed")
-                        logits = outputs["policy"] if "policy" in outputs else outputs["policy_own"]
-                        dtypes = {"policy": str(logits.dtype), "wdl": str(outputs["wdl"].dtype), "input": str(batch["x"].dtype)}
-                        if device.startswith("cuda"):
-                            require(outputs["wdl"].is_cuda and outputs["wdl"].dtype == torch.bfloat16
-                                    and logits.is_cuda and logits.dtype == torch.float32, "CUDA eager BF16/raw FP32-policy profile differs")
-                        reference = None if label == "A39" else torch.from_numpy(cache[offset + start:offset + stop]).to(device)
-                        values, policy_log, wdl_log = metrics.row_metrics(outputs, batch["legal_mask"], batch["policy_t"], batch["wdl_t"], reference)
-                        if label == "A39":
-                            cache[offset + start:offset + stop] = policy_log.cpu().numpy()
-                        scalars = {key: tensor.cpu().tolist() for key, tensor in values.items()}
-                        wdl_rows = wdl_log.cpu().tolist()
-                        for local, index in enumerate(range(start, stop)):
-                            row = {"model": label, "physical_game_id": game["physical_game_id"], "game_id": game["game_id"],
-                                "parent_id": parents[game["physical_game_id"]], "row_index": index, "ply_index": int(arrays["ply_index"][index]),
-                                "outcome": int(arrays["wdl_target"][index]), "producer_proof": game["producer_proof"],
-                                "shard_inventory_sha256": hashlib.sha256(ruler.canonical(game["shard"]["files"])).hexdigest(),
-                                "wdl_log_probs": wdl_rows[local], "metrics": {key: scalars[key][local] for key in metrics.METRICS}}
-                            log.add(row)
-                            for key in metrics.METRICS:
-                                numerators[key].append(scalars[key][local])
-                        forwards += 1
-                    observations[ordinal]["models"][label] = {key: math.fsum(values) for key, values in numerators.items()}
-                    offset += n
-            require(offset == count and same_rng(rng, snapshot_rng()) and pre == state_sha256(model.state_dict()), "scoring changed state/RNG or dropped rows")
-            logs[label] = log.close()
-        finally:
-            if not log.stream.closed:
-                log.stream.close()
-            if hook is not None:
-                hook.remove()
+                                require(outputs["wdl"].is_cuda and outputs["wdl"].dtype == torch.bfloat16
+                                        and logits.is_cuda and logits.dtype == torch.float32, "CUDA eager BF16/raw FP32-policy profile differs")
+                            reference = None if label == "A39" else torch.from_numpy(cache[offset + start:offset + stop]).to(device)
+                            values, policy_log, wdl_log = metrics.row_metrics(outputs, batch["legal_mask"], batch["policy_t"], batch["wdl_t"], reference)
+                            if label == "A39":
+                                cache[offset + start:offset + stop] = policy_log.cpu().numpy()
+                            scalars = {key: tensor.cpu().tolist() for key, tensor in values.items()}
+                            wdl_rows = wdl_log.cpu().tolist()
+                            for local, index in enumerate(range(start, stop)):
+                                row = {"model": label, "physical_game_id": game["physical_game_id"], "game_id": game["game_id"],
+                                    "parent_id": parents[game["physical_game_id"]], "row_index": index, "ply_index": int(arrays["ply_index"][index]),
+                                    "outcome": int(arrays["wdl_target"][index]), "producer_proof": game["producer_proof"],
+                                    "shard_inventory_sha256": hashlib.sha256(ruler.canonical(game["shard"]["files"])).hexdigest(),
+                                    "wdl_log_probs": wdl_rows[local], "metrics": {key: scalars[key][local] for key in metrics.METRICS}}
+                                log.add(row)
+                                for key in metrics.METRICS:
+                                    numerators[key].append(scalars[key][local])
+                            forwards += 1
+                        observations[ordinal]["models"][label] = {key: math.fsum(values) for key, values in numerators.items()}
+                        offset += n
+                require(offset == count and same_rng(rng, snapshot_rng()) and pre == state_sha256(model.state_dict()), "scoring changed state/RNG or dropped rows")
+                logs[label] = log.close()
+            finally:
+                if not log.stream.closed:
+                    log.stream.close()
+                if hook is not None:
+                    hook.remove()
         require(ruler.bank.stamp(Path(models[label]["checkpoint"]["path"])) == tuple(loading["checkpoint_stamp"])
                 and ruler.core.file_sha(Path(models[label]["checkpoint"]["path"])) == models[label]["checkpoint"]["sha256"], "checkpoint changed during scoring")
         model_evidence[label] = {**loading, "post_state_sha256": pre, "rng_unchanged_across_forwards": True,

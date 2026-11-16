@@ -14,7 +14,8 @@ import math
 from pathlib import Path
 import sys
 import time
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
 from scripts import core_generation_holdout_metrics as metrics
 from scripts import core_generation_holdout_ruler as ruler

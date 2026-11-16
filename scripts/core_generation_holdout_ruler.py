@@ -27,7 +27,6 @@ from scripts import core_generation_holdout_acceptance as hold
 from scripts import core_generation_holdout_metrics as metrics
 
 REPO = Path(__file__).resolve().parents[1]
-DESIGN_SCHEMA = "prospective_whole_game_holdout_ruler_v1"
 SCORE_SCHEMA = "CORE_GENERATION_HOLDOUT_SCORE_V1"
 READ_SCHEMA = "CORE_GENERATION_HOLDOUT_READ_V1"
 SCORE_PENDING = "CORE_HOLDOUT_OBSERVATIONS_PENDING_ROOT_CLOSURE_V1"

@@ -99,7 +99,7 @@ def test_equal_parent_not_pooled_rows():
     assert report["parents"] == 2
 
 
-@pytest.mark.parametrize("delta, veto", [(0.3, True), (0.1, False), (-0.3, False), (0.0, False)])
+@pytest.mark.parametrize(("delta", "veto"), [(0.3, True), (0.1, False), (-0.3, False), (0.0, False)])
 def test_fixed_parent_bootstrap_degenerate_local_rng(delta: float, veto: bool):
     before = np.random.get_state()
     games = [game_sums(50, 1, delta, index) for index in range(48)]
@@ -361,13 +361,12 @@ def test_public_entries_refuse_train_or_legacy_schema_before_runtime(tmp_path: P
 
 
 def test_bounded_row_log_never_emits_partial_qualified_descriptor(tmp_path: Path):
-    log = score.RowLog(tmp_path / "small.jsonl", 10)
-    try:
+    path = tmp_path / "small.jsonl"
+    with path.open("xb") as stream:
+        log = score.RowLog(path, 10, stream)
         with pytest.raises(ValueError, match="byte cap"):
             log.add({"too_large": "more than ten bytes"})
-    finally:
-        log.stream.close()
-    assert log.rows == 0
+        assert log.rows == 0
 
 
 def test_actual_hold_auditor_readonly_acceptance_feeds_strict_decoder(tmp_path: Path, monkeypatch):
