@@ -231,7 +231,7 @@ def score_games(games: list[tuple[dict[str, Any], dict[str, Any]]], parents: dic
             def linear_hook(_module: Any, _args: Any, value: Any, _observed: set[str] = linear_dtypes) -> None:
                 _observed.add(str(value.dtype))
             head = getattr(model, "policy_own", None)
-            hook = head.q.register_forward_hook(linear_hook) if hasattr(head, "q") else None
+            hook = head.q.register_forward_hook(linear_hook) if head is not None and hasattr(head, "q") else None
             try:
                 with torch.no_grad():
                     for ordinal, (game, arrays) in enumerate(games):

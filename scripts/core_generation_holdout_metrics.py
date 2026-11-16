@@ -29,7 +29,8 @@ def row_metrics(outputs: dict[str, Any], legal: Any, policy: Any, outcome: Any,
 
     logits = outputs["policy"] if "policy" in outputs else outputs.get("policy_own")
     wdl = outputs.get("wdl")
-    require(isinstance(logits, torch.Tensor) and isinstance(wdl, torch.Tensor), "missing policy/WDL outputs")
+    if not isinstance(logits, torch.Tensor) or not isinstance(wdl, torch.Tensor):
+        raise ValueError("missing policy/WDL outputs")
     n, width = logits.shape if logits.ndim == 2 else (0, 0)
     require(n > 0 and width == 1858 and wdl.shape == (n, 3) and legal.shape == policy.shape == logits.shape
             and outcome.shape == (n,), "HOLD metric shape mismatch")

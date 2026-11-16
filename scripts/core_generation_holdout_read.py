@@ -101,7 +101,9 @@ def reconcile_rows(report: dict[str, Any], view: Any, parents: dict[str, str], c
         game = expected[game_ordinal]
         common = None
         for label, row in zip(metrics.LABELS, paired, strict=True):
-            require(type(row) is dict and set(row) == {"model", "physical_game_id", "game_id", "parent_id", "row_index", "ply_index", "outcome",
+            if not isinstance(row, dict):
+                raise ValueError("dropped/invalid row observation")
+            require(set(row) == {"model", "physical_game_id", "game_id", "parent_id", "row_index", "ply_index", "outcome",
                     "producer_proof", "shard_inventory_sha256", "wdl_log_probs", "metrics"}, "invalid row schema")
             require(row["model"] == label and row["physical_game_id"] == game["physical_game_id"]
                     and row["parent_id"] == parents[game["physical_game_id"]] and type(row["game_id"]) is int and row["game_id"] == game["game_id"]
@@ -122,7 +124,9 @@ def reconcile_rows(report: dict[str, Any], view: Any, parents: dict[str, str], c
                 require(value["reference_forward_kl"] == 0, "reference self KL differs")
             for metric in metrics.METRICS:
                 sums[label][metric].append(value[metric])
-        require(common is not None and common["ply_index"] not in plies, "duplicate physical row")
+        if common is None:
+            raise ValueError("missing paired row identity")
+        require(common["ply_index"] not in plies, "duplicate physical row")
         plies.add(common["ply_index"])
         identity.update(ruler.canonical([game["physical_game_id"], game["game_id"], row_ordinal, common["ply_index"], common["outcome"]]) + b"\n")
         row_ordinal += 1
