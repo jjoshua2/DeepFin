@@ -82,6 +82,41 @@ this CPU audit. An actual saved-state audit and its closed owner/root+independen
 delivery must exist before real scoring; this module does not invent them or
 count a delivery status alone as a saved-payload check.
 
+Alternatively, `payload_audit` can have exactly `schema,readout,owner`, with
+`schema="core_bank_learner_same_gpu_payload_proof_v1"`. This explicit variant
+accepts the separately reviewed finite passive prover, identified by the pinned
+`GPU_PROOF_HELPER_SHA256`; it does not reinterpret the CPU status. Its readout is
+`CORE_BANK_LEARNER_GPU_OWN_LIVE_SAVED_PROOF_PENDING_ROOT_CLOSURE_V1` and its complete
+six-field owner must equal `learner_owner`. The same closed GPU owner has an exact
+900-second cap and the real anchored CLI suffix. No extra CPU phase is implied.
+The outer delivery root and independent review still bind the entire proof.
+
+Only this variant accepts the prover's normalized admission. It requires the
+exact `ROOT_ADMITS_SCIENTIFIC_LEARNER_PASSIVE_PROOF_GPU_V1` status and execution
+flag, actual admission path/SHA and observer-plan path/SHA in unique command
+flags, and replacement of only that admission SHA with `SELF_ADMISSION_SHA256`.
+This avoids a self-hash cycle without fabricating an `admission.command` field.
+The default legacy/CPU admission checks, all owner source/CWD/terminal/cap/wall/
+birth/closure checks, and all existing delivery gates remain mandatory.
+
+The proof must join its original plan, accepted source review, historical source
+map, contract, stage, boundary and checkpoint. Full494/175 counts, own-live/final
+save equality, one final CPU-only checkpoint decode, named optimizer evidence,
+reference immutability, exact five-stream RNG and backend, membership and journal
+hashes, and selected N/K/views must reconcile. RNG is held in the boundary, not
+in `learner.pt`. After `training_population` validates the actual accepted TRAIN,
+its full physical-game roster is joined to every per-game coverage count and
+fraction, including zero-draw games. With-replacement sampling does not imply
+full coverage; no coverage or efficacy threshold is added.
+
+This is metadata validation only: the consumer never opens checkpoints, raw
+journals, shards or historical source files. The learner, wrapper and current
+consumer revisions remain separate. Score and CPU reader share the adopted
+validator; general arena loading does not automatically gain this gate. Real
+use requires reviewed publication, explicit consumer adoption and genuine
+postclosure root/independent deliveries. Fictional graph controls establish no
+numerical saved-state, study, playing or strength qualification.
+
 All three delivered models are the actual anchored family, fresh segment1,
 with selected constant-LR contracts and the exact selected dose derived from
 complete TRAIN replay membership. A/B have zero coefficient/null reference;

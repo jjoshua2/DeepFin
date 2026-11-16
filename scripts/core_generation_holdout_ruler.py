@@ -41,6 +41,12 @@ ADMISSION = "ROOT_ADMITS_CORE_HOLDOUT_RULER_PHASE_V1"
 SOURCE_REVIEW = "ACCEPT_CORE_HOLDOUT_RULER_SOURCE_ONLY_NO_FINDINGS_V1"
 ANCHOR_KEY = "core_generation_bank_policy_anchor_v1"
 BOUNDARY = "COMPLETED_CORE_GENERATION_BANK_POLICY_ANCHOR_SEGMENT_V1"
+GPU_PAYLOAD_SCHEMA = "core_bank_learner_same_gpu_payload_proof_v1"
+GPU_PAYLOAD_STATUS = "CORE_BANK_LEARNER_GPU_OWN_LIVE_SAVED_PROOF_PENDING_ROOT_CLOSURE_V1"
+GPU_PROOF_ADMISSION = "ROOT_ADMITS_SCIENTIFIC_LEARNER_PASSIVE_PROOF_GPU_V1"
+GPU_PROOF_SOURCE_REVIEW = "ACCEPT_SCIENTIFIC_LEARNER_PASSIVE_PROOF_SOURCE_ONLY_NO_FINDINGS_V1"
+# Versioned pure-metadata consumer for the independently reviewed finite prover.
+GPU_PROOF_HELPER_SHA256 = "7b45088df9ab897dfb0f9cafc6e79bc0f79072c37b1d35dd6e0a8144c9032ba6"
 SOURCE_FILES = (
     "scripts/core_generation_holdout_score.py", "scripts/core_generation_holdout_read.py",
     "scripts/core_generation_holdout_ruler.py", "scripts/core_generation_holdout_metrics.py",
@@ -114,7 +120,7 @@ def write(path: Path, value: Any) -> dict[str, str]:
 
 
 def closed_owner(m: Metadata, owner: dict[str, Any], *, resource: str,
-                 suffix: list[str], seconds: int | None = None) -> dict[str, Any]:
+                 suffix: list[str], seconds: int | None = None, _same_gpu_proof: bool = False) -> dict[str, Any]:
     """Join a historical owner without confusing its revision with its child."""
     require(set(owner) == {"terminal", "admission", "command", "source_revision", "cwd", "closure"}, "invalid closed owner schema")
     terminal = m.observed(owner["terminal"])
@@ -141,8 +147,20 @@ def closed_owner(m: Metadata, owner: dict[str, Any], *, resource: str,
     for pid, birth in closure["known_processes"].items():
         require(type(pid) is str and pid.isdecimal() and str(int(pid)) == pid and int(pid) > 0
                 and type(birth) is int and birth > 0, "invalid process birth")
-    require(admission["command"] == command and admission["resource"] == resource
-            and admission["seconds"] == cap and admission["owner"]["sha256"] == terminal["supervisor_sha256"], "owner admission differs")
+    if _same_gpu_proof:
+        require(resource == "gpu" and seconds == cap == 900 and admission["status"] == GPU_PROOF_ADMISSION
+                and admission["execution_authorized"] is True, "same-GPU proof admission differs")
+        for flag, value in (("--admission", owner["admission"]["path"]), ("--admission-sha256", owner["admission"]["sha256"]),
+                            ("--observer-plan", admission["observer_plan"]["path"]), ("--observer-plan-sha256", admission["observer_plan"]["sha256"])):
+            require(command.count(flag) == 1 and command.index(flag) + 1 < len(command)
+                    and command[command.index(flag) + 1] == value, "same-GPU observer command differs")
+        normalized = list(command)
+        normalized[normalized.index("--admission-sha256") + 1] = "SELF_ADMISSION_SHA256"
+        require(admission["normalized_child"] == normalized and admission["resource"] == resource
+                and admission["seconds"] == cap and admission["owner"]["sha256"] == terminal["supervisor_sha256"], "same-GPU normalized admission differs")
+    else:
+        require(admission["command"] == command and admission["resource"] == resource
+                and admission["seconds"] == cap and admission["owner"]["sha256"] == terminal["supervisor_sha256"], "owner admission differs")
     return terminal
 
 
@@ -208,16 +226,19 @@ def model_delivery(m: Metadata, binding: dict[str, Any], label: str) -> dict[str
             and b["applied_views"] == b["step"] * c["batch_size"] and b["policy_anchor"] == c["policy_anchor"], "incomplete fresh selected model endpoint")
     suffix = ["-m", "scripts.core_generation_bank_policy_anchor", "--contract", root["contract"]["path"], "--contract-sha256", root["contract"]["sha256"],
               "--stage", root["stage"]["path"], "--stage-sha256", root["stage"]["sha256"]]
-    closed_owner(m, root["learner_owner"], resource="gpu", suffix=suffix)
     audit = root["payload_audit"]
-    require(set(audit) == {"readout", "owner"}, "invalid saved-state audit binding")
-    saved = m.read(audit["readout"])
-    closed_owner(m, audit["owner"], resource="cpu", suffix=saved["command_suffix"])
-    require(saved["status"] == "CORE_BANK_LEARNER_SAVED_STATE_AUDIT_PENDING_ROOT_CLOSURE_V1"
-            and all(saved[key] == root[key] for key in ("contract", "stage", "boundary", "checkpoint"))
-            and saved["source_revision"] == root["source_revision"] and saved["architecture"] == c["architecture"]
-            and type(saved["step"]) is int and saved["step"] == b["step"]
-            and saved["reconciled"] == dict.fromkeys(("model", "optimizer", "scheduler", "zclip", "counters", "rng", "journal", "membership", "policy_anchor"), True), "saved-state audit incomplete")
+    if set(audit) == {"readout", "owner"}:
+        saved = m.read(audit["readout"])
+        require(saved["status"] == "CORE_BANK_LEARNER_SAVED_STATE_AUDIT_PENDING_ROOT_CLOSURE_V1", "saved-state audit incomplete")
+        closed_owner(m, root["learner_owner"], resource="gpu", suffix=suffix)
+        closed_owner(m, audit["owner"], resource="cpu", suffix=saved["command_suffix"])
+        require(saved["status"] == "CORE_BANK_LEARNER_SAVED_STATE_AUDIT_PENDING_ROOT_CLOSURE_V1"
+                and all(saved[key] == root[key] for key in ("contract", "stage", "boundary", "checkpoint"))
+                and saved["source_revision"] == root["source_revision"] and saved["architecture"] == c["architecture"]
+                and type(saved["step"]) is int and saved["step"] == b["step"]
+                and saved["reconciled"] == dict.fromkeys(("model", "optimizer", "scheduler", "zclip", "counters", "rng", "journal", "membership", "policy_anchor"), True), "saved-state audit incomplete")
+    else:
+        saved = same_gpu_payload(m, root, c, b, suffix)
     bank.sha(saved["model_state_sha256"])
     membership = b["membership"]
     require(type(membership) is list and membership and all(type(row) is list and len(row) == 3
@@ -239,6 +260,111 @@ def model_delivery(m: Metadata, binding: dict[str, Any], label: str) -> dict[str
     tag["contract_sha256"] = root["contract"]["sha256"]
     return {"label": label, "checkpoint": root["checkpoint"], "architecture": c["architecture"], "step": b["step"],
             "tag": tag, "model_state_sha256": saved["model_state_sha256"], "contract": c, "boundary": b, "stage": s}
+
+
+
+def same_gpu_payload(m: Metadata, root: dict[str, Any], c: dict[str, Any], b: dict[str, Any], suffix: list[str]) -> dict[str, Any]:
+    """Versioned saved proof from the SAME closed learner GPU owner, JSON only."""
+    audit = root["payload_audit"]
+    require(set(audit) == {"schema", "readout", "owner"} and audit["schema"] == GPU_PAYLOAD_SCHEMA, "invalid saved-state audit binding")
+    require(audit["owner"] == root["learner_owner"], "payload proof must share complete learner owner")
+    closed_owner(m, audit["owner"], resource="gpu", suffix=suffix, seconds=900, _same_gpu_proof=True)
+    saved = m.read(audit["readout"])
+    require(saved["status"] == GPU_PAYLOAD_STATUS
+            and all(saved[key] == root[key] for key in ("contract", "stage", "boundary", "checkpoint"))
+            and saved["source_revision"] == root["source_revision"] and saved["source_checkout"] == root["source_checkout"]
+            and saved["architecture"] == c["architecture"] and type(saved["step"]) is int and saved["step"] == b["step"]
+            and saved["public_suffix"] == suffix
+            and saved["reconciled"] == dict.fromkeys(("model", "optimizer", "scheduler", "zclip", "counters", "rng", "journal", "membership", "policy_anchor"), True), "same-GPU saved-state proof incomplete")
+    plan = m.read(saved["observer_plan"])
+    admission = m.read(audit["owner"]["admission"])
+    require(plan["schema"] == "SCIENTIFIC_ANCHORED_LEARNER_PASSIVE_PROOF_V1"
+            and plan["status"] == "BOUND_SCIENTIFIC_LEARNER_PASSIVE_PROOF_NOT_DELIVERY_AUTHORITY_V1"
+            and admission["observer_plan"] == saved["observer_plan"]
+            and all(saved[key] == plan[key] == admission[key] for key in ("helper", "source_review", "source_pins"))
+            and all(plan[key] == root[key] for key in ("contract", "stage")) and plan["public_suffix"] == suffix
+            and plan["learner_output"] == str(Path(root["checkpoint"]["path"]).parent)
+            and plan["observation"] == audit["readout"]["path"]
+            and plan["limits"] == {"outer_seconds": 900, "inner_seconds": 870, "checkpoint_file_bytes": 8 << 30,
+                                   "journal_bytes": 16 << 20, "aggregate_bytes": 4 << 20}
+            and type(saved["outer_seconds"]) is int and saved["outer_seconds"] == 900
+            and type(saved["absolute_inner_seconds"]) is int and saved["absolute_inner_seconds"] == 870,
+            "same-GPU plan/admission proof differs")
+    helper = saved["helper"]
+    require(type(helper) is dict and set(helper) == {"path", "sha256"} and type(helper["path"]) is str
+            and Path(helper["path"]).is_absolute() and Path(helper["path"]).suffix == ".py"
+            and helper["sha256"] == GPU_PROOF_HELPER_SHA256 and audit["owner"]["command"].count(helper["path"]) == 1,
+            "unsupported same-GPU prover")
+    review = m.read(saved["source_review"])
+    require(review["status"] == GPU_PROOF_SOURCE_REVIEW and review["helper"] == helper
+            and review["source_pins"] == saved["source_pins"] and review["findings"] == [], "same-GPU prover source acceptance differs")
+    pins = m.read(saved["source_pins"])
+    require(pins["source_revision"] == root["source_revision"] and pins["source_checkout"] == root["source_checkout"]
+            and type(pins["files"]) is dict and len(pins["files"]) == 219, "same-GPU historical source identity differs")
+    require(saved["save_before_equals_after"] is True and saved["reference_immutable"] is True
+            and type(saved["additional_final_CPU_checkpoint_decodes"]) is int and saved["additional_final_CPU_checkpoint_decodes"] == 1,
+            "same-GPU live/final proof incomplete")
+    bank.sha(saved["own_live_state_fingerprint"])
+    initial = saved["initial"]
+    for key, value in (("state_entries", 494), ("input_planes", 175), ("unique_parameter_numel", 61444448), ("naive_state_numel", 77173088)):
+        require(type(initial["model"][key]) is int and initial["model"][key] == value, "same-GPU full model facts differ")
+    require(initial["model"]["finite"] is True and saved["initial_model_state_sha256"] == initial["model"]["state_sha256"], "same-GPU initial model differs")
+    bank.sha(saved["initial_model_state_sha256"])
+    bank.integer(saved["optimizer_named_parameters"], "named optimizer parameters")
+    bank.integer(saved["active_optimizer_slots"], "active optimizer slots")
+    require(saved["active_optimizer_slots"] <= saved["optimizer_named_parameters"], "same-GPU optimizer ownership differs")
+    require(type(b["rng"]) is dict and set(b["rng"]) == {"numpy", "mask", "torch_cpu", "torch_cuda", "python"}
+            and type(b["rng"]["torch_cuda"]) is list and len(b["rng"]["torch_cuda"]) == 1, "same-GPU five RNG streams differ")
+    require(saved["five_rng_snapshot_sha256"] == hashlib.sha256(canonical(b["rng"])).hexdigest()
+            and saved["membership_sha256"] == hashlib.sha256(canonical(b["membership"])).hexdigest()
+            and canonical(initial["membership"]) == canonical(b["membership"])
+            and saved["actual_backend"] == initial["backend"] == b["backend"], "same-GPU RNG/membership/backend differs")
+    membership = b["membership"]
+    require(type(membership) is list and membership and all(type(row) is list and len(row) == 3
+            and type(row[0]) is int and row[0] == 1 and type(row[2]) is int and row[2] > 0 for row in membership),
+            "invalid full replay membership")
+    membership = cast(list[list[Any]], membership)
+    population = sum(row[2] for row in membership)
+    coverage = saved["draw_coverage"]
+    require(type(plan["N"]) is int and plan["N"] == population and type(plan["K"]) is int
+            and plan["K"] == b["step"] == min((population + 31) // 32, 1024)
+            and type(coverage["population_rows"]) is int and coverage["population_rows"] == population
+            and type(coverage["batches"]) is int and coverage["batches"] == b["step"]
+            and type(coverage["views"]) is int and coverage["views"] == b["drawn_rows"] == b["applied_views"]
+            and coverage["journal_sha256"] == b["draws_sha256"]
+            and type(coverage["views_per_population_row"]) is float
+            and coverage["views_per_population_row"] == coverage["views"] / population, "same-GPU draw totals differ")
+    return saved
+
+
+def same_gpu_game_coverage(m: Metadata, binding: dict[str, Any], model: dict[str, Any], train: bank.AcceptedGeneration) -> None:
+    """Join the new aggregate roster to the actual accepted TRAIN, no draws read."""
+    root = m.read(binding["root"])
+    audit = root["payload_audit"]
+    if set(audit) == {"readout", "owner"}:
+        return
+    require(set(audit) == {"schema", "readout", "owner"} and audit["schema"] == GPU_PAYLOAD_SCHEMA, "invalid saved-state audit binding")
+    coverage = m.read(audit["readout"])["draw_coverage"]
+    rows = coverage["per_game_aggregate_counts"]
+    require(type(rows) is list and len(rows) == len(train.games) and type(coverage["games"]) is int
+            and coverage["games"] == len(train.games), "same-GPU coverage game roster differs")
+    draws = unique = zero = population = 0
+    for row, game in zip(rows, train.games, strict=True):
+        require(type(row) is dict and set(row) == {"physical_game_id", "population_rows", "draws", "unique_rows", "unique_fraction"}
+                and row["physical_game_id"] == game["physical_game_id"] and type(row["population_rows"]) is int
+                and row["population_rows"] == game["rows"], "same-GPU coverage physical game differs")
+        count = bank.integer(row["draws"], "game draws", 0)
+        seen = bank.integer(row["unique_rows"], "game unique rows", 0)
+        require(seen <= min(count, game["rows"]) and (seen > 0) == (count > 0)
+                and type(row["unique_fraction"]) is float and row["unique_fraction"] == seen / game["rows"], "same-GPU per-game coverage differs")
+        draws += count
+        unique += seen
+        population += game["rows"]
+        zero += count == 0
+    require(type(coverage["unique_physical_rows_drawn"]) is int and coverage["unique_physical_rows_drawn"] == unique
+            and type(coverage["zero_draw_games"]) is int and coverage["zero_draw_games"] == zero
+            and population == coverage["population_rows"] and draws == coverage["views"] == model["boundary"]["drawn_rows"]
+            and type(coverage["unique_fraction"]) is float and coverage["unique_fraction"] == unique / population, "same-GPU aggregate coverage differs")
 
 
 def asset_identity(m: Metadata, donor: dict[str, Any]) -> dict[str, Any]:
@@ -302,6 +428,7 @@ def bindings(m: Metadata, p: dict[str, Any]) -> tuple[hold.AcceptedHoldout, dict
         require(models[label]["architecture"] == plain(view.identity["architecture"]), "HOLD/model architecture differs")
     for label, weight in (("A", 0), ("B", 0), ("C", 0.1)):
         train = training_population(m, models[label])
+        same_gpu_game_coverage(m, p["models"][label], models[label], train)
         require(not ({game["physical_game_id"] for game in train.games} & {game["physical_game_id"] for game in view.games}), "HOLD physical game leaked into training")
         c = models[label]["contract"]
         a = c["policy_anchor"]
