@@ -426,7 +426,7 @@ def test_D1_bulk_reference_accepts_canonical_book_and_game_log_without_payload_i
 
 
 @pytest.mark.parametrize("suffix", [".epd", ".jsonl"])
-@pytest.mark.parametrize("fault,message", [
+@pytest.mark.parametrize(("fault", "message"), [
     ("extra", "invalid bulk reference"),
     ("missing", "invalid bulk reference"),
     ("digest", "invalid digest"),
