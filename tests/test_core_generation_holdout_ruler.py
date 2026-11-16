@@ -470,3 +470,115 @@ def test_rehashed_delivery_and_saved_state_refusals(tmp_path: Path, fault: str):
     binding = delivery_graph(tmp_path, fault)
     with pytest.raises(ValueError):
         ruler.model_delivery(ruler.Metadata(1 << 20, 8 << 20), binding, "A")
+
+
+def asset_graph(tmp_path: Path, fault: str = "") -> dict[str, Any]:
+    source = {"revision": "31ba591bbda95e1530ce995a07bdbce24f00fb73", "checkout": "/fiction/current-H",
+              "source_pins": frozen(tmp_path / "asset-source-pins.json", {"source": "fictional source fixture"})}
+    protocol = frozen(tmp_path / "asset-protocol.json", {"source": "fictional protocol fixture"})
+    terminal = frozen(tmp_path / "asset-terminal.json", {"status": "PASS", "owned_processes_closed": True})
+    donor: dict[str, Any] = {"checkpoint": {"path": "/fiction/epoch2.pt", "sha256": collect.INITIAL_DONOR_SHA256},
+        "architecture": {"_schema_version": 20, "input_extra_features": "v2_threats"}, "step": 680276,
+        "model_state_sha256": "9" * 64, "asset_source": source}
+    observed = {"path": donor["checkpoint"]["path"], "sha256": donor["checkpoint"]["sha256"], "architecture": donor["architecture"],
+        "embedded_step": 680276, "state_sha256": donor["model_state_sha256"], "state_tensors": 494,
+        "actual_CPU_model_only_load": True, "optimizer_restore_qualified": False}
+    child = {"status": "COMPLETE_COLLECTOR_CURRENT_H_CPU_ASSET_QUALIFICATION_CHILD_ROOT_CLOSURE_REQUIRED_V1",
+        "source_revision": source["revision"], "source_checkout": source["checkout"], "source_pins": source["source_pins"],
+        "protocol": protocol, "donor_model_only": observed, "closed_owner_attested_by_child": False}
+    if fault == "child_source":
+        child["source_revision"] = "c" * 40
+    child_ref = frozen(tmp_path / "asset-readout.json", child)
+    root = {"status": "ROOT_ACCEPTS_COLLECTOR_CURRENT_H_CPU_ASSET_READINESS_V1", "source_revision": source["revision"],
+            "source_checkout": source["checkout"], "readout": child_ref, "protocol": protocol, "terminal": terminal, "donor_model_only": observed}
+    if fault == "old_status":
+        root["status"] = "ROOT_ACCEPTS_CLOSED_COLLECTOR_CPU_ASSET_READINESS_V1"
+    elif fault == "root_source":
+        root["source_checkout"] = "/fiction/old-F"
+    donor["root"] = frozen(tmp_path / "asset-root.json", root)
+    review = {"status": "ACCEPT_CLOSED_COLLECTOR_CURRENT_H_CPU_ASSET_READINESS_NO_FINDINGS_V1", "root_acceptance": donor["root"],
+        "findings": [], "source_revision": source["revision"], "source_checkout": source["checkout"], "source_pins": source["source_pins"],
+        "readout": child_ref, "protocol": protocol, "terminal": terminal}
+    if fault == "independent_source":
+        review["source_revision"] = "d" * 40
+    elif fault == "crossed_readout":
+        review["readout"] = {"path": "/fiction/other-readout.json", "sha256": "e" * 64}
+    donor["independent"] = frozen(tmp_path / "asset-independent.json", review)
+    return donor
+
+
+def test_actual_shape_current_h_asset_metadata_is_accepted(tmp_path: Path):
+    binding = asset_graph(tmp_path)
+    m = ruler.Metadata(1 << 20, 8 << 20)
+    model = ruler.asset_identity(m, binding)
+    assert model["step"] == 680276
+    assert model["checkpoint"]["sha256"] == collect.INITIAL_DONOR_SHA256
+    assert model["asset_source"]["revision"] == "31ba591bbda95e1530ce995a07bdbce24f00fb73"
+    m.finish()
+
+
+@pytest.mark.parametrize("fault", ["old_status", "root_source", "child_source", "independent_source", "crossed_readout"])
+def test_old_or_crossed_asset_metadata_is_refused(tmp_path: Path, fault: str):
+    with pytest.raises(ValueError, match=r"current-H|A39 observed"):
+        ruler.asset_identity(ruler.Metadata(1 << 20, 8 << 20), asset_graph(tmp_path, fault))
+
+
+def native_modules(monkeypatch, fault=""):
+    from chess_anti_engine import ext_check
+
+    modules = {name: SimpleNamespace(**dict.fromkeys(symbols, object())) for name, symbols in ext_check.REQUIRED_SYMBOLS.items()}
+    modules[ext_check.LC0_EXT].CBoard = SimpleNamespace(**dict.fromkeys(ext_check.REQUIRED_CBOARD_METHODS, object()))
+    modules[ext_check.MCTS_TREE_EXT].MCTSTree = SimpleNamespace(**dict.fromkeys(ext_check.REQUIRED_MCTSTREE_METHODS, object()))
+    modules[ext_check.MCTS_TREE_EXT].ABI_VERSION = 8
+    modules["chess_anti_engine.mcts.gumbel_c"] = SimpleNamespace(_REQUIRED_MCTS_ABI=7)
+    if fault == "missing_symbol":
+        del modules[ext_check.LC0_EXT].encode_full_batch
+    elif fault == "numeric_abi":
+        modules[ext_check.MCTS_TREE_EXT].ABI_VERSION = 0
+    original = ext_check.importlib.import_module
+    monkeypatch.setattr(ext_check.importlib, "import_module", lambda name: modules[name] if name in modules else original(name))
+
+
+def test_real_required_symbol_and_numeric_abi_primitive_is_invoked(monkeypatch):
+    native_modules(monkeypatch)
+    result = ruler.native_symbol_abi()
+    assert result["primitive"] == "chess_anti_engine.ext_check.extension_problems"
+    assert result["problems"] == []
+    assert result["required_mcts_abi"] == 7
+    assert result["observed_mcts_abi"] == 8
+
+
+@pytest.mark.parametrize("fault", ["missing_symbol", "numeric_abi"])
+def test_real_symbol_or_numeric_abi_problem_refuses_ruler(monkeypatch, fault: str):
+    native_modules(monkeypatch, fault)
+    with pytest.raises(ValueError, match="required-symbol/numeric-ABI"):
+        ruler.native_symbol_abi()
+
+
+@pytest.mark.parametrize("offset", [0.0, 0.2])
+def test_heterogeneous_equal_parent_bootstrap_matches_independent_count_oracle(offset: float):
+    before = np.random.get_state()
+    games = [game_sums(40 if index < 24 else 200, 1, (0.4 if index < 24 else -0.1) + offset, index) for index in range(48)]
+    for index, game in enumerate(games):
+        game["parent_id"] = f"parent-{index:02d}"
+    result = metrics.parent_health(games)
+    local = np.random.default_rng(2026111680)
+    # Independent two-point count oracle: each resampled parent is equally
+    # weighted even though the low-difference games have five times more rows.
+    hits = (local.integers(0, 48, size=(10000, 48)) < 24).sum(axis=1)
+    oracle = -0.1 + offset + 0.5 * hits / 48
+    low, high = np.quantile(oracle, [0.025, 0.975], method="linear")
+    interval = result["C_minus_A39_equal_parent_WDL_CE"]
+    assert interval["point"] == pytest.approx(0.15 + offset, abs=1e-12)
+    assert interval["lower95"] == pytest.approx(low, abs=1e-12)
+    assert interval["upper95"] == pytest.approx(high, abs=1e-12)
+    assert interval["lower95"] < interval["point"] < interval["upper95"]
+    assert result["bootstrap"]["degenerate"] is False
+    row_weighted = result["aggregate"]["models"]["C"]["row_weighted"]["wdl_ce"] - result["aggregate"]["models"]["A39"]["row_weighted"]["wdl_ce"]
+    assert row_weighted == pytest.approx(-1 / 60 + offset, abs=1e-12)
+    assert abs(row_weighted - interval["point"]) > 0.1
+    assert result["severe_damage_veto"] is (offset == 0.2)
+    after = np.random.get_state()
+    assert before[0] == after[0]
+    assert np.array_equal(before[1], after[1])
+    assert before[2:] == after[2:]

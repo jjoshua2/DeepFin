@@ -46,7 +46,7 @@ SOURCE_FILES = (
     "scripts/core_generation_holdout_ruler.py", "scripts/core_generation_holdout_metrics.py",
     "scripts/core_generation_holdout_acceptance.py", "scripts/core_generation_bank_acceptance.py",
     "scripts/core_finite_learner.py", "scripts/core_finite_admit.py", "scripts/core_finite_collect.py",
-    "scripts/check_c_extensions_fresh.py", "chess_anti_engine/ext_build_record.py", "chess_anti_engine/uci/model_loader.py",
+    "scripts/check_c_extensions_fresh.py", "chess_anti_engine/ext_build_record.py", "chess_anti_engine/ext_check.py", "chess_anti_engine/mcts/gumbel_c.py", "chess_anti_engine/uci/model_loader.py",
     "chess_anti_engine/model/__init__.py", "chess_anti_engine/model/transformer.py",
     "chess_anti_engine/replay/shard.py", "chess_anti_engine/replay/dataset.py",
     "chess_anti_engine/train/losses.py", "chess_anti_engine/utils/amp.py",
@@ -240,6 +240,35 @@ def model_delivery(m: Metadata, binding: dict[str, Any], label: str) -> dict[str
             "tag": tag, "model_state_sha256": saved["model_state_sha256"], "contract": c, "boundary": b, "stage": s}
 
 
+def asset_identity(m: Metadata, donor: dict[str, Any]) -> dict[str, Any]:
+    """Join the selected genuine current-H model-only asset authority."""
+    require(set(donor) == {"checkpoint", "architecture", "step", "model_state_sha256", "root", "independent", "asset_source"}, "invalid A39 binding")
+    asset, independent = m.read(donor["root"]), m.read(donor["independent"])
+    readout = m.read(asset["readout"])
+    source = donor["asset_source"]
+    require(set(source) == {"revision", "checkout", "source_pins"}, "invalid current-H asset source binding")
+    bank.sha(source["revision"], 40)
+    bank.reference(source["source_pins"])
+    require(asset["status"] == "ROOT_ACCEPTS_COLLECTOR_CURRENT_H_CPU_ASSET_READINESS_V1"
+            and independent["status"] == "ACCEPT_CLOSED_COLLECTOR_CURRENT_H_CPU_ASSET_READINESS_NO_FINDINGS_V1"
+            and independent["root_acceptance"] == donor["root"] and independent["findings"] == []
+            and independent["readout"] == asset["readout"] and independent["protocol"] == readout["protocol"] == asset["protocol"]
+            and independent["terminal"] == asset["terminal"], "current-H A39 asset acceptance differs")
+    require(all(value["source_revision"] == source["revision"] and value["source_checkout"] == source["checkout"]
+                for value in (asset, independent, readout))
+            and independent["source_pins"] == readout["source_pins"] == source["source_pins"]
+            and readout["status"] == "COMPLETE_COLLECTOR_CURRENT_H_CPU_ASSET_QUALIFICATION_CHILD_ROOT_CLOSURE_REQUIRED_V1", "current-H asset source/readout differs")
+    observed = readout["donor_model_only"]
+    require(asset["donor_model_only"] == observed and observed["actual_CPU_model_only_load"] is True,
+            "current-H model-only observation differs")
+    require(donor["checkpoint"]["sha256"] == "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0", "not original A39 donor")
+    require(observed["sha256"] == donor["checkpoint"]["sha256"] and observed["path"] == donor["checkpoint"]["path"]
+            and observed["embedded_step"] == donor["step"] == 680276 and observed["architecture"] == donor["architecture"]
+            and observed["state_sha256"] == donor["model_state_sha256"], "A39 observed identity differs")
+    bank.sha(donor["model_state_sha256"])
+    return {**donor, "label": "A39", "tag": None}
+
+
 def training_population(m: Metadata, model: dict[str, Any]) -> Any:
     """Actual TRAIN acceptance API; HOLD can never be a training-bank token."""
     stage = model["stage"]
@@ -264,18 +293,7 @@ def bindings(m: Metadata, p: dict[str, Any]) -> tuple[hold.AcceptedHoldout, dict
     require(set(p["models"]) == set(metrics.LABELS), "fixed four-model order required")
     models = {label: model_delivery(m, p["models"][label], label) for label in ("A", "B", "C")}
     donor = p["models"]["A39"]
-    require(set(donor) == {"checkpoint", "architecture", "step", "model_state_sha256", "root", "independent"}, "invalid A39 binding")
-    asset, independent = m.read(donor["root"]), m.read(donor["independent"])
-    require(asset["status"] == "ROOT_ACCEPTS_CLOSED_COLLECTOR_CPU_ASSET_READINESS_V1"
-            and independent["status"] == "ACCEPT_CLOSED_COLLECTOR_CPU_ASSET_READINESS_NO_FINDINGS_V1"
-            and independent["root_acceptance"] == donor["root"] and independent["findings"] == [], "A39 asset acceptance differs")
-    observed = m.read(asset["readout"])["donor_model_only"]
-    require(donor["checkpoint"]["sha256"] == "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0", "not original A39 donor")
-    require(observed["sha256"] == donor["checkpoint"]["sha256"] and observed["path"] == donor["checkpoint"]["path"]
-            and observed["embedded_step"] == donor["step"] == 680276 and observed["architecture"] == donor["architecture"], "A39 observed asset differs")
-    require(observed["state_sha256"] == donor["model_state_sha256"], "A39 served-state identity differs")
-    bank.sha(donor["model_state_sha256"])
-    models["A39"] = {**donor, "label": "A39", "tag": None}
+    models["A39"] = asset_identity(m, donor)
     for label in metrics.LABELS:
         require(models[label]["architecture"] == plain(view.identity["architecture"]), "HOLD/model architecture differs")
     for label, weight in (("A", 0), ("B", 0), ("C", 0.1)):
@@ -328,7 +346,21 @@ def source_guard(source: dict[str, Any]) -> None:
         require((REPO / name).resolve() == REPO / name and core.file_sha(REPO / name) == expected, "source digest differs")
 
 
-def native_custody(m: Metadata, basis_ref: dict[str, str], files: dict[str, str], *, imports: bool) -> list[dict[str, Any]]:
+def native_symbol_abi() -> dict[str, Any]:
+    """Invoke the existing in-process required-symbol/numeric-MCTS-ABI gate."""
+    from chess_anti_engine import ext_check
+
+    require(Path(ext_check.__file__).resolve() == REPO / "chess_anti_engine/ext_check.py", "foreign native symbol primitive")
+    problems = ext_check.extension_problems()
+    require(not problems, "native required-symbol/numeric-ABI gate failed: " + "; ".join(problems))
+    tree = importlib.import_module(ext_check.MCTS_TREE_EXT)
+    import_custody()
+    return {"primitive": "chess_anti_engine.ext_check.extension_problems", "problems": problems,
+            "required_extensions": list(ext_check.REQUIRED_EXTENSIONS),
+            "required_mcts_abi": ext_check.required_abi(), "observed_mcts_abi": int(tree.ABI_VERSION)}
+
+
+def native_custody(m: Metadata, basis_ref: dict[str, str], files: dict[str, str]) -> dict[str, Any]:
     """Fresh named-file/record/source/ABI bracket, not mapped-byte attestation."""
     from scripts import check_c_extensions_fresh as fresh
 
@@ -357,12 +389,11 @@ def native_custody(m: Metadata, basis_ref: dict[str, str], files: dict[str, str]
         require(module in specs and record["version"] == 1 and record["artifact_sha256"] == item["sha256"]
                 and set(record["inputs"]) == specs[module] and all(files.get(name) == digest for name, digest in record["inputs"].items()), "native record/source differs")
         require(path.name.endswith(str(sysconfig.get_config_var("EXT_SUFFIX"))), "native interpreter ABI suffix differs")
-        if imports:
-            loaded = importlib.import_module(module)
-            require(Path(loaded.__file__).resolve() == path, "native import origin differs")
+        loaded = importlib.import_module(module)
+        require(Path(loaded.__file__).resolve() == path, "native import origin differs")
         observed.append({"path": str(path), "sha256": item["sha256"], "stamp": list(before), "record": item["record"]})
     require(modules == set(specs) and not fresh.check_extensions(REPO), "native roster/freshness failed")
-    return observed
+    return {"images": observed, "required_symbols_and_numeric_abi": native_symbol_abi()}
 
 
 def phase_start(protocol_ref: dict[str, str], admission_ref: dict[str, str], *, reader: bool = False) -> tuple[dict[str, Any], Metadata, Path]:

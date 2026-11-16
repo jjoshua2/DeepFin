@@ -38,7 +38,9 @@ operational limits before execution. No capacity failure changes batch size,
 precision, rows, or cap. The dense internal legal-policy cache is bounded by
 `max_rows*1858*4` and never written. The GPU phase checks six current readonly
 native images, exact bounded records, all31 current input hashes, freshness,
-interpreter extension suffix and actual import origins before/final. This is a
+interpreter extension suffix and actual import origins before/final. Both brackets
+invoke actual `ext_check.extension_problems()` (required symbols and numeric
+`_mcts_tree` ABI), before any model/data work in the initial bracket. This is a
 named-file bracket, not a claim about continuously mapped bytes. The CPU reader
 never opens those files, checkpoints, or shards and never imports Torch/native.
 
@@ -89,7 +91,8 @@ training bank identities; no HOLD view is accepted as a learner bank. Complete
 preplanned TRAIN/HOLD parent exclusions remain the selector's responsibility.
 
 A39 binding fields are `checkpoint,architecture,step,model_state_sha256,root,
-independent`. They join the genuine closed asset-readiness root, independent
+independent,asset_source`. The latter has `revision,checkout,source_pins` for the
+selected current-H qualification. They join the genuine current-H closed asset-readiness root, independent
 receipt and model-only readout, original A39 hash and embedded680276 step.
 Actual public loader calls decode once on CPU with explicit complete embedded
 architecture and strict weights. Family/reference tags are checked before the

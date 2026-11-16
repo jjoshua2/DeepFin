@@ -291,7 +291,7 @@ def execute(protocol_ref: dict[str, str], admission_ref: dict[str, str]) -> dict
     started = time.monotonic()
     try:
         view, parents, models = ruler.bindings(m, p)
-        native_before = ruler.native_custody(m, p["native_basis"], p["source"]["files"], imports=False)
+        native_before = ruler.native_custody(m, p["native_basis"], p["source"]["files"])
         import numpy as np
         import torch
 
@@ -319,7 +319,7 @@ def execute(protocol_ref: dict[str, str], admission_ref: dict[str, str]) -> dict
         ruler.source_guard(p["source"])
         final_view, final_parents, final_models = ruler.bindings(m, p)
         require(final_view == view and final_parents == parents and final_models == models, "metadata/data deliveries changed during scoring")
-        require(native_before == ruler.native_custody(m, p["native_basis"], p["source"]["files"], imports=True), "native bracket changed")
+        require(native_before == ruler.native_custody(m, p["native_basis"], p["source"]["files"]), "native bracket changed")
         m.finish()
         result.update(status=ruler.SCORE_PENDING, protocol=protocol_ref, study_uuid=p["study_uuid"], source=p["source"],
             holdout=p["holdout"], parents=p["parents"], model_deliveries=p["models"], native=native_before,
