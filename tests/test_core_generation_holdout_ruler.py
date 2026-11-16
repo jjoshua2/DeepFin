@@ -6,6 +6,7 @@ subject to separate source/runtime/native/model-delivery qualification.
 """
 from __future__ import annotations
 
+from collections import OrderedDict
 import copy
 from dataclasses import asdict
 import hashlib
@@ -147,7 +148,7 @@ def test_unread_incomplete_parent_estimator(fault: str):
 
 
 def synthetic_models(tmp_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
-    cfg = ModelConfig(kind="tiny", input_extra_features="v1", history_rep_fix=True)
+    cfg = ModelConfig(kind="tiny", input_extra_features="v2_threats", input_history_encoding="lc0_root_legacy_meta", history_rep_fix=True)
     architecture = {"_schema_version": ARCH_SCHEMA_VERSION, **asdict(cfg)}
     bindings = {}
     for label in metrics.LABELS:
@@ -155,7 +156,9 @@ def synthetic_models(tmp_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         path = tmp_path / (label + ".pt")
         tag = {"contract_sha256": "a" * 64, "run_uuid": "11111111-1111-4111-8111-111111111111", "source_revision": "b" * 40,
                "segment": 1, "logical_generation": 1, "policy_anchor": {"fixture": label}}
-        torch.save({"model": model.state_dict(), "arch": architecture, "step": 2,
+        state = model.state_dict()
+        assert isinstance(state, OrderedDict)  # Real public PyTorch serialization, never a dict conversion.
+        torch.save({"model": state, "arch": architecture, "step": 2,
                     ruler.ANCHOR_KEY: tag, "frozen_reference_policy_anchor_v1": tag["policy_anchor"], "opt": {"do_not_restore": True}}, path)
         path.chmod(0o444)
         bindings[label] = {"checkpoint": {"path": str(path), "sha256": core.file_sha(path)}, "architecture": architecture,

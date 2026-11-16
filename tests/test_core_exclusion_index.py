@@ -265,6 +265,10 @@ def test_bank_metadata_requires_historical_chunk_helper_pins_without_reopening_c
     root_body = json.loads(Path(root['path']).read_bytes())
     root_body['audit_source']['source_files'] = spec['source_files']
     sealed(Path(root['path']), root_body)
+    admission_path = tmp_path / 'admission.json'
+    admission = json.loads(admission_path.read_bytes())
+    admission['audit_source'] = root_body['audit_source']
+    sealed(admission_path, admission)
     rehash_graph(tmp_path)
     root = {'path': root['path'], 'sha256': collect.digest(root['path'])}
     review = {'path': review['path'], 'sha256': collect.digest(review['path'])}
@@ -304,6 +308,10 @@ def test_actual_public_data_audits_consume_new_index_and_require_matching_source
     producer = json.loads(producer_path.read_bytes())
     helper = 'scripts/core_exclusion_index.py'
     current_hash = collect.digest(Path(index.__file__))
+    source_root = Path(collect.__file__).resolve().parents[1]
+    producer['source']['sha256'] = {name: collect.digest(source_root / name) for name in collect.REQUIRED_SOURCE_FILES}
+    if holdout:
+        producer['source']['sha256']['scripts/core_finite_holdout_collect.py'] = collect.digest(source_root / 'scripts/core_finite_holdout_collect.py')
     if missing != 'producer':
         producer['source']['sha256'][helper] = current_hash
     if missing != 'audit':

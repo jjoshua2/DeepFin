@@ -73,7 +73,7 @@ def load_model(binding: dict[str, Any], *, device: str, complete: bool = False) 
         decoded.append(1)
         require(type(payload) is dict and ruler.canonical(payload.get("arch")) == ruler.canonical(binding["architecture"])
                 and type(payload.get("step")) is int and payload["step"] == binding["step"], "loaded architecture/step differs")
-        require(type(payload.get("model")) is dict and state_sha256(payload["model"]) == binding["model_state_sha256"], "loaded model state differs")
+        require(isinstance(payload.get("model"), dict) and state_sha256(payload["model"]) == binding["model_state_sha256"], "loaded model state differs")
         if complete:
             require(len(payload["model"]) == 494, "not complete494 checkpoint")
         if binding["tag"] is not None:
