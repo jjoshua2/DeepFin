@@ -300,6 +300,7 @@ def test_actual_transformer_reference_receives_same_post_mirror_relations(tmp_pa
     relations = np.zeros((2, 5, 64, 64), dtype=np.uint8)
     relations[:, 0, 1, 2] = 1
     replay.arrays["relations"] = relations
+    replay.arrays["has_relations"] = np.ones(2, dtype=np.uint8)
     observed: list[dict[str, torch.Tensor]] = []
     original = value._host_batch_to_tensors
     def tensors(batch: Any) -> dict[str, torch.Tensor]:

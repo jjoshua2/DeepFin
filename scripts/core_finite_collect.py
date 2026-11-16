@@ -438,8 +438,9 @@ def source_guard(protocol: dict[str, Any]) -> dict[str, Any]:
     git_env = dict(os.environ, GIT_OPTIONAL_LOCKS='0')
     require(subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, env=git_env).decode().strip() == source['revision'], 'source revision changed')
     require(not subprocess.check_output(['git', 'status', '--porcelain'], cwd=repo, env=git_env).strip(), 'source checkout dirty')
-    required = set(REQUIRED_SOURCE_FILES) | ({'chess_anti_engine/policy_anchor_spec.py'} if protocol['actor']['kind'] == ANCHOR_BANK_KIND else set())
-    require(required <= set(source['sha256']), 'incomplete source fingerprint')
+    require(set(REQUIRED_SOURCE_FILES) <= set(source['sha256']), 'incomplete source fingerprint')
+    if protocol['actor']['kind'] == ANCHOR_BANK_KIND:
+        require('chess_anti_engine/policy_anchor_spec.py' in source['sha256'], 'incomplete source fingerprint')
     for relative, expected in source['sha256'].items():
         path = (repo / relative).resolve()
         require(path.is_relative_to(repo) and digest(path) == expected, 'source bytes changed: ' + relative)
