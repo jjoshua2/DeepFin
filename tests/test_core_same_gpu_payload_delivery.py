@@ -26,7 +26,7 @@ def seal(path: Path, body: Any) -> dict[str, str]:
     return {"path": str(path), "sha256": hashlib.sha256(raw).hexdigest()}
 
 
-def gpu_graph(tmp_path: Path, fault: str = "", *, arm: str = "A") -> tuple[dict[str, Any], ruler.bank.AcceptedGeneration]:
+def gpu_graph(tmp_path: Path, fault: str = "", *, arm: str = "A", threaded: bool = False) -> tuple[dict[str, Any], ruler.bank.AcceptedGeneration]:
     """Seal every changed edge, so refusals exercise joins, not stale hashes."""
     architecture: dict[str, Any] = {"_schema_version": 20, "input_extra_features": "v2_threats", "fixture": "metadata-only full494 receipt"}
     initial_model = {"path": "/fiction/original-model.pt", "sha256": "a" * 64}
@@ -56,6 +56,9 @@ def gpu_graph(tmp_path: Path, fault: str = "", *, arm: str = "A") -> tuple[dict[
     membership = [[1, hashlib.sha256(ruler.canonical(game["shard"]["files"])).hexdigest(), 50] for game in games]
     rng: dict[str, Any] = {"numpy": {"fixture": 1}, "mask": [], "torch_cpu": [], "torch_cuda": [[]], "python": []}
     backend: dict[str, Any] = {"fixture_backend": "eager BF16 source observation"}
+    if threaded:
+        backend.update(torch_threads=1 if fault == "thread_backend_intra" else 2,
+                       interop_threads=1 if fault == "thread_backend_interop" else 2)
     checkpoint = {"path": str(output / "learner.pt"), "sha256": "c" * 64}
     boundary: dict[str, Any] = {"status": ruler.BOUNDARY, "contract_sha256": cref["sha256"], "stage": sref, "checkpoint": checkpoint,
         "source_revision": HISTORICAL_LEARNER, "run_uuid": contract["run_uuid"], "logical_generation": 1, "segment": 1,
@@ -68,13 +71,18 @@ def gpu_graph(tmp_path: Path, fault: str = "", *, arm: str = "A") -> tuple[dict[
     bref = seal(tmp_path / "boundary.json", boundary)
     suffix = ["-m", "scripts.core_generation_bank_policy_anchor", "--contract", cref["path"], "--contract-sha256", cref["sha256"],
               "--stage", sref["path"], "--stage-sha256", sref["sha256"]]
-    helper = {"path": "/fiction/source-prover/observe.py", "sha256": ruler.GPU_PROOF_HELPER_SHA256}
+    helper = {"path": "/fiction/source-prover/observe.py",
+              "sha256": ruler.GPU_PROOF_THREAD2_HELPER_SHA256 if threaded else ruler.GPU_PROOF_HELPER_SHA256}
+    if threaded and fault == "thread_helper_unknown":
+        helper["sha256"] = "f" * 64
     if fault == "helper":
         helper["sha256"] = "0" * 64
     pins = seal(tmp_path / "source-pins.json", {"source_revision": "e" * 40 if fault == "historical_source" else HISTORICAL_LEARNER,
         "source_checkout": "/fiction/historical-learner", "files": dict.fromkeys((f"fixture-{i}.py" for i in range(219)), "e" * 64)})
-    source_review = seal(tmp_path / "source-review.json", {"status": ruler.GPU_PROOF_SOURCE_REVIEW, "helper": helper,
-        "source_pins": pins, "findings": ["unresolved"] if fault == "source_review" else []})
+    review_helper = {**helper, "sha256": ruler.GPU_PROOF_HELPER_SHA256} if threaded and fault == "thread_review_helper" else helper
+    review_pins = {**pins, "sha256": "0" * 64} if threaded and fault == "thread_review_pins" else pins
+    source_review = seal(tmp_path / "source-review.json", {"status": ruler.GPU_PROOF_SOURCE_REVIEW, "helper": review_helper,
+        "source_pins": review_pins, "findings": ["unresolved"] if fault == "source_review" or (threaded and fault == "thread_review_findings") else []})
     proof_path = tmp_path / "gpu-proof.json"
     plan = seal(tmp_path / "observer-plan.json", {"schema": "SCIENTIFIC_ANCHORED_LEARNER_PASSIVE_PROOF_V1",
         "status": "BOUND_SCIENTIFIC_LEARNER_PASSIVE_PROOF_NOT_DELIVERY_AUTHORITY_V1", "helper": helper, "source_review": source_review,
@@ -125,6 +133,20 @@ def gpu_graph(tmp_path: Path, fault: str = "", *, arm: str = "A") -> tuple[dict[
             "membership": membership, "backend": backend}, "actual_backend": backend,
         "five_rng_snapshot_sha256": hashlib.sha256(ruler.canonical(rng)).hexdigest(),
         "membership_sha256": hashlib.sha256(ruler.canonical(membership)).hexdigest(), "draw_coverage": coverage}
+    if threaded:
+        proof.update(Torch_intra=2, Torch_interop=2)
+        if fault == "thread_missing_intra":
+            del proof["Torch_intra"]
+        elif fault == "thread_missing_interop":
+            del proof["Torch_interop"]
+        elif fault == "thread_intra":
+            proof["Torch_intra"] = 3
+        elif fault == "thread_interop":
+            proof["Torch_interop"] = 3
+        elif fault == "thread_bool_intra":
+            proof["Torch_intra"] = True
+        elif fault == "thread_float_interop":
+            proof["Torch_interop"] = 2.0
     if fault == "cpu_status":
         proof["status"] = "CORE_BANK_LEARNER_SAVED_STATE_AUDIT_PENDING_ROOT_CLOSURE_V1"
     elif fault == "checkpoint":

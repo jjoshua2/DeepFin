@@ -47,6 +47,7 @@ GPU_PROOF_ADMISSION = "ROOT_ADMITS_SCIENTIFIC_LEARNER_PASSIVE_PROOF_GPU_V1"
 GPU_PROOF_SOURCE_REVIEW = "ACCEPT_SCIENTIFIC_LEARNER_PASSIVE_PROOF_SOURCE_ONLY_NO_FINDINGS_V1"
 # Versioned pure-metadata consumer for the independently reviewed finite prover.
 GPU_PROOF_HELPER_SHA256 = "7b45088df9ab897dfb0f9cafc6e79bc0f79072c37b1d35dd6e0a8144c9032ba6"
+GPU_PROOF_THREAD2_HELPER_SHA256 = "721cf5d141843ef0db61adb5169e9424e4e7fcbca69758b8dadb8c5321a66b26"
 SOURCE_FILES = (
     "scripts/core_generation_holdout_score.py", "scripts/core_generation_holdout_read.py",
     "scripts/core_generation_holdout_ruler.py", "scripts/core_generation_holdout_metrics.py",
@@ -300,7 +301,8 @@ def same_gpu_payload(m: Metadata, root: dict[str, Any], c: dict[str, Any], b: di
     helper = saved["helper"]
     require(type(helper) is dict and set(helper) == {"path", "sha256"} and type(helper["path"]) is str
             and Path(helper["path"]).is_absolute() and Path(helper["path"]).suffix == ".py"
-            and helper["sha256"] == GPU_PROOF_HELPER_SHA256 and audit["owner"]["command"].count(helper["path"]) == 1,
+            and helper["sha256"] in (GPU_PROOF_HELPER_SHA256, GPU_PROOF_THREAD2_HELPER_SHA256)
+            and audit["owner"]["command"].count(helper["path"]) == 1,
             "unsupported same-GPU prover")
     review = m.read(saved["source_review"])
     require(review["status"] == GPU_PROOF_SOURCE_REVIEW and review["helper"] == helper
@@ -326,6 +328,13 @@ def same_gpu_payload(m: Metadata, root: dict[str, Any], c: dict[str, Any], b: di
             and saved["membership_sha256"] == hashlib.sha256(canonical(b["membership"])).hexdigest()
             and canonical(initial["membership"]) == canonical(b["membership"])
             and saved["actual_backend"] == initial["backend"] == b["backend"], "same-GPU RNG/membership/backend differs")
+    if helper["sha256"] == GPU_PROOF_THREAD2_HELPER_SHA256:
+        require(type(saved.get("Torch_intra")) is int and saved["Torch_intra"] == 2
+                and type(saved.get("Torch_interop")) is int and saved["Torch_interop"] == 2
+                and type(initial["backend"]) is dict
+                and type(initial["backend"].get("torch_threads")) is int and initial["backend"]["torch_threads"] == 2
+                and type(initial["backend"].get("interop_threads")) is int and initial["backend"]["interop_threads"] == 2,
+                "same-GPU thread-2 evidence differs")
     membership = b["membership"]
     require(type(membership) is list and membership and all(type(row) is list and len(row) == 3
             and type(row[0]) is int and row[0] == 1 and type(row[2]) is int and row[2] > 0 for row in membership),
@@ -376,6 +385,8 @@ def same_gpu_game_coverage(m: Metadata, binding: dict[str, Any], model: dict[str
 
 def asset_identity(m: Metadata, donor: dict[str, Any]) -> dict[str, Any]:
     """Join the selected genuine current-H model-only asset authority."""
+    if "schema" in donor:
+        return _current_integrated_asset_identity(m, donor)
     require(set(donor) == {"checkpoint", "architecture", "step", "model_state_sha256", "root", "independent", "asset_source"}, "invalid A39 binding")
     asset, independent = m.read(donor["root"]), m.read(donor["independent"])
     readout = m.read(asset["readout"])
@@ -399,6 +410,47 @@ def asset_identity(m: Metadata, donor: dict[str, Any]) -> dict[str, Any]:
     require(observed["sha256"] == donor["checkpoint"]["sha256"] and observed["path"] == donor["checkpoint"]["path"]
             and observed["embedded_step"] == donor["step"] == 680276 and observed["architecture"] == donor["architecture"]
             and observed["state_sha256"] == donor["model_state_sha256"], "A39 observed identity differs")
+    bank.sha(donor["model_state_sha256"])
+    return {**donor, "label": "A39", "tag": None}
+
+
+def _current_integrated_asset_identity(m: Metadata, donor: dict[str, Any]) -> dict[str, Any]:
+    """Versioned metadata-only original-A39 identity, never a legacy status alias."""
+    require(set(donor) == {"schema", "checkpoint", "architecture", "step", "model_state_sha256", "root",
+                           "independent", "asset_source"}
+            and donor["schema"] == "core_a39_current_integrated_asset_v1", "invalid current-integrated A39 binding")
+    asset, independent = m.read(donor["root"]), m.read(donor["independent"])
+    readout = m.read(asset["readout"])
+    source = donor["asset_source"]
+    require(set(source) == {"revision", "checkout", "source_pins"}, "invalid current-integrated asset source binding")
+    bank.sha(source["revision"], 40)
+    bank.reference(source["source_pins"])
+    require(asset["status"] == "ROOT_ACCEPTS_CURRENT_INTEGRATED_COLLECTOR_CPU_ASSET_READINESS_V1"
+            and independent["status"] == "ACCEPT_CLOSED_CURRENT_INTEGRATED_COLLECTOR_CPU_ASSET_READINESS_NO_FINDINGS_V1"
+            and independent["root_acceptance"] == donor["root"] and independent["findings"] == []
+            and independent["readout"] == asset["readout"]
+            and independent["protocol"] == readout["protocol"] == asset["protocol"]
+            and independent["terminal"] == asset["terminal"], "current-integrated A39 asset acceptance differs")
+    require(all(value["source_revision"] == source["revision"] and value["source_checkout"] == source["checkout"]
+                and value["source_pins"] == source["source_pins"] for value in (asset, independent, readout))
+            and readout["status"] == "COMPLETE_CURRENT_INTEGRATED_COLLECTOR_CPU_ASSET_QUALIFICATION_CHILD_ROOT_CLOSURE_REQUIRED_V1",
+            "current-integrated asset source/readout differs")
+    observed = readout["donor_model_only"]
+    require(asset["donor_model_only"] == observed and observed["actual_CPU_model_only_load"] is True,
+            "current-integrated model-only observation differs")
+    require(type(observed["state_tensors"]) is int and observed["state_tensors"] == 494
+            and observed["counts"] == {"input_planes": 175, "state_entries": 494,
+                                       "unique_parameters": 61444448, "naive_state_elements": 77173088}
+            and observed["optimizer_restore_qualified"] is False, "complete current-integrated A39 observation differs")
+    require(donor["checkpoint"]["sha256"] == "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+            "not original A39 donor")
+    require(observed["sha256"] == donor["checkpoint"]["sha256"] and observed["path"] == donor["checkpoint"]["path"]
+            and type(observed["embedded_step"]) is int and type(donor["step"]) is int
+            and observed["embedded_step"] == donor["step"] == 680276
+            and observed["architecture"] == donor["architecture"]
+            and observed["state_sha256"] == donor["model_state_sha256"]
+            == "9796079cd73bef73ba2f5d5f2ad0779704498832e34a7c2a880f0d0b7f305229",
+            "current-integrated A39 observed identity differs")
     bank.sha(donor["model_state_sha256"])
     return {**donor, "label": "A39", "tag": None}
 

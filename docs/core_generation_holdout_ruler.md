@@ -211,3 +211,50 @@ The sole health veto is point>0.20 nats **and** lower95>0. Nontriggering does no
 prove safety/noninferiority, and neither result chooses a best arm or authorizes
 playing. Reader status `CORE_HOLDOUT_HEALTH_PENDING_ROOT_CLOSURE_V1` still needs
 its own actual owner closure and root+independent disposition.
+
+
+## Versioned current-integrated A39 asset descriptor
+
+The strict seven-key A39 descriptor above remains the legacy current-H route.
+Current-integrated receipts require an explicit eighth field:
+`schema="core_a39_current_integrated_asset_v1"`. Unknown versions and extra fields
+are refused. Omitting this field does not adapt current-I receipts to legacy H.
+
+This route requires the exact root, independent and child readout statuses
+`ROOT_ACCEPTS_CURRENT_INTEGRATED_COLLECTOR_CPU_ASSET_READINESS_V1`,
+`ACCEPT_CLOSED_CURRENT_INTEGRATED_COLLECTOR_CPU_ASSET_READINESS_NO_FINDINGS_V1`
+and `COMPLETE_CURRENT_INTEGRATED_COLLECTOR_CPU_ASSET_QUALIFICATION_CHILD_ROOT_CLOSURE_REQUIRED_V1`.
+It joins the root/independent/readout protocol, terminal reference, source revision,
+checkout and source-pin reference, plus the complete model-only observation.
+The fixed original A39 checkpoint and state hashes, actual embedded step 680276,
+complete 494-state/175-input counts and architecture must match the descriptor;
+optimizer restoration must remain unqualified. This validates trusted metadata,
+not another checkpoint load or a new model/optimizer qualification.
+
+`asset_source` continues to identify the historically qualified asset loader and
+its receipt graph. A later scoring/reader consumer has its own source revision.
+The consumer neither relabels historical source as its current checkout nor
+reopens historical source or model bytes in this metadata join. SCORE's actual
+public loader retains its independent full checkpoint/state/architecture checks.
+Current-integrated qualification does not imply PLAY adoption or playing strength.
+
+
+## Exact thread-2 same-owner GPU prover version
+
+The existing GPU payload schema/status and original `7b45088d...` prover route
+remain supported. The consumer additionally accepts only the reviewed prover
+fingerprint `721cf5d141843ef0db61adb5169e9424e4e7fcbca69758b8dadb8c5321a66b26`.
+That private successor sets and asserts Torch intra-op and inter-op threads at
+2 before project/native/NN imports and asserts both at final custody. It emits
+the existing actual `Torch_intra` and `Torch_interop` fields, not a new CPU status.
+
+For that exact fingerprint, both final fields must be strict integers equal to
+2; initial backend `torch_threads` and `interop_threads` must also be strict
+integers equal to 2. The existing equality with the saved boundary and actual
+backend remains required. Original prover receipts do not acquire this new
+requirement retrospectively. Unknown fingerprints, crossed source reviews and
+missing, boolean, floating or wrong thread evidence are refused. All existing
+same-owner GPU 900 / 870-second, root/independent delivery, helper/source/plan,
+checkpoint/state/reference, membership/RNG/journal and coverage joins remain.
+This metadata support does not execute or qualify the prover, alter any learner
+math, or grant model delivery, scientific continuation or playing authority.
