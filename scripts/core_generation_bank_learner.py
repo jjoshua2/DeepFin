@@ -94,6 +94,8 @@ def metadata(c: dict[str, Any], stage: dict[str, Any], contract_ref: dict[str, s
         core.require(type(binding) is dict and set(binding) == {"root_acceptance", "independent_review"}, "invalid accepted-bank binding")
         bank = admission.validate_accepted_generation(cast(dict[str, str], binding["root_acceptance"]),
             cast(dict[str, str], binding["independent_review"]), **c["bank_limits"])
+        if "exclusion_index" in bank.evidence:
+            core.require("scripts/core_exclusion_index.py" in c["source_files"], "missing current chunked exclusion learner source pin")
         identity = plain(bank.identity)
         core.require(identity["generation"] == c["first_generation"] + index, "nonconsecutive logical bank generation")
         core.require(core.canonical(identity["architecture"]) == core.canonical(c["architecture"]), "bank/learner architecture mismatch")

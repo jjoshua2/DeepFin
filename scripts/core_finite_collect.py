@@ -458,6 +458,8 @@ def _source_guard(protocol: dict[str, Any], *, holdout: bool) -> dict[str, Any]:
                 'incomplete HOLDOUT source fingerprint')
     if protocol['actor']['kind'] == ANCHOR_BANK_KIND:
         require('chess_anti_engine/policy_anchor_spec.py' in source['sha256'], 'incomplete source fingerprint')
+    if isinstance(protocol.get('exclusions', {}).get('prior'), dict) and 'schema' in protocol['exclusions']['prior']:
+        require('scripts/core_exclusion_index.py' in source['sha256'], 'incomplete chunked exclusion source fingerprint')
     for relative, expected in source['sha256'].items():
         path = (repo / relative).resolve()
         require(path.is_relative_to(repo) and digest(path) == expected, 'source bytes changed: ' + relative)
@@ -731,7 +733,17 @@ def attach_mirror_ids(rows: list[dict[str, Any]], stored_x: Any, history_encodin
 def exclusion_inputs(protocol: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Authenticate the fixed exclusions before any actor or engine is created."""
     rules = protocol['exclusions']
-    prior = checked(rules['prior'])
+    if isinstance(rules['prior'], dict) and 'schema' in rules['prior']:
+        helper = Path(__file__).resolve().parent / 'core_exclusion_index.py'
+        require(protocol['source']['sha256'].get('scripts/core_exclusion_index.py') == digest(helper),
+                'chunked exclusion helper source mismatch')
+        from scripts import core_exclusion_index
+
+        require(Path(core_exclusion_index.__file__).resolve() == Path(__file__).resolve().parent / 'core_exclusion_index.py',
+                'foreign chunked exclusion helper')
+        prior = core_exclusion_index.load(rules['prior'])
+    else:
+        prior = checked(rules['prior'])
     playing = checked(rules['playing_starts'])
     require(set(prior) >= {'history_sha256', 'stored_input_float16_sha256', 'coverage_scope'} and
             prior.get('donor_pretraining_exposure') == 'UNKNOWN', 'exposure coverage must be explicit')
@@ -790,6 +802,8 @@ def failure_sample_evidence(samples: list[Any]) -> dict[str, Any]:
 
 def _execute(protocol: dict[str, Any], protocol_sha256: str, roster: list[dict[str, Any]],
              cfg: CollectionConfigs, profile: dict[str, Any], native: dict[str, Any], *, holdout: bool) -> int:
+    if isinstance(protocol.get('exclusions', {}).get('prior'), dict) and 'schema' in protocol['exclusions']['prior']:
+        exclusion_inputs(protocol)  # Direct API also refuses invalid chunks before actor/engine work.
     import numpy as np
     import torch
     from chess_anti_engine.core_generation_data import capture_raw_targets, validate_stored_targets
