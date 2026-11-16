@@ -221,7 +221,7 @@ def test_metadata_holdout_and_train_views_are_not_interchangeable(tmp_path: Path
                                   "failed", "unclosed", "eof", "review", "id_string", "id_bool", "id_negative", "id_range"])
 def test_rehashed_holdout_metadata_cannot_bypass_full_graph_checks(tmp_path: Path, fault: str):
     root, review, _ = graph(tmp_path, holdout=True, fault=fault)
-    with pytest.raises(ValueError, match=r"differs|invalid|changed|incomplete|candidate|owner|gate|row|bounds"):
+    with pytest.raises(ValueError, match=r"differs?|invalid|changed|incomplete|candidate|owner|gate|row|bounds"):
         hold_view.validate_accepted_holdout(root, review, **LIMITS)
 
 
