@@ -52,7 +52,7 @@ def recovery_graph(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str =
         "status": "ROOT_OBSERVES_SUPPORTED_EOF_CLOSED_CUSTODY_NO_RESULT_ACCEPTANCE_V1",
         "terminal": failed["terminal"], "admission": failed["admission"], "closure": failed["closure"],
         "command": seal(tmp_path / "original-command.json", {"child": cmd})})
-    trigger = {"terminal": failed["terminal"], "closure": historical_close,
+    trigger: dict[str, Any] = {"terminal": failed["terminal"], "closure": historical_close,
         "public_boundary": original["boundary"], "checkpoint_REFERENCE_ONLY": original["checkpoint"],
         "helper": oldplan["helper"], "log": {"path": str(tmp_path / "failed-log.txt"), "sha256": "e" * 64},
         "owner_wall_seconds": terminal["wall_seconds"]}
@@ -83,7 +83,7 @@ def recovery_graph(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str =
         "status": "FAILED_KL_DEVELOPMENT_FIRST_D1_PASSIVE_PROOF_NO_DELIVERY_V1",
         "error": "RuntimeError('saved counters/architecture/reference')"})
     proof_path = tmp_path / "recovery-proof.json"
-    plan = {"schema": "KL_D1_K0_SAVED_ENDPOINT_RECOVERY_PLAN_V1",
+    plan: dict[str, Any] = {"schema": "KL_D1_K0_SAVED_ENDPOINT_RECOVERY_PLAN_V1",
         "status": "BOUND_KL_D1_K0_SAVED_ENDPOINT_RECOVERY_NOT_DELIVERY_AUTHORITY_V1",
         "selection": selected, "selection_review": selection_review, "authority": authority, "layout_basis": ruler.K0_LAYOUT_BASIS,
         "helper": helper, "source_review": source_review, "source_pins": oldproof["source_pins"],
@@ -95,7 +95,7 @@ def recovery_graph(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str =
     adpath = tmp_path / "CPU-admission.json"
     cpu_command = ["/fiction/python", "-I", "-B", helper["path"], "--recovery-plan", planref["path"],
         "--recovery-plan-sha256", planref["sha256"], "--admission", str(adpath), "--admission-sha256", "SELF_ADMISSION_SHA256"]
-    cpu_ad = {"status": "ROOT_ADMITS_KL_D1_T1_K0_SAVED_ENDPOINT_RECOVERY_CPU_V1", "execution_authorized": True,
+    cpu_ad: dict[str, Any] = {"status": "ROOT_ADMITS_KL_D1_T1_K0_SAVED_ENDPOINT_RECOVERY_CPU_V1", "execution_authorized": True,
         "recovery_plan": planref, "authority": authority, "resource": "cpu", "seconds": 600,
         "owner": {"sha256": "e" * 64}, "normalized_child": list(cpu_command), "helper": helper,
         "source_review": source_review, "source_pins": oldproof["source_pins"]}
@@ -105,17 +105,17 @@ def recovery_graph(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str =
         cpu_ad["normalized_child"][0] = "/fiction/wrong-python"
     adref = seal(adpath, cpu_ad)
     cpu_command[cpu_command.index("--admission-sha256") + 1] = adref["sha256"]
-    cpu_terminal = {**terminal, "status": "PASS", "returncode": 0, "command": cpu_command,
+    cpu_terminal: dict[str, Any] = {**terminal, "status": "PASS", "returncode": 0, "command": cpu_command,
         "resource": "cpu", "seconds": 600}
     if fault == "cpu_resource":
         cpu_terminal["resource"] = "gpu"
     elif fault == "cpu_cap":
         cpu_terminal["seconds"] = 601
-    cpu_owner = {"terminal": seal(tmp_path / "CPU-terminal.json", cpu_terminal), "admission": adref, "command": cpu_command,
+    cpu_owner: dict[str, Any] = {"terminal": seal(tmp_path / "CPU-terminal.json", cpu_terminal), "admission": adref, "command": cpu_command,
         "source_revision": failed["source_revision"], "cwd": failed["cwd"], "closure": {**failed["closure"], "exit_code": 0}}
     if fault == "cpu_closure":
         cpu_owner["closure"]["owned_births_closed"] = False
-    proof = {"status": ruler.K0_RECOVERY_PENDING, "arm": "K0", "helper": helper, "source_review": source_review,
+    proof: dict[str, Any] = {"status": ruler.K0_RECOVERY_PENDING, "arm": "K0", "helper": helper, "source_review": source_review,
         "source_pins": oldproof["source_pins"], "source_revision": original["source_revision"], "source_checkout": original["source_checkout"],
         **{key: original[key] for key in ("contract", "stage", "boundary", "checkpoint")},
         "architecture": read(original["contract"])["architecture"], "step": 4096, "failed_gpu_owner": failed,
@@ -158,10 +158,10 @@ def recovery_graph(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str =
         proof["draw_coverage"]["views"] -= 1
     elif fault == "drop_game":
         proof["draw_coverage"]["per_game_aggregate_counts"].pop()
-    root = {**original, "status": ruler.K0_RECOVERY_ROOT, "learner_owner": failed, "recovery_authority": authority,
+    root: dict[str, Any] = {**original, "status": ruler.K0_RECOVERY_ROOT, "learner_owner": failed, "recovery_authority": authority,
         "payload_audit": {"schema": ruler.K0_RECOVERY_SCHEMA, "readout": seal(proof_path, proof), "owner": cpu_owner}}
     rref = seal(tmp_path / "recovery-root.json", root)
-    review = {**root, "status": ruler.K0_RECOVERY_REVIEW, "root_acceptance": rref, "findings": []}
+    review: dict[str, Any] = {**root, "status": ruler.K0_RECOVERY_REVIEW, "root_acceptance": rref, "findings": []}
     return {"root": rref, "independent": seal(tmp_path / "recovery-review.json", review)}, train
 
 

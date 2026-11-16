@@ -1138,7 +1138,9 @@ def _k0_failed_gpu(m: Metadata, owner: dict[str, Any], selection: dict[str, Any]
     """ONLY this selected FAILED owner; ordinary closed_owner is never weakened."""
     require(set(owner)=={'terminal','admission','command','source_revision','cwd','closure'}
             and owner['terminal']==selection['trigger']['terminal'], 'exact failed GPU owner binding')
-    t=m.observed(owner['terminal']); a=m.read(owner['admission']); command=owner['command']
+    t=m.observed(owner['terminal'])
+    a=m.read(owner['admission'])
+    command=owner['command']
     require(t['status']=='FAILED' and type(t['returncode']) is int and t['returncode']==1
             and t['resource']=='gpu' and t['seconds']==3600 and t['wall_seconds']==selection['trigger']['owner_wall_seconds']
             and t['owned_processes_closed'] is True and t['custody']=='OWNED_PROCESSES_CLOSED'
@@ -1148,7 +1150,8 @@ def _k0_failed_gpu(m: Metadata, owner: dict[str, Any], selection: dict[str, Any]
     for flag,value in (('--admission',owner['admission']['path']),('--admission-sha256',owner['admission']['sha256']),
                        ('--observer-plan',original_plan['path']),('--observer-plan-sha256',original_plan['sha256'])):
         require(command.count(flag)==1 and command[command.index(flag)+1]==value, 'failed owner command binding differs')
-    normalized=list(command);normalized[normalized.index('--admission-sha256')+1]='SELF_ADMISSION_SHA256'
+    normalized=list(command)
+    normalized[normalized.index('--admission-sha256')+1]='SELF_ADMISSION_SHA256'
     require(a['status']=='ROOT_ADMITS_KL_DEVELOPMENT_FIRST_D1_LEARNER_GPU_V1' and a['execution_authorized'] is True
             and a['observer_plan']==original_plan and a['normalized_child']==normalized
             and a['resource']=='gpu' and a['seconds']==3600 and a['helper']==selection['trigger']['helper']
