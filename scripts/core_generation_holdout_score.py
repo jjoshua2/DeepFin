@@ -242,7 +242,7 @@ def score_games(games: list[tuple[dict[str, Any], dict[str, Any]]], parents: dic
                             # Fixed source rows, no random, mirror, dropout or rebuild.
                             sliced = {key: value[start:stop] for key, value in arrays.items() if value.ndim > 0 and value.shape[0] == n}
                             batch = collate_arrays(sliced, device=device)
-                            with inference_autocast(device, enabled=autocast, dtype="bf16"):
+                            with inference_autocast(device=device, enabled=autocast, dtype="bf16"):
                                 if device.startswith("cuda"):
                                     require(torch.is_autocast_enabled("cuda") and torch.get_autocast_dtype("cuda") == torch.bfloat16, "BF16 autocast inactive")
                                 outputs = model(batch["x"], **({"relations": batch["relations"]} if "relations" in batch else {}))
