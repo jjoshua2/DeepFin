@@ -198,6 +198,9 @@ def closed_predecessor(binding: dict[str, Any]) -> dict[str, Any]:
 
 BANK_LINEAGE_SCHEMA = 'core_generation_bank_actor_lineage_v1'
 BANK_CHECKPOINT_KEY = 'core_generation_bank_learner_v1'
+ANCHOR_BANK_CHECKPOINT_KEY = 'core_generation_bank_policy_anchor_v1'
+ANCHOR_BANK_KIND = 'bank_policy_anchor'
+ANCHOR_BANK_LINEAGE_SCHEMA = 'core_generation_bank_policy_anchor_actor_lineage_v1'
 BANK_PARENT_SOURCE_FILES = {
     'scripts/core_finite_learner.py', 'scripts/bootstrap_checkpoint_resume.py', 'scripts/offline_epoch_resume.py',
     'chess_anti_engine/train/trainer.py', 'chess_anti_engine/train/losses.py', 'chess_anti_engine/config_keys.py',
@@ -259,12 +262,17 @@ def _bank_checked(ref: dict[str, Any], *, readonly: bool = True) -> dict[str, An
 
 
 def bank_lineage_identity(actor: dict[str, Any]) -> dict[str, Any]:
-    """The one supported adjacent family; never an arbitrary compatibility flag."""
+    """Explicit adjacent bank families; never an arbitrary compatibility flag."""
+    anchored = actor.get('kind') == ANCHOR_BANK_KIND
     require(set(actor) == {'kind', 'path', 'sha256', 'expected_checkpoint_step', 'architecture', 'predecessor', 'lineage'}
-            and actor['kind'] == 'bank_learner', 'invalid bank actor fields')
+            and actor['kind'] in ('bank_learner', ANCHOR_BANK_KIND), 'invalid bank actor fields')
     lineage = actor['lineage']
-    require(isinstance(lineage, dict) and set(lineage) == {'schema', 'run_uuid', 'source_revision', 'contract_sha256', 'segment', 'logical_generation'}
-            and lineage['schema'] == BANK_LINEAGE_SCHEMA, 'invalid bank actor lineage schema/fields')
+    require(isinstance(lineage, dict) and set(lineage) == ({'schema', 'run_uuid', 'source_revision', 'contract_sha256', 'segment', 'logical_generation'} | ({'policy_anchor'} if anchored else set()))
+            and lineage['schema'] == (ANCHOR_BANK_LINEAGE_SCHEMA if anchored else BANK_LINEAGE_SCHEMA), 'invalid bank actor lineage schema/fields')
+    if anchored:
+        from chess_anti_engine.policy_anchor_spec import validate_spec
+
+        require(validate_spec(lineage['policy_anchor'], actor['architecture']) == lineage['policy_anchor'], 'invalid historical frozen policy identity')
     require(type(lineage['run_uuid']) is str and str(uuid.UUID(lineage['run_uuid'])) == lineage['run_uuid'], 'invalid bank learner UUID')
     for key, size in (('source_revision', 40), ('contract_sha256', 64)):
         require(type(lineage[key]) is str and re.fullmatch('[0-9a-f]{' + str(size) + '}', lineage[key]) is not None,
@@ -277,13 +285,14 @@ def bank_lineage_identity(actor: dict[str, Any]) -> dict[str, Any]:
             'invalid bank actor checkpoint SHA')
     require(type(actor['path']) is str and _bank_external(actor['path']).name == 'learner.pt',
             'invalid bank actor path')
-    return {key: lineage[key] for key in ('run_uuid', 'source_revision', 'contract_sha256', 'segment', 'logical_generation')}
+    return {key: lineage[key] for key in ('run_uuid', 'source_revision', 'contract_sha256', 'segment', 'logical_generation')} | ({'policy_anchor': lineage['policy_anchor']} if anchored else {})
 
 
 def closed_bank_predecessor(protocol: dict[str, Any]) -> dict[str, Any]:
     """Authenticate a real bank-learner boundary without executing its old source."""
     actor = protocol['actor']
     identity = bank_lineage_identity(actor)
+    anchored = actor['kind'] == ANCHOR_BANK_KIND
     require(type(protocol['generation']) is int and protocol['generation'] > 1
             and identity['logical_generation'] == protocol['generation'] - 1, 'bank actor is not logically adjacent')
     binding = actor['predecessor']
@@ -293,7 +302,7 @@ def closed_bank_predecessor(protocol: dict[str, Any]) -> dict[str, Any]:
     terminal = _bank_checked(binding['owner_terminal'], readonly=False)
     command = binding['command']
     require(isinstance(command, list) and len(command) > 10 and all(type(arg) is str and arg for arg in command)
-            and command[-10:-7] == ['-m', 'scripts.core_generation_bank_learner', '--contract']
+            and command[-10:-7] == ['-m', 'scripts.core_generation_bank_policy_anchor' if anchored else 'scripts.core_generation_bank_learner', '--contract']
             and command[-6:] == ['--contract-sha256', identity['contract_sha256'], '--stage', boundary['stage']['path'],
                                   '--stage-sha256', boundary['stage']['sha256']], 'bank predecessor command differs')
     require(type(binding['owner_sha256']) is str and re.fullmatch('[0-9a-f]{64}', binding['owner_sha256']) is not None
@@ -303,22 +312,25 @@ def closed_bank_predecessor(protocol: dict[str, Any]) -> dict[str, Any]:
             'bank predecessor owner not closed PASS')
     contract = _bank_checked({'path': command[-7], 'sha256': identity['contract_sha256']})
     stage = _bank_checked(boundary['stage'])
-    require(set(contract) == BANK_CONTRACT_FIELDS and contract['schema'] == 'core_generation_bank_learning_v1'
-            and stage['schema'] == 'core_generation_bank_stage_v1'
+    require(set(contract) == (BANK_CONTRACT_FIELDS | ({'policy_anchor'} if anchored else set())) and contract['schema'] == ('core_generation_bank_policy_anchor_v1' if anchored else 'core_generation_bank_learning_v1')
+            and stage['schema'] == ('core_generation_bank_policy_anchor_stage_v1' if anchored else 'core_generation_bank_stage_v1')
             and set(stage) == {'schema', 'contract_sha256', 'segment', 'banks', 'parent', 'output'}, 'bank predecessor contract/stage schema differs')
     require(contract['run_uuid'] == boundary['run_uuid'] == identity['run_uuid']
             and contract['source_revision'] == boundary['source_revision'] == identity['source_revision']
             and boundary['contract_sha256'] == stage['contract_sha256'] == identity['contract_sha256']
             and type(stage['segment']) is int and stage['segment'] == boundary['segment'] == identity['segment']
-            and type(boundary['segment']) is int and boundary['status'] == 'COMPLETED_CORE_GENERATION_BANK_SEGMENT_V1',
+            and type(boundary['segment']) is int and boundary['status'] == ('COMPLETED_CORE_GENERATION_BANK_POLICY_ANCHOR_SEGMENT_V1' if anchored else 'COMPLETED_CORE_GENERATION_BANK_SEGMENT_V1'),
             'bank predecessor family/run/source/segment differs')
     pins = contract['source_files']
-    require(isinstance(pins, dict) and pins.keys() >= BANK_PARENT_SOURCE_FILES,
+    required_pins = BANK_PARENT_SOURCE_FILES | ({'scripts/core_generation_bank_policy_anchor.py', 'chess_anti_engine/train/frozen_policy_anchor.py', 'chess_anti_engine/policy_anchor_spec.py'} if anchored else set())
+    require(isinstance(pins, dict) and pins.keys() >= required_pins,
             'bank predecessor source pins missing')
     for name, expected in pins.items():
         require(type(name) is str and name != '' and not Path(name).is_absolute() and '..' not in Path(name).parts
                 and str(Path(name)) == name and type(expected) is str and re.fullmatch('[0-9a-f]{64}', expected) is not None,
                 'invalid historical bank learner source pin')
+    if anchored:
+        require(canonical(contract['policy_anchor']) == canonical(boundary.get('policy_anchor')) == canonical(identity['policy_anchor']), 'frozen policy parent identity differs')
     first, segment = contract['first_generation'], identity['segment']
     updates = contract['updates_per_segment']
     require(type(first) is int and first > 0 and isinstance(updates, list) and len(updates) >= segment
@@ -383,11 +395,11 @@ def validate_protocol(protocol: dict[str, Any], roster: list[dict[str, Any]]) ->
         require(type(protocol[key]) is int and protocol[key] >= (0 if key == 'seed' else 1), 'invalid integer: ' + key)
     require(protocol['concurrent_slots'] <= protocol['attempts'] == len(roster), 'roster/attempt/slot count differs')
     actor = protocol['actor']
-    require(actor['kind'] in ('donor', 'learner', 'bank_learner') and type(actor['expected_checkpoint_step']) is int and
+    require(actor['kind'] in ('donor', 'learner', 'bank_learner', ANCHOR_BANK_KIND) and type(actor['expected_checkpoint_step']) is int and
             actor['expected_checkpoint_step'] >= 0 and len(actor['sha256']) == 64, 'actor identity contract')
     require(actor['architecture']['_schema_version'] == 20 and
             actor['architecture']['input_extra_features'] == 'v2_threats', 'full A39 architecture contract required')
-    if actor['kind'] == 'bank_learner':
+    if actor['kind'] in ('bank_learner', ANCHOR_BANK_KIND):
         closed_bank_predecessor(protocol)
     elif protocol['generation'] == 1:
         require(actor['kind'] == 'donor' and actor['sha256'] == INITIAL_DONOR_SHA256 and
@@ -427,6 +439,8 @@ def source_guard(protocol: dict[str, Any]) -> dict[str, Any]:
     require(subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, env=git_env).decode().strip() == source['revision'], 'source revision changed')
     require(not subprocess.check_output(['git', 'status', '--porcelain'], cwd=repo, env=git_env).strip(), 'source checkout dirty')
     require(set(REQUIRED_SOURCE_FILES) <= set(source['sha256']), 'incomplete source fingerprint')
+    if protocol['actor']['kind'] == ANCHOR_BANK_KIND:
+        require('chess_anti_engine/policy_anchor_spec.py' in source['sha256'], 'incomplete source fingerprint')
     for relative, expected in source['sha256'].items():
         path = (repo / relative).resolve()
         require(path.is_relative_to(repo) and digest(path) == expected, 'source bytes changed: ' + relative)
@@ -560,7 +574,7 @@ def load_actor(protocol: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
     from chess_anti_engine.uci import model_loader
 
     actor = protocol['actor']
-    if actor['kind'] == 'bank_learner':
+    if actor['kind'] in ('bank_learner', ANCHOR_BANK_KIND):
         closed_bank_predecessor(protocol)
     path = Path(actor['path'])
     before = path.lstat()
@@ -579,10 +593,14 @@ def load_actor(protocol: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
                 type(payload.get('step')) is int and payload['step'] == actor['expected_checkpoint_step'],
                 'actor embedded architecture/historical checkpoint step differs')
         require(isinstance(payload.get('model'), dict) and len(payload['model']) == 494, 'incomplete494 actor checkpoint')
-        if actor['kind'] == 'bank_learner':
-            tag = payload.get(BANK_CHECKPOINT_KEY)
+        if actor['kind'] in ('bank_learner', ANCHOR_BANK_KIND):
+            anchored = actor['kind'] == ANCHOR_BANK_KIND
+            tag = payload.get(ANCHOR_BANK_CHECKPOINT_KEY if anchored else BANK_CHECKPOINT_KEY)
+            require((BANK_CHECKPOINT_KEY if anchored else ANCHOR_BANK_CHECKPOINT_KEY) not in payload, 'ambiguous loaded bank actor family')
             require(isinstance(tag, dict) and canonical(tag) == canonical(bank_lineage_identity(actor)), 'loaded bank actor family tag differs')
-            observed.update(bank_learner_tag=tag, actor_lineage=actor['lineage'], predecessor_boundary=actor['predecessor']['boundary'])
+            if anchored:
+                require(canonical(payload.get('frozen_reference_policy_anchor_v1')) == canonical(actor['lineage']['policy_anchor']), 'loaded reference identity differs')
+            observed.update({('policy_anchor_bank_tag' if anchored else 'bank_learner_tag'): tag}, actor_lineage=actor['lineage'], predecessor_boundary=actor['predecessor']['boundary'])
         observed.update(checkpoint_step=payload['step'], checkpoint_model_state_sha256=state_sha256(payload['model']))
         return payload
 
@@ -1033,7 +1051,7 @@ def main() -> int:
     parser.add_argument('--report', type=Path)
     args = parser.parse_args()
     protocol = checked({'path': str(args.protocol), 'sha256': args.protocol_sha256})
-    if protocol['actor']['kind'] == 'bank_learner':
+    if protocol['actor']['kind'] in ('bank_learner', ANCHOR_BANK_KIND):
         protocol = _bank_checked({'path': str(args.protocol), 'sha256': args.protocol_sha256})
     roster = checked(protocol['roster'])
     require(digest(protocol['starts']['path']) == protocol['starts']['sha256'], 'starts changed')
