@@ -613,17 +613,56 @@ def test_ponder_subprocess(ckpt: Path, tmp_path: Path, finish: str) -> None:
         sess.close()
 
 
-# A 7-man root (no root shortcut) whose leaves reach the tables: the case that
-# printed `pv e1e2 ...` then `bestmove e1d2` before the fix.
+# A 7-man root (no root shortcut) whose leaves reach the 6-man tables: the case
+# that printed `pv e1e2 ...` then `bestmove e1d2` before the fix.
 _TB_SEARCHED = "8/8/8/2br4/3P2k1/4B3/2p5/4K3 w - - 0 40"
 _TB_ROOT = "7k/8/8/8/8/8/8/KR6 w - - 0 1"
+# 4-man root (no 3-man shortcut) with captures into KRvK: searched, TB leaves.
+_TB_FOUR = "8/8/8/8/3k4/8/R2p4/4K3 w - - 0 1"
+_FIXTURE_TABLES = Path(__file__).resolve().parent / "fixtures" / "syzygy_3man"
+
+
+def _tb_gos(searched: str):
+    return [(f"position fen {searched}", "go nodes 400", None, True),
+            (f"position fen {searched}", "go movetime 1000", None, True),
+            (f"position fen {_TB_ROOT}", "go nodes 400", None, True),
+            (f"position fen {_TB_ROOT}", "go wtime 2000 btime 2000", None, True)]
+
+
+def test_tablebase_root_shortcut_and_tb_leaves_on_the_3man_fixture(
+        ckpt: Path, tmp_path: Path) -> None:
+    lines = _run_session(ckpt, tmp_path, ["--device", "cpu"], _tb_gos(_TB_FOUR),
+                         setup=(f"setoption name SyzygyPath value {_FIXTURE_TABLES}",))
+    root = _segments(lines)[2][0]
+    assert any("tbhits 1" in ln for ln in root), root  # the root shortcut answered
+
+
+# Fixture-table roots that are searched (4-man, or `searchmoves` past the
+# 3-man shortcut); before the fix the first, third and fourth ended on a PV
+# for another move at `go nodes 400` on the tiny net.
+_TB_FIXTURE_SEARCHED = (_TB_FOUR, "8/8/8/3k4/8/8/2Q5/K6r w - - 0 1",
+                        "4k3/8/8/8/8/8/4P3/R3K2r w - - 0 1", _TB_ROOT)
+
+
+def test_tb_leaf_searches_on_the_3man_fixture_in_process(out: _Out) -> None:
+    worker = _tiny_worker()
+    engine = Engine(worker)
+    try:
+        engine.dispatch(CmdSetOption(name="SyzygyPath", value=str(_FIXTURE_TABLES)))
+        for fen in _TB_FIXTURE_SEARCHED:
+            board = chess.Board(fen)
+            moves = " ".join(m.uci() for m in board.legal_moves)
+            for go in ("go nodes 400", f"go nodes 400 searchmoves {moves}"):
+                out.lines.clear()
+                engine.dispatch(parse_command(f"position fen {fen}"))
+                _go(engine, go)
+                _assert_aligned(out.lines)
+    finally:
+        engine.close()
+        worker.close()
 
 
 @needs_tables
 def test_tablebase_root_shortcut_and_tb_leaves(ckpt: Path, tmp_path: Path) -> None:
-    gos = [(f"position fen {_TB_SEARCHED}", "go nodes 400", None, True),
-           (f"position fen {_TB_SEARCHED}", "go movetime 1000", None, True),
-           (f"position fen {_TB_ROOT}", "go nodes 400", None, True),
-           (f"position fen {_TB_ROOT}", "go wtime 2000 btime 2000", None, True)]
-    _run_session(ckpt, tmp_path, ["--device", "cpu"], gos,
+    _run_session(ckpt, tmp_path, ["--device", "cpu"], _tb_gos(_TB_SEARCHED),
                  setup=(f"setoption name SyzygyPath value {_TABLES}",))
