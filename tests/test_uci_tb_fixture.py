@@ -1,7 +1,7 @@
 """Real-table tests that run in CI: the committed 3-man Syzygy fixture.
 
 CI ships no tablebases, so every other real-table test of the C prober SKIPs
-there. ``tests/fixtures/syzygy_3man/`` holds six standard table files
+there. ``tests/fixtures/syzygy_3man/`` holds ten standard table files
 (the complete 3-man set; 25,824 bytes; README beside them), enough for CI to see a
 wrong VALUE from the C batch path, not just wiring:
 
@@ -174,7 +174,7 @@ def test_root_shortcut_differential_on_the_fixture() -> None:
 
 def test_engine_subprocess_on_the_fixture(tmp_path: Path) -> None:
     """The real entry point with ``SyzygyPath`` = the fixture: the load line
-    counts its 3 tables, a ``searchmoves`` search reports leaf tbhits, the
+    counts its 5 tables, a ``searchmoves`` search reports leaf tbhits, the
     root shortcut answers KRvK, and no python-chess Syzygy entry point runs."""
     from chess_anti_engine.uci.selfcheck import _write_tiny_checkpoint
 
