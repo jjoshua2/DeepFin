@@ -375,10 +375,29 @@ device fault that is still inside a call -- probes nothing and returns `None`;
 the probe logs one warning and its leaves get no answer. `SearchWorker.run`
 drops a stale probe before the next search, resets the tree (it was grown with
 the old set's values) and prints `info string leaf tablebase probing disabled
-(...)`; `setoption name SyzygyPath` installs a fresh one. `setoption` still
-waits for the search to finish, as before.
+(...)` before that search and every later one, until `setoption name
+SyzygyPath` installs a fresh probe. `setoption` never runs beside a search:
+like every option it first STOPS the running search (a `go infinite` or
+ponder search answers its `bestmove` before the load line appears; the same as
+before this change) and waits for the search thread; if the search does not
+stop in time it is parked and the `SyzygyPath` change is rejected.
 
-Evidence (`tests/test_uci_tb_leaf_c.py`):
+**Two engines in one process** (a test harness or an in-process tournament
+runner, not the UCI binary, which holds one engine): Fathom's table set is
+process-wide. When engine B loads a different path, engine A's leaf probe and
+root shortcut go stale; A then plays WITHOUT tablebases (no leaf overrides,
+no root shortcut) and prints the `leaf tablebase probing disabled` line before
+every search until its own `setoption name SyzygyPath` reloads its path --
+which in turn makes B's handles stale. The python-chess probe A had before
+kept a per-engine handle and was unaffected. Re-installing automatically is
+deliberately not done (it would silently take the table set from B). A
+single engine process (normal tournament play) is unaffected.
+
+Evidence (`tests/test_uci_tb_leaf_c.py`; and `tests/test_uci_tb_fixture.py`,
+which runs in CI on the committed complete 3-man set in
+`tests/fixtures/syzygy_3man/`, 25,824 bytes: known W/D/L codes from
+`probe_wdl_batch`, the leaf differential against python-chess, the root
+shortcut differential and a `SyzygyPath` engine subprocess):
 
 - Differential, production pair: 5,247 leaves (2- to 7-man; 181 with castling
   rights, 32 with an en-passant square, 845 at halfmove 0, 1,091 at 50-99,
