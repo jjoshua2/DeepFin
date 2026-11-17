@@ -285,3 +285,5 @@ Current evidence correction and scale plan: [September 16 bootstrap audit](2026-
 - [2026-09-20: External storage and BT4 labeling efficiency](2026-09-20-storage-loader.md)
 
 - [BT4 run11 variable-batch scheduling opportunity](2026-09-27-bt4-batching-opportunity.md): fixed-wave tail, conditional rolling-call arithmetic, and 128-game A/B compatibility HOLD.
+
+- [2026-11-17 D2 matched short-horizon policy-anchor controls](2026-11-17-short-horizon-policy-anchor-controls.md) - Preregistered two new B32/512-update endpoints, six fresh-panel comparisons, finite caps; no training or efficacy result yet.
