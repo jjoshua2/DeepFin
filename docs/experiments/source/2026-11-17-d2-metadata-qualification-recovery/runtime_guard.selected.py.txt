@@ -1,0 +1,34 @@
+def runtime_guard(plan, *, explicit_source=False):
+    runtime = plan['runtime']
+    require(sys.version == runtime['python_version'] and sys.version_info[:2] == (3, 13)
+            and sys.executable == runtime['python'] and str(Path(sys.prefix)) == runtime['prefix']
+            and sys.flags.isolated == 1 and sys.flags.ignore_environment == 1 and sys.dont_write_bytecode,
+            'isolated Python runtime differs')
+    sites = Path(runtime['prefix']) / 'lib/python3.13/site-packages'
+    found = sorted(str(x) for x in sites.glob('*.pth'))
+    expected = sites / 'managed-dependencies.pth'
+    # One narrowly selected writable runtime config, never a metadata/receipt exception.
+    fixed = Path('<QUALIFIED_PLAIN_PTH>')
+    fixed_site = '<QUALIFIED_MANAGED_SITE>'
+    fixed_sha = '9ff7480dbc5e27595b4179759c7e290a0843dbadb8f26af8480ae8f116738362'
+    require(found == [str(expected)] and expected == fixed and runtime['managed_site'] == fixed_site
+            and runtime['plain_pth_sha256'] == fixed_sha, 'sole selected managed plain pth identity differs')
+    pth_before = expected.lstat()
+    require(stat.S_ISREG(pth_before.st_mode) and stat.S_IMODE(pth_before.st_mode) == 0o644
+            and pth_before.st_size == 99, 'managed plain pth must be regular exact0644/99B')
+    pth_bytes = raw(expected, 4096, readonly=False)
+    require(stamp(pth_before) == stamp(expected.lstat()) and pth_bytes == (fixed_site + '\n').encode()
+            and len(pth_bytes) == 99 and hashlib.sha256(pth_bytes).hexdigest() == fixed_sha,
+            'managed plain pth exact path/fd/bytes/hash custody differs')
+    require(runtime['managed_site'] in sys.path and not any(path and (Path(path) / '.git').exists() and not (explicit_source and path == SOURCE) for path in sys.path),
+            'unexpected source root before explicit insertion')
+    require(os.environ.get('CUDA_VISIBLE_DEVICES') == ''
+            and all(os.environ.get(key) == '2' for key in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'NUMEXPR_NUM_THREADS'))
+            and os.environ.get('PYTEST_DISABLE_PLUGIN_AUTOLOAD') == '1' and 'PYTHONPATH' not in os.environ
+            and not any(key.startswith(('PYTHON', 'LD_', 'CAE_', 'CHESS_')) for key in os.environ
+                        if key not in {'PYTHONNOUSERSITE', 'PYTHONDONTWRITEBYTECODE', 'PYTEST_DISABLE_PLUGIN_AUTOLOAD'}), 'runtime ingress differs')
+    require(os.sched_getaffinity(0) == {20, 22}, 'CPU affinity differs')
+    return {'python': sys.executable, 'version': sys.version, 'prefix': sys.prefix, 'managed_site': runtime['managed_site'],
+            'plain_pth_sha256': runtime['plain_pth_sha256'], 'affinity': sorted(os.sched_getaffinity(0)),
+            'CUDA_VISIBLE_DEVICES': os.environ['CUDA_VISIBLE_DEVICES'], 'CPU_environment_threads': 2,
+            'Torch_threads': None, 'CUDA_initialized': None, 'numerical_runtime_state': 'NOT_QUERIED_NO_NUMERICAL_IMPORT'}
