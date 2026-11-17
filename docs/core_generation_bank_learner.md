@@ -1,5 +1,12 @@
 # Finite learner for accepted generation banks
 
+For one uniform pass over a fixed accepted population without replacement,
+including one real final partial batch, use the separate
+[stored-row once family](stored_row_once_sampling.md). It retains stored row
+identity, shared original/mirror quota and durable continuation without rewinding.
+Historical rolling bank admission is unchanged; the sampling document specifies
+the strict contract and tail optimizer behavior.
+
 `python -m scripts.core_generation_bank_learner --contract PATH
 --contract-sha256 SHA --stage PATH --stage-sha256 SHA` is a distinct finite
 family. It consumes caller-trusted postclosure bank references through

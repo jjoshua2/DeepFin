@@ -13,6 +13,14 @@ A one-off research driver that only an older experiment record or the frozen
 `docs/experiment_ledger.md` cites does not belong here. When its experiment is
 closed, archive it together with any test file that tests only that driver.
 
+## Finite learning
+
+- `core_generation_bank_stored_row_once.py`: one uniform pass over fixed accepted
+  stored rows, with a real unpadded final partial batch, shared original/mirror
+  quota and durable cursor/permutation/ledger continuation. See
+  [the sampling contract](../docs/stored_row_once_sampling.md); publication does
+  not select data, a recipe, runtime adoption or training.
+
 ## Archived drivers
 
 Scripts removed under this rule, and their dedicated tests, are:

@@ -4894,7 +4894,8 @@ class Trainer:
         split_timing: _BatchPrefetchSplitTiming | None = None,
     ) -> Iterator[dict[str, torch.Tensor]]:
         """Training batches, serialized when exact replay owns a hard cap."""
-        if not bool(getattr(buf, "exact_without_replacement", False)):
+        if not (bool(getattr(buf, "exact_without_replacement", False))
+                or bool(getattr(buf, "stored_row_quota", False))):
             if split_timing is not None:
                 yield from self._iter_timed_prefetched_training_batches(
                     buf, batch_size=batch_size, mirror_prob=mirror_prob,
@@ -5844,6 +5845,7 @@ class Trainer:
             exact_epoch = bool(
                 getattr(buf, "exact_without_replacement", False)
             )
+            stored_row_quota = bool(getattr(buf, "stored_row_quota", False))
             with phases.phase("fwd_loss_s"):
                 self._apply_feature_group_dropout(batch["x"])
                 with self._amp_context():
@@ -5868,16 +5870,16 @@ class Trainer:
                     if balance_loss is not None and self.resid_channel_balance_weight > 0.0:
                         losses["channel_balance"] = balance_loss
                         losses["total"] = losses["total"] + self.resid_channel_balance_weight * balance_loss
-                    # ``compute_loss`` returns a row mean. Exact preflight
-                    # refuses a long game that would force extra undersized
-                    # optimizer steps; every accepted schedule is at least 99%
-                    # full (the production plan is 511/512). Preserve a constant
-                    # 1/requested_batch_size gradient
-                    # coefficient per row before Aurora/AdamW transforms it;
-                    # ordinary replacement replay keeps its historical scale.
+                    # ``compute_loss`` returns a row mean. Exact epochs and
+                    # stored-row quotas keep a constant 1/requested_batch_size
+                    # coefficient per real row, including a final partial batch.
+                    # The scale below applies after any anchor penalty is added.
+                    # The tail is still one real adaptive optimizer/decay step;
+                    # no padded-batch or fixed-update arithmetic equivalence is
+                    # claimed. Ordinary replacement keeps its historical scale.
                     exact_row_scale = (
                         float(realized_batch_rows) / float(batch_size)
-                        if exact_epoch
+                        if exact_epoch or stored_row_quota
                         else 1.0
                     )
                     training_total = losses["total"]
@@ -5904,7 +5906,7 @@ class Trainer:
                 total_scale=float(self.accum_steps),
                 mean_weight=(
                     float(realized_batch_rows)
-                    if exact_epoch
+                    if exact_epoch or stored_row_quota
                     else 1.0
                 ),
             )
@@ -5973,7 +5975,8 @@ class Trainer:
             step_opt_stats["nonfinite_grad"] = 1.0
             step_opt_stats["lr"] = float(self.opt.param_groups[0]["lr"])
             self.opt.zero_grad(set_to_none=True)
-            if bool(getattr(buf, "exact_without_replacement", False)):
+            if (bool(getattr(buf, "exact_without_replacement", False))
+                    or bool(getattr(buf, "stored_row_quota", False))):
                 raise RuntimeError(
                     "exact without-replacement training cannot discard a "
                     "non-finite-gradient update after consuming its rows; "
@@ -6164,7 +6167,8 @@ class Trainer:
                     # CUDA retry branch -- otherwise the first fault advances
                     # the one-shot iterator and the run can still report a
                     # complete step count over an incomplete corpus.
-                    if bool(getattr(buf, "exact_without_replacement", False)):
+                    if (bool(getattr(buf, "exact_without_replacement", False))
+                            or bool(getattr(buf, "stored_row_quota", False))):
                         raise
                     if "CUDA" not in str(exc) or _attempt >= 2:
                         raise
@@ -6218,7 +6222,8 @@ class Trainer:
                     else:
                         step_loss_denominator = (
                             int(step_opt_stats.get("samples_seen", 0.0))
-                            if bool(getattr(buf, "exact_without_replacement", False))
+                            if (bool(getattr(buf, "exact_without_replacement", False))
+                                or bool(getattr(buf, "stored_row_quota", False)))
                             else step_n_micro
                         )
                         pending_step_loss.append((
@@ -6229,6 +6234,13 @@ class Trainer:
                 self.step += 1
                 train_steps_done += 1
                 break
+        except BaseException as error:
+            if bool(getattr(buf, "stored_row_quota", False)):
+                abort = getattr(buf, "abort_consumption", None)
+                if not callable(abort):
+                    raise TypeError("stored-row quota buffer lacks abort_consumption") from error
+                abort()
+            raise
         finally:
             batch_iter.close()
 
@@ -6355,7 +6367,8 @@ class Trainer:
             )
         metric_denominator = (
             train_samples_seen
-            if bool(getattr(buf, "exact_without_replacement", False))
+            if (bool(getattr(buf, "exact_without_replacement", False))
+                or bool(getattr(buf, "stored_row_quota", False)))
             else n_micro
         )
         metrics = self._build_metrics(
