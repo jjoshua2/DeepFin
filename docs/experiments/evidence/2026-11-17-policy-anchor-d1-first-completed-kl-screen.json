@@ -1,0 +1,259 @@
+{
+  "acceptance": {
+    "CPU_summary": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_A39-development-reader-results-v2/summary.json",
+      "sha256": "753cf93007007b4fb94989a0e4410283458e7bfbb8ed9f5c2dd093f189805494"
+    },
+    "CPU_terminal": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_A39-development-CPU-v2/terminal.json",
+      "sha256": "de81bde76d4520012629ee568b2583744ce2452006a4bc46ac30ef8f17f3516e"
+    },
+    "GPU_closure": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_A39-development-bindings-v2/gpu.closed-custody.json",
+      "sha256": "0300e371c4de869aa5cf74ac00868e20da705241ee316d89ecb18552bbb841e4"
+    },
+    "GPU_readout": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_A39-development-GPU-results-v2/readout.json",
+      "sha256": "0884a054d4f14877a40876fc532b84294067872a8fc561e6126a3d4442080d49"
+    },
+    "GPU_terminal": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_A39-development-GPU-v2/terminal.json",
+      "sha256": "37d41cd1642f0b1376d0049a876166f657bd532d7aef778de4479d13dd216a29"
+    },
+    "Root_observations": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_A39-development-bindings-v2/root-readout-observations.json",
+      "sha256": "abd1354a900e213b303c93c3909a6f53bdb0874b26f3a5ea336d6b7c6b7631b4"
+    },
+    "Root_observations_status_note": "Immutable earlier reconciliation snapshot says pendingind; final independent acceptance is the separate f24e receipt above.",
+    "detailed_independent_actual_evidence": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_A39-development-independent-actual-review-v2/review.json",
+      "sha256": "4ffba84735af758cb7492eca0f23b6b52ee01923106cece639dd60e4ec280202"
+    },
+    "independent": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_A39-development-bindings-v2/independent-review.json",
+      "sha256": "f24e9de904c56fd3d11a03ca76876e4e37b57db967c4f5aef4e52f38fdd4b2c9"
+    },
+    "reader_closure": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_A39-development-bindings-v2/reader.closed-custody.json",
+      "sha256": "77c41a4c9b30b2cb3369ffc718ada49b1b1401c47fefd002668b0ae612a80a83"
+    },
+    "root": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_A39-development-bindings-v2/root-acceptance.json",
+      "sha256": "78cfd8264f279747516016d72f21ca6c90029414bff0186353765f76b0b96481"
+    }
+  },
+  "based_on_Main": {
+    "append_only_prefix_preserved": true,
+    "document_path": "docs/experiments/2026-11-16-fresh-whole-game-policy-anchor-pilot.md",
+    "document_sha256": "1816aa39a39045da14df71b63492b7b86f9e918a9e7f1388ed5bc49f0f54ed2a",
+    "revision": "30f38ce53a69e20e2991d3e36c60bfd929fc420d"
+  },
+  "continuing_original_design": {
+    "all_seven_before_selection": true,
+    "efficacy_winner_selected": false,
+    "final_confirmation_used": false,
+    "goal_achieved": false,
+    "new_matches_or_retry_authorized_by_this_publication": false,
+    "new_training_or_setting_change": false,
+    "next_original_edge": "K0_vs_A39",
+    "trained_model_HOLD_health_used": false
+  },
+  "costs_at_closed394": {
+    "CPU_reader_owner_wall_seconds": 12.669464714941569,
+    "GPU_owner_wall_seconds": 474.6701258009998,
+    "all_closed_owners": 394,
+    "all_prior_failures_remain_charged": true,
+    "global_CPU_actual_seconds": 6583.1833504324895,
+    "global_GPU_actual_seconds": 84996.85236600426,
+    "science_CPU_actual_seconds": 134.34289984067436,
+    "science_GPU_actual_seconds": 8547.911297879182
+  },
+  "edge": {
+    "attempt": "T2 v2; old startupv1 remainsFAILED",
+    "candidate": "K001",
+    "coefficient": 0.01,
+    "games": 160,
+    "models": {
+      "candidate": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T1-K001-learner-results-v1/learner.pt",
+        "sha256": "5c17f6b3bc29d8152fde76309c3703bae1a44b4492030c5c37deef6cbc71cbed"
+      },
+      "reference": {
+        "path": "~/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/baseline/epoch2.pt",
+        "sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0"
+      }
+    },
+    "pairs": 80,
+    "profile": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-development-source-v8/playing-profile.json",
+      "sha256": "8c248dda7b8f40b2d7bd06e13076ac52522c1729b1d9c73485bf3624e6453132"
+    },
+    "protocol": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_A39-development-bindings-v2/gpu.protocol.json",
+      "sha256": "c9bc6604260df511bf336aa1da210235917b46e83dcd6b309f109c94208c410d"
+    },
+    "reader_protocol": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_A39-development-bindings-v2/reader.protocol.json",
+      "sha256": "a3d16eb4b93a0f153e57005f7137b689b4de6bc66db24f0246bdaac3f8a33fac"
+    },
+    "reference": "A39",
+    "role_use": {
+      "independent": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-development-first-prefix-bindings-v1/independent-review.json",
+        "sha256": "c8136fc7e3932c42ca45654e7e8ecf367bb86d6f115cfe5f6a1d49a0907dc6d9"
+      },
+      "root": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-development-first-prefix-bindings-v1/root-acceptance.json",
+        "sha256": "6979cccb97da47c4e65e7e69ad5a1034c2c547c3ac84198bc53d01f93a006fb9"
+      }
+    },
+    "seed": 2026111674,
+    "source_checkout": "~/.codex/worktrees/anchor-software-readout-20261116/chess",
+    "source_map_files": 223,
+    "source_revision": "bbb4b725a2d5218ffa4630841dd93e8b2884b58d"
+  },
+  "preserved_startup_failure": {
+    "historical_availability_sha256": "207f7bc99c9113b237bee40ef1dc4f64f29bd3524279b6637da31032a2305ae5",
+    "historical_difference_cause": "UNRESOLVED; no byte-content/history identity inferred",
+    "status": "FAILED",
+    "terminal": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_A39-development-GPU-v1/terminal.json",
+      "sha256": "c3a10708e4f925b9bcf25299c3daf32e473e95f7943aabdac3798eae5bbc9822"
+    },
+    "wall_seconds": 9.68236756103579
+  },
+  "public_path_rendering": "Private home paths rendered as ~/ for display only. This is not a runtime input; sealed original artifact bytes/hashes remain authoritative.",
+  "result": {
+    "descriptive_paired_normal95": [
+      0.3356034726393272,
+      0.4456465273606728
+    ],
+    "draws": 61,
+    "interpretation": "Conditional regression relative to A39 for this fixed .01 checkpoint/dose/bank/panel; no optimum-formula or external-strength inference",
+    "interval_method": "Mean reciprocal-colour pair score +/-1.96*sqrt(sample variance(n-1)/80), clamped[0,1]; not simultaneous across edges or training seeds",
+    "losses": 67,
+    "meets_own_vs_A39_point": false,
+    "own_vs_A39_eligibility_point": 0.55,
+    "paired_counts": [
+      12,
+      26,
+      30,
+      9,
+      3
+    ],
+    "paired_counts_order": [
+      0,
+      0.25,
+      0.5,
+      0.75,
+      1
+    ],
+    "paired_score": 0.390625,
+    "perspective": "K001",
+    "sample_pair_variance": 0.0630439082278481,
+    "sample_variance_denominator": 79,
+    "wins": 32
+  },
+  "schema": "PUBLIC_DISPLAY_ONLY_D1_FIRST_COMPLETED_KL_SCREEN_READOUT_V1",
+  "status": "CLOSED_FIRST_EDGE_TECHNICAL_ACCEPTANCE_CONDITIONAL_REGRESSION_NO_WINNER_OR_GOAL_CLAIM",
+  "study_uuid": "8045699e-4088-4a41-ae9c-4013d4a55469",
+  "technical": {
+    "additional_forwards": 0,
+    "all_game_rows_reconciled": true,
+    "configured_is_not_observed_capacity": true,
+    "configured_max_batch": 1024,
+    "controls_CPU_reader": {
+      "executed_in_current_owned_process": true,
+      "failed": 0,
+      "forwards": 0,
+      "games": 0,
+      "models": 0,
+      "names": [
+        "actual-kernel-positive",
+        "noise-scale",
+        "c-scale",
+        "topk",
+        "temperature",
+        "vloss",
+        "target-batch",
+        "tree-reuse",
+        "missing-repfix",
+        "short-pairs",
+        "unselected-edge",
+        "paired-positive"
+      ],
+      "passed": 12,
+      "rng_draws": 0
+    },
+    "controls_GPU": {
+      "executed_in_current_owned_process": true,
+      "failed": 0,
+      "forwards": 0,
+      "games": 0,
+      "models": 0,
+      "names": [
+        "actual-kernel-positive",
+        "noise-scale",
+        "c-scale",
+        "topk",
+        "temperature",
+        "vloss",
+        "target-batch",
+        "tree-reuse",
+        "missing-repfix",
+        "short-pairs",
+        "unselected-edge",
+        "paired-positive"
+      ],
+      "passed": 12,
+      "rng_draws": 0
+    },
+    "extra_games": 0,
+    "illegal_or_crashed_games": 0,
+    "incomplete_pairs": 0,
+    "max_observed_forward_rows": 340,
+    "model_state_pre_post": {
+      "candidate": {
+        "post": "4875a5b53255ce701c158e8af447213b87178e043c0b9084d28fd5d16c5dd9d3",
+        "pre": "4875a5b53255ce701c158e8af447213b87178e043c0b9084d28fd5d16c5dd9d3"
+      },
+      "reference": {
+        "post": "9796079cd73bef73ba2f5d5f2ad0779704498832e34a7c2a880f0d0b7f305229",
+        "pre": "9796079cd73bef73ba2f5d5f2ad0779704498832e34a7c2a880f0d0b7f305229"
+      }
+    },
+    "operability_is_not_gain_or_future_capacity": true,
+    "optimizer_restores": 0,
+    "pair_order_verified": true,
+    "peak_CUDA_allocated_bytes": 1165269504,
+    "peak_CUDA_reserved_bytes": 2919235584,
+    "raw_WDL_dtype": "torch.bfloat16",
+    "raw_policy_dtype": "torch.float32",
+    "reader_CUDA_initialized": false,
+    "reader_models_loaded": 0,
+    "reciprocal_colours_complete": true,
+    "training_updates": 0
+  },
+  "technical_continuation": {
+    "current_availability_sha256": "8877ca686b9e844995b9df823175aaa8550b8be4046d77a7956986d3ed687b89",
+    "current_qualification": {
+      "independent": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-current-TB-availability-bindings-v1/independent-review.json",
+        "sha256": "18891a1500d9b79bd175af66a36e84fa6a220ec6e75a289aa852440858b4861a"
+      },
+      "root": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-current-TB-availability-bindings-v1/root-acceptance.json",
+        "sha256": "994b3f557576af550606f8ad346da575ae8de2714bd1a8a863632ef2d582d8fe"
+      }
+    },
+    "prior_completed_failure_and_diagnostic_publication": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-training-and-first-screen-status-main-publication-v1/publication.json",
+      "sha256": "6f4ae59b480cc05df06d1f7453cc3d0a6719f65173bc59c848f26e812253e4b5"
+    },
+    "publication": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T2-current-TB-startup-main-publication-v1/publication.json",
+      "sha256": "01ce3a0dde8da3d16c2986ed056f8084ef087005d3cdebce9d94d65222493f64"
+    },
+    "scope": "Current availability only; historical training/bank/A39 provenance unchanged"
+  }
+}

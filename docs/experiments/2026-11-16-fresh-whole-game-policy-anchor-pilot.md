@@ -755,3 +755,50 @@ alone does not adopt a runtime or authorize a particular job.
 The [compact T2 evidence](evidence/2026-11-17-policy-anchor-d1-t2-current-tb-continuation.json)
 binds the preregistration, current qualification pair, failed owner and closure,
 source reviews, unchanged model deliveries, exact namespaces and cost limits.
+
+
+## 2026-11-17: first completed D1 development screen
+
+**K001 (KL .01) regressed relative to A39 on this fixed screen.** The T2 v2
+attempt completed all 80 opening pairs / 160 reciprocal-colour games: **32 wins,
+61 draws and 67 losses** from K001's perspective. Mean pair score was
+**.390625**, with descriptive paired-normal 95% interval **[.335603, .445647]**.
+The paired-score histogram at 0/.25/.5/.75/1 was `[12,26,30,9,3]`. There were
+zero incomplete pairs, illegal/crashed games or unmatched game rows; pair and
+history order were verified. Root `78cfd826…` and independent `f24e9de9…` accept
+the complete technical endpoint and reader; detailed review `4ffba847…` checks
+the aggregate result.
+
+This is the selected .01 arm after 4,096 updates / 131,072 views on the common
+192-game, 17,568-row TRAIN bank, at LR 3e-6 and batch 32. It used the original
+first-80 panel, seed 2026111674 and unchanged internal Gumbel64 match profile.
+The point is below the preregistered .55 own-versus-A39 eligibility threshold.
+The interval is marginal and descriptive over these 80 complete opening pairs;
+it is not simultaneous coverage across the sweep or evidence across independent
+training seeds. This conditional regression does not establish that every KL
+coefficient fails, identify an optimum RL formula, or measure strength against
+Rofchade, Stockfish or Leela. No Elo conversion is reported.
+
+The passive serving checks found both model states unchanged, F32 policy and
+BF16 raw WDL outputs. Maximum observed forward batch was 340 against configured
+1024; peak CUDA allocation/reservation was 1,165,269,504 / 2,919,235,584 bytes.
+These are observations of this owner's operability, not improvement, a capacity
+guarantee or an explanation for the regression. GPU and CPU owners used
+474.670 / 12.669 seconds and closed successfully. The original failed v1 startup
+`c3a10708…` and its 9.682 seconds remain FAILED and charged. Historical `207f…`
+provenance is unchanged; current `8877…` passed the selected availability
+qualification and before/final guards. The cause of the historical metadata
+difference remains unresolved.
+
+This is one completed edge, not an efficacy winner or a completed study. All
+seven original development edges still precede selection; no trained-model HOLD
+health or final-confirmation result has been used. The original K0-versus-A39
+control is next, without new training or settings. At this edge's closure, all
+394 owners were closed; charged science GPU/CPU totals were 8,547.911 / 134.343
+seconds and global GPU/CPU totals 84,996.852 / 6,583.183 seconds, including prior
+failures. The existing matrix, thresholds, budgets and deadline remain in force.
+No project-goal completion or external-strength gain is claimed.
+
+[Compact completed-screen evidence](evidence/2026-11-17-policy-anchor-d1-first-completed-kl-screen.json)
+pins the accepted Root/independent records, banked summary, source/protocols and
+unchanged model identities.
