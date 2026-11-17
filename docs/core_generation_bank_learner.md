@@ -1,5 +1,9 @@
 # Finite learner for accepted generation banks
 
+For a fixed-population pass without replacement, use the separate
+[stored-row once family](stored_row_once_sampling.md), including its durable
+ledger and resume requirements.
+
 `python -m scripts.core_generation_bank_learner --contract PATH
 --contract-sha256 SHA --stage PATH --stage-sha256 SHA` is a distinct finite
 family. It consumes caller-trusted postclosure bank references through

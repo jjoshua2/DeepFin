@@ -4894,7 +4894,8 @@ class Trainer:
         split_timing: _BatchPrefetchSplitTiming | None = None,
     ) -> Iterator[dict[str, torch.Tensor]]:
         """Training batches, serialized when exact replay owns a hard cap."""
-        if not bool(getattr(buf, "exact_without_replacement", False)):
+        if not (bool(getattr(buf, "exact_without_replacement", False))
+                or bool(getattr(buf, "stored_row_quota", False))):
             if split_timing is not None:
                 yield from self._iter_timed_prefetched_training_batches(
                     buf, batch_size=batch_size, mirror_prob=mirror_prob,
@@ -5973,7 +5974,8 @@ class Trainer:
             step_opt_stats["nonfinite_grad"] = 1.0
             step_opt_stats["lr"] = float(self.opt.param_groups[0]["lr"])
             self.opt.zero_grad(set_to_none=True)
-            if bool(getattr(buf, "exact_without_replacement", False)):
+            if (bool(getattr(buf, "exact_without_replacement", False))
+                    or bool(getattr(buf, "stored_row_quota", False))):
                 raise RuntimeError(
                     "exact without-replacement training cannot discard a "
                     "non-finite-gradient update after consuming its rows; "
@@ -6164,7 +6166,8 @@ class Trainer:
                     # CUDA retry branch -- otherwise the first fault advances
                     # the one-shot iterator and the run can still report a
                     # complete step count over an incomplete corpus.
-                    if bool(getattr(buf, "exact_without_replacement", False)):
+                    if (bool(getattr(buf, "exact_without_replacement", False))
+                            or bool(getattr(buf, "stored_row_quota", False))):
                         raise
                     if "CUDA" not in str(exc) or _attempt >= 2:
                         raise
@@ -6229,6 +6232,13 @@ class Trainer:
                 self.step += 1
                 train_steps_done += 1
                 break
+        except BaseException:
+            if bool(getattr(buf, "stored_row_quota", False)):
+                abort = getattr(buf, "abort_consumption", None)
+                if not callable(abort):
+                    raise TypeError("stored-row quota buffer lacks abort_consumption")
+                abort()
+            raise
         finally:
             batch_iter.close()
 
