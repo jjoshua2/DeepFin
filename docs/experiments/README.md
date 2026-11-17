@@ -286,7 +286,9 @@ Current evidence correction and scale plan: [September 16 bootstrap audit](2026-
 
 - [BT4 run11 variable-batch scheduling opportunity](2026-09-27-bt4-batching-opportunity.md): fixed-wave tail, conditional rolling-call arithmetic, and 128-game A/B compatibility HOLD.
 
-- [2026-11-17 D2 matched short-horizon policy-anchor controls](2026-11-17-short-horizon-policy-anchor-controls.md) - Preregistered two new B32/512-update endpoints, six fresh-panel comparisons, finite caps; no training or efficacy result yet.
+- [2026-11-17 D2 matched short-horizon policy-anchor controls](2026-11-17-short-horizon-policy-anchor-controls.md#november-17-completed-six-edge-readout) - Six accepted160-game comparisons select S0 for fresh confirmation (55.9375% vsA39;57.5% vsL0); internal screen only, no adoption or external strength claim.
+
+- [2026-11-17 Fresh S0/A39 confirmation](2026-11-17-s0-a39-fresh-confirmation.md) - Prospective fixed400-pair/800-game independent-panel comparison; one final readpoint, paired-normal95 lower bound above.5 for internal donor advantage; separately bounded, no automatic training/adoption.
 
 - [2026-11-17 D2 metadata qualification recovery](2026-11-17-d2-metadata-qualification-recovery.md) - Closed: original and one bounded recovery metadata qualification both FAILED;45 local software cases and partial4+2+2 API reports do not complete the metadata qualification. All411 owners closed, costs charged; no D2 playing results or automatic retry. Path-normalized deployment-specific excerpt; not standalone.
 
