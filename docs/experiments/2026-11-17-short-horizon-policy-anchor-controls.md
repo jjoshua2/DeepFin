@@ -77,3 +77,50 @@ The frozen point-based rule selects **S0 only**: 55.9375% against A39 and 57.5% 
 This favors the shorter unanchored endpoint under this particular screen. It does not identify an optimum RL recipe, isolate a value-head cause, show that policy KL is generally ineffective or establish that long training is generally harmful. The arms share donor/data, one training seed and one80-opening panel. Pairwise estimates are correlated; their intervals are descriptive single-edge uncertainty. Physical-row prefix equality does not prove matching augmentation/RNG/arithmetic. L0 retains its saved-only corrective proof and original failed-GPU limitation.
 
 The next selected research method is a separately budgeted [fresh S0/A39 confirmation](2026-11-17-s0-a39-fresh-confirmation.md). D2 itself grants no confirmation clock. A39 remains retained, with no runtime adoption, external Rofchade/Stockfish/Lc0 milestone or long-term-goal completion.
+
+
+## November 17 fresh confirmation and stored-row reuse follow-up
+
+The separately preregistered [fresh S0/A39 confirmation](2026-11-17-s0-a39-fresh-confirmation.md#november-17-completed-fresh-confirmation-nonconfirm--inconclusive)
+completed all 400 pairs / 800 games: 235 W / 310 D / 255 L, score **48.75%**,
+paired-normal 95% interval **46.0267–51.4733%**. Its lower-bound-above-50% criterion
+was not met: **NONCONFIRM_INCONCLUSIVE**. Keep the six screen results and their
+S0 selection exactly as recorded above; the screen and independent confirmation
+are distinct observations and are not pooled. A39 remains retained, with no
+adoption, harm/equivalence conclusion, external-strength gain or goal completion.
+
+The accepted [read-only sampler reuse audit](2026-11-17-stored-row-sampler-reuse-audit.md)
+found that each short 512-update run drew 10,678 of 17,568 stored rows at least
+once, with maximum multiplicity 8 and 1,160 rows drawn more than twice. Each long
+4096-update run drew 17,562 rows at least once, with maximum 20 and 17,210 rows
+above twice. These are pre-mirror stored-row counts; original and mirror share
+one quota, and natural duplicate board contents are not deduplicated or claimed
+unique. Counts alone do not identify overfitting, a value-head cause or a better
+recipe. The old bank is not reclassified as unseen or retrospectively cap-compliant.
+
+Exact-once stored-row sampler source is independently reviewed software
+preparation in PR1378, with hosted validation/adoption still pending at this
+record. It does not enforce controlled usage across independently reset lineages
+by itself. Future training remains held until the selected runtime and sampler
+manifest, prior-usage accounting and the maximum **two total** deliberate
+presentations per underlying stored row are actually enforced. A proposed exact-
+once pass uses one total presentation, not separate original/mirror allowances.
+No bank, new training or further confirmation is authorized here.
+
+
+## November 17 future-only evaluation direction
+
+For future strength comparisons, use at least **400 games / 200 complete
+color-reversed pairs**. Any signal-dependent extension to 800 or 1,200 games must
+have its paired stopping and selection limits committed before outcomes, with
+uncertainty and repeated-look limitations reported; ordinary optional extension
+is not a fixed-horizon confirmation. Do not silently pool incompatible panels.
+This direction is prospective: the completed 160-game screens, their frozen
+eligibility/selection and the completed 800-game confirmation remain unchanged.
+Retain the short KL endpoint S1 for a possible larger evaluation; its 160-game
+screen ineligibility does not rule out KL or justify discarding that model.
+Exact-once stored-row sampling remains the next one-variable preparation priority,
+with original and mirror sharing one quota and natural board deduplication not
+required. The future-training hold remains; no new training, match, held-out
+access or unreviewed launch is authorized. Recorded future direction SHA256:
+`c6d046c5922c436ee6f1e2509f32bc244a4a3c2caf97843b0c4c8f53b6fb24f3`.
