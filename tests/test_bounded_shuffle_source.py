@@ -49,7 +49,7 @@ def test_source_views_charge_full_owning_allocation_before_returning_row(prefetc
                               reserve=lambda *_args: None) as replay:
         if prefetch:
             replay.start_prefetch()
-        with pytest.raises(ValueError, match="owning allocation|tainted|prefetch failed"):
+        with pytest.raises(ValueError, match=r"owning allocation|tainted|prefetch failed"):
             replay.sample_batch_arrays(4)
         with pytest.raises(ValueError, match="tainted"):
             replay.checkpoint()
@@ -57,21 +57,19 @@ def test_source_views_charge_full_owning_allocation_before_returning_row(prefetc
 
 def test_actual_quota_ledger_uses_new_order_records_and_refuses_ahead_tail(tmp_path: Path) -> None:
     path, journal_path = tmp_path / "quota.jsonl", tmp_path / "draws.jsonl"
-    with QuotaLedger(path, first=True, expected_journals=[], max_file_bytes=1 << 20, max_total_bytes=1 << 20) as ledger:
-        with journal_path.open("xb", buffering=0) as journal:
-            writer = BoundedReservationWriter(ledger, journal)
-            replay, _, _ = replay_fixture(5, reserve=writer)
-            with replay:
-                consume(replay)
-                state = replay.checkpoint()
-            assert ledger.checkpoint()["bytes"] == journal_path.stat().st_size
+    with QuotaLedger(path, first=True, expected_journals=[], max_file_bytes=1 << 20, max_total_bytes=1 << 20) as ledger, journal_path.open("xb", buffering=0) as journal:
+        writer = BoundedReservationWriter(ledger, journal)
+        replay, _, _ = replay_fixture(5, reserve=writer)
+        with replay:
+            consume(replay)
+            state = replay.checkpoint()
+        assert ledger.checkpoint()["bytes"] == journal_path.stat().st_size
     records = [json.loads(line) for line in journal_path.read_bytes().splitlines()]
     assert [len(r["rows"]) for r in records] == [4, 1]
     assert all(r["order"] == "APPROXIMATE_BOUNDED_SHUFFLE_V1" for r in records)
     assert records[-1]["emitted"] == state["emitted"] == 5
-    with pytest.raises(ValueError, match="ahead/behind"):
-        with QuotaLedger(path, first=False, expected_journals=[], max_file_bytes=1 << 20, max_total_bytes=1 << 20):
-            pass
+    with pytest.raises(ValueError, match="ahead/behind"), QuotaLedger(path, first=False, expected_journals=[], max_file_bytes=1 << 20, max_total_bytes=1 << 20):
+        pass
 
 
 def test_prefetch_close_joins_worker_and_releases_owned_storage() -> None:
@@ -94,15 +92,14 @@ def test_real_ledger_reservation_precedes_partial_journal_failure_and_stays_spen
         def write(self, raw: bytes) -> int:
             return self.stream.write(raw[:-1])
 
-    with QuotaLedger(ledger_path, first=True, expected_journals=[], max_file_bytes=1 << 20, max_total_bytes=1 << 20) as ledger:
-        with journal_path.open("xb", buffering=0) as stream:
-            writer = BoundedReservationWriter(ledger, PartialJournal(stream))
-            replay, _, _ = replay_fixture(5, reserve=writer)
-            with replay:
-                with pytest.raises(ValueError, match="partial bounded draw journal"):
-                    replay.sample_batch_arrays(4)
-                assert ledger.checkpoint()["bytes"] > journal_path.stat().st_size
-                with pytest.raises(ValueError, match="tainted"):
-                    replay.checkpoint()
-                with pytest.raises(ValueError, match="tainted"):
-                    replay.sample_batch_arrays(4)
+    with QuotaLedger(ledger_path, first=True, expected_journals=[], max_file_bytes=1 << 20, max_total_bytes=1 << 20) as ledger, journal_path.open("xb", buffering=0) as stream:
+        writer = BoundedReservationWriter(ledger, PartialJournal(stream))
+        replay, _, _ = replay_fixture(5, reserve=writer)
+        with replay:
+            with pytest.raises(ValueError, match="partial bounded draw journal"):
+                replay.sample_batch_arrays(4)
+            assert ledger.checkpoint()["bytes"] > journal_path.stat().st_size
+            with pytest.raises(ValueError, match="tainted"):
+                replay.checkpoint()
+            with pytest.raises(ValueError, match="tainted"):
+                replay.sample_batch_arrays(4)

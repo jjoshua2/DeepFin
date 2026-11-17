@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import copy
 import json
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -52,7 +51,7 @@ def source_fixture(n: int = 23) -> tuple[SequentialArraySource, list[dict[str, A
     return source, arrays, calls
 
 
-def limits(source: SequentialArraySource, batch: int = 4) -> ReplayLimits:
+def limits(_source: SequentialArraySource, batch: int = 4) -> ReplayLimits:
     return ReplayLimits(total_bytes=128 << 20, source_bytes=16 << 20, buffer_bytes=8 << 20,
                         ready_bytes=4 << 20, consumer_bytes=96 << 20, scratch_bytes=4 << 20,
                         buffer_rows=max(8, batch), ready_batches=2)
@@ -123,8 +122,8 @@ def test_json_resume_nonempty_slots_and_ready_preserves_order_and_mirror_rng() -
         resumed.start_prefetch()
         rest, sizes, mirrors = consume(resumed)
         assert first_ids + rest == expected[0]
-        assert [4] + sizes == expected[1]
-        assert [first_mirror] + mirrors == expected[2]
+        assert [4, *sizes] == expected[1]
+        assert [first_mirror, *mirrors] == expected[2]
         assert sum(len(rows) for rows, _ in records) == 19
 
 

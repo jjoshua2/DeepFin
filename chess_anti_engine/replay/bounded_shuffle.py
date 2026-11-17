@@ -14,7 +14,7 @@ import hashlib
 import json
 import random
 import threading
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from .generation import DrawnRow
 
@@ -88,6 +88,7 @@ def audit_selection(state: dict[str, Any], records: Iterable[dict[str, Any]]) ->
                 and 0 < len(record["rows"]) <= state["emitted"] - emitted, "reservation record row count differs")
         for row in record["rows"]:
             require(type(row) is dict and set(row) == {"generation", "source_sha256", "row_index"}, "physical record fields differ")
+            row = cast(dict[str, Any], row)
             generation, base, count = lookup[row["source_sha256"]]
             local = integer(row["row_index"])
             selected = choose()
@@ -103,10 +104,11 @@ def audit_selection(state: dict[str, Any], records: Iterable[dict[str, Any]]) ->
             and prefix == state["reservation_prefix"] and spent.hex() == state["spent_hex"], "closed journal frontier differs")
     require(type(state["ready"]) is list and len(state["ready"]) <= integer(state["limits"]["ready_batches"], 1),
             "ready frontier capacity differs")
-    require(all(type(batch) is list and 0 < len(batch) <= size for batch in state["ready"])
-            and all(len(batch) == size for batch in state["ready"][:-1]), "ready frontier batch shape differs")
+    ready = cast(list[list[int]], state["ready"])
+    require(all(type(batch) is list and 0 < len(batch) <= size for batch in ready)
+            and all(len(batch) == size for batch in ready[:-1]), "ready frontier batch shape differs")
     queued = 0
-    for batch in state["ready"]:
+    for batch in ready:
         for index in batch:
             require(type(index) is int and index == choose(), "ready order differs from symbolic selection")
             queued += 1
@@ -504,6 +506,7 @@ class BoundedShuffleReplay:
                 self._slots = [self._copy(integer(i), "buffer") for i in state["slots"]]
                 for batch in state["ready"]:
                     require(type(batch) is list and 0 < len(batch) <= self.batch_size, "invalid ready batch")
+                    batch = cast(list[int], batch)
                     self._ready.append([self._copy(integer(i), "ready") for i in batch])
                 self._partition()
             except BaseException:
