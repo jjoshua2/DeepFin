@@ -11,7 +11,7 @@ import math
 import stat
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from scripts import core_generation_holdout_ruler as ruler
 
@@ -239,7 +239,7 @@ def _closed_owner(m: ruler.Metadata, owner: dict[str, Any], suffix: list[str], *
 def _prefix_proof(m: ruler.Metadata, saved: dict[str, Any], plan: dict[str, Any], boundary: dict[str, Any],
                   label: str, donor: dict[str, Any]) -> None:
     """Validate a reviewed in-owner sampler witness, never open either journal."""
-    witness = saved["draw_prefix_comparison"]
+    witness: dict[str, Any] = cast(dict[str, Any], saved["draw_prefix_comparison"])
     keys = {"schema", "long_comparator", "long_boundary", "long_journal", "short_journal", "batches", "rows_per_batch", "views",
             "long_batches", "long_views", "population_rows", "population_games", "membership_sha256", "coverage_sha256",
             "long_prefix_sha256", "short_prefix_sha256", "equal", "long_stream_passes", "long_raw_read_bytes",
@@ -272,9 +272,9 @@ def _prefix_proof(m: ruler.Metadata, saved: dict[str, Any], plan: dict[str, Any]
     ruler.bank.sha(witness["long_prefix_sha256"])
     stamps: dict[str, dict[str, Any]] = {}
     for key in ("long_pre", "long_post", "long_final", "short_observed"):
-        value = witness[key]
+        value: dict[str, Any] = cast(dict[str, Any], witness[key])
         ruler.require(type(value) is dict and set(value) == {"stamp", "bytes", "sha256"}, "D2 sampler file witness differs")
-        observed = value["stamp"]
+        observed: dict[str, int] = cast(dict[str, int], value["stamp"])
         ruler.require(type(observed) is dict and set(observed) == {"st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns", "st_mode"}
                       and all(type(v) is int and v >= 0 for v in observed.values())
                       and stat.S_ISREG(observed["st_mode"]) and not observed["st_mode"] & 0o222
@@ -297,7 +297,7 @@ def _prefix_proof(m: ruler.Metadata, saved: dict[str, Any], plan: dict[str, Any]
 def _short_payload(m: ruler.Metadata, root: dict[str, Any], c: dict[str, Any], boundary: dict[str, Any],
                    suffix: list[str], label: str, donor: dict[str, Any]) -> dict[str, Any]:
     """Accept only the new reviewed observer, never project its status to D1."""
-    audit = root["payload_audit"]
+    audit: dict[str, Any] = cast(dict[str, Any], root["payload_audit"])
     ruler.require(type(audit) is dict and set(audit) == {"schema", "readout", "owner"} and audit["schema"] == SHORT_SCHEMA,
                   "D2 requires its normal GPU proof family")
     ruler.require(audit["owner"] == root["learner_owner"], "D2 proof must share complete learner owner")
@@ -331,7 +331,7 @@ def _short_payload(m: ruler.Metadata, root: dict[str, Any], c: dict[str, Any], b
                   and type(saved["absolute_inner_seconds"]) is int and saved["absolute_inner_seconds"] == 3570,
                   "D2 plan/admission proof differs")
     ruler.require(m.read(plan["contract_template"]) == c, "D2 selected contract template differs")
-    helper = saved["helper"]
+    helper: dict[str, str] = cast(dict[str, str], saved["helper"])
     ruler.require(type(helper) is dict and set(helper) == {"path", "sha256"} and type(helper["path"]) is str
                   and Path(helper["path"]).is_absolute() and Path(helper["path"]).suffix == ".py"
                   and helper["sha256"] == SHORT_HELPER_SHA256 and audit["owner"]["command"].count(helper["path"]) == 1
@@ -486,7 +486,7 @@ def role_authority(m: ruler.Metadata, binding: dict[str, Any]) -> dict[str, Any]
                   and report["complete_parent_descriptors_preserved"] is True
                   and type(report["controls_passed"]) is int and report["controls_passed"] == 16,
                   "D2 actual fresh-role protocol/readout differs")
-    helper, source_review = protocol["helper"], m.read(protocol["source_review"])
+    helper, source_review = cast(dict[str, str], protocol["helper"]), m.read(protocol["source_review"])
     ruler.require(type(helper) is dict and set(helper) == {"path", "sha256"} and type(helper["path"]) is str
                   and Path(helper["path"]).is_absolute() and Path(helper["path"]).suffix == ".py" and helper["sha256"] == ROLE_HELPER_SHA256
                   and protocol["source_review"] == ROLE_SOURCE_REVIEW
@@ -494,8 +494,8 @@ def role_authority(m: ruler.Metadata, binding: dict[str, Any]) -> dict[str, Any]
                   and source_review["helper"] == helper and source_review["controls"] == protocol["controls"]
                   and source_review["source_pins"] == protocol["source_pins"] and source_review["findings"] == [],
                   "D2 role producer source differs")
-    owner = root["owner"]
-    suffix = [helper["path"], "--protocol", root["protocol"]["path"], "--protocol-sha256", root["protocol"]["sha256"],
+    owner: dict[str, Any] = cast(dict[str, Any], root["owner"])
+    suffix: list[str] = [helper["path"], "--protocol", root["protocol"]["path"], "--protocol-sha256", root["protocol"]["sha256"],
               "--admission", owner["admission"]["path"], "--admission-sha256", owner["admission"]["sha256"]]
     admission = _closed_owner(m, owner, suffix, role=True)
     ruler.require(admission["protocol"] == root["protocol"] and all(admission[k] == protocol[k] for k in ("helper", "source_review", "source_pins"))
@@ -507,7 +507,7 @@ def role_authority(m: ruler.Metadata, binding: dict[str, Any]) -> dict[str, Any]
                   and root["original_six400_books"] == original["books"] and len(original["books"]) == 6,
                   "D2 original role ancestry differs")
     ruler.require(type(root["prefixes"]) is dict and set(root["prefixes"]) == {"SCREEN_C_A"}, "D2 requires one common fresh panel")
-    value = root["prefixes"]["SCREEN_C_A"]
+    value: dict[str, Any] = cast(dict[str, Any], cast(dict[str, Any], root["prefixes"])["SCREEN_C_A"])
     ruler.require(type(value) is dict and set(value) == {"source_role", "original400_book", "original_full_role", "book", "parent_map", "selection",
                   "prefix_start", "pairs", "source_count", "complete_parents", "actual_public_loader_count", "no_skips_dedup_shrink",
                   "parent_order_sha256", "history_order_sha256"}
@@ -522,12 +522,12 @@ def role_authority(m: ruler.Metadata, binding: dict[str, Any]) -> dict[str, Any]
     ruler.bank.reference(value["parent_map"])
     ruler.bank.sha(value["parent_order_sha256"])
     ruler.bank.sha(value["history_order_sha256"])
-    domains = report["all8role_domains_disjoint"]
+    domains: dict[str, int] = cast(dict[str, int], report["all8role_domains_disjoint"])
     ruler.require(type(domains) is dict and set(domains) == {"group", "parent", "history", "epd", "history_sha", "input"}
                   and all(type(count) is int for count in domains.values())
                   and all(domains[k] == 2656 for k in ("group", "history", "epd", "history_sha"))
                   and domains["input"] == 5312 and domains["parent"] >= 2656, "D2 full role domain counts differ")
-    consumed = report["public_consumption"]
+    consumed: list[dict[str, Any]] = cast(list[dict[str, Any]], report["public_consumption"])
     expected = [(ref, 400) for ref in original["books"].values()] + [(value["book"], 80)]
     ruler.require(type(consumed) is list and len(consumed) == 7
                   and all(type(row) is dict and set(row) == {"book", "pairs", "actual_public_reads", "full16_history_order_EPD_exact"}
@@ -540,7 +540,7 @@ def role_authority(m: ruler.Metadata, binding: dict[str, Any]) -> dict[str, Any]
 
 
 def _known_exposure(m: ruler.Metadata, root: dict[str, Any], report: dict[str, Any]) -> None:
-    refs = root["exposure_registry"]
+    refs: dict[str, dict[str, str]] = cast(dict[str, dict[str, str]], root["exposure_registry"])
     ruler.require(type(refs) is dict and set(refs) == {"root", "independent"}, "D2 known exposure refs differ")
     registry, independent = m.read(refs["root"]), m.read(refs["independent"])
     keys = {"status", "study_uuid", "design", "source_roles", "prior_closed_owner_count", "known_usage", "D1_readout", "D1_review",
@@ -563,9 +563,9 @@ def _known_exposure(m: ruler.Metadata, root: dict[str, Any], report: dict[str, A
     d1, d1i = m.read(d1_ref), m.read(d1_ind)
     ruler.require(d1["all_seven_technically_complete"] is True and d1i["readout"] == d1_ref and d1i["findings"] == [], "D2 prior D1 closure differs")
     ruler.require(type(registry["usage_evidence"]) is list and len(registry["usage_evidence"]) <= 32, "D2 bounded exposure evidence differs")
-    for evidence in registry["usage_evidence"]:
+    for evidence in cast(list[dict[str, str]], registry["usage_evidence"]):
         m.read(evidence)
-    check = report["known_exposure_check"]
+    check: dict[str, Any] = cast(dict[str, Any], report["known_exposure_check"])
     ruler.require(type(check) is dict and set(check) == {"registry", "prior_closed_owner_count", "known_usage", "conservatively_used_rows",
                   "selected_original_ordinals", "known_controlled_domains_disjoint", "selected_domain_counts", "scope"}
                   and check["registry"] == refs and type(check["prior_closed_owner_count"]) is int and check["prior_closed_owner_count"] == 406
@@ -573,7 +573,7 @@ def _known_exposure(m: ruler.Metadata, root: dict[str, Any], report: dict[str, A
                   and type(check["selected_original_ordinals"]) is list and check["selected_original_ordinals"] == [80, 160]
                   and all(type(v) is int for v in check["selected_original_ordinals"]) and check["known_controlled_domains_disjoint"] is True,
                   "D2 actual known-exposure check differs")
-    counts = check["selected_domain_counts"]
+    counts: dict[str, int] = cast(dict[str, int], check["selected_domain_counts"])
     ruler.require(type(counts) is dict and set(counts) == {"group", "parent", "history", "epd", "history_sha", "input"}
                   and all(type(count) is int for count in counts.values())
                   and all(counts[k] == 80 for k in ("group", "history", "epd", "history_sha"))
