@@ -10,6 +10,7 @@ import torch
 
 from chess_anti_engine.model import infer_input_planes
 
+from scripts import core_finite_learner as core
 from scripts import core_selfplay_union_stored_row_once as entry
 from scripts import core_selfplay_union_stored_row_once_proof as proof
 from scripts.bootstrap_checkpoint_resume import require_equal
@@ -62,7 +63,7 @@ def test_actual_passive_proof_uses_cumulative_optimizer_slots_after_closed_resum
     assert certificate["saved_model"]["key_shape_dtype_sha256"] == first["own_live_certificate"]["saved_model"]["key_shape_dtype_sha256"]
     delivery = entry.validate_closed_model_delivery(cref, closed_parent(tmp_path, cref, second, proof=True))
     assert delivery["pass_complete"] is True
-    assert delivery["own_live_certificate"] == certificate
+    assert core.canonical(delivery["own_live_certificate"]) == core.canonical(certificate)
 
 
 @pytest.mark.parametrize("fault", ["model", "optimizer_step", "family", "architecture"])
