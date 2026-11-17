@@ -1,0 +1,190 @@
+{
+  "admission_conditions": [
+    "Actual Main publication of this independently reviewed amendment, exact document/tree joins and all five CI jobs successful",
+    "Immutable independently reviewed runtime/controller successor, exact path/SHA coherent operator templates and preserved failure/cost guards",
+    "Root actual prerequisite selection and independent actual binding review",
+    "Fresh U3 resource/leases/process-birth/custody check immediately before the single bounded owner"
+  ],
+  "allowed_technical_changes": [
+    "Bind the exact current TB qualification pair and current887 availability for all seven future DEV protocols/readers; preserve historical207 training/bank/A39 qualification provenance without relabeling it.",
+    "New immutable runtime/helper namespace and exact first K001 GPU+reader binding/stage/output v2 paths; other six unused edges retain v1 paths. Preserve old failed v1 artifacts.",
+    "Root continuation gate requires this preregistration, independent source review and actual Main publication of the explicit continuation before any match admission.",
+    "Only the exact c3a107 failed startup is an allowed past scientific failure in the new admission sequence. Every other/new NN/DEV/reader failure still STOP; no additional retry, survivor, fallback or partial score.",
+    "Keep BOTH failed K001v1 and future K001v2 in science/global actual-cost accounting and closure helpers. No reset or omitted failure credit.",
+    "Include actual observed/declared/qualified TB hashes in any future failed identity guard message; no additional TB reads or repair."
+  ],
+  "consumer_qualification_unchanged": {
+    "independent": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/finite-policy-anchor-D1-consumer-CPU-bindings-v1/independent-review.json",
+      "sha256": "843db8c1cac3f19c71f7aa5d14bf3ed2948898af2f03de97a97d4fb3bd450b7c"
+    },
+    "root": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/finite-policy-anchor-D1-consumer-CPU-bindings-v1/root-acceptance.json",
+      "sha256": "a8df269ed71bdc4420dfb7ed477e77aa15858cda049f42f4ab35b37e214fd585"
+    }
+  },
+  "cost_accounting": "Both failed K001v1 and prospective K001v2 count toward science/global actual totals and closure/census; no reset.",
+  "current_TB_qualification": {
+    "independent": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-current-TB-availability-bindings-v1/independent-review.json",
+      "sha256": "18891a1500d9b79bd175af66a36e84fa6a220ec6e75a289aa852440858b4861a"
+    },
+    "root": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-current-TB-availability-bindings-v1/root-acceptance.json",
+      "sha256": "994b3f557576af550606f8ad346da575ae8de2714bd1a8a863632ef2d582d8fe"
+    }
+  },
+  "current_inventory_sha256": "8877ca686b9e844995b9df823175aaa8550b8be4046d77a7956986d3ed687b89",
+  "design": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-development-first-root-design-v1/design.json",
+    "sha256": "98770dcd0ac6dffba73608fcad53a23e5a90c929a8432ed74b6d52d615b1c8dd"
+  },
+  "execution_authorized": false,
+  "execution_priority": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-completed-KL-first-screen-root-priority-v1/selection.json",
+    "sha256": "ae19f586348ab6fcd7972a5357baa4ddea2d2d4aa9a94ec9ba8e85b88ae2eadc"
+  },
+  "failure_exception_scope": "The exact c3a107 startup is the only additional past failure exception. Existing T1 K0 GPU/prior CPU failures retain their strict separately published manual-recovery context and all costs. Every other or new NN/DEV/reader failure remains STOP; no blanket ignore, extra retry, fallback or partial score.",
+  "first_attempt_v2_namespace": {
+    "GPU_output": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_A39-development-GPU-results-v2",
+    "GPU_stage": "prospective-KL-D1-K001_vs_A39-development-GPU-v2",
+    "binding": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_A39-development-bindings-v2",
+    "reader_output": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_A39-development-reader-results-v2",
+    "reader_stage": "prospective-KL-D1-K001_vs_A39-development-CPU-v2"
+  },
+  "fixed_science": [
+    "Same four accepted checkpoints and fixed training dose/settings; zero additional training.",
+    "Same seven edges,80pairs/160games each; same original first80 opening/history ordinals and seeds1674/1675; K001_vs_A39 first perae19.",
+    "Same frozen TBBB arena source223, qualified consumer3246/runtime224+Lee225, native6, eagerBF16/F32 transport, rolling32/evalmaxbatch1024/two slots/CPU2/sims64/rule50TB6. No search/head/compute/dose/book/seed/rule change.",
+    "Same all-seven-before-winner, point>=.55 eligibility/maxpoint/tie-lowerlambda, descriptive DEV intervals; same HOLD parent health veto and fresh400-pair confirmation criteria.",
+    "No model-strength data from first failed owner, no reranking/selection/pair peeking before prescribed readers. No external strength or optimum-formula claim."
+  ],
+  "historical_inventory_sha256": "207f7bc99c9113b237bee40ef1dc4f64f29bd3524279b6637da31032a2305ae5",
+  "known_startup_failure": {
+    "closure": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_A39-development-bindings-v1/gpu.closed-custody.json",
+      "sha256": "d6b9d3ed57c155cac1cba3f68bb606771dd90e094bfef3f98b524935576e9d33"
+    },
+    "computed_inventory_not_recorded_in_failed_owner": true,
+    "failure_site": "V7 run.execute guard28 before public parser/model checkpoint decode/arena/gameplay; CUDA init and checkpoint byte hashes had occurred",
+    "independent_source_diagnosis": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-first-DEV-TB-inventory-failure-independent-diagnosis-v1/review.json",
+      "sha256": "0733975f935b470aa4096f8e56c63fe97eaac724f3b7e84b2534a367b6633eed"
+    },
+    "status_must_remain": "FAILED",
+    "terminal": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_A39-development-GPU-v1/terminal.json",
+      "sha256": "c3a10708e4f925b9bcf25299c3daf32e473e95f7943aabdac3798eae5bbc9822"
+    },
+    "usable_strength_games": 0,
+    "wall_seconds": 9.68236756103579
+  },
+  "limits": {
+    "CPU_reader_each_outer_inner": [
+      300,
+      270
+    ],
+    "GPU_each_outer_inner": [
+      900,
+      870
+    ],
+    "compute_deadline_utc": "2026-11-19T16:09:20+00:00",
+    "engineering_CPU_actual_before": 298.7533434762154,
+    "engineering_CPU_ceiling": 600,
+    "global_CPU_actual_before": 6570.513885717548,
+    "global_GPU_actual_before": 84522.18224020326,
+    "global_GPU_ceiling": 172800,
+    "science_CPU_actual_before": 121.6734351257328,
+    "science_GPU_actual_before": 8073.241172078182,
+    "seven_DEV_CPU_cap": 2100,
+    "seven_DEV_GPU_cap": 6300,
+    "study_CPU_ceiling": 9600,
+    "study_GPU_ceiling": 30900
+  },
+  "model_deliveries_unchanged": {
+    "K0": {
+      "independent": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T1-K0-no-clip-corrective-audit-bindings-v1/independent-review.json",
+        "sha256": "9388a6592b5bf819666567230098512f3756efbcb6920e884d30338907f09b71"
+      },
+      "root": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T1-K0-no-clip-corrective-audit-bindings-v1/root-acceptance.json",
+        "sha256": "71f733ac9a904aae0277f132dbcf58015692298e037fc5dde75f65235b94fc1f"
+      }
+    },
+    "K001": {
+      "independent": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T1-K001-learning-GPU-bindings-v1/independent-review.json",
+        "sha256": "d7d5c3434eee97f6a26a644713e02b9cd4adf33d1b0271374c01196bb6c0d18b"
+      },
+      "root": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T1-K001-learning-GPU-bindings-v1/root-acceptance.json",
+        "sha256": "11dbca0d880d67c4924fd214b5be518c2521154974fc4c7659e99348fd64de0f"
+      }
+    },
+    "K01": {
+      "independent": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T1-K01-learning-GPU-bindings-v1/independent-review.json",
+        "sha256": "ce2b062162753e59f9d8a91dd1284f64acfa5b316eabaf8479beb8b33be9bf66"
+      },
+      "root": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T1-K01-learning-GPU-bindings-v1/root-acceptance.json",
+        "sha256": "bef5d7b09124b97ddae4a30865da94955c584c18566bb49555da9b9b4ac2fcb7"
+      }
+    },
+    "K1": {
+      "independent": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T1-K1-learning-GPU-bindings-v1/independent-review.json",
+        "sha256": "8e5a03ecd1278084751db8ff05808432441dd8841cf97bcd9bcee4429c036bb5"
+      },
+      "root": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T1-K1-learning-GPU-bindings-v1/root-acceptance.json",
+        "sha256": "44cf204e7d62116352ecc2bde86d662ddb9367f2620332c83ebdf3c209e46014"
+      }
+    }
+  },
+  "preregistration": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T2-current-TB-startup-continuation-root-preregistration-v1/selection.json",
+    "sha256": "95fcf0475091e11fc74eff93661121ebc57ac3f1d05771b6b86972161c29e736"
+  },
+  "previous_failure_and_diagnostic_Main_publication": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-training-and-first-screen-status-main-publication-v1/publication.json",
+    "sha256": "6f4ae59b480cc05df06d1f7453cc3d0a6719f65173bc59c848f26e812253e4b5"
+  },
+  "result_claims": {
+    "external_strength": false,
+    "gain": false,
+    "goal_achieved": false,
+    "optimal_formula": false,
+    "winner": false
+  },
+  "runtime_adoption": false,
+  "runtime_source_manifest": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-development-source-v8/manifest.json",
+    "sha256": "1f8fe7518047b80818b337e1ed64258cb7443f16931fc0414786c8a254784981"
+  },
+  "schema": "D1_T2_CURRENT_TB_STARTUP_TECHNICAL_CONTINUATION_PUBLIC_RECORD_V1",
+  "scope_limits": "Current availability qualification is not byte-content identity/history or corruption-cause proof. The original failure remains FAILED/charged. This is a prospective technical availability-pin and one-startup exception, not a change of learning formula or evidence of gain. No goal-achieved claim.",
+  "source_reviews": {
+    "GPU_runtime": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-development-GPU-independent-source-review-v8/review.json",
+      "sha256": "b95331559996f2220ae0da6845dfa2eeaf6962c3e0f9f1504db094ebc877ce5a"
+    },
+    "common_runtime": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-development-T2-common-independent-source-review-v8/review.json",
+      "sha256": "e0c9ead2ae50bd3fca269784a9ea817a7a70405415f6ea232406f476cf935437"
+    },
+    "preregistration": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T2-current-TB-startup-continuation-independent-source-review-v1/review.json",
+      "sha256": "367df7cdfa21e09432e0ca6096bc92ace6891b047c678f825593705ba4cb91da"
+    },
+    "reader_runtime": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-development-reader-independent-source-review-v8/review.json",
+      "sha256": "620ee8d708bb97b2c508f348f9a1a7745c52161eb4d55806a5abb8e4709af580"
+    }
+  },
+  "status": "PROSPECTIVE_TECHNICAL_CONTINUATION_REQUIRES_MAIN_AND_REVIEWED_ACTUAL_ADMISSION",
+  "study_uuid": "8045699e-4088-4a41-ae9c-4013d4a55469",
+  "usable_strength_games": 0,
+  "usable_strength_games_basis": "Source-order diagnosis proves failure preceded arena/gameplay; not a synthesized game counter."
+}

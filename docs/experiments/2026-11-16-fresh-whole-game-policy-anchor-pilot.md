@@ -713,3 +713,45 @@ continuation separately after reviewing the evidence.
 
 Compact immutable receipts and the independent diagnostic acceptance are in
 [the supporting status evidence](evidence/2026-11-16-policy-anchor-d1-training-and-first-screen-status.json).
+
+
+## D1 T2 prospective current-tablebase startup continuation (2026-11-17)
+
+The first K001 versus A39 DEV owner stopped at its tablebase inventory guard,
+before arena setup or gameplay. Its terminal remains **FAILED**, and its
+9.68236756103579 GPU seconds remain charged. There are zero usable strength
+games from that attempt, as established by source order; no WDL or gain is inferred.
+The completed failure and diagnostic record is published in PR #1369.
+
+This prospective technical continuation uses the independently qualified **current**
+installed tablebase availability identity
+`8877ca686b9e844995b9df823175aaa8550b8be4046d77a7956986d3ed687b89`.
+The historical `207f7bc99c9113b237bee40ef1dc4f64f29bd3524279b6637da31032a2305ae5`
+remains the separately pinned training, bank and A39 provenance. The current
+qualification found full normalized 3–6 piece WDL/DTZ material coverage and the
+same two fixed public rule-50 witnesses. It establishes current availability,
+not unchanged tablebase bytes, historical equivalence or the cause of the mismatch.
+
+T2 changes only this availability pin, its exact qualification joins, diagnostic
+hash messages, and a fresh v2 namespace for the first K001 GPU owner and reader.
+Only that exact failed startup is an **additional** past failure exception;
+existing T1 K0 recovery exceptions retain their strict previously published context.
+Every other or new NN, DEV or reader failure still stops the study. Both old and
+new K001 attempts count toward science and global costs. No partial score,
+fallback, further retry or additional training is authorized.
+
+The four accepted checkpoints, original seven 80-pair DEV edges, opening/history
+ordinals, seeds, search and serving settings, winner rule, HOLD health veto,
+fresh 400-pair confirmation rules, budgets and week-one deadline are unchanged.
+K001 versus A39 remains first. A DEV point is descriptive; no strength gain,
+external-engine success, optimal learning formula or completed project is claimed.
+
+Before any match, this explicit amendment must be independently reviewed and
+published on main with all five CI jobs passing. Admission also requires the
+independently reviewed coherent runtime/controller successor, a new Root selection,
+independent actual binding review and fresh resource/custody checks. Publication
+alone does not adopt a runtime or authorize a particular job.
+
+The [compact T2 evidence](evidence/2026-11-17-policy-anchor-d1-t2-current-tb-continuation.json)
+binds the preregistration, current qualification pair, failed owner and closure,
+source reviews, unchanged model deliveries, exact namespaces and cost limits.
