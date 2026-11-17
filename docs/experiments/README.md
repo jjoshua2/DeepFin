@@ -287,3 +287,5 @@ Current evidence correction and scale plan: [September 16 bootstrap audit](2026-
 - [BT4 run11 variable-batch scheduling opportunity](2026-09-27-bt4-batching-opportunity.md): fixed-wave tail, conditional rolling-call arithmetic, and 128-game A/B compatibility HOLD.
 
 - [2026-11-17 D2 matched short-horizon policy-anchor controls](2026-11-17-short-horizon-policy-anchor-controls.md) - Preregistered two new B32/512-update endpoints, six fresh-panel comparisons, finite caps; no training or efficacy result yet.
+
+- [2026-11-17 D2 metadata qualification recovery](2026-11-17-d2-metadata-qualification-recovery.md) - Closed startup failure and one prospectively bounded295/265-second software-only qualification recovery; models and six comparisons unchanged, no playing or strength result.

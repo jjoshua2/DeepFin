@@ -1,0 +1,58 @@
+{
+  "Root_direction": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-metadata-qualification-recovery-root-direction-v1/direction.json",
+    "sha256": "8c9c3636dcb41625155d323d79408cea97049abadf6a1de65839f08a96464e31"
+  },
+  "declaration": {
+    "kind": "FunctionDef",
+    "name": "runtime_guard",
+    "source_end_line": 360,
+    "source_line": 327,
+    "source_slice_including_its_final_newline_sha256": "db5aa9f551ecdf7562def51000071790d1b9c45e23fb59851d38dc76594223d4"
+  },
+  "exact_private_source_slice_bytes": true,
+  "execution_authorized": false,
+  "full_helper": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-pure-metadata-qualification-source-preparation-v7/run_checks.py",
+    "sha256": "d85ceac3b961df0eefc115d44094075d0bd6ba3eb16ab92d95793401c31fa567"
+  },
+  "helper_or_archive_functions_executed": false,
+  "independent_direction_review": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-metadata-qualification-recovery-independent-direction-review-v1/review.json",
+    "sha256": "b852e2140fcebfb0caa1f5cefd13b0bf8a086b55a7a6a92d9e3be6c47346f2b0"
+  },
+  "interpretation": "Exact inert source excerpt, not a standalone helper, test, admission or environment observation. Its globals/dependencies and exact fixed host paths belong to the full pinned private helper. Raw/stamp retain their original default sealed-metadata policy; only the exact selected ordinary config passes readonly=False. No AST-dump fingerprint is used; source-slice byte identity is primary.",
+  "private_source_excerpt": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-pure-metadata-qualification-source-preparation-v7/runtime_guard.selected.py.txt",
+    "sha256": "db5aa9f551ecdf7562def51000071790d1b9c45e23fb59851d38dc76594223d4"
+  },
+  "private_source_manifest": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-pure-metadata-qualification-source-preparation-v7/manifest.json",
+    "sha256": "7d7ae3169961d4270a005fe03ac9705b700b697f65ace98fa3f5233e0a43f57d"
+  },
+  "private_source_review": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-pure-metadata-qualification-independent-source-review-v7/review.json",
+    "sha256": "77eda65f25d9d31a5c1042faf98ba40da2d4e9a85aafc459c69dbf3555e34387"
+  },
+  "pth_or_environment_accessed_by_author": false,
+  "public_path_rendering": "Provenance artifact paths use~/display-only with originalcanonical hashes; source archive itself preserves actualcode bytes including requiredpinnedhostpath literals.",
+  "schema": "D2_METADATA_QUALIFICATION_RECOVERY_EXACT_RUNTIME_GUARD_SOURCE_PROVENANCE_V1",
+  "source_archive_sha256": "db5aa9f551ecdf7562def51000071790d1b9c45e23fb59851d38dc76594223d4",
+  "status": "EXACT_REVIEWED_Q7_RUNTIME_GUARD_SOURCE_EXCERPT_NOT_EXECUTED",
+  "unchanged_supporting_declarations": [
+    {
+      "name": "raw",
+      "source_bytes_sha256": "dc1e5358e1c7c9eb1f53a7e7b71ade535fbc670b0e42b441ddf4e58ca9234d72",
+      "source_end_line": 186,
+      "source_line": 175,
+      "unchanged_from_Q6": true
+    },
+    {
+      "name": "stamp",
+      "source_bytes_sha256": "15751253a6932d10744abc762163e53f20a44b86cab32a714727eed3b135d6c7",
+      "source_end_line": 67,
+      "source_line": 66,
+      "unchanged_from_Q6": true
+    }
+  ]
+}
