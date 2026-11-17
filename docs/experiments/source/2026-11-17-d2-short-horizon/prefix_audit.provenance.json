@@ -1,0 +1,235 @@
+{
+  "actual_observer_source_review": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-short-horizon-learner-proof-independent-source-review-v2/review.json",
+    "sha256": "b5e32d81c4c1b0d6fa5be1426fb51a3d521794184090ec875e6fe77b2e26a825"
+  },
+  "coverage": "Only exact selected stdlib declarations/constants/imports. Excludes live model/save/metadataauthority/runtime/native/owner qualification and main. Fictional CI fixtures cannot establish real bank/model/draw identity.",
+  "declarations": [
+    {
+      "AST_sha256": "092cb77ae0770f1627b29bf41b2732722fbcc3a0e1d77a79674801800a2721d1",
+      "declaration_sha256": "ada1d9e0a360cda0fd1c8757d297aa74a4fc8d7193a69d3c28b43afc6950e9f9",
+      "intended_observer_portable_AST_sha256": "bd9ba0b9868ab3d0ff50dd412da040523d89d68440197c8b48e886efc22b8fad",
+      "kind": "Import",
+      "name": "import hashlib",
+      "portable_AST_sha256": "bd9ba0b9868ab3d0ff50dd412da040523d89d68440197c8b48e886efc22b8fad",
+      "source_end_line": 10,
+      "source_line": 10
+    },
+    {
+      "AST_sha256": "211ee42757705c7e350e70e36b762987a737f5e9c268f2a343e2dbfcb8fbea75",
+      "declaration_sha256": "ff3e4d4dcf7250cae8d622d77c9a6d69aefcf4ab04ef9920218fafe93c0f1991",
+      "intended_observer_portable_AST_sha256": "94fea760d7331ea7e7fadc8943189e793ee4ccc2765b42400c083d4dd35b58af",
+      "kind": "Import",
+      "name": "import json",
+      "portable_AST_sha256": "94fea760d7331ea7e7fadc8943189e793ee4ccc2765b42400c083d4dd35b58af",
+      "source_end_line": 11,
+      "source_line": 11
+    },
+    {
+      "AST_sha256": "f329650e2c61a07a1bab85b32296a6d93760e313e108904819fa27d09cf3954d",
+      "declaration_sha256": "b67c9ddef3e0c3715a3708ecfa296cc461a164bde94c8ba3fd112789b5bed926",
+      "intended_observer_portable_AST_sha256": "40af76ff51e597a3f098e6fa249389c76b561d22eaf64b6fb056efa61fca8589",
+      "kind": "Import",
+      "name": "import math",
+      "portable_AST_sha256": "40af76ff51e597a3f098e6fa249389c76b561d22eaf64b6fb056efa61fca8589",
+      "source_end_line": 12,
+      "source_line": 12
+    },
+    {
+      "AST_sha256": "ac3a74d6dd975a8e8fe4b7f85fce794793a9355595b850e3926964913948d386",
+      "declaration_sha256": "de2abade832c8e350a1bdc98cfcdb1e202ac4749c5fc51a4a970d41736b6df5c",
+      "intended_observer_portable_AST_sha256": "e77806d077d98039143ac47a07d333665fd9b5f4bc7299de70c219fd1d1a617a",
+      "kind": "Import",
+      "name": "import os",
+      "portable_AST_sha256": "e77806d077d98039143ac47a07d333665fd9b5f4bc7299de70c219fd1d1a617a",
+      "source_end_line": 13,
+      "source_line": 13
+    },
+    {
+      "AST_sha256": "59051b17634cdcb5a576ceb58fdc0a4e5652ed3b60d66667e92ddefd931abeca",
+      "declaration_sha256": "6d69f2ac09017b8a49d050ab336e953b8fa02ae08c24396916ea7ea42418e627",
+      "intended_observer_portable_AST_sha256": "f8d22db869cf426dd8d1702b8fee04d6227399b58aa6153c871fab4dccfcab3e",
+      "kind": "ImportFrom",
+      "name": "from pathlib import Path",
+      "portable_AST_sha256": "f8d22db869cf426dd8d1702b8fee04d6227399b58aa6153c871fab4dccfcab3e",
+      "source_end_line": 14,
+      "source_line": 14
+    },
+    {
+      "AST_sha256": "6b81b4ca19c88ec507aad63f1f49291209368a9490113655a68e994c91d092c1",
+      "declaration_sha256": "66ec018201fb03f10df19f1a56a1264beb2654e8f07c2f163f023ebd53a751e4",
+      "intended_observer_portable_AST_sha256": "89beddd08f8734d91f14dc682cd2fc2097ec04c2cb5ba524661d0af1bf676507",
+      "kind": "Import",
+      "name": "import re",
+      "portable_AST_sha256": "89beddd08f8734d91f14dc682cd2fc2097ec04c2cb5ba524661d0af1bf676507",
+      "source_end_line": 15,
+      "source_line": 15
+    },
+    {
+      "AST_sha256": "c22b5a111acc3bea9e5136e41e207f1f95083e90d861516ce34d682526721c86",
+      "declaration_sha256": "f9e42ccd54cc9de18179025fa0bf90642c41392da38ee9faa647e9e85573f63e",
+      "intended_observer_portable_AST_sha256": "0e731a48665ab38900112652aca1c103fed19f53d4f35b826cc774772084b585",
+      "kind": "Import",
+      "name": "import stat",
+      "portable_AST_sha256": "0e731a48665ab38900112652aca1c103fed19f53d4f35b826cc774772084b585",
+      "source_end_line": 19,
+      "source_line": 19
+    },
+    {
+      "AST_sha256": "9d1cef0f022e71065fae5824e75434211b622baf1f8984e2b328b1e05fee6890",
+      "declaration_sha256": "2bfa21d2bfdfe0dbb4414efbc4caf6a078975d195cd68e019959baee96016c81",
+      "intended_observer_portable_AST_sha256": "c495323e144f522db3103f0105ce362fdcbef9d3c3a88b103eb68175667a0186",
+      "kind": "Assign",
+      "name": "READ_CAP, COMPACT, CHECKPOINT_CAP, JOURNAL_CAP = 4<<30, 4<<20, 8<<30, 64<<20",
+      "portable_AST_sha256": "c495323e144f522db3103f0105ce362fdcbef9d3c3a88b103eb68175667a0186",
+      "source_end_line": 44,
+      "source_line": 44
+    },
+    {
+      "AST_sha256": "5b08e19b799ebc4972fc8a9187dafc720c219c5017e55155337a95de58c1c621",
+      "declaration_sha256": "38ad9d5b50be85439928ad1d2e69734961c31e0ac4840c0eff7f80003b4cebb5",
+      "intended_observer_portable_AST_sha256": "43a008e9c24071764d25b878ece7dd6bb0b0b9072319bd3fc3d5d2a961eea97a",
+      "kind": "FunctionDef",
+      "name": "require",
+      "portable_AST_sha256": "43a008e9c24071764d25b878ece7dd6bb0b0b9072319bd3fc3d5d2a961eea97a",
+      "source_end_line": 50,
+      "source_line": 48
+    },
+    {
+      "AST_sha256": "66042ad653fbba7388be1dbb059da47b9492c5880acc7bbe4cd6588fa268a6f1",
+      "declaration_sha256": "f264e3bfba411f15499500a055a3852511603fb7ededc553aff88c5124204e52",
+      "intended_observer_portable_AST_sha256": "19dbfdb142951b45b0fb5fe5a0e9a7e7a3beb2cb433f463a44cef96d5ad5adaa",
+      "kind": "FunctionDef",
+      "name": "sha",
+      "portable_AST_sha256": "19dbfdb142951b45b0fb5fe5a0e9a7e7a3beb2cb433f463a44cef96d5ad5adaa",
+      "source_end_line": 55,
+      "source_line": 53
+    },
+    {
+      "AST_sha256": "3239d7a202bf6fd0b9cb87e9cfd6b6d87d7adeb59528408a033229515158d4d0",
+      "declaration_sha256": "c6c40c6a5e8f6e4cc7320d71bff90e0c5b307bc17ad87c5e15a2f6bdbf0dd72e",
+      "intended_observer_portable_AST_sha256": "6a7683999c73a87db21eacf09fd98a2ec78f837b7f56289d81bae82234949aac",
+      "kind": "FunctionDef",
+      "name": "canonical",
+      "portable_AST_sha256": "6a7683999c73a87db21eacf09fd98a2ec78f837b7f56289d81bae82234949aac",
+      "source_end_line": 63,
+      "source_line": 62
+    },
+    {
+      "AST_sha256": "1f286b85e66d777f3db1190d547214efc2bb839c77ae1ee986e6642f22148c02",
+      "declaration_sha256": "f11384316c856cfccf12fd3519842e97c0df1460ae8d5d14754d22eca7fe5dca",
+      "intended_observer_portable_AST_sha256": "5423e969d623d48e4c398c5ea6c4ad00c05c1e4972fbc687f2bed83814926d50",
+      "kind": "FunctionDef",
+      "name": "digest",
+      "portable_AST_sha256": "5423e969d623d48e4c398c5ea6c4ad00c05c1e4972fbc687f2bed83814926d50",
+      "source_end_line": 67,
+      "source_line": 66
+    },
+    {
+      "AST_sha256": "036d5fb026b69e3983b9683d68f473c32f6dad6ddf83c14fbfd3baec6809fa86",
+      "declaration_sha256": "d5c492498437aee7dc33e21832e2a8fe72df798a527858969ab2940abf68f5cd",
+      "intended_observer_portable_AST_sha256": "c85c5a2ae2f6f5d26407ee060732f0262f1b0eef14fdbbc2d2c6db8fc912c3aa",
+      "kind": "FunctionDef",
+      "name": "stamp",
+      "portable_AST_sha256": "c85c5a2ae2f6f5d26407ee060732f0262f1b0eef14fdbbc2d2c6db8fc912c3aa",
+      "source_end_line": 71,
+      "source_line": 70
+    },
+    {
+      "AST_sha256": "68ba9aaaea0f69ed80fc7a008fbaa5892158740b36ac5c042cafbabe3e297693",
+      "declaration_sha256": "bf3791b6ec587785a6a4452138d740a09ee3b82e334e827e337b45dfe15f3889",
+      "intended_observer_portable_AST_sha256": "cf7d3215c0cad75a63d0f05038d0b27d946f48af2adc59d6cbc4e67e647c5794",
+      "kind": "FunctionDef",
+      "name": "external",
+      "portable_AST_sha256": "cf7d3215c0cad75a63d0f05038d0b27d946f48af2adc59d6cbc4e67e647c5794",
+      "source_end_line": 78,
+      "source_line": 74
+    },
+    {
+      "AST_sha256": "00772d523037ffb06cb799f7cc42c393fd022e38b0e4367b7c70d17737d04762",
+      "declaration_sha256": "3d90fd215eb8f782f664151eff79f7f615bfa8165bdecaae09c8b32860b48b90",
+      "intended_observer_portable_AST_sha256": "7c461a99c738981095fb7031264fefb3cfa1623061f0017fd792cf75f858c039",
+      "kind": "FunctionDef",
+      "name": "pairs",
+      "portable_AST_sha256": "7c461a99c738981095fb7031264fefb3cfa1623061f0017fd792cf75f858c039",
+      "source_end_line": 173,
+      "source_line": 168
+    },
+    {
+      "AST_sha256": "745d8c341d91e6c0963575c0f2920b78833fc8bab8457827cde1ac335fb7385b",
+      "declaration_sha256": "c5cf7540a7149d5505ad27b3d1ff03c34c684b7dcd8a71c64faf4264946d1177",
+      "intended_observer_portable_AST_sha256": "5d043722de523028642c0898befd2a0215843a46eff6baab798cae61da04e6a5",
+      "kind": "FunctionDef",
+      "name": "finite",
+      "portable_AST_sha256": "5d043722de523028642c0898befd2a0215843a46eff6baab798cae61da04e6a5",
+      "source_end_line": 179,
+      "source_line": 176
+    },
+    {
+      "AST_sha256": "e43db6bae78f036fc294deddd70710723456af2fa3af4dff84c9f5e3889cebbf",
+      "declaration_sha256": "9b31884ad9dff2d6eb607da86b5bb0a4be945f73a7c5e348d8a243954c707b02",
+      "intended_observer_portable_AST_sha256": "130e12747ebe53d6ecb0db16afdb937451ffc1cb7a8b6870fbe2ce46bdeb4cf1",
+      "kind": "FunctionDef",
+      "name": "bad_constant",
+      "portable_AST_sha256": "130e12747ebe53d6ecb0db16afdb937451ffc1cb7a8b6870fbe2ce46bdeb4cf1",
+      "source_end_line": 183,
+      "source_line": 182
+    },
+    {
+      "AST_sha256": "ffda3378b37c4bc612fecb1f9f3c40a586a44a36ee01d83052bd12f36f20e49d",
+      "declaration_sha256": "b5e3f570fec30772f82988c416472140d84813bd928ca11304bdb260afe5379d",
+      "intended_observer_portable_AST_sha256": "f75739d87368fcdbfa70ae0e156ad62930e5b5e152a5218cb7aefa2a75daf9e4",
+      "kind": "FunctionDef",
+      "name": "journal_stream",
+      "portable_AST_sha256": "f75739d87368fcdbfa70ae0e156ad62930e5b5e152a5218cb7aefa2a75daf9e4",
+      "source_end_line": 476,
+      "source_line": 426
+    },
+    {
+      "AST_sha256": "4ca9bcf9b650effeb4769e71244f68cacf70c0412df1bd3ec34cde3e8fbe676b",
+      "declaration_sha256": "ea6ad607126b8d7523e5c5f4f1fe2c4bf46fa7c27720847a22018ccffd667539",
+      "intended_observer_portable_AST_sha256": "616b1676af411d274deaab0379f50ff7b6e890180435863a9688291c45a38b1f",
+      "kind": "FunctionDef",
+      "name": "compare_prefix",
+      "portable_AST_sha256": "616b1676af411d274deaab0379f50ff7b6e890180435863a9688291c45a38b1f",
+      "source_end_line": 499,
+      "source_line": 479
+    },
+    {
+      "AST_sha256": "5a484ae8900391f762ed0307215529d9832601024526645809e5bf9889e3f0b7",
+      "declaration_sha256": "3f9c36a161b56a9b4f440bee2fc0c7f789522cb82ffa5e3103eb7aa35a3f5ac4",
+      "intended_observer_portable_AST_sha256": "e33e1660dcda1fff2526317a20304e3e8a64a961cda9753a7d9780d4579c9ebc",
+      "kind": "FunctionDef",
+      "name": "finish_prefix",
+      "portable_AST_sha256": "e33e1660dcda1fff2526317a20304e3e8a64a961cda9753a7d9780d4579c9ebc",
+      "source_end_line": 512,
+      "source_line": 502
+    }
+  ],
+  "execution_authorized": false,
+  "full_helper": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-short-horizon-learner-proof-source-preparation-v2/observe.py",
+    "sha256": "d20c6d918b40740cf8bb9d24c0fe3bd29ae7907e5b2029f957934b074893351f"
+  },
+  "full_helper_manifest": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-short-horizon-learner-proof-source-preparation-v2/manifest.json",
+    "sha256": "e1b7f22e7abb170d8aefa927665fe888a77bc471a66f3d8b77aaa64bf67315a3"
+  },
+  "portable_AST_fingerprint": {
+    "cross_parser_source_analysis": {
+      "no_archived_declarations_executed": true,
+      "portable_all20_equal": true,
+      "same_intended_source_archive_bytes": true,
+      "versions": [
+        "3.10.12",
+        "3.13.15"
+      ]
+    },
+    "encoding": "SHA256 UTF8 json.dumps(sort_keys=True,separators=(comma,colon),allow_nan=False) of recursive AST node/ordered iter_fields/list/scalar projection. bytes are tagged scalar_type=bytes plus hex.",
+    "historical_AST_sha256": "Existing AST_sha256 values remain historical CPython3.10 ast.dump(include_attributes=False) fingerprints; not a cross-parser executable guard.",
+    "only_omitted_field": "type_params ONLY when its value is an empty list on FunctionDef/AsyncFunctionDef/ClassDef. Nonempty parameters and all other fields are retained.",
+    "schema": "AST_ITER_FIELDS_PORTABLE_EMPTY_TYPE_PARAMS_V1"
+  },
+  "schema": "D2_ACTUAL_PREFIX_DECLARATION_SUBSET_PROVENANCE_V2",
+  "snapshot_sha256": "c5dd89de5587639d03367dcf1a3d6de9b8f5211b47aa6d8d1a5d39fcf273379d"
+}
