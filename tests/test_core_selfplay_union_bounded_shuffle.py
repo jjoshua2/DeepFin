@@ -189,6 +189,24 @@ def test_bounded_model_metadata_consumer_reconstructs_order_without_raw_payload_
     assert result["actual_views"] == 5
     assert result["selection_audit"]["payload_reads"] == 0
     assert result["own_live_certificate"]["bounded_state_sha256"] == core.digest(full["quota_state"])
+    assert type(full["metrics"]["transient_cuda_retry_batches"]) is float
+    assert full["metrics"]["transient_cuda_retry_batches"] == 0.0
+    # Rehashed caller-trusted metadata cannot change the actual metric schema
+    # or turn replacement retries into a clean bounded delivery.
+    path = Path(parent["boundary"]["path"])
+    for invalid in (False, 0, -1.0, 1.0):
+        changed = copy.deepcopy(full)
+        changed["metrics"]["transient_cuda_retry_batches"] = invalid
+        path.parent.chmod(0o755)
+        try:
+            path.chmod(0o644)
+            path.unlink()
+            parent["boundary"] = frozen(path, changed)
+        finally:
+            path.chmod(0o444)
+            path.parent.chmod(0o555)
+        with pytest.raises(ValueError, match="bounded retry metric must be actual finite float zero"):
+            entry.validate_closed_model_delivery(cref, parent)
 
 
 def test_passive_bounded_own_live_observer_does_not_change_model_or_rng(tmp_path: Path) -> None:

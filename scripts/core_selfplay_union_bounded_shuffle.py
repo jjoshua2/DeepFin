@@ -445,8 +445,11 @@ def validate_closed_segment(contract_ref: dict[str, str], binding: dict[str, Any
                  "closed bounded augmentation RNG differs from live boundary")
     for name in ("drawn_rows", "applied_views", "step"):
         core.require(type(closed[name]) is int, "noninteger bounded closed counter")
-    for name in ("train_samples_seen", "train_steps_done", "transient_cuda_retry_batches"):
+    for name in ("train_samples_seen", "train_steps_done"):
         core.require(type(closed["metrics"][name]) is int, "noninteger bounded metric counter")
+    core.require(type(closed["metrics"]["transient_cuda_retry_batches"]) is float
+                 and core.number(closed["metrics"]["transient_cuda_retry_batches"], "bounded retry metric") == 0.0,
+                 "bounded retry metric must be actual finite float zero")
     views = closed["quota_state"]["emitted"]
     expected_views = views - rows_after_batches(c["population"]["rows"], c["batch_size"], expected_start)
     core.require(closed["drawn_rows"] == closed["applied_views"] == closed["metrics"]["train_samples_seen"] == expected_views
