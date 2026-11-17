@@ -181,7 +181,7 @@ def test_short_delivery_reaches_real_retained_prefix_and_game_coverage(tmp_path:
 ])
 def test_rehashed_short_family_refusals(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str, message: str) -> None:
     binding, donor = short_graph(tmp_path, monkeypatch, "S1", fault)
-    with pytest.raises(RuntimeError, match=message):
+    with pytest.raises(ValueError, match=message):
         d2.model_delivery(ruler.Metadata(2 << 20, 64 << 20), binding, "S1", donor)
 
 
@@ -223,7 +223,7 @@ def test_fresh_slice_refuses_relabelled_or_incomplete_witnesses(tmp_path: Path, 
         role["source_role"] = "SCREEN_C_B"
     else:
         projection["study_uuid"] = "8045699e-4088-4a41-ae9c-4013d4a55469"
-    with pytest.raises(RuntimeError, match=message):
+    with pytest.raises(ValueError, match=message):
         d2.slice_projection(projection, role, consumed)
 
 
@@ -307,7 +307,7 @@ def test_closed_role_authority_reaches_source_owner_and_known_exposure(tmp_path:
                                                ("external", "reviewed known exposure"), ("integer_history", "seven actual public")])
 def test_closed_role_authority_refusals(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str, message: str) -> None:
     binding = role_authority_graph(tmp_path, monkeypatch, fault)
-    with pytest.raises(RuntimeError, match=message):
+    with pytest.raises(ValueError, match=message):
         d2.role_authority(ruler.Metadata(2 << 20, 32 << 20), binding)
 
 
