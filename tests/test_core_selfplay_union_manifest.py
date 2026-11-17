@@ -57,7 +57,9 @@ def legacy(tmp_path: Path, *, generation: int = 8, collection: int = 1, game_id:
                 "is_selfplay", "has_is_selfplay", "has_game_id", "has_ply_index"):
         arrays[key] = np.ones(rows, dtype=np.uint8)
     shard_path = root / "shard.zarr"
-    save_local_shard_arrays(shard_path, arrs=arrays, meta={"games": 1, "positions": rows, "synthetic_collection": collection})
+    save_local_shard_arrays(shard_path, arrs=arrays,
+        meta={"games": 1, "positions": rows, "username": "synthetic_collection_" + str(collection),
+              "provenance_verified": False})
     core.seal(shard_path)
     files = [{"path": path.relative_to(shard_path).as_posix(), "bytes": path.stat().st_size,
               "sha256": core.file_sha(path)} for path in sorted(shard_path.rglob("*")) if path.is_file()]
