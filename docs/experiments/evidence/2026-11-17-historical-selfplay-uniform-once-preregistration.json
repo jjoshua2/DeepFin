@@ -1,0 +1,238 @@
+{
+  "bootstrap": {
+    "architecture": {
+      "_schema_version": 20,
+      "arc_attention_bias": "none",
+      "aux_policy_head_dim": 128,
+      "categorical_head_coupled": true,
+      "dynamic_relation_count": 5,
+      "embed_dim": 512,
+      "embed_dim_by_layer": null,
+      "enable_policy_sf_head": true,
+      "ffn_mult": 1.5,
+      "ffn_mult_by_layer": [
+        1.5,
+        1.5,
+        1.5,
+        1.5,
+        1.5,
+        1.555556,
+        1.65,
+        1.772222,
+        1.894444,
+        1.666667,
+        1.638889,
+        1.905556,
+        1.783333,
+        1.794444,
+        1.744444,
+        1.5
+      ],
+      "history_rep_fix": true,
+      "input_extra_features": "v2_threats",
+      "input_global_embedding": "none",
+      "input_global_embedding_channels": 0,
+      "input_history_encoding": "lc0_root_legacy_meta",
+      "input_pos_encoding": "arc_adapter",
+      "input_square_embedding": "none",
+      "kind": "transformer",
+      "num_heads": 16,
+      "num_layers": 16,
+      "phase_output_adapter": false,
+      "phase_output_adapter_dim": 64,
+      "phase_piece_thresholds": [
+        13,
+        22
+      ],
+      "phase_smolgen": false,
+      "policy_dynamic_relations": false,
+      "policy_embedding_mode": "linear",
+      "policy_encoding": "lc0_1858",
+      "qkv_projection": "split",
+      "smolgen_bias_norm": "center_rms",
+      "smolgen_bias_scale": "layer_head",
+      "smolgen_gen_sz": 256,
+      "smolgen_hidden_channels": 32,
+      "smolgen_hidden_sz": 256,
+      "smolgen_mode": "per_layer",
+      "smolgen_pooling": "flatten",
+      "smolgen_relation_basis": true,
+      "smolgen_relation_coeff_norm": "none",
+      "smolgen_relation_norm": "none",
+      "smolgen_relation_scale": "none",
+      "use_deepnorm": true,
+      "use_dynamic_relations": false,
+      "use_gradient_checkpointing": false,
+      "use_nla": false,
+      "use_qk_rmsnorm": false,
+      "use_smolgen": true
+    },
+    "donor_recorded_step": 680276,
+    "historical_data_exposure": "intentional reuse disclosed; no semantic or worldwide unseen-data claim",
+    "kind": "fresh model-only A39 independent student, fresh optimizer/scheduler/scaler/RNG; never continuation of S0/S1/L0/L1",
+    "model": {
+      "path": "/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/baseline/epoch2.pt",
+      "sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0"
+    },
+    "student_start_step": 0
+  },
+  "budget_basis": {
+    "accepted_S0_training_seconds_for_512_updates": 172.994,
+    "approximate_12657_updates_training_only_seconds": 4277,
+    "approximate_4096_updates_training_only_seconds": 1384,
+    "interpretation": "prior run extrapolation, not a new benchmark or guarantee; provision margin for larger bank loading, durable ledger, custody, checkpointing and changed sampler; hard caps still technical-stop if insufficient",
+    "same_reference_S0_contract": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-short-horizon-learner-proof-source-preparation-v2/templates/S0.learner.contract.json",
+      "sha256": "991010a19017cc81800c5bfeece31d2c09c777c84669c7495bf592bb159cf009"
+    }
+  },
+  "budgets": {
+    "CPU_preparation_validation_outer_seconds": 300,
+    "CPU_result_reader_outer_seconds": 120,
+    "all_actual_costs_including_failures_charged": true,
+    "concurrency": "one local numerical owner; preserve frozen runtimes and neighbors",
+    "evaluation_GPU_owner_outer_seconds": 3600,
+    "evaluation_inner_seconds": 3570,
+    "existing_global_GPU_ceiling_seconds": 172800,
+    "overall_training_GPU_owner_wall_seconds": 8400,
+    "paid_compute": false,
+    "per_closed_segment_GPU_owner_outer_seconds": 2100,
+    "per_closed_segment_inner_seconds": 2070,
+    "total_local_new_GPU_authority_ceiling_seconds": 12000,
+    "week_cutoff_UTC": "2026-11-19T16:09:20Z"
+  },
+  "evaluation": {
+    "baseline": "retained A39",
+    "book": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/CONFIRM_C_A39.epd",
+      "sha256": "7e99de3a1033f1c6d3e3ef89966bda221c3f4f858a7358bc8ee6baa55110898e"
+    },
+    "candidate": "only accepted final U1",
+    "early_efficacy_looks_or_extensions": false,
+    "fixed_horizon": true,
+    "metric": "candidate mean game score, pair scores averaged; sample variance divisor399",
+    "output_scope": "donor-relative development evidence only; A39 retained absent separately justified adoption; no Rofchade/SF/Lc0 win claim",
+    "panel": "existing full CONFIRM_C_A39 400-pair panel, explicitly reused as DEVELOPMENT panel; consumed in prior S0 confirmation, never called fresh",
+    "planned_games": 800,
+    "planned_pairs": 400,
+    "profile": "same prior S0/A39 64sim Gumbel .75/cscale.1/topk16/policytemp1/gameT.1; full16 history;450additionalplies;rule50 strictTB3-6; eagerBF16/F32;rolling32/eval1024/slots2/noPad;CPU2",
+    "repeated_panel_limit": "panel reuse and prior recipe development prevent fresh confirmatory or multiplicity-controlled evidence claim; no pooling with historical S0 or160game screens",
+    "seed": 2026111778,
+    "success_rule": "available descriptive paired normal95 lower>0.5; zero-variance CI unavailable cannot pass; otherwise inconclusive/no donor-advantage selection",
+    "technical_validity": "all800 games/400 pairs complete legal without crashes; exact candidate/baseline/source/profile/TB/role/colour reconciliation",
+    "unit": "reciprocal-colour opening pair"
+  },
+  "execution_authorized": false,
+  "independent_method_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/historical-selfplay-uniform-once-U1-independent-method-review-v2/review.json",
+    "sha256": "a5f826e7630ca816986f81802edcaafa4568cce28a3a80d11849f00d82900c6b"
+  },
+  "interpretation_limits": [
+    "larger historical union, row dose and sampling all differ from512/4096 replacement regimes; does not isolate causal sampler effect",
+    "collector actors/settings vary; off-policy historical-data reuse disclosed",
+    "one candidate/one seed; no optimum RL formula claim",
+    "existing S1 KL endpoint retained for possible separate >=400game comparison; no global KL conclusion",
+    "later KL or diff-focus/priority intervention one at a time, cap-safe; no0.1search-WDL-blend axis selected"
+  ],
+  "inventory": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/historical-selfplay-saved-manifest-union-inventory-v1/compact-membership-evidence.json",
+    "sha256": "eb04cd032d85f6f9e78249ec7c7d48e03a3cb1ca3480de99d44d9e6cbed0f935"
+  },
+  "inventory_report": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/historical-selfplay-saved-manifest-union-inventory-v1/report.md",
+    "sha256": "37e88e9dca0a6416e9f7b6d3a7b1890505d85bc755c4cdce539afba049cca741"
+  },
+  "long_term_goal_achieved": false,
+  "method": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/historical-selfplay-uniform-once-U1-root-method-draft-v2/design.json",
+    "sha256": "4b392e80b39da5046d3eba16acdb24e3513a595d881f5b603b08990bdfc57b6f"
+  },
+  "new_checkpoint_or_playing_result": false,
+  "recorded_population": {
+    "HOLD_excluded": {
+      "games": 64,
+      "rows": 5943
+    },
+    "exhaustive_archive_inventory": false,
+    "games": 4032,
+    "high": {
+      "games": 2048,
+      "rows": 203794
+    },
+    "low_ancestry": {
+      "games": 2048,
+      "rows": 208478
+    },
+    "natural_board_opening_deduplication": false,
+    "recent_TRAIN": {
+      "games": 192,
+      "rows": 17568
+    },
+    "recent_historical_recorded_source_SHA_overlap": 0,
+    "shared_G1_subtracted_once": {
+      "games": 256,
+      "rows": 24827
+    },
+    "stored_rows": 405013
+  },
+  "source_runtime_data_admitted": false,
+  "status": "U1_PROSPECTIVE_METHOD_ACCEPTED_NO_EXECUTION_OR_RESULT",
+  "stop_recovery": {
+    "any_nonfinite_forward_optimizer_or_quota_fault": "stop, preserve costs/ledger/taint/partial results; no retry/discard/rewind or efficacy endpoint",
+    "incompatible_target_or_exposed_protected_source": "refuse before training; correct factual manifest/source in independently reviewed successor, never silently drop/pad/relabel",
+    "prior_accepted_clean_segments": "only predefined closed continuation under exact same manifest/lineage and matching ledger+cursor; no older-checkpoint replay of tainted tail",
+    "resource_or_wall_failure": "technical stop, preserve all state and costs; no automatic budget extension or recovery run",
+    "stopped_THREE_5k": "remain stopped"
+  },
+  "study_uuid": "bacb5b59-1988-4e8b-942e-ad389df33c1c",
+  "training": {
+    "baseline_presentations_per_stored_row": 1,
+    "batch_size": 32,
+    "closed_segments_updates": [
+      4096,
+      4096,
+      4096,
+      369
+    ],
+    "cpu_affinity": [
+      20,
+      22
+    ],
+    "endpoint_selection": "only final exactly-once endpoint, no choosing intermediate checkpoint by playing outcome",
+    "expected_optimizer_updates": 12657,
+    "future_run_cap_original_plus_mirror": 2,
+    "last_batch_real_rows": 21,
+    "learning_rate": {
+      "first_period": 16384,
+      "floor": 3e-06,
+      "note": "same constant realized LR as S0; longer inert cosine period satisfies finite-horizon guard",
+      "peak": 3e-06,
+      "warmup_start": 3e-06,
+      "warmup_steps": 0
+    },
+    "max_rows": 405013,
+    "max_total_decoded_bytes": 34359738368,
+    "mirror_probability": 0.5,
+    "no_priority_diff_focus_skip_or_extra_pass": true,
+    "optimizer_and_loss": "same effective CORE_KWARGS as S0: NAdamW, no clipping, main policy1+outcomeWDL1, all auxiliaries0, SF/search WDL shares0, no compile/prefetch",
+    "order_seed": 2026111777,
+    "partial_tail_semantics": "new V4 real partial batch; whole final objective multiplied by actual_rows/32; one real optimizer/scheduler/weight-decay update; no padded-batch-equivalence claim",
+    "policy_anchor_coefficient": 0,
+    "quota": "durable external exclusive ledger for actual student lineage; reserve before mirror/forward; no rewind/retry/discard; stale sibling tail refuses checkpoint resume",
+    "reference_contract": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-short-horizon-learner-proof-source-preparation-v2/templates/S0.learner.contract.json",
+      "sha256": "991010a19017cc81800c5bfeece31d2c09c777c84669c7495bf592bb159cf009"
+    },
+    "runtime": {
+      "cuda_devices": 1,
+      "device": "cuda:0",
+      "numpy_version": "2.2.6",
+      "torch_threads": 2,
+      "torch_version": "2.14.0+cu130",
+      "use_amp": true
+    },
+    "sampler": "explicit standard uniform random permutation without replacement; independent order RNG, full permutation+cursor persisted; original/mirror one presentation",
+    "seed": 2026111776,
+    "thread_count": 2
+  }
+}
