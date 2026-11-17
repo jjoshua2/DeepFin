@@ -15,3 +15,33 @@ Select one additional independent GPU scope, outer3600/inner3570 seconds, and on
 The normal interval is an approximation. This is one checkpoint and seed after selection on a different panel; keep screen and confirmation observations separate. It establishes no optimum λ/recipe, value-head mechanism, HOLD health/noninferiority, runtime adoption or strength against multicore Rofchade, Stockfish or Lc0. Those claims need appropriately designed separate measurements, including an external matched-time comparison. No universal1000-game or both-mode requirement is imposed here. The broader strength goal remains open.
 
 [Compact preregistration evidence](evidence/2026-11-17-s0-a39-fresh-confirmation-preregistration.json) pins the exact method, independent review, source protocol and accepted screen decision. Per-phase executable authority and current exposure receipts are separate operational artifacts.
+
+
+## November 17 completed fresh confirmation: NONCONFIRM / INCONCLUSIVE
+
+The fixed 400-pair / 800-game endpoint completed with full 16-ply histories,
+reciprocal colors, no illegal/crashed games or incomplete pairs, and all 16 reader
+controls passing. The sole final read produced **235 wins, 310 draws and 255
+losses** for S0: **48.75%**, with paired-normal 95% interval
+**46.0267–51.4733%**. Pair-outcome counts are `[44,89,146,85,36]`; sample variance
+is 0.07722431077694236 with divisor 399.
+
+The preregistered lower-bound-above-50% criterion was not met. The exact frozen
+verdict command (`feedfa95cdae3842104a2e88f39318fe4cd1fa5bd9c8207b9bf14243ba4ecc48`)
+records **NONCONFIRM_INCONCLUSIVE**. This independent panel did not confirm the
+screen's internal donor advantage. It establishes neither harm nor equivalence;
+retain A39 and S0. Do not pool this result with the screen, retry, extend the
+sample, open HOLD, adopt a model, or claim an external-engine or broader-goal win.
+
+The GPU technical endpoint and complete CPU reader were each closed and
+independently accepted. Actual owner-wall charges are 2034.7169391750358 GPU
+seconds and 35.80894034507219 CPU seconds, separate from the frozen original D2
+screen account. Preregistration, positive screening results, prior failures and
+all earlier costs remain preserved. [Compact completed evidence](evidence/2026-11-17-s0-a39-fresh-confirmation-readout.json)
+contains the exact Root verdict body, summary metrics and accepted endpoint refs.
+
+A separate [stored-row journal census](2026-11-17-stored-row-sampler-reuse-audit.md)
+measures historical replacement reuse. It does not establish a cause for this
+confirmation result or clear the future-training hold. Exact-once sampler code is
+software preparation only; no new training, inference or model adoption is
+selected by this readout.
