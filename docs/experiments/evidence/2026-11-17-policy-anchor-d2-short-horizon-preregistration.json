@@ -1,0 +1,285 @@
+{
+  "HOLD_or_final_opened": false,
+  "Root_design": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-short-horizon-root-design-v1/design.json",
+    "sha256": "4f61d06dd3d08eac7d2091347d682fa3433b2559b236c913d5a4bb48bfe94749"
+  },
+  "Root_design_independent": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-short-horizon-root-design-independent-review-v1/review.json",
+    "sha256": "e5df5c58636390b58fc3ea10f7c6bbd31c903a866d6603ebf28313d7178d40c8"
+  },
+  "arenas_completed": 0,
+  "goal_achieved": false,
+  "new_models_trained": 0,
+  "new_role_panels_qualified": 0,
+  "numerical_jobs_admitted": 0,
+  "runtime_adoption": false,
+  "schema": "D2_SHORT_HORIZON_SELECTED_METHOD_PREREGISTRATION_EVIDENCE_V1",
+  "scope": "Public registration of methods only. External Root design is immutable; its historical Main-publication UNISSUED field is resolved separately by a genuine later publication receipt, never edited or treated as launch authority.",
+  "selected_methods": {
+    "Main_preregistration_publication": "UNISSUED_REQUIRED_BEFORE_ANY_D2_CLOCK",
+    "arms": {
+      "L0": {
+        "proof_limit": "saved_only_corrective_CPU",
+        "retained_D1": "K0"
+      },
+      "L1": {
+        "proof_limit": "complete_GPU",
+        "retained_D1": "K1"
+      },
+      "S0": {
+        "lambda": 0,
+        "new": true
+      },
+      "S1": {
+        "lambda": 1,
+        "new": true
+      }
+    },
+    "costs": {
+      "CPU_aggregate": 2400,
+      "CPU_qualification_allocation": "CUMULATIVE_LOCAL300_AFTER_BOTH_SHORT_DELIVERIES_AND_ROLE_ACCEPTANCE_BEFORE_DEV_NO_OTHER_LOCAL_NUMERICAL_TESTS_OR_EXTENSION",
+      "CPU_qualification_inner": 270,
+      "CPU_qualification_max_ceiling": 300,
+      "CPU_readers": [
+        300,
+        300,
+        300,
+        300,
+        300,
+        300
+      ],
+      "CPU_readers_inner": 270,
+      "CPU_role": 300,
+      "CPU_role_inner": 270,
+      "GPU_aggregate": 12600,
+      "GPU_learners": [
+        3600,
+        3600
+      ],
+      "GPU_learners_inner": 3570,
+      "GPU_screens": [
+        900,
+        900,
+        900,
+        900,
+        900,
+        900
+      ],
+      "GPU_screens_inner": 870,
+      "confirmation_budget_authorized": false,
+      "cutoff": "2026-11-19T16:09:20Z",
+      "cutoff_utc": "2026-11-19T16:09:20+00:00",
+      "engineering_CPU_already_charged": 298.7533434762154,
+      "engineering_CPU_total_ceiling": 600,
+      "engineering_CPU_with_Q300": 598.7533434762154,
+      "remaining_week_GPU_reported": 84939.51097393385
+    },
+    "decision": {
+      "CI": "descriptive_paired_normal95_sample_variance_n_minus_1_clamped",
+      "CI_is_eligibility_gate": false,
+      "all_six_before_any_selection": true,
+      "both_points_at_least": 0.55,
+      "command_freeze_deadline": "BEFORE_FIRST_D2_ARENA_OUTCOME_NOT_BEFORE_INITIAL_METHOD_REGISTRATION",
+      "comparators": [
+        "A39",
+        "own_long"
+      ],
+      "empty": "SCREEN_NONPASS_NO_ESCALATION",
+      "exact_decision_command": "UNISSUED",
+      "exact_tie": "lower_lambda",
+      "rank": "highest_short_vs_A39_point",
+      "zero_variance_CI": "UNAVAILABLE"
+    },
+    "design_id": "D2",
+    "edges": [
+      "S0_vs_L0",
+      "S1_vs_L1",
+      "S0_vs_A39",
+      "S1_vs_A39",
+      "L0_vs_A39",
+      "L1_vs_A39"
+    ],
+    "execution_authorized": false,
+    "failure_rule": "ANY_TECHNICAL_FAILURE_NO_AUTOMATIC_RETRY_OR_SURVIVOR_SELECTION",
+    "independent_method_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-short-horizon-preregistration-independent-method-review-v1/review.json",
+      "sha256": "90ade87d308dab505459ccf01b6bb36e3d1ecf568544f09599e55fb5214e5021"
+    },
+    "issued_utc": "2026-11-17T05:12:17.479750+00:00",
+    "journal_prefix": {
+      "claims_excluded": [
+        "mirror decision equality",
+        "full RNG stream identity",
+        "arithmetic identity"
+      ],
+      "correspondence": {
+        "S0": "retained_L0_journal",
+        "S1": "retained_L1_journal"
+      },
+      "current_prefix_sha": "UNISSUED_NOT_OBSERVED",
+      "export": "COUNTS_DIGESTS_EQUALITY_ONLY_NO_RAW_IDS",
+      "extra_long_raw_read_max_bytes": 201326592,
+      "failure": "MISSING_MISMATCH_INSTABILITY_OR_OVERBUDGET_STOP",
+      "first_batches": 512,
+      "first_rows": 16384,
+      "inside": "EACH_NEW_SHORT_LEARNER_OWNER",
+      "long_journal_max_bytes": 67108864,
+      "long_journal_path_and_sha": "UNISSUED_PIN_ACTUAL_DRAWS_JSONL_BEFORE_LEARNER_CLOCK",
+      "long_max_full_stream_hash_passes": 3,
+      "mandatory": true,
+      "required_observations": [
+        "actual stable file stamps",
+        "pre/post hashes",
+        "counted raw read bytes",
+        "exact genuine short/long prefix row sequence equality",
+        "all192game aggregate coverage includingzero draws"
+      ],
+      "rows_per_batch": 32,
+      "within_total_private_read_budget_bytes": 4294967296
+    },
+    "limits": [
+      "One fixed dataset and seed; 80pair screens descriptive and not simultaneous or final-strength proof.",
+      "Adaptation-horizon intervention includes optimizer-update/decay/exposure history; no value-head mechanism or optimum-formula claim.",
+      "Existing L0 saved-only corrective proof remains asymmetric to L1 full GPU proof.",
+      "All future identities, observed row-prefix digests and qualification/delivery outcomes remain unissued until genuinely produced."
+    ],
+    "method_source": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-short-horizon-preregistration-draft-source-v3/protocol.json",
+      "sha256": "3d8fd29d53237b9410f6d47eba933152b460c5c8325147eeee525ed6f9caf86e"
+    },
+    "method_source_manifest": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-short-horizon-preregistration-draft-source-v3/manifest.json",
+      "sha256": "651a0a8b3100db9b7a6cf4906c83b62a39d98e0ed9b849ccef592fce185be3fa"
+    },
+    "methods_selected": true,
+    "missing_operational_prerequisites": [
+      "phase-specific strict source/proof/consumer/controller versions and hashes reviewed before corresponding clocks",
+      "fresh slice exposure qualification and immutable role proof before anyD2learner/arena",
+      "new observer/source plus meaningfulhostedsoftwaretests independentreview beforetraining",
+      "actual pinnedlong journals and boundedmandatory perlearner sampler-prefix audit",
+      "new S0/S1 run identities and actual endpoint delivery proofs",
+      "finitecombinedlocalQ300/270 andactualacceptance AFTERbothshortdeliveries+role BEFOREDEV",
+      "exactdecisioncommand/bindings BEFOREfirstD2arena outcome",
+      "fresh perphase authority/census/resources/leases/admission"
+    ],
+    "new_student_run_uuids": {
+      "S0": "c5e854cf-9ef3-4762-9b58-53f6baf9692e",
+      "S1": "017c63b8-8cba-491d-baac-59acb403b87b"
+    },
+    "new_training_or_inference_admitted": false,
+    "panel": {
+      "exposure_qualification": "UNISSUED_NOT_ASSUMED_UNUSED",
+      "games_per_edge": 160,
+      "pairs": 80,
+      "qualification_timing": "AFTER_METHOD_REGISTRATION_BEFORE_ANY_D2_LEARNER_OR_ARENA",
+      "seed": 2026111674,
+      "slice_start": 80,
+      "slice_stop_exclusive": 160,
+      "source_role": "SCREEN_C_A"
+    },
+    "phase_binding_rule": "Immutable reviewed source/contracts/commands, current source/runtime/native/resource/lease/census/expiry/budget custody and distinct supported Root admission before each phase; source or method selection itself never launches or qualifies a job.",
+    "phase_order": [
+      "independent method review and Root registration before role producer or any D2 clock",
+      "phase-specific reviewed source/contracts/commands before each corresponding phase clock",
+      "role exposure/prefix qualification accepted before any learner or arena",
+      "new observer/source/controller and hosted meaningful software tests independently reviewed before training; generic unchanged learner retains existing qualification",
+      "S0/S1 new genuine512deliveries withmandatory in-owner sampler-prefix proof",
+      "combined local software and genuine short-model metadata Q300/270 after BOTHdeliveries and acceptedrole, beforeDEV",
+      "exact reviewed decisioncommand/bindings frozen before FIRSTD2arena outcome",
+      "allSIXtechnical and reader results accepted before decision"
+    ],
+    "preservation": {
+      "A39_retained": true,
+      "D1_closed_without_eligible_candidate": true,
+      "HOLD_health_final_and_confirmation_unopened_and_not_authorized": true,
+      "broader_goal_achieved": false,
+      "historical_THREE_and_cancelled_5k_stops_preserved": true,
+      "native_goal_status_unchanged": true
+    },
+    "role_reservation_or_unusedness_claimed": false,
+    "schema": "ROOT_D2_SHORT_HORIZON_METHOD_SELECTION_V1",
+    "source_refs": {
+      "L0_review": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T1-K0-no-clip-corrective-audit-bindings-v1/independent-review.json",
+        "sha256": "9388a6592b5bf819666567230098512f3756efbcb6920e884d30338907f09b71"
+      },
+      "L0_root": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T1-K0-no-clip-corrective-audit-bindings-v1/root-acceptance.json",
+        "sha256": "71f733ac9a904aae0277f132dbcf58015692298e037fc5dde75f65235b94fc1f"
+      },
+      "L1_review": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T1-K1-learning-GPU-bindings-v1/independent-review.json",
+        "sha256": "8e5a03ecd1278084751db8ff05808432441dd8841cf97bcd9bcee4429c036bb5"
+      },
+      "L1_root": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T1-K1-learning-GPU-bindings-v1/root-acceptance.json",
+        "sha256": "44cf204e7d62116352ecc2bde86d662ddb9367f2620332c83ebdf3c209e46014"
+      },
+      "TRAIN_root": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-TRAIN-audit-bindings-v1/bank-root-acceptance.json",
+        "sha256": "4438815792a927f52d5234fdd4b87d067d7af1e6520c9de73696cd10d1316d19"
+      },
+      "closed_D1": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-complete-development-no-winner-readout-v1/readout.json",
+        "sha256": "1c886a2a8e39a3b843c508b5ea2d0edd9343d38f6e524d7cbc9b5481f0b617fc"
+      },
+      "closed_D1_review": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-complete-development-no-winner-independent-review-v1/review.json",
+        "sha256": "26bdd259e5656a3eb3eec44c5a6afb61e850ededcd11cf81e85ff245351070c6"
+      },
+      "feasibility_manifest": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-true-short-horizon-control-feasibility-source-v1/manifest.json",
+        "sha256": "1edd20946de04afb21d729c8e0dbd8d32f7dbf5ff0079a4b3a027a0291764c76"
+      },
+      "metric_comparison": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-banked-training-metric-comparison-v1/readout.json",
+        "sha256": "76080c3d80f9689ef0d0fa5129acccec13f777bdbcd1da931d74784f6a315550"
+      },
+      "metric_comparison_review": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-banked-training-metric-comparison-independent-review-v1/review.json",
+        "sha256": "240b73b35266518510bf7d55e1d8972326f06d28f0203145f41cdda8447258b8"
+      },
+      "metric_definitions": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-banked-training-metric-definitions-v1/manifest.json",
+        "sha256": "14dd4cbb34b7bb4c5489d2867412b256e8b31d1bd79062d0fc021a8e1f019d20"
+      },
+      "prior_context": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-prior-dose-LR-evidence-comparison-v1/manifest.json",
+        "sha256": "673c6586d538c3c9db60b66fe6c2c8e2b8d21d752cddd717e55440b9b147ff6d"
+      }
+    },
+    "status": "ROOT_SELECTS_D2_MATCHED_SHORT_HORIZON_METHODS_PENDING_MAIN_AND_PHASE_ADMISSIONS_V1",
+    "study_uuid": "3326c042-1044-4270-8d1e-02ca4c1c2ca5",
+    "training": {
+      "batch": 32,
+      "fresh_model_only_A39": true,
+      "fresh_optimizer_student_step0": true,
+      "games": 192,
+      "lr": {
+        "first_period": 4096,
+        "floor": 3e-06,
+        "peak": 3e-06,
+        "warmup_start": 3e-06,
+        "warmup_steps": 0
+      },
+      "mirror_probability": 0.5,
+      "new_S0_historical_recovery_exception": false,
+      "rows": 17568,
+      "seed": 2026111673,
+      "updates": 512,
+      "views": 16384
+    }
+  },
+  "status": "SELECTED_METHODS_ONLY_PHASE_ADMISSIONS_PENDING",
+  "study_uuid": "3326c042-1044-4270-8d1e-02ca4c1c2ca5",
+  "telemetry_interpretation_guard": {
+    "KL_is_trajectory_mean_not_endpoint": true,
+    "backpropagation_includes_anchor_penalty": true,
+    "common_prefix_per_step_telemetry": "Compare separately only if already recorded; absent means unavailable, not zero.",
+    "extra_inference_training_or_telemetry_audit_requested": false,
+    "logged_base_TOTAL_excludes_anchor_penalty": true,
+    "whole_run_average_difference_is_not_common_prefix_effect": true,
+    "whole_short512_and_long4096_averages_cover_different_states": true
+  }
+}
