@@ -181,7 +181,8 @@ def test_retained_models_use_distinct_actual_receipt_shapes(tmp_path: Path, monk
     metadata = ruler.Metadata(2 << 20, 64 << 20)
     model = d2.retained_model(metadata, binding, label, donor)
     assert model["label"] == {"L0": "K0", "L1": "K1"}[label]
-    assert model["step"] == 4096 and model["boundary"]["applied_views"] == 131072
+    assert model["step"] == 4096
+    assert model["boundary"]["applied_views"] == 131072
     metadata.finish()
 
 

@@ -9,22 +9,22 @@
   },
   "corrected_consumer_source": {
     "independent": {
-      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-short-horizon-consumer-independent-source-review-v9/review.json",
-      "sha256": "0b3a7ae90b99538805fcead1879aef2471e4355aaf2509d49252db1368492c89"
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-short-horizon-consumer-independent-source-review-v10/review.json",
+      "sha256": "e2bc08125837ed7edf9a9add7756f546e67a35f3489d7de02c6cbdeb82bb7157"
     },
     "manifest": {
-      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-short-horizon-consumer-source-preparation-v9/manifest.json",
-      "sha256": "f0861a1ab4c63fdfc12bba8b1f5c69d3da240b11eee98289ad73dd5ad96e1f22"
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-short-horizon-consumer-source-preparation-v10/manifest.json",
+      "sha256": "1fb3ed3c7a1c03b0fc46eb740083bf848e8fa132935ab38fb34d9cc097c75f59"
     }
   },
   "corrected_qualifier_source": {
     "independent": {
-      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-pure-metadata-qualification-independent-source-review-v8/review.json",
-      "sha256": "5566515aa02bce7343441661aedd0b17ce1937b660ccd8db37c09c12eb782cf3"
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-pure-metadata-qualification-independent-source-review-v8-corrected-v3/review.json",
+      "sha256": "806f5b2ba28c5e399abb10b6ee24ac5328bb915cd805c8fee5933dcd76767bcb"
     },
     "manifest": {
-      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-pure-metadata-qualification-source-preparation-v8/manifest.json",
-      "sha256": "7e8938046e2e395369253187bd4b0d650f0bf2b2767d038f2dcc53f16ca6d21e"
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-pure-metadata-qualification-source-preparation-v8-corrected-v3/manifest.json",
+      "sha256": "d8d70d6457c3edb8943d9891050af30b6a17eec5b627fd8d2828499fe56162c7"
     }
   },
   "corrected_static_inventory": {
@@ -43,6 +43,16 @@
     "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-recovery-retained-L0-schema-failure-independent-diagnosis-v1/review.json",
     "sha256": "39c0d5f52d58e7fadbaa2496efaf584c57aa26a848c01827433eecffa2e70192"
   },
+  "lint_only_source_retarget": {
+    "change": "One compound test assertion split for RuffPT018; production module,56case/15function inventory, qualifier method and caps unchanged. Actual Main/CI and owned qualification remain prerequisites.",
+    "head": "10e4b6de776f615d6477a30bcfcf311deaa2a4a7",
+    "numerical_owner_started_for_this_retarget": false,
+    "prior_completed_CI_evidence": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-corrected-consumer-CI-lint-failure-v1/log-evidence.json",
+      "sha256": "a526c83b10573ef414e74e0ec26e4a248d177fe376cd69e62d0c2b1688d44edf"
+    },
+    "run_id": 44082340125
+  },
   "metadata_only_no_new_training_playing_or_strength_claim": true,
   "private_DEV_metadata_ingress_correction": {
     "numerical_body_changes": false,
@@ -57,12 +67,12 @@
     "status": "ROOT_VERIFIES_D2_RETAINED_MODEL_METADATA_CORRECTION_MAIN_PUBLICATION_V1"
   },
   "qualifier_helper": {
-    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-pure-metadata-qualification-source-preparation-v8/run_checks.py",
-    "sha256": "cefee57412f1b4c271c230830cd97f6b113946c9d23196fe551220c0f3a7b50e"
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-pure-metadata-qualification-source-preparation-v8-corrected-v3/run_checks.py",
+    "sha256": "340b2a9d4cf009f7fb8e4f08bce4059336bd6dab063a5038e6387496296e420e"
   },
   "qualifier_interface": {
-    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-pure-metadata-qualification-source-preparation-v8/qualification-interface.json",
-    "sha256": "bec4fdffed6d913c0a04aca7e69062cc7e0bb667431e3a0a6f21bb41fb0f1a23"
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-pure-metadata-qualification-source-preparation-v8-corrected-v3/qualification-interface.json",
+    "sha256": "b827d91e50f31986cf41228c27792f2b528f4a4f0d2ecb70e7e159f9a66d0ba9"
   },
   "schema": "D2_RETAINED_MODEL_METADATA_CORRECTION_PROSPECTIVE_PUBLIC_METHOD_V1",
   "selected_method": {
