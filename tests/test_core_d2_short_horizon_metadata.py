@@ -46,23 +46,6 @@ def short_graph(tmp: Path, monkeypatch: pytest.MonkeyPatch, label: str, fault: s
     monkeypatch.setattr(d2, "D1_DESIGN", method)
     donor: dict[str, Any] = {"checkpoint": long_contract["initial_model"], "architecture": long_contract["architecture"], "step": 680276,
                              "model_state_sha256": "9796079cd73bef73ba2f5d5f2ad0779704498832e34a7c2a880f0d0b7f305229"}
-    if label == "S0":
-        # The retained corrective fixture predates this donor-state consumer
-        # field. Re-seal its fictional readout and parent references; do not
-        # bypass or monkeypatch the real retained-model predicate.
-        saved = read(long_root["payload_audit"]["readout"])
-        saved["initial_model_state_sha256"] = donor["model_state_sha256"]
-        saved_path = Path(long_root["payload_audit"]["readout"]["path"])
-        saved_path.chmod(0o644)
-        long_root["payload_audit"]["readout"] = seal(saved_path, saved)
-        root_path = Path(long_binding["root"]["path"])
-        root_path.chmod(0o644)
-        root_ref = seal(root_path, long_root)
-        independent = read(long_binding["independent"])
-        independent.update(root_acceptance=root_ref, payload_audit=long_root["payload_audit"])
-        independent_path = Path(long_binding["independent"]["path"])
-        independent_path.chmod(0o644)
-        long_binding = {"root": root_ref, "independent": seal(independent_path, independent)}
     monkeypatch.setattr(d2, "LONG_BINDINGS", {**d2.LONG_BINDINGS, long_label: long_binding})
     files = dict.fromkeys((f"fixture-{i}.py" for i in range(219)), "e" * 64)
     pins = seal(tmp / "pins.json", {"source_revision": d2.LEARNER_SOURCE, "source_checkout": "/fiction/learner", "files": files})
@@ -177,6 +160,87 @@ def short_graph(tmp: Path, monkeypatch: pytest.MonkeyPatch, label: str, fault: s
     independent: dict[str, Any] = {"status": ruler.DELIVERY_REVIEW, "root_acceptance": rref, "findings": [],
                    **{k: root[k] for k in ("contract", "stage", "boundary", "checkpoint", "payload_audit")}}
     return {"root": rref, "independent": seal(tmp / "independent.json", independent)}, donor
+
+
+@pytest.mark.parametrize("label", ["L0", "L1"])
+def test_retained_models_use_distinct_actual_receipt_shapes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, label: str) -> None:
+    _short, donor = short_graph(tmp_path, monkeypatch, "S0" if label == "L0" else "S1")
+    binding = d2.LONG_BINDINGS[label]
+    root = read(binding["root"])
+    saved = read(root["payload_audit"]["readout"])
+    if label == "L0":
+        assert root["payload_audit"]["schema"] == ruler.K0_NO_CLIP_SCHEMA
+        assert "initial_model_state_sha256" not in saved
+        assert set(saved["donor_provenance"]) == {"mode", "sha256", "architecture"}
+        assert saved["own_live_state_reconstructed"] is False
+        assert "own_live_state_fingerprint" not in saved
+    else:
+        assert root["payload_audit"]["schema"] == ruler.D1_GPU_SCHEMA
+        assert saved["initial_model_state_sha256"] == donor["model_state_sha256"]
+        assert saved["own_live_state_fingerprint"]
+    metadata = ruler.Metadata(2 << 20, 64 << 20)
+    model = d2.retained_model(metadata, binding, label, donor)
+    assert model["label"] == {"L0": "K0", "L1": "K1"}[label]
+    assert model["step"] == 4096 and model["boundary"]["applied_views"] == 131072
+    metadata.finish()
+
+
+def reseal_retained_proof(binding: dict[str, Any], saved: dict[str, Any], *, schema: str | None = None) -> dict[str, Any]:
+    """Rehash fictional metadata after mutation so the real predicate is reached."""
+    root = read(binding["root"])
+    saved_path = Path(root["payload_audit"]["readout"]["path"])
+    saved_path.chmod(0o644)
+    root["payload_audit"]["readout"] = seal(saved_path, saved)
+    if schema is not None:
+        root["payload_audit"]["schema"] = schema
+    root_path = Path(binding["root"]["path"])
+    root_path.chmod(0o644)
+    root_ref = seal(root_path, root)
+    independent = read(binding["independent"])
+    independent.update(root_acceptance=root_ref, payload_audit=root["payload_audit"])
+    independent_path = Path(binding["independent"]["path"])
+    independent_path.chmod(0o644)
+    return {"root": root_ref, "independent": seal(independent_path, independent)}
+
+
+@pytest.mark.parametrize(("label", "fault", "error", "message"), [
+    ("L0", "mode", ValueError, "saved donor provenance"),
+    ("L0", "sha", ValueError, "saved donor provenance"),
+    ("L0", "architecture", ValueError, "saved donor provenance"),
+    ("L0", "live", ValueError, "saved-only scope"),
+    ("L0", "family", ValueError, "corrective saved-only family"),
+    ("L1", "missing_initial", KeyError, "initial_model_state_sha256"),
+    ("L1", "wrong_initial", ValueError, "initial model"),
+])
+def test_retained_receipt_refusals_keep_family_requirements(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        label: str, fault: str, error: type[Exception], message: str) -> None:
+    _short, donor = short_graph(tmp_path, monkeypatch, "S0" if label == "L0" else "S1")
+    binding = d2.LONG_BINDINGS[label]
+    saved = read(read(binding["root"])["payload_audit"]["readout"])
+    if fault in {"mode", "sha", "architecture"}:
+        key = "sha256" if fault == "sha" else fault
+        saved["donor_provenance"][key] = {"different": True} if fault == "architecture" else "0" * 64 if fault == "sha" else "wrong"
+    elif fault == "live":
+        saved["own_live_state_reconstructed"] = True
+    elif fault == "missing_initial":
+        del saved["initial_model_state_sha256"]
+    elif fault == "wrong_initial":
+        saved["initial_model_state_sha256"] = "0" * 64
+    binding = reseal_retained_proof(binding, saved, schema=ruler.D1_GPU_SCHEMA if fault == "family" else None)
+    monkeypatch.setattr(d2, "LONG_BINDINGS", {**d2.LONG_BINDINGS, label: binding})
+    with pytest.raises(error, match=message):
+        d2.retained_model(ruler.Metadata(2 << 20, 64 << 20), binding, label, donor)
+
+
+@pytest.mark.parametrize("label", ["L0", "L1"])
+def test_retained_alias_refuses_the_other_long_binding(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, label: str) -> None:
+    _short, donor = short_graph(tmp_path, monkeypatch, "S0" if label == "L0" else "S1")
+    other = "L1" if label == "L0" else "L0"
+    other_folder = tmp_path / "other"
+    other_folder.mkdir()
+    short_graph(other_folder, monkeypatch, "S0" if other == "L0" else "S1")
+    with pytest.raises(ValueError, match="retained endpoint identity"):
+        d2.retained_model(ruler.Metadata(2 << 20, 64 << 20), d2.LONG_BINDINGS[other], label, donor)
 
 
 @pytest.mark.parametrize("label", ["S0", "S1"])
