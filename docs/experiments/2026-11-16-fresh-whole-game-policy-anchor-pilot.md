@@ -654,3 +654,62 @@ Record this correction in an immutable public PR before the additional read-only
 The already passed two-update engineering qualification remains applicable because its production prover and the training math are unchanged. Do not repeat it. No K0 retraining, new bank, learning-rate/coefficient change, extra opponent or effectiveness measurement is authorized. A further failed audit leaves continuation stopped.
 
 The projected scientific CPU maximum becomes 6,103.063787133782 seconds, below 9,600; scientific GPU remains 28,470.269704971113 seconds, below 30,900. Global ceilings and the original compute cutoff are unchanged. The supporting evidence record identifies the independent diagnosis, prospective manual selection and both failed owner graphs.
+
+
+## D1 post-training status: first development startup stopped
+
+All four fixed-dose endpoints now have Root and independent delivery acceptance:
+K0, K001, K01 and K1 each represent 4,096 updates / 131,072 replacement-sampled
+views from the same 192-game, 17,568-row TRAIN bank. The three positive-KL arms
+carry complete same-GPU live-to-saved proofs. K0 uses the separately published
+failed-GPU plus closed corrective-CPU saved-endpoint family; its original GPU and
+first CPU failures remain FAILED. That recovery supplies current saved-state
+evidence, not a reconstructed live hash or retroactive final GPU custody. These
+acceptances establish usable endpoints and dose, not playing improvement.
+
+The minimally projected consumer runtime then passed its single bounded local
+qualification: **304 cases across 56 functions / 7 modules, twelve genuine
+metadata controls, and full lint**, in **131.830 seconds**. Root `a8df269e…` and
+independent `843db8c1…` accept that result. Runtime profile `1d67899a…` records
+the exact 224-file runtime closure separately from the published preparation
+closure; only ten published owned blobs were adopted. Post-qualification
+adoption `2245e64a…` pins that profile and qualification pair. Software and
+metadata qualification do not supply match, HOLD-health or strength evidence.
+
+The first scheduled strength screen was **K001 versus A39**, on the original
+80-pair panel and seed. It ended **FAILED during startup after 9.682 seconds**,
+at `qualified TB metadata availability identity`, before public arena execution,
+model decoding or gameplay. The closed terminal is `c3a10708…`; log `c76d45ac…`
+and closure `d6b9d3ed…` preserve the failure. Source reconciliation confirms the
+check uses the same registered-table inventory algorithm as the earlier strict
+selfplay check: WDL then DTZ, each sorted unique resolved path, with size and
+mtime tuples hashed as compact JSON. The failed attempt did not persist its
+computed digest or tuple rows. The mismatch therefore does not identify which
+metadata changed, establish table-content corruption, or support a representation-
+mismatch diagnosis. **No WDL, pair score, Elo, health or strength result exists;
+D1 is technically stopped.** The failed owner remains charged.
+
+A separate, prospectively selected engineering diagnostic (`bd89f9dd…`) then
+closed **PASS in 1.301 seconds** within its single CPU 120 / 90 second limit.
+Root acceptance `29de620c…` records a before/final-stable current inventory
+digest `8877ca68…`, which differs from old `207f7bc9…`. WDL and DTZ each have
+1,000 registered keys but 510 unique resolved physical paths; alias keys are
+not additional files. All 1,020 table objects stayed uninitialized with
+`data=None` and `read_count=0`; guarded initialization/probe calls, model loads,
+forwards, games and training updates were zero. The diagnostic imported no
+Torch, NumPy, project package or native extension. Its compact metadata is
+banked in readout `be771d36…`, with full registered path-size-mtime rows.
+
+This establishes a stable **current availability-metadata difference**, not
+table-content corruption or its cause. No prior row-level inventory has been
+identified, so the changed tuple fields cannot yet be localized. The failed
+DEV attempt did not bank its own computed digest or rows, and is not
+retroactively converted to PASS. Engineering CPU charged time is now
+297.474 seconds against its existing 600-second ceiling. Independent review
+`850a749a…` accepts the closed diagnostic with no findings. D1 remains
+technically stopped; this readout grants no retry, new hash adoption, repinning,
+fallback, additional setting or scientific continuation. Root must select any
+continuation separately after reviewing the evidence.
+
+Compact immutable receipts and the independent diagnostic acceptance are in
+[the supporting status evidence](evidence/2026-11-16-policy-anchor-d1-training-and-first-screen-status.json).
