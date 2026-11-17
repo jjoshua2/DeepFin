@@ -46,7 +46,7 @@
   "metadata_only_no_new_training_playing_or_strength_claim": true,
   "private_DEV_metadata_ingress_correction": {
     "numerical_body_changes": false,
-    "reviewed_source_dependencies_pending": false,
+    "reviewed_source_dependencies_pending": true,
     "scope": "Borrow only accepted corrected public retained_model declaration into private d2_contracts; retain private ruleralias and all other declarations. Existing recoverydispatcher/TRAINcoverage/savedprovenance APIs retained; seven other components byteexact."
   },
   "publication_contract": {
