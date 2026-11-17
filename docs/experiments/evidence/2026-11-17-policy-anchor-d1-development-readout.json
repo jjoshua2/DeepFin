@@ -1,0 +1,412 @@
+{
+  "all_seven_technically_complete": true,
+  "design": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-development-first-root-design-v1/design.json",
+    "sha256": "98770dcd0ac6dffba73608fcad53a23e5a90c929a8432ed74b6d52d615b1c8dd"
+  },
+  "eligibility": {
+    "HOLD_or_final_authorized": false,
+    "eligible_arms": [],
+    "own_vs_A39_point_min": 0.55,
+    "positive_KL_vs_K0_point_min": 0.55,
+    "tie_break": "highest own-vs-A39 point, then lower coefficient",
+    "winner_certificate_issued": false
+  },
+  "execution_authorized": false,
+  "final_cost_snapshot": {
+    "closed_stage_count": 406,
+    "cost_semantics": "Root recorded charged cutoff including failures; custody directly attests406closed and globalGPU.",
+    "global_CPU_seconds": 6660.556216443481,
+    "global_GPU_seconds": 87860.48902606615,
+    "last_reader_closure": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K1_vs_K0-development-bindings-v1/reader.closed-custody.json",
+      "sha256": "f8e31e452794058444b396b461d2503b1315c77dfc91997aac5f016e3c2bdc54"
+    },
+    "post_closure_custody": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K1_vs_K0-development-bindings-v1/reader.post-closure-custody.json",
+      "sha256": "8f56253883f45ed8329f754ce2648a5fa4cf00a66682c7ba04e39fc69e8eda47"
+    },
+    "science_CPU_seconds": 211.71576585166622,
+    "science_GPU_seconds": 11411.547957941075
+  },
+  "limits": [
+    "Each80-pair interval is marginal descriptive, using sample79 variance; no pooled effect/CI or simultaneous sweep/seed coverage.",
+    "K1vsA39 and all3KLvsK0 intervals cross.5; missing55 is not universal negative-effect proof.",
+    "One fixed training seed, dose, bank and finite recipe set; no optimal formula, value-head causal identification or external-engine gain.",
+    "No HOLD/final efficacy used and no new training/settings or retry authority."
+  ],
+  "no_winner_independent_review": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-complete-development-no-winner-independent-review-v1/review.json",
+    "sha256": "26bdd259e5656a3eb3eec44c5a6afb61e850ededcd11cf81e85ff245351070c6"
+  },
+  "no_winner_readout": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-complete-development-no-winner-readout-v1/readout.json",
+    "sha256": "1c886a2a8e39a3b843c508b5ea2d0edd9343d38f6e524d7cbc9b5481f0b617fc"
+  },
+  "prior_evidence_note": {
+    "limits": "Historical B256/512 step controls have131072 views but different data/curve/noise/source; LOW512 and A512 same attested learned state are not independent weight replicates; no causal LR/batch/value inference.",
+    "manifest": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-prior-dose-LR-evidence-comparison-v1/manifest.json",
+      "sha256": "673c6586d538c3c9db60b66fe6c2c8e2b8d21d752cddd717e55440b9b147ff6d"
+    },
+    "readout": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-prior-dose-LR-evidence-comparison-v1/readout.json",
+      "sha256": "281f5484ef84f3cc01220176c58a71ed1052ec7fe927b24633100ab52cc67758"
+    }
+  },
+  "public_path_rendering": {
+    "expand_original_private_home_before_canonical_descriptor_reconstruction": true,
+    "home_relative_display_only": true,
+    "runtime_input": false
+  },
+  "rows": [
+    {
+      "WDL": {
+        "draws": 44,
+        "losses": 77,
+        "wins": 39
+      },
+      "acceptance": {
+        "independent": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K0_vs_A39-development-bindings-v1/independent-review.json",
+          "sha256": "68f5002ce3afd1a95b1b9b1e85583a770aa5d8beb7791a0e8002c98bb5b760fc"
+        },
+        "root": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K0_vs_A39-development-bindings-v1/root-acceptance.json",
+          "sha256": "ce3d2251988240be87a1d6ec941e020e94469dd8e99fe15d0c4268033ebfca58"
+        }
+      },
+      "descriptive_pair_normal95": [
+        0.3247760856117701,
+        0.43772391438822983
+      ],
+      "edge": "K0_vs_A39",
+      "games": 160,
+      "paired_counts": [
+        15,
+        23,
+        29,
+        11,
+        2
+      ],
+      "pairs": 80,
+      "point": 0.38125,
+      "summary": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K0_vs_A39-development-CPU-results-v1/summary.json",
+        "sha256": "8285b2ef8c443e69ec5a6de6cdf25dabc23ab7215d6e7b91e882bd090e412111"
+      },
+      "technical_complete": true
+    },
+    {
+      "WDL": {
+        "draws": 61,
+        "losses": 67,
+        "wins": 32
+      },
+      "acceptance": {
+        "independent": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_A39-development-bindings-v2/independent-review.json",
+          "sha256": "f24e9de904c56fd3d11a03ca76876e4e37b57db967c4f5aef4e52f38fdd4b2c9"
+        },
+        "root": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_A39-development-bindings-v2/root-acceptance.json",
+          "sha256": "78cfd8264f279747516016d72f21ca6c90029414bff0186353765f76b0b96481"
+        }
+      },
+      "descriptive_pair_normal95": [
+        0.3356034726393272,
+        0.4456465273606728
+      ],
+      "edge": "K001_vs_A39",
+      "games": 160,
+      "paired_counts": [
+        12,
+        26,
+        30,
+        9,
+        3
+      ],
+      "pairs": 80,
+      "point": 0.390625,
+      "summary": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_A39-development-reader-results-v2/summary.json",
+        "sha256": "753cf93007007b4fb94989a0e4410283458e7bfbb8ed9f5c2dd093f189805494"
+      },
+      "technical_complete": true
+    },
+    {
+      "WDL": {
+        "draws": 56,
+        "losses": 67,
+        "wins": 37
+      },
+      "acceptance": {
+        "independent": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K01_vs_A39-development-bindings-v1/independent-review.json",
+          "sha256": "8d08c46bbe19a99e65b6c0c3b7001eff7d906b59a6119eb840736852c490563b"
+        },
+        "root": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K01_vs_A39-development-bindings-v1/root-acceptance.json",
+          "sha256": "74e06c710d7346e635edb23730dda924d35704842a1775650b8af3188faedf1c"
+        }
+      },
+      "descriptive_pair_normal95": [
+        0.35086287707349345,
+        0.46163712292650655
+      ],
+      "edge": "K01_vs_A39",
+      "games": 160,
+      "paired_counts": [
+        13,
+        20,
+        33,
+        12,
+        2
+      ],
+      "pairs": 80,
+      "point": 0.40625,
+      "summary": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K01_vs_A39-development-CPU-results-v1/summary.json",
+        "sha256": "f16ac784b2fbb75232ae85d630d4895a44be2e08285b8da41b2c67a2c9390417"
+      },
+      "technical_complete": true
+    },
+    {
+      "WDL": {
+        "draws": 56,
+        "losses": 62,
+        "wins": 42
+      },
+      "acceptance": {
+        "independent": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K1_vs_A39-development-bindings-v1/independent-review.json",
+          "sha256": "ecb73030dcde8df8870f329a51fc2b9dc951a178e4ec00f68122d86e165176c6"
+        },
+        "root": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K1_vs_A39-development-bindings-v1/root-acceptance.json",
+          "sha256": "fb65f74f94808a4a7c0db73f18aad03062bf1f3f994bf211ae830a18ab234b86"
+        }
+      },
+      "descriptive_pair_normal95": [
+        0.3749458462458428,
+        0.5000541537541572
+      ],
+      "edge": "K1_vs_A39",
+      "games": 160,
+      "paired_counts": [
+        10,
+        26,
+        26,
+        10,
+        8
+      ],
+      "pairs": 80,
+      "point": 0.4375,
+      "summary": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K1_vs_A39-development-CPU-results-v1/summary.json",
+        "sha256": "d130bf24885f9ae57bf12b902596aeaa90ff179372d9b4c832492ab2a6fb817a"
+      },
+      "technical_complete": true
+    },
+    {
+      "WDL": {
+        "draws": 55,
+        "losses": 48,
+        "wins": 57
+      },
+      "acceptance": {
+        "independent": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_K0-development-bindings-v1/independent-review.json",
+          "sha256": "f7314ea4d44e145949f69304b9336e1e396ffe69789bf220116f80b18b57659f"
+        },
+        "root": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_K0-development-bindings-v1/root-acceptance.json",
+          "sha256": "9e095585c1f8b8352ac8c566d6e0dbe2c02d196d4e594e8d3e8eb43889f15df5"
+        }
+      },
+      "descriptive_pair_normal95": [
+        0.4703090015598371,
+        0.5859409984401628
+      ],
+      "edge": "K001_vs_K0",
+      "games": 160,
+      "paired_counts": [
+        7,
+        12,
+        33,
+        21,
+        7
+      ],
+      "pairs": 80,
+      "point": 0.528125,
+      "summary": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_K0-development-CPU-results-v1/summary.json",
+        "sha256": "669d1b6f66c707c6787e33ff6f98280b941725134f1757400380da983fef42d9"
+      },
+      "technical_complete": true
+    },
+    {
+      "WDL": {
+        "draws": 51,
+        "losses": 52,
+        "wins": 57
+      },
+      "acceptance": {
+        "independent": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K01_vs_K0-development-bindings-v1/independent-review.json",
+          "sha256": "69a8b2b37652da0c2a570fa29ccb14987aaa65f8f2789f96324dc551b758abae"
+        },
+        "root": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K01_vs_K0-development-bindings-v1/root-acceptance.json",
+          "sha256": "075fa852f410d3d4785770093b184b97afe7bacac33b0bfb56baf647b95f3581"
+        }
+      },
+      "descriptive_pair_normal95": [
+        0.4531658123758331,
+        0.5780841876241669
+      ],
+      "edge": "K01_vs_K0",
+      "games": 160,
+      "paired_counts": [
+        8,
+        17,
+        25,
+        22,
+        8
+      ],
+      "pairs": 80,
+      "point": 0.515625,
+      "summary": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K01_vs_K0-development-CPU-results-v1/summary.json",
+        "sha256": "c56b9706b02d0c655c445f2581f95230b117f368e9248ff7e15df0c6f22a418b"
+      },
+      "technical_complete": true
+    },
+    {
+      "WDL": {
+        "draws": 44,
+        "losses": 61,
+        "wins": 55
+      },
+      "acceptance": {
+        "independent": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K1_vs_K0-development-bindings-v1/independent-review.json",
+          "sha256": "ce00619419c2329d2d9d871f8068b20f0e788d94c0136c863c1f7f2b10641dc0"
+        },
+        "root": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K1_vs_K0-development-bindings-v1/root-acceptance.json",
+          "sha256": "0c25dc99a89e8d368e672bb238a0ddbcd356203084c63585a49cd96087489cdd"
+        }
+      },
+      "descriptive_pair_normal95": [
+        0.4203732894087972,
+        0.5421267105912028
+      ],
+      "edge": "K1_vs_K0",
+      "games": 160,
+      "paired_counts": [
+        8,
+        21,
+        27,
+        17,
+        7
+      ],
+      "pairs": 80,
+      "point": 0.48125,
+      "summary": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K1_vs_K0-development-CPU-results-v1/summary.json",
+        "sha256": "efb9ce6a5cd5c5a9bd9fdb114b4ebc63fe048e21a2c89608e1f54fff7a55e234"
+      },
+      "technical_complete": true
+    }
+  ],
+  "schema": "D1_COMPLETE_DEVELOPMENT_PUBLIC_READOUT_EVIDENCE_V1",
+  "scope_verdict": "D1 scientific scope stops without eligible checkpoint; retain A39 and all4 checkpoints. No global STOP, native goal-state change or wider-goal completion/pause.",
+  "technical_history": {
+    "T2_publication": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T2-current-TB-startup-main-publication-v1/publication.json",
+      "sha256": "01ce3a0dde8da3d16c2986ed056f8084ef087005d3cdebce9d94d65222493f64"
+    },
+    "current_TB_inventory_sha256": "8877ca686b9e844995b9df823175aaa8550b8be4046d77a7956986d3ed687b89",
+    "current_qualification_independent": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-current-TB-availability-bindings-v1/independent-review.json",
+      "sha256": "18891a1500d9b79bd175af66a36e84fa6a220ec6e75a289aa852440858b4861a"
+    },
+    "current_qualification_root": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-current-TB-availability-bindings-v1/root-acceptance.json",
+      "sha256": "994b3f557576af550606f8ad346da575ae8de2714bd1a8a863632ef2d582d8fe"
+    },
+    "failed_first_startup_terminal_SHA256": "c3a10708e4f925b9bcf25299c3daf32e473e95f7943aabdac3798eae5bbc9822",
+    "failed_startup_charged_seconds": 9.68236756103579,
+    "old207_cause": "unresolved; current availability is not byte-content/history equivalence"
+  },
+  "training_metrics": {
+    "K0_KL": "unmeasured; no reference forward",
+    "K0_delivery_limit": "Accepted saved-only corrective CPU proof, not reconstructed own-live finalGPU proof; both historical failed owners preserved.",
+    "aggregation": "training-view means through4096 updates, not saved-endpoint or heldout metrics",
+    "backward_includes_coefficient_times_policy_anchor_KL": true,
+    "definitions_addendum": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-banked-training-metric-definitions-v1/addendum.json",
+      "sha256": "476ff38c90651c23e93159b527be937d540227bf93493e26e6e3a5e97e5737a2"
+    },
+    "definitions_manifest": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-banked-training-metric-definitions-v1/manifest.json",
+      "sha256": "14dd4cbb34b7bb4c5489d2867412b256e8b31d1bd79062d0fc021a8e1f019d20"
+    },
+    "definitions_source_evidence": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-banked-training-metric-definitions-v1/source-evidence.json",
+      "sha256": "3836bd1a674b8d3e7dab693509685568ec5d69ebf0eb69f256ff2d090b870384"
+    },
+    "independent_review": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-banked-training-metric-comparison-independent-review-v1/review.json",
+      "sha256": "240b73b35266518510bf7d55e1d8972326f06d28f0203145f41cdda8447258b8"
+    },
+    "logged_base_TOTAL_excludes_anchor": true,
+    "readout": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-banked-training-metric-comparison-v1/readout.json",
+      "sha256": "76080c3d80f9689ef0d0fa5129acccec13f777bdbcd1da931d74784f6a315550"
+    },
+    "reported_means": [
+      {
+        "applied_updates": 4096,
+        "applied_views": 131072,
+        "arm": "K0",
+        "coefficient": 0.0,
+        "mean_policy_KL_across_eligible_training_views": null,
+        "reference_forward_count": 0,
+        "reported_training_WDL_loss_mean": 0.414103732611693,
+        "reported_training_policy_loss_mean": 0.9052155310637318
+      },
+      {
+        "applied_updates": 4096,
+        "applied_views": 131072,
+        "arm": "K001",
+        "coefficient": 0.01,
+        "mean_policy_KL_across_eligible_training_views": 0.12658435374250843,
+        "reference_forward_count": 4096,
+        "reported_training_WDL_loss_mean": 0.413949347867856,
+        "reported_training_policy_loss_mean": 0.9053279344152543
+      },
+      {
+        "applied_updates": 4096,
+        "applied_views": 131072,
+        "arm": "K01",
+        "coefficient": 0.1,
+        "mean_policy_KL_across_eligible_training_views": 0.09801601177247221,
+        "reference_forward_count": 4096,
+        "reported_training_WDL_loss_mean": 0.41334077434930805,
+        "reported_training_policy_loss_mean": 0.9072785674070474
+      },
+      {
+        "applied_updates": 4096,
+        "applied_views": 131072,
+        "arm": "K1",
+        "coefficient": 1.0,
+        "mean_policy_KL_across_eligible_training_views": 0.03426766182062835,
+        "reference_forward_count": 4096,
+        "reported_training_WDL_loss_mean": 0.416080451531343,
+        "reported_training_policy_loss_mean": 0.9304738153150538
+      }
+    ]
+  }
+}
