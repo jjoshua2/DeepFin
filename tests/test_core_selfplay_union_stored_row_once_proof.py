@@ -65,7 +65,7 @@ def test_actual_passive_proof_uses_cumulative_optimizer_slots_after_closed_resum
     assert delivery["own_live_certificate"] == certificate
 
 
-@pytest.mark.parametrize("fault", ["model", "optimizer_step", "family"])
+@pytest.mark.parametrize("fault", ["model", "optimizer_step", "family", "architecture"])
 def test_real_final_saved_payload_tamper_refuses_closed_delivery(tmp_path: Path, fault: str) -> None:
     c, cref = contract(tmp_path, split=False)
 
@@ -78,6 +78,8 @@ def test_real_final_saved_payload_tamper_refuses_closed_delivery(tmp_path: Path,
                 next(iter(payload["model"].values())).add_(1)
             elif fault == "optimizer_step":
                 next(iter(payload["opt"]["state"].values()))["step"] += 1
+            elif fault == "architecture":
+                payload["arch"]["history_rep_fix"] = not payload["arch"]["history_rep_fix"]
             else:
                 payload["fresh_rl_donor_provenance"]["sha256"] = "0" * 64
             torch.save(payload, path)

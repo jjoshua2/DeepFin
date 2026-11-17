@@ -228,7 +228,7 @@ class OwnLiveProof:
         payload = cast(dict[str, Any], payload)
         core.require(set(payload) == set(state_snapshot(trainer)) and fingerprint(payload, torch) == self.save_before["state"]
                      and aliases(payload["model"]) == self.save_before["model"]["aliases"], "saved payload differs from own-live state")
-        core.require(payload["step"] == boundary["step"] == trainer.step and payload["arch"] == c["architecture"]
+        core.require(payload["step"] == boundary["step"] == trainer.step and core.canonical(payload["arch"]) == core.canonical(c["architecture"])
                      and payload["peak_lr"] == c["lr"]["peak"] and payload["grad_clip_mode"] == "none", "saved union recipe/counters")
         names, opt = payload["opt_param_names"], payload["opt"]
         ownership: dict[Any, str] = {}
