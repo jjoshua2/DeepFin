@@ -149,3 +149,67 @@ def test_loader_refuses_payload_inventory_mutation_without_model_access(tmp_path
     path.chmod(0o444)
     with pytest.raises(ValueError, match="inventory mismatch"):
         load_fixed_population(ARCH, m, mr, rng=np.random.default_rng(3), max_rows=4, max_decoded_bytes=64 << 20)
+
+
+@pytest.mark.parametrize("dense_policy", [False, True])
+def test_memory_budget_dominates_real_sparse_storage_and_preserves_gather(tmp_path: Path, dense_policy: bool) -> None:
+    """Exercise full-width NNZ, owning arrays and actual sparse buffer conversion."""
+    from chess_anti_engine.replay.fixed_population import (
+        declared_memory_budget, digest, origin_map, resident_array_bytes,
+    )
+    from chess_anti_engine.replay.shard import load_shard_arrays, save_local_shard_arrays
+
+    m, _ = population_fixture(tmp_path, branches=1)
+    source = m["sources"][0]
+    arrays, _ = load_shard_arrays(source["shard"]["path"], lazy=False, validate=True)
+    if dense_policy:
+        arrays["policy_target"] = np.full((4, 1858), 1 / 1858, dtype=np.float16)
+    output = tmp_path / "memory-source.zarr"
+    save_local_shard_arrays(output, arrs=arrays,
+                           meta={"games": 1, "positions": 4, "username": "synthetic_memory_case",
+                                 "provenance_verified": False})
+    core.seal(output)
+    files = [{"path": p.relative_to(output).as_posix(), "bytes": p.stat().st_size,
+              "sha256": core.file_sha(p)} for p in sorted(output.rglob("*")) if p.is_file()]
+    source["shard"] = {"path": str(output), "files": files}
+    source["source_sha256"] = digest(files)
+    m["origin_map_sha256"] = digest(origin_map(m))
+    mr = frozen(tmp_path / "memory-manifest.json", m)
+    budget = declared_memory_budget(source["shard"], 4, arrays["x"].shape[1])
+    pop = load_fixed_population(ARCH, m, mr, rng=np.random.default_rng(11), max_rows=4, max_decoded_bytes=64 << 20)
+    chunk = pop._buffer._chunks[0]
+    assert resident_array_bytes(chunk) <= budget["retained_bytes"]
+    assert chunk["policy_target_nnz"].tolist() == [1858 if dense_policy else 1] * 4
+    # Legal masks have full width in BOTH cases; zero-sparsity assumptions fail.
+    assert chunk["legal_mask_nnz"].tolist() == [1858] * 4
+    gathered = pop._buffer._gather_rows(np.arange(4))
+    np.testing.assert_array_equal(gathered["policy_target"], arrays["policy_target"])
+    np.testing.assert_array_equal(gathered["legal_mask"], arrays["legal_mask"])
+    assert len(pop) == 4
+
+
+def test_single_population_reservation_avoids_false_double_residency(tmp_path: Path) -> None:
+    """Scale a real public-header budget, not payloads or a claimed admitted bank."""
+    from chess_anti_engine.replay.fixed_population import declared_memory_budget, population_memory_budget
+    from chess_anti_engine.model import infer_input_planes
+
+    m, _ = population_fixture(tmp_path, branches=1)
+    source = m["sources"][0]
+    budget = declared_memory_budget(source["shard"], 4, infer_input_planes(ARCH["input_extra_features"]))
+    # This is pure sizing of5000independent same-layout synthetic sources.
+    # It neither loads5000shards nor fabricates their provenance/admission.
+    sizing = population_memory_budget([budget] * 5000, 20000, 1 << 20)
+    assert sizing["reserve_bytes"] < 2 * budget["decoded_bytes"] * 5000
+    assert sizing["reserve_bytes"] > sizing["retained_bytes"]
+    assert sizing["metadata_headroom_bytes"] >= 1 << 20
+
+
+@pytest.mark.parametrize("fault", ["external", "object"])
+def test_resident_charge_counts_owning_allocation_and_refuses_unbounded_backing(fault: str) -> None:
+    from chess_anti_engine.replay.fixed_population import resident_array_bytes
+
+    owner = np.ones((8, 8), dtype=np.float32)
+    assert resident_array_bytes({"view": owner[:1], "alias": owner[1:2]}) == owner.nbytes
+    bad = np.frombuffer(bytearray(64), dtype=np.uint8) if fault == "external" else np.asarray([object()], dtype=object)
+    with pytest.raises(ValueError, match="external backing|object resident"):
+        resident_array_bytes({"bad": bad})

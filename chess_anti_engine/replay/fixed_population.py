@@ -234,6 +234,108 @@ def declared_decoded_bound(shard: dict[str, Any], rows: int, planes: int) -> int
     return total
 
 
+def declared_memory_budget(shard: dict[str, Any], rows: int, planes: int) -> dict[str, int]:
+    """Pre-decode worst case, independent of optional flags or observed NNZ.
+
+    Zarr returns logical arrays; storage chunk padding is one-source workspace.
+    Policy values preserve dtype; columns and lengths are uint16. Legal masks
+    become uint16 indices and lengths. Dense sf_p0_regret is not sparsified.
+    """
+    import numpy as np
+    from chess_anti_engine.replay.shard import LEGAL_MASK_FIELDS, POLICY_SPACE_FIELDS
+
+    root = Path(shard["path"])
+    require(any(f["path"] == ".zgroup" for f in shard["files"]), "fixed union requires public Zarr layout")
+    logical = padded = extra = sparse_elements = 0
+    saw_x = False
+    for f in shard["files"]:
+        if Path(f["path"]).name != ".zarray":
+            continue
+        relative = Path(f["path"])
+        require(len(relative.parts) == 2, "fixed union requires flat public array declarations")
+        d = _header(root / relative, f["sha256"])
+        shape, chunks = d["shape"], d["chunks"]
+        require(type(shape) is list and all(type(n) is int and n >= 0 for n in shape), "invalid declared shape")
+        require(type(chunks) is list and len(chunks) == len(shape)
+                and all(type(n) is int and n > 0 for n in chunks), "invalid declared chunks")
+        dtype = np.dtype(d["dtype"])
+        require(not dtype.hasobject, "object declaration refused")
+        elements = padded_elements = 1
+        for n, width in zip(shape, chunks, strict=True):
+            elements *= n
+            padded_elements *= ((n + width - 1) // width) * width
+            require(max(elements, padded_elements) * dtype.itemsize <= MAX_DECODED_BYTES, "oversized declaration")
+        logical += elements * dtype.itemsize
+        padded += padded_elements * dtype.itemsize
+        require(padded + 65536 + rows * 64 <= MAX_DECODED_BYTES, "oversized declared source")
+        name = relative.parts[0]
+        if name == "x":
+            require(shape == [rows, planes, 8, 8] and dtype == np.dtype("float16"), "declared input shape/precision")
+            saw_x = True
+        if name in (*POLICY_SPACE_FIELDS, *LEGAL_MASK_FIELDS):
+            require(len(shape) == 2 and shape[0] == rows and 0 < shape[1] <= 65535,
+                    "invalid sparse declaration shape")
+            if name in POLICY_SPACE_FIELDS:
+                require(dtype.kind == "f", "invalid sparse policy dtype")
+                # The values replace dense values. Full-width uint16 columns
+                # add2*elements; uint16 NNZ adds2*rows even for zero policies.
+                extra += 2 * elements + 2 * rows
+            else:
+                require(dtype.kind in "bui", "invalid sparse legal dtype")
+                extra += max(0, 2 - dtype.itemsize) * elements + 2 * rows
+            sparse_elements += elements
+    require(saw_x, "missing input declaration")
+    overhead = 65536 + rows * 64  # attached markers, missing priority, small row arrays
+    retained = logical + extra + overhead
+    encoded = sum(f["bytes"] for f in shard["files"])
+    # Eight logical sources cover the eager source, validation copies/casts,
+    # sparse output coexistence and transient metadata arrays. The additional
+    # 64bytes per sparse element dominates bool masks, int64 nonzero/position
+    # vectors, selected values and padded output construction. Charge a whole
+    # encoded source and two padded sources for codec/chunk decode workspace.
+    workspace = 8 * logical + 64 * sparse_elements + 2 * padded + encoded + 65536 + rows * 1024
+    return {"rows": rows, "logical_bytes": logical, "padded_bytes": padded,
+            "decoded_bytes": padded + overhead, "retained_bytes": retained,
+            "workspace_bytes": workspace,
+            "gather_row_bytes": (logical + extra + rows * 64 + rows - 1) // rows}
+
+
+def population_memory_budget(budgets: list[dict[str, int]], rows: int, manifest_bytes: int) -> dict[str, int]:
+    """Single population plus one source workspace; not a process RSS claim.
+
+    Headroom explicitly reserves parsed/canonical metadata, per-source Python
+    bookkeeping and row-order objects. Source-local buffers are charged even
+    when optional fields will be pruned. No sparsity or allocator reuse assumed.
+    """
+    require(bool(budgets) and sum(b["rows"] for b in budgets) == rows, "memory budget source rows differ")
+    retained = sum(b["retained_bytes"] for b in budgets)
+    workspace = max(b["workspace_bytes"] for b in budgets)
+    vectors = 32 * rows  # both old/new f4 priority+i1 WDL concatenations and indexing
+    gather = 8 * min(32, rows) * max(b["gather_row_bytes"] for b in budgets)
+    metadata = 16 * manifest_bytes + 65536 * len(budgets) + 256 * rows
+    return {"retained_bytes": retained, "workspace_bytes": workspace, "vectors_bytes": vectors,
+            "gather_bytes": gather, "metadata_headroom_bytes": metadata,
+            "reserve_bytes": retained + workspace + vectors + gather + metadata}
+
+
+def resident_array_bytes(arrays: dict[str, Any]) -> int:
+    """Charge owning allocations, not just a view's logical nbytes."""
+    import numpy as np
+
+    seen: set[int] = set()
+    total = 0
+    for value in arrays.values():
+        require(isinstance(value, np.ndarray) and not value.dtype.hasobject, "non-array/object resident storage")
+        owner = value
+        while isinstance(owner.base, np.ndarray):
+            owner = owner.base
+        require(owner.base is None, "resident array has unbounded external backing")
+        if id(owner) not in seen:
+            total += int(owner.nbytes)
+            seen.add(id(owner))
+    return total
+
+
 def _checked_arrays(architecture: dict[str, Any], source: dict[str, Any], arrays: dict[str, Any]) -> None:
     """Same core.load_replay shard predicates, without its FIFO assumptions."""
     import numpy as np
@@ -303,9 +405,9 @@ def load_fixed_population(architecture: dict[str, Any], manifest: dict[str, Any]
 
     Caller must bind the hash-authenticated manifest and its plan/acceptance.
     All declared shards are budgeted before the first eager load. The reserve
-    covers double resident storage plus three maximum-shard workspaces and
-    small buffer metadata arrays; it is deliberately conservative, not an RSS
-    claim. ArrayReplayBuffer is created once, appended once per source, never
+    covers worst retained sparse storage, one-source decode/validation/sparse
+    workspace, vectors, B32 gathers and explicit metadata headroom. It is not
+    a process RSS/model/allocator claim. ArrayReplayBuffer is created once, appended once per source, never
     reassembled or evicted. Its small priority vectors are unused by the quota
     adapter; this population exposes no legacy sampling method.
     """
@@ -321,28 +423,41 @@ def load_fixed_population(architecture: dict[str, Any], manifest: dict[str, Any]
     require(manifest["architecture"] == architecture and manifest["expected_rows"] <= max_rows,
             "population architecture/row cap differs")
     planes = infer_input_planes(architecture["input_extra_features"])
-    bounds = []
+    budgets = []
     for source in manifest["sources"]:
         path, actual = core.verify_inventory(source["shard"])
         require(actual == source["source_sha256"], "source inventory changed before decode")
-        bounds.append(declared_decoded_bound(source["shard"], source["rows"], planes))
+        budgets.append(declared_memory_budget(source["shard"], source["rows"], planes))
         require(path == Path(source["shard"]["path"]), "source path differs")
-    reserve = 2 * sum(bounds) + 3 * max(bounds) + manifest["expected_rows"] * 32
-    require(reserve <= max_decoded_bytes, "global decoded reserve exceeded before eager decode")
+    sizing = population_memory_budget(budgets, manifest["expected_rows"], len(canonical(manifest).encode()) + 1)
+    require(sizing["reserve_bytes"] <= max_decoded_bytes, "global decoded reserve exceeded before eager decode")
     buffer = ArrayReplayBuffer(manifest["expected_rows"], rng=rng)
     retained = 0
-    for source, bound in zip(manifest["sources"], bounds, strict=True):
+    retained_limit = 0
+    assembled_rows = 0
+    assembled_sources = 0
+    for source, budget in zip(manifest["sources"], budgets, strict=True):
         path, before = core.verify_inventory(source["shard"])
         require(before == source["source_sha256"], "source changed before eager load")
         arrays, _ = load_shard_arrays(path, lazy=False, validate=True)
-        actual_bytes = sum(a.nbytes for a in arrays.values())
-        require(actual_bytes <= bound, "decoded source exceeds pre-reserved declaration")
+        actual_bytes = resident_array_bytes(arrays)
+        require(actual_bytes <= budget["decoded_bytes"], "decoded source exceeds pre-reserved declaration")
         _checked_arrays(architecture, source, arrays)
         require(core.verify_inventory(source["shard"])[1] == before, "source changed during eager load")
         for a in arrays.values():
             a.setflags(write=False)
         buffer.add_many_arrays(arrays)
-        retained += actual_bytes
-        require(retained <= sum(bounds) and len(buffer) <= manifest["expected_rows"], "global assembly budget/row cap")
+        assembled_sources += 1
+        require(len(buffer._chunks) == len(buffer._chunk_sizes) == assembled_sources,
+                "buffer chunk bookkeeping differs")
+        added = resident_array_bytes(buffer._chunks[-1])
+        require(added <= budget["retained_bytes"], "sparse source exceeds pre-reserved retained storage")
+        retained += added
+        retained_limit += budget["retained_bytes"]
+        assembled_rows += source["rows"]
+        require(retained <= retained_limit <= sizing["retained_bytes"] and len(buffer) == assembled_rows
+                and len(buffer) <= manifest["expected_rows"], "global assembly budget/row cap")
+        require(buffer._priority.nbytes + buffer._wdl.nbytes <= sizing["vectors_bytes"],
+                "global buffer vectors exceed pre-reserved storage")
         del arrays
     return FixedPopulation(buffer, rng, manifest, manifest_ref)
