@@ -1,0 +1,186 @@
+{
+  "artifact_path_base": "operations/rl-week-one-20261112-v1 (display-relative lineage; hashes identify sealed private records)",
+  "budget_only_recovery": {
+    "automatic_retry": false,
+    "combined_GPU_max_seconds": 11999.203420207952,
+    "execution_authorized": false,
+    "failed_GPU_wall_seconds": 340.20342020795215,
+    "final_development_GPU_cap_seconds": 3600,
+    "fresh_scope_without_prior_owner_inheritance": true,
+    "old_empty_ledger_preserved": true,
+    "original_total_GPU_ceiling_seconds": 12000,
+    "original_training_GPU_ceiling_seconds": 8400,
+    "per_owner_GPU_cap_seconds": 2100,
+    "recovery_training_aggregate_GPU_seconds": 8059,
+    "same_zero_draw_lineage": true
+  },
+  "closed_local_owners": 435,
+  "current_qualification": {
+    "CPU_seconds": 21.83,
+    "Root_accepted": true,
+    "SYZYGY_dataset_qualification": false,
+    "added_memory_cases": 5,
+    "build_performed_this_phase": false,
+    "cases": 158,
+    "errors": 0,
+    "failed": 0,
+    "failure_history": [
+      {
+        "artifact_path_relative_to_operations": "uniform-once-runtime-build-focused-CPU-bindings-v1/root-failed-qualification-closure.json",
+        "sha256": "b0ec0a47f3f8c8243c663b44a015162d21c113de48ad07a3194c7d6535dfc006"
+      },
+      {
+        "artifact_path_relative_to_operations": "uniform-once-runtime-focused-CPU-recovery-bindings-v1/root-failed-qualification-closure.json",
+        "sha256": "35ee90e5e4a0af411e027f841c339d24cd1929d51b7d823ef73e114ab9e61dbb"
+      },
+      {
+        "artifact_path_relative_to_operations": "uniform-once-runtime-focused-CPU-recovery-bindings-v2/root-failed-qualification-closure.json",
+        "sha256": "87adbb91d71a50a3d6531ded67b68de2509aea4a80094eb285f0c3da7b7a3d5b"
+      }
+    ],
+    "independent_actual_result_review": "ACCEPTED_NO_FINDINGS",
+    "modules": [
+      "tests/test_stored_row_once.py",
+      "tests/test_core_generation_bank_stored_row_once.py",
+      "tests/test_generation_replay.py",
+      "tests/test_grad_clip_scope.py",
+      "tests/test_core_selfplay_union_manifest.py",
+      "tests/test_fixed_population.py",
+      "tests/test_core_selfplay_union_stored_row_once.py",
+      "tests/test_core_selfplay_union_stored_row_once_proof.py"
+    ],
+    "native_construction_428_whole_phase_remains_FAILED": true,
+    "native_images_records_builtin_wheel_setup_preserved": true,
+    "owner_wall_seconds": 26.409379632910714,
+    "passed": 158,
+    "previous_source_cases": 153,
+    "skipped": 0,
+    "source_head": "5040661e4d8c440fc607e46586fa48a59ab3672b",
+    "training_adoption": false
+  },
+  "failed_startup": {
+    "actual_CPU_seconds": 189.31,
+    "actual_wall_seconds": 340.20342020795215,
+    "future_automatic_retry_authorized": false,
+    "model_constructed": false,
+    "row_presentations": 0,
+    "shards_eager_decoded": 0,
+    "source_memory_cap_bytes": 34359738368,
+    "status": "ROOT_CLOSES_FAILED_U1_DECLARED_MEMORY_RESERVE_BEFORE_EAGER_DECODE_MODEL_OR_DRAWS_V1",
+    "training_updates": 0
+  },
+  "header_census": {
+    "CPU_seconds": 96.86,
+    "CUDA_queried": false,
+    "chunk_payload_bytes_read": 0,
+    "diagnostic_2sumlogical_3maxpadded_bytes": 38650597853,
+    "diagnostic_within_cap": false,
+    "failed_reserve_bytes": 38650597853,
+    "headers_read": 325820,
+    "logical_array_bytes": 19007478707,
+    "memory_bound_fix_accepted_at_census": false,
+    "model_loads": 0,
+    "owner_wall_seconds": 190.68559142400045,
+    "padded_array_bytes": 19007478707,
+    "padding_inflation_bytes": 0,
+    "resident_memory_peak_measured": false,
+    "rows": 405013,
+    "sources": 4032
+  },
+  "old_qualification": {
+    "all_passed": true,
+    "case_count": 153,
+    "scope": "OLD_HEAD_ONLY_NOT_CORRECTED_SOURCE_CREDIT",
+    "source_head": "d2369eb3ad58c32cb7d185eebefd7225a005a6c0"
+  },
+  "pending": {
+    "full_population_loading_and_RSS_fit": "UNOBSERVED",
+    "new_GPU_admission": "UNISSUED_BY_THIS_RECORD",
+    "recovery_population_source_bindings": "PENDING"
+  },
+  "reviewed_memory_bound": {
+    "all_legal_fields_charged_per_row": 3,
+    "all_policy_fields_charged_per_row": 5,
+    "below_cap": true,
+    "interpretation": "Conservative source-accounting projection from closed header declarations, supported by owned synthetic software tests; not measured full-population/RSS fit.",
+    "observed_NNZ_sparsity_assumed": false,
+    "projected_upper_bytes": 31893616270,
+    "real_full_population_loading_observed": false,
+    "resident_memory_peak_measured": false,
+    "unchanged_cap_bytes": 34359738368
+  },
+  "schema": "U1_ZERO_DRAW_STARTUP_HEADER_CENSUS_AND_CORRECTED_SOURCE_QUALIFICATION_PUBLIC_RECORD_V3",
+  "scientific_limits": {
+    "execution_authority": false,
+    "math_sampler_population_dose_cap_changed": false,
+    "new_U1_model": false,
+    "new_U1_playing_result": false,
+    "padding_or_memory_result_is_strength_evidence": false,
+    "planned_U1_800_panel_role": "CONSUMED_CONFIRM_C_A39_REUSED_AS_DEVELOPMENT",
+    "prior_S0_800_NONCONFIRM_retained": true
+  },
+  "sources": {
+    "all_434_closed_custody": {
+      "artifact_path_relative_to_operations": "historical-selfplay-uniform-once-U1-declared-array-census-CPU-bindings-v1/post-closure-custody.json",
+      "sha256": "6d4c4eff5c60e1f9940d29643f6b6629ee62dcb36fc6abde56514874858329fa"
+    },
+    "all_435_closed_custody": {
+      "artifact_path_relative_to_operations": "uniform-once-runtime-focused-CPU-recovery-bindings-v4/post-closure-custody.json",
+      "sha256": "262328fa6c99d739c64c8b706f51048c42f34b603fadaae11c0c4eca5fb6a607"
+    },
+    "budget_only_amendment": {
+      "artifact_path_relative_to_operations": "historical-selfplay-uniform-once-U1-zero-draw-operational-recovery-v1/amendment.json",
+      "sha256": "3b957168ce74522d5045ea57533c3c97565a9d2bdb210806f762d9942a044c96"
+    },
+    "census_434": {
+      "artifact_path_relative_to_operations": "historical-selfplay-uniform-once-U1-declared-array-census-CPU-bindings-v1/root-census-acceptance.json",
+      "sha256": "cae4de6325493d6d8d813cc1d0554aac9cc3ffd74a5496ab48c09531eccd1a7f"
+    },
+    "census_readout": {
+      "artifact_path_relative_to_operations": "historical-selfplay-uniform-once-U1-declared-array-census-CPU-results-v1/readout.json",
+      "sha256": "1b349761c1eb065fd00e81c4771685f450eb5886ce9e358a7120a0e1fef1961b"
+    },
+    "conservative_closed_census_projection": {
+      "artifact_path_relative_to_operations": "prospective-historical-selfplay-fixed-union-source-preparation-v5/closed-census-sizing-projection.json",
+      "sha256": "fcd8c8b3953021024fd4cbeec1bb9ba3e6a9441121e3477eb07492f540f3ae47"
+    },
+    "current_435_Root_qualification_acceptance": {
+      "artifact_path_relative_to_operations": "uniform-once-runtime-focused-CPU-recovery-bindings-v4/root-build-focused-acceptance.json",
+      "sha256": "21eee2d5b69d3f08f4ea581defc9d0d843433703c43d32dc2ec71fde627934d5"
+    },
+    "current_435_independent_qualification_acceptance": {
+      "artifact_path_relative_to_operations": "uniform-once-runtime-focused-CPU-recovery-bindings-v4/independent-build-focused-acceptance.json",
+      "sha256": "794359dc055b664cad718308aa428ca7a1c06bb059ac07c4f177f0d82f00d2b0"
+    },
+    "current_435_readout": {
+      "artifact_path_relative_to_operations": "uniform-once-runtime-focused-CPU-recovery-results-v4/readout.json",
+      "sha256": "0f644645c98b7167f0e356e6f40a06388cea8ad4a4ba38830289670c09393e10"
+    },
+    "current_435_unit_report": {
+      "artifact_path_relative_to_operations": "uniform-once-runtime-focused-CPU-recovery-results-v4/focused-tests.json",
+      "sha256": "d4417065d12b4db61a8d18a119ab9198323e4c464e9f77635faa18e4de74b28d"
+    },
+    "current_union_independent_source_review": {
+      "artifact_path_relative_to_operations": "prospective-historical-selfplay-fixed-union-independent-source-review-v5/review.json",
+      "sha256": "d7608f26d6a97240d285763952104dcdb863bd7ca97fb22968a88f04e6e0d703"
+    },
+    "current_union_source": {
+      "artifact_path_relative_to_operations": "prospective-historical-selfplay-fixed-union-source-preparation-v5/manifest.json",
+      "sha256": "c2afdb93748543ecef16aa80b74f87e70584bc043c76289d3cbfbf5da28008a3"
+    },
+    "failed_433": {
+      "artifact_path_relative_to_operations": "historical-selfplay-uniform-once-U1-learn-segment-01-bindings-v1/root-failed-memory-admission-closure.json",
+      "sha256": "92d11766e28aae7a31cad37340156e18d2979f7af30a2e1ac5cf2ae480351d5e"
+    },
+    "new_operational_scope": {
+      "artifact_path_relative_to_operations": "historical-selfplay-uniform-once-U1-zero-draw-operational-recovery-v1/scope.json",
+      "sha256": "cdcbc5ef7d042423ab26b75ec577d2483e3117fbcaeafd91df98eda2cd1b4580"
+    },
+    "old_head_153_case_qualification": {
+      "artifact_path_relative_to_operations": "uniform-once-runtime-focused-CPU-recovery-bindings-v3/root-build-focused-acceptance.json",
+      "sha256": "a91f5d01383428ef2068177a77a6059aee7d3c79407b22c420d5b724883d1612"
+    }
+  },
+  "status": "CLOSED_ENGINEERING_FACTS_AND_INDEPENDENTLY_ACCEPTED_158_CASE_QUALIFICATION_WITH_RECOVERY_GPU_UNISSUED",
+  "study_uuid": "bacb5b59-1988-4e8b-942e-ad389df33c1c"
+}
