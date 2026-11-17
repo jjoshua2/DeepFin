@@ -165,7 +165,7 @@ def _validate_contract_metadata(c: dict[str, Any]) -> None:
         and sampling["partial_batch"] == "EMIT_FINAL_REMAINDER_ONCE_NO_PADDING" and sampling["lineage_uuid"] == c["run_uuid"]
         and sampling["order"] == ORDER,
         "bounded shuffle/quota/partial recipe mismatch")
-    replay_limits = ReplayLimits(**sampling["limits"])
+    replay_limits = ReplayLimits(**cast(Any, sampling["limits"]))
     core.require(replay_limits.total_bytes <= limits["max_decoded_bytes"] and replay_limits.buffer_rows >= c["batch_size"],
                  "bounded replay limits exceed selected working-byte/row cap")
     quota_path = sampling["quota_ledger"]
@@ -356,7 +356,7 @@ def journal_identity(c: dict[str, Any], identity: dict[str, Any], membership: tu
                  and mirror["bit_generator"] == "PCG64" and type(mirror["state"]) is dict
                  and set(mirror["state"]) == {"state", "inc"}
                  and all(type(v) is int and 0 <= v < 2**128 for v in mirror["state"].values())
-                 and mirror["state"]["inc"] % 2 == 1
+                 and cast(int, mirror["state"]["inc"]) % 2 == 1
                  and type(mirror["has_uint32"]) is int and mirror["has_uint32"] in (0, 1)
                  and type(mirror["uinteger"]) is int and 0 <= mirror["uinteger"] < 2**32,
                  "bounded closed mirror RNG shape differs")
@@ -397,7 +397,7 @@ def journal_identity(c: dict[str, Any], identity: dict[str, Any], membership: tu
                         block = stream.read(len(encoded) - len(raw))
                         core.require(bool(block), "truncated bounded journal")
                         raw.extend(block)
-                    core.require(raw == encoded, "bounded actual journal order/record differs")
+                    core.require(bytes(raw) == encoded, "bounded actual journal order/record differs")
                 actual_bytes += len(encoded)
                 expected_hash.update(encoded)
                 all_hash.update(encoded)

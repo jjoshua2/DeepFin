@@ -166,7 +166,7 @@ def test_actual_resume_refuses_tainted_prefix_before_source_or_model_restore(tmp
     calls: list[str] = []
     monkeypatch.setattr(core, "make_trainer", lambda *_args, **_kwargs: calls.append("model"))
     monkeypatch.setattr(entry, "from_fixed_manifest", lambda *_args, **_kwargs: calls.append("source"))
-    with pytest.raises((ValueError, TypeError), match="ahead/behind|ready order|frontier|differs"):
+    with pytest.raises((ValueError, TypeError), match=r"ahead/behind|ready order|frontier|differs"):
         entry.execute(cref, stage(tmp_path, c, cref, 2, parent, "refused"))
     assert calls == []
     assert not (tmp_path / "refused/learner.pt").exists()
@@ -228,7 +228,7 @@ def test_own_live_saved_and_private_state_tamper_refuses_bounded_delivery(tmp_pa
                 payload[entry.global_union.CHECKPOINT_KEY] = {"pretend_old_family": True}
             torch.save(payload, path)
 
-    with pytest.raises(ValueError, match="saved payload differs|live state changed"):
+    with pytest.raises(ValueError, match=r"saved payload differs|live state changed"):
         entry.execute(cref, stage(tmp_path, c, cref, 1, None, "tampered"), observer=Tampered())
     assert not (tmp_path / "tampered/boundary.json").exists()
     assert not (tmp_path / "tampered/boundary.pending.json").exists()
