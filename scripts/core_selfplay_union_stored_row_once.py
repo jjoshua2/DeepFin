@@ -66,7 +66,7 @@ def _validate_contract_metadata(c: dict[str, Any]) -> None:
     core.require(type(c["source_revision"]) is str and re.fullmatch("[0-9a-f]{40}", c["source_revision"]) is not None,
                  "invalid union source revision")
     core.require(type(c["source_files"]) is dict and set(SOURCE_FILES) <= set(c["source_files"]), "missing union source pins")
-    for name, expected in c["source_files"].items():
+    for name, expected in cast(dict[str, Any], c["source_files"]).items():
         path = core.REPO / name
         core.require(path.resolve().is_relative_to(core.REPO) and not path.is_symlink()
                      and type(expected) is str and re.fullmatch("[0-9a-f]{64}", expected), "union source pin shape")
@@ -94,12 +94,14 @@ def _validate_contract_metadata(c: dict[str, Any]) -> None:
     limits = c["limits"]
     core.require(type(limits) is dict and set(limits) == {"max_rows", "max_decoded_bytes", "max_file_bytes", "max_total_metadata_bytes"},
                  "invalid union limits")
+    limits = cast(dict[str, Any], limits)
     for key, value in limits.items():
         core.integer(value, key)
     core.require(limits["max_file_bytes"] <= 128 << 20, "union metadata file limit exceeds128MiB")
     population = c["population"]
     core.require(type(population) is dict and set(population) == {"manifest", "plan", "origin_map_sha256",
         "membership_sha256", "sources", "rows"}, "invalid union population binding")
+    population = cast(dict[str, Any], population)
     reference(population["manifest"], "manifest")
     reference(population["plan"], "plan")
     for key in ("origin_map_sha256", "membership_sha256"):
@@ -284,6 +286,7 @@ def validate_closed_segment(contract_ref: dict[str, str], binding: dict[str, Any
     raw_bytes = 0
     journals = closed["draw_journals"]
     core.require(type(journals) is list and len(journals) == closed["segment"], "closed union journal chain length")
+    journals = cast(list[dict[str, str]], journals)
     batch_start = 0
     for index, ref in enumerate(journals):
         reference(ref, "closed journal")

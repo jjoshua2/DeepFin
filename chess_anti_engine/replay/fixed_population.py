@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 import re
 import stat
-from typing import Any
+from typing import Any, cast
 import uuid
 
 SCHEMA = "FIXED_SELFPLAY_UNION_MANIFEST_V1"
@@ -51,8 +51,9 @@ def sha(value: Any) -> str:
 
 def reference(value: Any) -> dict[str, str]:
     require(type(value) is dict and set(value) == {"path", "sha256"}, "invalid reference")
+    value = cast(dict[str, Any], value)
     require(type(value["path"]) is str, "invalid reference path")
-    p = Path(value["path"])
+    p = Path(cast(str, value["path"]))
     require(p.is_absolute() and str(p) == value["path"] and ".." not in p.parts,
             "noncanonical absolute reference")
     sha(value["sha256"])
@@ -62,14 +63,16 @@ def reference(value: Any) -> dict[str, str]:
 def inventory(shard: Any) -> str:
     """Validate the recorded descriptor, without statting any payload path."""
     require(type(shard) is dict and set(shard) == {"path", "files"}, "invalid shard descriptor")
-    p = Path(shard["path"])
+    shard = cast(dict[str, Any], shard)
+    p = Path(cast(str, shard["path"]))
     require(p.is_absolute() and str(p) == shard["path"] and ".." not in p.parts,
             "noncanonical shard path")
     require(type(shard["files"]) is list and bool(shard["files"]), "empty shard inventory")
     paths = []
-    for f in shard["files"]:
+    for f in cast(list[Any], shard["files"]):
         require(type(f) is dict and set(f) == {"path", "bytes", "sha256"}, "invalid inventory file")
-        path = Path(f["path"])
+        f = cast(dict[str, Any], f)
+        path = Path(cast(str, f["path"]))
         require(not path.is_absolute() and str(path) == f["path"] and ".." not in path.parts,
                 "noncanonical inventory entry")
         integer(f["bytes"], "inventory bytes", 0)
@@ -98,8 +101,9 @@ def validate_manifest(value: dict[str, Any]) -> dict[str, Any]:
     integer(value["expected_rows"], "expected row count")
     require(type(value["origins"]) is list and bool(value["origins"]), "missing original origins")
     origins: dict[str, dict[str, Any]] = {}
-    for o in value["origins"]:
+    for o in cast(list[Any], value["origins"]):
         require(type(o) is dict and set(o) == ORIGIN_KEYS, "invalid origin record")
+        o = cast(dict[str, Any], o)
         payload = {k: v for k, v in o.items() if k != "origin_id"}
         require(o["origin_id"] == digest(payload) and o["origin_id"] not in origins, "origin digest/duplicate")
         reference(o["generation_manifest"])
@@ -107,17 +111,19 @@ def validate_manifest(value: dict[str, Any]) -> dict[str, Any]:
         reference(o["actor_serving"])
         sha(o["served_state_sha256"])
         i = o["identity"]
-        require(type(i) is dict and set(i) == IDENTITY_KEYS and i["architecture"] == value["architecture"],
+        require(type(i) is dict and set(i) == IDENTITY_KEYS and cast(dict[str, Any], i)["architecture"] == value["architecture"],
                 "origin architecture or identity differs")
+        i = cast(dict[str, Any], i)
         integer(i["generation"], "actual generation")
         integer(i["actor_checkpoint_step"], "actor step", 0)
         sha(i["actor_sha256"])
         require(type(i["source_revision"]) is str and re.fullmatch(r"[0-9a-f]{40}", i["source_revision"])
                 is not None, "invalid original source revision")
         for key in ("run_uuid", "collection_uuid"):
-            require(type(i[key]) is str and str(uuid.UUID(i[key])) == i[key], "invalid original UUID")
+            require(type(i[key]) is str and str(uuid.UUID(cast(str, i[key]))) == i[key], "invalid original UUID")
         a = o["acceptance"]
         require(type(a) is dict and a.get("kind") in {"legacy", "bank"}, "invalid origin acceptance")
+        a = cast(dict[str, Any], a)
         if a["kind"] == "legacy":
             require(set(a) == {"kind", "manifest"} and a["manifest"] == o["generation_manifest"],
                     "legacy caller-trusted pin differs")
@@ -131,8 +137,9 @@ def validate_manifest(value: dict[str, Any]) -> dict[str, Any]:
     seen: set[str] = set()
     rows = 0
     physical: set[tuple[str, str]] = set()
-    for slot, s in enumerate(value["sources"]):
+    for slot, s in enumerate(cast(list[Any], value["sources"])):
         require(type(s) is dict and set(s) == SOURCE_KEYS, "invalid canonical source")
+        s = cast(dict[str, Any], s)
         require(type(s["slot"]) is int and s["slot"] == slot, "noncanonical union slot")
         sha(s["source_sha256"])
         require(s["source_sha256"] not in seen, "duplicate canonical source SHA")
@@ -154,12 +161,13 @@ def validate_manifest(value: dict[str, Any]) -> dict[str, Any]:
         reference(s["producer_proof"])
     require(rows == value["expected_rows"], "union row total differs")
     require(type(value["aliases"]) is list, "invalid copied-asset aliases")
-    for alias in value["aliases"]:
+    for alias in cast(list[Any], value["aliases"]):
         require(type(alias) is dict and set(alias) == {"canonical_slot", "origin_id", "shard", "producer_proof"},
                 "invalid copied-asset alias")
+        alias = cast(dict[str, Any], alias)
         slot = integer(alias["canonical_slot"], "alias canonical slot", 0)
         require(slot < len(value["sources"]) and alias["origin_id"] in origins, "unknown alias source/origin")
-        s = value["sources"][slot]
+        s = cast(dict[str, Any], value["sources"][slot])
         require(alias["shard"]["files"] == s["shard"]["files"]
                 and inventory(alias["shard"]) == s["source_sha256"], "alias inventory differs")
         reference(alias["producer_proof"])

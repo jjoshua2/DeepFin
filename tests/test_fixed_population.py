@@ -46,14 +46,14 @@ def test_real_quota_sampler_covers_every_admitted_source_row_once(tmp_path: Path
     m, mr = population_fixture(tmp_path)
     pop = load_fixed_population(ARCH, m, mr, rng=np.random.default_rng(3), max_rows=24, max_decoded_bytes=64 << 20)
     seen: list[Any] = []
-    replay = StoredRowOnceReplay(pop, seed=17, batch_size=4, expected_rows=24, on_draw=lambda rows: seen.extend(rows))
+    replay = StoredRowOnceReplay(pop, seed=17, batch_size=4, expected_rows=24, on_draw=seen.extend)
     for _ in range(6):
         arrays = replay.sample_batch_arrays(4)
         assert arrays["x"].shape[0] == 4
     assert len(seen) == 24
     wanted = {(g, sha, row) for g, sha, count in pop.membership for row in range(count)}
     assert {(r.generation, r.source_sha256, r.row_index) for r in seen} == wanted
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="stored-row pass exhausted"):
         replay.sample_batch_arrays(4)
 
 

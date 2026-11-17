@@ -6,6 +6,7 @@ model qualification, Root acceptance or scientific authority is provided.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from dataclasses import asdict
 import hashlib
 import inspect
@@ -13,7 +14,7 @@ import os
 from pathlib import Path
 import stat
 import sys
-from typing import Any, Callable
+from typing import Any, cast
 
 from scripts import core_finite_learner as core
 from scripts import core_selfplay_union_stored_row_once as entry
@@ -224,6 +225,7 @@ class OwnLiveProof:
                         "quota_ledger_checkpoint": boundary["quota_ledger_checkpoint"],
                         "population_identity": boundary["population_identity"], "source_origin_binding": boundary["source_origin_binding"]}
         core.require(type(payload) is dict and payload.pop(entry.CHECKPOINT_KEY) == expected_tag, "final union saved family tag")
+        payload = cast(dict[str, Any], payload)
         core.require(set(payload) == set(state_snapshot(trainer)) and fingerprint(payload, torch) == self.save_before["state"]
                      and aliases(payload["model"]) == self.save_before["model"]["aliases"], "saved payload differs from own-live state")
         core.require(payload["step"] == boundary["step"] == trainer.step and payload["arch"] == c["architecture"]

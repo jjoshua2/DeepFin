@@ -130,7 +130,10 @@ def test_union_identity_recipe_refusals_precede_model_construction(tmp_path: Pat
     cref = frozen(tmp_path / "invalid.contract.json", c)
     calls: list[bool] = []
     monkeypatch.setattr(core, "make_trainer", lambda *_args: calls.append(True))
-    with pytest.raises(ValueError):
+    expected = {"manifest": "metadata hash differs", "origins": "union manifest/origin/membership identity mismatch",
+                "dose": "union finite dose mismatch", "quota": "union permutation/quota/partial recipe mismatch",
+                "ledger_output": "union quota ledger inside sealed output", "anchor": "invalid fixed-union contract"}[fault]
+    with pytest.raises(ValueError, match=expected):
         entry.execute(cref, stage(tmp_path, cref, c, 1, None, "refused"))
     assert not calls
     assert not (tmp_path / "refused").exists()
@@ -208,5 +211,5 @@ def test_pure_closed_consumer_refuses_rehashed_boundary_alias_tampering(tmp_path
     finally:
         target.chmod(0o444)
         target.parent.chmod(0o555)
-    with pytest.raises(ValueError, match="closed union membership/selected segment counters|current journal hash/path aliases"):
+    with pytest.raises(ValueError, match=r"closed union membership/selected segment counters|current journal hash/path aliases"):
         entry.validate_closed_segment(cref, binding)

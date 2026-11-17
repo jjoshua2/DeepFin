@@ -15,7 +15,7 @@ import math
 import os
 from pathlib import Path
 import stat
-from typing import Any
+from typing import Any, cast
 
 from chess_anti_engine.replay.fixed_population import (
     SCHEMA, canonical, digest, integer, inventory, origin_map, reference,
@@ -125,21 +125,24 @@ def validate_plan(p: dict[str, Any]) -> None:
     integer(p["expected_rows"], "expected row count")
     require(type(p["branches"]) is list and bool(p["branches"]), "missing pinned branches")
     require(type(p["copies"]) is list, "invalid copy declarations")
-    for copy in p["copies"]:
+    for copy in cast(list[Any], p["copies"]):
         require(type(copy) is dict and set(copy) == {"canonical", "alias"}, "invalid copy proof")
+        copy = cast(dict[str, Any], copy)
         reference(copy["canonical"])
         reference(copy["alias"])
     limits = p["limits"]
     require(type(limits) is dict and set(limits) == {
         "metadata_file_bytes", "metadata_total_bytes", "bank_metadata_bytes", "max_games_per_branch",
         "max_inventory_files", "max_inventory_bytes", "max_manifest_bytes"}, "invalid compilation limits")
+    limits = cast(dict[str, Any], limits)
     for key, value in limits.items():
         integer(value, key)
     require(limits["metadata_file_bytes"] <= MAX_METADATA_FILE
             and limits["metadata_total_bytes"] <= MAX_METADATA_TOTAL
             and limits["max_manifest_bytes"] <= MAX_METADATA_FILE, "compilation cap too large")
-    for branch in p["branches"]:
+    for branch in cast(list[Any], p["branches"]):
         require(type(branch) is dict and branch.get("kind") in {"legacy", "bank"}, "invalid source family")
+        branch = cast(dict[str, Any], branch)
         if branch["kind"] == "legacy":
             require(set(branch) == {"kind", "manifest"}, "invalid trusted legacy binding")
             reference(branch["manifest"])
@@ -181,7 +184,7 @@ def _legacy(m: Metadata, branch: dict[str, Any], architecture: dict[str, Any]) -
                 "architecture": architecture}
     require(type(g["games"]) is list and bool(g["games"]), "legacy missing games")
     physical: set[str] = set()
-    for game in g["games"]:
+    for game in cast(list[dict[str, Any]], g["games"]):
         require(game["bank"] == "train" and game["label_class"] in {"NATURAL", "TB_ADJUDICATED"},
                 "protected or unresolved source refused")
         integer(game["rows"], "legacy source rows")
@@ -220,7 +223,7 @@ def _legacy(m: Metadata, branch: dict[str, Any], architecture: dict[str, Any]) -
     origin = {"generation_manifest": branch["manifest"], "identity": identity,
               "acceptance": branch, "producer_protocol": p["producer_protocol"],
               "actor_serving": g["actor_serving"], "served_state_sha256": state}
-    return origin, g["games"]
+    return origin, cast(list[dict[str, Any]], g["games"])
 
 
 def _bank(m: Metadata, branch: dict[str, Any], architecture: dict[str, Any], limits: dict[str, int]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -277,7 +280,7 @@ def compile_union(plan_ref: dict[str, str], *, max_file_bytes: int = MAX_METADAT
             origin_by_id[origin["origin_id"]] = origin
         for game in games:
             source_sha = inventory(game["shard"])
-            entry = {"slot": len(sources), "generation": origin["identity"]["generation"],
+            entry: dict[str, Any] = {"slot": len(sources), "generation": origin["identity"]["generation"],
                      "source_sha256": source_sha, "origin_id": origin["origin_id"],
                      **{k: game[k] for k in ("rows", "game_id", "physical_game_id", "bank", "label_class", "shard", "producer_proof")}}
             require(entry["bank"] == "train", "HOLD/final source cannot enter union")
