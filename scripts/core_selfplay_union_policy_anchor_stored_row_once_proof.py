@@ -83,6 +83,7 @@ def reference_snapshot(context: dict[str, Any]) -> dict[str, Any] | None:
         core.require(anchor is None, "zero union anchor loaded teacher")
         return None
     core.require(anchor is not None and anchor.spec == c["policy_anchor"], "missing selected positive teacher")
+    anchor = cast(Any, anchor)
     anchor.custody()
     teacher = anchor.model
     core.require(all(not module.training for module in teacher.modules())
