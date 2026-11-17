@@ -1,6 +1,6 @@
-# D2: matched 512-update horizon controls — preregistration
+# D2: matched 512-update horizon controls — preregistration and readout
 
-**Preregistered methods; phase admission remains pending.** Study UUID: `3326c042-1044-4270-8d1e-02ca4c1c2ca5`. Publication of this record on Main registers the selected methods. It reserves no role or resource and issues no executable plan, retry or launch authority. D1 remains closed with no eligible candidate. Keep A39, all D1 endpoints and all charged failures. The broader strength goal remains unresolved.
+**Registration text below is preserved; the completed six-edge readout is appended.** Study UUID: `3326c042-1044-4270-8d1e-02ca4c1c2ca5`. Publication of this record on Main registers the selected methods. It reserves no role or resource and issues no executable plan, retry or launch authority. D1 remains closed with no eligible candidate. Keep A39, all D1 endpoints and all charged failures. The broader strength goal remains unresolved.
 
 ## Question and fixed treatments
 
@@ -55,3 +55,25 @@ Root assigned new student run UUIDs S0 `c5e854cf-9ef3-4762-9b58-53f6baf9692e` an
 The selected GPU allowance is 12,600 seconds and CPU allowance 2,400 seconds within the existing week cap and cutoff; these finite ceilings are not actual runtime forecasts. All failed-owner time remains charged. The earlier THREE and cancelled 5k-study stops remain in force. This registration changes no native goal state or global stop marker.
 
 Telemetry interpretation: a 512-step whole-run loss or KL mean and a 4096-step mean cover different training states. Their difference is not a matched common-prefix effect or endpoint divergence. Compare any already-recorded common-prefix per-step telemetry separately; missing telemetry is unavailable, not zero. The logged base TOTAL excludes the anchor penalty, while backpropagation includes it. This guard requests no additional inference, training or telemetry audit.
+
+
+## November 17 completed six-edge readout
+
+All six fixed comparisons completed and were independently accepted: 160 games / 80 color-reversed opening pairs on every edge, with no illegal/crashed games or incomplete pairs. The GPU technical controls and separate complete-game reconciliation passed. These are six different comparisons on one common panel; they are not pooled into a single strength estimate.
+
+| Candidate vs reference | W / D / L | Candidate score | Descriptive paired 95% interval |
+|---|---:|---:|---|
+| L0 vs A39 | 53 / 52 / 55 | 49.3750% | 43.2129–55.5371% |
+| L1 vs A39 | 47 / 60 / 53 | 48.1250% | 42.5589–53.6911% |
+| S0 vs A39 | 61 / 57 / 42 | 55.9375% | 50.2054–61.6696% |
+| S0 vs L0 | 66 / 52 / 42 | 57.5000% | 51.6267–63.3733% |
+| S1 vs A39 | 52 / 58 / 50 | 50.6250% | 44.5875–56.6625% |
+| S1 vs L1 | 58 / 48 / 54 | 51.2500% | 45.0925–57.4075% |
+
+The frozen point-based rule selects **S0 only**: 55.9375% against A39 and 57.5% against its own L0 control both exceed the registered 55% entry threshold. S1 scores 50.625% against A39 and 51.25% against L1, so it is ineligible. The intervals do not enter the entry rule. The exact result is `SCREEN_ENTRY_ONLY_NO_ESCALATION_AUTHORITY`; selection is not confirmation or adoption.
+
+[The compact accepted decision evidence](evidence/2026-11-17-policy-anchor-d2-development-readout.json) records all six accepted source/summary/owner references and the frozen decision command. The external source decision is SHA256 `3ba2ee41cceaa82054aed26264f8b25c877b21949dc3fc9b7024cd3b8cd8cac5`; independent decision review is `c9f8dc17d7d24525efa8588a8a8dec572ddb78d68292be540d5db94f8f8421cc`. All424 numerical owners were closed at this readout. Original D2 actual owner-wall charges are 3106.3182622438762 GPU seconds and94.98407782916911 CPU seconds, including both failed metadata qualification attempts. Week totals are90966.80728831002 GPU seconds and6755.5402942726505 CPU seconds. Earlier failures, stops and D1 results remain retained; these are actual costs, not unused-cap credit.
+
+This favors the shorter unanchored endpoint under this particular screen. It does not identify an optimum RL recipe, isolate a value-head cause, show that policy KL is generally ineffective or establish that long training is generally harmful. The arms share donor/data, one training seed and one80-opening panel. Pairwise estimates are correlated; their intervals are descriptive single-edge uncertainty. Physical-row prefix equality does not prove matching augmentation/RNG/arithmetic. L0 retains its saved-only corrective proof and original failed-GPU limitation.
+
+The next selected research method is a separately budgeted [fresh S0/A39 confirmation](2026-11-17-s0-a39-fresh-confirmation.md). D2 itself grants no confirmation clock. A39 remains retained, with no runtime adoption, external Rofchade/Stockfish/Lc0 milestone or long-term-goal completion.
