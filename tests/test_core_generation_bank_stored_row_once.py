@@ -127,7 +127,7 @@ def test_preflight_refusals_precede_model_construction(tmp_path: Path, monkeypat
     cref = frozen(tmp_path / "bad.contract.json", c)
     calls: list[Any] = []
     monkeypatch.setattr(core, "make_trainer", lambda *_args: calls.append(True))
-    with pytest.raises(ValueError, match="stored-row|partial batch|dose"):
+    with pytest.raises(ValueError, match=r"stored-row|partial batch|dose"):
         once.execute(cref, stage(tmp_path, cref, {}, 1, None, "refused"))
     assert not calls
     assert not (tmp_path / "refused/learner.pt").exists()

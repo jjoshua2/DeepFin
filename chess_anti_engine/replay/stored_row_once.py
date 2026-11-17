@@ -298,29 +298,34 @@ class QuotaLedger:
             raise
 
     def reserve(self, encoded: bytes) -> None:
-        require(self._stream is not None and encoded.endswith(b"\n"), "quota ledger unavailable/record encoding")
+        stream = self._stream
+        if stream is None:
+            raise ValueError("quota ledger unavailable/record encoding")
+        require(encoded.endswith(b"\n"), "quota ledger unavailable/record encoding")
         require(self._bytes + len(encoded) <= min(self.max_file_bytes, self.max_total_bytes), "quota ledger reservation byte cap")
-        require(self._stream.write(encoded) == len(encoded), "partial quota reservation: no retry")
-        self._stream.flush()
-        os.fsync(self._stream.fileno())
+        require(stream.write(encoded) == len(encoded), "partial quota reservation: no retry")
+        stream.flush()
+        os.fsync(stream.fileno())
         self._bytes += len(encoded)
         self._raw.update(encoded)
-        require(_stamp(self.path.stat()) == _stamp(os.fstat(self._stream.fileno())), "quota ledger path changed")
+        require(_stamp(self.path.stat()) == _stamp(os.fstat(stream.fileno())), "quota ledger path changed")
 
     def checkpoint(self) -> dict[str, Any]:
-        require(self._stream is not None and os.fstat(self._stream.fileno()).st_size == self._bytes,
-                "quota ledger changed size")
-        before = os.fstat(self._stream.fileno())
-        self._stream.seek(0)
+        stream = self._stream
+        if stream is None:
+            raise ValueError("quota ledger changed size")
+        require(os.fstat(stream.fileno()).st_size == self._bytes, "quota ledger changed size")
+        before = os.fstat(stream.fileno())
+        stream.seek(0)
         raw = hashlib.sha256()
         remaining = self._bytes
         while remaining:
-            chunk = self._stream.read(min(1 << 20, remaining))
+            chunk = stream.read(min(1 << 20, remaining))
             require(bool(chunk), "quota ledger checkpoint truncated")
             raw.update(chunk)
             remaining -= len(chunk)
         require(raw.hexdigest() == self._raw.hexdigest()
-                and _stamp(os.fstat(self._stream.fileno())) == _stamp(before)
+                and _stamp(os.fstat(stream.fileno())) == _stamp(before)
                 and _stamp(self.path.stat()) == _stamp(before), "quota ledger checkpoint content changed")
         return {"path": str(self.path), "bytes": self._bytes, "sha256": raw.hexdigest()}
 

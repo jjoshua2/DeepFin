@@ -6232,11 +6232,11 @@ class Trainer:
                 self.step += 1
                 train_steps_done += 1
                 break
-        except BaseException:
+        except BaseException as error:
             if bool(getattr(buf, "stored_row_quota", False)):
                 abort = getattr(buf, "abort_consumption", None)
                 if not callable(abort):
-                    raise TypeError("stored-row quota buffer lacks abort_consumption")
+                    raise TypeError("stored-row quota buffer lacks abort_consumption") from error
                 abort()
             raise
         finally:

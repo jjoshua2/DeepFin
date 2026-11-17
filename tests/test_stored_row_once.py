@@ -52,7 +52,7 @@ def test_17568_rows_are_549_full_updates_and_never_wrap() -> None:
         replay.sample_batch_arrays(32)
 
 
-@pytest.mark.parametrize("n,batch", [(1, 2), (5, 2), (17567, 32)])
+@pytest.mark.parametrize(("n", "batch"), [(1, 2), (5, 2), (17567, 32)])
 def test_partial_population_refuses_without_drawing(n: int, batch: int) -> None:
     seen: list[Any] = []
     with pytest.raises(ValueError, match="partial batch"):
@@ -70,6 +70,7 @@ def test_natural_identical_boards_keep_distinct_stored_row_identities(tmp_path: 
     try:
         for _ in range(2):
             batch = trainer._sample_batch_host(cast(Any, replay), batch_size=2, mirror_prob=1.0)
+            assert isinstance(batch, dict)
             assert batch["x"].shape[0] == 2
         assert sorted(r.row_index for rows in draws for r in rows) == list(range(4))
         assert replay.state()["cursor"] == 4
@@ -117,7 +118,7 @@ def test_saved_state_tamper_refuses(tmp_path: Path, fault: str) -> None:
     else:
         state["permutation"][state["permutation"].index(0)] = False
     ref = sealed_journal(tmp_path / "journal.jsonl", draws)
-    with pytest.raises(ValueError, match="stored-row|checkpoint/journal"):
+    with pytest.raises(ValueError, match=r"stored-row|checkpoint/journal"):
         adapter(4, 2, lambda _: None).restore(state, [ref], max_file_bytes=1 << 20, max_total_bytes=1 << 20)
 
 
@@ -188,7 +189,9 @@ def test_quota_marker_serializes_prefetch_and_fault_stops_before_second_draw(tmp
         next(iterator)
         assert len(seen) == 1
     finally:
-        iterator.close()
+        close = getattr(iterator, "close", None)
+        assert callable(close)
+        close()
         trainer.writer.close()
     assert len(seen) == 1
 
@@ -206,20 +209,26 @@ def test_persistent_ledger_blocks_fresh_output_rewind_and_concurrent_owner(tmp_p
         ledger.reserve(line)
         assert ledger.checkpoint()["sha256"] == ref["sha256"]
         if fault == "concurrent":
-            with pytest.raises(BlockingIOError):
-                with QuotaLedger(path, first=False, expected_journals=[ref], **kwargs):
-                    pytest.fail("concurrent quota owner admitted")
+            with (
+                pytest.raises(BlockingIOError),
+                QuotaLedger(path, first=False, expected_journals=[ref], **kwargs),
+            ):
+                pytest.fail("concurrent quota owner admitted")
             return
         if fault == "tail":
             ledger.reserve(line)
     if fault == "restart_first":
-        with pytest.raises(FileExistsError):
-            with QuotaLedger(path, first=True, expected_journals=[], **kwargs):
-                pytest.fail("first ledger recreated")
+        with (
+            pytest.raises(FileExistsError),
+            QuotaLedger(path, first=True, expected_journals=[], **kwargs),
+        ):
+            pytest.fail("first ledger recreated")
         return
     if fault == "changed_prefix":
         data = path.read_bytes()
         path.write_bytes(data.replace(b"row_index", b"row_indeX", 1))
-    with pytest.raises(ValueError, match="quota ledger"):
-        with QuotaLedger(path, first=False, expected_journals=[ref], **kwargs):
-            pytest.fail("stale checkpoint admitted")
+    with (
+        pytest.raises(ValueError, match="quota ledger"),
+        QuotaLedger(path, first=False, expected_journals=[ref], **kwargs),
+    ):
+        pytest.fail("stale checkpoint admitted")

@@ -47,8 +47,11 @@ def validate_contract(c: dict[str, Any], *, _anchored: bool) -> dict[str, Any]:
                  and sampling["mirror_shares_quota"] is True
                  and sampling["partial_batch"] == "REFUSE_BEFORE_MODEL_CONSTRUCTION"
                  and sampling["lineage_uuid"] == c["run_uuid"], "stored-row quota/lineage contract")
-    ledger = core.external(sampling["quota_ledger"])
-    core.require(str(ledger) == sampling["quota_ledger"], "noncanonical quota ledger")
+    quota_path = sampling["quota_ledger"]
+    if type(quota_path) is not str:
+        raise ValueError("quota ledger path must be a string")
+    ledger = core.external(quota_path)
+    core.require(str(ledger) == quota_path, "noncanonical quota ledger")
     core.integer(sampling["order_seed"], "stored-row order seed", 0)
     n = core.integer(sampling["expected_rows"], "stored-row expected population")
     core.require(n <= c["limits"]["max_rows"] and n % c["batch_size"] == 0,
@@ -82,8 +85,8 @@ def metadata(c: dict[str, Any], stage: dict[str, Any], contract_ref: dict[str, s
     for index, binding in enumerate(stage["banks"]):
         core.require(type(binding) is dict and set(binding) == {"root_acceptance", "independent_review"},
                      "invalid accepted stored-row bank binding")
-        accepted = admission.validate_accepted_generation(binding["root_acceptance"], binding["independent_review"],
-                                                         **c["bank_limits"])
+        accepted = admission.validate_accepted_generation(cast(dict[str, str], binding["root_acceptance"]),
+                                                         cast(dict[str, str], binding["independent_review"]), **c["bank_limits"])
         if "exclusion_index" in accepted.evidence:
             core.require("scripts/core_exclusion_index.py" in c["source_files"], "missing exclusion learner source")
         identity = bank.plain(accepted.identity)
