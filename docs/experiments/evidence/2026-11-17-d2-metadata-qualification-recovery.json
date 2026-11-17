@@ -61,12 +61,15 @@
       "sha256": "d85ceac3b961df0eefc115d44094075d0bd6ba3eb16ab92d95793401c31fa567"
     },
     "source_excerpt": {
+      "interpretation": "Path-normalized deployment-specific excerpt, not standalone; exactly two deployment string literals replaced.",
+      "private_raw_function_sha256": "db5aa9f551ecdf7562def51000071790d1b9c45e23fb59851d38dc76594223d4",
+      "public_normalized_excerpt_sha256": "960a7ee89a06e5b549e4ae5deec695a80a3d8cd47153934de3918436184e5ccd",
       "repository_path": "docs/experiments/source/2026-11-17-d2-metadata-qualification-recovery/runtime_guard.selected.py.txt",
-      "sha256": "db5aa9f551ecdf7562def51000071790d1b9c45e23fb59851d38dc76594223d4"
+      "sha256": "960a7ee89a06e5b549e4ae5deec695a80a3d8cd47153934de3918436184e5ccd"
     },
     "source_provenance": {
       "repository_path": "docs/experiments/source/2026-11-17-d2-metadata-qualification-recovery/runtime_guard.provenance.json",
-      "sha256": "0ea08759d8148337e82c33fa7d75900cdb27af7b4d6f6e32e2f93d9216174776"
+      "sha256": "82e9f7cf3a1ea1e563c1a46a94ad395d47ec50ace5aa3d81be987db04e1656b0"
     }
   },
   "direction_review_status": "ACCEPT_D2_METADATA_QUALIFICATION_RECOVERY_DIRECTION_NO_FINDINGS_V1",
@@ -220,6 +223,27 @@
     "hashes_are_canonical_original_private_artifact_hashes": true,
     "not_runtime_input": true,
     "rendered_plain_path_line_is_not_the_actual_config_bytes": true
+  },
+  "publication_source_correction": {
+    "no_policy_allowlist_test_or_private_helper_change": true,
+    "not_standalone": true,
+    "parallel_passes": 11410,
+    "prior_CI_evidence": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-recovery-preregistration-CI-primary-failure-v1/log-evidence.json",
+      "sha256": "bfedb076f1fec12488dd0d23e70a08b64b3e1607f04b0fff4230592d39c70681"
+    },
+    "private_helper_and_raw_excerpt_unchanged": true,
+    "private_raw_function_sha256": "db5aa9f551ecdf7562def51000071790d1b9c45e23fb59851d38dc76594223d4",
+    "public_normalized_excerpt_sha256": "960a7ee89a06e5b549e4ae5deec695a80a3d8cd47153934de3918436184e5ccd",
+    "public_replacements": [
+      "<QUALIFIED_PLAIN_PTH>",
+      "<QUALIFIED_MANAGED_SITE>"
+    ],
+    "reason": "The first hosted CI attempt failed the repository no-absolute-home-path policy on exactly two public archived deployment literals. No numerical recovery owner started.",
+    "replacement_count": 2,
+    "run_id": 44064286426,
+    "serial_failed": 1,
+    "serial_passes": 5239
   },
   "qualification_contract": {
     "CUDA_state": "NOT_QUERIED",

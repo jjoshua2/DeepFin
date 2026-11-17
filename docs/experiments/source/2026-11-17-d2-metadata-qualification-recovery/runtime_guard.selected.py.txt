@@ -8,8 +8,8 @@ def runtime_guard(plan, *, explicit_source=False):
     found = sorted(str(x) for x in sites.glob('*.pth'))
     expected = sites / 'managed-dependencies.pth'
     # One narrowly selected writable runtime config, never a metadata/receipt exception.
-    fixed = Path('/home/josh/chess-artifacts/venvs/retained-search-finite-qualification-20261114/lib/python3.13/site-packages/managed-dependencies.pth')
-    fixed_site = '/home/josh/chess-artifacts/venvs/rl-transition-managed-20261111-cu130/lib/python3.13/site-packages'
+    fixed = Path('<QUALIFIED_PLAIN_PTH>')
+    fixed_site = '<QUALIFIED_MANAGED_SITE>'
     fixed_sha = '9ff7480dbc5e27595b4179759c7e290a0843dbadb8f26af8480ae8f116738362'
     require(found == [str(expected)] and expected == fixed and runtime['managed_site'] == fixed_site
             and runtime['plain_pth_sha256'] == fixed_sha, 'sole selected managed plain pth identity differs')
