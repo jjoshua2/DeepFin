@@ -132,14 +132,49 @@ def short_contract(c: dict[str, Any], label: str, donor: dict[str, Any],
 
 def retained_model(m: ruler.Metadata, binding: dict[str, Any], label: str,
                    donor: dict[str, Any]) -> dict[str, Any]:
-    """Resolve a display alias through the unchanged, exact historical route."""
+    """Keep normal own-live and corrective saved-only long receipts distinct."""
     ruler.require(label in LONG_LABELS and binding == LONG_BINDINGS[label], "D2 retained endpoint identity differs")
     design = m.read(D1_DESIGN)
     ruler.require(design["study_uuid"] == "8045699e-4088-4a41-ae9c-4013d4a55469", "D2 retained D1 design differs")
-    value = ruler._d1_model(m, binding, LONG_LABELS[label], donor, design)
+    if label == "L1":
+        # The normal K1 proof has its genuine recorded initial-state witness.
+        value = ruler._d1_model(m, binding, "K1", donor, design)
+    else:
+        root = m.read(binding["root"])
+        ruler.require(root["payload_audit"]["schema"] == ruler.K0_NO_CLIP_SCHEMA,
+                      "D2 retained L0 requires its corrective saved-only family")
+        # These unchanged public APIs validate Root10/ind12, the failed GPU,
+        # corrective CPU, saved payload, exact TRAIN and full per-game coverage.
+        value = ruler.model_delivery(m, binding, "K0", _d1=True)
+        train = ruler.training_population(m, value)
+        ruler.same_gpu_game_coverage(m, binding, value, train, _d1=True)
+        expected_bank = design["foundations"]["TRAIN_bank"]
+        ruler.require(value["stage"]["banks"] == [{"root_acceptance": expected_bank["root"], "independent_review": expected_bank["independent"]}]
+                      and len(train.games) == 192 and train.evidence["eligible_rows"] == 17568, "D1 exact accepted TRAIN differs")
+        c = value["contract"]
+        anchor = c["policy_anchor"]
+        ruler.require(c["initial_model"] == donor["checkpoint"] and c["initial_actor_step"] == donor["step"]
+                      and c["architecture"] == donor["architecture"] and type(c["seed"]) is int and c["seed"] == 2026111673
+                      and type(c["batch_size"]) is int and c["batch_size"] == 32 and c["mirror_prob"] == 0.5
+                      and ruler.canonical(c["updates_per_segment"]) == ruler.canonical([4096])
+                      and ruler.canonical(c["lr"]) == ruler.canonical(LR), "D1 exact bootstrap/dose/LR differs")
+        ruler.require(set(anchor) == {"schema", "direction", "mask", "coefficient", "reference"}
+                      and anchor["schema"] == "frozen_reference_policy_anchor_v1"
+                      and anchor["direction"] == "reference_to_student_forward_KL"
+                      and anchor["mask"] == "original_network_turn_has_policy_with_explicit_legal_mask_v1"
+                      and type(anchor["coefficient"]) in (int, float) and anchor["coefficient"] == 0
+                      and anchor["reference"] is None, "D1 anchor identity differs")
+        saved = m.read(root["payload_audit"]["readout"])
+        provenance = saved["donor_provenance"]
+        ruler.require(c["source_revision"] == LEARNER_SOURCE
+                      and type(provenance) is dict and set(provenance) == {"mode", "sha256", "architecture"}
+                      and provenance["mode"] == "fresh_rl_complete_v1"
+                      and provenance["sha256"] == donor["checkpoint"]["sha256"]
+                      and ruler.canonical(provenance["architecture"]) == ruler.canonical(donor["architecture"]),
+                      "D2 retained saved donor/source provenance differs")
+        # No initial-live hash or historical own-live equality is inferred from
+        # this saved-only receipt. Its original limitations remain unchanged.
     ruler.require(value["step"] == 4096 and value["label"] == LONG_LABELS[label], "D2 retained provenance differs")
-    # Preserve the original label, tag, study and source. A display alias is not a
-    # replacement delivery and does not turn K0's saved-only proof into same-GPU.
     return value
 
 

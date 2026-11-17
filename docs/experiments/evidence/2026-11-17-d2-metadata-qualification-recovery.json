@@ -3,6 +3,118 @@
     "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-metadata-qualification-recovery-root-direction-v1/direction.json",
     "sha256": "8c9c3636dcb41625155d323d79408cea97049abadf6a1de65839f08a96464e31"
   },
+  "actual_recovery_attempt": {
+    "D1_playing_observations_not_invalidated_by_this_metadata_failure": true,
+    "Main_publication": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-metadata-qualification-recovery-main-publication-v1/publication.json",
+      "sha256": "425694fabe1131ed7167896811e64fbca36449b7e7d14e265032a68f84157dd8"
+    },
+    "Main_revision": "542a04d406f06b74b28823a11499196870a2999c",
+    "Main_tree": "3efe7039a27cb38c4c17e3f2225f2beab910fcf8",
+    "Root12_or_ind14_qualification_issued": false,
+    "actual_model_metadata_report_present": false,
+    "admission": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-metadata-qualification-recovery-bindings-v1/admission.json",
+      "sha256": "0e2ba853befab17783e653dc903e080de0d7f9b30fe5ea7718c2b86994f6dbeb"
+    },
+    "all_closed_owners": 411,
+    "automatic_retry_or_new_compute_authority": false,
+    "child_failure_artifact": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-metadata-qualification-recovery-results-v1/failure.json",
+      "sha256": "1558388c7a752f2ef34191c050be6f670354e207c064abbb9ff502126ade2517"
+    },
+    "child_recorded_wall_seconds": 6.82278264395427,
+    "closed_custody": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-metadata-qualification-recovery-bindings-v1/cpu.closed-custody.json",
+      "sha256": "c679fac42bf17ad74952656f742f33e25d1d2bd319346829a5a6c83157c279ed"
+    },
+    "command": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-metadata-qualification-recovery-bindings-v1/command.json",
+      "sha256": "c07af5e2c3cb971e40384879f0a2fc74c2a7891646a6edc5f9e1b63b15677f58"
+    },
+    "complete_model_controls": 0,
+    "costs_after_closure": {
+      "D2_CPU_actual_seconds": 11.057120202924125,
+      "D2_GPU_actual_seconds": 477.2318951319903,
+      "combined_failed_qualification_wall_seconds": 8.76625999296084,
+      "engineering_CPU_actual_seconds": 307.5196034691762,
+      "original_failed_Q_wall_seconds": 1.2425382189685479,
+      "recovery_failed_Q_wall_seconds": 7.523721773992293,
+      "week_CPU_actual_seconds": 6671.6133366464055,
+      "week_GPU_actual_seconds": 88337.72092119814
+    },
+    "diagnosis_source_status": "CONFIRMED_CLOSED_D2_RECOVERY_RETAINED_L0_SCHEMA_FAILURE_CHANGES_REQUIRED_V1",
+    "exec_session_id": 75370,
+    "failure": {
+      "exception_type": "KeyError",
+      "interpretation": "The first S0 API control fails in nested retained L0 before the normal flat initial-live fingerprint lookup can complete. That field is absent from the genuine saved-only recovery receipt; the synthetic fixture supplied it. This is a metadata wrapper regression, not proof of numerical or playing failure; original D1 private loading used its recovery-aware dispatcher.",
+      "message": "'initial_model_state_sha256'"
+    },
+    "final_qualification_readout_present": false,
+    "final_source_runtime_origin_rechecks_reached": false,
+    "full_twelve_controls_complete": false,
+    "independent_failure_diagnosis": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-recovery-retained-L0-schema-failure-independent-diagnosis-v1/review.json",
+      "sha256": "39c0d5f52d58e7fadbaa2496efaf584c57aa26a848c01827433eecffa2e70192"
+    },
+    "new_D2_GPU_edges": 0,
+    "outer_owner_wall_seconds": 7.523721773992293,
+    "owned_births_closed": true,
+    "partial_genuine_control_reports": {
+      "actual-bank-metadata.json": {
+        "artifact": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-metadata-qualification-recovery-results-v1/actual-bank-metadata.json",
+          "sha256": "3184d505e764454507fc1ea0e786fcecc4ee27f680b1b2af58e197a76b0c983c"
+        },
+        "controls_completed": 4,
+        "status": "PASS_ACTUAL_BANK_METADATA_APIS_NOT_PAYLOAD_QUALIFICATION_V1"
+      },
+      "actual-current-I-asset-metadata.json": {
+        "artifact": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-metadata-qualification-recovery-results-v1/actual-current-I-asset-metadata.json",
+          "sha256": "8129708869c250b79806061d1c8345d9b9ea1ac060cb73ecd07309b49c40b5bd"
+        },
+        "controls_completed": 2,
+        "status": "PASS_ACTUAL_CURRENT_INTEGRATED_A39_METADATA_CONTROLS_V1"
+      },
+      "actual-role-metadata.json": {
+        "artifact": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-metadata-qualification-recovery-results-v1/actual-role-metadata.json",
+          "sha256": "43bdf61d191f646b56b0e8fab5bb5c74d94e497c46dc3bf233541ca99f8e760b"
+        },
+        "controls_completed": 2,
+        "status": "PASS_D2_FRESH_ROLE_METADATA_CONTROLS_V1"
+      }
+    },
+    "plan": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-metadata-qualification-recovery-bindings-v1/plan.json",
+      "sha256": "ff3a2afb73779230f1b71ed8b871fcdfa49b86ec2b92ca3e365e3694b521bfce"
+    },
+    "playing_strength_outcomes": "UNMEASURED",
+    "post_closure_custody": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-metadata-qualification-recovery-bindings-v1/cpu.post-closure-custody.json",
+      "sha256": "d2dcffc8396dbc02aa587466c0c09d55e8d0b868a8b3af7592040f054e8d59f3"
+    },
+    "status": "CLOSED_RECOVERY_FAILED_TECHNICAL_STOP_NO_QUALIFICATION",
+    "supported_parent_EOF": 1,
+    "terminal": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-metadata-qualification-recovery-CPU-execution-v1/terminal.json",
+      "sha256": "e0f22a3819f75420fbfecac552be3ba50a3bff14177199fdb049a3260a64dcc5"
+    },
+    "three_leases_free_at_closure": true,
+    "unit_JUnit": {
+      "artifact": {
+        "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-metadata-qualification-recovery-results-v1/junit.xml",
+        "sha256": "f64e6c0d643e90a1a51a31c6d6271630a7065dbf07760257b202c1b386be782b"
+      },
+      "errors": 0,
+      "failures": 0,
+      "meaning": "Local software cases completed; this does not complete actual model controls, final guards, or qualification.",
+      "skipped": 0,
+      "test_functions": 12,
+      "testcases": 45
+    }
+  },
   "author_actions": "Only source/compact metadata read+text/AST preparation. No logs/pth/environment/rawpayload/model/journal/book/TB/native/Git/network/import/helper/test/probe/numerical action or authority issuance.",
   "budget": {
     "D2_CPU_already_charged": 3.5333984289318323,
@@ -124,6 +236,7 @@
     "tests_or_controls_run": false,
     "wall_seconds": 1.2425382189685479
   },
+  "historical_preregistration_source_status": "PROSPECTIVE_REVIEWED_SOURCE_RECORD_RECOVERY_NOT_RUN",
   "independent_direction_review": {
     "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-metadata-qualification-recovery-independent-direction-review-v1/review.json",
     "sha256": "b852e2140fcebfb0caa1f5cefd13b0bf8a086b55a7a6a92d9e3be6c47346f2b0"
@@ -293,7 +406,7 @@
     }
   },
   "schema": "D2_METADATA_QUALIFICATION_RECOVERY_PUBLIC_RECORD_V1",
-  "status": "PROSPECTIVE_REVIEWED_SOURCE_RECORD_RECOVERY_NOT_RUN",
+  "status": "CLOSED_RECOVERY_FAILED_TECHNICAL_STOP_NO_QUALIFICATION",
   "stop_and_preservation": {
     "any_new_failure_or_extra_owner_blocks_recovery_and_DEV": true,
     "historical_THREE_and_cancelled_5k_stops_remain": true,
