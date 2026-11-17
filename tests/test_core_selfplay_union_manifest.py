@@ -169,7 +169,7 @@ def test_rehashed_unqualified_metadata_is_refused(tmp_path: Path, fault: str) ->
         game["producer_proof"] = frozen(tmp_path / "bad-proof.json", proof)
     bad = frozen(tmp_path / "bad-generation.json", value)
     p = plan(tmp_path, [{"kind": "legacy", "manifest": bad}], expected_sources=1, expected_rows=4)
-    with pytest.raises(ValueError, match="protected or unresolved|legacy TRAIN proof"):
+    with pytest.raises(ValueError, match=r"protected or unresolved|legacy TRAIN proof"):
         compiled(tmp_path, p)
 
 
@@ -221,5 +221,5 @@ def test_fixed_roster_and_inventory_caps_are_effective(tmp_path: Path, fault: st
     else:
         value["limits"]["max_inventory_bytes"] = 1
     bad = frozen(tmp_path / "bad-plan.json", value)
-    with pytest.raises(ValueError, match="union roster exceeds|source roster length|union inventory aggregate"):
+    with pytest.raises(ValueError, match=r"union roster exceeds|source roster length|union inventory aggregate"):
         compiled(tmp_path, bad)

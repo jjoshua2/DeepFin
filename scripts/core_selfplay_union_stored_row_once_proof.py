@@ -234,6 +234,7 @@ class OwnLiveProof:
         ownership: dict[Any, str] = {}
         offset = 0
         core.require(names == self.save_before["optimizer_names"] and names is not None, "saved optimizer names")
+        names = cast(list[str], names)
         for group in opt["param_groups"]:
             core.require(group["lr"] == c["lr"]["peak"], "saved flat union LR")
             roster = names[offset:offset + len(group["params"])]
