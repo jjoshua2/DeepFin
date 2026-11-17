@@ -286,9 +286,11 @@ Current evidence correction and scale plan: [September 16 bootstrap audit](2026-
 
 - [BT4 run11 variable-batch scheduling opportunity](2026-09-27-bt4-batching-opportunity.md): fixed-wave tail, conditional rolling-call arithmetic, and 128-game A/B compatibility HOLD.
 
-- [2026-11-17 D2 matched short-horizon policy-anchor controls](2026-11-17-short-horizon-policy-anchor-controls.md#november-17-completed-six-edge-readout) - Six accepted160-game comparisons select S0 for fresh confirmation (55.9375% vsA39;57.5% vsL0); internal screen only, no adoption or external strength claim.
+- [2026-11-17 D2 matched short-horizon policy-anchor controls](2026-11-17-short-horizon-policy-anchor-controls.md#november-17-completed-six-edge-readout) - Six accepted160-game screens selected S0 (55.9375% vsA39;57.5% vsL0); separate800-game confirmation scored48.75% and did not confirm donor advantage. A39 retained; no adoption or external strength claim.
 
-- [2026-11-17 Fresh S0/A39 confirmation](2026-11-17-s0-a39-fresh-confirmation.md) - Prospective fixed400-pair/800-game independent-panel comparison; one final readpoint, paired-normal95 lower bound above.5 for internal donor advantage; separately bounded, no automatic training/adoption.
+- [2026-11-17 Fresh S0/A39 confirmation](2026-11-17-s0-a39-fresh-confirmation.md#november-17-completed-fresh-confirmation-nonconfirm--inconclusive) - Completed400pairs/800games:235W310D255L,48.75% [46.0267,51.4733]%; lower>.5 unmet, NONCONFIRM_INCONCLUSIVE. No harm/equivalence or adoption claim.
+
+- [2026-11-17 Stored-row sampler reuse audit](2026-11-17-stored-row-sampler-reuse-audit.md) - Accepted read-only historical census: short/long maximum reuse8/20;1,160/17,210 rows exceed two presentations. Counts do not establish overfitting; exact-once software preparation does not clear the training hold.
 
 - [2026-11-17 D2 metadata qualification recovery](2026-11-17-d2-metadata-qualification-recovery.md) - Closed: original and one bounded recovery metadata qualification both FAILED;45 local software cases and partial4+2+2 API reports do not complete the metadata qualification. All411 owners closed, costs charged; no D2 playing results or automatic retry. Path-normalized deployment-specific excerpt; not standalone.
 

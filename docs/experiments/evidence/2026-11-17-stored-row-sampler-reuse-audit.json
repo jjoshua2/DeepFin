@@ -1,0 +1,152 @@
+{
+  "CUDA_queried": false,
+  "NumPy_imported": false,
+  "Torch_imported": false,
+  "actual_owner_wall_seconds": 1.2553332509705797,
+  "closed_custody": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-D2-sampler-journal-census-bindings-v1/closed-custody.json",
+    "sha256": "fecaa62269c8e16db98f3a324590a0edfde3edcd2e40c482bf2a0c607e6b5f15"
+  },
+  "closed_owner_count": 427,
+  "equivalent_individual_run_groups": {
+    "long4096": [
+      "K0",
+      "K001",
+      "K01",
+      "K1"
+    ],
+    "short512": [
+      "S0",
+      "S1"
+    ]
+  },
+  "exact_once_preparation": {
+    "adopted": false,
+    "cross_lineage_prior_use_enforced": false,
+    "hosted_corrected_head_pass": "UNISSUED_AT_RECORD_PREPARATION",
+    "new_training_authorized": false,
+    "pull_request": "https://github.com/jjoshua2/DeepFin/pull/1378",
+    "source_manifest": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-stored-row-exact-once-sampler-source-preparation-v3/manifest.json",
+      "sha256": "160d49e70d4ae2a2f3c23a9a5948998fb9f9fba1ce2e3cd15447f314b6c05a6a"
+    },
+    "source_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-stored-row-exact-once-sampler-independent-source-review-v3/review.json",
+      "sha256": "3e7d15b261b3cdf164950933e93150232643a22735feb54b81d48846e54a1283"
+    }
+  },
+  "execution_authorized": false,
+  "histograms": {
+    "long4096": {
+      "0": 6,
+      "1": 68,
+      "10": 1503,
+      "11": 1015,
+      "12": 620,
+      "13": 371,
+      "14": 183,
+      "15": 90,
+      "16": 37,
+      "17": 19,
+      "18": 10,
+      "19": 5,
+      "2": 284,
+      "20": 1,
+      "3": 675,
+      "4": 1336,
+      "5": 1954,
+      "6": 2360,
+      "7": 2644,
+      "8": 2434,
+      "9": 1953
+    },
+    "short512": {
+      "0": 6890,
+      "1": 6433,
+      "2": 3085,
+      "3": 923,
+      "4": 188,
+      "5": 39,
+      "6": 6,
+      "7": 3,
+      "8": 1
+    }
+  },
+  "identity": [
+    "generation",
+    "source_sha256",
+    "row_index"
+  ],
+  "independent_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-D2-sampler-journal-census-bindings-v1/independent-review.json",
+    "sha256": "c0ccea54f1fa3fd479b0a9935c12b0ec0764ece984d2571b5c2ffadc664438c1"
+  },
+  "measured_helper_wall_seconds": 0.41392643190920353,
+  "metadata_read_bytes": 1562219,
+  "models_or_games_or_training": 0,
+  "new_training_authorized": false,
+  "old_population_qualifies_as_unseen": false,
+  "original_and_mirror_combined": true,
+  "overfitting_causal_claim": false,
+  "post_closure_custody": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-D2-sampler-journal-census-bindings-v1/post-closure-custody.json",
+    "sha256": "7efe455bed57041edd03894b7d766631bdd4cc7d399a019229475f9e729db73e"
+  },
+  "raw_journal_read_bytes": 17082977,
+  "readout": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-D2-sampler-journal-census-results-v1/readout.json",
+    "sha256": "57551f500917433b425577f4ce6b382bf6fb144098c67c9933ca14e6b5d4a7ac"
+  },
+  "reports": [
+    {
+      "batches": 512,
+      "cohort": "short512",
+      "draw_presentations": 16384,
+      "excess_presentations_beyond_two": 1461,
+      "max_presentations_one_physical_row": 8,
+      "original_and_mirror_combined": true,
+      "physical_row_count_vector_sha256": "a2ec3ae3607a83d05284626144402dd2c4daec60c04e6c9b8a4b64d686b82e00",
+      "population_physical_rows": 17568,
+      "presentations_on_rows_above_two": 3781,
+      "representative": "S0",
+      "rows_above_two_total_presentations": 1160,
+      "unique_physical_rows_drawn": 10678,
+      "zero_draw_physical_rows": 6890
+    },
+    {
+      "batches": 4096,
+      "cohort": "long4096",
+      "draw_presentations": 131072,
+      "excess_presentations_beyond_two": 96016,
+      "max_presentations_one_physical_row": 20,
+      "original_and_mirror_combined": true,
+      "physical_row_count_vector_sha256": "88f56658bcbc8edd805f78d24a6fe20ca8c31b5d38cf755dca24c04176eb868b",
+      "population_physical_rows": 17568,
+      "presentations_on_rows_above_two": 130436,
+      "representative": "K1",
+      "rows_above_two_total_presentations": 17210,
+      "unique_physical_rows_drawn": 17562,
+      "zero_draw_physical_rows": 6
+    }
+  ],
+  "representative_streams": 2,
+  "retrospective_cap_compliance_claim": false,
+  "root_acceptance": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-D2-sampler-journal-census-bindings-v1/root-acceptance.json",
+    "sha256": "49ba659afaabb8a64f689133ba343e261aaca26749893eb5850e6959d356a27b"
+  },
+  "scope": {
+    "cross_lineage_future_cap_enforced": false,
+    "natural_duplicate_board_contents": "NOT_DEDUPLICATED",
+    "new_training_authorized": false,
+    "orientation": "NOT_JOURNALED",
+    "unit": "physical stored row generation/source_sha256/row_index before mirror"
+  },
+  "semantic_position_deduplication": "UNKNOWN_NOT_REQUIRED; natural duplicate contents remain distinct stored rows",
+  "source_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-D2-sampler-journal-census-independent-source-review-v1/review.json",
+    "sha256": "f65a6ba732396257630e45cce5e284b3488b09d3485406339e0a0ccdc8ef885b"
+  },
+  "status": "COMPLETED_READONLY_STORED_ROW_REUSE_AUDIT_PUBLIC_READOUT_V1",
+  "training_hold_cleared": false
+}

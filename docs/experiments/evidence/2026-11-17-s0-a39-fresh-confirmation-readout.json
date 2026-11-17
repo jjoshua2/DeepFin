@@ -1,0 +1,190 @@
+{
+  "GPU_and_reader_acceptances": {
+    "GPU_endpoint_independent": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0_vs_A39-confirmation-bindings-v1/gpu.independent-review.json",
+      "sha256": "edd8249ec11531619d72eb3f69329923f1a0dfef4567e1af18dd610e0e2a975c"
+    },
+    "GPU_endpoint_root": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0_vs_A39-confirmation-bindings-v1/gpu.root-acceptance.json",
+      "sha256": "564461fc589cb28d94db12cd0d283628f6323ccc71a7277bd9a2da38d0be54a8"
+    },
+    "reader_endpoint_independent": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0_vs_A39-confirmation-bindings-v1/reader.independent-review.json",
+      "sha256": "ae9b8cc3b430c54743061f61c32ea8b9ae23faa539d59ef35fd156bd5c607976"
+    },
+    "reader_endpoint_root": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0_vs_A39-confirmation-bindings-v1/reader.root-acceptance.json",
+      "sha256": "43cfa2d220e3cf517f1693d0060b1abdff24e2934f99104e55a087e30038a17c"
+    }
+  },
+  "actual_owner_charges": {
+    "GPU_endpoint": {
+      "owner_terminal": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0_vs_A39-confirmation-GPU-execution-v1/terminal.json",
+        "sha256": "26e70afd1db79110052cb4b177b104149b3596f0895e2db3b1cfdacb9ce12c7a"
+      },
+      "owner_wall_seconds": 2034.7169391750358
+    },
+    "reader_endpoint": {
+      "owner_terminal": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0_vs_A39-confirmation-reader-CPU-execution-v1/terminal.json",
+        "sha256": "643afe64a4a2a85329d89ac1fde1a7ebc3dc7e3e11cafe593c3b3067dd2a99d8"
+      },
+      "owner_wall_seconds": 35.80894034507219
+    }
+  },
+  "actual_summary": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0_vs_A39-confirmation-reader-results-v1/summary.json",
+    "sha256": "049907042807f2b0cd6bee6d324535e9d74ff43e81d492fa14abad57d6d977e8"
+  },
+  "actual_verdict": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0_vs_A39-confirmation-bindings-v1/verdict.json",
+    "sha256": "98c7a9944bed88209d6aed6a4eaace40b502a30bcff732eafb4dd73a8849ce8a"
+  },
+  "exact_actual_verdict_body": {
+    "GPU_endpoint": {
+      "independent": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0_vs_A39-confirmation-bindings-v1/gpu.independent-review.json",
+        "sha256": "edd8249ec11531619d72eb3f69329923f1a0dfef4567e1af18dd610e0e2a975c"
+      },
+      "root": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0_vs_A39-confirmation-bindings-v1/gpu.root-acceptance.json",
+        "sha256": "564461fc589cb28d94db12cd0d283628f6323ccc71a7277bd9a2da38d0be54a8"
+      }
+    },
+    "authority": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0-A39-confirmation-root-authority-v1/authority.json",
+      "sha256": "5537b05c117002096c511ec247caabd5c45858f358681b73ff036fecd971a18e"
+    },
+    "confirmation_design": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0-A39-confirmation-root-design-v1/design.json",
+      "sha256": "db59db97306cb8c31e1768c95714b840622c2876381686ee0d7a7b6a3eb02a80"
+    },
+    "decision": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-complete-development-decision-v1/readout.json",
+      "sha256": "3ba2ee41cceaa82054aed26264f8b25c877b21949dc3fc9b7024cd3b8cd8cac5"
+    },
+    "execution_authorized": false,
+    "external_Rof_or_adoption_claim": false,
+    "paired_inference": {
+      "criterion": "available paired normal95 lower>0.50; zero variance UNAVAILABLE cannot confirm",
+      "criterion_pass": false,
+      "interval_available": true,
+      "n": 400,
+      "normal95": [
+        0.46026652279451347,
+        0.5147334772054866
+      ],
+      "point": 0.4875,
+      "sample_variance": 0.07722431077694236
+    },
+    "reader_endpoint": {
+      "independent": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0_vs_A39-confirmation-bindings-v1/reader.independent-review.json",
+        "sha256": "ae9b8cc3b430c54743061f61c32ea8b9ae23faa539d59ef35fd156bd5c607976"
+      },
+      "root": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0_vs_A39-confirmation-bindings-v1/reader.root-acceptance.json",
+        "sha256": "43cfa2d220e3cf517f1693d0060b1abdff24e2934f99104e55a087e30038a17c"
+      }
+    },
+    "status": "ROOT_OBSERVES_D2_INTERNAL_DONOR_ADVANTAGE_CONFIRMATION_V1",
+    "summary": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0_vs_A39-confirmation-reader-results-v1/summary.json",
+      "sha256": "049907042807f2b0cd6bee6d324535e9d74ff43e81d492fa14abad57d6d977e8"
+    },
+    "training_HOLD_retry_extension_authorized": false,
+    "verdict": "NONCONFIRM_INCONCLUSIVE",
+    "verdict_command": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0_vs_A39-confirmation-bindings-v1/verdict-command.json",
+      "sha256": "feedfa95cdae3842104a2e88f39318fe4cd1fa5bd9c8207b9bf14243ba4ecc48"
+    }
+  },
+  "execution_authorized": false,
+  "interpretation": {
+    "A39_retained": true,
+    "external_strength_or_adoption_claim": false,
+    "harm_or_equivalence_established": false,
+    "long_term_goal_achieved": false,
+    "new_training_authorized": false,
+    "pooled_screen_and_confirmation": false,
+    "retry_extension_authorized": false,
+    "screen_results_retained_separately": true
+  },
+  "status": "COMPLETED_FRESH_CONFIRMATION_NONCONFIRM_PUBLIC_READOUT_V1",
+  "summary_observations": {
+    "all_game_rows_reconciled": true,
+    "controls": {
+      "executed_in_current_owned_process": true,
+      "failed": 0,
+      "forwards": 0,
+      "games": 0,
+      "models": 0,
+      "names": [
+        "actual-kernel-positive",
+        "noise-scale",
+        "c-scale",
+        "topk",
+        "temperature",
+        "vloss",
+        "target-batch",
+        "tree-reuse",
+        "missing-repfix",
+        "short-pairs",
+        "unselected-edge",
+        "paired-positive",
+        "required-final-edges",
+        "unavailable-CI-no-pass",
+        "n-minus-one-positive-final",
+        "missing-required-GPU-refused-before-read"
+      ],
+      "passed": 16,
+      "rng_draws": 0
+    },
+    "effective_settings": {
+      "autocast": "bf16",
+      "compile": "off",
+      "history_plies": 16,
+      "matched_sims": 64,
+      "max_additional_plies": 450,
+      "root_noise": true,
+      "rule50": true,
+      "strict_tb_max": 6,
+      "strict_tb_min": 3,
+      "temperature": 0.1,
+      "transport": "float32"
+    },
+    "games_completed": 800,
+    "illegal_or_crashed_games": 0,
+    "incomplete_pairs": 0,
+    "pair_order_verified": true,
+    "paired_counts": [
+      44,
+      89,
+      146,
+      85,
+      36
+    ],
+    "paired_final_inference": {
+      "criterion": "available paired normal95 lower>0.50; zero variance UNAVAILABLE cannot confirm",
+      "criterion_pass": false,
+      "interval_available": true,
+      "n": 400,
+      "normal95": [
+        0.46026652279451347,
+        0.5147334772054866
+      ],
+      "point": 0.4875,
+      "sample_variance": 0.07722431077694236
+    },
+    "paired_score": 0.4875,
+    "pairs_completed": 400,
+    "reciprocal_colours_complete": true,
+    "wdl_counts": {
+      "draws": 310,
+      "losses": 255,
+      "wins": 235
+    }
+  },
+  "variance_divisor": 399
+}
