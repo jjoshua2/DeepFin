@@ -802,3 +802,43 @@ No project-goal completion or external-strength gain is claimed.
 [Compact completed-screen evidence](evidence/2026-11-17-policy-anchor-d1-first-completed-kl-screen.json)
 pins the accepted Root/independent records, banked summary, source/protocols and
 unchanged model identities.
+
+
+## 2026-11-17: complete D1 development readout — no eligible candidate
+
+**D1 completed all seven preselected comparisons without an eligible candidate. A39 is retained; trained-model HOLD health and final-confirmation matches remain unopened.** Each comparison completed 80 opening pairs / 160 reciprocal-colour games with a genuine Root/independent acceptance, complete pair and row reconciliation, and no incomplete, illegal or crashed games. The 560 pairs / 1,120 games are totals across separate comparisons, not a pooled effect estimate.
+
+| Comparison (candidate perspective) | W / D / L | Pair score | Descriptive paired-normal 95% interval |
+| --- | --- | --- | --- |
+| K0 vs A39 | 39 / 44 / 77 | 0.381250 | [0.324776, 0.437724] |
+| K001 vs A39 | 32 / 61 / 67 | 0.390625 | [0.335603, 0.445647] |
+| K01 vs A39 | 37 / 56 / 67 | 0.406250 | [0.350863, 0.461637] |
+| K1 vs A39 | 42 / 56 / 62 | 0.437500 | [0.374946, 0.500054] |
+| K001 vs K0 | 57 / 55 / 48 | 0.528125 | [0.470309, 0.585941] |
+| K01 vs K0 | 57 / 51 / 52 | 0.515625 | [0.453166, 0.578084] |
+| K1 vs K0 | 55 / 44 / 61 | 0.481250 | [0.420373, 0.542127] |
+
+The fixed rule required own-versus-A39 point ≥.55, plus own-versus-K0 point ≥.55 for a positive-KL arm; eligible ties would use the highest A39 point, then lower coefficient. Every A39 point and every KL-versus-K0 point missed .55. The accepted complete-matrix readout `1c886a2a…`, independently reviewed as `26bdd259…`, records an empty eligible set. No winner certificate, HOLD/final authority, fallback or new training/settings is issued. This closes the scientific D1 scope; it neither pauses nor completes the wider research goal. All four checkpoints and A39 are retained.
+
+K0, K001 and K01 regressed against the donor on these fixed A39 panels. K1’s A39 interval crosses .5, as do all three KL-versus-K0 intervals: those comparisons do not establish a benefit or a negative effect for every coefficient. The intervals use complete opening-pair scores and sample variance with denominator 79; they are marginal descriptive normal intervals, not simultaneous sweep coverage or independent training-seed uncertainty. None enters eligibility. The unanchored control also missed the donor threshold; these results do not isolate a value-head cause, an optimal coefficient or an optimal RL formula. No external Rofchade, Stockfish or Leela gain or Elo conversion is claimed.
+
+All four arms started from original A39 on the same accepted 192-game / 17,568-row TRAIN bank, with LR 3e-6, batch 32, seed 2026111673, mirror probability .5 and 4,096 updates / 131,072 replacement views. K0 retains its saved-only corrective-delivery limitation; the positive-KL arms have complete accepted GPU proofs. Common recorded draw identity does not make the views unique. Reference-forward counts differ, so wall time and compute are not equalized.
+
+| Arm (policy-anchor coefficient) | Mean policy CE | Mean outcome-WDL CE | Mean policy KL (nats) |
+| --- | --- | --- | --- |
+| K0 (0) | 0.905216 | 0.414104 | unmeasured |
+| K001 (0.01) | 0.905328 | 0.413949 | 0.126584 |
+| K01 (0.1) | 0.907279 | 0.413341 | 0.098016 |
+| K1 (1) | 0.930474 | 0.416080 | 0.034268 |
+
+Policy CE uses normalized stored search-improved Gumbel policy or a verified tablebase override. Outcome-WDL CE uses genuine verified game results in row/player-to-move perspective; selected SF/search-WDL blend and auxiliary weights are zero. Both use natural logarithms. The policy-only anchor is forward KL over legal actions, frozen original A39 q against contemporaneous student p: Σ q ln(q/p). Its reported value is the mean over consumed eligible training views throughout the trajectory, including replacement repetitions; it is neither final-checkpoint KL nor a held-out measurement. K0 makes no reference forwards, so its KL is unmeasured, not zero divergence.
+
+The legacy logged base TOTAL excludes the anchor penalty; backpropagation adds coefficient × eligible-view anchor KL. Gradient norms therefore include the anchor when enabled and are not value-head-specific. Stronger tested coefficients reduced recorded mean training KL, but that did not yield a qualifying playing candidate. Training losses do not establish strength or diagnose why play changed. Definitions `14dd4cbb…` preserve these source semantics alongside the banked comparison `76080c3d…` and review `240b73b3…`.
+
+The prior-dose note `673c6586…` also records earlier 512-step, batch-256 controls: 131,072 views had already been tried with different data, learning-rate curves and inferred arena noise 1.0 versus D1’s explicit .75. LOW512 and A512 are distinct containers attested to serve the same learned state; they are not independent weight replicates, and those direct A39 screens did not establish a gain. This is context, not a matched D1 LR/batch/dose experiment or a new formula.
+
+The first K001 v1 startup remains FAILED and its 9.682 seconds remain charged. Historical `207f…` inventory provenance is unchanged; current `8877…` passed the selected availability qualification and match before/final guards. The historical metadata-difference cause remains unresolved, and availability does not establish byte-content identity. Software qualification and serving operability remain distinct from efficacy.
+
+At final closure, all 406 owners were closed. Charged science GPU/CPU totals were 11,411.548 / 211.716 seconds; global GPU/CPU totals were 87,860.489 / 6,660.556 seconds, including failed attempts. No global STOP marker or native goal-state change is part of the D1 verdict.
+
+[Compact completed-development evidence](evidence/2026-11-17-policy-anchor-d1-development-readout.json) pins all seven receipt pairs, summaries, the accepted no-winner decision, training definitions, prior-evidence note and closure snapshot.
