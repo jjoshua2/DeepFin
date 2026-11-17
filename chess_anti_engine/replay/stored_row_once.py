@@ -15,15 +15,16 @@ import hashlib
 import fcntl
 import json
 import os
+import random
 from pathlib import Path
 import stat
 from typing import Any
 
 from .generation import DrawnRow
 
-SCHEMA = "STORED_ROW_EXACT_ONCE_CURSOR_V1"
-SAMPLING = "STORED_ROW_EXACT_ONCE_PASS_V1"
-ORDER = "sha256_seed_index_sort_v1"
+SCHEMA = "STORED_ROW_EXACT_ONCE_CURSOR_V2"
+SAMPLING = "STORED_ROW_EXACT_ONCE_PASS_V2"
+ORDER = "python_random_mt19937_shuffle_v1"
 IDENTITY = ["generation", "source_sha256", "row_index"]
 
 
@@ -51,13 +52,30 @@ def sha(value: Any) -> str:
     return value
 
 
+def permutation_for(population_rows: int, seed: int) -> list[int]:
+    """Uniform unweighted shuffle with an independent explicit-seed RNG.
+
+    The contract pins its digest and state pins the full permutation. A runtime
+    whose shuffle differs refuses the contract/restore instead of remapping rows.
+    Never seed or consume the caller's augmentation RNG here.
+    """
+    order = list(range(integer(population_rows, 1)))
+    random.Random(integer(seed)).shuffle(order)
+    return order
+
+
+def rows_after_batches(population_rows: int, batch_size: int, batches: int) -> int:
+    n, batch, count = integer(population_rows, 1), integer(batch_size, 1), integer(batches)
+    require(count <= (n + batch - 1) // batch, "stored-row batch count exceeds finite pass")
+    return min(n, count * batch)
+
+
 class StoredRowOnceReplay:
     """Adapter around a fully decoded GenerationReplay; no legacy RNG draw.
 
-    The marker enables only Trainer serialization and no-discard/no-retry guards.
-    It deliberately does not enable the different exact-epoch loss objective.
-    Full batches only in this first family: an indivisible population is refused
-    by construction, before Trainer/model construction. No row can wrap or pad.
+    The marker enables serialized no-retry training and constant nominal-batch
+    row scaling, without enabling the separate exact-epoch masked objective.
+    The last batch contains every remaining real row, with no padding or wrap.
     """
 
     stored_row_quota = True
@@ -81,10 +99,8 @@ class StoredRowOnceReplay:
             self._ends.append(total)
         require(total == len(replay) == integer(expected_rows, 1), "stored-row population mismatch")
         self.batch_size = integer(batch_size, 1)
-        require(total % self.batch_size == 0, "last partial batch unsupported: refuse before first forward")
         self.seed = integer(seed)
-        self.permutation = sorted(range(total), key=lambda index: (
-            hashlib.sha256(f"{ORDER}:{self.seed}:{index}".encode()).digest(), index))
+        self.permutation = permutation_for(total, self.seed)
         self._cursor = self._batches = 0
         self._prefix = hashlib.sha256()
         self._tainted = False
@@ -96,6 +112,10 @@ class StoredRowOnceReplay:
     @property
     def remaining(self) -> int:
         return len(self) - self._cursor
+
+    @property
+    def total_batches(self) -> int:
+        return (len(self) + self.batch_size - 1) // self.batch_size
 
     def row_at(self, flat_index: int) -> DrawnRow:
         integer(flat_index)
@@ -118,17 +138,18 @@ class StoredRowOnceReplay:
         require(tuple(tuple(row) for row in self._replay.membership) == self.membership
                 and len(self._replay) == len(self), "stored-row population changed after freezing")
         require(type(batch_size) is int and batch_size == self.batch_size, "stored-row batch size changed")
-        require(self.remaining >= batch_size, "stored-row pass exhausted: no wraparound")
-        indices = self.permutation[self._cursor:self._cursor + batch_size]
+        require(self.remaining > 0, "stored-row pass exhausted: no wraparound")
+        actual_rows = min(batch_size, self.remaining)
+        indices = self.permutation[self._cursor:self._cursor + actual_rows]
         rows = tuple(self.row_at(index) for index in indices)
         # Reserve before any callback/gather; failed journal/gather never releases quota.
         self._tainted = True
-        self._cursor += batch_size
+        self._cursor += actual_rows
         self._batches += 1
         self._update_prefix(rows)
         self._on_draw(rows)  # Caller writes, flushes and fsyncs before returning.
         arrays = self._replay._buffer._gather_rows(indices)
-        require(int(arrays["x"].shape[0]) == batch_size, "stored-row realized batch differs")
+        require(int(arrays["x"].shape[0]) == actual_rows, "stored-row realized batch differs")
         self._tainted = False
         return arrays
 
@@ -136,8 +157,11 @@ class StoredRowOnceReplay:
         require(not self._tainted, "cannot checkpoint tainted stored-row consumption")
         return {"schema": SCHEMA, "identity": IDENTITY, "order": ORDER,
                 "seed": self.seed, "membership": [list(row) for row in self.membership],
-                "permutation": list(self.permutation), "batch_size": self.batch_size,
+                "permutation": list(self.permutation), "permutation_sha256": digest(self.permutation),
+                "batch_size": self.batch_size,
                 "cursor": self._cursor, "batches": self._batches,
+                "last_batch_rows": (self._cursor - rows_after_batches(len(self), self.batch_size, self._batches - 1)
+                                    if self._batches else 0),
                 "row_prefix_sha256": self._prefix.hexdigest(), "presentations_per_row": 1,
                 "mirror_shares_quota": True, "tainted": False}
 
@@ -146,12 +170,15 @@ class StoredRowOnceReplay:
         require(self._cursor == self._batches == 0 and not self._tainted, "restore only into fresh adapter")
         expected = self.state()
         require(set(state) == set(expected), "stored-row checkpoint state schema")
-        for key in set(expected) - {"cursor", "batches", "row_prefix_sha256"}:
+        for key in set(expected) - {"cursor", "batches", "row_prefix_sha256", "last_batch_rows"}:
             require(canonical(state[key]) == canonical(expected[key]),
                     f"stored-row checkpoint changed: {key}")
         cursor = integer(state["cursor"])
         batches = integer(state["batches"])
-        require(cursor <= len(self) and cursor == batches * self.batch_size, "stored-row cursor/dose mismatch")
+        require(cursor == rows_after_batches(len(self), self.batch_size, batches), "stored-row cursor/dose mismatch")
+        last_rows = integer(state["last_batch_rows"])
+        require(last_rows == (cursor - rows_after_batches(len(self), self.batch_size, batches - 1) if batches else 0),
+                "stored-row last-batch count mismatch")
         sha(state["row_prefix_sha256"])
         # Validate full actual chain, not a caller assertion or only a checkpoint hash.
         observed = verify_journals(self, journals, max_file_bytes=max_file_bytes,
@@ -207,8 +234,9 @@ def verify_journals(replay: StoredRowOnceReplay, journals: Sequence[dict[str, st
                 require(type(value) is dict and set(value) == {"draw_batch", "rows"}, "stored-row journal record schema")
                 require(type(value["draw_batch"]) is int and value["draw_batch"] == batches,
                         "stored-row journal batch order")
-                require(cursor + replay.batch_size <= len(replay), "stored-row journal overconsumes population")
-                rows = [asdict(replay.row_at(i)) for i in replay.permutation[cursor:cursor + replay.batch_size]]
+                require(cursor < len(replay), "stored-row journal overconsumes population")
+                actual_rows = min(replay.batch_size, len(replay) - cursor)
+                rows = [asdict(replay.row_at(i)) for i in replay.permutation[cursor:cursor + actual_rows]]
                 require(canonical(value) + "\n" == line.decode("utf-8") and canonical(value["rows"]) == canonical(rows),
                         "stored-row journal identity/order/quota mismatch")
                 for row in rows:

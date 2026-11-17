@@ -5845,6 +5845,7 @@ class Trainer:
             exact_epoch = bool(
                 getattr(buf, "exact_without_replacement", False)
             )
+            stored_row_quota = bool(getattr(buf, "stored_row_quota", False))
             with phases.phase("fwd_loss_s"):
                 self._apply_feature_group_dropout(batch["x"])
                 with self._amp_context():
@@ -5869,16 +5870,16 @@ class Trainer:
                     if balance_loss is not None and self.resid_channel_balance_weight > 0.0:
                         losses["channel_balance"] = balance_loss
                         losses["total"] = losses["total"] + self.resid_channel_balance_weight * balance_loss
-                    # ``compute_loss`` returns a row mean. Exact preflight
-                    # refuses a long game that would force extra undersized
-                    # optimizer steps; every accepted schedule is at least 99%
-                    # full (the production plan is 511/512). Preserve a constant
-                    # 1/requested_batch_size gradient
-                    # coefficient per row before Aurora/AdamW transforms it;
-                    # ordinary replacement replay keeps its historical scale.
+                    # ``compute_loss`` returns a row mean. Exact epochs and
+                    # stored-row quotas keep a constant 1/requested_batch_size
+                    # coefficient per real row, including a final partial batch.
+                    # The scale below applies after any anchor penalty is added.
+                    # The tail is still one real adaptive optimizer/decay step;
+                    # no padded-batch or fixed-update arithmetic equivalence is
+                    # claimed. Ordinary replacement keeps its historical scale.
                     exact_row_scale = (
                         float(realized_batch_rows) / float(batch_size)
-                        if exact_epoch
+                        if exact_epoch or stored_row_quota
                         else 1.0
                     )
                     training_total = losses["total"]
@@ -5905,7 +5906,7 @@ class Trainer:
                 total_scale=float(self.accum_steps),
                 mean_weight=(
                     float(realized_batch_rows)
-                    if exact_epoch
+                    if exact_epoch or stored_row_quota
                     else 1.0
                 ),
             )
@@ -6221,7 +6222,8 @@ class Trainer:
                     else:
                         step_loss_denominator = (
                             int(step_opt_stats.get("samples_seen", 0.0))
-                            if bool(getattr(buf, "exact_without_replacement", False))
+                            if (bool(getattr(buf, "exact_without_replacement", False))
+                                or bool(getattr(buf, "stored_row_quota", False)))
                             else step_n_micro
                         )
                         pending_step_loss.append((
@@ -6365,7 +6367,8 @@ class Trainer:
             )
         metric_denominator = (
             train_samples_seen
-            if bool(getattr(buf, "exact_without_replacement", False))
+            if (bool(getattr(buf, "exact_without_replacement", False))
+                or bool(getattr(buf, "stored_row_quota", False)))
             else n_micro
         )
         metrics = self._build_metrics(

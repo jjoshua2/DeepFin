@@ -1,7 +1,8 @@
 """Finite one-pass stored-row family over fixed accepted banks.
 
 Additive entry point; historical bank, anchor and exact-epoch families are not
-relabeled. Only full batches are supported. A failed output is never resumed.
+relabeled. The final batch contains the real remainder once, without padding.
+A failed output is never resumed.
 Continuation requires the complete immutable closed journal chain and full-state
 checkpoint with the same permutation/cursor. No launcher or training authority.
 """
@@ -20,7 +21,8 @@ from scripts import core_finite_learner as core
 from scripts import core_generation_bank_acceptance as admission
 from scripts import core_generation_bank_learner as bank
 from chess_anti_engine.replay.stored_row_once import (
-    SAMPLING, QuotaLedger, StoredRowOnceReplay, verify_journals,
+    ORDER, SAMPLING, QuotaLedger, StoredRowOnceReplay, digest, permutation_for,
+    rows_after_batches, verify_journals,
 )
 
 CONTRACT = "core_generation_bank_stored_row_once_v1"
@@ -41,22 +43,24 @@ def validate_contract(c: dict[str, Any], *, _anchored: bool) -> dict[str, Any]:
     core.require(set(SOURCE_FILES) <= set(c["source_files"]), "missing stored-row source pins")
     core.require(type(sampling) is dict and set(sampling) == {
         "schema", "order_seed", "expected_rows", "presentations_per_row", "mirror_shares_quota",
-        "partial_batch", "lineage_uuid", "quota_ledger"}, "stored-row sampling contract")
+        "partial_batch", "lineage_uuid", "quota_ledger", "order", "permutation_sha256"}, "stored-row sampling contract")
     core.require(sampling["schema"] == SAMPLING and sampling["presentations_per_row"] == 1
                  and type(sampling["presentations_per_row"]) is int
                  and sampling["mirror_shares_quota"] is True
-                 and sampling["partial_batch"] == "REFUSE_BEFORE_MODEL_CONSTRUCTION"
+                 and sampling["partial_batch"] == "EMIT_FINAL_REMAINDER_ONCE_NO_PADDING"
+                 and sampling["order"] == ORDER
                  and sampling["lineage_uuid"] == c["run_uuid"], "stored-row quota/lineage contract")
     quota_path = sampling["quota_ledger"]
     if type(quota_path) is not str:
         raise ValueError("quota ledger path must be a string")
     ledger = core.external(quota_path)
     core.require(str(ledger) == quota_path, "noncanonical quota ledger")
-    core.integer(sampling["order_seed"], "stored-row order seed", 0)
+    order_seed = core.integer(sampling["order_seed"], "stored-row order seed", 0)
     n = core.integer(sampling["expected_rows"], "stored-row expected population")
-    core.require(n <= c["limits"]["max_rows"] and n % c["batch_size"] == 0,
-                 "last partial batch unsupported: refuse before first forward")
-    core.require(sum(c["updates_per_segment"]) * c["batch_size"] == n,
+    core.require(n <= c["limits"]["max_rows"], "stored-row population exceeds limit")
+    core.require(sampling["permutation_sha256"] == digest(permutation_for(n, order_seed)),
+                 "stored-row contract permutation mismatch")
+    core.require(sum(c["updates_per_segment"]) == (n + c["batch_size"] - 1) // c["batch_size"],
                  "stored-row dose must exhaust exactly once, no drop/pad/repeat")
     return projected
 
@@ -193,9 +197,11 @@ def validate_closed_segment(contract_ref: dict[str, str], binding: dict[str, Any
                                  expected_rows=c["sampling"]["expected_rows"], on_draw=forbidden)
     replay.restore(closed["quota_state"], closed["draw_journals"],
                    max_file_bytes=c["bank_limits"]["max_file_bytes"], max_total_bytes=c["bank_limits"]["max_total_bytes"])
-    core.require(closed["quota_state"]["cursor"] == closed["step"] * c["batch_size"]
+    core.require(closed["quota_state"]["cursor"] == rows_after_batches(c["sampling"]["expected_rows"], c["batch_size"], closed["step"])
                  and closed["membership"] == [list(row) for row in membership]
                  and closed["applied_views"] == closed["drawn_rows"] == closed["metrics"]["train_samples_seen"]
+                 == (rows_after_batches(c["sampling"]["expected_rows"], c["batch_size"], closed["step"])
+                     - rows_after_batches(c["sampling"]["expected_rows"], c["batch_size"], closed["step_start"]))
                  and closed["applied_updates"] == closed["metrics"]["train_steps_done"]
                  and closed["metrics"]["transient_cuda_retry_batches"] == 0
                  and closed["metrics"]["grad_nonfinite_skip_rate"] == 0, "closed stored-row counters differ")
@@ -274,10 +280,13 @@ def _execute(contract_ref: dict[str, str], stage_ref: dict[str, str], *, _anchor
                 replay.restore(parent["quota_state"], prior_journals,
                                max_file_bytes=c["bank_limits"]["max_file_bytes"],
                                max_total_bytes=c["bank_limits"]["max_total_bytes"])
-                core.require(parent["quota_state"]["cursor"] == parent["step"] * c["batch_size"],
+                core.require(parent["quota_state"]["cursor"] == rows_after_batches(len(replay), c["batch_size"], parent["step"]),
                              "parent checkpoint/journal cumulative dose differs")
-            core.require(replay.remaining >= c["updates_per_segment"][stage["segment"] - 1] * c["batch_size"],
+            prior_steps = 0 if parent is None else parent["step"]
+            core.require(prior_steps + c["updates_per_segment"][stage["segment"] - 1] <= replay.total_batches,
                          "stored-row segment overdraw before model construction")
+            expected_views = (rows_after_batches(len(replay), c["batch_size"], prior_steps + c["updates_per_segment"][stage["segment"] - 1])
+                              - rows_after_batches(len(replay), c["batch_size"], prior_steps))
             core.import_custody()
             trainer = core.make_trainer(projected, output / "tb")
             if parent is None:
@@ -322,7 +331,7 @@ def _execute(contract_ref: dict[str, str], stage_ref: dict[str, str], *, _anchor
                 hook.remove()
             core.require(trainer.step == start + count and applied == count == metrics.train_steps_done, "bank applied update count mismatch")
             core.require(metrics.grad_nonfinite_skip_rate == 0 and metrics.transient_cuda_retry_batches == 0, "bank skips/retries refused")
-            core.require(drawn == count * c["batch_size"] == metrics.train_samples_seen, "bank draw/applied view mismatch")
+            core.require(drawn == expected_views == metrics.train_samples_seen, "bank draw/applied view mismatch")
             quota_ledger_checkpoint = ledger.checkpoint()
         journal_path = output / "draws.jsonl"
         journal_path.chmod(0o444)
@@ -332,7 +341,7 @@ def _execute(contract_ref: dict[str, str], stage_ref: dict[str, str], *, _anchor
                                    max_total_bytes=c["bank_limits"]["max_total_bytes"])
         core.require(observed == {key: quota_state[key] for key in ("cursor", "batches", "row_prefix_sha256")},
                      "current checkpoint/journal cursor differs")
-        core.require(quota_state["cursor"] == trainer.step * c["batch_size"], "cumulative optimizer/quota dose mismatch")
+        core.require(quota_state["cursor"] == rows_after_batches(len(replay), c["batch_size"], trainer.step), "cumulative optimizer/quota dose mismatch")
         if stage["segment"] == len(c["updates_per_segment"]):
             core.require(replay.remaining == 0, "completed pass must exhaust every stored row once")
         if c["runtime"]["device"].startswith("cuda"):
