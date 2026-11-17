@@ -256,6 +256,7 @@ def declared_memory_budget(shard: dict[str, Any], rows: int, planes: int) -> dic
         d = _header(root / relative, f["sha256"])
         shape, chunks = d["shape"], d["chunks"]
         require(type(shape) is list and all(type(n) is int and n >= 0 for n in shape), "invalid declared shape")
+        shape = cast(list[Any], shape)
         require(type(chunks) is list and len(chunks) == len(shape)
                 and all(type(n) is int and n > 0 for n in chunks), "invalid declared chunks")
         dtype = np.dtype(d["dtype"])
@@ -435,8 +436,7 @@ def load_fixed_population(architecture: dict[str, Any], manifest: dict[str, Any]
     retained = 0
     retained_limit = 0
     assembled_rows = 0
-    assembled_sources = 0
-    for source, budget in zip(manifest["sources"], budgets, strict=True):
+    for assembled_sources, (source, budget) in enumerate(zip(manifest["sources"], budgets, strict=True), 1):
         path, before = core.verify_inventory(source["shard"])
         require(before == source["source_sha256"], "source changed before eager load")
         arrays, _ = load_shard_arrays(path, lazy=False, validate=True)
@@ -447,7 +447,6 @@ def load_fixed_population(architecture: dict[str, Any], manifest: dict[str, Any]
         for a in arrays.values():
             a.setflags(write=False)
         buffer.add_many_arrays(arrays)
-        assembled_sources += 1
         require(len(buffer._chunks) == len(buffer._chunk_sizes) == assembled_sources,
                 "buffer chunk bookkeeping differs")
         added = resident_array_bytes(buffer._chunks[-1])

@@ -211,5 +211,5 @@ def test_resident_charge_counts_owning_allocation_and_refuses_unbounded_backing(
     owner = np.ones((8, 8), dtype=np.float32)
     assert resident_array_bytes({"view": owner[:1], "alias": owner[1:2]}) == owner.nbytes
     bad = np.frombuffer(bytearray(64), dtype=np.uint8) if fault == "external" else np.asarray([object()], dtype=object)
-    with pytest.raises(ValueError, match="external backing|object resident"):
+    with pytest.raises(ValueError, match=r"external backing|object resident"):
         resident_array_bytes({"bad": bad})
