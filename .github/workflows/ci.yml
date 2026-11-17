@@ -40,6 +40,15 @@ jobs:
           python -c "import torch; print(torch.__version__); assert torch.version.cuda is None, 'CI requires the CPU wheel'"
       # Keep a capped regression even though ordinary CI can use all cores.
       # Worker tests run in-process and must restore their one-thread setting.
+      - name: D2 metadata fixture and provenance regression
+        if: hashFiles('tests/test_core_d2_short_horizon_metadata.py') != ''
+        env:
+          CUDA_VISIBLE_DEVICES: ""
+          OMP_NUM_THREADS: "2"
+          MKL_NUM_THREADS: "2"
+          OPENBLAS_NUM_THREADS: "2"
+          CAE_TEST_THREADS: "2"
+        run: python -m pytest -q tests/test_core_d2_short_horizon_metadata.py --tb=short
       - name: Capped local regression
         env:
           CAE_TEST_THREADS: auto

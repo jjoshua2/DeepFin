@@ -40,13 +40,30 @@ def short_graph(tmp: Path, monkeypatch: pytest.MonkeyPatch, label: str, fault: s
     train = ruler.bank.AcceptedGeneration(identity=accepted.identity, games=accepted.games, evidence={"eligible_rows": 17568})
     monkeypatch.setattr(ruler.bank, "validate_accepted_generation", lambda *_a, **_k: train)
     long_label = "L0" if label == "S0" else "L1"
-    monkeypatch.setattr(d2, "LONG_BINDINGS", {**d2.LONG_BINDINGS, long_label: long_binding})
     method = seal(tmp / "D1-method.json", {"study_uuid": "8045699e-4088-4a41-ae9c-4013d4a55469",
         "foundations": {"TRAIN_bank": {"root": long_stage["banks"][0]["root_acceptance"],
                                      "independent": long_stage["banks"][0]["independent_review"]}}})
     monkeypatch.setattr(d2, "D1_DESIGN", method)
     donor: dict[str, Any] = {"checkpoint": long_contract["initial_model"], "architecture": long_contract["architecture"], "step": 680276,
                              "model_state_sha256": "9796079cd73bef73ba2f5d5f2ad0779704498832e34a7c2a880f0d0b7f305229"}
+    if label == "S0":
+        # The retained corrective fixture predates this donor-state consumer
+        # field. Re-seal its fictional readout and parent references; do not
+        # bypass or monkeypatch the real retained-model predicate.
+        saved = read(long_root["payload_audit"]["readout"])
+        saved["initial_model_state_sha256"] = donor["model_state_sha256"]
+        saved_path = Path(long_root["payload_audit"]["readout"]["path"])
+        saved_path.chmod(0o644)
+        long_root["payload_audit"]["readout"] = seal(saved_path, saved)
+        root_path = Path(long_binding["root"]["path"])
+        root_path.chmod(0o644)
+        root_ref = seal(root_path, long_root)
+        independent = read(long_binding["independent"])
+        independent.update(root_acceptance=root_ref, payload_audit=long_root["payload_audit"])
+        independent_path = Path(long_binding["independent"]["path"])
+        independent_path.chmod(0o644)
+        long_binding = {"root": root_ref, "independent": seal(independent_path, independent)}
+    monkeypatch.setattr(d2, "LONG_BINDINGS", {**d2.LONG_BINDINGS, long_label: long_binding})
     files = dict.fromkeys((f"fixture-{i}.py" for i in range(219)), "e" * 64)
     pins = seal(tmp / "pins.json", {"source_revision": d2.LEARNER_SOURCE, "source_checkout": "/fiction/learner", "files": files})
     monkeypatch.setattr(d2, "LEARNER_PINS", pins)
@@ -311,6 +328,29 @@ def test_closed_role_authority_refusals(tmp_path: Path, monkeypatch: pytest.Monk
         d2.role_authority(ruler.Metadata(2 << 20, 32 << 20), binding)
 
 
+def portable_ast(value: Any) -> Any:
+    """Version-neutral fields; ignore only the known empty generic parameter list."""
+    if isinstance(value, ast.AST):
+        fields = list(ast.iter_fields(value))
+        if type(value).__name__ in ("FunctionDef", "AsyncFunctionDef", "ClassDef"):
+            parameters = getattr(value, "type_params", [])
+            if type(parameters) is not list:
+                raise TypeError("generic AST parameters must be a list")
+            if parameters and not any(name == "type_params" for name, _item in fields):
+                fields.append(("type_params", parameters))
+        return {"node": type(value).__name__, "fields": [
+            [name, portable_ast(item)] for name, item in fields
+            if not (name == "type_params" and type(value).__name__ in ("FunctionDef", "AsyncFunctionDef", "ClassDef")
+                    and type(item) is list and not item)]}
+    if isinstance(value, list):
+        return [portable_ast(item) for item in value]
+    if type(value) is bytes:
+        return {"scalar_type": "bytes", "hex": value.hex()}
+    if value is None or type(value) in (str, int, float, bool):
+        return value
+    raise TypeError("unsupported portable AST scalar " + type(value).__name__)
+
+
 def prefix_namespace() -> dict[str, Any]:
     """Compile the actual published declaration subset, never helper main."""
     folder = Path(__file__).resolve().parents[1] / "docs/experiments/source/2026-11-17-d2-short-horizon"
@@ -318,6 +358,7 @@ def prefix_namespace() -> dict[str, Any]:
     raw = path.read_bytes()
     provenance = json.loads((folder / "prefix_audit.provenance.json").read_bytes())
     assert hashlib.sha256(raw).hexdigest() == provenance["snapshot_sha256"]
+    assert provenance["portable_AST_fingerprint"]["schema"] == "AST_ITER_FIELDS_PORTABLE_EMPTY_TYPE_PARAMS_V1"
     tree = ast.parse(raw)
     declarations = [node for node in tree.body if not isinstance(node, ast.Expr)]
     assert len(declarations) == len(provenance["declarations"])
@@ -326,7 +367,9 @@ def prefix_namespace() -> dict[str, Any]:
         segment = ast.get_source_segment(raw.decode(), node)
         assert segment is not None
         assert hashlib.sha256(segment.encode()).hexdigest() == identity["declaration_sha256"]
-        assert hashlib.sha256(ast.dump(node, include_attributes=False).encode()).hexdigest() == identity["AST_sha256"]
+        encoded = json.dumps(portable_ast(node), sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+        assert hashlib.sha256(encoded).hexdigest() == identity["portable_AST_sha256"]
+        assert identity["portable_AST_sha256"] == identity["intended_observer_portable_AST_sha256"]
         if isinstance(node, ast.Import):
             assert all(value.name in {"hashlib", "json", "math", "os", "re", "stat"} for value in node.names)
         elif isinstance(node, ast.ImportFrom):
@@ -392,6 +435,11 @@ def journal_fixture(folder: Path, batches: int = 512, fault: str = "") -> tuple[
 
 
 def test_actual_prefix_functions_positive_three_long_passes(tmp_path: Path) -> None:
+    # Nonempty generic parameters remain semantic input to the fingerprint.
+    plain = ast.parse("def marker():\n    pass\n").body[0]
+    generic = copy.deepcopy(plain)
+    setattr(generic, "type_params", [ast.Name(id="T", ctx=ast.Load())])
+    assert portable_ast(plain) != portable_ast(generic)
     namespace = prefix_namespace()
     long_ref, membership = journal_fixture(tmp_path / "long", 4096)
     short_ref, _ = journal_fixture(tmp_path / "short")
