@@ -324,7 +324,7 @@ def test_real_trainer_scales_whole_partial_objective_by_actual_over_nominal(
     # acceptance/anchor/checkpoint tests below exercise the actual loss pipeline.
     from chess_anti_engine.train import trainer as trainer_module
     from tests.test_grad_clip_scope import _make_trainer
-    trainer = _make_trainer(tmp_path, optimizer="nadamw", grad_clip_mode="none")
+    trainer = _make_trainer(tmp_path, optimizer="nadamw", grad_clip_mode="none", zclip_max_norm=None)
     parameter = dict(trainer.model.named_parameters())["head.weight"]
     captured: list[torch.Tensor] = []
     calls: list[str] = []
