@@ -4957,11 +4957,16 @@ class Trainer:
                     host_batch, split_timing,
                 )
             del host_batch
-            yield device_batch
-            # A suspended generator retains its locals.  Drop the yielded
-            # mapping before constructing the next host batch; on CPU its
-            # tensors may alias the NumPy storage directly.
-            del device_batch
+            try:
+                yield device_batch
+            finally:
+                # Release the final CPU tensor alias before returning borrowed
+                # host-byte credit. Optimizer success is acknowledged separately;
+                # faults must retain taint and cannot produce a clean checkpoint.
+                del device_batch
+                if bool(getattr(buf, "borrowed_row_batches", False)):
+                    release_completed = getattr(buf, "release_completed_batch")
+                    release_completed()
 
     def _iter_exact_overlapped_batches(
         self, buf: ReplayBuffer, *, batch_size: int, mirror_prob: float,
@@ -6058,6 +6063,12 @@ class Trainer:
         #     prevents. Training-only placement keeps the measurement's call graph
         #     byte-identical.
         self._assert_gated_heads_exist()
+        if bool(getattr(buf, "borrowed_row_batches", False)):
+            if (not bool(getattr(buf, "stored_row_quota", False)) or self.accum_steps != 1
+                    or self._prefetch_batches or bool(getattr(buf, "host_batch_overlap", False))):
+                raise ValueError("borrowed row batches require serialized single-microbatch training")
+            if not callable(getattr(buf, "mark_batch_completed", None)) or not callable(getattr(buf, "release_completed_batch", None)):
+                raise TypeError("borrowed row batch completion hooks required")
         self.model.train()
   # Always on, one instance per window, no config key. See
   # `_PipelinePhaseTimer` for why there is no switch and what the two clocks
@@ -6233,6 +6244,9 @@ class Trainer:
                     self.writer.add_scalar("train/lr", self.opt.param_groups[0]["lr"], self.step)
                 self.step += 1
                 train_steps_done += 1
+                if bool(getattr(buf, "borrowed_row_batches", False)):
+                    mark_completed = getattr(buf, "mark_batch_completed")
+                    mark_completed()
                 break
         except BaseException as error:
             if bool(getattr(buf, "stored_row_quota", False)):
