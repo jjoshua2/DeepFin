@@ -62,9 +62,11 @@ _multipv_truncation_warned = False
 # total label outage silent.
 _SF_LABEL_REPORT_EVERY = 4096
 
-# THE detector. Fraction of labelled rows on which not ONE of Stockfish's
-# MultiPV moves was legal at the position we queried, i.e. the stored
-# `sf_multipv_raw` came out empty. Calibrated against the four episodes visible
+# Health warning: fraction of labelled rows with no retained legal MultiPV
+# evidence (`sf_multipv_raw` is absent). This includes an empty parsed PV list,
+# for example when only bound scores were received, as well as illegal PVs.
+# It is not by itself proof of a different-position response. Historical
+# calibration against the four episodes visible
 # in the then-live window (2026-07-30/31), 721 shards / 1,280,663 labelled rows:
 #
 #     no-PV rate   "clean" 0.0008 | ep1 0.1241  ep2 0.3275  ep3 0.2541  ep4 0.5684
@@ -77,8 +79,8 @@ _SF_LABEL_REPORT_EVERY = 4096
 # computed against the 0.0008 "clean" figure that correction 2 below repudiates
 # (0.074 / 0.0008 ~= 92). Deleting the baseline while keeping the margins derived
 # from it would leave a calibration comment stating two mutually inconsistent
-# numbers, with the wrong one read first. Against the TRUE floor of exactly
-# 0.000000 no ratio is defined at all, which is why the margin is now quoted
+# numbers, with the wrong one read first. Against historical zero-rate windows
+# no ratio is defined at all, which is why the margin is now quoted
 # against the threshold rather than against the baseline.
 #
 # ⚑ TWO CORRECTIONS to the calibration above (2026-08-01). Neither changes the
@@ -90,17 +92,18 @@ _SF_LABEL_REPORT_EVERY = 4096
 #    reads 0.084, 07-13 0.153, 07-14 0.120. 07-30/31 was at least the THIRD
 #    occurrence. Aggregate contamination over retained history is 1.76%.
 #
-# 2. "clean 0.0008" is NOT the structural floor — that baseline was itself
-#    measured on shards carrying residual contamination. The structural rate is
-#    EXACTLY 0.000000: 90.48% of all historical shards, and 641 of the 713
-#    shards in the post-quarantine window, read exactly zero. Never treat a
-#    small non-zero reading as "the normal background".
+# 2. That "clean 0.0008" baseline was measured on shards carrying residual
+#    contamination. In that historical workload, 90.48% of all shards and
+#    641 of the 713 post-quarantine shards read exactly zero. This is not a
+#    universal structural floor: a node-limited bound-only result can have a
+#    legal bestmove but no retained exact PV. Inspect non-zero readings rather
+#    than identifying their cause from this aggregate alone.
 #
 # ⚑⚑ WHAT THIS THRESHOLD CANNOT SEE, BY CONSTRUCTION. 0.01 is a *desynced
 # engine* detector, not a contamination detector. The 2026-08-01 quarantine used
 # the same 0.01 bar and, having removed 122 shards, left 72 shards holding 252
 # no-PV rows — every one of them below the bar. Those 72 are burst EDGES, not a
-# floor: median distance to the nearest quarantined shard is 14 ids against 43.5
+# historical background: median distance to the nearest quarantined shard is 14 ids against 43.5
 # +/- 6.6 for a uniform draw of the same 72 over the same range (p < 1e-3, 2000
 # draws), and 55 of them sit in two runs butting against quarantined blocks.
 #
@@ -109,8 +112,8 @@ _SF_LABEL_REPORT_EVERY = 4096
 # window, orders of magnitude below anything that moves a training target — while
 # the failure this detector exists for (k=1 desynced engine, 0.074) clears either
 # bar by 7-37x. Buying a 0.02% cleanup with a 5x cut in alarm margin is a bad
-# trade. The blind spot is documented instead: a PASS here means "no engine is
-# detached", and must never be read as "this data is uncontaminated".
+# trade. The blind spot is documented instead: INFO means that no reporting
+# threshold fired, not proof of engine synchronization or uncontaminated data.
 _SF_NO_LEGAL_PV_WARN_RATE = 0.01
 
 # NOT the trigger, reported for context only. `bestmove_illegal` is floored by
@@ -123,8 +126,9 @@ _SF_NO_LEGAL_PV_WARN_RATE = 0.01
 _SF_BESTMOVE_ILLEGAL_CONTEXT_RATE = 0.25
 
 # THE OTHER HALF OF THE LABEL. `no_legal_pv` above reads the POLICY block; this
-# reads the record-level SF eval that becomes `rec.sf_wdl` — realized
-# `sf_wdl_frac` 0.45 of the trained value target, and until 2026-08-03 carrying
+# reads the record-level SF eval that becomes `rec.sf_wdl`. Its influence
+# depends on the selected loss recipe; the historical 0.45-share workload
+# motivating this check was until 2026-08-03 carrying
 # no detector in either direction (SELFPLAY_AUDIT P2). It fires when that eval's
 # own PV was dropped as illegal, leaving the score attached to a move that is
 # not playable in the queried position. Definition and floor:
@@ -242,8 +246,7 @@ def _sf_value_half_counts(rec) -> dict[str, int]:
         "eval_pv_checked": int(checked),
         "wdl_degenerate": int(wdl is not None and not wellformed),
   # The blind spot itself: the POLICY block is gone and a well-formed value
-  # label rode through anyway, at 0.45 of the value target with nothing
-  # marking it.
+  # label rode through anyway, without marking the missing policy evidence.
         "wdl_orphaned": int(
             getattr(rec, "sf_multipv_raw", None) is None and wellformed,
         ),
@@ -266,6 +269,9 @@ def _report_sf_label_health(
     and ``_collect_sf_pv_candidates`` drop every illegal PV move, and the caller
     fabricates a degenerate one-hot when nothing survives. A poisoned row
     therefore carries a fake bestmove AND a fake policy distribution.
+
+    The missing-PV counter also includes results with no retained exact PV,
+    such as a bound-only score. It is a warning signal, not a cause diagnosis.
 
     ``no_legal_pv`` is read from the STORED ``sf_multipv_raw``, so this live
     counter and the offline shard check are the same measurement by
@@ -343,11 +349,11 @@ def _report_sf_label_health(
         "sf label health: calls=%d labelled=%d no_legal_pv=%d (%.4f) "
         "bestmove_illegal=%d (%.3f) failed=%d eval_pv_orphan=%d (%.4f of %d "
         "checked) wdl_degenerate=%d wdl_orphaned=%d — no_legal_pv above %.3f "
-        "means Stockfish is answering a DIFFERENT position than the one "
-        "queried (a desynced engine), so the whole SF label block on those "
-        "rows is detached from its row; eval_pv_orphan above %.3f says the "
-        "same thing about the VALUE half (sf_wdl, 0.45 of the value target) "
-        "on rows the no_legal_pv check PASSES",
+        "warrants inspection: missing retained PV evidence can reflect "
+        "missing/bound-only info or illegal PVs, not proof of UCI desync; "
+        "eval_pv_orphan above %.3f flags a stored eval/PV mismatch, which "
+        "can also occur after MultiPV reranking. These counters do not "
+        "report the active SF loss weights",
         counts["calls"], counts["labelled"], counts["no_legal_pv"], no_pv_rate,
         counts["bestmove_illegal"], illegal_rate, counts["failed"],
         counts["eval_pv_orphan"], orphan_rate, counts["eval_pv_checked"],
@@ -1240,12 +1246,10 @@ def _process_sf_label_result_for_record(
         sf_policy_score_mode=score_mode,
     )
     if not cand_idxs:
-        # Every MultiPV move was illegal here. On a healthy engine that is a
-        # rounding event (0.0008 of labelled rows); on a desynced one it is the
-        # norm, and the fabricated one-hot below lands on legal_indices[0] — so
-        # the row gets a fake bestmove AND a fake policy distribution, both
-        # looking well-formed. `no_legal_pv` in the health line counts exactly
-        # this; do not make it silent again.
+        # No scored legal PV candidate survived. The result can have no
+        # retained exact PV (for example, a bound-only search), or its moves
+        # may be illegal here. Preserve the fallback; the health counter reads
+        # the stored sparse block below, not a diagnosis of which cause fired.
         cand_idxs = [a_idx]
         cand_scores = [0.0]
 
