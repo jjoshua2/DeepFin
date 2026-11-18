@@ -40,6 +40,16 @@
     "study_GPU_total": 32400,
     "week_cutoff_UTC": "2026-11-19T16:09:20Z"
   },
+  "cancelled_studies": {
+    "5k": "USER_CANCELLED_5000_NODE_STOCKFISH_LABEL_STUDY_NOT_A_PANEL",
+    "THREE": "STOPPED_STUDY_NOT_A_PANEL",
+    "payloads_accessed": false,
+    "stop_receipt": {
+      "path": "operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-user-cancelled-v1/stop-receipt.json",
+      "sha256": "257e647c292c5dc157aa731e5e1f5f90f04a83ceca83c0b842368cd6c5e53445"
+    },
+    "successor_or_resume_authorized": false
+  },
   "claims": {
     "causal_head_diagnosis": false,
     "fresh_confirmation_selected": false,
@@ -52,12 +62,22 @@
     "board_dedup": false,
     "final_panel": "consumed CONFIRM_C_A39 reusedDEV",
     "future_attempt_ids": "collection-qualified ordinal0..191; exactUUIDschedule in method",
-    "independent_game_count": "UNKNOWN"
+    "independent_game_count": "UNKNOWN",
+    "protected_from_training_roles": [
+      "HOLD",
+      "SCREEN_C_A",
+      "SCREEN_C_B",
+      "SCREEN_C_A39",
+      "CONFIRM_C_A",
+      "CONFIRM_C_B",
+      "CONFIRM_C_A39"
+    ],
+    "protection_representation": "Complete named-role-provenanced UNION: unchanged TRAIN_prior/refuse checks both current raw/mirror against authenticated flat set; playing_starts contains genuine pairs only. No invented pair map or inferred missing coverage."
   },
   "execution_authorized": false,
   "method": {
-    "path": "operations/rl-week-one-20261112-v1/fresh-current-policy-A39-12-cycle-method-source-preparation-v2/design.json",
-    "sha256": "125d6580715d61b232684d45454f78d81c4961dcdaa830c70600c650895cc2c0"
+    "path": "operations/rl-week-one-20261112-v1/fresh-current-policy-A39-12-cycle-method-source-preparation-v4/design.json",
+    "sha256": "9e07463d51c23523855e3dc8f67fc1876820e116d36cab0833fc700194727544"
   },
   "methods_selected": false,
   "prospective_code_tree": "cef979d3acd2437108fc679cb99a92990117ace7",
