@@ -7,7 +7,7 @@ Ordinary ``deepfin --checkpoint`` and the public loader remain unchanged.
 from __future__ import annotations
 
 import argparse
-from collections.abc import Iterator, Sequence
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager, ExitStack
 from dataclasses import asdict
 import importlib.util
@@ -34,7 +34,7 @@ def _canonical(value: Any) -> str:
 
 
 @contextmanager
-def guarded_loader(actor: dict[str, Any]) -> Iterator[dict[str, Any]]:
+def guarded_loader(actor: dict[str, Any]) -> Generator[dict[str, Any], None, None]:
     """Observe the one original load; validate it before UCI can get the model.
 
     No journal/data consumer, forward, optimizer restore or alternate decoder is
@@ -159,12 +159,12 @@ def guarded_loader(actor: dict[str, Any]) -> Iterator[dict[str, Any]]:
             if main is None and current is not None and getattr(current, "load_model_from_checkpoint", None) is load:
                 # A new module's from-import alias is not one of patch.object's
                 # original targets. Restore that newly captured alias explicitly.
-                current.load_model_from_checkpoint = original_loader
+                setattr(current, "load_model_from_checkpoint", original_loader)
             hooks.close()
             observed["hooks_restored"] = (torch.load is original_load
                                           and model_loader.build_model is original_build
                                           and model_loader.load_model_from_checkpoint is original_loader
-                                          and (current is None or current.load_model_from_checkpoint is original_loader))
+                                          and (current is None or getattr(current, "load_model_from_checkpoint", None) is original_loader))
 
 
 def _write_witness(path: Path, value: dict[str, Any]) -> None:
@@ -191,7 +191,7 @@ def run_closed_actor_uci(actor_ref: dict[str, str], public_argv: Sequence[str], 
     output = core.external(str(witness_path))
     _require(output.parent.is_dir() and not output.exists(), "closed UCI witness already exists or lacks parent")
     _, actor = core.read_ref(actor_ref)
-    argv = list(public_argv)
+    argv: list[Any] = list(public_argv)
     _require(bool(argv) and all(isinstance(arg, str) for arg in argv), "closed UCI requires public arguments")
     witness: dict[str, Any] = {"schema": SCHEMA, "actor": actor_ref, "public_uci_exit_code": None,
                                "error_type": None, "execution_authority_issued": False}

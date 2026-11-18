@@ -13,7 +13,7 @@ from pathlib import Path
 import pickle
 import subprocess
 import sys
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -44,6 +44,8 @@ class Buffers(torch.nn.Module):
 
 def fixture(tmp_path: Path, family: str = "global_union", *, fault: str | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
     tmp_path.mkdir(exist_ok=True)
+    actor: dict[str, Any]
+    payload: dict[str, Any]
     if family == "capped_cycle":
         from scripts import core_capped_on_policy_cycle as capped
         from scripts import core_capped_on_policy_cycle_proof as proof
@@ -72,7 +74,7 @@ def fixture(tmp_path: Path, family: str = "global_union", *, fault: str | None =
     expected_hash = fingerprint(payload["model"], torch)
     # Build self-consistent accepted metadata around the expected synthetic state;
     # faults alter only the actual payload, not the accepted model identity.
-    actual = copy.deepcopy(payload)
+    actual: dict[str, Any] = copy.deepcopy(payload)
     if fault == "arch":
         actual["arch"]["num_layers"] += 1
     elif fault == "step":
@@ -142,7 +144,8 @@ def test_real_public_loader_validates_same_object_and_restores_hooks(tmp_path: P
         assert observed["safe_decodes"] == observed["model_builds"] == observed["public_loader_calls"] == 1
         assert observed["state_entries"] == 494
         assert observed["returned_model_id"] == id(actual)
-        assert not actual.training and actual.forward_calls == 0
+        assert not actual.training
+        assert actual.forward_calls == 0
     assert observed["hooks_restored"] is True
     assert (torch.load, model_loader.build_model, model_loader.load_model_from_checkpoint, uci.load_model_from_checkpoint) == originals
 
@@ -152,9 +155,10 @@ def test_actual_payload_refusals_happen_before_constructor(tmp_path: Path, monke
     actor, _ = fixture(tmp_path, "policy_anchor", fault=fault)
     built = build_inert(monkeypatch)
     original = torch.load
-    with pytest.raises(ValueError, match="closed UCI|closed once actor"), owned.guarded_loader(actor):
+    with pytest.raises(ValueError, match=r"closed UCI|closed once actor"), owned.guarded_loader(actor):
         uci._load_models(actor["path"], ["cpu"])
-    assert built == [] and torch.load is original
+    assert built == []
+    assert torch.load is original
 
 
 @pytest.mark.parametrize("fault", ["missing_pair", "independent", "path", "hash", "arch", "step"])
@@ -188,7 +192,7 @@ def test_actual_returned_state_requires_complete_load_and_typed_identity(tmp_pat
     built = build_inert(monkeypatch)
     original = model_loader.build_model
     def corrupt(config: Any) -> Buffers:
-        model = original(config)
+        model = cast(Buffers, original(config))
         if fault == "missing":
             model.register_buffer("extra", torch.zeros(1))
         elif fault == "shape":
@@ -197,14 +201,15 @@ def test_actual_returned_state_requires_complete_load_and_typed_identity(tmp_pat
             original_to = model.to
             def changed(*args: Any, **kwargs: Any) -> Buffers:
                 original_to(*args, **kwargs)
-                model.tensor0 += 1
+                getattr(model, "tensor0").add_(1)
                 return model
             monkeypatch.setattr(model, "to", changed)
         return model
     monkeypatch.setattr(model_loader, "build_model", corrupt)
-    with pytest.raises((ValueError, RuntimeError), match="Incomplete state-dict|closed UCI"), owned.guarded_loader(actor):
+    with pytest.raises((ValueError, RuntimeError), match=r"Incomplete state-dict|closed UCI"), owned.guarded_loader(actor):
         uci._load_models(actor["path"], ["cpu"])
-    assert len(built) == 1 and built[0].forward_calls == 0
+    assert len(built) == 1
+    assert built[0].forward_calls == 0
 
 
 def test_unsafe_numpy_payload_is_refused_without_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -218,7 +223,8 @@ def test_unsafe_numpy_payload_is_refused_without_fallback(tmp_path: Path, monkey
     monkeypatch.setattr(torch, "load", counted)
     with pytest.raises(pickle.UnpicklingError, match="Weights only load failed"), owned.guarded_loader(actor):
         uci._load_models(actor["path"], ["cpu"])
-    assert calls == [True] and built == []
+    assert calls == [True]
+    assert built == []
 
 
 def test_fresh_from_import_alias_is_restored_on_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -256,7 +262,8 @@ def test_real_public_cli_reaches_evaluator_with_same_admitted_model(tmp_path: Pa
         def close(self) -> None:
             pass
     def evaluator(models: list[Any], *_args: Any, **_kwargs: Any) -> Any:
-        assert models == [built[0]] and models[0].forward_calls == 0
+        assert models == [built[0]]
+        assert models[0].forward_calls == 0
         seen.extend(models)
         return lambda *_args, **_kwargs: object()
     monkeypatch.setattr(uci, "enforce_startup_gate", lambda: None)
@@ -268,8 +275,11 @@ def test_real_public_cli_reaches_evaluator_with_same_admitted_model(tmp_path: Pa
     assert owned.main(["--actor", aref["path"], "--actor-sha256", aref["sha256"], "--witness", str(witness),
                        "--", "--checkpoint", actor["path"], "--device", "cpu", "--no-compile"]) == 0
     observed = json.loads(witness.read_text())["load_observation"]
-    assert seen == built and len(seen) == 1 and seen[0].forward_calls == 0
-    assert observed["validated_before_evaluator"] and observed["hooks_restored"]
+    assert seen == built
+    assert len(seen) == 1
+    assert seen[0].forward_calls == 0
+    assert observed["validated_before_evaluator"]
+    assert observed["hooks_restored"]
     assert witness.stat().st_mode & 0o222 == 0
 
 
@@ -279,7 +289,9 @@ def test_ordinary_public_loader_remains_unwrapped(tmp_path: Path, monkeypatch: p
     torch.save({"model": Buffers().state_dict(), "arch": {"_schema_version": ARCH_SCHEMA_VERSION,
                 **asdict(ModelConfig(kind="tiny"))}, "step": 680276}, path)
     actual = model_loader.load_model_from_checkpoint(path, device="cpu")
-    assert actual is built[0] and actual.forward_calls == 0 and not actual.training
+    assert actual is built[0]
+    assert actual.forward_calls == 0
+    assert not actual.training
 
 
 def test_changed_checkpoint_bytes_refuse_before_decode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -335,7 +347,8 @@ def test_selfcheck_refuses_before_decode_dispatch_or_child(tmp_path: Path, monke
                     "--", "--checkpoint", actor["path"], "--selfcheck"])
     witness = json.loads(witness_path.read_text())
     assert witness["status"] == "CLOSED_ACTOR_PUBLIC_UCI_UNSUCCESSFUL"
-    assert witness["error_type"] == "ValueError" and witness["public_uci_exit_code"] is None
+    assert witness["error_type"] == "ValueError"
+    assert witness["public_uci_exit_code"] is None
     assert "load_observation" not in witness
 
 
@@ -349,11 +362,14 @@ def test_later_unrelated_tensor_load_and_constructor_are_not_intercepted(tmp_pat
     original_public_loader = model_loader.load_model_from_checkpoint
     with owned.guarded_loader(actor) as observed:
         admitted = uci._load_models(actor["path"], ["cpu"])[0]
-        assert torch.load is original_load and model_loader.build_model is original_build
+        assert torch.load is original_load
+        assert model_loader.build_model is original_build
         cached = torch.load(cache, map_location="cpu", weights_only=True)
         later = model_loader.build_model(model_loader.model_config_from_arch(actor["architecture"]))
-        assert cached["cache"].tolist() == [42.0] and later is built[1]
-        assert admitted is built[0] and later is not admitted
+        assert cached["cache"].tolist() == [42.0]
+        assert later is built[1]
+        assert admitted is built[0]
+        assert later is not admitted
         assert all(model.forward_calls == 0 for model in built)
         assert observed["safe_decodes"] == observed["model_builds"] == observed["public_loader_calls"] == 1
         assert uci.load_model_from_checkpoint is model_loader.load_model_from_checkpoint
