@@ -110,6 +110,236 @@
     "public_record_prepared_while_first_segment_running": false,
     "unsubmitted_running_state_predecessor_superseded": true
   },
+  "completed_readout_through_owner459": {
+    "Root_joint_verdict": {
+      "path": "historical-selfplay-policy-anchor-U2-playing-controller-bindings-v1/verdict.json",
+      "sha256": "11bd85b23729ad23a168e4094fc007840803812bf10ba5f8c8366ba8bdfde6e3"
+    },
+    "actual_independent_full_pass_model_delivery": {
+      "path": "historical-selfplay-policy-anchor-U2-final-delivery-CPU-bindings-v1/independent-model-delivery.json",
+      "sha256": "8b8a12d39f12559c8bc1fb996293741a59be25775ff28d99f342558ea11c2866"
+    },
+    "all459_post_custody": {
+      "path": "historical-selfplay-policy-anchor-U2-vs-A39-800DEV-bindings-v1/reader.post-closure-custody.json",
+      "sha256": "5b5a9f12da2f8ce6fd851c30ecd8ac9381548b64566d7170292938cd37b8bab0"
+    },
+    "barriers": {
+      "both_GPU_technical_pairs_closed_before_any_efficacy_reader": true,
+      "both_reader_pairs_before_joint_verdict": true,
+      "fixed_800_each_no_pooling_interim_selection_or_extension": true,
+      "frozen_verdict_command": {
+        "path": "historical-selfplay-policy-anchor-U2-playing-controller-bindings-v1/verdict-command.json",
+        "sha256": "c36c366afafeed0ccc3d4a3f5600cb7dfd3605703e0d2a1f860a6ba7ca05af57"
+      }
+    },
+    "costs": {
+      "CPU_final_delivery_seconds": 20.156058119027875,
+      "CPU_readers_seconds": [
+        36.990443750983104,
+        34.86886475607753
+      ],
+      "GPU_playing_seconds": 4085.6418746351264,
+      "GPU_training_seconds": 8120.914577302057,
+      "U2_CPU_cap": 360,
+      "U2_GPU_cap": 19200,
+      "actual_U2_CPU_wall_seconds": 92.01536662608851,
+      "actual_U2_GPU_wall_seconds": 12206.556451937184,
+      "actual_global_CPU_wall_seconds": 7644.059019470995,
+      "actual_global_GPU_wall_seconds": 125717.28813925025,
+      "original_scopes_cutoff_global172800_stops_and_all_history_preserved": true,
+      "shared_historical_CPU443_charged_as_new_U2_CPU": false
+    },
+    "decision": {
+      "adoption_retry_extension_training_authorized": false,
+      "donor_advantage_requires_primary_and_A39": false,
+      "original_SL_A39_retained": true,
+      "primary_mitigation_vs_F1": false,
+      "verdict": "NO_PRIMARY_MITIGATION_SELECTION"
+    },
+    "independent_joint_readout": {
+      "path": "historical-selfplay-policy-anchor-U2-dual-readout-independent-review-v1/review.json",
+      "sha256": "8c9f76e22c62ee9231f74332fd2b640be0ae78d7151b799d13e079d4bbe8cf2e"
+    },
+    "independent_joint_readout_evidence": {
+      "path": "historical-selfplay-policy-anchor-U2-dual-readout-independent-review-v1/evidence.json",
+      "sha256": "81b09c02a2e9864996090b927d99e8638e3e2b5afcd2b5adfe6653fa7a06114d"
+    },
+    "limits": [
+      "Local immutable method/review preceded compute; original public-before-compute intention was missed. Published late chronology and dated453/455 snapshots remain unchanged.",
+      "The frozen F1 interval includes0.5: no demonstrated mitigation. The A39 interval lies below0.5 only for this exact recipe/checkpoint/reused development panel.",
+      "Consumed CONFIRM_C_A39 reused as development, not fresh confirmation; separate descriptive paired normal95 intervals/divisor399, no familywise or pooled inference.",
+      "4032 source assets/405013 rows are not independent games; row-once does not balance games or remove correlated/endogenous targets. No actual game-count census is claimed.",
+      "Runtime source/two-segment execution differ from F1, with no GPU bit-identity or policy/value/shared-trunk causal isolation claim.",
+      "No KL-in-general, optimal lambda, equivalence, external-engine/Elo gain, adoption or new-experiment authority follows. Teacher KL diagnostics are on-trajectory, not held-out strength or isolated GPU throughput.",
+      "All prior negative results/failure costs/stops/protected scopes remain; separate capability or future diagnostic source is not experimental-effect evidence."
+    ],
+    "method": {
+      "path": "historical-selfplay-policy-anchor-U2-method-draft-v2/design.json",
+      "sha256": "047ea2d5cc26c8244dced11f72945aa1659e3a44982e41368ed2443d1a665270"
+    },
+    "separate_fixed_endpoints": {
+      "U2_vs_A39": {
+        "CPU_reader_owner_wall_seconds": 34.86886475607753,
+        "GPU": {
+          "independent": {
+            "path": "historical-selfplay-policy-anchor-U2-vs-A39-800DEV-bindings-v1/gpu.independent-review.json",
+            "sha256": "71118a90a94fb8b9a0ec65fc5a121c782091f3d934bb0a920bd344a8d9d1a52c"
+          },
+          "root": {
+            "path": "historical-selfplay-policy-anchor-U2-vs-A39-800DEV-bindings-v1/gpu.root-acceptance.json",
+            "sha256": "f3c94ca6737f9dfee08d0e8601646d0db7b5b832856650147fe4c64435833a2f"
+          },
+          "terminal": {
+            "path": "historical-selfplay-policy-anchor-U2-vs-A39-800DEV-GPU-v1/terminal.json",
+            "sha256": "cd6c01176b00ab3a811973bf84013182e1e6f20996c0b89e6fe637c07d0e93ec"
+          }
+        },
+        "GPU_owner_wall_seconds": 2025.308576279087,
+        "all_game_rows_reconciled": true,
+        "games": 800,
+        "illegal_or_crashed_games": 0,
+        "incomplete_pairs": 0,
+        "pair_order_verified": true,
+        "pair_score_bins": [
+          42,
+          113,
+          144,
+          79,
+          22
+        ],
+        "pair_score_bins_order": [
+          0,
+          0.5,
+          1,
+          1.5,
+          2
+        ],
+        "paired_inference": {
+          "criterion": "available paired normal95 lower>0.50; zero variance UNAVAILABLE cannot confirm",
+          "criterion_pass": false,
+          "interval_available": true,
+          "n": 400,
+          "normal95": [
+            0.42818889931123755,
+            0.4793111006887624
+          ],
+          "point": 0.45375,
+          "sample_variance": 0.06803101503759398
+        },
+        "reader": {
+          "independent": {
+            "path": "historical-selfplay-policy-anchor-U2-vs-A39-800DEV-bindings-v1/reader.independent-review.json",
+            "sha256": "1c8f85f58e945204450e12a58dbe220509fd90481e5aab4fc909a14cc1c83bb6"
+          },
+          "root": {
+            "path": "historical-selfplay-policy-anchor-U2-vs-A39-800DEV-bindings-v1/reader.root-acceptance.json",
+            "sha256": "f01a6f8227221c7ebca8401d88943a6d7fc174d93fcbd20d042306025a2adc87"
+          },
+          "terminal": {
+            "path": "historical-selfplay-policy-anchor-U2-vs-A39-800DEV-reader-CPU-v1/terminal.json",
+            "sha256": "c42b3c6f05cb3ca4d3313cd1b55eefc71c8f3fac20211a014a1cfbfb2f2e37eb"
+          }
+        },
+        "reader_CUDA_initialized": false,
+        "reader_controls_passed": 16,
+        "reader_models_loaded": 0,
+        "reciprocal_colours_complete": true,
+        "reciprocal_pairs": 400,
+        "reference_display": "original A39 (SL donor)",
+        "summary": {
+          "path": "historical-selfplay-policy-anchor-U2-vs-A39-800DEV-reader-results-v1/summary.json",
+          "sha256": "9f2e771cdd33d83cdb87ef93c6fcfa03c0fca203414dbedc600b5afcf1f1e365"
+        },
+        "wdl_counts": {
+          "draws": 322,
+          "losses": 276,
+          "wins": 202
+        }
+      },
+      "U2_vs_U1": {
+        "CPU_reader_owner_wall_seconds": 36.990443750983104,
+        "GPU": {
+          "independent": {
+            "path": "historical-selfplay-policy-anchor-U2-vs-U1-800DEV-bindings-v1/gpu.independent-review.json",
+            "sha256": "0c94bc769c8eba01ec7b174ad8245e4d1b8801dad6a86b5cdfc097052f03436f"
+          },
+          "root": {
+            "path": "historical-selfplay-policy-anchor-U2-vs-U1-800DEV-bindings-v1/gpu.root-acceptance.json",
+            "sha256": "f80cd7ee29a1e95c88091424e98c32f63826126016939e68ba8c31593287f974"
+          },
+          "terminal": {
+            "path": "historical-selfplay-policy-anchor-U2-vs-U1-800DEV-GPU-v1/terminal.json",
+            "sha256": "02b74a9b1bddccd2d8dad6d7c58b8a0e88e7493776c286cdeb951a1ed3665154"
+          }
+        },
+        "GPU_owner_wall_seconds": 2060.3332983560394,
+        "all_game_rows_reconciled": true,
+        "games": 800,
+        "illegal_or_crashed_games": 0,
+        "incomplete_pairs": 0,
+        "pair_order_verified": true,
+        "pair_score_bins": [
+          30,
+          96,
+          149,
+          98,
+          27
+        ],
+        "pair_score_bins_order": [
+          0,
+          0.5,
+          1,
+          1.5,
+          2
+        ],
+        "paired_inference": {
+          "criterion": "available paired normal95 lower>0.50; zero variance UNAVAILABLE cannot confirm",
+          "criterion_pass": false,
+          "interval_available": true,
+          "n": 400,
+          "normal95": [
+            0.4723049468793101,
+            0.5226950531206899
+          ],
+          "point": 0.4975,
+          "sample_variance": 0.06609649122807017
+        },
+        "reader": {
+          "independent": {
+            "path": "historical-selfplay-policy-anchor-U2-vs-U1-800DEV-bindings-v1/reader.independent-review.json",
+            "sha256": "f324e7f70ee78571d931ab5aa71c8ce4b8ef934f124a2d2d34589c3580a783a0"
+          },
+          "root": {
+            "path": "historical-selfplay-policy-anchor-U2-vs-U1-800DEV-bindings-v1/reader.root-acceptance.json",
+            "sha256": "7de6d13512c004a4096fab83b376d3de7d3dd7fdc5d88c4cff99465a635791cb"
+          },
+          "terminal": {
+            "path": "historical-selfplay-policy-anchor-U2-vs-U1-800DEV-reader-CPU-v1/terminal.json",
+            "sha256": "4b4f38563913f960811c7c227bb9d21eb8d8f194d48b7b50d84bf35b656f2a5a"
+          }
+        },
+        "reader_CUDA_initialized": false,
+        "reader_controls_passed": 16,
+        "reader_models_loaded": 0,
+        "reciprocal_colours_complete": true,
+        "reciprocal_pairs": 400,
+        "reference_display": "frozen F1 (U1)",
+        "summary": {
+          "path": "historical-selfplay-policy-anchor-U2-vs-U1-800DEV-reader-results-v1/summary.json",
+          "sha256": "ea9a54ec360094ea905e64887edb2d13aba4084ef5f1f48f801d02a6294ff529"
+        },
+        "wdl_counts": {
+          "draws": 322,
+          "losses": 241,
+          "wins": 237
+        }
+      }
+    },
+    "snapshot_UTC": "2026-11-18T11:42:44.538864+00:00",
+    "snapshot_through_owner": 459,
+    "status": "COMPLETED_U2_DUAL_FIXED800_DEVELOPMENT_NO_PRIMARY_MITIGATION_SELECTION"
+  },
+  "current_readout_note": "The latest outcome is completed_readout_through_owner459. All earlier status/outcome/pending fields are immutable dated453/455 snapshots, preserved without backdating or overwriting the missed public-before-start chronology.",
   "evaluation": {
     "barrier": "BOTH full800 GPU endpoints must first close and receive technical acceptance before ANY efficacy reader/look; no ordering or execution decision by score. If either fails, preserve outcomes unread under technical stop; no partial efficacy promotion.",
     "book_reference_only": {
@@ -428,6 +658,65 @@
     "two_GPU_endpoints": "PENDING",
     "two_reader_pairs": "PENDING"
   },
+  "post_method_correlation_audit_closed460": {
+    "CPU_owner_wall_seconds_separate_from_U2": 2.332109948969446,
+    "GPU_owner_seconds": 0,
+    "Root_acceptance": {
+      "path": "fixed-union-game-group-census-CPU-bindings-v1/root-acceptance.json",
+      "sha256": "653a201e9179b5e04ce8ae64b3638ac358c22e01c07d6f3467869a005692c5f5"
+    },
+    "U2_closed459_GPU_CPU_seconds_unchanged": [
+      12206.556451937184,
+      92.01536662608851
+    ],
+    "U2_outcome_cause_proof": false,
+    "canonical_assets_per_recorded_group_histogram": {
+      "1": 4032
+    },
+    "canonical_source_assets": 4032,
+    "collection_qualified_recorded_game_groups": 4032,
+    "cross_collection_same_original_game_equivalence": "UNKNOWN",
+    "future_training_reweighting_adoption_or_experiment_authorized": false,
+    "groups_with_conflicting_numeric_game_ids": 0,
+    "groups_with_multiple_origin_records": 0,
+    "independent_acceptance": {
+      "path": "fixed-union-game-group-census-CPU-bindings-v1/independent-review.json",
+      "sha256": "feba3a997d4145f7bbaccf37542f54553e6ad8897e3c6bb6c7c8fecfda88b330"
+    },
+    "model_or_raw_game_shard_payload_reads": false,
+    "origin_qualified_recorded_groups": 4032,
+    "owner_terminal": {
+      "path": "fixed-union-game-group-census-CPU-execution-v1/terminal.json",
+      "sha256": "fc5dcbc24ce91d9de49cc3519507bc93fb5672d9b21d8f7010ca227772cb4203"
+    },
+    "post_custody": {
+      "path": "fixed-union-game-group-census-CPU-bindings-v1/post-closure-custody.json",
+      "sha256": "b7bd63b8d5854feab59f1a653677949dddc75b7b1609148e4ce1de384183394e"
+    },
+    "project_imports": 0,
+    "readout": {
+      "path": "fixed-union-game-group-census-CPU-results-v1/readout.json",
+      "sha256": "bed60fcaa5c4de0471bd380cb3c8fb3d753665449cd9faa5354ee37c20a0666e"
+    },
+    "recorded_copied_asset_aliases_not_added_to_rows": 0,
+    "recorded_group_key": [
+      "run_uuid",
+      "collection_uuid",
+      "physical_game_id"
+    ],
+    "retained_positions": 405013,
+    "retained_positions_per_recorded_group_min_max": [
+      5,
+      297
+    ],
+    "row_draws": 0,
+    "row_mass_is_gradient_mass_or_effective_N_proof": false,
+    "semantic_board_history_deduplication": "NOT_PERFORMED",
+    "snapshot_UTC": "2026-11-18T11:55:08.346096+00:00",
+    "snapshot_through_owner": 460,
+    "statistically_independent_games": "UNKNOWN",
+    "status": "CLOSED_POST_METHOD_METADATA_CENSUS_ACCEPTED_NOT_U2_EFFECT_EVIDENCE"
+  },
   "prepared_UTC": "2026-11-18T08:43:54.707948+00:00",
   "public_base_Main": "fcecae8988ec46c2d9eef754e59e54883945fb2f",
   "question": "Does additive frozen-A39 legal forward KL coefficient1 mitigate the observed full-pass F1 recipe regression, and does the resulting candidate also show donor-relative development advantage?",
@@ -715,5 +1004,266 @@
       202261
     ],
     "whole_tail_objective_scale": "21/32 including additive policy anchor"
-  }
+  },
+  "training_and_delivery_readout_through_owner455": {
+    "costs": {
+      "actual_U2_CPU_owner_seconds_through455": 20.156058119027875,
+      "actual_total_U2_training_GPU_seconds": 8120.914577302057,
+      "global_CPU_final_readout": "PENDING_GENUINE_FINAL_ROOT_COST_SNAPSHOT",
+      "global_GPU_after_training": 121631.64626461512,
+      "original_U2_CPU_ceiling": 360,
+      "original_U2_GPU_ceiling": 19200,
+      "past_failures_costs_stops_preserved": true,
+      "process_CPU_in_GPU_owner_is_separate_telemetry": true,
+      "remaining_fixed_playing_caps": [
+        3600,
+        3600
+      ],
+      "remaining_fixed_reader_caps": [
+        120,
+        120
+      ],
+      "shared_old_CPU443_engineering_is_new_U2_CPU": false,
+      "unused_budget_authorizes_no_extension_or_new_variant": true
+    },
+    "final_CPU": {
+      "CPU_owner_wall_seconds": 20.156058119027875,
+      "Root9_model_delivery": {
+        "path": "historical-selfplay-policy-anchor-U2-final-delivery-CPU-bindings-v1/root-model-delivery.json",
+        "sha256": "66c12edb616aa763fcd9bf9b1979a1c9c3dd601fcac9eae6efee5c761d3b8276"
+      },
+      "Root_closure": {
+        "path": "historical-selfplay-policy-anchor-U2-final-delivery-CPU-bindings-v1/root-final-delivery-CPU-closure.json",
+        "sha256": "8becb5939262b330b75e63573bb71ab241d5550a39c6a1dd4ae3bb3f0c9f4ab1"
+      },
+      "exit_code": 0,
+      "ind11_model_delivery": "PENDING_AT_ROOT_CLOSED455_SNAPSHOT",
+      "junit": {
+        "path": "historical-selfplay-policy-anchor-U2-final-delivery-CPU-results-v1/junit.xml",
+        "sha256": "ef30f92f7a6cf9b99b37e7bdc68de610f0d67c112ea340fa4c3490c5dfbd9ca2"
+      },
+      "native_build_or_requalification": false,
+      "post_custody": {
+        "path": "historical-selfplay-policy-anchor-U2-final-delivery-CPU-bindings-v1/post-closure-custody.json",
+        "sha256": "0061080ee735ba3c6d9e8abb3db7e99985097620d8bb5bb05d1b592ceb71778c"
+      },
+      "public_consumer_calls": 1,
+      "public_readout": {
+        "path": "historical-selfplay-policy-anchor-U2-final-delivery-CPU-results-v1/readout.json",
+        "sha256": "7e880b812c2753179382754127354400e7e6405d5eb5b39cfdf9522e42b7195e"
+      },
+      "raw_journal_reads": 0,
+      "real_checkpoint_decodes": 0,
+      "real_model_constructions": 0,
+      "real_model_forwards": 0,
+      "row_draws": 0,
+      "source1400_and_native_metadata_unchanged": true,
+      "supported_session": 93344,
+      "synthetic_adapter_cases_passed": 14,
+      "synthetic_functions": 4,
+      "synthetic_modules": 1,
+      "unit_tests": {
+        "path": "historical-selfplay-policy-anchor-U2-final-delivery-CPU-results-v1/unit-tests.json",
+        "sha256": "9d082eb61ca1c0ccc6b839a6798d13663beda6d7a955867f1f3f29e6b6adb32c"
+      }
+    },
+    "full_training": {
+      "KL_diagnostics_are_trajectory_not_heldout_strength_or_causality": true,
+      "SF_share": 0.0,
+      "checkpoint_descriptor_only": {
+        "path": "historical-selfplay-policy-anchor-U2-learn-segment-02-GPU-results-v1/learner/learner.pt",
+        "sha256": "611d82ab7048f7cbe497e1569b385b3dc17f8c71fdfda9b2565bb1479e3d4213"
+      },
+      "checkpoint_or_model_payload_read_by_publication_author": false,
+      "final_real_tail": 21,
+      "full_state_initial_equals_parent_final_segment2": true,
+      "independent_game_count": "UNKNOWN_NOT_ASSUMED",
+      "pass_complete": true,
+      "policy_anchor_coefficient": 1.0,
+      "retained_search_share": 0.0,
+      "same_ledger_quota_permutation_five_RNG_continuation": true,
+      "saved_model_facts": {
+        "finite": true,
+        "input_planes": 175,
+        "key_shape_dtype_sha256": "0ee887deb126cc0fd9857f8f8e38bab067d983e6f125903f387ddd6c2ca1a524",
+        "model_state_sha256": "25e9034c0fdc323fea0c75f3f0d6a9c631ada39d1c7238722b575ca38f97414c",
+        "naive_state_numel": 77173088,
+        "parameter_devices": [
+          "cuda:0"
+        ],
+        "parameter_dtypes": [
+          "torch.float32"
+        ],
+        "state_entries": 494,
+        "unique_parameter_numel": 61444448
+      },
+      "source_assets": 4032,
+      "updates": 12657,
+      "views": 405013
+    },
+    "limits": [
+      "The published missed-public-before-start chronology and accepted closed453 partial snapshot remain unchanged.",
+      "Full training/pass and teacher trajectory evidence do not establish playing benefit, head cause, calibration, optimum coefficient, external strength or adoption.",
+      "One stored-row presentation is not independent games, equal game weight or globally unseen data;4032 are source assets.",
+      "Both full GPU endpoints must close technically before efficacy readers; both reader pairs precede frozen joint verdict. No pooling, interim selection, extension or retry.",
+      "This is an unpublished technical append skeleton. No PR is selected until actual complete outcomes and readout review."
+    ],
+    "pending_completion": {
+      "A39_original_SL_retained": true,
+      "both_reader_pairs": "PENDING_UNREAD",
+      "donor_primary_and_A39_lower95_gt_half": "UNDETERMINED",
+      "joint_frozen_verdict": "PENDING_UNREAD",
+      "no_interim_or_partial_efficacy_look": true,
+      "primary_lower95_gt_half_vs_F1": "UNDETERMINED",
+      "two800_GPU_technical_endpoints": "PENDING_UNREAD"
+    },
+    "separate_unselected_feasibility": {
+      "exact_authenticated_game_grouping": "UNKNOWN_NOT_RECOMPUTED",
+      "experiment_or_code_selected": false,
+      "independent_review": {
+        "path": "value-only-source-game-weighting-independent-feasibility-review-v1/review.json",
+        "sha256": "a002436df5b147ee57f587af7593db65156d3534d4dae5a1c66968370c46d953"
+      },
+      "report": {
+        "path": "value-only-source-game-weighting-source-feasibility-audit-v1/report.json",
+        "sha256": "9fce186526695d5407a727075072c7a90b84504c65e1840ee3ae64f9550add47"
+      },
+      "shared_trunk_can_change_learned_policy_even_if_direct_policy_term_unchanged": true,
+      "used_in_U2": false
+    },
+    "snapshot_UTC": "2026-11-18T10:10:52.324875+00:00",
+    "snapshot_through_owner": 455,
+    "status": "COMPLETE_TRAINING_AND_ROOT_CPU_DELIVERY_PASS_INDEPENDENT_MODEL_DELIVERY_PENDING_IN_THIS_SNAPSHOT",
+    "training_segments": [
+      {
+        "GPU_owner_wall_seconds": 3412.132668819977,
+        "Root_closure": {
+          "path": "historical-selfplay-policy-anchor-U2-learn-segment-01-bindings-v1/root-training-closure.json",
+          "sha256": "2e506e1c81b477d89dc416da66aa1a981748a328724b19185d7f7d9bafd9a491"
+        },
+        "actual_calls": {
+          "forward": 6336,
+          "optimizer_post": 6336,
+          "optimizer_pre": 6336,
+          "save": 1
+        },
+        "batches": 6336,
+        "boundary_metadata": {
+          "path": "historical-selfplay-policy-anchor-U2-learn-segment-01-GPU-results-v1/learner/boundary.json",
+          "sha256": "8fb2c2a2f580b5c4eefd3a2f0470d62b304199e59d1d965a38ed32fd08b17e77"
+        },
+        "cursor": 202752,
+        "extra_student_forwards": 0,
+        "independent_technical": {
+          "path": "historical-selfplay-policy-anchor-U2-learn-segment-01-bindings-v1/independent-training-technical-review.json",
+          "sha256": "7edb9847dcc56679128236a8dbe6dc3b3f7099000922f66d0b154167ca811ac7"
+        },
+        "last_batch_rows": 32,
+        "pass_complete": false,
+        "policy_anchor_trajectory": {
+          "actual_reference_forwards": 6336,
+          "all_reference_modules_eval": true,
+          "coefficient": 1.0,
+          "diagnostics": {
+            "eligible_rows": 202752,
+            "forward_host_seconds": 228.241686458583,
+            "kl_row_sum": 4825.883210237138,
+            "mean_kl": 0.023801901881299017,
+            "reference_forwards": 6336,
+            "timing_scope": "host interval/enqueue time; CPU work elapsed on CPU, unsynchronized on CUDA, not GPU forward latency",
+            "total_rows": 202752,
+            "weighted_row_sum": 4825.883210237138
+          },
+          "direction": "reference_to_student_forward_KL",
+          "final_reference_sha256": "f878a952bdaa2981a3f06e5bf6ab48121765400fd268eed1ed01dc0f59853c70",
+          "no_optimizer_ownership": true,
+          "no_reference_gradients": true,
+          "reference_checkpoint": {
+            "path": "~/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/baseline/epoch2.pt",
+            "sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0"
+          },
+          "teacher_unchanged": true
+        },
+        "post_custody": {
+          "path": "historical-selfplay-policy-anchor-U2-learn-segment-01-bindings-v1/post-training-custody.json",
+          "sha256": "077ae7015948dc55d050a21cd0cc76eac4509488a944f27aebfcfac3be6f5d13"
+        },
+        "process_CPU_telemetry_seconds": 3118.29,
+        "readout": {
+          "path": "historical-selfplay-policy-anchor-U2-learn-segment-01-GPU-results-v1/readout.json",
+          "sha256": "4d40d66a7e773b5a264a40b8cecf8fca4c940ba23a12ea6bf4c808117a22166b"
+        },
+        "save_passive": true,
+        "segment": 1,
+        "updates": 6336,
+        "verification_decodes_inside_GPU_owner": 1,
+        "views": 202752
+      },
+      {
+        "GPU_owner_wall_seconds": 4708.78190848208,
+        "Root_closure": {
+          "path": "historical-selfplay-policy-anchor-U2-learn-segment-02-bindings-v1/root-training-closure.json",
+          "sha256": "8030b27964929d7b29896a40a0723e66001ffc4f18505f0d3aa184516403bccb"
+        },
+        "actual_calls": {
+          "forward": 6321,
+          "optimizer_post": 6321,
+          "optimizer_pre": 6321,
+          "save": 1
+        },
+        "batches": 12657,
+        "boundary_metadata": {
+          "path": "historical-selfplay-policy-anchor-U2-learn-segment-02-GPU-results-v1/learner/boundary.json",
+          "sha256": "48495a82cfe3faab735694123fe618e8ff29fd5675a9f974eb4501056c28c17e"
+        },
+        "cursor": 405013,
+        "extra_student_forwards": 0,
+        "independent_technical": {
+          "path": "historical-selfplay-policy-anchor-U2-learn-segment-02-bindings-v1/independent-training-technical-review.json",
+          "sha256": "abc39cfc9e142d89662b0b84e2559589aaf47e062171553a180fc18de4b03e62"
+        },
+        "last_batch_rows": 21,
+        "pass_complete": true,
+        "policy_anchor_trajectory": {
+          "actual_reference_forwards": 6321,
+          "all_reference_modules_eval": true,
+          "coefficient": 1.0,
+          "diagnostics": {
+            "eligible_rows": 202261,
+            "forward_host_seconds": 226.27500849135686,
+            "kl_row_sum": 6005.185493826866,
+            "mean_kl": 0.029690278866548004,
+            "reference_forwards": 6321,
+            "timing_scope": "host interval/enqueue time; CPU work elapsed on CPU, unsynchronized on CUDA, not GPU forward latency",
+            "total_rows": 202261,
+            "weighted_row_sum": 6005.185493826866
+          },
+          "direction": "reference_to_student_forward_KL",
+          "final_reference_sha256": "f878a952bdaa2981a3f06e5bf6ab48121765400fd268eed1ed01dc0f59853c70",
+          "no_optimizer_ownership": true,
+          "no_reference_gradients": true,
+          "reference_checkpoint": {
+            "path": "~/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/baseline/epoch2.pt",
+            "sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0"
+          },
+          "teacher_unchanged": true
+        },
+        "post_custody": {
+          "path": "historical-selfplay-policy-anchor-U2-learn-segment-02-bindings-v1/post-training-custody.json",
+          "sha256": "889f86c13411247dc957019b652ad45c06ae1ebb92243e04410ffdf0d9ddac5a"
+        },
+        "process_CPU_telemetry_seconds": 4210.93,
+        "readout": {
+          "path": "historical-selfplay-policy-anchor-U2-learn-segment-02-GPU-results-v1/readout.json",
+          "sha256": "439bfd145c0c3b4e5f2b3869cd94234416e02c82d2bb5714656fb6194a09a6c6"
+        },
+        "save_passive": true,
+        "segment": 2,
+        "updates": 6321,
+        "verification_decodes_inside_GPU_owner": 1,
+        "views": 202261
+      }
+    ]
+  },
+  "training_delivery_snapshot_note": "Prior published local-method/late-public chronology, source facts and closed453 partial progress are preserved byte/object-exact. This addition banks completed training and closed455 Root CPU facts only; independent model-delivery review and all playing outcomes are pending at this dated snapshot. No incremental PR."
 }

@@ -201,3 +201,173 @@ Append the completed readout to this record when genuine endpoints exist.
 
 [Compact method and in-progress evidence](evidence/2026-11-18-fixed-union-policy-anchor-u2.json)
 pins the frozen choices, chronology, actual first admission and scoped source reuse.
+
+## Training complete and final CPU closed through owner455 (2026-11-18)
+
+This unpublished append records the closed455 technical snapshot at
+2026-11-18 10:10:52 UTC. The published record above, including the missed
+public-before-start chronology and earlier partial453 snapshot, remains
+unchanged. Both800-game GPU endpoints, both efficacy readers and the joint
+verdict are **PENDING/unread in this snapshot**. No playing score is asserted.
+
+| Closed learner segment | Updates | Views | Final cursor | GPU owner-wall seconds |
+|---|---:|---:|---:|---:|
+|453, segment1 |6,336 |202,752 |202,752 |3412.132668819977 |
+|454, segment2 |6,321 |202,261 |405,013 |4708.78190848208 |
+
+Root and independent technical receipts accept both segments. The second
+started from the genuine first boundary with full model/optimizer/scheduler/
+scaler, five RNG streams and the same ledger/quota/journal state. Its initial
+full-state fingerprint equals the accepted parent's final state. The complete
+pass reached12,657 updates/405,013 views, including the real21-row tail;
+`pass_complete` is true. The4,032 units are source assets, not an assumed
+independent-game count. No additional learning, replay pass or quota reset is
+selected by this completion.
+
+The final saved certificate records494 finite state entries,61,444,448 unique
+parameters and175 input planes on float32 cuda:0. Its checkpoint identity is
+`611d82ab7048f7cbe497e1569b385b3dc17f8c71fdfda9b2565bb1479e3d4213`
+and saved-model state hash is
+`25e9034c0fdc323fea0c75f3f0d6a9c631ada39d1c7238722b575ca38f97414c`.
+These are metadata descriptors; the publication author reopened no checkpoint
+or model payload. Each learner owner recorded one save and one final
+verification decode, with zero extra student forwards and passive saved/RNG
+observations. Final CPU work is separate from those in-owner decodes.
+
+Coefficient1 remained active with frozen/eval/no-gradient/no-optimizer teacher
+custody. The two segments recorded202,752/202,261 eligible rows and
+6,336/6,321 reference forwards. Mean trajectory KL was0.023801901881299017
+and0.029690278866548004 respectively. These are training-trajectory diagnostics,
+not held-out policy comparisons, calibrated trust regions, isolated GPU
+teacher-throughput measurements or evidence of playing improvement. Value
+search/SF shares remained0; U2 was not mixed with V10.
+
+Final CPU session93344 closed with supported EOF/exit0, charging
+20.156058119027875 CPU owner-wall seconds. It invoked the genuine public
+closed-model-delivery consumer once and passed all14 synthetic adapter cases
+(4 functions/one module). It recorded zero real checkpoint decodes, raw journal
+reads, row draws, real-model constructions or forwards. The1,400 source pins
+and existing qualified native profile remained unchanged; no native rebuild,
+compiler rerun or new broad qualification occurred. Root issued the compact
+nine-field final model-delivery receipt. Independent eleven-field delivery
+acceptance was **PENDING at this Root closed455 snapshot**, so it is not
+preaccepted or inferred from the tests here.
+
+Actual total U2 training GPU time is8120.914577302057 seconds; U2 CPU-owner
+time through455 is20.156058119027875. The shared historical CPU443 engineering
+qualification is not charged as a new U2 CPU phase. Process CPU3118.29/4210.93
+seconds inside the two GPU owners is separate telemetry, not another pair of
+CPU-owner charges. Global GPU after training is121631.64626461512 seconds.
+Original19,200 GPU/360 CPU study ceilings, two3600 GPU arena caps, two120 CPU
+reader caps, global ceiling/cutoff and all older failures/costs/stops remain.
+Unused learning capacity grants no extra arena, variant or automatic retry.
+
+The future completed readout will append actual independent model delivery,
+both accepted full GPU endpoints, both reader pairs, the frozen joint verdict
+and final Root costs. It must report each fixed800/400 endpoint separately,
+its pair bins and prespecified n399 interval/availability and thresholds. Both
+GPU endpoints precede any efficacy reader; both accepted reader pairs precede
+the joint verdict. Nothing in this technical snapshot establishes mitigation,
+donor advantage, causal mechanism, optimal lambda, Elo, external strength or
+adoption. A39 remains retained. No PR is selected until actual complete results
+and independent readout review.
+
+Row-once still does not make positions within a game independent or equalize
+per-game influence. A separate source-only game-weighting feasibility report
+has independent review, but exact authenticated grouping is unknown and no
+third experiment or code is selected. Keeping a direct policy term unchanged
+would not prevent shared-trunk updates from changing learned policy. This
+feasibility work is not part of U2's intervention or evidence of its effect.
+
+## Completed fixed development readout (closed459, 2026-11-18)
+
+The final independent model-delivery receipt subsequently accepted the closed455
+full-pass model. Both fixed GPU endpoints then closed with Root and independent
+technical acceptance before either efficacy reader. Both reader pairs were
+accepted before the genuinely frozen joint deciding command was applied.
+All459 owners were closed at this snapshot. The earlier method-publication
+chronology and dated453/455 pending statements above are preserved as history;
+they are not current result claims or a retroactive public preregistration.
+
+| Fixed development comparison | W / D / L | Score | Paired normal95 interval | Lower>.5 |
+|---|---:|---:|---:|---|
+| U2 vs frozen F1 |237 /322 /241 |49.75% |[47.23049468793101%,52.26950531206899%] |False |
+| U2 vs original A39 |202 /322 /276 |45.375% |[42.818889931123755%,47.93111006887624%] |False |
+
+Each endpoint contains exactly800 games/400 reciprocal pairs. Pair-total bins
+for[0,.5,1,1.5,2] are[30,96,149,98,27] against F1 and[42,113,144,79,22]
+against A39. The observed pair-score sample variances are0.06609649122807017
+and0.06803101503759398, using the predeclared divisor399. Both intervals are
+available; zero-variance-unavailable handling was unchanged. The two results
+remain separate, with no pooling, count extension, efficacy-selected checkpoint
+or retrospectively changed threshold.
+
+The frozen verdict is **NO_PRIMARY_MITIGATION_SELECTION**. U2 did not
+demonstrate mitigation relative to frozen F1: that interval includes50%.
+Against original A39, the interval lies below50% for this exact endpoint.
+Neither the primary criterion nor the combined donor-advantage criterion passed.
+Original A39 remains retained. This is a conditional negative result for the
+selected KL1 recipe/checkpoint/horizon and reused panel, not proof that KL
+generally fails or identification of a policy-head, value-head or shared-trunk
+cause. It does not establish an optimal coefficient, equivalence, Elo or
+external-engine gain, adoption, retry or another experiment.
+
+Both closed readers reconciled all game rows, reciprocal colours and pair
+order, with zero incomplete pairs or illegal/crashed games. Each passed its16
+controls and loaded no model or CUDA context. Root/ind receipts bind the same
+final494-state model, sources, playing profile and consumed-panel DEVELOPMENT
+classification. These engineering controls establish measurement integrity;
+they do not turn the consumed panel into fresh confirmation or establish
+familywise inference across prior/adaptive experiments.
+
+| Charged owner scope | GPU seconds | CPU seconds |
+|---|---:|---:|
+| Two learner segments |8120.914577302057 |0 |
+| Final model delivery |0 |20.156058119027875 |
+| U2 vs F1 playing / reader |2060.3332983560394 |36.990443750983104 |
+| U2 vs A39 playing / reader |2025.308576279087 |34.86886475607753 |
+| U2 total |12206.556451937184 |92.01536662608851 |
+
+Totals remain within19,200 GPU/360 CPU seconds. The closed459 global charged
+snapshot is125717.28813925025 GPU and7644.059019470995 CPU seconds. Shared
+historical CPU443 qualification stays global-only; process CPU inside GPU
+owners is telemetry, not another CPU-owner charge. All earlier successful and
+failed costs, scopes, stops and protected-data limits remain. Unused capacity
+does not authorize an extension.
+
+Training still used4032 source assets/405013 stored rows, not an asserted
+independent-game count. Once per stored row is not per-game balancing; positions
+within a game share outcomes and search targets are endogenous. The source
+revision and two-segment execution differ from F1, and matching recipe/seeds
+does not prove GPU bit identity or causal isolation. Frozen-teacher trajectory
+KL demonstrates the anchor was exercised; it is not held-out playing evidence
+or isolated teacher GPU-throughput measurement. The method remains beta0/SF0,
+unmixed with V10. Separate diagnostic/capability preparation contributes no
+U2 effect credit or authority. Actual Root and independent endpoint, delivery,
+joint-verdict and custody refs are in the compact evidence.
+
+## Post-method recorded-game census (separate closed CPU460)
+
+After the frozen U2 verdict, a separate metadata-only CPU audit closed with
+Root and independent acceptance. The authenticated fixed union contains4,032
+recorded collection-qualified game groups, exactly one canonical source asset
+per group, and405,013 retained positions. Retained-row mass ranges from5 to297
+positions per recorded game group. The recorded grouping key is
+`(run_uuid, collection_uuid, physical_game_id)`; there were no copied-asset
+aliases, numeric game-ID conflicts or groups with multiple origin records.
+
+These are recorded game groups, not a proven count of statistically independent
+games. Statistical independence and cross-collection same-original-game
+equivalence remain **UNKNOWN**; no semantic board/history deduplication was
+performed. The count neither establishes an effective sample size nor proves
+per-game gradient influence or a cause of the U2 result. Once per stored row
+still gives unequal retained-row mass to games and does not remove shared
+outcome correlation.
+
+This post-method audit used no model, shard or raw-game payload and performed
+no row draws or project imports. It charged2.332109948969446 CPU owner-wall
+seconds separately; all460 owners then closed. The frozen closed459 U2 totals
+remain12206.556451937184 GPU/92.01536662608851 CPU seconds, and its outcomes,
+criteria and verdict are unchanged. The audit selects no training recipe,
+reweighting, model adoption or new experiment. Its accepted compact readout
+and Root/independent/custody references are appended in the evidence.
