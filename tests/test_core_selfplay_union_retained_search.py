@@ -143,7 +143,9 @@ def test_invalid_share_refuses_contract_before_model_or_draw(tmp_path: Path, bad
 
 @pytest.mark.parametrize(("key", "value"), [("search_wdl_frac", 0.2), ("sf_wdl_frac", 0.1), ("outcome_wdl_frac", 1.0)])
 def test_method_fraction_alias_mismatch_refuses(tmp_path: Path, key: str, value: float) -> None:
-    c, _ = selected(tmp_path, 0.1)
+    _, cref = selected(tmp_path, 0.1)
+    _, c = core.read_ref(cref)
+    entry._validate_contract_metadata(c)
     _, method = core.read_ref(c["method"])
     method["training"][key] = value
     c["method"] = frozen(tmp_path / "wrong-method.json", method)
@@ -240,7 +242,9 @@ def test_general_loss_missing_search_keeps_outcome_fallback_and_reports_zero_cov
 
 
 def test_omitting_option_cannot_ignore_positive_selected_method(tmp_path: Path) -> None:
-    c, _ = selected(tmp_path, 0.1)
+    _, cref = selected(tmp_path, 0.1)
+    _, c = core.read_ref(cref)
+    entry._validate_contract_metadata(c)
     del c["retained_search_share"]
     # Keep the exact positive method reference. Deleting the intervention key
     # must not route a .1 method into the old default-zero constructor.
