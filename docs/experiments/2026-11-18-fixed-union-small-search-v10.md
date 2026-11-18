@@ -172,3 +172,183 @@ protected stops/scopes remain preserved.
 The compact evidence's `engineering_readout_through_owner445` pins the accepted
 Root/independent result, JUnit, native/source profile and the preserved failure
 and diagnosis. Its earlier draft/readiness fields remain historical snapshots.
+
+## Training technical readout through closed owner447 (2026-11-18)
+
+This second snapshot follows the completed engineering record above. It ends
+at the independently accepted all447-closed training receipt, before final
+model-delivery validation and before either development arena result. Final CPU
+delivery, V10-versus-F1, V10-versus-A39, both efficacy readers and the frozen
+verdict are **PENDING in this snapshot**. No intermediate efficacy was read.
+
+| GPU owner | Closed outcome | Charged GPU owner-wall seconds | Process CPU seconds (telemetry) |
+|---|---|---:|---:|
+|446, initial startup | FAILED at immutable-metadata gate; no learner route |1.2640296500176191 |0.03 |
+|447, manual operational recovery | PASS; complete saved endpoint, technical acceptance only |5457.0321974779945 |5025.38 |
+
+Owner446 encountered an already completed CPU445 terminal still marked0644.
+The strict immutable `read_ref` refused it before learner output, model/data,
+forward/optimizer, draw or ledger creation. Source checks and metadata setup had
+run; this was a receipt-mode precondition failure, not evidence of a numerical
+algorithm or target failure. Root sealed the explicitly named finalized metadata
+receipts0444 with their recorded bytes/hashes unchanged, preserving the failed
+owner, output/stop record and1.2640296500176191-second charge. The independent
+diagnosis records the earlier binding-review miss. No guard was weakened, no
+model/data/native/source bytes changed and no exposure or quota was reset.
+
+Root selected a fresh operational recovery scope and7198/7168-second owner
+instead of automatically retrying the old7200-second owner. The method, student
+UUID, contract and recipe remained the same fresh A39 model-only experiment;
+no learned state existed in446 to transfer. Old actual1.2640296500176191 plus
+new training cap7198 remained below the original7200-second training allocation.
+The original14,400-second study GPU ceiling, two3600-second arena caps,
+172,800-second global ceiling and cutoff were unchanged. Recovery scope did not
+inherit the failed owner's identity or erase its cost.
+
+The closed447 endpoint completed12,657 optimizer updates and405,013 stored-row
+presentations over4,032 authenticated source assets, including a real final
+21-row batch. Its complete-pass metadata reports selected/realized search share.1,
+SF0, outcome.9, availability1.0 and search fallback0. Every selected raw search
+vector was checked usable before model construction/draw; the existing loss
+normalized positive mass. This is actual intervention/coverage evidence, not
+search-target calibration or proof that endogenous search labels are better.
+KL remained0 with no anchor teacher or additional teacher forward.
+
+Own-live/saved observations record494 state entries,61,444,448 unique parameters,
+175 input planes and finite float32 parameters on cuda:0. There were12,657 actual
+forwards and optimizer pre/post calls, one save, zero extra forwards and one final
+saved-checkpoint verification decode inside the owner. Save observation preserved
+the model/optimizer and five RNG streams. Root and the independent reviewer used
+closed compact metadata; neither reopened checkpoint, journal or dataset payloads.
+The saved checkpoint and state hashes are pinned in the evidence. This is not yet
+a Root/independent playing model-delivery receipt or strength result.
+
+Actual V10 GPU charges through447 total5458.296227128012 seconds, including446.
+The accompanying process-CPU column is telemetry inside GPU owners, separate from
+the131.5339327820111 seconds already charged to the engineering CPU-owner block.
+At the post447 snapshot, global charged GPU time was109292.6856851941 seconds.
+The two remaining3600-second arena caps would bring V10 to12658.296227128012
+and global GPU time to116492.6856851941, within the unchanged ceilings. Unused
+training time does not authorize a larger arena, extra pass or new variant.
+Final delivery/readers retain their existing CPU allocations and require their
+own actual closure/acceptance. All failed and successful charges remain counted.
+
+Row-once does not mean game-balanced or independent outcomes: positions from
+one game share an outcome, long games retain more aggregate row influence and
+natural repeated boards remain allowed. Retained search is endogenous historical
+actor/search output, including the previously disclosed draw-mass limitation.
+No claim about head causality, optimum beta, independent games, unseen pretraining,
+external-engine strength, mitigation, donor advantage or adoption follows from
+this technical endpoint. F1/U1 negatives, deferred U2 and protected old scopes
+remain intact. Both full800-game GPU endpoints must still close technically
+before any efficacy read, and the two prespecified decisions remain unchanged.
+
+## Final delivery CPU readout through closed owner448 (2026-11-18)
+
+This snapshot updates the historical447 delivery-pending state above. The actual
+final-delivery CPU operation completed with supported session41834 EOF/exit0:
+20.154762963065878 charged CPU owner-wall seconds and17.82 process CPU seconds.
+All448 owners were then closed. Independent model-delivery acceptance remained
+**PENDING at this snapshot**; both development arenas, their efficacy readers
+and the frozen verdict were also **PENDING/not issued**. No efficacy was read.
+
+The owned operation invoked the actual public closed-model-delivery metadata
+consumer exactly once and passed all11 synthetic adapter cases (4 test functions,
+one module; no failures/errors/skips). It recorded zero real checkpoint decodes,
+raw journal reads, row draws, real-model constructions or forwards. The1,401
+source/config pins and qualified six-native profile remained stable. This was
+metadata validation and synthetic CPU work, not another training pass or native
+rebuild. The saved-payload verification decode recorded earlier belongs to447,
+not448; those distinct observations are not merged into a zero-decode claim
+for the complete training pipeline.
+
+Root issued the nine-field V10 model-delivery receipt for the actual closed
+12657-update checkpoint `feafc2c011feab3856ddfa98ef518896e41bd5762fc6bd427904dac2071e84df`
+and saved-model state `2a2352f3e897c9b095324d136bb9d611bd99e9af857a058962b15c34106337fd`.
+It binds the current V10 public source/review and genuine boundary/contract/owner
+command, rather than an earlier preview or another student's status. The actual
+independent eleven-field model-delivery receipt was not yet included in this
+snapshot. Root acceptance and completed CPU checks are not an arena admission,
+playing-strength result or replacement for that independent reconciliation.
+
+V10 charged CPU-owner time through448 is151.68869574507698 seconds: the preserved
+131.5339327820111 engineering total plus20.154762963065878 delivery. Global
+charged CPU-owner time reported by Root was7478.170302286919 seconds. GPU charges
+remain5458.296227128012 for V10 and109292.6856851941 globally at this snapshot.
+The original540-second CPU and14,400-second GPU study ceilings, per-arena caps,
+cutoff, prior failures/stops and deferred U2 are unchanged. This draft remains
+unpublished pending both complete GPU endpoints, their subsequent accepted
+readers and the predeclared verdict; no incremental training-only PR is selected.
+
+## Completed readout:50.8% versus F1 and47.4% versus A39; neither deciding threshold passed
+
+This final snapshot ends at all452 owners closed (2026-11-18 07:29:38 UTC),
+after actual independent model delivery, both complete GPU endpoints and both
+accepted readers. The earlier preregistration/445/447/448 sections above remain
+unchanged dated snapshots; their pending statements are resolved here.
+
+The independent eleven-field model-delivery receipt accepted the same actual
+closed447 checkpoint/state and Root nine-field receipt recorded in448. GPU449
+then completed V10-versus-frozen-F1, and GPU450 completed V10-versus-A39. Both
+full800-game/400-pair GPU endpoints had Root and independent technical acceptance
+before either efficacy reader ran. Readers451/452 each reconciled all800 game
+rows and400 reciprocal pairs, PGN/pair/history order and the declared model,
+source, profile, role and custody bindings. Each GPU and reader phase passed all
+16 controls, with zero incomplete pairs, illegal games or crashes. The readers
+loaded no models and initialized no CUDA. No interim scores selected a model,
+changed the order, extended a match or entered the decision.
+
+| Fixed development endpoint | V10 W/D/L | Score | Paired-normal95% interval | Prespecified lower>.5 |
+|---|---:|---:|---:|---|
+| V10 vs frozen F1 (U1), seed2026111803 |247/319/234 |50.8125% |48.23801246370052–53.38698753629949% |No |
+| V10 vs A39 (SL donor), seed2026111804 |234/291/275 |47.4375% |44.759277703204486–50.11572229679551% |No |
+
+Both endpoints contain400 pairs. Pair-total bins for0,.5,1,1.5,2 candidate
+points were [24,99,160,74,43] versus F1 and [44,99,141,86,30] versus A39.
+The frozen estimator uses pair score (pair-total/2), sample-variance divisor399
+and the declared normal95 interval; zero variance would be unavailable and
+could not pass. No pooled1600-game estimator or retrospectively changed rule
+was used. The genuinely frozen joint verdict is
+`NO_PRIMARY_MITIGATION_SELECTION`, independently accepted against both closed
+reader results. Primary mitigation versus F1 failed; donor advantage, which
+requires the primary pass plus the A39 pass, also failed. **A39 remains retained.**
+
+The50.8% point against F1 is an inconclusive descriptive estimate, not demonstrated
+mitigation. The47.4% A39 estimate also has an interval containing50%; it does not
+establish harm or equivalence. Neither comparison establishes that small search
+weights are useless, a head-level causal mechanism, an optimum beta, an Elo gain,
+external-engine strength or adoption. The same consumed CONFIRM_C_A39 panel was
+reused for DEVELOPMENT, not fresh confirmation or familywise-controlled evidence.
+Old160/800/D1/D2/U1 negatives remain banked and unpooled.
+
+| Completed phase | Charged owner-wall seconds |
+|---|---:|
+| GPU449, V10 vs frozen F1 |2119.221981054987 |
+| GPU450, V10 vs A39 |2098.824021063978 |
+| CPU451, F1 reader |36.92897407198325 |
+| CPU452, A39 reader |36.94437648600433 |
+
+Final V10 charges are9676.342229246977 GPU seconds and225.56204630306456 CPU
+owner seconds, within unchanged14,400/540 ceilings. GPU totals retain the
+failed446 charge1.2640296500176191 and training447 charge5457.0321974779945,
+plus4218.046002118965 for both arenas. CPU totals retain engineering (owners444/445):131.5339327820111 seconds,
+delivery (owner448):20.154762963065878 seconds, and readers (451/452):
+73.87335055798758 seconds.
+Process CPU telemetry inside GPU owners is not charged a second time as a CPU
+owner. The all452 snapshot reports global GPU113510.73168731306 and
+CPU7552.043652844906 seconds. Historical failures, stops, scopes, the original
+180-second engineering block, global ceiling and cutoff remain preserved; unused
+capacity authorizes no retry, extra pass, arena extension or new method.
+
+Actual retained-search realization remained.1, outcome.9, availability1 and
+fallback0 at KL0. That verifies this intervention was delivered. It does not
+make historical search targets independent truth or convert row-once training
+into independent games or equal per-game influence: long games still contribute
+more rows, correlated outcomes remain and natural repeated positions are allowed.
+
+After the fixed V10 verdict, Root separately selected the unchanged U2 KL-only
+follow-up (coefficient1, search share0). That is a separate method and authority,
+not a mixed V10 intervention or evidence for V10. This V10 snapshot contains no
+U2 learner or playing outcomes and grants no execution permission. The compact
+evidence pins independent delivery, both GPU/reader receipt pairs, exact frozen
+verdict, independent joint readout, closed custody and the separate selection.
