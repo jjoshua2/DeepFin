@@ -132,3 +132,63 @@ as do all games, seeds, recipe, row quotas, endpoint and week cutoff. No automat
 retry, extra collection or efficacy-based change is authorized. This correction
 was selected after a successful data audit and before any F12 training, arena or
 efficacy result; it is implementation readiness, not a failed or repeated audit.
+
+
+### Prospective manual exception for the cycle 2 pre-execution admission failure
+
+The first cycle completed technically, and cycle 2's unchanged 192-game bank was
+collected, audited and compiled. Its first learner owner (session 59758) then
+failed before creating output or entering source/native/runtime checks or the
+learner route. Root had set an admission deadline only 180 seconds ahead for a
+600-second outer owner. The private gate correctly rejected that envelope. The
+failed owner used 1.2667814940214157 GPU owner-wall seconds, which remain charged.
+There were zero new training updates and no model/bootstrap, RNG, draw or ledger
+operations. The original failed receipt and its engineering-stop disposition are
+preserved; the original plan did not pass.
+
+A second command-envelope metadata error was also found: the failed command's
+top-level contract and learner-stage references still named cycle 1, while its
+actual child and public proof suffix correctly named cycle 2. It did not cause
+the deadline refusal or execute a different learner. A corrected envelope must
+bind those top-level references to the actual plan as well as the child command.
+
+The V4 rule that any technical failure stops this study was triggered. The
+following is a proposed, separately reviewed prospective manual operational
+exception, not continuation under that failed admission and not an automatic
+retry. After independent amendment review and public recording, Root may select
+exactly one new named owner for this proven pre-route admission error. It has
+outer/inner bounds of 600/570 seconds, a genuinely new admission and fresh
+resource/custody check, and a deadline computed from issue time plus the outer
+bound plus 180 seconds, within the unchanged week cutoff. Any further failure
+stops the study; no additional recovery is selected here.
+
+The same genuine M1 parent, original A39 origin, cycle 2 method/contract/stage,
+19,295-row bank, compiled order, training seed, full-state continuation and locked
+lineage ledger are retained. No numerical state is rewound or redrawn: the failed
+attempt never entered that route. The corrected learner still has 76 updates,
+step 69 to 145, batch 256 and final batch 95. The original wrapper/learner output
+paths were never created and remain the selected fresh paths. There is no new
+lineage, checkpoint selection, replacement collection or scientific intervention.
+
+The versioned GPU-scope amendment retains all 25 original named stages, including
+the failed cycle 2 learner, and adds one explicit recovery stage (26 total).
+Maximum all-in owner count becomes 77. Aggregate F12 GPU remains 32,400 seconds,
+global GPU remains 172,800 seconds, all-in CPU remains 5,280 seconds and the week
+cutoff is unchanged. Every actual success and failure is counted once; each next
+full admitted cap must fit the remaining aggregate budget. Adding a stage ceiling
+does not add an aggregate GPU allowance.
+
+The scope retains its genuine family UUID and original creation timestamp only
+to reconcile the already counted original owners. This amendment is dated
+separately after the failure. That historical creation time does not authorize
+the added stage retroactively: manual Root selection, independent binding review,
+fresh U3 and actual admission must follow this public record. The original
+engineering stop is superseded only by that explicit reviewed manual selection.
+
+Future phase bindings must carry the amended scope and include all actual costs.
+The final-playing metadata bridge will receive a narrow reviewed scope update
+before M12; no extra numerical qualification or arena is added. The twelve-cycle
+scientific recipe, horizon, seeds, exact-once row quota and sole final paired
+800-game reused-DEVELOPMENT endpoint remain unchanged. No interim strength result
+or efficacy-based decision motivated this exception, and A39 is not promoted or
+replaced by this operational record.
