@@ -141,7 +141,7 @@ def test_invalid_share_refuses_contract_before_model_or_draw(tmp_path: Path, bad
     assert not Path(c["sampling"]["quota_ledger"]).exists()
 
 
-@pytest.mark.parametrize("key,value", [("search_wdl_frac", 0.2), ("sf_wdl_frac", 0.1), ("outcome_wdl_frac", 1.0)])
+@pytest.mark.parametrize(("key", "value"), [("search_wdl_frac", 0.2), ("sf_wdl_frac", 0.1), ("outcome_wdl_frac", 1.0)])
 def test_method_fraction_alias_mismatch_refuses(tmp_path: Path, key: str, value: float) -> None:
     c, _ = selected(tmp_path, 0.1)
     _, method = core.read_ref(c["method"])
@@ -151,7 +151,7 @@ def test_method_fraction_alias_mismatch_refuses(tmp_path: Path, key: str, value:
         entry._validate_contract_metadata(c)
 
 
-@pytest.mark.parametrize("target,available", [(None, True), ([0.2, 0.3, 0.5], False)])
+@pytest.mark.parametrize(("target", "available"), [(None, True), ([0.2, 0.3, 0.5], False)])
 def test_missing_search_coverage_refuses_actual_entry_before_model_or_reservation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: list[float] | None, available: bool,
 ) -> None:

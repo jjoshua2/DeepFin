@@ -170,20 +170,20 @@ def validate_retained_search_population(population: Any, np: Any) -> dict[str, A
     Raw F16 probabilities need not sum exactly to one. The existing loss
     normalizes each finite, nonnegative, positive-mass vector.
     """
-    rows = sources = 0
-    for sources, chunk in enumerate(population._buffer._chunks, 1):
+    rows = _sources = 0
+    for _sources, chunk in enumerate(population._buffer._chunks, 1):
         n = len(chunk["x"])
         target, available = chunk.get("search_wdl"), chunk.get("has_search_wdl")
-        core.require(target is not None and available is not None,
-                     "union positive search share requires every retained search target")
+        if target is None or available is None:
+            raise ValueError("union positive search share requires every retained search target")
         core.require(target.shape == (n, 3) and available.shape == (n,)
             and bool(np.all(available == 1)) and bool(np.isfinite(target).all())
             and bool((target >= 0).all()) and bool((target.sum(axis=1, dtype=np.float64) > 0).all()),
             "union retained search targets must be available finite nonnegative positive-mass vectors")
         rows += n
-    core.require(rows == len(population) and sources == len(population.membership),
+    core.require(rows == len(population) and _sources == len(population.membership),
                  "union retained search validation population coverage")
-    return {"rows": rows, "sources": sources, "all_usable": True,
+    return {"rows": rows, "sources": _sources, "all_usable": True,
             "normalization": "existing_loss_positive_mass_normalization"}
 
 
