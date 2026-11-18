@@ -1,0 +1,228 @@
+{
+  "M3": {
+    "checkpoint_REF_ONLY": {
+      "artifact": "fresh-current-policy-A39-F12-cycle-03-learn-results-v1/learner/learner.pt",
+      "sha256": "cc6bc2cf30c202ae21979baf289df39914d31253f6e977f2579056d17f2b5387"
+    },
+    "cycle": 3,
+    "delivery": {
+      "independent": {
+        "artifact": "fresh-current-policy-A39-F12-cycle-03-delivery-bindings-v1/independent-review.json",
+        "sha256": "e1897df435a0a0e1e26718964c9727337bf27f464f91fa248d1fc49e7a0a7494"
+      },
+      "root": {
+        "artifact": "fresh-current-policy-A39-F12-cycle-03-delivery-bindings-v1/root-acceptance.json",
+        "sha256": "57240a5d496845dfe1734e500363accc359e44a694e6034b1f184a65c9077962"
+      }
+    },
+    "model_state_sha256": "f2011177b406c83d8835a1806237655145165c9c93d71ab611f0d442f34e56d8",
+    "step": 223
+  },
+  "M6_M12": "Future actual delivery refs only; no hashes predicted.",
+  "actual_root_selection_or_admission": "UNISSUED",
+  "additional_reader_CPU_scope": {
+    "artifact": "fresh-current-policy-A39-F12-interim-evaluation-scope-v1/interim-reader-CPU-scope.json",
+    "sha256": "d1c622e4da587f7f7f8c39441f2d64a1d18e6e2ae72d2d19661bfc684f05d1d7"
+  },
+  "budget_snapshot": {
+    "F12_GPU_charged": 3583.644023771165,
+    "F12_GPU_margin": 16.35597622883506,
+    "F12_worst_if_all_remaining_full_caps": 32383.644023771165,
+    "active_C4_owner_unclosed_not_yet_charged": true,
+    "closed_count": 485,
+    "not_a_reset_or_new_budget": true,
+    "remaining_full_caps": {
+      "collectors_C4_to_C12": 16200,
+      "final_GPU": 3600,
+      "interim_GPUs": 3600,
+      "learners_C4_to_C12": 5400
+    },
+    "week_GPU_charged": 129318.40063276538,
+    "week_worst_if_all_remaining_full_caps": 158118.40063276538
+  },
+  "chronology": {
+    "M3_checkpoint_owner_completion": {
+      "UTC": "2026-11-18T17:44:43.132243+00:00",
+      "definition": "Actual learner owner484 end including its full wall/cleanup, not cumulative GPU-only time.",
+      "terminal": {
+        "artifact": "fresh-current-policy-A39-F12-cycle-03-learn-GPU-v1/terminal.json",
+        "sha256": "315faaf71683fb4cde9e5dc00ab19c6c0d802ec0995cc29b8fe58d92291f0bca"
+      }
+    },
+    "M6_M12_checkpoint_owner_completions": "UNISSUED; derive only from each genuine savedmodel ownerterminal afterclosure",
+    "current_study_start": {
+      "UTC": "2026-11-18T14:03:11.497911+00:00",
+      "definition": "Earliest F12 scientific owner465, including prespecified protection CPU; current-study context only.",
+      "started_unix": 1795010591.4979107,
+      "terminal": {
+        "artifact": "fresh-current-policy-A39-F12-protection-CPU-v1/terminal.json",
+        "sha256": "93de2da78999907ccc6fa4244390336d5ac1a1ff30b4aadaa1abdafc2329db3e"
+      }
+    },
+    "first_collector": {
+      "UTC": "2026-11-18T14:12:07.853074+00:00",
+      "terminal": {
+        "artifact": "fresh-current-policy-A39-F12-cycle-01-collect-GPU-v1/terminal.json",
+        "sha256": "ee9b2a0670adcbd80100db45e77d82791ecaecee52008720dccb12ecc062560a"
+      }
+    },
+    "whole_week_not_reset": "Nov12weekone priornegative readouts, engineering/calendar history and all costs/stops remain. F12start does not reset/hide that history. Evaluationtimestamps also remain actual, even if an older fixed checkpoint is measured after latertraining."
+  },
+  "context_correction": {
+    "Root_clarification": {
+      "artifact": "fresh-current-policy-A39-F12-user-strength-clarification-v1/clarification.json",
+      "sha256": "aa1c1a41f8ee0fa3fc72852347f5b6f709e6c3d36ff5bbc80306b9a825f8181a"
+    },
+    "no_scientific_or_budget_delta": true,
+    "prior_proposal": {
+      "artifact": "fresh-current-policy-A39-F12-interim-evaluation-source-preparation-v1/proposal.json",
+      "sha256": "4d971f0a44c12e0764c3c6c6b0d0e7448476311045871af31382715a52b7fb1e"
+    }
+  },
+  "endpoint_schedule": {
+    "F12_vs_A39": {
+      "CPU_inner": 110,
+      "CPU_outer": 120,
+      "CPU_output": "operations/rl-week-one-20261112-v1/fresh-current-policy-A39-F12-vs-A39-800DEV-reader-results-v1",
+      "CPU_scope": {
+        "artifact": "fresh-current-policy-A39-12-cycle-method-source-preparation-v4/design.json",
+        "sha256": "9e07463d51c23523855e3dc8f67fc1876820e116d36cab0833fc700194727544"
+      },
+      "CPU_stage": "fresh-current-policy-A39-F12-vs-A39-800DEV-reader-CPU-v1",
+      "GPU_inner": 3570,
+      "GPU_outer": 3600,
+      "GPU_output": "operations/rl-week-one-20261112-v1/fresh-current-policy-A39-F12-vs-A39-800DEV-GPU-results-v1",
+      "GPU_stage": "fresh-current-policy-A39-F12-vs-A39-800DEV-GPU-v1",
+      "bindings": "operations/rl-week-one-20261112-v1/fresh-current-policy-A39-F12-vs-A39-800DEV-bindings-v1",
+      "candidate": "F12",
+      "criterion_applies": true,
+      "cycle": 12,
+      "descriptive_only": false,
+      "games": 800,
+      "opening_prefix_pairs": 400,
+      "pairs": 400,
+      "reference": "A39",
+      "required_full_role_pairs": 400,
+      "seed": 2026111999,
+      "variance_divisor": 399,
+      "z": 1.96
+    },
+    "M3_vs_A39": {
+      "CPU_inner": 110,
+      "CPU_outer": 120,
+      "CPU_output": "operations/rl-week-one-20261112-v1/fresh-current-policy-A39-F12-M3-vs-A39-400DEV-reader-results-v1",
+      "CPU_scope": {
+        "artifact": "fresh-current-policy-A39-F12-interim-evaluation-scope-v1/interim-reader-CPU-scope.json",
+        "sha256": "d1c622e4da587f7f7f8c39441f2d64a1d18e6e2ae72d2d19661bfc684f05d1d7"
+      },
+      "CPU_stage": "fresh-current-policy-A39-F12-M3-vs-A39-400DEV-reader-CPU-v1",
+      "GPU_inner": 1770,
+      "GPU_outer": 1800,
+      "GPU_output": "operations/rl-week-one-20261112-v1/fresh-current-policy-A39-F12-M3-vs-A39-400DEV-GPU-results-v1",
+      "GPU_stage": "fresh-current-policy-A39-F12-M3-vs-A39-400DEV-GPU-v1",
+      "bindings": "operations/rl-week-one-20261112-v1/fresh-current-policy-A39-F12-M3-vs-A39-400DEV-bindings-v1",
+      "candidate": "M3",
+      "criterion_applies": false,
+      "cycle": 3,
+      "descriptive_only": true,
+      "games": 400,
+      "opening_prefix_pairs": 200,
+      "pairs": 200,
+      "reference": "A39",
+      "required_full_role_pairs": 400,
+      "seed": 2026111999,
+      "variance_divisor": 199,
+      "z": 1.96
+    },
+    "M6_vs_A39": {
+      "CPU_inner": 110,
+      "CPU_outer": 120,
+      "CPU_output": "operations/rl-week-one-20261112-v1/fresh-current-policy-A39-F12-M6-vs-A39-400DEV-reader-results-v1",
+      "CPU_scope": {
+        "artifact": "fresh-current-policy-A39-F12-interim-evaluation-scope-v1/interim-reader-CPU-scope.json",
+        "sha256": "d1c622e4da587f7f7f8c39441f2d64a1d18e6e2ae72d2d19661bfc684f05d1d7"
+      },
+      "CPU_stage": "fresh-current-policy-A39-F12-M6-vs-A39-400DEV-reader-CPU-v1",
+      "GPU_inner": 1770,
+      "GPU_outer": 1800,
+      "GPU_output": "operations/rl-week-one-20261112-v1/fresh-current-policy-A39-F12-M6-vs-A39-400DEV-GPU-results-v1",
+      "GPU_stage": "fresh-current-policy-A39-F12-M6-vs-A39-400DEV-GPU-v1",
+      "bindings": "operations/rl-week-one-20261112-v1/fresh-current-policy-A39-F12-M6-vs-A39-400DEV-bindings-v1",
+      "candidate": "M6",
+      "criterion_applies": false,
+      "cycle": 6,
+      "descriptive_only": true,
+      "games": 400,
+      "opening_prefix_pairs": 200,
+      "pairs": 200,
+      "reference": "A39",
+      "required_full_role_pairs": 400,
+      "seed": 2026111999,
+      "variance_divisor": 199,
+      "z": 1.96
+    }
+  },
+  "manual477recovery_history": {
+    "artifact": "fresh-current-policy-A39-F12-preexecution-recovery-amendment-v1/Root-manual-selection.json",
+    "sha256": "0d07f42e4cfb921a82165423583f39213fa60636fd11c83c1c568203e6419484"
+  },
+  "method_review": {
+    "artifact": "fresh-current-policy-A39-12-cycle-independent-method-review-v4/review.json",
+    "sha256": "92e87f030006a5451634a18328b80c756d0e3dbe6a5a57ab7fc7f18dc522f6e7"
+  },
+  "new_GPU_scope": {
+    "artifact": "fresh-current-policy-A39-F12-interim-evaluation-scope-v1/GPU-scope.json",
+    "sha256": "57f65dada37a233312a6c89fd72de516f2d6b7ab0f5a9f703daeb1e7fe826de6"
+  },
+  "no_runtime_authority": true,
+  "original_method": {
+    "artifact": "fresh-current-policy-A39-12-cycle-method-source-preparation-v4/design.json",
+    "sha256": "9e07463d51c23523855e3dc8f67fc1876820e116d36cab0833fc700194727544"
+  },
+  "playing_limits": {
+    "CPU_inner": 110,
+    "CPU_outer": 120,
+    "CPU_total_max": 360,
+    "GPU_inner": 3570,
+    "GPU_outer": 3600,
+    "GPU_total_max": 7200,
+    "cutoff_utc": "2026-11-19T16:09:20+00:00",
+    "week_GPU_total_max": 172800
+  },
+  "previous_scope": {
+    "artifact": "fresh-current-policy-A39-F12-preexecution-recovery-amendment-v1/GPU-scope.json",
+    "sha256": "743c37aca960b948b43b19f5c2df0700675ce6fcd2810e56a48cbb0dd6ea58e5"
+  },
+  "proposal": {
+    "artifact": "fresh-current-policy-A39-F12-interim-evaluation-source-preparation-v2/proposal.json",
+    "sha256": "3201e0fb42b53b0fe34ed85667c1af1f5e89d5f725e986fba266ef14f82c9bea"
+  },
+  "schema": "F12_USER_REQUESTED_INTERIM_EVALUATION_PUBLIC_EVIDENCE_V1",
+  "study_limits": {
+    "audit_summary_engineering_CPU_max": 60,
+    "cutoff_utc": "2026-11-19T16:09:20+00:00",
+    "engineering_CPU_total_max": 780,
+    "handoff_engineering_CPU_max": 720,
+    "interim_reader_CPU_additional_max": 240,
+    "maximum_all_in_owners": 81,
+    "original_scientific_CPU_total_max": 4500,
+    "scientific_CPU_total_max": 4740,
+    "study_CPU_all_in_max": 5520,
+    "study_GPU_total_max": 32400,
+    "week_GPU_total_max": 172800
+  },
+  "user_performance_context": {
+    "Root_clarification": {
+      "artifact": "fresh-current-policy-A39-F12-user-strength-clarification-v1/clarification.json",
+      "sha256": "aa1c1a41f8ee0fa3fc72852347f5b6f709e6c3d36ff5bbc80306b9a825f8181a"
+    },
+    "automatic_pass_fail_stop_or_adaptation_rule": false,
+    "empirical_AlphaZero_result": false,
+    "goal": "Rapid, sustained clear improvement toward Stockfish.",
+    "hard_numerical_gate": false,
+    "not_daily_rate_inference_from_short_snapshots": true,
+    "not_observed_or_guaranteed": true,
+    "overall_goal": "NOT_PROVEN by technical checks, noisy interim screens, or even a positive consumedDEVfinal alone.",
+    "rough_personal_estimate": "The user described approximately +100Elo/day as a personal made-up estimate, not a measured AlphaZero result."
+  }
+}
