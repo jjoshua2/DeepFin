@@ -10,6 +10,7 @@ import argparse
 from dataclasses import asdict
 import inspect
 import hashlib
+import math
 import os
 from pathlib import Path
 import random
@@ -57,10 +58,12 @@ def reference(value: Any, label: str) -> dict[str, str]:
 
 
 def _validate_contract_metadata(c: dict[str, Any]) -> None:
-    core.require(set(c) == {"schema", "study_uuid", "run_uuid", "method", "source_revision", "source_files",
+    core.require(set(c) - {"retained_search_share"} == {"schema", "study_uuid", "run_uuid", "method", "source_revision", "source_files",
         "architecture", "initial_model", "initial_model_step", "batch_size", "updates_per_segment", "seed",
         "runtime", "lr", "mirror_prob", "limits", "population", "sampling"} and c["schema"] == CONTRACT,
         "invalid fixed-union contract")
+    if "retained_search_share" in c:
+        retained_search_share(c)
     for key in ("study_uuid", "run_uuid"):
         core.require(type(c[key]) is str and str(uuid.UUID(c[key])) == c[key], "invalid union UUID")
     core.require(type(c["source_revision"]) is str and re.fullmatch("[0-9a-f]{40}", c["source_revision"]) is not None,
@@ -142,6 +145,65 @@ def _validate_contract_metadata(c: dict[str, Any]) -> None:
         and training["policy_anchor_coefficient"] == 0 and training["no_priority_diff_focus_skip_or_extra_pass"] is True
         and training["max_rows"] == limits["max_rows"] and training["max_total_decoded_bytes"] == limits["max_decoded_bytes"],
         "union actual contract differs from caller-pinned method")
+    beta = retained_search_share(c) if "retained_search_share" in c else 0.0
+    core.require(training.get("search_wdl_frac", 0.0) == beta and training.get("sf_wdl_frac", 0.0) == 0
+        and training.get("outcome_wdl_frac", 1.0) == 1 - beta,
+        "union retained-search shares differ from caller-pinned method")
+
+
+def retained_search_share(c: dict[str, Any]) -> float:
+    value = c["retained_search_share"]
+    core.require(type(value) in (int, float) and math.isfinite(value) and 0 <= value <= 1,
+                 "union retained search share must be finite in [0,1]")
+    return float(value)
+
+
+def retained_search_loss_kwargs(c: dict[str, Any]) -> dict[str, Any]:
+    return {key: retained_search_share(c) if key == "search_wdl_frac" else core.CORE_KWARGS[key]
+            for key in ("w_policy", "w_wdl", "sf_wdl_frac", "search_wdl_frac", "use_adjusted_wdl_target",
+                        "wdl_terminal_outcome_plies", "wdl_terminal_outcome_sf_frac")}
+
+
+def validate_retained_search_population(population: Any, np: Any) -> dict[str, Any]:
+    """Check already admitted arrays, without draws, RNG, model or extra decode.
+
+    Raw F16 probabilities need not sum exactly to one. The existing loss
+    normalizes each finite, nonnegative, positive-mass vector.
+    """
+    rows = sources = 0
+    for sources, chunk in enumerate(population._buffer._chunks, 1):
+        n = len(chunk["x"])
+        target, available = chunk.get("search_wdl"), chunk.get("has_search_wdl")
+        core.require(target is not None and available is not None,
+                     "union positive search share requires every retained search target")
+        core.require(target.shape == (n, 3) and available.shape == (n,)
+            and bool(np.all(available == 1)) and bool(np.isfinite(target).all())
+            and bool((target >= 0).all()) and bool((target.sum(axis=1, dtype=np.float64) > 0).all()),
+            "union retained search targets must be available finite nonnegative positive-mass vectors")
+        rows += n
+    core.require(rows == len(population) and sources == len(population.membership),
+                 "union retained search validation population coverage")
+    return {"rows": rows, "sources": sources, "all_usable": True,
+            "normalization": "existing_loss_positive_mass_normalization"}
+
+
+def retained_search_record(c: dict[str, Any], metrics: dict[str, Any], population_validation: Any) -> dict[str, Any]:
+    """Selected fraction and actual row-weighted availability, never confused."""
+    beta = retained_search_share(c)
+    availability = metrics["search_wdl_effective_frac"]
+    core.require(type(availability) in (int, float) and math.isfinite(availability)
+        and 0 <= availability <= 1, "union search availability metric bound")
+    if beta > 0:
+        core.require(population_validation == {"rows": c["population"]["rows"],
+            "sources": c["population"]["sources"], "all_usable": True,
+            "normalization": "existing_loss_positive_mass_normalization"} and availability == 1,
+            "union positive search share requires full usable coverage and zero fallback")
+    else:
+        core.require(population_validation is None, "union zero search share has no target admission scan")
+    return {"retained_search_share": beta, "sf_wdl_frac": 0.0, "outcome_wdl_frac": 1 - beta,
+            "search_availability_frac": availability, "realized_search_mass": beta * availability,
+            "search_fallback_outcome_mass": beta * (1 - availability),
+            "realized_outcome_mass": 1 - beta * availability, "population_validation": population_validation}
 
 
 def validate_contract(c: dict[str, Any]) -> None:
@@ -193,7 +255,8 @@ def metadata(c: dict[str, Any], stage: dict[str, Any], contract_ref: dict[str, s
 
 def checkpoint_identity(c: dict[str, Any], contract_ref: dict[str, str], segment: int) -> dict[str, Any]:
     return {"contract_sha256": contract_ref["sha256"], "run_uuid": c["run_uuid"], "study_uuid": c["study_uuid"],
-            "source_revision": c["source_revision"], "segment": segment, "sampling": c["sampling"], "method": c["method"]}
+            "source_revision": c["source_revision"], "segment": segment, "sampling": c["sampling"], "method": c["method"],
+            **({"retained_search_share": retained_search_share(c)} if "retained_search_share" in c else {})}
 
 
 def _closed_record_metadata(binding: dict[str, Any], c: dict[str, Any], contract_ref: dict[str, str], stage: dict[str, Any]) -> dict[str, Any]:
@@ -225,6 +288,9 @@ def _closed_record_metadata(binding: dict[str, Any], c: dict[str, Any], contract
         and parent["source_revision"] == c["source_revision"] and parent["sampling"] == c["sampling"] and parent["method"] == c["method"]
         and parent["step"] == sum(c["updates_per_segment"][:stage["segment"] - 1])
         and parent["initial_model"] == c["initial_model"] and parent["initial_model_step"] == c["initial_model_step"], "union parent family mismatch")
+    if "retained_search_share" in c:
+        core.require(parent["retained_search"] == retained_search_record(c, parent["metrics"],
+            parent["retained_search"]["population_validation"]), "union parent retained search identity/coverage differs")
     checkpoint = reference(parent["checkpoint"], "closed checkpoint")
     core.require(core.external(checkpoint["path"]) == output / "learner.pt", "union checkpoint output path")
     return parent
@@ -320,6 +386,7 @@ def validate_closed_segment(contract_ref: dict[str, str], binding: dict[str, Any
         "run_uuid": c["run_uuid"], "study_uuid": c["study_uuid"], "method": c["method"],
         "population_identity": identity, "source_origin_binding": origin_binding(identity), "sampling": c["sampling"],
         "steps": batches, "actual_views": cursor, "pass_complete": complete,
+        **({"retained_search": closed["retained_search"]} if "retained_search_share" in c else {}),
         "scope": "caller-trusted closed lineage metadata only; actual own-live model delivery/Root+ind proof required separately"}
 
 
@@ -352,6 +419,12 @@ def validate_closed_model_delivery(contract_ref: dict[str, str], binding: dict[s
         and observed["additional_final_CPU_checkpoint_decodes"] == 1
         and observed["five_rng_sha256"] == core.digest(boundary["rng"])
         and observed["initial"]["rng"] != {} and observed["initial"]["backend"] == boundary["backend"], "union observed passivity/counter mismatch")
+    if "retained_search_share" in c:
+        expected_loss = retained_search_loss_kwargs(c)
+        core.require(observed["retained_search"] == boundary["retained_search"]
+            and observed["initial"]["retained_search_loss_kwargs"] == expected_loss
+            and observed["final_retained_search_loss_kwargs"] == expected_loss,
+            "union retained search observed live loss/boundary mismatch")
     facts = observed["saved_model"]
     core.require(facts["architecture"] == c["architecture"] and facts["state_entries"] == len(facts["key_shapes"])
         and facts["key_shape_dtype_sha256"] == core.digest(facts["key_shapes"])
@@ -415,6 +488,9 @@ def execute(contract_ref: dict[str, str], stage_ref: dict[str, str], *, observer
             loaded = fixed_population.load_fixed_population(c["architecture"], manifest, c["population"]["manifest"],
                 rng=rng, max_rows=c["limits"]["max_rows"], max_decoded_bytes=c["limits"]["max_decoded_bytes"])
             core.require(loaded.identity == identity, "actual loaded union identity changed")
+            search_validation = None
+            if "retained_search_share" in c and retained_search_share(c) > 0:
+                search_validation = validate_retained_search_population(loaded, np)
             replay = StoredRowOnceReplay(loaded, seed=c["sampling"]["order_seed"], batch_size=c["batch_size"],
                                          expected_rows=c["sampling"]["expected_rows"], on_draw=on_draw)
             if parent is not None:
@@ -430,7 +506,10 @@ def execute(contract_ref: dict[str, str], stage_ref: dict[str, str], *, observer
             expected_views = (rows_after_batches(len(replay), c["batch_size"], prior_steps + c["updates_per_segment"][stage["segment"] - 1])
                               - rows_after_batches(len(replay), c["batch_size"], prior_steps))
             core.import_custody()
-            trainer = core.make_trainer(c, output / "tb")
+            if "retained_search_share" in c:
+                trainer = core.make_trainer(c, output / "tb", retained_search_share=retained_search_share(c))
+            else:
+                trainer = core.make_trainer(c, output / "tb")
             if parent is None:
                 bank.fresh_model(trainer, c, torch)
             else:
@@ -484,6 +563,9 @@ def execute(contract_ref: dict[str, str], stage_ref: dict[str, str], *, observer
             core.require(replay.remaining == 0, "completed pass must exhaust every stored row once")
         if c["runtime"]["device"].startswith("cuda"):
             torch.cuda.synchronize()
+        search_record = None
+        if "retained_search_share" in c:
+            search_record = retained_search_record(c, asdict(metrics), search_validation)
         checkpoint = output / "learner.pt"
         if observer is not None:
             observer.before_save(context)
@@ -524,6 +606,8 @@ def execute(contract_ref: dict[str, str], stage_ref: dict[str, str], *, observer
             "metrics": asdict(metrics), "rng": _rng_state(rng, cast(Any, np.random)), "backend": backend,
             "recovery_scope": "same-family closed segment boundary only; interrupted output is terminal/unqualified",
             "champion_changed": False, "collector_lineage_qualified": False}
+        if "retained_search_share" in c:
+            boundary["retained_search"] = search_record
         if observer is not None:
             boundary["own_live_certificate"] = observer.closed_checkpoint(context, boundary)
         # Canonical compact JSON keeps the actual 405013-row permutation bounded;

@@ -1,0 +1,207 @@
+{
+  "actual_scope_contract_ledger_runtime_admission_issued": false,
+  "artifact_root_display": "~/chess-artifacts/operations/rl-week-one-20261112-v1",
+  "budgets": {
+    "CPU_affinity": [
+      20,
+      22
+    ],
+    "CPU_each_reader_outer_inner_seconds": [
+      120,
+      110
+    ],
+    "CPU_final_delivery_outer_inner_seconds": [
+      120,
+      110
+    ],
+    "CPU_including_engineering_total_outer_seconds": 540,
+    "CPU_new_source_build_focused_outer_inner_seconds": [
+      180,
+      170
+    ],
+    "CPU_scientific_delivery_readers_total_outer_seconds": 360,
+    "GPU_each_match_outer_inner_seconds": [
+      3600,
+      3570
+    ],
+    "GPU_training_outer_inner_seconds": [
+      7200,
+      7170
+    ],
+    "U2_KL_scope_unchanged_and_unlaunched": true,
+    "actual_success_failure_engineering_costs_all_charged": true,
+    "compiler_or_data_preparation_phase_selected": false,
+    "cutoff_UTC": "2026-11-19T16:09:20Z",
+    "engineering_scope": "One Root-selected bounded new-source/native/focused phase appropriate to actual diff; roster/target/source/review/profile not issued at draft. No blanket tests or extra neural smoke.",
+    "global_GPU_actual_before": 103834.38945806609,
+    "global_GPU_at_full_new_cap": 118234.38945806609,
+    "global_GPU_ceiling": 172800,
+    "new_V10_GPU_total_ceiling_seconds": 14400,
+    "old_scope_costs_inherited_erased_or_reassigned": false,
+    "one_numerical_owner_at_a_time": true,
+    "paid_compute": false,
+    "playing_GPU_total_outer_seconds": 7200,
+    "prior_U1_GPU_ceiling_unchanged": 13214,
+    "prior_U1_actual_GPU_seconds": 10832.865230581025,
+    "threads": 2,
+    "timing": "Single-process7200/7170 is closer to successful F1 than split U2; F1 actual5614.532851506025 is context only, not a V10 benchmark/completion guarantee. New source/target math may alter timing; stop at caps/cutoff without automatic extension.",
+    "training_GPU_total_outer_seconds": 7200,
+    "week_cutoff_UTC": "2026-11-19T16:09:20Z"
+  },
+  "evaluation": {
+    "both_GPU_technical_endpoints_closed_before_any_efficacy": true,
+    "edges": [
+      {
+        "games": 800,
+        "pairs": 400,
+        "reference": "F1",
+        "seed": 2026111803
+      },
+      {
+        "games": 800,
+        "pairs": 400,
+        "reference": "A39",
+        "seed": 2026111804
+      }
+    ],
+    "no_pooling_interim_extension_or_fresh_confirmatory_claim": true,
+    "paired_rule": {
+      "donor_advantage": "Only if primary mitigation passes AND available paired-normal95 lower>0.5 versus A39.",
+      "else": "Report both separate fixed-endpoint results; no mitigation or donor-advantage selection unless its prespecified criteria pass.",
+      "interval": "paired normal95",
+      "metric": "Mean candidate game score; reciprocal-pair score sampling unit.",
+      "primary_mitigation": "Available paired-normal95 lower>0.5 versus frozen F1.",
+      "variance_divisor": 399,
+      "zero_variance": "UNAVAILABLE; cannot pass"
+    },
+    "panel": "previously consumed CONFIRM_C_A39 DEVELOPMENT only"
+  },
+  "evidence_limits": {
+    "F1_once_limit": "F1 once405013 rows still regressed .45875 vsA39. Once still means12657 B32 optimizer steps (unlike old4096 B256 studies), so once does not isolate gentle dose or establish repeated sampling as sole cause.",
+    "U2_preservation": "Accepted KL-only U2 method047e/review9276 and scope709 are deferred/unlaunched unchanged, not silently blended, substituted, spent or erased.",
+    "audit": {
+      "path": "historical-selfplay-replay-dose-and-search-blend-evidence-audit-v1/audit.json",
+      "sha256": "71190cefaec56f1eb73a6e8c91f39f6737529ab5100233c5733e537d5449e0bb"
+    },
+    "audit_manifest": {
+      "path": "historical-selfplay-replay-dose-and-search-blend-evidence-audit-v1/manifest.json",
+      "sha256": "0b56223b05ea783f339081e1b64052ae461c5684948bdbc4d5678c79b21806eb"
+    },
+    "beta1_negative": "Earlier matched G1 share1 candidate scored .453 vs its outcome control and .4555 vsA39 on1000-game endpoints, after512xB256 updates/131072views from24827 rows. This different full-replacement setting does not determine beta0.1 response in this union. No positive banked small-beta strength evidence is claimed.",
+    "bootstrap_limit": "Retained search labels come from historical actors/search, not an independent oracle. Default net_raw draw mass partly uses the actor network raw root draw output; no claim labels equal Lc0 targets or solve correlation.",
+    "correlation": "Multiple stored positions/game are legitimate conditional examples; terminal outcomes are correlated and long retained games have larger aggregate row-weighted influence. Row counts do not imply independent outcome sample size. V10 does not add game balancing or claim to remove this correlation.",
+    "coverage": "Headers show search_wdl/has_search_wdl arrays for4032 assets; F1 actual row-weighted availability1.0 over405013 rows at selected coefficient0. Coverage is not blend mass or calibration; new owner must check all actual values/usability.",
+    "old_exposure": "G1 first window131072/24827=5.2794 mean draws per row; lifetime expected G1 exposure10.8286 high/10.8428 low across four overlapping windows. These are expectations/aggregate ratios, not realized individual counts/maxima."
+  },
+  "independent_method_review": {
+    "path": "historical-selfplay-small-search-V10-independent-method-review-v1/review.json",
+    "sha256": "15ca29f429b52d057e8585f6b37b605b2727c78a8b15dc645626da83b065b4e6"
+  },
+  "method_design": {
+    "path": "historical-selfplay-small-search-V10-method-draft-v1/design.json",
+    "sha256": "eaffa3a266aa6102d3b1ed62e5d2597f42f03950cb800c15606def4f84fd00be"
+  },
+  "proposed_fresh_student_UUID": "8bd132d1-326e-41b7-a6aa-7ee0206ff5d1",
+  "receipts": {
+    "F1_C3_contract": {
+      "path": "historical-selfplay-uniform-once-U1-learner-contract-v3/contract.json",
+      "sha256": "1fa3e6e48a8b56c17062ba0fc0eb120e646a11c1f6b328ff5a236dcbd2522801"
+    },
+    "F1_delivery_Root": {
+      "path": "historical-selfplay-uniform-once-U1-fresh-full-pass-final-delivery-CPU-bindings-v1/root-model-delivery.json",
+      "sha256": "a59d8152ea37115ed421c4ef5c1b71d0793394bc9132d020d062eebd89d5b618"
+    },
+    "F1_delivery_independent": {
+      "path": "historical-selfplay-uniform-once-U1-fresh-full-pass-final-delivery-CPU-bindings-v1/independent-model-delivery.json",
+      "sha256": "4cd0a5bc96d8338ff4fa789d6c83cd455f08096d406b882121cdc02e974ac0a9"
+    },
+    "F1_frozen_verdict": {
+      "path": "historical-selfplay-uniform-once-U1-fresh-full-pass-final-vs-A39-800DEV-recovery-bindings-v2/verdict.json",
+      "sha256": "3eb5e25282933aebb74b98cf262220e01ec766e41f4427ea0c19b0f084d6f722"
+    },
+    "F1_method": {
+      "path": "historical-selfplay-uniform-once-U1-single-process-fresh-method-v1/design.json",
+      "sha256": "57a3635ecffd1e0a18391759ee6f93bb7b9170ebd81fa651319a2b19c0fd3ed2"
+    },
+    "Root_direction": {
+      "path": "historical-selfplay-small-search-V10-direction-v1/decision.json",
+      "sha256": "f71807eac2cf3ed1a27b53815803fc656e64b5a98475c4c49f3294b3fbc633b3"
+    },
+    "dose_search_audit": {
+      "path": "historical-selfplay-replay-dose-and-search-blend-evidence-audit-v1/audit.json",
+      "sha256": "71190cefaec56f1eb73a6e8c91f39f6737529ab5100233c5733e537d5449e0bb"
+    },
+    "dose_search_audit_manifest": {
+      "path": "historical-selfplay-replay-dose-and-search-blend-evidence-audit-v1/manifest.json",
+      "sha256": "0b56223b05ea783f339081e1b64052ae461c5684948bdbc4d5678c79b21806eb"
+    },
+    "population_Root": {
+      "path": "historical-selfplay-uniform-once-U1-population-bindings-v2/root-population-acceptance.json",
+      "sha256": "c08d0ddfb51f76a7b610cc2726cd446d8c8b7e555a92cb0220ef7e9fabce83f6"
+    },
+    "population_readout": {
+      "path": "historical-selfplay-uniform-once-U1-population-CPU-results-v2/readout.json",
+      "sha256": "abeb6866ebdf97936302a37e390f67fefa7c7f6baac45c59786d8c7623fa9346"
+    },
+    "preserved_U2_method": {
+      "path": "historical-selfplay-policy-anchor-U2-method-draft-v2/design.json",
+      "sha256": "047ea2d5cc26c8244dced11f72945aa1659e3a44982e41368ed2443d1a665270"
+    },
+    "preserved_U2_review": {
+      "path": "historical-selfplay-policy-anchor-U2-independent-method-review-v2/review.json",
+      "sha256": "9276906edcc5e2db4fabfdde08c3d027f6d7fc4a532fa4a43415c97fa56b8b06"
+    },
+    "prior_beta1_evidence_audit": {
+      "path": "existing-RL-failure-evidence-audit-20261116-v1/readout.json",
+      "sha256": "9fc8e7a846d573cec985cf6af5ddb39917651d6b6970de539352f0778b918b97"
+    }
+  },
+  "reference_convention": "Relative paths under the display root identify original immutable metadata, not executable authority.",
+  "schema": "FIXED_UNION_SMALL_SEARCH_V10_PROSPECTIVE_EVIDENCE_V1",
+  "source_readiness": {
+    "Cea_206_baseline_scope": "Existing Cea/source-native206-case evidence is engineering baseline only, not pass credit for future modified V10 source.",
+    "absent_option": "Preserve actual legacy zero-share/default tag/boundary/behavior; no anchor teacher or anchor-zero sibling.",
+    "entry_module": "scripts.core_selfplay_union_stored_row_once",
+    "existing_binary_helper_gap": "Current finite core allows retained_search_share only{0,1}; explicit reviewed finite[0,1] plumbing needed, not editing unsupported current C3/U2 fields.",
+    "existing_driver_gap": "Current be458 generic driver whitelists bounded_shuffle/policy_anchor only; an honestly reviewed small successor must support unanchored global route before V10 admission. No new controller framework.",
+    "existing_public_contract_schema": "core_selfplay_union_stored_row_once_v1",
+    "explicit_option": "Bind actual share in contract/checkpoint/closed lineage and full own-live proof; future source review verifies actual Trainer share, coverage and zero V10 fallback.",
+    "method_training_join_keys": [
+      "retained_search_share",
+      "search_wdl_frac",
+      "sf_wdl_frac",
+      "outcome_wdl_frac",
+      "policy_anchor_coefficient"
+    ],
+    "opt_in_contract_key": "retained_search_share",
+    "opt_in_value": 0.1,
+    "proof_module": "scripts.core_selfplay_union_stored_row_once_proof",
+    "source_runtime_and_engineering_receipts": "UNISSUED_AFTER_ACTUAL_DIFF; worktree creation pending, no final path/head/native/focused-pass hashes fabricated."
+  },
+  "status": "METHOD_DRAFT_NOT_EXECUTION_AUTHORITY",
+  "target": {
+    "KL_coefficient": 0,
+    "SF_share": 0,
+    "per_game_weighting_intervention": false,
+    "retained_search_share": 0.1,
+    "strict_usable_search_target_requirement": "every selected row before model/draw; no V10 fallback/filtering",
+    "terminal_outcome_share": 0.9
+  },
+  "training": {
+    "batch_size": 32,
+    "compiled_manifest_sha256": "5241f0b0f0358603702c6423925e020356e14cd64766079d9d41c992bbcf60ec",
+    "fresh_model_only_A39": true,
+    "last_objective_scale": "21/32",
+    "last_real_rows": 21,
+    "model_seed": 2026111780,
+    "no_permutation_recomputation_or_raw_data_read_by_author": true,
+    "order_seed": 2026111777,
+    "permutation_sha256": "9de2b2a4960484d7df7e95d3c2ca592e0ccff5642c15a4ae5fc009d14a17065f",
+    "rows": 405013,
+    "same_C3_except_explicit_search_fraction": true,
+    "sources": 4032,
+    "updates": [
+      12657
+    ]
+  }
+}

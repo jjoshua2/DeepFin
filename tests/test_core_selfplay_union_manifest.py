@@ -28,7 +28,8 @@ def frozen(path: Path, value: dict[str, Any]) -> dict[str, str]:
 
 
 def legacy(tmp_path: Path, *, generation: int = 8, collection: int = 1, game_id: int = 7,
-           rows: int = 4, marker: float = 1.0, architecture: dict[str, Any] | None = None) -> dict[str, str]:
+           rows: int = 4, marker: float = 1.0, architecture: dict[str, Any] | None = None,
+           search_target: list[float] | None = None, search_available: bool = True) -> dict[str, str]:
     """One genuine-shape synthetic legacy source; every compiler gate is real.
 
     Equal boards and game IDs across branches are deliberate. Distinct source
@@ -56,6 +57,9 @@ def legacy(tmp_path: Path, *, generation: int = 8, collection: int = 1, game_id:
     for key in ("has_policy", "has_legal_mask", "is_network_turn", "has_is_network_turn",
                 "is_selfplay", "has_is_selfplay", "has_game_id", "has_ply_index"):
         arrays[key] = np.ones(rows, dtype=np.uint8)
+    if search_target is not None:
+        arrays["search_wdl"] = np.tile(np.asarray(search_target, dtype=np.float16), (rows, 1))
+        arrays["has_search_wdl"] = np.full(rows, int(search_available), dtype=np.uint8)
     shard_path = root / "shard.zarr"
     save_local_shard_arrays(shard_path, arrs=arrays,
         meta={"games": 1, "positions": rows, "username": "synthetic_collection_" + str(collection),
