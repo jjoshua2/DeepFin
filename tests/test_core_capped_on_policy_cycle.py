@@ -217,7 +217,9 @@ def test_actual_anchor_origin_continuation_keeps_reference_and_no_extra_forwards
     assert cert["extra_forwards"] == 0
     assert cert["actual_calls"]["forward"] == result["applied_updates"]
     anchor = cert["policy_anchor"]
-    assert anchor["identity"] == c["policy_anchor"] == oc["policy_anchor"]
+    expected_anchor = entry.validate_spec(c["policy_anchor"], c["architecture"])
+    assert anchor["identity"] == expected_anchor
+    assert expected_anchor == entry.validate_spec(oc["policy_anchor"], oc["architecture"])
     assert anchor["teacher_unchanged"] is True
     assert anchor["no_optimizer_ownership"] is True
     assert anchor["no_reference_gradients"] is True
@@ -283,23 +285,36 @@ def test_cumulative_identity_tampering_refuses_before_model(tmp_path: Path, monk
 
 @pytest.mark.parametrize("fault", ["lr", "scheduler", "group"])
 def test_real_resume_cannot_silently_replace_constructor_recipe(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str,
+    tmp_path: Path, fault: str,
 ) -> None:
-    from scripts import bootstrap_checkpoint_resume as bootstrap
-
     oc, initial = origin(tmp_path)
+    selected = bridge.closed_delivery(initial)
+    checkpoint = Path(selected["model"]["checkpoint"]["path"])
+    payload = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    if fault == "lr":
+        payload["opt"]["param_groups"][0]["lr"] *= 2
+    elif fault == "scheduler":
+        payload["scheduler"]["eta_min"] *= 2
+    else:
+        payload["opt"]["param_groups"][0]["weight_decay"] += 0.1
+    # Owned synthetic fixture only: intentionally unseal/edit/reseal. Keep the
+    # real restore helper and its exact-load checks; it must restore these
+    # controls before the actual constructor-recipe guard refuses any draw.
+    checkpoint.chmod(0o644)
+    torch.save(payload, checkpoint)
+    checkpoint.chmod(0o444)
+    boundary = copy.deepcopy(selected["boundary"])
+    changed_checkpoint = {"path": str(checkpoint), "sha256": core.file_sha(checkpoint)}
+    boundary["checkpoint"] = changed_checkpoint
+    boundary["own_live_certificate"]["checkpoint"] = changed_checkpoint
+    boundary_path = checkpoint.parent / "boundary.json"
+    boundary_path.chmod(0o644)
+    boundary_path.write_text(core.canonical(boundary) + "\n")
+    boundary_path.chmod(0o444)
+    receipt_folder = tmp_path / "changed-parent"
+    receipt_folder.mkdir()
+    initial = delivery(receipt_folder, oc, selected["root"]["contract"], boundary, cycle=False)
     c, cref, sref = cycle_contract(tmp_path / "cycle", oc, initial, initial, 1)
-    actual = bootstrap.resume_bootstrap
-    def changed(trainer: Any, *args: Any, **kwargs: Any) -> Any:
-        result = actual(trainer, *args, **kwargs)
-        if fault == "lr":
-            trainer.opt.param_groups[0]["lr"] *= 2
-        elif fault == "scheduler":
-            trainer._scheduler.eta_min *= 2
-        else:
-            trainer.opt.param_groups[0]["weight_decay"] += 0.1
-        return result
-    monkeypatch.setattr(bootstrap, "resume_bootstrap", changed)
     before = Path(c["sampling"]["quota_ledger"]).read_bytes()
     with pytest.raises(ValueError, match="actual cycle optimizer/scheduler recipe changed"):
         proof.execute(cref, sref)
