@@ -51,3 +51,48 @@ Reviewed capped sourceV3 retains V2 production bytes; prospective combined code-
 Terminal z estimates value under actual selfplay policies/exploration, unlike an SL strong-teacher estimate. Retained-search WDL is endogenous, including bootstrapped network information. Historical census4032 recorded collection-qualified groups/405013 rows/5–297 rows per group does not prove statistical independence; row-once is not game-balanced. No causal target/head/optimality/Elo claim follows. New game-balanced value weighting or SL-value anchoring would be separate unselected source/interventions; policy-only KL does not anchor WDL, and the shared trunk couples effects. A game-unseen value holdout would require new reserved whole groups, not a post-hoc row split of consumed history.
 
 Exact scientific design/evidence refs are in [the compact record](evidence/2026-11-18-fresh-current-policy-a39-twelve-cycle-baseline.json). Actual source adoption, pre-study protection result, per-cycle banks/contracts/owners, final delivery and deciding result remain **UNISSUED**. No public-before-compute claim is made until Root actually publishes the exact selected record.
+
+
+## Prospective engineering handoff addendum, November 18
+
+The first collection was already running when source inspection exposed a missing
+handoff artifact: `core_finite_collect.seal_readout` computes the complete sealed
+output inventory but discards the return value. Its readout embeds every retained
+row's validation metadata. Root cannot open that bulk readout or hash the roster
+payload. The unchanged data auditor requires a hash-pinned producer inventory in
+its protocol before launch, and the accepted-bank consumer authenticates that
+same protocol in the recorded owner command. Writing it late inside the auditor
+would violate that contract.
+
+Before any extra handoff owner, Root selects one bounded engineering projection
+per successfully closed collection, at most 12 owners of CPU 60 seconds each
+(inner 50 seconds), with no automatic retry. It reads the existing sealed producer
+metadata inside that owner, derives game inventory entries from the authenticated
+producer descriptors, hashes the named root JSON files, and reconciles canonical
+regular read-only file paths and recorded sizes against the complete output tree.
+It writes an external producer inventory and a compact summary with identities,
+counts and references, without row, history or roster contents. It does not open
+raw shard/NPZ/model payloads or construct arrays, models or encodings. Descriptor
+derivation is not independent payload verification: the original CPU 180-second
+data audit must still hash and reconcile the full actual output tree.
+
+These are necessary artifact-producing operations, not additional model tests or
+replacement collections. Reviewed source and actual closed-producer bindings,
+separate Root admission, current custody and a fresh resource check are required.
+A failed handoff stops this study under its existing engineering stop rule. All
+partial artifacts and costs remain recorded; no source or terminal bytes are
+changed and no extra game attempts are introduced.
+
+The original 63 scientific owners retain every selected bound, including CPU
+4,500 seconds and GPU 32,400 seconds. This addendum adds an explicit ceiling of
+720 CPU owner-wall seconds for up to 12 engineering handoffs: the combined F12
+ceiling is CPU 5,220 seconds and GPU 32,400 seconds, across at most 75 owners.
+Charge actual handoff costs separately and include them in all-in F12 and global
+costs. The week cutoff and global GPU ceiling remain unchanged. No unused CPU
+allowance authorizes GPU work or a recipe/horizon change.
+
+The original V4 method identity, publication-before-collection evidence, fixed
+2,304 attempts, actor progression, one presentation per original row, value blend,
+learning rate, seeds and final paired 800-game DEV endpoint remain unchanged.
+This operational addendum was selected while cycle 1 was running, before any F12
+training, arena, handoff owner or efficacy result. It does not establish an RL gain.

@@ -1,0 +1,33 @@
+{
+  "schema": "F12_PROSPECTIVE_HANDOFF_ENGINEERING_ADDENDUM_V1",
+  "status": "SOURCE_ONLY_PENDING_INDEPENDENT_REVIEW_AND_PUBLICATION",
+  "recorded_utc": "2026-11-18T14:17:30.222772+00:00",
+  "study_method": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-12-cycle-method-source-preparation-v4/design.json",
+    "sha256": "9e07463d51c23523855e3dc8f67fc1876820e116d36cab0833fc700194727544"
+  },
+  "scientific_method_changed": false,
+  "first_collection_session": 2784,
+  "training_or_playing_or_handoff_started": false,
+  "original_scientific_owner_caps": {
+    "owners": 63,
+    "CPU": 4500,
+    "GPU": 32400
+  },
+  "added_engineering_owner_caps": {
+    "maximum_owners": 12,
+    "CPU_outer_each": 60,
+    "CPU_inner_each": 50,
+    "CPU_aggregate": 720,
+    "GPU": 0,
+    "automatic_retry": false
+  },
+  "combined_caps": {
+    "owners": 75,
+    "CPU": 5220,
+    "GPU": 32400
+  },
+  "projection": "producer-authenticated metadata descriptors; unchanged data audit independently verifies actual payload bytes",
+  "Root_payload_reads_authorized": false,
+  "execution_authorized": false
+}
