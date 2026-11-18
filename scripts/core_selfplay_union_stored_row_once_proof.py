@@ -154,9 +154,17 @@ class OwnLiveProof:
 
     def _snapshot(self, context: dict[str, Any]) -> dict[str, Any]:
         trainer = context["trainer"]
-        return {"state": fingerprint(state_snapshot(trainer), context["torch"]),
+        result = {"state": fingerprint(state_snapshot(trainer), context["torch"]),
                 "model": model_facts(trainer, context["torch"], context["contract"]["architecture"]),
                 "rng": self._rng(context), "optimizer_names": trainer._optimizer_param_names()}
+        if "retained_search_share" in context["contract"]:
+            expected = entry.retained_search_loss_kwargs(context["contract"])
+            kwargs = trainer._loss_kwargs
+            actual = {key: kwargs[key] for key in expected}
+            core.require(actual == expected and trainer._frozen_policy_anchor is None,
+                         "actual union retained search loss kwargs differ")
+            result["retained_search_loss_kwargs"] = actual
+        return result
 
     def before_train(self, context: dict[str, Any]) -> None:
         core.require(self.context is None, "observer cannot be reused across segments")
@@ -255,7 +263,7 @@ class OwnLiveProof:
         core.require(before_rng == core.canonical(self._rng(context)) == core.canonical(boundary["rng"])
                      == core.canonical(self.save_after["rng"]), "final five RNG streams changed")
         core.require(self._observe(context, lambda: self._snapshot(context)) == self.save_after, "live state changed during final decode")
-        return {"schema": SCHEMA, "status": STATUS, "contract": context["contract_ref"], "stage": context["stage_ref"],
+        certificate = {"schema": SCHEMA, "status": STATUS, "contract": context["contract_ref"], "stage": context["stage_ref"],
                 "checkpoint": boundary["checkpoint"], "population_identity": boundary["population_identity"],
                 "source_origin_binding": boundary["source_origin_binding"], "sampling": c["sampling"], "step": trainer.step,
                 "step_start": boundary["step_start"], "applied_updates": boundary["applied_updates"], "actual_views": boundary["applied_views"],
@@ -267,6 +275,10 @@ class OwnLiveProof:
                 "actual_calls": dict(self.counts), "active_optimizer_slots": len(opt["state"]), "optimizer_named_parameters": len(ownership),
                 "additional_final_CPU_checkpoint_decodes": 1, "extra_forwards": 0,
                 "scope": "Observed own-live and saved state in same learner process; pending independent closed Root delivery, not playing strength or authority."}
+        if "retained_search_share" in c:
+            certificate["retained_search"] = boundary["retained_search"]
+            certificate["final_retained_search_loss_kwargs"] = self.save_after["retained_search_loss_kwargs"]
+        return certificate
 
     def failed(self) -> None:
         for hook in self.hooks:
