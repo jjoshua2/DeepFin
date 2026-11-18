@@ -28,6 +28,10 @@ A training checkpoint must bind this replay state together with its actual model
 
 ## Integration and validation
 
-This package provides the replay engine and checked-source adapter. The existing Trainer still needs the explicit batch-completion/abort integration, and training needs a distinct bounded-order contract and proof family. Those changes are separate from this backend; existing defaults remain unchanged.
+The finite learner is `scripts.core_selfplay_union_bounded_shuffle`, with passive saved-model observation in `scripts.core_selfplay_union_bounded_shuffle_proof`. Its contract/checkpoint family is `core_selfplay_union_bounded_shuffle_v1`; it uses the checked fixed-union manifest and explicit replay limits. Existing globally uniform entry points and defaults remain unchanged.
+
+Trainer integration is opt-in through the borrowed-row-batch interface. It requires single-microbatch, serialized training and disables Trainer batch prefetch/host overlap. Successful optimizer work marks the batch complete; the batch generator releases host-byte credit after dropping its final tensor aliases. Faults abort consumption and taint the attempt. The saved boundary binds actual model/optimizer updates, immutable journals and ledger prefix, bounded cursor, source identities, and private shuffle/mirror plus training RNG states. Closed lineage validation alone does not establish a saved model; the model-delivery validator also checks the own-live saved-payload certificate.
 
 The two test modules contain 24 synthetic cases covering row conservation, partial tails, queued resume, RNG/order continuity, byte ownership, backpressure, durable reservations, failure taint and symbolic journal audits. They run through the repository's normal CPU validation suite.
+
+The learner integration adds 14 Tiny model/Trainer cases covering continuous-versus-resumed state, actual partial tails, queued-but-unspent rows, CPU alias lifetime, failure taint, tampered continuation and saved-model proof.
