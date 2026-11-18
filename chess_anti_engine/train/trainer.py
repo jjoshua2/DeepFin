@@ -122,6 +122,29 @@ from .soda import SODA_STEP_KEY, SODAWeightDecayWrapper, mark_soda_weight_decay_
 SummaryWriter = _SummaryWriter  # skylos: ignore (used via runtime fallback)
 
 
+def _restore_nadam_host_scalars(optimizer: torch.optim.Optimizer) -> None:
+    """Restore NAdam's non-capturable scalar placement after any state load."""
+    if not isinstance(optimizer, torch.optim.NAdam):
+        return
+    for group in optimizer.param_groups:
+        if group.get("capturable", False):
+            continue
+        for parameter in group["params"]:
+            state = optimizer.state.get(parameter)
+            if not state:
+                continue
+            for key in ("step", "mu_product"):
+                value = state.get(key)
+                if isinstance(value, torch.Tensor) and value.device.type != "cpu":
+                    # NAdam initializes these on CPU when not capturable, but
+                    # torch.load(map_location=device) moves step to CUDA and
+                    # Optimizer.load_state_dict casts mu_product there even
+                    # from a CPU checkpoint. Eager NAdam reads both via .item()
+                    # per parameter/update. Restore placement, not their value,
+                    # dtype or shape; moments must stay with the parameters.
+                    state[key] = value.to(device="cpu")
+
+
 class UnsupportedWarmStartError(Exception):
     """This optimizer layout cannot be warm-started across a parameter change.
 
@@ -3198,6 +3221,8 @@ class Trainer:
                 param_groups, lr=lr, betas=(0.9, 0.98), eps=1e-7,
                 decoupled_weight_decay=True,
             )
+            # A post-hook covers exact, warm and delegated optimizer restores.
+            self.opt.register_load_state_dict_post_hook(_restore_nadam_host_scalars)
         elif optimizer == "adamw":
             self.opt = torch.optim.AdamW(param_groups, lr=lr)
         elif optimizer == "muon" or optimizer == "aurora":
