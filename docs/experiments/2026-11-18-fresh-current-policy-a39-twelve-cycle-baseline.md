@@ -1,5 +1,7 @@
 # Fresh current-policy A39: fixed twelve-cycle baseline (prospective)
 
+**Current readout (M3):** [Accepted descriptive 400-game interim](#m3-descriptive-interim-readout): 49.875% versus fixed A39, paired 95% CI 46.01–53.74%. No gain or equivalence established; A39 retained. Four training cycles are technically complete, but this evaluates the saved cycle-3 snapshot. The prospective status below is preserved as historical text.
+
 **Status:** proposed method/source preparation; no owner, bank, learner, model delivery or strength result. The exact independently reviewed Root-selected method must be published before this study's first compute. This document does not issue execution authority. Retained A39 remains the control.
 
 The question is whether a modest repeated current-policy selfplay loop can produce a fixed-horizon development gain. F1's historical once pass and U2's KL1 followup were negative against A39; V10's search.1 followup did not establish gain. They do not identify a causal head failure or prove that fresh on-policy learning cannot work. Earlier loops did refresh actors, but under different high-dose/FIFO/replacement schedules. This package changes freshness, dose and batch together; it is a baseline/control comparison, not a sampling-only ablation.
@@ -270,3 +272,58 @@ previously admitted scope is retained. Existing technical/data/resource
 stops and A39 retention remain; no automatic Goal-complete or promotion is
 authorized by a descriptive or positive DEV result. Full named receipts
 and limits are in the [compact evidence](evidence/2026-11-18-f12-user-requested-interim-evaluation-amendment.json).
+
+
+## M3 descriptive interim readout
+
+The registered saved M3 checkpoint (cycle3, step223, checkpoint `cc6bc2cf…`,
+typed model state `f2011177…`) completed its fixed 400-game /200-pair
+DEVELOPMENT comparison against original A39. Four training cycles were
+technically complete before this evaluation; M4 at step303 was not the
+evaluated model. The candidate was fixed before play, without checkpoint
+selection from the result.
+
+|Observation|Accepted result|
+|---|---:|
+|M3 wins / draws / losses|123 /153 /124|
+|Paired match score|49.875%|
+|Pointwise paired normal 95% interval|46.0149–53.7351%|
+|Conditional Elo-equivalent versus fixed A39|−0.87 (95% interval −27.75 to +26.00)|
+|Actual GPU owner wall / reader CPU owner wall|1067.5090s /21.2816s|
+
+The owned wrapper authenticated the original consumed 400-pair DEV order
+and used exactly its first200 pairs, with reciprocal colors, seed2026111999
+and the same frozen playing profile. All400 games and200 pairs reconciled;
+the GPU and reader each closed with genuine Root and independent technical
+acceptance before the frozen descriptive verdict. Inference uses n200,
+sample-variance divisor199 and z1.96. The five pair-score bins were
+`[18, 50, 67, 45, 20]`; sample variance was0.07757380653266331.
+
+This screen establishes neither a gain nor equivalence to A39. The interval
+allows deterioration and improvement under these settings. It is a
+descriptive, pointwise view of an already consumed and repeatedly reused
+panel; the M3/M6/final views are correlated. There is no pooling, fresh
+confirmation or multiplicity-control claim. The Elo-equivalent is only the
+monotone conversion of this conditional match score and its paired interval,
+not an absolute external rating or a daily forecast.
+
+The prescribed interim criterion is nonselecting: `descriptive_only=true`,
+`criterion_pass=false`, and no result changes training, the twelve-cycle
+horizon, data/order/dose, recipe, checkpoint choice or stopping rules.
+Training continues unchanged toward the M6 400-game descriptive check and
+the M12 800-game final screen. A39 remains retained; this result does not
+establish rapid sustained improvement, goal completion, adoption, a causal
+head diagnosis or a verdict about RL generally.
+
+M3's saved learner owner ended at17:44:43.132243UTC; it was evaluated after
+M4's accepted delivery. Current-study chronology begins at14:03:11.497911UTC,
+but does not reset the Nov12 week-one negative results, engineering/calendar
+history, costs or stops. The user's rough personal +100 Elo/day estimate
+was not measured AlphaZero evidence and is not a hard numerical gate. No
+new arena, numerical qualification, retry or training change is selected
+by this readout.
+
+The accepted frozen verdict is `3746973fc8bcff41ec58c5b48072e1eb8ca14079099838d3a92c99e5d7faaae9`;
+the reconciled summary is `ab28a61a416319a1a724a0906fe8949acee58870e3644c33e450f061f890e058`.
+Exact model, profile, amendment/public chronology, technical receipts and
+actual owner costs are in the [compact M3 evidence](evidence/2026-11-18-f12-M3-interim-readout.json).

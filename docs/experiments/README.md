@@ -302,4 +302,4 @@ Current evidence correction and scale plan: [September 16 bootstrap audit](2026-
 
 - [2026-11-17 D2 retained-model metadata correction](2026-11-17-d2-retained-model-metadata-correction.md) - Prospective: genuine saved-only L0 compatibility fix and one separately admittedCPU290/260 qualification within original cumulative ceilings; both failed stops/costs retained, no new playing result or execution authority.
 
-- [2026-11-18: Fresh current-policy A39 twelve-cycle baseline](2026-11-18-fresh-current-policy-a39-twelve-cycle-baseline.md) — proposed fixed12×192-game current-actor loop, B256/LR3e-6/search.1/KL0, first2 engineering condition and one final800-game reused-DEV A39 test; source/admission/results unissued.
+- [2026-11-18: Fresh current-policy A39 twelve-cycle baseline](2026-11-18-fresh-current-policy-a39-twelve-cycle-baseline.md) — four cycles technically complete; saved M3 descriptive400-game reused-DEV score49.875% versus fixed A39 (paired95% CI46.01–53.74%), no gain/equivalence established, A39 retained; unchanged twelve-cycle training, M6 descriptive400 and M12 final800 remain.
