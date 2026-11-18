@@ -1,5 +1,7 @@
 # Fresh current-policy A39: fixed twelve-cycle baseline (prospective)
 
+**Current readout (M6):** [Accepted descriptive 400-game interim](#m6-descriptive-interim-readout): 49.875% versus fixed A39, paired 95% CI 46.16–53.59%. Six training cycles are technically complete (step460; 116,989 cumulative views). No gain or equivalence established; A39 retained. Earlier current-status lines below are preserved historical snapshots.
+
 **Current readout (M3):** [Accepted descriptive 400-game interim](#m3-descriptive-interim-readout): 49.875% versus fixed A39, paired 95% CI 46.01–53.74%. No gain or equivalence established; A39 retained. Four training cycles are technically complete, but this evaluates the saved cycle-3 snapshot. The prospective status below is preserved as historical text.
 
 **Status:** proposed method/source preparation; no owner, bank, learner, model delivery or strength result. The exact independently reviewed Root-selected method must be published before this study's first compute. This document does not issue execution authority. Retained A39 remains the control.
@@ -327,3 +329,57 @@ The accepted frozen verdict is `3746973fc8bcff41ec58c5b48072e1eb8ca14079099838d3
 the reconciled summary is `ab28a61a416319a1a724a0906fe8949acee58870e3644c33e450f061f890e058`.
 Exact model, profile, amendment/public chronology, technical receipts and
 actual owner costs are in the [compact M3 evidence](evidence/2026-11-18-f12-M3-interim-readout.json).
+
+
+## M6 descriptive interim readout
+
+The registered saved M6 checkpoint (cycle 6, step 460, checkpoint
+`09bb5b0e…`, typed model state `923b09b2…`) completed its fixed 400-game,
+200-pair DEVELOPMENT comparison against original A39. Six training cycles
+were technically complete, with 116,989 cumulative training views. The
+candidate was fixed before play; no result selected a different checkpoint.
+
+| Observation | Accepted result |
+|---|---:|
+| M6 wins / draws / losses | 119 / 161 / 120 |
+| Paired match score | 49.875% |
+| Pointwise paired normal 95% interval | 46.1582–53.5918% |
+| Conditional Elo-equivalent versus fixed A39 | −0.87 (95% interval −26.75 to +25.00) |
+| Actual GPU owner wall / reader CPU owner wall | 1114.1944s / 21.3396s |
+
+The owned wrapper used exactly the same first 200 pairs of the authenticated,
+already consumed 400-pair DEV order as M3, with reciprocal colors,
+seed2026111999 and the frozen playing profile. All 400 games and 200 pairs
+reconciled, with no illegal, crashed or incomplete games. Both the GPU and
+reader passed all 16 controls and closed with genuine Root and independent
+technical acceptance before the frozen descriptive verdict. Inference uses
+n200, sample-variance divisor199 and z1.96. The pair-score bins were
+`[17, 47, 73, 46, 17]`; sample variance was 0.07192054020100502.
+
+M3 and M6 have the same point estimate, but these are correlated views of
+the same reused panel, not independent replications or a pooled estimate.
+This screen establishes neither gain nor equivalence to A39. Its pointwise
+interval allows deterioration and improvement under these settings; it does
+not provide fresh confirmation or a multiplicity-control claim. The
+Elo-equivalent is only the monotone transform of this conditional match
+score and paired interval, not an absolute external rating or daily rate.
+
+The registered interim remains nonselecting: `descriptive_only=true`,
+`criterion_applies=false`, `criterion_pass=false`. It changes no training
+recipe, data, order, dose, optimizer, checkpoint choice, horizon or stopping
+rule. Fixed cycles 7–12 and the M12 800-game final screen remain selected.
+A39 remains retained. Technical completion and this interim do not establish
+rapid sustained improvement, goal completion, adoption, optimality, a causal
+head diagnosis or a verdict about RL generally.
+
+This snapshot ends with all 507 owners closed. Current-study chronology starts
+at14:03:11.497911UTC and preserves the Nov12 week-one results, engineering,
+calendar history, failures, stops and costs. The user's rough personal
++100 Elo/day estimate was not measured AlphaZero evidence and is not a hard
+gate. No new compute, retry, qualification or training change is selected by
+this publication. The dated M3 and prospective records above remain intact.
+
+The frozen verdict is `9a3fdadd2573289bb6d806cfd2012375522c3f0a89fc0605aa7aba5a1eae52bc`;
+the reconciled summary is `d580125b7125d655aaaa28251e3be494bded8f26a073e34609c8677073856864`.
+Exact model identity, compact receipts, chronology and owner costs are in the
+[compact M6 evidence](evidence/2026-11-18-f12-M6-interim-readout.json).
