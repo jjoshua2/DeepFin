@@ -51,3 +51,84 @@ Reviewed capped sourceV3 retains V2 production bytes; prospective combined code-
 Terminal z estimates value under actual selfplay policies/exploration, unlike an SL strong-teacher estimate. Retained-search WDL is endogenous, including bootstrapped network information. Historical census4032 recorded collection-qualified groups/405013 rows/5–297 rows per group does not prove statistical independence; row-once is not game-balanced. No causal target/head/optimality/Elo claim follows. New game-balanced value weighting or SL-value anchoring would be separate unselected source/interventions; policy-only KL does not anchor WDL, and the shared trunk couples effects. A game-unseen value holdout would require new reserved whole groups, not a post-hoc row split of consumed history.
 
 Exact scientific design/evidence refs are in [the compact record](evidence/2026-11-18-fresh-current-policy-a39-twelve-cycle-baseline.json). Actual source adoption, pre-study protection result, per-cycle banks/contracts/owners, final delivery and deciding result remain **UNISSUED**. No public-before-compute claim is made until Root actually publishes the exact selected record.
+
+
+## Prospective engineering handoff addendum, November 18
+
+The first collection was already running when source inspection exposed a missing
+handoff artifact: `core_finite_collect.seal_readout` computes the complete sealed
+output inventory but discards the return value. Its readout embeds every retained
+row's validation metadata. Root cannot open that bulk readout or hash the roster
+payload. The unchanged data auditor requires a hash-pinned producer inventory in
+its protocol before launch, and the accepted-bank consumer authenticates that
+same protocol in the recorded owner command. Writing it late inside the auditor
+would violate that contract.
+
+Before any extra handoff owner, Root selects one bounded engineering projection
+per successfully closed collection, at most 12 owners of CPU 60 seconds each
+(inner 50 seconds), with no automatic retry. It reads the existing sealed producer
+metadata inside that owner, derives game inventory entries from the authenticated
+producer descriptors, hashes the named root JSON files, and reconciles canonical
+regular read-only file paths and recorded sizes against the complete output tree.
+It writes an external producer inventory and a compact summary with identities,
+counts and references, without row, history or roster contents. It does not open
+raw shard/NPZ/model payloads or construct arrays, models or encodings. Descriptor
+derivation is not independent payload verification: the original CPU 180-second
+data audit must still hash and reconcile the full actual output tree.
+
+These are necessary artifact-producing operations, not additional model tests or
+replacement collections. Reviewed source and actual closed-producer bindings,
+separate Root admission, current custody and a fresh resource check are required.
+A failed handoff stops this study under its existing engineering stop rule. All
+partial artifacts and costs remain recorded; no source or terminal bytes are
+changed and no extra game attempts are introduced.
+
+The original 63 scientific owners retain every selected bound, including CPU
+4,500 seconds and GPU 32,400 seconds. This addendum adds an explicit ceiling of
+720 CPU owner-wall seconds for up to 12 engineering handoffs: the combined F12
+ceiling is CPU 5,220 seconds and GPU 32,400 seconds, across at most 75 owners.
+Charge actual handoff costs separately and include them in all-in F12 and global
+costs. The week cutoff and global GPU ceiling remain unchanged. No unused CPU
+allowance authorizes GPU work or a recipe/horizon change.
+
+The original V4 method identity, publication-before-collection evidence, fixed
+2,304 attempts, actor progression, one presentation per original row, value blend,
+learning rate, seeds and final paired 800-game DEV endpoint remain unchanged.
+This operational addendum was selected while cycle 1 was running, before any F12
+training, arena, handoff owner or efficacy result. It does not establish an RL gain.
+
+
+### Subsequent audit-summary handoff correction
+
+The first unchanged CPU data audit subsequently closed PASS (session 66710,
+62.26493861700874 owner-wall seconds). Its sealed readout is 5,863,920 bytes and
+its candidate manifest is 5,606,141 bytes; Root observed their sizes without
+opening or hashing either file. The public CLI reports the candidate reference
+but omits the readout reference and compact deciding metadata. This exposes the
+same reporting gap at the audit boundary.
+
+Before any additional summary owner or F12 training/arena, Root selects one
+CPU 60-second operation (inner 50 seconds) to extract compact metadata from this
+already completed audit. It reads only the sealed audit protocol/specification,
+readout and candidate JSON, computes genuine references, and emits identities and
+counts without game inventories, histories, row details or payload contents. It
+preserves the existing audit and requires its actual closed owner; it does not
+repeat the data audit or promote the bank. Root and independent bank acceptance
+still follow the original consumer contract.
+
+For subsequent cycles, a separately reviewed private wrapper emits that compact
+summary after the unchanged public data audit runs once, within its existing
+CPU 180/170-second owner. Its actual command keeps the required public module and
+protocol suffix. The companion summary is written at a declared fresh external
+path after the audit seals its own output; public runtime/source, data and audit
+results remain unchanged. No additional per-cycle summary owner is selected.
+
+This explicitly adds one engineering owner and 60 CPU seconds to the earlier
+allowance: maximum engineering CPU 780 seconds, combined F12 CPU 5,280 seconds,
+and at most 76 owners. The prior 720/5,220/75 figures above record the earlier
+selection and are prospectively superseded by these combined ceilings. The
+original 63 scientific stage bounds and GPU 32,400-second ceiling remain fixed,
+as do all games, seeds, recipe, row quotas, endpoint and week cutoff. No automatic
+retry, extra collection or efficacy-based change is authorized. This correction
+was selected after a successful data audit and before any F12 training, arena or
+efficacy result; it is implementation readiness, not a failed or repeated audit.
