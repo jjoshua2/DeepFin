@@ -286,7 +286,7 @@ Current evidence correction and scale plan: [September 16 bootstrap audit](2026-
 
 - [BT4 run11 variable-batch scheduling opportunity](2026-09-27-bt4-batching-opportunity.md): fixed-wave tail, conditional rolling-call arithmetic, and 128-game A/B compatibility HOLD.
 
-- [2026-11-18 U2 fixed-union frozen-policy-anchor method and in-progress record](2026-11-18-fixed-union-policy-anchor-u2.md) - Local method/review frozen before launch; public record prepared after launch; first segment closed partial. Frozen-A39 legal forward KL1, outcome-only one-pass4032 source assets/405013 rows; two fixed800-game reused-panel development comparisons planned, no result or strength claim.
+- [2026-11-18 U2 fixed-union frozen-policy-anchor method and completed readout](2026-11-18-fixed-union-policy-anchor-u2.md) - Locally frozen KL1/outcome-only pass completed; public method record appeared after first launch. Fixed800-game reused-panel development scores49.75% vsF1 and45.375% vsA39; neither criterion passed, originalA39 retained. No demonstrated mitigation, fresh confirmation or general KL verdict.
 
 - [2026-11-18 V10 fixed-union small-search WDL preregistration](2026-11-18-fixed-union-small-search-v10.md) - Prospectively test90% outcome/10% retained-search WDL with KL0 on one405,013-row global-uniform pass, then two fixed800-game reused-panel development comparisons; U2 preserved/unlaunched, no execution authority issued.
 
