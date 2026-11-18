@@ -1,0 +1,305 @@
+{
+  "actual_costs_after_442": {
+    "all_U1_GPU_ceiling_seconds": 13214,
+    "all_U1_GPU_owner_wall_seconds": 10832.865230581025,
+    "all_prior_costs_failures_and_stops_preserved": true,
+    "closed_stage_count": 442,
+    "fresh_scope_GPU_ceiling_seconds": 10800,
+    "fresh_training_plus_all_playing_GPU_seconds": 8419.833520236076,
+    "global_CPU_owner_wall_seconds": 7267.442951110832,
+    "global_GPU_owner_wall_seconds": 103834.38945806609,
+    "global_counter_scope": "Root-reported post442 settled counters; GPU total also appears in authenticated post442 custody.",
+    "historical_failed_training_GPU_seconds": 2413.031710344949,
+    "leases_free": true,
+    "old_440_stop_and_cost_preserved": true,
+    "playing_CPU_reader_owner_wall_seconds": 42.618617585045286,
+    "total_playing_GPU_including_failed_440_seconds": 2805.3006687300513
+  },
+  "artifact_root_display": "~/chess-artifacts/operations/rl-week-one-20261112-v1",
+  "budget_preregistered_and_before_441": {
+    "all_U1_selected_ceiling_seconds": 13214,
+    "cutoff_UTC": "2026-11-19T16:09:20Z",
+    "explicit_increase_selected_before_438_seconds": 1214,
+    "failed_arena_GPU_actual_seconds": 4.411631898023188,
+    "fresh_method_playing_cap_seconds": 3600,
+    "fresh_method_total_cap_seconds": 10800,
+    "fresh_method_training_cap_seconds": 7200,
+    "fresh_training_GPU_actual_seconds": 5614.532851506025,
+    "fresh_training_and_playing_original_aggregate_max_seconds": 10800,
+    "global_GPU_actual_before_seconds": 101033.50042123406,
+    "global_GPU_cap_seconds": 172800,
+    "global_GPU_ceiling_seconds": 172800,
+    "historic_failed_training_GPU_actual_seconds": 2413.031710344949,
+    "historical_failed_training_GPU_seconds": 2413.031710344949,
+    "new_all_U1_cap_seconds": 13214,
+    "new_arena_GPU_outer_seconds": 3600,
+    "old_all_U1_cap_seconds": 12000
+  },
+  "closed_CPU_439_delivery": {
+    "Root_status": "ROOT_ACCEPTS_CLOSED_U1_FULL_PASS_MODEL_DELIVERY_V1",
+    "checkpoint_decodes": 0,
+    "distinction": "Zero CPU439 checkpoint decodes does not imply zero saved-payload verification inside the learner.",
+    "forwards": 0,
+    "independent_status": "ACCEPT_CLOSED_U1_FULL_PASS_MODEL_DELIVERY_NO_FINDINGS_V1",
+    "model_constructions": 0,
+    "owner_wall_seconds": 20.12908593402244,
+    "public_consumer_calls": 1,
+    "raw_journal_reads": 0,
+    "row_draws": 0
+  },
+  "efficacy": {
+    "D": 310,
+    "L": 278,
+    "W": 212,
+    "candidate_point": 0.45875,
+    "closed_reader_reference": {
+      "path": "historical-selfplay-uniform-once-U1-fresh-full-pass-final-vs-A39-800DEV-recovery-bindings-v2/reader.root-acceptance.json",
+      "sha256": "5d71df7991eebe79be54ebb97b694be6dbd33e04e903df0e66e961a4ee410209"
+    },
+    "criterion_pass": false,
+    "fresh_confirmation": false,
+    "frozen_verdict": "NO_DEVELOPMENT_DONOR_ADVANTAGE_SELECTION",
+    "frozen_verdict_reference": {
+      "path": "historical-selfplay-uniform-once-U1-fresh-full-pass-final-vs-A39-800DEV-recovery-bindings-v2/verdict.json",
+      "sha256": "3eb5e25282933aebb74b98cf262220e01ec766e41f4427ea0c19b0f084d6f722"
+    },
+    "games": 800,
+    "independent_reader_acceptance": {
+      "path": "historical-selfplay-uniform-once-U1-fresh-full-pass-final-vs-A39-800DEV-recovery-bindings-v2/reader.independent-review.json",
+      "sha256": "727d0a7b8788c317473b9fa20bbeb0af8ebc3ab1432067e0de70b24aa8398a81"
+    },
+    "interpretation": "Conditional development regression against retained A39 under this profile/panel/seed. A39 retained. No confirmatory negative, head-cause, causal sampler-only, optimum recipe, all-methods-bad, adoption or external milestone claim.",
+    "paired_bins_0_0p25_0p5_0p75_1": [
+      41,
+      118,
+      128,
+      92,
+      21
+    ],
+    "paired_normal_95_CI": [
+      0.43281496561074323,
+      0.48468503438925675
+    ],
+    "pairs": 400,
+    "pooling_or_optional_extension": false,
+    "rule": "Descriptive available paired-normal95 lower>0.5; pair variance divisor399; zero variance unavailable cannot pass.",
+    "sample_variance_divisor_399": 0.07003602756892231,
+    "status": "COMPLETE_ACCEPTED_FIXED_ENDPOINT"
+  },
+  "exposure": {
+    "F1_presentations_per_stored_row": 1,
+    "failed_lineages_ledgers_and_costs_preserved": true,
+    "failed_prefix_plus_F1_max_presentations_per_selected_stored_row": 2,
+    "global_unseen_claim": false,
+    "historical_pretraining_excluded_from_this_two_attempt_bound": true,
+    "natural_board_or_opening_deduplication": false,
+    "original_mirror_share_one_presentation": true
+  },
+  "failed_437": {
+    "GPU_owner_wall_seconds": 2072.8282901369967,
+    "counter_scope": "Compact owned-failure report, not a qualified saved endpoint; tainted ledger and failed lineage preserved.",
+    "entry_reported_completed_optimizer_calls": 3735,
+    "entry_reported_drawn_rows": 119520,
+    "saved_checkpoint_or_boundary": false
+  },
+  "failed_440": {
+    "GPU_owner_wall_seconds": 4.411631898023188,
+    "original_exception_masked": true,
+    "original_stop_and_cost_preserved": true,
+    "playing_output_or_arena_execute_reached": false,
+    "sufficient_static_startup_blocker": "profile.design old4b392 != actual fresh57a363 at common.start before output-directory creation and arena execution"
+  },
+  "fresh_F1": {
+    "LR": 3e-06,
+    "applied_updates": 12657,
+    "applied_views": 405013,
+    "batch_size": 32,
+    "bootstrap": "A39 model only; fresh NAdamW/scheduler/scaler/RNG; no failed learned-state transfer",
+    "extra_WDL_blend_selected": false,
+    "model_seed": 2026111780,
+    "order_seed": 2026111777,
+    "original_model_seed": 2026111776,
+    "policy_anchor_coefficient": 0,
+    "priority": false,
+    "sources": 4032,
+    "study_uuid": "8c60e283-2158-4359-a96b-1a07330e9797",
+    "tail_objective_scale": "21/32",
+    "tail_real_rows": 21,
+    "training_GPU_owner_wall_seconds": 5614.532851506025
+  },
+  "limits": [
+    "One disclosed fresh student/seed under a heterogeneous historical population; no causal sampler-only attribution.",
+    "Consumed panel reused as DEVELOPMENT; prior S0 NONCONFIRM/results remain separate and unpooled.",
+    "A39 retained; no new recipe/coefficient, training authority, adoption, protected-panel access or external strength milestone.",
+    "Draft author used named compact metadata and ordinary docs/source only; no raw games/models/books/journals/compiled manifest/native payloads or duplicate numerical reader."
+  ],
+  "model": {
+    "checkpoint_reference_only": {
+      "path": "historical-selfplay-uniform-once-U1-fresh-full-pass-GPU-results-v1/learner/learner.pt",
+      "sha256": "b98a7e6ca84391f2dec80cca6c577235082c4951c3a9c3e6da9fc2a702cb0d84"
+    },
+    "extra_forwards": 0,
+    "input_planes": 175,
+    "key_shape_dtype_sha256": "0ee887deb126cc0fd9857f8f8e38bab067d983e6f125903f387ddd6c2ca1a524",
+    "own_live_observed_calls": {
+      "forward": 12657,
+      "optimizer_post": 12657,
+      "optimizer_pre": 12657,
+      "save": 1
+    },
+    "save_before_equals_after": true,
+    "state_entries": 494,
+    "typed_model_state_sha256": "ecddbcf569a90ceab8c8b27cfa3b2fce33a2d7b594885bf188492de0b31fbf33",
+    "unique_parameters": 61444448
+  },
+  "playing_441": {
+    "CPU_seconds_within_GPU_owner": 2883.75,
+    "GPU_owner_wall_seconds": 2800.889036832028,
+    "games": 800,
+    "new_GPU_scope_seconds": 3600,
+    "old_owner_inheritance": false,
+    "phase": "fixed800 DEVELOPMENT on previously consumed CONFIRM_C_A39 panel",
+    "reciprocal_pairs": 400,
+    "same_models_profile_and_scientific_rule": true,
+    "seed": 2026111778,
+    "status": "PASS_CLOSED_AND_INDEPENDENTLY_ACCEPTED"
+  },
+  "reader_442": {
+    "CPU_owner_wall_seconds": 42.618617585045286,
+    "CPU_seconds": 39.03,
+    "all_game_rows_reconciled": true,
+    "controls_failed": 0,
+    "controls_passed": 16,
+    "illegal_or_crashed_games": 0,
+    "incomplete_pairs": 0,
+    "models_loaded": 0,
+    "status": "PASS_CLOSED_AND_INDEPENDENTLY_ACCEPTED"
+  },
+  "receipts": {
+    "GPU_441_Root": {
+      "path": "historical-selfplay-uniform-once-U1-fresh-full-pass-final-vs-A39-800DEV-recovery-bindings-v2/gpu.root-acceptance.json",
+      "sha256": "e8d69b2d0c3d57ae85372f4bcc8551da659fd9253b368605b80270e972561971"
+    },
+    "GPU_441_independent": {
+      "path": "historical-selfplay-uniform-once-U1-fresh-full-pass-final-vs-A39-800DEV-recovery-bindings-v2/gpu.independent-review.json",
+      "sha256": "0bb14af76d8d39d3f9685598d4b7228c5c5eceb16aa3b7994059076c7aa4f443"
+    },
+    "GPU_441_terminal": {
+      "path": "historical-selfplay-uniform-once-U1-fresh-full-pass-final-vs-A39-800DEV-recovery-GPU-v2/terminal.json",
+      "sha256": "ab5e3fffc4182f0063e762467c73d54874fabad0ac011b6183862988e143a9d1"
+    },
+    "GPU_source_review": {
+      "path": "historical-selfplay-uniform-once-U1-playing-GPU-independent-source-review-v3/review.json",
+      "sha256": "132812f81ceb9a020593f1a0c7298bb200a4ab262658c6a208ba9fcf2b3af93a"
+    },
+    "Root_controller_review": {
+      "path": "historical-selfplay-uniform-once-U1-playing-root-admission-independent-source-review-v5/review.json",
+      "sha256": "0ab2062395524ed2f0f36e6da3279967a5f1c67ddbaf7e8fae91d8ad0a2b4418"
+    },
+    "accepted_reader_summary": {
+      "path": "historical-selfplay-uniform-once-U1-fresh-full-pass-final-vs-A39-800DEV-recovery-reader-results-v2/summary.json",
+      "sha256": "b4e8989ae569344bd1ab58045387b3912a1c69ab7a44347af7c074a314761e11"
+    },
+    "corrected_playing_source": {
+      "path": "historical-selfplay-uniform-once-U1-playing-source-preparation-v3-corrected-v1/manifest.json",
+      "sha256": "326edd5cbe4a05ba031ba94dff7a8e626c16eba7cbe95ca976a3be6018f2dcb8"
+    },
+    "delivery_439_readout": {
+      "path": "historical-selfplay-uniform-once-U1-fresh-full-pass-final-delivery-CPU-results-v1/readout.json",
+      "sha256": "3cbfc1cd360efe64f185f2f272a1a42a7411e3316dad64ae3421d0a32b50b2f1"
+    },
+    "delivery_439_terminal": {
+      "path": "historical-selfplay-uniform-once-U1-fresh-full-pass-final-delivery-CPU-execution-v1/terminal.json",
+      "sha256": "65dfbf51e736f9ffb6e82037ae7afa7abe93fdcbc2c7aad1b164eb9e0b652edc"
+    },
+    "delivery_Root": {
+      "path": "historical-selfplay-uniform-once-U1-fresh-full-pass-final-delivery-CPU-bindings-v1/root-model-delivery.json",
+      "sha256": "a59d8152ea37115ed421c4ef5c1b71d0793394bc9132d020d062eebd89d5b618"
+    },
+    "delivery_independent": {
+      "path": "historical-selfplay-uniform-once-U1-fresh-full-pass-final-delivery-CPU-bindings-v1/independent-model-delivery.json",
+      "sha256": "4cd0a5bc96d8338ff4fa789d6c83cd455f08096d406b882121cdc02e974ac0a9"
+    },
+    "exposure_accounting": {
+      "path": "historical-selfplay-uniform-once-U1-fresh-full-pass-bindings-v1/exposure-accounting.json",
+      "sha256": "66ceb72b95b3b3151fa12a2b43c42e94a74b0c94f59e77a60cd53c82b50ddfa4"
+    },
+    "failed_437_closure": {
+      "path": "historical-selfplay-uniform-once-U1-recovery-learn-segment-01-bindings-v1/root-failed-timeout-closure.json",
+      "sha256": "d6a4478f511e8202bfb3dd37e9efd4558e5a5146eaa5e86d101006b810b337d7"
+    },
+    "failed_437_counter_addendum": {
+      "path": "historical-selfplay-uniform-once-U1-recovery-learn-segment-01-bindings-v1/root-timeout-counter-addendum.json",
+      "sha256": "83811e08bec4e7ae336f6c8d03870d27353fba338c0ca70f6da3fa8ab6e6c0de"
+    },
+    "failed_440_closure": {
+      "path": "historical-selfplay-uniform-once-U1-fresh-full-pass-final-vs-A39-800DEV-bindings-v1/gpu.closed-custody.json",
+      "sha256": "2a3d2dc8e3dd85ed667e1517ebc32ffa53e5ddf633abf45ace29ede2144b9a95"
+    },
+    "failed_440_diagnosis": {
+      "path": "historical-selfplay-uniform-once-U1-playing-startup-profile-failure-independent-diagnosis-v1/review.json",
+      "sha256": "4a1f6ee120908f0f609c84062f0210648908787bd9d8cb67efc9c675c7c11b16"
+    },
+    "failed_440_terminal": {
+      "path": "historical-selfplay-uniform-once-U1-fresh-full-pass-final-vs-A39-800DEV-GPU-v1/terminal.json",
+      "sha256": "241e252c2f86e13f71da4ed162aae39de1df7f2ed84e9e0ce21041fc2be90c99"
+    },
+    "fresh_method": {
+      "path": "historical-selfplay-uniform-once-U1-single-process-fresh-method-v1/design.json",
+      "sha256": "57a3635ecffd1e0a18391759ee6f93bb7b9170ebd81fa651319a2b19c0fd3ed2"
+    },
+    "fresh_method_review": {
+      "path": "historical-selfplay-uniform-once-U1-single-process-fresh-method-independent-review-v1/review.json",
+      "sha256": "05058d4689820e801bae5bad8d57bf85028de5713174084711c2b53eb8206c38"
+    },
+    "frozen_verdict": {
+      "path": "historical-selfplay-uniform-once-U1-fresh-full-pass-final-vs-A39-800DEV-recovery-bindings-v2/verdict.json",
+      "sha256": "3eb5e25282933aebb74b98cf262220e01ec766e41f4427ea0c19b0f084d6f722"
+    },
+    "operational_decision": {
+      "path": "historical-selfplay-uniform-once-U1-playing-operational-recovery-v2/decision.json",
+      "sha256": "9b80b16d19251c4ea62d6ba74a15bc3b64dd4fb13921e86bdb830937958867ae"
+    },
+    "post_442_custody": {
+      "path": "historical-selfplay-uniform-once-U1-fresh-full-pass-final-vs-A39-800DEV-recovery-bindings-v2/reader.post-closure-custody.json",
+      "sha256": "7512dc16d596f3dceba231700b39e5fe77e52cec9b77f770393fd1cc1b71a3cb"
+    },
+    "reader_442_Root": {
+      "path": "historical-selfplay-uniform-once-U1-fresh-full-pass-final-vs-A39-800DEV-recovery-bindings-v2/reader.root-acceptance.json",
+      "sha256": "5d71df7991eebe79be54ebb97b694be6dbd33e04e903df0e66e961a4ee410209"
+    },
+    "reader_442_independent": {
+      "path": "historical-selfplay-uniform-once-U1-fresh-full-pass-final-vs-A39-800DEV-recovery-bindings-v2/reader.independent-review.json",
+      "sha256": "727d0a7b8788c317473b9fa20bbeb0af8ebc3ab1432067e0de70b24aa8398a81"
+    },
+    "reader_442_terminal": {
+      "path": "historical-selfplay-uniform-once-U1-fresh-full-pass-final-vs-A39-800DEV-recovery-reader-CPU-v2/terminal.json",
+      "sha256": "32dd8f41ef034de27999a04689de0d29180bccb97fa716a85abc03931d93163e"
+    },
+    "reader_source_review": {
+      "path": "historical-selfplay-uniform-once-U1-playing-reader-independent-source-review-v3/review.json",
+      "sha256": "e10e6745800ea45941bd96bd1e3c650560e262f97c6fdd8e1c26b1ff18204443"
+    },
+    "recovery_scope": {
+      "path": "historical-selfplay-uniform-once-U1-playing-operational-recovery-v2/scope.json",
+      "sha256": "0a2d1998b8a292d7e3fe7103d7b354817990e738ffe6def9e56e110a2ce2229e"
+    },
+    "training_438_boundary": {
+      "path": "historical-selfplay-uniform-once-U1-fresh-full-pass-GPU-results-v1/learner/boundary.json",
+      "sha256": "32500bcc50596728ef39a88d02e896f6489082a4cd0f5d3b2773d1d0ea9934ec"
+    },
+    "training_438_terminal": {
+      "path": "historical-selfplay-uniform-once-U1-fresh-full-pass-GPU-v1/terminal.json",
+      "sha256": "1421d10a561b8c7e83e660b8c84ddc09030b3b1935bd1f1dcb5c088af4c897b8"
+    }
+  },
+  "reference_convention": "Receipt paths are relative to this display root and name original immutable records; these documentation references are not executable admission inputs.",
+  "schema": "U1_FULL_PASS_DELIVERY_AND_FIXED800_DEVELOPMENT_READOUT_V1",
+  "source_Main": {
+    "commit": "7c36ab65d281db2a7b48eedabafb1329c2a37da4",
+    "record_git_blob": "262b36b717c71b3d99c015ec95f53aaede0045d1",
+    "record_path": "docs/experiments/2026-11-17-historical-selfplay-uniform-once.md",
+    "record_sha256": "e25ba382d5a6ad78e1623a630f26e7347a9abc48c2a74d7d7ca31e55041952dc"
+  },
+  "status": "COMPLETE_ACCEPTED_FIXED800_DEVELOPMENT_NO_DONOR_ADVANTAGE_SELECTION"
+}

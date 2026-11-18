@@ -286,7 +286,7 @@ Current evidence correction and scale plan: [September 16 bootstrap audit](2026-
 
 - [BT4 run11 variable-batch scheduling opportunity](2026-09-27-bt4-batching-opportunity.md): fixed-wave tail, conditional rolling-call arithmetic, and 128-game A/B compatibility HOLD.
 
-- [2026-11-17 U1 historical self-play uniform-once preregistration](2026-11-17-historical-selfplay-uniform-once.md) - Select one fresh A39 student and one uniform pass over the recorded4,032-game/405,013-row union, then a fixed800-game reused-panel development comparison; source/data/runtime and phase admission pending.
+- [2026-11-17 U1 historical self-play uniform-once preregistration and readout](2026-11-17-historical-selfplay-uniform-once.md) - Fresh F1 completed405,013 views/12,657 updates; accepted fixed800 reused-panel DEVELOPMENT:212W/310D/278L,45.875% (paired95% CI43.28–48.47%); no donor-advantage selection, A39 retained; prior failures/costs preserved.
 
 - [2026-11-17 D2 matched short-horizon policy-anchor controls](2026-11-17-short-horizon-policy-anchor-controls.md#november-17-completed-six-edge-readout) - Six accepted160-game screens selected S0 (55.9375% vsA39;57.5% vsL0); separate800-game confirmation scored48.75% and did not confirm donor advantage. A39 retained; no adoption or external strength claim.
 
