@@ -91,7 +91,7 @@ def actor_fixture(tmp_path: Path, *, family: str = "global_union", architecture:
     actor = {"kind": bridge.KIND, **checkpoint, "expected_checkpoint_step": 2, "architecture": arch,
              "predecessor": binding, "lineage": {"schema": bridge.SCHEMA, "family": family,
              "delivery": {"root": rref, "independent": iref}}}
-    payload = {"model": state, selected["tag"]: tag, "arch": arch, "step": 2}
+    payload: dict[str, Any] = {"model": state, selected["tag"]: tag, "arch": arch, "step": 2}
     if family == "policy_anchor":
         payload["frozen_reference_policy_anchor_v1"] = c["policy_anchor"]
     return actor, payload

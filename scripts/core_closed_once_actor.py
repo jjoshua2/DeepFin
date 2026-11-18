@@ -6,7 +6,7 @@ are checked later, by the collector's existing single real load/build path.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from scripts import core_finite_learner as core
 
@@ -60,6 +60,7 @@ def closed_delivery(lineage: dict[str, Any]) -> dict[str, Any]:
     family = FAMILIES[lineage["family"]]
     pair = lineage["delivery"]
     core.require(type(pair) is dict and set(pair) == {"root", "independent"}, "closed once actor delivery pair")
+    pair = cast(dict[str, Any], pair)
     root, independent = read(pair["root"]), read(pair["independent"])
     core.require(set(root) == ROOT_FIELDS and set(independent) == ROOT_FIELDS | {"root_acceptance", "findings"}
                  and root["status"] in family["deliveries"]
@@ -88,6 +89,7 @@ def closed_delivery(lineage: dict[str, Any]) -> dict[str, Any]:
                  and core.external(root["boundary"]["path"]) == output / "boundary.json"
                  and not core.failure_marker(output).exists() and not (output / "boundary.pending.json").exists(),
                  "closed once actor closed boundary binding")
+    binding = cast(dict[str, Any], binding)
     terminal = read(binding["owner_terminal"])
     suffix = ["-m", family["module"], "--contract", root["contract"]["path"],
               "--contract-sha256", root["contract"]["sha256"], "--stage", boundary["stage"]["path"],
