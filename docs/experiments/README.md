@@ -301,3 +301,5 @@ Current evidence correction and scale plan: [September 16 bootstrap audit](2026-
 - [2026-11-17 D2 metadata qualification recovery](2026-11-17-d2-metadata-qualification-recovery.md) - Closed: original and one bounded recovery metadata qualification both FAILED;45 local software cases and partial4+2+2 API reports do not complete the metadata qualification. All411 owners closed, costs charged; no D2 playing results or automatic retry. Path-normalized deployment-specific excerpt; not standalone.
 
 - [2026-11-17 D2 retained-model metadata correction](2026-11-17-d2-retained-model-metadata-correction.md) - Prospective: genuine saved-only L0 compatibility fix and one separately admittedCPU290/260 qualification within original cumulative ceilings; both failed stops/costs retained, no new playing result or execution authority.
+
+- [2026-11-18: Fresh current-policy A39 twelve-cycle baseline](2026-11-18-fresh-current-policy-a39-twelve-cycle-baseline.md) — proposed fixed12×192-game current-actor loop, B256/LR3e-6/search.1/KL0, first2 engineering condition and one final800-game reused-DEV A39 test; source/admission/results unissued.
