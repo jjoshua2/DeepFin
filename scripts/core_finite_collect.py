@@ -470,6 +470,12 @@ def _source_guard(protocol: dict[str, Any], *, holdout: bool) -> dict[str, Any]:
                 'incomplete closed once actor source fingerprint')
         require(Path(closed_actor.__file__).resolve() == repo / 'scripts/core_closed_once_actor.py',
                 'foreign closed once actor bridge')
+        if protocol['actor']['lineage']['family'] == 'capped_cycle':
+            from scripts import core_capped_on_policy_cycle as cycle
+
+            require(set(cycle.SOURCE_FILES) <= set(source['sha256'])
+                    and Path(cycle.__file__).resolve() == repo / 'scripts/core_capped_on_policy_cycle.py',
+                    'incomplete or foreign capped cycle actor source closure')
         closed_actor.validate_actor(protocol['actor'])  # Recheck before/after collection; no extra model load.
     if isinstance(protocol.get('exclusions', {}).get('prior'), dict) and 'schema' in protocol['exclusions']['prior']:
         require('scripts/core_exclusion_index.py' in source['sha256'], 'incomplete chunked exclusion source fingerprint')
