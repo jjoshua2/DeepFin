@@ -420,7 +420,7 @@ def _execute(protocol_ref: dict[str, str], *, data_only: bool, holdout: bool = F
             helper = "scripts/core_exclusion_index.py"
             require(helper in contract["source_files"] and contract["source_files"][helper] == producer["source"]["sha256"].get(helper),
                     "missing or mismatched chunked exclusion audit source pin")
-        require(data_only or producer["actor"]["kind"] not in ("bank_learner", collection.ANCHOR_BANK_KIND), "bank learner actor requires recipe-independent data audit")
+        require(data_only or producer["actor"]["kind"] not in ("bank_learner", collection.ANCHOR_BANK_KIND, "closed_once_learner"), "bank learner actor requires recipe-independent data audit")
         if data_only:
             data_producer_identity(contract, producer)
         require(contract["run_uuid"] == producer["run_uuid"] and contract["source_revision"] == producer["source"]["revision"]
@@ -482,6 +482,19 @@ def _execute(protocol_ref: dict[str, str], *, data_only: bool, holdout: bool = F
                     and canonical(serving.get("actor_lineage")) == canonical(actor["lineage"])
                     and canonical(serving.get("policy_anchor_bank_tag" if actor["kind"] == collection.ANCHOR_BANK_KIND else "bank_learner_tag")) == canonical(collection.bank_lineage_identity(actor))
                     and serving.get("predecessor_boundary") == actor["predecessor"]["boundary"], "bank actor serving lineage differs")
+        elif producer["actor"]["kind"] == "closed_once_learner":
+            from scripts import core_closed_once_actor as closed_actor
+
+            actor = producer["actor"]
+            name = "scripts/core_closed_once_actor.py"
+            require(name in contract["source_files"] and contract["source_files"][name] == producer["source"]["sha256"].get(name),
+                    "missing or mismatched closed once actor audit source pin")
+            selected_model = closed_actor.validate_actor(actor)["model"]
+            require(serving.get("actor_kind") == closed_actor.KIND
+                    and serving.get("closed_once_actor_lineage") == actor["lineage"]
+                    and serving.get("predecessor_boundary") == actor["predecessor"]["boundary"]
+                    and serving.get("closed_once_model_state_sha256") == selected_model["model_state_sha256"],
+                    "closed once actor serving lineage differs")
         actor = learning.external(producer["actor"]["path"])
         require(learning.file_sha(actor) == producer["actor"]["sha256"] and collection.file_stamp(actor) == serving["checkpoint_stat"], "actor file changed")
         _, lifecycle = learning.read_ref(ref(producer_root / "stockfish-lifecycle.json"))

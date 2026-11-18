@@ -399,11 +399,15 @@ def _validate_protocol(protocol: dict[str, Any], roster: list[dict[str, Any]], *
         require(type(protocol[key]) is int and protocol[key] >= (0 if key == 'seed' else 1), 'invalid integer: ' + key)
     require(protocol['concurrent_slots'] <= protocol['attempts'] == len(roster), 'roster/attempt/slot count differs')
     actor = protocol['actor']
-    require(actor['kind'] in ('donor', 'learner', 'bank_learner', ANCHOR_BANK_KIND) and type(actor['expected_checkpoint_step']) is int and
+    require(actor['kind'] in ('donor', 'learner', 'bank_learner', ANCHOR_BANK_KIND, 'closed_once_learner') and type(actor['expected_checkpoint_step']) is int and
             actor['expected_checkpoint_step'] >= 0 and len(actor['sha256']) == 64, 'actor identity contract')
     require(actor['architecture']['_schema_version'] == 20 and
             actor['architecture']['input_extra_features'] == 'v2_threats', 'full A39 architecture contract required')
-    if actor['kind'] in ('bank_learner', ANCHOR_BANK_KIND):
+    if actor['kind'] == 'closed_once_learner':
+        from scripts.core_closed_once_actor import validate_actor
+
+        validate_actor(actor)
+    elif actor['kind'] in ('bank_learner', ANCHOR_BANK_KIND):
         closed_bank_predecessor(protocol)
     elif protocol['generation'] == 1:
         require(actor['kind'] == 'donor' and actor['sha256'] == INITIAL_DONOR_SHA256 and
@@ -458,6 +462,15 @@ def _source_guard(protocol: dict[str, Any], *, holdout: bool) -> dict[str, Any]:
                 'incomplete HOLDOUT source fingerprint')
     if protocol['actor']['kind'] == ANCHOR_BANK_KIND:
         require('chess_anti_engine/policy_anchor_spec.py' in source['sha256'], 'incomplete source fingerprint')
+    if protocol['actor']['kind'] == 'closed_once_learner':
+        from scripts import core_closed_once_actor as closed_actor
+
+        require({'scripts/core_closed_once_actor.py', 'scripts/core_finite_learner.py',
+                 'scripts/core_selfplay_union_stored_row_once_proof.py'} <= set(source['sha256']),
+                'incomplete closed once actor source fingerprint')
+        require(Path(closed_actor.__file__).resolve() == repo / 'scripts/core_closed_once_actor.py',
+                'foreign closed once actor bridge')
+        closed_actor.validate_actor(protocol['actor'])  # Recheck before/after collection; no extra model load.
     if isinstance(protocol.get('exclusions', {}).get('prior'), dict) and 'schema' in protocol['exclusions']['prior']:
         require('scripts/core_exclusion_index.py' in source['sha256'], 'incomplete chunked exclusion source fingerprint')
     for relative, expected in source['sha256'].items():
@@ -611,6 +624,10 @@ def load_actor(protocol: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
     actor = protocol['actor']
     if actor['kind'] in ('bank_learner', ANCHOR_BANK_KIND):
         closed_bank_predecessor(protocol)
+    elif actor['kind'] == 'closed_once_learner':
+        from scripts.core_closed_once_actor import validate_actor
+
+        validate_actor(actor)
     path = Path(actor['path'])
     before = path.lstat()
     before_stamp = file_stamp(path)
@@ -636,6 +653,12 @@ def load_actor(protocol: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
             if anchored:
                 require(canonical(payload.get('frozen_reference_policy_anchor_v1')) == canonical(actor['lineage']['policy_anchor']), 'loaded reference identity differs')
             observed.update({('policy_anchor_bank_tag' if anchored else 'bank_learner_tag'): tag}, actor_lineage=actor['lineage'], predecessor_boundary=actor['predecessor']['boundary'])
+        elif actor['kind'] == 'closed_once_learner':
+            from scripts.core_closed_once_actor import validate_payload
+
+            actual_typed_hash = validate_payload(actor, payload, torch)
+            observed.update(closed_once_actor_lineage=actor['lineage'], closed_once_model_state_sha256=actual_typed_hash,
+                            predecessor_boundary=actor['predecessor']['boundary'])
         observed.update(checkpoint_step=payload['step'], checkpoint_model_state_sha256=state_sha256(payload['model']))
         return payload
 
