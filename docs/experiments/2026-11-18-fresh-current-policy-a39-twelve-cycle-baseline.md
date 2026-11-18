@@ -96,3 +96,39 @@ The original V4 method identity, publication-before-collection evidence, fixed
 learning rate, seeds and final paired 800-game DEV endpoint remain unchanged.
 This operational addendum was selected while cycle 1 was running, before any F12
 training, arena, handoff owner or efficacy result. It does not establish an RL gain.
+
+
+### Subsequent audit-summary handoff correction
+
+The first unchanged CPU data audit subsequently closed PASS (session 66710,
+62.26493861700874 owner-wall seconds). Its sealed readout is 5,863,920 bytes and
+its candidate manifest is 5,606,141 bytes; Root observed their sizes without
+opening or hashing either file. The public CLI reports the candidate reference
+but omits the readout reference and compact deciding metadata. This exposes the
+same reporting gap at the audit boundary.
+
+Before any additional summary owner or F12 training/arena, Root selects one
+CPU 60-second operation (inner 50 seconds) to extract compact metadata from this
+already completed audit. It reads only the sealed audit protocol/specification,
+readout and candidate JSON, computes genuine references, and emits identities and
+counts without game inventories, histories, row details or payload contents. It
+preserves the existing audit and requires its actual closed owner; it does not
+repeat the data audit or promote the bank. Root and independent bank acceptance
+still follow the original consumer contract.
+
+For subsequent cycles, a separately reviewed private wrapper emits that compact
+summary after the unchanged public data audit runs once, within its existing
+CPU 180/170-second owner. Its actual command keeps the required public module and
+protocol suffix. The companion summary is written at a declared fresh external
+path after the audit seals its own output; public runtime/source, data and audit
+results remain unchanged. No additional per-cycle summary owner is selected.
+
+This explicitly adds one engineering owner and 60 CPU seconds to the earlier
+allowance: maximum engineering CPU 780 seconds, combined F12 CPU 5,280 seconds,
+and at most 76 owners. The prior 720/5,220/75 figures above record the earlier
+selection and are prospectively superseded by these combined ceilings. The
+original 63 scientific stage bounds and GPU 32,400-second ceiling remain fixed,
+as do all games, seeds, recipe, row quotas, endpoint and week cutoff. No automatic
+retry, extra collection or efficacy-based change is authorized. This correction
+was selected after a successful data audit and before any F12 training, arena or
+efficacy result; it is implementation readiness, not a failed or repeated audit.
