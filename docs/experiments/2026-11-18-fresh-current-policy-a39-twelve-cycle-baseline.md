@@ -192,3 +192,81 @@ scientific recipe, horizon, seeds, exact-once row quota and sole final paired
 800-game reused-DEVELOPMENT endpoint remain unchanged. No interim strength result
 or efficacy-based decision motivated this exception, and A39 is not promoted or
 replaced by this operational record.
+
+
+## User-requested M3 and M6 descriptive evaluations — prospective amendment
+
+After M3 was saved and before any interim evaluation, the user requested two
+400-game views against the same original A39, while retaining the final
+800-game M12 endpoint. This changes the prospective evaluation schedule,
+not the fixed12-cycle training recipe, data/order/dose, optimizer, source or
+horizon. The original prohibition on pre-M12 efficacy reads is superseded
+only for these registered descriptive endpoints; the original record remains
+visible above. Healthy jobs continue to their natural boundaries.
+
+|Checkpoint|Games / color pairs|Opening selection|Role|GPU cap / inner|Reader cap / inner|
+|---|---:|---|---|---:|---:|
+|M3|400 /200|First200 of the original400 pairs|Descriptive only|1800 /1770s|120 /110s|
+|M6|400 /200|The same first200 pairs|Descriptive only|1800 /1770s|120 /110s|
+|M12|800 /400|Original full400 pairs|Original final screen|3600 /3570s|120 /110s|
+
+All edges use fixed A39, seed2026111999 and the same frozen T playing profile:
+Gumbel64, noise, scale0.75/c0.1/topk16/policyT1/gameT0.1, full16 history,
+strict3–6man/rule50 TB, eager BF16/F32, rolling32/eval1024/slots2/no padding
+and CPU2. The panel has already been consumed as DEVELOPMENT. The owned
+wrapper must authenticate/load the full400-role order and take exactly
+`[:200]`; requesting200 directly from the oversize public loader can sample
+instead. The final full400-pair path remains unchanged.
+
+M3 is the immutable cycle3 model at step223 (accepted Root57240/inde1897);
+its checkpoint is `cc6bc2cf…`, typed model state `f2011177…`. M6 and M12
+require their genuine future cycle6/cycle12 deliveries; no future hash,
+checkpoint choice or step is invented. The intended M3 view is after healthy
+C4 closes, before C5 if source/readiness permits. M6 follows its accepted
+delivery. No interim score changes the recipe, horizon or training sequence.
+
+Interims report paired point/normal95 with n200, variance divisor199 and
+z1.96, with `descriptive_only` and criterion false. Final inference keeps
+n400/divisor399/z1.96 and the original available-lower95>0.5 screen; a
+zero-variance interval stays unavailable. These nested repeated-panel views
+are correlated and pointwise, without pooling or multiplicity claims. Each
+GPU must close with genuine technical Root/independent acceptance before
+its owned reader; actual M6/M12 receipts are not prerequisites for M3.
+
+Existing readers also report the conditional Elo-equivalent difference
+against fixed A39: `400 log10(score/(1-score))`, with the same monotone
+paired-CI transform. This is not an external rating. Boundary/unavailable
+values use null plus explicit flags, never NaN/Infinity. No daily-rate
+calculation or forecast is selected from short/noisy correlated snapshots.
+
+The user's goal is rapid, sustained clear improvement toward Stockfish.
+The approximately +100 Elo/day figure was a personal made-up estimate, not
+a measured AlphaZero result or a hard numerical gate. It is not an automatic
+pass/fail, stop or adaptation rule, nor an observed or guaranteed rate.
+Technical completion, an interim score, or even a positive reused-DEV final
+screen does not establish achievement of that broader goal.
+
+The versioned GPU scope retains the same family UUID, original creation time
+and all26 old names/costs, including failed477 and its manual recovery, then
+adds exactly the two interim1800-second names. New endpoint authority is
+prospective; the old scope timestamp does not backdate it. GPU32400,
+global172800 and the Nov19 16:09:20UTC cutoff remain. Two reader owners add
+240scientificCPU seconds: science4500→4740, all-in5280→5520, maxowners77→81.
+Engineering780 is unchanged. No extra training, collection, protection,
+model-delivery or qualification owner is added; no retry is selected.
+
+Actual485-owner snapshot charged3583.644023771165F12GPU seconds. Including
+C4's full unclosed cap, all remaining9collect/9learn/final/interim full caps
+would total32383.644023771165F12GPU seconds, within32400; actual costs are
+never reset. F12 chronology starts with its first scientific protection
+owner465 at14:03:11.497911UTC; M3's saved-owner end is17:44:43.132243UTC.
+These are current-study timestamps only: Nov12week-one prior negative
+results, costs, engineering and calendar history remain, and cannot be
+hidden to claim a daily gain. M6/M12 timestamps remain actual future facts.
+
+The amendment requires independent review, public record and actual Root
+selection/source/binding checks before any new interim clock. Healthy C4's
+previously admitted scope is retained. Existing technical/data/resource
+stops and A39 retention remain; no automatic Goal-complete or promotion is
+authorized by a descriptive or positive DEV result. Full named receipts
+and limits are in the [compact evidence](evidence/2026-11-18-f12-user-requested-interim-evaluation-amendment.json).
