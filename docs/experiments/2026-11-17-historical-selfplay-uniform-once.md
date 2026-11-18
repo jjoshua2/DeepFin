@@ -1,5 +1,7 @@
 # U1: one uniform pass through the historical self-play union
 
+**Current readout:** Fresh F1 completed one405,013-row pass; accepted fixed800 DEVELOPMENT:212W/310D/278L,45.875% (paired95% CI43.28–48.47%). No donor-advantage selection; A39 retained. [Latest readout](#accepted-fixed800-development-result-a39-retained).
+
 This prospective candidate-quality screen selects one fresh model-only A39 student and one uniform pass over the compatible historical self-play union. Source/runtime/data bindings and executable admission are pending. There is no new checkpoint or playing result at preregistration. This study does not claim to isolate the sampler's causal effect: the combined data population and dose also differ from the previous replacement-sampled runs.
 
 ## Population and reuse
@@ -51,3 +53,122 @@ Root selected a budget-only operational recovery scope, without execution author
 U1 has no trained endpoint or playing observation from this attempt. Retain the previous S0 fresh800-game NONCONFIRM and all prior results unchanged. U1's planned fixed800-game comparison reuses that consumed panel as development; it is not fresh confirmation. No strength gain, adoption or wider-goal completion follows from either engineering phase.
 
 [Compact startup and census evidence](evidence/2026-11-17-historical-selfplay-uniform-once-startup-census.json) records the closed scalars, evidence hashes and pending state.
+
+## Full-pass delivery and accepted fixed800 development readout
+
+This addendum preserves the preceding preregistration and engineering history.
+The original four-segment student did not produce an eligible endpoint.
+Closed owner437 reached its inner wall limit after2072.8282901369967 GPU
+owner-wall seconds. Its compact owned-failure addendum reports3,735 completed
+optimizer calls and119,520 drawn rows; no checkpoint or closed boundary was saved.
+The nonzero tainted ledger, failed lineage and all costs remain preserved.
+These counters do not promote the failed partial state to a delivered model.
+
+### Separately precommitted fresh student F1
+
+Before owner438, Root selected the single-process fresh-student method
+(`57a3635e…`), independently reviewed as `05058d46…`.
+F1 is a fresh model-only A39 student, UUID
+`8c60e283-2158-4359-a96b-1a07330e9797`, with model seed2026111780
+instead of the original2026111776; the independent order seed remains2026111777.
+No failed weights, optimizer, RNG state or reserved-row ledger were transferred.
+Fresh NAdamW, constant LR3e-6 and the same main-policy plus outcome-WDL
+objective remain selected, with no policy anchor, priority or extra WDL blend.
+This is a new disclosed student lineage, not continuation under a reset UUID.
+
+The selected endpoint is one process with12,657 updates and405,013 views over
+the same4,032-source union. The last batch has21 real rows; its objective is
+scaled by21/32 and it causes one real optimizer/scheduler/weight-decay step.
+The stored-row permutation is unchanged; original and mirror share one
+presentation. Each row is used once in F1. Even conservatively joining the
+failed prefix and F1, each selected stored row is presented at most twice.
+That statement excludes intentional earlier pretraining exposure; it is not a
+claim that the historical bank, natural boards or openings were globally unseen.
+
+The fresh method explicitly selected7200 training plus3600 development GPU
+seconds, a10800-second new scope. Adding the already failed2413.031710344949
+training seconds selected a13214-second all-U1 ceiling:1214 above the old12000.
+This amendment was recorded before438; it does not erase or inherit old costs.
+The global172800-second ceiling and2026-11-19 16:09:20 UTC cutoff remain.
+The method and exposure receipts preserve all failed attempts and stops.
+
+### Accepted full-pass endpoint
+
+Owner438 completed after5614.532851506025 GPU owner-wall seconds.
+Its saved boundary records12,657 applied updates,405,013 applied views,
+a complete pass,12,657 observed forwards and optimizer calls, one save and
+no extra forwards. The own-live/saved proof covers the full494-entry model:
+61,444,448 unique parameters,175 input planes and key/shape/dtype fingerprint
+`0ee887deb126cc0fd9857f8f8e38bab067d983e6f125903f387ddd6c2ca1a524`.
+The checkpoint SHA is `b98a7e6ca84391f2dec80cca6c577235082c4951c3a9c3e6da9fc2a702cb0d84`;
+its typed model-state fingerprint is
+`ecddbcf569a90ceab8c8b27cfa3b2fce33a2d7b594885bf188492de0b31fbf33`.
+
+Closed CPU owner439 took20.12908593402244 owner-wall seconds.
+It invoked the public delivery consumer once, with0 checkpoint decodes,
+0 model constructions,0 forwards,0 row draws and0 raw-journal reads in that
+CPU phase. Root delivery `a59d8152…` and independent delivery `4cd0a5bc…`
+accept the actual endpoint. The learner's own saved-payload verification
+remains distinct from this later metadata-only delivery phase.
+Model delivery establishes technical identity and lineage, not playing strength.
+
+### Preserved playing startup failure and corrected scope
+
+Owner440 failed after4.411631898023188 GPU owner-wall seconds.
+Independent diagnosis `4a1f6ee1…` identifies a sufficient startup blocker:
+the pinned profile still named the old method `4b392e80…`, while the actual
+fresh protocol required `57a3635e…`. The original exception was masked by
+the failure wrapper; the diagnosis does not claim a surviving assertion trace.
+The contradiction occurs before output-directory creation and arena execution.
+There is no playing observation from440, and its stop and cost remain charged.
+
+Manual decision `9b80b16d…` preserves that failure and selects corrected
+runtime `326edd5c…`, GPU/reader source reviews `132812f8…` / `e10e6745…`,
+Root-controller review `0ab20623…` and fresh playing scope `0a2d1998…`.
+The new3600-second scope names only the new GPU stage; it inherits no owner.
+Before that stage, all-U1 GPU cost is8031.976193748997 seconds.
+Adding its full cap gives11631.976193748997, within13214; fresh training plus
+failed440 plus the new cap is9218.944483404048, within the fresh10800 limit.
+Owner441 completed the fixed800-game development arena after
+2800.889036832028 GPU owner-wall seconds (2883.75 process CPU seconds).
+The closed GPU technical endpoint was accepted by Root `e8d69b2d…` and
+independent review `0bb14af7…` before the result reader began.
+
+### Accepted fixed800 development result: A39 retained
+
+Closed CPU reader442 passed after42.618617585045286 owner-wall seconds
+(39.03 process CPU seconds). Root `5d71df79…` and independent review
+`727d0a7b…` accepted its reconciliation of800 games and400 reciprocal pairs.
+There were0 illegal/crashed games or incomplete pairs; all16 reader controls passed.
+The reader loaded0 models. These are the owned reader's completed facts,
+not a second raw-game analysis.
+
+U1 scored **212 wins,310 draws,278 losses**, or **45.875%**.
+Pair-score bins for0/.25/.5/.75/1 were41/118/128/92/21.
+The paired sample variance (divisor399) was0.07003602756892231;
+the descriptive paired-normal95 interval was
+**[43.281496561074323%,48.468503438925675%]**.
+The precommitted available-lower-bound-above.5 rule did not pass.
+Frozen verdict `3eb5e252…` is
+`NO_DEVELOPMENT_DONOR_ADVANTAGE_SELECTION`; **A39 is retained**.
+
+This is conditional development regression relative to A39 under this
+population, student seed, profile and reused panel. It is not a fresh
+confirmatory negative, an attribution to a particular head, evidence that
+all methods fail, or an optimum-recipe/external-strength milestone.
+The consumed CONFIRM_C_A39 panel was DEVELOPMENT, with seed2026111778.
+The prior S0 NONCONFIRM is preserved separately; no results are pooled,
+and no optional extension, new variant, coefficient or adoption is selected.
+
+After442, all442 owners were closed and all three leases were free.
+Total U1 GPU owner-wall time is10832.865230581025 seconds, below13214.
+Playing, including failed440, totals2805.3006687300513 GPU seconds plus
+42.618617585045286 CPU reader owner-wall seconds. Fresh training plus
+all playing is8419.833520236076 GPU seconds, below its10800-second scope.
+Root's settled global totals are103834.38945806609 GPU owner-wall seconds
+and7267.442951110832 CPU owner-wall seconds. Historical costs and both
+training/playing failure stops remain retained; the readout does not clear them.
+The separate future206-case CPU engineering phase selects no training recipe.
+
+[Compact full-pass and accepted development evidence](evidence/2026-11-17-historical-selfplay-uniform-once-full-pass.json)
+pins the delivery, endpoint acceptances, summary, frozen verdict and costs.
