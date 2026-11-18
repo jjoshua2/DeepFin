@@ -48,6 +48,150 @@
     "training_GPU_total_outer_seconds": 7200,
     "week_cutoff_UTC": "2026-11-19T16:09:20Z"
   },
+  "engineering_readout_through_owner445": {
+    "accepted445": {
+      "all_source_after_exact": true,
+      "build_performed": true,
+      "cases": 233,
+      "charged_owner_wall_CPU_seconds": 65.27232636103872,
+      "closure": {
+        "path": "historical-selfplay-small-search-V10-runtime-CPU-bindings-v3/root-closure.json",
+        "sha256": "b83ab3db8576840268a30d333ce9fdaea3acd52912897e7e5a9de859c1bc7cd2"
+      },
+      "errors": 0,
+      "failures": 0,
+      "focused_tests": {
+        "path": "historical-selfplay-small-search-V10-runtime-CPU-results-v2/focused-tests.json",
+        "sha256": "1070907e4c6e21cb94405cbee1c67cde0c779bf75228f277cb8e00cebe103f1d"
+      },
+      "independent_acceptance": {
+        "path": "historical-selfplay-small-search-V10-runtime-CPU-bindings-v3/independent-review.json",
+        "sha256": "7ca309bfc0e96fd0dbce20de15439698392f03c4a48260057f93557f9455696a"
+      },
+      "junit": {
+        "path": "historical-selfplay-small-search-V10-runtime-CPU-results-v2/junit.xml",
+        "sha256": "2feceb86fb1ba8a4cdcd77e3a9d3a4b06edac4827786b47cb1a0201024ed4a5d"
+      },
+      "modules": 13,
+      "native_after": {
+        "path": "historical-selfplay-small-search-V10-runtime-CPU-results-v2/native-after-tests.json",
+        "sha256": "c56c682bb7b5bc2a37c4f777d920eb63661e0629311ad97f770fe2622158a062"
+      },
+      "native_before": {
+        "path": "historical-selfplay-small-search-V10-runtime-CPU-results-v2/native-before-tests.json",
+        "sha256": "dd32fdacd2f018c8b7b24a800fc15b79a90a1f8f713305559010b40902afcd0c"
+      },
+      "native_extensions": 6,
+      "native_records_builtins_wheels_setup_source_stable": true,
+      "ordinary_source_bytes": 30576307,
+      "ordinary_source_files": 1401,
+      "post_custody": {
+        "path": "historical-selfplay-small-search-V10-runtime-CPU-bindings-v3/post-closure-custody.json",
+        "sha256": "30152dd6af036e859b1e952f0d3e19fbd59aea398edd264689d370c02119436c"
+      },
+      "prior_four_negative_cases_all_passed": true,
+      "readout": {
+        "path": "historical-selfplay-small-search-V10-runtime-CPU-results-v2/readout.json",
+        "sha256": "25bbe19b512fcaecc5b4c2a53fa435e36444f8f2fb426c5d4c4cac1359f3b552"
+      },
+      "root_acceptance": {
+        "path": "historical-selfplay-small-search-V10-runtime-CPU-bindings-v3/root-acceptance.json",
+        "sha256": "5b8a9d355ad09889602ef6d8fa4aacc28f646e5d18357431cbabe83d351512e8"
+      },
+      "skipped": 0,
+      "source_pins": {
+        "path": "historical-selfplay-small-search-V10-runtime-CPU-bindings-v3/target-source-pins.json",
+        "sha256": "8623c0f5f6d9b560d4792c85bac1496df1110c4eb6e98edc71c3c3ccf5d27553"
+      },
+      "supported_session_EOF_exit": 0
+    },
+    "cost_preservation": {
+      "automatic_retry": false,
+      "engineering_owner_wall_actual_seconds": 131.5339327820111,
+      "manual_recovery_outer_inner_seconds": [
+        110,
+        100
+      ],
+      "manual_recovery_selection": {
+        "path": "V10-first-CPU-manual-recovery-selection-v1/decision.json",
+        "sha256": "05c61dfc9ab5c6bcbdfdcf5478294fb29a46087dcaf569c82743308212245a81"
+      },
+      "method_GPU_cutoff_and_recipe_changed": false,
+      "old_cost_erasure_or_scope_reset": false,
+      "original_engineering_ceiling_seconds": 180,
+      "original_study_CPU_ceiling_seconds": 540
+    },
+    "failed444": {
+      "cases": {
+        "collected": 233,
+        "errors": 0,
+        "failures": 4,
+        "passed": 229,
+        "skipped": 0
+      },
+      "cause": "Direct negative tests passed pre-JSON Tiny/asdict architecture tuple while the method was JSON-loaded with a list, failing earlier architecture equality before intended share checks.",
+      "charged_owner_wall_CPU_seconds": 66.26160642097238,
+      "closure": {
+        "path": "historical-selfplay-small-search-V10-runtime-CPU-bindings-v2/root-failed-closure.json",
+        "sha256": "088d357bf8dfec41f84516c431213fb43f2fb63a3e17c8ee48c2f22dcf8a165a"
+      },
+      "independent_failure_diagnosis": {
+        "path": "historical-selfplay-small-search-V10-runtime-CPU-bindings-v2/independent-failure-review.json",
+        "sha256": "e201eaf9788876f1c7ae3a1ee0a419ba428c2d531c0868b320be567bdacdbe68"
+      },
+      "junit": {
+        "path": "historical-selfplay-small-search-V10-runtime-CPU-results-v1/junit.xml",
+        "sha256": "5383d13e88d06855f6587d4224a5867168f9111baa325337ed157f321f4a3c6a"
+      },
+      "old_output_stops_cost_and_Git136_preserved": true,
+      "post_custody": {
+        "path": "historical-selfplay-small-search-V10-runtime-CPU-bindings-v2/post-closure-custody.json",
+        "sha256": "9672583150939cd7365a61f86e882f873e653c56efcb14e44a607491a7e93d99"
+      },
+      "preliminary_message_only_guess_superseded": true
+    },
+    "initial_CI_failure": {
+      "Pyright": 4,
+      "Ruff": 3,
+      "evidence": {
+        "path": "small-search-V10-initial-CI-lint-failure-v1/evidence.json",
+        "sha256": "821d5c6810892cf89c92fea7fa2dc4ff127d1486894617bac9478e65379ae118"
+      },
+      "log": {
+        "path": "small-search-V10-initial-CI-lint-failure-v1/job.log",
+        "sha256": "97cf022597fc4f5dad16cf36d88d2e1608cae9262cbea706f00d26bd69b9e4a6"
+      },
+      "passing_credit_from_failed_superseded_or_cancelled_CI": false
+    },
+    "qualified_source_revision": "9e95d133cc3787a4ddd49f1d18998677a8e6e117",
+    "scope_limits": {
+      "GPU_bit_identity_established": false,
+      "SYZYGY_dataset_qualification": false,
+      "execution_authority_from_publication": false,
+      "full_real_population_qualified": false,
+      "playing_strength_result": false,
+      "trained_model_or_GPU_learner_result": false
+    },
+    "snapshot_UTC": "2026-11-18T03:42:03.574753+00:00",
+    "snapshot_through_closed_owner": 445,
+    "status": "COMPLETED_SOURCE_LOCAL_RUNTIME_AND_SYNTHETIC_CPU_QUALIFICATION_ONLY",
+    "test_only_correction": {
+      "modules": 13,
+      "new_cases": 0,
+      "new_negative_precondition": "Read selected contract through actual core.read_ref; validate baseline before intended mutation/deletion.",
+      "production_three_and_shared_fixture_byteexact_to_V3": true,
+      "source_manifest": {
+        "path": "historical-selfplay-small-search-V10-source-preparation-v4/manifest.json",
+        "sha256": "d3de1e7aa3723911108d3f537885f9ec75394f92a30f961766c309dd8a8ade08"
+      },
+      "source_review": {
+        "path": "historical-selfplay-global-union-retained-search-share-independent-source-review-v4/review.json",
+        "sha256": "ff43f35326d0cbaf5b3cc0c8986ed6a3aee193e9120b9d93042a76d6449dba64"
+      },
+      "specific_rejection_regexes_and_case_IDs_retained": true,
+      "total_cases": 233
+    }
+  },
   "evaluation": {
     "both_GPU_technical_endpoints_closed_before_any_efficacy": true,
     "edges": [
@@ -156,6 +300,7 @@
       "sha256": "9fc8e7a846d573cec985cf6af5ddb39917651d6b6970de539352f0778b918b97"
     }
   },
+  "record_history_note": "Pre-existing preregistration fields, including pending readiness flags, preserve the original draft. engineering_readout_through_owner445 supersedes software readiness only; no V10 learner/playing result or execution authority is published.",
   "reference_convention": "Relative paths under the display root identify original immutable metadata, not executable authority.",
   "schema": "FIXED_UNION_SMALL_SEARCH_V10_PROSPECTIVE_EVIDENCE_V1",
   "source_readiness": {

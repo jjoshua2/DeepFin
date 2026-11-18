@@ -115,3 +115,60 @@ Prospective docs CI may run in parallel; documentation is not executable authori
 
 [Compact preregistration evidence](evidence/2026-11-18-fixed-union-small-search-v10.json)
 pins the exact choices, prior negative and dose/coverage evidence.
+
+## Engineering readout through closed owner445 (2026-11-18)
+
+The preceding preregistration, including its then-pending source-readiness text,
+is preserved as a dated snapshot. Software readiness subsequently passed on
+source revision `9e95d133cc3787a4ddd49f1d18998677a8e6e117` after the failures below.
+This section ends at the all445-closed custody snapshot
+(2026-11-18 03:42:03 UTC), before a V10 GPU learner result or playing result.
+It is an engineering readout, not a training endpoint, strength finding or
+new execution authority.
+
+Initial hosted CI found3 Ruff diagnostics (an enumeration counter and two
+parametrization-name declarations) and4 Pyright optional-array accesses after
+a runtime guard. The source correction retained the same checks and case roster:
+explicit None narrowing, the counter name and tuple parameter names. The initial
+failed CI and any superseded/cancelled runs supply no passing-test credit here.
+
+| Owned CPU phase | Outcome | Cases | Charged owner-wall seconds |
+|---|---|---|---:|
+|444, first source-local build/focused run | FAILED; evidence and costs retained |229 passed,4 failed,0 errors/skips |66.26160642097238 |
+|445, explicitly selected manual recovery | PASS; Root and independent acceptance |233 passed,0 failures/errors/skips across13 modules |65.27232636103872 |
+
+The four failures in444 did **not** establish the intended share-refusal checks.
+The synthetic Tiny fixture returned a pre-serialization contract whose
+`phase_piece_thresholds` remained a tuple, while its referenced method had been
+read from JSON and contained a list. Direct metadata tests therefore stopped at
+the earlier architecture/method equality check. The preliminary explanation of
+merely stale error wording was superseded by the independent fixture diagnosis.
+The test-only correction reloads the genuine saved contract, validates that
+baseline, then changes a share or deletes the option and retains the specific
+retained-search rejection assertion. All three production files and the shared
+fixture remained byte-exact to accepted V3. In445, all four corrected negative
+cases actually passed, alongside the positive share/default, real Tiny optimizer,
+tail, resume and passive saved-state proof cases. The roster stayed233 cases;
+no refusal guard or assertion was loosened.
+
+The110/100-second recovery was a separate, manually selected owner after444
+closed, with its own admission, clock and output. It backed up the previous
+source-local native images/records and rebuilt six extensions. Recorded native
+images/build records, builtins, wheels and setup/source pins were stable across
+tests; all1,401 ordinary source/config hashes remained exact. This qualifies
+that source-local runtime and the scoped synthetic CPU tests. It does not
+qualify the full405,013-row payload, a trained494-state endpoint, GPU bit identity,
+search-target calibration or the full Syzygy dataset. Actual positive-share target
+validation and the final model's own-live proof still belong to the learner owner.
+
+Both CPU owner-wall charges total131.5339327820111 seconds, within the original
+180-second engineering block. The540-second study CPU ceiling and all original
+GPU/cutoff/method limits are unchanged. The failed output, diagnostics, stopped
+scope and cost remain banked; recovery was not an automatic retry or rollback.
+No V10 learner, playing-strength, mitigation, donor-advantage or adoption result
+is asserted by this engineering snapshot. U1 negatives, deferred U2 and prior
+protected stops/scopes remain preserved.
+
+The compact evidence's `engineering_readout_through_owner445` pins the accepted
+Root/independent result, JUnit, native/source profile and the preserved failure
+and diagnosis. Its earlier draft/readiness fields remain historical snapshots.
