@@ -957,9 +957,14 @@ built object with complete state, before the evaluator receives it. It neither
 calls a model forward nor restores an optimizer. Unsupported safe-loader
 payloads fail without an unsafe fallback or added allowlist. This boundary is
 limited to one model load in a dedicated UCI process, not multi-device loading.
+The exact public diagnostic flag `--selfcheck` is refused before dispatch or
+decode; its separate UCI subprocess would not be covered by this process guard.
 
 Process-local hooks, including the canonical entry's captured loader alias, are
-restored on exit or exception. A fresh external compact witness records the load
+restored on exit or exception. Low-level decoder and constructor interception
+lasts only for the one original loader call and ends before evaluator creation;
+later unrelated cache/tensor loads and constructors retain normal behavior.
+A fresh external compact witness records the load
 observations and exit status; it is not owner closure, qualification, admission,
 or a strength result. Select and qualify the actual wrapper/source/native/runtime
 composition separately before timed use. Do not mix a bridge from another source

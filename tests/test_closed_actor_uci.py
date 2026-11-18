@@ -11,6 +11,7 @@ from dataclasses import asdict
 import json
 from pathlib import Path
 import pickle
+import subprocess
 import sys
 from typing import Any
 
@@ -318,3 +319,43 @@ def test_public_path_and_single_load_refusals_restore_hooks(tmp_path: Path, monk
             exercise()
     assert model_loader.load_model_from_checkpoint is original
     assert uci.load_model_from_checkpoint is original
+
+
+def test_selfcheck_refuses_before_decode_dispatch_or_child(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    actor, _ = fixture(tmp_path)
+    aref = frozen(tmp_path / "actor.json", actor)
+    witness_path = tmp_path / "refused-selfcheck.json"
+    def forbidden(*_args: Any, **_kwargs: Any) -> Any:
+        pytest.fail("diagnostic mode reached decoder, dispatcher or child")
+    monkeypatch.setattr(torch, "load", forbidden)
+    monkeypatch.setattr(owned.runpy, "run_module", forbidden)
+    monkeypatch.setattr(subprocess, "Popen", forbidden)
+    with pytest.raises(ValueError, match="diagnostic --selfcheck is unsupported"):
+        owned.main(["--actor", aref["path"], "--actor-sha256", aref["sha256"], "--witness", str(witness_path),
+                    "--", "--checkpoint", actor["path"], "--selfcheck"])
+    witness = json.loads(witness_path.read_text())
+    assert witness["status"] == "CLOSED_ACTOR_PUBLIC_UCI_UNSUCCESSFUL"
+    assert witness["error_type"] == "ValueError" and witness["public_uci_exit_code"] is None
+    assert "load_observation" not in witness
+
+
+def test_later_unrelated_tensor_load_and_constructor_are_not_intercepted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    actor, _ = fixture(tmp_path)
+    built = build_inert(monkeypatch)
+    cache = tmp_path / "unrelated-cache.pt"
+    torch.save({"cache": torch.tensor([42.0])}, cache)
+    original_load = torch.load
+    original_build = model_loader.build_model
+    original_public_loader = model_loader.load_model_from_checkpoint
+    with owned.guarded_loader(actor) as observed:
+        admitted = uci._load_models(actor["path"], ["cpu"])[0]
+        assert torch.load is original_load and model_loader.build_model is original_build
+        cached = torch.load(cache, map_location="cpu", weights_only=True)
+        later = model_loader.build_model(model_loader.model_config_from_arch(actor["architecture"]))
+        assert cached["cache"].tolist() == [42.0] and later is built[1]
+        assert admitted is built[0] and later is not admitted
+        assert all(model.forward_calls == 0 for model in built)
+        assert observed["safe_decodes"] == observed["model_builds"] == observed["public_loader_calls"] == 1
+        assert uci.load_model_from_checkpoint is model_loader.load_model_from_checkpoint
+        assert uci.load_model_from_checkpoint is not original_public_loader
+    assert observed["hooks_restored"] is True

@@ -116,7 +116,10 @@ def guarded_loader(actor: dict[str, Any]) -> Iterator[dict[str, Any]]:
             observed["public_loader_calls"] += 1
         # This is the original public loader with its normal safe decoder and
         # constructor. The opt-in boundary explicitly requires complete loading.
-        model = original_loader(path, device=device, require_complete=True)
+        # Low-level interception ends with this one call. Later cache/tensor
+        # loads or constructors during normal serving are not actor admissions.
+        with patch.object(torch, "load", capture_load), patch.object(model_loader, "build_model", capture_build):
+            model = original_loader(path, device=device, require_complete=True)
         _require(len(builds) == 1 and builds[0] is model, "closed UCI returned a different model")
         state = model.state_dict()
         _require(len(state) == 494 and all(isinstance(value, torch.Tensor) for value in state.values()),
@@ -136,8 +139,6 @@ def guarded_loader(actor: dict[str, Any]) -> Iterator[dict[str, Any]]:
     with ExitStack() as hooks:
         main = sys.modules.get("chess_anti_engine.uci.__main__")
         try:
-            hooks.enter_context(patch.object(torch, "load", capture_load))
-            hooks.enter_context(patch.object(model_loader, "build_model", capture_build))
             hooks.enter_context(patch.object(model_loader, "load_model_from_checkpoint", load))
             # The canonical entry imports its loader by value. Cover an already
             # imported alias too; a fresh import captures the patched function.
@@ -196,6 +197,9 @@ def run_closed_actor_uci(actor_ref: dict[str, str], public_argv: Sequence[str], 
                                "error_type": None, "execution_authority_issued": False}
     exit_code: int | None = None
     try:
+        # Both public dispatchers select diagnostics by this exact literal.
+        # Its separate UCI subprocess would be outside this process's guard.
+        _require("--selfcheck" not in argv, "closed UCI diagnostic --selfcheck is unsupported")
         with guarded_loader(actor) as observation:
             witness["load_observation"] = observation
             # Execute the public package entry, rather than a parallel parser or
