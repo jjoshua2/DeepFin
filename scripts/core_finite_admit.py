@@ -489,6 +489,11 @@ def _execute(protocol_ref: dict[str, str], *, data_only: bool, holdout: bool = F
             name = "scripts/core_closed_once_actor.py"
             require(name in contract["source_files"] and contract["source_files"][name] == producer["source"]["sha256"].get(name),
                     "missing or mismatched closed once actor audit source pin")
+            if actor["lineage"]["family"] == "capped_cycle":
+                from scripts import core_capped_on_policy_cycle as cycle
+
+                require(all(name in contract["source_files"] and contract["source_files"][name] == producer["source"]["sha256"].get(name)
+                            for name in cycle.SOURCE_FILES), "missing or mismatched capped cycle audit source closure")
             selected_model = closed_actor.validate_actor(actor)["model"]
             require(serving.get("actor_kind") == closed_actor.KIND
                     and serving.get("closed_once_actor_lineage") == actor["lineage"]

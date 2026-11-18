@@ -13,6 +13,7 @@ from scripts import core_finite_learner as core
 KIND = "closed_once_learner"
 SCHEMA = "core_closed_once_actor_lineage_v1"
 FAMILIES: dict[str, dict[str, Any]] = {
+    "capped_cycle": {"tag": "core_capped_on_policy_cycle_v1"},
     "global_union": {
         "contract": "core_selfplay_union_stored_row_once_v1",
         "boundary": "COMPLETED_CORE_SELFPLAY_UNION_STORED_ROW_ONCE_SEGMENT_V1",
@@ -57,6 +58,10 @@ def closed_delivery(lineage: dict[str, Any]) -> dict[str, Any]:
     core.require(type(lineage) is dict and set(lineage) == {"schema", "family", "delivery"}
                  and lineage["schema"] == SCHEMA and lineage["family"] in FAMILIES,
                  "closed once actor lineage schema")
+    if lineage["family"] == "capped_cycle":
+        from scripts.core_capped_on_policy_cycle import accepted_delivery
+
+        return accepted_delivery(lineage, resolve_delivery=closed_delivery)
     family = FAMILIES[lineage["family"]]
     pair = lineage["delivery"]
     core.require(type(pair) is dict and set(pair) == {"root", "independent"}, "closed once actor delivery pair")
@@ -162,7 +167,7 @@ def validate_payload(actor: dict[str, Any], payload: dict[str, Any], torch: Any)
                  and payload[model["tag_key"]] == model["tag"]
                  and actual_hash == model["model_state_sha256"],
                  "closed once actor actual payload tag/typed state differs")
-    if actor["lineage"]["family"] == "policy_anchor":
+    if actor["lineage"]["family"] in {"policy_anchor", "capped_cycle"}:
         core.require(payload.get("frozen_reference_policy_anchor_v1") == model["tag"]["identity"]["policy_anchor"],
                      "closed once actor actual frozen reference identity")
     return actual_hash
