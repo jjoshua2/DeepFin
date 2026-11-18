@@ -95,7 +95,7 @@ def test_positive_anchor_reaches_real_optimizer_and_observes_fixed_teacher_witho
     observed = proof.execute(cref, stage(tmp_path, cref, c, 1, None, "positive"))
     cert = observed["own_live_certificate"]
     anchor = cert["policy_anchor"]
-    assert anchor["identity"] == c["policy_anchor"]
+    assert core.canonical(anchor["identity"]) == core.canonical(c["policy_anchor"])
     assert anchor["actual_reference_forwards"] == cert["actual_calls"]["forward"] == 3
     assert anchor["diagnostics"]["eligible_rows"] == anchor["diagnostics"]["total_rows"] == 5
     assert anchor["diagnostics"]["kl_row_sum"] > 0
@@ -109,7 +109,7 @@ def test_positive_anchor_reaches_real_optimizer_and_observes_fixed_teacher_witho
     assert cert["extra_forwards"] == 0
     assert observed["quota_state"]["last_batch_rows"] == 1
     result = entry.validate_closed_model_delivery(cref, closed(tmp_path, cref, observed))
-    assert result["policy_anchor"] == c["policy_anchor"]
+    assert core.canonical(result["policy_anchor"]) == core.canonical(c["policy_anchor"])
     zero = copy.deepcopy(c)
     zero["policy_anchor"].update(coefficient=0, reference=None)
     zero["sampling"]["quota_ledger"] = str(tmp_path / "zero.quota.jsonl")
