@@ -275,8 +275,10 @@ nothing.
   (`info string movetime too short to search: ... source=... move=...`) from the
   same sources, in the same order, as a clock too short to search (below), with
   any fresh evaluation finished by `N` less 8 ms.
-- Every move's clock starts when the engine reads the `go` line (for pondering,
-  the `ponderhit` line), not when it gets round to handling it.
+- Every move's clock starts when the engine's main loop reads the `go` line (for
+  pondering, the `ponderhit` line). Time a line spends unread in the pipe while
+  the engine is still handling an earlier command is not counted, so
+  `MoveOverheadMs` must cover it along with the GUI's own latency.
 - Clock games (`wtime` / `btime`, with `winc` / `binc` and `movestogo` if sent):
   a reserve is set aside, half of the increment is spent per move, and the rest of
   the clock is divided over an estimate of the moves left that comes from the

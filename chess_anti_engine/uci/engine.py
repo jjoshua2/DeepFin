@@ -4253,10 +4253,12 @@ def _at_once_answer_by_ms(clock_left_ms: float, elapsed_ms: float) -> float:
 
 
 def _receipt_time(received_at: float | None) -> float:
-    """The clock origin of a `go` / `ponderhit`: when the stdin reader read it
+    """The clock origin of a `go` / `ponderhit`: when the main loop read its line
     (the command's ``received_at``), never later than now; now when unstamped.
-    The main thread can reach the handler tens of ms after the line arrived
-    (GIL contention with a running search); the GUI's clock ran all along."""
+    The main loop is the stdin reader, so time a line spends unread in the pipe
+    while the loop handles an earlier command is NOT counted (MoveOverheadMs
+    must cover it); the stamp only charges the parse-and-dispatch time before
+    the handler runs."""
     now = time.monotonic()
     return now if received_at is None else min(float(received_at), now)
 

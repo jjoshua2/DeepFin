@@ -149,6 +149,30 @@ def test_a_searched_movetime_ends_well_before_the_watchdogs_last_moment(n, overh
         assert limits.deadline_ms == max(_MIN_DEADLINE_MS, n - 30)
 
 
+@pytest.mark.parametrize(("go", "overhead", "fitted"), [
+    ("go movetime 40", 30, True), ("go movetime 100", 0, True), ("go movetime 100", 30, False),
+])
+def test_the_go_wait_is_sized_from_the_fitted_movetime_deadline(go, overhead, fitted) -> None:
+    """The bounded wait for a still-running search is a share of the deadline
+    the `go` will really get: 12 ms for `movetime 40` (answered at once), not
+    the unfitted 20 ms floor; 72 ms, not 100, for `movetime 100` with no
+    overhead. At the default overhead from 48 ms up the fit changes nothing."""
+    engine = Engine(_mock_worker(), options=EngineOptions(move_overhead_ms=overhead))
+    try:
+        cmd = parse_command(go)
+        assert isinstance(cmd, CmdGo)
+        deadline_ms = _mt_limits(cmd.args.movetime_ms or 0, overhead).deadline_ms
+        deadline_s = deadline_ms / 1000.0
+        floor_s = min(engine_module._GO_WAIT_MIN_S, engine_module._GO_WAIT_MAX_SHARE * deadline_s)
+        expect = min(engine_module._JOIN_TIMEOUT_S,
+                     max(floor_s, engine_module._GO_WAIT_FRACTION * deadline_s))
+        assert engine._go_wait_budget_s(cmd) == pytest.approx(expect)
+        unfitted = limits_from_go(cmd.args, side_to_move_is_white=True, move_overhead_ms=overhead)
+        assert (unfitted.deadline_ms != deadline_ms) is fitted
+    finally:
+        engine.close()
+
+
 def test_other_bounds_are_not_movetime_fitted() -> None:
     for args in (GoArgs(wtime_ms=40, btime_ms=40), GoArgs(nodes=64), GoArgs(infinite=True),
                  GoArgs(movetime_ms=5, ponder=True)):
