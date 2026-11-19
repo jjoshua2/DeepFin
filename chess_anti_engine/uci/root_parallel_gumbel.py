@@ -102,6 +102,7 @@ from chess_anti_engine.async_safety import drain_failed_receipts, ensure_usable,
 from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding.cboard_encode import encode_cboard
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
+from chess_anti_engine.mcts.headroom import reserve_concurrent_headroom
 from chess_anti_engine.mcts.gumbel import (
     GumbelConfig,
     _policy_logits_to_full,
@@ -790,6 +791,11 @@ class RootParallelGumbelPool:
 
         started = time.perf_counter()
         budget = max(1, int(target_sims))
+        # The groups descend their candidate subtrees with the GIL released
+        # while another group's expansion can grow the ONE shared arena: grow
+        # it for the whole run now, before any group starts, as the other
+        # shared-tree pools do (a no-op after the UCI search's own reserve).
+        reserve_concurrent_headroom(st.tree, budget)
         cands, gumbels = _select_top_m_with_gumbel(
             legal=st.search_legal,
             pri=st.pri,

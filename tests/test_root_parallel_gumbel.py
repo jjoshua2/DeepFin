@@ -30,6 +30,7 @@ import pytest
 from chess_anti_engine.inference import DirectGPUEvaluator
 from chess_anti_engine.inference_dispatcher import ThreadSafeGPUDispatcher
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
+from chess_anti_engine.mcts.headroom import MAX_NODES_PER_SIM
 from chess_anti_engine.mcts.gumbel import GumbelConfig, _root_sigma_scale
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.moves import move_to_index
@@ -515,7 +516,10 @@ def test_late_phase_split_fills_idle_groups() -> None:
 
 
 def test_stop_mid_phase_returns_promptly_and_pool_survives() -> None:
-    pool = _make_pool(2, topk=16, gather=4, sleep_s=0.005)
+    # 10k sims at ~400 sims/s (2 groups x 2 x 4-row batches per 20 ms) would run
+    # ~25 s unstopped; `run` reserves the arena for its whole budget up front,
+    # so a 200k-sim budget would reserve ~3 GB here.
+    pool = _make_pool(2, topk=16, gather=4, sleep_s=0.02)
     try:
         board = chess.Board()
         pol, wdl = _root_eval()
@@ -530,7 +534,7 @@ def test_stop_mid_phase_returns_promptly_and_pool_survives() -> None:
         timer = threading.Timer(0.3, stop.set)
         timer.start()
         t0 = time.monotonic()
-        value, action = pool.run(target_sims=200_000, stop_event=stop)
+        value, action = pool.run(target_sims=10_000, stop_event=stop)
         elapsed = time.monotonic() - t0
         timer.cancel()
         assert elapsed < 10.0, "stop_event did not interrupt the phase"
@@ -546,6 +550,42 @@ def test_stop_mid_phase_returns_promptly_and_pool_survives() -> None:
         )
         assert action2 in legal
         assert np.isfinite(value2)
+    finally:
+        pool.close()
+
+
+def test_a_run_never_reallocs_the_arena_under_a_descending_group() -> None:
+    """Each group descends its candidate subtree with the GIL released while
+    another group's expansion grows the ONE shared arena: a realloc then is a
+    use-after-free in the descending group. ``run`` reserves the run's worst
+    case up front (as the walker and multi-device PUCV pools do), so every
+    evaluation -- which runs while the other group descends -- sees one arena."""
+    tree = MCTSTree()  # no reserve: the smallest arena
+    seen: list[tuple[int, int]] = []
+
+    class Watched(_DeterministicStubEvaluator):
+        def evaluate_inplace_async(self, bsz: int, *, slot: int = 0):
+            stats = tree.memory_stats()
+            seen.append((int(stats["node_cap"]), int(stats["child_cap"])))
+            return super().evaluate_inplace_async(bsz, slot=slot)
+
+    cfg = RootParallelGumbelConfig(n_groups=2, gather=8, split_idle_groups=False)
+    gcfg = GumbelConfig(input_extra_features="v1", simulations=64, topk=8,
+                        add_noise=True, gumbel_scale=1.0, temperature=0.0)
+    pool = RootParallelGumbelPool(cfg, gcfg, evaluators=[Watched(), Watched()],
+                                  rng=np.random.default_rng(7))
+    try:
+        pol, wdl = _root_eval()
+        pool.prepare_root(tree=tree, board=chess.Board(), pol_logits=pol, wdl_logits=wdl)
+        before = tree.memory_stats()
+        seen.clear()  # (prepare_root runs no group evaluation; keep it exact)
+        pool.run(target_sims=300, stop_event=threading.Event())
+        after = tree.memory_stats()
+        assert int(after["node_count"]) > int(before["node_cap"])  # outgrew the old arena
+        assert len(seen) >= 8
+        assert set(seen) == {(int(after["node_cap"]), int(after["child_cap"]))}
+        assert int(after["node_cap"]) >= int(before["node_count"]) + 300 * MAX_NODES_PER_SIM
+        assert int(after["child_cap"]) >= int(before["child_count"]) + 300 * MAX_NODES_PER_SIM
     finally:
         pool.close()
 

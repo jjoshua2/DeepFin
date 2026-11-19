@@ -12,7 +12,7 @@ import argparse
 import concurrent.futures
 import contextlib
 import io
-from collections.abc import Mapping
+from collections.abc import Iterable, Iterator, Mapping
 import logging
 import math
 import os
@@ -69,7 +69,7 @@ from .engine import (
 from . import startup_progress, wedge
 from .device_guard import DegradingMultiGPUDispatcher, find_degrade_source
 from .model_loader import load_model_from_checkpoint
-from .protocol import CmdQuit, CmdUci, parse_command
+from .protocol import CmdQuit, CmdUci, parse_command, stamp_received
 from .search import SearchWorker
 from .selfcheck import enforce_startup_gate
 
@@ -2100,8 +2100,8 @@ def main() -> int:
 
     rc = 0
     try:
-        for raw in sys.stdin:
-            cmd = parse_command(raw)
+        for raw, received_at in _received_lines(sys.stdin):
+            cmd = stamp_received(parse_command(raw), received_at)
             if isinstance(cmd, CmdUci):
                 emit_handshake(startup_options)
                 continue
@@ -2206,6 +2206,17 @@ def main() -> int:
 # builder cannot be interrupted inside torch.compile / cudagraph capture, and a
 # GUI that quits during startup usually kills us a few seconds later anyway.
 _BUILDER_JOIN_TIMEOUT_S = 3.0
+
+# The clock `_received_lines` stamps each line with (a seam for tests).
+_receipt_clock = time.monotonic
+
+
+def _received_lines(stream: Iterable[str]) -> Iterator[tuple[str, float]]:
+    """Each line of ``stream`` with the moment it was read: a `go` or
+    `ponderhit` starts the move's clock then (`stamp_received`), not when its
+    handler gets to run."""
+    for raw in stream:
+        yield raw, _receipt_clock()
 
 
 def _report_startup_failure(exc: BaseException) -> None:

@@ -25,6 +25,7 @@ from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.inference import DirectGPUEvaluator
 from chess_anti_engine.inference_dispatcher import ThreadSafeGPUDispatcher
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
+from chess_anti_engine.mcts.headroom import MAX_NODES_PER_SIM
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.uci.subprocess_client import LineReader as _LineReader
 from chess_anti_engine.uci.subprocess_client import send_line as _send
@@ -160,6 +161,10 @@ def test_walker_pool_never_reallocs_the_arena_under_a_descending_walker() -> Non
         assert after["node_count"] > before["node_cap"]  # the run outgrew the old arena
         assert len(seen) >= 100
         assert set(seen) == {(int(after["node_cap"]), int(after["child_cap"]))}
+        # The reserve covers the worst case (MAX_NODES_PER_SIM per sim), not just
+        # what this narrow start position happened to use.
+        assert int(after["node_cap"]) >= int(before["node_count"]) + 200 * MAX_NODES_PER_SIM
+        assert int(after["child_cap"]) >= int(before["child_count"]) + 200 * MAX_NODES_PER_SIM
     finally:
         pool.close()
 
