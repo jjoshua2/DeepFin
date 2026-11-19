@@ -1,5 +1,7 @@
 # Fresh current-policy A39: fixed twelve-cycle baseline (prospective)
 
+**Final readout (M12):** Twelve cycles completed; the registered 800-game reused-DEV score versus fixed A39 is **47.125%** (paired 95% CI **44.51–49.74%**; conditional Elo-equivalent **−20.00**, interval **−38.31 to −1.80**). The fixed gain criterion failed: **no development gain established; A39 retained**. Earlier statuses and M3/M6 readouts below remain dated history.
+
 **Current readout (M6):** [Accepted descriptive 400-game interim](#m6-descriptive-interim-readout): 49.875% versus fixed A39, paired 95% CI 46.16–53.59%. Six training cycles are technically complete (step460; 116,989 cumulative views). No gain or equivalence established; A39 retained. Earlier current-status lines below are preserved historical snapshots.
 
 **Current readout (M3):** [Accepted descriptive 400-game interim](#m3-descriptive-interim-readout): 49.875% versus fixed A39, paired 95% CI 46.01–53.74%. No gain or equivalence established; A39 retained. Four training cycles are technically complete, but this evaluates the saved cycle-3 snapshot. The prospective status below is preserved as historical text.
@@ -383,3 +385,109 @@ The frozen verdict is `9a3fdadd2573289bb6d806cfd2012375522c3f0a89fc0605aa7aba5a1
 the reconciled summary is `d580125b7125d655aaaa28251e3be494bded8f26a073e34609c8677073856864`.
 Exact model identity, compact receipts, chronology and owner costs are in the
 [compact M6 evidence](evidence/2026-11-18-f12-M6-interim-readout.json).
+
+
+## M12 final fixed-horizon readout
+
+The fixed cycle 12 candidate (M12; controller alias `F12`, student step 948)
+completed the registered 800-game /400-pair comparison against original A39.
+The candidate was fixed by the twelve-cycle horizon. Neither the M3/M6 scores
+nor the final result selected a different model, recipe, dose or stopping point.
+
+| Observation | Accepted final result |
+|---|---:|
+| M12 wins / draws / losses | 218 / 318 / 264 |
+| Paired match score | 47.125% |
+| Paired normal 95% interval | 44.5095–49.7405% |
+| Conditional Elo-equivalent versus fixed A39 | −20.00 (95% interval −38.31 to −1.80) |
+| Final GPU owner wall / reader CPU owner wall | 2421.0463s / 40.8440s |
+
+The precommitted available lower 95% score bound >0.5 rule failed. The frozen verdict is
+**NO_DEVELOPMENT_GAIN_ESTABLISHED**, with A39 retained. The score and its
+reported interval are below 50% under this matched profile: a conditional
+negative result for this model/recipe/horizon.
+This does not identify a causal policy/value-head failure, an optimal learning
+dose, or a general verdict on RL or the search/outcome mixture.
+
+The owned wrapper authenticated the full original consumed 400-pair DEV order,
+with reciprocal colors, seed 2026111999 and the frozen T playing profile. All 800
+games and 400 pairs reconciled, with 0 illegal/crashed games or incomplete pairs.
+The GPU and reader each passed 16 controls and closed with genuine Root and
+independent technical acceptance before the frozen verdict. Inference uses
+n=400, sample-variance divisor 399 and z=1.96; the five pair-score bins were
+`[38, 109, 144, 79, 30]`, sample variance 0.0712265037593985. Zero variance
+would remain unavailable. The conditional Elo-equivalent is only the monotone
+transform of this match score and paired interval, not an external rating.
+
+M3 and M6 each scored 49.875% on the same first 200 pairs. They remain correlated
+descriptive views, not independent replications or observations pooled with
+M12. The full panel was already consumed as DEVELOPMENT: this is not fresh
+confirmation or a multiplicity-control claim. No promotion, further training,
+HOLD use, retry, extension or fresh confirmation is selected by the verdict.
+It does not establish rapid sustained improvement toward Stockfish, overall
+goal completion, equivalence or a daily rate. The rough personal +100 Elo/day
+estimate remains neither measured AlphaZero evidence nor a hard gate.
+
+### Completed training and lineage
+
+All twelve registered cycles have accepted Root/independent closed model
+deliveries: 2,304 resolved games from 12×192 fixed scheduled attempts, without
+replacements, and 241,125 physical stored-row presentations. The model-only A39
+bootstrap began at student step 0; 948 updates produced step 948. Cycles 2–12
+record matching adjacent full-state/five-RNG continuation in the same cumulative
+quota lineage, with maximum observed presentations 1.
+
+| Cycle | Stored-row presentations | Updates | Student step | Cumulative presentations |
+|---|---:|---:|---:|---:|
+| 1 | 17,628 | 69 | 0 → 69 | 17,628 |
+| 2 | 19,295 | 76 | 69 → 145 | 36,923 |
+| 3 | 19,841 | 78 | 145 → 223 | 56,764 |
+| 4 | 20,445 | 80 | 223 → 303 | 77,209 |
+| 5 | 20,227 | 80 | 303 → 383 | 97,436 |
+| 6 | 19,553 | 77 | 383 → 460 | 116,989 |
+| 7 | 20,355 | 80 | 460 → 540 | 137,344 |
+| 8 | 20,646 | 81 | 540 → 621 | 157,990 |
+| 9 | 20,454 | 80 | 621 → 701 | 178,444 |
+| 10 | 21,438 | 84 | 701 → 785 | 199,882 |
+| 11 | 21,010 | 83 | 785 → 868 | 220,892 |
+| 12 | 20,233 | 80 | 868 → 948 | 241,125 |
+
+The final checkpoint `3d3ca6b8…` /typed model state `13df344f…` has 494 state
+entries, 61,444,448 unique parameters and the accepted full key/shape/dtype
+identity. These are accepted delivery references; documentation did not reopen
+model bytes. The final certificate records outcome/search masses 0.9/0.1, usable
+search availability 1 and fallback 0, SF share 0 and policy KL null/no teacher.
+B256, flat LR 3e-6, mirror 0.5 and the fixed twelve-cycle horizon were unchanged.
+
+Physical row-once is not game-balanced value weighting or 241,125 independent
+terminal outcomes. Many positions share a game's terminal label, longer games
+contribute more retained rows, and the same 192 TRAIN starts are reused across
+cycles. Fresh trajectories do not make openings unseen. Terminal z reflects
+the actual game policies/exploration; retained `net_raw` search includes the
+network's own information. These correlated and endogenous targets remain
+limitations, without identifying what caused the lower match score. Earlier F1/U2
+negatives and the inconclusive V10 followup are preserved conditional evidence.
+
+### Costs and preserved operational history
+
+All 545 recorded owners are closed at this snapshot. Actual F12 charged owner
+wall was 20,806.97624983848 GPU seconds and 1,093.6510285579134 CPU seconds, within
+the selected 32,400 GPU /5,520 all-in CPU ceilings. Global charged totals after 545
+were 146,541.7328588327 GPU and 8,745.509056212904 CPU seconds; no earlier study,
+calendar time, engineering cost or failure was reset. The final pair's GPU and
+reader walls above are included, not added again.
+
+The original failed 477 stop/cost and prospective manual recovery remain visible
+above. Two separate zero-owner final-selection corrections were also preserved
+before admission: map key `M12` was reconciled to the controller's `F12` alias
+for the same actual cycle 12 model, and an incorrect checksum argument was
+rejected by the preparation guard before the correct written SHA was consumed.
+Neither issued U3/admission/clock/owner, changed science or retried numerical
+work. Exact immutable receipts are in the compact evidence.
+
+The final frozen verdict is `e8f1786b004bf17204efc79189943ca9ba8cbebd3f2fd41bfc5ac5aa693ee6b5`;
+the reconciled summary is `8bafa09d5c40eb32bb3ab6a88b9dc68faf92d05726e143970771b656e5f36907`.
+The [compact final evidence](evidence/2026-11-18-f12-final-readout.json) preserves
+model/receipt identities, per-cycle training scalars, fixed inference, costs and
+closed custody. Published source changes and future UCI work do not relabel the
+frozen learner/playing runtimes used for this result.
