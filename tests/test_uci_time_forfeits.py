@@ -20,7 +20,7 @@ import sys
 import threading
 import time
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import chess
@@ -473,11 +473,13 @@ def test_an_explicit_work_bound_is_searched_in_sudden_death(out, go) -> None:
 
 
 def test_explicit_bounds_skip_the_sudden_death_rule_but_not_an_exhausted_clock() -> None:
-    kw = {"side_to_move_is_white": True, "move_overhead_ms": 30}
-    assert not limits_from_go(GoArgs(wtime_ms=500, btime_ms=500, nodes=64), **kw).clock_exhausted
-    assert not limits_from_go(GoArgs(wtime_ms=500, btime_ms=500, depth=3), **kw).clock_exhausted
-    assert not limits_from_go(GoArgs(wtime_ms=500, btime_ms=500, mate=2), **kw).clock_exhausted
-    assert limits_from_go(GoArgs(wtime_ms=1, btime_ms=1, nodes=64), **kw).clock_exhausted
+    def exhausted(args: GoArgs) -> bool:
+        return limits_from_go(args, side_to_move_is_white=True, move_overhead_ms=30).clock_exhausted
+
+    assert not exhausted(GoArgs(wtime_ms=500, btime_ms=500, nodes=64))
+    assert not exhausted(GoArgs(wtime_ms=500, btime_ms=500, depth=3))
+    assert not exhausted(GoArgs(wtime_ms=500, btime_ms=500, mate=2))
+    assert exhausted(GoArgs(wtime_ms=1, btime_ms=1, nodes=64))
 
 
 def test_the_sudden_death_threshold_scales_with_the_measured_speed() -> None:
@@ -525,7 +527,7 @@ class _FakeTree:
 
 
 def _tree_worker(board: chess.Board, tree: _FakeTree) -> Any:
-    w = object.__new__(SearchWorker)
+    w: Any = object.__new__(SearchWorker)
     w._tree, w._root_id, w._tree_fen = tree, 0, board.fen()
     return w
 
@@ -560,11 +562,11 @@ def test_an_evaluator_rebuild_runs_on_a_joined_short_lived_thread(out) -> None:
     worker = _mock_worker()
     seen: list[threading.Thread] = []
 
-    def factory(max_batch, cache_entries, **_kw):
+    def factory(*_args: Any, **_kw: Any) -> Any:
         seen.append(threading.current_thread())
         return object()
 
-    engine = Engine(worker, options=EngineOptions(), rebuild_evaluator=factory)
+    engine = Engine(worker, options=EngineOptions(), rebuild_evaluator=cast("Any", factory))
     try:
         assert engine._rebuild_or_keep("MaxBatch", 64, 0) is not None
         assert len(seen) == 1
@@ -581,7 +583,7 @@ def test_a_name_error_in_a_rebuild_is_not_hidden_as_a_kept_setup(out) -> None:
     def factory(*_a, **_kw):
         raise NameError("undefined_helper")
 
-    engine = Engine(worker, options=EngineOptions(), rebuild_evaluator=factory)
+    engine = Engine(worker, options=EngineOptions(), rebuild_evaluator=cast("Any", factory))
     try:
         with pytest.raises(NameError):
             engine._rebuild_or_keep("MaxBatch", 64, 0)
@@ -595,7 +597,7 @@ def test_a_name_error_in_a_rebuild_is_not_hidden_as_a_kept_setup(out) -> None:
 def test_a_ponderhit_with_no_time_left_answers_from_the_ponder_tree(out) -> None:
     gate_entered, gate_release = threading.Event(), threading.Event()
 
-    def ponder_run(board, **_kw):
+    def ponder_run(*_args: Any, **_kw: Any) -> SearchResult:
         gate_entered.set()
         assert gate_release.wait(10)
         return SearchResult("e7e5", None, 16, ("e7e5",), 0)
@@ -630,19 +632,44 @@ def test_later_chunks_fill_the_remainder_by_the_measured_overrun_bound() -> None
     assert w._chunk_overrun_hi() == pytest.approx(1.0)
     d = Deadline(deadline_ms=2000, now=time.monotonic() - 1.0)  # ~1000 ms left
     got = w._time_capped_chunk(8192, d, total_nodes=1000)  # 1 sim/ms
-    assert 950 <= got <= 1001
+    assert 950 <= got <= 976  # (1000 - 25 ms finishing reserve) at 1 sim/ms
     # Noisy chunks: the bound widens, the chunk shrinks.
     for r in (1.0, 2.0) * 10:
         w._chunk_pred_rate = 1.0
         w._note_chunk_overrun(100, 100.0 * r)
-    assert w._chunk_overrun_hi() > 1.5
+    assert 1.5 < w._chunk_overrun_hi() <= 2.0  # never narrower than the old 0.5 share
+    # A tiny chunk is mostly fixed cost: not folded in, the bound stays put.
+    n_before = w._overrun_n
+    w._chunk_pred_rate = 1.0
+    w._note_chunk_overrun(16, 160.0)
+    assert w._overrun_n == n_before
     assert w._time_capped_chunk(8192, d, total_nodes=1000) < 700
     # The stop margin is one smallest chunk at that bound, not a whole chunk.
     margin = w._timed_stop_margin_ms(1, 2000, d, 1000, fixed_time=False)
-    assert margin == pytest.approx(_MIN_TIME_CAPPED_CHUNK / 1.0 * w._chunk_overrun_hi(), rel=0.05)
+    # (plus min(25 ms, 2 % of the budget) to finish the move).
+    assert margin == pytest.approx(
+        _MIN_TIME_CAPPED_CHUNK / 1.0 * w._chunk_overrun_hi() + 25.0, rel=0.05,
+    )
     # ClockBatchMarginSigmas 0 disables the stop margin (the knob stays live).
     w._batch_margin_sigmas = 0.0
     assert w._timed_stop_margin_ms(1, 2000, d, 1000, fixed_time=False) == 0.0
+
+
+def test_a_device_failure_restarts_the_rate_and_the_overrun_bound(monkeypatch) -> None:
+    w = _bare_worker(4096)
+    failed: list[str] = []
+    monkeypatch.setattr(w, "failed_pool_devices", lambda: tuple(failed), raising=False)
+    w._note_chunk_rate(100, 10.0)  # 10 sims/ms
+    for _ in range(5):
+        w._chunk_pred_rate = 10.0
+        w._note_chunk_overrun(100, 10.0)
+    assert w._overrun_n == 5
+    failed.append("cpu:1")
+    assert w.measured_chunk_rate() is None  # this topology has measured nothing yet
+    w._note_chunk_rate(100, 20.0)
+    assert w.measured_chunk_rate() == pytest.approx(5.0)
+    assert w._overrun_n == 0
+    assert w._chunk_overrun_hi() == _DEFAULT_CHUNK_OVERRUN
 
 
 # -- F9: no torch worker-thread team on the main thread -------------------------

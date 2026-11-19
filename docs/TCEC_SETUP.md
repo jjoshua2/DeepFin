@@ -301,8 +301,11 @@ nothing.
   measured (a quarter of the time left), each later one from the move's own
   speed, sized to the time left divided by a measured bound on how much longer
   chunks run than predicted (mean + `ClockBatchMarginSigmas` standard
-  deviations; 1.5 until three chunks are timed), down to 16 simulations near the
-  deadline. The search stops when not even a 16-simulation chunk fits. Untimed
+  deviations; 2 until three chunks are timed on this topology, which also
+  restarts when a device fails), down to 16 simulations near the
+  deadline. Once calibrated, the search stops when not even a 16-simulation
+  chunk plus min(25 ms, 2% of the move's budget) for finishing fits (before
+  that, the older whole-chunk margin also applies). Untimed
   `go nodes` and `go depth` (no clock, no `movetime`) are never resized; with a
   clock given, the clock caps them too.
 - `go nodes N` / `go depth N`: work bounds, no clock.

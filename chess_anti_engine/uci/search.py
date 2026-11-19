@@ -249,9 +249,24 @@ _FIRST_CHUNK_TIME_SHARE = 0.25
 # predicted. A chunk sized to the WHOLE remainder at the expected rate ends past
 # it about half the time, and it cannot be interrupted; a fixed share (an earlier
 # 0.5) plus a mean+2sd-of-chunk-durations stop left 10-15 % of a movetime unused.
-# The bound falls back to `_DEFAULT_CHUNK_OVERRUN` until a few chunks are timed.
-_DEFAULT_CHUNK_OVERRUN = 1.5
-_MAX_CHUNK_OVERRUN = 3.0
+# Until `_CHUNK_OVERRUN_MIN_SAMPLES` chunks are timed on this topology the bound
+# is `_DEFAULT_CHUNK_OVERRUN` (the old 0.5 share) and the old whole-chunk stop
+# margin also applies: an uncalibrated worker, or one whose device just failed
+# and halved its speed, must not bet the move on a full-size last chunk.
+_DEFAULT_CHUNK_OVERRUN = 2.0
+# Never below the old fixed 0.5 share: a wider bound only shrinks chunks further,
+# and near the deadline the 16-sim floor and the stop margin take over.
+_MAX_CHUNK_OVERRUN = 2.0
+# Chunks smaller than this are mostly fixed per-chunk cost (tree sync, result
+# build); their actual/predicted ratio is noise that would widen the bound and
+# spiral the chunks smaller. They are not folded into the estimate.
+_CHUNK_OVERRUN_MIN_SIMS = 64
+# The stop margin also keeps this much for the work after the last chunk (final
+# info, result build, bestmove), capped at `_STOP_RESERVE_SHARE` of the move's
+# starting budget. Without it a search under CPU contention stopped ~15 ms before
+# a 1470 ms deadline and the finish lost the race to the watchdog's last moment.
+_STOP_RESERVE_MS = 25.0
+_STOP_RESERVE_SHARE = 0.02
 _CHUNK_OVERRUN_MIN_SAMPLES = 3
 _CHUNK_OVERRUN_ALPHA = 0.2
 # The measured rate falls at once to a slower chunk and rises by at most this
@@ -1788,11 +1803,17 @@ class SearchWorker:
     def _chunk_rate_topology(self) -> tuple[int, ...]:
         """Identity of what a chunk runs on: the evaluator and every search
         helper. A rate measured on one topology says nothing about another
-        (a rebuilt evaluator, a walker pool, a multi-GPU pool)."""
-        return tuple(
+        (a rebuilt evaluator, a walker pool, a multi-GPU pool), nor on the same
+        pool after one of its devices failed (the count of dropped devices is
+        part of the key, so the rate and the overrun bound start over)."""
+        try:
+            failed = len(self.failed_pool_devices())
+        except Exception:
+            failed = 0
+        return (*(
             id(getattr(self, name, None))
             for name in ("_evaluator", "_pucv", "_pucv_pool", "_walker_pool", "_rpg_pool")
-        )
+        ), failed)
 
     def _note_chunk_rate(self, completed: int, dt_ms: float) -> None:
         """Fold one completed chunk into the slowest-recent rate estimate.
@@ -1818,7 +1839,8 @@ class SearchWorker:
         """Fold actual / predicted time of a chunk that was sized from a rate
         (`_time_capped_chunk` records it) into the running overrun estimate."""
         pred_rate = getattr(self, "_chunk_pred_rate", None)
-        if pred_rate is None or pred_rate <= 0.0 or completed <= 0 or dt_ms <= 0.0:
+        if (pred_rate is None or pred_rate <= 0.0 or completed < _CHUNK_OVERRUN_MIN_SIMS
+                or dt_ms <= 0.0):
             return
         ratio = float(dt_ms) * float(pred_rate) / float(completed)
         n = getattr(self, "_overrun_n", 0)
@@ -1847,7 +1869,8 @@ class SearchWorker:
         deadline: Deadline, total_nodes: int, *, fixed_time: bool,
     ) -> float:
         """Stop launching chunks when not even a `_MIN_TIME_CAPPED_CHUNK` chunk
-        fits before the deadline at this search's nps and the overrun bound.
+        fits before the deadline at this search's nps and the overrun bound,
+        plus `_STOP_RESERVE_MS` for finishing the move.
         Same gating as `_clock_time_margin_ms` (clock games, or ``movetime``
         when the engine opts in; ClockBatchMarginSigmas 0 disables); root-
         parallel Gumbel keeps that older batch-duration margin."""
@@ -1861,7 +1884,11 @@ class SearchWorker:
         if total_nodes <= 0 or elapsed <= 0:
             return 0.0
         nps = total_nodes / elapsed
-        return _MIN_TIME_CAPPED_CHUNK / nps * self._chunk_overrun_hi()
+        margin = _MIN_TIME_CAPPED_CHUNK / nps * self._chunk_overrun_hi() + _stop_reserve_ms(deadline)
+        if getattr(self, "_overrun_n", 0) < _CHUNK_OVERRUN_MIN_SAMPLES:
+            margin = max(margin, self._clock_time_margin_ms(
+                optimum_ms, start_remaining_ms, fixed_time=fixed_time))
+        return margin
 
     def measured_chunk_rate(self) -> float | None:
         """Sims per ms of the slowest recent chunk on the CURRENT topology, or
@@ -3520,7 +3547,8 @@ class SearchWorker:
         if rpg:
             return min(chunk, max(self._chunk_sims, int(nps * remaining_ms)))
         self._chunk_pred_rate = nps
-        time_cap = int(nps * remaining_ms / self._chunk_overrun_hi())
+        usable_ms = max(0.0, remaining_ms - _stop_reserve_ms(deadline))
+        time_cap = int(nps * usable_ms / self._chunk_overrun_hi())
         return min(chunk, max(_MIN_TIME_CAPPED_CHUNK, time_cap))
 
     def _ensure_shared_tree_headroom(self, upcoming_sims: int) -> int:
@@ -4992,6 +5020,16 @@ def _uci_pv(root_board: chess.Board, pv_indices: list[int]) -> tuple[str, ...]:
         out.append(mv.uci())
         b.push(mv)
     return tuple(out)
+
+
+def _stop_reserve_ms(deadline: Deadline) -> float:
+    """Time kept after the last chunk for finishing the move:
+    min(`_STOP_RESERVE_MS`, `_STOP_RESERVE_SHARE` of the move's budget)."""
+    remaining = deadline.remaining_ms()
+    if remaining is None:
+        return 0.0
+    budget = float(deadline.elapsed_ms() + max(0, remaining))
+    return min(_STOP_RESERVE_MS, _STOP_RESERVE_SHARE * budget)
 
 
 def _most_visited_children(
