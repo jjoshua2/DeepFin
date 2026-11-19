@@ -1,7 +1,8 @@
 # RL takeover: diagnostics so far, and a same-data policy-only ablation (prospective)
 
-**Status:** diagnostics D1–D2 complete, D3–D4 running; experiment P1 registered here
-**before** any P1 training update. Owner changed on 2026-11-19: the RL proof moved
+**Status:** D1–D3 complete; D4 part-run (Q50 arms banked, F12 arms B/C open); **P1 read: value
+loss implicated** (see "P1 readout" at the end). P1 was registered here before any P1
+training update. Owner changed on 2026-11-19: the RL proof moved
 from the Codex task to the Claude session; the week-one studies stay closed and
 their artifacts untouched.
 
@@ -149,3 +150,83 @@ openings recur across cycles; a reused control checkpoint from a different
 runtime build (cp313, torch 2.14, source `e633212da`) loaded into the current
 interpreter. D2 verified that checkpoint loads and that the harness reproduces
 the original learner's cycle-1 update exactly.
+
+## P1 readout (2026-11-19)
+
+**Harness control.** With the value loss on, the twelve-cycle harness reproduced
+every F12 learner checkpoint bit-exactly (cycles 1–12: model, optimizer, scheduler
+and clip state all identical, max abs difference 0.0). **Gate passed:** P1 cycle 1
+matches the D2 policy-only arm exactly (held-out CE 0.9368, mean abs value change
+0.0197, outputs identical to the audit's). Arena opening overlap with the 192 F12
+training starts or their mirrors: 0 of 800 pairs. All arena logs print config sha
+`8275f2b84d0e`. P1 final checkpoint sha256
+`b4025a75d926586614d77e08ef96d820f8c052bcb5790b82667ae1a1fd763624`.
+
+**Deciding match** (P1 vs F12 cycle 12, 1,600 games, banked final): score 0.5609,
+**+42.6 Elo, 95% CI +30.1 to +55.2**; pentanomial WW 88, WD 236, DD/WL 301, LD 133,
+LL 42.
+
+**Verdict by the pre-committed rule: value loss implicated** (lower bound above 0).
+Same rows, same order, same optimizer: switching the WDL loss off is worth about 43
+Elo head-to-head.
+
+**Recorded, not deciding.** P1 vs SL base, 800 games: 0.4844, −10.9 Elo (−27.7 to
++5.9) — policy-only training on these rows did not beat the base. F12 cycle 12 vs SL
+base on this seed was interrupted by a reboot at 279 of 800 games and is **unread**
+(no rolling number is quoted); D4's own 800-game run of the same pairing on seed
+20261119 read −34.9 (−53.1 to −16.8).
+
+**Per-cycle, fixed held-out cycle-2 rows** (in-sample for the policy from cycle 2):
+
+| Net | Policy entropy | CE to stored target | Policy KL from base | mean abs value change |
+|---|---:|---:|---:|---:|
+| SL base | 1.117 | 0.985 | 0 | 0 |
+| P1 c1 / c6 / c12 | 1.013 / 0.824 / 0.784 | 0.937 / 0.917 / 0.932 | 0.038 / 0.215 / 0.299 | 0.020 / 0.048 / 0.066 |
+| F12 c1 / c6 / c12 | 1.015 / 0.836 / 0.787 | 0.937 / 0.920 / 0.936 | 0.039 / 0.198 / 0.288 | 0.075 / 0.107 / 0.107 |
+
+The policy sharpened identically with and without the value loss, and with the
+value loss off the value output still drifted by 0.066 through the shared trunk.
+So the policy target is not cleared: P1 shows the value loss costs strength, not
+that the policy update gains any.
+
+## D3 result (calibration; target quality only)
+
+Bank and scripts: `~/chess-artifacts/operations/rl-claude-20261119/rl-audit/`
+(3,080 positions from the 192 cycle-1 games; game-clustered bootstrap).
+
+- Policy entropy (nats): lc0 BT4 1.49, Ceres net 1.53, SL base 1.12, F12 cycle
+  1/6/12 1.03/0.84/0.80, stored 64-simulation target 0.69, 800-simulation target
+  0.46. No setting of the existing knobs puts a 64-simulation target in the BT4/Ceres
+  band; temperature 2 is closest.
+- Against the 800-simulation search, F12 cycle 12's prior puts more mass on the deep
+  survivor (0.512 → 0.580) with unchanged top-1 (0.667 → 0.667). In-sample caveat:
+  these positions are from games cycles 1+ trained on.
+- Value against the 800-simulation survivor Q (MSE): game outcome 0.272, raw net
+  0.035, 64-simulation search value 0.0145. The root-node Q of a Gumbel search sits
+  0.235 below the survivor Q and must not be used as a value target.
+- Value landscape over legal moves: best-to-second gap 0.145 (SL base) → 0.119 (F12
+  c12) → 0.108 (Q50 c12); mean |Q| 0.41 → 0.33 → 0.30; BT4/Ceres 0.13 and 0.40.
+  Ranking against deep search did not improve.
+- A 256-simulation target beats every transformed 64-simulation target on mass,
+  top-1 and regret. `target_q_rescale` cannot be set from the self-play config
+  (not mapped in `build_selfplay_gumbel_config`). Collection reuses the tree across
+  plies, so stored "64-simulation" targets include inherited visits.
+
+## D4 part-result (head swap vs SL base, 800 games each, seed 20261119)
+
+| Arm | Score | Elo (95% CI) |
+|---|---:|---|
+| Q50 c12 full | 0.410 | −63.2 (−81.1 to −45.7) |
+| Q50 policy + base value | 0.506 | +4.3 (−12.5 to +21.2) |
+| base policy + Q50 value | 0.421 | −55.2 (−73.6 to −37.1) |
+| F12 c12 full | 0.450 | −34.9 (−53.1 to −16.8) |
+
+The Q50 deficit sits in the value output as it ended up. **Open:** the base-vs-base
+control read 0.5325 at 400 games (+22.6, CI +0.2 to +45.3), identically for the plain
+and hybrid loaders, where identical weights with root noise off were expected to
+score 0.500; until that is explained, read the arms relative to each other, not to
+zero. F12 arms B and C were not run (reboot); blocker: GPU held for the owner.
+
+**Next.** A fresh loop (new driver, PR #1416) whose first arms keep the value head
+on a search-value target or off, with the large opening book and per-generation
+tripwires; its record is written before launch.
