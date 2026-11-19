@@ -6,6 +6,8 @@ from typing import Any
 
 import pytest
 
+from chess_anti_engine.uci.engine import _on_short_lived_thread as _engine_on_short_lived_thread
+
 from tests.test_uci_topology_reuse import (
     Direct, Refusal, Wrapper, definitions, engine_fixture, leaves,
 )
@@ -30,6 +32,7 @@ def _fixture(*, enabled: bool = False, parallel: str = "pucv", devices: int = 2)
          "_close_quietly": lambda ev: ev.close() if ev is not None else None,
          "gc": SimpleNamespace(collect=lambda: 0),
          "_log": SimpleNamespace(error=lambda *_a, **_k: None),
+         "_on_short_lived_thread": _engine_on_short_lived_thread,
          "_one_line": lambda exc: f"{type(exc).__name__}: {exc}"},
     )
     for name, method in methods.items():
