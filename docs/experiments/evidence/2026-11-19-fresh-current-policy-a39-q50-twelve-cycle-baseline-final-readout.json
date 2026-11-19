@@ -1,0 +1,911 @@
+{
+  "schema": "Q50_FINAL_READOUT_AND_STRUCTURAL_EXPOSURE_EVIDENCE_V1",
+  "status": "CLOSED_ACCEPTED_NEGATIVE_DEVELOPMENT_READOUT_AND_STRUCTURAL_EXPOSURE_ONLY",
+  "draft_base_main": "a99594ec42615bbbf7f2b67da862c9f95a540392",
+  "preserved_published_markdown_sha256": "b38e435b79873515b2ac368638030cd4ac8b1bb54ae171d4038be2dd05fd40bd",
+  "method": {
+    "sha256": "b04aceff9656a647db4e4b6993e30c8425794236bd977f8fbe8422a81d727811",
+    "independent_review_sha256": "9b4692ff26889715011e9808de92a6f61a6af9ec8218550f332d4cc1051063ec"
+  },
+  "registered_final_endpoint": {
+    "candidate": "Accepted Q50 cycle12/M12, student step987; full model metadata remains in named delivery receipts",
+    "reference": "retained original A39",
+    "games": 800,
+    "opening_pairs": 400,
+    "panel": "consumed DEV; not fresh confirmation",
+    "seed": 2026111999,
+    "z": 1.96,
+    "sample_variance_divisor": 399,
+    "gain_rule": "complete valid800 games and paired normal95 lower bound strictly above0.5; zero variance unavailable"
+  },
+  "actual_final": {
+    "candidate_delivery_pair": {
+      "root_delivery": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-Q50-cycle-12-delivery-bindings-v2/root-acceptance.json",
+        "sha256": "9d11d7c139c951feca5c3ee1259f445bcd87f9f4fc3195c34e54174ce3e02cd7"
+      },
+      "independent_delivery": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-Q50-cycle-12-delivery-bindings-v2/independent-review.json",
+        "sha256": "4184137045c9fe58d02662a2df10adbcc7f8fc3a39e8fae3777a9ec430885f1e"
+      },
+      "post_closure_custody": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-Q50-cycle-12-delivery-bindings-v2/post-closure-custody.json",
+        "sha256": "7b609ded7205a1ee14ee4fcf08c3861a63f42e6d31a74b9ea65c66246f758735"
+      },
+      "review_scope": "Named sealed compact JSON authenticated with canonical regular read-only stable reads, SHA256 and exact Root9/ind11 joins; embedded model metadata opaque, no reference following. Aggregate dose is Root-reported accepted scalar projection, not an independent bank/ledger recomputation."
+    },
+    "gpu_technical_pair": {
+      "root": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-Q50-vs-A39-800DEV-bindings-v2/gpu.root-acceptance.json",
+        "sha256": "95c3204a98bee741bba45750bf05d093d8d568733e6c75fec2c657125321803f"
+      },
+      "independent": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-Q50-vs-A39-800DEV-bindings-v2/gpu.independent-review.json",
+        "sha256": "80be98d2a7a34fa2126f9aabb33a2ff23980de3f1b467915151385e068c36214"
+      }
+    },
+    "reader_pair": {
+      "root": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-Q50-vs-A39-800DEV-bindings-v2/reader.root-acceptance.json",
+        "sha256": "47c783ae750d26bd5b7d1ddc6a79e5028827771b514db48bf1cb7fcd60930609"
+      },
+      "independent": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-Q50-vs-A39-800DEV-bindings-v2/reader.independent-review.json",
+        "sha256": "654870d734b35770be7eef0f7c04b2e4452c54fd5ce7fdfedc2befa0fdfae5d3"
+      }
+    },
+    "summary": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-Q50-vs-A39-800DEV-reader-results-v1/summary.json",
+      "sha256": "1cdd9c0799cef9d3dff90d6f983a0dc489e60b168f622ec7c946aea247c616b8"
+    },
+    "frozen_verdict": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-Q50-vs-A39-800DEV-bindings-v2/verdict.json",
+      "sha256": "4c63bb86c9694b0975930da8470c7d9c15e7dbacf6b947e32ee4a4823aa8b22d"
+    },
+    "wdl": {
+      "wins": 179,
+      "draws": 319,
+      "losses": 302
+    },
+    "games": 800,
+    "pairs": 400,
+    "illegal_or_crashed_games": 0,
+    "incomplete_pairs": 0,
+    "paired_inference": {
+      "point": 0.423125,
+      "sample_variance": 0.06722705200501253,
+      "n": 400,
+      "variance_divisor": 399,
+      "z": 1.96,
+      "normal95_lower": 0.39771538356338015,
+      "normal95_upper": 0.4485346164366198,
+      "criterion_pass": false
+    },
+    "conditional_elo_equivalent_vs_fixed_A39": {
+      "point": -53.84521293630711,
+      "lower95": -72.09175232321473,
+      "upper95": -35.88891604494679,
+      "absolute_external_rating": false,
+      "daily_rate": false
+    },
+    "reader_current_owned_controls": {
+      "passed": 16,
+      "failed": 0
+    },
+    "registered_decision": "NO_DEVELOPMENT_GAIN_ESTABLISHED",
+    "retain_A39": true,
+    "technical_barriers": "GPU Root/ind pair then owned reader Root/ind pair before frozen verdict",
+    "source_projection_scope": "Authenticated named sealed compact records only; selected summary scalars and opaque metadata Root/ind joins, no reference/array following or inference recomputation"
+  },
+  "actual_training_and_accounting": {
+    "completed_cycles": 12,
+    "resolved_physical_games": 2304,
+    "stored_row_presentations": 251339,
+    "maximum_physical_row_presentations": 1,
+    "optimizer_updates": 987,
+    "full_state_five_rng_continuation": "Method-bound accepted technical delivery lineage; saved learner/optimizer/RNG contents were not reopened for this publication",
+    "source_profile_controls": "Registered frozen playing profile; current owned reader16PASS/0FAIL, no new NN qualification",
+    "closed_owner_frontier": 620,
+    "charged_study_gpu_cpu_wall_seconds": {
+      "GPU": 20384.54793118278,
+      "CPU": 956.7623146033147
+    },
+    "charged_global_gpu_cpu_wall_seconds": {
+      "GPU": 166926.28079001547,
+      "CPU": 9702.27137081622
+    },
+    "student_step": 987,
+    "snapshot_scope": "Final620-owner readout snapshot, before separate exposure audit; Q50 counters exclude that audit."
+  },
+  "structural_exposure_audit": {
+    "status": "CLOSED_ACCEPTED_STRUCTURAL_ONLY",
+    "root_and_independent_pair": {
+      "root_settlement": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/banked-game-exposure-24bank-bindings-v1/Root-settlement.json",
+        "sha256": "4f431cae224a1df6b374bb5743662b47d7b5484a2c560f2bc2a7a06e0955baad"
+      },
+      "independent": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/banked-game-exposure-24bank-bindings-v1/independent-review.json",
+        "sha256": "9fe5a023f29b9fb5c2cee981dc140e7f21b087f7c63fc6af8ddb4850c8b0a461"
+      }
+    },
+    "compact_readout": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/banked-game-exposure-24bank-results-v1/summary.json",
+      "sha256": "1a09e8521142c3b4ad761a0d3df8c1b6695b3fe35416a0d87c3d55ae20278a13"
+    },
+    "measurements": "Selected scalar projections below; no per-game mass/histogram/full-batch arrays or input descriptor graph copied",
+    "utility": {
+      "public_pr": 1409,
+      "helper_sha256": "8bc7e4114ce768310096ffb9a697c589da5aa9c40c17bd3382ac80b1ccb9d6f6",
+      "hosted_synthetic_test_methods_passed": 8,
+      "hosted_ci_run": 44494512063,
+      "actual_banked_measurements_from_these_tests": false
+    },
+    "batch_diversity_requires": [
+      "candidate membership digest authentication",
+      "reconstructed permutation digest equals actual compiler digest"
+    ],
+    "concentration_label": "exposure concentration only; not independent N or gradient ESS",
+    "public_projection": "Only concise scalar per-bank counts/ranges for up to24 selected banks; external summary path+SHA. No per-game mass/batch arrays or descriptors in Git.",
+    "failure_policy": "Publish actual technical failure or unavailable quantity honestly with actual Root/independent review; no PASS-only publication gate.",
+    "actual_input_manifest_REFONLY": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/banked-game-exposure-24bank-bindings-v1/input-selection.json",
+      "sha256": "45a59ecc4d4f8d4062c1b6a1809d018c9a834970eee3cddd4c8fd6e4fdd361f3"
+    },
+    "selection_evidence_sha256": "8d4cf2c6e5ed6ad16feb2db4cc90de1fcfb607dc07e391a53aabcee928e868da",
+    "selected_bank_count": 24,
+    "audited_bank_count": 24,
+    "input_selection_chronology": "Root outcome-blind metadata selection before final efficacy; draft author did not open/stat/hash input-selection or follow bank refs",
+    "tail_interpretation": "All-batch min/max include partial tail; separate first full256 batch and last_partial_batch scalar projections if available, never call all-batch minimum full-batch diversity.",
+    "scope_plan": "Issued AFTER final negative verdict, per outcome-independent audited condition",
+    "owner_status": "EXECUTED_ONCE_CLOSED_ROOT_AND_INDEPENDENT_ACCEPTED",
+    "root_settlement": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/banked-game-exposure-24bank-bindings-v1/Root-settlement.json",
+      "sha256": "4f431cae224a1df6b374bb5743662b47d7b5484a2c560f2bc2a7a06e0955baad"
+    },
+    "post_closure_custody_REFONLY": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/banked-game-exposure-24bank-bindings-v1/post-closure-custody.json",
+      "sha256": "ef4b0e2676fc26aef30f17221f74d7144e717694a37b50a7ce271cdbbdae5a2a"
+    },
+    "independent_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/banked-game-exposure-24bank-bindings-v1/independent-review.json",
+      "sha256": "9fe5a023f29b9fb5c2cee981dc140e7f21b087f7c63fc6af8ddb4850c8b0a461"
+    },
+    "banks_scalar_projection": [
+      {
+        "study": "F12",
+        "cycle": 1,
+        "source_qualified_game_groups": 192,
+        "rows": 17628,
+        "rows_per_game_min": 34,
+        "rows_per_game_max": 215,
+        "inverse_exposure_concentration": 178.6946278853121,
+        "actual_updates": 69,
+        "maximum_presentations": 1,
+        "first_full_batch": {
+          "rows": 256,
+          "distinct_game_groups": 140,
+          "largest_group_rows": 5
+        },
+        "last_partial_batch": {
+          "rows": 220,
+          "distinct_game_groups": 129,
+          "largest_group_rows": 6
+        },
+        "all_batches_including_tail_distinct_game_min": 129,
+        "all_batches_including_tail_distinct_game_max": 147,
+        "candidate_membership_sha256": "f4c601f6b05368279b1c632b8aa17de675b29324459bb4075940282846e6b2ff",
+        "declared_equals_reconstructed_permutation_sha256": "d7ec0a29bcf4df5a8a1b439a0d0946e09ae0b68caf651a2d8bfaac1fe3a7bf74"
+      },
+      {
+        "study": "F12",
+        "cycle": 2,
+        "source_qualified_game_groups": 192,
+        "rows": 19295,
+        "rows_per_game_min": 42,
+        "rows_per_game_max": 206,
+        "inverse_exposure_concentration": 178.90749980657844,
+        "actual_updates": 76,
+        "maximum_presentations": 1,
+        "first_full_batch": {
+          "rows": 256,
+          "distinct_game_groups": 140,
+          "largest_group_rows": 6
+        },
+        "last_partial_batch": {
+          "rows": 95,
+          "distinct_game_groups": 73,
+          "largest_group_rows": 3
+        },
+        "all_batches_including_tail_distinct_game_min": 73,
+        "all_batches_including_tail_distinct_game_max": 151,
+        "candidate_membership_sha256": "814ebfa54afbd32237f51cbb6c94fa531ff4951d3fc6d7f4375f77d877735556",
+        "declared_equals_reconstructed_permutation_sha256": "0cdbfcb3700aaf03e031a4b8e7d4a47bcf7ac251ecfdfc3a3ac68e1ee42c1238"
+      },
+      {
+        "study": "F12",
+        "cycle": 3,
+        "source_qualified_game_groups": 192,
+        "rows": 19841,
+        "rows_per_game_min": 35,
+        "rows_per_game_max": 237,
+        "inverse_exposure_concentration": 180.07380200564194,
+        "actual_updates": 78,
+        "maximum_presentations": 1,
+        "first_full_batch": {
+          "rows": 256,
+          "distinct_game_groups": 138,
+          "largest_group_rows": 5
+        },
+        "last_partial_batch": {
+          "rows": 129,
+          "distinct_game_groups": 92,
+          "largest_group_rows": 4
+        },
+        "all_batches_including_tail_distinct_game_min": 92,
+        "all_batches_including_tail_distinct_game_max": 149,
+        "candidate_membership_sha256": "c3009f70ff1d768b98047f21a3ef67ee90f81020b59b65720366be52c3566b73",
+        "declared_equals_reconstructed_permutation_sha256": "d8137b1af77aa01bf5b0430d98042203fda339ea7544e0f3996276d048f818b6"
+      },
+      {
+        "study": "F12",
+        "cycle": 4,
+        "source_qualified_game_groups": 192,
+        "rows": 20445,
+        "rows_per_game_min": 38,
+        "rows_per_game_max": 243,
+        "inverse_exposure_concentration": 175.8264513217122,
+        "actual_updates": 80,
+        "maximum_presentations": 1,
+        "first_full_batch": {
+          "rows": 256,
+          "distinct_game_groups": 135,
+          "largest_group_rows": 6
+        },
+        "last_partial_batch": {
+          "rows": 221,
+          "distinct_game_groups": 131,
+          "largest_group_rows": 5
+        },
+        "all_batches_including_tail_distinct_game_min": 128,
+        "all_batches_including_tail_distinct_game_max": 148,
+        "candidate_membership_sha256": "9500f4ff4507070b389f53e71546a89591a86d9011d1e87b0502b29770ad6dde",
+        "declared_equals_reconstructed_permutation_sha256": "ac538f4926e93a978a58aaef2eee3dd2aa84948d90abee08b1a372ebb4f67455"
+      },
+      {
+        "study": "F12",
+        "cycle": 5,
+        "source_qualified_game_groups": 192,
+        "rows": 20227,
+        "rows_per_game_min": 37,
+        "rows_per_game_max": 259,
+        "inverse_exposure_concentration": 173.4879193273377,
+        "actual_updates": 80,
+        "maximum_presentations": 1,
+        "first_full_batch": {
+          "rows": 256,
+          "distinct_game_groups": 131,
+          "largest_group_rows": 7
+        },
+        "last_partial_batch": {
+          "rows": 3,
+          "distinct_game_groups": 3,
+          "largest_group_rows": 1
+        },
+        "all_batches_including_tail_distinct_game_min": 3,
+        "all_batches_including_tail_distinct_game_max": 148,
+        "candidate_membership_sha256": "8ad8b5a0aa8b65d6a850ce12cff89a80e30d7d78ac1a7789206495df75a25737",
+        "declared_equals_reconstructed_permutation_sha256": "a50ccd08411bed26f07e07aad6f426d79dbd1e2a1220050345e542fa2ad7cb8b"
+      },
+      {
+        "study": "F12",
+        "cycle": 6,
+        "source_qualified_game_groups": 192,
+        "rows": 19553,
+        "rows_per_game_min": 24,
+        "rows_per_game_max": 257,
+        "inverse_exposure_concentration": 174.22958058099343,
+        "actual_updates": 77,
+        "maximum_presentations": 1,
+        "first_full_batch": {
+          "rows": 256,
+          "distinct_game_groups": 137,
+          "largest_group_rows": 6
+        },
+        "last_partial_batch": {
+          "rows": 97,
+          "distinct_game_groups": 79,
+          "largest_group_rows": 4
+        },
+        "all_batches_including_tail_distinct_game_min": 79,
+        "all_batches_including_tail_distinct_game_max": 148,
+        "candidate_membership_sha256": "e9fc760cf5bf5869177e1b60c9fb2d06dc27ec175caf7e2d8c7c43935eb89591",
+        "declared_equals_reconstructed_permutation_sha256": "ddd2a09a17abfa3aa95abf0faa980589429387ebd420187e03430e3fcaef8e54"
+      },
+      {
+        "study": "F12",
+        "cycle": 7,
+        "source_qualified_game_groups": 192,
+        "rows": 20355,
+        "rows_per_game_min": 24,
+        "rows_per_game_max": 290,
+        "inverse_exposure_concentration": 172.84837523137824,
+        "actual_updates": 80,
+        "maximum_presentations": 1,
+        "first_full_batch": {
+          "rows": 256,
+          "distinct_game_groups": 138,
+          "largest_group_rows": 5
+        },
+        "last_partial_batch": {
+          "rows": 131,
+          "distinct_game_groups": 96,
+          "largest_group_rows": 3
+        },
+        "all_batches_including_tail_distinct_game_min": 96,
+        "all_batches_including_tail_distinct_game_max": 149,
+        "candidate_membership_sha256": "2b787d962273dcd7b9198f6c2f138019a6e5d5049181dbeeb58f963cbb1e786e",
+        "declared_equals_reconstructed_permutation_sha256": "dfb1c655d172431cf31796e59b0375c7849b93a01c39304039a8c2fa136ed47b"
+      },
+      {
+        "study": "F12",
+        "cycle": 8,
+        "source_qualified_game_groups": 192,
+        "rows": 20646,
+        "rows_per_game_min": 34,
+        "rows_per_game_max": 297,
+        "inverse_exposure_concentration": 171.36124058182625,
+        "actual_updates": 81,
+        "maximum_presentations": 1,
+        "first_full_batch": {
+          "rows": 256,
+          "distinct_game_groups": 131,
+          "largest_group_rows": 7
+        },
+        "last_partial_batch": {
+          "rows": 166,
+          "distinct_game_groups": 109,
+          "largest_group_rows": 6
+        },
+        "all_batches_including_tail_distinct_game_min": 109,
+        "all_batches_including_tail_distinct_game_max": 147,
+        "candidate_membership_sha256": "ffb5341c52ce1738dd380ee5fc1b9b88b48ed3232ffcba5943fecb04c5ba6259",
+        "declared_equals_reconstructed_permutation_sha256": "aff1125469d93bb2696b0cad9ea53861d9fd621dce6119e2c9e16665efe0be7b"
+      },
+      {
+        "study": "F12",
+        "cycle": 9,
+        "source_qualified_game_groups": 192,
+        "rows": 20454,
+        "rows_per_game_min": 25,
+        "rows_per_game_max": 232,
+        "inverse_exposure_concentration": 174.7358143039363,
+        "actual_updates": 80,
+        "maximum_presentations": 1,
+        "first_full_batch": {
+          "rows": 256,
+          "distinct_game_groups": 135,
+          "largest_group_rows": 5
+        },
+        "last_partial_batch": {
+          "rows": 230,
+          "distinct_game_groups": 125,
+          "largest_group_rows": 8
+        },
+        "all_batches_including_tail_distinct_game_min": 125,
+        "all_batches_including_tail_distinct_game_max": 146,
+        "candidate_membership_sha256": "e69041defdf8a9a2b81089d6a56d6312c83673dfe470ea05ba51fc07d3fe3c4e",
+        "declared_equals_reconstructed_permutation_sha256": "a07f0a618c1c16efde9a7051db9edb31a5c489a2cb8e0f704f17107d7dc98ca3"
+      },
+      {
+        "study": "F12",
+        "cycle": 10,
+        "source_qualified_game_groups": 192,
+        "rows": 21438,
+        "rows_per_game_min": 40,
+        "rows_per_game_max": 261,
+        "inverse_exposure_concentration": 175.12591566298116,
+        "actual_updates": 84,
+        "maximum_presentations": 1,
+        "first_full_batch": {
+          "rows": 256,
+          "distinct_game_groups": 138,
+          "largest_group_rows": 6
+        },
+        "last_partial_batch": {
+          "rows": 190,
+          "distinct_game_groups": 117,
+          "largest_group_rows": 6
+        },
+        "all_batches_including_tail_distinct_game_min": 117,
+        "all_batches_including_tail_distinct_game_max": 147,
+        "candidate_membership_sha256": "066ba03ff311549498746d7e379aada5f452cd23c9aa9606cc99d47b2fe33936",
+        "declared_equals_reconstructed_permutation_sha256": "430797cc34a0138d35d1a118155e1b011df69773148fd31025f51194aa1abb88"
+      },
+      {
+        "study": "F12",
+        "cycle": 11,
+        "source_qualified_game_groups": 192,
+        "rows": 21010,
+        "rows_per_game_min": 39,
+        "rows_per_game_max": 250,
+        "inverse_exposure_concentration": 173.37026022421637,
+        "actual_updates": 83,
+        "maximum_presentations": 1,
+        "first_full_batch": {
+          "rows": 256,
+          "distinct_game_groups": 136,
+          "largest_group_rows": 7
+        },
+        "last_partial_batch": {
+          "rows": 18,
+          "distinct_game_groups": 18,
+          "largest_group_rows": 1
+        },
+        "all_batches_including_tail_distinct_game_min": 18,
+        "all_batches_including_tail_distinct_game_max": 149,
+        "candidate_membership_sha256": "e4192fae49f07737f3898a6bb25e6b4ff0aa137abd90b69a00a72121eab49b6b",
+        "declared_equals_reconstructed_permutation_sha256": "32c8c2a0e4b972f0722e618c92c6f7a8d4d6564dfc2dc238a72c8ae423b45f70"
+      },
+      {
+        "study": "F12",
+        "cycle": 12,
+        "source_qualified_game_groups": 192,
+        "rows": 20233,
+        "rows_per_game_min": 37,
+        "rows_per_game_max": 239,
+        "inverse_exposure_concentration": 174.37627558463808,
+        "actual_updates": 80,
+        "maximum_presentations": 1,
+        "first_full_batch": {
+          "rows": 256,
+          "distinct_game_groups": 137,
+          "largest_group_rows": 5
+        },
+        "last_partial_batch": {
+          "rows": 9,
+          "distinct_game_groups": 9,
+          "largest_group_rows": 1
+        },
+        "all_batches_including_tail_distinct_game_min": 9,
+        "all_batches_including_tail_distinct_game_max": 149,
+        "candidate_membership_sha256": "f875f696c374fc425101cef7471efc851e883bf7f03946a1692ac3a9a6c6c8a6",
+        "declared_equals_reconstructed_permutation_sha256": "6986a7c3265689eda2ff922edefec8bcbbff83e80fd71f794822804891298246"
+      },
+      {
+        "study": "Q50",
+        "cycle": 1,
+        "source_qualified_game_groups": 192,
+        "rows": 17882,
+        "rows_per_game_min": 31,
+        "rows_per_game_max": 200,
+        "inverse_exposure_concentration": 178.88642466501375,
+        "actual_updates": 70,
+        "maximum_presentations": 1,
+        "first_full_batch": {
+          "rows": 256,
+          "distinct_game_groups": 139,
+          "largest_group_rows": 5
+        },
+        "last_partial_batch": {
+          "rows": 218,
+          "distinct_game_groups": 127,
+          "largest_group_rows": 5
+        },
+        "all_batches_including_tail_distinct_game_min": 127,
+        "all_batches_including_tail_distinct_game_max": 149,
+        "candidate_membership_sha256": "fc168e5585b58a3a7ff5b235550aae8c536cd6bad9f95509fca032323dc81248",
+        "declared_equals_reconstructed_permutation_sha256": "7d2ce4f153b4c3f4aa0d9c111e32053972482086bfd06e7353b51bc8c39c90da"
+      },
+      {
+        "study": "Q50",
+        "cycle": 2,
+        "source_qualified_game_groups": 192,
+        "rows": 19626,
+        "rows_per_game_min": 34,
+        "rows_per_game_max": 240,
+        "inverse_exposure_concentration": 178.22698197647946,
+        "actual_updates": 77,
+        "maximum_presentations": 1,
+        "first_full_batch": {
+          "rows": 256,
+          "distinct_game_groups": 143,
+          "largest_group_rows": 5
+        },
+        "last_partial_batch": {
+          "rows": 170,
+          "distinct_game_groups": 108,
+          "largest_group_rows": 7
+        },
+        "all_batches_including_tail_distinct_game_min": 108,
+        "all_batches_including_tail_distinct_game_max": 152,
+        "candidate_membership_sha256": "ec99aeb60f6e27378f4ebd0430c4cdfbdcd1162cd51f3c29da3dbd10788f0ae9",
+        "declared_equals_reconstructed_permutation_sha256": "071acbb1dd2e3b7f561f1d10a14fd64cc5883eccff7a07ebbdc563f2d3a84ef9"
+      },
+      {
+        "study": "Q50",
+        "cycle": 3,
+        "source_qualified_game_groups": 192,
+        "rows": 20189,
+        "rows_per_game_min": 34,
+        "rows_per_game_max": 250,
+        "inverse_exposure_concentration": 177.6701346706682,
+        "actual_updates": 79,
+        "maximum_presentations": 1,
+        "first_full_batch": {
+          "rows": 256,
+          "distinct_game_groups": 137,
+          "largest_group_rows": 5
+        },
+        "last_partial_batch": {
+          "rows": 221,
+          "distinct_game_groups": 126,
+          "largest_group_rows": 6
+        },
+        "all_batches_including_tail_distinct_game_min": 126,
+        "all_batches_including_tail_distinct_game_max": 151,
+        "candidate_membership_sha256": "10add1205da8cdc1dde53787ed318db3b0da6708b42cfbdeb9ed2e0be75c5226",
+        "declared_equals_reconstructed_permutation_sha256": "360070e9d75c2b6a1607098e06e8fcd7f6dc13f3a878062696ecddfd2913da94"
+      },
+      {
+        "study": "Q50",
+        "cycle": 4,
+        "source_qualified_game_groups": 192,
+        "rows": 20024,
+        "rows_per_game_min": 22,
+        "rows_per_game_max": 272,
+        "inverse_exposure_concentration": 175.93768473079325,
+        "actual_updates": 79,
+        "maximum_presentations": 1,
+        "first_full_batch": {
+          "rows": 256,
+          "distinct_game_groups": 139,
+          "largest_group_rows": 6
+        },
+        "last_partial_batch": {
+          "rows": 56,
+          "distinct_game_groups": 50,
+          "largest_group_rows": 3
+        },
+        "all_batches_including_tail_distinct_game_min": 50,
+        "all_batches_including_tail_distinct_game_max": 147,
+        "candidate_membership_sha256": "4b0778d5a3dcf13db8be2a4d5f2ca89438f15c7387e3d9a92c27d8d26dab385e",
+        "declared_equals_reconstructed_permutation_sha256": "47dad898a72793a35249ddfa4482d3cabce58893c110da2c5d8ad0f8c3fc4677"
+      },
+      {
+        "study": "Q50",
+        "cycle": 5,
+        "source_qualified_game_groups": 192,
+        "rows": 21538,
+        "rows_per_game_min": 31,
+        "rows_per_game_max": 296,
+        "inverse_exposure_concentration": 172.14133770521977,
+        "actual_updates": 85,
+        "maximum_presentations": 1,
+        "first_full_batch": {
+          "rows": 256,
+          "distinct_game_groups": 134,
+          "largest_group_rows": 6
+        },
+        "last_partial_batch": {
+          "rows": 34,
+          "distinct_game_groups": 32,
+          "largest_group_rows": 2
+        },
+        "all_batches_including_tail_distinct_game_min": 32,
+        "all_batches_including_tail_distinct_game_max": 149,
+        "candidate_membership_sha256": "0443d8124f699851a4be882bc863db54ed441e4b8a7670e3e53d7bebbae13ced",
+        "declared_equals_reconstructed_permutation_sha256": "0f68b8ac2e6d4629d3844e427b77a165215f0747ca17046f096457b774501418"
+      },
+      {
+        "study": "Q50",
+        "cycle": 6,
+        "source_qualified_game_groups": 192,
+        "rows": 20991,
+        "rows_per_game_min": 31,
+        "rows_per_game_max": 251,
+        "inverse_exposure_concentration": 178.53645571435922,
+        "actual_updates": 82,
+        "maximum_presentations": 1,
+        "first_full_batch": {
+          "rows": 256,
+          "distinct_game_groups": 144,
+          "largest_group_rows": 5
+        },
+        "last_partial_batch": {
+          "rows": 255,
+          "distinct_game_groups": 142,
+          "largest_group_rows": 6
+        },
+        "all_batches_including_tail_distinct_game_min": 128,
+        "all_batches_including_tail_distinct_game_max": 153,
+        "candidate_membership_sha256": "90c9c87dbfad68e2892edad862cd038a7eee06277c860d037753dd5bc5bf19f6",
+        "declared_equals_reconstructed_permutation_sha256": "22c7890c666ab6f89e98d54bfde7783ac7c518728c13bb743e0047b650ff3e50"
+      },
+      {
+        "study": "Q50",
+        "cycle": 7,
+        "source_qualified_game_groups": 192,
+        "rows": 21147,
+        "rows_per_game_min": 37,
+        "rows_per_game_max": 218,
+        "inverse_exposure_concentration": 175.5340392969306,
+        "actual_updates": 83,
+        "maximum_presentations": 1,
+        "first_full_batch": {
+          "rows": 256,
+          "distinct_game_groups": 140,
+          "largest_group_rows": 6
+        },
+        "last_partial_batch": {
+          "rows": 155,
+          "distinct_game_groups": 101,
+          "largest_group_rows": 5
+        },
+        "all_batches_including_tail_distinct_game_min": 101,
+        "all_batches_including_tail_distinct_game_max": 148,
+        "candidate_membership_sha256": "c455ab7f0294ca00dd38d8ec33b3ec2aca60715225982c7244a7b3019cf1824d",
+        "declared_equals_reconstructed_permutation_sha256": "f5057302767e2d3fd60ce8b6cf05aeeebe45194992d08eaf2122eac6b274152a"
+      },
+      {
+        "study": "Q50",
+        "cycle": 8,
+        "source_qualified_game_groups": 192,
+        "rows": 22365,
+        "rows_per_game_min": 35,
+        "rows_per_game_max": 292,
+        "inverse_exposure_concentration": 170.95427235961446,
+        "actual_updates": 88,
+        "maximum_presentations": 1,
+        "first_full_batch": {
+          "rows": 256,
+          "distinct_game_groups": 139,
+          "largest_group_rows": 7
+        },
+        "last_partial_batch": {
+          "rows": 93,
+          "distinct_game_groups": 68,
+          "largest_group_rows": 3
+        },
+        "all_batches_including_tail_distinct_game_min": 68,
+        "all_batches_including_tail_distinct_game_max": 150,
+        "candidate_membership_sha256": "d8e05d9bba0f4eebe8aa678ca5c164605ba9eb0ca581b018c917321ceb877dfe",
+        "declared_equals_reconstructed_permutation_sha256": "6485bd41fa6383d0c676266c0268a0ad35eddd815176181a5cf335d3d2529fa9"
+      },
+      {
+        "study": "Q50",
+        "cycle": 9,
+        "source_qualified_game_groups": 192,
+        "rows": 22183,
+        "rows_per_game_min": 41,
+        "rows_per_game_max": 314,
+        "inverse_exposure_concentration": 174.20873200554115,
+        "actual_updates": 87,
+        "maximum_presentations": 1,
+        "first_full_batch": {
+          "rows": 256,
+          "distinct_game_groups": 138,
+          "largest_group_rows": 5
+        },
+        "last_partial_batch": {
+          "rows": 167,
+          "distinct_game_groups": 117,
+          "largest_group_rows": 3
+        },
+        "all_batches_including_tail_distinct_game_min": 117,
+        "all_batches_including_tail_distinct_game_max": 151,
+        "candidate_membership_sha256": "7379c5ba965cc4a1b817b014aa341eba9ec73ecae0ae9a0a52e746cd6b514a0d",
+        "declared_equals_reconstructed_permutation_sha256": "fa79057377704b2af14a883885c674c19f8f2975ec45ec8aed3f6f68d54de42b"
+      },
+      {
+        "study": "Q50",
+        "cycle": 10,
+        "source_qualified_game_groups": 192,
+        "rows": 21528,
+        "rows_per_game_min": 39,
+        "rows_per_game_max": 267,
+        "inverse_exposure_concentration": 175.13206434908,
+        "actual_updates": 85,
+        "maximum_presentations": 1,
+        "first_full_batch": {
+          "rows": 256,
+          "distinct_game_groups": 140,
+          "largest_group_rows": 5
+        },
+        "last_partial_batch": {
+          "rows": 24,
+          "distinct_game_groups": 23,
+          "largest_group_rows": 2
+        },
+        "all_batches_including_tail_distinct_game_min": 23,
+        "all_batches_including_tail_distinct_game_max": 148,
+        "candidate_membership_sha256": "b4efc9d0f9297e6788f3adb246eb4da4dd6d94b866a37733e2d07b9a653f423b",
+        "declared_equals_reconstructed_permutation_sha256": "5baf7a02304f393d86ddcf1f34b803275300fb8df265a368b858dfeba5c87d61"
+      },
+      {
+        "study": "Q50",
+        "cycle": 11,
+        "source_qualified_game_groups": 192,
+        "rows": 21758,
+        "rows_per_game_min": 43,
+        "rows_per_game_max": 233,
+        "inverse_exposure_concentration": 177.21228315001093,
+        "actual_updates": 85,
+        "maximum_presentations": 1,
+        "first_full_batch": {
+          "rows": 256,
+          "distinct_game_groups": 140,
+          "largest_group_rows": 6
+        },
+        "last_partial_batch": {
+          "rows": 254,
+          "distinct_game_groups": 136,
+          "largest_group_rows": 5
+        },
+        "all_batches_including_tail_distinct_game_min": 122,
+        "all_batches_including_tail_distinct_game_max": 149,
+        "candidate_membership_sha256": "a5b82e4923c4023cbec5c14d3a3a643424f8c6d9d8a0c0dbcb22f901e95e34c4",
+        "declared_equals_reconstructed_permutation_sha256": "5f6162fef5249abd82bf7d01337e222511497d0cd3e86d1172ed2fc63ee89d83"
+      },
+      {
+        "study": "Q50",
+        "cycle": 12,
+        "source_qualified_game_groups": 192,
+        "rows": 22108,
+        "rows_per_game_min": 38,
+        "rows_per_game_max": 258,
+        "inverse_exposure_concentration": 172.92394955396597,
+        "actual_updates": 87,
+        "maximum_presentations": 1,
+        "first_full_batch": {
+          "rows": 256,
+          "distinct_game_groups": 133,
+          "largest_group_rows": 5
+        },
+        "last_partial_batch": {
+          "rows": 92,
+          "distinct_game_groups": 75,
+          "largest_group_rows": 3
+        },
+        "all_batches_including_tail_distinct_game_min": 75,
+        "all_batches_including_tail_distinct_game_max": 147,
+        "candidate_membership_sha256": "d6005a39cd63074db15c0cb53a7453d4d4ef3311dac2800640c87aaa7b015120",
+        "declared_equals_reconstructed_permutation_sha256": "c136011f9156f628b49b73091e7018bf411087bc02a98789766ea362165c304a"
+      }
+    ],
+    "actual_owner": {
+      "supported_session": 31720,
+      "supported_exit_code": 0,
+      "CPU_wall_seconds": 3.4280724230920896
+    },
+    "IO": {
+      "actual_reserved_and_read_bytes": 295050178,
+      "helper_limit_bytes": 536805376,
+      "entry_source_reserve_bytes": 65536,
+      "overall_owner_limit_bytes": 536870912
+    },
+    "technical_dose_and_reconstruction_available_all24": true,
+    "chronology": "All24 complete bank inputs selected outcome-blind before final efficacy; actual scope/plan/authority after final negative verdict. Draft did not open/follow selected input refs.",
+    "post_audit_accounting": {
+      "closed_owners": 621,
+      "global_CPU": 9705.699443239311,
+      "global_GPU": 166926.28079001547,
+      "Q50_CPU_unchanged": 956.7623146033147,
+      "Q50_GPU_unchanged": 20384.54793118278,
+      "separate_audit_CPU": 3.4280724230920896,
+      "basis": "Exact authoritative Root verified Goal scalar report; no Goal read by draft author"
+    },
+    "tail_loss_semantics": "Source scales loss by realized_batch_rows/requested_batch_size; nominal per-row loss coefficient retained, adaptive optimizer/decay is still a real step. No full-batch-equivalent adaptive update claim.",
+    "independent_review_evidence_sha256": "6ce79b9a31b1a8c54c48ff3d4d463b2f70c44d8e634d62379b5102ef90b15cf6",
+    "root_review_reconciliation": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/banked-game-exposure-24bank-bindings-v1/Root-review-reconciliation.json",
+      "sha256": "8c8ff37966b821103d1f4ed564eedd36fbd551ef7e348b0bcdfd08c75e6d2eb2"
+    }
+  },
+  "limits": [
+    "physical/source-qualified identities do not establish independent or semantically distinct trajectories",
+    "same192 TRAIN starts recur across cycles",
+    "original/mirror views share physical-row quota",
+    "game length affects retained terminal-label row mass",
+    "own-network raw search labels are endogenous",
+    "consumed DEV is not fresh confirmation",
+    "no pooling as independent replication",
+    "no causal head-mechanism, optimum, gradient covariance, external absolute strength, daily-rate or overall-goal claim",
+    "positions can share one terminal game event with outcome targets adjusted for side to move; not identical WDL at every ply",
+    "correlation does not automatically invalidate the training loss",
+    "structural exposure does not measure search-target novelty/covariance or explain the negative result"
+  ],
+  "retained_control": "original A39",
+  "accepted_training_evidence": {
+    "root_delivery": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-Q50-cycle-12-delivery-bindings-v2/root-acceptance.json",
+      "sha256": "9d11d7c139c951feca5c3ee1259f445bcd87f9f4fc3195c34e54174ce3e02cd7"
+    },
+    "independent_delivery": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-Q50-cycle-12-delivery-bindings-v2/independent-review.json",
+      "sha256": "4184137045c9fe58d02662a2df10adbcc7f8fc3a39e8fae3777a9ec430885f1e"
+    },
+    "post_closure_custody": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-Q50-cycle-12-delivery-bindings-v2/post-closure-custody.json",
+      "sha256": "7b609ded7205a1ee14ee4fcf08c3861a63f42e6d31a74b9ea65c66246f758735"
+    },
+    "review_scope": "Named sealed compact JSON authenticated with canonical regular read-only stable reads, SHA256 and exact Root9/ind11 joins; embedded model metadata opaque, no reference following. Aggregate dose is Root-reported accepted scalar projection, not an independent bank/ledger recomputation."
+  },
+  "operational_provenance": {
+    "status": "FIRST_ACTUAL_FINAL_GPU_AND_READER_CLOSED_PASS_THEN_FROZEN_VERDICT",
+    "snapshot_basis": "Root-reported accepted closure/cost scalars plus authenticated GPU/reader Root-ind metadata; draft author did not follow owner terminal/process/raw refs",
+    "playing_source": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-Q50-playing-source-preparation-v5/manifest.json",
+      "sha256": "f312070fb3998868a099432559a89814a793cf5c91ac4472338722a5a7dd2901"
+    },
+    "playing_gpu_source_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-Q50-playing-GPU-independent-source-review-v3/review.json",
+      "sha256": "4454e1837f611e5f447c877665c2e107e5816e5970e78ecd25813e1ad8c4455a"
+    },
+    "playing_reader_source_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-Q50-playing-reader-independent-source-review-v3/review.json",
+      "sha256": "faecd18ce9cd7af84773d90e1238c7a1e0355dd4757a6b4c2ed9fd365727428a"
+    },
+    "controller_source": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-Q50-playing-root-controller-proposal-v7/manifest.json",
+      "sha256": "6c6e611ab80bdc8c9a894dbd1c7cf4a709df36c1b5b6d3cff9e54312ce160beb"
+    },
+    "controller_helper": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-Q50-playing-root-controller-proposal-v7/root_control.py",
+      "sha256": "c56ab445a224fd8a7be800a57616d176f0270ed80d10b597139e8b0a1cd1b3ca"
+    },
+    "controller_settlement": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-Q50-playing-root-controller-proposal-v7/close.py",
+      "sha256": "9488c10c022bd9274e63909d13c57d63f80cd8d7c320c00eadffcc2ce20900b7"
+    },
+    "controller_source_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-Q50-playing-root-admission-independent-source-review-v3/review.json",
+      "sha256": "6cdc698f28d33fede0c7be8a4443be6036ed4d18652e9e16c265d84763fc6904"
+    },
+    "playing_Root_source_selection": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/Q50-final-playing-Root-source-selection-v3/selection.json",
+      "sha256": "7c9a8013203270dc04936d9ce51122dbd73430b5d758a369725c2cb5a458ed84"
+    },
+    "controller_Root_source_selection": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/Q50-final-playing-R4-Root-source-selection-v3/selection.json",
+      "sha256": "8d22391b0301394dbcb444d4378f7aed6eea3c3eaf24259d8de631f1a5550dc8"
+    },
+    "actual_final_selection_REFONLY": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-Q50-vs-A39-800DEV-bindings-v2/playing-selection.json",
+      "sha256": "2fd5e4a6a4fe3918600de034b74b8297ce8ea5315f44a186afcbbcb7f10c5e4b"
+    },
+    "actual_final_protocol_REFONLY": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-Q50-vs-A39-800DEV-bindings-v2/gpu.protocol.json",
+      "sha256": "ab2997e2bf9bd7807d252cc6bb78fb23a38c4aedbd5d30eccbcf7ba068bdebf5"
+    },
+    "preserved_zero_owner_binding_negative": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-Q50-vs-A39-800DEV-bindings-v1/gpu-binding-independent-review.json",
+      "sha256": "385c251268e1941e9a4f2a0c15b2929db083875a57835c968df4ec75fd7b6dbc"
+    },
+    "preserved_negative_wording_erratum": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-Q50-vs-A39-800DEV-bindings-v1/gpu-binding-independent-review-erratum.json",
+      "sha256": "d20d534745cf8b44e758260ddf2c4d54d03895003265680a04d6ee66e63e8a09"
+    },
+    "preserved_playing_V4_negative": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-Q50-playing-consolidated-independent-source-review-v4-negative/review.json",
+      "sha256": "30304d30f23743180a1e2a889696937c484216a4d30fd09f3c557bd5d7f427db"
+    },
+    "preserved_controller_V6_negative": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-Q50-playing-root-controller-consolidated-independent-source-review-v6-negative/review.json",
+      "sha256": "6b9a9ee2bd36911a9735da088ffb04dda23b17e04f88326b72f635c6eacce02a"
+    },
+    "correction_scope": "metadata paths/hashes/reference closure only;49 common and32+1 controller declaration bodies unchanged; no scientific recipe/source/profile/native/qualification/cap/cost/deadline/stage/output change",
+    "final_costs": "Recorded in final620-owner accounting snapshot",
+    "actual_gpu": {
+      "supported_session": 30101,
+      "exit_code": 0,
+      "wall_seconds": 2516.747356913984
+    },
+    "actual_reader": {
+      "supported_session": 32459,
+      "exit_code": 0,
+      "wall_seconds": 34.306374598061666
+    }
+  },
+  "unselected_next_direction": "Recommend separate preregistered test of per-game terminal-outcome influence, holding blend/optimizer fixed. No next recipe/compute authority; game balancing not established optimal. Policy KL indirectly affects shared trunk, does not create independent outcomes or directly anchor WDL; direct WDL anchor is separate intervention."
+}
