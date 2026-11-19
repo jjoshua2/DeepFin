@@ -31,7 +31,9 @@ from chess_anti_engine.uci.root_parallel_gumbel import (
     RootParallelGumbelConfig,
     RootParallelGumbelPool,
     _SearchState,
+    root_forced_draw_actions,
 )
+import chess_anti_engine.uci.search as search_module
 from chess_anti_engine.uci.search import _FORCED_ROOT_MATE_SIMS_PER_MOVE, SearchWorker
 from chess_anti_engine.uci.time_manager import Deadline
 
@@ -389,7 +391,8 @@ def test_tb_proofs_leave_the_root_to_the_resolver(monkeypatch: pytest.MonkeyPatc
         pool.close()
 
 
-def test_a_pv_ending_on_a_proven_node_completes_the_depth_bound() -> None:
+def _depth_tree() -> tuple[SearchWorker, MCTSTree, int, int, int]:
+    """root -> child(10) -> leaf(20), sibling 11 unexpanded."""
     worker = SearchWorker.__new__(SearchWorker)
     tree = MCTSTree()
     tree.reserve(64, 640)
@@ -399,11 +402,60 @@ def test_a_pv_ending_on_a_proven_node_completes_the_depth_bound() -> None:
     tree.expand(child, np.array([20], dtype=np.int32), np.array([1.0]))
     leaf = int(tree.find_child(child, 20))
     worker._tree, worker._root_id = tree, rid
-    assert worker._depth_pv_len([10, 20], 4) == 2  # unproven leaf: keep deepening
-    tree.mark_solved_path(np.array([leaf], dtype=np.int32), 2)  # a drawn terminal
-    assert worker._depth_pv_len([10, 20], 4) == 4
-    assert worker._depth_pv_len([10, 20], None) == 2
+    return worker, tree, rid, child, leaf
+
+
+def _mark(tree: MCTSTree, node: int, status: int) -> None:
+    tree.mark_solved_path(np.array([node], dtype=np.int32), status)  # this node only
+
+
+def test_depth_pv_end_counts_only_when_nothing_better_can_exist() -> None:
+    worker, tree, rid, child, leaf = _depth_tree()
+    assert worker._depth_pv_len([10, 20], 4) == 2   # unproven end: keep deepening
+    _mark(tree, leaf, 2)                             # the leader's line ends drawn ...
+    assert worker._depth_pv_len([10, 20], 4) == 2   # ... but sibling 11 is unproven
     assert worker._depth_pv_len([], 4) == 0
+    assert worker._depth_pv_len([10, 20], None) == 2
+
+    worker, tree, rid, child, leaf = _depth_tree()
+    _mark(tree, leaf, 1)
+    _mark(tree, child, -1)                           # first move: a proven win
+    assert worker._depth_pv_len([10, 20], 4) == 4
+
+    for root_status, complete in ((1, True), (-1, True), (2, False)):
+        worker, tree, rid, child, leaf = _depth_tree()
+        _mark(tree, leaf, 2)
+        _mark(tree, rid, root_status)                # a DRAW root may rest on a twofold
+        assert worker._depth_pv_len([10, 20], 4) == (4 if complete else 2), root_status
+
+
+# White wins, and Qg6 stalemates at once: a drawn terminal the visit leader
+# can sit on (review: pool played it in 19/19 such positions under go depth).
+TEMPTING_STALEMATE = ("7k/2K5/8/8/8/8/2Q5/8 w - - 0 1", "c2g6")
+
+
+@pytest.mark.parametrize("path", ["pool", "walkers"])
+def test_go_depth_never_settles_for_the_stalemate_in_a_won_position(path: str) -> None:
+    """The drawn PV end must not complete `go depth`: the root is unproven and
+    a mate exists. (What an UNPROVEN pool search plays when it is cut off is
+    the search's own choice and identical to main -- a random net can rank the
+    exact 0 of the stalemate above its own guesses -- so only the stop is
+    pinned here, plus the move on the walker path, which never picks it.)"""
+    fen, stalemate = TEMPTING_STALEMATE
+    worker = _make_worker(path)
+    try:
+        result = worker.run(
+            chess.Board(fen), stop_event=threading.Event(),
+            deadline=Deadline(5_000), max_nodes=None, max_depth=10,
+        )
+        if worker.last_stop_reason == "max_depth":
+            assert worker._root_solved_status() == 1 or len(result.pv) >= 10, result.pv
+        else:
+            assert worker.last_stop_reason == "external", worker.last_stop_reason
+        if path == "walkers":
+            assert result.bestmove_uci != stalemate
+    finally:
+        worker.close()
 
 
 # --- review item 6: a proven-lost search with a pruned drawing move ------------
@@ -435,6 +487,8 @@ def test_a_lost_root_plays_the_pruned_drawing_move(path: str, fen: str, draw: st
         assert result.score_mate is None
         assert infos
         assert infos[-1]["pv"][0] == draw, infos[-1:]
+        assert infos[-1]["score_cp"] == 0, infos[-1:]
+        assert infos[-1]["score_mate"] is None, infos[-1:]
     finally:
         worker.close()
 
@@ -463,3 +517,70 @@ def test_a_proven_lost_root_plays_the_longest_loss(path: str, fen: str, longest:
         assert result.bestmove_uci == longest, (path, result.bestmove_uci, result.score_mate)
     finally:
         worker.close()
+
+
+# --- review round 2: targeted pins -------------------------------------------
+
+
+def test_only_a_third_occurrence_is_a_forced_repetition_draw() -> None:
+    board = chess.Board()
+    for uci in ("g1f3", "g8f6", "f3g1"):
+        board.push_uci(uci)
+    back = int(move_to_index(chess.Move.from_uci("f6g8"), board))
+    assert root_forced_draw_actions(board, [back]) == []  # second occurrence
+    for uci in ("f6g8", "g1f3", "g8f6", "f3g1"):
+        board.push_uci(uci)
+    back = int(move_to_index(chess.Move.from_uci("f6g8"), board))
+    assert root_forced_draw_actions(board, [back]) == [back]  # third occurrence
+
+
+def test_go_mate_budget_applies_to_forced_roots_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A normal root under `go mate N` is bounded by its deadline, not by the
+    forced-root simulation budget (shrunk here so a slow CI box passes it)."""
+    monkeypatch.setattr(search_module, "_FORCED_ROOT_MATE_SIMS_PER_MOVE", 16)
+    for fen, expected in ((FORCED_NO_MATE, "mate_forced_root"), (chess.STARTING_FEN, "external")):
+        worker = _make_worker("pool")
+        try:
+            worker.run(
+                chess.Board(fen), stop_event=threading.Event(),
+                deadline=Deadline(2_000), max_nodes=None, mate_moves=1,
+            )
+            assert worker.last_stop_reason == expected, (fen, worker.last_stop_reason)
+        finally:
+            worker.close()
+
+
+def _lost_root(board: chess.Board, children: list[chess.Move]) -> tuple[SearchWorker, MCTSTree, int]:
+    """A root proven lost: every child marked won for the opponent, no subtrees."""
+    worker = SearchWorker.__new__(SearchWorker)
+    tree = MCTSTree()
+    tree.reserve(64, 640)
+    rid = int(tree.add_root(1, 0.0))
+    actions = np.array([move_to_index(m, board) for m in children], dtype=np.int32)
+    tree.expand(rid, actions, np.full(len(children), 1.0 / len(children)))
+    for a in actions.tolist():
+        _mark(tree, int(tree.find_child(rid, int(a))), 1)
+    _mark(tree, rid, -1)
+    worker._tree, worker._root_id = tree, rid
+    return worker, tree, rid
+
+
+def test_longest_loss_prefers_a_move_with_no_proven_mate_distance() -> None:
+    board = chess.Board(LONGEST_LOSS[0][0])  # Kh2 is mated in 1 (a board fact)
+    short, unmeasured = chess.Move.from_uci("h3h2"), chess.Move.from_uci("h3h4")
+    worker, _tree, _rid = _lost_root(board, [short, unmeasured])
+    actions = np.array([move_to_index(short, board), move_to_index(unmeasured, board)])
+    chosen = worker._longest_proven_loss(board, actions, np.array([9, 1]), int(actions[0]))
+    assert chosen == int(actions[1])
+
+
+def test_drawing_escape_honours_searchmoves() -> None:
+    fen, draw = DRAW_ESCAPES[0]
+    board = chess.Board(fen)
+    draw_move = chess.Move.from_uci(draw)
+    others = [m for m in board.legal_moves if m != draw_move]
+    worker, _tree, _rid = _lost_root(board, others)
+    draw_idx = int(move_to_index(draw_move, board))
+    assert worker._drawing_escape_action(board, None) == draw_idx
+    allowed = {int(move_to_index(m, board)) for m in others}
+    assert worker._drawing_escape_action(board, allowed) is None

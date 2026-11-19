@@ -98,7 +98,12 @@ back to the watchdog; with `--walker-gather 32` (now the default) 5,500 nps at
 two walkers and 8,600 at eight. On CPU with a tiny test net (6 s `movetime`)
 classic ran 5,200-5,600 nps and walkers 2 / 4 / 8 ran 1,400 / 1,600 / 2,200 at
 gather 1 and 4,700 / 5,500 / 5,500 at gather 32. The new default itself has
-not yet been timed on a GPU. Keep one walker for play.
+not yet been timed on a GPU. Keep one walker for play. A walker finishes the
+batch it is evaluating before it sees a stop, so with a slow device a larger
+gather adds up to one batch to the stop latency; under `go movetime` the time
+manager still answered before the deadline in every measured case (an evaluator
+taking 50 ms + 2 ms per row: `movetime 100` answered at 92-93 ms and
+`movetime 300` at 170-293 ms, at gather 1 and 32 alike).
 
 **Several GPUs** (the 4-GPU path): `--devices` with more than one entry turns on the
 shared-tree multi-GPU PUCV pool (one worker per GPU, PUCT descent with virtual
@@ -341,12 +346,20 @@ nothing.
   cap. `go mate N` also stops at once when the side to move is proven lost,
   in every search mode (root-parallel Gumbel included: there the root is proven
   from its candidates' proofs after each halving phase).
-- `go depth N` treats a principal variation that ends on a proven position (a
-  checkmate, a draw on the board, a tablebase result, a proven line) as complete,
-  in every search mode, even when it is shorter than `N`: that line cannot be
-  deepened. A proven root (a forced mate either way, a tablebase-solved root)
-  therefore answers once proven. `go nodes N` counts its visits and ends as
-  usual; `go infinite` still waits for `stop`.
+- `go depth N` treats a principal variation that ends on a proven position as
+  complete, even when it is shorter than `N`, only when nothing better can exist:
+  the root is proven won or lost, or the line's first move is a proven win. A
+  root proven won or lost (a forced mate either way, a tablebase win) therefore
+  answers once proven, in every search mode. A line that ends drawn or lost while
+  other moves are still unproven does not end the search, and a root the tree
+  calls drawn does not either (see the twofold note below), so such a `go depth`
+  waits for `stop`, as before. `go nodes N` counts its visits and ends as usual;
+  `go infinite` still waits for `stop`.
+- Known gap: the pool and walker paths score a position that repeats one already
+  on the board or in the line (a twofold repetition) as a draw. A root whose only
+  escape is such a repetition can be marked drawn although it is lost. The engine
+  does not stop `go depth` or `go mate` on a drawn root for that reason; the score
+  it reports can still read 0.00 there.
 - When the network thinks the root is winning, the search leaves out moves that
   draw at once. If every move it did search is then proven lost, the engine plays
   a move that ends the game drawn on the board (stalemate, insufficient material,

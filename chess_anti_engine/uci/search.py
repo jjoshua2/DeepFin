@@ -3540,16 +3540,32 @@ class SearchWorker:
         return best
 
     def _depth_pv_len(self, pv_indices: list[int], max_depth: int | None) -> int:
-        """PV length as the ``go depth`` bound sees it: a PV that ends on a
-        proven node (a terminal on the board, a tablebase leaf, or a proven
-        line) cannot be deepened, so it counts as complete -- ``max_depth``.
-        Otherwise a short proven line (``a7a6 e5b5 a6b5``, a draw) would keep
-        an unproven root's search running until ``stop`` on the paths that
-        keep re-visiting it (pool, walkers, root-parallel)."""
+        """PV length as the ``go depth`` bound sees it.
+
+        A PV that ends on a proven node cannot be deepened, but that alone
+        does not decide the move: the visit leader can sit on a drawn or lost
+        line (a stalemate in a won KQK, an in-tree twofold repetition) while an
+        unproven sibling is better. So the proven end counts as complete --
+        ``max_depth`` -- only when nothing better can exist: the ROOT is proven
+        won or lost, or the PV's first move is a proven win for the side to
+        move. A root proven DRAWN does not count: the C tree proves draws from
+        in-tree twofold repetitions, which may not be draws at all (a WIN or
+        LOSS proof never rests on a draw). Otherwise the raw length, and a
+        ``go depth`` the search cannot complete waits for ``stop`` as before.
+        On the pool / walker / root-parallel paths a proven root re-visits its
+        proven lines forever, so without this the depth bound never ended."""
         n = len(pv_indices)
-        tree, node = self._tree, self._root_id
-        if max_depth is None or n == 0 or n >= max_depth or tree is None or node is None:
+        tree, root = self._tree, self._root_id
+        if max_depth is None or n == 0 or n >= max_depth or tree is None or root is None:
             return n
+        first = int(tree.find_child(root, int(pv_indices[0])))
+        decided = (
+            int(tree.get_solved_status(root)) in (1, -1)
+            or (first >= 0 and int(tree.get_solved_status(first)) == -1)
+        )
+        if not decided:
+            return n
+        node = root
         for action in pv_indices:
             node = int(tree.find_child(node, int(action)))
             if node < 0:
@@ -4329,7 +4345,9 @@ class SearchWorker:
                     stop_reason = "mate_solved_root"
                 elif mate_forced_root and (
                     int(completed) == 0
-                    or self._root_solved_status() != 0
+                    # Won / lost only: a DRAW proof may rest on an in-tree
+                    # twofold repetition (see `_depth_pv_len`).
+                    or self._root_solved_status() in (1, -1)
                     or total_nodes >= _FORCED_ROOT_MATE_SIMS_PER_MOVE * int(mate_moves)
                 ):
                     # A forced root: the move is decided, so the only open

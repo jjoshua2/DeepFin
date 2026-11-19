@@ -11,7 +11,7 @@ import pytest
 
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.uci.engine import Engine
-from chess_anti_engine.uci.search import SearchResult, SearchWorker
+from chess_anti_engine.uci.search import DEFAULT_LEAF_GATHER, SearchResult, SearchWorker
 from chess_anti_engine.uci.time_manager import SearchLimits
 
 
@@ -61,6 +61,31 @@ def test_deadline_interrupts_real_walker_chunk_without_fallback(capsys):
         assert later.nodes == 8
         assert not engine._stop_event.is_set()
         assert engine.bestmove_fallback_used == 0
+    finally:
+        engine.close()
+
+
+def test_deadline_interrupts_walker_chunk_at_the_default_gather(capsys):
+    """The default walker gather (32) still answers near a finite deadline: a
+    walker finishes its in-flight batch (one evaluator call) before it sees
+    the stop, so only elapsed time is bounded here; the node bound above is
+    a gather-1 property."""
+    worker = SearchWorker(
+        _SlowEvaluator(), device="cpu", n_walkers=2, chunk_sims=2048,
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", add_noise=False),
+    )
+    assert worker._walker_gather == DEFAULT_LEAF_GATHER
+    engine = Engine(worker)
+    try:
+        started = time.monotonic()
+        result = engine._run_one_phase(
+            SearchLimits(deadline_ms=100), is_ponder=False, board=chess.Board(),
+        )
+        elapsed = time.monotonic() - started
+        assert elapsed < 1.5  # Scheduling tolerance, not a real-time guarantee.
+        assert result.nodes > 0
+        assert engine.bestmove_fallback_used == 0
+        assert "search error:" not in capsys.readouterr().out
     finally:
         engine.close()
 
