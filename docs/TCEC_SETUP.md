@@ -203,7 +203,7 @@ between moves, and on failure the previous settings and evaluator stay).
 | `RPGOpenBudgetFrac` | string (0, 1] | 0.5 | Same. | that pool |
 | `VLGather` | spin 32..4096 | 512 | Leaf gather for `UseVL` / multi-GPU / `SearchParallel gumbel`. | those pools |
 | `MaxBatch` | spin 64..8192 | 1024 | GPU evaluator batch. | evaluator |
-| `EvalCacheEntries` | spin 0..1048576 | 0 | Eval cache entries; 0 = off. | evaluator |
+| `EvalCacheEntries` | spin 0..1048576 | 0 | Eval cache entries; 0 = off. Keep 0 on a GPU (section 9). | evaluator |
 | `MultiPV` | spin 1..256 | 1 | Number of `info` lines (PVs) reported. | no |
 | `UCI_ShowWDL` | check | false | Add `wdl` to `info` lines. | no |
 | `MoveOverheadMs` | spin 0..5000 | 30 | Subtracted from every clock-derived deadline; also moves the watchdog (section 8). | no |
@@ -526,11 +526,28 @@ or a failed search-path re-warm at `isready`, print
 `info string WARNING engine unhealthy: ...` once; every `go` is still answered. At
 the next `isready` after a game boundary (`ucinewgame`, or `position startpos` with
 no moves) the engine rebuilds the evaluator and reruns the strict startup check.
+It first empties every eval cache (`info string health check: emptied ... eval
+cache(s) ...` when `EvalCacheEntries` > 0), so nothing below is answered from
+evals cached before the evaluator broke. It then runs every compiled batch size
+twice, below the cache, on the evaluator it will play with (the rebuilt one, or
+the previous one when the rebuild failed), counting the forwards that really ran:
+`info string health check: re-ran ... compiled batch shapes on ...: ... real
+forwards, at least 2 per shape per device`. A shape that raised or did not run
+twice fails the check. Last comes a real search. The check passes only when all
+of these complete. (Before 2026-11-18 it ran only the small search, which on the
+real GPU passed while every longer `go` failed.)
+
 The result is one of: `info string engine health check passed; unhealthy state cleared`;
 `info string WARNING engine health check passed on a DEGRADED path ...`; or
 `info string engine health check failed ...` (and `deepfin: engine health check failed: ...`
 on stderr) and exit 1 before `readyok`. A GUI that never
 sends `isready` between games gets no re-check.
+
+The shape re-run covers the primary evaluator only. Beside the multi-GPU pool
+the primary is uncompiled, so there is nothing to re-run, and the engine says so:
+`info string health check: no compiled evaluator under the primary (eager), so no
+batch shapes were re-run; ...`. A pool worker that fails is caught by the
+DEGRADED path described below, not by this check.
 
 **One GPU failing on the multi-GPU PUCV pool.** A device whose evaluator raises
 (CUDA out of memory, device lost, any error) during a search is dropped; its
@@ -724,7 +741,15 @@ the rebuild fails, `info string ...: evaluator rebuild failed (...); keeping the
 previous evaluator and settings`. An option set to the value it already has
 rebuilds nothing (`... already ...; nothing rebuilt`), so it does not re-admit
 a device that raised: use a different value or restart the engine. While a stuck search holds the worker only
-`MultiPV` and `UCI_ShowWDL` apply.
+`MultiPV` and `UCI_ShowWDL` apply. On the compiled GPU path the rebuilt evaluator is
+warmed on a new thread through the compiled graphs the previous one built. Until
+2026-11-18 that warm-up failed on the real GPU (`CUBLAS_STATUS_NOT_INITIALIZED`
+inside a CUDA-graph capture). In some runs every later search then failed too,
+with `already recording to mempool_id` (seen on 2026-11-18; not in a 2026-11-16
+run or in a review run, where the rebuild failed but later searches still ran). Rebuilds now succeed. Should a
+rebuild's capture still fail, the failed capture is closed (stderr: `a CUDA-graph
+capture failed and left its memory pool marked as capturing; released it ...`) and
+the previous evaluator keeps searching.
 
 **Ponder** works at the protocol level, but it has not been validated for
 tournament play and is not recommended: leave `Ponder` false.
@@ -744,6 +769,25 @@ tournament play and is not recommended: leave `Ponder` false.
   (`previous configuration could not be restored ...; fell back to the single-evaluator classic Gumbel path`).
 - **A device that raised is not retried** until the pool (or chain) is rebuilt;
   a device dropped for stopping answering is re-admitted once its call returns.
+- **`EvalCacheEntries` slows a GPU search: keep it at 0.** Measured with the real
+  network on an RTX 5090 (2026-11-18, `go nodes 20000` from the start position):
+  one GPU 13431 nps with the cache off, 7616 nps at 262144 entries (-43%); the
+  two-worker pool -40% to -50% across runs. The cache hashes every encoded row
+  (blake2b over 44.8 KB: about 55 us per row on one CPU core, as long as the GPU
+  spends per node) and turns off the pinned in-place transfer path. It pays only
+  where the GPU forward is slower than the hash.
+- **A GPU listed twice in `--devices`** (a test setup: the tournament topology lists
+  each GPU once) gets CUDA graphs on its first listing only, announced once:
+  `info string multi-GPU: cuda:0#1 repeats a device already listed; ... compiles with
+  mode 'default' (no CUDA graphs)`. Every evaluator of the network on one GPU replays
+  the same compiled CUDA graphs through one memory pool, which two workers cannot
+  use at the same time; before 2026-11-18 the repeats tried and fell back after a
+  failed capture. `CAE_UCI_MULTI_GPU_COMPILE_MODE` now applies to the
+  `--no-multi-gpu-pucv` routing chain as well as the pool and root-parallel Gumbel,
+  and the chain, like the pool, rebuilds without CUDA graphs (`default`) if its
+  CUDA-graph warm-up fails (`routing chain fell back to compile mode 'default'`).
+  Beside the pool the primary evaluator (root evaluations, `go searchmoves`) stays
+  uncompiled for the same reason: it shares `devices[0]` with pool worker 0.
 - **`--no-multi-gpu-pucv` with several devices evaluates one call at a time.** It
   routes each batch to one device synchronously; it is a debugging path, not a
   way to use several GPUs at speed.

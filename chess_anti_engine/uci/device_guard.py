@@ -282,13 +282,15 @@ class DegradingMultiGPUDispatcher(MultiGPUDispatcher):
     def _drop_locked(self, idx: int, what: str, reason: str, *, stalled: bool) -> None:
         if not self._live[idx]:
             return
+        if not self._armed:
+            what = "failed at startup" if not stalled else "stopped answering at startup"
+        # After the startup rewrite: the latch's text is what the quit line
+        # prints ("a device failed this session (device ... failed at startup)").
         wedge.note_device_fault(f"device {self._labels[idx]} {what}")
         self._live[idx] = False
         self._raised[idx] = self._raised[idx] or not stalled
         if stalled:
             self._stall_drops_this_search[idx] += 1
-        if not self._armed:
-            what = "failed at startup" if not stalled else "stopped answering at startup"
         self._drop_reason[idx] = f"{what} ({reason})"
         msg = _pool.DEVICE_DROPPED_NOTE.format(
             label=self._labels[idx], what=what, reason=reason,
@@ -378,7 +380,11 @@ class DegradingMultiGPUDispatcher(MultiGPUDispatcher):
             ties = [k for k in live if self._inflight[k] == best_load]
             best = ties[self._rr % len(ties)] if len(ties) > 1 else ties[0]
             if len(ties) > 1:
-                self._rr = (self._rr + 1) % len(self._evals)
+                # Wrap over the devices in service: with all of them live this is
+                # len(self._evals), the healthy chain's routing unchanged; after a
+                # drop, wrapping over all devices made consecutive idle calls skip
+                # a live device (3 devices, #1 dropped: 0, 2, 2, 0, ...).
+                self._rr = (self._rr + 1) % max(1, sum(self._live))
             self._inflight[best] += 1
             return best
 
