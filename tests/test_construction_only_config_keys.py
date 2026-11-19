@@ -172,7 +172,10 @@ _STARTUP_ONLY_READER_FILES: dict[str, set[str]] = {
     # reason. It reshapes the TRAINING TARGET, so a mid-run change would also
     # split a readout window across two different targets with nothing in the
     # metrics able to say where the split fell.
-    "policy_target_temp": {"chess_anti_engine/train/trainer.py"},
+    # `simple_rl/learn.py` builds a fresh Trainer per generation from its own CLI
+    # settings (no yaml) and reads the value back off `_loss_kwargs` only to
+    # record what the loss received.
+    "policy_target_temp": {"chess_anti_engine/train/trainer.py", "chess_anti_engine/simple_rl/learn.py"},
     "grad_clip_mode": {"chess_anti_engine/train/trainer.py"},
     # `_resolve_pause_marker_paths`, which the startup block calls once.
     "pause_file": {"chess_anti_engine/tune/trainable_config_ops.py"},

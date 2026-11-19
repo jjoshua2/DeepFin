@@ -176,8 +176,15 @@ def test_selfplay_plumbs_policy_temp_but_not_the_root_transform() -> None:
     that can only detect movement in one direction is half a test.
     """
     omitted = _omitted_gumbel_kwargs()
-    for field in ("c_visit", "c_visit_root", "c_scale_root", "q_visit_exp_root", "halving_div"):
+    for field in ("c_visit_root", "c_scale_root", "q_visit_exp_root", "halving_div"):
         assert field in omitted, f"{field} is now plumbed into selfplay; update SHAPES"
+    # c_visit IS plumbed (SearchConfig.gumbel_c_visit, a direct-caller knob of
+    # the simple RL loop). The live shape stays right only while that field's
+    # default is the GumbelConfig default -- pinned here.
+    from chess_anti_engine.selfplay.config import SearchConfig
+
+    assert "c_visit" not in omitted
+    assert SearchConfig().gumbel_c_visit == GumbelConfig().c_visit
     assert "policy_temp" not in omitted, (
         "network_turn.py no longer passes policy_temp; the probe now assumes it "
         "does (it tempers its own prior to match) and SHAPES/--shape-yaml must "

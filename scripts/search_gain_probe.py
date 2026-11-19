@@ -185,11 +185,14 @@ class SearchShape:
 # banked against it.
 #
 # `selfplay/network_turn.py` builds its GumbelConfig from an explicit keyword
-# list that OMITS c_visit / c_visit_root / c_scale_root / q_visit_exp_root /
-# halving_div -- those take the GumbelConfig dataclass default, and for the root
-# trio that default is a SENTINEL meaning "fall back to the descent knob", so
-# live selfplay runs a LINEAR root. ⚑ `policy_temp` is NOT in that omitted set
-# any more: PR #385 plumbed `gumbel_policy_temp` through to selfplay, and
+# list that OMITS c_visit_root / c_scale_root / q_visit_exp_root / halving_div
+# -- those take the GumbelConfig dataclass default, and for the root trio that
+# default is a SENTINEL meaning "fall back to the descent knob", so live
+# selfplay runs a LINEAR root. `c_visit` is passed (from
+# SearchConfig.gumbel_c_visit, a direct-caller knob whose default IS the
+# GumbelConfig default and which no yaml sets), so live selfplay still runs
+# c_visit 50. ⚑ `policy_temp` is NOT in the omitted set
+# either: PR #385 plumbed `gumbel_policy_temp` through to selfplay, and
 # `test_selfplay_plumbs_policy_temp_but_not_the_root_transform` pins which side
 # of the line each field is on so this comment cannot drift again.
 SHAPES: dict[str, SearchShape] = {
