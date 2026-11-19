@@ -1210,7 +1210,7 @@ def _build_parser() -> argparse.ArgumentParser:
                    action="store_true", default=None,
                    help="with --devices, use shared-tree per-GPU PUCV workers instead of the "
                         "routing dispatcher (default: auto-enabled when --devices lists more "
-                        "than one device)")
+                        "than one device; with a single device it refuses to start)")
     p.add_argument("--no-multi-gpu-pucv", dest="multi_gpu_pucv",
                    action="store_false",
                    help="force the routing dispatcher even with multiple --devices "
@@ -1221,7 +1221,8 @@ def _build_parser() -> argparse.ArgumentParser:
                         "baseline); gumbel = root-parallel Gumbel over evaluator groups "
                         "(quality-preserving — classic sequential-halving root decisions, "
                         "per-candidate subtrees parallelized across devices). With a single "
-                        "device both values leave the classic search paths untouched.")
+                        "device the default pucv leaves the classic search paths "
+                        "untouched, and gumbel refuses to start (exit 1).")
     p.add_argument("--pucv-pending-mode", choices=["legacy", "virtual-mean"],
                    default="legacy",
                    help="pending accounting for batched PUCV paths (default: legacy)")

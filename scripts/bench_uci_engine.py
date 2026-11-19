@@ -80,6 +80,18 @@ def _float_from_result(result: dict[str, object], key: str, default: float = 0.0
     return default
 
 
+def _device_count(devices: str | None) -> int:
+    return len([d for d in (devices or "").split(",") if d.strip()]) or 1
+
+
+def _expects_pool_stats(devices: str | None, search_parallel: str | None) -> bool:
+    """Whether this config runs the multi-GPU PUCV pool, whose per-search batch
+    statistics (`info string pucv leaves=...`, printed under UCI `debug on`)
+    the `pucv profile:` summary is built from. Two or more devices auto-enable
+    the pool unless root-parallel Gumbel is asked for."""
+    return _device_count(devices) >= 2 and search_parallel != "gumbel"
+
+
 def _spawn(checkpoint: str, device: str, *,
            devices: str | None = None,
            chunk_sims: int, topk: int, max_batch: int,
@@ -110,6 +122,13 @@ def _spawn(checkpoint: str, device: str, *,
     if not coalesce:
         cmd.append("--no-coalesce")
     if multi_gpu_pucv:
+        if _device_count(devices) < 2:
+            # The engine refuses --multi-gpu-pucv on one device (exit 1); say
+            # why here instead of failing on a dead pipe.
+            raise SystemExit(
+                "--multi-gpu-pucv needs --devices with at least two entries "
+                f"(got {devices or device!r})"
+            )
         cmd.append("--multi-gpu-pucv")
     if search_parallel:
         cmd.extend(["--search-parallel", str(search_parallel)])
@@ -274,6 +293,9 @@ def _run_config(
         # separate.
         startup_timeout = max(600.0 if devices else 120.0, float(timeout_s))
         reader.read_until("uciok", timeout_s=startup_timeout)
+        # Pool batch statistics (`info string pucv ...`) print only under UCI
+        # `debug on`; the `pucv profile:` summary and cache rates read them.
+        _send(proc, "debug on")
         if use_vl:
             _send(proc, "setoption name UseVL value true")
             _send(proc, f"setoption name VLGather value {vl_gather}")
@@ -286,6 +308,7 @@ def _run_config(
             proc.wait(timeout=10)
         raise
 
+    expect_pool_stats = _expects_pool_stats(devices, search_parallel)
     coal_str = "" if walkers == 1 else f"  walkers={walkers}  coalesce={coalesce}"
     device_str = f"devices={devices}" if devices else f"device={device}"
     pucv_str = ""
@@ -310,9 +333,15 @@ def _run_config(
                 # measured tree-continuation state rather than evaluator NPS.
                 _send(proc, "ucinewgame")
                 result = _run_one(proc, reader, fen=fen, nodes=nodes, timeout_s=timeout_s)
+                prof = result.get("profile") or {}
+                if expect_pool_stats and not (isinstance(prof, dict) and "pucv_info_lines" in prof):
+                    raise RuntimeError(
+                        f"{label}: the multi-GPU PUCV pool search of {pos_label} printed no "
+                        "`info string pucv ...` statistics (sent `debug on`); the pucv "
+                        "profile would be missing, not zero"
+                    )
                 position_stats.setdefault(pos_label, []).append(_float_from_result(result, "sims_per_s"))
                 position_moves.setdefault(pos_label, []).append(str(result["bestmove"]))
-                prof = result.get("profile") or {}
                 if isinstance(prof, dict) and prof:
                     profile_runs.append(prof)
         for pos_label, vals in position_stats.items():

@@ -44,7 +44,9 @@ from chess_anti_engine.uci.search import SearchWorker, _board_line_mate
 from chess_anti_engine.uci.time_manager import Deadline
 
 FORCED_INTO_MATE = "7k/8/6KQ/8/8/8/8/8 b - - 0 1"  # Kg8 only, then Qg7#
-FORCED = "7k/8/8/8/8/8/6q1/7K w - - 0 1"  # Kxg2 only, nothing forced after
+FORCED = "7k/8/8/8/8/8/6q1/R6K w - - 0 1"  # Kxg2 only: K+R v K, nothing settled
+FORCED_INTO_BARE_KINGS = "k7/8/8/8/8/8/1r6/K7 w - - 0 1"  # Kxb2 only: K v K
+FORCED_INTO_STALEMATE = "5k2/3Q4/7N/8/8/8/1q6/1K6 w - - 0 1"  # Kxb2 only: Kf8 stalemated
 
 
 @pytest.fixture(autouse=True)
@@ -173,6 +175,67 @@ def test_board_mate_is_not_claimed_past_a_claimable_draw(halfmove: int, expected
     board = chess.Board(FORCED_INTO_MATE.replace(" 0 1", f" {halfmove} 1"))
     action = int(move_to_index(chess.Move.from_uci("h8g8"), board))
     assert _board_line_mate(board, action) == expected
+
+
+def test_board_mate_is_not_claimed_when_the_move_completes_a_threefold() -> None:
+    """Kh8 is forced and repeats its position a third time: the mover may claim
+    the draw, so the opponent's Qg7# / Qb8# does not make it "mated in one"."""
+    board = chess.Board("6k1/Q7/6K1/8/8/B7/8/R7 b - - 0 1")
+    for mv in ("g8h8", "a1a2", "h8g8", "a2a1", "g8h8", "a1a2", "h8g8", "a2a1"):
+        board.push_uci(mv)
+    move = chess.Move.from_uci("g8h8")
+    assert list(board.legal_moves) == [move]
+    action = int(move_to_index(move, board))
+    assert _board_line_mate(board, action) is None
+    # The same forced move without the repetition history is mated in one.
+    fresh = chess.Board(board.fen())
+    assert _board_line_mate(fresh, int(move_to_index(move, fresh))) == -1
+
+
+@pytest.mark.parametrize("walkers", [1, 2])
+@pytest.mark.parametrize("fen", [FORCED_INTO_BARE_KINGS, FORCED_INTO_STALEMATE])
+def test_forced_move_into_a_board_draw_scores_zero(fen: str, walkers: int) -> None:
+    """Review item 6: a forced move that leaves insufficient material or
+    stalemate is an exact draw; the classic path printed the root's eval."""
+    lines = _run_forced(fen, walkers)
+    assert len(lines) == 1
+    assert tuple(lines[0]["pv"])[:1] == ("b1b2",) if fen == FORCED_INTO_STALEMATE else ("a1b2",)
+    assert lines[0]["score_mate"] is None
+    assert lines[0]["score_cp"] == 0
+    assert "unsearched" not in (lines[0]["string"] or "")
+
+
+def test_tb_root_shortcut_reports_the_board_mate() -> None:
+    """Review item 5: the tablebase root shortcut printed a saturated cp for a
+    root that is mated next move (Syzygy has no distances; the board does)."""
+    from chess_anti_engine.uci.search import _try_tb_root_bestmove
+
+    class _LossTable:
+        def root_move(self, board: chess.Board) -> tuple[chess.Move, int]:
+            del board
+            return chess.Move.from_uci("h8g8"), -2
+
+    result = _try_tb_root_bestmove(
+        chess.Board(FORCED_INTO_MATE), _LossTable(), include_ponder=False,  # pyright: ignore[reportArgumentType]
+    )
+    assert result is not None
+    assert result.bestmove_uci == "h8g8"
+    assert result.score_mate == -1
+
+
+def test_go_mate_on_a_forced_root_answers_at_once() -> None:
+    """Review item 7: `go mate 1` on a forced root idled to the 60 s cap at
+    nodes 0 (the classic path never simulates a forced root, so no mate can be
+    proven and the move is decided anyway)."""
+    w = _worker()
+    t0 = time.monotonic()
+    result = w.run(
+        chess.Board(FORCED_INTO_MATE), stop_event=threading.Event(), deadline=Deadline(60_000),
+        max_nodes=None, mate_moves=1,
+    )
+    assert time.monotonic() - t0 < 5.0
+    assert result.bestmove_uci == "h8g8"
+    assert w.last_stop_reason == "mate_forced_root"
 
 
 def test_unsearched_forced_move_score_is_labelled() -> None:
@@ -366,6 +429,27 @@ def test_every_info_pv_is_a_legal_move_sequence_in_every_search_mode(ckpt, mode)
         sess.close()
 
 
+def test_pool_reports_exact_board_scores_for_forced_moves(ckpt) -> None:
+    """Review item 5/6 on the TCEC path (multi-GPU pool): `score mate -1` for a
+    forced move into mate (it printed `score cp -17 pv h8g8 h6c1`), `cp 0` for a
+    forced move into a bare-kings draw."""
+    sess = _Session(ckpt, ["--devices", "cpu,cpu"])
+    try:
+        sess.send("uci")
+        sess.read_until(lambda ln: ln == "uciok")
+        sess.send("isready")
+        sess.read_until(lambda ln: ln == "readyok")
+        for fen, score in ((FORCED_INTO_MATE, "score mate -1"), (FORCED_INTO_BARE_KINGS, "score cp 0")):
+            sess.send(f"position fen {fen}")
+            sess.send("go wtime 10000 btime 10000")
+            got = sess.read_until(lambda ln: ln.startswith("bestmove"))
+            pv_lines = [ln for ln in got if ln.startswith("info") and " pv " in ln]
+            assert pv_lines, got
+            assert all(f" {score} " in ln for ln in pv_lines), got
+    finally:
+        sess.close()
+
+
 def test_multi_gpu_pucv_on_one_device_refuses_to_start(ckpt) -> None:
     """Soak F10 end to end: exit 1 with the reason on stderr, before any UCI line."""
     cmd, env = _engine_cmd(ckpt, ["--multi-gpu-pucv"])
@@ -374,3 +458,31 @@ def test_multi_gpu_pucv_on_one_device_refuses_to_start(ckpt) -> None:
     assert proc.returncode == 1, (proc.stdout, proc.stderr)
     assert "--multi-gpu-pucv with 1 device" in proc.stderr
     assert "uciok" not in proc.stdout
+
+
+def _bench(ckpt: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    _, env = _engine_cmd(ckpt, [])
+    repo = Path(__file__).resolve().parents[1]
+    return subprocess.run(
+        [sys.executable, str(repo / "scripts" / "bench_uci_engine.py"), "--checkpoint", str(ckpt),
+         "--device", "cpu", "--no-compile", "--repeats", "1", *args],
+        capture_output=True, text=True, env=env, timeout=600, check=False,
+    )
+
+
+def test_bench_pool_run_still_reports_the_pucv_profile(ckpt) -> None:
+    """The bench's `pucv profile:` line and cache rates are built from the pool
+    statistics that now print only under `debug on`; the bench must send it.
+    (Without it the bench raises instead of silently dropping the profile.)"""
+    proc = _bench(ckpt, "--devices", "cpu,cpu", "--multi-gpu-pucv", "--nodes", "300",
+                  "--eval-cache-entries", "1000")
+    assert proc.returncode == 0, (proc.stdout[-3000:], proc.stderr[-3000:])
+    profile = [ln for ln in proc.stdout.splitlines() if "pucv profile:" in ln]
+    assert len(profile) == 1, proc.stdout
+    assert " cache=" in profile[0], profile
+
+
+def test_bench_refuses_multi_gpu_pucv_without_devices(ckpt) -> None:
+    proc = _bench(ckpt, "--multi-gpu-pucv", "--nodes", "64")
+    assert proc.returncode != 0
+    assert "--multi-gpu-pucv needs --devices with at least two entries" in proc.stderr, proc.stderr

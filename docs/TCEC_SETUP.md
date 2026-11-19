@@ -279,9 +279,16 @@ nothing.
 - `go nodes N` / `go depth N`: work bounds, no clock.
 - A position with one legal move is answered without spending the clock. The
   single-walker Gumbel search returns that move without simulating it; its `info`
-  line then reports `score mate -1` when the opponent mates next move, and
-  otherwise the network's evaluation of the position, followed by
+  line then reports `score cp 0` when the move leaves stalemate or insufficient
+  material, and otherwise the network's evaluation of the position, followed by
   `info string move unsearched (0 visits): score is the network's evaluation of this position, not a search result`.
+  `go mate N` there answers at once too.
+- In every search mode, and from the tablebase root shortcut, a move that mates is
+  reported as `score mate 1`, and a move after which the opponent mates next move
+  as `score mate -1` (not when the move makes a draw claimable), whether or not
+  the search reached that far. A first move that leaves stalemate or insufficient
+  material reports `score cp 0`. Longer mates are reported only when the search
+  has proven them.
 - A legal mate in one is played even at a position already drawn by rule (a
   claimable threefold repetition or a 50-move counter at 100 or more), where the
   engine otherwise answers from the network's policy without searching.
