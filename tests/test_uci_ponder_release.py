@@ -70,6 +70,7 @@ class _ImmediateWorker:
         on_chunk: object = None,
         fixed_time_margin: bool = False,
         mate_moves: int | None = None,
+        final_info: bool = True,
     ) -> SearchResult:
         del (
             stop_event,
@@ -85,6 +86,7 @@ class _ImmediateWorker:
             on_chunk,
             fixed_time_margin,
             mate_moves,
+            final_info,
         )
         move = next(iter(board.legal_moves)).uci()
         self.turns.append(board.turn)
@@ -126,6 +128,7 @@ class _BlockingWorker(_ImmediateWorker):
         on_chunk: object = None,
         fixed_time_margin: bool = False,
         mate_moves: int | None = None,
+        final_info: bool = True,
     ) -> SearchResult:
         self._calls += 1
         if self._calls == 1:
@@ -148,6 +151,7 @@ class _BlockingWorker(_ImmediateWorker):
             on_chunk=on_chunk,
             fixed_time_margin=fixed_time_margin,
             mate_moves=mate_moves,
+            final_info=final_info,
         )
 
 
@@ -176,6 +180,7 @@ class _FaultThenRun(_ImmediateWorker):
         on_chunk: object = None,
         fixed_time_margin: bool = False,
         mate_moves: int | None = None,
+        final_info: bool = True,
     ) -> SearchResult:
         self._calls += 1
         if self._calls == 1:
@@ -198,6 +203,7 @@ class _FaultThenRun(_ImmediateWorker):
             on_chunk=on_chunk,
             fixed_time_margin=fixed_time_margin,
             mate_moves=mate_moves,
+            final_info=final_info,
         )
 
 
@@ -227,6 +233,7 @@ class _DeclineThenRun(_ImmediateWorker):
         on_chunk: object = None,
         fixed_time_margin: bool = False,
         mate_moves: int | None = None,
+        final_info: bool = True,
     ) -> SearchResult:
         self._calls += 1
         result = super().run(
@@ -245,6 +252,7 @@ class _DeclineThenRun(_ImmediateWorker):
             on_chunk=on_chunk,
             fixed_time_margin=fixed_time_margin,
             mate_moves=mate_moves,
+            final_info=final_info,
         )
 
         if self._calls == 1 or self.decline_main:
