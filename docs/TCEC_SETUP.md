@@ -90,6 +90,29 @@ walker):
 deepfin --checkpoint /path/to/trainer.pt --device cuda:0                                     # (GPU, not run)
 ```
 
+`--walkers N` (UCI `SearchWalkers`) above 1 swaps classic Gumbel for a PUCT
+walker pool, and on one GPU that pool is **slower than classic**, not faster.
+Measured on one GPU: classic about 13,400 nps; two walkers at the default leaf
+gather of 1 (`--walker-gather`, UCI `LeafGather`) about 450 nps, so clocked
+moves fell back to the watchdog; with `--walker-gather 32` set by hand 5,500 nps
+at two walkers and 8,600 at eight. On CPU with a tiny test net (6 s `movetime`)
+classic ran 5,200-5,600 nps and walkers 2 / 4 / 8 ran 1,400 / 1,600 / 2,200 at
+gather 1 and 4,700 / 5,500 / 5,500 at gather 32. Keep one walker for play.
+
+A larger gather raises walker throughput (CPU, `--walkers 4`, gather 32 against
+1: median nodes per `movetime` move 630 against 214 with a tiny net, 67 against
+27 with a 128-wide 4-layer net), but a walker finishes the batch it is
+evaluating before it sees a stop. Every timed search (`movetime` and clocks)
+therefore stops a walker pool one walker batch early: the slowest recent full
+batch on that pool (a decayed maximum, measured from the startup warmup on), at
+most half of the move's budget. That does not cover every case: when one walker
+batch at full concurrency takes longer than about half the move's budget, the
+watchdog can still answer unsearched. Measured with `--walkers 8 --walker-gather
+32` on the 128-wide net on CPU (eight full 32-row batches of about 456 ms at
+once), 1 or 2 clock moves in about 100 per run were answered unsearched (the
+first move of a 10+0.1 game, which can then cascade to `engine unhealthy`);
+the default gather of 1 had none.
+
 **Several GPUs** (the 4-GPU path): `--devices` with more than one entry turns on the
 shared-tree multi-GPU PUCV pool (one worker per GPU, PUCT descent with virtual
 loss) unless `--no-multi-gpu-pucv` is given. `--search-parallel gumbel` instead
@@ -136,7 +159,7 @@ Every engine flag, with the default the argument parser really has:
 | `--gil-profile` | off | Per-search GIL telemetry as `info string` lines. |
 | `--walkers` | 1 | 1 = classic Gumbel; > 1 = PUCT walker pool (UCI `SearchWalkers`). |
 | `--vloss-weight` | 3 | Virtual-loss weight (UCI `VLossWeight`). |
-| `--walker-gather` | 1 | Per-walker leaf gather (UCI `LeafGather`). |
+| `--walker-gather` | 1 | Per-walker leaf gather, walker pool only (UCI `LeafGather`). |
 | `--vl-gather` | 512 | Leaf gather for `UseVL` / multi-GPU (UCI `VLGather`). |
 | `--multi-gpu-pucv` / `--no-multi-gpu-pucv` | auto | Force the multi-GPU pool on / off (off is for debugging). `--multi-gpu-pucv` with one device refuses to start. |
 | `--search-parallel` | `pucv` | Multi-GPU mode: `pucv` or `gumbel` (UCI `SearchParallel`). `gumbel` with one device refuses to start. |
@@ -335,9 +358,46 @@ nothing.
   `info string move unsearched (0 visits): score is the network's evaluation of this position, not a search result`.
   `go mate N` there answers at once too, so on this path it cannot report a mate
   longer than one move behind a forced first move: the forced root is not
-  searched. `go mate N` also stops at once when the side to move is proven lost,
-  in every mode except `--search-parallel gumbel`: there the root is never
-  marked solved, so `go mate N` runs to its time cap even with a mate found.
+  searched. The multi-GPU PUCV pool and the walker pool do search a forced root
+  under `go mate N`: they stop at a proven mate in N or fewer, when the forced
+  move's position is proven, or after 4,096 simulations per mate move asked
+  (`go mate 2`: 8,192), whichever comes first, instead of running to the 60 s
+  cap. `go mate N` also stops at once when the side to move is proven lost,
+  in every search mode (root-parallel Gumbel included: there the root is proven
+  from its candidates' proofs after each halving phase).
+- `go depth N` treats a principal variation that ends on a proven position as
+  complete, even when it is shorter than `N`, only when nothing better can exist:
+  the root is proven won or lost, or the line's first move is a proven win. A
+  root proven won or lost (a forced mate either way, a tablebase win) therefore
+  answers once proven, in every search mode. A line that ends drawn or lost while
+  other moves are still unproven does not end the search, and a root the tree
+  calls drawn does not either (see the twofold note below), so such a `go depth`
+  waits for `stop`, as before. `go nodes N` counts its visits and ends as usual;
+  `go infinite` still waits for `stop`.
+- Known gap: the pool and walker paths score a position that repeats one already
+  on the board or in the line (a twofold repetition) as a draw. A root whose only
+  escape is such a repetition can be marked drawn although it is lost. The engine
+  does not stop `go depth` or `go mate` on a drawn root for that reason; the score
+  it reports can still read 0.00 there.
+- When the network thinks the root is winning, the search leaves out moves that
+  draw at once. If every move it did search is then proven lost, the engine plays
+  a move that ends the game drawn on the board (stalemate, insufficient material,
+  50-move clock at 100, a third repetition), reporting `score cp 0` and
+  `info string every searched move is proven lost; playing a move that draws`.
+  A move after which the opponent could merely claim a draw does not count. One
+  case is left over: on the classic path, if leaving those moves out leaves a
+  single move, that move is returned unsearched and the draw is not found.
+- On a root proven lost the engine plays the move that delays mate longest: a
+  move with no proven mate distance first, then the longest proven mate. A move
+  after which the opponent mates next move ranks last (a check on the board, not
+  on the tree), and a move whose proof is too large to measure in its share of
+  the 4,000-node mate walk counts as mated in 2.
+- The drawing move and the longest loss are chosen for the answer of a finished
+  search and for an answer given at once from the reused tree (a clock or
+  `movetime` too short to search): there the drawing move, else the most-visited
+  move that does not allow mate in one. A move answered by the deadline watchdog
+  (the last PV's first move, or a fallback after it; section 8) does not get
+  them.
 - In every search mode, and from the tablebase root shortcut, a move that mates is
   reported as `score mate 1`, and a move after which the opponent mates next move
   as `score mate -1` (not when the move makes a draw claimable), whether or not

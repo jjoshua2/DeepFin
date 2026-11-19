@@ -61,7 +61,7 @@ from .protocol import (
     format_uciok,
     set_uci_debug,
 )
-from .search import SearchResult, SearchWorker
+from .search import DEFAULT_LEAF_GATHER, SearchResult, SearchWorker
 from .time_manager import (
     GO_IMPLICIT_CAP_MS,
     _DEFAULT_MOVES_REMAINING,
@@ -476,9 +476,11 @@ class EngineOptions:
     search_walkers: int = 1
   # Per-walker leaf gather: each walker does G descents → one NN batch
   # instead of one descent per submit. Amplifies effective batch to
-  # N_walkers×G without spawning more threads. 1 = classic. Lc0's
-  # canonical value is 8. Set via UCI `LeafGather`.
-    leaf_gather: int = 1
+  # N_walkers×G without spawning more threads. Read only by the walker pool
+  # (SearchWalkers > 1); the classic path never consults it. At the default
+  # of 1 a GPU sees ~1-2 leaves per call (~450 nps at two walkers against
+  # classic's ~13,400; see DEFAULT_LEAF_GATHER). Set via UCI `LeafGather`.
+    leaf_gather: int = DEFAULT_LEAF_GATHER
   # Single-thread async-pipeline batched-VL PUCT. Active only at
   # `SearchWalkers=1` with a 2-slot inplace-async evaluator. Bench: +112%
   # over sync gumbel walkers=1 (54k vs 26k nps on a 10-layer model).

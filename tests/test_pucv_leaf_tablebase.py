@@ -319,6 +319,11 @@ def test_rpg_first_forced_candidate_is_probed_before_backprop(
     assert tables.positions == ([expected.fen()] if pawn_move else [])
     assert arena.expanded
     assert tree.get_solved_status(cid) == status
+    # The proof stops at the candidate; the root is decided by
+    # `_resolve_root_solved` (after each phase), which applies the
+    # pruned-terminal-draw rule that C propagation cannot.
+    assert tree.get_solved_status(root) == 0
+    assert pool._resolve_root_solved(st) == (-status if status not in (0, 2) else status)
     assert tree.get_solved_status(root) == (-status if status not in (0, 2) else status)
     assert arena.terminal_value == (
         None if status == 0 else 0 if status == 2 else status
@@ -360,6 +365,12 @@ def test_rpg_descendant_solved_path_includes_global_root(monkeypatch):
             pool._run_item(0, ev, chunker, _WorkItem(arena, 1, 0), threading.Event())
             == 1
         )
+        # A descendant's proof reaches the candidate only; the global root is
+        # resolved from the candidates by `_resolve_root_solved`.
+        assert tree.get_solved_status(root) == 0
+        st = pool._state
+        assert st is not None
+        assert pool._resolve_root_solved(st) == 1
     child_board.push_uci("b4a3")
     assert tables.positions == [child_board.fen()]
     assert tree.get_solved_status(cid) == -1
