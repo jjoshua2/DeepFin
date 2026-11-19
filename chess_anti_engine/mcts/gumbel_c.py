@@ -1283,7 +1283,10 @@ def run_gumbel_root_many_c(
         if float(root_qs[i]) > 0.0 and legal_idx.size > 1 and terminal_draws:
             draw_arr = np.fromiter(terminal_draws, dtype=np.int32)
             keep = ~np.isin(legal_idx, draw_arr)
-            if keep.any():
+            # A pruned singleton is not a forced move: the shortcut below
+            # would return it without testing whether the available draw is
+            # better. Keep the draw alternatives when only one move survives.
+            if np.count_nonzero(keep) > 1:
                 legal_idx = legal_idx[keep]
                 if compact_ll is not None:
                     compact_ll = compact_ll[keep]

@@ -10,6 +10,7 @@ from chess_anti_engine.mcts import gumbel as python_gumbel
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
 from chess_anti_engine.moves import POLICY_SIZE
+from chess_anti_engine.moves import move_to_index
 from chess_anti_engine.uci.search import SearchWorker
 from chess_anti_engine.uci.time_manager import Deadline
 
@@ -35,6 +36,39 @@ def test_uci_classic_budget_caps_actual_root_child_visits(budget: int) -> None:
         assert worker._root_id is not None
         _, visits = worker._tree.get_children_visits(worker._root_id)
         assert int(visits.sum()) == result.nodes == budget
+    finally:
+        worker.close()
+
+
+@pytest.mark.parametrize("root_bias", [8.0, 0.0, -8.0], ids=["positive", "zero", "negative"])
+def test_uci_classic_searches_a_root_with_one_nondrawing_move(
+    monkeypatch: pytest.MonkeyPatch, root_bias: float,
+) -> None:
+    board = chess.Board("4K2k/3q1P2/6Q1/8/8/8/8/8 w - - 0 1")
+    expected = {int(move_to_index(move, board)) for move in board.legal_moves}
+    assert len(expected) == 2
+    worker = SearchWorker(
+        NeutralEvaluator(), device="cpu", n_walkers=1, chunk_sims=64,
+        gumbel_cfg=GumbelConfig(topk=2, add_noise=False, temperature=0.0),
+    )
+    root_eval = worker._root_eval
+
+    def controlled_root_eval(
+        xs: np.ndarray, rels: np.ndarray | None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        policy, wdl = root_eval(xs, rels)
+        logits = np.array([root_bias, 0.0, -root_bias], dtype=np.float32)
+        return policy, np.broadcast_to(logits, wdl.shape).copy()
+
+    monkeypatch.setattr(worker, "_root_eval", controlled_root_eval)
+    try:
+        result = worker.run(board, stop_event=threading.Event(),
+                            deadline=Deadline(5_000), max_nodes=64)
+        assert worker._tree is not None
+        assert worker._root_id is not None
+        actions, visits = worker._tree.get_children_visits(worker._root_id)
+        assert set(actions.tolist()) == expected
+        assert int(visits.sum()) == result.nodes == 64
     finally:
         worker.close()
 
