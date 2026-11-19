@@ -54,3 +54,72 @@ At the recorded **2026-11-19T04:59:21.140951Z** snapshot, the first collection's
 Root issued immutable version2 scope/selection/operations/engineering metadata. The GPU deadline is now `2026-11-19T16:09:20+00:00`: the **same absolute cutoff**, same scopeUUID,25 GPU stage/cap records and25200 aggregate. The method and engineering deadline strings stay `Z` where their existing literal interface requires it; no U3, interpreter or scientific-runtime patch is used. Future cycle binding directories use version2, while original stage/output names stay version1. Old scopes, selector, source, first unexecuted binding packet, actual protection receipts and original public prereg remain unchanged.
 
 The method, all seeds, fixed12-cycle horizon,75-owner maximum,4800 CPU/25200 GPU budgets, final reserves and global accounting are unchanged. All old costs/stops remain charged; no ledger/frontier reset, extension or new scientific choice is authorized. New source and actual parameter bindings require their genuine independent reviews before Root separately issues admission. The [compact erratum evidence](evidence/2026-11-19-q50-preissue-timestamp-compatibility.json) pins the preserved error and reconciliation; this addendum itself issues no authority.
+
+## Final M12 readout — November 19
+
+**Q50 established no development gain; retain original A39.** The accepted final 800-game/400-pair result scored 42.3125%, paired normal 95 CI 39.7715–44.8535%, under the registered consumed-DEV settings. Both the final endpoint and the separate structural exposure audit have genuine closed Root and independent acceptances. The dated preregistration and timestamp erratum above remain unchanged.
+
+### Result and uncertainty
+
+The final Q50 M12-versus-original-A39 match finished 179 W / 319 D / 302 L with all 800 games and 400 color pairs reconciled, zero illegal/crashed games and zero incomplete pairs. Paired score was 0.423125; the registered normal 95 interval was [0.39771538356338015, 0.4485346164366198], using sample variance 0.06722705200501253, divisor 399 and z 1.96. The lower bound is not above 0.5. The frozen verdict is `NO_DEVELOPMENT_GAIN_ESTABLISHED`; original A39 remains retained.
+
+The descriptive Elo-equivalent transform relative to this fixed A39 was −53.8452, interval [−72.0918, −35.8889]. It is neither an absolute external rating nor an improvement-per-day estimate. The entire score interval lies below 0.5 in this conditional consumed-DEV comparison; this establishes no gain for the tested package and supplies no causal blend/head explanation, equivalence, optimum, fresh confirmation, promotion or overall-goal completion. The separately seeded Q50 trajectory and its actual dose differ from F12; their point-score difference is not a matched causal ablation or a pooled independent replication.
+
+### Actual technical dose and costs
+
+Training completed all 12 accepted cycles: 2304 resolved physical/source-qualified games, 251339 physical stored-row presentations with maximum quota 1, and 987 optimizer updates; M12 student step 987. The named cycle 12 closed-delivery Root/independent pair and post-closure custody authenticate the accepted endpoint lineage; the dose totals are accepted technical scalar projections, not a new reconstruction of saved learner or bank payloads.
+
+The recipe remained equal 0.5 terminal outcome/0.5 own-network raw search value, SF 0 and policy KL null. The final technical GPU pair preceded the owned reader pair and frozen verdict. The reconciled reader reports 16 finite controls passed, zero failures; the frozen playing profile remains the registered T223 matched-simulation profile. These technical checks are distinct from the strength result.
+
+At the final-readout accounting snapshot, all 620 recorded owners were closed. Charged Q50 owner wall was 20384.54793118278 GPU seconds and 956.7623146033147 CPU seconds, within 25200/4800. Global charged wall was 166926.28079001547 GPU seconds and 9702.27137081622 CPU seconds. The final GPU session 30101 exited 0 after 2516.747356913984 seconds; owned reader session 32459 exited 0 after 34.306374598061666 seconds. The separate subsequent audit is excluded from Q50 costs and from this dated 620-owner global snapshot; its actual cost and disposition are reported below.
+
+### Final-endpoint operational provenance
+
+The first actual final 800-game GPU owner was session 30101, followed by owned reader 32459; both closed with supported exit 0 and genuine independent acceptance before the verdict. The corrected protocol uses final bindings-v2; the original stage/output names remain version 1.
+
+The original false bindings-v1 packet was never admitted or launched. Its independent rejection and wording erratum are preserved. The corrected immutable Playing V5 source and R4 V7 controller have genuine current source reviews and Root source selections. Further rejected source successors are also retained: Playing V4 had mismatched fixed-reference paths, and R4 V6 had a stale interface template hash. Repairs close metadata path/hash references; the 49 common declaration bodies, 32 issuer bodies plus settlement body, runner/reader/adapter/control/profile bytes and T223 mathematics remain unchanged. No model/data/method/seed/horizon/cap/cost/cutoff/stage/output change or new NN qualification follows from these repairs. Actual final wall costs are reported in the accounting snapshot above.
+
+### Descriptive structural exposure audit
+
+The outcome-blind metadata selection covered all 24 complete F12/Q50 banks before final efficacy was read. The actual audit scope/plan/authority were issued **after** the final negative verdict, under the previously reviewed outcome-independent condition. They were not public pre-readout authority. The stdlib audit then executed once: session 31720, exit 0, 3.4280724230920896 CPU seconds. Root technical acceptance and the actual strict 8 independent review both accepted with no findings; the reconciled audit state is `CLOSED_ACCEPTED_STRUCTURAL_ONLY`. The utility’s eight hosted synthetic test methods passed earlier; those tests are distinct from these actual measurements.
+
+All 24 banks have 192 physical/source-qualified game groups, complete actual technical dose with maximum physical presentations 1, and available batch reconstruction. Candidate membership was authenticated and each reconstructed permutation SHA matched the declared compiler SHA. This reconstructs structural membership of the pinned shuffled order; it is not journal replay or a gradient measurement. Original/mirror views share the physical-row quota. The audit read 295050178 bytes within its 536805376-byte helper allowance; the remaining 64 KiB entry-source reserve keeps the owner within 512 MiB. It opened no referenced shard/model/book/roster/ledger/journal/order-array payloads.
+
+Each first-full-batch column below means exactly 256 rows. Tail is `rows:distinct game groups`; the final column is the minimum–maximum number of distinct groups over **all batches, including partial tails**. It is not a full 256-row batch minimum. Reciprocal concentration is Kish-style **row-exposure concentration only**, not independent samples or gradient effective sample size. Exact scalar projections and external summary identity are retained in the compact evidence; per-game masses, histograms, batch arrays and descriptors remain external.
+
+| Bank | Rows | Rows/game min–max | Exposure concentration | First 256 groups | Tail rows:groups | All-batch groups min–max |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| F12-01 | 17628 | 34–215 | 178.69 | 140 | 220:129 | 129–147 |
+| F12-02 | 19295 | 42–206 | 178.91 | 140 | 95:73 | 73–151 |
+| F12-03 | 19841 | 35–237 | 180.07 | 138 | 129:92 | 92–149 |
+| F12-04 | 20445 | 38–243 | 175.83 | 135 | 221:131 | 128–148 |
+| F12-05 | 20227 | 37–259 | 173.49 | 131 | 3:3 | 3–148 |
+| F12-06 | 19553 | 24–257 | 174.23 | 137 | 97:79 | 79–148 |
+| F12-07 | 20355 | 24–290 | 172.85 | 138 | 131:96 | 96–149 |
+| F12-08 | 20646 | 34–297 | 171.36 | 131 | 166:109 | 109–147 |
+| F12-09 | 20454 | 25–232 | 174.74 | 135 | 230:125 | 125–146 |
+| F12-10 | 21438 | 40–261 | 175.13 | 138 | 190:117 | 117–147 |
+| F12-11 | 21010 | 39–250 | 173.37 | 136 | 18:18 | 18–149 |
+| F12-12 | 20233 | 37–239 | 174.38 | 137 | 9:9 | 9–149 |
+| Q50-01 | 17882 | 31–200 | 178.89 | 139 | 218:127 | 127–149 |
+| Q50-02 | 19626 | 34–240 | 178.23 | 143 | 170:108 | 108–152 |
+| Q50-03 | 20189 | 34–250 | 177.67 | 137 | 221:126 | 126–151 |
+| Q50-04 | 20024 | 22–272 | 175.94 | 139 | 56:50 | 50–147 |
+| Q50-05 | 21538 | 31–296 | 172.14 | 134 | 34:32 | 32–149 |
+| Q50-06 | 20991 | 31–251 | 178.54 | 144 | 255:142 | 128–153 |
+| Q50-07 | 21147 | 37–218 | 175.53 | 140 | 155:101 | 101–148 |
+| Q50-08 | 22365 | 35–292 | 170.95 | 139 | 93:68 | 68–150 |
+| Q50-09 | 22183 | 41–314 | 174.21 | 138 | 167:117 | 117–151 |
+| Q50-10 | 21528 | 39–267 | 175.13 | 140 | 24:23 | 23–148 |
+| Q50-11 | 21758 | 43–233 | 177.21 | 140 | 254:136 | 122–149 |
+| Q50-12 | 22108 | 38–258 | 172.92 | 133 | 92:75 | 75–147 |
+
+For Q50 cycle 12, the 22108 rows span 38–258 per game. The first full batch contains 133 groups, at most 5 rows from one group; the 92-row tail contains 75 groups, at most 3 rows from one group. Source uses realized/requested batch-row scaling for the tail loss, retaining the nominal per-row loss coefficient; the adaptive optimizer and decay still take a real step. A tail is not a full-batch-equivalent adaptive update.
+
+This separate audit adds 3.4280724230920896 CPU seconds to global accounting, not Q50: all 621 owners are closed, global CPU 9705.699443239311/global GPU 166926.28079001547. Q50 GPU 20384.54793118278/CPU 956.7623146033147 remain unchanged. These are separate dated snapshots from the pre-audit 620-owner totals above.
+
+### Interpretation limits
+
+Physical-row-once quota, shared by original/mirror views, does not establish independent game outcomes, independent search labels or novel positions. The same 192 TRAIN starts recur across cycles; longer games can contribute more rows sharing the same terminal game event, with the outcome target adjusted for side to move rather than an identical WDL vector at every ply. Own-network raw search labels are endogenous. Correlation does not automatically make the training loss invalid. The strength endpoint and structural audit cannot measure true independent N/gradient ESS, search-target semantic novelty/covariance, a causal explanation of the negative result, an optimal blend/dose, absolute external strength or an Elo-per-day rate. Preserve earlier F12/U2/V10 negative evidence; do not pool their consumed-panel observations as independent replications.
+
+Exact final and audit evidence: [compact evidence](evidence/2026-11-19-fresh-current-policy-a39-q50-twelve-cycle-baseline-final-readout.json). This record issues no authority or recipe change. A separately preregistered test of per-game terminal-outcome influence while holding blend/optimizer fixed is a recommendation only, not a selected next recipe or compute scope. Policy KL may anchor policy and affect the shared trunk indirectly; it neither creates independent outcomes nor directly anchors WDL. A direct WDL anchor would be a separate intervention; no game-balancing optimum is established.
