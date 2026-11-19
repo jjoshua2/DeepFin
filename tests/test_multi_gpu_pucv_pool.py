@@ -604,7 +604,9 @@ def test_search_abort_terminates_with_legal_move() -> None:
 
 def test_time_capped_chunk_shrinks_to_remaining_time() -> None:
     """A scaled chunk is capped to the sims that fit in the remaining deadline,
-    floored at the base chunk; open-ended / first-chunk searches are uncapped."""
+    floored at `_MIN_TIME_CAPPED_CHUNK` (not the base chunk: a deadline shorter
+    than one base chunk overran by a whole chunk); open-ended searches are
+    uncapped and a first chunk is bounded to the base chunk."""
     import time as _time
 
     ev = _make_evaluator()
@@ -618,9 +620,9 @@ def test_time_capped_chunk_shrinks_to_remaining_time() -> None:
         d = Deadline(deadline_ms=1500, now=_time.monotonic() - 1.0)
         capped = worker._time_capped_chunk(4096, d, total_nodes=1000)
         assert 64 <= capped < 4096
-  # Almost no time left -> floor at the base chunk (its overrun is negligible).
+  # Almost no time left -> the small time-capped floor, below the base chunk.
         d2 = Deadline(deadline_ms=1001, now=_time.monotonic() - 1.0)
-        assert worker._time_capped_chunk(4096, d2, total_nodes=1000) == 64
+        assert worker._time_capped_chunk(4096, d2, total_nodes=1000) == 16
   # Open-ended deadline (no clock) is uncapped even with an nps estimate.
         assert worker._time_capped_chunk(4096, Deadline(None), 1000) == 4096
   # First timed chunk (deadline set, no nps yet): bound to the base chunk so a

@@ -354,19 +354,24 @@ def test_thresholds_are_the_search_deadline_and_the_budget_minus_the_margin(over
         engine.close()
 
 
+# A clock game's answer must be on the wire MoveOverheadMs before the clock
+# runs out (the GUI charges its pipe latency to us): the soak's last-moment
+# answers timed to the raw clock landed 0.2 ms, and once 31 ms, past it.
+@pytest.mark.parametrize("overhead", [0, 30, 500])
 @pytest.mark.usefixtures("out")
-def test_a_clock_game_budget_is_the_side_to_moves_remaining_clock() -> None:
+def test_a_clock_game_budget_is_the_side_to_moves_remaining_clock(overhead) -> None:
     gate = _Gate()
     worker = _worker()
     worker.run.side_effect = gate
-    engine = _engine(worker)
+    engine = _engine(worker, move_overhead_ms=overhead)
     try:
         engine.dispatch(parse_command("position startpos moves e2e4"))  # black to move
         engine.dispatch(parse_command("go wtime 7000 btime 9000"))
         armed = engine._watchdog.armed
         assert armed is not None
         assert armed.last_moment_at is not None
-        assert (armed.last_moment_at - armed.started_at) * 1000 == pytest.approx(9000 - 3.0)
+        assert (armed.last_moment_at - armed.started_at) * 1000 == pytest.approx(9000 - overhead - 3.0)
+        assert armed.deadline_at < armed.last_moment_at
     finally:
         gate.release.set()
         _join_all(engine)

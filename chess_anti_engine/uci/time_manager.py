@@ -11,8 +11,18 @@ from dataclasses import dataclass
 
 from .protocol import GoArgs
 
-# Hard floor / ceiling guards on clock-derived deadlines.
+# Hard floor / ceiling guards on clock-derived deadlines. The floor never
+# overrides the clock: a clocked deadline is also capped at what the clock
+# allows (below), and a clock that leaves less than this floor is
+# `clock_exhausted` (the engine answers at once, without a search).
 _MIN_DEADLINE_MS = 20
+# A clocked search's hard deadline sits at least this far before the remaining
+# clock less MoveOverheadMs. That end point is where the deadline watchdog's
+# last-moment answer goes out (`_WATCHDOG_LAST_MOMENT_MS`, 3 ms, before it), and
+# a search answers up to one (small) chunk plus its result build after its
+# deadline: ~8 ms on CPU for a 20 ms search. Without the slack a healthy search
+# on a 60 ms clock lost the race to the watchdog and was answered unsearched.
+_CLOCK_SEARCH_SLACK_MS = 25
 # We never spend more than this fraction of remaining time on a single move,
 # regardless of increment or movestogo claims.
 _MAX_FRACTION_OF_REMAINING = 0.5
@@ -34,6 +44,21 @@ _MOVES_PER_PIECE = 1.5    # planned moves remaining per piece above _ENDGAME_PIE
 # Floor on the moves estimate: never assume fewer than this many moves remain, so a
 # long game can't dump the whole base into one move (the increment then carries it).
 _MIN_MOVES_REMAINING = 8
+# The same floor with NO increment (sudden death). Nothing refills the clock, so
+# each move spends a fixed fraction of what is left and the clock decays
+# geometrically over the endgame: at the 8-move floor (~6-9% of the clock per
+# move) a 40-move endgame keeps ~3% of the clock it started with, and self-play
+# at 10+0 reached 38 ms and 1 ms clocks. Endgames routinely run 30-60 moves;
+# 20 keeps ~25% after 40 moves.
+_MIN_MOVES_REMAINING_NO_INC = 20
+# In sudden death (no increment, no `movestogo`), once the clock less
+# MoveOverheadMs cannot pay for `_MIN_MOVES_REMAINING_NO_INC` more minimal
+# searches -- each costs about `_MIN_DEADLINE_MS` plus `_CLOCK_SEARCH_SLACK_MS`
+# of wall time -- searching on would flag before those moves are played, so every
+# move is answered at once (`clock_exhausted`) from the tree / previous search /
+# root policy. Self-play at 10+0 drained the last 2 s at ~33 ms per minimal
+# search and then flagged around move 150; an at-once answer costs ~1-7 ms.
+_SUDDEN_DEATH_AT_ONCE_MOVES = _MIN_MOVES_REMAINING_NO_INC
 # Default upper cap on the moves estimate (a conservatism guard; the pieces formula
 # tops out near 30, so this normally does not bind). Exposed as `moves_horizon`.
 _DEFAULT_MOVES_REMAINING = 50
@@ -97,6 +122,11 @@ class SearchLimits:
     mate_moves: int | None = None
     # The deadline is GO_IMPLICIT_CAP_MS because the go named no usable bound.
     implicit_cap: bool = False
+    # The side to move's clock, less MoveOverheadMs and `_CLOCK_SEARCH_SLACK_MS`,
+    # leaves less than `_MIN_DEADLINE_MS`: there is no time to search. The
+    # engine answers at once from what it already has (`deadline_ms` is that
+    # remainder, possibly 0).
+    clock_exhausted: bool = False
 
     def is_open_ended(self) -> bool:
         return self.infinite or self.ponder or (
@@ -128,6 +158,10 @@ def limits_from_go(
 
     deadline_ms: int | None = None
     implicit_cap = False
+    # The latest hard deadline the clock allows (None: no clock).
+    clock_cap_ms: int | None = None
+    # Sudden death with too little clock left to keep searching (see above).
+    sudden_death_low = False
     movetime_ms = args.movetime_ms
     is_movetime = movetime_ms is not None
     if movetime_ms is not None:
@@ -135,7 +169,18 @@ def limits_from_go(
     else:
         remaining, inc = _select_clock(args, side_to_move_is_white)
         if remaining is not None:
+            clock_cap_ms = max(
+                0, int(remaining) - max(0, int(move_overhead_ms)) - _CLOCK_SEARCH_SLACK_MS,
+            )
+        if remaining is not None:
             inc_v = inc or 0
+            sudden_death_low = (
+                optimum_fraction > 0.0
+                and inc_v <= 0
+                and not (args.movestogo and args.movestogo > 0)
+                and int(remaining) - max(0, int(move_overhead_ms))
+                < _SUDDEN_DEATH_AT_ONCE_MOVES * (_MIN_DEADLINE_MS + _CLOCK_SEARCH_SLACK_MS)
+            )
             if optimum_fraction <= 0.0:
   # OFF sentinel: reproduce the pre-time-management allocation EXACTLY — fixed
   # divisor, full increment, NO reserve and NO pieces-driven split — so a baseline
@@ -162,8 +207,9 @@ def limits_from_go(
   # Clamp the horizon up to the floor first, so a small `--moves-horizon` (e.g. 1)
   # can't pull `moves_left` below `_MIN_MOVES_REMAINING` and dump the whole base
   # into one move; the floor is honored regardless of the horizon cap.
-                    horizon = max(_MIN_MOVES_REMAINING, int(moves_horizon))
-                    moves_left = min(horizon, max(_MIN_MOVES_REMAINING, est))
+                    floor = _MIN_MOVES_REMAINING if inc_v > 0 else _MIN_MOVES_REMAINING_NO_INC
+                    horizon = max(floor, int(moves_horizon))
+                    moves_left = min(horizon, max(floor, est))
   # Carve a safety reserve off the clock first so the endgame can't flag, capped
   # at a fraction of remaining so it stays sane at short TCs. The increment refills
   # it each move. Only part of the increment is spent up front (the rest rolls over).
@@ -212,6 +258,14 @@ def limits_from_go(
   # latency). Without this, engines lose on time in fast games.
     if deadline_ms is not None and move_overhead_ms > 0:
         deadline_ms = max(_MIN_DEADLINE_MS, deadline_ms - int(move_overhead_ms))
+  # The floors above must never spend time the clock does not have: `go wtime 1`
+  # was searched for the 20 ms floor and answered at ~21 ms. Cap at the clock
+  # less MoveOverheadMs and the search slack; below the floor there is no time
+  # to search at all and the engine answers at once (`clock_exhausted`).
+    clock_exhausted = False
+    if deadline_ms is not None and clock_cap_ms is not None:
+        deadline_ms = min(deadline_ms, clock_cap_ms)
+        clock_exhausted = deadline_ms < _MIN_DEADLINE_MS or sudden_death_low
 
     if deadline_ms is None and args.nodes is None and args.depth is None and (
         args.mate is not None
@@ -243,7 +297,7 @@ def limits_from_go(
         and optimum_fraction > 0.0
     ):
         frac = min(1.0, optimum_fraction)
-        optimum_ms = max(_MIN_DEADLINE_MS, int(deadline_ms * frac))
+        optimum_ms = min(deadline_ms, max(_MIN_DEADLINE_MS, int(deadline_ms * frac)))
 
     return SearchLimits(
         deadline_ms=deadline_ms,
@@ -254,6 +308,7 @@ def limits_from_go(
         fixed_time=is_movetime,
         mate_moves=args.mate if args.mate is not None and args.mate > 0 else None,
         implicit_cap=implicit_cap,
+        clock_exhausted=clock_exhausted,
     )
 
 

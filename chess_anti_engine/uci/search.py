@@ -235,6 +235,35 @@ _ABORT_MIN_STABLE_CHUNKS = 2
 # full _chunk_sims. Lower-bounding nps means we under-spend the budget, never over.
 _BOOTSTRAP_NPS_PER_MS = 6.0
 _MIN_FIRST_CHUNK = 64
+# Once this worker has timed a chunk, the first chunk of a timed search is sized
+# from the slowest recent chunk rate it measured instead (`_note_chunk_rate`): the
+# fixed bootstrap rate is far above a CPU's real speed (a tiny net on 2 CPU threads
+# ran its 300 ms `movetime` first chunk past the 300 ms early watchdog in 15-17 of
+# 20 searches). The first chunk may use at most this share of the remaining time at
+# that rate; later chunks are sized from the search's own running nps.
+_FIRST_CHUNK_TIME_SHARE = 0.25
+# A later chunk of a timed search may use at most this share of the remaining
+# time at the search's running nps. A chunk sized to the WHOLE remainder ends
+# past it whenever it runs a little slower than the estimate (about half the
+# time); it cannot be interrupted, and on a short clock the watchdog's last
+# moment is only ~MoveOverheadMs beyond the deadline. Chunks shrink toward the
+# deadline instead, down to `_MIN_TIME_CAPPED_CHUNK`.
+_LATER_CHUNK_TIME_SHARE = 0.5
+# The measured rate falls at once to a slower chunk and rises by at most this
+# factor per chunk, so one fast chunk cannot size the next search's first chunk.
+_CHUNK_RATE_RISE = 1.25
+# Smallest chunk a time cap may size once a rate is measured (first chunk or
+# later). Lower than `_MIN_FIRST_CHUNK`: on a slow device (the production net on
+# CPU measured ~15 sims/s) even 64 sims outlast a 2 s move.
+_MIN_TIME_CAPPED_CHUNK = 16
+# The previous tree's choice (`reply_book_bestmove`): for the most-visited root
+# moves, and the most-visited replies to each, the reply's most-visited answer --
+# read between chunks, never during one, and kept for the busy-worker fallback
+# (a search still inside a chunk owns the tree and the evaluator). Refreshed at
+# search start and at most every `_REPLY_BOOK_INTERVAL_S` between chunks.
+_REPLY_BOOK_OUR_MOVES = 4
+_REPLY_BOOK_REPLIES = 8
+_REPLY_BOOK_INTERVAL_S = 0.2
 
 # Where each PUCT path keeps the family it will actually descend on. All four
 # snapshot the values at CONSTRUCTION, so these -- not the shared `GumbelConfig`
@@ -632,6 +661,14 @@ class SearchWorker:
         self._batch_n: int = 0
         self._batch_mean_ms: float = 0.0
         self._batch_m2_ms: float = 0.0
+  # Slowest recent chunk rate (sims per ms, `_note_chunk_rate`) and the search
+  # topology it was measured on; sizes the first chunk of a timed search.
+        self._chunk_rate: float | None = None
+        self._chunk_rate_key: tuple[int, ...] | None = None
+  # The previous tree's choices (`_snapshot_reply_book`): FEN -> UCI move.
+  # Replaced whole, never mutated, so another thread reads it without a lock.
+        self._reply_book: dict[str, str] = {}
+        self._reply_book_at: float = float("-inf")
   # MultiPV: emit this many top-ranked lines per info tick. 1 = one PV
   # (classic behavior). >1 triggers a loop that extracts each of the
   # top-N root children by visits, walks a most-visited PV from each,
@@ -1734,6 +1771,42 @@ class SearchWorker:
         self._batch_mean_ms += delta / self._batch_n
         self._batch_m2_ms += delta * (dt_ms - self._batch_mean_ms)
 
+    def _chunk_rate_topology(self) -> tuple[int, ...]:
+        """Identity of what a chunk runs on: the evaluator and every search
+        helper. A rate measured on one topology says nothing about another
+        (a rebuilt evaluator, a walker pool, a multi-GPU pool)."""
+        return tuple(
+            id(getattr(self, name, None))
+            for name in ("_evaluator", "_pucv", "_pucv_pool", "_walker_pool", "_rpg_pool")
+        )
+
+    def _note_chunk_rate(self, completed: int, dt_ms: float) -> None:
+        """Fold one completed chunk into the slowest-recent rate estimate.
+
+        Falls at once to a slower chunk, rises by at most `_CHUNK_RATE_RISE`
+        per chunk. Every completed chunk counts (warmup and node-bounded
+        searches too): the estimate exists to size a timed search's FIRST
+        chunk, before that search has a running nps of its own."""
+        if completed <= 0 or dt_ms <= 0.0:
+            return
+        sample = float(completed) / float(dt_ms)
+        key = self._chunk_rate_topology()
+        prev = getattr(self, "_chunk_rate", None)
+        if prev is None or getattr(self, "_chunk_rate_key", None) != key:
+            rate = sample
+        else:
+            rate = min(sample, prev * _CHUNK_RATE_RISE)
+        self._chunk_rate = rate
+        self._chunk_rate_key = key
+
+    def measured_chunk_rate(self) -> float | None:
+        """Sims per ms of the slowest recent chunk on the CURRENT topology, or
+        None before this topology has completed a chunk."""
+        rate = getattr(self, "_chunk_rate", None)
+        if rate is None or getattr(self, "_chunk_rate_key", None) != self._chunk_rate_topology():
+            return None
+        return rate
+
     def _batch_margin_ms(self, min_samples: int = _BATCH_MARGIN_MIN_SAMPLES) -> float:
         """Clock reserve = mean + K*std of measured chunk time.
 
@@ -2605,6 +2678,74 @@ class SearchWorker:
             return None
         return index_to_move(best, after).uci()
 
+    def tree_root_bestmove(
+        self, board: chess.Board, *, searchmoves: tuple[str, ...] = (),
+    ) -> str | None:
+        """The most-visited root move of the CURRENT tree when its root is
+        ``board``, else ``None``. Reads visit counts only. Call only while no
+        search runs on this worker (the engine's no-clock answer, after the
+        tree was advanced to the GUI's position)."""
+        tree, root_id = self._tree, self._root_id
+        if tree is None or root_id is None or root_id < 0 or self._tree_fen != board.fen():
+            return None
+        try:
+            best = _most_visited_children(tree, root_id, 1, _allowed_root_indices(board, searchmoves))
+        except Exception:
+            return None
+        return index_to_move(best[0][0], board).uci() if best else None
+
+    def reply_book_bestmove(
+        self, board: chess.Board, *, searchmoves: tuple[str, ...] = (),
+    ) -> str | None:
+        """The previous tree's choice at ``board``, or ``None``.
+
+        Safe from any thread, including while a search owns the worker: it
+        reads only the snapshot `_snapshot_reply_book` took between chunks.
+        That is what a busy-worker answer can use when the cached root prior
+        belongs to the position the stuck search is still on: the GUI's board
+        is then normally that position plus our answered move plus the reply.
+        The caller re-validates legality; ``searchmoves`` is honoured here."""
+        book = getattr(self, "_reply_book", None)
+        if not book:
+            return None
+        uci = book.get(board.fen())
+        if uci is None or (searchmoves and uci not in searchmoves):
+            return None
+        return uci
+
+    def _snapshot_reply_book(self, board: chess.Board, *, force: bool = False) -> None:
+        """Record the tree's choices around ``board`` (the root) for
+        `reply_book_bestmove`: the root itself, and the position after each of
+        the `_REPLY_BOOK_OUR_MOVES` most-visited root moves and each of the
+        `_REPLY_BOOK_REPLIES` most-visited replies to it. Runs between chunks
+        on the search thread (the tree is quiescent); at most every
+        `_REPLY_BOOK_INTERVAL_S` unless ``force``. A tree without a visited
+        root leaves the previous snapshot in place."""
+        now = time.monotonic()
+        if not force and now - getattr(self, "_reply_book_at", float("-inf")) < _REPLY_BOOK_INTERVAL_S:
+            return
+        tree, root_id = self._tree, self._root_id
+        if tree is None or root_id is None or root_id < 0 or self._tree_fen != board.fen():
+            return
+        try:
+            ours = _most_visited_children(tree, root_id, _REPLY_BOOK_OUR_MOVES, None)
+            if not ours:
+                return
+            book = {board.fen(): index_to_move(ours[0][0], board).uci()}
+            for action, node in ours:
+                after = board.copy(stack=False)
+                after.push(index_to_move(action, board))
+                for reply, reply_node in _most_visited_children(tree, node, _REPLY_BOOK_REPLIES, None):
+                    pos = after.copy(stack=False)
+                    pos.push(index_to_move(reply, after))
+                    answer = _most_visited_children(tree, reply_node, 1, None)
+                    if answer:
+                        book[pos.fen()] = index_to_move(answer[0][0], pos).uci()
+        except Exception:
+            return  # a snapshot is an optimisation; never fail a search for it
+        self._reply_book = book
+        self._reply_book_at = now
+
     def fresh_root_policy_bestmove(
         self, board: chess.Board, *, searchmoves: tuple[str, ...] = (),
     ) -> str | None:
@@ -3222,40 +3363,54 @@ class SearchWorker:
     ) -> int:
         """Shrink ``chunk`` to the sims that fit in the remaining deadline.
 
-        The hard deadline is only checked between chunks and the pucv pool isn't
-        handed the deadline, so a big scaled multi-GPU chunk could run past the
-        time budget. Once an nps estimate exists (after the first chunk), cap the
-        chunk at ``nps * remaining_ms``; floor it at ``_chunk_sims`` so the base
-        single-GPU granularity (whose overrun is ~one base chunk = negligible) is
-        never reduced. No-op for open-ended (no deadline) searches."""
+        The hard deadline is only checked between chunks (the classic Gumbel
+        chunk cannot be interrupted) and the pucv pool isn't handed the
+        deadline, so a chunk sized without the clock runs past it. Once this
+        search has an nps estimate (after its first chunk), cap the chunk at
+        ``_LATER_CHUNK_TIME_SHARE * nps * remaining_ms``, floored at
+        `_MIN_TIME_CAPPED_CHUNK` -- NOT at
+        ``_chunk_sims``: a deadline shorter than one base chunk used to overrun
+        by a whole chunk (57 ms deadline, 365 ms wall on CPU). Root-parallel
+        Gumbel keeps the ``_chunk_sims`` floor (its schedule needs the sims).
+        No-op for open-ended (no deadline) searches, so ``go nodes`` / untimed
+        searches are untouched."""
         remaining_ms = deadline.remaining_ms()
         if remaining_ms is None:
             return chunk
+        # getattr: unit tests may construct SearchWorker via object.__new__
+        # without running __init__.
+        rpg = getattr(self, "_rpg_pool", None) is not None
         if total_nodes <= 0:
-  # First chunk: no nps estimate yet. A scaled multi-GPU chunk (per_device *
-  # n_devices) could run unbounded past the deadline before the between-chunks
-  # check — a time forfeit on move 1. Bound it to the base single-GPU granularity,
-  # AND to a conservative bootstrap-nps time cap so a tight budget (e.g. 100ms
-  # matched_time, where one full _chunk_sims=2048 chunk would itself overrun)
-  # shrinks the first chunk. A normal/long budget leaves it at _chunk_sims; the
-  # measured nps then caps every later chunk.
+  # First chunk: no nps estimate for this search yet. A scaled multi-GPU chunk
+  # (per_device * n_devices) could run unbounded past the deadline before the
+  # between-chunks check — a time forfeit on move 1. Bound it to the base
+  # single-GPU granularity AND to a time cap: `_FIRST_CHUNK_TIME_SHARE` of the
+  # remaining time at the slowest chunk rate this worker has measured on this topology, or before any
+  # measurement a conservative bootstrap nps. A normal/long budget leaves it at
+  # _chunk_sims; the search's own nps then caps every later chunk.
   #
   # Exception: root-parallel Gumbel *requires* a large first schedule or
   # early-phase vpa collapses (vpa≈5 at 512 sims → GPU batch starvation).
-  # Cap only by bootstrap time, not by base _chunk_sims.
-            boot_cap = int(_BOOTSTRAP_NPS_PER_MS * remaining_ms)
-            time_bound = max(_MIN_FIRST_CHUNK, boot_cap)
-            # getattr: unit tests may construct SearchWorker via
-            # object.__new__ without running __init__.
-            if getattr(self, "_rpg_pool", None) is not None:
+  # Cap only by time, not by base _chunk_sims.
+            rate = self.measured_chunk_rate()
+            if rate is not None:
+                time_bound = max(
+                    _MIN_TIME_CAPPED_CHUNK,
+                    int(_FIRST_CHUNK_TIME_SHARE * rate * remaining_ms),
+                )
+            else:
+                time_bound = max(_MIN_FIRST_CHUNK, int(_BOOTSTRAP_NPS_PER_MS * remaining_ms))
+            if rpg:
                 return min(chunk, time_bound)
             return min(chunk, self._chunk_sims, time_bound)
         elapsed = deadline.elapsed_ms()
         if elapsed <= 0:
             return chunk
         nps = total_nodes / elapsed
-        time_cap = int(nps * remaining_ms)
-        return min(chunk, max(self._chunk_sims, time_cap))
+        if rpg:
+            return min(chunk, max(self._chunk_sims, int(nps * remaining_ms)))
+        time_cap = int(_LATER_CHUNK_TIME_SHARE * nps * remaining_ms)
+        return min(chunk, max(_MIN_TIME_CAPPED_CHUNK, time_cap))
 
     def _ensure_shared_tree_headroom(self, upcoming_sims: int) -> int:
         """Pre-grow the shared tree for the next concurrent chunk and return the
@@ -3654,6 +3809,9 @@ class SearchWorker:
             witness_checks_remaining -= 1
             return False
 
+  # The carried subtree's choices, before the first chunk can make this search
+  # unreachable (see `reply_book_bestmove`).
+        self._snapshot_reply_book(board, force=True)
         while True:
   # Hash-capped growth step on whatever tree the previous chunk left (the
   # classic Gumbel path creates its tree inside the first chunk).
@@ -3756,7 +3914,10 @@ class SearchWorker:
   # work (declined/forced root) took ~0 ms and would drag the batch-time
   # statistics toward zero, shrinking the margin for the real chunks.
             if int(completed) > 0:
-                self._record_batch_ms((time.monotonic() - _chunk_t0) * 1000.0)
+                _chunk_ms = (time.monotonic() - _chunk_t0) * 1000.0
+                self._record_batch_ms(_chunk_ms)
+                self._note_chunk_rate(int(completed), _chunk_ms)
+                self._snapshot_reply_book(board)
   # Count the sims actually completed, not the requested chunk: a pool chunk
   # cut short by stop_event would otherwise inflate reported nodes AND the nps
   # estimate `_time_capped_chunk` sizes later chunks with.
@@ -4614,6 +4775,27 @@ def _uci_pv(root_board: chess.Board, pv_indices: list[int]) -> tuple[str, ...]:
         out.append(mv.uci())
         b.push(mv)
     return tuple(out)
+
+
+def _most_visited_children(
+    tree: Any, node: int, k: int, allowed: set[int] | None,
+) -> list[tuple[int, int]]:
+    """Up to ``k`` visited children of ``node`` as ``(action, child_node)``,
+    most visits first (ties: lower action id), restricted to ``allowed``."""
+    actions, visits = tree.get_children_visits(int(node))
+    ranked = sorted(
+        (
+            (-int(n), int(a))
+            for a, n in zip(actions.tolist(), visits.tolist(), strict=True)
+            if int(n) > 0 and (allowed is None or int(a) in allowed)
+        ),
+    )[:k]
+    out: list[tuple[int, int]] = []
+    for _, action in ranked:
+        child = int(tree.find_child(int(node), action))
+        if child >= 0:
+            out.append((action, child))
+    return out
 
 
 def _index_to_uci(board: chess.Board, idx: int) -> str:

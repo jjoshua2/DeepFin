@@ -203,7 +203,7 @@ between moves, and on failure the previous settings and evaluator stay).
 | `EvalCacheEntries` | spin 0..1048576 | 0 | Eval cache entries; 0 = off. | evaluator |
 | `MultiPV` | spin 1..256 | 1 | Number of `info` lines (PVs) reported. | no |
 | `UCI_ShowWDL` | check | false | Add `wdl` to `info` lines. | no |
-| `MoveOverheadMs` | spin 0..5000 | 30 | Subtracted from every clock-derived deadline; also moves the watchdog (section 8). | no |
+| `MoveOverheadMs` | spin 0..5000 | 30 | Subtracted from every deadline; in clock games the answer, including the watchdog's last-moment answer, is out this long before the clock runs out (sections 5 and 8). | no |
 | `ClockBatchMarginSigmas` | string >= 0 | 2.0 | Clock safety margin in units of measured chunk-time spread. | no |
 | `SyzygyPath` | string | `<empty>` | Tablebase directories (section 7). | opens the tables |
 | `Syzygy50MoveRule` | check | true | Tablebase results respect the 50-move rule (section 7). | no |
@@ -251,8 +251,9 @@ nothing.
 
 ## 5. Time management in plain terms
 
-- `movetime N`: search about `N` ms, stopping one measured chunk early so the
-  answer is not late.
+- `movetime N`: search about `N` ms less `MoveOverheadMs`, stopping one measured
+  chunk early so the answer is not late. `movetime` is not a clock: the search
+  is never shorter than 20 ms, and the watchdog's last moment is 3 ms before `N`.
 - Clock games (`wtime` / `btime`, with `winc` / `binc` and `movestogo` if sent):
   a reserve is set aside, half of the increment is spent per move, and the rest of
   the clock is divided over an estimate of the moves left that comes from the
@@ -260,8 +261,28 @@ nothing.
   more than half the remaining clock (95% on the last move before a `movestogo`
   refill). The search aims at 70% of that budget (`--optimum-fraction`) and stops
   there if the best move is settled, otherwise it continues to the hard budget.
+  The moves-left estimate never goes below 8 with an increment and 20 without
+  one: in sudden death nothing refills the clock, and a long endgame must not
+  spend it down geometrically.
 - `MoveOverheadMs` is subtracted from every deadline; `ClockBatchMarginSigmas`
   adds a margin learned from how long this machine's search chunks take.
+- In a clock game the hard deadline is never later than the remaining clock
+  less `MoveOverheadMs` less 25 ms (room for the search to finish its last chunk
+  before the watchdog's last moment). When that leaves less than 20 ms there is
+  no time to search: the move is answered at once
+  (`info string clock too short to search: ... source=... move=...`) from the
+  reused tree, the previous search's choice for this position, the cached root
+  policy, one fresh root evaluation if the clock allows it, or the first legal
+  move, in that order. That is not a fault: it is not counted in
+  `bestmove_fallback_used`. In sudden death (no increment, no `movestogo`) the
+  same at-once answer starts earlier: once the clock less `MoveOverheadMs` is
+  under 900 ms, too little to pay for 20 more 20 ms searches with their slack,
+  every move is answered at once, so a long endgame does not flag.
+- The search runs in chunks that cannot be interrupted, so a timed search sizes
+  each chunk to fit: the first from the slowest chunk speed this engine has
+  measured (a quarter of the time left), each later one from the move's own
+  speed (half of the time left), down to 16 simulations near the deadline.
+  `go nodes` and `go depth` are never resized.
 - `go nodes N` / `go depth N`: work bounds, no clock.
 - `go mate N`: stop as soon as a mate in N moves or fewer is proven. With no other
   bound the search is capped at 60 s and says so
@@ -453,7 +474,11 @@ These lines mean something went wrong and are worth a report:
   `info string WARNING search failed on ... consecutive move(s); this move is UNSEARCHED (fallback)`;
 - `info string search not started; bestmove_fallback_used=...`;
 - `info string search did not stop in time; answering unsearched ...` (a search
-  that ignored `stop` for 1 s; it is parked and later moves are answered at once);
+  that ignored `stop` for 1 s; it is parked and later moves are answered at once
+  while it still owns the engine: from the cached root policy when it is for
+  that position, else the previous search's choice for it (`source=prev_tree`,
+  recorded between chunks for the positions two plies on), else the first legal
+  move -- no fresh evaluation runs while the parked search holds the evaluator);
 - `info string search incomplete reason=...` (a ponder transition past its
   deadline, or a solved root whose proof names no move; the latter is a property
   of the position, not a fault).
@@ -463,8 +488,11 @@ answered by the engine itself:
 `info string WARNING search stalled: ...` then
 `... deadline watchdog answers unsearched source=... move=...`. It fires when the
 search is past its deadline and has completed no chunk for 4 chunk times (at least
-300 ms, at most 2 s), or unconditionally 3 ms before the real budget. The move is a
-fallback (the last PV's first move, the root policy, or the first legal move).
+300 ms, at most 2 s), or unconditionally 3 ms before the real budget: the `movetime`,
+or in a clock game the remaining clock less `MoveOverheadMs` (the GUI charges its
+own pipe latency to the engine's clock). The move is a fallback (the last PV's
+first move, the root policy, the previous search's choice for this position, or
+the first legal move).
 `go infinite`, `go ponder` before `ponderhit`, and pure `go nodes` / `go depth` have
 no watchdog. On a heavily loaded CPU a very short `movetime` can trip it on a
 healthy search (section 9). The 3 ms is the watchdog's wake-up latency (measured
