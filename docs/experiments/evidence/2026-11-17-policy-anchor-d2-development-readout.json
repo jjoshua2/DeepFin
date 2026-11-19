@@ -1,0 +1,560 @@
+{
+  "CI_enters_eligibility": false,
+  "HOLD_final_confirmation_authorized": false,
+  "all_six_technical_and_reader_accepted": true,
+  "decision": "SCREEN_ENTRY_ONLY_NO_ESCALATION_AUTHORITY",
+  "decision_command": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-development-decision-bindings-v1/decision-command.json",
+    "sha256": "72ffafb3cc1f23fe61b37753ae9b1a0501396c757dbd8acbe51af6337e346750"
+  },
+  "design": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-short-horizon-root-design-v1/design.json",
+    "sha256": "4f61d06dd3d08eac7d2091347d682fa3433b2559b236c913d5a4bb48bfe94749"
+  },
+  "eligible_arms": [
+    "S0"
+  ],
+  "entry_threshold_vs_A39": 0.55,
+  "entry_threshold_vs_own_long": 0.55,
+  "execution_authorized": false,
+  "global_stop_written": false,
+  "limits": [
+    "Fixed seed/dataset/two endpoint coefficients; horizon includes full adaptation history, not a unique value-head cause.",
+    "80 paired openings per edge and descriptive intervals are not final external-strength evidence.",
+    "Retained L0 saved-only corrective proof remains asymmetric to the complete GPU proofs."
+  ],
+  "long_term_goal_achieved": false,
+  "models": {
+    "L0": {
+      "independent": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T1-K0-no-clip-corrective-audit-bindings-v1/independent-review.json",
+        "sha256": "9388a6592b5bf819666567230098512f3756efbcb6920e884d30338907f09b71"
+      },
+      "root": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T1-K0-no-clip-corrective-audit-bindings-v1/root-acceptance.json",
+        "sha256": "71f733ac9a904aae0277f132dbcf58015692298e037fc5dde75f65235b94fc1f"
+      }
+    },
+    "L1": {
+      "independent": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T1-K1-learning-GPU-bindings-v1/independent-review.json",
+        "sha256": "8e5a03ecd1278084751db8ff05808432441dd8841cf97bcd9bcee4429c036bb5"
+      },
+      "root": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T1-K1-learning-GPU-bindings-v1/root-acceptance.json",
+        "sha256": "44cf204e7d62116352ecc2bde86d662ddb9367f2620332c83ebdf3c209e46014"
+      }
+    },
+    "S0": {
+      "independent": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0-learning-GPU-bindings-v1/independent-review.json",
+        "sha256": "a004cd8db1a876566c11a747ef78693e9b6cb70b4d8a29a735b47911ac10b06f"
+      },
+      "root": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0-learning-GPU-bindings-v1/root-acceptance.json",
+        "sha256": "5a4e6cb2876ee9e723eadc25767dd5760fd7daeb5041629cbeb994a00bc09d0d"
+      }
+    },
+    "S1": {
+      "independent": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S1-learning-GPU-bindings-v1/independent-review.json",
+        "sha256": "8f540e259f628bf948a9d3ef059916b8ff60d2753c177e57f1fb870112d647d3"
+      },
+      "root": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S1-learning-GPU-bindings-v1/root-acceptance.json",
+        "sha256": "6a92ee8badf5482122b139d036bd15733dcde1e837d4ec5ba2c1cd4e78df6852"
+      }
+    }
+  },
+  "new_training_authorized": false,
+  "points": {
+    "L0_vs_A39": 0.49375,
+    "L1_vs_A39": 0.48125,
+    "S0_vs_A39": 0.559375,
+    "S0_vs_L0": 0.575,
+    "S1_vs_A39": 0.50625,
+    "S1_vs_L1": 0.5125
+  },
+  "profile": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-development-source-preparation-v9-corrected-v3/playing-profile.json",
+    "sha256": "7f6c0d8704114484af51d81df6c106e325593fe3a9c3a5b9e41c2ed6a37c6ee7"
+  },
+  "rank": "highest_short_vs_A39_point_then_lower_lambda",
+  "role_use": {
+    "independent": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-fresh-screen-A-80-159-role-bindings-v1/independent-review.json",
+      "sha256": "a007e269840117d1e8a78dd00d9acbfa3ea87370d8decfdd10a96f4102fddb5a"
+    },
+    "root": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-fresh-screen-A-80-159-role-bindings-v1/root-acceptance.json",
+      "sha256": "3a485770b80ecf038111b47fe28055c0d10340ac72dbbf6801c6b16b80a58ae6"
+    }
+  },
+  "rows": {
+    "L0_vs_A39": {
+      "acceptance": {
+        "independent": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-L0_vs_A39-development-bindings-v1/independent-review.json",
+          "sha256": "5169370a0d76807f3d504192f6efd09ca04205c3cc9d9a8f5f71fc9f9111c63c"
+        },
+        "root": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-L0_vs_A39-development-bindings-v1/root-acceptance.json",
+          "sha256": "fa5e615d4f572ff37a8f649b97ce96fbda6e156026710f34c4d05d6c796e401a"
+        }
+      },
+      "descriptive_pair_normal95": [
+        0.4321289718716497,
+        0.5553710281283503
+      ],
+      "paired_counts": [
+        8,
+        18,
+        31,
+        14,
+        9
+      ],
+      "point": 0.49375,
+      "readout": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-L0_vs_A39-development-GPU-results-v1/readout.json",
+        "sha256": "2fdc628118f25016138b1247254f97a7440d285ceb4228173d038ee523f846ce"
+      },
+      "summary": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-L0_vs_A39-development-reader-results-v1/summary.json",
+        "sha256": "e33037fc8435a6f312e78b49e75853bb45d6278af49b237d1c14f1544f43a633"
+      },
+      "wdl_counts": {
+        "draws": 52,
+        "losses": 55,
+        "wins": 53
+      }
+    },
+    "L1_vs_A39": {
+      "acceptance": {
+        "independent": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-L1_vs_A39-development-bindings-v1/independent-review.json",
+          "sha256": "4accf28c84c70dd1fa671135a88fb0eb167c969f64f8e745f7543fb060895067"
+        },
+        "root": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-L1_vs_A39-development-bindings-v1/root-acceptance.json",
+          "sha256": "f5cb117b00d978dabda04889180f0f332ca169a028badc66327cc829b42beb84"
+        }
+      },
+      "descriptive_pair_normal95": [
+        0.42558918980881394,
+        0.536910810191186
+      ],
+      "paired_counts": [
+        7,
+        19,
+        31,
+        19,
+        4
+      ],
+      "point": 0.48125,
+      "readout": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-L1_vs_A39-development-GPU-results-v1/readout.json",
+        "sha256": "8bffacfbb1dd6fefe5d6c4d42f1cfb28b8221de70557938e753e64ae33f9f046"
+      },
+      "summary": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-L1_vs_A39-development-reader-results-v1/summary.json",
+        "sha256": "bebc73c976d520523a36519e3ffb147e1013f923f9fd511b2d9f2419559ccb60"
+      },
+      "wdl_counts": {
+        "draws": 60,
+        "losses": 53,
+        "wins": 47
+      }
+    },
+    "S0_vs_A39": {
+      "acceptance": {
+        "independent": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0_vs_A39-development-bindings-v1/independent-review.json",
+          "sha256": "6d78f67c077013945aa311e675977fdbf8dbff8ca5796c2039a85a45455288dd"
+        },
+        "root": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0_vs_A39-development-bindings-v1/root-acceptance.json",
+          "sha256": "bc37d545c528fb129c1caf6af7766b6760fbb66fc503f1e2ee7f0f2b84aae7c7"
+        }
+      },
+      "descriptive_pair_normal95": [
+        0.5020539400295211,
+        0.6166960599704788
+      ],
+      "paired_counts": [
+        6,
+        11,
+        28,
+        28,
+        7
+      ],
+      "point": 0.559375,
+      "readout": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0_vs_A39-development-GPU-results-v1/readout.json",
+        "sha256": "cd98c59e514f5638f4699f52c20943a84d7e72bdf50011c872d9eea7e1170743"
+      },
+      "summary": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0_vs_A39-development-reader-results-v1/summary.json",
+        "sha256": "e65e2e0c1a6c5e6d60987f6a152ca1c9d15c807e380ea032a584e3ebb9f43c61"
+      },
+      "wdl_counts": {
+        "draws": 57,
+        "losses": 42,
+        "wins": 61
+      }
+    },
+    "S0_vs_L0": {
+      "acceptance": {
+        "independent": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0_vs_L0-development-bindings-v1/independent-review.json",
+          "sha256": "822aa6aa1e8167b82f9c99a603d82148f632073da649baf44d8e111cdfc2a713"
+        },
+        "root": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0_vs_L0-development-bindings-v1/root-acceptance.json",
+          "sha256": "5a79d972b2266cd4adb86cf94fc0f5dcdcb771bda21c9b9051540316434f838b"
+        }
+      },
+      "descriptive_pair_normal95": [
+        0.5162672325300132,
+        0.6337327674699867
+      ],
+      "paired_counts": [
+        5,
+        12,
+        27,
+        26,
+        10
+      ],
+      "point": 0.575,
+      "readout": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0_vs_L0-development-GPU-results-v1/readout.json",
+        "sha256": "2f73e1b7cf6ffcf2899b2dfec4267dacfe1d93a664aab97cd212e28dbc421df3"
+      },
+      "summary": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0_vs_L0-development-reader-results-v1/summary.json",
+        "sha256": "da5c69820d019284c9583b5e2e3f1cdc09c1c78fe3a5723d8956ea4c161b6c21"
+      },
+      "wdl_counts": {
+        "draws": 52,
+        "losses": 42,
+        "wins": 66
+      }
+    },
+    "S1_vs_A39": {
+      "acceptance": {
+        "independent": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S1_vs_A39-development-bindings-v1/independent-review.json",
+          "sha256": "6a3a43fa2ad99de4ad17ddb57118ded3221415c40bf692deb514a727df7be86e"
+        },
+        "root": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S1_vs_A39-development-bindings-v1/root-acceptance.json",
+          "sha256": "fba9d5f50da301a54c58bcebcdbf0997b52de38c97b0c56b0d24e137d7f8a9f1"
+        }
+      },
+      "descriptive_pair_normal95": [
+        0.44587459869882035,
+        0.5666254013011796
+      ],
+      "paired_counts": [
+        5,
+        24,
+        23,
+        20,
+        8
+      ],
+      "point": 0.50625,
+      "readout": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S1_vs_A39-development-GPU-results-v1/readout.json",
+        "sha256": "9dcb2bfee7b8c3111e35fb211f272d7beed386dbe33f9e6aa7f0c10d25513c42"
+      },
+      "summary": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S1_vs_A39-development-reader-results-v1/summary.json",
+        "sha256": "59aac461af079278545f1cb0fb766de99df19f77a1307d9c4f24b198ed7c3a19"
+      },
+      "wdl_counts": {
+        "draws": 58,
+        "losses": 50,
+        "wins": 52
+      }
+    },
+    "S1_vs_L1": {
+      "acceptance": {
+        "independent": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S1_vs_L1-development-bindings-v1/independent-review.json",
+          "sha256": "9819f00af0209581e35c7ae595efbcdcc51efa4094cf7c3d524d8a37c2d3dfa8"
+        },
+        "root": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S1_vs_L1-development-bindings-v1/root-acceptance.json",
+          "sha256": "61670c1979efb2a302e7a448d54934c5a35ba7897ee6b6d9b2665e1c44883c56"
+        }
+      },
+      "descriptive_pair_normal95": [
+        0.45092522812347924,
+        0.5740747718765207
+      ],
+      "paired_counts": [
+        8,
+        14,
+        34,
+        14,
+        10
+      ],
+      "point": 0.5125,
+      "readout": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S1_vs_L1-development-GPU-results-v1/readout.json",
+        "sha256": "57968aca0d00797eff94be066d75b1f7ad0f774f864c1e38aa99db4234caf56b"
+      },
+      "summary": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S1_vs_L1-development-reader-results-v1/summary.json",
+        "sha256": "637e7cba1cd672d9b1ece04da888a11e961a532fbc08e86ea49e4d6ae3567c92"
+      },
+      "wdl_counts": {
+        "draws": 48,
+        "losses": 54,
+        "wins": 58
+      }
+    }
+  },
+  "runtime_adoption": false,
+  "runtime_source": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-development-source-preparation-v9-corrected-v3/manifest.json",
+    "sha256": "067bce69a47ab6e4db454401d3d4dafd16698d3923869cc4087620cd31ffc6a8"
+  },
+  "schema": "D2_COMPLETE_SIX_EDGE_SCREEN_DECISION_V1",
+  "selected_arm": "S0",
+  "selection": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-development-root-selection-v2/selection.json",
+    "sha256": "685acd7bece0197029c87eae7c53b12c05add9f17758b623d2c7169b1304dd21"
+  },
+  "separate_edges_not_pooled": true,
+  "source": {
+    "checkout": "/home/josh/.codex/worktrees/anchor-software-readout-20261116/chess",
+    "files": {
+      ".python-version": "02e735b3dfe1c32833eb550b7ff8ffa17f5f2bc3fa1e7bae61a8f5a3883ce398",
+      "chess_anti_engine/__init__.py": "36d2d5d42f1b8f07957b14e420a5e9a18c09acb9caeb32eb63252d335bc36d50",
+      "chess_anti_engine/async_safety.py": "e35c9725139fca19d725cd2125b01c871d370d62cc64b68730e27fcc189a1113",
+      "chess_anti_engine/broker_hang.py": "298600da0d4c73ec79d8db7bdaef949ca710e3cc2354157b09d63662bb12e9bc",
+      "chess_anti_engine/compile_cache.py": "29c36e5604764b7cc1a5e7f5f865619a40a8f1b9558c1ed94245591a6d2dc99a",
+      "chess_anti_engine/config_keys.py": "9a853244b134c5ed65d7dbcae89bccfdf0993027ca35af60918a1d48bbdb3613",
+      "chess_anti_engine/core_generation_data.py": "0b82d70b04997a200b268bf44f10700b298bf9626ffe6537d40bcd1f8aa1a35f",
+      "chess_anti_engine/encoding/__init__.py": "47f4c61961c72f0df96e1f984473681d386c630e7ec38a67791de55aa181d97d",
+      "chess_anti_engine/encoding/_bitboard_planes_impl.h": "8fdc0ea17025c5543d15997573b2080a1ef99dd9f0b55dab0bb9c3af41cb8d9b",
+      "chess_anti_engine/encoding/_cboard_impl.h": "13560b4908282aca68c3f6c5747dc3848f036f3a494f24500e76fc44a3646572",
+      "chess_anti_engine/encoding/_features_ext.c": "1aca319fa2ae1eae4bba5707c61a7767421f1cf53a1510a8a739fb2557d9e053",
+      "chess_anti_engine/encoding/_features_impl.h": "778856a92e9c6ca179874a977f8b9ea35057d464e98c1f920a271b129c670341",
+      "chess_anti_engine/encoding/_lc0_ext.c": "1f167954b03e6ec912642c81bbe1c7fac37a7adab98fbad497d718270b243149",
+      "chess_anti_engine/encoding/_perft_ext.c": "82b15316bc9003eb1196aa7e0f1055051b89ab868782141d49dcd4db89a33645",
+      "chess_anti_engine/encoding/_slider_attacks_impl.h": "4bcd20d696241a218adfb15bdf31d0e72ba0a5c75d5c6dd29bbd53ec79d59d5d",
+      "chess_anti_engine/encoding/cboard_encode.py": "9a2adbae871baf946a370f5086d7ae3a298cab5287871c60ede23d7f0d4f4294",
+      "chess_anti_engine/encoding/encode.py": "b1bea1ded7aed5f5813c398875b1ab099e2d1e9408bd33d90e48faa3ca08c119",
+      "chess_anti_engine/encoding/features.py": "96541e711bed93bd9641b1cfb1ddc799ffad5db17a610f116aa0498189350489",
+      "chess_anti_engine/encoding/lc0.py": "a20b56a7c0666e134791855c0f124a66504013983f8f97948539a015dac9c3ee",
+      "chess_anti_engine/encoding/model_inputs.py": "8e5c7f1b122b50c2ef53a8cd1756adfbcbc812aaf4b08487ac2c7e28ff37821a",
+      "chess_anti_engine/encoding/plane_decode.py": "059e69b67254f46a341cfe2c99920c7b919a1a0c739342815d78fc5e398a93c0",
+      "chess_anti_engine/encoding/rep_fix.py": "f086972cc01d35cd5bd7bac84fb102187fabcd4f119ea3b150d03980ec6d9ec5",
+      "chess_anti_engine/eval/__init__.py": "aec5cdf3d2a94a119d842ed9352c756341c2aa8e76a4fbe54a4feaa12bc41d99",
+      "chess_anti_engine/eval/arena_durable.py": "71cee9b5e3941d98f75c782627b3f159e8f3a5a4b7d106e621825b0dcc0c4f5e",
+      "chess_anti_engine/eval/arena_pgn.py": "5e3b373ca939d1c565d47fb018d50d8338d7375a6f564e04f5a5cdadfec3ed44",
+      "chess_anti_engine/eval/era_probe.py": "f7bf39d875a0ec45a145f1e3c2902fb1f730a404c3031ca377d0aca59d4fb190",
+      "chess_anti_engine/eval/puzzles.py": "4c131ac77d0fe7a763b0ab0fbd12bfcf02f66593660643a387b65cb78b21ad68",
+      "chess_anti_engine/eval/sprt.py": "5f778573d4a702e625b3b6d3220536076dd41fd866c749bda9c9fb8aff749056",
+      "chess_anti_engine/ext_build_record.py": "f2a0e471348c963ab94bf8f9e503308ace956874d7ca460eb93e7c8417d1ce21",
+      "chess_anti_engine/ext_check.py": "c5f31de643528de2543bf92069a3d6a96ec85fa22222a6ed80c81b0388b7aef3",
+      "chess_anti_engine/heap_census.py": "3e9a3b115bc4418081d345fbd754a7457d5c6a60f97847184f73083092d75470",
+      "chess_anti_engine/inference.py": "13fa23ea1e249d5c5061c169d4db74b1838ee994b29743911879b812ae14627b",
+      "chess_anti_engine/inference_dispatcher.py": "7117274495ac772a50fbc4105ba484d9397f0adc72ee3407e602e1a4f31bb27b",
+      "chess_anti_engine/inference_threaded.py": "398fb85bf5495ce7044c4b83b89a5e677baaaf2f5710390dc7e0617ab8c608b9",
+      "chess_anti_engine/mcts/__init__.py": "fd24f47bd0684200c6f80a852d812c76b2ab77a603f239a4593329414771ae96",
+      "chess_anti_engine/mcts/_check_resolver.h": "13c0e6bc10fb43a92164ac411a3d6d6761a14b3b99117dcd83e66e2dc94d8f6e",
+      "chess_anti_engine/mcts/_mcts_tree.c": "baafe29f61d4fbd620a38b4bc8f11ae51e8dd71f7c15e1b65b0443953a41123c",
+      "chess_anti_engine/mcts/_position_dag.h": "3c7da5adccdc056632483bbe8d384dd44c687b66c6c6ea13549408e3970a02d3",
+      "chess_anti_engine/mcts/_search_terminal.h": "a7143cb2dd5c1fb548f67e0aaf6dda41d05246f72ac749cc4b132a8d5fa447b9",
+      "chess_anti_engine/mcts/_value_provider.h": "a8de0ee5f65fc5f5881f4c095f823a17c2e2c8bc6814a99375c228f9045db84a",
+      "chess_anti_engine/mcts/gumbel.py": "94dd6b8725923318eca53bba4ae9e2c7ee21032ebedafb6c97cc3c214470ef86",
+      "chess_anti_engine/mcts/gumbel_c.py": "699f07f8cefc7f234757c3d07a5cfdac96c555fb4908ebc9eea6be198aea062f",
+      "chess_anti_engine/mcts/puct.py": "5d2ca30cca5e2c9c0d4d2ab35387b0ab5ffd6023ed3cffb1a1ac8b1777ff04d7",
+      "chess_anti_engine/mcts/root_tactics.py": "f6fc48d0badf93dae5f74a43a476bb56e46518c1a503e10541ecedcc2aa2ed49",
+      "chess_anti_engine/mcts/sampling.py": "a62fc3acf0662f2fec2abe98a3070c35ec81103cd5661e1c8806e2b507417d31",
+      "chess_anti_engine/mcts/solved_root.py": "e1005f834a45c0996d17fff5b02e915fe91a1604af714cd4d0935d1f760d7701",
+      "chess_anti_engine/model/__init__.py": "36412f8c131aaec02f8a36b501b39f1e674b4311379380cafdd506656c171dce",
+      "chess_anti_engine/model/tiny.py": "a859677a41fde6ace61ff0679f6a410b2939a94b56dd26838a09d178589f8e30",
+      "chess_anti_engine/model/transformer.py": "484f092c0dfb124761c515e15c569ef9db0029d574ad61a7a08ce4c80c078f97",
+      "chess_anti_engine/moves/__init__.py": "58217eeb1dd6eb6c056254f86532ac68a9b738e4da345137553702b3b7850f96",
+      "chess_anti_engine/moves/encode.py": "eaa3537d5bfa0c95ce5370b19b9fe680f9f06466e2b62a7e77548c5c71eca340",
+      "chess_anti_engine/moves/torch_maps.py": "f93ba12976a69729d8a39becf3c11fbd34a678e48365715c250f34b2de7403c9",
+      "chess_anti_engine/neural_work.py": "1f3f87296ad823359a62d60e47ba1737b31e5f1a83dab1fb916af716c2ca4f6f",
+      "chess_anti_engine/nnue/_arm_providers.h": "6188fa6d85f34c7aff99f674adee705c6a11b82ad54ab78a92dc5d5a6eca192d",
+      "chess_anti_engine/nnue/_fastq_certificate.h": "ae2bbacdfc1120e37c6c926a31536f5e362924bbe40c4ef085f8ae50b76d55e9",
+      "chess_anti_engine/nnue/_fastq_search.h": "c2e2bd7f7a47d676a681e2f794eeb87fcea013c413e8c33d99b51c041329b925",
+      "chess_anti_engine/nnue/_fastq_see.h": "94ad8e2ea1129d5e5589870b3c675a5427b7ad7eb62e8a79f8c65950576a3b26",
+      "chess_anti_engine/nnue/_nnue_dag_api.h": "9e68c3e7eb0960d147c1f36c405180a237100674d6f182625a503808634e9e6e",
+      "chess_anti_engine/nnue/_nnue_dag_store.h": "ec7b273cb213f379aa66d5e80fcd8f0b5da8daf982479f54cebd344219b6ee46",
+      "chess_anti_engine/nnue/_nnue_ext.c": "f618c3617f736bb61ee2b68eb7146cb62ef30740f4f55e6d0d8204246b005e5f",
+      "chess_anti_engine/nnue/_nnue_impl.h": "fc9721ab6b58546bce92badd0464c6ca895ec00b9ea28a27b0024246e2c0ec32",
+      "chess_anti_engine/nnue/_nnue_provider.h": "0e3de96f06ef2e12361d977bb0eb6d8602468c9f56606a6e70b151856fe526a9",
+      "chess_anti_engine/nnue/_nnue_state.h": "f3e55228ae4648e401de32dbd5777fb785681a96ece3005314edeeaf6f0bbfff",
+      "chess_anti_engine/policy_anchor_spec.py": "ceee3db410c09eef4551517fdc5fe1d752cb1e3f295b06f2a63ae706e9fe81fb",
+      "chess_anti_engine/replay/__init__.py": "9b1754d3c66c2efca352a32af98838bd8a9a728f9487e7ae768c58d4b6b0efbb",
+      "chess_anti_engine/replay/_client_deps.py": "7cea299aca666e896165a9fe0cd833b6840520e4e12ea23c7a1d3a1168a8a1f0",
+      "chess_anti_engine/replay/augment.py": "8d6b8fce791d08401e3aa9c7e4be2234f9f24e421ae58442c65feff1d0e968cf",
+      "chess_anti_engine/replay/buffer.py": "6b79192a9ad2a508d7d81aaea0995e19e57b05ddcbdaca207596af0680dc0f97",
+      "chess_anti_engine/replay/codec_safety.py": "171f9d93fc20cba2635ac111523f2ef57ba2a2399ee5ed747202a172badfb843",
+      "chess_anti_engine/replay/dataset.py": "bbf052e534fb18db0e51a124fbb0c59c554a22e9ad094be48a0b7de341f691bd",
+      "chess_anti_engine/replay/directory_seal.py": "3150229179d1079ada9950bbffadd10d406c85898400c0f86bc2f16a43edbf99",
+      "chess_anti_engine/replay/disk_buffer.py": "ee1e5601a4f35c5af02eb9d958e529ff599ba3a6f42c29fd0cf21c2288f10446",
+      "chess_anti_engine/replay/game_epoch.py": "aa0456817122125a1b0af6d919dafc68b743c503ee42bb4637636c8da099af81",
+      "chess_anti_engine/replay/generation.py": "b714f01683501aab0e29d1a6419a207c12bc860048f6d63f4a7d131015cb6a63",
+      "chess_anti_engine/replay/indexed_rows.py": "94c7cb32ea4524160151878c0e391fdc40d7c4f044e837d2a41a78c5f26c09e3",
+      "chess_anti_engine/replay/packed_zarr.py": "19e7254a7f27caa9b95a6636d94b9208352b6174f98b561d23958690b655c8f2",
+      "chess_anti_engine/replay/sample.py": "dea421281fbd6d3d9714fc2dbfb4b7d92f8e732c283a09fd880262b09c8e53de",
+      "chess_anti_engine/replay/sampling.py": "b447d45c7f482020eee55ec1ae804f52b6ead0d12470ed9f13eebb6d25468432",
+      "chess_anti_engine/replay/sfp0_blend.py": "872ce0f4688e58e7e3291b8bff456feefffcf49d7a39a14e1de570481f242429",
+      "chess_anti_engine/replay/shard.py": "2328c0687cf8f6340588a6f626e488b4248e6857d68df1554311dac2759d6076",
+      "chess_anti_engine/replay/startup_cache.py": "d8920a3b01065b146fa4740c6511beb4af84dbfa4a56b6cb1243165ebd5fcd0b",
+      "chess_anti_engine/replay/target_overlay.py": "aef031631e41995867e72dfed7357e7e3eba05976167c723a9baee04093e667d",
+      "chess_anti_engine/replay/threat_upgrade.py": "2b41612eb8edd54549be1f9b106b4bbfe9465bc09b26abe22b328389938724dc",
+      "chess_anti_engine/replay/upgrade_failure_cache.py": "dba3153a77baf441302d1545b2c006baef2bce85c763e5c3d2072a9a7a69e47a",
+      "chess_anti_engine/selfplay/__init__.py": "04044ea025dbea502a8f4bece3ed170b8d8699bbd62c34b4888bb04575317e68",
+      "chess_anti_engine/selfplay/blindspot_harvest.py": "4796b972577fac522f680b58b3b3e833abe1b404d08c23169216d1bb3da74010",
+      "chess_anti_engine/selfplay/budget.py": "5e9f281966b4cdd05965b91df705b4469a08b03cbe07dbe341ff9181b1206d2f",
+      "chess_anti_engine/selfplay/config.py": "ac1e384358b782c5a3f48a32dcd80a8a6ef340c036fcd05a926e38a36f601afa",
+      "chess_anti_engine/selfplay/diff_focus_norm.py": "8283945df642c0b875e5a262f1bd6d9a186a239f90aaf22ba75ad28d27eaf6a0",
+      "chess_anti_engine/selfplay/finalize.py": "4ee98c293d81aabd2db4754b0140d789dae09593850b89ba4c44d7e1ff8e6f80",
+      "chess_anti_engine/selfplay/game.py": "bc222976b77cc9d96da6e6f01bbd25d85f10473cdce7276d5cdbcfa1e25a9d8e",
+      "chess_anti_engine/selfplay/manager.py": "c232c454c090ecfab04209b699e0860517c1496210d8c60097e8bb36a5ede121",
+      "chess_anti_engine/selfplay/match.py": "85886fc8bbd52b2a7c1e01c2394d5380c4a9222d9520815b7d683f17c964cdbb",
+      "chess_anti_engine/selfplay/network_turn.py": "340459590c5dc5e32ca6f24e3de2eacacba43e5f78af1e380c9f87570c04a16b",
+      "chess_anti_engine/selfplay/opening.py": "aaa2663510aa8dcffcaae83e500bb3aec545d29cccbb67d82da3432b6ef4b3c2",
+      "chess_anti_engine/selfplay/provenance.py": "55e42004ace3192e58db9705f49add6e96bd3bb1792c3dfbc96e8dffb7768d18",
+      "chess_anti_engine/selfplay/resume.py": "87fe3cceb3a49dcc2c1a4f35556f8a06285297ad6cd46b8cc7acbb83bd9f2708",
+      "chess_anti_engine/selfplay/seed_manifest.py": "0fe8857ab7fd53dbca12d0953ef4ee74909d0368524373c2d888c45afd3edbc9",
+      "chess_anti_engine/selfplay/state.py": "e529d22dff3f1f02fd7c67e38940465565b624b83195b160c30c051e7b0ac225",
+      "chess_anti_engine/selfplay/stockfish_turn.py": "de460e47bb83c434190ca69d8aded9757578fd36d82da2a31be767b5daa213d7",
+      "chess_anti_engine/selfplay/strict_tb.py": "2b32523be8c4b04fedfaf157ef90b8b501e804f996984e6b024b9d1e51c04ee6",
+      "chess_anti_engine/selfplay/temperature.py": "9ae252564144702c2e0683fa89e0055392b22720c982aeb1dc4495597d580338",
+      "chess_anti_engine/stockfish/__init__.py": "0830cbe723930dde5cdfd8cf0da6fc9e45d6de4b23731880926521bfee09ad5f",
+      "chess_anti_engine/stockfish/pid.py": "0467ab8dc5410647178f5926c3a787756c6473df1f85af811e5e2de9703ba1ad",
+      "chess_anti_engine/stockfish/pool.py": "369bd81e53b92db4c5e1d375215b1875eba300822d8e7943b29b2bbcdc72bc1d",
+      "chess_anti_engine/stockfish/uci.py": "5111d0006901f7d758e23f8d87a7abdca8f3dfe3e462621a776123611d9ec66b",
+      "chess_anti_engine/stockfish/wdl.py": "11b80c842254e825272d2e84bff473fb12cd3cb5d61c98d5f0bd9f743af43b98",
+      "chess_anti_engine/tablebase.py": "c7c218307e3ec10d3ad8f4dd051c3d8d1cc3a7ffb323507d5d9d0717ff45542e",
+      "chess_anti_engine/tb/_tb_ext.c": "3dfcf8dcb88df03463b867081057149fbf4611619d7e7be1e7abac349460c419",
+      "chess_anti_engine/tb/_tb_fathom.c": "4eba802f60dc984ffc8452f36b6ea7b0777d1edd42db0f619296c74a1238bf37",
+      "chess_anti_engine/tb/_tb_fathom.h": "ceac0a91304276b38bb36c85f4cf71a4d819553a1727e8c2aa590dccaf245ed5",
+      "chess_anti_engine/tb/fathom/src/stdendian.h": "e5b8187eec89ef83e731ea92be8ca0df4b533d8d21075fc4e2c86b4b00d7b7c3",
+      "chess_anti_engine/tb/fathom/src/tbchess.c": "119f19fa8714686798ca7be011e5b234f99c93aec751e9492f2664757d6c029d",
+      "chess_anti_engine/tb/fathom/src/tbconfig.h": "69fe1821b471164bd759cf46c486d55b7fa727e348a5ee306b18d19537ac3a03",
+      "chess_anti_engine/tb/fathom/src/tbprobe.c": "206fe66758935b4665facef459e08a4e241de6635e9e43fc25492b0384d9d80d",
+      "chess_anti_engine/tb/fathom/src/tbprobe.h": "dc7808dc58c2a1af921a612f94041b917dfac94d3215a76a2b2b0c53c94ea561",
+      "chess_anti_engine/train/__init__.py": "9132a45ee3d819e0dd2c0964db2a52bf1a5c204a0e589c62dd46b982fdc8d03c",
+      "chess_anti_engine/train/async_eval.py": "edc5f85f20e906ab021ec447092bfc4af0e7fb20604bcc33d0811880a9cf8d81",
+      "chess_anti_engine/train/aurora.py": "85db0725102ed4d61759d7ada5e872a0c2673a5580b4821d2a39bf1d141468df",
+      "chess_anti_engine/train/compile_probe.py": "77a61d72b76f26b05fe41a114b8ad11e3e39b41439d9b7011dbc3b6719dbf118",
+      "chess_anti_engine/train/constants.py": "1e3c3793047f1a65f3e262b9406b92a4cf0d6a86b135b5b9f581787640d76c73",
+      "chess_anti_engine/train/eval_ruler.py": "d2ccab8e6e7c250b0c02a3ef8847c51bc39ee6b444d165dfe49f9cc9512c83fc",
+      "chess_anti_engine/train/frozen_policy_anchor.py": "f2952531438b56580332d1221a0927477424594a5b75798cbcbc301b4b769ce9",
+      "chess_anti_engine/train/losses.py": "a70ec504f7a852e639aa9e954000925fb0aeeaeb97304d1e7f1c7fc4f4205820",
+      "chess_anti_engine/train/muon.py": "b4753c536f3bb906b0a50dd26a5bfa9bf332393d577b15688f1da8be4104bbd4",
+      "chess_anti_engine/train/soda.py": "425153ba95ffe057d4b221fc796aac0e111f24e5f6a49db20b1a909bcbed75a6",
+      "chess_anti_engine/train/sparse_sf_ce.py": "0666aaad143b2f3b8579792b87cdc81ce4c48cf20cbb6c46c769c631174f5d3b",
+      "chess_anti_engine/train/target_builder.py": "9234a205c56bd23cf8cc1bafa37119c797ef4d04c47e1495990b14e150d456f6",
+      "chess_anti_engine/train/targets.py": "e079df47087b3aa1150c37d261caf03b8b2a6f3196294392fea241bd597ae03c",
+      "chess_anti_engine/train/trainer.py": "23d9261d4afe59ebb49a1a7c95f4760cd2460b01e5dde3be371a651e05793d5b",
+      "chess_anti_engine/tune/__init__.py": "9f540887fea2b8b67ea2653029e5708e4ce8ad9ff3ac11036414636b0a0b0ba0",
+      "chess_anti_engine/tune/_utils.py": "1e82d66a3129e413dc3e32a9bd1348f69c8426c75b526b76f032b7e531720814",
+      "chess_anti_engine/tune/diff_focus_guard.py": "fc0354f92b306285decc85d2f0ac87ac5705c0b2e80359b91f09d30f27096ab5",
+      "chess_anti_engine/tune/distributed_runtime.py": "449ffdafa532c1b6c4ce9fe76f0608930eb650860db9ea3277fee8385f02c107",
+      "chess_anti_engine/tune/fresh_rl_donor.py": "b7a8237cbe6113c235b7cc91608128886851b55ee681afdbb9b2bc7b8788e8b2",
+      "chess_anti_engine/tune/holdout_state.py": "7227352023906775b40eb4df3d6df8bcb65afbe5c540f9047c1e347ae059bd5d",
+      "chess_anti_engine/tune/prefetch.py": "cb101e23f52d9da4ab7f41647e4e41a3f1f3b78bba4d0b2957937b01a0ccdac3",
+      "chess_anti_engine/tune/process_cleanup.py": "b5ed91abf0c8aff6f5bd60b7738ec0d513d9f6798d11feb7bff90ffb49c8b7f1",
+      "chess_anti_engine/tune/promotion_gate.py": "a82a08c55e753807fbfc252575b2a1d65295f2be9af45b237a4e0fc720736038",
+      "chess_anti_engine/tune/recovery.py": "ae61a65b357a504b493f928a505f0f02fbe184cb2e1d5fb588f6e56b42a9f6b8",
+      "chess_anti_engine/tune/replay_exchange.py": "d1f1d404b41e631335a9d845e8d8ab02ae53528387bb7e05c2f703cd34d60945",
+      "chess_anti_engine/tune/result_keys.py": "0d8692cdc289f80765a8b1a765e4d11fb57715e7f49f0c93fc79b36115a2b0f7",
+      "chess_anti_engine/tune/salvage.py": "1519b6a6c00c34d34746ac78b2f59d7e203e8e95fedaf28ac09ac31b5d01bbeb",
+      "chess_anti_engine/tune/startup_intent.py": "bd4c333855eab43bb9bbb56835c28011cd8fb66f1541745d16b2b270c4847ffe",
+      "chess_anti_engine/tune/trainable.py": "bf9364585272382c54e38be52f1782d4d31eebefe0e3d9a2252fe946eb99878c",
+      "chess_anti_engine/tune/trainable_config_ops.py": "e8bbb23ee32c0044226f68c3cb911ae5453f264bcbc38c4d1fef909202a9c0d5",
+      "chess_anti_engine/tune/trainable_init.py": "5622bc1e1c8f07538c5afcb6f5b7065901ff8fbbbeef1ab7efcd091ab7608b8d",
+      "chess_anti_engine/tune/trainable_metrics.py": "788b27ba034077bc860ac429772635f479de3fbf266cbae45b4f1d0ea7f47123",
+      "chess_anti_engine/tune/trainable_phases.py": "934aaf3c3a48094ed9940c21495d06bcbf6dfe9701e107eafd91adfbf1110173",
+      "chess_anti_engine/tune/trainable_report.py": "09c945bc698edbe55e240c1085a5ba8615dcd2a2285080a9f2884c1cff46a877",
+      "chess_anti_engine/tune/trial_config.py": "edd20089d6861271b97eabd942dfee0cbe8c50a23b51ee2cdbf380e429a0c45f",
+      "chess_anti_engine/uci/__init__.py": "ff38913fd41bac5ed3e7bced871c1d82f5e8453abe4b5dc0f870c4dbf137670d",
+      "chess_anti_engine/uci/model_loader.py": "2408c3eb207f10e951aff039880678d6481cf6518ee4d102b83f31c59632366a",
+      "chess_anti_engine/uci/wedge.py": "f00cad73775f66b9f6a5e06b134ab140f17dde2c45ef13761f7ccc4039724115",
+      "chess_anti_engine/utils/__init__.py": "9ba0ac559654dbc430889bd6fe77616cc174e06582ab75792083ce9fe6b59b59",
+      "chess_anti_engine/utils/amp.py": "91be05cab22b47fc06e0c06ac15029553cd84c592e0dafd8ceae512783670188",
+      "chess_anti_engine/utils/architecture.py": "a9793c47de5ecc4b06b71c04fc5eed8199936514c213fa4ce9d40b1b83f87558",
+      "chess_anti_engine/utils/atomic.py": "3fc2b1e5aae77d213ea5077b188b94d2c8dc834de3ebe4bda7f6837abaa94c67",
+      "chess_anti_engine/utils/bitboards.py": "faa1c98105039451d5601f2a0764068fab250c2e340a69d3163dd801babdfaf2",
+      "chess_anti_engine/utils/config_yaml.py": "ba7503c25e31980d7b60e1e33484595744b3ffad5bbe69812c6cec2184271a60",
+      "chess_anti_engine/utils/game_log.py": "4a515da04e376e19dece368f67f0663aaebb742e41fede4691ef2148010e1a0e",
+      "chess_anti_engine/utils/gil_probe.py": "ac17076a783ef75a55341122f5a247cbcee22015efa12c453af5905bc0ce5894",
+      "chess_anti_engine/utils/numpy_helpers.py": "a3faad628f5b68802c7d47c1dc467cd88ec118aac56fe3882cd060ab4287a2e9",
+      "chess_anti_engine/utils/search_type.py": "5e501f901c935a53235e36490233db03e207b41922b1c918fa99ddffefcbdc02",
+      "chess_anti_engine/utils/sequential_selfplay.py": "6750b9ddefe62f5d8b5c2032a22ed53ba9699489dc2d3d83301ae195c18a4a0f",
+      "chess_anti_engine/utils/syzygy_config.py": "438ec4b44bea82dd17e0c6a46aa6da4f38ec63cec588013e5ba5adb30c41b059",
+      "chess_anti_engine/utils/thread_join.py": "d60cd7f2f5374b86f2f7692a33ff286b458c3c5fd91edf396a6670b1ada92167",
+      "chess_anti_engine/utils/versioning.py": "04ae7e9355a48df36948ec2f104650b5f4ddc10b6ccf936c3472f64621c0cd75",
+      "chess_anti_engine/verified_outcome.py": "21a3e7bac445cae1f31833ca2a6a5707ed5f6c4717da66ecc4c14d2ae5ca7202",
+      "chess_anti_engine/version.py": "6d3dedb927723ac10353e9f262f3ddd7f013c08aa799c99cfdce6ddbf7cbc7b4",
+      "chess_anti_engine/worker.py": "5519fb74a44c34546907983d50adcb5a5ad30fc46099590c9245a5efc97d0864",
+      "chess_anti_engine/worker_assets.py": "906f13c8c7e5e9bc7db10a1cd3211c3c1dfb20c605b9330d9a25fb1f30104d4c",
+      "chess_anti_engine/worker_buffer.py": "30785b71710c7ab4cf394ed8794152c058cfc7e52a6df5527a79f8666c5fb399",
+      "chess_anti_engine/worker_config.py": "28760191bafc0f1b7f39b34667f40be9a8aafaf53820c78b01592d6783c1fd72",
+      "chess_anti_engine/worker_inference.py": "f0862e101eb554e92c5caf9d82b94f495c499fda31974131fd897036db950348",
+      "docs/core_exclusion_index.md": "2f13641879c42c766beaf940c90b7902b8399d7bd349c81eba08f0cbe16a32d6",
+      "docs/core_generation_bank_actor_lineage.md": "6e77cf35795919e873af1d4b82b019af599be794e017123ff6aeca8f34edb6fe",
+      "docs/core_generation_bank_learner.md": "095548cff177aa10b474dcc9617aa32f4ed2f66d9e58ed81b597c21d5b1dfea0",
+      "docs/core_generation_data_admission.md": "35485f055f36d4a47be7c24f4012332dd1e05a79f2f7794d598efc8c938d18e3",
+      "docs/core_generation_holdout.md": "d163ac8dfa4de74c1e3a5354cc48a0274a059eb3ebef3cfdb86c1b27d1c9d4cd",
+      "docs/core_generation_holdout_ruler.md": "0a0701c3eb9d4cb19a6d949d13f7f0e1c0df8f589e10eac7f1ef38d57522123a",
+      "docs/frozen_reference_policy_anchor.md": "4c4be4c2beea221a28c449c9cc3b4fd9574847c0c8185508c15a8a28782e17b0",
+      "pyproject.toml": "3418c3ddbd7f3ab66aa3b0c156c159e4c95c5cc29ecd8b0a94afc8e3abf9b06f",
+      "pyrightconfig.json": "71ed2287cdb19c4a473e24ec57d6faa4300d65fcfa4223418359b342a17183dd",
+      "scripts/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "scripts/arena_standard.py": "194facf70c3f63401e567d2e943b1bbbbdc42fd3519cf2450669bb1329fc5484",
+      "scripts/bootstrap_checkpoint_resume.py": "b29fecea144e7ce3cdc00e5c51add829249473eb663a7ba405932b91d961de5e",
+      "scripts/check_c_extensions_fresh.py": "2e12997728f405fa42c071b328e3129295bb0100938e869888bba9158661522d",
+      "scripts/core_exclusion_index.py": "4a250536e847385e40994cd5c636f2fb6490e6089b6604b8205886037a1dc459",
+      "scripts/core_finite_admit.py": "efcb71758bf4a46fbf9ce7d3efc48bae0341335eede2b829da57d49dc1fc433d",
+      "scripts/core_finite_collect.py": "c1062297264b9348d2ff4364eeb14323965bf17734aa3cdac43a528d58fa4d60",
+      "scripts/core_finite_holdout_collect.py": "5d0c074048650233faf067e021112fd748744443f988ff0576eef239bfa360c8",
+      "scripts/core_finite_learner.py": "e549492d87c8249774f3d24bb69110ad0fd092ca2294e26e08e95e5b802e63e8",
+      "scripts/core_generation_bank_acceptance.py": "e7da743ecb792ae3cb86f3c563e8ed657fb286c853e4df39ca3eafdb93668e56",
+      "scripts/core_generation_bank_learner.py": "76fb5d157a2b799c473f22115adae32da27cfe85deb8d58de99b1df4ff3e1c90",
+      "scripts/core_generation_bank_policy_anchor.py": "c6622b65bbb8739beb196174809616ed0e28e90c2d8147850a946b7cdf0a6ee6",
+      "scripts/core_generation_data_admit.py": "a7bc70b76da38e181285a5a8f9fc340b5fdc700fd2f768462cffd0ee5a67f3ca",
+      "scripts/core_generation_holdout_acceptance.py": "ed5d75e6e7b5e7e5f425b7776e6828eda8c6d0a900bfabf28d97585f5c131f95",
+      "scripts/core_generation_holdout_admit.py": "567dce6f491fe0b8b99dc237fac543a6bb7e30feb3d9be3fe312e9709119d0e7",
+      "scripts/core_generation_holdout_metrics.py": "beb57e4dbbfa115b260a10aed31fe84caa8b2e1aa499d5508898bad24ea68895",
+      "scripts/core_generation_holdout_read.py": "b6dd899c88ad95f89217c1728b94c4918add1aa7339ec6790386ef58aca34300",
+      "scripts/core_generation_holdout_ruler.py": "8f09f63c30705ececfa1cfcb0a8b6235118c0c75fa8ebad64956808fd9c59f1c",
+      "scripts/core_generation_holdout_score.py": "b1df04c0b650429c037c6ce4280dd014c1b667822b38fd750ebc0f733fb91680",
+      "scripts/lint.sh": "f021a54c3c6cbdb1e669d05d95dd43d33fd9f3fe5aeb3c22a229736a59d01bcd",
+      "scripts/offline_epoch_resume.py": "6ffca88f2b496464c5cbc009e5ab372d5805dccdd3ec889e375aa1f273ee032f",
+      "setup.py": "52839431815a8cfe654fe89184f582854419d0e82bf526b0a548297ffc20d853",
+      "tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "tests/conftest.py": "573aed7bf31e5b7382d8eceaded4ade7b7c73d72484e042501b1e1ce8f56499d",
+      "tests/test_core_bank_actor_lineage.py": "78fe548ec50442629e5a338d0d1f9a67b2c0cd8ec60d0f83d602e283028743a8",
+      "tests/test_core_exclusion_index.py": "fa2e8f994f2f58e9f2a2425b0a0f049401bb2023ffe18fc081a408f7cbe9b097",
+      "tests/test_core_finite_admit.py": "844713400d5cdc5c738f87bf18884ffbac35d35482475d17ae340c280f5936a1",
+      "tests/test_core_finite_collect.py": "10c49a6cc2611ecd43673881fa22845656c0cf24fa132c8d2b484e6043f83f8a",
+      "tests/test_core_finite_learner.py": "cde1cf4e1effdc352272ea2b7d5dc633dbee7d9ce10ad26e00b904a210ddebdc",
+      "tests/test_core_generation_bank_acceptance.py": "3b4a60a3fe8efc7cecca51f3f4ac9500a4cb1ec588cf58012060b085b23d0cc1",
+      "tests/test_core_generation_bank_learner.py": "363f3525fe7b42ccb404eba34f164ba61e9389494c9d5be930892c129f46cab2",
+      "tests/test_core_generation_bank_policy_anchor.py": "6dcd06613ba89472aa7353fbd7bc0230aa3e340ea92f4c43ec74e7dbc6e999f5",
+      "tests/test_core_generation_holdout.py": "c7e26f54dffd9b46b9f6e89814010b7876479602e5c05029cbdd4d361237db9a",
+      "tests/test_core_generation_holdout_ruler.py": "fd504e9473981637dd9b16df810f95ba8c1fa4cfd3cae1f52b80756db2c7d09e",
+      "tests/test_core_policy_anchor_actor.py": "af38ed123f45506f0850dac2b208aa65619f0f8c0c6dadff9512dc6ddb83bd0d",
+      "tests/test_frozen_policy_anchor.py": "0306f3adc7971bc0d9de4d9eff58ec4c2f9224d0924a762e05c8243fdcb9f4ee",
+      "tests/test_generation_replay.py": "f99624a062a6d9a6025bf097654467ac3c89729b1ad594fab1191f2d003c900b",
+      "tests/test_holdout_ruler_identity.py": "c4eced4ef26452f265bc697892ad2f1b483490fddd4e44828cc6928048e084ef",
+      "uv.lock": "b922781d65348814c787fe5626a9da919cff36e4696f1a8ee1602cc52372665f"
+    },
+    "revision": "bbb4b725a2d5218ffa4630841dd93e8b2884b58d"
+  },
+  "status": "ROOT_OBSERVES_COMPLETE_D2_SHORT_HORIZON_SCREEN_DECISION_V1",
+  "study_uuid": "3326c042-1044-4270-8d1e-02ca4c1c2ca5"
+}

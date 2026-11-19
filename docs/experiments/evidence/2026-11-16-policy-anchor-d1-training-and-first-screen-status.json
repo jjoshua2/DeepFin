@@ -1,0 +1,260 @@
+{
+  "accepted_training_endpoints": {
+    "K0": {
+      "coefficient": 0,
+      "delivery": {
+        "independent": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T1-K0-no-clip-corrective-audit-bindings-v1/independent-review.json",
+          "sha256": "9388a6592b5bf819666567230098512f3756efbcb6920e884d30338907f09b71"
+        },
+        "root": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T1-K0-no-clip-corrective-audit-bindings-v1/root-acceptance.json",
+          "sha256": "71f733ac9a904aae0277f132dbcf58015692298e037fc5dde75f65235b94fc1f"
+        }
+      },
+      "evidence_scope": "Authenticated saved endpoint plus current closed corrective CPU custody; original GPU and first CPU failures retained, no persisted final GPU live hash/bracket",
+      "population_games": 192,
+      "population_rows": 17568,
+      "proof_family": "core_bank_learner_K0_failed_gpu_closed_cpu_recovery_v2",
+      "updates": 4096,
+      "views": 131072
+    },
+    "K001": {
+      "coefficient": 0.01,
+      "delivery": {
+        "independent": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T1-K001-learning-GPU-bindings-v1/independent-review.json",
+          "sha256": "d7d5c3434eee97f6a26a644713e02b9cd4adf33d1b0271374c01196bb6c0d18b"
+        },
+        "root": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T1-K001-learning-GPU-bindings-v1/root-acceptance.json",
+          "sha256": "11dbca0d880d67c4924fd214b5be518c2521154974fc4c7659e99348fd64de0f"
+        }
+      },
+      "evidence_scope": "Complete closed same-learner GPU own-live/saved payload and final custody proof; no strength credit",
+      "population_games": 192,
+      "population_rows": 17568,
+      "proof_family": "core_bank_learner_same_gpu_payload_proof_D1_v1",
+      "updates": 4096,
+      "views": 131072
+    },
+    "K01": {
+      "coefficient": 0.1,
+      "delivery": {
+        "independent": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T1-K01-learning-GPU-bindings-v1/independent-review.json",
+          "sha256": "ce2b062162753e59f9d8a91dd1284f64acfa5b316eabaf8479beb8b33be9bf66"
+        },
+        "root": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T1-K01-learning-GPU-bindings-v1/root-acceptance.json",
+          "sha256": "bef5d7b09124b97ddae4a30865da94955c584c18566bb49555da9b9b4ac2fcb7"
+        }
+      },
+      "evidence_scope": "Complete closed same-learner GPU own-live/saved payload and final custody proof; no strength credit",
+      "population_games": 192,
+      "population_rows": 17568,
+      "proof_family": "core_bank_learner_same_gpu_payload_proof_D1_v1",
+      "updates": 4096,
+      "views": 131072
+    },
+    "K1": {
+      "coefficient": 1,
+      "delivery": {
+        "independent": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T1-K1-learning-GPU-bindings-v1/independent-review.json",
+          "sha256": "8e5a03ecd1278084751db8ff05808432441dd8841cf97bcd9bcee4429c036bb5"
+        },
+        "root": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-T1-K1-learning-GPU-bindings-v1/root-acceptance.json",
+          "sha256": "44cf204e7d62116352ecc2bde86d662ddb9367f2620332c83ebdf3c209e46014"
+        }
+      },
+      "evidence_scope": "Complete closed same-learner GPU own-live/saved payload and final custody proof; no strength credit",
+      "population_games": 192,
+      "population_rows": 17568,
+      "proof_family": "core_bank_learner_same_gpu_payload_proof_D1_v1",
+      "updates": 4096,
+      "views": 131072
+    }
+  },
+  "based_on_Main": {
+    "document_path": "docs/experiments/2026-11-16-fresh-whole-game-policy-anchor-pilot.md",
+    "document_sha256": "7512906c2bd444575264a62aece9a80d52553e7632e32064690a59859474b1da",
+    "revision": "a0cd72c143e1de56f1bc97d81ee8ff77ac86ab08",
+    "update": "Append only; preserve every original preregistration/amendment byte"
+  },
+  "diagnostic": {
+    "D1_retry_authorized": false,
+    "D1_technical_stop_remains": true,
+    "NumPy_imported": false,
+    "TB_payload_initializations": 0,
+    "TB_probes": 0,
+    "Torch_imported": false,
+    "actual_closed_custody": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-TB-inventory-diagnostic-bindings-v1/audit.closed-custody.json",
+      "sha256": "88f3bffa0ab64719ceb4f67df817dbd3a194c96a39c17dec24a5a6bc974dad9a"
+    },
+    "actual_independent_review": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-TB-inventory-diagnostic-bindings-v1/independent-review.json",
+      "sha256": "850a749a40e5f93650e8da746a939d12f1c8f9f0255083c0bb29af2d751e6603"
+    },
+    "actual_observations": "CLOSED_PASS_ROOT_AND_INDEPENDENT_ACCEPTED",
+    "actual_owner_wall_seconds": 1.300710726995021,
+    "actual_readout": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-TB-inventory-diagnostic-results-v1/readout.json",
+      "sha256": "be771d368e805d0b06b60f7c25df6671659459e9e97af3c9d7cd15570d0fa140"
+    },
+    "actual_root": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-TB-inventory-diagnostic-bindings-v1/root-acceptance.json",
+      "sha256": "29de620cf6681efbc328072dda9e32d2893bbbcfa223f36f1d36bad3f837e219"
+    },
+    "actual_terminal": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-TB-inventory-diagnostic-CPU-v1/terminal.json",
+      "sha256": "9e1ca16e3a72ee764ccb955ab6600283254baa53e7c3822bf940eca7789faf59"
+    },
+    "all_initialized_False": true,
+    "all_read_count_zero": true,
+    "all_table_data_None": true,
+    "attempts": 1,
+    "before_final_stable": true,
+    "completed_failure_plus_diagnostic_publication_before_scientific_continuation": true,
+    "current_inventory_sha256": "8877ca686b9e844995b9df823175aaa8550b8be4046d77a7956986d3ed687b89",
+    "engineering_CPU_after": 297.47361796023324,
+    "engineering_CPU_before": 296.1729072332382,
+    "engineering_CPU_ceiling": 600,
+    "forwards": 0,
+    "games": 0,
+    "hash_adoption_authorized": false,
+    "inner_seconds": 90,
+    "method": "Registered WDL then DTZ, each sorted UNIQUE resolved(path,size,mtime_ns) rows; registered keycounts separate from unique physical paths; before/final independent owned handles with dataNone/initializedFalse/read_count0, forbidden probes/mmap/data init and closed handles",
+    "models_loaded": 0,
+    "no_Main_merge_required_before_diagnostic": true,
+    "observation": "CURRENT_METADATA_DIFFERS_FROM_PRIOR_SNAPSHOT",
+    "old_digest": "207f7bc99c9113b237bee40ef1dc4f64f29bd3524279b6637da31032a2305ae5",
+    "old_digest_is_not_new_acceptance_gate": true,
+    "old_row_level_inventory": "NOT_IDENTIFIED; tuple-level differences and content-drift cause unproved",
+    "outer_seconds": 120,
+    "project_or_native_imported": false,
+    "registered_key_counts": {
+      "DTZ": 1000,
+      "WDL": 1000
+    },
+    "resource": "cpu",
+    "selection": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-TB-inventory-diagnostic-root-selection-v1/selection.json",
+      "sha256": "bd89f9ddb41720776a012089c4d2634d7fe2cb051a59bc588efb1dc0d1346f56"
+    },
+    "source_manifest": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-TB-inventory-diagnostic-source-v2/manifest.json",
+      "sha256": "c700536ade32d56b1879577d563c96293cb07324183044d7533a965c501da9be"
+    },
+    "source_review": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-TB-inventory-diagnostic-independent-source-review-v1/review.json",
+      "sha256": "4d599aa8367d6852b592e1a2fae5f5f35eda1f8d6b6a3ee88b59112770d2c292"
+    },
+    "training_updates": 0,
+    "uninitialized_table_objects": 1020,
+    "unique_resolved_path_counts": {
+      "DTZ": 510,
+      "WDL": 510
+    }
+  },
+  "execution_authorized": false,
+  "failure_source_diagnosis": {
+    "conclusion": "Inventory expression matches strict-selfplay algorithm; no evidence for representation mismatch, no persisted digest/row values to identify changed metadata or infer content corruption",
+    "independent_review": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-first-DEV-TB-inventory-failure-independent-diagnosis-v1/review.json",
+      "sha256": "0733975f935b470aa4096f8e56c63fe97eaac724f3b7e84b2534a367b6633eed"
+    }
+  },
+  "first_DEV_attempt": {
+    "WDL_or_pair_score_or_Elo": "UNREAD_NO_GAMEPLAY_OBSERVATIONS",
+    "actual_inventory_digest": "NOT_PERSISTED",
+    "actual_inventory_tuple_rows": "NOT_PERSISTED",
+    "closure": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_A39-development-bindings-v1/gpu.closed-custody.json",
+      "sha256": "d6b9d3ed57c155cac1cba3f68bb606771dd90e094bfef3f98b524935576e9d33"
+    },
+    "edge": "K001_vs_A39",
+    "failure": "qualified TB metadata availability identity",
+    "intended_games": 160,
+    "intended_pairs": 80,
+    "log": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_A39-development-GPU-v1/stage.log",
+      "sha256": "c76d45acbfbed97667be0450eeb55a61655bf79e5e965e7656bc8255a96419dd"
+    },
+    "post_closure": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_A39-development-bindings-v1/gpu.post-closure-custody.json",
+      "sha256": "a2a4a49e232ceded0ab817036c95890333b956db00e5914d7017c38988844cf7"
+    },
+    "seed": 2026111674,
+    "source_location": "prospective-KL-D1-development-source-v7/run.py:28",
+    "source_order": "After actual checkpoint SHA custody and CUDA initialization, before public arena parser/model decoding/gameplay",
+    "status": "FAILED",
+    "technical_STOP": true,
+    "terminal": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-K001_vs_A39-development-GPU-v1/terminal.json",
+      "sha256": "c3a10708e4f925b9bcf25299c3daf32e473e95f7943aabdac3798eae5bbc9822"
+    },
+    "wall_seconds": 9.68236756103579
+  },
+  "no_authority": [
+    "No D1 technical STOP exception",
+    "No scientific retry/continuation/fallback",
+    "No new hash adoption/repin/repair",
+    "No additional training setting or match",
+    "No strength or optimum-coefficient claim"
+  ],
+  "public_path_rendering": "Private home prefixes rendered as ~/ for display only. This companion is not a runtime input; exact sealed original descriptor bytes and hashes remain external.",
+  "qualification": {
+    "adoption": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/finite-policy-anchor-D1-qualified-runtime-adoption-v1/adoption.json",
+      "sha256": "2245e64abea583e0c8065bc017f78ef76956338731e969ef0650b72db44d3147"
+    },
+    "cases": 304,
+    "functions": 56,
+    "genuine_metadata_controls": {
+      "D1_deliveries": 4,
+      "banks": 4,
+      "current_I_assets": 2,
+      "prefix": 2,
+      "total": 12
+    },
+    "independent": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/finite-policy-anchor-D1-consumer-CPU-bindings-v1/independent-review.json",
+      "sha256": "843db8c1cac3f19c71f7aa5d14bf3ed2948898af2f03de97a97d4fb3bd450b7c"
+    },
+    "modules": 7,
+    "owner_wall_seconds": 131.8300596110057,
+    "readout": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/finite-policy-anchor-D1-consumer-CPU-unit-results-v1/readout.json",
+      "sha256": "4fed5f849adc949f96d819c5839d5b4eeb028ce5a7615721093451bb6ad36335"
+    },
+    "root": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/finite-policy-anchor-D1-consumer-CPU-bindings-v1/root-acceptance.json",
+      "sha256": "a8df269ed71bdc4420dfb7ed477e77aa15858cda049f42f4ab35b37e214fd585"
+    },
+    "runtime_source_profile": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/finite-policy-anchor-D1-projected-runtime-source-profile-v1/profile.json",
+      "sha256": "1d67899a46e7f58cc58154b8b61aaed1549a4f548712b28dc091247c5b098aca"
+    },
+    "scope": "Software/current-source/native/runtime and metadata APIs only; no efficacy credit",
+    "source_pins": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/finite-policy-anchor-D1-projected-runtime-source-profile-v1/unit-source-pins.json",
+      "sha256": "d410f141c85cbc5aa58778d3085633779806c5eae85fc5dee89ac78a8596a201"
+    },
+    "source_revision": "3246a6e6335eca69987d0610d91f5703d5698f28",
+    "terminal": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/finite-policy-anchor-D1-consumer-CPU-execution-v1/terminal.json",
+      "sha256": "a9b3c7eb4ee93cb636a786d42946b9a213f266a776274e1f887d982f062bcf2c"
+    },
+    "whole_repository_lint": "PASS"
+  },
+  "schema": "PUBLIC_DISPLAY_ONLY_D1_TRAINING_AND_FIRST_DEV_STARTUP_STATUS_DRAFT_V2",
+  "selected_design": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-development-first-root-design-v1/design.json",
+    "sha256": "98770dcd0ac6dffba73608fcad53a23e5a90c929a8432ed74b6d52d615b1c8dd"
+  },
+  "status": "COMPLETED_D1_TRAINING_SOFTWARE_QUALIFICATION_FAILED_FIRST_SCREEN_AND_METADATA_DIAGNOSTIC_NO_STRENGTH",
+  "study_uuid": "8045699e-4088-4a41-ae9c-4013d4a55469"
+}

@@ -1,0 +1,208 @@
+{
+  "actual_costs": {
+    "GPU_actual_owner_wall_seconds": 1067.5090069090948,
+    "GPU_cap_seconds": 1800,
+    "GPU_inner_seconds": 1770,
+    "reader_CPU_actual_owner_wall_seconds": 21.281629398930818,
+    "reader_CPU_cap_seconds": 120,
+    "reader_CPU_inner_seconds": 110
+  },
+  "all_actual_prior_costs_failures_and_stops_retained": true,
+  "artifact_namespace": "rl-week-one-20261112-v1 (artifact paths are display/custody identifiers, not runtime authority)",
+  "candidate": {
+    "checkpoint_REF_ONLY": {
+      "artifact": "fresh-current-policy-A39-F12-cycle-03-learn-results-v1/learner/learner.pt",
+      "sha256": "cc6bc2cf30c202ae21979baf289df39914d31253f6e977f2579056d17f2b5387"
+    },
+    "cycle": 3,
+    "model_state_sha256": "f2011177b406c83d8835a1806237655145165c9c93d71ab611f0d442f34e56d8",
+    "step": 223
+  },
+  "chronology": {
+    "GPU_ended_UTC": "2026-11-18T19:23:32.414665+00:00",
+    "GPU_started_UTC": "2026-11-18T19:05:44.905658+00:00",
+    "M3_saved_owner_completed_UTC": "2026-11-18T17:44:43.132243+00:00",
+    "Nov12_week_history_or_costs_reset": false,
+    "closed_count_at_endpoint": 493,
+    "current_study_start_UTC": "2026-11-18T14:03:11.497911+00:00",
+    "evaluated_snapshot_cycle": 3,
+    "reader_ended_UTC": "2026-11-18T19:34:05.465593+00:00",
+    "technical_cycles_complete_at_this_readout": 4
+  },
+  "compact_receipts": {
+    "M3_delivery": {
+      "independent": {
+        "artifact": "fresh-current-policy-A39-F12-cycle-03-delivery-bindings-v1/independent-review.json",
+        "sha256": "e1897df435a0a0e1e26718964c9727337bf27f464f91fa248d1fc49e7a0a7494"
+      },
+      "root": {
+        "artifact": "fresh-current-policy-A39-F12-cycle-03-delivery-bindings-v1/root-acceptance.json",
+        "sha256": "57240a5d496845dfe1734e500363accc359e44a694e6034b1f184a65c9077962"
+      }
+    },
+    "M4_delivery": {
+      "independent": {
+        "artifact": "fresh-current-policy-A39-F12-cycle-04-delivery-bindings-v1/independent-review.json",
+        "sha256": "effb602bc7eb142118c22f9a491ef92b1f0cc31245dbf8b28f90fd97eb7b2e4d"
+      },
+      "root": {
+        "artifact": "fresh-current-policy-A39-F12-cycle-04-delivery-bindings-v1/root-acceptance.json",
+        "sha256": "f5aafc8ff70b0b5f2ca9c2c38ff46ebd623ebf5e08eba478479fc2149013b0b0"
+      }
+    },
+    "actual_evaluation_selection": {
+      "artifact": "fresh-current-policy-A39-F12-interim-evaluation-root-selection-v1/selection.json",
+      "sha256": "fdf431e6c1883ad2a90642b39ab29efbcc3fc8484ee2657767e7f519e5780eb3"
+    },
+    "current_post493_custody": {
+      "artifact": "fresh-current-policy-A39-F12-M3-vs-A39-400DEV-bindings-v1/reader.post-closure-custody.json",
+      "sha256": "fc2a4abbc57c752339052e340b2ae62ea45ad1e9e58ef9e143c66c21b3567fc4"
+    },
+    "frozen_verdict_command": {
+      "artifact": "fresh-current-policy-A39-F12-M3-vs-A39-400DEV-bindings-v1/verdict-command.json",
+      "sha256": "0d1c4df56ec7217cec6725d7f8034d1187898fe5731b348f70a5d720ab23ccef"
+    },
+    "gpu_Root_acceptance": {
+      "artifact": "fresh-current-policy-A39-F12-M3-vs-A39-400DEV-bindings-v1/gpu.root-acceptance.json",
+      "sha256": "88324c7702e60621c52030a2189c5c06d303446d65f2369bf84624434868ad67"
+    },
+    "gpu_independent_acceptance": {
+      "artifact": "fresh-current-policy-A39-F12-M3-vs-A39-400DEV-bindings-v1/gpu.independent-review.json",
+      "sha256": "5e5981e763cd248e40e73a3154ccbb380b99285a967fd241fd9605323be58c1e"
+    },
+    "gpu_owner_terminal": {
+      "artifact": "fresh-current-policy-A39-F12-M3-vs-A39-400DEV-GPU-v1/terminal.json",
+      "sha256": "a62515977328bc2c0e2d4bdc7f6c9d51a8d2a66263153f083aa0b3055ca54df1"
+    },
+    "interim_evaluation_amendment": {
+      "artifact": "fresh-current-policy-A39-F12-interim-evaluation-source-preparation-v2/proposal.json",
+      "sha256": "3201e0fb42b53b0fe34ed85667c1af1f5e89d5f725e986fba266ef14f82c9bea"
+    },
+    "interim_evaluation_amendment_review": {
+      "artifact": "fresh-current-policy-A39-F12-interim-evaluation-independent-review-v2/review.json",
+      "sha256": "566c4be216e9feb086d862b67aef1ac2bfe95f8d7d7ab014380081b4f6965069"
+    },
+    "playing_profile": {
+      "artifact": "fresh-current-policy-A39-F12-playing-source-preparation-v6/playing-profile.json",
+      "sha256": "74cff90a0b59282a032d33d532c72fdc8c668297319b14aede017de3dea8ddfa"
+    },
+    "public_preregistration": {
+      "artifact": "fresh-current-policy-A39-F12-interim-evaluation-main-publication-v1/public-record.json",
+      "sha256": "f3eda664e8b98d79c5e73196d2647f2ef4af0c767778e953da55df9f84816a51"
+    },
+    "reader_Root_acceptance": {
+      "artifact": "fresh-current-policy-A39-F12-M3-vs-A39-400DEV-bindings-v1/reader.root-acceptance.json",
+      "sha256": "339f49badcd742bc8ba505f7c9f3853809c3f587c1fd2fe0304fca07a149c059"
+    },
+    "reader_independent_acceptance": {
+      "artifact": "fresh-current-policy-A39-F12-M3-vs-A39-400DEV-bindings-v1/reader.independent-review.json",
+      "sha256": "a7cfc0c631ba1d927277dd82f5a38b0b94b3d0b254b9effd5d49d6f7b86ca1bf"
+    },
+    "reader_owner_terminal": {
+      "artifact": "fresh-current-policy-A39-F12-M3-vs-A39-400DEV-reader-CPU-v1/terminal.json",
+      "sha256": "390ccdc339a6b806972eb9667a5819c6e660a93e07cbfdbcb186c5a34522e9f4"
+    },
+    "selected_method": {
+      "artifact": "fresh-current-policy-A39-12-cycle-method-source-preparation-v4/design.json",
+      "sha256": "9e07463d51c23523855e3dc8f67fc1876820e116d36cab0833fc700194727544"
+    },
+    "selected_method_review": {
+      "artifact": "fresh-current-policy-A39-12-cycle-independent-method-review-v4/review.json",
+      "sha256": "92e87f030006a5451634a18328b80c756d0e3dbe6a5a57ab7fc7f18dc522f6e7"
+    },
+    "summary": {
+      "artifact": "fresh-current-policy-A39-F12-M3-vs-A39-400DEV-reader-results-v1/summary.json",
+      "sha256": "ab28a61a416319a1a724a0906fe8949acee58870e3644c33e450f061f890e058"
+    },
+    "user_strength_clarification": {
+      "artifact": "fresh-current-policy-A39-F12-user-strength-clarification-v1/clarification.json",
+      "sha256": "aa1c1a41f8ee0fa3fc72852347f5b6f709e6c3d36ff5bbc80306b9a825f8181a"
+    },
+    "verdict": {
+      "artifact": "fresh-current-policy-A39-F12-M3-vs-A39-400DEV-bindings-v1/verdict.json",
+      "sha256": "3746973fc8bcff41ec58c5b48072e1eb8ca14079099838d3a92c99e5d7faaae9"
+    }
+  },
+  "interpretation": {
+    "absolute_external_rating_or_daily_rate_claim": false,
+    "criterion_pass": false,
+    "descriptive_only": true,
+    "equivalence_established": false,
+    "fixed_twelve_cycles_continue_with_M6_descriptive400_and_M12_final800": true,
+    "gain_established": false,
+    "general_RL_or_head_causal_verdict": false,
+    "goal_achievement_or_adoption_claim": false,
+    "nested_reused_panel_CIs_are_pointwise_and_correlated": true,
+    "no_effect_on_training_recipe_horizon_or_model_selection": true,
+    "no_pooling_or_multiplicity_claim": true,
+    "retain_A39": true
+  },
+  "new_compute_or_execution_authority": false,
+  "raw_payload_model_native_book_ledger_reads_by_doc_author": false,
+  "reference": "original retained A39",
+  "registered_endpoint": {
+    "criterion_applies": false,
+    "cycle": 3,
+    "descriptive_only": true,
+    "games": 400,
+    "opening_selection": "FIRST_200_OF_AUTHENTICATED_FULL_400",
+    "pairs": 200
+  },
+  "results": {
+    "elo_equivalent_vs_fixed_A39": {
+      "interval_available": true,
+      "interval_input_valid": true,
+      "lower_unbounded": false,
+      "normal95": [
+        -27.75017535335673,
+        26.002577752518636
+      ],
+      "point": -0.8685907733736153,
+      "point_input_valid": true,
+      "point_lower_unbounded": false,
+      "point_upper_unbounded": false,
+      "reference": "fixed retained A39, not an absolute external rating",
+      "schema": "DESCRIPTIVE_ELO_EQUIVALENT_VS_FIXED_A39_V1",
+      "scope": "paired reused-DEV score transform only; no daily-rate or guaranteed-gain claim",
+      "unavailable_reason": null,
+      "upper_unbounded": false
+    },
+    "paired_counts": [
+      18,
+      50,
+      67,
+      45,
+      20
+    ],
+    "paired_inference": {
+      "criterion": "DESCRIPTIVE_INTERIM_ONLY_NO_SELECTION_OR_TRAINING_ADAPTATION",
+      "criterion_applies": false,
+      "criterion_pass": false,
+      "descriptive_only": true,
+      "interval_available": true,
+      "n": 200,
+      "normal95": [
+        0.46014899384887237,
+        0.5373510061511277
+      ],
+      "point": 0.49875,
+      "sample_variance": 0.07757380653266331
+    },
+    "paired_point": 0.49875,
+    "wdl": {
+      "draws": 153,
+      "losses": 124,
+      "wins": 123
+    }
+  },
+  "sample": {
+    "games": 400,
+    "opening_selection": "exact first200 of authenticated original400 role order",
+    "paired_openings": 200,
+    "role": "already consumed DEVELOPMENT",
+    "seed": 2026111999
+  },
+  "schema": "F12_M3_DESCRIPTIVE_INTERIM_READOUT_V1",
+  "status": "CLOSED_DESCRIPTIVE_INTERIM_NO_SELECTION_OR_TRAINING_ADAPTATION",
+  "user_context": "Rapid sustained clear improvement toward Stockfish remains the goal. +100 Elo/day was a rough personal made-up estimate, not measured AlphaZero evidence or a hard gate."
+}

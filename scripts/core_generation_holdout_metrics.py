@@ -9,6 +9,7 @@ import math
 from typing import Any, cast
 
 LABELS = ("A39", "A", "B", "C")
+D1_ARMS = ("K0", "K001", "K01", "K1")
 METRICS = ("wdl_ce", "brier", "score_mse", "policy_ce", "reference_forward_kl")
 MIN_PARENTS = 48
 MIN_ROWS = 2000
@@ -19,6 +20,16 @@ BOOTSTRAP_REPLICATIONS = 10000
 def require(value: Any, message: str) -> None:
     if not value:
         raise ValueError(message)
+
+
+def d1_labels(selected: str) -> tuple[str, ...]:
+    require(selected in D1_ARMS, "invalid D1 selected arm")
+    return ("A39", "K0") if selected == "K0" else ("A39", "K0", selected)
+
+
+def validate_labels(labels: tuple[str, ...]) -> None:
+    require(type(labels) is tuple and (labels == LABELS or labels in tuple(d1_labels(arm) for arm in D1_ARMS)),
+            "unsupported HOLD model order")
 
 
 def row_metrics(outputs: dict[str, Any], legal: Any, policy: Any, outcome: Any,
@@ -66,8 +77,9 @@ def row_metrics(outputs: dict[str, Any], legal: Any, policy: Any, outcome: Any,
     return values, safe_log_policy, log_wdl
 
 
-def summarize(games: list[dict[str, Any]]) -> dict[str, Any]:
+def summarize(games: list[dict[str, Any]], *, labels: tuple[str, ...] = LABELS) -> dict[str, Any]:
     """Recompute row and equal-game/equal-parent estimands from fixed sums."""
+    validate_labels(labels)
     require(type(games) is list and games, "empty HOLD observations")
     parents: dict[str, list[dict[str, Any]]] = {}
     physical: set[str] = set()
@@ -76,14 +88,14 @@ def summarize(games: list[dict[str, Any]]) -> dict[str, Any]:
         require(type(game["physical_game_id"]) is str and game["physical_game_id"] not in physical
                 and type(game["parent_id"]) is str and game["parent_id"], "duplicate/invalid observed game")
         physical.add(game["physical_game_id"])
-        require(type(game["rows"]) is int and game["rows"] > 0 and set(game["models"]) == set(LABELS), "invalid observation denominator/model set")
+        require(type(game["rows"]) is int and game["rows"] > 0 and set(game["models"]) == set(labels), "invalid observation denominator/model set")
         for model in game["models"].values():
             require(set(model) == set(METRICS) and all(type(v) in (int, float) and math.isfinite(v) for v in model.values()), "nonfinite/missing game numerator")
         parents.setdefault(game["parent_id"], []).append(game)
     require(all(len(members) == 1 for members in parents.values()), "selected one-game-per-parent rule violated")
     total_rows = sum(game["rows"] for game in games)
     result = {}
-    for label in LABELS:
+    for label in labels:
         row = {metric: math.fsum(game["models"][label][metric] for game in games) / total_rows for metric in METRICS}
         parent = {metric: math.fsum(math.fsum(game["models"][label][metric] / game["rows"] for game in members)
                    / len(members) for members in parents.values()) / len(parents) for metric in METRICS}
@@ -91,15 +103,17 @@ def summarize(games: list[dict[str, Any]]) -> dict[str, Any]:
     return {"games": len(games), "parents": len(parents), "rows": total_rows, "models": result}
 
 
-def parent_health(games: list[dict[str, Any]]) -> dict[str, Any]:
+def parent_health(games: list[dict[str, Any]], *, labels: tuple[str, ...] = LABELS, selected_label: str = "C") -> dict[str, Any]:
     """Fixed CPU-only paired PCG64/linear percentile bootstrap, veto ONLY."""
     import numpy as np
 
     require(np.__version__ == "2.2.6", "bootstrap requires selected NumPy2.2.6")
-    aggregate = summarize(games)
+    validate_labels(labels)
+    require((labels == LABELS and selected_label == "C") or labels == d1_labels(selected_label), "wrong selected HOLD contrast")
+    aggregate = summarize(games, labels=labels)
     require(aggregate["parents"] >= MIN_PARENTS and aggregate["rows"] >= MIN_ROWS, "UNREAD insufficient HOLD parents/rows")
     ordered = sorted(games, key=lambda game: game["parent_id"])
-    differences = np.asarray([(game["models"]["C"]["wdl_ce"] - game["models"]["A39"]["wdl_ce"]) / game["rows"]
+    differences = np.asarray([(game["models"][selected_label]["wdl_ce"] - game["models"]["A39"]["wdl_ce"]) / game["rows"]
                               for game in ordered], dtype=np.float64)
     require(np.isfinite(differences).all(), "UNREAD nonfinite parent differences")
     before = cast(tuple[str, Any, int, int, float], np.random.get_state(legacy=True))
@@ -112,7 +126,7 @@ def parent_health(games: list[dict[str, Any]]) -> dict[str, Any]:
     require(before[0] == after[0] and np.array_equal(before[1], after[1]) and before[2:] == after[2:], "bootstrap changed global RNG")
     point = float(differences.mean(dtype=np.float64))
     require(all(math.isfinite(value) for value in (point, lower, upper)), "UNREAD invalid bootstrap interval")
-    return {"aggregate": aggregate, "C_minus_A39_equal_parent_WDL_CE": {"point": point, "lower95": float(lower), "upper95": float(upper)},
+    return {"aggregate": aggregate, selected_label + "_minus_A39_equal_parent_WDL_CE": {"point": point, "lower95": float(lower), "upper95": float(upper)},
             "bootstrap": {"seed": BOOTSTRAP_SEED, "replications": BOOTSTRAP_REPLICATIONS, "generator": "PCG64",
                           "quantile_method": "linear", "paired_unit": "complete_parent", "degenerate": bool(np.all(differences == differences[0]))},
             "severe_damage_veto": point > 0.20 and float(lower) > 0,

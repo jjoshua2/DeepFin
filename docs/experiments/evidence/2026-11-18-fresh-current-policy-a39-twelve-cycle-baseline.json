@@ -1,0 +1,179 @@
+{
+  "actual_future_outputs": {
+    "banks": "UNISSUED",
+    "final_result": "UNISSUED",
+    "learner_delivery": "UNISSUED",
+    "protection_Root_independent": "UNISSUED",
+    "source_adoption": "UNISSUED"
+  },
+  "budgets": {
+    "all_failure_costs": "retain every prior study and current owner cost, charge each actual wall once; no scope inheritance/reset/backdating",
+    "cycles_CPU_total": 4320,
+    "cycles_GPU_total": 28800,
+    "final_arena_GPU_inner": 3570,
+    "final_arena_GPU_outer": 3600,
+    "final_reader_CPU_inner": 110,
+    "final_reader_CPU_outer": 120,
+    "future7200_GPU_reserve": "UNSELECTED_NO_AUTHORITY",
+    "global_CPU_actual_before_Root_reported": 7646.391129419964,
+    "global_GPU_actual_before_Root_reported": 125734.75660899421,
+    "global_GPU_max_seconds": 172800,
+    "no_automatic_retry_or_extension": true,
+    "per_cycle_CPU": {
+      "audit_inner": 170,
+      "audit_outer": 180,
+      "compiler_inner": 50,
+      "compiler_outer": 60,
+      "delivery_inner": 110,
+      "delivery_outer": 120
+    },
+    "per_cycle_GPU": {
+      "collection_inner": 1770,
+      "collection_outer": 1800,
+      "learner_inner": 570,
+      "learner_outer": 600
+    },
+    "prestudy_protection_CPU_inner": 50,
+    "prestudy_protection_CPU_outer": 60,
+    "remaining_budget_gate": "Root actual current census/global bound/deadline before each owner; no launch if full admitted cap would exceed study/global scope",
+    "study_CPU_total": 4500,
+    "study_GPU_total": 32400,
+    "week_cutoff_UTC": "2026-11-19T16:09:20Z"
+  },
+  "cancelled_studies": {
+    "5k": "USER_CANCELLED_5000_NODE_STOCKFISH_LABEL_STUDY_NOT_A_PANEL",
+    "THREE": "STOPPED_STUDY_NOT_A_PANEL",
+    "payloads_accessed": false,
+    "stop_receipt": {
+      "path": "operations/rl-week-one-20261112-v1/core-SF-currentP0-main-policy-512-user-cancelled-v1/stop-receipt.json",
+      "sha256": "257e647c292c5dc157aa731e5e1f5f90f04a83ceca83c0b842368cd6c5e53445"
+    },
+    "successor_or_resume_authorized": false
+  },
+  "claims": {
+    "causal_head_diagnosis": false,
+    "fresh_confirmation_selected": false,
+    "promotion": false,
+    "strength_gain": false,
+    "two_successive_gains": false
+  },
+  "data_taxonomy": {
+    "TRAIN_starts": "reused frozen192",
+    "board_dedup": false,
+    "final_panel": "consumed CONFIRM_C_A39 reusedDEV",
+    "future_attempt_ids": "collection-qualified ordinal0..191; exactUUIDschedule in method",
+    "independent_game_count": "UNKNOWN",
+    "protected_from_training_roles": [
+      "HOLD",
+      "SCREEN_C_A",
+      "SCREEN_C_B",
+      "SCREEN_C_A39",
+      "CONFIRM_C_A",
+      "CONFIRM_C_B",
+      "CONFIRM_C_A39"
+    ],
+    "protection_representation": "Complete named-role-provenanced UNION: unchanged TRAIN_prior/refuse checks both current raw/mirror against authenticated flat set; playing_starts contains genuine pairs only. No invented pair map or inferred missing coverage."
+  },
+  "execution_authorized": false,
+  "method": {
+    "path": "operations/rl-week-one-20261112-v1/fresh-current-policy-A39-12-cycle-method-source-preparation-v4/design.json",
+    "sha256": "9e07463d51c23523855e3dc8f67fc1876820e116d36cab0833fc700194727544"
+  },
+  "methods_selected": false,
+  "prospective_code_tree": "cef979d3acd2437108fc679cb99a92990117ace7",
+  "publication_stack_base": "c7b9cd8ffea08de49c3145984cabf5b8f691e7b9",
+  "required_execution_checks": [
+    "all applicable hosted CI checks on exact final combined source",
+    "actual coherent source adoption/sourcepins/import origins/native input closure/freshness",
+    "current accepted TB and Stockfish availability/identity checks within their existing source-qualified scope",
+    "actual reviewed thin capped launcher/compiler-protection/delivery/playing adapters and genuine owner bindings",
+    "actual pre-study protection Root+ind acceptance before any collection"
+  ],
+  "run_uuid": "cb765533-b4ea-537a-b996-c09044ac3b81",
+  "schema": "F12_FRESH_CURRENT_POLICY_A39_PROSPECTIVE_EVIDENCE_V1",
+  "scientific_choices": {
+    "batch_size": 256,
+    "collection_seeds": [
+      2026111901,
+      2026111902,
+      2026111903,
+      2026111904,
+      2026111905,
+      2026111906,
+      2026111907,
+      2026111908,
+      2026111909,
+      2026111910,
+      2026111911,
+      2026111912
+    ],
+    "cycles": 12,
+    "evaluation_seed": 2026111999,
+    "final_games": 800,
+    "flat_LR": 3e-06,
+    "games_per_cycle": 192,
+    "maximum_presentations": 1,
+    "mirror": 0.5,
+    "model_seed": 2026111890,
+    "order_seeds": [
+      2026112001,
+      2026112002,
+      2026112003,
+      2026112004,
+      2026112005,
+      2026112006,
+      2026112007,
+      2026112008,
+      2026112009,
+      2026112010,
+      2026112011,
+      2026112012
+    ],
+    "pair_lower95_success": ">0.5",
+    "paired_normal_z": 1.96,
+    "period": 16384,
+    "policy_anchor": null,
+    "retained_search": 0.1
+  },
+  "source_dependencies": {
+    "NAdam_GPU463_independent": {
+      "path": "operations/rl-week-one-20261112-v1/nadam-resume-host-scalars-CUDA-recovery-bindings-v2/independent-result-review.json",
+      "sha256": "41beb83a601a8d421cd3893accb51592ac1762212a45d5710f2343fe57b8fbdb"
+    },
+    "NAdam_GPU463_post_custody": {
+      "path": "operations/rl-week-one-20261112-v1/nadam-resume-host-scalars-CUDA-recovery-bindings-v2/post-closure-custody.json",
+      "sha256": "4f67f29d322d0d4fb5a99cedaacd5ad408fa61b0e2b5970b2cda0a04e67bfbb9"
+    },
+    "NAdam_GPU463_root": {
+      "path": "operations/rl-week-one-20261112-v1/nadam-resume-host-scalars-CUDA-recovery-bindings-v2/root-acceptance.json",
+      "sha256": "2c06b9241f4fefc016c63a16a2ebcf67d2c60d8c898dd57aa7cdf2be5a93be70"
+    },
+    "collector_profile_parent": {
+      "path": "operations/rl-week-one-20261112-v1/prospective-whole-game-final-collection-metadata-bindings-v2/TRAIN.collector.protocol.CANDIDATE.json",
+      "sha256": "e0511c70e39daf141404be63d5713a8f1dbb6f65b815e965b08d9f4fc9089e04"
+    },
+    "cycle_source": {
+      "path": "operations/rl-week-one-20261112-v1/core-capped-on-policy-cycle-source-preparation-v3/manifest.json",
+      "sha256": "06044fd1ffbfe98247d8a3010ad59f0f2a31033a4b5a091129dfdb86ccead621"
+    },
+    "cycle_source_review": {
+      "path": "operations/rl-week-one-20261112-v1/core-capped-on-policy-cycle-independent-source-review-v3/review.json",
+      "sha256": "c0bee424ce353f5ec734d3fbeb415932a46077cf52dcd94ca3173f549380de26"
+    },
+    "role_independent": {
+      "path": "operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-roles-bindings-v1/independent-review.json",
+      "sha256": "88eca9455ebd6f045b7a7d6efe8e670756e00a757eff966aecfbb6b3a992252c"
+    },
+    "role_root": {
+      "path": "operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-roles-bindings-v1/root-acceptance.json",
+      "sha256": "14c2d63c678f4718c23b40bd84b43957008a232f52bd956058a4253c500da6ca"
+    },
+    "timing_audit": {
+      "path": "operations/rl-week-one-20261112-v1/fresh-current-policy-A39-loop-next-study-draft-v1/note.json",
+      "sha256": "818efda69c2632bcf8e700c6513557fb06bc5c8f9c2fcf8333ca931a3c2be4fd"
+    }
+  },
+  "source_reference_base_Main": "9bf2be64868655f1131fe0282d3c0fa57fcd85c2",
+  "status": "METHOD_PROPOSED_PENDING_ROOT_SELECTION_AND_PUBLICATION_NO_EXECUTION",
+  "study_uuid": "39e5d436-9930-5016-9030-d80671d8ac98"
+}

@@ -40,6 +40,19 @@ replay coverage and revision. Allow for its actual disk cost. Copy long-lived ba
 outside Ray's pruned directories. Consult the relevant procedure below before restore;
 restoring a config alone leaves trained weights and changed replay in place.
 
+For non-capturable NAdam, `Trainer` restores the optimizer's `step` and
+`mu_product` tensors to CPU after loading state, matching fresh NAdam's placement.
+Moments stay on the parameter device. A CUDA checkpoint load can otherwise place
+these scalar tensors on CUDA, where eager NAdam repeatedly reads them through
+`.item()`. The load hook covers both exact and ordinary resume, including delegated
+optimizer loads; it leaves capturable groups and other optimizers unchanged.
+Checkpoint values, scalar dtypes/shapes and parameter identities are preserved;
+existing checkpoints do not need rewriting. Value fingerprints alone do not prove
+device placement. The CUDA-conditional tests in `test_nadam_resume_host_scalars.py`
+check placement and the next update against a same-device uninterrupted control;
+they do not establish a measured speedup or CPU/CUDA bitwise equivalence. Adoption
+still requires a separately selected runtime; a merge does not alter a live process.
+
 ## Driving training
 
 Gradient clipping defaults to `train.grad_clip_mode: zclip`: adaptive ZClip plus

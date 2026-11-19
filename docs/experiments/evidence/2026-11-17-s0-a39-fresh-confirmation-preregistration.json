@@ -1,0 +1,340 @@
+{
+  "accepted_screen_decision": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-complete-development-decision-v1/readout.json",
+    "sha256": "3ba2ee41cceaa82054aed26264f8b25c877b21949dc3fc9b7024cd3b8cd8cac5"
+  },
+  "accepted_screen_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-complete-development-decision-independent-review-v1/review.json",
+    "sha256": "c9f8dc17d7d24525efa8588a8a8dec572ddb78d68292be540d5db94f8f8421cc"
+  },
+  "execution_authorized": false,
+  "method": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0-A39-confirmation-root-design-v1/design.json",
+    "sha256": "db59db97306cb8c31e1768c95714b840622c2876381686ee0d7a7b6a3eb02a80"
+  },
+  "method_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0-A39-confirmation-independent-design-review-v1/review.json",
+    "sha256": "0c553c69d051e39e295fb513e2d0029028e6ef58f16d1e47cc41ac3754113b9d"
+  },
+  "protocol_source": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0-A39-independent-confirmation-design-draft-v2/protocol.json",
+    "sha256": "e060c10e069677adaedbf753c8d33d9851f96f7dbd2d7a39318195e9a294c167"
+  },
+  "registered_protocol_source_body": {
+    "actual_source_helpers_tests_imports_probes_jobs_or_Git_mutations": false,
+    "conditional_entry": {
+      "actual_decision_reference": "UNISSUED_AWAIT_ALL_SIX",
+      "decision_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-complete-development-decision-v1/readout.json",
+      "otherwise": "NO_CONFIRMATION_UNDER_THIS_DRAFT_NO_SUBSTITUTE_CANDIDATE",
+      "required": "All original six D2 technical and reader results genuinely accepted; frozen all-six decision selects S0. No entry or selection is inferred from interim edges."
+    },
+    "decision": {
+      "CI": "mean +/- 1.96*sqrt(sample_variance/400), endpoints clamped[0,1]",
+      "automatic_retry": false,
+      "claim_scope": "Internal donor advantage for these exact endpoints/profile/seed/independent opening role only; normal-approximation uncertainty. No external Rof gain, runtime adoption, optimum coefficient/recipe, value-head mechanism, noninferiority or long-term-goal completion.",
+      "confirm_iff": "Complete technically valid800game endpoint AND finite positive pair variance AND lower paired-normal95 bound strictly greater than0.5.",
+      "otherwise_complete": "NONCONFIRM_INCONCLUSIVE_NO_EQUIVALENCE_OR_HARM_CLAIM",
+      "otherwise_technical": "UNREAD_TECHNICAL_FAILURE_NO_PARTIAL_STRENGTH_VERDICT",
+      "pair_mean": "mean(x_i), i=1..400",
+      "point_hurdle_0_55": false,
+      "sample_variance": "sum((x_i-mean)^2)/399",
+      "zero_variance": "CI_UNAVAILABLE_NO_CONFIRMATION"
+    },
+    "execution_authorized": false,
+    "material_limits": [
+      "Pair-normal95 is an approximation over the fixed selected opening panel; it is not simultaneous or external-strength evidence. Independent role is essential after selecting on D2 screens.",
+      "The one3600/3570 GPU cap must actually complete all800games; completeness is uncertain, no automatic extension or smaller-sample readout. Reader300/270 likewise remains a hard ceiling.",
+      "Current D2 DEV hard80pair/six-edge protocol cannot be relabelled as400pair confirmation. Reuse existing400pair final numerical kernels with narrowly reviewed new count/role/model/authority bindings; retain acceptedQ412 and do not rerun numerical qualification solely for the adapter.",
+      "Existing full-role files are reference-only here: neither book nor full-role payload was opened/stat-ed by this author. Current controlled-exposure freshness is still unresolved.",
+      "An eventual external/multicore Rof strength claim requires an appropriately designed separate matched-time external comparison. This internal confirmation makes no such claim and imposes no universal game-count or both-modes requirement.",
+      "No HOLD health or noninferiority claim is made; unopened HOLD and all checkpoints remain retained."
+    ],
+    "methods_selected": false,
+    "models": {
+      "candidate": {
+        "checkpoint_reference_only": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0-learner-results-v1/learner.pt",
+          "sha256": "b8a69564b2ca5ec77f7d24957b1cced6eaa507edb657295c8555429b2a08ee31"
+        },
+        "delivery": {
+          "independent": {
+            "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0-learning-GPU-bindings-v1/independent-review.json",
+            "sha256": "a004cd8db1a876566c11a747ef78693e9b6cb70b4d8a29a735b47911ac10b06f"
+          },
+          "root": {
+            "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0-learning-GPU-bindings-v1/root-acceptance.json",
+            "sha256": "5a4e6cb2876ee9e723eadc25767dd5760fd7daeb5041629cbeb994a00bc09d0d"
+          }
+        },
+        "label": "S0"
+      },
+      "reference": {
+        "asset": {
+          "independent": {
+            "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/collector-current-I-asset-qualification-independent-actual-review-v3/review.json",
+            "sha256": "43a4c892199e56f8c7fda1c416abe9565354a8cf7f3a99e5e4b05b5404d3f451"
+          },
+          "root": {
+            "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/collector-current-I-asset-qualification-bindings-v3/root-acceptance.json",
+            "sha256": "6949de242aad6d4b95358d05b1dce26a4b8be22faeb1abe3ba805a20b4773cfb"
+          }
+        },
+        "checkpoint_reference_only": {
+          "path": "/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/baseline/epoch2.pt",
+          "sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0"
+        },
+        "label": "A39"
+      }
+    },
+    "operational_requirements": {
+      "barrier": "GPU exports technical-only evidence; score-bearing games/PGN/logs opened only inside the single admitted reader after complete GPU technical closure/acceptance. No live progress efficacy.",
+      "before_any_phase": "Root finalizes/registers exact conditional design and deciding command/source bindings before any confirmation clock; current phase-specific source compatibility review and normal fresh custody/census/leases/host/resources/budget/deadline admission. No new blanket software qualification/publication chain is selected.",
+      "new_metadata_or_native_qualification_selected": false,
+      "new_training_HOLD_or_external_benchmark_selected": false,
+      "outputs": "New immutable phase output/binding namespaces chosen only by later Root authority; draft creates none.",
+      "reuse_current_Q412": {
+        "independent": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-retained-model-metadata-qualification-bindings-v1/independent-review.json",
+          "sha256": "2fedcd8130a909e961f5df79636012877c871eac288013e6cb2e5f1780627e2b"
+        },
+        "root": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-retained-model-metadata-qualification-bindings-v1/root-acceptance.json",
+          "sha256": "6e8de86da2f906fa7d652dc6276132ff37d8a1fddd785a95991e3433075c4ffb"
+        }
+      }
+    },
+    "panel": {
+      "freshness_requirement": "Root reconciles current complete known controlled exposure against this exact full role after all-six decision and before binding. Existing full-role proof is reused; no new role producer/qualification is selected. Missing freshness evidence or exposure conflict means UNBOUND/NO_LAUNCH, no alternate book or top-up.",
+      "full_history_plies": 16,
+      "games": 800,
+      "opening_book_reference_only": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/CONFIRM_C_A39.epd",
+        "sha256": "7e99de3a1033f1c6d3e3ef89966bda221c3f4f858a7358bc8ee6baa55110898e"
+      },
+      "original_role": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh2656-roles-results-v1/CONFIRM_C_A39.full-role.json",
+        "sha256": "d19539b3ef33cfcf65bc9aae0fd04b39d3fc3b4c3094bbfd95019f1d0a6ef951"
+      },
+      "pairs": 400,
+      "role": "CONFIRM_C_A39",
+      "source_full_roles": {
+        "independent": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-roles-bindings-v1/independent-review.json",
+          "sha256": "88eca9455ebd6f045b7a7d6efe8e670756e00a757eff966aecfbb6b3a992252c"
+        },
+        "root": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-roles-bindings-v1/root-acceptance.json",
+          "sha256": "14c2d63c678f4718c23b40bd84b43957008a232f52bd956058a4253c500da6ca"
+        }
+      }
+    },
+    "playing": {
+      "active_projection": {
+        "game": {
+          "search_wdl_draw_mode": "net_raw",
+          "syzygy_adjudicate": true,
+          "syzygy_adjudicate_fraction": 1.0,
+          "syzygy_in_search": true,
+          "syzygy_outcome_mode": "rule50_match_v1",
+          "syzygy_path": "/home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6"
+        },
+        "gumbel": {
+          "add_noise": true,
+          "c_scale": 0.1,
+          "compute_relations": false,
+          "gumbel_scale": 0.75,
+          "input_extra_features": "v2_threats",
+          "input_history_encoding": "lc0_root_legacy_meta",
+          "policy_encoding": "lc0_1858",
+          "policy_temp": 1.0,
+          "simulations": 64,
+          "target_max_visit_cap": 0,
+          "target_untempered_prior": false,
+          "temperature": 0.1,
+          "topk": 16,
+          "volatility_anchor": 0.05,
+          "volatility_fpu": 0.0,
+          "volatility_q_scale": 0.0
+        },
+        "history_plies": 16,
+        "max_additional_plies": 450,
+        "runner": {
+          "history_rep_fix": true,
+          "target_batch": 0,
+          "tree_reuse": false,
+          "vloss_weight": 1
+        },
+        "serving": {
+          "autocast": "bf16",
+          "compile": "off",
+          "explicit_legal_mask": true,
+          "transport": "float32"
+        }
+      },
+      "current_TB_availability_only": {
+        "independent": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-current-TB-availability-bindings-v1/independent-review.json",
+          "sha256": "18891a1500d9b79bd175af66a36e84fa6a220ec6e75a289aa852440858b4861a"
+        },
+        "root": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-current-TB-availability-bindings-v1/root-acceptance.json",
+          "sha256": "994b3f557576af550606f8ad346da575ae8de2714bd1a8a863632ef2d582d8fe"
+        }
+      },
+      "evaluation_shape": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-development-source-preparation-v9-corrected-v3/evaluation-shape.json",
+        "sha256": "a6bc5b4286fed574813f6430fb8481e67f84dcf655a98825d8147e54f31ecc82"
+      },
+      "operational_resources_provenance": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-playing-resources-root-selection-v1/selection.json",
+        "sha256": "59c4284a0eafb672221d190a96e6f9e932a2694dc9970a05b89fdb6b15c24a04"
+      },
+      "operational_values_reused_not_old_authority": {
+        "CPU_affinity": [
+          20,
+          22
+        ],
+        "Torch_interop_threads": 2,
+        "Torch_intra_threads": 2,
+        "autocast_dtype": "bfloat16",
+        "compile": "off",
+        "eval_max_batch": 1024,
+        "evaluator_n_slots": 2,
+        "explicit_legal_mask": true,
+        "input_transport": "float32",
+        "legal_mask_transport": "float32",
+        "loop": "rolling",
+        "max_concurrent_games": 32,
+        "pad_to_compiled_buckets": false,
+        "policy_wdl_transport": "float32",
+        "use_amp": true
+      },
+      "reuse_same_D2_profile": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-development-source-preparation-v9-corrected-v3/playing-profile.json",
+        "sha256": "7f6c0d8704114484af51d81df6c106e325593fe3a9c3a5b9e41c2ed6a37c6ee7"
+      },
+      "settings_changes_authorized": false
+    },
+    "proposed_resources": {
+      "GPU_inner_seconds": 3570,
+      "GPU_outer_seconds": 3600,
+      "GPU_owners": 1,
+      "allocation_status": "PROPOSED_NEW_FOLLOWUP_ALLOCATION_NOT_ISSUED; retain all existing D1/D2/global actual charges, caps and failed-stop history; unused caps are not authority. Root must reconcile remaining actual budget before selecting.",
+      "cutoff_utc": "2026-11-19T16:09:20+00:00",
+      "reader_CPU_inner_seconds": 270,
+      "reader_CPU_outer_seconds": 300,
+      "reader_CPU_owners": 1,
+      "week_GPU_ceiling_seconds": 172800
+    },
+    "question": "Does the exact retained S0 endpoint outperform exact A39 on an independent fresh-opening role under the unchanged D2 internal playing profile?",
+    "reference_scope_notes": {
+      "repository_eval_protocol": "Inherited v1 source reference is a historical live-checkout document used during drafting, not the current task protocol or an operative blanket game-count/both-modes gate. Current task guidance supersedes that old blanket assertion; no such gate is part of this draft."
+    },
+    "sampling_and_readout": {
+      "automatic_extension": false,
+      "design": "Fixed N=400 color-reversed complete opening pairs. Each pair score is mean of its two game scores; win1/draw0.5/loss0.",
+      "interim_outcomes": "NO_EFFICACY_READ_OR_SELECTION",
+      "one_efficacy_readpoint": "Only after the full800game endpoint is technically valid, GPU owner closed and independently accepted, with all400 pairs present exactlyonce/reciprocalcolours/full16history and no illegal/crashed/incomplete games.",
+      "optional_stopping": false,
+      "partial_pairs_or_imputed_draws": false,
+      "pool_with_screen_or_previous_matches": false,
+      "reported": [
+        "WDL160-equivalent naming forbidden; actual WDL800",
+        "pentanomial_pair_counts_sum400",
+        "candidate_pair_mean",
+        "paired_normal95",
+        "n399_sample_variance",
+        "observed_actual_resources_and_custody"
+      ]
+    },
+    "schema": "D2_CONDITIONAL_S0_A39_FRESH_CONFIRMATION_DESIGN_DRAFT_V2",
+    "seed": 2026111775,
+    "source_refs": {
+      "A39_asset": {
+        "independent": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/collector-current-I-asset-qualification-independent-actual-review-v3/review.json",
+          "sha256": "43a4c892199e56f8c7fda1c416abe9565354a8cf7f3a99e5e4b05b5404d3f451"
+        },
+        "root": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/collector-current-I-asset-qualification-bindings-v3/root-acceptance.json",
+          "sha256": "6949de242aad6d4b95358d05b1dce26a4b8be22faeb1abe3ba805a20b4773cfb"
+        }
+      },
+      "D2_design": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-short-horizon-root-design-v1/design.json",
+        "sha256": "4f61d06dd3d08eac7d2091347d682fa3433b2559b236c913d5a4bb48bfe94749"
+      },
+      "D2_method": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-short-horizon-preregistration-draft-source-v3/protocol.md",
+        "sha256": "76f4cbe9ddfaf67a3fbd93dcdb8b86e8d168164cb9216663de2cae6c8267e549"
+      },
+      "D2_selector_source": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-development-root-admission-source-preparation-v5-corrected-v1/manifest.json",
+        "sha256": "9da3a8184ca0a05c8a85bb05e4bd5cac1a649dc6c2986fda8fd3d9f51b663d77"
+      },
+      "D2_selector_source_review": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-development-root-admission-independent-source-review-v5-corrected-v1/review.json",
+        "sha256": "2bb1469f01ec67ab90b616b12552261ee4ff3a45ed95f31c33c8628ade102d6f"
+      },
+      "S0_delivery": {
+        "independent": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0-learning-GPU-bindings-v1/independent-review.json",
+          "sha256": "a004cd8db1a876566c11a747ef78693e9b6cb70b4d8a29a735b47911ac10b06f"
+        },
+        "root": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-S0-learning-GPU-bindings-v1/root-acceptance.json",
+          "sha256": "5a4e6cb2876ee9e723eadc25767dd5760fd7daeb5041629cbeb994a00bc09d0d"
+        }
+      },
+      "completed_Q412": {
+        "independent": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-retained-model-metadata-qualification-bindings-v1/independent-review.json",
+          "sha256": "2fedcd8130a909e961f5df79636012877c871eac288013e6cb2e5f1780627e2b"
+        },
+        "root": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-retained-model-metadata-qualification-bindings-v1/root-acceptance.json",
+          "sha256": "6e8de86da2f906fa7d652dc6276132ff37d8a1fddd785a95991e3433075c4ffb"
+        }
+      },
+      "current_TB_qualification": {
+        "independent": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-current-TB-availability-bindings-v1/independent-review.json",
+          "sha256": "18891a1500d9b79bd175af66a36e84fa6a220ec6e75a289aa852440858b4861a"
+        },
+        "root": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D1-current-TB-availability-bindings-v1/root-acceptance.json",
+          "sha256": "994b3f557576af550606f8ad346da575ae8de2714bd1a8a863632ef2d582d8fe"
+        }
+      },
+      "evaluation_shape": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-development-source-preparation-v9-corrected-v3/evaluation-shape.json",
+        "sha256": "a6bc5b4286fed574813f6430fb8481e67f84dcf655a98825d8147e54f31ecc82"
+      },
+      "operational_resources": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-playing-resources-root-selection-v1/selection.json",
+        "sha256": "59c4284a0eafb672221d190a96e6f9e932a2694dc9970a05b89fdb6b15c24a04"
+      },
+      "original_full_roles": {
+        "independent": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-roles-bindings-v1/independent-review.json",
+          "sha256": "88eca9455ebd6f045b7a7d6efe8e670756e00a757eff966aecfbb6b3a992252c"
+        },
+        "root": {
+          "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-whole-game-fresh-roles-bindings-v1/root-acceptance.json",
+          "sha256": "14c2d63c678f4718c23b40bd84b43957008a232f52bd956058a4253c500da6ca"
+        }
+      },
+      "playing_profile": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-development-source-preparation-v9-corrected-v3/playing-profile.json",
+        "sha256": "7f6c0d8704114484af51d81df6c106e325593fe3a9c3a5b9e41c2ed6a37c6ee7"
+      },
+      "repository_eval_protocol": {
+        "path": "/home/josh/projects/chess/docs/eval_protocol.md",
+        "sha256": "e33e7784fa6d50fd9c380b8c21ed66a786961487270ed88152aceca5cfbb9824"
+      }
+    },
+    "status": "PROSPECTIVE_CONDITIONAL_DRAFT_NOT_REGISTERED_NOT_AUTHORITY"
+  },
+  "schema": "D2_S0_A39_FRESH_CONFIRMATION_PREREGISTRATION_V1",
+  "status": "SELECTED_METHOD_BEFORE_CONFIRMATION_CLOCK_NO_EXECUTION_AUTHORITY"
+}

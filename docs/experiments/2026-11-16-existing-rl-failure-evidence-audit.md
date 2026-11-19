@@ -1,0 +1,69 @@
+# Existing RL failures: evidence audit, 2026-11-16
+
+The records establish several **qualified playing regressions**, but do not establish one common causal explanation. The strongest existing clue is sensitivity to the update regime: the matched lower-rate G1 model beat HIGH512, and HIGH512 had worse outcome-WDL fit. Lower rate alone did not deliver the later donor-relative gain.
+
+| Existing comparison | Data and dose | Observed result | What it supports; limit |
+| --- | --- | --- | --- |
+| Original policy + outcome loop | 8 changing actor generations; 4,096 updates, batch256, 1,048,576 replacement views | G8/A39 **.21875**, paired95% **[.19030,.24720]** | Strong conditional regression of the whole recipe. SF/search-WDL shares and all12 auxiliary losses were zero; this was not an SF policy-label intervention. |
+| Matched fixed-G1 LR probe | Same A39, 24,827 rows, seed and physical draw journal; 512 updates, batch256 | LOW/HIGH **.57031 [.52052,.62011]** | Lower-rate package helped this comparison. It also changes decoupled-decay exposure; it does not prove overshoot or donor gain. |
+| Fixed HIGH-produced G2 WDL observations | All26,505 rows, same observations for all3 models | Outcome NLL **A39 .77459 / HIGH1.30525 / LOW.72621**; Brier has same ordering | Measured HIGH value-fit harm and better descriptive LOW fit. G2 is actor/path-conditioned; input overlap/pretraining and generalization remain unknown. |
+| Low-rate on-policy continuation | New low-actor G2–G8; same4,096-update/batch256 total, full-state continuation | G8/A39 **.46289 [.43101,.49477]** | Still terminal NONPASS. The high/low G8 runs have different generated data, so their score difference is not an isolated LR effect. |
+| Retained-search main WDL | Fresh matched A/B, sameG1/seed1901/journal; share0 vs1; 512 updates/batch256 | B/A **.453 [.42949,.47651]**; B/A39 **.4555 [.43185,.47915]** | A nonzero target substitution was actually exercised and performed worse here. Not an independently stronger teacher or a verdict on every search target. |
+| Historical outcome-only A512/A39 | Fixed512-update checkpoint **b346…**, separate500-pair book | **.5065 [.48348,.52952]**, unresolved | Neither directional gate passed. Not equivalence/no effect. It is not retained-control **b140…**, whose own A39 contrast was not measured. |
+| Retained-target complete census | All24,827 rows: archivedF32, storedF16, source-normalizedF16 | Full-vector residual changes about **9.41e-7** from archived to normalized | Deprioritizes storage/normalization-only blame. Soft target disagreement with one realized outcome is not proof the target is wrong. |
+| Frozen-policy anchor software | Random full494 warm student, synthetic single row, one update; no realA39 bank | Nonzero gradient delta matches F32(p−q), residual **3.35e-8**; illegal delta0; **430** parameter tensors differ | Shows intended gradient reaches actual weights in that software fixture. Establishes no learning/playing benefit or suitable research coefficient. |
+
+Three conclusions are justified now:
+
+1. **The update regime matters, but the failure is not diagnosed.** The matched fixed-G1 LR result and WDL observations make regime sensitivity a real clue. Later low-rate failure prevents calling it a cure. The outcome-only regressions also rule out weak5k SF labels as their explanation, since those label losses were off.
+2. **Keep the retained-search value intervention negative and deprioritize the simple rounding explanation.** B was worse than its own matched control and donor, despite full active coverage. The complete census shows tiny representation changes. The archive lacks unclipped bestQ, full rawrootWDL and visits, and cannot establish why the values failed to help.
+3. **Do not conflate statistical NONPASS with broken software or identify a head from Elo alone.** The historical A512 control is unresolved, not a universal failure of short fine-tuning. The anchor software path is demonstrably active, not demonstrably useful. Earlier dtype-assumption and admission/fixture failures remain technical failures; the original scientific A stopped before model construction and updates.
+
+The actual architecture matters: main policy and WDL both read the shared transformer trunk; the coupled categorical/value topology remains in the model even when its auxiliary loss weight is zero. A policy or value loss can change common features. Existing evidence does not isolate policy damage, value damage, common-feature drift or optimizer/schedule/decay effects as the causal playing mechanism. No new policy/value swaps or matches are proposed by this audit.
+
+Comparability is limited. Uniform physical-row replacement sampling weights games by retained row count; repeated training views are not new independent outcomes or complete epochs. G2/G4/G6 diagnostics reuse openings and are not independent replications. The fixed-G2 WDL bank is physically outside the G1-only updates, but was generated by HIGH512 and is not globally unseen. Old exposure guards cover named recorded scopes; unretained search leaves, pretraining and broader family exposure remain unknown.
+
+Scores here belong to a fixed internal Gumbel64, noise-on, temperature.1, strict-tablebase profile. A score or Elo scalar combines policy, value, search, opponent and position-distribution effects. Separate B/A and B/A39 panels do not identify a missing A/A39 effect by subtraction, nor a responsible head. There is no verified external-engine strength gain.
+
+[Supporting evidence](evidence/2026-11-16-existing-rl-failure-evidence-audit.json) pins the seven published documents at immutable Git revision **d7c990c9…**, nine accepted compact root/independent receipt pairs, all relevant protocol/readout references, exact scores, the WDL aggregate and census values. No raw models, rows, journals, games, books, pools, native images or individual build records were opened. No tests, probes, resource queries, numerical jobs or new experiment proposals were performed. Approved D1/KL/data work remains preserved; it has no new scientific learner outcome in this audit.
+The supporting JSON renders private paths with `~/` for publication and is not a runtime input. Its artifact hashes identify the original external bytes; this public rendering has its own publication identity.
+
+
+## Historical #438 LC0 positive control: qualified context
+
+The retrieved summary records **38,544 steps**, MID at **19,272**, batch **512**,
+run `7c5ee700…`, and `valid_control: true` with no listed validity problems.
+That is a recovered historical record, not a new validation of its weights or
+current software. The following evaluation and match numbers are **reported in
+[the archived ledger](https://github.com/jjoshua2/DeepFin/blob/99ea326297fbac197ad9ff7ba8d05db4cdc9fb87/docs/experiment_ledger.md#L66023-L66048)**,
+not recomputed here:
+
+- Heldout teacher top-1 agreement, 91,842 paired rows: **43.1796% → 46.7967%**,
+  **+3.6171 percentage points**, reported row-level 95% CI **[3.3526, 3.8816]**.
+- Train sample, also 91,842 rows: **45.8951% → 49.5351%**, **+3.6399 points**,
+  reported row-level 95% CI **[3.3764, 3.9035]**.
+- Match B, LAST versus MID: **+196.7 Elo [160.8, 236.9]**, score **.756** over
+  400 games / 200 pairs; reported pentanomial **108 / 8 / 74 / 1 / 9**. The ledger
+  calls it final, not truncated, log-reconciled, no mixed compile, and 875 seconds.
+- Match A, LAST versus production iter-595: **−404.6 Elo [−466.1, −357.0]**,
+  score **.0888** over 400 games. Both matches used the historical matched
+  100-simulation play profile, not this audit's Gumbel64 RL profile.
+
+The named four score JSONs and their four `.json.npz` paths are absent in the
+sealed retrieval's narrow stat-only receipt. No raw scores or games were opened.
+The ledger reports **28,482 heldout game clusters**, but the quoted interval is
+row-level; a clustered interval cannot be recovered or recomputed from this
+summary. The low nominal training exposure, **.2513 views per corpus row**
+(roughly **22.2% ever drawn under a uniform-replacement approximation**), also
+means similar train/heldout slopes do **not** prove zero overfitting. Actual
+sampling coverage was not reconstructed.
+
+This is evidence against the literal claim that the stack cannot learn teacher
+labels: the archive reports improved agreement and improved play relative to
+its own earlier checkpoint. It does not uniquely identify targets, dose,
+optimizer or distribution as the cause of later RL failures. Nor is it current
+A39 RL improvement or verified strength against Rofchade, Stockfish or Leela.
+The eight earlier evidence rows and their limitations remain unchanged; no new
+experiment, match, rescoring or D1 recipe/admission change follows from this
+historical addition. Exact summary/retrieval/absence hashes and immutable ledger
+locations are in the supporting JSON.

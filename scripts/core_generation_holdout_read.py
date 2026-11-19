@@ -27,14 +27,18 @@ def closed_observations(m: ruler.Metadata, p: dict[str, Any]) -> tuple[dict[str,
     binding = p["scoring"]
     require(set(binding) == {"root", "independent"}, "invalid scoring acceptance binding")
     root, review = m.read(binding["root"]), m.read(binding["independent"])
-    require(set(root) == {"status", "protocol", "readout", "owner"} and root["status"] == ruler.SCORE_ROOT, "unaccepted scoring observations")
+    d1 = ruler.is_d1(p)
+    labels = ruler.protocol_labels(p)
+    require(set(root) == {"status", "protocol", "readout", "owner"} and root["status"] == (ruler.D1_SCORE_ROOT if d1 else ruler.SCORE_ROOT), "unaccepted scoring observations")
     require(set(review) == {"status", "root_acceptance", "protocol", "readout", "findings"}
-            and review["status"] == ruler.SCORE_REVIEW and review["root_acceptance"] == binding["root"] and review["findings"] == []
+            and review["status"] == (ruler.D1_SCORE_REVIEW if d1 else ruler.SCORE_REVIEW) and review["root_acceptance"] == binding["root"] and review["findings"] == []
             and review["protocol"] == root["protocol"] and review["readout"] == root["readout"], "scoring independent review differs")
     protocol = m.read(root["protocol"])
     report = m.read(root["readout"])
-    require(protocol["schema"] == ruler.SCORE_SCHEMA and protocol["outer_seconds"] == 1200
+    require(protocol["schema"] == (ruler.D1_SCORE_SCHEMA if d1 else ruler.SCORE_SCHEMA) and protocol["outer_seconds"] == 1200
             and all(protocol[key] == p[key] for key in ("study_uuid", "design", "holdout", "parents", "models", "source", "runtime", "limits", "native_basis")), "scorer/reader identities differ")
+    if d1:
+        require(protocol["d1"] == p["d1"] and protocol["selected_arm"] == p["selected_arm"], "D1 scorer/reader selection differs")
     # Admission ref is authenticated by the closed owner and exact actual argv.
     command = root["owner"]["command"]
     require(type(command) is list and command.count("--admission") == command.count("--admission-sha256") == 1, "scorer admission argv ambiguous")
@@ -48,13 +52,13 @@ def closed_observations(m: ruler.Metadata, p: dict[str, Any]) -> tuple[dict[str,
             and ad["source"] == protocol["source"] and ad["stage"] == protocol["stage"] and ad["owner"] == protocol["owner"], "scorer admission projection differs")
     output = ruler.core.external(protocol["output"])
     require(root["readout"]["path"] == str(output / "readout.json") and not output.with_name(output.name + ".failed.json").exists(), "failed/substituted score output")
-    require(report["status"] == ruler.SCORE_PENDING and report["protocol"] == root["protocol"]
+    require(report["status"] == (ruler.D1_SCORE_PENDING if d1 else ruler.SCORE_PENDING) and report["protocol"] == root["protocol"]
             and report["source"] == p["source"] and report["study_uuid"] == p["study_uuid"]
             and report["holdout"] == p["holdout"] and report["parents"] == p["parents"] and report["model_deliveries"] == p["models"]
             and report["optimizer_constructed"] is False and report["optimizer_restored"] is False
             and report["optimizer_updates"] == report["sampler_draws"] == 0
             and report["closed_owner_attested_by_child"] is False, "invalid scoring receipt")
-    require(set(report["row_logs"]) == set(metrics.LABELS), "missing model observations")
+    require(set(report["row_logs"]) == set(labels), "missing model observations")
     for label, descriptor in report["row_logs"].items():
         require(descriptor["path"] == str(output / (label + ".rows.jsonl")), "substituted row log")
     return report, terminal
@@ -83,8 +87,10 @@ def read_rows(descriptor: dict[str, Any], cap: int) -> Iterator[dict[str, Any]]:
     require(count == descriptor["rows"] and ruler.bank.stamp(path) == before and digest.hexdigest() == descriptor["sha256"], "row log custody/coverage differs")
 
 
-def reconcile_rows(report: dict[str, Any], view: Any, parents: dict[str, str], cap: int) -> list[dict[str, Any]]:
+def reconcile_rows(report: dict[str, Any], view: Any, parents: dict[str, str], cap: int,
+                   *, labels: tuple[str, ...] = metrics.LABELS) -> list[dict[str, Any]]:
     """Stream four paired logs and independently reconstruct every game sum."""
+    metrics.validate_labels(labels)
     expected = ruler.plain(view.games)
     expected.sort(key=lambda game: (game["physical_game_id"].rsplit(":", 1)[0], int(game["physical_game_id"].rsplit(":", 1)[1])))
     by_id = {game["physical_game_id"]: game for game in expected}
@@ -93,15 +99,15 @@ def reconcile_rows(report: dict[str, Any], view: Any, parents: dict[str, str], c
     grouped: list[dict[str, Any]] = []
     row_ordinal = 0
     game_ordinal = 0
-    sums: dict[str, dict[str, list[float]]] = {label: {metric: [] for metric in metrics.METRICS} for label in metrics.LABELS}
+    sums: dict[str, dict[str, list[float]]] = {label: {metric: [] for metric in metrics.METRICS} for label in labels}
     identity = hashlib.sha256()
     plies: set[int] = set()
-    streams = [read_rows(report["row_logs"][label], cap) for label in metrics.LABELS]
+    streams = [read_rows(report["row_logs"][label], cap) for label in labels]
     for paired in itertools.zip_longest(*streams):
         require(all(row is not None for row in paired) and game_ordinal < len(expected), "dropped/extra model rows")
         game = expected[game_ordinal]
         common = None
-        for label, row in zip(metrics.LABELS, paired, strict=True):
+        for label, row in zip(labels, paired, strict=True):
             if not isinstance(row, dict):
                 raise ValueError("dropped/invalid row observation")
             require(set(row) == {"model", "physical_game_id", "game_id", "parent_id", "row_index", "ply_index", "outcome",
@@ -144,9 +150,9 @@ def reconcile_rows(report: dict[str, Any], view: Any, parents: dict[str, str], c
             row_ordinal = 0
             identity = hashlib.sha256()
             plies = set()
-            sums = {label: {metric: [] for metric in metrics.METRICS} for label in metrics.LABELS}
+            sums = {label: {metric: [] for metric in metrics.METRICS} for label in labels}
     require(game_ordinal == len(expected) and row_ordinal == 0 and grouped == report["games"], "incomplete/different game sums")
-    require(metrics.summarize(grouped) == report["aggregate"], "aggregate reconstruction differs")
+    require(metrics.summarize(grouped, labels=labels) == report["aggregate"], "aggregate reconstruction differs")
     return grouped
 
 
@@ -156,8 +162,9 @@ def execute(protocol_ref: dict[str, str], admission_ref: dict[str, str]) -> dict
     try:
         require(not any(name == "torch" or name.startswith(("torch.", "chess_anti_engine.")) for name in sys.modules), "reader must be model/native free")
         view, parents, models = ruler.bindings(m, p)
+        labels = ruler.protocol_labels(p)
         report, terminal = closed_observations(m, p)
-        for label in metrics.LABELS:
+        for label in labels:
             evidence = report["models"][label]
             require(evidence["checkpoint"] == models[label]["checkpoint"] and evidence["step"] == models[label]["step"]
                     and evidence["model_state_sha256"] == evidence["post_state_sha256"] == models[label]["model_state_sha256"]
@@ -165,17 +172,17 @@ def execute(protocol_ref: dict[str, str], admission_ref: dict[str, str]) -> dict
                     and evidence["rng_unchanged_across_forwards"] is True and evidence["real_decodes"] == evidence["real_constructors"] == 1
                     and evidence["rows"] == report["eligible_rows"] and evidence["batch_size"] == 32
                     and evidence["forwards"] == sum((game["rows"] + 31) // 32 for game in view.games), "model scoring evidence incomplete")
-        games = reconcile_rows(report, view, parents, p["limits"]["row_log_bytes"])
+        games = reconcile_rows(report, view, parents, p["limits"]["row_log_bytes"], labels=labels)
         import numpy as np
 
         require(np.__version__ == p["runtime"]["numpy_version"] and Path(np.__file__).resolve().is_relative_to(Path(p["runtime"]["managed_site"])), "reader numerical origin/version differs")
-        health = metrics.parent_health(games)
+        health = metrics.parent_health(games, labels=labels, selected_label=p["selected_arm"] if ruler.is_d1(p) else "C")
         require(not any(name == "torch" or name.startswith(("torch.", "chess_anti_engine.")) for name in sys.modules), "reader imported model/native code")
         final_view, final_parents, final_models = ruler.bindings(m, p)
         require(final_view == view and final_parents == parents and final_models == models, "accepted metadata changed during read")
         ruler.source_guard(p["source"])
         m.finish()
-        result = {"status": ruler.READ_PENDING, "protocol": protocol_ref, "study_uuid": p["study_uuid"], "scoring": p["scoring"],
+        result = {"status": ruler.D1_READ_PENDING if ruler.is_d1(p) else ruler.READ_PENDING, "protocol": protocol_ref, "study_uuid": p["study_uuid"], "scoring": p["scoring"],
             "source": p["source"], "health": health, "games": games, "row_observations_reconciled": True,
             "GPU_owner_wall_seconds": terminal["wall_seconds"], "body_elapsed_seconds": time.monotonic() - started,
             "model_or_shard_payloads_opened": False, "closed_owner_attested_by_child": False,

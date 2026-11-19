@@ -1,0 +1,164 @@
+"""Actual portable declarations selected from the sealed D2 observer.
+
+This is a source subset, not a full observer or a deployment/qualification.
+Only stdlib row-journal/prefix logic is represented. No host paths or main body.
+The adjacent provenance file names the full external source and subset hashes.
+"""
+import hashlib
+
+
+import json
+
+
+import math
+
+
+import os
+
+
+from pathlib import Path
+
+
+import re
+
+
+import stat
+
+
+READ_CAP, COMPACT, CHECKPOINT_CAP, JOURNAL_CAP = 4<<30, 4<<20, 8<<30, 64<<20
+
+
+def require(value, message):
+    if not value:
+        raise RuntimeError(message)
+
+
+def sha(value):
+    import re
+    require(type(value) is str and re.fullmatch('[0-9a-f]{64}', value), 'invalid SHA256')
+
+
+def canonical(value):
+    return json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False)
+
+
+def digest(value):
+    return hashlib.sha256(canonical(value).encode()).hexdigest()
+
+
+def stamp(value):
+    return {key: getattr(value, key) for key in ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_ctime_ns', 'st_mode')}
+
+
+def external(value):
+    path = Path(value)
+    require(path.is_absolute() and path.resolve() == path and not path.is_symlink(), 'noncanonical path')
+    require(not any((parent / '.git').exists() for parent in (path, *path.parents)), 'artifact inside checkout')
+    return path
+
+
+def pairs(items):
+    out = {}
+    for key, value in items:
+        require(key not in out, 'duplicate JSON key')
+        out[key] = value
+    return out
+
+
+def finite(text):
+    value = float(text)
+    require(math.isfinite(value), 'nonfinite JSON')
+    return value
+
+
+def bad_constant(text):
+    raise ValueError('nonfinite JSON constant: '+text)
+
+
+def journal_stream(ref, expected_batches, membership, meter):
+    """Pre-reserved, bounded unbuffered full stream; raw rows remain local."""
+    require(type(ref) is dict and set(ref) == {'path','sha256'}, 'strict journal reference')
+    sha(ref['sha256']); path = external(ref['path'])
+    require(path.name == 'draws.jsonl' and type(expected_batches) is int and expected_batches in (512,4096), 'selected journal/path/horizon')
+    before = path.lstat()
+    require(stat.S_ISREG(before.st_mode) and not before.st_mode & 0o222 and 0 < before.st_size <= JOURNAL_CAP, 'bounded readonly journal')
+    require(type(membership) in (list,tuple) and len(membership) == 192, 'all192 source memberships required')
+    sources = {}
+    for item in membership:
+        require(type(item) in (list,tuple) and len(item) == 3, 'membership tuple shape')
+        generation,source,count = item
+        require(type(generation) is int and generation == 1 and type(count) is int and count > 0
+                and type(source) is str and source not in sources, 'strict unique source membership')
+        sha(source); sources[source] = count
+    require(sum(sources.values()) == 17568, 'exact full TRAIN population')
+    # The authenticated entire pass is reserved BEFORE open/read; no read can cross its authorized remaining bytes.
+    meter.charge(before.st_size)
+    h = hashlib.sha256(); prefix_hash = hashlib.sha256(); prefix_rows = []; batches = total = used = 0
+    def consume(raw):
+        nonlocal batches,total
+        require(len(raw) <= JOURNAL_CAP and batches < expected_batches, 'journal line/batch cap')
+        batch = json.loads(raw,object_pairs_hook=pairs,parse_float=finite,parse_constant=bad_constant)
+        require(type(batch) is dict and set(batch) == {'draw_batch','rows'}
+                and type(batch['draw_batch']) is int and batch['draw_batch'] == batches
+                and type(batch['rows']) is list and len(batch['rows']) == 32, 'exact ordered journal batch')
+        for row in batch['rows']:
+            require(type(row) is dict and set(row) == {'generation','source_sha256','row_index'}, 'exact physical DrawnRow fields')
+            source,index = row['source_sha256'],row['row_index']
+            require(type(source) is str and source in sources and type(row['generation']) is int and row['generation'] == 1
+                    and type(index) is int and 0 <= index < sources[source], 'physical row outside selected bank')
+            if batches < 512: prefix_rows.append((1,source,index))
+            total += 1
+        if batches < 512: prefix_hash.update((canonical(batch)+'\n').encode())
+        batches += 1
+    with os.fdopen(os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK),'rb',buffering=0) as stream:
+        require(stamp(os.fstat(stream.fileno())) == stamp(before), 'journal fd identity before stream')
+        remaining = before.st_size; pending = b''
+        while remaining:
+            raw = stream.read(min(1<<20,remaining))
+            require(0 < len(raw) <= remaining, 'journal truncated or read exceeded authenticated remaining bytes')
+            used += len(raw); remaining -= len(raw); h.update(raw); pending += raw
+            while b'\n' in pending:
+                line,pending = pending.split(b'\n',1); consume(line)
+        if pending: consume(pending)
+        require(stamp(os.fstat(stream.fileno())) == stamp(before), 'journal fd changed during stream')
+    require(used == before.st_size and stamp(path.lstat()) == stamp(before) and h.hexdigest() == ref['sha256']
+            and batches == expected_batches and total == 32*expected_batches and len(prefix_rows) == 16384,
+            'actual full journal hash/counts/final custody')
+    return {'stamp':stamp(before),'bytes':used,'sha256':h.hexdigest(),'prefix_sha256':prefix_hash.hexdigest(),
+            'prefix_rows':prefix_rows,'batches':batches,'views':total}
+
+
+def compare_prefix(p, meter, context, b, drawn):
+    require(canonical(context['membership']) == canonical(b['membership'])
+            and drawn['population_rows'] == 17568 and drawn['games'] == 192 and drawn['batches'] == 512
+            and drawn['views'] == 16384 and len(drawn['per_game_aggregate_counts']) == 192, 'whole192 genuine short coverage/membership')
+    after = journal_stream(context['journal'],4096,b['membership'],meter)
+    short_ref = {'path':str(external(p['learner_output'])/'draws.jsonl'),'sha256':b['draws_sha256']}
+    short = journal_stream(short_ref,512,b['membership'],meter)
+    require(context['before']['stamp'] == after['stamp'] and context['before']['bytes'] == after['bytes']
+            and context['before']['prefix_rows'] == after['prefix_rows'] == short['prefix_rows']
+            and context['before']['prefix_sha256'] == after['prefix_sha256'] == short['prefix_sha256'], 'mandatory paired physical-row prefix differs')
+    context['post'],context['short'],context['short_ref'] = after,short,short_ref
+    observed = lambda value: {key:value[key] for key in ('stamp','bytes','sha256')}
+    return {'schema':'D2_PAIRED_SAMPLER_PREFIX_COMPARISON_V1','long_comparator':p['long_comparator'],
+            'long_boundary':context['boundary'],'long_journal':context['journal'],'short_journal':short_ref,
+            'batches':512,'rows_per_batch':32,'views':16384,'long_batches':4096,'long_views':131072,
+            'population_rows':17568,'population_games':192,'membership_sha256':digest(b['membership']),
+            'coverage_sha256':digest(drawn),'long_prefix_sha256':after['prefix_sha256'],'short_prefix_sha256':short['prefix_sha256'],
+            'equal':True,'long_stream_passes':2,'long_raw_read_bytes':context['before']['bytes']+after['bytes'],
+            'short_stream_passes':1,'short_raw_read_bytes':short['bytes'],'long_pre':observed(context['before']),
+            'long_post':observed(after),'long_final':None,'short_observed':observed(short),'all_reads_metered':True,
+            'claims':'Physical-row sampler prefix equality only; no mirror/full-RNG/arithmetic identity claim.'}
+
+
+def finish_prefix(p, meter, context, result):
+    final = journal_stream(context['journal'],4096,context['membership'],meter)
+    require(final['stamp'] == context['before']['stamp'] == context['post']['stamp']
+            and final['prefix_rows'] == context['short']['prefix_rows']
+            and final['prefix_sha256'] == context['short']['prefix_sha256']
+            and stamp(external(context['short_ref']['path']).lstat()) == context['short']['stamp'], 'final paired journal custody/prefix differs')
+    report = result['draw_prefix_comparison']
+    report['long_final'] = {key:final[key] for key in ('stamp','bytes','sha256')}
+    report['long_stream_passes'] = 3; report['long_raw_read_bytes'] += final['bytes']
+    require(report['long_raw_read_bytes'] <= 192<<20 and meter.used <= READ_CAP
+            and report['long_raw_read_bytes'] == 3*report['long_pre']['bytes'], 'three bounded long streams/extra192MiB/total4GiB limit')

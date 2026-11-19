@@ -1,0 +1,204 @@
+{
+  "Root_direction": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-retained-model-metadata-correction-root-direction-v1/direction.json",
+    "sha256": "6305ed0a58720764a99e3cbff36e09a675bc2dd79aa2edcda80a43b1fc15b5c2"
+  },
+  "closed_failure_readout_source": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-metadata-qualification-recovery-failure-readout-publication-source-preparation-v1/manifest.json",
+    "sha256": "7017377b59d9084e61ff70ce602d51fcfad71f8f2b1b585bcd06b7c6cfcfdfdf"
+  },
+  "corrected_consumer_source": {
+    "independent": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-short-horizon-consumer-independent-source-review-v10/review.json",
+      "sha256": "e2bc08125837ed7edf9a9add7756f546e67a35f3489d7de02c6cbdeb82bb7157"
+    },
+    "manifest": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-short-horizon-consumer-source-preparation-v10/manifest.json",
+      "sha256": "1fb3ed3c7a1c03b0fc46eb740083bf848e8fa132935ab38fb34d9cc097c75f59"
+    }
+  },
+  "corrected_qualifier_source": {
+    "independent": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-pure-metadata-qualification-independent-source-review-v8-corrected-v3/review.json",
+      "sha256": "806f5b2ba28c5e399abb10b6ee24ac5328bb915cd805c8fee5933dcd76767bcb"
+    },
+    "manifest": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-pure-metadata-qualification-source-preparation-v8-corrected-v3/manifest.json",
+      "sha256": "d8d70d6457c3edb8943d9891050af30b6a17eec5b627fd8d2828499fe56162c7"
+    }
+  },
+  "corrected_static_inventory": {
+    "actual_tests_run_by_source_authors": false,
+    "all_prior45_case_ids_retained": true,
+    "cases": 56,
+    "functions": 15,
+    "modules": 1
+  },
+  "execution_authorized": false,
+  "independent_direction_review": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-retained-model-metadata-correction-independent-direction-review-v1/review.json",
+    "sha256": "b64ad346ed52b996336fb8824a994084f63f4fb26d0a9fa239bcb1236c08e416"
+  },
+  "independent_failure_diagnosis": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-recovery-retained-L0-schema-failure-independent-diagnosis-v1/review.json",
+    "sha256": "39c0d5f52d58e7fadbaa2496efaf584c57aa26a848c01827433eecffa2e70192"
+  },
+  "lint_only_source_retarget": {
+    "change": "One compound test assertion split for RuffPT018; production module,56case/15function inventory, qualifier method and caps unchanged. Actual Main/CI and owned qualification remain prerequisites.",
+    "head": "10e4b6de776f615d6477a30bcfcf311deaa2a4a7",
+    "numerical_owner_started_for_this_retarget": false,
+    "prior_completed_CI_evidence": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-corrected-consumer-CI-lint-failure-v1/log-evidence.json",
+      "sha256": "a526c83b10573ef414e74e0ec26e4a248d177fe376cd69e62d0c2b1688d44edf"
+    },
+    "run_id": 44082340125
+  },
+  "metadata_only_no_new_training_playing_or_strength_claim": true,
+  "private_DEV_metadata_ingress_correction": {
+    "numerical_body_changes": false,
+    "reviewed_source_dependencies_pending": true,
+    "scope": "Borrow only accepted corrected public retained_model declaration into private d2_contracts; retain private ruleralias and all other declarations. Existing recoverydispatcher/TRAINcoverage/savedprovenance APIs retained; seven other components byteexact."
+  },
+  "publication_contract": {
+    "all_five_CI_required": true,
+    "canonical_display_path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-retained-model-metadata-correction-main-publication-v1/publication.json",
+    "complete_feedback_reconciliation_required": true,
+    "required_before_any_clock": true,
+    "status": "ROOT_VERIFIES_D2_RETAINED_MODEL_METADATA_CORRECTION_MAIN_PUBLICATION_V1"
+  },
+  "qualifier_helper": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-pure-metadata-qualification-source-preparation-v8-corrected-v3/run_checks.py",
+    "sha256": "340b2a9d4cf009f7fb8e4f08bce4059336bd6dab063a5038e6387496296e420e"
+  },
+  "qualifier_interface": {
+    "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-pure-metadata-qualification-source-preparation-v8-corrected-v3/qualification-interface.json",
+    "sha256": "b827d91e50f31986cf41228c27792f2b528f4a4f0d2ecb70e7e159f9a66d0ba9"
+  },
+  "schema": "D2_RETAINED_MODEL_METADATA_CORRECTION_PROSPECTIVE_PUBLIC_METHOD_V1",
+  "selected_method": {
+    "correction_uuid": "d8a9fffe-d71f-4c3c-9ebd-e3a6f961c395",
+    "costs": {
+      "D2_CPU_actual_before": 11.057120202924125,
+      "D2_CPU_cap_unchanged": 2400,
+      "D2_GPU_actual_before": 477.2318951319903,
+      "D2_GPU_cap_unchanged": 12600,
+      "deadline_utc": "2026-11-19T16:09:20+00:00",
+      "engineering_actual_before": 307.5196034691762,
+      "engineering_cumulative_ceiling": 600,
+      "engineering_max_after_selected": 597.5196034691762,
+      "first_Q_wall": 1.2425382189685479,
+      "first_recovery_wall": 7.523721773992293,
+      "global_CPU_actual_before": 6671.6133366464055,
+      "global_GPU_actual_before": 88337.72092119814,
+      "qualification_actual_before": 8.76625999296084,
+      "qualification_cumulative_ceiling": 300,
+      "qualification_max_after_selected": 298.76625999296084,
+      "week_GPU_cap_unchanged": 172800
+    },
+    "design": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-short-horizon-root-design-v1/design.json",
+      "sha256": "4f61d06dd3d08eac7d2091347d682fa3433b2559b236c913d5a4bb48bfe94749"
+    },
+    "execution_authorized": false,
+    "failure_rule": "Preserve BOTH old failed attempts and stop objects exactly. New source/method-specific exception is limited to this separately registered qualification; any new failure creates a distinct stop and blocks all remaining DEV. No automatic retries or survivor selection.",
+    "finding": "S0 model control invokes retained L0 through normal D1 initial-live fingerprint lookup absent from genuine saved-only recovery receipt. An existing fixture supplied the nonexistent field. No numerical-state or playing-strength failure is established.",
+    "first_Q_closed_custody": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-pure-metadata-qualification-bindings-v1/cpu.closed-custody.json",
+      "sha256": "0bbd8d97429d17e5a2a714f5b01c3068de97d50081d738ce3d1a89ae0bd0a500"
+    },
+    "first_recovery_closed_custody": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-metadata-qualification-recovery-bindings-v1/cpu.closed-custody.json",
+      "sha256": "c679fac42bf17ad74952656f742f33e25d1d2bd319346829a5a6c83157c279ed"
+    },
+    "new_numerical_compute_launched": false,
+    "post_qualification_closed_count": 412,
+    "prerequisites": [
+      "Independent method acceptance of this direction",
+      "Independent corrected consumer, qualifier, runtime and Root controller source acceptance",
+      "Actual Main corrected-source and preregistration publication with exact passing CI",
+      "New Root authority and actual independently reviewed binding",
+      "Fresh U3, all411 closed births, free three leases, host64GiB/disk20GiB, unchanged controls and original week deadline",
+      "One Root launch of exact admitted CPU290/260 command"
+    ],
+    "preserved_stop_objects": {
+      "KL_D2_recovery_or_postrecovery_technical_stop": {
+        "rule": "STOP no automaticretry/survivors; every failedactualwallcharged",
+        "stage": "prospective-KL-D2-metadata-qualification-recovery-CPU-execution-v1",
+        "terminal": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-metadata-qualification-recovery-CPU-execution-v1/terminal.json",
+          "sha256": "e0f22a3819f75420fbfecac552be3ba50a3bff14177199fdb049a3260a64dcc5"
+        }
+      },
+      "KL_D2_technical_stop": {
+        "rule": "STOP no automaticretry/survivors; every failedactualwallcharged",
+        "stage": "prospective-KL-D2-pure-metadata-qualification-CPU-execution-v1",
+        "terminal": {
+          "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-pure-metadata-qualification-CPU-execution-v1/terminal.json",
+          "sha256": "9a5f0eb03b3eec63d2c20d2fda3ba86a9fc1e8c412d54d0b487194c4dc83542f"
+        }
+      }
+    },
+    "prior_Main_publication": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-metadata-qualification-recovery-main-publication-v1/publication.json",
+      "sha256": "425694fabe1131ed7167896811e64fbca36449b7e7d14e265032a68f84157dd8"
+    },
+    "prior_closed_custody": {
+      "path": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-metadata-qualification-recovery-bindings-v1/cpu.post-closure-custody.json",
+      "sha256": "d2dcffc8396dbc02aa587466c0c09d55e8d0b868a8b3af7592040f054e8d59f3"
+    },
+    "qualification": {
+      "CUDA_visible_devices": "",
+      "Torch_NumPy_imports": false,
+      "actual_models_and_role": "Same accepted S0/S1/L0/L1 and fresh role, no training or model migration. Full qualification requires actual 12 controls, exact reviewed tests, final custody guards, supported EOF, closure, Root12 and independent14; partial prior45/8 controls grant no qualification.",
+      "affinity": [
+        20,
+        22
+      ],
+      "attempts": 1,
+      "automatic_retry": false,
+      "bindings": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-retained-model-metadata-qualification-bindings-v1",
+      "genuine_API_controls": {
+        "asset": 2,
+        "banks": 4,
+        "models": 4,
+        "roles": 2
+      },
+      "inner_seconds": 260,
+      "outer_seconds": 290,
+      "output": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-retained-model-metadata-qualification-results-v1",
+      "payload_book_journal_TB_native_reads_in_qualifier": false,
+      "resource": "cpu",
+      "stage": "prospective-KL-D2-retained-model-metadata-qualification-CPU-execution-v1",
+      "temporary_parent": "~/chess-artifacts/operations/rl-week-one-20261112-v1/prospective-KL-D2-retained-model-metadata-qualification-private-temporary-v1",
+      "tensor_operations": 0,
+      "threads": 2
+    },
+    "schema": "ROOT_D2_RETAINED_MODEL_METADATA_CORRECTION_DIRECTION_V1",
+    "six_edges_final_closed_count": 424,
+    "source_scope": {
+      "consumer": "D2 retained_model compatibility only: L1 retains unchanged normal D1 route; L0 uses genuine legacy recovery dispatcher plus actual TRAIN/game coverage/exact D1 recipe and actual saved donor_provenance, never invents initial-live fingerprint. Shared legacy ruler and frozen X/runtime checkouts unchanged.",
+      "controllers": "Only exact new consumer/source/review/namespace/CPU290-260 identities, explicit two-failure basis, 411 census/all79 historical nonPASS, stop-object preservation and all actual costs; no playing method/search/model changes.",
+      "publication": "Corrective source, independently reviewed failure readout and prospective method on Main with exact commit CI and complete feedback reconciliation before numerical admission.",
+      "tests": "Remove nonexistent L0 fixture fingerprint; preserve all prior relevant 45 case coverage, add genuine receipt-shape positive and required provenance/family/source/dose refusals. Exact reviewed test inventory frozen before qualification. No test execution by source authors."
+    },
+    "status": "ROOT_SELECTS_SOURCE_CORRECTION_AND_PROSPECTIVE_CPU290_QUALIFICATION_NO_EXECUTION_V1",
+    "study_uuid": "3326c042-1044-4270-8d1e-02ca4c1c2ca5",
+    "success_rule": "Only actual new Root12 and independent14 authorize separately selected unchanged original six GPU900/870 and reader300/270 phases, same models, books, roles, search, seeds and all-six decision.",
+    "unchanged_science": "S0/S1 true512 vs L0/L1 original4096 and A39, six fixed edges, 80 paired openings/160 games per edge, original eligibility >=.55 vs own long AND A39, exact tie S0. No HOLD, confirmation, final, adoption, new training, external strength claim or goal completion authorized.",
+    "utc": "2026-11-17T11:48:52.385274+00:00"
+  },
+  "source_dependency_state": {
+    "actual_corrected_source_or_test_PASS_claimed": false,
+    "numerical_admission_or_Main_publication_claimed": false,
+    "remaining_prerequisites_before_clock": [
+      "Independent method acceptance of this direction",
+      "Independent corrected consumer, qualifier, runtime and Root controller source acceptance",
+      "Actual Main corrected-source and preregistration publication with exact passing CI",
+      "New Root authority and actual independently reviewed binding",
+      "Fresh U3, all411 closed births, free three leases, host64GiB/disk20GiB, unchanged controls and original week deadline",
+      "One Root launch of exact admitted CPU290/260 command"
+    ],
+    "status": "ACTUAL_CORRECTED_SOFTWARE_SOURCE_IDENTITIES_BOUND"
+  },
+  "status": "PROSPECTIVE_INDEPENDENTLY_REVIEWED_CORRECTIVE_METHOD_AND_SOURCE_NO_EXECUTION_AUTHORITY"
+}

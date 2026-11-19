@@ -193,7 +193,8 @@ class RowLog:
 
 
 def score_games(games: list[tuple[dict[str, Any], dict[str, Any]]], parents: dict[str, str], models: dict[str, Any],
-                output: Path, *, device: str, autocast: bool, limits: dict[str, int], complete: bool = False) -> dict[str, Any]:
+                output: Path, *, device: str, autocast: bool, limits: dict[str, int], complete: bool = False,
+                labels: tuple[str, ...] = metrics.LABELS) -> dict[str, Any]:
     """The same concrete scoring body serves small CPU software fixtures.
 
     The public phase fixes CUDA/BF16 and complete494 models; this lower-level API
@@ -205,7 +206,8 @@ def score_games(games: list[tuple[dict[str, Any], dict[str, Any]]], parents: dic
     from chess_anti_engine.utils.amp import inference_autocast
     from scripts.core_finite_collect import state_sha256
 
-    require(games and set(models) == set(metrics.LABELS), "missing games/models")
+    metrics.validate_labels(labels)
+    require(games and set(models) == set(labels), "missing games/models")
     count = sum(game["rows"] for game, _ in games)
     require(count <= limits["max_rows"] and count * 1858 * 4 <= limits["reference_cache_bytes"], "reference cache cap")
     # CPU resident, internal only: never serialized or included in observations.
@@ -219,7 +221,7 @@ def score_games(games: list[tuple[dict[str, Any], dict[str, Any]]], parents: dic
             "rows": game["rows"], "row_identity_sha256": identity.hexdigest(), "models": {}})
     model_evidence = {}
     logs = {}
-    for label in metrics.LABELS:
+    for label in labels:
         model, loading = load_model(models[label], device=device, complete=complete)
         pre = state_sha256(model.state_dict())
         require(pre == models[label]["model_state_sha256"], "pre-forward state differs")
@@ -286,7 +288,7 @@ def score_games(games: list[tuple[dict[str, Any], dict[str, Any]]], parents: dic
             "forwards": forwards, "rows": count, "observed_last_batch_dtypes": dtypes, "policy_q_linear_dtypes": sorted(linear_dtypes),
             "batch_size": 32, "last_remainder_rule": "fixed final game remainder, no fallback"}
         del model
-    return {"games": observations, "row_logs": logs, "models": model_evidence, "aggregate": metrics.summarize(observations)}
+    return {"games": observations, "row_logs": logs, "models": model_evidence, "aggregate": metrics.summarize(observations, labels=labels)}
 
 
 def execute(protocol_ref: dict[str, str], admission_ref: dict[str, str]) -> dict[str, Any]:
@@ -294,6 +296,7 @@ def execute(protocol_ref: dict[str, str], admission_ref: dict[str, str]) -> dict
     started = time.monotonic()
     try:
         view, parents, models = ruler.bindings(m, p)
+        labels = ruler.protocol_labels(p)
         native_before = ruler.native_custody(m, p["native_basis"], p["source"]["files"])
         import numpy as np
         import torch
@@ -309,11 +312,11 @@ def execute(protocol_ref: dict[str, str], admission_ref: dict[str, str]) -> dict
         random.seed(2026111673)
         torch.cuda.init()
         torch.cuda.manual_seed_all(2026111673)
-        require(ruler.core.backend_profile(torch) == models["A"]["boundary"]["backend"], "scoring/training backend profile differs")
+        require(ruler.core.backend_profile(torch) == models["K0" if ruler.is_d1(p) else "A"]["boundary"]["backend"], "scoring/training backend profile differs")
         games = load_games(view, p["limits"])
         for binding in models.values():
             require(binding["architecture"]["input_extra_features"] == "v2_threats", "not selected175 architecture")
-        result = score_games(games, parents, models, output, device="cuda:0", autocast=True, limits=p["limits"], complete=True)
+        result = score_games(games, parents, models, output, device="cuda:0", autocast=True, limits=p["limits"], complete=True, labels=labels)
         require(all(item["real_constructors"] == 1 and item["counts"] == {"state_entries": 494,
                 "unique_parameters": 61444448, "naive_state_elements": 77173088} and item["policy_q_linear_dtypes"] == ["torch.bfloat16"]
                 for item in result["models"].values()), "full494 model/precision construction differs")
@@ -325,7 +328,7 @@ def execute(protocol_ref: dict[str, str], admission_ref: dict[str, str]) -> dict
         require(final_view == view and final_parents == parents and final_models == models, "metadata/data deliveries changed during scoring")
         require(native_before == ruler.native_custody(m, p["native_basis"], p["source"]["files"]), "native bracket changed")
         m.finish()
-        result.update(status=ruler.SCORE_PENDING, protocol=protocol_ref, study_uuid=p["study_uuid"], source=p["source"],
+        result.update(status=ruler.D1_SCORE_PENDING if ruler.is_d1(p) else ruler.SCORE_PENDING, protocol=protocol_ref, study_uuid=p["study_uuid"], source=p["source"],
             holdout=p["holdout"], parents=p["parents"], model_deliveries=p["models"], native=native_before,
             backend=ruler.core.backend_profile(torch), body_elapsed_seconds=time.monotonic() - started,
             planned_attempts=64, attempt_class_counts=ruler.plain(view.evidence["class_counts"]),

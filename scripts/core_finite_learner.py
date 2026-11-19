@@ -433,8 +433,8 @@ def make_trainer(c: dict[str, Any], log_dir: Path, *, sf_p0_alpha: float | None 
     require(sf_p0_alpha is None or retained_search_share is None, "target families cannot be combined")
     kwargs = CORE_KWARGS if sf_p0_alpha is None else {**CORE_KWARGS, "sf_wdl_frac": sf_p0_alpha}
     if retained_search_share is not None:
-        require(type(retained_search_share) in (int, float) and retained_search_share in (0, 1),
-                "retained search share must be zero or one")
+        require(type(retained_search_share) in (int, float) and math.isfinite(retained_search_share)
+                and 0 <= retained_search_share <= 1, "retained search share must be finite in [0,1]")
         kwargs = {**CORE_KWARGS, "search_wdl_frac": retained_search_share}
     return NoRetryTrainer(
         build_model(cfg), model_config=cfg, log_dir=log_dir,

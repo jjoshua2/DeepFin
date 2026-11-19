@@ -1,0 +1,69 @@
+{
+  "actual_manual_selection_authority_admission_clock_or_execution": false,
+  "additional_numerical_qualification_or_arena": false,
+  "amended_scope": {
+    "artifact": "fresh-current-policy-A39-F12-preexecution-recovery-amendment-v1/GPU-scope.json",
+    "sha256": "743c37aca960b948b43b19f5c2df0700675ce6fcd2810e56a48cbb0dd6ea58e5"
+  },
+  "amendment_proposed_utc": "2026-11-18T16:28:38.191152+00:00",
+  "command_corrections": [
+    "deadline must exceed full outer owner cap",
+    "top-level contract and learner_stage must equal plan, as must public child suffix"
+  ],
+  "failed_actual_GPU_wall_seconds": 1.2667814940214157,
+  "failed_command": {
+    "artifact": "fresh-current-policy-A39-F12-cycle-02-learn-bindings-v1/command.json",
+    "sha256": "35aecb11d10f1d5850a2da26025fb5ef57ac3aff1f6e49452103f05327cfd37b"
+  },
+  "failed_terminal": {
+    "artifact": "fresh-current-policy-A39-F12-cycle-02-learn-GPU-v1/terminal.json",
+    "sha256": "bdef5402d8251cb664fd0433a01b337e3a4b2cc95ad6bf92e042767c2441f455"
+  },
+  "failure": {
+    "artifact": "fresh-current-policy-A39-F12-cycle-02-learn-bindings-v1/Root-preexecution-failure.json",
+    "sha256": "7485b111aa561b749863c429533f72da073d2e91dd28de830ee3188c4a43600f"
+  },
+  "fresh_final_metadata_scope_successor_required": true,
+  "historical_creation_time_is_not_added_stage_authorization": true,
+  "manual_exception": {
+    "automatic_retry": false,
+    "deadline": "issue +outer+180 seconds, within unchanged cutoff",
+    "further_failure": "STOP; no additional recovery selected",
+    "inner": 570,
+    "maximum_new_owners": 1,
+    "new_stage": "fresh-current-policy-A39-F12-cycle-02-learn-preexecution-recovery-GPU-v1",
+    "outer": 600,
+    "rewind_redraw_or_new_lineage": false,
+    "same_contract_stage_parent_bank_order_seed_and_locked_ledger": true
+  },
+  "method_sha256": "9e07463d51c23523855e3dc8f67fc1876820e116d36cab0833fc700194727544",
+  "original_scope": {
+    "artifact": "fresh-current-policy-A39-F12-scope-v1/GPU-scope.json",
+    "sha256": "c351e987c8c6430718c8f9b27138bcb4b8ed6c10a031d18c10717c454a8b2554"
+  },
+  "preserve_original_engineering_stop": true,
+  "proposal": {
+    "artifact": "fresh-current-policy-A39-F12-preexecution-recovery-amendment-v1/proposal.json",
+    "sha256": "cea0c8167b3e171a5fafe7af624f851d61a4d1b15a85ca69e7afcd54cc1c7298"
+  },
+  "schema": "F12_PROSPECTIVE_MANUAL_PREEXECUTION_RECOVERY_ADDENDUM_V1",
+  "science_or_endpoint_changed": false,
+  "scope_caps": {
+    "F12_GPU": 32400,
+    "F12_all_in_CPU": 5280,
+    "added_GPU_stage_names": 1,
+    "cutoff_UTC": "2026-11-19T16:09:20Z",
+    "global_GPU": 172800,
+    "maximum_all_in_owners": 77,
+    "original_GPU_stage_names_retained": 25,
+    "total_GPU_stage_names": 26
+  },
+  "scope_family_uuid": "b0720aa5-746f-49a4-a23c-a08cbd9bd6c0",
+  "scope_original_creation_utc": "2026-11-18T13:41:21.388060+00:00",
+  "status": "SOURCE_ONLY_PENDING_INDEPENDENT_REVIEW_AND_PUBLIC_RECORD",
+  "zero_route": {
+    "model_bootstrap_RNG_draw_or_ledger_operations": 0,
+    "output_created": false,
+    "training_updates": 0
+  }
+}

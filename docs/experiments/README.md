@@ -16,6 +16,8 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
+- [2026-11-16: Existing RL failure evidence audit](2026-11-16-existing-rl-failure-evidence-audit.md) — completed existing-evidence synthesis: update-regime sensitivity and qualified conditional regressions; retained-search target negative in its tested use, causal head/mechanism unresolved; no new measurements or experiments selected.
+
 - [2026-11-16: Integrated whole-game tools and original-A39 collector transport](2026-11-16-current-i-whole-game-tools-collector-engineering.md) — closed394-case software, current-source A39 CPU assets and17-attempt/two-ply public HOLD transport plus expected-refusal raw-history audit; no accepted bank, scientific cohort, strength or main-runtime adoption.
 
 - [2026-11-16: Original A39/B32 public policy-anchor learner engineering](2026-11-16-a39-b32-public-anchor-engineering.md) — closed synthetic engineering: original A39, two public B32 updates per λ0/0.1 arm, own-live-to-saved CPU state and matched journals/RNG accepted; fictional bank/outcome authority, no causal strength, transport or research qualification.
@@ -283,3 +285,21 @@ Current evidence correction and scale plan: [September 16 bootstrap audit](2026-
 - [2026-09-20: External storage and BT4 labeling efficiency](2026-09-20-storage-loader.md)
 
 - [BT4 run11 variable-batch scheduling opportunity](2026-09-27-bt4-batching-opportunity.md): fixed-wave tail, conditional rolling-call arithmetic, and 128-game A/B compatibility HOLD.
+
+- [2026-11-18 U2 fixed-union frozen-policy-anchor method and completed readout](2026-11-18-fixed-union-policy-anchor-u2.md) - Locally frozen KL1/outcome-only pass completed; public method record appeared after first launch. Fixed800-game reused-panel development scores49.75% vsF1 and45.375% vsA39; neither criterion passed, originalA39 retained. No demonstrated mitigation, fresh confirmation or general KL verdict.
+
+- [2026-11-18 V10 fixed-union small-search WDL preregistration](2026-11-18-fixed-union-small-search-v10.md) - Prospectively test90% outcome/10% retained-search WDL with KL0 on one405,013-row global-uniform pass, then two fixed800-game reused-panel development comparisons; U2 preserved/unlaunched, no execution authority issued.
+
+- [2026-11-17 U1 historical self-play uniform-once preregistration and readout](2026-11-17-historical-selfplay-uniform-once.md) - Fresh F1 completed405,013 views/12,657 updates; accepted fixed800 reused-panel DEVELOPMENT:212W/310D/278L,45.875% (paired95% CI43.28–48.47%); no donor-advantage selection, A39 retained; prior failures/costs preserved.
+
+- [2026-11-17 D2 matched short-horizon policy-anchor controls](2026-11-17-short-horizon-policy-anchor-controls.md#november-17-completed-six-edge-readout) - Six accepted160-game screens selected S0 (55.9375% vsA39;57.5% vsL0); separate800-game confirmation scored48.75% and did not confirm donor advantage. A39 retained; no adoption or external strength claim.
+
+- [2026-11-17 Fresh S0/A39 confirmation](2026-11-17-s0-a39-fresh-confirmation.md#november-17-completed-fresh-confirmation-nonconfirm--inconclusive) - Completed400pairs/800games:235W310D255L,48.75% [46.0267,51.4733]%; lower>.5 unmet, NONCONFIRM_INCONCLUSIVE. No harm/equivalence or adoption claim.
+
+- [2026-11-17 Stored-row sampler reuse audit](2026-11-17-stored-row-sampler-reuse-audit.md) - Accepted read-only historical census: short/long maximum reuse8/20;1,160/17,210 rows exceed two presentations. Counts do not establish overfitting; exact-once software preparation does not clear the training hold.
+
+- [2026-11-17 D2 metadata qualification recovery](2026-11-17-d2-metadata-qualification-recovery.md) - Closed: original and one bounded recovery metadata qualification both FAILED;45 local software cases and partial4+2+2 API reports do not complete the metadata qualification. All411 owners closed, costs charged; no D2 playing results or automatic retry. Path-normalized deployment-specific excerpt; not standalone.
+
+- [2026-11-17 D2 retained-model metadata correction](2026-11-17-d2-retained-model-metadata-correction.md) - Prospective: genuine saved-only L0 compatibility fix and one separately admittedCPU290/260 qualification within original cumulative ceilings; both failed stops/costs retained, no new playing result or execution authority.
+
+- [2026-11-18: Fresh current-policy A39 twelve-cycle baseline](2026-11-18-fresh-current-policy-a39-twelve-cycle-baseline.md) — six cycles technically complete (step460; 116989 views); saved M6 descriptive400-game reused-DEV score49.875% versus fixed A39 (paired95% CI46.16–53.59%), no gain/equivalence established, A39 retained; M3 history preserved, fixed cycles7–12 and M12 final800 unchanged.
