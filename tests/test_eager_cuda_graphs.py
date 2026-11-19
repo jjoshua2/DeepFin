@@ -98,3 +98,38 @@ def test_back_to_back_async_slots_keep_their_own_outputs() -> None:
     for (pe, we), (pg, wg) in zip(results[0], results[1]):
         assert pe.tobytes() == pg.tobytes()
         assert we.tobytes() == wg.tobytes()
+
+
+@needs_cuda
+def test_sync_forward_issued_while_an_async_one_is_in_flight() -> None:
+    # The two paths replay on different streams but share one graph memory
+    # pool, so the sync path must wait for the in-flight async replay. Large
+    # batches keep the async replay running while the sync one is launched.
+    torch.manual_seed(0)
+    model = build_model(
+        ModelConfig(embed_dim=256, num_layers=6, num_heads=4, use_smolgen=True),
+    ).cuda().eval()
+    eager = DirectGPUEvaluator(model, device="cuda", max_batch=4096, n_slots=2, legal_bf16=False)
+    graph = DirectGPUEvaluator(model, device="cuda", max_batch=4096, n_slots=2, legal_bf16=False,
+                               cuda_graphs=True)
+    planes = eager.get_input_buffer(1).shape[1]
+    rng = np.random.default_rng(2)
+    xa, xb = _rows(rng, 4096, planes), _rows(rng, 2048, planes)
+    results = []
+
+    def race(ev: DirectGPUEvaluator) -> tuple[np.ndarray, ...]:
+        # Both inputs staged first, so the sync call follows the async launch
+        # by microseconds while the async replay is still running.
+        ev.get_input_buffer(4096, slot=0)[:] = xa
+        ev.get_input_buffer(2048, slot=1)[:] = xb
+        pol_t, wdl_t, event = ev.evaluate_inplace_async(4096, slot=0)
+        pol_b, wdl_b = ev.evaluate_inplace(2048, slot=1)
+        assert event is not None
+        event.synchronize()
+        return pol_t.numpy().copy(), wdl_t.numpy().copy(), pol_b, wdl_b
+
+    for ev in (eager, graph):
+        race(ev)  # captures both shapes; the second call races two replays
+        results.append(race(ev))
+    for e, g in zip(results[0], results[1]):
+        assert e.tobytes() == g.tobytes()

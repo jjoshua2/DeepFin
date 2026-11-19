@@ -279,6 +279,14 @@ python-chess APIs the engine runtime relies on:
   (`scripts/arena_standard.py:1563`), or a throwaway `LocalModelEvaluator`
   per call when none is passed (the stream-pool OOM hazard documented at
   `selfplay/match.py:119`).
+- **Eager CUDA graphs (opt-in):** `DirectGPUEvaluator(cuda_graphs=True)`
+  replays a captured graph of its own eager dense forward per batch size
+  (`inference._EagerForwardGraphs`); bitwise-identical outputs, and several
+  times faster at the leaf batch sizes the Gumbel search submits, where the
+  eager forward is launch-bound. Arena: `--eval-cuda-graphs` (eager only);
+  in-process collectors pass `cuda_graphs: true` in their evaluator kwargs.
+  Refused, not dropped, off CUDA, with `pad_to_compiled_buckets`, or for a
+  `torch.compile`d model.
 - **ONNX:** `onnx/load.py` wraps `onnxruntime` as an `nn.Module` (4672-wide
   policy, Ceres input), used via `scripts/net_source.py` and the lc0 adapter.
 - **Python searches** fall back to `LocalModelEvaluator` (`gumbel.py`,
