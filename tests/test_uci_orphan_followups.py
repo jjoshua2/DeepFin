@@ -16,6 +16,7 @@ import chess_anti_engine.uci.engine as engine_module
 from chess_anti_engine.uci.engine import Engine, EngineOptions
 from chess_anti_engine.uci.protocol import CmdGo, GoArgs, parse_command
 from chess_anti_engine.uci.search import SearchResult
+from tests.uci_println_capture import capture_into
 
 
 def _bestmoves(out: str) -> list[str]:
@@ -124,8 +125,8 @@ def test_reporting_options_apply_with_an_orphan_alive_and_hash_does_not(monkeypa
 def test_quit_with_a_stuck_search_says_why_and_with_what_status(monkeypatch) -> None:
     monkeypatch.setattr(engine_module, "_JOIN_TIMEOUT_S", 0.01)
     output: list[str] = []
-    monkeypatch.setattr(engine_module, "_println", output.append)
-    monkeypatch.setattr(uci_main, "_println", output.append)
+    monkeypatch.setattr(engine_module, "_println", capture_into(output))
+    monkeypatch.setattr(uci_main, "_println", capture_into(output))
     err: list[str] = []
     real_print = print
 
@@ -227,11 +228,12 @@ def _faulted_go_engine(monkeypatch, out: list[str], *, hold):
     release, entered = threading.Event(), threading.Event()
     real_println = engine_module._println
 
-    def wrapped(line: str) -> None:
+    def wrapped(line: str) -> bool:
         thread = threading.current_thread()
         hold(line, thread, "before")
-        real_println(line)
+        wrote = real_println(line)
         hold(line, thread, "after")
+        return wrote
 
     monkeypatch.setattr(engine_module, "_println", wrapped)
     engine = Engine(_worker(), options=EngineOptions())
