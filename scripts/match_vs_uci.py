@@ -7,9 +7,10 @@ Results describe the declared engines and conditions, not an absolute Elo rating
 
 Each side plays White and Black equally. Per-move budget can be fixed time
 (``--time-ms``), fixed nodes (``--nodes-a`` / ``--nodes-b``), or a game clock
-(``--clock-base-ms`` + ``--clock-inc-ms``). Standard chess rules apply
-(5-fold repetition, 50-move, insufficient material). Adjudicates after
-``--max-plies``.
+(``--clock-base-ms`` + ``--clock-inc-ms``). A game ends as soon as a draw
+is claimable (``is_game_over(claim_draw=True)``: threefold repetition or the
+50-move rule), on insufficient material, or at mate/stalemate. Adjudicates
+after ``--max-plies``.
 
 Result tabulation prints:
 - A wins / draws / A losses
