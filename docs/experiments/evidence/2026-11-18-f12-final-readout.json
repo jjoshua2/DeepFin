@@ -1,0 +1,527 @@
+{
+  "actual_costs": {
+    "F12_GPU_ceiling_seconds": 32400,
+    "F12_GPU_charged_owner_wall_seconds": 20806.97624983848,
+    "F12_all_in_CPU_ceiling_seconds": 5520,
+    "F12_all_in_CPU_charged_owner_wall_seconds": 1093.6510285579134,
+    "global_CPU_charged_owner_wall_seconds_after545": 8745.509056212904,
+    "global_GPU_charged_owner_wall_seconds_after545": 146541.7328588327,
+    "totals_basis": "Root settled accounting after545; current post545 custody independently authenticated; earlier failed/cancelled costs preserved; final pair included once"
+  },
+  "artifact_namespace": "rl-week-one-20261112-v1; paths are evidence identifiers, not execution authority",
+  "author_access_scope": "ordinary docs/source and named compact accepted Root/ind/delivery certificate scalar projections, final technical/summary/verdict/custody and preissue metadata only; model bytes, tag/cursor arrays, journals, quota ledger, banks/native/raw/book/roster/bulk remained opaque; no private/public validators/imports/tests/probes or new numerical work",
+  "candidate": {
+    "checkpoint_REF_ONLY": {
+      "artifact": "fresh-current-policy-A39-F12-cycle-12-learn-results-v1/learner/learner.pt",
+      "sha256": "3d3ca6b8ad1bb220ee197b060273bf0fadca8f49663c96e6e7ddd7ea69a19def"
+    },
+    "controller_alias": "F12",
+    "cycle": 12,
+    "model_state_hash_schema": "union_typed_tensor_tree_sha256_v1",
+    "model_state_sha256": "13df344f782d1ba395e616203cd4aec0fdb8c7fb8f27bb702fa01d4f03e18fe9",
+    "step": 948,
+    "structural_profile": {
+      "finite": true,
+      "input_planes": 175,
+      "key_shape_dtype_sha256": "0ee887deb126cc0fd9857f8f8e38bab067d983e6f125903f387ddd6c2ca1a524",
+      "state_entries": 494,
+      "unique_parameter_numel": 61444448
+    }
+  },
+  "chronology": {
+    "Nov12_history_costs_or_calendar_reset": false,
+    "all_recorded_closed_stage_count": 545,
+    "candidate_learner_owner_terminal": {
+      "artifact": "fresh-current-policy-A39-F12-cycle-12-learn-GPU-v1/terminal.json",
+      "sha256": "9d52eb151ac7cdcca2657485626656d27c0977e4c719428e28ecc2ee28a8f460"
+    },
+    "candidate_owner_ended_unix": 1795055198.6936955,
+    "current_study_start": {
+      "UTC": "2026-11-18T14:03:11.497911+00:00",
+      "definition": "Earliest F12 scientific owner465, including prespecified protection CPU; current-study context only.",
+      "started_unix": 1795010591.4979107,
+      "terminal": {
+        "artifact": "fresh-current-policy-A39-F12-protection-CPU-v1/terminal.json",
+        "sha256": "93de2da78999907ccc6fa4244390336d5ac1a1ff30b4aadaa1abdafc2329db3e"
+      }
+    }
+  },
+  "compact_final_receipts": {
+    "GPU_Root": {
+      "artifact": "fresh-current-policy-A39-F12-vs-A39-800DEV-bindings-v1/gpu.root-acceptance.json",
+      "sha256": "5813bc44c7c7eaefc7cc4fac46cb7d78641613919f2dbb64d29f6ca6862b2f5f"
+    },
+    "GPU_Root_terminal": {
+      "artifact": "fresh-current-policy-A39-F12-vs-A39-800DEV-GPU-v1/terminal.json",
+      "sha256": "c465d3332470f339d8a146c341ea1fadf1d0ba0a00faf7848b8823b30024c82a"
+    },
+    "GPU_independent": {
+      "artifact": "fresh-current-policy-A39-F12-vs-A39-800DEV-bindings-v1/gpu.independent-review.json",
+      "sha256": "de1bb11d024db151c1a3e07448e9b026be43d3f999bc4a90a4bf149faccebe63"
+    },
+    "current_post545_custody": {
+      "artifact": "fresh-current-policy-A39-F12-vs-A39-800DEV-bindings-v1/reader.post-closure-custody.json",
+      "sha256": "6fe66ef1a594a1d530f83d46d42414ead9a9c847f79bcc17f60e657442609501"
+    },
+    "frozen_verdict": {
+      "artifact": "fresh-current-policy-A39-F12-vs-A39-800DEV-bindings-v1/verdict.json",
+      "sha256": "e8f1786b004bf17204efc79189943ca9ba8cbebd3f2fd41bfc5ac5aa693ee6b5"
+    },
+    "reader_Root": {
+      "artifact": "fresh-current-policy-A39-F12-vs-A39-800DEV-bindings-v1/reader.root-acceptance.json",
+      "sha256": "89990346b9379b7679c0aaa19e6b6068d5c5a468bad9b809522f87299a2b908d"
+    },
+    "reader_Root_terminal": {
+      "artifact": "fresh-current-policy-A39-F12-vs-A39-800DEV-reader-CPU-v1/terminal.json",
+      "sha256": "8a655e151dbb1768b0b9fb36eab892d451b1229086d4d6c2f3e02ce0b8b1e7ed"
+    },
+    "reader_independent": {
+      "artifact": "fresh-current-policy-A39-F12-vs-A39-800DEV-bindings-v1/reader.independent-review.json",
+      "sha256": "14f2ac9c99a1e619d6eae2a6e311923b3fed8f5586eda9400920925c5d7307e5"
+    },
+    "summary": {
+      "artifact": "fresh-current-policy-A39-F12-vs-A39-800DEV-reader-results-v1/summary.json",
+      "sha256": "8bafa09d5c40eb32bb3ab6a88b9dc68faf92d05726e143970771b656e5f36907"
+    }
+  },
+  "current_post543_custody": {
+    "artifact": "fresh-current-policy-A39-F12-cycle-12-delivery-bindings-v1/post-closure-custody.json",
+    "sha256": "e067166f17aca88292488ac2d171c468d984232dd10012171dd81f7e8b491466"
+  },
+  "final_endpoint": {
+    "actual_owner_wall_seconds": {
+      "GPU": 2421.0462900260463,
+      "reader_CPU": 40.84395927004516
+    },
+    "elo_equivalent_vs_fixed_A39": {
+      "interval_available": true,
+      "interval_input_valid": true,
+      "lower_unbounded": false,
+      "normal95": [
+        -38.30603708511403,
+        -1.8035347717812715
+      ],
+      "point": -19.9996068676998,
+      "point_input_valid": true,
+      "point_lower_unbounded": false,
+      "point_upper_unbounded": false,
+      "reference": "fixed retained A39, not an absolute external rating",
+      "schema": "DESCRIPTIVE_ELO_EQUIVALENT_VS_FIXED_A39_V1",
+      "scope": "paired reused-DEV score transform only; no daily-rate or guaranteed-gain claim",
+      "unavailable_reason": null,
+      "upper_unbounded": false
+    },
+    "paired_counts": [
+      38,
+      109,
+      144,
+      79,
+      30
+    ],
+    "paired_inference": {
+      "criterion": "available paired normal95 lower>0.50; zero variance UNAVAILABLE cannot confirm",
+      "criterion_pass": false,
+      "interval_available": true,
+      "n": 400,
+      "normal95": [
+        0.44509547186230913,
+        0.49740452813769087
+      ],
+      "point": 0.47125,
+      "sample_variance": 0.0712265037593985
+    },
+    "panel_scope": "CONSUMED_PANEL_REUSED_AS_DEVELOPMENT_NOT_FRESH_CONFIRMATION",
+    "registered": {
+      "criterion_applies": true,
+      "cycle": 12,
+      "descriptive_only": false,
+      "games": 800,
+      "opening_selection": "AUTHENTICATED_FULL_400",
+      "pairs": 400
+    },
+    "retain_A39": true,
+    "seed": 2026111999,
+    "source_native_profile": {
+      "effective_settings": {
+        "autocast": "bf16",
+        "compile": "off",
+        "history_plies": 16,
+        "matched_sims": 64,
+        "max_additional_plies": 450,
+        "root_noise": true,
+        "rule50": true,
+        "strict_tb_max": 6,
+        "strict_tb_min": 3,
+        "temperature": 0.1,
+        "transport": "float32"
+      },
+      "learner_source": "frozen e633212dafc0d06507730114270d86fa7a22e4da",
+      "playing_profile": {
+        "artifact": "fresh-current-policy-A39-F12-playing-source-preparation-v6/playing-profile.json",
+        "sha256": "74cff90a0b59282a032d33d532c72fdc8c668297319b14aede017de3dea8ddfa"
+      },
+      "playing_source": "frozen Tbbb4b725a2d5218ffa4630841dd93e8b2884b58d",
+      "source_native_checks_not_relabelled_as_latest_Main": true
+    },
+    "technical": {
+      "GPU_controls_passed": 16,
+      "all_game_rows_reconciled": true,
+      "games_completed": 800,
+      "illegal_or_crashed_games": 0,
+      "incomplete_pairs": 0,
+      "pairs_completed": 400,
+      "reader_CUDA_initialized": false,
+      "reader_controls_passed": 16,
+      "reader_engine_processes": 0,
+      "reader_models_loaded": 0,
+      "reciprocal_colours_complete": true,
+      "source223_native6_final_exact": true
+    },
+    "verdict": "NO_DEVELOPMENT_GAIN_ESTABLISHED",
+    "wdl_counts": {
+      "draws": 318,
+      "losses": 264,
+      "wins": 218
+    }
+  },
+  "limits": {
+    "M3_M6_final_are_correlated_consumed_DEV_views_no_pooling": true,
+    "conditional_negative_under_this_recipe_model_horizon_and_profile": true,
+    "fresh_confirmation_or_adoption_not_selected": true,
+    "longer_games_contribute_more_retained_terminal_label_mass": true,
+    "network_search_target_endogenous": true,
+    "no_HOLD_retry_extension_training_adoption_or_fresh_confirmation_selected_by_verdict": true,
+    "no_absolute_external_rating_daily_rate_or_overall_goal_achievement": true,
+    "no_general_harm_equivalence_causal_head_optimum_or_RL_claim": true,
+    "no_interim_adaptation_of_recipe_horizon_dose_or_candidate": true,
+    "no_strength_or_overall_goal_completion_claim": true,
+    "physical_row_once_does_not_establish_independent_terminal_outcomes_or_game_balancing": true,
+    "retain_A39": true,
+    "rough100_Elo_per_day_personal_estimate_not_measured_AlphaZero_result_or_hard_gate": true,
+    "same192_TRAIN_starts_reused_across_cycles": true
+  },
+  "method": {
+    "artifact": "fresh-current-policy-A39-12-cycle-method-source-preparation-v4/design.json",
+    "sha256": "9e07463d51c23523855e3dc8f67fc1876820e116d36cab0833fc700194727544"
+  },
+  "new_compute_or_execution_authority": false,
+  "operational_history": {
+    "all_previous_failures_stops_and_costs_preserved": true,
+    "candidate_label_reconciliation": {
+      "U3_admission_clock_or_owner_issued": false,
+      "actual_candidate_key": "F12",
+      "actual_saved_model_cycle": 12,
+      "actual_saved_model_step": 948,
+      "numerical_retry_or_method_adaptation": false,
+      "receipt": {
+        "artifact": "fresh-current-policy-A39-F12-final-selection-label-reconciliation-v1/reconciliation.json",
+        "sha256": "e43a024d3cb68c2d3ac8642f5abf8ba33d191d1b893f4f5c96a663127ef407a9"
+      }
+    },
+    "checksum_error_issued_U3_admission_clock_or_owner": false,
+    "failed477_and_manual_recovery_preserved": true,
+    "zero_owner_checksum_error": {
+      "artifact": "fresh-current-policy-A39-F12-final-selection-preissue-checksum-error-v1/error.json",
+      "sha256": "2d0e26b43e32d9b12b58719b01de5612075cf07d30c3c8110febd5ebc8a3f244"
+    }
+  },
+  "schema": "F12_M12_FIXED_HORIZON_FINAL_READOUT_V1",
+  "source_reference_base_Main": "9b91f2a7c2d9d3ecf280cc3313c14abb1926dcab",
+  "status": "CLOSED_NO_DEVELOPMENT_GAIN_ESTABLISHED_A39_RETAINED",
+  "study_uuid": "39e5d436-9930-5016-9030-d80671d8ac98",
+  "training": {
+    "SF_share": 0.0,
+    "adjacent_full_state_and_five_RNG_continuation_cycles2_through12": true,
+    "completed_cycles": 12,
+    "final_certificate_retained_search": {
+      "outcome_wdl_frac": 0.9,
+      "population_validation": {
+        "all_usable": true,
+        "normalization": "existing_loss_positive_mass_normalization",
+        "rows": 20233,
+        "sources": 192
+      },
+      "realized_outcome_mass": 0.9,
+      "realized_search_mass": 0.1,
+      "retained_search_share": 0.1,
+      "search_availability_frac": 1.0,
+      "search_fallback_outcome_mass": 0.0,
+      "sf_wdl_frac": 0.0
+    },
+    "maximum_observed_presentations": 1,
+    "outcome_share": 0.9,
+    "per_cycle_delivery_scalar_observations": [
+      {
+        "Root_delivery": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-01-delivery-bindings-v1/root-acceptance.json",
+          "sha256": "a2f11ba17208c4fc7dd60aedf3e3d769f75b24113f1acbd1606477ece23ce51d"
+        },
+        "cumulative_presentations": 17628,
+        "cycle": 1,
+        "independent_delivery": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-01-delivery-bindings-v1/independent-review.json",
+          "sha256": "1a40e5179b0f0749410d3aa74cfd20676a8d14902357e735da924f6b10b4f4ec"
+        },
+        "maximum_observed_presentations": 1,
+        "owned_delivery_readout": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-01-delivery-results-v1/readout.json",
+          "sha256": "7a1ce9cb49d410afdf4dc71a9aaf7ffcc6fd1620a66ded6b400813edccf17082"
+        },
+        "parent_initial_state_matches": null,
+        "step_end": 69,
+        "step_start": 0,
+        "stored_row_presentations": 17628,
+        "updates": 69
+      },
+      {
+        "Root_delivery": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-02-delivery-bindings-v1/root-acceptance.json",
+          "sha256": "e43017bfb4102c8d5339ab96d543b21fda7243eb72567cabc2f32fa9db837e29"
+        },
+        "cumulative_presentations": 36923,
+        "cycle": 2,
+        "independent_delivery": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-02-delivery-bindings-v1/independent-review.json",
+          "sha256": "5399ab9dd8e6a07585b4a567e13c89ceb25fa59e70de427e196b817f9f967fec"
+        },
+        "maximum_observed_presentations": 1,
+        "owned_delivery_readout": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-02-delivery-results-v1/readout.json",
+          "sha256": "17e01da553b2e5cf36e9b9c4b1f97c21dc9c7ac4befbcea1c32057701070ab75"
+        },
+        "parent_initial_state_matches": true,
+        "step_end": 145,
+        "step_start": 69,
+        "stored_row_presentations": 19295,
+        "updates": 76
+      },
+      {
+        "Root_delivery": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-03-delivery-bindings-v1/root-acceptance.json",
+          "sha256": "57240a5d496845dfe1734e500363accc359e44a694e6034b1f184a65c9077962"
+        },
+        "cumulative_presentations": 56764,
+        "cycle": 3,
+        "independent_delivery": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-03-delivery-bindings-v1/independent-review.json",
+          "sha256": "e1897df435a0a0e1e26718964c9727337bf27f464f91fa248d1fc49e7a0a7494"
+        },
+        "maximum_observed_presentations": 1,
+        "owned_delivery_readout": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-03-delivery-results-v1/readout.json",
+          "sha256": "67959dd8a922dd42f6a09b43624693bf85ae4d9ad9bb1132ea1b5878a313394f"
+        },
+        "parent_initial_state_matches": true,
+        "step_end": 223,
+        "step_start": 145,
+        "stored_row_presentations": 19841,
+        "updates": 78
+      },
+      {
+        "Root_delivery": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-04-delivery-bindings-v1/root-acceptance.json",
+          "sha256": "f5aafc8ff70b0b5f2ca9c2c38ff46ebd623ebf5e08eba478479fc2149013b0b0"
+        },
+        "cumulative_presentations": 77209,
+        "cycle": 4,
+        "independent_delivery": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-04-delivery-bindings-v1/independent-review.json",
+          "sha256": "effb602bc7eb142118c22f9a491ef92b1f0cc31245dbf8b28f90fd97eb7b2e4d"
+        },
+        "maximum_observed_presentations": 1,
+        "owned_delivery_readout": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-04-delivery-results-v1/readout.json",
+          "sha256": "eed5927f83d98b0fb471b456e70b9853e73d97a6cbb801402139bae08f6da236"
+        },
+        "parent_initial_state_matches": true,
+        "step_end": 303,
+        "step_start": 223,
+        "stored_row_presentations": 20445,
+        "updates": 80
+      },
+      {
+        "Root_delivery": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-05-delivery-bindings-v1/root-acceptance.json",
+          "sha256": "c5e994c63859dd84fb5781072142f5c6c323c7709f8c9eaa1ef3e112809c4660"
+        },
+        "cumulative_presentations": 97436,
+        "cycle": 5,
+        "independent_delivery": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-05-delivery-bindings-v1/independent-review.json",
+          "sha256": "3376ad697ffa74e7c5eadd8ae8ac03944b938efee4ab8867e3ab0b907ceec6f3"
+        },
+        "maximum_observed_presentations": 1,
+        "owned_delivery_readout": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-05-delivery-results-v1/readout.json",
+          "sha256": "6f0ad93b630dfdf6c09bb6f27976b1486e0fa67653c097057e9fcdf9763f1be4"
+        },
+        "parent_initial_state_matches": true,
+        "step_end": 383,
+        "step_start": 303,
+        "stored_row_presentations": 20227,
+        "updates": 80
+      },
+      {
+        "Root_delivery": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-06-delivery-bindings-v1/root-acceptance.json",
+          "sha256": "5b72285da2fe22e7e0373a017a934084cd4f94441b178649fe7c2e284994ff14"
+        },
+        "cumulative_presentations": 116989,
+        "cycle": 6,
+        "independent_delivery": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-06-delivery-bindings-v1/independent-review.json",
+          "sha256": "6280373ee71b3fd5b1d63a1cdedfb69eb35b0c28f29d8b54b3ac3aa63911484f"
+        },
+        "maximum_observed_presentations": 1,
+        "owned_delivery_readout": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-06-delivery-results-v1/readout.json",
+          "sha256": "48be8b097399d88178a95afa29e01b27185dfe647165d207eeb2cd24c9d24832"
+        },
+        "parent_initial_state_matches": true,
+        "step_end": 460,
+        "step_start": 383,
+        "stored_row_presentations": 19553,
+        "updates": 77
+      },
+      {
+        "Root_delivery": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-07-delivery-bindings-v1/root-acceptance.json",
+          "sha256": "46cc108d292d50faabe0df740a0a74643ef06a4e7700aa985d07653aa6e43179"
+        },
+        "cumulative_presentations": 137344,
+        "cycle": 7,
+        "independent_delivery": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-07-delivery-bindings-v1/independent-review.json",
+          "sha256": "d4f5d1770c535f887ae856b5719d6658012ccc67b6ecbaeda6ebe427ed060f87"
+        },
+        "maximum_observed_presentations": 1,
+        "owned_delivery_readout": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-07-delivery-results-v1/readout.json",
+          "sha256": "5476028179ecb2076d09c602235167769041f201ececd9f1c591b7dfb0bd7e5b"
+        },
+        "parent_initial_state_matches": true,
+        "step_end": 540,
+        "step_start": 460,
+        "stored_row_presentations": 20355,
+        "updates": 80
+      },
+      {
+        "Root_delivery": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-08-delivery-bindings-v1/root-acceptance.json",
+          "sha256": "7bc21bf5f5788b9c5387f29d74a85ddc87e75e84e7470787708987c310dd45bb"
+        },
+        "cumulative_presentations": 157990,
+        "cycle": 8,
+        "independent_delivery": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-08-delivery-bindings-v1/independent-review.json",
+          "sha256": "86259eb5c4e23a76f5cbd780fe5006306643b18cefa994b0291eecc634d13057"
+        },
+        "maximum_observed_presentations": 1,
+        "owned_delivery_readout": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-08-delivery-results-v1/readout.json",
+          "sha256": "e4f4d9e105f64ed773487cf6112c74512cacb1bcbcb74106a0dec39d1c34c191"
+        },
+        "parent_initial_state_matches": true,
+        "step_end": 621,
+        "step_start": 540,
+        "stored_row_presentations": 20646,
+        "updates": 81
+      },
+      {
+        "Root_delivery": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-09-delivery-bindings-v1/root-acceptance.json",
+          "sha256": "8ed1e2f1033a07557c60f1ae173220311cf8aac3830268e9dc4af514fa778e12"
+        },
+        "cumulative_presentations": 178444,
+        "cycle": 9,
+        "independent_delivery": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-09-delivery-bindings-v1/independent-review.json",
+          "sha256": "67da775a6feaafbd730e9bbcc667d157e80c7ac25fced107864912a66b7dcd43"
+        },
+        "maximum_observed_presentations": 1,
+        "owned_delivery_readout": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-09-delivery-results-v1/readout.json",
+          "sha256": "4770bc2c0cd17e7dc6a3e8b0918920879d7483c58c39ce65f87130651079a9af"
+        },
+        "parent_initial_state_matches": true,
+        "step_end": 701,
+        "step_start": 621,
+        "stored_row_presentations": 20454,
+        "updates": 80
+      },
+      {
+        "Root_delivery": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-10-delivery-bindings-v1/root-acceptance.json",
+          "sha256": "e881bfd9dddb009df20d6ab6deeccdf9c50c08d48ff86b2f3a52382d1724fad4"
+        },
+        "cumulative_presentations": 199882,
+        "cycle": 10,
+        "independent_delivery": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-10-delivery-bindings-v1/independent-review.json",
+          "sha256": "3945d4a52e35d59a2855201961e4afb0ac814e18c00f4c351e418d675bb2bbe1"
+        },
+        "maximum_observed_presentations": 1,
+        "owned_delivery_readout": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-10-delivery-results-v1/readout.json",
+          "sha256": "1d218175351c4ca69e340560a75f0c21bead41c84df2a1fcfcffe4b1bba23278"
+        },
+        "parent_initial_state_matches": true,
+        "step_end": 785,
+        "step_start": 701,
+        "stored_row_presentations": 21438,
+        "updates": 84
+      },
+      {
+        "Root_delivery": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-11-delivery-bindings-v1/root-acceptance.json",
+          "sha256": "6e5f663ebde25f81b30c1670c07a12942f2133d36cdf90d401a18b6507c83315"
+        },
+        "cumulative_presentations": 220892,
+        "cycle": 11,
+        "independent_delivery": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-11-delivery-bindings-v1/independent-review.json",
+          "sha256": "51bcfb005e4c6e9cbe8d87038e4c6bd2acaf2dacb688fbe0e572917a38436d4a"
+        },
+        "maximum_observed_presentations": 1,
+        "owned_delivery_readout": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-11-delivery-results-v1/readout.json",
+          "sha256": "d09901e11e39b6dd2f413f1b32f6c55a1fa112bda133e7266fcd07ccb6c8e600"
+        },
+        "parent_initial_state_matches": true,
+        "step_end": 868,
+        "step_start": 785,
+        "stored_row_presentations": 21010,
+        "updates": 83
+      },
+      {
+        "Root_delivery": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-12-delivery-bindings-v1/root-acceptance.json",
+          "sha256": "32dd8b586d4df9fc4155ceeff36a6db94f49ba80897cce5c260b341015a1d137"
+        },
+        "cumulative_presentations": 241125,
+        "cycle": 12,
+        "independent_delivery": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-12-delivery-bindings-v1/independent-review.json",
+          "sha256": "4240e37677d99bdfba8886e9d8a3fd539b462f37fc0ecdbcc46f4987d3710238"
+        },
+        "maximum_observed_presentations": 1,
+        "owned_delivery_readout": {
+          "artifact": "fresh-current-policy-A39-F12-cycle-12-delivery-results-v1/readout.json",
+          "sha256": "c9c9f8bee0d1188342d68f20ba882f24db275f027d9c2de05aeb3f8b296428ff"
+        },
+        "parent_initial_state_matches": true,
+        "step_end": 948,
+        "step_start": 868,
+        "stored_row_presentations": 20233,
+        "updates": 80
+      }
+    ],
+    "physical_stored_row_presentations": 241125,
+    "policy_KL": null,
+    "resolved_games_Root_reported": 2304,
+    "retained_net_raw_search_share": 0.1,
+    "same_cumulative_quota_lineage": true,
+    "scheduled_attempts_per_cycle": 192,
+    "updates": 948
+  }
+}
