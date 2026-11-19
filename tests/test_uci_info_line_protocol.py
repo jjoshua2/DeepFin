@@ -205,6 +205,58 @@ def test_forced_move_into_a_board_draw_scores_zero(fen: str, walkers: int) -> No
     assert "unsearched" not in (lines[0]["string"] or "")
 
 
+def test_a_merely_claimable_draw_is_not_scored_as_a_draw() -> None:
+    """Kg8 at halfmove 99 makes the 50-move draw claimable, not final: it is
+    neither a mate (the mover may claim) nor an exact 0 (nobody has to claim).
+    The line keeps the unsearched network score and says so."""
+    lines = _run_forced(FORCED_INTO_MATE.replace(" 0 1", " 99 1"))
+    assert len(lines) == 1
+    assert lines[0]["score_mate"] is None
+    assert "move unsearched" in (lines[0]["string"] or "")
+
+
+def test_go_mate_on_a_non_forced_root_without_progress_keeps_searching(monkeypatch) -> None:
+    """The forced-root `go mate` stop needs a FORCED root: a root with several
+    moves whose chunk completed nothing (here: stubbed) runs to its deadline."""
+    w = _worker()
+    board = chess.Board()
+    w.run(board, stop_event=threading.Event(), deadline=Deadline(20_000), max_nodes=64)
+    monkeypatch.setattr(w, "_run_one_chunk", lambda *a, **k: (0.0, 0))
+    t0 = time.monotonic()
+    w.run(board, stop_event=threading.Event(), deadline=Deadline(600),
+          max_nodes=None, mate_moves=1)
+    assert w.last_stop_reason not in ("mate_forced_root", "mate_unreachable"), w.last_stop_reason
+    assert time.monotonic() - t0 >= 0.4
+
+
+@pytest.mark.parametrize("walkers", [1, 2])
+def test_go_mate_on_a_forced_root_that_is_mated_answers_at_once(walkers: int) -> None:
+    """Review item 4: the walker (and pool) paths keep visiting the proven
+    lines of a forced root that is mated next move, and ran `go mate 1` to the
+    60 s cap."""
+    w = _worker(walkers)
+    t0 = time.monotonic()
+    result = w.run(
+        chess.Board(FORCED_INTO_MATE), stop_event=threading.Event(), deadline=Deadline(60_000),
+        max_nodes=None, mate_moves=1,
+    )
+    assert time.monotonic() - t0 < 5.0
+    assert result.bestmove_uci == "h8g8"
+    assert w.last_stop_reason in ("mate_forced_root", "mate_unreachable")
+
+
+@pytest.mark.parametrize("walkers", [1, 2])
+def test_go_mate_on_a_proven_lost_root_answers_at_once(walkers: int) -> None:
+    """Not forced (a6 / a5) but every move is met by mate: once the tree proves
+    the root lost, no mate for the mover can exist, so `go mate` stops."""
+    w = _worker(walkers)
+    t0 = time.monotonic()
+    w.run(chess.Board("7k/p4Q2/6K1/8/8/8/8/8 b - - 0 1"), stop_event=threading.Event(),
+          deadline=Deadline(60_000), max_nodes=None, mate_moves=1)
+    assert time.monotonic() - t0 < 5.0
+    assert w.last_stop_reason in ("mate_unreachable", "mate_solved_root"), w.last_stop_reason
+
+
 def test_tb_root_shortcut_reports_the_board_mate() -> None:
     """Review item 5: the tablebase root shortcut printed a saturated cp for a
     root that is mated next move (Syzygy has no distances; the board does)."""
@@ -446,6 +498,13 @@ def test_pool_reports_exact_board_scores_for_forced_moves(ckpt) -> None:
             pv_lines = [ln for ln in got if ln.startswith("info") and " pv " in ln]
             assert pv_lines, got
             assert all(f" {score} " in ln for ln in pv_lines), got
+        # Review item 4: `go mate 1` on the mated forced root ran the 60 s cap.
+        sess.send(f"position fen {FORCED_INTO_MATE}")
+        t0 = time.monotonic()
+        sess.send("go mate 1")
+        got = sess.read_until(lambda ln: ln.startswith("bestmove"), timeout=30.0)
+        assert got[-1].split()[1] == "h8g8"
+        assert time.monotonic() - t0 < 10.0, got
     finally:
         sess.close()
 

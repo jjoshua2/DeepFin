@@ -2011,14 +2011,16 @@ class SearchWorker:
         self._seldepth = max(
             self._seldepth, max((len(pv_idx) for _, _, pv_idx in lines), default=0),
         )
+        root_key = _board_root_key(board)
         mates = _proven_line_mates(
             self._tree, self._root_id, board, [pv_idx[0] if pv_idx else None for _, _, pv_idx in lines],
+            root_key,
         )
         # A first move that ends the game in a draw on the board (stalemate,
         # insufficient material) scores exactly 0, whatever the tree's Q says.
         lines = [
             (rank, 0.0, pv_idx)
-            if pv_idx and mate is None and _board_line_is_draw(board, pv_idx[0])
+            if pv_idx and mate is None and _board_line_is_draw(board, pv_idx[0], root_key)
             else (rank, q, pv_idx)
             for (rank, q, pv_idx), mate in zip(lines, mates, strict=True)
         ]
@@ -2027,7 +2029,7 @@ class SearchWorker:
         # its Q is the root's network evaluation. Say so instead of passing it off
         # as a search result; an exact mate or draw on the board is reported as such.
         if (lines[0][2] and mates[0] is None
-                and not _board_line_is_draw(board, lines[0][2][0])
+                and not _board_line_is_draw(board, lines[0][2][0], root_key)
                 and _root_action_visits(self._tree, self._root_id, lines[0][2][0]) == 0):
             unsearched = (
                 "move unsearched (0 visits): score is the network's evaluation "
@@ -3846,6 +3848,11 @@ class SearchWorker:
                     # ever prove a mate, and the move is decided, so answer now
                     # instead of idling to the implicit cap.
                     stop_reason = "mate_forced_root"
+                elif self._root_solved_status() == -1:
+                    # The side to move is proven lost: no mate for it can be
+                    # found, and the pool / walker paths, which keep visiting
+                    # the proven lines, would otherwise run to the implicit cap.
+                    stop_reason = "mate_unreachable"
             if stop_reason is not None:
                 self.last_stop_reason = stop_reason
   # Tree-bytes stops emit a final info line whose `string` names the reason —
@@ -4371,13 +4378,15 @@ def _proven_line_mate(
 
 def _proven_line_mates(
     tree: MCTSTree | None, root_id: int | None, board: chess.Board,
-    first_actions: list[int | None],
+    first_actions: list[int | None], root_key: object | None = None,
 ) -> list[int | None]:
     """`_proven_line_mate` for each line of one info emission (None for a line
     with no first move), all under ONE shared `_MateWalk` budget."""
     if tree is None or root_id is None:
         return [None] * len(first_actions)
     walk = _MateWalk()
+    if root_key is None:
+        root_key = _board_root_key(board)
     out: list[int | None] = []
     for action in first_actions:
         if action is None:
@@ -4388,7 +4397,7 @@ def _proven_line_mates(
             # Exact distance-1 facts the tree may not have proven (a forced
             # move the classic path never visits; a pool tree whose PV missed
             # the opponent's mate).
-            mate = _board_line_mate(board, int(action))
+            mate = _board_line_mate(board, int(action), root_key)
         out.append(mate)
     return out
 
@@ -4402,9 +4411,42 @@ def _root_action_visits(tree: MCTSTree | None, root_id: int | None, action: int)
     return int(visits[hit].max()) if bool(hit.any()) else 0
 
 
-def _board_line_mate(board: chess.Board, action: int) -> int | None:
+# The board facts of a root move (exact distance-1 mate, drawn on the board)
+# depend only on the root position and its reversible history, so they are
+# computed once per (root, move) instead of once per info emission: at MultiPV
+# 256 every emission asks for every legal move. Bounded; cleared when full.
+_BOARD_FACTS_CACHE: dict[tuple[object, int], tuple[int | None, bool]] = {}
+_BOARD_FACTS_CACHE_MAX = 8192
+
+
+def _board_root_key(board: chess.Board) -> tuple[str, tuple[str, ...]]:
+    """Identifies ``board`` for the board-facts cache: the FEN plus the moves
+    since the last irreversible one (what the repetition guard reads)."""
+    stack = board.move_stack
+    hm = board.halfmove_clock
+    tail = tuple(m.uci() for m in stack[len(stack) - hm:]) if hm and stack else ()
+    return board.fen(), tail
+
+
+def _board_line_facts(
+    board: chess.Board, action: int, root_key: object | None = None,
+) -> tuple[int | None, bool]:
+    """``(_board_move_mate, _board_move_is_draw)`` for root policy index
+    ``action``, cached per root position."""
+    key = (_board_root_key(board) if root_key is None else root_key, int(action))
+    facts = _BOARD_FACTS_CACHE.get(key)
+    if facts is None:
+        move = index_to_move(int(action), board)
+        facts = (_board_move_mate(board, move), _board_move_is_draw(board, move))
+        if len(_BOARD_FACTS_CACHE) >= _BOARD_FACTS_CACHE_MAX:
+            _BOARD_FACTS_CACHE.clear()
+        _BOARD_FACTS_CACHE[key] = facts
+    return facts
+
+
+def _board_line_mate(board: chess.Board, action: int, root_key: object | None = None) -> int | None:
     """`_board_move_mate` for root policy index ``action``."""
-    return _board_move_mate(board, index_to_move(int(action), board))
+    return _board_line_facts(board, action, root_key)[0]
 
 
 def _board_move_mate(board: chess.Board, move: chess.Move) -> int | None:
@@ -4424,11 +4466,17 @@ def _board_move_mate(board: chess.Board, move: chess.Move) -> int | None:
     return None if full.is_repetition(3) else -1
 
 
-def _board_line_is_draw(board: chess.Board, action: int) -> bool:
-    """True when root ``action`` ends the game drawn on the board: stalemate,
-    insufficient material, or the 75-move rule (exact score 0)."""
+def _board_line_is_draw(board: chess.Board, action: int, root_key: object | None = None) -> bool:
+    """`_board_move_is_draw` for root policy index ``action``."""
+    return _board_line_facts(board, action, root_key)[1]
+
+
+def _board_move_is_draw(board: chess.Board, move: chess.Move) -> bool:
+    """True when ``move`` ends the game drawn on the board: stalemate,
+    insufficient material, or the 75-move rule (exact score 0). A draw that is
+    merely claimable (threefold, 50-move) is not one: the game goes on."""
     after = board.copy(stack=False)
-    after.push(index_to_move(int(action), after))
+    after.push(move)
     return (after.is_stalemate() or after.is_insufficient_material()
             or after.is_seventyfive_moves())
 
