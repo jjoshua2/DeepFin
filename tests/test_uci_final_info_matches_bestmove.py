@@ -29,7 +29,13 @@ import chess_anti_engine.uci.engine as engine_module
 from chess_anti_engine.uci.engine import Engine
 from chess_anti_engine.uci.protocol import CmdSetOption, parse_command
 from chess_anti_engine.uci.score import q_to_cp
-from chess_anti_engine.uci.search import SearchResult, _multipv_lines, _proven_line_mate
+from chess_anti_engine.uci.search import (
+    SearchResult,
+    _board_line_is_draw,
+    _board_line_mate,
+    _multipv_lines,
+    _proven_line_mate,
+)
 from tests.test_uci_compliance_p2 import _MATE_IN_2, _go, _Out, _tiny_worker
 from tests.test_uci_degrade_gaps_subprocess import _fault_env, _Session, _tiny_checkpoint
 from tests.test_uci_tb_root_c import _TABLES, needs_tables
@@ -221,7 +227,12 @@ def _random_positions(n: int, seed: int) -> list[str]:
 
 
 def _expected_line_score(worker: Any, board: chess.Board, move: str) -> tuple[str, int] | None:
-    """`score` of ``move``'s own line from the searched tree (None: unvisited)."""
+    """`score` of ``move``'s own line by the info-line rules (None: unvisited).
+
+    Same rules as `_emit_pv_info`: a proven mate from the tree, else an exact
+    distance-1 mate on the board; else 0 when the move draws on the board;
+    else the move's Q. Rank 1 is first in its emission, so its mate walk has
+    the full shared budget, as here."""
     tree, root = worker._tree, worker._root_id
     idx = worker_index(board, move)
     actions, visits, qs = tree.get_children_q(root, 0.0)
@@ -229,8 +240,12 @@ def _expected_line_score(worker: Any, board: chess.Board, move: str) -> tuple[st
     if not hit or int(visits[hit[0]]) == 0:
         return None
     mate = _proven_line_mate(tree, root, board, idx)
+    if mate is None:
+        mate = _board_line_mate(board, idx)
     if mate is not None:
         return ("mate", mate)
+    if _board_line_is_draw(board, idx):
+        return ("cp", 0)
     return ("cp", q_to_cp(0.5 * (float(qs[hit[0]]) + 1.0)))
 
 
@@ -292,6 +307,39 @@ def test_property_last_pv_and_score_are_the_played_moves_over_200_positions(out:
             score_checked += 1
     assert survivor_not_leader >= 20, survivor_not_leader
     assert score_checked >= 150, score_checked
+
+
+# The played move delivers (or walks into) an exact board mate the tree has not
+# proven: the line must say `score mate`, not the move's Q (#1401's rules).
+_BOARD_MATE_ROOT = "r3k1nr/p1pb2Q1/p1n1p3/3p1p1p/8/B3P3/P1PP1PPP/RN2K1R1 b Q - 0 14"
+
+
+def test_final_line_uses_the_board_mate_rules(out: _Out) -> None:
+    assert _BOARD_MATE_ROOT in _random_positions(200, 20261116)
+    for fen, lines, result, worker in _search_positions(out, [_BOARD_MATE_ROOT], "go nodes 256"):
+        (last,) = _assert_aligned(lines)
+        board = chess.Board(fen)
+        expected = _expected_line_score(worker, board, result.bestmove_uci)
+        assert expected is not None
+        assert last["score"] == expected, (last, expected)
+        # Diagnostics ride on their own `info string` line, never after `pv`.
+        assert "string" not in last, last
+
+
+@pytest.mark.parametrize("go", ["go nodes 50", "go wtime 2000 btime 2000"])
+def test_forced_root_label_is_printed_once_and_not_overwritten(out: _Out, go: str) -> None:
+    """A forced root's sole move is returned unvisited: its line keeps main's
+    "move unsearched" label exactly once, and the final re-emit adds no second
+    set (the dedupe sees the same lines)."""
+    for _fen, lines, result, _w in _search_positions(
+            out, ["7k/8/8/8/8/8/5P1P/r5K1 w - - 0 1"], go):
+        (last,) = _assert_aligned(lines)
+        assert result.bestmove_uci == "g1g2"
+        labels = [ln for ln in lines if "move unsearched" in ln]
+        assert len(labels) == 1, lines
+        assert labels[0].startswith("info string "), labels
+        assert len(_rank1_pv_lines(_segments(lines)[0][0])) == 1, lines
+        assert "string" not in last
 
 
 def test_final_set_is_not_a_repeat_of_the_last_in_search_set(
