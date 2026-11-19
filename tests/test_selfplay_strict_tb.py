@@ -653,3 +653,23 @@ def test_incremental_full_history_rebuilds_for_a_transposed_start_with_equal_fen
     assert rebuilt.move_stack[:4] == second.move_stack
     assert sf_history_kwargs(state, 0).get("root_moves") == (
         "b1c3", "b8c6", "g1f3", "g8f6", "e2e4")
+
+
+@pytest.mark.parametrize(("board", "wdl", "dtz"), [
+    (chess.Board(ROOT), 2, 3),                                   # reset clock, decisive
+    (chess.Board(ROOT), 0, 0),                                   # TB draw
+    (chess.Board("7k/8/8/8/8/8/P7/KQ6 w - - 12 8"), 2, 3),      # positive clock: unresolved
+    (history(CYCLE * 2), 2, 3),                                  # natural repetition claim
+    (chess.Board(), 2, 3),                                       # not eligible, undecided
+    (chess.Board("7k/5Q2/6K1/8/8/8/8/8 b - - 0 1"), 2, 3),      # stalemate (natural)
+])
+def test_resolve_if_decided_is_resolve_minus_undecided_witnesses(board, wdl, dtz):
+    owner = session(SyntheticTables(wdl=wdl, dtz=dtz))
+    before = (board.fen(), list(board.move_stack))
+    full = owner.resolve(board.copy(stack=True), move_offset=3)
+    fast = owner.resolve_if_decided(board, move_offset=3)
+    assert (board.fen(), list(board.move_stack)) == before  # read-only
+    if full.result == "*":
+        assert fast is None
+    else:
+        assert fast == full

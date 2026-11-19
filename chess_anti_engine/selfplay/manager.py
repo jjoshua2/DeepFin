@@ -51,7 +51,10 @@ from chess_anti_engine.selfplay.stockfish_turn import (
 from chess_anti_engine.stockfish.pool import StockfishPool
 from chess_anti_engine.stockfish.uci import StockfishUCI
 from chess_anti_engine.tablebase import tb_adjudicate_result
-from chess_anti_engine.selfplay.strict_tb import full_history_board, validate_stockfish_contract
+from chess_anti_engine.selfplay.strict_tb import (
+    replayed_history_board,
+    validate_stockfish_contract,
+)
 from chess_anti_engine.utils.syzygy_config import validate_selfplay_syzygy
 
 
@@ -75,9 +78,13 @@ def _tb_adjudicate_active_games(state: SelfplayState) -> int:
                 continue
             if state.done_arr[i]:
                 continue  # finalizer rechecks full-history rules, including caps
-            board = full_history_board(state, i)
-            witness = strict_tb.resolve(board, move_offset=len(state.move_idx_history[i]))
-            if witness.result == "*":
+            # Read-only replay (no copy): resolve_if_decided only reads it and
+            # builds a decided witness from its own copy.
+            board = replayed_history_board(state, i)
+            witness = strict_tb.resolve_if_decided(
+                board, move_offset=len(state.move_idx_history[i]),
+            )
+            if witness is None:
                 continue  # positive-clock decisive TB remains play-on
             state.strict_tb_witnesses[i] = witness
             if witness.origin == "TB_ADJUDICATED":

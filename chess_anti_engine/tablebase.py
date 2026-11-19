@@ -162,7 +162,21 @@ def rule50_match_status(
     DTZ is still required and checked for coverage and WDL-class consistency.
     Missing eligible WDL or DTZ is an error, not neural fallback.
     """
-    natural = outcome_claim_draw(board)
+    return rule50_match_status_given(
+        board, tablebase, outcome_claim_draw(board), max_pieces=max_pieces,
+    )
+
+
+def rule50_match_status_given(
+    board: chess.Board,
+    tablebase: chess.syzygy.Tablebase,
+    natural: chess.Outcome | None,
+    *,
+    max_pieces: int = 6,
+) -> int | None:
+    """``rule50_match_status`` for a caller that already holds
+    ``natural == board.outcome(claim_draw=True)``, so the claim check is not
+    computed twice for one position."""
     if natural is not None:
         if natural.winner is None:
             return 2

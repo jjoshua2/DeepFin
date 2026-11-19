@@ -22,6 +22,7 @@ from chess_anti_engine.tablebase import (
     _rule50_dtz_key,
     open_strict_match_tablebase,
     rule50_match_status,
+    rule50_match_status_given,
 )
 
 if TYPE_CHECKING:
@@ -120,6 +121,16 @@ def full_history_board(state: _HistoryState, slot: int) -> chess.Board:
     return _replayed_history(state, slot).board.copy(stack=True)
 
 
+def replayed_history_board(state: _HistoryState, slot: int) -> chess.Board:
+    """``full_history_board`` without the defensive copy, for READ-ONLY use.
+
+    The board is the slot's cached replay: a caller that pushes, pops without
+    restoring, or keeps it past the slot's next move corrupts later answers.
+    python-chess's claim checks (which pop and restore) are fine.
+    """
+    return _replayed_history(state, slot).board
+
+
 def _replayed_history(state: _HistoryState, slot: int) -> _HistoryReplay:
     """The checked replay behind ``full_history_board``; its board is READ-ONLY.
 
@@ -208,9 +219,27 @@ class StrictSelfplayTablebase:
             self._closed = True
             self.tablebase.close()
 
-    def resolve(self, board: chess.Board, *, move_offset: int) -> TablebaseWitness:
+    def _natural_and_status(self, board: chess.Board) -> tuple[chess.Outcome | None, int | None]:
         natural = outcome_claim_draw(board)
-        status = rule50_match_status(board, self.tablebase, max_pieces=6)
+        return natural, rule50_match_status_given(board, self.tablebase, natural, max_pieces=6)
+
+    def resolve_if_decided(self, board: chess.Board, *, move_offset: int) -> TablebaseWitness | None:
+        """``resolve`` when its result would not be ``"*"``, else None.
+
+        The per-step adjudication scan asks this of every live game and keeps
+        only decided witnesses; building the full witness (root FEN, every
+        move as UCI) for the undecided majority was pure overhead. A witness
+        is unresolved exactly when there is no natural outcome and no rule-50
+        status, which is all this computes first. ``board`` is only read (the
+        claim checks pop and restore it); the witness is built from a copy.
+        """
+        natural, status = self._natural_and_status(board)
+        if natural is None and status is None:
+            return None
+        return self.resolve(board.copy(stack=True), move_offset=move_offset)
+
+    def resolve(self, board: chess.Board, *, move_offset: int) -> TablebaseWitness:
+        natural, status = self._natural_and_status(board)
         wdl = dtz = None
         if natural is not None:
             origin, result = "NATURAL", natural.result()
