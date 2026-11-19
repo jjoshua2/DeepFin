@@ -485,11 +485,31 @@ def test_resolve_use_multi_gpu_pucv_auto_enables(capsys) -> None:
 
 
 def test_resolve_use_multi_gpu_pucv_single_device_silent(capsys) -> None:
-    """Single device keeps today's behavior exactly: pool off, no output,
-    regardless of how the flag was set."""
-    for flag in (None, False, True):
+    """Single device: the pool is off and nothing is printed when the flag is
+    unset or off. (An explicit ``--multi-gpu-pucv`` on one device is refused
+    by ``_resolve_multi_gpu_startup`` before this resolver runs.)"""
+    for flag in (None, False):
         assert uci_main._resolve_use_multi_gpu_pucv(flag, 1) is False
+        assert uci_main._resolve_multi_gpu_startup("pucv", flag, 1) == (False, False, False)
     assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(("search_parallel", "pucv_flag", "named"), [
+    ("pucv", True, "--multi-gpu-pucv"),
+    ("gumbel", None, "--search-parallel gumbel"),
+    ("gumbel", False, "--search-parallel gumbel"),
+    ("gumbel", True, "--multi-gpu-pucv and --search-parallel gumbel"),
+])
+def test_explicit_multi_gpu_mode_on_one_device_refuses_to_start(
+    search_parallel: str, pucv_flag: bool | None, named: str,
+) -> None:
+    """Soak F10: ``--devices cpu --multi-gpu-pucv`` used to run classic Gumbel
+    with no word at startup. A mode that cannot be honoured refuses to start."""
+    with pytest.raises(SystemExit) as exc:
+        uci_main._resolve_multi_gpu_startup(search_parallel, pucv_flag, 1)
+    msg = str(exc.value.code)
+    assert msg.startswith(f"{named} with 1 device")
+    assert "Refusing to start" in msg
 
 
 def test_root_parallel_startup_retains_pucv_fallback_without_activating_it(

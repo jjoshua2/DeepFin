@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from chess_anti_engine.uci.protocol import (
+    CmdDebug,
     CmdGo,
     CmdIsReady,
     CmdPonderHit,
@@ -140,11 +141,6 @@ def test_setoption_multiword_name() -> None:
     assert cmd.value == "20"
 
 
-def test_debug_is_ignored() -> None:
-    assert isinstance(parse_command("debug on"), CmdUnknown)
-    assert isinstance(parse_command("debug off"), CmdUnknown)
-
-
 def test_format_bestmove() -> None:
     assert format_bestmove("e2e4") == "bestmove e2e4"
     assert format_bestmove("e2e4", ponder="e7e5") == "bestmove e2e4 ponder e7e5"
@@ -180,10 +176,25 @@ def test_format_info_string_trailing() -> None:
     assert out.endswith("string hello world")
 
 
-def test_format_info_pv_string_trailing() -> None:
+def test_format_info_never_puts_a_string_after_pv() -> None:
+    """UCI reads `pv` to the end of the line: a trailing `string` would be
+    parsed as moves. The string goes on its own `info string` line after."""
     out = format_info(InfoFields(
         score_cp=12,
         pv=("e2e4",),
         string="pucv leaves=512 batches=4",
     ))
-    assert out.endswith("pv e2e4 string pucv leaves=512 batches=4")
+    assert out.split("\n") == [
+        "info score cp 12 pv e2e4",
+        "info string pucv leaves=512 batches=4",
+    ]
+
+
+@pytest.mark.parametrize(("line", "on"), [
+    ("debug on", True), ("debug off", False), ("debug", None), ("debug maybe", None),
+    ("debug on off", None),
+])
+def test_parse_debug(line: str, on: bool | None) -> None:
+    cmd = parse_command(line)
+    assert isinstance(cmd, CmdDebug)
+    assert cmd.on is on

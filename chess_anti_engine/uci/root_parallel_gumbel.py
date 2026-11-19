@@ -120,6 +120,7 @@ from chess_anti_engine.mcts.root_tactics import (
 )
 from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.uci import wedge
+from chess_anti_engine.uci.protocol import uci_debug_enabled
 from chess_anti_engine.uci.startup_progress import StartupContext, startup_context
 
 _log = logging.getLogger(__name__)
@@ -834,7 +835,7 @@ class RootParallelGumbelPool:
                 survivor_actions=tuple(remaining),
                 kind="open",
             ))
-            if self._info_cb is not None:
+            if self._info_cb is not None and uci_debug_enabled():
                 self._info_cb(
                     f"rpg phase={phase_index} open cands={n_cands} "
                     f"vpa={open_vpa} sims={sims_done} "
@@ -882,9 +883,9 @@ class RootParallelGumbelPool:
                 survivor_actions=tuple(remaining),
                 kind="halve",
             ))
-            # Info every phase is fine for short schedules (≤~6 phases); keep
-            # the string compact for GUI/logs under high nps.
-            if self._info_cb is not None:
+            # Per-phase diagnostics: UCI `debug on` only (otherwise every move
+            # printed several of these). Keep the string compact.
+            if self._info_cb is not None and uci_debug_enabled():
                 self._info_cb(
                     f"rpg phase={phase_index} cands={n_cands} "
                     f"dispatched={n_dispatched} vpa={vpa} "
