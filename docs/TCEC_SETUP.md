@@ -92,32 +92,26 @@ deepfin --checkpoint /path/to/trainer.pt --device cuda:0                        
 
 `--walkers N` (UCI `SearchWalkers`) above 1 swaps classic Gumbel for a PUCT
 walker pool, and on one GPU that pool is **slower than classic**, not faster.
-Measured on one GPU: classic about 13,400 nps; two walkers with a leaf gather
-of 1 (the old `--walker-gather` default) about 450 nps, so clocked moves fell
-back to the watchdog; with `--walker-gather 32` (now the default) 5,500 nps at
-two walkers and 8,600 at eight. On CPU with a tiny test net (6 s `movetime`)
+Measured on one GPU: classic about 13,400 nps; two walkers at the default leaf
+gather of 1 (`--walker-gather`, UCI `LeafGather`) about 450 nps, so clocked
+moves fell back to the watchdog; with `--walker-gather 32` set by hand 5,500 nps
+at two walkers and 8,600 at eight. On CPU with a tiny test net (6 s `movetime`)
 classic ran 5,200-5,600 nps and walkers 2 / 4 / 8 ran 1,400 / 1,600 / 2,200 at
-gather 1 and 4,700 / 5,500 / 5,500 at gather 32. The new default itself has
-not yet been timed on a GPU. Keep one walker for play. A walker finishes the
-batch it is evaluating before it sees a stop, and on a slow device a batch of
-32 can outlast what is left of the move: stopped at its deadline, the search
-answered late enough for the watchdog to play an unsearched move. Every timed
-search (`movetime` and clocks) therefore stops a walker pool one walker batch
-early: the slowest recent batch on that pool (a decayed maximum, measured from
-the startup warmup on), at most half of the move's budget. Measured on CPU
-through the engine (`--walkers 4`; per arm 208 `movetime 100` / `300` moves,
-1+0.01, 6+0.1 and 10+0.1 clock games, and sudden death):
+gather 1 and 4,700 / 5,500 / 5,500 at gather 32. Keep one walker for play.
 
-- tiny net (a 32-row batch takes a few ms): gather 32 with the early stop, 0
-  watchdog answers, 0 late, median 630 nodes per `movetime` move; gather 1, 0,
-  0 and 214.
-- a 128-wide 4-layer net (a 32-row batch takes 44 ms alone, about 110 ms with
-  four walkers sharing two threads): gather 32 with the early stop, 0, 0 and 67;
-  gather 1, 0, 0 and 27; gather 32 without the early stop, 2 clock moves
-  answered by the watchdog.
-
-With the larger net the early stop ends a `movetime 300` search at a median
-142 ms, as gather 1 does (145 ms), against 239 ms without it.
+A larger gather raises walker throughput (CPU, `--walkers 4`, gather 32 against
+1: median nodes per `movetime` move 630 against 214 with a tiny net, 67 against
+27 with a 128-wide 4-layer net), but a walker finishes the batch it is
+evaluating before it sees a stop. Every timed search (`movetime` and clocks)
+therefore stops a walker pool one walker batch early: the slowest recent full
+batch on that pool (a decayed maximum, measured from the startup warmup on), at
+most half of the move's budget. That does not cover every case: when one walker
+batch at full concurrency takes longer than about half the move's budget, the
+watchdog can still answer unsearched. Measured with `--walkers 8 --walker-gather
+32` on the 128-wide net on CPU (eight full 32-row batches of about 456 ms at
+once), 1 or 2 clock moves in about 100 per run were answered unsearched (the
+first move of a 10+0.1 game, which can then cascade to `engine unhealthy`);
+the default gather of 1 had none.
 
 **Several GPUs** (the 4-GPU path): `--devices` with more than one entry turns on the
 shared-tree multi-GPU PUCV pool (one worker per GPU, PUCT descent with virtual
@@ -165,7 +159,7 @@ Every engine flag, with the default the argument parser really has:
 | `--gil-profile` | off | Per-search GIL telemetry as `info string` lines. |
 | `--walkers` | 1 | 1 = classic Gumbel; > 1 = PUCT walker pool (UCI `SearchWalkers`). |
 | `--vloss-weight` | 3 | Virtual-loss weight (UCI `VLossWeight`). |
-| `--walker-gather` | 32 | Per-walker leaf gather, walker pool only (UCI `LeafGather`). |
+| `--walker-gather` | 1 | Per-walker leaf gather, walker pool only (UCI `LeafGather`). |
 | `--vl-gather` | 512 | Leaf gather for `UseVL` / multi-GPU (UCI `VLGather`). |
 | `--multi-gpu-pucv` / `--no-multi-gpu-pucv` | auto | Force the multi-GPU pool on / off (off is for debugging). `--multi-gpu-pucv` with one device refuses to start. |
 | `--search-parallel` | `pucv` | Multi-GPU mode: `pucv` or `gumbel` (UCI `SearchParallel`). `gumbel` with one device refuses to start. |
@@ -221,7 +215,7 @@ between moves, and on failure the previous settings and evaluator stay).
 | `Hash` | spin 1024..524288 | 16384 | Tree memory cap in MB (section 6). | no |
 | `Threads` | spin 1..64 | 1 | **No effect**; accepted because GUIs send it, and answered with an `info string` saying so. | no |
 | `SearchWalkers` | spin 1..64 | 1 | 1 = classic Gumbel; > 1 = PUCT walker pool, where most Gumbel options are inert. | evaluator when crossing 1 <-> > 1; walker pool |
-| `LeafGather` | spin 1..64 | 32 | Leaf gather per walker; walker pool only. | walker pool |
+| `LeafGather` | spin 1..64 | 1 | Leaf gather per walker; walker pool only. | walker pool |
 | `UseVL` | check | false | Single-GPU virtual-loss PUCV path. | search helper |
 | `UseMultiGpuPUCV` | check | false | Multi-GPU PUCV pool (on automatically with several `--devices`). | pool (+ primary evaluator) |
 | `PUCVPendingMode` | combo `legacy` / `virtual-mean` | legacy | Pending accounting on batched PUCV paths. | pool reinstall |

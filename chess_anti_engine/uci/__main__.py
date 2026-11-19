@@ -1544,7 +1544,7 @@ def _build_parser() -> argparse.ArgumentParser:
                         f"(default: {PLAY_SEARCH_VLOSS_WEIGHT}, lc0 default)")
   # Per-walker leaf gather: each walker does G descents → one NN batch.
   # Walker pool only (--walkers > 1); the classic path never reads it. A
-  # default of 1 fed the GPU ~1-2 leaves per call (see DEFAULT_LEAF_GATHER).
+  # larger gather raises walker throughput (see DEFAULT_LEAF_GATHER).
   # Matches lc0's MinibatchSize semantic (our --minibatch-size UCI option
   # controls the separate Gumbel path's C state machine, not this).
     p.add_argument("--walker-gather", type=int, default=DEFAULT_LEAF_GATHER,

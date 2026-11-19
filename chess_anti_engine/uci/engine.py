@@ -477,9 +477,9 @@ class EngineOptions:
   # Per-walker leaf gather: each walker does G descents → one NN batch
   # instead of one descent per submit. Amplifies effective batch to
   # N_walkers×G without spawning more threads. Read only by the walker pool
-  # (SearchWalkers > 1); the classic path never consults it. The default
-  # used to be 1, which made `--walkers N` a trap: ~1-2 leaves per GPU call,
-  # ~450 nps on a GPU against classic's ~13,400. Set via UCI `LeafGather`.
+  # (SearchWalkers > 1); the classic path never consults it. At the default
+  # of 1 a GPU sees ~1-2 leaves per call (~450 nps at two walkers against
+  # classic's ~13,400; see DEFAULT_LEAF_GATHER). Set via UCI `LeafGather`.
     leaf_gather: int = DEFAULT_LEAF_GATHER
   # Single-thread async-pipeline batched-VL PUCT. Active only at
   # `SearchWalkers=1` with a 2-slot inplace-async evaluator. Bench: +112%

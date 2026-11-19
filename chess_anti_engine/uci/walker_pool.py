@@ -48,9 +48,12 @@ from chess_anti_engine.uci import wedge
 
 _log = logging.getLogger(__name__)
 
-# `WalkerPool.batch_ms_hi` decays its running maximum by this factor per batch,
-# so one stall is forgotten within a few dozen batches (about two searches at
-# `go movetime 100` on CPU) while the slowest recent batch still sets it.
+# `WalkerPool.batch_ms_hi` decays its running maximum by this factor per FULL
+# batch (one of the configured gather), so one stall is forgotten within a few
+# dozen full batches while the slowest recent one still sets it. Partial batches
+# (a stop mid-gather, a chunk smaller than the walkers' gathers, terminal
+# leaves) neither set nor decay it: they are faster, and with eight walkers
+# per-batch decay from them drove it to a fraction of a full batch's time.
 _BATCH_HI_DECAY = 0.95
 
 
@@ -132,8 +135,8 @@ class WalkerPool:
         # Semaphore residual is not portably readable, so walkers count leaves.
         self._completed_lock = threading.Lock()
         self._completed: int = 0
-        # Decayed maximum wall time (ms) of one walker's in-flight batch: from
-        # its evaluator call to the last leaf integrated. A walker that has
+        # Decayed maximum wall time (ms) of one walker's in-flight FULL batch:
+        # from its evaluator call to the last leaf integrated. A walker that has
         # submitted a batch cannot see a stop until that batch is done, so this
         # is how long before a deadline the stop must reach the pool (read by
         # the UCI search: `SearchWorker._walker_stop_reserve_ms`).
@@ -175,9 +178,9 @@ class WalkerPool:
         self.close()
 
     def batch_ms_hi(self) -> float:
-        """Decayed maximum duration (ms) of one walker's in-flight batch over
-        the batches this pool has run (0.0 before any): the latency between a
-        stop and the last walker seeing it."""
+        """Decayed maximum duration (ms) of one walker's in-flight full batch
+        (`_BATCH_HI_DECAY`; 0.0 before any): the latency between a stop and
+        the last walker seeing it."""
         with self._completed_lock:
             return float(self._batch_hi_ms)
 
@@ -400,7 +403,8 @@ class WalkerPool:
                         integrated = k + 1
                         if solved is not None and solved[k]:
                             tree.mark_solved_path(pending_paths[k], int(solved[k]))
-                    self._note_batch_ms((time.monotonic() - batch_t0) * 1000.0)
+                    if n_pending == gather:  # partial batches say nothing (above)
+                        self._note_batch_ms((time.monotonic() - batch_t0) * 1000.0)
             finally:
                 release_paths(
                     tree, pending_paths[integrated:], vloss_weight=vloss,

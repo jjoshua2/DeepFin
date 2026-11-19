@@ -118,10 +118,13 @@ _INFO_EMIT_INTERVAL_MS = 1000
 _FORCED_ROOT_CHUNK_SIMS = 64
 # Walker-pool leaf gather default -- the ONE source for `LeafGather`,
 # `--walker-gather`, `SearchWorker(walker_gather=...)` and the evaluator warm-up.
-# CPU tiny net, 6 s movetime: walkers 2/4/8 at gather 1 ran 1.4k/1.6k/2.2k nps,
-# at 32 4.7k/5.5k/5.5k (classic 5.2-5.6k); GPU (review): 2 walkers 450 -> 5.5k
-# nps. The single-walker path never reads it.
-DEFAULT_LEAF_GATHER = 32
+# The single-walker path never reads it. A larger gather raises walker throughput
+# (CPU tiny net, 6 s movetime: walkers 2/4/8 at gather 1 ran 1.4k/1.6k/2.2k nps,
+# at 32 4.7k/5.5k/5.5k; GPU (review): 2 walkers 450 -> 5.5k nps), but one walker
+# batch cannot be interrupted, and at full concurrency on a slow device it can
+# outlast a short move's budget (walkers 8, a slow CPU net: the stall watchdog
+# answered clock moves unsearched). Raising the default is a separate change.
+DEFAULT_LEAF_GATHER = 1
 # `go mate N` on a forced root (one legal / `searchmoves` move): simulations
 # spent looking for a mate for the mover behind the forced move, per mate move
 # asked, before answering (`run`'s "mate_forced_root" stop). The move itself is

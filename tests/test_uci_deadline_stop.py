@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import threading
 import time
+from typing import Any
 from unittest.mock import MagicMock
 
 import chess
@@ -11,8 +12,8 @@ import pytest
 
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.uci.engine import Engine
-from chess_anti_engine.uci.search import DEFAULT_LEAF_GATHER, SearchResult, SearchWorker
-from chess_anti_engine.uci.time_manager import SearchLimits
+from chess_anti_engine.uci.search import SearchResult, SearchWorker
+from chess_anti_engine.uci.time_manager import Deadline, SearchLimits
 
 
 def _result() -> SearchResult:
@@ -32,8 +33,8 @@ class _SlowEvaluator:
 
 def test_deadline_interrupts_real_walker_chunk_without_fallback(capsys):
     worker = SearchWorker(
-        # Gather 1 pins this test's original walker batch: the node bound
-        # below is a stop-latency bound, and the default gather is now 32.
+        # Gather 1 pins this test's walker batch: the node bound below is a
+        # stop-latency bound.
         _SlowEvaluator(), device="cpu", n_walkers=2, walker_gather=1, chunk_sims=2048,
         gumbel_cfg=GumbelConfig(input_extra_features="v1", add_noise=False),
     )
@@ -82,16 +83,25 @@ class _BatchCostEvaluator:
         return np.zeros((len(x), 4672), np.float32), np.zeros((len(x), 3), np.float32)
 
 
-def _walker_engine(evaluator, **kw) -> tuple[SearchWorker, Engine]:
+# An explicit larger walker gather (`--walker-gather 32`); the default is 1.
+LARGE_GATHER = 32
+
+
+def _walker_worker(evaluator) -> SearchWorker:
     worker = SearchWorker(
-        evaluator, device="cpu", n_walkers=2, chunk_sims=2048,
-        gumbel_cfg=GumbelConfig(input_extra_features="v1", add_noise=False), **kw,
+        evaluator, device="cpu", n_walkers=2, chunk_sims=2048, walker_gather=LARGE_GATHER,
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", add_noise=False),
     )
-    assert worker._walker_gather == DEFAULT_LEAF_GATHER
+    assert worker._walker_gather == LARGE_GATHER
+    return worker
+
+
+def _walker_engine(evaluator) -> tuple[SearchWorker, Engine]:
+    worker = _walker_worker(evaluator)
     return worker, Engine(worker)
 
 
-def test_deadline_interrupts_walker_chunk_at_the_default_gather(capsys):
+def test_deadline_interrupts_walker_chunk_at_gather_32(capsys):
     """A walker chunk that ignored the stop would run its whole time-capped
     first chunk (2048 sims = 32 batches a walker at 0.1 s each, > 3 s); a
     working stop ends it within one batch of the 600 ms deadline."""
@@ -228,3 +238,79 @@ def test_timer_respects_phase_deadline(monkeypatch, limits, is_ponder, finite):
         assert not engine._stop_event.is_set()
     finally:
         engine.close()
+
+
+def test_an_uncapped_walker_chunk_stops_one_batch_before_the_deadline():
+    """The in-chunk early stop on its own, without the engine's deadline timer
+    or the time cap: the chunk-time model is calibrated on a fast evaluator
+    and the evaluator then turns slow, so the first chunk is sized far past
+    the deadline (2048 sims = 32 batches a walker at 150 ms). Only the
+    early-stop event can end it: walkers stop submitting at deadline -
+    `batch_ms_hi` and their batches in flight end by the deadline. The
+    deadline sits half a batch off the walkers' 150 ms batch grid, so a stop
+    at the deadline itself (reserve not subtracted) starts a batch about 75 ms
+    before it."""
+    batch_ms = 150.0
+    evaluator = _BatchCostEvaluator(0.0)
+    worker = _walker_worker(evaluator)
+    try:
+        worker.calibrate_chunk_model()
+        pool = worker._walker_pool
+        assert pool is not None
+        evaluator.batch_s = batch_ms / 1000.0
+        pool._batch_hi_ms = batch_ms  # as a slow full batch would have set it
+        assert worker._time_capped_chunk(2048, Deadline(1000), 0) == 2048  # uncapped
+        evaluator.starts.clear()
+        started = time.monotonic()
+        result = worker.run(
+            chess.Board(), stop_event=threading.Event(), deadline=Deadline(1000),
+            max_nodes=None,
+        )
+        elapsed_ms = (time.monotonic() - started) * 1000.0
+        grid = [round((t - started) * 1000.0) for t in evaluator.starts]
+        last_start_ms = (max(evaluator.starts) - started) * 1000.0
+        assert last_start_ms <= 1000.0 - batch_ms + 40.0, grid
+        assert elapsed_ms < 1000.0 + 50.0, (elapsed_ms, grid)
+        assert 0 < result.nodes < 2048
+    finally:
+        worker.close()
+
+
+class _FixedReservePool:
+    def __init__(self, ms: float) -> None:
+        self.ms = ms
+
+    def batch_ms_hi(self) -> float:
+        return self.ms
+
+
+def _reserve_worker(pool_ms: float, **paths) -> SearchWorker:
+    worker: Any = SearchWorker.__new__(SearchWorker)
+    worker._walker_pool = _FixedReservePool(pool_ms)
+    worker._rpg_pool = paths.get("rpg")
+    worker._pucv_pool = paths.get("pucv")
+    return worker
+
+
+def test_walker_stop_reserve_is_capped_at_half_the_move():
+    worker = _reserve_worker(1000.0)
+    assert worker._walker_stop_reserve_ms(Deadline(400), 400, None) == 200.0
+    assert worker._walker_stop_reserve_ms(Deadline(4000), 4000, None) == 1000.0
+    assert worker._walker_stop_reserve_ms(Deadline(None), None, None) == 0.0
+
+
+def test_walker_stop_reserve_is_walker_path_only():
+    """The pool, root-parallel and classic paths -- and `searchmoves`, which
+    runs on the classic path -- keep their own stop rules: reserve 0."""
+    assert _reserve_worker(100.0, rpg=object())._walker_stop_reserve_ms(Deadline(4000), 4000, None) == 0.0
+    assert _reserve_worker(100.0, pucv=object())._walker_stop_reserve_ms(Deadline(4000), 4000, None) == 0.0
+    restricted = _reserve_worker(100.0)
+    assert restricted._walker_stop_reserve_ms(Deadline(4000), 4000, {1, 2}) == 0.0
+    classic = _reserve_worker(100.0)
+    classic._walker_pool = None
+    assert classic._walker_stop_reserve_ms(Deadline(4000), 4000, None) == 0.0
+    stop = threading.Event()
+    assert classic._walker_chunk_stop(stop, Deadline(4000), 4000, None) is stop
+    walker = _reserve_worker(100.0)
+    assert walker._walker_stop_reserve_ms(Deadline(4000), 4000, None) == 100.0
+    assert walker._walker_chunk_stop(stop, Deadline(4000), 4000, None) is not stop
