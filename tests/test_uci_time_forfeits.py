@@ -15,6 +15,7 @@ The watchdog's last moment net of ``MoveOverheadMs`` (F1) is pinned in
 """
 from __future__ import annotations
 
+import dataclasses
 import os
 import sys
 import threading
@@ -31,7 +32,7 @@ from chess_anti_engine.uci import search as search_module
 from chess_anti_engine.uci.engine import Engine, EngineOptions, _on_short_lived_thread
 from chess_anti_engine.uci.protocol import GoArgs, parse_command
 from chess_anti_engine.uci.search import (
-    _FIRST_CHUNK_TIME_SHARE,
+    _CHUNK_OVERRUN_MIN_SAMPLES,
     _DEFAULT_CHUNK_OVERRUN,
     _MIN_TIME_CAPPED_CHUNK,
     SearchResult,
@@ -151,32 +152,84 @@ def test_root_parallel_gumbel_keeps_the_chunk_sims_floor() -> None:
     assert w._time_capped_chunk(8192, d0, total_nodes=1000) == 2048
 
 
-def test_the_first_chunk_is_sized_from_the_measured_chunk_rate() -> None:
+def _feed(w: Any, chunks: list[tuple[int, float]]) -> None:
+    for sims, ms in chunks:
+        w._note_chunk_overrun(sims, ms)
+        w._note_chunk_time(sims, ms)
+
+
+def test_the_last_moment_outlasts_one_gil_switch_interval() -> None:
+    """The watchdog's last-moment answer needs the GIL; a thread that never
+    yields holds it for one switch interval (5 ms). With a 3 ms margin, one
+    answer under injected stalls on a loaded host landed past the hard limit."""
+    switch_ms = sys.getswitchinterval() * 1000.0
+    assert engine_module._WATCHDOG_LAST_MOMENT_MS >= 3.0 + switch_ms
+
+
+def test_the_first_chunk_is_sized_from_the_chunk_time_model() -> None:
     w = _bare_worker(2048)
     d = Deadline(deadline_ms=300, now=time.monotonic())
     # Before any measurement: the conservative bootstrap (6 sims/ms) -> 1800.
     assert 1700 <= w._time_capped_chunk(8192, d, 0) <= 1800
-    # A slow device: 2 sims/ms measured. A quarter of ~300 ms at 2/ms = ~150.
-    w._note_chunk_rate(200, 100.0)
-    assert w.measured_chunk_rate() == pytest.approx(2.0)
+    # A slow device: 6 ms fixed + 0.5 ms per sim (2 sims/ms of throughput).
+    _feed(w, [(16, 14.0), (64, 38.0), (256, 134.0), (32, 22.0), (128, 70.0)])
+    fitted, fixed, per_sim, _, _ = w._chunk_model()
+    assert fitted
+    assert fixed == pytest.approx(6.0, abs=0.01)
+    assert per_sim == pytest.approx(0.5, abs=1e-4)
+    # usable 300 - 6 (2 % reserve) = 294; first chunk gets 1/2 of it: 147 ms
+    # -> (147 - 6) / 0.5 = 282 sims (B is still the uncalibrated 2).
     got = w._time_capped_chunk(8192, d, 0)
-    assert got <= int(_FIRST_CHUNK_TIME_SHARE * 2.0 * 300) + 1
-    assert got >= int(_FIRST_CHUNK_TIME_SHARE * 2.0 * 280)
+    assert 270 <= got <= 283
     # A different topology (rebuilt evaluator, pool install) forgets it.
     w._evaluator = object()
-    assert w.measured_chunk_rate() is None
+    assert w._chunk_model() is None
     assert w._time_capped_chunk(8192, d, 0) >= 1600
 
 
-def test_the_chunk_rate_falls_at_once_and_rises_slowly() -> None:
+def test_small_chunks_do_not_poison_the_throughput() -> None:
+    # Many 16-sim chunks at 8 ms (6 fixed + 16 x 0.125): 2 sims/ms per chunk,
+    # but the throughput is 8 sims/ms. One larger chunk lets the model see it.
     w = _bare_worker()
-    w._note_chunk_rate(1000, 100.0)  # 10 /ms
-    w._note_chunk_rate(100, 100.0)   # 1 /ms: falls at once
-    assert w.measured_chunk_rate() == pytest.approx(1.0)
-    w._note_chunk_rate(10000, 100.0)  # 100 /ms: rises at most 25 %
-    assert w.measured_chunk_rate() == pytest.approx(1.25)
-    w._note_chunk_rate(0, 100.0)  # a chunk that did nothing teaches nothing
-    assert w.measured_chunk_rate() == pytest.approx(1.25)
+    _feed(w, [(16, 8.0)] * 6 + [(128, 22.0), (16, 8.0), (64, 14.0)])
+    fitted, fixed, per_sim, _, _ = w._chunk_model()
+    assert fitted
+    assert per_sim == pytest.approx(0.125, rel=0.02)
+    assert fixed == pytest.approx(6.0, rel=0.05)
+    # The time cap for 70 ms is ~ (70 - 6) / 0.125 = 512, not 2 x 70 = 140.
+    assert w._sims_for_ms(70.0) >= 500
+
+
+def test_unseparable_sizes_predict_conservatively() -> None:
+    w = _bare_worker()
+    _feed(w, [(64, 20.0)] * 4)  # one size only: fixed vs per-sim unknown
+    fitted, *_ = w._chunk_model()
+    assert not fitted
+    assert w._predict_chunk_ms(16) == pytest.approx(20.0)  # never faster than the mean chunk
+    assert w._predict_chunk_ms(256) == pytest.approx(80.0)  # never faster per sim
+    assert w._sims_for_ms(10.0) == 0
+    assert w._sims_for_ms(40.0) == 128
+
+
+def test_a_slow_spell_does_not_lock_the_rate_in() -> None:
+    """The model decays toward recent chunks: after a slow spell (a loaded box)
+    the minimal-search price, and with it the sudden-death rule, recovers."""
+    w = _bare_worker()
+    slow = [(16, 40.0), (64, 100.0), (128, 180.0)] * 3   # 20 ms + 1.25 ms/sim
+    fast = [(16, 8.0), (64, 14.0), (128, 22.0)] * 6      # 6 ms + 0.125 ms/sim
+    _feed(w, slow)
+    slow_min = w.measured_min_chunk_ms()
+    assert slow_min == pytest.approx(40.0, rel=0.05)
+
+    def at_once(clock: int) -> bool:
+        return limits_from_go(GoArgs(wtime_ms=clock, btime_ms=clock), side_to_move_is_white=True,
+                              move_overhead_ms=30,
+                              min_chunk_ms=w.measured_min_chunk_ms()).clock_exhausted
+
+    assert at_once(1300)  # 20 x (20 + 40 + 8) = 1360 ms
+    _feed(w, fast)
+    assert w.measured_min_chunk_ms() < 12.0  # most of the way back to 8 ms
+    assert not at_once(1300)  # 20 x (20 + ~9 + 8) ~ 750 ms
 
 
 # -- F4: the previous tree's choice --------------------------------------------
@@ -238,20 +291,45 @@ def test_the_reply_book_names_a_searched_answer_two_plies_on() -> None:
         worker.close()
 
 
-def test_a_real_search_teaches_the_first_chunk_rate() -> None:
+def test_a_real_search_teaches_the_chunk_time_model() -> None:
     worker = _tiny_worker()
     try:
-        assert worker.measured_chunk_rate() is None
+        assert worker.measured_min_chunk_ms() is None
         worker.run(chess.Board(), stop_event=threading.Event(), deadline=Deadline(None), max_nodes=128)
-        rate = worker.measured_chunk_rate()
-        assert rate is not None
-        assert rate > 0.0
-        # The next timed search's first chunk is sized from it, not the bootstrap.
-        d = Deadline(deadline_ms=200, now=time.monotonic())
-        assert worker._time_capped_chunk(8192, d, 0) <= max(
-            _MIN_TIME_CAPPED_CHUNK, int(_FIRST_CHUNK_TIME_SHARE * rate * 200) + 1,
-        )
+        assert worker._cm_n >= 1
+        ms = worker.measured_min_chunk_ms()
+        assert ms is not None
+        assert ms > 0.0
+        # The next timed search's first chunk is sized from it, not the bootstrap
+        # (6 sims/ms x 200 ms = 1200).
+        d = Deadline(deadline_ms=10_000, now=time.monotonic())
+        b = max(worker._chunk_overrun_hi(), 2.0)
+        expect = min(worker._chunk_sims,
+                     max(_MIN_TIME_CAPPED_CHUNK, worker._sims_for_ms((10_000 - 25) / b)))
+        assert abs(worker._time_capped_chunk(8192, d, 0) - expect) <= 2
     finally:
+        worker.close()
+
+
+def test_the_startup_warmup_calibrates_the_chunk_model() -> None:
+    """After the warmup the model is fitted (it has seen several chunk sizes)
+    and the overrun bound has its three judged chunks, so the first move at a
+    short budget is not priced as if every chunk cost the whole warmup chunk."""
+    worker = _tiny_worker()
+    worker._chunk_sims = 512  # a realistic ChunkSims (production: 2048), above the calibration sizes
+    engine = Engine(worker, options=EngineOptions())
+    try:
+        engine.warmup_search()
+        model = worker._chunk_model()
+        assert model is not None
+        fitted, _, per_sim, _, _ = model
+        assert fitted
+        assert per_sim > 0.0
+        assert worker._overrun_n >= _CHUNK_OVERRUN_MIN_SAMPLES
+        # A 16-sim chunk is priced near its own cost, far below the warmup chunk.
+        assert worker._predict_chunk_ms(16) < 0.5 * worker._predict_chunk_ms(worker._chunk_sims)
+    finally:
+        engine.close()
         worker.close()
 
 
@@ -338,7 +416,8 @@ def test_a_parked_worker_answers_from_the_previous_trees_choice(out) -> None:
     for mv in ("e2e4", "e7e5", "g1f3"):
         after.push_uci(mv)
     book = {after.fen(): "b8c6"}
-    worker.reply_book_bestmove.side_effect = lambda b, searchmoves=(): book.get(b.fen())
+    worker.reply_book_bestmove.side_effect = (
+        lambda b, searchmoves=(), root_only=False: None if root_only else book.get(b.fen()))
     engine = Engine(worker, options=EngineOptions())
     try:
         engine.dispatch(parse_command("position startpos moves e2e4"))
@@ -373,15 +452,14 @@ def test_a_clock_too_short_to_search_is_answered_at_once(out, go, source, setup)
     engine = Engine(worker, options=EngineOptions())
     try:
         engine.dispatch(parse_command("position startpos moves e2e4"))
-        started = time.monotonic()
         engine.dispatch(parse_command(go))
         moves = out.wait_bestmoves(1)
-        elapsed_ms = (time.monotonic() - started) * 1000
         assert moves == [next(iter(setup.values()))], out.text()
         assert "clock too short to search" in out.text()
         assert f"source={source}" in out.text()
         assert worker.run.call_count == 0  # no search was started
-        assert elapsed_ms < 50
+        # Answered from what was known: no evaluation either (wall-clock free).
+        assert worker.fresh_root_policy_bestmove.call_count == 0
         # Not a fault: neither the fallback counter nor the unhealthy streak moves.
         assert engine.bestmove_fallback_used == 0
         assert engine._consecutive_search_failures == 0
@@ -390,17 +468,26 @@ def test_a_clock_too_short_to_search_is_answered_at_once(out, go, source, setup)
         engine.close()
 
 
-def test_with_nothing_known_a_fresh_eval_answers_when_the_clock_allows(out) -> None:
+def test_with_nothing_known_a_fresh_eval_answers_when_the_clock_allows(out, monkeypatch) -> None:
     worker = _mock_worker()
-    worker.fresh_root_policy_bestmove.return_value = "g8f6"
     engine = Engine(worker, options=EngineOptions())
+    budgets: list[float | None] = []
+
+    def fresh(board, searchmoves, budget_s):  # the helper-thread round trip, stubbed
+        budgets.append(budget_s)
+        return "g8f6"
+
+    monkeypatch.setattr(engine, "_bounded_fresh_eval", fresh)
     try:
         engine.dispatch(parse_command("position startpos moves e2e4"))
-        # 60 ms clock: no search (60 - 30 - 25 < 20), but ~27 ms to answer in.
-        engine.dispatch(parse_command("go wtime 60 btime 60"))
+        # Sudden death with 900 ms: answered at once, and 5 % of the 870 ms left
+        # (~43 ms) is far more than any loaded box needs to get here.
+        engine.dispatch(parse_command("go wtime 900 btime 900"))
         assert out.wait_bestmoves(1) == ["g8f6"], out.text()
         assert "source=fresh_root_eval" in out.text()
         assert worker.run.call_count == 0
+        assert len(budgets) == 1
+        assert budgets[0] is not None and budgets[0] > 0.0
     finally:
         engine.close()
 
@@ -484,24 +571,24 @@ def test_explicit_bounds_skip_the_sudden_death_rule_but_not_an_exhausted_clock()
 
 
 def test_the_sudden_death_threshold_scales_with_the_measured_speed() -> None:
-    def exhausted(ms: int, rate: float | None) -> bool:
+    def exhausted(ms: int, min_chunk_ms: float | None) -> bool:
         return limits_from_go(GoArgs(wtime_ms=ms, btime_ms=ms), side_to_move_is_white=True,
-                              move_overhead_ms=30, chunk_rate_per_ms=rate).clock_exhausted
+                              move_overhead_ms=30, min_chunk_ms=min_chunk_ms).clock_exhausted
 
     # Default (nothing measured): 20 x 45 ms = 900 ms after the overhead.
     assert exhausted(929, None)
     assert not exhausted(931, None)
-    # Fast device, 100 sims/ms: 20 x (20 + 0.16 + 8) ~ 563 ms -> 700 is searched.
-    assert not exhausted(700, 100.0)
-    assert exhausted(590, 100.0)
-    # Slow device, 0.5 sims/ms: 20 x (20 + 32 + 8) = 1200 ms -> 1000 is at once.
-    assert exhausted(1000, 0.5)
-    assert not exhausted(1300, 0.5)
+    # Fast device, a 16-sim chunk in 0.16 ms: 20 x 28.16 ~ 563 ms -> 700 is searched.
+    assert not exhausted(700, 0.16)
+    assert exhausted(590, 0.16)
+    # Slow device, 32 ms: 20 x (20 + 32 + 8) = 1200 ms -> 1000 is at once.
+    assert exhausted(1000, 32.0)
+    assert not exhausted(1300, 32.0)
 
 
 def test_the_engine_prices_the_sudden_death_rule_with_the_workers_rate(out) -> None:
     worker = _mock_worker()
-    worker.measured_chunk_rate.return_value = 100.0
+    worker.measured_min_chunk_ms.return_value = 0.16
     worker.run.side_effect = lambda board, **_kw: SearchResult("e7e5", None, 64, ("e7e5",), 0)
     engine = Engine(worker, options=EngineOptions())
     try:
@@ -624,6 +711,88 @@ def test_a_ponderhit_with_no_time_left_answers_from_the_ponder_tree(out) -> None
         engine.close()
 
 
+@pytest.mark.parametrize("deadline_open", [False, True], ids=["deadline_gone", "clock_exhausted_only"])
+def test_a_real_ponder_tree_answers_a_ponderhit_with_no_time_left(out, monkeypatch, deadline_open) -> None:
+    """The answer is read from the real ponder tree BEFORE the root advances:
+    after `advance_root` the tree is rooted at the hit position and
+    `child_bestmove(ponder_root, reply)` finds nothing (a MagicMock cannot see
+    that). ``clock_exhausted_only``: the sudden-death rule says "answer at
+    once" while the 20 ms deadline is still open -- the path on which the root
+    DOES advance, so reading the tree after it would find nothing."""
+    if deadline_open:
+        real_limits_from_go = engine_module.limits_from_go
+
+        def open_deadline(*a: Any, **kw: Any) -> Any:
+            limits = real_limits_from_go(*a, **kw)
+            if limits.clock_exhausted:  # same verdict, a deadline that cannot lapse here
+                limits = dataclasses.replace(limits, deadline_ms=60_000)
+            return limits
+
+        monkeypatch.setattr(engine_module, "limits_from_go", open_deadline)
+    worker = _tiny_worker()
+    # Predict the reply the ponder search is sure to visit: this net's own
+    # favourite after e2e4 (an unvisited reply has no tree answer).
+    after = chess.Board()
+    after.push_uci("e2e4")
+    reply = worker.run(after, stop_event=threading.Event(), deadline=Deadline(None),
+                       max_nodes=256).bestmove_uci
+    worker.reset_tree()
+    runs: list[bool] = []
+    real_run = worker.run
+
+    def counting_run(*a: Any, **kw: Any) -> SearchResult:
+        runs.append(bool(kw.get("max_nodes") is None))
+        return real_run(*a, **kw)
+
+    worker.run = counting_run  # type: ignore[method-assign]
+    engine = Engine(worker, options=EngineOptions(ponder=True))
+    try:
+        engine.dispatch(parse_command(f"position startpos moves e2e4 {reply}"))
+        engine.dispatch(parse_command("go ponder wtime 500 btime 500"))  # sudden death: at once
+        end = time.monotonic() + 20
+        while time.monotonic() < end:
+            tree, rid = worker._tree, worker._root_id
+            if tree is not None and rid is not None and int(tree.node_count()) > 200:
+                break
+            time.sleep(0.02)
+        engine.dispatch(parse_command("ponderhit"))
+        moves = out.wait_bestmoves(1, timeout=20)
+        assert "source=ponder_tree" in out.text(), out.text()
+        real = chess.Board()
+        for mv in ("e2e4", reply):
+            real.push_uci(mv)
+        assert chess.Move.from_uci(moves[0]) in real.legal_moves
+        assert len(runs) == 1  # only the ponder phase searched
+        _assert_answer_line(out, moves[0])
+    finally:
+        engine.close()
+        worker.close()
+
+
+def test_the_trees_own_choice_for_this_position_beats_the_prior() -> None:
+    """Busy-worker / watchdog fallback: when the snapshot's root IS this
+    position, its most-visited move (>= 8 visits) is preferred to the raw prior;
+    for any other position the prior still comes first."""
+    worker = _tiny_worker()
+    engine = Engine(worker, options=EngineOptions())
+    try:
+        board = chess.Board()
+        worker.run(board, stop_event=threading.Event(), deadline=Deadline(None), max_nodes=512)
+        tree_best = worker.tree_root_bestmove(board)
+        assert tree_best is not None
+        prior = next(m.uci() for m in board.legal_moves if m.uci() != tree_best)
+        worker.root_policy_bestmove = lambda b, searchmoves=(): prior  # type: ignore[method-assign]
+        assert engine._bestmove_fallback(board, (), allow_fresh_eval=False) == (tree_best, "prev_tree")
+        other = chess.Board()
+        other.push_uci("a2a3")  # not the snapshot's root
+        other_prior = next(iter(other.legal_moves)).uci()
+        worker.root_policy_bestmove = lambda b, searchmoves=(): other_prior  # type: ignore[method-assign]
+        assert engine._bestmove_fallback(other, (), allow_fresh_eval=False) == (other_prior, "root_policy")
+    finally:
+        engine.close()
+        worker.close()
+
+
 # -- #1364: every answer this PR adds ends on a PV line for the played move -----
 
 
@@ -657,7 +826,7 @@ def test_a_watchdog_answer_from_the_previous_search_is_aligned(out, monkeypatch)
     worker.run.side_effect = _hung("g1f3", release)  # not in searchmoves: last_pv unusable
     start = chess.Board()
     worker.reply_book_bestmove.side_effect = (
-        lambda b, searchmoves=(): "d2d4" if b.fen() == start.fen() else None)
+        lambda b, searchmoves=(), root_only=False: "d2d4" if b.fen() == start.fen() else None)
     engine = Engine(worker, options=EngineOptions())
     try:
         engine.dispatch(parse_command("position startpos"))
@@ -677,7 +846,7 @@ def test_a_parked_stop_answer_from_the_previous_search_is_aligned(out, monkeypat
     worker.run.side_effect = _hung("g1f3", release)
     start = chess.Board()
     worker.reply_book_bestmove.side_effect = (
-        lambda b, searchmoves=(): "d2d4" if b.fen() == start.fen() else None)
+        lambda b, searchmoves=(), root_only=False: "d2d4" if b.fen() == start.fen() else None)
     engine = Engine(worker, options=EngineOptions())
     try:
         engine.dispatch(parse_command("position startpos"))
@@ -724,50 +893,95 @@ def test_the_at_once_answer_goes_through_the_bestmove_guard(out, monkeypatch) ->
 def test_later_chunks_fill_the_remainder_by_the_measured_overrun_bound() -> None:
     w = _bare_worker(4096)
     w._batch_margin_sigmas = 2.0
-    for _ in range(10):  # chunks run exactly as predicted
-        w._chunk_pred_rate = 1.0
-        w._note_chunk_overrun(100, 100.0)
-    assert w._chunk_overrun_hi() == pytest.approx(1.0)
+    # 1 ms per sim, no fixed cost; once fitted, every chunk runs as predicted.
+    _feed(w, [(100, 100.0), (200, 200.0), (50, 50.0)] * 12)
+    assert w._chunk_overrun_hi() == pytest.approx(1.0, abs=0.03)
     d = Deadline(deadline_ms=2000, now=time.monotonic() - 1.0)  # ~1000 ms left
-    got = w._time_capped_chunk(8192, d, total_nodes=1000)  # 1 sim/ms
-    assert 950 <= got <= 976  # (1000 - 25 ms finishing reserve) at 1 sim/ms
-    # Noisy chunks: the bound widens, the chunk shrinks.
+    got = w._time_capped_chunk(8192, d, total_nodes=1000)
+    # (1000 - 25 ms finishing reserve) / B at 1 ms per sim.
+    assert int(950 / w._chunk_overrun_hi()) - 2 <= got <= 976
+    # Noisy chunks: the bound widens (capped at 2), the chunk shrinks.
     for r in (1.0, 2.0) * 10:
-        w._chunk_pred_rate = 1.0
         w._note_chunk_overrun(100, 100.0 * r)
     assert 1.5 < w._chunk_overrun_hi() <= 2.0  # never narrower than the old 0.5 share
-    # A tiny chunk is mostly fixed cost: not folded in, the bound stays put.
-    n_before = w._overrun_n
-    w._chunk_pred_rate = 1.0
-    w._note_chunk_overrun(16, 160.0)
-    assert w._overrun_n == n_before
     assert w._time_capped_chunk(8192, d, total_nodes=1000) < 700
-    # The stop margin is one smallest chunk at that bound, not a whole chunk.
-    margin = w._timed_stop_margin_ms(1, 2000, d, 1000, fixed_time=False)
+    # The stop margin is one smallest chunk at that bound, not a whole chunk
     # (plus min(25 ms, 2 % of the budget) to finish the move).
+    margin = w._timed_stop_margin_ms(1, 2000, d, 1000, fixed_time=False)
     assert margin == pytest.approx(
-        _MIN_TIME_CAPPED_CHUNK / 1.0 * w._chunk_overrun_hi() + 25.0, rel=0.05,
+        _MIN_TIME_CAPPED_CHUNK * 1.0 * w._chunk_overrun_hi() + 25.0, rel=0.05,
     )
     # ClockBatchMarginSigmas 0 disables the stop margin (the knob stays live).
     w._batch_margin_sigmas = 0.0
     assert w._timed_stop_margin_ms(1, 2000, d, 1000, fixed_time=False) == 0.0
 
 
-def test_a_device_failure_restarts_the_rate_and_the_overrun_bound(monkeypatch) -> None:
+def test_later_chunks_use_the_model_not_this_searchs_average_speed() -> None:
+    """This search averaged 1 sim/ms (a slow first chunk, say), but the model
+    knows a chunk costs 10 ms + 0.5 ms per sim: the next chunk fills the time
+    left at the model's price, about twice what the average would allow."""
+    w = _bare_worker(8192)
+    w._batch_margin_sigmas = 2.0
+    _feed(w, [(100, 60.0), (200, 110.0), (50, 35.0)] * 12)
+    assert w._chunk_overrun_hi() == pytest.approx(1.0, abs=0.03)
+    d = Deadline(deadline_ms=2000, now=time.monotonic() - 1.0)  # ~1000 ms left
+    got = w._time_capped_chunk(8192, d, total_nodes=1000)  # 1 sim/ms so far
+    b = w._chunk_overrun_hi()
+    assert got >= int(((975.0 / b) - 10.0) / 0.5) - 10  # ~1930, not ~975
+    assert got <= 1932
+
+
+def test_the_overrun_bound_never_drops_below_one() -> None:
+    w = _bare_worker()
+    w._batch_margin_sigmas = 2.0
+    _feed(w, [(100, 100.0), (200, 200.0), (50, 50.0)])
+    for _ in range(10):  # chunks HALF as long as predicted
+        w._note_chunk_overrun(100, 50.0)
+    assert w._overrun_mean < 0.7
+    assert w._chunk_overrun_hi() == 1.0  # a faster-than-predicted spell never sizes past it
+
+
+def test_the_overrun_bound_waits_for_three_samples() -> None:
+    w = _bare_worker()
+    w._batch_margin_sigmas = 2.0
+    _feed(w, [(100, 100.0)])  # the model exists; its first chunk was not judged
+    assert w._overrun_n == 0
+    w._note_chunk_overrun(100, 100.0)
+    assert w._chunk_overrun_hi() == _DEFAULT_CHUNK_OVERRUN
+    w._note_chunk_overrun(100, 100.0)
+    assert w._overrun_n == 2
+    assert w._chunk_overrun_hi() == _DEFAULT_CHUNK_OVERRUN
+    w._note_chunk_overrun(100, 100.0)
+    assert w._chunk_overrun_hi() == pytest.approx(1.0)
+
+
+def test_a_device_failure_restarts_the_model_and_the_overrun_bound(monkeypatch) -> None:
     w = _bare_worker(4096)
     failed: list[str] = []
     monkeypatch.setattr(w, "failed_pool_devices", lambda: tuple(failed), raising=False)
-    w._note_chunk_rate(100, 10.0)  # 10 sims/ms
-    for _ in range(5):
-        w._chunk_pred_rate = 10.0
-        w._note_chunk_overrun(100, 10.0)
+    _feed(w, [(100, 10.0)] * 6)  # 10 sims/ms
     assert w._overrun_n == 5
     failed.append("cpu:1")
-    assert w.measured_chunk_rate() is None  # this topology has measured nothing yet
-    w._note_chunk_rate(100, 20.0)
-    assert w.measured_chunk_rate() == pytest.approx(5.0)
+    assert w._chunk_model() is None  # this topology has measured nothing yet
+    _feed(w, [(100, 20.0)])
+    assert w._predict_chunk_ms(100) == pytest.approx(20.0)
     assert w._overrun_n == 0
     assert w._chunk_overrun_hi() == _DEFAULT_CHUNK_OVERRUN
+
+
+def test_visit_ties_go_to_the_higher_q_in_the_reply_book_order() -> None:
+    import numpy as np
+
+    class Tree:
+        def get_children_q(self, _node, _default):
+            return (np.array([5, 9, 7], dtype=np.int32), np.array([10, 10, 3], dtype=np.int32),
+                    np.array([0.1, 0.4, 0.9]))
+
+        def find_child(self, _node, action):
+            return 100 + int(action)
+
+    got = search_module._most_visited_children(Tree(), 0, 3, None)
+    assert [a for a, _ in got] == [9, 5, 7]  # tie on 10 visits: Q 0.4 beats 0.1
 
 
 # -- F9: no torch worker-thread team on the main thread -------------------------

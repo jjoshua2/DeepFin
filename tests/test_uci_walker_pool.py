@@ -126,6 +126,44 @@ def test_walker_pool_accumulates_visits() -> None:
         pool.close()
 
 
+def test_walker_pool_never_reallocs_the_arena_under_a_descending_walker() -> None:
+    """Walkers descend lock-free while others expand: the pool reserves the
+    run's worst case up front, so the node/child arrays never grow mid-run
+    (a realloc there is a use-after-free in a descending walker)."""
+    cfg = ModelConfig(input_extra_features="v1", embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0)
+    model = build_model(cfg)
+    model.eval()
+    tree = MCTSTree()  # no reserve: the smallest arena
+    seen: list[tuple[int, int]] = []
+
+    class Watched(ThreadSafeGPUDispatcher):
+        def evaluate_encoded(self, *args, **kwargs):  # runs while other walkers descend
+            stats = tree.memory_stats()
+            seen.append((int(stats["node_cap"]), int(stats["child_cap"])))
+            return super().evaluate_encoded(*args, **kwargs)
+
+    dispatcher = Watched(DirectGPUEvaluator(model, device="cpu", max_batch=4, use_amp=False))
+    root_cb = CBoard.from_board(chess.Board())
+    rid = tree.add_root(0, 0.0)
+    legal = root_cb.legal_move_indices().astype(np.int32)
+    tree.expand(rid, legal, np.full(legal.size, 1.0 / legal.size, dtype=np.float64))
+    before = tree.memory_stats()
+    pool = WalkerPool(
+        WalkerPoolConfig(n_walkers=4, c_puct=1.5, fpu_at_root=0.0,
+                         fpu_reduction=0.33, vloss_weight=3),
+        dispatcher,
+    )
+    try:
+        pool.run(tree=tree, root_id=rid, root_cboard=root_cb,
+                 target_sims=200, stop_event=threading.Event())
+        after = tree.memory_stats()
+        assert after["node_count"] > before["node_cap"]  # the run outgrew the old arena
+        assert len(seen) >= 100
+        assert set(seen) == {(int(after["node_cap"]), int(after["child_cap"]))}
+    finally:
+        pool.close()
+
+
 def test_walker_pool_gather_amplifies_batch() -> None:
     """With gather=G per walker, a single walker thread should submit
     NN batches of size up to G instead of always 1. Validates the

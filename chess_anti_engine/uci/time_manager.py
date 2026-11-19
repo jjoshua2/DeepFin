@@ -18,7 +18,7 @@ from .protocol import GoArgs
 _MIN_DEADLINE_MS = 20
 # A clocked search's hard deadline sits at least this far before the remaining
 # clock less MoveOverheadMs. That end point is where the deadline watchdog's
-# last-moment answer goes out (`_WATCHDOG_LAST_MOMENT_MS`, 3 ms, before it), and
+# last-moment answer goes out (`_WATCHDOG_LAST_MOMENT_MS`, 8 ms, before it), and
 # a search answers up to one (small) chunk plus its result build after its
 # deadline: ~8 ms on CPU for a 20 ms search. Without the slack a healthy search
 # on a 60 ms clock lost the race to the watchdog and was answered unsearched.
@@ -60,18 +60,19 @@ _MIN_MOVES_REMAINING_NO_INC = 20
 # then flagged around move 150; an at-once answer costs ~1-7 ms.
 _SUDDEN_DEATH_AT_ONCE_MOVES = _MIN_MOVES_REMAINING_NO_INC
 # A minimal search: the `_MIN_DEADLINE_MS` deadline, then one smallest chunk
-# (`MIN_SEARCH_CHUNK_SIMS` at the measured chunk rate) and the per-search fixed
-# cost (root eval, tree sync, result build; ~8 ms on CPU) past it. Before the
-# engine has measured a chunk rate, `_MIN_DEADLINE_MS + _CLOCK_SEARCH_SLACK_MS`.
+# (`MIN_SEARCH_CHUNK_SIMS` sims; its wall time from the engine's chunk-time
+# model) and the per-search fixed cost (root eval, result build; ~8 ms on CPU)
+# past it. Before any chunk is timed, `_MIN_DEADLINE_MS + _CLOCK_SEARCH_SLACK_MS`.
 MIN_SEARCH_CHUNK_SIMS = 16
 _MIN_SEARCH_FIXED_MS = 8.0
 
 
-def minimal_search_cost_ms(chunk_rate_per_ms: float | None) -> float:
-    """Wall time one minimal search costs at this chunk rate (sims per ms)."""
-    if chunk_rate_per_ms is None or chunk_rate_per_ms <= 0.0:
+def minimal_search_cost_ms(min_chunk_ms: float | None) -> float:
+    """Wall time of one minimal search, given the predicted wall time of one
+    `MIN_SEARCH_CHUNK_SIMS`-sim chunk (None: not measured yet)."""
+    if min_chunk_ms is None or min_chunk_ms <= 0.0:
         return float(_MIN_DEADLINE_MS + _CLOCK_SEARCH_SLACK_MS)
-    return _MIN_DEADLINE_MS + MIN_SEARCH_CHUNK_SIMS / chunk_rate_per_ms + _MIN_SEARCH_FIXED_MS
+    return _MIN_DEADLINE_MS + float(min_chunk_ms) + _MIN_SEARCH_FIXED_MS
 # Default upper cap on the moves estimate (a conservatism guard; the pieces formula
 # tops out near 30, so this normally does not bind). Exposed as `moves_horizon`.
 _DEFAULT_MOVES_REMAINING = 50
@@ -155,10 +156,11 @@ def limits_from_go(
     optimum_fraction: float = _OPTIMUM_FRACTION,
     moves_horizon: int = _DEFAULT_MOVES_REMAINING,
     pieces: int = 32,
-    chunk_rate_per_ms: float | None = None,
+    min_chunk_ms: float | None = None,
 ) -> SearchLimits:
-    """``chunk_rate_per_ms``: the engine's measured chunk rate (None before
-    one is measured); it prices a minimal search for the sudden-death rule."""
+    """``min_chunk_ms``: the engine's predicted wall time of its smallest
+    chunk (None before one is timed); it prices a minimal search for the
+    sudden-death rule."""
     # Ponder is the current phase; infinite applies to the post-hit go args.
     if args.ponder:
   # Ponder still wants a fallback budget (for `ponderhit` latency bounds)
@@ -198,7 +200,7 @@ def limits_from_go(
                 and args.depth is None
                 and args.mate is None
                 and int(remaining) - max(0, int(move_overhead_ms))
-                < _SUDDEN_DEATH_AT_ONCE_MOVES * minimal_search_cost_ms(chunk_rate_per_ms)
+                < _SUDDEN_DEATH_AT_ONCE_MOVES * minimal_search_cost_ms(min_chunk_ms)
             )
             if optimum_fraction <= 0.0:
   # OFF sentinel: reproduce the pre-time-management allocation EXACTLY — fixed

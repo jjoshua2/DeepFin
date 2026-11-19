@@ -65,6 +65,7 @@ import numpy as np
 from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
 from chess_anti_engine.inference_cache import PucvEvalCache, PucvEvalCacheStats
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
+from chess_anti_engine.mcts.headroom import reserve_concurrent_headroom
 from chess_anti_engine.mcts.puct_history import puct_history_args
 from chess_anti_engine.mcts.puct_tb import LeafSnapshots, descend_batch, mark_batch_solved, override_leaf_values
 from chess_anti_engine.tablebase import SyzygyProbe
@@ -912,6 +913,9 @@ class MultiGpuPucvPool:
             return 0
         if self._shutdown.is_set():
             raise RuntimeError("MultiGpuPucvPool is closed")
+  # Workers descend lock-free while others expand under tree_lock: an arena
+  # realloc mid-run is a use-after-free in the descending thread.
+        reserve_concurrent_headroom(tree, target_sims)
 
         with self._job_lock:
             self._errors = []
