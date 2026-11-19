@@ -1,4 +1,4 @@
-"""Authored stdlib synthetic controls; UNRUN. No project or scientific imports."""
+"""Synthetic metadata controls for the banked structural exposure audit."""
 import importlib.util
 from pathlib import Path
 import tempfile
