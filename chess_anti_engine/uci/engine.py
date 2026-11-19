@@ -4222,8 +4222,12 @@ class Engine:
         # thread: not wrapped in ``wedge.parking`` (one parked thread per
         # fallback would grow without bound).
         helper = threading.Thread(target=run, daemon=True, name="uci-fresh-eval")
+        # The budget also bounds the wait for the helper's OS thread to exit
+        # after it returned (up to `OS_EXIT_WAIT_S`, 1 s, without a deadline):
+        # an at-once answer to `go movetime 20` waited out a torch teardown.
+        deadline = time.monotonic() + max(0.0, timeout)
         helper.start()
-        join_thread(helper, max(0.0, timeout))
+        join_thread(helper, max(0.0, timeout), deadline=deadline)
         if helper.is_alive():
             with self._state_lock:
                 self._orphan_threads.append(helper)

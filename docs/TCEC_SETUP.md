@@ -367,24 +367,30 @@ nothing.
   from its candidates' proofs after each halving phase).
 - `go depth N` treats a principal variation that ends on a proven position as
   complete, even when it is shorter than `N`, only when nothing better can exist:
-  the root is proven won or lost, or the line's first move is a proven win. A
-  root proven won or lost (a forced mate either way, a tablebase win) therefore
-  answers once proven, in every search mode. A line that ends drawn or lost while
-  other moves are still unproven does not end the search, and a root the tree
-  calls drawn does not either (see the twofold note below), so such a `go depth`
-  waits for `stop`, as before. `go nodes N` counts its visits and ends as usual;
+  the root is proven won, lost or drawn, or the line's first move is a proven
+  win. A proven root (a forced mate either way, a tablebase win, a position whose
+  only move stalemates) therefore answers once proven, in every search mode. A
+  root is proven drawn only when every move is proven, and a proof is never
+  undone, so searching on could not change it, even when the draw rests on a
+  twofold repetition (below). A line that ends drawn or lost while other moves
+  are still unproven does not end the search, so such a `go depth` waits for
+  `stop`, as before. `go nodes N` counts its visits and ends as usual;
   `go infinite` still waits for `stop`.
 - Known gap: the pool and walker paths score a position that repeats one already
   on the board or in the line (a twofold repetition) as a draw. A root whose only
   escape is such a repetition can be marked drawn although it is lost. The engine
-  does not stop `go depth` or `go mate` on a drawn root for that reason; the score
-  it reports can still read 0.00 there.
+  does not stop `go mate` on a drawn root for that reason; the score it reports
+  can still read 0.00 there. `go depth` does stop on it (above): searching on
+  would not remove the repetition from the proof.
 - When the network thinks the root is winning, the search leaves out moves that
   draw at once. If every move it did search is then proven lost, the engine plays
   a move that ends the game drawn on the board (stalemate, insufficient material,
-  50-move clock at 100, a third repetition), reporting `score cp 0` and
+  50-move clock at 100, a third repetition), or one that leaves the 50-move clock
+  at 99 when every reply of the opponent reaches 100 (or draws otherwise) and
+  none mates, reporting `score cp 0` and
   `info string every searched move is proven lost; playing a move that draws`.
-  A move after which the opponent could merely claim a draw does not count. One
+  A move after which the opponent could merely claim a draw, but could also play
+  on with a pawn move, a capture or a mate, does not count. One
   case is left over: on the classic path, if leaving those moves out leaves a
   single move, that move is returned unsearched and the draw is not found.
 - On a root proven lost the engine plays the move that delays mate longest: a
@@ -604,8 +610,11 @@ the reply when a search could not start, a clock too short to search, a refused
 order: the previous search's choice for this position (`source=prev_tree`, the
 tree's most-visited move at its own root, recorded between chunks), the
 network's cached root policy for this position, the previous search's choice
-recorded for the positions two plies on (`source=prev_tree`), one bounded fresh
-evaluation, or the first legal move, and says so on an `info string` with
+recorded for the positions two plies on (`source=prev_tree`; the most-visited
+move there, except the proven win at a position the tree proved won, and a move
+that does not allow mate in one at a position it proved lost), one bounded
+fresh evaluation (its wait never runs past its own small time budget), or the
+first legal move, and says so on an `info string` with
 `bestmove_fallback_used=N source=... move=...`.
 These lines mean something went wrong and are worth a report:
 

@@ -395,12 +395,47 @@ class _SearchState:
     pruned_root_draws: bool = False
 
 
+def _ends_drawn(board: chess.Board) -> bool:
+    """The game is over, drawn, on ``board``: stalemate, insufficient
+    material, the 50-move clock at 100 or more, or a third occurrence."""
+    return not board.is_checkmate() and (
+        board.is_stalemate()
+        or board.is_insufficient_material()
+        or board.halfmove_clock >= 100
+        or board.is_repetition(3)
+    )
+
+
+def _every_reply_ends_drawn(board: chess.Board) -> bool:
+    """With the 50-move clock at 99, every legal reply ends the game drawn
+    (each is reversible, so it reaches 100, or draws otherwise) and none
+    mates. Only examined at clock 99: earlier, a reply cannot reach 100."""
+    if board.halfmove_clock != 99:
+        return False
+    replies = list(board.legal_moves)
+    if not replies:
+        return False
+    for reply in replies:
+        board.push(reply)
+        try:
+            if not _ends_drawn(board):
+                return False
+        finally:
+            board.pop()
+    return True
+
+
 def root_forced_draw_actions(board: chess.Board, actions: Sequence[int]) -> list[int]:
-    """The root ``actions`` (policy indices) whose move ENDS the game drawn on
-    the board: stalemate, insufficient material, the 50-move clock at 100 or
-    more, or a third occurrence of the position. A move after which the
-    opponent merely MAY claim a draw on its reply is not one: the opponent
-    can decline and play on."""
+    """The root ``actions`` (policy indices) whose move forces a draw on the
+    board: it ends the game drawn (stalemate, insufficient material, the
+    50-move clock at 100 or more, a third occurrence), or it leaves the clock
+    at 99 with every opponent reply ending the game drawn and none mating
+    (an opponent with only reversible moves cannot decline the 50-move draw).
+    A move after which the opponent merely MAY claim a draw on its reply is not
+    one: an opponent with a pawn move, a capture or a mate can decline and play
+    on. Before 2026-11-19 the second kind was pruned from a winning root and
+    then counted as not a draw, so a root whose searched moves all lose was
+    marked lost and a losing move played (outside-model review lead R1)."""
     wanted = {int(a) for a in actions}
     out: list[int] = []
     for move in board.legal_moves:
@@ -409,11 +444,8 @@ def root_forced_draw_actions(board: chess.Board, actions: Sequence[int]) -> list
             continue
         board.push(move)
         try:
-            if not board.is_checkmate() and (
-                board.is_stalemate()
-                or board.is_insufficient_material()
-                or board.halfmove_clock >= 100
-                or board.is_repetition(3)
+            if _ends_drawn(board) or (
+                not board.is_checkmate() and _every_reply_ends_drawn(board)
             ):
                 out.append(action)
         finally:

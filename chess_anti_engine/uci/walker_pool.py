@@ -218,6 +218,10 @@ class WalkerPool:
             return 0
         if self._shutdown.is_set():
             raise RuntimeError("WalkerPool is closed")
+  # A stop already set: no walker would descend, so do not reserve the
+  # worst-case arena first (a 1M-sim target on a small tree zero-filled ~14 GB).
+        if stop_event.is_set():
+            return 0
   # Walkers descend lock-free while others expand under tree_lock: an arena
   # realloc mid-run is a use-after-free in the descending thread.
         reserve_concurrent_headroom(tree, target_sims)

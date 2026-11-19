@@ -3007,9 +3007,9 @@ class SearchWorker:
                 for reply, reply_node in _most_visited_children(tree, node, _REPLY_BOOK_REPLIES, None):
                     pos = after.copy(stack=False)
                     pos.push(index_to_move(reply, after))
-                    answer = _most_visited_children(tree, reply_node, 1, None)
-                    if answer:
-                        book[pos.fen()] = index_to_move(answer[0][0], pos).uci()
+                    answer = _book_answer(tree, reply_node, pos)
+                    if answer is not None:
+                        book[pos.fen()] = index_to_move(answer, pos).uci()
         except Exception:
             return  # a snapshot is an optimisation; never fail a search for it
         self._reply_book = (board.fen(), book)
@@ -3593,20 +3593,26 @@ class SearchWorker:
         line (a stalemate in a won KQK, an in-tree twofold repetition) while an
         unproven sibling is better. So the proven end counts as complete --
         ``max_depth`` -- only when nothing better can exist: the ROOT is proven
-        won or lost, or the PV's first move is a proven win for the side to
-        move. A root proven DRAWN does not count: the C tree proves draws from
-        in-tree twofold repetitions, which may not be draws at all (a WIN or
-        LOSS proof never rests on a draw). Otherwise the raw length, and a
-        ``go depth`` the search cannot complete waits for ``stop`` as before.
-        On the pool / walker / root-parallel paths a proven root re-visits its
-        proven lines forever, so without this the depth bound never ended."""
+        (won, lost or drawn), or the PV's first move is a proven win for the
+        side to move. A drawn root counts too, although the C tree proves draws
+        from in-tree twofold repetitions, which may not be draws at all: a root
+        is proven drawn only once EVERY child is proven
+        (``tree_resolve_from_children``; root-parallel's `_resolve_root_solved`
+        likewise) and solved statuses are never cleared, so no further search
+        can reach an unproven sibling or change the verdict -- waiting cannot
+        improve the move. (A position whose only move stalemates never
+        answered `go depth 4` on the pool / walker paths.) Otherwise the raw
+        length, and a ``go depth`` the search cannot complete waits for
+        ``stop`` as before. On the pool / walker / root-parallel paths a proven
+        root re-visits its proven lines forever, so without this the depth
+        bound never ended."""
         n = len(pv_indices)
         tree, root = self._tree, self._root_id
         if max_depth is None or n == 0 or n >= max_depth or tree is None or root is None:
             return n
         first = int(tree.find_child(root, int(pv_indices[0])))
         decided = (
-            int(tree.get_solved_status(root)) in (1, -1)
+            int(tree.get_solved_status(root)) in (1, -1, 2)
             or (first >= 0 and int(tree.get_solved_status(first)) == -1)
         )
         if not decided:
@@ -4400,8 +4406,8 @@ class SearchWorker:
                     stop_reason = "mate_solved_root"
                 elif mate_forced_root and (
                     int(completed) == 0
-                    # Won / lost only: a DRAW proof may rest on an in-tree
-                    # twofold repetition (see `_depth_pv_len`).
+                    # Won / lost; a drawn forced root (no mate for the mover
+                    # can exist) ends at the forced-root budget below.
                     or self._root_solved_status() in (1, -1)
                     or total_nodes >= _FORCED_ROOT_MATE_SIMS_PER_MOVE * int(mate_moves)
                 ):
@@ -5423,6 +5429,32 @@ def _stop_reserve_ms(deadline: Deadline) -> float:
         return 0.0
     budget = float(deadline.elapsed_ms() + max(0, remaining))
     return min(_STOP_RESERVE_MS, _STOP_RESERVE_SHARE * budget)
+
+
+def _book_answer(tree: Any, node: int, board: chess.Board) -> int | None:
+    """The reply book's move at ``node`` (``board`` is its position): the
+    most-visited child, except on a node the tree has proven. Proven won: the
+    most-visited child proven lost for the opponent (the visit leader can be a
+    move searched before the proof, which is not the win). Proven lost: the
+    most-visited child after which the opponent has no mate in one, if there is
+    one (the visit leader of a lost node is arbitrary and can be mated at once;
+    `tree_root_bestmove` applies the same rule at the root). None: no visited
+    child."""
+    ranked = _most_visited_children(tree, node, 256, None)  # every visited child
+    if not ranked:
+        return None
+    status = int(tree.get_solved_status(int(node)))
+    if status == 1:
+        for action, child in ranked:
+            if int(tree.get_solved_status(int(child))) == -1:
+                return action
+    elif status == -1:
+        for action, _child in ranked:
+            after = board.copy(stack=False)
+            after.push(index_to_move(action, board))
+            if not _has_mate_in_one(after):
+                return action
+    return ranked[0][0]
 
 
 def _most_visited_children(

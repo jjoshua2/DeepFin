@@ -428,10 +428,13 @@ def test_depth_pv_end_counts_only_when_nothing_better_can_exist() -> None:
         _mark(tree, child, first_status)
         assert worker._depth_pv_len([10, 20], 4) == 2, first_status
 
-    for root_status, complete in ((1, True), (-1, True), (2, False)):
+    for root_status, complete in ((1, True), (-1, True), (2, True)):
         worker, tree, rid, child, leaf = _depth_tree()
         _mark(tree, leaf, 2)
-        _mark(tree, rid, root_status)                # a DRAW root may rest on a twofold
+        # A DRAW root may rest on a twofold, but it is proven only with every
+        # child proven and never un-proven: waiting cannot change it (review
+        # lead S5, test_uci_search_review_leads.py).
+        _mark(tree, rid, root_status)
         assert worker._depth_pv_len([10, 20], 4) == (4 if complete else 2), root_status
 
 
