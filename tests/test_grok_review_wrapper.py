@@ -94,6 +94,22 @@ else:
     return repo, env, base, head
 
 
+def _assert_reaped(pid: int) -> None:
+    status = Path(f"/proc/{pid}/stat")
+    deadline = time.monotonic() + 2
+    while True:
+        try:
+            state = status.read_text().split(") ", 1)[1]
+        except (FileNotFoundError, ProcessLookupError):
+            # The pid can exit between open() and read(): read then raises ESRCH.
+            return
+        # A terminated orphan can briefly remain as a zombie pending its reaper.
+        if state.startswith("Z"):
+            return
+        assert time.monotonic() < deadline, f"owned pid {pid} survived cleanup"
+        time.sleep(0.01)
+
+
 def _run(repo: Path, env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["bash", str(_WRAPPER), *args], cwd=repo, env=env,
@@ -271,10 +287,7 @@ def test_timeout_kills_term_resistant_process_group(tmp_path: Path) -> None:
     env.update(RESIST_TERM="1", CHILD_PID=str(pid_file), GROK_REVIEW_TIMEOUT_SECONDS="1")
     result = _run(repo, env, "--diff", f"{base}...{head}")
     assert result.returncode == 70, result.stderr
-    child = int(pid_file.read_text())
-    status = Path(f"/proc/{child}/stat")
-    # A terminated orphan can briefly remain as a zombie pending its parent's reaper.
-    assert not status.exists() or status.read_text().split(") ", 1)[1].startswith("Z")
+    _assert_reaped(int(pid_file.read_text()))
 
 
 def test_wrapper_kills_descendants_a_child_only_timeout_leaves_behind(tmp_path: Path) -> None:
@@ -303,9 +316,7 @@ except subprocess.TimeoutExpired:
     env.update(RESIST_TERM="1", CHILD_PID=str(pid_file), GROK_REVIEW_TIMEOUT_SECONDS="3")
     result = _run(repo, env, "--diff", f"{base}...{head}")
     assert result.returncode == 70, result.stderr
-    child = int(pid_file.read_text())
-    status = Path(f"/proc/{child}/stat")
-    assert not status.exists() or status.read_text().split(") ", 1)[1].startswith("Z")
+    _assert_reaped(int(pid_file.read_text()))
 
 
 @pytest.mark.parametrize(("child_exit", "expected_status"), [(0, 0), (7, 70)])
@@ -376,18 +387,7 @@ exit 2
     assert result.returncode == 70, result.stderr
     assert "could not inspect the Grok process group" in result.stderr
     for pid_file in (leader_file, child_file):
-        pid = int(pid_file.read_text())
-        status = Path(f"/proc/{pid}/stat")
-        deadline = time.monotonic() + 2
-        while True:
-            try:
-                state = status.read_text().split(") ", 1)[1]
-            except FileNotFoundError:
-                break
-            if state.startswith("Z"):
-                break
-            assert time.monotonic() < deadline, f"owned pid {pid} survived cleanup"
-            time.sleep(0.01)
+        _assert_reaped(int(pid_file.read_text()))
     observed = json.loads(Path(env["OBSERVED"]).read_text())
     assert not Path(observed["snapshot"]).exists()
     assert (repo / "value.txt").read_text() == "base"

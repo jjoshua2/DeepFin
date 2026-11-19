@@ -84,7 +84,8 @@ def _assert_reaped(pid: int) -> None:
     while True:
         try:
             state = status.read_text().split(") ", 1)[1]
-        except FileNotFoundError:
+        except (FileNotFoundError, ProcessLookupError):
+            # The pid can exit between open() and read(): read then raises ESRCH.
             return
         # A terminated orphan can briefly remain as a zombie pending its reaper.
         if state.startswith("Z"):
