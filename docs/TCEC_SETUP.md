@@ -525,17 +525,29 @@ late by that much.
 or a failed search-path re-warm at `isready`, print
 `info string WARNING engine unhealthy: ...` once; every `go` is still answered. At
 the next `isready` after a game boundary (`ucinewgame`, or `position startpos` with
-no moves) the engine rebuilds the evaluator and reruns the strict startup check:
-every compiled batch size, twice, on the evaluator it will play with (the rebuilt
-one, or the previous one when the rebuild failed;
-`info string health check: re-ran all ... compiled batch shapes ...`), then a
-real search. It passes only when both complete. (Before 2026-11-18 it ran only the
-small search, which on the real GPU passed while every longer `go` failed.)
+no moves) the engine rebuilds the evaluator and reruns the strict startup check.
+It first empties every eval cache (`info string health check: emptied ... eval
+cache(s) ...` when `EvalCacheEntries` > 0), so nothing below is answered from
+evals cached before the evaluator broke. It then runs every compiled batch size
+twice, below the cache, on the evaluator it will play with (the rebuilt one, or
+the previous one when the rebuild failed), counting the forwards that really ran:
+`info string health check: re-ran ... compiled batch shapes on ...: ... real
+forwards, at least 2 per shape per device`. A shape that raised or did not run
+twice fails the check. Last comes a real search. The check passes only when all
+of these complete. (Before 2026-11-18 it ran only the small search, which on the
+real GPU passed while every longer `go` failed.)
+
 The result is one of: `info string engine health check passed; unhealthy state cleared`;
 `info string WARNING engine health check passed on a DEGRADED path ...`; or
 `info string engine health check failed ...` (and `deepfin: engine health check failed: ...`
 on stderr) and exit 1 before `readyok`. A GUI that never
 sends `isready` between games gets no re-check.
+
+The shape re-run covers the primary evaluator only. Beside the multi-GPU pool
+the primary is uncompiled, so there is nothing to re-run, and the engine says so:
+`info string health check: no compiled evaluator under the primary (eager), so no
+batch shapes were re-run; ...`. A pool worker that fails is caught by the
+DEGRADED path described below, not by this check.
 
 **One GPU failing on the multi-GPU PUCV pool.** A device whose evaluator raises
 (CUDA out of memory, device lost, any error) during a search is dropped; its
@@ -732,8 +744,9 @@ a device that raised: use a different value or restart the engine. While a stuck
 `MultiPV` and `UCI_ShowWDL` apply. On the compiled GPU path the rebuilt evaluator is
 warmed on a new thread through the compiled graphs the previous one built. Until
 2026-11-18 that warm-up failed on the real GPU (`CUBLAS_STATUS_NOT_INITIALIZED`
-inside a CUDA-graph capture) and every later search then failed with
-`already recording to mempool_id`; rebuilds now succeed (section 9). Should a
+inside a CUDA-graph capture). In some runs every later search then failed too,
+with `already recording to mempool_id` (seen on 2026-11-18; not in a 2026-11-16
+run or in a review run, where the rebuild failed but later searches still ran). Rebuilds now succeed. Should a
 rebuild's capture still fail, the failed capture is closed (stderr: `a CUDA-graph
 capture failed and left its memory pool marked as capturing; released it ...`) and
 the previous evaluator keeps searching.

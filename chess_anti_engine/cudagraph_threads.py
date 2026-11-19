@@ -38,7 +38,6 @@ no-graph compile mode for its repeats (UCI ``__main__``).
 from __future__ import annotations
 
 import contextlib
-import gc
 import logging
 import threading
 from collections.abc import Generator
@@ -50,13 +49,10 @@ _log = logging.getLogger(__name__)
 _tls = threading.local()
 # Every successful ``release_failed_capture`` (device index), for tests/diagnostics.
 released_captures: list[int] = []
-# Set by a release: the failed capture's tensors (allocated in the graph pool)
-# are still referenced by the exception's traceback, usually through a
-# reference cycle, when the scope is ended. They must be gone before the next
-# record through that manager, which otherwise refuses with "live storage data
-# ptrs are in the cudagraph pool but not accounted for": the next compiled
-# forward collects them first.
-_collect_before_next_forward = threading.Event()
+# The release reads torch internals (see ``_capture_pools``); when a failure
+# that looks like a capture finds none of them, say so once per process.
+_internals_warned = False
+_CAPTURE_SIGNS = ("capture", "CUBLAS_STATUS_NOT_INITIALIZED", "already recording to mempool")
 
 
 def _cuda_index(device: Any) -> int | None:
@@ -101,38 +97,62 @@ def prepare_thread_for_capture(device: Any) -> None:
 _CUDAGRAPH_TREES_MODULE = "torch._inductor.cudagraph_trees"
 
 
-def _capture_pools(exc: BaseException) -> list[tuple[int, Any]]:
-    """(device index, mempool id) of every cudagraph tree manager / node on the
-    stack of ``exc`` or the exceptions it chains (``__cause__``/``__context__``).
-
-    Only objects of ``torch._inductor.cudagraph_trees`` classes are read: a
-    ``CUDAGraphTreeManager`` (``device_index``, ``cuda_graphs_thread_pool``)
-    or a ``CUDAGraphNode`` (``device``, ``cuda_graphs_pool``).
-    """
-    found: list[tuple[int, Any]] = []
-    seen_exc: set[int] = set()
+def _chain(exc: BaseException) -> list[BaseException]:
+    """``exc`` and every exception it chains (``__cause__`` / ``__context__``)."""
+    out: list[BaseException] = []
     pending: list[BaseException | None] = [exc]
     while pending:
         e = pending.pop()
-        if e is None or id(e) in seen_exc:
+        if e is None or any(e is seen for seen in out):
             continue
-        seen_exc.add(id(e))
+        out.append(e)
+        pending.append(e.__cause__)
+        pending.append(e.__context__)
+    return out
+
+
+def _capture_pools(exc: BaseException) -> list[tuple[int, Any]]:
+    """(device index, mempool id) of every cudagraph tree manager on the stack
+    of ``exc`` or the exceptions it chains.
+
+    Torch internals, pinned by ``tests/test_uci_cudagraph_rebuild.py`` against
+    the installed torch: frames whose ``self`` is a
+    ``torch._inductor.cudagraph_trees.CUDAGraphTreeManager`` (on the real GPU
+    every failed record has ``run`` / ``record_function`` frames of the
+    manager), read for ``device_index`` and ``cuda_graphs_thread_pool``.
+    """
+    found: list[tuple[int, Any]] = []
+    for e in _chain(exc):
         tb = e.__traceback__
         while tb is not None:
             obj = tb.tb_frame.f_locals.get("self")
             if type(obj).__module__ == _CUDAGRAPH_TREES_MODULE:
                 pool = getattr(obj, "cuda_graphs_thread_pool", None)
-                if pool is None:
-                    pool = getattr(obj, "cuda_graphs_pool", None)
                 dev = getattr(obj, "device_index", None)
-                if dev is None:
-                    dev = getattr(obj, "device", None)
                 if pool is not None and isinstance(dev, int) and (dev, pool) not in found:
                     found.append((dev, pool))
             tb = tb.tb_next
-        pending.append(e.__cause__)
-        pending.append(e.__context__)
     return found
+
+
+def _looks_like_capture_failure(exc: BaseException) -> bool:
+    return any(sign in str(e) for e in _chain(exc) for sign in _CAPTURE_SIGNS)
+
+
+def _warn_internals_missing(what: str) -> None:
+    global _internals_warned
+    if _internals_warned:
+        return
+    _internals_warned = True
+    import torch
+
+    _log.warning(
+        "a compiled forward failed in what looks like a CUDA-graph capture, but %s "
+        "(torch %s): a failed capture cannot be released, and the evaluator it "
+        "poisons fails every later search; the health check will catch that at the "
+        "next game boundary. cudagraph_threads needs updating for this torch.",
+        what, torch.__version__,
+    )
 
 
 def release_failed_capture(exc: BaseException) -> bool:
@@ -142,14 +162,20 @@ def release_failed_capture(exc: BaseException) -> bool:
     on its stack was still marked as capturing (a capture died inside
     ``capture_end``) and is now usable again; False when nothing was left open
     (the usual case: the failure was not a capture, or its scope was closed).
+    A capture-looking failure where the torch internals this reads are absent
+    is warned about loudly, once.
     """
-    pools = _capture_pools(exc)
-    if not pools:
-        return False
     import torch
 
     end = getattr(torch._C, "_cuda_endAllocateToPool", None)
-    if end is None:
+    pools = _capture_pools(exc)
+    if end is None or not pools:
+        if _looks_like_capture_failure(exc):
+            _warn_internals_missing(
+                "torch._C._cuda_endAllocateToPool is missing" if end is None
+                else "no torch._inductor.cudagraph_trees manager (device_index, "
+                     "cuda_graphs_thread_pool) was found on its stack"
+            )
         return False
     released = False
     for idx, pool in pools:
@@ -158,7 +184,6 @@ def release_failed_capture(exc: BaseException) -> bool:
         except RuntimeError:
             continue  # "not currently recording": nothing was left open
         released = True
-        _collect_before_next_forward.set()
         released_captures.append(idx)
         _log.warning(
             "cuda:%d: a CUDA-graph capture failed and left its memory pool marked as "
@@ -170,9 +195,6 @@ def release_failed_capture(exc: BaseException) -> bool:
 @contextlib.contextmanager
 def compiled_forward_scope(device: Any) -> Generator[None]:
     """Wrap one compiled forward: handles first, failed-capture cleanup after."""
-    if _collect_before_next_forward.is_set():
-        _collect_before_next_forward.clear()
-        gc.collect()
     prepare_thread_for_capture(device)
     try:
         yield

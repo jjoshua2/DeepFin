@@ -1141,8 +1141,15 @@ class ShapeLedger:
         self._armed = False
         self._lock = threading.Lock()
         self.cold_shapes: list[tuple[str, int]] = []
+        # (graph, rows) -> forwards, only between start_counting/stop_counting
+        # (the health re-check proving each shape really ran; off otherwise).
+        self._counts: dict[tuple[str, int], int] | None = None
 
     def note(self, entry: str, rows: int, *, graph: str = "dense") -> None:
+        counts = self._counts
+        if counts is not None:
+            with self._lock:
+                counts[(graph, rows)] = counts.get((graph, rows), 0) + 1
         seen = self._seen_by_graph[graph]
         if rows in seen:
             return
@@ -1174,6 +1181,17 @@ class ShapeLedger:
     def arm(self) -> None:
         with self._lock:
             self._armed = True
+
+    def start_counting(self) -> None:
+        """Count every forward from now on, per (graph, padded rows)."""
+        with self._lock:
+            self._counts = {}
+
+    def stop_counting(self) -> dict[tuple[str, int], int]:
+        """The counts since ``start_counting`` (empty if it was not called)."""
+        with self._lock:
+            counts, self._counts = self._counts or {}, None
+        return counts
 
     @property
     def armed(self) -> bool:

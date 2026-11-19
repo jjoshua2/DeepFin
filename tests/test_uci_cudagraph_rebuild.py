@@ -110,6 +110,55 @@ def test_release_failed_capture_ends_the_failing_managers_pool_scope_once(monkey
     assert cudagraph_threads.released_captures == [0]
 
 
+def test_the_torch_internals_the_release_reads_exist_in_this_torch() -> None:
+    """``release_failed_capture`` reads private torch internals and falls back
+    to a warning without them: a torch upgrade that renames one must fail here,
+    not silently bring the poisoning back. Read off the installed torch."""
+    import inspect
+
+    import torch._inductor.cudagraph_trees as ct
+
+    if torch.backends.cuda.is_built():  # a CPU-only torch has no CUDA bindings to read
+        assert callable(getattr(torch._C, "_cuda_endAllocateToPool", None))
+        assert callable(getattr(torch._C, "_cuda_clearCublasWorkspaces", None))
+    assert ct.__name__ == cudagraph_threads._CUDAGRAPH_TREES_MODULE
+    manager = ct.CUDAGraphTreeManager
+    assert manager.__module__ == cudagraph_threads._CUDAGRAPH_TREES_MODULE
+    for method in ("run", "record_function"):  # the frames a failed record has
+        assert method in vars(manager), method
+    init = inspect.getsource(manager.__init__)
+    assert "self.device_index" in init
+    assert "self.cuda_graphs_thread_pool" in init
+    # The pool the manager records into is that one (a node's pool is the manager's).
+    assert "cuda_graphs_thread_pool" in inspect.getsource(manager.record_function)
+
+
+def test_a_capture_failure_the_release_cannot_read_is_warned_once(monkeypatch, caplog) -> None:
+    """No cudagraph-trees manager on the stack (or no endAllocateToPool) for a
+    failure that looks like a capture: say so loudly, once, with the torch
+    version, instead of returning False in silence."""
+    import logging
+
+    monkeypatch.setattr(cudagraph_threads, "_internals_warned", False)
+    caplog.set_level(logging.WARNING, logger=cudagraph_threads.__name__)
+    assert cudagraph_threads.release_failed_capture(RuntimeError("CUDA out of memory")) is False
+    assert not caplog.records  # not a capture: nothing to say
+    capture = RuntimeError("CUDA error: operation failed due to a previous error during capture")
+    assert cudagraph_threads.release_failed_capture(capture) is False
+    assert cudagraph_threads.release_failed_capture(capture) is False
+    warned = [r.getMessage() for r in caplog.records]
+    assert len(warned) == 1, warned
+    assert torch.__version__ in warned[0]
+    assert "no torch._inductor.cudagraph_trees manager" in warned[0]
+
+    caplog.clear()
+    monkeypatch.setattr(cudagraph_threads, "_internals_warned", False)
+    monkeypatch.delattr(torch._C, "_cuda_endAllocateToPool", raising=False)
+    wrapped = _captured_failure(_FakeManager(0, ("pool", 1)))
+    assert cudagraph_threads.release_failed_capture(wrapped) is False
+    assert "_cuda_endAllocateToPool is missing" in caplog.records[0].getMessage()
+
+
 def test_compiled_forward_scope_prepares_first_and_releases_on_failure(monkeypatch) -> None:
     calls: list[str] = []
     monkeypatch.setattr(cudagraph_threads, "prepare_thread_for_capture",
@@ -175,8 +224,8 @@ def test_health_check_fails_when_a_compiled_shape_raises_though_the_search_passe
     kept = object()
     worker._evaluator = kept
 
-    def verify(chain: object) -> None:
-        checked.append(chain)
+    def verify(target: Any) -> None:
+        checked.append(target._evaluator)
         raise RuntimeError("evaluator re-check failed at batch=340")
 
     engine._verify_evaluator = verify
@@ -186,7 +235,7 @@ def test_health_check_fails_when_a_compiled_shape_raises_though_the_search_passe
     engine.dispatch(parse_command("isready"))
     out = capsys.readouterr().out
     assert "health rebuild: evaluator rebuild failed" in out
-    assert checked == [kept]  # the consumer got the evaluator actually kept
+    assert checked == [kept]  # the consumer got the worker holding the evaluator kept
     assert "engine health check passed" not in out
     assert any(ln.startswith("info string engine health check failed") and "batch=340" in ln
                for ln in out.splitlines())
@@ -197,7 +246,7 @@ def test_health_check_fails_when_a_compiled_shape_raises_though_the_search_passe
 def test_health_check_passes_only_after_the_shape_check_and_the_search(capsys) -> None:
     order: list[str] = []
     engine, worker, _ = _flaky_engine()
-    engine._verify_evaluator = lambda chain: order.append("shapes")
+    engine._verify_evaluator = lambda _worker: order.append("shapes")
     _make_unhealthy(engine, worker)
 
     def warm(board, **_kw):
@@ -273,6 +322,110 @@ def test_reverify_raises_on_the_broken_shape_and_skips_eager_chains() -> None:
     eager = DirectGPUEvaluator(_model(), device="cpu", max_batch=64, use_amp=False)
     assert uci_main.reverify_compiled_evaluator(eager, input_extra_features="v1") == 0
     assert uci_main.reverify_compiled_evaluator(None) == 0
+
+
+def _counting_evaluator() -> tuple[DirectGPUEvaluator, dict[int, int], torch.nn.Module]:
+    model = _model()
+    counts: dict[int, int] = defaultdict(int)
+    real_forward = model.forward
+
+    def counting(x, *a, **kw):
+        counts[int(x.shape[0])] += 1
+        return real_forward(x, *a, **kw)
+
+    model.forward = counting  # type: ignore[method-assign]
+    ev = DirectGPUEvaluator(model, device="cpu", max_batch=64, n_slots=2, use_amp=False,
+                            pad_to_compiled_buckets=True, legal_bf16=False)
+    return ev, counts, model
+
+
+def test_reverify_runs_below_the_eval_cache_and_reports_real_forwards(capsys) -> None:
+    """Review of #1404: through an EncodedEvalCache the identical start-position
+    rows collapsed to one batch-1 forward, the rest were cache hits, and the
+    line still claimed every shape ran twice. The check now runs below the
+    cache and prints the forwards its ledger counted."""
+    from chess_anti_engine.inference_cache import EncodedEvalCache
+
+    ev, counts, model = _counting_evaluator()
+    cached = EncodedEvalCache(ev, max_entries=4096, encoding_source=model)
+    shapes = set(ev.reachable_forward_rows())
+    n = uci_main.reverify_compiled_evaluator(cached, input_extra_features="v1")
+    assert n == len(shapes)
+    assert dict(counts) == dict.fromkeys(shapes, 2)
+    assert cached.stats().inner_calls == 0  # nothing went through the cache
+    line = [ln for ln in capsys.readouterr().out.splitlines() if "health check:" in ln][-1]
+    assert line == (f"info string health check: re-ran {len(shapes)} compiled batch shapes on "
+                    f"cpu: {2 * len(shapes)} real forwards, at least 2 per shape per device")
+
+
+def test_reverify_fails_when_a_shape_did_not_really_run() -> None:
+    """A wrapper that answers a shape without a forward (a cache, a dedupe)
+    must not let the check claim that shape: the ledger count decides."""
+    ev = _counting_evaluator()[0]
+
+    class _SkipsBatch16:
+        def __init__(self, inner: DirectGPUEvaluator) -> None:
+            self._inner = inner
+
+        def evaluate_encoded(self, x, **kw):
+            if x.shape[0] == 16:
+                return np.zeros((16, 1858), np.float32), np.zeros((16, 3), np.float32)
+            return self._inner.evaluate_encoded(x, **kw)
+
+    with pytest.raises(RuntimeError, match=r"ran batch=16 \(dense\) 0x on cpu, not 2x"):
+        uci_main.reverify_compiled_evaluator(_SkipsBatch16(ev), input_extra_features="v1")
+
+
+def test_reverify_says_plainly_when_nothing_is_compiled(capsys) -> None:
+    eager = DirectGPUEvaluator(_model(), device="cpu", max_batch=64, use_amp=False)
+    assert uci_main.reverify_compiled_evaluator(eager, input_extra_features="v1") == 0
+    out = capsys.readouterr().out
+    assert "no compiled evaluator under the primary (eager), so no batch shapes were re-run" in out
+    assert "DEGRADED path" in out
+
+
+def test_health_check_empties_every_eval_cache_the_worker_reaches(capsys) -> None:
+    """A search answered from evals cached before the evaluator broke proves
+    nothing: the dense cache on the evaluator chain and a pool's PUCV cache
+    are both emptied before the shapes and the real search run."""
+    from chess_anti_engine.inference_cache import EncodedEvalCache, PucvEvalCache
+
+    ev, counts, model = _counting_evaluator()
+    dense = EncodedEvalCache(ev, max_entries=4096, encoding_source=model)
+    dense.evaluate_encoded(np.zeros((3, *_encoded_shape()), np.float32))
+    pucv = PucvEvalCache(max_entries=64)
+    pucv._cache[(1, 1)] = (b"", np.zeros(1), np.zeros(1))
+    pool = SimpleNamespace()  # a foreign object: not walked
+    pool._cache = PucvEvalCache(max_entries=64)
+    pool._cache._cache[(1, 1)] = (b"", np.zeros(1), np.zeros(1))
+
+    class _Pool:  # this package's kind of object: walked
+        def __init__(self) -> None:
+            self._cache = pucv
+
+    _Pool.__module__ = "chess_anti_engine.uci.multi_gpu_pucv_pool"
+    worker = SimpleNamespace(_evaluator=dense, _pucv_pool=_Pool(), _other=pool)
+    class _Worker:
+        pass
+
+    _Worker.__module__ = "chess_anti_engine.uci.search"
+    real_worker = _Worker()
+    vars(real_worker).update(vars(worker))
+    assert dense.stats().entries > 0
+    counts.clear()
+    uci_main.health_check_evaluator(real_worker, input_extra_features="v1")
+    assert dense.stats().entries == 0
+    assert pucv.stats().entries == 0
+    assert len(pool._cache._cache) == 1  # outside the package: left alone
+    assert "emptied 2 eval cache(s)" in capsys.readouterr().out
+    assert dict(counts) == dict.fromkeys(ev.reachable_forward_rows(), 2)
+
+
+def _encoded_shape() -> tuple[int, ...]:
+    import chess
+
+    return tuple(uci_main.encode_cboard(uci_main.CBoard.from_board(chess.Board()),
+                                        input_extra_features="v1").shape)
 
 
 # --- a failed build is released, not leaked -----------------------------------
@@ -623,6 +776,10 @@ def test_every_cuda_rebuild_first_returns_the_allocators_cached_blocks(monkeypat
     the real GPU kept 0.3-0.8 GB more VRAM reserved (live evaluators flat)."""
     emptied: list[str] = []
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    # The cuBLAS workspaces first (a replaced stream's workspace stays
+    # allocated, ~9 MB per rebuild), then the allocator's cached blocks.
+    monkeypatch.setattr(torch._C, "_cuda_clearCublasWorkspaces",
+                        lambda: emptied.append("workspaces"), raising=False)
     monkeypatch.setattr(torch.cuda, "empty_cache", lambda: emptied.append("empty"))
     monkeypatch.setattr(torch, "compile", lambda module, **_kw: module)
     monkeypatch.setattr(uci_main, "DirectGPUEvaluator", _FakeDirect)
@@ -632,7 +789,7 @@ def test_every_cuda_rebuild_first_returns_the_allocators_cached_blocks(monkeypat
     )
     for _ in range(3):
         uci_main._close_chain(build(64))
-    assert emptied == ["empty"] * 3
+    assert emptied == ["workspaces", "empty"] * 3
 
     emptied.clear()
     monkeypatch.setattr(uci_main, "_compile_and_warm_pucv_evaluator",
@@ -642,7 +799,7 @@ def test_every_cuda_rebuild_first_returns_the_allocators_cached_blocks(monkeypat
     )
     for make in pool_build(64, 32):
         make()
-    assert emptied == ["empty"] * 2
+    assert emptied == ["workspaces", "empty"] * 2
 
     emptied.clear()
     cpu_build = uci_main._make_evaluator_factory(

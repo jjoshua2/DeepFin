@@ -40,7 +40,7 @@ from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding.cboard_encode import encode_cboard
 from chess_anti_engine.inference import DirectGPUEvaluator
 from chess_anti_engine.inference import DirectGPUEvaluator as _RealDirectGPUEvaluator
-from chess_anti_engine.inference_cache import EncodedEvalCache
+from chess_anti_engine.inference_cache import EncodedEvalCache, PucvEvalCache
 from chess_anti_engine.inference_dispatcher import (
     BatchCoalescingDispatcher,
     CUDAOwnerDispatcher,
@@ -506,6 +506,18 @@ def _run_bucket_shape(
             chain.evaluate_legal_bf16(xs, legal_flat, legal_counts)
 
 
+def below_eval_cache(chain):
+    """``chain`` without its ``EncodedEvalCache`` layer(s): what the factory warms.
+
+    The cache dedupes identical rows and answers repeats without a forward, so
+    a check run through it would run one batch-1 forward and call every other
+    shape verified.
+    """
+    while isinstance(chain, EncodedEvalCache):
+        chain = chain._inner
+    return chain
+
+
 def reverify_compiled_evaluator(
     chain,
     *,
@@ -516,15 +528,24 @@ def reverify_compiled_evaluator(
 ) -> int:
     """The health re-check's evaluator half: EVERY compiled shape, run again.
 
-    Unlike the startup warm-up, already-seen shapes are not skipped: each
-    reachable padded shape goes through ``chain``'s search entry ``passes``
-    times (a cudagraph tree warms a shape on one call and records it on a
-    later one), on every device of a routing chain. A raise is the check
-    failing. Returns how many shapes were run; 0 for a chain with no
-    compiled (bucket-padding) evaluator, where the real search alone decides.
+    Runs below any eval cache. Unlike the startup warm-up, already-seen shapes
+    are not skipped: each reachable padded shape goes through the chain's
+    search entry ``passes`` times on every device of a routing chain (a
+    cudagraph tree warms a shape on one call and records it on a later one).
+    The forwards are COUNTED on each evaluator's shape ledger, and a shape that
+    did not really run ``passes`` times on a device still in service fails the
+    check, as does any raise. Returns the number of shapes; 0, said plainly,
+    when nothing under ``chain`` is compiled (an eager primary, e.g. beside a
+    multi-GPU pool), where the real search alone decides.
     """
-    directs = direct_evaluators(chain) if chain is not None else []
+    target = below_eval_cache(chain)
+    directs = direct_evaluators(target) if target is not None else []
     if not directs:
+        _println(
+            "info string health check: no compiled evaluator under the primary "
+            "(eager), so no batch shapes were re-run; the real search decides "
+            "(multi-GPU pool workers are covered by the DEGRADED path)"
+        )
         return 0
     cb = CBoard.from_board(chess.Board())
     encoded = encode_cboard(
@@ -536,26 +557,95 @@ def reverify_compiled_evaluator(
     rel_row = cb.compute_relations() if compute_relations else None
     warm_legal = (
         rel_row is None
-        and bool(getattr(chain, "supports_legal_bf16", False))
-        and hasattr(chain, "evaluate_legal_bf16")
+        and bool(getattr(target, "supports_legal_bf16", False))
+        and hasattr(target, "evaluate_legal_bf16")
     )
     n_devices = len(directs)
-    use_async = supports_inplace_api(chain)
-    for _ in range(max(1, int(passes))):
-        for rows in shapes:
-            try:
-                _run_bucket_shape(
-                    chain, rows, cb=cb, encoded=encoded, rel_row=rel_row,
-                    use_async=use_async, warm_legal=warm_legal, n_devices=n_devices,
-                )
-            except Exception as exc:
-                raise RuntimeError(f"evaluator re-check failed at batch={rows}") from exc
-    labels = ",".join(ev.shape_ledger.label for ev in directs)
+    use_async = supports_inplace_api(target)
+    want = max(1, int(passes))
+    for ev in directs:
+        ev.shape_ledger.start_counting()
+    counts: dict[int, dict[tuple[str, int], int]] = {}
+    try:
+        for _ in range(want):
+            for rows in shapes:
+                try:
+                    _run_bucket_shape(
+                        target, rows, cb=cb, encoded=encoded, rel_row=rel_row,
+                        use_async=use_async, warm_legal=warm_legal, n_devices=n_devices,
+                    )
+                except Exception as exc:
+                    raise RuntimeError(f"evaluator re-check failed at batch={rows}") from exc
+    finally:
+        for ev in directs:
+            counts[id(ev)] = ev.shape_ledger.stop_counting()
+    live = direct_evaluators(target)  # a device dropped meanwhile is the DEGRADED path
+    total = 0
+    least: int | None = None
+    for ev in live:
+        got = counts.get(id(ev), {})
+        graphs = ["dense"] + (["legal"] if warm_legal and ev.supports_legal_bf16 else [])
+        for rows in ev.reachable_forward_rows():
+            for graph in graphs:
+                n = got.get((graph, rows), 0)
+                if n < want:
+                    raise RuntimeError(
+                        f"evaluator re-check ran batch={rows} ({graph}) {n}x on "
+                        f"{ev.shape_ledger.label}, not {want}x"
+                    )
+                least = n if least is None else min(least, n)
+        total += sum(got.values())
+    labels = ",".join(ev.shape_ledger.label for ev in live)
     _println(
-        f"info string health check: re-ran all {len(shapes)} compiled batch shapes "
-        f"{max(1, int(passes))}x on {labels}"
+        f"info string health check: re-ran {len(shapes)} compiled batch shapes on "
+        f"{labels}: {total} real forwards, at least {least} per shape per device"
     )
     return len(shapes)
+
+
+def clear_eval_caches(root, *, max_depth: int = 6) -> int:
+    """Empty every eval cache reachable from ``root`` (the search worker).
+
+    Walks instance attributes of this package's objects (and the lists, tuples
+    and dicts holding them) -- the evaluator chain, a multi-GPU pool, a walker
+    pool -- and clears each ``EncodedEvalCache`` / ``PucvEvalCache``. The
+    health check's real search then evaluates on the evaluator instead of being
+    answered from evals cached before it broke. Returns the caches cleared.
+    """
+    cleared = 0
+    seen: set[int] = set()
+    stack: list[tuple[object, int]] = [(root, 0)]
+    while stack:
+        node, depth = stack.pop()
+        if node is None or id(node) in seen or depth > max_depth:
+            continue
+        seen.add(id(node))
+        if isinstance(node, (EncodedEvalCache, PucvEvalCache)):
+            node.clear()
+            cleared += 1
+            continue
+        if isinstance(node, (list, tuple)):
+            children = list(node)
+        elif isinstance(node, dict):
+            children = list(node.values())
+        elif type(node).__module__.startswith("chess_anti_engine") and hasattr(node, "__dict__"):
+            children = list(vars(node).values())
+        else:
+            continue
+        stack.extend((child, depth + 1) for child in children)
+    return cleared
+
+
+def health_check_evaluator(worker, **kwargs) -> int:
+    """The engine's health re-check before its real search: every eval cache
+    emptied, then every compiled shape re-run (``reverify_compiled_evaluator``)."""
+    cleared = clear_eval_caches(worker)
+    if cleared:
+        _println(
+            f"info string health check: emptied {cleared} eval cache(s) so the "
+            "real search runs on the evaluator"
+        )
+    return reverify_compiled_evaluator(getattr(worker, "_evaluator", None), **kwargs)
 
 
 def _pucv_warmup_batch_sizes(gather: int) -> list[int]:
@@ -1941,8 +2031,8 @@ def main() -> int:
                 options=startup_options,
                 gil_profile=bool(args.gil_profile),
                 device_startup_timeout_s=device_startup_timeout_s,
-                verify_evaluator=lambda chain: reverify_compiled_evaluator(
-                    chain,
+                verify_evaluator=lambda worker: health_check_evaluator(
+                    worker,
                     input_history_encoding=input_history_encoding,
                     input_extra_features=input_extra_features,
                     compute_relations=use_dynamic_relations,
