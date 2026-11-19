@@ -13,17 +13,20 @@ from __future__ import annotations
 
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 import chess
 import numpy as np
 import pytest
+import torch
 
 from chess_anti_engine.inference import DirectGPUEvaluator
 from chess_anti_engine.inference_dispatcher import ThreadSafeGPUDispatcher
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.model import ModelConfig, build_model
+from chess_anti_engine.moves import move_to_index
 from chess_anti_engine.uci.root_parallel_gumbel import (
     RootParallelGumbelConfig,
     RootParallelGumbelPool,
@@ -41,20 +44,27 @@ DEADLINE_MS = 30_000
 FAST_S = 15.0
 
 
-def _make_evaluator() -> Any:
+def _make_evaluator(*, optimistic: bool = False) -> Any:
     cfg = ModelConfig(
         input_extra_features="v1", embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0,
     )
     torch_model = build_model(cfg)
     torch_model.eval()
+    if optimistic:
+        # Every position looks won for the side to move: a root with
+        # root_q > 0 prunes its terminal-draw moves on every search path.
+        params = dict(torch_model.named_parameters())
+        with torch.no_grad():
+            params["value_wdl.net.2.weight"].zero_()
+            params["value_wdl.net.2.bias"].copy_(torch.tensor([8.0, 0.0, -8.0]))
     return ThreadSafeGPUDispatcher(DirectGPUEvaluator(
         torch_model, device="cpu", max_batch=64, use_amp=False, n_slots=2,
     ))
 
 
-def _make_worker(path: str) -> SearchWorker:
+def _make_worker(path: str, *, optimistic: bool = False) -> SearchWorker:
     worker = SearchWorker(
-        _make_evaluator(), device="cpu",
+        _make_evaluator(optimistic=optimistic), device="cpu",
         gumbel_cfg=GumbelConfig(
             input_extra_features="v1", simulations=64, add_noise=False, temperature=0.0,
         ),
@@ -62,7 +72,9 @@ def _make_worker(path: str) -> SearchWorker:
     )
     if path == "walkers":
         return worker
-    pair = [_make_evaluator(), _make_evaluator()]
+    if path == "classic":
+        return worker
+    pair = [_make_evaluator(optimistic=optimistic), _make_evaluator(optimistic=optimistic)]
     if path == "rpg":
         worker.install_root_parallel_gumbel(pair, gather=8, as_factories=False)
     elif path == "pool":
@@ -168,6 +180,8 @@ def _state_with_children(statuses: list[int], *, pruned: bool) -> _SearchState:
         ([1, 1, 1], False, -1),    # every reply wins for the opponent: lost
         ([1, 2, 1], False, 2),     # a drawn reply: draw
         ([1, 1, 1], True, 2),      # pruned terminal draws stay available: draw
+        ([2, -1], False, 1),       # a draw scanned before a win must not end the scan
+        ([1, 2, 0], False, 0),     # draw + unproven: not yet a draw
     ],
 )
 def test_resolve_root_solved_rule(children: list[int], pruned: bool, expected: int) -> None:
@@ -196,7 +210,7 @@ def test_go_depth_answers_on_proven_root(path: str) -> None:
     worker = _make_worker(path)
     try:
         result, took = _timed_run(worker, MATED_IN_ONE, max_depth=4)
-        assert worker.last_stop_reason == "depth_solved_root", worker.last_stop_reason
+        assert worker.last_stop_reason == "max_depth", worker.last_stop_reason
         assert took < FAST_S, f"{path} go depth 4 on a proven root took {took:.1f}s"
         assert result.score_mate == -1
     finally:
@@ -260,5 +274,182 @@ def test_go_mate_on_forced_root_still_finds_the_mate_behind_it(path: str) -> Non
         assert worker.last_stop_reason == "mate", worker.last_stop_reason
         assert result.bestmove_uci == "g1f1"
         assert result.score_mate == 2
+    finally:
+        worker.close()
+
+
+# --- review items: pruned-draw rule, TB path, depth on a proven PV end ---------
+
+TB_3MAN = str(Path(__file__).parent / "fixtures" / "syzygy_3man")
+
+
+def _rpg_pool(*, topk: int = 64) -> RootParallelGumbelPool:
+    return RootParallelGumbelPool(
+        RootParallelGumbelConfig(n_groups=2, gather=8),
+        GumbelConfig(
+            input_extra_features="v1", simulations=64, topk=topk,
+            add_noise=False, temperature=0.0,
+        ),
+        evaluators=[_make_evaluator(), _make_evaluator()], rng=np.random.default_rng(0),
+    )
+
+
+_WINNING_WDL = np.array([8.0, 0.0, -8.0], dtype=np.float32)
+
+
+def test_prepare_root_records_a_pruned_stalemate_as_an_available_draw() -> None:
+    """bxa7 stalemates: a winning root prunes it, and the root keeps the draw."""
+    board = chess.Board("8/q7/1P6/8/8/3Q4/8/K1k5 w - - 0 1")
+    stalemate = chess.Move.from_uci("b6a7")
+    pool = _rpg_pool()
+    try:
+        tree = MCTSTree()
+        tree.reserve(1_000, 10_000)
+        pool.prepare_root(
+            tree=tree, board=board, pol_logits=np.zeros(4672, dtype=np.float32),
+            wdl_logits=_WINNING_WDL,
+        )
+        st = pool._state
+        assert st is not None
+        assert int(move_to_index(stalemate, board)) not in st.search_legal.tolist()
+        assert st.pruned_root_draws
+    finally:
+        pool.close()
+
+
+# Mated in one after every move; some moves let the OPPONENT claim a 50-move
+# draw on its reply (clock 99 + reversible reply). The opponent can decline.
+CLAIMABLE_ONLY = [
+    "8/8/8/3P4/6q1/P4k2/7K/8 w - - 98 1",
+    "8/8/8/2q5/8/3P2P1/8/5k1K w - - 98 1",
+    "K7/2k5/8/8/P2P4/8/3q4/8 w - - 98 1",
+]
+
+
+@pytest.mark.parametrize("fen", CLAIMABLE_ONLY)
+def test_a_claimable_draw_is_not_a_root_draw(fen: str) -> None:
+    board = chess.Board(fen)
+    pool = _rpg_pool()
+    try:
+        tree = MCTSTree()
+        tree.reserve(50_000, 500_000)
+        rid = pool.prepare_root(
+            tree=tree, board=board, pol_logits=np.zeros(4672, dtype=np.float32),
+            wdl_logits=_WINNING_WDL,
+        )
+        st = pool._state
+        assert st is not None
+        assert st.search_legal.size < board.legal_moves.count(), "fixture must prune"
+        assert not st.pruned_root_draws
+        for _ in range(8):
+            pool.run(target_sims=512, stop_event=threading.Event())
+            if tree.get_solved_status(rid) != 0:
+                break
+        assert tree.get_solved_status(rid) == -1, "mated in one after every move"
+    finally:
+        pool.close()
+
+
+def test_tb_proofs_leave_the_root_to_the_resolver(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tablebase proofs (at candidate expansion and inside candidate searches)
+    stop at the candidate: only `_resolve_root_solved`, which applies the
+    pruned-draw rule, may mark the real root."""
+    from chess_anti_engine.tablebase import SyzygyProbe
+
+    monkeypatch.setattr(RootParallelGumbelPool, "_resolve_root_solved", lambda self, st: 0)
+    # 4 men: Kxb2 / Rxb2-type captures reach 3-man tablebase positions.
+    board = chess.Board("k7/8/8/8/8/8/1r6/K6R w - - 0 1")
+    pool = _rpg_pool()
+    try:
+        tree = MCTSTree()
+        tree.reserve(50_000, 500_000)
+        rid = pool.prepare_root(
+            tree=tree, board=board, pol_logits=np.zeros(4672, dtype=np.float32),
+            wdl_logits=np.zeros(3, dtype=np.float32),
+        )
+        probe = SyzygyProbe(TB_3MAN)
+        for _ in range(3):
+            pool.run(target_sims=1024, stop_event=threading.Event(), tb_probe=probe)
+        st = pool._state
+        assert st is not None
+        proven = [
+            int(tree.get_solved_status(int(tree.find_child(rid, int(a)))))
+            for a in st.search_legal.tolist()
+        ]
+        assert any(p != 0 for p in proven), "fixture must produce tablebase proofs"
+        assert tree.get_solved_status(rid) == 0
+    finally:
+        pool.close()
+
+
+def test_a_pv_ending_on_a_proven_node_completes_the_depth_bound() -> None:
+    worker = SearchWorker.__new__(SearchWorker)
+    tree = MCTSTree()
+    tree.reserve(64, 640)
+    rid = int(tree.add_root(1, 0.0))
+    tree.expand(rid, np.array([10, 11], dtype=np.int32), np.array([0.5, 0.5]))
+    child = int(tree.find_child(rid, 10))
+    tree.expand(child, np.array([20], dtype=np.int32), np.array([1.0]))
+    leaf = int(tree.find_child(child, 20))
+    worker._tree, worker._root_id = tree, rid
+    assert worker._depth_pv_len([10, 20], 4) == 2  # unproven leaf: keep deepening
+    tree.mark_solved_path(np.array([leaf], dtype=np.int32), 2)  # a drawn terminal
+    assert worker._depth_pv_len([10, 20], 4) == 4
+    assert worker._depth_pv_len([10, 20], None) == 2
+    assert worker._depth_pv_len([], 4) == 0
+
+
+# --- review item 6: a proven-lost search with a pruned drawing move ------------
+
+# Every move but the drawing one lets the opponent mate next move.
+DRAW_ESCAPES = [
+    ("8/q7/1P6/8/8/3Q4/8/K1k5 w - - 0 1", "b6a7"),   # bxa7 stalemates
+    ("4K2k/3q1P2/6Q1/8/8/8/8/8 w - - 0 1", "e8d7"),  # Kxd7 stalemates
+]
+
+
+@pytest.mark.parametrize("path", ["classic", "pool", "rpg", "walkers"])
+@pytest.mark.parametrize(("fen", "draw"), DRAW_ESCAPES)
+def test_a_lost_root_plays_the_pruned_drawing_move(path: str, fen: str, draw: str) -> None:
+    if path == "classic" and fen == DRAW_ESCAPES[1][0]:
+        pytest.skip(
+            "classic: pruning leaves one move, which the shared gumbel_c root "
+            "returns without simulating, so no proof (and no escape) can arise",
+        )
+    worker = _make_worker(path, optimistic=True)
+    infos: list[dict[str, Any]] = []
+    try:
+        result = worker.run(
+            chess.Board(fen), stop_event=threading.Event(),
+            deadline=Deadline(DEADLINE_MS), max_nodes=4096,
+            info_cb=lambda **f: infos.append(f),
+        )
+        assert result.bestmove_uci == draw, (path, result.bestmove_uci)
+        assert result.score_mate is None
+        assert infos
+        assert infos[-1]["pv"][0] == draw, infos[-1:]
+    finally:
+        worker.close()
+
+
+# --- review item 7: on a proven-lost root, delay mate longest ------------------
+
+LONGEST_LOSS = [
+    ("8/1q6/8/6r1/1k6/7K/8/8 w - - 0 1", "h3h4"),  # Kh2 is mated in 1
+    ("7q/8/2r5/8/8/8/8/4k2K w - - 0 1", "h1g2"),   # Kg1 is mated in 1
+]
+
+
+@pytest.mark.parametrize("path", ["classic", "pool", "rpg", "walkers"])
+@pytest.mark.parametrize(("fen", "longest"), LONGEST_LOSS)
+def test_a_proven_lost_root_plays_the_longest_loss(path: str, fen: str, longest: str) -> None:
+    if path == "classic" and fen == LONGEST_LOSS[1][0]:
+        pytest.skip("classic Gumbel does not prove this root lost inside the deadline")
+    worker = _make_worker(path)
+    try:
+        # `go mate` stops once the root is proven lost (`mate_unreachable`).
+        result, _took = _timed_run(worker, fen, mate_moves=3)
+        assert worker._root_solved_status() == -1, "fixture: the root is proven lost"
+        assert result.bestmove_uci == longest, (path, result.bestmove_uci, result.score_mate)
     finally:
         worker.close()

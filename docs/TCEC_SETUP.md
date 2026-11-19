@@ -301,10 +301,22 @@ nothing.
   cap. `go mate N` also stops at once when the side to move is proven lost,
   in every search mode (root-parallel Gumbel included: there the root is proven
   from its candidates' proofs after each halving phase).
-- `go depth N` on a proven root (a forced mate either way, or a tablebase-solved
-  root) answers once the root is proven, even when the proven line is shorter
-  than `N`: nothing is left to deepen. `go nodes N` counts its visits and ends
-  as usual; `go infinite` still waits for `stop`.
+- `go depth N` treats a principal variation that ends on a proven position (a
+  checkmate, a draw on the board, a tablebase result, a proven line) as complete,
+  in every search mode, even when it is shorter than `N`: that line cannot be
+  deepened. A proven root (a forced mate either way, a tablebase-solved root)
+  therefore answers once proven. `go nodes N` counts its visits and ends as
+  usual; `go infinite` still waits for `stop`.
+- When the network thinks the root is winning, the search leaves out moves that
+  draw at once. If every move it did search is then proven lost, the engine plays
+  a move that ends the game drawn on the board (stalemate, insufficient material,
+  50-move clock at 100, a third repetition), reporting `score cp 0` and
+  `info string every searched move is proven lost; playing a move that draws`.
+  A move after which the opponent could merely claim a draw does not count. One
+  case is left over: on the classic path, if leaving those moves out leaves a
+  single move, that move is returned unsearched and the draw is not found.
+- On a root proven lost the engine plays the move that delays mate longest (a
+  move with no proven mate distance first, then the longest proven mate).
 - In every search mode, and from the tablebase root shortcut, a move that mates is
   reported as `score mate 1`, and a move after which the opponent mates next move
   as `score mate -1` (not when the move makes a draw claimable), whether or not

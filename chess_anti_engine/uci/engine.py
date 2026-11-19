@@ -61,7 +61,7 @@ from .protocol import (
     format_uciok,
     set_uci_debug,
 )
-from .search import SearchResult, SearchWorker
+from .search import DEFAULT_LEAF_GATHER, SearchResult, SearchWorker
 from .time_manager import (
     GO_IMPLICIT_CAP_MS,
     _DEFAULT_MOVES_REMAINING,
@@ -394,10 +394,6 @@ _MIN_HASH_MB = 1024
 # allocate 2.2 TB of pinned input and killed the process. Registry search options
 # (mcts/search_options.py) carry their own lo/hi and are range-checked by
 # `_parse_search_value`; they are deliberately not repeated here.
-# Walker-pool leaf gather default (`LeafGather` / `--walker-gather`). CPU tiny
-# net, 6 s movetime: walkers 2/4/8 at gather 1 ran 1.4k/1.6k/2.2k nps, at 32
-# 4.7k/5.5k/5.5k (classic 5.2-5.6k); GPU (review): 2 walkers 450 -> 5.5k nps.
-DEFAULT_LEAF_GATHER = 32
 _SPIN_BOUNDS: dict[str, tuple[int, int]] = {
     "Hash": (_MIN_HASH_MB, 524288),
     "Threads": (1, 64),

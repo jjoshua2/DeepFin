@@ -59,3 +59,13 @@ def _fixed_node_search(walker_gather: int) -> tuple[str, int, tuple[str, ...], l
 
 def test_leaf_gather_is_inert_on_the_single_walker_path() -> None:
     assert _fixed_node_search(1) == _fixed_node_search(DEFAULT_LEAF_GATHER)
+
+
+def test_every_gather_default_is_the_one_constant() -> None:
+    """`SearchWorker` and the evaluator warm-up must not keep their own 1."""
+    import inspect
+
+    from chess_anti_engine.uci.__main__ import _warmup_evaluator
+
+    for fn in (SearchWorker.__init__, _warmup_evaluator):
+        assert inspect.signature(fn).parameters["walker_gather"].default == DEFAULT_LEAF_GATHER, fn

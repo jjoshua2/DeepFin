@@ -118,7 +118,7 @@ from chess_anti_engine.tablebase import SyzygyProbe
 from chess_anti_engine.mcts.root_tactics import (
     immediate_terminal_cboard_policy_or_draws,
 )
-from chess_anti_engine.moves import POLICY_SIZE
+from chess_anti_engine.moves import POLICY_SIZE, move_to_index
 from chess_anti_engine.uci import wedge
 from chess_anti_engine.uci.protocol import uci_debug_enabled
 from chess_anti_engine.uci.startup_progress import StartupContext, startup_context
@@ -392,6 +392,32 @@ class _SearchState:
     # children: a root whose remaining children are all proven lost is
     # still a proven DRAW, not a loss (see `_resolve_root_solved`).
     pruned_root_draws: bool = False
+
+
+def root_forced_draw_actions(board: chess.Board, actions: Sequence[int]) -> list[int]:
+    """The root ``actions`` (policy indices) whose move ENDS the game drawn on
+    the board: stalemate, insufficient material, the 50-move clock at 100 or
+    more, or a third occurrence of the position. A move after which the
+    opponent merely MAY claim a draw on its reply is not one: the opponent
+    can decline and play on."""
+    wanted = {int(a) for a in actions}
+    out: list[int] = []
+    for move in board.legal_moves:
+        action = int(move_to_index(move, board))
+        if action not in wanted:
+            continue
+        board.push(move)
+        try:
+            if not board.is_checkmate() and (
+                board.is_stalemate()
+                or board.is_insufficient_material()
+                or board.halfmove_clock >= 100
+                or board.is_repetition(3)
+            ):
+                out.append(action)
+        finally:
+            board.pop()
+    return out
 
 
 class RootParallelGumbelPool:
@@ -710,8 +736,15 @@ class RootParallelGumbelPool:
                 draw_arr = np.fromiter(terminal_draws, dtype=np.int32)
                 keep = ~np.isin(legal_idx, draw_arr)
                 if keep.any():
+                    # The draw scan also returns moves after which the
+                    # OPPONENT may claim a draw (50-move at 99 + a reversible
+                    # reply, threefold on its reply). That is the opponent's
+                    # option, not a draw the root can force: only a pruned
+                    # move that ends the game drawn keeps a draw available.
+                    pruned_root_draws = bool(root_forced_draw_actions(
+                        board, legal_idx[~keep].tolist(),
+                    ))
                     legal_idx = legal_idx[keep]
-                    pruned_root_draws = True
             search_legal = legal_idx.astype(np.int64)
 
             ll = pol_full[search_legal].astype(np.float64)
@@ -728,7 +761,10 @@ class RootParallelGumbelPool:
                 _probs, mate_action, mate_value = terminal_mate
                 finished_action = int(mate_action)
                 finished_value = float(mate_value)
-            elif search_legal.size == 1:
+            elif search_legal.size == 1 and not pruned_root_draws:
+                # Single-legal finish (classic). Not when pruning a drawing
+                # move left one: that move must be searched, or a lost root
+                # could never be proven and the draw never played.
                 finished_action = int(search_legal[0])
                 finished_value = root_q
 
@@ -1601,9 +1637,11 @@ class RootParallelGumbelPool:
                     if st.tb_probe is None:
                         ran = int(chunker.run(st.tree, arena.cid, arena.cboard, n))
                     else:
+                        # No root prefix on the proof paths: a TB proof stops at
+                        # the candidate and `_resolve_root_solved` decides the
+                        # root, applying the pruned-terminal-draw rule.
                         ran = int(chunker.run(
-                            st.tree, arena.cid, arena.cboard, n,
-                            tb_probe=st.tb_probe, tb_path_prefix=(st.root_id,),
+                            st.tree, arena.cid, arena.cboard, n, tb_probe=st.tb_probe,
                         ))
                 finally:
                     self._device_step_end(group_idx)
@@ -1633,8 +1671,10 @@ class RootParallelGumbelPool:
             # Record the terminal as a proven child (checkmate = mover lost,
             # every other terminal a draw: `cboard_terminal_solved_status`) so
             # `_resolve_root_solved` can count it.
+            # Mark the candidate only: `_resolve_root_solved` decides the
+            # root (it knows about pruned terminal draws; C propagation does not).
             st.tree.mark_solved_path(
-                np.array([st.root_id, arena.cid], dtype=np.int32),
+                np.array([arena.cid], dtype=np.int32),
                 -1 if arena.terminal_value < 0.0 else 2,
             )
             arena.expanded = True
@@ -1682,7 +1722,8 @@ class RootParallelGumbelPool:
         st.tree.backprop(np.array([arena.cid], dtype=np.int32), q)
         if solved is not None and solved[0]:
             status = int(solved[0])
-            st.tree.mark_solved_path(np.array([st.root_id, arena.cid], dtype=np.int32), status)
+            # Candidate only; `_resolve_root_solved` decides the root.
+            st.tree.mark_solved_path(np.array([arena.cid], dtype=np.int32), status)
             # Proven TB values share the existing forced-terminal budget path.
             arena.terminal_value = 0.0 if status == 2 else float(status)
         arena.expanded = True

@@ -212,7 +212,7 @@ def _warmup_evaluator(
     evaluator,
     *,
     n_walkers: int = 1,
-    walker_gather: int = 1,
+    walker_gather: int = DEFAULT_LEAF_GATHER,
     n_devices: int = 1,
     input_history_encoding: str = "legacy",
     input_extra_features: str | None = None,
