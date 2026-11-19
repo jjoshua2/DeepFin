@@ -19,6 +19,7 @@ from chess_anti_engine.uci import __main__ as uci_main
 from chess_anti_engine.uci import wedge as uci_wedge
 from chess_anti_engine.uci.engine import _decayed_max as _engine_decayed_max
 from chess_anti_engine.uci.tb_leaf import CLeafProbe
+from tests.uci_println_capture import capture_into
 
 SOURCE = Path(os.environ.get('UCI_TEST_SOURCE', str(Path(__file__).resolve().parents[1])))
 MODULE_HASHES = {}
@@ -123,7 +124,7 @@ def engine_fixture(enabled=False, parallel='pucv', devices=2):
                      'ThreadSafeGPUDispatcher': Wrapper, 'CUDAOwnerDispatcher': Wrapper,
                      'BatchCoalescingDispatcher': Wrapper, 'EncodedEvalCache': Wrapper,
                      '_warmup_evaluator': lambda *_args, **_kwargs: None,
-                     'wedge': uci_wedge, '_println': lambda *_args: None}
+                     'wedge': uci_wedge, '_println': lambda *_args: True}
     # The factory's module-level helpers, real (they only read the names they are given).
     for helper in ('_release_cached_device_memory', '_close_chain', '_label_evaluator',
                    'device_labels', 'graph_modes_per_device', '_announce_repeated_devices',
@@ -154,7 +155,7 @@ def engine_fixture(enabled=False, parallel='pucv', devices=2):
         if evaluator is not None:
             evaluator.close()
 
-    ns: dict[str, Any] = {'_println': messages.append, '_close_quietly': close_quietly, 'gc': SimpleNamespace(collect=lambda: 0),
+    ns: dict[str, Any] = {'_println': capture_into(messages), '_close_quietly': close_quietly, 'gc': SimpleNamespace(collect=lambda: 0),
           '_log': SimpleNamespace(error=lambda *_a, **_k: None),
           '_one_line': lambda exc: f'{type(exc).__name__}: {exc}'}
     ns['OPTIONS_BY_NAME'] = {}
@@ -293,7 +294,7 @@ def phase_fixture(worker):
     class Witness(Exception):
         pass
     namespace = {'Deadline': Deadline, 'time': time, 'SolvedRootWitnessUnavailable': Witness,
-                     '_println': lambda text: None, 'threading': threading,
+                     '_println': lambda text: True, 'threading': threading,
                      '_SILENCED_THREADS': set(), '_decayed_max': _engine_decayed_max}
     phase = definitions('chess_anti_engine/uci/engine.py', ['Engine._run_one_phase'], namespace)['Engine._run_one_phase']
     engine = SimpleNamespace(_worker=worker, _stop_event=threading.Event(), _gil_probe=None,

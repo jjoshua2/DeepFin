@@ -9,6 +9,7 @@ import pytest
 from tests.test_uci_topology_reuse import (
     Direct, Refusal, Wrapper, definitions, engine_fixture, leaves,
 )
+from tests.uci_println_capture import capture_into
 
 
 def _fixture(*, enabled: bool = False, parallel: str = "pucv", devices: int = 2) -> tuple[Any, Any, list]:
@@ -25,7 +26,7 @@ def _fixture(*, enabled: bool = False, parallel: str = "pucv", devices: int = 2)
         "chess_anti_engine/uci/engine.py",
         ["Engine._set_search_parallel", "Engine._try_install_root_parallel_gumbel",
          "Engine._reinstall_configured_search_path", "Engine._rebuild_or_keep"],
-        {"_println": messages.append, "_emit_info_string": messages.append,
+        {"_println": capture_into(messages), "_emit_info_string": messages.append,
          "_close_quietly": lambda ev: ev.close() if ev is not None else None,
          "gc": SimpleNamespace(collect=lambda: 0),
          "_log": SimpleNamespace(error=lambda *_a, **_k: None),

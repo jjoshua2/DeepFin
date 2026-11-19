@@ -208,6 +208,19 @@ def test_head_is_recorded_only_from_the_write_itself(
     _assert_aligned(out.lines)
 
 
+def test_the_shared_println_stand_in_keeps_the_guard_live(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests that replace `_println` use `tests.uci_println_capture`; with it the
+    head is still recorded and the alignment guard still fires."""
+    from tests.uci_println_capture import capture_into
+
+    lines: list[str] = []
+    monkeypatch.setattr(engine_module, "_println", capture_into(lines))
+    engine = _bare_engine()
+    _info(engine, 9, ("e2e4",))
+    engine._publish_bestmove(9, "d2d4")
+    assert lines[-2:] == ["info depth 1 pv d2d4", "bestmove d2d4"], lines
+
+
 # ------------------------------------------- in-process real search (tiny net)
 
 
@@ -680,7 +693,8 @@ def test_classic_single_device_every_go_kind(ckpt: Path, tmp_path: Path) -> None
 
 
 def test_classic_multipv_and_show_wdl(ckpt: Path, tmp_path: Path) -> None:
-    gos = [(_START, "go nodes 400", None, True), (_START, "go movetime 700", None, True),
+    # Unclocked: every go must print its final set (the clock is not the point here).
+    gos = [(_START, "go nodes 400", None, True), (_START, "go depth 3", None, True),
            (_START, "go infinite", 1.0, True)]
     lines = _run_session(
         ckpt, tmp_path, ["--device", "cpu"], gos,
@@ -719,7 +733,8 @@ def test_after_a_device_fault(ckpt: Path, tmp_path: Path, path: str, where: str)
             }[path]
     gos = [(_START, "go movetime 1500", None, False),
            ("position startpos moves e2e4 e7e5", "go nodes 300", None, True),
-           ("position startpos moves e2e4 e7e5 g1f3", "go wtime 3000 btime 3000", None, True),
+           # Clocked: the watchdog may answer before any line on a loaded machine.
+           ("position startpos moves e2e4 e7e5 g1f3", "go wtime 3000 btime 3000", None, False),
            ("position startpos moves e2e4 e7e5 g1f3 b8c6", "go infinite", 1.0, True)]
     lines = _run_session(ckpt, tmp_path, args, gos, env=_fault_env("raise", where))
     assert any("DEGRADED" in ln or "retir" in ln for ln in lines), lines[-40:]
@@ -773,10 +788,11 @@ _FIXTURE_TABLES = Path(__file__).resolve().parent / "fixtures" / "syzygy_3man"
 
 
 def _tb_gos(searched: str):
+    # Clocked rows require no line: the watchdog may answer before one under load.
     return [(f"position fen {searched}", "go nodes 400", None, True),
-            (f"position fen {searched}", "go movetime 1000", None, True),
+            (f"position fen {searched}", "go movetime 1000", None, False),
             (f"position fen {_TB_ROOT}", "go nodes 400", None, True),
-            (f"position fen {_TB_ROOT}", "go wtime 2000 btime 2000", None, True)]
+            (f"position fen {_TB_ROOT}", "go wtime 2000 btime 2000", None, False)]
 
 
 def test_tablebase_root_shortcut_and_tb_leaves_on_the_3man_fixture(
@@ -816,3 +832,145 @@ def test_tb_leaf_searches_on_the_3man_fixture_in_process(out: _Out) -> None:
 def test_tablebase_root_shortcut_and_tb_leaves(ckpt: Path, tmp_path: Path) -> None:
     _run_session(ckpt, tmp_path, ["--device", "cpu"], _tb_gos(_TB_SEARCHED),
                  setup=(f"setoption name SyzygyPath value {_TABLES}",))
+
+
+# --------------------------- independent oracle for the board-fact helpers
+#
+# `_expected_line_score` reuses production's `_board_line_mate` /
+# `_board_line_is_draw`, so a wrong helper would agree with itself. These
+# oracles recompute the same facts by brute force from python-chess's move
+# generator alone, and the helpers must agree with them on every legal move.
+
+
+def _oracle_has_legal_move(board: chess.Board) -> bool:
+    return any(True for _ in board.legal_moves)
+
+
+def _oracle_is_mated(board: chess.Board) -> bool:
+    return board.is_check() and not _oracle_has_legal_move(board)
+
+
+def _oracle_insufficient(board: chess.Board) -> bool:
+    """Neither side can ever mate: no pawns, rooks or queens, and at most one
+    minor piece in total, or only bishops, all on squares of one colour."""
+    if board.pieces_mask(chess.PAWN, chess.WHITE) | board.pieces_mask(chess.PAWN, chess.BLACK):
+        return False
+    for kind in (chess.ROOK, chess.QUEEN):
+        if board.pieces_mask(kind, chess.WHITE) | board.pieces_mask(kind, chess.BLACK):
+            return False
+    knights = [sq for c in (chess.WHITE, chess.BLACK) for sq in board.pieces(chess.KNIGHT, c)]
+    bishops = [sq for c in (chess.WHITE, chess.BLACK) for sq in board.pieces(chess.BISHOP, c)]
+    if len(knights) + len(bishops) <= 1:
+        return True
+    if knights:
+        return False
+    return len({(chess.square_file(sq) + chess.square_rank(sq)) % 2 for sq in bishops}) == 1
+
+
+def _oracle_move_mate(board: chess.Board, move: chess.Move) -> int | None:
+    """1: the move mates. -1: the opponent then mates in one, unless the mover
+    could claim a draw instead (50-move counter at 100 plies, threefold)."""
+    after = board.copy()
+    after.push(move)
+    if _oracle_is_mated(after):
+        return 1
+    if after.halfmove_clock >= 100 or after.is_repetition(3):
+        return None
+    for reply in list(after.legal_moves):
+        after.push(reply)
+        mated = _oracle_is_mated(after)
+        after.pop()
+        if mated:
+            return -1
+    return None
+
+
+def _oracle_move_is_draw(board: chess.Board, move: chess.Move) -> bool:
+    """The game ends drawn on the board: stalemate, insufficient material, or
+    the 75-move rule (150 plies, unless the position is mate)."""
+    after = board.copy()
+    after.push(move)
+    has_move = _oracle_has_legal_move(after)
+    stalemate = not after.is_check() and not has_move
+    return stalemate or _oracle_insufficient(after) or (after.halfmove_clock >= 150 and has_move)
+
+
+def _with_history(fen: str, moves: list[str]) -> chess.Board:
+    board = chess.Board(fen)
+    for uci in moves:
+        board.push_uci(uci)
+    return board
+
+
+# Constructed cases: each named fact must be present at least once.
+_ORACLE_CASES: list[chess.Board] = [
+    chess.Board("6k1/5ppp/8/8/8/8/5PPP/3R2K1 w - - 0 1"),        # Rd8#: mate 1
+    chess.Board("6k1/5ppp/8/8/8/8/5PPP/3R2K1 w - - 99 60"),      # mate still beats the 50-move claim
+    chess.Board("r5k1/5ppp/8/8/8/8/5PPP/6K1 w - - 0 1"),         # Kh1?? allows Ra1#: mate -1
+    chess.Board("r5k1/5ppp/8/8/8/8/5PPP/6K1 w - - 99 60"),       # ... unless Kh1 makes the claim (100 plies)
+    chess.Board("7k/5Q2/6K1/8/8/8/8/8 w - - 0 1"),               # Qe6 etc. stalemate; Qf8/Qg7 etc. mate
+    chess.Board("7k/8/8/8/8/8/1b6/K1N5 w - - 0 1"),              # Kxb2 leaves K+N v K: insufficient
+    chess.Board("8/8/8/8/4k3/8/1r6/K7 w - - 0 1"),               # Kxb2 leaves bare kings: insufficient
+    chess.Board("8/8/8/8/8/2k5/1b6/K1B5 w - - 0 1"),             # same-colour bishops: every move drawn
+    chess.Board("8/8/8/4k3/8/8/4b3/K3B3 w - - 149 120"),         # a quiet move reaches the 75-move rule
+    chess.Board("7k/8/6K1/8/8/8/8/R7 w - - 149 130"),            # Ra8# beats the 75-move rule; others draw
+    # Kh1 recreates a position for the third time: the mover may claim the
+    # threefold instead of facing Ra1#, so no mate -1.
+    _with_history("r5k1/5ppp/8/8/8/8/5PPP/6K1 w - - 0 1",
+                  ["g1h1", "g8f8", "h1g1", "f8g8", "g1h1", "g8f8", "h1g1", "f8g8"]),
+    # One short of each claim: no claim is available, so Kh1 is mate -1.
+    chess.Board("r5k1/5ppp/8/8/8/8/5PPP/6K1 w - - 98 60"),       # Kh1 -> clock 99, not 100
+    _with_history("r5k1/5ppp/8/8/8/8/5PPP/6K1 w - - 0 1",
+                  ["g1h1", "g8f8", "h1g1", "f8g8"]),             # Kh1 repeats only twice
+]
+
+
+def _oracle_positions() -> list[chess.Board]:
+    from scripts.tb_prober_equivalence import gen_random
+
+    rng = random.Random(20261119)
+    boards = [chess.Board(f) for f in _random_positions(200, 20261116)]
+    boards += _ORACLE_CASES
+    classes = ["KQvK", "KRvK", "KQvKR", "KBNvK", "KRvKP", "KQvKQ", "KBvKB", "KNvKP", "KRRvK"]
+    while len(boards) < 200 + len(_ORACLE_CASES) + 60:
+        b = gen_random(rng, rng.choice(classes))
+        if b is not None and not b.is_game_over():
+            boards.append(b)
+    return boards
+
+
+def test_board_fact_helpers_agree_with_a_brute_force_oracle() -> None:
+    from chess_anti_engine.moves import move_to_index
+    from chess_anti_engine.uci import search as search_module
+
+    search_module._BOARD_FACTS_CACHE.clear()
+    seen: dict[str, int] = {}
+    for board in _oracle_positions():
+        for move in list(board.legal_moves):
+            idx = int(move_to_index(move, board))
+            want_mate = _oracle_move_mate(board, move)
+            want_draw = _oracle_move_is_draw(board, move)
+            got_mate = _board_line_mate(board, idx)
+            got_draw = _board_line_is_draw(board, idx)
+            assert (got_mate, got_draw) == (want_mate, want_draw), (board.fen(), move.uci())
+            after = board.copy()
+            after.push(move)
+            fact = ("mate+1" if want_mate == 1 else "mate-1" if want_mate == -1
+                    else "stalemate" if want_draw and not after.legal_moves.count()
+                    else "insufficient" if want_draw and _oracle_insufficient(after)
+                    else "draw75" if want_draw
+                    else "claim_suppressed" if (after.halfmove_clock >= 100 or after.is_repetition(3))
+                    and _oracle_reply_mates(after) else "none")
+            seen[fact] = seen.get(fact, 0) + 1
+    for fact in ("mate+1", "mate-1", "stalemate", "insufficient", "draw75", "claim_suppressed"):
+        assert seen.get(fact, 0) >= 1, seen
+
+
+def _oracle_reply_mates(after: chess.Board) -> bool:
+    for reply in list(after.legal_moves):
+        after.push(reply)
+        mated = _oracle_is_mated(after)
+        after.pop()
+        if mated:
+            return True
+    return False

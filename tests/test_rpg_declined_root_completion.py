@@ -14,6 +14,7 @@ from chess_anti_engine.uci import engine as engine_module
 from chess_anti_engine.uci.engine import Engine, EngineOptions
 from chess_anti_engine.uci.protocol import parse_command
 from chess_anti_engine.uci.search import SearchWorker
+from tests.uci_println_capture import capture_into
 
 torch.set_num_threads(2)
 DRAW_POSITIONS = (
@@ -68,7 +69,7 @@ class ObservedWorker(SearchWorker):
 @pytest.fixture
 def session(monkeypatch):
     lines = []
-    monkeypatch.setattr(engine_module, "_println", lines.append)
+    monkeypatch.setattr(engine_module, "_println", capture_into(lines))
     worker = ObservedWorker()
     engine = Engine(worker, options=EngineOptions(hash_mb=64, max_batch=4, vl_gather=4,
                                                   ponder=True),

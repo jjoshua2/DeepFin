@@ -1,0 +1,118 @@
+{
+  "dated_actuals": {
+    "Q50_CPU_protection_actual_seconds": 4.525799846975133,
+    "Q50_GPU_actual_seconds": 0,
+    "actual_numerical_retry_or_owner_started": false,
+    "actual_protection_pair_preserved": {
+      "independent": {
+        "artifact": "fresh-current-policy-A39-Q50-prestudy-protection-bindings-v1/independent-review.json",
+        "sha256": "70365cb212dd6dee9edd02eddd97d007badde67cdbad4c2f06044ed52ef13168"
+      },
+      "root": {
+        "artifact": "fresh-current-policy-A39-Q50-prestudy-protection-bindings-v1/root-acceptance.json",
+        "sha256": "beacab56ae30e95b329b8ec64ac48d3da26b807e814e4b8e433a0d3bb661cd03"
+      }
+    },
+    "all_declared_Q50_GPU_stage_names_absent": true,
+    "closed_owner_count": 546,
+    "fresh_preflight_admission_command_absent": true,
+    "new_model_loads_row_draws_training_updates": 0,
+    "no_future_run_status_claim": true,
+    "valid_protection_owner": 546
+  },
+  "error": {
+    "artifact": "Q50-cycle01-collect-preissue-UTC-format-error-v1/error.json",
+    "sha256": "896365d0e0f6234f1cc2255ed67bb9cd05f9b02afe1cb69e565e79f9dd814218"
+  },
+  "execution_authorized": false,
+  "method": {
+    "artifact": "Q50-fresh-current-policy-A39-12-cycle-method-source-preparation-v1/design.json",
+    "sha256": "b04aceff9656a647db4e4b6993e30c8425794236bd977f8fbe8422a81d727811"
+  },
+  "new_qualification_or_protection_rerun": false,
+  "old_scope_selector_source_packet_and_protection_preserved": true,
+  "original_public_record": {
+    "artifact": "Q50-public-prereg-main-publication-v1/public-record.json",
+    "sha256": "52d24167188799abe2c6da4c345d9f6b2845fd56c4714b343fbc2030e07e9feb"
+  },
+  "parser": {
+    "Root_metadata_Python": "3.10.12",
+    "exception_type": "ValueError",
+    "interpreter_U3_or_validator_changed": false,
+    "message": "Invalid isoformat string: '2026-11-19T16:09:20Z'",
+    "site": "U3._aware_timestamp datetime.fromisoformat(value)",
+    "supported_metadata_exit_code": 1
+  },
+  "playing_or_improvement_result": false,
+  "preserved_accounting": {
+    "Q50_CPU_actual_owner_wall_seconds": 4.525799846975133,
+    "Q50_GPU_actual_owner_wall_seconds": 0.0,
+    "Q50_handoff_engineering_CPU_actual_owner_wall_seconds": 0.0,
+    "Q50_preparation_engineering_CPU_actual_owner_wall_seconds": 4.525799846975133,
+    "Q50_scientific_CPU_actual_owner_wall_seconds": 0.0,
+    "no_counter_ledger_or_frontier_reset": true,
+    "snapshot_only": true,
+    "week_CPU_actual_owner_wall_seconds": 8750.03485605988,
+    "week_GPU_actual_owner_wall_seconds": 146541.7328588327
+  },
+  "reconciliation": {
+    "artifact": "Q50-12-cycle-Root-selection-v2/preissue-reconciliation.json",
+    "sha256": "0e35444caad2e50016d89767366e87e9d9e6ec57a74296ecccbbbaed5a717357"
+  },
+  "schema": "Q50_PREISSUE_TIMESTAMP_ENCODING_PUBLIC_OPERATIONAL_ERRATUM_V1",
+  "science_and_seeds_unchanged": true,
+  "snapshot_utc": "2026-11-19T04:59:21.140951+00:00",
+  "source_review_hashes": "NOT_GUESSED_OR_IMPLIED_BY_THIS_DRAFT",
+  "source_successors_require_actual_independent_acceptance": true,
+  "status": "DATED_PREISSUE_METADATA_REFUSAL_NOT_NUMERICAL_RETRY",
+  "unchanged_limits": {
+    "cycles": 12,
+    "engineering_CPU": 900,
+    "final_GPU_reserve": 3600,
+    "final_reader_CPU_reserve": 180,
+    "games_per_cohort": 192,
+    "maximum_owners": 75,
+    "no_horizon_shrink_extension_retry_or_recollection": true,
+    "outcome_share": 0.5,
+    "retained_search_share": 0.5,
+    "study_CPU": 4800,
+    "study_GPU": 25200,
+    "week_GPU": 172800
+  },
+  "versioned_immutable_successor": {
+    "GPU_deadline_encoding": "2026-11-19T16:09:20+00:00",
+    "GPU_stage_caps_and_scope_aggregate_unchanged": true,
+    "GPU_stages": 25,
+    "future_cycle_binding_directories": "bindings-v2",
+    "method_and_engineering_deadline_encoding": "2026-11-19T16:09:20Z",
+    "new_engineering_scope": {
+      "artifact": "Q50-12-cycle-scope-v2/handoff-engineering-scope.json",
+      "sha256": "8ac7f6b320adeb4878c97bfbc465651033576451dcbdc582ba6147c677cc797b"
+    },
+    "new_issued_UTC_not_backdated": true,
+    "new_operations": {
+      "artifact": "Q50-12-cycle-scope-v2/operations.json",
+      "sha256": "949dff53980f27f2c8dcbebe8149a462ed45723de37ef04048f7963bc99194d1"
+    },
+    "new_scope": {
+      "artifact": "Q50-12-cycle-scope-v2/GPU-scope.json",
+      "sha256": "6823240546e962d7fe7f1b1160319d5ffb3cffe24fc8dffe83d2222cd19823b3"
+    },
+    "new_selection": {
+      "artifact": "Q50-12-cycle-Root-selection-v2/selection.json",
+      "sha256": "7d188f3241ca8817b446cb5cb4b93f65dc626b4b5580ef0816a8fa30d109aa84"
+    },
+    "old_scope": {
+      "artifact": "Q50-12-cycle-scope-v1/GPU-scope.json",
+      "sha256": "827b2bede3793185602cdd50eff57dbad239adacdd95a44ed0f14794f96ee808"
+    },
+    "old_selection": {
+      "artifact": "Q50-12-cycle-Root-selection-v1/selection.json",
+      "sha256": "60d97cac9afcb1fc01b77cae9557e9bde77da9e2e749c5ca50c3813131a68bf8"
+    },
+    "original_stage_and_output_directories": "v1_unchanged",
+    "protection_and_final_playing_bindings": "v1_unchanged",
+    "same_absolute_cutoff": true,
+    "same_scope_uuid": "7888afc5-e5b4-47a3-be78-180ae6000f8e"
+  }
+}

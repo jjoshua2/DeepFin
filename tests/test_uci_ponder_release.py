@@ -29,6 +29,7 @@ from chess_anti_engine.uci.protocol import (
 )
 from chess_anti_engine.uci.search import SearchResult, SearchWorker
 from chess_anti_engine.uci.time_manager import Deadline
+from tests.uci_println_capture import capture_into
 
 
 class _ImmediateWorker:
@@ -267,10 +268,7 @@ def _engine(worker: _ImmediateWorker) -> Engine:
 def _capture(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     lines: list[str] = []
 
-    def _print(text: str) -> None:
-        lines.append(text)
-
-    monkeypatch.setattr("chess_anti_engine.uci.engine._println", _print)
+    monkeypatch.setattr("chess_anti_engine.uci.engine._println", capture_into(lines))
     return lines
 
 
