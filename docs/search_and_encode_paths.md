@@ -285,6 +285,8 @@ python-chess APIs the engine runtime relies on:
   times faster at the leaf batch sizes the Gumbel search submits, where the
   eager forward is launch-bound. Arena: `--eval-cuda-graphs` (eager only);
   in-process collectors pass `cuda_graphs: true` in their evaluator kwargs.
+  Batches above `cuda_graph_max_rows` (default 512; larger ones are
+  GPU-bound, and capturing them pins >10 GB) run eager.
   Refused, not dropped, off CUDA, with `pad_to_compiled_buckets`, or for a
   `torch.compile`d model.
 - **ONNX:** `onnx/load.py` wraps `onnxruntime` as an `nn.Module` (4672-wide

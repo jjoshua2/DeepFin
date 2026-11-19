@@ -111,7 +111,7 @@ def test_sync_forward_issued_while_an_async_one_is_in_flight() -> None:
     ).cuda().eval()
     eager = DirectGPUEvaluator(model, device="cuda", max_batch=4096, n_slots=2, legal_bf16=False)
     graph = DirectGPUEvaluator(model, device="cuda", max_batch=4096, n_slots=2, legal_bf16=False,
-                               cuda_graphs=True)
+                               cuda_graphs=True, cuda_graph_max_rows=4096)
     planes = eager.get_input_buffer(1).shape[1]
     rng = np.random.default_rng(2)
     xa, xb = _rows(rng, 4096, planes), _rows(rng, 2048, planes)
@@ -131,5 +131,26 @@ def test_sync_forward_issued_while_an_async_one_is_in_flight() -> None:
     for ev in (eager, graph):
         race(ev)  # captures both shapes; the second call races two replays
         results.append(race(ev))
+    assert graph.cuda_graph_shapes == (2048, 4096)
     for e, g in zip(results[0], results[1]):
         assert e.tobytes() == g.tobytes()
+
+
+@needs_cuda
+def test_batches_above_the_row_cap_run_eager_and_are_not_captured() -> None:
+    model = _model("cuda")
+    eager = DirectGPUEvaluator(model, device="cuda", max_batch=64, legal_bf16=False)
+    graph = DirectGPUEvaluator(model, device="cuda", max_batch=64, legal_bf16=False,
+                               cuda_graphs=True, cuda_graph_max_rows=16)
+    planes = eager.get_input_buffer(1).shape[1]
+    rng = np.random.default_rng(3)
+    for bsz in (8, 16, 17, 64, 8):
+        x = _rows(rng, bsz, planes)
+        outs = []
+        for ev in (eager, graph):
+            ev.get_input_buffer(bsz)[:] = x
+            outs.append(ev.evaluate_inplace(bsz))
+        (pe, we), (pg, wg) = outs
+        assert pe.tobytes() == pg.tobytes(), bsz
+        assert we.tobytes() == wg.tobytes(), bsz
+    assert graph.cuda_graph_shapes == (8, 16)

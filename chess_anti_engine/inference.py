@@ -582,14 +582,25 @@ class _EagerForwardGraphs:
     next replay of ANY graph, so callers copy them out on the replay stream
     before the next replay is enqueued -- both DirectGPUEvaluator call sites
     do -- and replays never run concurrently (the sync path waits on the async
-    stream first). ``max_graphs`` bounds the number of captured shapes; past it
-    the forward falls back to eager, which is equal by construction.
+    stream first). ``max_graphs`` bounds the number of captured shapes and
+    ``max_rows`` the largest batch captured; past either the forward runs
+    eager, which is equal by construction. ``max_rows`` exists for memory: a
+    graph pins its activations in the pool for the process lifetime, and
+    capturing the largest leaf batches (up to 4096 rows) raised peak reserved
+    VRAM by over 10 GB in selfplay for no gain -- above ~512 rows the forward
+    is GPU-bound and replay is no faster than eager (see the PR table).
+    Warm-ups and captures run on ONE persistent side stream: a fresh stream
+    per capture strands that stream's cached activation blocks.
     """
 
-    def __init__(self, owner: DirectGPUEvaluator, *, max_graphs: int = 96) -> None:
+    def __init__(
+        self, owner: DirectGPUEvaluator, *, max_graphs: int = 96, max_rows: int = 512,
+    ) -> None:
         self._owner = owner
         self._max_graphs = int(max_graphs)
+        self._max_rows = int(max_rows)
         self._pool = torch.cuda.graph_pool_handle()
+        self._side = torch.cuda.Stream(device=owner.device)
         self._static_in: dict[torch.dtype, torch.Tensor] = {}
         self._graphs: dict[tuple[int, torch.dtype], tuple[torch.cuda.CUDAGraph, torch.Tensor, torch.Tensor]] = {}
         self.eager_fallbacks = 0
@@ -612,7 +623,7 @@ class _EagerForwardGraphs:
 
     def _capture(self, xt: torch.Tensor) -> tuple[torch.cuda.CUDAGraph, torch.Tensor, torch.Tensor]:
         caller = torch.cuda.current_stream(xt.device)
-        side = torch.cuda.Stream(device=xt.device)
+        side = self._side
         side.wait_stream(caller)
         with torch.cuda.stream(side):
             self._forward(xt)  # warm-up: lazy library/workspace init outside capture
@@ -632,7 +643,7 @@ class _EagerForwardGraphs:
         key = (bsz, host.dtype)
         entry = self._graphs.get(key)
         if entry is None:
-            if len(self._graphs) >= self._max_graphs:
+            if bsz > self._max_rows or len(self._graphs) >= self._max_graphs:
                 self.eager_fallbacks += 1
                 return self._forward(xt)
             entry = self._capture(xt)
@@ -667,6 +678,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         legal_bf16: bool = True,
         pad_to_compiled_buckets: bool = False,
         cuda_graphs: bool = False,
+        cuda_graph_max_rows: int = 512,
     ) -> None:
         super().__init__(model, device=device, use_amp=use_amp, amp_dtype=amp_dtype)
         self._max_batch = int(max_batch)
@@ -746,7 +758,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
                 # Refused, not ignored: an accepted-then-dropped speed knob would
                 # leave a caller benchmarking the eager path under the graph name.
                 raise ValueError(f"cuda_graphs=True is unsupported here: {reason}")
-            self._eager_graphs = _EagerForwardGraphs(self)
+            self._eager_graphs = _EagerForwardGraphs(self, max_rows=int(cuda_graph_max_rows))
 
     @property
     def cuda_graphs(self) -> bool:
