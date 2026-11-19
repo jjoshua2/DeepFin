@@ -221,11 +221,21 @@ Bank and scripts: `~/chess-artifacts/operations/rl-claude-20261119/rl-audit/`
 | base policy + Q50 value | 0.421 | −55.2 (−73.6 to −37.1) |
 | F12 c12 full | 0.450 | −34.9 (−53.1 to −16.8) |
 
-The Q50 deficit sits in the value output as it ended up. **Open:** the base-vs-base
-control read 0.5325 at 400 games (+22.6, CI +0.2 to +45.3), identically for the plain
-and hybrid loaders, where identical weights with root noise off were expected to
-score 0.500; until that is explained, read the arms relative to each other, not to
-zero. F12 arms B and C were not run (reboot); blocker: GPU held for the owner.
+The Q50 deficit sits in the value output as it ended up; the arms are additive
+within noise (paired B + C − A = +0.0175 ± 0.0211 in score). This locates the loss;
+it does not identify the cause, because the heads share a trunk.
+
+Controls: hybrid(base, base) reproduces the plain base-vs-base match game for game
+(400/400); swapping win and loss in the value, or permuting the policy columns,
+scores 0/40. The base-vs-base control read 0.5325 at 400 games (+22.6, CI +0.2 to
++45.3). The arena samples moves at temperature 0.1 from one seeded generator, so the
+two games of a pair are different games (197 of 200 pairs) and identical weights do
+not score exactly 0.500; a second, 20-pair same-net sample went the other way
+(0.375). That is read as sampling noise (sign test p = 0.045, one of several looks),
+and the arms are read against 0. Not excluded without new games: a seat-dependent
+path, testable by rerunning the control with the seats swapped. **Open:** F12 arms B
+and C (reboot at 429 of 800 games of B; blocker: GPU held for the owner) and the
+seat-swap control.
 
 **Next.** A fresh loop (new driver, PR #1416) whose first arms keep the value head
 on a search-value target or off, with the large opening book and per-generation
