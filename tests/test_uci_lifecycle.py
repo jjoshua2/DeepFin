@@ -14,6 +14,7 @@ from chess_anti_engine.uci.protocol import (
     CmdUciNewGame, GoArgs,
 )
 from chess_anti_engine.uci.search import SearchResult
+from tests.uci_println_capture import capture_into
 
 
 def _result(board: chess.Board) -> SearchResult:
@@ -382,7 +383,7 @@ def test_repeated_ponderhit_cannot_signal_the_replacement_cancel_event(monkeypat
 @pytest.mark.parametrize("fen", [None, "8/8/8/4k3/8/8/4P3/4K3 w - - 0 1"])
 def test_bare_position_ponderhit_releases_and_searches_same_real_board(monkeypatch, fen, held):
     lines = []
-    monkeypatch.setattr("chess_anti_engine.uci.engine._println", lines.append)
+    monkeypatch.setattr("chess_anti_engine.uci.engine._println", capture_into(lines))
     entered = threading.Event()
     calls = []
     worker = MagicMock()

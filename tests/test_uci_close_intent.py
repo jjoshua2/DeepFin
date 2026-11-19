@@ -13,6 +13,7 @@ import chess_anti_engine.uci.engine as engine_module
 from chess_anti_engine.uci.engine import Engine, SearchNotQuiescent
 from chess_anti_engine.uci.protocol import CmdGo, CmdPonderHit, CmdPosition, CmdStop, GoArgs
 from chess_anti_engine.uci.search import SearchResult
+from tests.uci_println_capture import capture_into
 
 
 def _worker():
@@ -27,7 +28,7 @@ def _worker():
 def _held_ponder(monkeypatch):
     monkeypatch.setattr(engine_module, "_JOIN_TIMEOUT_S", 0.01)
     output: list[str] = []
-    monkeypatch.setattr(engine_module, "_println", output.append)
+    monkeypatch.setattr(engine_module, "_println", capture_into(output))
     worker = _worker()
     entered = threading.Event()
     release = threading.Event()
@@ -150,8 +151,8 @@ def test_prelaunch_warmup_error_releases_custody(monkeypatch):
 def test_cli_eof_suppresses_late_result_without_retiring_live_worker(monkeypatch):
     monkeypatch.setattr(engine_module, "_JOIN_TIMEOUT_S", 0.01)
     output: list[str] = []
-    monkeypatch.setattr(engine_module, "_println", output.append)
-    monkeypatch.setattr(uci_main, "_println", output.append)
+    monkeypatch.setattr(engine_module, "_println", capture_into(output))
+    monkeypatch.setattr(uci_main, "_println", capture_into(output))
     worker = _worker()
     entered = threading.Event()
     release = threading.Event()
