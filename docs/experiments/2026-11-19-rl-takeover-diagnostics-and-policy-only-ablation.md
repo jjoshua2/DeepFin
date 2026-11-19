@@ -54,7 +54,7 @@ target was 100% teacher-search value; the loops replaced it with 90% (F12) or 50
 (Q50) game outcome, about 192 outcomes per cycle. In the stored "search value" the draw probability is the net's raw root draw; only
 win and loss mass move within what is left.
 
-**D3 (running). Target-sharpness calibration.** On about 3,000 cycle-1 positions,
+**D3 (result below). Target-sharpness calibration.** On about 3,000 cycle-1 positions,
 candidate 64-simulation targets (stored form, temperature, `target_q_rescale` off,
 `c_scale` and `c_visit` variants, per-move visit weighting, prior mixtures) are
 scored against an 800-simulation search of the SL base and against the raw
@@ -62,7 +62,7 @@ policies of lc0 BT4 and a Ceres net, with game-clustered bootstrap intervals. Th
 same bank scores the SL base and F12 cycle 1/6/12 priors (entropy, agreement with
 the deep search) to test whether the loop ratchets sharpness without earning it.
 
-**D4 (running). Head-swap matches.** Policy from one net and value from the other
+**D4 (part-result below). Head-swap matches.** Policy from one net and value from the other
 (two full forwards per evaluation), against the SL base at 64 simulations, 800
 games per arm on one fixed set of opening pairs: full fine-tuned net; fine-tuned
 policy + base value; base policy + fine-tuned value; base + base control. Q50
@@ -168,13 +168,20 @@ LL 42.
 
 **Verdict by the pre-committed rule: value loss implicated** (lower bound above 0).
 Same rows, same order, same optimizer: switching the WDL loss off is worth about 43
-Elo head-to-head.
+Elo head-to-head. The verdict is by rule; its robustness depends on the open
+seat-swap control in D4: identical weights read +22.6 (+0.2 to +45.3) for the
+candidate seat on another seed, and a real offset of that size would leave about
++20 with a lower bound near −6. Run that control before this verdict decides the
+next loop's value head.
 
 **Recorded, not deciding.** P1 vs SL base, 800 games: 0.4844, −10.9 Elo (−27.7 to
 +5.9) — policy-only training on these rows did not beat the base. F12 cycle 12 vs SL
-base on this seed was interrupted by a reboot at 279 of 800 games and is **unread**
-(no rolling number is quoted); D4's own 800-game run of the same pairing on seed
-20261119 read −34.9 (−53.1 to −16.8).
+base on this seed was interrupted by a reboot with 278 games banked of 800 and is **unread**
+(no rolling number is quoted; its game log ends in a NUL-filled tail that must be
+repaired before any resume); D4's own 800-game run of the same pairing on seed
+20261119 read −34.9 (−53.1 to −16.8), from a different code head (`df55413a6`) and
+a resumed run. Not done: scoring the P1 checkpoints against the D3 800-simulation
+bank, which the registration listed as recorded-only.
 
 **Per-cycle, fixed held-out cycle-2 rows** (in-sample for the policy from cycle 2):
 
@@ -182,9 +189,10 @@ base on this seed was interrupted by a reboot at 279 of 800 games and is **unrea
 |---|---:|---:|---:|---:|
 | SL base | 1.117 | 0.985 | 0 | 0 |
 | P1 c1 / c6 / c12 | 1.013 / 0.824 / 0.784 | 0.937 / 0.917 / 0.932 | 0.038 / 0.215 / 0.299 | 0.020 / 0.048 / 0.066 |
-| F12 c1 / c6 / c12 | 1.015 / 0.836 / 0.787 | 0.937 / 0.920 / 0.936 | 0.039 / 0.198 / 0.288 | 0.075 / 0.107 / 0.107 |
+| F12 c1 / c6 / c12 | 1.015 / 0.836 / 0.787 | 0.937 / 0.920 / 0.936 | 0.039 / 0.198 / 0.288 | 0.075 / 0.106 / 0.107 |
 
-The policy sharpened identically with and without the value loss, and with the
+The policy sharpened near-identically with and without the value loss (KL from
+base at cycle 12: 0.299 P1, 0.288 F12), and with the
 value loss off the value output still drifted by 0.066 through the shared trunk.
 So the policy target is not cleared: P1 shows the value loss costs strength, not
 that the policy update gains any.
@@ -196,19 +204,24 @@ Bank and scripts: `~/chess-artifacts/operations/rl-claude-20261119/rl-audit/`
 
 - Policy entropy (nats): lc0 BT4 1.49, Ceres net 1.53, SL base 1.12, F12 cycle
   1/6/12 1.03/0.84/0.80, stored 64-simulation target 0.69, 800-simulation target
-  0.46. No setting of the existing knobs puts a 64-simulation target in the BT4/Ceres
-  band; temperature 2 is closest.
+  0.46. None of the tested settings puts a 64-simulation target in the BT4/Ceres band;
+  temperature 2 (1.32) is closest below and temperature 3 (1.89) is above, so an
+  untested temperature between them would fall inside.
 - Against the 800-simulation search, F12 cycle 12's prior puts more mass on the deep
   survivor (0.512 → 0.580) with unchanged top-1 (0.667 → 0.667). In-sample caveat:
   these positions are from games cycles 1+ trained on.
-- Value against the 800-simulation survivor Q (MSE): game outcome 0.272, raw net
-  0.035, 64-simulation search value 0.0145. The root-node Q of a Gumbel search sits
+- Value against the 800-simulation survivor Q (MSE): game outcome 0.272, SL base raw
+  net 0.035 (F12 cycle 12 raw 0.037), stored 64-simulation search value 0.0145 (a
+  fresh 64-simulation survivor Q 0.017). The root-node Q of a Gumbel search sits
   0.235 below the survivor Q and must not be used as a value target.
 - Value landscape over legal moves: best-to-second gap 0.145 (SL base) → 0.119 (F12
-  c12) → 0.108 (Q50 c12); mean |Q| 0.41 → 0.33 → 0.30; BT4/Ceres 0.13 and 0.40.
+  c12) → 0.108 (Q50 c12); mean |Q| 0.41 → 0.33 → 0.30; BT4 gap 0.13 and mean
+  |Q| 0.40, Ceres 0.13 and 0.39, on the external-reference subset.
   Ranking against deep search did not improve.
-- A 256-simulation target beats every transformed 64-simulation target on mass,
-  top-1 and regret. `target_q_rescale` cannot be set from the self-play config
+- The best 256-simulation targets beat every transformed 64-simulation target on
+  mass, top-1 and regret (for example cv0/cs0.5: mass 0.702, top-1 0.763, regret
+  0.014); the default 256-simulation target does not on mass (0.674 against 0.677
+  for the sharpest 64-simulation cell), and intervals overlap. `target_q_rescale` cannot be set from the self-play config
   (not mapped in `build_selfplay_gumbel_config`). Collection reuses the tree across
   plies, so stored "64-simulation" targets include inherited visits.
 
@@ -230,7 +243,7 @@ Controls: hybrid(base, base) reproduces the plain base-vs-base match game for ga
 scores 0/40. The base-vs-base control read 0.5325 at 400 games (+22.6, CI +0.2 to
 +45.3). The arena samples moves at temperature 0.1 from one seeded generator, so the
 two games of a pair are different games (197 of 200 pairs) and identical weights do
-not score exactly 0.500; a second, 20-pair same-net sample went the other way
+not score exactly 0.500; a second, 20-pair same-net sample on the same openings went the other way
 (0.375). That is read as sampling noise (sign test p = 0.045, one of several looks),
 and the arms are read against 0. Not excluded without new games: a seat-dependent
 path, testable by rerunning the control with the seats swapped. **Open:** F12 arms B
