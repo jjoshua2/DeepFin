@@ -69,3 +69,61 @@ def test_every_gather_default_is_the_one_constant() -> None:
 
     for fn in (SearchWorker.__init__, _warmup_evaluator):
         assert inspect.signature(fn).parameters["walker_gather"].default == DEFAULT_LEAF_GATHER, fn
+
+
+class _StopAfterPolls(threading.Event):
+    """A stop event that reads set from its ``polls``-th `is_set` on."""
+
+    def __init__(self, polls: int) -> None:
+        super().__init__()
+        self._left = polls
+        self._lock = threading.Lock()
+
+    def is_set(self) -> bool:
+        with self._lock:
+            self._left -= 1
+            return self._left < 0 or super().is_set()
+
+
+class _ZeroEvaluator:
+    def __init__(self) -> None:
+        self.batches: list[int] = []
+
+    def evaluate_encoded(self, x, relations=None):
+        del relations
+        self.batches.append(len(x))
+        return np.zeros((len(x), 4672), np.float32), np.zeros((len(x), 3), np.float32)
+
+
+def test_a_walker_stops_mid_gather_and_submits_what_it_has() -> None:
+    """At gather 32 a stop must not wait for a full gather: the walker polls
+    the stop before every leaf, submits the partial batch and leaves. (A
+    walker that polled only between batches gathered 32 more leaves, and one
+    that never saw the job's event ran the whole budget.)"""
+    from chess_anti_engine.encoding._lc0_ext import CBoard
+    from chess_anti_engine.mcts._mcts_tree import MCTSTree
+    from chess_anti_engine.uci.walker_pool import WalkerPool, WalkerPoolConfig
+
+    tree = MCTSTree()
+    tree.reserve(4096, 65536)
+    root_cb = CBoard.from_board(chess.Board())
+    rid = tree.add_root(0, 0.0)
+    legal = root_cb.legal_move_indices().astype(np.int32)
+    tree.expand(rid, legal, np.full(legal.size, 1.0 / legal.size, dtype=np.float64))
+    evaluator = _ZeroEvaluator()
+    pool = WalkerPool(
+        WalkerPoolConfig(n_walkers=1, c_puct=1.5, fpu_at_root=0.0, fpu_reduction=0.33,
+                         vloss_weight=3, gather=DEFAULT_LEAF_GATHER),
+        evaluator,
+    )
+    try:
+        # Polls: one before the gather, then one per leaf -- set on the 5th.
+        completed = pool.run(
+            tree=tree, root_id=rid, root_cboard=root_cb,
+            target_sims=1000, stop_event=_StopAfterPolls(4),
+        )
+    finally:
+        pool.close()
+    assert completed == 3, (completed, evaluator.batches)
+    assert evaluator.batches == [3]
+    assert pool.batch_ms_hi() > 0.0  # the batch was timed

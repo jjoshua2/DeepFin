@@ -65,25 +65,85 @@ def test_deadline_interrupts_real_walker_chunk_without_fallback(capsys):
         engine.close()
 
 
-def test_deadline_interrupts_walker_chunk_at_the_default_gather(capsys):
-    """The default walker gather (32) still answers near a finite deadline: a
-    walker finishes its in-flight batch (one evaluator call) before it sees
-    the stop, so only elapsed time is bounded here; the node bound above is
-    a gather-1 property."""
+class _BatchCostEvaluator:
+    """Every call costs ``batch_s`` whatever its size (model latency releases
+    the GIL), and records when it started."""
+
+    def __init__(self, batch_s: float) -> None:
+        self.batch_s = batch_s
+        self.starts: list[float] = []
+        self._lock = threading.Lock()
+
+    def evaluate_encoded(self, x, relations=None):
+        del relations
+        with self._lock:
+            self.starts.append(time.monotonic())
+        time.sleep(self.batch_s)
+        return np.zeros((len(x), 4672), np.float32), np.zeros((len(x), 3), np.float32)
+
+
+def _walker_engine(evaluator, **kw) -> tuple[SearchWorker, Engine]:
     worker = SearchWorker(
-        _SlowEvaluator(), device="cpu", n_walkers=2, chunk_sims=2048,
-        gumbel_cfg=GumbelConfig(input_extra_features="v1", add_noise=False),
+        evaluator, device="cpu", n_walkers=2, chunk_sims=2048,
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", add_noise=False), **kw,
     )
     assert worker._walker_gather == DEFAULT_LEAF_GATHER
-    engine = Engine(worker)
+    return worker, Engine(worker)
+
+
+def test_deadline_interrupts_walker_chunk_at_the_default_gather(capsys):
+    """A walker chunk that ignored the stop would run its whole time-capped
+    first chunk (2048 sims = 32 batches a walker at 0.1 s each, > 3 s); a
+    working stop ends it within one batch of the 600 ms deadline."""
+    _worker, engine = _walker_engine(_BatchCostEvaluator(0.1))
     try:
         started = time.monotonic()
         result = engine._run_one_phase(
-            SearchLimits(deadline_ms=100), is_ponder=False, board=chess.Board(),
+            SearchLimits(deadline_ms=600), is_ponder=False, board=chess.Board(),
         )
         elapsed = time.monotonic() - started
         assert elapsed < 1.5  # Scheduling tolerance, not a real-time guarantee.
-        assert result.nodes > 0
+        assert 0 < result.nodes < 2048
+        assert engine.bestmove_fallback_used == 0
+        assert "search error:" not in capsys.readouterr().out
+    finally:
+        engine.close()
+
+
+def test_walker_batches_in_flight_at_the_stop_end_by_the_deadline(capsys):
+    """The stop reaches a walker pool one measured walker batch before the
+    deadline: a walker that has submitted a batch only sees the stop after it,
+    and at gather 32 on CPU a stop AT the deadline answered late enough for
+    the watchdog to play an unsearched move. With every batch costing 150 ms,
+    no batch may START later than 150 ms before the deadline. The walkers'
+    batches start in step every 150 ms from the chunk start, so the deadline
+    sits half a batch off that grid: a stop at the deadline itself then starts
+    a batch about 65 ms before it, 85 ms past the bound (measured: last start
+    910 ms with the reserve removed, 757-760 ms with it)."""
+    batch_s, deadline_ms = 0.15, 975
+    evaluator = _BatchCostEvaluator(batch_s)
+    worker, engine = _walker_engine(evaluator)
+    try:
+        # The pool measures its batch time on any search (startup calibrates).
+        engine._run_one_phase(SearchLimits(max_nodes=128), is_ponder=False, board=chess.Board())
+        assert worker._walker_pool is not None
+        assert worker._walker_pool.batch_ms_hi() >= batch_s * 1000.0
+        for _ in range(3):
+            worker.reset_tree()
+            engine._stop_event = threading.Event()
+            evaluator.starts.clear()
+            started = time.monotonic()
+            result = engine._run_one_phase(
+                SearchLimits(deadline_ms=deadline_ms), is_ponder=False, board=chess.Board(),
+            )
+            elapsed_ms = (time.monotonic() - started) * 1000.0
+            last_start_ms = (max(evaluator.starts) - started) * 1000.0
+            assert last_start_ms <= deadline_ms - batch_s * 1000.0 + 25.0, last_start_ms
+            assert elapsed_ms < deadline_ms + 100.0, elapsed_ms
+            assert result.nodes > 0
+            # Ended by the reserve between chunks, not by spinning empty
+            # chunks until the deadline fired.
+            assert worker.last_stop_reason == "time_margin", worker.last_stop_reason
         assert engine.bestmove_fallback_used == 0
         assert "search error:" not in capsys.readouterr().out
     finally:

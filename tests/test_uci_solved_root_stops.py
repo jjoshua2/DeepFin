@@ -422,6 +422,12 @@ def test_depth_pv_end_counts_only_when_nothing_better_can_exist() -> None:
     _mark(tree, child, -1)                           # first move: a proven win
     assert worker._depth_pv_len([10, 20], 4) == 4
 
+    for first_status in (2, 1):                      # first move drawn / lost: not decided
+        worker, tree, rid, child, leaf = _depth_tree()
+        _mark(tree, leaf, 2 if first_status == 2 else -1)
+        _mark(tree, child, first_status)
+        assert worker._depth_pv_len([10, 20], 4) == 2, first_status
+
     for root_status, complete in ((1, True), (-1, True), (2, False)):
         worker, tree, rid, child, leaf = _depth_tree()
         _mark(tree, leaf, 2)
@@ -451,7 +457,8 @@ def test_go_depth_never_settles_for_the_stalemate_in_a_won_position(path: str) -
         if worker.last_stop_reason == "max_depth":
             assert worker._root_solved_status() == 1 or len(result.pv) >= 10, result.pv
         else:
-            assert worker.last_stop_reason == "external", worker.last_stop_reason
+            # The deadline ended it (walkers: one walker batch early).
+            assert worker.last_stop_reason in ("external", "time_margin"), worker.last_stop_reason
         if path == "walkers":
             assert result.bestmove_uci != stalemate
     finally:
@@ -484,6 +491,7 @@ def test_a_lost_root_plays_the_pruned_drawing_move(path: str, fen: str, draw: st
             info_cb=lambda **f: infos.append(f),
         )
         assert result.bestmove_uci == draw, (path, result.bestmove_uci)
+        assert result.score_cp == 0
         assert result.score_mate is None
         assert infos
         assert infos[-1]["pv"][0] == draw, infos[-1:]
@@ -584,3 +592,102 @@ def test_drawing_escape_honours_searchmoves() -> None:
     assert worker._drawing_escape_action(board, None) == draw_idx
     allowed = {int(move_to_index(m, board)) for m in others}
     assert worker._drawing_escape_action(board, allowed) is None
+
+
+# --- review round 3: the longest loss under a starved mate walk ---------------
+
+# White to move, lost. Kh2 and a4 are mated in one (board facts); Kh4 and a3 are not.
+LOSS_FAN = "8/1q6/8/6r1/1k6/7K/P7/8 w - - 0 1"
+
+
+def _idx(board: chess.Board, *ucis: str) -> np.ndarray:
+    return np.array([move_to_index(chess.Move.from_uci(u), board) for u in ucis])
+
+
+def test_longest_loss_gives_every_child_its_own_share_of_the_walk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One node of walk per child: a3 spends its share, and Kh4 must still be
+    measured (no proven distance), not read as exhausted -- so the `chosen`
+    tie-break between the two unmeasured moves decides, not walk order."""
+    monkeypatch.setattr(search_module, "_MATE_WALK_NODE_LIMIT", 3)
+    board = chess.Board(LOSS_FAN)
+    moves = [chess.Move.from_uci(u) for u in ("a2a3", "h3h4", "h3h2")]
+    worker, _tree, _rid = _lost_root(board, moves)
+    actions = _idx(board, "a2a3", "h3h4", "h3h2")
+    chosen = worker._longest_proven_loss(board, actions, np.array([1, 1, 9]), int(actions[1]))
+    assert chosen == int(actions[1])
+
+
+def _lost_root_with_a_deep_child(board: chess.Board, deep: str, others: list[str]):
+    """`_lost_root` where ``deep`` has a proven reply under it, so measuring it
+    takes a second walk node."""
+    worker, tree, rid = _lost_root(board, [chess.Move.from_uci(u) for u in (deep, *others)])
+    after = board.copy()
+    after.push_uci(deep)
+    reply = next(iter(after.legal_moves))
+    node = int(tree.find_child(rid, int(move_to_index(chess.Move.from_uci(deep), board))))
+    tree.expand(node, np.array([move_to_index(reply, after)], dtype=np.int32), np.array([1.0]))
+    _mark(tree, int(tree.find_child(node, int(move_to_index(reply, after)))), -1)
+    return worker
+
+
+def test_an_exhausted_walk_ranks_above_mate_in_one_and_below_no_distance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(search_module, "_MATE_WALK_NODE_LIMIT", 2)  # one node a child
+    board = chess.Board(LOSS_FAN)
+    # a3's walk runs out; Kh2 is mated in one even with no walk left.
+    worker = _lost_root_with_a_deep_child(board, "a2a3", ["h3h2"])
+    actions = _idx(board, "a2a3", "h3h2")
+    assert worker._longest_proven_loss(
+        board, actions, np.array([1, 9]), int(actions[1])) == int(actions[0])
+    # ... but a move with no proven mate distance beats the exhausted walk.
+    worker = _lost_root_with_a_deep_child(board, "a2a3", ["h3h4"])
+    actions = _idx(board, "a2a3", "h3h4")
+    assert worker._longest_proven_loss(
+        board, actions, np.array([9, 1]), int(actions[0])) == int(actions[1])
+
+
+def test_longest_loss_never_plays_mate_in_one_on_a_tiny_walk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review demo: with the walk budget at one node, Kh4's walk used it and
+    Kh2 (mated in one) was then read as unmeasured -- the best rank."""
+    monkeypatch.setattr(search_module, "_MATE_WALK_NODE_LIMIT", 1)
+    board = chess.Board(LONGEST_LOSS[0][0])
+    moves = [chess.Move.from_uci(u) for u in ("h3h4", "h3h2")]
+    worker, _tree, _rid = _lost_root(board, moves)
+    actions = _idx(board, "h3h4", "h3h2")
+    chosen = worker._longest_proven_loss(board, actions, np.array([1, 9]), int(actions[1]))
+    assert chosen == int(actions[0])
+
+
+# --- review round 3: the at-once answer from the reused tree ------------------
+
+
+def _tree_answer_worker(board: chess.Board, moves: list[chess.Move], visits: list[int]):
+    worker, tree, rid = _lost_root(board, moves)
+    for move, n in zip(moves, visits, strict=True):
+        node = int(tree.find_child(rid, int(move_to_index(move, board))))
+        for _ in range(n):
+            tree.backprop(np.array([rid, node], dtype=np.int32), 0.0)
+    worker._tree_fen = board.fen()
+    return worker
+
+
+def test_tree_answer_on_a_lost_root_plays_the_drawing_escape() -> None:
+    fen, draw = DRAW_ESCAPES[0]
+    board = chess.Board(fen)
+    others = [m for m in board.legal_moves if m.uci() != draw]
+    worker = _tree_answer_worker(board, others, [20] + [1] * (len(others) - 1))
+    assert worker.tree_root_bestmove(board) == draw
+    # `searchmoves` without the drawing move: no escape.
+    assert worker.tree_root_bestmove(board, searchmoves=(others[0].uci(),)) == others[0].uci()
+
+
+def test_tree_answer_on_a_lost_root_avoids_mate_in_one() -> None:
+    board = chess.Board(LONGEST_LOSS[0][0])  # Kh2 is mated in 1
+    moves = [chess.Move.from_uci(u) for u in ("h3h2", "h3h4")]
+    worker = _tree_answer_worker(board, moves, [20, 2])  # Kh4 under the min visits
+    assert worker.tree_root_bestmove(board) == "h3h4"

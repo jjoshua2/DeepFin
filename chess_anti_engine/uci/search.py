@@ -2904,7 +2904,13 @@ class SearchWorker:
         reached through a different move order answers the same position. That
         is acceptable for an unsearched fallback move -- the engine re-checks
         legality, and history only changes which draws are claimable.
-        Reads visits only. Call only while no search runs on this worker."""
+        On a root proven lost the visit leader is arbitrary, so the same
+        proven-root choices as a finished search apply first, cheaply: a move
+        that draws on the board when every searched move is proven lost (the
+        drawing escape), else -- at any visit count -- the most-visited move
+        after which the opponent has no mate in one, if there is one (the full
+        longest-loss walk is too slow for an at-once answer).
+        Reads the tree only. Call only while no search runs on this worker."""
         tree, root_id = self._tree, self._root_id
         if tree is None or root_id is None or root_id < 0 or self._tree_fen != board.fen():
             return None
@@ -2913,6 +2919,25 @@ class SearchWorker:
             actions, visits, qs = tree.get_children_q(int(root_id), 0.0)
         except Exception:
             return None
+        try:
+            escape = self._drawing_escape_action(board, allowed)
+            if escape is not None:
+                return index_to_move(int(escape), board).uci()
+            lost_root = int(tree.get_solved_status(int(root_id))) == -1
+        except Exception:
+            lost_root = False
+        if lost_root:
+            longest: tuple[int, int, float, int] | None = None
+            for a, n, q in zip(actions.tolist(), visits.tolist(), qs.tolist(), strict=True):
+                if allowed is not None and int(a) not in allowed:
+                    continue
+                after = board.copy(stack=False)
+                after.push(index_to_move(int(a), after))
+                key = (int(not _has_mate_in_one(after)), int(n), float(q), -int(a))
+                if longest is None or key > longest:
+                    longest = key
+            if longest is not None:
+                return index_to_move(-longest[3], board).uci()
         best: tuple[int, float, int] | None = None
         for a, n, q in zip(actions.tolist(), visits.tolist(), qs.tolist(), strict=True):
             if allowed is not None and int(a) not in allowed:
@@ -3521,20 +3546,38 @@ class SearchWorker:
 
         Every child is proven lost, so the visit leader / halving survivor is
         arbitrary and can be the fastest loss (mated in 1 where another move
-        survives longer). Prefer a child with no proven mate distance (lost by
-        a tablebase or a proof the mate walk cannot measure), then the longest
-        proven mate; ties keep ``chosen``, then visits."""
+        survives longer). Each child is ranked by how many moves it is mated
+        in: exactly 1 when the opponent has a mate in one on the board after
+        it (checked first, a board fact that needs no tree); else the proven
+        line's distance, measured by a mate walk with its own fair share of
+        the node budget (`_MATE_WALK_NODE_LIMIT` over the children, so one
+        child's large proof cannot leave the later ones unmeasured). A walk
+        that runs out counts as mated in 2 -- all that is known, since mate in
+        one was ruled out -- and ranks just above a measured mate in 2. A
+        child whose proof has no mate distance (a tablebase loss, a proof the
+        walk cannot measure) ranks first. Ties keep ``chosen``, then visits."""
         tree, root_id = self._tree, self._root_id
         if (tree is None or root_id is None or actions.size < 2 or chosen < 0
                 or int(tree.get_solved_status(root_id)) != -1):
             return chosen
-        walk = _MateWalk()
-        best_key: tuple[float, int, int] | None = None
+        share = max(1, _MATE_WALK_NODE_LIMIT // int(actions.size))
+        walk = _MateWalk(share)  # the memo is shared: it holds finished answers only
+        best_key: tuple[float, int, int, int] | None = None
         best = chosen
         for action, n in zip(actions.tolist(), visits.tolist(), strict=True):
-            mate = _proven_line_mate(tree, root_id, board, int(action), walk)
-            plies = float("inf") if mate is None else float(abs(mate))
-            key = (plies, int(int(action) == chosen), int(n))
+            after = board.copy(stack=False)
+            after.push(index_to_move(int(action), after))
+            exhausted = 0
+            if _has_mate_in_one(after):
+                moves = 1.0
+            else:
+                walk.visits, walk.exhausted = 0, False
+                mate = _proven_line_mate(tree, root_id, board, int(action), walk)
+                if walk.exhausted:
+                    moves, exhausted = 2.0, 1
+                else:
+                    moves = float("inf") if mate is None else float(abs(mate))
+            key = (moves, exhausted, int(int(action) == chosen), int(n))
             if best_key is None or key > best_key:
                 best_key, best = key, int(action)
         return best
@@ -4227,7 +4270,11 @@ class SearchWorker:
             _visits_before = self._root_visit_snapshot()
             try:
                 last_value, completed = self._run_one_chunk(
-                    chunk, board, stop_event, tb_probe, allowed_root_indices,
+                    chunk, board,
+                    self._walker_chunk_stop(
+                        stop_event, deadline, start_remaining_ms, allowed_root_indices,
+                    ),
+                    tb_probe, allowed_root_indices,
                     allow_terminal_shortcuts=allow_terminal_shortcuts,
                     witness_stop_fn=witness_stop,
                 )
@@ -4327,6 +4374,11 @@ class SearchWorker:
             time_margin_ms = self._timed_stop_margin_ms(
                 optimum_ms, start_remaining_ms, deadline, total_nodes, fixed_time=fixed_time_margin,
             )
+  # A walker chunk launched with less than one walker batch left would stop at
+  # once (`_walker_chunk_stop`): stop here instead of spinning empty chunks.
+            time_margin_ms = max(time_margin_ms, self._walker_stop_reserve_ms(
+                deadline, start_remaining_ms, allowed_root_indices,
+            ))
             stop_reason = self._should_stop_search(
                 stop_event=stop_event, deadline=deadline,
                 max_nodes=max_nodes, max_depth=max_depth,
@@ -4436,6 +4488,49 @@ class SearchWorker:
                 lead_move=result.bestmove_uci if final_info else None,
             )
         return result
+
+    def _walker_stop_reserve_ms(
+        self, deadline: Deadline, start_remaining_ms: int | None,
+        allowed_root_indices: set[int] | None,
+    ) -> float:
+        """How long before a finite deadline a walker-pool chunk must be told
+        to stop: one walker's in-flight batch (`WalkerPool.batch_ms_hi`, the
+        decayed maximum measured on this pool). A walker that has submitted a
+        batch sees a stop only after that batch is evaluated and integrated, so
+        a stop AT the deadline ended the search one batch late -- with the
+        default gather (32 leaves a batch) late enough on CPU that the deadline
+        watchdog answered an unsearched move. Capped at
+        `_MAX_BATCH_MARGIN_FRACTION` of the move's starting budget. 0.0 off the
+        walker path, without a deadline, or before the pool has timed a batch."""
+        # getattr: unit tests may construct SearchWorker via object.__new__.
+        pool = getattr(self, "_walker_pool", None)
+        if (allowed_root_indices is not None or pool is None
+                or getattr(self, "_rpg_pool", None) is not None
+                or getattr(self, "_pucv_pool", None) is not None
+                or deadline.remaining_ms() is None):
+            return 0.0
+        reserve = float(pool.batch_ms_hi())
+        if start_remaining_ms is not None:
+            reserve = min(reserve, _MAX_BATCH_MARGIN_FRACTION * float(start_remaining_ms))
+        return max(0.0, reserve)
+
+    def _walker_chunk_stop(
+        self, stop_event: threading.Event, deadline: Deadline,
+        start_remaining_ms: int | None, allowed_root_indices: set[int] | None,
+    ) -> threading.Event:
+        """The stop event a walker-pool chunk polls: ``stop_event``, or also set
+        once the deadline is within `_walker_stop_reserve_ms` (one walker
+        batch), so batches in flight at the stop finish by the deadline.
+        ``stop_event`` itself off the walker path or without a reserve."""
+        reserve = self._walker_stop_reserve_ms(
+            deadline, start_remaining_ms, allowed_root_indices,
+        )
+        remaining = deadline.remaining_ms()
+        if reserve <= 0.0 or remaining is None:
+            return stop_event
+        return _EarlyStopEvent(
+            stop_event, time.monotonic() + (float(remaining) - reserve) / 1000.0,
+        )
 
     def _run_walker_chunk(
         self, chunk: int, stop_event: threading.Event, tb_probe=None,
@@ -5295,6 +5390,26 @@ def _uci_pv(root_board: chess.Board, pv_indices: list[int]) -> tuple[str, ...]:
         out.append(mv.uci())
         b.push(mv)
     return tuple(out)
+
+
+class _EarlyStopEvent(threading.Event):
+    """A stop event for one walker-pool chunk: set when ``parent`` is set or
+    from ``stop_at`` (monotonic seconds) on, whichever comes first. Walkers
+    only poll ``is_set`` (per gathered leaf) and call ``set`` on an error,
+    which is forwarded to ``parent`` as the plain event would have been."""
+
+    def __init__(self, parent: threading.Event, stop_at: float) -> None:
+        super().__init__()
+        self._parent = parent
+        self._stop_at = float(stop_at)
+
+    def is_set(self) -> bool:
+        return (super().is_set() or self._parent.is_set()
+                or time.monotonic() >= self._stop_at)
+
+    def set(self) -> None:
+        super().set()
+        self._parent.set()
 
 
 def _stop_reserve_ms(deadline: Deadline) -> float:

@@ -240,7 +240,7 @@ def search_fixture(rpg=True):
     names = ['SearchWorker.run', 'SearchWorker._drop_stale_tb_probe', 'SearchWorker._run_one_chunk', 'SearchWorker._run_gumbel_chunk',
              'SearchWorker._run_gumbel_chunk_inner',
              'SearchWorker._pre_expand_root_for_pool', 'SearchWorker._chunk_budget',
-             'SearchWorker._should_stop_search', 'SearchWorker._depth_pv_len', 'SearchWorker.reset_tree', '_allowed_root_indices',
+             'SearchWorker._should_stop_search', 'SearchWorker._depth_pv_len', 'SearchWorker._walker_chunk_stop', 'SearchWorker._walker_stop_reserve_ms', 'SearchWorker.reset_tree', '_allowed_root_indices',
              'SearchWorker._root_visits_added', 'SearchWorker._root_visit_snapshot',
              '_root_move_count']
     defs = definitions('chess_anti_engine/uci/search.py', names, ns)

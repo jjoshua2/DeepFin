@@ -99,11 +99,25 @@ two walkers and 8,600 at eight. On CPU with a tiny test net (6 s `movetime`)
 classic ran 5,200-5,600 nps and walkers 2 / 4 / 8 ran 1,400 / 1,600 / 2,200 at
 gather 1 and 4,700 / 5,500 / 5,500 at gather 32. The new default itself has
 not yet been timed on a GPU. Keep one walker for play. A walker finishes the
-batch it is evaluating before it sees a stop, so with a slow device a larger
-gather adds up to one batch to the stop latency; under `go movetime` the time
-manager still answered before the deadline in every measured case (an evaluator
-taking 50 ms + 2 ms per row: `movetime 100` answered at 92-93 ms and
-`movetime 300` at 170-293 ms, at gather 1 and 32 alike).
+batch it is evaluating before it sees a stop, and on a slow device a batch of
+32 can outlast what is left of the move: stopped at its deadline, the search
+answered late enough for the watchdog to play an unsearched move. Every timed
+search (`movetime` and clocks) therefore stops a walker pool one walker batch
+early: the slowest recent batch on that pool (a decayed maximum, measured from
+the startup warmup on), at most half of the move's budget. Measured on CPU
+through the engine (`--walkers 4`; per arm 208 `movetime 100` / `300` moves,
+1+0.01, 6+0.1 and 10+0.1 clock games, and sudden death):
+
+- tiny net (a 32-row batch takes a few ms): gather 32 with the early stop, 0
+  watchdog answers, 0 late, median 630 nodes per `movetime` move; gather 1, 0,
+  0 and 214.
+- a 128-wide 4-layer net (a 32-row batch takes 44 ms alone, about 110 ms with
+  four walkers sharing two threads): gather 32 with the early stop, 0, 0 and 67;
+  gather 1, 0, 0 and 27; gather 32 without the early stop, 2 clock moves
+  answered by the watchdog.
+
+With the larger net the early stop ends a `movetime 300` search at a median
+142 ms, as gather 1 does (145 ms), against 239 ms without it.
 
 **Several GPUs** (the 4-GPU path): `--devices` with more than one entry turns on the
 shared-tree multi-GPU PUCV pool (one worker per GPU, PUCT descent with virtual
@@ -379,8 +393,17 @@ nothing.
   A move after which the opponent could merely claim a draw does not count. One
   case is left over: on the classic path, if leaving those moves out leaves a
   single move, that move is returned unsearched and the draw is not found.
-- On a root proven lost the engine plays the move that delays mate longest (a
-  move with no proven mate distance first, then the longest proven mate).
+- On a root proven lost the engine plays the move that delays mate longest: a
+  move with no proven mate distance first, then the longest proven mate. A move
+  after which the opponent mates next move ranks last (a check on the board, not
+  on the tree), and a move whose proof is too large to measure in its share of
+  the 4,000-node mate walk counts as mated in 2.
+- The drawing move and the longest loss are chosen for the answer of a finished
+  search and for an answer given at once from the reused tree (a clock or
+  `movetime` too short to search): there the drawing move, else the most-visited
+  move that does not allow mate in one. A move answered by the deadline watchdog
+  (the last PV's first move, or a fallback after it; section 8) does not get
+  them.
 - In every search mode, and from the tablebase root shortcut, a move that mates is
   reported as `score mate 1`, and a move after which the opponent mates next move
   as `score mate -1` (not when the move makes a draw claimable), whether or not
