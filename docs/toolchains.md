@@ -935,3 +935,37 @@ Saving waits for a completed training window. The interval can therefore be exce
 by one window; forced termination does not guarantee a last-second save. The first
 window snapshot protects early progress without relying on a signal handler racing
 an optimizer update.
+
+### Owned closed-actor UCI wrapper
+
+`scripts/closed_actor_uci.py` is an opt-in boundary for an already selected,
+owned evaluation process. Ordinary `deepfin --checkpoint` is unchanged. Supply a
+sealed strict-ref actor JSON with the existing seven-field
+`closed_once_learner` schema: `kind`, `path`, `sha256`,
+`expected_checkpoint_step`, `architecture`, `predecessor`, and `lineage`.
+The lineage pins the accepted global-union, policy-anchor, or capped-cycle
+Root/independent delivery pair; it does not replace resource or playing authority.
+
+Invoke the helper in one coherent selected source environment, with
+`--actor PATH --actor-sha256 SHA --witness NEW_EXTERNAL_PATH --` followed by the
+normal public arguments, including the exact explicit `--checkpoint FILE`.
+It authenticates the closed metadata and immutable checkpoint before the public
+entry runs, then observes the original loader's one `weights_only=True` decode
+and build. Payload architecture, step, family tag and complete 494-entry typed
+state must match the accepted delivery; the returned model must be that same
+built object with complete state, before the evaluator receives it. It neither
+calls a model forward nor restores an optimizer. Unsupported safe-loader
+payloads fail without an unsafe fallback or added allowlist. This boundary is
+limited to one model load in a dedicated UCI process, not multi-device loading.
+The exact public diagnostic flag `--selfcheck` is refused before dispatch or
+decode; its separate UCI subprocess would not be covered by this process guard.
+
+Process-local hooks, including the canonical entry's captured loader alias, are
+restored on exit or exception. Low-level decoder and constructor interception
+lasts only for the one original loader call and ends before evaluator creation;
+later unrelated cache/tensor loads and constructors retain normal behavior.
+A fresh external compact witness records the load
+observations and exit status; it is not owner closure, qualification, admission,
+or a strength result. Select and qualify the actual wrapper/source/native/runtime
+composition separately before timed use. Do not mix a bridge from another source
+revision into a historical UCI package namespace.
