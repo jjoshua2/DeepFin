@@ -257,7 +257,10 @@ def _tiny_worker() -> SearchWorker:
     )
 
 
-def test_the_reply_book_names_a_searched_answer_two_plies_on() -> None:
+def test_the_reply_book_names_a_searched_answer_two_plies_on(monkeypatch) -> None:
+    # Snapshot after every chunk: the test compares the book with the FINAL
+    # tree, and at the 200 ms default a loaded host leaves it a chunk behind.
+    monkeypatch.setattr(search_module, "_REPLY_BOOK_INTERVAL_S", 0.0)
     worker = _tiny_worker()
     try:
         board = chess.Board()
