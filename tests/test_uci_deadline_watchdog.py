@@ -362,12 +362,15 @@ def test_unclocked_searches_are_not_armed(go) -> None:
         engine.close()
 
 
-# overhead 0: the last moment is never before the search's own deadline, which
-# is then the budget itself (an engine with no overhead already races the flag).
+# The last moment is never before the search's own deadline; a `movetime`
+# deadline is capped `_MOVETIME_FINISH_SLACK_MS` before it, so with any overhead
+# (0 included: it used to put the deadline, and the last moment, at the budget
+# itself) the last moment is the budget less the margin.
 _M = engine_module._WATCHDOG_LAST_MOMENT_MS
+_MT_CAP = 5000 - _M - engine_module._MOVETIME_FINISH_SLACK_MS
 
 
-@pytest.mark.parametrize(("overhead", "margin"), [(0, 0.0), (30, _M), (100, _M), (1000, _M)])
+@pytest.mark.parametrize(("overhead", "margin"), [(0, _M), (30, _M), (100, _M), (1000, _M)])
 @pytest.mark.usefixtures("out")
 def test_thresholds_are_the_search_deadline_and_the_budget_minus_the_margin(overhead, margin) -> None:
     gate = _Gate()
@@ -379,7 +382,8 @@ def test_thresholds_are_the_search_deadline_and_the_budget_minus_the_margin(over
         armed = engine._watchdog.armed
         assert armed is not None
         assert armed.started_at == engine._go_received_at
-        assert (armed.deadline_at - armed.started_at) * 1000 == pytest.approx(5000 - overhead)
+        assert (armed.deadline_at - armed.started_at) * 1000 == pytest.approx(
+            min(5000 - overhead, _MT_CAP))
         assert armed.last_moment_at is not None
         assert (armed.last_moment_at - armed.started_at) * 1000 == pytest.approx(5000 - margin)
         assert armed.check_at == armed.deadline_at

@@ -26,6 +26,7 @@ from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.inference import DirectGPUEvaluator
 from chess_anti_engine.inference_dispatcher import ThreadSafeGPUDispatcher
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
+from chess_anti_engine.mcts.headroom import MAX_NODES_PER_SIM
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.uci.engine import Engine, EngineOptions
@@ -478,6 +479,10 @@ def test_a_run_never_reallocs_the_arena_under_a_descending_worker(monkeypatch) -
         final = tuple(int(after[k]) for k in _ARENA_CAPS)
         assert len(seen) >= 300 // 8
         assert set(seen) == {final}  # every descent saw the final arena
+        # The reserve covers the worst case (MAX_NODES_PER_SIM per sim), not just
+        # what this narrow start position happened to use.
+        assert final[0] >= int(before["node_count"]) + 300 * MAX_NODES_PER_SIM
+        assert final[1] >= int(before["child_count"]) + 300 * MAX_NODES_PER_SIM
     finally:
         pool.close()
 
