@@ -124,10 +124,12 @@ def test_a_walker_stops_mid_gather_and_submits_what_it_has() -> None:
         evaluator,
     )
     try:
-        # Polls: one before the gather, then one per leaf -- set on the 5th.
+        # Polls: one by `run` before it reserves the arena (a stop already
+        # set returns 0 there), one before the gather, then one per leaf --
+        # set on the 6th.
         completed = pool.run(
             tree=tree, root_id=rid, root_cboard=root_cb,
-            target_sims=1000, stop_event=_StopAfterPolls(4),
+            target_sims=1000, stop_event=_StopAfterPolls(5),
         )
     finally:
         pool.close()
