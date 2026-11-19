@@ -506,10 +506,12 @@ with a `pv`, the last such line before `bestmove X` (with `MultiPV` above 1, the
 last `multipv 1` line) starts with X; for a searched move it carries X's own
 score, since in-search lines rank moves by visits and the played move need not
 lead them. A move the search did not produce (a fallback, the deadline watchdog,
-a parked search, a `stop` during ponder) gets a line with only `depth`, `multipv 1`
-under `MultiPV`, and `pv` -- no score, no `nodes`. A `go` that printed no `pv`
-line at all (the watchdog answering before the first line, the reply when a
-search could not start, a refused `go`) is outside this guarantee.
+a parked search, a `stop` during ponder, the previous search's choice, a
+`ponderhit` answered from the ponder tree with no time left) gets a line with only
+`depth`, `multipv 1` under `MultiPV`, and `pv` -- no score, no `nodes`. A `go`
+that printed no `pv` line at all (the watchdog answering before the first line,
+the reply when a search could not start, a clock too short to search, a refused
+`go`) is outside this guarantee.
 
 **Strict startup and exit codes.**
 

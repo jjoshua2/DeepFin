@@ -5086,17 +5086,18 @@ def _most_visited_children(
     tree: Any, node: int, k: int, allowed: set[int] | None,
 ) -> list[tuple[int, int]]:
     """Up to ``k`` visited children of ``node`` as ``(action, child_node)``,
-    most visits first (ties: lower action id), restricted to ``allowed``."""
-    actions, visits = tree.get_children_visits(int(node))
+    most visits first (ties: higher completed Q, then lower action id -- the
+    same order as `SearchWorker.tree_root_bestmove`), restricted to ``allowed``."""
+    actions, visits, qs = tree.get_children_q(int(node), 0.0)
     ranked = sorted(
         (
-            (-int(n), int(a))
-            for a, n in zip(actions.tolist(), visits.tolist(), strict=True)
+            (-int(n), -float(q), int(a))
+            for a, n, q in zip(actions.tolist(), visits.tolist(), qs.tolist(), strict=True)
             if int(n) > 0 and (allowed is None or int(a) in allowed)
         ),
     )[:k]
     out: list[tuple[int, int]] = []
-    for _, action in ranked:
+    for _, _, action in ranked:
         child = int(tree.find_child(int(node), action))
         if child >= 0:
             out.append((action, child))

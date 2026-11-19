@@ -1590,7 +1590,9 @@ class Engine:
                 f"{max(0, int(limits.deadline_ms or 0))} ms; answering at once "
                 f"source={source} move={move}"
             )
-            _println(format_bestmove(move, ponder=None))
+            # Through the bestmove guard like every other answer: this go
+            # printed no PV, so it adds no line, but it stays the one exit.
+            self._publish_bestmove(gen, move)
 
     def _clock_exhausted_move(
         self, board: chess.Board, searchmoves: tuple[str, ...], answer_by_ms: float,

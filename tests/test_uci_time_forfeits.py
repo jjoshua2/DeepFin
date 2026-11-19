@@ -318,6 +318,7 @@ def _mock_worker() -> MagicMock:
     worker.reply_book_bestmove.return_value = None
     worker.fresh_root_policy_bestmove.return_value = None
     worker.realized_search_path.return_value = "gumbel"
+    worker.leaf_tb_inactive_mode.return_value = None
     return worker
 
 
@@ -597,7 +598,9 @@ def test_a_name_error_in_a_rebuild_is_not_hidden_as_a_kept_setup(out) -> None:
 def test_a_ponderhit_with_no_time_left_answers_from_the_ponder_tree(out) -> None:
     gate_entered, gate_release = threading.Event(), threading.Event()
 
-    def ponder_run(*_args: Any, **_kw: Any) -> SearchResult:
+    def ponder_run(*_args: Any, **kw: Any) -> SearchResult:
+        # The ponder phase printed a PV for ITS root (the opponent's move).
+        _pv_line(kw, "e7e5")
         gate_entered.set()
         assert gate_release.wait(10)
         return SearchResult("e7e5", None, 16, ("e7e5",), 0)
@@ -615,8 +618,103 @@ def test_a_ponderhit_with_no_time_left_answers_from_the_ponder_tree(out) -> None
         assert out.wait_bestmoves(1) == ["g1f3"], out.text()
         assert "source=ponder_tree" in out.text()
         assert worker.run.call_count == 1
+        _assert_answer_line(out, "g1f3")
     finally:
         gate_release.set()
+        engine.close()
+
+
+# -- #1364: every answer this PR adds ends on a PV line for the played move -----
+
+
+def _pv_line(kw: dict, move: str) -> None:
+    kw["info_cb"](nodes=64, elapsed_ms=3, score_cp=5, pv=(move,), tbhits=0,
+                  score_mate=None, multipv=None, wdl=None)
+
+
+def _assert_answer_line(out: Any, move: str) -> None:
+    """The line right before ``bestmove move`` is the score-less, node-less PV
+    line for ``move``, and it is the last rank-1 PV line of the go."""
+    lines = out.text().splitlines()
+    at = lines.index(f"bestmove {move}")
+    assert lines[at - 1] == f"info depth 1 pv {move}", lines[max(0, at - 6):at + 1]
+
+
+def _hung(head: str, release: threading.Event):
+    def run(board, **kw):
+        _pv_line(kw, head)
+        release.wait(10)
+        mv = next(iter(board.legal_moves)).uci()
+        return SearchResult(mv, None, 8, (mv,), 0)
+    return run
+
+
+def test_a_watchdog_answer_from_the_previous_search_is_aligned(out, monkeypatch) -> None:
+    monkeypatch.setattr(engine_module, "_WATCHDOG_STALL_NO_ESTIMATE_MS", 100.0)
+    monkeypatch.setattr(engine_module, "_WATCHDOG_STALL_FLOOR_MS", 50.0)
+    release = threading.Event()
+    worker = _mock_worker()
+    worker.run.side_effect = _hung("g1f3", release)  # not in searchmoves: last_pv unusable
+    start = chess.Board()
+    worker.reply_book_bestmove.side_effect = (
+        lambda b, searchmoves=(): "d2d4" if b.fen() == start.fen() else None)
+    engine = Engine(worker, options=EngineOptions())
+    try:
+        engine.dispatch(parse_command("position startpos"))
+        engine.dispatch(parse_command("go movetime 200 searchmoves e2e4 d2d4"))
+        assert out.wait_bestmoves(1, timeout=15) == ["d2d4"], out.text()
+        assert "source=prev_tree" in out.text()
+        _assert_answer_line(out, "d2d4")
+    finally:
+        release.set()
+        engine.close()
+
+
+def test_a_parked_stop_answer_from_the_previous_search_is_aligned(out, monkeypatch) -> None:
+    monkeypatch.setattr(engine_module, "_GO_WAIT_NO_CLOCK_S", 0.05)
+    release = threading.Event()
+    worker = _mock_worker()
+    worker.run.side_effect = _hung("g1f3", release)
+    start = chess.Board()
+    worker.reply_book_bestmove.side_effect = (
+        lambda b, searchmoves=(): "d2d4" if b.fen() == start.fen() else None)
+    engine = Engine(worker, options=EngineOptions())
+    try:
+        engine.dispatch(parse_command("position startpos"))
+        engine.dispatch(parse_command("go infinite searchmoves e2e4 d2d4"))
+        end = time.monotonic() + 10
+        while " pv g1f3" not in out.text() and time.monotonic() < end:
+            time.sleep(0.01)
+        engine.dispatch(parse_command("stop"))
+        assert out.wait_bestmoves(1, timeout=15) == ["d2d4"], out.text()
+        assert "source=prev_tree" in out.text()
+        _assert_answer_line(out, "d2d4")
+    finally:
+        release.set()
+        engine.close()
+
+
+def test_the_at_once_answer_goes_through_the_bestmove_guard(out, monkeypatch) -> None:
+    worker = _mock_worker()
+    worker.tree_root_bestmove.return_value = "e7e5"
+    engine = Engine(worker, options=EngineOptions())
+    seen: list[tuple[int | None, str]] = []
+    real = engine._publish_bestmove
+
+    def spy(gen, move, ponder=None, *, pv=()):
+        seen.append((gen, move))
+        real(gen, move, ponder, pv=pv)
+
+    monkeypatch.setattr(engine, "_publish_bestmove", spy)
+    try:
+        engine.dispatch(parse_command("position startpos moves e2e4"))
+        engine.dispatch(parse_command("go wtime 1 btime 1"))
+        assert out.wait_bestmoves(1) == ["e7e5"]
+        assert seen == [(engine._search_gen, "e7e5")]
+        # This go printed no PV of its own, so the guard adds no line, and an
+        # earlier go's line is never re-led.
+        assert " pv " not in out.text()
+    finally:
         engine.close()
 
 
