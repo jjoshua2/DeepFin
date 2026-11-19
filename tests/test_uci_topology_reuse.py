@@ -293,7 +293,7 @@ def phase_fixture(worker):
     engine = SimpleNamespace(_worker=worker, _stop_event=threading.Event(), _gil_probe=None,
                              _search_gen=0, _heartbeat=None, _prev_chunk_ms=None,
                              _prev_first_chunk_ms=None,
-                             _options=SimpleNamespace(abort_factor=1.0, ponder=False),
+                             _options=SimpleNamespace(abort_factor=1.0, ponder=False, multi_pv=1),
                              _emit_info=lambda **kw: None, _emit_gil_profile=lambda **kw: None,
                              _note_searched_phase=lambda: None)
     limits = SimpleNamespace(deadline_ms=None, max_nodes=20, max_depth=None, optimum_ms=None,

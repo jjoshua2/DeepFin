@@ -734,6 +734,9 @@ class Engine:
   # immutable ``(fen, uci)`` tuple swapped atomically; the watchdog reads it
   # from its own thread and uses it only for the position it is keyed to.
         self._pv_snapshot: tuple[str, str] | None = None
+        # (go generation, first move) of the last `info ... pv` line actually
+        # printed with `multipv` 1 or absent; `_publish_bestmove` reads it.
+        self._pv_line_head: tuple[int, str] | None = None
         self._watchdog_fires = 0
         self._watchdog = _DeadlineWatchdog(self._watchdog_poll)
   # Search heartbeat: ``(gen, monotonic time of the last completed chunk,
@@ -1042,7 +1045,7 @@ class Engine:
                 f"info string search not started; bestmove_fallback_used="
                 f"{self._bestmove_fallback_used} source={source} move={move}"
             )
-            _println(format_bestmove(move, ponder=None))
+            self._publish_bestmove(gen, move)
 
     def _dispatch(self, cmd: Command) -> None:
         if isinstance(cmd, CmdUci):
@@ -3097,7 +3100,7 @@ class Engine:
             return  # a newer go, quit, `stop`'s parked answer or the watchdog owns it
         self._watchdog.disarm(gen)
         with _answer_owner():
-            self._emit_bestmove(result)
+            self._emit_bestmove(result, gen=gen)
 
   # -- unhealthy engine: streak, boundary rebuild, strict re-check ------------
   #
@@ -3326,7 +3329,7 @@ class Engine:
                 f"clocked move; deadline watchdog answers unsearched source={source} "
                 f"move={move} bestmove_fallback_used={self._bestmove_fallback_used}"
             )
-            _println(format_bestmove(move, ponder=None))
+            self._publish_bestmove(entry.gen, move)
 
     def _counts_for_streak(self) -> bool:
         """False on a parked search, or one the deadline watchdog answered: its
@@ -3391,7 +3394,9 @@ class Engine:
                 bestmove_uci=move, ponder_uci=None, nodes=0, pv=(), score_cp=0,
                 search_incomplete=reason,
             )
-        last_emitted_nodes = [-1]
+        # First move of this phase's last rank-1 `info ... pv` line (None: none).
+        phase_pv_head: list[str | None] = [None]
+        phase_nodes = [-1]  # node count of this phase's last info line
         profile_start = time.perf_counter()
         if self._gil_probe is not None:
             self._gil_probe.reset()
@@ -3430,13 +3435,14 @@ class Engine:
             hashfull: int | None = None,
             seldepth: int | None = None,
         ) -> None:
-            last_emitted_nodes[0] = int(nodes)
-            if (pv and multipv in (None, 1)
-                    and threading.current_thread() not in _SILENCED_THREADS):
-                # Keyed by the board this phase searches: a ponder phase's PV
-                # starts with the opponent's move and must not answer after
-                # ponderhit. One tuple, swapped by a single assignment.
-                self._pv_snapshot = (board_fen, pv[0])
+            phase_nodes[0] = int(nodes)
+            if pv and multipv in (None, 1):
+                phase_pv_head[0] = pv[0]
+                if threading.current_thread() not in _SILENCED_THREADS:
+                    # Keyed by the board this phase searches: a ponder phase's PV
+                    # starts with the opponent's move and must not answer after
+                    # ponderhit. One tuple, swapped by a single assignment.
+                    self._pv_snapshot = (board_fen, pv[0])
             self._emit_info(
                 nodes=nodes,
                 elapsed_ms=elapsed_ms,
@@ -3449,6 +3455,7 @@ class Engine:
                 string=string,
                 hashfull=hashfull,
                 seldepth=seldepth,
+                gen=beat_gen,
             )
 
         # Pools poll this event between batches, whereas their caller only
@@ -3484,6 +3491,8 @@ class Engine:
                 fixed_time_margin=not is_ponder and limits.fixed_time,
                 # `go mate N`: stop once a mate in <= N is proven at the root.
                 mate_moves=None if is_ponder else limits.mate_moves,
+                # The search's last info lines lead with the move it returns.
+                final_info=not is_ponder,
             )
             if threading.current_thread() not in _SILENCED_THREADS:
                 # The next search's stall scale -- never from a search the
@@ -3492,7 +3501,12 @@ class Engine:
                     self._prev_first_chunk_ms = _decayed_max(self._prev_first_chunk_ms, beat[3])
                 if beat[1] >= 2.0:
                     self._prev_chunk_ms = _decayed_max(self._prev_chunk_ms, beat[2])
-            if not is_ponder and last_emitted_nodes[0] != result.nodes:
+            # A searched root already ended on lines led by the played move at
+            # the final node count (`final_info`). This line is for answers that
+            # bypassed the tree (mate in one, declined root, mated / stalemated
+            # root) and, defensively, a worker whose last line is stale.
+            if not is_ponder and (phase_pv_head[0] != result.bestmove_uci
+                                  or phase_nodes[0] != result.nodes):
                 self._emit_info(
                     nodes=result.nodes,
                     elapsed_ms=deadline.elapsed_ms(),
@@ -3500,8 +3514,9 @@ class Engine:
                     pv=result.pv,
                     tbhits=result.tbhits,
                     score_mate=result.score_mate,
-                    multipv=None,
+                    multipv=1 if self._options.multi_pv > 1 and result.pv else None,
                     wdl=None,
+                    gen=beat_gen,
                 )
             self._emit_gil_profile(
                 nodes=result.nodes,
@@ -3681,9 +3696,10 @@ class Engine:
         tbhits: int, score_mate: int | None, multipv: int | None,
         wdl: tuple[int, int, int] | None, string: str | None = None,
         hashfull: int | None = None, seldepth: int | None = None,
+        gen: int | None = None,
     ) -> None:
         nps = int(nodes * 1000 / max(1, elapsed_ms))
-        _println(format_info(InfoFields(
+        line = format_info(InfoFields(
             depth=len(pv),
             seldepth=seldepth,
             multipv=multipv,
@@ -3697,7 +3713,40 @@ class Engine:
             tbhits=tbhits,
             wdl=wdl,
             string=string,
-        )))
+        ))
+        # Print and record under one lock hold, from `_println`'s own answer,
+        # so `_publish_bestmove` never reads a head that was not on stdout.
+        with _PRINT_LOCK:
+            printed = _println(line)
+            if printed and gen is not None and pv and multipv in (None, 1):
+                self._pv_line_head = (gen, pv[0])
+
+    def _publish_bestmove(
+        self, gen: int | None, move: str, ponder: str | None = None,
+        *, pv: tuple[str, ...] = (),
+    ) -> None:
+        """Print ``bestmove``; first, if go ``gen``'s last printed PV line led
+        with another move, print a line for ``move`` so it is the last PV.
+
+        A searched answer already ended on lines led by its move (the search's
+        `final_info`, `_run_one_phase`), so this prints only when an answer
+        replaced the searched one: the deadline watchdog, a parked search, a
+        fault fallback, a stop during ponder. Such a move has no searched
+        score or node count for this root, so the line carries neither: just
+        ``depth``, ``multipv 1`` under MultiPV, and ``pv`` -- ``pv`` itself
+        when it starts with ``move`` (a ponder-tree continuation), else
+        ``move`` alone."""
+        with _PRINT_LOCK:
+            head = self._pv_line_head
+            if (gen is not None and head is not None and head[0] == gen
+                    and head[1] != move and move != "0000"):
+                line_pv = pv if pv and pv[0] == move else (move,)
+                multipv = 1 if self._options.multi_pv > 1 else None
+                if _println(format_info(InfoFields(
+                    depth=len(line_pv), multipv=multipv, pv=line_pv,
+                ))):
+                    self._pv_line_head = (gen, move)
+            _println(format_bestmove(move, ponder=ponder))
 
     def _ponder_miss_result(
         self, result: SearchResult, ponder_board: chess.Board, popped: chess.Move,
@@ -3747,10 +3796,10 @@ class Engine:
             result, bestmove_uci=move, ponder_uci=None, pv=new_pv, root_declined=None,
         )
 
-    def _emit_bestmove(self, result: SearchResult) -> None:
+    def _emit_bestmove(self, result: SearchResult, *, gen: int | None = None) -> None:
         self._report_declined_root(result)
         ponder = result.ponder_uci if self._options.ponder else None
-        _println(format_bestmove(result.bestmove_uci, ponder=ponder))
+        self._publish_bestmove(gen, result.bestmove_uci, ponder, pv=tuple(result.pv or ()))
 
     def close(self) -> None:
         """Stop any running search and release the worker's evaluator. Call
@@ -3898,6 +3947,7 @@ class Engine:
             claim = answer and not self._quit_requested and self._claimed_gen != self._search_gen
             if claim:
                 self._claimed_gen = self._search_gen
+            parked_gen = self._search_gen
             self._search_gen += 1
         if thread not in self._orphan_threads:
             self._orphan_threads.append(thread)
@@ -3915,7 +3965,7 @@ class Engine:
             "info string search did not stop in time; answering unsearched "
             f"bestmove_fallback_used={self._bestmove_fallback_used} source={source} move={move}"
         )
-        _println(format_bestmove(move, ponder=None))
+        self._publish_bestmove(parked_gen, move)
 
     def _bounded_fresh_eval(
         self, board: chess.Board, searchmoves: tuple[str, ...], budget_s: float | None,
@@ -4013,7 +4063,9 @@ def _legal_fallback_move(board: chess.Board, searchmoves: tuple[str, ...]) -> st
 # `info string` swallowing the `id name` handshake line and breaking the UCI
 # handshake. Hold a lock across the write+flush so every logical line is atomic
 # on stdout; all UCI output (including __main__'s startup prints) routes here.
-_PRINT_LOCK = threading.Lock()
+# Re-entrant: a bestmove is printed with the lock held across the alignment
+# check, the aligned `info` line and the `bestmove` line (`_publish_bestmove`).
+_PRINT_LOCK = threading.RLock()
 
 
 def _decayed_max(previous: float | None, sample: float) -> float:
@@ -4135,13 +4187,22 @@ class _answer_owner:  # lowercase: used like a function, `with _answer_owner():`
         _ANSWER_OWNER.active = False
 
 
-def _println(s: str) -> None:
-    if (threading.current_thread() in _SILENCED_THREADS
-            and not getattr(_ANSWER_OWNER, "active", False)):
-        return
+def _silenced() -> bool:
+    return (threading.current_thread() in _SILENCED_THREADS
+            and not getattr(_ANSWER_OWNER, "active", False))
+
+
+def _println(s: str) -> bool:
+    """Write one UCI line; False when this thread is silenced (nothing written).
+
+    The silence check is inside the lock: a thread silenced while another
+    holds it (the watchdog printing a bestmove) cannot print after that line."""
     with _PRINT_LOCK:
+        if _silenced():
+            return False
         sys.stdout.write(s + "\n")
         sys.stdout.flush()
+        return True
 
 
 def _emit_info_string(s: str) -> None:

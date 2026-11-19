@@ -50,16 +50,17 @@ def test_run_one_phase_does_not_duplicate_worker_info(capsys) -> None:
     worker = MagicMock()
 
     def _run(*_args: Any, **kwargs: Any) -> SearchResult:
-        kwargs["info_cb"](
-            nodes=7,
-            elapsed_ms=5,
-            score_cp=12,
-            pv=("e2e4",),
-            tbhits=0,
-            score_mate=None,
-            multipv=2,
-            wdl=(500, 0, 500),
-        )
+        for rank, move in ((1, "e2e4"), (2, "d2d4")):
+            kwargs["info_cb"](
+                nodes=7,
+                elapsed_ms=5,
+                score_cp=12,
+                pv=(move,),
+                tbhits=0,
+                score_mate=None,
+                multipv=rank,
+                wdl=(500, 0, 500),
+            )
         return SearchResult(
             bestmove_uci="e2e4",
             ponder_uci=None,
@@ -77,9 +78,12 @@ def test_run_one_phase_does_not_duplicate_worker_info(capsys) -> None:
     engine._run_one_phase(limits, is_ponder=False, board=board)
 
     lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("info ")]
-    assert len(lines) == 1
-    assert "multipv 2" in lines[0]
-    assert "wdl 500 0 500" in lines[0]
+    # The worker's own final set already led with the played move at the
+    # final node count: nothing is appended after it.
+    assert len(lines) == 2
+    assert "multipv 1" in lines[0]
+    assert "multipv 2" in lines[1]
+    assert all("wdl 500 0 500" in line for line in lines)
 
 
 def test_run_one_phase_refreshes_stale_periodic_node_count(capsys) -> None:
