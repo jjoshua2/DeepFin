@@ -1413,6 +1413,7 @@ class Engine:
             optimum_fraction=self._options.optimum_fraction,
             moves_horizon=self._options.moves_horizon,
             pieces=chess.popcount(search_board.occupied),
+            chunk_rate_per_ms=self._measured_chunk_rate(),
         )
         if limits.clock_exhausted:
             self._answer_clock_exhausted(cmd.args, search_board, limits, go_received_at)
@@ -1445,6 +1446,7 @@ class Engine:
                 optimum_fraction=self._options.optimum_fraction,
                 moves_horizon=self._options.moves_horizon,
                 pieces=chess.popcount(real_board.occupied),
+                chunk_rate_per_ms=self._measured_chunk_rate(),
             )
         else:
             self._pending_real_limits = None
@@ -1681,6 +1683,16 @@ class Engine:
                 + (", stopping as soon as a mate in <= "
                    f"{args.mate} is proven" if limits.mate_moves is not None else "")
             )
+
+    def _measured_chunk_rate(self) -> float | None:
+        """The worker's measured chunk rate (sims per ms), or None (not yet
+        measured, or a worker double without one)."""
+        get = getattr(self._worker, "measured_chunk_rate", None)
+        try:
+            rate = get() if callable(get) else None
+        except Exception:
+            return None
+        return float(rate) if isinstance(rate, (int, float)) and rate > 0 else None
 
     def _move_budget_ms(self, args: GoArgs, *, white_to_move: bool) -> int | None:
         """The latest moment (ms after the clock started) this move's answer may
@@ -2873,8 +2885,13 @@ class Engine:
             return _on_short_lived_thread(
                 lambda: rebuild(max_batch, eval_cache_entries, n_walkers=n_walkers),
             )
+        except NameError:
+            # A code defect, never a device or memory failure: keeping the last
+            # good setup here would hide it as an ordinary refused rebuild.
+            raise
         except Exception as exc:
-            _log.error("evaluator rebuild for %s failed", what, exc_info=True)
+            _log.error("evaluator rebuild for %s failed (%s)", what, type(exc).__name__,
+                       exc_info=True)
             reason = _one_line(exc)
         # Outside the except block, so the traceback (and the half-built
         # evaluator's buffers it references) is already released.
@@ -3153,10 +3170,23 @@ class Engine:
   # this shouldn't fail. Reset rather than search stale tree.
                     self._worker.reset_tree()
                 self._applied_moves = (*self._applied_moves, popped)
-            result = self._run_one_phase(
-                real_limits, is_ponder=False, board=real_board, started_at=started_at,
-                gen=gen,
+            # No time left to search after the hit (an exhausted clock, or the
+            # ponder chunk in flight outlasted it): the ponder tree's answer at
+            # the hit position, which `_run_one_phase` would otherwise replace
+            # with the cached prior of the PRE-hit board, i.e. first legal.
+            quick = (
+                self._ponderhit_tree_answer(board, popped, tuple(real_limits.searchmoves))
+                if popped is not None and not self._cancel_event.is_set()
+                and (real_limits.clock_exhausted or transition_deadline.expired())
+                else None
             )
+            if quick is not None:
+                result = quick
+            else:
+                result = self._run_one_phase(
+                    real_limits, is_ponder=False, board=real_board, started_at=started_at,
+                    gen=gen,
+                )
             limits = real_limits
         elif limits.ponder and popped_at_start is not None and gen == self._search_gen:
             # (A superseded search -- parked, or a newer go owns the worker --
@@ -3792,6 +3822,24 @@ class Engine:
             wdl=wdl,
             string=string,
         )))
+
+    def _ponderhit_tree_answer(
+        self, board: chess.Board, popped: chess.Move, searchmoves: tuple[str, ...],
+    ) -> SearchResult | None:
+        """The ponder tree's most-visited answer to the predicted (and played)
+        reply, or None. ``board`` is the ponder root (before the reply)."""
+        child = getattr(self._worker, "child_bestmove", None)
+        try:
+            move = child(board, popped, searchmoves=searchmoves) if callable(child) else None
+        except Exception:
+            move = None
+        real = board.copy(stack=False)
+        real.push(popped)
+        if not (isinstance(move, str) and _is_playable_fallback(real, move, searchmoves)):
+            return None
+        _println(f"info string ponderhit with no time left to search; answering "
+                 f"source=ponder_tree move={move}")
+        return SearchResult(move, None, 0, (move,), 0)
 
     def _ponder_miss_result(
         self, result: SearchResult, ponder_board: chess.Board, popped: chess.Move,

@@ -32,7 +32,7 @@ from chess_anti_engine.uci.engine import Engine, EngineOptions, _on_short_lived_
 from chess_anti_engine.uci.protocol import GoArgs, parse_command
 from chess_anti_engine.uci.search import (
     _FIRST_CHUNK_TIME_SHARE,
-    _LATER_CHUNK_TIME_SHARE,
+    _DEFAULT_CHUNK_OVERRUN,
     _MIN_TIME_CAPPED_CHUNK,
     SearchResult,
     SearchWorker,
@@ -136,7 +136,7 @@ def test_a_later_chunk_can_shrink_below_chunk_sims() -> None:
     d = Deadline(deadline_ms=1100, now=time.monotonic() - 1.0)
     got = w._time_capped_chunk(4096, d, total_nodes=1000)
     assert _MIN_TIME_CAPPED_CHUNK <= got < 2048
-    assert got <= int(_LATER_CHUNK_TIME_SHARE * 1.0 * 100) + 2
+    assert got <= int(1.0 * 100 / _DEFAULT_CHUNK_OVERRUN) + 2
     # Nearly no time left: the small floor, not a whole base chunk.
     d0 = Deadline(deadline_ms=1001, now=time.monotonic() - 1.0)
     assert w._time_capped_chunk(4096, d0, total_nodes=1000) == _MIN_TIME_CAPPED_CHUNK
@@ -251,6 +251,26 @@ def test_a_real_search_teaches_the_first_chunk_rate() -> None:
         assert worker._time_capped_chunk(8192, d, 0) <= max(
             _MIN_TIME_CAPPED_CHUNK, int(_FIRST_CHUNK_TIME_SHARE * rate * 200) + 1,
         )
+    finally:
+        worker.close()
+
+
+def test_a_real_movetime_search_measures_its_overrun_and_prices_its_stop(monkeypatch) -> None:
+    worker = _tiny_worker()
+    margins: list[float] = []
+    real = worker._timed_stop_margin_ms
+
+    def spy(*a, **kw):
+        margins.append(real(*a, **kw))
+        return margins[-1]
+
+    monkeypatch.setattr(worker, "_timed_stop_margin_ms", spy)
+    try:
+        worker.run(chess.Board(), stop_event=threading.Event(),
+                   deadline=Deadline(deadline_ms=400), max_nodes=None, fixed_time_margin=True)
+        assert worker._overrun_n >= 1  # time-capped chunks were timed against their prediction
+        assert margins
+        assert any(m > 0.0 for m in margins)
     finally:
         worker.close()
 
@@ -384,40 +404,252 @@ def test_with_nothing_known_a_fresh_eval_answers_when_the_clock_allows(out) -> N
         engine.close()
 
 
-def test_an_at_once_answer_spends_only_a_small_share_of_the_clock_on_an_eval(out) -> None:
+def test_an_at_once_answer_spends_only_a_small_share_of_the_clock_on_an_eval(out, monkeypatch) -> None:
     # Sudden death, 900 ms on the clock: answered at once, every move from here
-    # on. A slow eval (100 ms) may take at most 5 % of the 870 ms left (~43 ms).
+    # on. The eval may take at most 5 % of the 870 ms left after the overhead.
     worker = _mock_worker()
-    release = threading.Event()
+    worker.fresh_root_policy_bestmove.return_value = "g8f6"
+    engine = Engine(worker, options=EngineOptions())
+    budgets: list[float] = []
+    real = engine._bounded_fresh_eval
 
-    def slow_eval(_board, searchmoves=()):
-        del searchmoves
-        release.wait(0.1)
-        return "g8f6"
+    def spy(board, searchmoves, budget_s):
+        budgets.append(budget_s)
+        return real(board, searchmoves, budget_s)
 
-    worker.fresh_root_policy_bestmove.side_effect = slow_eval
+    monkeypatch.setattr(engine, "_bounded_fresh_eval", spy)
+    try:
+        engine.dispatch(parse_command("position startpos moves e2e4"))
+        engine.dispatch(parse_command("go wtime 900 btime 900"))
+        assert out.wait_bestmoves(1) == ["g8f6"]
+        assert "clock too short to search" in out.text()
+        assert len(budgets) == 1
+        assert 0.0 < budgets[0] <= 0.05 * 0.870 + 1e-9
+        assert worker.run.call_count == 0
+    finally:
+        engine.close()
+
+
+def test_the_at_once_sources_are_tried_in_order(out) -> None:
+    worker = _mock_worker()
+    worker.tree_root_bestmove.return_value = "e7e5"
+    worker.reply_book_bestmove.return_value = "c7c5"
+    worker.root_policy_bestmove.return_value = "d7d5"
+    worker.fresh_root_policy_bestmove.return_value = "g8f6"
     engine = Engine(worker, options=EngineOptions())
     try:
         engine.dispatch(parse_command("position startpos moves e2e4"))
-        started = time.monotonic()
-        engine.dispatch(parse_command("go wtime 900 btime 900"))
-        moves = out.wait_bestmoves(1)
-        elapsed_ms = (time.monotonic() - started) * 1000
-        assert "clock too short to search" in out.text()
-        assert "source=first_legal" in out.text(), out.text()
-        assert moves != ["g8f6"]
-        assert elapsed_ms < 90
-        assert worker.run.call_count == 0
+        engine.dispatch(parse_command("go wtime 1 btime 1"))
+        assert out.wait_bestmoves(1) == ["e7e5"]
+        worker.tree_root_bestmove.return_value = None
+        engine.dispatch(parse_command("go wtime 1 btime 1"))
+        assert out.wait_bestmoves(2)[1] == "c7c5"
+        worker.reply_book_bestmove.return_value = None
+        engine.dispatch(parse_command("go wtime 1 btime 1"))
+        assert out.wait_bestmoves(3)[2] == "d7d5"
+        worker.root_policy_bestmove.return_value = None
+        engine.dispatch(parse_command("go wtime 80 btime 80"))
+        assert out.wait_bestmoves(4)[3] == "g8f6"
     finally:
-        release.set()
         engine.close()
+
+
+@pytest.mark.parametrize("go", [
+    "go nodes 64 wtime 500 btime 500", "go depth 3 wtime 500 btime 500",
+    "go mate 2 wtime 500 btime 500",
+])
+def test_an_explicit_work_bound_is_searched_in_sudden_death(out, go) -> None:
+    worker = _mock_worker()
+    worker.run.side_effect = lambda board, **_kw: SearchResult("e7e5", None, 64, ("e7e5",), 0)
+    engine = Engine(worker, options=EngineOptions())
+    try:
+        engine.dispatch(parse_command("position startpos moves e2e4"))
+        engine.dispatch(parse_command(go))
+        assert out.wait_bestmoves(1) == ["e7e5"]
+        assert worker.run.call_count == 1
+        assert "clock too short to search" not in out.text()
+    finally:
+        engine.close()
+
+
+def test_explicit_bounds_skip_the_sudden_death_rule_but_not_an_exhausted_clock() -> None:
+    kw = {"side_to_move_is_white": True, "move_overhead_ms": 30}
+    assert not limits_from_go(GoArgs(wtime_ms=500, btime_ms=500, nodes=64), **kw).clock_exhausted
+    assert not limits_from_go(GoArgs(wtime_ms=500, btime_ms=500, depth=3), **kw).clock_exhausted
+    assert not limits_from_go(GoArgs(wtime_ms=500, btime_ms=500, mate=2), **kw).clock_exhausted
+    assert limits_from_go(GoArgs(wtime_ms=1, btime_ms=1, nodes=64), **kw).clock_exhausted
+
+
+def test_the_sudden_death_threshold_scales_with_the_measured_speed() -> None:
+    def exhausted(ms: int, rate: float | None) -> bool:
+        return limits_from_go(GoArgs(wtime_ms=ms, btime_ms=ms), side_to_move_is_white=True,
+                              move_overhead_ms=30, chunk_rate_per_ms=rate).clock_exhausted
+
+    # Default (nothing measured): 20 x 45 ms = 900 ms after the overhead.
+    assert exhausted(929, None)
+    assert not exhausted(931, None)
+    # Fast device, 100 sims/ms: 20 x (20 + 0.16 + 8) ~ 563 ms -> 700 is searched.
+    assert not exhausted(700, 100.0)
+    assert exhausted(590, 100.0)
+    # Slow device, 0.5 sims/ms: 20 x (20 + 32 + 8) = 1200 ms -> 1000 is at once.
+    assert exhausted(1000, 0.5)
+    assert not exhausted(1300, 0.5)
+
+
+def test_the_engine_prices_the_sudden_death_rule_with_the_workers_rate(out) -> None:
+    worker = _mock_worker()
+    worker.measured_chunk_rate.return_value = 100.0
+    worker.run.side_effect = lambda board, **_kw: SearchResult("e7e5", None, 64, ("e7e5",), 0)
+    engine = Engine(worker, options=EngineOptions())
+    try:
+        engine.dispatch(parse_command("position startpos moves e2e4"))
+        engine.dispatch(parse_command("go wtime 700 btime 700"))  # default rule: at once
+        assert out.wait_bestmoves(1) == ["e7e5"]
+        assert worker.run.call_count == 1
+    finally:
+        engine.close()
+
+
+# -- F4 review: the reused tree's answer ------------------------------------------
+
+
+class _FakeTree:
+    def __init__(self, actions, visits, qs) -> None:
+        import numpy as np
+        self._a = np.asarray(actions, dtype=np.int32)
+        self._n = np.asarray(visits, dtype=np.int32)
+        self._q = np.asarray(qs, dtype=np.float64)
+
+    def get_children_q(self, _node, _default):
+        return self._a, self._n, self._q
+
+
+def _tree_worker(board: chess.Board, tree: _FakeTree) -> Any:
+    w = object.__new__(SearchWorker)
+    w._tree, w._root_id, w._tree_fen = tree, 0, board.fen()
+    return w
+
+
+def _idx(board: chess.Board, uci: str) -> int:
+    return int(search_module.move_to_index(chess.Move.from_uci(uci), board))
+
+
+def test_the_tree_answer_needs_its_own_root_enough_visits_and_breaks_ties_by_q() -> None:
+    board = chess.Board()
+    a, b = _idx(board, "e2e4"), _idx(board, "d2d4")
+    lo, hi = sorted((a, b))
+    # Tie on visits: the higher Q wins even with the higher action id.
+    w = _tree_worker(board, _FakeTree([lo, hi], [20, 20], [0.1, 0.3]))
+    hi_uci = search_module.index_to_move(hi, board).uci()
+    assert w.tree_root_bestmove(board) == hi_uci
+    # Fewer visits than the minimum: not trusted.
+    w = _tree_worker(board, _FakeTree([lo, hi], [3, 2], [0.0, 0.0]))
+    assert w.tree_root_bestmove(board) is None
+    # A tree rooted at another position answers nothing for this one.
+    other = chess.Board()
+    other.push_uci("e2e4")
+    w = _tree_worker(board, _FakeTree([lo, hi], [20, 10], [0.0, 0.0]))
+    assert w.tree_root_bestmove(other) is None
+
+
+# -- F9 review: setoption rebuilds run off the calling thread --------------------
+
+
+def test_an_evaluator_rebuild_runs_on_a_joined_short_lived_thread(out) -> None:
+    del out
+    worker = _mock_worker()
+    seen: list[threading.Thread] = []
+
+    def factory(max_batch, cache_entries, **_kw):
+        seen.append(threading.current_thread())
+        return object()
+
+    engine = Engine(worker, options=EngineOptions(), rebuild_evaluator=factory)
+    try:
+        assert engine._rebuild_or_keep("MaxBatch", 64, 0) is not None
+        assert len(seen) == 1
+        assert seen[0] is not threading.current_thread()
+        assert not seen[0].is_alive()  # joined before return
+    finally:
+        engine.close()
+
+
+def test_a_name_error_in_a_rebuild_is_not_hidden_as_a_kept_setup(out) -> None:
+    del out
+    worker = _mock_worker()
+
+    def factory(*_a, **_kw):
+        raise NameError("undefined_helper")
+
+    engine = Engine(worker, options=EngineOptions(), rebuild_evaluator=factory)
+    try:
+        with pytest.raises(NameError):
+            engine._rebuild_or_keep("MaxBatch", 64, 0)
+    finally:
+        engine.close()
+
+
+# -- F9 review / item 9: ponderhit with no time left -----------------------------
+
+
+def test_a_ponderhit_with_no_time_left_answers_from_the_ponder_tree(out) -> None:
+    gate_entered, gate_release = threading.Event(), threading.Event()
+
+    def ponder_run(board, **_kw):
+        gate_entered.set()
+        assert gate_release.wait(10)
+        return SearchResult("e7e5", None, 16, ("e7e5",), 0)
+
+    worker = _mock_worker()
+    worker.run.side_effect = ponder_run
+    worker.child_bestmove.return_value = "g1f3"
+    engine = Engine(worker, options=EngineOptions(ponder=True))
+    try:
+        engine.dispatch(parse_command("position startpos moves e2e4 e7e5"))
+        engine.dispatch(parse_command("go ponder wtime 500 btime 500"))
+        assert gate_entered.wait(5)
+        engine.dispatch(parse_command("ponderhit"))
+        gate_release.set()
+        assert out.wait_bestmoves(1) == ["g1f3"], out.text()
+        assert "source=ponder_tree" in out.text()
+        assert worker.run.call_count == 1
+    finally:
+        gate_release.set()
+        engine.close()
+
+
+# -- item 8: chunk sizing against the measured overrun ---------------------------
+
+
+def test_later_chunks_fill_the_remainder_by_the_measured_overrun_bound() -> None:
+    w = _bare_worker(4096)
+    w._batch_margin_sigmas = 2.0
+    for _ in range(10):  # chunks run exactly as predicted
+        w._chunk_pred_rate = 1.0
+        w._note_chunk_overrun(100, 100.0)
+    assert w._chunk_overrun_hi() == pytest.approx(1.0)
+    d = Deadline(deadline_ms=2000, now=time.monotonic() - 1.0)  # ~1000 ms left
+    got = w._time_capped_chunk(8192, d, total_nodes=1000)  # 1 sim/ms
+    assert 950 <= got <= 1001
+    # Noisy chunks: the bound widens, the chunk shrinks.
+    for r in (1.0, 2.0) * 10:
+        w._chunk_pred_rate = 1.0
+        w._note_chunk_overrun(100, 100.0 * r)
+    assert w._chunk_overrun_hi() > 1.5
+    assert w._time_capped_chunk(8192, d, total_nodes=1000) < 700
+    # The stop margin is one smallest chunk at that bound, not a whole chunk.
+    margin = w._timed_stop_margin_ms(1, 2000, d, 1000, fixed_time=False)
+    assert margin == pytest.approx(_MIN_TIME_CAPPED_CHUNK / 1.0 * w._chunk_overrun_hi(), rel=0.05)
+    # ClockBatchMarginSigmas 0 disables the stop margin (the knob stays live).
+    w._batch_margin_sigmas = 0.0
+    assert w._timed_stop_margin_ms(1, 2000, d, 1000, fixed_time=False) == 0.0
 
 
 # -- F9: no torch worker-thread team on the main thread -------------------------
 
 
-def _task_count() -> int:
-    return len(os.listdir("/proc/self/task"))
+def _native_tasks() -> set[int]:
+    return {int(t) for t in os.listdir("/proc/self/task")}
 
 
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="/proc/self/task")
@@ -441,9 +673,12 @@ def test_offloaded_torch_work_leaves_no_thread_behind() -> None:
 
     def caller() -> None:
         # A long-lived thread standing in for the UCI main thread.
-        counts["before"] = _task_count()
+        before = _native_tasks()
         _on_short_lived_thread(torch_work)
-        counts["after"] = _task_count()
+        # New OS threads that are not Python threads (another test's daemon
+        # thread may come and go meanwhile): a torch worker team, if any.
+        python = {t.native_id for t in threading.enumerate()}
+        counts["new_native"] = len(_native_tasks() - before - python)
         done.set()
         hold.wait(10)
 
@@ -451,7 +686,7 @@ def test_offloaded_torch_work_leaves_no_thread_behind() -> None:
     t.start()
     try:
         assert done.wait(60)
-        assert counts["after"] <= counts["before"], counts
+        assert counts["new_native"] == 0, counts
     finally:
         hold.set()
         t.join(10)

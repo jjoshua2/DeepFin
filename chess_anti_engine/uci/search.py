@@ -71,7 +71,7 @@ from chess_anti_engine.moves import index_to_move, move_to_index
 from .score import q_to_cp
 from .tb_leaf import CLeafProbe
 from .tb_root import RootTablebase, RootTablebaseError
-from .time_manager import Deadline
+from .time_manager import MIN_SEARCH_CHUNK_SIMS, Deadline
 from .walker_pool import WalkerPool, WalkerPoolConfig
 from . import wedge
 import contextlib
@@ -242,20 +242,24 @@ _MIN_FIRST_CHUNK = 64
 # 20 searches). The first chunk may use at most this share of the remaining time at
 # that rate; later chunks are sized from the search's own running nps.
 _FIRST_CHUNK_TIME_SHARE = 0.25
-# A later chunk of a timed search may use at most this share of the remaining
-# time at the search's running nps. A chunk sized to the WHOLE remainder ends
-# past it whenever it runs a little slower than the estimate (about half the
-# time); it cannot be interrupted, and on a short clock the watchdog's last
-# moment is only ~MoveOverheadMs beyond the deadline. Chunks shrink toward the
-# deadline instead, down to `_MIN_TIME_CAPPED_CHUNK`.
-_LATER_CHUNK_TIME_SHARE = 0.5
+# A later chunk of a timed search is sized to the remaining time divided by the
+# chunk-time overrun bound `_chunk_overrun_hi()`: mean + K*sd (K =
+# ClockBatchMarginSigmas) of how much longer chunks took than their size
+# predicted. A chunk sized to the WHOLE remainder at the expected rate ends past
+# it about half the time, and it cannot be interrupted; a fixed share (an earlier
+# 0.5) plus a mean+2sd-of-chunk-durations stop left 10-15 % of a movetime unused.
+# The bound falls back to `_DEFAULT_CHUNK_OVERRUN` until a few chunks are timed.
+_DEFAULT_CHUNK_OVERRUN = 1.5
+_MAX_CHUNK_OVERRUN = 3.0
+_CHUNK_OVERRUN_MIN_SAMPLES = 3
+_CHUNK_OVERRUN_ALPHA = 0.2
 # The measured rate falls at once to a slower chunk and rises by at most this
 # factor per chunk, so one fast chunk cannot size the next search's first chunk.
 _CHUNK_RATE_RISE = 1.25
 # Smallest chunk a time cap may size once a rate is measured (first chunk or
 # later). Lower than `_MIN_FIRST_CHUNK`: on a slow device (the production net on
 # CPU measured ~15 sims/s) even 64 sims outlast a 2 s move.
-_MIN_TIME_CAPPED_CHUNK = 16
+_MIN_TIME_CAPPED_CHUNK = MIN_SEARCH_CHUNK_SIMS
 # The previous tree's choice (`reply_book_bestmove`): for the most-visited root
 # moves, and the most-visited replies to each, the reply's most-visited answer --
 # read between chunks, never during one, and kept for the busy-worker fallback
@@ -264,6 +268,9 @@ _MIN_TIME_CAPPED_CHUNK = 16
 _REPLY_BOOK_OUR_MOVES = 4
 _REPLY_BOOK_REPLIES = 8
 _REPLY_BOOK_INTERVAL_S = 0.2
+# `tree_root_bestmove` trusts the reused tree only when its best move has at
+# least this many visits; fewer is noise next to the previous search's choice.
+_TREE_ANSWER_MIN_VISITS = 8
 
 # Where each PUCT path keeps the family it will actually descend on. All four
 # snapshot the values at CONSTRUCTION, so these -- not the shared `GumbelConfig`
@@ -665,6 +672,12 @@ class SearchWorker:
   # topology it was measured on; sizes the first chunk of a timed search.
         self._chunk_rate: float | None = None
         self._chunk_rate_key: tuple[int, ...] | None = None
+  # The sims/ms the last chunk was sized with (None: not time-capped) and a
+  # running (EWMA) mean/variance of actual / predicted chunk time.
+        self._chunk_pred_rate: float | None = None
+        self._overrun_n: int = 0
+        self._overrun_mean: float = 1.0
+        self._overrun_var: float = 0.0
   # The previous tree's choices (`_snapshot_reply_book`): FEN -> UCI move.
   # Replaced whole, never mutated, so another thread reads it without a lock.
         self._reply_book: dict[str, str] = {}
@@ -1794,10 +1807,60 @@ class SearchWorker:
         prev = getattr(self, "_chunk_rate", None)
         if prev is None or getattr(self, "_chunk_rate_key", None) != key:
             rate = sample
+            self._overrun_n, self._overrun_mean, self._overrun_var = 0, 1.0, 0.0
         else:
             rate = min(sample, prev * _CHUNK_RATE_RISE)
         self._chunk_rate = rate
         self._chunk_rate_key = key
+
+    def _note_chunk_overrun(self, completed: int, dt_ms: float) -> None:
+        """Fold actual / predicted time of a chunk that was sized from a rate
+        (`_time_capped_chunk` records it) into the running overrun estimate."""
+        pred_rate = getattr(self, "_chunk_pred_rate", None)
+        if pred_rate is None or pred_rate <= 0.0 or completed <= 0 or dt_ms <= 0.0:
+            return
+        ratio = float(dt_ms) * float(pred_rate) / float(completed)
+        n = getattr(self, "_overrun_n", 0)
+        if n == 0:
+            mean, var = ratio, 0.0
+        else:
+            mean = getattr(self, "_overrun_mean", 1.0)
+            var = getattr(self, "_overrun_var", 0.0)
+            delta = ratio - mean
+            mean += _CHUNK_OVERRUN_ALPHA * delta
+            var = (1.0 - _CHUNK_OVERRUN_ALPHA) * (var + _CHUNK_OVERRUN_ALPHA * delta * delta)
+        self._overrun_n, self._overrun_mean, self._overrun_var = n + 1, mean, var
+
+    def _chunk_overrun_hi(self) -> float:
+        """Upper bound on actual / predicted chunk time: mean + K*sd with K =
+        ClockBatchMarginSigmas, clamped to [1, `_MAX_CHUNK_OVERRUN`];
+        `_DEFAULT_CHUNK_OVERRUN` before `_CHUNK_OVERRUN_MIN_SAMPLES` chunks."""
+        if getattr(self, "_overrun_n", 0) < _CHUNK_OVERRUN_MIN_SAMPLES:
+            return _DEFAULT_CHUNK_OVERRUN
+        k = max(0.0, float(getattr(self, "_batch_margin_sigmas", _BATCH_MARGIN_SIGMAS)))
+        hi = self._overrun_mean + k * max(0.0, self._overrun_var) ** 0.5
+        return min(_MAX_CHUNK_OVERRUN, max(1.0, hi))
+
+    def _timed_stop_margin_ms(
+        self, optimum_ms: int | None, start_remaining_ms: int | None,
+        deadline: Deadline, total_nodes: int, *, fixed_time: bool,
+    ) -> float:
+        """Stop launching chunks when not even a `_MIN_TIME_CAPPED_CHUNK` chunk
+        fits before the deadline at this search's nps and the overrun bound.
+        Same gating as `_clock_time_margin_ms` (clock games, or ``movetime``
+        when the engine opts in; ClockBatchMarginSigmas 0 disables); root-
+        parallel Gumbel keeps that older batch-duration margin."""
+        if getattr(self, "_rpg_pool", None) is not None:
+            return self._clock_time_margin_ms(optimum_ms, start_remaining_ms, fixed_time=fixed_time)
+        if optimum_ms is None and not (fixed_time and start_remaining_ms is not None):
+            return 0.0
+        if getattr(self, "_batch_margin_sigmas", _BATCH_MARGIN_SIGMAS) <= 0.0:
+            return 0.0
+        elapsed = deadline.elapsed_ms()
+        if total_nodes <= 0 or elapsed <= 0:
+            return 0.0
+        nps = total_nodes / elapsed
+        return _MIN_TIME_CAPPED_CHUNK / nps * self._chunk_overrun_hi()
 
     def measured_chunk_rate(self) -> float | None:
         """Sims per ms of the slowest recent chunk on the CURRENT topology, or
@@ -2682,17 +2745,34 @@ class SearchWorker:
         self, board: chess.Board, *, searchmoves: tuple[str, ...] = (),
     ) -> str | None:
         """The most-visited root move of the CURRENT tree when its root is
-        ``board``, else ``None``. Reads visit counts only. Call only while no
-        search runs on this worker (the engine's no-clock answer, after the
-        tree was advanced to the GUI's position)."""
+        ``board`` and that move has at least `_TREE_ANSWER_MIN_VISITS` visits,
+        else ``None`` (the caller then prefers the previous search's choice or
+        the prior over a near-unvisited tree). Ties go to the higher completed
+        Q (the C tree keeps no per-child prior), then the lower action id.
+
+        The root match is by FEN, which ignores repetition history: a tree
+        reached through a different move order answers the same position. That
+        is acceptable for an unsearched fallback move -- the engine re-checks
+        legality, and history only changes which draws are claimable.
+        Reads visits only. Call only while no search runs on this worker."""
         tree, root_id = self._tree, self._root_id
         if tree is None or root_id is None or root_id < 0 or self._tree_fen != board.fen():
             return None
+        allowed = _allowed_root_indices(board, searchmoves)
         try:
-            best = _most_visited_children(tree, root_id, 1, _allowed_root_indices(board, searchmoves))
+            actions, visits, qs = tree.get_children_q(int(root_id), 0.0)
         except Exception:
             return None
-        return index_to_move(best[0][0], board).uci() if best else None
+        best: tuple[int, float, int] | None = None
+        for a, n, q in zip(actions.tolist(), visits.tolist(), qs.tolist(), strict=True):
+            if allowed is not None and int(a) not in allowed:
+                continue
+            key = (int(n), float(q), -int(a))
+            if best is None or key > best:
+                best = key
+        if best is None or best[0] < _TREE_ANSWER_MIN_VISITS:
+            return None
+        return index_to_move(-best[2], board).uci()
 
     def reply_book_bestmove(
         self, board: chess.Board, *, searchmoves: tuple[str, ...] = (),
@@ -3367,13 +3447,14 @@ class SearchWorker:
         chunk cannot be interrupted) and the pucv pool isn't handed the
         deadline, so a chunk sized without the clock runs past it. Once this
         search has an nps estimate (after its first chunk), cap the chunk at
-        ``_LATER_CHUNK_TIME_SHARE * nps * remaining_ms``, floored at
+        ``nps * remaining_ms / _chunk_overrun_hi()``, floored at
         `_MIN_TIME_CAPPED_CHUNK` -- NOT at
         ``_chunk_sims``: a deadline shorter than one base chunk used to overrun
         by a whole chunk (57 ms deadline, 365 ms wall on CPU). Root-parallel
         Gumbel keeps the ``_chunk_sims`` floor (its schedule needs the sims).
         No-op for open-ended (no deadline) searches, so ``go nodes`` / untimed
         searches are untouched."""
+        self._chunk_pred_rate = None
         remaining_ms = deadline.remaining_ms()
         if remaining_ms is None:
             return chunk
@@ -3394,6 +3475,7 @@ class SearchWorker:
   # Cap only by time, not by base _chunk_sims.
             rate = self.measured_chunk_rate()
             if rate is not None:
+                self._chunk_pred_rate = rate
                 time_bound = max(
                     _MIN_TIME_CAPPED_CHUNK,
                     int(_FIRST_CHUNK_TIME_SHARE * rate * remaining_ms),
@@ -3409,7 +3491,8 @@ class SearchWorker:
         nps = total_nodes / elapsed
         if rpg:
             return min(chunk, max(self._chunk_sims, int(nps * remaining_ms)))
-        time_cap = int(_LATER_CHUNK_TIME_SHARE * nps * remaining_ms)
+        self._chunk_pred_rate = nps
+        time_cap = int(nps * remaining_ms / self._chunk_overrun_hi())
         return min(chunk, max(_MIN_TIME_CAPPED_CHUNK, time_cap))
 
     def _ensure_shared_tree_headroom(self, upcoming_sims: int) -> int:
@@ -3917,6 +4000,7 @@ class SearchWorker:
                 _chunk_ms = (time.monotonic() - _chunk_t0) * 1000.0
                 self._record_batch_ms(_chunk_ms)
                 self._note_chunk_rate(int(completed), _chunk_ms)
+                self._note_chunk_overrun(int(completed), _chunk_ms)
                 self._snapshot_reply_book(board)
   # Count the sims actually completed, not the requested chunk: a pool chunk
   # cut short by stop_event would otherwise inflate reported nodes AND the nps
@@ -3958,7 +4042,9 @@ class SearchWorker:
 
   # Batch-time-variance clock margin: clock games only, capped so a bad early
   # estimate can't reserve away the whole move (see `_clock_time_margin_ms`).
-            time_margin_ms = self._clock_time_margin_ms(optimum_ms, start_remaining_ms, fixed_time=fixed_time_margin)
+            time_margin_ms = self._timed_stop_margin_ms(
+                optimum_ms, start_remaining_ms, deadline, total_nodes, fixed_time=fixed_time_margin,
+            )
             stop_reason = self._should_stop_search(
                 stop_event=stop_event, deadline=deadline,
                 max_nodes=max_nodes, max_depth=max_depth,

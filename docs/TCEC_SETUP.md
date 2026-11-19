@@ -274,15 +274,23 @@ nothing.
   reused tree, the previous search's choice for this position, the cached root
   policy, one fresh root evaluation if the clock allows it, or the first legal
   move, in that order. That is not a fault: it is not counted in
-  `bestmove_fallback_used`. In sudden death (no increment, no `movestogo`) the
-  same at-once answer starts earlier: once the clock less `MoveOverheadMs` is
-  under 900 ms, too little to pay for 20 more 20 ms searches with their slack,
-  every move is answered at once, so a long endgame does not flag.
+  `bestmove_fallback_used`. In sudden death (no increment, no `movestogo`, and
+  no explicit `nodes`, `depth` or `mate` bound) the same at-once answer starts
+  earlier: once the clock less `MoveOverheadMs` cannot pay for 20 more minimal
+  searches, every move is answered at once, so a long endgame does not flag. A
+  minimal search costs the 20 ms deadline plus one 16-simulation chunk at the
+  measured chunk speed plus ~8 ms of fixed cost; before any speed is measured it
+  is priced at 45 ms (a 900 ms threshold). An explicit work bound is still
+  searched unless the clock is truly exhausted (under 20 ms after the cap).
 - The search runs in chunks that cannot be interrupted, so a timed search sizes
   each chunk to fit: the first from the slowest chunk speed this engine has
   measured (a quarter of the time left), each later one from the move's own
-  speed (half of the time left), down to 16 simulations near the deadline.
-  `go nodes` and `go depth` are never resized.
+  speed, sized to the time left divided by a measured bound on how much longer
+  chunks run than predicted (mean + `ClockBatchMarginSigmas` standard
+  deviations; 1.5 until three chunks are timed), down to 16 simulations near the
+  deadline. The search stops when not even a 16-simulation chunk fits. Untimed
+  `go nodes` and `go depth` (no clock, no `movetime`) are never resized; with a
+  clock given, the clock caps them too.
 - `go nodes N` / `go depth N`: work bounds, no clock.
 - `go mate N`: stop as soon as a mate in N moves or fewer is proven. With no other
   bound the search is capped at 60 s and says so

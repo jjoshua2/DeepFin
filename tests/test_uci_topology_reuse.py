@@ -256,6 +256,8 @@ def search_fixture(rpg=True):
     worker._record_batch_ms = lambda *_args: None
     worker._note_chunk_rate = lambda *_args: None  # first-chunk sizing (not under test)
     worker._snapshot_reply_book = lambda *_args, **_kwargs: None  # busy-worker fallback snapshot
+    worker._note_chunk_overrun = lambda *_args: None  # chunk-time overrun estimate (not under test)
+    worker._timed_stop_margin_ms = lambda *_args, **_kwargs: 0.0
     # The stub tree's `visits` counter stands in for the root's child visits,
     # which `_run_one_chunk` now reads as the chunk's real completed count.
     worker._emit_pv_info = lambda *_args, **_kwargs: None  # final-info hook (not under test)
