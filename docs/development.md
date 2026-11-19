@@ -219,7 +219,9 @@ Overlay storage optimization and reuse boundaries are documented in [overlay qua
 ## Grok wrapper artifact directories
 
 `scripts/grok_fix.sh` and `scripts/grok_review.sh` require Python 3 in addition to
-Bash, Git, the existing Unix tools, GNU `timeout` and the authenticated Grok CLI.
+Bash, Git, the existing Unix tools, GNU `timeout`, `setsid` and the authenticated
+Grok CLI. Both run Grok in its own process group and kill that group when Grok
+exits or times out.
 Their shared `grok_artifact_dir.py` allocator uses only the Python standard library
 and requires POSIX descriptor-relative operations with `O_NOFOLLOW`/`O_DIRECTORY`
 (the supported Linux environment). It does not install or import project packages.
