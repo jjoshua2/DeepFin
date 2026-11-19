@@ -138,8 +138,8 @@ Every engine flag, with the default the argument parser really has:
 | `--vloss-weight` | 3 | Virtual-loss weight (UCI `VLossWeight`). |
 | `--walker-gather` | 1 | Per-walker leaf gather (UCI `LeafGather`). |
 | `--vl-gather` | 512 | Leaf gather for `UseVL` / multi-GPU (UCI `VLGather`). |
-| `--multi-gpu-pucv` / `--no-multi-gpu-pucv` | auto | Force the multi-GPU pool on / off (off is for debugging). |
-| `--search-parallel` | `pucv` | Multi-GPU mode: `pucv` or `gumbel` (UCI `SearchParallel`). |
+| `--multi-gpu-pucv` / `--no-multi-gpu-pucv` | auto | Force the multi-GPU pool on / off (off is for debugging). `--multi-gpu-pucv` with one device refuses to start. |
+| `--search-parallel` | `pucv` | Multi-GPU mode: `pucv` or `gumbel` (UCI `SearchParallel`). `gumbel` with one device refuses to start. |
 | `--pucv-pending-mode` | `legacy` | `legacy` or `virtual-mean` (UCI `PUCVPendingMode`). |
 | `--no-coalesce` | off | Disable walker-call coalescing (debug / benchmark only). |
 | `--compile` / `--no-compile` | compile on | torch.compile the model. |
@@ -149,7 +149,10 @@ Every engine flag, with the default the argument parser really has:
 | `--selfcheck` | off | Run the install check instead of the engine (section 2). |
 
 A search-option flag outside the range its UCI option accepts makes the engine
-refuse to start (exit 1, the reason on stderr).
+refuse to start (exit 1, the reason on stderr). So does a multi-GPU mode named
+explicitly with a single device (`--multi-gpu-pucv`, `--search-parallel gumbel`):
+both pools need at least two devices, and the engine does not fall back silently
+to the single-device search.
 
 **Compile warm-up.** The first start after install compiles the network
 (minutes under `max-autotune`); the cache makes later starts faster.
@@ -232,6 +235,17 @@ the tuned values. A search option that cannot affect the live search path says s
 every realized search parameter as `info string searchconfig ...` lines, each
 marked `LIVE`, `INERT` or `BRANCH`, read off the running worker: use it to confirm
 the engine runs what the GUI configured (`info string searchconfig path=...` first).
+That first line ends with the number of devices the search evaluates on,
+`devices=N`; several devices on a path other than the two multi-GPU pools are the
+`--no-multi-gpu-pucv` routing dispatcher, and the line adds
+`(routing dispatcher: one device call at a time)`.
+
+**Info lines and `debug`.** Nothing follows `pv` on an `info` line: a note that
+belongs to a search report (such as the tree-full stop reason) is printed on its
+own `info string` line right after it. UCI `debug on` turns on per-search
+diagnostics, each on its own line: the multi-GPU pool's batch statistics
+(`info string pucv leaves=...`) and root-parallel Gumbel's per-phase lines
+(`info string rpg phase=...`). They are off by default and again after `debug off`.
 
 Every value the engine cannot use is answered with an `info string`; what happens
 to the setting depends on the option:
@@ -263,6 +277,25 @@ nothing.
 - `MoveOverheadMs` is subtracted from every deadline; `ClockBatchMarginSigmas`
   adds a margin learned from how long this machine's search chunks take.
 - `go nodes N` / `go depth N`: work bounds, no clock.
+- A position with one legal move is answered without spending the clock. The
+  single-walker Gumbel search returns that move without simulating it; its `info`
+  line then reports `score cp 0` when the move leaves stalemate or insufficient
+  material, and otherwise the network's evaluation of the position, followed by
+  `info string move unsearched (0 visits): score is the network's evaluation of this position, not a search result`.
+  `go mate N` there answers at once too, so on this path it cannot report a mate
+  longer than one move behind a forced first move: the forced root is not
+  searched. `go mate N` also stops at once when the side to move is proven lost,
+  in every mode except `--search-parallel gumbel`: there the root is never
+  marked solved, so `go mate N` runs to its time cap even with a mate found.
+- In every search mode, and from the tablebase root shortcut, a move that mates is
+  reported as `score mate 1`, and a move after which the opponent mates next move
+  as `score mate -1` (not when the move makes a draw claimable), whether or not
+  the search reached that far. A first move that leaves stalemate or insufficient
+  material reports `score cp 0`. Longer mates are reported only when the search
+  has proven them.
+- A legal mate in one is played even at a position already drawn by rule (a
+  claimable threefold repetition or a 50-move counter at 100 or more), where the
+  engine otherwise answers from the network's policy without searching.
 - `go mate N`: stop as soon as a mate in N moves or fewer is proven. With no other
   bound the search is capped at 60 s and says so
   (`info string go: ... -- searching at most ... ms`).
@@ -441,7 +474,7 @@ rejected as a whole:
 | Exit | When |
 |---|---|
 | `0` | Normal `quit`. |
-| `1` | Startup failed before `readyok` (`info string engine startup failed: ...`, and `deepfin: engine startup failed: ...` on stderr); a search-option flag out of range; the health check at a game boundary failed (below); or `quit` while a search that ignored `stop` is still running. |
+| `1` | Startup failed before `readyok` (`info string engine startup failed: ...`, and `deepfin: engine startup failed: ...` on stderr); a search-option flag out of range or a multi-GPU flag with one device; the health check at a game boundary failed (below); or `quit` while a search that ignored `stop` is still running. |
 | `2` | Refusal before anything starts: a required C extension is missing, stale or broken (stderr names the fix; nothing on stdout), or a bad command line (for example no `--checkpoint`). |
 
 **A failed search never loses on time.** The move then comes from the network's

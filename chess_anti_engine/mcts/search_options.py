@@ -49,7 +49,7 @@ SEARCH_PATHS: tuple[str, ...] = ("gumbel", "rpg", "walker", "pucv", "pucv_pool")
 # Human-facing one-liners, used verbatim in the info-string warnings so an
 # operator reading a match log knows which engine mode swallowed their knob.
 PATH_DESCRIPTIONS: Mapping[str, str] = {
-    "gumbel": "classic single-thread Gumbel (SearchWalkers=1, UseVL off, 1 device)",
+    "gumbel": "classic single-thread Gumbel (SearchWalkers=1, UseVL off)",
     "rpg": "root-parallel Gumbel (SearchParallel=gumbel, >=2 devices)",
     "walker": "PUCT walker pool (SearchWalkers>1)",
     "pucv": "single-thread batched-VL PUCT (UseVL=true)",
