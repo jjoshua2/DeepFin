@@ -163,7 +163,8 @@ def test_the_last_moment_outlasts_one_gil_switch_interval() -> None:
     yields holds it for one switch interval (5 ms). With a 3 ms margin, one
     answer under injected stalls on a loaded host landed past the hard limit."""
     switch_ms = sys.getswitchinterval() * 1000.0
-    assert engine_module._WATCHDOG_LAST_MOMENT_MS >= 3.0 + switch_ms
+    margin_ms = engine_module._WATCHDOG_LAST_MOMENT_MS
+    assert margin_ms >= 3.0 + switch_ms
 
 
 def test_the_first_chunk_is_sized_from_the_chunk_time_model() -> None:
@@ -304,8 +305,9 @@ def test_a_real_search_teaches_the_chunk_time_model() -> None:
         # (6 sims/ms x 200 ms = 1200).
         d = Deadline(deadline_ms=10_000, now=time.monotonic())
         b = max(worker._chunk_overrun_hi(), 2.0)
-        expect = min(worker._chunk_sims,
-                     max(_MIN_TIME_CAPPED_CHUNK, worker._sims_for_ms((10_000 - 25) / b)))
+        fit = worker._sims_for_ms((10_000 - 25) / b)
+        assert fit is not None
+        expect = min(worker._chunk_sims, max(_MIN_TIME_CAPPED_CHUNK, fit))
         assert abs(worker._time_capped_chunk(8192, d, 0) - expect) <= 2
     finally:
         worker.close()
@@ -327,7 +329,11 @@ def test_the_startup_warmup_calibrates_the_chunk_model() -> None:
         assert per_sim > 0.0
         assert worker._overrun_n >= _CHUNK_OVERRUN_MIN_SAMPLES
         # A 16-sim chunk is priced near its own cost, far below the warmup chunk.
-        assert worker._predict_chunk_ms(16) < 0.5 * worker._predict_chunk_ms(worker._chunk_sims)
+        small = worker._predict_chunk_ms(16)
+        big = worker._predict_chunk_ms(worker._chunk_sims)
+        assert small is not None
+        assert big is not None
+        assert small < 0.5 * big
     finally:
         engine.close()
         worker.close()
@@ -473,7 +479,7 @@ def test_with_nothing_known_a_fresh_eval_answers_when_the_clock_allows(out, monk
     engine = Engine(worker, options=EngineOptions())
     budgets: list[float | None] = []
 
-    def fresh(board, searchmoves, budget_s):  # the helper-thread round trip, stubbed
+    def fresh(_board, _searchmoves, budget_s):  # the helper-thread round trip, stubbed
         budgets.append(budget_s)
         return "g8f6"
 
@@ -487,7 +493,8 @@ def test_with_nothing_known_a_fresh_eval_answers_when_the_clock_allows(out, monk
         assert "source=fresh_root_eval" in out.text()
         assert worker.run.call_count == 0
         assert len(budgets) == 1
-        assert budgets[0] is not None and budgets[0] > 0.0
+        assert budgets[0] is not None
+        assert budgets[0] > 0.0
     finally:
         engine.close()
 
@@ -769,10 +776,13 @@ def test_a_real_ponder_tree_answers_a_ponderhit_with_no_time_left(out, monkeypat
         worker.close()
 
 
-def test_the_trees_own_choice_for_this_position_beats_the_prior() -> None:
+def test_the_trees_own_choice_for_this_position_beats_the_prior(monkeypatch) -> None:
     """Busy-worker / watchdog fallback: when the snapshot's root IS this
     position, its most-visited move (>= 8 visits) is preferred to the raw prior;
     for any other position the prior still comes first."""
+    # Snapshot after every chunk, so the last one is the final tree (at the
+    # 200 ms default a loaded host can leave it a chunk behind).
+    monkeypatch.setattr(search_module, "_REPLY_BOOK_INTERVAL_S", 0.0)
     worker = _tiny_worker()
     engine = Engine(worker, options=EngineOptions())
     try:
@@ -781,12 +791,12 @@ def test_the_trees_own_choice_for_this_position_beats_the_prior() -> None:
         tree_best = worker.tree_root_bestmove(board)
         assert tree_best is not None
         prior = next(m.uci() for m in board.legal_moves if m.uci() != tree_best)
-        worker.root_policy_bestmove = lambda b, searchmoves=(): prior  # type: ignore[method-assign]
+        worker.root_policy_bestmove = lambda board, *, searchmoves=(): prior  # type: ignore[method-assign]
         assert engine._bestmove_fallback(board, (), allow_fresh_eval=False) == (tree_best, "prev_tree")
         other = chess.Board()
         other.push_uci("a2a3")  # not the snapshot's root
         other_prior = next(iter(other.legal_moves)).uci()
-        worker.root_policy_bestmove = lambda b, searchmoves=(): other_prior  # type: ignore[method-assign]
+        worker.root_policy_bestmove = lambda board, *, searchmoves=(): other_prior  # type: ignore[method-assign]
         assert engine._bestmove_fallback(other, (), allow_fresh_eval=False) == (other_prior, "root_policy")
     finally:
         engine.close()

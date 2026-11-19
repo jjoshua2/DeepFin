@@ -3931,7 +3931,7 @@ class Engine:
                     depth=len(line_pv), multipv=multipv, pv=line_pv,
                 )))
             lines.append(format_bestmove(move, ponder=ponder))
-            if _println("\n".join(lines)) and guard:
+            if _println("\n".join(lines)) and guard and gen is not None:
                 self._pv_line_head = (gen, move)
 
     def _ponderhit_tree_answer(

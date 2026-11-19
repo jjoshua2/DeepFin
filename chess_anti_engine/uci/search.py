@@ -1883,7 +1883,7 @@ class SearchWorker:
         warmup chunk timed, the model must price a 16-simulation chunk like the
         whole warmup chunk, and the first move at a short budget stopped after
         a single 16-sim chunk. Leaves no tree behind."""
-        kwargs = {} if abort_factor is None else {"abort_factor": abort_factor}
+        factor = _DEFAULT_ABORT_FACTOR if abort_factor is None else float(abort_factor)
         try:
             for sims in _CALIBRATION_CHUNK_SIMS:
                 self.reset_tree()
@@ -1891,7 +1891,7 @@ class SearchWorker:
                     chess.Board(), stop_event=threading.Event(),
                     deadline=Deadline(deadline_ms=None),
                     max_nodes=min(int(sims), int(self._chunk_sims)), optimum_ms=None,
-                    **kwargs,
+                    abort_factor=factor,
                 )
         finally:
             self.reset_tree()
