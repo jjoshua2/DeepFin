@@ -17,7 +17,7 @@ import threading
 import time
 import weakref
 from dataclasses import dataclass, fields, replace
-from typing import TYPE_CHECKING, Any, ClassVar, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, TypeVar, cast
 from collections.abc import Callable
 
 import chess
@@ -61,10 +61,11 @@ from .protocol import (
     format_uciok,
     set_uci_debug,
 )
-from .search import SearchResult, SearchWorker
+from .search import DEFAULT_LEAF_GATHER, SearchResult, SearchWorker
 from .time_manager import (
     GO_IMPLICIT_CAP_MS,
     _DEFAULT_MOVES_REMAINING,
+    _MIN_DEADLINE_MS,
     _OPTIMUM_FRACTION,
     Deadline,
     SearchLimits,
@@ -210,6 +211,16 @@ _GO_WAIT_NO_CLOCK_S = 1.0
 # tenth of the remaining clock), then first-legal. A hung evaluator must not
 # withhold the bestmove.
 _FRESH_EVAL_TIMEOUT_S = 0.15
+# A no-time-to-search answer (`_answer_clock_exhausted`) tries a fresh root eval
+# only when at least this much of the clock is left for it; below that the eval
+# helper would be abandoned mid-call and hold the worker into the next move.
+_CLOCK_EXHAUSTED_MIN_EVAL_S = 0.005
+# ... and spends on it at most this share of the clock left after MoveOverheadMs
+# (never less than `_CLOCK_EXHAUSTED_EVAL_FLOOR_S`): in sudden death every
+# remaining move may be answered this way, and an eval at the 150 ms fallback cap
+# (a slow device) would drain a 900 ms clock in six moves.
+_CLOCK_EXHAUSTED_EVAL_CLOCK_SHARE = 0.05
+_CLOCK_EXHAUSTED_EVAL_FLOOR_S = 0.01
 # Deadline watchdog (see `_DeadlineWatchdog`): it answers a clocked `go` the
 # search is not going to answer in time, and leaves a search that is making
 # progress alone. Two thresholds, both from the moment the clock started:
@@ -230,8 +241,11 @@ _FRESH_EVAL_TIMEOUT_S = 0.15
 #     remaining clock) minus M = _WATCHDOG_LAST_MOMENT_MS, never before the
 #     search's own deadline. M is the watchdog's wake-up latency plus its
 #     answer: wake latency measured during real CPU searches is p99 0.37 /
-#     max 0.73 ms, and p99 2.2 ms beside a Python thread holding the GIL half
-#     the time; the answer (snapshot or cached-prior read, two lines) is under
+#     max 0.73 ms, p99 2.2 ms beside a Python thread holding the GIL half the
+#     time, and up to one 5 ms GIL switch interval beside one that never yields;
+#     on a loaded host under injected search stalls one answer came 4.4 ms
+#     after its 3 ms mark, past the hard limit, so M is 3 ms + one switch
+#     interval. The answer (snapshot or cached-prior read, two lines) is under
 #     0.5 ms. A search that has not answered by then would answer in the last
 #     M ms of its budget at best, and the watchdog's answer is out no later.
 #     A hang is normally caught much earlier, by the EARLY rule.
@@ -240,7 +254,16 @@ _WATCHDOG_STALL_FLOOR_MS = 300.0
 _WATCHDOG_STALL_CEIL_MS = 2000.0
 _WATCHDOG_STALL_NO_ESTIMATE_MS = 1000.0
 _WATCHDOG_SCALE_DECAY = 0.9
-_WATCHDOG_LAST_MOMENT_MS = 3.0
+_WATCHDOG_LAST_MOMENT_MS = 8.0
+# A `movetime` search's deadline sits at least this far before the watchdog's
+# last moment (`_fit_movetime_limits`), the movetime analogue of the clock's
+# `_CLOCK_SEARCH_SLACK_MS`: a search answers up to one small chunk plus its
+# result build after its deadline. With the deadline AT the last moment
+# (`go movetime 28`, 20 ms deadline) the watchdog answered 10-12 of 12 moves on
+# a loaded CPU, each one a counted fallback; 12 ms of slack (`movetime 40`) still
+# lost 2 of 12; at 22 ms (`movetime 50`) none in any mode. Below 48 ms there is
+# no room for a 20 ms search and this slack, and the move is answered at once.
+_MOVETIME_FINISH_SLACK_MS = 20.0
 # `close()` waits this long for a search / helper; a thread still alive after
 # that is left to `__main__`, which hard-exits instead of finalizing under it.
 _SHUTDOWN_JOIN_S = 3.0
@@ -453,9 +476,11 @@ class EngineOptions:
     search_walkers: int = 1
   # Per-walker leaf gather: each walker does G descents → one NN batch
   # instead of one descent per submit. Amplifies effective batch to
-  # N_walkers×G without spawning more threads. 1 = classic. Lc0's
-  # canonical value is 8. Set via UCI `LeafGather`.
-    leaf_gather: int = 1
+  # N_walkers×G without spawning more threads. Read only by the walker pool
+  # (SearchWalkers > 1); the classic path never consults it. At the default
+  # of 1 a GPU sees ~1-2 leaves per call (~450 nps at two walkers against
+  # classic's ~13,400; see DEFAULT_LEAF_GATHER). Set via UCI `LeafGather`.
+    leaf_gather: int = DEFAULT_LEAF_GATHER
   # Single-thread async-pipeline batched-VL PUCT. Active only at
   # `SearchWalkers=1` with a 2-slot inplace-async evaluator. Bench: +112%
   # over sync gumbel walkers=1 (54k vs 26k nps on a 10-layer model).
@@ -1066,7 +1091,7 @@ class Engine:
         elif isinstance(cmd, CmdStop):
             self._handle_stop()
         elif isinstance(cmd, CmdPonderHit):
-            self._handle_ponderhit()
+            self._handle_ponderhit(cmd)
         elif isinstance(cmd, CmdSetOption):
             self._handle_setoption(cmd)
         elif isinstance(cmd, CmdSearchConfig):
@@ -1109,11 +1134,11 @@ class Engine:
         # too (no clock runs between `bestmove` and the next `go`). The health
         # re-check and the exit it can trigger run only at a game boundary.
         if self.worker_is_free():
-            if not self._in_game and not self._game_boundary_checks():
+            if not self._in_game and not _on_short_lived_thread(self._game_boundary_checks):
                 return  # exiting non-zero; no readyok over a broken search
             if self._warmup_dirty:
                 try:
-                    self.warmup_search()
+                    _on_short_lived_thread(self.warmup_search)
                 except Exception as exc:
                     # The path stays dirty (the next free isready retries) and
                     # the next game boundary rebuilds and strictly re-checks.
@@ -1378,10 +1403,11 @@ class Engine:
         # busy-worker answer when the wait below raises -- is a move of a game,
         # so a later isready must not run the boundary checks.
         self._in_game = True
-        # The move clock starts at `go` receipt: the bounded wait for a live
-        # search, tree sync (including any reuse work) and thread start-up
-        # below are all charged to this move's deadline.
-        go_received_at = time.monotonic()
+        # The move clock starts at `go` receipt (when the stdin reader read
+        # it): the bounded wait for a live search, tree sync (including any
+        # reuse work) and thread start-up below are all charged to this move's
+        # deadline.
+        go_received_at = _receipt_time(cmd.received_at)
         self._go_received_at = go_received_at
         # A timeout cannot transfer ownership of the still-live worker; it is
         # bounded by this move's own clock, then `dispatch` answers from the
@@ -1418,7 +1444,12 @@ class Engine:
             optimum_fraction=self._options.optimum_fraction,
             moves_horizon=self._options.moves_horizon,
             pieces=chess.popcount(search_board.occupied),
+            min_chunk_ms=self._measured_min_chunk_ms(),
         )
+        limits = _fit_movetime_limits(cmd.args, limits)
+        if limits.clock_exhausted:
+            self._answer_clock_exhausted(cmd.args, search_board, limits, go_received_at)
+            return
         self._stop_event = threading.Event()
         self._cancel_event = threading.Event()
         self._ponderhit_at = None
@@ -1439,15 +1470,17 @@ class Engine:
                 real_board.push(self._popped_ponder_move)
             # Bare FEN/startpos already names the real board; it still needs
             # a clocked handoff on ponderhit without any root advancement.
-            self._pending_real_limits = limits_from_go(
-                replace(cmd.args, ponder=False),
+            real_args = replace(cmd.args, ponder=False)
+            self._pending_real_limits = _fit_movetime_limits(real_args, limits_from_go(
+                real_args,
                 side_to_move_is_white=(real_board.turn == chess.WHITE),
                 move_overhead_ms=overhead,
                 time_budget_scale=self._options.time_budget_scale,
                 optimum_fraction=self._options.optimum_fraction,
                 moves_horizon=self._options.moves_horizon,
                 pieces=chess.popcount(real_board.occupied),
-            )
+                min_chunk_ms=self._measured_min_chunk_ms(),
+            ))
         else:
             self._pending_real_limits = None
         self._pending_real_budget_ms = (
@@ -1532,6 +1565,95 @@ class Engine:
             self._fallback_reply_thread = None
             self._print_refusal(gen)
 
+    def _answer_clock_exhausted(
+        self, args: GoArgs, board: chess.Board, limits: SearchLimits,
+        go_received_at: float,
+    ) -> None:
+        """Answer a clocked `go` at once, without a search: the side to move's
+        clock less ``MoveOverheadMs`` and the search slack leaves less than the
+        minimum search time (`SearchLimits.clock_exhausted`). Searching for the
+        old 20 ms floor answered `go wtime 1` at ~21 ms and `go wtime 22` at 22.8 ms.
+        A ``movetime`` too short for the minimum search plus its finishing slack
+        before the watchdog's last moment (`_fit_movetime_limits`, under 48 ms)
+        is answered here too: searched, ``go movetime 5`` and ``10`` answered
+        10-17 ms past their limit, and from 20 to 47 ms the search raced the
+        watchdog (each lost race a counted fallback).
+
+        The move is the best thing already known, cheapest first: the reused
+        tree's most-visited move at this position, the previous tree's choice
+        (`reply_book_bestmove`), the cached root prior, one fresh root eval if
+        what is left of the clock allows it, and only then the first legal move.
+        Not a fault: it neither counts in ``bestmove_fallback_used`` nor extends
+        the unhealthy streak. One writer, through the usual claim."""
+        self._stop_event = threading.Event()
+        self._cancel_event = threading.Event()
+        self._ponderhit_at = None
+        self._ponderhit_event = threading.Event()
+        self._ponder_release = threading.Event()
+        self._pending_real_limits = None
+        self._popped_ponder_move = None
+        with self._state_lock:
+            self._search_gen += 1
+            gen = self._search_gen
+        self._live_go = None
+        white = board.turn == chess.WHITE
+        clock_ms = args.wtime_ms if white else args.btime_ms
+        clock_left_ms = self._move_budget_ms(args, white_to_move=white) or 0
+        # The latest the answer may be written (less the watchdog's own margin),
+        # and no more than a small share of what is left for the moves after it.
+        answer_by_ms = _at_once_answer_by_ms(
+            clock_left_ms, (time.monotonic() - go_received_at) * 1000.0,
+        )
+        searchmoves = tuple(args.searchmoves)
+        move, source = self._clock_exhausted_move(board, searchmoves, answer_by_ms, go_received_at)
+        if not self._claim_answer(gen):
+            return
+        with _answer_owner():
+            if args.movetime_ms is not None:
+                _println(
+                    f"info string movetime too short to search: movetime {args.movetime_ms} "
+                    f"ms leaves a {max(0, int(limits.deadline_ms or 0))} ms deadline, under "
+                    f"the {_MIN_DEADLINE_MS} ms minimum search; answering at once "
+                    f"source={source} move={move}"
+                )
+            else:
+                _println(
+                    f"info string clock too short to search: {clock_ms} ms on the clock, "
+                    f"MoveOverheadMs {self._options.move_overhead_ms}, deadline "
+                    f"{max(0, int(limits.deadline_ms or 0))} ms; answering at once "
+                    f"source={source} move={move}"
+                )
+            # Through the bestmove guard like every other answer: this go
+            # printed no PV, so it adds no line, but it stays the one exit.
+            self._publish_bestmove(gen, move)
+
+    def _clock_exhausted_move(
+        self, board: chess.Board, searchmoves: tuple[str, ...], answer_by_ms: float,
+        go_received_at: float,
+    ) -> tuple[str, str]:
+        """``(uci, source)`` for `_answer_clock_exhausted` (worker free).
+        ``answer_by_ms``: when, after ``go_received_at``, the answer must be out."""
+        for source, name in (
+            ("tree", "tree_root_bestmove"),
+            ("prev_tree", "reply_book_bestmove"),
+            ("root_policy", "root_policy_bestmove"),
+        ):
+            reader = getattr(self._worker, name, None)
+            if not callable(reader):
+                continue
+            try:
+                candidate = reader(board, searchmoves=searchmoves)
+            except Exception:
+                candidate = None
+            if isinstance(candidate, str) and _is_playable_fallback(board, candidate, searchmoves):
+                return candidate, source
+        budget_s = answer_by_ms / 1000.0 - (time.monotonic() - go_received_at)
+        if budget_s >= _CLOCK_EXHAUSTED_MIN_EVAL_S:
+            fresh = self._bounded_fresh_eval(board, searchmoves, budget_s)
+            if isinstance(fresh, str) and _is_playable_fallback(board, fresh, searchmoves):
+                return fresh, "fresh_root_eval"
+        return _legal_fallback_move(board, searchmoves), "first_legal"
+
     def _held_refusal(self, gen: int, hold: threading.Event) -> None:
         hold.wait()
         self._print_refusal(gen)
@@ -1607,14 +1729,29 @@ class Engine:
                    f"{args.mate} is proven" if limits.mate_moves is not None else "")
             )
 
-    @staticmethod
-    def _move_budget_ms(args: GoArgs, *, white_to_move: bool) -> int | None:
-        """What the GUI allows this move: ``movetime``, else the side to move's
-        remaining clock, else None (no clock: no last-moment threshold)."""
+    def _measured_min_chunk_ms(self) -> float | None:
+        """The worker's predicted wall time of its smallest chunk, or None (not
+        yet measured, or a worker double without one)."""
+        get = getattr(self._worker, "measured_min_chunk_ms", None)
+        try:
+            ms = get() if callable(get) else None
+        except Exception:
+            return None
+        return float(ms) if isinstance(ms, (int, float)) and ms > 0 else None
+
+    def _move_budget_ms(self, args: GoArgs, *, white_to_move: bool) -> int | None:
+        """The latest moment (ms after the clock started) this move's answer may
+        be written: ``movetime``; else the side to move's remaining clock less
+        ``MoveOverheadMs`` (the GUI's pipe and bookkeeping latency, which the
+        clock is charged for too: a last-moment answer timed to the raw clock
+        landed 0.2 ms and once 31 ms past it); else None (no clock: no
+        last-moment threshold). The watchdog answers its own margin before it."""
         if args.movetime_ms is not None:
             return int(args.movetime_ms)
         remaining = args.wtime_ms if white_to_move else args.btime_ms
-        return None if remaining is None else int(remaining)
+        if remaining is None:
+            return None
+        return max(0, int(remaining) - max(0, int(self._options.move_overhead_ms)))
 
     def _go_wait_budget_s(self, cmd: CmdGo) -> float:
         try:
@@ -1624,6 +1761,7 @@ class Engine:
             )
         except Exception:
             return _GO_WAIT_NO_CLOCK_S
+        limits = _fit_movetime_limits(cmd.args, limits)
         if cmd.args.ponder or limits.deadline_ms is None:
             return _GO_WAIT_NO_CLOCK_S
         deadline_s = max(0.0, limits.deadline_ms / 1000.0)
@@ -1661,7 +1799,7 @@ class Engine:
             # Stop remains requested. Keep the owner available for a later join.
             _println(f"info string {exc}")
 
-    def _handle_ponderhit(self) -> None:
+    def _handle_ponderhit(self, cmd: CmdPonderHit | None = None) -> None:
         """Opponent played our predicted move. Convert open-ended ponder
         search into a time-bounded real search, keeping the MCTS tree.
         """
@@ -1680,7 +1818,9 @@ class Engine:
             if self._ponderhit_at is not None:
                 return
             ponder_stop = self._stop_event
-            self._ponderhit_at = time.monotonic()
+            # The real phase's clock started when the stdin reader read the
+            # ponderhit, not when this handler got the GIL.
+            self._ponderhit_at = _receipt_time(None if cmd is None else cmd.received_at)
             self._ponderhit_event.set()
             gen = self._search_gen
         real = self._pending_real_limits
@@ -2792,15 +2932,24 @@ class Engine:
         dispatch is guarded, the options would claim a batch size nothing was
         built for. Say so instead and keep playing on the last good setup.
         """
-        assert self._rebuild_evaluator is not None
+        rebuild = self._rebuild_evaluator
+        assert rebuild is not None
         try:
+            # Off the main thread like every other torch call here (see
+            # `_on_short_lived_thread`): the factory's warm forward would give
+            # the main thread a torch worker-thread team for the process's life.
             if n_walkers is None:
-                return self._rebuild_evaluator(max_batch, eval_cache_entries)
-            return self._rebuild_evaluator(
-                max_batch, eval_cache_entries, n_walkers=n_walkers,
+                return _on_short_lived_thread(lambda: rebuild(max_batch, eval_cache_entries))
+            return _on_short_lived_thread(
+                lambda: rebuild(max_batch, eval_cache_entries, n_walkers=n_walkers),
             )
+        except NameError:
+            # A code defect, never a device or memory failure: keeping the last
+            # good setup here would hide it as an ordinary refused rebuild.
+            raise
         except Exception as exc:
-            _log.error("evaluator rebuild for %s failed", what, exc_info=True)
+            _log.error("evaluator rebuild for %s failed (%s)", what, type(exc).__name__,
+                       exc_info=True)
             reason = _one_line(exc)
         # Outside the except block, so the traceback (and the half-built
         # evaluator's buffers it references) is already released.
@@ -3008,8 +3157,16 @@ class Engine:
                 optimum_ms=None,
                 abort_factor=self._options.abort_factor,
             )
+            self._calibrate_chunk_model()
         finally:
             self._worker.reset_tree()
+
+    def _calibrate_chunk_model(self) -> None:
+        """Let the worker time a few small chunks after the warmup (see
+        `SearchWorker.calibrate_chunk_model`); a worker without it is skipped."""
+        calibrate = getattr(self._worker, "calibrate_chunk_model", None)
+        if callable(calibrate):
+            calibrate(abort_factor=self._options.abort_factor)
 
     def _run_search(
         self, limits: SearchLimits, gen: int, board: chess.Board,
@@ -3072,6 +3229,18 @@ class Engine:
             if popped is not None:
                 real_board.push(popped)
             transition_deadline = Deadline(real_limits.deadline_ms, now=started_at)
+            # No time left to search after the hit (an exhausted clock, or the
+            # ponder chunk in flight outlasted it): the ponder tree's answer at
+            # the hit position, which `_run_one_phase` would otherwise replace
+            # with the cached prior of the PRE-hit board, i.e. first legal.
+            # Read BEFORE `advance_root`: the tree is still rooted at the
+            # ponder board, which `child_bestmove` requires.
+            quick = (
+                self._ponderhit_tree_answer(board, popped, tuple(real_limits.searchmoves))
+                if popped is not None and not self._cancel_event.is_set()
+                and (real_limits.clock_exhausted or transition_deadline.expired())
+                else None
+            )
             if (popped is not None and not self._cancel_event.is_set()
                     and not transition_deadline.expired()):
                 if not self._worker.advance_root(board, [popped]):
@@ -3079,10 +3248,13 @@ class Engine:
   # this shouldn't fail. Reset rather than search stale tree.
                     self._worker.reset_tree()
                 self._applied_moves = (*self._applied_moves, popped)
-            result = self._run_one_phase(
-                real_limits, is_ponder=False, board=real_board, started_at=started_at,
-                gen=gen,
-            )
+            if quick is not None:
+                result = quick
+            else:
+                result = self._run_one_phase(
+                    real_limits, is_ponder=False, board=real_board, started_at=started_at,
+                    gen=gen,
+                )
             limits = real_limits
         elif limits.ponder and popped_at_start is not None and gen == self._search_gen:
             # (A superseded search -- parked, or a newer go owns the worker --
@@ -3337,12 +3509,11 @@ class Engine:
         self._note_unsearched_reply()
         elapsed_ms = int((time.monotonic() - entry.started_at) * 1000)
         with _answer_owner():
-            _println(
+            self._publish_bestmove(entry.gen, move, prelude=(
                 f"info string WARNING search stalled: {reason}; {elapsed_ms} ms into a "
                 f"clocked move; deadline watchdog answers unsearched source={source} "
                 f"move={move} bestmove_fallback_used={self._bestmove_fallback_used}"
-            )
-            self._publish_bestmove(entry.gen, move)
+            ))
 
     def _counts_for_streak(self) -> bool:
         """False on a parked search, or one the deadline watchdog answered: its
@@ -3656,6 +3827,16 @@ class Engine:
         that is illegal in the real position is a forfeit, which is strictly
         worse than the random move it replaces.
         """
+        reader = getattr(self._worker, "reply_book_bestmove", None)
+        # The tree's own choice for THIS position (the snapshot's root, enough
+        # visits) beats the raw prior: it is what the search has preferred.
+        try:
+            candidate = (reader(board, searchmoves=searchmoves, root_only=True)
+                         if callable(reader) else None)
+        except Exception:
+            candidate = None
+        if isinstance(candidate, str) and _is_playable_fallback(board, candidate, searchmoves):
+            return candidate, "prev_tree"
         try:
             candidate = self._worker.root_policy_bestmove(board, searchmoves=searchmoves)
         except Exception as exc:
@@ -3663,6 +3844,17 @@ class Engine:
             candidate = None
         if isinstance(candidate, str) and _is_playable_fallback(board, candidate, searchmoves):
             return candidate, "root_policy"
+  # The previous tree's choice: a snapshot taken between chunks, so it is safe to
+  # read while a search still owns the worker. That is the busy-worker case: the
+  # cached prior belongs to the position the stuck search is on, and the GUI's
+  # board is usually that position + our answered move + the reply, which the
+  # snapshot covers when the earlier tree looked at that reply.
+        try:
+            candidate = reader(board, searchmoves=searchmoves) if callable(reader) else None
+        except Exception:
+            candidate = None
+        if isinstance(candidate, str) and _is_playable_fallback(board, candidate, searchmoves):
+            return candidate, "prev_tree"
   # The cache is empty or belongs to another position (a `go` that failed before
   # its own root eval). One forward pass on THIS board, no search, beats a
   # square-order move. Skipped when another thread may still own the evaluator.
@@ -3736,7 +3928,7 @@ class Engine:
 
     def _publish_bestmove(
         self, gen: int | None, move: str, ponder: str | None = None,
-        *, pv: tuple[str, ...] = (),
+        *, pv: tuple[str, ...] = (), prelude: str | None = None,
     ) -> None:
         """Print ``bestmove``; first, if go ``gen``'s last printed PV line led
         with another move, print a line for ``move`` so it is the last PV.
@@ -3748,18 +3940,45 @@ class Engine:
         score or node count for this root, so the line carries neither: just
         ``depth``, ``multipv 1`` under MultiPV, and ``pv`` -- ``pv`` itself
         when it starts with ``move`` (a ponder-tree continuation), else
-        ``move`` alone."""
+        ``move`` alone.
+
+        ``prelude`` (a line to print first, e.g. the watchdog's warning) and
+        all of the above go out in ONE write and flush: between separate writes
+        the printing thread must re-take the GIL, and beside a busy search
+        thread each re-take can wait a whole switch interval (5 ms) -- a
+        last-moment answer measured 5.6 ms from its first line to its bestmove."""
         with _PRINT_LOCK:
+            lines = [] if prelude is None else [prelude]
             head = self._pv_line_head
-            if (gen is not None and head is not None and head[0] == gen
-                    and head[1] != move and move != "0000"):
+            guard = (gen is not None and head is not None and head[0] == gen
+                     and head[1] != move and move != "0000")
+            if guard:
                 line_pv = pv if pv and pv[0] == move else (move,)
                 multipv = 1 if self._options.multi_pv > 1 else None
-                if _println(format_info(InfoFields(
+                lines.append(format_info(InfoFields(
                     depth=len(line_pv), multipv=multipv, pv=line_pv,
-                ))):
-                    self._pv_line_head = (gen, move)
-            _println(format_bestmove(move, ponder=ponder))
+                )))
+            lines.append(format_bestmove(move, ponder=ponder))
+            if _println("\n".join(lines)) and guard and gen is not None:
+                self._pv_line_head = (gen, move)
+
+    def _ponderhit_tree_answer(
+        self, board: chess.Board, popped: chess.Move, searchmoves: tuple[str, ...],
+    ) -> SearchResult | None:
+        """The ponder tree's most-visited answer to the predicted (and played)
+        reply, or None. ``board`` is the ponder root (before the reply)."""
+        child = getattr(self._worker, "child_bestmove", None)
+        try:
+            move = child(board, popped, searchmoves=searchmoves) if callable(child) else None
+        except Exception:
+            move = None
+        real = board.copy(stack=False)
+        real.push(popped)
+        if not (isinstance(move, str) and _is_playable_fallback(real, move, searchmoves)):
+            return None
+        _println(f"info string ponderhit with no time left to search; answering "
+                 f"source=ponder_tree move={move}")
+        return SearchResult(move, None, 0, (move,), 0)
 
     def _ponder_miss_result(
         self, result: SearchResult, ponder_board: chess.Board, popped: chess.Move,
@@ -4022,10 +4241,91 @@ class Engine:
         return move if isinstance(move, str) else None
 
 
+def _at_once_answer_by_ms(clock_left_ms: float, elapsed_ms: float) -> float:
+    """When (ms after the clock started) an at-once answer must be written,
+    ``elapsed_ms`` into a move whose real budget is ``clock_left_ms``: no later
+    than the watchdog's last moment (the budget less `_WATCHDOG_LAST_MOMENT_MS`),
+    and spending at most a small share of the clock (never less than the floor)
+    on the eval that may produce it."""
+    return min(
+        clock_left_ms - _WATCHDOG_LAST_MOMENT_MS,
+        elapsed_ms + max(_CLOCK_EXHAUSTED_EVAL_FLOOR_S * 1000.0,
+                         _CLOCK_EXHAUSTED_EVAL_CLOCK_SHARE * clock_left_ms),
+    )
+
+
+def _receipt_time(received_at: float | None) -> float:
+    """The clock origin of a `go` / `ponderhit`: when the main loop read its line
+    (the command's ``received_at``), never later than now; now when unstamped.
+    The main loop is the stdin reader, so time a line spends unread in the pipe
+    while the loop handles an earlier command is NOT counted (MoveOverheadMs
+    must cover it); the stamp only charges the parse-and-dispatch time before
+    the handler runs."""
+    now = time.monotonic()
+    return now if received_at is None else min(float(received_at), now)
+
+
+def _fit_movetime_limits(args: GoArgs, limits: SearchLimits) -> SearchLimits:
+    """``go movetime N``: the search's hard deadline is never later than
+    ``N - _WATCHDOG_LAST_MOMENT_MS - _MOVETIME_FINISH_SLACK_MS``: the watchdog's
+    last moment less the time a search takes to finish after its deadline (a
+    deadline past the last moment made that moment the deadline itself, and the
+    answer came after ``N``). A movetime that leaves less than the
+    `_MIN_DEADLINE_MS` minimum search before that is `clock_exhausted`: answered
+    at once, like a clock that cannot pay for a search. Other limits are
+    returned unchanged."""
+    if (args.movetime_ms is None or limits.ponder or limits.infinite
+            or limits.deadline_ms is None):
+        return limits
+    latest = math.floor(
+        args.movetime_ms - _WATCHDOG_LAST_MOMENT_MS - _MOVETIME_FINISH_SLACK_MS,
+    )
+    if latest < _MIN_DEADLINE_MS:
+        return replace(limits, deadline_ms=max(0, latest), clock_exhausted=True)
+    if limits.deadline_ms > latest:
+        return replace(limits, deadline_ms=latest)
+    return limits
+
+
 def _fresh_eval_budget_s(deadline: Deadline) -> float | None:
     """A tenth of what is left of this phase's clock (None: no clock)."""
     remaining = deadline.remaining_ms()
     return None if remaining is None else max(0.0, remaining / 1000.0) * 0.1
+
+
+
+_T = TypeVar("_T")
+
+
+def _on_short_lived_thread(fn: Callable[[], _T]) -> _T:
+    """Run ``fn`` on a fresh thread, wait for it AND its OS thread to end, and
+    return its result (or re-raise its exception) on the caller's thread.
+
+    For torch work the main (UCI command) thread would otherwise do itself:
+    the health rebuild and strict re-check at a game boundary, the search-path
+    re-warm at isready, an evaluator rebuild for a setoption. The first
+    parallel CPU op a thread runs gives that thread its own torch/OpenMP
+    worker team (``OMP_NUM_THREADS - 1`` threads) that lives as long as the
+    thread does -- for the main thread, the whole process: the first health
+    rebuild took the engine from 3 to 4 threads at ``OMP_NUM_THREADS=2`` and
+    from 4 to 8 at 4, for good. A thread that ends takes its team with it
+    (per-go search threads already do). The caller blocks exactly as long as
+    it did when it ran ``fn`` itself."""
+    box: dict[str, object] = {}
+
+    def run() -> None:
+        try:
+            box["result"] = fn()
+        except BaseException as exc:  # handed back to the caller below
+            box["error"] = exc
+
+    worker = threading.Thread(target=run, daemon=True, name="uci-main-offload")
+    worker.start()
+    join_thread(worker)
+    error = box.get("error")
+    if isinstance(error, BaseException):
+        raise error
+    return cast("_T", box.get("result"))
 
 
 def _close_quietly(evaluator: object) -> None:

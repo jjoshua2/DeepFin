@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -39,12 +40,21 @@ from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
 from chess_anti_engine.encoding.features import RELATION_COUNT
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
+from chess_anti_engine.mcts.headroom import reserve_concurrent_headroom
 from chess_anti_engine.mcts.puct_history import puct_history_args
 from chess_anti_engine.mcts.vloss import release_paths
 from chess_anti_engine.tablebase import SyzygyProbe
 from chess_anti_engine.uci import wedge
 
 _log = logging.getLogger(__name__)
+
+# `WalkerPool.batch_ms_hi` decays its running maximum by this factor per FULL
+# batch (one of the configured gather), so one stall is forgotten within a few
+# dozen full batches while the slowest recent one still sets it. Partial batches
+# (a stop mid-gather, a chunk smaller than the walkers' gathers, terminal
+# leaves) neither set nor decay it: they are faster, and with eight walkers
+# per-batch decay from them drove it to a fraction of a full batch's time.
+_BATCH_HI_DECAY = 0.95
 
 
 class _Evaluator(Protocol):
@@ -125,6 +135,12 @@ class WalkerPool:
         # Semaphore residual is not portably readable, so walkers count leaves.
         self._completed_lock = threading.Lock()
         self._completed: int = 0
+        # Decayed maximum wall time (ms) of one walker's in-flight FULL batch:
+        # from its evaluator call to the last leaf integrated. A walker that has
+        # submitted a batch cannot see a stop until that batch is done, so this
+        # is how long before a deadline the stop must reach the pool (read by
+        # the UCI search: `SearchWorker._walker_stop_reserve_ms`).
+        self._batch_hi_ms: float = 0.0
 
         self._threads = [
             threading.Thread(
@@ -161,6 +177,17 @@ class WalkerPool:
     def __exit__(self, *_args) -> None:
         self.close()
 
+    def batch_ms_hi(self) -> float:
+        """Decayed maximum duration (ms) of one walker's in-flight full batch
+        (`_BATCH_HI_DECAY`; 0.0 before any): the latency between a stop and
+        the last walker seeing it."""
+        with self._completed_lock:
+            return float(self._batch_hi_ms)
+
+    def _note_batch_ms(self, dt_ms: float) -> None:
+        with self._completed_lock:
+            self._batch_hi_ms = max(float(dt_ms), self._batch_hi_ms * _BATCH_HI_DECAY)
+
     @property
     def closed(self) -> bool:
         return self._shutdown.is_set()
@@ -191,6 +218,9 @@ class WalkerPool:
             return 0
         if self._shutdown.is_set():
             raise RuntimeError("WalkerPool is closed")
+  # Walkers descend lock-free while others expand under tree_lock: an arena
+  # realloc mid-run is a use-after-free in the descending thread.
+        reserve_concurrent_headroom(tree, target_sims)
 
   # Publish the job and wake every walker. Walkers signal completion
   # via the barrier; we participate too, so the caller blocks here
@@ -334,6 +364,7 @@ class WalkerPool:
   # Hot path is full-gather with no terminals → contiguous slice. Fancy
   # indexing copies, so reserve it for the partial-gather case.
                     n_pending = len(pending_slots)
+                    batch_t0 = time.monotonic()
                     if n_pending == gather:
                         xs = enc[:n_pending]
                         rels = rel[:n_pending] if rel is not None else None
@@ -372,6 +403,8 @@ class WalkerPool:
                         integrated = k + 1
                         if solved is not None and solved[k]:
                             tree.mark_solved_path(pending_paths[k], int(solved[k]))
+                    if n_pending == gather:  # partial batches say nothing (above)
+                        self._note_batch_ms((time.monotonic() - batch_t0) * 1000.0)
             finally:
                 release_paths(
                     tree, pending_paths[integrated:], vloss_weight=vloss,

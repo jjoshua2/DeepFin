@@ -26,6 +26,7 @@ from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.inference import DirectGPUEvaluator
 from chess_anti_engine.inference_dispatcher import ThreadSafeGPUDispatcher
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
+from chess_anti_engine.mcts.headroom import MAX_NODES_PER_SIM
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.uci.engine import Engine, EngineOptions
@@ -439,6 +440,49 @@ def test_raising_device_is_dropped_and_survivors_finish_the_budget() -> None:
                         target_sims=200, stop_event=threading.Event()) == 200
         assert bad.calls == calls
         _assert_no_vloss(tree)
+    finally:
+        pool.close()
+
+
+_ARENA_CAPS = ("node_cap", "child_cap")
+
+
+def test_a_run_never_reallocs_the_arena_under_a_descending_worker(monkeypatch) -> None:
+    """Workers descend lock-free while others expand under tree_lock, so the
+    node/child arrays must not grow mid-run (a realloc there is a use-after-free
+    in the descending thread -- the CI segfault in `descend_batch`). The pool
+    reserves the run's worst case up front, even for a caller that did not."""
+    seen: list[tuple[int, ...]] = []
+    real_descend = pool_module.descend_batch
+
+    def watched(tree, *args, **kwargs):
+        stats = tree.memory_stats()
+        seen.append(tuple(int(stats[k]) for k in _ARENA_CAPS))
+        return real_descend(tree, *args, **kwargs)
+
+    monkeypatch.setattr(pool_module, "descend_batch", watched)
+    pool = MultiGpuPucvPool(
+        MultiGpuPucvConfig(n_gpus=2, gather=8, device_labels=("cpu:0", "cpu:1")),
+        evaluators=[_evaluator(), _evaluator()],
+    )
+    try:
+        tree = MCTSTree()  # no reserve: the smallest arena
+        cb = CBoard.from_board(chess.Board())
+        rid = tree.add_root(0, 0.0)
+        legal = cb.legal_move_indices().astype(np.int32)
+        tree.expand(rid, legal, np.full(legal.size, 1.0 / legal.size, dtype=np.float64))
+        before = tree.memory_stats()
+        assert pool.run(tree=tree, root_id=rid, root_cboard=cb,
+                        target_sims=300, stop_event=threading.Event()) == 300
+        after = tree.memory_stats()
+        assert after["node_count"] > before["node_cap"]  # the run outgrew the old arena
+        final = tuple(int(after[k]) for k in _ARENA_CAPS)
+        assert len(seen) >= 300 // 8
+        assert set(seen) == {final}  # every descent saw the final arena
+        # The reserve covers the worst case (MAX_NODES_PER_SIM per sim), not just
+        # what this narrow start position happened to use.
+        assert final[0] >= int(before["node_count"]) + 300 * MAX_NODES_PER_SIM
+        assert final[1] >= int(before["child_count"]) + 300 * MAX_NODES_PER_SIM
     finally:
         pool.close()
 

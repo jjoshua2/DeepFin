@@ -102,6 +102,7 @@ from chess_anti_engine.async_safety import drain_failed_receipts, ensure_usable,
 from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding.cboard_encode import encode_cboard
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
+from chess_anti_engine.mcts.headroom import reserve_concurrent_headroom
 from chess_anti_engine.mcts.gumbel import (
     GumbelConfig,
     _policy_logits_to_full,
@@ -118,7 +119,7 @@ from chess_anti_engine.tablebase import SyzygyProbe
 from chess_anti_engine.mcts.root_tactics import (
     immediate_terminal_cboard_policy_or_draws,
 )
-from chess_anti_engine.moves import POLICY_SIZE
+from chess_anti_engine.moves import POLICY_SIZE, move_to_index
 from chess_anti_engine.uci import wedge
 from chess_anti_engine.uci.protocol import uci_debug_enabled
 from chess_anti_engine.uci.startup_progress import StartupContext, startup_context
@@ -388,6 +389,36 @@ class _SearchState:
     finished_value: float | None = None
     arenas: dict[int, _CandidateArena] = field(default_factory=dict)
     tb_probe: SyzygyProbe | None = None
+    # A winning root's terminal-draw moves were left out of the root's
+    # children: a root whose remaining children are all proven lost is
+    # still a proven DRAW, not a loss (see `_resolve_root_solved`).
+    pruned_root_draws: bool = False
+
+
+def root_forced_draw_actions(board: chess.Board, actions: Sequence[int]) -> list[int]:
+    """The root ``actions`` (policy indices) whose move ENDS the game drawn on
+    the board: stalemate, insufficient material, the 50-move clock at 100 or
+    more, or a third occurrence of the position. A move after which the
+    opponent merely MAY claim a draw on its reply is not one: the opponent
+    can decline and play on."""
+    wanted = {int(a) for a in actions}
+    out: list[int] = []
+    for move in board.legal_moves:
+        action = int(move_to_index(move, board))
+        if action not in wanted:
+            continue
+        board.push(move)
+        try:
+            if not board.is_checkmate() and (
+                board.is_stalemate()
+                or board.is_insufficient_material()
+                or board.halfmove_clock >= 100
+                or board.is_repetition(3)
+            ):
+                out.append(action)
+        finally:
+            board.pop()
+    return out
 
 
 class RootParallelGumbelPool:
@@ -681,6 +712,7 @@ class RootParallelGumbelPool:
         pri = np.zeros(POLICY_SIZE, dtype=np.float64)
         search_legal = np.zeros(0, dtype=np.int64)
 
+        pruned_root_draws = False
         legal_idx = root_cb.legal_move_indices()
         if root_cb.is_game_over():
             finished_action = -1
@@ -705,6 +737,14 @@ class RootParallelGumbelPool:
                 draw_arr = np.fromiter(terminal_draws, dtype=np.int32)
                 keep = ~np.isin(legal_idx, draw_arr)
                 if keep.any():
+                    # The draw scan also returns moves after which the
+                    # OPPONENT may claim a draw (50-move at 99 + a reversible
+                    # reply, threefold on its reply). That is the opponent's
+                    # option, not a draw the root can force: only a pruned
+                    # move that ends the game drawn keeps a draw available.
+                    pruned_root_draws = bool(root_forced_draw_actions(
+                        board, legal_idx[~keep].tolist(),
+                    ))
                     legal_idx = legal_idx[keep]
             search_legal = legal_idx.astype(np.int64)
 
@@ -722,7 +762,10 @@ class RootParallelGumbelPool:
                 _probs, mate_action, mate_value = terminal_mate
                 finished_action = int(mate_action)
                 finished_value = float(mate_value)
-            elif search_legal.size == 1:
+            elif search_legal.size == 1 and not pruned_root_draws:
+                # Single-legal finish (classic). Not when pruning a drawing
+                # move left one: that move must be searched, or a lost root
+                # could never be proven and the draw never played.
                 finished_action = int(search_legal[0])
                 finished_value = root_q
 
@@ -736,6 +779,7 @@ class RootParallelGumbelPool:
             root_q_init=root_q,
             finished_action=finished_action,
             finished_value=finished_value,
+            pruned_root_draws=pruned_root_draws,
         )
         return rid
 
@@ -790,6 +834,11 @@ class RootParallelGumbelPool:
 
         started = time.perf_counter()
         budget = max(1, int(target_sims))
+        # The groups descend their candidate subtrees with the GIL released
+        # while another group's expansion can grow the ONE shared arena: grow
+        # it for the whole run now, before any group starts, as the other
+        # shared-tree pools do (a no-op after the UCI search's own reserve).
+        reserve_concurrent_headroom(st.tree, budget)
         cands, gumbels = _select_top_m_with_gumbel(
             legal=st.search_legal,
             pri=st.pri,
@@ -824,6 +873,7 @@ class RootParallelGumbelPool:
             ]
             sims_done = self._dispatch_phase(items)
             self._raise_group_failure()
+            self._resolve_root_solved(st)
             stopped = stop_event.is_set()
             budget = max(0, budget - open_vpa * n_cands)
             # Keep every candidate — open is scout, not a SH round.
@@ -872,6 +922,7 @@ class RootParallelGumbelPool:
             ]
             sims_done = self._dispatch_phase(items)
             self._raise_group_failure()
+            self._resolve_root_solved(st)
             stopped = stop_event.is_set()
             remaining = self._score_and_halve(st, remaining, gumbels)
             budget -= vpa * n_dispatched
@@ -1319,6 +1370,44 @@ class RootParallelGumbelPool:
         keep = self._halving_keep(len(remaining))
         return [remaining[i] for i in order[:keep]]
 
+    def _resolve_root_solved(self, st: _SearchState) -> int:
+        """Resolve the REAL root's solved status from its children's.
+
+        Each candidate's chunker descends from the candidate node, so a proof
+        found inside a candidate subtree propagates up to that candidate and
+        no further: the C propagation walks only the descent path. Without
+        this the root stays unsolved forever, and every consumer of the root's
+        status (``go mate``'s proven-mate and ``mate_unreachable`` stops, the
+        solved-root ``go depth`` stop, ``_final_value``) is unreachable on this
+        path. Same rule as ``tree_resolve_from_children`` in ``_mcts_tree.c``:
+        one child lost for its mover makes the root won; otherwise every child
+        must be proven, and any drawn child makes it a draw. Statuses are
+        monotonic, so reading them while no phase runs is exact. Returns the
+        root's status after resolution."""
+        tree, root_id = st.tree, st.root_id
+        status = int(tree.get_solved_status(root_id))
+        if status != 0 or st.search_legal.size == 0:
+            return status
+        has_draw = st.pruned_root_draws
+        all_proven = True
+        for action in st.search_legal.tolist():
+            cid = int(tree.find_child(root_id, int(action)))
+            child = int(tree.get_solved_status(cid)) if cid >= 0 else 0
+            if child == -1:
+                status = 1  # one reply lost for the opponent suffices
+                break
+            if child == 0:
+                all_proven = False  # keep scanning: a later child may win
+            elif child == 2:
+                has_draw = True
+        else:
+            if not all_proven:
+                return 0
+            status = 2 if has_draw else -1
+        # A one-node path marks the root itself; the root has no parent.
+        tree.mark_solved_path(np.array([root_id], dtype=np.int32), status)
+        return int(tree.get_solved_status(root_id))
+
     def _final_value(self, st: _SearchState, best: int) -> float:
         """Exact solved root value, otherwise classic survivor-child Q."""
         if st.tree.get_solved_status(st.root_id) != 0:
@@ -1554,9 +1643,11 @@ class RootParallelGumbelPool:
                     if st.tb_probe is None:
                         ran = int(chunker.run(st.tree, arena.cid, arena.cboard, n))
                     else:
+                        # No root prefix on the proof paths: a TB proof stops at
+                        # the candidate and `_resolve_root_solved` decides the
+                        # root, applying the pruned-terminal-draw rule.
                         ran = int(chunker.run(
-                            st.tree, arena.cid, arena.cboard, n,
-                            tb_probe=st.tb_probe, tb_path_prefix=(st.root_id,),
+                            st.tree, arena.cid, arena.cboard, n, tb_probe=st.tb_probe,
                         ))
                 finally:
                     self._device_step_end(group_idx)
@@ -1583,6 +1674,15 @@ class RootParallelGumbelPool:
         arena.cboard = cb
         if cb.is_game_over():
             arena.terminal_value = float(cb.terminal_value())
+            # Record the terminal as a proven child (checkmate = mover lost,
+            # every other terminal a draw: `cboard_terminal_solved_status`) so
+            # `_resolve_root_solved` can count it.
+            # Mark the candidate only: `_resolve_root_solved` decides the
+            # root (it knows about pruned terminal draws; C propagation does not).
+            st.tree.mark_solved_path(
+                np.array([arena.cid], dtype=np.int32),
+                -1 if arena.terminal_value < 0.0 else 2,
+            )
             arena.expanded = True
             return 0
         enc = encode_cboard(
@@ -1628,7 +1728,8 @@ class RootParallelGumbelPool:
         st.tree.backprop(np.array([arena.cid], dtype=np.int32), q)
         if solved is not None and solved[0]:
             status = int(solved[0])
-            st.tree.mark_solved_path(np.array([st.root_id, arena.cid], dtype=np.int32), status)
+            # Candidate only; `_resolve_root_solved` decides the root.
+            st.tree.mark_solved_path(np.array([arena.cid], dtype=np.int32), status)
             # Proven TB values share the existing forced-terminal budget path.
             arena.terminal_value = 0.0 if status == 2 else float(status)
         arena.expanded = True

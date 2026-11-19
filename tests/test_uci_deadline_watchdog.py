@@ -161,6 +161,38 @@ def test_hang_at_the_first_batch_is_answered_once_before_the_flag(out) -> None:
         engine.close()
 
 
+def test_the_watchdog_answer_is_one_write(out, monkeypatch) -> None:
+    """Warning, guard PV line and bestmove leave in ONE write: between writes
+    the watchdog must re-take the GIL, which beside a busy search thread can
+    wait a whole switch interval each time, past the hard limit."""
+    writes: list[str] = []
+    real_write = out.write
+
+    def counting_write(s: str) -> int:
+        writes.append(s)
+        return real_write(s)
+
+    monkeypatch.setattr(out, "write", counting_write)
+    gate = _Gate()
+    worker = _worker()
+    worker.run.side_effect = gate
+    engine = _engine(worker)
+    try:
+        engine.dispatch(parse_command("position startpos moves e2e4"))
+        engine.dispatch(parse_command("go movetime 100"))
+        assert gate.entered.wait(5)
+        assert len(out.wait_bestmoves(1)) == 1
+        answer = [w for w in writes if "\nbestmove " in "\n" + w]
+        assert len(answer) == 1
+        lines = answer[0].splitlines()
+        assert lines[-1].startswith("bestmove ")
+        assert "deadline watchdog answers unsearched" in lines[0]
+    finally:
+        gate.release.set()
+        _join_all(engine)
+        engine.close()
+
+
 def test_hang_mid_search_answers_with_the_published_pv_move(out) -> None:
     gate = _Gate(before=lambda board, kw: _publish(kw["info_cb"], "g1f3"))
     worker = _worker()
@@ -330,9 +362,15 @@ def test_unclocked_searches_are_not_armed(go) -> None:
         engine.close()
 
 
-# overhead 0: the last moment is never before the search's own deadline, which
-# is then the budget itself (an engine with no overhead already races the flag).
-@pytest.mark.parametrize(("overhead", "margin"), [(0, 0.0), (30, 3.0), (100, 3.0), (1000, 3.0)])
+# The last moment is never before the search's own deadline; a `movetime`
+# deadline is capped `_MOVETIME_FINISH_SLACK_MS` before it, so with any overhead
+# (0 included: it used to put the deadline, and the last moment, at the budget
+# itself) the last moment is the budget less the margin.
+_M = engine_module._WATCHDOG_LAST_MOMENT_MS
+_MT_CAP = 5000 - _M - engine_module._MOVETIME_FINISH_SLACK_MS
+
+
+@pytest.mark.parametrize(("overhead", "margin"), [(0, _M), (30, _M), (100, _M), (1000, _M)])
 @pytest.mark.usefixtures("out")
 def test_thresholds_are_the_search_deadline_and_the_budget_minus_the_margin(overhead, margin) -> None:
     gate = _Gate()
@@ -344,7 +382,8 @@ def test_thresholds_are_the_search_deadline_and_the_budget_minus_the_margin(over
         armed = engine._watchdog.armed
         assert armed is not None
         assert armed.started_at == engine._go_received_at
-        assert (armed.deadline_at - armed.started_at) * 1000 == pytest.approx(5000 - overhead)
+        assert (armed.deadline_at - armed.started_at) * 1000 == pytest.approx(
+            min(5000 - overhead, _MT_CAP))
         assert armed.last_moment_at is not None
         assert (armed.last_moment_at - armed.started_at) * 1000 == pytest.approx(5000 - margin)
         assert armed.check_at == armed.deadline_at
@@ -354,19 +393,24 @@ def test_thresholds_are_the_search_deadline_and_the_budget_minus_the_margin(over
         engine.close()
 
 
+# A clock game's answer must be on the wire MoveOverheadMs before the clock
+# runs out (the GUI charges its pipe latency to us): the soak's last-moment
+# answers timed to the raw clock landed 0.2 ms, and once 31 ms, past it.
+@pytest.mark.parametrize("overhead", [0, 30, 500])
 @pytest.mark.usefixtures("out")
-def test_a_clock_game_budget_is_the_side_to_moves_remaining_clock() -> None:
+def test_a_clock_game_budget_is_the_side_to_moves_remaining_clock(overhead) -> None:
     gate = _Gate()
     worker = _worker()
     worker.run.side_effect = gate
-    engine = _engine(worker)
+    engine = _engine(worker, move_overhead_ms=overhead)
     try:
         engine.dispatch(parse_command("position startpos moves e2e4"))  # black to move
         engine.dispatch(parse_command("go wtime 7000 btime 9000"))
         armed = engine._watchdog.armed
         assert armed is not None
         assert armed.last_moment_at is not None
-        assert (armed.last_moment_at - armed.started_at) * 1000 == pytest.approx(9000 - 3.0)
+        assert (armed.last_moment_at - armed.started_at) * 1000 == pytest.approx(9000 - overhead - engine_module._WATCHDOG_LAST_MOMENT_MS)
+        assert armed.deadline_at < armed.last_moment_at
     finally:
         gate.release.set()
         _join_all(engine)
@@ -714,11 +758,11 @@ def test_a_healthy_short_movetime_search_never_fires(out) -> None:
     Timing is chosen so the outcome does not depend on host load: MoveOverheadMs
     150 puts the search deadline at 130 ms and the last moment at 277 ms, so a
     healthy search (done at ~150 ms) has ~127 ms of slack before the last-moment
-    rule. (With the default overhead 30 the slack is only overhead - 3 ms - the
+    rule. (With the default overhead 30 the slack is only overhead - the margin - the
     overrun, whatever the movetime, and a loaded host fired the last-moment
     rule by design.) A rule that fired at the search deadline itself -- no
     stall grace, or a last moment at the deadline -- still fires inside the
-    20 ms overrun and fails this test. The 3 ms margin itself is pinned exactly
+    20 ms overrun and fails this test. The last-moment margin itself is pinned exactly
     by `test_thresholds_are_the_search_deadline_and_the_budget_minus_the_margin`."""
     worker = _worker()
 

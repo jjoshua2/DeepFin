@@ -12,7 +12,7 @@ import argparse
 import concurrent.futures
 import contextlib
 import io
-from collections.abc import Mapping
+from collections.abc import Iterable, Iterator, Mapping
 import logging
 import math
 import os
@@ -59,6 +59,7 @@ from chess_anti_engine.utils.thread_join import join_thread, os_joined
 
 from .engine import (
     _SPIN_BOUNDS,
+    DEFAULT_LEAF_GATHER,
     Engine,
     EngineOptions,
     SearchNotQuiescent,
@@ -69,7 +70,7 @@ from .engine import (
 from . import startup_progress, wedge
 from .device_guard import DegradingMultiGPUDispatcher, find_degrade_source
 from .model_loader import load_model_from_checkpoint
-from .protocol import CmdQuit, CmdUci, parse_command
+from .protocol import CmdQuit, CmdUci, parse_command, stamp_received
 from .search import SearchWorker
 from .selfcheck import enforce_startup_gate
 
@@ -326,7 +327,7 @@ def _warmup_evaluator(
     evaluator,
     *,
     n_walkers: int = 1,
-    walker_gather: int = 1,
+    walker_gather: int = DEFAULT_LEAF_GATHER,
     n_devices: int = 1,
     input_history_encoding: str = "legacy",
     input_extra_features: str | None = None,
@@ -1542,12 +1543,13 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="virtual-loss weight, walker AND classic-Gumbel modes "
                         f"(default: {PLAY_SEARCH_VLOSS_WEIGHT}, lc0 default)")
   # Per-walker leaf gather: each walker does G descents → one NN batch.
-  # Default 1 = current behavior. Increase (4-8) to amplify effective
-  # submit batch size without more walker threads. Matches lc0's
-  # MinibatchSize semantic (our --minibatch-size UCI option controls
-  # the separate Gumbel path's C state machine, not this).
-    p.add_argument("--walker-gather", type=int, default=1,
-                   help="per-walker leaf gather (default: 1; lc0-style amplification at 4-8)")
+  # Walker pool only (--walkers > 1); the classic path never reads it. A
+  # larger gather raises walker throughput (see DEFAULT_LEAF_GATHER).
+  # Matches lc0's MinibatchSize semantic (our --minibatch-size UCI option
+  # controls the separate Gumbel path's C state machine, not this).
+    p.add_argument("--walker-gather", type=int, default=DEFAULT_LEAF_GATHER,
+                   help="per-walker leaf gather, walker pool only "
+                        f"(default: {DEFAULT_LEAF_GATHER})")
     p.add_argument("--vl-gather", type=int, default=512,
                    help="leaf gather for UseVL and UseMultiGpuPUCV (default: 512)")
   # Tri-state: None = unset (auto-enable with >1 devices), True/False =
@@ -2100,8 +2102,8 @@ def main() -> int:
 
     rc = 0
     try:
-        for raw in sys.stdin:
-            cmd = parse_command(raw)
+        for raw, received_at in _received_lines(sys.stdin):
+            cmd = stamp_received(parse_command(raw), received_at)
             if isinstance(cmd, CmdUci):
                 emit_handshake(startup_options)
                 continue
@@ -2206,6 +2208,17 @@ def main() -> int:
 # builder cannot be interrupted inside torch.compile / cudagraph capture, and a
 # GUI that quits during startup usually kills us a few seconds later anyway.
 _BUILDER_JOIN_TIMEOUT_S = 3.0
+
+# The clock `_received_lines` stamps each line with (a seam for tests).
+_receipt_clock = time.monotonic
+
+
+def _received_lines(stream: Iterable[str]) -> Iterator[tuple[str, float]]:
+    """Each line of ``stream`` with the moment it was read: a `go` or
+    `ponderhit` starts the move's clock then (`stamp_received`), not when its
+    handler gets to run."""
+    for raw in stream:
+        yield raw, _receipt_clock()
 
 
 def _report_startup_failure(exc: BaseException) -> None:

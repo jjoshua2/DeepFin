@@ -7,7 +7,7 @@ ignoring unknown commands per spec.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 
@@ -65,11 +65,15 @@ class GoArgs:
 @dataclass(frozen=True)
 class CmdGo:
     args: GoArgs
+  # `time.monotonic()` when the stdin reader read the line (`stamp_received`);
+  # the move's clock starts there. None: unstamped (the handler uses now).
+    received_at: float | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True)
 class CmdPonderHit:
-    pass
+  # As `CmdGo.received_at`: the real phase's clock starts there.
+    received_at: float | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True)
@@ -299,6 +303,14 @@ def _parse_setoption(tokens: list[str]) -> CmdSetOption:
         name = " ".join(tokens[1:])
         value = None
     return CmdSetOption(name=name, value=value)
+
+
+def stamp_received(cmd: Command, received_at: float) -> Command:
+    """``cmd`` with ``received_at`` set when it is a `go` or `ponderhit` (the
+    commands that start a move's clock); any other command unchanged."""
+    if isinstance(cmd, (CmdGo, CmdPonderHit)):
+        return replace(cmd, received_at=received_at)
+    return cmd
 
 
 def parse_command(line: str) -> Command:
