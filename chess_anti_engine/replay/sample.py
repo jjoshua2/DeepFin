@@ -135,3 +135,34 @@ class ReplaySample:
     sf_legal_mask: np.ndarray | None = None
   # Legal mask at t+2 (net POV, next own move) for policy_future head.
     future_legal_mask: np.ndarray | None = None
+
+  # Root search statistics (selfplay GameConfig.record_root_stats; default
+  # off). Policy-sized vectors in the SHARD's policy encoding, aligned like
+  # policy_target, float32. root_child_visits is -1 off the searched support,
+  # which is how a reader tells "searched, 0 visits" from "not a candidate";
+  # root_log_prior and root_child_q are 0 there. root_child_q holds completed
+  # Q (child Q when visited, root_net_value when not). root_log_prior is the
+  # SEARCH's prior (tempered by gumbel_policy_temp).
+  # mcts.gumbel_c.rebuild_improved_policy re-derives the stored target from
+  # these plus root_net_value and the run's GumbelConfig.
+  # Three DIFFERENT root values (see mcts.gumbel_c.RootSearchStats):
+  #   root_net_value  raw net value (W-L of root_net_wdl, the net's softmaxed WDL)
+  #   root_survivor_q completed Q of the halving survivor (the search's value)
+  #   root_node_q     tree root-node Q: visit average over every forced
+  #                   candidate, biased BELOW root_survivor_q -- diagnosis only
+  # root_start_visits: child visits already on the root when this search began
+  # (tree reuse), so the row's realised budget is that plus the sims run.
+  # search_budget: simulations run on this ply (full vs fast under playout
+  # cap randomisation); written for every net-turn row, policy or not.
+  # The two indices are move indices -> registered in POLICY_INDEX_FIELDS.
+    root_log_prior: np.ndarray | None = None
+    root_child_q: np.ndarray | None = None
+    root_child_visits: np.ndarray | None = None
+    root_net_value: float | None = None
+    root_net_wdl: np.ndarray | None = None
+    root_survivor_q: float | None = None
+    root_node_q: float | None = None
+    root_start_visits: int | None = None
+    root_survivor_index: int | None = None
+    played_move_index: int | None = None
+    search_budget: int | None = None

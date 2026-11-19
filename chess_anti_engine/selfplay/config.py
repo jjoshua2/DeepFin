@@ -35,6 +35,14 @@ class TemperatureConfig:
     selfplay_decay_start_move: int | None = None
     selfplay_decay_moves: int | None = None
     selfplay_endgame: float | None = None
+  # Direct finite-call research control, not a Worker/YAML setting. False
+  # (default) = the schedule above counts the 1-based FULLMOVE number of the
+  # board, so a game that starts after a 16-ply book is already at move 9.
+  # True = it counts PLIES played since the game's starting position (0 at
+  # the first move after the book), so decay_start_move/decay_moves are in
+  # plies and every opening gets the same early-exploration window however
+  # long its book line is (scripts/simple_rl_loop.py).
+    schedule_plies_from_start: bool = False
 
 
 @dataclass(frozen=True)
@@ -81,6 +89,22 @@ class SearchConfig:
     # docs/experiment_ledger.md, "selfplay search policy temperature".
     gumbel_policy_temp: float = 1.0
     gumbel_c_scale: float = SELFPLAY_GUMBEL_C_SCALE
+  # Direct finite-call research controls (scripts/simple_rl_loop.py), not
+  # Worker/YAML settings. Defaults equal GumbelConfig's own defaults, so the
+  # production mapping is bit-identical while they are untouched.
+  # gumbel_c_visit -> GumbelConfig.c_visit: the sigma(q) floor at the root
+  # halving AND in the descent, so it moves play and the stored target alike.
+  # gumbel_target_q_rescale -> GumbelConfig.target_q_rescale: store-arm only
+  # (see that field). ⚑ With a POSITIVE move temperature the played move is
+  # sampled from the stored target, so a store-arm knob then reaches play too
+  # (network_turn._resample_actions_with_temperature).
+    gumbel_c_visit: float = 50.0
+    gumbel_target_q_rescale: bool = True
+  # gumbel_tree_reuse: True (production) carries the chosen child's subtree
+  # into the next ply's search (network_turn passes root_node_ids), so a
+  # "N sims" row's visits and sigma include inherited visits. False searches
+  # every ply from a fresh root on exactly its own budget.
+    gumbel_tree_reuse: bool = True
     gumbel_scale: float = 1.0
     gumbel_scale_after: float = 0.0
     gumbel_scale_decay_start_move: int = 0
@@ -391,6 +415,17 @@ class GameConfig:
   # a side output itself; the cadenced monitor later vets and promotes candidates
   # into opening_fen_list_path through the validated feed step.
     blindspot_harvest_out_path: str = ""
+
+  # Direct finite-call research control, not a Worker/YAML setting (default
+  # off; adds three policy-sized float32 shard arrays per policy row plus
+  # scalars). Stores what the stored policy target was built from -- log
+  # prior over the searched support, completed Q and visit count per root
+  # child, the raw net value/WDL, the survivor's completed Q, the root-node
+  # Q, the visits inherited by tree reuse, the halving survivor and the move
+  # played -- so a target can be re-derived under different sigma knobs
+  # without re-searching (mcts.gumbel_c.rebuild_improved_policy); and the
+  # ply's simulation budget on every net-turn row. Compiled Gumbel path only.
+    record_root_stats: bool = False
 
     def __post_init__(self) -> None:
         if self.policy_row_retention not in ("legacy", "all_eligible"):

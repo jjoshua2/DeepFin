@@ -643,6 +643,8 @@ _NOT_A_MOVE_INDEX: dict[str, str] = {
     "future_sf_regret_count": "how many future plies the regret aggregate covers",
     "is_network_turn": "boolean",
     "is_selfplay": "boolean",
+    "root_start_visits": "visit count already on a carried search root",
+    "search_budget": "simulations run on the ply",
 }
 
 

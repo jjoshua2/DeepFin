@@ -22,7 +22,7 @@ import math
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import chess
 import numpy as np
@@ -52,6 +52,9 @@ from chess_anti_engine.mcts.gumbel import (
 )
 from chess_anti_engine.mcts.sampling import sample_action_with_temperature
 from chess_anti_engine.mcts.solved_root import SolvedRootWitnessUnavailable
+
+if TYPE_CHECKING:
+    from chess_anti_engine.mcts.gumbel_c import RootSearchStats
 
 # The ImportError text is kept: a refusal (manager._require_compiled_search
 # and the dispatch below) names what actually failed to import.
@@ -178,6 +181,19 @@ def _root_submit_size(eval_impl: Any, bsz: int, *, use_inplace: bool) -> int:
     return _padded_batch_size(bsz)
 
 
+def _temperature_clock(state: SelfplayState, slot: int) -> int:
+    """The step the move-temperature schedule is evaluated at for ``slot``.
+
+    Default: the board's 1-based fullmove number. With
+    ``TemperatureConfig.schedule_plies_from_start``: plies played since the
+    slot's starting position (0 on the first move after the opening book).
+    """
+    ply = int(state.cboards[slot].ply)
+    if not bool(getattr(state.temp, "schedule_plies_from_start", False)):
+        return ply // 2 + 1
+    return max(0, ply - int(state.starting_ply_arr[slot]))
+
+
 def _resample_actions_with_temperature(
     probs_list: list[np.ndarray],
     actions: list[int],
@@ -295,8 +311,10 @@ def build_selfplay_gumbel_config(
         temperature=0.0,
         policy_temp=float(search.gumbel_policy_temp),
         c_scale=float(search.gumbel_c_scale),
+        c_visit=float(search.gumbel_c_visit),
         target_max_visit_cap=int(search.gumbel_target_max_visit_cap),
         target_untempered_prior=bool(search.gumbel_target_untempered_prior),
+        target_q_rescale=bool(search.gumbel_target_q_rescale),
         add_noise=True,
         gumbel_scale=1.0,
         input_history_encoding=game.input_history_encoding,
@@ -1096,12 +1114,14 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
     values_list: list[float | None] = [None] * len(net_idxs)
     masks_list: list[np.ndarray | None] = [None] * len(net_idxs)
     gumbel_diags: list[dict[str, float] | None] = [None] * len(net_idxs)
+    record_root_stats = bool(getattr(state.game, "record_root_stats", False))
+    root_stats_list: list[RootSearchStats | None] = [None] * len(net_idxs)
 
     # Per-game action temperature based on each game's own ply count.  Pure
     # selfplay can keep exploration while SF-curriculum games stay sharp.
     temps = [
         temperature_for_ply(
-            ply=state.cboards[i].ply // 2 + 1,
+            ply=_temperature_clock(state, i),
             temperature=(
                 float(temp.selfplay_temperature)
                 if bool(state.selfplay_arr[i]) and temp.selfplay_temperature is not None
@@ -1178,9 +1198,23 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
         if volatility_search_enabled(gumbel_cfg):
             warn_volatility_python_path()
         used_gumbel_c = _HAS_GUMBEL_C and not volatility_search_enabled(gumbel_cfg)
+        if record_root_stats and not used_gumbel_c:
+            raise ValueError(
+                "record_root_stats needs the compiled Gumbel search; the Python "
+                "search path does not export per-child statistics",
+            )
+        root_stats_sub: list[RootSearchStats | None] | None = (
+            [] if record_root_stats else None
+        )
         if used_gumbel_c:
             # Map group indices to game-level root IDs for tree reuse.
-            sub_root_ids = [state.root_ids[net_idxs[j]] for j in group] if state.mcts_tree is not None else None
+            # SearchConfig.gumbel_tree_reuse=False hands the runner no carried
+            # roots, so every ply searches a fresh root on its own budget.
+            sub_root_ids = (
+                [state.root_ids[net_idxs[j]] for j in group]
+                if state.mcts_tree is not None and bool(getattr(search, "gumbel_tree_reuse", True))
+                else None
+            )
             gumbel_c_fn = cast(Any, _run_gumbel_root_many_c)
             try:
                 _gumbel_result = gumbel_c_fn(
@@ -1201,6 +1235,7 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
                     allow_terminal_root_shortcuts=True,
                     return_diagnostics=True,
                     witness_stop_fn=witness_stop_fn,
+                    root_stats_out=root_stats_sub,
                     **search_shape.runner_kwargs(),
                 )
             except SolvedRootWitnessUnavailable as exc:
@@ -1281,6 +1316,8 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
             values_list[jj] = float(v)
             masks_list[jj] = m
             gumbel_diags[jj] = _refresh_gumbel_action_diag(diag_sub[local_j], p, int(a))
+            if root_stats_sub is not None:
+                root_stats_list[jj] = root_stats_sub[local_j]
             # Advance tree root to chosen move's child for next-ply reuse
             if state.mcts_tree is not None:
                 game_idx = net_idxs[jj]
@@ -1321,9 +1358,14 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
         probs_list = [probs_list[j] for j in keep]
         masks_list = [masks_list[j] for j in keep]
         gumbel_diags = [gumbel_diags[j] for j in keep]
+        root_stats_list = [root_stats_list[j] for j in keep]
         is_full_py, is_full = [is_full_py[j] for j in keep], is_full[keep]
         sample_weights = [sample_weights[j] for j in keep]
 
+    records_before = (
+        [len(state.samples_per_game[idx]) for idx in net_idxs]
+        if record_root_stats else None
+    )
     if state.has_c_ply and len(net_idxs) > 0:
         _append_records_via_c(
             state, net_idxs,
@@ -1345,6 +1387,30 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
             is_full=is_full, sample_weights=sample_weights,
             diff_focus=diff_focus,
         )
+    if records_before is not None:
+        budgets = [full_sims if bool(f) else fast_sims for f in is_full_py]
+        _attach_root_stats(state, net_idxs, records_before, root_stats_list, actions, budgets)
+
+
+def _attach_root_stats(
+    state: SelfplayState, net_idxs: list[int], records_before: list[int],
+    root_stats_list: list[RootSearchStats | None], actions: list[int | None],
+    budgets: list[int],
+) -> None:
+    """Pin each new record to the root statistics its target came from.
+
+    Exactly one record per searched slot is appended per turn; anything else
+    means the pairing below would attach one ply's search to another's row,
+    so it is refused rather than guessed.
+    """
+    for j, idx in enumerate(net_idxs):
+        records = state.samples_per_game[idx]
+        if len(records) != records_before[j] + 1:
+            raise ValueError("record_root_stats: expected exactly one new record per searched slot")
+        rec = records[-1]
+        rec.root_stats = root_stats_list[j]
+        rec.played_action = None if actions[j] is None else int(cast(int, actions[j]))
+        rec.search_budget = int(budgets[j])
 
 
 __all__ = [

@@ -214,6 +214,7 @@ class _NetRecord:
         "legal_mask",
         "move_offset",
         "net_wdl_est",
+        "played_action",
         "ply_index",
         "policy_probs",
         "pos_hash",
@@ -224,7 +225,9 @@ class _NetRecord:
         "priority_policy_kl",
         "priority_q_delta",
         "relations",
+        "root_stats",
         "sample_weight",
+        "search_budget",
         "search_wdl_est",
         "sf_label_meta",
         "sf_legal_mask",
@@ -306,6 +309,14 @@ class _NetRecord:
     # (main policy + wdl/sf_wdl only); every other head is masked. Default False
     # keeps ordinary net-turn records untouched.
     is_sf_refute_opp: bool
+    # GameConfig.record_root_stats only (default None): the
+    # mcts.gumbel_c.RootSearchStats this row's policy target was built from,
+    # and the full-4672 action actually played (after move temperature).
+    # Never persisted by selfplay/resume.py; a resumed record has None.
+    root_stats: Any
+    played_action: int | None
+    # Simulations this ply ran (full vs fast budget); record_root_stats only.
+    search_budget: int | None
 
     def __init__(
         self, x: np.ndarray, policy_probs: np.ndarray,
@@ -357,6 +368,9 @@ class _NetRecord:
         self.sf_legal_mask = None
         self.gumbel_policy_diag = gumbel_policy_diag
         self.is_sf_refute_opp = False
+        self.root_stats = None
+        self.played_action = None
+        self.search_budget = None
 
 
 @dataclass
