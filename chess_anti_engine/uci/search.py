@@ -68,6 +68,7 @@ from .device_guard import (
 )
 from chess_anti_engine.moves import index_to_move, move_to_index
 
+from .protocol import uci_debug_enabled
 from .score import q_to_cp
 from .tb_leaf import CLeafProbe
 from .tb_root import RootTablebase, RootTablebaseError
@@ -1988,15 +1989,20 @@ class SearchWorker:
             if self._show_wdl and self._root_wdl_logits is not None
             else 0.0
         )
-        pucv_info = _pucv_stats_string(
-            self.last_multi_gpu_pucv_stats(),
-            pending_mode=self._pucv_vloss_mode,
-        )
-        if pucv_info is None:
-            pucv_info = _single_pucv_cache_stats_string(
-                self.last_single_pucv_cache_stats(),
+        # Pool batch statistics are a diagnostic: UCI `debug on` only. Whatever
+        # string survives is printed on its own `info string` line after the
+        # PV line (`format_info`), never after `pv` on it.
+        pucv_info: str | None = None
+        if uci_debug_enabled():
+            pucv_info = _pucv_stats_string(
+                self.last_multi_gpu_pucv_stats(),
                 pending_mode=self._pucv_vloss_mode,
             )
+            if pucv_info is None:
+                pucv_info = _single_pucv_cache_stats_string(
+                    self.last_single_pucv_cache_stats(),
+                    pending_mode=self._pucv_vloss_mode,
+                )
         if note is not None:
             pucv_info = note if pucv_info is None else f"{pucv_info}; {note}"
         hashfull = self._hashfull_permille()
@@ -2008,6 +2014,17 @@ class SearchWorker:
         mates = _proven_line_mates(
             self._tree, self._root_id, board, [pv_idx[0] if pv_idx else None for _, _, pv_idx in lines],
         )
+        # A first move the search never visited (the classic Gumbel path returns
+        # a forced root's sole move without a simulation) has no searched score:
+        # its Q is the root's network evaluation. Say so instead of passing it off
+        # as a search result; an exact mate on the board is reported as a mate.
+        if (lines[0][2] and mates[0] is None
+                and _root_action_visits(self._tree, self._root_id, lines[0][2][0]) == 0):
+            unsearched = (
+                "move unsearched (0 visits): score is the network's evaluation "
+                "of this position, not a search result"
+            )
+            pucv_info = unsearched if pucv_info is None else f"{unsearched}; {pucv_info}"
         for (rank, q, pv_idx), score_mate in zip(lines, mates, strict=True):
             uci_pv = _uci_pv(board, pv_idx)
             wdl = _q_to_wdl_permille(q, draw_rate) if self._show_wdl else None
@@ -4346,10 +4363,48 @@ def _proven_line_mates(
     if tree is None or root_id is None:
         return [None] * len(first_actions)
     walk = _MateWalk()
-    return [
-        None if action is None else _proven_line_mate(tree, root_id, board, int(action), walk)
-        for action in first_actions
-    ]
+    out: list[int | None] = []
+    for action in first_actions:
+        if action is None:
+            out.append(None)
+            continue
+        mate = _proven_line_mate(tree, root_id, board, int(action), walk)
+        if mate is None and _root_edge_unexpanded(tree, root_id, int(action)):
+            mate = _board_line_mate(board, int(action))
+        out.append(mate)
+    return out
+
+
+def _root_edge_unexpanded(tree: MCTSTree, root_id: int, action: int) -> bool:
+    """True when the search has nothing behind root ``action``: no child node,
+    or a child that was never expanded."""
+    child = tree.find_child(root_id, int(action))
+    return child < 0 or tree.get_children_visits(child)[0].size == 0
+
+
+def _root_action_visits(tree: MCTSTree | None, root_id: int | None, action: int) -> int:
+    """Visits of root ``action`` (0 when it has no edge or there is no tree)."""
+    if tree is None or root_id is None:
+        return 0
+    actions, visits = tree.get_children_visits(root_id)
+    hit = actions == int(action)
+    return int(visits[hit].max()) if bool(hit.any()) else 0
+
+
+def _board_line_mate(board: chess.Board, action: int) -> int | None:
+    """Exact ``score mate`` for root ``action`` from the board alone: 1 when it
+    mates, -1 when the opponent then has a mate in one (the worst value a move
+    can have, and one the opponent can always take), else None. For a line the
+    search has not looked behind (a forced move the classic path banks unvisited).
+    None too when the move makes a draw claimable (50-move counter, threefold):
+    the mover may claim it instead of facing the mate."""
+    after = board.copy()
+    after.push(index_to_move(int(action), after))
+    if after.is_checkmate():
+        return 1
+    if after.halfmove_clock >= 100 or after.is_repetition(3):
+        return None
+    return -1 if _has_mate_in_one(after) else None
 
 
 def _child_visit_order(

@@ -1620,7 +1620,7 @@ def test_illegal_searchmoves_are_named(out) -> None:
         engine.close()
 
 
-@pytest.mark.parametrize("line", ["debug on", "register later"])
+@pytest.mark.parametrize("line", ["register later"])
 def test_unimplemented_spec_commands_say_so(out, line: str) -> None:
     engine = Engine(_worker())
     try:

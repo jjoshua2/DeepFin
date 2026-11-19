@@ -1003,7 +1003,28 @@ def _resolve_multi_gpu_startup(
     The two pools are mutually exclusive, but retaining the PUCV intent while
     root Gumbel is active lets a later UCI ``SearchParallel=pucv`` switch
     restore concurrent multi-GPU search instead of the serialized dispatcher.
+
+    A multi-device mode asked for EXPLICITLY on one device cannot be honoured
+    (both pools need at least two device factories) and refuses to start --
+    running classic Gumbel under a flag that names another search is the
+    silent fallback this engine does not do. ``--search-parallel pucv`` is the
+    default, so only ``gumbel`` counts as asked for.
     """
+    if n_devices <= 1:
+        asked = [
+            flag for flag, on in (
+                ("--multi-gpu-pucv", pucv_flag is True),
+                ("--search-parallel gumbel", search_parallel == "gumbel"),
+            ) if on
+        ]
+        if asked:
+            raise SystemExit(
+                f"{' and '.join(asked)} with {n_devices} device: the multi-GPU "
+                "search pools need --devices with at least two entries, and "
+                "this engine does not fall back silently to classic Gumbel. "
+                "Drop the flag for the single-device search, or list two or "
+                "more --devices. Refusing to start."
+            )
     root_gumbel = search_parallel == "gumbel" and n_devices > 1
     pucv_fallback = _resolve_use_multi_gpu_pucv(
         pucv_flag, n_devices, announce=not root_gumbel,

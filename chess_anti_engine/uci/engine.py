@@ -40,6 +40,7 @@ from chess_anti_engine.utils.gil_probe import GilContentionProbe
 from chess_anti_engine.utils.thread_join import await_os_thread_exit, join_thread, note_started
 
 from .protocol import (
+    CmdDebug,
     CmdGo,
     CmdIsReady,
     CmdPonderHit,
@@ -58,6 +59,7 @@ from .protocol import (
     format_info,
     format_readyok,
     format_uciok,
+    set_uci_debug,
 )
 from .search import SearchResult, SearchWorker
 from .time_manager import (
@@ -1064,10 +1066,15 @@ class Engine:
         elif isinstance(cmd, CmdQuit):
             self._quit_requested = True
             self._handle_stop()
+        elif isinstance(cmd, CmdDebug):
+            if cmd.on is None:
+                _println(f"info string debug: {cmd.raw!r} is not 'on' or 'off'; ignored")
+            else:
+                set_uci_debug(cmd.on)
         else:  # CmdUnknown
             head = cmd.raw.split()[0] if cmd.raw.split() else ""
-            if head in ("debug", "register"):
-  # UCI spec commands this engine does not implement. Unknown commands stay
+            if head == "register":
+  # A UCI spec command this engine does not implement. Unknown commands stay
   # silent (the spec says to ignore them, and a blank line is one).
                 _println(f"info string {head}: not implemented by this engine; ignored")
 
@@ -1877,7 +1884,7 @@ class Engine:
         values = self._worker.realized_search_values()
         _println(
             f"info string searchconfig path={path} "
-            f"({PATH_DESCRIPTIONS.get(path, path)})"
+            f"({PATH_DESCRIPTIONS.get(path, path)}) {self._searchconfig_devices(path)}"
         )
         failed = getattr(self._worker, "failed_pool_devices", None)
         failed_devices = failed() if callable(failed) else ()
@@ -1899,6 +1906,16 @@ class Engine:
             f"info string searchconfig {len(rows) - inert - branch} live, "
             f"{branch} branch-pinned, {inert} inert on path={path}"
         )
+
+    def _searchconfig_devices(self, path: str) -> str:
+        """``devices=N`` for the searchconfig path line: the devices the search
+        evaluates on, read off the engine rather than implied by the path name.
+        Several devices on a non-pool path are the routing dispatcher, which
+        runs them one call at a time; say so."""
+        n = max(1, len(self._search_devices or ()))
+        if n > 1 and path not in ("pucv_pool", "rpg"):
+            return f"devices={n} (routing dispatcher: one device call at a time)"
+        return f"devices={n}"
 
   # ─── setoption handlers ────────────────────────────────────────────────────
   # Each takes the raw value string and is responsible for parsing + clamping.
