@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 import torch
 
@@ -48,8 +49,8 @@ def _argv(run_dir: Path, openings: Path, model_config: Path) -> list[str]:
     return ["run", "--run-dir", str(run_dir), "--openings-dir", str(openings), "--random-init",
             "--model-config", str(model_config), "--generations", "2", "--games", "4", "--concurrency", "4",
             "--sims", "8", "--max-plies", "30", "--rows-per-shard", "25", "--book-mix", "1.0",
-            "--batch-size", "16", "--passes", "1", "--lr", "1e-3", "--holdout-frac", "0.25",
-            "--optimizer-state", "continue", "--window", "2", "--no-eval", "--seed", "77"]
+            "--batch-size", "16", "--lr", "1e-3", "--holdout-frac", "0.25",
+            "--optimizer-state", "continue", "--presentations", "2", "--no-eval", "--seed", "77"]
 
 
 _VOLATILE = {"wall_seconds", "games_per_hour", "rows_per_second", "updates_per_second"}
@@ -145,3 +146,74 @@ def test_a_changed_setting_is_refused_on_resume(tmp_path: Path, monkeypatch: pyt
     assert simple_rl_loop.main([*changed, "--allow-config-change"]) == 0
     record = json.loads((run_dir / "run_config.json").read_text())
     assert record["changes"][0]["diff"]["lr"] == {"was": 1e-3, "now": 2e-3}
+
+
+def _presented(run_dir: Path, generations: int) -> dict[int, np.ndarray]:
+    from chess_anti_engine.simple_rl.learn import _generation_meta, holdout_mask, presentation_counts
+
+    counts, _ = presentation_counts(run_dir, before_generation=generations + 1)
+    out = {}
+    for g in range(1, generations + 1):
+        meta = _generation_meta(run_dir, g)
+        c = counts.get(g, np.zeros(len(meta["game_id"]), np.int64))
+        held = holdout_mask(meta, 0.25)
+        assert (c[held] == 0).all(), "a held-out row was trained on"
+        out[g] = c[~held]
+    return out
+
+
+@pytest.mark.parametrize("presentations", [1, 2])
+def test_every_row_is_presented_exactly_p_times_across_a_kill_and_resume(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, presentations: int) -> None:
+    from chess_anti_engine.simple_rl import learn
+
+    openings, model_config = _setup(tmp_path, monkeypatch)
+    run_dir = tmp_path / "run"
+    argv = _argv(run_dir, openings, model_config)
+    argv[argv.index("--generations") + 1] = "3"
+    argv[argv.index("--presentations") + 1] = str(presentations)
+
+    # Kill gen-2 training at the worst moment: after its presentation record
+    # and model are on disk, before its manifest. The redo must not count it.
+    real_write = learn.write_json_atomic
+    fired = {"n": 0}
+
+    def die_once(path: Any, payload: Any) -> Any:
+        if str(path).endswith("gen_0002/train/metrics.json") and not fired["n"]:
+            fired["n"] += 1
+            raise Killed
+        return real_write(path, payload)
+
+    monkeypatch.setattr(learn, "write_json_atomic", die_once)
+    with pytest.raises(Killed):
+        simple_rl_loop.main(argv)
+    assert (run_dir / "gen_0002" / "train" / learn.PRESENTED).exists()
+    assert not (run_dir / "gen_0002" / "train" / "manifest.json").exists()
+    assert simple_rl_loop.main(argv) == 0
+
+    counts = _presented(run_dir, 3)
+    for g in (1, 2, 3):
+        lifetime_over = g <= 3 - presentations + 1
+        expected = presentations if lifetime_over else presentations - 1
+        assert counts[g].size > 0
+        assert set(counts[g].tolist()) == {expected}, (g, np.unique(counts[g], return_counts=True))
+    ledger = json.loads((run_dir / learn.LEDGER).read_text())
+    for g in ("1", "2", "3"):
+        h = ledger["generations"][g]
+        if h["lifetime_complete"]:
+            assert h["histogram"] == {str(presentations): h["trainable_rows"]}
+    summary = json.loads((run_dir / "gen_0003" / "train" / "metrics.json").read_text())["summary"]
+    assert summary["sampling"] == "scheduled_exact_once"
+    gens = [1, 2, 3]
+    windows = [json.loads((run_dir / f"gen_{g:04d}" / "train" / "metrics.json").read_text())["summary"][
+        "window_generations"] for g in gens]
+    assert windows == ([[1], [2], [3]] if presentations == 1 else [[1], [1, 2], [2, 3]])
+
+
+def test_more_than_two_presentations_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    openings, model_config = _setup(tmp_path, monkeypatch)
+    argv = _argv(tmp_path / "run", openings, model_config)
+    argv[argv.index("--presentations") + 1] = "3"
+    with pytest.raises(ValueError, match="cap is 2"):
+        simple_rl_loop.main(argv)
+    assert not (tmp_path / "run" / "gen_0000").exists()

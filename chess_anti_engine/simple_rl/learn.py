@@ -53,10 +53,19 @@ MODEL_FILE = "model.pt"
 
 @dataclass(frozen=True)
 class TrainSettings:
-    window: int = 4
+    # Presentation schedule (default): every trainable row is presented
+    # exactly `presentations` times in its lifetime, by shuffled passes
+    # WITHOUT replacement. 1 = once, in the phase after its generation is
+    # collected; 2 (the cap) = once there and once in the next generation's
+    # phase. The phase's rows are a consequence of that schedule.
+    presentations: int = 1
+    # Explicit non-default alternative: uniform WITH replacement over the last
+    # `window` generations for `updates` (or passes x rows / batch) updates.
+    sample_with_replacement: bool = False
+    window: int | None = None
     batch_size: int = 256
     updates: int = 0
-    passes: float = 1.0
+    passes: float | None = None
     lr: float = 3e-5
     lr_floor: float | None = None
     warmup_steps: int = 0
@@ -100,6 +109,12 @@ class TrainSettings:
         return float(self.value_search_weight) / total
 
     def validate(self) -> None:
+        if self.presentations not in (1, 2):
+            raise ValueError(f"presentations must be 1 or 2 (the cap is 2), got {self.presentations}")
+        if not self.sample_with_replacement and (
+                self.window is not None or int(self.updates) > 0 or self.passes is not None):
+            raise ValueError("window / updates / passes apply only with sample_with_replacement; the default "
+                             "schedule presents each row exactly `presentations` times")
         if self.value_search_source not in VALUE_SOURCES:
             raise ValueError(f"value_search_source must be one of {VALUE_SOURCES}")
         if self.value_draw_source not in DRAW_SOURCES:
@@ -193,21 +208,166 @@ def _select(arrays: dict[str, np.ndarray], mask: np.ndarray) -> dict[str, np.nda
     return {k: (v if str(k).startswith("_") else np.asarray(v)[mask]) for k, v in arrays.items()}
 
 
-def load_window(run_dir: Path, generation: int, settings: TrainSettings) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], list[int]]:
-    """(train rows over the window, held-out rows of the newest generation, gens)."""
-    first = max(1, generation - int(settings.window) + 1)
-    gens = list(range(first, generation + 1))
+def phase_generations(generation: int, settings: TrainSettings) -> list[int]:
+    """The generations whose rows this phase presents."""
+    if settings.sample_with_replacement:
+        k = int(settings.window) if settings.window is not None else 4
+        return list(range(max(1, generation - k + 1), generation + 1))
+    return list(range(max(1, generation - int(settings.presentations) + 1), generation + 1))
+
+
+def load_window(run_dir: Path, generation: int, settings: TrainSettings) -> tuple[
+        dict[str, np.ndarray], dict[str, np.ndarray], list[int], np.ndarray]:
+    """(train rows, held-out rows of the newest generation, gens, row ids).
+
+    Row ids are ``(generation, row index within that generation's collect
+    rows in load order)``, the key of the presentation ledger.
+    """
+    gens = phase_generations(generation, settings)
     train_parts: list[dict[str, np.ndarray]] = []
+    ids: list[np.ndarray] = []
     holdout: dict[str, np.ndarray] | None = None
     for g in gens:
         arrays, meta = load_generation_rows(Path(run_dir) / f"gen_{g:04d}" / "collect",
                                             keys=(*TRAIN_KEYS, *TARGET_SOURCE_KEYS))
-        held = np.asarray([is_holdout_game(int(gid), settings.holdout_frac) for gid in meta["game_id"]], dtype=bool)
+        held = holdout_mask(meta, settings.holdout_frac)
         train_parts.append(_select(arrays, ~held))
+        rows = np.flatnonzero(~held)
+        ids.append(np.stack([np.full(rows.size, g, dtype=np.int64), rows.astype(np.int64)], axis=1))
         if g == generation:
             holdout = _select(arrays, held)
     assert holdout is not None
-    return concat_arrays(train_parts), holdout, gens
+    return concat_arrays(train_parts), holdout, gens, np.concatenate(ids, axis=0)
+
+
+def holdout_mask(meta: dict[str, np.ndarray], frac: float) -> np.ndarray:
+    return np.asarray([is_holdout_game(int(gid), frac) for gid in meta["game_id"]], dtype=bool)
+
+
+PRESENTED = "presented.npz"
+LEDGER = "presentation_ledger.json"
+
+
+def _generation_meta(run_dir: Path, g: int) -> dict[str, np.ndarray]:
+    metas = []
+    for m in sorted((Path(run_dir) / f"gen_{g:04d}" / "collect" / "shards").glob("shard_*.meta.npz")):
+        with np.load(m) as z:
+            metas.append(z["game_id"])
+    return {"game_id": np.concatenate(metas) if metas else np.zeros(0, np.int64)}
+
+
+def presentation_counts(run_dir: Path, *, before_generation: int) -> tuple[dict[int, np.ndarray], int]:
+    """Per-row presentation counts from every COMPLETED train phase (one with a
+    manifest) of a generation below ``before_generation``, plus the SL cursor.
+
+    Derived from the phases' own records rather than kept as a running
+    counter, so a phase killed before its manifest contributes nothing and a
+    redo cannot double-present.
+    """
+    counts: dict[int, np.ndarray] = {}
+    sl_cursor = 0
+    for g in range(1, int(before_generation)):
+        train_dir = Path(run_dir) / f"gen_{g:04d}" / "train"
+        if not (train_dir / "manifest.json").exists():
+            continue
+        with np.load(train_dir / PRESENTED) as z:
+            gen, row = z["gen"], z["row"]
+            sl_cursor = max(sl_cursor, int(z["sl_end"]))
+        for pg in np.unique(gen):
+            pg = int(pg)
+            if pg not in counts:
+                counts[pg] = np.zeros(len(_generation_meta(run_dir, pg)["game_id"]), dtype=np.int64)
+            np.add.at(counts[pg], row[gen == pg], 1)
+    return counts, sl_cursor
+
+
+def presentation_histograms(run_dir: Path, counts: dict[int, np.ndarray], *, holdout_frac: float,
+                            through_generation: int, presentations: int) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for g in range(1, int(through_generation) + 1):
+        n = len(_generation_meta(run_dir, g)["game_id"])
+        c = counts.get(g, np.zeros(n, dtype=np.int64))
+        held = holdout_mask(_generation_meta(run_dir, g), holdout_frac)
+        values, freq = np.unique(c[~held], return_counts=True)
+        out[str(g)] = {
+            "trainable_rows": int((~held).sum()), "holdout_rows": int(held.sum()),
+            "holdout_presented": int(c[held].sum()),
+            "histogram": {str(int(v)): int(f) for v, f in zip(values, freq, strict=True)},
+            "lifetime_complete": g <= int(through_generation) - int(presentations) + 1,
+        }
+    return out
+
+
+class ScheduledSampler:
+    """Serves a precomputed list of batches -- each row of a phase exactly
+    once, in a shuffled order, WITHOUT replacement.
+
+    The final batch is short (the remainder) rather than dropped or padded, so
+    no row is skipped and none repeats. ``served`` records the row positions
+    actually handed to the Trainer: the presentation record is the consumer's,
+    not the plan's. Exposes ``rng`` for the Trainer's mirror draw (per batch,
+    i.e. per presentation).
+    """
+
+    def __init__(self, rows: dict[str, np.ndarray], batches: list[tuple[np.ndarray, np.ndarray]], *,
+                 rng: np.random.Generator, sl_rows: dict[str, np.ndarray] | None = None) -> None:
+        self.rows = rows
+        self.batches = batches
+        self.rng = rng
+        self.sl_rows = sl_rows
+        self.n = int(rows["x"].shape[0])
+        self.cursor = 0
+        self.served: list[np.ndarray] = []
+        self.served_sl: list[np.ndarray] = []
+        self.drawn_rows = 0
+        self.realised_sl_rows = 0
+
+    def __len__(self) -> int:
+        return self.n
+
+    def sample_batch_arrays(self, batch_size: int) -> dict[str, np.ndarray]:
+        del batch_size  # the plan fixes every batch, including the short last one
+        if self.cursor >= len(self.batches):
+            raise RuntimeError("ScheduledSampler exhausted: the Trainer asked for more batches than planned")
+        own, sl_idx = self.batches[self.cursor]
+        self.cursor += 1
+        batch = {k: (v if str(k).startswith("_") else np.asarray(v)[own]) for k, v in self.rows.items()}
+        if sl_idx.size:
+            assert self.sl_rows is not None
+            sl = {k: (v if str(k).startswith("_") else np.asarray(v)[sl_idx]) for k, v in self.sl_rows.items()}
+            batch = concat_arrays([batch, sl])
+        self.served.append(np.asarray(own))
+        self.served_sl.append(np.asarray(sl_idx))
+        self.drawn_rows += int(own.size + sl_idx.size)
+        self.realised_sl_rows += int(sl_idx.size)
+        return batch
+
+
+def plan_batches(n_own: int, *, batch_size: int, sl_frac: float, sl_available: int,
+                 rng: np.random.Generator, sl_start: int = 0) -> tuple[list[tuple[np.ndarray, np.ndarray]], int]:
+    """Shuffled exact-once batches over ``n_own`` rows (+ an SL share).
+
+    Each full batch holds ``round(sl_frac * batch_size)`` SL rows; the short
+    final batch holds the same SL proportion of its own rows, rounded. SL rows
+    are taken consecutively from ``sl_start`` in the run's fixed corpus order,
+    so none is used twice in a run. Returns (batches, sl_end).
+    """
+    order = rng.permutation(int(n_own))
+    n_sl = round(float(sl_frac) * int(batch_size)) if sl_frac > 0 else 0
+    own_per = int(batch_size) - n_sl
+    if own_per <= 0:
+        raise ValueError("sl_frac leaves no room for self-play rows in a batch")
+    batches: list[tuple[np.ndarray, np.ndarray]] = []
+    sl_pos = int(sl_start)
+    for i in range(0, order.size, own_per):
+        own = order[i:i + own_per]
+        k = n_sl if own.size == own_per else round(own.size * n_sl / own_per)
+        if sl_pos + k > int(sl_available):
+            raise ValueError(f"SL corpus exhausted: need rows {sl_pos}..{sl_pos + k}, have {sl_available} "
+                             "(each SL row is used at most once per run; raise --sl-mix-max-rows)")
+        batches.append((own, np.arange(sl_pos, sl_pos + k, dtype=np.int64)))
+        sl_pos += k
+    return batches, sl_pos
 
 
 def load_sl_corpus(path: Path, *, max_rows: int, seed: int, need_search: bool) -> dict[str, np.ndarray]:
@@ -482,7 +642,7 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
     torch.manual_seed(seed & 0xFFFFFFFF)
     settings.validate()
     arch, model_config = load_arch_config(init_checkpoint)
-    train_rows, holdout, gens = load_window(run_dir, generation, settings)
+    train_rows, holdout, gens, row_ids = load_window(run_dir, generation, settings)
     reference_prior: Callable[[np.ndarray, np.ndarray], np.ndarray] | None = None
     if float(settings.policy_prior_mix) < 1.0 and settings.prior_mix_source == "reference":
         if not settings.prior_mix_reference:
@@ -520,16 +680,43 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
         probe = {k: z[k] for k in ("x", "legal_mask")}
 
     before = heldout_metrics(trainer.model, holdout, settings.device)
+    counts_before, sl_cursor = presentation_counts(run_dir, before_generation=generation)
     sl_rows = None
     if settings.sl_mix_frac > 0:
         if not settings.sl_mix_dir:
             raise ValueError("--sl-mix-frac > 0 needs --sl-mix-dir")
+        # One corpus order for the whole run (not per generation), consumed
+        # from the ledger's cursor: no SL row is used twice in a run.
         sl_rows = load_sl_corpus(Path(settings.sl_mix_dir), max_rows=settings.sl_mix_max_rows,
-                                 seed=seed_for(settings.seed, "sl", generation),
+                                 seed=seed_for(settings.seed, "sl"),
                                  need_search=settings.w_wdl > 0 and settings.search_wdl_frac() > 0)
-    sampler = WindowSampler(train_rows, rng=np.random.default_rng(seed), sl_rows=sl_rows, sl_frac=settings.sl_mix_frac)
-    updates = int(settings.updates) if settings.updates > 0 else max(
-        1, math.ceil(float(settings.passes) * sampler.n / int(settings.batch_size)))
+        perm = np.random.default_rng(seed_for(settings.seed, "sl-order")).permutation(int(sl_rows["x"].shape[0]))
+        sl_rows = {k: (v if str(k).startswith("_") else np.asarray(v)[perm]) for k, v in sl_rows.items()}
+    sampler: ScheduledSampler | WindowSampler
+    if settings.sample_with_replacement:
+        sampler = WindowSampler(train_rows, rng=np.random.default_rng(seed), sl_rows=sl_rows,
+                                sl_frac=settings.sl_mix_frac)
+        passes = 1.0 if settings.passes is None else float(settings.passes)
+        updates = int(settings.updates) if settings.updates > 0 else max(
+            1, math.ceil(passes * sampler.n / int(settings.batch_size)))
+        sl_end = sl_cursor
+    else:
+        # The double-presentation guard: every row this phase presents must
+        # have been presented exactly as often as the schedule says so far.
+        for g in gens:
+            expected = generation - g  # 0 for the new generation, 1 for the previous (P=2)
+            sel = row_ids[:, 0] == g
+            seen = counts_before.get(g, np.zeros(int(row_ids[sel, 1].max(initial=-1)) + 1, np.int64))
+            got = seen[row_ids[sel, 1]] if seen.size else np.zeros(int(sel.sum()), np.int64)
+            if not np.all(got == expected):
+                raise RuntimeError(f"presentation ledger: generation {g} rows have counts "
+                                   f"{sorted(set(got.tolist()))} before phase {generation}, expected {expected}")
+        batches, sl_end = plan_batches(
+            int(row_ids.shape[0]), batch_size=int(settings.batch_size), sl_frac=settings.sl_mix_frac,
+            sl_available=0 if sl_rows is None else int(sl_rows["x"].shape[0]),
+            rng=np.random.default_rng(seed), sl_start=sl_cursor)
+        sampler = ScheduledSampler(train_rows, batches, rng=np.random.default_rng(seed ^ 0x5A5A), sl_rows=sl_rows)
+        updates = len(batches)
 
     anchor = None
     if settings.kl_policy > 0 or settings.kl_wdl > 0:
@@ -545,15 +732,44 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
     wall = time.perf_counter() - t0
     if int(trainer.step) != start_step + updates:
         raise RuntimeError(f"Trainer applied {int(trainer.step) - start_step} of {updates} updates")
+    if isinstance(sampler, ScheduledSampler):
+        if sampler.cursor != len(sampler.batches):
+            raise RuntimeError(f"Trainer consumed {sampler.cursor} of {len(sampler.batches)} planned batches")
+        served = np.concatenate(sampler.served) if sampler.served else np.zeros(0, np.int64)
+        sl_served = np.concatenate(sampler.served_sl) if sampler.served_sl else np.zeros(0, np.int64)
+    else:
+        served = np.zeros(0, np.int64)  # with replacement: rows are not tracked per presentation
+        sl_served = np.zeros(0, np.int64)
+    presented_ids = row_ids[served] if served.size else np.zeros((0, 2), np.int64)
     model_path = out_dir / MODEL_FILE
     trainer.save(model_path)
+    np.savez(out_dir / PRESENTED, gen=presented_ids[:, 0].astype(np.int32), row=presented_ids[:, 1].astype(np.int32),
+             sl_start=np.asarray(sl_cursor), sl_end=np.asarray(sl_end), sl_rows=sl_served.astype(np.int64))
     after = heldout_metrics(trainer.model, holdout, settings.device)
     prev_model = load_model_from_checkpoint(init_checkpoint, device=settings.device)
     drift = probe_drift(trainer.model, prev_model, probe, settings.device)
     realised_lr = [float(g["lr"]) for g in trainer.opt.param_groups]
     m = asdict(metrics)
+    counts_after = {g: c.copy() for g, c in counts_before.items()}
+    for g in np.unique(presented_ids[:, 0]) if presented_ids.size else []:
+        g = int(g)
+        if g not in counts_after:
+            counts_after[g] = np.zeros(len(_generation_meta(run_dir, g)["game_id"]), dtype=np.int64)
+        np.add.at(counts_after[g], presented_ids[presented_ids[:, 0] == g, 1], 1)
+    histograms = presentation_histograms(run_dir, counts_after, holdout_frac=settings.holdout_frac,
+                                         through_generation=generation, presentations=int(settings.presentations))
+    if not settings.sample_with_replacement:
+        for g, h in histograms.items():
+            want = {str(int(settings.presentations)): h["trainable_rows"]} if h["trainable_rows"] else {}
+            if h["lifetime_complete"] and h["histogram"] != want:
+                raise RuntimeError(f"presentation ledger: generation {g} ended its lifetime with {h['histogram']}, "
+                                   f"expected {want}")
     summary = {
         "updates": updates, "start_step": start_step, "end_step": int(trainer.step),
+        "sampling": "with_replacement" if settings.sample_with_replacement else "scheduled_exact_once",
+        "presentations": int(settings.presentations),
+        "presentation_histograms": histograms,
+        "sl_cursor": [sl_cursor, sl_end],
         "window_generations": gens, "window_rows": sampler.n, "holdout_rows": int(holdout["x"].shape[0]),
         "drawn_rows": sampler.drawn_rows, "sl_rows_drawn": sampler.realised_sl_rows,
         "sl_frac_realised": sampler.realised_sl_rows / max(1, sampler.drawn_rows),
@@ -577,7 +793,11 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
     if reference_prior is not None and settings.prior_mix_reference:
         inputs["prior_mix_reference"] = input_ref(Path(settings.prior_mix_reference))
     write_manifest(out_dir, stage="train", config={"settings": asdict(settings), "arch": arch},
-                   inputs=inputs, outputs={"model": input_ref(model_path)},
+                   inputs=inputs, outputs={"model": input_ref(model_path), "presented": input_ref(out_dir / PRESENTED)},
                    counts={"updates": updates, "window_rows": sampler.n},
                    seeds={"train": seed, "base": settings.seed}, extra={"generation": generation, "summary": summary})
+    # Run-level view of the ledger (derived; the phases' presented.npz are the record).
+    write_json_atomic(run_dir / LEDGER, {"through_generation": generation, "sampling": summary["sampling"],
+                                         "presentations": int(settings.presentations),
+                                         "generations": histograms, "sl_rows_used": sl_end})
     return summary

@@ -136,7 +136,8 @@ def train_settings(a: argparse.Namespace, run_dir: Path) -> TrainSettings:
     ref = a.kl_reference or (str(model_path(run_dir, 0)) if (a.kl_policy > 0 or a.kl_wdl > 0) else None)
     mix_ref = a.prior_mix_reference or (
         str(model_path(run_dir, 0)) if a.policy_prior_mix < 1.0 and a.prior_mix_source == "reference" else None)
-    return TrainSettings(
+    settings = TrainSettings(
+        presentations=a.presentations, sample_with_replacement=a.sample_with_replacement,
         window=a.window, batch_size=a.batch_size, updates=a.updates, passes=a.passes, lr=a.lr,
         lr_floor=a.lr_floor, warmup_steps=a.warmup_steps, warmup_start=a.warmup_start,
         optimizer=a.optimizer, optimizer_state=a.optimizer_state, mirror_prob=a.mirror_prob,
@@ -149,6 +150,8 @@ def train_settings(a: argparse.Namespace, run_dir: Path) -> TrainSettings:
         sl_mix_frac=a.sl_mix_frac, sl_mix_max_rows=a.sl_mix_max_rows, holdout_frac=a.holdout_frac,
         probe_rows=a.probe_rows, device=a.device, use_amp=str(a.device).startswith("cuda"), seed=a.seed,
     )
+    settings.validate()
+    return settings
 
 
 def eval_settings(a: argparse.Namespace) -> EvalSettings:
@@ -248,6 +251,7 @@ def cmd_run(a: argparse.Namespace) -> int:
     if blocked:
         print("not starting: " + "; ".join(blocked), file=sys.stderr)
         return EXIT_BLOCKED
+    train_settings(a, run_dir)  # refuse invalid training settings before any stage runs
     check_run_config(a, run_dir)
     init_run(run_dir, init_checkpoint=a.init_checkpoint, random_init=a.random_init,
              model_config=a.model_config, arch_from=a.arch_from, seed=a.seed)
@@ -352,10 +356,17 @@ def _common(p: argparse.ArgumentParser) -> None:
     c.add_argument("--eval-max-batch", type=int, default=512)
 
     t = p.add_argument_group("train")
-    t.add_argument("--window", type=int, default=4, help="train on the last K generations")
+    t.add_argument("--presentations", type=int, default=1,
+                   help="times each trainable row is presented in its lifetime, shuffled, without replacement: "
+                        "1 = in its own generation's phase; 2 (the cap) = that phase and the next")
+    t.add_argument("--sample-with-replacement", action="store_true",
+                   help="NON-DEFAULT: uniform sampling with replacement over --window generations "
+                        "for --updates / --passes (no per-row presentation guarantee)")
+    t.add_argument("--window", type=int, default=None, help="with --sample-with-replacement: last K generations (4)")
     t.add_argument("--batch-size", type=int, default=256)
-    t.add_argument("--updates", type=int, default=0, help="optimizer updates (0 = use --passes)")
-    t.add_argument("--passes", type=float, default=1.0, help="updates = passes * window rows / batch")
+    t.add_argument("--updates", type=int, default=0, help="with --sample-with-replacement: optimizer updates")
+    t.add_argument("--passes", type=float, default=None,
+                   help="with --sample-with-replacement: updates = passes * window rows / batch (1.0)")
     t.add_argument("--lr", type=float, default=3e-5)
     t.add_argument("--lr-floor", type=float, default=None, help="cosine floor (default = --lr, i.e. flat)")
     t.add_argument("--warmup-steps", type=int, default=0)

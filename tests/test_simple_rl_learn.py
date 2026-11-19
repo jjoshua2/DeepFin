@@ -58,8 +58,9 @@ def _write_generation(run_dir: Path, g: int, n: int) -> None:
 def test_window_holds_exactly_the_last_k_generations(tmp_path: Path) -> None:
     for g in range(1, 6):
         _write_generation(tmp_path, g, 40 + g)
-    settings = TrainSettings(window=3, holdout_frac=0.25)
-    train, holdout, gens = load_window(tmp_path, 5, settings)
+    settings = TrainSettings(window=3, holdout_frac=0.25, sample_with_replacement=True)
+    train, holdout, gens, ids = load_window(tmp_path, 5, settings)
+    assert sorted(set(ids[:, 0].tolist())) == [3, 4, 5]
     assert gens == [3, 4, 5]
     markers = train["x"][:, 0, 0, 0].astype(int)
     assert set(markers) == {3, 4, 5}
@@ -292,3 +293,44 @@ def test_prior_mix_from_the_actor_prior_and_from_a_reference_net() -> None:
         prepare_targets(rows, TrainSettings(policy_prior_mix=0.5))
     same, _ = prepare_targets(rows, TrainSettings())
     np.testing.assert_array_equal(same["policy_target"], rows["policy_target"])
+
+
+def test_default_schedule_window_follows_the_presentation_count(tmp_path: Path) -> None:
+    from chess_anti_engine.simple_rl.learn import phase_generations
+
+    assert phase_generations(5, TrainSettings()) == [5]
+    assert phase_generations(5, TrainSettings(presentations=2)) == [4, 5]
+    assert phase_generations(1, TrainSettings(presentations=2)) == [1]
+    for g in range(1, 4):
+        _write_generation(tmp_path, g, 30)
+    _, _, gens, ids = load_window(tmp_path, 3, TrainSettings(presentations=2, holdout_frac=0.0))
+    assert gens == [2, 3]
+    assert ids.shape[0] == 60
+    with pytest.raises(ValueError, match="cap is 2"):
+        TrainSettings(presentations=3).validate()
+    with pytest.raises(ValueError, match="sample_with_replacement"):
+        TrainSettings(window=4).validate()
+    with pytest.raises(ValueError, match="sample_with_replacement"):
+        TrainSettings(updates=10).validate()
+    TrainSettings(window=4, updates=10, sample_with_replacement=True).validate()
+
+
+def test_plan_batches_presents_every_row_exactly_once_with_a_short_last_batch() -> None:
+    from chess_anti_engine.simple_rl.learn import plan_batches
+
+    batches, sl_end = plan_batches(203, batch_size=64, sl_frac=0.0, sl_available=0, rng=np.random.default_rng(1))
+    sizes = [b[0].size for b in batches]
+    assert sizes == [64, 64, 64, 11]  # remainder served as a short final batch, not dropped
+    served = np.concatenate([b[0] for b in batches])
+    np.testing.assert_array_equal(np.sort(served), np.arange(203))
+    assert sl_end == 0
+    # SL share: 16 per full batch, proportional in the short one; consecutive, never reused.
+    batches, sl_end = plan_batches(100, batch_size=64, sl_frac=0.25, sl_available=1000,
+                                   rng=np.random.default_rng(2), sl_start=40)
+    assert [b[0].size for b in batches] == [48, 48, 4]
+    assert [b[1].size for b in batches] == [16, 16, 1]
+    sl = np.concatenate([b[1] for b in batches])
+    np.testing.assert_array_equal(sl, np.arange(40, 73))
+    assert sl_end == 73
+    with pytest.raises(ValueError, match="exhausted"):
+        plan_batches(100, batch_size=64, sl_frac=0.25, sl_available=50, rng=np.random.default_rng(2), sl_start=40)

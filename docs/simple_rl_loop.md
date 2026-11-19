@@ -1,8 +1,8 @@
 # Simple self-play RL loop
 
 `scripts/simple_rl_loop.py` (code in `chess_anti_engine/simple_rl/`) is a plain
-generation loop: **collect** self-play games with the current net, **train** on a
-sliding window of recent generations, **evaluate** with `scripts/arena_standard.py`
+generation loop: **collect** self-play games with the current net, **train** with
+every new row presented exactly once (or twice) in shuffled order, **evaluate** with `scripts/arena_standard.py`
 on held-out openings, repeat. It reuses the real finite `play_batch`, the
 `Trainer` and its `compute_loss`, the shard format and the arena; it adds no
 search or loss of its own.
@@ -61,11 +61,12 @@ apply from the next stage that starts.
   run_config.json            settings pinned at the first run (+ recorded changes)
   ledger.jsonl               final arena records, one line per match
   probe.npz                  fixed probe rows for drift metrics
+  presentation_ledger.json   per-generation histogram of presentations per row (derived)
   gen_0000/model.pt          generation-0 actor (copy of --init-checkpoint, or random init)
   gen_NNNN/collect/          shards/shard_*.zarr (+ .meta.npz row sidecar), games.jsonl,
                              starts.txt, stats.json, manifest.json
   gen_NNNN/train/            model.pt (Trainer checkpoint: weights, optimizer, arch),
-                             metrics.json, manifest.json
+                             presented.npz (rows this phase presented), metrics.json, manifest.json
   gen_NNNN/eval/             arena_vs_previous.{jsonl,pgn,log}, arena_vs_reference.*, manifest.json
 ```
 
@@ -87,9 +88,35 @@ input (position and history planes) within the generation and against all
 previous generations, and from the stored root statistics the target entropy,
 prior entropy, KL(target‖prior) and top-1 agreement of target and prior.
 
-**train.** Rows of the last `--window` generations, drawn uniformly with
-replacement on every update; `--updates`, or `--passes` (updates = passes × window
-rows / batch). A `--holdout-frac` share of games (by game id) is never trained on;
+**train.** The default is a uniform, shuffled, exact-once schedule. Each phase is
+one pass WITHOUT replacement over the rows scheduled for it, so every trainable
+row is presented exactly `--presentations` times in its lifetime:
+
+- `--presentations 1` (default): a generation's rows are presented once, in the
+  phase right after that generation is collected. The phase trains on the
+  current generation only.
+- `--presentations 2` (the cap; larger values are refused): once in that phase and
+  once in the next generation's phase. Each phase is the shuffled union of the new
+  generation's rows and the previous generation's rows.
+
+The mirror decision is drawn per presentation (per batch, by the Trainer) and is
+not an extra presentation. The final partial batch is served as a short batch, so
+no row is dropped or repeated; updates = ceil(rows / batch). Each phase writes the
+rows it actually served (`presented.npz`, recorded from the sampler the Trainer
+consumed). The run's per-row counts are derived from completed phases only (those
+with a manifest), so a phase killed before its manifest contributes nothing and
+its redo cannot double-present. Before training, a phase refuses rows whose count
+so far differs from the schedule. Afterwards, every generation whose lifetime has
+ended must show exactly `{P: trainable rows}`; the histograms are in
+`metrics.json` and `presentation_ledger.json`.
+
+`--sample-with-replacement` is the explicit non-default alternative: uniform
+sampling with replacement over the last `--window` generations (default 4) for
+`--updates`, or `--passes` × rows / batch. It gives no per-row guarantee and is
+recorded as `sampling: with_replacement`. `--window`, `--updates` and
+`--passes` are refused without it.
+
+A `--holdout-frac` share of games (by game id) is never trained on;
 the newest generation's held-out rows give policy CE to the stored target, policy
 entropy and value NLL before and after the phase. Mean |ΔQ| and policy KL against
 the previous generation's net are measured on a fixed probe set. `metrics.json`
@@ -123,7 +150,7 @@ refuses to run rather than pass.
 | Playout cap randomisation | off (`--full-prob 1.0`) | see below |
 | Arena sims | 64 (`--eval-sims`) | independent of `--sims`, so changing the target budget does not move the yardstick |
 | Tablebases | strict rule50 route when `--syzygy` is given | as the F12 collection: TB in search, TB adjudication, TB-correct policy rows; ply-cap games keep no rows |
-| Window | last 4 generations | value targets from more than one generation's outcomes |
+| Presentations | 1 per row (2 = cap) | the owner's standing default: shuffled exact-once, at most two deliberate presentations of any row |
 | Loss | policy on the stored target + WDL on the game outcome | `--w-wdl 0` for policy only, `--value-search-weight` to mix in the stored search value |
 | Auxiliary heads, SF targets | off | nothing trains on Stockfish |
 
@@ -216,5 +243,9 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
   `--train-target-temp` is applied after the mix, inside the loss
   (`policy_target_temp`).
 - `--sl-mix-dir` / `--sl-mix-frac` put exactly `round(frac × batch)` rows of an
-  external shard corpus in every batch, with their own labels; a corpus without a
+  external shard corpus in every full batch (the same proportion, rounded, in the
+  short final batch), with their own labels. Corpus rows come from one fixed
+  order for the whole run, consumed from a cursor kept in the presentation
+  records, so each is used at most once per run; an exhausted corpus is an
+  error; a corpus without a
   legal mask (or without `search_wdl` when the value target needs it) is refused.
