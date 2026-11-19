@@ -39,6 +39,7 @@ from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
 from chess_anti_engine.encoding.features import RELATION_COUNT
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
+from chess_anti_engine.mcts.headroom import reserve_concurrent_headroom
 from chess_anti_engine.mcts.puct_history import puct_history_args
 from chess_anti_engine.mcts.vloss import release_paths
 from chess_anti_engine.tablebase import SyzygyProbe
@@ -191,6 +192,9 @@ class WalkerPool:
             return 0
         if self._shutdown.is_set():
             raise RuntimeError("WalkerPool is closed")
+  # Walkers descend lock-free while others expand under tree_lock: an arena
+  # realloc mid-run is a use-after-free in the descending thread.
+        reserve_concurrent_headroom(tree, target_sims)
 
   # Publish the job and wake every walker. Walkers signal completion
   # via the barrier; we participate too, so the caller blocks here

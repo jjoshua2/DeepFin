@@ -18,6 +18,7 @@ import unittest
 from chess_anti_engine.uci import __main__ as uci_main
 from chess_anti_engine.uci import wedge as uci_wedge
 from chess_anti_engine.uci.engine import _decayed_max as _engine_decayed_max
+from chess_anti_engine.uci.engine import _on_short_lived_thread as _engine_on_short_lived_thread
 from chess_anti_engine.uci.tb_leaf import CLeafProbe
 from tests.uci_println_capture import capture_into
 
@@ -157,6 +158,7 @@ def engine_fixture(enabled=False, parallel='pucv', devices=2):
 
     ns: dict[str, Any] = {'_println': capture_into(messages), '_close_quietly': close_quietly, 'gc': SimpleNamespace(collect=lambda: 0),
           '_log': SimpleNamespace(error=lambda *_a, **_k: None),
+          '_on_short_lived_thread': _engine_on_short_lived_thread,
           '_one_line': lambda exc: f'{type(exc).__name__}: {exc}'}
     ns['OPTIONS_BY_NAME'] = {}
     methods = definitions('chess_anti_engine/uci/engine.py',
@@ -259,6 +261,10 @@ def search_fixture(rpg=True):
     worker._invalidate_root_caches = invalidate
     worker._reset_batch_timing = lambda: None
     worker._record_batch_ms = lambda *_args: None
+    worker._note_chunk_time = lambda *_args: None  # chunk-time model (not under test)
+    worker._snapshot_reply_book = lambda *_args, **_kwargs: None  # busy-worker fallback snapshot
+    worker._note_chunk_overrun = lambda *_args: None  # chunk-time overrun estimate (not under test)
+    worker._timed_stop_margin_ms = lambda *_args, **_kwargs: 0.0
     # The stub tree's `visits` counter stands in for the root's child visits,
     # which `_run_one_chunk` now reads as the chunk's real completed count.
     worker._emit_pv_info = lambda *_args, **_kwargs: None  # final-info hook (not under test)

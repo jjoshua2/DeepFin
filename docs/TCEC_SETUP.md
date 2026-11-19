@@ -216,7 +216,7 @@ between moves, and on failure the previous settings and evaluator stay).
 | `EvalCacheEntries` | spin 0..1048576 | 0 | Eval cache entries; 0 = off. Keep 0 on a GPU (section 9). | evaluator |
 | `MultiPV` | spin 1..256 | 1 | Number of `info` lines (PVs) reported. | no |
 | `UCI_ShowWDL` | check | false | Add `wdl` to `info` lines. | no |
-| `MoveOverheadMs` | spin 0..5000 | 30 | Subtracted from every clock-derived deadline; also moves the watchdog (section 8). | no |
+| `MoveOverheadMs` | spin 0..5000 | 30 | Subtracted from every deadline; in clock games the answer, including the watchdog's last-moment answer, is out this long before the clock runs out (sections 5 and 8). | no |
 | `ClockBatchMarginSigmas` | string >= 0 | 2.0 | Clock safety margin in units of measured chunk-time spread. | no |
 | `SyzygyPath` | string | `<empty>` | Tablebase directories (section 7). | opens the tables |
 | `Syzygy50MoveRule` | check | true | Tablebase results respect the 50-move rule (section 7). | no |
@@ -275,8 +275,9 @@ nothing.
 
 ## 5. Time management in plain terms
 
-- `movetime N`: search about `N` ms, stopping one measured chunk early so the
-  answer is not late.
+- `movetime N`: search about `N` ms less `MoveOverheadMs`, stopping one measured
+  chunk early so the answer is not late. `movetime` is not a clock: the search
+  is never shorter than 20 ms, and the watchdog's last moment is 8 ms before `N`.
 - Clock games (`wtime` / `btime`, with `winc` / `binc` and `movestogo` if sent):
   a reserve is set aside, half of the increment is spent per move, and the rest of
   the clock is divided over an estimate of the moves left that comes from the
@@ -284,8 +285,47 @@ nothing.
   more than half the remaining clock (95% on the last move before a `movestogo`
   refill). The search aims at 70% of that budget (`--optimum-fraction`) and stops
   there if the best move is settled, otherwise it continues to the hard budget.
+  The moves-left estimate never goes below 8 with an increment and 20 without
+  one: in sudden death nothing refills the clock, and a long endgame must not
+  spend it down geometrically.
 - `MoveOverheadMs` is subtracted from every deadline; `ClockBatchMarginSigmas`
   adds a margin learned from how long this machine's search chunks take.
+- In a clock game the hard deadline is never later than the remaining clock
+  less `MoveOverheadMs` less 25 ms (room for the search to finish its last chunk
+  before the watchdog's last moment). When that leaves less than 20 ms there is
+  no time to search: the move is answered at once
+  (`info string clock too short to search: ... source=... move=...`) from the
+  reused tree, the previous search's choice for this position, the cached root
+  policy, one fresh root evaluation if the clock allows it, or the first legal
+  move, in that order. That is not a fault: it is not counted in
+  `bestmove_fallback_used`. In sudden death (no increment, no `movestogo`, and
+  no explicit `nodes`, `depth` or `mate` bound) the same at-once answer starts
+  earlier: once the clock less `MoveOverheadMs` cannot pay for 20 more minimal
+  searches, every move is answered at once, so a long endgame does not flag. A
+  minimal search costs the 20 ms deadline plus the predicted time of one
+  16-simulation chunk (the chunk-time model below) plus ~8 ms of fixed cost;
+  before any chunk is timed it is priced at 45 ms (a 900 ms threshold). An explicit work bound is still
+  searched unless the clock is truly exhausted (under 20 ms after the cap).
+- The search runs in chunks that cannot be interrupted, so a timed search sizes
+  each chunk to fit. Chunk wall time is modelled as a fixed cost plus a cost per
+  simulation, both fitted (least squares, recent chunks weighted most) from
+  every chunk this engine has timed on the current evaluator and device set; a
+  rebuild, a pool install or a failed device starts the model over. Small chunks
+  therefore teach the fixed cost instead of dragging the speed down, and a slow
+  spell fades out as faster chunks arrive. Until chunk sizes vary enough to
+  separate the two terms, the model predicts conservatively from the average
+  chunk; the startup warmup therefore also times three small chunks (128, 32
+  and 64 simulations, capped at `ChunkSims`), so the model and the overrun
+  bound are calibrated before the first `go`. Each chunk is sized so that its predicted time, times a measured bound
+  on how much longer chunks run than predicted (mean + `ClockBatchMarginSigmas`
+  standard deviations, between 1 and 2; 2 until three chunks are judged), fits
+  the time left less a finishing reserve of min(25 ms, 2% of the move's budget);
+  the first chunk of a move takes at most half of that. Chunks go down to 16
+  simulations near the deadline, and once calibrated the search stops when not
+  even a 16-simulation chunk plus the reserve fits (before that, the older
+  whole-chunk margin also applies). Untimed
+  `go nodes` and `go depth` (no clock, no `movetime`) are never resized; with a
+  clock given, the clock caps them too.
 - `go nodes N` / `go depth N`: work bounds, no clock.
 - A position with one legal move is answered without spending the clock. The
   single-walker Gumbel search returns that move without simulating it; its `info`
@@ -504,10 +544,12 @@ with a `pv`, the last such line before `bestmove X` (with `MultiPV` above 1, the
 last `multipv 1` line) starts with X; for a searched move it carries X's own
 score, since in-search lines rank moves by visits and the played move need not
 lead them. A move the search did not produce (a fallback, the deadline watchdog,
-a parked search, a `stop` during ponder) gets a line with only `depth`, `multipv 1`
-under `MultiPV`, and `pv` -- no score, no `nodes`. A `go` that printed no `pv`
-line at all (the watchdog answering before the first line, the reply when a
-search could not start, a refused `go`) is outside this guarantee.
+a parked search, a `stop` during ponder, the previous search's choice, a
+`ponderhit` answered from the ponder tree with no time left) gets a line with only
+`depth`, `multipv 1` under `MultiPV`, and `pv` -- no score, no `nodes`. A `go`
+that printed no `pv` line at all (the watchdog answering before the first line,
+the reply when a search could not start, a clock too short to search, a refused
+`go`) is outside this guarantee.
 
 **Strict startup and exit codes.**
 
@@ -526,7 +568,11 @@ These lines mean something went wrong and are worth a report:
   `info string WARNING search failed on ... consecutive move(s); this move is UNSEARCHED (fallback)`;
 - `info string search not started; bestmove_fallback_used=...`;
 - `info string search did not stop in time; answering unsearched ...` (a search
-  that ignored `stop` for 1 s; it is parked and later moves are answered at once);
+  that ignored `stop` for 1 s; it is parked and later moves are answered at once
+  while it still owns the engine: from the cached root policy when it is for
+  that position, else the previous search's choice for it (`source=prev_tree`,
+  recorded between chunks for the positions two plies on), else the first legal
+  move -- no fresh evaluation runs while the parked search holds the evaluator);
 - `info string search incomplete reason=...` (a ponder transition past its
   deadline, or a solved root whose proof names no move; the latter is a property
   of the position, not a fault).
@@ -536,12 +582,17 @@ answered by the engine itself:
 `info string WARNING search stalled: ...` then
 `... deadline watchdog answers unsearched source=... move=...`. It fires when the
 search is past its deadline and has completed no chunk for 4 chunk times (at least
-300 ms, at most 2 s), or unconditionally 3 ms before the real budget. The move is a
-fallback (the last PV's first move, the root policy, or the first legal move).
+300 ms, at most 2 s), or unconditionally 8 ms before the real budget: the `movetime`,
+or in a clock game the remaining clock less `MoveOverheadMs` (the GUI charges its
+own pipe latency to the engine's clock). The move is a fallback (the last PV's
+first move, the root policy, the previous search's choice for this position, or
+the first legal move).
 `go infinite`, `go ponder` before `ponderhit`, and pure `go nodes` / `go depth` have
 no watchdog. On a heavily loaded CPU a very short `movetime` can trip it on a
-healthy search (section 9). The 3 ms is the watchdog's wake-up latency (measured
-p99 0.37 ms during real searches) plus its answer (under 0.5 ms).
+healthy search (section 9). The 8 ms is the watchdog's wake-up latency (measured
+p99 0.37 ms during real searches, 2.2 ms beside a thread holding the GIL half
+the time, up to one 5 ms GIL switch interval, and 4.4 ms late once on a loaded
+host under injected search stalls) plus its answer (under 0.5 ms).
 
 Caveat: the watchdog is a Python thread. A hang inside a C call that holds the GIL
 stalls the watchdog too, and its wake-up waits for whichever thread holds the GIL:
