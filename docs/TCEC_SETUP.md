@@ -294,7 +294,11 @@ nothing.
   `info string move unsearched (0 visits): score is the network's evaluation of this position, not a search result`.
   `go mate N` there answers at once too, so on this path it cannot report a mate
   longer than one move behind a forced first move: the forced root is not
-  searched. `go mate N` also stops at once when the side to move is proven lost,
+  searched. The multi-GPU PUCV pool and the walker pool do search a forced root
+  under `go mate N`: they stop at a proven mate in N or fewer, when the forced
+  move's position is proven, or after 4,096 simulations per mate move asked
+  (`go mate 2`: 8,192), whichever comes first, instead of running to the 60 s
+  cap. `go mate N` also stops at once when the side to move is proven lost,
   in every search mode (root-parallel Gumbel included: there the root is proven
   from its candidates' proofs after each halving phase).
 - `go depth N` on a proven root (a forced mate either way, or a tablebase-solved

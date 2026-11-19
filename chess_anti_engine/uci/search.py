@@ -114,6 +114,12 @@ _INFO_EMIT_INTERVAL_MS = 1000
 # spending a full `chunk_sims` chunk on a decided move. `run` emits the info
 # line (score from the root evaluation / the visited child, pv = the move).
 _FORCED_ROOT_CHUNK_SIMS = 64
+# `go mate N` on a forced root (one legal / `searchmoves` move): simulations
+# spent looking for a mate for the mover behind the forced move, per mate move
+# asked, before answering (`run`'s "mate_forced_root" stop). The move itself is
+# decided; this only bounds the mate search behind it. A proven child ends the
+# search sooner.
+_FORCED_ROOT_MATE_SIMS_PER_MOVE = 4096
 # Back-off after a chunk that completed no simulation (see `run`).
 _IDLE_CHUNK_WAIT_S = 0.01
 
@@ -3701,6 +3707,9 @@ class SearchWorker:
         forced_root = optimum_ms is not None and _root_move_count(
             board, allowed_root_indices,
         ) == 1
+        mate_forced_root = mate_moves is not None and _root_move_count(
+            board, allowed_root_indices,
+        ) == 1
 
         def witness_stop() -> bool:
             nonlocal witness_checks_remaining
@@ -3882,11 +3891,19 @@ class SearchWorker:
                     # no later chunk can prove anything new, so idling to the
                     # implicit cap would only burn the clock.
                     stop_reason = "mate_solved_root"
-                elif int(completed) == 0 and _root_move_count(board, allowed_root_indices) == 1:
-                    # A forced root the search cannot grow (the classic path
-                    # returns the sole move without simulating): no chunk will
-                    # ever prove a mate, and the move is decided, so answer now
-                    # instead of idling to the implicit cap.
+                elif mate_forced_root and (
+                    int(completed) == 0
+                    or self._root_solved_status() != 0
+                    or total_nodes >= _FORCED_ROOT_MATE_SIMS_PER_MOVE * int(mate_moves)
+                ):
+                    # A forced root: the move is decided, so the only open
+                    # question is a mate for the mover behind it. Answer when
+                    # the search cannot grow (the classic path returns the sole
+                    # move without simulating), when the root is proven (its
+                    # one child is: won with no mate <= N found, drawn, lost),
+                    # or once the forced-root mate budget is spent. The pool /
+                    # walker paths simulate a forced root (completed > 0) and
+                    # would otherwise run to the implicit 60 s cap.
                     stop_reason = "mate_forced_root"
                 elif self._root_solved_status() == -1:
                     # The side to move is proven lost: no mate for it can be

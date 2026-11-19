@@ -29,7 +29,7 @@ from chess_anti_engine.uci.root_parallel_gumbel import (
     RootParallelGumbelPool,
     _SearchState,
 )
-from chess_anti_engine.uci.search import SearchWorker
+from chess_anti_engine.uci.search import _FORCED_ROOT_MATE_SIMS_PER_MOVE, SearchWorker
 from chess_anti_engine.uci.time_manager import Deadline
 
 # Black to move, mated in one whatever it plays (a6/a5, then Qg7# / Qf8#).
@@ -58,8 +58,10 @@ def _make_worker(path: str) -> SearchWorker:
         gumbel_cfg=GumbelConfig(
             input_extra_features="v1", simulations=64, add_noise=False, temperature=0.0,
         ),
-        chunk_sims=64, n_walkers=1,
+        chunk_sims=64, n_walkers=2 if path == "walkers" else 1, walker_gather=8,
     )
+    if path == "walkers":
+        return worker
     pair = [_make_evaluator(), _make_evaluator()]
     if path == "rpg":
         worker.install_root_parallel_gumbel(pair, gather=8, as_factories=False)
@@ -218,4 +220,45 @@ def test_go_infinite_on_proven_root_still_waits_for_stop(path: str) -> None:
         assert took >= 0.9, f"infinite search ended before stop ({took:.2f}s)"
     finally:
         timer.cancel()
+        worker.close()
+
+
+# --- `go mate N` on a forced root ---------------------------------------------
+
+# White is in check with one legal move (Kg2) and no mate behind it.
+FORCED_NO_MATE = "7k/8/8/8/8/8/5P1P/r5K1 w - - 0 1"
+
+
+@pytest.mark.parametrize("path", ["pool", "walkers", "rpg"])
+def test_go_mate_on_forced_root_answers_within_its_budget(path: str) -> None:
+    """The pool / walker paths simulate a forced root (completed > 0), so the
+    old completed == 0 forced-root stop never fired and `go mate N` ran to its
+    60 s cap. The move is decided; the mate search behind it is bounded."""
+    worker = _make_worker(path)
+    try:
+        result, took = _timed_run(worker, FORCED_NO_MATE, mate_moves=2)
+        assert result.bestmove_uci == "g1g2"
+        # Root-parallel Gumbel finishes a single-legal root without a phase
+        # (`root_finished`), before any stop reason is consulted.
+        expected = None if path == "rpg" else "mate_forced_root"
+        assert worker.last_stop_reason == expected, worker.last_stop_reason
+        assert took < FAST_S, f"{path} go mate 2 on a forced root took {took:.1f}s"
+        assert result.nodes <= 2 * _FORCED_ROOT_MATE_SIMS_PER_MOVE + 4096, result.nodes
+    finally:
+        worker.close()
+
+
+@pytest.mark.parametrize("path", ["pool", "walkers"])
+def test_go_mate_on_forced_root_still_finds_the_mate_behind_it(path: str) -> None:
+    """The budget bounds the mate search behind the forced move; it must not
+    pre-empt a mate the search can prove (Kxf1, then mate next move)."""
+    worker = _make_worker(path)
+    try:
+        result, _took = _timed_run(
+            worker, "3k4/1pR5/p7/2p1Q3/8/8/6PP/5rK1 w - - 2 13", mate_moves=2,
+        )
+        assert worker.last_stop_reason == "mate", worker.last_stop_reason
+        assert result.bestmove_uci == "g1f1"
+        assert result.score_mate == 2
+    finally:
         worker.close()
