@@ -16,19 +16,19 @@ the week-one records). F12 and Q50 are the two twelve-cycle loops of
 **D1. Search gain, SL base on both sides.** `scripts/arena_standard.py`,
 `matched_sims`, `--search-shape training --no-gumbel-noise`, tablebases on,
 `--compile off`, seed 20261119, default 147k-line opening book. Results in
-`/home/josh/chess-artifacts/operations/rl-claude-20261119/search-gain/results.jsonl`.
+`~/chess-artifacts/operations/rl-claude-20261119/search-gain/results.jsonl`.
 
 | Candidate sims vs reference sims | Games | Score | Elo (95% CI) |
 |---|---:|---:|---|
 | 64 vs 1 | 200 | 0.9925 | +849 (lower bound +691) |
 | 256 vs 64 | 400 | 0.8275 | +272 (+243 to +305) |
-| 800 vs 64 | 200 | 0.93 | about +450 (lower bound about +380) |
+| 800 vs 64 | 200 | 0.94 | +478 (+410 to +582) |
 
 Search is far stronger than the raw net, so there is a large gain for a loop to
 distil. These are same-weights search-budget contrasts, not external ratings.
 
 **D2. Read-only pipeline audit of F12 cycle 1** (17,628 rows, 192 games; scripts
-and logs in the session scratch directory `rl-audit/`). No data, storage or
+and logs copied to `~/chess-artifacts/operations/rl-claude-20261119/rl-audit/`). No data, storage or
 training defect was found: stored inputs equal the play-path encoding in every
 plane group (2,847 rows, max abs difference 0.0); policy targets are aligned and
 legal; outcome labels have the right point of view; mirroring is consistent; only
@@ -36,22 +36,22 @@ the policy and WDL losses are non-zero; the harness reproduces the production
 cycle-1 learner bit-exactly. Measured on 4,735 held-out cycle-2 rows, one cycle
 (69 updates at 3e-6):
 
-| Arm (same rows, same order) | Policy KL from SL base | mean abs value change |
+| Arm (same rows, same order) | Policy KL from SL base | mean abs value change (Q = W−L, in [−1, 1]) |
 |---|---:|---:|
 | Real F12 update | 0.039 | 0.075 |
-| Policy only (`w_wdl` = 0) | same policy fit (CE 0.9368 vs 0.9374) | 0.020 |
+| Policy only (`w_wdl` = 0) | not separately reported | 0.020 |
 | Value labels shuffled | 0.043 | 0.34 |
 | Zero loss | 0 | 0 |
 
-A second order/mirror seed lands at KL 0.0008 from the first, so the update is a
+The policy-only arm fits the stored targets as well as the real update (held-out
+CE 0.9368 vs 0.9374). A second order/mirror seed lands at KL 0.0008 from the first, so the update is a
 consistent push from the data, not optimizer noise. Stored policy targets average
 0.66 nats of entropy against 1.0–1.1 for the SL base; held-out policy entropy fell
 1.117 → 1.015 in one cycle; fit to the targets did not improve after cycle 1
 (held-out CE 0.985 base, 0.937 c1, 0.920 c6, 0.936 c12). The SL base's own value
 target was 100% teacher-search value; the loops replaced it with 90% (F12) or 50%
-(Q50) game outcome, about 192 outcomes per cycle. The stored "search value" takes
-its draw channel from the net's raw root draw, so it cannot be more decisive than
-the net already was.
+(Q50) game outcome, about 192 outcomes per cycle. In the stored "search value" the draw probability is the net's raw root draw; only
+win and loss mass move within what is left.
 
 **D3 (running). Target-sharpness calibration.** On about 3,000 cycle-1 positions,
 candidate 64-simulation targets (stored form, temperature, `target_q_rescale` off,
@@ -89,28 +89,38 @@ off-policy ablation of the loss, not a new loop.
 (`3d3ca6b8ad1bb220ee197b060273bf0fadca8f49663c96e6e7ddd7ea69a19def`), trained on
 the same rows in the same order with the value loss on.
 
-**Deciding yardstick (one).** Paired match of the P1 student against the SL base:
+**Gate before any arena.** P1's cycle 1 must reproduce the D2 policy-only arm
+(held-out CE 0.9368 and mean abs value change 0.020, or bit-exact weights);
+otherwise stop. Row order uses F12's compiled per-cycle orders and its original
+mirror draws. This proves `w_wdl` = 0 reached the learner and nothing else moved.
+
+**Deciding yardstick (one).** Paired match of the P1 student directly against
+the F12 cycle-12 checkpoint, 1,600 games (800 opening pairs), fixed N, final read
+only:
 
 ```bash
 PYTHONPATH=. python -u scripts/arena_standard.py \
-  --candidate <P1 student> --reference <SL base> --sims 64 --games 800 \
+  --candidate <P1 student> --reference <F12 cycle 12> --sims 64 --games 1600 \
   --mode matched_sims --search-shape training --no-gumbel-noise \
-  --syzygy /home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6 \
-  --compile off --seed 2026111950 --label p1_policy_only_vs_base \
-  --pgn-out <out>/p1.pgn --out <out>/results.jsonl
+  --syzygy "$HOME/projects/chess/data/syzygy_3-4-5:$HOME/projects/chess/data/syzygy_6" \
+  --compile off --seed 2026111950 --label p1_vs_f12c12 \
+  --pgn-out <out>/p1_vs_f12c12.pgn --out <out>/results.jsonl
 ```
 
-The control is measured with the identical command (same seed, hence the same
-opening pairs) with the F12 cycle-12 checkpoint as candidate. Fixed 800 games,
-final read only.
+Recorded but not deciding, with the same seed and 800 games each: P1 against the
+SL base, and F12 cycle 12 against the SL base.
 
-**Pre-committed reading.**
+**Pre-committed reading** (Elo from the arena's paired interval):
 
-- *Value loss implicated:* P1's Elo 95% interval lies above the control's point
-  estimate **and** P1's point estimate is at least −5 Elo.
-- *Policy targets implicated:* P1's point estimate is within 10 Elo of the
-  control's and below −10 Elo.
+- *Value loss implicated:* the head-to-head 95% lower bound is above 0 Elo.
+- *Value loss not implicated (look at the policy targets):* the head-to-head 95%
+  upper bound is below +20 Elo, which rules out recovering the full F12 deficit.
 - Anything else: unresolved at this sample size; say so.
+
+The two readings cannot both hold. At 1,600 games the standard error is about 6.7
+Elo, giving about 84% power to detect a 20 Elo difference. The head-to-head score
+is not the difference of the two scores against the base; transitivity is not
+assumed.
 
 A pass does not show a gain over the SL base and promotes nothing. Its use is to
 decide whether the next real loop trains the value head at all, and on what.
@@ -119,13 +129,22 @@ decide whether the next real loop trains the value head at all, and on what.
 to the stored targets, mean abs value change from the SL base, and after D3
 lands, agreement with the 800-simulation reference.
 
-**Cost and recovery.** About 15 GPU minutes of training and two 800-game arenas
-(about 40 minutes each). Outputs under
-`/home/josh/chess-artifacts/operations/rl-claude-20261119/p1-policy-only/`.
+**Cost and recovery.** About 15 GPU minutes of training, one 1,600-game arena and
+two 800-game arenas (roughly two hours of GPU in all). Outputs under
+`~/chess-artifacts/operations/rl-claude-20261119/p1-policy-only/`.
 Nothing live is touched; the week-one banks are read-only inputs. Recovery is
 deleting the output directory.
 
-**Confounds.** Off-policy data (generated by value-trained actors); the same 192
+**Confounds.** The yardstick is not the instrument that measured F12's −20 Elo
+(root noise off here against 0.75 there, the default 147k-line book against the
+consumed DEV panel, a 300-ply cap against 450 additional plies), so that deficit is
+not assumed to reproduce; the head-to-head design does not depend on it. All three
+arenas run from one tree, and the config sha printed in each log (`8275f2b84d0e`
+at registration) must match or the read is void. Before the read, count the
+sampled arena openings that match any of the 192 F12 training starts or their
+mirrors and record the count. With `w_wdl` = 0 the decoupled weight decay still
+acts on the value head; at this learning rate its multiplier rounds to 1.0 in
+float32 (measured in D2). Off-policy data (generated by value-trained actors); the same 192
 openings recur across cycles; a reused control checkpoint from a different
 runtime build (cp313, torch 2.14, source `e633212da`) loaded into the current
 interpreter. D2 verified that checkpoint loads and that the harness reproduces

@@ -16,7 +16,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
-- [2026-11-19: RL takeover — diagnostics and a same-data policy-only ablation](2026-11-19-rl-takeover-diagnostics-and-policy-only-ablation.md) — search gain measured (+849 Elo 64 vs 1 sim, +272 for 256 vs 64), no pipeline defect found in F12 cycle 1, policy-only ablation registered before any update
+- [2026-11-19: RL takeover — diagnostics and a same-data policy-only ablation](2026-11-19-rl-takeover-diagnostics-and-policy-only-ablation.md) — search gain measured (+849 Elo 64 vs 1 sim, +272 for 256 vs 64, +478 for 800 vs 64), no pipeline defect found in F12 cycle 1, policy-only ablation registered before any update
 
 - [2026-11-16: Existing RL failure evidence audit](2026-11-16-existing-rl-failure-evidence-audit.md) — completed existing-evidence synthesis: update-regime sensitivity and qualified conditional regressions; retained-search target negative in its tested use, causal head/mechanism unresolved; no new measurements or experiments selected.
 
