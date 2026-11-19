@@ -380,7 +380,11 @@ class DegradingMultiGPUDispatcher(MultiGPUDispatcher):
             ties = [k for k in live if self._inflight[k] == best_load]
             best = ties[self._rr % len(ties)] if len(ties) > 1 else ties[0]
             if len(ties) > 1:
-                self._rr = (self._rr + 1) % len(self._evals)
+                # Wrap over the devices in service: with all of them live this is
+                # len(self._evals), the healthy chain's routing unchanged; after a
+                # drop, wrapping over all devices made consecutive idle calls skip
+                # a live device (3 devices, #1 dropped: 0, 2, 2, 0, ...).
+                self._rr = (self._rr + 1) % max(1, sum(self._live))
             self._inflight[best] += 1
             return best
 

@@ -566,16 +566,38 @@ def reverify_compiled_evaluator(
     for ev in directs:
         ev.shape_ledger.start_counting()
     counts: dict[int, dict[tuple[str, int], int]] = {}
+    def run(rows: int, calls: int) -> None:
+        try:
+            _run_bucket_shape(
+                target, rows, cb=cb, encoded=encoded, rel_row=rel_row,
+                use_async=use_async, warm_legal=warm_legal, n_devices=calls,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"evaluator re-check failed at batch={rows}") from exc
+
+    def short(rows: int) -> bool:
+        """A live device that has not yet run ``rows`` ``want`` times."""
+        for ev in direct_evaluators(target):
+            if rows not in ev.reachable_forward_rows():
+                continue
+            graphs = ["dense"] + (["legal"] if warm_legal and ev.supports_legal_bf16 else [])
+            if any(ev.shape_ledger.counted(rows, g) < want for g in graphs):
+                return True
+        return False
+
     try:
         for _ in range(want):
             for rows in shapes:
-                try:
-                    _run_bucket_shape(
-                        target, rows, cb=cb, encoded=encoded, rel_row=rel_row,
-                        use_async=use_async, warm_legal=warm_legal, n_devices=n_devices,
-                    )
-                except Exception as exc:
-                    raise RuntimeError(f"evaluator re-check failed at batch={rows}") from exc
+                run(rows, n_devices)
+        # The router decides which device takes a call; on a degraded chain (or
+        # under any routing) n calls need not reach each live device once. Keep
+        # submitting a short shape, one call at a time, up to a bound; a live
+        # device still short after that is a failure below.
+        for rows in shapes:
+            for _ in range(4 * want * n_devices):
+                if not short(rows):
+                    break
+                run(rows, 1)
     finally:
         for ev in directs:
             counts[id(ev)] = ev.shape_ledger.stop_counting()

@@ -1187,6 +1187,11 @@ class ShapeLedger:
         with self._lock:
             self._counts = {}
 
+    def counted(self, rows: int, graph: str = "dense") -> int:
+        """Forwards of ``rows`` on ``graph`` since ``start_counting`` (0 if off)."""
+        with self._lock:
+            return (self._counts or {}).get((graph, rows), 0)
+
     def stop_counting(self) -> dict[tuple[str, int], int]:
         """The counts since ``start_counting`` (empty if it was not called)."""
         with self._lock:

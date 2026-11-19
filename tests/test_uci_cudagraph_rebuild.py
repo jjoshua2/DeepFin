@@ -118,8 +118,9 @@ def test_the_torch_internals_the_release_reads_exist_in_this_torch() -> None:
 
     import torch._inductor.cudagraph_trees as ct
 
-    if torch.backends.cuda.is_built():  # a CPU-only torch has no CUDA bindings to read
-        assert callable(getattr(torch._C, "_cuda_endAllocateToPool", None))
+    # Present even in a CPU-only build (torch 2.14.0+cpu on CI), so always pinned.
+    assert callable(getattr(torch._C, "_cuda_endAllocateToPool", None))
+    if torch.backends.cuda.is_built():  # absent from a CPU-only build
         assert callable(getattr(torch._C, "_cuda_clearCublasWorkspaces", None))
     assert ct.__name__ == cudagraph_threads._CUDAGRAPH_TREES_MODULE
     manager = ct.CUDAGraphTreeManager
@@ -374,6 +375,94 @@ def test_reverify_fails_when_a_shape_did_not_really_run() -> None:
 
     with pytest.raises(RuntimeError, match=r"ran batch=16 \(dense\) 0x on cpu, not 2x"):
         uci_main.reverify_compiled_evaluator(_SkipsBatch16(ev), input_extra_features="v1")
+
+
+def _degraded_chain(n: int, drop: list[int], cls: type = DegradingMultiGPUDispatcher):
+    evs = []
+    for k in range(n):
+        ev = _counting_evaluator()[0]
+        ev.shape_ledger.label = f"cpu#{k}"
+        evs.append(ev)
+    chain = cls(evs, labels=[f"cpu#{k}" for k in range(n)])
+    chain.arm()
+    for idx in drop:
+        with chain._state_lock:
+            chain._drop_locked(idx, "failed mid-search", "injected", stalled=False)
+    return chain
+
+
+@pytest.mark.parametrize(("n", "drop"), [(3, [1]), (4, [3]), (4, [0, 2]), (3, [])])
+def test_reverify_passes_on_a_healthy_degraded_chain(n: int, drop: list[int]) -> None:
+    """Review of #1404: with a device dropped, n consecutive calls did not reach
+    every live device (the router's cursor wrapped over ALL devices), and the
+    re-check failed a healthy degraded chain: `ran batch=1 (dense) 1x on cpu#2`."""
+    chain = _degraded_chain(n, drop)
+    try:
+        assert uci_main.reverify_compiled_evaluator(chain, input_extra_features="v1") == 4
+    finally:
+        chain.close()
+
+
+def test_degraded_routing_alternates_over_the_live_devices_only() -> None:
+    """Idle calls on 3 devices with #1 dropped go 0, 2, 0, 2 (not 0, 2, 2, 0);
+    with every device live the cursor wraps over all of them, as before."""
+    chain = _degraded_chain(3, [1])
+    healthy = _degraded_chain(3, [])
+    try:
+        picks = []
+        for _ in range(6):
+            k = chain._pick_live(set())
+            chain._inflight[k] -= 1
+            picks.append(k)
+        assert picks == [0, 2, 0, 2, 0, 2]
+        picks = []
+        for _ in range(6):
+            k = healthy._pick_live(set())
+            healthy._inflight[k] -= 1
+            picks.append(k)
+        assert picks == [0, 1, 2, 0, 1, 2]
+    finally:
+        chain.close()
+        healthy.close()
+
+
+class _SkewedRouter(DegradingMultiGPUDispatcher):
+    """Routes by a fixed pattern over device indices (``pattern`` set per test)."""
+
+    pattern: tuple[int, ...] = (0,)
+    _calls: int = 0
+
+    def _pick_live(self, tried: set[int]) -> int:
+        with self._select_lock:
+            n = self._calls
+            self._calls = n + 1
+            best = self.pattern[n % len(self.pattern)]
+            if best in tried or not self._live[best]:
+                return -1
+            self._inflight[best] += 1
+            return best
+
+
+def test_reverify_tops_up_a_device_the_router_reaches_rarely(monkeypatch) -> None:
+    """Whatever the routing, the check keeps submitting a shape until every live
+    device has run it twice: device 1 gets one call in three here."""
+    monkeypatch.setattr(_SkewedRouter, "pattern", (0, 0, 1))
+    chain = _degraded_chain(2, [], cls=_SkewedRouter)
+    try:
+        assert uci_main.reverify_compiled_evaluator(chain, input_extra_features="v1") == 4
+    finally:
+        chain.close()
+
+
+def test_reverify_fails_when_a_live_device_is_never_reached(monkeypatch) -> None:
+    """Bounded: a live device the router never sends work to is a real failure."""
+    monkeypatch.setattr(_SkewedRouter, "pattern", (0,))
+    chain = _degraded_chain(2, [], cls=_SkewedRouter)
+    try:
+        with pytest.raises(RuntimeError, match=r"ran batch=1 \(dense\) 0x on cpu#1, not 2x"):
+            uci_main.reverify_compiled_evaluator(chain, input_extra_features="v1")
+    finally:
+        chain.close()
 
 
 def test_reverify_says_plainly_when_nothing_is_compiled(capsys) -> None:
