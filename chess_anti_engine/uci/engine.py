@@ -3697,17 +3697,16 @@ class Engine:
             wdl=wdl,
             string=string,
         ))
-        # Print and record under one lock hold, so `_publish_bestmove` never
-        # reads a head that is not yet (or never was) on stdout.
+        # Print and record under one lock hold, from `_println`'s own answer,
+        # so `_publish_bestmove` never reads a head that was not on stdout.
         with _PRINT_LOCK:
-            printed = not _silenced()
-            _println(line)
+            printed = _println(line)
             if printed and gen is not None and pv and multipv in (None, 1):
                 self._pv_line_head = (gen, pv[0])
 
     def _publish_bestmove(
         self, gen: int | None, move: str, ponder: str | None = None,
-        *, pv: tuple[str, ...] = (), nodes: int | None = None,
+        *, pv: tuple[str, ...] = (),
     ) -> None:
         """Print ``bestmove``; first, if go ``gen``'s last printed PV line led
         with another move, print a line for ``move`` so it is the last PV.
@@ -3716,18 +3715,19 @@ class Engine:
         `final_info`, `_run_one_phase`), so this prints only when an answer
         replaced the searched one: the deadline watchdog, a parked search, a
         fault fallback, a stop during ponder. Such a move has no searched
-        score, so the line carries none: ``pv`` when it starts with ``move``
-        (a ponder-tree continuation), else ``move`` alone."""
+        score or node count for this root, so the line carries neither: just
+        ``depth``, ``multipv 1`` under MultiPV, and ``pv`` -- ``pv`` itself
+        when it starts with ``move`` (a ponder-tree continuation), else
+        ``move`` alone."""
         with _PRINT_LOCK:
             head = self._pv_line_head
             if (gen is not None and head is not None and head[0] == gen
                     and head[1] != move and move != "0000"):
                 line_pv = pv if pv and pv[0] == move else (move,)
                 multipv = 1 if self._options.multi_pv > 1 else None
-                _println(format_info(InfoFields(
-                    depth=len(line_pv), multipv=multipv, nodes=nodes, pv=line_pv,
-                )))
-                if not _silenced():
+                if _println(format_info(InfoFields(
+                    depth=len(line_pv), multipv=multipv, pv=line_pv,
+                ))):
                     self._pv_line_head = (gen, move)
             _println(format_bestmove(move, ponder=ponder))
 
@@ -3782,9 +3782,7 @@ class Engine:
     def _emit_bestmove(self, result: SearchResult, *, gen: int | None = None) -> None:
         self._report_declined_root(result)
         ponder = result.ponder_uci if self._options.ponder else None
-        self._publish_bestmove(
-            gen, result.bestmove_uci, ponder, pv=tuple(result.pv or ()), nodes=result.nodes,
-        )
+        self._publish_bestmove(gen, result.bestmove_uci, ponder, pv=tuple(result.pv or ()))
 
     def close(self) -> None:
         """Stop any running search and release the worker's evaluator. Call
@@ -4177,14 +4175,17 @@ def _silenced() -> bool:
             and not getattr(_ANSWER_OWNER, "active", False))
 
 
-def _println(s: str) -> None:
-    # The silence check is inside the lock: a thread silenced while another
-    # holds it (the watchdog printing a bestmove) cannot print after that line.
+def _println(s: str) -> bool:
+    """Write one UCI line; False when this thread is silenced (nothing written).
+
+    The silence check is inside the lock: a thread silenced while another
+    holds it (the watchdog printing a bestmove) cannot print after that line."""
     with _PRINT_LOCK:
         if _silenced():
-            return
+            return False
         sys.stdout.write(s + "\n")
         sys.stdout.flush()
+        return True
 
 
 def _emit_info_string(s: str) -> None:

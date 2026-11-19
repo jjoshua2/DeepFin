@@ -142,8 +142,8 @@ def test_guard_prints_a_scoreless_line_for_a_replaced_answer(out: _Out) -> None:
 def test_guard_keeps_a_continuation_that_starts_with_the_move(out: _Out) -> None:
     engine = _bare_engine()
     _info(engine, 3, ("e2e4", "e7e5"))
-    engine._publish_bestmove(3, "g1f3", pv=("g1f3", "b8c6"), nodes=40)
-    assert out.lines[-2:] == ["info depth 2 nodes 40 pv g1f3 b8c6", "bestmove g1f3"]
+    engine._publish_bestmove(3, "g1f3", pv=("g1f3", "b8c6"))
+    assert out.lines[-2:] == ["info depth 2 pv g1f3 b8c6", "bestmove g1f3"]
 
 
 @pytest.mark.parametrize("case", ["same_head", "other_go", "no_line", "null_move"])
@@ -181,6 +181,25 @@ def test_guard_ignores_a_line_the_silenced_thread_never_printed(out: _Out) -> No
     assert out.lines[-1] == "bestmove e2e4", out.lines
     # The printed e2e4 line still stands: no aligned line was needed.
     assert out.lines[-2].startswith("info depth 1 nodes 10 "), out.lines
+
+
+def test_head_is_recorded_only_from_the_write_itself(
+        out: _Out, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The silence state may flip between any separate check and the write: the
+    head must come from `_println`'s own answer. Here the first silence query
+    says "not silenced" and the next says "silenced" -- a second, separate
+    query before the write would record a head that never reached stdout."""
+    engine = _bare_engine()
+    _info(engine, 7, ("d2d4",))
+    real = engine_module._silenced
+    answers = iter([False, True])
+    monkeypatch.setattr(engine_module, "_silenced", lambda: next(answers, False))
+    _info(engine, 7, ("e2e4",))
+    monkeypatch.setattr(engine_module, "_silenced", real)
+    written = any(" pv e2e4" in ln for ln in out.lines)
+    assert engine._pv_line_head == ((7, "e2e4") if written else (7, "d2d4"))
+    engine._publish_bestmove(7, "e2e4")
+    _assert_aligned(out.lines)
 
 
 # ------------------------------------------- in-process real search (tiny net)
@@ -432,10 +451,81 @@ def test_fault_fallback_after_info_lines_ends_on_the_fallback_move(
         _go(engine, "go nodes 100")
         _assert_aligned(out.lines)
         seg = _segments(out.lines)[0][0]
-        assert _rank1_pv_lines(seg)[-1] == {"depth": 1, "nodes": 0, "pv": ["d2d4"]}
+        assert _rank1_pv_lines(seg)[-1] == {"depth": 1, "pv": ["d2d4"]}
     finally:
         engine.close()
         worker.close()
+
+
+def _hanging_worker(head: str, release: threading.Event) -> Any:
+    """A worker whose search prints one PV line led by ``head`` and then
+    ignores stop until ``release``."""
+    from unittest.mock import MagicMock
+
+    worker = MagicMock()
+    worker._chunk_sims = 16
+    worker._pucv_pool = worker._rpg_pool = None
+    worker.root_policy_bestmove.return_value = None
+    worker.realized_search_path.return_value = "gumbel"
+    worker.leaf_tb_inactive_mode.return_value = None
+
+    def hang(board: chess.Board, **kw: Any) -> SearchResult:
+        kw["info_cb"](nodes=64, elapsed_ms=3, score_cp=5, pv=(head,), tbhits=0,
+                      score_mate=None, multipv=None, wdl=None)
+        release.wait(10)
+        move = next(iter(board.legal_moves)).uci()
+        return SearchResult(move, None, 8, (move,), 0)
+
+    worker.run.side_effect = hang
+    return worker
+
+
+def test_parked_search_answer_is_aligned(out: _Out, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A search that printed a PV for d2d4 ignores `stop`; it is parked and
+    answered from the fallback (e2e4), whose line comes before bestmove."""
+    monkeypatch.setattr(engine_module, "_GO_WAIT_NO_CLOCK_S", 0.05)
+    release = threading.Event()
+    engine = Engine(_hanging_worker("d2d4", release))
+    monkeypatch.setattr(engine, "_bestmove_fallback", lambda *a, **k: ("e2e4", "root_policy"))
+    try:
+        engine.dispatch(parse_command("position startpos"))
+        engine.dispatch(parse_command("go infinite"))
+        end = time.monotonic() + 10
+        while not any(" pv d2d4" in ln for ln in out.lines) and time.monotonic() < end:
+            time.sleep(0.01)
+        engine.dispatch(parse_command("stop"))
+        assert any("did not stop in time" in ln for ln in out.lines), out.lines
+        at = out.lines.index("bestmove e2e4")
+        assert out.lines[at - 1] == "info depth 1 pv e2e4", out.lines
+        _assert_aligned(out.lines)
+    finally:
+        release.set()
+        for orphan in list(engine._orphan_threads):
+            orphan.join(5)
+
+
+def test_watchdog_answer_after_a_line_for_another_move_is_aligned(
+        out: _Out, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The stalled search printed a PV whose head the watchdog cannot play (not
+    in `searchmoves`), so it answers from the fallback: aligned line first."""
+    monkeypatch.setattr(engine_module, "_WATCHDOG_STALL_NO_ESTIMATE_MS", 100.0)
+    monkeypatch.setattr(engine_module, "_WATCHDOG_STALL_FLOOR_MS", 50.0)
+    release = threading.Event()
+    engine = Engine(_hanging_worker("g1f3", release))
+    monkeypatch.setattr(engine, "_bestmove_fallback", lambda *a, **k: ("e2e4", "root_policy"))
+    try:
+        engine.dispatch(parse_command("position startpos"))
+        engine.dispatch(parse_command("go movetime 200 searchmoves e2e4 d2d4"))
+        assert out.wait_bestmoves(1, timeout=15) == ["e2e4"], out.lines
+        assert any("deadline watchdog answers" in ln for ln in out.lines), out.lines
+        at = out.lines.index("bestmove e2e4")
+        assert out.lines[at - 1] == "info depth 1 pv e2e4", out.lines
+        _assert_aligned(out.lines)
+    finally:
+        release.set()
+        thread = engine._search_thread
+        if thread is not None:
+            thread.join(5)
 
 
 def _ponder_session(out: _Out, finish: str, calls: list[bool]) -> list[str]:
@@ -451,8 +541,14 @@ def _ponder_session(out: _Out, finish: str, calls: list[bool]) -> list[str]:
     try:
         engine.dispatch(CmdSetOption(name="Ponder", value="true"))
         engine.dispatch(parse_command("position startpos moves e2e4 e7e5"))
-        engine.dispatch(parse_command("go ponder wtime 4000 btime 4000"))
-        time.sleep(0.6)
+        # Node-limited: after ponderhit the main phase has no deadline, so it
+        # always runs (a clock could expire during the handoff on a loaded box).
+        engine.dispatch(parse_command("go ponder nodes 300"))
+        end = time.monotonic() + 30
+        while not calls and time.monotonic() < end:  # the ponder phase has started
+            time.sleep(0.01)
+        assert calls == [False], calls
+        time.sleep(0.2)
         engine.dispatch(parse_command(finish))
         thread = engine._search_thread
         if thread is not None:
@@ -486,19 +582,23 @@ def ckpt(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 _START = "position startpos moves e2e4"
 # (position, go, stop_after_s, require_pv) -- every way a classic search ends.
+# A clocked go (movetime / clock) may be answered by the deadline watchdog before
+# any line on a loaded machine; that line-less answer is outside the guarantee,
+# so those rows require no line (require_pv False) and check any line printed.
+# Unclocked gos (nodes, depth, infinite) always print one.
 _CLASSIC_GOS: list[tuple[str, str, float | None, bool]] = [
     (_START, "go nodes 300", None, True),
-    (_START, "go movetime 800", None, True),
-    (_START, "go wtime 3000 btime 3000 winc 0 binc 0", None, True),
+    (_START, "go movetime 800", None, False),
+    (_START, "go wtime 3000 btime 3000 winc 0 binc 0", None, False),
     (_START, "go infinite", 1.2, True),
     (_START, "go depth 3", None, True),
-    (_START, "go mate 2 movetime 1500", None, True),
-    (_START, "go movetime 800 searchmoves a7a6 h7h6 g8f6", None, True),
+    (_START, "go mate 2 movetime 1500", None, False),
+    (_START, "go movetime 800 searchmoves a7a6 h7h6 g8f6", None, False),
     (f"position fen {_MATE_IN_2}", "go nodes 3000", None, True),        # solved root
     (f"position fen {_MATE_IN_2}", "go infinite", 1.5, True),           # solved, waits for stop
     ("position fen 6k1/5ppp/8/8/8/8/5PPP/3R2K1 w - - 0 1", "go nodes 50", None, True),  # mate in 1
     ("position fen 7k/6Q1/6K1/8/8/8/8/8 b - - 0 1", "go nodes 50", None, False),  # mated
-    ("position fen 7k/8/8/8/8/8/5P1P/r5K1 w - - 0 1", "go wtime 2000 btime 2000", None, True),  # forced
+    ("position fen 7k/8/8/8/8/8/5P1P/r5K1 w - - 0 1", "go wtime 2000 btime 2000", None, False),  # forced
 ]
 
 
@@ -603,11 +703,13 @@ def test_ponder_subprocess(ckpt: Path, tmp_path: Path, finish: str) -> None:
         sess.ready()
         sess.send("setoption name Ponder value true")
         sess.send("position startpos moves e2e4 e7e5")
-        sess.send("go ponder wtime 3000 btime 3000")
+        sess.send("go ponder nodes 300")
         time.sleep(1.2)
         sess.send(finish)
         got = sess.read_until(lambda ln: ln.startswith("bestmove"), 60)
-        _assert_aligned(got)
+        # After ponderhit the node-limited main phase always prints lines; a
+        # stop may come before the ponder phase printed any.
+        _assert_aligned(got, require_pv=finish == "ponderhit")
         sess.quit()
     finally:
         sess.close()
