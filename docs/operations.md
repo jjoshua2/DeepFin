@@ -836,7 +836,7 @@ its realized value and a LIVE/INERT verdict for the path that will actually
 run:
 
 ```
-info string searchconfig path=gumbel (classic single-thread Gumbel (SearchWalkers=1, UseVL off, 1 device))
+info string searchconfig path=gumbel (classic single-thread Gumbel (SearchWalkers=1, UseVL off)) devices=1
 info string searchconfig PolicyTemperature = 1.0 [LIVE]
 info string searchconfig CScale = 0.025 [LIVE]
 info string searchconfig CPuct = 1.75 [INERT] — CPuct does not reach the gumbel path (...)

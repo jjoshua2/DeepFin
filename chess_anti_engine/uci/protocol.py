@@ -101,14 +101,38 @@ class CmdSearchConfig:
 
 
 @dataclass(frozen=True)
+class CmdDebug:
+    """UCI `debug [on | off]`. ``on`` is None when the argument is missing or
+    is neither word; the engine says so and keeps the current mode."""
+    on: bool | None
+    raw: str = ""
+
+
+@dataclass(frozen=True)
 class CmdUnknown:
     raw: str
 
 
 Command = (
     CmdUci | CmdIsReady | CmdUciNewGame | CmdPosition | CmdGo | CmdPonderHit
-    | CmdStop | CmdQuit | CmdSetOption | CmdSearchConfig | CmdUnknown
+    | CmdStop | CmdQuit | CmdSetOption | CmdSearchConfig | CmdDebug | CmdUnknown
 )
+
+
+# UCI `debug on`: diagnostic `info string` lines (search-pool batch statistics,
+# root-parallel Gumbel phase lines) are printed only while it is on. One engine
+# per process, so the mode is process-wide; the emitters read it at print time,
+# so `debug on` / `debug off` take effect on the very next line.
+_UCI_DEBUG = False
+
+
+def set_uci_debug(on: bool) -> None:
+    global _UCI_DEBUG
+    _UCI_DEBUG = bool(on)
+
+
+def uci_debug_enabled() -> bool:
+    return _UCI_DEBUG
 
 
 _INT_KEYS = {
@@ -306,6 +330,9 @@ def parse_command(line: str) -> Command:
             return _parse_setoption(rest)
         case "searchconfig":
             return CmdSearchConfig()
+        case "debug":
+            word = rest[0] if len(rest) == 1 else ""
+            return CmdDebug(on={"on": True, "off": False}.get(word), raw=" ".join(rest))
         case _:
             return CmdUnknown(raw=line)
 
@@ -333,6 +360,11 @@ class InfoFields:
 
 
 def format_info(f: InfoFields) -> str:
+    """One ``info`` line -- or two when ``f`` carries both a ``pv`` and a
+    ``string``: UCI reads ``pv`` (and ``string``) to the end of the line, so a
+    GUI would take every word of a trailing string for a move. The string then
+    goes on its own ``info string`` line after the PV line, the two joined by a
+    newline so one locked write keeps them together."""
     parts: list[str] = ["info"]
     if f.depth is not None:
         parts += ["depth", str(f.depth)]
@@ -360,6 +392,8 @@ def format_info(f: InfoFields) -> str:
     if f.pv:
         parts.append("pv")
         parts.extend(f.pv)
+        if f.string is not None:
+            return " ".join(parts) + "\ninfo string " + f.string
     if f.string is not None:
         parts += ["string", f.string]
     return " ".join(parts)
