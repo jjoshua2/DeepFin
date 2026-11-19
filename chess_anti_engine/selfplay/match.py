@@ -20,6 +20,7 @@ from chess_anti_engine.mcts.gumbel import (
     warn_volatility_python_path,
 )
 from chess_anti_engine.utils.search_type import require_gumbel_search
+from chess_anti_engine.utils.claimable_outcome import is_game_over_claim_draw
 from chess_anti_engine.moves import index_to_move_fast, index_to_move_strict
 from chess_anti_engine.selfplay.opening import OpeningConfig, make_starting_board
 
@@ -369,7 +370,7 @@ def play_match_batch(
 
     for _ply in range(int(max_plies)):
         for i in range(g):
-            if not done[i] and boards[i].is_game_over(claim_draw=True):
+            if not done[i] and is_game_over_claim_draw(boards[i]):
                 done[i] = True
         active = [i for i in range(g) if not done[i]]
         if not active:

@@ -808,6 +808,11 @@ class SelfplayState:
     strict_tb: StrictSelfplayTablebase | None = None
     strict_tb_witnesses: dict[int, TablebaseWitness] = field(default_factory=dict)
     strict_tb_policy_abstained: dict[int, list[int]] = field(default_factory=dict)
+    # Per-slot incremental replay behind `strict_tb.full_history_board`. A
+    # derived cache, never state: every entry is checked against the slot's
+    # current starting board and move history before use and rebuilt on any
+    # mismatch, so it needs no reset hook and cannot outlive its game.
+    full_history_cache: dict[int, Any] = field(default_factory=dict)
 
     # ── Shared caches (None when C tree unavailable) ─────────────────────────
     mcts_tree: Any = None

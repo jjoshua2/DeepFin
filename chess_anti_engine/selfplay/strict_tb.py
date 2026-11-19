@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Protocol, TypedDict
 import chess
 import chess.syzygy
 
+from chess_anti_engine.utils.claimable_outcome import outcome_claim_draw
 from chess_anti_engine.tablebase import (
     MatchTablebaseError,
     _dtz_of_played_move,
@@ -64,22 +65,104 @@ class TablebaseWitness:
     asset_identity_scope: str = "resolved-file-path,size,mtime_ns;not-content-hash"
 
 
-def full_history_board(state: _HistoryState, slot: int) -> chess.Board:
+@dataclass
+class _HistoryReplay:
+    """One slot's replayed game, extended in place as the game grows.
+
+    ``start`` is the exact starting-board OBJECT the replay began from, with
+    the length and FEN it had then; ``actions`` the played action ids already
+    pushed onto ``board`` (``ucis`` the same moves as UCI strings, ``root_fen``
+    the replay's root). Reuse requires all of them to still describe the slot,
+    so a recycled slot (new starting board), a resumed game or any rewritten
+    history rebuilds from scratch. ``verified`` is the (action count, native
+    FEN) pair the last native-board comparison passed for: the comparison is
+    skipped only while both are unchanged, i.e. when it would compare the same
+    two strings again.
+    """
+
+    start: chess.Board
+    start_plies: int
+    start_fen: str
+    actions: list[int]
+    board: chess.Board
+    root_fen: str
+    ucis: list[str]
+    verified: tuple[int, str] | None = None
+
+
+def _push_checked_actions(board: chess.Board, actions: Sequence[int]) -> None:
     from chess_anti_engine.moves import index_to_move
 
-    if state.starting_boards is None:
-        raise ValueError("strict selfplay requires the original opening history")
-    board = state.starting_boards[slot].copy(stack=True)
-    if not board.is_valid() or not board.root().is_valid():
-        raise ValueError("strict selfplay requires a valid original opening")
-    for action in state.move_idx_history[slot]:
+    for action in actions:
         move = index_to_move(int(action), board)
         if move not in board.legal_moves:
             raise ValueError("strict selfplay has an illegal played action")
         board.push(move)
-    if board.fen() != chess.Board(state.cboards[slot].fen()).fen():
-        raise ValueError("strict selfplay history/native position or clocks disagree")
-    return board
+
+
+def _reusable_replay(
+    entry: _HistoryReplay | None, start: chess.Board, history: Sequence[int],
+) -> _HistoryReplay | None:
+    if entry is None:
+        return None
+    n = len(entry.actions)
+    if (entry.start is not start or entry.start_plies != len(start.move_stack)
+            or len(history) < n or list(history[:n]) != entry.actions
+            or entry.start_fen != start.fen()):
+        return None
+    return entry
+
+
+def full_history_board(state: _HistoryState, slot: int) -> chess.Board:
+    """The slot's original opening plus every played action, legality-checked.
+
+    Returns a fresh board the caller may mutate."""
+    return _replayed_history(state, slot).board.copy(stack=True)
+
+
+def _replayed_history(state: _HistoryState, slot: int) -> _HistoryReplay:
+    """The checked replay behind ``full_history_board``; its board is READ-ONLY.
+
+    When ``state`` carries a
+    ``full_history_cache`` (``SelfplayState`` does) the replay is incremental:
+    only actions appended since the previous call are decoded, checked and
+    pushed, instead of re-validating the whole game on every step. The
+    O(plies) full replay ran several times per slot per step in strict
+    selfplay (TB adjudication, every SF label submit, finalize), i.e. O(plies^2)
+    python-chess legal-move generation per game -- a third of the main
+    thread's wall in a CPU profile of the collector shape. Checks are
+    unchanged: each action is legality-checked once against the identical
+    prefix position, and the native-board FEN comparison runs on every call.
+    """
+    if state.starting_boards is None:
+        raise ValueError("strict selfplay requires the original opening history")
+    start = state.starting_boards[slot]
+    history = state.move_idx_history[slot]
+    cache: dict[int, _HistoryReplay] | None = getattr(state, "full_history_cache", None)
+    entry = _reusable_replay(cache.get(slot) if cache is not None else None, start, history)
+    if entry is None:
+        board = start.copy(stack=True)
+        if not board.is_valid() or not board.root().is_valid():
+            raise ValueError("strict selfplay requires a valid original opening")
+        entry = _HistoryReplay(start=start, start_plies=len(start.move_stack),
+                               start_fen=start.fen(), actions=[], board=board,
+                               root_fen=board.root().fen(),
+                               ucis=[move.uci() for move in board.move_stack])
+    if cache is not None:
+        # Dropped while extending: a failed check leaves the board part-pushed.
+        cache.pop(slot, None)
+    new_actions = [int(a) for a in history[len(entry.actions):]]
+    _push_checked_actions(entry.board, new_actions)
+    entry.actions.extend(new_actions)
+    entry.ucis.extend(move.uci() for move in entry.board.move_stack[len(entry.ucis):])
+    native_fen = state.cboards[slot].fen()
+    if entry.verified != (len(entry.actions), native_fen):
+        if entry.board.fen() != chess.Board(native_fen).fen():
+            raise ValueError("strict selfplay history/native position or clocks disagree")
+        entry.verified = (len(entry.actions), native_fen)
+    if cache is not None:
+        cache[slot] = entry
+    return entry
 
 
 class SfHistoryKwargs(TypedDict, total=False):
@@ -90,9 +173,8 @@ class SfHistoryKwargs(TypedDict, total=False):
 def sf_history_kwargs(state: _HistoryState, slot: int) -> SfHistoryKwargs:
     if getattr(state.game, "syzygy_outcome_mode", "theoretical_wdl") != "rule50_match_v1":
         return {}
-    board = full_history_board(state, slot)
-    return {"root_fen": board.root().fen(),
-            "root_moves": tuple(move.uci() for move in board.move_stack)}
+    entry = _replayed_history(state, slot)
+    return {"root_fen": entry.root_fen, "root_moves": tuple(entry.ucis)}
 
 
 class StrictSelfplayTablebase:
@@ -127,7 +209,7 @@ class StrictSelfplayTablebase:
             self.tablebase.close()
 
     def resolve(self, board: chess.Board, *, move_offset: int) -> TablebaseWitness:
-        natural = board.outcome(claim_draw=True)
+        natural = outcome_claim_draw(board)
         status = rule50_match_status(board, self.tablebase, max_pieces=6)
         wdl = dtz = None
         if natural is not None:
@@ -161,7 +243,7 @@ class StrictSelfplayTablebase:
         Probe every legal child before abstaining, so missing covered material
         cannot masquerade as an ordinary conservative abstention.
         """
-        if board.outcome(claim_draw=True) is not None:
+        if outcome_claim_draw(board) is not None:
             return None
         if chess.popcount(board.occupied) > 6 or board.castling_rights:
             return None
