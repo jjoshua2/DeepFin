@@ -17,7 +17,7 @@ import threading
 import time
 import weakref
 from dataclasses import dataclass, fields, replace
-from typing import TYPE_CHECKING, ClassVar, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 from collections.abc import Callable
 
 import chess
@@ -606,8 +606,12 @@ class Engine:
         search_devices: tuple[str, ...] | None = None,
         options: EngineOptions | None = None,
         gil_profile: bool = False,
+        verify_evaluator: Callable[[Any], None] | None = None,
     ) -> None:
         self._worker = worker
+  # The health re-check's evaluator check (``__main__.reverify_compiled_evaluator``):
+  # reruns every compiled batch shape on the evaluator the worker holds NOW.
+        self._verify_evaluator = verify_evaluator
   # A compiled evaluator that meets a batch shape its warmup did not run
   # compiles / captures on the clock; say so (once per shape and device).
         set_cold_shape_hook(_report_cold_shape)
@@ -3177,6 +3181,12 @@ class Engine:
         """
         reason = self._unhealthy
         try:
+            # Every compiled batch shape first, on the evaluator kept or just
+            # installed: the real search below reaches only the shapes its
+            # budget happens to touch, and a broken shape it misses passed this
+            # check while every longer `go` raised (real-GPU run 2026-11-18).
+            if self._verify_evaluator is not None:
+                self._verify_evaluator(getattr(self._worker, "_evaluator", None))
             self.warmup_search()
         except Exception as exc:
             _log.error("health re-check failed", exc_info=True)

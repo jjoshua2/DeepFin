@@ -282,13 +282,15 @@ class DegradingMultiGPUDispatcher(MultiGPUDispatcher):
     def _drop_locked(self, idx: int, what: str, reason: str, *, stalled: bool) -> None:
         if not self._live[idx]:
             return
+        if not self._armed:
+            what = "failed at startup" if not stalled else "stopped answering at startup"
+        # After the startup rewrite: the latch's text is what the quit line
+        # prints ("a device failed this session (device ... failed at startup)").
         wedge.note_device_fault(f"device {self._labels[idx]} {what}")
         self._live[idx] = False
         self._raised[idx] = self._raised[idx] or not stalled
         if stalled:
             self._stall_drops_this_search[idx] += 1
-        if not self._armed:
-            what = "failed at startup" if not stalled else "stopped answering at startup"
         self._drop_reason[idx] = f"{what} ({reason})"
         msg = _pool.DEVICE_DROPPED_NOTE.format(
             label=self._labels[idx], what=what, reason=reason,

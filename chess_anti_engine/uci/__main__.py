@@ -128,6 +128,121 @@ def resolve_multi_gpu_compile_mode(
     return compile_mode
 
 
+def _one_line(exc: BaseException, limit: int = 200) -> str:
+    text = " ".join(f"{type(exc).__name__}: {exc}".split())
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+def device_labels(devices) -> list[str]:
+    """Per-device labels: the device name, or ``name#k`` when it is listed twice."""
+    names = [str(d) for d in devices]
+    return [n if names.count(n) == 1 else f"{n}#{k}" for k, n in enumerate(names)]
+
+
+def _physical_device_key(device) -> str:
+    name = str(device)
+    return "cuda:0" if name == "cuda" else name
+
+
+def graph_modes_per_device(mode: str | None, devices) -> list[str | None]:
+    """The compile mode each listed device builds with.
+
+    A CUDA-graph mode applies to the FIRST listing of each physical device
+    only; its repeats build with ``_MULTI_GPU_NO_CUDAGRAPH_MODE``. Every
+    evaluator of one net on one device replays the same compiled graphs
+    through ONE cudagraph tree manager and memory pool (``cudagraph_threads``),
+    which two evaluators cannot replay into at the same time. On a box with
+    one entry per GPU (the tournament topology) nothing changes.
+    """
+    if mode not in _CUDAGRAPH_COMPILE_MODES:
+        return [mode for _ in devices]
+    seen: set[str] = set()
+    out: list[str | None] = []
+    for d in devices:
+        key = _physical_device_key(d)
+        # CUDA graphs exist only on CUDA devices; a repeated CPU entry (tests)
+        # keeps the requested mode.
+        out.append(_MULTI_GPU_NO_CUDAGRAPH_MODE if key in seen else mode)
+        if key.startswith("cuda"):
+            seen.add(key)
+    return out
+
+
+# Repeated-device notes already printed (once per label per process: the pool
+# builder and the routing-chain factory would otherwise both say it, and every
+# chain rebuild again).
+_REPEAT_NOTES_PRINTED: set[str] = set()
+
+
+def _announce_repeated_devices(labels, modes, mode: str | None) -> None:
+    for lab, m in zip(labels, modes):
+        if mode in _CUDAGRAPH_COMPILE_MODES and m != mode and lab not in _REPEAT_NOTES_PRINTED:
+            _REPEAT_NOTES_PRINTED.add(lab)
+            _println(
+                f"info string multi-GPU: {lab} repeats a device already listed; CUDA graphs "
+                "are captured once per device per process and two evaluators cannot replay "
+                f"them at once, so {lab} compiles with mode {m!r} (no CUDA graphs)"
+            )
+
+
+def _pad_kw(mode: str | None) -> dict[str, Any]:
+    """Compiled evaluators pad every forward to the bucket ladder (finite,
+    warmable shape set); eager ones forward exact counts. Passed only when on,
+    so evaluator stand-ins without the parameter keep working."""
+    return {"pad_to_compiled_buckets": True} if mode else {}
+
+
+def _release_cached_device_memory(devices) -> None:
+    """Return the CUDA caching allocator's unused blocks before a rebuild.
+
+    Every DirectGPUEvaluator launches on its own CUDA stream, and the caching
+    allocator keeps a freed block for reuse on the stream that freed it only.
+    A replaced evaluator's blocks (its H2D inputs; a no-graph worker's whole
+    activation working set) therefore stayed reserved for the life of the
+    process: on the real GPU each pool rebuild added ~0.3-0.8 GB of reserved
+    VRAM while allocated memory and the live evaluator count stayed flat
+    (2026-11-18). Called at the start of every rebuild, after the previous
+    replacement was closed; CUDA-graph pools are not touched.
+    """
+    if not any(str(d).startswith("cuda") for d in devices):
+        return
+    import gc
+
+    import torch
+
+    gc.collect()
+    if torch.cuda.is_available():
+        # cuBLAS keeps one workspace per (handle, stream); a replaced
+        # evaluator's stream leaves its workspace allocated (~9 MB per pool
+        # rebuild measured). Eager workspaces are recreated on demand; a
+        # captured graph owns the one it captured with (Inductor clears these
+        # before every capture itself).
+        clear_workspaces = getattr(torch._C, "_cuda_clearCublasWorkspaces", None)
+        if callable(clear_workspaces):
+            clear_workspaces()
+        torch.cuda.empty_cache()
+
+
+def _label_evaluator(evaluator, label: str) -> None:
+    """Name ``evaluator`` in warm-up / cold-shape lines (``cuda:0#1``, not ``cuda:0``)."""
+    ledger = getattr(evaluator, "shape_ledger", None)
+    if ledger is not None:
+        ledger.label = str(label)
+
+
+def _close_chain(evaluator) -> None:
+    """Close a primary chain that will not be installed: its owner / submitter
+    thread and, on a routing chain, every per-device call thread."""
+    source = find_degrade_source(evaluator)
+    for ev in (evaluator, source):
+        close = getattr(ev, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                logging.getLogger(__name__).debug("closing a failed build raised", exc_info=True)
+
+
 def direct_evaluators(chain) -> list:
     """Every bucket-padding ``DirectGPUEvaluator`` under a dispatcher chain.
 
@@ -351,34 +466,96 @@ def _warmup_compiled_buckets(
     todo = [r for r in shapes if cold(r)]
     for i, rows in enumerate(todo, 1):
         _bucket_warm_progress(labels, i, len(todo), rows, started)
-        xs = np.broadcast_to(encoded, (rows, *encoded.shape)).astype(np.float32, copy=True)
-        rels = None if rel_row is None else np.broadcast_to(rel_row, (rows, *rel_row.shape)).copy()
         try:
-            for _ in range(max(1, int(n_devices))):
-                if use_async and rows != 1:
-                    buf = chain.get_input_buffer(rows, slot=0)
-                    buf[:] = xs
-                    if rels is None:
-                        _pol, _wdl, event = chain.evaluate_inplace_async(rows, slot=0)
-                    else:
-                        _pol, _wdl, event = chain.evaluate_inplace_async(rows, slot=0, relations=rels)
-                    if event is not None:
-                        event.synchronize()
-                elif rels is None:
-                    chain.evaluate_encoded(xs)
-                else:
-                    chain.evaluate_encoded(xs, relations=rels)
-            if warm_legal:
-                legal_one = cb.legal_move_indices().astype(np.int32, copy=False)
-                legal_counts = np.full((rows,), legal_one.size, dtype=np.int32)
-                legal_flat = np.tile(legal_one, rows)
-                for _ in range(max(1, int(n_devices))):
-                    chain.evaluate_legal_bf16(xs, legal_flat, legal_counts)
+            _run_bucket_shape(
+                chain, rows, cb=cb, encoded=encoded, rel_row=rel_row,
+                use_async=use_async, warm_legal=warm_legal, n_devices=n_devices,
+            )
         except Exception as exc:
             raise RuntimeError(f"evaluator warmup failed at batch={rows}") from exc
     # Re-walk the chain: a degrading routing chain may have dropped a device
     # during the warm-up; the strict check covers the devices still in service.
     _verify_and_arm(direct_evaluators(chain) or directs, lambda _ev: None, legal=warm_legal)
+
+
+def _run_bucket_shape(
+    chain, rows: int, *, cb, encoded, rel_row, use_async: bool, warm_legal: bool, n_devices: int,
+) -> None:
+    """One padded batch shape through ``chain``'s search entry, on every device."""
+    xs = np.broadcast_to(encoded, (rows, *encoded.shape)).astype(np.float32, copy=True)
+    rels = None if rel_row is None else np.broadcast_to(rel_row, (rows, *rel_row.shape)).copy()
+    for _ in range(max(1, int(n_devices))):
+        if use_async and rows != 1:
+            buf = chain.get_input_buffer(rows, slot=0)
+            buf[:] = xs
+            if rels is None:
+                _pol, _wdl, event = chain.evaluate_inplace_async(rows, slot=0)
+            else:
+                _pol, _wdl, event = chain.evaluate_inplace_async(rows, slot=0, relations=rels)
+            if event is not None:
+                event.synchronize()
+        elif rels is None:
+            chain.evaluate_encoded(xs)
+        else:
+            chain.evaluate_encoded(xs, relations=rels)
+    if warm_legal:
+        legal_one = cb.legal_move_indices().astype(np.int32, copy=False)
+        legal_counts = np.full((rows,), legal_one.size, dtype=np.int32)
+        legal_flat = np.tile(legal_one, rows)
+        for _ in range(max(1, int(n_devices))):
+            chain.evaluate_legal_bf16(xs, legal_flat, legal_counts)
+
+
+def reverify_compiled_evaluator(
+    chain,
+    *,
+    input_history_encoding: str = "legacy",
+    input_extra_features: str | None = None,
+    compute_relations: bool = False,
+    passes: int = 2,
+) -> int:
+    """The health re-check's evaluator half: EVERY compiled shape, run again.
+
+    Unlike the startup warm-up, already-seen shapes are not skipped: each
+    reachable padded shape goes through ``chain``'s search entry ``passes``
+    times (a cudagraph tree warms a shape on one call and records it on a
+    later one), on every device of a routing chain. A raise is the check
+    failing. Returns how many shapes were run; 0 for a chain with no
+    compiled (bucket-padding) evaluator, where the real search alone decides.
+    """
+    directs = direct_evaluators(chain) if chain is not None else []
+    if not directs:
+        return 0
+    cb = CBoard.from_board(chess.Board())
+    encoded = encode_cboard(
+        cb,
+        input_history_encoding=input_history_encoding,
+        input_extra_features=input_extra_features,
+    )
+    shapes = sorted(set().union(*(ev.reachable_forward_rows() for ev in directs)))
+    rel_row = cb.compute_relations() if compute_relations else None
+    warm_legal = (
+        rel_row is None
+        and bool(getattr(chain, "supports_legal_bf16", False))
+        and hasattr(chain, "evaluate_legal_bf16")
+    )
+    n_devices = len(directs)
+    use_async = supports_inplace_api(chain)
+    for _ in range(max(1, int(passes))):
+        for rows in shapes:
+            try:
+                _run_bucket_shape(
+                    chain, rows, cb=cb, encoded=encoded, rel_row=rel_row,
+                    use_async=use_async, warm_legal=warm_legal, n_devices=n_devices,
+                )
+            except Exception as exc:
+                raise RuntimeError(f"evaluator re-check failed at batch={rows}") from exc
+    labels = ",".join(ev.shape_ledger.label for ev in directs)
+    _println(
+        f"info string health check: re-ran all {len(shapes)} compiled batch shapes "
+        f"{max(1, int(passes))}x on {labels}"
+    )
+    return len(shapes)
 
 
 def _pucv_warmup_batch_sizes(gather: int) -> list[int]:
@@ -535,33 +712,27 @@ def _make_evaluator_factory(
         # Remembered only once the build SUCCEEDS: a failed rebuild keeps the
         # previous evaluator, so the next rebuild must keep its tier too.
         nw = walker_state["n_walkers"] if n_walkers is None else max(1, int(n_walkers))
+        _release_cached_device_memory(devices)
         active_models = models
         active_devices = devices
         if primary_only and len(devices) > 1:
             active_models = models[:1]
             active_devices = devices[:1]
 
-        if compile_mode:
-            import torch
-            from typing import cast
-            compiled_models = [
-                cast("torch.nn.Module", torch.compile(m, mode=compile_mode))
-                for m in active_models
-            ]
-        else:
-            compiled_models = list(active_models)
-  # Compiled evaluators pad every forward to the bucket ladder so the shape
-  # set is finite and warmup can cover all of it (``_warmup_compiled_buckets``).
-  # Eager evaluators forward exact counts, exactly as before. Passed only when
-  # on, so evaluator stand-ins without the parameter keep working.
-        pad_kw: dict[str, Any] = {"pad_to_compiled_buckets": True} if compile_mode else {}
+        # Multi-device routing chain: the multi-GPU compile-mode override
+        # (CAE_UCI_MULTI_GPU_COMPILE_MODE) applies here as on the pool, and a
+        # device listed twice gets CUDA graphs on its first listing only.
+        multi = len(active_devices) > 1
+        base_mode = (
+            resolve_multi_gpu_compile_mode(compile_mode, len(active_devices), announce=False)
+            if multi else compile_mode
+        )
 
         chain_labels: list[str] = []
-        if len(active_devices) > 1:
+        if multi:
   # A rebuild after a device wedged this session leaves that device out
   # (building on it would likely hang until the startup timeout), announced.
-            all_names = [str(d) for d in active_devices]
-            all_labels = [n if all_names.count(n) == 1 else f"{n}#{k}" for k, n in enumerate(all_names)]
+            all_labels = device_labels(active_devices)
             keep = [k for k, lab in enumerate(all_labels) if wedge.wedged_earlier(lab) is None]
             chain_labels = all_labels
             if keep and len(keep) < len(all_labels):
@@ -571,70 +742,121 @@ def _make_evaluator_factory(
                             f"info string WARNING multi-GPU DEGRADED: device {lab} left out of "
                             f"the rebuild: it wedged earlier this session ({wedge.wedged_earlier(lab)})"
                         )
-                compiled_models = [compiled_models[k] for k in keep]
+                active_models = [active_models[k] for k in keep]
                 active_devices = [active_devices[k] for k in keep]
                 chain_labels = [all_labels[k] for k in keep]
-        if len(active_devices) > 1:
-            evaluators = [
-                DirectGPUEvaluator(
-                    m, device=d, max_batch=max_batch, n_slots=2,
-                    input_bf16=compact_bf16, legal_bf16=compact_bf16,
-                    **pad_kw,
-                )
-                for m, d in zip(compiled_models, active_devices)
-            ]
+
+        def assemble(modes: list[str | None]):
+            """(evaluator, warm_target) for one compile mode per device."""
+            compiled_models = []
+            for m, mode in zip(active_models, modes):
+                if mode:
+                    import torch
+                    from typing import cast
+                    compiled_models.append(cast("torch.nn.Module", torch.compile(m, mode=mode)))
+                else:
+                    compiled_models.append(m)
+            if len(active_devices) > 1:
+                evaluators = []
+                for m, d, mode, lab in zip(compiled_models, active_devices, modes, chain_labels):
+  # Compiled evaluators pad every forward to the bucket ladder so the shape
+  # set is finite and warmup can cover all of it (``_warmup_compiled_buckets``).
+  # Eager evaluators forward exact counts, exactly as before. Passed only when
+  # on, so evaluator stand-ins without the parameter keep working.
+                    pad_kw = _pad_kw(mode)
+                    ev = DirectGPUEvaluator(
+                        m, device=d, max_batch=max_batch, n_slots=2,
+                        input_bf16=compact_bf16, legal_bf16=compact_bf16,
+                        **pad_kw,
+                    )
+                    _label_evaluator(ev, lab)
+                    evaluators.append(ev)
   # The degrading dispatcher: a device that raises or stops answering is
   # dropped (announced) and its batch redone on another; during the warm-up
   # below a call may take up to the device startup timeout.
-            names = [str(d) for d in active_devices]
-            labels = list(chain_labels)
-            evaluator = DegradingMultiGPUDispatcher(
-                evaluators, labels=labels, devices=names,
-                startup_timeout_s=device_startup_timeout_s,
-            )
-        else:
-            evaluator = DirectGPUEvaluator(
-                compiled_models[0], device=active_devices[0],
-                max_batch=max_batch, n_slots=2, input_bf16=compact_bf16, legal_bf16=compact_bf16,
-                **pad_kw,
-            )
+                evaluator = DegradingMultiGPUDispatcher(
+                    evaluators, labels=list(chain_labels), devices=[str(d) for d in active_devices],
+                    startup_timeout_s=device_startup_timeout_s,
+                )
+            else:
+                pad_kw = _pad_kw(modes[0])
+                evaluator = DirectGPUEvaluator(
+                    compiled_models[0], device=active_devices[0],
+                    max_batch=max_batch, n_slots=2, input_bf16=compact_bf16, legal_bf16=compact_bf16,
+                    **pad_kw,
+                )
   # Always wrap in ThreadSafeGPUDispatcher so the UCI `SearchWalkers`
   # option can bump walker count at runtime without a race. Lock
   # is uncontended at 1 thread — overhead is ~10ns.
-            evaluator = ThreadSafeGPUDispatcher(evaluator)
+                evaluator = ThreadSafeGPUDispatcher(evaluator)
   # A persistent owner thread is mandatory for compiled evaluators: CUDA graph
   # capture and replay need to stay on the same thread. Single-walker search
   # forwards the direct evaluator's pinned in-place API; concurrent walkers use
   # the heavier coalescer so their requests can still become one GPU batch.
   # For eager evaluation coalescing is only a batching optimization, so
   # --no-coalesce can bypass it.
-        if compile_mode is not None or (coalesce and nw > 1):
-            if compile_mode is not None and nw == 1:
-                evaluator = CUDAOwnerDispatcher(evaluator)
-            else:
-                evaluator = BatchCoalescingDispatcher(evaluator, max_batch=max_batch)
+            if compile_mode is not None or (coalesce and nw > 1):
+                if compile_mode is not None and nw == 1:
+                    evaluator = CUDAOwnerDispatcher(evaluator)
+                else:
+                    evaluator = BatchCoalescingDispatcher(evaluator, max_batch=max_batch)
   # Warm BELOW the eval cache: EncodedEvalCache dedupes identical rows and
   # serves full-hit batches without touching the inner evaluator, so warming
   # through it would compile/capture only the first call's shape on one
   # device and leave every other shape/device cold. Warming the pre-cache
   # chain still runs on the persistent owner/submitter thread (the thread that
   # replays cudagraphs in real searches).
-        warm_target = evaluator
-        if eval_cache_entries > 0:
-            evaluator = EncodedEvalCache(
-                evaluator, max_entries=int(eval_cache_entries),
+            warm_target = evaluator
+            if eval_cache_entries > 0:
+                evaluator = EncodedEvalCache(
+                    evaluator, max_entries=int(eval_cache_entries),
   # The model, not the evaluator stack: it is what declares the
   # encoding, and reading it live means a reload behind the
   # evaluator cannot serve entries built under the old one.
-                encoding_source=models[0],
+                    encoding_source=models[0],
+                )
+            return evaluator, warm_target
+
+        def warm(warm_target) -> None:
+            _warmup_evaluator(
+                warm_target, n_walkers=nw, walker_gather=walker_gather,
+                n_devices=len(active_devices), max_batch=max_batch,
+                input_history_encoding=input_history_encoding,
+                input_extra_features=input_extra_features,
+                compute_relations=use_relations,
             )
-        _warmup_evaluator(
-            warm_target, n_walkers=nw, walker_gather=walker_gather,
-            n_devices=len(active_devices), max_batch=max_batch,
-            input_history_encoding=input_history_encoding,
-            input_extra_features=input_extra_features,
-            compute_relations=use_relations,
-        )
+
+        modes = graph_modes_per_device(base_mode, active_devices) if multi else [base_mode]
+        if multi:
+            _announce_repeated_devices(chain_labels, modes, base_mode)
+        evaluator, warm_target = assemble(modes)
+        failure: str | None = None
+        try:
+            warm(warm_target)
+        except Exception as exc:
+            # A failed build must not live on: its owner thread references the
+            # whole chain (pinned buffers, per-device call threads) forever.
+            _close_chain(evaluator)
+            if not (multi and any(m in _CUDAGRAPH_COMPILE_MODES for m in modes)):
+                raise
+            failure = _one_line(exc)
+        if failure is not None:
+            # The fallback the multi-GPU announcement promises, on the chain
+            # too: rebuild every device without CUDA graphs, said once.
+            _println(
+                f"info string multi-GPU: cudagraph warmup failed on the routing chain "
+                f"({failure}); rebuilding it with compile mode {_MULTI_GPU_NO_CUDAGRAPH_MODE!r}"
+            )
+            evaluator, warm_target = assemble([_MULTI_GPU_NO_CUDAGRAPH_MODE] * len(active_devices))
+            try:
+                warm(warm_target)
+            except Exception:
+                _close_chain(evaluator)
+                raise
+            _println(
+                f"info string multi-GPU: routing chain fell back to compile mode "
+                f"{_MULTI_GPU_NO_CUDAGRAPH_MODE!r}"
+            )
         walker_state["n_walkers"] = nw
         return evaluator
     return build
@@ -650,10 +872,11 @@ def _make_multi_gpu_pucv_factory_builder(
 
     Each factory compiles, constructs, and warms its evaluator on the pool
     worker thread that will later run search. Compile+warmup is serialized
-    across workers (see ``_MULTI_GPU_COMPILE_LOCK``) and uses a no-cudagraph
-    mode when the requested mode would enable CUDA graphs — concurrent
-    cudagraph capture/replay across GPU worker threads is not safe in
-    PyTorch 2.6 (TLS tree_manager + mempool races).
+    across workers (see ``_MULTI_GPU_COMPILE_LOCK``). The requested mode,
+    CUDA graphs included, is kept for the first listing of each physical
+    device; a device listed again builds without CUDA graphs
+    (``graph_modes_per_device``): one device's compiled graphs replay through
+    one cudagraph tree manager, which two concurrent workers cannot share.
     """
     input_history_encoding = str(getattr(models[0], "input_history_encoding", "legacy"))
     input_extra_features = str(getattr(models[0], "input_extra_features", "v1"))
@@ -664,12 +887,16 @@ def _make_multi_gpu_pucv_factory_builder(
     effective_compile_mode = resolve_multi_gpu_compile_mode(
         compile_mode, len(devices), announce=True,
     )
+    labels = device_labels(devices)
+    device_modes = graph_modes_per_device(effective_compile_mode, devices)
+    if len(devices) > 1:
+        _announce_repeated_devices(labels, device_modes, effective_compile_mode)
 
     def build(max_batch: int, gather: int):
         effective_gather = min(max(1, int(gather)), int(max_batch))
         factories = []
-        for model, device in zip(models, devices):
-            def make_one(m=model, d=device):
+        for model, device, label, device_mode in zip(models, devices, labels, device_modes):
+            def make_one(m=model, d=device, lab=label, mode=device_mode):
   # Bind this pool worker thread to its device BEFORE compile /
   # construction / warmup: threads inherit current-device cuda:0.
   # cpu devices (tests) skip set_device.
@@ -690,14 +917,15 @@ def _make_multi_gpu_pucv_factory_builder(
                 if dev.type == "cuda":
   # bare "cuda" yields index None; `or 0` collapses None/0 to the default device.
                     torch.cuda.set_device(dev.index or 0)
-                mode = effective_compile_mode
                 with _MULTI_GPU_COMPILE_LOCK:
+                    # Under the turn: no other worker is capturing meanwhile.
+                    _release_cached_device_memory([d])
                     if mode and _MULTI_GPU_COMPILE_LOCK.revoked_holder_running():
   # A device timed out holding this turn may still be compiling: compiling here
   # too would be the concurrent compile the turn exists to prevent. Build eager
   # (no Inductor compile, no CUDA-graph capture), announced.
                         _println(
-                            f"info string WARNING multi-GPU DEGRADED: device {d} builds without "
+                            f"info string WARNING multi-GPU DEGRADED: device {lab} builds without "
                             f"torch.compile (eager, slower): a device timed out at startup "
                             "may still be compiling"
                         )
@@ -711,6 +939,7 @@ def _make_multi_gpu_pucv_factory_builder(
                         input_history_encoding=input_history_encoding,
                         input_extra_features=input_extra_features,
                         use_relations=use_relations,
+                        label=lab,
                     )
                 return evaluator
 
@@ -731,6 +960,7 @@ def _compile_and_warm_pucv_evaluator(
     input_history_encoding: str,
     input_extra_features: str,
     use_relations: bool,
+    label: str | None = None,
 ):
     """Compile + strict-warmup one multi-GPU worker evaluator.
 
@@ -748,9 +978,10 @@ def _compile_and_warm_pucv_evaluator(
         modes = [compile_mode, _MULTI_GPU_NO_CUDAGRAPH_MODE]
     else:
         modes = [compile_mode]
+    name = label or str(device)
 
-    last_exc: BaseException | None = None
     for i, mode in enumerate(modes):
+        failure: str | None = None
         try:
             if mode:
                 compiled = cast(
@@ -759,11 +990,11 @@ def _compile_and_warm_pucv_evaluator(
                 )
             else:
                 compiled = model
-            pad_kw: dict[str, Any] = {"pad_to_compiled_buckets": True} if mode else {}
             evaluator = DirectGPUEvaluator(
                 compiled, device=device, max_batch=max_batch, n_slots=2,
-                input_bf16=compact_bf16, legal_bf16=compact_bf16, **pad_kw,
+                input_bf16=compact_bf16, legal_bf16=compact_bf16, **_pad_kw(mode),
             )
+            _label_evaluator(evaluator, name)
             steady = _warmup_pucv_evaluator(
                 evaluator,
                 gather=gather,
@@ -777,21 +1008,22 @@ def _compile_and_warm_pucv_evaluator(
             if i > 0:
                 _println(
                     f"info string multi-GPU: cudagraph warmup failed on "
-                    f"{device}; fell back to compile mode {mode!r}"
+                    f"{name}; fell back to compile mode {mode!r}"
                 )
             return evaluator
         except BaseException as exc:
-            last_exc = exc
-            if i + 1 < len(modes):
-                _println(
-                    f"info string multi-GPU: compile/warmup failed on "
-                    f"{device} with mode {mode!r}: {exc!r}; retrying "
-                    f"{modes[i + 1]!r}"
-                )
-                continue
-            raise
-    assert last_exc is not None
-    raise last_exc
+            if i + 1 >= len(modes):
+                raise
+            failure = _one_line(exc)
+        # Outside the handler: the failed attempt's evaluator (referenced by
+        # the traceback) is released before the retry builds another.
+        evaluator = None
+        _println(
+            f"info string multi-GPU: compile/warmup failed on "
+            f"{name} with mode {mode!r}: {failure}; retrying "
+            f"{modes[i + 1]!r}"
+        )
+    raise AssertionError("unreachable: the last mode returns or raises")
 
 
 def _build_engine(
@@ -848,6 +1080,7 @@ def _build_engine(
     options: EngineOptions | None = None,
     gil_profile: bool = False,
     device_startup_timeout_s: float | None = None,
+    verify_evaluator=None,
 ) -> Engine:
     worker = SearchWorker(
         evaluator,
@@ -894,6 +1127,7 @@ def _build_engine(
             search_devices=devices,
             options=opts,
             gil_profile=gil_profile,
+            verify_evaluator=verify_evaluator,
         )
       # The two multi-GPU modes are mutually exclusive; the gumbel branch reuses
       # the same per-device evaluator factories as the pucv pool (identical
@@ -1685,6 +1919,12 @@ def main() -> int:
                 options=startup_options,
                 gil_profile=bool(args.gil_profile),
                 device_startup_timeout_s=device_startup_timeout_s,
+                verify_evaluator=lambda chain: reverify_compiled_evaluator(
+                    chain,
+                    input_history_encoding=input_history_encoding,
+                    input_extra_features=input_extra_features,
+                    compute_relations=use_dynamic_relations,
+                ),
             )
   # Warm the SEARCH path (not just the evaluator) before reporting ready, so
   # the first real `go` doesn't pay cudagraph capture mid-move and forfeit on
