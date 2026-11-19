@@ -284,8 +284,9 @@ nothing.
   `info string move unsearched (0 visits): score is the network's evaluation of this position, not a search result`.
   `go mate N` there answers at once too, so on this path it cannot report a mate
   longer than one move behind a forced first move: the forced root is not
-  searched. `go mate N` also stops at once, in every mode, when the side to move
-  is proven lost.
+  searched. `go mate N` also stops at once when the side to move is proven lost,
+  in every mode except `--search-parallel gumbel`: there the root is never
+  marked solved, so `go mate N` runs to its time cap even with a mate found.
 - In every search mode, and from the tablebase root shortcut, a move that mates is
   reported as `score mate 1`, and a move after which the opponent mates next move
   as `score mate -1` (not when the move makes a draw claimable), whether or not
