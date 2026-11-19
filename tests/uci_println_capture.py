@@ -12,10 +12,13 @@ from collections.abc import Callable
 
 
 def capture_into(sink: list[str]) -> Callable[[str], bool]:
-    """A `_println` replacement that appends to ``sink`` and reports a write."""
+    """A `_println` replacement that appends to ``sink`` and reports a write.
+
+    One call may carry several lines (`_publish_bestmove` writes a prelude,
+    the guard line and ``bestmove`` at once); each becomes its own entry."""
 
     def println(line: str) -> bool:
-        sink.append(line)
+        sink.extend(line.split("\n"))
         return True
 
     return println
