@@ -326,6 +326,28 @@ def test_prepare_root_records_a_pruned_stalemate_as_an_available_draw() -> None:
         pool.close()
 
 
+def test_prepare_root_keeps_the_draws_when_pruning_would_leave_one_move() -> None:
+    """Kxd7 stalemates, Kf8 is mated: pruning would leave one move, so the
+    drawing move stays in the search (the classic `gumbel_c` rule)."""
+    board = chess.Board("4K2k/3q1P2/6Q1/8/8/8/8/8 w - - 0 1")
+    expected = {int(move_to_index(m, board)) for m in board.legal_moves}
+    pool = _rpg_pool()
+    try:
+        tree = MCTSTree()
+        tree.reserve(1_000, 10_000)
+        pool.prepare_root(
+            tree=tree, board=board, pol_logits=np.zeros(4672, dtype=np.float32),
+            wdl_logits=_WINNING_WDL,
+        )
+        st = pool._state
+        assert st is not None
+        assert set(st.search_legal.tolist()) == expected
+        assert not st.pruned_root_draws
+        assert st.finished_action is None
+    finally:
+        pool.close()
+
+
 # Mated in one after every move; some moves let the OPPONENT claim a 50-move
 # draw on its reply (clock 99 + reversible reply). The opponent can decline.
 CLAIMABLE_ONLY = [
@@ -478,10 +500,15 @@ DRAW_ESCAPES = [
 @pytest.mark.parametrize(("fen", "draw"), DRAW_ESCAPES)
 def test_a_lost_root_plays_the_pruned_drawing_move(path: str, fen: str, draw: str) -> None:
     if path == "classic" and fen == DRAW_ESCAPES[1][0]:
-        pytest.skip(
-            "classic: pruning leaves one move, which the shared gumbel_c root "
-            "returns without simulating, so no proof (and no escape) can arise",
-        )
+        # Pruning no longer leaves Kf8 alone: both moves are searched. But
+        # under this unseeded optimistic random net Black's reply search
+        # settles on Qe7+ Kxe7 (a stalemate, value 0) and does not reliably
+        # try Qd8#, so Kf8 also searches at ~0 and the tie goes to the prior
+        # (seed-dependent). That is search strength on a degenerate net, not
+        # the pruning defect; the deterministic classic cases are
+        # tests/test_root_draw_pruning.py and
+        # test_uci_classic_searches_a_root_with_one_nondrawing_move.
+        pytest.skip("classic: Kf8 vs Kxd7 is a value tie under this optimistic fixture")
     worker = _make_worker(path, optimistic=True)
     infos: list[dict[str, Any]] = []
     try:
@@ -592,6 +619,28 @@ def test_drawing_escape_honours_searchmoves() -> None:
     assert worker._drawing_escape_action(board, None) == draw_idx
     allowed = {int(move_to_index(m, board)) for m in others}
     assert worker._drawing_escape_action(board, allowed) is None
+
+
+def test_drawing_escape_honours_only_a_classic_survivor_that_draws() -> None:
+    """The classic runner's below-0 fallback returns a pruned draw that is not a
+    tree child; that survivor is played. A non-child survivor that does NOT end
+    the game drawn (a stale index from another search) is never played."""
+    board = chess.Board("7k/8/6KP/8/8/8/8/8 w - - 0 1")
+    stalemate = chess.Move.from_uci("h6h7")
+    walk = chess.Move.from_uci("g6f6")
+    searched = [m for m in board.legal_moves if m not in (stalemate, walk)]
+    worker = SearchWorker.__new__(SearchWorker)
+    tree = MCTSTree()
+    tree.reserve(64, 640)
+    rid = int(tree.add_root(1, 0.0))
+    tree.expand(rid, np.array([move_to_index(m, board) for m in searched], dtype=np.int32),
+                np.full(len(searched), 1.0 / len(searched)))
+    worker._tree, worker._root_id = tree, rid
+    worker._last_gumbel_action_idx = int(move_to_index(stalemate, board))
+    assert worker._drawing_escape_action(board, None) == int(move_to_index(stalemate, board))
+    assert worker._drawing_escape_action(board, {int(move_to_index(walk, board))}) is None
+    worker._last_gumbel_action_idx = int(move_to_index(walk, board))
+    assert worker._drawing_escape_action(board, None) is None
 
 
 # --- review round 3: the longest loss under a starved mate walk ---------------

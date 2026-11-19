@@ -69,6 +69,48 @@ def test_uci_classic_searches_a_root_with_one_nondrawing_move(
         actions, visits = worker._tree.get_children_visits(worker._root_id)
         assert set(actions.tolist()) == expected
         assert int(visits.sum()) == result.nodes == 64
+        # Neutral leaves let 64 visits find Kf8 Qd8#: the drawing move is
+        # played at an exact 0 whatever the root's own value.
+        assert result.bestmove_uci == "e8d7"
+        assert result.score_cp == 0
+    finally:
+        worker.close()
+
+
+class SideToMoveWinsEvaluator:
+    """Every position looks won for the side to move: a root move visited
+    once searches at exactly -1 (the opponent's leaf looks won for it)."""
+
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        del relations
+        wdl = np.broadcast_to(np.array([8.0, 0.0, -8.0], np.float32), (len(x), 3)).copy()
+        return np.zeros((len(x), POLICY_SIZE), np.float32), wdl
+
+
+def test_uci_classic_plays_the_pruned_draw_when_every_searched_move_is_below_zero() -> None:
+    """h7 stalemates. Two king moves plus the stalemate are allowed, so the
+    winning-looking root prunes h7 and searches the two king moves once each:
+    both come back at -1, unproven (neither is mated). The runner's own below-0
+    fallback -- not the proof-based escape -- must reach the UCI answer."""
+    board = chess.Board("7k/8/6KP/8/8/8/8/8 w - - 0 1")
+    draw = int(move_to_index(chess.Move.from_uci("h6h7"), board))
+    worker = SearchWorker(
+        SideToMoveWinsEvaluator(), device="cpu", n_walkers=1, chunk_sims=2,
+        gumbel_cfg=GumbelConfig(topk=16, add_noise=False, temperature=0.0),
+    )
+    try:
+        result = worker.run(board, stop_event=threading.Event(), deadline=Deadline(5_000),
+                            max_nodes=2, root_moves=("h6h7", "g6f5", "g6h5"))
+        assert worker._tree is not None
+        assert worker._root_id is not None
+        actions, visits = worker._tree.get_children_visits(worker._root_id)
+        assert draw not in actions.tolist(), "the draw stays pruned"
+        assert visits.tolist() == [1, 1]
+        assert worker._tree.get_solved_status(worker._root_id) == 0, "fixture: not proven"
+        assert result.bestmove_uci == "h6h7"
+        assert result.score_cp == 0
     finally:
         worker.close()
 

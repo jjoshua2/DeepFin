@@ -3520,10 +3520,25 @@ class SearchWorker:
         the root is lost on the tree (classic, pool) or drawn only through the
         pruned draw (root-parallel), and the search would play a losing move.
         Only a move that ends the game drawn on the board counts
-        (`root_forced_draw_actions`), not one the opponent may merely claim."""
+        (`root_forced_draw_actions`), not one the opponent may merely claim.
+
+        The classic runner makes the same choice itself, before any proof,
+        when every move it searched scored below 0 (`gumbel_c` pruned-draw
+        fallback): its survivor is then a pruned draw that is not a tree child,
+        which `_emitted_action` cannot select, so it is honoured here."""
         tree, root_id = self._tree, self._root_id
         if tree is None or root_id is None:
             return None
+        # getattr: tree-only workers built without __init__ (the tests' and
+        # tools' bare instances) have no classic survivor.
+        gi = getattr(self, "_last_gumbel_action_idx", None)
+        if (
+            gi is not None
+            and tree.find_child(root_id, int(gi)) == -1
+            and (allowed_root_indices is None or int(gi) in allowed_root_indices)
+            and root_forced_draw_actions(board, [int(gi)])
+        ):
+            return int(gi)
         status = int(tree.get_solved_status(root_id))
         if status not in (-1, 2):
             return None
@@ -4478,7 +4493,7 @@ class SearchWorker:
                 score_mate=None,
                 multipv=1 if self._multi_pv > 1 else None,
                 wdl=(0, 1000, 0) if self._show_wdl else None,
-                string="every searched move is proven lost; playing a move that draws",
+                string="every searched move is lost or below a draw; playing a move that draws",
                 hashfull=self._hashfull_permille(),
                 seldepth=max(self._seldepth, 1),
             )

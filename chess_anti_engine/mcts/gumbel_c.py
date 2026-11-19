@@ -75,7 +75,9 @@ from chess_anti_engine.mcts.gumbel import (
     target_log_prior,
 )
 from chess_anti_engine.mcts.root_tactics import (
+    forced_draw_actions_cboard,
     immediate_terminal_cboard_policy_or_draws,
+    one_hot_root_policy,
 )
 from chess_anti_engine.mcts.sampling import sample_action_with_temperature
 from chess_anti_engine.mcts.solved_root import SolvedRootWitnessUnavailable
@@ -1242,6 +1244,7 @@ def run_gumbel_root_many_c(
   # non-trivial cost here -- exactly ONCE per board, same as before the split;
   # the mutating pass consumes `_root_preps` and recomputes nothing.
     _root_preps: list[_RootPrep | None] = [None] * n_boards
+    root_pruned_draws: list[list[int]] = [[] for _ in range(n_boards)]
     for i in range(n_boards):
         root_cb = root_cboards[i]
         legal_idx = (
@@ -1283,10 +1286,21 @@ def run_gumbel_root_many_c(
         if float(root_qs[i]) > 0.0 and legal_idx.size > 1 and terminal_draws:
             draw_arr = np.fromiter(terminal_draws, dtype=np.int32)
             keep = ~np.isin(legal_idx, draw_arr)
-            # A pruned singleton is not a forced move: the shortcut below
-            # would return it without testing whether the available draw is
-            # better. Keep the draw alternatives when only one move survives.
+            # Prune only while at least two moves survive. A single survivor
+            # is not a forced move: the one-move shortcut below would return
+            # it with zero simulations even when it loses and the pruned move
+            # draws. Leaving the draws in makes this an ordinary unpruned root
+            # (exactly what a root with root_q <= 0 searches), where each draw
+            # competes on its exact terminal value 0.
             if np.count_nonzero(keep) > 1:
+                # Remember the pruned moves that END the game drawn on the
+                # board (not mere reply-claims) for the post-search check in
+                # section 4: if every searched move comes back below 0, the
+                # premise of the prune (root_q > 0) was wrong and the draw is
+                # played instead.
+                root_pruned_draws[i] = forced_draw_actions_cboard(
+                    root_cb, legal_idx[~keep].tolist(),
+                )
                 legal_idx = legal_idx[keep]
                 if compact_ll is not None:
                     compact_ll = compact_ll[keep]
@@ -2073,6 +2087,21 @@ def run_gumbel_root_many_c(
             values_out[i] = float(completed_q[j_best])
         else:
             values_out[i] = root_q_i
+
+  # Pruned-draw fallback. A winning-looking root (root_q > 0) left its
+  # on-board drawing moves out of the search. When every move the search DID
+  # visit comes back below 0 (a proven-lost root is the extreme case), the
+  # draw's exact 0 beats all of them by the search's own values, so it is
+  # played (the lowest-index one if several) -- one-hot, value 0, like the
+  # other exact root shortcuts. Fires only on roots that pruned a forced draw;
+  # every other root is unchanged.
+        _pruned = root_pruned_draws[i]
+        if _pruned:
+            _visited = visits > 0
+            if _visited.any() and float(completed_q[_visited].max()) < 0.0:
+                probs_out[i], actions_out[i], values_out[i] = one_hot_root_policy(
+                    min(_pruned), value=0.0,
+                )
 
   # Build legal masks
     legal_masks_out: list[np.ndarray] = []

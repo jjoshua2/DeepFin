@@ -31,6 +31,7 @@ from chess_anti_engine.encoding.cboard_encode import encode_cboard
 from chess_anti_engine.mcts import _mcts_tree
 from chess_anti_engine.mcts import gumbel_c as gumbel_c_mod
 from chess_anti_engine.mcts.gumbel import GumbelConfig
+from chess_anti_engine.mcts.root_tactics import forced_draw_actions
 from chess_anti_engine.mcts.gumbel_c import (
     root_coverage_miss_count,
     root_support_narrowed_count,
@@ -719,7 +720,14 @@ def test_the_winning_root_draw_prune_rebuilds_a_selfplay_carried_root(
     )
     assert np.array_equal(arm[0][0], ctl[0][0]), "stored policy row diverged"
     assert float(arm[2][0]) == float(ctl[2][0]), "stored root value diverged"
-    assert set(np.nonzero(arm[0][0])[0].tolist()) <= support
+    row = set(np.nonzero(arm[0][0])[0].tolist())
+    if not row <= support:
+        # The pruned-draw fallback: every searched move came back below 0 and
+        # a pruned move ends the game drawn on the board (here the 50-move
+        # clock reaching 100), so the row is that draw, one-hot, value 0.
+        assert len(row) == 1
+        assert float(arm[2][0]) == 0.0
+        assert forced_draw_actions(board, sorted(row)) == sorted(row)
 
 
 def test_the_root_support_gate_is_equality_not_coverage() -> None:
