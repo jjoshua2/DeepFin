@@ -168,7 +168,9 @@ def _ponder_engine(monkeypatch, *, advance_ms=0):
     # behaviour is tested in tests/test_uci_deadline_watchdog.py.
     monkeypatch.setattr(engine._watchdog, "arm", lambda _entry: None)
     engine.dispatch(CmdPosition(None, ("e2e4", "e7e5")))
-    engine.dispatch(CmdGo(GoArgs(ponder=True, movetime_ms=100)))
+    # movetime 128 with no overhead: a 100 ms real deadline (capped 8 + 20 ms
+    # before the watchdog's last moment; see `_fit_movetime_limits`).
+    engine.dispatch(CmdGo(GoArgs(ponder=True, movetime_ms=128)))
     assert entered.wait(1)
     assert engine._pending_real_limits is not None
     worker.advance_root.reset_mock()

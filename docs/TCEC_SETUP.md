@@ -266,8 +266,19 @@ nothing.
 ## 5. Time management in plain terms
 
 - `movetime N`: search about `N` ms less `MoveOverheadMs`, stopping one measured
-  chunk early so the answer is not late. `movetime` is not a clock: the search
-  is never shorter than 20 ms, and the watchdog's last moment is 8 ms before `N`.
+  chunk early so the answer is not late. The search's deadline is never shorter
+  than 20 ms and never later than `N` less 28 ms: the watchdog's last moment, 8 ms
+  before `N`, less 20 ms for the search to finish its last chunk after the
+  deadline. The watchdog's last moment is 8 ms before `N` for every `N`. A
+  `movetime` under 48 ms has no room for a 20 ms search before that, so it is not
+  searched: the move is answered at once
+  (`info string movetime too short to search: ... source=... move=...`) from the
+  same sources, in the same order, as a clock too short to search (below), with
+  any fresh evaluation finished by `N` less 8 ms.
+- Every move's clock starts when the engine's main loop reads the `go` line (for
+  pondering, the `ponderhit` line). Time a line spends unread in the pipe while
+  the engine is still handling an earlier command is not counted, so
+  `MoveOverheadMs` must cover it along with the GUI's own latency.
 - Clock games (`wtime` / `btime`, with `winc` / `binc` and `movestogo` if sent):
   a reserve is set aside, half of the increment is spent per move, and the rest of
   the clock is divided over an estimate of the moves left that comes from the
@@ -529,9 +540,13 @@ the reply when a search could not start, a clock too short to search, a refused
 | `1` | Startup failed before `readyok` (`info string engine startup failed: ...`, and `deepfin: engine startup failed: ...` on stderr); a search-option flag out of range or a multi-GPU flag with one device; the health check at a game boundary failed (below); or `quit` while a search that ignored `stop` is still running. |
 | `2` | Refusal before anything starts: a required C extension is missing, stale or broken (stderr names the fix; nothing on stdout), or a bad command line (for example no `--checkpoint`). |
 
-**A failed search never loses on time.** The move then comes from the network's
-cached root policy, one bounded fresh evaluation, or the first legal move, and
-says so on an `info string` with `bestmove_fallback_used=N source=... move=...`.
+**A failed search never loses on time.** The move then comes from, in this
+order: the previous search's choice for this position (`source=prev_tree`, the
+tree's most-visited move at its own root, recorded between chunks), the
+network's cached root policy for this position, the previous search's choice
+recorded for the positions two plies on (`source=prev_tree`), one bounded fresh
+evaluation, or the first legal move, and says so on an `info string` with
+`bestmove_fallback_used=N source=... move=...`.
 These lines mean something went wrong and are worth a report:
 
 - `info string search error: ...`, followed by
@@ -539,10 +554,9 @@ These lines mean something went wrong and are worth a report:
 - `info string search not started; bestmove_fallback_used=...`;
 - `info string search did not stop in time; answering unsearched ...` (a search
   that ignored `stop` for 1 s; it is parked and later moves are answered at once
-  while it still owns the engine: from the cached root policy when it is for
-  that position, else the previous search's choice for it (`source=prev_tree`,
-  recorded between chunks for the positions two plies on), else the first legal
-  move -- no fresh evaluation runs while the parked search holds the evaluator);
+  while it still owns the engine, from the same sources in the same order except
+  the fresh evaluation, which never runs while the parked search holds the
+  evaluator);
 - `info string search incomplete reason=...` (a ponder transition past its
   deadline, or a solved root whose proof names no move; the latter is a property
   of the position, not a fault).
@@ -554,9 +568,10 @@ answered by the engine itself:
 search is past its deadline and has completed no chunk for 4 chunk times (at least
 300 ms, at most 2 s), or unconditionally 8 ms before the real budget: the `movetime`,
 or in a clock game the remaining clock less `MoveOverheadMs` (the GUI charges its
-own pipe latency to the engine's clock). The move is a fallback (the last PV's
-first move, the root policy, the previous search's choice for this position, or
-the first legal move).
+own pipe latency to the engine's clock). The move is a fallback, in this order:
+the last PV's first move, the previous search's choice for this position (its
+root), the cached root policy, the previous search's choice for the positions
+two plies on, or the first legal move (no fresh evaluation).
 `go infinite`, `go ponder` before `ponderhit`, and pure `go nodes` / `go depth` have
 no watchdog. On a heavily loaded CPU a very short `movetime` can trip it on a
 healthy search (section 9). The 8 ms is the watchdog's wake-up latency (measured
@@ -570,7 +585,11 @@ measured p99 0.4 ms beside a thread holding it 1 ms at a stretch, 2.2 ms at 2 ms
 stretches, 8 ms beside a thread that never releases it voluntarily (5 ms switch
 interval), 16 ms with two such threads. The engine runs no such thread during a
 search, but anything else in the process that does makes the last-moment answer
-late by that much.
+late by that much. One such call is the engine's own: growing the search tree
+(the reserve made before a chunk, as the tree outgrows its arrays) holds the GIL
+for about 36 ms per million nodes reserved on the development machine, so the
+8 ms margin is not guaranteed while one is in progress, and pondering at clocks
+under about 200 ms can overrun.
 
 **Unhealthy state and the game boundary.** Three counted fallback moves in a row,
 or a failed search-path re-warm at `isready`, print

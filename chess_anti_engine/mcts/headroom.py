@@ -1,7 +1,9 @@
 """Arena headroom for lock-free concurrent descents on one shared ``MCTSTree``.
 
-The walker pool and the multi-device PUCV pool descend the tree from several
-threads without ``tree_lock`` while other threads expand leaves under it. An
+The walker pool, the multi-device PUCV pool and the root-parallel Gumbel pool
+(each group in its own candidate subtree, all in one arena) descend the tree
+from several threads without ``tree_lock`` while other threads expand leaves
+under it. An
 expansion that outgrows the node or child arrays reallocs them, and a thread
 mid-descent then reads freed memory. ``reserve_concurrent_headroom`` grows the
 arrays up front so that a run of ``sims`` simulations cannot realloc.

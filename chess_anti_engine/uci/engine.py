@@ -65,6 +65,7 @@ from .search import SearchResult, SearchWorker
 from .time_manager import (
     GO_IMPLICIT_CAP_MS,
     _DEFAULT_MOVES_REMAINING,
+    _MIN_DEADLINE_MS,
     _OPTIMUM_FRACTION,
     Deadline,
     SearchLimits,
@@ -254,6 +255,15 @@ _WATCHDOG_STALL_CEIL_MS = 2000.0
 _WATCHDOG_STALL_NO_ESTIMATE_MS = 1000.0
 _WATCHDOG_SCALE_DECAY = 0.9
 _WATCHDOG_LAST_MOMENT_MS = 8.0
+# A `movetime` search's deadline sits at least this far before the watchdog's
+# last moment (`_fit_movetime_limits`), the movetime analogue of the clock's
+# `_CLOCK_SEARCH_SLACK_MS`: a search answers up to one small chunk plus its
+# result build after its deadline. With the deadline AT the last moment
+# (`go movetime 28`, 20 ms deadline) the watchdog answered 10-12 of 12 moves on
+# a loaded CPU, each one a counted fallback; 12 ms of slack (`movetime 40`) still
+# lost 2 of 12; at 22 ms (`movetime 50`) none in any mode. Below 48 ms there is
+# no room for a 20 ms search and this slack, and the move is answered at once.
+_MOVETIME_FINISH_SLACK_MS = 20.0
 # `close()` waits this long for a search / helper; a thread still alive after
 # that is left to `__main__`, which hard-exits instead of finalizing under it.
 _SHUTDOWN_JOIN_S = 3.0
@@ -1079,7 +1089,7 @@ class Engine:
         elif isinstance(cmd, CmdStop):
             self._handle_stop()
         elif isinstance(cmd, CmdPonderHit):
-            self._handle_ponderhit()
+            self._handle_ponderhit(cmd)
         elif isinstance(cmd, CmdSetOption):
             self._handle_setoption(cmd)
         elif isinstance(cmd, CmdSearchConfig):
@@ -1391,10 +1401,11 @@ class Engine:
         # busy-worker answer when the wait below raises -- is a move of a game,
         # so a later isready must not run the boundary checks.
         self._in_game = True
-        # The move clock starts at `go` receipt: the bounded wait for a live
-        # search, tree sync (including any reuse work) and thread start-up
-        # below are all charged to this move's deadline.
-        go_received_at = time.monotonic()
+        # The move clock starts at `go` receipt (when the stdin reader read
+        # it): the bounded wait for a live search, tree sync (including any
+        # reuse work) and thread start-up below are all charged to this move's
+        # deadline.
+        go_received_at = _receipt_time(cmd.received_at)
         self._go_received_at = go_received_at
         # A timeout cannot transfer ownership of the still-live worker; it is
         # bounded by this move's own clock, then `dispatch` answers from the
@@ -1433,6 +1444,7 @@ class Engine:
             pieces=chess.popcount(search_board.occupied),
             min_chunk_ms=self._measured_min_chunk_ms(),
         )
+        limits = _fit_movetime_limits(cmd.args, limits)
         if limits.clock_exhausted:
             self._answer_clock_exhausted(cmd.args, search_board, limits, go_received_at)
             return
@@ -1456,8 +1468,9 @@ class Engine:
                 real_board.push(self._popped_ponder_move)
             # Bare FEN/startpos already names the real board; it still needs
             # a clocked handoff on ponderhit without any root advancement.
-            self._pending_real_limits = limits_from_go(
-                replace(cmd.args, ponder=False),
+            real_args = replace(cmd.args, ponder=False)
+            self._pending_real_limits = _fit_movetime_limits(real_args, limits_from_go(
+                real_args,
                 side_to_move_is_white=(real_board.turn == chess.WHITE),
                 move_overhead_ms=overhead,
                 time_budget_scale=self._options.time_budget_scale,
@@ -1465,7 +1478,7 @@ class Engine:
                 moves_horizon=self._options.moves_horizon,
                 pieces=chess.popcount(real_board.occupied),
                 min_chunk_ms=self._measured_min_chunk_ms(),
-            )
+            ))
         else:
             self._pending_real_limits = None
         self._pending_real_budget_ms = (
@@ -1558,6 +1571,11 @@ class Engine:
         clock less ``MoveOverheadMs`` and the search slack leaves less than the
         minimum search time (`SearchLimits.clock_exhausted`). Searching for the
         old 20 ms floor answered `go wtime 1` at ~21 ms and `go wtime 22` at 22.8 ms.
+        A ``movetime`` too short for the minimum search plus its finishing slack
+        before the watchdog's last moment (`_fit_movetime_limits`, under 48 ms)
+        is answered here too: searched, ``go movetime 5`` and ``10`` answered
+        10-17 ms past their limit, and from 20 to 47 ms the search raced the
+        watchdog (each lost race a counted fallback).
 
         The move is the best thing already known, cheapest first: the reused
         tree's most-visited move at this position, the previous tree's choice
@@ -1581,23 +1599,28 @@ class Engine:
         clock_left_ms = self._move_budget_ms(args, white_to_move=white) or 0
         # The latest the answer may be written (less the watchdog's own margin),
         # and no more than a small share of what is left for the moves after it.
-        answer_by_ms = min(
-            clock_left_ms - _WATCHDOG_LAST_MOMENT_MS,
-            (time.monotonic() - go_received_at) * 1000.0
-            + max(_CLOCK_EXHAUSTED_EVAL_FLOOR_S * 1000.0,
-                  _CLOCK_EXHAUSTED_EVAL_CLOCK_SHARE * clock_left_ms),
+        answer_by_ms = _at_once_answer_by_ms(
+            clock_left_ms, (time.monotonic() - go_received_at) * 1000.0,
         )
         searchmoves = tuple(args.searchmoves)
         move, source = self._clock_exhausted_move(board, searchmoves, answer_by_ms, go_received_at)
         if not self._claim_answer(gen):
             return
         with _answer_owner():
-            _println(
-                f"info string clock too short to search: {clock_ms} ms on the clock, "
-                f"MoveOverheadMs {self._options.move_overhead_ms}, deadline "
-                f"{max(0, int(limits.deadline_ms or 0))} ms; answering at once "
-                f"source={source} move={move}"
-            )
+            if args.movetime_ms is not None:
+                _println(
+                    f"info string movetime too short to search: movetime {args.movetime_ms} "
+                    f"ms leaves a {max(0, int(limits.deadline_ms or 0))} ms deadline, under "
+                    f"the {_MIN_DEADLINE_MS} ms minimum search; answering at once "
+                    f"source={source} move={move}"
+                )
+            else:
+                _println(
+                    f"info string clock too short to search: {clock_ms} ms on the clock, "
+                    f"MoveOverheadMs {self._options.move_overhead_ms}, deadline "
+                    f"{max(0, int(limits.deadline_ms or 0))} ms; answering at once "
+                    f"source={source} move={move}"
+                )
             # Through the bestmove guard like every other answer: this go
             # printed no PV, so it adds no line, but it stays the one exit.
             self._publish_bestmove(gen, move)
@@ -1736,6 +1759,7 @@ class Engine:
             )
         except Exception:
             return _GO_WAIT_NO_CLOCK_S
+        limits = _fit_movetime_limits(cmd.args, limits)
         if cmd.args.ponder or limits.deadline_ms is None:
             return _GO_WAIT_NO_CLOCK_S
         deadline_s = max(0.0, limits.deadline_ms / 1000.0)
@@ -1773,7 +1797,7 @@ class Engine:
             # Stop remains requested. Keep the owner available for a later join.
             _println(f"info string {exc}")
 
-    def _handle_ponderhit(self) -> None:
+    def _handle_ponderhit(self, cmd: CmdPonderHit | None = None) -> None:
         """Opponent played our predicted move. Convert open-ended ponder
         search into a time-bounded real search, keeping the MCTS tree.
         """
@@ -1792,7 +1816,9 @@ class Engine:
             if self._ponderhit_at is not None:
                 return
             ponder_stop = self._stop_event
-            self._ponderhit_at = time.monotonic()
+            # The real phase's clock started when the stdin reader read the
+            # ponderhit, not when this handler got the GIL.
+            self._ponderhit_at = _receipt_time(None if cmd is None else cmd.received_at)
             self._ponderhit_event.set()
             gen = self._search_gen
         real = self._pending_real_limits
@@ -4211,6 +4237,52 @@ class Engine:
             return None
         move = box.get("move")
         return move if isinstance(move, str) else None
+
+
+def _at_once_answer_by_ms(clock_left_ms: float, elapsed_ms: float) -> float:
+    """When (ms after the clock started) an at-once answer must be written,
+    ``elapsed_ms`` into a move whose real budget is ``clock_left_ms``: no later
+    than the watchdog's last moment (the budget less `_WATCHDOG_LAST_MOMENT_MS`),
+    and spending at most a small share of the clock (never less than the floor)
+    on the eval that may produce it."""
+    return min(
+        clock_left_ms - _WATCHDOG_LAST_MOMENT_MS,
+        elapsed_ms + max(_CLOCK_EXHAUSTED_EVAL_FLOOR_S * 1000.0,
+                         _CLOCK_EXHAUSTED_EVAL_CLOCK_SHARE * clock_left_ms),
+    )
+
+
+def _receipt_time(received_at: float | None) -> float:
+    """The clock origin of a `go` / `ponderhit`: when the main loop read its line
+    (the command's ``received_at``), never later than now; now when unstamped.
+    The main loop is the stdin reader, so time a line spends unread in the pipe
+    while the loop handles an earlier command is NOT counted (MoveOverheadMs
+    must cover it); the stamp only charges the parse-and-dispatch time before
+    the handler runs."""
+    now = time.monotonic()
+    return now if received_at is None else min(float(received_at), now)
+
+
+def _fit_movetime_limits(args: GoArgs, limits: SearchLimits) -> SearchLimits:
+    """``go movetime N``: the search's hard deadline is never later than
+    ``N - _WATCHDOG_LAST_MOMENT_MS - _MOVETIME_FINISH_SLACK_MS``: the watchdog's
+    last moment less the time a search takes to finish after its deadline (a
+    deadline past the last moment made that moment the deadline itself, and the
+    answer came after ``N``). A movetime that leaves less than the
+    `_MIN_DEADLINE_MS` minimum search before that is `clock_exhausted`: answered
+    at once, like a clock that cannot pay for a search. Other limits are
+    returned unchanged."""
+    if (args.movetime_ms is None or limits.ponder or limits.infinite
+            or limits.deadline_ms is None):
+        return limits
+    latest = math.floor(
+        args.movetime_ms - _WATCHDOG_LAST_MOMENT_MS - _MOVETIME_FINISH_SLACK_MS,
+    )
+    if latest < _MIN_DEADLINE_MS:
+        return replace(limits, deadline_ms=max(0, latest), clock_exhausted=True)
+    if limits.deadline_ms > latest:
+        return replace(limits, deadline_ms=latest)
+    return limits
 
 
 def _fresh_eval_budget_s(deadline: Deadline) -> float | None:
