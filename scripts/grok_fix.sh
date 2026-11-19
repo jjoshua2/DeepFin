@@ -59,7 +59,7 @@ git -C "$REPO" worktree add -b "$BRANCH" "$WT" "$BASE_SHA"
 printf 'worktree: %s\nbranch: %s\nbase: %s\nraw_output: %s\n' "$WT" "$BRANCH" "$BASE_SHA" "$RAW"
 
 if timeout --kill-after=5s "${DURATION}s" grok --cwd "$WT" --prompt-file "$PROMPT" \
-    --permission-mode acceptEdits --max-turns 40 --no-subagents --output-format plain \
+    --permission-mode acceptEdits --max-turns "${GROK_FIX_MAX_TURNS:-300}" --no-subagents --output-format plain \
     > "$RAW" 2>&1; then
     GROK_EXIT=0
 else

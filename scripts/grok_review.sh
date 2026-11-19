@@ -6,7 +6,10 @@ umask 077
 
 REPO="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
 OUT_DIR="${GROK_REVIEW_OUT:-${TMPDIR:-/tmp}/grok_review}"
-GROK_REVIEW_TIMEOUT_SECONDS="${GROK_REVIEW_TIMEOUT_SECONDS:-1800}"
+GROK_REVIEW_TIMEOUT_SECONDS="${GROK_REVIEW_TIMEOUT_SECONDS:-5400}"
+# Turn budget. 25 ran out before any finding was written on large diffs
+# (2026-11-19: three passes, zero output); usage is not the constraint.
+GROK_REVIEW_MAX_TURNS="${GROK_REVIEW_MAX_TURNS:-300}"
 MODE=""
 TARGET=""
 FOCUS=""
@@ -365,7 +368,7 @@ fi
 # returns at once), so turn it off and verify the result rather than assume it.
 set +m
 setsid timeout --kill-after=5s "${GROK_REVIEW_TIMEOUT_SECONDS}s" \
-    grok --prompt-file "$PROMPT" --cwd "$SNAP" --max-turns 25 \
+    grok --prompt-file "$PROMPT" --cwd "$SNAP" --max-turns "$GROK_REVIEW_MAX_TURNS" \
         --no-subagents --output-format plain > "$RAW" 2>&1 &
 GROK_PGID=$!
 # setsid runs in the child after the fork, so the group appears a moment after
