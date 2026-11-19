@@ -57,7 +57,10 @@ _MIN_MOVES_REMAINING_NO_INC = 20
 # searching on would flag before those moves are played, so every move is
 # answered at once (`clock_exhausted`) from the tree / previous search / root
 # policy. Self-play at 10+0 drained the last 2 s at ~33 ms per minimal search and
-# then flagged around move 150; an at-once answer costs ~1-7 ms.
+# then flagged around move 150; an at-once answer costs ~1-7 ms. With an
+# increment each search costs only what the increment does not pay back, and a
+# `movestogo` refill caps how many searches the clock must fund
+# (`_at_once_threshold_ms`).
 _SUDDEN_DEATH_AT_ONCE_MOVES = _MIN_MOVES_REMAINING_NO_INC
 # A minimal search: the `_MIN_DEADLINE_MS` deadline, then one smallest chunk
 # (`MIN_SEARCH_CHUNK_SIMS` sims; its wall time from the engine's chunk-time
@@ -182,25 +185,25 @@ def limits_from_go(
     sudden_death_low = False
     movetime_ms = args.movetime_ms
     is_movetime = movetime_ms is not None
+    remaining, inc = _select_clock(args, side_to_move_is_white)
+    if remaining is not None:
+        # Also with `movetime`: a GUI that sends both must not see the
+        # engine spend a movetime its clock does not have.
+        clock_cap_ms = max(
+            0, int(remaining) - max(0, int(move_overhead_ms)) - _CLOCK_SEARCH_SLACK_MS,
+        )
     if movetime_ms is not None:
         deadline_ms = max(_MIN_DEADLINE_MS, int(movetime_ms))
     else:
-        remaining, inc = _select_clock(args, side_to_move_is_white)
-        if remaining is not None:
-            clock_cap_ms = max(
-                0, int(remaining) - max(0, int(move_overhead_ms)) - _CLOCK_SEARCH_SLACK_MS,
-            )
         if remaining is not None:
             inc_v = inc or 0
             sudden_death_low = (
                 optimum_fraction > 0.0
-                and inc_v <= 0
-                and not (args.movestogo and args.movestogo > 0)
                 and args.nodes is None
                 and args.depth is None
                 and args.mate is None
                 and int(remaining) - max(0, int(move_overhead_ms))
-                < _SUDDEN_DEATH_AT_ONCE_MOVES * minimal_search_cost_ms(min_chunk_ms)
+                < _at_once_threshold_ms(minimal_search_cost_ms(min_chunk_ms), inc_v, args.movestogo)
             )
             if optimum_fraction <= 0.0:
   # OFF sentinel: reproduce the pre-time-management allocation EXACTLY — fixed
@@ -331,6 +334,23 @@ def limits_from_go(
         implicit_cap=implicit_cap,
         clock_exhausted=clock_exhausted,
     )
+
+
+def _at_once_threshold_ms(search_cost_ms: float, inc_ms: int, movestogo: int | None) -> float:
+    """The clock (less MoveOverheadMs) below which every move is answered at
+    once: it must pay for one minimal search now, and for the searches it has
+    to fund before anything refills it. That is `_SUDDEN_DEATH_AT_ONCE_MOVES`
+    searches, or ``movestogo`` when the allotment refills sooner, each costing
+    what the increment it earns does not pay back. Sudden death is the
+    ``inc 0`` case. An increment at or above the search cost leaves only the
+    one-search floor; before 2026-11-19 any increment or ``movestogo`` skipped
+    the rule, so ``wtime 75 winc 10`` searched for 20 ms (a 68 ms minimal
+    search on CPU) and ``wtime 500 movestogo 40`` searched 20 ms moves it
+    could not pay for 40 of."""
+    funded = _SUDDEN_DEATH_AT_ONCE_MOVES
+    if movestogo is not None and movestogo > 0:
+        funded = min(funded, int(movestogo))
+    return max(search_cost_ms, funded * max(0.0, search_cost_ms - max(0, int(inc_ms))))
 
 
 def _select_clock(args: GoArgs, white: bool) -> tuple[int | None, int | None]:

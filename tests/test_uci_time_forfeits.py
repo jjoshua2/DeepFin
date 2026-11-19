@@ -60,15 +60,19 @@ def test_a_clocked_deadline_never_exceeds_the_clock(remaining, inc) -> None:
     assert limits.deadline_ms <= cap
     if limits.deadline_ms < _MIN_DEADLINE_MS:
         assert limits.clock_exhausted
-    if inc:  # (sudden death has its own, earlier at-once rule; tested below)
-        assert limits.clock_exhausted is (limits.deadline_ms < _MIN_DEADLINE_MS)
+    # The at-once rule (`_at_once_threshold_ms`, tested below and in
+    # test_uci_time_review_leads.py) answers earlier; never later than the cap.
+    if not limits.clock_exhausted:
+        assert limits.deadline_ms >= _MIN_DEADLINE_MS
     if limits.optimum_ms is not None:
         assert limits.optimum_ms <= limits.deadline_ms
 
 
 def test_the_soak_clocks_are_exhausted_and_a_workable_clock_is_not() -> None:
+    # An increment that pays for a whole minimal search (45 ms unmeasured), so
+    # only the clock cap decides; a smaller one adds the at-once rule.
     def lim(ms: int):
-        return limits_from_go(GoArgs(wtime_ms=ms, btime_ms=ms, winc_ms=10, binc_ms=10),
+        return limits_from_go(GoArgs(wtime_ms=ms, btime_ms=ms, winc_ms=50, binc_ms=50),
                               side_to_move_is_white=True, move_overhead_ms=30)
 
     # `go wtime 1` and `go wtime 22` were searched for the 20 ms floor.
