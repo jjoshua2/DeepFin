@@ -23,6 +23,7 @@ import numpy as np
 import torch
 
 from chess_anti_engine.async_safety import CompletionEvent, ensure_usable, guarded_event, launch_guard
+from chess_anti_engine.cudagraph_threads import compiled_forward_scope
 from chess_anti_engine.broker_hang import (
     BOOT_HANG_ABORT_ENV as _BOOT_HANG_ABORT_ENV,
     DEFAULT_BOOT_HANG_ABORT_S as _DEFAULT_BOOT_HANG_ABORT_S,
@@ -649,6 +650,20 @@ class DirectGPUEvaluator(LocalModelEvaluator):
     def pads_to_compiled_buckets(self) -> bool:
         return self._pad_to_buckets
 
+    def _graph_scope(self) -> contextlib.AbstractContextManager[None]:
+        """Around every compiled CUDA forward (``cudagraph_threads``).
+
+        The compiled graphs are shared by every evaluator of this net on the
+        device and bound to one cudagraph tree manager, whichever thread calls:
+        the calling thread's cuBLAS handles are created before its first
+        forward (never inside a capture), and a capture that fails is closed
+        so the shared manager -- and the evaluator this one was meant to
+        replace -- keeps working. Compiled (bucket-padding) evaluators only.
+        """
+        if self._pad_to_buckets and self._use_cuda:
+            return compiled_forward_scope(self.device)
+        return contextlib.nullcontext()
+
     def reachable_forward_rows(self, max_rows: int | None = None) -> tuple[int, ...]:
         """Forward shapes this evaluator can run for up to ``max_rows`` live rows.
 
@@ -796,7 +811,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             return _policy_output_full(out).detach().float().numpy(), out["wdl"].detach().float().numpy()
 
         stream = torch.cuda.current_stream(torch.device(self.device)) if str(self.device).startswith("cuda") else None
-        with launch_guard(self, stream):
+        with self._graph_scope(), launch_guard(self, stream):
             rel_t = _relations_to_device(relations, device=self.device, bsz=bsz)
             xt = self._device_input(bsz, slot=slot)
             out = _forward_no_grad(
@@ -987,7 +1002,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             self._stream = torch.cuda.Stream(device=self.device)
         stream = self._stream
 
-        with launch_guard(self, stream):
+        with self._graph_scope(), launch_guard(self, stream):
             event_default = torch.cuda.Event()
             event_default.record(torch.cuda.current_stream(self.device))
 
@@ -1016,7 +1031,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             self._stream = torch.cuda.Stream(device=self.device)
         stream = self._stream
 
-        with launch_guard(self, stream):
+        with self._graph_scope(), launch_guard(self, stream):
             event_default = torch.cuda.Event()
             event_default.record(torch.cuda.current_stream(self.device))
 
@@ -1126,8 +1141,15 @@ class ShapeLedger:
         self._armed = False
         self._lock = threading.Lock()
         self.cold_shapes: list[tuple[str, int]] = []
+        # (graph, rows) -> forwards, only between start_counting/stop_counting
+        # (the health re-check proving each shape really ran; off otherwise).
+        self._counts: dict[tuple[str, int], int] | None = None
 
     def note(self, entry: str, rows: int, *, graph: str = "dense") -> None:
+        counts = self._counts
+        if counts is not None:
+            with self._lock:
+                counts[(graph, rows)] = counts.get((graph, rows), 0) + 1
         seen = self._seen_by_graph[graph]
         if rows in seen:
             return
@@ -1159,6 +1181,22 @@ class ShapeLedger:
     def arm(self) -> None:
         with self._lock:
             self._armed = True
+
+    def start_counting(self) -> None:
+        """Count every forward from now on, per (graph, padded rows)."""
+        with self._lock:
+            self._counts = {}
+
+    def counted(self, rows: int, graph: str = "dense") -> int:
+        """Forwards of ``rows`` on ``graph`` since ``start_counting`` (0 if off)."""
+        with self._lock:
+            return (self._counts or {}).get((graph, rows), 0)
+
+    def stop_counting(self) -> dict[tuple[str, int], int]:
+        """The counts since ``start_counting`` (empty if it was not called)."""
+        with self._lock:
+            counts, self._counts = self._counts or {}, None
+        return counts
 
     @property
     def armed(self) -> bool:

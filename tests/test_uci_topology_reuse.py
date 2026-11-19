@@ -15,6 +15,7 @@ from typing import Any, ClassVar
 import threading
 import time
 import unittest
+from chess_anti_engine.uci import __main__ as uci_main
 from chess_anti_engine.uci import wedge as uci_wedge
 from chess_anti_engine.uci.engine import _decayed_max as _engine_decayed_max
 from chess_anti_engine.uci.tb_leaf import CLeafProbe
@@ -124,6 +125,11 @@ def engine_fixture(enabled=False, parallel='pucv', devices=2):
                      'BatchCoalescingDispatcher': Wrapper, 'EncodedEvalCache': Wrapper,
                      '_warmup_evaluator': lambda *_args, **_kwargs: None,
                      'wedge': uci_wedge, '_println': lambda *_args: True}
+    # The factory's module-level helpers, real (they only read the names they are given).
+    for helper in ('_release_cached_device_memory', '_close_chain', '_label_evaluator',
+                   'device_labels', 'graph_modes_per_device', '_announce_repeated_devices',
+                   '_pad_kw', 'resolve_multi_gpu_compile_mode'):
+        namespace[helper] = getattr(uci_main, helper)
     defs = definitions('chess_anti_engine/uci/__main__.py', ['_make_evaluator_factory', 'main._build.rebuild_evaluator'], namespace)
     build_eval = defs['_make_evaluator_factory'](models, device_names, False, 1, 8)
     options = SimpleNamespace(use_multi_gpu_pucv=enabled, search_parallel=parallel,
