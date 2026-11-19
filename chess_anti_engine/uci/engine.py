@@ -394,6 +394,10 @@ _MIN_HASH_MB = 1024
 # allocate 2.2 TB of pinned input and killed the process. Registry search options
 # (mcts/search_options.py) carry their own lo/hi and are range-checked by
 # `_parse_search_value`; they are deliberately not repeated here.
+# Walker-pool leaf gather default (`LeafGather` / `--walker-gather`). CPU tiny
+# net, 6 s movetime: walkers 2/4/8 at gather 1 ran 1.4k/1.6k/2.2k nps, at 32
+# 4.7k/5.5k/5.5k (classic 5.2-5.6k); GPU (review): 2 walkers 450 -> 5.5k nps.
+DEFAULT_LEAF_GATHER = 32
 _SPIN_BOUNDS: dict[str, tuple[int, int]] = {
     "Hash": (_MIN_HASH_MB, 524288),
     "Threads": (1, 64),
@@ -453,9 +457,11 @@ class EngineOptions:
     search_walkers: int = 1
   # Per-walker leaf gather: each walker does G descents → one NN batch
   # instead of one descent per submit. Amplifies effective batch to
-  # N_walkers×G without spawning more threads. 1 = classic. Lc0's
-  # canonical value is 8. Set via UCI `LeafGather`.
-    leaf_gather: int = 1
+  # N_walkers×G without spawning more threads. Read only by the walker pool
+  # (SearchWalkers > 1); the classic path never consults it. The default
+  # used to be 1, which made `--walkers N` a trap: ~1-2 leaves per GPU call,
+  # ~450 nps on a GPU against classic's ~13,400. Set via UCI `LeafGather`.
+    leaf_gather: int = DEFAULT_LEAF_GATHER
   # Single-thread async-pipeline batched-VL PUCT. Active only at
   # `SearchWalkers=1` with a 2-slot inplace-async evaluator. Bench: +112%
   # over sync gumbel walkers=1 (54k vs 26k nps on a 10-layer model).

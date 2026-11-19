@@ -3833,6 +3833,19 @@ class SearchWorker:
                 time_margin_ms=time_margin_ms,
                 tree_growth_bytes=self._tree_footprint_bytes() - _footprint_before,
             )
+            if (
+                stop_reason is None and max_depth is not None
+                and self._root_solved_status() != 0
+            ):
+                # `go depth N` on a proven root (won / drawn / lost): its PV
+                # ends on a proven terminal and cannot be deepened, and the
+                # pool / walker / root-parallel paths keep re-visiting the
+                # proven lines (completed > 0, no new node), so the depth
+                # target would never be met and the search would wait for
+                # `stop`. The value is exact: answer. `go nodes` needs no such
+                # stop (its budget counts those visits) and `go infinite` /
+                # ponder pass no depth, so they still wait for `stop`.
+                stop_reason = "depth_solved_root"
             if stop_reason is None and mate_moves is not None:
                 if self._proven_mate_within(board, mate_moves, allowed_root_indices) is not None:
                     stop_reason = "mate"

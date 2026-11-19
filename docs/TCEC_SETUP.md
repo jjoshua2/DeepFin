@@ -90,6 +90,16 @@ walker):
 deepfin --checkpoint /path/to/trainer.pt --device cuda:0                                     # (GPU, not run)
 ```
 
+`--walkers N` (UCI `SearchWalkers`) above 1 swaps classic Gumbel for a PUCT
+walker pool, and on one GPU that pool is **slower than classic**, not faster.
+Measured on one GPU: classic about 13,400 nps; two walkers with a leaf gather
+of 1 (the old `--walker-gather` default) about 450 nps, so clocked moves fell
+back to the watchdog; with `--walker-gather 32` (now the default) 5,500 nps at
+two walkers and 8,600 at eight. On CPU with a tiny test net (6 s `movetime`)
+classic ran 5,200-5,600 nps and walkers 2 / 4 / 8 ran 1,400 / 1,600 / 2,200 at
+gather 1 and 4,700 / 5,500 / 5,500 at gather 32. The new default itself has
+not yet been timed on a GPU. Keep one walker for play.
+
 **Several GPUs** (the 4-GPU path): `--devices` with more than one entry turns on the
 shared-tree multi-GPU PUCV pool (one worker per GPU, PUCT descent with virtual
 loss) unless `--no-multi-gpu-pucv` is given. `--search-parallel gumbel` instead
@@ -136,7 +146,7 @@ Every engine flag, with the default the argument parser really has:
 | `--gil-profile` | off | Per-search GIL telemetry as `info string` lines. |
 | `--walkers` | 1 | 1 = classic Gumbel; > 1 = PUCT walker pool (UCI `SearchWalkers`). |
 | `--vloss-weight` | 3 | Virtual-loss weight (UCI `VLossWeight`). |
-| `--walker-gather` | 1 | Per-walker leaf gather (UCI `LeafGather`). |
+| `--walker-gather` | 32 | Per-walker leaf gather, walker pool only (UCI `LeafGather`). |
 | `--vl-gather` | 512 | Leaf gather for `UseVL` / multi-GPU (UCI `VLGather`). |
 | `--multi-gpu-pucv` / `--no-multi-gpu-pucv` | auto | Force the multi-GPU pool on / off (off is for debugging). `--multi-gpu-pucv` with one device refuses to start. |
 | `--search-parallel` | `pucv` | Multi-GPU mode: `pucv` or `gumbel` (UCI `SearchParallel`). `gumbel` with one device refuses to start. |
@@ -192,7 +202,7 @@ between moves, and on failure the previous settings and evaluator stay).
 | `Hash` | spin 1024..524288 | 16384 | Tree memory cap in MB (section 6). | no |
 | `Threads` | spin 1..64 | 1 | **No effect**; accepted because GUIs send it, and answered with an `info string` saying so. | no |
 | `SearchWalkers` | spin 1..64 | 1 | 1 = classic Gumbel; > 1 = PUCT walker pool, where most Gumbel options are inert. | evaluator when crossing 1 <-> > 1; walker pool |
-| `LeafGather` | spin 1..64 | 1 | Leaf gather per walker; walker pool only. | walker pool |
+| `LeafGather` | spin 1..64 | 32 | Leaf gather per walker; walker pool only. | walker pool |
 | `UseVL` | check | false | Single-GPU virtual-loss PUCV path. | search helper |
 | `UseMultiGpuPUCV` | check | false | Multi-GPU PUCV pool (on automatically with several `--devices`). | pool (+ primary evaluator) |
 | `PUCVPendingMode` | combo `legacy` / `virtual-mean` | legacy | Pending accounting on batched PUCV paths. | pool reinstall |
@@ -285,8 +295,12 @@ nothing.
   `go mate N` there answers at once too, so on this path it cannot report a mate
   longer than one move behind a forced first move: the forced root is not
   searched. `go mate N` also stops at once when the side to move is proven lost,
-  in every mode except `--search-parallel gumbel`: there the root is never
-  marked solved, so `go mate N` runs to its time cap even with a mate found.
+  in every search mode (root-parallel Gumbel included: there the root is proven
+  from its candidates' proofs after each halving phase).
+- `go depth N` on a proven root (a forced mate either way, or a tablebase-solved
+  root) answers once the root is proven, even when the proven line is shorter
+  than `N`: nothing is left to deepen. `go nodes N` counts its visits and ends
+  as usual; `go infinite` still waits for `stop`.
 - In every search mode, and from the tablebase root shortcut, a move that mates is
   reported as `score mate 1`, and a move after which the opponent mates next move
   as `score mate -1` (not when the move makes a draw claimable), whether or not

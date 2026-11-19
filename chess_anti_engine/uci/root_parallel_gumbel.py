@@ -388,6 +388,10 @@ class _SearchState:
     finished_value: float | None = None
     arenas: dict[int, _CandidateArena] = field(default_factory=dict)
     tb_probe: SyzygyProbe | None = None
+    # A winning root's terminal-draw moves were left out of the root's
+    # children: a root whose remaining children are all proven lost is
+    # still a proven DRAW, not a loss (see `_resolve_root_solved`).
+    pruned_root_draws: bool = False
 
 
 class RootParallelGumbelPool:
@@ -681,6 +685,7 @@ class RootParallelGumbelPool:
         pri = np.zeros(POLICY_SIZE, dtype=np.float64)
         search_legal = np.zeros(0, dtype=np.int64)
 
+        pruned_root_draws = False
         legal_idx = root_cb.legal_move_indices()
         if root_cb.is_game_over():
             finished_action = -1
@@ -706,6 +711,7 @@ class RootParallelGumbelPool:
                 keep = ~np.isin(legal_idx, draw_arr)
                 if keep.any():
                     legal_idx = legal_idx[keep]
+                    pruned_root_draws = True
             search_legal = legal_idx.astype(np.int64)
 
             ll = pol_full[search_legal].astype(np.float64)
@@ -736,6 +742,7 @@ class RootParallelGumbelPool:
             root_q_init=root_q,
             finished_action=finished_action,
             finished_value=finished_value,
+            pruned_root_draws=pruned_root_draws,
         )
         return rid
 
@@ -824,6 +831,7 @@ class RootParallelGumbelPool:
             ]
             sims_done = self._dispatch_phase(items)
             self._raise_group_failure()
+            self._resolve_root_solved(st)
             stopped = stop_event.is_set()
             budget = max(0, budget - open_vpa * n_cands)
             # Keep every candidate — open is scout, not a SH round.
@@ -872,6 +880,7 @@ class RootParallelGumbelPool:
             ]
             sims_done = self._dispatch_phase(items)
             self._raise_group_failure()
+            self._resolve_root_solved(st)
             stopped = stop_event.is_set()
             remaining = self._score_and_halve(st, remaining, gumbels)
             budget -= vpa * n_dispatched
@@ -1319,6 +1328,44 @@ class RootParallelGumbelPool:
         keep = self._halving_keep(len(remaining))
         return [remaining[i] for i in order[:keep]]
 
+    def _resolve_root_solved(self, st: _SearchState) -> int:
+        """Resolve the REAL root's solved status from its children's.
+
+        Each candidate's chunker descends from the candidate node, so a proof
+        found inside a candidate subtree propagates up to that candidate and
+        no further: the C propagation walks only the descent path. Without
+        this the root stays unsolved forever, and every consumer of the root's
+        status (``go mate``'s proven-mate and ``mate_unreachable`` stops, the
+        solved-root ``go depth`` stop, ``_final_value``) is unreachable on this
+        path. Same rule as ``tree_resolve_from_children`` in ``_mcts_tree.c``:
+        one child lost for its mover makes the root won; otherwise every child
+        must be proven, and any drawn child makes it a draw. Statuses are
+        monotonic, so reading them while no phase runs is exact. Returns the
+        root's status after resolution."""
+        tree, root_id = st.tree, st.root_id
+        status = int(tree.get_solved_status(root_id))
+        if status != 0 or st.search_legal.size == 0:
+            return status
+        has_draw = st.pruned_root_draws
+        all_proven = True
+        for action in st.search_legal.tolist():
+            cid = int(tree.find_child(root_id, int(action)))
+            child = int(tree.get_solved_status(cid)) if cid >= 0 else 0
+            if child == -1:
+                status = 1  # one reply lost for the opponent suffices
+                break
+            if child == 0:
+                all_proven = False  # keep scanning: a later child may win
+            elif child == 2:
+                has_draw = True
+        else:
+            if not all_proven:
+                return 0
+            status = 2 if has_draw else -1
+        # A one-node path marks the root itself; the root has no parent.
+        tree.mark_solved_path(np.array([root_id], dtype=np.int32), status)
+        return int(tree.get_solved_status(root_id))
+
     def _final_value(self, st: _SearchState, best: int) -> float:
         """Exact solved root value, otherwise classic survivor-child Q."""
         if st.tree.get_solved_status(st.root_id) != 0:
@@ -1583,6 +1630,13 @@ class RootParallelGumbelPool:
         arena.cboard = cb
         if cb.is_game_over():
             arena.terminal_value = float(cb.terminal_value())
+            # Record the terminal as a proven child (checkmate = mover lost,
+            # every other terminal a draw: `cboard_terminal_solved_status`) so
+            # `_resolve_root_solved` can count it.
+            st.tree.mark_solved_path(
+                np.array([st.root_id, arena.cid], dtype=np.int32),
+                -1 if arena.terminal_value < 0.0 else 2,
+            )
             arena.expanded = True
             return 0
         enc = encode_cboard(
