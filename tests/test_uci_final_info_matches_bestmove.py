@@ -918,6 +918,10 @@ _ORACLE_CASES: list[chess.Board] = [
     # threefold instead of facing Ra1#, so no mate -1.
     _with_history("r5k1/5ppp/8/8/8/8/5PPP/6K1 w - - 0 1",
                   ["g1h1", "g8f8", "h1g1", "f8g8", "g1h1", "g8f8", "h1g1", "f8g8"]),
+    # One short of each claim: no claim is available, so Kh1 is mate -1.
+    chess.Board("r5k1/5ppp/8/8/8/8/5PPP/6K1 w - - 98 60"),       # Kh1 -> clock 99, not 100
+    _with_history("r5k1/5ppp/8/8/8/8/5PPP/6K1 w - - 0 1",
+                  ["g1h1", "g8f8", "h1g1", "f8g8"]),             # Kh1 repeats only twice
 ]
 
 
