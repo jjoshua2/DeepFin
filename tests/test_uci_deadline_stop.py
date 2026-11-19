@@ -32,7 +32,9 @@ class _SlowEvaluator:
 
 def test_deadline_interrupts_real_walker_chunk_without_fallback(capsys):
     worker = SearchWorker(
-        _SlowEvaluator(), device="cpu", n_walkers=2, chunk_sims=2048,
+        # Gather 1 pins this test's original walker batch: the node bound
+        # below is a stop-latency bound, and the default gather is now 32.
+        _SlowEvaluator(), device="cpu", n_walkers=2, walker_gather=1, chunk_sims=2048,
         gumbel_cfg=GumbelConfig(input_extra_features="v1", add_noise=False),
     )
     engine = Engine(worker)

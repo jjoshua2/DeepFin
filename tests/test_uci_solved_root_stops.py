@@ -44,7 +44,9 @@ DEADLINE_MS = 30_000
 FAST_S = 15.0
 
 
-def _make_evaluator(*, optimistic: bool = False) -> Any:
+def _make_evaluator(*, optimistic: bool = False, seed: int | None = None) -> Any:
+    if seed is not None:
+        torch.manual_seed(seed)
     cfg = ModelConfig(
         input_extra_features="v1", embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0,
     )
@@ -62,9 +64,11 @@ def _make_evaluator(*, optimistic: bool = False) -> Any:
     ))
 
 
-def _make_worker(path: str, *, optimistic: bool = False) -> SearchWorker:
+def _make_worker(
+    path: str, *, optimistic: bool = False, seed: int | None = None,
+) -> SearchWorker:
     worker = SearchWorker(
-        _make_evaluator(optimistic=optimistic), device="cpu",
+        _make_evaluator(optimistic=optimistic, seed=seed), device="cpu",
         gumbel_cfg=GumbelConfig(
             input_extra_features="v1", simulations=64, add_noise=False, temperature=0.0,
         ),
@@ -74,7 +78,10 @@ def _make_worker(path: str, *, optimistic: bool = False) -> SearchWorker:
         return worker
     if path == "classic":
         return worker
-    pair = [_make_evaluator(optimistic=optimistic), _make_evaluator(optimistic=optimistic)]
+    pair = [
+        _make_evaluator(optimistic=optimistic, seed=None if seed is None else seed + k)
+        for k in (1, 2)
+    ]
     if path == "rpg":
         worker.install_root_parallel_gumbel(pair, gather=8, as_factories=False)
     elif path == "pool":
@@ -434,6 +441,7 @@ def test_a_lost_root_plays_the_pruned_drawing_move(path: str, fen: str, draw: st
 
 # --- review item 7: on a proven-lost root, delay mate longest ------------------
 
+LONGEST_LOSS_SEED = 1
 LONGEST_LOSS = [
     ("8/1q6/8/6r1/1k6/7K/8/8 w - - 0 1", "h3h4"),  # Kh2 is mated in 1
     ("7q/8/2r5/8/8/8/8/4k2K w - - 0 1", "h1g2"),   # Kg1 is mated in 1
@@ -445,7 +453,9 @@ LONGEST_LOSS = [
 def test_a_proven_lost_root_plays_the_longest_loss(path: str, fen: str, longest: str) -> None:
     if path == "classic" and fen == LONGEST_LOSS[1][0]:
         pytest.skip("classic Gumbel does not prove this root lost inside the deadline")
-    worker = _make_worker(path)
+    # Seeded: whether a random net's search proves the root lost in time
+    # depends on its weights.
+    worker = _make_worker(path, seed=LONGEST_LOSS_SEED)
     try:
         # `go mate` stops once the root is proven lost (`mate_unreachable`).
         result, _took = _timed_run(worker, fen, mate_moves=3)
