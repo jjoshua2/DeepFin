@@ -1,0 +1,385 @@
+{
+  "F12_context": {
+    "Main": "5b2241f97d2b85f2dc1f039ebf290b64633ca3ff",
+    "PR": 1403,
+    "causal_head_or_correlation_failure_proved": false,
+    "paired_normal95": [
+      0.44509547186230913,
+      0.49740452813769087
+    ],
+    "public_record": {
+      "artifact": "fresh-current-policy-A39-F12-final-readout-main-publication-v1/public-record.json",
+      "sha256": "6be960a46f950bcdf9a5e99e3d6b3a2472ab5ddd7fd91159e7a332c459e4ed61"
+    },
+    "retain_A39": true,
+    "score": 0.47125,
+    "verdict": "NO_DEVELOPMENT_GAIN_ESTABLISHED"
+  },
+  "Root_core_source_selection": {
+    "artifact": "Q50-private-core-Root-source-selection-v1/selection.json",
+    "sha256": "dcff20b00935a7596991d6bb0f214786637fe0c490067ec0a087128d80e8ed1e"
+  },
+  "Root_method_source_publication_selection": {
+    "artifact": "Q50-method-Root-source-and-publication-selection-v1/selection.json",
+    "sha256": "e483d21d955f1120c909c273914c9b17c1d62a787b203608cd9ce69d56eed9c0"
+  },
+  "actual_execution": {
+    "Goal_complete": false,
+    "admissions": "UNISSUED",
+    "contracts": "UNISSUED",
+    "data_banks": "UNISSUED",
+    "execution_authorized": false,
+    "final_deciding_result": "UNISSUED",
+    "model_deliveries": "UNISSUED",
+    "owners": "UNISSUED",
+    "protocols": "UNISSUED"
+  },
+  "binding": {
+    "artifact": "Q50-fresh-current-policy-A39-12-cycle-method-source-preparation-v1/binding.json",
+    "sha256": "32e5decafeb4f673880d78019a41c42f05f098066865f8b5e59b5b299d86db9b"
+  },
+  "budgets": {
+    "all_failure_costs": "Charge every actual wall once. Preserve all earlier week/F12 costs and stops; Q50 local counters start zero only after genuine absence of its exact stage names/outputs and fresh run/ledger. No scope inheritance/reset/backdating.",
+    "engineering_CPU_max": 900,
+    "engineering_partition": "Twelve descriptor handoffs at60 plus one protection at180 =900 maximum; no unpriced extra controls, summaries inside audit180. Science CPU maximum under remaining actual4800 aggregate; no full-maxima completion guarantee.",
+    "final_GPU_reserve": 3600,
+    "final_arena_GPU_inner": 3570,
+    "final_arena_GPU_outer": 3600,
+    "final_reader_CPU_inner": 170,
+    "final_reader_CPU_outer": 180,
+    "final_reader_CPU_reserve": 180,
+    "global_CPU_actual_before_Root_reported": 8745.509056212904,
+    "global_GPU_actual_before_Root_reported": 146541.7328588327,
+    "global_GPU_max_seconds": 172800,
+    "maximum_all_in_owners": 75,
+    "maximum_engineering_owners": 13,
+    "no_automatic_retry_or_extension": true,
+    "per_cycle_CPU": {
+      "audit_inner": 170,
+      "audit_outer": 180,
+      "compiler_inner": 50,
+      "compiler_outer": 60,
+      "delivery_inner": 110,
+      "delivery_outer": 120,
+      "handoff_inner": 50,
+      "handoff_outer": 60
+    },
+    "per_cycle_GPU": {
+      "collection_inner": 1770,
+      "collection_outer": 1800,
+      "learner_inner": 570,
+      "learner_outer": 600
+    },
+    "per_cycle_start_GPU_reserve": 6000,
+    "prestudy_protection_CPU_inner": 170,
+    "prestudy_protection_CPU_outer": 180,
+    "remaining_budget_gate": "Before each collection, actual study/global remaining GPU must fit collection1800+learner600+reserved final3600; CPU must fit all remaining current-cycle caps (60+180+60+120) plus final180. Every subsequent owner must fit its full cap, unfinished current-cycle caps and final reserves; final owners consume their own reserve. Same remaining-wall cutoff check, outer+180 admission deadline margin. Do not require sum of all future cycle maxima at initial admission. If a later cycle cannot fit, STOP INCOMPLETE; no horizon shrink/extension/retry.",
+    "reported_all_closed_owner_count_before_preparation": 545,
+    "study_CPU_total": 4800,
+    "study_GPU_total": 25200,
+    "week_cutoff_UTC": "2026-11-19T16:09:20Z",
+    "worst_case_CPU_stage_caps_sum": 5400,
+    "worst_case_GPU_stage_caps_sum": 32400,
+    "worst_case_caps_not_fully_reserved": true
+  },
+  "chronology": "Publish exact accepted prereg before first Q50 numerical/protection owner. This source draft does not claim publication or issue admission.",
+  "core": {
+    "artifact": "Q50-12-cycle-private-core-source-preparation-v1/manifest.json",
+    "sha256": "49bfb9614e611ec6b20225c930290d32cb1d05e33ed7bf8ed2121ead5ff0ca10"
+  },
+  "core_component_independent_reviews": {
+    "H": {
+      "artifact": "Q50-handoff-independent-source-review-v1/review.json",
+      "sha256": "f87f588e2f27ff5df85e17a68482b0aeb48b2e42332c23a9a4a03a54e4db099c"
+    },
+    "N": {
+      "artifact": "Q50-collect-handoff-audit-root-operation-independent-source-review-v1/review.json",
+      "sha256": "e7b3cca908aa788e426c428768353b36ad974ba3dca2136100d143ed97e2dd70"
+    },
+    "P": {
+      "artifact": "Q50-collect-handoff-audit-parameter-independent-source-review-v1/review.json",
+      "sha256": "6c5cdf8cd9334b94d6e432df6a0790bb069ec4fd952fb470e06a0a1d4159a3f9"
+    },
+    "Protect": {
+      "artifact": "Q50-protection-independent-source-review-v1/review.json",
+      "sha256": "01d933c1989de274ad72af21d62dbfb42807871d0bfa414d79f3dc86d8f67f6d"
+    },
+    "Q": {
+      "artifact": "Q50-capped-parameter-independent-source-review-v1/review.json",
+      "sha256": "78142ac77e93f43cdac3acb8948ff2eea6265b05b95994714f892d051edb23bb"
+    },
+    "S": {
+      "artifact": "Q50-root-operation-independent-source-review-v1/review.json",
+      "sha256": "ffca9d6b38cd234d2965e6c044f2c243f7070eacec0eb5c6309eed09921310df"
+    }
+  },
+  "dose": {
+    "complete_games_per_cycle": 192,
+    "cycles": 12,
+    "final_tail": "EMIT_FINAL_REMAINDER_ONCE_NO_PADDING",
+    "maximum_plies": 450,
+    "maximum_rows_per_cycle": 86400,
+    "minimum_rows_per_cycle": 1,
+    "original_plus_mirror_presentations_maximum": 1,
+    "replacement_attempts": 0,
+    "slots": 16,
+    "updates": "ceil(actual accepted rows/256)"
+  },
+  "evaluation": {
+    "arena_argv_projection": [
+      "--candidate",
+      "ACTUAL_DELIVERED_CYCLE12_CHECKPOINT",
+      "--reference",
+      "PINNED_ORIGINAL_A39_CHECKPOINT",
+      "--mode",
+      "matched_sims",
+      "--search-shape",
+      "training",
+      "--sims",
+      "64",
+      "--games",
+      "800",
+      "--openings-fen",
+      "PINNED_CONSUMED_DEV_OPENING_BOOK",
+      "--max-concurrent-games",
+      "32",
+      "--eval-max-batch",
+      "1024",
+      "--compile",
+      "off",
+      "--max-plies",
+      "450",
+      "--temperature",
+      "0.1",
+      "--seed",
+      "2026111999",
+      "--max-seconds",
+      "3570",
+      "--device",
+      "cuda",
+      "--cand-gumbel",
+      "gumbel_scale=0.75",
+      "--ref-gumbel",
+      "gumbel_scale=0.75",
+      "--cand-vloss-weight",
+      "1",
+      "--ref-vloss-weight",
+      "1",
+      "--cand-target-batch",
+      "0",
+      "--ref-target-batch",
+      "0",
+      "--pgn-candidate-name",
+      "Q50_FINAL",
+      "--pgn-reference-name",
+      "IMMUTABLE_A39",
+      "--label",
+      "Q50_vs_A39_800GAME_REUSED_DEVELOPMENT",
+      "--syzygy",
+      "PINNED_STRICT_TB_PAIR",
+      "--syzygy-max-pieces",
+      "6",
+      "--pgn-out",
+      "ACTUAL_Q50_ARENA_OUTPUT/games.pgn",
+      "--games-out",
+      "ACTUAL_Q50_ARENA_OUTPUT/games.jsonl",
+      "--out",
+      "ACTUAL_Q50_ARENA_OUTPUT/result.jsonl",
+      "--compile-cache-dir",
+      "ACTUAL_Q50_ARENA_OUTPUT/compile-cache"
+    ],
+    "candidate": "Q50_cycle12_only",
+    "classification": "CONSUMED_REUSED_DEV_NOT_FRESH_CONFIRMATION",
+    "color_pairs": 400,
+    "games": 800,
+    "late_leaf_rule": "Only genuine delivered Q50 cycle12 checkpoint and authorized output paths are late-bound. PINNED tokens name fixed asset refs whose hashes/profile are in method; no guessed futuremodelhash.",
+    "no_CI_overlap_test": true,
+    "no_interims": true,
+    "opening_book_sha256": "7e99de3a1033f1c6d3e3ef89966bda221c3f4f858a7358bc8ee6baa55110898e",
+    "optional_matched_F12_difference": "OMITTED_NO_EXTRA_READER_OR_GPU_DUEL",
+    "primary": {
+      "interval": "point +/-1.96*standard_error",
+      "non_success": "NO_DEVELOPMENT_GAIN_ESTABLISHED; retainA39, no general harm/equivalence assertion",
+      "point": "mean of400 color-pair scores, each pair game-point total/2",
+      "standard_error": "sqrt(variance/400)",
+      "success": "complete valid800games/400pairs and paired-normal95lower strictly >0.5",
+      "variance": "math.fsum((pair_score-point)**2 for each of400 pair_scores)/399",
+      "z": 1.96,
+      "zero_variance": "UNAVAILABLE; not automatic success"
+    },
+    "public_entry": "scripts/arena_standard.py",
+    "reference_checkpoint_sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+    "same_frozen_T_profile": true,
+    "seed": 2026111999
+  },
+  "identities": {
+    "collector_actor_cycle1": "original_A39_donor_step680276",
+    "later_actor": "own_genuine_previous_delivered_cycle",
+    "learner_start_cycle1": "fresh_student_step0_empty_optimizer",
+    "new_bank_each_cycle": true,
+    "old_F12_bank_or_ledger_reuse": false,
+    "run_uuid": "b0081778-8321-4dd7-88c7-246aa737e91e",
+    "same_TRAIN_starts": true,
+    "scope_uuid": "7888afc5-e5b4-47a3-be78-180ae6000f8e",
+    "study_uuid": "aa9ad7ee-aff3-4966-b42d-4cc766632bf1"
+  },
+  "limits": [
+    "The sole intended training-recipe intervention from F12 is search/outcome blend0.1/0.9 to0.5/0.5. Distinct training/collection/order seeds and evolving on-policy banks prevent a same-randomness beta-only causal claim.",
+    "Inverse association or gain does not establish that correlated terminal targets caused F12 regression. Search targets are endogenous; .5 is not claimed optimal.",
+    "The row-weighted objective remains length-weighted; a higher search share does not game-balance rows or create independent labels. Repeated TRAIN starts and boards remain disclosed.",
+    "Primary lower95>.5 is a reused-DEV screen only. Retain original A39 pending separately selected fresh confirmation; no adoption, sustained gain, external rating or daily-rate claim.",
+    "User goal is rapid sustained improvement toward Stockfish; rough personal100Elo/day estimate is not measured evidence, a hard threshold or an automatic pass/fail/stop rule.",
+    "All prior week failures, costs, cancelled studies and F12 results remain preserved; no reset through new IDs."
+  ],
+  "method": {
+    "artifact": "Q50-fresh-current-policy-A39-12-cycle-method-source-preparation-v1/design.json",
+    "sha256": "b04aceff9656a647db4e4b6993e30c8425794236bd977f8fbe8422a81d727811"
+  },
+  "method_review": {
+    "artifact": "Q50-fresh-current-policy-A39-12-cycle-independent-method-review-v1/review.json",
+    "sha256": "9b4692ff26889715011e9808de92a6f61a6af9ec8218550f332d4cc1051063ec"
+  },
+  "method_source_manifest": {
+    "artifact": "Q50-fresh-current-policy-A39-12-cycle-method-source-preparation-v1/manifest.json",
+    "sha256": "98c674b93d941b103278f4e0d21767fcd96617b3f5a1c563eca44962ac15e18f"
+  },
+  "optimizer_and_loss": {
+    "WDL_weight": 1.0,
+    "full_five_RNG_adjacent_continuation": true,
+    "grad_clip_mode": "none",
+    "optimizer": "nadamw",
+    "policy_weight": 1.0,
+    "required_actual_fallback": 0.0,
+    "required_actual_search_availability": 1.0,
+    "search_targets_usable_before_model_or_draw": true,
+    "unmodified_frozen_public_runtime": true
+  },
+  "planned_owners": 75,
+  "protected_and_cancelled": "Known TRAIN_prior/HOLD/sixpanel metadata only under admitted protection; cancelled THREE/5000-node studies remain stopped and are not opened/reused/relabelled.",
+  "protection_procedure_review": {
+    "artifact": "Q50-protection-Root-metadata-procedure-independent-source-review-v1/review.json",
+    "sha256": "7482915dba96dfb5a6559d79c68a236cd7002bc2f17ba7138194076dacc2d576"
+  },
+  "public_prereg_source": {
+    "artifact": "Q50-fresh-current-policy-A39-12-cycle-method-source-preparation-v1/PREREG.md",
+    "sha256": "484c7b3ac961c47150b2000f4f15fef3bfbb1ff06a16e2717a34dc9952907d47"
+  },
+  "recipe": {
+    "batch_size": 256,
+    "lr": {
+      "first_period": 16384,
+      "floor": 3e-06,
+      "peak": 3e-06,
+      "warmup_start": 3e-06,
+      "warmup_steps": 0
+    },
+    "maximum_presentations": 1,
+    "mirror_prob": 0.5,
+    "outcome_wdl_frac": 0.5,
+    "policy_anchor": null,
+    "retained_search_share": 0.5,
+    "seed": 2026112190,
+    "sf_wdl_frac": 0.0
+  },
+  "schedule": [
+    {
+      "collection_seed": 2026112201,
+      "collection_uuid": "1ea790da-2f49-57a0-8b9c-2a6b2a3658b3",
+      "cycle": 1,
+      "order_seed": 2026112301
+    },
+    {
+      "collection_seed": 2026112202,
+      "collection_uuid": "1fb52647-1240-5223-b5e9-13eed5d1ecd0",
+      "cycle": 2,
+      "order_seed": 2026112302
+    },
+    {
+      "collection_seed": 2026112203,
+      "collection_uuid": "c4b02bc6-137d-5904-96c0-4ced01f8a4a8",
+      "cycle": 3,
+      "order_seed": 2026112303
+    },
+    {
+      "collection_seed": 2026112204,
+      "collection_uuid": "e2980981-61c7-51ca-b7a5-81fbe6f864b3",
+      "cycle": 4,
+      "order_seed": 2026112304
+    },
+    {
+      "collection_seed": 2026112205,
+      "collection_uuid": "6d41e490-37ff-553f-955e-78056b114845",
+      "cycle": 5,
+      "order_seed": 2026112305
+    },
+    {
+      "collection_seed": 2026112206,
+      "collection_uuid": "993edd5e-a96d-54d8-b9f2-519ea7139a96",
+      "cycle": 6,
+      "order_seed": 2026112306
+    },
+    {
+      "collection_seed": 2026112207,
+      "collection_uuid": "b0e8287d-b4c8-5478-bef3-1c5f8fac30b0",
+      "cycle": 7,
+      "order_seed": 2026112307
+    },
+    {
+      "collection_seed": 2026112208,
+      "collection_uuid": "8a4ac39a-0ebe-5e2c-9382-6f560cff1bad",
+      "cycle": 8,
+      "order_seed": 2026112308
+    },
+    {
+      "collection_seed": 2026112209,
+      "collection_uuid": "999d8f57-a66d-5eaf-884f-e57ef67ed133",
+      "cycle": 9,
+      "order_seed": 2026112309
+    },
+    {
+      "collection_seed": 2026112210,
+      "collection_uuid": "220d9690-b9cd-5c02-a637-e996b17d0e35",
+      "cycle": 10,
+      "order_seed": 2026112310
+    },
+    {
+      "collection_seed": 2026112211,
+      "collection_uuid": "3ae2cda3-7180-5478-8636-3b4b7adafc7e",
+      "cycle": 11,
+      "order_seed": 2026112311
+    },
+    {
+      "collection_seed": 2026112212,
+      "collection_uuid": "a8208e47-4b92-5a63-be5d-e7dc07f7f29f",
+      "cycle": 12,
+      "order_seed": 2026112312
+    }
+  ],
+  "schema": "Q50_FRESH_CURRENT_POLICY_TWELVE_CYCLE_PUBLIC_PREREG_V1",
+  "software": {
+    "existing_native_adoption": {
+      "independent": {
+        "artifact": "capped-cycle-runtime-adoption-bindings-v2/independent-review.json",
+        "sha256": "0b2cd9d59519e5fdb2d1542675eecd1e51e971c7de6ebf8fcc2b7ac663aff6da"
+      },
+      "root": {
+        "artifact": "capped-cycle-runtime-adoption-bindings-v2/root-acceptance.json",
+        "sha256": "61d04fedc751615e98e22042104ac728e27c5176810756731d49cd507598a20a"
+      }
+    },
+    "final_only_playing_source": "SEPARATE_REVIEW_REQUIRED_BEFORE_USE",
+    "frozen_runtime_head": "e633212dafc0d06507730114270d86fa7a22e4da",
+    "frozen_runtime_tree": "cef979d3acd2437108fc679cb99a92990117ace7",
+    "new_native_optimizer_ABI_or_blanket_NN_qualification_campaign": false,
+    "public_cycle_source": {
+      "artifact": "core-capped-on-policy-cycle-source-preparation-v3/manifest.json",
+      "sha256": "06044fd1ffbfe98247d8a3010ad59f0f2a31033a4b5a091129dfdb86ccead621"
+    },
+    "public_cycle_source_review": {
+      "artifact": "core-capped-on-policy-cycle-independent-source-review-v3/review.json",
+      "sha256": "c0bee424ce353f5ec734d3fbeb415932a46077cf52dcd94ca3173f549380de26"
+    },
+    "scientific_operate56ae_sha256": "56aedfd139d87572ef12e52dee86767d17036813da0e51e8902e64a783db475a"
+  },
+  "status": "PROSPECTIVE_SOURCE_ACCEPTED_NO_EXECUTION_AUTHORITY"
+}
