@@ -673,3 +673,36 @@ def test_resolve_if_decided_is_resolve_minus_undecided_witnesses(board, wdl, dtz
         assert fast is None
     else:
         assert fast == full
+
+
+def test_incremental_full_history_rechecks_a_replaced_native_board():
+    # A verified replay is skipped only while (actions, native FEN) is
+    # unchanged: swapping the slot's native board for another position with
+    # the history untouched must still be refused.
+    final = history(CYCLE)
+    state = state_for(final, opening=history(()))
+    state.full_history_cache = {}
+    assert full_history_board(state, 0).fen() == final.fen()
+    state.cboards[0] = CBoard.from_board(chess.Board(ROOT))
+    with pytest.raises(ValueError, match="disagree"):
+        full_history_board(state, 0)
+
+
+def test_incremental_full_history_rebuilds_when_the_start_is_mutated_in_place():
+    # Contract: starting_boards entries are replaced, never mutated. The
+    # start-FEN check is the backstop if one is: same object, same ply count,
+    # different position must rebuild from the mutated start, not serve the
+    # replay of the old one.
+    start = history(["g1f3", "g8f6"], root=chess.STARTING_FEN)
+    final = start.copy(stack=True)
+    final.push_uci("b1c3")
+    state = state_for(final, opening=start)
+    state.full_history_cache = {}
+    assert full_history_board(state, 0).fen() == final.fen()
+    held = state.starting_boards[0]
+    held.pop()
+    held.push_uci("b8c6")
+    mutated = held.copy(stack=True)
+    mutated.push_uci("b1c3")
+    state.cboards[0] = CBoard.from_board(mutated)
+    assert full_history_board(state, 0).fen() == mutated.fen()

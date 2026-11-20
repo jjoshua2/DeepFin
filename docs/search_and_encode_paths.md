@@ -280,15 +280,23 @@ python-chess APIs the engine runtime relies on:
   per call when none is passed (the stream-pool OOM hazard documented at
   `selfplay/match.py:119`).
 - **Eager CUDA graphs (opt-in):** `DirectGPUEvaluator(cuda_graphs=True)`
-  replays a captured graph of its own eager dense forward per batch size
-  (`inference._EagerForwardGraphs`); bitwise-identical outputs, and several
-  times faster at the leaf batch sizes the Gumbel search submits, where the
-  eager forward is launch-bound. Arena: `--eval-cuda-graphs` (eager only);
-  in-process collectors pass `cuda_graphs: true` in their evaluator kwargs.
-  Batches above `cuda_graph_max_rows` (default 512; larger ones are
-  GPU-bound, and capturing them pins >10 GB) run eager.
-  Refused, not dropped, off CUDA, with `pad_to_compiled_buckets`, or for a
-  `torch.compile`d model.
+  replays a captured graph of its own eager DENSE forward per batch size
+  (`inference._EagerForwardGraphs`); measured bitwise-identical to eager,
+  and several times faster at the leaf batch sizes the Gumbel search
+  submits, where the eager forward is launch-bound. Arena:
+  `--eval-cuda-graphs` (eager only). An in-process collector can pass
+  `cuda_graphs: true` only if its serving already uses dense transport
+  (`legal_bf16: false`); with the default `legal_bf16=True` the compact
+  legal-BF16 path carries the leaves and is not graphed, so the combination
+  is refused. Switching a collector from compact bf16 to dense fp32 to get
+  graphs changes its numerics. Batches above `cuda_graph_max_rows`
+  (default 512; larger ones are GPU-bound, and capturing them pins >10 GB)
+  and relation-carrying forwards run eager; `cuda_graph_stats` counts
+  replays and each kind of eager fallback (the arena records it as
+  `eval_cuda_graph_stats`). Replacing the model, reallocating its
+  parameters or flipping `_inference_only`/TF32 drops and recaptures the
+  graphs. Also refused off CUDA, with `pad_to_compiled_buckets`, or for a
+  `torch.compile`d model or submodule.
 - **ONNX:** `onnx/load.py` wraps `onnxruntime` as an `nn.Module` (4672-wide
   policy, Ceres input), used via `scripts/net_source.py` and the lc0 adapter.
 - **Python searches** fall back to `LocalModelEvaluator` (`gumbel.py`,

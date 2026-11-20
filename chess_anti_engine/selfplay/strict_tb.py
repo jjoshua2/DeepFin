@@ -143,7 +143,13 @@ def _replayed_history(state: _HistoryState, slot: int) -> _HistoryReplay:
     python-chess legal-move generation per game -- a third of the main
     thread's wall in a CPU profile of the collector shape. Checks are
     unchanged: each action is legality-checked once against the identical
-    prefix position, and the native-board FEN comparison runs on every call.
+    prefix position, and the native-board FEN comparison runs whenever the
+    action count or the native board's FEN differs from the last verified pair.
+
+    Contract: ``state.starting_boards[slot]`` is REPLACED (a new object) when a
+    slot starts a new game, never mutated in place. Reuse is keyed on that
+    object's identity, ply count, FEN and the action-history prefix; the FEN
+    check is a backstop for an in-place mutation, not a licence for one.
     """
     if state.starting_boards is None:
         raise ValueError("strict selfplay requires the original opening history")

@@ -101,39 +101,111 @@ def test_back_to_back_async_slots_keep_their_own_outputs() -> None:
 
 
 @needs_cuda
-def test_sync_forward_issued_while_an_async_one_is_in_flight() -> None:
-    # The two paths replay on different streams but share one graph memory
-    # pool, so the sync path must wait for the in-flight async replay. Large
-    # batches keep the async replay running while the sync one is launched.
-    torch.manual_seed(0)
-    model = build_model(
-        ModelConfig(embed_dim=256, num_layers=6, num_heads=4, use_smolgen=True),
-    ).cuda().eval()
-    eager = DirectGPUEvaluator(model, device="cuda", max_batch=4096, n_slots=2, legal_bf16=False)
-    graph = DirectGPUEvaluator(model, device="cuda", max_batch=4096, n_slots=2, legal_bf16=False,
-                               cuda_graphs=True, cuda_graph_max_rows=4096)
+def test_sync_forward_issued_while_an_async_one_is_in_flight(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Both paths copy their rows into the SAME static graph input and replay
+    # graphs from one pool, so the sync path must wait for an async replay
+    # still queued on the side stream. Made deterministic by delaying every
+    # replay issued on the async stream (after its H2D copy): without the wait
+    # the sync call overwrites the static input before the async replay reads it.
+    model = _model("cuda")
+    eager = DirectGPUEvaluator(model, device="cuda", max_batch=64, n_slots=2, legal_bf16=False)
+    graph = DirectGPUEvaluator(model, device="cuda", max_batch=64, n_slots=2, legal_bf16=False,
+                               cuda_graphs=True)
     planes = eager.get_input_buffer(1).shape[1]
     rng = np.random.default_rng(2)
-    xa, xb = _rows(rng, 4096, planes), _rows(rng, 2048, planes)
-    results = []
+    xa, xb = _rows(rng, 32, planes), _rows(rng, 16, planes)
 
     def race(ev: DirectGPUEvaluator) -> tuple[np.ndarray, ...]:
-        # Both inputs staged first, so the sync call follows the async launch
-        # by microseconds while the async replay is still running.
-        ev.get_input_buffer(4096, slot=0)[:] = xa
-        ev.get_input_buffer(2048, slot=1)[:] = xb
-        pol_t, wdl_t, event = ev.evaluate_inplace_async(4096, slot=0)
-        pol_b, wdl_b = ev.evaluate_inplace(2048, slot=1)
+        ev.get_input_buffer(32, slot=0)[:] = xa
+        ev.get_input_buffer(16, slot=1)[:] = xb
+        pol_t, wdl_t, event = ev.evaluate_inplace_async(32, slot=0)
+        pol_b, wdl_b = ev.evaluate_inplace(16, slot=1)
         assert event is not None
         event.synchronize()
         return pol_t.numpy().copy(), wdl_t.numpy().copy(), pol_b, wdl_b
 
-    for ev in (eager, graph):
-        race(ev)  # captures both shapes; the second call races two replays
-        results.append(race(ev))
-    assert graph.cuda_graph_shapes == (2048, 4096)
-    for e, g in zip(results[0], results[1]):
+    want = race(eager)
+    race(graph)  # capture both shapes first
+    orig_replay = torch.cuda.CUDAGraph.replay
+
+    def delayed_replay(self: torch.cuda.CUDAGraph) -> None:
+        if graph._stream is not None and torch.cuda.current_stream() == graph._stream:
+            torch.cuda._sleep(200_000_000)  # ~0.1 s of GPU spin on the async stream
+        orig_replay(self)
+
+    monkeypatch.setattr(torch.cuda.CUDAGraph, "replay", delayed_replay)
+    got = race(graph)
+    for e, g in zip(want, got):
         assert e.tobytes() == g.tobytes()
+
+
+@needs_cuda
+def test_refused_with_compact_legal_bf16_and_for_compiled_submodules() -> None:
+    model = _model("cuda")
+    with pytest.raises(ValueError, match="legal_bf16=True"):
+        DirectGPUEvaluator(model, device="cuda", max_batch=8, cuda_graphs=True)  # legal_bf16 default
+    sub = next(m for m in model.modules() if m is not model and any(True for _ in m.parameters()))
+    sub.compile()
+    with pytest.raises(ValueError, match=r"torch\.compile"):
+        DirectGPUEvaluator(model, device="cuda", max_batch=8, legal_bf16=False, cuda_graphs=True)
+
+
+@needs_cuda
+def test_stats_count_replays_and_eager_fallbacks() -> None:
+    model = _model("cuda")
+    graph = DirectGPUEvaluator(model, device="cuda", max_batch=64, legal_bf16=False,
+                               cuda_graphs=True, cuda_graph_max_rows=16)
+    planes = graph.get_input_buffer(1).shape[1]
+    rng = np.random.default_rng(4)
+    for bsz in (8, 8, 32):
+        graph.get_input_buffer(bsz)[:] = _rows(rng, bsz, planes)
+        graph.evaluate_inplace(bsz)
+    stats = graph.cuda_graph_stats
+    assert stats is not None
+    assert (stats["captures"], stats["replays"], stats["eager_over_max_rows"]) == (1, 2, 1)
+    assert stats["eager_relations"] == 0
+    assert DirectGPUEvaluator(model, device="cuda", max_batch=8).cuda_graph_stats is None
+
+
+@needs_cuda
+def test_model_swap_reallocation_and_inference_only_toggle_recapture() -> None:
+    # Graphs read the parameter storages and control flow seen at capture; a
+    # replaced model, reallocated parameters or a flipped forward flag must
+    # not replay the old binding.
+    model = _model("cuda")
+    graph = DirectGPUEvaluator(model, device="cuda", max_batch=16, legal_bf16=False, cuda_graphs=True)
+    planes = graph.get_input_buffer(1).shape[1]
+    x = _rows(np.random.default_rng(5), 8, planes)
+
+    def eager_out(m: torch.nn.Module) -> tuple[bytes, bytes]:
+        ev = DirectGPUEvaluator(m, device="cuda", max_batch=16, legal_bf16=False)
+        ev.get_input_buffer(8)[:] = x
+        pol, wdl = ev.evaluate_inplace(8)
+        return pol.tobytes(), wdl.tobytes()
+
+    def graph_out() -> tuple[bytes, bytes]:
+        graph.get_input_buffer(8)[:] = x
+        pol, wdl = graph.evaluate_inplace(8)
+        return pol.tobytes(), wdl.tobytes()
+
+    assert graph_out() == eager_out(model)
+    torch.manual_seed(1)
+    other = build_model(ModelConfig(embed_dim=32, num_layers=2, num_heads=2, use_smolgen=True)).cuda().eval()
+    graph.model = other
+    assert graph_out() == eager_out(other)
+    with torch.no_grad():
+        for prm in other.parameters():
+            prm.data = prm.data * 1.5  # new storages
+    assert graph_out() == eager_out(other)
+    with torch.no_grad():
+        for prm in other.parameters():
+            prm.mul_(0.5)  # in place: same storages, replay sees the new values
+    assert graph_out() == eager_out(other)
+    setattr(other, "_inference_only", True)  # a plain attribute on a Module
+    assert graph_out() == eager_out(other)
+    stats = graph.cuda_graph_stats
+    assert stats is not None
+    assert stats["recaptures"] == 3
 
 
 @needs_cuda

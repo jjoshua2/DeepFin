@@ -2719,6 +2719,7 @@ def build_result_record(
     arena_pool: int | None = None,
     sprt: dict[str, Any] | None = None,
     eval_cuda_graphs: bool | None = None,
+    eval_cuda_graph_stats: dict[str, Any] | None = None,
 ) -> dict:
     elo_lo, elo_hi = summary.elo_ci95
     return {
@@ -2779,9 +2780,12 @@ def build_result_record(
         "mixed_eval_hoist": len(set(hoist_values)) > 1,
         "eval_max_batch": eval_max_batch,
         # Realized off the evaluator objects (None: no hoisted evaluator).
-        # Outcome-neutral by construction (bitwise-identical forwards), so it
-        # is recorded, not fingerprinted -- like `compile`, minus the numerics.
+        # Outcome-neutral (measured bitwise-identical forwards), so it is
+        # recorded, not fingerprinted -- like `compile`, minus the numerics.
         "eval_cuda_graphs": eval_cuda_graphs,
+        # Per side: graph replays vs dense forwards that ran eager, and why --
+        # the evidence that "graphs on" took effect (None when graphs are off).
+        "eval_cuda_graph_stats": eval_cuda_graph_stats,
         "eval_leaf_cap_uncapped": eval_leaf_cap_uncapped,
         "eval_leaf_cap_bound": bool(eval_leaf_cap_bound),
         # ⚑ THE INPUTS the two fields above are a FUNCTION OF, banked so a row
@@ -3023,6 +3027,7 @@ def run_arena(
     # What the hoisted evaluators REALIZED, read back off them once built;
     # None when no evaluator was hoisted (matched_time, CPU, --eval-max-batch 0).
     _realized_eval_cuda_graphs: bool | None = None
+    _graph_evaluators: tuple[Any, Any] | None = None
     if mode == "matched_sims" and (search_candidate is None or search_reference is None):
         raise SystemExit(
             "matched_sims needs an explicit search shape: pass --search-shape "
@@ -3730,6 +3735,7 @@ def run_arena(
             graphs_candidate = bool(getattr(evaluator_candidate, "cuda_graphs", False))
             graphs_reference = bool(getattr(evaluator_reference, "cuda_graphs", False))
             _realized_eval_cuda_graphs = graphs_candidate and graphs_reference
+            _graph_evaluators = (evaluator_candidate, evaluator_reference)
             print(
                 "[arena] eval CUDA graphs (eager-forward replay): "
                 f"candidate={graphs_candidate} reference={graphs_reference}",
@@ -4066,6 +4072,11 @@ def run_arena(
         hoist_values=sorted(scored_hoist_tags),
         eval_max_batch=int(eval_max_batch),
         eval_cuda_graphs=_realized_eval_cuda_graphs,
+        eval_cuda_graph_stats=(
+            {"candidate": getattr(_graph_evaluators[0], "cuda_graph_stats", None),
+             "reference": getattr(_graph_evaluators[1], "cuda_graph_stats", None)}
+            if _realized_eval_cuda_graphs and _graph_evaluators is not None else None
+        ),
         eval_leaf_cap_uncapped=(uncapped_leaf_rows or None),
         eval_leaf_cap_bound=leaf_cap_bound,
         # Banked UNCONDITIONALLY, unlike the leaf-cap fields above: those are
