@@ -12,15 +12,21 @@ play roughly like the base with more search. These rows are D1 of the
 [2026-11-19 record](2026-11-19-rl-takeover-diagnostics-and-policy-only-ablation.md),
 banked in `~/chess-artifacts/operations/rl-claude-20261119/search-gain/results.jsonl`:
 
-| High sims vs 64-sim reference | Games | Score | Elo (95% CI) |
-|---|---:|---:|---|
-| 64 vs 1 | 200 | 0.9925 | +849 (lower bound +691) |
-| 256 vs 64 | 400 | 0.8275 | +272.4 (+243.1 to +305.3) |
-| 800 vs 64 | 200 | 0.94 | +478.0 (+410.2 to +582.3) |
+| Candidate sims | Reference sims | Games | Score | Elo of candidate (95% CI) |
+|---:|---:|---:|---:|---|
+| 64 | 1 | 200 | 0.9925 | +849 (lower bound +691) |
+| 256 | 64 | 400 | 0.8275 | +272.4 (+243.1 to +305.3) |
+| 800 | 64 | 200 | 0.94 | +478.0 (+410.2 to +582.3) |
 
 Settings: `scripts/arena_standard.py --mode matched_sims --search-shape training
 --no-gumbel-noise --compile off`, tablebases on, seed 20261119, 128 games in flight,
 the default 147k-line opening book (not the loop's EVAL split), git `df55413a6`.
+
+**What the 1-sim side plays.** With one simulation and no root noise the candidate
+width is 1: only the top-prior child is visited. The arena then samples its move at
+temperature 0.1 from softmax(log prior + σ(completed Q)), where unvisited children
+carry v_mix. That is essentially the raw policy prior sharpened by the T=0.1 power
+and nudged by a single child value: neither a pure argmax of the policy nor a search.
 
 **Seat handling.** Single orientation: the high-sims side was the candidate seat in
 every game (colours are balanced by opening pairs). D4 round 2 found no
@@ -59,7 +65,7 @@ Playing results at the end of those loops, against the SL base, for scale: P1 c1
 F12 c12 47.125% (paired 95% CI 44.51–49.74%, about −20 Elo)
 ([2026-11-18 record](2026-11-18-fresh-current-policy-a39-twelve-cycle-baseline.md)).
 Policy KL grows sublinearly and flattens: from cycle 1 to 6 it rises about as
-updates^0.8, from cycle 6 to 12 about as updates^0.5. The policy-only arm's |ΔQ|
+updates^0.9 (exponents 0.91 for P1, 0.86 for F12), from cycle 6 to 12 about as updates^0.5. The policy-only arm's |ΔQ|
 moves only through shared trunk weights, about 0.06 by cycle 8; F12's value moves
 about 0.075 in the first cycle and stays near 0.11.
 
