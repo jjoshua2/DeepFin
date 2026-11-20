@@ -97,6 +97,35 @@ def test_the_loop_flag_reaches_the_settings_and_is_pinned(tmp_path: Path) -> Non
     loop.check_run_config(off, tmp_path)
     with pytest.raises(SystemExit, match="collect_cuda_graphs"):
         loop.check_run_config(on, tmp_path)
+    # A run pinned ON must not resume OFF: the stored value wins over the
+    # added-since-pinning default.
+    on_dir = tmp_path / "pinned_on"
+    on_dir.mkdir()
+    loop.check_run_config(on, on_dir)
+    assert json.loads((on_dir / loop.RUN_CONFIG).read_text())["settings"]["collect_cuda_graphs"] is True
+    with pytest.raises(SystemExit, match="collect_cuda_graphs"):
+        loop.check_run_config(off, on_dir)
+    loop.check_run_config(on, on_dir)
+
+
+@pytest.mark.parametrize(("bad", "reason"), [
+    (["--collect-cuda-graphs"], "cuda_graphs needs a CUDA device"),             # device cpu
+    (["--eval-opening-plies", "1"], "longest EVAL line"),                       # below the split's
+    ([], "exactly one of --init-checkpoint / --random-init"),                   # no gen-0 source
+])
+def test_a_refused_setting_is_never_pinned(tmp_path: Path, bad: list[str], reason: str) -> None:
+    from scripts import simple_rl_loop as loop
+
+    openings = tmp_path / "openings"
+    openings.mkdir()
+    (openings / "summary.json").write_text(json.dumps({"eval_max_plies": 6}))
+    run_dir = tmp_path / "run"
+    init = [] if not bad else ["--random-init"]
+    no_eval = [] if "--eval-opening-plies" in bad else ["--no-eval"]
+    with pytest.raises(SystemExit, match=reason):
+        loop.main(["run", "--run-dir", str(run_dir), "--openings-dir", str(openings), "--device", "cpu",
+                   "--generations", "1", *init, *no_eval, *bad])
+    assert not (run_dir / loop.RUN_CONFIG).exists()
 
 
 @needs_cuda
@@ -114,3 +143,47 @@ def test_graphs_on_gives_the_same_shards_and_banks_its_counters(
     manifest = json.loads((on / "manifest.json").read_text())
     assert manifest["config"]["settings"]["cuda_graphs"] is True
     assert manifest["stats"]["cuda_graph_stats"] == stats_on["cuda_graph_stats"]
+
+
+def test_validate_settings_refuses_each_settings_only_fault() -> None:
+    from chess_anti_engine.simple_rl.collect import CollectSettings, validate_settings
+
+    validate_settings(CollectSettings(games=1))
+    with pytest.raises(ValueError, match="opening_sampling"):
+        validate_settings(CollectSettings(games=1, opening_sampling="shuffled"))
+    with pytest.raises(ValueError, match="cuda_graphs needs a CUDA device"):
+        validate_settings(CollectSettings(games=1, device="cpu", cuda_graphs=True))
+    validate_settings(CollectSettings(games=1, device="cuda", cuda_graphs=True))  # settings only: no GPU touched
+
+
+def test_run_validates_eval_settings_only_while_an_evaluation_remains(tmp_path: Path,
+                                                                    monkeypatch: pytest.MonkeyPatch) -> None:
+    """A re-invoked `run` on a fully sealed run must not be refused over eval
+    settings it will never use (e.g. the openings summary.json since removed)."""
+    import argparse
+
+    from scripts import simple_rl_loop as loop
+
+    for g in (1, 2):
+        for kind in ("collect", "train", "eval"):
+            (tmp_path / f"gen_{g:04d}" / kind).mkdir(parents=True)
+            (tmp_path / f"gen_{g:04d}" / kind / "manifest.json").write_text("{}")
+    a = loop.parser().parse_args(["run", "--run-dir", str(tmp_path), "--generations", "2",
+                                  "--openings-dir", str(tmp_path / "no_openings")])
+    assert (a.no_eval, a.eval_opening_plies) == (False, None)
+    assert loop.run_stages_left(a, tmp_path) == set()
+    (tmp_path / "gen_0002" / "eval" / "manifest.json").unlink()
+    assert loop.run_stages_left(a, tmp_path) == {"eval"}
+    assert loop.run_stages_left(argparse.Namespace(generations=2, no_eval=True), tmp_path) == set()
+    with pytest.raises(SystemExit, match=r"summary\.json missing"):
+        loop.validate_before_pinning(a, tmp_path, loop.run_stages_left(a, tmp_path))
+    (tmp_path / "gen_0002" / "eval" / "manifest.json").write_text("{}")
+    loop.validate_before_pinning(a, tmp_path, loop.run_stages_left(a, tmp_path))  # nothing left: no eval check
+    # Through `run` itself: every stage sealed (lineage checks stubbed: the
+    # manifests are placeholders), no summary.json, no --eval-opening-plies.
+    (tmp_path / "gen_0000").mkdir()
+    (tmp_path / "gen_0000" / "manifest.json").write_text("{}")
+    monkeypatch.setattr(loop, "verify_stage", lambda *_a, **_k: None)
+    monkeypatch.setattr(loop, "tripwire_exit", lambda *_a, **_k: 0)
+    assert loop.main(["run", "--run-dir", str(tmp_path), "--generations", "2",
+                      "--openings-dir", str(tmp_path / "no_openings")]) == 0

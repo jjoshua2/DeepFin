@@ -24,7 +24,7 @@ from typing import Any
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from chess_anti_engine.simple_rl.collect import CollectSettings, collect_generation
+from chess_anti_engine.simple_rl.collect import CollectSettings, collect_generation, validate_settings
 from chess_anti_engine.simple_rl.common import (
     blocking_markers,
     input_ref,
@@ -265,6 +265,38 @@ RUN_CONFIG_EXEMPT = frozenset({
 ADDED_SINCE_PINNING = {"collect_cuda_graphs": False}
 
 
+def validate_before_pinning(a: argparse.Namespace, run_dir: Path, stages: set[str]) -> None:
+    """Raise every settings-only refusal for ``stages`` BEFORE any side effect.
+
+    Both ``run`` and a standalone stage call this ahead of ``check_run_config``
+    (which pins run_config.json) and, for a stage, ahead of any unsealing or
+    manifest removal, so a refused setting is neither pinned (dropping it again
+    would need --allow-config-change) nor leaves lineage half-rewound.
+    ``stages`` names what will execute: "collect" checks the collect settings
+    (e.g. --collect-cuda-graphs without CUDA) and generation 0's init flags,
+    "train" the train settings, "eval" the eval settings (opening plies
+    against the split).
+    """
+    if "train" in stages:
+        train_settings(a, run_dir)
+    if "collect" in stages:
+        try:
+            validate_settings(collect_settings(a))
+        except ValueError as exc:
+            raise SystemExit(f"collect settings refused: {exc}") from exc
+        if not stage_done(gen_dir(run_dir, 0)) and bool(a.init_checkpoint) == bool(a.random_init):
+            raise SystemExit("exactly one of --init-checkpoint / --random-init is required to create generation 0")
+    if "eval" in stages:
+        eval_settings(a)
+
+
+def run_stages_left(a: argparse.Namespace, run_dir: Path) -> set[str]:
+    """The stage kinds a ``run`` would still execute (a sealed stage is skipped)."""
+    kinds = ["collect", "train"] + ([] if a.no_eval else ["eval"])
+    return {k for g in range(1, int(a.generations) + 1) for k in kinds
+            if not stage_done(gen_dir(run_dir, g) / k)}
+
+
 def check_run_config(a: argparse.Namespace, run_dir: Path) -> None:
     """Pin the loop's settings at the first ``run``; refuse a silent change on resume."""
     current = {k: v for k, v in sorted(vars(a).items()) if k not in RUN_CONFIG_EXEMPT}
@@ -293,7 +325,7 @@ def cmd_run(a: argparse.Namespace) -> int:
     if blocked:
         print("not starting: " + "; ".join(blocked), file=sys.stderr)
         return EXIT_BLOCKED
-    train_settings(a, run_dir)  # refuse invalid training settings before any stage runs
+    validate_before_pinning(a, run_dir, {"collect", "train"} | run_stages_left(a, run_dir))
     check_run_config(a, run_dir)
     init_run(run_dir, init_checkpoint=a.init_checkpoint, random_init=a.random_init,
              model_config=a.model_config, arch_from=a.arch_from, seed=a.seed)
@@ -323,9 +355,12 @@ def cmd_stage(a: argparse.Namespace) -> int:
     if blocked:
         print("not starting: " + "; ".join(blocked), file=sys.stderr)
         return EXIT_BLOCKED
+    stage = "eval" if a.command == "evaluate" else a.command
+    # Before pinning, unsealing or unlinking anything: a refused setting must
+    # leave run_config.json and the lineage exactly as they were.
+    validate_before_pinning(a, run_dir, {stage})
     if (run_dir / RUN_CONFIG).exists():
         check_run_config(a, run_dir)  # the same pinned settings a `run` would be held to
-    stage = "eval" if a.command == "evaluate" else a.command
     stage_dir = gen_dir(run_dir, a.generation) / stage
     if stage_done(stage_dir) and not a.redo:
         verify_before(run_dir, a.generation, stage, inclusive=True)
