@@ -405,7 +405,8 @@ def test_continue_refuses_or_reapplies_a_changed_optimizer_hparam(tmp_path: Path
     first.save(ckpt)
 
     same = build_trainer(tiny_model_config(), TrainSettings(device="cpu", lr=1e-3), log_dir=None)
-    assert continue_optimizer(same, ckpt, TrainSettings(device="cpu", lr=1e-3)) == {"differed": {}, "reapplied": False}
+    same_check = continue_optimizer(same, ckpt, TrainSettings(device="cpu", lr=1e-3))
+    assert (same_check["differed"], same_check["reapplied"], same_check["group_differed"]) == ({}, False, [])
 
     lower = TrainSettings(device="cpu", lr=5e-5, lr_floor=1e-6, mirror_prob=0.0)
     with pytest.raises(ValueError, match="reapply-optimizer-hparams"):

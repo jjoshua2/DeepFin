@@ -12,6 +12,9 @@ from pathlib import Path
 from typing import Any
 
 MANIFEST = "manifest.json"
+# Run-level cache of file sha256s keyed by (size, mtime_ns, inode); read and
+# written by simple_rl.lineage, seeded here at every manifest write.
+SHA_CACHE = "lineage_sha_cache.json"
 STOP_FILE = "STOP"
 PAUSE_FILE = "PAUSE"
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -39,9 +42,36 @@ def sha256_tree(path: Path) -> str:
     return h.hexdigest()
 
 
+# Digests input_ref computed for regular files in this process, keyed by
+# resolved path: (size, mtime_ns, inode) taken BEFORE hashing, sha256.
+# write_manifest seeds the run's lineage sha cache from them.
+_HASHED: dict[str, tuple[list[int], str]] = {}
+
+
+def stat_stamp(st: os.stat_result) -> list[int]:
+    """The identity a cached sha256 is valid for: (size, mtime_ns, inode)."""
+    return [st.st_size, st.st_mtime_ns, st.st_ino]
+
+
 def input_ref(path: Path) -> dict[str, Any]:
     p = Path(path)
+    if p.is_file():
+        stamp = stat_stamp(p.stat())
+        digest = sha256_file(p)
+        _HASHED[str(p.resolve())] = (stamp, digest)
+        return {"path": str(p), "sha256": digest}
     return {"path": str(p), "sha256": sha256_tree(p)}
+
+
+def _refs_hashed(refs: dict[str, Any]) -> dict[str, tuple[list[int], str]]:
+    out = {}
+    for ref in refs.values():
+        if isinstance(ref, dict) and "path" in ref and "sha256" in ref:
+            key = str(Path(ref["path"]).resolve())
+            hit = _HASHED.get(key)
+            if hit is not None and hit[1] == ref["sha256"]:
+                out[key] = hit
+    return out
 
 
 def git_identity() -> dict[str, Any]:
@@ -124,7 +154,39 @@ def write_manifest(stage_dir: Path, *, stage: str, config: dict[str, Any], input
         **(extra or {}),
     }
     write_json_atomic(Path(stage_dir) / MANIFEST, manifest)
+    seed_sha_cache(Path(stage_dir), {**_refs_hashed(inputs), **_refs_hashed(outputs)})
     return manifest
+
+
+def run_dir_of(stage_dir: Path) -> Path | None:
+    """The run dir that owns ``stage_dir`` (``<run>/gen_NNNN[/<stage>]``), or None."""
+    for d in (Path(stage_dir), *Path(stage_dir).parents):
+        if len(d.name) == 8 and d.name.startswith("gen_") and d.name[4:].isdigit():
+            return d.parent
+    return None
+
+
+def seed_sha_cache(stage_dir: Path, hashed: dict[str, tuple[list[int], str]]) -> None:
+    """Record the digests a stage just computed for its manifest (resolved path ->
+    (stamp taken before hashing, sha256)) in the run's sha cache, so the first
+    resume does not re-read every model. A file whose stamp moved since it was
+    hashed is skipped; a later change is caught by the stamp on lookup."""
+    run_dir = run_dir_of(stage_dir)
+    if run_dir is None or not hashed:
+        return
+    path = run_dir / SHA_CACHE
+    try:
+        data: dict[str, Any] = json.loads(path.read_text()) if path.is_file() else {}
+    except (OSError, ValueError):
+        data = {}
+    changed = False
+    for key, (stamp, digest) in hashed.items():
+        p = Path(key)
+        if p.is_file() and stat_stamp(p.stat()) == stamp:
+            data[key] = {"stamp": stamp, "sha256": digest}
+            changed = True
+    if changed:
+        write_json_atomic(path, data)
 
 
 def blocking_markers(run_dir: Path, extra_markers: list[Path] | tuple[Path, ...] = ()) -> list[str]:

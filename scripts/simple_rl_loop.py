@@ -43,7 +43,8 @@ from chess_anti_engine.simple_rl.evaluate import (
     tripwire_table,
 )
 from chess_anti_engine.simple_rl.learn import (
-    MODEL_FILE, TrainSettings, lineage_capped_collects, refuse_capped_collects, train_generation,
+    MATRIX_OPTIMIZER_SCOPES, MODEL_FILE, TrainSettings, lineage_capped_collects, preflight_init_optimizer,
+    refuse_capped_collects, train_generation,
 )
 from chess_anti_engine.simple_rl.lineage import later_sealed, unseal_after, verify_before, verify_stage
 from chess_anti_engine.simple_rl.openings import split_openings
@@ -162,7 +163,9 @@ def train_settings(a: argparse.Namespace, run_dir: Path) -> TrainSettings:
         window=a.window, batch_size=a.batch_size, updates=a.updates, passes=a.passes, lr=a.lr,
         lr_floor=a.lr_floor, warmup_steps=a.warmup_steps, warmup_start=a.warmup_start,
         optimizer=a.optimizer, optimizer_state=a.optimizer_state,
-        reapply_optimizer_hparams=a.reapply_optimizer_hparams, mirror_prob=a.mirror_prob,
+        reapply_optimizer_hparams=a.reapply_optimizer_hparams, init_optimizer_state=a.init_optimizer_state,
+        adopt_checkpoint_optimizer_hparams=a.adopt_checkpoint_optimizer_hparams,
+        matrix_optimizer_scope=a.matrix_optimizer_scope, mirror_prob=a.mirror_prob,
         w_policy=a.w_policy, w_wdl=a.w_wdl, value_outcome_weight=a.value_outcome_weight,
         value_search_weight=a.value_search_weight, value_search_source=a.value_search_source,
         value_draw_source=a.value_draw_source, policy_prior_mix=a.policy_prior_mix,
@@ -265,7 +268,9 @@ RUN_CONFIG_EXEMPT = frozenset({
 # Flags added after runs were already pinned, with the value every earlier run
 # implicitly had. A run_config.json without the key reads as that default, so
 # resuming an older run at the default is not a "change" -- any other value is.
-ADDED_SINCE_PINNING = {"collect_cuda_graphs": False, "allow_capped_collect_rows": False}
+ADDED_SINCE_PINNING = {"collect_cuda_graphs": False, "init_optimizer_state": "fresh",
+                       "matrix_optimizer_scope": "default", "adopt_checkpoint_optimizer_hparams": False,
+                       "allow_capped_collect_rows": False}
 
 
 def validate_before_pinning(a: argparse.Namespace, run_dir: Path, stages: set[str]) -> None:
@@ -282,6 +287,8 @@ def validate_before_pinning(a: argparse.Namespace, run_dir: Path, stages: set[st
     """
     if "train" in stages:
         settings = train_settings(a, run_dir)
+        if settings.init_optimizer_state == "checkpoint" and not stage_done(gen_dir(run_dir, 1) / "train"):
+            preflight_init_optimizer_source(a, run_dir, settings)
         if getattr(a, "generation", None) is not None:
             to_train = [int(a.generation)]
         else:
@@ -302,6 +309,25 @@ def validate_before_pinning(a: argparse.Namespace, run_dir: Path, stages: set[st
             raise SystemExit("exactly one of --init-checkpoint / --random-init is required to create generation 0")
     if "eval" in stages:
         eval_settings(a)
+
+
+def preflight_init_optimizer_source(a: argparse.Namespace, run_dir: Path, settings: TrainSettings) -> None:
+    """--init-optimizer-state checkpoint refusals that need only the init
+    checkpoint's header: generation 1 trains from gen_0000/model.pt, a copy of
+    --init-checkpoint (or the random init, which has no moments to start from)."""
+    gen0 = gen_dir(run_dir, 0)
+    if stage_done(gen0):
+        kind = json.loads((gen0 / "manifest.json").read_text()).get("config", {}).get("kind")
+        source = None if kind == "random_init" else gen0 / MODEL_FILE
+    else:
+        source = None if a.random_init else (Path(a.init_checkpoint) if a.init_checkpoint else None)
+    if source is None:
+        raise SystemExit("--init-optimizer-state checkpoint needs an --init-checkpoint with optimizer state; a "
+                         "random init has none (use --init-optimizer-state fresh)")
+    try:
+        preflight_init_optimizer(source, settings)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def run_stages_left(a: argparse.Namespace, run_dir: Path) -> set[str]:
@@ -510,9 +536,21 @@ def _common(p: argparse.ArgumentParser) -> None:
     t.add_argument("--warmup-start", type=float, default=0.0)
     t.add_argument("--optimizer", default="nadamw")
     t.add_argument("--optimizer-state", choices=("fresh", "continue"), default="fresh")
+    t.add_argument("--init-optimizer-state", choices=("fresh", "checkpoint"), default="fresh",
+                   help="generation 1: 'checkpoint' starts from the init checkpoint's optimizer moments and "
+                        "step counters (refused if it has none, or its parameter layout / hyperparameters differ; "
+                        "its scheduler is not restored -- this run's --lr schedule drives the rate)")
+    t.add_argument("--matrix-optimizer-scope", default="default", choices=MATRIX_OPTIMIZER_SCOPES,
+                   help="Aurora/Muon (and SOAP) only, refused with any other optimizer: which matrices the "
+                        "matrix group owns (the SL base used mlp_out)")
     t.add_argument("--reapply-optimizer-hparams", action="store_true",
-                   help="under --optimizer-state continue, apply the requested lr / lr floor / weight decay onto "
-                        "the restored optimizer (default: refuse when they differ from the checkpoint's)")
+                   help="on a restore (--optimizer-state continue, --init-optimizer-state checkpoint): apply the "
+                        "requested lr / lr floor and this run's configured param-group hyperparameters onto "
+                        "the restored optimizer (default: refuse when any differs from the checkpoint's)")
+    t.add_argument("--adopt-checkpoint-optimizer-hparams", action="store_true",
+                   help="on a restore: KEEP the checkpoint's param-group hyperparameters (weight decay, betas, "
+                        "Aurora polar knobs, ...) where they differ from this run's configured ones; recorded. "
+                        "Exclusive with --reapply-optimizer-hparams; never adopts lr / lr floor")
     t.add_argument("--allow-capped-collect-rows", action="store_true",
                    help="train on rows from collects whose evaluator cap could absorb search leaves (default: "
                         "refused; when allowed the phase records trained_on_capped_rows)")
