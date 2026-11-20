@@ -145,6 +145,7 @@ class _CompactRootParityEvaluator:
 
 _MATE_VS_STALEMATE_FEN = "5k2/1R6/P4BB1/P7/2P5/8/3K3P/8 w - - 5 70"
 _STALEMATE_ONLY_FEN = "7k/8/6KP/8/8/8/8/8 w - - 0 1"
+_PRUNED_SINGLETON_FEN = "4K2k/3q1P2/6Q1/8/8/8/8/8 w - - 0 1"
 
 
 @pytest.mark.skipif(run_gumbel_root_many_c is None, reason="C tree extension not available")
@@ -499,13 +500,19 @@ def test_gumbel_python_avoids_high_prior_stalemate_when_root_is_winning():
 @pytest.mark.skipif(run_gumbel_root_many_c is None, reason="C tree extension not available")
 def test_gumbel_c_avoids_high_prior_stalemate_when_root_is_winning():
     board = chess.Board(_STALEMATE_ONLY_FEN)
+    nondrawing = 0
+    for move in board.legal_moves:
+        child = board.copy()
+        child.push(move)
+        nondrawing += not child.is_game_over(claim_draw=True)
+    assert nondrawing > 1
     pre_pol, pre_wdl, stalemate_idx = _stalemate_only_logits(
         board,
         root_wdl_logits=np.array([[10.0, -10.0, -10.0]], dtype=np.float32),
     )
 
     run_gumbel_root_many_c = _require_run_gumbel_root_many_c()
-    probs, actions, values, masks = run_gumbel_root_many_c(
+    probs, actions, values, masks, tree, roots = run_gumbel_root_many_c(
         None,
         [board],
         device="cpu",
@@ -514,12 +521,88 @@ def test_gumbel_c_avoids_high_prior_stalemate_when_root_is_winning():
         evaluator=_ZeroEvaluator(),
         pre_pol_logits=pre_pol,
         pre_wdl_logits=pre_wdl,
-    )[:4]
+    )[:6]
 
     assert actions[0] != stalemate_idx
     assert probs[0][stalemate_idx] == 0.0
+    assert tree.find_child(roots[0], stalemate_idx) == -1
     assert np.isfinite(values[0])
     assert np.array_equal(masks[0], legal_move_mask(board))
+
+
+@pytest.mark.parametrize("root_wdl", [[8.0, 0.0, -8.0], [0.0, 0.0, 0.0], [-8.0, 0.0, 8.0]],
+                         ids=["positive", "zero", "negative"])
+@pytest.mark.parametrize("use_cboard", [False, True], ids=["board", "selfplay_cboard"])
+def test_gumbel_c_draw_pruning_does_not_make_a_false_forced_move(
+    root_wdl: list[float], use_cboard: bool,
+) -> None:
+    """Only root optimism changes; neutral leaves let 64 visits prove the draw."""
+    from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast
+
+    board = chess.Board(_PRUNED_SINGLETON_FEN)
+    assert board.is_valid()
+    assert {m.uci() for m in board.legal_moves} == {"e8d7", "e8f8"}
+    draw = board.copy()
+    draw.push_uci("e8d7")
+    assert draw.is_stalemate()
+    loss = board.copy()
+    loss.push_uci("e8f8")
+    loss.push_uci("d7d8")
+    assert loss.is_checkmate()
+    draw_idx = int(move_to_index(chess.Move.from_uci("e8d7"), board))
+    loss_idx = int(move_to_index(chess.Move.from_uci("e8f8"), board))
+    cb = cboard_from_board_fast(board)
+    # The selfplay caller supplies CBoards in both arguments.
+    boards = cast(Any, [cb]) if use_cboard else [board]
+    run = _require_run_gumbel_root_many_c()
+    probs, actions, values, masks, tree, roots = run(
+        None, boards, device="cpu", rng=np.random.default_rng(0),
+        cfg=GumbelConfig(input_extra_features="v1", simulations=64, topk=2,
+                         temperature=0.0, add_noise=False),
+        evaluator=_ZeroEvaluator(),
+        pre_pol_logits=np.zeros((1, POLICY_SIZE), dtype=np.float32),
+        pre_wdl_logits=np.array([root_wdl], dtype=np.float32),
+        cboards=[cb] if use_cboard else None, target_batch=1,
+    )[:6]
+    child_actions, visits = tree.get_children_visits(roots[0])
+    assert set(child_actions.tolist()) == {draw_idx, loss_idx}
+    assert 0 < int(visits.sum()) <= 64
+    assert tree.get_solved_status(roots[0]) == 2
+    assert actions == [draw_idx]
+    assert np.count_nonzero(probs[0]) == 1
+    assert probs[0][draw_idx] == 1.0
+    assert values == [0.0]
+    assert np.array_equal(masks[0], legal_move_mask(board))
+
+
+@pytest.mark.parametrize("restricted", [False, True], ids=["one_legal", "one_allowed"])
+def test_gumbel_c_real_singleton_still_returns_without_search(restricted: bool) -> None:
+    board = chess.Board(_PRUNED_SINGLETON_FEN if restricted else
+                        "7k/8/8/8/8/8/5P1P/r5K1 w - - 0 1")
+    move = chess.Move.from_uci("e8f8" if restricted else "g1g2")
+    assert move in board.legal_moves
+    if not restricted:
+        assert board.legal_moves.count() == 1
+        child = board.copy()
+        child.push(move)
+        assert not child.is_game_over()
+    action = int(move_to_index(move, board))
+    result = _require_run_gumbel_root_many_c()(
+        None, [board], device="cpu", rng=np.random.default_rng(0),
+        cfg=GumbelConfig(input_extra_features="v1", simulations=64, topk=2,
+                         temperature=0.0, add_noise=False),
+        # Precomputed root: any attempted leaf evaluation is a test failure.
+        evaluator=cast(Any, object()),
+        pre_pol_logits=np.zeros((1, POLICY_SIZE), dtype=np.float32),
+        pre_wdl_logits=np.array([[8.0, 0.0, -8.0]], dtype=np.float32),
+        allowed_root_indices_batch=[{action}] if restricted else None,
+    )
+    probs, actions, _values, _masks, tree, roots = result[:6]
+    child_actions, visits = tree.get_children_visits(roots[0])
+    assert child_actions.tolist() == [action]
+    assert int(visits.sum()) == 0
+    assert actions == [action]
+    assert probs[0][action] == 1.0
 
 
 @pytest.mark.skipif(run_gumbel_root_many_c is None, reason="C tree extension not available")

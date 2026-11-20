@@ -383,10 +383,13 @@ nothing.
   draw at once. If every move it did search is then proven lost, the engine plays
   a move that ends the game drawn on the board (stalemate, insufficient material,
   50-move clock at 100, a third repetition), reporting `score cp 0` and
-  `info string every searched move is proven lost; playing a move that draws`.
-  A move after which the opponent could merely claim a draw does not count. One
-  case is left over: on the classic path, if leaving those moves out leaves a
-  single move, that move is returned unsearched and the draw is not found.
+  `info string every searched move is lost or below a draw; playing a move that draws`.
+  A move after which the opponent could merely claim a draw does not count.
+  The moves are left out only while at least two others remain: if leaving
+  them out would leave a single move, every path keeps them in the search,
+  where they count as the exact draw they are. On the classic path the search
+  itself also plays a left-out drawing move when every move it searched scores
+  below a draw, before any proof (the same rule self-play uses).
 - On a root proven lost the engine plays the move that delays mate longest: a
   move with no proven mate distance first, then the longest proven mate. A move
   after which the opponent mates next move ranks last (a check on the board, not

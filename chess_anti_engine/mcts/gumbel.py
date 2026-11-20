@@ -22,8 +22,10 @@ from chess_anti_engine.mcts.puct import (
     _value_scalar_from_wdl_logits as _wdl_to_q,
 )
 from chess_anti_engine.mcts.root_tactics import (
+    forced_draw_actions,
     immediate_mate_root_policy,
     immediate_terminal_draw_indices,
+    one_hot_root_policy,
 )
 from chess_anti_engine.moves import (
     MODEL_POLICY_ENCODING,
@@ -1420,6 +1422,9 @@ class _BoardSearchState:
     finished_probs: np.ndarray | None
     finished_action: int | None
     finished_value: float | None
+    # On-board drawing moves a winning-looking root pruned (see
+    # `_build_improved_policy_for_board`'s fallback; mirrors gumbel_c).
+    pruned_draws: tuple[int, ...] = ()
 
 
 def _init_board_search_state(
@@ -1452,11 +1457,15 @@ def _init_board_search_state(
         probs, action, value = mate
         return _finish(probs, action, value)
 
+    pruned_draws: tuple[int, ...] = ()
     if root_q > 0.0 and legal.size > 1:
         terminal_draws = immediate_terminal_draw_indices(board)
         if terminal_draws:
             keep = np.array([int(a) not in terminal_draws for a in legal], dtype=np.bool_)
-            if keep.any():
+            # Prune only while at least two moves survive: a single survivor
+            # is not a forced move (mirrors gumbel_c, which documents why).
+            if np.count_nonzero(keep) > 1:
+                pruned_draws = tuple(forced_draw_actions(board, legal[~keep].tolist()))
                 pri[np.fromiter(terminal_draws, dtype=np.int64)] = 0.0
                 legal = legal[keep]
 
@@ -1475,6 +1484,7 @@ def _init_board_search_state(
         root=root, priors=pri, search_legal=legal,
         candidates=cands, remaining=list(cands), gumbels=gumbels,
         finished_probs=None, finished_action=None, finished_value=None,
+        pruned_draws=pruned_draws,
     )
 
 
@@ -1683,6 +1693,12 @@ def _build_improved_policy_for_board(
         rng, legal, imp_all, float(cfg.temperature), argmax_idx=argmax_idx,
     )
     value = _completed_q(root_q=root_q, root=root, action=best_a)
+  # Pruned-draw fallback, kept parallel to gumbel_c.py's: every visited move
+  # below 0 means the pruned on-board draw is the best move by the search's own
+  # values.
+    visited = visits > 0
+    if st.pruned_draws and visited.any() and float(qvalues[visited].max()) < 0.0:
+        return one_hot_root_policy(min(st.pruned_draws), value=0.0)
     return probs, action, value
 
 
