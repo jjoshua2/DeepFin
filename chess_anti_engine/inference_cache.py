@@ -247,8 +247,8 @@ class EncodedEvalCache:
         Gumbel caps its leaf encode buffer at the evaluator's ``_max_batch``
         only on the in-place path. Declining that path (above) would otherwise
         size the buffer at the uncapped ``leaf_buffer_rows`` (>= 512), which
-        both changes the search -- leaves past the cap are evaluated instead of
-        being absorbed as root-Q pseudo-terminals -- and can raise in an inner
+        both changes the search -- leaves past the cap land in the same batch
+        instead of a buffer-full flush (a different batching) -- and can raise in an inner
         evaluator that rejects batches above its max. Advertising the cap the
         inner in-place path would have used keeps cache-on and cache-off on
         the same search shape. ``None`` when the inner would not have taken

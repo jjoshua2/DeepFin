@@ -581,13 +581,10 @@ def test_the_cli_flag_reaches_run_arena(monkeypatch: pytest.MonkeyPatch) -> None
 # --eval-max-batch is a SEARCH-SHAPE knob below the uncapped leaf buffer
 #
 # gumbel_c mins its leaf buffer against the evaluator's `_max_batch`, and when
-# that buffer fills `_mcts_tree.c` does NOT flush and retry -- it appends the
-# leaf as a SOLVED_UNKNOWN pseudo-terminal carrying the ROOT's Q
-# (`stored_append_terminal(s, path_buf, path_len, g->root_qs[bi],
-# SOLVED_UNKNOWN)`). Leaves beyond the buffer are absorbed, not evaluated, so a
-# cap below what the search asked for changes which move is played. Reviewer
-# measured 128 vs 4096 on CPU: 57-75% of leaf evaluations gone, 53/64 boards
-# picking a different action.
+# that buffer fills `_mcts_tree.c` flushes the batch and resumes (ABI 11; it
+# used to back the leaf up with the ROOT's Q -- see
+# tests/test_gumbel_buffer_full_flush.py). Every leaf is evaluated, but a cap
+# below what the search asked for re-batches it, so moves can change.
 # ---------------------------------------------------------------------------
 
 
@@ -744,7 +741,7 @@ def test_a_cap_that_shrinks_the_search_warns_loudly_and_still_runs(
     err = capsys.readouterr().err
     assert "512" in err, "the cap must be named"
     assert "4032" in err, "the uncapped leaf-buffer size must be named"
-    assert "SOLVED_UNKNOWN" in err, "the mechanism must be stated, not just the fact"
+    assert "flushes the batch" in err, "the mechanism must be stated, not just the fact"
     assert "NOT COMPARABLE" in err.upper()
     assert seen, "a capped arena must still PLAY -- this is warn, not refuse"
 
@@ -766,7 +763,7 @@ def test_a_cap_at_or_above_the_uncapped_size_is_silent(
     # returns scores without writing rows, so the unrelated game-log
     # disagreement warning is on stderr too and a bare "WARNING" check would
     # pass for the wrong reason.
-    assert "SOLVED_UNKNOWN" not in capsys.readouterr().err
+    assert "flushes the batch" not in capsys.readouterr().err
 
 
 def test_the_refusal_recommends_the_uncapped_size_not_the_bare_minimum(
@@ -1232,7 +1229,7 @@ def test_a_relations_model_flips_the_recorded_bound_in_the_blind_window(
     assert record["eval_leaf_cap_bound"] is True
     assert record["eval_hoist"] == "4096<8192"
     err = capsys.readouterr().err
-    assert "SOLVED_UNKNOWN" in err, "the late warning must still fire"
+    assert "flushes the batch" in err, "the late warning must still fire"
     assert "after loading the checkpoints" in err, "and say why it is late"
 
 
@@ -1259,7 +1256,7 @@ def test_a_relations_off_model_records_exactly_the_pre_load_floor(
     assert record["eval_leaf_cap_uncapped"] == floor == 4096
     assert record["eval_leaf_cap_bound"] is False
     assert record["eval_hoist"] == "4096"
-    assert "SOLVED_UNKNOWN" not in capsys.readouterr().err
+    assert "flushes the batch" not in capsys.readouterr().err
 
 
 def test_a_model_without_the_attribute_is_treated_as_relations_off(
@@ -1423,7 +1420,7 @@ def test_a_cap_inert_for_the_real_pool_does_not_cry_wolf(
         search_candidate=side, search_reference=side,
         games=2, openings_fen=_openings_file(tmp_path, 1),
     )
-    assert "SOLVED_UNKNOWN" not in capsys.readouterr().err
+    assert "flushes the batch" not in capsys.readouterr().err
 
 
 def test_the_root_submit_refusal_is_against_the_pool(

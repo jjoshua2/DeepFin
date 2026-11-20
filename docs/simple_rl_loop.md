@@ -141,6 +141,13 @@ the exact-repeat rate of the encoded input (position and history planes) within
 the generation, the cross-generation repeat rate, and, from the stored root
 statistics, the target entropy, prior entropy, KL(target‖prior) and top-1
 agreement of target and prior.
+It also records `buffer_full_flushes`: how many times the generation's C searches
+found their leaf buffer full and flushed. That count is observed, read from
+`gumbel_c.buffer_full_flushes()` around the collect, not predicted from settings.
+A count above 0 means the evaluator cap (`--eval-max-batch`) is below what the
+search asks for, so the searches were re-batched. The collect writes `stats.json`
+and then refuses to seal the generation, which is redone whole. See the
+[buffer-full record](experiments/2026-11-20-gumbel-buffer-full-fallback.md).
 
 The cross-generation repeat rate (`repeat_rate_vs_previous`) is a constant-memory
 estimate by default. The run keeps every earlier row hash below a threshold in a
@@ -291,6 +298,69 @@ drawing move) carries NO statistics, never stale ones; `stats.json` counts them
 (`rows_without_root_stats`) and their value target falls back as described under
 Training details. Rows whose target was replaced by the tablebase policy are
 flagged in the row sidecar (`tb_policy_override`).
+
+## Evaluator batch cap
+
+`--eval-max-batch` controls the search, not memory. Each network turn hands one
+compiled Gumbel call every active game, together with the persistent tree. The
+call caps its leaf buffer at the evaluator's max batch. Before ABI 11 (the
+[buffer-full fix](experiments/2026-11-20-gumbel-buffer-full-fallback.md)), a leaf
+that found the buffer full was not evaluated: the C tree backed it up as a
+pseudo-terminal carrying the root's Q. Since ABI 11 the batch is flushed and
+resumed, and a collect whose searches flushed is refused unsealed. The rest of
+this section describes the defect that rows from older builds carry.
+
+`tree_backprop` reads a leaf value from the leaf's side to move, while the root's
+Q is from the root's side to move. So a starved leaf at any ODD depth (a root
+child, a great-grandchild, ...) is backed up with the wrong sign: for a losing
+root those leaves look as good as the root is bad. A starved leaf at an even depth
+gets the right sign, but its value is still the root's, not its own: fabricated.
+One rep of a halving round requests up to concurrency × topk leaves, and the
+accumulate guard keeps later reps inside the buffer, so a cap binds exactly when
+it is below concurrency × topk. The old default was a fixed 512: above 32 games at
+topk 16 it binds.
+
+The 2026-11-20 diagnostic measured the cost. It used 64 sims, UHO openings and
+128 identical games, and compared cap 512 against 4096:
+
+| Setting | Cap 512 | Cap 4096 |
+|---|---|---|
+| Reply side: Spearman(child Q, prior) | about 0 | +0.60 (book-end mover +0.58) |
+| Book-end mover wins / losses / draws | 95 / 13 / 20 | 45 / 24 / 59 |
+| Mean target entropy | 0.80 | 0.69 |
+
+At cap 4096 the mean target entropy (0.69) matches the calibration bank's
+stored F12 targets. In the smoke's 256-game generation at concurrency 128, the
+reply side's stored targets disagreed with a cold re-search of the same
+positions: KL 2.4, top-1 agreement 0.53. The book-end mover's disagreed far less
+(KL 0.4, top-1 agreement 0.84). Training one phase on those rows moved the probe
+by |ΔQ| 0.30, against 0.02 on F12's rows (Training details).
+
+The cap now defaults to the search's own leaf-buffer size,
+`leaf_buffer_rows(concurrency, topk)`: 2048 at 64 games and 4096 at 128. A
+smaller explicit value is refused before anything is pinned (`validate_settings`,
+called by the loop's pre-pin validation). The refusal is conservative: it compares
+against the 2× buffer, so an explicit 512 is refused at 17–32 games at topk 16
+although the concurrency × topk request would not bind there. The realised cap is
+read off the evaluator into `stats.json` (`eval_max_batch_realised`, with
+`leaf_rows_required`).
+
+Rows already collected at a binding cap are not trained on silently. Train
+refuses (before pinning, and again when the phase starts) any generation in its
+window whose sealed collect ran on CUDA with a cap below concurrency × topk. This
+is the precise could-bind bound, not the conservative one. The cap is read from
+`stats.json` when recorded, else from the pinned setting, else the legacy fixed
+512 that old manifests do not record. The check covers the whole lineage, not
+only the phase's window: a model descends from every earlier generation's rows,
+so a capped collect in any generation 1..g taints phase g and is refused the same
+way, read from the collect manifests (older metrics carry no taint field).
+`--allow-capped-collect-rows` (pinned) overrides the refusal. The phase then
+records `trained_on_capped_rows: true`, the window's capped generations
+(`capped_collect_rows`) and the lineage's (`capped_lineage_collects`) in
+`metrics.json`, the train manifest and `presentation_ledger.json`. An
+`--init-checkpoint` taken from another run carries no taint record: the check
+sees only this run's collects. The arena already checks the same bound and warns
+(`scripts/arena_standard.py`, `arena_uncapped_leaf_rows`).
 
 ## Stockfish
 

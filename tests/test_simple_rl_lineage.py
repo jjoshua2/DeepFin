@@ -384,12 +384,13 @@ def test_a_pinned_run_without_the_new_optimizer_keys_resumes_at_their_defaults(t
     a = loop.parser().parse_args(argv)
     loop.check_run_config(a, run)
     stored = json.loads((run / "run_config.json").read_text())
-    for k in ("init_optimizer_state", "matrix_optimizer_scope", "adopt_checkpoint_optimizer_hparams"):
+    for k in ("init_optimizer_state", "matrix_optimizer_scope", "adopt_checkpoint_optimizer_hparams",
+              "allow_capped_collect_rows"):
         stored["settings"].pop(k)
     (run / "run_config.json").write_text(json.dumps(stored))
     loop.check_run_config(a, run)  # old pin, defaults now: accepted
     for extra in (["--init-optimizer-state", "checkpoint"], ["--matrix-optimizer-scope", "mlp_out"],
-                  ["--adopt-checkpoint-optimizer-hparams"]):
+                  ["--adopt-checkpoint-optimizer-hparams"], ["--allow-capped-collect-rows"]):
         with pytest.raises(SystemExit, match="run settings differ"):
             loop.check_run_config(loop.parser().parse_args([*argv, *extra]), run)
 
