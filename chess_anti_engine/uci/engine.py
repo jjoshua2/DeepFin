@@ -750,6 +750,11 @@ class Engine:
   # fallback reply. They may still own the worker, so the quiescence barrier
   # waits for them too.
         self._orphan_threads: list[threading.Thread] = []
+  # Fresh-eval helpers that returned within their budget while their OS thread
+  # was still in its thread-local (torch) teardown: the at-once answer does not
+  # wait for that, so they are waited for at the next `_wait_for_search` (quit
+  # and every evaluator-closing path) and keep `_search_free_locked` false.
+        self._exiting_helpers: list[threading.Thread] = []
   # (board, searchmoves) of the `go` the current search thread answers, so a
   # search parked as an orphan by `_wait_for_search` still gets its one bestmove.
         self._live_go: tuple[chess.Board, tuple[str, ...]] | None = None
@@ -4093,8 +4098,14 @@ class Engine:
 
     def _search_free_locked(self) -> bool:
         self._orphan_threads = [t for t in self._orphan_threads if t.is_alive()]
+        # One /proc look each, no wait: a helper still exiting keeps the worker
+        # and evaluators off limits (a rebuild or exit would race its teardown).
+        self._exiting_helpers = [
+            t for t in self._exiting_helpers if not await_os_thread_exit(t, cap_s=0.0)
+        ]
         thread = self._search_thread
-        return (thread is None or not thread.is_alive()) and not self._orphan_threads
+        return ((thread is None or not thread.is_alive()) and not self._orphan_threads
+                and not self._exiting_helpers)
 
     def has_live_threads(self) -> bool:
         """A search, orphan or fallback helper is still running (e.g. in torch).
@@ -4172,6 +4183,13 @@ class Engine:
             with self._state_lock:
                 if orphan in self._orphan_threads:
                     self._orphan_threads.remove(orphan)
+        # Ended fresh-eval helpers still exiting: bounded by this call's budget
+        # like the ended search thread above; one not gone yet stays recorded.
+        for helper in list(self._exiting_helpers):
+            if await_os_thread_exit(helper, cap_s=max(0.0, end - time.monotonic())):
+                with self._state_lock:
+                    if helper in self._exiting_helpers:
+                        self._exiting_helpers.remove(helper)
         self._search_thread = None
         self._live_go = None
 
@@ -4236,6 +4254,9 @@ class Engine:
         deadline = time.monotonic() + max(0.0, timeout)
         helper.start()
         join_thread(helper, max(0.0, timeout), deadline=deadline)
+        if not helper.is_alive() and not await_os_thread_exit(helper, cap_s=0.0):
+            with self._state_lock:
+                self._exiting_helpers.append(helper)
         if helper.is_alive():
             with self._state_lock:
                 self._orphan_threads.append(helper)
