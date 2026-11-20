@@ -289,6 +289,45 @@ drawing move) carries NO statistics, never stale ones; `stats.json` counts them
 Training details. Rows whose target was replaced by the tablebase policy are
 flagged in the row sidecar (`tb_policy_override`).
 
+## Evaluator batch cap
+
+`--eval-max-batch` controls the search, not memory. Each network turn hands one
+compiled Gumbel call every active game, together with the persistent tree. The
+call caps its leaf buffer at the evaluator's max batch. When a leaf finds the
+buffer full, it is not evaluated: the C tree backs it up as a pseudo-terminal
+carrying the root's Q (`_mcts_tree.c`, "Buffer full").
+
+`tree_backprop` reads a leaf value from the leaf's side to move. That flips the
+sign of the root's Q for every child of the root, so for a losing root the
+starved children look as good as the root is bad. The default cap was a fixed
+512, and the first halving round wants concurrency × topk leaves. Above 32 games
+at topk 16 that cap binds.
+
+The 2026-11-20 diagnostic measured the cost. It used 64 sims, UHO openings and
+128 identical games, and compared cap 512 against 4096:
+
+| Setting | Cap 512 | Cap 4096 |
+|---|---|---|
+| Reply side: Spearman(child Q, prior) | about 0 | +0.60 (book-end mover +0.58) |
+| Book-end mover wins / losses / draws | 95 / 13 / 20 | 45 / 24 / 59 |
+| Mean target entropy | 0.80 | 0.69 |
+
+At cap 4096 the mean target entropy (0.69) matches the calibration bank's
+stored F12 targets. In the smoke's 256-game generation at concurrency 128, the
+reply side's stored targets disagreed with a cold re-search of the same
+positions: KL 2.4, top-1 agreement 0.53. The book-end mover's disagreed far less
+(KL 0.4, top-1 agreement 0.84). Training one phase on those rows moved the probe
+by |ΔQ| 0.30, against 0.02 on F12's rows (Training details).
+
+The cap now defaults to the search's own leaf-buffer size,
+`leaf_buffer_rows(concurrency, topk)`: 2048 at 64 games and 4096 at 128. A
+smaller explicit value is refused. The realised cap is read off the evaluator
+into `stats.json` (`eval_max_batch_realised`, with `leaf_rows_required`). Runs
+pinned with `eval_max_batch: 512` at more than 32 games carry the corrupted
+targets. Resuming them needs `--allow-config-change`, and their earlier
+generations are not repaired. The arena already checks the same bound and warns
+(`scripts/arena_standard.py`, `arena_uncapped_leaf_rows`).
+
 ## Stockfish
 
 `play_batch` cannot run without a Stockfish handle: every self-play network turn

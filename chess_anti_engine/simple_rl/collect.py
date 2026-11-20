@@ -92,7 +92,16 @@ class CollectSettings:
     exact_repeat_vs_previous: bool = False
     rows_per_shard: int = 20000
     device: str = "cpu"
-    eval_max_batch: int = 512
+    # Forward-batch cap of the CUDA evaluator. None (default) = the search's own
+    # leaf-buffer size at this concurrency and topk (required_leaf_rows). It is a
+    # SEARCH-SHAPE knob, not a memory one: gumbel_c caps its leaf buffer at the
+    # evaluator's max batch, and a leaf that finds the buffer full is NOT
+    # evaluated -- it is backed up as a pseudo-terminal carrying the ROOT's Q
+    # (_mcts_tree.c, "Buffer full"). At 64 sims / topk 16 / 128 games and the old
+    # fixed 512 that hit most first-round children and corrupted the reply
+    # side's targets (docs/simple_rl_loop.md, "Evaluator batch cap"). An explicit
+    # value below required_leaf_rows is refused.
+    eval_max_batch: int | None = None
     # Replay CUDA graphs of the evaluator's own eager dense forward (measured
     # bitwise identical, PR #1414). The collect evaluator is already on dense
     # fp32 transport (legal_bf16=False), so this is not a transport change.
@@ -314,6 +323,36 @@ def _open_stockfish(settings: CollectSettings) -> Any:
     return pool
 
 
+def required_leaf_rows(settings: CollectSettings) -> int:
+    """The leaf buffer one collect search call asks for, before any evaluator cap.
+
+    Every network turn hands ``run_gumbel_root_many_c`` up to ``concurrency``
+    boards together with the persistent game tree, and a supplied tree turns
+    the 2-group pipeline off at every board count, so the single-buffer
+    expression applies at the full concurrency.
+    """
+    from chess_anti_engine.mcts.gumbel_c import leaf_buffer_rows
+
+    boards = max(1, min(int(settings.concurrency), int(settings.games)))
+    return int(leaf_buffer_rows(boards, topk=int(settings.topk), pipelined=False))
+
+
+def realised_eval_max_batch(settings: CollectSettings) -> int:
+    """``eval_max_batch``, defaulted to ``required_leaf_rows``; a smaller explicit
+    value is refused, because it would silently drop leaf evaluations."""
+    need = required_leaf_rows(settings)
+    if settings.eval_max_batch is None:
+        return need
+    if int(settings.eval_max_batch) < need:
+        raise ValueError(
+            f"--eval-max-batch {settings.eval_max_batch} is below the {need} leaf rows one search call asks for "
+            f"at --concurrency {settings.concurrency} / --topk {settings.topk}: the C tree would back up the "
+            "leaves that find the buffer full as pseudo-terminals carrying the root's Q instead of evaluating "
+            "them, which changes moves and targets. Omit --eval-max-batch (auto) or pass at least "
+            f"{need}, or lower --concurrency")
+    return int(settings.eval_max_batch)
+
+
 def _evaluator(model: Any, settings: CollectSettings) -> Any:
     if not str(settings.device).startswith("cuda"):
         if settings.cuda_graphs:
@@ -321,7 +360,7 @@ def _evaluator(model: Any, settings: CollectSettings) -> Any:
         return None  # play_batch builds a LocalModelEvaluator on CPU
     from chess_anti_engine.inference import DirectGPUEvaluator
 
-    return DirectGPUEvaluator(model, device=settings.device, max_batch=int(settings.eval_max_batch),
+    return DirectGPUEvaluator(model, device=settings.device, max_batch=realised_eval_max_batch(settings),
                               use_amp=True, amp_dtype="bfloat16", n_slots=1, input_bf16=False,
                               legal_bf16=False, pad_to_compiled_buckets=False,
                               cuda_graphs=bool(settings.cuda_graphs))
@@ -329,14 +368,20 @@ def _evaluator(model: Any, settings: CollectSettings) -> Any:
 
 def evaluator_graph_record(evaluator: Any) -> dict[str, Any]:
     """What the evaluator REALISED: graphs on/off and its replay/fallback counters."""
+    max_batch = getattr(evaluator, "_max_batch", None)
     return {"cuda_graphs": bool(getattr(evaluator, "cuda_graphs", False)),
-            "cuda_graph_stats": getattr(evaluator, "cuda_graph_stats", None)}
+            "cuda_graph_stats": getattr(evaluator, "cuda_graph_stats", None),
+            # read off the evaluator the search consumed (None on CPU: no cap)
+            "eval_max_batch_realised": None if max_batch is None else int(max_batch)}
 
 
 def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, train_jsonl: Path,
                        settings: CollectSettings) -> dict[str, Any]:
     """Play one generation into ``gen_dir`` (a fresh, empty directory)."""
     import torch
+
+    if str(settings.device).startswith("cuda"):
+        realised_eval_max_batch(settings)  # refuse a leaf-dropping cap before any work
 
     from chess_anti_engine.replay.shard import ShardMeta, samples_to_arrays, save_local_shard_arrays
     from chess_anti_engine.selfplay import play_batch
@@ -457,7 +502,7 @@ def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, trai
                               for b, c in cursor_after["books"].items()}
     stats.update(wall_seconds=wall, games_per_hour=3600.0 * games_done / max(wall, 1e-9),
                  rows_per_second=stats["rows"] / max(wall, 1e-9), sf_nodes=int(settings.sf_nodes),
-                 **evaluator_graph_record(evaluator))
+                 leaf_rows_required=required_leaf_rows(settings), **evaluator_graph_record(evaluator))
     write_json_atomic(gen_dir / STATS, stats)
     config_record = {"settings": asdict(settings),
                      "dataclasses": {k: asdict(v) for k, v in cfg.items()}, "arch": arch}

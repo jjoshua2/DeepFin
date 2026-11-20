@@ -434,7 +434,9 @@ def _common(p: argparse.ArgumentParser) -> None:
     c.add_argument("--exact-repeat-vs-previous", action="store_true",
                    help="compute repeat_rate_vs_previous exactly over every earlier row (memory grows with the run)")
     c.add_argument("--rows-per-shard", type=int, default=20000)
-    c.add_argument("--eval-max-batch", type=int, default=512)
+    c.add_argument("--eval-max-batch", type=int, default=None,
+                   help="CUDA evaluator batch cap (default: the search's leaf-buffer size at this "
+                        "--concurrency / --topk; a smaller value is refused -- it would drop leaf evaluations)")
     c.add_argument("--collect-cuda-graphs", action="store_true",
                    help="collect on CUDA: replay CUDA graphs of the evaluator's eager dense forward "
                         "(outputs measured bitwise identical, so the same shards; faster at the "
