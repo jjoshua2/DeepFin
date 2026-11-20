@@ -24,6 +24,7 @@ weights for the reference.
 from __future__ import annotations
 
 import inspect
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -1883,23 +1884,73 @@ def test_the_games_refusal_does_not_catch_games_per_rung(
     assert [kw["games"] for kw in seen] == [6, 6]
 
 
-@pytest.mark.parametrize(("overrides", "match"), [
-    ({"mode": "matched_time", "ms_per_move": 10}, "matched_sims only"),
-    ({"eval_max_batch": 0}, "hoisted evaluator"),
-    ({"compile_models": True}, "EAGER forward"),
-    ({"device": "cpu"}, "CUDA --device"),
-    ({"volatility_candidate": {"volatility_q_scale": 0.5, "volatility_fpu": 0.0}}, "volatility"),
+@pytest.mark.parametrize(("overrides", "asked_for"), [
+    ({}, [True, True]),                                  # CUDA, eager, hoisted: graphs
+    ({"compile_models": True}, [False, False]),          # compiled: the graphs capture the EAGER forward
+    ({"eval_max_batch": 0}, []),                         # no hoisted evaluator
+    ({"device": "cpu"}, []),                             # no hoist off CUDA
+    ({"volatility_candidate": {"volatility_q_scale": 0.5, "volatility_fpu": 0.0}}, []),  # no hoist
 ])
-def test_eval_cuda_graphs_is_refused_where_it_could_not_run(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, overrides: dict[str, Any], match: str,
+def test_graphs_are_used_wherever_they_can_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, overrides: dict[str, Any], asked_for: list[bool],
 ) -> None:
-    """Every way --eval-cuda-graphs could be accepted and then not take effect
-    is refused, before a checkpoint loads."""
-    built = _stub_model_loader(monkeypatch)
+    """No flag: CUDA graphs are requested exactly where they can run, and the
+    eager forward is used everywhere else; the record banks the realised mode."""
+    _stub_model_loader(monkeypatch)
     _stub_play_loops(monkeypatch)
-    with pytest.raises(SystemExit, match=match):
-        _run(tmp_path, **{"device": "cuda", "eval_cuda_graphs": True, **overrides})
-    assert built == []
+    monkeypatch.setattr(torch, "compile", lambda m, *a, **k: m)
+    asked: list[Any] = []
+
+    def _fake_build(model: Any, **kw: Any) -> Any:
+        asked.append(kw.get("cuda_graphs"))
+        return _GraphStubEvaluator(getattr(model, "tag", "?"), bool(kw.get("cuda_graphs")))
+
+    monkeypatch.setattr(arena, "build_arena_evaluator", _fake_build)
+    record = _run(tmp_path, **{"device": "cuda", **overrides})
+    assert asked == asked_for
+    assert record["eval_cuda_graphs"] is (None if not asked_for else asked_for[0])
+
+
+def test_the_eval_cuda_graphs_flag_is_gone(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setattr(sys, "argv", ["arena_standard.py", "--candidate", "c.pt", "--reference", "r.pt",
+                                      "--eval-cuda-graphs"])
+    with pytest.raises(SystemExit) as exc:
+        arena.main()
+    assert exc.value.code == 2
+    assert "unrecognized arguments: --eval-cuda-graphs" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(("extra", "compiled"), [
+    (["--device", "cuda"], False),                                 # graphs can run: auto never compiles
+    (["--device", "cuda", "--compile", "on"], True),               # explicit on still compiles
+    (["--device", "cuda", "--eval-max-batch", "0"], True),         # no hoist: the work threshold decides
+    (["--device", "cpu"], True),                                   # no graphs off CUDA: threshold decides
+])
+def test_compile_auto_prefers_the_cuda_graphs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, extra: list[str], compiled: bool,
+) -> None:
+    """--compile auto picks the eager graph path wherever graphs can run, even
+    above the work threshold (400 games x 64 sims here), and keeps the
+    threshold rule elsewhere."""
+    seen: dict[str, Any] = {}
+
+    def _fake_run_arena(**kwargs: Any) -> dict:
+        seen.update(kwargs)
+        return {"elo": 0.0, "elo_ci95": [0.0, 0.0], "pairs": 0}
+
+    monkeypatch.setattr(arena, "run_arena", _fake_run_arena)
+    # A compiled run points inductor at a cache dir and exports it: keep both
+    # inside the test (never the production worker cache) and restore the env.
+    for var in ("TORCHINDUCTOR_CACHE_DIR", "TRITON_CACHE_DIR", "TORCHINDUCTOR_FX_GRAPH_CACHE"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr("sys.argv", [
+        "arena_standard.py", "--candidate", "a.pt", "--reference", "b.pt",
+        "--games", "400", "--sims", "64", "--mode", "matched_sims", "--search-shape", "play",
+        "--compile-cache-dir", str(tmp_path / "cache"), *extra,
+    ])
+    arena.main()
+    assert arena.AUTO_COMPILE_WORK_THRESHOLD <= 400 * 64
+    assert seen["compile_models"] is compiled
 
 
 class _GraphStubEvaluator(_StubEvaluator):
@@ -1924,7 +1975,7 @@ def test_the_realised_graph_flag_and_stats_are_banked_off_the_evaluators(
         return _GraphStubEvaluator(getattr(model, "tag", "?"), realised)
 
     monkeypatch.setattr(arena, "build_arena_evaluator", _fake_build)
-    record = _run(tmp_path, device="cuda", eval_cuda_graphs=True)
+    record = _run(tmp_path, device="cuda")
     assert asked == [True, True]
     assert record["eval_cuda_graphs"] is realised
     if realised:

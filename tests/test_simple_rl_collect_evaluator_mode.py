@@ -1,24 +1,20 @@
-"""``--collect-cuda-graphs``: refused off CUDA, pinned, banked, and the same shards.
-
-The collect evaluator is already on dense fp32 transport, so replaying CUDA
-graphs of its eager forward must leave every stored row unchanged. Off CUDA
-the flag is refused rather than dropped, and the realised flag plus the graph
-counters are banked in the collect stage's stats and manifest.
+"""The collect evaluator has ONE fast path: CUDA graphs of its eager dense
+forward on CUDA, eager only where graphs cannot run (CPU). There is no flag;
+the realised mode and the graph counters are banked in stats and manifest, and
+a run pinned with the retired ``collect_cuda_graphs`` flag still resumes.
 """
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from dataclasses import replace
 from pathlib import Path
 
-import numpy as np
 import pytest
 import torch
 
 from chess_anti_engine.simple_rl import collect as collect_mod
-from chess_anti_engine.simple_rl.collect import CollectSettings, collect_generation, load_generation_rows
+from chess_anti_engine.simple_rl.collect import CollectSettings, collect_generation
 from tests.simple_rl_helpers import QuietStockfish, save_tiny_checkpoint
 
 needs_cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA graphs need CUDA")
@@ -46,70 +42,51 @@ def _collect(tmp_path: Path, name: str, monkeypatch: pytest.MonkeyPatch, **overr
     return out
 
 
-def _rows_digest(collect_dir: Path) -> str:
-    arrays, meta = load_generation_rows(collect_dir)
-    h = hashlib.sha256()
-    for part in (arrays, meta):
-        for key in sorted(part):
-            value = np.ascontiguousarray(part[key])
-            h.update(key.encode())
-            h.update(str(value.dtype).encode() + str(value.shape).encode())
-            h.update(value.tobytes())
-    h.update((collect_dir / collect_mod.GAMES).read_bytes())
-    return h.hexdigest()
-
-
-def test_refused_without_cuda(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    with pytest.raises(ValueError, match="cuda_graphs needs a CUDA device"):
-        _collect(tmp_path, "cpu", monkeypatch, device="cpu", cuda_graphs=True)
-
-
-def test_off_is_banked_as_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    out = _collect(tmp_path, "off", monkeypatch)
+def test_cpu_runs_eager_and_banks_the_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    out = _collect(tmp_path, "cpu", monkeypatch)
     stats = json.loads((out / collect_mod.STATS).read_text())
     manifest = json.loads((out / "manifest.json").read_text())
-    assert stats["cuda_graphs"] is False
-    assert stats["cuda_graph_stats"] is None
-    assert manifest["config"]["settings"]["cuda_graphs"] is False
-    assert manifest["stats"]["cuda_graphs"] is False
+    assert (stats["cuda_graphs"], stats["evaluator_mode"], stats["cuda_graph_stats"]) == (False, "eager_cpu", None)
+    assert manifest["stats"]["evaluator_mode"] == "eager_cpu"
+    assert "cuda_graphs" not in manifest["config"]["settings"]
 
 
-def test_the_loop_flag_reaches_the_settings_and_is_pinned(tmp_path: Path) -> None:
+@needs_cuda
+def test_cuda_always_replays_graphs_and_banks_its_counters(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    out = _collect(tmp_path, "cuda", monkeypatch, device="cuda")
+    stats = json.loads((out / collect_mod.STATS).read_text())
+    assert (stats["cuda_graphs"], stats["evaluator_mode"]) == (True, "cuda_graphs")
+    assert stats["cuda_graph_stats"]["replays"] > 0
+    assert json.loads((out / "manifest.json").read_text())["stats"]["cuda_graph_stats"] == stats["cuda_graph_stats"]
+
+
+def test_the_flag_is_gone_and_old_run_configs_still_load(tmp_path: Path) -> None:
     from scripts import simple_rl_loop as loop
 
     parser = argparse.ArgumentParser()
     loop._common(parser)
     base = ["--run-dir", str(tmp_path), "--openings-dir", str(tmp_path)]
-    on = parser.parse_args([*base, "--collect-cuda-graphs"])
-    off = parser.parse_args(base)
-    assert loop.collect_settings(on).cuda_graphs is True
-    assert loop.collect_settings(off).cuda_graphs is False
-    for ns in (on, off):
-        ns.allow_config_change = False
-    loop.check_run_config(off, tmp_path)
+    with pytest.raises(SystemExit):
+        parser.parse_args([*base, "--collect-cuda-graphs"])
+    a = parser.parse_args(base)
+    a.allow_config_change = False
+    assert "collect_cuda_graphs" not in vars(a)
+    loop.check_run_config(a, tmp_path)
     pinned = json.loads((tmp_path / loop.RUN_CONFIG).read_text())
-    assert pinned["settings"]["collect_cuda_graphs"] is False
-    with pytest.raises(SystemExit, match="collect_cuda_graphs"):
-        loop.check_run_config(on, tmp_path)
-    # A run pinned before the flag existed resumes at its default, refuses otherwise.
-    del pinned["settings"]["collect_cuda_graphs"]
-    (tmp_path / loop.RUN_CONFIG).write_text(json.dumps(pinned))
-    loop.check_run_config(off, tmp_path)
-    with pytest.raises(SystemExit, match="collect_cuda_graphs"):
-        loop.check_run_config(on, tmp_path)
-    # A run pinned ON must not resume OFF: the stored value wins over the
-    # added-since-pinning default.
-    on_dir = tmp_path / "pinned_on"
-    on_dir.mkdir()
-    loop.check_run_config(on, on_dir)
-    assert json.loads((on_dir / loop.RUN_CONFIG).read_text())["settings"]["collect_cuda_graphs"] is True
-    with pytest.raises(SystemExit, match="collect_cuda_graphs"):
-        loop.check_run_config(off, on_dir)
-    loop.check_run_config(on, on_dir)
+    assert "collect_cuda_graphs" not in pinned["settings"]
+    # Runs pinned before the flag was retired, with it on or off, resume unchanged.
+    for value in (False, True):
+        old = {**pinned, "settings": {**pinned["settings"], "collect_cuda_graphs": value}}
+        (tmp_path / loop.RUN_CONFIG).write_text(json.dumps(old))
+        loop.check_run_config(a, tmp_path)
+        assert json.loads((tmp_path / loop.RUN_CONFIG).read_text()) == old  # nothing rewritten
+    # A genuine change is still refused next to the retired key.
+    a.sims = 128
+    with pytest.raises(SystemExit, match=r"run settings differ.*sims"):
+        loop.check_run_config(a, tmp_path)
 
 
 @pytest.mark.parametrize(("bad", "reason"), [
-    (["--collect-cuda-graphs"], "cuda_graphs needs a CUDA device"),             # device cpu
     (["--eval-opening-plies", "1"], "longest EVAL line"),                       # below the split's
     ([], "exactly one of --init-checkpoint / --random-init"),                   # no gen-0 source
 ])
@@ -128,32 +105,13 @@ def test_a_refused_setting_is_never_pinned(tmp_path: Path, bad: list[str], reaso
     assert not (run_dir / loop.RUN_CONFIG).exists()
 
 
-@needs_cuda
-def test_graphs_on_gives_the_same_shards_and_banks_its_counters(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    off = _collect(tmp_path, "off", monkeypatch, device="cuda")
-    on = _collect(tmp_path, "on", monkeypatch, device="cuda", cuda_graphs=True)
-    assert _rows_digest(on) == _rows_digest(off)
-    stats_on = json.loads((on / collect_mod.STATS).read_text())
-    stats_off = json.loads((off / collect_mod.STATS).read_text())
-    assert stats_off["cuda_graphs"] is False
-    assert stats_on["cuda_graphs"] is True
-    assert stats_on["cuda_graph_stats"]["replays"] > 0
-    manifest = json.loads((on / "manifest.json").read_text())
-    assert manifest["config"]["settings"]["cuda_graphs"] is True
-    assert manifest["stats"]["cuda_graph_stats"] == stats_on["cuda_graph_stats"]
-
-
 def test_validate_settings_refuses_each_settings_only_fault() -> None:
     from chess_anti_engine.simple_rl.collect import CollectSettings, validate_settings
 
     validate_settings(CollectSettings(games=1))
     with pytest.raises(ValueError, match="opening_sampling"):
         validate_settings(CollectSettings(games=1, opening_sampling="shuffled"))
-    with pytest.raises(ValueError, match="cuda_graphs needs a CUDA device"):
-        validate_settings(CollectSettings(games=1, device="cpu", cuda_graphs=True))
-    validate_settings(CollectSettings(games=1, device="cuda", cuda_graphs=True))  # settings only: no GPU touched
+    validate_settings(CollectSettings(games=1, device="cuda"))  # settings only: no GPU touched
 
 
 def test_run_validates_eval_settings_only_while_an_evaluation_remains(tmp_path: Path,

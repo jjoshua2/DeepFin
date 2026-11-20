@@ -39,7 +39,7 @@ from chess_anti_engine.simple_rl.common import (
 # arm's run_config yet have no effect on the rows it trains on. ``seed`` is
 # deliberately NOT exempt: the same --seed also draws the train phase's batch
 # plan, so arms with another seed would silently see other sample orders.
-EXECUTION_ONLY_SETTINGS = frozenset({"device", "cuda_graphs", "eval_max_batch", "dup_sketch_budget",
+EXECUTION_ONLY_SETTINGS = frozenset({"device", "eval_max_batch", "dup_sketch_budget",
                                      "exact_repeat_vs_previous"})
 
 
