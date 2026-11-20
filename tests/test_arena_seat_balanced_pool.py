@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from chess_anti_engine.eval.model_provenance import seat_files
 from scripts import arena_seat_balanced_pool as pool_mod
 
 CREATED = "2099-01-01T00:00:00"     # the runs "started" after the synthetic nets were written
@@ -81,7 +82,13 @@ def _write_run(tmp: Path, label: str, *, candidate: str, reference: str, opening
             lines.append(json.dumps({"kind": "game", "pair_id": p, "half": half, "opening_fen": fen,
                                      "opening_uci": ["e2e4"], "score_candidate": s, "a_is_white": half == 0}))
     log.write_text("\n".join(lines) + "\n")
-    row = _row(label, pairs=len(openings), scores=[a + b for a, b in game_scores], over=row_over or {})
+    # What the current arena banks in every result row (arena_standard.arena_provenance).
+    cand_files, ref_files = seat_files(candidate), seat_files(reference)
+    banked = {"candidate_sha256": cand_files[0]["sha256"], "reference_sha256": ref_files[0]["sha256"],
+              "candidate_files": cand_files, "reference_files": ref_files, "openings_sha256": "eval-sha",
+              "game_log_provenance": "this_run"}
+    row = _row(label, pairs=len(openings), scores=[a + b for a, b in game_scores],
+               over={**banked, **(row_over or {})})
     res = tmp / f"{label}.results.jsonl"
     res.write_text(json.dumps({"label": "someone_else", "game_log_fingerprint": "fp_x"}) + "\n"
                    + json.dumps(row) + "\n")
@@ -96,6 +103,7 @@ def _split(excess: float) -> tuple[float, float]:
 
 def _pair(tmp: Path, a_excess: list[float], b_excess: list[float], *, openings: list[str] | None = None,
           b_openings: list[str] | None = None, b_over: dict[str, Any] | None = None,
+          a_over: dict[str, Any] | None = None,
           b_settings: dict[str, Any] | None = None, drop_b: tuple[int, int] | None = None,
           rule: str | None = None, allow_legacy: bool = False, arm: str | None = None,
           created: str = CREATED) -> dict[str, Any]:
@@ -103,7 +111,7 @@ def _pair(tmp: Path, a_excess: list[float], b_excess: list[float], *, openings: 
     arm_path, base_path = _nets(tmp)
     openings = openings or [f"fen{i}" for i in range(len(a_excess))]
     a_log, a_res = _write_run(tmp, "A", candidate=arm_path, reference=base_path, openings=openings,
-                              game_scores=[_split(x) for x in a_excess], created=created)
+                              game_scores=[_split(x) for x in a_excess], row_over=a_over, created=created)
     b_log, b_res = _write_run(tmp, "B", candidate=base_path, reference=arm_path, openings=b_openings or openings,
                               game_scores=[_split(x) for x in b_excess], row_over=b_over,
                               settings_over=b_settings, drop_game=drop_b, created=created)
@@ -247,7 +255,7 @@ def test_provenance_records_input_and_net_sha256(tmp_path: Path) -> None:
     assert r["nets"]["base"][0]["sha256"] == hashlib.sha256(b"base weights").hexdigest()
     assert r["input_sha256"]["a_games"] == hashlib.sha256((tmp_path / "A.games.jsonl").read_bytes()).hexdigest()
     assert set(r["input_sha256"]) == {"a_games", "b_games", "a_result", "b_result"}
-    assert any("banked by path only" in n for n in r["notes"])
+    assert r["net_check"] == "row_sha256"
 
 
 def test_a_hybrid_spec_records_every_file_it_names(tmp_path: Path) -> None:
@@ -256,21 +264,101 @@ def test_a_hybrid_spec_records_every_file_it_names(tmp_path: Path) -> None:
     value.write_bytes(b"value weights")
     spec = tmp_path / "arm.hybrid.json"
     spec.write_text(json.dumps({"policy": arm, "value": str(value), "mutate": None}))
-    files = [str(f) for f in pool_mod.net_files(str(spec))]
+    files = [f["path"] for f in pool_mod.pool_time_files("arm", str(spec))]
     assert files == [str(spec), arm, str(value)]
 
 
-def test_a_net_modified_after_the_runs_started_is_refused(tmp_path: Path) -> None:
+def test_row_sha256s_that_are_not_swapped_are_refused(tmp_path: Path) -> None:
+    """B's row claims the ARM as its candidate: the seats were not actually swapped."""
     ex = [0.0, 0.25, -0.25]
+    _nets(tmp_path)
+    arm_sha = seat_files(str(tmp_path / "arm.pt"))[0]["sha256"]
+    base_sha = seat_files(str(tmp_path / "base.pt"))[0]["sha256"]
+    with pytest.raises(SystemExit, match="seat sha256s are not swapped"):
+        _pair(tmp_path, ex, ex, b_over={"candidate_sha256": arm_sha, "reference_sha256": base_sha})
+
+
+def test_a_net_rewritten_after_it_was_played_is_refused(tmp_path: Path) -> None:
+    """Row sha256 != pool-time sha256: the file under the same path is no longer what was played."""
+    ex = [0.0, 0.25, -0.25]
+    _pair(tmp_path, ex, ex)
+    (tmp_path / "arm.pt").write_bytes(b"arm weights, retrained")
+    with pytest.raises(SystemExit, match="changed after it was played"):
+        pool_mod.run(tmp_path / "A.games.jsonl", tmp_path / "B.games.jsonl", tmp_path / "A.results.jsonl",
+                     tmp_path / "B.results.jsonl", arm=str(tmp_path / "arm.pt"))
+
+
+def test_different_openings_sha256_are_refused(tmp_path: Path) -> None:
+    ex = [0.0, 0.25, -0.25]
+    with pytest.raises(SystemExit, match="openings_sha256"):
+        _pair(tmp_path, ex, ex, b_over={"openings_sha256": "other-book"})
+
+
+def test_with_row_sha256s_the_mtime_heuristic_is_not_used(tmp_path: Path) -> None:
+    """A net touched after the run (mtime later than 'created') but byte-identical is fine."""
+    ex = [0.0, 0.25, -0.25]
+    r = _pair(tmp_path, ex, ex, created="2000-01-01T00:00:00")
+    assert r["net_check"] == "row_sha256"
+
+
+@pytest.mark.parametrize("prov", ["absent", None])
+def test_a_row_whose_log_was_never_sha_checked_is_refused(tmp_path: Path, prov: str | None) -> None:
+    """``absent`` = a pre-provenance log resumed; its earlier games were played under unchecked bytes."""
+    ex = [0.0, 0.25, -0.25]
+    with pytest.raises(SystemExit, match="run B game_log_provenance is"):
+        _pair(tmp_path, ex, ex, b_over={"game_log_provenance": prov})
+
+
+def test_a_recorded_log_provenance_is_accepted(tmp_path: Path) -> None:
+    ex = [0.0, 0.25, -0.25]
+    assert _pair(tmp_path, ex, ex, b_over={"game_log_provenance": "recorded"})["net_check"] == "row_sha256"
+
+
+def test_a_null_openings_sha256_is_refused_even_when_both_are_null(tmp_path: Path) -> None:
+    ex = [0.0, 0.25, -0.25]
+    with pytest.raises(SystemExit, match="run A openings_sha256 is null"):
+        _pair(tmp_path, ex, ex, a_over={"openings_sha256": None}, b_over={"openings_sha256": None})
+
+
+@pytest.mark.parametrize("allow_legacy", [False, True])
+def test_a_mixed_pair_is_refused_even_under_the_legacy_waiver(tmp_path: Path, allow_legacy: bool) -> None:
+    """One row with shas, one without: legacy mode is for two legacy rows, never a half-checked pair."""
+    ex = [0.0, 0.25, -0.25]
+    strip: dict[str, Any] = dict.fromkeys(("candidate_sha256", "reference_sha256"))
+    with pytest.raises(SystemExit, match="mixed pair: run A banks seat sha256s and run B does not"):
+        _pair(tmp_path, ex, ex, b_over=strip, allow_legacy=allow_legacy)
+
+
+def test_legacy_rows_without_sha256_are_refused_without_the_waiver(tmp_path: Path) -> None:
+    ex = [0.0, 0.25, -0.25]
+    strip: dict[str, Any] = dict.fromkeys(("candidate_sha256", "reference_sha256"))
+    with pytest.raises(SystemExit, match="carry no candidate_sha256"):
+        _pair(tmp_path, ex, ex, a_over=strip, b_over=strip)
+
+
+def test_a_net_modified_after_the_runs_started_is_refused_on_legacy_rows(tmp_path: Path) -> None:
+    ex = [0.0, 0.25, -0.25]
+    strip: dict[str, Any] = dict.fromkeys(("candidate_sha256", "reference_sha256"))
     with pytest.raises(SystemExit, match="modified after the earlier run started"):
-        _pair(tmp_path, ex, ex, created="2000-01-01T00:00:00")
+        _pair(tmp_path, ex, ex, a_over=strip, b_over=strip, allow_legacy=True, created="2000-01-01T00:00:00")
+    (tmp_path / "later").mkdir()
+    r = _pair(tmp_path / "later", ex, ex, a_over=strip, b_over=strip, allow_legacy=True)
+    assert r["net_check"] == "legacy_mtime"
+    assert any("mtime heuristic" in n for n in r["notes"])
+
+
+def test_run_start_parses_a_utc_suffix() -> None:
+    assert pool_mod.run_start({"created": "2026-11-20T10:00:00Z"}, "A") == pytest.approx(
+        pool_mod.run_start({"created": "2026-11-20T10:00:00+00:00"}, "A"))
+    with pytest.raises(SystemExit, match="no parseable 'created'"):
+        pool_mod.run_start({"created": "yesterday"}, "A")
 
 
 def test_a_missing_net_is_refused(tmp_path: Path) -> None:
     ex = [0.0, 0.25, -0.25]
     _pair(tmp_path, ex, ex)
     (tmp_path / "base.pt").unlink()
-    with pytest.raises(SystemExit, match="does not exist"):
+    with pytest.raises(SystemExit, match="no checkpoint file"):
         pool_mod.run(tmp_path / "A.games.jsonl", tmp_path / "B.games.jsonl", tmp_path / "A.results.jsonl",
                      tmp_path / "B.results.jsonl", arm=str(tmp_path / "arm.pt"))
 
@@ -342,8 +430,9 @@ def _legacy(tmp: Path, ex: list[float]) -> tuple[Path, Path]:
         res = tmp / f"{label}.results.jsonl"
         rows = [json.loads(line) for line in res.read_text().splitlines()]
         for r in rows:
-            r.pop("buffer_full_flushes", None)
-            r.pop("eval_max_batch_realised", None)
+            for k in ("buffer_full_flushes", "eval_max_batch_realised", "candidate_sha256", "reference_sha256",
+                      "candidate_files", "reference_files", "openings_sha256", "game_log_provenance"):
+                r.pop(k, None)
         res.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
         out.append(res)
     return out[0], out[1]

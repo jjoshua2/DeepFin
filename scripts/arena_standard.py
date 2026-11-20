@@ -78,6 +78,11 @@ from chess_anti_engine.eval.arena_durable import (
 from chess_anti_engine.eval.sprt import SprtMonitor, SprtSpec
 from chess_anti_engine.moves import ActionDecodeError
 from chess_anti_engine.utils.claimable_outcome import outcome_claim_draw
+from chess_anti_engine.eval.model_provenance import (
+    ProvenanceError,
+    openings_sha256,
+    seat_provenance,
+)
 from chess_anti_engine.utils.game_log import (
     GameLogWriter,
     default_game_log_path,
@@ -1073,6 +1078,51 @@ def announce_sprt_armed(sprt: SprtMonitor | None, *, where: str) -> None:
 # Keep the stopping specification beside the game settings so fixed-N headers
 # and fingerprints remain unchanged. Resume validates the specification exactly.
 SPRT_LOG_INFO_KEY = "sprt"
+# The game-log header's NON-fingerprinted record of which bytes were played:
+# sha256 of both seats (every file a seat is made of) and of the openings
+# source. Outside ``settings`` so a log written before it existed still resumes;
+# checked on resume whenever the log carries it.
+PROVENANCE_LOG_INFO_KEY = "provenance"
+
+
+def arena_provenance(candidate: str, reference: str, openings_source: str | None) -> dict[str, Any]:
+    """sha256 of what each seat loads and of the openings source, computed once per run.
+
+    A seat path that does not exist is recorded with ``sha256: null`` (the
+    loader then fails on it in a real run; the test doubles never load it). A
+    seat that exists but cannot be hashed consistently -- a JSON spec whose
+    recorded ``<key>_sha256`` disagrees with the file it names -- is refused:
+    the spec would otherwise claim nets it does not load.
+    """
+    out: dict[str, Any] = {}
+    for role, path in (("candidate", candidate), ("reference", reference)):
+        try:
+            out[role] = seat_provenance(path)
+        except ProvenanceError as exc:
+            if Path(path).exists():
+                raise SystemExit(f"[arena] --{role}: {exc}") from exc
+            out[role] = {"path": str(path), "sha256": None, "files": []}
+    out["openings_sha256"] = openings_sha256(openings_source)
+    return out
+
+
+def provenance_differences(recorded: Mapping[str, Any], current: Mapping[str, Any]) -> list[str]:
+    """The provenance fields a resume would silently change, as readable lines."""
+    diffs = []
+    for role in ("candidate", "reference"):
+        was = (recorded.get(role) or {}).get("sha256")
+        now = (current.get(role) or {}).get("sha256")
+        if was != now:
+            diffs.append(f"{role} sha256 {was} -> {now}")
+        was_files = [(f.get("role"), f.get("sha256")) for f in (recorded.get(role) or {}).get("files") or []]
+        now_files = [(f.get("role"), f.get("sha256")) for f in (current.get(role) or {}).get("files") or []]
+        if was == now and was_files != now_files:
+            diffs.append(f"{role} member files {was_files} -> {now_files}")
+    if recorded.get("openings_sha256") != current.get("openings_sha256"):
+        diffs.append(f"openings sha256 {recorded.get('openings_sha256')} -> {current.get('openings_sha256')}")
+    return diffs
+
+
 SPRT_SPEC_FIELDS = ("elo0", "elo1", "alpha", "beta")
 
 
@@ -1294,10 +1344,15 @@ class ArenaResume:
     # The SPRT spec the log's header records, or None when it records none —
     # a fixed-N run. Kept outside the fingerprint but checked strictly on resume.
     sprt_spec: dict[str, Any] | None = None
+    # "recorded": the header's provenance matched this invocation's; "absent":
+    # a log written before provenance was recorded (resumed, unverifiable);
+    # "unchecked": the caller passed no provenance.
+    log_provenance: str = "unchecked"
 
 
 def load_arena_resume(
     path: Path, *, settings: dict, openings: list[chess.Board],
+    provenance: Mapping[str, Any] | None = None,
 ) -> ArenaResume:
     """Load finished pairs from ``path``, refusing anything that does not match.
 
@@ -1323,6 +1378,23 @@ def load_arena_resume(
         raise SystemExit(refuse_settings_mismatch_message(
             path, differences=diffs, resume_flag="--resume",
         ))
+    log_provenance = "unchecked"
+    if provenance is not None:
+        recorded_provenance = log.info.get(PROVENANCE_LOG_INFO_KEY)
+        if recorded_provenance is None:
+            log_provenance = "absent"
+        elif not isinstance(recorded_provenance, dict):
+            raise SystemExit("--resume: malformed provenance block in game log")
+        else:
+            moved = provenance_differences(recorded_provenance, provenance)
+            if moved:
+                raise SystemExit(
+                    f"--resume: {path} was played with different bytes than this invocation loads "
+                    f"(same paths, so the settings fingerprint cannot see it): " + "; ".join(moved)
+                    + ". Resuming would splice two populations' games into one Elo. Restore the original "
+                    "files or start a new log with --games-out."
+                )
+            log_provenance = "recorded"
     rows = latest_rows_by_key(
         log.games, key=lambda r: (int(r["pair_id"]), int(r["half"])),
     )
@@ -1428,6 +1500,7 @@ def load_arena_resume(
         compile_tags=sorted(kept_tags),
         hoist_tags=sorted(kept_htags),
         sprt_spec=dict(recorded_sprt) if isinstance(recorded_sprt, dict) else None,
+        log_provenance=log_provenance,
     )
 
 
@@ -3129,6 +3202,9 @@ def run_arena(
     # compile to play zero games.
     openings_source = str(openings_fen if openings_fen is not None else openings_path)
     openings_kind = "fen" if openings_fen is not None else "book"
+    # Hashed ONCE, before any resume decision: a resume onto rewritten files is
+    # refused, and every result row carries what was actually played.
+    provenance = arena_provenance(candidate, reference, openings_source)
     log_settings = arena_game_log_settings(
         mode=mode,
         candidate=candidate,
@@ -3183,8 +3259,11 @@ def run_arena(
             raise SystemExit(message + ("\n" + note if note else ""))
     if had_log:
         resumed = load_arena_resume(
-            log_path, settings=log_settings, openings=openings,
+            log_path, settings=log_settings, openings=openings, provenance=provenance,
         )
+        if resumed.log_provenance == "absent":
+            print(f"[arena] --resume: {log_path} predates recorded provenance; its earlier games' "
+                  "nets cannot be checked against this invocation's sha256", flush=True)
     elif resume:
         # Not an error: wrappers pass --resume unconditionally (the ratchet
         # does, so its retries continue rather than abort). Never silent
@@ -3367,10 +3446,10 @@ def run_arena(
         # without it. Resume compares this specification separately from game
         # settings. None on a fixed-N run,
         # and then the header keeps its pre-branch shape exactly.
-        info=(
-            None if sprt is None
-            else {SPRT_LOG_INFO_KEY: sprt.as_record()}
-        ),
+        info={
+            PROVENANCE_LOG_INFO_KEY: provenance,
+            **({} if sprt is None else {SPRT_LOG_INFO_KEY: sprt.as_record()}),
+        },
     )
     print(f"[arena] game log -> {log_path} (fingerprint {fingerprint})", flush=True)
 
@@ -4125,6 +4204,17 @@ def run_arena(
     # comparing arenas compare this field.
     record["buffer_full_flushes"] = int(buffer_full_flushes() - buffer_full_before)
     record["eval_max_batch_realised"] = eval_max_batch_realised
+    # Which BYTES were played (paths alone cannot say): sha256 computed once at
+    # the start of this invocation; a resume refuses a log whose header records
+    # other sha256s. "absent" = resumed a log written before this was recorded.
+    record["candidate_sha256"] = provenance["candidate"]["sha256"]
+    record["reference_sha256"] = provenance["reference"]["sha256"]
+    record["openings_sha256"] = provenance["openings_sha256"]
+    record["candidate_files"] = provenance["candidate"]["files"]
+    record["reference_files"] = provenance["reference"]["files"]
+    record["game_log_provenance"] = (
+        "this_run" if resumed is None else resumed.log_provenance
+    )
     if record["buffer_full_flushes"] > 0:
         print(f"[arena] ⚑ buffer_full_flushes={record['buffer_full_flushes']}: the evaluator cap re-batched "
               "this arena's searches (see the --eval-max-batch warning).", file=sys.stderr, flush=True)
