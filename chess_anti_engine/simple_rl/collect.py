@@ -313,6 +313,18 @@ def _open_stockfish(settings: CollectSettings) -> Any:
     return pool
 
 
+def validate_settings(settings: CollectSettings) -> None:
+    """Every refusal a collect would raise from its settings alone, raised up front.
+
+    The loop driver calls this BEFORE pinning run_config.json, so a refused
+    setting is never pinned (dropping it again would need --allow-config-change).
+    """
+    if settings.opening_sampling not in OPENING_SAMPLING:
+        raise ValueError(f"opening_sampling must be one of {OPENING_SAMPLING}")
+    if settings.cuda_graphs and not str(settings.device).startswith("cuda"):
+        raise ValueError(f"cuda_graphs needs a CUDA device; collect device is {settings.device!r}")
+
+
 def _evaluator(model: Any, settings: CollectSettings) -> Any:
     if not str(settings.device).startswith("cuda"):
         if settings.cuda_graphs:
@@ -347,8 +359,7 @@ def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, trai
     (gen_dir / "shards").mkdir(parents=True)
     arch = _arch(checkpoint)
     seed = seed_for(settings.seed, "collect", generation)
-    if settings.opening_sampling not in OPENING_SAMPLING:
-        raise ValueError(f"opening_sampling must be one of {OPENING_SAMPLING}")
+    validate_settings(settings)
     cursor_before = previous_cursor(gen_dir, generation) if settings.opening_sampling == "cycle" else None
     cursor_after: dict[str, Any] | None = None
     if settings.opening_sampling == "cycle":

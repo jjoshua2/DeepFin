@@ -271,3 +271,27 @@ def test_late_final_seal_fault_banks_immutable_external_failure(tmp_path: Path, 
     previous = marker.read_bytes()
     collect.mark_failure(out, {'later_error': 'must not overwrite first failure'})
     assert marker.read_bytes() == previous
+
+
+@pytest.mark.parametrize('graphs', [True, False])
+def test_actor_serving_banks_the_realised_graph_flag_and_counters(graphs: bool) -> None:
+    class Ev:
+        cuda_graphs = graphs
+        cuda_graph_stats = {'replays': 11, 'captures': 2} if graphs else None
+
+    serving: dict[str, Any] = {'forwards': {'calls': 3, 'rows': 9, 'scope': 'actual _encode_tokens calls'}}
+    collect.bank_graph_serving(serving, Ev())
+    assert serving['cuda_graphs'] is graphs
+    assert serving['cuda_graph_stats'] == ({'replays': 11, 'captures': 2} if graphs else None)
+    assert ('graph replays excluded' in serving['forwards']['scope']) is graphs
+    plain: dict[str, Any] = {'forwards': {'scope': 's'}}
+    collect.bank_graph_serving(plain, object())  # an evaluator without the attributes: off
+    assert (plain['cuda_graphs'], plain['cuda_graph_stats'], plain['forwards']['scope']) == (False, None, 's')
+
+
+def test_the_generation_writes_actor_serving_through_the_banking_helper() -> None:
+    import inspect
+    source = inspect.getsource(collect)
+    banked = source.index('bank_graph_serving(serving, evaluator)')
+    written = source.index("write_json(out / 'actor-serving.json', serving)")
+    assert banked < written

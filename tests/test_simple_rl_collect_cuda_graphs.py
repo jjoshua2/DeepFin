@@ -97,6 +97,35 @@ def test_the_loop_flag_reaches_the_settings_and_is_pinned(tmp_path: Path) -> Non
     loop.check_run_config(off, tmp_path)
     with pytest.raises(SystemExit, match="collect_cuda_graphs"):
         loop.check_run_config(on, tmp_path)
+    # A run pinned ON must not resume OFF: the stored value wins over the
+    # added-since-pinning default.
+    on_dir = tmp_path / "pinned_on"
+    on_dir.mkdir()
+    loop.check_run_config(on, on_dir)
+    assert json.loads((on_dir / loop.RUN_CONFIG).read_text())["settings"]["collect_cuda_graphs"] is True
+    with pytest.raises(SystemExit, match="collect_cuda_graphs"):
+        loop.check_run_config(off, on_dir)
+    loop.check_run_config(on, on_dir)
+
+
+@pytest.mark.parametrize(("bad", "reason"), [
+    (["--collect-cuda-graphs"], "cuda_graphs needs a CUDA device"),             # device cpu
+    (["--eval-opening-plies", "1"], "longest EVAL line"),                       # below the split's
+    ([], "exactly one of --init-checkpoint / --random-init"),                   # no gen-0 source
+])
+def test_a_refused_setting_is_never_pinned(tmp_path: Path, bad: list[str], reason: str) -> None:
+    from scripts import simple_rl_loop as loop
+
+    openings = tmp_path / "openings"
+    openings.mkdir()
+    (openings / "summary.json").write_text(json.dumps({"eval_max_plies": 6}))
+    run_dir = tmp_path / "run"
+    init = [] if not bad else ["--random-init"]
+    no_eval = [] if "--eval-opening-plies" in bad else ["--no-eval"]
+    with pytest.raises(SystemExit, match=reason):
+        loop.main(["run", "--run-dir", str(run_dir), "--openings-dir", str(openings), "--device", "cpu",
+                   "--generations", "1", *init, *no_eval, *bad])
+    assert not (run_dir / loop.RUN_CONFIG).exists()
 
 
 @needs_cuda

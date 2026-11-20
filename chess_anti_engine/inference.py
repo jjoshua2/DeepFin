@@ -658,9 +658,10 @@ class _EagerForwardGraphs:
     re-walked when the model object changes, when ANY parameter, buffer or
     submodule is registered anywhere in the process (torch's global
     registration hooks, which fire for ``module.weight = Parameter(...)``), and
-    every ``RETRAVERSE_EVERY`` calls as a backstop for writes that bypass
-    registration (``module._parameters[name] = ...``), so such a write can
-    serve at most ``RETRAVERSE_EVERY - 1`` stale forwards. In-place weight updates (``load_state_dict``,
+    every ``RETRAVERSE_EVERY`` calls as a backstop for changes that fire no
+    registration hook -- a direct ``module._parameters[name] = ...`` write and
+    ``del module.weight`` -- so such a change can serve at most
+    ``RETRAVERSE_EVERY - 1`` stale forwards. In-place weight updates (``load_state_dict``,
     ``copy_``) keep the storages and are picked up by replay as they are. Other
     Python-side state read inside ``forward`` (the SDPA backend choice, any
     module flag not in the key) is frozen at capture: change it only on a fresh

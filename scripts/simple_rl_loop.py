@@ -24,7 +24,7 @@ from typing import Any
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from chess_anti_engine.simple_rl.collect import CollectSettings, collect_generation
+from chess_anti_engine.simple_rl.collect import CollectSettings, collect_generation, validate_settings
 from chess_anti_engine.simple_rl.common import (
     blocking_markers,
     input_ref,
@@ -264,6 +264,25 @@ RUN_CONFIG_EXEMPT = frozenset({
 ADDED_SINCE_PINNING = {"collect_cuda_graphs": False}
 
 
+def validate_before_pinning(a: argparse.Namespace, run_dir: Path) -> None:
+    """Raise every settings-only refusal BEFORE ``check_run_config`` pins them.
+
+    A refused value that got pinned first could only be dropped again with
+    --allow-config-change. Covers the train settings, the collect settings
+    (e.g. --collect-cuda-graphs without CUDA), the eval settings (the opening
+    plies against the split) and generation 0's init flags.
+    """
+    train_settings(a, run_dir)
+    try:
+        validate_settings(collect_settings(a))
+    except ValueError as exc:
+        raise SystemExit(f"collect settings refused: {exc}") from exc
+    if not getattr(a, "no_eval", True):
+        eval_settings(a)
+    if not stage_done(gen_dir(run_dir, 0)) and bool(a.init_checkpoint) == bool(a.random_init):
+        raise SystemExit("exactly one of --init-checkpoint / --random-init is required to create generation 0")
+
+
 def check_run_config(a: argparse.Namespace, run_dir: Path) -> None:
     """Pin the loop's settings at the first ``run``; refuse a silent change on resume."""
     current = {k: v for k, v in sorted(vars(a).items()) if k not in RUN_CONFIG_EXEMPT}
@@ -292,7 +311,7 @@ def cmd_run(a: argparse.Namespace) -> int:
     if blocked:
         print("not starting: " + "; ".join(blocked), file=sys.stderr)
         return EXIT_BLOCKED
-    train_settings(a, run_dir)  # refuse invalid training settings before any stage runs
+    validate_before_pinning(a, run_dir)
     check_run_config(a, run_dir)
     init_run(run_dir, init_checkpoint=a.init_checkpoint, random_init=a.random_init,
              model_config=a.model_config, arch_from=a.arch_from, seed=a.seed)
