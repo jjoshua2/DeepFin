@@ -15,7 +15,7 @@ scripts/grok_review.sh --diff <base>...<head> [--focus "..."]
 scripts/grok_review.sh --worktree <path> [--focus "..."]
 ```
 
-The wrapper needs Bash, Git, Unix archive tools, GNU `timeout`, and an
+The wrapper needs Bash, Git, Unix archive tools, GNU `timeout`, `setsid`, and an
 authenticated `grok` CLI. PR mode also uses authenticated `gh`. `--repo <path>` selects
 the source repository for PR/range modes; worktree mode uses the supplied worktree.
 The model and effort inherit Grok's own configuration. An explicit request to run this
@@ -27,8 +27,15 @@ The snapshot is working-copy isolation, not an OS security sandbox. Worktree mod
 includes tracked edits and non-ignored untracked files; inspect scope before using it
 on an artifact-heavy checkout. Keep credentials and run outputs ignored.
 
-The default time limit is 30 minutes; `GROK_REVIEW_TIMEOUT_SECONDS` can set the agreed
-budget, with a five-second termination grace for the process group. Start it as an ongoing process and continue independent work. Each invocation
+Two caps end a run, whichever is hit first: a turn budget and a wall-clock limit.
+`GROK_REVIEW_MAX_TURNS` (default 300) sets the turns and `GROK_REVIEW_TIMEOUT_SECONDS`
+(default 10800, i.e. 3 hours) the wall clock, with a five-second termination grace for
+the process group. A turn has been observed to take about 25-40 seconds, so the
+wall clock is usually the binding cap; raise both together. Both must be positive
+integers; anything else exits 64 before a snapshot is made. `scripts/grok_fix.sh` has
+the same pair, `GROK_FIX_MAX_TURNS` (default 300) and `GROK_FIX_TIMEOUT_SECONDS`
+(default 10800), and likewise exits 64 before creating its worktree or branch. Start
+it as an ongoing process and continue independent work. Each invocation
 preserves the prompt and complete CLI output under a private directory in
 `${GROK_REVIEW_OUT:-${TMPDIR:-/tmp}/grok_review}`. Read the printed `raw_output` file.
 
