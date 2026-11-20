@@ -974,3 +974,22 @@ def _oracle_reply_mates(after: chess.Board) -> bool:
         if mated:
             return True
     return False
+
+
+def test_drawing_escape_final_line_is_the_drawing_move_at_cp_0(out: _Out) -> None:
+    """Every searched move is proven lost; the played move is a pruned draw that
+    is not a tree child, so the escape prints its own final line."""
+    from tests.test_uci_solved_root_stops import DRAW_ESCAPES, _make_worker
+
+    fen, draw = DRAW_ESCAPES[0]
+    worker = _make_worker("classic", optimistic=True)
+    engine = Engine(worker)
+    try:
+        engine.dispatch(parse_command(f"position fen {fen}"))
+        _go(engine, "go nodes 4096")
+        (last,) = _assert_aligned(out.lines)
+        assert last["pv"][0] == draw, last
+        assert last["score"] == ("cp", 0), last
+    finally:
+        engine.close()
+        worker.close()

@@ -335,10 +335,12 @@ def test_failed_use_vl_does_not_leave_the_pucv_flags_set(make_engine, monkeypatc
 def test_failed_leaf_gather_keeps_the_previous_gather(make_engine, monkeypatch, capsys) -> None:
     engine = make_engine(walkers=2, multi=False)
     gather = engine._worker._walker_gather
+    option = engine._options.leaf_gather
+    assert option != 4
     pool = engine._worker._walker_pool
     _fail(monkeypatch, "_build_walker_pool")
     engine.dispatch(parse_command("setoption name LeafGather value 4"))
-    assert engine._options.leaf_gather == 1
+    assert engine._options.leaf_gather == option
     assert engine._worker._walker_gather == gather
     assert engine._worker._walker_pool is pool
     assert _assert_searches_and_reports_truthfully(engine, capsys) == "walker"

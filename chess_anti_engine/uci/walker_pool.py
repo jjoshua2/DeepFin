@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -46,6 +47,14 @@ from chess_anti_engine.tablebase import SyzygyProbe
 from chess_anti_engine.uci import wedge
 
 _log = logging.getLogger(__name__)
+
+# `WalkerPool.batch_ms_hi` decays its running maximum by this factor per FULL
+# batch (one of the configured gather), so one stall is forgotten within a few
+# dozen full batches while the slowest recent one still sets it. Partial batches
+# (a stop mid-gather, a chunk smaller than the walkers' gathers, terminal
+# leaves) neither set nor decay it: they are faster, and with eight walkers
+# per-batch decay from them drove it to a fraction of a full batch's time.
+_BATCH_HI_DECAY = 0.95
 
 
 class _Evaluator(Protocol):
@@ -126,6 +135,12 @@ class WalkerPool:
         # Semaphore residual is not portably readable, so walkers count leaves.
         self._completed_lock = threading.Lock()
         self._completed: int = 0
+        # Decayed maximum wall time (ms) of one walker's in-flight FULL batch:
+        # from its evaluator call to the last leaf integrated. A walker that has
+        # submitted a batch cannot see a stop until that batch is done, so this
+        # is how long before a deadline the stop must reach the pool (read by
+        # the UCI search: `SearchWorker._walker_stop_reserve_ms`).
+        self._batch_hi_ms: float = 0.0
 
         self._threads = [
             threading.Thread(
@@ -161,6 +176,17 @@ class WalkerPool:
 
     def __exit__(self, *_args) -> None:
         self.close()
+
+    def batch_ms_hi(self) -> float:
+        """Decayed maximum duration (ms) of one walker's in-flight full batch
+        (`_BATCH_HI_DECAY`; 0.0 before any): the latency between a stop and
+        the last walker seeing it."""
+        with self._completed_lock:
+            return float(self._batch_hi_ms)
+
+    def _note_batch_ms(self, dt_ms: float) -> None:
+        with self._completed_lock:
+            self._batch_hi_ms = max(float(dt_ms), self._batch_hi_ms * _BATCH_HI_DECAY)
 
     @property
     def closed(self) -> bool:
@@ -338,6 +364,7 @@ class WalkerPool:
   # Hot path is full-gather with no terminals → contiguous slice. Fancy
   # indexing copies, so reserve it for the partial-gather case.
                     n_pending = len(pending_slots)
+                    batch_t0 = time.monotonic()
                     if n_pending == gather:
                         xs = enc[:n_pending]
                         rels = rel[:n_pending] if rel is not None else None
@@ -376,6 +403,8 @@ class WalkerPool:
                         integrated = k + 1
                         if solved is not None and solved[k]:
                             tree.mark_solved_path(pending_paths[k], int(solved[k]))
+                    if n_pending == gather:  # partial batches say nothing (above)
+                        self._note_batch_ms((time.monotonic() - batch_t0) * 1000.0)
             finally:
                 release_paths(
                     tree, pending_paths[integrated:], vloss_weight=vloss,

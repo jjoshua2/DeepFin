@@ -73,6 +73,48 @@ def immediate_terminal_draw_indices(
     return out
 
 
+def forced_draw_actions(board: chess.Board, actions: Iterable[int]) -> list[int]:
+    """The root ``actions`` (policy indices) whose move ENDS the game drawn on
+    the board: stalemate, insufficient material, the 50-move clock at 100 or
+    more, or a third occurrence of the position. A move after which the
+    opponent merely MAY claim a draw on its reply is not one: the opponent
+    can decline and play on. Returned in ``board.legal_moves`` order."""
+    wanted = {int(a) for a in actions}
+    out: list[int] = []
+    for move in board.legal_moves:
+        action = int(move_to_index(move, board))
+        if action not in wanted:
+            continue
+        board.push(move)
+        try:
+            if not board.is_checkmate() and (
+                board.is_stalemate()
+                or board.is_insufficient_material()
+                or board.halfmove_clock >= 100
+                or board.is_repetition(3)
+            ):
+                out.append(action)
+        finally:
+            board.pop()
+    return out
+
+
+def forced_draw_actions_cboard(root_cb: CBoard, actions: Iterable[int]) -> list[int]:
+    """``forced_draw_actions`` on a ``CBoard``, in ``actions`` order.
+
+    ``CBoard.is_game_over`` is exactly the on-board set (50-move clock >= 100,
+    a third occurrence, insufficient material, no legal move); a mate is
+    excluded. The reply-claim draws ``root_terminal_actions`` also reports are
+    not game-over on the child, so they are not returned."""
+    out: list[int] = []
+    for action in actions:
+        child = root_cb.copy()
+        child.push_index(int(action))
+        if child.is_game_over() and not child.is_checkmate():
+            out.append(int(action))
+    return out
+
+
 def immediate_terminal_cboard_policy_or_draws(
     root_cb: CBoard,
     legal_idx: Iterable[int],

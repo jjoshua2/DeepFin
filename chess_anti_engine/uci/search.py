@@ -53,6 +53,7 @@ from .multi_gpu_pucv_pool import (
     MultiGpuPucvWorkerStats,
 )
 from .root_parallel_gumbel import (
+    root_forced_draw_actions,
     RootParallelGumbelConfig,
     RootParallelGumbelPool,
     RootParallelGumbelStats,
@@ -115,6 +116,21 @@ _INFO_EMIT_INTERVAL_MS = 1000
 # spending a full `chunk_sims` chunk on a decided move. `run` emits the info
 # line (score from the root evaluation / the visited child, pv = the move).
 _FORCED_ROOT_CHUNK_SIMS = 64
+# Walker-pool leaf gather default -- the ONE source for `LeafGather`,
+# `--walker-gather`, `SearchWorker(walker_gather=...)` and the evaluator warm-up.
+# The single-walker path never reads it. A larger gather raises walker throughput
+# (CPU tiny net, 6 s movetime: walkers 2/4/8 at gather 1 ran 1.4k/1.6k/2.2k nps,
+# at 32 4.7k/5.5k/5.5k; GPU (review): 2 walkers 450 -> 5.5k nps), but one walker
+# batch cannot be interrupted, and at full concurrency on a slow device it can
+# outlast a short move's budget (walkers 8, a slow CPU net: the stall watchdog
+# answered clock moves unsearched). Raising the default is a separate change.
+DEFAULT_LEAF_GATHER = 1
+# `go mate N` on a forced root (one legal / `searchmoves` move): simulations
+# spent looking for a mate for the mover behind the forced move, per mate move
+# asked, before answering (`run`'s "mate_forced_root" stop). The move itself is
+# decided; this only bounds the mate search behind it. A proven child ends the
+# search sooner.
+_FORCED_ROOT_MATE_SIMS_PER_MOVE = 4096
 # Back-off after a chunk that completed no simulation (see `run`).
 _IDLE_CHUNK_WAIT_S = 0.01
 
@@ -503,6 +519,8 @@ class SearchWorker:
 
     # `_pv_info_key` of the last `_emit_pv_info` in this `run` (None: none yet).
     _last_pv_info_key: tuple[int, int, int, tuple[tuple[int, ...], ...]] | None = None
+    # bestmove of the last `run` when it is the proven-loss drawing escape.
+    _drawing_escape_uci: str | None = None
 
     def __init__(
         self,
@@ -513,7 +531,7 @@ class SearchWorker:
         chunk_sims: int = _DEFAULT_CHUNK_SIMS,
         n_walkers: int = 1,
         vloss_weight: int = PLAY_SEARCH_VLOSS_WEIGHT,
-        walker_gather: int = 1,
+        walker_gather: int = DEFAULT_LEAF_GATHER,
         pucv_vloss_mode: int = 0,
         eval_cache_entries: int = 0,
     ) -> None:
@@ -2889,7 +2907,13 @@ class SearchWorker:
         reached through a different move order answers the same position. That
         is acceptable for an unsearched fallback move -- the engine re-checks
         legality, and history only changes which draws are claimable.
-        Reads visits only. Call only while no search runs on this worker."""
+        On a root proven lost the visit leader is arbitrary, so the same
+        proven-root choices as a finished search apply first, cheaply: a move
+        that draws on the board when every searched move is proven lost (the
+        drawing escape), else -- at any visit count -- the most-visited move
+        after which the opponent has no mate in one, if there is one (the full
+        longest-loss walk is too slow for an at-once answer).
+        Reads the tree only. Call only while no search runs on this worker."""
         tree, root_id = self._tree, self._root_id
         if tree is None or root_id is None or root_id < 0 or self._tree_fen != board.fen():
             return None
@@ -2898,6 +2922,25 @@ class SearchWorker:
             actions, visits, qs = tree.get_children_q(int(root_id), 0.0)
         except Exception:
             return None
+        try:
+            escape = self._drawing_escape_action(board, allowed)
+            if escape is not None:
+                return index_to_move(int(escape), board).uci()
+            lost_root = int(tree.get_solved_status(int(root_id))) == -1
+        except Exception:
+            lost_root = False
+        if lost_root:
+            longest: tuple[int, int, float, int] | None = None
+            for a, n, q in zip(actions.tolist(), visits.tolist(), qs.tolist(), strict=True):
+                if allowed is not None and int(a) not in allowed:
+                    continue
+                after = board.copy(stack=False)
+                after.push(index_to_move(int(a), after))
+                key = (int(not _has_mate_in_one(after)), int(n), float(q), -int(a))
+                if longest is None or key > longest:
+                    longest = key
+            if longest is not None:
+                return index_to_move(-longest[3], board).uci()
         best: tuple[int, float, int] | None = None
         for a, n, q in zip(actions.tolist(), visits.tolist(), qs.tolist(), strict=True):
             if allowed is not None and int(a) not in allowed:
@@ -3411,7 +3454,24 @@ class SearchWorker:
                 root_declined=_declined_root_reason(board),
             )
         actions, visits = self._filtered_root_visits(allowed_root_indices)
+        escape = self._drawing_escape_action(board, allowed_root_indices)
+        if escape is not None:
+            # Every searched move is proven lost, but a move left out of the
+            # tree (a winning-looking root prunes terminal draws) ends the game
+            # drawn: play it. The draw is exact, so the score is 0.
+            escape_uci = _index_to_uci(board, escape)
+            self._drawing_escape_uci = escape_uci
+            return SearchResult(
+                bestmove_uci=escape_uci,
+                ponder_uci=None,
+                nodes=total_nodes,
+                pv=(escape_uci,),
+                score_cp=q_to_cp(0.5),
+                tbhits=tb_probe.hits if tb_probe is not None else 0,
+                score_mate=None,
+            )
         bestmove_idx = self._emitted_action(actions, visits, allowed_root_indices)
+        bestmove_idx = self._longest_proven_loss(board, actions, visits, bestmove_idx)
         pv_indices = (
             _pv_from_root_action(self._tree, self._root_id, bestmove_idx)
             if bestmove_idx >= 0 else []
@@ -3448,6 +3508,130 @@ class SearchWorker:
                 if bestmove_idx >= 0 else None
             ),
         )
+
+    def _drawing_escape_action(
+        self, board: chess.Board, allowed_root_indices: set[int] | None,
+    ) -> int | None:
+        """A drawing move to play instead of a proven loss, or None.
+
+        When the network thinks the root is winning, every search path prunes
+        root moves that draw at once (classic `gumbel_c`, root-parallel
+        `prepare_root`). If every move that WAS searched is then proven lost,
+        the root is lost on the tree (classic, pool) or drawn only through the
+        pruned draw (root-parallel), and the search would play a losing move.
+        Only a move that ends the game drawn on the board counts
+        (`root_forced_draw_actions`), not one the opponent may merely claim.
+
+        The classic runner makes the same choice itself, before any proof,
+        when every move it searched scored below 0 (`gumbel_c` pruned-draw
+        fallback): its survivor is then a pruned draw that is not a tree child,
+        which `_emitted_action` cannot select, so it is honoured here."""
+        tree, root_id = self._tree, self._root_id
+        if tree is None or root_id is None:
+            return None
+        # getattr: tree-only workers built without __init__ (the tests' and
+        # tools' bare instances) have no classic survivor.
+        gi = getattr(self, "_last_gumbel_action_idx", None)
+        if (
+            gi is not None
+            and tree.find_child(root_id, int(gi)) == -1
+            and (allowed_root_indices is None or int(gi) in allowed_root_indices)
+            and root_forced_draw_actions(board, [int(gi)])
+        ):
+            return int(gi)
+        status = int(tree.get_solved_status(root_id))
+        if status not in (-1, 2):
+            return None
+        children, _ = tree.get_children_visits(root_id)
+        child_status = [
+            int(tree.get_solved_status(tree.find_child(root_id, int(a))))
+            for a in children.tolist()
+        ]
+        if status == 2 and any(cs == 2 for cs in child_status):
+            return None  # a searched move draws: normal proof-preserving choice
+        if any(cs != 1 for cs in child_status):
+            return None  # a searched move is not proven lost
+        legal = [int(move_to_index(m, board)) for m in board.legal_moves]
+        if allowed_root_indices is not None:
+            legal = [a for a in legal if a in allowed_root_indices]
+        draws = root_forced_draw_actions(board, legal)
+        return draws[0] if draws else None
+
+    def _longest_proven_loss(
+        self, board: chess.Board, actions: np.ndarray, visits: np.ndarray, chosen: int,
+    ) -> int:
+        """On a proven-lost root, the move that delays mate longest.
+
+        Every child is proven lost, so the visit leader / halving survivor is
+        arbitrary and can be the fastest loss (mated in 1 where another move
+        survives longer). Each child is ranked by how many moves it is mated
+        in: exactly 1 when the opponent has a mate in one on the board after
+        it (checked first, a board fact that needs no tree); else the proven
+        line's distance, measured by a mate walk with its own fair share of
+        the node budget (`_MATE_WALK_NODE_LIMIT` over the children, so one
+        child's large proof cannot leave the later ones unmeasured). A walk
+        that runs out counts as mated in 2 -- all that is known, since mate in
+        one was ruled out -- and ranks just above a measured mate in 2. A
+        child whose proof has no mate distance (a tablebase loss, a proof the
+        walk cannot measure) ranks first. Ties keep ``chosen``, then visits."""
+        tree, root_id = self._tree, self._root_id
+        if (tree is None or root_id is None or actions.size < 2 or chosen < 0
+                or int(tree.get_solved_status(root_id)) != -1):
+            return chosen
+        share = max(1, _MATE_WALK_NODE_LIMIT // int(actions.size))
+        walk = _MateWalk(share)  # the memo is shared: it holds finished answers only
+        best_key: tuple[float, int, int, int] | None = None
+        best = chosen
+        for action, n in zip(actions.tolist(), visits.tolist(), strict=True):
+            after = board.copy(stack=False)
+            after.push(index_to_move(int(action), after))
+            exhausted = 0
+            if _has_mate_in_one(after):
+                moves = 1.0
+            else:
+                walk.visits, walk.exhausted = 0, False
+                mate = _proven_line_mate(tree, root_id, board, int(action), walk)
+                if walk.exhausted:
+                    moves, exhausted = 2.0, 1
+                else:
+                    moves = float("inf") if mate is None else float(abs(mate))
+            key = (moves, exhausted, int(int(action) == chosen), int(n))
+            if best_key is None or key > best_key:
+                best_key, best = key, int(action)
+        return best
+
+    def _depth_pv_len(self, pv_indices: list[int], max_depth: int | None) -> int:
+        """PV length as the ``go depth`` bound sees it.
+
+        A PV that ends on a proven node cannot be deepened, but that alone
+        does not decide the move: the visit leader can sit on a drawn or lost
+        line (a stalemate in a won KQK, an in-tree twofold repetition) while an
+        unproven sibling is better. So the proven end counts as complete --
+        ``max_depth`` -- only when nothing better can exist: the ROOT is proven
+        won or lost, or the PV's first move is a proven win for the side to
+        move. A root proven DRAWN does not count: the C tree proves draws from
+        in-tree twofold repetitions, which may not be draws at all (a WIN or
+        LOSS proof never rests on a draw). Otherwise the raw length, and a
+        ``go depth`` the search cannot complete waits for ``stop`` as before.
+        On the pool / walker / root-parallel paths a proven root re-visits its
+        proven lines forever, so without this the depth bound never ended."""
+        n = len(pv_indices)
+        tree, root = self._tree, self._root_id
+        if max_depth is None or n == 0 or n >= max_depth or tree is None or root is None:
+            return n
+        first = int(tree.find_child(root, int(pv_indices[0])))
+        decided = (
+            int(tree.get_solved_status(root)) in (1, -1)
+            or (first >= 0 and int(tree.get_solved_status(first)) == -1)
+        )
+        if not decided:
+            return n
+        node = root
+        for action in pv_indices:
+            node = int(tree.find_child(node, int(action)))
+            if node < 0:
+                return n
+        return int(max_depth) if int(tree.get_solved_status(node)) != 0 else n
 
     def _root_solved_status(self) -> int:
         tree, root_id = self._tree, self._root_id
@@ -3988,6 +4172,7 @@ class SearchWorker:
         self._last_gumbel_action_idx = None
         self._seldepth = 0
         self._last_pv_info_key = None
+        self._drawing_escape_uci = None
         self.last_stop_reason = None
         self._mate_check_key = None
         self._ensure_root_eval_cached(board, tb_probe)
@@ -4037,6 +4222,9 @@ class SearchWorker:
   # `_abort_ready`); keep that chunk small — it only has to produce the info
   # line's score/PV, not spend a full chunk of evaluations on one move.
         forced_root = optimum_ms is not None and _root_move_count(
+            board, allowed_root_indices,
+        ) == 1
+        mate_forced_root = mate_moves is not None and _root_move_count(
             board, allowed_root_indices,
         ) == 1
 
@@ -4100,7 +4288,11 @@ class SearchWorker:
             _visits_before = self._root_visit_snapshot()
             try:
                 last_value, completed = self._run_one_chunk(
-                    chunk, board, stop_event, tb_probe, allowed_root_indices,
+                    chunk, board,
+                    self._walker_chunk_stop(
+                        stop_event, deadline, start_remaining_ms, allowed_root_indices,
+                    ),
+                    tb_probe, allowed_root_indices,
                     allow_terminal_shortcuts=allow_terminal_shortcuts,
                     witness_stop_fn=witness_stop,
                 )
@@ -4129,7 +4321,7 @@ class SearchWorker:
                 if self._should_stop_search(
                     stop_event=stop_event, deadline=deadline,
                     max_nodes=max_nodes, max_depth=max_depth,
-                    total_nodes=total_nodes, pv_len=len(pv_indices),
+                    total_nodes=total_nodes, pv_len=self._depth_pv_len(pv_indices, max_depth),
                     time_margin_ms=self._clock_time_margin_ms(optimum_ms, start_remaining_ms, fixed_time=fixed_time_margin),
                 ) is not None:
                     raise
@@ -4200,10 +4392,15 @@ class SearchWorker:
             time_margin_ms = self._timed_stop_margin_ms(
                 optimum_ms, start_remaining_ms, deadline, total_nodes, fixed_time=fixed_time_margin,
             )
+  # A walker chunk launched with less than one walker batch left would stop at
+  # once (`_walker_chunk_stop`): stop here instead of spinning empty chunks.
+            time_margin_ms = max(time_margin_ms, self._walker_stop_reserve_ms(
+                deadline, start_remaining_ms, allowed_root_indices,
+            ))
             stop_reason = self._should_stop_search(
                 stop_event=stop_event, deadline=deadline,
                 max_nodes=max_nodes, max_depth=max_depth,
-                total_nodes=total_nodes, pv_len=len(pv_indices),
+                total_nodes=total_nodes, pv_len=self._depth_pv_len(pv_indices, max_depth),
                 time_margin_ms=time_margin_ms,
                 tree_growth_bytes=self._tree_footprint_bytes() - _footprint_before,
             )
@@ -4216,11 +4413,21 @@ class SearchWorker:
                     # no later chunk can prove anything new, so idling to the
                     # implicit cap would only burn the clock.
                     stop_reason = "mate_solved_root"
-                elif int(completed) == 0 and _root_move_count(board, allowed_root_indices) == 1:
-                    # A forced root the search cannot grow (the classic path
-                    # returns the sole move without simulating): no chunk will
-                    # ever prove a mate, and the move is decided, so answer now
-                    # instead of idling to the implicit cap.
+                elif mate_forced_root and (
+                    int(completed) == 0
+                    # Won / lost only: a DRAW proof may rest on an in-tree
+                    # twofold repetition (see `_depth_pv_len`).
+                    or self._root_solved_status() in (1, -1)
+                    or total_nodes >= _FORCED_ROOT_MATE_SIMS_PER_MOVE * int(mate_moves)
+                ):
+                    # A forced root: the move is decided, so the only open
+                    # question is a mate for the mover behind it. Answer when
+                    # the search cannot grow (the classic path returns the sole
+                    # move without simulating), when the root is proven (its
+                    # one child is: won with no mate <= N found, drawn, lost),
+                    # or once the forced-root mate budget is spent. The pool /
+                    # walker paths simulate a forced root (completed > 0) and
+                    # would otherwise run to the implicit 60 s cap.
                     stop_reason = "mate_forced_root"
                 elif self._root_solved_status() == -1:
                     # The side to move is proven lost: no mate for it can be
@@ -4274,7 +4481,23 @@ class SearchWorker:
   # first 1 s info tick, and GUIs / broadcasts expect a line per move. With
   # `final_info` the last line set leads with the move `bestmove` plays: GUIs
   # and match logs show the last PV and score as the engine's choice.
-        if info_cb is not None and self._root_id is not None and (
+        if info_cb is not None and self._drawing_escape_uci is not None:
+            # The drawing escape is not a tree child, so the PV lines cannot
+            # lead with it: report it on its own line, matching bestmove.
+            info_cb(
+                nodes=total_nodes,
+                elapsed_ms=deadline.elapsed_ms(),
+                score_cp=q_to_cp(0.5),
+                pv=(self._drawing_escape_uci,),
+                tbhits=tb_probe.hits if tb_probe is not None else 0,
+                score_mate=None,
+                multipv=1 if self._multi_pv > 1 else None,
+                wdl=(0, 1000, 0) if self._show_wdl else None,
+                string="every searched move is lost or below a draw; playing a move that draws",
+                hashfull=self._hashfull_permille(),
+                seldepth=max(self._seldepth, 1),
+            )
+        elif info_cb is not None and self._root_id is not None and (
                 final_info or not info_emitted[0]):
             self._emit_pv_info(
                 info_cb, board, float(last_value), total_nodes,
@@ -4283,6 +4506,49 @@ class SearchWorker:
                 lead_move=result.bestmove_uci if final_info else None,
             )
         return result
+
+    def _walker_stop_reserve_ms(
+        self, deadline: Deadline, start_remaining_ms: int | None,
+        allowed_root_indices: set[int] | None,
+    ) -> float:
+        """How long before a finite deadline a walker-pool chunk must be told
+        to stop: one walker's in-flight batch (`WalkerPool.batch_ms_hi`, the
+        decayed maximum measured on this pool). A walker that has submitted a
+        batch sees a stop only after that batch is evaluated and integrated, so
+        a stop AT the deadline ended the search one batch late -- with the
+        default gather (32 leaves a batch) late enough on CPU that the deadline
+        watchdog answered an unsearched move. Capped at
+        `_MAX_BATCH_MARGIN_FRACTION` of the move's starting budget. 0.0 off the
+        walker path, without a deadline, or before the pool has timed a batch."""
+        # getattr: unit tests may construct SearchWorker via object.__new__.
+        pool = getattr(self, "_walker_pool", None)
+        if (allowed_root_indices is not None or pool is None
+                or getattr(self, "_rpg_pool", None) is not None
+                or getattr(self, "_pucv_pool", None) is not None
+                or deadline.remaining_ms() is None):
+            return 0.0
+        reserve = float(pool.batch_ms_hi())
+        if start_remaining_ms is not None:
+            reserve = min(reserve, _MAX_BATCH_MARGIN_FRACTION * float(start_remaining_ms))
+        return max(0.0, reserve)
+
+    def _walker_chunk_stop(
+        self, stop_event: threading.Event, deadline: Deadline,
+        start_remaining_ms: int | None, allowed_root_indices: set[int] | None,
+    ) -> threading.Event:
+        """The stop event a walker-pool chunk polls: ``stop_event``, or also set
+        once the deadline is within `_walker_stop_reserve_ms` (one walker
+        batch), so batches in flight at the stop finish by the deadline.
+        ``stop_event`` itself off the walker path or without a reserve."""
+        reserve = self._walker_stop_reserve_ms(
+            deadline, start_remaining_ms, allowed_root_indices,
+        )
+        remaining = deadline.remaining_ms()
+        if reserve <= 0.0 or remaining is None:
+            return stop_event
+        return _EarlyStopEvent(
+            stop_event, time.monotonic() + (float(remaining) - reserve) / 1000.0,
+        )
 
     def _run_walker_chunk(
         self, chunk: int, stop_event: threading.Event, tb_probe=None,
@@ -5142,6 +5408,26 @@ def _uci_pv(root_board: chess.Board, pv_indices: list[int]) -> tuple[str, ...]:
         out.append(mv.uci())
         b.push(mv)
     return tuple(out)
+
+
+class _EarlyStopEvent(threading.Event):
+    """A stop event for one walker-pool chunk: set when ``parent`` is set or
+    from ``stop_at`` (monotonic seconds) on, whichever comes first. Walkers
+    only poll ``is_set`` (per gathered leaf) and call ``set`` on an error,
+    which is forwarded to ``parent`` as the plain event would have been."""
+
+    def __init__(self, parent: threading.Event, stop_at: float) -> None:
+        super().__init__()
+        self._parent = parent
+        self._stop_at = float(stop_at)
+
+    def is_set(self) -> bool:
+        return (super().is_set() or self._parent.is_set()
+                or time.monotonic() >= self._stop_at)
+
+    def set(self) -> None:
+        super().set()
+        self._parent.set()
 
 
 def _stop_reserve_ms(deadline: Deadline) -> float:
