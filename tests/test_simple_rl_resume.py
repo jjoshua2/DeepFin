@@ -374,3 +374,42 @@ def test_a_stale_diagnostics_file_is_rebuilt_not_trusted(tmp_path: Path, monkeyp
     assert after["repeat_rate_vs_previous_estimate"] == before
     assert (after["openings_played_in_earlier_generation_share"]
             == stats_before["openings_played_in_earlier_generation_share"] > 0)
+
+
+def _tree_snapshot(root: Path) -> dict[str, bytes]:
+    return {str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
+
+
+@pytest.mark.parametrize(("command", "generation", "bad", "reason"), [
+    ("collect", 1, ["--collect-cuda-graphs"], "cuda_graphs needs a CUDA device"),     # device cpu
+    ("train", 1, ["--presentations", "3"], "presentations must be 1 or 2"),
+    ("evaluate", 1, ["--eval-opening-plies", "1"], "longest EVAL line"),
+])
+def test_a_refused_standalone_stage_changes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                    command: str, generation: int, bad: list[str],
+                                                    reason: str) -> None:
+    """A standalone stage validates its settings BEFORE pinning run_config.json,
+    unsealing downstream stages to superseded/ or unlinking its own manifest:
+    refused, the run directory is byte-identical, with or without --redo-downstream."""
+    openings, model_config = _setup(tmp_path, monkeypatch)
+    run_dir = tmp_path / "run"
+    argv = _argv(run_dir, openings, model_config)
+    assert simple_rl_loop.main(argv) == 0
+    (openings / "summary.json").write_text(json.dumps({"eval_max_plies": 6}))
+    before = _tree_snapshot(run_dir)
+    assert "gen_0002/train/manifest.json" in before
+    for extra in (["--redo"], ["--redo", "--redo-downstream"]):
+        with pytest.raises((SystemExit, ValueError), match=reason):
+            simple_rl_loop.main(_stage_argv(argv, command, generation, *extra, "--allow-config-change", *bad))
+        assert _tree_snapshot(run_dir) == before, extra
+    assert not (run_dir / "superseded").exists()
+
+
+def test_a_refused_standalone_stage_on_a_new_run_writes_nothing(tmp_path: Path,
+                                                                monkeypatch: pytest.MonkeyPatch) -> None:
+    openings, model_config = _setup(tmp_path, monkeypatch)
+    run_dir = tmp_path / "run"
+    argv = _stage_argv(_argv(run_dir, openings, model_config), "collect", 1, "--collect-cuda-graphs")
+    with pytest.raises(SystemExit, match="cuda_graphs needs a CUDA device"):
+        simple_rl_loop.main(argv)
+    assert not run_dir.exists() or _tree_snapshot(run_dir) == {}

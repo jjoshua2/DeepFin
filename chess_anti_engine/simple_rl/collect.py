@@ -353,6 +353,20 @@ def realised_eval_max_batch(settings: CollectSettings) -> int:
     return int(settings.eval_max_batch)
 
 
+def validate_settings(settings: CollectSettings) -> None:
+    """Every refusal a collect would raise from its settings alone, raised up front.
+
+    The loop driver calls this BEFORE pinning run_config.json, so a refused
+    setting is never pinned (dropping it again would need --allow-config-change).
+    """
+    if settings.opening_sampling not in OPENING_SAMPLING:
+        raise ValueError(f"opening_sampling must be one of {OPENING_SAMPLING}")
+    if settings.cuda_graphs and not str(settings.device).startswith("cuda"):
+        raise ValueError(f"cuda_graphs needs a CUDA device; collect device is {settings.device!r}")
+    if str(settings.device).startswith("cuda"):
+        realised_eval_max_batch(settings)  # a leaf-dropping evaluator cap
+
+
 def _evaluator(model: Any, settings: CollectSettings) -> Any:
     if not str(settings.device).startswith("cuda"):
         if settings.cuda_graphs:
@@ -380,8 +394,7 @@ def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, trai
     """Play one generation into ``gen_dir`` (a fresh, empty directory)."""
     import torch
 
-    if str(settings.device).startswith("cuda"):
-        realised_eval_max_batch(settings)  # refuse a leaf-dropping cap before any work
+    validate_settings(settings)  # refuse before any work (incl. a leaf-dropping cap)
 
     from chess_anti_engine.replay.shard import ShardMeta, samples_to_arrays, save_local_shard_arrays
     from chess_anti_engine.selfplay import play_batch
@@ -393,8 +406,7 @@ def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, trai
     (gen_dir / "shards").mkdir(parents=True)
     arch = _arch(checkpoint)
     seed = seed_for(settings.seed, "collect", generation)
-    if settings.opening_sampling not in OPENING_SAMPLING:
-        raise ValueError(f"opening_sampling must be one of {OPENING_SAMPLING}")
+    validate_settings(settings)
     cursor_before = previous_cursor(gen_dir, generation) if settings.opening_sampling == "cycle" else None
     cursor_after: dict[str, Any] | None = None
     if settings.opening_sampling == "cycle":

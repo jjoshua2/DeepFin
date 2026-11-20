@@ -19,7 +19,7 @@ import pytest
 from chess_anti_engine.mcts.gumbel_c import leaf_buffer_rows
 from chess_anti_engine.simple_rl import collect as collect_mod
 from chess_anti_engine.simple_rl.collect import (
-    CollectSettings, collect_generation, realised_eval_max_batch, required_leaf_rows,
+    CollectSettings, collect_generation, realised_eval_max_batch, required_leaf_rows, validate_settings,
 )
 
 
@@ -36,6 +36,16 @@ def test_an_explicit_cap_below_the_leaf_buffer_is_refused() -> None:
     s = CollectSettings(games=256, concurrency=128, topk=16, eval_max_batch=512)
     with pytest.raises(ValueError, match="below the 4096 leaf rows"):
         realised_eval_max_batch(s)
+
+
+def test_the_pre_pin_validation_refuses_a_leaf_dropping_cap() -> None:
+    # The loop driver calls validate_settings BEFORE pinning run_config.json,
+    # so a refused cap must be refused there, not only inside the collect.
+    bad = CollectSettings(games=256, concurrency=128, topk=16, device="cuda", eval_max_batch=512)
+    with pytest.raises(ValueError, match="--eval-max-batch 512 is below"):
+        validate_settings(bad)
+    validate_settings(replace(bad, eval_max_batch=None))
+    validate_settings(replace(bad, device="cpu"))  # CPU builds no capped evaluator
 
 
 def test_the_evaluator_the_search_consumes_gets_the_realised_cap(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -79,3 +89,14 @@ def test_the_loop_flag_defaults_to_auto_and_reaches_the_settings(tmp_path: Path)
     assert parser.parse_args(base).eval_max_batch is None
     assert loop.collect_settings(parser.parse_args(base)).eval_max_batch is None
     assert loop.collect_settings(parser.parse_args([*base, "--eval-max-batch", "8192"])).eval_max_batch == 8192
+
+
+def test_the_loop_refuses_a_leaf_dropping_cap_before_pinning(tmp_path: Path) -> None:
+    from scripts import simple_rl_loop as loop
+
+    args = ["collect", "--run-dir", str(tmp_path), "--openings-dir", str(tmp_path), "--device", "cuda",
+            "--concurrency", "128", "--games", "256", "--generation", "1"]
+    a = loop.parser().parse_args([*args, "--eval-max-batch", "512"])
+    with pytest.raises(SystemExit, match="--eval-max-batch 512 is below"):
+        loop.validate_before_pinning(a, tmp_path, {"collect"})
+    assert not (tmp_path / "run_config.json").exists()
