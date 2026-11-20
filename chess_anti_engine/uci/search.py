@@ -685,8 +685,8 @@ class SearchWorker:
   # the move budget. `last_reuse_inputs` records the numbers the decision used.
         self._compaction_pending: bool = False
         self.last_reuse_decision: str | None = None
-        # `advance_root` refusals of a root carrying a stale twofold DRAW mark.
-        self.stale_draw_reroots_refused = 0
+        # `advance_root` refusals by reason ("unexpanded", "stale_status").
+        self.reroots_refused: dict[str, int] = {}
         self.last_reuse_inputs: dict[str, float] = {}
   # Growth rate measured by the last `run()` that did enough visits: visits per
   # ms of search and resident tree bytes added per visit. Feeds the reuse rule.
@@ -2395,8 +2395,9 @@ class SearchWorker:
         we push each move onto a local copy to compute its policy index.
 
         Returns True if the whole walk succeeded (tree reusable), False if any
-        step fell off the expanded tree or the new root carries a stale DRAW
-        mark (drawn with an unproven child; caller must call ``reset_tree``).
+        step fell off the expanded tree, or the new root is unexpanded or carries
+        a solved status its children do not re-derive (``_reroot_refusal``);
+        the caller must then call ``reset_tree``.
 
         Rerooting in place only repoints ``self._root_id`` — the discarded
         sibling subtrees stay in the arena, so the footprint climbs across a
@@ -2419,18 +2420,22 @@ class SearchWorker:
             if rid < 0:
                 return False
             b.push(mv)
-  # A node the C tree marked DRAW as a leaf -- an in-tree twofold, path
-  # dependent -- keeps that mark when it becomes the root, with unproven (or no)
-  # children. The runner then treats the root as solved (the classic path made
-  # its "proven-draw" child the only candidate and played the repeating move
-  # with `score cp 0`). A root drawn on its children's proofs (every child
-  # proven) is re-derived from the subtree and kept. Won / lost marks never rest
-  # on a draw (`tree_resolve_from_children`) or on a repetition, so they are
-  # not stale. Refuse the reuse; the caller resets the tree.
-        if int(self._tree.get_solved_status(int(rid))) == 2 and not _every_child_proven(
-            self._tree, int(rid),
-        ):
-            self.stale_draw_reroots_refused = getattr(self, "stale_draw_reroots_refused", 0) + 1
+  # The self-play reuse gate (`gumbel_c.py`, `is_expanded` + root context),
+  # mirrored for the PUCT pool / walker paths, which have none of their own.
+  # A twofold repetition is a search terminal marked DRAW and never expanded,
+  # and the mark is kept when the node becomes the root: the runner then
+  # treated the root as solved with no child supporting it (a pool / walker
+  # root stayed DRAW through `go nodes 2000`; a hand-marked expanded node made
+  # the classic runner play the repeating move with `score cp 0`). So refuse
+  # (the caller resets the tree) a root that is unexpanded (nothing to reuse)
+  # or whose solved status the kept subtree does not re-derive.
+  # The root context needs no check here: reuse requires the same root FEN and
+  # move prefix (`Engine._sync_tree_root`, ponderhit), so the history is equal
+  # by construction; and PUCT-built trees bind no boards, so
+  # `root_context_matches` reads False on every descendant of them.
+        reason = _reroot_refusal(self._tree, int(rid))
+        if reason is not None:
+            self.reroots_refused[reason] = self.reroots_refused.get(reason, 0) + 1
             return False
   # The reuse decision is deferred to `run()`, which knows the move's time
   # budget and runs under its clock (see `_resolve_pending_compaction`). Even a
@@ -5482,6 +5487,33 @@ def _stop_reserve_ms(deadline: Deadline) -> float:
         return 0.0
     budget = float(deadline.elapsed_ms() + max(0, remaining))
     return min(_STOP_RESERVE_MS, _STOP_RESERVE_SHARE * budget)
+
+
+def _reroot_refusal(tree: Any, node: int) -> str | None:
+    """Why ``node`` must not be adopted as a reused root, or None.
+
+    "unexpanded": no children (a twofold or other terminal leaf, or a node never
+    searched): nothing to reuse. "stale_status": a nonzero solved status the
+    children do not re-derive (`tree_resolve_from_children`): DRAW needs every
+    child proven; WIN a child proven lost; LOSS every child proven won.
+    """
+    children, _ = tree.get_children_visits(int(node))
+    if not tree.is_expanded(int(node)) or len(children) == 0:
+        return "unexpanded"
+    status = int(tree.get_solved_status(int(node)))
+    if status == 0:
+        return None
+    child_statuses = []
+    for a in children.tolist():
+        child = int(tree.find_child(int(node), int(a)))
+        child_statuses.append(0 if child < 0 else int(tree.get_solved_status(child)))
+    if status == 2:
+        ok = all(cs != 0 for cs in child_statuses)
+    elif status == 1:
+        ok = any(cs == -1 for cs in child_statuses)
+    else:
+        ok = all(cs == 1 for cs in child_statuses)
+    return None if ok else "stale_status"
 
 
 def _every_child_proven(tree: Any, node: int) -> bool:

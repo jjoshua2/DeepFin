@@ -387,12 +387,15 @@ nothing.
   forced mate either way, a tablebase win, a position whose only move
   stalemates) therefore answers once proven, in every search mode. With every
   move proven, and a proof never undone, searching on could not change a drawn
-  root, even when the draw rests on a twofold repetition (below). A position
-  the previous search marked drawn only because it repeated there, with its own
-  moves unproven, is not reused as the next root: the engine rebuilds the tree
-  and searches it afresh (a reused one played the repeating move with
-  `score cp 0` without searching). A drawn root whose every move is proven, and
-  a won or lost root (those proofs never rest on a repetition), are reused. A line that ends drawn or lost while other moves
+  root, even when the draw rests on a twofold repetition (below). Between
+  moves the engine reuses the subtree below the moves played only when the new
+  root was searched (expanded) and its own moves prove any result it carries:
+  drawn with every move proven, won with a move proven lost for the opponent,
+  lost with every move proven won for the opponent. Otherwise it rebuilds the
+  tree and searches the position afresh. A position that repeats one from the
+  game is marked drawn and never searched; reused as the root, it read as a
+  proven draw no move supported (and a reused, hand-marked one played the
+  repeating move with `score cp 0` without searching). A line that ends drawn or lost while other moves
   are still unproven does not end the search, so such a `go depth` waits for
   `stop`, as before. `go nodes N` counts its visits and ends as usual;
   `go infinite` still waits for `stop`.
@@ -453,8 +456,8 @@ early with `info string tree memory full ...`; a tree also cannot address more t
 about 2.1 billion nodes, and then says `tree node-id space full`. Provision about
 Hash + 150 MB + the eval cache of RAM for the engine process. Between moves the
 tree is reused below the move played (kept, compacted, or rebuilt), except
-when the new root carries only a repetition draw mark (section 5); then it is
-rebuilt.
+when the new root was never searched or carries a result its moves do not
+prove (section 5); then it is rebuilt.
 
 ## 7. Tablebases
 
