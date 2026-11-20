@@ -1576,6 +1576,15 @@ typedef struct {
     int32_t q_resume;
     int32_t q_pending_n;
 
+    /* Buffer-full flushes this search (reset by start_gumbel_sims). A leaf
+     * that finds the encode buffer full is NOT evaluated in place: the batch
+     * is returned for evaluation and the query list resumes at that leaf (the
+     * q_resume cursor). Each flush means the evaluator cap re-batched the
+     * search, so the result differs from an uncapped run -- legitimately,
+     * like a smaller target_batch -- and callers that pin a search shape
+     * refuse on > 0. Read via gumbel_buffer_full_flushes(). */
+    int64_t buffer_full_flushes;
+
     /* State machine phase */
     int phase;    /* 0=not started, 1=needs_eval, 2=done */
     int allocated;
@@ -2020,10 +2029,21 @@ static int32_t gss_prepare_batch(
         }
 
         if (s->n_leaves >= g->enc_capacity) {
-            /* Buffer full — fall back to root Q (not 0.0 which biases toward draws).
-             * Not a proven terminal, so SOLVED_UNKNOWN. */
-            if (stored_append_terminal(s, path_buf, path_len, g->root_qs[bi], SOLVED_UNKNOWN) < 0) return -1;
-            continue;
+            /* Buffer full: flush and resume HERE, exactly like the C17
+             * duplicate flush below. Nothing has been committed for this
+             * query (no leaf appended, no virtual loss applied), so re-walking
+             * it after the pending evals land is side-effect free.
+             *
+             * This used to back the leaf up as a pseudo-terminal carrying the
+             * ROOT's Q. tree_backprop reads `value` from the LEAF's side to
+             * move, so every starved leaf at an odd depth got the wrong sign
+             * and every one at an even depth a fabricated value (2026-11-20:
+             * a 512 cap at 128 boards x topk 16 absorbed ~31% of leaf
+             * visits). n_leaves >= enc_capacity >= 1 here, so the flush
+             * always has leaves to return (gss_step's q_resume branch). */
+            g->buffer_full_flushes++;
+            g->q_resume = qi;
+            break;
         }
 
         /* C17 duplicate guard. A pending leaf is the ONLY unexpanded node that
@@ -4206,6 +4226,12 @@ static PyObject *MCTSTree_compact_to_subtree(MCTSTreeObject *self, PyObject *arg
 }
 
 
+/* gumbel_buffer_full_flushes() -> int: buffer-full flushes of the last (or
+ * current) Gumbel search on this tree; reset by start_gumbel_sims. */
+static PyObject *MCTSTree_gumbel_buffer_full_flushes(MCTSTreeObject *self, PyObject *Py_UNUSED(args)) {
+    return PyLong_FromLongLong((long long)self->gsim.buffer_full_flushes);
+}
+
 /* reset() -> None  (clear tree for reuse) */
 static PyObject *MCTSTree_reset(MCTSTreeObject *self, PyObject *Py_UNUSED(args)) {
     /* Pending batches contain node ids from the discarded tree. Reject
@@ -4969,6 +4995,17 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
         g->rel_arr_ref = (PyObject *)rel_arr;  /* may be NULL (no relations) */
     }
     g->enc_capacity = (int32_t)PyArray_DIM(enc_arr, 0);
+    if (g->enc_capacity < 1) {
+        /* The buffer-full flush needs room for at least one leaf, or it
+         * would return with nothing to evaluate. */
+        g->enc_data = NULL;
+        Py_XDECREF(g->rel_arr_ref);
+        g->rel_arr_ref = NULL;
+        g->rel_data = NULL;
+        Py_DECREF(enc_arr);
+        PyErr_SetString(PyExc_ValueError, "start_gumbel_sims: enc_buf must have at least one row");
+        return NULL;
+    }
     Py_INCREF(enc_arr);
     g->enc_arr_ref = (PyObject *)enc_arr;
 
@@ -4976,6 +5013,7 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     g->target_batch = (int32_t)target_batch;
     g->q_resume = -1;
     g->q_pending_n = 0;
+    g->buffer_full_flushes = 0;
 
     /* Start every virtual-loss search from a clean slate. Every penalty this
      * path applies is removed in gss_finish_batch, but a search ABANDONED
@@ -5809,6 +5847,8 @@ static PyMethodDef MCTSTree_methods[] = {
     {"compact_to_subtree", (PyCFunction)MCTSTree_compact_to_subtree, METH_VARARGS,
      "compact_to_subtree(root_id, max_footprint_bytes=0) -> int. Keep only root_id's subtree "
      "(new root id 0); -1 = refused because the compacted footprint exceeds the limit."},
+    {"gumbel_buffer_full_flushes", (PyCFunction)MCTSTree_gumbel_buffer_full_flushes, METH_NOARGS,
+     "Buffer-full flushes of the last Gumbel search (the evaluator cap re-batched it)."},
     {"node_count", (PyCFunction)MCTSTree_node_count, METH_NOARGS,
      "node_count() -> int"},
     {"node_capacity", (PyCFunction)MCTSTree_node_capacity, METH_NOARGS,
@@ -7056,8 +7096,12 @@ PyMODINIT_FUNC PyInit__mcts_tree(void) {
      * 8 = explicit incomplete survivors for bounded caller witness recovery.
      * 9 = optional PUCT leaf input-history mode (legacy/root/root-legacy-meta).
      * 10 = dense CBoard cache + footprint_bytes()/memory_stats()/
-     * set_growth_step()/compact_to_subtree() (UCI Hash accounting). */
-    if (PyModule_AddIntConstant(m, "ABI_VERSION", 10) < 0) {
+     * set_growth_step()/compact_to_subtree() (UCI Hash accounting).
+     * 11 = buffer-full flush-and-resume + gumbel_buffer_full_flushes(). ABI 10
+     * backs a leaf that finds the encode buffer full with the ROOT's Q
+     * (wrong-signed at every odd depth) whenever an evaluator cap binds: a
+     * silent, data-affecting semantic, so stale binaries must fail fast. */
+    if (PyModule_AddIntConstant(m, "ABI_VERSION", 11) < 0) {
         Py_DECREF(m);
         return NULL;
     }

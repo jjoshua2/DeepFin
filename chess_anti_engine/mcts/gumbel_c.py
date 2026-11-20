@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging as _logging
 import os
 import sys as _sys
+import threading
 import time as _time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -294,7 +295,11 @@ def _start_gumbel_trailing_args(
 # Raised to 8 for explicit incomplete survivors and bounded caller recovery.
 # Raised to 9 for the shared extension's optional PUCT leaf history mode.
 # Raised to 10 for the dense CBoard cache + Hash footprint API (UCI accounting).
-_REQUIRED_MCTS_ABI = 10
+# Raised to 11 for the buffer-full fix: an older extension backs a leaf that
+# finds the encode buffer full with the ROOT's Q (wrong-signed at odd depths)
+# instead of flushing, silently, whenever an evaluator cap binds; and it lacks
+# gumbel_buffer_full_flushes(), which this module reads after every search.
+_REQUIRED_MCTS_ABI = 11
 
 # Mirrors the VLOSS_MODE_* defines in _mcts_tree.c (205-206). LEGACY scores a
 # pending leaf as a loss (parallel-PUCT pessimism); VIRTUAL_MEAN scores it at
@@ -516,6 +521,40 @@ _tt_health_next_check = 0.0
 _tt_health_reported = (0, 0, 0, 0)
 
 
+# Buffer-full flushes (``_mcts_tree.c``: a leaf that found the encode buffer
+# full is now flushed-and-resumed instead of backed up with the root's Q). One
+# count per flush, summed over every C Gumbel search in this process; a flush
+# means the evaluator cap re-batched that search (valid, but a different search
+# shape than the uncapped one). Read with ``buffer_full_flushes()``; callers that
+# pin a search shape bank the delta around their own calls.
+_BUFFER_FULL_FLUSHES = 0
+_BUFFER_FULL_LOCK = threading.Lock()
+_BUFFER_FULL_WARNED = False
+
+
+def buffer_full_flushes() -> int:
+    """Buffer-full flushes summed over every C Gumbel search since process start."""
+    return _BUFFER_FULL_FLUSHES
+
+
+def _bank_buffer_full(trees: list[MCTSTree], *, buffer_rows: int, n_boards: int) -> int:
+    """Read each tree's per-search counter (consumer-side), add it to the process total."""
+    global _BUFFER_FULL_FLUSHES, _BUFFER_FULL_WARNED
+    n = sum(int(t.gumbel_buffer_full_flushes()) for t in trees)
+    if n <= 0:
+        return 0
+    with _BUFFER_FULL_LOCK:
+        _BUFFER_FULL_FLUSHES += n
+        first = not _BUFFER_FULL_WARNED
+        _BUFFER_FULL_WARNED = True
+    if first:
+        print(f"[mcts] gumbel leaf buffer FULL: {n} flush(es) in one search of {n_boards} board(s) at "
+              f"{buffer_rows} buffer rows -- the evaluator's max batch is below what this search asks for, so "
+              "it was re-batched (every leaf is still evaluated). Counted in buffer_full_flushes(); further "
+              "occurrences are counted, not printed.", file=_sys.stderr, flush=True)
+    return n
+
+
 def _report_guard_health() -> None:
     global _tt_health_next_check, _tt_health_reported
     now = _time.monotonic()
@@ -702,11 +741,13 @@ def leaf_buffer_rows(n_boards: int, *, topk: int, pipelined: bool) -> int:
     """Rows the C leaf encode buffer is sized to, BEFORE any evaluator cap.
 
     ⚑ THIS IS A SEARCH-SHAPE QUANTITY, not a memory knob. When the buffer
-    fills, ``_mcts_tree.c`` does NOT flush and retry: it appends the leaf as a
-    ``SOLVED_UNKNOWN`` pseudo-terminal carrying the ROOT's Q
-    (``stored_append_terminal(..., g->root_qs[bi], SOLVED_UNKNOWN)``), so leaves
-    beyond the buffer are ABSORBED rather than evaluated. Shrinking this below
-    what the search asked for silently changes which move is played.
+    fills, ``_mcts_tree.c`` flushes the batch for evaluation and resumes at the
+    leaf that did not fit (counted: ``buffer_full_flushes()``). Every leaf is
+    evaluated, but later leaves see a fresher tree than they would in one big
+    batch, so a cap below what the search asks for changes the search the way
+    a smaller ``target_batch`` does. Before ABI 11 the leaf was instead backed
+    up with the ROOT's Q -- wrong-signed at every odd depth -- which is why
+    results from capped runs on older builds are suspect.
 
     An evaluator's ``_max_batch`` is min'd against the value returned here, so a
     caller that sets ``max_batch`` below it is choosing a smaller search. This
@@ -736,7 +777,7 @@ def _noninplace_leaf_rows(eval_impl: object, single_leaf_rows: int) -> int:
     ``search_leaf_row_cap``: ``EncodedEvalCache`` declines the in-place path
     so that it sees every request, and reports the ``_max_batch`` cap its inner
     in-place evaluator would have imposed, so enabling the cache does not
-    change which leaves are evaluated vs absorbed (see ``leaf_buffer_rows``)
+    change where the search is re-batched (see ``leaf_buffer_rows``)
     nor hand the inner a batch above its max.
     """
     cap = getattr(eval_impl, "search_leaf_row_cap", None)
@@ -1001,7 +1042,8 @@ def run_gumbel_root_many_c(
             "(missing the start_gumbel_sims root-scale args, the audit-W1 "
             "transposition-key fix, history-safe TT evaluation reuse, "
             "batch_process_ply's search_wdl draw-mode args, bound root history or "
-            "the ABI-10 dense CBoard cache / Hash footprint API); "
+            "the ABI-10 dense CBoard cache / Hash footprint API, or the ABI-11 "
+            "buffer-full flush); "
             "rebuild the C "
             "extension: "
             "python3 scripts/build_production_extensions.py"
@@ -1832,6 +1874,7 @@ def run_gumbel_root_many_c(
             raise
 
   # Retrieve remaining candidates from both trees, merge back
+        _bank_buffer_full(list(_trees), buffer_rows=len(_enc_bufs[0]), n_boards=n_boards)
         _rem_a = _trees[0].get_gumbel_remaining(True)
         _rem_b = _trees[1].get_gumbel_remaining(True)
         remaining_per_board = [None] * n_boards
@@ -2009,6 +2052,7 @@ def run_gumbel_root_many_c(
                 n_leaves = tree.continue_gumbel_sims(pol_all, wdl_all)
             _t_prepare += _time.perf_counter() - _tp0
 
+        _bank_buffer_full([tree], buffer_rows=len(_enc_buf), n_boards=n_boards)
         remaining_per_board = cast("list[list[int] | None]", tree.get_gumbel_remaining(True))
         _tree_for_board = None  # signal to use single tree
         _rid_for_board = None

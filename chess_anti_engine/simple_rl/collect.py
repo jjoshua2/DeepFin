@@ -388,6 +388,9 @@ def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, trai
     buffered_meta: list[tuple[int, int, str, bool, np.uint64]] = []
     shard_index = 0
     games_done = 0
+    from chess_anti_engine.mcts.gumbel_c import buffer_full_flushes
+
+    flushes_before = buffer_full_flushes()
     t0 = time.perf_counter()
     model_sha = sha256_file(checkpoint)
 
@@ -469,7 +472,19 @@ def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, trai
     stats.update(wall_seconds=wall, games_per_hour=3600.0 * games_done / max(wall, 1e-9),
                  rows_per_second=stats["rows"] / max(wall, 1e-9), sf_nodes=int(settings.sf_nodes),
                  **evaluator_graph_record(evaluator))
+    # Observed, not predicted: buffer-full flushes the generation's searches
+    # took (gumbel_c's process counter, read around this collect only). > 0
+    # means the evaluator cap re-batched the searches, i.e. the rows were made
+    # by a different search than the pinned settings describe; written to
+    # stats.json, and the generation is refused unsealed (redone whole).
+    stats["buffer_full_flushes"] = int(buffer_full_flushes() - flushes_before)
     write_json_atomic(gen_dir / STATS, stats)
+    if stats["buffer_full_flushes"] > 0:
+        raise RuntimeError(
+            f"collect generation {generation}: {stats['buffer_full_flushes']} buffer-full flush(es) -- the "
+            "evaluator's max batch is below the leaves the search asks for, so its searches were re-batched "
+            "(see gumbel_c.leaf_buffer_rows). stats.json records the count; the generation is not sealed. "
+            "Raise the evaluator cap or lower --concurrency and redo it")
     config_record = {"settings": asdict(settings),
                      "dataclasses": {k: asdict(v) for k, v in cfg.items()}, "arch": arch}
     write_manifest(

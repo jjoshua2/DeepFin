@@ -138,6 +138,13 @@ the exact-repeat rate of the encoded input (position and history planes) within
 the generation, the cross-generation repeat rate, and, from the stored root
 statistics, the target entropy, prior entropy, KL(target‖prior) and top-1
 agreement of target and prior.
+It also records `buffer_full_flushes`: how many times the generation's C searches
+found their leaf buffer full and flushed. That count is observed, read from
+`gumbel_c.buffer_full_flushes()` around the collect, not predicted from settings.
+A count above 0 means the evaluator cap (`--eval-max-batch`) is below what the
+search asks for, so the searches were re-batched. The collect writes `stats.json`
+and then refuses to seal the generation, which is redone whole. See the
+[buffer-full record](experiments/2026-11-20-gumbel-buffer-full-fallback.md).
 
 The cross-generation repeat rate (`repeat_rate_vs_previous`) is a constant-memory
 estimate by default. The run keeps every earlier row hash below a threshold in a
