@@ -76,6 +76,7 @@ from chess_anti_engine.eval.arena_durable import (
 )
 from chess_anti_engine.eval.sprt import SprtMonitor, SprtSpec
 from chess_anti_engine.moves import ActionDecodeError
+from chess_anti_engine.utils.claimable_outcome import outcome_claim_draw
 from chess_anti_engine.utils.game_log import (
     GameLogWriter,
     default_game_log_path,
@@ -1526,7 +1527,10 @@ without raising this is what the cap exists to stop.
 """
 
 
-def build_arena_evaluator(model: Any, *, device: str, max_batch: int, n_slots: int = 2) -> Any:
+def build_arena_evaluator(
+    model: Any, *, device: str, max_batch: int, n_slots: int = 2, cuda_graphs: bool = False,
+    cuda_graph_max_rows: int = 512,
+) -> Any:
     """One LONG-LIVED evaluator for one arena side.
 
     Without this, ``pick_moves_for_boards`` passes no evaluator and every C
@@ -1566,6 +1570,12 @@ def build_arena_evaluator(model: Any, *, device: str, max_batch: int, n_slots: i
         max_batch=int(max_batch),
         n_slots=int(n_slots),
         legal_bf16=False,
+        # Replays CUDA graphs of the same eager forward: outputs measured
+        # bitwise identical to eager (PR #1414), without the per-call launch
+        # overhead that dominates the forward at the batch sizes the search
+        # submits (--eval-cuda-graphs).
+        cuda_graphs=bool(cuda_graphs),
+        cuda_graph_max_rows=int(cuda_graph_max_rows),
     )
 
 
@@ -2391,8 +2401,9 @@ def play_paired_games_matched_sims_rolling(
             b = boards[j]
             res: str | None = None
             termination = "rules"
-            if b.is_game_over(claim_draw=True):
-                res = b.result(claim_draw=True)
+            outcome = outcome_claim_draw(b)
+            if outcome is not None:
+                res = outcome.result()
             elif syzygy_tablebase is not None:
                 res = (
                     rule50_match_result(b, syzygy_tablebase, max_pieces=tb_max_pieces)
@@ -2710,6 +2721,8 @@ def build_result_record(
     max_concurrent_games: int | None = None,
     arena_pool: int | None = None,
     sprt: dict[str, Any] | None = None,
+    eval_cuda_graphs: bool | None = None,
+    eval_cuda_graph_stats: dict[str, Any] | None = None,
 ) -> dict:
     elo_lo, elo_hi = summary.elo_ci95
     return {
@@ -2769,6 +2782,13 @@ def build_result_record(
         "eval_hoist_values": list(hoist_values) or [hoist_setting],
         "mixed_eval_hoist": len(set(hoist_values)) > 1,
         "eval_max_batch": eval_max_batch,
+        # Realized off the evaluator objects (None: no hoisted evaluator).
+        # Outcome-neutral (measured bitwise-identical forwards), so it is
+        # recorded, not fingerprinted -- like `compile`, minus the numerics.
+        "eval_cuda_graphs": eval_cuda_graphs,
+        # Per side: graph replays vs dense forwards that ran eager, and why --
+        # the evidence that "graphs on" took effect (None when graphs are off).
+        "eval_cuda_graph_stats": eval_cuda_graph_stats,
         "eval_leaf_cap_uncapped": eval_leaf_cap_uncapped,
         "eval_leaf_cap_bound": bool(eval_leaf_cap_bound),
         # ⚑ THE INPUTS the two fields above are a FUNCTION OF, banked so a row
@@ -2915,6 +2935,7 @@ def run_arena(
     syzygy_path: str | None = None,
     tb_max_pieces: int = 6,
     compile_models: bool = True,
+    eval_cuda_graphs: bool = False,
     rolling: bool = True,
     search_candidate: SideSearch | None = None,
     search_reference: SideSearch | None = None,
@@ -2990,6 +3011,26 @@ def run_arena(
         raise SystemExit("--games must be even and >= 2 (paired openings)")
     if eval_max_batch < 0:
         raise SystemExit("--eval-max-batch must be >= 0 (0 disables the hoist)")
+    if eval_cuda_graphs:
+        # Every way the flag could be accepted and then not run is refused here,
+        # before any checkpoint loads: the graphs live on the hoisted evaluator.
+        if mode != "matched_sims":
+            raise SystemExit("--eval-cuda-graphs applies to matched_sims only")
+        if not eval_max_batch:
+            raise SystemExit("--eval-cuda-graphs needs the hoisted evaluator (--eval-max-batch > 0)")
+        if compile_models:
+            raise SystemExit(
+                "--eval-cuda-graphs captures the EAGER forward; pass --compile off "
+                "(torch.compile changes the arithmetic, the graphs do not)"
+            )
+        if not str(device).startswith("cuda"):
+            raise SystemExit("--eval-cuda-graphs needs a CUDA --device")
+        if volatility_candidate is not None:
+            raise SystemExit("--eval-cuda-graphs cannot be used with --volatility-* (no hoist)")
+    # What the hoisted evaluators REALIZED, read back off them once built;
+    # None when no evaluator was hoisted (matched_time, CPU, --eval-max-batch 0).
+    _realized_eval_cuda_graphs: bool | None = None
+    _graph_evaluators: tuple[Any, Any] | None = None
     if mode == "matched_sims" and (search_candidate is None or search_reference is None):
         raise SystemExit(
             "matched_sims needs an explicit search shape: pass --search-shape "
@@ -3686,9 +3727,22 @@ def run_arena(
 
             evaluator_candidate = build_arena_evaluator(
                 model_candidate, device=device, max_batch=eval_max_batch,
+                cuda_graphs=eval_cuda_graphs,
             )
             evaluator_reference = build_arena_evaluator(
                 model_reference, device=device, max_batch=eval_max_batch,
+                cuda_graphs=eval_cuda_graphs,
+            )
+            # Read off the objects: an evaluator without the attribute (any
+            # non-DirectGPUEvaluator) is not replaying graphs, whatever was asked.
+            graphs_candidate = bool(getattr(evaluator_candidate, "cuda_graphs", False))
+            graphs_reference = bool(getattr(evaluator_reference, "cuda_graphs", False))
+            _realized_eval_cuda_graphs = graphs_candidate and graphs_reference
+            _graph_evaluators = (evaluator_candidate, evaluator_reference)
+            print(
+                "[arena] eval CUDA graphs (eager-forward replay): "
+                f"candidate={graphs_candidate} reference={graphs_reference}",
+                flush=True,
             )
   # Announced off the OBJECTS, through the very expressions mcts/gumbel_c.py
   # uses to read them (`getattr(eval_impl, "_max_batch", ...)`,
@@ -4020,6 +4074,12 @@ def run_arena(
         hoist_setting=this_hoist,
         hoist_values=sorted(scored_hoist_tags),
         eval_max_batch=int(eval_max_batch),
+        eval_cuda_graphs=_realized_eval_cuda_graphs,
+        eval_cuda_graph_stats=(
+            {"candidate": getattr(_graph_evaluators[0], "cuda_graph_stats", None),
+             "reference": getattr(_graph_evaluators[1], "cuda_graph_stats", None)}
+            if _realized_eval_cuda_graphs and _graph_evaluators is not None else None
+        ),
         eval_leaf_cap_uncapped=(uncapped_leaf_rows or None),
         eval_leaf_cap_bound=leaf_cap_bound,
         # Banked UNCONDITIONALLY, unlike the leaf-cap fields above: those are
@@ -4094,6 +4154,17 @@ def add_common_args(p: argparse.ArgumentParser) -> None:
     # it refuses an explicit --games rather than accept a number it will not
     # read. Before adding anything here, check what the OTHER script does with
     # it.
+    p.add_argument("--eval-cuda-graphs", action="store_true",
+                   help="matched_sims, eager (--compile off): replay CUDA graphs of "
+                        "the hoisted evaluator's own eager forward, one per batch "
+                        "size up to 512 rows. Outputs MEASURED bitwise identical "
+                        "to eager (same kernels; PR #1414); faster at the leaf "
+                        "batch sizes the search submits, where the eager forward "
+                        "is launch-bound. MEMORY: the graphs pin activations for "
+                        "the process lifetime (measured +1.7 GB reserved per "
+                        "evaluator, one per side, on the production net) -- check "
+                        "headroom before running beside training or another GPU "
+                        "job. Off by default.")
     p.add_argument("--eval-max-batch", type=int, default=DEFAULT_EVAL_MAX_BATCH,
                    help="matched_sims: forward-batch cap for the ONE long-lived "
                         f"evaluator built per side (default: {DEFAULT_EVAL_MAX_BATCH}, "
@@ -4606,6 +4677,7 @@ def main() -> None:
         syzygy_path=args.syzygy,
         tb_max_pieces=args.syzygy_max_pieces,
         compile_models=compile_models,
+        eval_cuda_graphs=bool(args.eval_cuda_graphs),
         rolling=not args.no_rolling,
         openings_path=openings_path,
         openings_fen=args.openings_fen,

@@ -36,6 +36,7 @@ import chess.syzygy
 import numpy as np
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
+from chess_anti_engine.utils.claimable_outcome import outcome_claim_draw
 import contextlib
 
 _log = logging.getLogger(__name__)
@@ -161,7 +162,21 @@ def rule50_match_status(
     DTZ is still required and checked for coverage and WDL-class consistency.
     Missing eligible WDL or DTZ is an error, not neural fallback.
     """
-    natural = board.outcome(claim_draw=True)
+    return rule50_match_status_given(
+        board, tablebase, outcome_claim_draw(board), max_pieces=max_pieces,
+    )
+
+
+def rule50_match_status_given(
+    board: chess.Board,
+    tablebase: chess.syzygy.Tablebase,
+    natural: chess.Outcome | None,
+    *,
+    max_pieces: int = 6,
+) -> int | None:
+    """``rule50_match_status`` for a caller that already holds
+    ``natural == board.outcome(claim_draw=True)``, so the claim check is not
+    computed twice for one position."""
     if natural is not None:
         if natural.winner is None:
             return 2

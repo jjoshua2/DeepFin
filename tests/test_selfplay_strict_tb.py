@@ -563,3 +563,146 @@ def test_legacy_mode_is_default_and_keeps_original_syzygy_rescore(monkeypatch):
     assert finalize_module._rescore_with_syzygy(state, 0, chess.Board(ROOT), [], "1-0") == ("0-1", {})
     assert sf_history_kwargs(state, 0) == {}
     assert asdict(state.game)["syzygy_outcome_mode"] == "theoretical_wdl"
+
+
+def _uncached_full_history(state, slot):
+    # The pre-cache definition, kept here as the oracle.
+    from chess_anti_engine.moves import index_to_move
+    board = state.starting_boards[slot].copy(stack=True)
+    for action in state.move_idx_history[slot]:
+        move = index_to_move(int(action), board)
+        assert move in board.legal_moves
+        board.push(move)
+    return board
+
+
+def test_incremental_full_history_matches_full_replay_and_rebuilds_on_change():
+    tokens = ["e2e4", "e7e5", *CYCLE, *CYCLE, "d2d4", "e5d4", "d1d4"]
+    final = history(tokens, root=chess.STARTING_FEN)
+    opening = history(tokens[:2], root=chess.STARTING_FEN)
+    state = state_for(final, opening=opening)
+    all_actions = list(state.move_idx_history[0])
+    state.full_history_cache = {}
+    walk = opening.copy(stack=True)
+    state.move_idx_history[0] = []
+    for n, action in enumerate([None, *all_actions]):
+        if action is not None:
+            state.move_idx_history[0].append(action)
+            walk.push(walk.parse_uci(tokens[2 + n - 1]))
+        state.cboards[0] = CBoard.from_board(walk)
+        got = full_history_board(state, 0)
+        want = _uncached_full_history(state, 0)
+        assert got.fen() == want.fen()
+        assert got.move_stack == want.move_stack
+        assert got.root().fen() == want.root().fen()
+        assert got.can_claim_threefold_repetition() == want.can_claim_threefold_repetition()
+        assert state.full_history_cache[0].actions == state.move_idx_history[0]
+        got.push(next(iter(got.legal_moves)))  # callers own the returned board
+    # A rewritten history (same length, different moves) must not reuse the replay.
+    state.move_idx_history[0] = all_actions[:2]
+    other = opening.copy(stack=True)
+    other.push_uci(tokens[2])
+    other.push_uci(tokens[3])
+    state.cboards[0] = CBoard.from_board(other)
+    assert full_history_board(state, 0).fen() == other.fen()
+    alt = opening.copy(stack=True)
+    alt.push_uci("b1c3")
+    alt.push_uci("b8c6")
+    state.move_idx_history[0] = [move_to_index(alt.move_stack[2], opening),
+                                 move_to_index(alt.move_stack[3], history([*tokens[:2], "b1c3"], root=chess.STARTING_FEN))]
+    state.cboards[0] = CBoard.from_board(alt)
+    assert full_history_board(state, 0).fen() == alt.fen()
+    # A recycled slot (new starting-board object) rebuilds from the new start.
+    fresh = chess.Board()
+    state.starting_boards[0] = fresh
+    state.move_idx_history[0] = []
+    state.cboards[0] = CBoard.from_board(fresh)
+    assert full_history_board(state, 0).fen() == fresh.fen()
+    assert state.full_history_cache[0].start is fresh
+
+
+def test_incremental_full_history_still_refuses_an_illegal_appended_action():
+    final = history(CYCLE)
+    opening = history(())
+    state = state_for(final, opening=opening)
+    state.full_history_cache = {}
+    assert full_history_board(state, 0).fen() == final.fen()
+    # An appended action naming no legal move (the decoder substitutes one, so
+    # the native-board FEN check is what refuses) must refuse and drop the
+    # part-extended replay rather than keep serving it.
+    state.move_idx_history[0].append(move_to_index(chess.Move.from_uci("e2e5"), final))
+    with pytest.raises(ValueError, match=r"illegal played action|disagree"):
+        full_history_board(state, 0)
+    assert 0 not in state.full_history_cache
+
+
+def test_incremental_full_history_rebuilds_for_a_transposed_start_with_equal_fen():
+    # Same FEN, same ply count, different opening move order: the replay's
+    # history (root, repetition window, SF root_moves) differs, so the cached
+    # replay of the first start must not be served for the second.
+    first = history(["g1f3", "g8f6", "b1c3", "b8c6"], root=chess.STARTING_FEN)
+    second = history(["b1c3", "b8c6", "g1f3", "g8f6"], root=chess.STARTING_FEN)
+    assert first.fen() == second.fen()
+    final = first.copy(stack=True)
+    final.push_uci("e2e4")
+    state = state_for(final, opening=first)
+    state.full_history_cache = {}
+    assert full_history_board(state, 0).move_stack[:4] == first.move_stack
+    state.starting_boards[0] = second.copy(stack=True)
+    rebuilt = full_history_board(state, 0)
+    assert rebuilt.move_stack[:4] == second.move_stack
+    assert sf_history_kwargs(state, 0).get("root_moves") == (
+        "b1c3", "b8c6", "g1f3", "g8f6", "e2e4")
+
+
+@pytest.mark.parametrize(("board", "wdl", "dtz"), [
+    (chess.Board(ROOT), 2, 3),                                   # reset clock, decisive
+    (chess.Board(ROOT), 0, 0),                                   # TB draw
+    (chess.Board("7k/8/8/8/8/8/P7/KQ6 w - - 12 8"), 2, 3),      # positive clock: unresolved
+    (history(CYCLE * 2), 2, 3),                                  # natural repetition claim
+    (chess.Board(), 2, 3),                                       # not eligible, undecided
+    (chess.Board("7k/5Q2/6K1/8/8/8/8/8 b - - 0 1"), 2, 3),      # stalemate (natural)
+])
+def test_resolve_if_decided_is_resolve_minus_undecided_witnesses(board, wdl, dtz):
+    owner = session(SyntheticTables(wdl=wdl, dtz=dtz))
+    before = (board.fen(), list(board.move_stack))
+    full = owner.resolve(board.copy(stack=True), move_offset=3)
+    fast = owner.resolve_if_decided(board, move_offset=3)
+    assert (board.fen(), list(board.move_stack)) == before  # read-only
+    if full.result == "*":
+        assert fast is None
+    else:
+        assert fast == full
+
+
+def test_incremental_full_history_rechecks_a_replaced_native_board():
+    # A verified replay is skipped only while (actions, native FEN) is
+    # unchanged: swapping the slot's native board for another position with
+    # the history untouched must still be refused.
+    final = history(CYCLE)
+    state = state_for(final, opening=history(()))
+    state.full_history_cache = {}
+    assert full_history_board(state, 0).fen() == final.fen()
+    state.cboards[0] = CBoard.from_board(chess.Board(ROOT))
+    with pytest.raises(ValueError, match="disagree"):
+        full_history_board(state, 0)
+
+
+def test_incremental_full_history_rebuilds_when_the_start_is_mutated_in_place():
+    # Contract: starting_boards entries are replaced, never mutated. The
+    # start-FEN check is the backstop if one is: same object, same ply count,
+    # different position must rebuild from the mutated start, not serve the
+    # replay of the old one.
+    start = history(["g1f3", "g8f6"], root=chess.STARTING_FEN)
+    final = start.copy(stack=True)
+    final.push_uci("b1c3")
+    state = state_for(final, opening=start)
+    state.full_history_cache = {}
+    assert full_history_board(state, 0).fen() == final.fen()
+    held = state.starting_boards[0]
+    held.pop()
+    held.push_uci("b8c6")
+    mutated = held.copy(stack=True)
+    mutated.push_uci("b1c3")
+    state.cboards[0] = CBoard.from_board(mutated)
+    assert full_history_board(state, 0).fen() == mutated.fen()

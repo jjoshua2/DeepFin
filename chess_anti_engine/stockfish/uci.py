@@ -10,10 +10,12 @@ import subprocess
 import termios
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from functools import partial
+from typing import cast
 
 import chess
 import numpy as np
@@ -483,31 +485,79 @@ def _validated_position_history(
     ):
         raise ValueError("history requires a FEN string and a sequence of UCI strings")
     snapshot = tuple(root_moves)
+    # Non-string tokens are refused by the loop below, in order, exactly as
+    # before; they only must not reach the cache key (a list is unhashable).
+    cacheable = all(isinstance(token, str) for token in snapshot)
     try:
-        board = chess.Board(root_fen)
         requested = chess.Board(fen)
+        cached = _validated_prefix(root_fen, cast("tuple[str, ...]", snapshot)) if cacheable else None
+        board = chess.Board(root_fen) if cached is None else cached[1]
     except ValueError as exc:
         raise ValueError("history requires valid root and requested FENs") from exc
-    if not board.is_valid():
-        raise ValueError("history root is not a valid standard-chess position")
-    # Canonicalize the root so whitespace cannot inject protocol commands;
-    # retain even a non-capturable EP square when the root explicitly has one.
-    root = board.fen(en_passant="fen")
-    moves: list[str] = []
-    for token in snapshot:
+    if cached is None:
+        if not board.is_valid():
+            raise ValueError("history root is not a valid standard-chess position")
+        # Canonicalize the root so whitespace cannot inject protocol commands;
+        # retain even a non-capturable EP square when the root explicitly has one.
+        root = board.fen(en_passant="fen")
+        done = 0
+    else:
+        root, _board, done = cached
+    for token in snapshot[done:]:
         if not isinstance(token, str) or not _UCI_MOVE_RE.fullmatch(token):
             raise ValueError(f"history contains a malformed UCI move: {token!r}")
         move = chess.Move.from_uci(token)
         if not board.is_legal(move):
             raise ValueError(f"history contains an illegal move: {token!r}")
         board.push(move)
-        moves.append(token)
+    validated = cast("tuple[str, ...]", snapshot)  # every token passed the loop
+    _remember_validated_prefix(root_fen, validated, root, board)
     # Include both clocks, castling, turn and legal EP state. Match the same
     # canonical FEN convention used by live Board.fen() callers; a phantom EP
     # square omitted by that convention does not discard the supplied history.
     if board.fen() != requested.fen():
         raise ValueError("history does not reproduce the requested final FEN")
-    return root, tuple(moves)
+    return root, validated
+
+
+# Successfully validated (root_fen, moves) prefixes -> (canonical root, board).
+# The same game history is validated twice per Stockfish query (pool.submit on
+# the caller's thread, then StockfishUCI.search on the engine's thread), and
+# every later query of that game extends it by a ply or two; each validation
+# used to replay the whole game with python-chess legality checks. Only
+# histories whose every move already passed the checks above are stored, and a
+# hit resumes those exact checks at the first move it does not cover, so the
+# accepted set and every error are unchanged. Bounded LRU, shared by threads.
+_PREFIX_CACHE_MAX = 1024
+_PREFIX_LOOKBACK = 8
+_prefix_cache: OrderedDict[tuple[str, tuple[str, ...]], tuple[str, chess.Board]] = OrderedDict()
+_prefix_lock = threading.Lock()
+
+
+def _validated_prefix(
+    root_fen: str, moves: tuple[str, ...],
+) -> tuple[str, chess.Board, int] | None:
+    """Longest cached validated prefix of ``moves`` (within the look-back)."""
+    with _prefix_lock:
+        for n in range(len(moves), max(-1, len(moves) - _PREFIX_LOOKBACK - 1), -1):
+            key = (root_fen, moves[:n])
+            hit = _prefix_cache.get(key)
+            if hit is not None:
+                _prefix_cache.move_to_end(key)
+                root, board = hit
+                return root, board.copy(stack=True), n
+    return None
+
+
+def _remember_validated_prefix(
+    root_fen: str, moves: tuple[str, ...], root: str, board: chess.Board,
+) -> None:
+    key = (root_fen, moves)
+    with _prefix_lock:
+        _prefix_cache[key] = (root, board.copy(stack=True))
+        _prefix_cache.move_to_end(key)
+        while len(_prefix_cache) > _PREFIX_CACHE_MAX:
+            _prefix_cache.popitem(last=False)
 
 
 class StockfishUCI:

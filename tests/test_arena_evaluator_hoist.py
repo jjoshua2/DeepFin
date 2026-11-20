@@ -1884,3 +1884,56 @@ def test_the_games_refusal_does_not_catch_games_per_rung(
     """
     seen = _ladder_run_arena_kwargs(monkeypatch, ["--games-per-rung", "6"])
     assert [kw["games"] for kw in seen] == [6, 6]
+
+
+@pytest.mark.parametrize(("overrides", "match"), [
+    ({"mode": "matched_time", "ms_per_move": 10}, "matched_sims only"),
+    ({"eval_max_batch": 0}, "hoisted evaluator"),
+    ({"compile_models": True}, "EAGER forward"),
+    ({"device": "cpu"}, "CUDA --device"),
+    ({"volatility_candidate": {"volatility_q_scale": 0.5, "volatility_fpu": 0.0}}, "volatility"),
+])
+def test_eval_cuda_graphs_is_refused_where_it_could_not_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, overrides: dict[str, Any], match: str,
+) -> None:
+    """Every way --eval-cuda-graphs could be accepted and then not take effect
+    is refused, before a checkpoint loads."""
+    built = _stub_model_loader(monkeypatch)
+    _stub_play_loops(monkeypatch)
+    with pytest.raises(SystemExit, match=match):
+        _run(tmp_path, **{"device": "cuda", "eval_cuda_graphs": True, **overrides})
+    assert built == []
+
+
+class _GraphStubEvaluator(_StubEvaluator):
+    def __init__(self, name: str, graphs: bool) -> None:
+        super().__init__(name)
+        self.cuda_graphs = graphs
+        self.cuda_graph_stats = {"replays": 7, "side": name} if graphs else None
+
+
+@pytest.mark.parametrize("realised", [True, False])
+def test_the_realised_graph_flag_and_stats_are_banked_off_the_evaluators(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, realised: bool,
+) -> None:
+    """The record reports what the evaluators did, not what was asked: a
+    requested flag the evaluators do not realise banks False and no stats."""
+    _stub_model_loader(monkeypatch)
+    _stub_play_loops(monkeypatch)
+    asked: list[Any] = []
+
+    def _fake_build(model: Any, **kw: Any) -> Any:
+        asked.append(kw.get("cuda_graphs"))
+        return _GraphStubEvaluator(getattr(model, "tag", "?"), realised)
+
+    monkeypatch.setattr(arena, "build_arena_evaluator", _fake_build)
+    record = _run(tmp_path, device="cuda", eval_cuda_graphs=True)
+    assert asked == [True, True]
+    assert record["eval_cuda_graphs"] is realised
+    if realised:
+        stats = record["eval_cuda_graph_stats"]
+        assert set(stats) == {"candidate", "reference"}
+        assert stats["candidate"]["replays"] == 7
+        assert stats["candidate"]["side"] != stats["reference"]["side"]
+    else:
+        assert record["eval_cuda_graph_stats"] is None
