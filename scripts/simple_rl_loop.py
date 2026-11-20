@@ -43,7 +43,8 @@ from chess_anti_engine.simple_rl.evaluate import (
     tripwire_table,
 )
 from chess_anti_engine.simple_rl.learn import (
-    MATRIX_OPTIMIZER_SCOPES, MODEL_FILE, TrainSettings, preflight_init_optimizer, train_generation,
+    MATRIX_OPTIMIZER_SCOPES, MODEL_FILE, TrainSettings, lineage_capped_collects, preflight_init_optimizer,
+    refuse_capped_collects, train_generation,
 )
 from chess_anti_engine.simple_rl.lineage import later_sealed, unseal_after, verify_before, verify_stage
 from chess_anti_engine.simple_rl.openings import split_openings
@@ -173,6 +174,7 @@ def train_settings(a: argparse.Namespace, run_dir: Path) -> TrainSettings:
         kl_policy=a.kl_policy, kl_wdl=a.kl_wdl, kl_reference=ref, sl_mix_dir=a.sl_mix_dir,
         sl_mix_frac=a.sl_mix_frac, sl_mix_max_rows=a.sl_mix_max_rows, holdout_frac=a.holdout_frac,
         probe_rows=a.probe_rows, device=a.device, use_amp=str(a.device).startswith("cuda"), seed=a.seed,
+        allow_capped_collect_rows=a.allow_capped_collect_rows,
     )
     settings.validate()
     return settings
@@ -267,7 +269,8 @@ RUN_CONFIG_EXEMPT = frozenset({
 # implicitly had. A run_config.json without the key reads as that default, so
 # resuming an older run at the default is not a "change" -- any other value is.
 ADDED_SINCE_PINNING = {"collect_cuda_graphs": False, "init_optimizer_state": "fresh",
-                       "matrix_optimizer_scope": "default", "adopt_checkpoint_optimizer_hparams": False}
+                       "matrix_optimizer_scope": "default", "adopt_checkpoint_optimizer_hparams": False,
+                       "allow_capped_collect_rows": False}
 
 
 def validate_before_pinning(a: argparse.Namespace, run_dir: Path, stages: set[str]) -> None:
@@ -286,6 +289,17 @@ def validate_before_pinning(a: argparse.Namespace, run_dir: Path, stages: set[st
         settings = train_settings(a, run_dir)
         if settings.init_optimizer_state == "checkpoint" and not stage_done(gen_dir(run_dir, 1) / "train"):
             preflight_init_optimizer_source(a, run_dir, settings)
+        if getattr(a, "generation", None) is not None:
+            to_train = [int(a.generation)]
+        else:
+            to_train = [g for g in range(1, int(getattr(a, "generations", 0) or 0) + 1)
+                        if not stage_done(gen_dir(run_dir, g) / "train")]
+        # The whole lineage, not just the windows: a model descends from every
+        # earlier generation's rows (lineage_capped_collects).
+        try:
+            refuse_capped_collects(lineage_capped_collects(run_dir, max(to_train, default=0)), settings)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
     if "collect" in stages:
         try:
             validate_settings(collect_settings(a))
@@ -345,13 +359,14 @@ def check_run_config(a: argparse.Namespace, run_dir: Path) -> None:
 
 def cmd_run(a: argparse.Namespace) -> int:
     run_dir = Path(a.run_dir)
-    run_dir.mkdir(parents=True, exist_ok=True)
     markers = [Path(m) for m in (a.pause_marker or ())]
     blocked = blocking_markers(run_dir, markers)
     if blocked:
         print("not starting: " + "; ".join(blocked), file=sys.stderr)
         return EXIT_BLOCKED
+    # Validate BEFORE creating anything: a refused setting leaves no run dir behind.
     validate_before_pinning(a, run_dir, {"collect", "train"} | run_stages_left(a, run_dir))
+    run_dir.mkdir(parents=True, exist_ok=True)
     check_run_config(a, run_dir)
     init_run(run_dir, init_checkpoint=a.init_checkpoint, random_init=a.random_init,
              model_config=a.model_config, arch_from=a.arch_from, seed=a.seed)
@@ -495,7 +510,9 @@ def _common(p: argparse.ArgumentParser) -> None:
     c.add_argument("--exact-repeat-vs-previous", action="store_true",
                    help="compute repeat_rate_vs_previous exactly over every earlier row (memory grows with the run)")
     c.add_argument("--rows-per-shard", type=int, default=20000)
-    c.add_argument("--eval-max-batch", type=int, default=512)
+    c.add_argument("--eval-max-batch", type=int, default=None,
+                   help="CUDA evaluator batch cap (default: the search's leaf-buffer size at this "
+                        "--concurrency / --topk; a smaller value is refused -- it would drop leaf evaluations)")
     c.add_argument("--collect-cuda-graphs", action="store_true",
                    help="collect on CUDA: replay CUDA graphs of the evaluator's eager dense forward "
                         "(outputs measured bitwise identical, so the same shards; faster at the "
@@ -534,6 +551,9 @@ def _common(p: argparse.ArgumentParser) -> None:
                    help="on a restore: KEEP the checkpoint's param-group hyperparameters (weight decay, betas, "
                         "Aurora polar knobs, ...) where they differ from this run's configured ones; recorded. "
                         "Exclusive with --reapply-optimizer-hparams; never adopts lr / lr floor")
+    t.add_argument("--allow-capped-collect-rows", action="store_true",
+                   help="train on rows from collects whose evaluator cap could absorb search leaves (default: "
+                        "refused; when allowed the phase records trained_on_capped_rows)")
     t.add_argument("--mirror-prob", type=float, default=0.5)
     t.add_argument("--w-policy", type=float, default=1.0)
     t.add_argument("--w-wdl", type=float, default=1.0, help="0 = policy only")

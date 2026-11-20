@@ -178,5 +178,6 @@ Mutants:
 - Results from capped runs on builds before ABI 11 are suspect wherever
   `eval_leaf_cap_bound` was true or a collect cap sat below boards × topk. The
   audit above found only the smoke.
-- Until #1427 merges, a main collect at `--concurrency` above 32 with the old
-  512 cap now refuses to seal (flushes > 0) instead of silently corrupting.
+- #1427 (merged) defaults the collect cap to the search's own leaf buffer and
+  makes train refuse rows from capped collects, so a default collect never
+  flushes; an explicit smaller cap is refused before pinning.

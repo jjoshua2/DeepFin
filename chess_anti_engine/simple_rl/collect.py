@@ -92,7 +92,17 @@ class CollectSettings:
     exact_repeat_vs_previous: bool = False
     rows_per_shard: int = 20000
     device: str = "cpu"
-    eval_max_batch: int = 512
+    # Forward-batch cap of the CUDA evaluator. None (default) = the search's own
+    # leaf-buffer size at this concurrency and topk (required_leaf_rows). It is a
+    # SEARCH-SHAPE knob, not a memory one: gumbel_c caps its leaf buffer at the
+    # evaluator's max batch. Before ABI 11 a leaf that found the buffer full was
+    # NOT evaluated -- it was backed up with the ROOT's Q; since ABI 11 the batch
+    # is flushed and resumed (counted, and a collect with flushes is refused
+    # unsealed). At 64 sims / topk 16 / 128 games and the old
+    # fixed 512 that hit most first-round children and corrupted the reply
+    # side's targets (docs/simple_rl_loop.md, "Evaluator batch cap"). An explicit
+    # value below required_leaf_rows is refused.
+    eval_max_batch: int | None = None
     # Replay CUDA graphs of the evaluator's own eager dense forward (measured
     # bitwise identical, PR #1414). The collect evaluator is already on dense
     # fp32 transport (legal_bf16=False), so this is not a transport change.
@@ -314,6 +324,75 @@ def _open_stockfish(settings: CollectSettings) -> Any:
     return pool
 
 
+def required_leaf_rows(settings: CollectSettings) -> int:
+    """The leaf buffer one collect search call asks for, before any evaluator cap.
+
+    Every network turn hands ``run_gumbel_root_many_c`` up to ``concurrency``
+    boards together with the persistent game tree, and a supplied tree turns
+    the 2-group pipeline off at every board count, so the single-buffer
+    expression applies at the full concurrency.
+    """
+    from chess_anti_engine.mcts.gumbel_c import leaf_buffer_rows
+
+    boards = max(1, min(int(settings.concurrency), int(settings.games)))
+    return int(leaf_buffer_rows(boards, topk=int(settings.topk), pipelined=False))
+
+
+# The fixed DirectGPUEvaluator cap every CUDA collect used before
+# --eval-max-batch existed (2026-11-20); old manifests do not record it.
+LEGACY_EVAL_MAX_BATCH = 512
+
+
+def capped_collect_record(manifest: dict[str, Any]) -> dict[str, Any] | None:
+    """Non-None when a SEALED collect ran at an evaluator cap that could absorb leaves.
+
+    ``_mcts_tree.c`` (before the buffer-full fix) backs a leaf that finds the
+    buffer full with the root's Q instead of evaluating it -- wrong-signed at
+    every odd depth and fabricated at every even one. A search call asks for at
+    most boards x topk leaves in one rep (the accumulate guard keeps later reps
+    inside the buffer), so a cap below that could bind. This is the PRECISE
+    could-bind bound, unlike the collect-time refusal, which conservatively
+    compares against the 2x buffer. Read from the manifest's own config, so it
+    works on old-format collects that predate the stats fields; the realised cap
+    comes from stats when recorded, else the setting, else the legacy fixed 512.
+    """
+    settings = dict(manifest.get("config", {}).get("settings", {}))
+    if not str(settings.get("device", "cpu")).startswith("cuda"):
+        return None
+    stats = manifest.get("stats") or {}
+    realised = stats.get("eval_max_batch_realised")
+    source = "stats"
+    if realised is None:
+        realised, source = settings.get("eval_max_batch"), "settings"
+    if realised is None:
+        realised, source = LEGACY_EVAL_MAX_BATCH, "legacy_fixed_512"
+    boards = max(1, min(int(settings.get("concurrency", 32)), int(settings.get("games", 1))))
+    request = boards * int(settings.get("topk", 16))
+    if int(realised) >= request:
+        return None
+    return {"eval_max_batch": int(realised), "eval_max_batch_source": source, "boards": boards,
+            "topk": int(settings.get("topk", 16)), "leaf_request_per_rep": request}
+
+
+def realised_eval_max_batch(settings: CollectSettings) -> int:
+    """``eval_max_batch``, defaulted to ``required_leaf_rows``; a smaller explicit
+    value is refused, because it would silently drop leaf evaluations."""
+    need = required_leaf_rows(settings)
+    if settings.eval_max_batch is None:
+        return need
+    if int(settings.eval_max_batch) < need:
+        # Conservative: `need` is the 2x leaf BUFFER, while one rep requests at
+        # most boards x topk leaves, so a value between the two would not
+        # actually bind (e.g. 512 at 17-32 games, topk 16) and is refused anyway.
+        raise ValueError(
+            f"--eval-max-batch {settings.eval_max_batch} is below the {need} leaf rows one search call asks for "
+            f"at --concurrency {settings.concurrency} / --topk {settings.topk}: the C search would have to "
+            "re-batch (flush) its leaf buffer, a different search than the pinned settings describe (before "
+            "ABI 11 it backed those leaves up with the root's Q). Omit --eval-max-batch (auto) or pass at least "
+            f"{need}, or lower --concurrency")
+    return int(settings.eval_max_batch)
+
+
 def validate_settings(settings: CollectSettings) -> None:
     """Every refusal a collect would raise from its settings alone, raised up front.
 
@@ -324,6 +403,8 @@ def validate_settings(settings: CollectSettings) -> None:
         raise ValueError(f"opening_sampling must be one of {OPENING_SAMPLING}")
     if settings.cuda_graphs and not str(settings.device).startswith("cuda"):
         raise ValueError(f"cuda_graphs needs a CUDA device; collect device is {settings.device!r}")
+    if str(settings.device).startswith("cuda"):
+        realised_eval_max_batch(settings)  # a leaf-dropping evaluator cap
 
 
 def _evaluator(model: Any, settings: CollectSettings) -> Any:
@@ -333,7 +414,7 @@ def _evaluator(model: Any, settings: CollectSettings) -> Any:
         return None  # play_batch builds a LocalModelEvaluator on CPU
     from chess_anti_engine.inference import DirectGPUEvaluator
 
-    return DirectGPUEvaluator(model, device=settings.device, max_batch=int(settings.eval_max_batch),
+    return DirectGPUEvaluator(model, device=settings.device, max_batch=realised_eval_max_batch(settings),
                               use_amp=True, amp_dtype="bfloat16", n_slots=1, input_bf16=False,
                               legal_bf16=False, pad_to_compiled_buckets=False,
                               cuda_graphs=bool(settings.cuda_graphs))
@@ -341,14 +422,19 @@ def _evaluator(model: Any, settings: CollectSettings) -> Any:
 
 def evaluator_graph_record(evaluator: Any) -> dict[str, Any]:
     """What the evaluator REALISED: graphs on/off and its replay/fallback counters."""
+    max_batch = getattr(evaluator, "_max_batch", None)
     return {"cuda_graphs": bool(getattr(evaluator, "cuda_graphs", False)),
-            "cuda_graph_stats": getattr(evaluator, "cuda_graph_stats", None)}
+            "cuda_graph_stats": getattr(evaluator, "cuda_graph_stats", None),
+            # read off the evaluator the search consumed (None on CPU: no cap)
+            "eval_max_batch_realised": None if max_batch is None else int(max_batch)}
 
 
 def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, train_jsonl: Path,
                        settings: CollectSettings) -> dict[str, Any]:
     """Play one generation into ``gen_dir`` (a fresh, empty directory)."""
     import torch
+
+    validate_settings(settings)  # refuse before any work (incl. a leaf-dropping cap)
 
     from chess_anti_engine.replay.shard import ShardMeta, samples_to_arrays, save_local_shard_arrays
     from chess_anti_engine.selfplay import play_batch
@@ -471,7 +557,7 @@ def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, trai
                               for b, c in cursor_after["books"].items()}
     stats.update(wall_seconds=wall, games_per_hour=3600.0 * games_done / max(wall, 1e-9),
                  rows_per_second=stats["rows"] / max(wall, 1e-9), sf_nodes=int(settings.sf_nodes),
-                 **evaluator_graph_record(evaluator))
+                 leaf_rows_required=required_leaf_rows(settings), **evaluator_graph_record(evaluator))
     # Observed, not predicted: buffer-full flushes the generation's searches
     # took (gumbel_c's process counter, read around this collect only). > 0
     # means the evaluator cap re-batched the searches, i.e. the rows were made
