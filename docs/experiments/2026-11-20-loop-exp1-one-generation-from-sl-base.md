@@ -323,7 +323,9 @@ the compressed chunk files and the metadata timestamp are not reproducible.
   below the phase's planned update count N. N is computed from the sealed collect
   (step 2) before any arm starts, and N and the list are recorded here. At about
   5,700 planned updates (16,000 games) the list is 1,000, 2,000, 4,000; at about
-  1,400 (4,000 games, or the positive control) it is 1,000 alone.
+  1,400 (4,000 games, or the positive control) it is 1,000 alone. The driver allows a
+  snapshot AT N; "strictly below" is this record's choice, so no snapshot duplicates
+  the final model.
 - **Refusal.** The train stage refuses a list that reaches past its planned updates.
   Because the arm's collect is sealed before its `run` starts, that check runs before
   `run_config.json` is pinned.
@@ -358,6 +360,7 @@ collect. "Capped" is the same 128 games at the defective cap 512. Sources: smoke
 | G-C8 draw rate | `draw_rate` | 0.30–0.70 | 0.461–0.531 | 0.156 |
 | G-C9 survivor − node Q | `mean_survivor_minus_node_q` | 0.12–0.30 | 0.181–0.212; D3 bank 0.235 | 0.157 (weak; recorded) |
 | G-C10 within-collect repeats | `repeat_rate_within` | ≤ 0.05 | 0.000 | 0.000 |
+| G-C11 fast path ran | `stats.json`: `cuda_graphs`, `cuda_graph_stats.replays`; eager counters recorded | `cuda_graphs` true and `replays` > 0 (reported, voids nothing; see below) | — | — |
 
 G-C5, G-C6, G-C9 and G-C10 are the collect's own `stats.json` statistics, recomputed
 by the script over every row. G-C3 and G-C4 come from a uniform seeded sample over all
@@ -372,13 +375,35 @@ collect's many tied child Qs (ordinal capped −0.007 / +0.110, reproduced exact
 the script with ordinal ranks). Only average-rank references are cited here, from the
 [driver doc](../simple_rl_loop.md#collect-gates).
 
-**G-C2 is gated on the numbers.** The script's `eval_max_batch_equals_leaf_rows` is a
-boolean, and `--thresholds` accepts only numbers (a boolean reads as missing and
-fails). So G-C2 is two numeric gates, `eval_max_batch_realised` and
-`leaf_rows_required`, each with min = max = 4096: the leaf rows of the clean
-concurrency-128 reference. If D7 changes the concurrency, both bounds are set to that
-setting's leaf rows before launch. Gating the boolean directly waits on a follow-up
-PR.
+**G-C2 is gated three ways.** #1431 (`054548fb8`) added `{"equals": v}` bounds, for
+numbers and booleans, to the gate scripts' `--thresholds`. G-C2 keeps the two numeric
+gates, `eval_max_batch_realised` and `leaf_rows_required`, each with min = max = 4096
+(the leaf rows of the clean concurrency-128 reference, the decided D7 setting), and
+adds `"eval_max_batch_equals_leaf_rows": {"equals": true}`. G-C1 is
+`{"equals": 0}`.
+
+**G-C11: the fast path ran.** D7 makes the CUDA-graphs collect the only path, so
+something must show it ran. Read from the collect's own `stats.json`:
+- **Reported:** `cuda_graphs` is true and `cuda_graph_stats.replays` > 0. If either
+  fails, "fast path did not run" is recorded here before any training proceeds. It
+  voids nothing: graphs change speed, not what is computed, so the collect is still
+  valid data.
+- **Recorded only:** the eager counters `eager_over_max_rows`,
+  `eager_over_max_graphs` and `eager_relations` (forwards that ran eager instead of
+  replaying a graph). The eager share is not gated, for the same reason.
+
+```bash
+python -c 'import json, sys; s = json.load(open(sys.argv[1])); g = s.get("cuda_graph_stats") or {}
+keys = ("replays", "captures", "recaptures", "eager_over_max_rows", "eager_over_max_graphs", "eager_relations")
+print(json.dumps({"cuda_graphs": s.get("cuda_graphs"), **{k: g.get(k) for k in keys}}))
+sys.exit(0 if s.get("cuda_graphs") is True and (g.get("replays") or 0) > 0 else 3)' \
+  $R/collect/gen_0001/collect/stats.json | tee $R/gates/collect_primary.gc11.json
+```
+
+Exit code 3 here means "fast path did not run", to be reported. It is not a void.
+Checked on two banked bench collects: graphs on gives exit 0 (`replays` 1,590,
+`eager_over_max_rows` 573); graphs off gives exit 3 (`cuda_graphs` false). The same
+check runs on the control's collect.
 
 **Command.** Exit code 3 means a gate failed or its field was missing or NaN:
 
@@ -391,9 +416,10 @@ python -u scripts/simple_rl_collect_gates.py $R/collect/gen_0001/collect --train
 
 ```json
 {
- "buffer_full_flushes": {"min": 0, "max": 0},
+ "buffer_full_flushes": {"equals": 0},
  "eval_max_batch_realised": {"min": 4096, "max": 4096},
  "leaf_rows_required": {"min": 4096, "max": 4096},
+ "eval_max_batch_equals_leaf_rows": {"equals": true},
  "spearman_childq_prior.reply_fresh.spearman_childq_prior": {"min": 0.50},
  "spearman_childq_prior.reply_reused.spearman_childq_prior": {"min": 0.50},
  "book_end_mover_score": {"max": 0.70},
@@ -408,8 +434,9 @@ python -u scripts/simple_rl_collect_gates.py $R/collect/gen_0001/collect --train
 
 The control's file is in [Positive control](#positive-control).
 
-Checked read-only on the banked clean 128-game collect (`fix_c128_auto`): every field
-resolves, and every gate passes except `buffer_full_flushes`. That collect predates
+Checked read-only, with the gate script at `054548fb8`, on the banked clean 128-game
+collect (`fix_c128_auto`): every field resolves, and every gate passes, including
+`eval_max_batch_equals_leaf_rows` `{"equals": true}`, except `buffer_full_flushes`. That collect predates
 #1428 and does not carry the field, so the gate fails as missing, as the script
 intends.
 
@@ -473,7 +500,9 @@ Extrapolated, P1's KL reaches about 0.5–1.2 at 5,700 updates, so no tighter bo
 defensible at the default dose.
 
 **G-T3 held-out policy CE.** After the phase it must not exceed the before-phase
-value, on generation 1's held-out games.
+value, on generation 1's held-out games. This is a manual comparison of two numbers
+from two JSON outputs (no script gates it); both numbers and the comparison are
+recorded here.
 - **Arms P and V:** `summary.heldout_before.policy_ce` against
   `summary.heldout_after.policy_ce` in the train manifest (temperature 1, the target
   they train on).
@@ -497,7 +526,8 @@ value, on generation 1's held-out games.
 **G-T4 realised settings, read off the consumers** (`metrics.json`, train manifest):
 - presentation histogram exactly `{1: trainable rows}`;
 - `trained_on_capped_rows` false (the field is always written);
-- `summary.snapshots` equals the recorded snapshot list;
+- `summary.snapshot_updates`, and `[s["update"] for s in summary.snapshots]`
+  (`summary.snapshots` is a list of dicts), both equal the recorded snapshot list;
 - `realised_lr_param_groups` all 3e-6;
 - `realised_policy_target_temp` 1.0 for P and V, 2.0 for S;
 - **Arm S:** `retempered_target_entropy.2.overall` from the collect-gate report
@@ -543,8 +573,24 @@ sd_o(d(o)) / √(number of openings): clustered by opening, because each opening
 appears in both runs.
 
 The 95% interval is estimate ± 1.96 SE, mapped to Elo by −400 log₁₀(1/(0.5 + x) − 1).
-If an opening repeats within a run, all its pairs join one cluster. The script that
-does this is committed before launch (L2) and fixed by this record.
+If an opening repeats within a run, all its pairs join one cluster. The script is
+`scripts/arena_seat_balanced_pool.py` (#1434):
+- **Inputs:** the two `--games-out` logs, plus each run's result row (matched by
+  game-log fingerprint) for the fields only the row carries.
+- **Checks:** the opening key is `opening_fen` + `opening_uci`. Run A's and run B's
+  index → opening maps must be identical. Both runs must be complete, with
+  `buffer_full_flushes` 0 and the realised evaluator cap recorded, and their settings
+  must be equal after the seat swap.
+- **Outputs:** estimate, SE, 95% CI, Elo, n_clusters, the realised A/B correlation and
+  the implied seat offset.
+
+```bash
+PYTHONPATH=. python -u scripts/arena_seat_balanced_pool.py \
+  --a-games <run>/arenas/exp1_primary_A.games.jsonl --b-games <run>/arenas/exp1_primary_B.games.jsonl \
+  --a-result <run>/arenas/results.jsonl --b-result <run>/arenas/results.jsonl \
+  --a-label exp1_primary_A --b-label exp1_primary_B \
+  --verdict-rule lb-gt-zero --out <run>/arenas/exp1_primary_pooled.json
+```
 
 **Why seat-balanced.** The pooled seat reading, +6.4 (−4.2 to +17.1 by pair; −5.0 to
 +17.8 by opening; D4 round 2), does not exclude an offset. At a true seat offset of
@@ -651,8 +697,13 @@ start.
   own read, and mean P(draw) must stay in 0.45–0.60. Read at the end and at every
   snapshot. The floor is the value `simple_rl_model_gates.py` reads for
   `posctl/arm_V/gen_0000/model.pt` (Q50 c12) on the same device before training,
-  recorded here; banked 0.2980 (bf16 CUDA) and 0.2982 (CPU fp32). `gt1_control.json`
-  is `{"audit.mean_abs_q": {"min": <that read>}, "audit.mean_p_draw": {"min": 0.45, "max": 0.60}}`.
+  recorded here; banked 0.2980 (bf16 CUDA) and 0.2982 (CPU fp32). Pre-launch check L2
+  writes that value into `gt1_control.json` before training. The file's shape, with
+  the value still to be written shown here as the placeholder FLOOR (FLOOR is not
+  valid JSON and must be replaced by the measured number):
+  `{"audit.mean_abs_q": {"min": FLOOR}, "audit.mean_p_draw": {"min": 0.45, "max": 0.60}}`.
+- **G-C11 (reported, voids nothing):** the same fast-path check on
+  `posctl/collect/gen_0001/collect/stats.json`.
 - **Collect gates, gated:** G-C1 (= 0), G-C2 (equal), G-C7 (≥ 80 rows per game) and
   G-C10 (≤ 0.05) with the primary's bounds, and G-C3 at ≥ +0.30 on both root classes
   (the primary's bound is +0.50). These test the machinery, not the start net. G-C3 is
@@ -665,9 +716,10 @@ start.
 
   ```json
   {
-   "buffer_full_flushes": {"min": 0, "max": 0},
+   "buffer_full_flushes": {"equals": 0},
    "eval_max_batch_realised": {"min": 4096, "max": 4096},
    "leaf_rows_required": {"min": 4096, "max": 4096},
+   "eval_max_batch_equals_leaf_rows": {"equals": true},
    "spearman_childq_prior.reply_fresh.spearman_childq_prior": {"min": 0.30},
    "spearman_childq_prior.reply_reused.spearman_childq_prior": {"min": 0.30},
    "rows_per_game": {"min": 80},
@@ -681,7 +733,8 @@ start.
 - **G-T3:** held-out policy CE against the stored target must not exceed the
   before-phase value (`summary.heldout_before` / `heldout_after`, as for Arm V).
 - **G-T4:** the Arm V checks unchanged: presentation histogram `{1: trainable rows}`,
-  `trained_on_capped_rows` false, `summary.snapshots` as recorded, `realised_lr_param_groups` all 3e-6,
+  `trained_on_capped_rows` false, `summary.snapshot_updates` and the `update` of each
+  `summary.snapshots` entry as recorded, `realised_lr_param_groups` all 3e-6,
   `realised_policy_target_temp` 1.0, `realised_search_wdl_frac` = 1.0,
   `targets.value_from_survivor_q` ≥ 99% of rows.
 - **Arena records:** the four required fields of every arena record apply.
@@ -731,9 +784,14 @@ measurements. Nothing runs during any arena.
   `scripts/simple_rl_collect_gates.py` (G-C1–G-C10, and S's retempered target
   entropy) and `scripts/simple_rl_model_gates.py` (G-T1, and S's G-T3). Their sha256
   at the pinned sha is recorded, with the threshold files above. The seat-balanced
-  pooling script is NOT among them and is still committed before launch. Also: a
-  model-gates read of the SL base on the audit rows reproduces 0.4086 / 0.5133 (CPU)
-  or 0.4088 / 0.5132 (CUDA) within 0.0005.
+  pooling script, `scripts/arena_seat_balanced_pool.py` (#1434), satisfies the rest of
+  L2 once it merges; its sha256 is recorded too. Also:
+  - a model-gates read of the SL base on the audit rows reproduces 0.4086 / 0.5133
+    (CPU) or 0.4088 / 0.5132 (CUDA) within 0.0005;
+  - `simple_rl_model_gates.py --model <posctl run>/gen_0000/model.pt --audit-rows
+    <positions.npz> --device cuda` is run on the control's start, and its
+    `audit.mean_abs_q` is written into `gt1_control.json` as the FLOOR before the
+    control trains.
 - **L3.** A tiny-net CPU rehearsal of the exact commands above: source collect, the
   `chmod`, each arm's `collect --collect-from` then `run`; `probe.npz` and
   `presented.npz` sha256 equal across arms; an arm with a different `--seed` and a
@@ -757,7 +815,9 @@ measurements. Nothing runs during any arena.
 - **On a kill or a failed gate,** collections, gate outputs and arena banks are kept
   for re-analysis (rule 4). Arm models may be deleted by the owner after the verdict
   is recorded.
-- **Recovery is deleting the run directory.**
+- **Recovery is deleting the run directory,** after `chmod -R u+w` on it: the
+  frozen source run dirs (`collect/`, `posctl/collect/`) are read-only and refuse a
+  plain delete.
 
 ## Confounds
 
