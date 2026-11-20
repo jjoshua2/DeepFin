@@ -10,10 +10,10 @@ left-right reflection (the trainer's mirror augmentation) and the reflection
 of the colour mirror -- the group the two symmetries generate.
 
 EVAL = the ``eval_lines`` lines with the smallest ``sha256(salt, line)``, so the
-choice depends only on the line text and the salt, never on file order; a
-candidate whose final-position orbit repeats an already-chosen EVAL line's is
-skipped (a duplicate or mirror wastes the held-out budget and correlates
-paired games). A remaining line is excluded from TRAIN when any position on
+choice depends only on the line text and the salt, never on file order. Two
+EVAL lines whose final positions share an orbit are REFUSED (counted; the
+production books have none): a duplicate or mirror wastes the held-out budget
+and correlates paired games. A remaining line is excluded from TRAIN when any position on
 its path (root to final) is in the orbit of an EVAL final position, or when
 its final position is in the orbit of any position on an EVAL line's path --
 so no TRAIN game starts at, passes through, or is a prefix of an EVAL start,
@@ -137,23 +137,18 @@ def split_lines(lines: list[BookLine], *, eval_lines: int, salt: str) -> tuple[l
         return hashlib.sha256(f"{salt}\n{line.line}".encode()).hexdigest()
 
     ranked = sorted(candidates, key=lambda line: (score(line), line.line))
-    eval_set: list[BookLine] = []
+    eval_set, rest = ranked[:eval_lines], ranked[eval_lines:]
     eval_final: set[str] = set()  # orbits of EVAL final positions
-    rest: list[BookLine] = []
     eval_duplicates = 0
-    for line in ranked:
-        if len(eval_set) >= eval_lines:
-            rest.append(line)
-            continue
+    for line in eval_set:
         keys = position_keys(line.final_board())
-        if keys & eval_final:
-            eval_duplicates += 1
-            rest.append(line)
-            continue
-        eval_set.append(line)
+        eval_duplicates += bool(keys & eval_final)
         eval_final |= keys
-    if len(eval_set) < eval_lines:
-        raise ValueError(f"only {len(eval_set)} position-distinct lines; cannot hold out {eval_lines}")
+    if eval_duplicates:
+        # The production books have none; a book that does would waste the
+        # held-out budget on correlated pairs, so it is refused, not silently deduped.
+        raise ValueError(f"{eval_duplicates} EVAL line(s) share a final-position orbit with another EVAL line; "
+                         "de-duplicate the book (or change the salt) before splitting")
     eval_path: set[str] = set()  # orbits of every position on every EVAL path
     for line in eval_set:
         for board in path_boards(line):
@@ -177,7 +172,7 @@ def split_lines(lines: list[BookLine], *, eval_lines: int, salt: str) -> tuple[l
     raw = [b.epd() for b in finals]
     orbit_rep = [min(position_keys(b)) for b in finals]
     counts = {"parsed": len(lines), "unique": len(unique), "usable": len(candidates),
-              "eval": len(eval_set), "eval_skipped_duplicate_or_mirror": eval_duplicates,
+              "eval": len(eval_set), "eval_orbit_duplicates": eval_duplicates,
               "train": len(train), "train_excluded_by_eval_position": sum(excluded.values()),
               **{f"train_excluded_{k}": v for k, v in excluded.items()},
               # Reported, not removed: naturally recurring positions stay in TRAIN.

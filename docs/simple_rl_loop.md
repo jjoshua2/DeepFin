@@ -88,26 +88,48 @@ game with a PGN parse error is rejected and counted (never kept as a truncated
 prefix). A position's orbit is the position, its colour mirror, its left-right
 reflection (the trainer's mirror augmentation) and the reflection of the colour
 mirror. EVAL is the `--eval-lines` (default 4,000) lines with the smallest
-`sha256(salt, line)`, skipping a line whose final-position orbit repeats an EVAL
-line already chosen. A remaining line is excluded from TRAIN when any position on
+`sha256(salt, line)`; two EVAL lines whose final positions share an orbit are
+refused (counted as `eval_orbit_duplicates`), never silently dropped. A remaining line is excluded from TRAIN when any position on
 its path is in the orbit of an EVAL start, or when its final position is in the
 orbit of any position on an EVAL line's path: no TRAIN game starts at, passes
 through, or is a prefix of an EVAL start. TRAIN is not de-duplicated by position
 (naturally recurring positions stay); the duplicate counts are reported. On the
-two production books: 158,106 lines parsed, 0 parse errors, 4,000 EVAL (0 skipped
-as duplicates or mirrors), 153,842 TRAIN, 219 excluded (139 pass through an EVAL
+two production books: 158,106 lines parsed, 0 parse errors, 4,000 EVAL (0 orbit duplicates), 153,842 TRAIN, 219 excluded (139 pass through an EVAL
 start, 80 end on an EVAL path), 0 TRAIN lines sharing a final position or orbit.
 Rerunning with different `--eval-lines`, `--salt` or books into an existing split
 is refused. Outputs `train.jsonl`, `eval.jsonl`, `eval.pgn` (for the arena's
 `--openings`) and `summary.json` (whose `eval_max_plies` the arena replays).
 
-**collect.** `--games` games from TRAIN lines drawn without replacement within the
-generation, 95% / 5% by book as production (`--book-mix`). Both seats are the net.
+**collect.** `--games` games from TRAIN lines, 95% / 5% by book as production
+(`--book-mix`). Both seats are the net. Openings CYCLE across generations by
+default (`--opening-sampling cycle`): each book has one seeded permutation per
+pass, walked by a cursor that the collect manifest records
+(`opening_cursor`, with `opening_cursor_before`) and the next generation
+continues, so no TRAIN line is reused until its book is used up; an exhausted
+book starts its next pass (a new permutation, logged). A redo of a killed collect
+restarts from the previous generation's sealed cursor, so it picks the same lines.
+`--opening-sampling independent` (the non-default alternative) redraws every
+generation, without replacement only within it.
+
 `stats.json`: games, rows, W/D/L, decisive and draw rate, mean length, mate count,
-TB-adjudicated share, unresolved (ply-cap) games, exact-repeat rate of the encoded
-input (position and history planes) within the generation and against all
-previous generations, and from the stored root statistics the target entropy,
-prior entropy, KL(target‖prior) and top-1 agreement of target and prior.
+TB-adjudicated share, unresolved (ply-cap) games, the book pass per book
+(`book_pass`), the share of games whose line was played in an earlier generation,
+the exact-repeat rate of the encoded input (position and history planes) within
+the generation, the cross-generation repeat rate, and, from the stored root
+statistics, the target entropy, prior entropy, KL(target‖prior) and top-1
+agreement of target and prior.
+
+The cross-generation repeat rate (`repeat_rate_vs_previous`) is a constant-memory
+estimate by default. The run keeps every earlier row hash below a threshold in a
+sorted array of at most `--dup-sketch-budget` hashes (default 4M, about 32 MB,
+`<run-dir>/dup_sketch/`); the threshold halves whenever the array would overflow.
+The estimate is hits among this generation's rows with a hash below the threshold,
+divided by those rows. Because inclusion depends only on the hash, the estimate is
+unbiased. `repeat_rate_vs_previous_estimate` holds the estimate's counts and its
+binomial standard error (a lower bound when rows also repeat within the
+generation), plus the same rate by plies after the book (0–3, 4–9, 10–19, 20–39,
+40+). `--exact-repeat-vs-previous` computes the exact rate over every earlier row
+instead; it is for small runs, because its memory grows with the run.
 
 **train.** The default is a uniform, shuffled, exact-once schedule. Each phase is
 one pass WITHOUT replacement over the rows scheduled for it, so every trainable

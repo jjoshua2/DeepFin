@@ -4,6 +4,7 @@ from __future__ import annotations
 import random
 
 import chess
+import pytest
 
 from chess_anti_engine.simple_rl.openings import BookLine, position_keys, split_lines
 
@@ -148,18 +149,19 @@ def test_no_train_line_shares_a_path_with_an_eval_start() -> None:
     assert counts["train_excluded_ends_on_eval_path"] >= 1
 
 
-def test_eval_slice_is_position_distinct_and_the_ban_is_orbit_closed() -> None:
-    # Two eval candidates with the same final position by transposition: only one is held out.
+def test_eval_orbit_duplicates_are_refused_and_the_ban_is_orbit_closed() -> None:
+    # Two EVAL lines with the same final position by transposition: refused, not silently deduped.
     a = BookLine(book=1, root_fen=START, moves=("g1f3", "g8f6", "b1c3"))
     b = BookLine(book=1, root_fen=START, moves=("b1c3", "g8f6", "g1f3"))
     filler = _pool()[:30]
     lines = [a, b, *filler]
-    salt = _force_eval(lines, [a, b])
+    with pytest.raises(ValueError, match="1 EVAL line"):
+        split_lines(lines, eval_lines=2, salt=_force_eval(lines, [a, b]))
+    # Only one of them in EVAL: the other is a TRAIN line ending on an EVAL start, excluded.
+    salt = _force_eval(lines, [a, filler[0]])
     train, eval_set, counts = split_lines(lines, eval_lines=2, salt=salt)
-    finals = [min(position_keys(x.final_board())) for x in eval_set]
-    assert len(set(finals)) == 2
-    assert counts["eval_skipped_duplicate_or_mirror"] == 1
-    assert not {a.line, b.line} <= {x.line for x in eval_set}
+    assert counts["eval_orbit_duplicates"] == 0
+    assert b.line not in {x.line for x in train}
     # O1: the reflection of the colour mirror is in the orbit too.
     board = a.final_board()
     assert board.mirror().transform(chess.flip_horizontal).epd() in position_keys(board)

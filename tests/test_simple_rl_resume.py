@@ -111,8 +111,38 @@ def test_resume_after_kills_is_identical(tmp_path: Path, monkeypatch: pytest.Mon
     assert not (resumed / "gen_0002" / "collect" / "manifest.json").exists()
     monkeypatch.setattr(shard_mod, "save_local_shard_arrays", real_save)
 
+    # Kill 3: gen-2 collect redone to its very end (stats, duplicate sketch and
+    # opening record written) but killed before its manifest seals it.
+    real_manifest = collect_mod.write_manifest
+
+    def die_before_gen2_collect_manifest(stage_dir: Any, **kwargs: Any) -> Any:
+        if "gen_0002" in str(stage_dir):
+            raise Killed
+        return real_manifest(stage_dir, **kwargs)
+
+    monkeypatch.setattr(collect_mod, "write_manifest", die_before_gen2_collect_manifest)
+    with pytest.raises(Killed):
+        simple_rl_loop.main(argv)
+    assert (resumed / "dup_sketch" / "through_gen_0002.npz").exists()
+    monkeypatch.setattr(collect_mod, "write_manifest", real_manifest)
+
     assert simple_rl_loop.main(argv) == 0
     assert _result(resumed) == _result(straight)
+    # Openings cycle across generations: 8 games over a 6-line book reuse no
+    # line before the 7th game, and the pass counter and earlier-play share say so.
+    ids = [json.loads(r)["opening_id"] for g in (1, 2)
+           for r in (resumed / f"gen_{g:04d}" / "collect" / "games.jsonl").read_text().splitlines()]
+    starts = [ln for g in (1, 2) for ln in (resumed / f"gen_{g:04d}" / "collect" / "starts.txt").read_text().splitlines()]
+    assert len(set(starts[:6])) == 6
+    assert len(ids) == 8
+    s2 = json.loads((resumed / "gen_0002" / "collect" / "stats.json").read_text())
+    assert s2["book_pass"] == {"1": {"start": 1, "end": 2}}
+    gen1_ids = set(ids[:4])
+    assert s2["openings_played_in_earlier_generation_share"] == pytest.approx(
+        sum(i in gen1_ids for i in ids[4:]) / 4)
+    m2 = json.loads((resumed / "gen_0002" / "collect" / "manifest.json").read_text())
+    assert m2["opening_cursor"]["books"]["1"] == {"pass": 2, "pos": 2, "lines": 6}
+    assert m2["opening_cursor_before"]["books"]["1"]["pos"] == 4
     a, b = _weights(straight), _weights(resumed)
     assert a.keys() == b.keys()
     for k in a:

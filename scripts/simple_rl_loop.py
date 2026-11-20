@@ -144,6 +144,8 @@ def collect_settings(a: argparse.Namespace) -> CollectSettings:
         root_noise_decay_moves=a.root_noise_decay_moves, max_plies=a.max_plies,
         syzygy=a.syzygy, sf_path=a.sf_path or "", sf_nodes=a.sf_nodes,
         book_mix=tuple(float(x) for x in a.book_mix.split(",")), rows_per_shard=a.rows_per_shard,
+        opening_sampling=a.opening_sampling, dup_sketch_budget=a.dup_sketch_budget,
+        exact_repeat_vs_previous=a.exact_repeat_vs_previous,
         device=a.device, eval_max_batch=a.eval_max_batch, seed=a.seed,
     )
 
@@ -399,6 +401,13 @@ def _common(p: argparse.ArgumentParser) -> None:
     c.add_argument("--sf-path", default=None, help="Stockfish binary (required by play_batch; labels unused)")
     c.add_argument("--sf-nodes", type=int, default=1)
     c.add_argument("--book-mix", default="0.95,0.05", help="per-book game share, book order of split-openings")
+    c.add_argument("--opening-sampling", choices=("cycle", "independent"), default="cycle",
+                   help="cycle (default): walk each book's seeded permutation across generations, reusing no line "
+                        "before the book is used up; independent: a fresh draw every generation")
+    c.add_argument("--dup-sketch-budget", type=int, default=4_000_000,
+                   help="hashes kept by the constant-memory cross-generation duplicate estimator (~8 bytes each)")
+    c.add_argument("--exact-repeat-vs-previous", action="store_true",
+                   help="compute repeat_rate_vs_previous exactly over every earlier row (memory grows with the run)")
     c.add_argument("--rows-per-shard", type=int, default=20000)
     c.add_argument("--eval-max-batch", type=int, default=512)
 

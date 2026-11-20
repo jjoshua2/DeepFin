@@ -79,6 +79,16 @@ class CollectSettings:
     sf_hash_mb: int = 16
     sf_timeout_s: float = 30.0
     book_mix: tuple[float, ...] = (0.95, 0.05)
+    # "cycle" (default): one seeded permutation per book per pass, walked by a
+    # cursor carried from generation to generation, so no TRAIN line is reused
+    # before its book is used up. "independent": a fresh draw every generation
+    # (without replacement only WITHIN the generation).
+    opening_sampling: str = "cycle"
+    # Cross-generation duplicate rate: constant-memory threshold-sampling
+    # estimate (dup_sketch.py) with this many stored hashes; the exact set
+    # computation over every earlier row is opt-in for small runs.
+    dup_sketch_budget: int = 4_000_000
+    exact_repeat_vs_previous: bool = False
     rows_per_shard: int = 20000
     device: str = "cpu"
     eval_max_batch: int = 512
@@ -202,6 +212,76 @@ def sample_openings(train_jsonl: Path, *, games: int, book_mix: tuple[float, ...
     return picked
 
 
+OPENING_SAMPLING = ("cycle", "independent")
+
+
+def _books(train_jsonl: Path) -> dict[int, list[dict[str, Any]]]:
+    by_book: dict[int, list[dict[str, Any]]] = {}
+    for row in load_lines(train_jsonl):
+        by_book.setdefault(int(row["book"]), []).append(row)
+    return by_book
+
+
+def _cycle_permutation(base_seed: int, book: int, n_pass: int, n: int) -> np.ndarray:
+    return np.random.default_rng(seed_for(base_seed, "opening-cycle", book, n_pass)).permutation(n)
+
+
+def cycle_openings(train_jsonl: Path, *, games: int, book_mix: tuple[float, ...], base_seed: int, generation: int,
+                   start: dict[str, Any] | None) -> tuple[list[dict[str, Any]], dict[str, Any], list[str]]:
+    """``games`` TRAIN lines from a cursor that walks the whole book before
+    reusing any line.
+
+    Each book has one seeded permutation per PASS (``seed_for(base, book,
+    pass)``); the cursor ``{book: {pass, pos}}`` is carried from the previous
+    generation's collect manifest (``start``; None = a fresh run at pass 1).
+    Each game draws its book by ``book_mix`` and takes that book's next line;
+    an exhausted book starts its next pass (logged). Returns (lines, cursor
+    after this generation, log lines).
+    """
+    by_book = _books(train_jsonl)
+    books = sorted(by_book)
+    sha = sha256_file(train_jsonl)
+    if start is not None and start.get("train_sha256") != sha:
+        raise ValueError("the TRAIN openings changed since the previous generation's cursor "
+                         f"({start.get('train_sha256')} -> {sha}); a cursor over another book is meaningless")
+    cursor = {b: dict((start or {}).get("books", {}).get(str(b), {"pass": 1, "pos": 0})) for b in books}
+    for b in books:
+        if int(cursor[b].get("lines", len(by_book[b]))) != len(by_book[b]):
+            raise ValueError(f"book {b} line count changed under the cursor")
+    perms = {b: _cycle_permutation(base_seed, b, int(cursor[b]["pass"]), len(by_book[b])) for b in books}
+    weights = np.asarray([book_mix[b - 1] if b - 1 < len(book_mix) else 0.0 for b in books], dtype=np.float64)
+    if weights.sum() <= 0:
+        raise ValueError("book_mix gives every book weight 0")
+    rng = np.random.default_rng(seed_for(base_seed, "openings", generation))
+    picked: list[dict[str, Any]] = []
+    log: list[str] = []
+    for _ in range(int(games)):
+        b = books[int(rng.choice(len(books), p=weights / weights.sum()))]
+        c = cursor[b]
+        if int(c["pos"]) >= len(by_book[b]):
+            c["pass"], c["pos"] = int(c["pass"]) + 1, 0
+            perms[b] = _cycle_permutation(base_seed, b, int(c["pass"]), len(by_book[b]))
+            log.append(f"generation {generation}: book {b} exhausted; starting pass {c['pass']}")
+        picked.append(by_book[b][int(perms[b][int(c["pos"])])])
+        c["pos"] = int(c["pos"]) + 1
+    after = {"train_sha256": sha,
+             "books": {str(b): {"pass": int(cursor[b]["pass"]), "pos": int(cursor[b]["pos"]),
+                                "lines": len(by_book[b])} for b in books}}
+    return picked, after, log
+
+
+def previous_cursor(gen_dir: Path, generation: int) -> dict[str, Any] | None:
+    """The opening cursor the previous generation's (sealed) collect left."""
+    if generation <= 1:
+        return None
+    from chess_anti_engine.simple_rl.common import read_manifest
+
+    prev = read_manifest(Path(gen_dir).parent.parent / f"gen_{generation - 1:04d}" / "collect")
+    if prev is None:
+        raise ValueError(f"generation {generation - 1} collect is not sealed; its opening cursor is unknown")
+    return prev.get("opening_cursor")  # None when it used independent sampling
+
+
 def x_hash(x: np.ndarray) -> np.uint64:
     """Identity of an encoded input (position AND its history planes)."""
     digest = hashlib.blake2b(np.ascontiguousarray(x, dtype=np.float16).tobytes(), digest_size=8).digest()
@@ -253,10 +333,22 @@ def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, trai
     (gen_dir / "shards").mkdir(parents=True)
     arch = _arch(checkpoint)
     seed = seed_for(settings.seed, "collect", generation)
-    openings = sample_openings(train_jsonl, games=settings.games, book_mix=settings.book_mix,
-                               seed=seed_for(settings.seed, "openings", generation))
+    if settings.opening_sampling not in OPENING_SAMPLING:
+        raise ValueError(f"opening_sampling must be one of {OPENING_SAMPLING}")
+    cursor_before = previous_cursor(gen_dir, generation) if settings.opening_sampling == "cycle" else None
+    cursor_after: dict[str, Any] | None = None
+    if settings.opening_sampling == "cycle":
+        openings, cursor_after, cycle_log = cycle_openings(
+            train_jsonl, games=settings.games, book_mix=settings.book_mix, base_seed=settings.seed,
+            generation=generation, start=cursor_before)
+        for line in cycle_log:
+            print(f"[simple_rl] {line}", flush=True)
+    else:
+        openings = sample_openings(train_jsonl, games=settings.games, book_mix=settings.book_mix,
+                                   seed=seed_for(settings.seed, "openings", generation))
     starts_path = gen_dir / "starts.txt"
     starts_path.write_text("".join(row["line"] + "\n" for row in openings))
+    # A line can occur twice in one generation only after its book wrapped.
     by_line = {row["line"]: row for row in openings}
     cfg = build_configs(settings, arch, starts_path)
 
@@ -341,7 +433,13 @@ def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, trai
         raise ValueError(f"incomplete generation: {games_done}/{settings.games} games, "
                          f"{len(queue)} undoled openings, {len(pending)} pending")
     stats = generation_stats(gen_dir, previous=[p for p in sorted(gen_dir.parent.parent.glob("gen_*/collect"))
-                                                if p != gen_dir and _gen_number(p) < generation])
+                                                if p != gen_dir and _gen_number(p) < generation],
+                             generation=generation, settings=settings)
+    stats["opening_sampling"] = settings.opening_sampling
+    if cursor_after is not None:
+        start_books = (cursor_before or {}).get("books", {})
+        stats["book_pass"] = {b: {"start": int(start_books.get(b, {"pass": 1})["pass"]), "end": int(c["pass"])}
+                              for b, c in cursor_after["books"].items()}
     stats.update(wall_seconds=wall, games_per_hour=3600.0 * games_done / max(wall, 1e-9),
                  rows_per_second=stats["rows"] / max(wall, 1e-9), sf_nodes=int(settings.sf_nodes))
     write_json_atomic(gen_dir / STATS, stats)
@@ -355,7 +453,8 @@ def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, trai
         counts={"games": games_done, "rows": stats["rows"], "shards": shard_index,
                 "play_batch_games": int(batch_stats.games)},
         seeds={"collect": seed, "openings": seed_for(settings.seed, "openings", generation), "base": settings.seed},
-        extra={"generation": generation, "stats": stats},
+        extra={"generation": generation, "stats": stats, "opening_cursor": cursor_after,
+               "opening_cursor_before": cursor_before},
     )
     return stats
 
@@ -462,7 +561,43 @@ def policy_stats(arrays: dict[str, np.ndarray]) -> dict[str, float]:
     return out
 
 
-def generation_stats(collect_dir: Path, *, previous: list[Path]) -> dict[str, Any]:
+OPENINGS_SEEN_DIR = "openings_seen"
+
+
+def _seen_path(run_dir: Path, generation: int) -> Path:
+    return Path(run_dir) / OPENINGS_SEEN_DIR / f"through_gen_{generation:04d}.npy"
+
+
+def openings_seen_before(run_dir: Path, generation: int, previous: list[Path]) -> np.ndarray:
+    """Sorted unique opening ids played in generations < g (bounded by the
+    book size). Read from the file generation g-1 wrote, else rebuilt."""
+    path = _seen_path(run_dir, generation - 1)
+    if generation > 1 and path.is_file():
+        return np.load(path, allow_pickle=False)
+    ids: set[str] = set()
+    for p in previous:
+        for r in (p / GAMES).read_text().splitlines():
+            if r.strip():
+                ids.add(json.loads(r)["opening_id"])
+    return np.asarray(sorted(ids), dtype=str)
+
+
+def dup_sketch_before(run_dir: Path, generation: int, previous: list[Path], budget: int) -> Any:
+    from chess_anti_engine.simple_rl.dup_sketch import DupSketch, sketch_path
+
+    path = sketch_path(run_dir, generation - 1)
+    if generation > 1 and path.is_file():
+        return DupSketch.load(path, budget=budget)
+    sketch = DupSketch(budget=budget)
+    for p in sorted(previous, key=_gen_number):
+        for m in sorted((p / "shards").glob("shard_*.meta.npz")):
+            with np.load(m) as z:
+                sketch.add(z["x_hash"])
+    return sketch
+
+
+def generation_stats(collect_dir: Path, *, previous: list[Path], generation: int | None = None,
+                     settings: CollectSettings | None = None) -> dict[str, Any]:
     collect_dir = Path(collect_dir)
     games = [json.loads(r) for r in (collect_dir / GAMES).read_text().splitlines() if r.strip()]
     keys = ("x", "policy_target", "wdl_target", "has_policy", "root_log_prior", "has_root_log_prior",
@@ -472,12 +607,38 @@ def generation_stats(collect_dir: Path, *, previous: list[Path]) -> dict[str, An
     n = int(arrays["x"].shape[0])
     results = [g["result"] for g in games]
     w, d, l_ = results.count("1-0"), results.count("1/2-1/2"), results.count("0-1")
-    hashes = meta["x_hash"]
-    prev: set[int] = set()
-    for p in previous:
-        for m in sorted((p / "shards").glob("shard_*.meta.npz")):
-            with np.load(m) as z:
-                prev.update(int(h) for h in z["x_hash"])
+    hashes = np.asarray(meta["x_hash"], dtype=np.uint64)
+    from chess_anti_engine.simple_rl.dup_sketch import prune, sketch_path
+
+    generation = _gen_number(collect_dir) if generation is None else int(generation)
+    run_dir = collect_dir.parent.parent
+    budget = int(settings.dup_sketch_budget) if settings is not None else 4_000_000
+    start_ply = {int(g["game_id"]): int(g["start_ply"]) for g in games}
+    ply_after_book = np.asarray([int(p) - start_ply[int(gid)] for gid, p in zip(meta["game_id"], meta["ply_index"],
+                                                                                 strict=True)], dtype=np.int64)
+    sketch = dup_sketch_before(run_dir, generation, previous, budget)
+    dup = sketch.estimate(hashes, ply_after_book)
+    sketch.add(hashes)
+    sketch.save(sketch_path(run_dir, generation))
+    prune(run_dir, keep_from=generation - 1)
+    seen = openings_seen_before(run_dir, generation, previous)
+    ids = np.asarray([g["opening_id"] for g in games], dtype=str)
+    earlier = np.isin(ids, seen)
+    seen_after = np.union1d(seen, ids)
+    _seen_path(run_dir, generation).parent.mkdir(parents=True, exist_ok=True)
+    np.save(_seen_path(run_dir, generation), seen_after, allow_pickle=False)
+    for old in (run_dir / OPENINGS_SEEN_DIR).glob("through_gen_*.npy"):
+        if int(old.stem.rsplit("_", 1)[1]) < generation - 1:
+            old.unlink(missing_ok=True)
+    exact = bool(settings is not None and settings.exact_repeat_vs_previous)
+    exact_rate = None
+    if exact:
+        prev: set[int] = set()
+        for p in previous:
+            for m in sorted((p / "shards").glob("shard_*.meta.npz")):
+                with np.load(m) as z:
+                    prev.update(int(h) for h in z["x_hash"])
+        exact_rate = (sum(1 for h in hashes if int(h) in prev) / max(1, n)) if previous else 0.0
     stats: dict[str, Any] = {
         "games": len(games), "rows": n,
         "white_wins": w, "draws": d, "black_wins": l_,
@@ -491,7 +652,14 @@ def generation_stats(collect_dir: Path, *, previous: list[Path]) -> dict[str, An
         "unresolved_games": sum(1 for g in games if g["resolution"] == "unresolved"),
         "tb_policy_override_rows": int(np.asarray(meta["tb_policy_override"]).sum()),
         "repeat_rate_within": 1.0 - len({int(h) for h in hashes}) / max(1, n),
-        "repeat_rate_vs_previous": (sum(1 for h in hashes if int(h) in prev) / max(1, n)) if previous else 0.0,
+        # Constant-memory estimate (dup_sketch.py) unless the exact set is asked for.
+        "repeat_rate_vs_previous": (exact_rate if exact_rate is not None
+                                    else (dup["rate"] if previous else 0.0)),
+        "repeat_rate_vs_previous_method": "exact" if exact else "threshold_sample",
+        "repeat_rate_vs_previous_estimate": dup,
+        "repeat_rate_vs_previous_exact": exact_rate,
+        "openings_played_in_earlier_generation_share": float(earlier.mean()) if ids.size else math.nan,
+        "distinct_openings_played_so_far": int(seen_after.size),
         "previous_generations_compared": len(previous),
         "unique_openings": len({g["opening_id"] for g in games}),
     }
