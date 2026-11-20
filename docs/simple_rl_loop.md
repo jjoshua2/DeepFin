@@ -492,8 +492,13 @@ It reports:
 - with `--train-target-temp T` (repeatable), the target entropy after the loss's
   own `retemper_main_policy_target`.
 
-`--thresholds FILE` (`{"dotted.metric": {"min": x, "max": y}}`) exits 3 when a
-gate fails or its metric is missing or NaN.
+`--thresholds FILE` exits 3 when a gate fails or its metric is missing or NaN.
+Each gate is `{"dotted.metric": {"min": x, "max": y}}` (a finite number in range),
+`{"dotted.metric": {"equals": v}}` (bools and numbers; False, None or a missing
+metric fail `{"equals": true}`; a bool never equals a number), or `{}` (present:
+a finite number, or True). For example, G-C2 is
+`{"eval_max_batch_equals_leaf_rows": {"equals": true}}` and G-C1 is
+`{"buffer_full_flushes": {"equals": 0}}`.
 
 `--content-digest` prints only the identity of the collect's decoded content: a
 SHA-256 over every shard's arrays and row sidecar, plus the SHA-256 of
@@ -545,6 +550,16 @@ On the 3,080-row D3 audit bank (`rl-audit/positions.npz`):
 | Q50 c12 | 0.2982 / 0.5141 | 0.2980 / 0.5144 |
 
 The two columns differ only by fp32 vs bf16-autocast arithmetic (at most 0.0003).
+The script's own `--device cuda` path, also bf16 autocast, is not bit-identical
+to the banked figures either. It runs a different forward path from the study's,
+and the review measured differences of up to 0.0002 from the banked values. Read
+gates near a band edge with that tolerance in mind.
+
+A held-out-CE gate at T ≠ 1 compares a model against the same measurement BEFORE
+training. Arm S's G-T3 at T = 2 therefore needs the before value run on the
+start model at the same temperature, for example
+`--model <run>/gen_0000/model.pt --collect <run> --gen 1 --train-target-temp 2`.
+The train stage's `heldout_before` is measured at T = 1 only.
 
 ## Stockfish
 

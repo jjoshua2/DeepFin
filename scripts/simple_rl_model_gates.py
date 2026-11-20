@@ -17,7 +17,7 @@
   ``is_holdout_game``, at the run's pinned ``holdout_frac``), by the train stage's
   own ``heldout_metrics``. At T = 1 it is the train stage's held-out CE.
 
-``--thresholds FILE``: JSON ``{"dotted.metric.path": {"min": x, "max": y}}``; a
+``--thresholds FILE``: as in simple_rl_collect_gates (min / max / equals); a
 failed gate, or a missing / NaN metric, exits 3.
 """
 from __future__ import annotations
@@ -121,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--gen", type=int, default=None)
     p.add_argument("--train-target-temp", type=float, default=1.0)
     p.add_argument("--device", default="cpu")
-    p.add_argument("--thresholds", default=None, help="JSON {metric.path: {min, max}}; exit 3 when one fails")
+    p.add_argument("--thresholds", default=None, help="JSON {metric.path: {min, max} | {equals}}; exit 3 when one fails")
     p.add_argument("--out", default=None)
     a = p.parse_args(argv)
     if a.audit_rows is None and a.collect is None:
