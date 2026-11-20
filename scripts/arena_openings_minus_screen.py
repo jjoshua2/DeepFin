@@ -14,10 +14,19 @@ An opening is keyed by its final position (EPD) and its move list, the key the
 arena's FEN loader dedups on. Every screen opening must match an EVAL line (else
 the subtraction is incomplete and the script refuses).
 
+The rebuilt screen set is only as right as ``--screen-games`` / ``--screen-seed``
+/ ``--opening-plies``: a wrong value rebuilds a DIFFERENT set, and nothing in the
+rebuild can see that. ``--screen-log <games.jsonl>`` (repeatable; the screens'
+``--games-out`` logs) closes that gap once the screens have been played: the
+script refuses unless the rebuilt set equals each log's set of played
+(``opening_fen``, ``opening_uci``) keys. Before the screens exist, the output is
+only as good as the arguments.
+
 ``--check-games`` / ``--check-seed`` (the confirmation's own ``--games`` and
 ``--seed``) then load the written file exactly as the arena will
 (``load_fen_openings``) and refuse unless every drawn pair has its history and
-none overlaps the screen.
+none is in the rebuilt screen set (which, with ``--screen-log``, is the set the
+screens actually played).
 
 Output: the file, and one JSON line on stdout with the counts and the file's
 sha256. Exit 0 on success, 2 on a refusal (a file that fails the check is
@@ -76,15 +85,40 @@ def eval_lines(eval_jsonl: Path) -> dict[OpeningKey, str]:
     return out
 
 
+def played_openings(games_log: Path) -> tuple[set[Any], bool]:
+    """The opening keys of every game row in an arena ``--games-out`` log, and whether they carry moves.
+
+    matched_sims rows record ``opening_uci`` (the full key); matched_time rows do
+    not, and are keyed by final EPD alone -- unique within a split's EVAL lines,
+    which refuses two lines whose final positions share an orbit.
+    """
+    rows = [r for r in (json.loads(raw) for raw in games_log.read_text().splitlines()) if r.get("kind") == "game"]
+    with_moves = bool(rows) and all("opening_uci" in r for r in rows)
+    keys: set[Any] = set()
+    for r in rows:
+        epd = chess.Board(r["opening_fen"]).epd()
+        keys.add((epd, tuple(r["opening_uci"])) if with_moves else epd)
+    return keys, with_moves
+
+
 def build(openings_dir: Path, out: Path, *, screen_games: int, screen_seed: int,
           opening_plies: int | None = None, check_games: int | None = None,
-          check_seed: int | None = None) -> dict[str, Any]:
+          check_seed: int | None = None, screen_logs: list[Path] | None = None) -> dict[str, Any]:
     if opening_plies is None:
         opening_plies = int(json.loads((openings_dir / "summary.json").read_text())["eval_max_plies"])
     full = eval_lines(openings_dir / "eval.jsonl")
     screen = screen_openings(openings_dir / "eval.pgn", games=screen_games, seed=screen_seed,
                              opening_plies=opening_plies)
     skeys = {opening_key(b) for b in screen}
+    log_keys: dict[str, str] = {}
+    for log in screen_logs or []:
+        played, with_moves = played_openings(log)
+        log_keys[str(log)] = "epd_and_moves" if with_moves else "epd_only"
+        rebuilt = skeys if with_moves else {epd for epd, _ in skeys}
+        if played != rebuilt:
+            raise Refusal(f"{log}: the screen played {len(played)} opening(s), the rebuilt set has {len(rebuilt)}; "
+                          f"{len(played - rebuilt)} played but not rebuilt, {len(rebuilt - played)} rebuilt but not "
+                          "played -- --screen-games / --screen-seed / --opening-plies do not reproduce this screen")
     unmatched = sorted(skeys - full.keys())
     if unmatched:
         raise Refusal(f"{len(unmatched)} screen opening(s) match no EVAL line (first: {unmatched[0]}); "
@@ -97,6 +131,7 @@ def build(openings_dir: Path, out: Path, *, screen_games: int, screen_seed: int,
         "screen_games": screen_games, "screen_seed": screen_seed,
         "eval_lines": len(full), "screen_openings": len(screen), "screen_unique": len(skeys),
         "confirmation_rows": len(keep), "out": str(out),
+        "screen_logs_checked": log_keys,
         "sha256": hashlib.sha256(out.read_bytes()).hexdigest(),
     }
     if check_games is not None:
@@ -109,6 +144,8 @@ def build(openings_dir: Path, out: Path, *, screen_games: int, screen_seed: int,
         problems = []
         if len(drawn) != check_games // 2:
             problems.append(f"{len(drawn)} pairs loadable, {check_games // 2} needed")
+        # Zero by construction (the screen set was just removed); a guard against a future edit of `keep`.
+        # What was PLAYED is proven only by --screen-log.
         if report["check_overlap_with_screen"]:
             problems.append(f"{report['check_overlap_with_screen']} confirmation pair(s) overlap the screen")
         if report["check_with_history"] != len(drawn):
@@ -129,11 +166,15 @@ def main(argv: list[str] | None = None) -> int:
                    help="the screen arena's --opening-plies (default: summary.json eval_max_plies)")
     p.add_argument("--check-games", type=int, default=None, help="the confirmation arena's --games")
     p.add_argument("--check-seed", type=int, default=None, help="the confirmation arena's --seed")
+    p.add_argument("--screen-log", action="append", default=[],
+                   help="a screen arena's --games-out log (repeatable): refuse unless the rebuilt screen set "
+                        "equals its played openings")
     p.add_argument("--out", required=True)
     a = p.parse_args(argv)
     try:
         report = build(Path(a.openings_dir), Path(a.out), screen_games=a.screen_games, screen_seed=a.screen_seed,
-                       opening_plies=a.opening_plies, check_games=a.check_games, check_seed=a.check_seed)
+                       opening_plies=a.opening_plies, check_games=a.check_games, check_seed=a.check_seed,
+                       screen_logs=[Path(x) for x in a.screen_log])
     except Refusal as exc:
         print(f"REFUSED: {exc.message}", file=sys.stderr)
         return 2

@@ -580,27 +580,34 @@ Outputs go to `$R/gates/` (`step_<N>` or `train` in the name), never into a seal
 stage directory.
 
 **G-T1 verdict.** The loop above discards each run's exit code, so the verdict is read
-from the output files. This prints, per file, the model and `gates_passed`, then the
-file count (snapshots + 1), and exits 3 if any is not `true`:
+from the output files. The expected files are named from `$SNAPS` (one per snapshot,
+plus `train`), so a missing file fails rather than being skipped. This prints, per
+file, the model and `gates_passed` (or `MISSING`), then the expected count
+(snapshots + 1), and exits 3 if any file is missing or not `true`:
 
 ```bash
-gt1() {  # $1 = arm letter
-  python3 -c 'import json, sys
+gt1() {  # $1 = arm letter; reads $R and $SNAPS (step 2)
+  python3 -c 'import json, os, sys
+r, arm, snaps = sys.argv[1], sys.argv[2], [s for s in sys.argv[3].split(",") if s]
+files = [f"{r}/gates/arm_{arm}_step_{s}_gt1.json" for s in snaps] + [f"{r}/gates/arm_{arm}_train_gt1.json"]
 bad = 0
-for f in sys.argv[1:]:
+for f in files:
+    if not os.path.isfile(f):
+        print("MISSING", f); bad = 1; continue
     o = json.load(open(f)); ok = o.get("gates_passed") is True
     print(o.get("model"), "gates_passed", o.get("gates_passed"), f); bad |= not ok
-print(len(sys.argv) - 1, "file(s)")
-sys.exit(3 if bad else 0)' $R/gates/arm_$1_*_gt1.json
+print(len(files), "file(s) expected")
+sys.exit(3 if bad else 0)' "$R" "$1" "$SNAPS"
   echo "exit=$?"
 }
 gt1 P; gt1 V; gt1 S
 ```
 
-Exit 0 = G-T1 passed on every file; exit 3 = a gate failed; any other code (for
-example 1, no file matched) means the check did not run and is repeated. Run on the
-dry run's tiny-net rehearsal outputs (4 files for arm P), it printed each
-`gates_passed` false and `exit=3`, as it should for an untrained tiny net.
+Exit 0 = G-T1 passed on every expected file; exit 3 = a gate failed or a file is
+missing; any other code means the check did not run and is repeated. Run on the dry
+run's tiny-net rehearsal outputs with its `SNAPS=2,4,8` (4 files for arm P), it
+printed each `gates_passed` false and `exit=3`, as it should for an untrained tiny
+net. With `SNAPS=2,4,8,16` it also printed `MISSING` for `step_16`.
 
 **G-T2 probe drift against the SL base:** a gross-defect guard only. A read of KL > 1.5
 or |ΔQ| > 0.4 fails. Every read is recorded. The fields are
@@ -621,31 +628,35 @@ defensible at the default dose.
 
 The snapshot `metrics.json` carries `probe_vs_previous` at top level; the final
 `gen_0001/train/metrics.json` carries it under `summary`. This reads both, prints every
-read and exits 3 if any read is above a bound, missing or not finite:
+read and exits 3 if any expected file is missing (named from `$SNAPS`, as in
+`gt1`) or any read is above a bound, missing or not finite:
 
 ```bash
-gt2() {  # $1 = arm run dir
-  python3 -c 'import glob, json, math, sys
-d = sys.argv[1] + "/gen_0001/train"
-files = sorted(glob.glob(d + "/snapshots/step_*/metrics.json")) + [d + "/metrics.json"]
+gt2() {  # $1 = arm run dir; reads $SNAPS (the arm's own list)
+  python3 -c 'import json, math, os, sys
+d, snaps = sys.argv[1] + "/gen_0001/train", [s for s in sys.argv[2].split(",") if s]
+files = [f"{d}/snapshots/step_{s}/metrics.json" for s in snaps] + [d + "/metrics.json"]
 bad = 0
 for f in files:
+    if not os.path.isfile(f):
+        print("MISSING", f); bad = 1; continue
     m = json.load(open(f))
     p = m.get("probe_vs_previous") or (m.get("summary") or {}).get("probe_vs_previous") or {}
     kl, dq = p.get("policy_kl_prev_to_new"), p.get("mean_abs_dq")
     ok = all(isinstance(v, (int, float)) and math.isfinite(v) for v in (kl, dq)) and kl <= 1.5 and dq <= 0.4
     print(f, "policy_kl_prev_to_new", kl, "mean_abs_dq", dq, "pass" if ok else "FAIL"); bad |= not ok
-print(len(files), "file(s)")
-sys.exit(3 if bad else 0)' "$1"
+print(len(files), "file(s) expected")
+sys.exit(3 if bad else 0)' "$1" "$SNAPS"
   echo "exit=$?"
 }
 gt2 $R/arm_P; gt2 $R/arm_V; gt2 $R/arm_S
-gt2 $R/posctl/arm_V                     # the control, against Q50 c12
+SNAPS=<the control's own list, from its N>; gt2 $R/posctl/arm_V    # the control, against Q50 c12
 ```
 
-Exit codes as for G-T1. Checked on the dry run's rehearsal arms P and V (3 snapshots
-+ final, every read printed, `exit=0`), and on a hand-made file with KL 1.6 and a
-missing |ΔQ| (both reads FAIL, `exit=3`).
+Exit codes as for G-T1. Checked on the dry run's rehearsal arms P and V with
+`SNAPS=2,4,8` (3 snapshots + final, every read printed, `exit=0`); with
+`SNAPS=2,4,8,16` (`MISSING` for `step_16`, `exit=3`); and on a hand-made file with KL
+1.6 and a missing |ΔQ| (both reads FAIL, `exit=3`).
 
 **G-T3 held-out policy CE.** After the phase it must not exceed the before-phase
 value, on generation 1's held-out games. This is a manual comparison of two numbers
@@ -837,7 +848,8 @@ prevents one.
 
 **Secondaries.**
 - **Screens:** V and S that passed their gates play 400 games each, seat-balanced
-  (200 + 200), both on seed 2026112003, so they meet the same openings.
+  (200 + 200), both on seed 2026112003, so they meet the same openings. Their
+  `--games-out` logs are `$R/arenas/exp1_screen_{V,S}_{A,B}.games.jsonl`.
 - **Confirmation:** the better screen point estimate is confirmed at 1,600 games,
   seat-balanced, on seed 2026112005, with `--openings-fen` built from the EVAL lines
   minus the screen's openings. Building that file is pre-launch check L4:
@@ -848,16 +860,39 @@ prevents one.
     --check-games 1600 --check-seed 2026112005 --out $R/openings/confirmation.fen
   ```
 
-  The script reproduces the screens' 200 opening pairs with the arena's own sampler
-  and rng, writes the remaining EVAL lines as full-history `<root_fen> | <uci ...>`
-  rows, loads the file as the confirmation arena will, and refuses (exit 2) unless all
-  800 pairs load with their history and none overlaps a screen. It prints the counts
-  and the file's sha256, which is recorded here. On the banked split it wrote 3,800
-  rows (4,000 − 200), sha256 `8e1973153d666893…`, 800 pairs with history, 0 overlap:
-  byte-identical to the dry run's L4 file. The confirmation then passes
-  `--openings-fen $R/openings/confirmation.fen` in place of `--openings` /
-  `--opening-plies`. If the file cannot be built, the confirmation uses `eval.pgn`, and
-  the overlap (about 40 of 800 expected) is counted and recorded.
+  The script rebuilds the screens' 200 opening pairs from `--screen-games` /
+  `--screen-seed` with the arena's own sampler and rng, writes the remaining EVAL
+  lines as full-history `<root_fen> | <uci ...>` rows, and loads the file as the
+  confirmation arena will. It refuses (exit 2, file removed) unless all 800 pairs
+  load with their history and none is in the REBUILT screen set. It prints the counts
+  and the file's sha256, which is recorded here. At L4 the screens have not been
+  played, so this proves only that the arguments rebuild a set that the file
+  excludes: a wrong seed or game count would rebuild a different set, and nothing at
+  L4 can see that. On the banked split it wrote 3,800 rows (4,000 − 200), sha256
+  `8e1973153d666893…`, 800 pairs with history: byte-identical to the dry run's L4
+  file.
+
+  **Screen-log check (after both screens, before the confirmation).** The same
+  command is re-run with the four screen logs, which proves the rebuilt set is the
+  set the screens actually played:
+
+  ```bash
+  python -u scripts/arena_openings_minus_screen.py --openings-dir $R/openings \
+    --screen-games 400 --screen-seed 2026112003 \
+    --screen-log $R/arenas/exp1_screen_V_A.games.jsonl --screen-log $R/arenas/exp1_screen_V_B.games.jsonl \
+    --screen-log $R/arenas/exp1_screen_S_A.games.jsonl --screen-log $R/arenas/exp1_screen_S_B.games.jsonl \
+    --check-games 1600 --check-seed 2026112005 --out $R/openings/confirmation_checked.fen
+  ```
+
+  It refuses (exit 2) unless the rebuilt set equals each log's set of played
+  (`opening_fen`, `opening_uci`) keys, and its printed sha256 must equal L4's. Only
+  then does the confirmation run, with `--openings-fen $R/openings/confirmation.fen`
+  in place of `--openings` / `--opening-plies`; "no confirmation pair was played in a
+  screen" is established by this step, not by L4. Checked on the dry run's two real
+  matched-sims logs (8 games, seed 2026112001): the right seed passes, and seed
+  2026112004 is refused. If the file cannot be built or the check refuses, the
+  confirmation uses `eval.pgn`, and the overlap (about 40 of 800 expected) is counted
+  and recorded.
 - **Reading:** success at 97.5%, lower bound > 0. Otherwise "not confirmed", with no
   extension.
 
@@ -1032,7 +1067,9 @@ measurements. Nothing runs during any arena.
   is pinned.
 - **L4.** Build the confirmation `--openings-fen` file with
   `scripts/arena_openings_minus_screen.py` ([Secondaries](#deciding-yardstick)) and
-  record its printed counts and sha256, or record that the fallback applies.
+  record its printed counts and sha256, or record that the fallback applies. L4
+  checks the arguments only; the screen-log re-run after the screens, which must
+  print the same sha256, checks them against what was played.
 
 The dry run on `f51c51f20` passed L1–L4 (bank above). It predates the commands
 added in this revision (steps 0a and 0b, the SNAPS lines, `gt1`, `gt2`, `--z`, the L4
@@ -1081,6 +1118,16 @@ script), each of which was checked separately as stated where it appears.
   resume replays the single-colour pairs, and only the capped pair is selected on
   length (D4 round 2).
 - Throughput was measured on a shared GPU.
+- **The calibration saw part of the registered collect's stream.** The dry run's
+  128-game collect used this record's own collect command and seed (2026112000), so
+  its games are probably the first 128 of the registered collection's stream. It is
+  one of the three references that set G-C5 (0.60–0.78) and G-T4's survivor-Q bound
+  (≥ 98.5%). Those are collect-quality checks on untrained data, not a result, so the
+  overlap is harmless; it is recorded.
+- **G-C5's margin over the defect is thin.** The only banked capped collect at
+  concurrency 128 read target entropy 0.799, against the new 0.78 upper bound. G-C5
+  is a backstop behind G-C2, G-C3, G-C6 and G-C7, which all fail clearly on that
+  collect.
 
 ## Second generation (not registered here)
 
