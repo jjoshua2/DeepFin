@@ -16,7 +16,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
-- [2026-11-19: Twofold repetition as a proven draw — semantics, footprint, defects, plan](2026-11-19-twofold-repetition-as-proven-draw.md) — investigation only, no code change: the C search proves a draw on the first repeat counting pre-root game history (lc0 does not); 3.93% of 497,027 banked searched roots carry such a child and 39% of banked twofold events did not end drawn; UCI PUCT/walker reroot keeps a stale DRAW root; a twofold hides a mate in 1; options C (engine fix now) then B (lc0-style, arena-gated) proposed, awaiting owner
+- [2026-11-19: Twofold repetition as a proven draw — semantics, footprint, defects, plan](2026-11-19-twofold-repetition-as-proven-draw.md) — investigation only, no self-play code change: the C search proves a draw on the first repeat counting pre-root game history (lc0 does not); 3.9% of banked training rows have such a child and ~25% of them store q exactly 0 (~1% of all rows, ~100× enriched); UCI PUCT/walker reroot keeps a stale DRAW root (fix in #1421); the repeated position is never searched; option B (lc0-style) proposed with a frozen target-side audit as its yardstick, awaiting owner
 
 - [2026-11-19: Winning-root draw pruning — no fake forced moves, below-zero draw fallback](2026-11-19-root-draw-pruning-singleton-fix.md) — search-correctness change; self-play footprint measured on 497,027 banked plies: 3.1 stored targets and 1.2 played moves per 10,000 plies change, all other roots bit-identical; no training experiment
 

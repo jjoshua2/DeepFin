@@ -1,48 +1,68 @@
 # Twofold repetition as a proven draw: semantics, footprint, defects, plan
 
 **Status:** investigation and prospective plan only. **No code change is made by this
-record, and none will be made until the owner agrees to one of the options below.**
-CPU only (no GPU, no training compute). Code read at `origin/main` 5c9b44722.
-Scripts, raw outputs and per-game rows are banked under
-`~/chess-artifacts/operations/rl-claude-20261119/twofold-audit/` (referred to below as
-`<bank>/`).
+record. None will be made, apart from the engine-only fix in PR #1421 (option C, in
+progress), until the owner agrees to an option below.**
+
+- CPU only; no GPU and no training compute.
+- Code read at `origin/main` 51f366363. The only cited file that changed since
+  5c9b44722 is `uci/engine.py`/`uci/time_manager.py`, which is not cited.
+- The banked games were produced at `source_revision` e633212d. It is not an ancestor of
+  main. I checked it in a separate worktree: `_search_terminal.h` and `bt4_outcome.py`
+  are byte-identical to main's, and `cboard_is_repetition`,
+  `cboard_insufficient_material`, `tree_resolve_from_children`,
+  `tree_mark_solved_and_propagate`, `gss_begin_round` and the `gumbel_c.py` reuse gate
+  are textually identical. The gate sits at lines 1381-1383 there and 1397-1399 on main.
+  The semantics below are therefore the ones that produced the banked rows.
+- "SL base" means the actor whose sha256 is `a39f900c…` (model-state `9796079c…`, step
+  680,276). The banked directory names call it A39.
+- Scripts, raw outputs and per-row data are banked under
+  `~/chess-artifacts/operations/rl-claude-20261119/twofold-audit/`, written `<bank>/`
+  below. An independent reviewer's census is in `<bank>/review-census/`; it reproduces
+  the code claims and the census exactly.
 
 ## Summary
 
-- The compiled search scores a position as an **exact, proven draw** (`Q = 0`, solved
-  status `DRAW`) the first time it repeats, and it counts occurrences **before the search
-  root (game history) as well as inside the tree**. lc0 counts only occurrences at or
-  below the root, and does not treat the twofold as a proof. Stockfish needs a threefold
-  when the earlier occurrence is before the root.
-- The `DRAW` mark is used as a proof. It ends the search early at a proven root, it makes
-  the policy target one-hot, and it is kept through tree reuse and compaction.
+- **The rule.** The compiled search scores a position as an **exact, proven draw**
+  (`Q = 0`, solved status `DRAW`) the first time it repeats. It counts occurrences
+  **before the search root (game history) as well as inside the tree**. lc0 counts only
+  occurrences at or below the root and never treats a twofold as a proof. Stockfish
+  needs a threefold when the earlier occurrence is before the root.
+- **The mark is a proof.** It ends the search early at a proven root, it makes the
+  policy target one-hot, and it survives tree reuse and compaction.
+- **Training targets** (this is the stated harm; measured on the banked
+  `raw-targets.npz` of the production net, every cycle of both arms):
+  - Rows whose root has a child repeating a game-history position are 3.90% (F12) and
+    3.94% (Q50) of all training rows.
+  - **24.4–25.9% of those rows store q exactly 0**, against 0.26–0.28% of other rows.
+    That is roughly 100× enriched, and it amounts to about 1% of all training rows.
+  - When the played move is the repeat, 79–80% of rows store q exactly 0.
+  - On average, 24–25% of the stored policy target mass sits on the repeating move(s).
+  - 10.7% (F12) and 18.8% (Q50) of the exact-zero rows come from games that ended
+    decisively.
 - **Self-play is protected from the stale-root defect** by the reuse gate in
-  `gumbel_c.py`. Self-play still stores a value of exactly 0, with a one-hot target, on
-  roots that are "proven drawn" only because every legal move repeats a position from
-  the game history.
-- **The UCI engine is not protected on its PUCT pool and walker paths.** After
-  `advance_root` onto a twofold leaf, the root keeps `DRAW` while 13 of its 14 children
-  are unproven, and it still reports `DRAW` after 2,000 more nodes.
-- **The twofold leaf is never expanded, so tactics inside the repeated position are
-  invisible.** In a constructed position the defender walks into a mate in 1 because
-  the repeat scores 0. This happened in 5 of 8 seeds; the history-free control did it
-  in 0 of 8.
-- **Banked games** (A39 F12/Q50, 12 cycles each, 4,608 games, 497,027 searched plies):
-  - 3.93% of searched roots have at least one child that repeats a game-history
-    position. Today each such child is an exact-draw terminal.
+  `gumbel_c.py`. **The UCI engine is not protected** on its PUCT pool and walker paths,
+  where a reused root keeps `DRAW` with unproven children. The walker path reproduces
+  this deterministically. PR #1421 fixes it on the engine side and is in progress.
+- **The repeated position is never searched,** so an unsearched exact 0 beats searched
+  values below 0. In a constructed defender position the search plays the repeat in 5 of
+  8 seeds with a stored target of 0.999–1.000; the history-free control never plays it.
+  In the 2 seeds where the control search actually proves the repeat loses to a mate in
+  1, the same seed with history plays it.
+- **Banked games** (4,608 games, 497,027 searched plies):
   - 1.11% of searched plies play into a twofold, and 31.2% of games contain one.
-  - Games end on a **claimable** threefold, one ply before a third occurrence. This
-    happens in 18.2% of games; no game reaches an actual third occurrence.
-  - Of 5,527 twofold events, **39.2% were followed by play leaving the cycle**
-    (an irreversible move later), so the "draw" did not come true. 29.9% (F12) and
-    37.0% (Q50) of the games where that happened ended decisively.
-  - Repetition and shuffling rise across cycles: roots with a repeat child, and the
-    halfmove clock, rise in both arms (z 3–5). Threefold-claim endings rise in F12 only
-    (+7.6 pp, z = 2.8).
-- **Recommendation:** fix the engine now with option C, which has no self-play footprint
-  and merges on an identity test. Then run option B (lc0-style: in-tree occurrences
-  only, never a proof, recomputed on reroot) as a registered experiment, scored
-  audit-first and decided by one arena command.
+  - 18.2% of games end on a claimable threefold. By construction of the claim rule, no
+    game reaches an actual third occurrence.
+  - For 39.2% of twofold events, an irreversible move followed later. Those games were
+    still 66% drawn.
+  - 13.6% of twofold events are in games that ended decisively.
+  - A twofold terminal is a claim about value, not a prediction about play. These game
+    statistics bound how often "twofold = draw" is wrong only loosely.
+- **Recommendation:**
+  - Option C now (PR #1421, engine only, identity on self-play).
+  - Option B (lc0-style twofold handling) as a registered experiment. It is decided by
+    a **target-side audit** on a frozen set of banked repeat-child rows; an arena serves
+    only as a pre-committed non-inferiority guard.
 
 ## 1. Semantics in code
 
@@ -54,8 +74,8 @@ Scripts, raw outputs and per-game rows are banked under
 | "Any prior occurrence" scans the board's whole `hash_stack` | `encoding/_cboard_impl.h:1416-1422` (`cboard_is_repetition`) |
 | `hash_stack` holds every position since the last irreversible move: it is cleared on a zeroing move and the pre-move key is pushed otherwise | `_cboard_impl.h:1201-1211` (inside `cboard_push`) |
 | The root board imported from python-chess fills `hash_stack` from `board._stack`, which is **game history before the root**, back to the halfmove clock (plus one unreachable pre-zeroing key) | `encoding/_lc0_ext.c:448-477` |
-| The game ends only on a third occurrence (strict, in C) | `_cboard_impl.h:1424-1445` (`cboard_is_threefold_repetition`, `cboard_is_game_over`) |
-| Banked collection: the game ends at the root if `board.outcome(claim_draw=True)` fires, i.e. when the side to move **can claim** threefold or 50-move | `selfplay/bt4_outcome.py:101-105` (mode `rule50_match_v1`, as stamped in every banked `provenance.json`) |
+| C game over needs a strict third occurrence | `_cboard_impl.h:1424-1445` |
+| Banked collection: the game ends at the root, before inference, when `board.outcome(claim_draw=True)` fires, i.e. when the side to move **can claim** threefold or 50-move. This applies in both outcome modes (`claim_draw=True` is unconditional; the banked games used `rule50_match_v1`) | `selfplay/bt4_outcome.py:101-105` |
 | Every search entry point uses the same test: Gumbel collect, forced-move collapse, PUCT batch descent, walker descent | `_mcts_tree.c:1943` (`gss_prepare_batch`), `:1159` (`try_forced_collapse`), `:3110` (`batch_descend_puct`), `:2720` (`walker_descend_puct`) |
 
 So the first repeat is a terminal, and it counts **both** the in-tree path and the game
@@ -72,18 +92,17 @@ its history-free twin is not.
 - **It propagates as a proof.** `tree_mark_solved_and_propagate`
   (`_mcts_tree.c:1180-1213`) writes the status and walks up. `tree_resolve_from_children`
   (`:1071-1088`) makes a parent `DRAW` once every child is solved and none is a win for
-  the parent. A twofold `DRAW` can therefore turn a would-be `LOSS` into a proven `DRAW`.
-  It can also hide a `WIN` for the side to move at the repeated node, because that node
-  is never searched. A WIN or LOSS proof never rests on a draw, as `uci/search.py:3607-3625`
+  the parent. A twofold `DRAW` can therefore turn a would-be `LOSS` into a proven
+  `DRAW`. It can also hide a `WIN` for the side to move at the repeated node, which is
+  never searched. A WIN or LOSS proof never rests on a draw, as `uci/search.py:3607-3625`
   already notes.
-- **Selection uses it.** In `tree_select_child` a `DRAW` child's Q is forced to exactly 0
-  (`_mcts_tree.c:1009-1013`, and `:3509-3511` on the PUCT path). Public Q queries return
-  the proof value (`tree_child_q`, `:351-357`).
+- **Selection uses it.** A `DRAW` child's Q is forced to exactly 0, in
+  `tree_select_child` (`_mcts_tree.c:1009-1013`) and in `tree_gumbel_select_child`
+  (`:3509-3511`). Public Q queries return the proof value (`tree_child_q`, `:351-357`).
 - **Early stops use it.** At the start of each Gumbel halving round, a root that is
   already solved `WIN`/`DRAW` collapses to one proving child with zero remaining budget
   (`gss_begin_round`, `_mcts_tree.c:1599-1644`). The Python side then returns a one-hot
-  policy and `value = node_q(root)`, which is exactly 0 for a draw
-  (`mcts/gumbel_c.py:1952-1982`).
+  policy and `value = node_q(root)` (`mcts/gumbel_c.py:1952-1982`).
 - **It is monotone.** A node already solved is never revisited
   (`_mcts_tree.c:1188-1193`, `:1204`). On the root-parallel UCI path,
   `_resolve_root_solved` returns early on any nonzero status
@@ -93,22 +112,23 @@ its history-free twin is not.
 
 | Mechanism | Treatment of `solved` | Code |
 |---|---|---|
-| Transposition table | Copies priors and backs up donor W/N only, after a full history and repetition-stack context match. It **does not copy `solved`**. Each node has one path, so the TT does not leak a path-dependent status | `_mcts_tree.c:1963-2020`, `:599-667` |
-| Compaction | Copies `solved` and `has_solved_child` verbatim | `_mcts_tree.c:4106-4107` (`compact_to_subtree`) |
-| Self-play reuse | The root becomes the played child (`network_turn.py:1286-1290`). It is reused **only if `is_expanded(rid)` and `root_context_matches`**; otherwise a fresh root is built (`gumbel_c.py:1397-1413`). A twofold leaf is terminal and unexpanded, so it is never reused | as cited |
-| UCI `advance_root` | Repoints `_root_id` to the descendant with **no expanded check and no solved reset** | `uci/search.py:2390-2427` |
+| Transposition table | Copies priors and backs up donor W/N only, after a full history and repetition-stack context match. It **does not copy `solved`**. Each node has one path | `_mcts_tree.c:1963-2020`, `:599-667` |
+| Compaction | Copies `solved` and `has_solved_child` verbatim | `_mcts_tree.c:4106-4107` |
+| Self-play reuse | The root becomes the played child (`network_turn.py:1286-1290`). It is reused **only if `is_expanded(rid)` and `root_context_matches`** (`gumbel_c.py:1397-1413`). A twofold leaf is never expanded, so it is never reused | as cited |
+| UCI `advance_root` | Repoints `_root_id` with **no expanded check and no solved reset** | `uci/search.py:2390-2427` |
 | UCI classic Gumbel path | Goes through the `gumbel_c.py` gate above, so it is safe | |
 | UCI PUCT pool / walker paths | `_drop_pool_root_if_support_differs` **returns early on an unexpanded root** and keeps it, `solved` and all | `uci/search.py:3036-3071` |
-| Root-parallel path | `advance_root` refuses reuse (`search.py:2405-2408`), so a stale mark cannot arrive by reroot | |
+| Root-parallel path | `advance_root` refuses reuse (`search.py:2405-2408`) | |
 
 ### Where self-play stores the value
 
 - `values_out` is the survivor child's completed Q, or `node_q(root)` for a solved root
-  (`gumbel_c.py:2082-2089`, `:1981`).
-- It enters the row through `c_process_ply` (`selfplay/network_turn.py:700-709`), which
-  builds the stored `search_wdl` target (`_mcts_tree.c:236-249`).
-- A survivor that is a twofold child therefore stores an exact 0. A root proven `DRAW`
-  stores a one-hot policy and an exact 0.
+  (`gumbel_c.py:2082-2089`, `:1981`). It enters the row through `c_process_ply`
+  (`selfplay/network_turn.py:700-709`).
+- A twofold survivor, or a root proven `DRAW`, gives **scalar q exactly 0**.
+- The stored `search_wdl`, under production `search_wdl_draw_mode: net_raw`
+  (`_mcts_tree.c:236-249`), is then a symmetric triple: W = L, with D the net's raw draw
+  output. That is the signature the target measurement in §2b counts.
 - The winning-root draw prune (`gumbel_c.py:1285-1305`) removes only threefold and
   50-move claim draws and on-board draws, never twofold children
   (`encoding/_lc0_ext.c:698-760`).
@@ -117,18 +137,19 @@ its history-free twin is not.
 
 **lc0** (`LeelaChessZero/lc0` at `bf15d558`, `src/search/classic/`):
 
-- `search.cc` (twofold block, around l.1948-1961, in `ExtendNode`) marks a twofold
-  terminal only if `repetitions == 1 && depth-1 >= 4 && two_fold_draws &&
-  depth-1 >= plies_since_prev_repetition`. That means the earlier occurrence must lie
-  **at or below the root on the current path**. Game history before the root does not
-  count. A position repeated twice or more (`repetitions >= 2`) is a draw regardless.
-- These draw-by-rule shortcuts are skipped at the root itself.
-- `node.cc` `MakeTerminal`: `if (type != Terminal::TwoFold) SetBounds(...)`, so **a
-  twofold is not a bound (proof)**.
+- `search.cc` (twofold block, around l.1948-1961) marks a twofold terminal only if
+  `repetitions == 1 && depth-1 >= 4 && two_fold_draws &&
+  depth-1 >= plies_since_prev_repetition`. The earlier occurrence must lie at or below
+  the root on the current path.
+- Because a repetition cycle is at least 4 plies, the `depth-1 >= 4` clause is implied
+  by the last clause.
+- `repetitions >= 2` is a draw regardless of where the occurrences are.
+- These draw-by-rule shortcuts are skipped at the root.
+- `node.cc` `MakeTerminal` skips `SetBounds` for `Terminal::TwoFold`, so **a twofold is
+  not a proof**.
 - `NodeTree::MakeMove` calls `MakeNotTerminal()` on a terminal new head.
-- `SearchWorker::EnsureNodeTwoFoldCorrectForDepth` (`search.cc` around l.1520-1555)
-  clears a reused twofold terminal whose first occurrence is now before the root and
-  reverts its visits up the path.
+- `EnsureNodeTwoFoldCorrectForDepth` (`search.cc` around l.1520-1555) clears a reused
+  twofold terminal whose first occurrence is now before the root and reverts its visits.
 
 All of this was verified in the fetched source. That this matches the shipped binary in
 `local_engines/` is unverified.
@@ -136,60 +157,51 @@ All of this was verified in the fetched source. That this matches the shipped bi
 **Stockfish** (`official-stockfish/Stockfish` at `5d03b6e5`):
 
 - `position.cpp` `is_repetition(ply)` is `st->repetition && st->repetition < ply`. The
-  comment reads "draw score if a position repeats once earlier but strictly after the
-  root, or repeats twice before or at the root".
+  comment reads "repeats once earlier but strictly after the root, or repeats twice
+  before or at the root".
 - `search.cpp` returns `value_draw(nodes)` (a small randomised draw score) at a
-  non-root node before any TT probe, so the repeated node itself writes no TT entry.
-- Ancestors' values that depend on such draws **are** stored in the TT (accepted
-  graph-history interaction). The common statement that "it is never stored" is
-  therefore only true of the repeated node.
+  non-root node, before any TT probe, so the repeated node writes no TT entry. Ancestors'
+  values that depend on such draws **are** stored (accepted graph-history interaction).
+- `search.cpp:756` adds `upcoming_repetition` (cuckoo tables). If the side to move can
+  play into a repetition, alpha is raised to a draw score. This is a **lower bound**,
+  with an early cutoff only if it reaches beta; it is not an exact score.
 
-## 2. Banked self-play census
+## 2. Measurements on banked self-play
 
-Source: `~/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-{F12,Q50}-cycle-NN-collect-results-v1/game-*/provenance.json`.
+Source: `~/chess-artifacts/operations/rl-week-one-20261112-v1/fresh-current-policy-A39-{F12,Q50}-cycle-NN-collect-results-v1/game-*/`.
+The opening is book; "searched" means ply ≥ `start_ply`.
 
-- Each game's full move list (`tablebase_witness.moves` from `root_fen`, opening
-  included) is replayed with python-chess.
-- "Searched" means plies at or after `start_ply`. The opening is book.
-- Script: `<bank>/measure_repetition.py`. Rows: `<bank>/games_{F12,Q50}.jsonl`. Tables:
-  `<bank>/aggregate.py` writes `<bank>/tables.md`, and `<bank>/trend.py` writes
-  `<bank>/trend.out`. The full per-cycle tables are in `<bank>/tables.md`.
+### 2a. Game census (python-chess replay)
 
-**How games end (% of games, 192 per cycle):**
+Script `<bank>/measure_repetition.py`; rows `<bank>/games_{F12,Q50}.jsonl`; tables
+`<bank>/tables.md`, `<bank>/trend.out`, `<bank>/event_outcomes.out`.
 
-| arm | cyc | searched plies/game | draw | TB adjudication | mate | threefold **claim** | 50-move claim | actual 3rd occurrence |
-|---|---|---|---|---|---|---|---|---|
-| F12 | 1 | 92.9 | 44.3 | 51.0 | 33.9 | 15.1 | 0.0 | 0 |
-| F12 | 6 | 102.9 | 46.9 | 56.8 | 25.5 | 17.7 | 0.0 | 0 |
-| F12 | 12 | 106.4 | 56.2 | 54.7 | 17.2 | 27.6 | 0.5 | 0 |
-| Q50 | 1 | 94.1 | 46.4 | 55.7 | 27.6 | 16.7 | 0.0 | 0 |
-| Q50 | 6 | 110.3 | 45.8 | 61.5 | 22.9 | 15.1 | 0.5 | 0 |
-| Q50 | 12 | 116.2 | 56.8 | 67.7 | 12.5 | 18.8 | 1.0 | 0 |
-
-Pooled over 4,608 games, 18.2% end by threefold claim and 28 by 50-move claim. Of the
-866 natural draws that are not mate, stalemate or TB adjudication, 838 are a claimable
-threefold: in 635 the final position is itself a twofold, and in 203 a move into a
-twice-seen position is available. The other 28 are 50-move claims
-(`<bank>/classify_other.out`).
-
-**Repetition exposure (pooled per arm):**
-
-| arm | searched plies | plies into a twofold | games with a twofold | roots with ≥1 child repeating a game-history position (exact DRAW today) | twofold events | ended by repetition claim, no irreversible move after | play left the cycle |
+| arm | cyc | searched plies/game | draw | TB adjudication | mate | threefold claim | 50-move claim |
 |---|---|---|---|---|---|---|---|
-| F12 | 243,453 | 1.15% | 31.8% | 3.92% (9,540) | 2,804 | 65.5% | 33.8% |
-| Q50 | 253,574 | 1.07% | 30.6% | 3.95% (10,014) | 2,723 | 54.0% | 44.8% |
+| F12 | 1 | 92.9 | 44.3 | 51.0 | 33.9 | 15.1 | 0.0 |
+| F12 | 6 | 102.9 | 46.9 | 56.8 | 25.5 | 17.7 | 0.0 |
+| F12 | 12 | 106.4 | 56.2 | 54.7 | 17.2 | 27.6 | 0.5 |
+| Q50 | 1 | 94.1 | 46.4 | 55.7 | 27.6 | 16.7 | 0.0 |
+| Q50 | 6 | 110.3 | 45.8 | 61.5 | 22.9 | 15.1 | 0.5 |
+| Q50 | 12 | 116.2 | 56.8 | 67.7 | 12.5 | 18.8 | 1.0 |
 
-- "Ended by repetition claim" is a game-level attribution: the game ended by a threefold
-  claim with no zeroing move after the event, and the claim may involve a different key
-  from the same cycle.
-- The 0.7–1.2% remainder of events ended by TB adjudication or mate without leaving the
-  cycle.
-- In the games where play left a twofold cycle, 29.9% (F12) and 37.0% (Q50) were
-  decisive.
-- So treating a twofold as a draw was false for roughly 2 in 5 events in these games.
+- Pooled, 18.2% of games end by threefold claim and 28 by 50-move claim.
+- Of the 866 natural draws that are not mate, stalemate or TB, 838 are a claimable
+  threefold and 28 are a 50-move claim (`<bank>/classify_other.out`).
+- The claim rule ends the game when the side to move *can* play into a third
+  occurrence, so no game reaches one.
 
-**Trend, cycle 1 to cycle 12** (OLS slope per cycle on per-game values, games treated as
-independent):
+| arm | plies into a twofold | games with a twofold | twofold events | irreversible move followed later | events in games that ended decisively |
+|---|---|---|---|---|---|
+| F12 | 1.15% | 31.8% | 2,804 | 33.8% (games with one: 70.1% drawn) | 9.5% |
+| Q50 | 1.07% | 30.6% | 2,723 | 44.8% (games with one: 63.0% drawn) | 17.8% |
+
+- All games: 50.8% decisive. Games in which an irreversible move followed a twofold
+  were **less** often decisive (66.3% drawn).
+- Leaving the cycle is therefore not a non-draw. The game statistic that bears on the
+  value claim is the 13.6% of twofold events in games that ended decisively.
+
+**Trend, cycle 1 to cycle 12** (OLS slope on per-game values; games independent):
 
 | indicator | F12 change (z) | Q50 change (z) |
 |---|---|---|
@@ -200,17 +212,73 @@ independent):
 | roots with a game-history-repeat child | +1.2 pp (4.6) | +0.8 pp (3.1) |
 | mean halfmove clock at searched plies | +1.04 (4.7) | +1.10 (4.6) |
 
-- **Shuffling and repetition exposure grow in both arms.** Repetition-claim endings and
-  draws grow in F12 only.
-- Q50's length growth comes with a rising share of TB adjudication (55.7% to 67.7%),
-  not with repetition.
-- Causation is not established. Every cycle retrains the net, so the trend is confounded
-  with everything else that changed.
+Causation is not established: every cycle retrains the net.
+
+### 2b. Production-net stored targets at repeat-child roots (no GPU needed)
+
+- Script: `<bank>/twofold_targets.py`, which re-derives and extends
+  `<bank>/review-census/zeros.py`. Rows: `<bank>/targets_{F12,Q50}.jsonl`, all 24
+  arm-cycles, 0 length mismatches.
+- Aggregation: `<bank>/agg_targets.py` writes `<bank>/targets_tables.md`. CIs are 95%
+  bootstraps that resample **games** within an arm-cycle (B = 1,000).
+- **Definitions.**
+  - "Rep root": a searched row where some non-zeroing legal move reaches a position
+    already seen in the game since the last zeroing move. These are exactly the
+    children the C search marks `DRAW`.
+  - "q0": the stored `search_wdl_raw` has W == L exactly.
+  - Policy mass uses the stored target's compact-1858 slots. I checked on a full game
+    that legal-move mass sums to 1.000 in that convention, against 0.206 in Leela
+    order.
+
+| arm | cyc | rep rows | rep rows / all rows | **q0 \| rep** | q0 \| other | rep & q0 / all rows | target mass on repeat move(s) | one-hot on a repeat move | played the repeat |
+|---|---|---|---|---|---|---|---|---|---|
+| F12 | 1 | 489 | 2.77 [2.31, 3.28] | **32.5 [26.2, 38.3]** | 0.24 [0.18, 0.31] | 0.90 [0.66, 1.17] | 31.4 | 1.6 | 34.6 |
+| F12 | 6 | 778 | 3.98 [3.24, 4.74] | **27.8 [22.7, 33.2]** | 0.30 [0.23, 0.38] | 1.10 [0.81, 1.40] | 27.2 | 0.8 | 31.8 |
+| F12 | 12 | 972 | 4.80 [4.00, 5.65] | **28.1 [23.3, 33.5]** | 0.29 [0.23, 0.36] | 1.35 [1.05, 1.63] | 27.4 | 1.3 | 30.1 |
+| Q50 | 1 | 564 | 3.15 [2.62, 3.77] | **33.7 [28.6, 38.9]** | 0.31 [0.24, 0.38] | 1.06 [0.80, 1.32] | 31.1 | 1.4 | 35.8 |
+| Q50 | 6 | 751 | 3.58 [2.89, 4.28] | **25.3 [20.5, 30.1]** | 0.27 [0.21, 0.32] | 0.91 [0.69, 1.13] | 24.7 | 0.4 | 27.0 |
+| Q50 | 12 | 943 | 4.27 [3.57, 4.95] | **24.3 [19.8, 29.1]** | 0.34 [0.27, 0.41] | 1.04 [0.80, 1.29] | 23.9 | 1.5 | 25.9 |
+| **F12** | all | 9,400 | 3.90 [3.68, 4.12] | **25.9 [24.3, 27.3]** | 0.26 [0.24, 0.28] | **1.01 [0.93, 1.08]** | 25.2 [24.0, 26.8] | 1.10 [0.88, 1.33] | 28.3 [26.7, 30.0] |
+| **Q50** | all | 9,895 | 3.94 [3.72, 4.16] | **24.4 [23.0, 25.8]** | 0.28 [0.26, 0.30] | **0.96 [0.90, 1.03]** | 23.6 [22.3, 25.0] | 1.00 [0.78, 1.25] | 26.3 [24.8, 27.8] |
+
+All 24 rows, with CIs on every cell, are in `<bank>/targets_tables.md`. The enrichment
+of q0 at rep roots over other roots ranges from 68× to 136× across arm-cycles.
+
+**Further readings:**
+
+- q0 given rep root **and the played move is the repeat**: 79.4% [77.3, 81.3] (F12)
+  and 80.4% [78.7, 82.2] (Q50). In other words, the stored scalar is the repeat child's
+  exact 0.
+- **Trend, slope per cycle** (game bootstrap):
+
+  | indicator | F12 | Q50 |
+  |---|---|---|
+  | rep rows / all rows | +0.155 pp [+0.094, +0.213] | +0.105 pp [+0.045, +0.163] |
+  | q0 \| rep | −0.31 pp [−0.73, +0.15] | −0.55 pp [−0.95, −0.11] |
+  | rep & q0 share of all rows | +0.031 pp [+0.010, +0.053] (0.90% → 1.35%) | +0.007 pp [−0.013, +0.028] |
+  | one-hot on a repeat move | flat | flat |
+
+  Exposure grows. The per-row exact-zero rate does not grow (in Q50 it falls), so the
+  share of exact-zero training rows grows only in F12.
+- **Stored q against the eventual outcome:**
+
+  | rep rows | n | outcome W / D / L | mean q | decisive |
+  |---|---|---|---|---|
+  | F12, q0 | 2,433 | 5.6 / 89.3 / 5.1 | | 10.7% |
+  | F12, q ≠ 0 | 6,967 | 29.6 / 67.3 / 3.1 | +0.252 | |
+  | Q50, q0 | 2,411 | 10.1 / 81.2 / 8.7 | | 18.8% |
+  | Q50, q ≠ 0 | 7,484 | 31.4 / 62.6 / 6.0 | +0.257 | |
+
+  Most exact-zero rows do end drawn. About 1 in 9 (F12) and 1 in 5 (Q50) do not.
+- **Syzygy: no coverage.** No rep-root searched row has 6 men or fewer. The collection
+  adjudicates such positions at the root before any search (`bt4_outcome.py`), so
+  Syzygy cannot price these rows. Deep SF is needed (§4 B).
 
 ## 3. Repros (tiny random nets, CPU)
 
-**(i) Stale DRAW root after UCI reroot** (`<bank>/repro_i_uci_reroot.py`, outputs
-`<bank>/repro_i_uci_reroot_{classic,walkers,pool}.out`).
+### (i) Stale DRAW root after UCI reroot
+
+`<bank>/repro_i_uci_reroot.py`, outputs `<bank>/repro_i_uci_reroot_{classic,walkers,pool}.out`.
 
 The script searches a position with the `tests/test_uci_solved_root_stops` worker. It
 then finds the shallowest node that is a natural twofold `DRAW` (no hand-marking),
@@ -218,234 +286,270 @@ calls `advance_root` onto it, and searches again.
 
 | path | case | root before run | after `go nodes 2000` | children proven | `go depth 4` |
 |---|---|---|---|---|---|
-| classic Gumbel | KR vs K, KQ vs KR | `DRAW`, unexpanded | **0** (fresh root via the `gumbel_c.py` gate) | 2/15, 1/35 | stops at depth like the fresh control (64 nodes) |
-| walker | KR vs K | `DRAW`, unexpanded | **`DRAW`** | **1/14** | runs to the 30 s cap (32,816 nodes); the fresh control stops at depth after 1,984 |
-| walker | KQ vs KR | `DRAW`, unexpanded | **`DRAW`** | 1/7 | runs to the cap (the fresh control does too) |
-| PUCT pool | after 1.Nf3 Nf6: Ne5 Ng8 Nf3 | `DRAW`, unexpanded | **`DRAW`** | **1/20** | |
-| PUCT pool | KR vs K | `DRAW`, unexpanded | **`DRAW`** | 1/14 | runs to the cap (46,208 nodes); the fresh control stops at 30,272 |
+| classic Gumbel | KR vs K, KQ vs KR | `DRAW`, unexpanded | 0 (fresh root via the gate) | 2/15, 1/35 | stops like the fresh control |
+| walker | KR vs K | `DRAW`, unexpanded | **`DRAW`** | **1/14** | runs to the 30 s cap (32,816 nodes); the control stops after 1,984 |
+| walker | KQ vs KR | `DRAW`, unexpanded | **`DRAW`** | 1/7 | to the cap (as the control) |
+| PUCT pool | opening (Ne5 Ng8 Nf3), KR vs K | `DRAW`, unexpanded | **`DRAW`** | 1/20, 1/14 | KR vs K to the cap (46,208); the control stops at 30,272 |
 
-- The reviewer's script (`go depth` stopping after 64 nodes) hand-marked an
-  *expanded* grandchild. On main the natural mark sits on an unexpanded leaf, so the
-  classic path discards it.
-- The PUCT pool and walker paths keep it, and the root then reports a proven draw
-  that no child supports.
-- With a random net `score cp 0` is uninformative (the controls also print 0), so this
-  repro does not show the score claim. It does show the status.
-- PR #1418 changes the `go depth` stop. It does not stop `advance_root` from carrying
-  the mark.
+- **The pool-path rows are a single nondeterministic draw.** The pool's first search
+  is not deterministic. In the independent reviewer's rerun the pool path reached a
+  natural twofold `DRAW` root 0 of 3 times, while the walker path reproduced fully.
+- The reviewer's 64-node `go depth` stop came from hand-marking an *expanded*
+  grandchild. On main the natural mark sits on an unexpanded leaf.
+- With a random net `score cp 0` is uninformative (the controls also print 0).
+- **Requirement on option C's test (PR #1421).** It must assert its precondition, i.e.
+  that the root status is `DRAW` and the root is unexpanded *before* the post-reroot
+  run. It must also build that state deterministically: either via the walker path,
+  which reproduces, or by marking an unexpanded twofold leaf by hand. Otherwise the test
+  can pass vacuously when the nondeterministic search never creates the stale root.
 
-**(ii) Self-play reuse** (`<bank>/probe_ii_selfplay_reuse.py`, rows in
-`<bank>/probe_ii_selfplay_reuse.jsonl`, summary in `<bank>/probe_ii_summary.out`).
+### (ii) Self-play reuse
 
-The probe calls `run_gumbel_root_many_c` the way `network_turn.py` does: a persistent
-tree, and `root_node_ids` set to the child of the banked move. It ran over the 16
-cycle-12 games with the most twofold plies (8 per arm), 2,179 searched roots, 64 sims.
+`<bank>/probe_ii_selfplay_reuse.py`, `<bank>/probe_ii_summary.out`.
 
-- 2,163 roots were offered a carried root, and 1,324 of them were reused.
-- 91 offered roots carried `DRAW`. All 91 were unexpanded twofold leaves, **all 91 were
-  rejected** by the `is_expanded` gate, and a fresh root was built.
-- **No reused root ever had a nonzero solved status** (0 of 1,324).
-- Self-play does store exact zeros from the twofold rule:
-  - 37 rows have value exactly 0.0. 33 of them are survivors that were a twofold child
-    of game history.
-  - 4 rows are roots proven `DRAW` within the same search, because each of their 2–3
-    legal moves repeats a game-history position. These get a **one-hot policy and value
-    0**. lc0 would not mark any of those children, since the earlier occurrence is
-    before the root.
-- 10.9% of probed roots had at least one root child marked `DRAW` against game history.
-  This sample was selected for repetition; the population rate from the census is
-  3.93%.
+The probe calls `run_gumbel_root_many_c` the way `network_turn.py` does (persistent
+tree, `root_node_ids` = the child of the banked move). It ran over the 16 cycle-12
+games with the most twofold plies, 2,179 roots, 64 sims.
 
-**(iii) A twofold hides a mate in 1** (`<bank>/repro_iii_twofold_hides_mate.py`, output
-`<bank>/repro_iii_twofold_hides_mate.out`).
+- 91 offered roots carried `DRAW`. All were unexpanded twofold leaves and **all were
+  rejected** by the `is_expanded` gate. **0 of 1,324 reused roots carried a status.**
+- Self-play stores exact zeros through the twofold rule itself: 37 rows. Of these, 33
+  are twofold survivors, and 4 are roots proven `DRAW` in-search because every legal
+  move repeats a game-history position (one-hot target, value 0).
+- §2b gives the production-net rate of the same signature.
 
-- The repeated position is P = `6k1/r4ppp/8/8/8/8/2P2PPP/4R1K1 w`. White is a pawn up
-  and has Re8#.
-- The history is P, 1.Re2 Ra8 2.Re1, giving root `r5k1/5ppp/8/8/8/8/2P2PPP/4R1K1 b`.
-- Black's Ra7?? returns to P and is mated. Every other move survives.
-- The evaluator uses tiny-net priors, and its value is "the side with more pawns wins".
-  That puts black in the defender's regime: every line that does not repeat evaluates
-  below 0.
+### (iii) An unsearched exact 0 beats searched values: the repeated position is never searched
 
-| root | chose Ra7?? | Ra7 node | stored target on Ra7 | stored value |
-|---|---|---|---|---|
-| with game history | **5/8 seeds** | solved `DRAW`, never expanded, 48 visits | **0.999** | **0.000** |
-| FEN only (control) | 0/8 | expanded, normal child | ≤0.09 | −1.000 |
+`<bank>/repro_iii_twofold_hides_mate.py`, outputs `<bank>/repro_iii_twofold_hides_mate_{200,800}sims.out`.
 
-- In the other 3 seeds Ra7 was not among the 16 Gumbel candidates.
-- With a purely random value, or the "optimistic" value, the repeat is never preferred
-  (0/8 in both arms). The defect needs the defender's regime, which is exactly when a
-  repeat looks like salvation.
+- Repeated position P = `6k1/r4ppp/8/8/8/8/2P2PPP/4R1K1 w`: white, a pawn up, has Re8#.
+- History P, 1.Re2 Ra8 2.Re1 gives root `r5k1/5ppp/8/8/8/8/2P2PPP/4R1K1 b`. Black's
+  Ra7?? returns to P.
+- Evaluator: "the side with more pawns wins". That puts black in the defender's regime:
+  every line that does not repeat evaluates below 0.
+- A second variant adds a large prior on Re1-e8, so a search that expands P can find
+  the mate.
+- 8 seeds per cell.
+
+| evaluator, sims | root | chose Ra7?? | Ra7 node | stored target on Ra7 | stored value |
+|---|---|---|---|---|---|
+| pawn count, 200 | with history | **5/8** | `DRAW`, never expanded | 0.999 | 0.000 |
+| pawn count, 200 | FEN only | 0/8 | expanded, unproven (solved 0, valued −1 like every move) | ≤0.09 | −1.000 |
+| + Re8 prior, 200 / 800 | with history | **5/8 / 5/8** | `DRAW`, never expanded | 0.999 / 1.000 | 0.000 |
+| + Re8 prior, 200 / 800 | FEN only | 0/8 / 0/8 | **proven lost in seeds 6 and 7** (solved = WIN for white); unproven in 6 seeds | 0.000 in seeds 6, 7 | −1.000 |
+
+- **What this shows in general:** an unsearched exact 0 beats searched values below
+  0, because the repeated position is never searched. The mate is irrelevant to that
+  conclusion.
+- **Where the mate claim holds:** only in the paired seeds 6 and 7. There the control
+  search proves Ra7 loses to the mate in 1, and the same seed with history plays Ra7
+  with target 0.999–1.000.
+- In the other 3 history seeds that did not pick it, Ra7 was outside the 16 Gumbel
+  candidates.
+- Random or "optimistic" values never prefer the repeat (0/8 in both arms; 1/8 for the
+  FEN-only random net at 800 sims). The defect needs the defender's regime.
 - lc0 would search P here, because the earlier occurrence is before the root.
 
-**Reported today and not re-measured here:** in the PR #1410 draw-pruning work, 26 of
-the 58 changed self-play moves went to a twofold-repeat child scored as an exact draw.
-
-## 4. Options (prospective; none is implemented)
+## 4. Options (prospective)
 
 Every option is weighed against these rules:
 
-- `CLAUDE.md` "Experiments": record, hypothesis, control, one yardstick, pre-committed
-  threshold, and recovery plan.
-- The search config must be frozen while `wdl_regret` is read as a net signal. Any
-  change to search semantics injects a step into PID-driven numbers.
+- `CLAUDE.md` "Experiments", rules 1 and 5: a record with hypothesis, control, one
+  yardstick as an exact command, a pre-committed threshold, and a recovery plan; and an
+  audit against a frozen deep-SF set before any training compute.
+- The search config must be frozen while `wdl_regret` is read as a net signal.
 - A Python-only `GumbelConfig` field is dropped by the C path. A new knob must be
-  plumbed into C, and its take-effect proof must log from the C consumer.
+  plumbed into C, with a take-effect proof logged from the C consumer.
 
-`$SL_BASE` below is the A39 checkpoint used by the banked runs: model-state sha256
-`9796079c…`, actor sha256 `a39f900c…`, step 680,276. Pin it by path and step at launch.
+### Option C: engine-side reuse fix (in progress: PR #1421)
 
-### Option C: engine-side, no change to self-play semantics (smallest)
+**Change.** UCI reroot refuses a root that is unexpanded, or that has a nonzero
+`solved` status with an unproven child, and rebuilds a fresh root. This is what
+`gumbel_c.py:1397-1413` already does for self-play.
 
-**Change.** `advance_root` (or `_drop_pool_root_if_support_differs`) refuses to reuse a
-root that is unexpanded, or that has a nonzero `solved` status with an unproven child.
-It rebuilds a fresh root, exactly as `gumbel_c.py:1397-1413` already does for self-play
-and the classic UCI path. Optionally, `compact_to_subtree` clears the new root's
-`solved` unless its children prove it.
-
-- **Self-play footprint:** none. Self-play never takes this path, as shown in (ii): 0 of
-  1,324 reused roots carried a status.
-- **Identity test:** `tests/test_e2e_smoke.py -k gumbel_selfplay_smoke` produces
-  byte-identical shards and targets before and after, with a fixed seed. All
-  `tests/test_mcts_*` and `tests/test_gumbel_*` pass unchanged.
-- **Audit-first:** not applicable; it is not a training target.
-- **Deciding yardstick:** `python -m pytest tests/test_uci_reroot_twofold.py`. This is a
-  new test that ports repro (i) to the walker and pool paths and asserts that after
-  `advance_root` onto a natural twofold leaf the root status is 0 and `go depth 4` stops
-  like the fresh control. **Threshold:** 0 stale roots across the three cases on both
-  paths. The test must first fail on the parent commit; that is the mutant.
-- **Cost:** a few hours. **Confounds:** none. **Recovery:** revert the PR.
+- **Self-play footprint:** none (§3 ii). The change is in `uci/` only.
+- **Identity test:** a fixed-seed `tests/test_e2e_smoke.py -k gumbel_selfplay_smoke`
+  produces byte-identical output, and `tests/test_mcts_*` / `tests/test_gumbel_*` are
+  unchanged.
+- **Yardstick:** the PR's reroot test, with the precondition assertion and the
+  deterministic construction required in §3 (i). **Threshold:** 0 stale roots, and the
+  test fails on the parent commit (mutant run recorded).
+- **Recovery:** revert.
 
 ### Option A: keep `Q = 0` for twofold, but never as a proof
 
-**Change.** The twofold leaf stays a terminal with value 0 but is written as
-`SOLVED_UNKNOWN`, or as a separate non-proof flag. It is excluded from
-`tree_resolve_from_children` and from the solved-root stop, and it never survives a
-reroot.
+**Change.** No `SOLVED_DRAW` mark for a twofold, no `tree_resolve_from_children` proof,
+no solved-root stop, and the mark never survives a reroot.
 
-- **Self-play footprint:** roots that today become proven `DRAW` from twofold children
-  stop getting a one-hot policy and exact 0. In the probe that was 4 of 2,179 roots,
-  0.18% of a repetition-heavy sample. Deeper in the tree, more ancestors stay unproven.
-  The population rate is unmeasured, with an upper bound of 3.93% of roots (roots that
-  have any repeat child).
-- **Does not fix (iii).** The leaf is still terminal, so the mate is still invisible.
-- **Identity test:** on a position suite whose trees contain no twofold terminal
-  (assert a C counter of twofold hits is 0), targets and moves are bit-identical.
-- **Audit-first and yardstick:** as for B.
-- A is dominated by B. Use it only if B's reroot bookkeeping proves too invasive.
+- **Does not touch §2b's dominant signature.** 79–80% of the exact zeros come from a
+  played repeat child whose value is 0, and that child would still be an exact-0
+  terminal.
+- **Does not fix (iii).**
+- It changes only the one-hot or zero-budget proven roots (4 of 2,179 in the
+  repetition-heavy probe).
+- A is dominated by B.
 
-### Option B: lc0-style (recommended experiment)
+### Option B: lc0-style twofold (recommended experiment)
 
-**Change.** A first repeat is a terminal draw only if the earlier occurrence lies **at
-or after the root on the current path**. Implement this by storing the root's
-`hash_stack_len` boundary and matching only indices at or above it. A repeat of a
-pre-root position is searched normally; threefold still counts pre-root occurrences.
-The twofold draw is never a proof (A's rule). On reroot, twofold leaves whose earlier
-occurrence is now before the new root are cleared and their visits reverted, as lc0's
-`EnsureNodeTwoFoldCorrectForDepth` does. The simpler alternative is to refuse reuse when
-the kept subtree holds any.
+**Change.**
 
-**Self-play footprint:**
+- A first repeat is a terminal draw only if the earlier occurrence is at or after the
+  root on the current path. Implement this by storing the root's `hash_stack_len`
+  boundary and matching only indices at or above it.
+- lc0's `depth-1 >= 4` clause is implied, since a cycle is at least 4 plies; it will be
+  written explicitly anyway so the rule is literally lc0's.
+- A threefold still counts pre-root occurrences.
+- The twofold draw is never a proof.
+- On reroot, twofold leaves whose first occurrence moves before the new root are cleared
+  and their visits reverted, as lc0's `EnsureNodeTwoFoldCorrectForDepth` does.
+  Alternative: refuse reuse when the kept subtree holds any.
+- `tests/test_mcts_root_history_lifecycle.py:99-109` would change, with the reason
+  stated.
 
-- Direct: the 3.93% of searched roots with a child repeating a game-history position.
-  Those children become ordinary searched children.
-- Played moves into a repeat: 1.11% of plies are candidates to change.
-- Indirect: deeper in-tree nodes that repeat a pre-root position. Unmeasured; the
-  repetition-selected probe saw 10.9% at the root level.
-- Game level: 31% of games contain a twofold, and 18% end by threefold claim. Both may
-  shift.
-- `tests/test_mcts_root_history_lifecycle.py:99-109` pins the current behaviour and
-  would have to change, with the reason stated.
+**Hypothesis.** Scoring a repeat of a *pre-root* position as an exact proven draw
+corrupts the stored targets at the 3.9% of rows whose root has such a child, and about
+1% of all rows store q exactly 0 through it. B makes those rows' stored q and policy
+target agree better with a deep teacher, and changes nothing else.
 
-**Identity test.** A C counter of "twofold hits whose match index is below the root
-boundary". On a fixed seed and position suite, every root where the counter is 0 must
-produce a bit-identical policy, value and move. Only rows with a nonzero counter may
-differ.
+**Control.** The current rule (`any_prior`): same checkpoint, same rows, same seeds,
+same sims.
 
-**Audit-first** (before any training compute): take the 19,554 banked roots that have a
-game-history-repeat child, or a stratified 2,000 of them, frozen by `game_id` and ply.
+**Expected footprint.**
 
-- Run the current and the candidate search with `$SL_BASE` in a pause window.
-- Score both chosen moves against Syzygy (≤6 men) and deep SF (MultiPV, the frozen
-  deep-SF audit protocol).
-- Bank per-move scores and PVs keyed by position, arm and engine settings, plus
-  `game_id`.
-- **Proceed** only if the candidate's mean regret against deep SF is not worse
-  (one-sided 95% bound ≤ +2 cp). Otherwise stop: there is no gain to train for.
+- Direct: the 3.90–3.94% rep-root rows.
+- 1.0% of all rows currently store exact 0 through it; 79–80% of rep rows where the
+  repeat is played do.
+- About 1.1% of played moves are candidates to change.
+- Not measured: how often a repeat of a pre-root position occurs *below* the root (not
+  only at the root's children). Measuring it needs searches with the real net.
 
-**Deciding yardstick (play side, one command):**
+**Identity test.** A C counter of twofold hits whose match index lies below the root
+boundary. On a fixed seed and position set, every row with counter 0 must produce a
+bit-identical policy, value and move. Only counter > 0 rows may differ.
 
-```bash
-PYTHONPATH=. python3 scripts/arena_standard.py --candidate $SL_BASE --reference $SL_BASE \
-  --mode matched_sims --sims 400 --cand-gumbel twofold=in_tree --games 1000 \
-  --syzygy <production syzygy pair> --pgn-out <out>.pgn \
-  --sprt 'elo0=-10,elo1=5,alpha=0.05,beta=0.05' --label twofold-in-tree-vs-current
-```
+The standing frozen audit set provides a second identity control:
 
-- `twofold` is a new per-side knob. It must be plumbed into C, added to the
-  `--cand-gumbel` allow-list, and proven to take effect from the C consumer's own
-  counter.
-- **Pre-committed rule:** adopt on SPRT H1 or INCONCLUSIVE with the 95% lower bound
-  ≥ −10 Elo. **Kill** on H0.
-- This decides the engine. A self-play training arm is a separate record, judged by
-  `scripts/arena_standard.py` on the trained checkpoint against `$SL_BASE`.
+- **Why `data/audit_set_v1.jsonl` cannot be the yardstick.** Its rows carry only
+  `fen, key, multipv, wdl, bestmove, nodes, depth, phase, source`, with no move history
+  (FEN halfmove kept, fullmove reset). The repetition stack is therefore empty, and
+  neither rule ever fires on it.
+- **What it is used for instead.** `scripts/audit_targets.py` on that set must produce
+  identical targets under both rules. Any difference is a leak.
+- The `--input-encoding stored` mode recovers stored *planes*, not a repetition stack,
+  so it does not help either.
+
+**Deciding yardstick: a target-side audit on a new frozen set.**
+
+1. **Freeze the rows first, before either arm runs.**
+   - From `<bank>/targets_{F12,Q50}.jsonl`, take a game-clustered random sample of
+     2,000 rep-root rows: seed 20261119, stratified by arm and cycle, at most 2 rows
+     per game.
+   - Write `<bank>/twofold_audit_rows_v1.jsonl`. Each line holds the arm, cycle,
+     game, ply, the full UCI move list from `root_fen`, and the sha256 of the move list.
+   - Record the file's own sha256 in this record before anything else runs. The set
+     never changes afterwards; a new sample means `v2`.
+2. **Label once:** deep SF on each row's position (MultiPV 10, ≥ 1M nodes, the audit
+   set's protocol), with the full move history passed as `position startpos moves …`.
+   Bank per-move cp/WDL and PVs keyed by row and engine settings, plus `game_id`.
+3. **Run both arms** with the SL base in a GPU pause window, at the banked collection's
+   self-play search settings. The exact search profile is read from the collection's
+   `resolved-profile.json`, not from prose. Bank each row's stored-equivalent q, WDL and
+   policy target.
+4. **Exact command.** This is a new script, written and reviewed before the freeze:
+
+   ```bash
+   PYTHONPATH=. python3 scripts/twofold_target_audit.py \
+     --rows ~/chess-artifacts/operations/rl-claude-20261119/twofold-audit/twofold_audit_rows_v1.jsonl \
+     --rows-sha256 <recorded> --checkpoint $SL_BASE --rule any_prior,in_tree \
+     --profile <collection resolved-profile.json> \
+     --sf-labels <bank>/twofold_audit_sf_v1.jsonl --out <bank>/twofold_audit_readout_v1.json
+   ```
+
+5. **Scoring, paired per row and clustered by game:**
+   - **Value:** |q − q_SF|, where q_SF = W − L of the deep-SF WDL at the root.
+   - **Policy:** E[regret] of the stored target in cp against SF's MultiPV, plus its
+     mass on moves SF scores ≥ 50 cp below best.
+6. **Pre-committed outcomes:**
+   - **PASS** (B proceeds to a training-arm record): the value-error difference
+     (B − current) has a 95% upper bound below −0.005, **and** the policy E[regret]
+     difference has a 95% upper bound ≤ +2 cp.
+   - **KILL:** the value-error difference has a 95% lower bound ≥ 0 (B no better), or
+     the policy E[regret] difference has a 95% lower bound > +2 cp.
+   - **Anything else is UNREAD.** Extend once to 4,000 frozen rows (the `v1` sample's
+     continuation, drawn in the same freeze step) and apply the same rule. Still unread
+     means B is not adopted.
+
+**Guard: arena non-inferiority. It does not decide B.**
+
+- **Why `matched_time`, not `matched_sims`.** `matched_sims` (in-process
+  `run_gumbel_root_many_c`) passes no tree (`selfplay/match.py`), so every move is a
+  **cold tree** and B's reroot bookkeeping is never exercised. B ships in the C path and
+  in the UCI engine, where `advance_root` reuses trees, so the guard plays real UCI
+  engines with tree reuse.
+- **Prerequisites:** a per-side UCI option for the rule, and a per-side argument in
+  `arena_standard.py` (not built yet).
+- **Command:**
+
+  ```bash
+  PYTHONPATH=. python3 scripts/arena_standard.py --candidate $SL_BASE --reference $SL_BASE \
+    --mode matched_time --ms-per-move 200 --games 2000 \
+    --cand-uci-args 'TwofoldRule=in_tree' --ref-uci-args 'TwofoldRule=any_prior' \
+    --label twofold-guard-v1
+  ```
+
+- **Power, stated honestly.** About ±15 Elo 95% CI at 1,000 games and about ±11 at
+  2,000. A change touching about 1.1% of moves is probably < 10 Elo either way, so the
+  guard can only catch a gross regression.
+- **Pre-committed outcomes:**
+  - **PASS:** the 95% lower bound is ≥ −15 Elo, whatever the point estimate.
+  - **FAIL:** the 95% upper bound is < 0.
+  - **Otherwise** (lower bound < −15 and upper bound ≥ 0): extend once to 4,000 games;
+    still neither, then FAIL.
+  - A FAIL blocks B even after an audit PASS.
 
 **Other terms:**
 
-- **Cost:** C work on the terminal test, the reroot bookkeeping and the ABI bump
-  (about 1–2 days), plus a 1,000-game arena in a pause window.
-- **Confounds:** one data-affecting change per readout window, so do not overlap the
-  draw-pruning (#1410) or claim-rule changes. It changes `wdl_regret` as a search-config
-  change.
-- **Recovery:** the knob defaults to the current behaviour, and a revert to
-  `twofold=any_prior` restores it bit-identically.
+- **Cost:** C work (terminal test, root boundary, reroot revert, ABI bump; 1–2 days),
+  plus a 2,000-row SF labelling run (CPU), two GPU audit passes, and a 2,000-game
+  matched_time guard in pause windows.
+- **Confounds:** one data-affecting change per readout window, so do not overlap #1410
+  or claim-rule changes. B is a search-config change for `wdl_regret`.
+- **Recovery:** the rule defaults to `any_prior`, which is bit-identical to today.
 
 ### Ranking and recommendation
 
-1. **C now.** It is a correctness bug in the engine with zero self-play footprint, and
-   it merges on identity.
-2. **B as the registered experiment.** It is the only option that fixes (iii) and
-   matches lc0's convention. Gate it audit-first, then use the arena command above.
-3. **A** only as a fallback, if B's reroot bookkeeping is rejected.
+1. **C now (PR #1421).**
+2. **B as the registered experiment,** decided by the frozen target audit, with the
+   arena as a guard only.
+3. **A** only as a fallback; it leaves the dominant exact-zero source in place.
 
-**No code change is made until the owner chooses.**
+**No self-play-affecting code change is made until the owner chooses.**
 
 ## 5. Same-coloured bishops: insufficient material
 
 - **C rule:** with no pawns, rooks or queens, the C board calls material insufficient
-  for K vs K, K+minor vs K, or **exactly** K+B vs K+B on the same colour, i.e. 4 men
+  only for K vs K, K+minor vs K, or **exactly** K+B vs K+B on one colour, i.e. 4 men
   (`encoding/_cboard_impl.h:1394-1408`).
 - **python-chess rule:** material is insufficient whenever each side's only non-king
   pieces are bishops, all on one square colour (and no knights).
 - **Check** (`<bank>/check_bishops.py`, `.out`): after
   `4b3/8/8/8/6bk/1B6/2r5/2K5 w - - 97 1` Bxc2, python-chess reports a draw by
   insufficient material and the C board reports the game not over.
-- **Banked footprint:** 0 positions in 4,608 games, all plies including the opening.
-- **Why the footprint is zero:** the banked game end uses python-chess (`claim_draw=True`),
-  and positions with 6 men or fewer are TB-adjudicated. A mismatch needs 7 or more men
-  made only of kings and same-coloured bishops.
-- **Where it can still matter:** in-search terminal detection, for nodes without a TB
-  probe, which requires promotions to bishops; and the C `is_game_over` used for forced
-  moves (`network_turn.py:464`).
-- **Proposed fix:** mirror python-chess's per-colour rule in
-  `cboard_insufficient_material`, with a differential test against python-chess on
-  random and constructed positions.
-- **Self-play footprint:** expected 0 rows in the banked distribution. The identity
-  test is the census script, which must report 0 changed positions, plus the
-  self-play smoke test producing byte-identical output.
-- This fix can ship with option C.
+- **Banked footprint:** 0 positions in 4,608 games, all plies.
+- **Why it is zero:** the game end uses python-chess, and positions with 6 men or fewer
+  are TB-adjudicated. A mismatch needs 7 or more men made only of kings and
+  same-coloured bishops.
+- **Where it can still matter:** in-search nodes without a TB probe (via bishop
+  promotions), and the C `is_game_over` used for forced moves (`network_turn.py:464`).
+- **Proposed fix:** mirror python-chess's per-colour rule, with a differential test.
+- **Footprint:** expected 0 rows. Identity: the census reports 0 changed positions, and
+  the self-play smoke output is byte-identical.
 
 ## What this record could not determine
 
-- The population rate of deeper in-tree nodes that repeat a pre-root position (option B's
-  indirect footprint). That needs instrumented searches with the real net on GPU.
-- Whether production-net self-play prefers twofold children more or less often than the
-  random-net probe. The probe's 37 exact-zero rows are a mechanism demonstration, not a
-  rate.
-- Whether the cycle-over-cycle growth in shuffling is caused by the twofold rule.
-- The banked collection's `source_revision` (`e633212d…`) is not in this repository's
-  history. Its outcome rule is inferred from the matching `rule50_match_v1` mode in
-  `selfplay/bt4_outcome.py` and from the census itself (838 claimable-threefold endings,
-  0 third occurrences).
-- That lc0 behaves identically in the shipped binary under `local_engines/`. Only the
-  source was read.
+- How often, below the root, a repeat of a pre-root position occurs (B's indirect
+  footprint). It needs real-net searches.
+- Syzygy truth for rep-root rows: there are none with 6 men or fewer (§2b). Deep-SF
+  labels are part of B's audit.
+- Whether the twofold rule causes the cycle trend in shuffling.
+- lc0 binary parity with the source I read.
