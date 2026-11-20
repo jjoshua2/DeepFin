@@ -1927,7 +1927,7 @@ def test_the_eval_cuda_graphs_flag_is_gone(monkeypatch: pytest.MonkeyPatch, caps
     (["--device", "cpu"], True),                                   # no graphs off CUDA: threshold decides
 ])
 def test_compile_auto_prefers_the_cuda_graphs(
-    monkeypatch: pytest.MonkeyPatch, extra: list[str], compiled: bool,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, extra: list[str], compiled: bool,
 ) -> None:
     """--compile auto picks the eager graph path wherever graphs can run, even
     above the work threshold (400 games x 64 sims here), and keeps the
@@ -1939,9 +1939,14 @@ def test_compile_auto_prefers_the_cuda_graphs(
         return {"elo": 0.0, "elo_ci95": [0.0, 0.0], "pairs": 0}
 
     monkeypatch.setattr(arena, "run_arena", _fake_run_arena)
+    # A compiled run points inductor at a cache dir and exports it: keep both
+    # inside the test (never the production worker cache) and restore the env.
+    for var in ("TORCHINDUCTOR_CACHE_DIR", "TRITON_CACHE_DIR", "TORCHINDUCTOR_FX_GRAPH_CACHE"):
+        monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr("sys.argv", [
         "arena_standard.py", "--candidate", "a.pt", "--reference", "b.pt",
-        "--games", "400", "--sims", "64", "--mode", "matched_sims", "--search-shape", "play", *extra,
+        "--games", "400", "--sims", "64", "--mode", "matched_sims", "--search-shape", "play",
+        "--compile-cache-dir", str(tmp_path / "cache"), *extra,
     ])
     arena.main()
     assert arena.AUTO_COMPILE_WORK_THRESHOLD <= 400 * 64
