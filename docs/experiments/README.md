@@ -16,7 +16,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
-- [2026-11-20: SL base search ceiling (measurement, registered before running)](2026-11-20-sl-base-search-ceiling.md) — sizing only, no training: the SL base vs itself at 128, 256 and 512 sims against 64, seat-balanced, 1,600 games each on the loop's EVAL openings; banked D1 search gains and the P1/F12 dose→drift table as context. RESULTS: pending
+- [2026-11-20: SL base search ceiling — banked search gains and dose → drift](2026-11-20-sl-base-search-ceiling.md) — sizing context only, no new compute: SL base search gains from the banked D1 rows (64 vs 1 +849, 256 vs 64 +272, 800 vs 64 +478; single orientation, seat offset negligible at these sizes) and the P1/F12 policy-KL / |ΔQ| vs updates table; a started seat-balanced rerun was stopped and banked as incomplete
 
 - [2026-11-20: Loop experiment 1 — one self-play generation from the SL base (DRAFT, prospective)](2026-11-20-loop-exp1-one-generation-from-sl-base.md) — awaiting owner approval, nothing launched: one collection (16,000 games with snapshot gates by default, 4,000 as the D2 alternative) trained three ways on the same rows via `--collect-from` arms (policy only = default primary; search value; softened policy), collect and model gates via the committed gate scripts before any arena, one deciding seat-balanced 3,200-game match vs the SL base read once (success = lower 95% bound > 0), unconditional positive control from Q50 c12, dispositions for every outcome, eight open owner decisions with defaults (D7 decided 2026-11-20: fast CUDA-graphs collect path only)
 
