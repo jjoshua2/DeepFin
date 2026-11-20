@@ -129,7 +129,10 @@ established by the deterministic instruments:
 - the reviewer's CPU fuzz: 150 parent-vs-head cases compared node for node, all
   identical, 0 flushes;
 - `bench_arena_identity.py`, 64 pairs, pool 128, 64 sims, max_batch 4096: digest
-  `45bdc247…20adaa` on both builds, 0 flushes (the reviewer's repeats agree);
+  `45bdc247…20adaa` on both builds, 0 flushes. The reviewer's independent repeats
+  used different openings, so they give a different digest (`2d8a173c…`); that
+  digest was equal across both builds and across repeat runs. They corroborate
+  identity on their own openings and do not reproduce the author's digest;
 - `tests/test_uci_search_identity_pin.py` passes;
 - `tests/test_e2e_smoke.py -k gumbel_selfplay_smoke` passes.
 

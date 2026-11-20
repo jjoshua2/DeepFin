@@ -43,11 +43,12 @@ from chess_anti_engine.simple_rl.evaluate import (
     tripwire_table,
 )
 from chess_anti_engine.simple_rl.learn import (
-    MATRIX_OPTIMIZER_SCOPES, MODEL_FILE, TrainSettings, lineage_capped_collects, preflight_init_optimizer,
-    refuse_capped_collects, train_generation,
+    MATRIX_OPTIMIZER_SCOPES, MODEL_FILE, TrainSettings, check_snapshot_plan, lineage_capped_collects,
+    planned_phase_updates, preflight_init_optimizer, refuse_capped_collects, train_generation, trainer_kwargs,
 )
 from chess_anti_engine.simple_rl.lineage import later_sealed, unseal_after, verify_before, verify_stage
 from chess_anti_engine.simple_rl.openings import split_openings
+from chess_anti_engine.simple_rl.reference import precheck_source, reference_collect
 
 EXIT_TRIPWIRE = 3
 EXIT_BLOCKED = 4
@@ -175,9 +176,20 @@ def train_settings(a: argparse.Namespace, run_dir: Path) -> TrainSettings:
         sl_mix_frac=a.sl_mix_frac, sl_mix_max_rows=a.sl_mix_max_rows, holdout_frac=a.holdout_frac,
         probe_rows=a.probe_rows, device=a.device, use_amp=str(a.device).startswith("cuda"), seed=a.seed,
         allow_capped_collect_rows=a.allow_capped_collect_rows,
+        snapshot_updates=parse_snapshot_updates(a.snapshot_updates),
     )
     settings.validate()
+    trainer_kwargs(settings)  # the Trainer's own range checks (e.g. --train-target-temp)
     return settings
+
+
+def parse_snapshot_updates(spec: str | None) -> tuple[int, ...]:
+    if not spec:
+        return ()
+    try:
+        return tuple(int(x) for x in str(spec).split(",") if x.strip())
+    except ValueError as exc:
+        raise SystemExit(f"--snapshot-updates wants comma-separated update counts, got {spec!r}") from exc
 
 
 def eval_opening_plies(a: argparse.Namespace) -> int:
@@ -214,6 +226,18 @@ def thresholds(a: argparse.Namespace) -> dict[str, float | None]:
 
 def do_collect(a: argparse.Namespace, run_dir: Path, g: int) -> None:
     ckpt = sealed_model(run_dir, g - 1)
+    if a.collect_from:
+        try:
+            stats = reference_collect(collect_dir=gen_dir(run_dir, g) / "collect", generation=g,
+                                      source_run_dir=Path(a.collect_from), actor_checkpoint=ckpt,
+                                      gen0_model=sealed_model(run_dir, 0),
+                                      train_jsonl=Path(a.openings_dir) / "train.jsonl", settings=collect_settings(a))
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        print(json.dumps({"stage": "collect", "generation": g, "reference_to": str(Path(a.collect_from).resolve()),
+                          **{k: stats.get(k) for k in ("games", "rows", "decisive_rate", "draw_rate")}},
+                         default=str), flush=True)
+        return
     stats = collect_generation(gen_dir=gen_dir(run_dir, g) / "collect", generation=g, checkpoint=ckpt,
                                train_jsonl=Path(a.openings_dir) / "train.jsonl", settings=collect_settings(a))
     print(json.dumps({"stage": "collect", "generation": g, **{k: stats[k] for k in (
@@ -270,45 +294,66 @@ RUN_CONFIG_EXEMPT = frozenset({
 # resuming an older run at the default is not a "change" -- any other value is.
 ADDED_SINCE_PINNING = {"collect_cuda_graphs": False, "init_optimizer_state": "fresh",
                        "matrix_optimizer_scope": "default", "adopt_checkpoint_optimizer_hparams": False,
-                       "allow_capped_collect_rows": False}
+                       "allow_capped_collect_rows": False, "snapshot_updates": None, "collect_from": None}
 
 
 def validate_before_pinning(a: argparse.Namespace, run_dir: Path, stages: set[str]) -> None:
-    """Raise every settings-only refusal for ``stages`` BEFORE any side effect.
+    """Raise every settings-only refusal BEFORE any side effect.
 
     Both ``run`` and a standalone stage call this ahead of ``check_run_config``
     (which pins run_config.json) and, for a stage, ahead of any unsealing or
     manifest removal, so a refused setting is neither pinned (dropping it again
     would need --allow-config-change) nor leaves lineage half-rewound.
-    ``stages`` names what will execute: "collect" checks the collect settings
-    (e.g. --collect-cuda-graphs without CUDA) and generation 0's init flags,
-    "train" the train settings, "eval" the eval settings (opening plies
-    against the split).
+
+    Every flag group is pinned whichever command runs, so every group's
+    settings-only checks run always (a standalone ``collect`` pins the train
+    flags too). ``stages`` names what will execute and adds the checks that read
+    run state: "collect" generation 0's init flags and an arm's
+    ``--collect-from`` source, "train" the init-optimizer source, the capped
+    lineage and the snapshot plan against the phase's planned updates.
     """
+    settings = train_settings(a, run_dir)
+    try:
+        validate_settings(collect_settings(a))
+    except ValueError as exc:
+        raise SystemExit(f"collect settings refused: {exc}") from exc
+    # Without the split's summary.json and an explicit --eval-opening-plies the
+    # opening plies are unknowable, which only an executing `eval` must refuse.
+    knowable = a.eval_opening_plies is not None or (Path(a.openings_dir) / "summary.json").is_file()
+    if "eval" in stages or (not a.no_eval and knowable):
+        eval_settings(a)
+    if getattr(a, "generation", None) is not None:
+        gens = [int(a.generation)]
+    else:
+        gens = list(range(1, int(getattr(a, "generations", 0) or 0) + 1))
     if "train" in stages:
-        settings = train_settings(a, run_dir)
         if settings.init_optimizer_state == "checkpoint" and not stage_done(gen_dir(run_dir, 1) / "train"):
             preflight_init_optimizer_source(a, run_dir, settings)
-        if getattr(a, "generation", None) is not None:
-            to_train = [int(a.generation)]
-        else:
-            to_train = [g for g in range(1, int(getattr(a, "generations", 0) or 0) + 1)
-                        if not stage_done(gen_dir(run_dir, g) / "train")]
+        to_train = gens if getattr(a, "generation", None) is not None else [
+            g for g in gens if not stage_done(gen_dir(run_dir, g) / "train")]
         # The whole lineage, not just the windows: a model descends from every
         # earlier generation's rows (lineage_capped_collects).
         try:
             refuse_capped_collects(lineage_capped_collects(run_dir, max(to_train, default=0)), settings)
+            for g in to_train:
+                # Knowable only once the phase's collects are sealed; otherwise
+                # train_generation refuses before its first update.
+                planned = planned_phase_updates(run_dir, g, settings)
+                if planned is not None:
+                    check_snapshot_plan(settings.snapshot_updates, planned)
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
     if "collect" in stages:
-        try:
-            validate_settings(collect_settings(a))
-        except ValueError as exc:
-            raise SystemExit(f"collect settings refused: {exc}") from exc
         if not stage_done(gen_dir(run_dir, 0)) and bool(a.init_checkpoint) == bool(a.random_init):
             raise SystemExit("exactly one of --init-checkpoint / --random-init is required to create generation 0")
-    if "eval" in stages:
-        eval_settings(a)
+        if a.collect_from:
+            to_collect = gens if getattr(a, "generation", None) is not None else [
+                g for g in gens if not stage_done(gen_dir(run_dir, g) / "collect")]
+            try:
+                for g in to_collect:
+                    precheck_source(Path(a.collect_from), g, collect_settings(a))
+            except ValueError as exc:
+                raise SystemExit(str(exc)) from exc
 
 
 def preflight_init_optimizer_source(a: argparse.Namespace, run_dir: Path, settings: TrainSettings) -> None:
@@ -517,6 +562,10 @@ def _common(p: argparse.ArgumentParser) -> None:
                    help="collect on CUDA: replay CUDA graphs of the evaluator's eager dense forward "
                         "(outputs measured bitwise identical, so the same shards; faster at the "
                         "search's leaf batch sizes; +1.5 GB VRAM). Refused off CUDA.")
+    c.add_argument("--collect-from", default=None, metavar="SOURCE_RUN_DIR",
+                   help="training arm: seal each collect as a verified reference to SOURCE_RUN_DIR's sealed "
+                        "collect of the same generation instead of playing games (same gen-0 model, actor, "
+                        "TRAIN openings and collect flags required; see docs/simple_rl_loop.md)")
 
     t = p.add_argument_group("train")
     t.add_argument("--presentations", type=int, default=1,
@@ -554,6 +603,10 @@ def _common(p: argparse.ArgumentParser) -> None:
     t.add_argument("--allow-capped-collect-rows", action="store_true",
                    help="train on rows from collects whose evaluator cap could absorb search leaves (default: "
                         "refused; when allowed the phase records trained_on_capped_rows)")
+    t.add_argument("--snapshot-updates", default=None, metavar="N[,N...]",
+                   help="exact-once schedule: after these optimizer update counts of each phase write "
+                        "train/snapshots/step_<N>/ (weights-only model.pt + metrics.json); strictly increasing, "
+                        "each <= the phase's planned updates; training is unchanged (bit-identical on CPU)")
     t.add_argument("--mirror-prob", type=float, default=0.5)
     t.add_argument("--w-policy", type=float, default=1.0)
     t.add_argument("--w-wdl", type=float, default=1.0, help="0 = policy only")

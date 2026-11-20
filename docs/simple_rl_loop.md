@@ -96,7 +96,8 @@ The opening cursor lives in the collect manifests, so it rewinds with them.
   gen_NNNN/collect/          shards/shard_*.zarr (+ .meta.npz row sidecar), games.jsonl,
                              starts.txt, stats.json, manifest.json
   gen_NNNN/train/            model.pt (Trainer checkpoint: weights, optimizer, arch),
-                             presented.npz (rows this phase presented), metrics.json, manifest.json
+                             presented.npz (rows this phase presented), metrics.json, manifest.json,
+                             snapshots/step_<k>/ (with --snapshot-updates; see Train snapshots)
   gen_NNNN/eval/             arena_vs_previous.{jsonl,pgn,log}, arena_vs_reference.*, manifest.json
 ```
 
@@ -361,6 +362,142 @@ records `trained_on_capped_rows: true`, the window's capped generations
 `--init-checkpoint` taken from another run carries no taint record: the check
 sees only this run's collects. The arena already checks the same bound and warns
 (`scripts/arena_standard.py`, `arena_uncapped_leaf_rows`).
+
+## Train snapshots
+
+`--snapshot-updates N[,N...]` (exact-once schedule only) writes
+`gen_NNNN/train/snapshots/step_<N>/` after the phase's N-th optimizer update:
+
+- `model.pt`: weights and `arch` only (no optimizer), loadable by every checkpoint
+  loader, so `scripts/arena_standard.py --candidate .../step_<N>/model.pt` plays it;
+- `metrics.json`: the measurements the phase makes at its end, taken on the
+  snapshot's weights: held-out policy CE / entropy / value NLL (`heldout`), probe
+  `mean_abs_dq`, `policy_kl_prev_to_new` and `top1_agree_prev` against the
+  phase's init model (`probe_vs_previous`), the realised lr per param group, rows
+  presented so far and the rows-weighted losses so far;
+- `snapshot.json`, written last: the snapshot is complete only with it.
+
+The train manifest records every snapshot file with its SHA-256
+(`outputs.snapshot_<N>_model`, `outputs.snapshot_<N>_metrics`) and
+`summary.snapshots`. The counts must be strictly increasing and at most the
+phase's planned updates. Both are refused before `run_config.json` is pinned; the
+planned-updates bound is checked there once the phase's collects are sealed (a
+standalone `train`, or a resume), and otherwise by `train` before its first
+update, since a fresh `run` cannot know the row count before it collects.
+
+Snapshots do not change training. The phase runs as one `train_steps` call per
+snapshot interval on the same sampler, the measurements run under `fork_rng`, and
+on CPU the final weights and `presented.npz` are bit-identical with and without
+snapshots (tested).
+
+A killed phase resumes from its newest complete snapshot: the snapshot also keeps
+`resume_trainer.pt` (`Trainer.save`) and `resume_state.pt` (sampler cursor, served
+rows, RNG streams, KL-anchor counters, the chunk metrics so far), restored by
+`Trainer.load(exact_resume=True)`. Earlier snapshots are not rewritten, later ones
+are written, and the result equals the uninterrupted phase (tested on CPU). Only
+the newest snapshot keeps the resume files, and sealing the stage deletes them. A
+snapshot resumes only an attempt with the same resume key, which covers the
+settings, the SHA-256 of every input, and the batch plan. Snapshots from any other
+attempt are deleted and redone.
+
+## Training arms on one collection
+
+Several training arms can train on ONE collection. Each arm is its own run dir
+(its own `run_config.json`, so it pins its own train settings) started with
+`--collect-from <source run dir>`. Instead of playing games, each of the arm's
+collect stages seals a manifest that references the source run's sealed collect
+of the same generation (`simple_rl/reference.py`). Every reader of rows and games
+(training, the probe, the presentation ledger, the next collect's duplicate
+statistics) resolves the reference with `common.resolve_collect_dir`. The arm
+holds no copy of the rows.
+
+```bash
+python scripts/simple_rl_loop.py collect --run-dir SRC ... --generation 1     # the collection
+for w in 1.0 0.0; do                                                            # the arms
+  python scripts/simple_rl_loop.py run --run-dir ARM_w$w --init-checkpoint SRC/gen_0000/model.pt \
+      --collect-from SRC --generations 1 --w-wdl $w <SRC's collect flags> <arm's train flags>
+done
+```
+
+The reference is created only when all of these hold:
+
+- the source collect is sealed and is not itself a reference;
+- every output SHA-256 the source's manifest sealed still matches;
+- the source's generation-0 model is the arm's;
+- the source collect was played by the arm's own generation g-1 model (so
+  in practice arms share generation 1, which the shared gen-0 model played);
+- it used the arm's TRAIN openings;
+- the arm's collect flags equal the source's. A different value would be pinned
+  without affecting the rows. Execution-only fields are exempt: device,
+  cuda_graphs, eval_max_batch, seed, dup_sketch_budget and exact_repeat_vs_previous.
+
+The cheap checks run before pinning. The reference manifest records, as `source_*`
+inputs, the SHA-256 of:
+
+- the source manifest;
+- every shard file (`.zarr` and `.meta.npz`);
+- `games.jsonl` and `starts.txt`;
+- the source's gen-0 model.
+
+`lineage.verify_stage` re-hashes these like in-run inputs whenever the arm reuses
+the stage, and `train` re-verifies a referenced collect before loading it. A
+source that is redone, unsealed or edited later therefore refuses the arm's next
+stage. The arm can then re-reference with `collect --redo --redo-downstream`,
+which re-checks the source against its own seal. The source's config and stats
+are copied into the reference, so the capped-collect taint rules apply through it
+unchanged. An arm never writes, moves or unseals the source: `--redo` and
+`--redo-downstream` act only on the arm's own one-file reference directory.
+
+Given the same `--seed`, arms see the same holdout split (a hash of the game id),
+the same probe set (the first trained generation's held-out rows) and the same
+batch plan (seeded by `--seed` and the generation). A test asserts that two arms
+differing only in `--w-wdl` are served byte-identical batches in the same order
+and write byte-identical `presented.npz`.
+
+## Collect gates
+
+`scripts/simple_rl_collect_gates.py <run>/gen_NNNN/collect` prints JSON
+search-sanity metrics for a sealed collect (an arm's reference reads its source).
+It replaces the scratch `side_stats.py`:
+
+- row metrics come from a uniform seeded sample over all shards (`--sample-rows`,
+  `--seed`), loaded one shard at a time; game metrics come from every game;
+- sides are split by the parity of plies after the book: side 0 is the book-end
+  mover, the side to move where the opening line ends;
+- roots are "fresh" (`root_start_visits == 0`) or "reused".
+
+It reports:
+
+- the Spearman rank correlation of visited children's Q with their prior, and
+  survivor == argmax Q, per side x root kind;
+- the book-end mover's score (win 1, draw 0.5, loss 0). Its colour is white iff
+  `start_ply` is even;
+- target entropy, KL(target‖prior) and survivor − node Q, overall and per side;
+- rows per game and the draw / decisive rates;
+- `buffer_full_flushes`, and `eval_max_batch_realised` against
+  `leaf_rows_required`, with the capped-collect record;
+- with `--train-target-temp T` (repeatable), the target entropy after the loss's
+  own `retemper_main_policy_target`.
+
+`--thresholds FILE` (`{"dotted.metric": {"min": x, "max": y}}`) exits 3 when a
+gate fails or its metric is missing.
+
+On the banked 128-game smoke collects, all rows:
+
+| metric | clean (`fix_c128_auto`) | capped (`main_c128`) |
+|---|---|---|
+| book-end mover score | 0.582 | 0.820 |
+| draw rate | 0.461 | 0.156 |
+| rows per game | 96.7 | 56.9 |
+| Spearman, mover fresh / reused | 0.596 / 0.581 | 0.577 / 0.497 |
+| Spearman, reply fresh / reused | 0.596 / 0.602 | −0.053 / 0.096 |
+| KL(target‖prior), mover / reply | 0.261 / 0.318 | 0.329 / 1.025 |
+
+The Spearman values use average ranks for ties. `side_stats.py` used ordinal ranks
+(argsort of argsort). With ordinal ranks this script reproduces its banked values
+exactly (capped: 0.511 / 0.475 / −0.007 / 0.110). The capped collect has many
+tied child Qs, from leaves backed with the root's Q, which is where the two rank
+methods differ.
 
 ## Stockfish
 

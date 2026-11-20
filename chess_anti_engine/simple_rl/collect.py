@@ -33,6 +33,7 @@ import numpy as np
 from chess_anti_engine.simple_rl.common import (
     append_jsonl,
     input_ref,
+    resolve_collect_dir,
     seed_for,
     sha256_file,
     write_json_atomic,
@@ -600,7 +601,7 @@ def load_generation_rows(collect_dir: Path, *, keys: tuple[str, ...] | None = No
     """All shards of one generation, concatenated, plus the row-meta sidecar."""
     from chess_anti_engine.replay.shard import load_shard_arrays
 
-    shard_dir = Path(collect_dir) / "shards"
+    shard_dir = resolve_collect_dir(collect_dir) / "shards"
     parts: list[dict[str, np.ndarray]] = []
     metas: list[dict[str, np.ndarray]] = []
     for shard in sorted(shard_dir.glob("shard_*.zarr")):
@@ -721,7 +722,7 @@ def openings_seen_before(run_dir: Path, generation: int, previous: list[Path]) -
         return np.load(path, allow_pickle=False)
     ids: set[str] = set()
     for p in previous:
-        for r in (p / GAMES).read_text().splitlines():
+        for r in (resolve_collect_dir(p) / GAMES).read_text().splitlines():
             if r.strip():
                 ids.add(json.loads(r)["opening_id"])
     return np.asarray(sorted(ids), dtype=str)
@@ -735,7 +736,7 @@ def dup_sketch_before(run_dir: Path, generation: int, previous: list[Path], budg
         return DupSketch.load(path, budget=budget)
     sketch = DupSketch(budget=budget)
     for p in sorted(previous, key=_gen_number):
-        for m in sorted((p / "shards").glob("shard_*.meta.npz")):
+        for m in sorted((resolve_collect_dir(p) / "shards").glob("shard_*.meta.npz")):
             with np.load(m) as z:
                 sketch.add(z["x_hash"])
     return sketch
@@ -780,7 +781,7 @@ def generation_stats(collect_dir: Path, *, previous: list[Path], generation: int
     if exact:
         prev: set[int] = set()
         for p in previous:
-            for m in sorted((p / "shards").glob("shard_*.meta.npz")):
+            for m in sorted((resolve_collect_dir(p) / "shards").glob("shard_*.meta.npz")):
                 with np.load(m) as z:
                     prev.update(int(h) for h in z["x_hash"])
         exact_rate = (sum(1 for h in hashes if int(h) in prev) / max(1, n)) if previous else 0.0
