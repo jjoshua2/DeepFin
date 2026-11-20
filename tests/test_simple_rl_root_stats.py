@@ -98,6 +98,8 @@ def test_root_fields_mirror_with_the_policy() -> None:
         np.testing.assert_array_equal(getattr(m, name), mirror_policy(getattr(s, name)))
     for name in ("root_net_value", "root_survivor_q", "root_node_q", "root_start_visits", "search_budget"):
         assert getattr(m, name) == getattr(s, name), name
+    assert m.root_net_wdl is not None
+    assert s.root_net_wdl is not None
     np.testing.assert_array_equal(m.root_net_wdl, s.root_net_wdl)
     # the move indices follow the same permutation as the policy target
     for index_name in ("root_survivor_index", "played_move_index"):
@@ -230,3 +232,48 @@ def test_playout_cap_records_the_budget_and_stores_policy_only_at_full(
     assert (visits[(budget == 4) & arrays["has_root_log_prior"].astype(bool)] <= 4).all()
     stats = json.loads((out / "stats.json").read_text())
     assert set(stats["rows_by_search_budget"]) == {"4", "12"}
+
+
+def _bit_squares(bb: int) -> list[int]:
+    return [s for s in range(64) if (int(bb) >> s) & 1]
+
+
+def test_played_move_is_the_sampled_move_and_replays_to_the_next_row(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """At positive temperature the played move differs from the halving
+    survivor on some rows, and the stored ``played_move_index`` is the move
+    actually pushed: applying it to row i's pieces gives row i+1's pieces
+    (seen from the other side)."""
+    from chess_anti_engine.encoding.plane_decode import decode_step0_bitboards
+    from chess_anti_engine.moves.encode import _PLANE_TO_DELTA, COMPACT_TO_FULL_POLICY, PLANE_COUNT
+
+    out = _collect(tmp_path, "temp", monkeypatch, temp_start=1.5, temp_floor=1.0, tree_reuse=False)
+    arrays, meta = load_generation_rows(out)
+    has = arrays["has_root_log_prior"].astype(bool)
+    played, survivor = arrays["played_move_index"], arrays["root_survivor_index"]
+    assert (played[has] != survivor[has]).sum() >= 5
+    bbs = decode_step0_bitboards(arrays["x"])
+    key = {(int(g), int(p)): i for i, (g, p) in enumerate(zip(meta["game_id"], meta["ply_index"], strict=True))}
+    checked = differing = 0
+    for (g, p), i in key.items():
+        j = key.get((g, p + 1))
+        if j is None or not has[i]:
+            continue
+        full = int(COMPACT_TO_FULL_POLICY[int(played[i])])
+        frm, plane = full // PLANE_COUNT, full % PLANE_COUNT
+        if plane >= 64:
+            continue  # underpromotion
+        df, dr = _PLANE_TO_DELTA[plane]
+        to = frm + 8 * dr + df
+        us = [int(b) for b in bbs[i][:6]]
+        piece = next(k for k in range(6) if (us[k] >> frm) & 1)
+        if (piece == 0 and to >= 56) or (piece == 5 and abs(df) == 2):
+            continue  # promotion / castling move more than one piece
+        us[piece] = (us[piece] & ~(1 << frm)) | (1 << to)
+        them_next = [int(b) for b in bbs[j][6:12]]
+        flipped = [sum(1 << (s ^ 56) for s in _bit_squares(b)) for b in us]
+        assert flipped == them_next, (g, p)
+        checked += 1
+        differing += int(played[i] != survivor[i])
+    assert checked > 20
+    assert differing >= 3  # the replay check covers rows where played != survivor

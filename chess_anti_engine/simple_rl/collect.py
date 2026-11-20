@@ -429,6 +429,9 @@ def policy_stats(arrays: dict[str, np.ndarray]) -> dict[str, float]:
     }
     has = np.asarray(arrays.get("has_root_log_prior", np.zeros(len(target))), dtype=bool)
     out["root_stats_rows"] = int(has.sum())
+    # Exact root shortcuts (solved / tablebase / single-move / #1410's pruned-draw
+    # fallback) carry no statistics; their value target falls back (learn.py).
+    out["rows_without_root_stats"] = int((~has).sum())
     # Value diagnostics over every searched row; policy diagnostics (below)
     # over policy rows only -- a fast ply's stored target is masked.
     if not has.any():

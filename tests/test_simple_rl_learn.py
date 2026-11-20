@@ -334,3 +334,129 @@ def test_plan_batches_presents_every_row_exactly_once_with_a_short_last_batch() 
     assert sl_end == 73
     with pytest.raises(ValueError, match="exhausted"):
         plan_batches(100, batch_size=64, sl_frac=0.25, sl_available=50, rng=np.random.default_rng(2), sl_start=40)
+
+
+def _scheduled(n: int, batches: list[np.ndarray], seed: int = 0) -> Any:
+    from chess_anti_engine.simple_rl.learn import ScheduledSampler
+
+    rows = samples_to_arrays(_rows(n, marker=0.0, seed=seed)[0])
+    rows = {k: v for k, v in rows.items() if k in TRAIN_KEYS or k.startswith("_")}
+    return ScheduledSampler(rows, [(b, np.zeros(0, np.int64)) for b in batches], rng=np.random.default_rng(seed))
+
+
+def test_a_nonfinite_gradient_fails_the_phase_instead_of_consuming_a_presentation() -> None:
+    """Review lead L1: the Trainer skips a non-finite step but still advances;
+    a scheduled row would then count as presented with no update."""
+    trainer = build_trainer(tiny_model_config(), TrainSettings(device="cpu", mirror_prob=0.0), log_dir=None)
+    with torch.no_grad():
+        next(iter(trainer.model.parameters())).fill_(float("nan"))
+    sampler = _scheduled(32, [np.arange(16), np.arange(16, 32)])
+    with pytest.raises(RuntimeError, match="non-finite"):
+        trainer.train_steps(sampler, batch_size=16, steps=2)
+
+
+def test_a_short_final_batch_keeps_the_per_row_coefficient_of_a_full_batch() -> None:
+    """Review lead L2: every row's gradient coefficient is 1/batch_size, so the
+    4-row tail contributes 4/16 of the gradient its row-mean would."""
+    def grads(sampler: Any) -> dict[str, torch.Tensor]:
+        torch.manual_seed(0)
+        trainer = build_trainer(tiny_model_config(), TrainSettings(device="cpu", mirror_prob=0.0), log_dir=None)
+        got: dict[str, torch.Tensor] = {}
+
+        def grab(_o: Any, _a: Any, _k: Any) -> None:
+            for name, p in trainer.model.named_parameters():
+                if p.grad is not None:
+                    got[name] = p.grad.detach().clone()
+
+        trainer.opt.register_step_pre_hook(grab)
+        trainer.train_steps(sampler, batch_size=16, steps=1)
+        return got
+
+    class _PlainFour:
+        """The same 4 rows with no exact-presentation marker: a plain row mean."""
+
+        def __init__(self, inner: Any) -> None:
+            self.inner, self.rng = inner, inner.rng
+
+        def __len__(self) -> int:
+            return 4
+
+        def sample_batch_arrays(self, batch_size: int) -> dict[str, np.ndarray]:
+            return self.inner.sample_batch_arrays(batch_size)
+
+    tail = grads(_scheduled(20, [np.arange(16, 20)]))
+    plain = grads(_PlainFour(_scheduled(20, [np.arange(16, 20)])))
+    names = [n for n, g in plain.items() if float(g.abs().max()) > 1e-6]
+    assert names
+    for name in names:
+        np.testing.assert_allclose(tail[name].numpy(), plain[name].numpy() * (4 / 16), rtol=1e-4, atol=1e-7)
+
+
+def test_continue_refuses_or_reapplies_a_changed_optimizer_hparam(tmp_path: Path) -> None:
+    """Review item 2: exact resume restores the checkpoint's lr / floor, so a
+    requested --lr was silently ignored. Now: refused, or re-applied with
+    --reapply-optimizer-hparams and read back off the param groups after a step."""
+    from chess_anti_engine.simple_rl.learn import continue_optimizer, realised_optimizer
+
+    first = build_trainer(tiny_model_config(), TrainSettings(device="cpu", lr=1e-3, mirror_prob=0.0), log_dir=None)
+    first.train_steps(_scheduled(16, [np.arange(16)]), batch_size=16, steps=1)
+    ckpt = tmp_path / "gen1.pt"
+    first.save(ckpt)
+
+    same = build_trainer(tiny_model_config(), TrainSettings(device="cpu", lr=1e-3), log_dir=None)
+    assert continue_optimizer(same, ckpt, TrainSettings(device="cpu", lr=1e-3)) == {"differed": {}, "reapplied": False}
+
+    lower = TrainSettings(device="cpu", lr=5e-5, lr_floor=1e-6, mirror_prob=0.0)
+    with pytest.raises(ValueError, match="reapply-optimizer-hparams"):
+        continue_optimizer(build_trainer(tiny_model_config(), lower, log_dir=None), ckpt, lower)
+
+    reapply = TrainSettings(device="cpu", lr=5e-5, lr_floor=1e-6, mirror_prob=0.0, reapply_optimizer_hparams=True)
+    trainer = build_trainer(tiny_model_config(), reapply, log_dir=None)
+    check = continue_optimizer(trainer, ckpt, reapply)
+    assert check["reapplied"]
+    assert set(check["differed"]) == {"peak_lr", "lr_floor"}
+    step_before = int(trainer.step)
+    trainer.train_steps(_scheduled(16, [np.arange(16)]), batch_size=16, steps=1)
+    assert int(trainer.step) == step_before + 1  # the moments and step count did continue
+    got = realised_optimizer(trainer)
+    assert got["peak_lr"] == pytest.approx(5e-5)
+    assert got["lr_floor"] == pytest.approx(1e-6)
+    assert got["param_group_lr"] == pytest.approx([5e-5] * len(got["param_group_lr"]), rel=1e-3)
+
+
+def test_plan_batches_order_is_a_seeded_non_identity_permutation() -> None:
+    from chess_anti_engine.simple_rl.common import seed_for
+    from chess_anti_engine.simple_rl.learn import plan_batches
+
+    def order(generation: int) -> np.ndarray:
+        rng = np.random.default_rng(seed_for(7, "train", generation))
+        batches, _ = plan_batches(500, batch_size=64, sl_frac=0.0, sl_available=0, rng=rng)
+        return np.concatenate([b[0] for b in batches])
+
+    a, b = order(3), order(4)
+    np.testing.assert_array_equal(np.sort(a), np.arange(500))
+    assert not np.array_equal(a, np.arange(500))
+    assert not np.array_equal(a, b)
+    np.testing.assert_array_equal(a, order(3))  # same seed, same order
+
+
+def test_heldout_policy_metrics_skip_value_only_rows() -> None:
+    """Review item 6: a fast playout-cap row has no policy target; its zeroed
+    target must not enter the held-out policy CE / entropy."""
+    from chess_anti_engine.simple_rl.learn import heldout_metrics
+
+    rows = {k: v for k, v in samples_to_arrays(_rows(12, marker=0.0, seed=3)[0]).items() if not k.startswith("_")}
+    model = tiny_model(seed=1).eval()
+    base = heldout_metrics(model, rows, "cpu")
+    poisoned = {k: v.copy() for k, v in rows.items()}
+    poisoned["has_policy"] = np.ones(12, dtype=np.uint8)
+    poisoned["has_policy"][6:] = 0
+    poisoned["policy_target"][6:] = 0
+    poisoned["policy_target"][6:, 0] = 1.0  # what a value-only row's target slot might hold
+    got = heldout_metrics(model, poisoned, "cpu")
+    head = heldout_metrics(model, {k: v[:6] for k, v in rows.items() if not k.startswith("_")}, "cpu")
+    assert got["policy_rows"] == 6
+    assert got["rows"] == 12
+    assert got["policy_ce"] == pytest.approx(head["policy_ce"])
+    assert got["policy_entropy"] == pytest.approx(head["policy_entropy"])
+    assert got["value_nll"] == pytest.approx(base["value_nll"])

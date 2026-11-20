@@ -82,7 +82,16 @@ def run_arena(cmd: list[str], *, out: Path, log: Path) -> dict[str, Any]:
     rows = [json.loads(r) for r in out.read_text().splitlines() if r.strip()]
     if len(rows) != 1:
         raise RuntimeError(f"expected exactly one final arena record in {out}, found {len(rows)}")
-    return rows[0]
+    return check_complete(rows[0], out)
+
+
+def check_complete(record: dict[str, Any], out: Path) -> dict[str, Any]:
+    """A fixed-N yardstick: a truncated or short arena is not this generation's result."""
+    games, requested = record.get("games"), record.get("games_requested")
+    if record.get("truncated") or games is None or requested is None or int(games) != int(requested):
+        raise RuntimeError(f"arena record in {out} is incomplete (games={games}, games_requested={requested}, "
+                           f"truncated={record.get('truncated')}); a fixed-N result needs every game")
+    return record
 
 
 def _child_env() -> dict[str, str]:
@@ -104,6 +113,7 @@ def evaluate_generation(*, run_dir: Path, generation: int, candidate: Path, prev
     if reference is not None and Path(reference).resolve() != Path(previous).resolve():
         matches.append(("vs_reference", reference))
     results: dict[str, Any] = {}
+    ledger_rows: list[dict[str, Any]] = []
     for name, opponent in matches:
         label = f"simple_rl_gen{generation:04d}_{name}"
         out = out_dir / f"arena_{name}.jsonl"
@@ -113,8 +123,11 @@ def evaluate_generation(*, run_dir: Path, generation: int, candidate: Path, prev
         results[name] = {"opponent": str(opponent), "score": record.get("score"), "elo": record.get("elo"),
                          "elo_ci95": record.get("elo_ci95"), "games": record.get("games", settings.games),
                          "pentanomial": record.get("pentanomial")}
-        append_jsonl(run_dir / LEDGER, {"generation": generation, "match": name, "candidate": str(candidate),
-                                        "opponent": str(opponent), "record": record})
+        ledger_rows.append({"generation": generation, "match": name, "candidate": str(candidate),
+                            "opponent": str(opponent), "record": record})
+    # Idempotent: this generation's rows replace any an interrupted attempt
+    # left, written together after both matches finished.
+    replace_ledger_rows(run_dir / LEDGER, generation, ledger_rows)
     write_manifest(out_dir, stage="evaluate", config={"settings": asdict(settings)},
                    inputs={"candidate": input_ref(candidate), "previous": input_ref(previous),
                            "openings": input_ref(openings_pgn),
@@ -123,6 +136,21 @@ def evaluate_generation(*, run_dir: Path, generation: int, candidate: Path, prev
                    counts={"matches": len(matches)}, seeds={"arena": settings.seed},
                    extra={"generation": generation, "results": results})
     return results
+
+
+def replace_ledger_rows(path: Path, generation: int, rows: list[dict[str, Any]]) -> None:
+    path = Path(path)
+    kept = []
+    if path.exists():
+        kept = [r for r in (json.loads(x) for x in path.read_text().splitlines() if x.strip())
+                if int(r.get("generation", -1)) != int(generation)]
+    tmp = path.with_suffix(".jsonl.tmp")
+    tmp.unlink(missing_ok=True)
+    for r in [*kept, *rows]:
+        append_jsonl(tmp, r)
+    if not kept and not rows:
+        tmp.write_text("")
+    tmp.replace(path)
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +201,9 @@ def check_tripwires(rows: list[dict[str, Any]], thresholds: dict[str, float | No
         raise ValueError(f"unknown tripwire thresholds {sorted(unknown)}")
     if not armed:
         raise ValueError("--tripwire needs at least one threshold flag; refusing a check that cannot fail")
+    bad = {k: v for k, v in armed.items() if not math.isfinite(float(v))}
+    if bad:
+        raise ValueError(f"tripwire thresholds must be finite (a NaN/inf limit can never trip): {bad}")
     if not rows:
         raise ValueError("no finished generation to check")
     row = rows[-1]

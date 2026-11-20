@@ -208,6 +208,21 @@ def test_every_row_is_presented_exactly_p_times_across_a_kill_and_resume(
     windows = [json.loads((run_dir / f"gen_{g:04d}" / "train" / "metrics.json").read_text())["summary"][
         "window_generations"] for g in gens]
     assert windows == ([[1], [2], [3]] if presentations == 1 else [[1], [1, 2], [2, 3]])
+    # Presentation ORDER: shuffled within each phase (never the load order),
+    # and a generation's rows come in a different order in its second phase.
+    order = {}
+    for g in gens:
+        with np.load(run_dir / f"gen_{g:04d}" / "train" / learn.PRESENTED) as z:
+            pairs = np.stack([z["gen"], z["row"]], axis=1)
+        load_order = pairs[np.lexsort((pairs[:, 1], pairs[:, 0]))]
+        assert not np.array_equal(pairs, load_order), f"phase {g} presented rows in load order"
+        order[g] = pairs
+    if presentations == 2:
+        for g in (1, 2):
+            first = order[g][order[g][:, 0] == g, 1]
+            second = order[g + 1][order[g + 1][:, 0] == g, 1]
+            assert sorted(first.tolist()) == sorted(second.tolist())
+            assert not np.array_equal(first, second), f"generation {g} replayed in the same order"
 
 
 def test_more_than_two_presentations_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -217,3 +232,43 @@ def test_more_than_two_presentations_is_refused(tmp_path: Path, monkeypatch: pyt
     with pytest.raises(ValueError, match="cap is 2"):
         simple_rl_loop.main(argv)
     assert not (tmp_path / "run" / "gen_0000").exists()
+
+
+def _stage_argv(argv: list[str], command: str, generation: int, *extra: str) -> list[str]:
+    out = [command, *argv[1:]]
+    i = out.index("--generations")
+    del out[i:i + 2]
+    return [*out, "--generation", str(generation), *extra]
+
+
+def test_standalone_stages_are_held_to_the_run_config_and_load_only_sealed_models(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Leads D2 / item 7: standalone subcommands go through check_run_config,
+    skip a complete stage unless --redo, `device` is pinned, and a model whose
+    sha256 does not match its manifest is refused rather than consumed."""
+    openings, model_config = _setup(tmp_path, monkeypatch)
+    run_dir = tmp_path / "run"
+    argv = _argv(run_dir, openings, model_config)
+    argv[argv.index("--generations") + 1] = "1"
+    assert simple_rl_loop.main(argv) == 0
+    model = run_dir / "gen_0001" / "train" / "model.pt"
+    before = model.read_bytes()
+
+    assert simple_rl_loop.main(_stage_argv(argv, "train", 1)) == 0  # complete: skipped
+    assert model.read_bytes() == before
+    changed = _stage_argv(argv, "train", 1, "--redo")
+    changed[changed.index("--lr") + 1] = "5e-4"
+    with pytest.raises(SystemExit, match="run settings differ"):
+        simple_rl_loop.main(changed)
+    with pytest.raises(SystemExit, match="run settings differ"):
+        simple_rl_loop.main([*argv, "--device", "meta"])  # device is pinned, not exempt
+
+    model.write_bytes(before[:-1] + bytes([before[-1] ^ 1]))  # a stray overwrite of sealed weights
+    with pytest.raises(SystemExit, match="does not match the sha256"):
+        simple_rl_loop.main(_stage_argv(argv, "collect", 2))
+    model.write_bytes(before)
+    assert simple_rl_loop.main(_stage_argv(argv, "train", 1, "--redo")) == 0  # same settings: allowed, resealed
+    manifest = json.loads((run_dir / "gen_0001" / "train" / "manifest.json").read_text())
+    assert manifest["outputs"]["model"]["sha256"]
+    assert "probe" in manifest["inputs"]
+    assert manifest["config"]["realised"]["amp"] is False

@@ -1,8 +1,14 @@
-"""One training phase over a sliding window of the last K generations.
+"""One training phase of the simple RL loop.
 
-Rows are drawn uniformly WITH replacement from the window on every update, so
-each update sees fresh rows and ``--passes`` is only a dose (updates =
-passes x window rows / batch). The repo's ``Trainer`` does the step: its
+Default: a shuffled exact-once presentation schedule. Each phase is one pass
+WITHOUT replacement over the rows scheduled for it (the new generation's, plus
+the previous generation's under ``presentations=2``), served by
+``ScheduledSampler`` in precomputed batches with a short final batch, so every
+trainable row is presented exactly ``presentations`` times in its lifetime; a
+per-row ledger derived from completed phases enforces it. The explicit
+alternative ``sample_with_replacement`` draws uniformly WITH replacement from
+the last ``window`` generations for ``updates`` (or ``passes`` x rows / batch)
+updates. The repo's ``Trainer`` does the step: its
 optimizer, LR warmup, AMP, mirror augmentation and ``compute_loss`` are used
 unchanged, configured with the policy loss on the stored target plus (when
 ``w_wdl`` > 0) the WDL loss on ``outcome_weight * game outcome +
@@ -19,6 +25,7 @@ own labels.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 from collections.abc import Callable
 import time
@@ -72,6 +79,11 @@ class TrainSettings:
     warmup_start: float = 0.0
     optimizer: str = "nadamw"
     optimizer_state: str = "fresh"
+    # Under optimizer_state=continue the checkpoint's optimizer hyperparameters
+    # (peak lr, lr floor, per-group weight decay, ...) are restored with its
+    # state; a requested value that differs is REFUSED unless this is set,
+    # which re-applies the requested values onto the restored optimizer.
+    reapply_optimizer_hparams: bool = False
     weight_decay_mode: str = "weight_decay"
     mirror_prob: float = 0.5
     w_policy: float = 1.0
@@ -307,7 +319,16 @@ class ScheduledSampler:
     actually handed to the Trainer: the presentation record is the consumer's,
     not the plan's. Exposes ``rng`` for the Trainer's mirror draw (per batch,
     i.e. per presentation).
+
+    ``stored_row_quota`` is the Trainer's contract for a consumed-once row
+    stream (the same marker ``StoredRowOnceReplay`` sets): batches are served
+    serially with no retry, a non-finite gradient RAISES instead of skipping
+    the step after its rows were consumed, and the loss is scaled by
+    ``rows / batch_size`` so a short final batch keeps the full batches'
+    per-row coefficient of ``1 / batch_size``.
     """
+
+    stored_row_quota = True
 
     def __init__(self, rows: dict[str, np.ndarray], batches: list[tuple[np.ndarray, np.ndarray]], *,
                  rng: np.random.Generator, sl_rows: dict[str, np.ndarray] | None = None) -> None:
@@ -321,9 +342,14 @@ class ScheduledSampler:
         self.served_sl: list[np.ndarray] = []
         self.drawn_rows = 0
         self.realised_sl_rows = 0
+        self.aborted = False
 
     def __len__(self) -> int:
         return self.n
+
+    def abort_consumption(self) -> None:
+        """Trainer fault: the phase is not retried; the stage fails and redoes whole."""
+        self.aborted = True
 
     def sample_batch_arrays(self, batch_size: int) -> dict[str, np.ndarray]:
         del batch_size  # the plan fixes every batch, including the short last one
@@ -370,7 +396,8 @@ def plan_batches(n_own: int, *, batch_size: int, sl_frac: float, sl_available: i
     return batches, sl_pos
 
 
-def load_sl_corpus(path: Path, *, max_rows: int, seed: int, need_search: bool) -> dict[str, np.ndarray]:
+def load_sl_corpus(path: Path, *, max_rows: int, seed: int, need_search: bool,
+                   consumed: list[Path] | None = None) -> dict[str, np.ndarray]:
     from chess_anti_engine.replay.shard import load_shard_arrays
 
     shards = sorted(p for p in Path(path).rglob("*.zarr") if p.is_dir())
@@ -388,6 +415,8 @@ def load_sl_corpus(path: Path, *, max_rows: int, seed: int, need_search: bool) -
         if not np.all(np.asarray(arrays["has_legal_mask"]) == 1):
             raise ValueError(f"SL corpus shard {shards[int(i)]} has rows without a legal mask")
         parts.append({k: v for k, v in arrays.items() if k in TRAIN_KEYS or str(k).startswith("_")})
+        if consumed is not None:
+            consumed.append(shards[int(i)])  # provenance: the shards actually read
         rows += int(arrays["x"].shape[0])
         if rows >= max_rows:
             break
@@ -536,6 +565,72 @@ def trainer_kwargs(settings: TrainSettings) -> dict[str, Any]:
     }
 
 
+_GROUP_HPARAMS = ("weight_decay", "betas", "eps", "momentum_decay")
+
+
+def optimizer_hparams(trainer: Any) -> dict[str, Any]:
+    """The optimizer hyperparameters a restore can carry, read off the live
+    trainer (scheduler + param groups), JSON-ready."""
+    def plain(v: Any) -> Any:
+        return [float(x) for x in v] if isinstance(v, (tuple, list)) else float(v)
+
+    sched = trainer._scheduler
+    return {
+        "peak_lr": float(trainer._peak_lr),
+        "base_lrs": [float(v) for v in getattr(sched, "base_lrs", [])],
+        "lr_floor": float(getattr(sched, "eta_min", float("nan"))),
+        "groups": [{k: plain(g[k]) for k in _GROUP_HPARAMS if k in g} for g in trainer.opt.param_groups],
+    }
+
+
+def realised_optimizer(trainer: Any) -> dict[str, Any]:
+    out = optimizer_hparams(trainer)
+    out["param_group_lr"] = [float(g["lr"]) for g in trainer.opt.param_groups]
+    return out
+
+
+def _hparam_diff(want: dict[str, Any], have: dict[str, Any]) -> dict[str, Any]:
+    import math as _m
+
+    def close(a: Any, b: Any) -> bool:
+        if isinstance(a, list) and isinstance(b, list):
+            return len(a) == len(b) and all(close(x, y) for x, y in zip(a, b, strict=True))
+        if isinstance(a, dict) and isinstance(b, dict):
+            return a.keys() == b.keys() and all(close(a[k], b[k]) for k in a)
+        if isinstance(a, float) and isinstance(b, float):
+            return (_m.isnan(a) and _m.isnan(b)) or _m.isclose(a, b, rel_tol=1e-9, abs_tol=0.0)
+        return a == b
+
+    return {k: {"checkpoint": have.get(k), "requested": want[k]} for k in want if not close(want[k], have.get(k))}
+
+
+def continue_optimizer(trainer: Any, checkpoint: Path, settings: TrainSettings) -> dict[str, Any]:
+    """``trainer.load(exact_resume=True)`` restores the checkpoint's optimizer
+    hyperparameters along with its moments, so the requested ``--lr`` /
+    ``--lr-floor`` / weight decay would be silently ignored. Refuse any
+    difference, or with ``reapply_optimizer_hparams`` re-apply the requested
+    values (schedule phase kept). Returns what was compared and done."""
+    requested = optimizer_hparams(trainer)
+    trainer.load(checkpoint, exact_resume=True)
+    restored = optimizer_hparams(trainer)
+    want = {k: requested[k] for k in ("peak_lr", "lr_floor", "groups")}
+    diff = _hparam_diff(want, restored)
+    if diff and not settings.reapply_optimizer_hparams:
+        raise ValueError(f"--optimizer-state continue: the checkpoint's optimizer hyperparameters differ from the "
+                         f"requested ones {json.dumps(diff, default=str)}; restoring would silently ignore them. "
+                         "Pass --reapply-optimizer-hparams to apply the requested values, or request the "
+                         "checkpoint's")
+    if diff:
+        trainer._reapply_configured_param_group_hparams()  # weight decay & co, from this trainer's config
+        trainer.set_peak_lr(float(settings.lr))  # base_lrs, active lr and _peak_lr, phase preserved
+        if hasattr(trainer._scheduler, "eta_min"):
+            trainer._scheduler.eta_min = float(requested["lr_floor"])
+        left = _hparam_diff(want, optimizer_hparams(trainer))
+        if left:
+            raise RuntimeError(f"re-applying optimizer hyperparameters left differences: {left}")
+    return {"differed": diff, "reapplied": bool(diff)}
+
+
 def build_trainer(model_config: Any, settings: TrainSettings, *, log_dir: Path | None) -> Any:
     from chess_anti_engine.model import build_model
     from chess_anti_engine.train import Trainer
@@ -588,15 +683,18 @@ def _log_softmax_masked(logits: np.ndarray, mask: np.ndarray) -> np.ndarray:
 
 
 def heldout_metrics(model: Any, rows: dict[str, np.ndarray], device: str) -> dict[str, float]:
-    """Policy CE to the stored target, policy entropy, value NLL to the outcome."""
+    """Policy CE to the stored target and policy entropy over rows that HAVE a
+    policy target (``has_policy``: fast playout-cap rows are value-only);
+    value NLL to the outcome over every row."""
     n = int(rows["x"].shape[0])
     if n == 0:
         return {"rows": 0}
     pol, wdl = _forward(model, rows["x"], device)
-    mask = np.asarray(rows["legal_mask"]) > 0
-    logp = _log_softmax_masked(pol, mask)
+    has = np.asarray(rows.get("has_policy", np.ones(n)), dtype=bool)
+    mask = np.asarray(rows["legal_mask"])[has] > 0
+    logp = _log_softmax_masked(pol[has], mask)
     p = np.where(mask, np.exp(logp), 0.0)
-    target = np.asarray(rows["policy_target"], dtype=np.float64)
+    target = np.asarray(rows["policy_target"], dtype=np.float64)[has]
     target /= target.sum(axis=1, keepdims=True)
     safe = np.where(mask, logp, 0.0)
     ce = -(target * safe).sum(axis=1)
@@ -605,7 +703,10 @@ def heldout_metrics(model: Any, rows: dict[str, np.ndarray], device: str) -> dic
     lw = lw - np.log(np.exp(lw).sum(axis=1, keepdims=True))
     y = np.asarray(rows["wdl_target"]).astype(np.int64)
     nll = -lw[np.arange(n), y]
-    return {"rows": n, "policy_ce": float(ce.mean()), "policy_entropy": float(ent.mean()),
+    nan = float("nan")
+    return {"rows": n, "policy_rows": int(has.sum()),
+            "policy_ce": float(ce.mean()) if ce.size else nan,
+            "policy_entropy": float(ent.mean()) if ent.size else nan,
             "value_nll": float(nll.mean())}
 
 
@@ -637,9 +738,11 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
     run_dir = Path(run_dir)
     out_dir = run_dir / f"gen_{generation:04d}" / "train"
     out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "manifest.json").unlink(missing_ok=True)  # a redo is unsealed until its own manifest lands
     seed = seed_for(settings.seed, "train", generation)
-    np.random.seed(seed & 0xFFFFFFFF)
-    torch.manual_seed(seed & 0xFFFFFFFF)
+    global_seed = seed & 0xFFFFFFFF  # numpy's legacy seed is 32-bit; record what was realised
+    np.random.seed(global_seed)
+    torch.manual_seed(global_seed)
     settings.validate()
     arch, model_config = load_arch_config(init_checkpoint)
     train_rows, holdout, gens, row_ids = load_window(run_dir, generation, settings)
@@ -662,9 +765,10 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
 
     trainer = build_trainer(model_config, settings, log_dir=None)
     continued = settings.optimizer_state == "continue" and prev_trainer_checkpoint is not None
+    optimizer_check: dict[str, Any] | None = None
     if continued:
         assert prev_trainer_checkpoint is not None
-        trainer.load(prev_trainer_checkpoint, exact_resume=True)
+        optimizer_check = continue_optimizer(trainer, prev_trainer_checkpoint, settings)
     else:
         load_weights(trainer, init_checkpoint)
 
@@ -682,6 +786,7 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
     before = heldout_metrics(trainer.model, holdout, settings.device)
     counts_before, sl_cursor = presentation_counts(run_dir, before_generation=generation)
     sl_rows = None
+    sl_shards: list[Path] = []
     if settings.sl_mix_frac > 0:
         if not settings.sl_mix_dir:
             raise ValueError("--sl-mix-frac > 0 needs --sl-mix-dir")
@@ -689,7 +794,8 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
         # from the ledger's cursor: no SL row is used twice in a run.
         sl_rows = load_sl_corpus(Path(settings.sl_mix_dir), max_rows=settings.sl_mix_max_rows,
                                  seed=seed_for(settings.seed, "sl"),
-                                 need_search=settings.w_wdl > 0 and settings.search_wdl_frac() > 0)
+                                 need_search=settings.w_wdl > 0 and settings.search_wdl_frac() > 0,
+                                 consumed=sl_shards)
         perm = np.random.default_rng(seed_for(settings.seed, "sl-order")).permutation(int(sl_rows["x"].shape[0]))
         sl_rows = {k: (v if str(k).startswith("_") else np.asarray(v)[perm]) for k, v in sl_rows.items()}
     sampler: ScheduledSampler | WindowSampler
@@ -749,6 +855,7 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
     prev_model = load_model_from_checkpoint(init_checkpoint, device=settings.device)
     drift = probe_drift(trainer.model, prev_model, probe, settings.device)
     realised_lr = [float(g["lr"]) for g in trainer.opt.param_groups]
+    realised_opt = realised_optimizer(trainer)  # read off the live optimizer after the phase's steps
     m = asdict(metrics)
     counts_after = {g: c.copy() for g, c in counts_before.items()}
     for g in np.unique(presented_ids[:, 0]) if presented_ids.size else []:
@@ -774,6 +881,7 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
         "drawn_rows": sampler.drawn_rows, "sl_rows_drawn": sampler.realised_sl_rows,
         "sl_frac_realised": sampler.realised_sl_rows / max(1, sampler.drawn_rows),
         "optimizer_continued": continued, "realised_lr_param_groups": realised_lr,
+        "realised_optimizer": realised_opt, "optimizer_continue_check": optimizer_check,
         "realised_search_wdl_frac": float(trainer._loss_kwargs["search_wdl_frac"]),
         "realised_w_wdl": float(trainer._loss_kwargs["w_wdl"]),
         "realised_policy_target_temp": float(trainer._loss_kwargs["policy_target_temp"]),
@@ -792,12 +900,21 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
         inputs["kl_reference"] = input_ref(Path(settings.kl_reference))
     if reference_prior is not None and settings.prior_mix_reference:
         inputs["prior_mix_reference"] = input_ref(Path(settings.prior_mix_reference))
-    write_manifest(out_dir, stage="train", config={"settings": asdict(settings), "arch": arch},
-                   inputs=inputs, outputs={"model": input_ref(model_path), "presented": input_ref(out_dir / PRESENTED)},
-                   counts={"updates": updates, "window_rows": sampler.n},
-                   seeds={"train": seed, "base": settings.seed}, extra={"generation": generation, "summary": summary})
-    # Run-level view of the ledger (derived; the phases' presented.npz are the record).
+    inputs["probe"] = input_ref(probe_path)
+    for k, shard in enumerate(sl_shards):
+        inputs[f"sl_shard_{k:04d}"] = input_ref(shard)
+    # Run-level view of the ledger: derived from the phases' presented.npz and
+    # rewritten by every phase, so it is written BEFORE the manifest seals this one.
     write_json_atomic(run_dir / LEDGER, {"through_generation": generation, "sampling": summary["sampling"],
                                          "presentations": int(settings.presentations),
                                          "generations": histograms, "sl_rows_used": sl_end})
+    write_manifest(out_dir, stage="train",
+                   config={"settings": asdict(settings), "arch": arch,
+                           # realised, read off the objects that consumed them
+                           "realised": {"optimizer": realised_opt, "amp": bool(trainer.use_amp),
+                                        "device": str(trainer.device)}},
+                   inputs=inputs, outputs={"model": input_ref(model_path), "presented": input_ref(out_dir / PRESENTED)},
+                   counts={"updates": updates, "window_rows": sampler.n},
+                   seeds={"train": seed, "global_seed_realised": global_seed, "base": settings.seed},
+                   extra={"generation": generation, "summary": summary})
     return summary

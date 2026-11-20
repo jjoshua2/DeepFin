@@ -2203,6 +2203,11 @@ def run_gumbel_root_many_c(
                 probs_out[i], actions_out[i], values_out[i] = one_hot_root_policy(
                     min(_pruned), value=0.0,
                 )
+                # The returned row is no longer the completed-Q arithmetic the
+                # statistics describe (the draw is not a searched child), so
+                # they are withdrawn, like every other exact shortcut's.
+                if root_stats_out is not None:
+                    root_stats_out[i] = None
 
   # Build legal masks
     legal_masks_out: list[np.ndarray] = []

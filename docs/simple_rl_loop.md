@@ -51,8 +51,17 @@ marker your GPU window uses.
 The first `run` pins its settings in `<run-dir>/run_config.json`: every flag
 except the operational ones (run dir, generation count, device, threads, pause
 markers, tripwire thresholds). A later `run` with different settings is refused
-unless `--allow-config-change` is given, which records the change; the new values
-apply from the next stage that starts.
+unless `--allow-config-change` is given, which records the change. A stage takes
+its settings from the flags it is started with, so a changed collect, train or
+arena setting applies to every stage that runs after the change; a stage that
+already completed is not redone. Settings a stage RESTORES rather than reads are
+not covered by this: under `--optimizer-state continue` the optimizer's
+hyperparameters come from the checkpoint (see Training details). `device` is
+pinned (it switches bf16 autocast in collect and train); `eval_device` is not.
+The standalone `collect` / `train` / `evaluate` subcommands are held to the same
+`run_config.json` when the run dir has one, skip a stage that is already complete
+unless `--redo` is given (which unseals it first), and every stage loads a model
+only when its manifest is present and records that file's sha256.
 
 ## What each stage writes
 
@@ -74,11 +83,23 @@ Every `manifest.json` holds the stage config, inputs with SHA-256, outputs with
 SHA-256, seeds, counts, git SHA and dirty flag, and the runtime versions.
 
 **split-openings.** Lines are book mainlines cut to the book's ply cap,
-deduplicated, and filtered to non-terminal starts with at least two legal moves.
-EVAL is the `--eval-lines` (default 4,000) lines with the smallest
-`sha256(salt, line)`. A remaining line whose final position equals an eval final
-position, its colour mirror or its left-right mirror is excluded from TRAIN.
-Outputs `train.jsonl`, `eval.jsonl` and `eval.pgn` (for the arena's `--openings`).
+deduplicated, and filtered to non-terminal starts with at least two legal moves; a
+game with a PGN parse error is rejected and counted (never kept as a truncated
+prefix). A position's orbit is the position, its colour mirror, its left-right
+reflection (the trainer's mirror augmentation) and the reflection of the colour
+mirror. EVAL is the `--eval-lines` (default 4,000) lines with the smallest
+`sha256(salt, line)`, skipping a line whose final-position orbit repeats an EVAL
+line already chosen. A remaining line is excluded from TRAIN when any position on
+its path is in the orbit of an EVAL start, or when its final position is in the
+orbit of any position on an EVAL line's path: no TRAIN game starts at, passes
+through, or is a prefix of an EVAL start. TRAIN is not de-duplicated by position
+(naturally recurring positions stay); the duplicate counts are reported. On the
+two production books: 158,106 lines parsed, 0 parse errors, 4,000 EVAL (0 skipped
+as duplicates or mirrors), 153,842 TRAIN, 219 excluded (139 pass through an EVAL
+start, 80 end on an EVAL path), 0 TRAIN lines sharing a final position or orbit.
+Rerunning with different `--eval-lines`, `--salt` or books into an existing split
+is refused. Outputs `train.jsonl`, `eval.jsonl`, `eval.pgn` (for the arena's
+`--openings`) and `summary.json` (whose `eval_max_plies` the arena replays).
 
 **collect.** `--games` games from TRAIN lines drawn without replacement within the
 generation, 95% / 5% by book as production (`--book-mix`). Both seats are the net.
@@ -125,8 +146,14 @@ and anchor diagnostics read off the objects that consumed them.
 
 **evaluate.** `arena_standard --mode matched_sims --search-shape training` on
 `eval.pgn`, fixed seed, fixed N, no SPRT and (by default) no root noise, for
-new-vs-previous and new-vs-reference (default reference: generation 0). Only each
-arena's final record is read; it is appended to `ledger.jsonl`. `--search-shape
+new-vs-previous and new-vs-reference (default reference: generation 0). The arena
+samples moves at its default temperature 0.1, so the two games of an opening pair
+are not mirror images of each other. Book plies replayed default to the split's
+`eval_max_plies`; a smaller `--eval-opening-plies` is refused (games would start
+mid-line). Only each arena's final record is read, and it must be complete
+(`games == games_requested`, not truncated) or the stage fails. Both matches'
+records are written to `ledger.jsonl` together, replacing any rows an interrupted
+attempt left for that generation, so a redo never duplicates them. `--search-shape
 training` takes c_scale/topk/policy temperature from this tree's production yaml,
 which need not equal the loop's own collection flags; add `--arena-arg` to override.
 With `--syzygy` the arena is strict: a single game still unresolved at
@@ -143,8 +170,8 @@ refuses to run rather than pass.
 | Setting | Default | Why |
 |---|---|---|
 | Openings | 154k TRAIN lines from the two production books | 192 recurring openings gave 18% exact repeats |
-| Move temperature | 0.5 on the first ply after the book, linear to 0.1 over 10 plies, then 0.1 | mild early diversity without random-looking games; counted from the book's end (`TemperatureConfig.schedule_plies_from_start`), so 2-move and 8-move lines get the same window |
-| Root noise | Gumbel scale 1.0, to 0.5 over moves 12-15 | production self-play |
+| Move temperature | 0.5 on the first ply after the book, linear to 0.1 over 10 plies, then 0.1 for the rest of the game | mild early diversity without random-looking games; counted in plies from the book's end (`TemperatureConfig.schedule_plies_from_start`), so 2-move and 8-move lines get the same window. The floor never reaches 0, so every played move is SAMPLED from the stored target, not the halving survivor (`played_move_index` and `root_survivor_index` are both stored) |
+| Root noise | Gumbel scale 1.0, to 0.5 over moves 12-15 | production self-play; counted in FULL MOVES from the start position (the book plies included), unlike the temperature clock |
 | Sims / topk / c_scale / c_visit | 64 / 16 / 0.1 / 50 | the F12 instrument and the D1 search-gain reads |
 | Tree reuse | on (`--no-tree-reuse` to turn off) | production behaviour; see below |
 | Playout cap randomisation | off (`--full-prob 1.0`) | see below |
@@ -189,7 +216,7 @@ otherwise no row). Every net-turn row records `search_budget`; `stats.json` coun
 rows by budget.
 
 **Stored root statistics.** With `GameConfig.record_root_stats` (on in this loop,
-off by default everywhere else) each policy row also carries, in compact policy
+off by default everywhere else) each searched row also carries, in compact policy
 space and float32: `root_log_prior` (the search's prior, tempered by
 `--policy-temp`), `root_child_q` (completed Q per root child), `root_child_visits`
 (-1 off the searched support), and three root values that differ materially:
@@ -204,8 +231,14 @@ plus `root_start_visits`, `root_survivor_index` and `played_move_index`.
 `mcts.gumbel_c.rebuild_improved_policy` rebuilds the stored target from the
 vectors and `root_net_value` (the value unvisited children are filled with) under
 the run's `GumbelConfig`, so targets can be re-scored offline under different sigma
-knobs without re-searching. Rows whose target was replaced by the tablebase policy
-are flagged in the row sidecar (`tb_policy_override`).
+knobs without re-searching. The stored `policy_target` itself is float16, so a
+rebuild matches it to within 1.5e-4. A row the search returned through an exact
+shortcut rather than the completed-Q arithmetic (a solved or tablebase root, a
+single legal move, or the pruned-draw fallback of #1410, which plays an unsearched
+drawing move) carries NO statistics, never stale ones; `stats.json` counts them
+(`rows_without_root_stats`) and their value target falls back as described under
+Training details. Rows whose target was replaced by the tablebase policy are
+flagged in the row sidecar (`tb_policy_override`).
 
 ## Stockfish
 
@@ -221,7 +254,18 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
 
 - `--optimizer-state fresh` (default) builds a new optimizer each generation;
   `continue` restores the previous generation's optimizer, scheduler and step, so
-  warmup happens once.
+  warmup happens once. The restore also brings the checkpoint's peak LR, LR floor
+  and per-group weight decay, so a different `--lr` / `--lr-floor` would be
+  silently ignored: the phase REFUSES such a difference unless
+  `--reapply-optimizer-hparams` is given, which re-applies the requested values
+  (schedule phase kept). The values realised after the phase's steps, read off
+  the param groups and scheduler, are recorded in the train manifest
+  (`config.realised.optimizer`) and in `metrics.json`.
+- Every batch of the exact-once schedule gives each row the coefficient
+  1 / batch size: the short final batch is scaled by rows / batch size rather
+  than averaged over its own rows. A non-finite gradient fails the phase (the
+  stage is redone whole) instead of skipping an update whose rows were already
+  consumed.
 - `--lr-floor` defaults to `--lr` (flat after warmup).
 - `--kl-policy` / `--kl-wdl` add KL(reference‖student) on legal-move policy and on
   WDL; the reference defaults to generation 0 (`--kl-reference`).
@@ -231,8 +275,8 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
   turned into a WDL: with draw `d` from `--value-draw-source` (`net`: the raw
   net's root draw probability; `zero`: 0), d is clipped to `1 - |q|`, then
   `W = (1 - d + q)/2`, `D = d`, `L = (1 - d - q)/2`, so W - L = q exactly. It is
-  never the root-node average. Rows without a usable survivor Q (solved roots, or a
-  survivor outside the searched support) keep the shard's stored `search_wdl`,
+  never the root-node average. Rows without a usable survivor Q (exact-shortcut rows,
+  which carry no root statistics, or a survivor outside the searched support) keep the shard's stored `search_wdl`,
   whose draw also comes from the raw net's root draw (`mcts/_mcts_tree.c`); the
   counts are in `metrics.json` under `targets`. `--value-search-source
   stored_search_wdl` uses the stored field for every row.
@@ -241,11 +285,20 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
   (`--prior-mix-source reference`, `--prior-mix-reference`, default generation 0)
   or the searching net's stored prior (`actor`, which includes `--policy-temp`).
   `--train-target-temp` is applied after the mix, inside the loss
-  (`policy_target_temp`).
+  (`policy_target_temp`). The reference prior is computed once per row on the
+  un-mirrored input and mixed in before the Trainer's mirror augmentation, so a
+  mirrored row trains on mirror(ref(x)) rather than ref(mirror(x)) -- the same
+  convention as the stored search target, which is also searched on the
+  un-mirrored position. Measured with the SL base on 512 smoke-run positions:
+  mean KL(mirror(ref(x)) ‖ ref(mirror(x))) = 0.0117 nats (p95 0.055), top-1
+  agreement 96.5%, mean total variation 0.029.
 - `--sl-mix-dir` / `--sl-mix-frac` put exactly `round(frac × batch)` rows of an
   external shard corpus in every full batch (the same proportion, rounded, in the
   short final batch), with their own labels. Corpus rows come from one fixed
   order for the whole run, consumed from a cursor kept in the presentation
-  records, so each is used at most once per run; an exhausted corpus is an
-  error; a corpus without a
+  records, so under the exact-once schedule each is used at most once per run
+  (under `--sample-with-replacement` SL rows are drawn with replacement too and
+  the cursor does not move); an exhausted corpus is an error. The sha256 of every
+  corpus shard actually read, and of `probe.npz`, is in the train manifest; a
+  corpus without a
   legal mask (or without `search_wdl` when the value target needs it) is refused.

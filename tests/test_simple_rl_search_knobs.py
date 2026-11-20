@@ -10,7 +10,7 @@ source text.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any
+from typing import Any, cast
 
 import chess
 import numpy as np
@@ -135,3 +135,86 @@ def test_target_q_rescale_moves_the_target_but_not_the_survivor() -> None:
     assert [s.survivor for s in base_stats] == [s.survivor for s in off_stats]
     for a, b in zip(base_stats, off_stats, strict=True):
         np.testing.assert_array_equal(a.visits, b.visits)  # store-arm only: the search is identical
+
+
+def _edge_search(fen: str, evaluator: Any, wdl: np.ndarray, **kwargs: Any) -> tuple[Any, Any, list[Any], Any]:
+    from chess_anti_engine.mcts.gumbel import GumbelConfig
+    from chess_anti_engine.moves import POLICY_SIZE
+
+    board = chess.Board(fen)
+    cfg = GumbelConfig(input_extra_features="v1", simulations=64, topk=16, temperature=0.0, add_noise=False)
+    stats: list[Any] = []
+    out = run_gumbel_root_many_c(
+        None, cast(Any, [board]), device="cpu", rng=np.random.default_rng(0), cfg=cfg, evaluator=evaluator,
+        pre_pol_logits=np.zeros((1, POLICY_SIZE), np.float32), pre_wdl_logits=wdl, target_batch=1,
+        root_stats_out=stats, **kwargs,
+    )
+    return out[0][0], out[1][0], stats, cfg
+
+
+def test_root_stats_withdrawn_when_the_pruned_draw_fallback_replaces_the_row() -> None:
+    """#1410: a winning-looking root whose searched moves all lose plays the
+    pruned stalemate one-hot. That row is not the completed-Q arithmetic, so it
+    must carry no statistics (a stale survivor_q of about -1 would become a
+    LOSS value target on a drawn row)."""
+    from tests.test_root_draw_pruning import BXA7_FEN, _WINNING_ROOT, _idx, _SideToMoveWins
+
+    probs, action, stats, _ = _edge_search(BXA7_FEN, _SideToMoveWins(), _WINNING_ROOT)
+    draw = _idx(chess.Board(BXA7_FEN), "b6a7")
+    assert int(action) == draw
+    assert float(probs[draw]) == 1.0
+    assert stats == [None]
+
+
+@pytest.mark.parametrize(("fen", "why"), [
+    ("7k/8/6KQ/8/8/8/8/8 w - - 0 1", "mate-in-one terminal shortcut"),
+    ("k7/8/1K6/8/8/8/8/7R b - - 0 1", "single legal move"),
+])
+def test_root_stats_absent_on_exact_shortcuts(fen: str, why: str) -> None:
+    from tests.test_root_draw_pruning import _NeutralLeaves
+
+    board = chess.Board(fen)
+    if why == "single legal move":
+        assert board.legal_moves.count() == 1
+    _, _, stats, _ = _edge_search(fen, _NeutralLeaves(), np.zeros((1, 3), np.float32))
+    assert stats == [None], why
+
+
+def test_root_stats_rebuild_under_explicit_searchmoves() -> None:
+    """A narrowed root (UCI searchmoves) is still the completed-Q arithmetic,
+    over the narrowed support; the statistics describe exactly that support."""
+    from chess_anti_engine.moves import move_to_index
+    from tests.test_root_draw_pruning import _NeutralLeaves
+
+    board = chess.Board()
+    allowed = {move_to_index(chess.Move.from_uci(u), board) for u in ("e2e4", "d2d4", "g1f3")}
+    probs, _, stats, cfg = _edge_search(chess.STARTING_FEN, _NeutralLeaves(), np.zeros((1, 3), np.float32),
+                                        allowed_root_indices_batch=[allowed])
+    s = stats[0]
+    assert s is not None
+    assert set(s.legal.tolist()) == allowed
+    rebuilt = rebuild_improved_policy(log_prior=s.log_prior, completed_q=s.completed_q, visits=s.visits,
+                                      net_value=s.net_value, cfg=cfg)
+    np.testing.assert_allclose(probs[s.legal], rebuilt, atol=1e-6)
+    assert float(probs.sum()) == pytest.approx(float(probs[s.legal].sum()), abs=1e-6)
+
+
+def test_root_stats_on_a_root_draw_pruning_no_longer_cuts_to_one_move() -> None:
+    """#1410's other change: a root that pruning would leave with ONE move keeps
+    its drawing moves in the search. On ``KXD7`` the search then proves Kf8
+    mated and returns the stalemate one-hot (an exact solved-root shortcut), so
+    the row carries no statistics -- and it never carries statistics that do
+    not rebuild the row. Both a winning-looking and a neutral root."""
+    from tests.test_root_draw_pruning import _WINNING_ROOT, KXD7_FEN, _idx, _NeutralLeaves
+
+    board = chess.Board(KXD7_FEN)
+    for wdl in (_WINNING_ROOT, np.zeros((1, 3), np.float32)):
+        probs, action, stats, cfg = _edge_search(KXD7_FEN, _NeutralLeaves(), wdl)
+        assert int(action) == _idx(board, "e8d7")
+        s = stats[0]
+        if s is None:
+            assert float(probs.max()) == 1.0  # exact shortcut, one-hot
+        else:
+            rebuilt = rebuild_improved_policy(log_prior=s.log_prior, completed_q=s.completed_q, visits=s.visits,
+                                              net_value=s.net_value, cfg=cfg)
+            np.testing.assert_allclose(probs[s.legal], rebuilt, atol=1e-6)

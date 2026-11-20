@@ -29,6 +29,7 @@ from chess_anti_engine.simple_rl.common import (
     blocking_markers,
     input_ref,
     read_manifest,
+    sha256_tree,
     stage_done,
     write_json_atomic,
     write_manifest,
@@ -55,6 +56,20 @@ def gen_dir(run_dir: Path, g: int) -> Path:
 
 def model_path(run_dir: Path, g: int) -> Path:
     return gen_dir(run_dir, 0) / MODEL_FILE if g == 0 else gen_dir(run_dir, g) / "train" / MODEL_FILE
+
+
+def sealed_model(run_dir: Path, g: int) -> Path:
+    """Generation g's model, only if its stage manifest is present and its
+    recorded sha256 is the file on disk (a kill between the weights and the
+    manifest of a redo, or a stray overwrite, is refused rather than used)."""
+    path = model_path(run_dir, g)
+    manifest = read_manifest(path.parent)
+    if manifest is None:
+        raise SystemExit(f"generation {g} model is not sealed (no manifest beside {path}); redo that stage")
+    want = manifest["outputs"]["model"]["sha256"]
+    if not path.is_file() or sha256_tree(path) != want:
+        raise SystemExit(f"{path} does not match the sha256 its manifest recorded ({want}); redo that stage")
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -99,16 +114,17 @@ def init_run(run_dir: Path, *, init_checkpoint: str | None, random_init: bool,
             raise SystemExit(f"--model-config has unknown ModelConfig keys {sorted(unknown)}")
         arch = {**base, **overrides, "_schema_version": ARCH_SCHEMA_VERSION}
         cfg = model_config_from_arch(arch)
-        torch.manual_seed(int(seed) & 0xFFFFFFFF)
+        torch_seed = int(seed) & 0xFFFFFFFF
+        torch.manual_seed(torch_seed)
         # The Trainer only serialises the fresh weights in the standard
         # self-describing format (model + arch) every loader here reads.
         trainer = build_trainer(cfg, TrainSettings(device="cpu"), log_dir=None)
         trainer.save(target)
         inputs = {**({"arch_from": input_ref(Path(arch_from))} if arch_from else {}),
                   **({"model_config": input_ref(Path(model_config))} if model_config else {})}
-        config = {"kind": "random_init", "arch": arch}
+        config = {"kind": "random_init", "arch": arch, "torch_seed": torch_seed}
     write_manifest(out, stage="init", config=config, inputs=inputs, outputs={"model": input_ref(target)},
-                   counts={}, seeds={"init": int(seed)})
+                   counts={}, seeds={"init": int(seed), "init_torch_seed_realised": int(seed) & 0xFFFFFFFF})
     return target
 
 
@@ -140,7 +156,8 @@ def train_settings(a: argparse.Namespace, run_dir: Path) -> TrainSettings:
         presentations=a.presentations, sample_with_replacement=a.sample_with_replacement,
         window=a.window, batch_size=a.batch_size, updates=a.updates, passes=a.passes, lr=a.lr,
         lr_floor=a.lr_floor, warmup_steps=a.warmup_steps, warmup_start=a.warmup_start,
-        optimizer=a.optimizer, optimizer_state=a.optimizer_state, mirror_prob=a.mirror_prob,
+        optimizer=a.optimizer, optimizer_state=a.optimizer_state,
+        reapply_optimizer_hparams=a.reapply_optimizer_hparams, mirror_prob=a.mirror_prob,
         w_policy=a.w_policy, w_wdl=a.w_wdl, value_outcome_weight=a.value_outcome_weight,
         value_search_weight=a.value_search_weight, value_search_source=a.value_search_source,
         value_draw_source=a.value_draw_source, policy_prior_mix=a.policy_prior_mix,
@@ -154,11 +171,26 @@ def train_settings(a: argparse.Namespace, run_dir: Path) -> TrainSettings:
     return settings
 
 
+def eval_opening_plies(a: argparse.Namespace) -> int:
+    """The arena must replay every EVAL line to its end: read the split's
+    longest line and refuse a smaller explicit value."""
+    summary_path = Path(a.openings_dir) / "summary.json"
+    longest = int(json.loads(summary_path.read_text())["eval_max_plies"]) if summary_path.is_file() else None
+    if a.eval_opening_plies is None:
+        if longest is None:
+            raise SystemExit(f"{summary_path} missing; pass --eval-opening-plies")
+        return longest
+    if longest is not None and int(a.eval_opening_plies) < longest:
+        raise SystemExit(f"--eval-opening-plies {a.eval_opening_plies} < the split's longest EVAL line ({longest}): "
+                         "arena games would start mid-line")
+    return int(a.eval_opening_plies)
+
+
 def eval_settings(a: argparse.Namespace) -> EvalSettings:
     return EvalSettings(games=a.eval_games, sims=a.eval_sims, seed=a.eval_seed,
                         device=a.eval_device or a.device,
                         syzygy=None if a.eval_no_syzygy else a.syzygy, max_plies=a.eval_max_plies,
-                        opening_plies=a.eval_opening_plies, max_concurrent_games=a.eval_concurrency,
+                        opening_plies=eval_opening_plies(a), max_concurrent_games=a.eval_concurrency,
                         root_noise=a.eval_root_noise,
                         extra_args=tuple(a.arena_arg or ()))
 
@@ -172,9 +204,7 @@ def thresholds(a: argparse.Namespace) -> dict[str, float | None]:
 # ---------------------------------------------------------------------------
 
 def do_collect(a: argparse.Namespace, run_dir: Path, g: int) -> None:
-    ckpt = model_path(run_dir, g - 1)
-    if not ckpt.is_file():
-        raise SystemExit(f"generation {g - 1} model missing: {ckpt}")
+    ckpt = sealed_model(run_dir, g - 1)
     stats = collect_generation(gen_dir=gen_dir(run_dir, g) / "collect", generation=g, checkpoint=ckpt,
                                train_jsonl=Path(a.openings_dir) / "train.jsonl", settings=collect_settings(a))
     print(json.dumps({"stage": "collect", "generation": g, **{k: stats[k] for k in (
@@ -183,8 +213,8 @@ def do_collect(a: argparse.Namespace, run_dir: Path, g: int) -> None:
 
 
 def do_train(a: argparse.Namespace, run_dir: Path, g: int) -> None:
-    prev_trainer = model_path(run_dir, g - 1) if g > 1 else None
-    summary = train_generation(run_dir=run_dir, generation=g, init_checkpoint=model_path(run_dir, g - 1),
+    prev_trainer = sealed_model(run_dir, g - 1) if g > 1 else None
+    summary = train_generation(run_dir=run_dir, generation=g, init_checkpoint=sealed_model(run_dir, g - 1),
                                prev_trainer_checkpoint=prev_trainer, settings=train_settings(a, run_dir))
     print(json.dumps({"stage": "train", "generation": g, "updates": summary["updates"],
                       "heldout_after": summary["heldout_after"], "probe": summary["probe_vs_previous"],
@@ -193,9 +223,9 @@ def do_train(a: argparse.Namespace, run_dir: Path, g: int) -> None:
 
 
 def do_evaluate(a: argparse.Namespace, run_dir: Path, g: int) -> None:
-    ref = Path(a.reference_checkpoint) if a.reference_checkpoint else model_path(run_dir, 0)
-    results = evaluate_generation(run_dir=run_dir, generation=g, candidate=model_path(run_dir, g),
-                                  previous=model_path(run_dir, g - 1), reference=ref,
+    ref = Path(a.reference_checkpoint) if a.reference_checkpoint else sealed_model(run_dir, 0)
+    results = evaluate_generation(run_dir=run_dir, generation=g, candidate=sealed_model(run_dir, g),
+                                  previous=sealed_model(run_dir, g - 1), reference=ref,
                                   openings_pgn=Path(a.openings_dir) / "eval.pgn", settings=eval_settings(a))
     print(json.dumps({"stage": "evaluate", "generation": g, **results}, default=str), flush=True)
 
@@ -219,8 +249,10 @@ def tripwire_exit(a: argparse.Namespace, run_dir: Path) -> int:
 # process runs or when to stop. A deny-list, so a newly added flag is pinned by
 # default instead of being changeable mid-run without a record.
 RUN_CONFIG_EXEMPT = frozenset({
-    "command", "run_dir", "generations", "allow_config_change", "threads", "pause_marker", "device",
-    "eval_device", "tripwire", *TRIPWIRE_FIELDS,
+    # `device` is NOT exempt: it switches bf16 autocast in collect and train.
+    # `eval_device` only places the arena (whose AMP choice is its own record).
+    "command", "run_dir", "generations", "generation", "redo", "allow_config_change", "threads",
+    "pause_marker", "eval_device", "tripwire", *TRIPWIRE_FIELDS,
 })
 
 
@@ -279,6 +311,14 @@ def cmd_stage(a: argparse.Namespace) -> int:
     if blocked:
         print("not starting: " + "; ".join(blocked), file=sys.stderr)
         return EXIT_BLOCKED
+    if (run_dir / RUN_CONFIG).exists():
+        check_run_config(a, run_dir)  # the same pinned settings a `run` would be held to
+    stage_dir = gen_dir(run_dir, a.generation) / ("eval" if a.command == "evaluate" else a.command)
+    if stage_done(stage_dir) and not a.redo:
+        print(f"{stage_dir} is already complete (manifest present); --redo to replace it", file=sys.stderr)
+        return 0
+    if stage_dir.exists() and a.redo:
+        (stage_dir / "manifest.json").unlink(missing_ok=True)  # unsealed until the redo's manifest lands
     if a.command == "collect":
         init_run(run_dir, init_checkpoint=a.init_checkpoint, random_init=a.random_init,
                  model_config=a.model_config, arch_from=a.arch_from, seed=a.seed)
@@ -294,8 +334,15 @@ def cmd_split(a: argparse.Namespace) -> int:
             raise SystemExit(f"--book wants PATH:MAX_PLIES, got {spec!r}")
         books.append((Path(path), int(plies)))
     out = Path(a.out)
-    if read_manifest(out) is not None and not a.force:
-        print(f"{out} already split (manifest present); --force to redo", file=sys.stderr)
+    existing = read_manifest(out)
+    if existing is not None and not a.force:
+        want = {"eval_lines": a.eval_lines, "salt": a.salt,
+                "books": [{"path": str(p), "max_plies": m, "book": i + 1} for i, (p, m) in enumerate(books)]}
+        have = {k: existing.get("config", {}).get(k) for k in want}
+        if have != want:
+            raise SystemExit(f"{out} was split with different settings {have}; asked for {want}. "
+                             "Use another --out, or --force to replace it")
+        print(f"{out} already split with these settings (manifest present); --force to redo", file=sys.stderr)
         return 0
     print(json.dumps(split_openings(books=books, out_dir=out, eval_lines=a.eval_lines, salt=a.salt)), flush=True)
     return 0
@@ -373,6 +420,9 @@ def _common(p: argparse.ArgumentParser) -> None:
     t.add_argument("--warmup-start", type=float, default=0.0)
     t.add_argument("--optimizer", default="nadamw")
     t.add_argument("--optimizer-state", choices=("fresh", "continue"), default="fresh")
+    t.add_argument("--reapply-optimizer-hparams", action="store_true",
+                   help="under --optimizer-state continue, apply the requested lr / lr floor / weight decay onto "
+                        "the restored optimizer (default: refuse when they differ from the checkpoint's)")
     t.add_argument("--mirror-prob", type=float, default=0.5)
     t.add_argument("--w-policy", type=float, default=1.0)
     t.add_argument("--w-wdl", type=float, default=1.0, help="0 = policy only")
@@ -409,7 +459,8 @@ def _common(p: argparse.ArgumentParser) -> None:
                    help="arena without --syzygy. With it (the default when --syzygy is set) the arena is "
                         "strict: one game still unresolved at --eval-max-plies invalidates the match, which "
                         "a weak/random net at low sims can hit")
-    e.add_argument("--eval-opening-plies", type=int, default=16)
+    e.add_argument("--eval-opening-plies", type=int, default=None,
+                   help="book plies the arena replays (default: the split's longest EVAL line; smaller is refused)")
     e.add_argument("--eval-concurrency", type=int, default=64)
     e.add_argument("--eval-root-noise", action="store_true",
                    help="arena with root Gumbel noise (default off, as the RL-takeover yardstick)")
@@ -434,6 +485,8 @@ def parser() -> argparse.ArgumentParser:
         sp = sub.add_parser(name)
         _common(sp)
         sp.add_argument("--generation", type=int, required=True)
+        sp.add_argument("--allow-config-change", action="store_true")
+        sp.add_argument("--redo", action="store_true", help="replace this stage even if it is complete")
     r = sub.add_parser("run", help="generations 1..G of collect -> train -> evaluate")
     _common(r)
     r.add_argument("--generations", type=int, required=True)
