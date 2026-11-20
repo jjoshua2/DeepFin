@@ -16,7 +16,7 @@ import pytest
 
 from chess_anti_engine.eval.model_provenance import ProvenanceError, seat_files, seat_provenance
 from chess_anti_engine.utils.game_log import read_game_log
-from tests.test_match_resume import _openings_file, _run_arena, _SimulatedCrash
+from tests.test_match_resume import _OPENING_FENS, _openings_file, _run_arena, _SimulatedCrash
 
 
 def _sha(data: bytes) -> str:
@@ -60,6 +60,27 @@ def test_a_spec_records_every_net_it_names_and_verifies_its_shas(tmp_path: Path)
         seat_files(str(spec))
 
 
+def test_a_spec_member_directory_resolves_to_its_trainer_pt(tmp_path: Path) -> None:
+    d = tmp_path / "policy_ckpt"
+    d.mkdir()
+    (d / "trainer.pt").write_bytes(b"policy trainer")
+    spec = tmp_path / "dir.hybrid.json"
+    spec.write_text(json.dumps({"policy": str(d), "policy_sha256": _sha(b"policy trainer")}))
+    files = seat_files(str(spec))
+    assert files[1] == {"role": "policy", "path": str(d / "trainer.pt"), "sha256": _sha(b"policy trainer")}
+
+
+@pytest.mark.parametrize("member", ["missing.pt", "empty_dir"])
+def test_a_spec_member_with_a_recorded_sha_that_does_not_resolve_is_refused(tmp_path: Path, member: str) -> None:
+    """A recorded ``<key>_sha256`` says the key IS a net; skipping it would skip its verification."""
+    (tmp_path / "empty_dir").mkdir()
+    spec = tmp_path / "gone.hybrid.json"
+    spec.write_text(json.dumps({"policy": str(tmp_path / member), "policy_sha256": "a" * 64,
+                                "mode": "blend"}))    # a non-path string without a sha stays skipped
+    with pytest.raises(ProvenanceError, match="policy has policy_sha256 recorded but no checkpoint file"):
+        seat_files(str(spec))
+
+
 # ---------------------------------------------------------------------------
 # arena_standard: rows, header, resume
 # ---------------------------------------------------------------------------
@@ -100,6 +121,39 @@ def test_a_resume_onto_a_rewritten_net_is_refused(monkeypatch: pytest.MonkeyPatc
     _cand(tmp_path, b"candidate weights v2")
     with pytest.raises(SystemExit, match="candidate sha256"):
         _run_arena(monkeypatch, tmp_path, log_path=log_path, candidate=cand, resume=True)
+
+
+def test_a_resume_onto_a_rewritten_reference_is_refused(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    cand = _cand(tmp_path)
+    ref = tmp_path / "ref.pt"
+    ref.write_bytes(b"reference weights v1")
+    log_path = tmp_path / "ref_rewritten.games.jsonl"
+    with pytest.raises(_SimulatedCrash):
+        _run_arena(monkeypatch, tmp_path, log_path=log_path, candidate=cand, reference=str(ref), crash_after=3)
+    ref.write_bytes(b"reference weights v2")
+    with pytest.raises(SystemExit, match="reference sha256") as exc:
+        _run_arena(monkeypatch, tmp_path, log_path=log_path, candidate=cand, reference=str(ref), resume=True)
+    assert "candidate sha256" not in str(exc.value)
+
+
+def test_a_resume_onto_rewritten_openings_is_refused_by_their_sha256(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Same openings PATH, positions swapped, header intact: the sha256 refuses before the per-pair FEN guard."""
+    from chess_anti_engine.selfplay.opening import _load_fen_list
+
+    cand = _cand(tmp_path)
+    log_path = tmp_path / "openings_rewritten.games.jsonl"
+    with pytest.raises(_SimulatedCrash):
+        _run_arena(monkeypatch, tmp_path, log_path=log_path, candidate=cand, crash_after=3)
+    swapped = list(_OPENING_FENS[:4])
+    swapped[0], swapped[1] = swapped[1], swapped[0]
+    (tmp_path / "openings.fen").write_text("\n".join(swapped) + "\n")
+    _load_fen_list.cache_clear()
+    with pytest.raises(SystemExit, match="openings sha256") as exc:
+        _run_arena(monkeypatch, tmp_path, log_path=log_path, candidate=cand, resume=True,
+                   openings_file=tmp_path / "openings.fen")
+    assert "NOT reproducible" not in str(exc.value)
 
 
 def test_a_log_written_before_provenance_still_resumes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

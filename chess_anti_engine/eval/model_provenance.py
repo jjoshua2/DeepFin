@@ -12,9 +12,10 @@ A seat is one of:
 * a checkpoint file;
 * a checkpoint directory, which the loader resolves to ``<dir>/trainer.pt``;
 * a JSON spec (for example a research ``*.hybrid.json`` wrapper) whose string
-  values that name existing files are the nets it is built from. A spec that
-  carries ``<key>_sha256`` beside ``<key>`` is VERIFIED: a mismatch raises, since
-  the spec would otherwise claim nets it does not load.
+  values that resolve to a checkpoint (a file, or a directory's ``trainer.pt``)
+  are the nets it is built from. A spec that carries ``<key>_sha256`` beside
+  ``<key>`` is VERIFIED: a mismatch raises, and so does a member that does not
+  resolve, since the spec would otherwise claim nets it does not load.
 """
 from __future__ import annotations
 
@@ -63,11 +64,15 @@ def seat_files(path: str | Path) -> list[dict[str, str]]:
     for key, value in spec.items():
         if not isinstance(value, str) or not value or key.endswith("_sha256"):
             continue
-        member = Path(value)
-        if not member.is_file():
-            continue
-        digest = sha256_file(member)
         recorded = spec.get(f"{key}_sha256")
+        try:
+            member = resolve_checkpoint(value)
+        except ProvenanceError as exc:
+            if recorded is not None:
+                # A recorded sha256 says this key IS a net; skipping it would skip its verification.
+                raise ProvenanceError(f"{primary}: {key} has {key}_sha256 recorded but {exc}") from exc
+            continue            # a string that is not a checkpoint (a mode, a label)
+        digest = sha256_file(member)
         if recorded is not None and recorded != digest:
             raise ProvenanceError(f"{primary}: {key}_sha256 {recorded} != sha256 of {member} ({digest})")
         if str(member) not in seen:

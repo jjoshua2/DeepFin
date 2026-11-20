@@ -57,10 +57,14 @@ unless:
   A's candidate sha256 must be B's reference sha256 and vice versa; every row
   sha256 must equal the sha256 of the same file AT POOL TIME (a JSON spec seat
   counts as the spec plus every file it names, as the arena hashes it); and the
-  two runs' ``openings_sha256`` must be equal. Rows without these fields are
-  legacy: refused unless ``--allow-legacy-rows``, under which the older mtime
-  heuristic applies (no net file may be modified after the earlier run's header
-  ``created``) and the output marks the check as ``legacy_mtime``.
+  two runs' ``openings_sha256`` must be non-null and equal. Each row's
+  ``game_log_provenance`` must be ``this_run`` or ``recorded``: ``absent`` means
+  a pre-provenance log was resumed, so its earlier games were never checked.
+  Rows without the seat shas are legacy: refused unless ``--allow-legacy-rows``,
+  under which the older mtime heuristic applies (no net file may be modified
+  after the earlier run's header ``created``) and the output marks the check as
+  ``legacy_mtime``. A mixed pair (one row with shas, one without) is refused
+  outright, waiver or not.
 
 Provenance: the output records the sha256 of the four input files and of every
 net file at pool time, and which net check ran (``row_sha256`` or
@@ -220,6 +224,8 @@ def run_start(header: dict[str, Any], name: str) -> float:
 
 
 ROW_SHA_FIELDS = ("candidate_sha256", "reference_sha256")
+# "absent" = a pre-provenance log resumed: the games played before the resume were never sha-checked.
+ROW_SHA_LOG_PROVENANCE = frozenset({"this_run", "recorded"})
 
 
 def _file_shas(files: Sequence[dict[str, Any]]) -> list[tuple[Any, Any]]:
@@ -230,9 +236,20 @@ def check_nets(a_row: dict[str, Any], b_row: dict[str, Any], a_header: dict[str,
                arm: str, base: str, *, allow_legacy: bool) -> tuple[dict[str, Any], str, list[str]]:
     """Prove the pooled nets are the ones played; return (pool-time files, check mode, notes)."""
     nets = {"arm": pool_time_files("arm", arm), "base": pool_time_files("base", base)}
-    have_shas = all(r.get(f) is not None for r in (a_row, b_row) for f in ROW_SHA_FIELDS)
-    if have_shas:
+    with_shas = [all(r.get(f) is not None for f in ROW_SHA_FIELDS) for r in (a_row, b_row)]
+    if any(with_shas) and not all(with_shas):
+        raise PoolError("mixed pair: run " + ("A" if with_shas[0] else "B") + " banks seat sha256s and run "
+                        + ("B" if with_shas[0] else "A") + " does not, so the two runs are not from one arena "
+                        "version and the shas cannot cross-check; --allow-legacy-rows is for two legacy rows only")
+    if all(with_shas):
         problems: list[str] = []
+        for name, row in (("A", a_row), ("B", b_row)):
+            prov = row.get("game_log_provenance")
+            if prov not in ROW_SHA_LOG_PROVENANCE:
+                problems.append(f"run {name} game_log_provenance is {prov!r}, not one of "
+                                f"{sorted(ROW_SHA_LOG_PROVENANCE)}: its earlier games were never sha-checked")
+            if row.get("openings_sha256") is None:
+                problems.append(f"run {name} openings_sha256 is null: the openings cannot be proven")
         if a_row["candidate_sha256"] != b_row["reference_sha256"] or a_row["reference_sha256"] != b_row["candidate_sha256"]:
             problems.append(f"seat sha256s are not swapped: A candidate {a_row['candidate_sha256']} / reference "
                             f"{a_row['reference_sha256']}, B candidate {b_row['candidate_sha256']} / reference "
@@ -503,7 +520,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--allow-legacy-rows", action="store_true",
                    help="for rows written before the arena recorded them: waive buffer_full_flushes / "
                         "eval_max_batch_realised, and check the nets by mtime instead of banked sha256 "
-                        "(banked reproductions only; never for a registered read)")
+                        "(banked reproductions only; never for a registered read). Both rows must be legacy: "
+                        "a mixed pair is refused regardless")
     p.add_argument("--verdict-rule", choices=("lb-gt-zero",), default=None)
     p.add_argument("--out", default=None, help="write the JSON report here")
     a = p.parse_args(argv)

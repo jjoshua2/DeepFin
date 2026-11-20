@@ -215,6 +215,7 @@ def _run_arena(
     seed: int = 7,
     n_openings: int = 4,
     candidate: str = "cand.pt",
+    reference: str = "ref.pt",
     pgn_out: Path | None = None,
     openings_file: Path | None = None,
     stub_play: bool = True,
@@ -231,7 +232,7 @@ def _run_arena(
         else _openings_file(tmp_path, n_openings)
     )
     return arena.run_arena(
-        candidate=candidate, reference="ref.pt",
+        candidate=candidate, reference=reference,
         games=2 * n_openings,
         openings_path=None, openings_fen=fen_file,
         opening_plies=16, mode="matched_time",
@@ -612,9 +613,11 @@ def test_resume_refuses_when_the_schedule_does_not_reproduce(
     Same settings fingerprint (the openings PATH is unchanged), but the file
     behind it now holds different positions. Nothing about the fingerprint can
     see that. A log that records provenance is refused earlier, on the openings
-    sha256 (``test_arena_provenance.py``); this test strips the header's
-    provenance, as in a log written before it existed, so the per-pair
-    ``opening_fen`` check -- the only guard such a log has -- is still exercised.
+    sha256 (``test_arena_provenance.py::
+    test_a_resume_onto_rewritten_openings_is_refused_by_their_sha256``); this
+    test strips the header's provenance, as in a log written before it existed,
+    so the per-pair ``opening_fen`` check -- the only guard such a log has -- is
+    still exercised.
     """
     log_path = tmp_path / "swapped.games.jsonl"
     with pytest.raises(_SimulatedCrash):

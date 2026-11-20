@@ -1121,6 +1121,8 @@ def provenance_differences(recorded: Mapping[str, Any], current: Mapping[str, An
     if recorded.get("openings_sha256") != current.get("openings_sha256"):
         diffs.append(f"openings sha256 {recorded.get('openings_sha256')} -> {current.get('openings_sha256')}")
     return diffs
+
+
 SPRT_SPEC_FIELDS = ("elo0", "elo1", "alpha", "beta")
 
 
