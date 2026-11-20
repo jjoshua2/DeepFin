@@ -393,9 +393,9 @@ nothing.
   drawn with every move proven, won with a move proven lost for the opponent,
   lost with every move proven won for the opponent. Otherwise it rebuilds the
   tree and searches the position afresh. A position that repeats one from the
-  game is marked drawn and never searched; reused as the root, it read as a
-  proven draw no move supported (and a reused, hand-marked one played the
-  repeating move with `score cp 0` without searching). A line that ends drawn or lost while other moves
+  game is marked drawn and never searched, so after such a move the engine
+  always searches the new position from scratch instead of treating it as an
+  already proven draw. A line that ends drawn or lost while other moves
   are still unproven does not end the search, so such a `go depth` waits for
   `stop`, as before. `go nodes N` counts its visits and ends as usual;
   `go infinite` still waits for `stop`.

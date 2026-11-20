@@ -1424,7 +1424,9 @@ class Engine:
         # A timeout cannot transfer ownership of the still-live worker; it is
         # bounded by this move's own clock, then `dispatch` answers from the
         # busy-worker fallback for the latest board.
-        self._wait_for_search(timeout_s=self._go_wait_budget_s(cmd))
+        self._wait_for_search(
+            timeout_s=self._go_wait_budget_s(cmd), tolerate_exiting_helpers=True,
+        )
         if self._position_error is not None:
             self._refuse_go_for_rejected_position(cmd.args)
             return
@@ -3272,8 +3274,10 @@ class Engine:
             if (popped is not None and not self._cancel_event.is_set()
                     and not transition_deadline.expired()):
                 if not self._worker.advance_root(board, [popped]):
-  # Defensive: ponder-at-M root-expanded the popped child, so
-  # this shouldn't fail. Reset rather than search stale tree.
+  # The popped child exists (ponder-at-M root-expanded it), but
+  # `advance_root` refuses one that is unexpanded or carries an
+  # unsupported proof -- e.g. a reply repeating a game position,
+  # a never-expanded twofold DRAW. Reset rather than search it.
                     self._worker.reset_tree()
                 self._applied_moves = (*self._applied_moves, popped)
             if quick is not None:
@@ -4144,6 +4148,7 @@ class Engine:
 
     def _wait_for_search(
         self, *, timeout_s: float | None = None, answer_parked: bool = False,
+        tolerate_exiting_helpers: bool = False,
     ) -> None:
         """Stop the current search and make sure nothing else owns the worker.
 
@@ -4155,7 +4160,11 @@ class Engine:
         bestmove): answer the parked search's `go` from the fallback now. Any
         other command must NOT: a late bestmove after the GUI has moved on is
         read as the reply to its NEXT `go`, for the wrong board.
-        Raises `SearchNotQuiescent` while anything still owns the worker.
+        Raises `SearchNotQuiescent` while anything still owns the worker,
+        including a fallback eval helper whose thread has not exited by the end
+        of the budget -- unless ``tolerate_exiting_helpers`` (only `go`): the
+        helper then stays recorded and keeps the worker non-free for every
+        evaluator-closing path.
         """
         budget = _JOIN_TIMEOUT_S if timeout_s is None else max(0.0, timeout_s)
         end = time.monotonic() + budget
@@ -4196,14 +4205,21 @@ class Engine:
             with self._state_lock:
                 if orphan in self._orphan_threads:
                     self._orphan_threads.remove(orphan)
-        # Ended fresh-eval helpers still exiting: bounded by this call's budget
-        # like the ended search thread above; one not gone yet stays recorded.
+        # Fresh-eval helpers that answered but had not fully exited: polled (by
+        # /proc, never through the Thread, so the budget holds on 3.13 too) until
+        # gone or this call's budget ends. One still exiting then owns the
+        # worker like an orphan, except for `go` (``tolerate_exiting_helpers``),
+        # which closes no evaluator and must not answer from a fallback over a
+        # thread-local teardown.
         for helper in list(self._exiting_helpers):
-            join_thread(helper.thread, max(0.0, end - time.monotonic()), deadline=end)
-            if not helper.still_exiting():
+            if helper.wait_exited(end):
                 with self._state_lock:
                     if helper in self._exiting_helpers:
                         self._exiting_helpers.remove(helper)
+            elif not tolerate_exiting_helpers:
+                raise SearchNotQuiescent(
+                    "a fallback eval helper is still exiting the evaluator"
+                )
         self._search_thread = None
         self._live_go = None
 
@@ -4275,10 +4291,13 @@ class Engine:
         # Read now, while the helper runs: on 3.13 even `is_alive()` blocks
         # through the exit window, so the later checks look only at /proc.
         exiting = _ExitingHelper.of(helper)
-        if done.wait(max(0.0, timeout)) and exiting.still_exiting():
+        # ONE read of the event decides both branches: a helper finishing
+        # between two reads would be neither recorded nor orphaned.
+        finished = done.wait(max(0.0, timeout))
+        if finished and exiting.still_exiting():
             with self._state_lock:
                 self._exiting_helpers.append(exiting)
-        if not done.is_set():
+        if not finished:
             with self._state_lock:
                 self._orphan_threads.append(helper)
             _SILENCED_THREADS.add(helper)
@@ -4316,11 +4335,28 @@ class _ExitingHelper:
         return cls(thread, tid, task_start_time(tid) if tid is not None else None)
 
     def still_exiting(self) -> bool:
-        if not os.path.isdir("/proc/self/task"):
+        if not _HAS_PROC_TASKS:
             return self.thread.is_alive()
         if self.tid is None or self.start_time is None:
             return False
         return task_start_time(self.tid) == self.start_time
+
+    def wait_exited(self, deadline: float) -> bool:
+        """Poll ``still_exiting`` until the task is gone (True) or
+        ``deadline`` (``time.monotonic()``) passes (False). Without ``/proc``
+        it joins the Thread instead (bounded there before 3.13)."""
+        if not _HAS_PROC_TASKS:
+            join_thread(self.thread, max(0.0, deadline - time.monotonic()), deadline=deadline)
+            return not self.thread.is_alive()
+        while self.still_exiting():
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(_EXIT_POLL_S)
+        return True
+
+
+_HAS_PROC_TASKS = os.path.isdir("/proc/self/task")
+_EXIT_POLL_S = 0.0005
 
 
 def _at_once_answer_by_ms(clock_left_ms: float, elapsed_ms: float) -> float:

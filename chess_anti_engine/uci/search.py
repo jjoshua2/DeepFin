@@ -5493,9 +5493,9 @@ def _reroot_refusal(tree: Any, node: int) -> str | None:
     """Why ``node`` must not be adopted as a reused root, or None.
 
     "unexpanded": no children (a twofold or other terminal leaf, or a node never
-    searched): nothing to reuse. "stale_status": a nonzero solved status the
-    children do not re-derive (`tree_resolve_from_children`): DRAW needs every
-    child proven; WIN a child proven lost; LOSS every child proven won.
+    searched): nothing to reuse. "stale_status": a nonzero solved status that
+    `_resolve_from_children` (the C `tree_resolve_from_children` rule) does not
+    re-derive from the children.
     """
     children, _ = tree.get_children_visits(int(node))
     if not tree.is_expanded(int(node)) or len(children) == 0:
@@ -5507,13 +5507,19 @@ def _reroot_refusal(tree: Any, node: int) -> str | None:
     for a in children.tolist():
         child = int(tree.find_child(int(node), int(a)))
         child_statuses.append(0 if child < 0 else int(tree.get_solved_status(child)))
-    if status == 2:
-        ok = all(cs != 0 for cs in child_statuses)
-    elif status == 1:
-        ok = any(cs == -1 for cs in child_statuses)
-    else:
-        ok = all(cs == 1 for cs in child_statuses)
-    return None if ok else "stale_status"
+    return None if _resolve_from_children(child_statuses) == status else "stale_status"
+
+
+def _resolve_from_children(child_statuses: list[int]) -> int:
+    """The C `tree_resolve_from_children` (`_mcts_tree.c`), on the children's
+    own statuses (1 win, -1 loss, 2 draw, 0 unknown, each from the child's side
+    to move): WIN if any child is lost; else, with every child solved, DRAW if
+    any child is drawn and LOSS if none is; else unknown."""
+    if any(cs == -1 for cs in child_statuses):
+        return 1
+    if not child_statuses or any(cs == 0 for cs in child_statuses):
+        return 0
+    return 2 if any(cs == 2 for cs in child_statuses) else -1
 
 
 def _every_child_proven(tree: Any, node: int) -> bool:

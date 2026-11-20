@@ -11,17 +11,24 @@ move with `score cp 0`. Self-play reuse is gated in `gumbel_c.py`
 """
 from __future__ import annotations
 
+import sys
 import threading
+import time
+from types import SimpleNamespace
 
 import chess
 import numpy as np
 import pytest
 
+import chess_anti_engine.uci.engine as engine_module
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
 from chess_anti_engine.moves import move_to_index
+from chess_anti_engine.uci.engine import Engine, EngineOptions
+from chess_anti_engine.uci.protocol import parse_command
 from chess_anti_engine.uci.search import SearchWorker, _reroot_refusal
 from chess_anti_engine.uci.time_manager import Deadline
 from tests.test_uci_solved_root_stops import _make_worker, _mark
+from tests.test_uci_time_forfeits import _Out
 
 # (start FEN, game moves before the search, the move onto the natural twofold).
 # The searched side's move repeats a position from the game history.
@@ -146,12 +153,17 @@ def _one_ply_tree(child_statuses: list[int], root_status: int) -> tuple[MCTSTree
 
 @pytest.mark.parametrize(("root", "children", "expected"), [
     (0, [0, 0], None),
-    (2, [2, 1], None),                # drawn, every child proven
+    (2, [2, 1], None),                # drawn: a drawn child, the rest won by the opponent
+    (2, [2, 2], None),                # drawn: every child drawn
     (2, [2, 0], "stale_status"),      # drawn with an unproven child
+    (2, [2, -1], "stale_status"),     # mis-marked: a child proven lost makes it WON
+    (2, [1, 1], "stale_status"),      # mis-marked: no drawn child makes it LOST
     (1, [0, -1], None),               # won: a child proven lost
     (1, [0, 2], "stale_status"),      # won with no losing child
     (-1, [1, 1], None),               # lost: every child proven won
     (-1, [1, 0], "stale_status"),     # lost with an unproven child
+    (-1, [1, 2], "stale_status"),     # mis-marked: a drawn child makes it DRAWN
+    (1, [2, 2], "stale_status"),      # mis-marked: a drawn node
 ])
 def test_a_solved_root_is_reused_only_when_its_children_re_derive_it(
     root: int, children: list[int], expected: str | None,
@@ -167,7 +179,8 @@ def test_an_unexpanded_node_is_refused() -> None:
 
 
 def test_a_genuinely_proven_draw_root_is_still_reused() -> None:
-    """A node drawn on its children's proofs (every child proven) is
+    """A node drawn on its children's proofs (one reply drawn, the other won
+    by the replying side, as `tree_resolve_from_children` derives DRAW) is
     re-derived from the kept subtree: the reroot is kept."""
     worker = _make_worker("classic", seed=0)
     try:
@@ -183,7 +196,7 @@ def test_a_genuinely_proven_draw_root_is_still_reused() -> None:
         replies = [move_to_index(m, b1) for m in list(b1.legal_moves)[:2]]
         tree.expand(child, np.array(replies, dtype=np.int32), np.array([0.5, 0.5]))
         _mark(tree, int(tree.find_child(child, int(replies[0]))), 2)
-        _mark(tree, int(tree.find_child(child, int(replies[1]))), -1)
+        _mark(tree, int(tree.find_child(child, int(replies[1]))), 1)
         _mark(tree, child, 2)
         worker._tree, worker._root_id, worker._tree_fen = tree, rid, b0.fen()
         assert worker.advance_root(b0, [e4])
@@ -191,3 +204,113 @@ def test_a_genuinely_proven_draw_root_is_still_reused() -> None:
         assert worker.reroots_refused == {}
     finally:
         worker.close()
+
+
+# -- engine level: the callers reset the tree on a refusal ------------------------
+
+
+@pytest.fixture
+def out(monkeypatch) -> _Out:
+    capture = _Out()
+    monkeypatch.setattr(engine_module, "sys", SimpleNamespace(stdout=capture, stderr=sys.stderr))
+    return capture
+
+
+def _count_resets(worker: SearchWorker) -> list[int]:
+    calls = [0]
+    real = worker.reset_tree
+
+    def counted() -> None:
+        calls[0] += 1
+        real()
+
+    worker.reset_tree = counted  # type: ignore[method-assign]
+    return calls
+
+
+def _twofold_leaf(worker: SearchWorker, board: chess.Board, move: chess.Move) -> int:
+    tree, rid = worker._tree, worker._root_id
+    if tree is None or rid is None:
+        return -1
+    return int(tree.find_child(rid, int(move_to_index(move, board))))
+
+
+def _assert_natural_twofold(worker: SearchWorker, board: chess.Board, move: chess.Move) -> None:
+    tree = worker._tree
+    leaf = _twofold_leaf(worker, board, move)
+    assert tree is not None
+    assert leaf >= 0, "fixture: the repeating move was searched"
+    assert int(tree.get_solved_status(leaf)) == 2, "fixture: marked as a twofold draw"
+    assert not tree.is_expanded(leaf), "fixture: a natural twofold is never expanded"
+
+
+def test_position_onto_a_natural_twofold_resets_the_tree(out: _Out) -> None:
+    """`position` + `go`, then `position` extended by the move onto a natural
+    twofold + `go`: `_sync_tree_root` gets the refusal and resets the tree;
+    the search then runs on a fresh root and answers a legal move."""
+    fen, history, repeat = _NATURAL["knight_shuffle"]
+    worker = _make_worker("walkers", seed=0)
+    engine = Engine(worker, options=EngineOptions())
+    try:
+        engine.dispatch(parse_command(f"position fen {fen} moves {' '.join(history)}"))
+        engine.dispatch(parse_command("go nodes 2000"))
+        assert len(out.wait_bestmoves(1, timeout=120)) == 1, out.text()
+        board = chess.Board(fen)
+        for uci in history:
+            board.push_uci(uci)
+        move = chess.Move.from_uci(repeat)
+        _assert_natural_twofold(worker, board, move)
+        resets = _count_resets(worker)
+        engine.dispatch(parse_command(
+            f"position fen {fen} moves {' '.join([*history, repeat])}"))
+        engine.dispatch(parse_command("go nodes 256"))
+        answers = out.wait_bestmoves(2, timeout=120)
+        assert len(answers) == 2, out.text()
+        after = board.copy()
+        after.push(move)
+        assert chess.Move.from_uci(answers[1]) in after.legal_moves
+        assert worker.reroots_refused == {"unexpanded": 1}
+        assert resets[0] == 1, "the refused reroot must reset the tree"
+        assert worker._tree_fen == after.fen()
+        _assert_root_not_stale(worker)
+    finally:
+        engine.close()
+
+
+def test_ponderhit_onto_a_natural_twofold_resets_the_tree(out: _Out) -> None:
+    """Pondering on the opponent's repeating reply (KR vs K: ... Kd8-e8 repeats
+    the start), then `ponderhit`: the ponderhit caller gets the refusal and
+    resets the tree before searching the hit position."""
+    fen = "4k3/8/8/8/8/8/8/R3K3 w - - 0 1"
+    history = ["a1a2", "e8d8", "a2a1"]
+    predicted = chess.Move.from_uci("d8e8")
+    worker = _make_worker("walkers", seed=0)
+    engine = Engine(worker, options=EngineOptions())
+    try:
+        engine.dispatch(parse_command(
+            f"position fen {fen} moves {' '.join([*history, predicted.uci()])}"))
+        engine.dispatch(parse_command("go ponder wtime 4000 btime 4000"))
+        board = chess.Board(fen)
+        for uci in history:
+            board.push_uci(uci)
+        tree_seen = None
+        end = time.monotonic() + 60
+        while time.monotonic() < end:  # until the ponder search marks the repeat
+            tree_seen = worker._tree
+            leaf = _twofold_leaf(worker, board, predicted)
+            if tree_seen is not None and leaf >= 0 and int(tree_seen.get_solved_status(leaf)) == 2:
+                break
+            time.sleep(0.05)
+        _assert_natural_twofold(worker, board, predicted)
+        resets = _count_resets(worker)
+        engine.dispatch(parse_command("ponderhit"))
+        answers = out.wait_bestmoves(1, timeout=120)
+        assert len(answers) == 1, out.text()
+        after = board.copy()
+        after.push(predicted)
+        assert chess.Move.from_uci(answers[0]) in after.legal_moves
+        assert worker.reroots_refused == {"unexpanded": 1}
+        assert resets[0] == 1, "the refused reroot must reset the tree"
+        assert worker._tree_fen == after.fen()
+    finally:
+        engine.close()

@@ -412,3 +412,63 @@ def test_uci_wait_for_an_ended_search_is_bounded_and_honours_a_noted_start_time(
     finally:
         release.set()
         other.join(5)
+
+
+def _fresh_eval_fake() -> SimpleNamespace:
+    fake = _engine_like(_worker=SimpleNamespace(
+        fresh_root_policy_bestmove=lambda *_a, **_k: "e2e4"))
+    fake._warmup_done.set()
+    return fake
+
+
+def test_uci_fresh_eval_wait_for_an_exiting_helper_keeps_its_budget(slow_thread_exit) -> None:
+    """`_wait_for_search` polls a still-exiting helper only until its own
+    budget: 2 ms against the helper's 0.15 s teardown (a Thread join would
+    wait it out on CPython 3.13). `go` tolerates it (recorded, no raise);
+    any other caller gets `SearchNotQuiescent`; a later wait with room joins it."""
+    from chess_anti_engine.uci.engine import Engine, SearchNotQuiescent
+
+    fake = _fresh_eval_fake()
+    assert Engine._bounded_fresh_eval(fake, chess.Board(), (), 0.02) == "e2e4"  # pyright: ignore[reportArgumentType]
+    helpers = [t for t in slow_thread_exit if t.name == "uci-fresh-eval"]
+    assert [h.thread for h in fake._exiting_helpers] == helpers
+    t0 = time.monotonic()
+    Engine._wait_for_search(fake, timeout_s=0.002, tolerate_exiting_helpers=True)  # pyright: ignore[reportArgumentType]
+    assert time.monotonic() - t0 < 0.08, "the go wait outlived its 2 ms budget"
+    assert [h.thread for h in fake._exiting_helpers] == helpers, "still recorded"
+    t0 = time.monotonic()
+    with pytest.raises(SearchNotQuiescent, match="still exiting"):
+        Engine._wait_for_search(fake, timeout_s=0.002)  # pyright: ignore[reportArgumentType]
+    assert time.monotonic() - t0 < 0.08, "the raising wait outlived its 2 ms budget"
+    assert [h.thread for h in fake._exiting_helpers] == helpers, "still recorded"
+    Engine._wait_for_search(fake, timeout_s=5.0)  # pyright: ignore[reportArgumentType]
+    _assert_os_thread_gone(helpers[0])
+    assert fake._exiting_helpers == []
+
+
+class _FinishesAfterTheWait(threading.Event):
+    """The eval ends just after the timed wait gave up: `wait` reports a
+    timeout while the flag is (by then) set."""
+
+    def wait(self, timeout: float | None = None) -> bool:
+        super().wait(timeout)
+        return False
+
+
+def test_uci_fresh_eval_a_helper_finishing_after_the_wait_is_orphaned(monkeypatch) -> None:
+    """One read of the event decides: a helper whose eval ended after the wait
+    timed out is treated as timed out (parked as an orphan, first-legal
+    answer), never dropped between the two branches."""
+    from chess_anti_engine.uci import engine as engine_module
+    from chess_anti_engine.uci.engine import Engine
+
+    # Only this module's `threading.Event` changes (`Thread` keeps the real one).
+    monkeypatch.setattr(engine_module, "threading", SimpleNamespace(
+        **{**vars(threading), "Event": _FinishesAfterTheWait}))
+    fake = _fresh_eval_fake()
+    assert Engine._bounded_fresh_eval(fake, chess.Board(), (), 0.05) is None  # pyright: ignore[reportArgumentType]
+    monkeypatch.undo()
+    helpers = [t for t in fake._orphan_threads if t.name == "uci-fresh-eval"]
+    assert len(helpers) == 1, "the helper must be parked, not dropped"
+    Engine._wait_for_search(fake, timeout_s=5.0)  # pyright: ignore[reportArgumentType]
+    _assert_os_thread_gone(helpers[0])
