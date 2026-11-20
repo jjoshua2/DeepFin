@@ -55,6 +55,7 @@ TARGET_SOURCE_KEYS: tuple[str, ...] = (
 VALUE_SOURCES = ("survivor_q", "stored_search_wdl")
 DRAW_SOURCES = ("net", "zero")
 PRIOR_MIX_SOURCES = ("reference", "actor")
+INIT_OPTIMIZER_STATES = ("fresh", "checkpoint")
 MODEL_FILE = "model.pt"
 
 
@@ -84,6 +85,16 @@ class TrainSettings:
     # state; a requested value that differs is REFUSED unless this is set,
     # which re-applies the requested values onto the restored optimizer.
     reapply_optimizer_hparams: bool = False
+    # Generation 1 only (the phase that starts from the run's init model, where
+    # optimizer_state=continue has no previous phase to continue): "checkpoint"
+    # restores the init checkpoint's optimizer moments and per-parameter step
+    # counters instead of a fresh optimizer. The checkpoint's scheduler is NOT
+    # restored (it belongs to the run that wrote it); this phase's schedule at
+    # --lr drives the rate. Same refusal / reapply rules as continue.
+    init_optimizer_state: str = "fresh"
+    # Which 2-D matrices the Aurora/Muon group owns (Trainer's matrix_optimizer_scope).
+    # Only consulted by those optimizers; the SL base was trained with "mlp_out".
+    matrix_optimizer_scope: str = "default"
     weight_decay_mode: str = "weight_decay"
     mirror_prob: float = 0.5
     w_policy: float = 1.0
@@ -135,6 +146,8 @@ class TrainSettings:
             raise ValueError(f"prior_mix_source must be one of {PRIOR_MIX_SOURCES}")
         if not 0.0 <= float(self.policy_prior_mix) <= 1.0:
             raise ValueError("policy_prior_mix must be in [0, 1]")
+        if self.init_optimizer_state not in INIT_OPTIMIZER_STATES:
+            raise ValueError(f"init_optimizer_state must be one of {INIT_OPTIMIZER_STATES}")
 
     def uses_survivor_value(self) -> bool:
         return (float(self.w_wdl) > 0 and self.search_wdl_frac() > 0
@@ -544,7 +557,7 @@ def trainer_kwargs(settings: TrainSettings) -> dict[str, Any]:
     floor = settings.lr if settings.lr_floor is None else settings.lr_floor
     return {
         "optimizer": settings.optimizer, "weight_decay_mode": settings.weight_decay_mode,
-        "matrix_optimizer_scope": "default", "grad_clip_mode": "none", "zclip_max_norm": None,
+        "matrix_optimizer_scope": settings.matrix_optimizer_scope, "grad_clip_mode": "none", "zclip_max_norm": None,
         "feature_dropout_p": 0.0, "fdp_king_safety": 0.0, "fdp_pins": 0.0, "fdp_pawns": 0.0,
         "fdp_mobility": 0.0, "fdp_outposts": 0.0, "resid_channel_dropout": 0.0,
         "resid_channel_balance_weight": 0.0, "rebuild_sf_targets": False, "sf_policy_sparse_ce": False,
@@ -631,6 +644,67 @@ def continue_optimizer(trainer: Any, checkpoint: Path, settings: TrainSettings) 
         if left:
             raise RuntimeError(f"re-applying optimizer hyperparameters left differences: {left}")
     return {"differed": diff, "reapplied": bool(diff)}
+
+
+def init_optimizer_from_checkpoint(trainer: Any, checkpoint: Path, settings: TrainSettings) -> dict[str, Any]:
+    """Load the init checkpoint's weights AND optimizer moments into a freshly
+    built trainer (``--init-optimizer-state checkpoint``, generation 1).
+
+    Refused loudly when the checkpoint carries no optimizer/scheduler state,
+    when its parameter layout differs from this trainer's (optimizer type or
+    ``--matrix-optimizer-scope``), or -- unless ``reapply_optimizer_hparams`` --
+    when its per-group hyperparameters differ from the requested ones. The
+    checkpoint's per-group lr and scheduler are its own run's schedule state and
+    are not adopted: the requested schedule's lr is put back on every group.
+    """
+    import torch
+
+    payload = torch.load(str(checkpoint), map_location=trainer.device, weights_only=False)
+    missing = [k for k in ("opt", "scheduler") if k not in payload]
+    if missing or not payload["opt"].get("state"):
+        raise ValueError(f"--init-optimizer-state checkpoint: {checkpoint} has no optimizer state "
+                         f"(missing {missing or ['opt.state (empty)']}); use --init-optimizer-state fresh")
+    names = trainer._optimizer_param_names()
+    ck_names = payload.get("opt_param_names")
+    sizes = [len(g["params"]) for g in payload["opt"]["param_groups"]]
+    mine = [len(g["params"]) for g in trainer.opt.param_groups]
+    if ck_names is None or names is None or list(ck_names) != list(names) or sizes != mine:
+        raise ValueError(f"--init-optimizer-state checkpoint: {checkpoint}'s optimizer parameter layout (group sizes "
+                         f"{sizes}, names {'absent' if ck_names is None else 'compared'}) is not this trainer's "
+                         f"(group sizes {mine}); match --optimizer and --matrix-optimizer-scope to the run that "
+                         "wrote it")
+    load_weights(trainer, checkpoint)
+    requested = optimizer_hparams(trainer)["groups"]
+    want_lr = [float(g["lr"]) for g in trainer.opt.param_groups]
+    try:
+        trainer.opt.load_state_dict(payload["opt"])
+    except (ValueError, KeyError) as exc:
+        raise ValueError(f"--init-optimizer-state checkpoint: cannot load {checkpoint}'s optimizer state into "
+                         f"{settings.optimizer}: {exc}") from exc
+    checkpoint_lr = [float(g["lr"]) for g in trainer.opt.param_groups]
+    diff = _hparam_diff({"groups": requested}, {"groups": optimizer_hparams(trainer)["groups"]})
+    if diff and not settings.reapply_optimizer_hparams:
+        raise ValueError(f"--init-optimizer-state checkpoint: the checkpoint's optimizer hyperparameters differ from "
+                         f"the requested ones {json.dumps(diff, default=str)}; restoring would silently ignore them. "
+                         "Pass --reapply-optimizer-hparams to apply the requested values")
+    if diff:
+        trainer._reapply_configured_param_group_hparams()
+        left = _hparam_diff({"groups": requested}, {"groups": optimizer_hparams(trainer)["groups"]})
+        if left:
+            raise RuntimeError(f"re-applying optimizer hyperparameters left differences: {left}")
+    for g, lr in zip(trainer.opt.param_groups, want_lr, strict=True):
+        g["lr"] = lr
+        if "initial_lr" in g:
+            g["initial_lr"] = lr
+    steps = [int(v["step"].item()) if torch.is_tensor(v["step"]) else int(v["step"])
+             for v in trainer.opt.state.values() if isinstance(v, dict) and "step" in v]
+    sched = payload["scheduler"]
+    return {"source": str(checkpoint), "state_entries": len(trainer.opt.state),
+            "state_step_min": min(steps) if steps else None, "state_step_max": max(steps) if steps else None,
+            "checkpoint_param_group_lr": checkpoint_lr, "param_group_lr_set": want_lr,
+            "differed": diff, "reapplied": bool(diff),
+            "scheduler_not_restored": {"checkpoint_peak_lr": payload.get("peak_lr"),
+                                       "checkpoint_last_epoch": sched.get("last_epoch") if isinstance(sched, dict) else None}}
 
 
 def build_trainer(model_config: Any, settings: TrainSettings, *, log_dir: Path | None) -> Any:
@@ -768,9 +842,12 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
     trainer = build_trainer(model_config, settings, log_dir=None)
     continued = settings.optimizer_state == "continue" and prev_trainer_checkpoint is not None
     optimizer_check: dict[str, Any] | None = None
+    init_optimizer: dict[str, Any] | None = None
     if continued:
         assert prev_trainer_checkpoint is not None
         optimizer_check = continue_optimizer(trainer, prev_trainer_checkpoint, settings)
+    elif settings.init_optimizer_state == "checkpoint" and int(generation) == 1:
+        init_optimizer = init_optimizer_from_checkpoint(trainer, init_checkpoint, settings)
     else:
         load_weights(trainer, init_checkpoint)
 
@@ -882,7 +959,8 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
         "window_generations": gens, "window_rows": sampler.n, "holdout_rows": int(holdout["x"].shape[0]),
         "drawn_rows": sampler.drawn_rows, "sl_rows_drawn": sampler.realised_sl_rows,
         "sl_frac_realised": sampler.realised_sl_rows / max(1, sampler.drawn_rows),
-        "optimizer_continued": continued, "realised_lr_param_groups": realised_lr,
+        "optimizer_continued": continued, "optimizer_from_init_checkpoint": init_optimizer,
+        "realised_lr_param_groups": realised_lr,
         "realised_optimizer": realised_opt, "optimizer_continue_check": optimizer_check,
         "realised_search_wdl_frac": float(trainer._loss_kwargs["search_wdl_frac"]),
         "realised_w_wdl": float(trainer._loss_kwargs["w_wdl"]),

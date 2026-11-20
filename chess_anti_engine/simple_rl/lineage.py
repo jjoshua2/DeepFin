@@ -8,7 +8,8 @@ mismatch, so a redo of an earlier stage can never be silently built upon.
 
 ``unseal_after`` implements ``--redo-downstream``: every sealed stage after the
 redone one is MOVED (rows and models kept) to
-``<run>/superseded/<UTC stamp>/gen_NNNN/<stage>``, and the run-level files
+``<run>/superseded/<UTC stamp>[-N]/gen_NNNN/<stage>`` (``-N`` keeps two redos in the
+same second apart), and the run-level files
 derived from them are rewound: arena ledger rows of the unsealed evaluations,
 the derived presentation ledger, the probe set (when generation 1's train or
 collect is unsealed), and the duplicate-sketch / openings-seen files from the
@@ -17,18 +18,20 @@ so it rewinds with them.
 """
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import time
 from pathlib import Path
 from typing import Any
 
-from chess_anti_engine.simple_rl.common import MANIFEST, read_manifest, sha256_tree, write_json_atomic
+from chess_anti_engine.simple_rl.common import (
+    MANIFEST, SHA_CACHE, read_manifest, sha256_tree, stat_stamp, write_json_atomic,
+)
 
 STAGE_ORDER = ("collect", "train", "eval")
 # Inputs outside the run dir that are part of the lineage (the split's files).
 LINEAGE_EXTERNAL_INPUTS = frozenset({"train_openings", "openings"})
-SHA_CACHE = "lineage_sha_cache.json"
 
 
 def stage_key(generation: int, stage: str) -> tuple[int, int]:
@@ -62,6 +65,8 @@ class _ShaCache:
     dir so a resume does not re-read every model of every generation. A
     directory is always hashed in full."""
 
+    stamp = staticmethod(stat_stamp)
+
     def __init__(self, run_dir: Path) -> None:
         self.path = Path(run_dir) / SHA_CACHE
         try:
@@ -73,20 +78,39 @@ class _ShaCache:
     def sha(self, p: Path) -> str:
         if p.is_dir():
             return sha256_tree(p)
-        st = p.stat()
         key = str(p.resolve())
-        stamp = [st.st_size, st.st_mtime_ns, st.st_ino]
+        stamp = self.stamp(p.stat())
         hit = self.data.get(key)
         if hit and hit["stamp"] == stamp:
             return str(hit["sha256"])
         digest = sha256_tree(p)
-        self.data[key] = {"stamp": stamp, "sha256": digest}
-        self.dirty = True
+        self.remember(p, stamp, digest)
         return digest
+
+    def remember(self, p: Path, stamp_before: list[int], digest: str) -> None:
+        """Cache ``digest`` only if the file's stamp did not move while it was hashed."""
+        if self.stamp(p.stat()) == stamp_before:
+            self.data[str(p.resolve())] = {"stamp": stamp_before, "sha256": digest}
+            self.dirty = True
 
     def save(self) -> None:
         if self.dirty:
             write_json_atomic(self.path, self.data)
+
+
+def _fresh_superseded_dir(run_dir: Path) -> Path:
+    """A new ``superseded/<UTC stamp>[-N]`` dir; never one an earlier redo used."""
+    base = Path(run_dir) / "superseded"
+    base.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    for n in itertools.count():
+        d = base / (stamp if n == 0 else f"{stamp}-{n}")
+        try:
+            d.mkdir()
+        except FileExistsError:
+            continue
+        return d
+    raise AssertionError("unreachable")
 
 
 def _inside(p: Path, root: Path) -> bool:
@@ -142,11 +166,12 @@ def unseal_after(run_dir: Path, generation: int, stage: str, *, include_self: bo
     run_dir = Path(run_dir)
     k = stage_key(generation, stage)
     targets = [gs for gs in sealed_stages(run_dir) if stage_key(*gs) > k]
-    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    dest = _fresh_superseded_dir(run_dir) if targets else None
     moved = []
     for g, s in targets:
+        assert dest is not None
         src = stage_dir(run_dir, g, s)
-        dst = run_dir / "superseded" / stamp / f"gen_{g:04d}" / s
+        dst = dest / f"gen_{g:04d}" / s
         dst.parent.mkdir(parents=True, exist_ok=True)
         os.replace(src, dst)
         moved.append(f"gen_{g:04d}/{s}")
@@ -170,4 +195,4 @@ def unseal_after(run_dir: Path, generation: int, stage: str, *, include_self: bo
                 if int(p.stem.split(".")[0].rsplit("_", 1)[1]) >= first:
                     p.unlink()
                     rewound.append(f"{sub}/{p.name}")
-    return {"moved_to": str(run_dir / "superseded" / stamp) if moved else None, "moved": moved, "rewound": rewound}
+    return {"moved_to": str(dest) if moved else None, "moved": moved, "rewound": rewound}

@@ -160,7 +160,8 @@ def train_settings(a: argparse.Namespace, run_dir: Path) -> TrainSettings:
         window=a.window, batch_size=a.batch_size, updates=a.updates, passes=a.passes, lr=a.lr,
         lr_floor=a.lr_floor, warmup_steps=a.warmup_steps, warmup_start=a.warmup_start,
         optimizer=a.optimizer, optimizer_state=a.optimizer_state,
-        reapply_optimizer_hparams=a.reapply_optimizer_hparams, mirror_prob=a.mirror_prob,
+        reapply_optimizer_hparams=a.reapply_optimizer_hparams, init_optimizer_state=a.init_optimizer_state,
+        matrix_optimizer_scope=a.matrix_optimizer_scope, mirror_prob=a.mirror_prob,
         w_policy=a.w_policy, w_wdl=a.w_wdl, value_outcome_weight=a.value_outcome_weight,
         value_search_weight=a.value_search_weight, value_search_source=a.value_search_source,
         value_draw_source=a.value_draw_source, policy_prior_mix=a.policy_prior_mix,
@@ -262,7 +263,8 @@ RUN_CONFIG_EXEMPT = frozenset({
 # Flags added after runs were already pinned, with the value every earlier run
 # implicitly had. A run_config.json without the key reads as that default, so
 # resuming an older run at the default is not a "change" -- any other value is.
-ADDED_SINCE_PINNING = {"collect_cuda_graphs": False}
+ADDED_SINCE_PINNING = {"collect_cuda_graphs": False, "init_optimizer_state": "fresh",
+                       "matrix_optimizer_scope": "default"}
 
 
 def check_run_config(a: argparse.Namespace, run_dir: Path) -> None:
@@ -458,8 +460,15 @@ def _common(p: argparse.ArgumentParser) -> None:
     t.add_argument("--warmup-start", type=float, default=0.0)
     t.add_argument("--optimizer", default="nadamw")
     t.add_argument("--optimizer-state", choices=("fresh", "continue"), default="fresh")
+    t.add_argument("--init-optimizer-state", choices=("fresh", "checkpoint"), default="fresh",
+                   help="generation 1: 'checkpoint' starts from the init checkpoint's optimizer moments and "
+                        "step counters (refused if it has none, or its parameter layout / hyperparameters differ; "
+                        "its scheduler is not restored -- this run's --lr schedule drives the rate)")
+    t.add_argument("--matrix-optimizer-scope", default="default",
+                   help="Aurora/Muon only: which matrices the polar-update group owns (the SL base used mlp_out)")
     t.add_argument("--reapply-optimizer-hparams", action="store_true",
-                   help="under --optimizer-state continue, apply the requested lr / lr floor / weight decay onto "
+                   help="under --optimizer-state continue (or --init-optimizer-state checkpoint), apply the "
+                        "requested lr / lr floor / weight decay onto "
                         "the restored optimizer (default: refuse when they differ from the checkpoint's)")
     t.add_argument("--mirror-prob", type=float, default=0.5)
     t.add_argument("--w-policy", type=float, default=1.0)
