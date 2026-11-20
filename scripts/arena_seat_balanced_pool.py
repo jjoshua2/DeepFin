@@ -48,16 +48,34 @@ unless:
   ``volatility_candidate`` is null in both (it has no reference-side twin);
 * the result-row fields in ``ROW_MATCH_FIELDS`` are equal;
 * the index -> opening maps are identical: pair id p has the same opening key
-  in A and in B, for every p, and both colourings of a pair share it.
+  in A and in B, for every p, and both colourings of a pair share it;
+* ``--arm`` (required) resolves to run A's candidate and to run B's reference,
+  so runs passed in the wrong order cannot report the base as the arm;
+* every net file exists and none was modified after the earlier of the two
+  runs' starts (the log headers' ``created``). A hybrid JSON spec counts as
+  its own file plus every file it names.
+
+Provenance: the arena banks checkpoint PATHS only, so the output records the
+sha256 of the four input files and of every net file AT POOL TIME. A
+checkpoint rewritten before the runs started, or rewritten with its mtime
+preserved, cannot be detected from the banked files; the output notes say so.
+
+When several result rows share a fingerprint (and label), as a resumed run can
+leave them, the unique complete, non-truncated one is used; anything else is
+refused.
 
 Output: JSON (``--out``) and a one-screen text summary on stdout.
-``--verdict-rule lb-gt-zero`` adds the pre-registered reading: success when the
-pooled lower 95% bound is above 0 Elo, kill when the upper bound is below 0,
-otherwise unread.
+``--verdict-rule lb-gt-zero`` adds the pre-registered reading, decided on the
+excess (score) scale so that an Elo end that is undefined at an extreme score
+cannot hide a clear result: success when the pooled lower 95% bound of the excess
+is above 0 (equivalently, Elo lower bound > 0), kill when the upper bound is below
+0, otherwise unread.
 """
 from __future__ import annotations
 
 import argparse
+import datetime
+import hashlib
 import json
 import math
 from collections import Counter, defaultdict
@@ -155,11 +173,68 @@ def load_row(path: Path, fingerprint: str | None, label: str | None) -> dict[str
             r = json.loads(line)
             if r.get("game_log_fingerprint") == fingerprint and (label is None or r.get("label") == label):
                 rows.append(r)
+    if len(rows) > 1:
+        # A resumed run can leave an earlier, incomplete row beside the final one.
+        rows = [r for r in rows if not r.get("truncated") and r.get("games_requested") is not None
+                and r.get("games") == r.get("games_requested")]
     if len(rows) != 1:
         want = f"game_log_fingerprint {fingerprint!r}" + ("" if label is None else f" and label {label!r}")
-        raise PoolError(f"{path}: expected exactly one result row with {want}, found {len(rows)}"
-                        + ("; pass --a-label / --b-label" if len(rows) > 1 else ""))
+        raise PoolError(f"{path}: expected exactly one (complete, non-truncated, when several) result row "
+                        f"with {want}, found {len(rows)}" + ("; pass --a-label / --b-label" if len(rows) > 1 else ""))
     return rows[0]
+
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def net_files(path: str) -> list[Path]:
+    """The files a seat's net is made of: the checkpoint, or a JSON spec plus every file it names."""
+    p = Path(path)
+    if not p.is_file():
+        raise PoolError(f"net {path} does not exist (cannot record its sha256)")
+    files = [p]
+    if p.suffix == ".json":
+        try:
+            spec = json.loads(p.read_text())
+        except (OSError, ValueError):
+            spec = None
+        if isinstance(spec, dict):
+            for v in spec.values():
+                if isinstance(v, str) and v and Path(v).is_file() and Path(v) not in files:
+                    files.append(Path(v))
+    return files
+
+
+def run_start(header: dict[str, Any], name: str) -> float:
+    created = header.get("created")
+    try:
+        return datetime.datetime.fromisoformat(str(created)).timestamp()
+    except ValueError:
+        raise PoolError(f"run {name}: log header has no parseable 'created' ({created!r}); "
+                        "cannot check that the nets predate the run") from None
+
+
+def net_provenance(nets: dict[str, str], started: float) -> dict[str, Any]:
+    """sha256 and mtime of every net file; refuse a file modified after the runs started."""
+    out: dict[str, Any] = {}
+    late: list[str] = []
+    for role, path in nets.items():
+        entries = []
+        for f in net_files(path):
+            mtime = f.stat().st_mtime
+            entries.append({"path": str(f), "sha256": sha256_file(f), "mtime_unix": mtime})
+            if mtime > started:
+                late.append(f"{role} {f}")
+        out[role] = entries
+    if late:
+        raise PoolError("net file(s) modified after the earlier run started, so the banked games may not be "
+                        "these nets: " + "; ".join(late))
+    return out
 
 
 def opening_key(game: dict[str, Any]) -> str:
@@ -292,7 +367,7 @@ def pool(a_games: Games, b_games: Games, pairs: int) -> dict[str, Any]:
 def verdict(pooled: dict[str, Any], rule: str) -> str:
     if rule != "lb-gt-zero":
         raise PoolError(f"unknown verdict rule {rule!r}")
-    lo, hi = pooled["elo_ci95"]
+    lo, hi = pooled.get("excess_ci95") or (None, None)
     if lo is None or hi is None:
         return "unread"
     if lo > 0.0:
@@ -316,7 +391,7 @@ def summary_text(report: dict[str, Any]) -> str:
     corr = r["ab_correlation"]
     lines = [
         f"seat-balanced pool: A = {report['a']['label']} (arm candidate), B = {report['b']['label']} (arm reference)",
-        f"  arm  {report['arm']}",
+        f"  arm  {report['arm']}  (--arm; run A candidate, run B reference)",
         f"  base {report['base']}",
         f"  {r['n_clusters']} opening clusters, {r['pairs_per_run']} pairs per run, "
         f"{r['openings_repeated_within_run']} opening(s) repeated within a run; "
@@ -334,7 +409,7 @@ def summary_text(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def run(a_games_path: Path, b_games_path: Path, a_result: Path, b_result: Path, *,
+def run(a_games_path: Path, b_games_path: Path, a_result: Path, b_result: Path, *, arm: str,
         a_label: str | None = None, b_label: str | None = None, allow_legacy: bool = False,
         rule: str | None = None) -> dict[str, Any]:
     a_header, a_g = load_games(a_games_path)
@@ -346,9 +421,20 @@ def run(a_games_path: Path, b_games_path: Path, a_result: Path, b_result: Path, 
     compared = check_pairing(a_header, b_header, a_row, b_row)
     pairs = int(a_row["pairs"])
     check_opening_maps(a_g, b_g, pairs)
-    sa = a_header["settings"]
+    sa, sb = a_header["settings"], b_header["settings"]
+    want = Path(arm).resolve()
+    if Path(str(sa.get("candidate"))).resolve() != want or Path(str(sb.get("reference"))).resolve() != want:
+        raise PoolError(f"--arm {arm} is not run A's candidate ({sa.get('candidate')}) and run B's reference "
+                        f"({sb.get('reference')}); are A and B passed in the right order?")
+    started = min(run_start(a_header, "A"), run_start(b_header, "B"))
+    nets = net_provenance({"arm": str(sa["candidate"]), "base": str(sa["reference"])}, started)
+    notes.append("checkpoints are banked by path only: sha256 recorded at pool time; a net rewritten before the "
+                 "runs started, or rewritten with its mtime preserved, cannot be detected from the banked files")
     report: dict[str, Any] = {
         "arm": sa.get("candidate"), "base": sa.get("reference"),
+        "input_sha256": {"a_games": sha256_file(a_games_path), "b_games": sha256_file(b_games_path),
+                         "a_result": sha256_file(a_result), "b_result": sha256_file(b_result)},
+        "nets": nets, "runs_started_unix": started,
         "a": {"label": a_row.get("label"), "games": str(a_games_path), "result": str(a_result),
               "game_log_fingerprint": a_header.get("fingerprint"), "row_elo": a_row.get("elo"),
               "row_elo_ci95": a_row.get("elo_ci95")},
@@ -371,6 +457,7 @@ def run(a_games_path: Path, b_games_path: Path, a_result: Path, b_result: Path, 
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--arm", required=True, help="the arm's net path: must be run A's candidate and run B's reference")
     p.add_argument("--a-games", required=True, help="run A's --games-out log (arm = candidate)")
     p.add_argument("--b-games", required=True, help="run B's --games-out log (arm = reference)")
     p.add_argument("--a-result", required=True, help="results JSONL holding run A's row (matched by fingerprint)")
@@ -383,7 +470,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--verdict-rule", choices=("lb-gt-zero",), default=None)
     p.add_argument("--out", default=None, help="write the JSON report here")
     a = p.parse_args(argv)
-    report = run(Path(a.a_games), Path(a.b_games), Path(a.a_result), Path(a.b_result),
+    report = run(Path(a.a_games), Path(a.b_games), Path(a.a_result), Path(a.b_result), arm=a.arm,
                  a_label=a.a_label, b_label=a.b_label, allow_legacy=a.allow_legacy_rows, rule=a.verdict_rule)
     if a.out:
         Path(a.out).write_text(json.dumps(report, indent=1, sort_keys=True) + "\n")

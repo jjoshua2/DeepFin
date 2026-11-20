@@ -18,7 +18,15 @@ import pytest
 
 from scripts import arena_seat_balanced_pool as pool_mod
 
-ARM, BASE = "arm.pt", "base.pt"
+CREATED = "2099-01-01T00:00:00"     # the runs "started" after the synthetic nets were written
+
+
+def _nets(tmp: Path) -> tuple[str, str]:
+    arm, base = tmp / "arm.pt", tmp / "base.pt"
+    for f, data in ((arm, b"arm weights"), (base, b"base weights")):
+        if not f.exists():
+            f.write_bytes(data)
+    return str(arm), str(base)
 PENTA = dict(zip(pool_mod.PENTA_KEYS, pool_mod.PAIR_SCORE_BINS, strict=True))
 
 
@@ -59,11 +67,11 @@ def _row(label: str, *, pairs: int, scores: list[float], over: dict[str, Any]) -
 
 def _write_run(tmp: Path, label: str, *, candidate: str, reference: str, openings: list[str],
                game_scores: list[tuple[float, float]], row_over: dict[str, Any] | None = None,
-               settings_over: dict[str, Any] | None = None,
+               settings_over: dict[str, Any] | None = None, created: str = CREATED,
                drop_game: tuple[int, int] | None = None) -> tuple[Path, Path]:
     """One arena run: game_scores[p] = the candidate's two game scores of pair p. Returns (games, results)."""
     log = tmp / f"{label}.games.jsonl"
-    header = {"kind": "header", "fingerprint": f"fp_{label}",
+    header = {"kind": "header", "fingerprint": f"fp_{label}", "created": created,
               "settings": _settings(candidate, reference, len(openings), settings_over or {})}
     lines = [json.dumps(header)]
     for p, (fen, (s0, s1)) in enumerate(zip(openings, game_scores, strict=True)):
@@ -89,15 +97,17 @@ def _split(excess: float) -> tuple[float, float]:
 def _pair(tmp: Path, a_excess: list[float], b_excess: list[float], *, openings: list[str] | None = None,
           b_openings: list[str] | None = None, b_over: dict[str, Any] | None = None,
           b_settings: dict[str, Any] | None = None, drop_b: tuple[int, int] | None = None,
-          rule: str | None = None, allow_legacy: bool = False) -> dict[str, Any]:
+          rule: str | None = None, allow_legacy: bool = False, arm: str | None = None,
+          created: str = CREATED) -> dict[str, Any]:
     """Run A (arm candidate) with per-pair candidate excess a_excess, run B (base candidate) with b_excess."""
+    arm_path, base_path = _nets(tmp)
     openings = openings or [f"fen{i}" for i in range(len(a_excess))]
-    a_log, a_res = _write_run(tmp, "A", candidate=ARM, reference=BASE, openings=openings,
-                              game_scores=[_split(x) for x in a_excess])
-    b_log, b_res = _write_run(tmp, "B", candidate=BASE, reference=ARM, openings=b_openings or openings,
+    a_log, a_res = _write_run(tmp, "A", candidate=arm_path, reference=base_path, openings=openings,
+                              game_scores=[_split(x) for x in a_excess], created=created)
+    b_log, b_res = _write_run(tmp, "B", candidate=base_path, reference=arm_path, openings=b_openings or openings,
                               game_scores=[_split(x) for x in b_excess], row_over=b_over,
-                              settings_over=b_settings, drop_game=drop_b)
-    return pool_mod.run(a_log, b_log, a_res, b_res, allow_legacy=allow_legacy, rule=rule)
+                              settings_over=b_settings, drop_game=drop_b, created=created)
+    return pool_mod.run(a_log, b_log, a_res, b_res, arm=arm or arm_path, allow_legacy=allow_legacy, rule=rule)
 
 
 def test_a_planted_seat_bonus_cancels_exactly(tmp_path: Path) -> None:
@@ -132,9 +142,10 @@ def test_a_planted_true_effect_is_recovered(tmp_path: Path) -> None:
     openings = [f"fen{i}" for i in range(n)]
     a_games = [(_sample_game(rng, eps + delta), _sample_game(rng, eps + delta)) for _ in range(n)]
     b_games = [(_sample_game(rng, -eps + delta), _sample_game(rng, -eps + delta)) for _ in range(n)]
-    a_log, a_res = _write_run(tmp_path, "A", candidate=ARM, reference=BASE, openings=openings, game_scores=a_games)
-    b_log, b_res = _write_run(tmp_path, "B", candidate=BASE, reference=ARM, openings=openings, game_scores=b_games)
-    r = pool_mod.run(a_log, b_log, a_res, b_res, rule="lb-gt-zero")
+    arm, base = _nets(tmp_path)
+    a_log, a_res = _write_run(tmp_path, "A", candidate=arm, reference=base, openings=openings, game_scores=a_games)
+    b_log, b_res = _write_run(tmp_path, "B", candidate=base, reference=arm, openings=openings, game_scores=b_games)
+    r = pool_mod.run(a_log, b_log, a_res, b_res, arm=arm, rule="lb-gt-zero")
     pooled, seat = r["result"]["pooled"], r["result"]["seat_offset"]
     assert abs(pooled["excess"] - eps) < 3 * pooled["se"]
     assert abs(seat["excess"] - delta) < 3 * seat["se"]
@@ -148,10 +159,25 @@ def test_a_planted_true_effect_is_recovered(tmp_path: Path) -> None:
 
 
 def test_verdict_reads_kill_and_unread() -> None:
-    assert pool_mod.verdict({"elo_ci95": [-30.0, -2.0]}, "lb-gt-zero") == "kill"
-    assert pool_mod.verdict({"elo_ci95": [-3.0, 9.0]}, "lb-gt-zero") == "unread"
-    assert pool_mod.verdict({"elo_ci95": [None, None]}, "lb-gt-zero") == "unread"
-    assert pool_mod.verdict({"elo_ci95": [0.5, 9.0]}, "lb-gt-zero") == "success"
+    assert pool_mod.verdict({"excess_ci95": [-0.04, -0.003]}, "lb-gt-zero") == "kill"
+    assert pool_mod.verdict({"excess_ci95": [-0.004, 0.013]}, "lb-gt-zero") == "unread"
+    assert pool_mod.verdict({"excess_ci95": [None, None]}, "lb-gt-zero") == "unread"
+    assert pool_mod.verdict({"excess_ci95": [0.001, 0.013]}, "lb-gt-zero") == "success"
+
+
+def test_verdict_at_exact_zero_bounds_is_unread() -> None:
+    """Strict inequalities: a bound exactly at 0 neither passes nor kills."""
+    assert pool_mod.verdict({"excess_ci95": [0.0, 0.02]}, "lb-gt-zero") == "unread"
+    assert pool_mod.verdict({"excess_ci95": [-0.02, 0.0]}, "lb-gt-zero") == "unread"
+    assert pool_mod.verdict({"excess_ci95": [1e-12, 0.02]}, "lb-gt-zero") == "success"
+    assert pool_mod.verdict({"excess_ci95": [-0.02, -1e-12]}, "lb-gt-zero") == "kill"
+
+
+def test_verdict_is_decided_on_the_excess_scale_at_extreme_scores() -> None:
+    """At an upper end past a score of 1 the Elo end is undefined; the result is still clear."""
+    assert pool_mod.interval([0.45, 0.5, 0.5, 0.5])["elo_ci95"][1] is None
+    assert pool_mod.verdict(pool_mod.interval([0.45, 0.5, 0.5, 0.5]), "lb-gt-zero") == "success"
+    assert pool_mod.verdict(pool_mod.interval([-0.45, -0.5, -0.5, -0.5]), "lb-gt-zero") == "kill"
 
 
 def test_repeated_openings_form_one_cluster(tmp_path: Path) -> None:
@@ -200,8 +226,68 @@ def test_a_seat_setting_that_does_not_follow_the_arm_is_refused(tmp_path: Path) 
 
 def test_unswapped_seats_are_refused(tmp_path: Path) -> None:
     ex = [0.0, 0.25, -0.25]
+    arm, base = _nets(tmp_path)
     with pytest.raises(SystemExit, match="seats are not swapped"):
-        _pair(tmp_path, ex, ex, b_settings={"candidate": ARM, "reference": BASE})
+        _pair(tmp_path, ex, ex, b_settings={"candidate": arm, "reference": base})
+
+
+def test_runs_in_the_wrong_order_are_refused_by_arm(tmp_path: Path) -> None:
+    """Passing the base as --arm (or A and B swapped) must not report the base as the arm."""
+    ex = [0.0, 0.25, -0.25]
+    _, base = _nets(tmp_path)
+    with pytest.raises(SystemExit, match="is not run A's candidate"):
+        _pair(tmp_path, ex, ex, arm=base)
+
+
+def test_provenance_records_input_and_net_sha256(tmp_path: Path) -> None:
+    import hashlib
+    r = _pair(tmp_path, [0.0, 0.25, -0.25], [0.0, 0.25, -0.25])
+    arm = r["nets"]["arm"][0]
+    assert arm["sha256"] == hashlib.sha256(b"arm weights").hexdigest()
+    assert r["nets"]["base"][0]["sha256"] == hashlib.sha256(b"base weights").hexdigest()
+    assert r["input_sha256"]["a_games"] == hashlib.sha256((tmp_path / "A.games.jsonl").read_bytes()).hexdigest()
+    assert set(r["input_sha256"]) == {"a_games", "b_games", "a_result", "b_result"}
+    assert any("banked by path only" in n for n in r["notes"])
+
+
+def test_a_hybrid_spec_records_every_file_it_names(tmp_path: Path) -> None:
+    arm, _ = _nets(tmp_path)
+    value = tmp_path / "value.pt"
+    value.write_bytes(b"value weights")
+    spec = tmp_path / "arm.hybrid.json"
+    spec.write_text(json.dumps({"policy": arm, "value": str(value), "mutate": None}))
+    files = [str(f) for f in pool_mod.net_files(str(spec))]
+    assert files == [str(spec), arm, str(value)]
+
+
+def test_a_net_modified_after_the_runs_started_is_refused(tmp_path: Path) -> None:
+    ex = [0.0, 0.25, -0.25]
+    with pytest.raises(SystemExit, match="modified after the earlier run started"):
+        _pair(tmp_path, ex, ex, created="2000-01-01T00:00:00")
+
+
+def test_a_missing_net_is_refused(tmp_path: Path) -> None:
+    ex = [0.0, 0.25, -0.25]
+    _pair(tmp_path, ex, ex)
+    (tmp_path / "base.pt").unlink()
+    with pytest.raises(SystemExit, match="does not exist"):
+        pool_mod.run(tmp_path / "A.games.jsonl", tmp_path / "B.games.jsonl", tmp_path / "A.results.jsonl",
+                     tmp_path / "B.results.jsonl", arm=str(tmp_path / "arm.pt"))
+
+
+def test_a_resumed_runs_complete_row_is_chosen(tmp_path: Path) -> None:
+    ex = [0.0, 0.25, -0.25]
+    _pair(tmp_path, ex, ex)
+    res = tmp_path / "B.results.jsonl"
+    rows = [json.loads(line) for line in res.read_text().splitlines()]
+    partial = {**rows[-1], "games": 2, "truncated": True}
+    res.write_text("\n".join(json.dumps(r) for r in [partial, *rows]) + "\n")
+    args = (tmp_path / "A.games.jsonl", tmp_path / "B.games.jsonl", tmp_path / "A.results.jsonl", res)
+    r = pool_mod.run(*args, arm=str(tmp_path / "arm.pt"))
+    assert r["result"]["n_clusters"] == 3
+    res.write_text("\n".join(json.dumps(r) for r in [rows[-1], *rows]) + "\n")   # two complete rows
+    with pytest.raises(SystemExit, match="found 2"):
+        pool_mod.run(*args, arm=str(tmp_path / "arm.pt"))
 
 
 def test_a_volatility_override_is_refused(tmp_path: Path) -> None:
@@ -217,7 +303,7 @@ def test_a_volatility_override_is_refused(tmp_path: Path) -> None:
     ({"buffer_full_flushes": 3}, "buffer_full_flushes 3"),
     ({"eval_max_batch_realised": None}, "eval_max_batch_realised is null"),
     ({"eval_leaf_cap_bound": True}, "eval_leaf_cap_bound"),
-    ({"game_log_fingerprint": "other"}, "expected exactly one result row"),
+    ({"game_log_fingerprint": "other"}, "result row with game_log_fingerprint 'fp_B', found 0"),
     ({"pentanomial": {"WW": 3, "WD_DW": 0, "DD_WL": 0, "LD_DL": 0, "LL": 0}}, "pentanomial"),
 ])
 def test_incomplete_or_unverifiable_runs_are_refused(tmp_path: Path, over: dict[str, Any], match: str) -> None:
@@ -242,9 +328,10 @@ def test_legacy_rows_need_the_explicit_waiver(tmp_path: Path) -> None:
     ex = [0.0, 0.25, -0.25]
     legacy_a, legacy_b = _legacy(tmp_path, ex)
     logs = (tmp_path / "A.games.jsonl", tmp_path / "B.games.jsonl")
+    arm = str(tmp_path / "arm.pt")
     with pytest.raises(SystemExit, match="buffer_full_flushes absent"):
-        pool_mod.run(*logs, legacy_a, legacy_b)
-    r = pool_mod.run(*logs, legacy_a, legacy_b, allow_legacy=True)
+        pool_mod.run(*logs, legacy_a, legacy_b, arm=arm)
+    r = pool_mod.run(*logs, legacy_a, legacy_b, arm=arm, allow_legacy=True)
     assert any("waived" in n for n in r["notes"])
 
 
@@ -265,7 +352,7 @@ def _legacy(tmp: Path, ex: list[float]) -> tuple[Path, Path]:
 def test_the_cli_writes_json_and_a_verdict(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _pair(tmp_path, [0.25] * 4 + [0.0], [0.25] * 4 + [0.0])
     out = tmp_path / "pooled.json"
-    assert pool_mod.main(["--a-games", str(tmp_path / "A.games.jsonl"),
+    assert pool_mod.main(["--arm", str(tmp_path / "arm.pt"), "--a-games", str(tmp_path / "A.games.jsonl"),
                           "--b-games", str(tmp_path / "B.games.jsonl"),
                           "--a-result", str(tmp_path / "A.results.jsonl"),
                           "--b-result", str(tmp_path / "B.results.jsonl"),
@@ -299,8 +386,10 @@ def test_banked_seat_control_reproduction(tmp_path: Path) -> None:
     d_res, s_res = BANK / "results" / "D_hybrid_bb_400.jsonl", BANK / "results" / "S_swap_bb_800.jsonl"
     d_log = next((BANK / "arena_games").glob("D_hybrid_bb_400.*.games.jsonl"))
     s_log = next((BANK / "arena_games").glob("S_swap_bb_800.*.games.jsonl"))
+    header_d, _ = pool_mod.load_games(d_log)
+    arm = header_d["settings"]["candidate"]
     with pytest.raises(SystemExit, match="not a seat-balanced pair"):  # uncut: 400 vs 800 games
-        pool_mod.run(d_log, s_log, d_res, s_res, allow_legacy=True)
+        pool_mod.run(d_log, s_log, d_res, s_res, arm=arm, allow_legacy=True)
     header, games = pool_mod.load_games(s_log)
     s_row = pool_mod.load_row(s_res, header["fingerprint"], None)
     keep = {k: v for k, v in games.items() if k[0] < 200}
@@ -312,7 +401,7 @@ def test_banked_seat_control_reproduction(tmp_path: Path) -> None:
                  pentanomial={k: counts.get(b, 0) for k, b in PENTA.items()})
     cut_res = tmp_path / "S_cut.results.jsonl"
     cut_res.write_text(json.dumps(s_row) + "\n")
-    r = pool_mod.run(d_log, cut_log, d_res, cut_res, allow_legacy=True)
+    r = pool_mod.run(d_log, cut_log, d_res, cut_res, arm=arm, allow_legacy=True)
     res = r["result"]
     assert res["n_clusters"] == 200
     assert res["openings_repeated_within_run"] == 0
@@ -323,9 +412,11 @@ def test_banked_seat_control_reproduction(tmp_path: Path) -> None:
     # is the candidate seat's excess over these 200 openings (D +0.0325, S's first 200
     # pairs +0.0125), not the banked 998-pair pool across four samples (+6.4).
     assert res["pooled"]["elo_ci95"][0] < 0.0 < res["pooled"]["elo_ci95"][1]
-    assert r["notes"]
-    assert all("waived" in n for n in r["notes"])
+    assert sum("waived" in n for n in r["notes"]) == 4
+    assert [e["sha256"] for e in r["nets"]["base"]] == [A39_SHA256]     # the SL base banked as a39.pt
+    assert [e["sha256"] for e in r["nets"]["arm"][1:]] == [A39_SHA256]  # the hybrid spec names a39 once
 
 
+A39_SHA256 = "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0"
 PINNED_POOLED = 0.01      # (0.0325 + (-0.0125)) / 2: +6.9 Elo [-9.0, +23.0]
 PINNED_SEAT = 0.0225      # (0.0325 - (-0.0125)) / 2: +15.6 Elo [-1.5, +32.9]
