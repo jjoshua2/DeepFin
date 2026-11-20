@@ -20,7 +20,7 @@ pair of a key that repeats within a run joins one cluster):
 The estimate is mean_o d(o), its SE sd_o(d) / sqrt(K) over the K opening
 clusters (clustered by opening, because each opening appears in both runs). The
 interval uses the convention of ``arena_standard.summarize_pentanomial``: a
-normal approximation on the score scale, x +/- 1.96 SE (sample variance,
+normal approximation on the score scale, x +/- z SE (z = 1.96 unless ``--z``; sample variance,
 n - 1), with both ends mapped through Elo(x) = -400 log10(1 / (0.5 + x) - 1).
 It is unavailable with fewer than two clusters or zero variance. The realised
 correlation of e_A(o) and e_B(o) across clusters is reported: a positive value
@@ -77,9 +77,13 @@ refused.
 Output: JSON (``--out``) and a one-screen text summary on stdout.
 ``--verdict-rule lb-gt-zero`` adds the pre-registered reading, decided on the
 excess (score) scale so that an Elo end that is undefined at an extreme score
-cannot hide a clear result: success when the pooled lower 95% bound of the excess
+cannot hide a clear result: success when the pooled lower bound of the excess
 is above 0 (equivalently, Elo lower bound > 0), kill when the upper bound is below
-0, otherwise unread.
+0, otherwise unread. The bounds are at ``--z`` (default 1.96, 95% two-sided; for
+example 2.2414 for a 97.5% two-sided reading, or 2.797 / 1.977 for the two looks
+of an O'Brien-Fleming design). ``z`` and its two-sided coverage are recorded in
+the output, and every block carries both its ``*_ci`` interval at ``z`` and its
+``*_ci95`` interval at 1.96.
 """
 from __future__ import annotations
 
@@ -133,19 +137,28 @@ def _mean_se(xs: Sequence[float]) -> tuple[float, float | None]:
     return m, math.sqrt(var / n)
 
 
-def interval(xs: Sequence[float]) -> dict[str, Any]:
-    """Mean, clustered SE and the arena-convention Elo interval of per-cluster values."""
+def two_sided_coverage(z: float) -> float:
+    """Two-sided normal coverage of +/- z SE: 2 Phi(z) - 1."""
+    return math.erf(z / math.sqrt(2.0))
+
+
+def interval(xs: Sequence[float], z: float = Z95) -> dict[str, Any]:
+    """Mean, clustered SE and the arena-convention Elo interval of per-cluster values.
+
+    ``*_ci95`` is always the +/- 1.96 SE interval; ``*_ci`` is the interval at
+    ``z`` (the one the verdict reads). They coincide at the default z.
+    """
     m, se = _mean_se(xs)
-    out: dict[str, Any] = {"n_clusters": len(xs), "excess": m, "se": se, "elo": _elo(m)}
-    if se is None:
-        out.update(elo_ci95=[None, None], excess_ci95=[None, None],
-                   interval_status="unavailable_insufficient_clusters")
-    elif se == 0.0:
-        out.update(elo_ci95=[None, None], excess_ci95=[None, None],
-                   interval_status="unavailable_zero_empirical_variance")
+    out: dict[str, Any] = {"n_clusters": len(xs), "excess": m, "se": se, "elo": _elo(m), "z": z}
+    if se is None or se == 0.0:
+        out.update(elo_ci95=[None, None], excess_ci95=[None, None], elo_ci=[None, None], excess_ci=[None, None],
+                   interval_status=("unavailable_insufficient_clusters" if se is None
+                                    else "unavailable_zero_empirical_variance"))
     else:
         out.update(elo_ci95=[_elo(m - Z95 * se), _elo(m + Z95 * se)],
                    excess_ci95=[m - Z95 * se, m + Z95 * se],
+                   elo_ci=[_elo(m - z * se), _elo(m + z * se)],
+                   excess_ci=[m - z * se, m + z * se],
                    interval_status="available_normal_approximation")
     return out
 
@@ -398,7 +411,7 @@ def per_opening(games: Games, pairs: int) -> dict[str, list[float]]:
     return out
 
 
-def pool(a_games: Games, b_games: Games, pairs: int) -> dict[str, Any]:
+def pool(a_games: Games, b_games: Games, pairs: int, z: float = Z95) -> dict[str, Any]:
     ca, cb = per_opening(a_games, pairs), per_opening(b_games, pairs)
     keys = sorted(ca)
     e_a = [sum(ca[k]) / len(ca[k]) for k in keys]                 # arm as candidate
@@ -410,17 +423,17 @@ def pool(a_games: Games, b_games: Games, pairs: int) -> dict[str, Any]:
         "pairs_per_run": pairs,
         "openings_repeated_within_run": sum(1 for k in keys if len(ca[k]) > 1),
         "ab_correlation": correlation(e_a, e_b),
-        "pooled": interval(d),
-        "arm_as_candidate": interval(e_a),
-        "arm_as_reference": interval(e_b),
-        "seat_offset": interval(s),
+        "pooled": interval(d, z),
+        "arm_as_candidate": interval(e_a, z),
+        "arm_as_reference": interval(e_b, z),
+        "seat_offset": interval(s, z),
     }
 
 
 def verdict(pooled: dict[str, Any], rule: str) -> str:
     if rule != "lb-gt-zero":
         raise PoolError(f"unknown verdict rule {rule!r}")
-    lo, hi = pooled.get("excess_ci95") or (None, None)
+    lo, hi = pooled.get("excess_ci") or (None, None)      # the interval at the report's z
     if lo is None or hi is None:
         return "unread"
     if lo > 0.0:
@@ -432,7 +445,7 @@ def verdict(pooled: dict[str, Any], rule: str) -> str:
 
 def _fmt(block: dict[str, Any]) -> str:
     elo = block["elo"]
-    lo, hi = block["elo_ci95"]
+    lo, hi = block["elo_ci"]
     se = block["se"]
     e = "n/a" if elo is None else f"{elo:+.1f}"
     ci = "[n/a]" if lo is None or hi is None else f"[{lo:+.1f}, {hi:+.1f}]"
@@ -450,11 +463,12 @@ def summary_text(report: dict[str, Any]) -> str:
         f"  {r['n_clusters']} opening clusters, {r['pairs_per_run']} pairs per run, "
         f"{r['openings_repeated_within_run']} opening(s) repeated within a run; "
         f"A/B correlation {'n/a' if corr is None else f'{corr:+.3f}'}",
-        f"  POOLED (arm vs base, Elo, 95%):  {_fmt(r['pooled'])}",
+        f"  POOLED (arm vs base, Elo, z {report['z']:g} = {100 * report['coverage']:.2f}% two-sided):",
+        f"                                   {_fmt(r['pooled'])}",
         f"  arm as candidate (run A):        {_fmt(r['arm_as_candidate'])}",
         f"  arm as reference (run B):        {_fmt(r['arm_as_reference'])}",
         f"  seat offset (candidate seat):    {_fmt(r['seat_offset'])}",
-        "  interval: normal approximation on the score scale, x +/- 1.96 SE clustered by opening, "
+        f"  interval: normal approximation on the score scale, x +/- {report['z']:g} SE clustered by opening, "
         "ends mapped by Elo = -400 log10(1/(0.5+x) - 1)",
     ]
     lines.extend(f"  NOTE {note}" for note in report["notes"])
@@ -465,7 +479,9 @@ def summary_text(report: dict[str, Any]) -> str:
 
 def run(a_games_path: Path, b_games_path: Path, a_result: Path, b_result: Path, *, arm: str,
         a_label: str | None = None, b_label: str | None = None, allow_legacy: bool = False,
-        rule: str | None = None) -> dict[str, Any]:
+        rule: str | None = None, z: float = Z95) -> dict[str, Any]:
+    if not (math.isfinite(z) and z > 0.0):
+        raise PoolError(f"--z must be a finite positive number, got {z!r}")
     a_header, a_g = load_games(a_games_path)
     b_header, b_g = load_games(b_games_path)
     a_row = load_row(a_result, a_header.get("fingerprint"), a_label)
@@ -488,6 +504,7 @@ def run(a_games_path: Path, b_games_path: Path, a_result: Path, b_result: Path, 
         "input_sha256": {"a_games": sha256_file(a_games_path), "b_games": sha256_file(b_games_path),
                          "a_result": sha256_file(a_result), "b_result": sha256_file(b_result)},
         "nets": nets, "net_check": net_check,
+        "z": z, "coverage": two_sided_coverage(z),
         "a": {"label": a_row.get("label"), "games": str(a_games_path), "result": str(a_result),
               "game_log_fingerprint": a_header.get("fingerprint"), "row_elo": a_row.get("elo"),
               "row_elo_ci95": a_row.get("elo_ci95")},
@@ -496,11 +513,12 @@ def run(a_games_path: Path, b_games_path: Path, a_result: Path, b_result: Path, 
               "row_candidate_elo_ci95": b_row.get("elo_ci95")},
         "compared_header_settings": compared, "compared_row_fields": list(ROW_MATCH_FIELDS),
         "method": {"unit": "opening key (opening_fen + opening_uci); repeated openings form one cluster",
-                   "interval": "normal approximation on the score scale, x +/- 1.96 SE, SE = sd/sqrt(K) "
-                               "(sample variance), ends mapped by Elo = -400 log10(1/(0.5+x) - 1); "
-                               "the convention of arena_standard.summarize_pentanomial"},
+                   "interval": f"normal approximation on the score scale, x +/- z SE (z = {z:g}; *_ci95 is "
+                               "always at 1.96), SE = sd/sqrt(K) (sample variance), ends mapped by "
+                               "Elo = -400 log10(1/(0.5+x) - 1); the convention of "
+                               "arena_standard.summarize_pentanomial"},
         "notes": notes,
-        "result": pool(a_g, b_g, pairs),
+        "result": pool(a_g, b_g, pairs, z),
     }
     if rule:
         report["verdict_rule"] = rule
@@ -523,10 +541,13 @@ def main(argv: list[str] | None = None) -> int:
                         "(banked reproductions only; never for a registered read). Both rows must be legacy: "
                         "a mixed pair is refused regardless")
     p.add_argument("--verdict-rule", choices=("lb-gt-zero",), default=None)
+    p.add_argument("--z", type=float, default=Z95,
+                   help="interval half-width in SE, the one the verdict reads (default 1.96 = 95%% two-sided; "
+                        "2.2414 = 97.5%% two-sided; O'Brien-Fleming looks 2.797 / 1.977). Recorded in the output")
     p.add_argument("--out", default=None, help="write the JSON report here")
     a = p.parse_args(argv)
     report = run(Path(a.a_games), Path(a.b_games), Path(a.a_result), Path(a.b_result), arm=a.arm,
-                 a_label=a.a_label, b_label=a.b_label, allow_legacy=a.allow_legacy_rows, rule=a.verdict_rule)
+                 a_label=a.a_label, b_label=a.b_label, allow_legacy=a.allow_legacy_rows, rule=a.verdict_rule, z=a.z)
     if a.out:
         Path(a.out).write_text(json.dumps(report, indent=1, sort_keys=True) + "\n")
     print(summary_text(report))

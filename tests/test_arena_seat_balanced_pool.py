@@ -167,18 +167,18 @@ def test_a_planted_true_effect_is_recovered(tmp_path: Path) -> None:
 
 
 def test_verdict_reads_kill_and_unread() -> None:
-    assert pool_mod.verdict({"excess_ci95": [-0.04, -0.003]}, "lb-gt-zero") == "kill"
-    assert pool_mod.verdict({"excess_ci95": [-0.004, 0.013]}, "lb-gt-zero") == "unread"
-    assert pool_mod.verdict({"excess_ci95": [None, None]}, "lb-gt-zero") == "unread"
-    assert pool_mod.verdict({"excess_ci95": [0.001, 0.013]}, "lb-gt-zero") == "success"
+    assert pool_mod.verdict({"excess_ci": [-0.04, -0.003]}, "lb-gt-zero") == "kill"
+    assert pool_mod.verdict({"excess_ci": [-0.004, 0.013]}, "lb-gt-zero") == "unread"
+    assert pool_mod.verdict({"excess_ci": [None, None]}, "lb-gt-zero") == "unread"
+    assert pool_mod.verdict({"excess_ci": [0.001, 0.013]}, "lb-gt-zero") == "success"
 
 
 def test_verdict_at_exact_zero_bounds_is_unread() -> None:
     """Strict inequalities: a bound exactly at 0 neither passes nor kills."""
-    assert pool_mod.verdict({"excess_ci95": [0.0, 0.02]}, "lb-gt-zero") == "unread"
-    assert pool_mod.verdict({"excess_ci95": [-0.02, 0.0]}, "lb-gt-zero") == "unread"
-    assert pool_mod.verdict({"excess_ci95": [1e-12, 0.02]}, "lb-gt-zero") == "success"
-    assert pool_mod.verdict({"excess_ci95": [-0.02, -1e-12]}, "lb-gt-zero") == "kill"
+    assert pool_mod.verdict({"excess_ci": [0.0, 0.02]}, "lb-gt-zero") == "unread"
+    assert pool_mod.verdict({"excess_ci": [-0.02, 0.0]}, "lb-gt-zero") == "unread"
+    assert pool_mod.verdict({"excess_ci": [1e-12, 0.02]}, "lb-gt-zero") == "success"
+    assert pool_mod.verdict({"excess_ci": [-0.02, -1e-12]}, "lb-gt-zero") == "kill"
 
 
 def test_verdict_is_decided_on_the_excess_scale_at_extreme_scores() -> None:
@@ -453,6 +453,41 @@ def test_the_cli_writes_json_and_a_verdict(tmp_path: Path, capsys: pytest.Captur
     assert "ab_correlation" in report["result"]
     assert "seat_offset" in report["result"]
     assert "VERDICT (lb-gt-zero)" in capsys.readouterr().out
+
+
+def test_z_widens_the_interval_the_verdict_reads_and_is_recorded(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """t = 2.12 on the pooled excess: a success at z 1.96, unread at the 97.5% z 2.2414."""
+    effect = [0.25] * 3 + [0.0] * 4                    # mean / SE = 2.1213
+    _pair(tmp_path, effect, [-e for e in effect])
+    args = ["--arm", str(tmp_path / "arm.pt"), "--a-games", str(tmp_path / "A.games.jsonl"),
+            "--b-games", str(tmp_path / "B.games.jsonl"), "--a-result", str(tmp_path / "A.results.jsonl"),
+            "--b-result", str(tmp_path / "B.results.jsonl"), "--verdict-rule", "lb-gt-zero"]
+    reports = {}
+    for z in ("1.96", "2.2414"):
+        out = tmp_path / f"z{z}.json"
+        assert pool_mod.main([*args, "--z", z, "--out", str(out)]) == 0
+        reports[z] = json.loads(out.read_text())
+    default, wide = reports["1.96"], reports["2.2414"]
+    assert default["verdict"] == "success"
+    assert wide["verdict"] == "unread"
+    assert wide["z"] == 2.2414
+    assert wide["coverage"] == pytest.approx(0.975, abs=1e-4)
+    pooled = wide["result"]["pooled"]
+    m, se = pooled["excess"], pooled["se"]
+    assert pooled["excess_ci"] == pytest.approx([m - 2.2414 * se, m + 2.2414 * se])
+    assert pooled["excess_ci95"] == default["result"]["pooled"]["excess_ci95"], "the 95% interval stays at 1.96"
+    assert "z 2.2414 = 97.50% two-sided" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("z", [0.0, -1.0, float("nan"), float("inf")])
+def test_a_non_positive_or_non_finite_z_is_refused(tmp_path: Path, z: float) -> None:
+    effect = [0.25] * 3 + [0.0] * 4
+    _pair(tmp_path, effect, [-e for e in effect])
+    with pytest.raises(SystemExit, match="--z must be a finite positive number"):
+        pool_mod.run(tmp_path / "A.games.jsonl", tmp_path / "B.games.jsonl", tmp_path / "A.results.jsonl",
+                     tmp_path / "B.results.jsonl", arm=str(tmp_path / "arm.pt"), z=z)
 
 
 # ---------------------------------------------------------------------------
