@@ -2,10 +2,10 @@
 
 **Status:** D1–D4 complete (D4 round 2, 2026-11-20: seat control closed, F12 arms
 banked, recalibrated-value diagnostics); **P1 read: value loss implicated**, and the
-seat control no longer qualifies it (see "P1 readout" and "D4 round 2"). P1 was registered here before any P1
-training update. Owner changed on 2026-11-19: the RL proof moved
-from the Codex task to the Claude session; the week-one studies stay closed and
-their artifacts untouched.
+seat control no longer qualifies it (see "P1 readout" and "D4 round 2"). P1 was
+registered here before any P1 training update. Owner changed on 2026-11-19: the
+RL proof moved from the Codex task to the Claude session; the week-one studies stay
+closed and their artifacts untouched.
 
 Naming: "SL base" is the supervised starting net (checkpoint sha256
 `a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0`, called A39 in
@@ -172,11 +172,12 @@ Same rows, same order, same optimizer: switching the WDL loss off is worth about
 Elo head-to-head. The verdict is by rule. The caveat first written here was that its
 robustness depended on the open seat-swap control in D4: identical weights had read
 +22.6 (+0.2 to +45.3) for the candidate seat on another seed. **That control is now
-closed (D4 round 2, 2026-11-20):** there is no systematic candidate-seat offset.
-Pooled over 998 same-net pairs the candidate seat reads +6.4 (−4.2 to +17.1), and the
-+22.6 was one draw of the move-sampling generator. So the P1 reading,
-+42.6 (+30.1 to +55.2) against F12 cycle 12, stands as read against 0, with no
-offset correction.
+closed (D4 round 2, 2026-11-20):** no candidate-seat offset was detected. Pooled
+over 998 same-net pairs the candidate seat reads +6.4 (−4.2 to +17.1; −5.0 to +17.8
+clustered by opening), and the +22.6 is consistent with one draw of the
+move-sampling generator. Even if the pooled +6.4 is subtracted together with its
+uncertainty, the P1 reading against F12 cycle 12 becomes +36.2 (+19.3 to +53.1),
+still well above 0. So the P1 reading of +42.6 (+30.1 to +55.2) stands.
 
 **Recorded, not deciding.** P1 vs SL base, 800 games: 0.4844, −10.9 Elo (−27.7 to
 +5.9) — policy-only training on these rows did not beat the base. F12 cycle 12 vs SL
@@ -276,15 +277,24 @@ score excess over pairs, with pair-clustered 95% intervals.
 | Same openings, new move RNG | plain vs plain | D's openings, move generator reseeded to 20261121 | 400 | +3.5 (−19.6 to +26.6) |
 | Seats swapped | candidate plain, reference hybrid(base, base) | 20261119 | 800 | +4.8 (−12.2 to +21.8) |
 
-**There is no systematic candidate-seat offset.**
-- By orientation: original +7.5 (−6.0 to +21.1) over 600 pairs, swapped +4.8 (−12.2 to
-  +21.8) over 400 pairs.
-- Pooled over all 998 distinct pairs: +6.4 (−4.2 to +17.1).
-- Pooled without D, the sample that raised the question: +2.4 (−9.6 to +14.4).
-- Three of the samples play the same openings as D, so the pooled interval is
-  slightly too narrow.
+**No candidate-seat offset was detected.** The pooled interval excludes offsets above
+about +17 Elo (about +18 clustered by opening).
 
-**The +22.6 was one draw of the move-sampling generator.** Replaying D's own
+Forking path: the three extra samples were run because D looked large. D stays in
+the headline pool, and the pool without D is a sensitivity reading only.
+
+- By orientation, counting only the hybrid-vs-plain runs:
+  - original (D plus the second seed): +9.6 (−7.2 to +26.4) over 400 pairs;
+  - swapped: +4.8 (−12.2 to +21.8) over 400 pairs.
+- The plain-vs-plain reseeded sample is the move-RNG control, not an orientation
+  sample: +3.5 (−19.6 to +26.6).
+- Pooled over all 998 distinct pairs:
+  - +6.4 (−4.2 to +17.1) clustered by pair;
+  - +6.4 (−5.0 to +17.8) clustered by opening (599 openings; three samples share D's
+    openings).
+- Sensitivity, pooled without D: +2.4 (−9.6 to +14.4).
+
+**The +22.6 is consistent with one draw of the move-sampling generator.** Replaying D's own
 openings with a fresh move stream gave +3.5. The swap and the reseeded run play D's
 openings but are different games: 2 of 400 and 1 of 400 move sequences are
 identical.
@@ -293,8 +303,8 @@ With identical weights in both seats, a swap alone cannot separate a seat-depend
 code path from sampling noise, because the path moves with the seat label. The
 independent draws are what decide it.
 
-Consequence for P1: the caveat in "P1 readout" is closed, and the head-to-head
-+42.6 (+30.1 to +55.2) is read against 0.
+Consequence for P1: the caveat in "P1 readout" is closed. Subtracting the pooled +6.4
+with its uncertainty still leaves the head-to-head at +36.2 (+19.3 to +53.1).
 
 ### F12 swap arms, beside Q50 (800 games each)
 
@@ -364,9 +374,16 @@ inference-time patch. It is not evidence that training on these targets is fine.
 | R4 F12 c12 full, recal. value | −0.9 (−19.0 to +17.2) | −34.9 | +34.0 (+8.4 to +60.0) | 0.97 (0.37 to 1.56) | 99.6 | 0.417 |
 
 Reading:
-- **Q50:** most of the value-output deficit goes away when the value is put back on
-  the SL base's confidence and draw shape. This agrees with the offline study, which
-  found Q50's value gap was mostly calibration.
+- **Q50:** most of the play deficit from the value output goes away when the value is
+  put back on the SL base's confidence and draw shape. The offline study found Q50's
+  value gap was mostly calibration, but not entirely:
+  - its raw gap of +0.0070 splits into calibration +0.0041 and information +0.0030
+    (0.0012 to 0.0044);
+  - a child-level top-1 deficit of −0.031 (−0.053 to −0.009) remains that no
+    monotone map touches.
+
+  The R arms show that, on this net, a two-parameter map recovers most of the play
+  deficit. They do not show that the value head lost no information.
 - **F12, value only (R2):** the gain does not resolve. F12's value deficit is small,
   and the offline study found it was mostly information.
 - **F12, full net (R4):** R4 recovers more than R2 and the policy share together
@@ -381,8 +398,15 @@ Reading:
 - **One f12_C pair replayed.** One f12_C game reached the 300-ply cap unresolved, and
   the strict-tablebase arena refuses to call that a draw, so the run stopped. The
   arena's `--resume` discarded that one-colour pair and replayed it in full: 1 pair
-  of 400. This slightly selects against very long games. F12 c12 full had the same
-  single-pair replay in round 1.
+  of 400 (pair 352).
+- **Two round-1 arms also replayed pairs on resume:**
+  - F12 c12 full stopped at the same 300-ply refusal (pair 104). That left 22 pairs
+    with one colouring played; all 22 were discarded and replayed, giving 822 game
+    rows for 800 scored games.
+  - Q50 c12 full stopped on a CUDA error and replayed 21 pairs (821 rows).
+- **Size of the length selection.** Only the pair that hit the cap is selected on game
+  length, so about one game per affected arm (F12 full and f12_C). The other replayed
+  pairs were simply in flight when the run stopped, and their replays are fresh draws.
 - **Scratch harness only; no repository code was changed.**
   - A driver loads a "hybrid" net, then calls `scripts/arena_standard.py`'s `main()`
     unchanged. The hybrid takes the policy from one checkpoint and the WDL from
@@ -418,13 +442,21 @@ All of the following are candidates for a future registered experiment, not
 decisions.
 
 - The dominant measured loss in Q50 is the value output's confidence and draw-shape
-  drift (flatter |Q| than the SL base). It is mostly recoverable by a two-parameter
-  map at inference time.
-- F12's loss is not concentrated in one output, and its value gap is mostly
-  information, not calibration. A calibration fix alone is not expected to clear an
-  F12-like loop.
-- Candidate: train value on search value (the SL base's own regime), or keep the
-  value loss off, as P1's +42.6 head-to-head suggests.
+  drift (flatter |Q| than the SL base). Most of its play deficit is recoverable by a
+  two-parameter map at inference time. Offline, an information part of +0.0030
+  (0.0012 to 0.0044) and a child-level top-1 deficit of −0.031 (−0.053 to −0.009)
+  remain that no monotone map touches.
+- F12's loss is not concentrated in one output. The evidence on calibration
+  conflicts:
+  - R4 (full F12, recalibrated) recovers the full-net deficit: −0.9 (−19.0 to +17.2),
+    share 0.97 (0.37 to 1.56).
+  - R2 (value only) is unresolved at +6.1 (−18.9 to +31.1), and the offline study
+    found F12's value gap mostly information.
+
+  Whether calibration clears an F12-like loop is unresolved.
+- Candidate: train value on search value (the SL base's own value target was 100%
+  teacher-search value; see D2), or keep the value loss off, as P1's +42.6
+  head-to-head suggests.
 - Candidate: monitor mean |Q| and P(draw) on the fixed 3,080 audit rows every
   generation, as a tripwire against confidence drift.
 - Candidate: apply or learn a calibration step for the value output, registered with
