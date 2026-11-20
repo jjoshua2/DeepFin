@@ -8,10 +8,12 @@ no noise, temperature 0. The result has a DIGEST of every game's moves,
 result and termination, so two revisions can be compared on the same command:
 
     PYTHONPATH=<tree> python <this script> --model NET.pt --syzygy "WDL:DTZ" \\
-        --starts starts.txt --pairs 64 --pool 128 [--cuda-graphs] --out run.json
+        --starts starts.txt --pairs 64 --pool 128 --out run.json
 
 ``--starts`` lines are ``<root FEN> | <uci moves...>``. Also recorded: GPU
-utilisation, peak torch memory and the evaluator's CUDA-graph counters.
+utilisation, peak torch memory and the evaluator's CUDA-graph counters. The
+evaluator replays CUDA graphs of its eager forward on CUDA, as the arena does
+(its one fast path); off CUDA it runs eager.
 """
 from __future__ import annotations
 
@@ -43,8 +45,6 @@ def main() -> None:
     p.add_argument("--max-plies", type=int, default=400)
     p.add_argument("--seed", type=int, default=1)
     p.add_argument("--threads", type=int, default=2)
-    p.add_argument("--cuda-graphs", action="store_true")
-    p.add_argument("--cuda-graph-max-rows", type=int, default=512)
     p.add_argument("--inference-only", action="store_true")
     p.add_argument("--device", default="cuda:0")
     p.add_argument("--out", required=True)
@@ -73,10 +73,8 @@ def main() -> None:
         openings.append(board)
 
     side = resolve_search_shape("training")
-    graph_kw: dict[str, Any] = (
-        {"cuda_graphs": True, "cuda_graph_max_rows": args.cuda_graph_max_rows} if args.cuda_graphs else {}
-    )
-    ev = build_arena_evaluator(model, device=args.device, max_batch=args.max_batch, **graph_kw)
+    ev = build_arena_evaluator(model, device=args.device, max_batch=args.max_batch,
+                               cuda_graphs=str(args.device).startswith("cuda"))
     forwards: list[int] = []
     for name in ("evaluate_inplace_async", "evaluate_encoded_async", "evaluate_encoded"):
         orig = getattr(ev, name, None)
