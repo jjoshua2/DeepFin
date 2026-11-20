@@ -173,3 +173,46 @@ def test_training_on_capped_rows_is_refused_unless_allowed_and_then_recorded(
     assert summary["capped_collect_rows"]["1"]["eval_max_batch"] == 512
     ledger = json.loads((run / "presentation_ledger.json").read_text())
     assert ledger["trained_on_capped_rows"] is True
+
+
+def test_a_capped_ancestor_outside_the_window_still_taints_and_is_refused(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Gen 2 at --presentations 1 never presents gen 1's rows, but its model
+    descends from gen 1's training: the taint is read from the whole lineage's
+    collect manifests, not from a field older metrics never wrote."""
+    from tests.test_simple_rl_resume import _argv, _setup
+
+    from scripts import simple_rl_loop
+
+    openings, model_config = _setup(tmp_path, monkeypatch)
+    run = tmp_path / "run"
+    argv = _argv(run, openings, model_config)
+    argv[argv.index("--generations") + 1] = "1"
+    argv[argv.index("--presentations") + 1] = "1"
+    assert simple_rl_loop.main(argv) == 0
+    metrics = run / "gen_0001" / "train" / "metrics.json"
+    old = json.loads(metrics.read_text())  # pre-PR metrics carry no taint fields
+    old["summary"].pop("trained_on_capped_rows")
+    metrics.write_text(json.dumps(old))
+    real = collect_mod.capped_collect_record
+    monkeypatch.setattr(collect_mod, "capped_collect_record",
+                        lambda m: real(_manifest()) if m.get("generation") == 1 else real(m))
+    argv[argv.index("--generations") + 1] = "2"
+    with pytest.raises(SystemExit, match=r"generation\(s\) \[1\] were collected at an evaluator cap"):
+        simple_rl_loop.main(argv)
+    assert not (run / "gen_0002").exists()
+    assert simple_rl_loop.main([*argv, "--allow-capped-collect-rows", "--allow-config-change"]) == 0
+    summary = json.loads((run / "gen_0002" / "train" / "metrics.json").read_text())["summary"]
+    assert summary["window_generations"] == [2]
+    assert summary["capped_collect_rows"] == {}  # nothing capped IN the window
+    assert summary["trained_on_capped_rows"] is True  # inherited from gen 1
+    assert summary["capped_lineage_collects"]["1"]["eval_max_batch"] == 512
+    assert json.loads((run / "presentation_ledger.json").read_text())["capped_lineage_collects"]["1"]
+    # The phase itself refuses too (not only the driver's pre-pin check).
+    from chess_anti_engine.simple_rl.learn import TrainSettings, train_generation
+
+    model = run / "gen_0001" / "train" / "model.pt"
+    assert model.is_file()
+    with pytest.raises(ValueError, match=r"generation\(s\) \[1\] were collected at an evaluator cap"):
+        train_generation(run_dir=run, generation=2, init_checkpoint=model, prev_trainer_checkpoint=None,
+                         settings=TrainSettings(device="cpu", presentations=1))

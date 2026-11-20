@@ -43,7 +43,7 @@ from chess_anti_engine.simple_rl.evaluate import (
     tripwire_table,
 )
 from chess_anti_engine.simple_rl.learn import (
-    MODEL_FILE, TrainSettings, capped_collects, phase_generations, refuse_capped_collects, train_generation,
+    MODEL_FILE, TrainSettings, lineage_capped_collects, refuse_capped_collects, train_generation,
 )
 from chess_anti_engine.simple_rl.lineage import later_sealed, unseal_after, verify_before, verify_stage
 from chess_anti_engine.simple_rl.openings import split_openings
@@ -287,9 +287,10 @@ def validate_before_pinning(a: argparse.Namespace, run_dir: Path, stages: set[st
         else:
             to_train = [g for g in range(1, int(getattr(a, "generations", 0) or 0) + 1)
                         if not stage_done(gen_dir(run_dir, g) / "train")]
-        window = sorted({w for g in to_train for w in phase_generations(g, settings)})
+        # The whole lineage, not just the windows: a model descends from every
+        # earlier generation's rows (lineage_capped_collects).
         try:
-            refuse_capped_collects(capped_collects(run_dir, window), settings)
+            refuse_capped_collects(lineage_capped_collects(run_dir, max(to_train, default=0)), settings)
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
     if "collect" in stages:

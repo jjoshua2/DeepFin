@@ -245,6 +245,17 @@ def capped_collects(run_dir: Path, generations: list[int]) -> dict[int, dict[str
     return out
 
 
+def lineage_capped_collects(run_dir: Path, generation: int) -> dict[int, dict[str, Any]]:
+    """Capped collects anywhere in the lineage a phase-``generation`` model descends from.
+
+    Every collected generation 1..generation is trained on by some phase of the
+    run (at least its own), so the model trained at ``generation`` inherits all
+    of them, whatever this phase's window is. Read from the collect manifests,
+    so it does not depend on earlier phases having recorded a taint field.
+    """
+    return capped_collects(run_dir, list(range(1, int(generation) + 1)))
+
+
 def refuse_capped_collects(capped: dict[int, dict[str, Any]], settings: TrainSettings) -> None:
     if capped and not settings.allow_capped_collect_rows:
         raise ValueError(
@@ -774,10 +785,11 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
     settings.validate()
     arch, model_config = load_arch_config(init_checkpoint)
     capped = capped_collects(run_dir, phase_generations(generation, settings))
-    refuse_capped_collects(capped, settings)
+    lineage_capped = lineage_capped_collects(run_dir, generation)
     prev_train = Path(run_dir) / f"gen_{generation - 1:04d}" / "train" / "metrics.json"
-    inherited_taint = bool(prev_train.is_file() and json.loads(prev_train.read_text())["summary"].get(
-        "trained_on_capped_rows", False))
+    inherited_taint = bool(lineage_capped) or bool(prev_train.is_file() and json.loads(
+        prev_train.read_text())["summary"].get("trained_on_capped_rows", False))
+    refuse_capped_collects(lineage_capped, settings)  # direct OR inherited: the same refusal
     train_rows, holdout, gens, row_ids = load_window(run_dir, generation, settings)
     reference_prior: Callable[[np.ndarray, np.ndarray], np.ndarray] | None = None
     if float(settings.policy_prior_mix) < 1.0 and settings.prior_mix_source == "reference":
@@ -914,6 +926,7 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
         "drawn_rows": sampler.drawn_rows, "sl_rows_drawn": sampler.realised_sl_rows,
         "sl_frac_realised": sampler.realised_sl_rows / max(1, sampler.drawn_rows),
         "capped_collect_rows": {str(k): v for k, v in capped.items()},
+        "capped_lineage_collects": {str(k): v for k, v in lineage_capped.items()},
         # this phase's rows, or any earlier phase of the lineage it starts from
         "trained_on_capped_rows": bool(capped) or inherited_taint,
         "optimizer_continued": continued, "realised_lr_param_groups": realised_lr,
@@ -945,6 +958,7 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
                                          "presentations": int(settings.presentations),
                                          "trained_on_capped_rows": summary["trained_on_capped_rows"],
                                          "capped_collect_rows": summary["capped_collect_rows"],
+                                         "capped_lineage_collects": summary["capped_lineage_collects"],
                                          "generations": histograms, "sl_rows_used": sl_end})
     write_manifest(out_dir, stage="train",
                    config={"settings": asdict(settings), "arch": arch,

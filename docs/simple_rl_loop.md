@@ -337,11 +337,16 @@ refuses (before pinning, and again when the phase starts) any generation in its
 window whose sealed collect ran on CUDA with a cap below concurrency × topk. This
 is the precise could-bind bound, not the conservative one. The cap is read from
 `stats.json` when recorded, else from the pinned setting, else the legacy fixed
-512 that old manifests do not record. `--allow-capped-collect-rows` (pinned)
-overrides the refusal. The phase then records `trained_on_capped_rows: true` with
-the offending generations in `metrics.json`, the train manifest and
-`presentation_ledger.json`. The flag is inherited by every later phase of that
-lineage. The arena already checks the same bound and warns
+512 that old manifests do not record. The check covers the whole lineage, not
+only the phase's window: a model descends from every earlier generation's rows,
+so a capped collect in any generation 1..g taints phase g and is refused the same
+way, read from the collect manifests (older metrics carry no taint field).
+`--allow-capped-collect-rows` (pinned) overrides the refusal. The phase then
+records `trained_on_capped_rows: true`, the window's capped generations
+(`capped_collect_rows`) and the lineage's (`capped_lineage_collects`) in
+`metrics.json`, the train manifest and `presentation_ledger.json`. An
+`--init-checkpoint` taken from another run carries no taint record: the check
+sees only this run's collects. The arena already checks the same bound and warns
 (`scripts/arena_standard.py`, `arena_uncapped_leaf_rows`).
 
 ## Stockfish
