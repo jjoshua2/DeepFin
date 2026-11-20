@@ -337,6 +337,42 @@ def required_leaf_rows(settings: CollectSettings) -> int:
     return int(leaf_buffer_rows(boards, topk=int(settings.topk), pipelined=False))
 
 
+# The fixed DirectGPUEvaluator cap every CUDA collect used before
+# --eval-max-batch existed (2026-11-20); old manifests do not record it.
+LEGACY_EVAL_MAX_BATCH = 512
+
+
+def capped_collect_record(manifest: dict[str, Any]) -> dict[str, Any] | None:
+    """Non-None when a SEALED collect ran at an evaluator cap that could absorb leaves.
+
+    ``_mcts_tree.c`` (before the buffer-full fix) backs a leaf that finds the
+    buffer full with the root's Q instead of evaluating it -- wrong-signed at
+    every odd depth and fabricated at every even one. A search call asks for at
+    most boards x topk leaves in one rep (the accumulate guard keeps later reps
+    inside the buffer), so a cap below that could bind. This is the PRECISE
+    could-bind bound, unlike the collect-time refusal, which conservatively
+    compares against the 2x buffer. Read from the manifest's own config, so it
+    works on old-format collects that predate the stats fields; the realised cap
+    comes from stats when recorded, else the setting, else the legacy fixed 512.
+    """
+    settings = dict(manifest.get("config", {}).get("settings", {}))
+    if not str(settings.get("device", "cpu")).startswith("cuda"):
+        return None
+    stats = manifest.get("stats") or {}
+    realised = stats.get("eval_max_batch_realised")
+    source = "stats"
+    if realised is None:
+        realised, source = settings.get("eval_max_batch"), "settings"
+    if realised is None:
+        realised, source = LEGACY_EVAL_MAX_BATCH, "legacy_fixed_512"
+    boards = max(1, min(int(settings.get("concurrency", 32)), int(settings.get("games", 1))))
+    request = boards * int(settings.get("topk", 16))
+    if int(realised) >= request:
+        return None
+    return {"eval_max_batch": int(realised), "eval_max_batch_source": source, "boards": boards,
+            "topk": int(settings.get("topk", 16)), "leaf_request_per_rep": request}
+
+
 def realised_eval_max_batch(settings: CollectSettings) -> int:
     """``eval_max_batch``, defaulted to ``required_leaf_rows``; a smaller explicit
     value is refused, because it would silently drop leaf evaluations."""
@@ -344,6 +380,9 @@ def realised_eval_max_batch(settings: CollectSettings) -> int:
     if settings.eval_max_batch is None:
         return need
     if int(settings.eval_max_batch) < need:
+        # Conservative: `need` is the 2x leaf BUFFER, while one rep requests at
+        # most boards x topk leaves, so a value between the two would not
+        # actually bind (e.g. 512 at 17-32 games, topk 16) and is refused anyway.
         raise ValueError(
             f"--eval-max-batch {settings.eval_max_batch} is below the {need} leaf rows one search call asks for "
             f"at --concurrency {settings.concurrency} / --topk {settings.topk}: the C tree would back up the "

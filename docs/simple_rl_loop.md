@@ -297,11 +297,15 @@ call caps its leaf buffer at the evaluator's max batch. When a leaf finds the
 buffer full, it is not evaluated: the C tree backs it up as a pseudo-terminal
 carrying the root's Q (`_mcts_tree.c`, "Buffer full").
 
-`tree_backprop` reads a leaf value from the leaf's side to move. That flips the
-sign of the root's Q for every child of the root, so for a losing root the
-starved children look as good as the root is bad. The default cap was a fixed
-512, and the first halving round wants concurrency × topk leaves. Above 32 games
-at topk 16 that cap binds.
+`tree_backprop` reads a leaf value from the leaf's side to move, while the root's
+Q is from the root's side to move. So a starved leaf at any ODD depth (a root
+child, a great-grandchild, ...) is backed up with the wrong sign: for a losing
+root those leaves look as good as the root is bad. A starved leaf at an even depth
+gets the right sign, but its value is still the root's, not its own: fabricated.
+One rep of a halving round requests up to concurrency × topk leaves, and the
+accumulate guard keeps later reps inside the buffer, so a cap binds exactly when
+it is below concurrency × topk. The old default was a fixed 512: above 32 games at
+topk 16 it binds.
 
 The 2026-11-20 diagnostic measured the cost. It used 64 sims, UHO openings and
 128 identical games, and compared cap 512 against 4096:
@@ -321,11 +325,23 @@ by |ΔQ| 0.30, against 0.02 on F12's rows (Training details).
 
 The cap now defaults to the search's own leaf-buffer size,
 `leaf_buffer_rows(concurrency, topk)`: 2048 at 64 games and 4096 at 128. A
-smaller explicit value is refused. The realised cap is read off the evaluator
-into `stats.json` (`eval_max_batch_realised`, with `leaf_rows_required`). Runs
-pinned with `eval_max_batch: 512` at more than 32 games carry the corrupted
-targets. Resuming them needs `--allow-config-change`, and their earlier
-generations are not repaired. The arena already checks the same bound and warns
+smaller explicit value is refused before anything is pinned (`validate_settings`,
+called by the loop's pre-pin validation). The refusal is conservative: it compares
+against the 2× buffer, so an explicit 512 is refused at 17–32 games at topk 16
+although the concurrency × topk request would not bind there. The realised cap is
+read off the evaluator into `stats.json` (`eval_max_batch_realised`, with
+`leaf_rows_required`).
+
+Rows already collected at a binding cap are not trained on silently. Train
+refuses (before pinning, and again when the phase starts) any generation in its
+window whose sealed collect ran on CUDA with a cap below concurrency × topk. This
+is the precise could-bind bound, not the conservative one. The cap is read from
+`stats.json` when recorded, else from the pinned setting, else the legacy fixed
+512 that old manifests do not record. `--allow-capped-collect-rows` (pinned)
+overrides the refusal. The phase then records `trained_on_capped_rows: true` with
+the offending generations in `metrics.json`, the train manifest and
+`presentation_ledger.json`. The flag is inherited by every later phase of that
+lineage. The arena already checks the same bound and warns
 (`scripts/arena_standard.py`, `arena_uncapped_leaf_rows`).
 
 ## Stockfish

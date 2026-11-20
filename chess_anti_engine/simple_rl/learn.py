@@ -113,6 +113,9 @@ class TrainSettings:
     device: str = "cpu"
     use_amp: bool = False
     seed: int = 0
+    # Train on rows from collects whose evaluator cap could absorb leaves
+    # (capped_collect_record). Refused by default; recorded when allowed.
+    allow_capped_collect_rows: bool = False
 
     def search_wdl_frac(self) -> float:
         total = float(self.value_outcome_weight) + float(self.value_search_weight)
@@ -226,6 +229,29 @@ def phase_generations(generation: int, settings: TrainSettings) -> list[int]:
         k = int(settings.window) if settings.window is not None else 4
         return list(range(max(1, generation - k + 1), generation + 1))
     return list(range(max(1, generation - int(settings.presentations) + 1), generation + 1))
+
+
+def capped_collects(run_dir: Path, generations: list[int]) -> dict[int, dict[str, Any]]:
+    """The sealed collects among ``generations`` whose evaluator cap could absorb leaves."""
+    from chess_anti_engine.simple_rl.collect import capped_collect_record
+
+    out: dict[int, dict[str, Any]] = {}
+    for g in generations:
+        path = Path(run_dir) / f"gen_{g:04d}" / "collect" / "manifest.json"
+        if path.is_file():
+            rec = capped_collect_record(json.loads(path.read_text()))
+            if rec is not None:
+                out[g] = rec
+    return out
+
+
+def refuse_capped_collects(capped: dict[int, dict[str, Any]], settings: TrainSettings) -> None:
+    if capped and not settings.allow_capped_collect_rows:
+        raise ValueError(
+            f"generation(s) {sorted(capped)} were collected at an evaluator cap below the leaves one search rep "
+            f"requests ({json.dumps({str(k): v for k, v in capped.items()})}): those searches backed starved leaves "
+            "with the root's Q instead of evaluating them, so their targets are corrupt. Re-collect them, or pass "
+            "--allow-capped-collect-rows to train on them anyway (recorded as trained_on_capped_rows)")
 
 
 def load_window(run_dir: Path, generation: int, settings: TrainSettings) -> tuple[
@@ -747,6 +773,11 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
     torch.manual_seed(global_seed)
     settings.validate()
     arch, model_config = load_arch_config(init_checkpoint)
+    capped = capped_collects(run_dir, phase_generations(generation, settings))
+    refuse_capped_collects(capped, settings)
+    prev_train = Path(run_dir) / f"gen_{generation - 1:04d}" / "train" / "metrics.json"
+    inherited_taint = bool(prev_train.is_file() and json.loads(prev_train.read_text())["summary"].get(
+        "trained_on_capped_rows", False))
     train_rows, holdout, gens, row_ids = load_window(run_dir, generation, settings)
     reference_prior: Callable[[np.ndarray, np.ndarray], np.ndarray] | None = None
     if float(settings.policy_prior_mix) < 1.0 and settings.prior_mix_source == "reference":
@@ -882,6 +913,9 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
         "window_generations": gens, "window_rows": sampler.n, "holdout_rows": int(holdout["x"].shape[0]),
         "drawn_rows": sampler.drawn_rows, "sl_rows_drawn": sampler.realised_sl_rows,
         "sl_frac_realised": sampler.realised_sl_rows / max(1, sampler.drawn_rows),
+        "capped_collect_rows": {str(k): v for k, v in capped.items()},
+        # this phase's rows, or any earlier phase of the lineage it starts from
+        "trained_on_capped_rows": bool(capped) or inherited_taint,
         "optimizer_continued": continued, "realised_lr_param_groups": realised_lr,
         "realised_optimizer": realised_opt, "optimizer_continue_check": optimizer_check,
         "realised_search_wdl_frac": float(trainer._loss_kwargs["search_wdl_frac"]),
@@ -909,6 +943,8 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
     # rewritten by every phase, so it is written BEFORE the manifest seals this one.
     write_json_atomic(run_dir / LEDGER, {"through_generation": generation, "sampling": summary["sampling"],
                                          "presentations": int(settings.presentations),
+                                         "trained_on_capped_rows": summary["trained_on_capped_rows"],
+                                         "capped_collect_rows": summary["capped_collect_rows"],
                                          "generations": histograms, "sl_rows_used": sl_end})
     write_manifest(out_dir, stage="train",
                    config={"settings": asdict(settings), "arch": arch,

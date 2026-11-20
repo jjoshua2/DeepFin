@@ -42,7 +42,9 @@ from chess_anti_engine.simple_rl.evaluate import (
     format_table,
     tripwire_table,
 )
-from chess_anti_engine.simple_rl.learn import MODEL_FILE, TrainSettings, train_generation
+from chess_anti_engine.simple_rl.learn import (
+    MODEL_FILE, TrainSettings, capped_collects, phase_generations, refuse_capped_collects, train_generation,
+)
 from chess_anti_engine.simple_rl.lineage import later_sealed, unseal_after, verify_before, verify_stage
 from chess_anti_engine.simple_rl.openings import split_openings
 
@@ -169,6 +171,7 @@ def train_settings(a: argparse.Namespace, run_dir: Path) -> TrainSettings:
         kl_policy=a.kl_policy, kl_wdl=a.kl_wdl, kl_reference=ref, sl_mix_dir=a.sl_mix_dir,
         sl_mix_frac=a.sl_mix_frac, sl_mix_max_rows=a.sl_mix_max_rows, holdout_frac=a.holdout_frac,
         probe_rows=a.probe_rows, device=a.device, use_amp=str(a.device).startswith("cuda"), seed=a.seed,
+        allow_capped_collect_rows=a.allow_capped_collect_rows,
     )
     settings.validate()
     return settings
@@ -262,7 +265,7 @@ RUN_CONFIG_EXEMPT = frozenset({
 # Flags added after runs were already pinned, with the value every earlier run
 # implicitly had. A run_config.json without the key reads as that default, so
 # resuming an older run at the default is not a "change" -- any other value is.
-ADDED_SINCE_PINNING = {"collect_cuda_graphs": False}
+ADDED_SINCE_PINNING = {"collect_cuda_graphs": False, "allow_capped_collect_rows": False}
 
 
 def validate_before_pinning(a: argparse.Namespace, run_dir: Path, stages: set[str]) -> None:
@@ -278,7 +281,17 @@ def validate_before_pinning(a: argparse.Namespace, run_dir: Path, stages: set[st
     against the split).
     """
     if "train" in stages:
-        train_settings(a, run_dir)
+        settings = train_settings(a, run_dir)
+        if getattr(a, "generation", None) is not None:
+            to_train = [int(a.generation)]
+        else:
+            to_train = [g for g in range(1, int(getattr(a, "generations", 0) or 0) + 1)
+                        if not stage_done(gen_dir(run_dir, g) / "train")]
+        window = sorted({w for g in to_train for w in phase_generations(g, settings)})
+        try:
+            refuse_capped_collects(capped_collects(run_dir, window), settings)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
     if "collect" in stages:
         try:
             validate_settings(collect_settings(a))
@@ -498,6 +511,9 @@ def _common(p: argparse.ArgumentParser) -> None:
     t.add_argument("--reapply-optimizer-hparams", action="store_true",
                    help="under --optimizer-state continue, apply the requested lr / lr floor / weight decay onto "
                         "the restored optimizer (default: refuse when they differ from the checkpoint's)")
+    t.add_argument("--allow-capped-collect-rows", action="store_true",
+                   help="train on rows from collects whose evaluator cap could absorb search leaves (default: "
+                        "refused; when allowed the phase records trained_on_capped_rows)")
     t.add_argument("--mirror-prob", type=float, default=0.5)
     t.add_argument("--w-policy", type=float, default=1.0)
     t.add_argument("--w-wdl", type=float, default=1.0, help="0 = policy only")

@@ -2,7 +2,8 @@
 
 gumbel_c caps its leaf buffer at the evaluator's ``_max_batch``; a leaf that
 finds the buffer full is backed up as a pseudo-terminal carrying the root's Q
-instead of being evaluated. At the old fixed 512 and 64-128 concurrent games
+instead of being evaluated: wrong-signed at every odd depth, fabricated at every
+even one. At the old fixed 512 and 64-128 concurrent games
 (topk 16) that hit most first-round children and corrupted the reply side's
 search (2026-11-20 diagnostic). The cap now defaults to the search's own
 leaf-buffer size and a smaller explicit value is refused.
@@ -100,3 +101,75 @@ def test_the_loop_refuses_a_leaf_dropping_cap_before_pinning(tmp_path: Path) -> 
     with pytest.raises(SystemExit, match="--eval-max-batch 512 is below"):
         loop.validate_before_pinning(a, tmp_path, {"collect"})
     assert not (tmp_path / "run_config.json").exists()
+
+
+def test_the_eval_cap_boundary_is_accepted() -> None:
+    s = CollectSettings(games=256, concurrency=128, topk=16, device="cuda")
+    need = required_leaf_rows(s)
+    assert realised_eval_max_batch(replace(s, eval_max_batch=need)) == need
+    validate_settings(replace(s, eval_max_batch=need))
+    with pytest.raises(ValueError, match="below"):
+        realised_eval_max_batch(replace(s, eval_max_batch=need - 1))
+
+
+def test_a_cpu_collect_records_the_cap_fields(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.test_simple_rl_resume import _argv, _setup
+
+    from scripts import simple_rl_loop
+
+    openings, model_config = _setup(tmp_path, monkeypatch)
+    argv = _argv(tmp_path / "run", openings, model_config)
+    argv[argv.index("--generations") + 1] = "1"
+    assert simple_rl_loop.main(argv) == 0
+    stats = json.loads((tmp_path / "run" / "gen_0001" / "collect" / "stats.json").read_text())
+    assert stats["leaf_rows_required"] == leaf_buffer_rows(4, topk=16, pipelined=False)
+    assert stats["eval_max_batch_realised"] is None  # CPU: no capped evaluator was built
+
+
+def _manifest(**settings: Any) -> dict[str, Any]:
+    return {"config": {"settings": {"games": 256, "concurrency": 128, "topk": 16, "device": "cuda", **settings}}}
+
+
+def test_capped_collect_record_reads_old_format_manifests() -> None:
+    from chess_anti_engine.simple_rl.collect import capped_collect_record
+
+    old = capped_collect_record(_manifest())  # no eval_max_batch key, no stats: the legacy fixed 512
+    assert old == {"eval_max_batch": 512, "eval_max_batch_source": "legacy_fixed_512", "boards": 128,
+                   "topk": 16, "leaf_request_per_rep": 2048}
+    assert capped_collect_record(_manifest(device="cpu")) is None
+    assert capped_collect_record(_manifest(eval_max_batch=2048)) is None  # boundary: one rep fits exactly
+    just_below = capped_collect_record(_manifest(eval_max_batch=2047))
+    assert just_below is not None
+    assert just_below["eval_max_batch_source"] == "settings"
+    assert capped_collect_record(_manifest(concurrency=16)) is None  # F12/Q50 shape: 16 x 16 = 256 <= 512
+    stats_win = {**_manifest(eval_max_batch=None), "stats": {"eval_max_batch_realised": 4096}}
+    assert capped_collect_record(stats_win) is None
+
+
+def test_training_on_capped_rows_is_refused_unless_allowed_and_then_recorded(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.test_simple_rl_resume import _argv, _setup
+
+    from scripts import simple_rl_loop
+
+    openings, model_config = _setup(tmp_path, monkeypatch)
+    run = tmp_path / "run"
+    argv = _argv(run, openings, model_config)
+    argv[argv.index("--generations") + 1] = "1"
+    assert simple_rl_loop.main(argv) == 0
+    # Pretend generation 1 was a CUDA collect at the old fixed cap (CPU cannot produce one).
+    real = collect_mod.capped_collect_record
+    monkeypatch.setattr(collect_mod, "capped_collect_record",
+                        lambda m: real(_manifest()) if m.get("generation") == 1 else real(m))
+    argv[argv.index("--generations") + 1] = "2"  # gen 2 re-presents gen 1 (--presentations 2)
+    before = (run / "run_config.json").read_bytes()
+    with pytest.raises(SystemExit, match=r"generation\(s\) \[1\] were collected at an evaluator cap"):
+        simple_rl_loop.main(argv)
+    assert (run / "run_config.json").read_bytes() == before  # refused before pinning
+    assert not (run / "gen_0002").exists()
+    assert simple_rl_loop.main([*argv, "--allow-capped-collect-rows", "--allow-config-change"]) == 0
+    summary = json.loads((run / "gen_0002" / "train" / "metrics.json").read_text())["summary"]
+    assert summary["trained_on_capped_rows"] is True
+    assert summary["capped_collect_rows"]["1"]["eval_max_batch"] == 512
+    ledger = json.loads((run / "presentation_ledger.json").read_text())
+    assert ledger["trained_on_capped_rows"] is True
