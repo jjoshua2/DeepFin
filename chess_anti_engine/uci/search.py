@@ -685,6 +685,8 @@ class SearchWorker:
   # the move budget. `last_reuse_inputs` records the numbers the decision used.
         self._compaction_pending: bool = False
         self.last_reuse_decision: str | None = None
+        # `advance_root` refusals of a root carrying a stale twofold DRAW mark.
+        self.stale_draw_reroots_refused = 0
         self.last_reuse_inputs: dict[str, float] = {}
   # Growth rate measured by the last `run()` that did enough visits: visits per
   # ms of search and resident tree bytes added per visit. Feeds the reuse rule.
@@ -2393,7 +2395,8 @@ class SearchWorker:
         we push each move onto a local copy to compute its policy index.
 
         Returns True if the whole walk succeeded (tree reusable), False if any
-        step fell off the expanded tree (caller must call ``reset_tree``).
+        step fell off the expanded tree or the new root carries a stale DRAW
+        mark (drawn with an unproven child; caller must call ``reset_tree``).
 
         Rerooting in place only repoints ``self._root_id`` — the discarded
         sibling subtrees stay in the arena, so the footprint climbs across a
@@ -2416,6 +2419,19 @@ class SearchWorker:
             if rid < 0:
                 return False
             b.push(mv)
+  # A node the C tree marked DRAW as a leaf -- an in-tree twofold, path
+  # dependent -- keeps that mark when it becomes the root, with unproven (or no)
+  # children. The runner then treats the root as solved (the classic path made
+  # its "proven-draw" child the only candidate and played the repeating move
+  # with `score cp 0`). A root drawn on its children's proofs (every child
+  # proven) is re-derived from the subtree and kept. Won / lost marks never rest
+  # on a draw (`tree_resolve_from_children`) or on a repetition, so they are
+  # not stale. Refuse the reuse; the caller resets the tree.
+        if int(self._tree.get_solved_status(int(rid))) == 2 and not _every_child_proven(
+            self._tree, int(rid),
+        ):
+            self.stale_draw_reroots_refused = getattr(self, "stale_draw_reroots_refused", 0) + 1
+            return False
   # The reuse decision is deferred to `run()`, which knows the move's time
   # budget and runs under its clock (see `_resolve_pending_compaction`). Even a
   # half-empty arena can starve this move if it grows faster than the room left.

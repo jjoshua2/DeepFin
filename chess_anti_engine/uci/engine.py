@@ -1621,8 +1621,16 @@ class Engine:
         if not self._claim_answer(gen):
             return
         with _answer_owner():
+            # Blame the movetime only when it alone leaves no room to search
+            # (`_fit_movetime_limits`); otherwise the clock (its cap or its
+            # funding rule) is what answered at once.
+            movetime_alone_too_short = args.movetime_ms is not None and (
+                args.movetime_ms - _WATCHDOG_LAST_MOMENT_MS - _MOVETIME_FINISH_SLACK_MS
+                < _MIN_DEADLINE_MS
+            )
             clock_binds = clock_ms is not None and (
                 args.movetime_ms is None
+                or not movetime_alone_too_short
                 or int(clock_ms) - max(0, int(self._options.move_overhead_ms)) < args.movetime_ms
             )
             if not clock_binds:
