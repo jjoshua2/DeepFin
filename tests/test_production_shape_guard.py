@@ -2134,6 +2134,11 @@ _CALL_SITE_ARGS: dict[str, str] = {
         "the current run cancellation callback for bounded solved-root witness "
         "recovery; supplied by the caller at runtime, with no config value"
     ),
+    "root_stats_out=root_stats_sub": (
+        "an OUTPUT list the runner fills with per-root statistics; it changes "
+        "no search arithmetic. Gated by GameConfig.record_root_stats (None when "
+        "off), which decides only whether those statistics are kept on the row"
+    ),
     "return_diagnostics=True": (
         "a literal: selfplay always wants the per-move diagnostics"
     ),

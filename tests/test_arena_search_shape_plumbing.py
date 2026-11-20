@@ -611,6 +611,13 @@ def test_every_config_driven_knob_reaches_the_arena_or_is_provably_inert() -> No
         # either -- and is carried into the training shape anyway, for
         # the `live_and_unpinned` clause below to re-prove.
         "gumbel_target_untempered_prior",
+        # Direct-caller research knobs of the simple RL loop (not yaml keys).
+        # c_visit moves the descent and the root halving, so an arena CAN see
+        # it; target_q_rescale is store-arm only. Both default to the
+        # GumbelConfig default, which is what production runs, and both are
+        # carried by the derived training shape like every other field.
+        "gumbel_c_visit",
+        "gumbel_target_q_rescale",
         "volatility_q_scale",
         "volatility_fpu",
         "volatility_anchor",

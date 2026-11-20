@@ -138,6 +138,7 @@ class _OptFieldSpec:
 
 _POLICY_SHAPE: tuple[int, ...] = (POLICY_SIZE,)
 _F16: np.dtype = np.dtype(np.float16)
+_F32: np.dtype = np.dtype(np.float32)
 _U8_DT: np.dtype = np.dtype(np.uint8)
 _I32_DT: np.dtype = np.dtype(np.int32)
 _I64_DT: np.dtype = np.dtype(np.int64)
@@ -198,6 +199,20 @@ _OPTIONAL_FIELD_SPECS: tuple[_OptFieldSpec, ...] = (
     _OptFieldSpec("legal_mask",           "has_legal_mask",        _POLICY_SHAPE, _U8_DT),
     _OptFieldSpec("sf_legal_mask",        "has_sf_legal_mask",     _POLICY_SHAPE, _U8_DT),
     _OptFieldSpec("future_legal_mask",    "has_future_legal_mask", _POLICY_SHAPE, _U8_DT),
+    # Root search statistics (selfplay record_root_stats; see ReplaySample).
+    # float32, not float16: they are the inputs a stored target is re-derived
+    # from, and visit counts above 2048 are not exact in float16.
+    _OptFieldSpec("root_log_prior",       "has_root_log_prior",    _POLICY_SHAPE, _F32),
+    _OptFieldSpec("root_child_q",         "has_root_child_q",      _POLICY_SHAPE, _F32),
+    _OptFieldSpec("root_child_visits",    "has_root_child_visits", _POLICY_SHAPE, _F32),
+    _OptFieldSpec("root_net_value",       "has_root_net_value",    (),            _F32),
+    _OptFieldSpec("root_net_wdl",         "has_root_net_wdl",      (3,),          _F32),
+    _OptFieldSpec("root_survivor_q",      "has_root_survivor_q",   (),            _F32),
+    _OptFieldSpec("root_node_q",          "has_root_node_q",       (),            _F32),
+    _OptFieldSpec("root_start_visits",    "has_root_start_visits", (),            _I32_DT),
+    _OptFieldSpec("root_survivor_index",  "has_root_survivor",     (),            _I32_DT),
+    _OptFieldSpec("played_move_index",    "has_played_move",       (),            _I32_DT),
+    _OptFieldSpec("search_budget",        "has_search_budget",     (),            _I32_DT),
 )
 
 _REQUIRED_STORAGE_FIELDS: tuple[str, ...] = (
@@ -297,7 +312,7 @@ POLICY_SPACE_FIELDS = ("policy_target", "sf_policy_target", "policy_soft_target"
 # scored regret and 1.0), so it is dense -> sparsifying it would store vals+cols
 # for ~every entry (~2x bloat). Keep dense, but it is still policy-sized
 # (allocation) and lives in move space (mirror augmentation).
-POLICY_DENSE_VALUE_FIELDS = ("sf_p0_regret",)
+POLICY_DENSE_VALUE_FIELDS = ("sf_p0_regret", "root_log_prior", "root_child_q", "root_child_visits")
 POLICY_SIZED_FIELDS = frozenset((*POLICY_SPACE_FIELDS, *POLICY_DENSE_VALUE_FIELDS, *LEGAL_MASK_FIELDS))
 # Scalar fields holding a single MOVE INDEX in policy space. Two consumers
 # depend on this being the COMPLETE list, and both fail silently if it is not:
@@ -310,6 +325,8 @@ POLICY_INDEX_FIELDS: tuple[tuple[str, str], ...] = (
     ("sf_move_index", "has_sf_move"),
     ("sf_played_move_index", "has_sf_played_move"),
     ("prior_top1_index", "has_prior_top1"),
+    ("root_survivor_index", "has_root_survivor"),
+    ("played_move_index", "has_played_move"),
 )
 
 
@@ -1135,6 +1152,13 @@ _SCALAR_FIELDS: tuple[tuple[str, str, str, object], ...] = (
     ("moves_left",        "moves_left",     "has_moves_left",       lambda v: np.float16(float(v))),
     ("is_network_turn",   "is_network_turn","has_is_network_turn",  lambda v: 1 if bool(v) else 0),
     ("is_selfplay",       "is_selfplay",    "has_is_selfplay",      lambda v: 1 if bool(v) else 0),
+    ("root_net_value",    "root_net_value", "has_root_net_value",   lambda v: np.float32(float(v))),
+    ("root_survivor_q",   "root_survivor_q", "has_root_survivor_q", lambda v: np.float32(float(v))),
+    ("root_node_q",       "root_node_q",    "has_root_node_q",      lambda v: np.float32(float(v))),
+    ("root_start_visits", "root_start_visits", "has_root_start_visits", int),
+    ("root_survivor_index", "root_survivor_index", "has_root_survivor", int),
+    ("played_move_index", "played_move_index", "has_played_move",   int),
+    ("search_budget",     "search_budget",  "has_search_budget",    int),
 )
 _VECTOR_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("x_lc0_root",           "x_lc0_root",           "has_x_lc0_root"),
@@ -1152,9 +1176,15 @@ _VECTOR_FIELDS: tuple[tuple[str, str, str], ...] = (
 )
 # Integer-valued vector fields keep their exact dtype (the generic
 # _VECTOR_FIELDS loop casts through float16, which corrupts ints > 2048).
+# The root-statistics vectors ride here too: the loop casts to the field's own
+# spec dtype (float32 for them), which is the exactness they need.
 _INT_VECTOR_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("sf_multipv_raw", "sf_multipv_raw", "has_sf_multipv_raw"),
     ("sf_label_meta",  "sf_label_meta",  "has_sf_label_meta"),
+    ("root_log_prior", "root_log_prior", "has_root_log_prior"),
+    ("root_child_q",   "root_child_q",   "has_root_child_q"),
+    ("root_child_visits", "root_child_visits", "has_root_child_visits"),
+    ("root_net_wdl",   "root_net_wdl",   "has_root_net_wdl"),
 )
 
 _VECTOR_EXPLICIT_HAS_ATTRS: dict[str, str] = {
@@ -1725,6 +1755,18 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
         for mk, hk in zip(LEGAL_MASK_FIELDS, LEGAL_MASK_HAS_FIELDS, strict=True):
             if opt[hk][i]:
                 setattr(s, mk, _copy_row(opt[mk], i, dtype=np.uint8))
+        for vk, hk in (("root_log_prior", "has_root_log_prior"), ("root_child_q", "has_root_child_q"),
+                       ("root_child_visits", "has_root_child_visits"), ("root_net_wdl", "has_root_net_wdl")):
+            if opt[hk][i]:
+                setattr(s, vk, _copy_row(opt[vk], i, dtype=np.float32))
+        for fk, hk in (("root_net_value", "has_root_net_value"), ("root_survivor_q", "has_root_survivor_q"),
+                       ("root_node_q", "has_root_node_q")):
+            if opt[hk][i]:
+                setattr(s, fk, float(opt[fk][i]))
+        for ik, hk in (("root_start_visits", "has_root_start_visits"), ("root_survivor_index", "has_root_survivor"),
+                       ("played_move_index", "has_played_move"), ("search_budget", "has_search_budget")):
+            if opt[hk][i]:
+                setattr(s, ik, int(opt[ik][i]))
         out.append(s)
     return out
 

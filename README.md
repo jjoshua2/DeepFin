@@ -40,6 +40,7 @@ dated proposals rather than current deployment instructions.
 
 See [toolchain entry points](docs/toolchains.md) and [branch lifecycle](docs/branch_lifecycle.md) for development and production adoption.
 See [search and encode paths](docs/search_and_encode_paths.md) for the map of every search driver and encoder and the plan to consolidate them.
+See [simple self-play RL loop](docs/simple_rl_loop.md) for the generation-by-generation collect / train / arena driver.
 
 ## Setup
 

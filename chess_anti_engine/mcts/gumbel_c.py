@@ -19,6 +19,7 @@ import os
 import sys as _sys
 import time as _time
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Literal, NamedTuple, cast, overload
 
 import chess
@@ -301,6 +302,81 @@ _REQUIRED_MCTS_ABI = 10
 # Gumbel descent only implements LEGACY correctly.
 VLOSS_MODE_LEGACY = 0
 VLOSS_MODE_VIRTUAL_MEAN = 1
+
+@dataclass(frozen=True)
+class RootSearchStats:
+    """Everything the stored improved policy was built from, for one root.
+
+    ``legal`` is the searched support (full-4672 action ids, sorted); the three
+    arrays are aligned with it. ``log_prior`` is the search's own prior, i.e.
+    already divided by ``policy_temp`` when that is not 1.0 (the stored target
+    undoes it only under ``target_untempered_prior``). ``completed_q`` holds
+    the child Q for visited children and ``root_q`` for unvisited ones, exactly
+    as handed to ``_completed_q_transform``. ``survivor`` is the
+    sequential-halving survivor before any final-move temperature.
+
+    Three DIFFERENT scalar values, named apart because they differ materially:
+
+    * ``net_value`` -- the raw network value at the root, ``_wdl_to_q`` of
+      ``net_wdl`` (the softmaxed root WDL head). This is the ``raw_value`` the
+      completed-Q transform fills unvisited children with, so the rebuild
+      takes it, not either search value.
+    * ``survivor_q`` -- the completed Q of the survivor (the move the search
+      settles on); NaN if the survivor fell outside the searched support.
+    * ``node_q`` -- the tree's root-node Q after the search: a visit average
+      over every candidate sequential halving is forced to try, so it sits
+      BELOW ``survivor_q`` -- a biased value estimate, kept for diagnosis.
+
+    ``start_visits`` is the summed child visits of the root BEFORE this
+    search: nonzero only when the root was carried from an earlier ply (tree
+    reuse), so the realised budget of the row is ``start_visits`` plus the
+    simulations run now. ``completed_q``/``visits`` include the carried part.
+
+    With these and the run's ``GumbelConfig``, the stored target is
+    ``softmax(target_log_prior(log_prior) + _completed_q_transform(...))``
+    -- see ``rebuild_improved_policy`` below, which is that formula.
+    """
+
+    legal: np.ndarray
+    log_prior: np.ndarray
+    completed_q: np.ndarray
+    visits: np.ndarray
+    net_value: float
+    net_wdl: np.ndarray
+    survivor: int
+    survivor_q: float
+    node_q: float
+    start_visits: int
+
+
+def rebuild_improved_policy(
+    *, log_prior: np.ndarray, completed_q: np.ndarray, visits: np.ndarray,
+    net_value: float, cfg: GumbelConfig, store: bool = True,
+) -> np.ndarray:
+    """Re-derive the improved policy over ``log_prior``'s support.
+
+    ``store=True`` returns the STORED-target arm (``target_max_visit_cap``,
+    ``target_q_rescale`` and ``target_untempered_prior`` applied); ``False``
+    the play arm. Same calls, in the same order, as the per-board block of
+    ``run_gumbel_root_many_c``; no search is run.
+    """
+    lp = np.asarray(log_prior, dtype=np.float64)
+    priors = np.exp(lp)
+    actions = np.arange(lp.size)
+    v = np.asarray(visits, dtype=np.float64)
+    q = np.asarray(completed_q, dtype=np.float64)
+    if not store:
+        return _softmax(lp + _completed_q_transform(
+            actions=actions, priors=priors, visits=v, qvalues=q, raw_value=float(net_value),
+            cfg=cfg, root=True,
+        ))
+    q_store = _completed_q_transform(
+        actions=actions, priors=priors, visits=v, qvalues=q, raw_value=float(net_value),
+        cfg=cfg, root=True, max_visit_cap=int(cfg.target_max_visit_cap),
+        rescale=bool(cfg.target_q_rescale),
+    )
+    return _softmax(target_log_prior(lp, cfg=cfg) + q_store)
+
 
 GumbelManyCResult = tuple[list[np.ndarray], list[int], list[float], list[np.ndarray], MCTSTree, list[int]]
 GumbelManyCDiagnosticsResult = tuple[
@@ -794,6 +870,7 @@ def run_gumbel_root_many_c(
     vloss_weight: int = 0,
     vloss_mode: int = 0,
     witness_stop_fn: Callable[[], bool] | None = None,
+    root_stats_out: list[RootSearchStats | None] | None = None,
     return_diagnostics: Literal[False] = False,
 ) -> GumbelManyCResult: ...
 
@@ -824,6 +901,7 @@ def run_gumbel_root_many_c(
     vloss_weight: int = 0,
     vloss_mode: int = 0,
     witness_stop_fn: Callable[[], bool] | None = None,
+    root_stats_out: list[RootSearchStats | None] | None = None,
     return_diagnostics: Literal[True],
 ) -> GumbelManyCDiagnosticsResult: ...
 
@@ -853,6 +931,7 @@ def run_gumbel_root_many_c(
     vloss_weight: int = 0,
     vloss_mode: int = 0,
     witness_stop_fn: Callable[[], bool] | None = None,
+    root_stats_out: list[RootSearchStats | None] | None = None,
     return_diagnostics: bool = False,
 ) -> GumbelManyCResult | GumbelManyCDiagnosticsResult:
     """Gumbel root search with MCTSTree C tree + CBoard.
@@ -990,6 +1069,13 @@ def run_gumbel_root_many_c(
     _t_func_start = _time.perf_counter()
 
     n_boards = len(boards)
+    if root_stats_out is not None:
+        # Opt-in observation only: filled per board below, never read back.
+        # A board whose result did not come from the ordinary completed-Q
+        # arithmetic (terminal shortcut, solved root, unresolved witness)
+        # keeps None, so no caller can mistake a one-hot proof for a search.
+        root_stats_out[:] = [None] * n_boards
+    start_visits_by_board = [0] * n_boards
     if n_boards == 0:
         out_empty = ([], [], [], [], (tree if tree is not None else MCTSTree()), [])
         if return_diagnostics:
@@ -1411,6 +1497,8 @@ def run_gumbel_root_many_c(
                 rid = tree.add_root(1, float(root_qs[i]), root_cboards[i])
                 root_ids[i] = rid
                 tree.expand(rid, legal_idx.astype(np.int32), priors)
+            elif root_stats_out is not None:
+                start_visits_by_board[i] = int(np.asarray(tree.get_children_visits(root_ids[i])[1]).sum())
 
         if terminal_mate is not None:
             probs_out[i], actions_out[i], values_out[i] = terminal_mate
@@ -2078,6 +2166,19 @@ def run_gumbel_root_many_c(
 
         probs_out[i] = probs
         actions_out[i] = action
+        if root_stats_out is not None:
+            root_stats_out[i] = RootSearchStats(
+                legal=legal.astype(np.int32, copy=True),
+                log_prior=np.array(log_prior, dtype=np.float64),
+                completed_q=np.array(completed_q, dtype=np.float64),
+                visits=np.array(visits, dtype=np.float64),
+                net_value=float(root_q_i),
+                net_wdl=_softmax(np.asarray(wdl_logits_batch[i], dtype=np.float64)),
+                survivor=int(best_a),
+                survivor_q=float(completed_q[j_best]) if best_in_legal else float("nan"),
+                node_q=float(_qtree.node_q(rid)),
+                start_visits=int(start_visits_by_board[i]),
+            )
 
   # Value from child
         slot = action_to_slot.get(best_a)
@@ -2102,6 +2203,11 @@ def run_gumbel_root_many_c(
                 probs_out[i], actions_out[i], values_out[i] = one_hot_root_policy(
                     min(_pruned), value=0.0,
                 )
+                # The returned row is no longer the completed-Q arithmetic the
+                # statistics describe (the draw is not a searched child), so
+                # they are withdrawn, like every other exact shortcut's.
+                if root_stats_out is not None:
+                    root_stats_out[i] = None
 
   # Build legal masks
     legal_masks_out: list[np.ndarray] = []
