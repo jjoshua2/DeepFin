@@ -228,7 +228,8 @@ def test_uci_fresh_eval_helper_join(slow_thread_exit) -> None:
     helpers = [t for t in slow_thread_exit if t.name == "uci-fresh-eval"]
     assert len(helpers) == 1
     assert elapsed < 0.12, f"waited {elapsed:.3f} s for the helper's teardown"
-    assert fake._exiting_helpers == helpers, "a still-exiting helper must be recorded"
+    assert [h.thread for h in fake._exiting_helpers] == helpers, (
+        "a still-exiting helper must be recorded")
     assert not Engine._search_free_locked(fake)  # pyright: ignore[reportArgumentType]
     Engine._wait_for_search(fake, timeout_s=5.0)  # pyright: ignore[reportArgumentType]
     _assert_os_thread_gone(helpers[0])
