@@ -50,16 +50,30 @@ def test_a_movetime_longer_than_the_clock_is_capped_by_the_clock() -> None:
     lim = _lim(movetime_ms=1000, wtime_ms=10, btime_ms=10)
     assert lim.clock_exhausted
     assert lim.deadline_ms == 0
-    # 400 ms on the clock: the cap is 400 - 30 - 25, not the movetime.
-    lim = _lim(movetime_ms=1000, wtime_ms=400, btime_ms=400)
-    assert lim.deadline_ms == 345
+    # The clock's own deadline for the move caps the movetime: 60 s, 32 pieces
+    # plans (60000 - 2400 reserve) / 30 = 1920 ms, less MoveOverheadMs.
+    lim = _lim(movetime_ms=5000, wtime_ms=60_000, btime_ms=60_000)
+    assert lim.deadline_ms == 1890
     assert not lim.clock_exhausted
     assert lim.fixed_time
     assert lim.optimum_ms is None
-    # A clock with room to spare leaves the movetime (less overhead) alone.
+    # A clock whose own deadline is longer leaves the movetime (less overhead) alone.
     assert _lim(movetime_ms=1000, wtime_ms=60_000, btime_ms=60_000).deadline_ms == 970
-    # The OTHER side's clock does not cap it.
+    # The OTHER side's clock does not cap it, and no clock leaves it as before.
     assert _lim(movetime_ms=1000, wtime_ms=60_000, btime_ms=10).deadline_ms == 970
+    assert _lim(movetime_ms=1000).deadline_ms == 970
+    assert not _lim(movetime_ms=1000).clock_exhausted
+
+
+def test_a_movetime_with_a_clock_obeys_the_clocks_at_once_rule() -> None:
+    # One minimal search costs 68 ms against 45 ms left: at once.
+    assert _lim(movetime_ms=1000, wtime_ms=75, btime_ms=75, winc_ms=10, binc_ms=10,
+                min_chunk_ms=40.0).clock_exhausted
+    # 470 ms owed to 40 moves: at once, not a 445 ms search.
+    assert _lim(movetime_ms=1000, wtime_ms=500, btime_ms=500, movestogo=40).clock_exhausted
+    # Sudden death below 20 minimal searches (900 ms): at once.
+    assert _lim(movetime_ms=1000, wtime_ms=400, btime_ms=400).clock_exhausted
+    assert not _lim(movetime_ms=1000, wtime_ms=2000, btime_ms=2000).clock_exhausted
 
 
 def test_the_watchdog_budget_of_a_movetime_is_capped_by_the_clock() -> None:
@@ -82,8 +96,11 @@ def test_go_movetime_with_an_exhausted_clock_is_answered_at_once(out) -> None:
         engine.dispatch(parse_command("position startpos moves e2e4"))
         engine.dispatch(parse_command("go movetime 1000 wtime 10 btime 10"))
         assert out.wait_bestmoves(1) == ["e7e5"], out.text()
+        engine.dispatch(parse_command("go movetime 1000 wtime 500 btime 500 movestogo 40"))
+        assert out.wait_bestmoves(2) == ["e7e5", "e7e5"], out.text()
         assert worker.run.call_count == 0
         assert "clock too short to search: 10 ms on the clock" in out.text()
+        assert "clock too short to search: 500 ms on the clock" in out.text()
     finally:
         engine.close()
 
@@ -116,6 +133,9 @@ def test_movestogo_caps_the_searches_the_clock_must_fund() -> None:
     # Beyond 20 moves the rule is sudden death's: 20 x 45 = 900 ms.
     assert _lim(wtime_ms=929, btime_ms=929, movestogo=40).clock_exhausted
     assert not _lim(wtime_ms=931, btime_ms=931, movestogo=40).clock_exhausted
+    # `movestogo 0` is "no repeating control": sudden death's 20 searches.
+    assert _lim(wtime_ms=500, btime_ms=500, movestogo=0).clock_exhausted
+    assert not _lim(wtime_ms=931, btime_ms=931, movestogo=0).clock_exhausted
     # The last move of an allotment still needs one search's worth.
     assert not _lim(wtime_ms=80, btime_ms=80, movestogo=1).clock_exhausted
     assert _lim(wtime_ms=74, btime_ms=74, movestogo=1).clock_exhausted

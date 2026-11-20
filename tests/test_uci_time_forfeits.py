@@ -48,7 +48,14 @@ from chess_anti_engine.uci.time_manager import (
 # -- F3: the clock caps the deadline ------------------------------------------
 
 
-@pytest.mark.parametrize("remaining", [1, 22, 40, 60, 74, 75, 100, 300, 1000])
+# Answered at once at MoveOverheadMs 30, minimal search unmeasured (45 ms): the
+# clock less 30 must pay for 20 searches at 45 ms (inc 0: 900 ms) or at the
+# 35 ms the 10 ms increment does not pay back (700 ms); below 75 ms the cap
+# (`deadline_ms < _MIN_DEADLINE_MS`) decides anyway.
+_SEARCHED = {(750, 10), (1000, 0), (1000, 10)}
+
+
+@pytest.mark.parametrize("remaining", [1, 22, 40, 60, 74, 75, 100, 300, 750, 1000])
 @pytest.mark.parametrize("inc", [0, 10])
 def test_a_clocked_deadline_never_exceeds_the_clock(remaining, inc) -> None:
     limits = limits_from_go(
@@ -60,10 +67,7 @@ def test_a_clocked_deadline_never_exceeds_the_clock(remaining, inc) -> None:
     assert limits.deadline_ms <= cap
     if limits.deadline_ms < _MIN_DEADLINE_MS:
         assert limits.clock_exhausted
-    # The at-once rule (`_at_once_threshold_ms`, tested below and in
-    # test_uci_time_review_leads.py) answers earlier; never later than the cap.
-    if not limits.clock_exhausted:
-        assert limits.deadline_ms >= _MIN_DEADLINE_MS
+    assert limits.clock_exhausted is ((remaining, inc) not in _SEARCHED)
     if limits.optimum_ms is not None:
         assert limits.optimum_ms <= limits.deadline_ms
 

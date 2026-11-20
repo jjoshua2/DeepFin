@@ -298,11 +298,14 @@ nothing.
   (`info string movetime too short to search: ... source=... move=...`) from the
   same sources, in the same order, as a clock too short to search (below), with
   any fresh evaluation finished by `N` less 8 ms. When the `go` also sends the
-  side to move's clock (`wtime` / `btime`), the clock caps the movetime like any
-  clock game (below): the deadline is never later than the clock less
-  `MoveOverheadMs` less 25 ms, the watchdog's last moment is 8 ms before the
-  earlier of `N` and the clock less `MoveOverheadMs`, and a clock too short to
-  search is answered at once.
+  side to move's clock (`wtime` / `btime`), the move gets the earlier of the
+  movetime deadline and the deadline that clock alone would get (below, with
+  its increment and `movestogo`), still never later than the clock less
+  `MoveOverheadMs` less 25 ms. The clock's at-once rule applies too, so
+  `go movetime 1000 wtime 500 movestogo 40` is answered at once instead of
+  spending 445 ms of a clock owed to 40 moves. The watchdog's last moment is
+  8 ms before the earlier of `N` and the clock less `MoveOverheadMs`. A
+  `movetime` without the side to move's clock is unchanged.
 - Every move's clock starts when the engine's main loop reads the `go` line (for
   pondering, the `ponderhit` line). Time a line spends unread in the pipe while
   the engine is still handling an earlier command is not counted, so
