@@ -166,7 +166,8 @@ def _engine_like(**extra: Any) -> SimpleNamespace:
     fields: dict[str, Any] = {
         "_search_thread": None, "_cancel_event": threading.Event(), "_stop_event": threading.Event(),
         "_ponder_release": threading.Event(), "_warmup_done": threading.Event(),
-        "_orphan_threads": [], "_state_lock": threading.Lock(), "_live_go": None}
+        "_orphan_threads": [], "_exiting_helpers": [], "_state_lock": threading.Lock(),
+        "_live_go": None}
     fields.update(extra)
     return SimpleNamespace(**fields)
 
@@ -213,14 +214,26 @@ def test_uci_orphan_join() -> None:
 
 
 def test_uci_fresh_eval_helper_join(slow_thread_exit) -> None:
+    """The at-once answer does not wait out the helper's 0.15 s teardown past
+    its 20 ms budget, and the still-exiting helper is recorded, keeps the
+    worker busy, and is waited for by the next `_wait_for_search` (quit)."""
     from chess_anti_engine.uci.engine import Engine
 
     fake = _engine_like(_worker=SimpleNamespace(
         fresh_root_policy_bestmove=lambda *_a, **_k: "e2e4"))
-    assert Engine._bounded_fresh_eval(fake, chess.Board(), (), 5.0) == "e2e4"  # pyright: ignore[reportArgumentType]
+    fake._warmup_done.set()
+    t0 = time.monotonic()
+    assert Engine._bounded_fresh_eval(fake, chess.Board(), (), 0.02) == "e2e4"  # pyright: ignore[reportArgumentType]
+    elapsed = time.monotonic() - t0
     helpers = [t for t in slow_thread_exit if t.name == "uci-fresh-eval"]
     assert len(helpers) == 1
+    assert elapsed < 0.12, f"waited {elapsed:.3f} s for the helper's teardown"
+    assert [h.thread for h in fake._exiting_helpers] == helpers, (
+        "a still-exiting helper must be recorded")
+    assert not Engine._search_free_locked(fake)  # pyright: ignore[reportArgumentType]
+    Engine._wait_for_search(fake, timeout_s=5.0)  # pyright: ignore[reportArgumentType]
     _assert_os_thread_gone(helpers[0])
+    assert fake._exiting_helpers == []
 
 
 def test_uci_deadline_watchdog_close() -> None:

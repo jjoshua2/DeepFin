@@ -73,12 +73,50 @@ def immediate_terminal_draw_indices(
     return out
 
 
+def _ends_drawn(board: chess.Board) -> bool:
+    """The game is over, drawn, on ``board``: stalemate, insufficient
+    material, the 50-move clock at 100 or more, or a third occurrence."""
+    return not board.is_checkmate() and (
+        board.is_stalemate()
+        or board.is_insufficient_material()
+        or board.halfmove_clock >= 100
+        or board.is_repetition(3)
+    )
+
+
+def _every_reply_ends_drawn(board: chess.Board) -> bool:
+    """The 50-move half of the reply-forced draw: with the clock at 99, every
+    legal reply ends the game drawn (each reversible reply reaches 100; a pawn
+    move or capture must draw on the board some other way) and none mates.
+    Only the 50-move rule is covered: a position where every reply is a third
+    occurrence but the clock is not at 99 is not examined (the 99 gate is what
+    keeps this off every other root)."""
+    if board.halfmove_clock != 99:
+        return False
+    replies = list(board.legal_moves)
+    if not replies:
+        return False
+    for reply in replies:
+        board.push(reply)
+        try:
+            if not _ends_drawn(board):
+                return False
+        finally:
+            board.pop()
+    return True
+
+
 def forced_draw_actions(board: chess.Board, actions: Iterable[int]) -> list[int]:
-    """The root ``actions`` (policy indices) whose move ENDS the game drawn on
-    the board: stalemate, insufficient material, the 50-move clock at 100 or
-    more, or a third occurrence of the position. A move after which the
-    opponent merely MAY claim a draw on its reply is not one: the opponent
-    can decline and play on. Returned in ``board.legal_moves`` order."""
+    """The root ``actions`` (policy indices) whose move forces a draw on the
+    board: it ends the game drawn (stalemate, insufficient material, the
+    50-move clock at 100 or more, a third occurrence), or it leaves the clock
+    at 99 with every opponent reply ending the game drawn and none mating (an
+    opponent with only reversible moves cannot decline the 50-move draw). A
+    move after which the opponent merely MAY claim a draw on its reply is not
+    one: an opponent with a pawn move, a capture or a mate can decline and play
+    on. Returned in ``board.legal_moves`` order. The clock-99 rule (added
+    2026-11-19, outside-model review lead R1) only changes roots where a move
+    leaves the fifty-move clock at 99."""
     wanted = {int(a) for a in actions}
     out: list[int] = []
     for move in board.legal_moves:
@@ -87,16 +125,32 @@ def forced_draw_actions(board: chess.Board, actions: Iterable[int]) -> list[int]
             continue
         board.push(move)
         try:
-            if not board.is_checkmate() and (
-                board.is_stalemate()
-                or board.is_insufficient_material()
-                or board.halfmove_clock >= 100
-                or board.is_repetition(3)
+            if _ends_drawn(board) or (
+                not board.is_checkmate() and _every_reply_ends_drawn(board)
             ):
                 out.append(action)
         finally:
             board.pop()
     return out
+
+
+def _cboard_ends_drawn(cb: CBoard) -> bool:
+    return bool(cb.is_game_over()) and not bool(cb.is_checkmate())
+
+
+def _cboard_every_reply_ends_drawn(child: CBoard) -> bool:
+    """`_every_reply_ends_drawn` on a ``CBoard`` (the same 50-move-only rule)."""
+    if int(child.halfmove_clock) != 99:
+        return False
+    replies = child.legal_move_indices()
+    if len(replies) == 0:
+        return False
+    for reply in replies.tolist():
+        grandchild = child.copy()
+        grandchild.push_index(int(reply))
+        if not _cboard_ends_drawn(grandchild):
+            return False
+    return True
 
 
 def forced_draw_actions_cboard(root_cb: CBoard, actions: Iterable[int]) -> list[int]:
@@ -105,12 +159,15 @@ def forced_draw_actions_cboard(root_cb: CBoard, actions: Iterable[int]) -> list[
     ``CBoard.is_game_over`` is exactly the on-board set (50-move clock >= 100,
     a third occurrence, insufficient material, no legal move); a mate is
     excluded. The reply-claim draws ``root_terminal_actions`` also reports are
-    not game-over on the child, so they are not returned."""
+    not game-over on the child, so they are not returned, except the clock-99
+    case where every reply ends the game drawn (`forced_draw_actions`)."""
     out: list[int] = []
     for action in actions:
         child = root_cb.copy()
         child.push_index(int(action))
-        if child.is_game_over() and not child.is_checkmate():
+        if _cboard_ends_drawn(child) or (
+            not bool(child.is_checkmate()) and _cboard_every_reply_ends_drawn(child)
+        ):
             out.append(int(action))
     return out
 

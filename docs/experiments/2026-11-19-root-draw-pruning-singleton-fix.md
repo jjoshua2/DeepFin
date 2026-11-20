@@ -120,3 +120,41 @@ loss, target definition or training knob.
 Confounds for any readout window that spans the deployment of this change:
 self-play draw rate can rise slightly (the 58 changed moves are draw-seeking),
 and the stored policy target changes on about 3 plies per 10,000.
+
+## Addendum 2026-11-19: the reply-forced fifty-move draw (PR #1418)
+
+Added rule (outside-model review lead R1): `forced_draw_actions` and
+`forced_draw_actions_cboard` (`mcts/root_tactics.py`, one definition used by
+the C runner's and the Python reference's below-zero fallback, root-parallel
+Gumbel's root resolver and the UCI drawing escape) also count a move that
+leaves the fifty-move clock at 99 when every opponent reply ends the game drawn
+and none mates, i.e. an opponent with only reversible moves cannot decline the
+fifty-move draw. Before it, such a move was pruned from a winning root as a
+reply-claim and then counted as no draw, so a root whose searched moves all
+lose was played as lost (e.g. `2K5/8/1k6/1q6/8/8/P7/8 w - - 98 1`: Kd8 draws,
+a2a3 / a2a4 are mated next move).
+
+Scope: the rule is examined only when a move leaves the clock at exactly 99,
+and only adds moves to the pruned-draw set. Every other root is unchanged.
+
+Evidence (`tests/test_root_reply_forced_draw.py`):
+
+- On ~4,000 seeded random roots (two seeds, clocks 0-100, repetition-bearing
+  histories) with no reply-forced move, both helpers return exactly what the
+  pre-rule helpers returned.
+- The C runner (board and CBoard entries) and the Python reference give
+  bit-identical policy targets, moves and values with the old and new helper
+  on 7 roots x 2 leaf evaluators, including the pruned-stalemate fallback root.
+- A seeded port of the review's differential test against a python-chess
+  oracle (100-ply adjudication, checkmate first): no false draw on any of
+  >20,000 moves, and no miss where a move leaves the clock at 99. The review's
+  own unbounded run found 0 false draws in ~360k moves.
+- `tests/test_uci_search_identity_pin.py`, the Gumbel parity tests and
+  `tests/test_e2e_smoke.py -k gumbel_selfplay_smoke` pass unchanged.
+
+Not covered by design: a move after which every reply draws some other way
+(for example the only reply captures into insufficient material) at a clock
+other than 99. Found while porting the test, and older than this rule: CBoard
+does not treat same-coloured bishops as a dead position where python-chess
+does (`4b3/8/8/8/6bk/1B6/2r5/2K5 w - - 97 1`, Bxc2), so the two helpers' base
+sets can differ there.

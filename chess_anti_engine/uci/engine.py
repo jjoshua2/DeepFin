@@ -12,6 +12,7 @@ from __future__ import annotations
 import gc
 import logging
 import math
+import os
 import sys
 import threading
 import time
@@ -37,7 +38,12 @@ from chess_anti_engine.mcts.search_options import (
 from chess_anti_engine.uci import tb_leaf, tb_root, wedge
 from chess_anti_engine.utils.bitboards import unsearchable_king_reason
 from chess_anti_engine.utils.gil_probe import GilContentionProbe
-from chess_anti_engine.utils.thread_join import await_os_thread_exit, join_thread, note_started
+from chess_anti_engine.utils.thread_join import (
+    await_os_thread_exit,
+    join_thread,
+    note_started,
+    task_start_time,
+)
 
 from .protocol import (
     CmdDebug,
@@ -750,6 +756,12 @@ class Engine:
   # fallback reply. They may still own the worker, so the quiescence barrier
   # waits for them too.
         self._orphan_threads: list[threading.Thread] = []
+  # Fresh-eval helpers that returned within their budget while their OS thread
+  # was still in its thread-local (torch) teardown: the at-once answer does not
+  # wait for that, so they are waited for at the next `_wait_for_search` (quit
+  # and every evaluator-closing path) and keep `_search_free_locked` false.
+        # (thread, native id, task start time) -- see `_ExitingHelper`.
+        self._exiting_helpers: list[_ExitingHelper] = []
   # (board, searchmoves) of the `go` the current search thread answers, so a
   # search parked as an orphan by `_wait_for_search` still gets its one bestmove.
         self._live_go: tuple[chess.Board, tuple[str, ...]] | None = None
@@ -4093,8 +4105,12 @@ class Engine:
 
     def _search_free_locked(self) -> bool:
         self._orphan_threads = [t for t in self._orphan_threads if t.is_alive()]
+        # One /proc look each, no wait: a helper still exiting keeps the worker
+        # and evaluators off limits (a rebuild or exit would race its teardown).
+        self._exiting_helpers = [h for h in self._exiting_helpers if h.still_exiting()]
         thread = self._search_thread
-        return (thread is None or not thread.is_alive()) and not self._orphan_threads
+        return ((thread is None or not thread.is_alive()) and not self._orphan_threads
+                and not self._exiting_helpers)
 
     def has_live_threads(self) -> bool:
         """A search, orphan or fallback helper is still running (e.g. in torch).
@@ -4172,6 +4188,14 @@ class Engine:
             with self._state_lock:
                 if orphan in self._orphan_threads:
                     self._orphan_threads.remove(orphan)
+        # Ended fresh-eval helpers still exiting: bounded by this call's budget
+        # like the ended search thread above; one not gone yet stays recorded.
+        for helper in list(self._exiting_helpers):
+            join_thread(helper.thread, max(0.0, end - time.monotonic()), deadline=end)
+            if not helper.still_exiting():
+                with self._state_lock:
+                    if helper in self._exiting_helpers:
+                        self._exiting_helpers.remove(helper)
         self._search_thread = None
         self._live_go = None
 
@@ -4217,6 +4241,7 @@ class Engine:
         """
         timeout = _FRESH_EVAL_TIMEOUT_S if budget_s is None else min(_FRESH_EVAL_TIMEOUT_S, budget_s)
         box: dict[str, object] = {}
+        done = threading.Event()
 
         def run() -> None:
             try:
@@ -4225,14 +4250,27 @@ class Engine:
                 )
             except Exception as exc:
                 box["error"] = exc
+            finally:
+                done.set()
 
         # One evaluator call per fallback reply, ending after it like a per-go
         # thread: not wrapped in ``wedge.parking`` (one parked thread per
         # fallback would grow without bound).
         helper = threading.Thread(target=run, daemon=True, name="uci-fresh-eval")
+        # Wait for the eval itself, never for the thread's exit: an at-once
+        # answer to `go movetime 20` waited out a torch thread-local teardown,
+        # and from CPython 3.13 `Thread.join(timeout)` on a thread whose Python
+        # part has ended blocks until the OS thread exits, ignoring the timeout.
+        # A helper that answered but has not fully exited is recorded and joined
+        # by the next `_wait_for_search`, before anything closes an evaluator.
         helper.start()
-        join_thread(helper, max(0.0, timeout))
-        if helper.is_alive():
+        # Read now, while the helper runs: on 3.13 even `is_alive()` blocks
+        # through the exit window, so the later checks look only at /proc.
+        exiting = _ExitingHelper.of(helper)
+        if done.wait(max(0.0, timeout)) and exiting.still_exiting():
+            with self._state_lock:
+                self._exiting_helpers.append(exiting)
+        if not done.is_set():
             with self._state_lock:
                 self._orphan_threads.append(helper)
             _SILENCED_THREADS.add(helper)
@@ -4247,6 +4285,34 @@ class Engine:
             return None
         move = box.get("move")
         return move if isinstance(move, str) else None
+
+
+@dataclass(frozen=True)
+class _ExitingHelper:
+    """A helper thread and its task identity, read while it ran.
+
+    ``still_exiting`` never calls into the ``Thread``: from CPython 3.13 both
+    ``join(timeout)`` and ``is_alive()`` on a thread whose Python part has
+    ended block until its OS thread exits. It reads ``/proc`` once: the task
+    with this tid and start time still exists. Without ``/proc`` (not Linux) it
+    falls back to ``is_alive()``.
+    """
+
+    thread: threading.Thread
+    tid: int | None
+    start_time: int | None
+
+    @classmethod
+    def of(cls, thread: threading.Thread) -> _ExitingHelper:
+        tid = thread.native_id
+        return cls(thread, tid, task_start_time(tid) if tid is not None else None)
+
+    def still_exiting(self) -> bool:
+        if not os.path.isdir("/proc/self/task"):
+            return self.thread.is_alive()
+        if self.tid is None or self.start_time is None:
+            return False
+        return task_start_time(self.tid) == self.start_time
 
 
 def _at_once_answer_by_ms(clock_left_ms: float, elapsed_ms: float) -> float:

@@ -453,8 +453,21 @@ def test_depth_pv_end_counts_only_when_nothing_better_can_exist() -> None:
     for root_status, complete in ((1, True), (-1, True), (2, False)):
         worker, tree, rid, child, leaf = _depth_tree()
         _mark(tree, leaf, 2)
-        _mark(tree, rid, root_status)                # a DRAW root may rest on a twofold
+        # A DRAW root with an unproven child (11) does not count: the C tree
+        # marks an in-tree twofold LEAF drawn, and a reroot onto it leaves a
+        # drawn root with unproven children (review of lead S5,
+        # test_uci_search_review_leads.py).
+        _mark(tree, rid, root_status)
         assert worker._depth_pv_len([10, 20], 4) == (4 if complete else 2), root_status
+
+    # ... but with EVERY child proven it does: no further search can reach an
+    # unproven sibling or un-prove a child, so waiting cannot change the move.
+    worker, tree, rid, child, leaf = _depth_tree()
+    _mark(tree, leaf, 2)
+    _mark(tree, child, 2)
+    _mark(tree, int(tree.find_child(rid, 11)), 1)
+    _mark(tree, rid, 2)
+    assert worker._depth_pv_len([10, 20], 4) == 4
 
 
 # White wins, and Qg6 stalemates at once: a drawn terminal the visit leader
