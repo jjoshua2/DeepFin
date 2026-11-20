@@ -297,6 +297,20 @@ python-chess APIs the engine runtime relies on:
   parameters or flipping `_inference_only`/TF32 drops and recaptures the
   graphs. Also refused off CUDA, with `pad_to_compiled_buckets`, or for a
   `torch.compile`d model or submodule.
+  - **Where it applies:** in-process evaluators on dense transport only --
+    the arena, `scripts/core_finite_collect.py` (protocol serving
+    `cuda_graphs: true`) and the loop driver's collect stage
+    (`scripts/simple_rl_loop.py --collect-cuda-graphs`). The distributed
+    selfplay worker (inference broker / compact transport) and the UCI engine
+    cannot use it.
+  - **Memory:** graphs pin their activations for the process lifetime: +1.5
+    to +1.7 GB reserved per evaluator at the default 512-row cap on the
+    production net (an arena builds one per side). Check headroom before
+    running beside training or another GPU job; an OOM there takes the other
+    job down too.
+  - **Measured speed-ups** (PR #1414: 1.4-2.3x selfplay, 2.1x arena) were all
+    taken with the GPU shared with another job; the ratio on an idle GPU has
+    not been measured.
 - **ONNX:** `onnx/load.py` wraps `onnxruntime` as an `nn.Module` (4672-wide
   policy, Ceres input), used via `scripts/net_source.py` and the lc0 adapter.
 - **Python searches** fall back to `LocalModelEvaluator` (`gumbel.py`,

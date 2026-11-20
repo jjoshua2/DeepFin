@@ -586,6 +586,29 @@ def _eager_graph_refusal(
     return None
 
 
+# Bumped by torch's process-wide registration hooks whenever any module
+# registers a parameter, buffer or submodule (including ``m.weight = P(...)``):
+# the graph caches use it to know their cached parameter list may be stale.
+_REGISTRATION_GENERATION = [0]
+_REGISTRATION_HOOKS: list[Any] = []
+
+
+def _bump_registration_generation(*_args: Any) -> None:
+    _REGISTRATION_GENERATION[0] += 1  # returns None: the registered object is unchanged
+
+
+def _install_registration_hooks() -> None:
+    if _REGISTRATION_HOOKS:
+        return
+    from torch.nn.modules import module as _module
+
+    _REGISTRATION_HOOKS.extend((
+        _module.register_module_parameter_registration_hook(_bump_registration_generation),
+        _module.register_module_buffer_registration_hook(_bump_registration_generation),
+        _module.register_module_module_registration_hook(_bump_registration_generation),
+    ))
+
+
 class _EagerForwardGraphs:
     """CUDA graphs of the evaluator's own eager dense forward, one per batch size.
 
@@ -597,11 +620,12 @@ class _EagerForwardGraphs:
 
     What it does NOT change: the graph records the very kernels the eager call
     launches (same module, same autocast, same ``_policy_output_full`` /
-    ``.float()`` tail, same shapes), so outputs are bitwise identical to the
-    eager forward for the same rows -- unlike ``torch.compile``, which fuses
-    and reorders arithmetic. This is asserted per batch size by
-    ``tests/test_eager_cuda_graphs.py`` and end to end by the selfplay/arena
-    identity runs recorded in the PR.
+    ``.float()`` tail, same shapes), and its outputs were MEASURED bitwise
+    identical to the eager forward for the same rows -- unlike
+    ``torch.compile``, which fuses and reorders arithmetic. The measurements
+    are per batch size in ``tests/test_eager_cuda_graphs.py`` and end to end in
+    the selfplay/arena identity runs recorded in PR #1414; it is not a
+    guarantee for a model, kernel library or driver they did not cover.
 
     Mechanics: one static device input per input dtype (``max_batch`` rows;
     graph ``b`` reads its first ``b``), one shared memory pool, capture on
@@ -609,8 +633,13 @@ class _EagerForwardGraphs:
     Every graph's outputs live in the shared pool and are only valid until the
     next replay of ANY graph, so callers copy them out on the replay stream
     before the next replay is enqueued -- both DirectGPUEvaluator call sites
-    do -- and replays never run concurrently (the sync path waits on the async
-    stream first). ``max_graphs`` bounds the number of captured shapes and
+    do -- and replays never run concurrently: the sync path waits on the async
+    stream first. That wait is required, not defensive: both paths copy their
+    rows into the SAME static input, from two streams torch creates
+    non-blocking, so without it a sync call can overwrite the rows of an async
+    replay still queued. (The WSL2 test host happens to serialise those
+    cross-stream copies, which hides the race in an output comparison; a spy
+    test pins the call itself.) ``max_graphs`` bounds the number of captured shapes and
     ``max_rows`` the largest batch captured; past either the forward runs
     eager (the same forward graphs record). ``max_rows`` exists for memory: a
     graph pins its activations in the pool for the process lifetime, and
@@ -624,7 +653,14 @@ class _EagerForwardGraphs:
     it saw at capture. ``run`` therefore checks a binding key -- the model
     object, every parameter/buffer ``data_ptr``, ``_inference_only`` and the
     TF32/matmul-precision flags -- and drops every graph and recaptures when it
-    changes (``recaptures``). In-place weight updates (``load_state_dict``,
+    changes (``recaptures``). The parameter/buffer list is cached: walking the
+    module tree cost ~0.6 ms per forward on the production net. It is
+    re-walked when the model object changes, when ANY parameter, buffer or
+    submodule is registered anywhere in the process (torch's global
+    registration hooks, which fire for ``module.weight = Parameter(...)``), and
+    every ``RETRAVERSE_EVERY`` calls as a backstop for writes that bypass
+    registration (``module._parameters[name] = ...``), so such a write can
+    serve at most ``RETRAVERSE_EVERY - 1`` stale forwards. In-place weight updates (``load_state_dict``,
     ``copy_``) keep the storages and are picked up by replay as they are. Other
     Python-side state read inside ``forward`` (the SDPA backend choice, any
     module flag not in the key) is frozen at capture: change it only on a fresh
@@ -634,6 +670,8 @@ class _EagerForwardGraphs:
     size in ``tests/test_eager_cuda_graphs.py`` and end to end in the PR's
     selfplay/arena digests.
     """
+
+    RETRAVERSE_EVERY = 64
 
     def __init__(
         self, owner: DirectGPUEvaluator, *, max_graphs: int = 96, max_rows: int = 512,
@@ -646,6 +684,12 @@ class _EagerForwardGraphs:
         self._static_in: dict[torch.dtype, torch.Tensor] = {}
         self._graphs: dict[tuple[int, torch.dtype], tuple[torch.cuda.CUDAGraph, torch.Tensor, torch.Tensor]] = {}
         self._binding: tuple[Any, ...] | None = None
+        _install_registration_hooks()
+        self._tensors: list[torch.Tensor] = []
+        self._tensors_model: Any = None
+        self._tensors_generation = -1
+        self._calls_since_walk = 0
+        self.walks = 0
         self.replays = 0
         self.captures = 0
         self.recaptures = 0
@@ -664,6 +708,19 @@ class _EagerForwardGraphs:
             "max_rows": self._max_rows, "graphs": len(self._graphs),
         }
 
+    def _bound_tensors(self, model: Any) -> list[torch.Tensor]:
+        """The model's parameters + buffers, re-walked only when they may differ."""
+        generation = _REGISTRATION_GENERATION[0]
+        if (model is not self._tensors_model or generation != self._tensors_generation
+                or self._calls_since_walk >= self.RETRAVERSE_EVERY):
+            self._tensors = [*model.parameters(), *model.buffers()]
+            self._tensors_model = model
+            self._tensors_generation = generation
+            self._calls_since_walk = 0
+            self.walks += 1
+        self._calls_since_walk += 1
+        return self._tensors
+
     def _binding_key(self) -> tuple[Any, ...]:
         model = self._owner.model
         return (
@@ -672,8 +729,7 @@ class _EagerForwardGraphs:
             torch.backends.cuda.matmul.allow_tf32,
             torch.backends.cudnn.allow_tf32,
             torch.get_float32_matmul_precision(),
-            tuple(t.data_ptr() for t in model.parameters()),
-            tuple(t.data_ptr() for t in model.buffers()),
+            tuple(map(torch.Tensor.data_ptr, self._bound_tensors(model))),
         )
 
     def _check_binding(self) -> None:

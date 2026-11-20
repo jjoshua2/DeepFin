@@ -118,3 +118,24 @@ def test_cache_is_bounded() -> None:
         moves.append(board.move_stack[-1].uci())
         _validated_position_history(board.fen(), root_fen=root, root_moves=tuple(moves))
     assert len(sf_uci._prefix_cache) <= sf_uci._PREFIX_CACHE_MAX
+
+
+def test_two_roots_sharing_a_move_prefix_never_answer_for_each_other():
+    # Entries are keyed by the ROOT as well as the moves: two roots with the
+    # same (possibly empty) move prefix, interleaved, must each be validated
+    # against their own root -- including the empty history ``()``.
+    roots = [chess.STARTING_FEN, "r3k2r/pp3ppp/8/8/8/8/PP3PPP/R3K2R w KQkq - 0 1"]
+    prefix = ("a2a4", "a7a5", "b2b3")
+    for n in range(len(prefix) + 1):
+        for root in roots + roots[::-1]:
+            board = chess.Board(root)
+            for uci in prefix[:n]:
+                board.push_uci(uci)
+            want = _oracle(board.fen(), root, prefix[:n])
+            assert _validated_position_history(board.fen(), root_fen=root, root_moves=prefix[:n]) == want
+            # The other root's final position must still be refused here.
+            other = chess.Board(roots[1] if root == roots[0] else roots[0])
+            for uci in prefix[:n]:
+                other.push_uci(uci)
+            with pytest.raises(ValueError, match="reproduce"):
+                _validated_position_history(other.fen(), root_fen=root, root_moves=prefix[:n])
