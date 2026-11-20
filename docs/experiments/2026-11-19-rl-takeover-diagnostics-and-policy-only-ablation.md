@@ -454,9 +454,10 @@ decisions.
     found F12's value gap mostly information.
 
   Whether calibration clears an F12-like loop is unresolved.
-- Candidate: train value on search value (the SL base's own value target was 100%
-  teacher-search value; see D2), or keep the value loss off, as P1's +42.6
-  head-to-head suggests.
+- Candidate: train value on the net's own self-play search value, or keep the value
+  loss off, as P1's +42.6 head-to-head suggests. This is not the SL base's regime: the
+  SL base's value target was a teacher's search value (see D2), a different target
+  from the net's own 64-simulation search.
 - Candidate: monitor mean |Q| and P(draw) on the fixed 3,080 audit rows every
   generation, as a tripwire against confidence drift.
 - Candidate: apply or learn a calibration step for the value output, registered with
