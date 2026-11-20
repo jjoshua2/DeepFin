@@ -8,8 +8,8 @@ Nothing launches until (i) the owner's D1–D6, D8 and D9 are recorded in this r
 by a follow-up commit (D7 is decided), and (ii) pre-launch checks L1–L4 pass. The driver support it needs
 (#1430) is on main.
 Revised 2026-11-20 after an independent review (findings M1–M7, m1–m11). Aligned
-2026-11-21 with the driver as merged in #1430: commands, gate scripts and report
-fields. D7 was decided by the owner on 2026-11-21 (fast collect path only). D1–D6,
+2026-11-20 with the driver as merged in #1430: commands, gate scripts and report
+fields. D7 was decided by the owner on 2026-11-20 (fast collect path only). D1–D6,
 D8 and D9 are unchanged and still open.
 
 **Prerequisites:**
@@ -56,7 +56,7 @@ change. Each decision is argued in the section it links to. D7 is already decide
 | D4 | [Softening used by Arm S](#arms) | **`--train-target-temp 2.0`** | `--policy-prior-mix 0.5 --prior-mix-source reference` (SL base) |
 | D5 | [Primary arena layout](#deciding-yardstick) | **Seat-balanced:** half the games with the arm as candidate, half as reference, same openings; no separate base-vs-base control | One orientation plus a same-day base-vs-base control |
 | D6 | [Positive control](#positive-control) | **Unconditional:** Arm V's recipe at 4,000 games from Q50 c12, played against Q50 c12. It cannot validate the primary: a pass is largely expected from fixing value calibration, and its dose is a quarter of the primary's | Skip it, saving about 3 GPU hours (2.6–3.4) |
-| D7 | [Collect execution](#collection) | **DECIDED by the owner, 2026-11-21:** the fast (CUDA-graphs) collect path only, concurrency 128. "I don't think we need to maintain a fast and a slow path. It's okay to be a little bit different. And just be faster." | ~~Graphs off~~ (struck) |
+| D7 | [Collect execution](#collection) | **DECIDED by the owner, 2026-11-20:** the fast (CUDA-graphs) collect path only, concurrency 128. "I don't think we need to maintain a fast and a slow path. It's okay to be a little bit different. And just be faster." | ~~Graphs off~~ (struck) |
 | D8 | [Optimizer](#training) | **Fresh NAdamW, flat LR 3e-6, warmup 0**, as F12 | `--init-optimizer-state checkpoint` (Aurora): not recommended here |
 | D9 | [Deciding N](#deciding-yardstick) | **Single fixed look at 3,200 games** (1,600 per orientation), read once | O'Brien–Fleming two-look: z 2.797 at 1,600, z 1.977 at 3,200 |
 
