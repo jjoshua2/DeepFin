@@ -1529,6 +1529,7 @@ without raising this is what the cap exists to stop.
 
 def build_arena_evaluator(
     model: Any, *, device: str, max_batch: int, n_slots: int = 2, cuda_graphs: bool = False,
+    cuda_graph_max_rows: int = 512,
 ) -> Any:
     """One LONG-LIVED evaluator for one arena side.
 
@@ -1573,6 +1574,7 @@ def build_arena_evaluator(
         # outputs, without the per-call launch overhead that dominates the
         # forward at the batch sizes the search submits (--eval-cuda-graphs).
         cuda_graphs=bool(cuda_graphs),
+        cuda_graph_max_rows=int(cuda_graph_max_rows),
     )
 
 
