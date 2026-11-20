@@ -147,10 +147,18 @@ Labels `*_s64_pt1.5`, same bank:
   base at 1.0, seat-balanced.
 - **Control:** the SL base at 1.5 against the SL base at 1.0.
 
-> **[RESULT SLOT: the softening test. To be filled from the banked rows, pooled
-> with `arena_seat_balanced_pool.py`, before this record is approved. Arm:
-> ______ Elo (95% CI ______). Control: ______ Elo (95% CI ______). Reading
-> chosen by the table below: ______.]**
+> **[RESULT SLOT: the softening test, filled from the banked rows and pooled with
+> `arena_seat_balanced_pool.py` (`net_check: row_sha256`).
+> - **Arm:** P1 c12 at `policy_temp=1.5` vs the SL base at 1.0, 400 + 400 games:
+>   **+3.9 Elo (−13.6 to +21.5)**, against −3.9 (−22.8 to +15.0) at 1.0 on the same
+>   200 openings. Its seat offset is −17.0 (−33.6 to −0.4), and its A/B
+>   correlation +0.059.
+> - **Control:** the SL base at 1.5 vs the SL base at 1.0, labels `BASE_*_s64_pt1.5`:
+>   STILL RUNNING when this was written: ______ Elo (95% CI ______).
+> - **Reading** (from the table below, once the control is in): ______.
+>
+> The arm alone does not show R1. Its +7.8-Elo change from the 1.0 read is well
+> inside the noise of two 800-game matches.]**
 
 Three readings, each written before the result:
 
