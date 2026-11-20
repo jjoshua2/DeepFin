@@ -1925,6 +1925,7 @@ def test_the_eval_cuda_graphs_flag_is_gone(monkeypatch: pytest.MonkeyPatch, caps
     (["--device", "cuda", "--compile", "on"], True),               # explicit on still compiles
     (["--device", "cuda", "--eval-max-batch", "0"], True),         # no hoist: the work threshold decides
     (["--device", "cpu"], True),                                   # no graphs off CUDA: threshold decides
+    (["--device", "cuda", "--volatility-q-scale", "0.5"], True),   # volatility: no hoist, threshold decides
 ])
 def test_compile_auto_prefers_the_cuda_graphs(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, extra: list[str], compiled: bool,

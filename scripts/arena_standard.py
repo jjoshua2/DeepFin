@@ -46,6 +46,7 @@ import datetime
 import hashlib
 import json
 import math
+import os
 import shlex
 import subprocess
 import sys
@@ -1803,44 +1804,32 @@ def _find_nested(cfg: object, key: str) -> object | None:
     return None
 
 
+# Research entry points (arena, match scripts) keep their torch.compile cache
+# OUTSIDE every checkout: resolving the production worker cache put it inside
+# the live tree (runs/pbt2_small/server/worker_cache), and research compiles
+# wrote there. The distributed worker keeps its own shared cache, untouched.
+RESEARCH_COMPILE_CACHE_ENV = "CAE_RESEARCH_COMPILE_CACHE_DIR"
+RESEARCH_COMPILE_CACHE_DEFAULT = "~/chess-artifacts/caches/research-compile"
+
+
 def default_compile_cache_dir() -> Path:
-    """The production worker's shared torch.compile/triton cache root.
+    """The torch.compile/triton cache root research entry points use by default.
 
-    Mirrors ``tune.distributed_runtime._resolve_shared_cache_root``: the
-    explicit ``distributed_worker_shared_cache_dir`` from the production config
-    wins (that is exactly the dir the live workers populate), otherwise we fall
-    back to ``<work_dir>/server/worker_cache``. Pointing the arena's compile at
-    this reuses the autotuned kernels + FX graphs that training already baked,
-    so an arena run skips most of its cold-compile cost.
-
-    Falls back to the documented literal ``runs/pbt2_small/server/worker_cache``
-    (the production worker cache) if the config can't be read; an absent dir is
-    harmless (just no reuse that run). Always returns an absolute path.
+    ``$CAE_RESEARCH_COMPILE_CACHE_DIR`` when set, else
+    ``~/chess-artifacts/caches/research-compile`` -- never a path inside a
+    checkout. ``--compile-cache-dir`` overrides both. The cost: no reuse of the
+    kernels the training workers baked, so a first compile is cold. Always
+    returns an absolute path.
     """
-    fallback = REPO_ROOT / "runs" / "pbt2_small" / "server" / "worker_cache"
-    try:
-        import yaml
-
-        cfg = yaml.safe_load(production_config_path().read_text())
-    except (OSError, ValueError):
-        return fallback
-    explicit = _find_nested(cfg, "distributed_worker_shared_cache_dir")
-    if explicit and str(explicit).strip():
-        return Path(str(explicit).strip()).expanduser().resolve()
-    work_dir = _find_nested(cfg, "work_dir")
-    if work_dir and str(work_dir).strip():
-        root = Path(str(work_dir).strip()).expanduser()
-        if not root.is_absolute():
-            root = REPO_ROOT / root
-        return (root / "server" / "worker_cache").resolve()
-    return fallback
+    raw = os.environ.get(RESEARCH_COMPILE_CACHE_ENV, "").strip() or RESEARCH_COMPILE_CACHE_DEFAULT
+    return Path(raw).expanduser().resolve()
 
 
 def _configure_shared_compile_cache(cache_dir: Path) -> None:
     """Point TorchInductor/Triton at ``cache_dir`` for cross-run kernel reuse.
 
-    Mirrors ``worker._configure_shared_compile_cache`` so the arena hits the
-    same on-disk cache layout the training workers populate. Uses
+    Same on-disk layout as ``worker._configure_shared_compile_cache`` (the
+    directory differs: see ``default_compile_cache_dir``). Uses
     ``os.environ.setdefault`` so an explicitly-exported env var still wins, and
     must be called BEFORE any ``torch.compile`` (i.e. before run_arena loads
     torch). Creating the dirs is harmless when they don't exist yet.
@@ -1856,8 +1845,7 @@ def _configure_shared_compile_cache(cache_dir: Path) -> None:
     os.environ.setdefault("TRITON_CACHE_DIR", str(triton_dir))
     os.environ.setdefault("TORCHINDUCTOR_FX_GRAPH_CACHE", "1")
     print(
-        f"[arena] compile cache: {inductor_dir} "
-        f"(reusing training kernels if present)",
+        f"[arena] compile cache: {inductor_dir}",
         flush=True,
     )
 
@@ -4450,10 +4438,11 @@ def main() -> None:
                    help="matched_sims: back-compat alias for --compile off "
                         "(disables torch.compile regardless of --compile).")
     p.add_argument("--compile-cache-dir", type=Path, default=None,
-                   help="matched_sims: torch.compile/triton cache root to reuse "
-                        "(default: the production worker cache, so arena reuses "
-                        "the kernels training already baked). Overridable; an "
-                        "absent dir just means no reuse that run.")
+                   help="matched_sims: torch.compile/triton cache root (default: "
+                        f"${RESEARCH_COMPILE_CACHE_ENV}, else "
+                        f"{RESEARCH_COMPILE_CACHE_DEFAULT} -- outside every "
+                        "checkout; it no longer reuses the training workers' "
+                        "cache, which lives in the live tree).")
     p.add_argument("--no-rolling", action="store_true",
                    help="matched_sims: disable the rolling pool and use fixed chunks "
                         "instead. Rolling (on by default) keeps a fixed pool of "
