@@ -38,7 +38,7 @@ def test_refused_off_cuda() -> None:
 def test_refused_for_compiled_model() -> None:
     model = torch.compile(_model("cuda"))
     with pytest.raises(ValueError, match=r"torch\.compile"):
-        DirectGPUEvaluator(model, device="cuda", max_batch=8, cuda_graphs=True)  # pyright: ignore[reportArgumentType]
+        DirectGPUEvaluator(model, device="cuda", max_batch=8, legal_bf16=False, cuda_graphs=True)  # pyright: ignore[reportArgumentType]
 
 
 @needs_cuda
@@ -104,9 +104,16 @@ def test_back_to_back_async_slots_keep_their_own_outputs() -> None:
 def test_sync_forward_issued_while_an_async_one_is_in_flight(monkeypatch: pytest.MonkeyPatch) -> None:
     # Both paths copy their rows into the SAME static graph input and replay
     # graphs from one pool, so the sync path must wait for an async replay
-    # still queued on the side stream. Made deterministic by delaying every
+    # still queued on the side stream. Made deterministic by delaying the
     # replay issued on the async stream (after its H2D copy): without the wait
-    # the sync call overwrites the static input before the async replay reads it.
+    # the sync call overwrites the static input before the async replay reads
+    # it. The sync call runs on a caller-owned stream, the case the explicit
+    # wait exists for. Measured limitation: on the test host (torch 2.10,
+    # CUDA 12.8, WSL2) the sync call is ordered behind the delayed async
+    # replay even with the wait removed (it blocks for the injected ~70 ms
+    # sleep on the legacy default stream and on a caller stream alike), so
+    # this test checks the outputs under the race but does not by itself
+    # kill a removed wait_stream there.
     model = _model("cuda")
     eager = DirectGPUEvaluator(model, device="cuda", max_batch=64, n_slots=2, legal_bf16=False)
     graph = DirectGPUEvaluator(model, device="cuda", max_batch=64, n_slots=2, legal_bf16=False,
@@ -114,12 +121,14 @@ def test_sync_forward_issued_while_an_async_one_is_in_flight(monkeypatch: pytest
     planes = eager.get_input_buffer(1).shape[1]
     rng = np.random.default_rng(2)
     xa, xb = _rows(rng, 32, planes), _rows(rng, 16, planes)
+    caller_stream = torch.cuda.Stream()
 
     def race(ev: DirectGPUEvaluator) -> tuple[np.ndarray, ...]:
         ev.get_input_buffer(32, slot=0)[:] = xa
         ev.get_input_buffer(16, slot=1)[:] = xb
         pol_t, wdl_t, event = ev.evaluate_inplace_async(32, slot=0)
-        pol_b, wdl_b = ev.evaluate_inplace(16, slot=1)
+        with torch.cuda.stream(caller_stream):
+            pol_b, wdl_b = ev.evaluate_inplace(16, slot=1)
         assert event is not None
         event.synchronize()
         return pol_t.numpy().copy(), wdl_t.numpy().copy(), pol_b, wdl_b
@@ -127,14 +136,27 @@ def test_sync_forward_issued_while_an_async_one_is_in_flight(monkeypatch: pytest
     want = race(eager)
     race(graph)  # capture both shapes first
     orig_replay = torch.cuda.CUDAGraph.replay
+    orig_async = graph.evaluate_inplace_async
+    in_async = [False]
+    delays = [0]
 
     def delayed_replay(self: torch.cuda.CUDAGraph) -> None:
-        if graph._stream is not None and torch.cuda.current_stream() == graph._stream:
-            torch.cuda._sleep(200_000_000)  # ~0.1 s of GPU spin on the async stream
+        if in_async[0]:  # enqueued on the async stream, after its H2D copy
+            torch.cuda._sleep(200_000_000)  # ~0.1 s of GPU spin before the replay
+            delays[0] += 1
         orig_replay(self)
 
+    def flagged_async(*a: object, **kw: object) -> object:
+        in_async[0] = True
+        try:
+            return orig_async(*a, **kw)  # pyright: ignore[reportArgumentType]
+        finally:
+            in_async[0] = False
+
     monkeypatch.setattr(torch.cuda.CUDAGraph, "replay", delayed_replay)
+    monkeypatch.setattr(graph, "evaluate_inplace_async", flagged_async)
     got = race(graph)
+    assert delays[0] == 1
     for e, g in zip(want, got):
         assert e.tobytes() == g.tobytes()
 
