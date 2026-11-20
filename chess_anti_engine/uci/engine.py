@@ -1609,7 +1609,11 @@ class Engine:
         if not self._claim_answer(gen):
             return
         with _answer_owner():
-            if args.movetime_ms is not None:
+            clock_binds = clock_ms is not None and (
+                args.movetime_ms is None
+                or int(clock_ms) - max(0, int(self._options.move_overhead_ms)) < args.movetime_ms
+            )
+            if not clock_binds:
                 _println(
                     f"info string movetime too short to search: movetime {args.movetime_ms} "
                     f"ms leaves a {max(0, int(limits.deadline_ms or 0))} ms deadline, under "
@@ -1745,13 +1749,17 @@ class Engine:
         ``MoveOverheadMs`` (the GUI's pipe and bookkeeping latency, which the
         clock is charged for too: a last-moment answer timed to the raw clock
         landed 0.2 ms and once 31 ms past it); else None (no clock: no
-        last-moment threshold). The watchdog answers its own margin before it."""
-        if args.movetime_ms is not None:
-            return int(args.movetime_ms)
+        last-moment threshold). With both, the earlier of the two: a ``movetime``
+        longer than the clock must not let the watchdog answer after the flag.
+        The watchdog answers its own margin before it."""
         remaining = args.wtime_ms if white_to_move else args.btime_ms
-        if remaining is None:
-            return None
-        return max(0, int(remaining) - max(0, int(self._options.move_overhead_ms)))
+        clock = (
+            None if remaining is None
+            else max(0, int(remaining) - max(0, int(self._options.move_overhead_ms)))
+        )
+        if args.movetime_ms is not None:
+            return int(args.movetime_ms) if clock is None else min(int(args.movetime_ms), clock)
+        return clock
 
     def _go_wait_budget_s(self, cmd: CmdGo) -> float:
         try:
