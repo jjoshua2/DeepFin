@@ -14,26 +14,39 @@ words:
   wish we could be more rigorous instead of guessing";
 - on search headroom: the SL base "gained at each more step and it should
   continue to do so as we increase the model; even lc0 and ceres do this at like
-  1500 elo stronger base."
+  1500 elo stronger base";
+- on what is wrong: "i think the main problem is we dont know how to calibrate the
+  sharpness and distribution of policy and value head to use the information. i
+  think it shouldnt be that hard to get half of that 800 elo with like 100,000
+  positions if we do it right";
+- on why RL rather than more SL data: "search goes towards the holes where policy
+  is worse so fixing those is very important".
 
-So the one-generation experiment is no longer the goal. It becomes the
-calibration step (Stage 1) of a multi-generation run (Stage 2), and doses come
-from measurements. Every number that is still a guess is listed under
-[What is still a guess](#what-is-still-a-guess), together with the measurement
-that would replace it.
+So the one-generation experiment is no longer the goal. The plan is a staged
+sequence:
+- banked evidence (Stage 0);
+- diagnostics that need no training (Stage 0c);
+- a small-data calibration lab (Stage 1a);
+- a dose and sims sweep (Stage 1b);
+- the multi-generation run (Stage 2).
+
+Doses come from measurements. Every number that is still a guess is listed under
+[What is still a guess](#what-is-still-a-guess), with the measurement that would
+replace it.
 
 **Relation to the loop-exp1 record.** The
 [loop-exp1 record](2026-11-20-loop-exp1-one-generation-from-sl-base.md) is
-superseded as a standalone experiment. This plan reuses it as the source of:
+superseded as a standalone experiment. It is reused as the source of:
 - the commands (the collection, `--collect-from` arms, planned updates);
 - the collect gates G-C1–G-C11 and their threshold file;
 - the model gates G-T1–G-T4 and the `gt1` / `gt2` verdict commands;
 - the arena command and the seat-balanced pooling (`scripts/arena_seat_balanced_pool.py`);
-- the net write-protection and sha256 provenance rules.
+- the net write-protection and the sha256 provenance rules.
 
-"As loop-exp1" means that record's text with #1437's additions:
+"As loop-exp1" means that record's text together with #1437's additions:
 - openings split step 0b and SL base copy step 0a;
-- `gt1`, `gt2` and the pooling script's `--z`;
+- `gt1` / `gt2` with their expected-file counts;
+- the pooling script's `--z`;
 - the recalibrated G-C5 and G-T4 bounds.
 
 #1437 must merge before launch.
@@ -44,18 +57,18 @@ Naming: "SL base" is the supervised starting net, sha256
 
 ## Decisions for the owner
 
-Only these three are the owner's to make. Everything else is set either by a
-measurement or by a rule written below before any data.
+Three decisions are the owner's. Everything else is set by a measurement, or by a
+rule written below before any data.
 
 | # | Decision | Recommended default | Alternative |
 |---|---|---|---|
-| O1 | **Time cap for Stage 1's collection** | **One day of collection in total,** half at 64 sims and half at 256 sims. At the measured 3,284 games/h, that is about 39,000 games at 64 sims, plus about a quarter as many at 256 sims (that rate is measured before launch). Stage 1 as a whole is then about 2.9–3.9 GPU days ([compute](#stage-1-compute)). | Two days in total. That doubles the data at every rung's time point, and roughly doubles the training time; arena time is unchanged. |
-| O2 | **Primary recipe: P (policy only) or V (search value)** | **Run both as arms through Stage 1, and let the pre-written rule choose** ([Stage 1 output](#stage-1-output-the-pre-written-rule)) | Name one recipe. Stage 1 then runs only that recipe's arms, which halves training and arena cost. |
-| O3 | **Sims per move: include the 256-sim factor** | **Include it.** A 256-sim collection costs the same GPU time as the 64-sim one, and the two are compared at equal GPU time. Stage 0 shows the 256-sim teacher is about +272 Elo stronger. | 64 sims only. This drops half the arms and puts the whole collection budget into 64-sim games. |
+| O1 | **Time cap for Stage 1b's collection** (the lab's collection is about 20 min and needs no cap) | **One day of collection in total**, split equally between 64 and 256 sims: about 39,000 games at 64 sims, at the measured 3,284 games/h, plus about a quarter as many at 256 sims. Stage 1b in total is then about 42–52 GPU hours ([compute](#stage-1b-compute)) | Two days in total. This doubles the data behind every rung; arena time is unchanged |
+| O2 | **Primary recipe (policy target, value target)** | **Decided by the lab's pre-written rule** ([Stage 1a](#stage-1a-calibration-lab)), over P (policy only), V (search value) and O (game outcome), crossed with policy-target temperatures | Name one recipe and skip that factor in the lab |
+| O3 | **Sims per move for the collection: include the 256-sim factor in Stage 1b** | **Include it.** A 256-sim collection takes the same GPU time as the 64-sim one, and the two are compared at equal GPU time; the 256-sim teacher is about +272 Elo stronger (Stage 0) | 64 sims only. This halves the Stage 1b arms, and the whole collection goes to 64 sims |
 
 ## Stage 0: search ceiling — answered by banked matches
 
-No new matches are run. The SL base's search gain is already banked in
+No new matches are run. The SL base's search gain is already banked, in
 `~/chess-artifacts/operations/rl-claude-20261119/search-gain/results.jsonl`
 (takeover record D1). The rows, verbatim:
 
@@ -65,174 +78,310 @@ No new matches are run. The SL base's search gain is already banked in
 | `a39_s256_v_s64` | 256 vs 64 sims | 400 | 0.8275 | +272.4 (+243.1 to +305.3) |
 | `a39_s800_v_s64` | 800 vs 64 sims | 200 | 0.9400 | +478.0 (+410.2 to +582.3) |
 
-These matches were played in one orientation only. A candidate-seat offset of up to
-about 15 Elo (D4 round 2's pooled same-net read was +6.4, −4.2 to +17.1) is
-negligible at these sizes.
+These matches were played in one orientation. A candidate-seat offset of up to
+about 15 Elo would be negligible at these sizes; D4 round 2's pooled same-net read
+was +6.4 (−4.2 to +17.1).
+
+A 4× search is worth about +270 Elo to the SL base. So the question is not
+whether there is anything to gain. It is whether training TRANSFERS the search's
+strength into the net, in a form that still helps when the net searches.
+
+## Stage 0b: raw-net transfer — banked, recomputed here
+
+`~/chess-artifacts/operations/rl-claude-20261119/raw-net-1sim/` holds a diagnostic
+banked on 2026-11-20. It was not pre-registered, and is marked NOT_A_CANDIDATE.
+The banked loop nets were played against the SL base with BOTH sides at 1
+simulation, on main `f51c51f20`:
+- EVAL openings, seed 2026112050, `--sims 1`, no root noise, `--compile off`;
+- seat-balanced, 800 games per orientation.
+
+The pooled numbers below were recomputed from the banked game logs and result rows
+with `scripts/arena_seat_balanced_pool.py` (`net_check: row_sha256`, both seats'
+shas verified at pool time). The 64-sim column is from the earlier records.
+
+| Net | 1 sim vs 1 sim: pooled Elo (95% CI, opening-clustered) | Seat offset | A/B correlation | 64 sims vs 64 sims |
+|---|---|---|---:|---|
+| P1 c12 | **+240.8** (+218.3 to +265.2) | −2.6 (−12.9 to +7.7) | +0.357 | −10.9 (−27.7 to +5.9) |
+| F12 c12 | **+211.7** (+190.3 to +234.7) | +3.0 (−8.5 to +14.5) | +0.295 | −34.9 (D4) / −20.0 (own panel) |
+| Q50 c12 | **+128.7** (+109.4 to +148.8) | −9.3 (−22.4 to +3.7) | +0.273 | −63.2 (−81.1 to −45.7) |
+**The central fact: P1 c12's transfer curve.** P1 c12 played the SL base with
+both sides at the same sims, seat-balanced. All rows were recomputed with the
+pooling script:
+
+| Sims (both sides) | Games | Pooled Elo (95% CI, opening-clustered) | Seat offset | A/B correlation |
+|---:|---:|---|---|---:|
+| 1 | 1,600 | **+240.8** (+218.3 to +265.2) | −2.6 | +0.357 |
+| 4 | 800 | **+98.1** (+72.4 to +124.8) | −3.5 | +0.496 |
+| 16 | 800 | **+20.0** (−2.2 to +42.3) | +7.8 | +0.287 |
+| 64 | 800 | **−3.9** (−22.8 to +15.0) | −1.3 | +0.124 |
 
 **What follows from it:**
-1. **The headroom is large.** A 4× search is worth about +270 Elo to the SL base.
-   So the question is not whether there is anything to gain. It is whether training
-   TRANSFERS the search's strength into the raw net.
-   - **The one measured transfer point is P1:** policy-only training at about 950
-     updates on F12's rows read −10.9 Elo (−27.7 to +5.9) against the SL base. Its
-     upper bound is about 2% of the +272.
-   - **A detectable gain needs only a small transfer.** A 2,000-game seat-balanced
-     match detects +15.6 Elo with 80% power. That is 5.7% of +272. At 5% of +272,
-     about +14 Elo, it is near the edge of one such match.
-2. **A working generation should show tens of Elo.** Stage 1's matches can
-   therefore be small (400 games per rung, [below](#power)). The time saved is spent
-   on more dose rungs, more learning rates and the 256-sim factor.
-3. **Sims per move is a real lever, not a nuisance.** Collecting at 256 sims gives
-   targets from a teacher about +272 Elo stronger, at about 4× the cost per game.
-   The old record's D3 measured only target fit against deep search, never Elo.
-   Stage 1 therefore compares 64-sim and 256-sim collections at equal GPU time: fewer
-   games with stronger targets, against more games with weaker ones.
+- **Training moved the raw net a lot.** About 950 updates on about 2,300 games
+  made the raw net 130–240 Elo stronger (the first table): roughly a quarter of the
+  +849 64-vs-1 gap.
+- **The gain decays with search and vanishes.** The advantage more than halves
+  with each 4× of search. It reaches zero at 64 sims without going clearly
+  negative.
+- **The CIs here are wider than a hand pooling.** A hand pooling that treated the
+  orientations as independent gave narrower intervals: 1 sim +241 (+221 to +262);
+  16 sims +20.0 (+0.4 to +39.7), which excludes 0, where the clustered interval
+  does not. The orientations of an opening are positively correlated (+0.12 to
+  +0.50), so the opening-clustered CIs are the right ones, and sizing below allows
+  for them.
 
-## Stage 1: calibration sweep
+**The central open question** is therefore no longer "does training move the net".
+It is: **why does a +240-Elo raw-net gain not compose with search?**
 
-### Question
+### The softening test (running; result slot)
 
-On collections from the SL base, does Elo against the SL base rise with the GPU
-time spent collecting (dose)? And which combination does that best: recipe P or V,
-which learning rate, 64 or 256 sims? Finally, what is the smallest dose that
-measurably beats the SL base?
+Labels `*_s64_pt1.5`, same bank:
+- **Arm:** P1 c12 at 64 sims with search-time `policy_temp=1.5`, against the SL
+  base at 1.0, seat-balanced.
+- **Control:** the SL base at 1.5 against the SL base at 1.0.
 
-The learning rate is a factor because 3e-6 was copied from earlier Codex runs, and
-is as much a guess as the dose.
+> **[RESULT SLOT: the softening test. To be filled from the banked rows, pooled
+> with `arena_seat_balanced_pool.py`, before this record is approved. Arm:
+> ______ Elo (95% CI ______). Control: ______ Elo (95% CI ______). Reading
+> chosen by the table below: ______.]**
+
+Three readings, each written before the result:
+
+| Reading | What the softening test shows | What it means | What the plan does |
+|---|---|---|---|
+| **R1: prior sharpness** | the arm gains (its CI above P1's 64-sim −3.9) and the control does not | training made the policy too sharp for search; the information is there but search cannot use it | the search-time prior temperature becomes a factor of every read, and of the lab's collection; the lab adds prior softening (`--train-target-temp`, `--policy-prior-mix`) |
+| **R2: a general search-setting effect** | the arm and the control both gain, by similar amounts | `policy_temp=1.0` is not the best setting for either net; P1's own deficit is not about sharpness | the setting is retuned for both sides (a separate, recorded change to the yardstick, made before any lab read), and the composition question stays open |
+| **R3: a shallow head start** | neither gains | the net learned what 64-sim search already finds (a head start that search catches up with), not new information | the loop must train on targets deeper than its own 64-sim result: more sims per move for the targets (the lab's 64 vs 256 factor), or value-target changes; more data of the same depth is not expected to help |
+
+## The central question: why the raw-net gain does not compose with search
+
+The softening test above is M1's first point. Each candidate mechanism below has
+a test that needs no new training. These tests are Stage 0c. They run on banked nets (P1 c12 first, then F12 c12 and Q50 c12 where
+stated), before any new collection.
+
+**Common to every Stage 0c match:**
+- seat-balanced against the SL base, 800 games (400 per orientation) on the
+  200-line `diag` opening block;
+- loop-exp1's arena flags (`--search-shape training --no-gumbel-noise
+  --compile off`);
+- pooled with the pooling script.
+
+**Reading.** These are diagnostics, not registered claims. A mechanism is
+"supported" when the named contrast moves by more than the 95% half-width of the
+difference. That half-width is about 1.96 × √2 × 8.8 ≈ 24 Elo at 800 games per
+arm, treating the arms as independent; that is conservative, since they share
+openings.
+
+| # | Mechanism | Test (no training) | Supported if |
+|---|---|---|---|
+| M1 | **The trained prior is too sharp for search.** Sequential halving trusts the prior's top-k, and a sharpened prior under-explores | P1 c12 at 64 sims with its search-time prior temperature raised on the candidate side only. `--cand-gumbel policy_temp=τ` (per-side knob of `arena_standard.py`) for τ ∈ {τ₀, 1.25 τ₀, 1.5 τ₀, 2 τ₀}, where τ₀ is the training shape's realised `policy_temp`, printed at startup | some τ > τ₀ beats τ₀ by more than 24 Elo |
+| M2 | **Value drift misdirects search.** The trunk moved, so even a frozen value head reads differently | Head swap with the banked tool (`<bank>/headswap_arena.py`, takeover record D4): P1 c12's policy with the SL base's value, at 1 and at 64 sims. Already known for Q50: Q50 policy + base value reads +4.3 (−12.5 to +21.2) at 64 sims, so for Q50 the policy gain alone does not show at 64 sims | P1 policy + base value at 64 sims beats full P1 c12 (−10.9) by more than 24 Elo |
+| M3 | **Redundancy.** The net learned what 64-sim search already finds, so its gain is a search saving rather than extra strength at 64 sims | Equal-strength sims ratio: P1 c12 at s sims (`--sims-candidate s --sims-reference 64`, s ∈ {16, 32, 48}) against the SL base at 64. Interpolate the s at which the pooled Elo is 0; the ratio is 64 / s | P1 matches the base at s < 64, with 64 / s CI above 1. A search saving is then real but does not add at equal sims |
+| M4 | **Top-k / Gumbel root interaction.** A sharper prior changes which 16 children enter halving, or how σ ranks them | P1 c12 at 64 sims with `--cand-gumbel topk=32`, and separately with `--cand-gumbel c_scale=` at 2× the training value | either beats P1 at its defaults by more than 24 Elo |
+
+**Compute:** about 8,000 64-sim games (M1 4 arms, M2 2 arms, M3 3 arms, M4 2
+arms, plus 1-sim reads), about 4.4–6.3 GPU hours.
+
+**What each outcome means for the plan:**
+- **M1 supported:** the lab adds the search-time prior temperature as a factor, and
+  Stage 2 collects with the measured τ.
+- **M2 supported:** value targets and value calibration move to the front of the
+  lab's grid.
+- **M3 supported:** the gain is real but is a sims saving. The yardstick question
+  becomes "strength at equal GPU time".
+- **None supported:** the lab proceeds as designed, and the composition question
+  stays open as a named gap.
+
+Owner's hypothesis, which the lab is built to test: the problem is the calibration
+of the policy's and value's sharpness and distribution, and "half of that 800 elo"
+should be reachable from about 100,000 positions done right.
+
+## The readout protocol: transfer curves
+
+Every net is read the same way from now on.
+- **The transfer curve.** The net plays the SL base seat-balanced with both sides
+  at 1, 4, 16 and 64 sims, at the size each stage states, and pooled by the pooling
+  script.
+- **Success is judged at 64 sims** (and, later, on the tournament path). A 1-sim
+  gain alone is not strength: P1 c12 is +241 at 1 sim and −3.9 at 64.
+- **The curve's shape is the diagnostic.** For example, it can decay to 0, hold
+  its level, or improve with sims.
+
+| Sims | Cost per 800 games | Role |
+|---:|---|---|
+| 1 | about 1–2 min | transfer: did training move the raw net |
+| 4, 16 | minutes | where the advantage is lost |
+| 64 | 26–38 min (1,274–1,800 games/h) | **judged:** strength at the search the engine uses |
+
+## Stage 1a: calibration lab
+
+**Question.** On small collections, which choice of target search depth, policy-
+target sharpness, value target and learning rate gives the strongest net at 64
+sims? Its arms are chosen to discriminate between the three readings:
+- **Target depth (64 vs 256 sims)** tests R3: deeper targets should help if the
+  gain is a shallow head start.
+- **Policy-target temperature** tests R1: softer targets should help if the prior
+  is too sharp.
+- **Value target** tests M2.
+
+**Collections (equal GPU time, about 20 min each).** Both start from the SL base,
+with loop-exp1's `$COLLECT`, at `--seed 2026112300`:
+- `lab64/`: `--sims 64 --games 1040`, about 100,000 rows at 96.8 rows per game;
+- `lab256/`: `--sims 256`, with `--games` = 1,040 × (256-sim rate / 64-sim rate)
+  from P6, about 260 games and 25,000 rows if the rate is a quarter.
+
+Both pass loop-exp1's collect gates (machinery gates only at 256 sims), and are
+frozen once arms reference them. They share their first openings: same seed, same
+cursor.
+
+**Arms (36).** All arms reference their collection with `--collect-from`, with
+fresh NAdamW, warmup 0 and a flat LR. The grid:
+
+| Factor | Levels | Flags |
+|---|---|---|
+| Target sims (collection) | 64, 256, at equal GPU time | `lab64/` or `lab256/` |
+| Policy-target temperature | 1, 2, 4 | `--train-target-temp T` (D3: stored targets 0.69 nats against the SL base's 1.12; T = 2 gives 1.32) |
+| Value target | P: none; V: search value; O: game outcome | P `--w-wdl 0`; V `--w-wdl 1 --value-outcome-weight 0 --value-search-weight 1 --value-search-source survivor_q --value-draw-source net`; O `--w-wdl 1` (the driver's default outcome target) |
+| Learning rate | 3e-6, 3e-5 | `--lr X --lr-floor X` |
+
+Not in the grid:
+- **A value-target temperature.** The driver has no such flag; it would need a code
+  change before it could be a factor. The no-training analogue is the D4 value
+  recalibration.
+- **Multiple passes over the 100,000 rows** (`--sample-with-replacement
+  --passes`). This is a candidate second lab factor.
+
+**Training cost.** A `lab64/` arm is about 370 updates, and a `lab256/` arm about
+95. All 36 arms take about 1.1–2.0 h.
+
+**Reads, per arm (final model only): the transfer curve.** Each read is
+seat-balanced against the SL base, with G-T2 and G-T4 as loop-exp1:
+
+| Sims | Games | Block |
+|---:|---:|---|
+| 64 | 400 | `lab_64` (first 100 lines) |
+| 16 | 400 | `lab_64` (first 100 lines) |
+| 4 | 800 | `lab_1sim` (first 200 lines) |
+| 1 | 1,600 | `lab_1sim` (400 lines) |
+
+**Pre-written selection rule.**
+1. The winner is the arm with the highest 64-sim pooled excess.
+2. A tie is two arms within 15 Elo, about 1.2 SE at 400 games. Ties go, in order:
+   - to the higher 16-sim excess;
+   - then to the higher 1-sim excess;
+   - then to the lower LR;
+   - then to the lower T;
+   - then to 64 target sims;
+   - then in the order P, V, O.
+3. The selection uses all 36 arms on shared openings. The winner's curse is handled
+   by the confirmation below, never by the screen number.
+4. **The lab also reports which reading its data favour,** without a test. The
+   readings are the 256-vs-64 target contrast and the temperature contrast, each
+   averaged over the other factors, compared at 64 and at 1 sim. This is
+   descriptive, and it feeds the record's next step; it decides nothing on its own.
+
+**Registered confirmation.** The winner plays the SL base at 64 sims:
+- 2,000 games seat-balanced, on the 500-line `lab_confirm` block, which no other
+  match uses;
+- read with `--verdict-rule lb-gt-zero` at z 1.96;
+- its 1-, 4- and 16-sim reads on the same block are reported, not judged.
+
+The reading is pre-committed:
+- **Lab success:** the lower 95% bound is above 0. Stage 1b uses the winner's
+  policy temperature and value target, and centres its LR grid on the winner's LR.
+- **Lab kill:** the upper bound is below 0.
+- **Unread:** anything else.
+- On a kill or unread, Stage 1b does not launch on this recipe. The next lab grid
+  is chosen from Stage 0c's supported mechanisms (search-time τ in collection,
+  prior mixing with `--policy-prior-mix`, value calibration), under an addendum.
+
+**Power of the confirmation.** SE 5.6 Elo, assuming no orientation correlation.
+At the +0.36 correlation measured at 1 sim it is about 6.5. The confirmation
+detects +16 to +18 Elo with 80% power. The owner's hope (half of 800, about +400)
+is far above that. One-twentieth of the raw-net gain (+12) is near the edge.
+
+**Compute:**
+- collect 0.7 h (two collections of about 20 min each);
+- training 1.1–2.0 h;
+- 64-sim reads, 36 × 400 = 14,400 games: 8.0–11.3 h;
+- 16-sim reads: about a quarter of that, 2.0–2.8 h (a guess: arena cost assumed
+  proportional to sims);
+- 4- and 1-sim reads: about 1 h;
+- confirmation: 1.1–1.6 h, plus its transfer curve.
+
+Total about 14–19 GPU hours.
+
+## Stage 1b: dose and sims sweep
+
+Stage 1b launches only on a lab success. It asks how strength scales with GPU time
+spent collecting, at 64 sims and at 256, for the lab's recipe and three LRs around
+the lab's LR.
 
 ### Collections
 
-There are two collections from the SL base. Each uses loop-exp1's `$COLLECT` with
-these changes:
+Two collections from the SL base, each loop-exp1's `$COLLECT` with these changes:
 
 | Collection | Sims | `--seed` | `--games` |
 |---|---:|---|---|
 | `c64/` | 64 | 2026112100 | half of O1 × the 64-sim rate measured on the day: about 39,000 at 3,284 games/h |
 | `c256/` | 256 | 2026112100 | half of O1 × the 256-sim rate from pre-launch check P6: about 9,800 if the rate is a quarter |
 
-Each game count is rounded down to a multiple of 100. Both collections take the
-same GPU time. That makes a fraction f of either collection the same GPU time, and
-so the dose axis is GPU time.
+- **Equal GPU time.** Each game count is rounded down to a multiple of 100. Both
+  collections take the same GPU time, so the same fraction f of either collection
+  is the same GPU time; the dose axis is GPU time.
+- **Shared openings.** Same seed, same cursor: `c256/`'s lines are the first lines
+  `c64/` plays too, so the two collections are paired on openings.
+- **Size.** 96.8 rows per game. After the 5% holdout, at batch 256, N ≈ 14,200
+  updates for `c64/` and N ≈ 3,550 for `c256/`. Each N is computed exactly by
+  loop-exp1's step-2 snippet and recorded.
+- **Disk.** About 0.26 MB per game: about 13 GB for both collections, plus models.
+- **Gates.** Loop-exp1's collect gates. Its SL-base bands were measured at 64 sims,
+  so on `c256/` only the machinery gates are gated (G-C1, G-C2, G-C3 ≥ +0.50, G-C7,
+  G-C10); the rest are recorded. A failed gate voids that collection's arms.
 
-- **Shared seed, so shared openings.** Both collections walk the same TRAIN
-  permutation from the same cursor. The 256-sim collection's lines are therefore
-  the first lines the 64-sim collection plays too, so the two are paired on
-  openings.
-- **Rows:** 96.8 rows per game (the mean of three clean 128-game collects: 96.7,
-  93.1, 100.5). After the 5% holdout, at batch 256, that gives N ≈ 14,200 updates
-  for `c64/` and N ≈ 3,550 for `c256/`. Each N is computed exactly from its sealed
-  collect by loop-exp1's step-2 snippet, and recorded.
-- **Disk:** about 0.26 MB per game (33 MB per 128 games), so about 13 GB for both
-  collections, plus about 15 GB of models for 16 arms. Free space is checked before
-  launch.
-- **Gates:** loop-exp1's collect gates G-C1–G-C11 and threshold file, on each
-  collection. Its SL-base bands were measured at 64 sims, so on `c256/` only the
-  machinery gates are gated: G-C1, G-C2, G-C3 ≥ +0.50, G-C7 and G-C10. Bands G-C4,
-  G-C5, G-C6, G-C8 and G-C9 are recorded only. A failed gate voids that
-  collection's arms.
+### Arms (6)
 
-### Arms
-
-There are 16 arms: 2 collections × 2 recipes × 4 learning rates. Each arm
-references its collection with `--collect-from`, so all arms on one collection
-share the seed, the holdout and the batch plan (loop-exp1 step 3). The arm flags,
-beyond loop-exp1's `$TRAIN`:
-
-| Recipe | Flags (X = 3e-6, 1e-5, 3e-5 or 1e-4) |
-|---|---|
-| P | `--w-wdl 0 --lr X --lr-floor X` |
-| V | `--w-wdl 1 --value-outcome-weight 0 --value-search-weight 1 --value-search-source survivor_q --value-draw-source net --lr X --lr-floor X` |
-
-- **Optimizer:** fresh NAdamW, warmup 0, flat LR (`--lr-floor` = `--lr`), as
-  loop-exp1.
-- **LR grid:** steps of about ×3, from the copied 3e-6 to 1e-4. The driver's own
-  default is 3e-5. The SL base was trained at 3e-6 on its non-matrix parameters and
-  at 6e-5 on its matrices (Aurora). 1e-4 is above both; if it trips the G-T2 gross
-  guard early, that is a measured edge, not a lost arm.
-- **Arm S is not in Stage 1.** It is a third recipe; it can be a later factor.
-- **Movement:** probe KL and |ΔQ| against the SL base are recorded at every
-  snapshot and on the final model, as descriptors. They never choose an LR or a
-  dose ([why](#why-no-sizing-from-loss-curves)).
+The lab's recipe (policy-target temperature and value target), at three learning
+rates — the lab's LR ÷ 3, the lab's LR, and the lab's LR × 3 — on each collection.
+- Fresh NAdamW, warmup 0, flat LR.
+- Probe KL and |ΔQ| are recorded as descriptors only
+  ([why](#why-no-sizing-from-loss-curves)).
 
 ### Dose rungs
-
-Each arm writes snapshots at each halving of its data:
 
 ```bash
 N=<planned updates from the arm's sealed collect>
 SNAPS=$((N/64)),$((N/32)),$((N/16)),$((N/8)),$((N/4)),$((N/2))   # doses 1/64 … 1/2; the final model is dose 1
 ```
 
-That gives 7 rungs, x = log₂(fraction) ∈ {−6, …, 0}. On `c64/` at N ≈ 14,200 the
-snapshots fall at about 221, 443, 887, 1,775, 3,550 and 7,100 updates. On
-`c256/` at N ≈ 3,550 they fall at about 55 … 1,775. Rung x is the same GPU time on
-both collections.
+This gives 7 rungs, with x = log₂(fraction) ∈ {−6, …, 0}; rung x is the same GPU
+time on both collections.
 
-**A snapshot counts as a dose rung only because the schedule is exact-once,
+**A snapshot is a valid dose rung only because the schedule is exact-once,
 shuffled and at a flat LR.** The rows seen by update N/64 are a uniform random
-subset of the collection, trained at the same LR a shorter run would use. With a
-decaying LR schedule this would not hold.
+subset of the collection, at the LR a shorter run would use.
 
-**Gates per rung:** loop-exp1's G-T1–G-T4 on every snapshot and on the final
-model, with its bands per recipe. A snapshot that fails a gate ends that arm there:
-its later rungs are not played. The arm's trend test then uses only the rungs
-before the failure. It needs at least three; with fewer, the arm reads "gate
-failed".
-
-### Openings: disjoint blocks
-
-The EVAL split (4,000 lines) is cut once, in `eval.jsonl` order. Stage 1 gets 7
-rung blocks of 100 lines; Stage 2 gets four blocks of 500:
-
-```bash
-mkdir -p $R/openings/blocks
-python3 -c 'import json, sys
-d = sys.argv[1]; lines = [json.loads(l)["line"] for l in open(d + "/eval.jsonl")]
-assert len(lines) == 4000
-cuts = [(f"rung_{k}", 100 * k, 100 * (k + 1)) for k in range(7)] + [
-    ("readout_base", 1000, 1500), ("readout_prev", 1500, 2000), ("confirm", 2000, 2500), ("anchor", 2500, 3000)]
-for name, a, b in cuts:
-    open(f"{d}/blocks/{name}.fen", "w").write("".join(x + "\n" for x in lines[a:b]))
-print(len(cuts), "blocks")' $R/openings
-```
-
-- Rung x uses `rung_{x+6}.fen` in every arm.
-- Lines 700–999 and 3000–3999 are left unused, in reserve.
-
-This block was run verbatim on the banked split. It wrote 11 files; in the
-arena's FEN loader, each rung block has 100 unique rows and each Stage 2 block has
-500. An earlier cut of the same split into 8 blocks of 500 loaded with every row
-carrying its move history.
-
-**Why disjoint blocks, not shared openings.** With one shared opening set, the rung
-estimates would be positively correlated (correlation ρ through the openings).
-- **What sharing would buy.** The slope is a contrast whose weights sum to zero, so
-  sharing would cut its variance by about (1 − ρ).
-- **What it would cost.** It would need an opening-level slope estimator: per
-  opening, a slope across rungs, with the SE taken over openings. That estimator is
-  not written. The plain weighted fit below assumes independent rungs, so with
-  shared openings its SE would be overstated.
-- **What disjoint blocks give.** The rungs are independent, so the registered
-  estimator is exactly the pooling script's per-rung output plus a weighted fit. That
-  is conservative: the possible (1 − ρ) gain is given up, and ρ is unmeasured.
-
-Arms share the block at each rung. Comparisons between arms at one rung are
-therefore paired on openings, and the output rule uses that pairing.
+**Gates.** Loop-exp1's G-T1–G-T4 run at every rung. A failing snapshot ends its arm
+there; the trend test then uses the earlier rungs, at least three of them, and
+fewer than three reads "gate failed".
 
 ### Matches
 
-Each rung of each arm is played seat-balanced against the SL base: 400 games, as
-two runs of 200 games on the rung's 100 openings. With `--openings-fen`, a file of
-100 rows and `--games 200`, every row is played once, with no subsample. This is
-loop-exp1's arena command, with `--openings-fen` in place of `--openings` and
-`--opening-plies`:
+Each rung of each arm is read with its transfer curve against the SL base,
+seat-balanced, on the rung's own 100-line block:
+- **64 sims (judged):** 400 games, two runs of 200, with `--openings-fen`,
+  `--games 200` and 100 rows, so every row is played once;
+- **16, 4 and 1 sims:** 400 games each, with the same command and `--sims 16`,
+  `--sims 4`, `--sims 1`. These are reported, not judged.
+
+The 64-sim command is loop-exp1's, with `--openings-fen` in place of `--openings`
+and `--opening-plies`:
 
 ```bash
 TB="$HOME/projects/chess/data/syzygy_3-4-5:$HOME/projects/chess/data/syzygy_6"
 COMMON="--sims 64 --games 200 --mode matched_sims --search-shape training --no-gumbel-noise \
   --openings-fen $R/openings/blocks/rung_$((X+6)).fen --max-plies 300 --syzygy $TB \
   --compile off --seed 2026112101"
-# $M = the rung's model (snapshot or final), $T = a tag such as c64_P_3e-6_x-6
+# $M = the rung's model (snapshot or final), $T = a tag such as c64_lr1_x-6
 PYTHONPATH=. python -u scripts/arena_standard.py $COMMON --candidate $M --reference $R/sl_base.pt \
   --label s1_${T}_A --games-out $R/arenas/s1_${T}_A.games.jsonl --pgn-out $R/arenas/s1_${T}_A.pgn \
   --out $R/arenas/results.jsonl
@@ -245,46 +394,33 @@ PYTHONPATH=. python -u scripts/arena_seat_balanced_pool.py --arm $M \
   --a-label s1_${T}_A --b-label s1_${T}_B --out $R/arenas/s1_${T}_pooled.json
 ```
 
-- The arena plays at 64 sims for every arm. It measures the raw net plus a fixed
-  search, whatever sims made the targets.
-- Every arena record must meet loop-exp1's "Required in every arena record" list:
-  the shas, `game_log_provenance`, `eval_cuda_graphs`, zero flushes, and a complete
-  run.
-- Every net that plays is write-protected from the end of its arm's training
-  until its pooling is recorded.
+Every arena record meets loop-exp1's "Required in every arena record" list. Every
+net that plays is write-protected until its pooling is recorded.
 
-### The registered test: trend of Elo on log₂(dose)
+### The registered test: trend of 64-sim Elo on log₂(dose)
 
-For each arm, every rung k gives three numbers:
-- the dose x_k = log₂(fraction) ∈ {−6, …, 0};
-- y_k = `result.pooled.excess`: the arm's seat-balanced per-game score excess over
-  0.5;
-- s_k = `result.pooled.se`: its SE, clustered by opening (100 clusters).
+For each arm, rung k gives three numbers:
+- x_k, the dose;
+- y_k, the pooled excess `result.pooled.excess` at 64 sims;
+- s_k, its opening-clustered SE `result.pooled.se`, over 100 clusters.
 
-**Estimator.** Weighted least squares with weights w_k = 1 / s_k²:
-- x̄ = Σ w_k x_k / Σ w_k, and ȳ the same way;
-- slope b = Σ w_k (x_k − x̄)(y_k − ȳ) / Σ w_k (x_k − x̄)²;
-- SE(b) = 1 / √(Σ w_k (x_k − x̄)²);
-- z = b / SE(b);
-- the fitted excess at dose 1 is ŷ₀ = ȳ − b x̄, with
-  SE(ŷ₀) = √(1 / Σ w_k + x̄² SE(b)²).
+**Estimator.** Weighted least squares, w_k = 1 / s_k²:
+- x̄ = Σ w x / Σ w, and ȳ likewise;
+- b = Σ w (x − x̄)(y − ȳ) / Σ w (x − x̄)²;
+- SE(b) = 1 / √(Σ w (x − x̄)²), and z = b / SE(b);
+- fitted excess at dose 1: ŷ₀ = ȳ − b x̄, with SE √(1 / Σ w + x̄² SE(b)²).
 
-On the Elo scale, the slope is about 694.9 × b Elo per doubling (the derivative of
-−400 log₁₀(1/(0.5 + x) − 1) at x = 0 is 1600 / ln 10).
+In Elo, the slope is about 694.9 × b per doubling (1600 / ln 10 is the slope of the
+Elo map at x = 0).
 
-**Test.** One-sided at 2.5%, family-wise over the m arms whose trend is tested
-(Bonferroni). An arm passes when z > z_crit = Φ⁻¹(1 − 0.025 / m). With 16 arms,
-z_crit = 2.955; with 8, 2.734.
+**Test.** One-sided at 2.5%, family-wise over the m arms tested (Bonferroni).
+- z_crit = Φ⁻¹(1 − 0.025 / m): 2.638 for six arms.
+- The null is "Elo does not change with dose", at any level.
+- A non-monotone response is read as its average trend. A departure from
+  linearity costs power, not validity.
 
-**What a pass means.**
-- The null hypothesis is "Elo does not change with dose", at any level, including a
-  constant offset from the SL base. A pass says more collection time measurably
-  helps.
-- A pass does not by itself show the net beats the SL base. That is the per-rung
-  bound in the [output rule](#stage-1-output-the-pre-written-rule).
-- A non-monotone response (the dip and recover seen in the ft595 fine-tune) is read
-  as its average trend.
-- If the response is not linear in log₂ dose, the test loses power, not validity.
+The same fit on the 1-, 4- and 16-sim reads is reported as the transfer trend.
+It is not registered.
 
 ```bash
 trend() {  # $1 = m (arms in the family); then x=pooled.json for each rung played
@@ -309,366 +445,384 @@ out = {"rungs": len(pts), "slope_excess": b, "se": se, "z": b / se, "z_crit": zc
 print(json.dumps(out)); sys.exit(0 if out["passed"] else 3)' "$@"
   echo "exit=$?"
 }
-T=c64_P_3e-6
-trend 16 -6=$R/arenas/s1_${T}_x-6_pooled.json -5=$R/arenas/s1_${T}_x-5_pooled.json \
+T=c64_lr1
+trend 6 -6=$R/arenas/s1_${T}_x-6_pooled.json -5=$R/arenas/s1_${T}_x-5_pooled.json \
   -4=$R/arenas/s1_${T}_x-4_pooled.json -3=$R/arenas/s1_${T}_x-3_pooled.json \
   -2=$R/arenas/s1_${T}_x-2_pooled.json -1=$R/arenas/s1_${T}_x-1_pooled.json 0=$R/arenas/s1_${T}_x0_pooled.json
 ```
 
-Exit codes: 0 = pass, 3 = not passed, 4 = no test (fewer than three rungs).
-The function above was run verbatim on seven synthetic rungs with a slope of
-0.0072 excess per doubling and an SE of 0.01796 per rung (a 400-game rung). It
-printed an SE of 2.36 Elo per doubling and z = 2.12, not passed at m = 16
-(`exit=3`), and recovered the fitted dose-1 excess of 0.0100 (SE 0.0122).
+Exit codes: 0 = pass, 3 = not passed, 4 = no test.
 
-The function's slope arithmetic was checked on five synthetic pooled files, with a
-slope of 0.0072 excess per doubling and an SE of 0.008032 per rung:
-- it printed z = 2.835, a slope of +5.00 Elo per doubling and an SE of 1.76;
-- that is a pass at m = 6 (z_crit 2.638) and at m = 1;
-- given only two rungs, it printed `exit=4`.
+The function was run verbatim on seven synthetic rungs, with a slope of 0.0072
+excess per doubling and an SE of 0.01796 per rung (a 400-game rung):
+- it printed an SE of 2.36 Elo per doubling and z = 2.12;
+- that is not a pass at m = 16 (`exit=3`);
+- it recovered the fitted dose-1 excess of 0.0100 (SE 0.0122).
+
+An earlier form of the function returned z = 2.835 on five synthetic rungs, and
+printed `exit=4` when given two.
 
 ### Power
 
-The per-pair SD is 0.254, from the banked matches. A 400-game rung has P = 200
-pairs, so its pooled SE is s = 0.254 / √200 = 0.0180 excess, or 12.5 Elo. That
-assumes the two orientations of an opening are uncorrelated. A correlation r > 0
-inflates s by √(1 + r); the test uses the realised clustered SE.
-
-With seven equally weighted rungs, Σ (x − x̄)² = 28, so SE(b) = s / √28 = 2.36 Elo
-per doubling. The effect the test detects with 80% power is (z_crit + 0.842) ×
-SE(b): 6.6 Elo per doubling for one arm, and 9.0 with all 16 arms in the family.
+The per-pair SD is 0.254, from the banked matches.
+- **Per rung.** A 400-game rung has P = 200 pairs, so s = 0.254 / √200 = 0.0180
+  excess (12.5 Elo) with uncorrelated orientations. A correlation r inflates this by
+  √(1 + r). Stage 0b measured r = +0.27 to +0.50 at 1 sim, which is up to ×1.22. The
+  test uses the realised clustered SE.
+- **Slope.** With seven equal rungs, Σ (x − x̄)² = 28, so SE(b) = s / √28 = 2.36 Elo
+  per doubling at r = 0.
+- **Detectable effect.** The 80%-power effect is (z_crit + 0.842) × SE(b). At six
+  arms that is 8.2 Elo per doubling at r = 0, and about 10 at r = +0.5.
 
 The games per rung needed for 80% power are
-2 × ((z_crit + 0.842) × 0.254 × 694.9 / (δ × √R_x))², where R_x = Σ (x − x̄)²:
+2 × ((z_crit + 0.842) × 0.254 × 694.9 / (δ × √R_x))², with R_x = Σ (x − x̄)²:
 
 | Rungs (R_x) | Arms tested (m) | δ = +10 Elo per doubling | δ = +25 Elo per doubling |
 |---|---:|---:|---:|
 | 5 (10) | 1 | 489 | 78 |
-| 5 (10) | 16 | 898 | 144 |
 | 7 (28) | 1 | 175 | 28 |
-| 7 (28) | 8 | 285 | 46 |
+| 7 (28) | 6 | 269 | 43 |
 | 7 (28) | 16 | 321 | 51 |
 
-**Design: 7 rungs × 400 games.** With all 16 arms in the family, this has 80% power
-for a true trend of +9.0 Elo per doubling, which is +54 Elo across the six
-doublings.
-- 400 rather than the minimum 321: the per-rung bound used by the output rule needs
-  it, and 100 opening clusters keep the clustered SE stable.
-- At +25 Elo per doubling, 51 games per rung would do. 400 is a floor for the normal
-  approximation and for opening coverage, not a power requirement.
-- A smaller true trend is likely to read "not passed". That means unread, not "no
-  effect".
+**Design: 7 rungs × 400 games at 64 sims.** That is above the 269 games needed at
++10 Elo per doubling, which leaves room for the correlation inflation. 400 games
+is also the floor for the normal approximation and for opening coverage. A smaller
+true trend reads "not passed", which means unread, not "no effect".
 
-### Stage 1 output: the pre-written rule
+### Stage 1b output: the pre-written rule
 
-The rule is applied in this order, with no other discretion:
+The rule is applied in this order:
 
-1. **Eligible arms.** Those whose trend test passes at the family-wise z_crit
-   (m = the number of arms tested). Only rungs that passed every gate count.
-2. **Recipe, LR and sims.** Among the eligible arms, take the highest fitted excess
-   at dose 1 (`fitted_excess_dose1`): the most Elo for the same collection GPU time.
-   Every arm's dose 1 is the same time.
-   - A tie is two fitted values within 5 Elo of each other.
-   - Ties go first to the steeper slope, then to the lower LR, then to 64 sims (the
-     cheaper target, and the one every banked read used), then to P over V. P has
-     no named failure mechanism; V carries the flatter-value risk (loop-exp1,
-     "Prior and choice of primary").
-3. **Rows per generation.** The smallest dose rung of the chosen arm whose pooled
-   95% lower bound (the low end of `excess_ci95`) is above 0. Ties go to the smaller
-   dose.
+1. **Eligible arms:** those whose 64-sim trend passes at the family-wise z_crit,
+   using only rungs that passed every gate.
+2. **LR and sims:** the eligible arm with the highest `fitted_excess_dose1`, which
+   is the most Elo for the same collection GPU time.
+   - A tie is two arms within 5 Elo.
+   - Ties go first to the steeper slope, then to the lower LR, then to 64 sims.
+3. **Rows per generation:** the smallest dose rung of the chosen arm whose 64-sim
+   pooled 95% lower bound is above 0. Ties go to the smaller dose.
    - If no rung's lower bound is above 0 but the fitted dose-1 excess is positive,
      use dose 1.
-   - Otherwise the outcome is "trend without a gain": stop and report (rule 5).
-4. **Stage 2 starts** from the chosen arm's model at the chosen rung (snapshot or
-   final). It uses that arm's recipe, LR and sims. The generation size is the chosen
-   dose's games (the fraction × that collection's games).
-5. **Kill / stop.** If no arm passes, Stage 2 does not launch, and the record says
-   which reading applies:
-   - **KILL:** every tested arm's one-sided 97.5% upper bound on the slope is below
-     +5 Elo per doubling;
-   - **"unread, insufficient evidence"** otherwise.
+   - Otherwise the reading is "trend without a gain": stop and report.
+4. **Stage 2 starts** from the chosen arm's model at the chosen rung, with that arm's
+   recipe, LR and sims. Generation size = the chosen dose's games.
+5. **Kill / stop:** if no arm passes, Stage 2 does not launch.
+   - **KILL** when every tested arm's one-sided 97.5% upper bound on the slope is
+     below +5 Elo per doubling.
+   - **"Unread, insufficient evidence"** otherwise.
+   - The next lever is named from Stage 0c's supported mechanisms, under a new
+     record.
 
-   The next lever is named in either case. Stage 0 shows the search headroom, so the
-   failure is in transfer. The candidates are the target construction (value-target
-   mix, policy softening such as Arm S, sharper or deeper targets beyond 256 sims)
-   and the optimizer (Aurora with the SL base's own state,
-   `--init-optimizer-state checkpoint`). Each is a new record with its own
-   calibration.
+The per-rung bound in rule 3 is a decision threshold, not a registered claim. The
+claim Stage 1b registers is the trend test, and Stage 2's readouts re-measure on
+fresh openings.
 
-Rule 3 selects among 7 rungs. Its per-rung 95% bound is a decision threshold, not a
-registered claim; the claim Stage 1 registers is the trend test. Stage 2's readouts
-re-measure every claim, on openings Stage 1 never used.
+### Stage 1b compute
 
-### Stage 1 compute
+**Rates used:**
+- collect: 3,284 games/h at 64 sims; 256 sims measured in P6;
+- training: 0.47–0.84 s per update (F12 record);
+- 64-sim arena: 1,274–1,800 games/h (D4's 800-game arms);
+- 1-sim arena: about 800 games per 1–2 min (Stage 0b);
+- one GPU job at a time.
 
-**Rates:**
-- collect: 3,284 games/h at 64 sims (128-game runs); 256 sims to be measured
-  (pre-launch check P6);
-- training: 0.47–0.84 s per update (F12 record: 512 updates in 239–432 s);
-- arenas: 1,274–1,800 games/h (the 800-game D4 arms took 1,600–2,260 s).
-
-One job runs on the GPU at a time. Nothing else runs during an arena.
-
-| Item | 16 arms (default) | 8 arms (64 sims only, or one recipe) |
+| Item | 6 arms (default) | 3 arms (64 sims only) |
 |---|---:|---:|
 | Collect (O1 = one day in total) | 24 h | 24 h |
-| Train `c64/` arms, ≈ 14,200 updates each | 15–27 h (8 arms) | 15–27 h |
-| Train `c256/` arms, ≈ 3,550 updates each | 3.7–6.6 h (8 arms) | — |
-| Model gates (7 models per arm) | ≈ 2 h | ≈ 1 h |
-| Arenas, 7 rungs × 400 games per arm | 25–35 h (44,800 games) | 12–18 h |
-| **Total** | **≈ 70–95 h (2.9–3.9 days)** | **≈ 52–70 h** |
+| Train `c64/` arms, ≈ 14,200 updates each | 5.6–9.9 h (3 arms) | 5.6–9.9 h |
+| Train `c256/` arms, ≈ 3,550 updates each | 1.4–2.5 h (3 arms) | — |
+| Model gates | ≈ 1 h | ≈ 0.5 h |
+| 64-sim reads, 7 rungs × 400 games per arm | 9.3–13.2 h (16,800 games) | 4.7–6.6 h |
+| 16-, 4- and 1-sim reads, 7 rungs × 400 games each per arm | ≈ 3–4.5 h | ≈ 1.5–2.3 h |
+| **Total** | **≈ 44–56 h** | **≈ 36–43 h** |
 
-Collect gates run on CPU, an estimated 10–15 min per collection. With O1 = two days,
-collection and training time double (about 112–151 h in total), and arena time does
-not change.
+## Openings: disjoint blocks
+
+The EVAL split (4,000 lines) is cut once, in `eval.jsonl` order:
+
+```bash
+mkdir -p $R/openings/blocks
+python3 -c 'import json, sys
+d = sys.argv[1]; lines = [json.loads(l)["line"] for l in open(d + "/eval.jsonl")]
+assert len(lines) == 4000
+cuts = [("lab_64", 0, 200), ("lab_1sim", 200, 600), ("lab_confirm", 600, 1100), ("diag", 1100, 1300)]
+cuts += [(f"rung_{k}", 1300 + 100 * k, 1400 + 100 * k) for k in range(7)]
+cuts += [("readout_base", 2000, 2500), ("readout_prev", 2500, 3000), ("confirm", 3000, 3500), ("anchor", 3500, 4000)]
+for name, a, b in cuts:
+    open(f"{d}/blocks/{name}.fen", "w").write("".join(x + "\n" for x in lines[a:b]))
+print(len(cuts), "blocks")' $R/openings
+```
+
+| Block | Lines | Used by |
+|---|---:|---|
+| `lab_64` / `lab_1sim` | 200 / 400 | Stage 1a screen reads |
+| `lab_confirm` | 500 | Stage 1a confirmation only |
+| `diag` | 200 | Stage 0c |
+| `rung_0` … `rung_6` | 7 × 100 | Stage 1b rung x uses `rung_{x+6}` in every arm |
+| `readout_base` / `readout_prev` | 500 / 500 | Stage 2 readouts |
+| `confirm` | 500 | Stage 2's final confirmation only |
+| `anchor` | 500 | the Stockfish anchor |
+
+An earlier version of this cutter, with the same structure but different blocks,
+was run verbatim on the banked split. In the arena's FEN loader, every block loaded
+as unique rows, each with its move history. The cutter is re-run and its sha256
+recorded at P2.
+
+**Why disjoint and not shared.** One shared set would correlate the Stage 1b rungs
+through the openings, by some correlation ρ.
+- That would cut the slope's variance by about (1 − ρ).
+- But it would need an opening-level slope estimator, which is not written. The
+  plain weighted fit assumes independent rungs, so with shared openings its SE would
+  be wrong.
+- Disjoint blocks make the registered estimator exactly the pooling output plus a
+  weighted fit. That is conservative: the (1 − ρ) gain is given up, and ρ is
+  unmeasured.
+
+Arms share the block at each rung, so comparisons between arms at a rung are paired
+on openings.
 
 ## Stage 2: the multi-generation run
 
-Stage 2 launches only on a Stage 1 pass. It takes the recipe, LR, sims, starting
-model and generation size from the [rule](#stage-1-output-the-pre-written-rule).
+Stage 2 launches only on a Stage 1b pass. It takes the recipe, LR, sims, starting
+model and generation size from the
+[rule](#stage-1b-output-the-pre-written-rule).
 
 ### Driver settings
 
-The run is one run dir driven by `run --generations G`.
+One run dir, `run --generations G`.
 
-**Start:**
-- `--init-checkpoint` is the Stage 1 model the rule chose. It is copied into the run
-  dir, sha-verified and write-protected, the same way as the SL base copy.
-- That model is a weights-only snapshot or a final model. Either way, the first
-  phase starts a fresh optimizer.
+**Start.** `--init-checkpoint` = the Stage 1b model the rule chose.
+- It is copied into the run dir, sha-verified and write-protected.
+- Whether it is a weights-only snapshot or a final model, the first phase starts a
+  fresh optimizer.
 - Stage 2's generation 1 is the loop's second generation.
 
-**Generation size:** the chosen dose's game count, at the chosen sims and
-concurrency 128, with Stage 1's collect flags.
+**Generation size.** The chosen dose's games, at the chosen sims, concurrency 128,
+and Stage 1b's collect flags.
 
-**Phase window: `--presentations 1`.** Each phase trains once on its own
-generation's rows, which is the regime Stage 1 measured. These alternatives were
-not measured and are not registered:
-- `--presentations 2`: this generation's rows plus the previous generation's, each
-  row twice in its lifetime;
-- `--sample-with-replacement --window`.
+**Phase: `--presentations 1`.** Each phase trains exactly once on its own
+generation's rows, which is the regime Stage 1 measured. `--presentations 2` and
+`--sample-with-replacement --window` were not measured, and are not registered.
 
-**Optimizer: `--optimizer-state fresh`** every generation, at the Stage 1 LR, with
-warmup 0 and a flat schedule. Each phase then starts the optimizer the way Stage 1
-measured.
-- `--optimizer-state continue` would carry Adam moments across generations. The
-  driver supports it: it restores the previous phase's optimizer, scheduler and
-  step, and refuses a changed `--lr` unless `--reapply-optimizer-hparams` is given.
-- It was not measured, and is not registered.
+**Optimizer: `--optimizer-state fresh`** each generation, at the Stage 1b LR,
+warmup 0, flat. `--optimizer-state continue` carries Adam moments across
+generations. The driver supports it: it restores the optimizer, scheduler and
+step, and refuses a changed `--lr` without `--reapply-optimizer-hparams`. But it
+was not measured, and is not registered.
 
-**Openings:** `--opening-sampling cycle` with `--seed 2026112200`, an independent
+**Openings.** `--opening-sampling cycle` with `--seed 2026112200`, an independent
 permutation of TRAIN.
-- At small generation sizes, the cursor walks the 153,842 lines without reuse
-  within Stage 2.
-- Stage 1's collections played up to about 25% of TRAIN, with a different seed.
-  That share of Stage 2's lines was also played in Stage 1, by the SL base.
+- Stage 1 played up to about 26% of TRAIN with other seeds. That share of Stage 2's
+  lines was also played in Stage 1, by the SL base.
 - This is counted, not avoided: the driver cannot continue another run dir's
   cursor.
 
-**Holdout and probe:** `--holdout-frac 0.05` and `--probe-rows 2048`. The probe
-measures drift against the previous generation, the driver's definition.
+**Holdout / probe:** `--holdout-frac 0.05`, `--probe-rows 2048`. Probe drift is
+measured against the previous generation.
 
-**Evaluation:** `--no-eval`. Readouts are run separately (below), so the driver's
-own per-generation arena does not spend GPU time every generation.
+**Evaluation:** `--no-eval`. Readouts run separately (below).
 
 ### Banked per generation (kept for the whole run)
 
-- `gen_NNNN/collect/`: rows, games, stats and manifest;
-- `gen_NNNN/train/`: the Trainer checkpoint with its optimizer state,
-  `presented.npz`, `metrics.json` and manifest;
-- gate outputs in `$R2/gates/`: collect gates, `gt1`, `gt2` and the G-T4 reads;
-- each collect's content digest (`simple_rl_collect_gates.py --content-digest`).
+- the collect directory;
+- the Trainer checkpoint, with optimizer state;
+- `presented.npz` and `metrics.json`;
+- the gate outputs;
+- each collect's content digest.
 
-Disk use is about 0.26 MB per 64-sim game, plus about 0.7 GB per Trainer
-checkpoint. Nothing is pruned during the run.
+Disk use is about 0.26 MB per 64-sim game plus about 0.7 GB per checkpoint.
+Nothing is pruned.
 
 ### Per-generation gates
 
-Loop-exp1's bands were set on SL-base collects. Later generations are different
-nets, so in Stage 2 the gates are split into three groups.
+Loop-exp1's bands describe SL-base collects, so in Stage 2 they split three ways.
 
-**Gated, machinery.** A failure here means the collect cannot be trusted:
+**Gated (machinery).** A failure means the collect cannot be trusted:
 - G-C1 = 0;
 - G-C2 equal;
-- G-C3 ≥ +0.30 on both root classes (the positive control's bound);
-- G-C7 ≥ 80 rows per game;
+- G-C3 ≥ +0.30 on both root classes;
+- G-C7 ≥ 80;
 - G-C10 ≤ 0.05.
 
-**Recorded, with a drift alarm:** G-C4, G-C5, G-C6, G-C8 and G-C9, read against
-loop-exp1's bands. If two consecutive generations fall outside a band, the run
-pauses for a report. A pause voids nothing.
+**Recorded, with a drift alarm:** G-C4, G-C5, G-C6, G-C8 and G-C9 against
+loop-exp1's bands. Two consecutive generations outside a band pause the run for a
+report. A pause voids nothing.
 
 **Model gates:**
-- **G-T2** against the previous generation: KL above 1.5 or |ΔQ| above 0.4 fails
-  (`gt2`).
-- **G-T1** on the audit rows: mean |Q| ≥ 0.33 and P(draw) in 0.45–0.60. These
-  bands are guesses, taken from V's lower edge and the control's band.
-- **G-T4** realised settings, as loop-exp1.
+- G-T2 against the previous generation: KL > 1.5 or |ΔQ| > 0.4 fails.
+- G-T1: mean |Q| ≥ 0.33 and P(draw) in 0.45–0.60. These bands are guesses.
+- G-T4, as loop-exp1.
 
-**On a gate failure mid-run:**
-- **Collect gate:** redo that collect once (`collect --redo --generation g`). The
-  redo starts from the sealed cursor, so it replays the same lines. If the redo
-  also fails, the run stops at generation g − 1, the last passing generation.
-- **Model gate:** the run stops at g − 1. The failed model is kept for diagnosis.
-- Restarting after either stop needs an addendum to this record.
+**On a gate failure:**
+- **Collect gate:** one redo of that collect (`collect --redo --generation g`, which
+  replays the same lines from the sealed cursor). If the redo fails too, the run
+  stops at generation g − 1.
+- **Model gate:** the run stops at g − 1, and the failed model is kept.
+- **Restart:** either kind of stop needs an addendum to restart.
 
 ### Readouts
 
-Every k generations, the newest net plays two seat-balanced matches of 2,000 games
-each. Each is two runs of 1,000 games on a block of 500 openings, pooled as in
-Stage 1:
-- **vs the SL base,** on `readout_base.fen`, at every readout. The openings are the
-  same each time, so changes from one readout to the next are paired on openings.
-- **vs the previous readout net,** on `readout_prev.fen`. At the first readout, the
-  previous readout net is Stage 2's starting model.
+Every k generations, the newest net gets two transfer curves (1, 4, 16 and 64
+sims). Both are seat-balanced, and each is read on its own block:
+- **R-base**, against the SL base, on `readout_base`;
+- **R-prev**, against the previous readout net, on `readout_prev`. At the first
+  readout, that is Stage 2's start model.
 
-**Size.** A 2,000-game match has an SE of 5.58 Elo, so it detects
-(1.96 + 0.84) × 5.58 = 15.6 Elo with 80% power (one-sided, 2.5%). After Stage 1,
-its realised per-pair SD replaces 0.254. If Stage 1 shows per-generation gains of
-tens of Elo, the readouts shrink to the size that keeps 80% power for half the
-measured gain.
+The 64-sim reads (R-base-64, R-prev-64) are 2,000 games each, and so are the 1-sim
+reads. The 4- and 16-sim reads are 800 games each.
 
-**Cadence.** k is the smallest integer with k × g₁ ≥ 15.6 Elo, clamped to 1–4:
-- g₁ is Stage 1's point estimate of the chosen rung's Elo against the SL base,
-  taken as the per-generation gain;
-- a vs-previous readout then has about 80% power for the expected gain;
-- if g₁ ≤ 3.9 Elo, k = 4.
+**How the readouts are judged.** The stop rule and the deliverable are judged at
+64 sims only. The rest of each curve is reported beside it: the shape of the curve
+is the composition evidence. A 1-sim gain alone is not strength.
 
-**Two anchors that do not move.** Anchored Elo depends on the anchor here: one
-recorded three-contrast design found the anchors differing by up to 82 Elo
-(experiment ledger). So the run uses two anchors.
-1. **The SL base**, through the vs-SL-base match above.
-2. **Stockfish at fixed nodes**, through `scripts/match_vs_uci.py`, with our engine
-   run as `python -m chess_anti_engine.uci --checkpoint <net>`.
-   - Before Stage 2, the SL base plays Stockfish at a few node counts. The count at
-     which it scores 25–75% is fixed for the whole run and recorded.
-   - Each readout plays 1,000 games against it (`--nodes-b <fixed>
-     --enforce-nodes-b --openings $R/openings/blocks/anchor.fen`).
-   - The exact UCI command and our engine's per-move budget are checked before
-     Stage 2.
+**Size.** A 2,000-game match has SE 5.6 Elo, or about 6.5 at the orientation
+correlation measured at 1 sim. Its 80%-power effect is about 16–18 Elo. After Stage
+1b, the realised clustered SEs replace these figures.
 
-Each readout records both anchored readings. The transitivity check is that
-(net vs SF) − (SL base vs SF) agrees with (net vs SL base) within the combined
-CI. A disagreement is reported, not averaged away.
+**Cadence.** k is the smallest integer with k × g₁ ≥ 18 Elo, clamped to 1–4. Here
+g₁ is Stage 1b's point estimate of the chosen rung's 64-sim Elo against the SL base,
+taken as the per-generation gain.
+
+**Two anchors that do not move.** Anchored Elo is anchor-dependent here, by up to
+82 Elo in one recorded three-contrast design (experiment ledger).
+1. **The SL base**, through R-base-64 and R-base-1.
+2. **Stockfish at fixed nodes**, through `scripts/match_vs_uci.py` with our engine
+   as `python -m chess_anti_engine.uci --checkpoint <net>`.
+   - The node count is fixed before Stage 2, where the SL base scores 25–75%.
+   - Each readout plays 1,000 games, with `--nodes-b <fixed> --enforce-nodes-b
+     --openings $R/openings/blocks/anchor.fen`.
+   - The exact UCI command and per-move budget are a pre-Stage-2 check.
+
+The transitivity check is that (net vs SF) − (SL base vs SF) agrees with
+R-base-64 within the combined CI. A disagreement is reported, not averaged away.
 
 ### Stop rule (pre-committed)
 
-The run stops at the first of these:
-1. **Regression:** two consecutive readouts whose vs-previous pooled upper 95%
-   bound is below 0.
-2. **Plateau:** three consecutive readouts that are unread against the previous
-   readout net (the 95% CI contains 0).
-3. **Gates:** a gate failure that one re-collect does not clear.
-4. **Time:** the owner's time cap.
+The run stops at the first of:
+1. two consecutive readouts with an R-prev-64 pooled upper 95% bound below 0
+   (regression);
+2. three consecutive readouts with R-prev-64 unread (plateau);
+3. a gate failure that one re-collect does not clear;
+4. the owner's time cap.
 
-**The deliverable net** on a stop is the readout net with the highest pooled
-estimate against the SL base, among those whose lower bound is above 0. That choice
-is a selection, with winner's curse, so the delivered claim is re-measured once: a
-2,000-game seat-balanced match against the SL base on `confirm.fen`, openings no
-earlier match used, read at 95%.
+**Deliverable.** The deliverable is the readout net with the highest R-base-64
+estimate, among those whose lower bound is above 0.
+- This is a selection, so it carries winner's curse.
+- The claim is re-measured once: 2,000 games at 64 sims, seat-balanced, against
+  the SL base on `confirm`, read at 95%. A 1-sim read on the same block is reported.
 
 ### Recovery
 
-- Every generation's model and Trainer state are kept, so the run can roll back to
-  any generation.
-- To resume from the last passing generation g, use `--redo --redo-downstream` on
-  generation g + 1's collect. That moves the later stages to `superseded/`, where
-  they are kept and never read. The alternative is a new run dir with
-  `--init-checkpoint` set to generation g's model.
+- Every generation's model and Trainer state are kept.
+- Resuming from the last passing generation g uses `--redo --redo-downstream` of
+  generation g + 1's collect (later stages move to `superseded/`). Alternatively,
+  start a new run dir with `--init-checkpoint` = generation g's model.
 - The SL base, the live checkout, the production recipe and every earlier bank are
-  left untouched. Nothing is promoted to production by this run.
+  untouched. Nothing is promoted to production.
 
 ### Compute per generation and per readout
 
-With C = the generation size in games, at the chosen sims:
-
-- **A generation** costs the collect, C / rate hours, plus training,
-  (C × 96.8 × 0.95 / 256) updates × 0.47–0.84 s, plus a few minutes of gates.
-  - At 64 sims and C = 1,200 (a 1/32 dose of `c64/`): about 0.4 h of collect plus
-    0.1 h of training, so about 40 generations a day before readouts.
-  - At 64 sims and C = 39,000 (dose 1): about 12 h plus 1.9–3.3 h, so about 1.6
-    generations a day.
-- **A readout** is 4,000 arena games, 2.2–3.1 h, plus the Stockfish anchor (1,000
-  games, at a rate not yet measured).
+With C the generation size in games:
+- **A generation:** C / rate hours of collect, plus
+  (C × 96.8 × 0.95 / 256) × 0.47–0.84 s of training, plus a few minutes of gates.
+  - At 64 sims and C = 1,200: about 0.5 h, so about 40 generations a day before
+    readouts.
+  - At C = 39,000: about 14–15 h.
+- **A readout:**
+  - 4,000 64-sim games: 2.2–3.1 h;
+  - 3,200 games at 4 and 16 sims: about 0.5–0.8 h (16 sims assumed a quarter of the
+    64-sim cost);
+  - 4,000 1-sim games: about 5–10 min;
+  - the Stockfish anchor: 1,000 games, at a rate not yet measured.
 
 ### What success means at one week
 
 **The one-week target, pre-committed:** within 7 days of Stage 2's start, the
-deliverable net's confirmation match against the SL base reads a 95% lower bound
-above 0, with a point estimate of at least +50 Elo.
-- Short of +50, with the lower bound above 0: "gain confirmed, below target".
-- With the lower bound not above 0: "not shown at one week".
+deliverable's confirmation match reads a 95% lower bound above 0 with a point
+estimate of at least +50 Elo at 64 sims.
+- Short of +50, with LB > 0: "gain confirmed, below target".
+- LB not above 0: "not shown at one week".
 
-+50 Elo is about a fifth of what a 4× search is worth to the SL base. It is still a
-guess ([below](#what-is-still-a-guess)). Before Stage 2 launches, Stage 1 replaces
-it with a projection: generations in a week × g₁, discounted by half. The
-projection is recorded at the Stage 1 readout.
++50 Elo is a guess. Before Stage 2, Stage 1b replaces it with a projection:
+generations in a week × g₁, discounted by half, recorded at the Stage 1b readout.
 
 ## Why no sizing from loss curves
 
-The experiment ledger (2026-08-23) records three cases where a fit or audit gain did
-not transfer to Elo:
-- the F-only arm: held-out CE fell 0.043 nats, for 0 cp;
+The experiment ledger (2026-08-23) records three cases where a fit or audit gain
+did not transfer to Elo:
+- F-only: held-out CE fell 0.043 nats, for 0 cp;
 - absorption: 11.6× the fit, for 0 Elo;
 - v020: +3.1 cp on the deep-SF audit, for −9.56 Elo (−29.59 to +10.41) at 800
   games.
 
-Separately, the ft595 fine-tune traded Elo for fit: −41.0 Elo (−71.3 to −11.4).
+The ft595 fine-tune traded Elo for fit: −41.0 (−71.3 to −11.4). Stage 0b adds a
+fourth pattern, at the level of play: a large raw-net (1-sim) gain that does not
+show at 64 sims.
 
-So every dose, LR, sims and recipe choice here is made on arena Elo against a fixed
-opponent. Loss, CE, probe KL and |ΔQ| are recorded, and serve only as gross-defect
-gates.
+So every dose, LR, sims and recipe choice here is made on 64-sim arena Elo against
+a fixed opponent. 1-sim Elo, loss, CE, probe KL and |ΔQ| are recorded, and are used
+only as transfer descriptors or gross gates.
 
 ## What is still a guess
 
 | Number | Where it is used | The measurement that replaces it |
 |---|---|---|
-| 3,284 games/h at 64 sims | collection size, every compute line | Stage 1's own timed collect (only 128-game runs are banked) |
-| The 256-sim rate (a quarter of 64-sim assumed) | `c256/`'s game count, compute | pre-launch check P6 (a 128-game 256-sim collect) |
-| 96.8 rows per game | N, updates, training time | the sealed collects (N is computed exactly before any arm trains) |
-| 0.47–0.84 s per update | training time | Stage 1's first arm (the train manifest's wall time) |
-| 1,274–1,800 arena games/h | arena time | Stage 1's first rung match |
-| Per-pair SD 0.254, zero correlation between orientations | all match sizing and power | Stage 1's realised clustered SEs; Stage 2's sizing is redone with them |
-| +9 Elo per doubling as the effect worth detecting | games per rung | none: it states what is worth detecting, and the owner can adjust it. A smaller real effect reads "unread" |
-| LR grid 3e-6 / 1e-5 / 3e-5 / 1e-4 | Stage 1 arms | Stage 1 measures inside it; an optimum at an edge points the next sweep outward |
-| Dose grid 1/64 … 1, linear in log₂ dose | the trend test | Stage 1's rung estimates, where curvature is visible |
-| That a Stage 1 rung's gain (g₁) repeats each Stage 2 generation | readout cadence k, the one-week projection | Stage 2's first readouts |
-| `--presentations 1`, a fresh optimizer each generation | Stage 2 | a separate later comparison; not measured here |
-| +50 Elo at one week | the success line | Stage 1's projection, recorded before Stage 2 |
-| The Stockfish node count for the anchor | the second anchor | the pre-Stage-2 calibration match (25–75% for the SL base) |
-| Stage 2's G-T1 bands (\|Q\| ≥ 0.33, P(draw) 0.45–0.60) | the per-generation model gate | Stage 1's audit reads at every rung (the range of the moving nets) |
-| G-T2 bounds KL 1.5 / \|ΔQ\| 0.4 | the gross gate | Stage 1's per-rung probe reads (the realised range across LRs) |
-| The arena's 64 sims as the yardstick | every match | not replaced: fixed so that matches stay comparable |
-| The Gumbel noise and move-temperature schedules | collection | not measured here; inherited from the driver's defaults |
-| The one-week horizon and the one-day Stage 1 cap | budgets | the owner's choices (O1) |
+| 3,284 games/h at 64 sims | collection sizes, compute | Stage 1a's collect (1,040 games), then Stage 1b's |
+| The 256-sim rate (a quarter of 64-sim assumed) | `c256/` size, compute | pre-launch check P6 |
+| 96.8 rows per game | updates, training time | the sealed collects (N is computed exactly) |
+| 0.47–0.84 s per update | training time | Stage 1a's arms |
+| 1,274–1,800 64-sim arena games/h; 800 1-sim games per 1–2 min | arena time | Stage 0c's first match |
+| Per-pair SD 0.254; orientation correlation at 64 sims | all sizing | Stage 0c's and Stage 1a's realised clustered SEs (+0.27 to +0.50 at 1 sim, Stage 0b) |
+| +24 Elo as Stage 0c's "supported" threshold | diagnostics | the realised SEs of the paired arms |
+| The lab grid (T 1 / 2 / 4; P / V / O; LR 3e-6 / 3e-5) | Stage 1a | the lab itself; an optimum at an edge points the next grid outward |
+| About 100,000 positions as the lab's size | Stage 1a | Stage 1b's dose trend |
+| +8–10 Elo per doubling as the effect worth detecting | Stage 1b games per rung | none: a statement of what is worth detecting |
+| Linear in log₂ dose | Stage 1b's trend test | the rung estimates (curvature is visible) |
+| That a Stage 1b rung's gain (g₁) repeats each generation | readout cadence, the one-week projection | Stage 2's first readouts |
+| `--presentations 1`, a fresh optimizer each generation | Stage 2 | a later comparison |
+| +50 Elo at one week | success line | Stage 1b's projection |
+| The Stockfish node count | the second anchor | the pre-Stage-2 calibration |
+| Stage 2's G-T1 bands; the G-T2 bounds 1.5 / 0.4 | per-generation gates | Stage 1a and 1b's per-arm audit and probe reads |
+| The arena's 64 sims as the yardstick | every judged match | not replaced: fixed so that matches stay comparable |
+| The Gumbel noise and move-temperature schedules | collection | not measured here |
+| The one-week horizon and Stage 1b's one-day cap | budgets | owner (O1) |
 
 ## Pre-launch checks
 
-- **P1.** #1437 is merged. The run executes from a detached worktree at a pinned
+- **P1.** #1437 is merged. Every stage runs from a detached worktree at a pinned
   main sha, recorded here, with the extensions rebuilt.
-- **P2.** The openings split is reproduced and checked (loop-exp1 step 0b), and the
-  blocks are cut, with their sha256 recorded.
+- **P2.** The openings split is reproduced and checked (loop-exp1 step 0b). The
+  blocks are cut, and their sha256 recorded.
 - **P3.** The SL base is copied into the run dir and write-protected (loop-exp1 step
   0a).
-- **P4.** At least about 30 GB of disk is free for Stage 1, plus Stage 2's estimate.
-- **P5.** The `trend`, `gt1` and `gt2` functions are re-run on the dry run's banked
-  files, and on synthetic files, and print the outputs stated in their sections.
-- **P6.** A 128-game collect at 256 sims (otherwise `$COLLECT`, `--games 128`, a
-  scratch run dir) measures the 256-sim games/h and passes the machinery gates. The
-  `c256/` game count is computed from that rate and recorded.
+- **P4.** Free disk: about 2 GB for Stage 1a, about 20 GB for Stage 1b, plus
+  Stage 2's estimate.
+- **P5.** `trend`, `gt1` and `gt2` are re-run on the dry run's banked files and on
+  synthetic files, and print the outputs stated.
+- **P6.** A 128-game collect at 256 sims (`$COLLECT` with `--games 128`, in a
+  scratch run dir) measures the 256-sim rate and passes the machinery gates.
+- **P7.** The softening test's result slot is filled from its banked rows,
+  pooled with the pooling script, and the reading is named from the table. Done
+  before approval.
 
 ## Confounds
 
-- Each collection's arms share one sample, so every arm verdict is conditional on
-  its collection.
-- Stage 1's rungs are snapshots along one trajectory per arm. The models at
-  successive rungs are not independent fits, though their matches use disjoint
-  openings. The trend describes this trajectory.
-- `c64/` and `c256/` share their first openings (same seed and cursor). This pairs
-  the comparison between them; it does not bias it.
-- Stage 2's first generation starts from a net trained on part of a Stage 1
-  collection.
-- The yardstick (64 sims, no root noise, EVAL openings, a 300-ply cap) is not F12's
-  instrument.
-- loop-exp1's confounds (twofold-repetition draws, the same-coloured-bishops gap)
-  apply unchanged.
+- **The P1 c12 ladder shares its openings across sims levels.** Every run used
+  seed 2026112050 on `eval.pgn`. The 4-, 16- and 64-sim runs played the same 200
+  openings, and those are 200 of the 1-sim run's 400 (checked from the game
+  logs). So the curve's points are paired on openings and positively correlated:
+  differences between levels are estimated more precisely than the separate CIs
+  suggest, and the points are not independent.
+- **Shared collections.** Each collection's arms share one sample, so every arm
+  verdict is conditional on it.
+- **Snapshots, not independent fits.** Stage 1b's rungs are snapshots along one
+  trajectory per arm. Their matches are on disjoint openings, but the models are
+  not independent fits.
+- **Paired collections.** `c64/` and `c256/` share their first openings, which
+  pairs the comparison and does not bias it.
+- **Stage 0b and 0c are on banked nets** that were trained under the old loop on
+  F12's rows. Their mechanisms may not be the same as a new arm's.
+- **Stage 2's start.** Stage 2's first generation starts from a net trained on part
+  of a Stage 1b collection.
+- **Inherited from loop-exp1:** the yardstick is not F12's instrument, and loop-exp1's
+  confounds (twofold-repetition draws, the same-coloured-bishops gap) apply.
