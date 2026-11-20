@@ -4,6 +4,9 @@
 training, no arena. This record exists so the experiment can be judged, and its
 rule fixed, before any compute is spent (CLAUDE.md "Experiments" rule 1). It is
 registered only once the owner approves it and the decisions below are filled in.
+Nothing launches until (i) the owner's D1–D9 are recorded in this record by a
+follow-up commit, (ii) the snapshot/collect-from driver PR is merged (otherwise the
+4,000-game fallback applies), and (iii) pre-launch checks L1–L5 pass.
 Revised 2026-11-20 after an independent review (findings M1–M7, m1–m11).
 
 **Prerequisites:**
@@ -458,9 +461,13 @@ start.
 - **G-T1 (control):** mean |Q| on the 3,080 audit rows must not fall below the start's
   0.298, and mean P(draw) must stay in 0.45–0.60. Read at the end and at every
   snapshot.
-- **Collect gates, gated with the primary's bounds:** G-C1 (= 0), G-C2 (equal), G-C3
-  (≥ +0.50 both), G-C7 (≥ 80 rows per game), G-C10 (≤ 0.05). These test the
-  machinery, not the start net.
+- **Collect gates, gated:** G-C1 (= 0), G-C2 (equal), G-C7 (≥ 80 rows per game) and
+  G-C10 (≤ 0.05) with the primary's bounds, and G-C3 at ≥ +0.30 on both root classes
+  (the primary's bound is +0.50). These test the machinery, not the start net. G-C3 is
+  looser here because no Q50 c12 collect reference exists and the statistic also
+  reflects agreement between that net's own policy and value, which were trained
+  differently; +0.30 still separates clearly from the defect signature (−0.007 /
+  +0.110; smoke run −0.24 / −0.35).
 - **Collect gates, recorded only:** G-C4, G-C5, G-C6, G-C8, G-C9. Their bands were set
   on SL-base collects and the expected values for a Q50 c12 collect are unknown.
 - **G-T2:** the same gross guard, measured against Q50 c12 (the control's start), not
