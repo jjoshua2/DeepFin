@@ -45,7 +45,7 @@ change. Each decision is argued in the section it links to.
 | D3 | [Search budget of the stored targets](#collection) | **64 sims** | 256 sims at N/4 games, as a separate later experiment |
 | D4 | [Softening used by Arm S](#arms) | **`--train-target-temp 2.0`** | `--policy-prior-mix 0.5 --prior-mix-source reference` (SL base) |
 | D5 | [Primary arena layout](#deciding-yardstick) | **Seat-balanced:** half the games with the arm as candidate, half as reference, same openings; no separate base-vs-base control | One orientation plus a same-day base-vs-base control |
-| D6 | [Positive control](#positive-control) | **Unconditional:** Arm V's recipe at 4,000 games from Q50 c12, played against Q50 c12 | Skip it |
+| D6 | [Positive control](#positive-control) | **Unconditional:** Arm V's recipe at 4,000 games from Q50 c12, played against Q50 c12. It cannot validate the primary: a pass is largely expected from fixing value calibration, and its dose is a quarter of the primary's | Skip it, saving about 3 GPU hours (2.6–3.4) |
 | D7 | [Collect execution](#collection) | **Concurrency 128, `--collect-cuda-graphs` on** (after pre-launch check L4) | Graphs off |
 | D8 | [Optimizer](#training) | **Fresh NAdamW, flat LR 3e-6, warmup 0**, as F12 | `--init-optimizer-state checkpoint` (Aurora): not recommended here |
 | D9 | [Deciding N](#deciding-yardstick) | **Single fixed look at 3,200 games** (1,600 per orientation), read once | O'Brien–Fleming two-look: z 2.797 at 1,600, z 1.977 at 3,200 |
@@ -441,6 +441,7 @@ all.
 - **Match:** the trained net against Q50 c12, seat-balanced, 1,600 games on EVAL
   openings, seed 2026112006. Same reading rule: success if the lower 95% bound is
   above 0.
+- **Dose:** 4,000 games ≈ 1,400 updates, against about 5,700 for the primary.
 
 **Why this start.** It is the clearly weaker same-architecture net with a known
 recoverable deficit: in D4 round 2, a two-parameter value map recovered 0.77 (0.47 to
@@ -450,10 +451,41 @@ recoverable deficit: in D4 round 2, a two-parameter value map recovered 0.77 (0.
   steps 680,213 and 680,276.
 - A random-init start would be trivially positive.
 
+**Gates for the control (gated, not record-only).** The control is gated so that a
+broken run cannot be read as a pass or a fail. G-T1 is replaced, because Q50 c12 starts
+at mean |Q| 0.298, below Arm V's 0.33 floor; a benign run could fail that band at the
+start.
+- **G-T1 (control):** mean |Q| on the 3,080 audit rows must not fall below the start's
+  0.298, and mean P(draw) must stay in 0.45–0.60. Read at the end and at every
+  snapshot.
+- **Collect gates, gated with the primary's bounds:** G-C1 (= 0), G-C2 (equal), G-C3
+  (≥ +0.50 both), G-C7 (≥ 80 rows per game), G-C10 (≤ 0.05). These test the
+  machinery, not the start net.
+- **Collect gates, recorded only:** G-C4, G-C5, G-C6, G-C8, G-C9. Their bands were set
+  on SL-base collects and the expected values for a Q50 c12 collect are unknown.
+- **G-T2:** the same gross guard, measured against Q50 c12 (the control's start), not
+  the SL base: KL > 1.5 or |ΔQ| > 0.4 fails.
+- **G-T3:** held-out policy CE against the stored target must not exceed the
+  before-phase value.
+- **G-T4:** the Arm V checks unchanged: presentation histogram `{1: trainable rows}`,
+  `trained_on_capped_rows` absent, `realised_lr_param_groups` all 3e-6,
+  `realised_policy_target_temp` 1.0, `realised_search_wdl_frac` = 1.0,
+  `targets.value_from_survivor_q` ≥ 99% of rows.
+- **Arena records:** the four required fields of every arena record apply.
+
+A gate failure makes the control "gate failed — unread".
+
 **Reading.**
-- **Pass:** the loop can move strength upward in one generation from a net with a
-  recoverable deficit.
-- **Fail:** the recipe or dose cannot, even there.
+- **Pass:** licenses only that this pipeline, with Arm V's recipe, can measurably
+  improve a net whose deficit is mostly value calibration. A pass is largely expected
+  from fixing calibration alone: in D4 round 2 the two-parameter recalibration moved
+  Q50 c12 by +48.5 (+25.3 to +72.2) Elo with no training. It does not show that
+  self-play policy improvement works, and it says nothing about Arm P.
+- **Fail:** does not show that the recipe or dose cannot work. The control's dose
+  (about 1,400 updates) is not the primary's (about 5,700). A fail says this recipe at
+  this dose did not measurably improve Q50 c12. It points at the pipeline or the value
+  fit as a question for the next experiment.
+- **Either way,** the control cannot validate or invalidate the primary verdict.
 
 It runs after the primary arena, alone on the GPU. The D6 alternative is to skip it.
 
