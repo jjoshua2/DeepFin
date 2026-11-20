@@ -117,9 +117,10 @@ from chess_anti_engine.mcts.puct_vl import _PLANES, PucvChunker
 from chess_anti_engine.mcts.puct_tb import override_leaf_values
 from chess_anti_engine.tablebase import SyzygyProbe
 from chess_anti_engine.mcts.root_tactics import (
+    forced_draw_actions,
     immediate_terminal_cboard_policy_or_draws,
 )
-from chess_anti_engine.moves import POLICY_SIZE, move_to_index
+from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.uci import wedge
 from chess_anti_engine.uci.protocol import uci_debug_enabled
 from chess_anti_engine.uci.startup_progress import StartupContext, startup_context
@@ -395,62 +396,11 @@ class _SearchState:
     pruned_root_draws: bool = False
 
 
-def _ends_drawn(board: chess.Board) -> bool:
-    """The game is over, drawn, on ``board``: stalemate, insufficient
-    material, the 50-move clock at 100 or more, or a third occurrence."""
-    return not board.is_checkmate() and (
-        board.is_stalemate()
-        or board.is_insufficient_material()
-        or board.halfmove_clock >= 100
-        or board.is_repetition(3)
-    )
-
-
-def _every_reply_ends_drawn(board: chess.Board) -> bool:
-    """With the 50-move clock at 99, every legal reply ends the game drawn
-    (each is reversible, so it reaches 100, or draws otherwise) and none
-    mates. Only examined at clock 99: earlier, a reply cannot reach 100."""
-    if board.halfmove_clock != 99:
-        return False
-    replies = list(board.legal_moves)
-    if not replies:
-        return False
-    for reply in replies:
-        board.push(reply)
-        try:
-            if not _ends_drawn(board):
-                return False
-        finally:
-            board.pop()
-    return True
-
-
 def root_forced_draw_actions(board: chess.Board, actions: Sequence[int]) -> list[int]:
-    """The root ``actions`` (policy indices) whose move forces a draw on the
-    board: it ends the game drawn (stalemate, insufficient material, the
-    50-move clock at 100 or more, a third occurrence), or it leaves the clock
-    at 99 with every opponent reply ending the game drawn and none mating
-    (an opponent with only reversible moves cannot decline the 50-move draw).
-    A move after which the opponent merely MAY claim a draw on its reply is not
-    one: an opponent with a pawn move, a capture or a mate can decline and play
-    on. Before 2026-11-19 the second kind was pruned from a winning root and
-    then counted as not a draw, so a root whose searched moves all lose was
-    marked lost and a losing move played (outside-model review lead R1)."""
-    wanted = {int(a) for a in actions}
-    out: list[int] = []
-    for move in board.legal_moves:
-        action = int(move_to_index(move, board))
-        if action not in wanted:
-            continue
-        board.push(move)
-        try:
-            if _ends_drawn(board) or (
-                not board.is_checkmate() and _every_reply_ends_drawn(board)
-            ):
-                out.append(action)
-        finally:
-            board.pop()
-    return out
+    """The root ``actions`` (policy indices) whose move ENDS the game drawn on
+    the board; see ``mcts.root_tactics.forced_draw_actions`` (shared with the
+    classic search's pruned-draw fallback)."""
+    return forced_draw_actions(board, actions)
 
 
 class RootParallelGumbelPool:
@@ -768,7 +718,11 @@ class RootParallelGumbelPool:
             if root_q > 0.0 and legal_idx.size > 1 and terminal_draws:
                 draw_arr = np.fromiter(terminal_draws, dtype=np.int32)
                 keep = ~np.isin(legal_idx, draw_arr)
-                if keep.any():
+                # Prune only while at least two moves survive (same rule as
+                # classic `gumbel_c`): a single survivor is not a forced move,
+                # so the drawing moves stay in the search and compete on their
+                # exact value 0.
+                if np.count_nonzero(keep) > 1:
                     # The draw scan also returns moves after which the
                     # OPPONENT may claim a draw (50-move at 99 + a reversible
                     # reply, threefold on its reply). That is the opponent's
@@ -795,9 +749,9 @@ class RootParallelGumbelPool:
                 finished_action = int(mate_action)
                 finished_value = float(mate_value)
             elif search_legal.size == 1 and not pruned_root_draws:
-                # Single-legal finish (classic). Not when pruning a drawing
-                # move left one: that move must be searched, or a lost root
-                # could never be proven and the draw never played.
+                # Single-legal finish (classic). Pruning never leaves a single
+                # survivor (above), so this is a genuinely forced root; the
+                # flag check is kept as a guard.
                 finished_action = int(search_legal[0])
                 finished_value = root_q
 

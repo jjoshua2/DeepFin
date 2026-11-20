@@ -2912,7 +2912,9 @@ class SearchWorker:
         that draws on the board when every searched move is proven lost (the
         drawing escape), else -- at any visit count -- the most-visited move
         after which the opponent has no mate in one, if there is one (the full
-        longest-loss walk is too slow for an at-once answer).
+        longest-loss walk is too slow for an at-once answer). On a root proven
+        won, a child proven lost for the opponent, at any visit count (the
+        visit leader can be a move searched before the proof).
         Reads the tree only. Call only while no search runs on this worker."""
         tree, root_id = self._tree, self._root_id
         if tree is None or root_id is None or root_id < 0 or self._tree_fen != board.fen():
@@ -2926,9 +2928,26 @@ class SearchWorker:
             escape = self._drawing_escape_action(board, allowed)
             if escape is not None:
                 return index_to_move(int(escape), board).uci()
-            lost_root = int(tree.get_solved_status(int(root_id))) == -1
+            root_status = int(tree.get_solved_status(int(root_id)))
         except Exception:
-            lost_root = False
+            root_status = 0
+        lost_root = root_status == -1
+        if root_status == 1:
+            # Proven won: the visit leader can predate the proof; play a
+            # child proven lost for the opponent (the most-visited one, ties
+            # as below), as `_book_answer` does. At any visit count.
+            won: tuple[int, float, int] | None = None
+            for a, n, q in zip(actions.tolist(), visits.tolist(), qs.tolist(), strict=True):
+                if allowed is not None and int(a) not in allowed:
+                    continue
+                child = int(tree.find_child(int(root_id), int(a)))
+                if child < 0 or int(tree.get_solved_status(child)) != -1:
+                    continue
+                key = (int(n), float(q), -int(a))
+                if won is None or key > won:
+                    won = key
+            if won is not None:
+                return index_to_move(-won[2], board).uci()
         if lost_root:
             longest: tuple[int, int, float, int] | None = None
             for a, n, q in zip(actions.tolist(), visits.tolist(), qs.tolist(), strict=True):
@@ -3520,10 +3539,25 @@ class SearchWorker:
         the root is lost on the tree (classic, pool) or drawn only through the
         pruned draw (root-parallel), and the search would play a losing move.
         Only a move that ends the game drawn on the board counts
-        (`root_forced_draw_actions`), not one the opponent may merely claim."""
+        (`root_forced_draw_actions`), not one the opponent may merely claim.
+
+        The classic runner makes the same choice itself, before any proof,
+        when every move it searched scored below 0 (`gumbel_c` pruned-draw
+        fallback): its survivor is then a pruned draw that is not a tree child,
+        which `_emitted_action` cannot select, so it is honoured here."""
         tree, root_id = self._tree, self._root_id
         if tree is None or root_id is None:
             return None
+        # getattr: tree-only workers built without __init__ (the tests' and
+        # tools' bare instances) have no classic survivor.
+        gi = getattr(self, "_last_gumbel_action_idx", None)
+        if (
+            gi is not None
+            and tree.find_child(root_id, int(gi)) == -1
+            and (allowed_root_indices is None or int(gi) in allowed_root_indices)
+            and root_forced_draw_actions(board, [int(gi)])
+        ):
+            return int(gi)
         status = int(tree.get_solved_status(root_id))
         if status not in (-1, 2):
             return None
@@ -3593,26 +3627,29 @@ class SearchWorker:
         line (a stalemate in a won KQK, an in-tree twofold repetition) while an
         unproven sibling is better. So the proven end counts as complete --
         ``max_depth`` -- only when nothing better can exist: the ROOT is proven
-        (won, lost or drawn), or the PV's first move is a proven win for the
-        side to move. A drawn root counts too, although the C tree proves draws
-        from in-tree twofold repetitions, which may not be draws at all: a root
-        is proven drawn only once EVERY child is proven
-        (``tree_resolve_from_children``; root-parallel's `_resolve_root_solved`
-        likewise) and solved statuses are never cleared, so no further search
-        can reach an unproven sibling or change the verdict -- waiting cannot
-        improve the move. (A position whose only move stalemates never
-        answered `go depth 4` on the pool / walker paths.) Otherwise the raw
-        length, and a ``go depth`` the search cannot complete waits for
-        ``stop`` as before. On the pool / walker / root-parallel paths a proven
-        root re-visits its proven lines forever, so without this the depth
-        bound never ended."""
+        won or lost, the root is proven drawn AND every one of its children is
+        proven, or the PV's first move is a proven win for the side to move.
+        A drawn root alone does not count: the C tree marks an in-tree twofold
+        LEAF drawn, and after `advance_root` reroots onto such a node (status
+        copied by compaction) the new root reads drawn with unproven children
+        -- `go depth 4` then stopped after one chunk on an arbitrary move. With
+        every child proven no further search can reach an unproven sibling or
+        change the verdict (statuses are never cleared), so waiting cannot
+        improve the move even when a child's draw rests on a twofold. (A
+        position whose only move stalemates never answered `go depth 4` on the
+        pool / walker paths.) Otherwise the raw length, and a ``go depth`` the
+        search cannot complete waits for ``stop`` as before. On the pool /
+        walker / root-parallel paths a proven root re-visits its proven lines
+        forever, so without this the depth bound never ended."""
         n = len(pv_indices)
         tree, root = self._tree, self._root_id
         if max_depth is None or n == 0 or n >= max_depth or tree is None or root is None:
             return n
         first = int(tree.find_child(root, int(pv_indices[0])))
+        root_status = int(tree.get_solved_status(root))
         decided = (
-            int(tree.get_solved_status(root)) in (1, -1, 2)
+            root_status in (1, -1)
+            or (root_status == 2 and _every_child_proven(tree, root))
             or (first >= 0 and int(tree.get_solved_status(first)) == -1)
         )
         if not decided:
@@ -4484,7 +4521,7 @@ class SearchWorker:
                 score_mate=None,
                 multipv=1 if self._multi_pv > 1 else None,
                 wdl=(0, 1000, 0) if self._show_wdl else None,
-                string="every searched move is proven lost; playing a move that draws",
+                string="every searched move is lost or below a draw; playing a move that draws",
                 hashfull=self._hashfull_permille(),
                 seldepth=max(self._seldepth, 1),
             )
@@ -5431,6 +5468,18 @@ def _stop_reserve_ms(deadline: Deadline) -> float:
     return min(_STOP_RESERVE_MS, _STOP_RESERVE_SHARE * budget)
 
 
+def _every_child_proven(tree: Any, node: int) -> bool:
+    """``node`` has children and every one has a nonzero solved status."""
+    children, _ = tree.get_children_visits(int(node))
+    if len(children) == 0:
+        return False
+    for a in children.tolist():
+        child = int(tree.find_child(int(node), int(a)))
+        if child < 0 or int(tree.get_solved_status(child)) == 0:
+            return False
+    return True
+
+
 def _book_answer(tree: Any, node: int, board: chess.Board) -> int | None:
     """The reply book's move at ``node`` (``board`` is its position): the
     most-visited child, except on a node the tree has proven. Proven won: the
@@ -5449,6 +5498,10 @@ def _book_answer(tree: Any, node: int, board: chess.Board) -> int | None:
             if int(tree.get_solved_status(int(child))) == -1:
                 return action
     elif status == -1:
+        # Worst case ~14 ms per fully scanned node (every visited child
+        # checked for a mate in one), at most 4 x 8 = 32 nodes a snapshot;
+        # proven-lost nodes are rare and the snapshot runs at most every
+        # `_REPLY_BOOK_INTERVAL_S` between chunks.
         for action, _child in ranked:
             after = board.copy(stack=False)
             after.push(index_to_move(action, board))

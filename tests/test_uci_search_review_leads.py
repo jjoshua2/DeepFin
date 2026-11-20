@@ -3,9 +3,11 @@ by the case that reproduced it.
 
 - S5: ``go depth 4`` on a position whose only move stalemates never returned on
   the pool / walker paths: the root is proven drawn, the PV cannot grow, and a
-  drawn root did not count as a finished depth.
+  drawn root did not count as a finished depth. It counts now only when every
+  root child is proven: a reroot onto a twofold leaf leaves a stale draw.
 - S7: the reply book stored a proven-lost node's visit leader, which can be
-  mated at once (the root entry already avoided that).
+  mated at once (the root entry already avoided that); proven-won nodes and
+  roots now give the proven win.
 - R1: a winning root pruned a move after which every opponent reply reaches the
   50-move draw, then counted it as not a draw: the root was marked lost and
   root-parallel Gumbel / classic Gumbel played a losing pawn move.
@@ -68,6 +70,45 @@ def test_go_depth_answers_on_a_proven_drawn_root(path: str) -> None:
         worker.close()
 
 
+@pytest.mark.parametrize("path", ["walkers", "pool"])
+def test_go_depth_does_not_stop_on_a_rerooted_stale_draw(path: str) -> None:
+    """Review repro: the C tree marks an in-tree twofold LEAF drawn, and
+    `advance_root` reroots onto it with that status, so the new root reads
+    drawn with unproven children. `go depth 4` stopped after one chunk on an
+    arbitrary move; it must keep searching (here: to the deadline)."""
+    worker = _make_worker(path, seed=0)
+    try:
+        b0 = chess.Board()
+        for u in ("g1f3", "g8f6"):
+            b0.push_uci(u)
+        worker.run(b0.copy(), stop_event=threading.Event(), deadline=Deadline(20_000),
+                   max_nodes=2000, max_depth=None)
+        tree, rid = worker._tree, worker._root_id
+        assert tree is not None
+        assert rid is not None
+        m1, m2 = chess.Move.from_uci("f3g1"), chess.Move.from_uci("f6g8")
+        b1 = b0.copy()
+        b1.push(m1)
+        child = int(tree.find_child(rid, int(move_to_index(m1, b0))))
+        assert child >= 0, "fixture: Ng1 was searched"
+        leaf = int(tree.find_child(child, int(move_to_index(m2, b1))))
+        assert leaf >= 0, "fixture: Ng8 was searched"
+        assert len(tree.get_children_visits(leaf)[0]) == 0, "fixture: a leaf"
+        _mark(tree, leaf, 2)  # what an in-tree twofold leaf carries
+        assert worker.advance_root(b0.copy(), [m1, m2])
+        b2 = b1.copy()
+        b2.push(m2)
+        t0 = time.monotonic()
+        result = worker.run(b2, stop_event=threading.Event(), deadline=Deadline(3_000),
+                            max_nodes=None, max_depth=4)
+        took = time.monotonic() - t0
+        assert worker._root_solved_status() == 2, "fixture: the stale draw survives the reroot"
+        assert worker.last_stop_reason != "max_depth" or len(result.pv) >= 4, (
+            worker.last_stop_reason, result.pv, result.nodes, took)
+    finally:
+        worker.close()
+
+
 # -- S7: the reply book on proven nodes ---------------------------------------------
 
 # Kh3-h2 is mated in one (Qh1#); Kh3-h4 is not. Reached from START by Kh2-h3 Kb5-b4.
@@ -119,23 +160,59 @@ def test_the_reply_book_plays_the_proven_win_on_a_proven_won_node() -> None:
     assert worker.reply_book_bestmove(pos) == "h3h4"
 
 
+def test_the_tree_answer_on_a_proven_won_root_plays_the_proven_win() -> None:
+    """`tree_root_bestmove` (the book's root entry and the at-once answer)
+    follows the same rule as `_book_answer`: the proven win, not the visit
+    leader searched before the proof."""
+    after = START.copy()
+    after.push(OUR_MOVE)
+    pos = after.copy()
+    pos.push(REPLY)
+    tree = MCTSTree()
+    tree.reserve(64, 640)
+    rid = int(tree.add_root(1, 0.0))
+    acts = [int(move_to_index(chess.Move.from_uci(u), pos)) for u in ("h3h2", "h3h4")]
+    tree.expand(rid, np.array(acts, dtype=np.int32), np.array([0.5, 0.5]))
+    for a, n in zip(acts, (20, 3), strict=True):
+        child = int(tree.find_child(rid, a))
+        for _ in range(n):
+            tree.backprop(np.array([rid, child], dtype=np.int32), 0.0)
+    worker = SearchWorker.__new__(SearchWorker)
+    worker._tree, worker._root_id, worker._tree_fen = tree, rid, pos.fen()
+    assert worker.tree_root_bestmove(pos) == "h3h2"  # unproven: the visit leader
+    _mark(tree, int(tree.find_child(rid, acts[1])), -1)
+    _mark(tree, rid, 1)
+    assert worker.tree_root_bestmove(pos) == "h3h4"
+    # `searchmoves` without the win: the old rule.
+    assert worker.tree_root_bestmove(pos, searchmoves=("h3h2",)) == "h3h2"
+
+
 # -- R1: a draw the opponent cannot decline ------------------------------------------
 
 # Every move but the drawing one is mated next move. The drawing king move
 # leaves the clock at 99 and every Black reply is reversible (clock 100) and
-# not mate; each fixture also has a losing pawn move, so the prune keeps one.
+# not mate; each fixture has at least two losing pawn moves, so the prune
+# (which since #1410 keeps at least two moves) still happens.
 REPLY_FORCED_DRAWS = [
-    ("6K1/8/3P2k1/8/8/8/1q6/8 w - - 98 1", "g8f8"),
-    ("3q4/8/k7/8/8/6P1/4r3/1K6 w - - 98 1", "b1c1"),
+    ("K7/8/k6q/8/8/8/4P3/8 w - - 98 1", "a8b8"),
+    ("8/P7/8/8/8/2k4q/8/2K5 w - - 98 1", "c1b1"),
     ("2K5/8/1k6/1q6/8/8/P7/8 w - - 98 1", "c8d8"),
 ]
+# Two- and three-move roots with the same shape (one losing pawn move: no prune).
+SMALL_REPLY_FORCED_DRAWS = [
+    ("6K1/8/3P2k1/8/8/8/1q6/8 w - - 98 1", "g8f8"),
+    ("3q4/8/k7/8/8/6P1/4r3/1K6 w - - 98 1", "b1c1"),
+]
+# Rf7+ leaves the clock at 99, but Black's Kxf7 (a capture into K+N vs K+B,
+# not a dead position) declines the draw: not forced.
+DECLINED_BY_A_CAPTURE = ("5k2/3R4/8/8/b7/8/5K2/7N w - - 98 1", "d7f7")
 
 
 def _idx(board: chess.Board, uci: str) -> int:
     return int(move_to_index(chess.Move.from_uci(uci), board))
 
 
-@pytest.mark.parametrize(("fen", "draw"), REPLY_FORCED_DRAWS)
+@pytest.mark.parametrize(("fen", "draw"), REPLY_FORCED_DRAWS + SMALL_REPLY_FORCED_DRAWS)
 def test_a_draw_every_reply_reaches_is_a_forced_draw(fen: str, draw: str) -> None:
     board = chess.Board(fen)
     legal = [int(move_to_index(m, board)) for m in board.legal_moves]
@@ -148,6 +225,13 @@ def test_a_reply_that_mates_or_zeroes_keeps_the_draw_declinable(fen: str) -> Non
     board = chess.Board(fen)
     legal = [int(move_to_index(m, board)) for m in board.legal_moves]
     assert root_forced_draw_actions(board, legal) == []
+
+
+def test_a_capture_reply_keeps_the_draw_declinable() -> None:
+    fen, move = DECLINED_BY_A_CAPTURE
+    board = chess.Board(fen)
+    legal = [int(move_to_index(m, board)) for m in board.legal_moves]
+    assert _idx(board, move) not in root_forced_draw_actions(board, legal)
 
 
 @pytest.mark.parametrize(("fen", "draw"), REPLY_FORCED_DRAWS)
@@ -172,13 +256,7 @@ def test_prepare_root_records_a_pruned_reply_forced_draw(fen: str, draw: str) ->
 @pytest.mark.parametrize("path", ["rpg", "classic"])
 @pytest.mark.parametrize(("fen", "draw"), REPLY_FORCED_DRAWS)
 def test_a_lost_looking_root_plays_the_reply_forced_draw(path: str, fen: str, draw: str) -> None:
-    if path == "classic" and fen != REPLY_FORCED_DRAWS[2][0]:
-        pytest.skip(
-            "classic: the shared gumbel_c root prunes the draw and returns the one "
-            "remaining move unsimulated (fixture 1) or does not prove it lost in "
-            "budget, so no escape can arise without a gumbel_c change",
-        )
-    worker = _make_worker(path, optimistic=True)
+    worker = _make_worker(path, optimistic=True, seed=0)
     try:
         result = worker.run(
             chess.Board(fen), stop_event=threading.Event(),
