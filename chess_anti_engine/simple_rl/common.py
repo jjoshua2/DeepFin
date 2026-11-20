@@ -139,6 +139,21 @@ def read_manifest(stage_dir: Path) -> dict[str, Any] | None:
     return json.loads(path.read_text())
 
 
+# Key of a collect manifest that REFERENCES another run's sealed collect
+# (simple_rl.reference) instead of holding rows of its own.
+COLLECT_REFERENCE = "collect_reference"
+
+
+def resolve_collect_dir(collect_dir: Path) -> Path:
+    """The directory holding a collect's rows: its own, or -- for a sealed
+    reference collect -- the source run's collect it points at. Every reader of
+    shards / games.jsonl goes through this; lineage.verify_stage re-checks the
+    source's recorded sha256s before a stage is built on it."""
+    manifest = read_manifest(collect_dir)
+    ref = (manifest or {}).get(COLLECT_REFERENCE)
+    return Path(ref["source_collect_dir"]) if ref else Path(collect_dir)
+
+
 def stage_done(stage_dir: Path) -> bool:
     return (Path(stage_dir) / MANIFEST).is_file()
 

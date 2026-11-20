@@ -25,10 +25,12 @@ own labels.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import math
-from collections.abc import Callable
+import shutil
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -36,7 +38,9 @@ from typing import Any
 import numpy as np
 
 from chess_anti_engine.simple_rl.collect import concat_arrays, load_generation_rows
-from chess_anti_engine.simple_rl.common import input_ref, seed_for, write_json_atomic, write_manifest
+from chess_anti_engine.simple_rl.common import (
+    input_ref, resolve_collect_dir, seed_for, sha256_file, write_json_atomic, write_manifest,
+)
 
 # Everything the configured loss reads, plus the flags that gate it. Other
 # shard fields (SF labels, root statistics, ...) never reach the batch.
@@ -141,6 +145,11 @@ class TrainSettings:
     # Train on rows from collects whose evaluator cap could absorb leaves
     # (capped_collect_record). Refused by default; recorded when allowed.
     allow_capped_collect_rows: bool = False
+    # Exact-once mode only: after each listed optimizer update count (strictly
+    # increasing, each <= the phase's planned updates) the phase writes
+    # train/snapshots/step_<k>/ (weights-only model.pt + metrics.json) without
+    # changing the training it is part of. See write_snapshot.
+    snapshot_updates: tuple[int, ...] = ()
 
     def search_wdl_frac(self) -> float:
         total = float(self.value_outcome_weight) + float(self.value_search_weight)
@@ -176,6 +185,18 @@ class TrainSettings:
             raise ValueError(f"matrix_optimizer_scope {self.matrix_optimizer_scope!r} is read only by the "
                              f"{SCOPED_OPTIMIZERS} optimizers (or weight_decay_mode soda); with optimizer "
                              f"{self.optimizer!r} it would be ignored")
+        snaps = [int(k) for k in self.snapshot_updates]
+        if snaps:
+            if self.sample_with_replacement:
+                raise ValueError("snapshot_updates applies to the exact-once schedule only, not "
+                                 "sample_with_replacement")
+            if snaps[0] < 1 or any(b <= a for a, b in itertools.pairwise(snaps)):
+                raise ValueError(f"snapshot_updates must be strictly increasing positive update counts, got {snaps}")
+
+    def own_rows_per_batch(self) -> int:
+        """Self-play rows in a full exact-once batch (the rest is the SL share)."""
+        n_sl = round(float(self.sl_mix_frac) * int(self.batch_size)) if self.sl_mix_frac > 0 else 0
+        return int(self.batch_size) - n_sl
 
     def uses_survivor_value(self) -> bool:
         return (float(self.w_wdl) > 0 and self.search_wdl_frac() > 0
@@ -317,6 +338,10 @@ def load_window(run_dir: Path, generation: int, settings: TrainSettings) -> tupl
     for g in gens:
         if not (Path(run_dir) / f"gen_{g:04d}" / "collect" / "manifest.json").is_file():
             raise ValueError(f"generation {g} collect is not sealed; refusing to train on its rows")
+        if resolve_collect_dir(Path(run_dir) / f"gen_{g:04d}" / "collect") != Path(run_dir) / f"gen_{g:04d}" / "collect":
+            from chess_anti_engine.simple_rl.lineage import verify_stage
+
+            verify_stage(run_dir, g, "collect")  # a reference: the source still matches what it sealed
         arrays, meta = load_generation_rows(Path(run_dir) / f"gen_{g:04d}" / "collect",
                                             keys=(*TRAIN_KEYS, *TARGET_SOURCE_KEYS))
         held = holdout_mask(meta, settings.holdout_frac)
@@ -329,6 +354,24 @@ def load_window(run_dir: Path, generation: int, settings: TrainSettings) -> tupl
     return concat_arrays(train_parts), holdout, gens, np.concatenate(ids, axis=0)
 
 
+def planned_phase_updates(run_dir: Path, generation: int, settings: TrainSettings) -> int | None:
+    """The exact-once phase's update count, from the sealed collects' row
+    metadata alone (no shard is loaded); None while any of them is unsealed."""
+    if settings.sample_with_replacement:
+        return None
+    n = 0
+    for g in phase_generations(generation, settings):
+        if not (Path(run_dir) / f"gen_{g:04d}" / "collect" / "manifest.json").is_file():
+            return None
+        n += int((~holdout_mask(_generation_meta(run_dir, g), settings.holdout_frac)).sum())
+    return math.ceil(n / settings.own_rows_per_batch())
+
+
+def check_snapshot_plan(snapshots: tuple[int, ...] | list[int], updates: int) -> None:
+    if snapshots and int(snapshots[-1]) > int(updates):
+        raise ValueError(f"snapshot_updates {list(snapshots)} reach past the phase's {updates} planned updates")
+
+
 def holdout_mask(meta: dict[str, np.ndarray], frac: float) -> np.ndarray:
     return np.asarray([is_holdout_game(int(gid), frac) for gid in meta["game_id"]], dtype=bool)
 
@@ -339,7 +382,7 @@ LEDGER = "presentation_ledger.json"
 
 def _generation_meta(run_dir: Path, g: int) -> dict[str, np.ndarray]:
     metas = []
-    for m in sorted((Path(run_dir) / f"gen_{g:04d}" / "collect" / "shards").glob("shard_*.meta.npz")):
+    for m in sorted((resolve_collect_dir(Path(run_dir) / f"gen_{g:04d}" / "collect") / "shards").glob("shard_*.meta.npz")):
         with np.load(m) as z:
             metas.append(z["game_id"])
     return {"game_id": np.concatenate(metas) if metas else np.zeros(0, np.int64)}
@@ -763,14 +806,33 @@ def continue_optimizer(trainer: Any, checkpoint: Path, settings: TrainSettings) 
     return {"differed": diff, "reapplied": bool(diff), **groups}
 
 
+UNRECOGNISED_OPTIMIZER = "unrecognised"
+
+
 def _optimizer_family(param_groups: list[dict[str, Any]]) -> str | None:
-    """The optimizer a saved state was written by, where its group keys say so."""
-    keys = set().union(*(set(g) for g in param_groups)) if param_groups else set()
-    if "use_aurora" in keys:
+    """The optimizer a saved state was written by, from its param-group keys.
+
+    One of the Trainer's optimizers (aurora, muon, nadamw, adamw, soap);
+    ``UNRECOGNISED_OPTIMIZER`` for groups none of them writes; None only when
+    the state has no groups to read (``_ChainedOptimizer`` omits them -- its
+    layout is then compared by parameter names instead). Aurora/Muon are
+    detected by a group that USES the matrix optimizer: their branch groups
+    carry ``use_aurora: False`` / ``use_muon: False`` in either optimizer.
+    """
+    if not param_groups:
+        return None
+    keys = set().union(*(set(g) for g in param_groups))
+    if any(g.get("use_aurora") for g in param_groups):
         return "aurora"
+    if any(g.get("use_muon") for g in param_groups):
+        return "muon"
     if "momentum_decay" in keys:
         return "nadamw"
-    return None
+    if "precondition_frequency" in keys or "shampoo_beta" in keys:
+        return "soap"
+    if "amsgrad" in keys:
+        return "adamw"
+    return UNRECOGNISED_OPTIMIZER
 
 
 def check_init_optimizer_source(payload: dict[str, Any], checkpoint: Path, settings: TrainSettings) -> None:
@@ -783,6 +845,10 @@ def check_init_optimizer_source(payload: dict[str, Any], checkpoint: Path, setti
                          f"(missing {missing or ['opt.state (empty)']}); use --init-optimizer-state fresh")
     family = _optimizer_family(payload["opt"].get("param_groups") or [])
     want = str(settings.optimizer).lower()
+    if family == UNRECOGNISED_OPTIMIZER:
+        raise ValueError(f"--init-optimizer-state checkpoint: {checkpoint}'s optimizer state has param groups no "
+                         "Trainer optimizer writes, so it cannot be matched to --optimizer "
+                         f"{settings.optimizer}; use --init-optimizer-state fresh")
     if family is not None and family != ("nadamw" if want in ("nadam", "nadamw") else want):
         raise ValueError(f"--init-optimizer-state checkpoint: {checkpoint}'s optimizer state was written by "
                          f"{family}, not the requested --optimizer {settings.optimizer}")
@@ -941,8 +1007,140 @@ def probe_drift(new: Any, old: Any, probe: dict[str, np.ndarray], device: str) -
 
     lo, ln = _log_softmax_masked(pol_o, mask), _log_softmax_masked(pol_n, mask)
     kl = np.where(mask, np.exp(lo) * (np.where(mask, lo, 0.0) - np.where(mask, ln, 0.0)), 0.0).sum(axis=1)
+    top1 = np.where(mask, pol_n, -np.inf).argmax(axis=1) == np.where(mask, pol_o, -np.inf).argmax(axis=1)
     return {"probe_rows": len(kl), "mean_abs_dq": float(np.abs(q(wdl_n) - q(wdl_o)).mean()),
-            "policy_kl_prev_to_new": float(kl.mean())}
+            "policy_kl_prev_to_new": float(kl.mean()), "top1_agree_prev": float(top1.mean())}
+
+
+SNAPSHOTS = "snapshots"
+SNAPSHOT_RECORD = "snapshot.json"
+RESUME_TRAINER = "resume_trainer.pt"
+RESUME_STATE = "resume_state.pt"
+
+
+def snapshot_dir(out_dir: Path, update: int) -> Path:
+    return Path(out_dir) / SNAPSHOTS / f"step_{int(update)}"
+
+
+def _rng_states(device: str) -> dict[str, Any]:
+    import torch
+
+    out: dict[str, Any] = {"numpy_global": np.random.get_state(), "torch_cpu": torch.get_rng_state()}
+    if str(device).startswith("cuda"):
+        out["torch_cuda"] = torch.cuda.get_rng_state_all()
+    return out
+
+
+def _set_rng_states(states: dict[str, Any]) -> None:
+    import torch
+
+    np.random.set_state(states["numpy_global"])
+    torch.set_rng_state(states["torch_cpu"])
+    if "torch_cuda" in states:
+        torch.cuda.set_rng_state_all(states["torch_cuda"])
+
+
+def write_snapshot(*, out_dir: Path, update: int, trainer: Any, arch: dict[str, Any], sampler: ScheduledSampler,
+                   anchor: ReferenceAnchor | None, chunks: list[dict[str, Any]], measure: Callable[[], dict[str, Any]],
+                   resume_key: str) -> dict[str, Any]:
+    """Write ``train/snapshots/step_<update>/`` mid-phase. Nothing here touches
+    the training that continues afterwards (the RNG streams are saved first and
+    the measurements run under ``fork_rng``).
+
+    Kept: ``model.pt`` (weights + arch only, loadable by every checkpoint loader
+    including the arena's) and ``metrics.json`` (``measure()``: held-out CE /
+    entropy / value NLL, probe drift vs the phase's init model, realised lr).
+    Transient, for resuming a killed phase from here: ``resume_trainer.pt``
+    (``Trainer.save``: weights, optimizer, scheduler, step) and
+    ``resume_state.pt`` (sampler cursor / served rows / RNG streams, anchor
+    counters, the trainer metrics of the chunks so far). Only the newest
+    snapshot keeps them, and sealing the stage removes them. ``snapshot.json``
+    is written LAST: a step dir without it is incomplete and is redone.
+    """
+    import torch
+
+    from chess_anti_engine.train.trainer import strip_compile_prefix
+
+    d = snapshot_dir(out_dir, update)
+    if d.exists():
+        shutil.rmtree(d)
+    d.mkdir(parents=True)
+    rng = _rng_states(str(trainer.device))
+    weights = d / MODEL_FILE
+    tmp = d / f".{MODEL_FILE}.tmp"
+    torch.save({"model": strip_compile_prefix(trainer.model.state_dict()), "arch": arch}, str(tmp))
+    tmp.replace(weights)
+    devices = [torch.cuda.current_device()] if str(trainer.device).startswith("cuda") else []
+    with torch.random.fork_rng(devices=devices):
+        metrics = {"update": int(update), "trainer_step": int(trainer.step), **measure()}
+    write_json_atomic(d / "metrics.json", metrics)
+    trainer.save(d / RESUME_TRAINER)
+    torch.save({"resume_key": resume_key, "update": int(update), "cursor": int(sampler.cursor),
+                "served": list(sampler.served), "served_sl": list(sampler.served_sl),
+                "drawn_rows": int(sampler.drawn_rows), "realised_sl_rows": int(sampler.realised_sl_rows),
+                "sampler_rng": sampler.rng.bit_generator.state, "rng": rng, "chunks": chunks,
+                "anchor": None if anchor is None else {k: getattr(anchor, k) for k in _ANCHOR_COUNTERS}},
+               str(d / RESUME_STATE))
+    record = {"update": int(update), "resume_key": resume_key,
+              "files": {name: input_ref(d / name) for name in (MODEL_FILE, "metrics.json")}}
+    write_json_atomic(d / SNAPSHOT_RECORD, record)
+    for other in Path(out_dir, SNAPSHOTS).glob("step_*"):
+        if other != d:
+            for name in (RESUME_TRAINER, RESUME_STATE):
+                (other / name).unlink(missing_ok=True)
+    return {**record, "metrics": metrics}
+
+
+_ANCHOR_COUNTERS = ("rows", "forwards", "policy_kl_sum", "wdl_kl_sum")
+
+
+def resumable_snapshot(out_dir: Path, resume_key: str) -> int | None:
+    """The newest COMPLETE snapshot of an unsealed attempt with this exact
+    resume key (same settings, inputs and batch plan) whose resume files are
+    still present; None when the phase must start from its first update."""
+    best = None
+    for d in Path(out_dir, SNAPSHOTS).glob("step_*"):
+        rec = d / SNAPSHOT_RECORD
+        if not (rec.is_file() and (d / RESUME_TRAINER).is_file() and (d / RESUME_STATE).is_file()):
+            continue
+        data = json.loads(rec.read_text())
+        if data.get("resume_key") == resume_key and (best is None or int(data["update"]) > best):
+            best = int(data["update"])
+    return best
+
+
+def resume_from_snapshot(out_dir: Path, update: int, *, trainer: Any, sampler: ScheduledSampler,
+                         anchor: ReferenceAnchor | None) -> list[dict[str, Any]]:
+    """Restore the phase's whole state as it was when ``step_<update>`` was
+    written; returns the trainer metrics of the chunks already trained."""
+    import torch
+
+    d = snapshot_dir(out_dir, update)
+    trainer.load(d / RESUME_TRAINER, exact_resume=True)
+    state = torch.load(str(d / RESUME_STATE), map_location="cpu", weights_only=False)
+    sampler.cursor = int(state["cursor"])
+    sampler.served = list(state["served"])
+    sampler.served_sl = list(state["served_sl"])
+    sampler.drawn_rows = int(state["drawn_rows"])
+    sampler.realised_sl_rows = int(state["realised_sl_rows"])
+    sampler.rng.bit_generator.state = state["sampler_rng"]
+    if anchor is not None and state["anchor"] is not None:
+        for k in _ANCHOR_COUNTERS:
+            setattr(anchor, k, state["anchor"][k])
+    _set_rng_states(state["rng"])
+    return list(state["chunks"])
+
+
+def merged_losses(chunks: list[dict[str, Any]]) -> dict[str, float]:
+    """The phase's mean losses over its chunks, weighted by the rows each saw
+    (the exact-once metrics are per-row means)."""
+    rows = [float(c.get("train_samples_seen", 0) or 0) for c in chunks]
+    total = sum(rows)
+    out = {}
+    for k in ("loss", "policy_loss", "wdl_loss", "blended_wdl_loss"):
+        if all(k in c for c in chunks) and total > 0:
+            out[k] = float(sum(float(c[k]) * r for c, r in zip(chunks, rows, strict=True)) / total)
+    return out
 
 
 def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
@@ -952,6 +1150,13 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
     from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
     run_dir = Path(run_dir)
+    settings.validate()
+    planned = planned_phase_updates(run_dir, generation, settings)
+    if settings.snapshot_updates:
+        # Before ANY write (stage dir, run-level probe.npz): a refused plan leaves the run as it was.
+        if planned is None:
+            raise ValueError(f"generation {generation}: a phase collect is not sealed; refusing to train")
+        check_snapshot_plan(settings.snapshot_updates, planned)
     out_dir = run_dir / f"gen_{generation:04d}" / "train"
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "manifest.json").unlink(missing_ok=True)  # a redo is unsealed until its own manifest lands
@@ -959,7 +1164,6 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
     global_seed = seed & 0xFFFFFFFF  # numpy's legacy seed is 32-bit; record what was realised
     np.random.seed(global_seed)
     torch.manual_seed(global_seed)
-    settings.validate()
     arch, model_config = load_arch_config(init_checkpoint)
     capped = capped_collects(run_dir, phase_generations(generation, settings))
     lineage_capped = lineage_capped_collects(run_dir, generation)
@@ -1048,6 +1252,8 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
             rng=np.random.default_rng(seed), sl_start=sl_cursor)
         sampler = ScheduledSampler(train_rows, batches, rng=np.random.default_rng(seed ^ 0x5A5A), sl_rows=sl_rows)
         updates = len(batches)
+        if planned is not None and planned != updates:
+            raise RuntimeError(f"planned_phase_updates said {planned} updates, the batch plan has {updates}")
 
     anchor = None
     if settings.kl_policy > 0 or settings.kl_wdl > 0:
@@ -1058,8 +1264,59 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
         attach_anchor(trainer, anchor)
 
     start_step = int(trainer.step)
+    snapshots = [int(k) for k in settings.snapshot_updates]
+    check_snapshot_plan(snapshots, updates)
+    prev_model: Any = None
+
+    def previous_model() -> Any:
+        nonlocal prev_model
+        if prev_model is None:
+            prev_model = load_model_from_checkpoint(init_checkpoint, device=settings.device)
+        return prev_model
+
+    chunks: list[dict[str, Any]] = []
+    snapshot_records: list[dict[str, Any]] = []
+    resumed_from: int | None = None
+    done = 0
     t0 = time.perf_counter()
-    metrics = trainer.train_steps(sampler, batch_size=int(settings.batch_size), steps=updates)
+    if not snapshots:
+        chunks.append(asdict(trainer.train_steps(sampler, batch_size=int(settings.batch_size), steps=updates)))
+        done = updates
+    else:
+        assert isinstance(sampler, ScheduledSampler)  # validate(): exact-once only
+        resume_key = snapshot_resume_key(settings=settings, generation=generation, init_checkpoint=init_checkpoint,
+                                         prev_trainer_checkpoint=prev_trainer_checkpoint if continued else None,
+                                         run_dir=run_dir, gens=gens, probe_path=probe_path, batches=sampler.batches)
+        resumed_from = resumable_snapshot(out_dir, resume_key)
+        for d in Path(out_dir, SNAPSHOTS).glob("step_*"):
+            # Stale (another attempt's plan) or past the resume point (never completed): redone.
+            if resumed_from is None or int(d.name.split("_")[1]) > resumed_from:
+                shutil.rmtree(d)
+        if resumed_from is not None:
+            chunks = resume_from_snapshot(out_dir, resumed_from, trainer=trainer, sampler=sampler, anchor=anchor)
+            if int(trainer.step) != start_step + resumed_from:
+                raise RuntimeError(f"snapshot step_{resumed_from} restored trainer step {int(trainer.step)}, "
+                                   f"expected {start_step + resumed_from}")
+            done = resumed_from
+            snapshot_records = [json.loads((snapshot_dir(out_dir, k) / SNAPSHOT_RECORD).read_text())
+                                for k in snapshots if k <= resumed_from]
+
+        def measure() -> dict[str, Any]:
+            return {"heldout": heldout_metrics(trainer.model, holdout, settings.device),
+                    "probe_vs_previous": probe_drift(trainer.model, previous_model(), probe, settings.device),
+                    "realised_lr_param_groups": [float(g["lr"]) for g in trainer.opt.param_groups],
+                    "rows_presented": int(sum(int(a.size) for a in sampler.served)),
+                    "losses_so_far": merged_losses(chunks)}
+
+        for k in [*snapshots, updates]:
+            if k <= done:
+                continue
+            chunks.append(asdict(trainer.train_steps(sampler, batch_size=int(settings.batch_size), steps=k - done)))
+            done = k
+            if k in snapshots:
+                rec = write_snapshot(out_dir=out_dir, update=k, trainer=trainer, arch=arch, sampler=sampler,
+                                     anchor=anchor, chunks=chunks, measure=measure, resume_key=resume_key)
+                snapshot_records.append({key: rec[key] for key in ("update", "resume_key", "files")})
     wall = time.perf_counter() - t0
     if int(trainer.step) != start_step + updates:
         raise RuntimeError(f"Trainer applied {int(trainer.step) - start_step} of {updates} updates")
@@ -1077,11 +1334,12 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
     np.savez(out_dir / PRESENTED, gen=presented_ids[:, 0].astype(np.int32), row=presented_ids[:, 1].astype(np.int32),
              sl_start=np.asarray(sl_cursor), sl_end=np.asarray(sl_end), sl_rows=sl_served.astype(np.int64))
     after = heldout_metrics(trainer.model, holdout, settings.device)
-    prev_model = load_model_from_checkpoint(init_checkpoint, device=settings.device)
-    drift = probe_drift(trainer.model, prev_model, probe, settings.device)
+    drift = probe_drift(trainer.model, previous_model(), probe, settings.device)
     realised_lr = [float(g["lr"]) for g in trainer.opt.param_groups]
     realised_opt = realised_optimizer(trainer)  # read off the live optimizer after the phase's steps
-    m = asdict(metrics)
+    # One train_steps call without snapshots (its metrics verbatim); one per
+    # snapshot interval with them (rows-weighted mean losses, chunks kept).
+    m = chunks[0] if len(chunks) == 1 else {**merged_losses(chunks), "chunks": chunks}
     counts_after = {g: c.copy() for g, c in counts_before.items()}
     for g in np.unique(presented_ids[:, 0]) if presented_ids.size else []:
         g = int(g)
@@ -1119,7 +1377,10 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
         "losses": {k: m[k] for k in ("loss", "policy_loss", "wdl_loss", "blended_wdl_loss") if k in m},
         "heldout_before": before, "heldout_after": after, "probe_vs_previous": drift,
         "anchor": None if anchor is None else anchor.diagnostics(), "wall_seconds": wall,
-        "updates_per_second": updates / max(wall, 1e-9),
+        "updates_per_second": (updates - (resumed_from or 0)) / max(wall, 1e-9),
+        "snapshot_updates": snapshots, "resumed_from_snapshot": resumed_from,
+        "snapshots": [{"update": r["update"], "model_sha256": r["files"][MODEL_FILE]["sha256"],
+                       "metrics_sha256": r["files"]["metrics.json"]["sha256"]} for r in snapshot_records],
     }
     write_json_atomic(out_dir / "metrics.json", {"summary": summary, "trainer_metrics": m})
     inputs = {"init_checkpoint": input_ref(init_checkpoint),
@@ -1133,6 +1394,13 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
     inputs["probe"] = input_ref(probe_path)
     for k, shard in enumerate(sl_shards):
         inputs[f"sl_shard_{k:04d}"] = input_ref(shard)
+    # Each snapshot's files, re-hashed now: the seal vouches for what is on disk.
+    snapshot_outputs = {f"snapshot_{r['update']}_{name.split('.')[0]}": input_ref(snapshot_dir(out_dir, r["update"]) / name)
+                        for r in snapshot_records for name in (MODEL_FILE, "metrics.json")}
+    for r in snapshot_records:
+        for name in (MODEL_FILE, "metrics.json"):
+            if snapshot_outputs[f"snapshot_{r['update']}_{name.split('.')[0]}"]["sha256"] != r["files"][name]["sha256"]:
+                raise RuntimeError(f"snapshot step_{r['update']}/{name} changed after it was written")
     # Run-level view of the ledger: derived from the phases' presented.npz and
     # rewritten by every phase, so it is written BEFORE the manifest seals this one.
     write_json_atomic(run_dir / LEDGER, {"through_generation": generation, "sampling": summary["sampling"],
@@ -1146,8 +1414,31 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
                            # realised, read off the objects that consumed them
                            "realised": {"optimizer": realised_opt, "amp": bool(trainer.use_amp),
                                         "device": str(trainer.device)}},
-                   inputs=inputs, outputs={"model": input_ref(model_path), "presented": input_ref(out_dir / PRESENTED)},
+                   inputs=inputs, outputs={"model": input_ref(model_path), "presented": input_ref(out_dir / PRESENTED),
+                                           **snapshot_outputs},
                    counts={"updates": updates, "window_rows": sampler.n},
                    seeds={"train": seed, "global_seed_realised": global_seed, "base": settings.seed},
                    extra={"generation": generation, "summary": summary})
+    for r in snapshot_records:  # sealed: the resume files have no further use
+        for name in (RESUME_TRAINER, RESUME_STATE):
+            (snapshot_dir(out_dir, r["update"]) / name).unlink(missing_ok=True)
     return summary
+
+
+def snapshot_resume_key(*, settings: TrainSettings, generation: int, init_checkpoint: Path,
+                        prev_trainer_checkpoint: Path | None, run_dir: Path, gens: list[int], probe_path: Path,
+                        batches: list[tuple[np.ndarray, np.ndarray]]) -> str:
+    """Identity of one phase attempt: a snapshot resumes only an attempt with
+    the same settings, inputs (by sha256) and batch plan."""
+    h = hashlib.sha256()
+    for own, sl in batches:
+        h.update(np.ascontiguousarray(own, dtype=np.int64).tobytes())
+        h.update(b"|")
+        h.update(np.ascontiguousarray(sl, dtype=np.int64).tobytes())
+        h.update(b"\n")
+    ident = {"settings": asdict(settings), "generation": int(generation),
+             "init": sha256_file(init_checkpoint),
+             "prev": None if prev_trainer_checkpoint is None else sha256_file(prev_trainer_checkpoint),
+             "collects": {g: sha256_file(Path(run_dir) / f"gen_{g:04d}" / "collect" / "manifest.json") for g in gens},
+             "probe": sha256_file(probe_path), "plan": h.hexdigest()}
+    return hashlib.sha256(json.dumps(ident, sort_keys=True, default=str).encode()).hexdigest()

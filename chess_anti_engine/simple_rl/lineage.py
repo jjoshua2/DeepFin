@@ -32,6 +32,13 @@ from chess_anti_engine.simple_rl.common import (
 STAGE_ORDER = ("collect", "train", "eval")
 # Inputs outside the run dir that are part of the lineage (the split's files).
 LINEAGE_EXTERNAL_INPUTS = frozenset({"train_openings", "openings"})
+# A reference collect's source files (simple_rl.reference): another run's
+# sealed collect and gen-0 model, re-hashed like in-run inputs.
+SOURCE_INPUT_PREFIX = "source_"
+
+
+def is_lineage_input(name: str, path: Path, run_dir: Path) -> bool:
+    return _inside(path, run_dir) or name in LINEAGE_EXTERNAL_INPUTS or name.startswith(SOURCE_INPUT_PREFIX)
 
 
 def stage_key(generation: int, stage: str) -> tuple[int, int]:
@@ -133,13 +140,17 @@ def verify_stage(run_dir: Path, generation: int, stage: str, *, cache: _ShaCache
         if not isinstance(ref, dict) or "sha256" not in ref:
             continue
         p = Path(ref["path"])
-        if not (_inside(p, run_dir) or name in LINEAGE_EXTERNAL_INPUTS):
+        if not is_lineage_input(name, p, run_dir):
             continue
         now = own.sha(p) if p.exists() else None
         if now != ref["sha256"]:
             bad.append(f"{name}: {p} is {now and now[:12]}, sealed as {str(ref['sha256'])[:12]}")
     if cache is None:
         own.save()
+    if bad and any(b.startswith(SOURCE_INPUT_PREFIX) for b in bad):
+        raise SystemExit(f"gen {generation} {stage}: the source collect this arm references changed after the "
+                         f"reference was sealed ({'; '.join(bad)}). The arm's rows are no longer the ones it "
+                         "recorded; redo this collect (re-reference) with --redo --redo-downstream")
     if bad:
         raise SystemExit(f"gen {generation} {stage}: sealed inputs no longer match their upstream "
                          f"({'; '.join(bad)}). An upstream stage was redone after this one was sealed; "
