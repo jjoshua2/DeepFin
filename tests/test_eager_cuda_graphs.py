@@ -248,3 +248,91 @@ def test_batches_above_the_row_cap_run_eager_and_are_not_captured() -> None:
         assert pe.tobytes() == pg.tobytes(), bsz
         assert we.tobytes() == wg.tobytes(), bsz
     assert graph.cuda_graph_shapes == (8, 16)
+
+
+@needs_cuda
+def test_sync_path_waits_on_the_async_stream_while_graphs_are_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Structural pin for the wait the race test above cannot observe on a host
+    # that serialises cross-stream copies: both paths write the SAME static
+    # graph input, so a sync forward must order itself after the async stream.
+    model = _model("cuda")
+    graph = DirectGPUEvaluator(model, device="cuda", max_batch=16, n_slots=2, legal_bf16=False,
+                               cuda_graphs=True)
+    planes = graph.get_input_buffer(1).shape[1]
+    x = _rows(np.random.default_rng(6), 8, planes)
+    graph.get_input_buffer(8, slot=0)[:] = x
+    _p, _w, event = graph.evaluate_inplace_async(8, slot=0)  # creates the async stream
+    assert event is not None
+    event.synchronize()
+    calls: list[tuple[object, object]] = []
+    orig = torch.cuda.Stream.wait_stream
+
+    def spy(self: torch.cuda.Stream, other: torch.cuda.Stream) -> None:
+        calls.append((self, other))
+        orig(self, other)
+
+    monkeypatch.setattr(torch.cuda.Stream, "wait_stream", spy)
+    graph.get_input_buffer(8, slot=1)[:] = x
+    graph.evaluate_inplace(8, slot=1)
+    assert any(other == graph._stream and me == torch.cuda.current_stream() for me, other in calls), calls
+
+
+@needs_cuda
+def test_relations_and_graph_count_fallbacks_are_counted_and_equal_eager() -> None:
+    model = _model("cuda")
+    eager = DirectGPUEvaluator(model, device="cuda", max_batch=16, legal_bf16=False)
+    graph = DirectGPUEvaluator(model, device="cuda", max_batch=16, legal_bf16=False, cuda_graphs=True)
+    assert graph._eager_graphs is not None
+    graph._eager_graphs._max_graphs = 1  # one shape graphed, every other shape eager
+    planes = eager.get_input_buffer(1).shape[1]
+    rng = np.random.default_rng(7)
+    rel = np.zeros((8, 5, 64, 64), dtype=np.uint8)
+    rel[:, 0, np.arange(64), np.arange(64)] = 1
+    for bsz, relations in ((8, None), (4, None), (8, rel), (8, None)):
+        x = _rows(rng, bsz, planes)
+        outs = []
+        for ev in (eager, graph):
+            ev.get_input_buffer(bsz)[:] = x
+            outs.append(ev.evaluate_inplace(bsz, relations=relations))
+        (pe, we), (pg, wg) = outs
+        assert pe.tobytes() == pg.tobytes()
+        assert we.tobytes() == wg.tobytes()
+    stats = graph.cuda_graph_stats
+    assert stats is not None
+    assert (stats["captures"], stats["replays"]) == (1, 2)
+    assert stats["eager_over_max_graphs"] == 1
+    assert stats["eager_relations"] == 1
+
+
+@needs_cuda
+def test_parameter_replacement_is_caught_by_the_registration_hook_and_backstop() -> None:
+    # The binding caches the parameter list: a registered replacement
+    # (``m.weight = Parameter``) must invalidate it at once, and a write that
+    # bypasses registration (``m._parameters[...] = ...``) within
+    # RETRAVERSE_EVERY calls.
+    model = _model("cuda")
+    graph = DirectGPUEvaluator(model, device="cuda", max_batch=16, legal_bf16=False, cuda_graphs=True)
+    assert graph._eager_graphs is not None
+    planes = graph.get_input_buffer(1).shape[1]
+    x = _rows(np.random.default_rng(8), 8, planes)
+
+    def outs(ev: DirectGPUEvaluator) -> bytes:
+        ev.get_input_buffer(8)[:] = x
+        pol, wdl = ev.evaluate_inplace(8)
+        return pol.tobytes() + wdl.tobytes()
+
+    def eager_now() -> bytes:
+        return outs(DirectGPUEvaluator(model, device="cuda", max_batch=16, legal_bf16=False))
+
+    outs(graph)
+    linear = next(m for m in model.modules() if isinstance(m, torch.nn.Linear))
+    linear.weight = torch.nn.Parameter(linear.weight.detach() * 2.0)
+    assert outs(graph) == eager_now()  # caught on the very next forward
+    assert graph.cuda_graph_stats is not None
+    assert graph.cuda_graph_stats["recaptures"] == 1
+    linear._parameters["weight"] = torch.nn.Parameter(linear.weight.detach() * 0.5)  # bypasses hooks
+    every = graph._eager_graphs.RETRAVERSE_EVERY
+    want = eager_now()
+    got = [outs(graph) for _ in range(every)]
+    assert got[-1] == want  # caught within RETRAVERSE_EVERY calls
+    assert graph.cuda_graph_stats["recaptures"] == 2

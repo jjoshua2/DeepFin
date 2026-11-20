@@ -92,6 +92,11 @@ class CollectSettings:
     rows_per_shard: int = 20000
     device: str = "cpu"
     eval_max_batch: int = 512
+    # Replay CUDA graphs of the evaluator's own eager dense forward (measured
+    # bitwise identical, PR #1414). The collect evaluator is already on dense
+    # fp32 transport (legal_bf16=False), so this is not a transport change.
+    # Refused, not ignored, without CUDA.
+    cuda_graphs: bool = False
     seed: int = 0
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -310,12 +315,21 @@ def _open_stockfish(settings: CollectSettings) -> Any:
 
 def _evaluator(model: Any, settings: CollectSettings) -> Any:
     if not str(settings.device).startswith("cuda"):
+        if settings.cuda_graphs:
+            raise ValueError(f"cuda_graphs needs a CUDA device; collect device is {settings.device!r}")
         return None  # play_batch builds a LocalModelEvaluator on CPU
     from chess_anti_engine.inference import DirectGPUEvaluator
 
     return DirectGPUEvaluator(model, device=settings.device, max_batch=int(settings.eval_max_batch),
                               use_amp=True, amp_dtype="bfloat16", n_slots=1, input_bf16=False,
-                              legal_bf16=False, pad_to_compiled_buckets=False)
+                              legal_bf16=False, pad_to_compiled_buckets=False,
+                              cuda_graphs=bool(settings.cuda_graphs))
+
+
+def evaluator_graph_record(evaluator: Any) -> dict[str, Any]:
+    """What the evaluator REALISED: graphs on/off and its replay/fallback counters."""
+    return {"cuda_graphs": bool(getattr(evaluator, "cuda_graphs", False)),
+            "cuda_graph_stats": getattr(evaluator, "cuda_graph_stats", None)}
 
 
 def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, train_jsonl: Path,
@@ -441,7 +455,8 @@ def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, trai
         stats["book_pass"] = {b: {"start": int(start_books.get(b, {"pass": 1})["pass"]), "end": int(c["pass"])}
                               for b, c in cursor_after["books"].items()}
     stats.update(wall_seconds=wall, games_per_hour=3600.0 * games_done / max(wall, 1e-9),
-                 rows_per_second=stats["rows"] / max(wall, 1e-9), sf_nodes=int(settings.sf_nodes))
+                 rows_per_second=stats["rows"] / max(wall, 1e-9), sf_nodes=int(settings.sf_nodes),
+                 **evaluator_graph_record(evaluator))
     write_json_atomic(gen_dir / STATS, stats)
     config_record = {"settings": asdict(settings),
                      "dataclasses": {k: asdict(v) for k, v in cfg.items()}, "arch": arch}

@@ -1051,6 +1051,16 @@ def _execute(protocol: dict[str, Any], protocol_sha256: str, roster: list[dict[s
                 digest(protocol['actor']['path']) == protocol['actor']['sha256'] and
                 file_stamp(Path(protocol['actor']['path'])) == serving['checkpoint_stat'], 'served actor mutated during generation')
         serving['forwards'] = {**forwards, 'scope': 'actual _encode_tokens calls, including compact legal-policy forwards'}
+        # With protocol serving cuda_graphs on, a graph REPLAY runs no Python
+        # forward: `forwards` then counts captures and eager forwards only
+        # (each replayed shape passed observed_encode once, at capture), and
+        # the replays are in cuda_graph_stats. Banked off the evaluator, so it
+        # records what was realised, not what the protocol asked for.
+        serving['cuda_graphs'] = bool(getattr(evaluator, 'cuda_graphs', False))
+        serving['cuda_graph_stats'] = getattr(evaluator, 'cuda_graph_stats', None)
+        if serving['cuda_graphs']:
+            serving['forwards']['scope'] += '; graph replays excluded (see cuda_graph_stats)'
+
         write_json(out / 'actor-serving.json', serving)
         overlap = exclusions_gate(completed, protocol)
         write_json(out / 'input-exclusions.json', overlap)

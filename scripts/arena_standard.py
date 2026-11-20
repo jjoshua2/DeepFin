@@ -1570,9 +1570,10 @@ def build_arena_evaluator(
         max_batch=int(max_batch),
         n_slots=int(n_slots),
         legal_bf16=False,
-        # Replays CUDA graphs of the same eager forward: bitwise-identical
-        # outputs, without the per-call launch overhead that dominates the
-        # forward at the batch sizes the search submits (--eval-cuda-graphs).
+        # Replays CUDA graphs of the same eager forward: outputs measured
+        # bitwise identical to eager (PR #1414), without the per-call launch
+        # overhead that dominates the forward at the batch sizes the search
+        # submits (--eval-cuda-graphs).
         cuda_graphs=bool(cuda_graphs),
         cuda_graph_max_rows=int(cuda_graph_max_rows),
     )
@@ -4156,9 +4157,14 @@ def add_common_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--eval-cuda-graphs", action="store_true",
                    help="matched_sims, eager (--compile off): replay CUDA graphs of "
                         "the hoisted evaluator's own eager forward, one per batch "
-                        "size. Bitwise-identical outputs (same kernels), several "
-                        "times faster at the leaf batch sizes the search submits, "
-                        "where the eager forward is launch-bound. Off by default.")
+                        "size up to 512 rows. Outputs MEASURED bitwise identical "
+                        "to eager (same kernels; PR #1414); faster at the leaf "
+                        "batch sizes the search submits, where the eager forward "
+                        "is launch-bound. MEMORY: the graphs pin activations for "
+                        "the process lifetime (measured +1.7 GB reserved per "
+                        "evaluator, one per side, on the production net) -- check "
+                        "headroom before running beside training or another GPU "
+                        "job. Off by default.")
     p.add_argument("--eval-max-batch", type=int, default=DEFAULT_EVAL_MAX_BATCH,
                    help="matched_sims: forward-batch cap for the ONE long-lived "
                         f"evaluator built per side (default: {DEFAULT_EVAL_MAX_BATCH}, "
