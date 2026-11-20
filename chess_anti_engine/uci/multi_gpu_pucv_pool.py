@@ -214,6 +214,51 @@ class MultiGpuPucvConfig:
     startup_timeout_s: float | None = None
 
 
+_NO_ROWS = np.empty(0, dtype=np.int32)
+
+
+def _distinct_leaf_rows(
+    leaf_ids: np.ndarray, is_term: np.ndarray, n: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Rows of a descended batch to evaluate, and its duplicate selections.
+
+    Returns ``(eval_rows, dup_rows, dup_first)``: ``eval_rows`` (ascending) is
+    the first row selecting each distinct non-terminal leaf; ``dup_rows[k]``
+    selected the same leaf as the earlier row ``dup_first[k]``. Terminal rows
+    are in neither. Same leaf => same path => same position and history, so
+    the same network input.
+    """
+    live = np.flatnonzero(is_term[:n] == 0).astype(np.int32)
+    if live.size == 0:
+        return live, _NO_ROWS, _NO_ROWS
+    _, first_pos, inverse = np.unique(leaf_ids[live], return_index=True, return_inverse=True)
+    if first_pos.size == live.size:
+        return live, _NO_ROWS, _NO_ROWS
+    first_row = live[first_pos]
+    keep = np.zeros(live.size, dtype=bool)
+    keep[first_pos] = True
+    eval_rows = live[keep]
+    return eval_rows, live[~keep], first_row[inverse[~keep]].astype(np.int32)
+
+
+def _forwarded_rows(pending: tuple[Any, ...]) -> int:
+    """Rows a prepared batch sends to the device."""
+    kind = pending[0]
+    if kind == "gpu_full":
+        return int(pending[2])
+    if kind == "gpu_miss":
+        return len(pending[3])
+    return 0
+
+
+def _fan_out_duplicates(b: dict[str, np.ndarray], pol: np.ndarray, wdl: np.ndarray) -> None:
+    """Give each duplicate selection the outputs of the leaf's first row."""
+    dup_rows, dup_first = b["dup_rows"], b["dup_first"]
+    if dup_rows.size:
+        pol[dup_rows] = pol[dup_first]
+        wdl[dup_rows] = wdl[dup_first]
+
+
 @dataclass(frozen=True)
 class MultiGpuPucvWorkerStats:
     worker_index: int
@@ -223,6 +268,10 @@ class MultiGpuPucvWorkerStats:
     max_batch: int = 0
     wait_seconds: float = 0.0
     wall_seconds: float = 0.0
+    # Rows actually sent to the device (distinct non-terminal leaves that
+    # missed the eval cache) and duplicate selections answered by fan-out.
+    evaluated_rows: int = 0
+    duplicate_leaves: int = 0
 
     @property
     def avg_batch(self) -> float:
@@ -248,6 +297,14 @@ class MultiGpuPucvStats:
     @property
     def terminal_leaves(self) -> int:
         return sum(w.terminal_leaves for w in self.workers)
+
+    @property
+    def evaluated_rows(self) -> int:
+        return sum(w.evaluated_rows for w in self.workers)
+
+    @property
+    def duplicate_leaves(self) -> int:
+        return sum(w.duplicate_leaves for w in self.workers)
 
     @property
     def avg_batch(self) -> float:
@@ -1260,6 +1317,8 @@ class MultiGpuPucvPool:
         pending: Any = None
         batches = 0
         terminal_leaves = 0
+        evaluated_rows = 0
+        duplicate_leaves = 0
         max_batch = 0
         wait_seconds = 0.0
         wall_start = time.perf_counter()
@@ -1317,6 +1376,9 @@ class MultiGpuPucvPool:
                 else:
                     next_handle = None
 
+                if next_handle is not None:
+                    evaluated_rows += _forwarded_rows(next_handle)
+                    duplicate_leaves += int(bufs[next_local]["dup_rows"].size)
                 if next_handle is not None and next_handle[0] != "cache_only":
                     receipts[next_local] = pending_receipt(next_handle)
                     unregistered_receipt[0] = None
@@ -1376,6 +1438,8 @@ class MultiGpuPucvPool:
                     batches=previous.batches + batches,
                     leaves=self._integrated[idx],
                     terminal_leaves=previous.terminal_leaves + terminal_leaves,
+                    evaluated_rows=previous.evaluated_rows + evaluated_rows,
+                    duplicate_leaves=previous.duplicate_leaves + duplicate_leaves,
                     max_batch=max(previous.max_batch, max_batch),
                     wait_seconds=previous.wait_seconds + wait_seconds,
                     wall_seconds=previous.wall_seconds + time.perf_counter() - wall_start,
@@ -1401,8 +1465,28 @@ class MultiGpuPucvPool:
   # batch_integrate_leaves skips terminal rows regardless. (The cache-on
   # path below reaches the same result via its empty miss list.)
         if n_term >= n:
+            b["dup_rows"], b["dup_first"] = _NO_ROWS, _NO_ROWS
             return ("cache_only", buf_idx, n, {}, 0.0)
+        # Only the first selection of each distinct leaf is evaluated: terminal
+        # rows (already backpropped by the descent) are left out of the forward,
+        # and a leaf several descents selected in this batch (virtual loss does
+        # not prevent it) is evaluated once, its output copied to every later
+        # row (``_fan_out_duplicates``) -- the integration is unchanged.
+        eval_rows, b["dup_rows"], b["dup_first"] = _distinct_leaf_rows(
+            b["leaf_ids"], b["is_term"], n,
+        )
         cache = self._cache
+        if cache is None and eval_rows.size < n:
+            m = int(eval_rows.size)
+            enc_view[:m] = enc_view[eval_rows]
+            if rel is None:
+                handle = submit_async(evaluator, m, slot=slot)
+            else:
+                rel[:m] = rel[eval_rows]
+                handle = submit_async(evaluator, m, slot=slot, relations=rel[:m])
+            if receipt_cell is not None:
+                receipt_cell[0] = handle
+            return ("gpu_miss", buf_idx, n, eval_rows, {}, handle, time.perf_counter())
         if cache is None:
             if rel is None:
                 handle = submit_async(evaluator, n, slot=slot)
@@ -1416,9 +1500,7 @@ class MultiGpuPucvPool:
 
         hit_values: dict[int, tuple[np.ndarray, np.ndarray]] = {}
         miss_indices: list[int] = []
-        for i in range(n):
-            if int(b["is_term"][i]) != 0:
-                continue
+        for i in eval_rows.tolist():
             hit = cache.get(b["cache_keys"][i], enc_view[i])
             if hit is None:
                 miss_indices.append(i)
@@ -1476,6 +1558,7 @@ class MultiGpuPucvPool:
         if kind == "cache_only":
             _, buf_idx, n, hit_values, submit_t = pending
             pol, wdl = self._materialize_cached_outputs(int(n), hit_values, None, None)
+            _fan_out_duplicates(bufs[buf_idx], pol, wdl)
             return bufs[buf_idx], int(n), pol, wdl, float(submit_t)
 
         _, buf_idx, n, miss_idx, hit_values, handle, submit_t = pending
@@ -1484,13 +1567,14 @@ class MultiGpuPucvPool:
         wdl_m = wdl_t.numpy() if hasattr(wdl_t, "numpy") else np.asarray(wdl_t)
         b = bufs[buf_idx]
         cache = self._cache
-        assert cache is not None
-        for j, original_i in enumerate(miss_idx):
-            i = int(original_i)
-            cache.put(b["cache_keys"][i], b["enc_rows"][i], pol_m[j], wdl_m[j])
+        if cache is not None:
+            for j, original_i in enumerate(miss_idx):
+                i = int(original_i)
+                cache.put(b["cache_keys"][i], b["enc_rows"][i], pol_m[j], wdl_m[j])
         pol, wdl = self._materialize_cached_outputs(
             int(n), hit_values, miss_idx, (pol_m, wdl_m),
         )
+        _fan_out_duplicates(b, pol, wdl)
         return b, int(n), pol, wdl, float(submit_t)
 
     def _materialize_cached_outputs(

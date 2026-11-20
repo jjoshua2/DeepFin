@@ -423,7 +423,9 @@ def _pucv_stats_string(
     return (
         f"pucv leaves={stats.leaves} batches={stats.batches} "
         f"avg_batch={stats.avg_batch:.1f} max_batch={max_batch} "
-        f"workers={worker_leaves} pending={mode}{cache_part}"
+        f"workers={worker_leaves} pending={mode}{cache_part} "
+        f"evals={stats.evaluated_rows} terminal={stats.terminal_leaves} "
+        f"duplicate={stats.duplicate_leaves}"
     )
 
 
