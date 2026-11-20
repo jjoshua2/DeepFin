@@ -104,11 +104,6 @@ class CollectSettings:
     # side's targets (docs/simple_rl_loop.md, "Evaluator batch cap"). An explicit
     # value below required_leaf_rows is refused.
     eval_max_batch: int | None = None
-    # Replay CUDA graphs of the evaluator's own eager dense forward (measured
-    # bitwise identical, PR #1414). The collect evaluator is already on dense
-    # fp32 transport (legal_bf16=False), so this is not a transport change.
-    # Refused, not ignored, without CUDA.
-    cuda_graphs: bool = False
     seed: int = 0
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -402,29 +397,33 @@ def validate_settings(settings: CollectSettings) -> None:
     """
     if settings.opening_sampling not in OPENING_SAMPLING:
         raise ValueError(f"opening_sampling must be one of {OPENING_SAMPLING}")
-    if settings.cuda_graphs and not str(settings.device).startswith("cuda"):
-        raise ValueError(f"cuda_graphs needs a CUDA device; collect device is {settings.device!r}")
     if str(settings.device).startswith("cuda"):
         realised_eval_max_batch(settings)  # a leaf-dropping evaluator cap
 
 
 def _evaluator(model: Any, settings: CollectSettings) -> Any:
+    """The collect's evaluator. On CUDA it always replays CUDA graphs of its own
+    eager dense forward (the one fast path; outputs measured bitwise identical
+    to the eager forward, PR #1414). Off CUDA graphs cannot run: play_batch
+    builds an eager LocalModelEvaluator. Either way the realised mode is
+    recorded (``evaluator_graph_record``)."""
     if not str(settings.device).startswith("cuda"):
-        if settings.cuda_graphs:
-            raise ValueError(f"cuda_graphs needs a CUDA device; collect device is {settings.device!r}")
-        return None  # play_batch builds a LocalModelEvaluator on CPU
+        return None  # play_batch builds an eager LocalModelEvaluator on CPU
     from chess_anti_engine.inference import DirectGPUEvaluator
 
     return DirectGPUEvaluator(model, device=settings.device, max_batch=realised_eval_max_batch(settings),
                               use_amp=True, amp_dtype="bfloat16", n_slots=1, input_bf16=False,
                               legal_bf16=False, pad_to_compiled_buckets=False,
-                              cuda_graphs=bool(settings.cuda_graphs))
+                              cuda_graphs=True)
 
 
 def evaluator_graph_record(evaluator: Any) -> dict[str, Any]:
     """What the evaluator REALISED: graphs on/off and its replay/fallback counters."""
     max_batch = getattr(evaluator, "_max_batch", None)
-    return {"cuda_graphs": bool(getattr(evaluator, "cuda_graphs", False)),
+    graphs = bool(getattr(evaluator, "cuda_graphs", False))
+    return {"cuda_graphs": graphs,
+            # realised evaluator mode: graphs on CUDA; eager only where graphs cannot run (CPU)
+            "evaluator_mode": "cuda_graphs" if graphs else ("eager_cpu" if evaluator is None else "eager"),
             "cuda_graph_stats": getattr(evaluator, "cuda_graph_stats", None),
             # read off the evaluator the search consumed (None on CPU: no cap)
             "eval_max_batch_realised": None if max_batch is None else int(max_batch)}

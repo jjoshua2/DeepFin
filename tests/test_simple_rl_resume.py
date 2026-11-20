@@ -381,7 +381,7 @@ def _tree_snapshot(root: Path) -> dict[str, bytes]:
 
 
 @pytest.mark.parametrize(("command", "generation", "bad", "reason"), [
-    ("collect", 1, ["--collect-cuda-graphs"], "cuda_graphs needs a CUDA device"),     # device cpu
+    ("collect", 1, ["--device", "cuda", "--eval-max-batch", "1"], "leaf rows one search call"),  # settings only
     ("train", 1, ["--presentations", "3"], "presentations must be 1 or 2"),
     ("evaluate", 1, ["--eval-opening-plies", "1"], "longest EVAL line"),
 ])
@@ -409,7 +409,8 @@ def test_a_refused_standalone_stage_on_a_new_run_writes_nothing(tmp_path: Path,
                                                                 monkeypatch: pytest.MonkeyPatch) -> None:
     openings, model_config = _setup(tmp_path, monkeypatch)
     run_dir = tmp_path / "run"
-    argv = _stage_argv(_argv(run_dir, openings, model_config), "collect", 1, "--collect-cuda-graphs")
-    with pytest.raises(SystemExit, match="cuda_graphs needs a CUDA device"):
+    argv = _stage_argv(_argv(run_dir, openings, model_config), "collect", 1, "--device", "cuda",
+                       "--eval-max-batch", "1")
+    with pytest.raises(SystemExit, match="leaf rows one search call"):
         simple_rl_loop.main(argv)
     assert not run_dir.exists() or _tree_snapshot(run_dir) == {}

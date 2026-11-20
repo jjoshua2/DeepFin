@@ -279,12 +279,13 @@ python-chess APIs the engine runtime relies on:
   (`scripts/arena_standard.py:1563`), or a throwaway `LocalModelEvaluator`
   per call when none is passed (the stream-pool OOM hazard documented at
   `selfplay/match.py:119`).
-- **Eager CUDA graphs (opt-in):** `DirectGPUEvaluator(cuda_graphs=True)`
+- **Eager CUDA graphs:** `DirectGPUEvaluator(cuda_graphs=True)`
   replays a captured graph of its own eager DENSE forward per batch size
   (`inference._EagerForwardGraphs`); measured bitwise-identical to eager,
   and several times faster at the leaf batch sizes the Gumbel search
-  submits, where the eager forward is launch-bound. Arena:
-  `--eval-cuda-graphs` (eager only). An in-process collector can pass
+  submits, where the eager forward is launch-bound. The arena and the loop
+  driver's collect use it wherever it can run, with no flag (since
+  2026-11-21: one fast path). An in-process collector can pass
   `cuda_graphs: true` only if its serving already uses dense transport
   (`legal_bf16: false`); with the default `legal_bf16=True` the compact
   legal-BF16 path carries the leaves and is not graphed, so the combination
@@ -298,9 +299,14 @@ python-chess APIs the engine runtime relies on:
   graphs. Also refused off CUDA, with `pad_to_compiled_buckets`, or for a
   `torch.compile`d model or submodule.
   - **Where it applies:** in-process evaluators on dense transport only --
-    the arena, `scripts/core_finite_collect.py` (protocol serving
-    `cuda_graphs: true`) and the loop driver's collect stage
-    (`scripts/simple_rl_loop.py --collect-cuda-graphs`). The distributed
+    the arena (always, on CUDA matched_sims with the hoisted evaluator and an
+    eager model; eager on CPU, with `--eval-max-batch 0`, `--volatility-*`,
+    in matched_time and under `--compile on`; `--compile auto` no longer
+    compiles where graphs can run, as they measured faster: 0.65 vs 0.76
+    s/game in steady state, 256-game SL-base self-match at 64 sims, with no
+    compile wait), `scripts/core_finite_collect.py`
+    (protocol serving `cuda_graphs: true`) and the loop driver's collect stage
+    (always on CUDA; eager on CPU, recorded as `evaluator_mode`). The distributed
     selfplay worker (inference broker / compact transport) and the UCI engine
     cannot use it.
   - **Memory:** graphs pin their activations for the process lifetime: +1.5
