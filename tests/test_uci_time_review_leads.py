@@ -159,3 +159,24 @@ def test_a_normal_increment_clock_is_never_answered_at_once() -> None:
             if not lim.clock_exhausted:
                 assert lim.deadline_ms is not None
                 assert lim.deadline_ms >= _MIN_DEADLINE_MS
+
+
+def test_an_at_once_answer_blames_the_clock_unless_the_movetime_alone_is_too_short(out) -> None:
+    """`go movetime 100 wtime 600`: the clock's funding rule (570 ms < 900 ms)
+    answers at once although the movetime alone leaves 72 ms; the line names
+    the clock. `go movetime 30` alone leaves 2 ms: the line names the movetime."""
+    worker = _mock_worker()
+    worker.tree_root_bestmove.return_value = "e7e5"
+    engine = Engine(worker, options=EngineOptions())
+    try:
+        engine.dispatch(parse_command("position startpos moves e2e4"))
+        engine.dispatch(parse_command("go movetime 100 wtime 600 btime 600"))
+        assert out.wait_bestmoves(1) == ["e7e5"], out.text()
+        assert "clock too short to search: 600 ms on the clock" in out.text()
+        assert "movetime too short to search" not in out.text()
+        engine.dispatch(parse_command("go movetime 30 wtime 60000 btime 60000"))
+        assert out.wait_bestmoves(2) == ["e7e5", "e7e5"], out.text()
+        assert "movetime too short to search: movetime 30" in out.text()
+        assert worker.run.call_count == 0
+    finally:
+        engine.close()
