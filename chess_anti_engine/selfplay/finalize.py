@@ -1239,8 +1239,54 @@ def _build_replay_samples(
                 is_selfplay=is_selfplay_slot,
             ),
         )
+        if bool(getattr(state.game, "record_root_stats", False)):
+            budget = getattr(rec, "search_budget", None)
+            if budget is not None:
+                out[-1].search_budget = int(budget)
+            # Fast (playout-capped) rows keep their search statistics too:
+            # their policy target is masked, but a value target built from
+            # the survivor's Q must not fall back to another definition.
+            _attach_root_stats_to_sample(out[-1], rec)
 
     return out
+
+
+def _attach_root_stats_to_sample(sample: ReplaySample, rec: _NetRecord) -> None:
+    """Project a record's root search statistics into compact policy space.
+
+    Written only as a complete set: a row whose searched support contains a
+    move outside the compact vocabulary (or that has no statistics -- a solved
+    root, a resumed record) carries none, so the per-field ``has_`` flags can
+    never describe half a search. The flags are re-read from the GameConfig at
+    this boundary, like ``record_prior_top1``.
+    """
+    stats = getattr(rec, "root_stats", None)
+    played = getattr(rec, "played_action", None)
+    if stats is None or played is None:
+        return
+    legal = np.asarray(stats.legal, dtype=np.int64)
+    compact = FULL_TO_COMPACT_POLICY[legal]
+    survivor = int(FULL_TO_COMPACT_POLICY[int(stats.survivor)])
+    played_c = int(FULL_TO_COMPACT_POLICY[int(played)])
+    width = int(np.asarray(sample.policy_target).shape[0])
+    if (compact < 0).any() or survivor < 0 or played_c < 0 or width != int(FULL_TO_COMPACT_POLICY.max()) + 1:
+        return
+    log_prior = np.zeros((width,), dtype=np.float32)
+    q = np.zeros((width,), dtype=np.float32)
+    visits = np.full((width,), -1.0, dtype=np.float32)
+    log_prior[compact] = np.asarray(stats.log_prior, dtype=np.float32)
+    q[compact] = np.asarray(stats.completed_q, dtype=np.float32)
+    visits[compact] = np.asarray(stats.visits, dtype=np.float32)
+    sample.root_log_prior = log_prior
+    sample.root_child_q = q
+    sample.root_child_visits = visits
+    sample.root_net_value = float(stats.net_value)
+    sample.root_net_wdl = np.asarray(stats.net_wdl, dtype=np.float32)
+    sample.root_survivor_q = float(stats.survivor_q)
+    sample.root_node_q = float(stats.node_q)
+    sample.root_start_visits = int(stats.start_visits)
+    sample.root_survivor_index = survivor
+    sample.played_move_index = played_c
 
 
 def _resolve_terminal_result(

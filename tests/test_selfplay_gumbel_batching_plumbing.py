@@ -327,6 +327,24 @@ _INTENTIONALLY_NOT_CONFIGURABLE: dict[str, str] = {
         "inert without volatility_q_scale/volatility_fpu, which cannot run on "
         "the distributed path at all"
     ),
+    # Direct finite-call research knobs (scripts/simple_rl_loop.py passes them
+    # straight into SearchConfig). Not yaml keys and not published to workers:
+    # the distributed fleet keeps GumbelConfig's own default for both, which is
+    # what these fields default to. Their take-effect proof is by execution in
+    # tests/test_simple_rl_search_knobs.py.
+    "gumbel_c_visit": (
+        "direct-caller research knob (simple RL loop); not a yaml key, the "
+        "worker keeps the GumbelConfig default"
+    ),
+    "gumbel_target_q_rescale": (
+        "direct-caller research knob (simple RL loop); not a yaml key, the "
+        "worker keeps the GumbelConfig default"
+    ),
+    "gumbel_tree_reuse": (
+        "direct-caller research knob (simple RL loop); not a yaml key, the "
+        "worker keeps the default True (carry the chosen subtree), which is "
+        "what production selfplay has always done"
+    ),
 }
 
 # SearchConfig fields with exactly ONE accepted value, so no sentinel distinct
@@ -345,6 +363,18 @@ _GATE_EVAL_NOT_SET: dict[str, str] = {
     "simulations": (
         "set per phase by the caller via dataclasses.replace "
         "(gate_mcts_sims / eval_mcts_simulations), not from TrialConfig"
+    ),
+    "gumbel_c_visit": (
+        "not a TrialConfig/yaml knob; production selfplay leaves it at the "
+        "same default the gate/eval SearchConfig gets"
+    ),
+    "gumbel_target_q_rescale": (
+        "not a TrialConfig/yaml knob, and store-arm only: a gate/eval match "
+        "stores no training rows"
+    ),
+    "gumbel_tree_reuse": (
+        "not a TrialConfig/yaml knob; read only by the selfplay network turn "
+        "(root_node_ids), never by a gate/eval match"
     ),
 }
 

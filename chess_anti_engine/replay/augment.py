@@ -174,6 +174,16 @@ def mirror_sample(s: ReplaySample, *, input_history_encoding: str | None = None)
     out.has_sf_p0 = getattr(s, "has_sf_p0", None)
   # Per-move value vector: same move-index permutation as a policy under reflection.
     out.sf_p0_regret = None if s.sf_p0_regret is None else mirror_policy(s.sf_p0_regret)
+  # Root search statistics: per-move vectors permute like a policy; values,
+  # the root WDL and the budgets are mirror-invariant. (The two move indices
+  # are POLICY_INDEX_FIELDS, remapped by the loop above.)
+    for name in ("root_log_prior", "root_child_q", "root_child_visits"):
+        v = getattr(s, name, None)
+        setattr(out, name, None if v is None else mirror_policy(np.asarray(v, dtype=np.float32)))
+    for name in ("root_net_value", "root_survivor_q", "root_node_q", "root_start_visits", "search_budget"):
+        setattr(out, name, getattr(s, name, None))
+    wdl = getattr(s, "root_net_wdl", None)
+    out.root_net_wdl = None if wdl is None else np.asarray(wdl, dtype=np.float32).copy()
     out.has_sf_p0_regret = getattr(s, "has_sf_p0_regret", None)
 
     out.volatility_target = None if s.volatility_target is None else np.asarray(s.volatility_target, dtype=np.float32)
