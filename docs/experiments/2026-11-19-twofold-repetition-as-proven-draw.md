@@ -460,11 +460,30 @@ case only the engine-side guard (#1421) is warranted.
 - Not measured: repeats of pre-root positions deeper below the root. Measuring it needs
   searches with the real net.
 
-**Identity: both claims hold because only pre-root matches change.**
+**Identity: both claims hold because only pre-root matches change, under the
+conditions below.**
 
 1. A C counter of twofold hits whose match index lies below the root boundary. On a
    fixed seed and position set, every row with counter 0 produces a bit-identical
-   policy, value and move.
+   policy, value and move, under the conditions stated here:
+
+   **Conditions for both counter-based identity tests (B1 and B2).** "Counter 0 ⇒
+   bit-identical" holds only when each row's search is independent: a fresh tree (no
+   subtree carried from an earlier ply, and a fresh transposition table) and
+   batch-invariant evaluation (CPU fp32, or one row per call). Otherwise a row with zero
+   hits in its own search can still differ through:
+   - (i) the subtree carried from an earlier ply (`network_turn.py:1322-1327`, gate
+     `gumbel_c.py:1483-1486`), whose N/W/solved marks differ between arms, and B1's own
+     reroot clearing;
+   - (ii) TT donors built in earlier, divergent searches (`_mcts_tree.c:1995-2017`);
+   - (iii) cross-game batch composition under bf16/TF32 GPU kernels (a stated risk, not
+     measured);
+   - (iv) trajectory divergence once any played move differs.
+
+   The alternative is a counter cumulative over the whole game and the tree's lifetime,
+   with one game at a time; then only games whose cumulative counter is 0 are claimed
+   identical. Without one of these setups the gate raises false "leak" alarms in
+   production-style runs.
 2. On `data/audit_set_v1.jsonl`, targets are bit-identical under both rules. Its rows
    are FEN-only, with no move history, so the repetition stack starts empty and no
    pre-root match can exist. In-tree twofolds still fire there, identically under both
@@ -487,13 +506,20 @@ case only the engine-side guard (#1421) is warranted.
 **Identity.**
 
 - A C counter of **every** twofold hit, in-tree and pre-root alike. Rows whose searches
-  hit no twofold at all are bit-identical.
+  hit no twofold at all are bit-identical, under the same conditions as B1 (independent
+  per-row search with a fresh tree and fresh TT, batch-invariant evaluation; or a
+  counter cumulative over the game with one game at a time).
 - **No audit-set identity claim.** In-tree twofolds fire on `audit_set_v1` too, and B2
   changes how they resolve, propagate and stop a solved root. Its targets can
   legitimately differ there.
 
 **Audit B2:** the same frozen audit procedure, run as a separate readout with
 `--rule root_boundary,root_boundary+no_proof`. That way B2 is judged on top of B1.
+
+The `v1` frozen rows were selected for pre-root repeats, so they are a weak sample for B2,
+whose effect is on in-tree proofs anywhere. B2's audit therefore needs its own selection:
+rows whose search had any twofold hit, frozen the same way as `v1` (written as
+`twofold_audit_rows_b2_v1.jsonl`, with its sha256 recorded before either arm runs).
 
 **Order.** B1 first: it is the minimal step, cleanly testable, and covers the game-history
 case that produces the self-play rows measured in §2b. Then B2, only if B1 passes, or as
@@ -537,7 +563,15 @@ them by construction. They still serve as B1's identity control.
    ```
 
 3. **Run both arms** with the SL base in a GPU pause window, at the collection's
-   self-play search profile, read from its `resolved-profile.json`:
+   self-play search profile, read from its `resolved-profile.json`.
+   - **Fresh tree per row.** The deciding comparison searches each row from a fresh tree
+     (fresh TT, no carried subtree), with the full move history, identically in both
+     arms.
+   - **Consequence.** The stored production targets came from warm trees, carried across
+     plies. This measures the rule's effect at a cold root, not the carried-subtree
+     effect.
+   - **Warm-tree variant (secondary, non-deciding).** Replay each row's game from the
+     opening with tree reuse, as `network_turn.py` does, and score it the same way.
 
    ```bash
    PYTHONPATH=. python3 scripts/twofold_target_audit.py search \
