@@ -16,6 +16,8 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
+- [2026-11-19: Twofold repetition as a proven draw — semantics, footprint, defects, plan](2026-11-19-twofold-repetition-as-proven-draw.md) — investigation only, no code change: the C search proves a draw on the first repeat counting pre-root game history (lc0 does not); 3.93% of 497,027 banked searched roots carry such a child and 39% of banked twofold events did not end drawn; UCI PUCT/walker reroot keeps a stale DRAW root; a twofold hides a mate in 1; options C (engine fix now) then B (lc0-style, arena-gated) proposed, awaiting owner
+
 - [2026-11-19: Winning-root draw pruning — no fake forced moves, below-zero draw fallback](2026-11-19-root-draw-pruning-singleton-fix.md) — search-correctness change; self-play footprint measured on 497,027 banked plies: 3.1 stored targets and 1.2 played moves per 10,000 plies change, all other roots bit-identical; no training experiment
 
 - [2026-11-19: RL takeover — diagnostics and a same-data policy-only ablation](2026-11-19-rl-takeover-diagnostics-and-policy-only-ablation.md) — search gain measured (+849 Elo 64 vs 1 sim, +272 for 256 vs 64, +478 for 800 vs 64), no pipeline defect found in F12 cycle 1, policy-only ablation registered before any update
