@@ -216,3 +216,14 @@ def test_a_capped_ancestor_outside_the_window_still_taints_and_is_refused(
     with pytest.raises(ValueError, match=r"generation\(s\) \[1\] were collected at an evaluator cap"):
         train_generation(run_dir=run, generation=2, init_checkpoint=model, prev_trainer_checkpoint=None,
                          settings=TrainSettings(device="cpu", presentations=1))
+
+
+def test_a_refused_run_leaves_no_run_dir(tmp_path: Path) -> None:
+    from scripts import simple_rl_loop
+
+    run = tmp_path / "run"
+    with pytest.raises(SystemExit, match="--eval-max-batch 512 is below"):
+        simple_rl_loop.main(["run", "--run-dir", str(run), "--openings-dir", str(tmp_path), "--random-init",
+                             "--device", "cuda", "--concurrency", "64", "--games", "64", "--eval-max-batch", "512",
+                             "--generations", "1"])
+    assert not run.exists()

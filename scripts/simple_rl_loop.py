@@ -333,13 +333,14 @@ def check_run_config(a: argparse.Namespace, run_dir: Path) -> None:
 
 def cmd_run(a: argparse.Namespace) -> int:
     run_dir = Path(a.run_dir)
-    run_dir.mkdir(parents=True, exist_ok=True)
     markers = [Path(m) for m in (a.pause_marker or ())]
     blocked = blocking_markers(run_dir, markers)
     if blocked:
         print("not starting: " + "; ".join(blocked), file=sys.stderr)
         return EXIT_BLOCKED
+    # Validate BEFORE creating anything: a refused setting leaves no run dir behind.
     validate_before_pinning(a, run_dir, {"collect", "train"} | run_stages_left(a, run_dir))
+    run_dir.mkdir(parents=True, exist_ok=True)
     check_run_config(a, run_dir)
     init_run(run_dir, init_checkpoint=a.init_checkpoint, random_init=a.random_init,
              model_config=a.model_config, arch_from=a.arch_from, seed=a.seed)
