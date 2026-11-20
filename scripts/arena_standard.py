@@ -3725,13 +3725,14 @@ def run_arena(
                 model_reference, device=device, max_batch=eval_max_batch,
                 cuda_graphs=eval_cuda_graphs,
             )
-            _realized_eval_cuda_graphs = bool(
-                evaluator_candidate.cuda_graphs and evaluator_reference.cuda_graphs
-            )
+            # Read off the objects: an evaluator without the attribute (any
+            # non-DirectGPUEvaluator) is not replaying graphs, whatever was asked.
+            graphs_candidate = bool(getattr(evaluator_candidate, "cuda_graphs", False))
+            graphs_reference = bool(getattr(evaluator_reference, "cuda_graphs", False))
+            _realized_eval_cuda_graphs = graphs_candidate and graphs_reference
             print(
                 "[arena] eval CUDA graphs (eager-forward replay): "
-                f"candidate={evaluator_candidate.cuda_graphs} "
-                f"reference={evaluator_reference.cuda_graphs}",
+                f"candidate={graphs_candidate} reference={graphs_reference}",
                 flush=True,
             )
   # Announced off the OBJECTS, through the very expressions mcts/gumbel_c.py
