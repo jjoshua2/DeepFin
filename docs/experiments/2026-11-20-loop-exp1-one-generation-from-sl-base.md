@@ -386,24 +386,37 @@ adds `"eval_max_batch_equals_leaf_rows": {"equals": true}`. G-C1 is
 something must show it ran. Read from the collect's own `stats.json`:
 - **Reported:** `cuda_graphs` is true and `cuda_graph_stats.replays` > 0. If either
   fails, "fast path did not run" is recorded here before any training proceeds. It
-  voids nothing: graphs change speed, not what is computed, so the collect is still
-  valid data.
+  voids nothing: graphs are intended to change speed only (their identity on this net
+  is unchecked; see [Not verified](#not-verified)), so the collect is kept as data.
 - **Recorded only:** the eager counters `eager_over_max_rows`,
-  `eager_over_max_graphs` and `eager_relations` (forwards that ran eager instead of
-  replaying a graph). The eager share is not gated, for the same reason.
+  `eager_over_max_graphs` and `eager_relations` (dense forwards that ran eager instead
+  of replaying a graph). A non-trivial eager share is expected: on the banked
+  graphs-on bench collect, 573 dense forwards ran eager against 1,590 replays. The
+  eager share is therefore recorded, not gated.
+
+The check writes its own output file (no pipe, so the exit code seen is Python's) and
+prints the exit code, which is recorded here. Exit 0 = the fast path ran; exit 3 =
+"fast path did not run" (reported, not a void); any other code (for example 127, no
+interpreter) means the check itself did not run and is repeated.
 
 ```bash
-python -c 'import json, sys; s = json.load(open(sys.argv[1])); g = s.get("cuda_graph_stats") or {}
+gc11() {  # $1 = sealed collect dir, $2 = output JSON
+  python3 -c 'import json, sys
+s = json.load(open(sys.argv[1])); g = s.get("cuda_graph_stats") or {}
 keys = ("replays", "captures", "recaptures", "eager_over_max_rows", "eager_over_max_graphs", "eager_relations")
-print(json.dumps({"cuda_graphs": s.get("cuda_graphs"), **{k: g.get(k) for k in keys}}))
-sys.exit(0 if s.get("cuda_graphs") is True and (g.get("replays") or 0) > 0 else 3)' \
-  $R/collect/gen_0001/collect/stats.json | tee $R/gates/collect_primary.gc11.json
+out = {"cuda_graphs": s.get("cuda_graphs"), **{k: g.get(k) for k in keys}}
+open(sys.argv[2], "w").write(json.dumps(out) + "\n")
+print(json.dumps(out))
+sys.exit(0 if s.get("cuda_graphs") is True and (g.get("replays") or 0) > 0 else 3)' "$1/stats.json" "$2"
+  echo "exit=$?"
+}
+gc11 $R/collect/gen_0001/collect $R/gates/collect_primary.gc11.json          # primary
+gc11 $R/posctl/collect/gen_0001/collect $R/gates/collect_control.gc11.json   # control
 ```
 
-Exit code 3 here means "fast path did not run", to be reported. It is not a void.
-Checked on two banked bench collects: graphs on gives exit 0 (`replays` 1,590,
-`eager_over_max_rows` 573); graphs off gives exit 3 (`cuda_graphs` false). The same
-check runs on the control's collect.
+This block was run verbatim (the function, then a call per collect) on two banked
+bench collects. Graphs on printed `exit=0`, with `replays` 1,590 and
+`eager_over_max_rows` 573. Graphs off printed `exit=3`, with `cuda_graphs` false.
 
 **Command.** Exit code 3 means a gate failed or its field was missing or NaN:
 
@@ -702,8 +715,9 @@ start.
   the value still to be written shown here as the placeholder FLOOR (FLOOR is not
   valid JSON and must be replaced by the measured number):
   `{"audit.mean_abs_q": {"min": FLOOR}, "audit.mean_p_draw": {"min": 0.45, "max": 0.60}}`.
-- **G-C11 (reported, voids nothing):** the same fast-path check on
-  `posctl/collect/gen_0001/collect/stats.json`.
+- **G-C11 (reported, voids nothing):** the same `gc11` check on
+  `posctl/collect/gen_0001/collect` (the second call in the G-C11 block), with its
+  printed exit code recorded.
 - **Collect gates, gated:** G-C1 (= 0), G-C2 (equal), G-C7 (≥ 80 rows per game) and
   G-C10 (≤ 0.05) with the primary's bounds, and G-C3 at ≥ +0.30 on both root classes
   (the primary's bound is +0.50). These test the machinery, not the start net. G-C3 is
