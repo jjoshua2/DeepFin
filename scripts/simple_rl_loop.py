@@ -43,6 +43,7 @@ from chess_anti_engine.simple_rl.evaluate import (
     tripwire_table,
 )
 from chess_anti_engine.simple_rl.learn import MODEL_FILE, TrainSettings, train_generation
+from chess_anti_engine.simple_rl.lineage import later_sealed, unseal_after, verify_before, verify_stage
 from chess_anti_engine.simple_rl.openings import split_openings
 
 EXIT_TRIPWIRE = 3
@@ -253,7 +254,7 @@ def tripwire_exit(a: argparse.Namespace, run_dir: Path) -> int:
 RUN_CONFIG_EXEMPT = frozenset({
     # `device` is NOT exempt: it switches bf16 autocast in collect and train.
     # `eval_device` only places the arena (whose AMP choice is its own record).
-    "command", "run_dir", "generations", "generation", "redo", "allow_config_change", "threads",
+    "command", "run_dir", "generations", "generation", "redo", "redo_downstream", "allow_config_change", "threads",
     "pause_marker", "eval_device", "tripwire", *TRIPWIRE_FIELDS,
 })
 
@@ -292,9 +293,11 @@ def cmd_run(a: argparse.Namespace) -> int:
     stages = [("collect", do_collect), ("train", do_train)]
     if not a.no_eval:
         stages.append(("eval", do_evaluate))
+    verify_stage(run_dir, 0, "init")
     for g in range(1, int(a.generations) + 1):
         for name, fn in stages:
             if stage_done(gen_dir(run_dir, g) / name):
+                verify_stage(run_dir, g, name)  # a sealed stage is reused only if its upstream is unchanged
                 continue
             blocked = blocking_markers(run_dir, markers)
             if blocked:
@@ -315,10 +318,25 @@ def cmd_stage(a: argparse.Namespace) -> int:
         return EXIT_BLOCKED
     if (run_dir / RUN_CONFIG).exists():
         check_run_config(a, run_dir)  # the same pinned settings a `run` would be held to
-    stage_dir = gen_dir(run_dir, a.generation) / ("eval" if a.command == "evaluate" else a.command)
+    stage = "eval" if a.command == "evaluate" else a.command
+    stage_dir = gen_dir(run_dir, a.generation) / stage
     if stage_done(stage_dir) and not a.redo:
+        verify_before(run_dir, a.generation, stage, inclusive=True)
         print(f"{stage_dir} is already complete (manifest present); --redo to replace it", file=sys.stderr)
         return 0
+    if a.redo_downstream and not a.redo:
+        raise SystemExit("--redo-downstream needs --redo")
+    downstream = later_sealed(run_dir, a.generation, stage)
+    if downstream and not a.redo_downstream:
+        raise SystemExit(f"gen {a.generation} {stage}: later stages are sealed "
+                         f"({', '.join(f'gen {g} {s}' for g, s in downstream)}) and were built on this one; "
+                         "pass --redo-downstream to unseal them (moved to <run>/superseded/), or redo a later stage")
+    verify_before(run_dir, a.generation, stage, inclusive=False)
+    if downstream:
+        print(json.dumps({"redo_downstream": unseal_after(run_dir, a.generation, stage, include_self=True)}),
+              flush=True)
+    elif stage_dir.exists() and a.redo and stage_done(stage_dir):
+        unseal_after(run_dir, a.generation, stage, include_self=True)  # rewind this stage's own side files
     if stage_dir.exists() and a.redo:
         (stage_dir / "manifest.json").unlink(missing_ok=True)  # unsealed until the redo's manifest lands
     if a.command == "collect":
@@ -496,6 +514,9 @@ def parser() -> argparse.ArgumentParser:
         sp.add_argument("--generation", type=int, required=True)
         sp.add_argument("--allow-config-change", action="store_true")
         sp.add_argument("--redo", action="store_true", help="replace this stage even if it is complete")
+        sp.add_argument("--redo-downstream", action="store_true",
+                        help="with --redo: also unseal every later sealed stage (moved to <run>/superseded/) and "
+                             "rewind the run-level files derived from them")
     r = sub.add_parser("run", help="generations 1..G of collect -> train -> evaluate")
     _common(r)
     r.add_argument("--generations", type=int, required=True)
