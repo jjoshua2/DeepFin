@@ -63,6 +63,24 @@ The standalone `collect` / `train` / `evaluate` subcommands are held to the same
 unless `--redo` is given (which unseals it first), and every stage loads a model
 only when its manifest is present and records that file's sha256.
 
+**Lineage.** A sealed stage is reused (by `run`, or skipped by a standalone
+subcommand) only if every input it recorded from the run's own lineage -- files in
+the run dir, plus the TRAIN / EVAL openings -- still has the sha256 it was sealed
+with; otherwise the command fails and names the input. External inputs (the
+initial checkpoint, an SL corpus, a KL or prior-mix reference) are recorded but
+not re-hashed on reuse. File hashes are cached in `<run-dir>/lineage_sha_cache.json`
+by size, mtime and inode. `--redo` of a stage while any LATER stage is sealed is
+refused, because those stages were built on it. `--redo --redo-downstream` unseals
+them: their directories (rows, models, logs) are moved to
+`<run-dir>/superseded/<UTC stamp>/gen_NNNN/<stage>/` (kept for inspection, never
+read again, safe to delete). The run-level files derived from them are rewound:
+- arena ledger rows of the unsealed evaluations;
+- `presentation_ledger.json` (derived, rewritten by the next train);
+- `probe.npz`, when generation 1's collect or train is unsealed;
+- the `dup_sketch/` and `openings_seen/` files from the first unsealed collect on.
+
+The opening cursor lives in the collect manifests, so it rewinds with them.
+
 ## What each stage writes
 
 ```
@@ -106,8 +124,10 @@ default (`--opening-sampling cycle`): each book has one seeded permutation per
 pass, walked by a cursor that the collect manifest records
 (`opening_cursor`, with `opening_cursor_before`) and the next generation
 continues, so no TRAIN line is reused until its book is used up; an exhausted
-book starts its next pass (a new permutation, logged). A redo of a killed collect
-restarts from the previous generation's sealed cursor, so it picks the same lines.
+book starts its next pass (a new permutation, logged). Passes are independent
+permutations, so a line played near the end of one pass can recur early in the
+next. A redo of a killed collect restarts from the previous generation's sealed
+cursor, so it picks the same lines.
 `--opening-sampling independent` (the non-default alternative) redraws every
 generation, without replacement only within it.
 
@@ -123,6 +143,10 @@ The cross-generation repeat rate (`repeat_rate_vs_previous`) is a constant-memor
 estimate by default. The run keeps every earlier row hash below a threshold in a
 sorted array of at most `--dup-sketch-budget` hashes (default 4M, about 32 MB,
 `<run-dir>/dup_sketch/`); the threshold halves whenever the array would overflow.
+The `dup_sketch/` and `openings_seen/` files are diagnostics only: each collect
+records their sha256 under `diagnostics_files` in its manifest. The next collect
+uses one only if it matches that record; otherwise it rebuilds the file from the
+sealed collects. Files older than the previous generation are pruned.
 The estimate is hits among this generation's rows with a hash below the threshold,
 divided by those rows. Because inclusion depends only on the hash, the estimate is
 unbiased. `repeat_rate_vs_previous_estimate` holds the estimate's counts and its
@@ -235,7 +259,10 @@ so reuse is effectively off at, for example, 8 sims / topk 16.
 `--sims` with probability p and stores a policy row, or else searches `n`, is
 played, and stores no policy target (a value-only row with `--fast-value-rows`,
 otherwise no row). Every net-turn row records `search_budget`; `stats.json` counts
-rows by budget.
+rows by budget. `search_budget` is the budget the ply was given, not the visits it
+spent. A root proven solved mid-search stops early and keeps its statistics, which
+still rebuild its target. On the SL base's real-net smoke this was 132 of 11,823
+rows, all with |survivor Q| = 1.
 
 **Stored root statistics.** With `GameConfig.record_root_stats` (on in this loop,
 off by default everywhere else) each searched row also carries, in compact policy
@@ -254,7 +281,7 @@ plus `root_start_visits`, `root_survivor_index` and `played_move_index`.
 vectors and `root_net_value` (the value unvisited children are filled with) under
 the run's `GumbelConfig`, so targets can be re-scored offline under different sigma
 knobs without re-searching. The stored `policy_target` itself is float16, so a
-rebuild matches it to within 1.5e-4. A row the search returned through an exact
+rebuild matches it to half-precision rounding: within 1.5e-4 on the tiny-net smoke, but up to 9e-4 (p99 1.6e-4) on real-net rows, where probabilities near 1 carry the largest float16 absolute error. A row the search returned through an exact
 shortcut rather than the completed-Q arithmetic (a solved or tablebase root, a
 single legal move, or the pruned-draw fallback of #1410, which plays an unsearched
 drawing move) carries NO statistics, never stale ones; `stats.json` counts them
@@ -274,7 +301,12 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
 
 ## Training details
 
-- `--optimizer-state fresh` (default) builds a new optimizer each generation;
+- `--optimizer-state fresh` (default) builds a new optimizer each generation. With
+  `--warmup-steps 0`, its first Adam steps are full size regardless of gradient
+  magnitude. On the SL base, the first generation's 46 updates at LR 3e-6
+  (`--w-wdl 0`, value head exactly frozen) moved the probe set by mean |ΔQ| 0.21
+  and KL 0.24, and changed 11% of top-1 moves. Use warmup or `continue` when the
+  start net matters (GPU smoke, 2026-11-20).
   `continue` restores the previous generation's optimizer, scheduler and step, so
   warmup happens once. The restore also brings the checkpoint's peak LR, LR floor
   and per-group weight decay, so a different `--lr` / `--lr-floor` would be

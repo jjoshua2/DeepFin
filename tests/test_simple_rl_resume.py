@@ -302,3 +302,75 @@ def test_standalone_stages_are_held_to_the_run_config_and_load_only_sealed_model
     assert manifest["outputs"]["model"]["sha256"]
     assert "probe" in manifest["inputs"]
     assert manifest["config"]["realised"]["amp"] is False
+
+
+def test_redo_of_an_earlier_stage_refuses_or_unseals_downstream_and_rebuilds_lineage(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reviewer N1: `train --generation 1 --redo` while generation 2 is sealed
+    used to be accepted, leaving gen 2 played by a model that no longer exists."""
+    from chess_anti_engine.simple_rl.common import sha256_tree
+
+    openings, model_config = _setup(tmp_path, monkeypatch)
+    run_dir = tmp_path / "run"
+    argv = _argv(run_dir, openings, model_config)
+    assert simple_rl_loop.main(argv) == 0
+    redo = _stage_argv(argv, "train", 1, "--redo", "--allow-config-change")
+    redo[redo.index("--lr") + 1] = "5e-4"
+    with pytest.raises(SystemExit, match="later stages are sealed"):
+        simple_rl_loop.main(redo)
+    assert (run_dir / "gen_0002" / "collect" / "manifest.json").exists()
+
+    sketch2 = run_dir / "dup_sketch" / "through_gen_0002.npz"
+    assert sketch2.exists()
+    assert simple_rl_loop.main([*redo, "--redo-downstream"]) == 0
+    superseded = list((run_dir / "superseded").glob("*/gen_0002/collect/manifest.json"))
+    assert len(superseded) == 1  # moved, rows kept
+    assert not (run_dir / "gen_0002").exists() or not any((run_dir / "gen_0002").glob("*/manifest.json"))
+    assert not sketch2.exists()  # side files from the first unsealed collect on are rewound
+    assert not (run_dir / "openings_seen" / "through_gen_0002.npy").exists()
+
+    rerun = list(argv)
+    rerun[rerun.index("--lr") + 1] = "5e-4"
+    assert simple_rl_loop.main(rerun) == 0
+    gen1 = sha256_tree(run_dir / "gen_0001" / "train" / "model.pt")
+    played = json.loads((run_dir / "gen_0002" / "collect" / "manifest.json").read_text())["inputs"]["checkpoint"]
+    assert played["sha256"] == gen1
+    # the opening cursor rewound with the collect manifests: gen 2 continues gen 1's cursor again
+    m2 = json.loads((run_dir / "gen_0002" / "collect" / "manifest.json").read_text())
+    m1 = json.loads((run_dir / "gen_0001" / "collect" / "manifest.json").read_text())
+    assert m2["opening_cursor_before"] == m1["opening_cursor"]
+
+
+def test_a_sealed_stage_whose_upstream_changed_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    openings, model_config = _setup(tmp_path, monkeypatch)
+    run_dir = tmp_path / "run"
+    argv = _argv(run_dir, openings, model_config)
+    assert simple_rl_loop.main(argv) == 0
+    assert simple_rl_loop.main(argv) == 0  # unchanged lineage: every stage is skipped
+    manifest = run_dir / "gen_0001" / "collect" / "manifest.json"
+    payload = json.loads(manifest.read_text())
+    payload["tampered"] = True  # what any redo of gen-1 collect would do to its sealed record
+    manifest.write_text(json.dumps(payload))
+    with pytest.raises(SystemExit, match="no longer match their upstream"):
+        simple_rl_loop.main(argv)
+    with pytest.raises(SystemExit, match="no longer match their upstream"):
+        simple_rl_loop.main(_stage_argv(argv, "train", 2))  # standalone, complete-and-skipped
+
+
+def test_a_stale_diagnostics_file_is_rebuilt_not_trusted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from chess_anti_engine.simple_rl.dup_sketch import DupSketch
+
+    openings, model_config = _setup(tmp_path, monkeypatch)
+    run_dir = tmp_path / "run"
+    argv = _argv(run_dir, openings, model_config)
+    assert simple_rl_loop.main(argv) == 0
+    stats_path = run_dir / "gen_0002" / "collect" / "stats.json"
+    stats_before = json.loads(stats_path.read_text())
+    before = stats_before["repeat_rate_vs_previous_estimate"]
+    DupSketch(budget=10).save(run_dir / "dup_sketch" / "through_gen_0001.npz")  # stale / foreign file
+    np.save(run_dir / "openings_seen" / "through_gen_0001.npy", np.asarray([], dtype=str))
+    assert simple_rl_loop.main(_stage_argv(argv, "collect", 2, "--redo", "--redo-downstream")) == 0
+    after = json.loads(stats_path.read_text())
+    assert after["repeat_rate_vs_previous_estimate"] == before
+    assert (after["openings_played_in_earlier_generation_share"]
+            == stats_before["openings_played_in_earlier_generation_share"] > 0)
