@@ -2030,15 +2030,17 @@ static int32_t gss_prepare_batch(
 
         if (s->n_leaves >= g->enc_capacity) {
             /* Buffer full: flush and resume HERE, exactly like the C17
-             * duplicate flush below. Nothing has been committed for this
-             * query (no leaf appended, no virtual loss applied), so re-walking
-             * it after the pending evals land is side-effect free.
+             * duplicate flush below. No leaf has been appended and no virtual
+             * loss applied for this query, so re-walking it after the pending
+             * evals land evaluates the leaf it reaches then. (A forced chain
+             * try_forced_collapse expanded above stays expanded -- harmless,
+             * the re-walk follows it, exactly as after a C17 flush.)
              *
              * This used to back the leaf up as a pseudo-terminal carrying the
              * ROOT's Q. tree_backprop reads `value` from the LEAF's side to
              * move, so every starved leaf at an odd depth got the wrong sign
              * and every one at an even depth a fabricated value (2026-11-20:
-             * a 512 cap at 128 boards x topk 16 absorbed ~31% of leaf
+             * a 512 cap at 128 boards x 16 candidates absorbed ~31% of leaf
              * visits). n_leaves >= enc_capacity >= 1 here, so the flush
              * always has leaves to return (gss_step's q_resume branch). */
             g->buffer_full_flushes++;

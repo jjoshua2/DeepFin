@@ -123,13 +123,23 @@ at the cost of 47% more forward calls.
 
 ## Identity when the cap never binds
 
-The branch is not taken, so outputs are byte-identical to the parent:
+The branch is not taken, so outputs are byte-identical to the parent. Identity is
+established by the deterministic instruments:
 
-- `bench_selfplay_identity.py`, max_batch 4096: digest equal (table above);
+- the reviewer's CPU fuzz: 150 parent-vs-head cases compared node for node, all
+  identical, 0 flushes;
 - `bench_arena_identity.py`, 64 pairs, pool 128, 64 sims, max_batch 4096: digest
-  `45bdc247…20adaa` on both builds, 0 flushes;
+  `45bdc247…20adaa` on both builds, 0 flushes (the reviewer's repeats agree);
 - `tests/test_uci_search_identity_pin.py` passes;
 - `tests/test_e2e_smoke.py -k gumbel_selfplay_smoke` passes.
+
+`bench_selfplay_identity.py` at max_batch 4096 also gave equal digests
+(`8d377744e79a73e3`) on one run per build. That bench is not deterministic run to
+run, though: both builds produce the same two digests across repeats, and
+`sf_block_starved` varies, which suggests Stockfish-pool timing. A single equal
+pair is therefore consistent with identity but does not prove it. The footprint
+rows above are single runs. The bench's nondeterminism is a follow-up and is not
+fixed here.
 
 ## Tests and mutants
 
@@ -145,11 +155,13 @@ the cap imposed through `search_leaf_row_cap`. It covers:
 - an empty buffer is refused;
 - the arena record and the realised-cap bound;
 - the collect's record-and-refuse.
+- no node carries virtual loss after a capped search.
 
 Mutants:
 - Parent semantics restored in C (absorb with the root's Q, counter kept): the
   sign test and the leaf-count test fail.
 - Counter never incremented in C: 3 tests fail.
+- Virtual loss applied at the flush and never undone: the virtual-loss test fails.
 - Six Python-side mutants: all killed. They cover:
   - banking removed, on the single path or entirely;
   - the arena observation zeroed;
@@ -158,6 +170,10 @@ Mutants:
   - the collect recording the process total instead of the delta.
 
 ## Follow-ups
+
+- `scripts/bench_selfplay_identity.py` is nondeterministic run to run (two
+  digests per build across repeats; Stockfish-pool timing suspected), so it cannot
+  certify identity from one run per build.
 
 - Results from capped runs on builds before ABI 11 are suspect wherever
   `eval_leaf_cap_bound` was true or a collect cap sat below boards × topk. The

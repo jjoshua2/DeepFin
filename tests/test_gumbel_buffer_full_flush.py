@@ -213,3 +213,14 @@ def test_the_arena_bound_is_read_off_the_built_evaluators(monkeypatch: pytest.Mo
     record = _run(tmp_path, device="cuda", eval_max_batch=4096)
     assert record["eval_max_batch_realised"] == 64
     assert record["eval_leaf_cap_bound"] is True
+
+
+def test_no_virtual_loss_is_left_behind_by_a_capped_search() -> None:
+    """Every flush must leave the in-flight penalty accounting balanced: after
+    the search, no node of the tree still carries virtual loss."""
+    before = buffer_full_flushes()
+    out, _ = _search(_Evaluator(cap=8, hashed=True))
+    tree = out[4]
+    assert buffer_full_flushes() > before
+    leftover = [n for n in range(tree.node_count()) if tree.get_virtual_loss(n) != 0]
+    assert leftover == []
