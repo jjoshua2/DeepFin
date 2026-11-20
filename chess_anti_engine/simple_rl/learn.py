@@ -240,6 +240,8 @@ def load_window(run_dir: Path, generation: int, settings: TrainSettings) -> tupl
     ids: list[np.ndarray] = []
     holdout: dict[str, np.ndarray] | None = None
     for g in gens:
+        if not (Path(run_dir) / f"gen_{g:04d}" / "collect" / "manifest.json").is_file():
+            raise ValueError(f"generation {g} collect is not sealed; refusing to train on its rows")
         arrays, meta = load_generation_rows(Path(run_dir) / f"gen_{g:04d}" / "collect",
                                             keys=(*TRAIN_KEYS, *TARGET_SOURCE_KEYS))
         held = holdout_mask(meta, settings.holdout_frac)

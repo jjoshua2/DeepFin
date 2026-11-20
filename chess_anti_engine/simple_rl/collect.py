@@ -38,6 +38,7 @@ from chess_anti_engine.simple_rl.common import (
     write_json_atomic,
     write_manifest,
 )
+from chess_anti_engine.simple_rl.dup_sketch import sketch_path
 from chess_anti_engine.simple_rl.openings import load_lines
 
 ROW_META = "row_meta.npz"
@@ -480,7 +481,12 @@ def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, trai
                 "play_batch_games": int(batch_stats.games)},
         seeds={"collect": seed, "openings": seed_for(settings.seed, "openings", generation), "base": settings.seed},
         extra={"generation": generation, "stats": stats, "opening_cursor": cursor_after,
-               "opening_cursor_before": cursor_before},
+               "opening_cursor_before": cursor_before,
+               # Derived and rebuildable from the sealed collects; pruned after
+               # two generations. A later collect uses one only if it matches.
+               "diagnostics_files": {
+                   "dup_sketch": input_ref(sketch_path(gen_dir.parent.parent, generation)),
+                   "openings_seen": input_ref(_seen_path(gen_dir.parent.parent, generation))}},
     )
     return stats
 
@@ -590,6 +596,18 @@ def policy_stats(arrays: dict[str, np.ndarray]) -> dict[str, float]:
 OPENINGS_SEEN_DIR = "openings_seen"
 
 
+def _diagnostic_ok(run_dir: Path, generation: int, name: str, path: Path) -> bool:
+    """A run-level diagnostics file (duplicate sketch, openings seen) is used
+    only if the sealed collect of ``generation`` recorded exactly this file;
+    otherwise (a superseded or interrupted collect wrote it) it is rebuilt
+    from the sealed collects."""
+    from chess_anti_engine.simple_rl.common import read_manifest
+
+    manifest = read_manifest(Path(run_dir) / f"gen_{generation:04d}" / "collect")
+    ref = ((manifest or {}).get("diagnostics_files") or {}).get(name)
+    return bool(ref) and sha256_file(path) == ref["sha256"]
+
+
 def _seen_path(run_dir: Path, generation: int) -> Path:
     return Path(run_dir) / OPENINGS_SEEN_DIR / f"through_gen_{generation:04d}.npy"
 
@@ -598,7 +616,7 @@ def openings_seen_before(run_dir: Path, generation: int, previous: list[Path]) -
     """Sorted unique opening ids played in generations < g (bounded by the
     book size). Read from the file generation g-1 wrote, else rebuilt."""
     path = _seen_path(run_dir, generation - 1)
-    if generation > 1 and path.is_file():
+    if generation > 1 and path.is_file() and _diagnostic_ok(run_dir, generation - 1, "openings_seen", path):
         return np.load(path, allow_pickle=False)
     ids: set[str] = set()
     for p in previous:
@@ -609,10 +627,10 @@ def openings_seen_before(run_dir: Path, generation: int, previous: list[Path]) -
 
 
 def dup_sketch_before(run_dir: Path, generation: int, previous: list[Path], budget: int) -> Any:
-    from chess_anti_engine.simple_rl.dup_sketch import DupSketch, sketch_path
+    from chess_anti_engine.simple_rl.dup_sketch import DupSketch
 
     path = sketch_path(run_dir, generation - 1)
-    if generation > 1 and path.is_file():
+    if generation > 1 and path.is_file() and _diagnostic_ok(run_dir, generation - 1, "dup_sketch", path):
         return DupSketch.load(path, budget=budget)
     sketch = DupSketch(budget=budget)
     for p in sorted(previous, key=_gen_number):
@@ -634,7 +652,7 @@ def generation_stats(collect_dir: Path, *, previous: list[Path], generation: int
     results = [g["result"] for g in games]
     w, d, l_ = results.count("1-0"), results.count("1/2-1/2"), results.count("0-1")
     hashes = np.asarray(meta["x_hash"], dtype=np.uint64)
-    from chess_anti_engine.simple_rl.dup_sketch import prune, sketch_path
+    from chess_anti_engine.simple_rl.dup_sketch import prune
 
     generation = _gen_number(collect_dir) if generation is None else int(generation)
     run_dir = collect_dir.parent.parent
