@@ -168,7 +168,7 @@ One collection from the SL base, at main ≥ `885ab7b54`.
 | Games | 16,000 / 4,000 (D2) | 2,000 | 192 per cycle | below |
 | Concurrency | 128 (D7) | 64 | 16 slots | the only clean measured setting |
 | Evaluator cap | auto (= `leaf_rows_required`) | auto | — | #1427 |
-| CUDA graphs | on: the only collect path (D7, decided) | off | — | owner's decision; no on-vs-off identity check |
+| CUDA graphs | on: the only CUDA collect path (D7, decided) | always on for CUDA since #1433 (no flag) | — | owner's decision; no on-vs-off identity check |
 | Max plies; tablebases | 450; strict rule50, production pair | 450 | 450 per game; strict | CLAUDE.md "Production Syzygy" |
 
 **Dose (D2).**
@@ -236,8 +236,9 @@ reference only when all of these hold, and refuses otherwise:
   shared generation-0 model played; no arm trains a second generation on these rows.
 - **Same `--init-checkpoint`** as the source: every arm passes the SL base file the
   source was started from.
-- **Collect flags equal to the source's.** Only device, CUDA graphs, evaluator cap,
-  dup-sketch budget and exact-repeat-vs-previous are exempt. The commands below pass
+- **Collect flags equal to the source's.** Only device, evaluator cap, dup-sketch
+  budget and exact-repeat-vs-previous are exempt. CUDA graphs are no longer a setting
+  (#1433): every CUDA collect replays them. The commands below pass
   one shared `$COLLECT` to the source and to every arm.
 - **The arm's `--seed` equals the source's.**
 
@@ -254,12 +255,11 @@ export PYTHONPATH=.
 R=~/chess-artifacts/operations/loop-exp1-20261120
 TB=~/projects/chess/data/syzygy_3-4-5:~/projects/chess/data/syzygy_6
 SL=<SL base checkpoint, sha256 a39f900c…>
-# D2: --games 4000 for the alternative. D7 (decided): CUDA graphs on. --collect-cuda-graphs is
-# valid on current main; a driver PR in progress removes the flag (graphs always on for CUDA),
-# after which it is dropped. The launch commit records the final command.
+# D2: --games 4000 for the alternative. D7 (decided): the CUDA-graphs path, which since #1433
+# is the only CUDA collect path (no flag).
 COLLECT="--openings-dir $R/openings --init-checkpoint $SL --device cuda --seed 2026112000 \
   --games 16000 --concurrency 128 --sims 64 --topk 16 --c-scale 0.1 --c-visit 50 \
-  --max-plies 450 --syzygy $TB --sf-path <stockfish> --collect-cuda-graphs"
+  --max-plies 450 --syzygy $TB --sf-path <stockfish>"
 TRAIN="--presentations 1 --batch-size 256 --mirror-prob 0.5 --lr 3e-6 --lr-floor 3e-6 \
   --warmup-steps 0 --optimizer nadamw --optimizer-state fresh --init-optimizer-state fresh \
   --holdout-frac 0.05 --probe-rows 2048 --no-eval"
@@ -360,7 +360,7 @@ collect. "Capped" is the same 128 games at the defective cap 512. Sources: smoke
 | G-C8 draw rate | `draw_rate` | 0.30–0.70 | 0.461–0.531 | 0.156 |
 | G-C9 survivor − node Q | `mean_survivor_minus_node_q` | 0.12–0.30 | 0.181–0.212; D3 bank 0.235 | 0.157 (weak; recorded) |
 | G-C10 within-collect repeats | `repeat_rate_within` | ≤ 0.05 | 0.000 | 0.000 |
-| G-C11 fast path ran | `stats.json`: `cuda_graphs`, `cuda_graph_stats.replays`; eager counters recorded | `cuda_graphs` true and `replays` > 0 (reported, voids nothing; see below) | — | — |
+| G-C11 fast path ran | `stats.json`: `evaluator_mode`, `cuda_graph_stats.replays`; eager counters recorded | `evaluator_mode` = `"cuda_graphs"` and `replays` > 0 (reported, voids nothing; see below) | — | — |
 
 G-C5, G-C6, G-C9 and G-C10 are the collect's own `stats.json` statistics, recomputed
 by the script over every row. G-C3 and G-C4 come from a uniform seeded sample over all
@@ -384,7 +384,8 @@ adds `"eval_max_batch_equals_leaf_rows": {"equals": true}`. G-C1 is
 
 **G-C11: the fast path ran.** D7 makes the CUDA-graphs collect the only path, so
 something must show it ran. Read from the collect's own `stats.json`:
-- **Reported:** `cuda_graphs` is true and `cuda_graph_stats.replays` > 0. If either
+- **Reported:** `evaluator_mode` is `"cuda_graphs"` (the realised evaluator mode main
+  banks since #1433) and `cuda_graph_stats.replays` > 0. If either
   fails, "fast path did not run" is recorded here before any training proceeds. It
   voids nothing: graphs are intended to change speed only (their identity on this net
   is unchecked; see [Not verified](#not-verified)), so the collect is kept as data.
@@ -404,10 +405,10 @@ gc11() {  # $1 = sealed collect dir, $2 = output JSON
   python3 -c 'import json, sys
 s = json.load(open(sys.argv[1])); g = s.get("cuda_graph_stats") or {}
 keys = ("replays", "captures", "recaptures", "eager_over_max_rows", "eager_over_max_graphs", "eager_relations")
-out = {"cuda_graphs": s.get("cuda_graphs"), **{k: g.get(k) for k in keys}}
+out = {"evaluator_mode": s.get("evaluator_mode"), "cuda_graphs": s.get("cuda_graphs"), **{k: g.get(k) for k in keys}}
 open(sys.argv[2], "w").write(json.dumps(out) + "\n")
 print(json.dumps(out))
-sys.exit(0 if s.get("cuda_graphs") is True and (g.get("replays") or 0) > 0 else 3)' "$1/stats.json" "$2"
+sys.exit(0 if s.get("evaluator_mode") == "cuda_graphs" and (g.get("replays") or 0) > 0 else 3)' "$1/stats.json" "$2"
   echo "exit=$?"
 }
 gc11 $R/collect/gen_0001/collect $R/gates/collect_primary.gc11.json          # primary
@@ -415,8 +416,10 @@ gc11 $R/posctl/collect/gen_0001/collect $R/gates/collect_control.gc11.json   # c
 ```
 
 This block was run verbatim (the function, then a call per collect) on two banked
-bench collects. Graphs on printed `exit=0`, with `replays` 1,590 and
-`eager_over_max_rows` 573. Graphs off printed `exit=3`, with `cuda_graphs` false.
+bench collects. A collect written by the #1433 code (`bench_after_default`) printed
+`exit=0`, with `evaluator_mode` `"cuda_graphs"`, `replays` 1,590 and
+`eager_over_max_rows` 573. A graphs-off collect from before #1433 printed `exit=3`
+(no `evaluator_mode`, `cuda_graphs` false).
 
 **Command.** Exit code 3 means a gate failed or its field was missing or NaN:
 
@@ -642,6 +645,9 @@ orientation) at z 2.797; look 2 at 3,200 at z 1.977. The false-positive rate sta
 
 **Required in every arena record:**
 - `eval_leaf_cap_bound` False;
+- `eval_cuda_graphs` true, in both orientations. Since #1433 the arena replays CUDA
+  graphs under `--compile off` on CUDA matched-sims; the pooling script also requires
+  the field to be equal between runs A and B.
 - `buffer_full_flushes` 0. The arena writes it into the result record on main
   (`scripts/arena_standard.py`, read at `b410456b4`). The field's presence in a real
   run is unverified until the first run.
