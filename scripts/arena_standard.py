@@ -1143,6 +1143,14 @@ COMPILE_UNKNOWN = "unknown"
 HOIST_UNKNOWN = "unknown"
 
 
+def graphs_can_run(*, device: str, eval_max_batch: int, volatility: bool) -> bool:
+    """Whether a matched_sims arena gets a hoisted evaluator the eager-forward
+    CUDA graphs can serve: CUDA, the hoist on (``--eval-max-batch`` > 0) and no
+    ``--volatility-*`` (that side searches on the Python path, unhoisted).
+    torch.compile is the remaining exclusion, applied by the callers."""
+    return bool(str(device).startswith("cuda") and int(eval_max_batch) > 0 and not volatility)
+
+
 def compile_tag(compile_models: bool, *, mode: str) -> str:
     """What a game row records about the invocation's ``torch.compile`` state.
 
@@ -1573,7 +1581,7 @@ def build_arena_evaluator(
         # Replays CUDA graphs of the same eager forward: outputs measured
         # bitwise identical to eager (PR #1414), without the per-call launch
         # overhead that dominates the forward at the batch sizes the search
-        # submits (--eval-cuda-graphs).
+        # submits (on wherever it can run; see run_arena).
         cuda_graphs=bool(cuda_graphs),
         cuda_graph_max_rows=int(cuda_graph_max_rows),
     )
@@ -2935,7 +2943,6 @@ def run_arena(
     syzygy_path: str | None = None,
     tb_max_pieces: int = 6,
     compile_models: bool = True,
-    eval_cuda_graphs: bool = False,
     rolling: bool = True,
     search_candidate: SideSearch | None = None,
     search_reference: SideSearch | None = None,
@@ -3011,22 +3018,19 @@ def run_arena(
         raise SystemExit("--games must be even and >= 2 (paired openings)")
     if eval_max_batch < 0:
         raise SystemExit("--eval-max-batch must be >= 0 (0 disables the hoist)")
-    if eval_cuda_graphs:
-        # Every way the flag could be accepted and then not run is refused here,
-        # before any checkpoint loads: the graphs live on the hoisted evaluator.
-        if mode != "matched_sims":
-            raise SystemExit("--eval-cuda-graphs applies to matched_sims only")
-        if not eval_max_batch:
-            raise SystemExit("--eval-cuda-graphs needs the hoisted evaluator (--eval-max-batch > 0)")
-        if compile_models:
-            raise SystemExit(
-                "--eval-cuda-graphs captures the EAGER forward; pass --compile off "
-                "(torch.compile changes the arithmetic, the graphs do not)"
-            )
-        if not str(device).startswith("cuda"):
-            raise SystemExit("--eval-cuda-graphs needs a CUDA --device")
-        if volatility_candidate is not None:
-            raise SystemExit("--eval-cuda-graphs cannot be used with --volatility-* (no hoist)")
+    # CUDA graphs of the hoisted evaluator's eager dense forward are the ONE
+    # fast path (outputs measured bitwise identical to eager, PR #1414) and are
+    # used wherever they can run: matched_sims with a hoisted evaluator on CUDA,
+    # eager models. They cannot run (and the eager forward is used) on CPU,
+    # with --eval-max-batch 0 or --volatility-* (no hoisted evaluator), in
+    # matched_time (the engines own their evaluators), or under torch.compile
+    # (the graphs capture the EAGER forward; only an explicit --compile on
+    # compiles where graphs could run). The realised mode is recorded.
+    eval_cuda_graphs = bool(
+        mode == "matched_sims" and not compile_models
+        and graphs_can_run(device=device, eval_max_batch=eval_max_batch,
+                           volatility=volatility_candidate is not None)
+    )
     # What the hoisted evaluators REALIZED, read back off them once built;
     # None when no evaluator was hoisted (matched_time, CPU, --eval-max-batch 0).
     _realized_eval_cuda_graphs: bool | None = None
@@ -4184,17 +4188,6 @@ def add_common_args(p: argparse.ArgumentParser) -> None:
     # it refuses an explicit --games rather than accept a number it will not
     # read. Before adding anything here, check what the OTHER script does with
     # it.
-    p.add_argument("--eval-cuda-graphs", action="store_true",
-                   help="matched_sims, eager (--compile off): replay CUDA graphs of "
-                        "the hoisted evaluator's own eager forward, one per batch "
-                        "size up to 512 rows. Outputs MEASURED bitwise identical "
-                        "to eager (same kernels; PR #1414); faster at the leaf "
-                        "batch sizes the search submits, where the eager forward "
-                        "is launch-bound. MEMORY: the graphs pin activations for "
-                        "the process lifetime (measured +1.7 GB reserved per "
-                        "evaluator, one per side, on the production net) -- check "
-                        "headroom before running beside training or another GPU "
-                        "job. Off by default.")
     p.add_argument("--eval-max-batch", type=int, default=DEFAULT_EVAL_MAX_BATCH,
                    help="matched_sims: forward-batch cap for the ONE long-lived "
                         f"evaluator built per side (default: {DEFAULT_EVAL_MAX_BATCH}, "
@@ -4446,9 +4439,13 @@ def main() -> None:
                         "many men (default: 6)")
     p.add_argument("--compile", choices=["auto", "on", "off"], default="auto",
                    help="matched_sims torch.compile policy (default: auto). "
-                        "on=always compile; off=eager; auto=compile only when "
+                        "on=always compile (and no CUDA graphs); off=eager; "
+                        "auto=eager wherever the eager-forward CUDA graphs can run "
+                        "(CUDA, --eval-max-batch > 0, no --volatility-*: they are "
+                        "faster than compile), else compile only when "
                         f"games*sims >= {AUTO_COMPILE_WORK_THRESHOLD} (else the "
-                        "~2-4 min compile cost isn't worth it for a quick run).")
+                        "~2-4 min compile cost isn't worth it for a quick run). "
+                        "Off and auto replay CUDA graphs wherever they can run.")
     p.add_argument("--no-compile", action="store_true",
                    help="matched_sims: back-compat alias for --compile off "
                         "(disables torch.compile regardless of --compile).")
@@ -4623,8 +4620,9 @@ def main() -> None:
 
     # Resolve the matched_sims torch.compile decision (matched_time is a UCI
     # subprocess and unaffected). --no-compile is the back-compat "off" alias and
-    # wins over --compile. auto compiles only when the run does enough inference
-    # work to amortize the ~2-4 min compile cost.
+    # wins over --compile. auto never compiles where the CUDA graphs can run
+    # (they are faster); elsewhere it compiles only when the run does enough
+    # inference work to amortize the ~2-4 min compile cost.
     sims_cand = int(args.sims if args.sims_candidate is None else args.sims_candidate)
     sims_ref = int(args.sims if args.sims_reference is None else args.sims_reference)
     effective_sims = max(sims_cand, sims_ref)
@@ -4637,7 +4635,17 @@ def main() -> None:
         compile_models = True
         if args.mode == "matched_sims":
             print("[arena] compile=on -> COMPILE", flush=True)
-    else:  # auto
+    elif args.mode == "matched_sims" and graphs_can_run(
+        device=args.device, eval_max_batch=int(args.eval_max_batch),
+        volatility=_volatility_kwargs_from_args(args) is not None,
+    ):
+        # auto, where the eager-forward CUDA graphs can run: they are the one
+        # fast path. Measured faster than compile at every size tried (256-game
+        # SL-base self-match, 64 sims: 0.65 vs 0.76 s/game in steady state, and
+        # no 2-4 min compile), so auto no longer compiles here.
+        compile_models = False
+        print("[arena] compile=auto -> EAGER + CUDA graphs (the one fast path)", flush=True)
+    else:  # auto, where graphs cannot run
         work = int(effective_games) * int(effective_sims)
         compile_models = work >= AUTO_COMPILE_WORK_THRESHOLD
         if args.mode == "matched_sims":
@@ -4707,7 +4715,6 @@ def main() -> None:
         syzygy_path=args.syzygy,
         tb_max_pieces=args.syzygy_max_pieces,
         compile_models=compile_models,
-        eval_cuda_graphs=bool(args.eval_cuda_graphs),
         rolling=not args.no_rolling,
         openings_path=openings_path,
         openings_fen=args.openings_fen,

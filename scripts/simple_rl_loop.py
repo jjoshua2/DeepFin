@@ -151,7 +151,7 @@ def collect_settings(a: argparse.Namespace) -> CollectSettings:
         book_mix=tuple(float(x) for x in a.book_mix.split(",")), rows_per_shard=a.rows_per_shard,
         opening_sampling=a.opening_sampling, dup_sketch_budget=a.dup_sketch_budget,
         exact_repeat_vs_previous=a.exact_repeat_vs_previous,
-        device=a.device, eval_max_batch=a.eval_max_batch, cuda_graphs=a.collect_cuda_graphs, seed=a.seed,
+        device=a.device, eval_max_batch=a.eval_max_batch, seed=a.seed,
     )
 
 
@@ -242,7 +242,7 @@ def do_collect(a: argparse.Namespace, run_dir: Path, g: int) -> None:
                                train_jsonl=Path(a.openings_dir) / "train.jsonl", settings=collect_settings(a))
     print(json.dumps({"stage": "collect", "generation": g, **{k: stats[k] for k in (
         "games", "rows", "decisive_rate", "draw_rate", "repeat_rate_within", "repeat_rate_vs_previous",
-        "target_entropy", "games_per_hour", "cuda_graphs")}}, default=str), flush=True)
+        "target_entropy", "games_per_hour", "cuda_graphs", "evaluator_mode")}}, default=str), flush=True)
 
 
 def do_train(a: argparse.Namespace, run_dir: Path, g: int) -> None:
@@ -292,7 +292,7 @@ RUN_CONFIG_EXEMPT = frozenset({
 # Flags added after runs were already pinned, with the value every earlier run
 # implicitly had. A run_config.json without the key reads as that default, so
 # resuming an older run at the default is not a "change" -- any other value is.
-ADDED_SINCE_PINNING = {"collect_cuda_graphs": False, "init_optimizer_state": "fresh",
+ADDED_SINCE_PINNING = {"init_optimizer_state": "fresh",
                        "matrix_optimizer_scope": "default", "adopt_checkpoint_optimizer_hparams": False,
                        "allow_capped_collect_rows": False, "snapshot_updates": None, "collect_from": None}
 
@@ -390,6 +390,9 @@ def check_run_config(a: argparse.Namespace, run_dir: Path) -> None:
         write_json_atomic(path, {"settings": current, "changes": []})
         return
     stored = json.loads(path.read_text())
+    # Only CURRENT flags are compared, so a key a later version removed (e.g.
+    # collect_cuda_graphs, retired 2026-11-21: CUDA graphs are the only collect
+    # path on CUDA) still loads from an older run_config.json, whatever its value.
     pinned = {**ADDED_SINCE_PINNING, **stored["settings"]}
     diff = {k: {"was": pinned.get(k), "now": v} for k, v in current.items() if pinned.get(k) != v}
     if not diff:
@@ -558,10 +561,6 @@ def _common(p: argparse.ArgumentParser) -> None:
     c.add_argument("--eval-max-batch", type=int, default=None,
                    help="CUDA evaluator batch cap (default: the search's leaf-buffer size at this "
                         "--concurrency / --topk; a smaller value is refused -- it would drop leaf evaluations)")
-    c.add_argument("--collect-cuda-graphs", action="store_true",
-                   help="collect on CUDA: replay CUDA graphs of the evaluator's eager dense forward "
-                        "(outputs measured bitwise identical, so the same shards; faster at the "
-                        "search's leaf batch sizes; +1.5 GB VRAM). Refused off CUDA.")
     c.add_argument("--collect-from", default=None, metavar="SOURCE_RUN_DIR",
                    help="training arm: seal each collect as a verified reference to SOURCE_RUN_DIR's sealed "
                         "collect of the same generation instead of playing games (same gen-0 model, actor, "

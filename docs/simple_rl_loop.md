@@ -300,6 +300,37 @@ drawing move) carries NO statistics, never stale ones; `stats.json` counts them
 Training details. Rows whose target was replaced by the tablebase policy are
 flagged in the row sidecar (`tb_policy_override`).
 
+## Collect evaluator: one fast path
+
+On CUDA the collect evaluator always replays CUDA graphs of its own eager dense
+forward (`DirectGPUEvaluator(cuda_graphs=True)`). There is no flag: the old
+`--collect-cuda-graphs` choice is gone, because its outputs were measured
+bitwise identical to the eager forward and keeping a slow twin path bought
+nothing. Graphs cannot run on CPU, so a CPU collect uses the eager
+`LocalModelEvaluator`. `stats.json` records the realised `evaluator_mode`
+(`cuda_graphs` or `eager_cpu`) and the graph counters in `cuda_graph_stats`.
+A run pinned with `collect_cuda_graphs` in its `run_config.json`, on or off,
+still resumes: only current flags are compared, so the retired key is ignored,
+and such a run now collects on graphs. The arena likewise replays graphs wherever its
+hoisted evaluator can (see `docs/search_and_encode_paths.md`).
+
+Measured on 2026-11-20. Setup: SL base, 128 games, 64 sims, concurrency 128,
+one process, GPU otherwise idle. Every collect below has the same
+`--content-digest`.
+
+| collect evaluator | games/h | wall s |
+|---|---|---|
+| eager (the old default) | 2,720 | 169.4 |
+| graphs (the old `--collect-cuda-graphs`) | 3,763 | 122.5 |
+| graphs, the new default (run twice) | 3,760 / 3,613 | 122.5 / 127.5 |
+
+The two runs of the new default differ by about 4%, so treat any gain under
+about 5% as noise. These candidates were measured and not taken:
+- **Graph row cap 1024 / 2048 instead of 512:** 3,778 / 3,787 games/h, with
+  identical rows. That is within noise, and it pins more VRAM.
+- **Memoising the rule-50 tablebase status per FEN:** an 11% hit rate and
+  3,704 games/h, with identical rows.
+
 ## Evaluator batch cap
 
 `--eval-max-batch` controls the search, not memory. Each network turn hands one
@@ -429,7 +460,7 @@ The reference is created only when all of these hold:
 - it used the arm's TRAIN openings;
 - the arm's collect flags equal the source's. A different value would be pinned
   without affecting the rows. Execution-only fields are exempt: device,
-  cuda_graphs, eval_max_batch, dup_sketch_budget and exact_repeat_vs_previous.
+  eval_max_batch, dup_sketch_budget and exact_repeat_vs_previous.
   `--seed` is NOT exempt: it also draws the train phase's batch plan, so an arm
   must use the source's seed (refused before pinning otherwise).
 
