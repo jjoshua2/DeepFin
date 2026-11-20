@@ -78,9 +78,17 @@ No new matches are run. The SL base's search gain is already banked, in
 | `a39_s256_v_s64` | 256 vs 64 sims | 400 | 0.8275 | +272.4 (+243.1 to +305.3) |
 | `a39_s800_v_s64` | 800 vs 64 sims | 200 | 0.9400 | +478.0 (+410.2 to +582.3) |
 
-These matches were played in one orientation. A candidate-seat offset of up to
-about 15 Elo would be negligible at these sizes; D4 round 2's pooled same-net read
-was +6.4 (−4.2 to +17.1).
+These matches were played in one orientation, on the default 147k-line opening
+book rather than the loop's EVAL split. A candidate-seat offset of up to about 15
+Elo would be negligible at these sizes; D4 round 2's pooled same-net read was +6.4
+(−4.2 to +17.1). The [search-ceiling record](2026-11-20-sl-base-search-ceiling.md)
+holds these rows with their settings, and the dose → drift table of P1 and F12.
+
+**What a 1-sim side plays** (from that record). With one simulation and no root
+noise, only the top-prior child is visited. The move is sampled at temperature 0.1
+from softmax(log prior + σ(completed Q)), with unvisited children carrying v_mix.
+That is essentially the raw policy prior, sharpened, and nudged by one child value.
+So the 1-sim reads below measure the raw policy, not a search.
 
 A 4× search is worth about +270 Elo to the SL base. So the question is not
 whether there is anything to gain. It is whether training TRANSFERS the search's
