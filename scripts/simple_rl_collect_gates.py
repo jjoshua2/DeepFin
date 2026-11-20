@@ -22,14 +22,22 @@ visits in.
 - ``book_end_mover_score``: over all games, the book-end mover's score (win 1,
   draw 0.5, loss 0). Its colour is white iff ``start_ply`` (``Board.ply()`` of the
   book-end position) is even.
-- ``target_entropy`` / ``kl_target_prior`` (over the visited-or-legal support,
-  ``root_child_visits >= 0``) / ``survivor_minus_node_q``: overall and by side,
-  on policy rows (``has_policy``) with root statistics.
+- ``target_entropy``, ``kl_target_prior`` (over the prior's support,
+  ``root_child_visits >= 0``), ``mean_survivor_minus_node_q`` and
+  ``repeat_rate_within``: the collect's stats.json fields under the same names
+  and definitions, recomputed over EVERY row (``whole_collect_stats``).
+- ``*_by_side``: target entropy, KL and survivor - node Q on the sample, overall
+  and per side.
 - ``retempered_target_entropy``: target entropy after
   ``losses.retemper_main_policy_target`` at each ``--train-target-temp``.
 - ``rows_per_game``, ``draw_rate``, ``decisive_rate``; from the manifest stats
   ``buffer_full_flushes`` and ``eval_max_batch_realised`` vs
-  ``leaf_rows_required``, with ``collect.capped_collect_record``.
+  ``leaf_rows_required`` (``eval_max_batch_equals_leaf_rows``), with
+  ``collect.capped_collect_record``.
+
+``--content-digest``: print only ``content_digest`` -- a sha256 over the decoded
+arrays of every shard plus the row sidecars, and games.jsonl's sha256 -- the
+identity check for two collects that should hold the same rows.
 
 ``--thresholds FILE``: JSON ``{"dotted.metric.path": {"min": x, "max": y}}``;
 any gate that fails (or whose metric is missing / NaN) makes the exit code 3.
@@ -97,9 +105,7 @@ def sample_rows(collect_dir: Path, *, n: int, seed: int) -> tuple[dict[str, np.n
     loaded one shard at a time. Returns (arrays, row meta, total rows)."""
     from chess_anti_engine.replay.shard import load_shard_arrays
 
-    shards = sorted((resolve_collect_dir(collect_dir) / "shards").glob("shard_*.zarr"))
-    if not shards:
-        raise SystemExit(f"no shards under {resolve_collect_dir(collect_dir)}")
+    shards = _shards(collect_dir)
     metas = []
     for s in shards:
         with np.load(s.with_name(s.name.replace(".zarr", ".meta.npz"))) as z:
@@ -120,6 +126,94 @@ def sample_rows(collect_dir: Path, *, n: int, seed: int) -> tuple[dict[str, np.n
     keys = set.intersection(*(set(p) for p in parts))
     return ({k: np.concatenate([p[k] for p in parts]) for k in keys},
             {k: np.concatenate([m[k] for m in meta_parts]) for k in ("game_id", "ply_index")}, total)
+
+
+def _shards(collect_dir: Path) -> list[Path]:
+    shards = sorted((resolve_collect_dir(collect_dir) / "shards").glob("shard_*.zarr"))
+    if not shards:
+        raise SystemExit(f"no shards under {resolve_collect_dir(collect_dir)}")
+    return shards
+
+
+def _kl_target_prior(target: np.ndarray, log_prior: np.ndarray, visits: np.ndarray) -> np.ndarray:
+    """Per-row KL(target || prior) over the prior's support (visits >= 0), as collect.policy_stats."""
+    support = visits >= 0
+    with np.errstate(divide="ignore", invalid="ignore"):
+        lp = np.where(support, log_prior, -np.inf)
+        lp = lp - lp.max(axis=1, keepdims=True)
+        prior = np.where(support, np.exp(lp), 0.0)
+        prior = prior / np.maximum(prior.sum(axis=1, keepdims=True), 1e-300)
+        t = target / np.maximum(target.sum(axis=1, keepdims=True), 1e-30)
+        return np.where(t > 0, t * (np.log(np.where(t > 0, t, 1.0)) - np.log(np.where(prior > 0, prior, 1e-300))),
+                        0.0).sum(axis=1)
+
+
+def whole_collect_stats(collect_dir: Path) -> dict[str, Any]:
+    """The collect's own stats.json fields, recomputed over EVERY row (one shard at a
+    time) under the same definitions: ``target_entropy`` (policy rows),
+    ``kl_target_prior`` (policy rows with root statistics), ``mean_survivor_minus_node_q``
+    (rows with root statistics, NaN-skipping) and ``repeat_rate_within`` (1 - distinct
+    input hashes / rows, from the row sidecars)."""
+    from chess_anti_engine.replay.shard import load_shard_arrays
+
+    ent_sum = kl_sum = gap_sum = 0.0
+    ent_n = kl_n = gap_n = 0
+    hashes: list[np.ndarray] = []
+    for s in _shards(collect_dir):
+        with np.load(s.with_name(s.name.replace(".zarr", ".meta.npz"))) as z:
+            hashes.append(np.asarray(z["x_hash"], dtype=np.uint64))
+        a, _ = load_shard_arrays(s, lazy=False, validate=True)
+        target = np.asarray(a["policy_target"], np.float64)
+        n = len(target)
+        policy = np.asarray(a.get("has_policy", np.ones(n)), dtype=bool)
+        stats = np.asarray(a.get("has_root_log_prior", np.zeros(n)), dtype=bool)
+        e = entropy(target)[policy]
+        ent_sum, ent_n = ent_sum + float(e.sum()), ent_n + int(e.size)
+        sel = stats & policy
+        if sel.any():
+            kl = _kl_target_prior(target[sel], np.asarray(a["root_log_prior"], np.float64)[sel],
+                                  np.asarray(a["root_child_visits"])[sel])
+            kl_sum, kl_n = kl_sum + float(kl.sum()), kl_n + int(kl.size)
+        if stats.any() and "root_survivor_q" in a and "root_node_q" in a:
+            gap = (np.asarray(a["root_survivor_q"], np.float64) - np.asarray(a["root_node_q"], np.float64))[stats]
+            gap = gap[np.isfinite(gap)]
+            gap_sum, gap_n = gap_sum + float(gap.sum()), gap_n + int(gap.size)
+    h = np.concatenate(hashes)
+    return {"target_entropy": ent_sum / ent_n if ent_n else None,
+            "kl_target_prior": kl_sum / kl_n if kl_n else None,
+            "mean_survivor_minus_node_q": gap_sum / gap_n if gap_n else None,
+            "repeat_rate_within": 1.0 - len(np.unique(h)) / max(1, len(h))}
+
+
+def content_digest(collect_dir: Path) -> dict[str, Any]:
+    """Identity of a collect's DECODED content: sha256 over every shard's arrays
+    (sorted keys, raw bytes) and row sidecar, in shard order, plus games.jsonl's
+    sha256. Two collects that made the same rows agree here even though their
+    shard FILES differ (shard metadata carries a wall-clock timestamp and the
+    compressed chunk files are not byte-stable)."""
+    import hashlib
+
+    from chess_anti_engine.replay.shard import load_shard_arrays
+    from chess_anti_engine.simple_rl.common import sha256_file
+
+    h = hashlib.sha256()
+    rows = 0
+    shards = _shards(collect_dir)
+    for s in shards:
+        a, _ = load_shard_arrays(s, lazy=False, validate=True)
+        for k in sorted(a):
+            v = np.ascontiguousarray(np.asarray(a[k]))
+            h.update(f"{s.name}/{k}/{v.dtype.str}/{v.shape}".encode())
+            h.update(v.tobytes())
+        rows += int(np.asarray(a["x"]).shape[0])
+        with np.load(s.with_name(s.name.replace(".zarr", ".meta.npz"))) as z:
+            for k in sorted(z.files):
+                v = np.ascontiguousarray(z[k])
+                h.update(f"{s.name}/meta/{k}/{v.dtype.str}/{v.shape}".encode())
+                h.update(v.tobytes())
+    rows_dir = resolve_collect_dir(collect_dir)
+    return {"collect_dir": str(collect_dir), "content_sha256": h.hexdigest(), "shards": len(shards), "rows": rows,
+            "games_sha256": sha256_file(rows_dir / GAMES)}
 
 
 def _mean(x: np.ndarray) -> float | None:
@@ -180,23 +274,15 @@ def row_metrics(a: dict[str, np.ndarray], meta: dict[str, np.ndarray], start_ply
                                        "spearman_childq_prior": _mean(rho[sel]),
                                        "survivor_is_argmax_q": _mean(survivor_is_argmax_q[sel])}
     ent = entropy(target)
-    support = visits >= 0
-    with np.errstate(divide="ignore", invalid="ignore"):
-        lp = np.where(support, log_prior, -np.inf)
-        lp = lp - lp.max(axis=1, keepdims=True)
-        prior = np.where(support, np.exp(lp), 0.0)
-        prior = prior / np.maximum(prior.sum(axis=1, keepdims=True), 1e-300)
-        t = target / np.maximum(target.sum(axis=1, keepdims=True), 1e-30)
-        kl = np.where(t > 0, t * (np.log(np.where(t > 0, t, 1.0)) - np.log(np.where(prior > 0, prior, 1e-300))),
-                      0.0).sum(axis=1)
+    kl = _kl_target_prior(target, log_prior, visits)
     gap = np.asarray(a["root_survivor_q"], np.float64) - np.asarray(a["root_node_q"], np.float64)
     out: dict[str, Any] = {
         "sampled_rows": n, "policy_rows": int(policy.sum()), "root_stats_rows": int(stats.sum()),
         "reused_root_share": _mean((start_visits > 0)[stats].astype(float)),
         "spearman_childq_prior": cells,
-        "target_entropy": _by_side(ent, side, policy),
-        "kl_target_prior": _by_side(kl, side, policy & stats),
-        "survivor_minus_node_q": _by_side(gap, side, stats),
+        "target_entropy_by_side": _by_side(ent, side, policy),
+        "kl_target_prior_by_side": _by_side(kl, side, policy & stats),
+        "survivor_minus_node_q_by_side": _by_side(gap, side, stats),
     }
     if temps:
         out["retempered_target_entropy"] = {
@@ -214,6 +300,7 @@ def collect_gates(collect_dir: Path, *, sample: int, seed: int, temps: list[floa
     start_ply = {int(g["game_id"]): int(g["start_ply"]) for g in games}
     arrays, meta, total = sample_rows(collect_dir, n=sample, seed=seed)
     stats = manifest.get("stats") or {}
+    known = stats.get("eval_max_batch_realised") is not None and stats.get("leaf_rows_required") is not None
     capped = capped_collect_record(manifest)
     return {
         "collect_dir": str(collect_dir), "rows_dir": str(rows_dir), "sample_seed": seed,
@@ -223,10 +310,14 @@ def collect_gates(collect_dir: Path, *, sample: int, seed: int, temps: list[floa
         "buffer_full_flushes": stats.get("buffer_full_flushes"),
         "eval_max_batch_realised": stats.get("eval_max_batch_realised"),
         "leaf_rows_required": stats.get("leaf_rows_required"),
-        "eval_cap_covers_leaf_rows": (None if stats.get("eval_max_batch_realised") is None
-                                      or stats.get("leaf_rows_required") is None
+        "eval_cap_covers_leaf_rows": (None if not known
                                       else int(stats["eval_max_batch_realised"]) >= int(stats["leaf_rows_required"])),
+        # G-C2: the realised cap EQUALS the leaf rows one search call asks for (the auto default)
+        "eval_max_batch_equals_leaf_rows": (None if not known
+                                            else int(stats["eval_max_batch_realised"]) == int(stats["leaf_rows_required"])),
         "capped_collect": capped,
+        # stats.json names, over every row (G-C5 / G-C6 / G-C9 / G-C10)
+        **whole_collect_stats(collect_dir),
     }
 
 
@@ -264,7 +355,13 @@ def main(argv: list[str] | None = None) -> int:
                    help="also report the target entropy re-tempered at this train-time temperature (repeatable)")
     p.add_argument("--thresholds", default=None, help="JSON {metric.path: {min, max}}; exit 3 when one fails")
     p.add_argument("--out", default=None, help="also write the JSON here")
+    p.add_argument("--content-digest", action="store_true",
+                   help="only print the decoded-content digest (all shard arrays + row sidecars) and games.jsonl "
+                        "sha256: equal for two collects that made the same rows (e.g. graphs on vs off)")
     a = p.parse_args(argv)
+    if a.content_digest:
+        print(json.dumps(content_digest(Path(a.collect_dir)), indent=1, sort_keys=True))
+        return 0
     if a.sample_rows < 1:
         raise SystemExit("--sample-rows must be >= 1")
     report = collect_gates(Path(a.collect_dir), sample=a.sample_rows, seed=a.seed, temps=list(a.train_target_temp))

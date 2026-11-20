@@ -1150,6 +1150,13 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
     from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
     run_dir = Path(run_dir)
+    settings.validate()
+    planned = planned_phase_updates(run_dir, generation, settings)
+    if settings.snapshot_updates:
+        # Before ANY write (stage dir, run-level probe.npz): a refused plan leaves the run as it was.
+        if planned is None:
+            raise ValueError(f"generation {generation}: a phase collect is not sealed; refusing to train")
+        check_snapshot_plan(settings.snapshot_updates, planned)
     out_dir = run_dir / f"gen_{generation:04d}" / "train"
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "manifest.json").unlink(missing_ok=True)  # a redo is unsealed until its own manifest lands
@@ -1157,7 +1164,6 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
     global_seed = seed & 0xFFFFFFFF  # numpy's legacy seed is 32-bit; record what was realised
     np.random.seed(global_seed)
     torch.manual_seed(global_seed)
-    settings.validate()
     arch, model_config = load_arch_config(init_checkpoint)
     capped = capped_collects(run_dir, phase_generations(generation, settings))
     lineage_capped = lineage_capped_collects(run_dir, generation)
@@ -1246,6 +1252,8 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
             rng=np.random.default_rng(seed), sl_start=sl_cursor)
         sampler = ScheduledSampler(train_rows, batches, rng=np.random.default_rng(seed ^ 0x5A5A), sl_rows=sl_rows)
         updates = len(batches)
+        if planned is not None and planned != updates:
+            raise RuntimeError(f"planned_phase_updates said {planned} updates, the batch plan has {updates}")
 
     anchor = None
     if settings.kl_policy > 0 or settings.kl_wdl > 0:

@@ -429,7 +429,9 @@ The reference is created only when all of these hold:
 - it used the arm's TRAIN openings;
 - the arm's collect flags equal the source's. A different value would be pinned
   without affecting the rows. Execution-only fields are exempt: device,
-  cuda_graphs, eval_max_batch, seed, dup_sketch_budget and exact_repeat_vs_previous.
+  cuda_graphs, eval_max_batch, dup_sketch_budget and exact_repeat_vs_previous.
+  `--seed` is NOT exempt: it also draws the train phase's batch plan, so an arm
+  must use the source's seed (refused before pinning otherwise).
 
 The cheap checks run before pinning. The reference manifest records, as `source_*`
 inputs, the SHA-256 of:
@@ -447,6 +449,12 @@ which re-checks the source against its own seal. The source's config and stats
 are copied into the reference, so the capped-collect taint rules apply through it
 unchanged. An arm never writes, moves or unseals the source: `--redo` and
 `--redo-downstream` act only on the arm's own one-file reference directory.
+
+**Freeze the source run dir once arms reference it.** The source cannot know its
+arms exist, so nothing stops a `collect --redo` (or any edit) in the source after
+arms reference it. The arms then refuse loudly at their next stage, because the
+re-hashed `source_*` inputs no longer match, and must re-reference the new
+collect, which means retraining.
 
 Given the same `--seed`, arms see the same holdout split (a hash of the game id),
 the same probe set (the first trained generation's held-out rows) and the same
@@ -472,15 +480,28 @@ It reports:
   survivor == argmax Q, per side x root kind;
 - the book-end mover's score (win 1, draw 0.5, loss 0). Its colour is white iff
   `start_ply` is even;
-- target entropy, KL(target‖prior) and survivor − node Q, overall and per side;
+- the collect's own stats.json fields under their own names, recomputed over every
+  row: `target_entropy`, `kl_target_prior`, `mean_survivor_minus_node_q`,
+  `repeat_rate_within`;
+- target entropy, KL(target‖prior) and survivor − node Q on the sample, overall
+  and per side (`*_by_side`);
 - rows per game and the draw / decisive rates;
 - `buffer_full_flushes`, and `eval_max_batch_realised` against
-  `leaf_rows_required`, with the capped-collect record;
+  `leaf_rows_required` (`eval_max_batch_equals_leaf_rows`, and
+  `eval_cap_covers_leaf_rows`), with the capped-collect record;
 - with `--train-target-temp T` (repeatable), the target entropy after the loss's
   own `retemper_main_policy_target`.
 
 `--thresholds FILE` (`{"dotted.metric": {"min": x, "max": y}}`) exits 3 when a
-gate fails or its metric is missing.
+gate fails or its metric is missing or NaN.
+
+`--content-digest` prints only the identity of the collect's decoded content: a
+SHA-256 over every shard's arrays and row sidecar, plus the SHA-256 of
+`games.jsonl`. Use it to check that two collects made the same rows (for example
+CUDA graphs on vs off). Their shard FILES are not comparable: on the 128-game
+SL-base check, 263 of 2,676 zarr files differed between graphs on and off. The
+differences were the shard metadata's wall-clock `generated_at_unix` and the
+blosc-zstd chunk files of 11 arrays, while every decoded array was identical.
 
 On the banked 128-game smoke collects, all rows:
 
@@ -498,6 +519,32 @@ The Spearman values use average ranks for ties. `side_stats.py` used ordinal ran
 exactly (capped: 0.511 / 0.475 / −0.007 / 0.110). The capped collect has many
 tied child Qs, from leaves backed with the root's Q, which is where the two rank
 methods differ.
+
+## Model gates
+
+`scripts/simple_rl_model_gates.py --model <model.pt>` measures one checkpoint,
+including a train snapshot, and prints JSON:
+
+- `--audit-rows <npz>`: mean |Q| (|W − L|) and mean P(draw) of the value head on
+  fixed audit rows (the `x` array). The model is loaded by the arena's loader. On
+  CUDA the forward runs under bf16 autocast, as the banked references were made.
+- `--collect <run dir> --gen g [--train-target-temp T]`: held-out policy CE
+  against the stored target re-tempered at T by `retemper_main_policy_target`,
+  plus policy entropy and value NLL. These are computed by the train stage's own
+  `heldout_metrics`, on the same held-out rows (generation g's held-out games at
+  the run's pinned `holdout_frac`). At T = 1 the CE equals the train stage's
+  `heldout_after` (tested).
+- `--thresholds FILE` works as in the collect gates (exit 3; missing or NaN fails).
+
+On the 3,080-row D3 audit bank (`rl-audit/positions.npz`):
+
+| net | this script, CPU fp32: mean \|Q\| / P(draw) | banked (bf16 CUDA forward) |
+|---|---|---|
+| SL base | 0.4086 / 0.5133 | 0.4088 / 0.5132 |
+| F12 c12 | 0.3312 / 0.5278 | 0.3312 / 0.5281 |
+| Q50 c12 | 0.2982 / 0.5141 | 0.2980 / 0.5144 |
+
+The two columns differ only by fp32 vs bf16-autocast arithmetic (at most 0.0003).
 
 ## Stockfish
 

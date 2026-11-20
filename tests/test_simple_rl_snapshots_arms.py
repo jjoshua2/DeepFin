@@ -272,9 +272,18 @@ def test_arm_refusals(tmp_path: Path, source: tuple[Path, Path, Path]) -> None:
     with pytest.raises(SystemExit, match="collect settings differ"):
         simple_rl_loop.main(_arm(tmp_path, "b", source, "--sims", "16"))
     assert not (tmp_path / "b").exists()
+    # Another --seed: it also draws the train plan, so arms must share the source's.
+    seeded = _arm(tmp_path, "s", source)
+    seeded[seeded.index("--seed") + 1] = "78"
+    with pytest.raises(SystemExit, match=r"collect settings differ.*'seed'"):
+        simple_rl_loop.main(seeded)
+    assert not (tmp_path / "s").exists()  # refused before pinning
     # Another generation-0 model.
-    other = _argv(tmp_path / "c", openings, model_config, "--collect-from", str(src))
-    other[other.index("--seed") + 1] = "78"
+    payload = torch.load(src / "gen_0000" / "model.pt", map_location="cpu", weights_only=False)
+    key = next(k for k, v in payload["model"].items() if v.is_floating_point())
+    payload["model"][key] = payload["model"][key] + 1e-3
+    torch.save(payload, tmp_path / "other_gen0.pt")
+    other = _argv(tmp_path / "c", openings, model_config, "--collect-from", str(src), init=tmp_path / "other_gen0.pt")
     with pytest.raises(SystemExit, match="generation-0 model is not the source's"):
         simple_rl_loop.main(other)
     # A reference to a reference.
@@ -389,3 +398,23 @@ def test_an_off_policy_generation_is_refused(tmp_path: Path, monkeypatch: pytest
         simple_rl_loop.main(arm)
     assert (tmp_path / "arm" / "gen_0001" / "train" / "manifest.json").is_file()
     assert not (tmp_path / "arm" / "gen_0002" / "collect" / "manifest.json").exists()
+
+
+def test_train_generation_refuses_a_bad_plan_before_writing_anything(source: tuple[Path, Path, Path]) -> None:
+    from chess_anti_engine.simple_rl.learn import TrainSettings, planned_phase_updates, train_generation
+
+    src = source[2]
+    settings = TrainSettings(batch_size=8, holdout_frac=0.5, seed=77)
+    planned = planned_phase_updates(src, 1, settings)
+    assert planned is not None
+    before = sorted(p.relative_to(src) for p in src.rglob("*"))
+    bad = TrainSettings(batch_size=8, holdout_frac=0.5, seed=77, snapshot_updates=(1, planned + 1))
+    with pytest.raises(ValueError, match="reach past the phase's"):
+        train_generation(run_dir=src, generation=1, init_checkpoint=src / "gen_0000" / "model.pt",
+                         prev_trainer_checkpoint=None, settings=bad)
+    assert sorted(p.relative_to(src) for p in src.rglob("*")) == before  # no train dir, no probe.npz
+    # The metadata-only count is the batch plan's: the same settings train exactly `planned` updates.
+    ok = TrainSettings(batch_size=8, holdout_frac=0.5, seed=77, snapshot_updates=(planned,))
+    summary = train_generation(run_dir=src, generation=1, init_checkpoint=src / "gen_0000" / "model.pt",
+                               prev_trainer_checkpoint=None, settings=ok)
+    assert summary["updates"] == planned

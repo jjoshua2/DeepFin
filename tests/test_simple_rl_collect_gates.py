@@ -43,15 +43,19 @@ def test_report_on_a_sealed_collect(collect: Path, tmp_path: Path) -> None:
     assert r["rows"] == stats["rows"] == r["sampled_rows"]
     assert r["rows_per_game"] == pytest.approx(stats["rows"] / stats["games"])
     assert r["draw_rate"] == pytest.approx(stats["draw_rate"])
-    assert r["target_entropy"]["overall"] == pytest.approx(stats["target_entropy"])
-    assert r["kl_target_prior"]["overall"] == pytest.approx(stats["kl_target_prior"])
+    # The stats.json fields under their own names, recomputed over every row.
+    for k in ("target_entropy", "kl_target_prior", "mean_survivor_minus_node_q", "repeat_rate_within"):
+        assert r[k] == pytest.approx(stats[k], abs=1e-12), k
+    # All rows sampled here, so the sample's overall values are the same numbers.
+    assert r["target_entropy_by_side"]["overall"] == pytest.approx(stats["target_entropy"])
+    assert r["kl_target_prior_by_side"]["overall"] == pytest.approx(stats["kl_target_prior"])
     assert r["buffer_full_flushes"] == stats["buffer_full_flushes"]
     # Re-temper at 1.0 is the identity; 2.0 flattens.
-    assert r["retempered_target_entropy"]["1"]["overall"] == pytest.approx(r["target_entropy"]["overall"])
-    assert r["retempered_target_entropy"]["2"]["overall"] > r["target_entropy"]["overall"]
+    assert r["retempered_target_entropy"]["1"]["overall"] == pytest.approx(r["target_entropy"])
+    assert r["retempered_target_entropy"]["2"]["overall"] > r["target_entropy"]
     cells = r["spearman_childq_prior"]
     assert sum(c["rows"] for c in cells.values()) == r["root_stats_rows"]
-    sides = r["target_entropy"]
+    sides = r["target_entropy_by_side"]
     assert min(sides["book_end_mover"], sides["reply"]) <= sides["overall"] <= max(sides["book_end_mover"],
                                                                                    sides["reply"])
 
@@ -95,3 +99,59 @@ def test_book_end_mover_is_the_side_to_move_at_start_ply() -> None:
     assert r["white_score"] == pytest.approx(2.5 / 4)
     assert r["book_end_mover_white_share"] == 0.5
     assert (r["rows_per_game"], r["draw_rate"], r["decisive_rate"]) == (10.0, 0.25, 0.75)
+
+
+def test_a_nan_metric_fails_its_gate() -> None:
+    report = {"a": float("nan"), "b": 0.5, "c": True, "d": {"e": None}, "f": float("nan"), "g": float("inf")}
+    # An empty bound is a presence gate: the metric must exist and be finite.
+    out = {g["metric"]: g["pass"] for g in gates.check_gates(
+        report, {"a": {"min": 0.0}, "b": {"min": 0.0, "max": 1.0}, "c": {"min": 0.0}, "d.e": {"max": 1.0},
+                 "f": {}, "g": {}, "b2": {}})}
+    assert out == {"a": False, "b": True, "c": False, "d.e": False, "f": False, "g": False, "b2": False}
+    assert gates.check_gates(report, {"b": {}})[0]["pass"] is True
+
+
+def test_g_c2_equality_and_stats_fields_are_gateable(collect: Path, tmp_path: Path) -> None:
+    import json as _json
+
+    m = _json.loads((collect / "manifest.json").read_text())
+    m["stats"].update(eval_max_batch_realised=128, leaf_rows_required=128)
+    (collect / "manifest.json").write_text(_json.dumps(m))
+    th = tmp_path / "t.json"
+    th.write_text(_json.dumps({"repeat_rate_within": {"max": 0.05}, "target_entropy": {"min": 0.0},
+                               "kl_target_prior": {"min": 0.0}, "mean_survivor_minus_node_q": {"min": -1.0}}))
+    out = tmp_path / "r.json"
+    assert gates.main([str(collect), "--thresholds", str(th), "--out", str(out)]) == 0
+    r = _json.loads(out.read_text())
+    assert r["eval_max_batch_equals_leaf_rows"] is True
+    assert all(g["pass"] for g in r["gates"])
+    m["stats"]["eval_max_batch_realised"] = 256
+    (collect / "manifest.json").write_text(_json.dumps(m))
+    assert gates.main([str(collect), "--out", str(out)]) == 0
+    r = _json.loads(out.read_text())
+    assert (r["eval_max_batch_equals_leaf_rows"], r["eval_cap_covers_leaf_rows"]) == (False, True)
+
+
+def test_content_digest_ignores_shard_file_bytes_but_not_rows(collect: Path, tmp_path: Path) -> None:
+    import shutil
+
+    from chess_anti_engine.replay.shard import load_shard_arrays, save_local_shard_arrays
+
+    base = gates.content_digest(collect)
+    copy = tmp_path / "copy" / "gen_0001" / "collect"
+    shutil.copytree(collect, copy)
+    shard = sorted((copy / "shards").glob("shard_*.zarr"))[0]
+    arrays, meta = load_shard_arrays(shard, lazy=False, validate=True)
+    from chess_anti_engine.replay.shard import ShardMeta
+
+    shutil.rmtree(shard)
+    fields = {k: v for k, v in meta.items() if k in ShardMeta.__dataclass_fields__}
+    fields["generated_at_unix"] = int(fields.get("generated_at_unix") or 0) + 12345  # a different file, same rows
+    save_local_shard_arrays(shard, arrs=arrays, meta=ShardMeta(**fields))
+    again = gates.content_digest(copy)
+    assert again["content_sha256"] == base["content_sha256"]
+    assert again["games_sha256"] == base["games_sha256"]
+    arrays["wdl_target"] = (np.asarray(arrays["wdl_target"]) + 1) % 3
+    shutil.rmtree(shard)
+    save_local_shard_arrays(shard, arrs=arrays, meta=ShardMeta(**fields))
+    assert gates.content_digest(copy)["content_sha256"] != base["content_sha256"]

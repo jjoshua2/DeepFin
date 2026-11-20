@@ -6,7 +6,8 @@ Every reader of rows / games goes through ``common.resolve_collect_dir``, so the
 arm trains on exactly the source's rows: the holdout split (a hash of the game
 id), the probe set (the first trained generation's held-out rows) and the batch
 plan (seeded by ``--seed`` and the generation) are then identical across arms
-that share ``--seed``, while each arm pins its own train settings.
+-- which must use the source's ``--seed`` -- while each arm pins its own train
+settings.
 
 The reference is created only when the source collect is sealed, is not itself
 a reference, still matches every sha256 its own manifest recorded, was played
@@ -35,8 +36,10 @@ from chess_anti_engine.simple_rl.common import (
 # Collect settings that say how/where the source ran, not which rows it made
 # (the source's own record of them is copied with its config). Every other
 # setting must equal the source's: a differing value would be pinned in the
-# arm's run_config yet have no effect on the rows it trains on.
-EXECUTION_ONLY_SETTINGS = frozenset({"device", "cuda_graphs", "eval_max_batch", "seed", "dup_sketch_budget",
+# arm's run_config yet have no effect on the rows it trains on. ``seed`` is
+# deliberately NOT exempt: the same --seed also draws the train phase's batch
+# plan, so arms with another seed would silently see other sample orders.
+EXECUTION_ONLY_SETTINGS = frozenset({"device", "cuda_graphs", "eval_max_batch", "dup_sketch_budget",
                                      "exact_repeat_vs_previous"})
 
 
