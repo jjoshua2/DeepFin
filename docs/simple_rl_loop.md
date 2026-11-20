@@ -141,6 +141,13 @@ the exact-repeat rate of the encoded input (position and history planes) within
 the generation, the cross-generation repeat rate, and, from the stored root
 statistics, the target entropy, prior entropy, KL(target‖prior) and top-1
 agreement of target and prior.
+It also records `buffer_full_flushes`: how many times the generation's C searches
+found their leaf buffer full and flushed. That count is observed, read from
+`gumbel_c.buffer_full_flushes()` around the collect, not predicted from settings.
+A count above 0 means the evaluator cap (`--eval-max-batch`) is below what the
+search asks for, so the searches were re-batched. The collect writes `stats.json`
+and then refuses to seal the generation, which is redone whole. See the
+[buffer-full record](experiments/2026-11-20-gumbel-buffer-full-fallback.md).
 
 The cross-generation repeat rate (`repeat_rate_vs_previous`) is a constant-memory
 estimate by default. The run keeps every earlier row hash below a threshold in a
@@ -296,9 +303,12 @@ flagged in the row sidecar (`tb_policy_override`).
 
 `--eval-max-batch` controls the search, not memory. Each network turn hands one
 compiled Gumbel call every active game, together with the persistent tree. The
-call caps its leaf buffer at the evaluator's max batch. When a leaf finds the
-buffer full, it is not evaluated: the C tree backs it up as a pseudo-terminal
-carrying the root's Q (`_mcts_tree.c`, "Buffer full").
+call caps its leaf buffer at the evaluator's max batch. Before ABI 11 (the
+[buffer-full fix](experiments/2026-11-20-gumbel-buffer-full-fallback.md)), a leaf
+that found the buffer full was not evaluated: the C tree backed it up as a
+pseudo-terminal carrying the root's Q. Since ABI 11 the batch is flushed and
+resumed, and a collect whose searches flushed is refused unsealed. The rest of
+this section describes the defect that rows from older builds carry.
 
 `tree_backprop` reads a leaf value from the leaf's side to move, while the root's
 Q is from the root's side to move. So a starved leaf at any ODD depth (a root

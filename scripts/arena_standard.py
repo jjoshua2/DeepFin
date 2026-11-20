@@ -1171,8 +1171,8 @@ def hoist_tag(
     resume fingerprint (a pre-hoist log must stay resumable under post-hoist
     code), and it can change the arithmetic that plays the games. Unlike
     compile, it can change the SEARCH: below the uncapped leaf-buffer size the
-    C tree absorbs surplus leaves as root-Q pseudo-terminals instead of
-    evaluating them.
+    C tree flushes and re-batches (ABI >= 11; older builds backed surplus
+    leaves up with the root's Q instead of evaluating them).
 
     So the tag is the effective configuration, not the raw flag:
     ``"n/a"`` off the matched_sims path, ``"off"`` when no evaluator is hoisted,
@@ -1628,9 +1628,10 @@ def arena_uncapped_leaf_rows(
     ⚑ The number ``--eval-max-batch`` has to be compared against, and the reason
     that flag is a SEARCH-SHAPE knob rather than a memory one: ``gumbel_c`` mins
     its leaf buffer against the evaluator's ``_max_batch``, and when the buffer
-    fills the C tree does not flush -- it absorbs the leaf as a SOLVED_UNKNOWN
-    pseudo-terminal carrying the ROOT's Q. Below this value, leaves stop being
-    evaluated and moves change.
+    fills the C tree flushes the batch and resumes (ABI >= 11; counted in
+    ``gumbel_c.buffer_full_flushes()``). Below this value the search is
+    re-batched and moves can change; before ABI 11 the leaf was backed up with
+    the ROOT's Q instead of being evaluated.
 
     Computed from ``mcts/gumbel_c.leaf_buffer_rows`` -- the search's own
     expression -- over every board count either loop can hand one side (1 ..
@@ -1739,14 +1740,13 @@ def _warn_leaf_cap_binds(
         f"this arena's uncapped leaf-buffer size {uncapped_leaf_rows}, so it is "
         f"acting as a SEARCH-SHAPE knob, not a memory knob. gumbel_c mins its "
         f"leaf buffer against the evaluator's cap, and when that buffer fills "
-        f"the C tree does NOT flush and retry — it absorbs the leaf as a "
-        f"SOLVED_UNKNOWN pseudo-terminal carrying the ROOT's Q. Leaves beyond "
-        f"{eval_max_batch} are therefore never evaluated: measured on CPU, 128 "
-        f"vs 4096 dropped 57-75% of leaf evaluations and changed the chosen "
-        f"move on 53 of 64 boards. THIS ARENA'S SEARCH IS NOT COMPARABLE TO AN "
-        f"UNCAPPED ONE. Pass --eval-max-batch {uncapped_leaf_rows} (or 0) if "
-        f"that was not intended; the result record and every game row store "
-        f"which it was.",
+        f"the C tree flushes the batch and resumes at the leaf that did not fit "
+        f"(every leaf is still evaluated, but later leaves see a fresher tree, "
+        f"as with a smaller target_batch). THIS ARENA'S SEARCH IS NOT COMPARABLE "
+        f"(BYTE FOR BYTE) TO AN UNCAPPED ONE. Pass --eval-max-batch "
+        f"{uncapped_leaf_rows} (or 0) if that was not intended; the result "
+        f"record stores the cap and the realised buffer_full_flushes count, and "
+        f"every game row stores the cap.",
         file=sys.stderr, flush=True,
     )
 
@@ -3109,7 +3109,7 @@ def run_arena(
         # ⚑ The remedy deliberately does NOT say "raise it to the pool size".
         # That is the value at which the ROOT submit stops raising and the LEAF
         # cap binds HARDEST: at a pool of 128 the search asks for 4096 leaf
-        # rows, so a cap of 128 would run and absorb most of the leaves. Naming
+        # rows, so a cap of 128 would run and flush ~32 times per halving rep. Naming
         # the bare minimum would trade a loud crash for a quiet search change.
         raise SystemExit(
             f"--eval-max-batch {eval_max_batch} is below this arena's pool of "
@@ -3442,7 +3442,7 @@ def run_arena(
                 # Provenance for a POOLED fit. Two runs with the same engine
                 # names, ConfigHash, GitSha and SideSearch but different
                 # evaluator caps played DIFFERENT searches -- a binding cap
-                # makes the C tree absorb leaves instead of evaluating them --
+                # makes the C tree re-batch the search (flush-and-resume) --
                 # and Ordo would fit them as ONE player. The value is the
                 # effective hoist state ("4096", "512<4032", "off", "n/a"),
                 # the same string the game-log row carries, and its ABSENCE
@@ -3556,6 +3556,9 @@ def run_arena(
     # scoped to this process rather than implying resumed games were reprobed.
     tb_probe: SyzygyProbe | None = None
     t0 = time.time()
+    from chess_anti_engine.mcts.gumbel_c import buffer_full_flushes
+    buffer_full_before = buffer_full_flushes()
+    eval_max_batch_realised: int | None = None  # read off the hoisted evaluators below
     if not openings_to_play:
         print(
             f"[arena] resume: all {len(openings)} pairs are already complete "
@@ -3733,6 +3736,20 @@ def run_arena(
                 model_reference, device=device, max_batch=eval_max_batch,
                 cuda_graphs=eval_cuda_graphs,
             )
+            # The cap the SEARCH reads (gumbel_c: getattr(eval_impl,
+            # "_max_batch", ...)), read back off the built objects rather than
+            # trusted from the request; the bound is re-derived from it.
+            eval_max_batch_realised = min(
+                int(getattr(e, "_max_batch", eval_max_batch))
+                for e in (evaluator_candidate, evaluator_reference)
+            )
+            if eval_max_batch_realised != eval_max_batch:
+                print(f"[arena] evaluator realised max_batch {eval_max_batch_realised} != requested "
+                      f"{eval_max_batch}", file=sys.stderr, flush=True)
+            _was_bound = leaf_cap_bound
+            leaf_cap_bound = eval_max_batch_realised < uncapped_leaf_rows
+            if leaf_cap_bound and not _was_bound:
+                _warn_leaf_cap_binds(eval_max_batch_realised, uncapped_leaf_rows, late=True)
             # Read off the objects: an evaluator without the attribute (any
             # non-DirectGPUEvaluator) is not replaying graphs, whatever was asked.
             graphs_candidate = bool(getattr(evaluator_candidate, "cuda_graphs", False))
@@ -4106,6 +4123,19 @@ def run_arena(
         )
     if sprt_lookahead_pairs is not None:
         record["sprt_lookahead_pairs"] = sprt_lookahead_pairs
+    # The OBSERVATION behind eval_leaf_cap_bound (a configuration-derived
+    # prediction): buffer-full flushes the C searches of this invocation
+    # actually took, read off gumbel_c's process counter. Kept as a recorded
+    # count, not a refusal: since ABI 11 a binding cap re-batches the search
+    # (every leaf evaluated) instead of fabricating leaf values, so the games
+    # are valid searches at a different batching -- the same class of change
+    # as a smaller target_batch, which the arena also only records. Readers
+    # comparing arenas compare this field.
+    record["buffer_full_flushes"] = int(buffer_full_flushes() - buffer_full_before)
+    record["eval_max_batch_realised"] = eval_max_batch_realised
+    if record["buffer_full_flushes"] > 0:
+        print(f"[arena] ⚑ buffer_full_flushes={record['buffer_full_flushes']}: the evaluator cap re-batched "
+              "this arena's searches (see the --eval-max-batch warning).", file=sys.stderr, flush=True)
     if receipts is not None:
         record["durable_source_seal_sha256"] = durable_source_seal_sha256
         record["pair_receipts_dir"] = str(receipts.directory)
@@ -4173,8 +4203,8 @@ def add_common_args(p: argparse.ArgumentParser) -> None:
                         "batch the search asks for). ⚑ BELOW that it is a "
                         "SEARCH-SHAPE knob, not a memory knob: gumbel_c mins its "
                         "leaf buffer against this, and a full buffer makes the C "
-                        "tree ABSORB surplus leaves as root-Q pseudo-terminals "
-                        "instead of evaluating them, so the moves change. Values "
+                        "tree flush and re-batch the search (counted as "
+                        "buffer_full_flushes), so the moves can change. Values "
                         "below the arena's POOL SIZE (--max-concurrent-games "
                         "capped by the loaded opening pairs; elo_vs_sims runs "
                         "the 128 default) are refused — the root submit would "

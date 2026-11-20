@@ -95,9 +95,10 @@ class CollectSettings:
     # Forward-batch cap of the CUDA evaluator. None (default) = the search's own
     # leaf-buffer size at this concurrency and topk (required_leaf_rows). It is a
     # SEARCH-SHAPE knob, not a memory one: gumbel_c caps its leaf buffer at the
-    # evaluator's max batch, and a leaf that finds the buffer full is NOT
-    # evaluated -- it is backed up as a pseudo-terminal carrying the ROOT's Q
-    # (_mcts_tree.c, "Buffer full"). At 64 sims / topk 16 / 128 games and the old
+    # evaluator's max batch. Before ABI 11 a leaf that found the buffer full was
+    # NOT evaluated -- it was backed up with the ROOT's Q; since ABI 11 the batch
+    # is flushed and resumed (counted, and a collect with flushes is refused
+    # unsealed). At 64 sims / topk 16 / 128 games and the old
     # fixed 512 that hit most first-round children and corrupted the reply
     # side's targets (docs/simple_rl_loop.md, "Evaluator batch cap"). An explicit
     # value below required_leaf_rows is refused.
@@ -385,9 +386,9 @@ def realised_eval_max_batch(settings: CollectSettings) -> int:
         # actually bind (e.g. 512 at 17-32 games, topk 16) and is refused anyway.
         raise ValueError(
             f"--eval-max-batch {settings.eval_max_batch} is below the {need} leaf rows one search call asks for "
-            f"at --concurrency {settings.concurrency} / --topk {settings.topk}: the C tree would back up the "
-            "leaves that find the buffer full as pseudo-terminals carrying the root's Q instead of evaluating "
-            "them, which changes moves and targets. Omit --eval-max-batch (auto) or pass at least "
+            f"at --concurrency {settings.concurrency} / --topk {settings.topk}: the C search would have to "
+            "re-batch (flush) its leaf buffer, a different search than the pinned settings describe (before "
+            "ABI 11 it backed those leaves up with the root's Q). Omit --eval-max-batch (auto) or pass at least "
             f"{need}, or lower --concurrency")
     return int(settings.eval_max_batch)
 
@@ -473,6 +474,9 @@ def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, trai
     buffered_meta: list[tuple[int, int, str, bool, np.uint64]] = []
     shard_index = 0
     games_done = 0
+    from chess_anti_engine.mcts.gumbel_c import buffer_full_flushes
+
+    flushes_before = buffer_full_flushes()
     t0 = time.perf_counter()
     model_sha = sha256_file(checkpoint)
 
@@ -554,7 +558,19 @@ def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, trai
     stats.update(wall_seconds=wall, games_per_hour=3600.0 * games_done / max(wall, 1e-9),
                  rows_per_second=stats["rows"] / max(wall, 1e-9), sf_nodes=int(settings.sf_nodes),
                  leaf_rows_required=required_leaf_rows(settings), **evaluator_graph_record(evaluator))
+    # Observed, not predicted: buffer-full flushes the generation's searches
+    # took (gumbel_c's process counter, read around this collect only). > 0
+    # means the evaluator cap re-batched the searches, i.e. the rows were made
+    # by a different search than the pinned settings describe; written to
+    # stats.json, and the generation is refused unsealed (redone whole).
+    stats["buffer_full_flushes"] = int(buffer_full_flushes() - flushes_before)
     write_json_atomic(gen_dir / STATS, stats)
+    if stats["buffer_full_flushes"] > 0:
+        raise RuntimeError(
+            f"collect generation {generation}: {stats['buffer_full_flushes']} buffer-full flush(es) -- the "
+            "evaluator's max batch is below the leaves the search asks for, so its searches were re-batched "
+            "(see gumbel_c.leaf_buffer_rows). stats.json records the count; the generation is not sealed. "
+            "Raise the evaluator cap or lower --concurrency and redo it")
     config_record = {"settings": asdict(settings),
                      "dataclasses": {k: asdict(v) for k, v in cfg.items()}, "arch": arch}
     write_manifest(
