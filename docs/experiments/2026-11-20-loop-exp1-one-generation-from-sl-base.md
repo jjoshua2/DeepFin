@@ -11,6 +11,14 @@ Revised 2026-11-20 after an independent review (findings M1–M7, m1–m11). Ali
 2026-11-20 with the driver as merged in #1430: commands, gate scripts and report
 fields. D7 was decided by the owner on 2026-11-20 (fast collect path only). D1–D6,
 D8 and D9 are unchanged and still open.
+Revised 2026-11-20 after a dry run of L1–L4 on main `f51c51f20` (bank
+`~/chess-artifacts/operations/rl-claude-20261119/exp1-prelaunch-dryrun/`, marked
+NOT_A_CANDIDATE: a tiny-net CPU rehearsal, one 128-game collect, an audit
+reproduction and a tiny arena pair; nothing in it is a result). L1–L4 passed. The
+gaps it found are closed here: the openings split command, the G-T1 and G-T2
+verdict commands, `--z` on the pooling script, the L4 build script, snapshots
+derived from N, the SL base copied into the run dir, and recalibrated G-C5 and
+G-T4 bounds and throughput.
 
 **Prerequisites:**
 - **Collector fixes, on main since `b410456b4`:**
@@ -51,14 +59,14 @@ change. Each decision is argued in the section it links to. D7 is already decide
 | # | Decision | Recommended default | Alternative |
 |---|---|---|---|
 | D1 | [Which arm is primary, given its prior](#prior-and-choice-of-primary) | **Arm P** (policy only): measured prior −10.9 (−27.7 to +5.9) on F12's rows, no named failure mechanism. The likely outcome is "unread" or "kill", which would register that one policy-only generation at this dose is neutral. | **Arm V** (value on the search value): possibly a better chance of a positive read, with a named risk (a flatter value, the mechanism of Q50's loss) |
-| D2 | [Dose](#collection) | **16,000 games WITH snapshot gates** (snapshots at 1,000 / 2,000 / 4,000 updates) | **4,000 games** (one snapshot, at 1,000 updates, under the [snapshot rule](#snapshots)) |
+| D2 | [Dose](#collection) | **16,000 games WITH snapshot gates** (snapshots at 1,000 / 2,000 / 4,000 updates, derived from N by the [snapshot rule](#snapshots)) | **4,000 games** (one snapshot, at 1,000 updates, by the same rule; the commands are unchanged apart from `--games`) |
 | D3 | [Search budget of the stored targets](#collection) | **64 sims** | 256 sims at N/4 games, as a separate later experiment |
 | D4 | [Softening used by Arm S](#arms) | **`--train-target-temp 2.0`** | `--policy-prior-mix 0.5 --prior-mix-source reference` (SL base) |
-| D5 | [Primary arena layout](#deciding-yardstick) | **Seat-balanced:** half the games with the arm as candidate, half as reference, same openings; no separate base-vs-base control | One orientation plus a same-day base-vs-base control |
-| D6 | [Positive control](#positive-control) | **Unconditional:** Arm V's recipe at 4,000 games from Q50 c12, played against Q50 c12. It cannot validate the primary: a pass is largely expected from fixing value calibration, and its dose is a quarter of the primary's | Skip it, saving about 3 GPU hours (2.6–3.4) |
+| D5 | [Primary arena layout](#deciding-yardstick) | **Seat-balanced:** half the games with the arm as candidate, half as reference, same openings; no separate base-vs-base control | One orientation plus a same-day base-vs-base control. **Would need commands and a reading rule before selection:** none are written here, and the pooling script reads only the seat-balanced layout |
+| D6 | [Positive control](#positive-control) | **Unconditional:** Arm V's recipe at 4,000 games from Q50 c12, played against Q50 c12. It cannot validate the primary: a pass is largely expected from fixing value calibration, and its dose is a quarter of the primary's | Skip it, saving about 3 GPU hours (2.6–3.6) |
 | D7 | [Collect execution](#collection) | **DECIDED by the owner, 2026-11-20:** the fast (CUDA-graphs) collect path only, concurrency 128. "I don't think we need to maintain a fast and a slow path. It's okay to be a little bit different. And just be faster." | ~~Graphs off~~ (struck) |
 | D8 | [Optimizer](#training) | **Fresh NAdamW, flat LR 3e-6, warmup 0**, as F12 | `--init-optimizer-state checkpoint` (Aurora): not recommended here |
-| D9 | [Deciding N](#deciding-yardstick) | **Single fixed look at 3,200 games** (1,600 per orientation), read once | O'Brien–Fleming two-look: z 2.797 at 1,600, z 1.977 at 3,200 |
+| D9 | [Deciding N](#deciding-yardstick) | **Single fixed look at 3,200 games** (1,600 per orientation), read once | O'Brien–Fleming two-look: z 2.797 at 1,600, z 1.977 at 3,200. Look 2 [would need commands before selection](#deciding-yardstick) |
 
 ## Question and hypothesis
 
@@ -195,13 +203,16 @@ One collection from the SL base, at main ≥ `885ab7b54`.
 The default keeps 64 sims: it is the instrument of every banked read, and changing it
 would add a second data-affecting change in one readout (rule 3).
 
-**Throughput (unverified).** Clean collects at concurrency 128 measured 2,424–2,583
-games/h, but on 128-game runs. Those two runs are effectively ONE collect: the same
-128 games, with and without an explicit cap. The concurrency-256 reads (5,180–6,139
-games/h) had the cap defect and are not used. The CUDA-graph speed-up is not banked
-in a readable file and is not counted.
+**Throughput (128-game runs only).** On current main the fast path measured:
+- 3,284 games/h: the dry run's collect on `f51c51f20`, this record's step 1 verbatim
+  apart from `--games 128` (`stats.json` `games_per_hour`; 140 s wall);
+- 3,760 games/h: #1433's `bench_after_default` (seed 20261121).
 
-Estimate: about 6.2–6.6 h for 16,000 games, 1.5–1.7 h for 4,000.
+The earlier 2,424–2,583 games/h were measured before #1433 on the eager path and no
+longer apply. The concurrency-256 reads (5,180–6,139 games/h) had the cap defect and
+are not used. No collect longer than 128 games has been timed.
+
+Estimate: about 4.3–4.9 h for 16,000 games, 1.1–1.2 h for 4,000.
 
 ## Training
 
@@ -254,7 +265,30 @@ Recovering means re-referencing and retraining every arm.
 export PYTHONPATH=.
 R=~/chess-artifacts/operations/loop-exp1-20261120
 TB=~/projects/chess/data/syzygy_3-4-5:~/projects/chess/data/syzygy_6
-SL=<SL base checkpoint, sha256 a39f900c…>
+BOOKS=~/projects/chess/data/opening_books
+mkdir -p $R/gates $R/arenas
+
+# 0a. The SL base: copied ONCE into the run dir, verified, and write-protected. The shared
+#     bank file is never chmodded; every command below uses the copy.
+cp -n <shared SL base file> $R/sl_base.pt
+echo "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0  $R/sl_base.pt" | sha256sum -c - \
+  || { echo "SL base sha256 mismatch"; exit 1; }
+chmod a-w $R/sl_base.pt
+SL=$R/sl_base.pt
+
+# 0b. The openings split (TRAIN / EVAL), then its check against the banked split.
+python -u scripts/simple_rl_loop.py split-openings --out $R/openings \
+  --book $BOOKS/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip:16 \
+  --book $BOOKS/2moves_v2_no8overlap_uho060110.pgn.zip:4 --eval-lines 4000 --salt simple-rl-v1
+python3 -c 'import hashlib, json, sys
+d = sys.argv[1]; m = json.load(open(d + "/manifest.json")); s = json.load(open(d + "/summary.json"))
+want = {"train.jsonl": "1a98416db7263005da0412403267e722b8b0e814c2569728ee77e35421bcef1f",
+        "eval.jsonl": "1d3d13ed11d669d0b2c7263fbd0bdc35059cbc2bb02d2babb0023159e8b5e325",
+        "eval.pgn": "067675c264fb6b88251a2afdcdb298a720646a19b26aa1a90e7ca779eaf2a4de"}
+got = {k: hashlib.sha256(open(d + "/" + k, "rb").read()).hexdigest() for k in want}
+counts = (m["counts"]["train"], m["counts"]["eval"], s["eval_max_plies"])
+print(json.dumps({"sha256": got, "train_eval_maxplies": counts}))
+sys.exit(0 if got == want and counts == (153842, 4000, 16) else 3)' $R/openings; echo "exit=$?"
 # D2: --games 4000 for the alternative. D7 (decided): the CUDA-graphs path, which since #1433
 # is the only CUDA collect path (no flag).
 COLLECT="--openings-dir $R/openings --init-checkpoint $SL --device cuda --seed 2026112000 \
@@ -285,21 +319,40 @@ a = loop.parser().parse_args(["train", "--run-dir", str(src), "--openings-dir", 
                               "--holdout-frac", "0.05", "--presentations", "1"])
 print(planned_phase_updates(src, 1, loop.train_settings(a, src)))
 EOF
-SNAPS=1000,2000,4000             # the members of {1000, 2000, 4000} strictly below N
+N=<the number printed above>
+# The snapshot rule: the members of {1000, 2000, 4000} strictly below N. Empty below 1,001
+# updates, and then the flag is omitted.
+SNAPS=$(for s in 1000 2000 4000; do [ "$s" -lt "$N" ] && printf '%s,' "$s"; done); SNAPS=${SNAPS%,}
+SNAPARG=${SNAPS:+--snapshot-updates $SNAPS}
+echo "N=$N SNAPS=$SNAPS"
 
 # 3. Each arm: seal the reference (a standalone collect pins nothing), then `run`,
 #    which checks the snapshot plan against the sealed collect BEFORE pinning
 #    run_config.json, skips the sealed collect after re-verifying the source, and trains.
 for a in P V S; do
   python -u scripts/simple_rl_loop.py collect --run-dir $R/arm_$a --generation 1 \
-    --collect-from $R/collect $COLLECT $TRAIN ${ARM[$a]} --snapshot-updates $SNAPS
+    --collect-from $R/collect $COLLECT $TRAIN ${ARM[$a]} $SNAPARG
   python -u scripts/simple_rl_loop.py run --run-dir $R/arm_$a --generations 1 \
-    --collect-from $R/collect $COLLECT $TRAIN ${ARM[$a]} --snapshot-updates $SNAPS
+    --collect-from $R/collect $COLLECT $TRAIN ${ARM[$a]} $SNAPARG
 done
 ```
 
+**Openings split.** Step 0b reproduces the banked split
+(`~/chess-artifacts/operations/rl-claude-20261119/loop-smoke-gpu/openings`, written by
+the same command): 158,106 parsed lines → 153,842 TRAIN / 4,000 EVAL (3,725 / 275 by
+book), `eval_max_plies` 16. Its check compares the three output files against the
+sha256 the banked `manifest.json` records for them, and the counts. The manifest
+file's own sha256 cannot be compared: it records the write time and runtime, so it
+differs on every run. The book inputs' sha256 (`70d0dfa5…`, `aa0f2fd3…`) are in the new
+manifest's `inputs`, to be recorded here. Step 0b, run verbatim from main `f51c51f20`
+into a scratch directory (about 6 min of CPU), reproduced all three files' sha256 and
+the counts; its check printed `exit=0`.
+
 The planned-updates snippet was checked read-only on the banked 128-game collect
-(`fix_c128_auto`, 12,372 rows): it prints 47.
+(`fix_c128_auto`, 12,372 rows): it prints 47. The SNAPS lines print `1000,2000,4000`
+for N = 5,700 and 4,001, `1000` for N = 1,400 and 2,000, and nothing (flag omitted)
+for N = 900. The dry run's L3 rehearsal ran this block on a tiny net (with the
+snapshot set scaled down to its N).
 
 **Pre-arena identity check (recorded, before any arena).**
 - `sha256(arm_P/probe.npz) = sha256(arm_V/probe.npz) = sha256(arm_S/probe.npz)`;
@@ -321,7 +374,8 @@ the compressed chunk files and the metadata timestamp are not reproducible.
 
 - **Rule.** An arm's snapshots are the members of {1,000, 2,000, 4,000} strictly
   below the phase's planned update count N. N is computed from the sealed collect
-  (step 2) before any arm starts, and N and the list are recorded here. At about
+  (step 2) before any arm starts, the list is derived from N by the SNAPS lines in
+  step 2, and N and the list are recorded here. At about
   5,700 planned updates (16,000 games) the list is 1,000, 2,000, 4,000; at about
   1,400 (4,000 games, or the positive control) it is 1,000 alone. The driver allows a
   snapshot AT N; "strictly below" is this record's choice, so no snapshot duplicates
@@ -343,24 +397,50 @@ arena compute is spent on it.
 
 **Collect gates.**
 
-The references are effectively TWO clean collects: the concurrency-128 collect with
-the fixed cap (the two banked c128 runs are the same 128 games) and a concurrency-32
-collect. "Capped" is the same 128 games at the defective cap 512. Sources: smoke
-`optimizer-start/mini/fix_c128_auto`, `main_g128_c32`, `main_c128`; #1427.
+The clean references are 128-game collects from the SL base at concurrency 128 with
+the fixed cap:
+- `fix_c128_auto` (smoke `optimizer-start/mini/`, seed 20261119, eager path, before
+  #1433), plus a concurrency-32 collect (`main_g128_c32`) for the older ranges;
+- #1433's `bench_after_default` (`one-fast-path/`, seed 20261121, fast path);
+- the dry run's collect (seed 2026112000, this experiment's own seed and command, on
+  main `f51c51f20`, fast path; column "Dry run").
 
-| Gate | Report field (`simple_rl_collect_gates.py`) | Pass | Clean | Capped |
-|---|---|---|---|---|
-| G-C1 buffer flushes | `buffer_full_flushes` | = 0 | — (written from #1428 on) | — |
-| G-C2 evaluator cap | `eval_max_batch_realised` and `leaf_rows_required` | both = 4096 | 4096 = 4096 | 512 < 2048 |
-| G-C3 reply-side Spearman(child Q, prior), fresh and reused roots | `spearman_childq_prior.reply_fresh.spearman_childq_prior`, `spearman_childq_prior.reply_reused.spearman_childq_prior` | ≥ +0.50 both | +0.596 / +0.602 | −0.053 / +0.096 |
-| G-C4 book-end mover's score | `book_end_mover_score` | ≤ 0.70 | 0.582 | 0.820 (smoke gen 1: 0.90) |
-| G-C5 target entropy | `target_entropy` | 0.60–0.76 | 0.684–0.694 | 0.799 |
-| G-C6 KL(target‖prior) | `kl_target_prior` | ≤ 0.50 | 0.290–0.332 | 0.676 |
-| G-C7 rows per game | `rows_per_game` | ≥ 80 | 96.7–101.0 | 56.9 |
-| G-C8 draw rate | `draw_rate` | 0.30–0.70 | 0.461–0.531 | 0.156 |
-| G-C9 survivor − node Q | `mean_survivor_minus_node_q` | 0.12–0.30 | 0.181–0.212; D3 bank 0.235 | 0.157 (weak; recorded) |
-| G-C10 within-collect repeats | `repeat_rate_within` | ≤ 0.05 | 0.000 | 0.000 |
-| G-C11 fast path ran | `stats.json`: `evaluator_mode`, `cuda_graph_stats.replays`; eager counters recorded | `evaluator_mode` = `"cuda_graphs"` and `replays` > 0 (reported, voids nothing; see below) | — | — |
+"Capped" is the `fix_c128_auto` games at the defective cap 512 (`main_c128`; #1427).
+
+| Gate | Report field (`simple_rl_collect_gates.py`) | Pass | Clean (earlier) | Dry run | Capped |
+|---|---|---|---|---|---|
+| G-C1 buffer flushes | `buffer_full_flushes` | = 0 | — (written from #1428 on) | 0 | — |
+| G-C2 evaluator cap | `eval_max_batch_realised` and `leaf_rows_required` | both = 4096 | 4096 = 4096 | 4096 = 4096 | 512 < 2048 |
+| G-C3 reply-side Spearman(child Q, prior), fresh and reused roots | `spearman_childq_prior.reply_fresh.spearman_childq_prior`, `spearman_childq_prior.reply_reused.spearman_childq_prior` | ≥ +0.50 both | +0.596 / +0.602 | +0.576 / +0.608 | −0.053 / +0.096 |
+| G-C4 book-end mover's score | `book_end_mover_score` | ≤ 0.70 | 0.582 | 0.434 | 0.820 (smoke gen 1: 0.90) |
+| G-C5 target entropy | `target_entropy` | 0.60–0.78 | 0.684–0.694; `bench_after_default` 0.720 | 0.758 | 0.799 |
+| G-C6 KL(target‖prior) | `kl_target_prior` | ≤ 0.50 | 0.290–0.332 | 0.294 | 0.676 |
+| G-C7 rows per game | `rows_per_game` | ≥ 80 | 96.7–101.0 | 100.5 | 56.9 |
+| G-C8 draw rate | `draw_rate` | 0.30–0.70 | 0.461–0.531; `bench_after_default` 0.562 | 0.617 | 0.156 |
+| G-C9 survivor − node Q | `mean_survivor_minus_node_q` | 0.12–0.30 | 0.181–0.212; D3 bank 0.235 | 0.206 | 0.157 (weak; recorded) |
+| G-C10 within-collect repeats | `repeat_rate_within` | ≤ 0.05 | 0.000 | 0.000 | 0.000 |
+| G-C11 fast path ran | `stats.json`: `evaluator_mode`, `cuda_graph_stats.replays`; eager counters recorded | `evaluator_mode` = `"cuda_graphs"` and `replays` > 0 (reported, voids nothing; see below) | — | `cuda_graphs`, 1,791 replays, 627 eager over max rows | — |
+
+**Calibration of G-C5 and G-C8 (three clean references).** The three clean 128-game
+collects at concurrency 128, by seed 20261119 / 20261121 / 2026112000, read target
+entropy 0.694 / 0.720 / 0.758 and draw rate 0.461 / 0.562 / 0.617. The G-C5 upper
+bound 0.76 was set from the first collect alone; the third sits 0.002 under it.
+- **Expected 16,000-game value.** The best estimate is the three-collect mean:
+  entropy 0.724 (SD across collects 0.033, so SE of the mean 0.019), draw rate 0.547
+  (SD 0.079, SE 0.046).
+- **Sampling SD of one 16,000-game collect** around its own expectation is small:
+  about 0.003 for entropy (0.033 × √(128/16,000), an upper bound since that SD is not
+  all game sampling) and 0.004 for the draw rate (binomial).
+- **What sets the band is the uncertainty in the mean, not the 16,000-game sampling.**
+  The spread across collects is larger than game sampling alone (draw-rate SD 0.079
+  against a binomial 0.044 at 128 games): the seeds draw different openings, and the
+  three ran on three code versions.
+- **G-C5: widened to 0.60–0.78.** 0.76 sat 1.9 SE above the estimated mean, so a
+  clean collect could plausibly void every arm on it. 0.78 is 3.0 SE above the mean;
+  0.60 is 6.6 SE below. The capped collect's 0.799 still fails, and G-C5 is not the
+  capped signature's only detector: on that collect G-C2, G-C3, G-C6 and G-C7 all
+  fail too.
+- **G-C8: kept at 0.30–0.70.** That is 5.4 SE below and 3.3 SE above the mean.
 
 G-C5, G-C6, G-C9 and G-C10 are the collect's own `stats.json` statistics, recomputed
 by the script over every row. G-C3 and G-C4 come from a uniform seeded sample over all
@@ -439,7 +519,7 @@ python -u scripts/simple_rl_collect_gates.py $R/collect/gen_0001/collect --train
  "spearman_childq_prior.reply_fresh.spearman_childq_prior": {"min": 0.50},
  "spearman_childq_prior.reply_reused.spearman_childq_prior": {"min": 0.50},
  "book_end_mover_score": {"max": 0.70},
- "target_entropy": {"min": 0.60, "max": 0.76},
+ "target_entropy": {"min": 0.60, "max": 0.78},
  "kl_target_prior": {"max": 0.50},
  "rows_per_game": {"min": 80},
  "draw_rate": {"min": 0.30, "max": 0.70},
@@ -454,7 +534,8 @@ Checked read-only, with the gate script at `054548fb8`, on the banked clean 128-
 collect (`fix_c128_auto`): every field resolves, and every gate passes, including
 `eval_max_batch_equals_leaf_rows` `{"equals": true}`, except `buffer_full_flushes`. That collect predates
 #1428 and does not carry the field, so the gate fails as missing, as the script
-intends.
+intends. On the dry run's collect (main `f51c51f20`), every gate passes, under the
+earlier 0.76 bound too.
 
 **Train gates (per arm, at the end of the phase and at every snapshot).**
 
@@ -498,6 +579,29 @@ The threshold files, verbatim:
 Outputs go to `$R/gates/` (`step_<N>` or `train` in the name), never into a sealed
 stage directory.
 
+**G-T1 verdict.** The loop above discards each run's exit code, so the verdict is read
+from the output files. This prints, per file, the model and `gates_passed`, then the
+file count (snapshots + 1), and exits 3 if any is not `true`:
+
+```bash
+gt1() {  # $1 = arm letter
+  python3 -c 'import json, sys
+bad = 0
+for f in sys.argv[1:]:
+    o = json.load(open(f)); ok = o.get("gates_passed") is True
+    print(o.get("model"), "gates_passed", o.get("gates_passed"), f); bad |= not ok
+print(len(sys.argv) - 1, "file(s)")
+sys.exit(3 if bad else 0)' $R/gates/arm_$1_*_gt1.json
+  echo "exit=$?"
+}
+gt1 P; gt1 V; gt1 S
+```
+
+Exit 0 = G-T1 passed on every file; exit 3 = a gate failed; any other code (for
+example 1, no file matched) means the check did not run and is repeated. Run on the
+dry run's tiny-net rehearsal outputs (4 files for arm P), it printed each
+`gates_passed` false and `exit=3`, as it should for an untrained tiny net.
+
 **G-T2 probe drift against the SL base:** a gross-defect guard only. A read of KL > 1.5
 or |ΔQ| > 0.4 fails. Every read is recorded. The fields are
 `probe_vs_previous.policy_kl_prev_to_new` and `probe_vs_previous.mean_abs_dq`, in each
@@ -514,6 +618,34 @@ References, by instrument:
 
 Extrapolated, P1's KL reaches about 0.5–1.2 at 5,700 updates, so no tighter bound is
 defensible at the default dose.
+
+The snapshot `metrics.json` carries `probe_vs_previous` at top level; the final
+`gen_0001/train/metrics.json` carries it under `summary`. This reads both, prints every
+read and exits 3 if any read is above a bound, missing or not finite:
+
+```bash
+gt2() {  # $1 = arm run dir
+  python3 -c 'import glob, json, math, sys
+d = sys.argv[1] + "/gen_0001/train"
+files = sorted(glob.glob(d + "/snapshots/step_*/metrics.json")) + [d + "/metrics.json"]
+bad = 0
+for f in files:
+    m = json.load(open(f))
+    p = m.get("probe_vs_previous") or (m.get("summary") or {}).get("probe_vs_previous") or {}
+    kl, dq = p.get("policy_kl_prev_to_new"), p.get("mean_abs_dq")
+    ok = all(isinstance(v, (int, float)) and math.isfinite(v) for v in (kl, dq)) and kl <= 1.5 and dq <= 0.4
+    print(f, "policy_kl_prev_to_new", kl, "mean_abs_dq", dq, "pass" if ok else "FAIL"); bad |= not ok
+print(len(files), "file(s)")
+sys.exit(3 if bad else 0)' "$1"
+  echo "exit=$?"
+}
+gt2 $R/arm_P; gt2 $R/arm_V; gt2 $R/arm_S
+gt2 $R/posctl/arm_V                     # the control, against Q50 c12
+```
+
+Exit codes as for G-T1. Checked on the dry run's rehearsal arms P and V (3 snapshots
++ final, every read printed, `exit=0`), and on a hand-made file with KL 1.6 and a
+missing |ΔQ| (both reads FAIL, `exit=3`).
 
 **G-T3 held-out policy CE.** After the phase it must not exceed the before-phase
 value, on generation 1's held-out games. This is a manual comparison of two numbers
@@ -551,8 +683,17 @@ recorded here.
   that Arm P trains on;
 - **Arm V:**
   - `realised_search_wdl_frac` = 1.0;
-  - `targets.value_from_survivor_q` ≥ 99% of rows;
+  - `targets.value_from_survivor_q` ≥ 98.5% of `targets.rows`;
   - `value_fallback_stored_search_wdl` and `value_without_search_target` recorded.
+
+  **The 98.5% bound, from evidence.** The share of rows with a usable survivor Q
+  (`has_root_survivor_q`, a finite `root_survivor_q` and `has_root_net_wdl`, as
+  `prepare_targets` counts them) over every row of the three clean 128-game
+  collects: 98.77% (`fix_c128_auto`), 98.89% (`bench_after_default`), 99.12% (dry
+  run); mean 98.93%, SE of the mean 0.10 pp. The earlier ≥ 99% would have failed two
+  of the three clean collects. 98.5% is 4.2 SE below the mean and 0.27 pp below the
+  lowest clean collect; a 16,000-game collect's own sampling SD is about 0.02 pp. A
+  broken survivor-Q path would read far lower.
 
 ## Deciding yardstick
 
@@ -568,13 +709,13 @@ COMMON="--sims 64 --games 1600 --mode matched_sims --search-shape training \
 
 # A: arm as candidate
 PYTHONPATH=. python -u scripts/arena_standard.py $COMMON \
-  --candidate <run>/arm_P/gen_0001/train/model.pt --reference <SL base> \
+  --candidate <run>/arm_P/gen_0001/train/model.pt --reference <run>/sl_base.pt \
   --label exp1_primary_A --games-out <run>/arenas/exp1_primary_A.games.jsonl \
   --pgn-out <run>/arenas/exp1_primary_A.pgn --out <run>/arenas/results.jsonl
 
 # B: arm as reference
 PYTHONPATH=. python -u scripts/arena_standard.py $COMMON \
-  --candidate <SL base> --reference <run>/arm_P/gen_0001/train/model.pt \
+  --candidate <run>/sl_base.pt --reference <run>/arm_P/gen_0001/train/model.pt \
   --label exp1_primary_B --games-out <run>/arenas/exp1_primary_B.games.jsonl \
   --pgn-out <run>/arenas/exp1_primary_B.pgn --out <run>/arenas/results.jsonl
 ```
@@ -589,6 +730,9 @@ sd_o(d(o)) / √(number of openings): clustered by opening, because each opening
 appears in both runs.
 
 The 95% interval is estimate ± 1.96 SE, mapped to Elo by −400 log₁₀(1/(0.5 + x) − 1).
+The script's `--z` (default 1.96) sets the half-width the verdict reads, and the
+output records `z` and its two-sided coverage. Every block also keeps its 1.96
+interval (`*_ci95`) beside the one at `z` (`*_ci`).
 If an opening repeats within a run, all its pairs join one cluster. The script is
 `scripts/arena_seat_balanced_pool.py` (#1434):
 - **Inputs:** the two `--games-out` logs, plus each run's result row (matched by
@@ -622,6 +766,20 @@ PYTHONPATH=. python -u scripts/arena_seat_balanced_pool.py \
   --a-label exp1_primary_A --b-label exp1_primary_B \
   --verdict-rule lb-gt-zero --out <run>/arenas/exp1_primary_pooled.json
 ```
+
+The primary uses the default `--z 1.96`. The other registered readings use the same
+command with these changes:
+- **Secondary confirmation (97.5%, two-sided z 2.2414):** `--arm` the confirmed arm's
+  model, its `exp1_confirm_A` / `exp1_confirm_B` logs and labels, `--z 2.2414`,
+  `--out <run>/arenas/exp1_confirm_pooled.json`.
+- **D9 alternative, O'Brien–Fleming, look 1:** runs A and B at `--games 800` each
+  (1,600 games), pooled with `--z 2.797`.
+- **D9 alternative, look 2 would need commands before selection.** Look 2 reads at
+  `--z 1.977` the look-1 games PLUS 800 new pairs per orientation. Neither tool does
+  that today: the arena cannot extend a log (`games` is in its resume fingerprint),
+  and the pooling script reads one log per orientation. A fresh pair of 1,600-game
+  runs would replay look 1's openings as new games rather than add to them, so it is
+  not the registered design. The default single look needs none of this.
 
 **Why seat-balanced.** The pooled seat reading, +6.4 (−4.2 to +17.1 by pair; −5.0 to
 +17.8 by opening; D4 round 2), does not exclude an offset. At a true seat offset of
@@ -669,19 +827,37 @@ Per-game rows, PGNs and seeds are banked.
 
 **Write-protect the nets.** From the end of each arm's training until its pooling is
 recorded, every net that plays in an arena of this experiment is made read-only with
-`chmod a-w`: each arm's `gen_0001/train/model.pt`, the SL base file used as
-`--reference`, and (for the control) `posctl/arm_V/gen_0001/train/model.pt` and the
-Q50 c12 file. This complements the sha256 check. The check detects a rewrite after
-the fact; the write protection prevents one.
+`chmod a-w`: each arm's `gen_0001/train/model.pt` and (for the control)
+`posctl/arm_V/gen_0001/train/model.pt`. The two start nets are shared bank files
+and are never chmodded: each is copied once into the run dir, verified and
+write-protected there, and only the copy is used (`$R/sl_base.pt`, step 0a;
+`$R/posctl/q50_c12.pt`, [Positive control](#positive-control)). This complements
+the sha256 check. The check detects a rewrite after the fact; the write protection
+prevents one.
 
 **Secondaries.**
 - **Screens:** V and S that passed their gates play 400 games each, seat-balanced
   (200 + 200), both on seed 2026112003, so they meet the same openings.
 - **Confirmation:** the better screen point estimate is confirmed at 1,600 games,
   seat-balanced, on seed 2026112005, with `--openings-fen` built from the EVAL lines
-  minus the screen's openings. Building that file is pre-launch check L4. If it
-  cannot be built, the confirmation uses `eval.pgn`, and the overlap (about 40 of 800
-  expected) is counted and recorded.
+  minus the screen's openings. Building that file is pre-launch check L4:
+
+  ```bash
+  python -u scripts/arena_openings_minus_screen.py --openings-dir $R/openings \
+    --screen-games 400 --screen-seed 2026112003 \
+    --check-games 1600 --check-seed 2026112005 --out $R/openings/confirmation.fen
+  ```
+
+  The script reproduces the screens' 200 opening pairs with the arena's own sampler
+  and rng, writes the remaining EVAL lines as full-history `<root_fen> | <uci ...>`
+  rows, loads the file as the confirmation arena will, and refuses (exit 2) unless all
+  800 pairs load with their history and none overlaps a screen. It prints the counts
+  and the file's sha256, which is recorded here. On the banked split it wrote 3,800
+  rows (4,000 − 200), sha256 `8e1973153d666893…`, 800 pairs with history, 0 overlap:
+  byte-identical to the dry run's L4 file. The confirmation then passes
+  `--openings-fen $R/openings/confirmation.fen` in place of `--openings` /
+  `--opening-plies`. If the file cannot be built, the confirmation uses `eval.pgn`, and
+  the overlap (about 40 of 800 expected) is counted and recorded.
 - **Reading:** success at 97.5%, lower bound > 0. Otherwise "not confirmed", with no
   extension.
 
@@ -714,8 +890,18 @@ all.
 - **Collection:** 4,000 games from the same split's TRAIN lines, in its own source
   run dir `posctl/collect`, with `--seed 2026112010` (its own opening permutation).
   The overlap with the primary collection's lines is counted and recorded.
+- **Start file:** Q50 c12 is a shared bank file, so it is copied once into the run
+  dir and only the copy is used:
+
+  ```bash
+  mkdir -p $R/posctl
+  cp -n <shared Q50 c12 file> $R/posctl/q50_c12.pt
+  echo "bb157a8412a2085b7dbb77cee64aef0c5d3498f065648c6244a02804347f9c33  $R/posctl/q50_c12.pt" \
+    | sha256sum -c - || { echo "Q50 c12 sha256 mismatch"; exit 1; }
+  chmod a-w $R/posctl/q50_c12.pt
+  ```
 - **Procedure:** the primary's, with `$COLLECT` changed only in
-  `--init-checkpoint <Q50 c12> --games 4000 --seed 2026112010`. One arm,
+  `--init-checkpoint $R/posctl/q50_c12.pt --games 4000 --seed 2026112010`. One arm,
   `posctl/arm_V`, references it with `--collect-from $R/posctl/collect`, the same
   init checkpoint and seed, and Arm V's flags. `posctl/collect` is frozen once the arm
   references it. Snapshots follow the [rule](#snapshots): at about 1,400 planned
@@ -781,7 +967,9 @@ start.
   `trained_on_capped_rows` false, `summary.snapshot_updates` and the `update` of each
   `summary.snapshots` entry as recorded, `realised_lr_param_groups` all 3e-6,
   `realised_policy_target_temp` 1.0, `realised_search_wdl_frac` = 1.0,
-  `targets.value_from_survivor_q` ≥ 99% of rows.
+  `targets.value_from_survivor_q` ≥ 98.5% of `targets.rows` (calibrated on SL-base
+  collects; a Q50 c12 collect's share is unknown, and a read below it is recorded
+  with the share).
 - **Arena records:** the four required fields of every arena record apply.
 
 A gate failure makes the control "gate failed — unread".
@@ -807,15 +995,15 @@ Single RTX 5090. Nothing else is measured during an arena or a collect.
 | Stage | GPU hours (16,000-game default) | 4,000-game alternative (D2) | Basis |
 |---|---|---|---|
 | Pre-launch checks L1–L4 | ≈ 0 | same | CPU rehearsal and file checks |
-| Collect | 6.2–6.6 | 1.5–1.7 | 2,424–2,583 games/h, unverified |
+| Collect | 4.3–4.9 | 1.1–1.2 | 3,284–3,760 games/h on main's fast path, 128-game runs only |
 | Train ×3, incl. snapshot gates | 2.4–4.4 | 0.6–1.1 | 0.47–0.84 s per update (F12 record: 512 updates in 239–432 s) |
 | Collect gates (`simple_rl_collect_gates.py`) | 0 (CPU, about 10–15 min per collect) | same | two collects: primary and control |
 | Model gates (`simple_rl_model_gates.py`) | 0.2–0.5 | same | a 3,080-row audit pass per snapshot and final model; held-out CE before and after for S (and the P / V cross-check) |
 | Primary arena, 3,200 games | 1.8–2.6 | same | 800-game D4 arms took 1,600–2,260 s |
 | Screens, 2 × 400 games | 0.5–0.7 | same | |
 | Confirmation, 1,600 games | 0.9–1.3 | same | |
-| Positive control (collect 4,000 + train + 1,600-game arena) | 2.6–3.4 | same | |
-| **Total** | **≈ 14.6–19.5** | **≈ 8.1–11.3** | |
+| Positive control (collect 4,000 + train + 1,600-game arena) | 2.6–3.6 | same | 1.1–1.2 + 0.6–1.1 + 0.9–1.3 |
+| **Total** | **≈ 12.7–18.0** | **≈ 7.7–11.0** | |
 
 The trains may run one after another, or two at a time if memory allows; they are not
 measurements. Nothing runs during any arena.
@@ -842,17 +1030,22 @@ measurements. Nothing runs during any arena.
   `presented.npz` sha256 equal across arms; an arm with a different `--seed` and a
   snapshot list past the planned updates are both refused, before `run_config.json`
   is pinned.
-- **L4.** Build the confirmation `--openings-fen` file, or record that the fallback
-  applies.
+- **L4.** Build the confirmation `--openings-fen` file with
+  `scripts/arena_openings_minus_screen.py` ([Secondaries](#deciding-yardstick)) and
+  record its printed counts and sha256, or record that the fallback applies.
+
+The dry run on `f51c51f20` passed L1–L4 (bank above). It predates the commands
+added in this revision (steps 0a and 0b, the SNAPS lines, `gt1`, `gt2`, `--z`, the L4
+script), each of which was checked separately as stated where it appears.
 
 ## Recovery plan
 
 - **Everything goes in a new directory:** `~/chess-artifacts/operations/loop-exp1-20261120/`,
-  with `openings/`, `collect/` (the source; read-only once an arm references it),
-  `arm_P/`, `arm_V/`, `arm_S/`, `posctl/collect/`, `posctl/arm_V/`, `arenas/`,
+  with `sl_base.pt` (write-protected copy), `openings/`, `collect/` (the source; read-only once an arm references it),
+  `arm_P/`, `arm_V/`, `arm_S/`, `posctl/q50_c12.pt` (write-protected copy), `posctl/collect/`, `posctl/arm_V/`, `arenas/`,
   `gates/`.
 - **Untouched:**
-  - the SL base;
+  - the SL base and Q50 c12 bank files (the run uses write-protected copies);
   - the live checkout;
   - the production recipe and live yaml;
   - every earlier bank (read-only inputs).
@@ -909,9 +1102,9 @@ A second step of improvement is the owner's stated goal.
 - The gate scripts' runtimes on a 16,000-game collect (10–15 min is an estimate).
 - That `buffer_full_flushes` appears in a real arena result row. The code writes it;
   no run on current main has been read.
-- Clean collect throughput beyond 128-game runs; any CUDA-graph speed-up. Graphs-on
-  vs graphs-off identity on this net is not checked (D7: the fast path is the only
-  path).
+- Collect throughput beyond 128-game runs (3,284–3,760 games/h on 128-game runs).
+  Graphs-on vs graphs-off identity on this net is not checked (D7: the fast path is
+  the only path).
 - The probe-drift trajectory at about 5,700 updates.
 - That arena seeds draw disjoint EVAL pairs.
 - The same-coloured-bishops gap's footprint in this collection (0 in the banked 4,608 games).
