@@ -39,8 +39,11 @@ visits in.
 arrays of every shard plus the row sidecars, and games.jsonl's sha256 -- the
 identity check for two collects that should hold the same rows.
 
-``--thresholds FILE``: JSON ``{"dotted.metric.path": {"min": x, "max": y}}``;
-any gate that fails (or whose metric is missing / NaN) makes the exit code 3.
+``--thresholds FILE``: JSON ``{"dotted.metric.path": {"min": x, "max": y}}`` or
+``{"dotted.metric.path": {"equals": v}}`` (bools and numbers; False / None /
+missing fail ``{"equals": true}``); an empty bound is a presence gate (a finite
+number, or True). Any gate that fails (or whose metric is missing / NaN) makes
+the exit code 3.
 """
 from __future__ import annotations
 
@@ -330,19 +333,38 @@ def lookup(report: dict[str, Any], dotted: str) -> Any:
     return cur
 
 
-def check_gates(report: dict[str, Any], thresholds: dict[str, dict[str, float]]) -> list[dict[str, Any]]:
+def _gate_pass(value: Any, bound: dict[str, Any]) -> bool:
+    """One gate. ``equals``: the metric must be present and equal (a bool only to
+    a bool, a number to a number; False / None / missing fail ``{"equals": True}``).
+    ``min`` / ``max``: the metric must be a finite number in range. An empty
+    bound is a presence gate: a finite number, or the bool True."""
+    if "equals" in bound:
+        want = bound["equals"]
+        if isinstance(want, bool) or isinstance(value, bool):
+            return isinstance(value, bool) and isinstance(want, bool) and value is want
+        if isinstance(want, (int, float)) and isinstance(value, (int, float)):
+            return math.isfinite(float(value)) and float(value) == float(want)
+        return value is not None and value == want
+    if isinstance(value, bool):
+        return value is True and not ({"min", "max"} & set(bound))
+    ok = isinstance(value, (int, float)) and math.isfinite(float(value))
+    if ok and "min" in bound:
+        ok = float(value) >= float(bound["min"])
+    if ok and "max" in bound:
+        ok = float(value) <= float(bound["max"])
+    return bool(ok)
+
+
+def check_gates(report: dict[str, Any], thresholds: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     out = []
     for metric, bound in sorted(thresholds.items()):
-        unknown = set(bound) - {"min", "max"}
+        unknown = set(bound) - {"min", "max", "equals"}
         if unknown:
-            raise SystemExit(f"thresholds: {metric} has unknown keys {sorted(unknown)} (min / max)")
+            raise SystemExit(f"thresholds: {metric} has unknown keys {sorted(unknown)} (min / max / equals)")
+        if "equals" in bound and {"min", "max"} & set(bound):
+            raise SystemExit(f"thresholds: {metric}: equals excludes min / max")
         value = lookup(report, metric)
-        ok = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
-        if ok and "min" in bound:
-            ok = float(value) >= float(bound["min"])
-        if ok and "max" in bound:
-            ok = float(value) <= float(bound["max"])
-        out.append({"metric": metric, "value": value, **bound, "pass": bool(ok)})
+        out.append({"metric": metric, "value": value, **bound, "pass": _gate_pass(value, bound)})
     return out
 
 
@@ -353,7 +375,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--train-target-temp", type=float, action="append", default=[],
                    help="also report the target entropy re-tempered at this train-time temperature (repeatable)")
-    p.add_argument("--thresholds", default=None, help="JSON {metric.path: {min, max}}; exit 3 when one fails")
+    p.add_argument("--thresholds", default=None, help="JSON {metric.path: {min, max} | {equals}}; exit 3 when one fails")
     p.add_argument("--out", default=None, help="also write the JSON here")
     p.add_argument("--content-digest", action="store_true",
                    help="only print the decoded-content digest (all shard arrays + row sidecars) and games.jsonl "

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -155,3 +156,64 @@ def test_content_digest_ignores_shard_file_bytes_but_not_rows(collect: Path, tmp
     shutil.rmtree(shard)
     save_local_shard_arrays(shard, arrs=arrays, meta=ShardMeta(**fields))
     assert gates.content_digest(copy)["content_sha256"] != base["content_sha256"]
+
+
+def test_bool_gates_and_equals() -> None:
+    report = {"t": True, "f": False, "n": None, "x": 4096, "y": 4095.0, "z": float("nan")}
+    cases = {"t": {}, "f": {}, "n": {}, "missing": {},
+             "t_eq": ("t", {"equals": True}), "f_eq": ("f", {"equals": True}), "n_eq": ("n", {"equals": True}),
+             "missing_eq": ("missing", {"equals": True}), "f_eq_false": ("f", {"equals": False}),
+             "x_eq": ("x", {"equals": 4096}), "y_eq": ("y", {"equals": 4096}), "z_eq": ("z", {"equals": 4096}),
+             "one_is_not_true": ("x", {"equals": True}), "true_is_not_one": ("t", {"equals": 1}),
+             "t_min": ("t", {"min": 0.0})}
+    want = {"t": True, "f": False, "n": False, "missing": False, "t_eq": True, "f_eq": False, "n_eq": False,
+            "missing_eq": False, "f_eq_false": True, "x_eq": True, "y_eq": False, "z_eq": False,
+            "one_is_not_true": False, "true_is_not_one": False, "t_min": False}
+    for name, case in cases.items():
+        metric, bound = case if isinstance(case, tuple) else (name, case)
+        assert gates.check_gates(report, {metric: bound})[0]["pass"] is want[name], name
+    with pytest.raises(SystemExit, match="equals excludes"):
+        gates.check_gates(report, {"x": {"equals": 1, "min": 0}})
+
+
+def test_content_digest_covers_every_array_and_sidecar_field(collect: Path, tmp_path: Path,
+                                                             monkeypatch: pytest.MonkeyPatch) -> None:
+    import shutil
+
+    from chess_anti_engine.replay import shard as shard_mod
+
+    base = gates.content_digest(collect)["content_sha256"]
+    first = sorted((collect / "shards").glob("shard_*.zarr"))[0]
+    arrays, _ = shard_mod.load_shard_arrays(first, lazy=False, validate=True)
+    real = shard_mod.load_shard_arrays
+
+    def perturbed(value: object) -> np.ndarray:
+        v = np.array(value, copy=True)
+        if v.dtype.kind in "US":
+            return np.asarray(str(v.reshape(-1)[0]) + "x" if v.size else "x")
+        flat = v.reshape(-1)
+        if flat.size == 0:
+            return np.zeros(1, dtype=v.dtype)
+        flat[0] = ~flat[0] if v.dtype == bool else flat[0] + 1
+        return v
+
+    for key in sorted(arrays):
+        def load(path: str | Path, *, _key: str = key, **k: Any) -> tuple[dict, dict]:
+            got, meta = real(path, **k)
+            if Path(str(path)).name == first.name:
+                got = {**got, _key: perturbed(got[_key])}
+            return got, meta
+
+        monkeypatch.setattr(shard_mod, "load_shard_arrays", load)
+        assert gates.content_digest(collect)["content_sha256"] != base, f"array {key} is not hashed"
+    monkeypatch.setattr(shard_mod, "load_shard_arrays", real)
+
+    sidecar = first.with_name(first.name.replace(".zarr", ".meta.npz"))
+    with np.load(sidecar) as z:
+        fields = {k: z[k] for k in z.files}
+    for key in sorted(fields):
+        copy = tmp_path / f"c_{key}" / "gen_0001" / "collect"
+        shutil.copytree(collect, copy)
+        changed: dict[str, Any] = {**fields, key: perturbed(fields[key])}
+        np.savez(copy / "shards" / sidecar.name, **changed)
+        assert gates.content_digest(copy)["content_sha256"] != base, f"sidecar {key} is not hashed"
