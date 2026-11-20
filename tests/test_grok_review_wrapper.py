@@ -43,7 +43,7 @@ prompt = Path(args[args.index('--prompt-file') + 1]).read_text()
 Path(os.environ['OBSERVED']).write_text(json.dumps({
     'snapshot': str(snap), 'value': (snap/'value.txt').read_text(),
     'extra': (snap/'extra.txt').read_text() if (snap/'extra.txt').exists() else None,
-    'prompt': prompt,
+    'prompt': prompt, 'argv': args,
 }))
 (snap/'value.txt').write_text('model edit in disposable snapshot')
 if os.environ.get('CHANGE_SOURCE'):
@@ -80,6 +80,8 @@ else:
 ''')
     gh.chmod(0o755)
     env = dict(os.environ)
+    # The caller's shell must not leak a budget override into the default test.
+    env.pop("GROK_REVIEW_MAX_TURNS", None)
     env.update(
         PATH=f"{bins}:{env['PATH']}",
         GROK_REVIEW_OUT=str(tmp_path / "results"),
@@ -90,6 +92,22 @@ else:
         PR_HEAD=head,
     )
     return repo, env, base, head
+
+
+def _assert_reaped(pid: int) -> None:
+    status = Path(f"/proc/{pid}/stat")
+    deadline = time.monotonic() + 2
+    while True:
+        try:
+            state = status.read_text().split(") ", 1)[1]
+        except (FileNotFoundError, ProcessLookupError):
+            # The pid can exit between open() and read(): read then raises ESRCH.
+            return
+        # A terminated orphan can briefly remain as a zombie pending its reaper.
+        if state.startswith("Z"):
+            return
+        assert time.monotonic() < deadline, f"owned pid {pid} survived cleanup"
+        time.sleep(0.01)
 
 
 def _run(repo: Path, env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
@@ -197,16 +215,79 @@ def test_invalid_timeout_cannot_disable_budget(tmp_path: Path, duration: str) ->
     assert not Path(env["OBSERVED"]).exists()
 
 
+def _max_turns(argv: list[str]) -> str:
+    assert argv.count("--max-turns") == 1, argv
+    return argv[argv.index("--max-turns") + 1]
+
+
+def test_default_turn_budget_reaches_grok(tmp_path: Path) -> None:
+    repo, env, base, head = _setup(tmp_path)
+    result = _run(repo, env, "--diff", f"{base}...{head}")
+    assert result.returncode == 0, result.stderr
+    assert _max_turns(json.loads(Path(env["OBSERVED"]).read_text())["argv"]) == "300"
+
+
+def test_turn_budget_override_reaches_grok(tmp_path: Path) -> None:
+    repo, env, base, head = _setup(tmp_path)
+    env["GROK_REVIEW_MAX_TURNS"] = "17"
+    result = _run(repo, env, "--diff", f"{base}...{head}")
+    assert result.returncode == 0, result.stderr
+    assert _max_turns(json.loads(Path(env["OBSERVED"]).read_text())["argv"]) == "17"
+
+
+@pytest.mark.parametrize("turns", ["abc", "0", "00", "-5", "3 00", ""])
+def test_invalid_turn_budget_fails_before_any_side_effect(tmp_path: Path, turns: str) -> None:
+    repo, env, base, head = _setup(tmp_path)
+    env["GROK_REVIEW_MAX_TURNS"] = turns
+    result = _run(repo, env, "--diff", f"{base}...{head}")
+    if turns == "":
+        # ``${VAR:-300}`` treats an empty value as unset: the default applies.
+        assert result.returncode == 0, result.stderr
+        assert _max_turns(json.loads(Path(env["OBSERVED"]).read_text())["argv"]) == "300"
+        return
+    assert result.returncode == 64, result.stderr
+    assert "GROK_REVIEW_MAX_TURNS" in result.stderr
+    assert not Path(env["OBSERVED"]).exists()
+    # No artifact run directory, hence no snapshot, was allocated.
+    assert not Path(env["GROK_REVIEW_OUT"]).exists()
+
+
+def _recording_timeout(bins: Path, record: Path) -> None:
+    """Install a ``timeout`` that records its argv, then runs the real one."""
+    real = shutil.which("timeout")
+    assert real is not None
+    shim = bins / "timeout"
+    shim.write_text(f"""#!/usr/bin/env bash
+printf '%s\\n' "$@" > {str(record)!r}
+exec {real!r} "$@"
+""")
+    shim.chmod(0o755)
+
+
+@pytest.mark.parametrize(("override", "expected"), [(None, "10800s"), ("77", "77s")])
+def test_wall_clock_budget_reaches_timeout(
+    tmp_path: Path, override: str | None, expected: str,
+) -> None:
+    repo, env, base, head = _setup(tmp_path)
+    if override is None:
+        env.pop("GROK_REVIEW_TIMEOUT_SECONDS")
+    else:
+        env["GROK_REVIEW_TIMEOUT_SECONDS"] = override
+    record = tmp_path / "timeout-argv"
+    _recording_timeout(tmp_path / "bin", record)
+    result = _run(repo, env, "--diff", f"{base}...{head}")
+    assert result.returncode == 0, result.stderr
+    argv = record.read_text().splitlines()
+    assert argv[:2] == ["--kill-after=5s", expected], argv
+
+
 def test_timeout_kills_term_resistant_process_group(tmp_path: Path) -> None:
     repo, env, base, head = _setup(tmp_path)
     pid_file = tmp_path / "child.pid"
     env.update(RESIST_TERM="1", CHILD_PID=str(pid_file), GROK_REVIEW_TIMEOUT_SECONDS="1")
     result = _run(repo, env, "--diff", f"{base}...{head}")
     assert result.returncode == 70, result.stderr
-    child = int(pid_file.read_text())
-    status = Path(f"/proc/{child}/stat")
-    # A terminated orphan can briefly remain as a zombie pending its parent's reaper.
-    assert not status.exists() or status.read_text().split(") ", 1)[1].startswith("Z")
+    _assert_reaped(int(pid_file.read_text()))
 
 
 def test_wrapper_kills_descendants_a_child_only_timeout_leaves_behind(tmp_path: Path) -> None:
@@ -235,9 +316,7 @@ except subprocess.TimeoutExpired:
     env.update(RESIST_TERM="1", CHILD_PID=str(pid_file), GROK_REVIEW_TIMEOUT_SECONDS="3")
     result = _run(repo, env, "--diff", f"{base}...{head}")
     assert result.returncode == 70, result.stderr
-    child = int(pid_file.read_text())
-    status = Path(f"/proc/{child}/stat")
-    assert not status.exists() or status.read_text().split(") ", 1)[1].startswith("Z")
+    _assert_reaped(int(pid_file.read_text()))
 
 
 @pytest.mark.parametrize(("child_exit", "expected_status"), [(0, 0), (7, 70)])
@@ -308,18 +387,7 @@ exit 2
     assert result.returncode == 70, result.stderr
     assert "could not inspect the Grok process group" in result.stderr
     for pid_file in (leader_file, child_file):
-        pid = int(pid_file.read_text())
-        status = Path(f"/proc/{pid}/stat")
-        deadline = time.monotonic() + 2
-        while True:
-            try:
-                state = status.read_text().split(") ", 1)[1]
-            except FileNotFoundError:
-                break
-            if state.startswith("Z"):
-                break
-            assert time.monotonic() < deadline, f"owned pid {pid} survived cleanup"
-            time.sleep(0.01)
+        _assert_reaped(int(pid_file.read_text()))
     observed = json.loads(Path(env["OBSERVED"]).read_text())
     assert not Path(observed["snapshot"]).exists()
     assert (repo / "value.txt").read_text() == "base"
