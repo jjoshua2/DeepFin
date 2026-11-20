@@ -593,12 +593,19 @@ If an opening repeats within a run, all its pairs join one cluster. The script i
 - **Checks:** the opening key is `opening_fen` + `opening_uci`. Run A's and run B's
   index → opening maps must be identical. Both runs must be complete, with
   `buffer_full_flushes` 0 and the realised evaluator cap recorded, and their settings
-  must be equal after the seat swap.
+  must be equal after the seat swap. `--arm` (required) must be run A's candidate and
+  run B's reference. No net file may have been modified after the runs started.
 - **Outputs:** estimate, SE, 95% CI, Elo, n_clusters, the realised A/B correlation and
-  the implied seat offset.
+  the implied seat offset. Provenance: the sha256 of the four input files and of every
+  net file at pool time. The arena banks checkpoint paths only, so a net rewritten
+  before the runs cannot be detected; the output says so.
+- **Verdict:** `lb-gt-zero` is decided on the excess scale (lower bound of the excess
+  > 0 is success; upper bound < 0 is kill). This is the same rule as an Elo lower
+  bound > 0, and it still holds where an Elo end is undefined at an extreme score.
 
 ```bash
 PYTHONPATH=. python -u scripts/arena_seat_balanced_pool.py \
+  --arm <run>/arm_P/gen_0001/train/model.pt \
   --a-games <run>/arenas/exp1_primary_A.games.jsonl --b-games <run>/arenas/exp1_primary_B.games.jsonl \
   --a-result <run>/arenas/results.jsonl --b-result <run>/arenas/results.jsonl \
   --a-label exp1_primary_A --b-label exp1_primary_B \
