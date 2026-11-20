@@ -57,7 +57,10 @@ _MIN_MOVES_REMAINING_NO_INC = 20
 # searching on would flag before those moves are played, so every move is
 # answered at once (`clock_exhausted`) from the tree / previous search / root
 # policy. Self-play at 10+0 drained the last 2 s at ~33 ms per minimal search and
-# then flagged around move 150; an at-once answer costs ~1-7 ms.
+# then flagged around move 150; an at-once answer costs ~1-7 ms. With an
+# increment each search costs only what the increment does not pay back, and a
+# `movestogo` refill caps how many searches the clock must fund
+# (`_at_once_threshold_ms`).
 _SUDDEN_DEATH_AT_ONCE_MOVES = _MIN_MOVES_REMAINING_NO_INC
 # A minimal search: the `_MIN_DEADLINE_MS` deadline, then one smallest chunk
 # (`MIN_SEARCH_CHUNK_SIMS` sims; its wall time from the engine's chunk-time
@@ -182,69 +185,71 @@ def limits_from_go(
     sudden_death_low = False
     movetime_ms = args.movetime_ms
     is_movetime = movetime_ms is not None
-    if movetime_ms is not None:
-        deadline_ms = max(_MIN_DEADLINE_MS, int(movetime_ms))
-    else:
-        remaining, inc = _select_clock(args, side_to_move_is_white)
-        if remaining is not None:
-            clock_cap_ms = max(
-                0, int(remaining) - max(0, int(move_overhead_ms)) - _CLOCK_SEARCH_SLACK_MS,
-            )
-        if remaining is not None:
-            inc_v = inc or 0
-            sudden_death_low = (
-                optimum_fraction > 0.0
-                and inc_v <= 0
-                and not (args.movestogo and args.movestogo > 0)
-                and args.nodes is None
-                and args.depth is None
-                and args.mate is None
-                and int(remaining) - max(0, int(move_overhead_ms))
-                < _SUDDEN_DEATH_AT_ONCE_MOVES * minimal_search_cost_ms(min_chunk_ms)
-            )
-            if optimum_fraction <= 0.0:
+    remaining, inc = _select_clock(args, side_to_move_is_white)
+    if remaining is not None:
+        # Also with `movetime`: a GUI that sends both must not see the
+        # engine spend a movetime its clock does not have.
+        clock_cap_ms = max(
+            0, int(remaining) - max(0, int(move_overhead_ms)) - _CLOCK_SEARCH_SLACK_MS,
+        )
+    # The clock's own deadline for this move (None: no clock for the side to
+    # move). With `movetime` too, the earlier of the two is used and the clock's
+    # at-once rule applies: `go movetime 1000 wtime 500 movestogo 40` must not
+    # spend 445 ms of a clock owed to 39 more moves.
+    clock_deadline_ms: int | None = None
+    if remaining is not None:
+        inc_v = inc or 0
+        sudden_death_low = (
+            optimum_fraction > 0.0
+            and args.nodes is None
+            and args.depth is None
+            and args.mate is None
+            and int(remaining) - max(0, int(move_overhead_ms))
+            < _at_once_threshold_ms(minimal_search_cost_ms(min_chunk_ms), inc_v, args.movestogo)
+        )
+        if optimum_fraction <= 0.0:
   # OFF sentinel: reproduce the pre-time-management allocation EXACTLY — fixed
   # divisor, full increment, NO reserve and NO pieces-driven split — so a baseline
   # binary is a true A/B against the old engine. Skipping only `optimum_ms` (below)
   # is not enough: the reserve + half-increment would still budget e.g. 2200ms vs
   # the old 4000ms at 30s+3s. A real `movestogo` from the GUI still wins.
-                moves_left = (
-                    args.movestogo if args.movestogo and args.movestogo > 0
-                    else _BASELINE_MOVES_REMAINING
-                )
+            moves_left = (
+                args.movestogo if args.movestogo and args.movestogo > 0
+                else _BASELINE_MOVES_REMAINING
+            )
   # The pre-change allocation scaled the whole budget by time_budget_scale too,
   # so honor it here — otherwise a sweep like optimum_fraction=0,scale=1.5 would
   # run the unscaled old budget and not test the no-abort engine at that spend.
-                budget = time_budget_scale * (remaining / moves_left + inc_v)
-            else:
+            budget = time_budget_scale * (remaining / moves_left + inc_v)
+        else:
   # Pieces-driven AGGRESSIVE allocation (a real `movestogo` from the GUI always
   # wins). Plan to spend the reserved base down by the hard middlegame; the
   # visit-margin abort banks most of it on easy moves, so the clock actually
   # lasts much longer (no extension mechanism needed). See the constants above.
-                if args.movestogo and args.movestogo > 0:
-                    moves_left = args.movestogo
-                else:
-                    est = round((max(0, int(pieces)) - _ENDGAME_PIECES) * _MOVES_PER_PIECE)
+            if args.movestogo and args.movestogo > 0:
+                moves_left = args.movestogo
+            else:
+                est = round((max(0, int(pieces)) - _ENDGAME_PIECES) * _MOVES_PER_PIECE)
   # Clamp the horizon up to the floor first, so a small `--moves-horizon` (e.g. 1)
   # can't pull `moves_left` below `_MIN_MOVES_REMAINING` and dump the whole base
   # into one move; the floor is honored regardless of the horizon cap.
-                    floor = _MIN_MOVES_REMAINING if inc_v > 0 else _MIN_MOVES_REMAINING_NO_INC
-                    horizon = max(floor, int(moves_horizon))
-                    moves_left = min(horizon, max(floor, est))
+                floor = _MIN_MOVES_REMAINING if inc_v > 0 else _MIN_MOVES_REMAINING_NO_INC
+                horizon = max(floor, int(moves_horizon))
+                moves_left = min(horizon, max(floor, est))
   # Carve a safety reserve off the clock first so the endgame can't flag, capped
   # at a fraction of remaining so it stays sane at short TCs. The increment refills
   # it each move. Only part of the increment is spent up front (the rest rolls over).
-                reserve = min(
-                    _MAX_RESERVE_FRACTION * remaining,
-                    max(_RESERVE_INC_MULT * inc_v, _RESERVE_OVERHEAD_MULT * move_overhead_ms),
-                )
-                usable = max(0.0, remaining - reserve)
+            reserve = min(
+                _MAX_RESERVE_FRACTION * remaining,
+                max(_RESERVE_INC_MULT * inc_v, _RESERVE_OVERHEAD_MULT * move_overhead_ms),
+            )
+            usable = max(0.0, remaining - reserve)
   # time_budget_scale lets the engine schedule more time per move on the bet that
   # the visit-margin abort banks most of it back; the 50%-of-remaining ceiling
   # still caps any single move, so the clock cannot be flagged regardless of scale.
-                budget = time_budget_scale * (
-                    usable / moves_left + _INCREMENT_SPEND_FRACTION * inc_v
-                )
+            budget = time_budget_scale * (
+                usable / moves_left + _INCREMENT_SPEND_FRACTION * inc_v
+            )
   # The ceiling exists to stop a LONG-HORIZON estimate from dumping the clock
   # into one move. `movestogo <= 1` is definitionally not that case: a fresh
   # allotment arrives right after this move, so halving the budget here threw
@@ -264,16 +269,22 @@ def limits_from_go(
   # the pre-time-management allocation EXACTLY" so a baseline binary is a true
   # A/B; moving it at `movestogo=1` would silently make the baseline arm not the
   # old engine, which is the U4 defect over again.
-            last_of_allotment = (
-                optimum_fraction > 0.0
-                and args.movestogo is not None
-                and 0 < args.movestogo <= 1
-            )
-            ceiling = remaining * (
-                _LAST_MOVE_FRACTION_OF_REMAINING if last_of_allotment
-                else _MAX_FRACTION_OF_REMAINING
-            )
-            deadline_ms = max(_MIN_DEADLINE_MS, int(min(budget, ceiling)))
+        last_of_allotment = (
+            optimum_fraction > 0.0
+            and args.movestogo is not None
+            and 0 < args.movestogo <= 1
+        )
+        ceiling = remaining * (
+            _LAST_MOVE_FRACTION_OF_REMAINING if last_of_allotment
+            else _MAX_FRACTION_OF_REMAINING
+        )
+        clock_deadline_ms = max(_MIN_DEADLINE_MS, int(min(budget, ceiling)))
+    if movetime_ms is not None:
+        deadline_ms = max(_MIN_DEADLINE_MS, int(movetime_ms))
+        if clock_deadline_ms is not None:
+            deadline_ms = min(deadline_ms, clock_deadline_ms)
+    else:
+        deadline_ms = clock_deadline_ms
 
   # Reserve time for UCI command + GUI overhead (bestmove emission, pipe
   # latency). Without this, engines lose on time in fast games.
@@ -331,6 +342,23 @@ def limits_from_go(
         implicit_cap=implicit_cap,
         clock_exhausted=clock_exhausted,
     )
+
+
+def _at_once_threshold_ms(search_cost_ms: float, inc_ms: int, movestogo: int | None) -> float:
+    """The clock (less MoveOverheadMs) below which every move is answered at
+    once: it must pay for one minimal search now, and for the searches it has
+    to fund before anything refills it. That is `_SUDDEN_DEATH_AT_ONCE_MOVES`
+    searches, or ``movestogo`` when the allotment refills sooner, each costing
+    what the increment it earns does not pay back. Sudden death is the
+    ``inc 0`` case. An increment at or above the search cost leaves only the
+    one-search floor; before 2026-11-19 any increment or ``movestogo`` skipped
+    the rule, so ``wtime 75 winc 10`` searched for 20 ms (a 68 ms minimal
+    search on CPU) and ``wtime 500 movestogo 40`` searched 20 ms moves it
+    could not pay for 40 of."""
+    funded = _SUDDEN_DEATH_AT_ONCE_MOVES
+    if movestogo is not None and movestogo > 0:
+        funded = min(funded, int(movestogo))
+    return max(search_cost_ms, funded * max(0.0, search_cost_ms - max(0, int(inc_ms))))
 
 
 def _select_clock(args: GoArgs, white: bool) -> tuple[int | None, int | None]:
