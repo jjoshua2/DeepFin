@@ -5,9 +5,11 @@ training, no arena. This record exists so the experiment can be judged, and its
 rule fixed, before any compute is spent (CLAUDE.md "Experiments" rule 1). It is
 registered only once the owner approves it and the decisions below are filled in.
 Nothing launches until (i) the owner's D1–D9 are recorded in this record by a
-follow-up commit, (ii) the snapshot/collect-from driver PR is merged (otherwise the
-4,000-game fallback applies), and (iii) pre-launch checks L1–L5 pass.
-Revised 2026-11-20 after an independent review (findings M1–M7, m1–m11).
+follow-up commit, and (ii) pre-launch checks L1–L5 pass. The driver support it needs
+(#1430) is on main.
+Revised 2026-11-20 after an independent review (findings M1–M7, m1–m11). Aligned
+2026-11-21 with the driver as merged in #1430: commands, gate scripts and report
+fields. The owner's decisions D1–D9 are unchanged and still open.
 
 **Prerequisites:**
 - **Collector fixes, on main since `b410456b4`:**
@@ -17,14 +19,18 @@ Revised 2026-11-20 after an independent review (findings M1–M7, m1–m11).
 - **Extensions rebuilt** in the run's tree at or after `b410456b4`.
 - **Every collect's `stats.json` must show `buffer_full_flushes == 0` and
   `eval_max_batch_realised == leaf_rows_required`.** A collect that does not is void.
-- **Snapshot / collect-from prerequisite PR (not yet merged; being commissioned).**
-  Driver support for:
-  - gates-only checkpoints at fixed update counts within a phase;
-  - a native `--collect-from`-style option, so several training arms run on one
-    sealed collection.
+- **Snapshot / collect-from driver support, #1430, on main since `885ab7b54`:**
+  - `--snapshot-updates`: weights-only checkpoints at fixed update counts within a
+    phase ([Train snapshots](../simple_rl_loop.md#train-snapshots));
+  - `--collect-from`: several training arms on one sealed collection
+    ([Training arms on one collection](../simple_rl_loop.md#training-arms-on-one-collection));
+  - the gate instruments `scripts/simple_rl_collect_gates.py`
+    ([Collect gates](../simple_rl_loop.md#collect-gates)) and
+    `scripts/simple_rl_model_gates.py` ([Model gates](../simple_rl_loop.md#model-gates)).
 
-  Without it, D2 falls back to 4,000 games, and the multi-arm procedure in
-  [Training](#training) applies.
+  The 4,000-game fallback existed in case this PR did not merge. That reason no
+  longer applies; 4,000 games remains the owner's D2 alternative. #1430 changed no C
+  code, so the extension build above stands.
 
 Owner's goal, verbatim: "my goal is to get at least one or two steps of improvement
 to show a RL loop can work."
@@ -44,7 +50,7 @@ change. Each decision is argued in the section it links to.
 | # | Decision | Recommended default | Alternative |
 |---|---|---|---|
 | D1 | [Which arm is primary, given its prior](#prior-and-choice-of-primary) | **Arm P** (policy only): measured prior −10.9 (−27.7 to +5.9) on F12's rows, no named failure mechanism. The likely outcome is "unread" or "kill", which would register that one policy-only generation at this dose is neutral. | **Arm V** (value on the search value): possibly a better chance of a positive read, with a named risk (a flatter value, the mechanism of Q50's loss) |
-| D2 | [Dose](#collection) | **16,000 games WITH snapshot gates** (needs the prerequisite PR) | **4,000 games** without snapshots (the fallback if the PR is not merged) |
+| D2 | [Dose](#collection) | **16,000 games WITH snapshot gates** (snapshots at 1,000 / 2,000 / 4,000 updates) | **4,000 games** (one snapshot, at 1,000 updates, under the [snapshot rule](#snapshots)) |
 | D3 | [Search budget of the stored targets](#collection) | **64 sims** | 256 sims at N/4 games, as a separate later experiment |
 | D4 | [Softening used by Arm S](#arms) | **`--train-target-temp 2.0`** | `--policy-prior-mix 0.5 --prior-mix-source reference` (SL base) |
 | D5 | [Primary arena layout](#deciding-yardstick) | **Seat-balanced:** half the games with the arm as candidate, half as reference, same openings; no separate base-vs-base control | One orientation plus a same-day base-vs-base control |
@@ -149,7 +155,7 @@ confirmation. Head-to-head comparisons between arms are not registered.
 
 ## Collection
 
-One collection from the SL base, at main ≥ `b410456b4`.
+One collection from the SL base, at main ≥ `885ab7b54`.
 
 | Setting | This experiment | Driver default | F12 | Source / reason |
 |---|---|---|---|---|
@@ -158,7 +164,7 @@ One collection from the SL base, at main ≥ `b410456b4`.
 | Root noise | Gumbel 1.0 → 0.5 over moves 12–15 | same | not re-read here | driver default |
 | Move temperature | 0.5 → 0.1 over 10 plies after the book, then 0.1 | same | not re-read here | driver default |
 | Openings | split 153,842 TRAIN / 4,000 EVAL; book mix 95% / 5%; `cycle` | same | 192 fixed starts | 18% exact repeats under F12's starts |
-| Games | 16,000 with snapshots / 4,000 without (D2) | 2,000 | 192 per cycle | below |
+| Games | 16,000 / 4,000 (D2) | 2,000 | 192 per cycle | below |
 | Concurrency | 128 (D7) | 64 | 16 slots | the only clean measured setting |
 | Evaluator cap | auto (= `leaf_rows_required`) | auto | — | #1427 |
 | `--collect-cuda-graphs` | on (D7), after L4 | off | — | documented bitwise identical; L4 checks it on this net |
@@ -175,9 +181,9 @@ One collection from the SL base, at main ≥ `b410456b4`.
   10% of TRAIN. Every row is presented once. The evidence ties the earlier losses to
   the value loss and recurring openings, not to the number of updates.
 - **What the larger dose risks.** No read exists at that many updates, and the
-  policy-drift extrapolation below reaches KL 0.5–1.2. So the 16,000 default requires
-  the snapshot gates; without them the dose falls back to 4,000 games, inside the
-  measured range.
+  policy-drift extrapolation below reaches KL 0.5–1.2. So the 16,000 default is
+  paired with the snapshot gates (#1430). The 4,000-game alternative stays closer to
+  the measured range.
 
 **Search budget (D3).** The evidence is mixed:
 - the best 256-sim targets beat every transformed 64-sim target on mass, top-1 and
@@ -204,7 +210,9 @@ Estimate: about 6.2–6.6 h for 16,000 games, 1.5–1.7 h for 4,000.
 - `--lr 3e-6 --lr-floor 3e-6 --warmup-steps 0`;
 - `--optimizer nadamw --optimizer-state fresh --init-optimizer-state fresh`;
 - `--holdout-frac 0.05`, `--probe-rows 2048`;
-- the same `--seed` everywhere.
+- `--seed 2026112000` for the collection and every arm. The driver refuses an arm
+  whose `--seed` differs from its source's, because the seed also draws the train
+  phase's batch plan.
 
 The driver's `--lr` default is 3e-5, so 3e-6 is passed explicitly. The holdout is a
 sha256 of the game id (`is_holdout_game`), so every arm holds out the same games.
@@ -217,25 +225,104 @@ zero-first-update caveat applies only with `--warmup-steps > 0`.
 The SL base's own optimizer state (Aurora, `mlp_out` scope) would change the
 optimizer family, which is a second change in one readout.
 
-**Several arms on one collection.** Prefer the native option from the prerequisite PR
-once it is merged. Until then, lineage checks cannot prove a copied run dir: the
-driver's `input_ref` stores paths as given, and `verify_stage` checks only in-run
-inputs. So the manual procedure must record its own proof:
-1. Collect generation 1 once in `collect/`.
-2. Copy `collect/` (with its `run_config.json`) to `arm_P/`, `arm_V/`, `arm_S/`.
-3. Record that `sha256_tree(arm_X/gen_0001/collect) == sha256_tree(collect/gen_0001/collect)`,
-   and the same for `gen_0000`, with `simple_rl.common.sha256_tree`.
-4. Run `train --generation 1` in each arm dir with the arm's flags and
-   `--allow-config-change`, so each `run_config.json` records that arm's diff.
-5. Record that `probe.npz` and the held-out row set have the same sha256 in every arm.
+**Several arms on one collection (native, #1430).** The collection is its own run
+dir, `collect/` (the source), which only collects. Each arm is its own run dir that
+references the source's sealed generation-1 collect with `--collect-from`, pins its
+own `run_config.json`, and holds no copy of the rows. The driver creates the
+reference only when all of these hold, and refuses otherwise:
+- **Generation 1 only.** The source collect must have been played by the arm's own
+  generation g−1 model (the on-policy actor rule). Arms share generation 1, which the
+  shared generation-0 model played; no arm trains a second generation on these rows.
+- **Same `--init-checkpoint`** as the source: every arm passes the SL base file the
+  source was started from.
+- **Collect flags equal to the source's.** Only device, CUDA graphs, evaluator cap,
+  dup-sketch budget and exact-repeat-vs-previous are exempt. The commands below pass
+  one shared `$COLLECT` to the source and to every arm.
+- **The arm's `--seed` equals the source's.**
 
-Pre-launch check L3 rehearses this on a tiny net, on CPU.
+**Freeze the source.** Once the first arm references it, `collect/` is made read-only
+and is never redone or edited. The source cannot know its arms exist. A redo or edit
+there makes every arm refuse its next stage, because the reference re-hashes the
+source's manifest, shards, `games.jsonl`, `starts.txt` and generation-0 model.
+Recovering means re-referencing and retraining every arm.
 
-**Snapshots (with the prerequisite PR).**
-- Each arm writes gates-only snapshots at 1,000, 2,000 and 4,000 updates and at the
-  end of the phase.
-- G-T1 and G-T2 are read at every snapshot. A snapshot that fails a gate ends the arm
-  there with the verdict "gate failed". That is an early stop, not a selection.
+**Commands.**
+
+```bash
+export PYTHONPATH=.
+R=~/chess-artifacts/operations/loop-exp1-20261120
+TB=~/projects/chess/data/syzygy_3-4-5:~/projects/chess/data/syzygy_6
+SL=<SL base checkpoint, sha256 a39f900c…>
+# D2: --games 4000 for the alternative. D7: drop --collect-cuda-graphs if D7 or L4 says off.
+COLLECT="--openings-dir $R/openings --init-checkpoint $SL --device cuda --seed 2026112000 \
+  --games 16000 --concurrency 128 --sims 64 --topk 16 --c-scale 0.1 --c-visit 50 \
+  --max-plies 450 --syzygy $TB --sf-path <stockfish> --collect-cuda-graphs"
+TRAIN="--presentations 1 --batch-size 256 --mirror-prob 0.5 --lr 3e-6 --lr-floor 3e-6 \
+  --warmup-steps 0 --optimizer nadamw --optimizer-state fresh --init-optimizer-state fresh \
+  --holdout-frac 0.05 --probe-rows 2048 --no-eval"
+declare -A ARM=(
+  [P]="--w-wdl 0"
+  [V]="--w-wdl 1 --value-outcome-weight 0 --value-search-weight 1 --value-search-source survivor_q --value-draw-source net"
+  [S]="--w-wdl 0 --train-target-temp 2.0")
+
+# 1. The collection: the source run dir, collect stage only.
+python -u scripts/simple_rl_loop.py collect --run-dir $R/collect --generation 1 $COLLECT
+chmod -R a-w $R/collect          # frozen from here on
+
+# 2. The phase's planned updates, from the sealed collect's row metadata. Record N here.
+python - "$R/collect" <<'EOF'
+import importlib.util, sys
+from pathlib import Path
+from chess_anti_engine.simple_rl.learn import planned_phase_updates
+spec = importlib.util.spec_from_file_location("loop", "scripts/simple_rl_loop.py")
+loop = importlib.util.module_from_spec(spec); spec.loader.exec_module(loop)
+src = Path(sys.argv[1])
+a = loop.parser().parse_args(["train", "--run-dir", str(src), "--openings-dir", "unused",
+                              "--generation", "1", "--batch-size", "256",
+                              "--holdout-frac", "0.05", "--presentations", "1"])
+print(planned_phase_updates(src, 1, loop.train_settings(a, src)))
+EOF
+SNAPS=1000,2000,4000             # the members of {1000, 2000, 4000} strictly below N
+
+# 3. Each arm: seal the reference (a standalone collect pins nothing), then `run`,
+#    which checks the snapshot plan against the sealed collect BEFORE pinning
+#    run_config.json, skips the sealed collect after re-verifying the source, and trains.
+for a in P V S; do
+  python -u scripts/simple_rl_loop.py collect --run-dir $R/arm_$a --generation 1 \
+    --collect-from $R/collect $COLLECT $TRAIN ${ARM[$a]} --snapshot-updates $SNAPS
+  python -u scripts/simple_rl_loop.py run --run-dir $R/arm_$a --generations 1 \
+    --collect-from $R/collect $COLLECT $TRAIN ${ARM[$a]} --snapshot-updates $SNAPS
+done
+```
+
+The planned-updates snippet was checked read-only on the banked 128-game collect
+(`fix_c128_auto`, 12,372 rows): it prints 47.
+
+**Pre-arena identity check (recorded, before any arena).**
+- `sha256(arm_P/probe.npz) = sha256(arm_V/probe.npz) = sha256(arm_S/probe.npz)`;
+- `sha256(arm_X/gen_0001/train/presented.npz)` equal across the three arms (same
+  holdout, same batch plan; the driver's test asserts this for arms that differ only
+  in loss flags);
+- every arm's `gen_0001/collect/manifest.json` names the same
+  `collect_reference.source_collect_dir`.
+
+A mismatch voids all arms under the collect-gate disposition.
+
+### Snapshots
+
+- **Rule.** An arm's snapshots are the members of {1,000, 2,000, 4,000} strictly
+  below the phase's planned update count N. N is computed from the sealed collect
+  (step 2) before any arm starts, and N and the list are recorded here. At about
+  5,700 planned updates (16,000 games) the list is 1,000, 2,000, 4,000; at about
+  1,400 (4,000 games, or the positive control) it is 1,000 alone.
+- **Refusal.** The train stage refuses a list that reaches past its planned updates.
+  Because the arm's collect is sealed before its `run` starts, that check runs before
+  `run_config.json` is pinned.
+- **The final model is the last readout:** `gen_0001/train/model.pt`. It is not a
+  snapshot.
+- **Gates.** G-T1 and G-T2 are read at every snapshot and on the final model. A
+  snapshot that fails a gate ends the arm there with the verdict "gate failed". That
+  is an early stop, not a selection.
 - Only the final model is ever played. No snapshot replaces it.
 
 ## Gates before any arena
@@ -250,34 +337,81 @@ the fixed cap (the two banked c128 runs are the same 128 games) and a concurrenc
 collect. "Capped" is the same 128 games at the defective cap 512. Sources: smoke
 `optimizer-start/mini/fix_c128_auto`, `main_g128_c32`, `main_c128`; #1427.
 
-| Gate | Pass | Clean | Capped |
-|---|---|---|---|
-| G-C1 `buffer_full_flushes` | = 0 | — | — |
-| G-C2 `eval_max_batch_realised` vs `leaf_rows_required` | equal | 4096 = 4096 | 512 < 2048 |
-| G-C3 reply-side Spearman(child Q, prior), fresh and reused roots | ≥ +0.50 both | +0.60 / +0.60 | −0.007 / +0.110 (smoke gen 1: −0.24 / −0.35) |
-| G-C4 book-end mover's score | ≤ 0.70 | 0.582 | 0.820 (smoke gen 1: 0.90) |
-| G-C5 `target_entropy` | 0.60–0.76 | 0.684–0.694 | 0.799 |
-| G-C6 `kl_target_prior` | ≤ 0.50 | 0.290–0.332 | 0.676 |
-| G-C7 rows per game | ≥ 80 | 96.7–101.0 | 56.9 |
-| G-C8 `draw_rate` | 0.30–0.70 | 0.461–0.531 | 0.156 |
-| G-C9 `mean_survivor_minus_node_q` | 0.12–0.30 | 0.181–0.212; D3 bank 0.235 | 0.157 (weak; recorded) |
-| G-C10 `repeat_rate_within` | ≤ 0.05 | 0.000 | 0.000 |
+| Gate | Report field (`simple_rl_collect_gates.py`) | Pass | Clean | Capped |
+|---|---|---|---|---|
+| G-C1 buffer flushes | `buffer_full_flushes` | = 0 | — (written from #1428 on) | — |
+| G-C2 evaluator cap | `eval_max_batch_realised` and `leaf_rows_required` | both = 4096 | 4096 = 4096 | 512 < 2048 |
+| G-C3 reply-side Spearman(child Q, prior), fresh and reused roots | `spearman_childq_prior.reply_fresh.spearman_childq_prior`, `spearman_childq_prior.reply_reused.spearman_childq_prior` | ≥ +0.50 both | +0.596 / +0.602 | −0.053 / +0.096 |
+| G-C4 book-end mover's score | `book_end_mover_score` | ≤ 0.70 | 0.582 | 0.820 (smoke gen 1: 0.90) |
+| G-C5 target entropy | `target_entropy` | 0.60–0.76 | 0.684–0.694 | 0.799 |
+| G-C6 KL(target‖prior) | `kl_target_prior` | ≤ 0.50 | 0.290–0.332 | 0.676 |
+| G-C7 rows per game | `rows_per_game` | ≥ 80 | 96.7–101.0 | 56.9 |
+| G-C8 draw rate | `draw_rate` | 0.30–0.70 | 0.461–0.531 | 0.156 |
+| G-C9 survivor − node Q | `mean_survivor_minus_node_q` | 0.12–0.30 | 0.181–0.212; D3 bank 0.235 | 0.157 (weak; recorded) |
+| G-C10 within-collect repeats | `repeat_rate_within` | ≤ 0.05 | 0.000 | 0.000 |
+
+G-C5, G-C6, G-C9 and G-C10 are the collect's own `stats.json` statistics, recomputed
+by the script over every row. G-C3 and G-C4 come from a uniform seeded sample over all
+shards (20,000 rows, `--seed 0`) and from every game.
 
 **Book-end mover's score:** over all games, (wins + 0.5 × draws) / games for the side
 to move at the end of the book line.
 
-**G-C3 and G-C4 need a committed script** (pre-launch check L2). The banked
-`loop-smoke-gpu/optimizer-start/scripts/side_stats.py` (sha256 `f3d237cb…`) cannot
-serve:
-- it samples only the first 3,000 rows per side and root class;
-- it does not compute the mover score.
+**Spearman references use average ranks.** The script ranks ties by their average
+rank. The scratch `side_stats.py` used ordinal ranks, which differ on the capped
+collect's many tied child Qs (ordinal capped −0.007 / +0.110, reproduced exactly by
+the script with ordinal ranks). Only average-rank references are cited here, from the
+[driver doc](../simple_rl_loop.md#collect-gates).
 
-The committed version samples uniformly over the whole collect.
+**G-C2 is gated on the numbers.** The script's `eval_max_batch_equals_leaf_rows` is a
+boolean, and `--thresholds` accepts only numbers (a boolean reads as missing and
+fails). So G-C2 is two numeric gates, `eval_max_batch_realised` and
+`leaf_rows_required`, each with min = max = 4096: the leaf rows of the clean
+concurrency-128 reference. If D7 changes the concurrency, both bounds are set to that
+setting's leaf rows before launch. Gating the boolean directly waits on a follow-up
+PR.
+
+**Command.** Exit code 3 means a gate failed or its field was missing or NaN:
+
+```bash
+python -u scripts/simple_rl_collect_gates.py $R/collect/gen_0001/collect --train-target-temp 2 \
+  --thresholds $R/gates/collect_primary.json --out $R/gates/collect_primary.out.json
+```
+
+`$R/gates/collect_primary.json`, verbatim:
+
+```json
+{
+ "buffer_full_flushes": {"min": 0, "max": 0},
+ "eval_max_batch_realised": {"min": 4096, "max": 4096},
+ "leaf_rows_required": {"min": 4096, "max": 4096},
+ "spearman_childq_prior.reply_fresh.spearman_childq_prior": {"min": 0.50},
+ "spearman_childq_prior.reply_reused.spearman_childq_prior": {"min": 0.50},
+ "book_end_mover_score": {"max": 0.70},
+ "target_entropy": {"min": 0.60, "max": 0.76},
+ "kl_target_prior": {"max": 0.50},
+ "rows_per_game": {"min": 80},
+ "draw_rate": {"min": 0.30, "max": 0.70},
+ "mean_survivor_minus_node_q": {"min": 0.12, "max": 0.30},
+ "repeat_rate_within": {"max": 0.05}
+}
+```
+
+The control's file is in [Positive control](#positive-control).
+
+Checked read-only on the banked clean 128-game collect (`fix_c128_auto`): every field
+resolves, and every gate passes except `buffer_full_flushes`. That collect predates
+#1428 and does not carry the field, so the gate fails as missing, as the script
+intends.
 
 **Train gates (per arm, at the end of the phase and at every snapshot).**
 
-**G-T1 confidence band on the fixed 3,080 D3 audit rows**, through the arena's own
-evaluator, as in the D4 round-2 proof.
+**G-T1 confidence band on the fixed 3,080 D3 audit rows**
+(`~/chess-artifacts/operations/rl-claude-20261119/rl-audit/positions.npz`, sha256
+`0d335d6487cd702a…`), measured by `scripts/simple_rl_model_gates.py --audit-rows`. It
+loads the model with the arena's loader and runs the forward under bf16 autocast on
+CUDA, as the banked references were made. Banked reproduction for the SL base: this
+script reads 0.4086 / 0.5133 on CPU fp32, against 0.4088 / 0.5132 banked (bf16 CUDA).
 - **Arms P and S:** mean |Q| 0.37–0.45 and mean P(draw) 0.48–0.55.
 - **Arm V:** mean |Q| 0.33–0.45 and P(draw) 0.48–0.55. A value fitted to the 800-sim
   survivor Q has mean |Q| ≈ 0.368 on these rows (value-recalibration study), so V's
@@ -293,8 +427,31 @@ References:
 | Q50 recalibrated | 0.364 | value-only arm recovered 0.85 (0.50 to 1.18) |
 | F12 recalibrated | 0.386 | full net recovered 0.97 (0.37 to 1.56); value-only arm unresolved |
 
+Commands, for each snapshot and for the final model of arm X:
+
+```bash
+for m in $R/arm_X/gen_0001/train/snapshots/step_*/model.pt $R/arm_X/gen_0001/train/model.pt; do
+  python -u scripts/simple_rl_model_gates.py --model $m --device cuda \
+    --audit-rows ~/chess-artifacts/operations/rl-claude-20261119/rl-audit/positions.npz \
+    --thresholds $R/gates/gt1_X.json --out $R/gates/arm_X_$(basename $(dirname $m))_gt1.json
+done
+```
+
+The threshold files, verbatim:
+- `gt1_P.json` and `gt1_S.json`:
+  `{"audit.mean_abs_q": {"min": 0.37, "max": 0.45}, "audit.mean_p_draw": {"min": 0.48, "max": 0.55}}`
+- `gt1_V.json`:
+  `{"audit.mean_abs_q": {"min": 0.33, "max": 0.45}, "audit.mean_p_draw": {"min": 0.48, "max": 0.55}}`
+
+Outputs go to `$R/gates/` (`step_<N>` or `train` in the name), never into a sealed
+stage directory.
+
 **G-T2 probe drift against the SL base:** a gross-defect guard only. A read of KL > 1.5
-or |ΔQ| > 0.4 fails. Every read is recorded. References, by instrument:
+or |ΔQ| > 0.4 fails. Every read is recorded. The fields are
+`probe_vs_previous.policy_kl_prev_to_new` and `probe_vs_previous.mean_abs_dq`, in each
+snapshot's `metrics.json` and in the final `gen_0001/train/metrics.json`, measured
+against the phase's init model (the SL base; Q50 c12 for the positive control).
+References, by instrument:
 
 | Instrument | Run | Updates | KL | \|ΔQ\| |
 |---|---|---:|---:|---:|
@@ -307,19 +464,36 @@ Extrapolated, P1's KL reaches about 0.5–1.2 at 5,700 updates, so no tighter bo
 defensible at the default dose.
 
 **G-T3 held-out policy CE.** After the phase it must not exceed the before-phase
-value.
-- **Arms P and V:** against the stored target (`heldout_metrics`).
-- **Arm S:** `heldout_metrics` scores against the temperature-1 stored target, which S
-  does not train on. S's CE is therefore scored against
-  `retemper_main_policy_target(stored, temp=2)` by the gate script.
+value, on generation 1's held-out games.
+- **Arms P and V:** `summary.heldout_before.policy_ce` against
+  `summary.heldout_after.policy_ce` in the train manifest (temperature 1, the target
+  they train on).
+- **Arm S:** `heldout.policy_ce` from `scripts/simple_rl_model_gates.py` at
+  `--train-target-temp 2`, run on BOTH the before model and the final model:
+
+  ```bash
+  for m in $R/arm_S/gen_0000/model.pt $R/arm_S/gen_0001/train/model.pt; do
+    python -u scripts/simple_rl_model_gates.py --model $m --device cuda \
+      --collect $R/arm_S --gen 1 --train-target-temp 2 \
+      --out $R/gates/arm_S_gt3_$(basename $(dirname $m)).json
+  done
+  ```
+
+  The CE logged in S's `metrics.json` and manifest is against the temperature-1
+  target, which S does not train on, and it rises by design (1.06 → 1.16 in #1430's
+  45-update check). S's G-T3 is never read off `metrics.json`.
+- The script at temperature 1 equals the train stage's `heldout_after` (tested), so
+  the same command at `--train-target-temp 1` cross-checks P and V.
 
 **G-T4 realised settings, read off the consumers** (`metrics.json`, train manifest):
 - presentation histogram exactly `{1: trainable rows}`;
-- `trained_on_capped_rows` absent;
+- `trained_on_capped_rows` false (the field is always written);
+- `summary.snapshots` equals the recorded snapshot list;
 - `realised_lr_param_groups` all 3e-6;
 - `realised_policy_target_temp` 1.0 for P and V, 2.0 for S;
-- **Arm S:** target entropy of the collected targets under
-  `retemper_main_policy_target(·, temp=2)` recorded, and above Arm P's;
+- **Arm S:** `retempered_target_entropy.2.overall` from the collect-gate report
+  (`--train-target-temp 2`) recorded, and above the temperature-1 `target_entropy`
+  that Arm P trains on;
 - **Arm V:**
   - `realised_search_wdl_frac` = 1.0;
   - `targets.value_from_survivor_q` ≥ 99% of rows;
@@ -438,9 +612,15 @@ all.
 - **Start:** Q50 c12 (sha256 `bb157a84…`), −63.2 (−81.1 to −45.7) against the SL base.
 - **Recipe:** Arm V's, because Q50's loss sits in its value output. Arm P does not
   train the value and could fail for that reason alone.
-- **Collection:** 4,000 games from the same split's TRAIN lines, with its own run dir
-  and `--seed 2026112010` (its own opening permutation). The overlap with the primary
-  collection's lines is counted and recorded.
+- **Collection:** 4,000 games from the same split's TRAIN lines, in its own source
+  run dir `posctl/collect`, with `--seed 2026112010` (its own opening permutation).
+  The overlap with the primary collection's lines is counted and recorded.
+- **Procedure:** the primary's, with `$COLLECT` changed only in
+  `--init-checkpoint <Q50 c12> --games 4000 --seed 2026112010`. One arm,
+  `posctl/arm_V`, references it with `--collect-from $R/posctl/collect`, the same
+  init checkpoint and seed, and Arm V's flags. `posctl/collect` is frozen once the arm
+  references it. Snapshots follow the [rule](#snapshots): at about 1,400 planned
+  updates, one at 1,000.
 - **Match:** the trained net against Q50 c12, seat-balanced, 1,600 games on EVAL
   openings, seed 2026112006. Same reading rule: success if the lower 95% bound is
   above 0.
@@ -459,23 +639,40 @@ broken run cannot be read as a pass or a fail. G-T1 is replaced, because Q50 c12
 at mean |Q| 0.298, below Arm V's 0.33 floor; a benign run could fail that band at the
 start.
 - **G-T1 (control):** mean |Q| on the 3,080 audit rows must not fall below the start's
-  0.298, and mean P(draw) must stay in 0.45–0.60. Read at the end and at every
-  snapshot.
+  own read, and mean P(draw) must stay in 0.45–0.60. Read at the end and at every
+  snapshot. The floor is the value `simple_rl_model_gates.py` reads for
+  `posctl/arm_V/gen_0000/model.pt` (Q50 c12) on the same device before training,
+  recorded here; banked 0.2980 (bf16 CUDA) and 0.2982 (CPU fp32). `gt1_control.json`
+  is `{"audit.mean_abs_q": {"min": <that read>}, "audit.mean_p_draw": {"min": 0.45, "max": 0.60}}`.
 - **Collect gates, gated:** G-C1 (= 0), G-C2 (equal), G-C7 (≥ 80 rows per game) and
   G-C10 (≤ 0.05) with the primary's bounds, and G-C3 at ≥ +0.30 on both root classes
   (the primary's bound is +0.50). These test the machinery, not the start net. G-C3 is
   looser here because no Q50 c12 collect reference exists and the statistic also
   reflects agreement between that net's own policy and value, which were trained
-  differently; +0.30 still separates clearly from the defect signature (−0.007 /
-  +0.110; smoke run −0.24 / −0.35).
+  differently; +0.30 still separates clearly from the defect signature (average
+  ranks: −0.053 / +0.096).
+
+  `$R/gates/collect_control.json`, verbatim:
+
+  ```json
+  {
+   "buffer_full_flushes": {"min": 0, "max": 0},
+   "eval_max_batch_realised": {"min": 4096, "max": 4096},
+   "leaf_rows_required": {"min": 4096, "max": 4096},
+   "spearman_childq_prior.reply_fresh.spearman_childq_prior": {"min": 0.30},
+   "spearman_childq_prior.reply_reused.spearman_childq_prior": {"min": 0.30},
+   "rows_per_game": {"min": 80},
+   "repeat_rate_within": {"max": 0.05}
+  }
+  ```
 - **Collect gates, recorded only:** G-C4, G-C5, G-C6, G-C8, G-C9. Their bands were set
   on SL-base collects and the expected values for a Q50 c12 collect are unknown.
 - **G-T2:** the same gross guard, measured against Q50 c12 (the control's start), not
   the SL base: KL > 1.5 or |ΔQ| > 0.4 fails.
 - **G-T3:** held-out policy CE against the stored target must not exceed the
-  before-phase value.
+  before-phase value (`summary.heldout_before` / `heldout_after`, as for Arm V).
 - **G-T4:** the Arm V checks unchanged: presentation histogram `{1: trainable rows}`,
-  `trained_on_capped_rows` absent, `realised_lr_param_groups` all 3e-6,
+  `trained_on_capped_rows` false, `summary.snapshots` as recorded, `realised_lr_param_groups` all 3e-6,
   `realised_policy_target_temp` 1.0, `realised_search_wdl_frac` = 1.0,
   `targets.value_from_survivor_q` ≥ 99% of rows.
 - **Arena records:** the four required fields of every arena record apply.
@@ -500,44 +697,53 @@ It runs after the primary arena, alone on the GPU. The D6 alternative is to skip
 
 Single RTX 5090. Nothing else is measured during an arena or a collect.
 
-| Stage | GPU hours (16,000-game default) | 4,000-game fallback | Basis |
+| Stage | GPU hours (16,000-game default) | 4,000-game alternative (D2) | Basis |
 |---|---|---|---|
 | Pre-launch checks L1–L5 | about 0.1 (L4 only) | same | L4 is a 128-game collect |
 | Collect | 6.2–6.6 | 1.5–1.7 | 2,424–2,583 games/h, unverified |
 | Train ×3, incl. snapshot gates | 2.4–4.4 | 0.6–1.1 | 0.47–0.84 s per update (F12 record: 512 updates in 239–432 s) |
-| Final gates | ≤ 0.2 | ≤ 0.2 | 3,080-row evaluator pass per arm |
+| Collect gates (`simple_rl_collect_gates.py`) | 0 (CPU, about 10–15 min per collect) | same | two collects: primary and control |
+| Model gates (`simple_rl_model_gates.py`) | 0.2–0.5 | same | a 3,080-row audit pass per snapshot and final model; held-out CE before and after for S (and the P / V cross-check) |
 | Primary arena, 3,200 games | 1.8–2.6 | same | 800-game D4 arms took 1,600–2,260 s |
 | Screens, 2 × 400 games | 0.5–0.7 | same | |
 | Confirmation, 1,600 games | 0.9–1.3 | same | |
 | Positive control (collect 4,000 + train + 1,600-game arena) | 2.6–3.4 | same | |
-| **Total** | **≈ 14.6–19.3** | **≈ 8.2–11.1** | |
+| **Total** | **≈ 14.7–19.6** | **≈ 8.2–11.4** | |
 
 The trains may run one after another, or two at a time if memory allows; they are not
 measurements. Nothing runs during any arena.
 
 ## Pre-launch checks
 
-- **L1.** Main ≥ `b410456b4`, extensions rebuilt (ABI 11). The run executes from a
-  detached worktree at a pinned sha, recorded here before launch. For the 16,000-game
-  default, the snapshot / collect-from PR is merged.
-- **L2.** Committed scripts, sha256 recorded:
-  - G-C3 / G-C4: uniform sampling over the whole collect, mover score as defined;
-  - the audit-row G-T1 evaluator pass;
-  - the S-specific G-T3;
-  - the seat-balanced pooling.
-- **L3.** A tiny-net CPU rehearsal of the multi-arm procedure: tree hashes equal,
-  `probe.npz` and holdout hashes equal across arms, each arm's `run_config.json`
-  change recorded.
+- **L1.** Main ≥ `885ab7b54` (contains #1427, #1428 and #1430), extensions rebuilt
+  (ABI 11). The run executes from a detached worktree at a pinned sha, recorded here
+  before launch.
+- **L2.** The gate instruments are committed on main (#1430):
+  `scripts/simple_rl_collect_gates.py` (G-C1–G-C10, and S's retempered target
+  entropy) and `scripts/simple_rl_model_gates.py` (G-T1, and S's G-T3). Their sha256
+  at the pinned sha is recorded, with the threshold files above. The seat-balanced
+  pooling script is NOT among them and is still committed before launch. Also: a
+  model-gates read of the SL base on the audit rows reproduces 0.4086 / 0.5133 (CPU)
+  or 0.4088 / 0.5132 (CUDA) within 0.0005.
+- **L3.** A tiny-net CPU rehearsal of the exact commands above: source collect, the
+  `chmod`, each arm's `collect --collect-from` then `run`; `probe.npz` and
+  `presented.npz` sha256 equal across arms; an arm with a different `--seed` and a
+  snapshot list past the planned updates are both refused, before `run_config.json`
+  is pinned.
 - **L4.** Rerun the clean 128-game reference collect (`fix_c128_auto` settings) with
-  `--collect-cuda-graphs` on. Its shard sha256 must equal the graphs-off shards;
-  otherwise graphs stay off.
+  `--collect-cuda-graphs` on, and compare it with the graphs-off collect by
+  `simple_rl_collect_gates.py --content-digest`: `content_sha256` (every decoded shard
+  array and row sidecar) and `games_sha256` must both be equal. Shard file sha256 is
+  not compared: the compressed chunk files and the metadata timestamp are not
+  reproducible. Otherwise graphs stay off.
 - **L5.** Build the confirmation `--openings-fen` file, or record that the fallback
   applies.
 
 ## Recovery plan
 
 - **Everything goes in a new directory:** `~/chess-artifacts/operations/loop-exp1-20261120/`,
-  with `openings/`, `collect/`, `arm_P/`, `arm_V/`, `arm_S/`, `posctl/`, `arenas/`,
+  with `openings/`, `collect/` (the source; read-only once an arm references it),
+  `arm_P/`, `arm_V/`, `arm_S/`, `posctl/collect/`, `posctl/arm_V/`, `arenas/`,
   `gates/`.
 - **Untouched:**
   - the SL base;
@@ -588,7 +794,11 @@ A second step of improvement is the owner's stated goal.
 
 ## Not verified
 
-- The snapshot / collect-from prerequisite PR: not yet merged.
+- The arm procedure (a standalone `collect --collect-from`, then `run`) on the
+  production net. The driver's tests cover it on tiny nets; L3 rehearses the exact
+  commands.
+- `buffer_full_flushes` in a real collect-gate report on current main.
+- The gate scripts' runtimes on a 16,000-game collect (10–15 min is an estimate).
 - That `buffer_full_flushes` appears in a real arena result row. The code writes it;
   no run on current main has been read.
 - Clean collect throughput beyond 128-game runs; any CUDA-graph speed-up; graphs-on
