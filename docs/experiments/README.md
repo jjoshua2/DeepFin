@@ -16,6 +16,8 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
+- [2026-11-20: Loop experiment 1 — one self-play generation from the SL base (DRAFT, prospective)](2026-11-20-loop-exp1-one-generation-from-sl-base.md) — awaiting owner approval, nothing launched: one 16,000-game collection (after #1427 and #1428) trained three ways on the same rows (policy only = primary; search value; softened policy), cheap gates before any arena, one deciding 1,600-game match vs the SL base (success = lower 95% bound > 0, one pre-committed extension), eight owner decisions with defaults
+
 - [2026-11-19: Twofold repetition as a proven draw — semantics, footprint, defects, plan](2026-11-19-twofold-repetition-as-proven-draw.md) — investigation only, no self-play code change: the C search proves a draw on the first repeat counting pre-root game history (lc0 does not); 3.9% of banked training rows have such a child and ~25% of them store q exactly 0 (~1% of all rows; calibrated vs outcome on average, partly self-fulfilling); UCI PUCT/walker reroot keeps a stale DRAW root (fix in #1421); the repeated position is never searched; B1 (root boundary) then B2 (no proof) proposed, each decided by a frozen deep-SF target audit, awaiting owner
 
 - [2026-11-19: Winning-root draw pruning — no fake forced moves, below-zero draw fallback](2026-11-19-root-draw-pruning-singleton-fix.md) — search-correctness change; self-play footprint measured on 497,027 banked plies: 3.1 stored targets and 1.2 played moves per 10,000 plies change, all other roots bit-identical; no training experiment
