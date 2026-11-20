@@ -611,12 +611,18 @@ def test_resume_refuses_when_the_schedule_does_not_reproduce(
 
     Same settings fingerprint (the openings PATH is unchanged), but the file
     behind it now holds different positions. Nothing about the fingerprint can
-    see that, so the per-pair ``opening_fen`` check is the only thing standing
-    between a resume and two different opening sets in one pentanomial.
+    see that. A log that records provenance is refused earlier, on the openings
+    sha256 (``test_arena_provenance.py``); this test strips the header's
+    provenance, as in a log written before it existed, so the per-pair
+    ``opening_fen`` check -- the only guard such a log has -- is still exercised.
     """
     log_path = tmp_path / "swapped.games.jsonl"
     with pytest.raises(_SimulatedCrash):
         _run_arena(monkeypatch, tmp_path, log_path=log_path, crash_after=3)
+    lines = log_path.read_text().splitlines()
+    header = json.loads(lines[0])
+    header.pop("info", None)
+    log_path.write_text("\n".join([json.dumps(header), *lines[1:]]) + "\n")
     swapped = list(_OPENING_FENS[:4])
     swapped[0], swapped[1] = swapped[1], swapped[0]
     # Same PATH (so the fingerprint is unchanged), different contents. The

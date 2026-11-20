@@ -1143,15 +1143,16 @@ def test_the_log_header_records_the_spec_beside_the_fingerprinted_settings(
         "everything under settings is hashed into the resume fingerprint"
     )
 
-    # The same run without --sprt: no info block at all (the pre-branch header
-    # shape), and — the load-bearing half — the SAME fingerprint, so the two
-    # logs are resumable from each other.
+    # The same run without --sprt: no SPRT spec in the info block (which now
+    # always carries the non-fingerprinted provenance), and — the load-bearing
+    # half — the SAME fingerprint, so the two logs are resumable from each other.
     plain_path = tmp_path / "nospec.games.jsonl"
     _run_chunked_arena(
         monkeypatch, tmp_path, sprt=None, n_pairs=6, calls=[], log_path=plain_path,
     )
     plain = _log_header(plain_path)
-    assert "info" not in plain
+    assert "sprt" not in plain.get("info", {})
+    assert "provenance" in plain["info"]
     assert header["fingerprint"] == plain["fingerprint"]
 
 

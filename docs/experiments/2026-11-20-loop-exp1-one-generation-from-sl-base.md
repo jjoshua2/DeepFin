@@ -597,11 +597,19 @@ If an opening repeats within a run, all its pairs join one cluster. The script i
   index → opening maps must be identical. Both runs must be complete, with
   `buffer_full_flushes` 0 and the realised evaluator cap recorded, and their settings
   must be equal after the seat swap. `--arm` (required) must be run A's candidate and
-  run B's reference. No net file may have been modified after the runs started.
+  run B's reference.
+- **Net identity, by sha256:** the arena banks `candidate_sha256`, `reference_sha256`
+  and `openings_sha256` (plus per-file `candidate_files` / `reference_files`) in every
+  result row, and the same block, unfingerprinted, in each game-log header. A resume
+  onto files whose sha256 differs is refused. The pooling script then asserts three
+  things: A's candidate sha256 is B's reference sha256 and vice versa; every row
+  sha256 equals the file's sha256 at pool time; and the two runs' openings sha256
+  are equal. The older mtime heuristic applies only to legacy rows without these
+  fields, under `--allow-legacy-rows`, which a registered read never uses. The output
+  records which check ran (`net_check`: `row_sha256` here).
 - **Outputs:** estimate, SE, 95% CI, Elo, n_clusters, the realised A/B correlation and
   the implied seat offset. Provenance: the sha256 of the four input files and of every
-  net file at pool time. The arena banks checkpoint paths only, so a net rewritten
-  before the runs cannot be detected; the output says so.
+  net file at pool time.
 - **Verdict:** `lb-gt-zero` is decided on the excess scale (lower bound of the excess
   > 0 is success; upper bound < 0 is kill). This is the same rule as an Elo lower
   bound > 0, and it still holds where an Elo end is undefined at an extreme score.
@@ -644,6 +652,9 @@ orientation) at z 2.797; look 2 at 3,200 at z 1.977. The false-positive rate sta
 2.5%, and it saves 1,600 games when the effect is large.
 
 **Required in every arena record:**
+- `candidate_sha256`, `reference_sha256` and `openings_sha256` present and non-null,
+  with `game_log_provenance` `this_run` or `recorded` (never `absent`: every log of
+  this experiment is written by an arena that records provenance);
 - `eval_leaf_cap_bound` False;
 - `eval_cuda_graphs` true, in both orientations. Since #1433 the arena replays CUDA
   graphs under `--compile off` on CUDA matched-sims; the pooling script also requires
@@ -655,6 +666,13 @@ orientation) at z 2.797; look 2 at 3,200 at z 1.977. The false-positive rate sta
 - the same printed config sha across all arenas of this experiment.
 
 Per-game rows, PGNs and seeds are banked.
+
+**Write-protect the nets.** From the end of each arm's training until its pooling is
+recorded, every net that plays in an arena of this experiment is made read-only with
+`chmod a-w`: each arm's `gen_0001/train/model.pt`, the SL base file used as
+`--reference`, and (for the control) `posctl/arm_V/gen_0001/train/model.pt` and the
+Q50 c12 file. This complements the sha256 check. The check detects a rewrite after
+the fact; the write protection prevents one.
 
 **Secondaries.**
 - **Screens:** V and S that passed their gates play 400 games each, seat-balanced

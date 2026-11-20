@@ -51,14 +51,20 @@ unless:
   in A and in B, for every p, and both colourings of a pair share it;
 * ``--arm`` (required) resolves to run A's candidate and to run B's reference,
   so runs passed in the wrong order cannot report the base as the arm;
-* every net file exists and none was modified after the earlier of the two
-  runs' starts (the log headers' ``created``). A hybrid JSON spec counts as
-  its own file plus every file it names.
+* the nets are the ones that were played. Result rows written by the current
+  arena carry ``candidate_sha256`` / ``reference_sha256`` (and the per-file
+  ``candidate_files`` / ``reference_files``, plus ``openings_sha256``). Then:
+  A's candidate sha256 must be B's reference sha256 and vice versa; every row
+  sha256 must equal the sha256 of the same file AT POOL TIME (a JSON spec seat
+  counts as the spec plus every file it names, as the arena hashes it); and the
+  two runs' ``openings_sha256`` must be equal. Rows without these fields are
+  legacy: refused unless ``--allow-legacy-rows``, under which the older mtime
+  heuristic applies (no net file may be modified after the earlier run's header
+  ``created``) and the output marks the check as ``legacy_mtime``.
 
-Provenance: the arena banks checkpoint PATHS only, so the output records the
-sha256 of the four input files and of every net file AT POOL TIME. A
-checkpoint rewritten before the runs started, or rewritten with its mtime
-preserved, cannot be detected from the banked files; the output notes say so.
+Provenance: the output records the sha256 of the four input files and of every
+net file at pool time, and which net check ran (``row_sha256`` or
+``legacy_mtime``).
 
 When several result rows share a fingerprint (and label), as a resumed run can
 leave them, the unique complete, non-truncated one is used; anything else is
@@ -82,6 +88,8 @@ from collections import Counter, defaultdict
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
+
+from chess_anti_engine.eval.model_provenance import ProvenanceError, seat_files
 
 Z95 = 1.96
 PAIR_SCORE_BINS = (2.0, 1.5, 1.0, 0.5, 0.0)          # arena_standard.PAIR_SCORES order
@@ -192,49 +200,77 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def net_files(path: str) -> list[Path]:
-    """The files a seat's net is made of: the checkpoint, or a JSON spec plus every file it names."""
-    p = Path(path)
-    if not p.is_file():
-        raise PoolError(f"net {path} does not exist (cannot record its sha256)")
-    files = [p]
-    if p.suffix == ".json":
-        try:
-            spec = json.loads(p.read_text())
-        except (OSError, ValueError):
-            spec = None
-        if isinstance(spec, dict):
-            for v in spec.values():
-                if isinstance(v, str) and v and Path(v).is_file() and Path(v) not in files:
-                    files.append(Path(v))
-    return files
+def pool_time_files(role: str, path: str) -> list[dict[str, Any]]:
+    try:
+        return [dict(f) for f in seat_files(path)]
+    except ProvenanceError as exc:
+        raise PoolError(f"{role} net {path}: {exc} (cannot record its sha256)") from exc
 
 
 def run_start(header: dict[str, Any], name: str) -> float:
-    created = header.get("created")
-    try:
-        return datetime.datetime.fromisoformat(str(created)).timestamp()
-    except ValueError:
-        raise PoolError(f"run {name}: log header has no parseable 'created' ({created!r}); "
-                        "cannot check that the nets predate the run") from None
+    """The log header's ``created`` as a POSIX time (naive = local, as the arena writes it)."""
+    created = str(header.get("created") or "")
+    for text in (created, created.replace("Z", "+00:00")):
+        try:
+            return datetime.datetime.fromisoformat(text).timestamp()
+        except ValueError:
+            continue
+    raise PoolError(f"run {name}: log header has no parseable 'created' ({created!r}); "
+                    "cannot check that the nets predate the run")
 
 
-def net_provenance(nets: dict[str, str], started: float) -> dict[str, Any]:
-    """sha256 and mtime of every net file; refuse a file modified after the runs started."""
-    out: dict[str, Any] = {}
-    late: list[str] = []
-    for role, path in nets.items():
-        entries = []
-        for f in net_files(path):
-            mtime = f.stat().st_mtime
-            entries.append({"path": str(f), "sha256": sha256_file(f), "mtime_unix": mtime})
+ROW_SHA_FIELDS = ("candidate_sha256", "reference_sha256")
+
+
+def _file_shas(files: Sequence[dict[str, Any]]) -> list[tuple[Any, Any]]:
+    return [(f.get("role"), f.get("sha256")) for f in files]
+
+
+def check_nets(a_row: dict[str, Any], b_row: dict[str, Any], a_header: dict[str, Any], b_header: dict[str, Any],
+               arm: str, base: str, *, allow_legacy: bool) -> tuple[dict[str, Any], str, list[str]]:
+    """Prove the pooled nets are the ones played; return (pool-time files, check mode, notes)."""
+    nets = {"arm": pool_time_files("arm", arm), "base": pool_time_files("base", base)}
+    have_shas = all(r.get(f) is not None for r in (a_row, b_row) for f in ROW_SHA_FIELDS)
+    if have_shas:
+        problems: list[str] = []
+        if a_row["candidate_sha256"] != b_row["reference_sha256"] or a_row["reference_sha256"] != b_row["candidate_sha256"]:
+            problems.append(f"seat sha256s are not swapped: A candidate {a_row['candidate_sha256']} / reference "
+                            f"{a_row['reference_sha256']}, B candidate {b_row['candidate_sha256']} / reference "
+                            f"{b_row['reference_sha256']}")
+        for name, row, arm_field, base_field in (("A", a_row, "candidate", "reference"),
+                                                 ("B", b_row, "reference", "candidate")):
+            for role, field in (("arm", arm_field), ("base", base_field)):
+                now = nets[role][0]["sha256"]
+                if row[f"{field}_sha256"] != now:
+                    problems.append(f"run {name} {field}_sha256 {row[f'{field}_sha256']} != pool-time sha256 of "
+                                    f"the {role} ({now}): the file changed after it was played")
+                banked = row.get(f"{field}_files")
+                if banked is not None and _file_shas(banked) != _file_shas(nets[role]):
+                    problems.append(f"run {name} {field}_files {_file_shas(banked)} != pool-time "
+                                    f"{_file_shas(nets[role])}")
+        if a_row.get("openings_sha256") != b_row.get("openings_sha256"):
+            problems.append(f"openings_sha256: A {a_row.get('openings_sha256')} != B {b_row.get('openings_sha256')}")
+        if problems:
+            raise PoolError("net provenance refused: " + "; ".join(problems))
+        return nets, "row_sha256", []
+    if not allow_legacy:
+        raise PoolError("result rows carry no candidate_sha256 / reference_sha256 (written before the arena banked "
+                        "them), so the played nets cannot be proven; --allow-legacy-rows applies the older mtime "
+                        "check, for banked rows only")
+    started = min(run_start(a_header, "A"), run_start(b_header, "B"))
+    late = []
+    for role, files in nets.items():
+        for f in files:
+            mtime = Path(f["path"]).stat().st_mtime
+            f["mtime_unix"] = mtime
             if mtime > started:
-                late.append(f"{role} {f}")
-        out[role] = entries
+                late.append(f"{role} {f['path']}")
     if late:
         raise PoolError("net file(s) modified after the earlier run started, so the banked games may not be "
                         "these nets: " + "; ".join(late))
-    return out
+    return nets, "legacy_mtime", [
+        "legacy rows (no banked sha256): net check is the mtime heuristic; a net rewritten before the runs "
+        "started, or rewritten with its mtime preserved, cannot be detected"]
 
 
 def opening_key(game: dict[str, Any]) -> str:
@@ -393,6 +429,7 @@ def summary_text(report: dict[str, Any]) -> str:
         f"seat-balanced pool: A = {report['a']['label']} (arm candidate), B = {report['b']['label']} (arm reference)",
         f"  arm  {report['arm']}  (--arm; run A candidate, run B reference)",
         f"  base {report['base']}",
+        f"  nets checked by: {report['net_check']}",
         f"  {r['n_clusters']} opening clusters, {r['pairs_per_run']} pairs per run, "
         f"{r['openings_repeated_within_run']} opening(s) repeated within a run; "
         f"A/B correlation {'n/a' if corr is None else f'{corr:+.3f}'}",
@@ -426,15 +463,14 @@ def run(a_games_path: Path, b_games_path: Path, a_result: Path, b_result: Path, 
     if Path(str(sa.get("candidate"))).resolve() != want or Path(str(sb.get("reference"))).resolve() != want:
         raise PoolError(f"--arm {arm} is not run A's candidate ({sa.get('candidate')}) and run B's reference "
                         f"({sb.get('reference')}); are A and B passed in the right order?")
-    started = min(run_start(a_header, "A"), run_start(b_header, "B"))
-    nets = net_provenance({"arm": str(sa["candidate"]), "base": str(sa["reference"])}, started)
-    notes.append("checkpoints are banked by path only: sha256 recorded at pool time; a net rewritten before the "
-                 "runs started, or rewritten with its mtime preserved, cannot be detected from the banked files")
+    nets, net_check, net_notes = check_nets(a_row, b_row, a_header, b_header, str(sa["candidate"]),
+                                            str(sa["reference"]), allow_legacy=allow_legacy)
+    notes += net_notes
     report: dict[str, Any] = {
         "arm": sa.get("candidate"), "base": sa.get("reference"),
         "input_sha256": {"a_games": sha256_file(a_games_path), "b_games": sha256_file(b_games_path),
                          "a_result": sha256_file(a_result), "b_result": sha256_file(b_result)},
-        "nets": nets, "runs_started_unix": started,
+        "nets": nets, "net_check": net_check,
         "a": {"label": a_row.get("label"), "games": str(a_games_path), "result": str(a_result),
               "game_log_fingerprint": a_header.get("fingerprint"), "row_elo": a_row.get("elo"),
               "row_elo_ci95": a_row.get("elo_ci95")},
@@ -465,8 +501,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--a-label", default=None, help="narrow run A's row by label when several share the fingerprint")
     p.add_argument("--b-label", default=None)
     p.add_argument("--allow-legacy-rows", action="store_true",
-                   help="waive buffer_full_flushes / eval_max_batch_realised for rows written before the arena "
-                        "recorded them (banked reproductions only; never for a registered read)")
+                   help="for rows written before the arena recorded them: waive buffer_full_flushes / "
+                        "eval_max_batch_realised, and check the nets by mtime instead of banked sha256 "
+                        "(banked reproductions only; never for a registered read)")
     p.add_argument("--verdict-rule", choices=("lb-gt-zero",), default=None)
     p.add_argument("--out", default=None, help="write the JSON report here")
     a = p.parse_args(argv)
