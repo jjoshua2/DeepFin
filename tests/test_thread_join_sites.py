@@ -472,3 +472,72 @@ def test_uci_fresh_eval_a_helper_finishing_after_the_wait_is_orphaned(monkeypatc
     assert len(helpers) == 1, "the helper must be parked, not dropped"
     Engine._wait_for_search(fake, timeout_s=5.0)  # pyright: ignore[reportArgumentType]
     _assert_os_thread_gone(helpers[0])
+
+
+def test_uci_go_searches_while_a_fresh_eval_helper_is_still_exiting(slow_thread_exit, monkeypatch) -> None:
+    """`go wtime 600` answers at once from a fresh eval whose helper is then
+    still in its 0.15 s teardown; the next `go` (a ~20 ms wait budget) must
+    search -- `go` tolerates an exiting helper -- not be rejected and answered
+    from the busy-worker fallback."""
+    from chess_anti_engine.uci import engine as engine_module
+    from chess_anti_engine.uci.engine import Engine, EngineOptions
+    from chess_anti_engine.uci.protocol import parse_command
+    from chess_anti_engine.uci.search import SearchResult
+    from tests.test_uci_time_forfeits import _mock_worker, _Out
+
+    out = _Out()
+    monkeypatch.setattr(engine_module, "sys", SimpleNamespace(stdout=out, stderr=sys.stderr))
+    worker = _mock_worker()
+    worker.fresh_root_policy_bestmove.return_value = "e7e5"
+    worker.run.side_effect = lambda board, **_kw: SearchResult("b8c6", None, 64, ("b8c6",), 0)
+    engine = Engine(worker, options=EngineOptions())
+    try:
+        engine.dispatch(parse_command("position startpos moves e2e4"))
+        engine.dispatch(parse_command("go wtime 600 btime 600"))
+        assert out.wait_bestmoves(1) == ["e7e5"], out.text()
+        assert worker.run.call_count == 0
+        helpers = [t for t in slow_thread_exit if t.name == "uci-fresh-eval"]
+        assert len(helpers) == 1
+        assert [h.thread for h in engine._exiting_helpers] == helpers, (
+            "fixture: the helper is still exiting when the next go arrives")
+        engine.dispatch(parse_command("go movetime 200"))
+        assert out.wait_bestmoves(2) == ["e7e5", "b8c6"], out.text()
+        assert worker.run.call_count == 1
+        assert "command rejected" not in out.text()
+        assert "busy" not in out.text()
+    finally:
+        engine.close()
+
+
+def test_uci_a_wedged_helper_costs_default_budget_commands_one_cap_once(monkeypatch) -> None:
+    """A helper whose teardown never ends (`still_exiting` patched True): the
+    first default-budget wait (setoption / ucinewgame: 30 s budget) spends at
+    most `OS_EXIT_WAIT_S` on it, later ones only poll it; every one still
+    raises. An explicit budget is spent as given; `go` tolerates it."""
+    from chess_anti_engine.uci import engine as engine_module
+    from chess_anti_engine.uci.engine import Engine, SearchNotQuiescent
+    from chess_anti_engine.utils.thread_join import OS_EXIT_WAIT_S
+
+    monkeypatch.setattr(engine_module._ExitingHelper, "still_exiting", lambda _self: True)
+    ended = threading.Thread(target=lambda: None)
+    ended.start()
+    ended.join()
+    helper = engine_module._ExitingHelper(ended, ended.native_id, 1)
+    fake = _engine_like(_exiting_helpers=[helper])
+    fake._warmup_done.set()
+
+    def timed(**kw: Any) -> float:
+        t0 = time.monotonic()
+        with pytest.raises(SearchNotQuiescent, match="still exiting"):
+            Engine._wait_for_search(fake, **kw)  # pyright: ignore[reportArgumentType]
+        return time.monotonic() - t0
+
+    first = timed()
+    assert OS_EXIT_WAIT_S - 0.05 <= first < OS_EXIT_WAIT_S + 0.5, first
+    assert timed() < 0.1, "a capped-out helper is only polled by default-budget calls"
+    assert timed() < 0.1
+    assert 0.25 <= timed(timeout_s=0.3) < 0.8, "an explicit budget is spent as given"
+    t0 = time.monotonic()
+    Engine._wait_for_search(fake, timeout_s=0.02, tolerate_exiting_helpers=True)  # pyright: ignore[reportArgumentType]
+    assert time.monotonic() - t0 < 0.3
+    assert fake._exiting_helpers == [helper], "still recorded"

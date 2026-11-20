@@ -389,9 +389,11 @@ nothing.
   move proven, and a proof never undone, searching on could not change a drawn
   root, even when the draw rests on a twofold repetition (below). Between
   moves the engine reuses the subtree below the moves played only when the new
-  root was searched (expanded) and its own moves prove any result it carries:
-  drawn with every move proven, won with a move proven lost for the opponent,
-  lost with every move proven won for the opponent. Otherwise it rebuilds the
+  root was searched (expanded) and its own moves prove any result it carries,
+  by the rule the search itself uses: won when some reply is proven lost for
+  the opponent; drawn when every reply is proven, none is lost for the
+  opponent and at least one is drawn; lost when every reply is proven won for
+  the opponent. Otherwise it rebuilds the
   tree and searches the position afresh. A position that repeats one from the
   game is marked drawn and never searched, so after such a move the engine
   always searches the new position from scratch instead of treating it as an
@@ -631,7 +633,7 @@ the reply when a search could not start, a clock too short to search, a refused
 | Exit | When |
 |---|---|
 | `0` | Normal `quit`. |
-| `1` | Startup failed before `readyok` (`info string engine startup failed: ...`, and `deepfin: engine startup failed: ...` on stderr); a search-option flag out of range or a multi-GPU flag with one device; the health check at a game boundary failed (below); or `quit` while a search that ignored `stop` is still running. |
+| `1` | Startup failed before `readyok` (`info string engine startup failed: ...`, and `deepfin: engine startup failed: ...` on stderr); a search-option flag out of range or a multi-GPU flag with one device; the health check at a game boundary failed (below); or `quit` while a search that ignored `stop` is still running, or while a fallback root eval's helper thread is still exiting the evaluator 3 s after `quit` (the same exit as for that search; whether a tournament manager treats exit 1 after `quit` differently from 0 is not verified). |
 | `2` | Refusal before anything starts: a required C extension is missing, stale or broken (stderr names the fix; nothing on stdout), or a bad command line (for example no `--checkpoint`). |
 
 **A failed search never loses on time.** The move then comes from, in this

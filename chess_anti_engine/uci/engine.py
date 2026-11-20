@@ -39,6 +39,7 @@ from chess_anti_engine.uci import tb_leaf, tb_root, wedge
 from chess_anti_engine.utils.bitboards import unsearchable_king_reason
 from chess_anti_engine.utils.gil_probe import GilContentionProbe
 from chess_anti_engine.utils.thread_join import (
+    OS_EXIT_WAIT_S,
     await_os_thread_exit,
     join_thread,
     note_started,
@@ -4211,12 +4212,22 @@ class Engine:
         # worker like an orphan, except for `go` (``tolerate_exiting_helpers``),
         # which closes no evaluator and must not answer from a fallback over a
         # thread-local teardown.
+        # A default-budget call (setoption, ucinewgame, searchconfig: 30 s) waits
+        # for them at most `OS_EXIT_WAIT_S` in total, and only ONCE per helper:
+        # a helper that outlived that cap is afterwards only polled, as orphans
+        # are, so a wedged teardown cannot stall every later command.
+        helpers_end = end if timeout_s is not None else min(
+            end, time.monotonic() + OS_EXIT_WAIT_S)
         for helper in list(self._exiting_helpers):
-            if helper.wait_exited(end):
+            capped_out = timeout_s is None and helper.capped_out
+            if helper.wait_exited(time.monotonic() if capped_out else helpers_end):
                 with self._state_lock:
                     if helper in self._exiting_helpers:
                         self._exiting_helpers.remove(helper)
-            elif not tolerate_exiting_helpers:
+                continue
+            if timeout_s is None:
+                helper.capped_out = True
+            if not tolerate_exiting_helpers:
                 raise SearchNotQuiescent(
                     "a fallback eval helper is still exiting the evaluator"
                 )
@@ -4314,7 +4325,7 @@ class Engine:
         return move if isinstance(move, str) else None
 
 
-@dataclass(frozen=True)
+@dataclass
 class _ExitingHelper:
     """A helper thread and its task identity, read while it ran.
 
@@ -4328,6 +4339,9 @@ class _ExitingHelper:
     thread: threading.Thread
     tid: int | None
     start_time: int | None
+    # A default-budget `_wait_for_search` already spent its `OS_EXIT_WAIT_S`
+    # cap on this helper: later default-budget calls only poll it.
+    capped_out: bool = False
 
     @classmethod
     def of(cls, thread: threading.Thread) -> _ExitingHelper:
