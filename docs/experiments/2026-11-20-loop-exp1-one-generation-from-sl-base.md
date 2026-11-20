@@ -4,12 +4,13 @@
 training, no arena. This record exists so the experiment can be judged, and its
 rule fixed, before any compute is spent (CLAUDE.md "Experiments" rule 1). It is
 registered only once the owner approves it and the decisions below are filled in.
-Nothing launches until (i) the owner's D1–D9 are recorded in this record by a
-follow-up commit, and (ii) pre-launch checks L1–L5 pass. The driver support it needs
+Nothing launches until (i) the owner's D1–D6, D8 and D9 are recorded in this record
+by a follow-up commit (D7 is decided), and (ii) pre-launch checks L1–L4 pass. The driver support it needs
 (#1430) is on main.
 Revised 2026-11-20 after an independent review (findings M1–M7, m1–m11). Aligned
 2026-11-21 with the driver as merged in #1430: commands, gate scripts and report
-fields. The owner's decisions D1–D9 are unchanged and still open.
+fields. D7 was decided by the owner on 2026-11-21 (fast collect path only). D1–D6,
+D8 and D9 are unchanged and still open.
 
 **Prerequisites:**
 - **Collector fixes, on main since `b410456b4`:**
@@ -45,7 +46,7 @@ The driver is `scripts/simple_rl_loop.py`
 ## Decisions for the owner
 
 Approval can be one reply: "approve with defaults", or name the decisions that
-change. Each decision is argued in the section it links to.
+change. Each decision is argued in the section it links to. D7 is already decided.
 
 | # | Decision | Recommended default | Alternative |
 |---|---|---|---|
@@ -55,7 +56,7 @@ change. Each decision is argued in the section it links to.
 | D4 | [Softening used by Arm S](#arms) | **`--train-target-temp 2.0`** | `--policy-prior-mix 0.5 --prior-mix-source reference` (SL base) |
 | D5 | [Primary arena layout](#deciding-yardstick) | **Seat-balanced:** half the games with the arm as candidate, half as reference, same openings; no separate base-vs-base control | One orientation plus a same-day base-vs-base control |
 | D6 | [Positive control](#positive-control) | **Unconditional:** Arm V's recipe at 4,000 games from Q50 c12, played against Q50 c12. It cannot validate the primary: a pass is largely expected from fixing value calibration, and its dose is a quarter of the primary's | Skip it, saving about 3 GPU hours (2.6–3.4) |
-| D7 | [Collect execution](#collection) | **Concurrency 128, `--collect-cuda-graphs` on** (after pre-launch check L4) | Graphs off |
+| D7 | [Collect execution](#collection) | **DECIDED by the owner, 2026-11-21:** the fast (CUDA-graphs) collect path only, concurrency 128. "I don't think we need to maintain a fast and a slow path. It's okay to be a little bit different. And just be faster." | ~~Graphs off~~ (struck) |
 | D8 | [Optimizer](#training) | **Fresh NAdamW, flat LR 3e-6, warmup 0**, as F12 | `--init-optimizer-state checkpoint` (Aurora): not recommended here |
 | D9 | [Deciding N](#deciding-yardstick) | **Single fixed look at 3,200 games** (1,600 per orientation), read once | O'Brien–Fleming two-look: z 2.797 at 1,600, z 1.977 at 3,200 |
 
@@ -167,7 +168,7 @@ One collection from the SL base, at main ≥ `885ab7b54`.
 | Games | 16,000 / 4,000 (D2) | 2,000 | 192 per cycle | below |
 | Concurrency | 128 (D7) | 64 | 16 slots | the only clean measured setting |
 | Evaluator cap | auto (= `leaf_rows_required`) | auto | — | #1427 |
-| `--collect-cuda-graphs` | on (D7), after L4 | off | — | documented bitwise identical; L4 checks it on this net |
+| CUDA graphs | on: the only collect path (D7, decided) | off | — | owner's decision; no on-vs-off identity check |
 | Max plies; tablebases | 450; strict rule50, production pair | 450 | 450 per game; strict | CLAUDE.md "Production Syzygy" |
 
 **Dose (D2).**
@@ -253,7 +254,9 @@ export PYTHONPATH=.
 R=~/chess-artifacts/operations/loop-exp1-20261120
 TB=~/projects/chess/data/syzygy_3-4-5:~/projects/chess/data/syzygy_6
 SL=<SL base checkpoint, sha256 a39f900c…>
-# D2: --games 4000 for the alternative. D7: drop --collect-cuda-graphs if D7 or L4 says off.
+# D2: --games 4000 for the alternative. D7 (decided): CUDA graphs on. --collect-cuda-graphs is
+# valid on current main; a driver PR in progress removes the flag (graphs always on for CUDA),
+# after which it is dropped. The launch commit records the final command.
 COLLECT="--openings-dir $R/openings --init-checkpoint $SL --device cuda --seed 2026112000 \
   --games 16000 --concurrency 128 --sims 64 --topk 16 --c-scale 0.1 --c-visit 50 \
   --max-plies 450 --syzygy $TB --sf-path <stockfish> --collect-cuda-graphs"
@@ -307,6 +310,12 @@ The planned-updates snippet was checked read-only on the banked 128-game collect
   `collect_reference.source_collect_dir`.
 
 A mismatch voids all arms under the collect-gate disposition.
+
+**Collect identity (lineage).** After the source collect seals, its
+`simple_rl_collect_gates.py --content-digest` output (`content_sha256` over every
+decoded shard array and row sidecar, and `games_sha256`) is recorded here, so later
+re-analyses can prove they read the same rows. Shard file sha256 is not used for this:
+the compressed chunk files and the metadata timestamp are not reproducible.
 
 ### Snapshots
 
@@ -580,7 +589,7 @@ Per-game rows, PGNs and seeds are banked.
   (200 + 200), both on seed 2026112003, so they meet the same openings.
 - **Confirmation:** the better screen point estimate is confirmed at 1,600 games,
   seat-balanced, on seed 2026112005, with `--openings-fen` built from the EVAL lines
-  minus the screen's openings. Building that file is pre-launch check L5. If it
+  minus the screen's openings. Building that file is pre-launch check L4. If it
   cannot be built, the confirmation uses `eval.pgn`, and the overlap (about 40 of 800
   expected) is counted and recorded.
 - **Reading:** success at 97.5%, lower bound > 0. Otherwise "not confirmed", with no
@@ -699,7 +708,7 @@ Single RTX 5090. Nothing else is measured during an arena or a collect.
 
 | Stage | GPU hours (16,000-game default) | 4,000-game alternative (D2) | Basis |
 |---|---|---|---|
-| Pre-launch checks L1–L5 | about 0.1 (L4 only) | same | L4 is a 128-game collect |
+| Pre-launch checks L1–L4 | ≈ 0 | same | CPU rehearsal and file checks |
 | Collect | 6.2–6.6 | 1.5–1.7 | 2,424–2,583 games/h, unverified |
 | Train ×3, incl. snapshot gates | 2.4–4.4 | 0.6–1.1 | 0.47–0.84 s per update (F12 record: 512 updates in 239–432 s) |
 | Collect gates (`simple_rl_collect_gates.py`) | 0 (CPU, about 10–15 min per collect) | same | two collects: primary and control |
@@ -708,7 +717,7 @@ Single RTX 5090. Nothing else is measured during an arena or a collect.
 | Screens, 2 × 400 games | 0.5–0.7 | same | |
 | Confirmation, 1,600 games | 0.9–1.3 | same | |
 | Positive control (collect 4,000 + train + 1,600-game arena) | 2.6–3.4 | same | |
-| **Total** | **≈ 14.7–19.6** | **≈ 8.2–11.4** | |
+| **Total** | **≈ 14.6–19.5** | **≈ 8.1–11.3** | |
 
 The trains may run one after another, or two at a time if memory allows; they are not
 measurements. Nothing runs during any arena.
@@ -730,13 +739,7 @@ measurements. Nothing runs during any arena.
   `presented.npz` sha256 equal across arms; an arm with a different `--seed` and a
   snapshot list past the planned updates are both refused, before `run_config.json`
   is pinned.
-- **L4.** Rerun the clean 128-game reference collect (`fix_c128_auto` settings) with
-  `--collect-cuda-graphs` on, and compare it with the graphs-off collect by
-  `simple_rl_collect_gates.py --content-digest`: `content_sha256` (every decoded shard
-  array and row sidecar) and `games_sha256` must both be equal. Shard file sha256 is
-  not compared: the compressed chunk files and the metadata timestamp are not
-  reproducible. Otherwise graphs stay off.
-- **L5.** Build the confirmation `--openings-fen` file, or record that the fallback
+- **L4.** Build the confirmation `--openings-fen` file, or record that the fallback
   applies.
 
 ## Recovery plan
@@ -801,8 +804,9 @@ A second step of improvement is the owner's stated goal.
 - The gate scripts' runtimes on a 16,000-game collect (10–15 min is an estimate).
 - That `buffer_full_flushes` appears in a real arena result row. The code writes it;
   no run on current main has been read.
-- Clean collect throughput beyond 128-game runs; any CUDA-graph speed-up; graphs-on
-  shard identity on this net (L4).
+- Clean collect throughput beyond 128-game runs; any CUDA-graph speed-up. Graphs-on
+  vs graphs-off identity on this net is not checked (D7: the fast path is the only
+  path).
 - The probe-drift trajectory at about 5,700 updates.
 - That arena seeds draw disjoint EVAL pairs.
 - The same-coloured-bishops gap's footprint in this collection (0 in the banked 4,608 games).
