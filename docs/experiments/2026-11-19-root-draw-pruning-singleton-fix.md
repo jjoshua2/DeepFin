@@ -147,7 +147,10 @@ Evidence (`tests/test_root_reply_forced_draw.py`):
   on 7 roots x 2 leaf evaluators, including the pruned-stalemate fallback root.
 - A seeded port of the review's differential test against a python-chess
   oracle (100-ply adjudication, checkmate first): no false draw on any of
-  >20,000 moves, and no miss where a move leaves the clock at 99. The review's
+  >20,000 moves, and no miss where a move leaves the clock at 99 for the
+  python helper. The CBoard twin can still miss there when a reply ends in the
+  same-coloured-bishops dead position it does not recognise (below); it then
+  keeps a move it could have pruned, the cautious side. The review's
   own unbounded run found 0 false draws in ~360k moves.
 - `tests/test_uci_search_identity_pin.py`, the Gumbel parity tests and
   `tests/test_e2e_smoke.py -k gumbel_selfplay_smoke` pass unchanged.

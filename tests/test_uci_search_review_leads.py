@@ -95,9 +95,13 @@ def test_go_depth_does_not_stop_on_a_rerooted_stale_draw(path: str) -> None:
         assert leaf >= 0, "fixture: Ng8 was searched"
         assert len(tree.get_children_visits(leaf)[0]) == 0, "fixture: a leaf"
         _mark(tree, leaf, 2)  # what an in-tree twofold leaf carries
-        assert worker.advance_root(b0.copy(), [m1, m2])
         b2 = b1.copy()
         b2.push(m2)
+        # `advance_root` now refuses this root (test_a_stale_draw_root_is_not_reused);
+        # adopt it by hand to keep pinning the search-side defence.
+        assert not worker.advance_root(b0.copy(), [m1, m2])
+        worker._root_id, worker._tree_fen = leaf, b2.fen()
+        worker._invalidate_root_caches()
         t0 = time.monotonic()
         result = worker.run(b2, stop_event=threading.Event(), deadline=Deadline(3_000),
                             max_nodes=None, max_depth=4)
