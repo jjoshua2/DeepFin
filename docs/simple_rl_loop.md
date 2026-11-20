@@ -69,10 +69,13 @@ the run dir, plus the TRAIN / EVAL openings -- still has the sha256 it was seale
 with; otherwise the command fails and names the input. External inputs (the
 initial checkpoint, an SL corpus, a KL or prior-mix reference) are recorded but
 not re-hashed on reuse. File hashes are cached in `<run-dir>/lineage_sha_cache.json`
-by size, mtime and inode. `--redo` of a stage while any LATER stage is sealed is
+by size, mtime and inode. Each stage seeds the cache with the digests it already
+computed for its manifest, so the first resume does not re-read every model. A
+file whose size, mtime or inode has changed since is hashed again. `--redo` of a stage while any LATER stage is sealed is
 refused, because those stages were built on it. `--redo --redo-downstream` unseals
 them: their directories (rows, models, logs) are moved to
-`<run-dir>/superseded/<UTC stamp>/gen_NNNN/<stage>/` (kept for inspection, never
+`<run-dir>/superseded/<UTC stamp>[-N]/gen_NNNN/<stage>/`, where `-N` keeps two redos in
+the same second apart (kept for inspection, never
 read again, safe to delete). The run-level files derived from them are rewound:
 - arena ledger rows of the unsealed evaluations;
 - `presentation_ledger.json` (derived, rewritten by the next train);
@@ -303,17 +306,70 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
 
 - `--optimizer-state fresh` (default) builds a new optimizer each generation. With
   `--warmup-steps 0`, its first Adam steps are full size regardless of gradient
-  magnitude. On the SL base, the first generation's 46 updates at LR 3e-6
-  (`--w-wdl 0`, value head exactly frozen) moved the probe set by mean |ΔQ| 0.21
-  and KL 0.24, and changed 11% of top-1 moves. Use warmup or `continue` when the
-  start net matters (GPU smoke, 2026-11-20).
+  magnitude.
+  The 2026-11-20 GPU smoke's first phase (46 policy-only updates at LR 3e-6 from
+  the SL base, value head exactly frozen) moved the probe set a lot. Two readings
+  exist, from different instruments:
+  - the in-run `probe_vs_previous` (all 622 probe rows, GPU fp32): mean |ΔQ| 0.295,
+    KL 0.148;
+  - a CPU fp32 recheck on the first 256 probe rows: |ΔQ| 0.212, KL 0.237, 10.5% of
+    top-1 moves changed.
+
+  That drift is **not** an optimizer-start effect. The same fresh optimizer, warmup
+  0 and LR 3e-6, run through this trainer on F12's cycle-1 rows, moves the same
+  probe by |ΔQ| 0.018 and KL 0.030. The P1 harness reads 0.016 for the same update.
+  Warmup does not remove the smoke's drift either: 46 warmup steps give |ΔQ| 0.357.
+  Starting from the SL base's own optimizer state gives 0.249. The cause was the
+  smoke's collected rows (see the collect `--eval-max-batch` note). The diagnostic
+  is banked under the operations bank, `rl-claude-20261119/loop-smoke-gpu/optimizer-start/`.
+- With `--warmup-start 0` (the default) and `--warmup-steps W > 0`, the first
+  update of every fresh-optimizer phase runs at LR 0. Under the exact-once schedule,
+  that first batch's rows are consumed without being learned from: one batch per
+  phase, measured as an exactly zero first update. The default is unchanged. To
+  avoid this, pass `--warmup-start <lr / W>` so the first step already moves. The
+  proposed default is `lr / W`.
+- `--init-optimizer-state checkpoint` (generation 1 only) starts the first phase
+  from the init checkpoint's optimizer state. `--optimizer-state continue` cannot
+  reach generation 1: there is no previous phase to continue from. Later
+  generations follow `--optimizer-state` (`fresh` builds a fresh optimizer).
+  - **Adopted:** every per-parameter state tensor (momentum buffers, Adam first
+    and second moments) and the per-parameter step counts.
+  - **Not adopted:** the scheduler, the per-group LR (this run's `--lr` schedule
+    sets the rate; `initial_lr` is set to the schedule's peak), zclip state and
+    the trainer step. They belong to the run that wrote the checkpoint.
+  - **Param-group hyperparameters** (every group key except `params`, `lr`,
+    `initial_lr` and SODA's step: weight decay, betas, eps, the Aurora polar
+    knobs, ...) are replaced wholesale by `Optimizer.load_state_dict`. Each one is
+    compared against this run's configured value. Any difference is REFUSED,
+    listing every differing key with both values, unless you pick one:
+    `--reapply-optimizer-hparams` uses the configured values;
+    `--adopt-checkpoint-optimizer-hparams` keeps the checkpoint's (for example
+    the SL base's polar knobs). The choice and the realised values of every group
+    key are recorded (`optimizer_from_init_checkpoint`, `realised_optimizer`).
+
+  Refused before anything is pinned or collected: a random init (no moments), a
+  checkpoint with no optimizer state, or a state written by a different optimizer
+  than `--optimizer` (read from the header). A parameter layout that differs (the
+  `--matrix-optimizer-scope`) is refused when generation 1 trains.
+  `--matrix-optimizer-scope` is a closed choice and is refused with an optimizer
+  that does not read it (anything but Aurora, Muon or SOAP, unless
+  `weight_decay_mode` is soda).
+
+  The SL base was trained with Aurora on the `mlp_out` matrix scope: 48 matrices,
+  matrix LR ×20, auxiliary AdamW betas (0.9, 0.95), eps 1e-8, polar knobs
+  `polar_express` / 8 steps / fp16 / pp_beta 0.25 / pp_iterations 3. It was saved
+  at step 680,276, with LR 6e-5 on the matrices and 3e-6 on the rest. Reproducing
+  it needs `--optimizer aurora --matrix-optimizer-scope mlp_out`, plus one of the
+  two group-hyperparameter choices, because its polar knobs are not the Trainer's
+  defaults. With the default `nadamw` the phase is refused.
   `continue` restores the previous generation's optimizer, scheduler and step, so
-  warmup happens once. The restore also brings the checkpoint's peak LR, LR floor
-  and per-group weight decay, so a different `--lr` / `--lr-floor` would be
-  silently ignored: the phase REFUSES such a difference unless
-  `--reapply-optimizer-hparams` is given, which re-applies the requested values
-  (schedule phase kept). The values realised after the phase's steps, read off
-  the param groups and scheduler, are recorded in the train manifest
+  warmup happens once. The restore also brings the checkpoint's peak LR and LR
+  floor, and every param-group key. A different `--lr` / `--lr-floor` is REFUSED
+  unless `--reapply-optimizer-hparams` re-applies it (schedule phase kept). A
+  param-group key difference follows the same refuse / reapply / adopt rule as
+  above, so a run that adopted the SL base's knobs at generation 1 keeps them
+  under `continue`. The values realised after the phase's steps, read off the
+  param groups and scheduler, are recorded in the train manifest
   (`config.realised.optimizer`) and in `metrics.json`.
 - Every batch of the exact-once schedule gives each row the coefficient
   1 / batch size: the short final batch is scaled by rows / batch size rather
