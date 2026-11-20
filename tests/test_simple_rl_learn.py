@@ -53,6 +53,7 @@ def _write_generation(run_dir: Path, g: int, n: int) -> None:
     np.savez(shard_dir / "shard_00000.meta.npz", game_id=np.asarray(games, dtype=np.int64),
              ply_index=np.arange(n, dtype=np.int32), opening_id=np.asarray(["o"] * n),
              tb_policy_override=np.zeros(n, dtype=bool), x_hash=np.arange(n, dtype=np.uint64))
+    (shard_dir.parent / "manifest.json").write_text("{}")  # sealed (load_window refuses unsealed rows)
 
 
 def test_window_holds_exactly_the_last_k_generations(tmp_path: Path) -> None:
@@ -460,3 +461,10 @@ def test_heldout_policy_metrics_skip_value_only_rows() -> None:
     assert got["policy_ce"] == pytest.approx(head["policy_ce"])
     assert got["policy_entropy"] == pytest.approx(head["policy_entropy"])
     assert got["value_nll"] == pytest.approx(base["value_nll"])
+
+
+def test_training_refuses_an_unsealed_collect(tmp_path: Path) -> None:
+    _write_generation(tmp_path, 1, 20)
+    (tmp_path / "gen_0001" / "collect" / "manifest.json").unlink()
+    with pytest.raises(ValueError, match="not sealed"):
+        load_window(tmp_path, 1, TrainSettings(holdout_frac=0.0))
