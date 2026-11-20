@@ -297,7 +297,15 @@ nothing.
   searched: the move is answered at once
   (`info string movetime too short to search: ... source=... move=...`) from the
   same sources, in the same order, as a clock too short to search (below), with
-  any fresh evaluation finished by `N` less 8 ms.
+  any fresh evaluation finished by `N` less 8 ms. When the `go` also sends the
+  side to move's clock (`wtime` / `btime`), the move gets the earlier of the
+  movetime deadline and the deadline that clock alone would get (below, with
+  its increment and `movestogo`), still never later than the clock less
+  `MoveOverheadMs` less 25 ms. The clock's at-once rule applies too, so
+  `go movetime 1000 wtime 500 movestogo 40` is answered at once instead of
+  spending 445 ms of a clock owed to 40 moves. The watchdog's last moment is
+  8 ms before the earlier of `N` and the clock less `MoveOverheadMs`. A
+  `movetime` without the side to move's clock is unchanged.
 - Every move's clock starts when the engine's main loop reads the `go` line (for
   pondering, the `ponderhit` line). Time a line spends unread in the pipe while
   the engine is still handling an earlier command is not counted, so
@@ -322,13 +330,20 @@ nothing.
   reused tree, the previous search's choice for this position, the cached root
   policy, one fresh root evaluation if the clock allows it, or the first legal
   move, in that order. That is not a fault: it is not counted in
-  `bestmove_fallback_used`. In sudden death (no increment, no `movestogo`, and
-  no explicit `nodes`, `depth` or `mate` bound) the same at-once answer starts
-  earlier: once the clock less `MoveOverheadMs` cannot pay for 20 more minimal
-  searches, every move is answered at once, so a long endgame does not flag. A
-  minimal search costs the 20 ms deadline plus the predicted time of one
-  16-simulation chunk (the chunk-time model below) plus ~8 ms of fixed cost;
-  before any chunk is timed it is priced at 45 ms (a 900 ms threshold). An explicit work bound is still
+  `bestmove_fallback_used`. Without an explicit `nodes`, `depth` or `mate`
+  bound the same at-once answer starts earlier: once the clock less
+  `MoveOverheadMs` cannot pay for one minimal search, or for the minimal
+  searches it must fund before anything refills it, every move is answered at
+  once, so a long endgame does not flag. In sudden death (no increment, no
+  `movestogo`) that is 20 more minimal searches. A `movestogo` refill sooner
+  than 20 moves needs only that many (`movestogo 5`: five), and an increment
+  pays back part of each search, so each one costs only what the increment
+  does not cover; an increment at or above the cost of a search leaves just the
+  one-search floor. A minimal search costs the 20 ms deadline plus the predicted
+  time of one 16-simulation chunk (the chunk-time model below) plus ~8 ms of
+  fixed cost; before any chunk is timed it is priced at 45 ms (a 900 ms
+  sudden-death threshold; `wtime 500 movestogo 40` and `wtime 600 winc 10` are
+  answered at once, `wtime 2000 winc 100` is searched). An explicit work bound is still
   searched unless the clock is truly exhausted (under 20 ms after the cap).
 - The search runs in chunks that cannot be interrupted, so a timed search sizes
   each chunk to fit. Chunk wall time is modelled as a fixed cost plus a cost per
@@ -383,10 +398,13 @@ nothing.
   draw at once. If every move it did search is then proven lost, the engine plays
   a move that ends the game drawn on the board (stalemate, insufficient material,
   50-move clock at 100, a third repetition), reporting `score cp 0` and
-  `info string every searched move is proven lost; playing a move that draws`.
-  A move after which the opponent could merely claim a draw does not count. One
-  case is left over: on the classic path, if leaving those moves out leaves a
-  single move, that move is returned unsearched and the draw is not found.
+  `info string every searched move is lost or below a draw; playing a move that draws`.
+  A move after which the opponent could merely claim a draw does not count.
+  The moves are left out only while at least two others remain: if leaving
+  them out would leave a single move, every path keeps them in the search,
+  where they count as the exact draw they are. On the classic path the search
+  itself also plays a left-out drawing move when every move it searched scores
+  below a draw, before any proof (the same rule self-play uses).
 - On a root proven lost the engine plays the move that delays mate longest: a
   move with no proven mate distance first, then the longest proven mate. A move
   after which the opponent mates next move ranks last (a check on the board, not

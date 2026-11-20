@@ -10,6 +10,7 @@ from chess_anti_engine.mcts import gumbel as python_gumbel
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
 from chess_anti_engine.moves import POLICY_SIZE
+from chess_anti_engine.moves import move_to_index
 from chess_anti_engine.uci.search import SearchWorker
 from chess_anti_engine.uci.time_manager import Deadline
 
@@ -35,6 +36,81 @@ def test_uci_classic_budget_caps_actual_root_child_visits(budget: int) -> None:
         assert worker._root_id is not None
         _, visits = worker._tree.get_children_visits(worker._root_id)
         assert int(visits.sum()) == result.nodes == budget
+    finally:
+        worker.close()
+
+
+@pytest.mark.parametrize("root_bias", [8.0, 0.0, -8.0], ids=["positive", "zero", "negative"])
+def test_uci_classic_searches_a_root_with_one_nondrawing_move(
+    monkeypatch: pytest.MonkeyPatch, root_bias: float,
+) -> None:
+    board = chess.Board("4K2k/3q1P2/6Q1/8/8/8/8/8 w - - 0 1")
+    expected = {int(move_to_index(move, board)) for move in board.legal_moves}
+    assert len(expected) == 2
+    worker = SearchWorker(
+        NeutralEvaluator(), device="cpu", n_walkers=1, chunk_sims=64,
+        gumbel_cfg=GumbelConfig(topk=2, add_noise=False, temperature=0.0),
+    )
+    root_eval = worker._root_eval
+
+    def controlled_root_eval(
+        xs: np.ndarray, rels: np.ndarray | None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        policy, wdl = root_eval(xs, rels)
+        logits = np.array([root_bias, 0.0, -root_bias], dtype=np.float32)
+        return policy, np.broadcast_to(logits, wdl.shape).copy()
+
+    monkeypatch.setattr(worker, "_root_eval", controlled_root_eval)
+    try:
+        result = worker.run(board, stop_event=threading.Event(),
+                            deadline=Deadline(5_000), max_nodes=64)
+        assert worker._tree is not None
+        assert worker._root_id is not None
+        actions, visits = worker._tree.get_children_visits(worker._root_id)
+        assert set(actions.tolist()) == expected
+        assert int(visits.sum()) == result.nodes == 64
+        # Neutral leaves let 64 visits find Kf8 Qd8#: the drawing move is
+        # played at an exact 0 whatever the root's own value.
+        assert result.bestmove_uci == "e8d7"
+        assert result.score_cp == 0
+    finally:
+        worker.close()
+
+
+class SideToMoveWinsEvaluator:
+    """Every position looks won for the side to move: a root move visited
+    once searches at exactly -1 (the opponent's leaf looks won for it)."""
+
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        del relations
+        wdl = np.broadcast_to(np.array([8.0, 0.0, -8.0], np.float32), (len(x), 3)).copy()
+        return np.zeros((len(x), POLICY_SIZE), np.float32), wdl
+
+
+def test_uci_classic_plays_the_pruned_draw_when_every_searched_move_is_below_zero() -> None:
+    """h7 stalemates. Two king moves plus the stalemate are allowed, so the
+    winning-looking root prunes h7 and searches the two king moves once each:
+    both come back at -1, unproven (neither is mated). The runner's own below-0
+    fallback -- not the proof-based escape -- must reach the UCI answer."""
+    board = chess.Board("7k/8/6KP/8/8/8/8/8 w - - 0 1")
+    draw = int(move_to_index(chess.Move.from_uci("h6h7"), board))
+    worker = SearchWorker(
+        SideToMoveWinsEvaluator(), device="cpu", n_walkers=1, chunk_sims=2,
+        gumbel_cfg=GumbelConfig(topk=16, add_noise=False, temperature=0.0),
+    )
+    try:
+        result = worker.run(board, stop_event=threading.Event(), deadline=Deadline(5_000),
+                            max_nodes=2, root_moves=("h6h7", "g6f5", "g6h5"))
+        assert worker._tree is not None
+        assert worker._root_id is not None
+        actions, visits = worker._tree.get_children_visits(worker._root_id)
+        assert draw not in actions.tolist(), "the draw stays pruned"
+        assert visits.tolist() == [1, 1]
+        assert worker._tree.get_solved_status(worker._root_id) == 0, "fixture: not proven"
+        assert result.bestmove_uci == "h6h7"
+        assert result.score_cp == 0
     finally:
         worker.close()
 

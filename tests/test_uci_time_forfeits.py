@@ -48,7 +48,14 @@ from chess_anti_engine.uci.time_manager import (
 # -- F3: the clock caps the deadline ------------------------------------------
 
 
-@pytest.mark.parametrize("remaining", [1, 22, 40, 60, 74, 75, 100, 300, 1000])
+# Answered at once at MoveOverheadMs 30, minimal search unmeasured (45 ms): the
+# clock less 30 must pay for 20 searches at 45 ms (inc 0: 900 ms) or at the
+# 35 ms the 10 ms increment does not pay back (700 ms); below 75 ms the cap
+# (`deadline_ms < _MIN_DEADLINE_MS`) decides anyway.
+_SEARCHED = {(750, 10), (1000, 0), (1000, 10)}
+
+
+@pytest.mark.parametrize("remaining", [1, 22, 40, 60, 74, 75, 100, 300, 750, 1000])
 @pytest.mark.parametrize("inc", [0, 10])
 def test_a_clocked_deadline_never_exceeds_the_clock(remaining, inc) -> None:
     limits = limits_from_go(
@@ -60,15 +67,16 @@ def test_a_clocked_deadline_never_exceeds_the_clock(remaining, inc) -> None:
     assert limits.deadline_ms <= cap
     if limits.deadline_ms < _MIN_DEADLINE_MS:
         assert limits.clock_exhausted
-    if inc:  # (sudden death has its own, earlier at-once rule; tested below)
-        assert limits.clock_exhausted is (limits.deadline_ms < _MIN_DEADLINE_MS)
+    assert limits.clock_exhausted is ((remaining, inc) not in _SEARCHED)
     if limits.optimum_ms is not None:
         assert limits.optimum_ms <= limits.deadline_ms
 
 
 def test_the_soak_clocks_are_exhausted_and_a_workable_clock_is_not() -> None:
+    # An increment that pays for a whole minimal search (45 ms unmeasured), so
+    # only the clock cap decides; a smaller one adds the at-once rule.
     def lim(ms: int):
-        return limits_from_go(GoArgs(wtime_ms=ms, btime_ms=ms, winc_ms=10, binc_ms=10),
+        return limits_from_go(GoArgs(wtime_ms=ms, btime_ms=ms, winc_ms=50, binc_ms=50),
                               side_to_move_is_white=True, move_overhead_ms=30)
 
     # `go wtime 1` and `go wtime 22` were searched for the 20 ms floor.
