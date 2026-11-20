@@ -56,6 +56,12 @@ VALUE_SOURCES = ("survivor_q", "stored_search_wdl")
 DRAW_SOURCES = ("net", "zero")
 PRIOR_MIX_SOURCES = ("reference", "actor")
 INIT_OPTIMIZER_STATES = ("fresh", "checkpoint")
+# Canonical Trainer matrix_optimizer_scope names (train/trainer.py
+# _matrix_optimizer_filter; the aliases it also accepts are not offered here).
+MATRIX_OPTIMIZER_SCOPES = ("default", "block_all", "mlp_only", "mlp_out", "mlp_out_v", "mlp_attn_all")
+# Optimizers whose construction reads matrix_optimizer_scope (the Aurora/Muon
+# matrix group, SOAP's split); weight_decay_mode "soda" reads it too.
+SCOPED_OPTIMIZERS = ("aurora", "muon", "soap")
 MODEL_FILE = "model.pt"
 
 
@@ -85,6 +91,14 @@ class TrainSettings:
     # state; a requested value that differs is REFUSED unless this is set,
     # which re-applies the requested values onto the restored optimizer.
     reapply_optimizer_hparams: bool = False
+    # The other resolution of a param-group hyperparameter difference on a
+    # restore: keep the CHECKPOINT's group values (e.g. the SL base's Aurora
+    # polar knobs) instead of this run's configured ones. Applies to every
+    # restore this run makes (the init checkpoint at generation 1, the previous
+    # phase under optimizer_state=continue) and never to a fresh optimizer.
+    # Mutually exclusive with reapply_optimizer_hparams; peak lr / lr floor
+    # differences are never adopted (they stay refuse-or-reapply).
+    adopt_checkpoint_optimizer_hparams: bool = False
     # Generation 1 only (the phase that starts from the run's init model, where
     # optimizer_state=continue has no previous phase to continue): "checkpoint"
     # restores the init checkpoint's optimizer moments and per-parameter step
@@ -148,6 +162,17 @@ class TrainSettings:
             raise ValueError("policy_prior_mix must be in [0, 1]")
         if self.init_optimizer_state not in INIT_OPTIMIZER_STATES:
             raise ValueError(f"init_optimizer_state must be one of {INIT_OPTIMIZER_STATES}")
+        if self.reapply_optimizer_hparams and self.adopt_checkpoint_optimizer_hparams:
+            raise ValueError("reapply_optimizer_hparams (use the configured group hyperparameters) and "
+                             "adopt_checkpoint_optimizer_hparams (keep the checkpoint's) are mutually exclusive")
+        if self.matrix_optimizer_scope not in MATRIX_OPTIMIZER_SCOPES:
+            raise ValueError(f"matrix_optimizer_scope must be one of {MATRIX_OPTIMIZER_SCOPES}, "
+                             f"got {self.matrix_optimizer_scope!r}")
+        if (self.matrix_optimizer_scope != "default" and str(self.optimizer).lower() not in SCOPED_OPTIMIZERS
+                and self.weight_decay_mode != "soda"):
+            raise ValueError(f"matrix_optimizer_scope {self.matrix_optimizer_scope!r} is read only by the "
+                             f"{SCOPED_OPTIMIZERS} optimizers (or weight_decay_mode soda); with optimizer "
+                             f"{self.optimizer!r} it would be ignored")
 
     def uses_survivor_value(self) -> bool:
         return (float(self.w_wdl) > 0 and self.search_wdl_frac() > 0
@@ -580,22 +605,51 @@ def trainer_kwargs(settings: TrainSettings) -> dict[str, Any]:
     }
 
 
-_GROUP_HPARAMS = ("weight_decay", "betas", "eps", "momentum_decay")
+def _plain(v: Any) -> Any:
+    """A JSON-ready, comparable copy of one param-group value."""
+    import torch
+
+    if torch.is_tensor(v):
+        return v.detach().cpu().tolist()
+    if isinstance(v, (tuple, list)):
+        return [_plain(x) for x in v]
+    if v is None or isinstance(v, (bool, int, float, str)):
+        return v
+    return repr(v)
+
+
+def group_hparams(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """EVERY param-group key a restore replaces, except the ones the checkpoint
+    legitimately owns (params, lr, initial_lr, SODA's step: the Trainer's
+    ``_CHECKPOINT_OWNED_GROUP_KEYS``). ``Optimizer.load_state_dict`` swaps
+    each group dict wholesale, so anything narrower lets a key change unseen
+    (the Aurora polar knobs did, 2026-11-20 review of #1426)."""
+    from chess_anti_engine.train.trainer import _CHECKPOINT_OWNED_GROUP_KEYS
+
+    return [{k: _plain(v) for k, v in sorted(g.items()) if k not in _CHECKPOINT_OWNED_GROUP_KEYS} for g in groups]
 
 
 def optimizer_hparams(trainer: Any) -> dict[str, Any]:
     """The optimizer hyperparameters a restore can carry, read off the live
     trainer (scheduler + param groups), JSON-ready."""
-    def plain(v: Any) -> Any:
-        return [float(x) for x in v] if isinstance(v, (tuple, list)) else float(v)
-
     sched = trainer._scheduler
     return {
         "peak_lr": float(trainer._peak_lr),
         "base_lrs": [float(v) for v in getattr(sched, "base_lrs", [])],
         "lr_floor": float(getattr(sched, "eta_min", float("nan"))),
-        "groups": [{k: plain(g[k]) for k in _GROUP_HPARAMS if k in g} for g in trainer.opt.param_groups],
+        "groups": group_hparams(trainer.opt.param_groups),
     }
+
+
+def group_key_diff(configured: list[dict[str, Any]], checkpoint: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One entry per (group, key) whose value differs or exists on one side only."""
+    out: list[dict[str, Any]] = []
+    for i, (want, have) in enumerate(zip(configured, checkpoint, strict=True)):
+        for k in sorted(set(want) | set(have)):
+            a, b = want.get(k, "<absent>"), have.get(k, "<absent>")
+            if not _close(a, b):
+                out.append({"group": i, "key": k, "configured": a, "checkpoint": b})
+    return out
 
 
 def realised_optimizer(trainer: Any) -> dict[str, Any]:
@@ -604,19 +658,45 @@ def realised_optimizer(trainer: Any) -> dict[str, Any]:
     return out
 
 
-def _hparam_diff(want: dict[str, Any], have: dict[str, Any]) -> dict[str, Any]:
+def _close(a: Any, b: Any) -> bool:
     import math as _m
 
-    def close(a: Any, b: Any) -> bool:
-        if isinstance(a, list) and isinstance(b, list):
-            return len(a) == len(b) and all(close(x, y) for x, y in zip(a, b, strict=True))
-        if isinstance(a, dict) and isinstance(b, dict):
-            return a.keys() == b.keys() and all(close(a[k], b[k]) for k in a)
-        if isinstance(a, float) and isinstance(b, float):
-            return (_m.isnan(a) and _m.isnan(b)) or _m.isclose(a, b, rel_tol=1e-9, abs_tol=0.0)
-        return a == b
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b) and all(_close(x, y) for x, y in zip(a, b, strict=True))
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(_close(a[k], b[k]) for k in a)
+    if isinstance(a, float) and isinstance(b, float):
+        return (_m.isnan(a) and _m.isnan(b)) or _m.isclose(a, b, rel_tol=1e-9, abs_tol=0.0)
+    return type(a) is type(b) and a == b if isinstance(a, bool) or isinstance(b, bool) else a == b
 
-    return {k: {"checkpoint": have.get(k), "requested": want[k]} for k in want if not close(want[k], have.get(k))}
+
+def _hparam_diff(want: dict[str, Any], have: dict[str, Any]) -> dict[str, Any]:
+    return {k: {"checkpoint": have.get(k), "requested": want[k]} for k in want if not _close(want[k], have.get(k))}
+
+
+def _resolve_group_diff(trainer: Any, configured: list[dict[str, Any]], settings: TrainSettings,
+                        what: str) -> dict[str, Any]:
+    """Refuse, reapply (configured) or adopt (checkpoint) after a restore; verify the outcome."""
+    diff = group_key_diff(configured, group_hparams(trainer.opt.param_groups))
+    resolution = None
+    if diff:
+        if settings.reapply_optimizer_hparams:
+            trainer._reapply_configured_param_group_hparams()
+            resolution = "configured"
+            left = group_key_diff(configured, group_hparams(trainer.opt.param_groups))
+            if left:
+                raise RuntimeError(f"re-applying the configured group hyperparameters left differences: {left}")
+        elif settings.adopt_checkpoint_optimizer_hparams:
+            resolution = "checkpoint"
+        else:
+            lines = "; ".join(f"group {d['group']} {d['key']}: configured {d['configured']!r} vs checkpoint "
+                              f"{d['checkpoint']!r}" for d in diff)
+            raise ValueError(f"{what}: the checkpoint's optimizer param-group hyperparameters differ from this "
+                             f"run's configured ones ({lines}); restoring would silently replace them. Pass "
+                             "--reapply-optimizer-hparams to use the configured values or "
+                             "--adopt-checkpoint-optimizer-hparams to keep the checkpoint's")
+    return {"group_differed": diff, "group_resolution": resolution,
+            "group_hparams_realised": group_hparams(trainer.opt.param_groups)}
 
 
 def continue_optimizer(trainer: Any, checkpoint: Path, settings: TrainSettings) -> dict[str, Any]:
@@ -628,7 +708,7 @@ def continue_optimizer(trainer: Any, checkpoint: Path, settings: TrainSettings) 
     requested = optimizer_hparams(trainer)
     trainer.load(checkpoint, exact_resume=True)
     restored = optimizer_hparams(trainer)
-    want = {k: requested[k] for k in ("peak_lr", "lr_floor", "groups")}
+    want = {k: requested[k] for k in ("peak_lr", "lr_floor")}
     diff = _hparam_diff(want, restored)
     if diff and not settings.reapply_optimizer_hparams:
         raise ValueError(f"--optimizer-state continue: the checkpoint's optimizer hyperparameters differ from the "
@@ -636,14 +716,47 @@ def continue_optimizer(trainer: Any, checkpoint: Path, settings: TrainSettings) 
                          "Pass --reapply-optimizer-hparams to apply the requested values, or request the "
                          "checkpoint's")
     if diff:
-        trainer._reapply_configured_param_group_hparams()  # weight decay & co, from this trainer's config
         trainer.set_peak_lr(float(settings.lr))  # base_lrs, active lr and _peak_lr, phase preserved
         if hasattr(trainer._scheduler, "eta_min"):
             trainer._scheduler.eta_min = float(requested["lr_floor"])
         left = _hparam_diff(want, optimizer_hparams(trainer))
         if left:
             raise RuntimeError(f"re-applying optimizer hyperparameters left differences: {left}")
-    return {"differed": diff, "reapplied": bool(diff)}
+    groups = _resolve_group_diff(trainer, requested["groups"], settings, "--optimizer-state continue")
+    return {"differed": diff, "reapplied": bool(diff), **groups}
+
+
+def _optimizer_family(param_groups: list[dict[str, Any]]) -> str | None:
+    """The optimizer a saved state was written by, where its group keys say so."""
+    keys = set().union(*(set(g) for g in param_groups)) if param_groups else set()
+    if "use_aurora" in keys:
+        return "aurora"
+    if "momentum_decay" in keys:
+        return "nadamw"
+    return None
+
+
+def check_init_optimizer_source(payload: dict[str, Any], checkpoint: Path, settings: TrainSettings) -> None:
+    """The settings-only refusals of --init-optimizer-state checkpoint (no
+    optimizer state; a different optimizer type than requested). Also run by
+    the loop driver before pinning."""
+    missing = [k for k in ("opt", "scheduler") if k not in payload]
+    if missing or not isinstance(payload.get("opt"), dict) or not payload["opt"].get("state"):
+        raise ValueError(f"--init-optimizer-state checkpoint: {checkpoint} has no optimizer state "
+                         f"(missing {missing or ['opt.state (empty)']}); use --init-optimizer-state fresh")
+    family = _optimizer_family(payload["opt"].get("param_groups") or [])
+    want = str(settings.optimizer).lower()
+    if family is not None and family != ("nadamw" if want in ("nadam", "nadamw") else want):
+        raise ValueError(f"--init-optimizer-state checkpoint: {checkpoint}'s optimizer state was written by "
+                         f"{family}, not the requested --optimizer {settings.optimizer}")
+
+
+def preflight_init_optimizer(checkpoint: Path, settings: TrainSettings) -> None:
+    """Header read for the pre-pin check: mmap'd, nothing materialised."""
+    import torch
+
+    payload = torch.load(str(checkpoint), map_location="cpu", weights_only=False, mmap=True)
+    check_init_optimizer_source(payload, checkpoint, settings)
 
 
 def init_optimizer_from_checkpoint(trainer: Any, checkpoint: Path, settings: TrainSettings) -> dict[str, Any]:
@@ -660,10 +773,7 @@ def init_optimizer_from_checkpoint(trainer: Any, checkpoint: Path, settings: Tra
     import torch
 
     payload = torch.load(str(checkpoint), map_location=trainer.device, weights_only=False)
-    missing = [k for k in ("opt", "scheduler") if k not in payload]
-    if missing or not payload["opt"].get("state"):
-        raise ValueError(f"--init-optimizer-state checkpoint: {checkpoint} has no optimizer state "
-                         f"(missing {missing or ['opt.state (empty)']}); use --init-optimizer-state fresh")
+    check_init_optimizer_source(payload, checkpoint, settings)
     names = trainer._optimizer_param_names()
     ck_names = payload.get("opt_param_names")
     sizes = [len(g["params"]) for g in payload["opt"]["param_groups"]]
@@ -674,35 +784,28 @@ def init_optimizer_from_checkpoint(trainer: Any, checkpoint: Path, settings: Tra
                          f"(group sizes {mine}); match --optimizer and --matrix-optimizer-scope to the run that "
                          "wrote it")
     load_weights(trainer, checkpoint)
-    requested = optimizer_hparams(trainer)["groups"]
-    want_lr = [float(g["lr"]) for g in trainer.opt.param_groups]
+    configured = group_hparams(trainer._configured_param_group_hparams)
+    want_lr = [float(g["lr"]) for g in trainer.opt.param_groups]  # the schedule's current (warmup) lr
+    base_lrs = [float(v) for v in getattr(trainer._scheduler, "base_lrs", want_lr)]  # its peak per group
     try:
         trainer.opt.load_state_dict(payload["opt"])
     except (ValueError, KeyError) as exc:
         raise ValueError(f"--init-optimizer-state checkpoint: cannot load {checkpoint}'s optimizer state into "
                          f"{settings.optimizer}: {exc}") from exc
     checkpoint_lr = [float(g["lr"]) for g in trainer.opt.param_groups]
-    diff = _hparam_diff({"groups": requested}, {"groups": optimizer_hparams(trainer)["groups"]})
-    if diff and not settings.reapply_optimizer_hparams:
-        raise ValueError(f"--init-optimizer-state checkpoint: the checkpoint's optimizer hyperparameters differ from "
-                         f"the requested ones {json.dumps(diff, default=str)}; restoring would silently ignore them. "
-                         "Pass --reapply-optimizer-hparams to apply the requested values")
-    if diff:
-        trainer._reapply_configured_param_group_hparams()
-        left = _hparam_diff({"groups": requested}, {"groups": optimizer_hparams(trainer)["groups"]})
-        if left:
-            raise RuntimeError(f"re-applying optimizer hyperparameters left differences: {left}")
-    for g, lr in zip(trainer.opt.param_groups, want_lr, strict=True):
+    groups = _resolve_group_diff(trainer, configured, settings, "--init-optimizer-state checkpoint")
+    for g, lr, base in zip(trainer.opt.param_groups, want_lr, base_lrs, strict=True):
         g["lr"] = lr
         if "initial_lr" in g:
-            g["initial_lr"] = lr
+            g["initial_lr"] = base  # scheduler bookkeeping: the peak, not the warmup-start lr
     steps = [int(v["step"].item()) if torch.is_tensor(v["step"]) else int(v["step"])
              for v in trainer.opt.state.values() if isinstance(v, dict) and "step" in v]
     sched = payload["scheduler"]
     return {"source": str(checkpoint), "state_entries": len(trainer.opt.state),
             "state_step_min": min(steps) if steps else None, "state_step_max": max(steps) if steps else None,
             "checkpoint_param_group_lr": checkpoint_lr, "param_group_lr_set": want_lr,
-            "differed": diff, "reapplied": bool(diff),
+            **groups, "reapplied": groups["group_resolution"] == "configured",
+            "not_adopted": ["scheduler", "per-group lr", "zclip state", "trainer step"],
             "scheduler_not_restored": {"checkpoint_peak_lr": payload.get("peak_lr"),
                                        "checkpoint_last_epoch": sched.get("last_epoch") if isinstance(sched, dict) else None}}
 

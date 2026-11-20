@@ -189,8 +189,13 @@ def test_init_optimizer_state_checkpoint_refuses_missing_state_and_foreign_layou
         init_optimizer_from_checkpoint(build_trainer(tiny_model_config(), want, log_dir=None), tmp_path / "noopt.pt", want)
 
     aurora, _ = _trained_checkpoint(tmp_path / "aurora.pt", TrainSettings(device="cpu", lr=3e-6, optimizer="aurora"))
-    with pytest.raises(ValueError, match="optimizer parameter layout"):
+    with pytest.raises(ValueError, match="written by aurora, not the requested --optimizer nadamw"):
         init_optimizer_from_checkpoint(build_trainer(tiny_model_config(), want, log_dir=None), aurora, want)
+    # Same optimizer, different matrix scope: the parameter layout check.
+    scoped = TrainSettings(device="cpu", lr=3e-6, optimizer="aurora", init_optimizer_state="checkpoint",
+                           matrix_optimizer_scope="mlp_out")
+    with pytest.raises(ValueError, match="optimizer parameter layout"):
+        init_optimizer_from_checkpoint(build_trainer(tiny_model_config(), scoped, log_dir=None), aurora, scoped)
 
 
 def test_init_optimizer_state_checkpoint_refuses_differing_hparams_unless_reapplied(tmp_path: Path) -> None:
@@ -223,12 +228,15 @@ def test_init_optimizer_state_reaches_generation_one_through_the_cli(
     openings, model_config = _setup(tmp_path, monkeypatch)
     argv = _argv(tmp_path / "run_random", openings, model_config)
     argv[argv.index("--generations") + 1] = "1"
-    with pytest.raises(ValueError, match="has no optimizer state"):  # random init: nothing to start from
+    with pytest.raises(SystemExit, match="random init has none"):  # refused before pinning or collecting
         simple_rl_loop.main([*argv, "--init-optimizer-state", "checkpoint"])
+    assert not (tmp_path / "run_random" / "run_config.json").exists()
+    assert not (tmp_path / "run_random" / "gen_0001").exists()
 
     ckpt, _ = _trained_checkpoint(tmp_path / "init.pt", TrainSettings(device="cpu", lr=1e-3))
     argv = _argv(tmp_path / "run", openings, model_config)
-    argv[argv.index("--generations") + 1] = "1"
+    argv[argv.index("--generations") + 1] = "2"  # gen 2 must NOT restore the init moments (review F4)
+    argv[argv.index("--optimizer-state") + 1] = "fresh"
     i = argv.index("--random-init")
     argv[i:i + 1] = ["--init-checkpoint", str(ckpt)]
     del argv[argv.index("--model-config"):argv.index("--model-config") + 2]
@@ -240,3 +248,163 @@ def test_init_optimizer_state_reaches_generation_one_through_the_cli(
     assert summary["realised_lr_param_groups"] == [1e-3, 1e-3]
     pinned = json.loads((tmp_path / "run" / "run_config.json").read_text())["settings"]
     assert pinned["init_optimizer_state"] == "checkpoint"
+    gen2 = json.loads((tmp_path / "run" / "gen_0002" / "train" / "metrics.json").read_text())["summary"]
+    assert gen2["optimizer_from_init_checkpoint"] is None
+    assert gen2["optimizer_continued"] is False  # --optimizer-state fresh: a fresh optimizer at gen 2
+
+
+def _aurora_knobs_differ(tmp_path: Path) -> tuple[Path, dict]:
+    """An Aurora checkpoint whose polar knobs are NOT this run's configured ones."""
+    from chess_anti_engine.simple_rl.learn import TrainSettings
+
+    ckpt, _ = _trained_checkpoint(tmp_path / "aurora.pt", TrainSettings(device="cpu", lr=3e-6, optimizer="aurora"))
+    payload = torch.load(ckpt, map_location="cpu", weights_only=False)
+    knobs = {"aurora_polar_steps": 8, "aurora_polar_method": "polar_express", "aurora_pp_beta": 0.25}
+    for g in payload["opt"]["param_groups"]:
+        assert "aurora_polar_steps" in g
+        g.update(knobs)
+    torch.save(payload, ckpt)
+    return ckpt, knobs
+
+
+def test_init_optimizer_refuses_any_group_key_difference_and_names_both_values(tmp_path: Path) -> None:
+    """Review F1: load_state_dict replaces EVERY group key; the old diff saw
+    only weight_decay/betas/eps/momentum_decay, so Aurora polar knobs changed
+    silently. Every differing key is now listed with both values."""
+    from chess_anti_engine.simple_rl.learn import TrainSettings, build_trainer, init_optimizer_from_checkpoint
+
+    ckpt, knobs = _aurora_knobs_differ(tmp_path)
+    want = TrainSettings(device="cpu", lr=3e-6, optimizer="aurora", init_optimizer_state="checkpoint")
+    trainer = build_trainer(tiny_model_config(), want, log_dir=None)
+    configured = {k: trainer.opt.param_groups[0][k] for k in knobs}
+    assert configured != knobs  # the fixture really differs from the configured defaults
+    with pytest.raises(ValueError, match="param-group hyperparameters differ") as exc:
+        init_optimizer_from_checkpoint(trainer, ckpt, want)
+    msg = str(exc.value)
+    for k, v in knobs.items():
+        if configured[k] != v:
+            assert f"{k}: configured {configured[k]!r} vs checkpoint {v!r}" in msg
+
+
+def test_init_optimizer_reapply_uses_configured_and_adopt_keeps_the_checkpoints(tmp_path: Path) -> None:
+    from chess_anti_engine.simple_rl.learn import (
+        TrainSettings, build_trainer, init_optimizer_from_checkpoint, realised_optimizer,
+    )
+
+    ckpt, knobs = _aurora_knobs_differ(tmp_path)
+    reapply = TrainSettings(device="cpu", lr=3e-6, optimizer="aurora", init_optimizer_state="checkpoint",
+                            reapply_optimizer_hparams=True)
+    t1 = build_trainer(tiny_model_config(), reapply, log_dir=None)
+    configured = {k: t1.opt.param_groups[0][k] for k in knobs}
+    info = init_optimizer_from_checkpoint(t1, ckpt, reapply)
+    assert info["group_resolution"] == "configured"
+    assert info["reapplied"]
+    assert {k: t1.opt.param_groups[0][k] for k in knobs} == configured  # read off the consumer
+    assert {d["key"] for d in info["group_differed"]} >= {k for k in knobs if configured[k] != knobs[k]}
+
+    adopt = TrainSettings(device="cpu", lr=3e-6, optimizer="aurora", init_optimizer_state="checkpoint",
+                          adopt_checkpoint_optimizer_hparams=True)
+    t2 = build_trainer(tiny_model_config(), adopt, log_dir=None)
+    info = init_optimizer_from_checkpoint(t2, ckpt, adopt)
+    assert info["group_resolution"] == "checkpoint"
+    assert not info["reapplied"]
+    for g in t2.opt.param_groups:
+        assert {k: g[k] for k in knobs} == knobs
+    realised = realised_optimizer(t2)["groups"]
+    assert all(r[k] == v for r in realised for k, v in knobs.items())  # recorded in metrics/manifest
+    assert info["group_hparams_realised"] == realised
+
+
+def test_init_optimizer_initial_lr_is_the_schedule_peak_not_the_warmup_start(tmp_path: Path) -> None:
+    """Review N1."""
+    from chess_anti_engine.simple_rl.learn import TrainSettings, build_trainer, init_optimizer_from_checkpoint
+
+    ckpt, _ = _trained_checkpoint(tmp_path / "init.pt", TrainSettings(device="cpu", lr=3e-6))
+    want = TrainSettings(device="cpu", lr=1e-3, warmup_steps=10, warmup_start=1e-5, init_optimizer_state="checkpoint")
+    trainer = build_trainer(tiny_model_config(), want, log_dir=None)
+    init_optimizer_from_checkpoint(trainer, ckpt, want)
+    peaks = [float(v) for v in trainer._scheduler.base_lrs]
+    assert [float(g["initial_lr"]) for g in trainer.opt.param_groups if "initial_lr" in g] in ([], peaks)
+    assert all(float(g["lr"]) < p for g, p in zip(trainer.opt.param_groups, peaks, strict=True))
+
+
+@pytest.mark.parametrize(("kw", "match"), [
+    ({"matrix_optimizer_scope": "bogus", "optimizer": "aurora"}, "matrix_optimizer_scope must be one of"),
+    ({"matrix_optimizer_scope": "mlp_out"}, "would be ignored"),  # nadamw does not read it
+    ({"reapply_optimizer_hparams": True, "adopt_checkpoint_optimizer_hparams": True}, "mutually exclusive"),
+])
+def test_train_settings_refuse_ignored_optimizer_knobs(kw: dict, match: str) -> None:
+    """Review F2."""
+    from chess_anti_engine.simple_rl.learn import TrainSettings
+
+    with pytest.raises(ValueError, match=match):
+        TrainSettings(device="cpu", **kw).validate()
+    TrainSettings(device="cpu", optimizer="aurora", matrix_optimizer_scope="mlp_out").validate()
+
+
+def test_the_matrix_scope_flag_is_a_closed_choice() -> None:
+    from scripts import simple_rl_loop
+
+    with pytest.raises(SystemExit):
+        simple_rl_loop.parser().parse_args(["train", "--run-dir", "x", "--openings-dir", "x", "--generation", "1",
+                                            "--matrix-optimizer-scope", "bogus"])
+
+
+def test_init_optimizer_source_is_refused_before_pinning(tmp_path: Path) -> None:
+    """Review F3: no optimizer state / another optimizer's state is refused by
+    validate_before_pinning, from the header, before run_config.json exists."""
+    from chess_anti_engine.simple_rl.learn import TrainSettings
+    from scripts import simple_rl_loop as loop
+    from tests.simple_rl_helpers import save_tiny_checkpoint
+
+    empty = save_tiny_checkpoint(tmp_path / "fresh.pt")
+    nadam, _ = _trained_checkpoint(tmp_path / "nadam.pt", TrainSettings(device="cpu"))
+    base = ["run", "--run-dir", str(tmp_path / "run"), "--openings-dir", str(tmp_path), "--generations", "1",
+            "--init-optimizer-state", "checkpoint"]
+    cases = [([*base, "--init-checkpoint", str(empty)], "has no optimizer state"),
+             ([*base, "--init-checkpoint", str(nadam), "--optimizer", "aurora"], "written by nadamw"),
+             ([*base, "--random-init"], "random init has none")]
+    for argv, match in cases:
+        a = loop.parser().parse_args(argv)
+        with pytest.raises(SystemExit, match=match):
+            loop.validate_before_pinning(a, tmp_path / "run", {"collect", "train"})
+    assert not (tmp_path / "run").exists()
+    ok = loop.parser().parse_args([*base, "--init-checkpoint", str(nadam)])
+    loop.validate_before_pinning(ok, tmp_path / "run", {"collect", "train"})
+
+
+def test_a_pinned_run_without_the_new_optimizer_keys_resumes_at_their_defaults(tmp_path: Path) -> None:
+    """Review F5: the keys added since pinning default on resume; a non-default
+    value is a config change."""
+    from scripts import simple_rl_loop as loop
+
+    run = tmp_path / "run"
+    run.mkdir()
+    argv = ["run", "--run-dir", str(run), "--openings-dir", str(tmp_path), "--generations", "1", "--random-init"]
+    a = loop.parser().parse_args(argv)
+    loop.check_run_config(a, run)
+    stored = json.loads((run / "run_config.json").read_text())
+    for k in ("init_optimizer_state", "matrix_optimizer_scope", "adopt_checkpoint_optimizer_hparams"):
+        stored["settings"].pop(k)
+    (run / "run_config.json").write_text(json.dumps(stored))
+    loop.check_run_config(a, run)  # old pin, defaults now: accepted
+    for extra in (["--init-optimizer-state", "checkpoint"], ["--matrix-optimizer-scope", "mlp_out"],
+                  ["--adopt-checkpoint-optimizer-hparams"]):
+        with pytest.raises(SystemExit, match="run settings differ"):
+            loop.check_run_config(loop.parser().parse_args([*argv, *extra]), run)
+
+
+def test_continue_follows_the_same_group_rule(tmp_path: Path) -> None:
+    """A run that adopted the checkpoint's knobs keeps them under continue;
+    without a choice the continue restore is refused like the init one."""
+    from chess_anti_engine.simple_rl.learn import TrainSettings, build_trainer, continue_optimizer
+
+    ckpt, knobs = _aurora_knobs_differ(tmp_path)
+    plain = TrainSettings(device="cpu", lr=3e-6, optimizer="aurora")
+    with pytest.raises(ValueError, match="param-group hyperparameters differ"):
+        continue_optimizer(build_trainer(tiny_model_config(), plain, log_dir=None), ckpt, plain)
+    adopt = TrainSettings(device="cpu", lr=3e-6, optimizer="aurora", adopt_checkpoint_optimizer_hparams=True)
+    trainer = build_trainer(tiny_model_config(), adopt, log_dir=None)
+    check = continue_optimizer(trainer, ckpt, adopt)
+    assert check["group_resolution"] == "checkpoint"
+    assert all(g[k] == v for g in trainer.opt.param_groups for k, v in knobs.items())

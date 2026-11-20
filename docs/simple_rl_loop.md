@@ -329,30 +329,47 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
   avoid this, pass `--warmup-start <lr / W>` so the first step already moves. The
   proposed default is `lr / W`.
 - `--init-optimizer-state checkpoint` (generation 1 only) starts the first phase
-  from the init checkpoint's optimizer moments and per-parameter step counters.
-  `--optimizer-state continue` cannot reach generation 1: there is no previous
-  phase to continue from. The checkpoint's scheduler is not restored, because it
-  belongs to the run that wrote it, so this run's `--lr` schedule sets the rate;
-  the per-group LR is read back off the param groups into `metrics.json`. The
-  phase is refused when:
-  - the checkpoint has no optimizer state;
-  - its parameter layout differs: optimizer type, or `--matrix-optimizer-scope` for
-    Aurora/Muon;
-  - its per-group hyperparameters differ, unless `--reapply-optimizer-hparams` is
-    given.
+  from the init checkpoint's optimizer state. `--optimizer-state continue` cannot
+  reach generation 1: there is no previous phase to continue from. Later
+  generations follow `--optimizer-state` (`fresh` builds a fresh optimizer).
+  - **Adopted:** every per-parameter state tensor (momentum buffers, Adam first
+    and second moments) and the per-parameter step counts.
+  - **Not adopted:** the scheduler, the per-group LR (this run's `--lr` schedule
+    sets the rate; `initial_lr` is set to the schedule's peak), zclip state and
+    the trainer step. They belong to the run that wrote the checkpoint.
+  - **Param-group hyperparameters** (every group key except `params`, `lr`,
+    `initial_lr` and SODA's step: weight decay, betas, eps, the Aurora polar
+    knobs, ...) are replaced wholesale by `Optimizer.load_state_dict`. Each one is
+    compared against this run's configured value. Any difference is REFUSED,
+    listing every differing key with both values, unless you pick one:
+    `--reapply-optimizer-hparams` uses the configured values;
+    `--adopt-checkpoint-optimizer-hparams` keeps the checkpoint's (for example
+    the SL base's polar knobs). The choice and the realised values of every group
+    key are recorded (`optimizer_from_init_checkpoint`, `realised_optimizer`).
+
+  Refused before anything is pinned or collected: a random init (no moments), a
+  checkpoint with no optimizer state, or a state written by a different optimizer
+  than `--optimizer` (read from the header). A parameter layout that differs (the
+  `--matrix-optimizer-scope`) is refused when generation 1 trains.
+  `--matrix-optimizer-scope` is a closed choice and is refused with an optimizer
+  that does not read it (anything but Aurora, Muon or SOAP, unless
+  `weight_decay_mode` is soda).
 
   The SL base was trained with Aurora on the `mlp_out` matrix scope: 48 matrices,
-  matrix LR ×20, auxiliary AdamW betas (0.9, 0.95), eps 1e-8. It was saved at step
-  680,276, with LR 6e-5 on the matrices and 3e-6 on the rest. Reproducing it needs
-  `--optimizer aurora --matrix-optimizer-scope mlp_out`; with the default `nadamw`
-  the phase is refused.
+  matrix LR ×20, auxiliary AdamW betas (0.9, 0.95), eps 1e-8, polar knobs
+  `polar_express` / 8 steps / fp16 / pp_beta 0.25 / pp_iterations 3. It was saved
+  at step 680,276, with LR 6e-5 on the matrices and 3e-6 on the rest. Reproducing
+  it needs `--optimizer aurora --matrix-optimizer-scope mlp_out`, plus one of the
+  two group-hyperparameter choices, because its polar knobs are not the Trainer's
+  defaults. With the default `nadamw` the phase is refused.
   `continue` restores the previous generation's optimizer, scheduler and step, so
-  warmup happens once. The restore also brings the checkpoint's peak LR, LR floor
-  and per-group weight decay, so a different `--lr` / `--lr-floor` would be
-  silently ignored: the phase REFUSES such a difference unless
-  `--reapply-optimizer-hparams` is given, which re-applies the requested values
-  (schedule phase kept). The values realised after the phase's steps, read off
-  the param groups and scheduler, are recorded in the train manifest
+  warmup happens once. The restore also brings the checkpoint's peak LR and LR
+  floor, and every param-group key. A different `--lr` / `--lr-floor` is REFUSED
+  unless `--reapply-optimizer-hparams` re-applies it (schedule phase kept). A
+  param-group key difference follows the same refuse / reapply / adopt rule as
+  above, so a run that adopted the SL base's knobs at generation 1 keeps them
+  under `continue`. The values realised after the phase's steps, read off the
+  param groups and scheduler, are recorded in the train manifest
   (`config.realised.optimizer`) and in `metrics.json`.
 - Every batch of the exact-once schedule gives each row the coefficient
   1 / batch size: the short final batch is scaled by rows / batch size rather
