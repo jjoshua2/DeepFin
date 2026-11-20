@@ -547,6 +547,201 @@ class LocalModelEvaluator:
             return pol, wdl, guarded_event(self, done, stream, xb, pol, wdl)
 
 
+def _is_compiled_module(module: torch.nn.Module) -> bool:
+    """``torch.compile(m)`` wrapper, in-place ``m.compile()``, or a compiled forward."""
+    return (
+        hasattr(module, "_orig_mod")
+        or type(module).__name__ == "OptimizedModule"
+        or getattr(module, "_compiled_call_impl", None) is not None
+        or hasattr(getattr(module, "forward", None), "_torchdynamo_orig_callable")
+    )
+
+
+def _eager_graph_refusal(
+    model: torch.nn.Module, *, use_cuda: bool, pad_to_buckets: bool, legal_bf16: bool,
+) -> str | None:
+    """Why ``DirectGPUEvaluator(cuda_graphs=True)`` cannot run, or None.
+
+    Only the DENSE forward is graphed. ``legal_bf16=True`` sends the C search's
+    leaf and compact-root forwards through ``evaluate_legal_bf16``, which is not,
+    so the flag would be accepted and then bypassed on the hot path: refused.
+    Note that switching a caller from compact bf16 to dense fp32 transport to
+    get graphs changes its numerics (bf16 logits, softmax in C) -- it is not an
+    identity-preserving change for that caller.
+
+    The compiled check covers a ``torch.compile`` wrapper, an in-place
+    ``Module.compile()`` and a compiled ``forward`` on the model or any
+    submodule; it cannot see a compiled function a module calls internally.
+    """
+    if not use_cuda:
+        return "CUDA graphs need a CUDA device"
+    if pad_to_buckets:
+        return "pad_to_compiled_buckets already runs torch.compile cudagraph trees"
+    if legal_bf16:
+        return ("legal_bf16=True routes leaf/compact-root forwards through the compact "
+                "legal BF16 path, which is not graphed; pass legal_bf16=False (dense "
+                "fp32 transport -- a numerics change for a caller now on compact bf16)")
+    if any(_is_compiled_module(m) for m in model.modules()) or _is_compiled_module(model):
+        return "the model (or a submodule) is torch.compile'd; graphs here capture the EAGER forward"
+    return None
+
+
+class _EagerForwardGraphs:
+    """CUDA graphs of the evaluator's own eager dense forward, one per batch size.
+
+    Why: at the batch sizes the batched Gumbel search actually submits (a
+    median of ~100 rows, bucket-padded), the eager forward of the production
+    transformer is launch-bound -- about 35-40 ms of Python/kernel-launch
+    overhead per call whatever the batch -- while the GPU work itself is a few
+    milliseconds. Replaying a captured graph removes the launches.
+
+    What it does NOT change: the graph records the very kernels the eager call
+    launches (same module, same autocast, same ``_policy_output_full`` /
+    ``.float()`` tail, same shapes), so outputs are bitwise identical to the
+    eager forward for the same rows -- unlike ``torch.compile``, which fuses
+    and reorders arithmetic. This is asserted per batch size by
+    ``tests/test_eager_cuda_graphs.py`` and end to end by the selfplay/arena
+    identity runs recorded in the PR.
+
+    Mechanics: one static device input per input dtype (``max_batch`` rows;
+    graph ``b`` reads its first ``b``), one shared memory pool, capture on
+    first sight of a batch size after one eager warm-up on the capture stream.
+    Every graph's outputs live in the shared pool and are only valid until the
+    next replay of ANY graph, so callers copy them out on the replay stream
+    before the next replay is enqueued -- both DirectGPUEvaluator call sites
+    do -- and replays never run concurrently (the sync path waits on the async
+    stream first). ``max_graphs`` bounds the number of captured shapes and
+    ``max_rows`` the largest batch captured; past either the forward runs
+    eager (the same forward graphs record). ``max_rows`` exists for memory: a
+    graph pins its activations in the pool for the process lifetime, and
+    capturing the largest leaf batches (up to 4096 rows) raised peak reserved
+    VRAM by over 10 GB in selfplay for no gain -- above ~512 rows the forward
+    is GPU-bound and replay is no faster than eager (see the PR table).
+    Warm-ups and captures run on ONE persistent side stream: a fresh stream
+    per capture strands that stream's cached activation blocks.
+
+    Binding: a graph reads the parameter storages and replays the control flow
+    it saw at capture. ``run`` therefore checks a binding key -- the model
+    object, every parameter/buffer ``data_ptr``, ``_inference_only`` and the
+    TF32/matmul-precision flags -- and drops every graph and recaptures when it
+    changes (``recaptures``). In-place weight updates (``load_state_dict``,
+    ``copy_``) keep the storages and are picked up by replay as they are. Other
+    Python-side state read inside ``forward`` (the SDPA backend choice, any
+    module flag not in the key) is frozen at capture: change it only on a fresh
+    evaluator.
+
+    Equality with eager is MEASURED, not a theorem: bitwise at every batch
+    size in ``tests/test_eager_cuda_graphs.py`` and end to end in the PR's
+    selfplay/arena digests.
+    """
+
+    def __init__(
+        self, owner: DirectGPUEvaluator, *, max_graphs: int = 96, max_rows: int = 512,
+    ) -> None:
+        self._owner = owner
+        self._max_graphs = int(max_graphs)
+        self._max_rows = int(max_rows)
+        self._pool = torch.cuda.graph_pool_handle()
+        self._side = torch.cuda.Stream(device=owner.device)
+        self._static_in: dict[torch.dtype, torch.Tensor] = {}
+        self._graphs: dict[tuple[int, torch.dtype], tuple[torch.cuda.CUDAGraph, torch.Tensor, torch.Tensor]] = {}
+        self._binding: tuple[Any, ...] | None = None
+        self.replays = 0
+        self.captures = 0
+        self.recaptures = 0
+        self.eager_over_max_rows = 0
+        self.eager_over_max_graphs = 0
+
+    @property
+    def eager_fallbacks(self) -> int:
+        return self.eager_over_max_rows + self.eager_over_max_graphs
+
+    def stats(self) -> dict[str, int]:
+        return {
+            "replays": self.replays, "captures": self.captures, "recaptures": self.recaptures,
+            "eager_over_max_rows": self.eager_over_max_rows,
+            "eager_over_max_graphs": self.eager_over_max_graphs,
+            "max_rows": self._max_rows, "graphs": len(self._graphs),
+        }
+
+    def _binding_key(self) -> tuple[Any, ...]:
+        model = self._owner.model
+        return (
+            id(model),
+            bool(getattr(model, "_inference_only", False)),
+            torch.backends.cuda.matmul.allow_tf32,
+            torch.backends.cudnn.allow_tf32,
+            torch.get_float32_matmul_precision(),
+            tuple(t.data_ptr() for t in model.parameters()),
+            tuple(t.data_ptr() for t in model.buffers()),
+        )
+
+    def _check_binding(self) -> None:
+        key = self._binding_key()
+        if key == self._binding:
+            return
+        if self._binding is not None:
+            # Model swapped, storages reallocated or a forward flag flipped:
+            # every captured graph replays the OLD binding. Start over.
+            self._graphs.clear()
+            self._pool = torch.cuda.graph_pool_handle()
+            self.recaptures += 1
+        self._binding = key
+
+    def shapes(self) -> tuple[int, ...]:
+        return tuple(sorted({bsz for bsz, _dtype in self._graphs}))
+
+    def _forward(self, xt: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        o = self._owner
+        out = _forward_no_grad(o.model, xt, device=o.device, use_amp=o._use_amp, amp_dtype=o._amp_dtype)
+        return _policy_output_full(out).detach().float(), out["wdl"].detach().float()
+
+    def _static_input(self, host: torch.Tensor) -> torch.Tensor:
+        buf = self._static_in.get(host.dtype)
+        if buf is None:
+            o = self._owner
+            buf = torch.zeros((o._max_batch, *host.shape[1:]), dtype=host.dtype, device=o.device)
+            self._static_in[host.dtype] = buf
+        return buf
+
+    def _capture(self, xt: torch.Tensor) -> tuple[torch.cuda.CUDAGraph, torch.Tensor, torch.Tensor]:
+        caller = torch.cuda.current_stream(xt.device)
+        side = self._side
+        side.wait_stream(caller)
+        with torch.cuda.stream(side):
+            self._forward(xt)  # warm-up: lazy library/workspace init outside capture
+        caller.wait_stream(side)
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph, pool=self._pool, stream=side):
+            pol, wdl = self._forward(xt)
+        caller.wait_stream(side)
+        return graph, pol, wdl
+
+    def run(self, host: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Forward the pinned host rows ``host`` on the current stream."""
+        bsz = int(host.shape[0])
+        self._check_binding()
+        static = self._static_input(host)
+        xt = static[:bsz]
+        xt.copy_(host, non_blocking=True)
+        key = (bsz, host.dtype)
+        entry = self._graphs.get(key)
+        if entry is None:
+            if bsz > self._max_rows:
+                self.eager_over_max_rows += 1
+                return self._forward(xt)
+            if len(self._graphs) >= self._max_graphs:
+                self.eager_over_max_graphs += 1
+                return self._forward(xt)
+            entry = self._capture(xt)
+            self._graphs[key] = entry
+            self.captures += 1
+        graph, pol, wdl = entry
+        graph.replay()
+        self.replays += 1
+        return pol, wdl
+
+
 class DirectGPUEvaluator(LocalModelEvaluator):
     """LocalModelEvaluator with pre-allocated pinned buffers.
 
@@ -571,6 +766,8 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         input_bf16: bool = False,
         legal_bf16: bool = True,
         pad_to_compiled_buckets: bool = False,
+        cuda_graphs: bool = False,
+        cuda_graph_max_rows: int = 512,
     ) -> None:
         super().__init__(model, device=device, use_amp=use_amp, amp_dtype=amp_dtype)
         self._max_batch = int(max_batch)
@@ -641,6 +838,42 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         )
         self._pinned_pols_np: list[np.ndarray] = [t.numpy(force=True) for t in self._pinned_pols]
         self._pinned_wdls_np: list[np.ndarray] = [t.numpy(force=True) for t in self._pinned_wdls]
+        self._eager_graphs: _EagerForwardGraphs | None = None
+        if cuda_graphs:
+            reason = _eager_graph_refusal(
+                model, use_cuda=self._use_cuda, pad_to_buckets=self._pad_to_buckets,
+                legal_bf16=self._legal_bf16,
+            )
+            if reason is not None:
+                # Refused, not ignored: an accepted-then-dropped speed knob would
+                # leave a caller benchmarking the eager path under the graph name.
+                raise ValueError(f"cuda_graphs=True is unsupported here: {reason}")
+            self._eager_graphs = _EagerForwardGraphs(self, max_rows=int(cuda_graph_max_rows))
+        # Dense forwards that carried a relations input: those run eager.
+        self._eager_relations_forwards = 0
+
+    @property
+    def cuda_graphs(self) -> bool:
+        """Whether dense forwards replay captured CUDA graphs of the eager model."""
+        return self._eager_graphs is not None
+
+    @property
+    def cuda_graph_stats(self) -> dict[str, int] | None:
+        """Graph replay/capture/eager-fallback counters, None when graphs are off.
+
+        The proof that ``cuda_graphs`` took effect: ``replays`` counts dense
+        forwards served by a graph; ``eager_over_max_rows``,
+        ``eager_over_max_graphs`` and ``eager_relations`` count the dense
+        forwards that ran eager instead, and why.
+        """
+        if self._eager_graphs is None:
+            return None
+        return {**self._eager_graphs.stats(), "eager_relations": self._eager_relations_forwards}
+
+    @property
+    def cuda_graph_shapes(self) -> tuple[int, ...]:
+        """Batch sizes captured so far (empty when graphs are off)."""
+        return self._eager_graphs.shapes() if self._eager_graphs is not None else ()
 
     @property
     def n_slots(self) -> int:
@@ -722,16 +955,43 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         self._slot_input_bf16[slot] = True
         return self._pinned_inputs_bf16_bits_np[slot][:bsz]
 
-    def _device_input(self, bsz: int, *, slot: int) -> torch.Tensor:
+    def _host_input(self, bsz: int, *, slot: int) -> torch.Tensor:
+        """The pinned host rows the next forward reads (bf16-staged if enabled)."""
         ensure_usable(self)
         pin_in = self._pinned_inputs[slot]
         if self._pinned_inputs_bf16 is not None and self._slot_input_bf16[slot]:
-            return self._pinned_inputs_bf16[slot][:bsz].to(self.device, non_blocking=True)
+            return self._pinned_inputs_bf16[slot][:bsz]
         if self._pinned_inputs_bf16 is not None:
             pin_bf16 = self._pinned_inputs_bf16[slot]
             pin_bf16[:bsz].copy_(pin_in[:bsz])
-            return pin_bf16[:bsz].to(self.device, non_blocking=True)
-        return pin_in[:bsz].to(self.device, non_blocking=True)
+            return pin_bf16[:bsz]
+        return pin_in[:bsz]
+
+    def _device_input(self, bsz: int, *, slot: int) -> torch.Tensor:
+        return self._host_input(bsz, slot=slot).to(self.device, non_blocking=True)
+
+    def _dense_forward_on_stream(
+        self, bsz: int, *, slot: int, relations: np.ndarray | None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Device (dense fp32 policy, fp32 wdl) for ``bsz`` rows of ``slot``.
+
+        Runs on the current stream. With ``cuda_graphs`` on and no relations
+        input this replays a captured graph of the same eager forward instead
+        of launching its kernels one by one; outputs are then static graph
+        buffers valid until the next replay, so callers copy them out on this
+        stream before returning (both callers do).
+        """
+        if self._eager_graphs is not None:
+            if relations is None:
+                return self._eager_graphs.run(self._host_input(bsz, slot=slot))
+            self._eager_relations_forwards += 1  # surfaced in cuda_graph_stats
+        xt = self._device_input(bsz, slot=slot)
+        out = _forward_no_grad(
+            self.model, xt, device=self.device,
+            use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+            relations_t=_relations_to_device(relations, device=self.device, bsz=bsz),
+        )
+        return _policy_output_full(out).detach().float(), out["wdl"].detach().float()
 
     def _stage_encoded_input(self, x: np.ndarray, bsz: int, *, slot: int = 0) -> None:
         """Copy an encoded batch into pinned input ``slot``, tracking bf16 dtype.
@@ -812,15 +1072,13 @@ class DirectGPUEvaluator(LocalModelEvaluator):
 
         stream = torch.cuda.current_stream(torch.device(self.device)) if str(self.device).startswith("cuda") else None
         with self._graph_scope(), launch_guard(self, stream):
-            rel_t = _relations_to_device(relations, device=self.device, bsz=bsz)
-            xt = self._device_input(bsz, slot=slot)
-            out = _forward_no_grad(
-                self.model, xt, device=self.device,
-                use_amp=self._use_amp, amp_dtype=self._amp_dtype,
-                relations_t=rel_t,
-            )
-            pin_pol[:bsz].copy_(_policy_output_full(out).detach().float(), non_blocking=True)
-            pin_wdl[:bsz].copy_(out["wdl"].detach().float(), non_blocking=True)
+            if self._eager_graphs is not None and self._stream is not None and stream is not None:
+                # All graphs share one memory pool: a replay here must not overlap
+                # an async replay still running on the side stream.
+                stream.wait_stream(self._stream)
+            pol_d, wdl_d = self._dense_forward_on_stream(bsz, slot=slot, relations=relations)
+            pin_pol[:bsz].copy_(pol_d, non_blocking=True)
+            pin_wdl[:bsz].copy_(wdl_d, non_blocking=True)
             done = torch.cuda.Event()
             done.record(stream)
             done.synchronize()
@@ -1008,14 +1266,9 @@ class DirectGPUEvaluator(LocalModelEvaluator):
 
             with torch.cuda.stream(stream):
                 stream.wait_event(cast(Any, event_default))
-                xt = self._device_input(bsz, slot=slot)
-                out = _forward_no_grad(
-                    self.model, xt, device=self.device,
-                    use_amp=self._use_amp, amp_dtype=self._amp_dtype,
-                    relations_t=_relations_to_device(relations, device=self.device, bsz=bsz),
-                )
-                pin_pol[:bsz].copy_(_policy_output_full(out).detach().float(), non_blocking=True)
-                pin_wdl[:bsz].copy_(out["wdl"].detach().float(), non_blocking=True)
+                pol_d, wdl_d = self._dense_forward_on_stream(bsz, slot=slot, relations=relations)
+                pin_pol[:bsz].copy_(pol_d, non_blocking=True)
+                pin_wdl[:bsz].copy_(wdl_d, non_blocking=True)
                 done = torch.cuda.Event()
                 done.record(stream)
 
