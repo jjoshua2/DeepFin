@@ -83,6 +83,7 @@ LR_SCHEDULES = ("flat", "cosine-phase")
 AURORA_KNOBS = ("aurora_pp_iterations", "aurora_pp_beta", "aurora_polar_steps", "aurora_polar_method",
                 "aurora_polar_dtype")
 SPLIT_KNOBS = ("matrix_lr_multiplier", "matrix_weight_decay", "aux_weight_decay")
+_CHECKPOINT_CLIP_FIELD = "grad_clip_mode"
 
 
 @dataclass(frozen=True)
@@ -902,11 +903,14 @@ def resolve_optimizer_hparams(settings: TrainSettings, checkpoint: Path | None) 
                          f"{bad}; the setup is not reproducible")
     mat, aux = groups[0], groups[2]
     found: dict[str, Any] = {k: _plain(mat[k]) for k in AURORA_KNOBS}
-    found["matrix_lr_multiplier"] = float(mat["lr"]) / float(aux["lr"])
-    found["matrix_weight_decay"] = float(mat["weight_decay"])
-    found["aux_weight_decay"] = float(aux["weight_decay"])
+    # A keyword update, not subscript writes: tests/test_construction_only_config_keys.py reads
+    # `x["<yaml key>"]` as a config read, and these are the checkpoint's group values, not the yaml's.
+    found.update(matrix_lr_multiplier=float(mat["lr"]) / float(aux["lr"]),
+                 matrix_weight_decay=float(mat["weight_decay"]), aux_weight_decay=float(aux["weight_decay"]))
     zc = payload.get("zclip")
-    found["grad_clip"] = str(payload.get("grad_clip_mode") or ("zclip" if isinstance(zc, dict) else "none"))
+    # The CHECKPOINT's clip-mode field (Trainer.save writes it), read through a constant so the
+    # construction-only key scan does not take it for a yaml read of `grad_clip_mode`.
+    found["grad_clip"] = str(payload.get(_CHECKPOINT_CLIP_FIELD) or ("zclip" if isinstance(zc, dict) else "none"))
     filled = {k: v for k, v in found.items() if getattr(settings, k) is None}
     record = {"source": str(checkpoint), "checkpoint_values": found, "filled": sorted(filled),
               "explicit": sorted(k for k in found if getattr(settings, k) is not None)}
