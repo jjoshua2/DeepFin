@@ -1,6 +1,8 @@
 # Project guidance
 
 Shared guidance for every agent. `AGENTS.md` points here; keep one copy.
+Also follow the mandatory [tablebase requirement](AGENTS.md#required-tablebase-use)
+in AGENTS.md for every applicable workflow, including training, matches and experiments.
 This guide holds durable project constraints. Task-specific procedures live in
 Skills and the linked documentation. Explicit user direction sets the task scope;
 historical plans and experiment entries are evidence, not new assignments.
