@@ -37,7 +37,7 @@ from typing import Any
 
 import numpy as np
 
-from chess_anti_engine.simple_rl.collect import concat_arrays, load_generation_rows
+from chess_anti_engine.simple_rl.collect import concat_arrays, gather_rows, generation_shards, shard_row_meta
 from chess_anti_engine.simple_rl.common import (
     input_ref, resolve_collect_dir, seed_for, sha256_file, write_json_atomic, write_manifest,
 )
@@ -319,6 +319,9 @@ def search_value_wdl(q: np.ndarray, draw: np.ndarray) -> np.ndarray:
     return np.stack([(1.0 - d + q) / 2.0, d, (1.0 - d - q) / 2.0], axis=-1)
 
 
+PRIOR_MIX_CHUNK_ROWS = 8192
+
+
 def prepare_targets(rows: dict[str, np.ndarray], settings: TrainSettings,
                     reference_prior: Any = None) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
     """Rewrite ``search_wdl`` / ``policy_target`` per the value and prior-mix
@@ -351,23 +354,31 @@ def prepare_targets(rows: dict[str, np.ndarray], settings: TrainSettings,
     lam = float(settings.policy_prior_mix)
     if lam < 1.0 and n:
         policy = np.asarray(out.get("has_policy", np.ones(n)), dtype=bool)
-        legal = np.asarray(out["legal_mask"]) > 0
         if settings.prior_mix_source == "actor":
             ok = policy & np.asarray(out.get("has_root_log_prior", np.zeros(n)), dtype=bool)
-            support = np.asarray(out["root_child_visits"])[ok] >= 0
-            logp = np.where(support, np.asarray(out["root_log_prior"], dtype=np.float64)[ok], -np.inf)
-            logp -= logp.max(axis=1, keepdims=True)
-            prior = np.where(support, np.exp(logp), 0.0)
         else:
             if reference_prior is None:
                 raise ValueError("prior_mix_source=reference needs a reference checkpoint")
             ok = policy
-            prior = np.asarray(reference_prior(np.asarray(out["x"])[ok], legal[ok]), dtype=np.float64)
-        prior /= np.maximum(prior.sum(axis=1, keepdims=True), 1e-30)
         target = np.asarray(out["policy_target"], dtype=np.float32).copy()
-        t = target[ok].astype(np.float64)
-        t /= np.maximum(t.sum(axis=1, keepdims=True), 1e-30)
-        target[ok] = (lam * t + (1.0 - lam) * prior).astype(np.float32)
+        # Row-local float64 work in bounded row chunks (identical per row), so the
+        # temporaries never span the whole window (~15 KB/row each at 1858 moves).
+        rows_ok = np.flatnonzero(ok)
+        for start in range(0, rows_ok.size, PRIOR_MIX_CHUNK_ROWS):
+            idx = rows_ok[start:start + PRIOR_MIX_CHUNK_ROWS]
+            if settings.prior_mix_source == "actor":
+                support = np.asarray(out["root_child_visits"][idx]) >= 0
+                logp = np.where(support, np.asarray(out["root_log_prior"][idx], dtype=np.float64), -np.inf)
+                logp -= logp.max(axis=1, keepdims=True)
+                prior = np.where(support, np.exp(logp), 0.0)
+            else:
+                assert reference_prior is not None
+                legal = np.asarray(out["legal_mask"][idx]) > 0
+                prior = np.asarray(reference_prior(np.asarray(out["x"][idx]), legal), dtype=np.float64)
+            prior /= np.maximum(prior.sum(axis=1, keepdims=True), 1e-30)
+            t = target[idx].astype(np.float64)
+            t /= np.maximum(t.sum(axis=1, keepdims=True), 1e-30)
+            target[idx] = (lam * t + (1.0 - lam) * prior).astype(np.float32)
         out["policy_target"] = target
         info["prior_mixed_rows"] = int(ok.sum())
         info["prior_mix_skipped_policy_rows"] = int((policy & ~ok).sum())
@@ -435,9 +446,9 @@ def load_window(run_dir: Path, generation: int, settings: TrainSettings) -> tupl
     rows in load order)``, the key of the presentation ledger.
     """
     gens = phase_generations(generation, settings)
-    train_parts: list[dict[str, np.ndarray]] = []
+    train_group: list[tuple[Path, np.ndarray | None]] = []
+    holdout_group: list[tuple[Path, np.ndarray | None]] = []
     ids: list[np.ndarray] = []
-    holdout: dict[str, np.ndarray] | None = None
     for g in gens:
         if not (Path(run_dir) / f"gen_{g:04d}" / "collect" / "manifest.json").is_file():
             raise ValueError(f"generation {g} collect is not sealed; refusing to train on its rows")
@@ -445,16 +456,32 @@ def load_window(run_dir: Path, generation: int, settings: TrainSettings) -> tupl
             from chess_anti_engine.simple_rl.lineage import verify_stage
 
             verify_stage(run_dir, g, "collect")  # a reference: the source still matches what it sealed
-        arrays, meta = load_generation_rows(Path(run_dir) / f"gen_{g:04d}" / "collect",
-                                            keys=(*TRAIN_KEYS, *TARGET_SOURCE_KEYS))
-        held = holdout_mask(meta, settings.holdout_frac)
-        train_parts.append(_select(arrays, ~held))
-        rows = np.flatnonzero(~held)
+        shards = generation_shards(Path(run_dir) / f"gen_{g:04d}" / "collect")
+        held = [holdout_mask(shard_row_meta(s), settings.holdout_frac) for s in shards]
+        train_group += [(s, ~h) for s, h in zip(shards, held, strict=True)]
+        rows = np.flatnonzero(~np.concatenate(held))
         ids.append(np.stack([np.full(rows.size, g, dtype=np.int64), rows.astype(np.int64)], axis=1))
         if g == generation:
-            holdout = _select(arrays, held)
-    assert holdout is not None
-    return concat_arrays(train_parts), holdout, gens, np.concatenate(ids, axis=0)
+            holdout_group = [(s, h) for s, h in zip(shards, held, strict=True)]
+    # Only the keys the loss and THIS target configuration read are loaded, into
+    # preallocated arrays (collect.gather_rows): the train rows and the held-out
+    # rows are filled from each shard in one pass, never via a full extra copy.
+    train, holdout = gather_rows([train_group, holdout_group], keys=(*TRAIN_KEYS, *target_source_keys(settings)))
+    return train, holdout, gens, np.concatenate(ids, axis=0)
+
+
+def target_source_keys(settings: TrainSettings) -> tuple[str, ...]:
+    """The subset of TARGET_SOURCE_KEYS ``prepare_targets`` reads under ``settings``
+    (all of them are dropped before a row reaches the sampler)."""
+    keys: list[str] = []
+    if settings.uses_survivor_value():
+        keys += ["root_survivor_q", "has_root_survivor_q"]
+        if settings.value_draw_source == "net":
+            keys += ["root_net_wdl", "has_root_net_wdl"]
+    if float(settings.policy_prior_mix) < 1.0 and settings.prior_mix_source == "actor":
+        keys += ["has_root_log_prior", "root_log_prior", "root_child_visits"]
+    assert set(keys) <= set(TARGET_SOURCE_KEYS)
+    return tuple(keys)
 
 
 def planned_phase_updates(run_dir: Path, generation: int, settings: TrainSettings) -> int | None:
