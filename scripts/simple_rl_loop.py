@@ -24,7 +24,12 @@ from typing import Any
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from chess_anti_engine.simple_rl.collect import CollectSettings, collect_generation, validate_settings
+from chess_anti_engine.simple_rl.collect import (
+    CollectSettings,
+    collect_generation,
+    default_collect_shape,
+    validate_settings,
+)
 from chess_anti_engine.simple_rl.common import (
     blocking_markers,
     input_ref,
@@ -43,9 +48,10 @@ from chess_anti_engine.simple_rl.evaluate import (
     tripwire_table,
 )
 from chess_anti_engine.simple_rl.learn import (
-    MATRIX_OPTIMIZER_SCOPES, MODEL_FILE, TrainSettings, check_snapshot_plan, lineage_capped_collects,
-    planned_phase_updates, planned_snapshot_updates, preflight_init_optimizer, refuse_capped_collects,
-    train_generation, trainer_kwargs,
+    GRAD_CLIP_MODES, MATRIX_OPTIMIZER_SCOPES, MODEL_FILE, OPTIMIZER_HPARAM_SOURCES, TrainSettings,
+    check_snapshot_plan, lineage_capped_collects, planned_phase_updates, planned_snapshot_updates,
+    preflight_init_optimizer, refuse_capped_collects, resolve_optimizer_hparams, train_generation,
+    trainer_kwargs,
 )
 from chess_anti_engine.simple_rl.lineage import later_sealed, unseal_after, verify_before, verify_stage
 from chess_anti_engine.simple_rl.openings import split_openings
@@ -140,7 +146,7 @@ def init_run(run_dir: Path, *, init_checkpoint: str | None, random_init: bool,
 
 def collect_settings(a: argparse.Namespace) -> CollectSettings:
     return CollectSettings(
-        games=a.games, concurrency=a.concurrency, sims=a.sims, full_prob=a.full_prob, fast_sims=a.fast_sims,
+        games=a.games, concurrency=resolve_collect_shape(a)[1], sims=a.sims, full_prob=a.full_prob, fast_sims=a.fast_sims,
         fast_value_rows=a.fast_value_rows, tree_reuse=not a.no_tree_reuse, topk=a.topk, c_scale=a.c_scale,
         c_visit=a.c_visit, target_q_rescale=not a.no_target_q_rescale, policy_temp=a.policy_temp,
         target_untempered_prior=a.target_untempered_prior, vloss_weight=a.vloss_weight,
@@ -152,7 +158,7 @@ def collect_settings(a: argparse.Namespace) -> CollectSettings:
         book_mix=tuple(float(x) for x in a.book_mix.split(",")), rows_per_shard=a.rows_per_shard,
         opening_sampling=a.opening_sampling, dup_sketch_budget=a.dup_sketch_budget,
         exact_repeat_vs_previous=a.exact_repeat_vs_previous,
-        device=a.device, eval_max_batch=a.eval_max_batch, seed=a.seed,
+        device=a.device, eval_max_batch=a.eval_max_batch, collect_procs=resolve_collect_procs(a), seed=a.seed,
     )
 
 
@@ -178,11 +184,33 @@ def train_settings(a: argparse.Namespace, run_dir: Path) -> TrainSettings:
         probe_rows=a.probe_rows, device=a.device, use_amp=str(a.device).startswith("cuda"), seed=a.seed,
         allow_capped_collect_rows=a.allow_capped_collect_rows,
         snapshot_updates=parse_snapshot_updates(a.snapshot_updates),
+        optimizer_hparams_source=a.optimizer_hparams_source, matrix_lr_multiplier=a.matrix_lr_multiplier,
+        matrix_weight_decay=a.matrix_weight_decay, aux_weight_decay=a.aux_weight_decay,
+        aurora_pp_iterations=a.aurora_pp_iterations, aurora_pp_beta=a.aurora_pp_beta,
+        aurora_polar_steps=a.aurora_polar_steps, aurora_polar_method=a.aurora_polar_method,
+        aurora_polar_dtype=a.aurora_polar_dtype, grad_clip=a.grad_clip, zclip_max_norm=a.zclip_max_norm,
+        lr_schedule=a.lr_schedule,
         accum_steps=a.accum_steps, snapshot_rows=parse_snapshot_updates(a.snapshot_rows, flag="--snapshot-rows"),
     )
     settings.validate()
+    if settings.optimizer_hparams_source != "trainer":
+        try:
+            settings = resolve_optimizer_hparams(settings, optimizer_hparams_checkpoint(a, run_dir))
+        except ValueError as exc:
+            raise SystemExit(f"--optimizer-hparams-source init-checkpoint: {exc}") from exc
     trainer_kwargs(settings)  # the Trainer's own range checks (e.g. --train-target-temp)
     return settings
+
+
+def optimizer_hparams_checkpoint(a: argparse.Namespace, run_dir: Path) -> Path | None:
+    """The run's init checkpoint: the sealed generation-0 copy once it exists
+    (the same file every generation), else --init-checkpoint; None for a random init."""
+    gen0 = gen_dir(run_dir, 0)
+    if stage_done(gen0):
+        kind = json.loads((gen0 / "manifest.json").read_text()).get("config", {}).get("kind")
+        return None if kind == "random_init" else gen0 / MODEL_FILE
+    return None if getattr(a, "random_init", False) or not getattr(a, "init_checkpoint", None) \
+        else Path(a.init_checkpoint)
 
 
 def parse_snapshot_updates(spec: str | None, *, flag: str = "--snapshot-updates") -> tuple[int, ...]:
@@ -241,10 +269,13 @@ def do_collect(a: argparse.Namespace, run_dir: Path, g: int) -> None:
                          default=str), flush=True)
         return
     stats = collect_generation(gen_dir=gen_dir(run_dir, g) / "collect", generation=g, checkpoint=ckpt,
-                               train_jsonl=Path(a.openings_dir) / "train.jsonl", settings=collect_settings(a))
+                               train_jsonl=Path(a.openings_dir) / "train.jsonl", settings=collect_settings(a),
+                               pause_markers=tuple(Path(m) for m in (a.pause_marker or ())))
     print(json.dumps({"stage": "collect", "generation": g, **{k: stats[k] for k in (
         "games", "rows", "decisive_rate", "draw_rate", "repeat_rate_within", "repeat_rate_vs_previous",
-        "target_entropy", "games_per_hour", "cuda_graphs", "evaluator_mode")}}, default=str), flush=True)
+        "target_entropy", "games_per_hour", "cuda_graphs", "evaluator_mode", "collect_procs",
+        "paused_seconds", "timing_independent")}},
+                     default=str), flush=True)
 
 
 def do_train(a: argparse.Namespace, run_dir: Path, g: int) -> None:
@@ -298,7 +329,61 @@ RUN_CONFIG_EXEMPT = frozenset({
 ADDED_SINCE_PINNING = {"init_optimizer_state": "fresh",
                        "matrix_optimizer_scope": "default", "adopt_checkpoint_optimizer_hparams": False,
                        "allow_capped_collect_rows": False, "snapshot_updates": None, "collect_from": None,
-                       "accum_steps": 1, "snapshot_rows": None}
+                       "optimizer_hparams_source": "trainer", "matrix_lr_multiplier": None,
+                       "matrix_weight_decay": None, "aux_weight_decay": None, "aurora_pp_iterations": None,
+                       "aurora_pp_beta": None, "aurora_polar_steps": None, "aurora_polar_method": None,
+                       "aurora_polar_dtype": None, "grad_clip": None, "zclip_max_norm": None,
+                       "lr_schedule": "flat",
+                       # Every collect before --collect-procs ran as one process.
+                       "collect_procs": 1, "accum_steps": 1, "snapshot_rows": None}
+
+
+def _pinned_value(path: Path, key: str, legacy: Any) -> Any:
+    """``key`` from a run_config.json, ``legacy`` when the run predates it, None when unpinned."""
+    if not path.is_file():
+        return None
+    return json.loads(path.read_text())["settings"].get(key, legacy)
+
+
+def _collect_manifest_value(source_run_dir: Path, key: str, legacy: Any) -> Any:
+    """``key`` from the earliest sealed collect manifest of a source run without a
+    run_config.json (e.g. a ``retarget`` output), None when it has none."""
+    for manifest in sorted(source_run_dir.glob("gen_*/collect/manifest.json")):
+        return json.loads(manifest.read_text()).get("config", {}).get("settings", {}).get(key, legacy)
+    return None
+
+
+def resolve_collect_shape(a: argparse.Namespace) -> tuple[int, int]:
+    """(``--collect-procs``, ``--concurrency``) as the integers that are pinned and used.
+
+    Explicit values are kept. A flag not given takes, in order: the value the run
+    already pinned (1 process for a run pinned before --collect-procs existed); for
+    an arm, the source run's value (its rows were made with it; from its collect
+    manifest when the source has no run_config, as a retarget output); else the
+    sims-dependent default table ``collect.CUDA_COLLECT_SHAPES`` (CPU: 1 x 64)."""
+    pinned, source = Path(a.run_dir) / RUN_CONFIG, Path(a.collect_from) / RUN_CONFIG if a.collect_from else None
+    default = default_collect_shape(a.device, a.sims)
+    # A defaulted K never exceeds --games (a tiny run would otherwise be refused).
+    default = (min(default[0], max(1, int(a.games))), default[1])
+    out = []
+    for key, given, legacy, fallback in (("collect_procs", a.collect_procs, 1, default[0]),
+                                         ("concurrency", a.concurrency, 64, default[1])):
+        if given is not None:
+            if int(given) < 1:
+                raise SystemExit(f"--{key.replace('_', '-')} must be >= 1, got {given}")
+            out.append(int(given))
+            continue
+        value = _pinned_value(pinned, key, legacy)
+        if value is None and source is not None:
+            value = _pinned_value(source, key, legacy)
+        if value is None and a.collect_from:
+            value = _collect_manifest_value(Path(a.collect_from), key, legacy)
+        out.append(int(fallback if value is None else value))
+    return out[0], out[1]
+
+
+def resolve_collect_procs(a: argparse.Namespace) -> int:
+    return resolve_collect_shape(a)[0]
 
 
 def validate_before_pinning(a: argparse.Namespace, run_dir: Path, stages: set[str]) -> None:
@@ -321,6 +406,14 @@ def validate_before_pinning(a: argparse.Namespace, run_dir: Path, stages: set[st
         validate_settings(collect_settings(a))
     except ValueError as exc:
         raise SystemExit(f"collect settings refused: {exc}") from exc
+    cs = collect_settings(a)
+    if int(settings.accum_steps) > 1 and float(settings.w_policy) > 0 \
+            and float(cs.full_prob) < 1.0 and bool(cs.fast_value_rows):
+        # train_generation would refuse these value-only rows anyway (each micro-batch normalises
+        # policy by its own has_policy count); refuse before the collect is pinned and spent.
+        raise SystemExit(f"--accum-steps {settings.accum_steps} refused with --full-prob {cs.full_prob} "
+                         "--fast-value-rows: fast plies store value-only rows, which accumulation refuses; "
+                         "use --accum-steps 1 or drop --fast-value-rows")
     # Without the split's summary.json and an explicit --eval-opening-plies the
     # opening plies are unknowable, which only an executing `eval` must refuse.
     knowable = a.eval_opening_plies is not None or (Path(a.openings_dir) / "summary.json").is_file()
@@ -524,7 +617,10 @@ def _common(p: argparse.ArgumentParser) -> None:
 
     c = p.add_argument_group("collect")
     c.add_argument("--games", type=int, default=2000)
-    c.add_argument("--concurrency", type=int, default=64, help="concurrent game slots")
+    c.add_argument("--concurrency", type=int, default=None,
+                   help="concurrent game slots PER collect process (default: the run's pinned value, else by "
+                        "--sims from collect.CUDA_COLLECT_SHAPES on CUDA -- 64 at <= 16 sims, 128 above -- "
+                        "and 64 on CPU)")
     c.add_argument("--sims", type=int, default=64,
                    help="simulations per TARGET (full) ply; the arena's budget is --eval-sims, independent")
     c.add_argument("--full-prob", type=float, default=1.0,
@@ -566,6 +662,11 @@ def _common(p: argparse.ArgumentParser) -> None:
     c.add_argument("--eval-max-batch", type=int, default=None,
                    help="CUDA evaluator batch cap (default: the search's leaf-buffer size at this "
                         "--concurrency / --topk; a smaller value is refused -- it would drop leaf evaluations)")
+    c.add_argument("--collect-procs", type=int, default=None, metavar="K",
+                   help="collect processes sharing the device, each playing a disjoint slice of the openings "
+                        "with its own seed (pinned: it sets the RNG streams). Default: the run's pinned value, "
+                        "else by --sims from collect.CUDA_COLLECT_SHAPES on CUDA (8 at <= 16 sims, 3 above) and "
+                        "1 on CPU. Refused, never stepped down, when it would not fit in usable GPU memory")
     c.add_argument("--collect-from", default=None, metavar="SOURCE_RUN_DIR",
                    help="training arm: seal each collect as a verified reference to SOURCE_RUN_DIR's sealed "
                         "collect of the same generation instead of playing games (same gen-0 model, actor, "
@@ -596,6 +697,30 @@ def _common(p: argparse.ArgumentParser) -> None:
     t.add_argument("--matrix-optimizer-scope", default="default", choices=MATRIX_OPTIMIZER_SCOPES,
                    help="Aurora/Muon (and SOAP) only, refused with any other optimizer: which matrices the "
                         "matrix group owns (the SL base used mlp_out)")
+    t.add_argument("--optimizer-hparams-source", default="trainer", choices=OPTIMIZER_HPARAM_SOURCES,
+                   help="where every unset optimizer knob below comes from: 'trainer' (default, unchanged) = the "
+                        "Trainer's constructor defaults; 'init-checkpoint' = the run's init checkpoint's saved "
+                        "Aurora param groups and zclip on/off (refused unless it holds the Trainer's Aurora "
+                        "layout); the resolved values and their source are recorded in the train manifest")
+    t.add_argument("--matrix-lr-multiplier", type=float, default=None,
+                   help="Aurora/Muon: matrix group lr = --lr x this (Trainer default 20)")
+    t.add_argument("--matrix-weight-decay", type=float, default=None, help="Aurora/Muon matrix group (default 1e-4)")
+    t.add_argument("--aux-weight-decay", type=float, default=None,
+                   help="Aurora/Muon AdamW decay group (default 1e-4)")
+    t.add_argument("--aurora-pp-iterations", type=int, default=None, help="Aurora (Trainer default 2; SL base 3)")
+    t.add_argument("--aurora-pp-beta", type=float, default=None, help="Aurora (Trainer default 0.5; SL base 0.25)")
+    t.add_argument("--aurora-polar-steps", type=int, default=None, help="Aurora (Trainer default 12; SL base 8)")
+    t.add_argument("--aurora-polar-method", default=None,
+                   help="Aurora (Trainer default simple; SL base polar_express)")
+    t.add_argument("--aurora-polar-dtype", default=None, help="Aurora (Trainer default auto; SL base fp16)")
+    t.add_argument("--grad-clip", default=None, choices=GRAD_CLIP_MODES,
+                   help="gradient clipping (default none, unchanged; the SL base ran zclip): zclip = the "
+                        "Trainer's adaptive z-score clip with a 25-step warmup")
+    t.add_argument("--zclip-max-norm", type=float, default=None, help="zclip's hard cap (default: none)")
+    t.add_argument("--lr-schedule", default="flat", choices=("flat", "cosine-phase"),
+                   help="flat (default, unchanged): --lr for the whole phase; cosine-phase: one cosine from --lr "
+                        "(after warmup) to --lr-floor over the phase's planned optimizer updates (exact-once, "
+                        "fresh optimizer state; the SL base's run decayed)")
     t.add_argument("--reapply-optimizer-hparams", action="store_true",
                    help="on a restore (--optimizer-state continue, --init-optimizer-state checkpoint): apply the "
                         "requested lr / lr floor and this run's configured param-group hyperparameters onto "
@@ -720,6 +845,8 @@ def cmd_retarget(a: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     a = parser().parse_args(argv)
+    if hasattr(a, "collect_procs"):
+        a.collect_procs, a.concurrency = resolve_collect_shape(a)
     if getattr(a, "threads", 0):
         import torch
 

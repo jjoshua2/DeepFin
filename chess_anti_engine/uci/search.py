@@ -4377,12 +4377,21 @@ class SearchWorker:
             _chunk_t0 = time.monotonic()
             _footprint_before = self._tree_footprint_bytes()
             _visits_before = self._root_visit_snapshot()
+  # The reserve this chunk's early stop is computed with. `batch_ms_hi` decays
+  # with every batch, so the reserve re-read after the chunk can be smaller: a
+  # chunk that stopped inside the launch reserve (possibly before any sim) would
+  # then not count as a time stop and ended the go through the zero-progress
+  # break with no stop reason. The stop check below uses the larger of the two.
+            chunk_reserve_ms = self._walker_stop_reserve_ms(
+                deadline, start_remaining_ms, allowed_root_indices,
+            )
+            chunk_stop = self._walker_chunk_stop(
+                stop_event, deadline, start_remaining_ms, allowed_root_indices,
+                reserve_ms=chunk_reserve_ms,
+            )
             try:
                 last_value, completed = self._run_one_chunk(
-                    chunk, board,
-                    self._walker_chunk_stop(
-                        stop_event, deadline, start_remaining_ms, allowed_root_indices,
-                    ),
+                    chunk, board, chunk_stop,
                     tb_probe, allowed_root_indices,
                     allow_terminal_shortcuts=allow_terminal_shortcuts,
                     witness_stop_fn=witness_stop,
@@ -4485,7 +4494,7 @@ class SearchWorker:
             )
   # A walker chunk launched with less than one walker batch left would stop at
   # once (`_walker_chunk_stop`): stop here instead of spinning empty chunks.
-            time_margin_ms = max(time_margin_ms, self._walker_stop_reserve_ms(
+            time_margin_ms = max(time_margin_ms, chunk_reserve_ms, self._walker_stop_reserve_ms(
                 deadline, start_remaining_ms, allowed_root_indices,
             ))
             stop_reason = self._should_stop_search(
@@ -4495,6 +4504,14 @@ class SearchWorker:
                 time_margin_ms=time_margin_ms,
                 tree_growth_bytes=self._tree_footprint_bytes() - _footprint_before,
             )
+  # A walker chunk whose reserve stop has fired is a time stop, whatever the
+  # re-check above says: `remaining_ms()` floors to whole ms, so a chunk that
+  # stopped at its reserve with no batch in flight re-reads remaining == reserve
+  # and `rem < reserve` is false. The next chunk then launched already stopped,
+  # completed 0 sims, and a depth/node-bounded go ended as `no_progress`.
+            if (stop_reason not in ("external", "time_margin")
+                    and isinstance(chunk_stop, _EarlyStopEvent) and chunk_stop.reserve_reached()):
+                stop_reason = "time_margin"
             if stop_reason is None and mate_moves is not None:
                 if self._proven_mate_within(board, mate_moves, allowed_root_indices) is not None:
                     stop_reason = "mate"
@@ -4555,6 +4572,7 @@ class SearchWorker:
   # briefly on the stop event instead of spinning a core.
             if int(completed) == 0 and not stop_event.is_set():
                 if max_nodes is not None or max_depth is not None:
+                    self.last_stop_reason = "no_progress"
                     break
                 stop_event.wait(_IDLE_CHUNK_WAIT_S)
 
@@ -4626,12 +4644,13 @@ class SearchWorker:
     def _walker_chunk_stop(
         self, stop_event: threading.Event, deadline: Deadline,
         start_remaining_ms: int | None, allowed_root_indices: set[int] | None,
+        *, reserve_ms: float | None = None,
     ) -> threading.Event:
         """The stop event a walker-pool chunk polls: ``stop_event``, or also set
         once the deadline is within `_walker_stop_reserve_ms` (one walker
         batch), so batches in flight at the stop finish by the deadline.
         ``stop_event`` itself off the walker path or without a reserve."""
-        reserve = self._walker_stop_reserve_ms(
+        reserve = reserve_ms if reserve_ms is not None else self._walker_stop_reserve_ms(
             deadline, start_remaining_ms, allowed_root_indices,
         )
         remaining = deadline.remaining_ms()
@@ -5520,6 +5539,11 @@ class _EarlyStopEvent(threading.Event):
     def set(self) -> None:
         super().set()
         self._parent.set()
+
+    def reserve_reached(self) -> bool:
+        """True once ``stop_at`` has passed: the chunk was (or is being)
+        stopped by the batch reserve, not by its own budget."""
+        return time.monotonic() >= self._stop_at
 
 
 def _stop_reserve_ms(deadline: Deadline) -> float:
