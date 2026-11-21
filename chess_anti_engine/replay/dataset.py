@@ -249,6 +249,9 @@ def collate_arrays(arrs: dict[str, np.ndarray], *, device: str) -> dict[str, tor
         ("moves_left", np.float32, torch.float32),
         ("has_moves_left", np.float32, torch.float32),
         ("is_network_turn", np.bool_, torch.bool),
+        # simple-RL `value_rows_per_game`: the per-row WDL weight (m / f) that
+        # compute_loss reads; absent everywhere else, so the payload is unchanged.
+        ("value_row_weight", np.float32, torch.float32),
         ("is_selfplay", np.bool_, torch.bool),
         ("has_is_selfplay", np.float32, torch.float32),
         ("categorical_t", np.float32, torch.float32, "categorical_target"),
