@@ -39,16 +39,20 @@ words:
 
 **The plan, in order:**
 1. **Stage 0** (done): what the banked matches and diagnostics already say.
-2. **Stage 0b** (CPU plus about 2 GPU-h, no training): validate a ruler, price the
-   targets on it, and run the registered tests T1 and T2 and the true headroom
-   match.
-3. **Stage 1** (one generation): a target test at 64 sims. One SL-base collection;
+2. **Stage 0b** (CPU plus about 2 GPU-h, no training): validate a ruler (primary:
+   BT4 and Ceres searched at 64 and 256 nodes), price the targets on it, and run
+   the registered tests T1 and T2 and the true headroom match.
+3. **Stage 0c** (GPU, no training): the node-odds ladder, with the SL base against
+   BT4 at fixed nodes. It gives the baseline gap and the owner's milestone: our
+   256-sim search matches BT4 at 64 nodes.
+4. **Stage 1** (one generation): a target test at 64 sims. One SL-base collection;
    three policy-only arms that differ only in the policy target, plus a value-first
    arm; each judged by a registered seat-balanced 64-sim match. This is also the first possible positive
    control for any offline screen.
-4. **Stage 1c** (after Stage 1): learner recipes, screened offline only on a ruler
+5. **Stage 1c** (after Stage 1): learner recipes, screened offline only on a ruler
    that Stage 0b validated, and search-depth arms at matched GPU time.
-5. **Stage 2**: the multi-generation run, with a gated calibration invariant.
+6. **Stage 2**: the multi-generation run, with a gated calibration invariant and
+   two anchors (the SL base, and BT4 at fixed nodes).
 
 Every number that is still a guess is listed under
 [What is still a guess](#what-is-still-a-guess).
@@ -273,24 +277,34 @@ the candidate targets score on it?
 - **A2:** a fresh audit set of about 3,000 rows from SL-base games started from the
   `a2` block (EVAL lines 800–1,799), which no training data or match uses.
 
-**Labels:** deep-SF labels on A1 and A2. The diagnosis is starting 8M-node labels on
-the audit rows (interim 6); their bank is cited here when it lands. Production Syzygy pair for both engines.
+**Labels.**
+- **Primary rulers (owner, 2026-11-20): BT4 and Ceres searched at 64 and 256
+  nodes** on A1 and A2: the root's most-visited move and visit distribution. The
+  diagnosis is producing these; their bank is cited here when it lands. In the
+  owner's words: "I think using bt4 or ceres can work instead of a deep stockfish?
+  And you could even do those at like 64 nodes or 256 nodes."
+- **Cross-check column:** deep-SF labels (8M nodes; the diagnosis is starting them,
+  interim 6), CPU only, with the production Syzygy pair.
+- The raw BT4 and C3 policies already banked (`rl-audit/external_refs.npz`) stay as
+  the 1-node column.
 
 **Scored on A1 and A2:**
 - **Targets:** stored, R64, R64 no-rescale, R256, R16, R32, stored at train temp
   1.5.
 - **Nets:** SL base; P1 and F12 c01–c12; Q50 c12; the headswap hybrids.
-- **By:** deep-SF regret; top-1 vs deep SF, BT4, C3 and R800; calibration gap
-  (mean p_top1 − top-1 agreement); entropy.
+- **By:** top-1 vs BT4 and Ceres at 1, 64 and 256 nodes; top-1 vs R800; deep-SF
+  regret and top-1 (cross-check); calibration gap (mean p_top1 − top-1 agreement);
+  entropy.
 - **The disagreement table:** for each pair of rulers, the share of rows where they
   pick different moves, and the rank order each gives the nets.
 
-**Ruler validation rule (pre-committed).** A ruler is *validated* when two things
-hold. First, it is not the training target. Second, on A1 ∪ A2 it ranks the SL base
+**Ruler validation rule (pre-committed).** Each ruler is tested, the primary
+rulers first. A ruler is *validated* when two things hold. First, it is not the training target. Second, on A1 ∪ A2 it ranks the SL base
 above P1 c12, F12 c12 and Q50 c12, and Q50 c12 last of the four. A pair whose
 difference is within one SE (game-clustered) counts as a tie, not an error. If no
 ruler is validated, Stage 1 still runs, because it is judged by matches, and Stage
-1c's offline screen does not run.
+1c's offline screen does not run. If several are validated, the searched BT4 ruler
+at 256 nodes is used, then at 64, then Ceres, then the rest.
 
 **The registered matches in this stage (GPU, one arena at a time, about 2 h):**
 - **T1 and T2**, exactly as `search-compose/PREREG.md` registers them (seed
@@ -329,6 +343,105 @@ sha256:
 | `rl-audit/external_refs.npz` | `3199a6acd82a6e29fbafb4ea4e26d27b161bc821eec2002b737a69e7ce642699` |
 | `rl-audit/positions.npz` | `0d335d6487cd702a7e3b1d950fe10ca754a66794e6d42efdc9980f3d357df737` |
 | `rl-audit/search_bank.npz` | `ee04cd33264b9917a7561b387d949a1705e467ea6c9d80c036d86d12fe8302e7` |
+
+## Stage 0c: node-odds ladder against BT4 (the baseline gap, in concrete terms)
+
+**Why.** This is the owner's headline yardstick (2026-11-20): "even if we get as good
+as them matching one 1 node for 1 node, it will already be huge since our net is
+smaller. I expect even if our 256 node search matched their 64 it would be amazing
+for our elo and show that we can be competitive in tcec tournaments with all the
+top engines etc".
+
+**The milestones, recorded here:**
+- **The milestone:** our 256-sim search matches BT4 at 64 nodes.
+- **The stretch:** node for node, at the same node count.
+
+**The ladder.** The SL base at 64, 256 and 800 sims plays BT4-it332 at 1, 64 and
+256 nodes: nine cells. The SL base goes first, so the gap is known before any
+training. Stage 2 then repeats the milestone cell at its readouts.
+
+**What exists, checked here:**
+- **An lc0 that runs BT4 on the GPU:**
+  `~/chess-artifacts/operations/rl-week-one-20261112-v1/external-Lc0-CUDA-build-runtime-v1/build/lc0`.
+  It is v0.32.1+git.dirty, and `--backend` offers `cuda-fp16`, `cuda-auto` and
+  `cuda`. Its BT4 GPU operability bank (`external-Lc0-BT4-GPU-operability-results-v3`)
+  passed its 23 predicate controls.
+- **The other two lc0 builds are CPU-only:** `~/local_engines/lc0/lc0` (v0.32.1)
+  and `~/local_engines/lc0_033/build/lc0` (v0.33.0-dev+git.d8ce482). Both offer the
+  `eigen` backend but no CUDA one.
+- **Weights:** `data/lc0/BT4-it332.pb.gz`, sha256
+  `e6ada9d6c4a769bfab3aa0848d82caeb809aa45f83e6c605fc58a31d21bdd618`.
+- **No banked match against an lc0 engine can be reused.** The one joint SL-base vs
+  Lc0 GPU match (`external-A39-Lc0-joint-timed-engineering-results-v1`) failed after
+  1 game. Lc0 died with `std::system_error: Resource temporarily unavailable` at
+  `Threads=8` (`external-A39-Lc0-joint-failure-thread-source-note-v1.md`). The
+  "champion vs lc0-LAST2x −619" anchors in project notes are matches between our own
+  nets, one of them trained on lc0 data. They are not matches against the lc0
+  engine.
+
+**Settings for both sides:**
+- **Harness:** `scripts/match_vs_uci.py`; cutechess is broken here. Each opening is
+  played twice with colours swapped, so every cell is seat-balanced by construction,
+  and the script's CI is over pairs.
+- **Our engine:**
+  - `python -m chess_anti_engine.uci --checkpoint <net>`, with the arena's
+    training-shape search flags (`--topk 16 --c-scale 0.1 --c-visit 50`, and the
+    root flags from the arena row's `search_candidate.gumbel`);
+  - `go nodes S`, where our node count is simulations;
+  - it plays the halving survivor, so it is deterministic at temperature 0.
+- **BT4:**
+  - `--weights=<BT4> --backend=cuda-fp16`, `go nodes N`;
+  - `SmartPruningFactor=0`, so it spends the whole budget;
+  - `Threads=2`, below the 8 that crashed;
+  - lc0's UCI default temperature is 0, so it is deterministic up to
+    multi-threaded search order.
+- **Syzygy:** the production pair for both sides (`SyzygyPath` on each), plus
+  `--syzygy-adjudicate-path`.
+- **Openings:** the 200-line `anchor` block, with move history. 400 games per cell.
+
+**How lc0 counts nodes, versus our sims: unmeasured.** Our `nodes` is the
+simulations run this move. lc0's `go nodes N` limit may count visits already in
+the subtree reused from the previous move. If it does, BT4's realised new search
+per move is below N. Pre-launch check P8 logs both engines' reported `nodes` per
+move (`--move-log-out`) over 20 games per side, and the record states the realised
+per-move new-visit counts beside each cell. `--enforce-nodes-*` (an external stop
+at the reported count) is used only for an engine that ignores `go nodes`.
+
+**One cell, exact command:**
+
+```bash
+TB="$HOME/projects/chess/data/syzygy_3-4-5:$HOME/projects/chess/data/syzygy_6"
+LC0=~/chess-artifacts/operations/rl-week-one-20261112-v1/external-Lc0-CUDA-build-runtime-v1/build/lc0
+BT4=data/lc0/BT4-it332.pb.gz          # sha256 e6ada9d6…bdd618, checked before each cell
+ENG_A="python -m chess_anti_engine.uci --checkpoint <net> --device cuda --topk 16 --c-scale 0.1 --c-visit 50 <root flags>"
+ENG_B="$LC0 --weights=$BT4 --backend=cuda-fp16"
+PYTHONPATH=. python -u scripts/match_vs_uci.py --engine-a "$ENG_A" --engine-b "$ENG_B" \
+  --label-a ours_s$S --label-b bt4_n$N --games 400 --nodes-a $S --nodes-b $N \
+  --openings $R/openings/blocks/anchor.fen --max-plies 300 \
+  --option-a SyzygyPath=$TB --option-b SyzygyPath=$TB \
+  --option-b Threads=2 --option-b SmartPruningFactor=0 \
+  --syzygy-adjudicate-path $TB \
+  --games-out $R/ladder/ours_s${S}_bt4_n$N.games.jsonl --pgn-out $R/ladder/ours_s${S}_bt4_n$N.pgn \
+  --move-log-out $R/ladder/ours_s${S}_bt4_n$N.moves.csv
+```
+
+UCI option names are checked against each engine's `uci` listing before the first
+cell (P8).
+
+**Size and power.** This is a measurement, not a judged test. Each cell reports the
+score with its pair-clustered 95% CI, mapped to Elo.
+- At 400 games (200 pairs), with the per-pair SD of about 0.26 from our 64-sim
+  self-matches (unmeasured against BT4), the score SE is about 0.018.
+- That is about ±25 Elo (95%) near a 50% score and about ±33 at 25% or 75%. It is
+  wider in Elo towards the extremes, where a cell far from 50% mostly says which
+  side of the crossing it is on.
+- **Milestone reading:** the milestone cell's 95% lower bound on score ≥ 0.50. A
+  point estimate ≥ 0.50 with the lower bound below 0.50 is reported as "level,
+  unconfirmed".
+
+**Compute: unmeasured.** It needs BT4's GPU nodes per second at these budgets and
+our 800-sim UCI move time. A 20-game smoke per engine (P8) measures both before the
+ladder runs. One arena at a time; never concurrent with another GPU job.
 
 ## Stage 1: one-generation target test at 64 sims
 
@@ -547,7 +660,7 @@ collection draws from it.
 | `s1_low` | 600–799 | Stage 1 temperature-0 reads |
 | `a2` | 800–1,799 | game starts for Stage 0b's A2 audit set (SL-base self-play, about 3 rows per game) |
 | `s1_confirm` | 1,800–2,299 | Stage 1 unread confirmations |
-| `anchor` | 2,300–2,499 | Stockfish anchor |
+| `anchor` | 2,300–2,499 | BT4 node-odds ladder (Stage 0c) and the Stage 2 BT4 anchor |
 | `readout_base` | 2,500–2,999 | every Stage 2 R-base readout |
 | `confirm` | 3,000–3,499 | Stage 2 deliverable confirmation |
 | `confirm2` | 3,500–3,999 | a second deliverable confirmation, if the first fails |
@@ -555,7 +668,7 @@ collection draws from it.
 - A seat-balanced match of G games on a block of G/4 lines plays every line once
   per orientation (`--openings-fen`, `--games G/2` per run). The 200-line
   blocks play 800.
-- Blocks shared by several matches (`s1_match`, `readout_base`) make those matches
+- Blocks shared by several matches (`s1_match`, `readout_base`, `anchor`) make those matches
   correlated with each other. Each match's own read is unaffected.
 - Cutting code: loop-exp1's, run verbatim on the banked split with other
   boundaries. Each block loaded in the arena's FEN loader as unique rows, all with
@@ -615,19 +728,25 @@ interim). Every generation measures the newest net on A1 ∪ A2:
   last readout is at least 7/3 × that readout's measured arena time, which keeps
   the arena share ≤ 30%. At 0.4 h per generation and 1.1–1.6 h per 2,000 games, that
   is about every 6–9 generations.
-- **The Stockfish anchor,** at the first readout and at the deliverable:
-  - `scripts/match_vs_uci.py`, 800 games on `anchor` (each line twice per colour);
-  - our engine is `python -m chess_anti_engine.uci --checkpoint <net>`, with its
-    search flags set to the arena's training shape (`--topk 16 --c-scale 0.1
-    --c-visit 50`, the arena row's `search_candidate.gumbel` values for the root
-    flags), at `--nodes-a 64 --enforce-nodes-a`;
-  - the production Syzygy pair for both engines;
-  - Stockfish's node count is fixed where the SL base scores 40–60%.
-  
-  Pre-launch check P6 compares the UCI engine's chosen move with the arena search's
-  on fixed positions. If they cannot be matched, the anchor is reported as a
-  different agent, and the transitivity check (anchor difference vs R-base) is
-  dropped.
+- **The second anchor: BT4 at fixed nodes.** At every readout, the newest net plays
+  the milestone cell (our 256 sims against BT4 at 64 nodes), using Stage 0c's command
+  and settings, 400 games on `anchor`. At the deliverable it plays the full nine-cell
+  ladder. The anchor is reported, not judged; R-base judges.
+- **Why BT4, and why it replaces the Stockfish anchor:**
+  - It is the owner's yardstick and names his milestone.
+  - Stage 0c measures the SL base on it, so the gap is known in advance.
+  - As an lc0-family engine it is closer to ours in style, which should make it
+    more sensitive to policy and value gains.
+  - **The single-anchor trap.** Anchored Elo depended on the anchor by up to 82 Elo
+    in one recorded design (experiment ledger). So two unlike anchors stay: the SL
+    base (our own family, via R-base) and BT4 at fixed nodes. A gain claimed on one
+    and absent on the other is reported as anchor-dependent.
+  - The Stockfish anchor is dropped. Matching its settings to our agent was itself
+    an open check, and a third anchor would raise the arena share past 30% with
+    nothing to decide.
+- **Transitivity check:** the change in the milestone cell's score against the
+  change in R-base, both since Stage 0c, agree within the combined CI. A
+  disagreement is recorded, not resolved.
 
 ### Stop rule (pre-committed, simulated)
 
@@ -694,7 +813,7 @@ at 95%.
 - **A generation:** about 0.4 h at 1,040 games (collect 0.3 h, training minutes,
   gates and the calibration read minutes), plus the retarget step for arm (b).
 - **A readout:** 1.1–1.6 h of 64-sim games, plus the temperature-0 reads. The
-  Stockfish anchor's rate is unmeasured.
+  BT4 anchor's rate (one cell, 400 games) is unmeasured until P8.
 
 ### What success means at one week
 
@@ -742,7 +861,8 @@ So offline scores only filter, and only after a ruler is validated; only registe
 | Calibration tolerance ±0.02 | Stage 1c guard, Stage 2 invariant | Stage 1's realised gaps |
 | Arena share ≤ 30% (7/3 factor) | Stage 2 schedule | Stage 2's realised times |
 | Stop-rule constants (lag 3, two consecutive) and the simulation's SE 6.06 | Stage 2 | Stage 2's realised clustered SE |
-| 800 Stockfish games; the 40–60% node band | anchor | the first anchor read |
+| 400 games per ladder cell; the per-pair SD 0.26 against BT4 | Stage 0c, Stage 2 anchor | Stage 0c's realised CIs |
+| lc0 node counting vs our sims | Stage 0c, Stage 2 anchor | P8's per-move node logs |
 | G-C3 ≥ +0.50 | Stage 2 gate | loop-exp1's primary value; revisited if a clean collect fails it |
 | Holdout 0.05, probe 2,048 | Stage 1, 2 | not tuned |
 | +50 Elo at one week and the "halved" projection | success line | Stage 1's projection |
@@ -765,7 +885,16 @@ So offline scores only filter, and only after a ruler is validated; only registe
 - **P5.** The retarget step's PR has merged, with its rebuild-equals-shard test,
   and was run once on a small collect.
 - **P6.** The UCI engine's settings match the arena's training-shape search on
-  fixed positions (Stockfish anchor).
+  fixed positions, because the BT4 ladder plays our net through the UCI path. If
+  they cannot be matched, the ladder is reported as measuring the UCI agent.
+- **P8.** BT4 smoke, before Stage 0c:
+  - the lc0 CUDA build loads BT4 (sha256 checked) on the GPU at `Threads=2`;
+  - 20 games per side complete without an engine death;
+  - UCI option names are checked against each `uci` listing;
+  - per-move reported `nodes` are logged for both engines, which settles how lc0
+    counts nodes against our sims;
+  - BT4 nodes per second and our 800-sim move time are measured, which prices the
+    ladder.
 - **P7.** Stage 0b's scorer is on main, or the bank scripts are used at the sha256
   listed above.
 
