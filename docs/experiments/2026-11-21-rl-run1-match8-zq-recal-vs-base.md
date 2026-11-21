@@ -13,7 +13,7 @@ Match 7 is registered in [the follow-up record](2026-11-21-rl-run1-match5-p0-sin
 It played Zq + recal against Zq: 6,400 games, seed 2026112171, PIN `0c795fb7a`. Its result
 (`rl-run1-followup/arenas/zq_recal_h2h/pool.json`):
 - **+21.4 Elo [+15.1, +27.6]**;
-- measured clustered SE 3.17 Elo, 1,600 clusters;
+- measured clustered SE 3.18 Elo (the value the CI implies), 1,600 clusters;
 - as candidate +25.7, as reference +17.1;
 - 0 unresolved games; the smoke and both seat readbacks passed.
 
@@ -32,10 +32,12 @@ registration.
     forward, with no value-from net.
 - **Recalibration:** (T, b) = **(0.7036189636786957, −0.22711530923843357)**, the banked
   `pilot-value-diagnosis/out/recal_Zq.json` field `cli`. It is the same fit match 7 used.
-  - **No refit.** That fit was made to the base's WDL on the pilot's hold-out rows (416
-    games) before any match was played. A refit after match 7 would be chosen with match 7's
-    result in view, which makes it a second look. Match 7 tested this exact (T, b), so match 8
-    must use it too.
+  - **When it was made.** `recal_Zq.json` was written at 13:09:31. That is AFTER the pilot gate
+    (finished 11:10:45) and the graft looks (finished by 13:01:32), and BEFORE match 7 (started
+    15:52:52).
+  - **No refit.** The fit's target is the base's WDL on the pilot's hold-out rows (416 games),
+    not any game outcome, and it precedes match 7. A refit now would be a second fit made after
+    match 7 was seen. Match 7 tested this exact (T, b), so match 8 must use it too.
 - **Games:** 6,400 (3,200 per run, 1,600 openings). **Seed 2026112191**, which appears in no
   pilot, follow-up or anchor-screen match nor anywhere under `docs/`.
 - **Pin and launcher.**
