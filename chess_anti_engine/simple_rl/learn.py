@@ -73,6 +73,10 @@ MODEL_FILE = "model.pt"
 # by resolve_optimizer_hparams and recorded.
 OPTIMIZER_HPARAM_SOURCES = ("trainer", "init-checkpoint")
 GRAD_CLIP_MODES = ("none", "zclip")
+# "flat": the peak lr for the whole phase (historical: a cosine whose period is
+# 1e9 updates). "cosine-phase": one cosine from the peak lr (after warmup) down
+# to lr_floor over the phase's planned optimizer updates, restarted each phase.
+LR_SCHEDULES = ("flat", "cosine-phase")
 # The Aurora knobs the driver passes to the Trainer when set. Each is read by
 # the Aurora optimizer only (matrix_lr_multiplier / the weight decays by the
 # Aurora and Muon splits); validate() refuses one that would be ignored.
@@ -179,6 +183,7 @@ class TrainSettings:
     # z-score clip (25-step EMA warmup), with an optional hard cap.
     grad_clip: str | None = None
     zclip_max_norm: float | None = None
+    lr_schedule: str = "flat"
     # What resolve_optimizer_hparams filled in, and from where (recorded).
     optimizer_hparams_resolved: dict[str, Any] | None = None
 
@@ -227,6 +232,17 @@ class TrainSettings:
         if unread:
             raise ValueError(f"{unread} are read only by the Aurora split (matrix knobs also by Muon); with "
                              f"optimizer {self.optimizer!r} they would be ignored")
+        if self.lr_schedule not in LR_SCHEDULES:
+            raise ValueError(f"lr_schedule must be one of {LR_SCHEDULES}, got {self.lr_schedule!r}")
+        if self.lr_schedule == "cosine-phase":
+            if self.sample_with_replacement:
+                raise ValueError("lr_schedule cosine-phase needs the exact-once schedule's planned updates")
+            if self.optimizer_state == "continue":
+                raise ValueError("lr_schedule cosine-phase restarts each phase's cosine from the Trainer's step, "
+                                 "which optimizer_state continue carries across phases; use fresh state")
+            if self.lr_floor is None or not float(self.lr_floor) < float(self.lr):
+                raise ValueError("lr_schedule cosine-phase decays to lr_floor; give an lr_floor below lr (without "
+                                 "one the schedule would be flat while recorded as a decay)")
         if self.grad_clip is not None and self.grad_clip not in GRAD_CLIP_MODES:
             raise ValueError(f"grad_clip must be one of {GRAD_CLIP_MODES}, got {self.grad_clip!r}")
         if self.zclip_max_norm is not None and self.realised_grad_clip() != "zclip":
@@ -706,7 +722,16 @@ def attach_anchor(trainer: Any, anchor: ReferenceAnchor) -> None:
     trainer._frozen_policy_anchor = anchor
 
 
-def trainer_kwargs(settings: TrainSettings) -> dict[str, Any]:
+def schedule_period(settings: TrainSettings, phase_updates: int | None) -> int:
+    """CosineAnnealingWarmRestarts T_0 for the requested schedule."""
+    if settings.lr_schedule == "flat":
+        return 10**9
+    if phase_updates is None:
+        raise ValueError("lr_schedule cosine-phase needs the phase's planned updates")
+    return max(1, int(phase_updates) - int(settings.warmup_steps))
+
+
+def trainer_kwargs(settings: TrainSettings, *, phase_updates: int | None = None) -> dict[str, Any]:
     from chess_anti_engine.train.losses import policy_target_temp_active
 
     policy_target_temp_active(settings.policy_target_temp)  # range check, raises on a typo
@@ -734,7 +759,9 @@ def trainer_kwargs(settings: TrainSettings) -> dict[str, Any]:
         "device": settings.device, "use_amp": settings.use_amp,
         "lr": settings.lr, "lr_eta_min": floor, "warmup_steps": settings.warmup_steps,
         "warmup_lr_start": settings.warmup_start, "lr_schedule": "cosine",
-        "lr_T0": 10**9, "lr_T_mult": 1, "mirror_prob": settings.mirror_prob,
+        "lr_T0": (schedule_period(settings, phase_updates)
+                  if settings.lr_schedule == "flat" or phase_updates is not None else 10**9),
+        "lr_T_mult": 1, "mirror_prob": settings.mirror_prob,
     }
 
 
@@ -831,6 +858,10 @@ def realised_optimizer(trainer: Any) -> dict[str, Any]:
     out["param_group_lr"] = [float(g["lr"]) for g in trainer.opt.param_groups]
     out["optimizer_class"] = type(trainer.opt).__name__
     out["param_group_table"] = param_group_table(trainer)
+    sched = trainer._scheduler
+    out["lr_schedule"] = {"class": type(sched).__name__, "T_0": getattr(sched, "T_0", None),
+                          "eta_min": getattr(sched, "eta_min", None),
+                          "warmup_steps": int(getattr(trainer, "_warmup_steps", 0))}
     out["grad_clip"] = {"mode": str(trainer.grad_clip_mode),
                         "zclip_max_norm": getattr(trainer.zclip, "max_grad_norm", None),
                         "zclip_warmup_steps": int(getattr(trainer.zclip, "warmup_steps", 0))}
@@ -1064,12 +1095,17 @@ def init_optimizer_from_checkpoint(trainer: Any, checkpoint: Path, settings: Tra
                                        "checkpoint_last_epoch": sched.get("last_epoch") if isinstance(sched, dict) else None}}
 
 
-def build_trainer(model_config: Any, settings: TrainSettings, *, log_dir: Path | None) -> Any:
+def build_trainer(model_config: Any, settings: TrainSettings, *, log_dir: Path | None,
+                  phase_updates: int | None = None) -> Any:
+    if settings.lr_schedule != "flat" and phase_updates is None:
+        # trainer_kwargs alone (the driver's range check) tolerates it; a real Trainer must not run flat
+        # while the settings record a decay.
+        raise ValueError(f"lr_schedule {settings.lr_schedule} needs phase_updates to build a Trainer")
     from chess_anti_engine.model import build_model
     from chess_anti_engine.train import Trainer
 
     return Trainer(build_model(model_config), model_config=model_config, log_dir=log_dir,
-                   **trainer_kwargs(settings))
+                   **trainer_kwargs(settings, phase_updates=phase_updates))
 
 
 def load_arch_config(checkpoint: Path) -> tuple[dict[str, Any], Any]:
@@ -1340,7 +1376,11 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
     if settings.optimizer_state not in ("fresh", "continue"):
         raise ValueError("optimizer_state must be fresh or continue")
 
-    trainer = build_trainer(model_config, settings, log_dir=None)
+    if settings.lr_schedule != "flat" and planned is None:
+        raise ValueError(f"generation {generation}: lr_schedule {settings.lr_schedule} needs the phase's planned "
+                         "updates, and a phase collect is not sealed")
+    trainer = build_trainer(model_config, settings, log_dir=None,
+                            phase_updates=planned if settings.lr_schedule != "flat" else None)
     continued = settings.optimizer_state == "continue" and prev_trainer_checkpoint is not None
     optimizer_check: dict[str, Any] | None = None
     init_optimizer: dict[str, Any] | None = None

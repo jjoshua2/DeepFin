@@ -183,6 +183,7 @@ def train_settings(a: argparse.Namespace, run_dir: Path) -> TrainSettings:
         aurora_pp_iterations=a.aurora_pp_iterations, aurora_pp_beta=a.aurora_pp_beta,
         aurora_polar_steps=a.aurora_polar_steps, aurora_polar_method=a.aurora_polar_method,
         aurora_polar_dtype=a.aurora_polar_dtype, grad_clip=a.grad_clip, zclip_max_norm=a.zclip_max_norm,
+        lr_schedule=a.lr_schedule,
     )
     settings.validate()
     if settings.optimizer_hparams_source != "trainer":
@@ -320,7 +321,8 @@ ADDED_SINCE_PINNING = {"init_optimizer_state": "fresh",
                        "optimizer_hparams_source": "trainer", "matrix_lr_multiplier": None,
                        "matrix_weight_decay": None, "aux_weight_decay": None, "aurora_pp_iterations": None,
                        "aurora_pp_beta": None, "aurora_polar_steps": None, "aurora_polar_method": None,
-                       "aurora_polar_dtype": None, "grad_clip": None, "zclip_max_norm": None}
+                       "aurora_polar_dtype": None, "grad_clip": None, "zclip_max_norm": None,
+                       "lr_schedule": "flat"}
 
 
 def validate_before_pinning(a: argparse.Namespace, run_dir: Path, stages: set[str]) -> None:
@@ -637,6 +639,10 @@ def _common(p: argparse.ArgumentParser) -> None:
                    help="gradient clipping (default none, unchanged; the SL base ran zclip): zclip = the "
                         "Trainer's adaptive z-score clip with a 25-step warmup")
     t.add_argument("--zclip-max-norm", type=float, default=None, help="zclip's hard cap (default: none)")
+    t.add_argument("--lr-schedule", default="flat", choices=("flat", "cosine-phase"),
+                   help="flat (default, unchanged): --lr for the whole phase; cosine-phase: one cosine from --lr "
+                        "(after warmup) to --lr-floor over the phase's planned optimizer updates (exact-once, "
+                        "fresh optimizer state; the SL base's run decayed)")
     t.add_argument("--reapply-optimizer-hparams", action="store_true",
                    help="on a restore (--optimizer-state continue, --init-optimizer-state checkpoint): apply the "
                         "requested lr / lr floor and this run's configured param-group hyperparameters onto "

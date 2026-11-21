@@ -158,3 +158,60 @@ def test_driver_records_the_realised_table_equal_to_the_init_checkpoint(
     resolved = manifest["config"]["settings"]["optimizer_hparams_resolved"]
     assert resolved["source"].endswith("gen_0000/model.pt")
     assert "grad_clip" in resolved["filled"]
+
+
+def _lrs(settings: TrainSettings, phase_updates: int | None, steps: int) -> list[float]:
+    """The matrix-free AdamW group's lr the optimizer applies at each step (pre-hook)."""
+    from tests.test_simple_rl_learn import _scheduled
+
+    torch.manual_seed(0)
+    trainer = build_trainer(tiny_model_config(), settings, log_dir=None, phase_updates=phase_updates)
+    seen: list[float] = []
+    trainer.opt.register_step_pre_hook(lambda o, _a, _k: seen.append(float(o.param_groups[-1]["lr"])))
+    trainer.train_steps(_scheduled(4 * steps, [np.arange(4 * i, 4 * i + 4) for i in range(steps)]),
+                        batch_size=4, steps=steps)
+    return seen
+
+
+def test_cosine_phase_decays_from_lr_to_the_floor_over_the_phase_and_flat_stays_flat() -> None:
+    import math
+
+    n, peak, floor = 10, 1e-3, 1e-4
+    cos = _lrs(TrainSettings(device="cpu", mirror_prob=0.0, lr=peak, lr_floor=floor, lr_schedule="cosine-phase"),
+               n, n)
+    # The Trainer steps its scheduler after each update, from the update count, so
+    # updates 0 and 1 both run at the peak and update k >= 1 at position k - 1.
+    want = [floor + (peak - floor) * (1 + math.cos(math.pi * max(0, k - 1) / n)) / 2 for k in range(n)]
+    np.testing.assert_allclose(cos, want, rtol=1e-6)
+    flat = _lrs(TrainSettings(device="cpu", mirror_prob=0.0, lr=peak, lr_floor=floor), None, n)
+    np.testing.assert_allclose(flat, [peak] * n, rtol=1e-6)
+
+
+@pytest.mark.parametrize(("kwargs", "match"), [
+    ({"lr_schedule": "cosine-phase"}, "give an lr_floor below lr"),
+    ({"lr_schedule": "cosine-phase", "lr_floor": 1e-6, "optimizer_state": "continue"}, "use fresh state"),
+    ({"lr_schedule": "cosine-phase", "lr_floor": 1e-6, "sample_with_replacement": True}, "exact-once"),
+    ({"lr_schedule": "linear"}, "lr_schedule must be one of"),
+])
+def test_a_schedule_that_could_not_take_effect_is_refused(kwargs: dict[str, Any], match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        TrainSettings(device="cpu", **kwargs).validate()
+
+
+def test_train_generation_realises_the_cosine_over_its_planned_updates(tmp_path: Path) -> None:
+    from chess_anti_engine.simple_rl.learn import planned_phase_updates, train_generation
+    from tests.simple_rl_helpers import save_tiny_checkpoint
+    from tests.test_simple_rl_learn import _write_generation
+
+    run = tmp_path / "run"
+    (run / "gen_0000").mkdir(parents=True)
+    save_tiny_checkpoint(run / "gen_0000" / "model.pt")
+    _write_generation(run, 1, 40)
+    settings = TrainSettings(device="cpu", batch_size=8, holdout_frac=0.0, seed=1, lr=1e-3, lr_floor=1e-4,
+                             lr_schedule="cosine-phase")
+    planned = planned_phase_updates(run, 1, settings)
+    summary = train_generation(run_dir=run, generation=1, init_checkpoint=run / "gen_0000" / "model.pt",
+                               prev_trainer_checkpoint=None, settings=settings)
+    sched = summary["realised_optimizer"]["lr_schedule"]
+    assert sched["T_0"] == planned
+    assert sched["eta_min"] == pytest.approx(1e-4)
