@@ -10,6 +10,7 @@ Covers:
 """
 from __future__ import annotations
 
+import re
 import threading
 from typing import Any
 
@@ -27,6 +28,7 @@ from chess_anti_engine.uci.multi_gpu_pucv_pool import (
     MultiGpuPucvConfig,
     MultiGpuPucvPool,
 )
+from chess_anti_engine.uci import protocol
 from chess_anti_engine.uci.search import SearchWorker, _pucv_stats_string
 from chess_anti_engine.uci.time_manager import Deadline
 
@@ -747,4 +749,78 @@ def test_set_num_threads_under_pucv_pool_does_not_spawn_walkers() -> None:
         worker.clear_multi_gpu_pucv()
         assert worker._walker_pool is not None  # restore uses stored n=4
     finally:
+        worker.close()
+
+
+def test_debug_counters_sum_every_chunk_of_a_search() -> None:
+    """`evals= terminal= duplicate=` on the debug pucv line cover the WHOLE
+    search (every pool chunk of the go), not the last chunk -- the pool's own
+    stats object stays per chunk -- and the next go starts from zero."""
+    worker = SearchWorker(
+        _make_evaluator(max_batch=64), device="cpu",
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False),
+        chunk_sims=64, n_walkers=1,
+    )
+    worker.install_multi_gpu_pucv(
+        [_make_evaluator(max_batch=64), _make_evaluator(max_batch=64)], gather=8, as_factories=False,
+    )
+    pool = worker._pucv_pool
+    assert pool is not None
+    chunk_stats: list[Any] = []
+    real_run = pool.run
+
+    def recording_run(**kwargs: Any) -> int:
+        completed = real_run(**kwargs)
+        chunk_stats.append(pool.last_stats())
+        return completed
+
+    pool.run = recording_run
+    emitted: list[str] = []
+
+    def info_cb(**fields: Any) -> None:
+        text = fields.get("string")
+        if text and "pucv leaves=" in text:
+            emitted.append(text)
+
+    protocol.set_uci_debug(True)
+    try:
+        # Knight shuffle: twofold-repetition terminals, so `terminal` is non-zero.
+        board = chess.Board()
+        for uci in ("g1f3", "g8f6", "f3g1", "f6g8", "g1f3", "g8f6"):
+            board.push_uci(uci)
+        for _go in range(2):
+            chunk_stats.clear()
+            emitted.clear()
+            worker.run(board, stop_event=threading.Event(), deadline=Deadline(20_000), max_nodes=320,
+                       info_cb=info_cb)
+            counts = worker.pool_search_counts()
+            assert len(chunk_stats) >= 3
+            assert counts.chunks == len(chunk_stats)
+            assert counts.leaves == sum(s.leaves for s in chunk_stats)
+            assert counts.evals == sum(s.evaluated_rows for s in chunk_stats)
+            assert counts.terminal == sum(s.terminal_leaves for s in chunk_stats)
+            assert counts.duplicate == sum(s.duplicate_leaves for s in chunk_stats)
+            assert counts.terminal > chunk_stats[-1].terminal_leaves  # more than the last chunk
+            line = _pucv_stats_string(worker.last_multi_gpu_pucv_stats(), pending_mode=0, search=counts)
+            assert line is not None
+            assert f"leaves={chunk_stats[-1].leaves} " in line  # leading fields: last chunk
+            assert f"search_chunks={counts.chunks} search_leaves={counts.leaves} " in line
+            assert line.endswith(
+                f"evals={counts.evals} terminal={counts.terminal} duplicate={counts.duplicate}")
+            # The line the engine actually emits (debug on): each covers the chunks run so far.
+            assert emitted
+            covered = []
+            for text in emitted:
+                m = re.search(r"search_chunks=(\d+)", text)
+                assert m is not None, text
+                k = int(m.group(1))
+                done = chunk_stats[:k]
+                assert text.endswith(
+                    f"evals={sum(s.evaluated_rows for s in done)} "
+                    f"terminal={sum(s.terminal_leaves for s in done)} "
+                    f"duplicate={sum(s.duplicate_leaves for s in done)}"), (k, text)
+                covered.append(k)
+            assert max(covered) >= 2
+    finally:
+        protocol.set_uci_debug(False)
         worker.close()
