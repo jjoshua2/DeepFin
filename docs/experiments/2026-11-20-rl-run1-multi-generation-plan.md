@@ -439,8 +439,8 @@ also what answers the legacy question "NAdamW-256 against the Aurora split at 51
 so Stage 1 has no legacy NAdamW cell.
 
 **What Stage 0b decides for Stage 1.** Only which ruler picks each cell's dose
-(the validated ruler, else searched BT4 at 256 nodes, labelled unvalidated). It
-does not change which cells play.
+(the validated ruler; else every cell plays its FINAL model, as the scorer's
+`dose` enforces). It does not change which cells play.
 
 **The registered matches in this stage (GPU, one arena at a time, about 2 h):**
 - **T1 and T2**, exactly as `search-compose/PREREG.md` registers them (seed
@@ -614,8 +614,10 @@ the dose ruler, among snapshots inside the
 Snapshots within one game-clustered SE of the best count as tied, and the earliest
 of them is played (less movement). If no snapshot is inside the band, the one
 nearest the band is played. A2 is reported and never used to choose.
-- **The dose ruler** is the Stage 0b-validated ruler, else searched BT4 at 256
-  nodes, labelled unvalidated.
+- **The dose ruler** is the Stage 0b-validated ruler; without a validated ruler
+  every cell plays its final model (both raw rulers failed the positive control,
+  `rl-run1-prereq/a1_poscontrol_score.json`; the scorer's `dose` plays the final
+  model unless a passing validation record names the ruler).
 - The scorer is a P5 prerequisite. If it has not landed, every cell plays its
   final model, pre-committed.
 
@@ -955,7 +957,7 @@ only registered 64-sim matches decide.
 |---|---|---|
 | Every *interim* number in Stage 0 (veto weights, the 0.7× ratchet) | direction | the diagnosis's full report, T1 / T2 |
 | The ruler validation rule, including the 1-SE tie rule and the positive control's paired lower bound | Stage 0b, dose ruler | Stage 1's matches |
-| The fallback dose ruler: searched BT4 at 256 nodes, unvalidated, with `ext_search.py`'s PUCT constants | Stage 1 dose | Stage 0b's validation |
+| The fallback when no ruler validates: play the final model | Stage 1 dose | Stage 0b's validation |
 | A2: about 3,000 rows, about 3 per game, from the `a2` block | Stage 0b validation, reporting, Stage 2 drift alarm | — (a budget) |
 | 1,040 games / ≈ 100k rows | Stage 1, Stage 2 | Stage 1's read and O3 |
 | Linear LR scaling anchored at 3e-6 for batch 512 (matrix LR 20× = 6e-5, the SL run's end LRs); 1.2e-5 at 2048 | a2048 | the Stage 0b learner screen; a2048's match |

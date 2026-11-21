@@ -221,7 +221,7 @@ games. Our runs: every ply, ~105 rows per game.
 | The pilot's recalibrated and grafted nets in a match | `headswap/headswap_arena.py` (bank scratch, monkeypatches the loader) | **the pilot's only prerequisite code**: promote a tested `--value-from CKPT` (policy from one net, value from another, two forwards) and `--value-recal T,b` option on `scripts/arena_standard.py`. Recalibration alone could instead be folded into a checkpoint's WDL head (exact), but the graft needs the hybrid |
 | Outcome smoothed to the base's draw mass (a second shape-preserving value target) | none | **missing**; the pilot uses search WDL instead |
 | Dose-response points at game counts | separate train runs, each on a game-prefix subset of the one collection | **no new schedule needed**: train each dose as its own run on the first G_i games (total ≈ 2× one full run). Independent runs also make the slope's independence assumption honest and complete the LR schedule at every dose. Selecting a game prefix needs a small train-side game filter (to check: `--collect-from` arms copy whole collects) |
-| Window larger than RAM | the train window is loaded whole (`load_window`, `lazy=False`) | **blocker above ~1M training rows**: 28.0 KB per row resident, but the LOAD peaks at ≈ 85 KB per row (measured below), so 98 GB holds ≈ 1M rows. The pilot's ≈ 758k rows peak at ≈ 64 GB: it fits, but only alone on the box |
+| Window larger than RAM | the train window is loaded whole (`load_window`, `lazy=False`) | **blocker for the pilot on today's main**: the full `load_window` path peaks at ≈ 141.6 KiB per row (measured below), so the pilot's ≈ 758k rows need ≈ 102 GiB on a 98 GiB box (largest that fits in 88 GiB free: ≈ 0.65M rows). **The loader-RAM PR (in progress, collect agent) is a prerequisite**: it streams shards into preallocated arrays, ≈ 27.95 KiB per row + one decoded shard, so ≈ 20 GiB for the pilot and ≈ 3.3M rows in 88 GiB (≈ 1.9M with the actor prior mix, 49 KiB per row) |
 | Multi-process collect, PAUSE marker | #1441 (open) | needed |
 | Kill-safe resume | #1444 (open, stacked on #1441) | needed |
 | SL base's Aurora split, its realised LRs | #1445 (open) | needed |
@@ -246,11 +246,14 @@ games. Our runs: every ply, ~105 rows per game.
 - **Disk:** 1.87 KB per row (`snapshots-arms-e2e-20261120/src_graphs`: 23.0 MB of
   shards for 12,299 rows; the collect agent measured 1.86 KB on head 347aaf08c).
 - **RAM:** 28.0 KB per row resident for the training keys (float16 planes and
-  targets). Loading adds the target-source keys (`root_log_prior`,
-  `root_child_visits`, float32 × 1858 each: 42.9 KB per row while a generation
-  loads), and `load_generation_rows` holds the per-shard arrays plus their
-  concatenation: **peak ≈ 85 KB per row** (measured by the collect agent on 11,911
-  rows). For the pilot's ≈ 758k rows: ≈ 21 GB resident, **≈ 64 GB peak** at load.
+  targets). On today's main the full training load (`load_window`: the
+  target-source keys, 42.9 KB per row while a generation loads; the per-shard
+  arrays and their concatenation; the train / held-out selection copy and a second
+  concatenation) peaks at **≈ 141.6 KiB per row** (collect agent, measured at
+  11.9k and 47.6k rows; an earlier 85 KB figure covered `load_generation_rows`
+  only). For the pilot's ≈ 758k rows that is **≈ 102 GiB: it does not fit**. With
+  the loader-RAM PR (prerequisite): ≈ 27.95 KiB per row + one decoded shard
+  (≈ 1.2 GiB at 20k-row shards), **≈ 20 GiB** for the pilot.
 - **Kill / pause at the pilot's size** (collect agent, #1441 / #1444): without #1444
   an unfinished process restarts from its first game (a kill at 90% loses ≈ 1.45 h);
   with #1444 ≈ 4 min per process (`--rows-per-shard 5000`: ≈ 2 min). PAUSE holds all
@@ -274,8 +277,9 @@ about 2% of Z-all's value gradient), so any dose-proportional mechanism reads
 
 **Collection:** one, from the SL base, 64 sims on every ply (`--full-prob 1.0`),
 **8,000 games** (8,000 / 5,021 ≈ 1.6 GPU-h; ≈ 758k rows; 1.4 GB disk; ≈ 21 GB
-resident and ≈ 64 GB peak RAM when training loads them, so each training cell runs
-alone on the box, never beside an arena). Flags: `--collect-procs 3 --concurrency
+resident; ≈ 102 GiB peak at load on today's main, which does not fit, so the
+loader-RAM PR is a prerequisite and brings it to ≈ 20 GiB; each training cell still
+runs alone, never beside an arena). Flags: `--collect-procs 3 --concurrency
 128` (the default at 64 sims, spelled out because it is pinned and sets the RNG
 streams), `--rows-per-shard 5000` (a shorter kill window under #1444), the production
 Syzygy pair, and the cells' train flags given at the first stage (it pins them).
@@ -299,28 +303,53 @@ Syzygy pair, and the cells' train flags given at the first stage (it pins them).
 | **S** | `--value-search-weight 1 --value-outcome-weight 0` | the SL base's value-target family; expected sign unknown, possibly negative |
 | **P0** | `--w-wdl 0` (policy only) | the policy dose, read with the base's value grafted on |
 
-**Matches** (registered, seat-balanced, 64 sims, 800 games each, common opening
-list; SE ≈ 8.9 Elo; played in this order):
+**Order of work** (the RAM and VRAM facts fix it): collect (≈ 1.6 GPU-h, kill /
+resume under #1444 — a PAUSE keeps ≈ 23 GB of VRAM allocated, so a collect that
+spans the owner's gaming is killed and resumed, not paused) → train the three cells
+ONE AT A TIME with nothing else on the box (≈ 20 GiB load peak each with the
+loader-RAM PR; ≈ 102 GiB without it, which does not fit) → fit the recalibration → matches 1–4.
 
-1. **Zq vs base — the gate.** "Damage reproduced" iff UB95 < 0. If not, match 2
-   is skipped (recalibrating an undamaged net reads nothing) and the record says
-   the new recipe did not damage the value at this dose, which is itself good news.
-   Matches 3 and 4 answer separate questions and are played either way.
-2. **Zq-recalibrated vs Zq, head-to-head** (T and b fitted to the base on A1, as
-   `value-recalibration/recalibrate.py` does). "The loss is shape" iff LB95 > 0;
-   the recovered fraction (diff / −Elo(Zq)) is reported. A direct head-to-head has
-   SE 8.9 where the difference of two matches against the base has 12.6.
-3. **S vs base.** Damage iff UB95 < 0; gain iff LB95 > 0; otherwise null within
-   ±17.4.
-4. **P0's policy grafted onto the base's value vs base.** "The policy pays" iff
-   LB95 > 0; "the policy does not pay +20 or more at this dose" iff UB95 < +20;
-   otherwise unread. An 800-game match detects +25 with 80% power and +10 with 20%.
+**Matches** (registered, seat-balanced, 64 sims, common opening list from the
+openings split's `eval.pgn`; SE = 8.9 × √(800 / games) Elo; played in this order;
+each 1,600-game block is a kill / resume unit):
 
-**What match 4 decides.** If the policy does not pay at 64 sims at this dose with
-the value held EXACTLY at the base's, no value-target fix can make the loop pay in
-this form. The next levers are then the policy side: more sims in the target
-(the target is a 64-sim search), the policy dose (more games), and
-recalibration-in-the-loop only as damage control.
+1. **Zq vs base — the gate, 1,600 games** (SE 6.3). "Damage reproduced" iff
+   UB95 < 0. If not, match 2 is skipped and the record says the recipe did not
+   reproduce the damage at this dose. That is NOT evidence the recipe is safe (see
+   Step 2's adoption rule). Matches 3 and 4 are played either way.
+2. **Zq-recalibrated vs Zq, head-to-head, 1,600 games** (SE 6.3). "The loss is
+   shape" iff LB95 > 0; the recovered fraction (diff / −Elo(Zq)) is reported.
+   T and b are fitted with `scripts/fit_value_recal.py` (the arena PR) against the
+   base's WDL on **the pilot collect's hold-out games** (`is_holdout_game`, never
+   trained on; TRAIN-split openings, so disjoint from the match's `eval.pgn` by the
+   split's orbit rule) — pre-registered here, fitted before the match. A
+   recalibration-only seat runs one forward per evaluation, so matches 1–2 run at
+   plain speed (≈ 0.4 GPU-h per 1,600 games).
+3. **S vs base, 800 games** (SE 8.9). Damage iff UB95 < 0. "S adoptable" iff
+   LB95 > −10 (Step 2). 800 games is kept: at a true 0 S is adoptable only 20% of
+   the time, and 1,600 games raises that only to 36%; S's expected sign is unknown
+   and the bank leans negative, so the cheaper read decides whether S earns a
+   larger one.
+4. **P0's policy grafted onto the base's value vs base — group-sequential,
+   pre-registered.** Looks at 1,600 / 3,200 / 4,800 games with O'Brien–Fleming-type
+   boundaries z = 3.471 / 2.454 / 2.004 (est and SE from all games so far): stop
+   "the policy pays" iff est − z·SE > 0; stop "does not pay +10" iff est + z·SE <
+   +10; otherwise continue; after the third look, "unread". No other stopping.
+
+**Why +10 sizes match 4** (`plan-review-1452-r2/sizing.txt`): the banked "trained
+policy, sound value" reads sit at about 0 near 2.3k games (P1 −3.9, Q50-policy +4.3,
+F12-policy −15.7); the pilot's 8k games are 1.8 doublings beyond, and Step 3's
+smallest slope worth detecting is 5.3 Elo per doubling, so the effect that matters
+here is 5.3 × 1.8 ≈ **+10 Elo**. An 80 / 80 fixed design at +10 needs SE 3.57
+(≈ 5,000 games); the sequential design reaches the same error rates at an expected
+≈ 4,070 games at a true 0 or +10 and ≈ 2,600 at +20. The 1-sim gain (+79) is the
+wrong yardstick: 64-sim search absorbed it.
+
+**What match 4 decides.** If the policy does not pay +10 at 64 sims at this dose
+with the value held EXACTLY at the base's, no value-target fix can make the loop pay
+in this form at Step 3's detectable rate. The next levers are then the policy side:
+more sims in the target (the target is a 64-sim search), the policy dose (more
+games), and recalibration-in-the-loop only as damage control.
 
 **Secondary, pre-registered (report only):** the WDL-shape statistics of every net
 on A1 (entropy, |W − L|, draw mass by the base's |W − L| bucket, top-2 child gap
@@ -328,33 +357,43 @@ where child values are computed), via the scorer (#1448). The child top-2 gap wa
 already at its c12 level by F12 c6 while c6 showed no Elo loss, so these do not
 substitute for a match.
 
-**Reading table, simulated** (`amendment-1452-sim/pilot_sim.py`, 400k draws per
-world, each match ~ N(true, 8.9); output `pilot_sim.txt`). Columns: P(gate reads
-damage); P(match 2 reads shape | gate); S: P(damage / null / gain); P0: P(pays /
-does-not-pay-20 / unread).
+**Reading table, simulated** (`amendment-1452-sim/pilot_sim_v2.py`, 400k draws per
+world, sizes as above; output `pilot_sim_v2.txt`; the superseded 800-game version is
+in `v1/`). Columns: P(gate reads damage); P(Zq adoptable, LB95 > −10); P(match 2
+reads shape | gate); S: P(damage), P(adoptable); match 4: P(pays / does not pay +10 /
+unread) and expected games.
 
-| True world (Zq, recal gain, S, graft) | Gate | Shape \| gate | S: dmg / null / gain | P0: pays / not / unread |
-|---|---|---|---|---|
-| shape loss, S mild, policy flat (−55, +45, −10, 0) | 1.00 | 1.00 | 0.20 / 0.80 / 0.00 | 0.03 / 0.61 / 0.36 |
-| shape loss, S safe, policy +25 (−55, +45, 0, +25) | 1.00 | 1.00 | 0.02 / 0.95 / 0.03 | 0.80 / 0.01 / 0.19 |
-| loss not shape, S as bad (−55, 0, −55, 0) | 1.00 | 0.03 | 1.00 / 0.00 / 0.00 | 0.03 / 0.61 / 0.36 |
-| partial shape (−55, +20, −20, 0) | 1.00 | 0.61 | 0.61 / 0.39 / 0.00 | 0.02 / 0.61 / 0.36 |
-| small damage (−15, +12, 0, 0) | 0.39 | 0.27 | 0.02 / 0.95 / 0.02 | 0.03 / 0.61 / 0.36 |
-| no damage (0, 0, 0, 0) | 0.02 | 0.02 | 0.03 / 0.95 / 0.03 | 0.02 / 0.61 / 0.36 |
-| policy pays +15 (−55, +45, −10, +15) | 1.00 | 1.00 | 0.20 / 0.80 / 0.00 | 0.39 / 0.08 / 0.53 |
+| True world (Zq, recal gain, S, graft) | Gate | Zq adopt | Shape \| gate | S dmg | S adopt | Match 4: pays / not +10 / unread | E[games] |
+|---|---|---|---|---|---|---|---|
+| shape loss, S mild, policy 0 (−55, +45, −10, 0) | 1.00 | 0.00 | 1.00 | 0.20 | 0.03 | 0.03 / 0.78 / 0.20 | 4,072 |
+| shape loss, S safe, policy +10 (−55, +45, 0, +10) | 1.00 | 0.00 | 1.00 | 0.02 | 0.20 | 0.78 / 0.02 / 0.20 | 4,071 |
+| loss not shape, S as bad (−55, 0, −55, 0) | 1.00 | 0.00 | 0.02 | 1.00 | 0.00 | 0.03 / 0.78 / 0.20 | 4,071 |
+| partial shape (−55, +20, −20, 0) | 1.00 | 0.00 | 0.89 | 0.61 | 0.00 | 0.02 / 0.78 / 0.19 | 4,069 |
+| small damage (−15, +12, 0, 0) | 0.67 | 0.00 | 0.48 | 0.03 | 0.20 | 0.03 / 0.78 / 0.20 | 4,070 |
+| no damage (0, 0, 0, 0) | 0.02 | 0.35 | 0.02 | 0.02 | 0.20 | 0.02 / 0.78 / 0.20 | 4,068 |
+| policy pays +20 (−55, +45, −10, +20) | 1.00 | 0.00 | 1.00 | 0.20 | 0.02 | 1.00 / 0.00 / 0.00 | 2,620 |
+| policy +5 (−55, +45, −10, +5) | 1.00 | 0.00 | 1.00 | 0.20 | 0.02 | 0.27 / 0.27 / 0.45 | 4,493 |
 
-So: a shape loss of the head-swap's size is read correctly almost always; a
-partial one 61%; a small (−15) control damage passes the gate only 39% of the time
-(then "unread" for the mechanism); and a policy gain under +20 is mostly unread at
-800 games. A false "shape" when the loss is not shape is 3%.
+So: a shape loss of the head-swap's size is read correctly almost always, a partial
+one (+20) 89%; a false "shape" 2%; a small (−15) control damage passes the gate 67%;
+and match 4 reads +10 correctly 78% of the time and a true 0 as "does not pay +10"
+78%. A safe recipe is "adoptable" only 20–35% of the time: by design the record does
+not adopt a value target on a failure to see damage.
 
-**Cost:** collect 1.6 GPU-h; training three cells ≈ 16 min each at ≥ 770 rows/s
-(≈ 0.8 h); matches: two plain (≈ 0.2 h each) and two hybrid (≈ 0.4–0.7 h each)
-≈ 1.2–1.8 GPU-h. **≈ 3.6–4.2 GPU-h**, within the review's ≤ 6.
+**Cost** (GPU-h): collect 1.6; training three cells ≈ 0.8 (≈ 16 min each at
+≥ 770 rows/s, run in sequence); recalibration fit < 0.1; matches: (1) 1,600 plain
+≈ 0.4, (2) 1,600 plain (recal-only seat, one forward) ≈ 0.4, (3) 800 plain ≈ 0.2,
+(4) 1,600–4,800 two-forward hybrid ≈ 0.45–0.7 per 800 games (head-swap bank), so
+≈ 0.9–4.2. **Total ≈ 4.0–7.6 GPU-h**, expected ≈ 6.3 (match 4's expected
+≈ 4,070 games).
 
-**Prerequisite code (the only one):** the tested arena option for a recalibrated
-value and a grafted value (above). The scratch harness must not be used for a
-registered match without promotion: its loader monkeypatch is untested in the repo.
+**Prerequisite code (the only one): the tested arena option** (`--candidate-value-from`
+/ `--candidate-value-recal`, mirrored for the reference) with these controls by name,
+each a test in its PR: `--candidate-value-from <the candidate's own checkpoint>`
+with `--candidate-value-recal 1,0` plays games byte-identical to the plain arena;
+`--candidate-value-recal 1,0` alone likewise; a value with W and L swapped declines
+material the plain value wins. The scratch head-swap harness must not be used for a
+registered match: its loader monkeypatch is untested in the repo.
 
 ## Step 2: the recipe for the large generation
 
@@ -367,15 +406,23 @@ Set by the pilot's reading; items marked **guess** are listed for the owner.
   The end rates continue a converged net; a cosine from the epoch-2 start rates
   (`--lr 1.5e-5 --lr-floor 3e-6 --lr-schedule cosine-phase`) is the alternative
   (**guess**, not tried).
-- **Value target:** by the pilot. Shape loss confirmed → the Q50 or the SL family's
-  target with the recalibration step after each generation (the fold into the WDL
-  head), or S if match 3 reads null or gain. No damage at the gate → the pilot's
-  Zq recipe stands. Loss not shape and S damaging → stop for the owner.
+- **Value target — adopted only on a shown margin, never on a failure to see
+  damage.** A target is adopted only if its match against the base has
+  **LB95 > −10 Elo** (it loses at most 10). A gate that does not read damage, or an
+  S match that reads "null", is NOT safety: at a true −15 a 1,600-game gate fails
+  to read damage 33% of the time and an 800-game S match's null band admits −15, and a per-generation
+  −15 compounds over Stage 2. In order:
+  1. S if match 3 has LB95 > −10;
+  2. else Zq if match 1 has LB95 > −10;
+  3. else, if match 2 read shape, Zq with the recalibration refitted and folded
+     into the WDL head after each generation — and its first generation's match
+     must itself show LB95 > −10 before a second generation runs;
+  4. else stop for the owner.
 - **Policy rows:** every full-search row (policy residual ICC 0.030; argmax-flip
   ICC 0.004).
 - **Policy target:** as the pilot (train temp 1.0). A sharpening guard
   (`--train-target-temp 1.5` or `--kl-policy`) is a separate, later change.
-- **SL share:** off unless the owner asks (O7); if on, it needs an SL corpus in
+- **SL share:** off unless the owner asks; if on, it needs an SL corpus in
   shard format with `search_wdl` while s > 0, ≈ 28 GB RAM per 1M SL rows.
 - **Exact-once**, `--presentations 1 --mirror-prob 0.5`; a native batch of 512.
 
@@ -388,18 +435,18 @@ proposed). Policy wants full-search rows (near-independent); a z-based value wan
 games. The share p of full-search plies trades the two; rates below are 12 × the
 games/h above, and the playout-cap rates are **guesses** until measured:
 
-| Design | Games | Full-search (policy) rows | Disk | RAM at load (≈ 85 KB/row) |
+| Design | Games | Full-search (policy) rows | Disk | RAM at load (loader-RAM PR, ≈ 28 KiB/row) |
 |---|---|---|---|---|
-| p = 1, 64 sims every ply | ≈ 60k | ≈ 5.7M | 10.7 GB | ≈ 480 GB: does not fit |
-| p = 0.25, 64 / 16 (KataGo's p) | ≈ 135k (guess) | ≈ 3.2M | 6.1 GB | ≈ 270 GB: does not fit |
-| p ≈ 0.021, 64 / 16 (≈ 2 full plies per game) | ≈ 218k (guess) | ≈ 0.44M | 0.8 GB | ≈ 37 GB |
-| 16 sims every ply (O5's alternative) | ≈ 232k | ≈ 22M | 41 GB | does not fit |
+| p = 1, 64 sims every ply | ≈ 60k | ≈ 5.7M | 10.7 GB | ≈ 153 GiB: does not fit |
+| p = 0.25, 64 / 16 (KataGo's p) | ≈ 135k (guess) | ≈ 3.2M | 6.1 GB | ≈ 86 GiB: at the 88 GiB limit |
+| p ≈ 0.021, 64 / 16 (≈ 2 full plies per game) | ≈ 218k (guess) | ≈ 0.44M | 0.8 GB | ≈ 13 GiB |
+| 16 sims every ply (the alternative) | ≈ 232k | ≈ 22M | 41 GB | does not fit |
 
 - **Proposal:** p = 1 at 64 sims (the pilot's own collect shape) unless the
   dose-matched follow-up reads variance, in which case games matter most and
-  p = 0.25 is preferred. Above ~1M rows either needs the lazy window (missing;
-  load peak ≈ 85 KB per row); without it the collection is capped at ~1M training
-  rows (≈ 2.2 GPU-h at p = 1, ≈ 10.5k games), which is barely above the pilot.
+  p = 0.25 is preferred. With the loader-RAM PR a window of ≈ 3.3M rows fits
+  (≈ 7 GPU-h at p = 1, ≈ 35k games); a 12 GPU-h p = 1 collect still needs the lazy
+  window (missing) or a smaller collection.
 - The artifact disk has 366 GB free.
 - Kill-safe through #1444's game-granularity resume; pausable with the PAUSE marker
   (#1441); one output directory under `$R`.
@@ -447,26 +494,30 @@ more at Step 3's).
 A generation = collect hours + train hours + readout hours. With the default above:
 12 + ≈ 1–2 (training, one run per dose) + ≈ 1.2 (matches) ≈ **14–15 GPU-h**, so
 about **11 generations per week** at full GPU use, fewer with the owner's gaming
-hours. After the first, a generation needs one training run and one 800-game match
-(≈ 0.2 h), ≈ 12.5–13 GPU-h each. These are design numbers; Stage 2's own record re-derives them from the
+hours. After the first, a generation needs one training run and one adoption match
+against the previous generation sized to Step 2's margin (LB95 > −10 at 80% for a
+true 0 needs ≈ 5,000 games, ≈ 1.3 GPU-h plain; a sequential design with the same
+looks as match 4 cuts the expectation), ≈ 14 GPU-h each. These are design numbers; Stage 2's own record re-derives them from the
 pilot's measured rates.
 
 ## Decisions for the owner
 
 | # | Decision | Proposal | Owner's decision |
 |---|---|---|---|
-| O1 | Replace Stage 1's four policy-target cells with the pilot (Zq gate, Zq-recal head-to-head, S, P0 graft) + one large generation | Yes | *(unfilled)* |
-| O5 | Collection sims, p and hours (now first-order) | 12 GPU-h at 64 sims, p from the pilot's reading (Step 3 table); alternative 16 sims every ply at equal GPU time | *(unfilled)* |
-| O6 | Value target | set by the pilot's reading (Step 2) | *(unfilled)* |
-| O7 | SL-corpus share | off in the pilot; owner's call for Step 3 | *(unfilled)* |
-| O8 | Rows per game | policy: every full-search row; value: all rows until the dose-matched follow-up reads | *(unfilled)* |
+| O1 | Launch the pilot (collect 8k games; train Zq, S, P0; matches 1–4 as above) | Yes, once #1441, #1444, #1445, the loader-RAM PR and the arena option are merged | *(unfilled)* |
+| O2 | Total budget | ≈ 4.0–7.6 GPU-h (expected ≈ 6.3), in kill / resume blocks of ≤ 1.6 h | *(unfilled)* |
+| O3 | Changes to the three cells | none proposed (Zq = Q50's blend; S = search WDL only; P0 = policy only) | *(unfilled)* |
+
+Step 3's collection size, its SL share and the rows-per-game follow-up are decided
+after the pilot reads, in their own record.
 
 ## Before the pilot
 
-- The only prerequisite code: the tested `--value-from` / `--value-recal` arena
-  option (above). Step 3 needs a train-side game-prefix filter and, above ~1M rows,
-  the lazy window (so the lazy window is in practice required for Step 3). The fast-ply noise check precedes any playout-cap collect.
-- #1441, #1444 and #1445 merged; the pilot runs from a detached worktree of main.
+- The only prerequisite code: the tested `--candidate-value-from` /
+  `--candidate-value-recal` arena option with its identity and swapped-W/L controls
+  (above); the loader-RAM PR is a merge prerequisite for the training step. Step 3
+  needs a train-side game-prefix filter and, above ≈ 3.3M rows, the lazy window. The fast-ply noise check precedes any playout-cap collect.
+- #1441, #1444, #1445 and the loader-RAM PR merged; the pilot runs from a detached worktree of main.
 - Main's CLAUDE.md experiment rule: this record names the hypotheses (the loss is
   shape; a soft target avoids it; the policy pays at 64 sims with the value held),
   the controls (Zq; the base), the deciding yardsticks (matches 1–4 with their
