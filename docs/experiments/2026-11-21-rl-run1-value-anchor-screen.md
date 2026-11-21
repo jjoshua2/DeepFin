@@ -114,20 +114,31 @@ run-level gates below are what can fail on a real run.
 
 **Gate (i), at training time.** Within each target, `summary.anchor.mean_wdl_kl` must be
 strictly decreasing in λ. If it fails, the target is void (`TARGET_<T>_VOID`) and gets no
-Stage B.
+Stage B. **The gate is strict:** `train_check.py` also voids the whole target if ANY of its
+anchored cells is VOID, because a missing λ leaves the monotonicity untested.
 
 **Gate (ii), in Stage A.** An anchored cell is "anchored" only if both hold:
 - the 95% CI upper bound of its hold-out KL(base ‖ cell) lies below the unanchored cell's
   lower bound (S 0.01573, Zq 0.02642);
 - its point estimate is below that of every smaller-λ cell of its target.
 
+The run-to-run noise scale for the second clause is reported, not used as a margin:
+|KL(base ‖ truncated-S final model) − 0.0167|. The truncated-S final model is an S replicate.
+
 A cell failing gate (ii) is "not anchored" and is skipped like an inert cell, so the next λ
 is selected.
 
-**Rerun rule.** A crashed cell (exit ≠ 0, or no sealed manifest) may be rerun ONCE, whole: its
-run dir is renamed `arm_<cell>.crash1` and the same command is run again. A field mismatch is
-not a crash: it voids the cell, with no rerun. Stage A and Stage B refuse any cell with a
-`VOID` file and any target with a `TARGET_<T>_VOID` file.
+**Rerun rule.**
+- **Training.** A crashed cell (exit ≠ 0) has its run dir renamed `arm_<cell>.crash1` and is
+  rerun ONCE, whole, BEFORE `train_check.py` runs. `train_check.py` runs exactly once, after
+  every rerun, so a second crash is VOID. A field mismatch is not a crash: it voids the cell,
+  with no rerun. The command block implements this order.
+- **Stage A.** A crash in `run_stage_a.sh control` or `cells` (non-zero exit with no
+  `CONTROL_FAIL`) is rerun once: the output dir is renamed `<dir>.fail1` and the same mode is
+  run again. `run_stage_a.sh` refuses a second rerun, and it refuses to rerun a control that
+  wrote `CONTROL_FAIL`.
+- Stage A and Stage B refuse any cell with a `VOID` file and any target with a
+  `TARGET_<T>_VOID` file.
 
 ## Pin
 
@@ -234,12 +245,22 @@ This is the pilot's `TRAIN` with `--kl-wdl 0` removed; each cell passes its own.
   `share_of_gap_closed`). That is ranking damage per unit of movement toward the search value.
   S's r is −0.0096 / 0.293 = **−0.033**.
 - CI: a game bootstrap. Replicate i of the numerator and replicate i of the denominator use
-  the banked bootstrap weights; the weight matrix's sha256 must match between runs. The cell's
-  r − S's r gets a 95% percentile CI over the 2,000 replicates.
-- **"Direction, not distance"** may be claimed for an anchored cell only if its r − S's r has a
-  CI entirely above 0. The matched truncated-S snapshot's r is reported beside it. If that
-  snapshot's r is as good, distance is named as the explanation.
-- r is not computed for inert cells, because the denominator is near 0.
+  the banked bootstrap weights; the weight matrix's sha256 must match between runs. Every
+  difference of r gets a 95% percentile CI over the 2,000 replicates, paired by replicate.
+- **Scope.** r is computed only for S-target cells: the anchored S cells, the dose cells and
+  the truncated-S snapshots, all with S as the reference.
+  - **r claims are NOT COMPUTABLE for Zq-target cells.** Unanchored Zq's numerator CI
+    includes 0 (−0.0007 [−0.0032, +0.0017]), so there is no ranking damage to have less of.
+    Against S's r, any Zq cell would "pass" on noise.
+  - r is not computable for the P0-anchor cell either, and it is not computed for inert
+    cells, whose denominator is near 0.
+- **Matched snapshot.** Each non-inert anchored S cell is matched to the non-inert truncated-S
+  snapshot whose MEASURED `share_of_gap_closed` is nearest its own.
+- **Readings:**
+  - **"direction"** iff both r − r_S and r − r_snapshot have CIs entirely above 0;
+  - **"distance"** iff only r − r_S does: less damage, but no less than S's own direction
+    stopped at the same distance;
+  - **"none"** otherwise.
 
 **The P0-anchor cell is descriptive only.**
 - It has no value loss, so its only value-specific pull is the anchor, against the
@@ -273,10 +294,10 @@ lines unchanged.
 | `analyze_holdout.py` | `3291449af64b…` | `analyze_holdout.py` `eb368ea89777…` |
 | `sibling_order.py` | `17eeb159f691…` | `sibling_order.py` `4dd4ea8000ae…` |
 | `supp_outcome_distance.py` | `2ad7f272d00a…` | `supp_outcome_distance.py` `67f72335402f…` |
-| `run_stage_a.sh` | `002d7d4ca8fd…` | replaces `queue_after_fits.sh` `7ee033a63a12…` |
-| `check_control.py` | `413b6e11cfd8…` | new: the step-0 exact-reproduction check |
+| `run_stage_a.sh` (v2) | `fafc514bfd31…` | replaces `queue_after_fits.sh` `7ee033a63a12…`; v1 `002d7d4ca8fd…` kept as `.v1` |
+| `check_control.py` (v2) | `b72e711caba8…` | new: the step-0 exact-reproduction check; v1 `413b6e11cfd8…` kept as `.v1` |
 | `train_check.py` | `5a2fa045d5e9…` | new: the per-cell field checks and gate (i) |
-| `stage_a_decide.py` | `81cc5e42dd0f…` | new: the rules below, applied mechanically |
+| `stage_a_decide.py` (v2) | `1b2b2986af3a…` | new: the rules below, applied mechanically; v1 `81cc5e42dd0f…` kept as `.v1` |
 | `value_regret_recal.py` (report-only) | run UNMODIFIED from the bank | `6cddd7d5afd1…` |
 
 What the adapted copies add:
@@ -285,23 +306,32 @@ What the adapted copies add:
 - `sibling_order.py` also writes `sibling_boot.npz`: the replicates of the clear-pair paired
   difference.
 - Both store the bootstrap weight matrix's sha256, for gate (ii) and for r.
+- The v1 → v2 changes (r scope, snapshot matching, rerun handling, `CONTROL_FAIL`, the
+  truncated-S final model scored) are in `diffs/*.v1_v2.diff`. `stage_a_decide.py` v2 was
+  rerun on fabricated inputs in `fab_tests_v2/`: the reviewer's scenarios A and B, plus a
+  scenario C that exercises the snapshot readings "direction" and "distance" and the Zq
+  "NOT COMPUTABLE".
 
 **Instrument positive control.**
 - *Already done on CPU* (`stage_a/cpu_proof/`): the adapted `analyze_holdout.py` and
   `supp_outcome_distance.py`, run on the banked logits and fits, reproduce the banked
   `holdout_analysis.json` and `supp_outcome_distance.json` exactly (parsed JSON equal). The
   replicate percentiles reproduce the banked CIs, for example S KL [0.01573, 0.01771].
-- *At launch, Stage A step 0* (`run_stage_a.sh control`): the fits, `collect_logits.py` and
-  `sibling_order.py` need the GPU, which is busy until ≈ 21:30. The whole adapted chain runs
-  on the banked base / S / Zq / P0. It must reproduce all of these exactly:
+- *At launch, Stage A step 0, run FIRST, before any training* (`run_stage_a.sh control`): the
+  fits, `collect_logits.py` and `sibling_order.py` need the GPU, which is busy until ≈ 21:30.
+  Step 0 needs only the banked nets, so a failure costs ≈ 0.4 GPU-h instead of the training.
+  The whole adapted chain runs on the banked base / S / Zq / P0. It must reproduce all of these
+  exactly:
   - the banked `holdout_logits.npz` arrays, bit-equal;
   - `recal_{S,Zq,P0}.json`;
   - `holdout_analysis.json`;
   - `sibling_order.json`;
   - `supp_outcome_distance.json`.
 
-  Otherwise Stage A is void (`check_control.py`; no `CONTROL_PASS`, so `cells` refuses to
-  run). A mismatch is reported with its size, and the instrument is never loosened to pass.
+  Otherwise `check_control.py` writes `CONTROL_FAIL`, and `cells` refuses to run without
+  `CONTROL_PASS`. **The screen's verdict is then "unread: instrument failed"**, and no cell is
+  trained. A mismatch is reported with its size, and the instrument is never loosened to pass.
+  A determinism fix may come only by amendment, with its own review.
 
 **Statistics** (raw heads, no recalibration; `stage_a_decide.py`):
 - **VETOED** iff the 95% CI upper bound of
@@ -327,6 +357,8 @@ What the adapted copies add:
 
   Stage A only removes cells.
 - **Report-only:**
+  - each cell's `divergence.<cell>.KL_share_removed`: the share of its KL to the base that its
+    own (T, b) removes;
   - FEN-only 1-ply value regret (the banked `value_regret_recal.py`);
   - outcome distance (`supp_outcome_distance.py`);
   - the (T, b) fits;
@@ -339,6 +371,8 @@ What the adapted copies add:
   matches, one S-anchor and one Zq-anchor. Dose, truncated-S and P0-anchor cells are never
   matched. `stage_a_decide.py` writes the selection to `offline/cells/stage_a_decision.json`
   → `stage_b`.
+- **Blind to recalibration.** Selection reads raw heads, and Stage B plays plain seats. Playing
+  Zq's Stage B recalibrated was considered and not adopted.
 - **Design.**
   - The cell vs the SL base, plain seats, seat-balanced.
   - 6,400 games: 3,200 per run, 1,600 openings.
@@ -376,7 +410,8 @@ What the adapted copies add:
 
 | Reading | Licenses |
 |---|---|
-| adoptable | NOMINATES that value recipe (the target plus λ) for a 2-generation run together with the policy, under its own record. Nothing is adopted here |
+| adoptable, S target | NOMINATES that value recipe (S plus λ) for a 2-generation run together with the policy, under its own record. Nothing is adopted here |
+| adoptable, Zq target | NOMINATES the anchored Zq recipe only TOGETHER with a "Zq + (T, b)" alternative in the nomination record. It supports no claim that "the anchor fixes content" for Zq: match 7 showed Zq's loss is largely shape, and part of an anchored Zq cell's gain may be the anchor removing that shape error |
 | damage | The anchor at that strength does not prevent the value damage |
 | unread | Nothing |
 
@@ -396,8 +431,10 @@ movement, is responsible. That claim needs r, as registered above.
   only in `--kl-wdl` / `--kl-reference`: same collection, seed, batch plan (proved by
   `presented.npz`), pin and optimizer.
 - **Match 7 exists.** Recalibrated Zq vs Zq read +21.4 [+15.1, +27.6] ("the loss is shape").
-  Stage A already reports each cell's (T, b) fit; any recalibrated reading of the Zq cells is a
-  follow-up under the match-8 record, not part of this design.
+  Stage A already reports each cell's (T, b) fit and its `KL_share_removed`. Any recalibrated
+  reading of the Zq cells is a follow-up under the match-8 record (PR #1476,
+  `docs/experiments/2026-11-21-rl-run1-match8-zq-recal-vs-base.md`, not yet on main), not part
+  of this design.
 - **GPU nondeterminism.** The truncated-S run's final model may differ in the last bits from
   the banked S. Its snapshots are compared with the anchored cells, not with the banked S's
   weights.
@@ -407,16 +444,16 @@ movement, is responsible. That claim needs r, as registered above.
 | Item | Cost |
 |---|---|
 | Training, 10 runs (9 cells + truncated S) | ≈ 7 min each (measured 398–440 s for S / Zq / P0) ≈ **1.2 GPU-h**. The anchor adds one no-grad reference forward per batch, and the snapshots add three hold-out measurements, so the realised wall time is reported |
-| Offline Stage A | step 0: 4 nets; cells: base + 9 cells + 3 snapshots = 13 nets. About 17 nets × ≈ 6 min ≈ **1.7 GPU-h**, capped at 0.24 of the card as banked |
+| Offline Stage A | step 0 (first): 4 nets ≈ 0.4 GPU-h; cells: base + 9 cells + 3 snapshots + the truncated-S final = 14 nets. About 18 nets × ≈ 6 min ≈ **1.8 GPU-h**, capped at 0.24 of the card as banked |
 | Stage B | ≤ 2 matches × 1.52 GPU-h ≈ **≤ 3.0 GPU-h** |
-| **Total** | **≤ ≈ 5.9 GPU-h** |
+| **Total** | **≤ ≈ 6.0 GPU-h** |
 
 ## Commands
 
 Outputs go to `~/chess-artifacts/operations/rl-run1-value-anchor/` (`V`). The pilot bank
 (`P`) is read-only.
 
-**Training and take-effect check:**
+**Step 0 (instrument control, FIRST), training, take-effect check:**
 
 ```bash
 V=$HOME/chess-artifacts/operations/rl-run1-value-anchor; P=$HOME/chess-artifacts/operations/rl-run1-pilot
@@ -442,24 +479,32 @@ declare -A CELL=(
   [P0_k7.0]="--w-wdl 0 --kl-wdl 7.0 --kl-reference $SL"
   [S_trunc]="$S_V --kl-wdl 0 --snapshot-updates 353,635,988")
 (cd $V/stage_a && sha256sum -c --quiet SHA256SUMS) || exit 93
+# step 0, before any training: banked nets through the adapted instruments must reproduce the bank exactly.
+# A crash (no CONTROL_FAIL) may be rerun once after `mv $V/offline/control $V/offline/control.fail1`;
+# a CONTROL_FAIL ends the screen as "unread: instrument failed".
+$V/stage_a/run_stage_a.sh control || exit 1
 cd $PINW && [ "$(git rev-parse HEAD)" = "$PIN" ] || exit 96
 CUDA_VISIBLE_DEVICES= PYTHONPATH=. $PY -m pytest -q -p no:cacheprovider \
   "tests/test_simple_rl_learn.py::test_kl_anchor_gradients_are_nonzero_and_reach_the_consumer" \
   tests/test_simple_rl_accum_steps.py || exit 1          # launch precondition: the code-level proof
-for c in S_k4.1 S_k7.0 S_k13.4 Zq_k11.3 Zq_k18.1 Zq_k33.4 S_w0.1 S_w0.03 P0_k7.0 S_trunc; do
-  date -Is > $V/arm_$c.started
-  PYTHONPATH=. $PY -u scripts/simple_rl_loop.py run --run-dir $V/arm_$c --collect-from $P/collect \
-    --generations 1 $COLLECT $TRAIN ${CELL[$c]} > $V/arm_$c.log 2>&1; echo "$? $(date -Is)" > $V/arm_$c.exit
+train() { date -Is > $V/arm_$1.started
+  PYTHONPATH=. $PY -u scripts/simple_rl_loop.py run --run-dir $V/arm_$1 --collect-from $P/collect \
+    --generations 1 $COLLECT $TRAIN ${CELL[$1]} > $V/arm_$1.log 2>&1; echo "$? $(date -Is)" > $V/arm_$1.exit; }
+CELLS="S_k4.1 S_k7.0 S_k13.4 Zq_k11.3 Zq_k18.1 Zq_k33.4 S_w0.1 S_w0.03 P0_k7.0 S_trunc"
+for c in $CELLS; do train $c; done
+for c in $CELLS; do                   # one whole rerun per crashed cell, BEFORE the single train_check run
+  [ "$(cut -d' ' -f1 $V/arm_$c.exit)" = 0 ] && continue
+  for f in "" .log .exit .started; do mv $V/arm_$c$f $V/arm_$c.crash1$f; done; train $c
 done
-$PY $V/stage_a/train_check.py $V      # field checks + gate (i); writes VOID / TARGET_<T>_VOID markers
+$PY $V/stage_a/train_check.py $V      # once: field checks + gate (i); writes VOID / TARGET_<T>_VOID markers
 ```
 
-**Stage A, in order:**
+**Stage A cells** (after the training and `train_check.py`; step 0 already passed):
 
 ```bash
-$V/stage_a/run_stage_a.sh control || exit 1   # step 0: banked nets must reproduce the bank exactly -> CONTROL_PASS
-$V/stage_a/run_stage_a.sh cells   || exit 1   # skips VOID cells; fits, logits, analysis, outcome distance, sibling
-                                              # order, value regret (report-only), then stage_a_decide.py
+$V/stage_a/run_stage_a.sh cells || exit 1   # refuses without CONTROL_PASS; skips VOID cells; fits, logits, analysis,
+                                            # outcome distance, sibling order, value regret (report-only), stage_a_decide.py
+# a crash may be rerun once after `mv $V/offline/cells $V/offline/cells.fail1`
 ```
 
 **Stage B**, for each target T whose `stage_b` entry names a cell `X`, with seed `SEED`
