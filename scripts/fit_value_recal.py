@@ -217,7 +217,7 @@ def load_rows(args: argparse.Namespace) -> tuple[np.ndarray, dict[str, Any]]:
     if args.exclude_openings is not None:
         raise SystemExit("--exclude-openings applies to --rows; a collect's hold-out games are disjoint from "
                          "the EVAL openings by the openings split")
-    from chess_anti_engine.simple_rl.collect import load_generation_rows
+    from chess_anti_engine.simple_rl.collect import load_generation_rows_where
     from chess_anti_engine.simple_rl.learn import holdout_mask
 
     collect = Path(args.collect_dir)
@@ -225,13 +225,13 @@ def load_rows(args: argparse.Namespace) -> tuple[np.ndarray, dict[str, Any]]:
     if not manifest.is_file():
         raise SystemExit(f"{collect} is not a sealed collect (no manifest.json)")
     frac, frac_source = pinned_holdout_frac(collect, args.holdout_frac)
-    arrays, meta = load_generation_rows(collect, keys=("x",))
-    held = holdout_mask(meta, frac)
-    if not held.any():
+    # Only the hold-out rows are loaded (the whole generation's x is ~16 GiB at 762k rows).
+    arrays, meta = load_generation_rows_where(collect, lambda m: holdout_mask(m, frac), keys=("x",))
+    if not len(meta["game_id"]):
         raise SystemExit(f"{collect} has no hold-out games at holdout_frac {frac}")
-    return np.asarray(arrays["x"])[held], {
+    return np.asarray(arrays["x"]), {
         "collect_dir": str(collect), "collect_manifest_sha256": _sha256(manifest),
-        "holdout_frac": frac, "holdout_frac_source": frac_source, "holdout_games": int(np.unique(meta["game_id"][held]).size),
+        "holdout_frac": frac, "holdout_frac_source": frac_source, "holdout_games": int(np.unique(meta["game_id"]).size),
     }
 
 
