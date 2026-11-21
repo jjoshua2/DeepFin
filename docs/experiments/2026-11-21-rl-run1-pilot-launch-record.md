@@ -558,6 +558,29 @@ from the code and the audits. "Unknown" means not re-verified in this session.
 
 **Launch condition (unchanged):** the pilot has read.
 
+**Design option for the multi-generation run (not the pilot): an outside gauge per generation.**
+
+The owner, verbatim (2026-11-21):
+
+> "In self plah only games you also get 50% winrate"
+
+**The problem.** Self-play has no built-in progress gauge. The original loop's
+regret window is one, and it is measured against an independent engine.
+
+**The option.** Give each generation of the small loop one outside gauge, reported
+report-only beside the match against the SL base. Either:
+- **a fixed-handicap match against limited Stockfish:**
+  - the same `within_regret_candidates` handicap, at a pinned regret limit and a pinned node budget;
+  - the production Syzygy pair;
+  - banked finals of a fixed size;
+- **or the regret level at which the generation scores 50%.**
+
+**Caveat (CLAUDE.md).** Regret measures net plus search, never the net alone. It is
+comparable across generations only while the search settings and SF nodes are
+frozen. Difficulty is regret AND nodes.
+
+**Cost:** SF CPU per game at the play node budget, to measure.
+
 #### Alternative: the owner's outcome-conditioned value source (designed, not queued)
 
   The owner clarified this item (verbatim, 2026-11-21):
