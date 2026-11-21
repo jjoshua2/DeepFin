@@ -761,11 +761,32 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
     per game a batch holds only a handful of them. That denominator would swing
     each row's weight with the batch's draw, and a batch with one chosen row would
     give it the whole term.
+  - **What it costs, in numbers.** The pilot collect (3x128, 64 sims) holds
+    761,979 rows from 8,000 games, so 95.2 rows per game.
+    - At R = 2: f = 2 / 95.2 = 0.021, and each chosen row's weight is 1/f = 47.6.
+    - A 512-row batch holds about 10.8 chosen rows on average, and the count
+      itself varies from batch to batch. The effective value batch is about 11.
+    - The value gradient's variance is at least 1/f, about 48 times that of R = all,
+      so its SD is about 7 times larger. The term is still unbiased.
+    - AdamW normalises the step per parameter, so the value head's step is no
+      smaller, only noisier.
+    - In Aurora's orthogonalised trunk step, the value share of the trunk
+      gradient becomes mostly noise.
+  - **An option, not built:** a sampler that places a fixed number of chosen
+    rows in every batch. It would remove the count-variance term; the 1/f
+    weight-variance term would remain.
+  - **When R helps.** The gain is for an OUTCOME target, where every row of a game
+    carries the same label (the game result), so its rows are strongly
+    correlated. With a per-row search-value target (for example
+    `--value-search-source stored_search_wdl`), every row carries its own label,
+    and R throws that information away.
+  - Rows off the network turn (simple-RL collects store none) count toward a
+    game's R but carry weight 0, and f counts network-turn rows only.
   - Absent the flag, nothing reaches the loss and the reduction is the historical
     one. A weight of 1 on every row is bit-identical to it
     (`tests/test_simple_rl_value_rows_per_game.py`).
-  - Refused with `--accum-steps > 1` (micro-batches would hold unequal value-row
-    counts), with `--sl-mix-frac > 0` (SL rows have no game ids) and with
+  - Refused at settings validation, before anything is pinned or collected, with
+    `--accum-steps > 1` (micro-batches would hold unequal value-row counts), with `--sl-mix-frac > 0` (SL rows have no game ids) and with
     `--w-wdl 0` (nothing to mask).
   - Pinned in `run_config.json`. A run pinned before the flag resumes at 0. The
     train summary records `value_rows` (R, chosen rows, network-turn rows, games,

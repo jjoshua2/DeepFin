@@ -23,6 +23,7 @@ from chess_anti_engine.simple_rl.learn import (
     refuse_masked_heads_under_accumulation,
     train_generation,
     value_row_choice,
+    value_row_weights,
 )
 from tests.simple_rl_helpers import tiny_model_config
 from tests.test_simple_rl_accum_steps import _arrays, _run
@@ -165,11 +166,46 @@ def test_accumulation_and_settings_refuse_what_the_mask_cannot_honour(tmp_path: 
         _settings(value_rows_per_game=2, w_wdl=0.0).validate()
     with pytest.raises(ValueError, match=">= 0"):
         _settings(value_rows_per_game=-1).validate()
+    with pytest.raises(ValueError, match="accum_steps > 1"):  # at validation, before any collect runs
+        _settings(value_rows_per_game=1, accum_steps=2).validate()
     run = _run(tmp_path, 40)
     with pytest.raises(ValueError, match="value_rows_per_game"):
         train_generation(run_dir=run, generation=1, init_checkpoint=run / "gen_0000" / "model.pt",
                          prev_trainer_checkpoint=None, settings=_settings(batch_size=4, accum_steps=2,
                                                                           value_rows_per_game=1))
+
+
+def test_accumulation_is_refused_by_the_driver_before_anything_is_pinned_or_collected(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from scripts import simple_rl_loop
+    from tests.test_simple_rl_resume import _setup
+    from tests.test_simple_rl_snapshots_arms import _argv
+
+    openings, model_config = _setup(tmp_path, monkeypatch)
+    run = tmp_path / "vra"
+    with pytest.raises((SystemExit, ValueError), match="accum_steps > 1"):
+        simple_rl_loop.main(_argv(run, openings, model_config, "--value-rows-per-game", "2", "--accum-steps", "2"))
+    assert not (run / "run_config.json").exists()
+    assert not (run / "gen_0001").exists()
+
+
+def test_the_value_share_counts_network_turn_rows_only(tmp_path: Path) -> None:
+    """f is the chosen share of NETWORK-TURN rows (the WDL term's own mask), not
+    of all phase rows: rows off the network turn get weight 0 and are not in f's
+    denominator."""
+    run = _run(tmp_path, 100)  # 25 games of 4 rows, ply = row index
+    row_ids = np.stack([np.ones(100, dtype=np.int64), np.arange(100, dtype=np.int64)], axis=1)
+    net = np.ones(100, dtype=bool)
+    net[::3] = False  # 34 rows off the network turn, 66 on it
+    weight, info = value_row_weights(run, row_ids, net, 2)
+    chosen = value_row_choice(np.arange(100) // 4 + 1000, np.arange(100), 2)
+    k = int((chosen & net).sum())
+    assert info["network_turn_rows"] == 66
+    assert info["value_rows"] == k
+    assert info["value_row_share"] == pytest.approx(k / 66)
+    np.testing.assert_allclose(weight[chosen & net], 66 / k, rtol=1e-6)
+    assert not weight[~net].any()
+    assert not weight[~chosen].any()
 
 
 def test_driver_flag_is_pinned_and_an_old_run_resumes_at_every_row(

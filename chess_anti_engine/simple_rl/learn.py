@@ -291,6 +291,14 @@ class TrainSettings:
                              "to choose value rows by")
         if int(self.value_rows_per_game) > 0 and float(self.w_wdl) <= 0:
             raise ValueError("value_rows_per_game > 0 with w_wdl 0 would be ignored: there is no value term to mask")
+        if int(self.value_rows_per_game) > 0 and int(self.accum_steps) > 1:
+            # Refused here, before any collect runs, as well as by
+            # refuse_masked_heads_under_accumulation at train time: every
+            # micro-batch would hold a different number of value rows, so the
+            # accumulated value gradient would not be the effective batch's.
+            raise ValueError("value_rows_per_game > 0 with accum_steps > 1 is refused: micro-batches hold unequal "
+                             "value-row counts, so the accumulated value gradient is not the effective batch's; "
+                             "use accum_steps 1")
         if self.snapshot_updates and self.snapshot_rows:
             raise ValueError("snapshot_updates and snapshot_rows are alternatives; give one")
         rows = [int(k) for k in self.snapshot_rows]
