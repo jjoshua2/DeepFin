@@ -96,8 +96,8 @@ TB="$HOME/projects/chess/data/syzygy_3-4-5:$HOME/projects/chess/data/syzygy_6"
 ARENA="--mode matched_sims --sims 64 --search-shape training --no-gumbel-noise --compile off \
   --openings $P/openings/eval.pgn --opening-plies 16 --max-plies 600 --on-max-plies abort \
   --syzygy $TB --max-concurrent-games 128"
-O=$1 m=$2 k=$3 s=$4 seed=$5 n=$6; shift 6
-case "$(realpath -m "$O")" in "$(realpath "$P")"|"$(realpath "$P")"/*) echo "refusing to write into the frozen pilot bank"; exit 94;; esac
+O=$(realpath -m "$1") m=$2 k=$3 s=$4 seed=$5 n=$6; shift 6   # absolute before the cd below
+case "$O" in "$(realpath "$P")"|"$(realpath "$P")"/*) echo "refusing to write into the frozen pilot bank"; exit 94;; esac
 d=$O/arenas/$m; mkdir -p $d
 cd $PINW || exit 97
 [ "$(git rev-parse HEAD)" = "$PIN" ] || { echo "worktree not at PIN"; exit 96; }
@@ -121,28 +121,49 @@ by the consumer, and exits nonzero on any mismatch:
 ```python
 #!/usr/bin/env python3
 # usage: check_seat.py <arena dir> <label> <hybrid role: candidate|reference> <value-from sha256 or -> <T,b or ->
+# Explicit exits, never assert: `python -O` cannot disable a check.
 import json, re, sys
+
+def fail(msg):
+    sys.exit(f"seat readback FAILED: {msg}")
+
 d, label, role, vsha, recal = sys.argv[1:6]
+if role not in ("candidate", "reference"):
+    fail(f"role must be candidate or reference, got {role!r}")
 other = "reference" if role == "candidate" else "candidate"
 t_b = None if recal == "-" else [float(v) for v in recal.split(",")]
 log = open(f"{d}/{label}.log").read()
 m = re.search(rf"\[arena\] {role} HYBRID built: value_net=(\w+) recal_T=(\S+) recal_bias=\[([^\]]*)\]", log)
-assert m, f"no '{role} HYBRID built' line in {label}.log"
-assert m.group(1) == ("own" if vsha == "-" else "loaded"), m.group(0)
+if not m:
+    fail(f"no '{role} HYBRID built' line in {label}.log")
+if m.group(1) != ("own" if vsha == "-" else "loaded"):
+    fail(f"value_net={m.group(1)}, expected {'own' if vsha == '-' else 'loaded'}: {m.group(0)}")
 if t_b is None:
-    assert m.group(2) == "None", m.group(0)
+    if m.group(2) != "None":
+        fail(f"a recalibration was applied but none was expected: {m.group(0)}")
 else:
+    if m.group(2) == "None":
+        fail(f"no recalibration was applied, expected T,b = {t_b}: {m.group(0)}")
     bias = [float(v) for v in m.group(3).split(",")]
-    assert abs(float(m.group(2)) - t_b[0]) < 1e-9 and abs(bias[1] - t_b[1]) < 1e-6 and bias[0] == bias[2] == 0.0, m.group(0)
-assert f"[arena] {other} HYBRID built" not in log, f"the {other} seat was built as a hybrid"
-row = [json.loads(l) for l in open(f"{d}/results.jsonl") if json.loads(l).get("label") == label][-1]
+    if abs(float(m.group(2)) - t_b[0]) > 1e-9 or abs(bias[1] - t_b[1]) > 1e-6 or bias[0] != 0.0 or bias[2] != 0.0:
+        fail(f"built recalibration differs from T,b = {t_b}: {m.group(0)}")
+if f"[arena] {other} HYBRID built" in log:
+    fail(f"the {other} seat was built as a hybrid")
+rows = [r for r in map(json.loads, open(f"{d}/results.jsonl")) if r.get("label") == label]
+if not rows:
+    fail(f"no result row labelled {label}")
+row = rows[-1]
 v = row.get(f"{role}_value")
-assert v is not None and v.get("recal") == t_b, (role, v)
-assert (v.get("value_from") or {}).get("sha256") == (None if vsha == "-" else vsha), (role, v)
-assert row.get(f"{other}_value") is None, (other, row.get(f"{other}_value"))
+if v is None or v.get("recal") != t_b:
+    fail(f"result row {role}_value {v} does not carry recal {t_b}")
+if (v.get("value_from") or {}).get("sha256") != (None if vsha == "-" else vsha):
+    fail(f"result row {role}_value value_from {v.get('value_from')} is not sha256 {vsha}")
+if row.get(f"{other}_value") is not None:
+    fail(f"result row carries a {other}_value block: {row.get(f'{other}_value')}")
 names = re.findall(r'\[(White|Black) "([^"]*)"\]', open(f"{d}/{label}.pgn").read())
 pairs = list(zip(names[::2], names[1::2]))
-assert pairs and all(w[1] != b[1] for w, b in pairs), "engine names coincide in some game"
+if not pairs or any(w[1] == b[1] for w, b in pairs):
+    fail("engine names coincide in some game (or the PGN has no games)")
 print(f"seat readback OK: {label} {role} value_from={vsha[:12]} recal={t_b}")
 ```
 
@@ -192,8 +213,14 @@ For the record, the pool checks the arm seat's value signature. It does not prin
 - **"single-net policy-only step is adoptable"** iff LB95 > −10;
 - otherwise **"unread"**.
 
-At 6,400 games the interval is ≈ 13.2 Elo wide, so "damage" and "adoptable" cannot both
-hold.
+At the predicted SE (3.37) the interval is ≈ 13.2 Elo wide, so "damage" and "adoptable"
+cannot both hold.
+
+**Tie-break, if the MEASURED clustered SE is below ≈ 2.55 Elo.** The interval is then under
+10 Elo wide, and both can hold, for example [−8, −1]. Both facts are reported, and the
+reading is **"adoptable within the margin, with a measured loss"**:
+- the step stays within the amendment's margin, which tolerates up to 10 Elo;
+- like any "adoptable", it only nominates.
 
 **Secondary, report-only.**
 - The cost of P0's value drift = match 5's estimate − 7.66 (the graft), with
@@ -371,19 +398,33 @@ hybrid. Both smokes must pass, or match 6 is not played. No code changes under t
 - P(R's LB95 > 0) is 0.55 at true R = +10, and 0.84 at R = +14 (half of the predicted −28).
 - P(6a's UB95 < 0 | true −10) = 0.84.
 
-**Rules** (on the measured SEs):
-- **"content"** iff 6a's UB95 < 0 AND R's UB95 < +10;
-- **"shape"** iff R's LB95 > 0 AND 6a's LB95 > −10;
-- **everything else "unread".** The remaining cells:
+**Rules: a decision order, read on the measured SEs.** The steps are mutually exclusive
+and exhaustive; the first step that applies gives the reading.
 
-  | Case | Reading | What is reported |
-  |---|---|---|
-  | 6b's UB95 ≥ 0 | The value graft's damage is not established, so R cannot be read as a recovery | 6a, 6b and R, each with its interval. Any "content" or "shape" match from the rules above is reported as conditional on a damage that was not established |
-  | 6a reads damage, but R's UB95 ≥ +10 | Partial recovery not excluded: "unread" | — |
-  | R's LB95 > 0, but 6a's LB95 ≤ −10 | Recalibration helps, but the recal graft is not within the margin: "unread". This cell is reported as "recovery without adoption-level strength" | — |
-  | Neither rule fires on either side | "unread" | — |
+1. **6b's UB95 ≥ 0 → "unread (value-graft damage not established)".**
+   - R cannot be read as a recovery.
+   - 6a, 6b and R are reported, each with its interval.
+   - Whatever steps 2–4 would say is reported as report-only.
 
-  At 6,400 games 6a's interval is ≈ 13.2 wide, so "content" and "shape" cannot both hold.
+   Steps 2–5 apply only when 6b reads damage (UB95 < 0).
+2. **Both rules hold: "partial recovery".** That is, 6a's UB95 < 0 AND R's UB95 < +10 AND
+   R's LB95 > 0 AND 6a's LB95 > −10.
+   - This needs R's interval under 10 wide AND 6a's interval under 10 wide. That means a
+     measured SE_R below ≈ 2.55 and a measured SE_a below ≈ 2.55; the predicted values are
+     4.8 and 3.37.
+   - So the R-based clauses do not by themselves keep the two rules apart, and this step
+     defines the reading.
+   - Reported as: recalibration recovers a measurable part, 0 < R < +10, and the recal
+     graft still loses, but within the margin.
+   - It licenses what "shape" licenses (a nomination only). The diagnosis's content account
+     is recorded for the unrecovered part.
+3. **"content"** iff 6a's UB95 < 0 AND R's UB95 < +10.
+4. **"shape"** iff R's LB95 > 0 AND 6a's LB95 > −10.
+5. **Otherwise "unread".** The cells this step covers, all with 6b reading damage:
+   - **6a reads damage, but R's UB95 ≥ +10:** partial recovery is not excluded.
+   - **R's LB95 > 0, but 6a's LB95 ≤ −10:** reported as "recovery without adoption-level
+     strength".
+   - **6a's UB95 ≥ 0 and R's LB95 ≤ 0:** neither rule fires.
 
 **Licenses.**
 
@@ -391,6 +432,7 @@ hybrid. Both smokes must pass, or match 6 is not played. No code changes under t
 |---|---|
 | shape | NOMINATES a recalibrated S-value cell for the owner, under its own record, confirmed on fresh games. Nothing is adopted |
 | content | The diagnosis's mechanism stands: a value target built from the 64-sim search value harms ranking that recalibration cannot fix. Value-target work needs a different target, or a held-out value, before generation 2 |
+| partial recovery (step 2) | As "shape": a nomination only, with the content account recorded for the unrecovered part |
 | unread | Nothing |
 
 **Commands** (continuing the shell; 6b first, then 6a; each preceded by its 4-game smoke):
