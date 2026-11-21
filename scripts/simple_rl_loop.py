@@ -48,9 +48,10 @@ from chess_anti_engine.simple_rl.evaluate import (
     tripwire_table,
 )
 from chess_anti_engine.simple_rl.learn import (
-    MATRIX_OPTIMIZER_SCOPES, MODEL_FILE, TrainSettings, check_snapshot_plan, lineage_capped_collects,
-    planned_phase_updates, planned_snapshot_updates, preflight_init_optimizer, refuse_capped_collects,
-    train_generation, trainer_kwargs,
+    GRAD_CLIP_MODES, MATRIX_OPTIMIZER_SCOPES, MODEL_FILE, OPTIMIZER_HPARAM_SOURCES, TrainSettings,
+    check_snapshot_plan, lineage_capped_collects, planned_phase_updates, planned_snapshot_updates,
+    preflight_init_optimizer, refuse_capped_collects, resolve_optimizer_hparams, train_generation,
+    trainer_kwargs,
 )
 from chess_anti_engine.simple_rl.lineage import later_sealed, unseal_after, verify_before, verify_stage
 from chess_anti_engine.simple_rl.openings import split_openings
@@ -183,11 +184,33 @@ def train_settings(a: argparse.Namespace, run_dir: Path) -> TrainSettings:
         probe_rows=a.probe_rows, device=a.device, use_amp=str(a.device).startswith("cuda"), seed=a.seed,
         allow_capped_collect_rows=a.allow_capped_collect_rows,
         snapshot_updates=parse_snapshot_updates(a.snapshot_updates),
+        optimizer_hparams_source=a.optimizer_hparams_source, matrix_lr_multiplier=a.matrix_lr_multiplier,
+        matrix_weight_decay=a.matrix_weight_decay, aux_weight_decay=a.aux_weight_decay,
+        aurora_pp_iterations=a.aurora_pp_iterations, aurora_pp_beta=a.aurora_pp_beta,
+        aurora_polar_steps=a.aurora_polar_steps, aurora_polar_method=a.aurora_polar_method,
+        aurora_polar_dtype=a.aurora_polar_dtype, grad_clip=a.grad_clip, zclip_max_norm=a.zclip_max_norm,
+        lr_schedule=a.lr_schedule,
         accum_steps=a.accum_steps, snapshot_rows=parse_snapshot_updates(a.snapshot_rows, flag="--snapshot-rows"),
     )
     settings.validate()
+    if settings.optimizer_hparams_source != "trainer":
+        try:
+            settings = resolve_optimizer_hparams(settings, optimizer_hparams_checkpoint(a, run_dir))
+        except ValueError as exc:
+            raise SystemExit(f"--optimizer-hparams-source init-checkpoint: {exc}") from exc
     trainer_kwargs(settings)  # the Trainer's own range checks (e.g. --train-target-temp)
     return settings
+
+
+def optimizer_hparams_checkpoint(a: argparse.Namespace, run_dir: Path) -> Path | None:
+    """The run's init checkpoint: the sealed generation-0 copy once it exists
+    (the same file every generation), else --init-checkpoint; None for a random init."""
+    gen0 = gen_dir(run_dir, 0)
+    if stage_done(gen0):
+        kind = json.loads((gen0 / "manifest.json").read_text()).get("config", {}).get("kind")
+        return None if kind == "random_init" else gen0 / MODEL_FILE
+    return None if getattr(a, "random_init", False) or not getattr(a, "init_checkpoint", None) \
+        else Path(a.init_checkpoint)
 
 
 def parse_snapshot_updates(spec: str | None, *, flag: str = "--snapshot-updates") -> tuple[int, ...]:
@@ -306,6 +329,11 @@ RUN_CONFIG_EXEMPT = frozenset({
 ADDED_SINCE_PINNING = {"init_optimizer_state": "fresh",
                        "matrix_optimizer_scope": "default", "adopt_checkpoint_optimizer_hparams": False,
                        "allow_capped_collect_rows": False, "snapshot_updates": None, "collect_from": None,
+                       "optimizer_hparams_source": "trainer", "matrix_lr_multiplier": None,
+                       "matrix_weight_decay": None, "aux_weight_decay": None, "aurora_pp_iterations": None,
+                       "aurora_pp_beta": None, "aurora_polar_steps": None, "aurora_polar_method": None,
+                       "aurora_polar_dtype": None, "grad_clip": None, "zclip_max_norm": None,
+                       "lr_schedule": "flat",
                        # Every collect before --collect-procs ran as one process.
                        "collect_procs": 1, "accum_steps": 1, "snapshot_rows": None}
 
@@ -378,6 +406,14 @@ def validate_before_pinning(a: argparse.Namespace, run_dir: Path, stages: set[st
         validate_settings(collect_settings(a))
     except ValueError as exc:
         raise SystemExit(f"collect settings refused: {exc}") from exc
+    cs = collect_settings(a)
+    if int(settings.accum_steps) > 1 and float(settings.w_policy) > 0 \
+            and float(cs.full_prob) < 1.0 and bool(cs.fast_value_rows):
+        # train_generation would refuse these value-only rows anyway (each micro-batch normalises
+        # policy by its own has_policy count); refuse before the collect is pinned and spent.
+        raise SystemExit(f"--accum-steps {settings.accum_steps} refused with --full-prob {cs.full_prob} "
+                         "--fast-value-rows: fast plies store value-only rows, which accumulation refuses; "
+                         "use --accum-steps 1 or drop --fast-value-rows")
     # Without the split's summary.json and an explicit --eval-opening-plies the
     # opening plies are unknowable, which only an executing `eval` must refuse.
     knowable = a.eval_opening_plies is not None or (Path(a.openings_dir) / "summary.json").is_file()
@@ -661,6 +697,30 @@ def _common(p: argparse.ArgumentParser) -> None:
     t.add_argument("--matrix-optimizer-scope", default="default", choices=MATRIX_OPTIMIZER_SCOPES,
                    help="Aurora/Muon (and SOAP) only, refused with any other optimizer: which matrices the "
                         "matrix group owns (the SL base used mlp_out)")
+    t.add_argument("--optimizer-hparams-source", default="trainer", choices=OPTIMIZER_HPARAM_SOURCES,
+                   help="where every unset optimizer knob below comes from: 'trainer' (default, unchanged) = the "
+                        "Trainer's constructor defaults; 'init-checkpoint' = the run's init checkpoint's saved "
+                        "Aurora param groups and zclip on/off (refused unless it holds the Trainer's Aurora "
+                        "layout); the resolved values and their source are recorded in the train manifest")
+    t.add_argument("--matrix-lr-multiplier", type=float, default=None,
+                   help="Aurora/Muon: matrix group lr = --lr x this (Trainer default 20)")
+    t.add_argument("--matrix-weight-decay", type=float, default=None, help="Aurora/Muon matrix group (default 1e-4)")
+    t.add_argument("--aux-weight-decay", type=float, default=None,
+                   help="Aurora/Muon AdamW decay group (default 1e-4)")
+    t.add_argument("--aurora-pp-iterations", type=int, default=None, help="Aurora (Trainer default 2; SL base 3)")
+    t.add_argument("--aurora-pp-beta", type=float, default=None, help="Aurora (Trainer default 0.5; SL base 0.25)")
+    t.add_argument("--aurora-polar-steps", type=int, default=None, help="Aurora (Trainer default 12; SL base 8)")
+    t.add_argument("--aurora-polar-method", default=None,
+                   help="Aurora (Trainer default simple; SL base polar_express)")
+    t.add_argument("--aurora-polar-dtype", default=None, help="Aurora (Trainer default auto; SL base fp16)")
+    t.add_argument("--grad-clip", default=None, choices=GRAD_CLIP_MODES,
+                   help="gradient clipping (default none, unchanged; the SL base ran zclip): zclip = the "
+                        "Trainer's adaptive z-score clip with a 25-step warmup")
+    t.add_argument("--zclip-max-norm", type=float, default=None, help="zclip's hard cap (default: none)")
+    t.add_argument("--lr-schedule", default="flat", choices=("flat", "cosine-phase"),
+                   help="flat (default, unchanged): --lr for the whole phase; cosine-phase: one cosine from --lr "
+                        "(after warmup) to --lr-floor over the phase's planned optimizer updates (exact-once, "
+                        "fresh optimizer state; the SL base's run decayed)")
     t.add_argument("--reapply-optimizer-hparams", action="store_true",
                    help="on a restore (--optimizer-state continue, --init-optimizer-state checkpoint): apply the "
                         "requested lr / lr floor and this run's configured param-group hyperparameters onto "

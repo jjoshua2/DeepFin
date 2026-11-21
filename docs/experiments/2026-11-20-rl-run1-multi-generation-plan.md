@@ -1,5 +1,9 @@
 # RL run 1: a measured multi-generation self-play run from the SL base (plan)
 
+**Amended (draft):** [count games, not rows](2026-11-21-rl-run1-amendment-games-not-rows.md)
+proposes replacing Stage 1 below with a value-shape / policy-dose pilot and one large generation
+read as a dose-response curve in games. Until the owner decides, both are drafts.
+
 **Status:** DRAFT for owner approval. Nothing has been launched. No stage below
 starts until two things have happened:
 - the owner has approved this record, with the [decisions](#decisions-for-the-owner)
@@ -11,9 +15,11 @@ starts until two things have happened:
 **Interim evidence.** Every number marked *interim* comes from an ongoing diagnosis
 (bank `~/chess-artifacts/operations/rl-claude-20261119/search-compose/`, marked
 NOT_A_CANDIDATE, pre-registration `PREREG.md`). Those numbers are pending that
-diagnosis's full report and its registered tests T1 and T2. T1's orientation A is
-banked (`results/results.jsonl`, row `t0s1_P1_A`, 800 games) and **not read**: by
-`PREREG.md` it is read once, after both orientations. T2 has not run. Numbers re-read here from bank files say
+diagnosis's full report and its registered tests T1 and T2. **Corrected
+2026-11-21 (amendment PR #1452):** T1 has been read, pooled over both orientations:
+**+79.1 [+59.7, +98.9]**, "SUPPORTED by the registered rule"
+(`search-compose/PREREG.sha256.addendum`, addendum 5). T2 was withdrawn before it
+ran (addendum 7). Numbers re-read here from bank files say
 which file. The independent review of this plan (PR #1439) banked its evidence at
 `~/chess-artifacts/operations/rl-claude-20261119/plan-review-1439/`; numbers from
 it are marked *review* and were spot-checked here where stated.
@@ -183,7 +189,10 @@ P1 c12 at 64 sims with search-time `policy_temp=1.5`, against the SL base at 1.0
 and by the review. The diagnosis quoted +3.9 (−13.1 to +21.0).
 - Its seat offset is −17.0 (−33.6 to −0.4), the only one of the seven reads whose
   offset excludes zero. Pooling cancels it.
-- The control (the SL base at 1.5 against the SL base at 1.0) was still running.
+- The control (the SL base at 1.5 against the SL base at 1.0) never produced a game
+  (corrected 2026-11-21; earlier text said it was still running): its logs
+  `raw-net-1sim/BASE_cand_s64_pt1.5.log` / `BASE_ref_s64_pt1.5.log` stop at the
+  opening-sampling line and no games file exists.
 
 ### What training did (interim; re-read from `flip_by_cycle_v2.json`)
 
@@ -268,7 +277,15 @@ and `external_refs.npz`; this record recomputed the BT4 column independently
 - Against R800, deeper search looks like a better target. Against BT4 and C3 raw,
   the stored target is barely better than the prior, R256 is no better, and
   no-rescale has the largest gain.
-- **The deep-SF cross-check disagrees** (interim, `search-compose/sf_scores.json`,
+- **Superseded 2026-11-21 by the final labels.** The final leak-free deep-SF
+  labels (n = 2,433, `search-compose/logs/sf_parse_final.txt`, 8M nodes, every row
+  labelled) give regret (cp): BT4 raw 18.9, R800 19.6, C3 raw 19.7, R256n 19.9,
+  **stored 22.8, R64 no-rescale 23.2, R64 24.3**, R16 28.8, P1 c12 38.6, F12 c12
+  39.7, **base 44.6**. The stored target and no-rescale are now on par with (and
+  slightly below) rescaled R64, so the interim reading "no-rescale is worse than
+  the rescaled R64" does not survive. The interim table below is kept for the
+  record only.
+- *Interim, superseded:* the deep-SF cross-check (`search-compose/sf_scores.json`,
   n = 127 leak-free rows, unpaired, still being labelled; *review*):
 
   | Move source | Deep-SF regret (cp) |
@@ -282,9 +299,10 @@ and `external_refs.npz`; this record recomputed the BT4 column independently
   | BT4 raw | 18.1 |
   | P1 c12 prior | 29.5 |
 
-  On deep SF the stored target is much better than the prior, no-rescale is worse
-  than the rescaled R64, and P1 c12 is better than the base, the opposite of its
-  64-sim result. At n = 127 this decides nothing.
+  At n = 127 the stored target was much better than the prior, no-rescale worse
+  than the rescaled R64, and P1 c12 better than the base. On the final labels the
+  first and third hold (stored 22.8 vs base 44.6; P1 c12 38.6) and the second does
+  not.
 - **Target pricing is unresolved** until the full deep-SF labels and the searched
   BT4 ruler land. That is why all three targets play a match in Stage 1 instead of
   being screened out offline.
@@ -402,16 +420,27 @@ and is not used. Given what is banked (BT4 raw prices the stored target at only
 +0.7 pp; deep SF ranks P1 c12 above the base), possibly no ruler passes. Stage 1
 does not depend on one: the ruler picks doses only, and all four cells play.
 
+**Read 2026-11-21: neither raw ruler validates.** The positive control fails on
+both (`rl-run1-prereq/a1_poscontrol_score.json`, 2,433 rows, 190 games, paired,
+game-clustered): R64 argmax over the base's raw argmax, top-1 difference BT4 raw
++0.0074 [−0.0117, +0.0265], C3 raw +0.0181 [−0.0019, +0.0381]; both lower bounds
+are below 0, so by rule (3) neither is used. The offline ruler is now the deep-SF
+regret on the leak-free rows (`search-compose/logs/sf_parse_final.txt`) for
+POLICY, and there is **none for value**: offline value metrics did not see the
+64-sim value damage (amendment PR #1452), so value is judged by matches only.
+
 **The diagnosis's learner screen (Stage 0b, held until the owner finishes using the
-GPU).** Arms N256, N512, N1024, N4096 (NAdamW), N4096 with linear LR, and A512
+GPU).** *Corrected 2026-11-21:* addendum 6 replaced these arms with N256 (the P1
+recipe), A512, A2048 and N512, and the screen is now deprioritised. The original
+list was N256, N512, N1024, N4096 (NAdamW), N4096 with linear LR, and A512
 (the Aurora split), on the leak-free rows, scored at matched samples and matched
 KL. Its bank (`search-compose/`, `batch_screen`) is cited here when it lands. It is
 also what answers the legacy question "NAdamW-256 against the Aurora split at 512",
 so Stage 1 has no legacy NAdamW cell.
 
 **What Stage 0b decides for Stage 1.** Only which ruler picks each cell's dose
-(the validated ruler, else searched BT4 at 256 nodes, labelled unvalidated). It
-does not change which cells play.
+(the validated ruler; else every cell plays its FINAL model, as the scorer's
+`dose` enforces). It does not change which cells play.
 
 **The registered matches in this stage (GPU, one arena at a time, about 2 h):**
 - **T1 and T2**, exactly as `search-compose/PREREG.md` registers them (seed
@@ -585,8 +614,10 @@ the dose ruler, among snapshots inside the
 Snapshots within one game-clustered SE of the best count as tied, and the earliest
 of them is played (less movement). If no snapshot is inside the band, the one
 nearest the band is played. A2 is reported and never used to choose.
-- **The dose ruler** is the Stage 0b-validated ruler, else searched BT4 at 256
-  nodes, labelled unvalidated.
+- **The dose ruler** is the Stage 0b-validated ruler; without a validated ruler
+  every cell plays its final model (both raw rulers failed the positive control,
+  `rl-run1-prereq/a1_poscontrol_score.json`; the scorer's `dose` plays the final
+  model unless a passing validation record names the ruler).
 - The scorer is a P5 prerequisite. If it has not landed, every cell plays its
   final model, pre-committed.
 
@@ -722,10 +753,13 @@ not a per-readout anchor. One optional reading gives the gap in concrete terms.
 - **Pairing:** the SL base at 800 sims (UCI, the arena's training-shape flags,
   `go nodes 800`) against BT4-it332 at 1 node (its raw policy).
 - **Engine:** the existing CPU binary `~/local_engines/lc0/lc0` (v0.32.1, `eigen`
-  backend; about 1 s per move at 1 node). The local lc0 builds are CPU-only, so
-  BT4 above 1 node is out of scope here. A wrapper around the diagnosis's
-  `ext_search.py`, or a CUDA lc0 build, would be needed for that. Neither is
-  proposed now, and a CUDA build would need the owner's go-ahead.
+  backend; about 1 s per move at 1 node). **Corrected 2026-11-21:** a CUDA build
+  now exists (`~/local_engines/lc0-0.32.1-cuda/`; `smoke_gpu.json`: cuda backends
+  listed, weights sha ok, a Syzygy probe with tbhits 1 and a TB-correct move), and
+  Ceres 0cb57d8 with its own C3-768-30-pre8-I8 net on GPU is likewise smoked with
+  the production Syzygy pair (`~/local_engines/ceres-0cb57d8/smoke_gpu.json`: 510
+  WDL + 510 DTZ files loaded). Both run as 256-node rulers in the diagnosis
+  (addendum 6), so BT4 above 1 node is no longer out of reach.
 - **Harness:** `scripts/match_vs_uci.py` (cutechess is broken here), 200 games on
   100 `anchor` lines, colours swapped. The production Syzygy pair for our side and
   for adjudication (`--syzygy-adjudicate-path`); lc0 gets `SyzygyPath` too.
@@ -923,7 +957,7 @@ only registered 64-sim matches decide.
 |---|---|---|
 | Every *interim* number in Stage 0 (veto weights, the 0.7× ratchet) | direction | the diagnosis's full report, T1 / T2 |
 | The ruler validation rule, including the 1-SE tie rule and the positive control's paired lower bound | Stage 0b, dose ruler | Stage 1's matches |
-| The fallback dose ruler: searched BT4 at 256 nodes, unvalidated, with `ext_search.py`'s PUCT constants | Stage 1 dose | Stage 0b's validation |
+| The fallback when no ruler validates: play the final model | Stage 1 dose | Stage 0b's validation |
 | A2: about 3,000 rows, about 3 per game, from the `a2` block | Stage 0b validation, reporting, Stage 2 drift alarm | — (a budget) |
 | 1,040 games / ≈ 100k rows | Stage 1, Stage 2 | Stage 1's read and O3 |
 | Linear LR scaling anchored at 3e-6 for batch 512 (matrix LR 20× = 6e-5, the SL run's end LRs); 1.2e-5 at 2048 | a2048 | the Stage 0b learner screen; a2048's match |
@@ -940,7 +974,7 @@ only registered 64-sim matches decide.
 | The Stockfish K band (40–60%), the 25–75% re-tune trigger, 400 games | Stage 2 anchor | the tuning ladder and first readouts |
 | G-C3 ≥ +0.50; holdout 0.05; probe 2,048 | gates | not tuned |
 | +50 Elo at one week, and "halved" | success line | Stage 1's projection |
-| 0.49M rows per GPU-hour at 64 sims (3,284 games/h single-process); 96.8 rows per game; 1,274–1,800 arena games/h | compute | Stage 1's own runs |
+| 0.49M rows per GPU-hour at 64 sims (3,284 games/h single-process); 95.0 rows per game (`collect-throughput/bench_c128` manifest: 48,641 rows / 512 games; corrected from an unsourced 96.8; F12's 12 cycles: 104.7); 1,274–1,800 arena games/h | compute | Stage 1's own runs |
 | The exchange rate: 1.86M / 0.88M (provisional) / 0.49M rows per GPU-hour at 16 / 32 / 64 sims | later depth arms | the full collect-throughput report, after #1441 |
 | BT4 raw forward cost (about 43 ms per row on 8 CPU threads) | the parked BT4-target diagnostic | its own run, if it launches |
 

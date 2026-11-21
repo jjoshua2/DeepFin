@@ -716,10 +716,15 @@ def test_parallel_paths(ckpt: Path, tmp_path: Path, path: str) -> None:
     }[path]
     # The clocked gos may be answered by the deadline watchdog before any line on
     # a slow CPU (root-parallel Gumbel's first schedule is large): no line is
-    # required there, only that a printed one is aligned.
+    # required there, only that a printed one is aligned. That includes the
+    # clocked searchmoves go: on the chain path its only line is the final one,
+    # printed ~70-140 ms before an 800 ms budget on an idle CPU, so a 2-vCPU CI
+    # runner's overrunning last chunk lets the watchdog answer first (CI, #1450).
+    # The unclocked searchmoves go always prints one.
     gos = [(_START, "go nodes 400", None, True), (_START, "go movetime 800", None, False),
            (_START, "go wtime 3000 btime 3000", None, False), (_START, "go infinite", 1.0, True),
-           (_START, "go movetime 800 searchmoves a7a6 h7h6 g8f6", None, True)]
+           (_START, "go movetime 800 searchmoves a7a6 h7h6 g8f6", None, False),
+           (_START, "go nodes 400 searchmoves a7a6 h7h6 g8f6", None, True)]
     _run_session(ckpt, tmp_path, args, gos)
 
 

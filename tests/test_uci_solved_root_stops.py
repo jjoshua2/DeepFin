@@ -478,11 +478,11 @@ TEMPTING_STALEMATE = ("7k/2K5/8/8/8/8/2Q5/8 w - - 0 1", "c2g6")
 @pytest.mark.parametrize("path", ["pool", "walkers"])
 def test_go_depth_never_settles_for_the_stalemate_in_a_won_position(path: str) -> None:
     """The drawn PV end must not complete `go depth`: the root is unproven and
-    a mate exists. (What an UNPROVEN pool search plays when it is cut off is
-    the search's own choice and identical to main -- a random net can rank the
-    exact 0 of the stalemate above its own guesses -- so only the stop is
-    pinned here, plus the move on the walker path, which never picks it.)"""
-    fen, stalemate = TEMPTING_STALEMATE
+    a mate exists. (What an UNPROVEN search plays when it is cut off is the
+    search's own choice -- the unseeded random net can rank the exact 0 of the
+    stalemate above its own guesses, on the walker path too: 10/50 runs on main
+    played c2g6 -- so only the stop is pinned here.)"""
+    fen, _stalemate = TEMPTING_STALEMATE
     worker = _make_worker(path)
     try:
         result = worker.run(
@@ -494,8 +494,6 @@ def test_go_depth_never_settles_for_the_stalemate_in_a_won_position(path: str) -
         else:
             # The deadline ended it (walkers: one walker batch early).
             assert worker.last_stop_reason in ("external", "time_margin"), worker.last_stop_reason
-        if path == "walkers":
-            assert result.bestmove_uci != stalemate
     finally:
         worker.close()
 
@@ -753,3 +751,115 @@ def test_tree_answer_on_a_lost_root_avoids_mate_in_one() -> None:
     moves = [chess.Move.from_uci(u) for u in ("h3h2", "h3h4")]
     worker = _tree_answer_worker(board, moves, [20, 2])  # Kh4 under the min visits
     assert worker.tree_root_bestmove(board) == "h3h4"
+
+
+def test_walker_time_stop_is_named_when_the_batch_reserve_decays(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CI flake (`...stalemate_in_a_won_position[walkers]`: last_stop_reason None).
+
+    A walker chunk's early stop is computed from `batch_ms_hi`, a decayed
+    maximum, when the chunk launches; the loop re-read it after the chunk, by
+    when it could have decayed. A chunk launched inside its own reserve stops
+    before any sim, the re-read reserve said "not yet", and the go ended through
+    the zero-progress break with no stop reason. Here the reserve reads 1.5 s at
+    each chunk launch and 0 at each re-check: the go must end as a time stop.
+
+    Deadline-only (no depth/node bound): a real walker chunk that completes 0
+    sims for an unrelated reason (slow CI runner) then idles instead of taking
+    the zero-progress exit, so only the race decides the reason. Without the
+    fix every chunk stops at once and the go runs to the 3 s deadline."""
+    worker = _make_worker("walkers")
+    calls = [0]
+
+    def decaying_reserve(*_args: Any) -> float:
+        calls[0] += 1
+        return 1500.0 if calls[0] % 2 == 1 else 0.0  # launch, then re-check
+
+    monkeypatch.setattr(worker, "_walker_stop_reserve_ms", decaying_reserve)
+    try:
+        t0 = time.monotonic()
+        worker.run(
+            chess.Board(), stop_event=threading.Event(),
+            deadline=Deadline(3_000), max_nodes=None, max_depth=None,
+        )
+        took = time.monotonic() - t0
+        assert worker.last_stop_reason == "time_margin", worker.last_stop_reason
+        assert 1.0 < took < 2.5, took  # ended at the 1.5 s reserve, not the deadline
+        assert calls[0] >= 2
+    finally:
+        worker.close()
+
+
+def test_a_walker_chunk_stopped_at_its_reserve_is_a_time_stop_at_the_ms_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CI flake on #1449 (`no_progress` under `max_depth`). `remaining_ms()`
+    floors to whole ms; a chunk that stopped at its reserve with no batch in
+    flight re-read remaining == reserve, `rem < reserve` was false, the next
+    chunk launched already stopped and completed 0 sims, and the depth-bounded
+    go ended as `no_progress` -- a time stop mislabelled as "cannot progress".
+    Pinned exactly: the reserve equals the floored remaining time, so the
+    chunk's stop has fired at launch and the strict re-check ties."""
+    worker = _make_worker("walkers")
+    monkeypatch.setattr(
+        worker, "_walker_stop_reserve_ms",
+        lambda deadline, *_a: float(deadline.remaining_ms() or 0),
+    )
+    try:
+        worker.run(
+            chess.Board(), stop_event=threading.Event(),
+            deadline=Deadline(3_000), max_nodes=None, max_depth=50,
+        )
+        assert worker.last_stop_reason == "time_margin", worker.last_stop_reason
+    finally:
+        worker.close()
+
+
+def test_each_walker_chunk_stop_is_built_from_its_launch_reserve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One reserve per chunk: the value read at launch is the one the chunk's
+    early stop is built from (and the one the re-check honours). A stop that
+    re-read `batch_ms_hi` itself could disagree with the loop's copy -- the
+    race #1449 fixes -- so the launch value must be passed in, never re-read."""
+    worker = _make_worker("walkers")
+    served: list[float] = []
+
+    def distinct_reserve(*_args: Any) -> float:
+        served.append(100.0 + len(served))  # every read distinguishable
+        return served[-1]
+
+    built: list[float | None] = []
+    real_stop = worker._walker_chunk_stop
+
+    def recording_stop(*args: Any, **kwargs: Any) -> threading.Event:
+        built.append(kwargs.get("reserve_ms"))
+        return real_stop(*args, **kwargs)
+
+    monkeypatch.setattr(worker, "_walker_stop_reserve_ms", distinct_reserve)
+    monkeypatch.setattr(worker, "_walker_chunk_stop", recording_stop)
+    try:
+        worker.run(
+            chess.Board(), stop_event=threading.Event(),
+            deadline=Deadline(5_000), max_nodes=200, max_depth=None,
+        )
+        assert built, "no walker chunk ran"
+        assert None not in built, built  # the stop never re-reads the reserve
+        # Reads alternate launch / re-check: chunk k's stop got launch read k.
+        assert built == served[0::2][:len(built)], (built, served)
+    finally:
+        worker.close()
+
+
+def test_a_zero_progress_bounded_search_names_its_stop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A chunk that completes nothing cannot move a node or depth bound, so the
+    search stops at once -- and must say why, not leave last_stop_reason None."""
+    worker = _make_worker("walkers")
+    monkeypatch.setattr(worker, "_run_one_chunk", lambda *_a, **_k: (0.0, 0))
+    try:
+        worker.run(
+            chess.Board(), stop_event=threading.Event(),
+            deadline=Deadline(30_000), max_nodes=None, max_depth=50,
+        )
+        assert worker.last_stop_reason == "no_progress", worker.last_stop_reason
+    finally:
+        worker.close()

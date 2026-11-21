@@ -37,7 +37,7 @@ from typing import Any
 
 import numpy as np
 
-from chess_anti_engine.simple_rl.collect import concat_arrays, load_generation_rows
+from chess_anti_engine.simple_rl.collect import concat_arrays, gather_rows, generation_shards, shard_row_meta
 from chess_anti_engine.simple_rl.common import (
     input_ref, resolve_collect_dir, seed_for, sha256_file, write_json_atomic, write_manifest,
 )
@@ -67,6 +67,23 @@ MATRIX_OPTIMIZER_SCOPES = ("default", "block_all", "mlp_only", "mlp_out", "mlp_o
 # matrix group, SOAP's split); weight_decay_mode "soda" reads it too.
 SCOPED_OPTIMIZERS = ("aurora", "muon", "soap")
 MODEL_FILE = "model.pt"
+# Where unset optimizer knobs come from: "trainer" = the Trainer's constructor
+# defaults (the driver's historical behaviour); "init-checkpoint" = the
+# run's init checkpoint's saved param groups (and zclip on/off), resolved once
+# by resolve_optimizer_hparams and recorded.
+OPTIMIZER_HPARAM_SOURCES = ("trainer", "init-checkpoint")
+GRAD_CLIP_MODES = ("none", "zclip")
+# "flat": the peak lr for the whole phase (historical: a cosine whose period is
+# 1e9 updates). "cosine-phase": one cosine from the peak lr (after warmup) down
+# to lr_floor over the phase's planned optimizer updates, restarted each phase.
+LR_SCHEDULES = ("flat", "cosine-phase")
+# The Aurora knobs the driver passes to the Trainer when set. Each is read by
+# the Aurora optimizer only (matrix_lr_multiplier / the weight decays by the
+# Aurora and Muon splits); validate() refuses one that would be ignored.
+AURORA_KNOBS = ("aurora_pp_iterations", "aurora_pp_beta", "aurora_polar_steps", "aurora_polar_method",
+                "aurora_polar_dtype")
+SPLIT_KNOBS = ("matrix_lr_multiplier", "matrix_weight_decay", "aux_weight_decay")
+_CHECKPOINT_CLIP_FIELD = "grad_clip_mode"
 
 
 @dataclass(frozen=True)
@@ -150,6 +167,26 @@ class TrainSettings:
     # train/snapshots/step_<k>/ (weights-only model.pt + metrics.json) without
     # changing the training it is part of. See write_snapshot.
     snapshot_updates: tuple[int, ...] = ()
+    # Optimizer knobs (None = not set: from optimizer_hparams_source). The
+    # realised values are read back off the optimizer into the manifest
+    # (realised_optimizer: param_group_table, grad_clip).
+    optimizer_hparams_source: str = "trainer"
+    matrix_lr_multiplier: float | None = None
+    matrix_weight_decay: float | None = None
+    aux_weight_decay: float | None = None
+    aurora_pp_iterations: int | None = None
+    aurora_pp_beta: float | None = None
+    aurora_polar_steps: int | None = None
+    aurora_polar_method: str | None = None
+    aurora_polar_dtype: str | None = None
+    # Gradient clipping: None = "none" (the driver's historical setting) unless
+    # resolved from the init checkpoint; "zclip" = the Trainer's adaptive
+    # z-score clip (25-step EMA warmup), with an optional hard cap.
+    grad_clip: str | None = None
+    zclip_max_norm: float | None = None
+    lr_schedule: str = "flat"
+    # What resolve_optimizer_hparams filled in, and from where (recorded).
+    optimizer_hparams_resolved: dict[str, Any] | None = None
     # Gradient accumulation: one optimizer step per `accum_steps` micro-batches
     # of `batch_size` rows, so the effective batch is batch_size * accum_steps.
     # The Trainer scales each micro-batch's loss by rows / batch_size /
@@ -200,6 +237,34 @@ class TrainSettings:
             raise ValueError(f"matrix_optimizer_scope {self.matrix_optimizer_scope!r} is read only by the "
                              f"{SCOPED_OPTIMIZERS} optimizers (or weight_decay_mode soda); with optimizer "
                              f"{self.optimizer!r} it would be ignored")
+        opt = str(self.optimizer).lower()
+        if self.optimizer_hparams_source not in OPTIMIZER_HPARAM_SOURCES:
+            raise ValueError(f"optimizer_hparams_source must be one of {OPTIMIZER_HPARAM_SOURCES}")
+        if self.optimizer_hparams_source != "trainer" and opt != "aurora":
+            raise ValueError("optimizer_hparams_source init-checkpoint reproduces an Aurora split; with optimizer "
+                             f"{self.optimizer!r} it would be ignored")
+        unread = [k for k in AURORA_KNOBS if getattr(self, k) is not None and opt != "aurora"]
+        unread += [k for k in SPLIT_KNOBS if getattr(self, k) is not None and opt not in ("aurora", "muon")]
+        if unread:
+            raise ValueError(f"{unread} are read only by the Aurora split (matrix knobs also by Muon); with "
+                             f"optimizer {self.optimizer!r} they would be ignored")
+        if self.lr_schedule not in LR_SCHEDULES:
+            raise ValueError(f"lr_schedule must be one of {LR_SCHEDULES}, got {self.lr_schedule!r}")
+        if self.lr_schedule == "cosine-phase":
+            if self.sample_with_replacement:
+                raise ValueError("lr_schedule cosine-phase needs the exact-once schedule's planned updates")
+            if self.optimizer_state == "continue":
+                raise ValueError("lr_schedule cosine-phase restarts each phase's cosine from the Trainer's step, "
+                                 "which optimizer_state continue carries across phases; use fresh state")
+            if self.lr_floor is None or not float(self.lr_floor) < float(self.lr):
+                raise ValueError("lr_schedule cosine-phase decays to lr_floor; give an lr_floor below lr (without "
+                                 "one the schedule would be flat while recorded as a decay)")
+        if self.grad_clip is not None and self.grad_clip not in GRAD_CLIP_MODES:
+            raise ValueError(f"grad_clip must be one of {GRAD_CLIP_MODES}, got {self.grad_clip!r}")
+        if self.zclip_max_norm is not None and self.realised_grad_clip() != "zclip":
+            raise ValueError("zclip_max_norm is read only with grad_clip zclip; it would be ignored")
+        if self.zclip_max_norm is not None and not float(self.zclip_max_norm) > 0:
+            raise ValueError(f"zclip_max_norm must be > 0, got {self.zclip_max_norm}")
         if int(self.accum_steps) < 1:
             raise ValueError(f"accum_steps must be >= 1, got {self.accum_steps}")
         if int(self.accum_steps) > 1 and (self.kl_policy > 0 or self.kl_wdl > 0):
@@ -228,6 +293,9 @@ class TrainSettings:
             if snaps[0] < 1 or any(b <= a for a, b in itertools.pairwise(snaps)):
                 raise ValueError(f"snapshot_updates must be strictly increasing positive update counts, got {snaps}")
 
+    def realised_grad_clip(self) -> str:
+        return "none" if self.grad_clip is None else str(self.grad_clip)
+
     def own_rows_per_batch(self) -> int:
         """Self-play rows in a full exact-once batch (the rest is the SL share)."""
         n_sl = round(float(self.sl_mix_frac) * int(self.batch_size)) if self.sl_mix_frac > 0 else 0
@@ -249,6 +317,9 @@ def search_value_wdl(q: np.ndarray, draw: np.ndarray) -> np.ndarray:
     q = np.clip(np.asarray(q, dtype=np.float64), -1.0, 1.0)
     d = np.minimum(np.clip(np.asarray(draw, dtype=np.float64), 0.0, 1.0), 1.0 - np.abs(q))
     return np.stack([(1.0 - d + q) / 2.0, d, (1.0 - d - q) / 2.0], axis=-1)
+
+
+PRIOR_MIX_CHUNK_ROWS = 8192
 
 
 def prepare_targets(rows: dict[str, np.ndarray], settings: TrainSettings,
@@ -283,23 +354,31 @@ def prepare_targets(rows: dict[str, np.ndarray], settings: TrainSettings,
     lam = float(settings.policy_prior_mix)
     if lam < 1.0 and n:
         policy = np.asarray(out.get("has_policy", np.ones(n)), dtype=bool)
-        legal = np.asarray(out["legal_mask"]) > 0
         if settings.prior_mix_source == "actor":
             ok = policy & np.asarray(out.get("has_root_log_prior", np.zeros(n)), dtype=bool)
-            support = np.asarray(out["root_child_visits"])[ok] >= 0
-            logp = np.where(support, np.asarray(out["root_log_prior"], dtype=np.float64)[ok], -np.inf)
-            logp -= logp.max(axis=1, keepdims=True)
-            prior = np.where(support, np.exp(logp), 0.0)
         else:
             if reference_prior is None:
                 raise ValueError("prior_mix_source=reference needs a reference checkpoint")
             ok = policy
-            prior = np.asarray(reference_prior(np.asarray(out["x"])[ok], legal[ok]), dtype=np.float64)
-        prior /= np.maximum(prior.sum(axis=1, keepdims=True), 1e-30)
         target = np.asarray(out["policy_target"], dtype=np.float32).copy()
-        t = target[ok].astype(np.float64)
-        t /= np.maximum(t.sum(axis=1, keepdims=True), 1e-30)
-        target[ok] = (lam * t + (1.0 - lam) * prior).astype(np.float32)
+        # Row-local float64 work in bounded row chunks (identical per row), so the
+        # temporaries never span the whole window (~15 KB/row each at 1858 moves).
+        rows_ok = np.flatnonzero(ok)
+        for start in range(0, rows_ok.size, PRIOR_MIX_CHUNK_ROWS):
+            idx = rows_ok[start:start + PRIOR_MIX_CHUNK_ROWS]
+            if settings.prior_mix_source == "actor":
+                support = np.asarray(out["root_child_visits"][idx]) >= 0
+                logp = np.where(support, np.asarray(out["root_log_prior"][idx], dtype=np.float64), -np.inf)
+                logp -= logp.max(axis=1, keepdims=True)
+                prior = np.where(support, np.exp(logp), 0.0)
+            else:
+                assert reference_prior is not None
+                legal = np.asarray(out["legal_mask"][idx]) > 0
+                prior = np.asarray(reference_prior(np.asarray(out["x"][idx]), legal), dtype=np.float64)
+            prior /= np.maximum(prior.sum(axis=1, keepdims=True), 1e-30)
+            t = target[idx].astype(np.float64)
+            t /= np.maximum(t.sum(axis=1, keepdims=True), 1e-30)
+            target[idx] = (lam * t + (1.0 - lam) * prior).astype(np.float32)
         out["policy_target"] = target
         info["prior_mixed_rows"] = int(ok.sum())
         info["prior_mix_skipped_policy_rows"] = int((policy & ~ok).sum())
@@ -367,9 +446,9 @@ def load_window(run_dir: Path, generation: int, settings: TrainSettings) -> tupl
     rows in load order)``, the key of the presentation ledger.
     """
     gens = phase_generations(generation, settings)
-    train_parts: list[dict[str, np.ndarray]] = []
+    train_group: list[tuple[Path, np.ndarray | None]] = []
+    holdout_group: list[tuple[Path, np.ndarray | None]] = []
     ids: list[np.ndarray] = []
-    holdout: dict[str, np.ndarray] | None = None
     for g in gens:
         if not (Path(run_dir) / f"gen_{g:04d}" / "collect" / "manifest.json").is_file():
             raise ValueError(f"generation {g} collect is not sealed; refusing to train on its rows")
@@ -377,16 +456,32 @@ def load_window(run_dir: Path, generation: int, settings: TrainSettings) -> tupl
             from chess_anti_engine.simple_rl.lineage import verify_stage
 
             verify_stage(run_dir, g, "collect")  # a reference: the source still matches what it sealed
-        arrays, meta = load_generation_rows(Path(run_dir) / f"gen_{g:04d}" / "collect",
-                                            keys=(*TRAIN_KEYS, *TARGET_SOURCE_KEYS))
-        held = holdout_mask(meta, settings.holdout_frac)
-        train_parts.append(_select(arrays, ~held))
-        rows = np.flatnonzero(~held)
+        shards = generation_shards(Path(run_dir) / f"gen_{g:04d}" / "collect")
+        held = [holdout_mask(shard_row_meta(s), settings.holdout_frac) for s in shards]
+        train_group += [(s, ~h) for s, h in zip(shards, held, strict=True)]
+        rows = np.flatnonzero(~np.concatenate(held))
         ids.append(np.stack([np.full(rows.size, g, dtype=np.int64), rows.astype(np.int64)], axis=1))
         if g == generation:
-            holdout = _select(arrays, held)
-    assert holdout is not None
-    return concat_arrays(train_parts), holdout, gens, np.concatenate(ids, axis=0)
+            holdout_group = [(s, h) for s, h in zip(shards, held, strict=True)]
+    # Only the keys the loss and THIS target configuration read are loaded, into
+    # preallocated arrays (collect.gather_rows): the train rows and the held-out
+    # rows are filled from each shard in one pass, never via a full extra copy.
+    train, holdout = gather_rows([train_group, holdout_group], keys=(*TRAIN_KEYS, *target_source_keys(settings)))
+    return train, holdout, gens, np.concatenate(ids, axis=0)
+
+
+def target_source_keys(settings: TrainSettings) -> tuple[str, ...]:
+    """The subset of TARGET_SOURCE_KEYS ``prepare_targets`` reads under ``settings``
+    (all of them are dropped before a row reaches the sampler)."""
+    keys: list[str] = []
+    if settings.uses_survivor_value():
+        keys += ["root_survivor_q", "has_root_survivor_q"]
+        if settings.value_draw_source == "net":
+            keys += ["root_net_wdl", "has_root_net_wdl"]
+    if float(settings.policy_prior_mix) < 1.0 and settings.prior_mix_source == "actor":
+        keys += ["has_root_log_prior", "root_log_prior", "root_child_visits"]
+    assert set(keys) <= set(TARGET_SOURCE_KEYS)
+    return tuple(keys)
 
 
 def planned_phase_updates(run_dir: Path, generation: int, settings: TrainSettings) -> int | None:
@@ -798,14 +893,25 @@ def attach_anchor(trainer: Any, anchor: ReferenceAnchor) -> None:
     trainer._frozen_policy_anchor = anchor
 
 
-def trainer_kwargs(settings: TrainSettings) -> dict[str, Any]:
+def schedule_period(settings: TrainSettings, phase_updates: int | None) -> int:
+    """CosineAnnealingWarmRestarts T_0 for the requested schedule."""
+    if settings.lr_schedule == "flat":
+        return 10**9
+    if phase_updates is None:
+        raise ValueError("lr_schedule cosine-phase needs the phase's planned updates")
+    return max(1, int(phase_updates) - int(settings.warmup_steps))
+
+
+def trainer_kwargs(settings: TrainSettings, *, phase_updates: int | None = None) -> dict[str, Any]:
     from chess_anti_engine.train.losses import policy_target_temp_active
 
     policy_target_temp_active(settings.policy_target_temp)  # range check, raises on a typo
     floor = settings.lr if settings.lr_floor is None else settings.lr_floor
     return {
         "optimizer": settings.optimizer, "weight_decay_mode": settings.weight_decay_mode,
-        "matrix_optimizer_scope": settings.matrix_optimizer_scope, "grad_clip_mode": "none", "zclip_max_norm": None,
+        "matrix_optimizer_scope": settings.matrix_optimizer_scope,
+        "grad_clip_mode": settings.realised_grad_clip(), "zclip_max_norm": settings.zclip_max_norm,
+        **{k: getattr(settings, k) for k in (*AURORA_KNOBS, *SPLIT_KNOBS) if getattr(settings, k) is not None},
         "feature_dropout_p": 0.0, "fdp_king_safety": 0.0, "fdp_pins": 0.0, "fdp_pawns": 0.0,
         "fdp_mobility": 0.0, "fdp_outposts": 0.0, "resid_channel_dropout": 0.0,
         "resid_channel_balance_weight": 0.0, "rebuild_sf_targets": False, "sf_policy_sparse_ce": False,
@@ -824,7 +930,9 @@ def trainer_kwargs(settings: TrainSettings) -> dict[str, Any]:
         "device": settings.device, "use_amp": settings.use_amp,
         "lr": settings.lr, "lr_eta_min": floor, "warmup_steps": settings.warmup_steps,
         "warmup_lr_start": settings.warmup_start, "lr_schedule": "cosine",
-        "lr_T0": 10**9, "lr_T_mult": 1, "mirror_prob": settings.mirror_prob,
+        "lr_T0": (schedule_period(settings, phase_updates)
+                  if settings.lr_schedule == "flat" or phase_updates is not None else 10**9),
+        "lr_T_mult": 1, "mirror_prob": settings.mirror_prob,
     }
 
 
@@ -875,10 +983,199 @@ def group_key_diff(configured: list[dict[str, Any]], checkpoint: list[dict[str, 
     return out
 
 
+# The per-group table that says which optimizer setup actually ran. Read off
+# the live param groups (never the flags); compared against a checkpoint's
+# saved groups by param_group_table_of.
+TABLE_KEYS = ("lr", "betas", "eps", "weight_decay", "aurora_momentum", "aurora_nesterov", "aurora_pp_iterations",
+              "aurora_pp_beta", "aurora_polar_steps", "aurora_polar_method", "aurora_polar_dtype",
+              "aurora_polar_safety", "aurora_uw_floor")
+
+
+def _group_class(g: dict[str, Any], optimizer_class: str) -> str:
+    if "use_aurora" in g:
+        return "aurora" if g["use_aurora"] else "adamw"
+    if "use_muon" in g:
+        return "muon" if g["use_muon"] else "adamw"
+    return optimizer_class
+
+
+def param_group_table_of(groups: list[dict[str, Any]], optimizer_class: str = "unknown") -> list[dict[str, Any]]:
+    """One row per param group: count, class and every TABLE_KEYS value present."""
+    return [{"params": len(g["params"]), "class": _group_class(g, optimizer_class),
+             **{k: _plain(g[k]) for k in TABLE_KEYS if k in g}} for g in groups]
+
+
+def param_group_table(trainer: Any) -> list[dict[str, Any]]:
+    return param_group_table_of(trainer.opt.param_groups, type(trainer.opt).__name__)
+
+
+def tables_match(a: list[dict[str, Any]], b: list[dict[str, Any]], *, rel_lr: float = 1e-6) -> list[str]:
+    """Differences between two param-group tables (lr compared at rel_lr)."""
+    if len(a) != len(b):
+        return [f"{len(a)} groups vs {len(b)}"]
+    out = []
+    for i, (x, y) in enumerate(zip(a, b, strict=True)):
+        for k in sorted(set(x) | set(y)):
+            u, v = x.get(k, "<absent>"), y.get(k, "<absent>")
+            same = (math.isclose(float(u), float(v), rel_tol=rel_lr, abs_tol=0.0)
+                    if k == "lr" and isinstance(u, float) and isinstance(v, float) else _close(u, v))
+            if not same:
+                out.append(f"group {i} {k}: {u!r} vs {v!r}")
+    return out
+
+
 def realised_optimizer(trainer: Any) -> dict[str, Any]:
     out = optimizer_hparams(trainer)
     out["param_group_lr"] = [float(g["lr"]) for g in trainer.opt.param_groups]
+    out["optimizer_class"] = type(trainer.opt).__name__
+    out["param_group_table"] = param_group_table(trainer)
+    sched = trainer._scheduler
+    out["lr_schedule"] = {"class": type(sched).__name__, "T_0": getattr(sched, "T_0", None),
+                          "eta_min": getattr(sched, "eta_min", None),
+                          "group_eta_min": [float(v) for v in getattr(sched, "group_eta_min", [])] or None,
+                          "warmup_steps": int(getattr(trainer, "_warmup_steps", 0))}
+    # Read at phase end: initialized + a filled buffer are the direct evidence the clip ran
+    # (zclip is a no-op until `initialized`, after its 25 warm-up norms).
+    out["grad_clip"] = {"mode": str(trainer.grad_clip_mode),
+                        "zclip_max_norm": getattr(trainer.zclip, "max_grad_norm", None),
+                        "zclip_warmup_steps": int(getattr(trainer.zclip, "warmup_steps", 0)),
+                        "zclip_initialized": bool(getattr(trainer.zclip, "initialized", False)),
+                        "zclip_buffer_len": len(getattr(trainer.zclip, "buffer", None) or [])}
     return out
+
+
+def resolve_optimizer_hparams(settings: TrainSettings, checkpoint: Path | None) -> TrainSettings:
+    """Fill every unset Aurora knob (and grad_clip) from ``checkpoint``'s saved
+    optimizer when ``optimizer_hparams_source`` is "init-checkpoint".
+
+    The checkpoint must hold the Trainer's Aurora layout (four groups: matrix,
+    matrix no-decay, aux decay, aux no-decay); its matrix-LR multiplier is the
+    matrix group's lr over the aux decay group's. Keys the driver cannot set
+    (AdamW betas / eps, Aurora momentum / Nesterov / safety / uw floor) must
+    already equal what the Trainer builds, else the setup is not reproducible
+    and this refuses. Explicitly set knobs win and are recorded as such.
+    """
+    import dataclasses
+
+    import torch
+
+    if settings.optimizer_hparams_source == "trainer":
+        return settings
+    if checkpoint is None:
+        raise ValueError("optimizer_hparams_source init-checkpoint needs an init checkpoint (a random init has no "
+                         "optimizer to reproduce)")
+    payload = torch.load(str(checkpoint), map_location="cpu", weights_only=False, mmap=True)
+    groups = (payload.get("opt") or {}).get("param_groups") if isinstance(payload.get("opt"), dict) else None
+    flags = [g.get("use_aurora") for g in groups or []]
+    if not groups or flags[:4] != [True, False, False, False]:
+        raise ValueError(f"{checkpoint}: optimizer param groups are not the Trainer's Aurora layout "
+                         f"(use_aurora {flags}); nothing to reproduce from")
+    fixed = {"betas": [0.9, 0.95], "eps": 1e-8, "aurora_momentum": 0.95, "aurora_nesterov": True,
+             "aurora_polar_safety": 1.01, "aurora_uw_floor": 0.0}
+    bad = {k: _plain(groups[0].get(k)) for k, v in fixed.items() if not _close(_plain(groups[0].get(k)), v)}
+    if bad:
+        raise ValueError(f"{checkpoint}: optimizer keys the driver cannot set differ from the Trainer's {fixed}: "
+                         f"{bad}; the setup is not reproducible")
+    mat, aux = groups[0], groups[2]
+    found: dict[str, Any] = {k: _plain(mat[k]) for k in AURORA_KNOBS}
+    # A keyword update, not subscript writes: tests/test_construction_only_config_keys.py reads
+    # `x["<yaml key>"]` as a config read, and these are the checkpoint's group values, not the yaml's.
+    found.update(matrix_lr_multiplier=float(mat["lr"]) / float(aux["lr"]),
+                 matrix_weight_decay=float(mat["weight_decay"]), aux_weight_decay=float(aux["weight_decay"]))
+    scope = checkpoint_matrix_scope(payload, checkpoint)
+    if settings.matrix_optimizer_scope != "default" and settings.matrix_optimizer_scope != scope \
+            and not _same_split(payload, settings.matrix_optimizer_scope, scope):
+        raise ValueError(f"--matrix-optimizer-scope {settings.matrix_optimizer_scope} differs from {checkpoint}'s "
+                         f"split ({scope}); the init-checkpoint source reproduces the checkpoint's")
+    zc = payload.get("zclip")
+    # The CHECKPOINT's clip-mode field (Trainer.save writes it), read through a constant so the
+    # construction-only key scan does not take it for a yaml read of `grad_clip_mode`.
+    found["grad_clip"] = str(payload.get(_CHECKPOINT_CLIP_FIELD) or ("zclip" if isinstance(zc, dict) else "none"))
+    filled = {k: v for k, v in found.items() if getattr(settings, k) is None}
+    explicit = sorted(k for k in found if getattr(settings, k) is not None)
+    if settings.matrix_optimizer_scope != "default":
+        scope = settings.matrix_optimizer_scope  # equal to, or the same split as, the derived one
+    found["matrix_optimizer_scope"] = scope
+    if settings.matrix_optimizer_scope != scope:  # "default" given, the checkpoint's derived scope differs
+        filled["matrix_optimizer_scope"] = scope
+    elif scope != "default":
+        explicit.append("matrix_optimizer_scope")
+    record = {"source": str(checkpoint), "checkpoint_values": found, "filled": sorted(filled),
+              "explicit": sorted(explicit)}
+    out = dataclasses.replace(settings, **filled, optimizer_hparams_resolved=record)
+    out.validate()
+    return out
+
+
+def _wrap_agnostic(name: str) -> str:
+    return name.replace("_orig_mod.", "").removeprefix("module.")
+
+
+def checkpoint_matrix_scope(payload: dict[str, Any], checkpoint: Path) -> str:
+    """The canonical ``matrix_optimizer_scope`` whose Aurora filter selects
+    exactly the checkpoint's matrix groups (groups 0 and 1), from its
+    ``opt_param_names`` manifest and its weights' shapes. Refused when the
+    manifest is absent or no canonical scope (or more than one) matches."""
+    from chess_anti_engine.train.trainer import _matrix_optimizer_filter
+
+    names = payload.get("opt_param_names")
+    groups = payload["opt"]["param_groups"]
+    sizes = [len(g["params"]) for g in groups]
+    if not names or len(names) != sum(sizes):
+        raise ValueError(f"{checkpoint}: no usable opt_param_names manifest, so the matrix scope its optimizer "
+                         "used cannot be derived; pass --matrix-optimizer-scope and --init-optimizer-state "
+                         "checkpoint, whose layout check compares names")
+    shapes = {_wrap_agnostic(k): tuple(v.shape) for k, v in payload["model"].items() if hasattr(v, "shape")}
+    matrix = set(names[: sizes[0] + sizes[1]])
+
+    class _P:  # the filter reads only .ndim
+        def __init__(self, ndim: int) -> None:
+            self.ndim = ndim
+
+    hits = []
+    for scope in MATRIX_OPTIMIZER_SCOPES:
+        keep = _matrix_optimizer_filter(scope, include_embed_default=False)
+        chosen = {n for n in names if keep(n, _P(len(shapes.get(n, ()))))}  # pyright: ignore[reportArgumentType]
+        if chosen == matrix:
+            hits.append(scope)
+    if not hits:
+        raise ValueError(f"{checkpoint}: no canonical matrix scope ({list(MATRIX_OPTIMIZER_SCOPES)}) selects its "
+                         f"{len(matrix)} matrix-group parameters; the split is not reproducible from a scope name")
+    # Several scopes can select the same set on a model without (say) a separate v_proj; they then
+    # build the same split, so the first (canonical order) stands for all of them.
+    return hits[0]
+
+
+def _same_split(payload: dict[str, Any], a: str, b: str) -> bool:
+    """Whether scopes ``a`` and ``b`` select the same matrices on the checkpoint's model."""
+    from chess_anti_engine.train.trainer import _matrix_optimizer_filter
+
+    shapes = {_wrap_agnostic(k): len(tuple(v.shape)) for k, v in payload["model"].items() if hasattr(v, "shape")}
+
+    class _P:
+        def __init__(self, ndim: int) -> None:
+            self.ndim = ndim
+
+    pick = [{n for n in shapes if _matrix_optimizer_filter(sc, include_embed_default=False)(
+        n, _P(shapes[n]))} for sc in (a, b)]  # pyright: ignore[reportArgumentType]
+    return pick[0] == pick[1]
+
+
+def check_built_split(trainer: Any, checkpoint: Path) -> dict[str, Any]:
+    """Refuse unless the BUILT optimizer's groups hold exactly the checkpoint's
+    parameters, group by group, in order (``--optimizer-hparams-source
+    init-checkpoint`` claims the checkpoint's split; this is the proof)."""
+    import torch
+
+    payload = torch.load(str(checkpoint), map_location="cpu", weights_only=False, mmap=True)
+    names = payload.get("opt_param_names")
+    sizes = [len(g["params"]) for g in payload["opt"]["param_groups"]]
+    mine = [len(g["params"]) for g in trainer.opt.param_groups]
+    built = trainer._optimizer_param_names()
+    if names is None or built is None or list(names) != list(built) or sizes != mine:
+        raise ValueError(f"optimizer_hparams_source init-checkpoint: the built optimizer groups (sizes {mine}) "
+                         f"are not {checkpoint}'s split (sizes {sizes}); match --matrix-optimizer-scope to it")
+    return {"group_sizes": mine, "names_equal": True}
 
 
 def _close(a: Any, b: Any) -> bool:
@@ -1039,6 +1336,9 @@ def init_optimizer_from_checkpoint(trainer: Any, checkpoint: Path, settings: Tra
         raise ValueError(f"--init-optimizer-state checkpoint: cannot load {checkpoint}'s optimizer state into "
                          f"{settings.optimizer}: {exc}") from exc
     checkpoint_lr = [float(g["lr"]) for g in trainer.opt.param_groups]
+    # The clip's EMA is part of "continue the SL run's optimizer" only when the
+    # clip is on; load_zclip_state refuses (False) a missing or poisoned state.
+    zclip_restored = bool(trainer.grad_clip_mode == "zclip" and trainer.load_zclip_state(payload.get("zclip")))
     groups = _resolve_group_diff(trainer, configured, settings, "--init-optimizer-state checkpoint")
     for g, lr, base in zip(trainer.opt.param_groups, want_lr, base_lrs, strict=True):
         g["lr"] = lr
@@ -1051,17 +1351,60 @@ def init_optimizer_from_checkpoint(trainer: Any, checkpoint: Path, settings: Tra
             "state_step_min": min(steps) if steps else None, "state_step_max": max(steps) if steps else None,
             "checkpoint_param_group_lr": checkpoint_lr, "param_group_lr_set": want_lr,
             **groups, "reapplied": groups["group_resolution"] == "configured",
-            "not_adopted": ["scheduler", "per-group lr", "zclip state", "trainer step"],
+            "not_adopted": ["scheduler", "per-group lr", "trainer step",
+                            *(["zclip state"] if not zclip_restored else [])],
+            "zclip_state_restored": zclip_restored,
             "scheduler_not_restored": {"checkpoint_peak_lr": payload.get("peak_lr"),
                                        "checkpoint_last_epoch": sched.get("last_epoch") if isinstance(sched, dict) else None}}
 
 
-def build_trainer(model_config: Any, settings: TrainSettings, *, log_dir: Path | None) -> Any:
+def build_trainer(model_config: Any, settings: TrainSettings, *, log_dir: Path | None,
+                  phase_updates: int | None = None) -> Any:
+    if settings.lr_schedule != "flat" and phase_updates is None:
+        # trainer_kwargs alone (the driver's range check) tolerates it; a real Trainer must not run flat
+        # while the settings record a decay.
+        raise ValueError(f"lr_schedule {settings.lr_schedule} needs phase_updates to build a Trainer")
     from chess_anti_engine.model import build_model
     from chess_anti_engine.train import Trainer
 
-    return Trainer(build_model(model_config), model_config=model_config, log_dir=log_dir,
-                   **trainer_kwargs(settings))
+    trainer = Trainer(build_model(model_config), model_config=model_config, log_dir=log_dir,
+                      **trainer_kwargs(settings, phase_updates=phase_updates))
+    if settings.lr_schedule == "cosine-phase":
+        install_group_floor_cosine(trainer, settings)
+    return trainer
+
+
+def install_group_floor_cosine(trainer: Any, settings: TrainSettings) -> None:
+    """Replace the Trainer's cosine (one scalar ``eta_min`` for every group,
+    which would decay the Aurora group to the AdamW floor) with the same cosine
+    whose floor is per group: ``lr_floor * group_base / lr``, so every group's
+    lr keeps its ratio to the others throughout (the SL base ended at
+    [6e-5, 3e-6], ratio 20, as it started)."""
+    import math
+
+    from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+
+    if settings.lr_floor is None:  # validate(): cosine-phase needs an lr_floor below lr
+        raise ValueError("lr_schedule cosine-phase needs an lr_floor")
+    lr_floor = float(settings.lr_floor)
+    ratio = lr_floor / float(settings.lr)
+    old = trainer._scheduler
+
+    class GroupFloorCosine(CosineAnnealingWarmRestarts):
+        def __init__(self, opt: Any, *, T_0: int, floor_ratio: float) -> None:
+            self.floor_ratio = float(floor_ratio)
+            super().__init__(opt, T_0=T_0, eta_min=lr_floor)
+
+        @property
+        def group_eta_min(self) -> list[float]:
+            return [float(b) * self.floor_ratio for b in self.base_lrs]
+
+        def get_lr(self) -> list[float]:  # pyright: ignore[reportIncompatibleMethodOverride]
+            f = (1.0 + math.cos(math.pi * self.T_cur / self.T_i)) / 2.0
+            return [m + (float(b) - m) * f for b, m in zip(self.base_lrs, self.group_eta_min, strict=True)]
+
+    trainer._scheduler = GroupFloorCosine(trainer.opt, T_0=int(old.T_0), floor_ratio=ratio)
+    trainer._set_initial_lrs()  # the new scheduler's first step put the peak back; warmup starts below it
 
 
 def load_arch_config(checkpoint: Path) -> tuple[dict[str, Any], Any]:
@@ -1335,7 +1678,13 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
     if settings.optimizer_state not in ("fresh", "continue"):
         raise ValueError("optimizer_state must be fresh or continue")
 
-    trainer = build_trainer(model_config, settings, log_dir=None)
+    if settings.lr_schedule != "flat" and planned is None:
+        raise ValueError(f"generation {generation}: lr_schedule {settings.lr_schedule} needs the phase's planned "
+                         "updates, and a phase collect is not sealed")
+    trainer = build_trainer(model_config, settings, log_dir=None,
+                            phase_updates=planned if settings.lr_schedule != "flat" else None)
+    built_split = (check_built_split(trainer, init_checkpoint)
+                   if settings.optimizer_hparams_source == "init-checkpoint" else None)
     continued = settings.optimizer_state == "continue" and prev_trainer_checkpoint is not None
     optimizer_check: dict[str, Any] | None = None
     init_optimizer: dict[str, Any] | None = None
@@ -1493,6 +1842,7 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
     drift = probe_drift(trainer.model, previous_model(), probe, settings.device)
     realised_lr = [float(g["lr"]) for g in trainer.opt.param_groups]
     realised_opt = realised_optimizer(trainer)  # read off the live optimizer after the phase's steps
+    realised_opt["built_split_matches_init_checkpoint"] = built_split
     # One train_steps call without snapshots (its metrics verbatim); one per
     # snapshot interval with them (rows-weighted mean losses, chunks kept).
     m = chunks[0] if len(chunks) == 1 else {**merged_losses(chunks), "chunks": chunks}
