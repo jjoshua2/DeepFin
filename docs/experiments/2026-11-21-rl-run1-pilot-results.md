@@ -205,8 +205,11 @@ value-head training is the candidate.** It is a hypothesis these numbers support
 
 ### Offline value diagnosis (report-only; pointer)
 
-Bank: `~/chess-artifacts/operations/rl-claude-20261119/pilot-value-diagnosis/` (`README.md` [`0bdac6a5`];
-`PREREG.md` [`691dd3a4`], sealed 13:06, before the first output at 13:08). There were no matches and no training.
+Bank: `~/chess-artifacts/operations/rl-claude-20261119/pilot-value-diagnosis/`. Every entry in its `SHA256SUMS`
+[`5a1bc230`] verifies OK. The files:
+- `README.md` [`ae5e0866`], the current version, with Addendum 1;
+- the pre-addendum text, frozen as `README.v1-20261121T1323.md` [`0bdac6a5`];
+- `PREREG.md` [`691dd3a4`], sealed 13:06, before the first output at 13:08. There were no matches and no training.
 The numbers below were read from `out/*.json`:
 
 - **Recalibration fit** to the base's WDL on the 39,237 hold-out rows (416 games):
@@ -238,9 +241,35 @@ The numbers below were read from `out/*.json`:
 - **The 64-sim search value is no more biased than the base:** overall abs(z − search) 0.359 vs abs(z − base) 0.373,
   and the two are about equal bin by bin (`holdout_analysis.json`, `target_calibration`).
 
-**Status.** The mechanism, that the value loss changes what the head says (content) rather than its scale (shape), is
-a HYPOTHESIS. A falsifier match is being pre-registered separately. A sibling-ordering measurement (PREREG addendum 1)
-is running and is not banked, so no result is cited.
+- **Sibling ordering** (PREREG addendum 1, `PREREG.addendum1.md` [`2a07543c`]; sealed in `PREREG.sha256` [`79509dd1`]
+  together with the script `scripts/sibling_order.py` [`4dd4ea80`] before the run; result `out/sibling_order.json`
+  [`bb8e5b16`], `logs/sibling_order.log` [`c917a34b`]).
+  - **Data:** 2,433 rl-audit rows with full history, from 190 games (counted here from `rl-audit/positions.npz`
+    `game_id`), giving 81,807 sibling pairs scored by SF 8M.
+  - **Primary bin:** "clear+", an SF gap of ≥ 50 cp with the pair not decided: 38,705 pairs. The base orders 0.8554
+    of them correctly.
+  - **Net minus base**, with game-clustered CIs:
+
+    | Net | Raw | After (T, b) |
+    |---|---|---|
+    | S | −0.0096 [−0.0129, −0.0064] | −0.0093 |
+    | Zq | −0.0007 [−0.0032, +0.0017] | — |
+    | P0's own head | −0.0020 [−0.0040, +0.0001] | — |
+
+  - **Where S's drop sits:** about −0.010 in every piece band from 8 to 32 men (8–12 −0.0101, 13–22 −0.0100,
+    23–32 −0.0093). It is not concentrated where S's value moved most.
+  - **Disagreement rows:** S's drop is no larger on rows where the stored search value and the base disagree most
+    (−0.0089 on the top decile, 244 rows, vs −0.0097 on the rest). This decile is an ANALOG computed on the rl-audit
+    rows; the pilot's hold-out decile could not be joined, because it has no deep-SF labels.
+
+**Status, by the addendum's pre-registered rule.**
+- **S: supports "ranking content broke".** The CI is entirely below 0, and (T, b) does not restore it.
+- **Zq: not separated.** This does NOT explain Zq's −10; Zq's shape account (0.60 of its divergence is removable by
+  (T, b)) stays open.
+- **P0's own head: not separated.**
+
+The mechanism, that the value loss changes what the head says (content) rather than its scale (shape), is therefore
+an S-specific HYPOTHESIS, not a verdict. It is offline and 1-ply, not a played seat.
 
 ## 3. Training facts (fit numbers, not strength)
 
@@ -338,6 +367,9 @@ No recommendation is made here.
 4. The launch record's owner rows L4 (S's role), L5 (collection B with cells K-blend and K-z2, matches K1–K3) and L6 (the parked anchor: the three-way blend plus an SF-opponent share, or the outcome-conditioned alternative) remain unfilled.
 5. Which value target, if any, should any next generation train? None is adoptable by the registered rule.
 6. Should a next generation train the policy only, with the value held at the SL base's? This is a design question, not a result.
+
+Fact, not a decision: three follow-up matches are being pre-registered in a separate record. They are P0 as a single
+net; the S recal-graft falsifier; and Zq recalibrated vs Zq. There are no results, and no PR exists yet.
 
 ## Files
 
