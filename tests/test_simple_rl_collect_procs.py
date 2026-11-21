@@ -149,8 +149,8 @@ def test_a_killed_k2_collect_resumes_keeping_finished_processes(
     # before the manifest) rate process 1's games over its own active time.
     partial = json.loads((gen / "stats.json").read_text())
     assert partial["procs_resumed"] == [0]
-    fresh_games = partial["procs"][1]["games"]
-    assert fresh_games == 2
+    fresh_games = partial["procs"][1]["games_this_attempt"]  # < 2 if kill 1 left committed games
+    assert 0 < fresh_games <= 2
     assert partial["games_per_hour"] == pytest.approx(3600.0 * fresh_games / partial["active_seconds"])
     monkeypatch.setattr(collect_mod, "write_manifest", real_manifest)
     stats, _ = _collect(tmp_path, "resumed", 2)
