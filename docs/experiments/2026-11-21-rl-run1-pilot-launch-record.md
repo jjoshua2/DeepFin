@@ -1,5 +1,7 @@
 # RL run 1 pilot: launch record (NOT LAUNCHED)
 
+**Results (2026-11-21):** [pilot results](2026-11-21-rl-run1-pilot-results.md). S damage −20.0 [−36.8, −3.3]; gate −10.0 [−23.2, +3.2], so damage was not reproduced and Zq is not adoptable; match 2 skipped; match 4 unread at +7.7 [−0.1, +15.4]; the adoption order stops for the owner.
+
 This record makes the pilot of
 [the games-not-rows amendment](2026-11-21-rl-run1-amendment-games-not-rows.md)
 (Step 1) executable. It gives the exact commands, output directories, stopping rules
