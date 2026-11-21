@@ -135,7 +135,7 @@ def test_dose_scores_every_snapshot_with_the_forwarded_priors(tmp_path: Path) ->
     np.savez(tmp_path / "ruler.npz", move=rng.integers(0, 12, 24))
     out = tmp_path / "dose.json"
     spec = f"r={tmp_path / 'ruler.npz'}:move"
-    val = _validation(tmp_path, spec, passed=True)
+    val = _validation(tmp_path, spec, passed=True, rows=rows)
     assert ras.main(["dose", "--train-dir", str(train), "--rows", str(rows), "--ruler", spec, "--band-lo", "-1",
                      "--band-hi", "1", "--no-mask", "--ruler-validation", str(val),
                      "--out", str(out), "--out-model", str(tmp_path / "played.pt")]) == 0
@@ -214,11 +214,14 @@ def test_a2_openings_takes_exactly_the_block(tmp_path: Path) -> None:
         ras.main(["a2-openings", "--eval-jsonl", str(ev), "--lines", "15:25", "--out-dir", str(tmp_path / "x")])
 
 
-def _validation(tmp_path: Path, spec: str, *, passed: bool) -> Path:
-    """A validate record for ``spec`` (its exact file sha), passing or not."""
-    rec = {"ruler": ras._ruler_record(spec), "passed": passed,
-           "conditions": {"3_positive_control": {"pass": passed}}}
-    out = tmp_path / f"validation_{int(passed)}.json"
+def _validation(tmp_path: Path, spec: str, *, passed: bool, rows: Path | None = None,
+                mask: str | None = None, tag: str = "") -> Path:
+    """A validate record for ``spec`` (its exact file sha), passing or not, run on ``rows`` / ``mask``."""
+    rec: dict[str, Any] = {"ruler": ras._ruler_record(spec), "passed": passed,
+                           "conditions": {"3_positive_control": {"pass": passed}}}
+    if rows is not None:
+        rec["input"] = ras.load_rows(rows, mask)["_record"]
+    out = tmp_path / f"validation_{int(passed)}{tag}.json"
     out.write_text(json.dumps(rec))
     return out
 
@@ -403,3 +406,134 @@ def test_a2_position_key_is_history_free_so_a_transposition_is_excluded(tmp_path
     np.savez(tmp_path / "a1.npz", root_fen=np.asarray([chess.STARTING_FEN]),
              history=np.asarray(["e2e4 e7e5 g1f3 b8c6"]))
     assert ras.rows_position_keys(tmp_path / "a1.npz") == {ras._position_key(b)}
+
+
+def test_dose_refuses_a_pass_recorded_on_other_rows_or_another_mask(tmp_path: Path) -> None:
+    """Review of #1448 (delta): a PASS on another row set or mask must not unlock selection."""
+    train = _tiny_run_with_snapshots(tmp_path)
+    rows = _rows_npz(tmp_path / "a1.npz")
+    other_rows = tmp_path / "other_rows.npz"
+    with np.load(rows) as z:
+        arrays: dict[str, np.ndarray] = {k: z[k] for k in z.files}
+    arrays["game_id"] = np.arange(24)
+    np.savez(other_rows, **arrays)  # pyright: ignore[reportArgumentType]
+    np.savez(tmp_path / "ruler.npz", move=np.zeros(24, dtype=np.int64))
+    leak = np.zeros(24, dtype=bool)
+    leak[:3] = True
+    np.savez(tmp_path / "leak.npz", leak=leak)
+    spec = f"r={tmp_path / 'ruler.npz'}:move"
+    mask = f"{tmp_path / 'leak.npz'}:leak"
+    base = ["dose", "--train-dir", str(train), "--rows", str(rows), "--ruler", spec, "--band-lo", "-1",
+            "--band-hi", "1", "--out-model", str(tmp_path / "played.pt")]
+    cases = {
+        "other_rows": (["--no-mask"], _validation(tmp_path, spec, passed=True, rows=other_rows, tag="o"),
+                       "other rows"),
+        "mask_vs_none": (["--mask", mask, "--mask-invert"],
+                         _validation(tmp_path, spec, passed=True, rows=rows, tag="n"), "another mask"),
+        "polarity": (["--mask", mask], _validation(tmp_path, spec, passed=True, rows=rows, mask=mask, tag="p"),
+                     None),
+    }
+    for name, (flags, val, why) in cases.items():
+        out = tmp_path / f"dose_{name}.json"
+        assert ras.main([*base, *flags, "--ruler-validation", str(val), "--out", str(out)]) == 0
+        rec = json.loads(out.read_text())
+        if why is None:     # same rows, same mask and polarity: selection is unlocked
+            assert rec["ruler_validated"] is True, name
+            continue
+        assert rec["ruler_validated"] is False, name
+        assert rec["played"]["name"] == "final", name
+        assert why in rec["ruler_validation_reason"], (name, rec["ruler_validation_reason"])
+    # the same mask with the other polarity is another row set
+    out = tmp_path / "dose_inverted.json"
+    val = _validation(tmp_path, spec, passed=True, rows=rows, mask=mask, tag="i")
+    assert ras.main([*base, "--mask", mask, "--mask-invert", "--ruler-validation", str(val), "--out", str(out)]) == 0
+    assert json.loads(out.read_text())["ruler_validated"] is False
+
+
+def test_the_draw_buckets_split_by_the_reference_nets_wl_not_the_nets_own() -> None:
+    n = 24
+    game = np.repeat(np.arange(8), 3)
+    ref_wl = np.r_[np.full(8, 0.05), np.full(8, 0.2), np.full(8, 0.6)]
+    # the net's own |W - L| is large on every row (all in the >0.3 bucket by its own split),
+    # its draw mass differs by the REFERENCE's bucket
+    p_draw = np.r_[np.full(8, 0.30), np.full(8, 0.20), np.full(8, 0.10)]
+    w = 1.0 - p_draw - 0.001
+    p = np.stack([w, p_draw, np.full(n, 0.001)], axis=1)
+    out = ras.value_shape(np.log(p), game, ref_wl)
+    buckets = out["p_draw_by_ref_bucket"]
+    assert [buckets[name]["n"] for _, _, name in ras.WL_BUCKETS] == [8, 8, 8]
+    assert [buckets[name]["mean"] for _, _, name in ras.WL_BUCKETS] == pytest.approx([0.30, 0.20, 0.10])
+
+
+def test_the_negative_control_counts_a_pair_within_one_paired_se_as_a_tie(monkeypatch: pytest.MonkeyPatch) -> None:
+    n = 12
+    legal = _legal(n, 4)
+    game = np.repeat(np.arange(4), 3)
+    pols = {k: np.zeros((n, N_MOVES)) for k in ("base", "x", "last")}
+    ruler = np.zeros(n, dtype=np.int64)
+
+    def run(diff_over_se: float) -> dict[str, Any]:
+        def fake(a: np.ndarray, b: np.ndarray, *_args: Any) -> dict[str, float]:
+            # base vs x: the tested pair; everything else comfortably ordered
+            if a is pols["base"] and b is pols["x"]:
+                return {"diff": diff_over_se * 0.01, "se": 0.01}
+            return {"diff": 0.5, "se": 0.01}
+        monkeypatch.setattr(ras, "paired_top1", fake)
+        return ras.validate_ruler(ruler, pols, legal, game, base="base", others=["x", "last"],
+                                  search_move=ruler, independent=True)["conditions"]["2_negative_control"]
+
+    assert run(-0.9)["pass"] is True      # x above base by less than one SE: a tie
+    assert run(-1.1)["pass"] is False     # by more than one SE: an error
+    assert run(+0.5)["pass"] is True
+
+
+def test_regret_drops_uncovered_rows_rather_than_zero_filling() -> None:
+    moves = np.array([[3, -1], [5, -1], [4, -1]])
+    cp = np.array([[100.0, 0.0], [40.0, 0.0], [20.0, 0.0]])
+    game = np.array([0, 1, 2])
+    col = ras.regret_column(np.array([3, 7, 4]), {"moves": moves, "regret_cp": cp}, game)  # row 1 uncovered
+    assert col["covered"] == 2
+    assert col["regret_cp"] == pytest.approx(60.0)          # (100 + 20) / 2, not / 3
+    pair = ras.paired_regret(np.array([3, 5, 7]), np.array([3, 7, 4]), {"moves": moves, "regret_cp": cp}, game)
+    assert pair["rows_both_covered"] == 1                   # only row 0 is covered for both
+    assert pair["diff_cp"] == pytest.approx(0.0)
+
+
+def _sf_line(depth: int, rank: int, mv: str, score: str, *, bound: str = "") -> str:
+    return f"info depth {depth} seldepth 4 multipv {rank} score {score}{bound} nodes 9 nps 1 pv {mv} e7e5"
+
+
+def test_the_sf_converter_follows_the_sf_parse_convention(tmp_path: Path) -> None:
+    import chess
+
+    rows = tmp_path / "rows.npz"
+    root = chess.STARTING_FEN
+    np.savez(rows, x=np.zeros((2, 175, 8, 8), dtype=np.float16), legal=np.ones((2, N_MOVES), dtype=bool),
+             game_id=np.array([0, 1]), root_fen=np.array([root, root]), history=np.array(["", "e2e4"]))
+    lines = [
+        _sf_line(10, 1, "e2e4", "cp 40"), _sf_line(10, 2, "d2d4", "cp 35"),       # depth 10 complete
+        _sf_line(11, 1, "e2e4", "cp 60", bound=" lowerbound"),                   # a bound: skipped
+        _sf_line(11, 1, "g1f3", "cp 30"), _sf_line(11, 2, "e2e4", "cp 28"),      # depth 11 complete (first wins)
+        _sf_line(11, 1, "e2e4", "cp 99"),                                        # a later rank-1 line: ignored
+        _sf_line(12, 1, "g1f3", "cp 31"),                                        # depth 12 incomplete
+    ]
+    rec = {"row": 0, "fen": chess.Board().fen(), "multipv_a": 2, "a": {"lines": lines},
+           "b": {"searchmoves": ["h2h4"], "lines": [_sf_line(9, 1, "h2h4", "mate -3")]}}
+    sfj = tmp_path / "sf.jsonl"
+    sfj.write_text(json.dumps(rec) + "\n")
+    out = tmp_path / "regret.npz"
+    assert ras.main(["sf-regret-table", "--rows", str(rows), "--sf-jsonl", str(sfj), "--out", str(out)]) == 0
+    from chess_anti_engine.moves.encode import FULL_TO_COMPACT_POLICY, move_to_index
+
+    board = chess.Board()
+    idx = {u: int(FULL_TO_COMPACT_POLICY[move_to_index(chess.Move.from_uci(u), board)])
+           for u in ("g1f3", "e2e4", "h2h4")}
+    with np.load(out) as z:
+        moves, cp = z["moves"], z["regret_cp"]
+    got = {int(m): float(c) for m, c in zip(moves[0], cp[0]) if m >= 0}
+    # best g1f3 30 (depth 11); e2e4 28 -> regret 2; h2h4 mated in 3 -> -9970 -> regret clipped to 1000
+    assert got == {idx["g1f3"]: 0.0, idx["e2e4"]: 2.0, idx["h2h4"]: 1000.0}
+    assert (moves[1] == -1).all()            # row 1 has no label: uncovered, not zero regret
+    meta = json.loads(Path(str(out) + ".json").read_text())
+    assert meta["rows_labelled"] == 1
+    assert meta["cap_cp"] == 1000
