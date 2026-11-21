@@ -92,3 +92,22 @@ def test_a_split_rerun_with_other_settings_is_refused(tmp_path: Path) -> None:
         simple_rl_loop.main(["split-openings", "--out", str(out), "--book", f"{book}:16", "--salt", "other"])
     with pytest.raises(SystemExit, match="different settings"):
         simple_rl_loop.main(["split-openings", "--out", str(out), "--book", f"{book}:8"])
+
+
+def test_every_arena_gets_the_run_pause_file_and_the_driver_markers(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cmds: list[list[str]] = []
+
+    def fake(cmd: list[str], *, out: Path, log: Path) -> dict[str, Any]:
+        del log
+        cmds.append(cmd)
+        out.write_text(json.dumps({"score": 0.5}) + "\n")
+        return {"score": 0.5, "games": 2, "games_requested": 2, "truncated": False}
+
+    monkeypatch.setattr(ev, "run_arena", fake)
+    window = tmp_path / "gpu_window.marker"
+    ev.evaluate_generation(**_kw(tmp_path), pause_markers=(window,))
+    assert len(cmds) == 2  # vs_previous and vs_reference
+    for cmd in cmds:
+        markers = [cmd[i + 1] for i, a in enumerate(cmd) if a == "--pause-marker"]
+        assert markers == [str(tmp_path / "PAUSE"), str(window)]
