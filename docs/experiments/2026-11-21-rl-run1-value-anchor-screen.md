@@ -132,11 +132,19 @@ is selected.
 - **Training.** A crashed cell (exit ≠ 0) has its run dir renamed `arm_<cell>.crash1` and is
   rerun ONCE, whole, BEFORE `train_check.py` runs. `train_check.py` runs exactly once, after
   every rerun, so a second crash is VOID. A field mismatch is not a crash: it voids the cell,
-  with no rerun. The command block implements this order.
-- **Stage A.** A crash in `run_stage_a.sh control` or `cells` (non-zero exit with no
-  `CONTROL_FAIL`) is rerun once: the output dir is renamed `<dir>.fail1` and the same mode is
-  run again. `run_stage_a.sh` refuses a second rerun, and it refuses to rerun a control that
-  wrote `CONTROL_FAIL`.
+  with no rerun. The command block implements this order. It renames only if no
+  `arm_<cell>.crash1*` exists; if one does, the rerun is spent, nothing is renamed, and the cell
+  is VOID.
+- **Stage A.** The operator never renames anything: `run_stage_a.sh` (v3) enforces the budget
+  itself. It refuses in each of these cases:
+  - any `CONTROL_FAIL` exists anywhere under `offline/`, whatever its directory is called (a
+    mismatch is never rerun);
+  - the mode's output dir has already completed (`DONE` or `CONTROL_PASS`);
+  - any sibling `<dir>.*` exists, whatever it was renamed to: the one rerun is spent.
+
+  Otherwise, if the output dir exists (a crash), the script renames it to `<dir>.fail1` itself
+  and runs again. That is the one rerun. The reviewer's guard test (third pass) and extra cases
+  were run against v3 and are banked in `stage_a/guard_tests_v3/`.
 - Stage A and Stage B refuse any cell with a `VOID` file and any target with a
   `TARGET_<T>_VOID` file.
 
@@ -260,7 +268,8 @@ This is the pilot's `TRAIN` with `--kl-wdl 0` removed; each cell passes its own.
   - **"direction"** iff both r − r_S and r − r_snapshot have CIs entirely above 0;
   - **"distance"** iff only r − r_S does: less damage, but no less than S's own direction
     stopped at the same distance;
-  - **"none"** otherwise.
+  - **"none"** otherwise: not better than S's r;
+  - **"untestable (no usable snapshot)"** when every snapshot is VOID or inert.
 
 **The P0-anchor cell is descriptive only.**
 - It has no value loss, so its only value-specific pull is the anchor, against the
@@ -294,10 +303,10 @@ lines unchanged.
 | `analyze_holdout.py` | `3291449af64b…` | `analyze_holdout.py` `eb368ea89777…` |
 | `sibling_order.py` | `17eeb159f691…` | `sibling_order.py` `4dd4ea8000ae…` |
 | `supp_outcome_distance.py` | `2ad7f272d00a…` | `supp_outcome_distance.py` `67f72335402f…` |
-| `run_stage_a.sh` (v2) | `fafc514bfd31…` | replaces `queue_after_fits.sh` `7ee033a63a12…`; v1 `002d7d4ca8fd…` kept as `.v1` |
+| `run_stage_a.sh` (v3) | `afca672f5124…` | replaces `queue_after_fits.sh` `7ee033a63a12…`; v1 `002d7d4ca8fd…` and v2 `fafc514bfd31…` kept as `.v1` / `.v2` |
 | `check_control.py` (v2) | `b72e711caba8…` | new: the step-0 exact-reproduction check; v1 `413b6e11cfd8…` kept as `.v1` |
 | `train_check.py` | `5a2fa045d5e9…` | new: the per-cell field checks and gate (i) |
-| `stage_a_decide.py` (v2) | `1b2b2986af3a…` | new: the rules below, applied mechanically; v1 `81cc5e42dd0f…` kept as `.v1` |
+| `stage_a_decide.py` (v3) | `91d3ef26b34b…` | new: the rules below, applied mechanically; v1 `81cc5e42dd0f…` and v2 `1b2b2986af3a…` kept as `.v1` / `.v2` |
 | `value_regret_recal.py` (report-only) | run UNMODIFIED from the bank | `6cddd7d5afd1…` |
 
 What the adapted copies add:
@@ -311,6 +320,15 @@ What the adapted copies add:
   rerun on fabricated inputs in `fab_tests_v2/`: the reviewer's scenarios A and B, plus a
   scenario C that exercises the snapshot readings "direction" and "distance" and the Zq
   "NOT COMPUTABLE".
+- The v2 → v3 changes are in `diffs/*.v2_v3.diff`:
+  - `run_stage_a.sh` does the rerun rename itself;
+  - `stage_a_decide.py` reads "untestable (no usable snapshot)" instead of "none (no usable
+    snapshot)";
+  - `stage_a_decide.py` no longer divides by a share of exactly 0. That was a v2 crash, found by
+    the new scenario D.
+
+  `fab_tests_v3/` reruns scenarios A–C, with C's comment corrected (S_k4.1 is VETOED, so its
+  reading is "none"), plus a scenario D in which every snapshot is inert, giving "untestable".
 
 **Instrument positive control.**
 - *Already done on CPU* (`stage_a/cpu_proof/`): the adapted `analyze_holdout.py` and
@@ -480,8 +498,8 @@ declare -A CELL=(
   [S_trunc]="$S_V --kl-wdl 0 --snapshot-updates 353,635,988")
 (cd $V/stage_a && sha256sum -c --quiet SHA256SUMS) || exit 93
 # step 0, before any training: banked nets through the adapted instruments must reproduce the bank exactly.
-# A crash (no CONTROL_FAIL) may be rerun once after `mv $V/offline/control $V/offline/control.fail1`;
-# a CONTROL_FAIL ends the screen as "unread: instrument failed".
+# A crash may be rerun once by running the same line again (the script renames the crashed dir itself and
+# refuses a third run); a CONTROL_FAIL ends the screen as "unread: instrument failed".
 $V/stage_a/run_stage_a.sh control || exit 1
 cd $PINW && [ "$(git rev-parse HEAD)" = "$PIN" ] || exit 96
 CUDA_VISIBLE_DEVICES= PYTHONPATH=. $PY -m pytest -q -p no:cacheprovider \
@@ -494,7 +512,8 @@ CELLS="S_k4.1 S_k7.0 S_k13.4 Zq_k11.3 Zq_k18.1 Zq_k33.4 S_w0.1 S_w0.03 P0_k7.0 S
 for c in $CELLS; do train $c; done
 for c in $CELLS; do                   # one whole rerun per crashed cell, BEFORE the single train_check run
   [ "$(cut -d' ' -f1 $V/arm_$c.exit)" = 0 ] && continue
-  for f in "" .log .exit .started; do mv $V/arm_$c$f $V/arm_$c.crash1$f; done; train $c
+  [ -z "$(compgen -G "$V/arm_$c.crash1*")" ] || continue      # rerun already spent: left crashed, train_check VOIDs it
+  for f in "" .log .exit .started; do [ ! -e $V/arm_$c$f ] || mv $V/arm_$c$f $V/arm_$c.crash1$f; done; train $c
 done
 $PY $V/stage_a/train_check.py $V      # once: field checks + gate (i); writes VOID / TARGET_<T>_VOID markers
 ```
@@ -504,7 +523,7 @@ $PY $V/stage_a/train_check.py $V      # once: field checks + gate (i); writes VO
 ```bash
 $V/stage_a/run_stage_a.sh cells || exit 1   # refuses without CONTROL_PASS; skips VOID cells; fits, logits, analysis,
                                             # outcome distance, sibling order, value regret (report-only), stage_a_decide.py
-# a crash may be rerun once after `mv $V/offline/cells $V/offline/cells.fail1`
+# a crash may be rerun once by running the same line again (self-rename; a third run is refused)
 ```
 
 **Stage B**, for each target T whose `stage_b` entry names a cell `X`, with seed `SEED`
