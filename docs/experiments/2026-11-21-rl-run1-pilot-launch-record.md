@@ -709,11 +709,57 @@ frozen. Difficulty is regret AND nodes.
   reaches −0.024 at a 2-ply lag and −0.061 at 8 plies, because t\* looks ahead to the
   end of the game.
 
-  **The launch measurement** is a calibration table, E[target − z | s-bin], for the
-  proposed target against an unconditional rule on a held-out collection. The gift-win
-  share (won-game rows where full-strength SF had us at win probability ≤ 0.20) and
-  the shape statistics (entropy, |W − L|) are report-only, because the gift-win share
-  sizes only the won-game gap.
+  The definition above is **variant A** (the source is chosen by the result, with t\*
+  found by looking ahead).
+
+  **Variant B: trust SF only on a confident jump, with no look-ahead.**
+
+  The owner, verbatim (2026-11-21):
+
+  > "I was thinking id fix that bias by only trusting sf when search found something iys confident in and its winrate jumped. It's very strong its basically always right in that case especially when it wins right after"
+
+  **Definition.** On each row, SF's value is used when a trigger fires; otherwise
+  the row keeps our search WDL (or the fixed blend). The trigger depends only on SF's
+  evaluations up to that ply. It fires when both hold:
+  - SF's win probability moved by at least Δ from the previous ply;
+  - it is now at or beyond a confidence threshold.
+
+  It fires in EITHER direction, for a jump against us or in our favour. "Wins right
+  after" is the future and is NOT part of the trigger. It is reported only as a check
+  statistic: the share of triggered rows whose game ends as SF said.
+
+  **Properties:**
+  - **No look-ahead.** It removes the look-ahead that biased variant A.
+  - **Selection on the label remains.** Rows that look alike to our net split into
+    triggered rows (SF's value written in) and untriggered rows (left at our
+    search's average). So a one-sided trigger is pessimistic by about
+    P(trigger among look-alikes) × the jump size, concentrated in sharp positions.
+    A two-sided trigger reduces this but need not cancel it.
+  - **Quiet positions keep our search's value.** That avoids importing SF's
+    cp-logistic calibration in quiet positions, which is the cost of the primary
+    (SF-everywhere) design.
+  - **Model bias:** to be quoted from the statistics reviewer's extension of
+    `outcome_conditioned_variants.py` with variant B, one-sided and two-sided
+    (requested).
+
+  **The launch measurement, the same for every candidate on the SAME held-out games.**
+  The table reports E[target − z | value bin] and target sharpness for:
+  1. our search WDL alone;
+  2. variant B at two (Δ, threshold) settings fixed in advance;
+  3. the fixed three-way blend.
+
+  The SF values come from an **offline SF relabel of a game sample of collection A**:
+  - whole games, every ply;
+  - the production label path: MultiPV 6, the label node budget (`sf_label_nodes_floor` 150k), the Syzygy pair, a warm TT as in production, and each game's moves sent as history (`position <root> moves ...`, rebuilt from `root_fen` + `history`).
+  - **P0-aligned.** Collection A stores no SF label, so the relabel queries each trained position itself (P0, our side to move), not the position after our move. This differs from the live loop's stored label, which is P1. The P1 value (after the stored move) can be added for comparison at about twice the cost.
+
+  **Sample size and cost.** About 500 games, ≈ 95k positions. At 0.4–0.7 core-s per label
+  (`docs/sf_cpu_cost_split.md` ≈ L164: 290–370k nps per engine), that is ≈ 38k–66k
+  core-s ≈ 11–18 core-h, or about 0.7–1.2 h on 16 cores. It needs no GPU, and it is
+  run outside training.
+
+  The gift-win share (won-game rows where full-strength SF had us at win probability
+  ≤ 0.20) and the shape statistics (entropy, |W − L|) stay report-only.
 
   **What the simple loop lacks, from the code (estimate only; nothing is built):**
   - **SF opponents.** `simple_rl/collect.py` forces self-play (`selfplay_fraction=1.0`, a default `OpponentConfig()`, `sf_nodes` 1, with SF labels unused). The play path itself supports SF opponents:
