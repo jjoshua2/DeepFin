@@ -4335,11 +4335,20 @@ class SearchWorker:
             _chunk_t0 = time.monotonic()
             _footprint_before = self._tree_footprint_bytes()
             _visits_before = self._root_visit_snapshot()
+  # The reserve this chunk's early stop is computed with. `batch_ms_hi` decays
+  # with every batch, so the reserve re-read after the chunk can be smaller: a
+  # chunk that stopped inside the launch reserve (possibly before any sim) would
+  # then not count as a time stop and ended the go through the zero-progress
+  # break with no stop reason. The stop check below uses the larger of the two.
+            chunk_reserve_ms = self._walker_stop_reserve_ms(
+                deadline, start_remaining_ms, allowed_root_indices,
+            )
             try:
                 last_value, completed = self._run_one_chunk(
                     chunk, board,
                     self._walker_chunk_stop(
                         stop_event, deadline, start_remaining_ms, allowed_root_indices,
+                        reserve_ms=chunk_reserve_ms,
                     ),
                     tb_probe, allowed_root_indices,
                     allow_terminal_shortcuts=allow_terminal_shortcuts,
@@ -4443,7 +4452,7 @@ class SearchWorker:
             )
   # A walker chunk launched with less than one walker batch left would stop at
   # once (`_walker_chunk_stop`): stop here instead of spinning empty chunks.
-            time_margin_ms = max(time_margin_ms, self._walker_stop_reserve_ms(
+            time_margin_ms = max(time_margin_ms, chunk_reserve_ms, self._walker_stop_reserve_ms(
                 deadline, start_remaining_ms, allowed_root_indices,
             ))
             stop_reason = self._should_stop_search(
@@ -4513,6 +4522,7 @@ class SearchWorker:
   # briefly on the stop event instead of spinning a core.
             if int(completed) == 0 and not stop_event.is_set():
                 if max_nodes is not None or max_depth is not None:
+                    self.last_stop_reason = "no_progress"
                     break
                 stop_event.wait(_IDLE_CHUNK_WAIT_S)
 
@@ -4584,12 +4594,13 @@ class SearchWorker:
     def _walker_chunk_stop(
         self, stop_event: threading.Event, deadline: Deadline,
         start_remaining_ms: int | None, allowed_root_indices: set[int] | None,
+        *, reserve_ms: float | None = None,
     ) -> threading.Event:
         """The stop event a walker-pool chunk polls: ``stop_event``, or also set
         once the deadline is within `_walker_stop_reserve_ms` (one walker
         batch), so batches in flight at the stop finish by the deadline.
         ``stop_event`` itself off the walker path or without a reserve."""
-        reserve = self._walker_stop_reserve_ms(
+        reserve = reserve_ms if reserve_ms is not None else self._walker_stop_reserve_ms(
             deadline, start_remaining_ms, allowed_root_indices,
         )
         remaining = deadline.remaining_ms()
