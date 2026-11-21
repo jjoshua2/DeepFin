@@ -676,3 +676,45 @@ def test_a_moved_net_pools_only_through_relocate_which_still_hashes_it(tmp_path:
         pool_mod.run(a_log, b_log, a_res, b_res, arm=arm_path, relocate=reloc)
     with pytest.raises(pool_mod.PoolError, match="expected OLD=NEW"):
         pool_mod.parse_relocate(["no-equals-sign"])
+
+
+def test_boundaries_choose_z_by_look_count_and_refuse_a_missing_or_reordered_look(tmp_path: Path) -> None:
+    """Review of #1463: z must follow the look count, and only looks 1..k in order are accepted."""
+    arm = str(tmp_path / "arm.pt")
+    l1 = _look(tmp_path, 1, [0.25, 0.0, 0.5], [0.0, 0.25, 0.0], ["x", "y", "z"])
+    l2 = _look(tmp_path, 2, [0.5, -0.25, 0.0], [0.25, 0.0, 0.0], ["v", "w", "u"])
+    l3 = _look(tmp_path, 3, [0.0, 0.25], [0.0, 0.0], ["t", "s"])
+    bounds, seeds = [3.471, 2.454, 2.004], [101, 102, 103]
+    r1 = pool_mod.run_looks([l1], arm=arm, boundaries=bounds, look_seeds=seeds)
+    assert (r1["z"], r1["look_index"]) == (3.471, 1)
+    r2 = pool_mod.run_looks([l1, l2], arm=arm, boundaries=bounds, look_seeds=seeds, z=1.96)
+    assert (r2["z"], r2["look_index"], r2["boundaries"], r2["look_seeds"]) == (2.454, 2, bounds, seeds)
+    with pytest.raises(pool_mod.PoolError, match="missing, extra or out of order"):
+        pool_mod.run_looks([l2], arm=arm, boundaries=bounds, look_seeds=seeds)            # look 2 alone
+    with pytest.raises(pool_mod.PoolError, match="missing, extra or out of order"):
+        pool_mod.run_looks([l1, l3], arm=arm, boundaries=bounds, look_seeds=seeds)        # looks 1 + 3
+    with pytest.raises(pool_mod.PoolError, match="missing, extra or out of order"):
+        pool_mod.run_looks([l2, l1], arm=arm, boundaries=bounds, look_seeds=seeds)        # reordered
+    with pytest.raises(pool_mod.PoolError, match="needs --look-seeds"):
+        pool_mod.run_looks([l1], arm=arm, boundaries=bounds)
+    with pytest.raises(pool_mod.PoolError, match="only 2 boundaries"):
+        pool_mod.run_looks([l1, l2, l3], arm=arm, boundaries=bounds[:2], look_seeds=seeds[:2])
+    argv = ["--arm", arm, "--boundaries", "3.471,2.454,2.004", "--z", "1.96", "--look-seeds", "101,102,103"]
+    for a_log, b_log, a_res, b_res in (l1,):
+        argv += ["--a-games", str(a_log), "--b-games", str(b_log), "--a-result", str(a_res), "--b-result", str(b_res)]
+    with pytest.raises(SystemExit):
+        pool_mod.main(argv)                                  # --z with --boundaries is refused
+
+
+def test_recurrence_fields_and_every_looks_inputs_are_reported(tmp_path: Path) -> None:
+    """Review of #1463: within-run repeats keep their meaning; cross-look recurrence and every
+    look's hashed inputs are reported at the top level."""
+    arm = str(tmp_path / "arm.pt")
+    l1 = _look(tmp_path, 1, [0.25, 0.0, 0.5], [0.0, 0.25, 0.0], ["x", "x", "y"])     # x repeated in-run
+    l2 = _look(tmp_path, 2, [0.5, -0.25], [0.25, 0.0], ["y", "w"])                   # y recurs across looks
+    rep = pool_mod.run_looks([l1, l2], arm=arm)
+    assert rep["result"]["openings_repeated_within_run"] == 1
+    assert rep["result"]["openings_recurring_across_looks"] == 1
+    assert [li["look"] for li in rep["look_inputs"]] == [1, 2]
+    assert rep["look_inputs"][1]["input_sha256"]["a_games"] == pool_mod.sha256_file(l2[0])
+    assert rep["look_inputs"][1]["seed"] == 102

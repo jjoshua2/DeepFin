@@ -93,8 +93,14 @@ seed or game log used twice (a repeated seed replays the same openings and, on
 one commit, the same games: pooling it would count them twice). The estimate
 pools every pair of every look: an opening key drawn in more than one look is
 ONE cluster, so e_A(o) and e_B(o) average over all of that opening's pairs. The
-report keeps each look's own block under ``looks``; ``result`` is the cumulative
-estimate the look's boundary is read against (``--z``).
+report keeps each look's own block under ``looks`` and every look's inputs and
+hashes under ``look_inputs``; ``result`` is the cumulative estimate the look's
+boundary is read against. With ``--boundaries Z1,Z2,...`` and ``--look-seeds
+S1,S2,...`` the z is chosen by the number of looks given and the looks must be
+exactly looks 1..k in order (a missing, extra or reordered look is refused);
+``look_index``, ``boundaries`` and ``look_seeds`` are recorded. The tool only
+pools and reports: the stop / continue decision belongs to the pre-registered
+rule that reads it.
 
 Output: JSON (``--out``) and a one-screen text summary on stdout.
 ``--verdict-rule lb-gt-zero`` adds the pre-registered reading, decided on the
@@ -508,9 +514,14 @@ def pool_looks(looks: Sequence[tuple[Games, Games, int]], z: float = Z95) -> dic
     """Pool one or more looks; an opening key that occurs in several looks is one cluster."""
     ca: dict[str, list[float]] = defaultdict(list)
     cb: dict[str, list[float]] = defaultdict(list)
+    within_run: set[str] = set()
+    looks_of: dict[str, int] = defaultdict(int)
     for a_games, b_games, pairs in looks:
         for k, v in per_opening(a_games, pairs).items():
             ca[k].extend(v)
+            looks_of[k] += 1
+            if len(v) > 1:
+                within_run.add(k)
         for k, v in per_opening(b_games, pairs).items():
             cb[k].extend(v)
     pairs = sum(n for _, _, n in looks)
@@ -523,7 +534,9 @@ def pool_looks(looks: Sequence[tuple[Games, Games, int]], z: float = Z95) -> dic
         "n_clusters": len(keys),
         "pairs_per_run": pairs,
         "looks": len(looks),
-        "openings_repeated_within_run": sum(1 for k in keys if len(ca[k]) > 1),
+        # Repeated inside ONE look's run (the single-pair meaning, unchanged) vs drawn in several looks.
+        "openings_repeated_within_run": len(within_run),
+        "openings_recurring_across_looks": sum(1 for k in keys if looks_of[k] > 1),
         "ab_correlation": correlation(e_a, e_b),
         "pooled": interval(d, z),
         "arm_as_candidate": interval(e_a, z),
@@ -573,6 +586,9 @@ def summary_text(report: dict[str, Any]) -> str:
         f"  interval: normal approximation on the score scale, x +/- {report['z']:g} SE clustered by opening, "
         "ends mapped by Elo = -400 log10(1/(0.5+x) - 1)",
     ]
+    if report.get("boundaries"):
+        lines.insert(1, f"  look {report['look_index']} of {len(report['boundaries'])} registered; boundary z = "
+                        f"{report['z']:g} (boundaries {report['boundaries']}, seeds {report['look_seeds']})")
     if len(report.get("looks", [])) > 1:
         lines.insert(1, f"  {len(report['looks'])} looks pooled (cumulative); openings drawn in several looks "
                         "are one cluster")
@@ -661,23 +677,48 @@ def check_looks_are_one_match(looks: Sequence[dict[str, Any]]) -> None:
 
 def run_looks(paths: Sequence[tuple[Path, Path, Path, Path]], *, arm: str,
               labels: Sequence[tuple[str | None, str | None]] | None = None, allow_legacy: bool = False,
-              rule: str | None = None, z: float = Z95, relocate: Relocate | None = None) -> dict[str, Any]:
-    if not (math.isfinite(z) and z > 0.0):
-        raise PoolError(f"--z must be a finite positive number, got {z!r}")
+              rule: str | None = None, z: float = Z95, relocate: Relocate | None = None,
+              boundaries: Sequence[float] | None = None,
+              look_seeds: Sequence[int] | None = None) -> dict[str, Any]:
+    """Pool looks 1..k of a match.
+
+    With ``boundaries`` (the pre-registered z per look) the z read is
+    ``boundaries[k - 1]`` for k looks given, and ``look_seeds`` (each look's
+    pre-registered seed, in look order) is required: the looks must be exactly
+    looks 1..k, in order, so a missing, extra or reordered look is refused
+    instead of being read against the wrong boundary.
+    """
     if not paths:
         raise PoolError("no looks given")
+    if boundaries is not None:
+        bounds = [float(b) for b in boundaries]
+        if not bounds or not all(math.isfinite(b) and b > 0.0 for b in bounds):
+            raise PoolError(f"--boundaries must be finite positive z values, got {boundaries!r}")
+        if look_seeds is None or len(look_seeds) != len(bounds):
+            raise PoolError("--boundaries needs --look-seeds with one pre-registered seed per look")
+        if len(paths) > len(bounds):
+            raise PoolError(f"{len(paths)} looks given but only {len(bounds)} boundaries are registered")
+        z = bounds[len(paths) - 1]
+    elif look_seeds is not None:
+        raise PoolError("--look-seeds is the look check for --boundaries; pass both")
+    if not (math.isfinite(z) and z > 0.0):
+        raise PoolError(f"--z must be a finite positive number, got {z!r}")
     labels = list(labels) if labels is not None else [(None, None)] * len(paths)
     if len(labels) != len(paths):
         raise PoolError(f"{len(labels)} label pair(s) for {len(paths)} look(s)")
     looks = [check_look(*p, arm=arm, a_label=la, b_label=lb, allow_legacy=allow_legacy, relocate=relocate)
              for p, (la, lb) in zip(paths, labels, strict=True)]
     check_looks_are_one_match(looks)
+    seeds = [(lk["a_header"].get("settings") or {}).get("seed") for lk in looks]
+    if look_seeds is not None and seeds != [int(x) for x in look_seeds[:len(looks)]]:
+        raise PoolError(f"the looks given have seeds {seeds}, but looks 1..{len(looks)} are registered as "
+                        f"{list(look_seeds[:len(looks)])}: a look is missing, extra or out of order")
     first = looks[0]
     sa = first["a_header"]["settings"]
     notes = [n for look in looks for n in look["notes"]]
     report: dict[str, Any] = {
         "arm": sa.get("candidate"), "base": sa.get("reference"),
-        "input_sha256": first["input_sha256"],
+        "input_sha256": first["input_sha256"],          # look 1's; every look's is in look_inputs
         "nets": first["nets"], "net_check": first["net_check"],
         "relocated": dict(relocate or {}),
         "z": z, "coverage": two_sided_coverage(z),
@@ -690,6 +731,11 @@ def run_looks(paths: Sequence[tuple[Path, Path, Path, Path]], *, arm: str,
                                "arena_standard.summarize_pentanomial"},
         "notes": notes,
         "result": pool_looks([(lk["a_games"], lk["b_games"], lk["pairs"]) for lk in looks], z),
+        "look_index": len(looks),
+        "boundaries": None if boundaries is None else [float(b) for b in boundaries],
+        "look_seeds": None if look_seeds is None else [int(x) for x in look_seeds],
+        "look_inputs": [{"look": i + 1, "seed": seeds[i], "a": lk["a"], "b": lk["b"],
+                         "input_sha256": lk["input_sha256"]} for i, lk in enumerate(looks)],
     }
     if len(looks) > 1:
         report["method"]["looks"] = ("cumulative over every look; an opening drawn in several looks is one "
@@ -732,9 +778,14 @@ def main(argv: list[str] | None = None) -> int:
                         "(banked reproductions only; never for a registered read). Both rows must be legacy: "
                         "a mixed pair is refused regardless")
     p.add_argument("--verdict-rule", choices=("lb-gt-zero",), default=None)
-    p.add_argument("--z", type=float, default=Z95,
+    p.add_argument("--z", type=float, default=None,
                    help="interval half-width in SE, the one the verdict reads (default 1.96 = 95%% two-sided; "
                         "2.2414 = 97.5%% two-sided; O'Brien-Fleming looks 2.797 / 1.977). Recorded in the output")
+    p.add_argument("--boundaries", default=None, metavar="Z1,Z2,...",
+                   help="pre-registered z per look (e.g. 3.471,2.454,2.004): the z read is chosen by the number of "
+                        "looks given; needs --look-seeds; exclusive with --z")
+    p.add_argument("--look-seeds", default=None, metavar="S1,S2,...",
+                   help="each look's pre-registered seed, in look order: the looks given must be exactly looks 1..k")
     p.add_argument("--relocate", action="append", default=None, metavar="OLD=NEW",
                    help="a net recorded at OLD was moved to NEW after it was played: hash it at NEW against the "
                         "recorded sha256 (never skipped) and record the mapping (repeatable)")
@@ -749,8 +800,16 @@ def main(argv: list[str] | None = None) -> int:
     labels = list(zip(a.a_label or [None] * n, a.b_label or [None] * n, strict=True))
     paths = [(Path(ag), Path(bg), Path(ar), Path(br))
              for ag, bg, ar, br in zip(a.a_games, a.b_games, a.a_result, a.b_result, strict=True)]
-    report = run_looks(paths, arm=a.arm, labels=labels, allow_legacy=a.allow_legacy_rows, rule=a.verdict_rule, z=a.z,
-                       relocate=parse_relocate(a.relocate))
+    if a.boundaries is not None and a.z is not None:
+        p.error("--z and --boundaries are exclusive: with boundaries the z is chosen by the look count")
+    try:
+        bounds = None if a.boundaries is None else [float(x) for x in a.boundaries.split(",")]
+        seeds = None if a.look_seeds is None else [int(x) for x in a.look_seeds.split(",")]
+    except ValueError as exc:
+        p.error(f"--boundaries / --look-seeds: {exc}")
+    report = run_looks(paths, arm=a.arm, labels=labels, allow_legacy=a.allow_legacy_rows, rule=a.verdict_rule,
+                       z=Z95 if a.z is None else a.z, relocate=parse_relocate(a.relocate),
+                       boundaries=bounds, look_seeds=seeds)
     if a.out:
         Path(a.out).write_text(json.dumps(report, indent=1, sort_keys=True) + "\n")
     print(summary_text(report))
