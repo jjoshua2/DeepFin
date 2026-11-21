@@ -2130,6 +2130,12 @@ _CALL_SITE_ARGS: dict[str, str] = {
         "a literal: selfplay always allows them. Not config-derived, and it "
         "must not BECOME config-derived without landing on the shape"
     ),
+    "per_game_rng=None if game_rngs is None else [game_rngs[j] for j in group]": (
+        "each searched game's own generator (simple_rl collect's per-game streams, "
+        "keyed by process seed and dole index) — runtime RNG state like `rng=rng`. "
+        "Opted into by the play_batch caller, not by any config value; None on "
+        "every other path, where the shared `rng` is used as before"
+    ),
     "witness_stop_fn=witness_stop_fn": (
         "the current run cancellation callback for bounded solved-root witness "
         "recovery; supplied by the caller at runtime, with no config value"
