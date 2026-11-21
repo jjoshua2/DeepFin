@@ -467,17 +467,98 @@ at plain speed.
 | three 1,600-game plain matches (3 × 0.38) | 1.14 |
 | **Total** | **≈ 3.0–3.3**, on top of the pilot's 4.0–6.0 |
 
-### 3. Parked, with launch conditions (not queued)
+### 3. Parked, with launch conditions (not queued): the anchor already exists in the original DeepFin loop
 
-- **Stockfish-opponent games at tuned strength, as an outside anchor.** This is the
-  owner's original loop: tune SF's strength so the net's holes are punished, then
-  train on those games.
-  - **Launch condition:** EITHER a self-play generation has shown a measured step
-    (a match vs the base with LB95 > 0), OR a multi-generation run gains in
-    self-play but not against the outside yardsticks (BT4 node-odds, SF).
-  - The design must keep the training target best-move based, never the handicapped
-    move SF played.
-- **Outcome-conditioned value source in games against strength-limited Stockfish (DESIGNED arm, not queued).**
+The owner, verbatim (2026-11-21):
+
+> "Have you seen how we set this up in original deepfin? We had a complicated setup that addresses a lot of ur concerns. Like we ran full strength sf and limited by forcing random moves within its top choices etc and we had multiple output heads to predict our search and its and we learned on a combo of it our and game result and also we did some self play and some sf so they all balance each other with different bias but still anchored to rreality"
+
+He is right: the production loop already has this design. The simple loop strips it.
+
+**What the original loop does.** Read from `docs/model_heads.md`, the live
+`configs/pbt2_small.yaml` and the code on main 6c72b821b; values are the live
+yaml's, not main's.
+
+- **Main `wdl` head: one soft CE against a three-way blend.** The blend is
+  `game_frac`·outcome + `sf_wdl_frac`·SF cp-logistic label +
+  `search_wdl_frac`·own search-root WDL (`train/losses.py::normalize_value_blend_fracs`).
+  - Live shares: `sf_wdl_frac` 0.69 (`sf_wdl_frac_floor` 0.69) and `search_wdl_frac` 0.31, so the outcome share of the MAIN head is 0 there.
+  - The yaml comment records an earlier realised blend of 0.35 outcome / 0.45 SF / 0.20 search (iter 478).
+  - In the live config the game result enters through the trained `categorical` head (`w_categorical` 1.0, blended into the search value at `categorical_blend_frac` 0.69).
+- **SF games.** `selfplay_fraction` is 0.8. The other games are played against SF:
+  - SF's strength is limited by choosing uniformly among its MultiPV candidates within a PID-controlled regret limit (`stockfish_turn.within_regret_candidates`; `sf_pid_target_winrate` 0.5; `sf_nodes` 75,000 for play).
+  - Labels are always from full-strength SF's search, never from the handicapped move: `sf_label_nodes_floor` 150,000, `sf_label_nodes_cap` 200,000, `sf_multipv` 6, `sf_workers` 4.
+- **Auxiliary heads:**
+  - `sf_eval`: `w_sf_eval` is 0.0 live.
+  - `policy_sf`: the opponent's reply.
+  - `policy_soft`: `w_soft` 1.0.
+  - `policy_future`: `w_future` 0.01.
+  - volatility: 0.1, and SF volatility 0.05.
+  - moves-left: 0.02.
+- **What the simple loop strips:**
+  - `simple_rl/learn.py` hard-sets every auxiliary weight to 0 (`w_soft`, `w_future`, `w_sf_*`, `w_categorical`, `w_volatility`, `w_moves_left`, ...) and trains only `w_policy` + `w_wdl`.
+  - `simple_rl/collect.py` forces `selfplay_fraction` 1.0, with `sf_nodes` 1 and no SF label stored.
+  - Its `TRAIN_KEYS` carry no `sf_wdl`.
+
+**Existing blend-weight mechanisms (do not rebuild).**
+
+The owner, verbatim (2026-11-21):
+
+> "We had some experiments tying the weight of our search to opponent search based on distance from z or how much ti weight it based on how many moves left and other things"
+
+Each mechanism below is in `chess_anti_engine/train/losses.py` on main. Live values
+are from the live `configs/pbt2_small.yaml`; verdicts are from `docs/experiment_ledger.md`
+(line numbers on main 6c72b821b).
+
+| # | Knob | What it does | Live value | Recorded verdict |
+|---|---|---|---|---|
+| 1 | `wdl_terminal_outcome_plies` / `_full_plies` / `_sf_frac` (`terminal_outcome_transfer_taper`) | Moves the SEARCH share of the blend to the game result near the end of the game: full weight within `_full_plies`, tapered to zero by `_plies` via `moves_left`. `_sf_frac` lets the outcome also take part of the SF share | unset, so off (defaults 0 / 2 / 0.0) | **Calibration** (ledger L38651, 2026-08-07, `data/terminal_outcome_calibration_20260807/`, 149k rows): the result's noise as a value label is sd ≈ 0.10 at 1–2 plies from the end, rising to 0.77 deep. It crosses the search component's noise at d ≈ 6–7, and d ≤ 6 touches 4.7% of rows. **Stage-1 screen: KILL, both arms** (L38726): the endgame CI included 0 for both, e.g. conservative +1.24 [−2.93, +5.53] cp. Stage 2 never launched |
+| 2 | `use_adjusted_wdl_target` (+ `adjusted_wdl_regret_source` / `_scale` / `_cap`) | Discounts the game result by the opponent's later regret, so a result owed to SF's later mistakes counts for less. **This is the "gift win" correction** | `false` (the three sub-keys are deleted from the yaml as unreachable, L57920–57926) | **2026-07-20/21 multi-seed NULL** (L3775): its 2× dose won only at seed 0, and "at s0 EVERY value-pressure lever won" |
+| 3 | `sf_search_dampen_sf_low` / `_high` | Lowers the SF share on rows where SF and our search disagree in sign, separately for each direction | 0.0 / 0.0 | **No screening arm found.** A grep of the ledger for `sf_search_dampen` finds only "inert" and "restored to the yaml" entries (L7059, L25754, L41637, L46472, L61867). It was restored because `scripts/value_optimism.py` requires the keys to be present (L41637) |
+| 4 | `sf_wdl_frac` → `sf_wdl_frac_floor` interpolation by `wdl_regret` | The SF share rises with difficulty past a 0.10 regret knee | pinned: frac = floor = 0.69 | **Never fired:** realised `wdl_regret` never reached 0.10 (max 0.0984) in 478/478 iterations. It was pinned to the realised value (live yaml comment; `rl_loop_audit` I5) |
+| 5 | `sf_wdl_conf_power` / `sf_wdl_draw_scale` | **Affect ONLY the auxiliary `sf_eval` mask, never the value target** (`losses.py` docstring at L1916; pinned by `tests/test_sf_wdl_conf_knobs_are_aux_only.py`) | as live | Listed so nobody tunes them expecting a value effect |
+
+**How to read these verdicts.**
+- **They are leads, not closures, for the SL base.** They came from offline `value_regret` screens on the OLD net at small dose. This lane has since found that no offline value metric predicts the SL base's 64-sim strength.
+- **The calibration in (1) bears directly on the pilot.** A one-hot result far from the end is the noisiest of the three labels. That is the pilot's damage hypothesis seen from the other side.
+- **Design option for the arm after the pilot** (not a change to the pilot's cells): wherever the result enters (K-z2, or any z share), its weight should fall with plies-to-end, using a taper like (1)'s.
+
+**Primary design: restore the three-way value blend and an SF-opponent share of
+games in the simple loop.**
+- **Unconditional blend.** It has no result-conditioned switch between sources, so the bias question raised by the alternative below does not arise.
+- **Gift wins are corrected.** Full-strength SF labels every position, including positions the limited opponent let us off.
+
+**Staging: one data-affecting change per readout.**
+
+| Stage | Change |
+|---|---|
+| (a) | SF labels plus the three-way blend, on self-play games only |
+| (b) | add the SF-opponent game share |
+| (c) | add the auxiliary heads |
+
+**Before the primary design is trusted.** Each item has its status on main 6c72b821b,
+from the code and the audits. "Unknown" means not re-verified in this session.
+
+| Item | What must hold | Status |
+|---|---|---|
+| One-ply alignment of the SF label | `rec.sf_wdl` is SF's search AFTER our move (P1, SF to move, POV-flipped; `stockfish_turn._sf_result_wdl_for_record`; `docs/model_heads.md` `policy_sf` row). As a value target for the row's position, it is the value after our chosen move, one ply off. The P0 fields (`sf_p0_*`) are built from the PARENT row's MultiPV (`finalize._build_sf_p0_regret_vector`). | **open, by design.** Decide whether the value target takes P1 as-is (the value under our move) or a P0 eval; no P0 value field exists today |
+| Dirty-TT label regime | Labels should be searched from a known TT state | **open.** Default label queries run with `fresh=False` (warm TT carried across positions; `stockfish/pool.py`). Only escalation re-queries run cold (`fresh=True`, `stockfish_turn.py` ~L745–753, L1365) |
+| MultiPV-6 regret-tail fabrication | No fabricated values in the stored targets | **open, for the POLICY fields.** `finalize._build_sf_p0_regret_vector` imputes a regret for about 68% of legal moves at MultiPV 6, and `record_sf_p0_regret: true` banks it into every shard (`docs/experiment_ledger.md` ~L980–1016). It does not touch `sf_wdl`, the value label, which is from SF's best line |
+| Unconverged labels (about 3%) | A label must be a converged search | **unknown.** The banked finding is about 2.92% of labels unconverged; whether the escalation path fixes these was not re-checked |
+| cp-logistic slope and draw width | The cp → WDL map fits the data | **open.** Live values are 0.006 and 120 cp; the yaml's own comments say the replay fit is about 0.0045–0.0055 and 130–145 cp. Not refitted |
+| `search_wdl_draw_mode` | The search-WDL component's draw channel is the intended one | **unknown for the simple loop.** The live yaml does not set it, so the runtime default `net_raw` applies (`stockfish/wdl.py` `SEARCH_WDL_DRAW_NET_RAW`) |
+| "The SF share is load-bearing" | NOT to be cited | **operator's rule** (`docs/model_heads.md`; ledger, 2026-08-23): the 0.64 → 0.40 winrate fall is an old, uncontrolled result and must not be cited as a mechanism without a fresh preregistered re-ablation |
+
+**Cost: SF label CPU against our collect rate. Estimate, a guess until measured.**
+- The pilot collects ≈ 5,000 games/h × ≈ 95 rows ≈ 475k rows/h.
+- At the production label budget (150k–200k nodes, MultiPV 6) and an assumed ≈ 1M nodes/s per core (**not measured here**), a label costs about 0.15–0.2 core-seconds. That makes ≈ 20–26 cores busy continuously.
+- So at 64 sims on every ply, **SF labelling, not the GPU, is likely the limit**: the live yaml's `sf_workers` 4 would label only about a fifth of the rows.
+- Fast-move collection (playout cap) makes it worse, because games per hour rise while every stored row still needs a label.
+- **The measurement that settles it:** label throughput, rows/s at `sf_label_nodes_floor`, on this box beside a 64-sim collect.
+
+**Launch condition (unchanged):** the pilot has read.
+
+#### Alternative: the owner's outcome-conditioned value source (designed, not queued)
 
   The owner clarified this item (verbatim, 2026-11-21):
 
@@ -570,5 +651,5 @@ head-swap harness without CUDA graphs and are superseded by this table.
 | L3 | Cell changes | none (Zq, S, P0 as in the amendment) | |
 | L4 | S's role | a one-generation shape diagnostic only; z in every multi-generation recipe | |
 | L5 | Add collection B and cells K-blend / K-z2 with matches K1–K3 (≈ 3.0–3.3 GPU-h more) | yes, once `--value-rows-per-game` and the playout-cap throughput are banked; p from that measurement | |
-| L6 | The parked items (SF opponent as an outside anchor; the outcome-conditioned SF value arm with its defaults) | stay parked with the launch conditions above; run the gift-win measurement when the second unparks | |
+| L6 | The parked anchor: restore the original loop's three-way value blend plus an SF-opponent share in the simple loop (primary, staged a → b → c), or the outcome-conditioned alternative | stay parked until the pilot reads; then the primary design, after the trust checks and the label-throughput measurement | |
 | — | `PIN` (the commit every stage runs from) | | |
