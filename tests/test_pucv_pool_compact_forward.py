@@ -183,3 +183,36 @@ def test_the_debug_info_line_reports_evals_terminal_and_duplicate_rows(monkeypat
     assert f"terminal={stats.terminal_leaves} " in line
     assert line.endswith(f"duplicate={stats.duplicate_leaves}")
     assert stats.terminal_leaves > 0
+
+
+def test_scatter_reuses_the_buffer_and_leaves_nothing_stale() -> None:
+    """The per-buffer output array is reused batch after batch (no fresh
+    n x 4672 allocation); every row is rewritten each batch: evaluated rows
+    from the forward, duplicates from their first row, terminal rows zeroed."""
+    rng = np.random.default_rng(7)
+    b: dict[str, np.ndarray] = {"leaf_ids": np.zeros(8, dtype=np.int32)}
+
+    def batch(leaf_ids: list[int], is_term: list[int]) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        n = len(leaf_ids)
+        b["leaf_ids"][:n] = leaf_ids
+        b["is_term"] = np.array(is_term, dtype=np.int8)
+        eval_rows, b["dup_rows"], b["dup_first"] = pool_module._distinct_leaf_rows(b["leaf_ids"], b["is_term"], n)
+        pol_m = rng.standard_normal((len(eval_rows), 4672)).astype(np.float32)
+        wdl_m = rng.standard_normal((len(eval_rows), 3)).astype(np.float32)
+        pol, wdl = pool_module._scatter_outputs(b, n, {}, eval_rows, (pol_m, wdl_m))
+        return pol, wdl, pol_m, wdl_m
+
+    batch([1, 2, 3, 4, 5, 6, 7, 8], [0] * 8)  # fills every row of the buffer
+    first_buffer = b["out_pol"]
+    pol, wdl, pol_m, wdl_m = batch([4, 9, 4, 5, 9, 6], [0, 0, 0, 1, 0, 1])
+    assert b["out_pol"] is first_buffer
+    assert np.shares_memory(pol, first_buffer)
+    assert pol.shape == (6, 4672)
+    assert wdl.shape == (6, 3)
+    np.testing.assert_array_equal(pol[[0, 1]], pol_m)
+    np.testing.assert_array_equal(wdl[[0, 1]], wdl_m)
+    np.testing.assert_array_equal(pol[2], pol_m[0])
+    np.testing.assert_array_equal(pol[4], pol_m[1])
+    np.testing.assert_array_equal(wdl[4], wdl_m[1])
+    assert not pol[[3, 5]].any()
+    assert not wdl[[3, 5]].any()
