@@ -544,3 +544,29 @@ def test_banked_seat_control_reproduction(tmp_path: Path) -> None:
 A39_SHA256 = "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0"
 PINNED_POOLED = 0.01      # (0.0325 + (-0.0125)) / 2: +6.9 Elo [-9.0, +23.0]
 PINNED_SEAT = 0.0225      # (0.0325 - (-0.0125)) / 2: +15.6 Elo [-1.5, +32.9]
+
+
+def _value_block(path: Path, recal: list[float] | None = None) -> dict[str, Any]:
+    return {"value_from": {"path": str(path), "sha256": seat_files(str(path))[0]["sha256"], "files": []},
+            "recal": recal}
+
+
+def test_a_hybrid_arm_pools_only_as_the_same_hybrid_with_its_value_file_unchanged(tmp_path: Path) -> None:
+    """Review of #1457: a hybrid seat's value-from file is re-hashed at pool time and the two runs'
+    value blocks must match (A's candidate_value is B's reference_value)."""
+    ex = [0.0, 0.25, -0.25]
+    value = tmp_path / "value.pt"
+    value.write_bytes(b"value weights")
+    block = _value_block(value, [0.5, -0.5])
+    r = _pair(tmp_path, ex, ex, a_over={"candidate_value": block}, b_over={"reference_value": block})
+    assert r["nets"]["value_from"][0]["sha256"] == block["value_from"]["sha256"]
+    with pytest.raises(SystemExit, match="value differs between runs"):     # B played the plain arm
+        _pair(tmp_path, ex, ex, a_over={"candidate_value": block})
+    with pytest.raises(SystemExit, match="value differs between runs"):     # another recalibration
+        _pair(tmp_path, ex, ex, a_over={"candidate_value": block},
+              b_over={"reference_value": _value_block(value, [0.5, -0.4])})
+    _pair(tmp_path, ex, ex, a_over={"candidate_value": block}, b_over={"reference_value": block})
+    value.write_bytes(b"value weights, retrained")                           # same path, other bytes
+    with pytest.raises(SystemExit, match=r"value-from .* changed after it was played"):
+        pool_mod.run(tmp_path / "A.games.jsonl", tmp_path / "B.games.jsonl", tmp_path / "A.results.jsonl",
+                     tmp_path / "B.results.jsonl", arm=str(tmp_path / "arm.pt"))

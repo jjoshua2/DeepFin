@@ -55,6 +55,7 @@ def test_the_cli_fits_two_checkpoints_on_rows_and_records_them(tmp_path: Path) -
     assert rec["T"] > 0
     assert rec["cli"] == f"{rec['T']!r},{rec['b']!r}"
     assert rec["cross_entropy_fitted"] <= rec["cross_entropy_identity"]
+    assert rec["logits_dtype"] == {"net": "float32", "reference": "float32"}   # CPU: no autocast
     assert len(rec["net_sha256"]) == 64
     assert rec["net_sha256"] != rec["reference_sha256"]
     # The net fitted against itself is the identity.
@@ -68,3 +69,46 @@ def test_the_cli_fits_two_checkpoints_on_rows_and_records_them(tmp_path: Path) -
 def test_rows_must_come_from_exactly_one_source(tmp_path: Path) -> None:
     with pytest.raises(SystemExit, match="exactly one"):
         main(["--net", "a.pt", "--reference", "b.pt", "--out", str(tmp_path / "o.json")])
+
+
+def test_the_holdout_fraction_is_the_runs_pinned_one(tmp_path: Path) -> None:
+    """Review of #1457: a --holdout-frac that disagrees with the run's would fit on trained rows."""
+    from scripts.fit_value_recal import pinned_holdout_frac
+
+    collect = tmp_path / "run" / "gen_0001" / "collect"
+    collect.mkdir(parents=True)
+    (collect / "manifest.json").write_text("{}")
+    assert pinned_holdout_frac(collect, 0.05) == 0.05                      # nothing pinned: the flag
+    with pytest.raises(SystemExit, match="pins no holdout_frac"):
+        pinned_holdout_frac(collect, None)
+    (tmp_path / "run" / "run_config.json").write_text(json.dumps({"settings": {"holdout_frac": 0.1}}))
+    assert pinned_holdout_frac(collect, None) == 0.1
+    assert pinned_holdout_frac(collect, 0.1) == 0.1
+    with pytest.raises(SystemExit, match=r"disagrees with the run's pinned holdout_frac 0\.1"):
+        main(["--net", "a.pt", "--reference", "b.pt", "--collect-dir", str(collect), "--holdout-frac", "0.05",
+              "--out", str(tmp_path / "o.json")])
+
+
+def test_rows_that_overlap_the_match_openings_are_refused(tmp_path: Path) -> None:
+    from scripts.fit_value_recal import check_rows_disjoint
+
+    after_e4 = chess.Board()
+    after_e4.push_uci("e2e4")
+    openings = tmp_path / "eval.fen"
+    openings.write_text(after_e4.fen() + "\n")
+    clean = tmp_path / "clean.npz"
+    np.savez(clean, x=np.zeros((2, 1, 8, 8)), root_fen=np.array([chess.STARTING_FEN] * 2),
+             history=np.array(["d2d4", "d2d4 d7d5"]))
+    with np.load(clean) as z:
+        assert check_rows_disjoint(z, clean, openings)["rows_overlapping"] == 0
+    dirty = tmp_path / "dirty.npz"   # the second row's game passed through the opening's position
+    np.savez(dirty, x=np.zeros((2, 1, 8, 8)), root_fen=np.array([chess.STARTING_FEN] * 2),
+             history=np.array(["d2d4", "e2e4 e7e5"]))
+    with pytest.raises(SystemExit, match="1 rows started at or passed through"):
+        main(["--net", "a.pt", "--reference", "b.pt", "--rows", str(dirty), "--exclude-openings", str(openings),
+              "--out", str(tmp_path / "o.json")])
+    bare = tmp_path / "bare.npz"
+    np.savez(bare, x=np.zeros((1, 1, 8, 8)))
+    with pytest.raises(SystemExit, match="needs root_fen and history"):
+        main(["--net", "a.pt", "--reference", "b.pt", "--rows", str(bare), "--exclude-openings", str(openings),
+              "--out", str(tmp_path / "o.json")])

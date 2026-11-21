@@ -3554,10 +3554,12 @@ def run_arena(
     cand_name = ref_name = ""
     cand_search = ref_search = ""
     if pgn_out is not None:
-        cand_name = pgn_candidate_name or hybrid_engine_name(
-            engine_name_from_checkpoint(candidate, fallback="candidate"), value_candidate)
-        ref_name = pgn_reference_name or hybrid_engine_name(
-            engine_name_from_checkpoint(reference, fallback="reference"), value_reference)
+        # An explicit name gets the hybrid suffix too: a hybrid seat must never share a
+        # pooled-fit player name with the plain seat of the same checkpoint.
+        cand_name = hybrid_engine_name(
+            pgn_candidate_name or engine_name_from_checkpoint(candidate, fallback="candidate"), value_candidate)
+        ref_name = hybrid_engine_name(
+            pgn_reference_name or engine_name_from_checkpoint(reference, fallback="reference"), value_reference)
         if cand_name == ref_name:
             # Two players that share a name become ONE player in a pooled fit,
             # and the resulting rating is a silent average of both. Refuse

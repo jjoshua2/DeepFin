@@ -60,6 +60,10 @@ unless:
   two runs' ``openings_sha256`` must be non-null and equal. Each row's
   ``game_log_provenance`` must be ``this_run`` or ``recorded``: ``absent`` means
   a pre-provenance log was resumed, so its earlier games were never checked.
+  A hybrid seat (``--<seat>-value-from`` / ``-value-recal``; ``candidate_value`` /
+  ``reference_value`` in the row) must be the same hybrid in both runs (value-from
+  sha256 and [T, b]), and each value-from file must hash, AT POOL TIME, to what
+  the row says was played.
   Rows without the seat shas are legacy: refused unless ``--allow-legacy-rows``,
   under which the older mtime heuristic applies (no net file may be modified
   after the earlier run's header ``created``) and the output marks the check as
@@ -245,6 +249,43 @@ def _file_shas(files: Sequence[dict[str, Any]]) -> list[tuple[Any, Any]]:
     return [(f.get("role"), f.get("sha256")) for f in files]
 
 
+def _value_signature(block: dict[str, Any] | None) -> tuple[Any, Any] | None:
+    """A hybrid seat's (value-from sha256, [T, b]); None for a plain seat."""
+    if not block:
+        return None
+    vf = block.get("value_from")
+    recal = block.get("recal")
+    return (None if vf is None else vf.get("sha256"), None if recal is None else tuple(float(x) for x in recal))
+
+
+def check_seat_values(a_row: dict[str, Any], b_row: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]]]:
+    """A hybrid seat (``--<seat>-value-from`` / ``-value-recal``) must be the SAME hybrid in both runs
+    (A's candidate is B's reference), and every value-from file must still hash to what was played.
+    Returns (problems, pool-time value-from files)."""
+    problems: list[str] = []
+    files: list[dict[str, Any]] = []
+    for who, a_field, b_field in (("arm", "candidate_value", "reference_value"),
+                                  ("base", "reference_value", "candidate_value")):
+        va, vb = a_row.get(a_field), b_row.get(b_field)
+        if _value_signature(va) != _value_signature(vb):
+            problems.append(f"the {who} seat's value differs between runs: A {a_field} {_value_signature(va)} vs "
+                            f"B {b_field} {_value_signature(vb)} (a hybrid seat never pools with another seat)")
+        for name, block in (("A", va), ("B", vb)):
+            vf = (block or {}).get("value_from")
+            if not vf:
+                continue
+            try:
+                now = pool_time_files(f"{who} value-from", str(vf.get("path")))
+            except PoolError as exc:
+                problems.append(str(exc))
+                continue
+            files.append({"seat": who, "run": name, **now[0]})
+            if now[0]["sha256"] != vf.get("sha256"):
+                problems.append(f"run {name} {who} value-from {vf.get('path')} sha256 {vf.get('sha256')} != "
+                                f"pool-time sha256 {now[0]['sha256']}: the file changed after it was played")
+    return problems, files
+
+
 def check_nets(a_row: dict[str, Any], b_row: dict[str, Any], a_header: dict[str, Any], b_header: dict[str, Any],
                arm: str, base: str, *, allow_legacy: bool) -> tuple[dict[str, Any], str, list[str]]:
     """Prove the pooled nets are the ones played; return (pool-time files, check mode, notes)."""
@@ -280,6 +321,10 @@ def check_nets(a_row: dict[str, Any], b_row: dict[str, Any], a_header: dict[str,
                                     f"{_file_shas(nets[role])}")
         if a_row.get("openings_sha256") != b_row.get("openings_sha256"):
             problems.append(f"openings_sha256: A {a_row.get('openings_sha256')} != B {b_row.get('openings_sha256')}")
+        value_problems, value_files = check_seat_values(a_row, b_row)
+        problems.extend(value_problems)
+        if value_files:
+            nets["value_from"] = value_files
         if problems:
             raise PoolError("net provenance refused: " + "; ".join(problems))
         return nets, "row_sha256", []
