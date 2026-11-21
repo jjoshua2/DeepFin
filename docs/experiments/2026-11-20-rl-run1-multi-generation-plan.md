@@ -13,7 +13,10 @@ starts until two things have happened:
 NOT_A_CANDIDATE, pre-registration `PREREG.md`). Those numbers are pending that
 diagnosis's full report and its registered tests T1 and T2. T1's orientation A is
 banked (`results/results.jsonl`, row `t0s1_P1_A`, 800 games) and **not read**: by
-`PREREG.md` it is read once, after both orientations. T2 has not run. Numbers re-read here from bank files say
+`PREREG.md` it is read once, after both orientations. **T2 is withdrawn as pending:** its
+question (a trained policy with the base's value) is already answered by the banked
+head-swap matches ([below](#head-swap-banked-omitted-from-the-merged-plan)), which the merged
+plan's Stage 0 omitted. Numbers re-read here from bank files say
 which file. The independent review of this plan (PR #1439) banked its evidence at
 `~/chess-artifacts/operations/rl-claude-20261119/plan-review-1439/`; numbers from
 it are marked *review* and were spot-checked here where stated.
@@ -41,6 +44,8 @@ words:
   get a working RL loop in selfplay even, which i think should be possible with 64
   node search … as long as on average its better if we get enough of it it should
   work. i wonder if maybe we need larger batch sizes to avg it out better?"
+- on the optimizer (later the same day): "Just using aurora instead of Adam won't fix our
+  loop … If we have the same bad training target it won't help."
 
 **The principle (owner, 2026-11-20).** "i want to be an independent project and not
 merely distill lc0 … i want a pipeline that could in theory get us even stronger
@@ -97,7 +102,7 @@ Naming: "SL base" is the supervised starting net, sha256
 
 | # | Decision | Recommended default | Alternative | **Owner's decision** |
 |---|---|---|---|---|
-| O1 | **Stage 1's cells** | **Four pre-committed cells, all matched:** (a), (b), (c) at batch 512, and (a) at effective batch 2048 (below) | A different large batch than 2048, or a fifth cell | *(unfilled)* |
+| O1 | **Stage 1's cells** | **Held open.** Expected: at least one VALUE-target cell plus the best policy-target contrast, chosen when the diagnosis's value-target pre-screen lands (which value target from our own pipeline, if any, is closer to deep-SF eval / game outcome than the base's value). The four policy-only cells below are the merged draft's design and are superseded by the head-swap evidence | The merged draft's four policy-only cells | *(unfilled)* |
 | O2 | **Stage 1's optimizer state** | **Fresh** (the Aurora split as the SL base used it; the split is the owner's and is not an arm) | Continue the SL base's saved Aurora state | *(unfilled)* |
 | O3 | **Stage 1's collection size** | **1,040 games (≈ 100k rows)** | 2,080 games | *(unfilled)* |
 | O4 | **Stage 2's time cap** | **One week** from Stage 2's start | Another cap | *(unfilled)* |
@@ -106,6 +111,33 @@ Naming: "SL base" is the supervised starting net, sha256
 The owner fills the last column; nothing launches while any cell of it is unfilled.
 
 ## Stage 0: what is known before any training
+
+### Head-swap (banked; omitted from the merged plan)
+
+From `~/chess-artifacts/operations/rl-claude-20261119/headswap/table.md` (64 sims,
+seat-balanced, 800 games each, against the SL base):
+
+| Arm | Elo [95% CI] |
+|---|---|
+| Q50 c12, full net | −63.2 [−81.1, −45.7] |
+| Q50 policy + base value | **+4.3 [−12.5, +21.2]** |
+| base policy + Q50 value | −55.2 [−73.6, −37.1] |
+| F12 c12, full net | −34.9 [−53.1, −16.8] |
+| F12 policy + base value | **−15.7 [−33.8, +2.5]** |
+| base policy + F12 value | −18.3 [−36.2, −0.4] |
+| base policy + Q50 value, recalibrated | −8.2 [−26.1, +9.6] |
+| base policy + F12 value, recalibrated | −12.2 [−29.7, +5.3] |
+
+- A trained POLICY on the base's value reads about 0 at 64 sims (Q50 +4.3, F12
+  −15.7); with P1 c12 at −3.9 that is three nets. **Policy-target cells should be
+  expected to read about 0 at 64 sims.**
+- A trained VALUE on the base's policy is negative (Q50 −55.2, F12 −18.3), and value
+  recalibration recovers it to about the base. The losses sit in the value head.
+- The two halves add up to the full net within error (Q50 −50.8 vs −63.2; F12 −33.9
+  vs −34.9; `table.md`'s additive check).
+- This answers T2's question for Q50 and F12 (T2 itself is registered on P1), so T2
+  is no longer pending for the plan. Stage 1's cell list is held open (O1) until the
+  value-target pre-screen lands.
 
 ### Search headroom (banked; the 64-vs-1 row is veto-confounded)
 
@@ -429,17 +461,10 @@ does not change which cells play.
 - **T1 refutes H1** (lower bound ≥ +180). The prior did improve at 1 sim, the 1-sim
   exclusion is revisited before Stage 1, and Stage 0's veto paragraphs are
   rewritten.
-- **T2 shows a hidden policy gain** (P1 policy + base value, lower bound > 0,
-  confirmed on the fresh seed). Value drift is binding: every Stage 1 arm keeps
-  `--w-wdl 0` (already the default here) and adds a value co-requirement (G-T2's
-  |ΔQ| on the probe rows ≤ the P1 c01 value). A KL-wdl anchor to the SL base
-  (`--kl-wdl`, with `--kl-reference` explicit) is added to every policy cell. The
-  `--accum-steps` PR refuses accumulation with a KL anchor, loudly (the anchor's
-  penalty is a per-micro-batch mean), so the 2048 cell then needs a native 2048
-  batch or anchor support for accumulation (code).
-- **T2 shows no hidden gain** (upper bound < +20). Stage 1 proceeds unchanged.
-- **Either test unread.** Stage 1 proceeds, and the reading is listed as an open
-  confound.
+- **T2:** withdrawn as pending for this plan. The head-swap bank already answers its
+  question on Q50 and F12 (trained policy + base value ≈ 0; the losses are in the
+  value head). If the diagnosis still reads T2 on P1, it is reported, not waited on.
+- **T1 unread.** Stage 1 proceeds, and the reading is listed as an open confound.
 
 **Scoring code.** Stage 0b's scorer lands on main in its own PR, with tests,
 before it is used on Stage 1's snapshots. Until then the bank scripts it replaces are pinned by
@@ -571,11 +596,12 @@ optimizer state, on the same collection:
 ### Snapshots, in samples
 
 Snapshots are defined by rows presented, so the two batch sizes are read at the
-same samples: **5,120; 10,240; 17,920; 35,328; 70,656** and the final model
-(`--snapshot-rows`, from the `--accum-steps` PR). That is updates 10, 20, 35, 69
-and 138 at batch 512. At 2048 each resolves to the first optimizer step whose rows
-reach it (updates 3, 5, 9, 18, 35; at most +20% more rows, at the first one); the
-resolved updates are recorded in the manifest. KL(SL base ‖ new) on the probe rows
+same samples: **6,144; 10,240; 18,432; 36,864; 71,680** and the final model
+(`--snapshot-rows`, from the `--accum-steps` PR). Each is a multiple of 2048, so
+both batch sizes snapshot at exactly these rows: updates 12, 20, 36, 72 and 140 at
+512, and 3, 5, 9, 18 and 35 at 2048 (the earlier draft's 5,120 and 17,920 would have
+resolved to 6,144 and 18,432 rows at 2048, review of #1447). The resolved updates are
+recorded in the manifest. KL(SL base ‖ new) on the probe rows
 (`probe_vs_previous.policy_kl_prev_to_new`, Σ p_old (log p_old − log p_new)) is
 recorded at each snapshot, descriptively.
 
@@ -613,7 +639,7 @@ AUR="--optimizer aurora --matrix-optimizer-scope mlp_out --optimizer-hparams-sou
 BASE="--presentations 1 --mirror-prob 0.5 --warmup-steps 0 $AUR \
   --optimizer-state fresh --init-optimizer-state fresh \
   --holdout-frac 0.05 --probe-rows 2048 --no-eval \
-  --snapshot-rows 5120,10240,17920,35328,70656"
+  --snapshot-rows 6144,10240,18432,36864,71680"
 cell() {  # $1 = name, $2 = source collect run dir, $3 = accum steps, $4 = lr, rest = arm flags
   local n=$1 src=$2 k=$3 lr=$4; shift 4
   local T="$BASE --batch-size 512 --accum-steps $k --lr $lr --lr-floor $lr"
@@ -623,7 +649,7 @@ cell() {  # $1 = name, $2 = source collect run dir, $3 = accum steps, $4 = lr, r
     --collect-from $src $COLLECT1 $T "$@"
 }
 cell a512  $R/s1/collect            1 3e-6   --w-wdl 0
-cell b512  $R/s1/collect_norescale  1 3e-6   --w-wdl 0
+cell b512  $R/s1/collect_norescale  1 3e-6   --w-wdl 0 --no-target-q-rescale  # must match the retarget's sealed setting
 cell c512  $R/s1/collect            1 3e-6   --w-wdl 0 --train-target-temp 1.5
 cell a2048 $R/s1/collect            4 1.2e-5 --w-wdl 0
 ```
@@ -988,6 +1014,15 @@ only registered 64-sim matches decide.
   is reproduced (step 0b). The blocks are cut, with their sha256 recorded.
 - **P4.** The diagnosis's full report and T1 / T2 are read, and every interim
   number here is replaced or confirmed.
+- **P5a.** The no-rescale retarget is verified against a C-path searched no-rescale
+  target on REAL data: a small same-seed temperature-0 GPU collect pair (rescale on /
+  `--no-target-q-rescale`), the first retargeted and compared row by row. Read at the
+  rescale-on rebuild's measured real-data residual (max 3.2e-3, 7 of 12,146 rows
+  above 5e-4; #1446). Until then b512's target is verified only on the CPU test.
+- **P5b.** Under `--accum-steps` every phase row must carry every trained head's
+  target (#1447 refuses value-only rows: each micro-batch normalises a head by its
+  own valid-row count). Stage 1 collects use `--full-prob 1.0`, so no row is
+  value-only.
 - **P5.** These have merged and were run once on a small collect. Owner of each:
   the implementer working this plan (Claude), CPU only unless stated.
   - **`--accum-steps` and `--snapshot-rows`** (a2048; snapshots in samples), tested
