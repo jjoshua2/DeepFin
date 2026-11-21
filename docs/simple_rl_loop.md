@@ -454,6 +454,12 @@ peaked at 29.9 GB, 25% above the line), which the second term, through 1 × 256 
 `--concurrency`. The usable limit is measured: 8 × 96 at
 16 sims peaked at 31.0 GB of 32 and ran 22% slower than 6 × 96 at 25.9 GB, which ran
 at full speed.
+With K > 1 the free memory is read with nvidia-smi, so the driver does not open a
+495 MiB CUDA context. It does this only when the card can be named unambiguously:
+the `CUDA_VISIBLE_DEVICES` entry is a `GPU-` UUID, or the host has a single card,
+or `CUDA_DEVICE_ORDER=PCI_BUS_ID` is set. Otherwise (MIG slices, or several cards
+in torch's default fastest-first order) it falls back to torch. The stats record
+`gpu_memory_check.source` says which instrument read the memory.
 
 Measured on 2026-11-20 on the RTX 5090, GPU otherwise idle (compute-process list
 recorded every 2 s): SL base, 64 sims, cap auto, 0 buffer-full flushes in every

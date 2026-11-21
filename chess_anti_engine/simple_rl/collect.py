@@ -554,30 +554,64 @@ def vram_need_gib(settings: CollectSettings) -> float:
     return _VRAM_SAFETY * per_mib * int(settings.collect_procs) / 1024.0
 
 
-def _gpu_memory(settings: CollectSettings) -> tuple[int, int]:
-    """(free, total) bytes of the collect's device.
+def _nvidia_smi_target(index: int) -> str | None:
+    """The nvidia-smi selector (an index or a ``GPU-`` UUID) for torch's ``cuda:index``,
+    or None when it cannot be named unambiguously.
+
+    torch numbers the devices ``CUDA_VISIBLE_DEVICES`` leaves visible, in
+    ``CUDA_DEVICE_ORDER`` (default FASTEST_FIRST); nvidia-smi numbers every card
+    in PCI bus order. A visible-devices entry is mapped through; a MIG or
+    otherwise unrecognised entry is not."""
+    import os
+
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if visible is None:
+        return str(index)
+    entries = [e.strip() for e in visible.split(",") if e.strip()]
+    if index >= len(entries):
+        return None
+    entry = entries[index]
+    return entry if entry.isdigit() or entry.startswith("GPU-") else None
+
+
+def _gpu_memory(settings: CollectSettings) -> tuple[int, int, str]:
+    """(free, total) bytes of the collect's device, and which instrument read them.
 
     With K > 1 the driver plays nothing on the GPU, so it asks nvidia-smi rather
     than ``torch.cuda.mem_get_info``: that call would create a CUDA context in
     the DRIVER that lives for the whole collect, outside the VRAM model. K = 1
-    plays in the driver, which needs the context anyway."""
+    plays in the driver, which needs the context anyway. nvidia-smi is used only
+    when it can name torch's device unambiguously (a UUID, a single card, or
+    ``CUDA_DEVICE_ORDER=PCI_BUS_ID``); otherwise, and when it fails, torch reads
+    it and the source says so."""
+    import os
+
     import torch
 
     device = torch.device(settings.device)
     if int(settings.collect_procs) > 1:
         import subprocess
 
-        index = device.index or 0  # "cuda" alone means the current (first) device
+        target = _nvidia_smi_target(device.index or 0)  # "cuda" alone means the current (first) device
         try:
-            out = subprocess.run(["nvidia-smi", f"--id={index}", "--query-gpu=memory.free,memory.total",
+            if target is None:
+                raise ValueError("device not nameable for nvidia-smi")
+            out = subprocess.run(["nvidia-smi", "--query-gpu=index,uuid,memory.free,memory.total",
                                   "--format=csv,noheader,nounits"], capture_output=True, text=True,
                                  check=True, timeout=30).stdout
-            free_mib, total_mib = (float(x) for x in out.strip().splitlines()[0].split(","))
-            return int(free_mib * 2**20), int(total_mib * 2**20)
+            cards = [[c.strip() for c in ln.split(",")] for ln in out.strip().splitlines() if ln.strip()]
+            pci_order = os.environ.get("CUDA_DEVICE_ORDER") == "PCI_BUS_ID"
+            if target.startswith("GPU-"):
+                (card,) = [c for c in cards if c[1] == target]
+            elif len(cards) == 1 or pci_order:
+                (card,) = [c for c in cards if c[0] == target]
+            else:
+                raise ValueError("several cards and torch's order is not PCI bus order")
+            return int(float(card[2]) * 2**20), int(float(card[3]) * 2**20), "nvidia-smi"
         except (OSError, subprocess.SubprocessError, ValueError, IndexError):
-            pass  # no usable nvidia-smi: fall back to torch (and its context)
+            pass  # no usable nvidia-smi reading: fall back to torch (and its context)
     free, total = torch.cuda.mem_get_info(device)
-    return int(free), int(total)
+    return int(free), int(total), "torch"
 
 
 def check_vram(settings: CollectSettings) -> dict[str, Any] | None:
@@ -589,11 +623,11 @@ def check_vram(settings: CollectSettings) -> dict[str, Any] | None:
     the value that would fit."""
     if not str(settings.device).startswith("cuda"):
         return None
-    free, total = _gpu_memory(settings)
+    free, total, source = _gpu_memory(settings)
     usable = min(free, VRAM_USABLE_FRACTION * total) / 2**30
     need = vram_need_gib(settings)
     record = {"free_gib": free / 2**30, "total_gib": total / 2**30, "usable_gib": usable, "need_gib": need,
-              "collect_procs": int(settings.collect_procs)}
+              "collect_procs": int(settings.collect_procs), "source": source}
     if need > usable:
         per = need / int(settings.collect_procs)
         fit = int(usable // per)

@@ -407,14 +407,15 @@ def test_an_arm_must_match_the_source_k() -> None:
 
 def test_vram_refusal_uses_free_memory_and_the_usable_limit(monkeypatch: pytest.MonkeyPatch) -> None:
     gib = 2**30
-    monkeypatch.setattr(collect_mod, "_gpu_memory", lambda *_a: (10 * gib, 32 * gib))
+    monkeypatch.setattr(collect_mod, "_gpu_memory", lambda *_a: (10 * gib, 32 * gib, "nvidia-smi"))
     settings = replace(_settings(3, games=512), concurrency=128, sims=64, device="cuda")
     with pytest.raises(ValueError, match=r"--collect-procs 3 x --concurrency 128 .* pass --collect-procs 1 explicitly"):
         collect_mod.check_vram(settings)
-    monkeypatch.setattr(collect_mod, "_gpu_memory", lambda *_a: (31 * gib, 32 * gib))
+    monkeypatch.setattr(collect_mod, "_gpu_memory", lambda *_a: (31 * gib, 32 * gib, "torch"))
     record = collect_mod.check_vram(settings)  # measured 22.1 GB: fits
     assert record is not None
     assert record["usable_gib"] == pytest.approx(0.83 * 32)
+    assert record["source"] == "torch"  # the instrument that read the memory is on the record
     # 16 sims: the default 8 x 64 (measured 22.9 GB) fits; 8 x 96 (31.0 GB, ran
     # 22% slower) is past the usable limit although the card has 31 GiB free.
     assert collect_mod.check_vram(replace(settings, collect_procs=8, concurrency=64, sims=16)) is not None
@@ -443,20 +444,57 @@ def test_the_driver_of_k_processes_reads_gpu_memory_without_a_cuda_context(
 
     calls: list[list[str]] = []
 
+    cards = "0, GPU-aaaa, 20480, 32607\n"
+
     def smi(cmd: list[str], **_k: Any) -> Any:
         calls.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, stdout="20480, 32607\n", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout=cards, stderr="")
 
     monkeypatch.setattr(torch.cuda, "mem_get_info", no_context)
     monkeypatch.setattr(subprocess, "run", smi)
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    monkeypatch.delenv("CUDA_DEVICE_ORDER", raising=False)
     settings = replace(_settings(3, games=512), device="cuda:0")
-    assert collect_mod._gpu_memory(settings) == (20480 * 2**20, 32607 * 2**20)
+    assert collect_mod._gpu_memory(settings) == (20480 * 2**20, 32607 * 2**20, "nvidia-smi")
     assert calls
     assert calls[0][0] == "nvidia-smi"
-    assert "--id=0" in calls[0]
     # K = 1 plays in the driver, which needs the context anyway
     monkeypatch.setattr(torch.cuda, "mem_get_info", lambda *_a: (5, 9))
-    assert collect_mod._gpu_memory(replace(settings, collect_procs=1)) == (5, 9)
+    assert collect_mod._gpu_memory(replace(settings, collect_procs=1)) == (5, 9, "torch")
+
+
+def test_nvidia_smi_reads_the_card_torch_means_under_device_remapping(monkeypatch: pytest.MonkeyPatch) -> None:
+    """torch's cuda:N is the N-th CUDA_VISIBLE_DEVICES entry, in CUDA_DEVICE_ORDER;
+    nvidia-smi numbers every card in PCI order. Read the right card or use torch."""
+    import subprocess
+
+    import torch
+
+    cards = "0, GPU-aaaa, 1000, 24000\n1, GPU-bbbb, 2000, 32000\n2, GPU-cccc, 3000, 48000\n"
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **_k: subprocess.CompletedProcess(cmd, 0, stdout=cards,
+                                                                                           stderr=""))
+    monkeypatch.setattr(torch.cuda, "mem_get_info", lambda *_a: (7, 8))
+    settings = replace(_settings(3, games=512), device="cuda:1")
+
+    def read() -> tuple[int, int, str]:
+        return collect_mod._gpu_memory(settings)
+
+    mib = 2**20
+    monkeypatch.setenv("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    assert read() == (2000 * mib, 32000 * mib, "nvidia-smi")  # no remapping: cuda:1 is card 1
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "2,0")
+    assert read() == (1000 * mib, 24000 * mib, "nvidia-smi")  # cuda:1 is the 2nd visible entry: card 0
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "GPU-bbbb,GPU-cccc")
+    monkeypatch.delenv("CUDA_DEVICE_ORDER")
+    assert read() == (3000 * mib, 48000 * mib, "nvidia-smi")  # a UUID names the card in any order
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "2,0")
+    assert read() == (7, 8, "torch")  # several cards in FASTEST_FIRST order: not nameable
+    monkeypatch.setenv("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "MIG-1234,MIG-5678")
+    assert read() == (7, 8, "torch")  # a MIG slice: nvidia-smi cannot read it by --query-gpu
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
+    assert read() == (7, 8, "torch")  # cuda:1 is not visible at all
 
 
 def test_default_shape_table_by_sims() -> None:
@@ -519,6 +557,12 @@ def test_an_arm_of_a_source_without_run_config_takes_the_collect_manifest_shape(
     a = simple_rl_loop.parser().parse_args(
         ["train", "--run-dir", str(tmp_path / "arm"), "--openings-dir", str(tmp_path), "--generation", "1",
          "--collect-from", str(source), "--sims", "16", "--games", "512", "--device", "cuda"])
+    assert simple_rl_loop.resolve_collect_shape(a) == (1, 96)
+    # A later generation collected at another shape: the EARLIEST manifest wins
+    # (generation 1's rows set the arm's shape), not the latest.
+    (source / "gen_0002" / "collect").mkdir(parents=True)
+    (source / "gen_0002" / "collect" / "manifest.json").write_text(json.dumps(
+        {"config": {"settings": {"collect_procs": 3, "concurrency": 128}}}))
     assert simple_rl_loop.resolve_collect_shape(a) == (1, 96)
     legacy = tmp_path / "legacy"
     (legacy / "gen_0001" / "collect").mkdir(parents=True)
