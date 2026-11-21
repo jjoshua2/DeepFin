@@ -103,6 +103,25 @@ from chess_anti_engine.utils.game_log import (
 # rides the same hook.
 PgnSink = Callable[..., None]
 
+# What a strict-Syzygy matched_sims arena does with a game that reaches
+# --max-plies neither over nor tablebase-resolved. "abort" (the default since
+# #854) refuses to score it; "draw" scores it 0.5. Either way the choice is
+# named in advance: "draw" is bound into the settings fingerprint, stamped in
+# the PGN and the result row, and every such game is counted.
+ON_MAX_PLIES_ABORT = "abort"
+ON_MAX_PLIES_DRAW = "draw"
+ON_MAX_PLIES_CHOICES = (ON_MAX_PLIES_ABORT, ON_MAX_PLIES_DRAW)
+
+
+def _bank_unresolved(sink: PgnSink | None, **game: Any) -> None:
+    """Hand the game an abort is about to discard to ``sink`` BEFORE raising.
+
+    Without it the offending game's moves die with the process, and the one
+    piece of evidence about why the run stopped is lost.
+    """
+    if sink is not None:
+        sink(**game)
+
 
 def _opening_history(board: chess.Board) -> tuple[str, tuple[str, ...]]:
     """Record the pre-play root and ordered book moves, not just their final FEN."""
@@ -2182,6 +2201,8 @@ def play_paired_games_matched_sims(
     chunk: int | None = None,
     evaluator_candidate: Any = None,
     evaluator_reference: Any = None,
+    on_max_plies: str = ON_MAX_PLIES_ABORT,
+    unresolved_sink: PgnSink | None = None,
 ) -> list[float]:
     """Play each opening twice (colors swapped) and return per-pair scores.
 
@@ -2355,12 +2376,22 @@ def play_paired_games_matched_sims(
 
     def _game_score(i: int) -> float:
         res = adjudicated[i] or boards[i].result(claim_draw=True)
-        if res == "*":  # unfinished at max_plies, not TB-covered: adjudicate as draw
-            if tb_probe is not None:
+        if res == "*":  # unfinished at max_plies, not TB-covered
+            if tb_probe is not None and on_max_plies == ON_MAX_PLIES_ABORT:
+                mv = tuple(boards[i].move_stack[start_offsets[i]:])
+                _bank_unresolved(
+                    unresolved_sink, pair_id=ids[i // 2], half=i % 2,
+                    a_is_white=bool(a_plays_white[i]), start_fen=start_fens[i],
+                    moves=mv, duration_s=_arena_clock() - t0, loop="chunked",
+                )
                 raise RuntimeError(
                     f"strict Syzygy arena reached max_plies with unresolved game "
-                    f"pair={ids[i // 2]} half={i % 2}; refusing a fabricated draw"
+                    f"pair={ids[i // 2]} half={i % 2}; refusing a fabricated draw "
+                    f"(--on-max-plies abort)"
                 )
+            # --on-max-plies draw, or a non-Syzygy arena: scored and WRITTEN
+            # as a draw with termination "max_plies" (see the sweep below),
+            # and counted in the result row's max_plies_unresolved.
             return 0.5
         return {1: 1.0, 0: 0.5, -1: 0.0}[
             result_from_a_pov(res, a_is_white=bool(a_plays_white[i]))
@@ -2429,6 +2460,8 @@ def play_paired_games_matched_sims_rolling(
     evaluator_candidate: Any = None,
     evaluator_reference: Any = None,
     free_cached_vram: bool = True,
+    on_max_plies: str = ON_MAX_PLIES_ABORT,
+    unresolved_sink: PgnSink | None = None,
 ) -> list[float]:
     """Rolling-pool variant: keep ``pool_size`` games active at all times, starting
     a fresh game the instant one finishes (like production selfplay), instead of
@@ -2605,13 +2638,22 @@ def play_paired_games_matched_sims_rolling(
                 if res is not None:
                     termination = "syzygy"
             if res is None and gplies[j] >= int(max_plies):
-                if tb_probe is not None:
+                if tb_probe is not None and on_max_plies == ON_MAX_PLIES_ABORT:
+                    _bank_unresolved(
+                        unresolved_sink, pair_id=ids[gids[j] // 2], half=gids[j] % 2,
+                        a_is_white=bool(awhite[j]), start_fen=gfens[j],
+                        moves=tuple(b.move_stack[goffs[j]:]),
+                        duration_s=_arena_clock() - gt0[j], loop="rolling",
+                    )
                     raise RuntimeError(
                         f"strict Syzygy arena reached max_plies with unresolved game "
                         f"pair={ids[gids[j] // 2]} half={gids[j] % 2}; "
-                        "refusing a fabricated draw"
+                        "refusing a fabricated draw (--on-max-plies abort)"
                     )
-                res = "*"  # not naturally decided and not TB-covered: adjudicate draw
+                # Not naturally decided and not TB-covered: under
+                # --on-max-plies draw (or without Syzygy) scored as a draw,
+                # termination "max_plies", counted in max_plies_unresolved.
+                res = "*"
                 termination = "max_plies"
             if res is not None:
                 _record(j, res, termination)
@@ -3101,6 +3143,22 @@ def print_summary(summary: PentanomialSummary) -> None:
 # Orchestration
 # ---------------------------------------------------------------------------
 
+def unresolved_games_path(log_path: Path) -> Path:
+    """Sidecar that banks games an --on-max-plies abort refused to score."""
+    return log_path.with_name(log_path.name + ".unresolved.jsonl")
+
+
+def count_max_plies_games(log_path: Path) -> int:
+    """Scored games that reached --max-plies unresolved (written as draws).
+
+    Read from the game log's latest row per (pair_id, half), so a resumed run
+    counts its kept games as well as this process's.
+    """
+    log = read_game_log(log_path)
+    rows = latest_rows_by_key(log.games, lambda r: (int(r["pair_id"]), int(r["half"])))
+    return sum(1 for r in rows.values() if r.get("termination") == "max_plies")
+
+
 def run_arena(
     *,
     candidate: str,
@@ -3127,6 +3185,7 @@ def run_arena(
     max_seconds: float | None = None,
     syzygy_path: str | None = None,
     tb_max_pieces: int = 6,
+    on_max_plies: str = ON_MAX_PLIES_ABORT,
     compile_models: bool = True,
     rolling: bool = True,
     search_candidate: SideSearch | None = None,
@@ -3383,6 +3442,14 @@ def run_arena(
     # the fingerprint: a hybrid run keys its own game log and can never resume
     # into, or pool as, a plain run. Added only when set, so every plain
     # fingerprint is unchanged byte for byte.
+    if on_max_plies not in ON_MAX_PLIES_CHOICES:
+        raise SystemExit(f"--on-max-plies must be one of {ON_MAX_PLIES_CHOICES}, got {on_max_plies!r}")
+    if on_max_plies != ON_MAX_PLIES_ABORT:
+        # A run that scores max-plies games as draws is a different ruler from
+        # one that refuses them; bound in so the two never resume into or pool
+        # as each other. Added only when not the default, so every existing
+        # fingerprint is unchanged byte for byte.
+        log_settings["on_max_plies"] = on_max_plies
     if value_candidate is not None:
         log_settings["value_candidate"] = value_candidate.settings_record()
     if value_reference is not None:
@@ -3578,6 +3645,7 @@ def run_arena(
         if syzygy_path is not None:
             base_tags["SyzygyProtocol"] = SYZYGY_MATCH_PROTOCOL
             base_tags["SyzygyMaxPieces"] = str(tb_max_pieces)
+            base_tags["OnMaxPlies"] = on_max_plies
         if label:
             base_tags["ArenaLabel"] = label
         base_tags.update(seat_value_pgn_tags(provenance))
@@ -3750,6 +3818,48 @@ def run_arena(
             )
 
     pgn_sink = _on_game
+    unresolved_path = unresolved_games_path(log_path)
+
+    def unresolved_sink(
+        *, pair_id: int, half: int, a_is_white: bool, start_fen: str,
+        moves: tuple[chess.Move, ...], duration_s: float, loop: str,
+    ) -> None:
+        """Bank the game an --on-max-plies abort discards.
+
+        NOT written to the game log or the match PGN: the game log is the
+        resume's commit record (a row there is a FINISHED game), and a ``*``
+        PGN game is dropped by Ordo. A sidecar beside the log keeps it apart
+        from every scored population while preserving its moves.
+        """
+        board = chess.Board(start_fen)
+        san: list[str] = []
+        for m in moves:
+            san.append(board.san(m))
+            board.push(m)
+        row = {
+            "kind": "unresolved_at_max_plies",
+            "game_log": str(log_path),
+            "fingerprint": fingerprint,
+            "pair_id": int(pair_id),
+            "half": int(half),
+            "a_is_white": bool(a_is_white),
+            "start_fen": start_fen,
+            "final_fen": board.fen(),
+            "moves_uci": [m.uci() for m in moves],
+            "moves_san": san,
+            "plies": len(moves),
+            "max_plies": int(max_plies),
+            "result": "*",
+            "on_max_plies": on_max_plies,
+            "loop": loop,
+            "duration_s": round(float(duration_s), 2),
+            "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+        }
+        with open(unresolved_path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, separators=(",", ":")) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        print(f"[arena] unresolved max-plies game banked -> {unresolved_path}", flush=True)
 
     # ---- optional GSPRT early stop --------------------------------------
     # Built AFTER the resume load, and seeded with the resumed pairs: the
@@ -4112,6 +4222,8 @@ def run_arena(
                     evaluator_candidate=evaluator_candidate,
                     evaluator_reference=evaluator_reference,
                     free_cached_vram=bool(eval_max_batch),
+                    on_max_plies=on_max_plies,
+                    unresolved_sink=unresolved_sink,
                 )
             else:
                 # Chunked: plays each chunk of `max_concurrent_games` to completion
@@ -4159,6 +4271,8 @@ def run_arena(
                         chunk=ci // chunk_pairs,
                         evaluator_candidate=evaluator_candidate,
                         evaluator_reference=evaluator_reference,
+                        on_max_plies=on_max_plies,
+                        unresolved_sink=unresolved_sink,
                     ))
                     # The chunk has drained; its widest batch shapes are gone for
                     # good until the next chunk rebuilds them. Skipped under
@@ -4358,6 +4472,8 @@ def run_arena(
         arena_pool=int(pool_size),
         sprt=sprt_record,
     )
+    record["on_max_plies"] = on_max_plies
+    record["max_plies_unresolved"] = count_max_plies_games(log_path)
     if syzygy_path is not None:
         record["syzygy_protocol"] = SYZYGY_MATCH_PROTOCOL
         record["syzygy_path"] = syzygy_path
@@ -4490,7 +4606,13 @@ def add_common_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--opening-plies", type=int, default=16,
                    help="book plies to apply per opening (default: 16 = 8 moves)")
     p.add_argument("--max-plies", type=int, default=300,
-                   help="adjudicate as draw after this many plies (default: 300)")
+                   help="ply cap (default: 300). Without --syzygy a game reaching it is "
+                   "scored a draw; with --syzygy see --on-max-plies")
+    p.add_argument("--on-max-plies", choices=ON_MAX_PLIES_CHOICES, default=ON_MAX_PLIES_ABORT,
+                   help="strict-Syzygy matched_sims: what a game that reaches --max-plies "
+                   "neither over nor TB-resolved does. abort (default) banks the game to "
+                   "<games-log>.unresolved.jsonl and refuses to score it; draw scores it 0.5 "
+                   "(fingerprinted, PGN-tagged, counted as max_plies_unresolved)")
     p.add_argument("--temperature", type=float, default=0.1,
                    help="move-selection temperature for matched_sims (default: 0.1)")
     p.add_argument("--no-gumbel-noise", action="store_true",
@@ -5008,6 +5130,7 @@ def main() -> None:
         max_seconds=args.max_seconds,
         syzygy_path=args.syzygy,
         tb_max_pieces=args.syzygy_max_pieces,
+        on_max_plies=args.on_max_plies,
         compile_models=compile_models,
         rolling=not args.no_rolling,
         openings_path=openings_path,
