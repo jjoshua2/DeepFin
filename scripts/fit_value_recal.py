@@ -106,11 +106,18 @@ def _position_key(board: Any) -> str:
     return board.epd()          # pieces, side to move, castling, en passant; no move counters
 
 
-def opening_keys(path: Path) -> set[str]:
+ARENA_OPENING_PLIES = 16   # arena_standard --opening-plies default = simple-RL evaluate's opening_plies
+
+
+def opening_keys(path: Path, opening_plies: int = ARENA_OPENING_PLIES) -> set[str]:
     """Positions the match starts from.
 
-    * ``.pgn``: each game's mainline final position (the simple-RL ``eval.pgn``
-      the pilot's matches play, whose lines the arena replays in full).
+    * ``.pgn``: the position the arena starts each game from: the standard start
+      plus the mainline's first ``min(len, opening_plies)`` plies -- exactly
+      ``arena_standard.load_paired_openings`` -> ``_sample_from_pgn`` with
+      ``--opening-plies``, which truncates a longer line (pass the match's own
+      ``--opening-plies``). The arena ignores a ``FEN`` header, so a game with
+      one is refused rather than keyed at a position the match never plays.
     * anything else is an arena ``--openings-fen`` seed list, read with the
       arena's own reader (``_load_fen_list``: ``#`` comments and blanks skipped)
       and keyed by ``seed_board_from_line``, which REPLAYS a
@@ -130,11 +137,18 @@ def opening_keys(path: Path) -> set[str]:
         raise SystemExit(f"{path}: a zipped / Polyglot book has no fixed opening set; pass the match's eval.pgn "
                          "or its --openings-fen list")
     keys: set[str] = set()
+    if int(opening_plies) < 1:
+        raise SystemExit(f"--opening-plies must be >= 1, got {opening_plies}")
     if suffix == ".pgn":
         with open(path) as fh:
             while (game := chess.pgn.read_game(fh)) is not None:
-                board = game.board()
-                for mv in game.mainline_moves():
+                if "FEN" in game.headers:
+                    raise SystemExit(f"{path}: a game with a FEN header; the arena starts every PGN line from "
+                                     "the standard position, so this key would not be where the match starts")
+                board = chess.Board()
+                for k, mv in enumerate(game.mainline_moves()):
+                    if k >= int(opening_plies):
+                        break
                     board.push(mv)
                 keys.add(_position_key(board))
     else:
@@ -148,13 +162,14 @@ def opening_keys(path: Path) -> set[str]:
     return keys
 
 
-def check_rows_disjoint(z: Any, rows_path: Path, openings: Path) -> dict[str, Any]:
+def check_rows_disjoint(z: Any, rows_path: Path, openings: Path,
+                        opening_plies: int = ARENA_OPENING_PLIES) -> dict[str, Any]:
     """Refuse rows whose game started at or passed through a match opening's position."""
     import chess
 
     if "root_fen" not in z.files or "history" not in z.files:
         raise SystemExit(f"{rows_path}: --exclude-openings needs root_fen and history to rebuild each row's game")
-    keys = opening_keys(openings)
+    keys = opening_keys(openings, opening_plies)
     hits = 0
     for root, hist in zip(z["root_fen"], z["history"]):
         board = chess.Board(str(root))
@@ -167,7 +182,7 @@ def check_rows_disjoint(z: Any, rows_path: Path, openings: Path) -> dict[str, An
         raise SystemExit(f"{rows_path}: {hits} rows started at or passed through a position of {openings}; "
                          "fit on rows disjoint from the match openings")
     return {"excluded_openings": str(openings), "excluded_openings_sha256": _sha256(openings),
-            "opening_positions": len(keys), "rows_overlapping": 0}
+            "opening_positions": len(keys), "opening_plies": int(opening_plies), "rows_overlapping": 0}
 
 
 def pinned_holdout_frac(collect: Path, given: float | None) -> tuple[float, str]:
@@ -196,7 +211,7 @@ def load_rows(args: argparse.Namespace) -> tuple[np.ndarray, dict[str, Any]]:
             if "x" not in z.files:
                 raise SystemExit(f"{args.rows} has no 'x' array")
             disjoint = ({} if args.exclude_openings is None
-                        else check_rows_disjoint(z, args.rows, args.exclude_openings))
+                        else check_rows_disjoint(z, args.rows, args.exclude_openings, args.opening_plies))
             x = np.asarray(z["x"])
         return x, {"rows_file": str(args.rows), "rows_sha256": _sha256(args.rows), **disjoint}
     if args.exclude_openings is not None:
@@ -252,6 +267,9 @@ def main(argv: list[str] | None = None) -> int:
                    help="the learner's holdout_frac; read from the run's run_config.json, refused on disagreement")
     p.add_argument("--exclude-openings", type=Path, default=None,
                    help="with --rows: the match's openings (eval.pgn or a FEN list); overlapping rows are refused")
+    p.add_argument("--opening-plies", type=int, default=ARENA_OPENING_PLIES,
+                   help="with --exclude-openings on a PGN: the match's arena --opening-plies (default 16, simple-RL "
+                        "evaluate's); each line is keyed where the arena starts it, after min(len, this) plies")
     p.add_argument("--device", default="cpu")
     p.add_argument("--batch", type=int, default=256)
     p.add_argument("--out", type=Path, required=True)
