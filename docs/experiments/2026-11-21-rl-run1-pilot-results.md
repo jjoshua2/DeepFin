@@ -368,8 +368,11 @@ No recommendation is made here.
 5. Which value target, if any, should any next generation train? None is adoptable by the registered rule.
 6. Should a next generation train the policy only, with the value held at the SL base's? This is a design question, not a result.
 
-Fact, not a decision: three follow-up matches are being pre-registered in a separate record. They are P0 as a single
-net; the S recal-graft falsifier; and Zq recalibrated vs Zq. There are no results, and no PR exists yet.
+Fact, not a decision: the three follow-up matches are pre-registered in
+[the follow-up match record](2026-11-21-rl-run1-match5-p0-single-net.md) (PR #1473, merged `51b3d56f3`). They are
+P0 as a single net (5); S's value on the base policy, raw and recalibrated (6a, 6b); and Zq recalibrated vs Zq (7).
+They are played in the order 5, 7, 6b, 6a, at 6,400 games each. They launched on 2026-11-21 after the merge (output
+root `~/chess-artifacts/operations/rl-run1-followup/` [mtime 11-21 14:34]). No result is cited here.
 
 ## Files
 
