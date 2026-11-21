@@ -442,9 +442,13 @@ the next stage boundary, and the driver still refuses to START a stage while a
 pause marker exists.
 
 GPU memory: at the start the collect refuses, and never silently steps K down,
-when K × 1.10 × (48 MiB per sim + 1.11 MiB per leaf row) exceeds the usable memory,
-min(free, 83% of the card). The per-process model is a least-squares fit to the
-measured peaks (within −8% / +9% of each). The usable limit is measured: 8 × 96 at
+when K × 1.10 × max(48 MiB per sim + 1.11 MiB per leaf row, 2.006 MiB per leaf row
+− 4348 MiB) exceeds the usable memory, min(free, 83% of the card). The first term is
+a least-squares fit to the multi-process and ≤ 256-game peaks (within −8% / +9% of
+each); above ~8k leaf rows in one process the peak grows faster (64 sims, 1 × 512
+peaked at 29.9 GB, 25% above the line), which the second term, through 1 × 256 and
+1 × 512, covers. When no process count fits, the refusal says to lower
+`--concurrency`. The usable limit is measured: 8 × 96 at
 16 sims peaked at 31.0 GB of 32 and ran 22% slower than 6 × 96 at 25.9 GB, which ran
 at full speed.
 

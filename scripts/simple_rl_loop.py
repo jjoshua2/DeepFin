@@ -249,7 +249,7 @@ def do_collect(a: argparse.Namespace, run_dir: Path, g: int) -> None:
     print(json.dumps({"stage": "collect", "generation": g, **{k: stats[k] for k in (
         "games", "rows", "decisive_rate", "draw_rate", "repeat_rate_within", "repeat_rate_vs_previous",
         "target_entropy", "games_per_hour", "cuda_graphs", "evaluator_mode", "collect_procs",
-        "paused_seconds")}},
+        "paused_seconds", "timing_independent")}},
                      default=str), flush=True)
 
 
