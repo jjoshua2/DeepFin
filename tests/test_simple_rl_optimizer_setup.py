@@ -99,7 +99,7 @@ def test_an_explicit_knob_wins_over_the_checkpoint_and_is_recorded(sl_ckpt: Path
     settings = resolve_optimizer_hparams(
         TrainSettings(**AURORA, optimizer_hparams_source="init-checkpoint", aurora_polar_steps=5), sl_ckpt)
     assert settings.optimizer_hparams_resolved is not None
-    assert settings.optimizer_hparams_resolved["explicit"] == ["aurora_polar_steps"]
+    assert settings.optimizer_hparams_resolved["explicit"] == ["aurora_polar_steps", "matrix_optimizer_scope"]
     trainer = build_trainer(tiny_model_config(), settings, log_dir=None)
     diff = tables_match(param_group_table(trainer), _ckpt_table(sl_ckpt))
     assert diff
@@ -147,7 +147,8 @@ def test_driver_records_the_realised_table_equal_to_the_init_checkpoint(
 
     openings, model_config = _setup(tmp_path, monkeypatch)
     run = tmp_path / "sl"
-    argv = _argv(run, openings, model_config, "--optimizer", "aurora", "--matrix-optimizer-scope", "mlp_out",
+    # No --matrix-optimizer-scope: the init-checkpoint source derives the checkpoint's split (review of #1445).
+    argv = _argv(run, openings, model_config, "--optimizer", "aurora",
                  "--optimizer-hparams-source", "init-checkpoint", init=sl_ckpt)
     argv[argv.index("--lr") + 1] = "3e-6"
     assert simple_rl_loop.main(argv) == 0
@@ -158,6 +159,9 @@ def test_driver_records_the_realised_table_equal_to_the_init_checkpoint(
     resolved = manifest["config"]["settings"]["optimizer_hparams_resolved"]
     assert resolved["source"].endswith("gen_0000/model.pt")
     assert "grad_clip" in resolved["filled"]
+    assert "matrix_optimizer_scope" in resolved["filled"]
+    assert realised["built_split_matches_init_checkpoint"]["names_equal"] is True
+    assert {"zclip_initialized", "zclip_buffer_len"} <= set(realised["grad_clip"])
 
 
 def _lrs(settings: TrainSettings, phase_updates: int | None, steps: int) -> list[float]:
@@ -215,3 +219,76 @@ def test_train_generation_realises_the_cosine_over_its_planned_updates(tmp_path:
     sched = summary["realised_optimizer"]["lr_schedule"]
     assert sched["T_0"] == planned
     assert sched["eta_min"] == pytest.approx(1e-4)
+
+
+def _group_lrs(settings: TrainSettings, phase_updates: int | None, steps: int) -> list[list[float]]:
+    """Every group's lr the optimizer applies at each step (step pre-hook)."""
+    from tests.test_simple_rl_learn import _scheduled
+
+    torch.manual_seed(0)
+    trainer = build_trainer(tiny_model_config(), settings, log_dir=None, phase_updates=phase_updates)
+    seen: list[list[float]] = []
+    trainer.opt.register_step_pre_hook(lambda o, _a, _k: seen.append([float(g["lr"]) for g in o.param_groups]))
+    trainer.train_steps(_scheduled(4 * steps, [np.arange(4 * i, 4 * i + 4) for i in range(steps)]),
+                        batch_size=4, steps=steps)
+    return seen
+
+
+def test_the_default_scope_is_derived_from_the_checkpoint_split(sl_ckpt: Path) -> None:
+    """Review of #1445: without --matrix-optimizer-scope the init-checkpoint source must
+    still build the checkpoint's split (it derives mlp_out from opt_param_names)."""
+    from chess_anti_engine.simple_rl.learn import check_built_split
+
+    plain: dict[str, Any] = {k: v for k, v in AURORA.items() if k != "matrix_optimizer_scope"}
+    unresolved = build_trainer(tiny_model_config(), TrainSettings(**plain), log_dir=None)
+    with pytest.raises(ValueError, match=r"not .*split"):  # non-vacuous: the default scope is another split
+        check_built_split(unresolved, sl_ckpt)
+    settings = resolve_optimizer_hparams(TrainSettings(**plain, optimizer_hparams_source="init-checkpoint"),
+                                         sl_ckpt)
+    assert settings.matrix_optimizer_scope == "mlp_out"
+    assert settings.optimizer_hparams_resolved is not None
+    assert "matrix_optimizer_scope" in settings.optimizer_hparams_resolved["filled"]
+    trainer = build_trainer(tiny_model_config(), settings, log_dir=None)
+    assert check_built_split(trainer, sl_ckpt)["names_equal"] is True
+    assert tables_match(param_group_table(trainer), _ckpt_table(sl_ckpt)) == []
+    with pytest.raises(ValueError, match="differs from"):
+        resolve_optimizer_hparams(TrainSettings(**plain, matrix_optimizer_scope="block_all",
+                                                optimizer_hparams_source="init-checkpoint"), sl_ckpt)
+
+
+def test_cosine_phase_keeps_every_groups_ratio_and_ends_each_at_its_own_floor() -> None:
+    """Review of #1445: one scalar eta_min decayed the Aurora group to the AdamW floor.
+    The floor is per group (lr_floor * group base / lr), so the ratio holds throughout."""
+    import math
+
+    n, peak, floor, mult = 10, 1e-3, 1e-4, 20.0
+    kw: dict[str, Any] = {**AURORA, "lr": peak}
+    seen = _group_lrs(TrainSettings(**kw, mirror_prob=0.0, lr_floor=floor,
+                                    matrix_lr_multiplier=mult, lr_schedule="cosine-phase"), n, n)
+    for lrs in seen:
+        assert lrs[0] / lrs[2] == pytest.approx(mult, rel=1e-6)
+    assert seen[0][0] == pytest.approx(peak * mult, rel=1e-6)
+    # The phase's last update runs at cosine position n - 2 (updates 0 and 1 both at the peak).
+    f = (1 + math.cos(math.pi * (n - 2) / n)) / 2
+    assert seen[-1][2] == pytest.approx(floor + (peak - floor) * f, rel=1e-6)
+    assert seen[-1][0] == pytest.approx(mult * (floor + (peak - floor) * f), rel=1e-6)  # its own floor, x20
+    assert seen[-1][0] > 2 * peak  # a shared scalar floor would give ~5.9e-4 here
+
+
+def test_an_explicit_matrix_lr_multiplier_reaches_the_aurora_group() -> None:
+    lrs = _group_lrs(TrainSettings(**AURORA, mirror_prob=0.0, matrix_lr_multiplier=7.0), None, 2)
+    assert lrs[0][0] == pytest.approx(7.0 * AURORA["lr"], rel=1e-6)
+    assert lrs[0][2] == pytest.approx(AURORA["lr"], rel=1e-6)
+
+
+def test_the_documented_reproduction_equals_the_checkpoint_state(sl_ckpt: Path) -> None:
+    """What reproduces exactly: aurora + init-checkpoint + mlp_out at the checkpoint's lr
+    gives its groups, names, order, lr, betas, wd, Aurora knobs and zclip mode."""
+    from chess_anti_engine.simple_rl.learn import check_built_split
+
+    settings = resolve_optimizer_hparams(TrainSettings(**AURORA, optimizer_hparams_source="init-checkpoint"),
+                                         sl_ckpt)
+    trainer = build_trainer(tiny_model_config(), settings, log_dir=None)
+    assert check_built_split(trainer, sl_ckpt)["names_equal"] is True
+    assert tables_match(param_group_table(trainer), _ckpt_table(sl_ckpt)) == []
+    assert trainer.grad_clip_mode == "zclip"

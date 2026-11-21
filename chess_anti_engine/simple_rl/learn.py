@@ -862,10 +862,15 @@ def realised_optimizer(trainer: Any) -> dict[str, Any]:
     sched = trainer._scheduler
     out["lr_schedule"] = {"class": type(sched).__name__, "T_0": getattr(sched, "T_0", None),
                           "eta_min": getattr(sched, "eta_min", None),
+                          "group_eta_min": [float(v) for v in getattr(sched, "group_eta_min", [])] or None,
                           "warmup_steps": int(getattr(trainer, "_warmup_steps", 0))}
+    # Read at phase end: initialized + a filled buffer are the direct evidence the clip ran
+    # (zclip is a no-op until `initialized`, after its 25 warm-up norms).
     out["grad_clip"] = {"mode": str(trainer.grad_clip_mode),
                         "zclip_max_norm": getattr(trainer.zclip, "max_grad_norm", None),
-                        "zclip_warmup_steps": int(getattr(trainer.zclip, "warmup_steps", 0))}
+                        "zclip_warmup_steps": int(getattr(trainer.zclip, "warmup_steps", 0)),
+                        "zclip_initialized": bool(getattr(trainer.zclip, "initialized", False)),
+                        "zclip_buffer_len": len(getattr(trainer.zclip, "buffer", None) or [])}
     return out
 
 
@@ -907,16 +912,100 @@ def resolve_optimizer_hparams(settings: TrainSettings, checkpoint: Path | None) 
     # `x["<yaml key>"]` as a config read, and these are the checkpoint's group values, not the yaml's.
     found.update(matrix_lr_multiplier=float(mat["lr"]) / float(aux["lr"]),
                  matrix_weight_decay=float(mat["weight_decay"]), aux_weight_decay=float(aux["weight_decay"]))
+    scope = checkpoint_matrix_scope(payload, checkpoint)
+    if settings.matrix_optimizer_scope != "default" and settings.matrix_optimizer_scope != scope \
+            and not _same_split(payload, settings.matrix_optimizer_scope, scope):
+        raise ValueError(f"--matrix-optimizer-scope {settings.matrix_optimizer_scope} differs from {checkpoint}'s "
+                         f"split ({scope}); the init-checkpoint source reproduces the checkpoint's")
     zc = payload.get("zclip")
     # The CHECKPOINT's clip-mode field (Trainer.save writes it), read through a constant so the
     # construction-only key scan does not take it for a yaml read of `grad_clip_mode`.
     found["grad_clip"] = str(payload.get(_CHECKPOINT_CLIP_FIELD) or ("zclip" if isinstance(zc, dict) else "none"))
     filled = {k: v for k, v in found.items() if getattr(settings, k) is None}
+    explicit = sorted(k for k in found if getattr(settings, k) is not None)
+    if settings.matrix_optimizer_scope != "default":
+        scope = settings.matrix_optimizer_scope  # equal to, or the same split as, the derived one
+    found["matrix_optimizer_scope"] = scope
+    if settings.matrix_optimizer_scope != scope:  # "default" given, the checkpoint's derived scope differs
+        filled["matrix_optimizer_scope"] = scope
+    elif scope != "default":
+        explicit.append("matrix_optimizer_scope")
     record = {"source": str(checkpoint), "checkpoint_values": found, "filled": sorted(filled),
-              "explicit": sorted(k for k in found if getattr(settings, k) is not None)}
+              "explicit": sorted(explicit)}
     out = dataclasses.replace(settings, **filled, optimizer_hparams_resolved=record)
     out.validate()
     return out
+
+
+def _wrap_agnostic(name: str) -> str:
+    return name.replace("_orig_mod.", "").removeprefix("module.")
+
+
+def checkpoint_matrix_scope(payload: dict[str, Any], checkpoint: Path) -> str:
+    """The canonical ``matrix_optimizer_scope`` whose Aurora filter selects
+    exactly the checkpoint's matrix groups (groups 0 and 1), from its
+    ``opt_param_names`` manifest and its weights' shapes. Refused when the
+    manifest is absent or no canonical scope (or more than one) matches."""
+    from chess_anti_engine.train.trainer import _matrix_optimizer_filter
+
+    names = payload.get("opt_param_names")
+    groups = payload["opt"]["param_groups"]
+    sizes = [len(g["params"]) for g in groups]
+    if not names or len(names) != sum(sizes):
+        raise ValueError(f"{checkpoint}: no usable opt_param_names manifest, so the matrix scope its optimizer "
+                         "used cannot be derived; pass --matrix-optimizer-scope and --init-optimizer-state "
+                         "checkpoint, whose layout check compares names")
+    shapes = {_wrap_agnostic(k): tuple(v.shape) for k, v in payload["model"].items() if hasattr(v, "shape")}
+    matrix = set(names[: sizes[0] + sizes[1]])
+
+    class _P:  # the filter reads only .ndim
+        def __init__(self, ndim: int) -> None:
+            self.ndim = ndim
+
+    hits = []
+    for scope in MATRIX_OPTIMIZER_SCOPES:
+        keep = _matrix_optimizer_filter(scope, include_embed_default=False)
+        chosen = {n for n in names if keep(n, _P(len(shapes.get(n, ()))))}  # pyright: ignore[reportArgumentType]
+        if chosen == matrix:
+            hits.append(scope)
+    if not hits:
+        raise ValueError(f"{checkpoint}: no canonical matrix scope ({list(MATRIX_OPTIMIZER_SCOPES)}) selects its "
+                         f"{len(matrix)} matrix-group parameters; the split is not reproducible from a scope name")
+    # Several scopes can select the same set on a model without (say) a separate v_proj; they then
+    # build the same split, so the first (canonical order) stands for all of them.
+    return hits[0]
+
+
+def _same_split(payload: dict[str, Any], a: str, b: str) -> bool:
+    """Whether scopes ``a`` and ``b`` select the same matrices on the checkpoint's model."""
+    from chess_anti_engine.train.trainer import _matrix_optimizer_filter
+
+    shapes = {_wrap_agnostic(k): len(tuple(v.shape)) for k, v in payload["model"].items() if hasattr(v, "shape")}
+
+    class _P:
+        def __init__(self, ndim: int) -> None:
+            self.ndim = ndim
+
+    pick = [{n for n in shapes if _matrix_optimizer_filter(sc, include_embed_default=False)(
+        n, _P(shapes[n]))} for sc in (a, b)]  # pyright: ignore[reportArgumentType]
+    return pick[0] == pick[1]
+
+
+def check_built_split(trainer: Any, checkpoint: Path) -> dict[str, Any]:
+    """Refuse unless the BUILT optimizer's groups hold exactly the checkpoint's
+    parameters, group by group, in order (``--optimizer-hparams-source
+    init-checkpoint`` claims the checkpoint's split; this is the proof)."""
+    import torch
+
+    payload = torch.load(str(checkpoint), map_location="cpu", weights_only=False, mmap=True)
+    names = payload.get("opt_param_names")
+    sizes = [len(g["params"]) for g in payload["opt"]["param_groups"]]
+    mine = [len(g["params"]) for g in trainer.opt.param_groups]
+    built = trainer._optimizer_param_names()
+    if names is None or built is None or list(names) != list(built) or sizes != mine:
+        raise ValueError(f"optimizer_hparams_source init-checkpoint: the built optimizer groups (sizes {mine}) "
+                         f"are not {checkpoint}'s split (sizes {sizes}); match --matrix-optimizer-scope to it")
+    return {"group_sizes": mine, "names_equal": True}
 
 
 def _close(a: Any, b: Any) -> bool:
@@ -1108,8 +1197,44 @@ def build_trainer(model_config: Any, settings: TrainSettings, *, log_dir: Path |
     from chess_anti_engine.model import build_model
     from chess_anti_engine.train import Trainer
 
-    return Trainer(build_model(model_config), model_config=model_config, log_dir=log_dir,
-                   **trainer_kwargs(settings, phase_updates=phase_updates))
+    trainer = Trainer(build_model(model_config), model_config=model_config, log_dir=log_dir,
+                      **trainer_kwargs(settings, phase_updates=phase_updates))
+    if settings.lr_schedule == "cosine-phase":
+        install_group_floor_cosine(trainer, settings)
+    return trainer
+
+
+def install_group_floor_cosine(trainer: Any, settings: TrainSettings) -> None:
+    """Replace the Trainer's cosine (one scalar ``eta_min`` for every group,
+    which would decay the Aurora group to the AdamW floor) with the same cosine
+    whose floor is per group: ``lr_floor * group_base / lr``, so every group's
+    lr keeps its ratio to the others throughout (the SL base ended at
+    [6e-5, 3e-6], ratio 20, as it started)."""
+    import math
+
+    from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+
+    if settings.lr_floor is None:  # validate(): cosine-phase needs an lr_floor below lr
+        raise ValueError("lr_schedule cosine-phase needs an lr_floor")
+    lr_floor = float(settings.lr_floor)
+    ratio = lr_floor / float(settings.lr)
+    old = trainer._scheduler
+
+    class GroupFloorCosine(CosineAnnealingWarmRestarts):
+        def __init__(self, opt: Any, *, T_0: int, floor_ratio: float) -> None:
+            self.floor_ratio = float(floor_ratio)
+            super().__init__(opt, T_0=T_0, eta_min=lr_floor)
+
+        @property
+        def group_eta_min(self) -> list[float]:
+            return [float(b) * self.floor_ratio for b in self.base_lrs]
+
+        def get_lr(self) -> list[float]:  # pyright: ignore[reportIncompatibleMethodOverride]
+            f = (1.0 + math.cos(math.pi * self.T_cur / self.T_i)) / 2.0
+            return [m + (float(b) - m) * f for b, m in zip(self.base_lrs, self.group_eta_min, strict=True)]
+
+    trainer._scheduler = GroupFloorCosine(trainer.opt, T_0=int(old.T_0), floor_ratio=ratio)
+    trainer._set_initial_lrs()  # the new scheduler's first step put the peak back; warmup starts below it
 
 
 def load_arch_config(checkpoint: Path) -> tuple[dict[str, Any], Any]:
@@ -1385,6 +1510,8 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
                          "updates, and a phase collect is not sealed")
     trainer = build_trainer(model_config, settings, log_dir=None,
                             phase_updates=planned if settings.lr_schedule != "flat" else None)
+    built_split = (check_built_split(trainer, init_checkpoint)
+                   if settings.optimizer_hparams_source == "init-checkpoint" else None)
     continued = settings.optimizer_state == "continue" and prev_trainer_checkpoint is not None
     optimizer_check: dict[str, Any] | None = None
     init_optimizer: dict[str, Any] | None = None
@@ -1532,6 +1659,7 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
     drift = probe_drift(trainer.model, previous_model(), probe, settings.device)
     realised_lr = [float(g["lr"]) for g in trainer.opt.param_groups]
     realised_opt = realised_optimizer(trainer)  # read off the live optimizer after the phase's steps
+    realised_opt["built_split_matches_init_checkpoint"] = built_split
     # One train_steps call without snapshots (its metrics verbatim); one per
     # snapshot interval with them (rows-weighted mean losses, chunks kept).
     m = chunks[0] if len(chunks) == 1 else {**merged_losses(chunks), "chunks": chunks}

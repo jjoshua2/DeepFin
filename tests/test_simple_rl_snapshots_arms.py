@@ -418,3 +418,33 @@ def test_train_generation_refuses_a_bad_plan_before_writing_anything(source: tup
     summary = train_generation(run_dir=src, generation=1, init_checkpoint=src / "gen_0000" / "model.pt",
                                prev_trainer_checkpoint=None, settings=ok)
     assert summary["updates"] == planned
+
+
+def test_a_cosine_phase_resumed_from_a_snapshot_is_the_uninterrupted_phase(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The resumed Trainer's scheduler (the per-group-floor cosine) continues where the
+    killed one stopped: final weights and the realised lr equal the straight run's."""
+    openings, model_config = _setup(tmp_path, monkeypatch)
+    cos = ("--lr", "1e-3", "--lr-floor", "1e-4", "--lr-schedule", "cosine-phase")
+    run = tmp_path / "straight_cos"
+    assert simple_rl_loop.main(_argv(run, openings, model_config, *cos)) == 0
+    updates = int(json.loads((_train(run) / "metrics.json").read_text())["summary"]["updates"])
+    k1 = max(1, updates // 2)
+    argv = _argv(tmp_path / "killed_cos", openings, model_config, *cos, "--snapshot-updates", str(k1))
+    real = learn_mod.write_snapshot
+
+    def die(**kw: Any) -> Any:
+        real(**kw)
+        raise Killed
+
+    monkeypatch.setattr(learn_mod, "write_snapshot", die)
+    with pytest.raises(Killed):
+        simple_rl_loop.main(argv)
+    monkeypatch.setattr(learn_mod, "write_snapshot", real)
+    assert simple_rl_loop.main(argv) == 0
+    train = _train(tmp_path / "killed_cos")
+    summary = json.loads((train / "metrics.json").read_text())["summary"]
+    assert summary["resumed_from_snapshot"] == k1
+    assert _same(_weights(train / "model.pt"), _weights(_train(run) / "model.pt"))
+    want = json.loads((_train(run) / "metrics.json").read_text())["summary"]["realised_optimizer"]
+    assert summary["realised_optimizer"]["param_group_lr"] == want["param_group_lr"]
