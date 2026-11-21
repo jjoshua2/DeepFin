@@ -35,24 +35,42 @@ words:
 - on RL over more SL data: "search goes towards the holes where policy is worse so
   fixing those is very important";
 - on target depth: "I'm not convinced that 256 or more is necessary … Gumbel showed
-  it could learn in chess at 16 nodes".
+  it could learn in chess at 16 nodes";
+- on scope: "im not sure if its worth getting that fancy yet i mostly just want to
+  get a working RL loop in selfplay even, which i think should be possible with 64
+  node search … as long as on average its better if we get enough of it it should
+  work. i wonder if maybe we need larger batch sizes to avg it out better?"
+
+**The principle (owner, 2026-11-20).** "i want to be an independent project and not
+merely distill lc0 … i want a pipeline that could in theory get us even stronger
+than bt4 … right now we are so far below both of them we just need raw strength not
+finding narrow holes."
+- The run's strength must come from the project's own pipeline: self-play search
+  targets and game outcomes. That pipeline can in principle exceed any teacher.
+- BT4 and Ceres are used only as a ruler, a sharpness and calibration reference,
+  and a distance benchmark (Stage 0c). Nothing in this plan trains on them, except one
+  conditional diagnostic whose net is never a candidate
+  ([below](#conditional-diagnostic-a-bt4-raw-policy-target)).
+- **Out of scope by the owner's direction:** opponent-exploitation and blind-spot
+  arms. None is in this plan.
+
+**The goal of this plan:** the first measured self-play gain at 64 sims against the
+SL base, and then repeating it. Everything else is cut to what that needs.
 
 **The plan, in order:**
 1. **Stage 0** (done): what the banked matches and diagnostics already say.
-2. **Stage 0b** (CPU plus about 2 GPU-h, no training): validate a ruler (primary:
-   BT4 and Ceres searched at 64 and 256 nodes), price the targets on it, and run
-   the registered tests T1 and T2 and the true headroom match.
-3. **Stage 0c** (GPU, no training): the node-odds ladder, with the SL base against
-   BT4 at fixed nodes. It gives the baseline gap and the owner's milestone: our
-   256-sim search matches BT4 at 64 nodes.
-4. **Stage 1** (one generation): a target test at 64 sims. One SL-base collection;
-   three policy-only arms that differ only in the policy target, plus a value-first
-   arm; each judged by a registered seat-balanced 64-sim match. This is also the first possible positive
-   control for any offline screen.
-5. **Stage 1c** (after Stage 1): learner recipes, screened offline only on a ruler
-   that Stage 0b validated, and search-depth arms at matched GPU time.
-6. **Stage 2**: the multi-generation run, with a gated calibration invariant and
-   two anchors (the SL base, and BT4 at fixed nodes).
+2. **Stage 0b** (minutes of compute; the rulers are already built): score targets
+   and nets on leak-free audit rows against searched BT4 and Ceres, with deep SF as
+   a cross-check, and read the registered tests T1 and T2. **It does not gate
+   Stage 1,** unless it shows the standard target is worse than the prior.
+3. **Stage 1** (one generation from the SL base): one collection, a grid of
+   policy target × effective batch size (plus a value-first cell), screened offline
+   on held-out positions. At most three cells go to registered seat-balanced 64-sim
+   matches.
+4. **Stage 2** (only after a Stage 1 success): repeat the winning recipe for
+   several generations. It is kept short here until Stage 1 has a winner.
+5. **Optional:** a one-off distance to BT4 at 1 node, with the existing CPU lc0
+   binary (Stage 0c).
 
 Every number that is still a guess is listed under
 [What is still a guess](#what-is-still-a-guess).
@@ -74,9 +92,9 @@ Naming: "SL base" is the supervised starting net, sha256
 
 | # | Decision | Recommended default | Alternative |
 |---|---|---|---|
-| O1 | **Stage 1's arms** | **(a) stored rescaled, (b) no-rescale, (c) rescaled at `--train-target-temp 1.5`, (d) value-first on game outcome** | (b) and (d) only, the two built on the candidate mechanism (MDE 18.7 instead of 20.2 Elo) |
-| O2 | **Stage 1's collection size** | **1,040 games (≈ 100k rows)**, a guess with its power stated below | 2,080 games, which doubles the dose range the snapshots can reach |
-| O3 | **Search depth** | **An equal-GPU-time arm in Stage 1c only** (16/32/64 sims at measured positions per GPU-hour); no depth presumed better | Leave depth at 64 |
+| O1 | **Stage 1's grid** | **3 policy targets × 4 effective batch sizes, plus a value-first cell** (below) | Fewer batch sizes (256 and 1024 only) |
+| O2 | **Stage 1's optimizer** | **Production's: `--optimizer aurora --matrix-optimizer-scope mlp_out`** (Muon-style on the FFN and attention-output matrices, AdamW on the rest). The owner tuned that split, so it is taken as given, not an arm | `nadamw`, the driver's default, which is what the earlier nulls effectively ran (below) |
+| O3 | **Stage 1's collection size** | **1,040 games (≈ 100k rows)** | 2,080 games |
 | O4 | **Stage 2's time cap** | **One week** from Stage 2's start | Another cap |
 
 ## Stage 0: what is known before any training
@@ -264,7 +282,7 @@ built around it.
   reference, deep-SF regret once labelled, calibration gap, prior entropy, veto
   rate, mean V − Q(top child), |Q|, P(draw).
 
-## Stage 0b: ruler validation and target pricing (CPU, plus about 2 GPU-h; no training)
+## Stage 0b: rulers and target pricing (minutes of compute, plus the registered T1/T2; no training)
 
 **Question.** Which offline ruler orders nets the way 64-sim matches do, and how do
 the candidate targets score on it?
@@ -283,6 +301,9 @@ the candidate targets score on it?
   diagnosis is producing these; their bank is cited here when it lands. In the
   owner's words: "I think using bt4 or ceres can work instead of a deep stockfish?
   And you could even do those at like 64 nodes or 256 nodes."
+  **Searched BT4 and Ceres are a ruler and a distance benchmark only; nothing in
+  this plan trains on them.** The owner doubts they make a good target for a smaller net ("it
+  might just be too hard, and it may be too sharp").
 - **Cross-check column:** deep-SF labels (8M nodes; the diagnosis is starting them,
   interim 6), CPU only, with the production Syzygy pair.
 - The raw BT4 and C3 policies already banked (`rl-audit/external_refs.npz`) stay as
@@ -298,13 +319,34 @@ the candidate targets score on it?
 - **The disagreement table:** for each pair of rulers, the share of rows where they
   pick different moves, and the rank order each gives the nets.
 
+**BT4 as the known-good sharpness reference.** BT4's raw policy is scored beside
+ours, as what a healthy strong net looks like. It is a reference, not a target to
+copy: BT4 is a different, larger net. Already computable from the bank, on the 2,433
+leak-free rows (`external_refs.npz`, `leak_mask.npz`; computed here):
+
+| Raw policy | Entropy | Mean p_top1 | Agreement / gap vs R800 | Agreement / gap vs C3 |
+|---|---:|---:|---:|---:|
+| SL base | 1.191 | 0.592 | 0.658 / −0.066 | 0.679 / −0.088 |
+| BT4-it332 | 1.512 | 0.523 | 0.672 / −0.148 | 0.814 / −0.291 |
+| Ceres C3 | 1.558 | 0.504 | 0.656 / −0.152 | — |
+
+- **On these rulers the strong nets' raw policies are softer and more
+  under-confident than ours, not sharper.** A calibration gap of zero is therefore
+  not what a strong raw prior looks like.
+- Stage 0b repeats this against the searched BT4 and Ceres rulers once they land.
+  It adds BT4's value |Q| and draw rate on the probe rows if the adapter exposes the
+  WDL head; the banked array holds the policy only.
+
 **Ruler validation rule (pre-committed).** Each ruler is tested, the primary
 rulers first. A ruler is *validated* when two things hold. First, it is not the training target. Second, on A1 ∪ A2 it ranks the SL base
 above P1 c12, F12 c12 and Q50 c12, and Q50 c12 last of the four. A pair whose
-difference is within one SE (game-clustered) counts as a tie, not an error. If no
-ruler is validated, Stage 1 still runs, because it is judged by matches, and Stage
-1c's offline screen does not run. If several are validated, the searched BT4 ruler
-at 256 nodes is used, then at 64, then Ceres, then the rest.
+difference is within one SE (game-clustered) counts as a tie, not an error.
+
+**What Stage 0b decides for Stage 1.** It does not gate Stage 1, with one exception.
+If searched BT4 and Ceres at 256 nodes both price the stored target at or below the
+prior (maximum top-1 gain ≤ 0 on A1 ∪ A2), target (a) leaves the grid, and (b) and
+(c) stay. The validation result decides one more thing: which ruler Stage 1's
+offline screen uses (below).
 
 **The registered matches in this stage (GPU, one arena at a time, about 2 h):**
 - **T1 and T2**, exactly as `search-compose/PREREG.md` registers them (seed
@@ -323,14 +365,16 @@ at 256 nodes is used, then at 64, then Ceres, then the rest.
 - **T2 shows a hidden policy gain** (P1 policy + base value, lower bound > 0,
   confirmed on the fresh seed). Value drift is binding: every Stage 1 arm keeps
   `--w-wdl 0` (already the default here) and adds a value co-requirement (G-T2's
-  |ΔQ| on the probe rows ≤ the P1 c01 value). Stage 1c's R5 becomes part of every
-  baseline.
+  |ΔQ| on the probe rows ≤ the P1 c01 value). A KL-wdl anchor to the SL base
+  (`--kl-wdl`, with `--kl-reference` explicit) is added to every policy cell. The anchor refuses
+  gradient accumulation (`attach_anchor`), so the 1024 and 4096 cells then need
+  either native batches or anchor support for accumulation (code).
 - **T2 shows no hidden gain** (upper bound < +20). Stage 1 proceeds unchanged.
 - **Either test unread.** Stage 1 proceeds, and the reading is listed as an open
   confound.
 
 **Scoring code.** Stage 0b's scorer lands on main in its own PR, with tests,
-before Stage 0b reads. Until then the bank scripts it replaces are pinned by
+before Stage 1's screen reads. Until then the bank scripts it replaces are pinned by
 sha256:
 
 | Script | sha256 |
@@ -344,120 +388,45 @@ sha256:
 | `rl-audit/positions.npz` | `0d335d6487cd702a7e3b1d950fe10ca754a66794e6d42efdc9980f3d357df737` |
 | `rl-audit/search_bank.npz` | `ee04cd33264b9917a7561b387d949a1705e467ea6c9d80c036d86d12fe8302e7` |
 
-## Stage 0c: node-odds ladder against BT4 (the baseline gap, in concrete terms)
+## Stage 0c (optional): distance to BT4 at 1 node
 
-**Why.** This is the owner's headline yardstick (2026-11-20): "even if we get as good
-as them matching one 1 node for 1 node, it will already be huge since our net is
-smaller. I expect even if our 256 node search matched their 64 it would be amazing
-for our elo and show that we can be competitive in tcec tournaments with all the
-top engines etc".
+The owner's milestones, in order:
+1. a measured gain from the loop at 64 sims;
+2. "our 800-sim search matches BT4";
+3. long term, closing the node handicap to 1:1.
 
-**The milestones, recorded here:**
-- **The milestone:** our 256-sim search matches BT4 at 64 nodes.
-- **The stretch:** node for node, at the same node count.
+"i think we are too far away from bt4 to use it as a good anchor yet", so BT4 is
+not a per-readout anchor. One optional reading gives the gap in concrete terms.
+- **Pairing:** the SL base at 800 sims (UCI, the arena's training-shape flags,
+  `go nodes 800`) against BT4-it332 at 1 node (its raw policy).
+- **Engine:** the existing CPU binary `~/local_engines/lc0/lc0` (v0.32.1, `eigen`
+  backend; about 1 s per move at 1 node). The local lc0 builds are CPU-only, so
+  BT4 above 1 node is out of scope here. A wrapper around the diagnosis's
+  `ext_search.py`, or a CUDA lc0 build, would be needed for that. Neither is
+  proposed now, and a CUDA build would need the owner's go-ahead.
+- **Harness:** `scripts/match_vs_uci.py` (cutechess is broken here), 200 games on
+  100 `anchor` lines, colours swapped. The production Syzygy pair for our side and
+  for adjudication (`--syzygy-adjudicate-path`); lc0 gets `SyzygyPath` too.
+- **Reading:** the score with its pair-clustered 95% CI, in Elo. If the upper bound
+  is below 0.15 (about −300 Elo), the answer is recorded as "BT4's raw policy beats
+  our 800-sim search by more than about 300 Elo", and nothing more is played.
+- **Cost:** about 1 s per BT4 move plus our 800-sim moves, a few GPU-minutes; it is
+  unmeasured until it runs.
 
-**The ladder.** The SL base at 64, 256 and 800 sims plays BT4-it332 at 1, 64 and
-256 nodes: nine cells. The SL base goes first, so the gap is known before any
-training. Stage 2 then repeats the milestone cell at its readouts.
+## Stage 1: one generation, target × effective batch, at 64 sims
 
-**What exists, checked here:**
-- **An lc0 that runs BT4 on the GPU:**
-  `~/chess-artifacts/operations/rl-week-one-20261112-v1/external-Lc0-CUDA-build-runtime-v1/build/lc0`.
-  It is v0.32.1+git.dirty, and `--backend` offers `cuda-fp16`, `cuda-auto` and
-  `cuda`. Its BT4 GPU operability bank (`external-Lc0-BT4-GPU-operability-results-v3`)
-  passed its 23 predicate controls.
-- **The other two lc0 builds are CPU-only:** `~/local_engines/lc0/lc0` (v0.32.1)
-  and `~/local_engines/lc0_033/build/lc0` (v0.33.0-dev+git.d8ce482). Both offer the
-  `eigen` backend but no CUDA one.
-- **Weights:** `data/lc0/BT4-it332.pb.gz`, sha256
-  `e6ada9d6c4a769bfab3aa0848d82caeb809aa45f83e6c605fc58a31d21bdd618`.
-- **No banked match against an lc0 engine can be reused.** The one joint SL-base vs
-  Lc0 GPU match (`external-A39-Lc0-joint-timed-engineering-results-v1`) failed after
-  1 game. Lc0 died with `std::system_error: Resource temporarily unavailable` at
-  `Threads=8` (`external-A39-Lc0-joint-failure-thread-source-note-v1.md`). The
-  "champion vs lc0-LAST2x −619" anchors in project notes are matches between our own
-  nets, one of them trained on lc0 data. They are not matches against the lc0
-  engine.
-
-**Settings for both sides:**
-- **Harness:** `scripts/match_vs_uci.py`; cutechess is broken here. Each opening is
-  played twice with colours swapped, so every cell is seat-balanced by construction,
-  and the script's CI is over pairs.
-- **Our engine:**
-  - `python -m chess_anti_engine.uci --checkpoint <net>`, with the arena's
-    training-shape search flags (`--topk 16 --c-scale 0.1 --c-visit 50`, and the
-    root flags from the arena row's `search_candidate.gumbel`);
-  - `go nodes S`, where our node count is simulations;
-  - it plays the halving survivor, so it is deterministic at temperature 0.
-- **BT4:**
-  - `--weights=<BT4> --backend=cuda-fp16`, `go nodes N`;
-  - `SmartPruningFactor=0`, so it spends the whole budget;
-  - `Threads=2`, below the 8 that crashed;
-  - lc0's UCI default temperature is 0, so it is deterministic up to
-    multi-threaded search order.
-- **Syzygy:** the production pair for both sides (`SyzygyPath` on each), plus
-  `--syzygy-adjudicate-path`.
-- **Openings:** the 200-line `anchor` block, with move history. 400 games per cell.
-
-**How lc0 counts nodes, versus our sims: unmeasured.** Our `nodes` is the
-simulations run this move. lc0's `go nodes N` limit may count visits already in
-the subtree reused from the previous move. If it does, BT4's realised new search
-per move is below N. Pre-launch check P8 logs both engines' reported `nodes` per
-move (`--move-log-out`) over 20 games per side, and the record states the realised
-per-move new-visit counts beside each cell. `--enforce-nodes-*` (an external stop
-at the reported count) is used only for an engine that ignores `go nodes`.
-
-**One cell, exact command:**
-
-```bash
-TB="$HOME/projects/chess/data/syzygy_3-4-5:$HOME/projects/chess/data/syzygy_6"
-LC0=~/chess-artifacts/operations/rl-week-one-20261112-v1/external-Lc0-CUDA-build-runtime-v1/build/lc0
-BT4=data/lc0/BT4-it332.pb.gz          # sha256 e6ada9d6…bdd618, checked before each cell
-ENG_A="python -m chess_anti_engine.uci --checkpoint <net> --device cuda --topk 16 --c-scale 0.1 --c-visit 50 <root flags>"
-ENG_B="$LC0 --weights=$BT4 --backend=cuda-fp16"
-PYTHONPATH=. python -u scripts/match_vs_uci.py --engine-a "$ENG_A" --engine-b "$ENG_B" \
-  --label-a ours_s$S --label-b bt4_n$N --games 400 --nodes-a $S --nodes-b $N \
-  --openings $R/openings/blocks/anchor.fen --max-plies 300 \
-  --option-a SyzygyPath=$TB --option-b SyzygyPath=$TB \
-  --option-b Threads=2 --option-b SmartPruningFactor=0 \
-  --syzygy-adjudicate-path $TB \
-  --games-out $R/ladder/ours_s${S}_bt4_n$N.games.jsonl --pgn-out $R/ladder/ours_s${S}_bt4_n$N.pgn \
-  --move-log-out $R/ladder/ours_s${S}_bt4_n$N.moves.csv
-```
-
-UCI option names are checked against each engine's `uci` listing before the first
-cell (P8).
-
-**Size and power.** This is a measurement, not a judged test. Each cell reports the
-score with its pair-clustered 95% CI, mapped to Elo.
-- At 400 games (200 pairs), with the per-pair SD of about 0.26 from our 64-sim
-  self-matches (unmeasured against BT4), the score SE is about 0.018.
-- That is about ±25 Elo (95%) near a 50% score and about ±33 at 25% or 75%. It is
-  wider in Elo towards the extremes, where a cell far from 50% mostly says which
-  side of the crossing it is on.
-- **Milestone reading:** the milestone cell's 95% lower bound on score ≥ 0.50. A
-  point estimate ≥ 0.50 with the lower bound below 0.50 is reported as "level,
-  unconfirmed".
-
-**Compute: unmeasured.** It needs BT4's GPU nodes per second at these budgets and
-our 800-sim UCI move time. A 20-game smoke per engine (P8) measures both before the
-ladder runs. One arena at a time; never concurrent with another GPU job.
-
-## Stage 1: one-generation target test at 64 sims
-
-**Question.** Does a one-generation update from the SL base, trained on fresh
-self-play rows, gain at 64 sims? Which policy target, or the value-first arm, makes
+**Question.** Does one generation of the project's own self-play training, from the
+SL base, gain at 64 sims? Which policy target, and which effective batch size, makes
 the difference?
 
-**Hypotheses.**
-- (b) no-rescale beats (a) stored: the two independent references price it at +3.7
-  / +4.4 pp against +0.7 / +1.4.
-- (c) tests the owner's calibration hypothesis in its simplest form.
-  `--train-target-temp 1.5` brings the stored target's entropy from 0.693 to 0.999
-  (`rl-audit/target_scores.json`), near the prior's.
-- (d) tests the candidate mechanism's other branch: the loop gains only if the value
-  head learns information the base lacks. The game outcome is the one value signal
-  the base value head does not already produce.
+### The collection
+
+One SL-base collection: loop-exp1's `$COLLECT` with `--games 1040 --seed
+2026112300`, which gives about 100k rows.
+- **Cost:** about 20 min at the measured 3,284 games/h, or about 12 min at 5,021
+  games/h with `--collect-procs 3` (PR #1441, not merged; interim).
+- It must pass loop-exp1's collect gates (G-C1–G-C11), and is frozen once arms
+  reference it.
 
 **One collection, three policy targets on the same games.** Two ways were considered:
 - **Not used: two same-seed collections, one with `--no-target-q-rescale`.** That
@@ -479,174 +448,245 @@ the difference?
   lands in its own PR, with a test that the rebuilt stored-arm target equals the
   shard's `policy_target` when rescale is on, before Stage 1 launches.
 
-**Arms:**
-- **(a)** policy only (`--w-wdl 0`), the stored rescaled target;
-- **(b)** policy only, the no-rescale target, rebuilt offline from the same
-  collection;
-- **(c)** policy only, the stored target with `--train-target-temp 1.5`;
-- **(d)** value first: value only, on the game outcome (`--w-policy 0 --w-wdl 1
-  --value-outcome-weight 1 --value-search-weight 0`). **Named risk:** Q50's loss sat
-  in its value output (base policy + Q50 value: −55.2, takeover record D4).
-- **LR:** 3e-6 (the loop-exp1 default) and 1e-5, each flat. Both are guesses.
+### The grid
 
-So there are eight trained models. If T2 shows a hidden policy gain, (a)–(c) keep
-the value frozen, as they already do.
+**Targets** (policy only, `--w-wdl 0`):
+- **(a)** the stored rescaled target;
+- **(b)** the no-rescale target, rebuilt offline from the same collection;
+- **(c)** the stored target at `--train-target-temp 1.5`, which brings its entropy
+  from 0.693 to 0.999 (`rl-audit/target_scores.json`), near the prior's.
 
-**Dose.** Snapshots at 10, 20, 35, 50, 69, 138, 207 and 276 updates, plus the final
-model at N (≈ 374 updates at batch 256 for ≈ 100k rows, holdout 0.05). The only
-non-negative out-of-sample point in the banked loop is P1 c01, at 69–84 updates
-(leak-free table above), so the grid is dense below 69.
-- **Which model plays the match, per arm** (pre-committed):
-  - Policy arms (a)–(c), if Stage 0b validated a ruler: the (LR, snapshot) that
-    maximises it. Selection is on A1 and the report is on A2.
-  - Arm (d), if deep-SF labels exist: the (LR, snapshot) with the lowest mean
-    |V − deep-SF value| on A1, reported on A2. That is not its training target.
-  - Otherwise: the final model at each LR, so the arm plays two matches.
+**Effective batch** (the owner's averaging hypothesis): 256, 512, 1024 and 4096
+rows per optimizer step, at an equal number of samples seen.
+- **256** is what the banked P1/F12 runs used (the F12 contract's `batch_size`,
+  checked here).
+- **512** is production's setting (`configs/pbt2_small.yaml`, Aurora; the owner
+  found it better than smaller sizes).
 
-**Collection and arms, exact commands** (loop-exp1's `$COLLECT` and `$TRAIN`,
-except where stated):
+**Plus one value-first cell (d):** value only, on the game outcome (`--w-policy 0
+--w-wdl 1 --value-outcome-weight 1 --value-search-weight 0`), at batch 512. This
+tests the other branch of the candidate mechanism: the loop gains only if the value
+head learns information the base lacks. **Named risk:** Q50's loss sat in its value
+output (base policy + Q50 value: −55.2, takeover record D4).
+
+**What averaging can and cannot fix.** A larger batch averages away random error in
+the targets. It does not remove a consistent bias. The measured sharpening (target
+entropy ≈ 0.7 × the prior's, interim) is a bias every row shares. So the batch axis
+is crossed with the target arms, not a replacement for them.
+
+### The optimizer, read from the code
+
+- **Production:** `optimizer: aurora`, `matrix_optimizer_scope: mlp_out`,
+  `matrix_lr_multiplier: 20`, `batch_size: 512` (`configs/pbt2_small.yaml`). The
+  owner tuned the Aurora/AdamW split and found 512 better than 256 in his own
+  experiments. Stage 1 takes the split as given, and **512 is the baseline batch.**
+- **What Aurora does** (`train/aurora.py`, `AuroraWithAuxAdam`; the owner: "aurora
+  is built on muon on top of adamw"):
+  - The matrix group's update is the orthogonalised (polar) Nesterov momentum,
+    with momentum 0.95. That is a fixed-norm step: the LR alone sets how far it
+    moves, whatever the gradient's size or noise.
+  - The matrix group's LR is `lr × matrix_lr_multiplier` = 20 × `lr`
+    (`train/trainer.py`). The driver does not expose the multiplier, so the
+    Trainer default of 20, which matches production, applies.
+  - The other groups are AdamW at `lr`, with betas (0.9, 0.95).
+- **The simple-RL driver's defaults differ from production:** `--optimizer nadamw`
+  and `--batch-size 256` (`scripts/simple_rl_loop.py`). NAdam is β1 0.9, β2 0.98,
+  ε 1e-7, with two groups, decay (1e-4) and no-decay (0), both at `--lr`.
+- **What P1/F12 actually ran:**
+  - **Batch 256:** the F12 contract's `batch_size`, checked here.
+  - **Two parameter groups, both at 3e-6** (the P1 log: `[(3e-06, 0.0001, 190),
+    (3e-06, 0.0, 289)]`). That is an Adam-family layout. An Aurora run would show
+    a matrix group at 20 × `lr`, and there is none. The optimizer class is not named
+    in the contract; the two-group layout is the evidence.
+  - **Confound of the earlier nulls:** P1/F12 departed from the production
+    optimizer setup (no Aurora matrix group, batch 256 against 512). Their 64-sim
+    nulls may partly reflect that. Stage 1 runs the production setup.
+- **The realised LR of every group** is read off the optimizer's param groups in
+  each run's metrics, never off the flag (P8).
+- **Momentum's averaging window** is about batch × 1/(1 − β) samples. That is 20
+  steps for Aurora's matrix momentum (10,240 samples at batch 512; 81,920 at
+  4096), and 10 steps for AdamW's first moment.
+
+### The batch axis is confounded with dose unless movement is matched
+
+At equal samples, a larger batch takes fewer steps:
+
+| Effective batch | Updates on ≈ 95.6k training rows | Aurora matrix momentum window (steps) | Base `lr` (linear scaling) | Matrix LR (20×) |
+|---:|---:|---:|---:|---:|
+| 256 | ≈ 373 | 20 | 1.5e-6 | 3e-5 |
+| **512 (baseline)** | ≈ 187 | 20 | **3e-6** | 6e-5 |
+| 1024 | ≈ 93 | 20 | 6e-6 | 1.2e-4 |
+| 4096 | ≈ 23 | 20 (most of the phase) | 2.4e-5 | 4.8e-4 |
+
+- **Fixed-norm steps.** With a fixed LR, the 4096 arm takes an eighth as many
+  fixed-size matrix steps as the 512 arm, and moves the net much less. The batch
+  axis would then just be the dose axis again.
+- **LR co-scaling (a guess): linear, LR ∝ batch, anchored at 3e-6 for the 512
+  baseline.** 3e-6 is P1/F12's fine-tuning LR. For Aurora's fixed-norm matrix steps,
+  linear scaling restores equal movement per sample. For the AdamW groups it is
+  only approximate, because their step also depends on the gradient's
+  signal-to-noise ratio. Every batch arm uses linear scaling. A fixed-LR batch arm
+  would test a different hypothesis (dose), already covered by the snapshots.
+- **So cells are compared at matched samples AND at matched movement.** Movement is
+  KL(new ‖ SL base) on the probe rows, recorded at every snapshot. The screen reads
+  each cell at the snapshot whose KL is closest to a common set of KL values: those
+  the 512 arm reaches at 10, 35 and 69 updates. Only P1 c01 (69–84 updates at 256)
+  was non-negative out of sample.
+- **Fresh optimizer and warmup.** Each arm starts a fresh optimizer with warmup 0.
+  Aurora's matrix momentum needs about 20 steps to fill, which is most of the 4096
+  arm's 23 updates. So that arm is the most exposed to start-up effects. This is
+  recorded as a confound, not corrected.
+
+**Gradient accumulation needs code.** The Trainer has `accum_steps`, but the driver
+hard-codes `"accum_steps": 1` (`simple_rl/learn.py`, `trainer_kwargs`). The KL
+anchor also refuses accumulation (`attach_anchor`). A small PR adds
+`--accum-steps K`, with a test that K × B accumulated equals one native K·B batch
+on CPU. It applies only to arms without the KL anchor. 256 and 512 fit natively
+(512 is production's); 1024 and 4096 use accumulation unless a native run fits in
+VRAM.
+
+### Snapshots
+
+At 10, 20, 35, 50, 69, 138, 207 and 276 updates, plus the final model, for each
+cell whose N reaches them. The 4096 arm's N is about 23, so it has only its 10 and
+20 snapshots plus its final model.
+
+### Exact commands
 
 ```bash
-COLLECT1="${COLLECT/--games 16000/--games 1040} "; COLLECT1="${COLLECT1/--seed 2026112000/--seed 2026112300}"
+COLLECT1="${COLLECT/--games 16000/--games 1040}"; COLLECT1="${COLLECT1/--seed 2026112000/--seed 2026112300}"
 python -u scripts/simple_rl_loop.py collect --run-dir $R/s1/collect --generation 1 $COLLECT1
 chmod -R a-w $R/s1/collect
-# (b)'s source: the retarget step (new PR), writing a sealed reference collect
-#   $R/s1/collect_norescale whose policy_target is rebuilt with target_q_rescale=False.
-SNAPS=10,20,35,50,69,138,207,276
-for lr in 3e-6 1e-5; do
-  T="${TRAIN/--lr 3e-6 --lr-floor 3e-6/--lr $lr --lr-floor $lr} --snapshot-updates $SNAPS"
-  for a in a b c d; do
-    src=$R/s1/collect; [ $a = b ] && src=$R/s1/collect_norescale
-    extra="--w-wdl 0"; [ $a = c ] && extra="--w-wdl 0 --train-target-temp 1.5"
-    [ $a = d ] && extra="--w-policy 0 --w-wdl 1 --value-outcome-weight 1 --value-search-weight 0"
-    python -u scripts/simple_rl_loop.py collect --run-dir $R/s1/arm_${a}_$lr --generation 1 \
-      --collect-from $src $COLLECT1 $T $extra
-    python -u scripts/simple_rl_loop.py run --run-dir $R/s1/arm_${a}_$lr --generations 1 \
-      --collect-from $src $COLLECT1 $T $extra
-  done
+# target (b)'s source: the retarget step (new PR, P5) writes the sealed reference
+#   collect $R/s1/collect_norescale, whose policy_target is rebuilt with target_q_rescale=False.
+BASE="--presentations 1 --mirror-prob 0.5 --warmup-steps 0 --optimizer aurora \
+  --matrix-optimizer-scope mlp_out --optimizer-state fresh --init-optimizer-state fresh \
+  --holdout-frac 0.05 --probe-rows 2048 --no-eval"
+# effective batch -> native micro-batch, accumulation (new flag, P5), base lr (linear scaling)
+declare -A MB=([256]=256 [512]=512 [1024]=512 [4096]=512)
+declare -A AC=([256]=1 [512]=1 [1024]=2 [4096]=8)
+declare -A LR=([256]=1.5e-6 [512]=3e-6 [1024]=6e-6 [4096]=2.4e-5)
+cell() {  # $1 = name, $2 = effective batch, $3 = source collect, rest = arm flags
+  local n=$1 b=$2 src=$3; shift 3
+  local T="$BASE --batch-size ${MB[$b]} --accum-steps ${AC[$b]} --lr ${LR[$b]} --lr-floor ${LR[$b]}"
+  local SN=$(for k in 10 20 35 50 69 138 207 276; do [ "$k" -lt "$(planned_updates $b)" ] && printf '%s,' $k; done)
+  python -u scripts/simple_rl_loop.py collect --run-dir $R/s1/$n --generation 1 \
+    --collect-from $src $COLLECT1 $T --snapshot-updates ${SN%,} "$@"
+  python -u scripts/simple_rl_loop.py run --run-dir $R/s1/$n --generations 1 \
+    --collect-from $src $COLLECT1 $T --snapshot-updates ${SN%,} "$@"
+}
+for b in 256 512 1024 4096; do
+  cell a_$b $b $R/s1/collect --w-wdl 0
+  cell b_$b $b $R/s1/collect_norescale --w-wdl 0
+  cell c_$b $b $R/s1/collect --w-wdl 0 --train-target-temp 1.5
 done
+cell d_512 512 $R/s1/collect --w-policy 0 --w-wdl 1 --value-outcome-weight 1 --value-search-weight 0
 ```
 
-The snapshot list is checked against N before each run is pinned. A snapshot at or
-above N is dropped, and the record says so.
+`planned_updates b` is loop-exp1's step-2 `planned_phase_updates` reader at that
+batch. The command is final only once the `--accum-steps` PR fixes the flag's name
+and its interaction with `planned_phase_updates`.
 
-**Gates:** loop-exp1's collect gates (G-C1–G-C11) and model gates (G-T1–G-T4),
-unchanged. A collect gate failure allows one re-collect from the sealed cursor;
-a second failure stops Stage 1, and the record says so.
+### Screening order (matches are the expense)
 
-**Registered match, per played model.** 2,000 games against the SL base at 64
-sims, seat-balanced:
-- **Openings:** the 500-line `s1_match` block, shared by every Stage 1 match, so
-  arms are compared on the same openings.
+1. **Offline screen, every cell and snapshot:**
+   - on A1 (leak-free) and A2;
+   - top-1 against the screen ruler, plus the calibration gap and prior entropy;
+   - the screen ruler is the Stage 0b-validated ruler, else searched BT4 at 256
+     nodes, labelled unvalidated;
+   - read at matched KL (above);
+   - selection on A1, report on A2.
+2. **At most three cells go to registered matches:** the three with the highest
+   A2 top-1 among those inside the [calibration band](#calibration-band-used-by-the-screen-and-by-stage-2). At most one
+   cell per target, and (d) is eligible by its value read (|V − deep-SF value| on
+   A1, reported on A2).
+3. **If no ruler is validated and the screen is unvalidated,** the three cells are
+   pre-committed instead: (a), (b) and (c), each at batch 512 and the final model.
+
+### Registered match, per selected cell
+
+2,000 games against the SL base at 64 sims, seat-balanced:
+- **Openings:** the 500-line `s1_match` block.
 - **Arena:** loop-exp1's `$COMMON` with `--games 1000 --openings-fen <block>` in
-  place of `--openings`/`--opening-plies`, two runs on one seed with the arm as
+  place of `--openings`/`--opening-plies`, two runs on one seed with the cell as
   candidate (A) and as reference (B).
 - **Pooling:**
   ```bash
   python scripts/arena_seat_balanced_pool.py --arm <model.pt> \
     --a-games <A.games.jsonl> --b-games <B.games.jsonl> \
     --a-result <results.jsonl> --b-result <results.jsonl> \
-    --a-label <tag>_A --b-label <tag>_B --verdict-rule lb-gt-zero --z <z>
+    --a-label <tag>_A --b-label <tag>_B --verdict-rule lb-gt-zero --z 2.394
   ```
-- **z:** Bonferroni over the m matches played: z = Φ⁻¹(1 − 0.025/m). With one model
-  per arm, m = 4 and z = 2.498. With two per arm, m = 8 and z = 2.734. If both
-  selection rules apply to only some arms, m is the actual count.
+- **z:** z = 2.394, Bonferroni over three matches (Φ⁻¹(1 − 0.025/3)). With fewer
+  matches, z is recomputed for the actual count.
 - **Reported alongside, not judged:** temperature-0 reads at 1, 4 and 16 sims (800
-  games each, on the 200-line `s1_low` block); the Stage 0b ruler scores; the
-  offline descriptors.
+  games each, on `s1_low`), and the offline descriptors.
 
 **Reading and dispositions (pre-committed, per match):**
-- **Success:** lower bound above 0. Stage 2 launches on that arm; with several, on
+- **Success:** lower bound above 0. Stage 2 launches on that cell; with several, on
   the one with the highest pooled estimate.
-- **Kill:** upper bound below 0. The arm is recorded as harmful at this dose.
-- **Unread:** anything else. One fresh confirmation is run, with the same size and
-  z on `s1_confirm`, read alone (several unread arms share that block). If it is still unread, it is recorded "unread
-  at N = 2,000", and that arm does not launch Stage 2.
-- **No success in any arm:** Stage 2 does not launch. The next step is Stage 1c,
-  with an offline screen only if Stage 0b validated a ruler. If it did not, the next
-  step is O2's larger collection, which doubles the reachable dose, with the same
-  arms.
+- **Kill:** upper bound below 0. The cell is recorded as harmful at this dose.
+- **Unread:** one fresh confirmation, with the same size and z, on `s1_confirm`,
+  read alone. If it is still unread, it is recorded "unread at N = 2,000".
+- **No success in any cell:** Stage 2 does not launch. The
+  [conditional diagnostic](#conditional-diagnostic-a-bt4-raw-policy-target) runs
+  next, then O3's larger collection with the same grid.
 
-**Power.**
-- The banked P1 64-sim match gives a per-cluster SD of d of 0.195 (200 clusters,
-  ρ = +0.12; *review*). At 500 clusters the SE is 6.06 Elo.
-- The 80%-power MDE is 20.2 Elo at m = 4 and 21.7 at m = 8. It is about 10% larger
-  if ρ is +0.36, as at 1 sim.
-- **Expected effect:** unknown. A c01-sized dose moved KL(new‖base) by 0.038. About
-  374 updates moves it by about 0.17, the movement of P1 c04–c06, which were ≈ 0 at
-  64 sims (*review*). With the stored target, "unread" is the likely outcome. Arms
-  (b) and (d) exist because of the independent references and the candidate
-  mechanism.
-
-**This is the first possible positive control.** A Stage 1 success is the first net
-with a positive 64-sim result. It is then added to Stage 0b's ruler validation.
+**Power.** The banked P1 64-sim match gives a per-cluster SD of d of 0.195 (200
+clusters, ρ = +0.12; *review*). That is an SE of 6.06 Elo at 500 clusters, and an
+80%-power MDE of 19.6 Elo at z 2.394, about 10% larger at ρ = +0.36.
 
 **Compute:**
-- collect: about 0.3 h at the measured 3,284 games/h;
-- training: eight models, minutes each;
-- matches: 1.1–1.6 h per 2,000 games, at 1,274–1,800 games/h, so 4.4–12.6 h for four
-  to eight matches;
-- temperature-0 reads: minutes.
+- collect: 12–20 min;
+- training: 13 cells, minutes each;
+- offline screen: minutes;
+- matches: 1.1–1.6 h per 2,000 games, so 3.3–4.8 h for three, plus confirmations.
 
-## Stage 1c: learner recipes and depth arms (after Stage 1)
+### Conditional diagnostic: a BT4 raw-policy target
 
-These run only after Stage 1 has read.
+**It runs only if every own-pipeline cell in Stage 1 fails its match** (kill, or
+unread after its confirmation). It separates two causes: "the learner or pipeline
+cannot absorb a good target" and "our targets are not good enough".
+- **Setup:** the same Stage 1 collection, snapshots and policy-only setup, at batch 512. The
+  policy target is BT4-it332's raw (1-node) policy on those positions, which the
+  owner called the safest distillation. BT4's raw entropy is about 1.5 against our
+  base's 1.2, so it does not sharpen.
+- **Its net is never a candidate and never an initialisation for Stage 2.** This
+  record never presents it as a result. The run's strength must come from its own
+  pipeline (see the principle at the top).
+- **Match:** one registered seat-balanced 2,000-game 64-sim match against the SL
+  base on `confirm`, which is free because Stage 2 did not launch; read alone at
+  95%. Played model: the final model.
+- **Reading:**
+  - A gain means our targets are the binding problem, and the next step is target
+    work (depth arms at matched GPU time; interior-node targets).
+  - No gain means the learner or pipeline is suspect, and the next step is a
+    pipeline audit before any recipe screen.
+- **Cost and implementation:** BT4 raw forwards via the bank's
+  `rl-audit/external_refs.py` path (ONNX, about 43 ms per row on 8 CPU threads,
+  about 1.2 h per 100k rows, an estimate). It also needs a supplied-array mode in
+  the retarget step. P9 covers the history rep_fix regime and the 1858 / castling
+  remap checks.
 
-**Learner recipes,** screened offline. The screen runs only if Stage 0b validated a
-ruler, and only on that ruler, which is never the training target. Selection is on
-A1 and the test is on A2 (or a game-split half of A1). The co-requirement is a
-calibration guard (below).
+### Calibration band (used by the screen and by Stage 2)
 
-| # | Recipe | Driver flag | Code needed |
-|---|---|---|---|
-| R1 | Entropy-matched targets | `--train-target-temp` (global); per-row: new code. `--policy-prior-mix λ` (target = λ · stored + (1 − λ) · prior) is an entropy-preserving alternative that may make per-row code unnecessary | per-row only |
-| R2 | R1 + anchor | `--kl-policy λ --kl-reference <SL base copy>`; screened as anchor-only and as R1 + anchor | agree-only KL: yes |
-| R3 | Flip-weighted or pairwise ranking loss | — | yes |
-| R4 | Dose with early stopping | the snapshot grid | no |
-| R5 | Freeze value drift | `--kl-wdl λ --kl-reference <SL base copy>` | no |
-| R7 | Interior-node targets | — | collector change |
+The gap (mean top-1 probability − top-1 agreement) against the screen ruler must
+stay within [g_BT4, +0.02]. g_BT4 is BT4's raw gap on the same ruler (−0.148
+against R800, Stage 0b).
+- The upper edge stops over-confidence, the direction the loop drifted (P1 c12 is
+  +0.034 against R800).
+- The lower edge allows a prior as soft as a known strong net's, but no softer.
+- BT4 is a reference point, not a target: it is a different, larger net. Both
+  edges are guesses.
+- Entropy is recorded beside the gap.
 
-- **Runs on fresh simple-RL collects, not on the old F12 rows.** No path runs the
-  driver's recipe flags on the old rows without code. Those rows came from the P1
-  harness (`p1_cycle.py`, another tree, a continued optimizer). The driver's
-  `--collect-from` needs a collect played by the arm's own generation g − 1 model.
-  The old shards have no per-child Q or visit arrays. Stage 1c's rows are Stage 1's
-  collection, so the optimizer regime (`--optimizer-state fresh`) matches Stage 2.
-- **`--kl-reference` is always passed explicitly.** It defaults to generation 0,
-  which in Stage 2 is the Stage 1 winner, not the SL base. G-T4 reads the realised
-  reference sha256.
-- **Multiplicity:** Bonferroni over arms (recipe × setting), not recipes.
+**Later, only after Stage 1 has read:**
+- learner recipes (anchor, R1 per-row entropy matching, ranking loss), screened
+  the same way;
+- search-depth arms at matched GPU time, sized from the measured exchange rate
+  (16 sims gives 1.9× the games of 64 sims, not 4×; interim).
 
-**Depth arms (R6):** 16, 32 and 64 target sims, run only as collection arms at
-matched GPU time. Each collects for the same GPU-hours, at the positions per
-GPU-hour measured at that sim count. The first exchange-rate point (interim): one
-process × 256 games at 16 sims gives 6,451 games/h, against 3,372 at 64 sims, which
-is 1.9×, not 4×. Three processes × 128 at 64 sims give 5,021 games/h, via
-`--collect-procs` in PR #1441 (not merged). So the depth arms' collections are sized
-from the measurement, never from 4×. Each is judged at 64 sims by
-Stage 1's match design. They never run on fixed banked rows: there a 16-sim arm
-would get a quarter of the compute.
-
-**The calibration guard** replaces the earlier fixed entropy band. That band was
-centred on an under-confident net. The gap is mean top-1 probability minus top-1
-agreement, on the 2,433 leak-free rows (interim, `flip_by_cycle_v2.json`):
-
-| Net | Entropy | Gap vs R800 | Gap vs BT4 |
-|---|---:|---:|---:|
-| SL base | 1.191 | −0.066 | −0.113 |
-| P1 c01 | 1.085 | −0.046 | −0.087 |
-| P1 c03 | 0.973 | −0.010 | −0.045 |
-| P1 c06 | 0.892 | +0.018 | −0.014 |
-| P1 c12 | 0.866 | +0.034 | +0.008 |
-
-- Against R800 the gap crosses zero near entropy 0.95. Against BT4 it crosses only
-  at c12, where top-1 is worst. **So calibration alone does not select a good net,
-  and the ruler matters.**
-- **Guard:** |mean p_top1 − top-1 agreement| ≤ 0.02, against the validated ruler.
-- Entropy is recorded as a descriptor. Entropy conventions differ between nets: BT4
-  and C3 read 1.49 and 1.53 on these rows.
-- The driver's `--tripwire --min-policy-entropy / --min-target-entropy` stay as
-  coarse alarms, not as the guard.
+These are not planned in detail here.
 
 ## Openings: disjoint blocks
 
@@ -660,7 +700,7 @@ collection draws from it.
 | `s1_low` | 600–799 | Stage 1 temperature-0 reads |
 | `a2` | 800–1,799 | game starts for Stage 0b's A2 audit set (SL-base self-play, about 3 rows per game) |
 | `s1_confirm` | 1,800–2,299 | Stage 1 unread confirmations |
-| `anchor` | 2,300–2,499 | BT4 node-odds ladder (Stage 0c) and the Stage 2 BT4 anchor |
+| `anchor` | 2,300–2,499 | optional Stage 0c, the Stockfish K tuning ladder and the Stage 2 Stockfish anchor |
 | `readout_base` | 2,500–2,999 | every Stage 2 R-base readout |
 | `confirm` | 3,000–3,499 | Stage 2 deliverable confirmation |
 | `confirm2` | 3,500–3,999 | a second deliverable confirmation, if the first fails |
@@ -674,79 +714,38 @@ collection draws from it.
   boundaries. Each block loaded in the arena's FEN loader as unique rows, all with
   move history.
 
-## Stage 2: the multi-generation run
+## Stage 2: repeat the winning recipe (short until Stage 1 has a winner)
 
-Launches only on a Stage 1 success, with that arm's target, LR and dose.
-
-### Driver settings
-
-One run dir, `run --generations G`:
-- **Start:** `--init-checkpoint` = the Stage 1 winner, copied into the run dir,
-  sha-verified and write-protected.
-- **Generation size:** Stage 1's collection size at 64 sims. The played model is
-  the snapshot at the winner's dose (`--snapshot-updates D`) or the final model, as
-  in Stage 1.
-- **Phase:** `--presentations 1`. **Optimizer:** `--optimizer-state fresh` each
-  generation, at the winner's LR, warmup 0, flat.
-- **Openings:** `--opening-sampling cycle`, `--seed 2026112200`.
-- **Holdout and probe:** `--holdout-frac 0.05`, `--probe-rows 2048`. **Evaluation:**
-  `--no-eval`; the readouts below replace it.
-- **KL:** if the winner uses `--kl-policy` or `--kl-wdl`, `--kl-reference <SL base
-  copy>` is passed explicitly.
-- **Target:** if the winner is arm (b), every generation runs the retarget step
-  before training.
-
-### The calibration invariant (gated, every generation)
-
-The target is sharper than the prior that searched for it (about 0.7× its entropy;
-interim). Every generation measures the newest net on A1 ∪ A2:
-- **Gate:** the calibration gap against Stage 0b's validated ruler stays within
-  ±0.02, and top-1 against that ruler on A2 is not below the SL base's (one-sided
-  2.5% on discordant rows). Calibration alone admits a worse net (above). If no ruler was validated, R800 is used, and the gate is labelled
-  provisional. Leaving the band stops the run at the last generation inside it.
-- **Recorded:** prior entropy, veto rate, mean V − Q(top child), |Q|, P(draw), and
-  agreement with each reference.
-
-### Per-generation gates
-
-- **Gated (machinery):** G-C1 = 0; G-C2 equal; G-C3 ≥ +0.50 on both root classes
-  (loop-exp1's primary value); G-C7 ≥ 80; G-C10 ≤ 0.05.
-- **Gated (model):** the calibration invariant; G-T2 against the previous
-  generation (KL > 1.5 or |ΔQ| > 0.4 fails); G-T4 as loop-exp1.
-- **Recorded, drift alarm:** G-C4, G-C5, G-C6, G-C8, G-C9. Two consecutive
-  generations out of band pause the run for a report.
-- **On a failure:** a collect gate allows one redo from the sealed cursor. A second
-  failure, or any other gated failure, stops the run at g − 1. Restarting needs an
-  addendum.
-
-### Readouts on a GPU-time schedule
-
-- **R-base,** at each readout: the newest net against the SL base, 2,000 games at
-  64 sims, seat-balanced, on `readout_base` (the same block every readout). Temperature-0 reads at 1, 4 and 16 sims
-  (800 games each, on `s1_low`) are reported beside it.
-- **Schedule:** the next readout falls once the generations' GPU time since the
-  last readout is at least 7/3 × that readout's measured arena time, which keeps
-  the arena share ≤ 30%. At 0.4 h per generation and 1.1–1.6 h per 2,000 games, that
-  is about every 6–9 generations.
-- **The second anchor: BT4 at fixed nodes.** At every readout, the newest net plays
-  the milestone cell (our 256 sims against BT4 at 64 nodes), using Stage 0c's command
-  and settings, 400 games on `anchor`. At the deliverable it plays the full nine-cell
-  ladder. The anchor is reported, not judged; R-base judges.
-- **Why BT4, and why it replaces the Stockfish anchor:**
-  - It is the owner's yardstick and names his milestone.
-  - Stage 0c measures the SL base on it, so the gap is known in advance.
-  - As an lc0-family engine it is closer to ours in style, which should make it
-    more sensitive to policy and value gains.
-  - **The single-anchor trap.** Anchored Elo depended on the anchor by up to 82 Elo
-    in one recorded design (experiment ledger). So two unlike anchors stay: the SL
-    base (our own family, via R-base) and BT4 at fixed nodes. A gain claimed on one
-    and absent on the other is reported as anchor-dependent.
-  - The Stockfish anchor is dropped. Matching its settings to our agent was itself
-    an open check, and a third anchor would raise the arena share past 30% with
-    nothing to decide.
-- **Transitivity check:** the change in the milestone cell's score against the
-  change in R-base, both since Stage 0c, agree within the combined CI. A
-  disagreement is recorded, not resolved.
+Launches only on a Stage 1 success, with that cell's target, effective batch, LR
+and dose.
+- **Driver:** one run dir, `run --generations G`, `--init-checkpoint` = the Stage 1
+  winner (copied, sha-verified, write-protected).
+  - Each generation is Stage 1's collection size at 64 sims, with
+    `--presentations 1` and `--optimizer-state fresh`.
+  - `--opening-sampling cycle`, `--seed 2026112200`, `--no-eval`.
+  - `--kl-reference <SL base copy>` is passed explicitly if any KL term is on; it
+    defaults to generation 0, which here is the winner.
+  - Cell (b) runs the retarget step every generation.
+- **Gated every generation:**
+  - loop-exp1's collect gates (G-C1 = 0, G-C2 equal, G-C3 ≥ +0.50, G-C7 ≥ 80,
+    G-C10 ≤ 0.05) and G-T2 / G-T4;
+  - the calibration band, and top-1 against the screen ruler on A2 not below the SL
+    base's.
+  - A failure allows one re-collect, then stops the run at g − 1.
+- **Readouts:** on a GPU-time schedule, with an arena share ≤ 30%. The next readout
+  comes once the generations' GPU time is at least 7/3 × the last readout's arena
+  time, about every 6–9 generations.
+  - Each readout is R-base: 2,000 games at 64 sims, seat-balanced, against the SL
+    base, on `readout_base`.
+  - Beside it, the second anchor: Stockfish at a fixed node count K, near the net.
+    Our agent runs via UCI with R-base's arena settings at `--nodes-a 64
+    --enforce-nodes-a`; Stockfish runs at `--nodes-b K --enforce-nodes-b`. 400
+    games on `anchor`, with the production Syzygy pair for both.
+  - K is tuned before Stage 2 so the SL base scores 40–60%. It is re-tuned only at
+    a readout where the net leaves 25–75%, and that readout plays the old and new K
+    so the scale chains.
+  - Verdicts read both anchors (the single-anchor trap: anchored Elo depended on
+    the anchor by up to 82 Elo in one recorded design).
 
 ### Stop rule (pre-committed, simulated)
 
@@ -808,25 +807,11 @@ at 95%.
 - The SL base, the live checkout, production and earlier banks are untouched.
   Nothing is promoted.
 
-### Compute
-
-- **A generation:** about 0.4 h at 1,040 games (collect 0.3 h, training minutes,
-  gates and the calibration read minutes), plus the retarget step for arm (b).
-- **A readout:** 1.1–1.6 h of 64-sim games, plus the temperature-0 reads. The
-  BT4 anchor's rate (one cell, 400 games) is unmeasured until P8.
-
 ### What success means at one week
 
-**The one-week target, pre-committed:** within 7 days of Stage 2's start, the
-deliverable's confirmation match reads a 95% lower bound above 0 and a point
-estimate of at least +50 Elo at 64 sims.
-- Below +50 with the lower bound above 0: "gain confirmed, below target".
-- Otherwise: "not shown at one week".
-
-+50 is a guess. Before Stage 2 starts it is replaced by a projection: generations in
-a week × g₁ / generations per readout, halved. g₁ is the Stage 1 winner's pooled
-estimate, which carries winner's curse; the halving is for that, and is itself a
-guess.
+Within 7 days of Stage 2's start, the deliverable's confirmation reads a 95% lower
+bound above 0 and at least +50 Elo at 64 sims. +50 is a guess, replaced before
+Stage 2 by a projection from Stage 1's gain (halved, for winner's curse).
 
 ## Why no sizing from loss curves
 
@@ -851,24 +836,23 @@ So offline scores only filter, and only after a ruler is validated; only registe
 | Number | Where it is used | The measurement that replaces it |
 |---|---|---|
 | Every *interim* number in Stage 0 (veto weights, the 0.7× ratchet) | direction | the diagnosis's full report, T1 / T2 |
-| The ruler validation rule (rank order of four nets, one-SE ties) | Stage 0b | Stage 1's results as a positive control |
-| 1,040 games / ≈ 100k rows | Stage 1, Stage 2 generation size | Stage 1's read and O2 |
-| LR 3e-6 and 1e-5, batch 256 | Stage 1 | Stage 1 |
+| The ruler validation rule | Stage 0b | Stage 1's results as a positive control |
+| 1,040 games / ≈ 100k rows | Stage 1, Stage 2 | Stage 1's read and O3 |
+| Linear LR scaling anchored at 3e-6 for batch 512 (matrix LR 20×) | Stage 1 batch axis | the matched-KL read |
+| The matched-KL points (the 512 arm at 10 / 35 / 69 updates) | Stage 1 screen | Stage 1's held-out curves |
 | Snapshot grid 10…276 | Stage 1 dose | Stage 1's held-out curves |
-| `--train-target-temp 1.5` | arm (c) | Stage 1 |
-| Outcome-only value target, value-only training | arm (d) | Stage 1 |
-| The 16-vs-64-sim exchange rate (1.9×, one point, interim) | Stage 1c depth arms | the throughput measurement's full curve |
-| Calibration tolerance ±0.02 | Stage 1c guard, Stage 2 invariant | Stage 1's realised gaps |
+| `--train-target-temp 1.5` | target (c) | Stage 1 |
+| Outcome-only value target, value-only training, at batch 512 | cell (d) | Stage 1 |
+| Calibration band [g_BT4, +0.02] | screen, Stage 2 gate | Stage 1's realised gaps |
+| At most three matched cells; z 2.394 | Stage 1 | — (a budget) |
 | Arena share ≤ 30% (7/3 factor) | Stage 2 schedule | Stage 2's realised times |
-| Stop-rule constants (lag 3, two consecutive) and the simulation's SE 6.06 | Stage 2 | Stage 2's realised clustered SE |
-| 400 games per ladder cell; the per-pair SD 0.26 against BT4 | Stage 0c, Stage 2 anchor | Stage 0c's realised CIs |
-| lc0 node counting vs our sims | Stage 0c, Stage 2 anchor | P8's per-move node logs |
-| G-C3 ≥ +0.50 | Stage 2 gate | loop-exp1's primary value; revisited if a clean collect fails it |
-| Holdout 0.05, probe 2,048 | Stage 1, 2 | not tuned |
-| +50 Elo at one week and the "halved" projection | success line | Stage 1's projection |
-| 3,284 games/h; 96.8 rows per game; 1,274–1,800 arena games/h | compute | Stage 1's own collect and matches |
-| Per-cluster SD 0.195, ρ at 64 sims | match sizing | Stage 1's realised clustered SE |
-| A2's ≈ 3,000 rows | Stage 0b | the disagreement table's SEs |
+| Stop-rule constants (lag 3, two consecutive) and SE 6.06 | Stage 2 | Stage 2's realised clustered SE |
+| The Stockfish K band (40–60%), the 25–75% re-tune trigger, 400 games | Stage 2 anchor | the tuning ladder and first readouts |
+| G-C3 ≥ +0.50; holdout 0.05; probe 2,048 | gates | not tuned |
+| +50 Elo at one week, and "halved" | success line | Stage 1's projection |
+| 3,284 / 5,021 games/h; 96.8 rows per game; 1,274–1,800 arena games/h | compute | Stage 1's own runs |
+| The 16-vs-64-sim exchange rate (1.9×, one point, interim) | later depth arms | the throughput measurement |
+| BT4 raw forward cost (about 43 ms per row on 8 CPU threads) | the conditional diagnostic | its own run, if it runs |
 
 ## Pre-launch checks
 
@@ -877,26 +861,26 @@ So offline scores only filter, and only after a ruler is validated; only registe
 - **P2.** A1 excludes every audit position that occurs in cycle 2–12 games, by
   position key; both counts are reported. A2 shares no position key with any
   training collection.
-- **P3.** The SL base is copied into the run dir and write-protected (loop-exp1
-  step 0a). The split is reproduced (step 0b). The blocks are cut, with their
-  sha256 recorded.
+- **P3.** The SL base is copied and write-protected (loop-exp1 step 0a). The split
+  is reproduced (step 0b). The blocks are cut, with their sha256 recorded.
 - **P4.** The diagnosis's full report and T1 / T2 are read, and every interim
   number here is replaced or confirmed.
-- **P5.** The retarget step's PR has merged, with its rebuild-equals-shard test,
-  and was run once on a small collect.
-- **P6.** The UCI engine's settings match the arena's training-shape search on
-  fixed positions, because the BT4 ladder plays our net through the UCI path. If
-  they cannot be matched, the ladder is reported as measuring the UCI agent.
-- **P8.** BT4 smoke, before Stage 0c:
-  - the lc0 CUDA build loads BT4 (sha256 checked) on the GPU at `Threads=2`;
-  - 20 games per side complete without an engine death;
-  - UCI option names are checked against each `uci` listing;
-  - per-move reported `nodes` are logged for both engines, which settles how lc0
-    counts nodes against our sims;
-  - BT4 nodes per second and our 800-sim move time are measured, which prices the
-    ladder.
-- **P7.** Stage 0b's scorer is on main, or the bank scripts are used at the sha256
-  listed above.
+- **P5.** Two small PRs have merged and were run once on a small collect:
+  - the retarget step (target (b)), tested so the rebuilt target equals the shard's
+    `policy_target` when rescale is on;
+  - `--accum-steps` (the batch axis), tested so accumulated equals native on CPU.
+- **P6.** For the Stockfish anchor and the optional Stage 0c, the UCI engine's
+  settings match the arena's training-shape search on fixed positions. If they
+  cannot be matched, both are reported as measuring the UCI agent.
+- **P7.** The screen's scorer is on main, or the bank scripts are used at the
+  sha256 listed in Stage 0b.
+- **P8.** Each run's metrics carry every param group's realised LR. The batch arms'
+  values are checked against the linear-scaling table before the screen reads.
+- **P9.** Only if the conditional diagnostic runs, its BT4 policy array:
+  - the rep_fix regime is applied and stamped;
+  - 0 index-convention mismatches and 0 support outside the legal mask;
+  - an independent gather check over castles and promotions;
+  - its sha256 is recorded.
 
 ## Confounds
 
@@ -907,6 +891,12 @@ So offline scores only filter, and only after a ruler is validated; only registe
   optimizer.
 - P1's snapshots confound dose with data vintage (snapshot k trained on rows from
   F12 c01…c(k−1)). Stage 1's single collection removes this.
+- The batch axis: linear LR scaling is exact only for Aurora's fixed-norm matrix
+  steps; the AdamW groups' steps also depend on gradient noise, so matched KL is
+  the comparison, and the 4096 arm sits mostly inside the optimizer's start-up.
+- The earlier nulls (P1, F12, Q50) ran an Adam-family two-group optimizer at batch
+  256, not production's Aurora split at 512. Stage 1 differs from them in optimizer
+  and batch as well as in the collection.
 - Selecting the played snapshot is selection. It is done on held-out games of the
   collection, never on a match, and each match is on its own block.
 - loop-exp1's confounds (twofold-repetition draws, the same-coloured-bishops gap)
