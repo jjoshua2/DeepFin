@@ -357,6 +357,28 @@ where child values are computed), via the scorer (#1448). The child top-2 gap wa
 already at its c12 level by F12 c6 while c6 showed no Elo loss, so these do not
 substitute for a match.
 
+Also report-only, per cell: the policy KL from the base and the policy entropy on
+A1. A comparison across optimizers or doses is meaningful only at matched KL (at
+Aurora 512 the KL moved per row differs from NAdam 256), so P0's dose is compared
+with P1 / F12 by KL as well as by games. Dose is NOT controlled by KL.
+
+**64-sim matches are the only arbiter.** The diagnosis's regime split is one bit
+(a shared sign), and no offline column reproduces an ordering among nets. Claims
+this record does not rely on, in the strong form they have been quoted in:
+- "Optimizer / batch is not a lever." What the screen licenses: no difference of
+  about 0.045 or more in raw-policy changed-row precision at matched KL between
+  batch 256 / 512 / 2048, on rulers that do not validate; the accumulation control
+  was not a clean pass; 64-sim play was never measured. The pilot's Aurora split at
+  512 stands on the owner's own tuning, not on this screen.
+- "The tablebase move is better by SF" (28.5 vs 48.8 cp, CI [−5.0, +66.9]). What
+  holds: tablebases change lc0's move on 1.9% of rows with no detectable quality
+  difference by SF. Tablebases stay on for every engine because the owner requires
+  it and it is correct, not because of this number.
+- Sharpening is real and shared across optimizers (policy entropy 1.19 → about
+  0.87 in every arm), but whether it costs 64-sim strength is untested (the
+  softening control never ran). The pilot trains at temperature 1.0; a softening
+  guard is a named later lever.
+
 **Reading table, simulated** (`amendment-1452-sim/pilot_sim_v2.py`, 400k draws per
 world, sizes as above; output `pilot_sim_v2.txt`; the superseded 800-game version is
 in `v1/`). Columns: P(gate reads damage); P(Zq adoptable, LB95 > −10); P(match 2
