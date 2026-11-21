@@ -450,9 +450,8 @@ movement, is responsible. That claim needs r, as registered above.
   `presented.npz`), pin and optimizer.
 - **Match 7 exists.** Recalibrated Zq vs Zq read +21.4 [+15.1, +27.6] ("the loss is shape").
   Stage A already reports each cell's (T, b) fit and its `KL_share_removed`. Any recalibrated
-  reading of the Zq cells is a follow-up under the match-8 record (PR #1476,
-  `docs/experiments/2026-11-21-rl-run1-match8-zq-recal-vs-base.md`, not yet on main), not part
-  of this design.
+  reading of the Zq cells is a follow-up under the [match-8 record](2026-11-21-rl-run1-match8-zq-recal-vs-base.md) (PR #1476,
+  merged as 337aa0ea0), not part of this design.
 - **GPU nondeterminism.** The truncated-S run's final model may differ in the last bits from
   the banked S. Its snapshots are compared with the anchored cells, not with the banked S's
   weights.
