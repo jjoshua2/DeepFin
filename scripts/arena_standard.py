@@ -148,6 +148,12 @@ class _ArenaPause:
 _PAUSE = _ArenaPause()
 
 
+def _pause_record() -> dict[str, Any]:
+    """The result record's pause fields: a paused run's timing is not independent."""
+    return {"paused_seconds": _PAUSE.total, "pause_intervals": list(_PAUSE.intervals),
+            "timing_independent": not _PAUSE.intervals}
+
+
 def _arena_clock() -> float:
     """Wall-clock seconds minus time spent paused (``_ArenaPause``)."""
     return time.time() - _PAUSE.total
@@ -3675,6 +3681,9 @@ def run_arena(
     # scoped to this process rather than implying resumed games were reprobed.
     tb_probe: SyzygyProbe | None = None
     t0 = _arena_clock()
+    # Before any model is loaded or engine started: an arena launched under a
+    # pause marker puts nothing on the GPU until the marker is gone.
+    _PAUSE.hold()
     from chess_anti_engine.mcts.gumbel_c import buffer_full_flushes
     buffer_full_before = buffer_full_flushes()
     eval_max_batch_realised: int | None = None  # read off the hoisted evaluators below
@@ -4250,9 +4259,7 @@ def run_arena(
     # are valid searches at a different batching -- the same class of change
     # as a smaller target_batch, which the arena also only records. Readers
     # comparing arenas compare this field.
-    record["paused_seconds"] = _PAUSE.total
-    record["pause_intervals"] = list(_PAUSE.intervals)
-    record["timing_independent"] = not _PAUSE.intervals
+    record.update(_pause_record())
     record["buffer_full_flushes"] = int(buffer_full_flushes() - buffer_full_before)
     record["eval_max_batch_realised"] = eval_max_batch_realised
     # Which BYTES were played (paths alone cannot say): sha256 computed once at
