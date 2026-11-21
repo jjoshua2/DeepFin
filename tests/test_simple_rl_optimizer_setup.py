@@ -309,7 +309,8 @@ def test_accumulation_with_aurora_and_cosine_counts_optimizer_steps_and_keeps_th
     save_tiny_checkpoint(run / "gen_0000" / "model.pt")
     _write_generation(run, 1, 40)               # 40 rows: 5 micro-batches of 8, 3 optimizer steps of 16
     peak, floor = 1e-3, 1e-4
-    settings = TrainSettings(**{**AURORA, "lr": peak}, mirror_prob=0.0, batch_size=8, accum_steps=2,
+    kw: dict[str, Any] = {**AURORA, "lr": peak}
+    settings = TrainSettings(**kw, mirror_prob=0.0, batch_size=8, accum_steps=2,
                              holdout_frac=0.0, seed=1, lr_floor=floor, lr_schedule="cosine-phase")
     planned = planned_phase_updates(run, 1, settings)
     assert planned == 3
