@@ -129,7 +129,9 @@ def evaluate_generation(*, run_dir: Path, generation: int, candidate: Path, prev
         record = run_arena(cmd, out=out, log=out_dir / f"arena_{name}.log")
         results[name] = {"opponent": str(opponent), "score": record.get("score"), "elo": record.get("elo"),
                          "elo_ci95": record.get("elo_ci95"), "games": record.get("games", settings.games),
-                         "pentanomial": record.get("pentanomial")}
+                         "pentanomial": record.get("pentanomial"),
+                         # games scored as draws at the ply cap (arena --on-max-plies); None from an older arena
+                         "max_plies_unresolved": record.get("max_plies_unresolved")}
         ledger_rows.append({"generation": generation, "match": name, "candidate": str(candidate),
                             "opponent": str(opponent), "record": record})
     # Idempotent: this generation's rows replace any an interrupted attempt

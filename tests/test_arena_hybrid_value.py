@@ -131,7 +131,7 @@ def test_the_identity_hybrid_evaluates_exactly_like_the_plain_net(nets: dict[str
 def _input_shape(model: nn.Module) -> tuple[int, int, int]:
     from chess_anti_engine.encoding.model_inputs import encode_position_for_model
 
-    return tuple(encode_position_for_model(model, chess.Board()).shape)  # type: ignore[return-value]
+    return tuple(encode_position_for_model(model, chess.Board()).shape)
 
 
 def test_the_recalibration_reaches_the_evaluator_exactly(nets: dict[str, Path]) -> None:
@@ -319,3 +319,11 @@ def test_provenance_differences_name_a_changed_value_block() -> None:
         prov(block), prov({**block, "value_from": {"path": "v.pt", "sha256": "w" * 64, "files": []}}))
     assert arena.provenance_differences(prov(block), prov(None))
     assert arena.provenance_differences(prov(None), prov(None)) == []
+
+
+def test_an_explicit_pgn_name_on_a_hybrid_seat_still_gets_the_suffix(tmp_path: Path, nets: dict[str, Path]) -> None:
+    """Review of #1457: an explicit --pgn-candidate-name must not let a hybrid share a plain arm's name."""
+    _arena(tmp_path, nets, "named", value_candidate=SeatValue(recal=(0.5, -0.25)),
+           pgn_candidate_name="armX", pgn_reference_name="base")
+    names = {g.headers["White"] for g in _pgn_games(tmp_path / "named.pgn")}
+    assert names == {"armX+recal(0.5,-0.25)", "base"}
