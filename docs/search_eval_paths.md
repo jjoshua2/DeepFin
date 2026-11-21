@@ -136,10 +136,23 @@ So the default should **not** be switched on speed. A switch needs:
 
 Until then, classic Gumbel stays the validated default. Step 1+3 above makes B and C cheaper either way.
 
-Separate observation, the first search of a process (pool path, idle GPU; `idle/pvp_*`). Each run's first `go` is `opening_start` at movetime 5000. Compared with the same position at 100k nodes later in the run:
-- parent: −4.2% (r1) and −4.0% (r2);
-- #1440: −20.8% (r1) and −7.5% (r2).
+### 4.1 Measured on main (75d063c97, idle GPU, 2026-11-21)
 
-Every other middlegame/opening cell is within about ±2.5% on the parent. So the first search costs about 4% before #1440, and #1440 seems to have made it worse. Two rounds only, and #1440's endgame cells also swing ±8–20%, so the size is unsettled. This also qualifies the headline: the ×1.13 movetime-5000 geomean includes `opening_start` at ×0.905.
+**First search of a process: a fixed 60–100 ms, not CUDA-graph capture.**
+- Design: 5 fresh processes per arm, two passes of `go nodes 20000` over four positions, `ucinewgame` between gos. Banked under `engine-speed-profile/idle/fs_*`; the script is `scripts/run_firstsearch.sh`.
+- Pass-1 extra over pass 2 (median):
+  - pool with compile: +62 ms on the first search, +52 ms on the second;
+  - pool without compile: +131 ms;
+  - classic with compile: +98 ms, first search only;
+  - classic eager: not measurable in its noise.
+- It is present without compile, so it is not graph capture. It is not front-loaded at `go` either: in classic, the first info line at about 12k nodes is on time and the extra comes later in the search. That fits growth costs (tree arena, buffers, cache memory first reaching a size) rather than a one-off init. The cause is not isolated further.
+- **The earlier −20.8% (#1440, r1, mt5000) cell did not reproduce, and is withdrawn.** A fixed 60–100 ms cannot be 20% of a 5 s search.
+- An `isready` warm-up (one throwaway search of about one real move's size) is **parked**.
+  - Launch condition: a time control where move 1 is ≤ 2 s, or evidence of a first-move loss.
+  - Acceptance: `scripts/run_firstsearch.sh` shows the pass-1 deficit gone.
 
-Startup already warms and verifies all 11 compiled batch shapes per device before `readyok`, so the cost is not compile-related (*cause unverified*; candidates: first touch of the tree arena and of the pool's per-buffer output arrays, which #1440 added, and the Python-side first use of the search loop). A pre-warm search at `isready` / `ucinewgame` (a few hundred visits from the start position, off the clock) would remove it if so. Measure with `engine-speed-profile/scripts/run_firstmove.sh` before building it.
+**Endgames forward about 35% fewer rows/s than middlegames.**
+- Per-search counters (#1453), pool `--devices cuda:0,cuda:0`, compile on, all standard positions at mt5000 and n100k. Banked: `engine-speed-profile/idle/evals_pool_main.{jsonl,summary.txt}`.
+- Middlegames and openings: about 17.3k evals/s (16.4–17.7k) at 87–98% unique leaves. That is the forward-bound rate of two workers on one GPU.
+- Endgames: 32–35k leaves/s but only 9.8k–12.1k evals/s, because only 28–38% of leaves are unique (terminal 45–65%, duplicate up to 27%).
+- **So the pool's next speed-up is per-leaf CPU/tree work in endgames, not the device.**
