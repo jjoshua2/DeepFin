@@ -612,7 +612,7 @@ def test_games_jsonl_keeps_each_games_move_list_in_uci_and_action_ids(
     action-id list under index_to_move."""
     import chess
 
-    from chess_anti_engine.moves.encode import index_to_move
+    from chess_anti_engine.moves.encode import index_to_move, move_to_index
     from chess_anti_engine.selfplay.opening import seed_board_from_line
 
     monkeypatch.setattr(collect_mod, "_open_stockfish", quiet_stockfish)
@@ -639,6 +639,12 @@ def test_games_jsonl_keeps_each_games_move_list_in_uci_and_action_ids(
             assert board.outcome() is None
             adjudicated += 1
     assert adjudicated == GAMES  # this fixture's quiet SF adjudicates every game
+    # the C board writes a pseudo-legal en passant square python-chess omits (here
+    # exd6 would leave the king in check): the same position, accepted
+    before = "1n2q1r1/1bppbkpp/r4p2/1K2Pn2/p5P1/PPN2P2/R1PBP1BP/3Q2NR b - - 3 18"
+    d7d5 = move_to_index(chess.Move.from_uci("d7d5"), chess.Board(before))
+    c_fen = "1n2q1r1/1bp1bkpp/r4p2/1K1pPn2/p5P1/PPN2P2/R1PBP1BP/3Q2NR w - d6 0 19"
+    assert collect_mod._uci_moves(before, [d7d5], c_fen) == ["d7d5"]
     # the writer refuses a move list that does not reach the game's final position
     g = games[0]
     with pytest.raises(ValueError, match="not the final"):

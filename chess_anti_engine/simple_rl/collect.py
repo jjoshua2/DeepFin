@@ -794,7 +794,10 @@ def _uci_moves(start_fen: str, actions: Any, final_fen: str) -> list[str]:
         move = index_to_move(int(a), board)
         out.append(move.uci())
         board.push(move)
-    if board.fen() != final_fen:
+    # Compare python-chess's normal form on both sides: the C board writes an en
+    # passant square whenever a capture is pseudo-legal, python-chess only when it
+    # is legal (a pinned or checked capturer), so the raw strings can differ.
+    if board.fen() != chess.Board(final_fen).fen():
         raise ValueError(f"played moves from {start_fen!r} reach {board.fen()!r}, not the final {final_fen!r}")
     return out
 
@@ -1046,7 +1049,7 @@ def _play_proc(spec: ProcSpec) -> dict[str, Any]:
             "book": int(row["book"]), "moves": [int(m) for m in audit.played_move_indices], "uci": uci,
             "result": audit.result, "resolution": audit.resolution,
             "total_plies": int(audit.total_plies), "start_ply": int(audit.start.start_ply),
-            "rows": len(samples), "mate": bool(final.is_checkmate()), "final_fen": audit.final_fen,
+            "rows": len(samples), "mate": bool(final.is_checkmate()), "final_fen": final.fen(),
             "tb_policy_rows": sum(1 for s in samples if int(s.ply_index) in tb_plies),
             "cap_reached": bool(audit.cap_reached),
         })

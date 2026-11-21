@@ -424,7 +424,8 @@ still match it). An unfinished process resumes at game granularity:
   each games.jsonl line records, with the game's moves), in doled order.
 - **The move-list record.** Each games.jsonl line carries the game's played
   moves twice: `moves` (action ids, 4672 space) and `uci` (the same moves as
-  UCI, replayed from the game's opening line), plus `final_fen`. The writer
+  UCI, replayed from the game's opening line), plus `final_fen` (python-chess
+  normal form: an en passant square only when the capture is legal). The writer
   refuses a list that does not reach `final_fen`. `uci` and `final_fen` are
   write-only (no rows change: the shard content digest is the same with and
   without them); `moves` is also read by the resume repair, which checks
@@ -451,6 +452,23 @@ still match it). An unfinished process resumes at game granularity:
   The repair reads only complete journal lines (a torn tail is dropped and the
   journal rewritten atomically before anything is appended), and a journal
   entry that disagrees with a committed game's move is refused.
+- **How exact a resume is.** A replay is exact up to the first process-wide
+  tree reset and evaluation float noise. Both are history noise, not selection.
+  The search tree is shared by every game in a process and is emptied when it
+  passes 500,000 nodes (`manager.py`, `node_count() > 500_000`). The reset's
+  timing depends on every game in the process. It drops tree reuse for all
+  slots at once, and it removes the transposition donors a later search could
+  have reused. A resumed process resets at different moments, so its games can
+  part from the uninterrupted run's at the next ply a reset touches. The same
+  coupling exists in every collect: games in one process are not independent
+  draws.
+  - Measured 2026-11-21 on CPU, 800 games, K=2, 128 slots. Evaluation was padded
+    to a fixed batch, tree reuse was off, and the tree was emptied before every
+    search (all harness-only). Under those conditions a resumed collect matched
+    the uninterrupted one in every game: 800 of 800 byte-identical. One row of
+    118,478 differed, in one child's Q only.
+  - Without those harness changes, the in-flight games came back +10.5 ± 4.7
+    plies longer (n = 516). The no-forcing mutant gave −62.5 ± 9.4 plies.
 - `procs/<k>/resumes.json`, then the manifest's `game_resumes` and each process
   record's `resumes`, list per attempt: the kept and replayed opening ids, the
   replayed dole indices and `replayed_share`, kept games, shards and rows, and
