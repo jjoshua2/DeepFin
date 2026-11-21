@@ -819,6 +819,36 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
   stage is redone whole) instead of skipping an update whose rows were already
   consumed.
 - `--lr-floor` defaults to `--lr` (flat after warmup).
+- **Reproducing the SL base's optimizer setup on a FRESH optimizer:**
+  `--optimizer aurora --optimizer-hparams-source init-checkpoint`. Every Aurora
+  knob, the matrix LR multiplier, both weight decays, the clip mode
+  (`--grad-clip`, zclip on the SL base) and the matrix scope are read from the
+  init checkpoint's saved optimizer (the gen-0 copy once sealed). The scope is
+  derived from the checkpoint's `opt_param_names` manifest: the one canonical
+  scope whose filter selects exactly its matrix groups (`mlp_out` for the SL
+  base). An explicit `--matrix-optimizer-scope` that builds a different split is
+  refused. At train time the BUILT groups' parameter names and sizes must equal
+  the checkpoint's, group by group, or the phase is refused
+  (`config.realised.optimizer.built_split_matches_init_checkpoint`). An explicit
+  knob (`--matrix-lr-multiplier`, `--matrix-weight-decay`, `--aux-weight-decay`,
+  `--aurora-pp-iterations`, `--aurora-pp-beta`, `--aurora-polar-steps`,
+  `--aurora-polar-method`, `--aurora-polar-dtype`, `--zclip-max-norm`) wins and
+  is recorded under `optimizer_hparams_resolved.explicit`. `--lr` is the
+  AdamW groups' rate and the matrix group runs at `--lr` × the multiplier.
+  The SL base STARTED at `--lr 3e-5` (matrices 6e-4) and ENDED at 3e-6
+  (matrices 6e-5); its saved groups are the end values. The train manifest
+  records the realised group table, `zclip_initialized` and `zclip_buffer_len`
+  at phase end (zclip does nothing before its 25 warm-up norms, so those two
+  fields are the direct evidence it clipped).
+- `--lr-schedule cosine-phase` decays each phase from `--lr` to `--lr-floor`
+  over its planned optimizer updates, restarted each phase. The floor is per
+  group: `--lr-floor` × group base / `--lr`, so the matrix group keeps its ×20
+  ratio throughout (6e-4 → 6e-5 for `--lr 3e-5 --lr-floor 3e-6`). The Trainer
+  steps the scheduler after each update from the update count, so updates 0 and
+  1 both run at the peak and the last update sits one position short of the
+  floor. It needs fresh optimizer state and the exact-once schedule. `flat`
+  (the default) keeps the peak. A phase resumed from a snapshot continues the
+  same cosine.
 - `--kl-policy` / `--kl-wdl` add KL(reference‖student) on legal-move policy and on
   WDL; the reference defaults to generation 0 (`--kl-reference`).
 - Value target: `--value-outcome-weight a --value-search-weight b` trains WDL on
