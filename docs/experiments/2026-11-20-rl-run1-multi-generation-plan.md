@@ -1,7 +1,7 @@
 # RL run 1: a measured multi-generation self-play run from the SL base (plan)
 
 **Amended (draft):** [count games, not rows](2026-11-21-rl-run1-amendment-games-not-rows.md)
-proposes replacing Stage 1 below with a variance-vs-shape pilot and one large generation
+proposes replacing Stage 1 below with a value-shape / policy-dose pilot and one large generation
 read as a dose-response curve in games. Until the owner decides, both are drafts.
 
 **Status:** DRAFT for owner approval. Nothing has been launched. No stage below
