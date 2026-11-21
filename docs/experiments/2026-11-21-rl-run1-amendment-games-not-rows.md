@@ -1,7 +1,8 @@
-# RL run 1 amendment: count games, not rows (DRAFT)
+# RL run 1 amendment: count games, not rows
 
-**Status:** DRAFT, awaiting the owner's decisions ([below](#decisions-for-the-owner)).
-Nothing has been launched. Code base: main at 75d063c97, where #1447
+**Status:** merged (#1452, `d3be0f4e1`). This is the registered rule set the pilot was judged by: the pilot (Step 1)
+launched and was read on 2026-11-21 ([results](2026-11-21-rl-run1-pilot-results.md)). Step 2 onward awaits the owner's
+decisions ([below](#decisions-for-the-owner)). When this record was written, nothing had been launched. Code base: main at 75d063c97, where #1447
 (`--accum-steps`, `--snapshot-rows`) and #1446 (offline retarget) are merged; #1441,
 #1444 and #1445 are open. This amends
 [RL run 1](2026-11-20-rl-run1-multi-generation-plan.md): it replaces that plan's
