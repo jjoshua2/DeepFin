@@ -76,6 +76,12 @@ class SearchConfig:
     # this either. False = off and bit-identical.
     # Rationale: mcts.gumbel.GumbelConfig.target_untempered_prior.
     gumbel_target_untempered_prior: bool = False
+    # Full-width first round at the root: every unvisited legal root child is
+    # evaluated once before sequential halving, and the topk candidates are
+    # chosen with sigma(q) from those evaluations. The round-0 simulations are
+    # spent on top of `simulations` and counted in the row's search_budget.
+    # False = off and bit-identical. Rationale: mcts.gumbel.GumbelConfig.root_full_width.
+    gumbel_root_full_width: bool = False
     # lc0's PolicyTemperature for SELFPLAY search: the policy-head logits are
     # divided by this before they seed the tree, at the root AND at every leaf
     # (mcts.gumbel.apply_policy_temp, shared by the Python and C paths).

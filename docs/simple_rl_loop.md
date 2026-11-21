@@ -276,7 +276,12 @@ so reuse is effectively off at, for example, 8 sims / topk 16.
 played, and stores no policy target (a value-only row with `--fast-value-rows`,
 otherwise no row). Every net-turn row records `search_budget`; `stats.json` counts
 rows by budget. `search_budget` is the budget the ply was given, not the visits it
-spent. A root proven solved mid-search stops early and keeps its statistics, which
+spent. With `--root-full-width` (`GumbelConfig.root_full_width`, default off) every
+unvisited legal root child is evaluated once before sequential halving and the
+`--topk` candidates are chosen by gumbel + prior + sigma(q) from those evaluations;
+those round-0 simulations come on top of `--sims` and are added to `search_budget`,
+and `stats.json` reports `mean_root_visited_children` against
+`mean_root_support_children` (equal with the flag on). A root proven solved mid-search stops early and keeps its statistics, which
 still rebuild its target. On the SL base's real-net smoke this was 132 of 11,823
 rows, all with |survivor Q| = 1.
 

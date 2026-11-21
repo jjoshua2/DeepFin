@@ -69,6 +69,7 @@ class CollectSettings:
     target_q_rescale: bool = True
     policy_temp: float = 1.0
     target_untempered_prior: bool = False
+    root_full_width: bool = False
     vloss_weight: int = 1
     temp_start: float = 0.5
     temp_floor: float = 0.1
@@ -176,6 +177,7 @@ def build_configs(settings: CollectSettings, arch: dict[str, Any], starts_path: 
         gumbel_target_q_rescale=bool(settings.target_q_rescale),
         gumbel_policy_temp=float(settings.policy_temp),
         gumbel_target_untempered_prior=bool(settings.target_untempered_prior),
+        gumbel_root_full_width=bool(settings.root_full_width),
         gumbel_vloss_weight=int(settings.vloss_weight),
         gumbel_scale=float(settings.root_noise_scale),
         gumbel_scale_after=float(settings.root_noise_after),
@@ -1578,6 +1580,9 @@ class PolicyStatsAccumulator:
         self.value_n = dict.fromkeys((*self._VALUE_KEYS, "gap"), 0)
         self.sv_sum = 0.0
         self.sv_reused = 0
+        self.n_width = 0
+        self.support_sum = 0
+        self.visited_sum = 0
         self.n_pol_root = 0
         self.prior_entropy_sum = 0.0
         self.kl_sum = 0.0
@@ -1613,6 +1618,13 @@ class PolicyStatsAccumulator:
             sv = np.asarray(arrays["root_start_visits"], dtype=np.float64)[has]
             self.sv_sum += float(sv.sum())
             self.sv_reused += int((sv > 0).sum())
+        if "root_child_visits" in arrays:
+            # Root width, the observation `root_full_width` must move: with it on,
+            # every searched child has a visit (visited == support).
+            rcv = np.asarray(arrays["root_child_visits"])[has]
+            self.n_width += int(rcv.shape[0])
+            self.support_sum += int((rcv >= 0).sum())
+            self.visited_sum += int((rcv > 0).sum())
         has &= policy_rows
         if not has.any():
             return
@@ -1650,6 +1662,9 @@ class PolicyStatsAccumulator:
                                                  if self.value_n["gap"] else math.nan)
         if "root_start_visits" in self.present:
             out.update(mean_root_start_visits=self.sv_sum / self.n_root, reused_root_share=self.sv_reused / self.n_root)
+        if self.n_width:
+            out.update(mean_root_support_children=self.support_sum / self.n_width,
+                       mean_root_visited_children=self.visited_sum / self.n_width)
         if not self.n_pol_root:
             return out
         out.update(prior_entropy=self.prior_entropy_sum / self.n_pol_root, kl_target_prior=self.kl_sum / self.n_pol_root,

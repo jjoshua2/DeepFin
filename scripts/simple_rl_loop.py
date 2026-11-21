@@ -150,7 +150,8 @@ def collect_settings(a: argparse.Namespace) -> CollectSettings:
         games=a.games, concurrency=resolve_collect_shape(a)[1], sims=a.sims, full_prob=a.full_prob, fast_sims=a.fast_sims,
         fast_value_rows=a.fast_value_rows, tree_reuse=not a.no_tree_reuse, topk=a.topk, c_scale=a.c_scale,
         c_visit=a.c_visit, target_q_rescale=not a.no_target_q_rescale, policy_temp=a.policy_temp,
-        target_untempered_prior=a.target_untempered_prior, vloss_weight=a.vloss_weight,
+        target_untempered_prior=a.target_untempered_prior, root_full_width=a.root_full_width,
+        vloss_weight=a.vloss_weight,
         temp_start=a.temp_start, temp_floor=a.temp_floor, temp_decay_plies=a.temp_decay_plies,
         root_noise_scale=a.root_noise, root_noise_after=a.root_noise_after,
         root_noise_decay_start_move=a.root_noise_decay_start_move,
@@ -343,7 +344,9 @@ ADDED_SINCE_PINNING = {"init_optimizer_state": "fresh",
                        # Every collect before --collect-procs ran as one process.
                        "collect_procs": 1, "accum_steps": 1, "snapshot_rows": None,
                        # Every run before --value-rows-per-game trained the value on every row.
-                       "value_rows_per_game": 0}
+                       "value_rows_per_game": 0,
+                       # Every run before --root-full-width searched the plain topk root.
+                       "root_full_width": False}
 
 
 def _pinned_value(path: Path, key: str, legacy: Any) -> Any:
@@ -646,6 +649,10 @@ def _common(p: argparse.ArgumentParser) -> None:
                    help="stored target uses sigma in absolute Q units (GumbelConfig.target_q_rescale=False)")
     c.add_argument("--policy-temp", type=float, default=1.0, help="search prior temperature (gumbel_policy_temp)")
     c.add_argument("--target-untempered-prior", action="store_true")
+    c.add_argument("--root-full-width", action="store_true",
+                   help="evaluate every unvisited legal root child once before sequential halving and choose the "
+                        "--topk candidates with sigma(q) (GumbelConfig.root_full_width); the round-0 simulations "
+                        "are spent on top of --sims and counted in search_budget")
     c.add_argument("--vloss-weight", type=int, default=1)
     c.add_argument("--temp-start", type=float, default=0.5, help="move temperature on the first ply after the book")
     c.add_argument("--temp-floor", type=float, default=0.1)

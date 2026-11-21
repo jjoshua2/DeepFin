@@ -280,6 +280,17 @@ def assert_python_path_can_run(cfg: GumbelConfig, *, where: str) -> None:
     volatility-forced reroute. That matters because the volatility route is the
     one that fires on a machine where everything else works.
     """
+  # `root_full_width` is C-runner only too, but deliberately NOT in
+  # C_ONLY_GUMBEL_KNOBS: that set also makes `validate_gumbel_config` refuse
+  # the knob at every eval boundary, and the arena's `--search-shape training`
+  # must be able to carry it. The Python reference search has no round 0, so
+  # it refuses here instead of running a narrower search than the record names.
+    if bool(cfg.root_full_width):
+        raise ValueError(
+            f"{where}: root_full_width is read by run_gumbel_root_many_c only; the "
+            "Python reference search has no full-width round 0 and would run the "
+            "plain topk search. Route to the C path or turn it off."
+        )
     offenders = c_only_knobs_set(cfg)
     if not offenders:
         return
@@ -462,6 +473,17 @@ class GumbelConfig:
   # Gumbel descent below the root, which is what BOTH paths run and the only
   # thing the Python path can run.
     full_tree: bool = True
+  # Full-width first round at the root (default False = off, bit-identical).
+  # True = before sequential halving, every searched legal root child that has
+  # no visits yet gets exactly one simulation (one evaluation each, batched),
+  # and the topk candidates are then chosen by gumbel + log prior + sigma(q)
+  # using those evaluations (the Gumbel paper's rule once all actions have a
+  # Q) instead of gumbel + log prior alone. The halving schedule over the
+  # candidates is unchanged and still spends `simulations`; the round-0
+  # simulations are spent ON TOP and counted (RootSearchStats.prelude_visits,
+  # the row's search_budget, root_child_visits). Read by the C runner only
+  # (`run_gumbel_root_many_c`); the Python reference search refuses it.
+    root_full_width: bool = False
     add_noise: bool = True  # Backward-compatible gate; use gumbel_scale for partial noise.
     gumbel_scale: float = 1.0
     input_history_encoding: str = LC0_HISTORY_LEGACY

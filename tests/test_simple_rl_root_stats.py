@@ -214,6 +214,39 @@ def test_tree_reuse_flag_controls_inherited_visits(tmp_path: Path, monkeypatch: 
     assert stats["reused_root_share"] > 0.3
 
 
+def test_root_full_width_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Through collect -> play_batch -> finalize -> shard: with --root-full-width
+    every searched root child holds a visit, the row's search_budget counts the
+    round-0 simulations on top of --sims, and stats.json reports the width.
+    Mutant: network_turn ignoring prelude_visits -> visits exceed start + budget."""
+    on = _collect(tmp_path, "fw", monkeypatch, root_full_width=True)
+    off = _collect(tmp_path, "nofw", monkeypatch)
+    sims = 8
+    for d, full_width in ((on, True), (off, False)):
+        arrays, _ = load_generation_rows(d)
+        has = arrays["has_root_log_prior"].astype(bool)
+        rcv = arrays["root_child_visits"][has]
+        support = (rcv >= 0).sum(axis=1)
+        visited = (rcv > 0).sum(axis=1)
+        total = np.where(rcv >= 0, rcv, 0).sum(axis=1)
+        start = arrays["root_start_visits"][has].astype(np.int64)
+        budget = arrays["search_budget"][has].astype(np.int64)
+        stats = json.loads((d / "stats.json").read_text())
+        if full_width:
+            np.testing.assert_array_equal(visited, support)
+            assert (budget > sims).mean() > 0.9
+            # A root proven mid-search stops early; every other row spends its budget exactly.
+            assert (total <= start + budget).all()
+            assert (total == start + budget).mean() > 0.95
+            assert stats["mean_root_visited_children"] == pytest.approx(stats["mean_root_support_children"])
+        else:
+            assert (visited < support).any()
+            assert (budget == sims).all()
+            assert stats["mean_root_visited_children"] < stats["mean_root_support_children"]
+    manifest = json.loads((on / "manifest.json").read_text())
+    assert manifest["config"]["dataclasses"]["search"]["gumbel_root_full_width"] is True
+
+
 def test_playout_cap_records_the_budget_and_stores_policy_only_at_full(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     out = _collect(tmp_path, "pcr", monkeypatch, sims=12, full_prob=0.5, fast_sims=4, fast_value_rows=True,

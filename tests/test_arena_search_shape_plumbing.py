@@ -611,6 +611,9 @@ def test_every_config_driven_knob_reaches_the_arena_or_is_provably_inert() -> No
         # either -- and is carried into the training shape anyway, for
         # the `live_and_unpinned` clause below to re-prove.
         "gumbel_target_untempered_prior",
+        # Search-shape knob the arena CAN see: the full-width root round changes
+        # which candidates halving searches, so it moves the played move too.
+        "gumbel_root_full_width",
         # Direct-caller research knobs of the simple RL loop (not yaml keys).
         # c_visit moves the descent and the root halving, so an arena CAN see
         # it; target_q_rescale is store-arm only. Both default to the
@@ -715,6 +718,9 @@ _EXPECTED_CARRIED_FIELDS = {
     "c_scale_root",
     "q_visit_exp_root",
     "full_tree",
+    # The full-width root round: a property of the training search (yaml
+    # `gumbel_root_full_width`), owned by neither arm, so both sides carry it.
+    "root_full_width",
     "volatility_q_scale",
     "volatility_fpu",
     "volatility_anchor",
@@ -833,6 +839,7 @@ def nondefault_production_config(monkeypatch: Any, tmp_path: Any) -> None:
         "gumbel_target_max_visit_cap": 5,
         "gumbel_target_untempered_prior": True,
         "gumbel_c_scale": 0.25,
+        "gumbel_root_full_width": True,
     })
     config = tmp_path / "nondefault-production.yaml"
     config.write_text(yaml.safe_dump(raw), encoding="utf-8")
@@ -861,7 +868,10 @@ def test_the_equality_check_is_not_vacuous_and_catches_a_dropped_knob() -> None:
     )
     # The fixture explicitly arms the two original regression cases; production
     # may use defaults without weakening this propagation check.
-    assert {"target_max_visit_cap", "target_untempered_prior"} <= set(live), (
+    # `root_full_width` is armed by the fixture too: the arena's
+    # `--search-shape training` must follow the yaml key, and the loop below
+    # proves dropping it would be seen.
+    assert {"target_max_visit_cap", "target_untempered_prior", "root_full_width"} <= set(live), (
         f"production no longer sets the two knobs the drift was found on; live "
         f"discriminating fields are {live}. If the yaml genuinely reverted them, "
         "update this pin -- but re-check that some other knob still discriminates."

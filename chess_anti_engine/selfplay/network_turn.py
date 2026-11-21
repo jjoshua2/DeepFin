@@ -316,6 +316,7 @@ def build_selfplay_gumbel_config(
         target_max_visit_cap=int(search.gumbel_target_max_visit_cap),
         target_untempered_prior=bool(search.gumbel_target_untempered_prior),
         target_q_rescale=bool(search.gumbel_target_q_rescale),
+        root_full_width=bool(search.gumbel_root_full_width),
         add_noise=True,
         gumbel_scale=1.0,
         input_history_encoding=game.input_history_encoding,
@@ -1476,7 +1477,10 @@ def _attach_root_stats(
         rec = records[-1]
         rec.root_stats = root_stats_list[j]
         rec.played_action = None if actions[j] is None else int(cast(int, actions[j]))
-        rec.search_budget = int(budgets[j])
+      # `root_full_width`'s round 0 is spent on top of the halving budget; the
+      # runner reports what it realised (0 with the knob off).
+        stats = root_stats_list[j]
+        rec.search_budget = int(budgets[j]) + (0 if stats is None else int(stats.prelude_visits))
 
 
 __all__ = [
