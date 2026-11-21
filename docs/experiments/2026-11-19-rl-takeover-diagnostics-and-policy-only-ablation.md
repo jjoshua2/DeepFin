@@ -41,9 +41,18 @@ cycle-1 learner bit-exactly. Measured on 4,735 held-out cycle-2 rows, one cycle
 | Arm (same rows, same order) | Policy KL from SL base | mean abs value change (Q = W−L, in [−1, 1]) |
 |---|---:|---:|
 | Real F12 update | 0.039 | 0.075 |
-| Policy only (`w_wdl` = 0) | not separately reported | 0.020 |
+| Policy only (`w_wdl` = 0) | 0.038 | 0.020 |
+| Value only | 0.017 | 0.092 |
+| Self-target (the SL base's own outputs as targets) | 0.00006 | 0.010 |
 | Value labels shuffled | 0.043 | 0.34 |
 | Zero loss | 0 | 0 |
+
+*Corrected 2026-11-21 (PR #1452):* the policy-only KL was banked
+(`rl-audit/check6_policyonly.json`: `KL(A39||model)_policy` 0.0384), and the
+value-only (`check6_valueonly.json`: KL 0.0171, mean |ΔQ| 0.0916) and self-target
+(`check6_selftarget.json`: KL 5.8e-5, |ΔQ| 0.0103) arms were banked but omitted.
+The value-only arm moves the policy (KL 0.017) without a policy loss: the trunk
+carries the value update into the policy, as P1 shows the reverse.
 
 The policy-only arm fits the stored targets as well as the real update (held-out
 CE 0.9368 vs 0.9374). A second order/mirror seed lands at KL 0.0008 from the first, so the update is a

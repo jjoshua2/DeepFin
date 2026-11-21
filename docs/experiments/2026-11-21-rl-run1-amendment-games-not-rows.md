@@ -7,8 +7,12 @@ Nothing has been launched. Code base: main at d678f97ed, where #1447
 [RL run 1](2026-11-20-rl-run1-multi-generation-plan.md): it replaces that plan's
 Stage 1 (four policy-target cells on one ~100k-row collection) with a **pilot that
 separates value-row variance from value-target shape** followed by **one large generation read as a dose-response curve whose x-axis
-is games**. The plan's Stage 0b rulers, its scorer (#1448) and its BT4 / Ceres / SF
-ruler columns stay, as report-only columns.
+is games**. The BT4 / Ceres / SF ruler columns stay, as report-only columns.
+Neither raw ruler validated (the plan's positive control fails on BT4 raw and C3
+raw, `rl-run1-prereq/a1_poscontrol_score.json`); the offline policy ruler is the
+deep-SF regret on the leak-free rows, and value has no offline ruler (matches
+only). This PR also corrects plan and takeover-record statements that later banked
+evidence overtook ([below](#corrections-to-the-plan-and-the-takeover-record)).
 
 Every number below is either read from a named bank file, derived (the arithmetic is
 shown), or marked **guess**. Bank paths are relative to
@@ -136,7 +140,9 @@ cp-logistic slope 0.006; script `search-compose/value_prescreen.py`):
 T1 (registered in `search-compose/PREREG.md`, temperature 0, 1 sim, P1 c12 vs the
 base, both orientations, 800 games each; `search-compose/results/pool_t0s1_P1.json`):
 **+80.9 [+60.3, +102.1]** and **+77.3 [+56.7, +98.4]** (orientation B, sign
-flipped). The ~240k rows moved the raw policy by about +79 Elo at 1 sim; the gain
+flipped); pooled **+79.1 [+59.7, +98.9]**, "SUPPORTED by the registered rule"
+(`search-compose/PREREG.sha256.addendum`, addendum 5). The ~240k rows moved the
+raw policy by about +79 Elo at 1 sim; the gain
 does not survive 64-sim search with the trained value (above).
 
 ### The owner's objection, verbatim
@@ -356,7 +362,8 @@ G_i games.
   readout; a curvature term is reported, not tested).
 - **Match cost:** 6 × 800 = 4,800 games ≈ 1.2–4.2 GPU-h; arena share of the
   experiment ≈ 9–25% (of 12 h collect + < 0.5 h train + 1.2–4.2 h matches).
-- **Secondary:** offline scorer (#1448) and the value pre-screen on every snapshot;
+- **Secondary:** deep-SF regret on the leak-free rows (the scorer, #1448) and the
+  value pre-screen on every snapshot, report only;
   temperature-0 1-sim reads of every snapshot beside the searched curve, so the
   raw-policy and searched curves sit side by side. BT4 / Ceres / SF ruler columns
   are report-only.
@@ -405,3 +412,19 @@ pilot's measured rates.
   Z-2 − Z-all and S-all − Z-all match differences; the curve's slope), the
   thresholds above and the recovery plan (the SL base is never overwritten; every
   cell is a new run directory).
+
+## Corrections to the plan and the takeover record
+
+Statements overtaken by later banked evidence (found by the evidence-log audit,
+PR #1451), each re-read from its source and corrected in place:
+
+| Was | Now | Source |
+|---|---|---|
+| Interim deep-SF table (n = 127): R64 16.3 cp beats no-rescale 25.5; stored 25.2; base 42.6; P1 c12 29.5 | Final leak-free labels (n = 2,433): R64 24.3, no-rescale 23.2, stored 22.8, base 44.6, P1 c12 38.6; "no-rescale is worse than rescaled R64" does not survive | `search-compose/logs/sf_parse_final.txt` |
+| "T1 not read" | Read: +79.1 [+59.7, +98.9], supported | `search-compose/PREREG.sha256.addendum`, addendum 5 |
+| "The local lc0 builds are CPU-only" | A CUDA lc0 build exists and is smoked with tablebases; Ceres with its own C3 net likewise | `~/local_engines/lc0-0.32.1-cuda/smoke_gpu.json`, `~/local_engines/ceres-0cb57d8/smoke_gpu.json` |
+| Learner screen arms N1024 / N4096 / N4096L | Replaced by N256 / A512 / A2048 / N512 (addendum 6), now deprioritised | addendum 6 |
+| Softening control "still running" | Never produced a game | `raw-net-1sim/BASE_cand_s64_pt1.5.log` and `BASE_ref_s64_pt1.5.log` stop at opening sampling; no games file |
+| Ruler validation pending | Positive control fails on both raw rulers: BT4 raw +0.0074 [−0.0117, +0.0265], C3 raw +0.0181 [−0.0019, +0.0381]; neither validates. Offline ruler: deep-SF regret (policy); none for value | `rl-run1-prereq/a1_poscontrol_score.json` |
+| Takeover D2: policy-only KL "not separately reported"; value-only and self-target arms omitted | Policy only 0.0384; value only KL 0.0171, mean abs ΔQ 0.0916; self-target KL 5.8e-5, mean abs ΔQ 0.0103 | `rl-audit/check6_policyonly.json`, `check6_valueonly.json`, `check6_selftarget.json` |
+| "96.8 rows per game" (unsourced) | 95.0 (`collect-throughput/bench_c128` manifest, 48,641 / 512); F12's 12 cycles 104.7 | the manifests and draw journals named above |
