@@ -535,6 +535,9 @@ after the pilot reads, in their own record.
 
 ## Before the pilot
 
+**Superseded for execution by the [launch record](2026-11-21-rl-run1-pilot-launch-record.md)**, which drops #1444 from the
+prerequisites, re-measures the match costs, and adds the max-plies and adoption rules. Where they differ, the launch record wins.
+
 - The only prerequisite code: the tested `--candidate-value-from` /
   `--candidate-value-recal` arena option with its identity and swapped-W/L controls
   (above); the loader-RAM PR is a merge prerequisite for the training step. Step 3
