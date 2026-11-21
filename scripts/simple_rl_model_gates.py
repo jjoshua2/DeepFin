@@ -70,14 +70,15 @@ def run_holdout_frac(run_dir: Path, generation: int) -> float:
 
 def heldout_rows(run_dir: Path, generation: int, holdout_frac: float) -> dict[str, np.ndarray]:
     """Generation g's held-out rows exactly as learn.load_window selects them."""
-    from chess_anti_engine.simple_rl.collect import load_generation_rows
-    from chess_anti_engine.simple_rl.learn import TRAIN_KEYS, _select, holdout_mask
+    from chess_anti_engine.simple_rl.collect import load_generation_rows_where
+    from chess_anti_engine.simple_rl.learn import TRAIN_KEYS, holdout_mask
 
     collect = Path(run_dir) / f"gen_{int(generation):04d}" / "collect"
     if not (collect / "manifest.json").is_file():
         raise SystemExit(f"{collect} is not sealed")
-    arrays, meta = load_generation_rows(collect, keys=TRAIN_KEYS)
-    return _select(arrays, holdout_mask(meta, holdout_frac))
+    # Only the held-out rows are ever held (one shard at a time), as load_window does.
+    arrays, _meta = load_generation_rows_where(collect, lambda m: holdout_mask(m, holdout_frac), keys=TRAIN_KEYS)
+    return arrays
 
 
 def retempered_heldout(model: Any, rows: dict[str, np.ndarray], temp: float, device: str) -> dict[str, Any]:
