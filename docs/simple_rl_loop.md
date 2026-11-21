@@ -95,6 +95,7 @@ The opening cursor lives in the collect manifests, so it rewinds with them.
   gen_0000/model.pt          generation-0 actor (copy of --init-checkpoint, or random init)
   gen_NNNN/collect/          shards/shard_*.zarr (+ .meta.npz row sidecar), games.jsonl,
                              starts.txt, stats.json, manifest.json
+                             (while unsealed also plan.json and procs/<k>/: see Collect processes)
   gen_NNNN/train/            model.pt (Trainer checkpoint: weights, optimizer, arch),
                              presented.npz (rows this phase presented), metrics.json, manifest.json,
                              snapshots/step_<k>/ (with --snapshot-updates; see Train snapshots)
@@ -131,7 +132,8 @@ continues, so no TRAIN line is reused until its book is used up; an exhausted
 book starts its next pass (a new permutation, logged). Passes are independent
 permutations, so a line played near the end of one pass can recur early in the
 next. A redo of a killed collect restarts from the previous generation's sealed
-cursor, so it picks the same lines.
+cursor, so it picks the same lines. The lines are drawn once per generation and
+split across the collect processes (Collect processes).
 `--opening-sampling independent` (the non-default alternative) redraws every
 generation, without replacement only within it.
 
@@ -330,6 +332,96 @@ about 5% as noise. These candidates were measured and not taken:
   identical rows. That is within noise, and it pins more VRAM.
 - **Memoising the rule-50 tablebase status per FEN:** an 11% hit rate and
   3,704 games/h, with identical rows.
+
+## Collect processes
+
+`--collect-procs K` runs the collect as K processes sharing the device. The
+default is 3 on CUDA and 1 on CPU; a run already pinned keeps its pinned value
+(1 for a run pinned before the flag existed), and an arm without the flag takes
+its source run's value. K = 1 is the same code path, run in the driver's own
+process.
+
+Why: the collect search is serial within a process (C tree walk, forward, wait,
+tablebase probes, C tree walk), because the collect carries persistent trees and
+a supplied tree turns the 2-group pipeline off (`gumbel_c.py`, play-path audit
+F5). One process therefore leaves the GPU about half idle, and raising
+`--concurrency` past 256 does not fill it. Several processes overlap one
+process's CPU work with another's forward.
+
+How a generation is split:
+- **Openings:** the generation's list is drawn exactly as for one process (the
+  cursor advances by `--games`). Process k plays the disjoint slice
+  `openings[k::K]`, so no line is played twice across processes beyond what the
+  book cycle itself repeats. The collect refuses to seal unless the openings
+  played equal the openings drawn.
+- **Seeds:** process k uses `seed_for(seed, "collect", g, "proc", k, "of", K)`.
+  K = 1 keeps the one-process seed `seed_for(seed, "collect", g)`, so a K = 1
+  collect has the same `--content-digest` as one made before the flag existed.
+- **Concurrency is per process:** each process runs `--concurrency` games at a
+  time, with its own evaluator (its own leaf-buffer cap) and its own Stockfish
+  pool.
+- **Merge:** each process writes `procs/<k>/shards`, `games.jsonl` and, last,
+  `done.json` (its seed, counts, evaluator record and buffer-full flushes). The
+  parent hard-links the shards into `shards/` in process order, renumbered, and
+  concatenates games.jsonl in process order. One manifest seals the collect;
+  `seeds.collect_procs` lists every process's seed and `stats.procs` every
+  process's record. The process directories are removed once the manifest is
+  written.
+- **Gates over the merge:** `buffer_full_flushes` is the sum over processes (any
+  flush refuses the seal). `eval_max_batch_realised` and `evaluator_mode` are the
+  processes' common value; if they disagree the field is null (`"mixed"` for the
+  mode), so G-C2 and G-C11 fail rather than report one process for all.
+  `cuda_graph_stats` counters are summed. `duplicate_game_ids` counts game ids
+  that occur more than once (ids are content hashes of opening, moves and
+  result, so only identical games share one; holdout membership is by game id).
+
+K is pinned. It sets every process's RNG stream and batch composition, so rows at
+K = 3 are not the rows at K = 1, and a changed K needs `--allow-config-change`.
+An arm must match its source's K (`reference.settings_diff`; a source sealed
+before the flag counts as 1). The distribution is argued equivalent, not
+identical: each game runs the same search, targets and sampling at any K; the
+collect gates (G-C1 to G-C11) are the check.
+
+Resume: `plan.json` records K, the per-process seeds and opening ids, the
+checkpoint sha256 and the settings. A killed collect whose plan is unchanged
+keeps every process that wrote `done.json` (and whose shards and games.jsonl
+still match it) and restarts the others from their own seed and openings. Any
+other unsealed attempt is redone whole.
+
+Process hygiene: children are spawned (never forked). Each child arms a
+parent-death signal against the driver, so a SIGKILL or SIGTERM of the driver
+kills it; the Stockfish engines a child starts carry the same guard against the
+child (`stockfish.uci._child_reap_guard`). A failing child, an exception or
+Ctrl-C in the driver stops the other children (SIGTERM, then SIGKILL after 10 s).
+Every process checks the run's STOP/PAUSE files and `--pause-marker`s before it
+plays; a blocked process makes the stage exit with the blocked code, keeping the
+finished processes.
+
+GPU memory: at the start the collect refuses, and never silently steps K down,
+when the GPU's free memory is below about 1.25 × (3.3 GiB + 0.98 GiB per 1,024
+leaf rows) per process. That is 9.0 GiB per process at `--concurrency` 128
+(27 GiB for K = 3), from the measured peaks below.
+
+Measured on 2026-11-20 on the RTX 5090, GPU otherwise idle (compute-process list
+recorded every 2 s): SL base, 64 sims, cap auto, 0 buffer-full flushes in every
+run. Each multi-process row is K independent collects with distinct seeds, run
+side by side, which is what `--collect-procs` launches.
+
+| setup | games/h | forwarded positions/s | GPU util mean | peak VRAM |
+|---|---|---|---|---|
+| 1 × 128 games | 2,881 | 5,282 | 46% | 8.7 GB |
+| 1 × 256 | 3,372 | 6,151 | 54% | 12.2 GB |
+| 1 × 512 | 3,355 | 6,047 | 53% | 29.9 GB |
+| 1 × 256, graph row cap 2,048 | 2,675 | 4,880 | 43% | 13.9 GB |
+| 2 × 128 | 4,546 | 8,435 | 78% | 16.2 GB |
+| 2 × 256 | 4,553 | 8,412 | 78% | 22.6 GB |
+| 3 × 128 | 5,021 | 9,262 | 87% | 21.9 GB |
+
+At 3 × 128, py-spy of one process puts 51% of its main thread in waiting on the
+GPU and 13% in launching forwards; tablebase probing (8%), the C search (6%),
+Stockfish labels (6%) and encoding (3%) are each small. The GPU is the
+bottleneck there, so moving any one CPU cost into C buys single-digit percent at
+most.
 
 ## Evaluator batch cap
 

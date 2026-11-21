@@ -60,7 +60,9 @@ def _result(run_dir: Path) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for g in (1, 2):
         stats = json.loads((run_dir / f"gen_{g:04d}" / "collect" / "stats.json").read_text())
-        out[f"collect{g}"] = {k: v for k, v in stats.items() if k not in _VOLATILE}
+        out[f"collect{g}"] = {k: v for k, v in stats.items() if k not in _VOLATILE and k != "procs_resumed"}
+        # Per-process records: everything but their own clocks.
+        out[f"collect{g}"]["procs"] = [{k: v for k, v in p.items() if k not in _VOLATILE} for p in stats["procs"]]
         summary = json.loads((run_dir / f"gen_{g:04d}" / "train" / "metrics.json").read_text())["summary"]
         out[f"train{g}"] = {k: summary[k] for k in ("losses", "heldout_before", "heldout_after",
                                                     "probe_vs_previous", "window_rows", "end_step")}
@@ -107,7 +109,8 @@ def test_resume_after_kills_is_identical(tmp_path: Path, monkeypatch: pytest.Mon
     with pytest.raises(Killed):
         simple_rl_loop.main(argv)
     assert calls["n"] == 1
-    assert (resumed / "gen_0002" / "collect" / "shards" / "shard_00000.zarr").exists()
+    # Each collect process writes under procs/<k>/ until the merge (K = 1 here).
+    assert (resumed / "gen_0002" / "collect" / "procs" / "00" / "shards" / "shard_00000.zarr").exists()
     assert not (resumed / "gen_0002" / "collect" / "manifest.json").exists()
     monkeypatch.setattr(shard_mod, "save_local_shard_arrays", real_save)
 
