@@ -972,9 +972,10 @@ def _build_replay_samples(
             # subsampling value rows by policy difficulty would both shrink
             # the fast-ply value multiplier and bias the kept rows toward
             # positions where the low-sim search disagreed with the prior.
-            if float(rec.sample_weight) < 1.0 and state.rng.random() > float(rec.sample_weight):
+            rng_i = state.rng_for(i) if getattr(state, "game_rngs", None) is not None else state.rng
+            if float(rec.sample_weight) < 1.0 and rng_i.random() > float(rec.sample_weight):
                 continue
-            if float(rec.keep_prob) < 1.0 and state.rng.random() > float(rec.keep_prob):
+            if float(rec.keep_prob) < 1.0 and rng_i.random() > float(rec.keep_prob):
                 continue
         if not row_has_policy and not keep_fast_plies:
             # Fast-ply (playout-capped) records are dropped by default. With

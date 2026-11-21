@@ -5,7 +5,7 @@ from dataclasses import asdict
 import logging
 import math
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import FIRST_COMPLETED, wait
 from typing import Any
 
@@ -269,7 +269,8 @@ def _finalize_completed_slots(
                 )
             state.finalized_arr[i] = 1
             state.games_completed += 1
-            if recycle and (continuous or state.games_started < target):
+            deal = getattr(state, "deal_fn", None)  # absent from lightweight state doubles
+            if recycle and (continuous or state.games_started < target) and (deal is None or deal()):
                 ordinal = state.games_started
                 state.recycle_slot(i)
                 if game_starts is not None:
@@ -364,6 +365,11 @@ def play_batch(
     fen_dole_queue: list[str] | None = None,
     fen_sf_refute_queue: list[str] | None = None,
     diff_focus_norm: DiffFocusNormalizer | None = None,
+    game_rng_base: int | None = None,
+    doled_game_indices: Sequence[int] | None = None,
+    game_journal: Callable[[list[dict[str, Any]]], None] | None = None,
+    forced_prefixes: Mapping[int, Sequence[Mapping[str, Any]]] | None = None,
+    deal_fn: Callable[[], bool] | None = None,
 ) -> tuple[list[ReplaySample], BatchStats]:
     """Play a batch of games.
 
@@ -418,6 +424,22 @@ def play_batch(
     mode. Finite calls still play exactly their requested target. The default
     1.0 preserves current scheduling; values above one provide independent
     network work while curriculum slots wait on asynchronous Stockfish moves.
+
+    ``game_rng_base`` / ``doled_game_indices`` (opt-in, the simple_rl collect):
+    per-game RNG streams. The k-th game drawn from ``fen_dole_queue`` is game
+    ``doled_game_indices[k]`` of the caller's list and draws every random number
+    from its own generator, seeded by (``game_rng_base``, that index), never from
+    ``rng``. A replayed opening then plays the game it would have played in an
+    uninterrupted call, up to floating-point differences of batched network
+    outputs. Requires a finite call in which every game is a doled selfplay game.
+
+    ``game_journal`` / ``forced_prefixes`` (opt-in, need per-game streams): the
+    move journal of a killable caller and the replay of games that were in flight
+    at a kill. See ``SelfplayState.game_journal``.
+
+    ``deal_fn`` (opt-in, finite mode): drain. While it returns False no finished
+    slot is refilled; the in-flight games finish and the call returns with the
+    games completed so far (fewer than ``target_games``).
 
     ``diff_focus_norm`` (opt-in, ``diff_focus_norm_shared``) is an already-built
     difficulty-scale estimator to ADOPT rather than build. The worker uses it to
@@ -490,6 +512,11 @@ def play_batch(
         fen_dole_queue=fen_dole_queue,
         fen_sf_refute_queue=fen_sf_refute_queue,
         diff_focus_norm=diff_focus_norm,
+        game_rng_base=game_rng_base,
+        doled_game_indices=doled_game_indices,
+        game_journal=game_journal,
+        forced_prefixes=forced_prefixes,
+        deal_fn=deal_fn,
     )
 
     strict_contract = (
@@ -514,8 +541,17 @@ def play_batch(
 
         # Continuous mode: stop_fn controls exit.  Finite mode: safety bound
         # lets us abort if something goes sideways and no game ever finalizes.
+        # One step moves every in-flight game one ply, so a game needs up to
+        # max_plies steps (plus finalization) and the target needs at most
+        # ceil(target / batch) waves of them. The older bound,
+        # target * (max_plies // 2 + 2), is below that whenever a slot plays more
+        # than two games' worth -- one game alone, or 3 games on 2 slots -- and the
+        # loop then ended with games unplayed. Unchanged wherever it sufficed.
         max_steps = (
-            2**62 if continuous else int(target) * (int(game.max_plies) // 2 + 2)
+            2**62 if continuous else max(
+                int(target) * (int(game.max_plies) // 2 + 2),
+                -(-int(target) // max(1, int(batch_size))) * (int(game.max_plies) + 4),
+            )
         )
         t_net = 0.0
         t_sf = 0.0

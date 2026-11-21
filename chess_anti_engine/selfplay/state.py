@@ -17,7 +17,7 @@ verbatim so extraction stays zero-cost. Capability handles are
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, overload
 
@@ -529,6 +529,56 @@ def _init_color_and_selfplay_arrays(
     return net_color_arr, selfplay_arr
 
 
+def _validate_per_game_streams(
+    *, game: GameConfig, opening: OpeningConfig, target: int, continuous: bool,
+    fen_dole_queue: list[str] | None, fen_sf_refute_queue: list[str] | None,
+    doled_game_indices: Sequence[int] | None,
+) -> None:
+    """Per-game RNG streams key every game by the index of the doled opening it
+    plays, so every game must be one: a finite call, all slots selfplay (a
+    curriculum roll or an SF opponent would draw from the shared stream), and
+    exactly one index per queued opening. The tablebase-adjudication roll also
+    draws from the shared stream, so it must be certain (fraction 1.0)."""
+    if continuous:
+        raise ValueError("per-game RNG streams need a finite play_batch")
+    if float(game.selfplay_fraction) != 1.0:
+        raise ValueError("per-game RNG streams need selfplay_fraction 1.0 (a curriculum game draws from the "
+                         "shared stream)")
+    if fen_sf_refute_queue:
+        raise ValueError("per-game RNG streams do not cover SF-refute openings")
+    if bool(game.syzygy_adjudicate) and float(game.syzygy_adjudicate_fraction) < 1.0:
+        raise ValueError("per-game RNG streams need syzygy_adjudicate_fraction 1.0 (the per-game tablebase-"
+                         "adjudication roll in recycle_slot draws from the shared stream)")
+    if fen_dole_queue is None or int(opening.opening_fen_dole_per_iter) <= 0 or not opening.opening_fen_list_path:
+        raise ValueError("per-game RNG streams need every game drawn from fen_dole_queue")
+    if doled_game_indices is None or len(doled_game_indices) != len(fen_dole_queue):
+        raise ValueError("per-game RNG streams need one doled_game_indices entry per queued opening")
+    if len(doled_game_indices) != int(target):
+        raise ValueError(f"per-game RNG streams: {len(doled_game_indices)} doled game indices for a target of "
+                         f"{target} games")
+
+
+def _unbound_game_rngs(n: int) -> list[np.random.Generator | None]:
+    return [None] * n
+
+
+def _index_forced_prefixes(
+    prefixes: Mapping[int, Sequence[Mapping[str, Any]]] | None,
+) -> dict[int, dict[int, dict[str, Any]]] | None:
+    """Forced prefixes by dole index then board ply; the highest ply is marked ``last``."""
+    if not prefixes:
+        return None
+    out: dict[int, dict[int, dict[str, Any]]] = {}
+    for index, entries in prefixes.items():
+        plies = {int(e["p"]): dict(e) for e in entries}
+        if len(plies) != len(entries):
+            raise ValueError(f"forced prefix of game {index} journals a ply twice")
+        if plies:
+            plies[max(plies)]["last"] = True
+            out[int(index)] = plies
+    return out
+
+
 def _fenlist_net_color(source: str, board: chess.Board, cfg: OpeningConfig) -> int | None:
     """Net color (1=white, 0=black) for a fenlist-seeded slot: the net faces the
     FEN's side to move — the seat that historically blundered. None when the slot
@@ -857,6 +907,35 @@ class SelfplayState:
     # Per-slot remaining SF opponent plies in an SF-refute game (0 = not active).
     sf_refute_opp_plies_left: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.int32))
 
+    # ── Per-game RNG streams (opt-in; the simple_rl collect) ─────────────────
+    # When ``game_rng_base`` is set, the k-th game drawn from ``fen_dole_queue``
+    # in this call is game ``doled_game_indices[k]`` of its caller's list, and
+    # EVERY random draw of that game (full/fast schedule, Gumbel noise, move
+    # temperature, row subsampling) comes from its own generator, seeded by
+    # (game_rng_base, that index) -- never from the batch-shared ``rng``. A game
+    # then plays the same moves whichever games share its batch and whenever it
+    # starts, up to floating-point differences of batched network outputs.
+    game_rng_base: int | None = None
+    doled_game_indices: list[int] | None = None
+    game_rngs: list[np.random.Generator | None] | None = None
+    games_doled: int = 0
+    slot_dole_index: list[int] = field(default_factory=list)
+    # Move journal (opt-in, needs per-game streams): ``game_journal(entries)`` is
+    # called once per network turn, BEFORE the moves are applied, with one entry
+    # per moving game: dole index ``i``, board ply ``p``, played action ``m``,
+    # full-search flag ``f`` and the game's stream state before (``s0``) and
+    # after (``s1``) the ply's draws. ``forced_prefixes`` maps a dole index to the
+    # journaled entries of a game that was in flight at a kill: those plies are
+    # replayed with the stream reset to ``s0``, ``f`` and ``m`` forced, and the
+    # stream set to ``s1`` after the last one, so the game continues as the
+    # original would have, with no re-draw of a game known to be long.
+    game_journal: Callable[[list[dict[str, Any]]], None] | None = None
+    forced_prefixes: dict[int, dict[int, dict[str, Any]]] | None = None
+    # Drain (opt-in): while ``deal_fn()`` is False, a finished slot is not
+    # refilled, so the in-flight games finish and the call returns early with
+    # fewer than ``target`` games. A game's inclusion is fixed when it is dealt.
+    deal_fn: Callable[[], bool] | None = None
+
     # ── Control counters (mutated by recycle_slot / main loop) ───────────────
     games_started: int = 0
     games_completed: int = 0
@@ -885,6 +964,11 @@ class SelfplayState:
         fen_dole_queue: list[str] | None = None,
         fen_sf_refute_queue: list[str] | None = None,
         diff_focus_norm: DiffFocusNormalizer | None = None,
+        game_rng_base: int | None = None,
+        doled_game_indices: Sequence[int] | None = None,
+        game_journal: Callable[[list[dict[str, Any]]], None] | None = None,
+        forced_prefixes: Mapping[int, Sequence[Mapping[str, Any]]] | None = None,
+        deal_fn: Callable[[], bool] | None = None,
     ) -> SelfplayState:
         """Build a ``SelfplayState`` from ``play_batch``'s arguments.
 
@@ -919,6 +1003,14 @@ class SelfplayState:
             if model is None:
                 raise ValueError("play_batch requires model or evaluator")
             evaluator = LocalModelEvaluator(model, device=device)
+        if (game_journal is not None or forced_prefixes) and game_rng_base is None:
+            raise ValueError("a move journal or forced prefixes need per-game RNG streams (game_rng_base)")
+        if game_rng_base is not None:
+            _validate_per_game_streams(
+                game=game, opening=opening, target=target, continuous=continuous,
+                fen_dole_queue=fen_dole_queue, fen_sf_refute_queue=fen_sf_refute_queue,
+                doled_game_indices=doled_game_indices,
+            )
 
         # Roll the selfplay/curriculum type FIRST so fenlist seeding can be gated on
         # it: with opening_fen_selfplay_only, curriculum slots never draw a seed, so
@@ -934,7 +1026,9 @@ class SelfplayState:
         sf_refute_opp_plies_left = np.zeros(batch_size, dtype=np.int32)
         refute_plies = max(0, int(opening.opening_fen_sf_refute_plies))
         starts = []
+        doled_before: list[bool] = []
         for i in range(batch_size):
+            queued = len(fen_dole_queue) if fen_dole_queue is not None else 0
             is_sp = bool(selfplay_arr[i])
             if is_sp:
                 refute = try_take_sf_refute_opening(
@@ -951,6 +1045,7 @@ class SelfplayState:
                     fen_dole_queue=fen_dole_queue,
                 )
             )
+            doled_before.append(fen_dole_queue is not None and len(fen_dole_queue) < queued)
         boards = [start.board for start in starts]
         opening_source_arr = [start.source for start in starts]
         # Use from_board (not from_raw) to preserve ply count + history from openings.
@@ -987,7 +1082,7 @@ class SelfplayState:
                 tb_probe, tb_result_arr, tb_adj_roll_arr = _init_tb_state(
                     batch_size, rng=rng, game=game,
                 )
-            return cls(
+            out = cls(
                 device=device,
                 rng=rng,
                 stockfish=stockfish,
@@ -1045,12 +1140,78 @@ class SelfplayState:
                 fen_sf_refute_queue=fen_sf_refute_queue,
                 sf_refute_opp_plies_left=sf_refute_opp_plies_left,
                 games_started=batch_size,
+                game_rng_base=game_rng_base,
+                doled_game_indices=None if doled_game_indices is None else [int(x) for x in doled_game_indices],
+                game_rngs=None if game_rng_base is None else _unbound_game_rngs(batch_size),
+                slot_dole_index=[-1] * batch_size,
+                game_journal=game_journal,
+                forced_prefixes=_index_forced_prefixes(forced_prefixes),
+                deal_fn=deal_fn,
             )
+            for i, doled in enumerate(doled_before):
+                if out.game_rng_base is not None:
+                    out._bind_game_rng(i, doled=doled)
+            return out
         except BaseException:
             if strict_tb is not None:
                 strict_tb.close()
             raise
 
+
+    def rng_for(self, i: int) -> np.random.Generator:
+        """The generator slot ``i``'s game draws from: its own under per-game
+        streams, else the batch-shared one."""
+        if self.game_rngs is not None:
+            g = self.game_rngs[i]
+            if g is None:
+                raise RuntimeError(f"slot {i} has no per-game generator")
+            return g
+        return self.rng
+
+    def game_rngs_for(self, idxs: Sequence[int]) -> list[np.random.Generator] | None:
+        """Per-game generators of ``idxs`` in order, or None under the shared stream."""
+        return None if self.game_rngs is None else [self.rng_for(i) for i in idxs]
+
+    def _bind_game_rng(self, i: int, *, doled: bool) -> None:
+        """Give slot ``i``'s new game its own generator, keyed by the caller's
+        index of the doled opening it just took (and its net colour by that
+        index's parity, as an uninterrupted call would assign it)."""
+        assert self.game_rng_base is not None
+        assert self.doled_game_indices is not None
+        assert self.game_rngs is not None
+        if not doled:
+            raise RuntimeError(f"slot {i} started a game that was not drawn from the doled openings; "
+                               "per-game streams key every game by its doled index")
+        if self.games_doled >= len(self.doled_game_indices):
+            raise RuntimeError("more doled games started than doled_game_indices lists")
+        index = int(self.doled_game_indices[self.games_doled])
+        self.games_doled += 1
+        self.slot_dole_index[i] = index
+        self.game_rngs[i] = np.random.default_rng(
+            np.random.SeedSequence(int(self.game_rng_base), spawn_key=(index,)))
+        col = _fenlist_net_color(self.opening_source_arr[i], self.boards[i], self.opening)
+        self.net_color_arr[i] = (1 if index % 2 == 0 else 0) if col is None else col
+
+    def forced_entry(self, i: int) -> dict[str, Any] | None:
+        """The journaled entry for slot ``i``'s current ply, if its game is being
+        replayed and this ply was journaled."""
+        if not self.forced_prefixes or not self.slot_dole_index:
+            return None
+        plies = self.forced_prefixes.get(self.slot_dole_index[i])
+        return None if plies is None else plies.get(int(self.cboards[i].ply))
+
+    def consume_forced_entry(self, i: int) -> None:
+        """Drop the entry slot ``i`` just replayed (and the game's prefix once empty)."""
+        if not self.forced_prefixes or not self.slot_dole_index:
+            return
+        index = self.slot_dole_index[i]
+        plies = self.forced_prefixes.get(index)
+        if plies is None:
+            return
+        # the board has not moved yet: the entry is the current ply's
+        plies.pop(int(self.cboards[i].ply), None)
+        if not plies:
+            del self.forced_prefixes[index]
 
     def net_color(self, i: int) -> chess.Color:
         """Return ``chess.Color`` for slot ``i``'s network-assigned color."""
@@ -1240,12 +1401,14 @@ class SelfplayState:
                 self.sf_refute_opp_plies_left[i] = max(
                     0, int(self.opening.opening_fen_sf_refute_plies),
                 )
+        queued = len(self.fen_dole_queue) if self.fen_dole_queue is not None else 0
         if opening_start is None:
             opening_start = resolve_slot_opening(
                 rng=self.rng, cfg=self.opening,
                 is_selfplay=bool(self.selfplay_arr[i]),
                 fen_dole_queue=self.fen_dole_queue,
             )
+        doled = self.fen_dole_queue is not None and len(self.fen_dole_queue) < queued
         self.boards[i] = opening_start.board
         self.opening_source_arr[i] = opening_start.source
         self.cboards[i] = _CBoard.from_board(self.boards[i])
@@ -1280,6 +1443,8 @@ class SelfplayState:
             self.sf_label_escalations[i] = 0  # Fresh per-game escalation budget.
         if i < len(self.resumed_from_disk):
             self.resumed_from_disk[i] = False  # This slot's game starts here.
+        if self.game_rng_base is not None:
+            self._bind_game_rng(i, doled=doled)  # after the colour above: the index decides it
         self.games_started += 1
 
     def close_tablebase(self) -> None:
