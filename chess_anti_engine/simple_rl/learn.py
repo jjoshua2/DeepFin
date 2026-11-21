@@ -67,6 +67,18 @@ MATRIX_OPTIMIZER_SCOPES = ("default", "block_all", "mlp_only", "mlp_out", "mlp_o
 # matrix group, SOAP's split); weight_decay_mode "soda" reads it too.
 SCOPED_OPTIMIZERS = ("aurora", "muon", "soap")
 MODEL_FILE = "model.pt"
+# Where unset optimizer knobs come from: "trainer" = the Trainer's constructor
+# defaults (the driver's historical behaviour); "init-checkpoint" = the
+# run's init checkpoint's saved param groups (and zclip on/off), resolved once
+# by resolve_optimizer_hparams and recorded.
+OPTIMIZER_HPARAM_SOURCES = ("trainer", "init-checkpoint")
+GRAD_CLIP_MODES = ("none", "zclip")
+# The Aurora knobs the driver passes to the Trainer when set. Each is read by
+# the Aurora optimizer only (matrix_lr_multiplier / the weight decays by the
+# Aurora and Muon splits); validate() refuses one that would be ignored.
+AURORA_KNOBS = ("aurora_pp_iterations", "aurora_pp_beta", "aurora_polar_steps", "aurora_polar_method",
+                "aurora_polar_dtype")
+SPLIT_KNOBS = ("matrix_lr_multiplier", "matrix_weight_decay", "aux_weight_decay")
 
 
 @dataclass(frozen=True)
@@ -150,6 +162,25 @@ class TrainSettings:
     # train/snapshots/step_<k>/ (weights-only model.pt + metrics.json) without
     # changing the training it is part of. See write_snapshot.
     snapshot_updates: tuple[int, ...] = ()
+    # Optimizer knobs (None = not set: from optimizer_hparams_source). The
+    # realised values are read back off the optimizer into the manifest
+    # (realised_optimizer: param_group_table, grad_clip).
+    optimizer_hparams_source: str = "trainer"
+    matrix_lr_multiplier: float | None = None
+    matrix_weight_decay: float | None = None
+    aux_weight_decay: float | None = None
+    aurora_pp_iterations: int | None = None
+    aurora_pp_beta: float | None = None
+    aurora_polar_steps: int | None = None
+    aurora_polar_method: str | None = None
+    aurora_polar_dtype: str | None = None
+    # Gradient clipping: None = "none" (the driver's historical setting) unless
+    # resolved from the init checkpoint; "zclip" = the Trainer's adaptive
+    # z-score clip (25-step EMA warmup), with an optional hard cap.
+    grad_clip: str | None = None
+    zclip_max_norm: float | None = None
+    # What resolve_optimizer_hparams filled in, and from where (recorded).
+    optimizer_hparams_resolved: dict[str, Any] | None = None
 
     def search_wdl_frac(self) -> float:
         total = float(self.value_outcome_weight) + float(self.value_search_weight)
@@ -185,6 +216,23 @@ class TrainSettings:
             raise ValueError(f"matrix_optimizer_scope {self.matrix_optimizer_scope!r} is read only by the "
                              f"{SCOPED_OPTIMIZERS} optimizers (or weight_decay_mode soda); with optimizer "
                              f"{self.optimizer!r} it would be ignored")
+        opt = str(self.optimizer).lower()
+        if self.optimizer_hparams_source not in OPTIMIZER_HPARAM_SOURCES:
+            raise ValueError(f"optimizer_hparams_source must be one of {OPTIMIZER_HPARAM_SOURCES}")
+        if self.optimizer_hparams_source != "trainer" and opt != "aurora":
+            raise ValueError("optimizer_hparams_source init-checkpoint reproduces an Aurora split; with optimizer "
+                             f"{self.optimizer!r} it would be ignored")
+        unread = [k for k in AURORA_KNOBS if getattr(self, k) is not None and opt != "aurora"]
+        unread += [k for k in SPLIT_KNOBS if getattr(self, k) is not None and opt not in ("aurora", "muon")]
+        if unread:
+            raise ValueError(f"{unread} are read only by the Aurora split (matrix knobs also by Muon); with "
+                             f"optimizer {self.optimizer!r} they would be ignored")
+        if self.grad_clip is not None and self.grad_clip not in GRAD_CLIP_MODES:
+            raise ValueError(f"grad_clip must be one of {GRAD_CLIP_MODES}, got {self.grad_clip!r}")
+        if self.zclip_max_norm is not None and self.realised_grad_clip() != "zclip":
+            raise ValueError("zclip_max_norm is read only with grad_clip zclip; it would be ignored")
+        if self.zclip_max_norm is not None and not float(self.zclip_max_norm) > 0:
+            raise ValueError(f"zclip_max_norm must be > 0, got {self.zclip_max_norm}")
         snaps = [int(k) for k in self.snapshot_updates]
         if snaps:
             if self.sample_with_replacement:
@@ -192,6 +240,9 @@ class TrainSettings:
                                  "sample_with_replacement")
             if snaps[0] < 1 or any(b <= a for a, b in itertools.pairwise(snaps)):
                 raise ValueError(f"snapshot_updates must be strictly increasing positive update counts, got {snaps}")
+
+    def realised_grad_clip(self) -> str:
+        return "none" if self.grad_clip is None else str(self.grad_clip)
 
     def own_rows_per_batch(self) -> int:
         """Self-play rows in a full exact-once batch (the rest is the SL share)."""
@@ -662,7 +713,9 @@ def trainer_kwargs(settings: TrainSettings) -> dict[str, Any]:
     floor = settings.lr if settings.lr_floor is None else settings.lr_floor
     return {
         "optimizer": settings.optimizer, "weight_decay_mode": settings.weight_decay_mode,
-        "matrix_optimizer_scope": settings.matrix_optimizer_scope, "grad_clip_mode": "none", "zclip_max_norm": None,
+        "matrix_optimizer_scope": settings.matrix_optimizer_scope,
+        "grad_clip_mode": settings.realised_grad_clip(), "zclip_max_norm": settings.zclip_max_norm,
+        **{k: getattr(settings, k) for k in (*AURORA_KNOBS, *SPLIT_KNOBS) if getattr(settings, k) is not None},
         "feature_dropout_p": 0.0, "fdp_king_safety": 0.0, "fdp_pins": 0.0, "fdp_pawns": 0.0,
         "fdp_mobility": 0.0, "fdp_outposts": 0.0, "resid_channel_dropout": 0.0,
         "resid_channel_balance_weight": 0.0, "rebuild_sf_targets": False, "sf_policy_sparse_ce": False,
@@ -732,9 +785,102 @@ def group_key_diff(configured: list[dict[str, Any]], checkpoint: list[dict[str, 
     return out
 
 
+# The per-group table that says which optimizer setup actually ran. Read off
+# the live param groups (never the flags); compared against a checkpoint's
+# saved groups by param_group_table_of.
+TABLE_KEYS = ("lr", "betas", "eps", "weight_decay", "aurora_momentum", "aurora_nesterov", "aurora_pp_iterations",
+              "aurora_pp_beta", "aurora_polar_steps", "aurora_polar_method", "aurora_polar_dtype",
+              "aurora_polar_safety", "aurora_uw_floor")
+
+
+def _group_class(g: dict[str, Any], optimizer_class: str) -> str:
+    if "use_aurora" in g:
+        return "aurora" if g["use_aurora"] else "adamw"
+    if "use_muon" in g:
+        return "muon" if g["use_muon"] else "adamw"
+    return optimizer_class
+
+
+def param_group_table_of(groups: list[dict[str, Any]], optimizer_class: str = "unknown") -> list[dict[str, Any]]:
+    """One row per param group: count, class and every TABLE_KEYS value present."""
+    return [{"params": len(g["params"]), "class": _group_class(g, optimizer_class),
+             **{k: _plain(g[k]) for k in TABLE_KEYS if k in g}} for g in groups]
+
+
+def param_group_table(trainer: Any) -> list[dict[str, Any]]:
+    return param_group_table_of(trainer.opt.param_groups, type(trainer.opt).__name__)
+
+
+def tables_match(a: list[dict[str, Any]], b: list[dict[str, Any]], *, rel_lr: float = 1e-6) -> list[str]:
+    """Differences between two param-group tables (lr compared at rel_lr)."""
+    if len(a) != len(b):
+        return [f"{len(a)} groups vs {len(b)}"]
+    out = []
+    for i, (x, y) in enumerate(zip(a, b, strict=True)):
+        for k in sorted(set(x) | set(y)):
+            u, v = x.get(k, "<absent>"), y.get(k, "<absent>")
+            same = (math.isclose(float(u), float(v), rel_tol=rel_lr, abs_tol=0.0)
+                    if k == "lr" and isinstance(u, float) and isinstance(v, float) else _close(u, v))
+            if not same:
+                out.append(f"group {i} {k}: {u!r} vs {v!r}")
+    return out
+
+
 def realised_optimizer(trainer: Any) -> dict[str, Any]:
     out = optimizer_hparams(trainer)
     out["param_group_lr"] = [float(g["lr"]) for g in trainer.opt.param_groups]
+    out["optimizer_class"] = type(trainer.opt).__name__
+    out["param_group_table"] = param_group_table(trainer)
+    out["grad_clip"] = {"mode": str(trainer.grad_clip_mode),
+                        "zclip_max_norm": getattr(trainer.zclip, "max_grad_norm", None),
+                        "zclip_warmup_steps": int(getattr(trainer.zclip, "warmup_steps", 0))}
+    return out
+
+
+def resolve_optimizer_hparams(settings: TrainSettings, checkpoint: Path | None) -> TrainSettings:
+    """Fill every unset Aurora knob (and grad_clip) from ``checkpoint``'s saved
+    optimizer when ``optimizer_hparams_source`` is "init-checkpoint".
+
+    The checkpoint must hold the Trainer's Aurora layout (four groups: matrix,
+    matrix no-decay, aux decay, aux no-decay); its matrix-LR multiplier is the
+    matrix group's lr over the aux decay group's. Keys the driver cannot set
+    (AdamW betas / eps, Aurora momentum / Nesterov / safety / uw floor) must
+    already equal what the Trainer builds, else the setup is not reproducible
+    and this refuses. Explicitly set knobs win and are recorded as such.
+    """
+    import dataclasses
+
+    import torch
+
+    if settings.optimizer_hparams_source == "trainer":
+        return settings
+    if checkpoint is None:
+        raise ValueError("optimizer_hparams_source init-checkpoint needs an init checkpoint (a random init has no "
+                         "optimizer to reproduce)")
+    payload = torch.load(str(checkpoint), map_location="cpu", weights_only=False, mmap=True)
+    groups = (payload.get("opt") or {}).get("param_groups") if isinstance(payload.get("opt"), dict) else None
+    flags = [g.get("use_aurora") for g in groups or []]
+    if not groups or flags[:4] != [True, False, False, False]:
+        raise ValueError(f"{checkpoint}: optimizer param groups are not the Trainer's Aurora layout "
+                         f"(use_aurora {flags}); nothing to reproduce from")
+    fixed = {"betas": [0.9, 0.95], "eps": 1e-8, "aurora_momentum": 0.95, "aurora_nesterov": True,
+             "aurora_polar_safety": 1.01, "aurora_uw_floor": 0.0}
+    bad = {k: _plain(groups[0].get(k)) for k, v in fixed.items() if not _close(_plain(groups[0].get(k)), v)}
+    if bad:
+        raise ValueError(f"{checkpoint}: optimizer keys the driver cannot set differ from the Trainer's {fixed}: "
+                         f"{bad}; the setup is not reproducible")
+    mat, aux = groups[0], groups[2]
+    found: dict[str, Any] = {k: _plain(mat[k]) for k in AURORA_KNOBS}
+    found["matrix_lr_multiplier"] = float(mat["lr"]) / float(aux["lr"])
+    found["matrix_weight_decay"] = float(mat["weight_decay"])
+    found["aux_weight_decay"] = float(aux["weight_decay"])
+    zc = payload.get("zclip")
+    found["grad_clip"] = str(payload.get("grad_clip_mode") or ("zclip" if isinstance(zc, dict) else "none"))
+    filled = {k: v for k, v in found.items() if getattr(settings, k) is None}
+    record = {"source": str(checkpoint), "checkpoint_values": found, "filled": sorted(filled),
+              "explicit": sorted(k for k in found if getattr(settings, k) is not None)}
+    out = dataclasses.replace(settings, **filled, optimizer_hparams_resolved=record)
+    out.validate()
     return out
 
 
@@ -896,6 +1042,9 @@ def init_optimizer_from_checkpoint(trainer: Any, checkpoint: Path, settings: Tra
         raise ValueError(f"--init-optimizer-state checkpoint: cannot load {checkpoint}'s optimizer state into "
                          f"{settings.optimizer}: {exc}") from exc
     checkpoint_lr = [float(g["lr"]) for g in trainer.opt.param_groups]
+    # The clip's EMA is part of "continue the SL run's optimizer" only when the
+    # clip is on; load_zclip_state refuses (False) a missing or poisoned state.
+    zclip_restored = bool(trainer.grad_clip_mode == "zclip" and trainer.load_zclip_state(payload.get("zclip")))
     groups = _resolve_group_diff(trainer, configured, settings, "--init-optimizer-state checkpoint")
     for g, lr, base in zip(trainer.opt.param_groups, want_lr, base_lrs, strict=True):
         g["lr"] = lr
@@ -908,7 +1057,9 @@ def init_optimizer_from_checkpoint(trainer: Any, checkpoint: Path, settings: Tra
             "state_step_min": min(steps) if steps else None, "state_step_max": max(steps) if steps else None,
             "checkpoint_param_group_lr": checkpoint_lr, "param_group_lr_set": want_lr,
             **groups, "reapplied": groups["group_resolution"] == "configured",
-            "not_adopted": ["scheduler", "per-group lr", "zclip state", "trainer step"],
+            "not_adopted": ["scheduler", "per-group lr", "trainer step",
+                            *(["zclip state"] if not zclip_restored else [])],
+            "zclip_state_restored": zclip_restored,
             "scheduler_not_restored": {"checkpoint_peak_lr": payload.get("peak_lr"),
                                        "checkpoint_last_epoch": sched.get("last_epoch") if isinstance(sched, dict) else None}}
 
