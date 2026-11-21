@@ -131,7 +131,7 @@ def test_the_identity_hybrid_evaluates_exactly_like_the_plain_net(nets: dict[str
 def _input_shape(model: nn.Module) -> tuple[int, int, int]:
     from chess_anti_engine.encoding.model_inputs import encode_position_for_model
 
-    return tuple(encode_position_for_model(model, chess.Board()).shape)  # type: ignore[return-value]
+    return tuple(encode_position_for_model(model, chess.Board()).shape)
 
 
 def test_the_recalibration_reaches_the_evaluator_exactly(nets: dict[str, Path]) -> None:

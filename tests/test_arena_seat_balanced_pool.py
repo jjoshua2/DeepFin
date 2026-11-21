@@ -570,3 +570,28 @@ def test_a_hybrid_arm_pools_only_as_the_same_hybrid_with_its_value_file_unchange
     with pytest.raises(SystemExit, match=r"value-from .* changed after it was played"):
         pool_mod.run(tmp_path / "A.games.jsonl", tmp_path / "B.games.jsonl", tmp_path / "A.results.jsonl",
                      tmp_path / "B.results.jsonl", arm=str(tmp_path / "arm.pt"))
+
+
+def test_a_moved_net_pools_only_through_relocate_which_still_hashes_it(tmp_path: Path) -> None:
+    """Review of #1459: a banked result whose net was moved is re-hashed at the new path, never skipped."""
+    arm_path, base_path = _nets(tmp_path)
+    fens = ["f0", "f1", "f2"]
+    a_log, a_res = _write_run(tmp_path, "A", candidate=arm_path, reference=base_path, openings=fens,
+                              game_scores=[_split(x) for x in (0.25, 0.0, 0.5)])
+    b_log, b_res = _write_run(tmp_path, "B", candidate=base_path, reference=arm_path, openings=fens,
+                              game_scores=[_split(x) for x in (0.0, 0.25, 0.0)])
+    moved = tmp_path / "archive" / "arm.pt"
+    moved.parent.mkdir()
+    Path(arm_path).rename(moved)
+    with pytest.raises(pool_mod.PoolError, match="arm net"):
+        pool_mod.run(a_log, b_log, a_res, b_res, arm=arm_path)
+    reloc = pool_mod.parse_relocate([f"{arm_path}={moved}"])
+    rep = pool_mod.run(a_log, b_log, a_res, b_res, arm=arm_path, relocate=reloc)
+    assert rep["relocated"] == {str(Path(arm_path).resolve()): str(moved)}
+    assert rep["nets"]["arm"][0]["path"] == str(moved)
+    assert rep["nets"]["arm"][0]["recorded_path"] == arm_path
+    moved.write_bytes(b"other weights")         # a different file at the new path is still refused
+    with pytest.raises(pool_mod.PoolError, match="the file changed after it was played"):
+        pool_mod.run(a_log, b_log, a_res, b_res, arm=arm_path, relocate=reloc)
+    with pytest.raises(pool_mod.PoolError, match="expected OLD=NEW"):
+        pool_mod.parse_relocate(["no-equals-sign"])

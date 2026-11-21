@@ -78,12 +78,12 @@ def test_the_holdout_fraction_is_the_runs_pinned_one(tmp_path: Path) -> None:
     collect = tmp_path / "run" / "gen_0001" / "collect"
     collect.mkdir(parents=True)
     (collect / "manifest.json").write_text("{}")
-    assert pinned_holdout_frac(collect, 0.05) == 0.05                      # nothing pinned: the flag
+    assert pinned_holdout_frac(collect, 0.05) == (0.05, "flag, unpinned")  # nothing pinned: the flag, unchecked
     with pytest.raises(SystemExit, match="pins no holdout_frac"):
         pinned_holdout_frac(collect, None)
     (tmp_path / "run" / "run_config.json").write_text(json.dumps({"settings": {"holdout_frac": 0.1}}))
-    assert pinned_holdout_frac(collect, None) == 0.1
-    assert pinned_holdout_frac(collect, 0.1) == 0.1
+    assert pinned_holdout_frac(collect, None) == (0.1, "run_config")
+    assert pinned_holdout_frac(collect, 0.1) == (0.1, "run_config")
     with pytest.raises(SystemExit, match=r"disagrees with the run's pinned holdout_frac 0\.1"):
         main(["--net", "a.pt", "--reference", "b.pt", "--collect-dir", str(collect), "--holdout-frac", "0.05",
               "--out", str(tmp_path / "o.json")])
@@ -112,3 +112,31 @@ def test_rows_that_overlap_the_match_openings_are_refused(tmp_path: Path) -> Non
     with pytest.raises(SystemExit, match="needs root_fen and history"):
         main(["--net", "a.pt", "--reference", "b.pt", "--rows", str(bare), "--exclude-openings", str(openings),
               "--out", str(tmp_path / "o.json")])
+
+
+def test_a_fen_list_line_with_moves_is_keyed_by_the_position_the_match_starts_from(tmp_path: Path) -> None:
+    """Review of #1459: '<root> | <moves>' keys the replayed TERMINAL board, not the root.
+
+    The root here is not the start position, so keying the root would silently accept
+    a row whose game passes through the real match start.
+    """
+    from scripts.fit_value_recal import check_rows_disjoint, opening_keys
+
+    root = chess.Board()
+    for u in ("e2e4", "e7e5"):
+        root.push_uci(u)
+    start = root.copy()
+    for u in ("g1f3", "b8c6"):
+        start.push_uci(u)
+    openings = tmp_path / "eval.fen"
+    openings.write_text(f"# provenance comment\n{root.fen()} | g1f3 b8c6\n\n")
+    keys = opening_keys(openings)
+    assert len(keys) == 1
+    assert keys == {start.epd()}
+    rows = tmp_path / "rows.npz"   # passes through the match start, never through the root's own line end
+    np.savez(rows, x=np.zeros((1, 1, 8, 8)), root_fen=np.array([chess.STARTING_FEN]),
+             history=np.array(["g1f3 b8c6 e2e4 e7e5 d2d4"]))
+    with np.load(rows) as z, pytest.raises(SystemExit, match="1 rows started at or passed through"):
+        check_rows_disjoint(z, rows, openings)
+    with pytest.raises(SystemExit, match="no fixed opening set"):
+        opening_keys(tmp_path / "book.pgn.zip")

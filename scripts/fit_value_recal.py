@@ -107,12 +107,30 @@ def _position_key(board: Any) -> str:
 
 
 def opening_keys(path: Path) -> set[str]:
-    """Final positions of the match openings: a PGN's game mainlines, or one FEN per line."""
-    import chess
+    """Positions the match starts from.
+
+    * ``.pgn``: each game's mainline final position (the simple-RL ``eval.pgn``
+      the pilot's matches play, whose lines the arena replays in full).
+    * anything else is an arena ``--openings-fen`` seed list, read with the
+      arena's own reader (``_load_fen_list``: ``#`` comments and blanks skipped)
+      and keyed by ``seed_board_from_line``, which REPLAYS a
+      ``<start_fen> | <uci ...>`` line to its terminal position -- the board the
+      match actually starts from, not the line's root.
+
+    A zipped or Polyglot book (the arena's default ``--openings``) samples a
+    weighted subset of its lines per seed, so there is no fixed opening set to
+    compare against: refused.
+    """
     import chess.pgn
 
+    from chess_anti_engine.selfplay.opening import _load_fen_list, seed_board_from_line
+
+    suffix = path.suffix.lower()
+    if suffix in (".zip", ".bin"):
+        raise SystemExit(f"{path}: a zipped / Polyglot book has no fixed opening set; pass the match's eval.pgn "
+                         "or its --openings-fen list")
     keys: set[str] = set()
-    if path.suffix.lower() == ".pgn":
+    if suffix == ".pgn":
         with open(path) as fh:
             while (game := chess.pgn.read_game(fh)) is not None:
                 board = game.board()
@@ -120,9 +138,11 @@ def opening_keys(path: Path) -> set[str]:
                     board.push(mv)
                 keys.add(_position_key(board))
     else:
-        for line in path.read_text().splitlines():
-            if line.strip():
-                keys.add(_position_key(chess.Board(line.split("|")[0].strip())))
+        try:
+            lines = _load_fen_list(str(path))
+        except ValueError as exc:
+            raise SystemExit(f"{path}: {exc}") from exc
+        keys.update(_position_key(seed_board_from_line(line)) for line in lines)
     if not keys:
         raise SystemExit(f"{path}: no openings read")
     return keys
@@ -150,8 +170,10 @@ def check_rows_disjoint(z: Any, rows_path: Path, openings: Path) -> dict[str, An
             "opening_positions": len(keys), "rows_overlapping": 0}
 
 
-def pinned_holdout_frac(collect: Path, given: float | None) -> float:
-    """The run's pinned holdout_frac (the split its learner trained by); refuse a disagreeing flag."""
+def pinned_holdout_frac(collect: Path, given: float | None) -> tuple[float, str]:
+    """The run's pinned holdout_frac (the split its learner trained by) and where it came from;
+    refuse a disagreeing flag. A run that pinned none needs the flag, which is then unchecked
+    and recorded as such."""
     cfg = collect.parent.parent / "run_config.json"
     pinned = None
     if cfg.is_file():
@@ -159,11 +181,11 @@ def pinned_holdout_frac(collect: Path, given: float | None) -> float:
     if pinned is None:
         if given is None:
             raise SystemExit(f"{cfg} pins no holdout_frac; pass --holdout-frac (the learner's)")
-        return float(given)
+        return float(given), "flag, unpinned"
     if given is not None and float(given) != float(pinned):
         raise SystemExit(f"--holdout-frac {given} disagrees with the run's pinned holdout_frac {pinned} "
                          f"({cfg}): the fit would include rows the learner trained on")
-    return float(pinned)
+    return float(pinned), "run_config"
 
 
 def load_rows(args: argparse.Namespace) -> tuple[np.ndarray, dict[str, Any]]:
@@ -187,14 +209,14 @@ def load_rows(args: argparse.Namespace) -> tuple[np.ndarray, dict[str, Any]]:
     manifest = collect / "manifest.json"
     if not manifest.is_file():
         raise SystemExit(f"{collect} is not a sealed collect (no manifest.json)")
-    frac = pinned_holdout_frac(collect, args.holdout_frac)
+    frac, frac_source = pinned_holdout_frac(collect, args.holdout_frac)
     arrays, meta = load_generation_rows(collect, keys=("x",))
     held = holdout_mask(meta, frac)
     if not held.any():
         raise SystemExit(f"{collect} has no hold-out games at holdout_frac {frac}")
     return np.asarray(arrays["x"])[held], {
         "collect_dir": str(collect), "collect_manifest_sha256": _sha256(manifest),
-        "holdout_frac": frac, "holdout_games": int(np.unique(meta["game_id"][held]).size),
+        "holdout_frac": frac, "holdout_frac_source": frac_source, "holdout_games": int(np.unique(meta["game_id"][held]).size),
     }
 
 
