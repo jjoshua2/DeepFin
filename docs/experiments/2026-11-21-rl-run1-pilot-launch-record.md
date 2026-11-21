@@ -250,7 +250,10 @@ match 2 both seats are Zq's file, and the pool (with #1459) refuses unless A's
 `+recal(T,b)` suffix.
 
 **Match 4 runs in looks.** Each look is its own A/B pair of 800 games per run, with
-the look's own seed (2026112141, 42, 43). After look k, the multi-look pool
+the look's own seed (2026112141, 42, 43).
+- **Sizing correction (#1463 review).** A 1,600-game look is **400 openings**. Each opening is played four times: two colours in run A and two in run B.
+- **Recurrence across looks.** It is light at the pilot's book: 759 / 800 and 1,084 / 1,200 distinct openings after looks 2 and 3. The SE inflation is 1.03 at look 3, and the information fractions are 0.35 / 0.68 / 1.
+- **Alpha check.** A null simulation through `pool_looks` at 3.471 / 2.454 / 2.004 gives P("pays" | 0) = 0.023–0.027, which is nominal (`plan-review-1463/`). After look k, the multi-look pool
 combines looks 1..k and clusters by opening across looks (an opening drawn in two
 looks is one cluster). The pool gives the estimate and its SE, and they are read
 against z = 3.471 / 2.454 / 2.004:
@@ -262,11 +265,11 @@ against z = 3.471 / 2.454 / 2.004:
 There is no other stopping point.
 
 The pool after look k (k = 2 shown) repeats the run flags once per look, in look
-order, and reads the look's z:
+order. `--boundaries` with `--look-seeds` picks the z by look count and refuses a missing, extra or reordered look:
 
 ```bash
 P0=$R/arm_P0/gen_0001/train/model.pt; d=$R/arenas/graft
-PYTHONPATH=. python scripts/arena_seat_balanced_pool.py --arm $P0 --z 2.454 \
+PYTHONPATH=. python scripts/arena_seat_balanced_pool.py --arm $P0 --boundaries 3.471,2.454,2.004 --look-seeds 2026112141,2026112142,2026112143 \
   --a-games $d/graft_1_A.games.jsonl --b-games $d/graft_1_B.games.jsonl \
   --a-result $d/results.jsonl --b-result $d/results.jsonl --a-label graft_1_A --b-label graft_1_B \
   --a-games $d/graft_2_A.games.jsonl --b-games $d/graft_2_B.games.jsonl \
@@ -290,6 +293,20 @@ is > 0 but LB95 ≤ −10**, S is extended with match 4's look schedule:
 - looks at 1,600 / 3,200 / 4,800 cumulative games;
 - the added looks use seeds 2026112131 / 32 / 33;
 - the 800-game first read is pooled into the first look.
+
+As run pairs, those are:
+
+| Run pair | Seed | Games per run | Cumulative games |
+|---|---|---|---|
+| the first read | 2026112103 | 400 | 800 |
+| 2026112131 | 2026112131 | 400 | 1,600 |
+| 2026112132 | 2026112132 | 800 | 3,200 |
+| 2026112133 | 2026112133 | 800 | 4,800 |
+
+The pool takes them in that order with
+`--boundaries 1.96,3.471,2.454,2.004 --look-seeds 2026112103,2026112131,2026112132,2026112133`.
+It reads z = 1.96 on the first read alone, then 3.471 / 2.454 / 2.004 at the three
+extension looks, and it refuses any pair that is missing or out of order.
 
 At each look, S is adoptable iff est − z·SE > −10. The extension stops early iff
 est ≤ 0 or est + z·SE < −10. After the third look without adoption, S is not
