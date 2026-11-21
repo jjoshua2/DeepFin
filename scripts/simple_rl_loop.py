@@ -44,7 +44,8 @@ from chess_anti_engine.simple_rl.evaluate import (
 )
 from chess_anti_engine.simple_rl.learn import (
     MATRIX_OPTIMIZER_SCOPES, MODEL_FILE, TrainSettings, check_snapshot_plan, lineage_capped_collects,
-    planned_phase_updates, preflight_init_optimizer, refuse_capped_collects, train_generation, trainer_kwargs,
+    planned_phase_updates, planned_snapshot_updates, preflight_init_optimizer, refuse_capped_collects,
+    train_generation, trainer_kwargs,
 )
 from chess_anti_engine.simple_rl.lineage import later_sealed, unseal_after, verify_before, verify_stage
 from chess_anti_engine.simple_rl.openings import split_openings
@@ -177,19 +178,20 @@ def train_settings(a: argparse.Namespace, run_dir: Path) -> TrainSettings:
         probe_rows=a.probe_rows, device=a.device, use_amp=str(a.device).startswith("cuda"), seed=a.seed,
         allow_capped_collect_rows=a.allow_capped_collect_rows,
         snapshot_updates=parse_snapshot_updates(a.snapshot_updates),
+        accum_steps=a.accum_steps, snapshot_rows=parse_snapshot_updates(a.snapshot_rows, flag="--snapshot-rows"),
     )
     settings.validate()
     trainer_kwargs(settings)  # the Trainer's own range checks (e.g. --train-target-temp)
     return settings
 
 
-def parse_snapshot_updates(spec: str | None) -> tuple[int, ...]:
+def parse_snapshot_updates(spec: str | None, *, flag: str = "--snapshot-updates") -> tuple[int, ...]:
     if not spec:
         return ()
     try:
         return tuple(int(x) for x in str(spec).split(",") if x.strip())
     except ValueError as exc:
-        raise SystemExit(f"--snapshot-updates wants comma-separated update counts, got {spec!r}") from exc
+        raise SystemExit(f"{flag} wants comma-separated counts, got {spec!r}") from exc
 
 
 def eval_opening_plies(a: argparse.Namespace) -> int:
@@ -259,7 +261,8 @@ def do_evaluate(a: argparse.Namespace, run_dir: Path, g: int) -> None:
     ref = Path(a.reference_checkpoint) if a.reference_checkpoint else sealed_model(run_dir, 0)
     results = evaluate_generation(run_dir=run_dir, generation=g, candidate=sealed_model(run_dir, g),
                                   previous=sealed_model(run_dir, g - 1), reference=ref,
-                                  openings_pgn=Path(a.openings_dir) / "eval.pgn", settings=eval_settings(a))
+                                  openings_pgn=Path(a.openings_dir) / "eval.pgn", settings=eval_settings(a),
+                                  pause_markers=tuple(Path(m) for m in (a.pause_marker or ())))
     print(json.dumps({"stage": "evaluate", "generation": g, **results}, default=str), flush=True)
 
 
@@ -294,7 +297,8 @@ RUN_CONFIG_EXEMPT = frozenset({
 # resuming an older run at the default is not a "change" -- any other value is.
 ADDED_SINCE_PINNING = {"init_optimizer_state": "fresh",
                        "matrix_optimizer_scope": "default", "adopt_checkpoint_optimizer_hparams": False,
-                       "allow_capped_collect_rows": False, "snapshot_updates": None, "collect_from": None}
+                       "allow_capped_collect_rows": False, "snapshot_updates": None, "collect_from": None,
+                       "accum_steps": 1, "snapshot_rows": None}
 
 
 def validate_before_pinning(a: argparse.Namespace, run_dir: Path, stages: set[str]) -> None:
@@ -339,8 +343,9 @@ def validate_before_pinning(a: argparse.Namespace, run_dir: Path, stages: set[st
                 # Knowable only once the phase's collects are sealed; otherwise
                 # train_generation refuses before its first update.
                 planned = planned_phase_updates(run_dir, g, settings)
-                if planned is not None:
-                    check_snapshot_plan(settings.snapshot_updates, planned)
+                snaps = planned_snapshot_updates(run_dir, g, settings)
+                if planned is not None and snaps is not None:
+                    check_snapshot_plan(snaps, planned)
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
     if "collect" in stages:
@@ -606,6 +611,17 @@ def _common(p: argparse.ArgumentParser) -> None:
                    help="exact-once schedule: after these optimizer update counts of each phase write "
                         "train/snapshots/step_<N>/ (weights-only model.pt + metrics.json); strictly increasing, "
                         "each <= the phase's planned updates; training is unchanged (bit-identical on CPU)")
+    t.add_argument("--snapshot-rows", default=None, metavar="N[,N...]",
+                   help="exact-once schedule, instead of --snapshot-updates: snapshot after the first optimizer "
+                        "step at which N rows have been presented (matched samples across effective batches; "
+                        "the resolved update counts are recorded)")
+    t.add_argument("--accum-steps", type=int, default=1,
+                   help="gradient accumulation: one optimizer step per N micro-batches of --batch-size rows "
+                        "(effective batch = batch-size x N; every row's loss coefficient is 1/effective batch, "
+                        "so the step's gradient is the native big batch's). Warmup, the LR schedule and "
+                        "--snapshot-updates count optimizer steps. Refused with a KL anchor, an SL share, or phase rows "
+                        "missing a trained head's target (e.g. value-only playout-cap rows). "
+                        "Default 1 (no accumulation)")
     t.add_argument("--mirror-prob", type=float, default=0.5)
     t.add_argument("--w-policy", type=float, default=1.0)
     t.add_argument("--w-wdl", type=float, default=1.0, help="0 = policy only")
@@ -673,11 +689,33 @@ def parser() -> argparse.ArgumentParser:
         sp.add_argument("--redo-downstream", action="store_true",
                         help="with --redo: also unseal every later sealed stage (moved to <run>/superseded/) and "
                              "rewind the run-level files derived from them")
+    rt = sub.add_parser("retarget", help="write a NEW run dir whose generation-G collect is the source's with "
+                                         "the policy target rebuilt from its stored root statistics (offline; "
+                                         "an arm then trains on it with --collect-from)")
+    rt.add_argument("--source-run-dir", required=True)
+    rt.add_argument("--generation", type=int, required=True)
+    rt.add_argument("--out-run-dir", required=True, help="must not exist")
+    rt.add_argument("--no-target-q-rescale", dest="target_q_rescale", action="store_false",
+                    help="rebuild without the min-max Q rescale (the only retarget so far; required)")
     r = sub.add_parser("run", help="generations 1..G of collect -> train -> evaluate")
     _common(r)
     r.add_argument("--generations", type=int, required=True)
     r.add_argument("--allow-config-change", action="store_true")
     return p
+
+
+def cmd_retarget(a: argparse.Namespace) -> int:
+    from chess_anti_engine.simple_rl.retarget import retarget_collect, retarget_summary
+
+    if a.target_q_rescale:
+        raise SystemExit("retarget: pass --no-target-q-rescale (the only rebuild this step offers)")
+    try:
+        record = retarget_collect(source_run_dir=Path(a.source_run_dir), generation=int(a.generation),
+                                  out_run_dir=Path(a.out_run_dir), target_q_rescale=False)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(retarget_summary(record))
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -688,6 +726,8 @@ def main(argv: list[str] | None = None) -> int:
         torch.set_num_threads(int(a.threads))
     if a.command == "split-openings":
         return cmd_split(a)
+    if a.command == "retarget":
+        return cmd_retarget(a)
     if a.command == "run":
         return cmd_run(a)
     return cmd_stage(a)
