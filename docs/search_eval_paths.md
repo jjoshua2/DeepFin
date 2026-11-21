@@ -138,7 +138,7 @@ Until then, classic Gumbel stays the validated default. Step 1+3 above makes B a
 
 ### 4.1 Measured on main (75d063c97, idle GPU, 2026-11-21)
 
-**First search of a process: a fixed 60–100 ms, not CUDA-graph capture.**
+**First search of a process: a median 60–130 ms (spread 20–300 ms) on the first one or two searches, not CUDA-graph capture.**
 - Design: 5 fresh processes per arm, two passes of `go nodes 20000` over four positions, `ucinewgame` between gos. Banked under `engine-speed-profile/idle/fs_*`; the script is `scripts/run_firstsearch.sh`.
 - Pass-1 extra over pass 2 (median):
   - pool with compile: +62 ms on the first search, +52 ms on the second;
@@ -146,13 +146,13 @@ Until then, classic Gumbel stays the validated default. Step 1+3 above makes B a
   - classic with compile: +98 ms, first search only;
   - classic eager: not measurable in its noise.
 - It is present without compile, so it is not graph capture. It is not front-loaded at `go` either: in classic, the first info line at about 12k nodes is on time and the extra comes later in the search. That fits growth costs (tree arena, buffers, cache memory first reaching a size) rather than a one-off init. The cause is not isolated further.
-- **The earlier −20.8% (#1440, r1, mt5000) cell did not reproduce, and is withdrawn.** A fixed 60–100 ms cannot be 20% of a 5 s search.
+- **The earlier −20.8% (#1440, r1, mt5000) cell is withdrawn: not reproduced under the first-search design (`go nodes 20000`, `ucinewgame` between gos — not a rerun of the original 5 s clocked conditions); most likely noise.** A cost of this size would be about 1–6% of a 5 s search, not 20%.
 - An `isready` warm-up (one throwaway search of about one real move's size) is **parked**.
   - Launch condition: a time control where move 1 is ≤ 2 s, or evidence of a first-move loss.
   - Acceptance: `scripts/run_firstsearch.sh` shows the pass-1 deficit gone.
 
-**Endgames forward about 35% fewer rows/s than middlegames.**
+**TB-adjacent / 7-piece endgames forward about 35% fewer rows/s than middlegames (`end_rook` is middlegame-like).**
 - Per-search counters (#1453), pool `--devices cuda:0,cuda:0`, compile on, all standard positions at mt5000 and n100k. Banked: `engine-speed-profile/idle/evals_pool_main.{jsonl,summary.txt}`.
 - Middlegames and openings: about 17.3k evals/s (16.4–17.7k) at 87–98% unique leaves. That is the forward-bound rate of two workers on one GPU.
-- Endgames: 32–35k leaves/s but only 9.8k–12.1k evals/s, because only 28–38% of leaves are unique (terminal 45–65%, duplicate up to 27%).
-- **So the pool's next speed-up is per-leaf CPU/tree work in endgames, not the device.**
+- TB-adjacent / 7-piece endgames (`end_minor7`, `tb_adjacent7`): 32–35k leaves/s but only 9.8k–12.1k evals/s, because only 28–38% of leaves are unique (terminal 45–65%, duplicate up to 27%). `end_rook` runs 17.4–17.5k evals/s at 98% unique, like a middlegame.
+- **So the pool's next speed-up is per-leaf CPU/tree work in TB-adjacent / 7-piece endgames, not the device.**
