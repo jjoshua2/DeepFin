@@ -4343,13 +4343,13 @@ class SearchWorker:
             chunk_reserve_ms = self._walker_stop_reserve_ms(
                 deadline, start_remaining_ms, allowed_root_indices,
             )
+            chunk_stop = self._walker_chunk_stop(
+                stop_event, deadline, start_remaining_ms, allowed_root_indices,
+                reserve_ms=chunk_reserve_ms,
+            )
             try:
                 last_value, completed = self._run_one_chunk(
-                    chunk, board,
-                    self._walker_chunk_stop(
-                        stop_event, deadline, start_remaining_ms, allowed_root_indices,
-                        reserve_ms=chunk_reserve_ms,
-                    ),
+                    chunk, board, chunk_stop,
                     tb_probe, allowed_root_indices,
                     allow_terminal_shortcuts=allow_terminal_shortcuts,
                     witness_stop_fn=witness_stop,
@@ -4462,6 +4462,14 @@ class SearchWorker:
                 time_margin_ms=time_margin_ms,
                 tree_growth_bytes=self._tree_footprint_bytes() - _footprint_before,
             )
+  # A walker chunk whose reserve stop has fired is a time stop, whatever the
+  # re-check above says: `remaining_ms()` floors to whole ms, so a chunk that
+  # stopped at its reserve with no batch in flight re-reads remaining == reserve
+  # and `rem < reserve` is false. The next chunk then launched already stopped,
+  # completed 0 sims, and a depth/node-bounded go ended as `no_progress`.
+            if (stop_reason not in ("external", "time_margin")
+                    and isinstance(chunk_stop, _EarlyStopEvent) and chunk_stop.reserve_reached()):
+                stop_reason = "time_margin"
             if stop_reason is None and mate_moves is not None:
                 if self._proven_mate_within(board, mate_moves, allowed_root_indices) is not None:
                     stop_reason = "mate"
@@ -5488,6 +5496,11 @@ class _EarlyStopEvent(threading.Event):
     def set(self) -> None:
         super().set()
         self._parent.set()
+
+    def reserve_reached(self) -> bool:
+        """True once ``stop_at`` has passed: the chunk was (or is being)
+        stopped by the batch reserve, not by its own budget."""
+        return time.monotonic() >= self._stop_at
 
 
 def _stop_reserve_ms(deadline: Deadline) -> float:
