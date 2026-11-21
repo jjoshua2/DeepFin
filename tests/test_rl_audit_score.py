@@ -537,3 +537,60 @@ def test_the_sf_converter_follows_the_sf_parse_convention(tmp_path: Path) -> Non
     meta = json.loads(Path(str(out) + ".json").read_text())
     assert meta["rows_labelled"] == 1
     assert meta["cap_cp"] == 1000
+
+
+def test_the_paired_regret_difference_is_net_minus_reference() -> None:
+    """Review of #1465 (R8): a flipped sign would invert every vs_reference conclusion."""
+    moves = np.array([[3, 4], [3, 4]])
+    cp = np.array([[0.0, 100.0], [0.0, 60.0]])
+    tab = {"moves": moves, "regret_cp": cp}
+    pair = ras.paired_regret(np.array([4, 4]), np.array([3, 3]), tab, np.array([0, 1]))
+    assert pair["diff_cp"] == pytest.approx(80.0)            # the net (a) plays the worse move: positive
+
+
+def test_mate_scores_keep_the_distance_and_searchmoves_only_fill_gaps() -> None:
+    """Review of #1465 (R3, R5): mate in 2 beats mate in 5 by 30 cp, not a flat 10000 tie; the
+    searchmoves pass never overrides a MultiPV score."""
+    a_lines = [_sf_line(10, 1, "e2e4", "mate 2"), _sf_line(10, 2, "d2d4", "mate 5")]
+    rec = {"row": 0, "multipv_a": 2, "a": {"lines": a_lines},
+           "b": {"searchmoves": ["d2d4", "h2h4"],
+                 "lines": [_sf_line(9, 1, "d2d4", "cp 5"), _sf_line(9, 2, "h2h4", "cp -50")]}}
+    scores, best = ras.sf_record_scores(rec)
+    assert best == 9980
+    assert scores["d2d4"] == 9950                            # MultiPV's mate 5, not the b pass's cp 5
+    assert scores["h2h4"] == -50                             # the gap the b pass fills
+
+
+def test_a_duplicate_fen_in_the_labels_is_refused(tmp_path: Path) -> None:
+    import chess
+
+    rows = tmp_path / "rows.npz"
+    np.savez(rows, x=np.zeros((1, 175, 8, 8), dtype=np.float16), legal=np.ones((1, N_MOVES), dtype=bool),
+             game_id=np.array([0]), root_fen=np.array([chess.STARTING_FEN]), history=np.array([""]))
+    rec = {"row": 0, "fen": chess.Board().fen(), "multipv_a": 1, "a": {"lines": [_sf_line(9, 1, "e2e4", "cp 9")]}}
+    sfj = tmp_path / "sf.jsonl"
+    sfj.write_text(json.dumps(rec) + "\n" + json.dumps(rec) + "\n")
+    with pytest.raises(SystemExit, match="duplicate FEN"):
+        ras.main(["sf-regret-table", "--rows", str(rows), "--sf-jsonl", str(sfj), "--out", str(tmp_path / "r.npz")])
+
+
+def test_dose_refuses_a_pass_whose_mask_file_was_rewritten_at_the_same_path(tmp_path: Path) -> None:
+    """Review of #1465 (R9): same mask spec, different contents -> another row set."""
+    train = _tiny_run_with_snapshots(tmp_path)
+    rows = _rows_npz(tmp_path / "a1.npz")
+    np.savez(tmp_path / "ruler.npz", move=np.zeros(24, dtype=np.int64))
+    leak = np.zeros(24, dtype=bool)
+    leak[:3] = True
+    np.savez(tmp_path / "leak.npz", leak=leak)
+    spec = f"r={tmp_path / 'ruler.npz'}:move"
+    mask = f"{tmp_path / 'leak.npz'}:leak"
+    val = _validation(tmp_path, spec, passed=True, rows=rows, mask=mask, tag="m")
+    leak[:6] = True
+    np.savez(tmp_path / "leak.npz", leak=leak)                # rewritten in place
+    out = tmp_path / "dose.json"
+    assert ras.main(["dose", "--train-dir", str(train), "--rows", str(rows), "--ruler", spec, "--band-lo", "-1",
+                     "--band-hi", "1", "--mask", mask, "--out-model", str(tmp_path / "played.pt"),
+                     "--ruler-validation", str(val), "--out", str(out)]) == 0
+    rec = json.loads(out.read_text())
+    assert rec["ruler_validated"] is False
+    assert "another mask" in rec["ruler_validation_reason"]

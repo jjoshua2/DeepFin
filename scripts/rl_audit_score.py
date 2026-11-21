@@ -542,7 +542,10 @@ def cmd_dose(a: argparse.Namespace) -> int:
 # complete line (bounds skipped); the deepest depth at which every rank is present;
 # scores cp from the side to move, mate m -> sign(m) * (10000 - 10 * |m|); a "b"
 # searchmoves pass fills moves the MultiPV pass missed; regret = best - move clipped to
-# [0, cap].
+# [0, cap]. A label file with a duplicate FEN is refused. The paired regret
+# difference is a - b (the scored net minus the reference): positive = the net is worse.
+# Intervals are normal 1.96 x the game-clustered SE (the search-compose bank used a game
+# bootstrap; the two agree in the mean and differ by <= 0.3 cp in the bounds on that bank).
 SF_REGRET_CAP = 1000
 
 
@@ -611,6 +614,9 @@ def cmd_sf_regret_table(a: argparse.Namespace) -> int:
             if rec["fen"] in by_fen:
                 dup += 1
             by_fen[rec["fen"]] = rec
+    if dup:
+        raise SystemExit(f"{a.sf_jsonl}: {dup} duplicate FEN record(s); one label per position is required "
+                         "(which record would win is not a convention, so none is chosen)")
     n = int(root_fen.shape[0])
     k = int(a.max_moves)
     moves = np.full((n, k), -1, dtype=np.int64)
