@@ -91,6 +91,7 @@ from chess_anti_engine.utils.game_log import (
     latest_rows_by_key,
     read_game_log,
     refuse_existing_log_message,
+    repair_truncated_tail,
     refuse_settings_mismatch_message,
     settings_fingerprint,
     take_over_header_only_log,
@@ -2374,21 +2375,31 @@ def play_paired_games_matched_sims(
                 done[i] = True
                 _emit(i, "syzygy")
 
-    def _game_score(i: int) -> float:
-        res = adjudicated[i] or boards[i].result(claim_draw=True)
-        if res == "*":  # unfinished at max_plies, not TB-covered
-            if tb_probe is not None and on_max_plies == ON_MAX_PLIES_ABORT:
-                mv = tuple(boards[i].move_stack[start_offsets[i]:])
+    if tb_probe is not None and on_max_plies == ON_MAX_PLIES_ABORT:
+        unresolved = [i for i in range(g)
+                      if (adjudicated[i] or boards[i].result(claim_draw=True)) == "*"]
+        if unresolved:
+            # Every game that DID finish is already written: in this strict
+            # branch the reap above emitted each game that is over (including
+            # one decided on the very last ply) or TB-resolved, before this
+            # point. EVERY unresolved game is banked, not just the first.
+            for i in unresolved:
                 _bank_unresolved(
                     unresolved_sink, pair_id=ids[i // 2], half=i % 2,
                     a_is_white=bool(a_plays_white[i]), start_fen=start_fens[i],
-                    moves=mv, duration_s=_arena_clock() - t0, loop="chunked",
+                    moves=tuple(boards[i].move_stack[start_offsets[i]:]),
+                    duration_s=_arena_clock() - t0, loop="chunked",
                 )
-                raise RuntimeError(
-                    f"strict Syzygy arena reached max_plies with unresolved game "
-                    f"pair={ids[i // 2]} half={i % 2}; refusing a fabricated draw "
-                    f"(--on-max-plies abort)"
-                )
+            first = unresolved[0]
+            raise RuntimeError(
+                f"strict Syzygy arena reached max_plies with {len(unresolved)} unresolved game(s), first "
+                f"pair={ids[first // 2]} half={first % 2}; refusing a fabricated draw "
+                f"(--on-max-plies abort)"
+            )
+
+    def _game_score(i: int) -> float:
+        res = adjudicated[i] or boards[i].result(claim_draw=True)
+        if res == "*":  # unfinished at max_plies, not TB-covered
             # --on-max-plies draw, or a non-Syzygy arena: scored and WRITTEN
             # as a draw with termination "max_plies" (see the sweep below),
             # and counted in the result row's max_plies_unresolved.
@@ -2622,6 +2633,7 @@ def play_paired_games_matched_sims_rolling(
         ks: list[tuple[str, ...]] = []
         ko: list[int] = []
         kt: list[float] = []
+        unresolved_js: list[int] = []
         for j in range(len(boards)):
             b = boards[j]
             res: str | None = None
@@ -2639,17 +2651,10 @@ def play_paired_games_matched_sims_rolling(
                     termination = "syzygy"
             if res is None and gplies[j] >= int(max_plies):
                 if tb_probe is not None and on_max_plies == ON_MAX_PLIES_ABORT:
-                    _bank_unresolved(
-                        unresolved_sink, pair_id=ids[gids[j] // 2], half=gids[j] % 2,
-                        a_is_white=bool(awhite[j]), start_fen=gfens[j],
-                        moves=tuple(b.move_stack[goffs[j]:]),
-                        duration_s=_arena_clock() - gt0[j], loop="rolling",
-                    )
-                    raise RuntimeError(
-                        f"strict Syzygy arena reached max_plies with unresolved game "
-                        f"pair={ids[gids[j] // 2]} half={gids[j] % 2}; "
-                        "refusing a fabricated draw (--on-max-plies abort)"
-                    )
+                    # Finish the pass first: the games it reaps are recorded,
+                    # then EVERY unresolved game is banked and the run raises.
+                    unresolved_js.append(j)
+                    continue
                 # Not naturally decided and not TB-covered: under
                 # --on-max-plies draw (or without Syzygy) scored as a draw,
                 # termination "max_plies", counted in max_plies_unresolved.
@@ -2668,6 +2673,20 @@ def play_paired_games_matched_sims_rolling(
                 ks.append(gstacks[j])
                 ko.append(goffs[j])
                 kt.append(gt0[j])
+        if unresolved_js:
+            for j in unresolved_js:
+                _bank_unresolved(
+                    unresolved_sink, pair_id=ids[gids[j] // 2], half=gids[j] % 2,
+                    a_is_white=bool(awhite[j]), start_fen=gfens[j],
+                    moves=tuple(boards[j].move_stack[goffs[j]:]),
+                    duration_s=_arena_clock() - gt0[j], loop="rolling",
+                )
+            first = unresolved_js[0]
+            raise RuntimeError(
+                f"strict Syzygy arena reached max_plies with {len(unresolved_js)} unresolved game(s), first "
+                f"pair={ids[gids[first] // 2]} half={gids[first] % 2}; "
+                "refusing a fabricated draw (--on-max-plies abort)"
+            )
         boards[:], gids[:], awhite[:], gplies[:] = kb, kg, ka, kp
         gfens[:], goffs[:], gt0[:] = kf, ko, kt
         groots[:], gstacks[:] = kr, ks
@@ -3148,15 +3167,40 @@ def unresolved_games_path(log_path: Path) -> Path:
     return log_path.with_name(log_path.name + ".unresolved.jsonl")
 
 
-def count_max_plies_games(log_path: Path) -> int:
-    """Scored games that reached --max-plies unresolved (written as draws).
+def count_max_plies_games(log_path: Path) -> tuple[int | None, int]:
+    """(scored games that reached --max-plies unresolved, rows that could not be keyed).
 
     Read from the game log's latest row per (pair_id, half), so a resumed run
-    counts its kept games as well as this process's.
+    counts its kept games as well as this process's. It runs AFTER every game
+    is played, so it must never raise: a row without an integer pair_id / half
+    is skipped and counted, and an unreadable log gives None.
     """
-    log = read_game_log(log_path)
-    rows = latest_rows_by_key(log.games, lambda r: (int(r["pair_id"]), int(r["half"])))
-    return sum(1 for r in rows.values() if r.get("termination") == "max_plies")
+    try:
+        log = read_game_log(log_path)
+    except (OSError, ValueError):
+        return None, 0
+    keyed: list[dict[str, Any]] = []
+    unkeyable = 0
+    for r in log.games:
+        try:
+            keyed.append({**r, "_key": (int(r["pair_id"]), int(r["half"]))})
+        except (KeyError, TypeError, ValueError):
+            unkeyable += 1
+    rows = latest_rows_by_key(keyed, lambda r: r["_key"])
+    return sum(1 for r in rows.values() if r.get("termination") == "max_plies"), unkeyable
+
+
+def count_banked_aborts(path: Path) -> int:
+    """Games banked by earlier --on-max-plies aborts of this log (a resumed run's evidence)."""
+    if not path.exists():
+        return 0
+    n = 0
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            n += json.loads(line).get("kind") == "unresolved_at_max_plies"
+        except (json.JSONDecodeError, AttributeError):
+            continue
+    return n
 
 
 def run_arena(
@@ -3444,6 +3488,9 @@ def run_arena(
     # fingerprint is unchanged byte for byte.
     if on_max_plies not in ON_MAX_PLIES_CHOICES:
         raise SystemExit(f"--on-max-plies must be one of {ON_MAX_PLIES_CHOICES}, got {on_max_plies!r}")
+    if on_max_plies == ON_MAX_PLIES_DRAW and syzygy_path is None:
+        raise SystemExit("--on-max-plies draw applies only with --syzygy: without it every game reaching "
+                         "--max-plies is already scored a draw, so the flag would change nothing but the fingerprint")
     if on_max_plies != ON_MAX_PLIES_ABORT:
         # A run that scores max-plies games as draws is a different ruler from
         # one that refuses them; bound in so the two never resume into or pool
@@ -3855,6 +3902,7 @@ def run_arena(
             "duration_s": round(float(duration_s), 2),
             "ts": datetime.datetime.now().isoformat(timespec="seconds"),
         }
+        repair_truncated_tail(unresolved_path)   # a torn line from a killed write must not fuse with this one
         with open(unresolved_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, separators=(",", ":")) + "\n")
             fh.flush()
@@ -4472,8 +4520,11 @@ def run_arena(
         arena_pool=int(pool_size),
         sprt=sprt_record,
     )
-    record["on_max_plies"] = on_max_plies
-    record["max_plies_unresolved"] = count_max_plies_games(log_path)
+    # The policy actually APPLIED: without --syzygy the arena is not strict and
+    # a capped game is always scored a draw, whatever the (default) flag says.
+    record["on_max_plies"] = on_max_plies if syzygy_path is not None else "draw_non_strict"
+    record["max_plies_unresolved"], record["max_plies_unkeyable_rows"] = count_max_plies_games(log_path)
+    record["max_plies_aborts_banked"] = count_banked_aborts(unresolved_path)
     if syzygy_path is not None:
         record["syzygy_protocol"] = SYZYGY_MATCH_PROTOCOL
         record["syzygy_path"] = syzygy_path

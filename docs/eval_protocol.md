@@ -221,17 +221,28 @@ minutes the same way.
   (f12_A_full), a game that was unresolved at 300 plies came back as a
   109-ply win. That makes `--resume` a selection whenever the crash correlates
   with the games in flight, most of all after a max-plies abort. A registered
-  match does not resume: it is played in looks, and a killed look is rerun whole
-  on its seed. A fresh run on the same seed and commit is deterministic.
-  `--pause-marker` holds state, so pausing is safe.
+  match does not resume: it is played in looks, and `--pause-marker` holds state,
+  so pausing is safe.
+  - A look killed for an outside reason (OOM, CUDA error, power) is rerun whole on
+    its own seed: a fresh run on the same seed and commit is deterministic.
+  - That determinism means rerunning a **max-plies-aborted** look on its own seed
+    reproduces the abort exactly (same game, same moves). Such a look is void. It
+    is reported with its `.unresolved.jsonl` sidecar, and it is rerun whole on its
+    pre-registered BACKUP seed only after the stop-and-report tripwire, with the
+    owner's decision.
+  - Rerunning on the backup seed is itself a selection: it conditions on no abort.
+    That is acceptable only because P(abort) is negligible at the registered
+    600-ply limit (13,707 banked games, longest 298 plies).
 
 ### A game that reaches `--max-plies` under strict Syzygy
 
 With `--syzygy`, a matched-sims game that reaches `--max-plies` while it is
 neither over nor tablebase-resolved is handled by `--on-max-plies`:
 
-- **`abort` (default).** The run writes the game to
-  `<games-out>.unresolved.jsonl` before raising "refusing a fabricated draw". The
+- **`abort` (default).** Before raising "refusing a fabricated draw", the run
+  writes EVERY game unresolved at that moment to `<games-out>.unresolved.jsonl`
+  (repairing a torn final line first), and writes every game that did finish to
+  the game log and PGN as usual. The
   sidecar records the start FEN, the UCI and SAN moves, the final FEN, the ply
   count, result `*` and the log fingerprint. The game is not written to the game
   log, which is the resume's commit record, nor to the match PGN, where Ordo
@@ -241,10 +252,19 @@ neither over nor tablebase-resolved is handled by `--on-max-plies`:
   - The choice is bound into the settings fingerprint, so a `draw` run never
     resumes into or pools as an `abort` run. It is recorded in the fingerprint
     only when it is not the default, so existing fingerprints are unchanged.
+  - `draw` is refused without `--syzygy`, because a non-strict arena already
+    scores every capped game a draw. A non-strict row records
+    `on_max_plies: "draw_non_strict"`, the policy it actually applied.
   - Every PGN game is stamped `OnMaxPlies`.
   - The result row records `on_max_plies` and `max_plies_unresolved`, the
     number of scored games that reached the cap. A non-Syzygy arena counts its
     capped draws there too.
+  - The row also records `max_plies_unkeyable_rows`, game-log rows the count
+    could not key, which are skipped, never fatal. It also records
+    `max_plies_aborts_banked`, the games an earlier abort of this log banked in
+    the sidecar: a resumed run's evidence.
+  - simple-RL `evaluate` carries `max_plies_unresolved` into its results
+    summary.
 
 The default `--max-plies 300` is too short for a long registered match. The 13,707
 completed games in the 2026-11-19 and 2026-11-21 banks reach a p99.9 of 262
