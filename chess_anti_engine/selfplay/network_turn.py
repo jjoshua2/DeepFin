@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import math
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -199,6 +199,7 @@ def _resample_actions_with_temperature(
     actions: list[int],
     temps: list[float],
     rng: np.random.Generator,
+    per_game_rng: Sequence[np.random.Generator] | None = None,
 ) -> None:
     """Apply final move temperature to Gumbel search policies in-place.
 
@@ -225,7 +226,7 @@ def _resample_actions_with_temperature(
         matches = np.flatnonzero(legal == int(actions[gi]))
         fallback_idx = int(matches[0]) if matches.size else 0
         actions[gi] = sample_action_with_temperature(
-            rng,
+            rng if per_game_rng is None else per_game_rng[gi],
             legal,
             p[legal],
             t,
@@ -418,6 +419,7 @@ def _draw_is_full(
     playout_cap_fraction: float,
     pair_fraction: float,
     force_flags: list[bool],
+    per_game_rng: Sequence[np.random.Generator] | None = None,
 ) -> np.ndarray:
     """Full/fast schedule, optionally forcing consecutive full-ply PAIRS.
 
@@ -432,13 +434,21 @@ def _draw_is_full(
     finalize's sf_p0 block).
     """
     n = len(net_idxs)
-    if pair_fraction <= 0.0:
-        return rng.random(size=n) < float(playout_cap_fraction)
+    if per_game_rng is not None:
+        # One draw (two with pairs) from each game's own stream, so a game's
+        # schedule does not depend on the other games of the batch.
+        draws = np.asarray([g.random() for g in per_game_rng], dtype=np.float64)
+        if pair_fraction <= 0.0:
+            return draws < float(playout_cap_fraction)
+        pair_draws = np.asarray([g.random() for g in per_game_rng], dtype=np.float64)
+    else:
+        if pair_fraction <= 0.0:
+            return rng.random(size=n) < float(playout_cap_fraction)
+        draws = rng.random(size=n)
+        pair_draws = rng.random(size=n)
     p_pair = min(1.0, float(pair_fraction))
     f = float(playout_cap_fraction)
     base_rate = f / (1.0 + p_pair * (1.0 - f))
-    draws = rng.random(size=n)
-    pair_draws = rng.random(size=n)
     out = np.zeros(n, dtype=bool)
     for j, idx in enumerate(net_idxs):
         if force_flags[idx]:
@@ -1099,12 +1109,33 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
     xs_batch, pol_logits, wdl_logits_raw, wdl_est = _evaluate_root_batch(state, net_idxs)
     _cb_encode_list = [state.cboards[_idx] for _idx in net_idxs]
 
+    # Per-game streams (simple_rl collect): every draw for slot i comes from
+    # that game's own generator, never from the batch-shared one.
+    # (read by getattr: the opt-in fields are absent from lightweight state doubles)
+    game_rngs = state.game_rngs_for(net_idxs) if getattr(state, "game_rngs", None) is not None else None
+    # A journaled ply of a game being replayed after a kill: its stream is set to
+    # the state it had before that ply's draws, so the search re-runs under the
+    # same noise; its full/fast choice and played move are then forced below.
+    forced = [state.forced_entry(i) for i in net_idxs] if getattr(state, "forced_prefixes", None) else None
+    if forced is not None:
+        for i, entry in zip(net_idxs, forced, strict=True):
+            if entry is not None:
+                state.rng_for(i).bit_generator.state = entry["s0"]
+    stream_before = (
+        {i: g.bit_generator.state for i, g in zip(net_idxs, game_rngs, strict=True)}
+        if getattr(state, "game_journal", None) is not None and game_rngs is not None else None
+    )
     is_full = _draw_is_full(
         rng, net_idxs,
         playout_cap_fraction=float(search.playout_cap_fraction),
         pair_fraction=float(getattr(search, "full_ply_pair_fraction", 0.0)),
         force_flags=state.force_full_next,
+        per_game_rng=game_rngs,
     )
+    if forced is not None:
+        for j, entry in enumerate(forced):
+            if entry is not None:
+                is_full[j] = bool(entry["f"])
     full_sims = int(search.simulations)
     fast_sims = int(search.fast_simulations)
     sample_weights = _compute_resign_weights(state, wdl_est, net_idxs)
@@ -1236,6 +1267,7 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
                     return_diagnostics=True,
                     witness_stop_fn=witness_stop_fn,
                     root_stats_out=root_stats_sub,
+                    per_game_rng=None if game_rngs is None else [game_rngs[j] for j in group],
                     **search_shape.runner_kwargs(),
                 )
             except SolvedRootWitnessUnavailable as exc:
@@ -1266,6 +1298,9 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
                     f"mcts.gumbel_c ({_GUMBEL_C_IMPORT_ERROR or 'not imported'})",
                     "the pure-Python Gumbel search",
                 )
+            if game_rngs is not None:
+                raise ValueError("per-game RNG streams need the compiled Gumbel search; the Python "
+                                 "search draws every game from one shared generator")
             sub_boards = [state.replay_board(net_idxs[j]) for j in group]
             _gumbel_result = run_gumbel_root_many(
                 state.model,
@@ -1304,10 +1339,21 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
             active_actions,
             [sub_temps[j] for j in active],
             rng,
+            per_game_rng=None if game_rngs is None else [game_rngs[group[j]] for j in active],
         )
 
         for j, action in zip(active, active_actions, strict=True):
             a_sub[j] = action
+        if forced is not None:
+            for j in active:
+                entry = forced[group[j]]
+                if entry is not None:
+                    move = int(entry["m"])
+                    slot = net_idxs[group[j]]
+                    if move not in {int(x) for x in state.cboards[slot].legal_move_indices()}:
+                        raise ValueError(f"journaled move {move} at ply {entry['p']} is not legal in slot {slot}'s "
+                                         "position: the journal does not belong to this game")
+                    a_sub[j] = move
         for local_j, (jj, p, a, v, m) in enumerate(zip(group, p_sub, a_sub, v_sub, m_sub, strict=True)):
             if jj in adjudicated_rows:
                 continue
@@ -1361,6 +1407,26 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
         root_stats_list = [root_stats_list[j] for j in keep]
         is_full_py, is_full = [is_full_py[j] for j in keep], is_full[keep]
         sample_weights = [sample_weights[j] for j in keep]
+
+    if forced is not None:
+        # The last journaled ply: the stream continues from the state the
+        # original game had after it, exactly.
+        for i, entry in zip(net_idxs, [state.forced_entry(i) for i in net_idxs], strict=True):
+            if entry is not None and entry.get("last"):
+                state.rng_for(i).bit_generator.state = entry["s1"]
+    if stream_before is not None:
+        assert state.game_journal is not None
+        # Journaled BEFORE the moves are applied: a kill loses no applied move.
+        state.game_journal([
+            {"i": state.slot_dole_index[i], "p": int(state.cboards[i].ply), "m": int(a),
+             "f": bool(f), "s0": stream_before[i], "s1": state.rng_for(i).bit_generator.state}
+            for i, a, f in zip(net_idxs, actions, is_full_py, strict=True) if a is not None
+        ])
+        for i in net_idxs:
+            state.consume_forced_entry(i)
+    elif forced is not None:
+        for i in net_idxs:
+            state.consume_forced_entry(i)
 
     records_before = (
         [len(state.samples_per_game[idx]) for idx in net_idxs]

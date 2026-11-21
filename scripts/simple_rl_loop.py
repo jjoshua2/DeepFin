@@ -25,6 +25,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from chess_anti_engine.simple_rl.collect import (
+    CollectDrained,
     CollectSettings,
     collect_generation,
     default_collect_shape,
@@ -269,9 +270,13 @@ def do_collect(a: argparse.Namespace, run_dir: Path, g: int) -> None:
                           **{k: stats.get(k) for k in ("games", "rows", "decisive_rate", "draw_rate")}},
                          default=str), flush=True)
         return
-    stats = collect_generation(gen_dir=gen_dir(run_dir, g) / "collect", generation=g, checkpoint=ckpt,
-                               train_jsonl=Path(a.openings_dir) / "train.jsonl", settings=collect_settings(a),
-                               pause_markers=tuple(Path(m) for m in (a.pause_marker or ())))
+    try:
+        stats = collect_generation(gen_dir=gen_dir(run_dir, g) / "collect", generation=g, checkpoint=ckpt,
+                                   train_jsonl=Path(a.openings_dir) / "train.jsonl", settings=collect_settings(a),
+                                   pause_markers=tuple(Path(m) for m in (a.pause_marker or ())))
+    except CollectDrained as exc:
+        print(f"[simple_rl] {exc}", file=sys.stderr, flush=True)
+        raise SystemExit(EXIT_BLOCKED) from exc
     print(json.dumps({"stage": "collect", "generation": g, **{k: stats[k] for k in (
         "games", "rows", "decisive_rate", "draw_rate", "repeat_rate_within", "repeat_rate_vs_previous",
         "target_entropy", "games_per_hour", "cuda_graphs", "evaluator_mode", "collect_procs",

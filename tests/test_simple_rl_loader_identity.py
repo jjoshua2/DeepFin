@@ -10,6 +10,7 @@ real two-generation multi-shard collect.
 """
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 from typing import Any
 
@@ -90,6 +91,25 @@ def _same(a: dict[str, np.ndarray], b: dict[str, np.ndarray]) -> None:
         assert np.array_equal(va, vb, equal_nan=va.dtype.kind == "f"), k
 
 
+def _holdout_u(game_id: int) -> float:
+    import hashlib
+
+    h = hashlib.sha256(f"holdout:{int(game_id)}".encode()).digest()
+    return int.from_bytes(h[:8], "little") / float(1 << 64)
+
+
+def _split_frac(shards: list[Path]) -> float:
+    """A holdout fraction holding out the lowest-hash game of a multi-game shard
+    and every game with a lower hash (none of which fills a shard alone)."""
+    games = [sorted({int(g) for g in shard_row_meta(s)["game_id"]}, key=_holdout_u) for s in shards]
+    us = sorted(_holdout_u(g) for gs in games for g in gs)
+    for u in us:
+        held = [[g for g in gs if _holdout_u(g) <= u] for gs in games]
+        if any(0 < len(h) < len(gs) for h, gs in zip(held, games, strict=True)):
+            return u + 1e-12
+    raise AssertionError("no holdout fraction splits a shard")
+
+
 SETTINGS = {
     "stored_search_wdl": TrainSettings(presentations=2, holdout_frac=0.25, value_search_weight=0.5,
                                        value_search_source="stored_search_wdl"),
@@ -106,9 +126,11 @@ SETTINGS = {
 @pytest.mark.parametrize("source", sorted(SETTINGS))
 def test_the_streaming_window_equals_the_concatenating_one(runs: tuple[Path, Path], source: str) -> None:
     run, _ = runs
-    settings = SETTINGS[source]
     shards = generation_shards(run / "gen_0002" / "collect")
     assert len(shards) > 1  # several shards per generation
+    # Hold out exactly the games of one shard-sharing game's hash or below, so a
+    # shard is split between train and held-out rows whatever games were played.
+    settings = dataclasses.replace(SETTINGS[source], holdout_frac=_split_frac(shards))
     held = [learn.holdout_mask(shard_row_meta(s), settings.holdout_frac) for s in shards]
     assert any(0 < h.sum() < h.size for h in held)  # a shard split between train and held-out rows
     old = _old_load_window(run, 2, settings)
