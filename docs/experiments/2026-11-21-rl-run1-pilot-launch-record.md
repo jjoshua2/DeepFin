@@ -31,16 +31,30 @@ is not gaming, with no PAUSE. If it is killed, main's collect (#1441) redoes eve
 unfinished process whole from its seed. That selects nothing (losing up to about
 1.45 h at a kill near the end). See the pre-training check below.
 
-### The pinned commit
+### The pinned commits: C0 for the collection, `$PIN` for everything after it
 
-Collect, training, the recalibration fit and **all four matches run from ONE
-detached worktree at ONE commit**:
+**The collection runs at C0 = `6c72b821b`.** Step 0 and Step 1 run from the detached
+worktree `~/projects/chess-worktrees/rl-run1-pilot-6c72b821b`. They started before
+#1459, #1462 and #1463 merged, on the owner's go for Step 1 (owner block).
+
+**Training, the fit and all four matches run at `$PIN`.** That is main after the
+last prerequisite merges, in its own detached worktree. Every command here runs
+with the live venv's interpreter, `PY=$HOME/projects/chess/.venv/bin/python`
+(torch 2.10.0+cu128); `python` / `python3` below mean `$PY`.
 
 ```bash
-PIN=<main's sha after the last prerequisite merges; written into the owner block before the collect starts>
+PIN=<main's sha after the last prerequisite merges; written into the owner block before any training>
+git -C ~/projects/chess merge-base --is-ancestor 6c72b821b $PIN || exit 1     # $PIN must descend from C0
+git -C ~/projects/chess diff --name-only 6c72b821b $PIN                        # -> the owner block
 git -C ~/projects/chess worktree add --detach ~/projects/chess-worktrees/rl-run1-pilot-$PIN $PIN
-cd ~/projects/chess-worktrees/rl-run1-pilot-$PIN && python3 scripts/build_production_extensions.py
+cd ~/projects/chess-worktrees/rl-run1-pilot-$PIN && $PY scripts/build_production_extensions.py
 ```
+
+- The collection is the shared input of every cell, so `$PIN` must be a descendant
+  of C0.
+- The list `git diff --name-only C0 $PIN` goes into the owner block. **If it touches
+  the shard format or the train-side loader's reading of it, the collect is
+  redone at `$PIN`.**
 
 **Why one commit.** On 2026-11-21 the 800-game head-swap arms no longer reproduced the
 2026-11-19 bank game for game. This was true of the PLAIN arms too: plain Q50 matched
@@ -48,7 +62,7 @@ on 30 of 424 games and plain F12 on 63 of 799. 24 commits since the bank's
 `df55413a6` touch the play path, CUDA graphs among them
 (`~/chess-artifacts/operations/rl-claude-20261119/arena-hybrid-option/README.md`).
 So every pilot contrast is **within-run, on one commit**:
-- every arena result row's `git_sha` must equal `$PIN`;
+- every arena result row's `git_sha` must equal `$PIN` (the one-commit rule for the matches is unchanged by C0);
 - the bank's absolute numbers are context only, never a control.
 
 ## Directories
@@ -124,9 +138,10 @@ print(json.dumps({"games": games, "game_resumes": resumes, "ok": ok})); sys.exit
 EOF
 ```
 
-`game_resumes` exists only under #1444, which the pilot does not use. On `$PIN` the
-key is absent, and the check requires it to be absent or empty, so a collect that
-#1444 resumed cannot pass. The collect gates
+`game_resumes` exists only under #1444, which the pilot does not use. On C0 and on
+`$PIN` the key is absent, and the check requires it to be absent or empty, so a
+collect that #1444 resumed cannot pass. **On this code the only clause that can
+fail is `games == 8000`.** The collect gates
 (`scripts/simple_rl_collect_gates.py $R/collect/gen_0001/collect`) are also recorded.
 
 ## Step 2: three training cells, ONE AT A TIME, nothing else on the box
@@ -228,7 +243,7 @@ max-plies rule).
 | # | Match | A: candidate | A: reference | B: candidate | B: reference | Games | Seed | Looks |
 |---|---|---|---|---|---|---|---|---|
 | 1 | gate: Zq vs base | Zq | SL | SL | Zq | 1,600 | 2026112101 | one |
-| 2 | head-to-head: Zq + recal vs Zq | Zq `--candidate-value-recal $RECAL` | Zq | Zq | Zq `--reference-value-recal $RECAL` | 1,600 | 2026112102 | one |
+| 2 | head-to-head: Zq + recal vs Zq (**skipped unless match 1 reads UB95 < 0**) | Zq `--candidate-value-recal $RECAL` | Zq | Zq | Zq `--reference-value-recal $RECAL` | 1,600 | 2026112102 | one |
 | 3 | S vs base | S | SL | SL | S | 800 | 2026112103 | one, plus the extension |
 | 4 | P0 policy + base value vs base | P0 `--candidate-value-from $SL` | SL | SL | P0 `--reference-value-from $SL` | 1,600 / 3,200 / 4,800 | 2026112141 / 42 / 43 | three |
 
@@ -307,6 +322,14 @@ The pool takes them in that order with
 `--boundaries 1.96,3.471,2.454,2.004 --look-seeds 2026112103,2026112131,2026112132,2026112133`.
 It reads z = 1.96 on the first read alone, then 3.471 / 2.454 / 2.004 at the three
 extension looks, and it refuses any pair that is missing or out of order.
+
+**False adoption, simulated** (statistics review of #1464,
+`plan-review-1464/s_extension_sim.txt`):
+
+| True S | With the extension | Single 800-game read |
+|---|---|---|
+| −10 | 0.0277 | 0.0251 |
+| 0 | 0.34 | 0.20 |
 
 At each look, S is adoptable iff est − z·SE > −10. The extension stops early iff
 est ≤ 0 or est + z·SE < −10. After the third look without adoption, S is not
@@ -439,7 +462,10 @@ collection A (about 1.6 h):
 - the playout-cap throughput, measured in `collect-throughput/playout-cap/`;
 - the fast-ply root-noise check: KataGo disables noise on fast searches. This was "to check" in the amendment.
 
-**p is chosen from the measurement, not the guess.** Until the throughput run
+**p is chosen from the measurement, by a rule fixed now, before the throughput is read.**
+p = the smallest value in {0.5, 0.25, 0.125} whose MEASURED effective policy rows
+at 1.6 GPU-h are ≥ collection A's 198k. B's game count is then fixed from the
+measured games/h × 1.6 h, not from wall time. Until the throughput run
 lands, the table below uses the amendment's eval-count model,
 games/h ≈ 1 / (p / 5,021 + (1 − p) / 19,300), which is a **guess**. Policy rows are
 near-independent (residual ICC 0.03), so the policy's effective rows are about
@@ -454,7 +480,17 @@ rows / (1 + (m − 1)·0.03) for m rows per game. Value information scales with 
 
 At p = 0.25, B gives more games AND, by this model, more effective policy rows. At
 p ≈ 0.04, games rise further, but the policy is starved to about half of A's
-effective rows. Fill in from `collect-throughput/playout-cap/` before choosing.
+effective rows. The numbers are filled in from `collect-throughput/playout-cap/`, and the rule above then picks p.
+
+**Collection B changes more than the game count** (engine agent, read from main 6c72b821b):
+- 75% of plies are played at 16 sims;
+- fast plies use the same temperature schedule as full plies;
+- root noise is OFF on fast plies;
+- tree reuse is carried across fast and full plies, so a stored full-ply target includes inherited visits;
+- there is no per-row capped flag.
+
+**Optimizer steps.** The K cells take fewer optimizer steps than A's cells, because
+B stores fewer rows.
 
 **Cells from B:**
 
@@ -468,11 +504,11 @@ SE = 8.9 × √(800 / games).
 
 | # | Match | Games | SE | Reads | Cannot show |
 |---|---|---|---|---|---|
-| K1 | K-blend vs base | 1,600 | 6.3 | damage iff UB95 < 0; adoptable iff LB95 > −10 | whether K-blend beats Zq: the difference of two vs-base results has SE ≈ 8.9, so only gaps above about 17 Elo read |
-| K2 | K-z2 vs base | 1,600 | 6.3 | as K1 | why it reads as it does: it changes the value dose, the source (z only) and the games at once |
-| K3 | K-blend vs Zq, head-to-head | 1,600 | 6.3 | "B's shape helps at equal time" iff LB95 > 0 | anything about the base: it is a within-pair contrast only |
+| K1 | K-blend vs base | 1,600 | 6.3 | damage iff UB95 < 0; adoptable iff LB95 > −10. At 80% power (one-sided 0.025, 2.80 × SE): adoption reads at true ≥ +7.6, damage at true ≤ −17.6 | whether K-blend beats Zq: the difference of two vs-base results (K1 − match 1) has SE ≈ 8.9 and reaches 80% power only at ≈ 25 Elo |
+| K2 | K-z2 vs base | 1,600 | 6.3 | as K1, as a **package verdict on the owner's recipe** only | why it reads as it does. It changes rows per game AND the value source (z only) AND the games. Isolating them needs cells this record does not add: **K-z-all** (z on every full-ply row of B) and **K-blend2** (the blend on 2 rows per game). Its value dose is ≈ 36k–56k value rows vs K-blend's ≈ 434k, so it also reports a value-drift readout (value KL vs the base on hold-out rows, or a value-half head-swap); otherwise "adoptable" could mean only that the value barely trained |
+| K3 | K-blend vs Zq, head-to-head | 1,600 | 6.3 | "collection B's package beats A's at equal collection time" iff LB95 > 0; 80% power at a true difference ≥ 17.6 (19.0 with the pool's measured SE) | anything about the base. It is a **package contrast for collection B**: games, rows per game AND the game distribution all change (the fast-ply list above) |
 
-K3 exists because K1 − match 1 is underpowered. Both nets are plain, so K3 plays
+K3 exists because K1 − match 1 is underpowered (80% power only at ≈ 25 Elo). Both nets are plain, so K3 plays
 at plain speed.
 
 **Added cost:**
@@ -529,16 +565,19 @@ are from the live `configs/pbt2_small.yaml`; verdicts are from `docs/experiment_
 
 | # | Knob | What it does | Live value | Recorded verdict |
 |---|---|---|---|---|
-| 1 | `wdl_terminal_outcome_plies` / `_full_plies` / `_sf_frac` (`terminal_outcome_transfer_taper`) | Moves the SEARCH share of the blend to the game result near the end of the game: full weight within `_full_plies`, tapered to zero by `_plies` via `moves_left`. `_sf_frac` lets the outcome also take part of the SF share | unset, so off (defaults 0 / 2 / 0.0) | **Calibration** (ledger L38651, 2026-08-07, `data/terminal_outcome_calibration_20260807/`, 149k rows): the result's noise as a value label is sd ≈ 0.10 at 1–2 plies from the end, rising to 0.77 deep. It crosses the search component's noise at d ≈ 6–7, and d ≤ 6 touches 4.7% of rows. **Stage-1 screen: KILL, both arms** (L38726): the endgame CI included 0 for both, e.g. conservative +1.24 [−2.93, +5.53] cp. Stage 2 never launched |
-| 2 | `use_adjusted_wdl_target` (+ `adjusted_wdl_regret_source` / `_scale` / `_cap`) | Discounts the game result by the opponent's later regret, so a result owed to SF's later mistakes counts for less. **This is the "gift win" correction** | `false` (the three sub-keys are deleted from the yaml as unreachable, L57920–57926) | **2026-07-20/21 multi-seed NULL** (L3775): its 2× dose won only at seed 0, and "at s0 EVERY value-pressure lever won" |
-| 3 | `sf_search_dampen_sf_low` / `_high` | Lowers the SF share on rows where SF and our search disagree in sign, separately for each direction | 0.0 / 0.0 | **No screening arm found.** A grep of the ledger for `sf_search_dampen` finds only "inert" and "restored to the yaml" entries (L7059, L25754, L41637, L46472, L61867). It was restored because `scripts/value_optimism.py` requires the keys to be present (L41637) |
-| 4 | `sf_wdl_frac` → `sf_wdl_frac_floor` interpolation by `wdl_regret` | The SF share rises with difficulty past a 0.10 regret knee | pinned: frac = floor = 0.69 | **Never fired:** realised `wdl_regret` never reached 0.10 (max 0.0984) in 478/478 iterations. It was pinned to the realised value (live yaml comment; `rl_loop_audit` I5) |
+| 1 | `wdl_terminal_outcome_plies` / `_full_plies` / `_sf_frac` (`terminal_outcome_transfer_taper`) | Moves the SEARCH share of the blend to the game result near the end of the game: full weight within `_full_plies`, tapered to zero by `_plies` via `moves_left`. `_sf_frac` lets the outcome also take part of the SF share | unset, so off (defaults 0 / 2 / 0.0) | **Biased by construction** (the weight depends on plies-to-end, i.e. on the future; see below). **Calibration** (ledger L38651, 2026-08-07, `data/terminal_outcome_calibration_20260807/`, 149k rows): the result's noise as a value label is sd ≈ 0.10 at 1–2 plies from the end, rising to 0.77 deep. It crosses the search component's noise at d ≈ 6–7, and d ≤ 6 touches 4.7% of rows. **Stage-1 screen: KILL, both arms** (L38726): the endgame CI included 0 for both, e.g. conservative +1.24 [−2.93, +5.53] cp. Stage 2 never launched |
+| 2 | `use_adjusted_wdl_target` (+ `adjusted_wdl_regret_source` / `_scale` / `_cap`) | Discounts the game result by the opponent's later regret, so a result owed to SF's later mistakes counts for less. **This is the "gift win" correction** | `false` (the three sub-keys are deleted from the yaml as unreachable, L57920–57926) | **Biased by construction** (the weight depends on future regret). **2026-07-20/21 multi-seed NULL** (L3775): its 2× dose won only at seed 0, and "at s0 EVERY value-pressure lever won" |
+| 3 | `sf_search_dampen_sf_low` / `_high` | Lowers the SF share on rows where SF and our search disagree in sign, separately for each direction | 0.0 / 0.0 | **Biased by construction** (the weight depends on the labels). **No screening arm found.** A grep of the ledger for `sf_search_dampen` finds only "inert" and "restored to the yaml" entries (L7059, L25754, L41637, L46472, L61867). It was restored because `scripts/value_optimism.py` requires the keys to be present (L41637) |
+| 4 | `sf_wdl_frac` → `sf_wdl_frac_floor` interpolation by `wdl_regret` | The SF share rises with difficulty past a 0.10 regret knee | pinned: frac = floor = 0.69 | **Never fired in the current run:** realised `wdl_regret` never reached 0.10 (max 0.0984) in 478/478 iterations, and it was pinned to the realised value (live yaml comment; `rl_loop_audit` I5). An earlier run crossed the knee on 15.3% of 646 iterations (`docs/rl_loop_audit.md` item L15, ≈ L820) |
 | 5 | `sf_wdl_conf_power` / `sf_wdl_draw_scale` | **Affect ONLY the auxiliary `sf_eval` mask, never the value target** (`losses.py` docstring at L1916; pinned by `tests/test_sf_wdl_conf_knobs_are_aux_only.py`) | as live | Listed so nobody tunes them expecting a value effect |
 
 **How to read these verdicts.**
 - **They are leads, not closures, for the SL base.** They came from offline `value_regret` screens on the OLD net at small dose. This lane has since found that no offline value metric predicts the SL base's 64-sim strength.
 - **The calibration in (1) bears directly on the pilot.** A one-hot result far from the end is the noisiest of the three labels. That is the pilot's damage hypothesis seen from the other side.
-- **Design option for the arm after the pilot** (not a change to the pilot's cells): wherever the result enters (K-z2, or any z share), its weight should fall with plies-to-end, using a taper like (1)'s.
+- **Design option for the arm after the pilot** (not a change to the pilot's cells): wherever the result enters (K-z2, or any z share), its weight would fall with plies-to-end, using a taper like (1)'s. **Marked biased:** like (1)–(3), it is a weight that depends on the future, which the statistics review shows reintroduces bias. It needs the calibration table below before any use.
+- **What is and is not calibrated** (statistics review of #1464, `plan-review-1464/outcome_conditioned_sim.txt`, `outcome_conditioned_variants.txt`):
+  - FIXED-weight blends are calibrated. This supports the primary design.
+  - ANY weight that depends on labels or on the future reintroduces bias, even with perfectly calibrated evaluators. In the model, a threshold rule was biased by ± 0.065.
 
 **Primary design: restore the three-way value blend and an SF-opponent share of
 games in the simple loop.**
@@ -549,29 +588,33 @@ games in the simple loop.**
 
 | Stage | Change |
 |---|---|
-| (a) | SF labels plus the three-way blend, on self-play games only |
-| (b) | add the SF-opponent game share |
-| (c) | add the auxiliary heads |
+| Stage | Change | Control, and what is held equal |
+|---|---|---|
+| (a) | SF labels plus the three-way blend, on self-play games only | Relabel collection A's positions OFFLINE with SF and compare against Zq **on the same rows**, stating the three shares. A freshly labelled collection would also resample the games |
+| (b) | add the SF-opponent game share | This changes games, rows per game and opponent difficulty. Use a FIXED regret limit, not the PID, inside a one-generation readout, and state equal games or equal time |
+| (c) | add the auxiliary heads | Not a pure training change: `categorical_blend_frac` feeds the categorical head into the MCTS value, which is a search-config change. Hold `categorical_blend_frac` at 0 in (c), or read (c) as a search change |
 
 **Before the primary design is trusted.** Each item has its status on main 6c72b821b,
 from the code and the audits. "Unknown" means not re-verified in this session.
 
 | Item | What must hold | Status |
 |---|---|---|
-| One-ply alignment of the SF label | `rec.sf_wdl` is SF's search AFTER our move (P1, SF to move, POV-flipped; `stockfish_turn._sf_result_wdl_for_record`; `docs/model_heads.md` `policy_sf` row). As a value target for the row's position, it is the value after our chosen move, one ply off. The P0 fields (`sf_p0_*`) are built from the PARENT row's MultiPV (`finalize._build_sf_p0_regret_vector`). | **open, by design.** Decide whether the value target takes P1 as-is (the value under our move) or a P0 eval; no P0 value field exists today |
+| One-ply alignment of the SF label | `rec.sf_wdl` is SF's search AFTER our move (P1, SF to move, POV-flipped; `stockfish_turn._sf_result_wdl_for_record`; `docs/model_heads.md` `policy_sf` row). As a value target for the row's position, it is the value after our chosen move, one ply off. **Direction:** a label taken after our move is at most the P0 value, lower by our move's regret, so it carries a systematic pessimistic offset equal to the mean regret. The P0 fields (`sf_p0_*`) are built from the PARENT row's MultiPV (`finalize._build_sf_p0_regret_vector`). | **open, by design.** Decide whether the value target takes P1 as-is (the value under our move, pessimistic by the mean regret) or a P0 eval; no P0 value field exists today |
+| Label coverage (the signature defect) | A row with no usable `sf_wdl` silently falls back to the one-hot result for its SF share (`train/losses.py` ≈ L1891). If the labeller cannot keep up, the blend turns z-heavy on a non-random subset with no error | **open.** Require 100% label coverage, or make `train/value_blend_guard.py` fail the run instead of reporting |
 | Dirty-TT label regime | Labels should be searched from a known TT state | **open.** Default label queries run with `fresh=False` (warm TT carried across positions; `stockfish/pool.py`). Only escalation re-queries run cold (`fresh=True`, `stockfish_turn.py` ~L745–753, L1365) |
 | MultiPV-6 regret-tail fabrication | No fabricated values in the stored targets | **open, for the POLICY fields.** `finalize._build_sf_p0_regret_vector` imputes a regret for about 68% of legal moves at MultiPV 6, and `record_sf_p0_regret: true` banks it into every shard (`docs/experiment_ledger.md` ~L980–1016). It does not touch `sf_wdl`, the value label, which is from SF's best line |
-| Unconverged labels (about 3%) | A label must be a converged search | **unknown.** The banked finding is about 2.92% of labels unconverged; whether the escalation path fixes these was not re-checked |
-| cp-logistic slope and draw width | The cp → WDL map fits the data | **open.** Live values are 0.006 and 120 cp; the yaml's own comments say the replay fit is about 0.0045–0.0055 and 130–145 cp. Not refitted |
+| Unconverged labels (about 3%) | A label must be a converged search | **open.** About 2.92% of labels were found unconverged, and escalation is OFF: `sf_label_escalate_q_gap` defaults to 0.0 (`selfplay/config.py` ≈ L286) and is unset in the live yaml |
+| cp-logistic slope and draw width | The cp → WDL map fits the data | **open.** Live values are 0.006 and 120 cp. The replay-fit notes (about 0.0045–0.0055 and 130–145 cp) are comments in MAIN's `configs/pbt2_small.yaml` (≈ L500–501), not the live one. Not refitted |
 | `search_wdl_draw_mode` | The search-WDL component's draw channel is the intended one | **unknown for the simple loop.** The live yaml does not set it, so the runtime default `net_raw` applies (`stockfish/wdl.py` `SEARCH_WDL_DRAW_NET_RAW`) |
 | "The SF share is load-bearing" | NOT to be cited | **operator's rule** (`docs/model_heads.md`; ledger, 2026-08-23): the 0.64 → 0.40 winrate fall is an old, uncontrolled result and must not be cited as a mechanism without a fresh preregistered re-ablation |
 
-**Cost: SF label CPU against our collect rate. Estimate, a guess until measured.**
+**Cost: SF label CPU against our collect rate.**
 - The pilot collects ≈ 5,000 games/h × ≈ 95 rows ≈ 475k rows/h.
-- At the production label budget (150k–200k nodes, MultiPV 6) and an assumed ≈ 1M nodes/s per core (**not measured here**), a label costs about 0.15–0.2 core-seconds. That makes ≈ 20–26 cores busy continuously.
-- So at 64 sims on every ply, **SF labelling, not the GPU, is likely the limit**: the live yaml's `sf_workers` 4 would label only about a fifth of the rows.
-- Fast-move collection (playout cap) makes it worse, because games per hour rise while every stored row still needs a label.
-- **The measurement that settles it:** label throughput, rows/s at `sf_label_nodes_floor`, on this box beside a 64-sim collect.
+- **Measured nps on this box:** 290–370k nodes/s per engine with 32 engines (`docs/sf_cpu_cost_split.md`, ≈ L164).
+- At the production label budget (150k–200k nodes, MultiPV 6), a label costs ≈ 0.4–0.7 core-seconds. 475k rows/h then needs ≈ 53–91 cores, **more than the machine has**.
+- (A first draft of this record assumed ≈ 1M nodes/s per core and underestimated the cost about 3×.)
+- **So at 64 sims on every ply, SF labelling, not the GPU, is the limit.** Fast-move collection makes it worse, because games per hour rise while every stored row still needs a label.
+- **The measurement that settles it:** the production label path (MultiPV 6, warm TT, history moves, the Syzygy pair), measured beside the collect's own CPU load.
 
 **Launch condition (unchanged):** the pilot has read.
 
@@ -630,10 +673,16 @@ frozen. Difficulty is regret AND nodes.
   - **Disagreement rows are relabelled, not dropped:** a row where our search and the result disagree gets the winner's evaluation.
   - **One-sided gap:** a win against a deliberately weakened opponent does not show our evaluation was right, so won games get no correction. These are positions where full-strength SF already saw us losing and the limited SF let us off.
 
-  **The cheap measurement that sizes the gap, before any training (report only).**
-  Play a small collection, SL base vs limited SF, and report two things:
-  - the share of won-game rows where SF's full-strength evaluation had us below the same threshold (our win probability ≤ 0.20: "gift wins");
-  - the resulting target's shape statistics (entropy, |W − L|) against the base's.
+  **Bias, from the statistics review** (`plan-review-1464/outcome_conditioned_sim.txt`).
+  This alternative is biased even with perfectly calibrated evaluators: E[target | s] − s
+  reaches −0.024 at a 2-ply lag and −0.061 at 8 plies, because t\* looks ahead to the
+  end of the game.
+
+  **The launch measurement** is a calibration table, E[target − z | s-bin], for the
+  proposed target against an unconditional rule on a held-out collection. The gift-win
+  share (won-game rows where full-strength SF had us at win probability ≤ 0.20) and
+  the shape statistics (entropy, |W − L|) are report-only, because the gift-win share
+  sizes only the won-game gap.
 
   **What the simple loop lacks, from the code (estimate only; nothing is built):**
   - **SF opponents.** `simple_rl/collect.py` forces self-play (`selfplay_fraction=1.0`, a default `OpponentConfig()`, `sf_nodes` 1, with SF labels unused). The play path itself supports SF opponents:
@@ -686,10 +735,12 @@ head-swap harness without CUDA graphs and are superseded by this table.
 
 | # | Decision | Proposal | Owner's decision |
 |---|---|---|---|
-| L1 | Launch the pilot as recorded here | yes, once every prerequisite above is merged and `PIN` is written below | |
+| L1 | Launch the pilot as recorded here | yes, once every prerequisite above is merged and `PIN` is written below | **Step 1 (the collection) only: GO.** Owner, 2026-11-21, in reply to "say go and I'll start the pilot collection as soon as the Ceres run finishes": "I guess? I dont see downsides?" Run at C0 = `6c72b821b`. Training, the fit and the matches wait for this record's merge |
 | L2 | Budget | 4.0–6.0 GPU-h (expected about 4.8), plus the collect window of about 1.6 h with no gaming | |
 | L3 | Cell changes | none (Zq, S, P0 as in the amendment) | |
 | L4 | S's role | a one-generation shape diagnostic only; z in every multi-generation recipe | |
 | L5 | Add collection B and cells K-blend / K-z2 with matches K1–K3 (≈ 3.0–3.3 GPU-h more) | yes, once `--value-rows-per-game` and the playout-cap throughput are banked; p from that measurement | |
 | L6 | The parked anchor: restore the original loop's three-way value blend plus an SF-opponent share in the simple loop (primary, staged a → b → c), or the outcome-conditioned alternative | stay parked until the pilot reads; then the primary design, after the trust checks and the label-throughput measurement | |
-| — | `PIN` (the commit every stage runs from) | | |
+| — | C0 (the collection's commit) | `6c72b821b` | |
+| — | `PIN` (training, fit and matches; must descend from C0) | | |
+| — | `git diff --name-only C0 $PIN` (redo the collect if it touches the shard format or the loader's reading of it) | | |
