@@ -199,6 +199,13 @@ class TrainSettings:
     # optimizer step at which this many rows have been presented (resolved
     # against the batch plan by snapshot_updates_for_rows; recorded).
     snapshot_rows: tuple[int, ...] = ()
+    # Value rows per game (0 = every row, the historical behaviour). With r > 0
+    # the WDL term reads only r rows of each game -- the r with the smallest
+    # sha256("value_row:<game_id>:<ply_index>") -- and every stored row keeps
+    # its policy term. The choice depends only on (game_id, ply), so it is the
+    # same in any row order, on a resume and in every arm. See value_row_weights
+    # for the loss normalisation.
+    value_rows_per_game: int = 0
 
     def effective_batch(self) -> int:
         return int(self.batch_size) * int(self.accum_steps)
@@ -277,6 +284,21 @@ class TrainSettings:
         if int(self.accum_steps) > 1 and self.sl_mix_frac > 0:
             raise ValueError("accum_steps > 1 with sl_mix_frac > 0 is refused: the SL share is rounded per "
                              "micro-batch, so the accumulated step is not the effective batch's mix")
+        if int(self.value_rows_per_game) < 0:
+            raise ValueError(f"value_rows_per_game must be >= 0 (0 = every row), got {self.value_rows_per_game}")
+        if int(self.value_rows_per_game) > 0 and self.sl_mix_frac > 0:
+            raise ValueError("value_rows_per_game > 0 with sl_mix_frac > 0 is refused: SL rows have no game ids "
+                             "to choose value rows by")
+        if int(self.value_rows_per_game) > 0 and float(self.w_wdl) <= 0:
+            raise ValueError("value_rows_per_game > 0 with w_wdl 0 would be ignored: there is no value term to mask")
+        if int(self.value_rows_per_game) > 0 and int(self.accum_steps) > 1:
+            # Refused here, before any collect runs, as well as by
+            # refuse_masked_heads_under_accumulation at train time: every
+            # micro-batch would hold a different number of value rows, so the
+            # accumulated value gradient would not be the effective batch's.
+            raise ValueError("value_rows_per_game > 0 with accum_steps > 1 is refused: micro-batches hold unequal "
+                             "value-row counts, so the accumulated value gradient is not the effective batch's; "
+                             "use accum_steps 1")
         if self.snapshot_updates and self.snapshot_rows:
             raise ValueError("snapshot_updates and snapshot_rows are alternatives; give one")
         rows = [int(k) for k in self.snapshot_rows]
@@ -687,12 +709,71 @@ def refuse_masked_heads_under_accumulation(rows: dict[str, np.ndarray], settings
                                                                           dtype=bool)
     if float(settings.w_wdl) > 0:
         masks["wdl (is_network_turn)"] = net
+        if int(settings.value_rows_per_game) > 0:
+            masks[f"wdl (value_rows_per_game {settings.value_rows_per_game})"] = (
+                net & (np.asarray(rows["value_row_weight"]) > 0))
     bad = {name: int((~m).sum()) for name, m in masks.items() if not m.all()}
     if bad:
         raise ValueError(f"accum_steps {settings.accum_steps} refused: phase rows without a trained head's target "
                          f"{bad} of {n}. Each micro-batch normalises a head by its own valid-row count, so the "
                          "accumulated gradient would not be the effective batch's; train these rows with "
                          "accum_steps 1 (a native batch)")
+
+
+def value_row_choice(game_id: np.ndarray, ply_index: np.ndarray, r: int) -> np.ndarray:
+    """Boolean mask: the ``r`` rows of each game with the smallest
+    sha256("value_row:<game_id>:<ply_index>") (every row of a game with <= r).
+
+    A pure function of each row's (game id, ply), so the same rows are chosen
+    in any load order, on a resume and in every arm over the same collect."""
+    gid = np.asarray(game_id, dtype=np.int64)
+    ply = np.asarray(ply_index, dtype=np.int64)
+    keys = np.fromiter(
+        (int.from_bytes(hashlib.sha256(f"value_row:{int(g)}:{int(p)}".encode()).digest()[:8], "big")
+         for g, p in zip(gid, ply, strict=True)), dtype=np.uint64, count=gid.size)
+    order = np.lexsort((keys, gid))  # by game, then by hash within the game
+    sorted_gid = gid[order]
+    first = np.ones(gid.size, dtype=bool)
+    first[1:] = sorted_gid[1:] != sorted_gid[:-1]
+    starts = np.flatnonzero(first)
+    rank = np.arange(gid.size) - np.repeat(starts, np.diff(np.append(starts, gid.size)))
+    chosen = np.zeros(gid.size, dtype=bool)
+    chosen[order] = rank < int(r)
+    return chosen
+
+
+def value_row_weights(run_dir: Path, row_ids: np.ndarray, is_network_turn: np.ndarray, r: int) -> tuple[
+        np.ndarray, dict[str, Any]]:
+    """Per-row WDL weight m / f for the phase's train rows (row ids as load_window).
+
+    m marks the chosen value rows (value_row_choice over each generation's rows);
+    f is the chosen share of the phase's network-turn rows. compute_loss reduces
+    the WDL term as masked_mean(ce * weight, is_network_turn), so a chosen row's
+    coefficient is 1 / (f * net rows in its batch): over the phase that is the
+    mean over the CHOSEN rows (per value row), with w_wdl meaning what it means
+    at r = 0. It is deliberately NOT the per-batch masked mean over the chosen
+    rows (1 / chosen rows in the batch): at r = 2 of ~95 rows a batch holds a
+    handful of them, and that denominator would swing each row's coefficient
+    with the batch's draw (and give a batch of one chosen row the whole term)."""
+    weight = np.zeros(int(row_ids.shape[0]), dtype=np.float32)
+    chosen_all = np.zeros(int(row_ids.shape[0]), dtype=bool)
+    games = 0
+    for g in np.unique(row_ids[:, 0]):
+        metas = [shard_row_meta(s) for s in generation_shards(Path(run_dir) / f"gen_{int(g):04d}" / "collect")]
+        gid = np.concatenate([m["game_id"] for m in metas])
+        ply = np.concatenate([m["ply_index"] for m in metas])
+        chosen_g = value_row_choice(gid, ply, r)
+        sel = row_ids[:, 0] == g
+        chosen_all[sel] = chosen_g[row_ids[sel, 1]]
+        games += int(np.unique(gid[row_ids[sel, 1]]).size)
+    net = np.asarray(is_network_turn, dtype=bool)
+    k, n = int((chosen_all & net).sum()), int(net.sum())
+    if k == 0:
+        raise ValueError(f"value_rows_per_game {r}: no network-turn row was chosen")
+    f = k / n
+    weight[chosen_all & net] = np.float32(1.0 / f)
+    return weight, {"value_rows_per_game": int(r), "value_rows": k, "network_turn_rows": n,
+                    "games": games, "value_row_share": f}
 
 
 def snapshot_updates_for_rows(rows: tuple[int, ...] | list[int], step_rows: list[int]) -> tuple[int, ...]:
@@ -1673,6 +1754,12 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
         reference_prior = _reference_prior
 
     train_rows, target_info = prepare_targets(train_rows, settings, reference_prior)
+    value_rows_info: dict[str, Any] | None = None
+    if int(settings.value_rows_per_game) > 0:
+        n_rows = int(train_rows["x"].shape[0])
+        train_rows["value_row_weight"], value_rows_info = value_row_weights(
+            run_dir, row_ids, np.asarray(train_rows.get("is_network_turn", np.ones(n_rows))),
+            int(settings.value_rows_per_game))
     refuse_masked_heads_under_accumulation(train_rows, settings)
     holdout = {k: v for k, v in holdout.items() if k not in TARGET_SOURCE_KEYS}
     if settings.optimizer_state not in ("fresh", "continue"):
@@ -1880,6 +1967,7 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
         "realised_w_wdl": float(trainer._loss_kwargs["w_wdl"]),
         "realised_policy_target_temp": float(trainer._loss_kwargs["policy_target_temp"]),
         "targets": target_info,
+        "value_rows": value_rows_info,
         "losses": {k: m[k] for k in ("loss", "policy_loss", "wdl_loss", "blended_wdl_loss") if k in m},
         "heldout_before": before, "heldout_after": after, "probe_vs_previous": drift,
         "anchor": None if anchor is None else anchor.diagnostics(), "wall_seconds": wall,

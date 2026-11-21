@@ -192,6 +192,7 @@ def train_settings(a: argparse.Namespace, run_dir: Path) -> TrainSettings:
         aurora_polar_dtype=a.aurora_polar_dtype, grad_clip=a.grad_clip, zclip_max_norm=a.zclip_max_norm,
         lr_schedule=a.lr_schedule,
         accum_steps=a.accum_steps, snapshot_rows=parse_snapshot_updates(a.snapshot_rows, flag="--snapshot-rows"),
+        value_rows_per_game=a.value_rows_per_game,
     )
     settings.validate()
     if settings.optimizer_hparams_source != "trainer":
@@ -340,7 +341,9 @@ ADDED_SINCE_PINNING = {"init_optimizer_state": "fresh",
                        "aurora_polar_dtype": None, "grad_clip": None, "zclip_max_norm": None,
                        "lr_schedule": "flat",
                        # Every collect before --collect-procs ran as one process.
-                       "collect_procs": 1, "accum_steps": 1, "snapshot_rows": None}
+                       "collect_procs": 1, "accum_steps": 1, "snapshot_rows": None,
+                       # Every run before --value-rows-per-game trained the value on every row.
+                       "value_rows_per_game": 0}
 
 
 def _pinned_value(path: Path, key: str, legacy: Any) -> Any:
@@ -752,6 +755,13 @@ def _common(p: argparse.ArgumentParser) -> None:
                         "--snapshot-updates count optimizer steps. Refused with a KL anchor, an SL share, or phase rows "
                         "missing a trained head's target (e.g. value-only playout-cap rows). "
                         "Default 1 (no accumulation)")
+    t.add_argument("--value-rows-per-game", type=int, default=0, metavar="R",
+                   help="train the WDL term on R rows per game only (the R with the smallest "
+                        "sha256(game_id, ply): deterministic, independent of row order and resume); the policy "
+                        "term stays on every stored row. Normalised per chosen row over the phase (each chosen "
+                        "row's weight is 1 / its share of network-turn rows), so --w-wdl keeps its meaning. "
+                        "Pinned in run_config.json. Refused with --accum-steps > 1, --sl-mix-frac > 0 or "
+                        "--w-wdl 0. Default 0 = every row (unchanged)")
     t.add_argument("--mirror-prob", type=float, default=0.5)
     t.add_argument("--w-policy", type=float, default=1.0)
     t.add_argument("--w-wdl", type=float, default=1.0, help="0 = policy only")
