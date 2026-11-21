@@ -1054,9 +1054,9 @@ def _play_proc(spec: ProcSpec) -> dict[str, Any]:
             )
         finally:
             pool.close()
-            journal.close()
         played_games = int(batch_stats.games)
     flush()
+    journal.close()
     wall = time.perf_counter() - t0
     if games_done != n_games and not pending and stop_file.exists() and len(queue) == n_games - games_done:
         # Drained: every dealt game finished and is committed; nothing in flight.

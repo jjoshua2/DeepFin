@@ -1111,18 +1111,19 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
 
     # Per-game streams (simple_rl collect): every draw for slot i comes from
     # that game's own generator, never from the batch-shared one.
-    game_rngs = state.game_rngs_for(net_idxs)
+    # (read by getattr: the opt-in fields are absent from lightweight state doubles)
+    game_rngs = state.game_rngs_for(net_idxs) if getattr(state, "game_rngs", None) is not None else None
     # A journaled ply of a game being replayed after a kill: its stream is set to
     # the state it had before that ply's draws, so the search re-runs under the
     # same noise; its full/fast choice and played move are then forced below.
-    forced = [state.forced_entry(i) for i in net_idxs] if state.forced_prefixes else None
+    forced = [state.forced_entry(i) for i in net_idxs] if getattr(state, "forced_prefixes", None) else None
     if forced is not None:
         for i, entry in zip(net_idxs, forced, strict=True):
             if entry is not None:
                 state.rng_for(i).bit_generator.state = entry["s0"]
     stream_before = (
         {i: g.bit_generator.state for i, g in zip(net_idxs, game_rngs, strict=True)}
-        if state.game_journal is not None and game_rngs is not None else None
+        if getattr(state, "game_journal", None) is not None and game_rngs is not None else None
     )
     is_full = _draw_is_full(
         rng, net_idxs,
