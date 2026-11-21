@@ -782,6 +782,23 @@ def _read_journal(path: Path) -> list[dict[str, Any]]:
     return out
 
 
+def _uci_moves(start_fen: str, actions: Any, final_fen: str) -> list[str]:
+    """A game's played moves as UCI, replayed from its start position (the
+    write-only move-list record: games.jsonl keeps both this and the action ids).
+    Refuses a list that does not reach the game's final position."""
+    from chess_anti_engine.moves.encode import index_to_move
+
+    board = chess.Board(start_fen)
+    out = []
+    for a in actions:
+        move = index_to_move(int(a), board)
+        out.append(move.uci())
+        board.push(move)
+    if board.fen() != final_fen:
+        raise ValueError(f"played moves from {start_fen!r} reach {board.fen()!r}, not the final {final_fen!r}")
+    return out
+
+
 class _Journal:
     """Append-only journal writer: one line per network turn, flushed to the
     kernel before the turn's moves are applied (a SIGKILL loses no applied
@@ -1019,16 +1036,17 @@ def _play_proc(spec: ProcSpec) -> dict[str, Any]:
                              f"not its doled opening #{dole_index} ({row['line']!r})")
         tb_plies = {int(p) for p in audit.tablebase_policy_applied_plies}
         final = chess.Board(audit.final_fen)
+        uci = _uci_moves(audit.start.start_fen, audit.played_move_indices, audit.final_fen)
         for s in samples:
             buffered.append(s)
             buffered_meta.append((int(audit.game_id), int(s.ply_index), row["id"],
                                   int(s.ply_index) in tb_plies, x_hash(s.x)))
         append_jsonl(proc_dir / GAMES, {
             "game_id": int(audit.game_id), "opening_id": row["id"], "dole_index": int(dole_index),
-            "book": int(row["book"]), "moves": [int(m) for m in audit.played_move_indices],
+            "book": int(row["book"]), "moves": [int(m) for m in audit.played_move_indices], "uci": uci,
             "result": audit.result, "resolution": audit.resolution,
             "total_plies": int(audit.total_plies), "start_ply": int(audit.start.start_ply),
-            "rows": len(samples), "mate": bool(final.is_checkmate()),
+            "rows": len(samples), "mate": bool(final.is_checkmate()), "final_fen": audit.final_fen,
             "tb_policy_rows": sum(1 for s in samples if int(s.ply_index) in tb_plies),
             "cap_reached": bool(audit.cap_reached),
         })

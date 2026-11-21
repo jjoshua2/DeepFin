@@ -422,6 +422,13 @@ still match it). An unfinished process resumes at game granularity:
   repaired the same way.
 - The process then replays only its remaining openings (by dole index, which
   each games.jsonl line records, with the game's moves), in doled order.
+- **The move-list record.** Each games.jsonl line carries the game's played
+  moves twice: `moves` (action ids, 4672 space) and `uci` (the same moves as
+  UCI, replayed from the game's opening line), plus `final_fen`. The writer
+  refuses a list that does not reach `final_fen`. `uci` and `final_fen` are
+  write-only (no rows change: the shard content digest is the same with and
+  without them); `moves` is also read by the resume repair, which checks
+  journal entries against committed games.
 - **Move journal.** A game that was in flight at the kill is long-selected: it
   is known to have still been running. Re-drawing it after the kill biases the
   collect toward short, decisive games. Per-game streams alone do not prevent

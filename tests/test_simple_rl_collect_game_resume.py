@@ -602,3 +602,44 @@ def test_the_replay_takes_its_moves_and_streams_from_the_journal_not_from_free_p
     nxt = min((p for p in replay if p > last), default=None)
     assert nxt is not None, "the game ended at its last journaled ply; pick a longer one"
     assert replay[nxt]["s0"] == state_b  # and it continued from the journaled after-state
+
+
+
+def test_games_jsonl_keeps_each_games_move_list_in_uci_and_action_ids(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The move-list record: each line's UCI list replays legally from the game's
+    opening line to its recorded final position and result, and equals the
+    action-id list under index_to_move."""
+    import chess
+
+    from chess_anti_engine.moves.encode import index_to_move
+    from chess_anti_engine.selfplay.opening import seed_board_from_line
+
+    monkeypatch.setattr(collect_mod, "_open_stockfish", quiet_stockfish)
+    _, gen = _collect(tmp_path, "plain")
+    starts = (gen / "starts.txt").read_text().splitlines()
+    games = _games(gen / "games.jsonl")
+    assert len(games) == GAMES
+    adjudicated = 0
+    for g in games:
+        board = seed_board_from_line(starts[int(g["dole_index"])])  # K = 1: dole index = row of starts.txt
+        assert board.ply() == int(g["start_ply"])
+        assert len(g["uci"]) == len(g["moves"]) == int(g["total_plies"]) - int(g["start_ply"]) > 0
+        for u, a in zip(g["uci"], g["moves"], strict=True):
+            move = chess.Move.from_uci(u)
+            assert move in board.legal_moves
+            assert index_to_move(int(a), board) == move
+            board.push(move)
+        assert board.fen() == g["final_fen"]
+        assert board.is_checkmate() == g["mate"]
+        if g["resolution"] == "natural":  # a game the rules ended carries the rules' result
+            assert board.is_game_over(claim_draw=True)
+            assert g["result"] == board.result(claim_draw=True)
+        else:  # an adjudicated game stopped in a position the rules had not ended
+            assert board.outcome() is None
+            adjudicated += 1
+    assert adjudicated == GAMES  # this fixture's quiet SF adjudicates every game
+    # the writer refuses a move list that does not reach the game's final position
+    g = games[0]
+    with pytest.raises(ValueError, match="not the final"):
+        collect_mod._uci_moves(seed_board_from_line(starts[int(g["dole_index"])]).fen(), g["moves"][:-1], g["final_fen"])
