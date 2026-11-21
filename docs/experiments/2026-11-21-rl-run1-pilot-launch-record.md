@@ -61,8 +61,11 @@ would put the cells out of distribution, but not the SL base, and would bias eve
 vs-base match against the cells.
 
 **Tripwire.** The checks below are MANDATORY if the diff touches any of:
-- `chess_anti_engine/encoding/**` (including the `rep_fix` / history regime);
-- the C extensions (`*.c`, `*.h`);
+- the encode path:
+  - `chess_anti_engine/encoding/**`, which includes the `rep_fix` / history regime, `_lc0_ext.c`, `_features_ext.c`, `_cboard_impl.h`, `_features_impl.h`, `_bitboard_planes_impl.h` and `_slider_attacks_impl.h`;
+  - `chess_anti_engine/mcts/_mcts_tree.c`, which includes the cboard and features headers;
+  - the encoder selection in `selfplay/network_turn.py` (`_batch_encoder_pair`);
+  - `x_hash` in `simple_rl/collect.py`;
 - the `moves/` policy maps;
 - shard I/O (`replay/shard.py`, `replay/packed_zarr.py`);
 - `simple_rl/learn.py`'s `prepare_targets` or the loader (`load_window`, `gather_rows`).
@@ -100,39 +103,47 @@ done
 This was smoke-tested on a banked small collect (11,274 rows): two runs gave
 identical digests. It has not yet been run on the pilot's collect.
 
-**(b) The encoder is identical.** Re-encode a fixed set of real move histories at C0
-and at `$PIN`; the digests must be equal. Also, the regime stamps in each shard's
-meta (`input_history_encoding`, `history_rep_fix`, `policy_encoding`) must equal
-`$PIN`'s resolved collect config.
+**(b) The encoder that wrote the stored `x` is identical.** The collector does not
+store `encode_position` output. It stores the C batch encoder that
+`selfplay/network_turn.py:_batch_encoder_pair` picks for `lc0_root` history:
+`batch_encode_146_lc0_root`, or its `_bf16` twin when the evaluator takes bf16
+input. (b) runs both of those, on CBoards, over every position of 300 banked FULL
+arena games, with the `rep_fix` regime set explicitly. It runs at C0 and at `$PIN`.
+Both digests must be equal.
 
 ```bash
-PYTHONPATH=. $PY - $R/openings/eval.pgn lc0_root v2_threats <history_rep_fix of $SL: 0|1> <<'EOF'
+B=~/chess-artifacts/operations/rl-claude-20261119
+PYTHONPATH=. $PY - <history_rep_fix of $SL: 0|1> 300 \
+  $B/search-compose/pgn/t0s1_F12_A.pgn $B/search-compose/pgn/t0s1_Q50_A.pgn $B/arena-hybrid-option/pgn/*.pgn <<'EOF'
 import hashlib, json, sys
 import chess, chess.pgn, numpy as np
 from chess_anti_engine.encoding import rep_fix
-from chess_anti_engine.encoding.encode import encode_position
-rep_fix.apply(sys.argv[4] == "1")                       # the regime is process-global: set it explicitly
-h, n = hashlib.sha256(), 0
-with open(sys.argv[1]) as fh:
-    while (g := chess.pgn.read_game(fh)) is not None:
-        b = chess.Board()
-        for mv in g.mainline_moves():
-            b.push(mv)
-            x = encode_position(b, input_history_encoding=sys.argv[2], input_extra_features=sys.argv[3])
-            h.update(np.ascontiguousarray(x, dtype=np.float16).tobytes()); n += 1
-print(json.dumps({"positions": n, "x_sha256": h.hexdigest()}))
+from chess_anti_engine.encoding._lc0_ext import CBoard
+from chess_anti_engine.mcts._mcts_tree import batch_encode_146_lc0_root, batch_encode_146_lc0_root_bf16
+from chess_anti_engine.moves.encode import move_to_index
+rep_fix.apply(sys.argv[1] == "1")                 # the regime is process-global: set it explicitly
+max_games, planes = int(sys.argv[2]), 175
+h32, h16, n, games = hashlib.sha256(), hashlib.sha256(), 0, 0
+def flush(cbs):
+    o32 = np.zeros((len(cbs), planes, 8, 8), dtype=np.float32); batch_encode_146_lc0_root(cbs, o32); h32.update(o32.tobytes())
+    o16 = np.zeros((len(cbs), planes, 8, 8), dtype=np.uint16); batch_encode_146_lc0_root_bf16(cbs, o16); h16.update(o16.tobytes())
+for path in sys.argv[3:]:
+    with open(path) as fh:
+        while games < max_games and (g := chess.pgn.read_game(fh)) is not None:
+            board = g.board(); cb = CBoard.from_board(board); cbs = []
+            for mv in g.mainline_moves():
+                cb.push_index(int(move_to_index(mv, board))); board.push(mv); cbs.append(cb.copy())
+            if cbs:
+                flush(cbs)
+            n += len(cbs); games += 1
+print(json.dumps({"games": games, "positions": n, "x_fp32_sha256": h32.hexdigest(), "x_bf16_sha256": h16.hexdigest()}))
 EOF
 ```
 
-The encoding names come from `$SL`'s `arch`.
-
-**Deviation from the review's (b).** The review asked to re-encode collection
-positions from `root_fen` + history and compare with the stored `x`. Collection rows
-carry neither: a shard row has `x` plus `game_id` / `ply_index` / `x_hash`, and
-`games.jsonl` has no move list. So (b) re-encodes `eval.pgn`'s 4,000 lines at every
-prefix instead (≈ 64k positions). Those cover only opening positions, with no
-repetitions and no endgames. Therefore: **if the tripwire fires on `encoding/**` or
-on the C extensions, the collect is redone at `$PIN` even when (b) passes.**
+- **Coverage.** The banks hold ≈ 13.7k full games (the 11-21 regression and head-swap banks), including repetitions, 250–298-ply games and Syzygy endgames. The `history_rep_fix` value comes from `$SL`'s `arch`.
+- **Smoke test.** On 300 of these games (24,961 positions) two runs gave identical digests, and flipping `rep_fix` changed both digests. So the check is deterministic and sees a regime change.
+- **The shard regime stamps** in each shard's meta (`input_history_encoding`, `history_rep_fix`, `policy_encoding`) must also equal `$PIN`'s resolved collect config.
+- **Rule: the collect is redone at `$PIN` iff (a) or (b) fails.**
 
 **Why one commit.** On 2026-11-21 the 800-game head-swap arms no longer reproduced the
 2026-11-19 bank game for game. This was true of the PLAIN arms too: plain Q50 matched
@@ -891,7 +902,12 @@ frozen. Difficulty is regret AND nodes.
   **Sample size and cost** (corrected; the first version overstated the size 2×).
   - **Size.** 500 games ≈ 47.5k positions at ≈ 95 rows per game.
   - **Cost.** At 0.4–0.7 core-s per label (`docs/sf_cpu_cost_split.md` ≈ L164: 290–370k nps per engine), that is ≈ 19k–33k core-s ≈ 5.3–9.2 core-h, about 0.3–0.6 h on 16 cores. It needs no GPU and is run outside training.
-  - **Which games.** The hold-out has only ≈ 400 games (5% of 8,000). A target-only table does not need a hold-out, because no net is scored. So the sample is 500 games drawn from all of A with a fixed seed; the ≈ 400 hold-out games can be used instead.
+  - **Which games.** The hold-out has only ≈ 400 games (5% of 8,000). A target-only table does not need a hold-out, because no net is scored. A cannot be relabelled at all, because it stores no move lists (above). So the sample is a **SEPARATE ≈ 500-game collection** (≈ 6 GPU-min). It is acceptable under these conditions:
+    - the same SL base, the same collect flags and the same TRAIN-split openings as A;
+    - only the seed changed;
+    - the move-list addition only writes, and does not change play.
+
+    Under those conditions its games are exchangeable with A's, and the table measures the target rules on that distribution.
 
   The gift-win share (won-game rows where full-strength SF had us at win probability
   ≤ 0.20) and the shape statistics (entropy, |W − L|) stay report-only.
@@ -955,4 +971,5 @@ head-swap harness without CUDA graphs and are superseded by this table.
 | L6 | The parked anchor: restore the original loop's three-way value blend plus an SF-opponent share in the simple loop (primary, staged a → b → c), or the outcome-conditioned alternative | stay parked until the pilot reads; then the primary design, after the trust checks and the label-throughput measurement | |
 | — | C0 (the collection's commit) | `6c72b821b` | |
 | — | `PIN` (training, fit and matches; must descend from C0) | | |
-| — | `git diff --name-only C0 $PIN` (redo the collect if it touches the shard format or the loader's reading of it) | | |
+| — | `git diff --name-only C0 $PIN`: the tripwire list; guard checks (a) and (b) are run, and the collect is redone at `$PIN` iff (a) or (b) fails | | |
+| — | Step 1 launch | **2026-11-21T06:41:24-05:00** at C0 = `6c72b821b` from `~/projects/chess-worktrees/rl-run1-pilot-6c72b821b`. Launcher `~/chess-artifacts/operations/rl-run1-pilot/launch_collect.sh` runs the verbatim Step 1 command with the live `.venv` python. The Step 0 split check passed (sha256 match; 153,842 / 4,000 / 16). Its exit code and time go to `collect.exit` | |
