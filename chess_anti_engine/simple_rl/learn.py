@@ -20,7 +20,8 @@ Optional, each off by default: a KL anchor to a frozen reference net on the
 policy and/or WDL heads (attached through the Trainer's single penalty hook,
 the one ``configure_frozen_policy_anchor`` uses), and a fixed fraction of
 every batch drawn from an external supervised corpus whose rows keep their
-own labels.
+own labels, and the sibling-ordering value term (``w_sibling``; materialised
+child pairs, ``simple_rl/sibling.py``) on the same penalty hook.
 """
 from __future__ import annotations
 

@@ -910,6 +910,88 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
     train summary records `value_rows` (R, chosen rows, network-turn rows, games,
     share). Held-out metrics still score every row.
 
+- **`--w-sibling W`** (default 0 = off) adds a sibling-ordering value term. For two
+  explored children A and B of a searched root, it trains the value head's
+  difference toward the searched difference: `dq = q_A − q_B`, both completed Q in
+  the parent's POV (`root_child_q`). Code and POV algebra are in
+  `chess_anti_engine/simple_rl/sibling.py`; the evidence is the sibling-target
+  scoping row in `docs/experiments/2026-11-21-rl-loop-evidence-log.md`.
+  - **Loss:** `W · mean over pairs of (min(v_A, v_B) / 64) · Huber_0.2(Δv − dq)`.
+    The child value is `v = L − W` of the child's own WDL softmax, because the
+    child's side to move is the parent's opponent. Both children go through the
+    SAME net in the same step, in train mode. Train mode changes no output here:
+    the model has no BatchNorm or dropout, and simple_rl's channel-dropout and
+    balance knobs are 0 (tested). Mirroring applies to the root batch only.
+  - **Pairs come from a materialised sidecar**, never from the collect itself.
+    Run `scripts/simple_rl_sibling_pairs.py --collect RUN/gen_<g>/collect --out
+    SIBLING_DIR/gen_<g>` once per generation, then train with `--sibling-dir
+    SIBLING_DIR`.
+    - **K pairs per row** (default 2), among children with at least `--min-visits`
+      visits (default 2) whose move does not end the game.
+    - **Choice:** drawn without replacement with probability proportional to
+      `min(v_A, v_B)`, from an RNG keyed by (seed, game id, ply), so it is
+      reproducible and independent of order.
+    - **Each pair stores:** both child inputs (float16, the shared encoder),
+      `dq`, the visit counts, the action ids, the row key, and the hold-out flag
+      from the learner's `is_holdout_game`.
+  - **Boards are rebuilt exactly or the collect is refused.** The rebuild starts from
+    the game's opening line and replays the game's moves:
+    - #1444-era collects use the stored `uci` list.
+    - Older collects use each row's `played_move_index`. A ply with no row, or a
+      row with no played move, is filled ONLY when exactly one move sequence (at
+      most 3 plies) encodes to the next row's stored `x_hash`.
+    - In both modes every row's rebuilt root must hash to its stored `x_hash`,
+      over the whole collect, before anything is written.
+    - The process applies the collect's `history_rep_fix` before its first board,
+      and the sidecar stamps the collect's, the shards' and the realised regime.
+    - `--self-check N` compares N games' rebuilt roots and played children byte
+      for byte with the stored inputs, and exits 1 on any mismatch.
+  - **Pilot measurements** (`gen_0001`, 8,000 games):
+    - Self-check on 20 games: 1,783 / 1,783 roots and 1,735 / 1,735 played
+      children byte-equal.
+    - Two shards (40,092 rows, 78,393 pairs) took 74 s at a peak RSS of 955 MiB,
+      and wrote 1.7 GB per 20k-row shard.
+    - The planning pass holds one shard's root-statistic columns. Children are
+      written sequentially through the page cache, so RSS does not grow with the
+      output. A version that wrote through memory maps peaked at 2.36 GB.
+    - Full collect (39 shards, 761,979 rows, every root hash matched,
+      including 7,611 bridged gaps): 1,491,924 pairs and 63 GB in 20 min 42 s, at
+      a peak RSS of 1,072 MiB.
+    - The trainer's `load_sidecars` on that sidecar verifies every file's sha256
+      in 100 s at a peak RSS of 266 MiB. The child inputs are memory-mapped, two
+      descriptors per shard.
+  - **Which rows train.** In each batch, the first `--sibling-rows` rows that carry
+    pairs (default 128, in the batch's shuffled order) present all their pairs.
+    - The term reads the rows the scheduled sampler served for THAT batch. It
+      refuses a sampler whose cursor did not advance by exactly one between calls.
+    - Hold-out games' pairs are never trained. The learner refuses a training row
+      carrying a hold-out pair, a sidecar made at another `--holdout-frac`, a
+      partial sidecar, a sidecar of another collect (manifest sha256), and any
+      sidecar file whose sha256 differs from its manifest.
+  - **How it composes with other flags:**
+    - With `--kl-policy` / `--kl-wdl`, the anchor and the term share the
+      Trainer's single penalty hook through `sibling.PenaltyChain` and add. The
+      anchor reads the root batch only.
+    - `--value-rows-per-game` masks the ROOT WDL term only. Sibling pairs come from
+      any row of the batch whatever R is, so R does not limit the sibling value
+      gradient.
+    - Refused with `--accum-steps > 1` (the term is a per-micro-batch mean, the
+      anchor's reason) and with `--sample-with-replacement` (served rows are not
+      recorded).
+    - `--sibling-dir` or a non-default `--sibling-rows` with `--w-sibling 0` is
+      refused, because it would be ignored.
+  - **Take-effect record.** The train summary's `sibling` block holds:
+    - pairs, steps, the per-step (pairs, loss) log, and the mean weighted Huber;
+    - mean |Δv − dq| on a fixed probe of up to 1,024 hold-out pairs of the newest
+      generation, before and after the phase;
+    - K, min visits, and every sidecar's manifest and per-file sha256.
+    - The manifest's inputs carry `sibling_gen_<g>`.
+  - **Default off is bit-identical to main.** A tiny phase trained with the default
+    settings on main 918785204 and on this branch gives the same weights sha256,
+    the same losses and the same `presented.npz`. Absent the flag, nothing is
+    attached to the penalty hook. Pinned in `run_config.json`; a run pinned before
+    the flag resumes at 0.
+
 - **Row loading is streamed into preallocated arrays.** `load_window` loads only the
   keys the loss and the configured target source read (`TRAIN_KEYS` plus
   `target_source_keys(settings)`: survivor-Q value adds 2–4 small columns, the actor
