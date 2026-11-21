@@ -113,15 +113,19 @@ several looks as one cluster.
 - **Secondary only:** the ordinary 95% interval (z 1.96) at look 3 is +7.7 [+0.1, +15.2] (`elo_ci95` in the pool).
   It is not the registered boundary and decides nothing.
 
-Per run, at look 3:
+Per run, at look 3. The first interval is at the look's z = 2.004 (`elo_ci`); the 95% interval at z = 1.96
+(`elo_ci95`) is the secondary:
 
-| Run | Elo |
-|---|---|
-| Arm as candidate (A) | +9.6 [−1.1, +20.4] |
-| Arm as reference (B) | +5.7 [−5.2, +16.6] |
-| Seat offset | +2.0 [−5.6, +9.6] |
+| Run | Elo [z 2.004] | Elo [95%] |
+|---|---|---|
+| Arm as candidate (A) | +9.6 [−1.1, +20.4] | [−0.9, +20.2] |
+| Arm as reference (B) | +5.7 [−5.2, +16.6] | [−5.0, +16.4] |
+| Seat offset | +2.0 [−5.6, +9.6] | [−5.4, +9.4] |
 
-Each look on its own (descriptive; from the look-3 pool's per-look entries): look 1 +3.5, look 2 +11.3, look 3 +6.5.
+Each look on its own (descriptive, derived): look 1 +3.5, look 2 +11.3, look 3 +6.5. Each is ≈ (Elo of the A row −
+Elo of the B row) / 2 from `results.jsonl`, the arm's Elo in A and minus the candidate's Elo in B; for look 2,
+(+9.56 + 13.03) / 2 = 11.3. The same values are in `pool_look3.json` under `looks[k].result.pooled.elo` (3.47, 11.30,
+6.52). The `look_inputs` entries carry no result.
 Arm's W/D/L per run:
 
 | Look | Run A | Run B |
@@ -165,8 +169,12 @@ Sources:
 
 These contrasts were chosen after the results were seen. They decide nothing.
 
-**Method.** Each contrast uses the pools' pooled excess and SE. The three matches have different seeds and opening
-blocks, so they are treated as independent:
+**Method.** Each contrast uses the pools' pooled excess and SE. The three matches have different seeds. Their opening
+sets overlap: the graft's 1,087 opening clusters share 65 openings with S's 200 and 113 with the gate's 400 (computed
+from the game logs with the pool's opening key, `opening_fen` + `opening_uci`).
+- **Covariance is negligible (computed).** The cross-match covariance of the two estimates, from per-opening cluster
+  values over the shared openings, is 2.1e-7 (graft, S) and 1.2e-7 (graft, gate). With it, the combined SEs are
+  unchanged to four decimals (0.0134, 0.0112).
 - SE = √(SE₁² + SE₂²) on the score scale;
 - z = difference / SE;
 - the Elo difference is the difference of the pooled point estimates;
@@ -176,6 +184,8 @@ blocks, so they are treated as independent:
 |---|---|---|---|
 | graft (look 3) − S | +0.0398 (0.0134) | 2.96 | +27.7 (9.4) |
 | graft (look 3) − Zq | +0.0254 (0.0112) | 2.27 | +17.7 (7.8) |
+
+The z column is without the covariance term (2.959, 2.274); with it, 2.963 and 2.276.
 
 **The policy side looks alike across the cells** (fit numbers, Section 3):
 - held-out policy CE 0.9816 / 0.9825 / 0.9815 for S / Zq / P0;
@@ -187,6 +197,50 @@ value-head training is the candidate.** It is a hypothesis these numbers support
 - Two contrasts were chosen after the fact.
 - The graft seat also differs in kind: it runs two forwards per evaluation, P0's net for the policy and the SL base's net for the value.
 - P0's own value head was never played.
+- **No played seat isolates the value head.** The contrast compares P0's policy net, on the base's value, against
+  S's and Zq's WHOLE nets. S's and Zq's own policies were never played on the base's value. So the policy halves of
+  S and Zq are not shown harmless by any game: "the value-head training is the candidate" rests on the policy fit
+  numbers above, not on a played seat. The offline diagnosis below speaks to the value heads directly, but it is
+  offline and 1-ply, not a played seat, so it addresses this gap only partly.
+
+### Offline value diagnosis (report-only; pointer)
+
+Bank: `~/chess-artifacts/operations/rl-claude-20261119/pilot-value-diagnosis/` (`README.md` [`0bdac6a5`];
+`PREREG.md` [`691dd3a4`], sealed 13:06, before the first output at 13:08). There were no matches and no training.
+The numbers below were read from `out/*.json`:
+
+- **Recalibration fit** to the base's WDL on the 39,237 hold-out rows (416 games):
+
+  | Net | (T, b) | Share of KL(base ‖ net) removed |
+  |---|---|---|
+  | S | (0.853, −0.120) | 0.24 [0.23, 0.25] |
+  | Zq | (0.704, −0.227) | 0.60 [0.58, 0.62] |
+  | P0's own head | (1.028, +0.042) | 0.02 |
+
+  Sources: `out/recal_{S,Zq,P0}.json` [`6522a6fc` / `7e665c5e` / `9f21b655`] and `out/holdout_analysis.json`
+  [`7ae11cf7`].
+- **1-ply value regret on the frozen audit set** (FEN-only, so the history planes are empty; n 3,723; CIs by
+  position), net minus base, in cp:
+
+  | Net | Regret vs base |
+  |---|---|
+  | S | +6.8 [+4.6, +9.2] |
+  | Zq | +2.3 [+0.6, +4.0] |
+  | P0's own head | +1.9 [+0.2, +3.6] |
+
+  (T, b) changes 1.0% / 1.8% / 0.05% of choices and none of the regret: after (T, b) the figures are +7.0 / +2.5 /
+  +1.9 (`out/value_regret_recal.json` [`995d1165`]).
+- **With history**, on 2,433 rl-audit rows, the order is the same, S +1.6, Zq +0.8, P0 +0.2, but no difference
+  excludes zero (CIs by game; `out/value_regret_history.json` [`2bcd8d01`]).
+- **Calibration to outcomes on hold-out.** Both trained heads are better calibrated than the base: squared error to
+  z minus the base's is S −0.011 [−0.016, −0.006] and Zq −0.017 [−0.024, −0.009]
+  (`out/supp_outcome_distance.json` [`f1529197`]).
+- **The 64-sim search value is no more biased than the base:** overall abs(z − search) 0.359 vs abs(z − base) 0.373,
+  and the two are about equal bin by bin (`holdout_analysis.json`, `target_calibration`).
+
+**Status.** The mechanism, that the value loss changes what the head says (content) rather than its scale (shape), is
+a HYPOTHESIS. A falsifier match is being pre-registered separately. A sibling-ordering measurement (PREREG addendum 1)
+is running and is not banked, so no result is cited.
 
 ## 3. Training facts (fit numbers, not strength)
 
