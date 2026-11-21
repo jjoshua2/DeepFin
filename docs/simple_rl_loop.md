@@ -497,7 +497,7 @@ still match it). An unfinished process resumes at game granularity:
 
 | Stop | How | Unbiased? | Cost |
 |---|---|---|---|
-| Drain | create `<run>/STOP` | yes, by construction: a game's inclusion is fixed when it is dealt | the in-flight games' remaining time (minutes); frees the GPU when the processes exit |
+| Drain | create `<run>/STOP` | yes, by construction: a game's inclusion is fixed when it is dealt | ≈ 2.5–3 min at 3×128 / 64 sims (measured 2026-11-21: 173 s and 148 s STOP → exit 4); frees the GPU when the processes exit |
 | Kill + resume | SIGKILL / crash, then rerun | yes, up to floating-point and tree-history noise (see "How exact a resume is"): committed games kept, in-flight games replayed through the journal | instant; replays the in-flight games' journaled plies |
 | PAUSE | create `<run>/PAUSE` or a `--pause-marker` | yes (nothing is re-dealt) | instant, but holds every process's GPU memory (about 23 GB at 3 × 128) |
 
