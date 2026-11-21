@@ -63,7 +63,9 @@ def _result(run_dir: Path) -> dict[str, Any]:
         stats = json.loads((run_dir / f"gen_{g:04d}" / "collect" / "stats.json").read_text())
         out[f"collect{g}"] = {k: v for k, v in stats.items() if k not in _VOLATILE and k not in ("procs_resumed", "timing_independent")}
         # Per-process records: everything but their own clocks.
-        out[f"collect{g}"]["procs"] = [{k: v for k, v in p.items() if k not in _VOLATILE} for p in stats["procs"]]
+        # (and the attempt history, checked separately)
+        out[f"collect{g}"]["procs"] = [{k: v for k, v in p.items() if k not in _VOLATILE and k != "resumes"}
+                                       for p in stats["procs"]]
         summary = json.loads((run_dir / f"gen_{g:04d}" / "train" / "metrics.json").read_text())["summary"]
         out[f"train{g}"] = {k: summary[k] for k in ("losses", "heldout_before", "heldout_after",
                                                     "probe_vs_previous", "window_rows", "end_step")}
@@ -132,6 +134,12 @@ def test_resume_after_kills_is_identical(tmp_path: Path, monkeypatch: pytest.Mon
 
     assert simple_rl_loop.main(argv) == 0
     assert _result(resumed) == _result(straight)
+    # Kill 2 struck before the first shard's commit record: nothing was kept, so the
+    # process restarted on its own seed (hence the identical rows), and says so.
+    gen2 = json.loads((resumed / "gen_0002" / "collect" / "stats.json").read_text())
+    (resume,) = gen2["procs"][0]["resumes"]
+    assert (resume["kept_games"], resume["discarded"]) == (0, ["shard_00000.zarr"])
+    assert gen2["procs_game_resumed"] == {}
     # Openings cycle across generations: 8 games over a 6-line book reuse no
     # line before the 7th game, and the pass counter and earlier-play share say so.
     ids = [json.loads(r)["opening_id"] for g in (1, 2)

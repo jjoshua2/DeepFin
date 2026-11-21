@@ -148,8 +148,15 @@ def test_a_killed_k2_collect_resumes_keeping_finished_processes(
     monkeypatch.setattr(collect_mod, "write_manifest", real_manifest)
     stats, _ = _collect(tmp_path, "resumed", 2)
     assert stats["procs_resumed"] == [0, 1]
-    assert content_digest(gen)["content_sha256"] == content_digest(straight)["content_sha256"]
-    assert content_digest(gen)["games_sha256"] == content_digest(straight)["games_sha256"]
+    if stats["procs_game_resumed"]:
+        # Process 1 had committed games when it died: they were kept and the rest
+        # replayed on a fresh seed (test_simple_rl_collect_game_resume), so only the
+        # gates and the openings can match an uninterrupted collect.
+        assert sorted(g["opening_id"] for g in _games(gen)) == sorted(g["opening_id"] for g in _games(straight))
+        assert stats["timing_independent"] is False
+    else:  # nothing kept: a plain restart on its own seed reproduces the rows
+        assert content_digest(gen)["content_sha256"] == content_digest(straight)["content_sha256"]
+        assert content_digest(gen)["games_sha256"] == content_digest(straight)["games_sha256"]
 
 
 def test_a_changed_plan_redoes_the_interrupted_collect_whole(

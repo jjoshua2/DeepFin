@@ -393,8 +393,33 @@ collect gates (G-C1 to G-C11) are the check.
 Resume: `plan.json` records K, the per-process seeds and opening ids, the
 checkpoint sha256 and the settings. A killed collect whose plan is unchanged
 keeps every process that wrote `done.json` (and whose shards and games.jsonl
-still match it) and restarts the others from their own seed and openings. Any
-other unsealed attempt is redone whole.
+still match it). An unfinished process resumes at game granularity:
+
+- Each shard flush writes the zarr store (temp dir + rename), then
+  `shard_NNNNN.meta.npz`, then, last and atomically, `shard_NNNNN.commit.json`
+  (row count, number of games.jsonl lines so far and their sha256). Shards hold
+  whole games, and a game's line is written before the flush that commits its
+  rows, so the committed lines are exactly the games whose rows are all on disk.
+- Before anything is appended, the resume repairs the directory on disk: it
+  keeps the contiguous prefix of shards whose commit record still agrees with
+  the disk, deletes every other shard, temporary store, meta or commit file, a
+  stale `done.json`, and truncates games.jsonl (atomic rewrite) to the committed
+  lines, dropping a torn tail. The repair is idempotent, so a second kill is
+  repaired the same way.
+- The process then replays only its remaining openings, in doled order, with a
+  fresh seed `seed_for(seed, "resume", attempt)`. If nothing was kept, it
+  restarts on its own seed, and its rows equal an uninterrupted run's.
+- `procs/<k>/resumes.json`, then the manifest's `game_resumes` and each process
+  record's `resumes`, list per attempt: the kept and replayed opening ids, kept
+  games, shards and rows, discarded files and the seed. `stats.json` has
+  `procs_game_resumed` and `timing_independent: false`; games/h counts only the
+  games played in this attempt.
+- **A resumed collect that kept games is NOT digest-identical to an unkilled
+  one**: the replayed games use a different RNG stream. Every gate still applies
+  to the merged result, and the merge still refuses an opening played twice or
+  dropped.
+
+Any other unsealed attempt (changed plan) is redone whole.
 
 Process hygiene: children are spawned (never forked). Each child arms a
 parent-death signal against the driver, so a SIGKILL or SIGTERM of the driver
