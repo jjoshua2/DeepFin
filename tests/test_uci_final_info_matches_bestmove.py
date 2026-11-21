@@ -725,7 +725,18 @@ def test_parallel_paths(ckpt: Path, tmp_path: Path, path: str) -> None:
            (_START, "go wtime 3000 btime 3000", None, False), (_START, "go infinite", 1.0, True),
            (_START, "go movetime 800 searchmoves a7a6 h7h6 g8f6", None, False),
            (_START, "go nodes 400 searchmoves a7a6 h7h6 g8f6", None, True)]
-    _run_session(ckpt, tmp_path, args, gos)
+    # UCI_ShowWDL: the search's own final line set carries `wdl`; the engine's
+    # defensive final line (`_run_one_phase`, for answers that bypassed the
+    # tree) does not. Without this the defensive line alone would satisfy the
+    # unclocked searchmoves row even if the search's final set were dropped
+    # under searchmoves on a parallel path.
+    lines = _run_session(ckpt, tmp_path, args, gos,
+                         setup=("setoption name UCI_ShowWDL value true",))
+    seg, best = _segments(lines)[-1]
+    last = _rank1_pv_lines(seg)[-1]
+    tail = "\n".join(seg[-8:])
+    assert last["pv"][0] == best, tail
+    assert "wdl" in last, "searchmoves final line is not the search's own:\n" + tail
 
 
 @pytest.mark.parametrize(("path", "where"), [("pool", "pool:1"), ("rpg", "rpg:1")])
