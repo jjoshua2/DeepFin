@@ -44,7 +44,10 @@ checks the result is identical to an uninterrupted run).
 
 Control files: `<run-dir>/STOP` stops before the next stage; `<run-dir>/PAUSE`
 and any `--pause-marker PATH` (for example the marker of a GPU pause window)
-refuse to start a stage while present. Exit codes: 3 tripwire, 4 blocked by a
+refuse to start a stage while present, and pause a RUNNING evaluate stage: each
+arena gets them as `--pause-marker` and holds its in-flight games (no ply, models
+not loaded yet if it was launched paused) until they are gone; paused time is
+excluded from its timings and recorded. Exit codes: 3 tripwire, 4 blocked by a
 marker. The loop never takes or checks the GPU custody lock itself; pass the
 marker your GPU window uses.
 

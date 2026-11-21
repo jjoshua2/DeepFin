@@ -103,8 +103,15 @@ def _child_env() -> dict[str, str]:
 
 
 def evaluate_generation(*, run_dir: Path, generation: int, candidate: Path, previous: Path,
-                        reference: Path | None, openings_pgn: Path, settings: EvalSettings) -> dict[str, Any]:
+                        reference: Path | None, openings_pgn: Path, settings: EvalSettings,
+                        pause_markers: tuple[Path, ...] = ()) -> dict[str, Any]:
+    """Run the generation's matches. ``<run>/PAUSE`` and ``pause_markers`` pause
+    each arena cooperatively (``--pause-marker``): it holds its in-flight games and
+    continues when they are removed; paused time is excluded from its timings."""
+    from chess_anti_engine.simple_rl.common import PAUSE_FILE
+
     run_dir = Path(run_dir)
+    pause_args = [x for m in (run_dir / PAUSE_FILE, *pause_markers) for x in ("--pause-marker", str(m))]
     out_dir = run_dir / f"gen_{generation:04d}" / "eval"
     if out_dir.exists():
         shutil.rmtree(out_dir)
@@ -118,7 +125,7 @@ def evaluate_generation(*, run_dir: Path, generation: int, candidate: Path, prev
         label = f"simple_rl_gen{generation:04d}_{name}"
         out = out_dir / f"arena_{name}.jsonl"
         cmd = arena_command(candidate=candidate, reference=opponent, openings_pgn=openings_pgn,
-                            out=out, label=label, settings=settings)
+                            out=out, label=label, settings=settings) + pause_args
         record = run_arena(cmd, out=out, log=out_dir / f"arena_{name}.log")
         results[name] = {"opponent": str(opponent), "score": record.get("score"), "elo": record.get("elo"),
                          "elo_ci95": record.get("elo_ci95"), "games": record.get("games", settings.games),

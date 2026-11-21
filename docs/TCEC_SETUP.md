@@ -267,7 +267,10 @@ That first line ends with the number of devices the search evaluates on,
 belongs to a search report (such as the tree-full stop reason) is printed on its
 own `info string` line right after it. UCI `debug on` turns on per-search
 diagnostics, each on its own line: the multi-GPU pool's batch statistics
-(`info string pucv leaves=...`) and root-parallel Gumbel's per-phase lines
+(`info string pucv leaves=...`: the leading fields describe the last pool chunk;
+`search_chunks= search_leaves= evals= terminal= duplicate=` are summed over every
+chunk of the search, `evals` being the rows actually sent to the network, while
+`nps`/`nodes` keep counting visits) and root-parallel Gumbel's per-phase lines
 (`info string rpg phase=...`). They are off by default and again after `debug off`.
 
 Every value the engine cannot use is answered with an `info string`; what happens

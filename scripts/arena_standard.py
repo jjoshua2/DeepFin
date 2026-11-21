@@ -108,6 +108,57 @@ def _opening_history(board: chess.Board) -> tuple[str, tuple[str, ...]]:
     return board.root().fen(), tuple(move.uci() for move in board.move_stack)
 
 
+class _ArenaPause:
+    """Cooperative pause: ``--pause-marker PATH`` (repeatable).
+
+    While any marker exists the arena plays no ply (matched_sims: checked before
+    every ply of both loops; matched_time: before every game, since a UCI game
+    keeps its own clocks) and sleeps, holding every in-flight game, its boards
+    and evaluator memory; it continues exactly where it stopped once the markers
+    are gone. ``_arena_clock`` excludes paused time, so ``--max-seconds``
+    budgets and per-game ``duration_s`` count only time spent playing; the
+    result record carries ``paused_seconds`` / ``pause_intervals`` and
+    ``timing_independent`` (False once paused).
+    """
+
+    def __init__(self) -> None:
+        self.paths: list[Path] = []
+        self.intervals: list[tuple[float, float]] = []
+        self.total = 0.0
+
+    def configure(self, paths: Sequence[str | Path]) -> None:
+        self.paths = [Path(p).expanduser() for p in paths]
+
+    def _held(self) -> bool:
+        return any(p.exists() or p.is_symlink() for p in self.paths)
+
+    def hold(self) -> None:
+        if not self.paths or not self._held():
+            return
+        start = time.time()
+        print(f"[arena] paused by {[str(p) for p in self.paths if p.exists() or p.is_symlink()]}", flush=True)
+        while self._held():
+            time.sleep(0.5)
+        end = time.time()
+        self.intervals.append((start, end))
+        self.total += end - start
+        print(f"[arena] resumed after {end - start:.0f}s paused", flush=True)
+
+
+_PAUSE = _ArenaPause()
+
+
+def _pause_record() -> dict[str, Any]:
+    """The result record's pause fields: a paused run's timing is not independent."""
+    return {"paused_seconds": _PAUSE.total, "pause_intervals": list(_PAUSE.intervals),
+            "timing_independent": not _PAUSE.intervals}
+
+
+def _arena_clock() -> float:
+    """Wall-clock seconds minus time spent paused (``_ArenaPause``)."""
+    return time.time() - _PAUSE.total
+
+
 def _played_uci_sha256(moves: Sequence[chess.Move]) -> str:
     """Bind one arena attempt's actual play to its JSONL row and PGN game."""
     played = json.dumps(
@@ -2132,7 +2183,7 @@ def play_paired_games_matched_sims(
     done = [False] * g
     adjudicated: list[str | None] = [None] * g  # Syzygy-adjudicated result per game
     emitted = [False] * g
-    t0 = time.time()
+    t0 = _arena_clock()
 
     def _emit(i: int, termination: str, result_override: str | None = None) -> None:
         if pgn_sink is None or emitted[i]:
@@ -2151,11 +2202,12 @@ def play_paired_games_matched_sims(
             result=res,
             termination=termination,
             plies=len(mv),
-            duration_s=time.time() - t0,
+            duration_s=_arena_clock() - t0,
             chunk=chunk,
             loop="chunked",
         )
     for ply in range(int(max_plies)):
+        _PAUSE.hold()
         for i in range(g):
             if done[i]:
                 continue
@@ -2182,7 +2234,7 @@ def play_paired_games_matched_sims(
         if ply and ply % 20 == 0:
             print(
                 f"[arena] ply {ply}: {g - len(active)}/{g} games finished "
-                f"({time.time() - t0:.0f}s)",
+                f"({_arena_clock() - t0:.0f}s)",
                 flush=True,
             )
         a_to_move, b_to_move = split_active_by_side_to_move(
@@ -2322,7 +2374,7 @@ def play_paired_games_matched_sims_rolling(
     game_id ``2k``/``2k+1`` are the white/black halves of opening ``k``, so the
     flat ``game_scores`` reassemble into the same pairs as the lockstep path.
 
-    ``deadline`` (``time.time()`` epoch seconds) stops the loop between plies
+    ``deadline`` (``_arena_clock()`` seconds: wall clock minus paused time) stops the loop between plies
     and returns whatever COMPLETE pairs exist. Only complete pairs are ever
     returned: a half-played game contributes nothing, because filling it in as
     a draw would let a truncated run report pairs it never finished.
@@ -2415,7 +2467,7 @@ def play_paired_games_matched_sims_rolling(
             groots.append(root_fen)
             gstacks.append(opening_uci)
             goffs.append(len(opening.move_stack))
-            gt0.append(time.time())
+            gt0.append(_arena_clock())
 
     def _record(j: int, res: str, termination: str) -> None:
         if res == "*":
@@ -2440,17 +2492,18 @@ def play_paired_games_matched_sims_rolling(
                 result="1/2-1/2" if res == "*" else res,
                 termination=termination,
                 plies=len(mv),
-                duration_s=time.time() - gt0[j],
+                duration_s=_arena_clock() - gt0[j],
                 chunk=None,
                 loop="rolling",
             )
 
-    t0 = time.time()
+    t0 = _arena_clock()
     done = 0
     last_report = 0
     drain_freed = False
     announce_sprt_armed(sprt, where="rolling")
     while queue or boards:
+        _PAUSE.hold()
         # Stop on our OWN clock rather than waiting to be SIGKILLed by the
         # caller's `timeout`. A killed process returns nothing at all; stopping
         # here returns every pair that finished and lets run_arena print the
@@ -2522,9 +2575,9 @@ def play_paired_games_matched_sims_rolling(
         # banked 100 games but scored 96, and 118 but scored 114. Reaping first
         # costs nothing (no ply is played below this point) and cannot fabricate
         # anything, because `_record` still only runs for a game with a result.
-        if deadline is not None and time.time() >= deadline:
+        if deadline is not None and _arena_clock() >= deadline:
             print(
-                f"[arena] max-seconds reached after {time.time() - t0:.0f}s: "
+                f"[arena] max-seconds reached after {_arena_clock() - t0:.0f}s: "
                 f"stopping with {done}/{n_games} games finished — "
                 f"scoring COMPLETE PAIRS only",
                 flush=True,
@@ -2545,7 +2598,7 @@ def play_paired_games_matched_sims_rolling(
         if done - last_report >= report_every:
             print(
                 f"[arena] rolling: {done}/{n_games} games done, "
-                f"{len(boards)} active ({time.time() - t0:.0f}s)",
+                f"{len(boards)} active ({_arena_clock() - t0:.0f}s)",
                 flush=True,
             )
             # Running Elo over the pairs that have BOTH colorings finished so far,
@@ -2656,7 +2709,7 @@ def play_paired_games_matched_time(
         print(f"[arena] starting reference engine: {engine_cmd(reference_ckpt)}")
         eng_b = _open_engine(engine_cmd(reference_ckpt), cwd=str(REPO_ROOT))
         for pair_idx, opening in enumerate(openings):
-            if deadline is not None and time.time() >= deadline:
+            if deadline is not None and _arena_clock() >= deadline:
                 print(
                     f"[arena] max-seconds reached: stopping before pair "
                     f"{pair_idx + 1}/{len(openings)} with {len(pair_scores)} "
@@ -2666,8 +2719,9 @@ def play_paired_games_matched_time(
                 break
             scores: list[float] = []
             for a_is_white in (True, False):
+                _PAUSE.hold()
                 eng_w, eng_b_side = (eng_a, eng_b) if a_is_white else (eng_b, eng_a)
-                _g_t0 = time.time()
+                _g_t0 = _arena_clock()
                 record = play_one_game(
                     eng_w, eng_b_side,
                     limit_w=limit, limit_b=limit,
@@ -2687,7 +2741,7 @@ def play_paired_games_matched_time(
                         result=record.result,
                         termination=record.termination,
                         plies=record.plies,
-                        duration_s=time.time() - _g_t0,
+                        duration_s=_arena_clock() - _g_t0,
                         chunk=None,
                         loop="matched_time",
                     )
@@ -3119,7 +3173,7 @@ def run_arena(
     # are what the caller's `timeout` counts, and on a contended box they are
     # not small (data/ratchet/arena_2026-07-31_vs_boot512.log spent its whole
     # 880s window before the play loop started).
-    deadline = None if max_seconds is None else time.time() + float(max_seconds)
+    deadline = None if max_seconds is None else _arena_clock() + float(max_seconds)
 
     if (openings_path is None) == (openings_fen is None):
         raise SystemExit("exactly one of openings_path / openings_fen is required")
@@ -3626,7 +3680,10 @@ def run_arena(
     # A no-op resume never constructs a probe. Keep telemetry explicitly
     # scoped to this process rather than implying resumed games were reprobed.
     tb_probe: SyzygyProbe | None = None
-    t0 = time.time()
+    t0 = _arena_clock()
+    # Before any model is loaded or engine started: an arena launched under a
+    # pause marker puts nothing on the GPU until the marker is gone.
+    _PAUSE.hold()
     from chess_anti_engine.mcts.gumbel_c import buffer_full_flushes
     buffer_full_before = buffer_full_flushes()
     eval_max_batch_realised: int | None = None  # read off the hoisted evaluators below
@@ -3950,7 +4007,7 @@ def run_arena(
                     # BEFORE starting one that would run past the budget rather
                     # than mid-chunk. Rolling (the default, and what the ratchet
                     # runs) stops per ply.
-                    if deadline is not None and time.time() >= deadline:
+                    if deadline is not None and _arena_clock() >= deadline:
                         print(
                             f"[arena] max-seconds reached: stopping before chunk "
                             f"{ci // chunk_pairs + 1}/{n_chunks} with "
@@ -4015,7 +4072,7 @@ def run_arena(
         )
     else:
         raise SystemExit(f"unknown mode {mode!r}")
-    duration_s = time.time() - t0
+    duration_s = _arena_clock() - t0  # paused time excluded (paused_seconds)
     # Fixed-N folds every completed pair. Sequential scoring uses only the
     # monitor's canonical prefix, even if more games completed speculatively.
     played_pair_scores = list(pair_scores)
@@ -4116,7 +4173,7 @@ def run_arena(
         sprt_monitor.finalize(
             stop_reason=(
                 "max_seconds"
-                if deadline is not None and time.time() >= deadline
+                if deadline is not None and _arena_clock() >= deadline
                 else "cap" if len(pair_scores) >= len(openings)
                 else "incomplete"
             ),
@@ -4202,6 +4259,7 @@ def run_arena(
     # are valid searches at a different batching -- the same class of change
     # as a smaller target_batch, which the arena also only records. Readers
     # comparing arenas compare this field.
+    record.update(_pause_record())
     record["buffer_full_flushes"] = int(buffer_full_flushes() - buffer_full_before)
     record["eval_max_batch_realised"] = eval_max_batch_realised
     # Which BYTES were played (paths alone cannot say): sha256 computed once at
@@ -4499,6 +4557,11 @@ def main() -> None:
                         "is simply lost. 2026-07-26: a 32-sim rung was stopped at "
                         "18 min having printed nothing, because the first block "
                         "only lands at 64 games.")
+    p.add_argument("--pause-marker", action="append", default=[], metavar="PATH",
+                   help="cooperative pause: while PATH exists the arena plays no ply (matched_time: no "
+                        "new game) and holds every in-flight game; it continues when PATH is removed. "
+                        "Paused time is excluded from --max-seconds and per-game durations and recorded "
+                        "as paused_seconds. Repeatable")
     p.add_argument("--max-seconds", type=float, default=None,
                    help="stop after this many wall-clock seconds and score the "
                         "COMPLETE PAIRS finished so far, printing the summary and "
@@ -4625,6 +4688,7 @@ def main() -> None:
                         "'never look'.")
     add_common_args(p)
     args = p.parse_args()
+    _PAUSE.configure(args.pause_marker)
 
     validated_durable_seal: ValidatedSourceSeal | None = None
     durable_args = (

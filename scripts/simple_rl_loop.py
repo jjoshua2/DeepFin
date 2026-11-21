@@ -269,7 +269,8 @@ def do_evaluate(a: argparse.Namespace, run_dir: Path, g: int) -> None:
     ref = Path(a.reference_checkpoint) if a.reference_checkpoint else sealed_model(run_dir, 0)
     results = evaluate_generation(run_dir=run_dir, generation=g, candidate=sealed_model(run_dir, g),
                                   previous=sealed_model(run_dir, g - 1), reference=ref,
-                                  openings_pgn=Path(a.openings_dir) / "eval.pgn", settings=eval_settings(a))
+                                  openings_pgn=Path(a.openings_dir) / "eval.pgn", settings=eval_settings(a),
+                                  pause_markers=tuple(Path(m) for m in (a.pause_marker or ())))
     print(json.dumps({"stage": "evaluate", "generation": g, **results}, default=str), flush=True)
 
 
