@@ -20,6 +20,16 @@ were played exactly as the source recorded) plus a ``retarget`` block: the
 source run / collect / manifest sha256, the rebuild settings, and the row
 accounting. Its shard digest therefore differs from the source's.
 
+The sealed settings state the target (``target_q_rescale`` is the rebuilt
+one), so an arm must pass the matching flag (``--no-target-q-rescale``) and its
+pinned run_config says what it trains on; the ``retarget`` block records that
+the games were played under the source's target and search config. Sealing
+happens inside a ``.<name>.partial`` dir that is renamed into place, so a kill
+leaves nothing a rerun refuses. Shard bytes are not idempotent across two
+identical retargets (zarr chunk bytes of ``future_legal_mask`` differ; every
+array's values are identical), so compare retargets by array values, not by
+the shard digest.
+
 Rows:
 - a policy row with root statistics: target rebuilt (``rebuild_improved_policy``
   with the source's search config and the requested ``target_q_rescale``);
@@ -32,6 +42,7 @@ Rows:
 """
 from __future__ import annotations
 
+import copy
 import json
 import shutil
 from dataclasses import replace
@@ -116,6 +127,9 @@ def _check_source(source_run_dir: Path, generation: int) -> tuple[Path, dict[str
     manifest = read_manifest(src)
     if manifest is None:
         raise ValueError(f"retarget: {src} is not sealed (no manifest.json)")
+    if RETARGET in manifest:
+        raise ValueError(f"retarget: {src} is itself a retarget of {manifest[RETARGET]['source_collect_dir']}; "
+                         "rebuild from the collect that played the games")
     if COLLECT_REFERENCE in manifest:
         raise ValueError(f"retarget: {src} is a reference collect; retarget the run that holds the rows "
                          f"({manifest[COLLECT_REFERENCE]['source_run_dir']})")
@@ -177,34 +191,47 @@ def retarget_collect(*, source_run_dir: Path, generation: int, out_run_dir: Path
                   "source_manifest_sha256": sha256_file(src / "manifest.json"),
                   "source_shards_sha256": manifest["outputs"]["shards"]["sha256"],
                   "rebuild": "chess_anti_engine.mcts.gumbel_c.rebuild_improved_policy",
-                  "target_q_rescale": bool(target_q_rescale), "rows": totals}
+                  "target_q_rescale": bool(target_q_rescale), "rows": totals,
+                  # Lineage: the games (and every array but policy_target) are the source's, played under
+                  # the source's target (sampled from it at positive move temperature).
+                  "games_played_with_target_q_rescale": settings_rescale,
+                  "games_played_search_config": "config.dataclasses.search (the source's, unchanged)"}
+
+        def ref(path_in_tmp: Path, final: Path) -> dict[str, Any]:
+            return {"path": str(final), "sha256": sha256_tree(path_in_tmp)}
+
+        # Seal INSIDE the partial dir (paths recorded at their final location), then publish with one
+        # rename: a kill at any point leaves only the partial dir, which the next attempt removes.
+        write_manifest(out_gen0, stage=str(gen0_manifest.get("stage", "gen0")),
+                       config=gen0_manifest.get("config", {}),
+                       inputs={**gen0_manifest.get("inputs", {}),
+                               "source_gen0_manifest": input_ref(_gen(source_run_dir, 0) / "manifest.json")},
+                       outputs={"model": ref(out_gen0 / "model.pt", _gen(out_run_dir, 0) / "model.pt")},
+                       counts=gen0_manifest.get("counts", {}), seeds=gen0_manifest.get("seeds", {}),
+                       extra={RETARGET: {"copied_from": str(_gen(source_run_dir, 0))}})
+        inputs = dict(manifest["inputs"])
+        if "checkpoint" in inputs and int(generation) == 1 \
+                and inputs["checkpoint"].get("sha256") == sha256_file(out_gen0 / "model.pt"):
+            inputs["checkpoint"] = ref(out_gen0 / "model.pt", _gen(out_run_dir, 0) / "model.pt")
+        inputs["source_collect_manifest"] = input_ref(src / "manifest.json")
+        outputs = {name: ref(out_collect / Path(r["path"]).name, final_collect / Path(r["path"]).name)
+                   for name, r in sorted(manifest.get("outputs", {}).items())}
+        if outputs["shards"]["sha256"] == record["source_shards_sha256"]:
+            raise RuntimeError("retarget: the rebuilt shards hash like the source's; no target changed")
+        # The settings state the TARGET truthfully: an arm referencing this collect must pass the same
+        # target flag (reference.settings_diff), so its pinned run_config describes what it trains on.
+        config = copy.deepcopy(manifest["config"])
+        config["settings"]["target_q_rescale"] = bool(target_q_rescale)
+        extra = {k: v for k, v in manifest.items()
+                 if k not in ("schema", "stage", "written_unix", "config", "inputs", "outputs", "counts", "seeds",
+                              "git", "runtime")}
+        write_manifest(out_collect, stage="collect", config=config, inputs=inputs, outputs=outputs,
+                       counts=manifest.get("counts", {}), seeds=manifest.get("seeds", {}),
+                       extra={**extra, RETARGET: record})
         tmp.rename(out_run_dir)
     except BaseException:
         shutil.rmtree(tmp, ignore_errors=True)
         raise
-    # Seal: gen_0000 first (its model is what an arm's generation-0 check compares), then the collect.
-    write_manifest(_gen(out_run_dir, 0), stage=str(gen0_manifest.get("stage", "gen0")), config=gen0_manifest.get("config", {}),
-                   inputs={**gen0_manifest.get("inputs", {}),
-                           "source_gen0_manifest": input_ref(_gen(source_run_dir, 0) / "manifest.json")},
-                   outputs={"model": input_ref(_gen(out_run_dir, 0) / "model.pt")},
-                   counts=gen0_manifest.get("counts", {}), seeds=gen0_manifest.get("seeds", {}),
-                   extra={RETARGET: {"copied_from": str(_gen(source_run_dir, 0))}})
-    inputs = dict(manifest["inputs"])
-    if "checkpoint" in inputs:  # the actor is the (byte-identical) copied generation-0 model when it was that
-        ck = inputs["checkpoint"]
-        if ck.get("sha256") == sha256_file(_gen(out_run_dir, 0) / "model.pt") and int(generation) == 1:
-            inputs["checkpoint"] = input_ref(_gen(out_run_dir, 0) / "model.pt")
-    inputs["source_collect_manifest"] = input_ref(src / "manifest.json")
-    outputs = {name: input_ref(final_collect / Path(ref["path"]).name)
-               for name, ref in sorted(manifest.get("outputs", {}).items())}
-    extra = {k: v for k, v in manifest.items()
-             if k not in ("schema", "stage", "written_unix", "config", "inputs", "outputs", "counts", "seeds",
-                          "git", "runtime")}
-    write_manifest(final_collect, stage="collect", config=manifest["config"], inputs=inputs, outputs=outputs,
-                   counts=manifest.get("counts", {}), seeds=manifest.get("seeds", {}),
-                   extra={**extra, RETARGET: record})
-    if outputs["shards"]["sha256"] == record["source_shards_sha256"]:
-        raise RuntimeError("retarget: the rebuilt shards hash like the source's; no target changed")
     return record
 
 

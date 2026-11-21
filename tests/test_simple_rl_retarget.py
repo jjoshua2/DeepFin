@@ -91,7 +91,13 @@ def test_the_retargeted_collect_is_a_new_sealed_artifact_with_lineage(
     assert om["outputs"]["shards"]["sha256"] != sm["outputs"]["shards"]["sha256"]  # a distinct digest
     assert om["outputs"]["shards"]["sha256"] == sha256_tree(out_c / "shards")
     assert om["outputs"]["games"]["sha256"] == sm["outputs"]["games"]["sha256"]
-    assert om["config"] == sm["config"]
+    # The settings state the rebuilt target; everything else is the source's (the games' play config).
+    assert om["config"]["settings"]["target_q_rescale"] is False
+    assert sm["config"]["settings"]["target_q_rescale"] is True
+    assert {k: v for k, v in om["config"]["settings"].items() if k != "target_q_rescale"} == \
+        {k: v for k, v in sm["config"]["settings"].items() if k != "target_q_rescale"}
+    assert om["config"]["dataclasses"] == sm["config"]["dataclasses"]
+    assert rec["games_played_with_target_q_rescale"] is True
     assert om["inputs"]["checkpoint"]["sha256"] == sm["inputs"]["checkpoint"]["sha256"]
     assert (out / "gen_0000" / "manifest.json").is_file()
     # Every array except the target is byte-identical to the source's.
@@ -112,9 +118,16 @@ def test_an_arm_trains_on_the_retargeted_collect_and_the_source_never_moves(
                         lambda _s: __import__("tests.simple_rl_helpers", fromlist=["QuietStockfish"])
                         .QuietStockfish([0.0, 1.0, 0.0]))
     before = sha256_tree(rescaled)
-    arm = _argv(tmp_path / "arm", openings, model_config, *TEMP0, "--collect-from", str(out),
-                init=out / "gen_0000" / "model.pt")
+    # The rescale-ON flags (the source's) are refused: they would pin a target the arm does not train on.
+    wrong = _argv(tmp_path / "arm_wrong", openings, model_config, *TEMP0, "--collect-from", str(out),
+                  init=out / "gen_0000" / "model.pt")
+    with pytest.raises(SystemExit, match="target_q_rescale"):
+        simple_rl_loop.main(wrong)
+    arm = _argv(tmp_path / "arm", openings, model_config, *TEMP0, "--no-target-q-rescale", "--collect-from",
+                str(out), init=out / "gen_0000" / "model.pt")
     assert simple_rl_loop.main(arm) == 0
+    pinned = json.loads((tmp_path / "arm" / "run_config.json").read_text())["settings"]
+    assert pinned["no_target_q_rescale"] is True
     ref = json.loads((tmp_path / "arm" / "gen_0001" / "collect" / "manifest.json").read_text())
     assert ref["collect_reference"]["source_run_dir"] == str(out.resolve())
     assert (tmp_path / "arm" / "gen_0001" / "train" / "manifest.json").is_file()
@@ -128,6 +141,27 @@ def test_retarget_refusals(pair: tuple[Path, Path, Path, Path, Path], tmp_path: 
     with pytest.raises(ValueError, match="already has target_q_rescale"):
         retarget_collect(source_run_dir=searched, generation=1, out_run_dir=tmp_path / "x")
     assert not (tmp_path / "x").exists()
+    with pytest.raises(ValueError, match="is itself a retarget"):
+        retarget_collect(source_run_dir=out, generation=1, out_run_dir=tmp_path / "y")
+
+
+def test_a_kill_before_publishing_leaves_nothing_a_rerun_refuses(
+        pair: tuple[Path, Path, Path, Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _, _, rescaled, _, _ = pair
+    out = tmp_path / "killed"
+    real_rename = Path.rename
+
+    def killed(_self: Path, _target: Path) -> Path:
+        raise KeyboardInterrupt("killed between seal and publish")
+
+    monkeypatch.setattr(Path, "rename", killed)
+    with pytest.raises(KeyboardInterrupt):
+        retarget_collect(source_run_dir=rescaled, generation=1, out_run_dir=out)
+    monkeypatch.setattr(Path, "rename", real_rename)
+    assert not out.exists()
+    assert not (tmp_path / ".killed.partial").exists()
+    retarget_collect(source_run_dir=rescaled, generation=1, out_run_dir=out)  # the rerun is accepted
+    assert (out / "gen_0001" / "collect" / "manifest.json").is_file()
 
 
 def _arrays(n: int = 3) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
