@@ -649,3 +649,26 @@ def test_games_jsonl_keeps_each_games_move_list_in_uci_and_action_ids(
     g = games[0]
     with pytest.raises(ValueError, match="not the final"):
         collect_mod._uci_moves(seed_board_from_line(starts[int(g["dole_index"])]).fen(), g["moves"][:-1], g["final_fen"])
+
+
+def test_per_game_streams_refuse_a_tablebase_adjudication_roll_on_the_shared_stream() -> None:
+    """recycle_slot rolls 'adjudicate this game?' from the SHARED rng when
+    syzygy_adjudicate_fraction < 1, so per-game streams would silently stop being
+    per-game. The validator must refuse it; fraction 1.0 (what simple-RL sets) and
+    adjudication off are accepted."""
+    from dataclasses import replace
+
+    from chess_anti_engine.selfplay.config import GameConfig
+    from chess_anti_engine.selfplay.opening import OpeningConfig
+    from chess_anti_engine.selfplay.state import _validate_per_game_streams
+
+    game = replace(GameConfig(), selfplay_fraction=1.0, syzygy_adjudicate=True, syzygy_adjudicate_fraction=1.0)
+    opening = replace(OpeningConfig(), opening_fen_dole_per_iter=2, opening_fen_list_path="starts.txt")
+    def check(g: GameConfig) -> None:
+        _validate_per_game_streams(game=g, opening=opening, target=2, continuous=False,
+                                   fen_dole_queue=["a", "b"], fen_sf_refute_queue=None, doled_game_indices=[0, 1])
+
+    check(game)
+    check(replace(game, syzygy_adjudicate=False, syzygy_adjudicate_fraction=0.5))
+    with pytest.raises(ValueError, match="shared stream"):
+        check(replace(game, syzygy_adjudicate_fraction=0.5))

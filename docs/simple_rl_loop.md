@@ -371,11 +371,14 @@ How a generation is split:
   own generator, `SeedSequence(process seed, spawn_key=(dole index,))`, where the
   dole index is the game's position in the process's opening slice. That covers
   the full/fast playout-cap draw, the root Gumbel noise, the move temperature and
-  row subsampling; there is no other per-game randomness (no RNG in the compiled
-  search). `play_batch(game_rng_base=, doled_game_indices=)` implements it and
-  refuses any game that is not a doled selfplay game. A game therefore plays the
-  same moves whichever games share its batch and whenever it starts, up to
-  floating-point differences of batched network outputs. **This changed the
+  row subsampling. No other per-game draw is live here (no RNG in the compiled
+  search), but only because simple-RL sets `syzygy_adjudicate_fraction=1.0`: the
+  per-game tablebase-adjudication roll still uses the shared stream, so
+  `play_batch(game_rng_base=, doled_game_indices=)` refuses a fraction below 1,
+  as it refuses any game that is not a doled selfplay game. A game therefore
+  plays the same moves whichever games share its batch and whenever it starts,
+  up to floating-point differences of batched network outputs and the search
+  tree's history (see "How exact a resume is"). **This changed the
   stream layout (2026-11-21):** a collect made before it, at any K, is not
   reproduced by digest by this code, and the digests banked on 2026-11-20 (the
   K = 1 bench equality and the K = 3 repeat) need a new baseline.
@@ -495,7 +498,7 @@ still match it). An unfinished process resumes at game granularity:
 | Stop | How | Unbiased? | Cost |
 |---|---|---|---|
 | Drain | create `<run>/STOP` | yes, by construction: a game's inclusion is fixed when it is dealt | the in-flight games' remaining time (minutes); frees the GPU when the processes exit |
-| Kill + resume | SIGKILL / crash, then rerun | yes, up to floating-point noise: committed games kept, in-flight games replayed through the journal | instant; replays the in-flight games' journaled plies |
+| Kill + resume | SIGKILL / crash, then rerun | yes, up to floating-point and tree-history noise (see "How exact a resume is"): committed games kept, in-flight games replayed through the journal | instant; replays the in-flight games' journaled plies |
 | PAUSE | create `<run>/PAUSE` or a `--pause-marker` | yes (nothing is re-dealt) | instant, but holds every process's GPU memory (about 23 GB at 3 × 128) |
 
 Drain: while `<run>/STOP` exists a running collect deals no new opening; every

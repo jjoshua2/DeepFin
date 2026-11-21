@@ -537,7 +537,8 @@ def _validate_per_game_streams(
     """Per-game RNG streams key every game by the index of the doled opening it
     plays, so every game must be one: a finite call, all slots selfplay (a
     curriculum roll or an SF opponent would draw from the shared stream), and
-    exactly one index per queued opening."""
+    exactly one index per queued opening. The tablebase-adjudication roll also
+    draws from the shared stream, so it must be certain (fraction 1.0)."""
     if continuous:
         raise ValueError("per-game RNG streams need a finite play_batch")
     if float(game.selfplay_fraction) != 1.0:
@@ -545,6 +546,9 @@ def _validate_per_game_streams(
                          "shared stream)")
     if fen_sf_refute_queue:
         raise ValueError("per-game RNG streams do not cover SF-refute openings")
+    if bool(game.syzygy_adjudicate) and float(game.syzygy_adjudicate_fraction) < 1.0:
+        raise ValueError("per-game RNG streams need syzygy_adjudicate_fraction 1.0 (the per-game tablebase-"
+                         "adjudication roll in recycle_slot draws from the shared stream)")
     if fen_dole_queue is None or int(opening.opening_fen_dole_per_iter) <= 0 or not opening.opening_fen_list_path:
         raise ValueError("per-game RNG streams need every game drawn from fen_dole_queue")
     if doled_game_indices is None or len(doled_game_indices) != len(fen_dole_queue):
