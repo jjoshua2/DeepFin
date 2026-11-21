@@ -828,3 +828,39 @@ def test_debug_counters_sum_every_chunk_of_a_search() -> None:
     finally:
         protocol.set_uci_debug(False)
         worker.close()
+
+
+def test_debug_duplicate_counter_sums_every_chunk_of_a_search() -> None:
+    """The knight-shuffle test above cannot see a `duplicate` counter that covers
+    only the last chunk: none of its chunks has duplicates. This KP ending gives a
+    fresh worker's first go 16 duplicate leaves in its FIRST chunk (20/20 runs;
+    later chunks had none), so the whole-search sum must exceed the last chunk's."""
+    worker = SearchWorker(
+        _make_evaluator(max_batch=64), device="cpu",
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False),
+        chunk_sims=64, n_walkers=1,
+    )
+    worker.install_multi_gpu_pucv(
+        [_make_evaluator(max_batch=64), _make_evaluator(max_batch=64)], gather=8, as_factories=False,
+    )
+    pool = worker._pucv_pool
+    assert pool is not None
+    chunk_stats: list[Any] = []
+    real_run = pool.run
+
+    def recording_run(**kwargs: Any) -> int:
+        completed = real_run(**kwargs)
+        chunk_stats.append(pool.last_stats())
+        return completed
+
+    pool.run = recording_run
+    try:
+        worker.run(chess.Board("8/8/8/4k3/8/4K3/4P3/8 w - - 0 1"), stop_event=threading.Event(),
+                   deadline=Deadline(20_000), max_nodes=320, info_cb=lambda **_f: None)
+        counts = worker.pool_search_counts()
+        assert len(chunk_stats) >= 2
+        assert any(s.duplicate_leaves > 0 for s in chunk_stats[:-1])  # the premise: a non-final chunk adds some
+        assert counts.duplicate == sum(s.duplicate_leaves for s in chunk_stats)
+        assert counts.duplicate > chunk_stats[-1].duplicate_leaves
+    finally:
+        worker.close()
