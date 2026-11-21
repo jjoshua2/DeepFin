@@ -52,9 +52,87 @@ cd ~/projects/chess-worktrees/rl-run1-pilot-$PIN && $PY scripts/build_production
 
 - The collection is the shared input of every cell, so `$PIN` must be a descendant
   of C0.
-- The list `git diff --name-only C0 $PIN` goes into the owner block. **If it touches
-  the shard format or the train-side loader's reading of it, the collect is
-  redone at `$PIN`.**
+- The list `git diff --name-only C0 $PIN` goes into the owner block.
+
+**The C0 → `$PIN` guard is mechanical, not a path rule** (statistics review of #1464).
+Shards store the ENCODED input `x`. The cells therefore learn from C0-encoded
+inputs, while every match encodes at `$PIN`. An encoder change between the two
+would put the cells out of distribution, but not the SL base, and would bias every
+vs-base match against the cells.
+
+**Tripwire.** The checks below are MANDATORY if the diff touches any of:
+- `chess_anti_engine/encoding/**` (including the `rep_fix` / history regime);
+- the C extensions (`*.c`, `*.h`);
+- the `moves/` policy maps;
+- shard I/O (`replay/shard.py`, `replay/packed_zarr.py`);
+- `simple_rl/learn.py`'s `prepare_targets` or the loader (`load_window`, `gather_rows`).
+
+They are cheap, so run them anyway. A diff in `simple_rl/learn.py` alone, for example
+adding `--value-rows-per-game`, is not a redo if (a) passes with that option off.
+
+**(a) The decoded training input is identical.** Run this at C0 (from its worktree)
+and again at `$PIN`, once per cell with the cell's own flags. The output must be
+byte-equal, key by key. It digests every train row the cell reads, after
+`prepare_targets`, plus the row ids. This is the content the batches are drawn from.
+The sampler's order is not digested: it is fixed by `--seed` and is a learn.py
+property that does not change what the inputs are.
+
+```bash
+for c in S Zq P0; do
+  PYTHONPATH=. $PY - $R/collect $COLLECT $TRAIN ${CELL[$c]} > $R/guard_a_${c}_$(git rev-parse --short HEAD).json <<'EOF'
+import hashlib, json, sys
+from pathlib import Path
+import numpy as np
+from scripts.simple_rl_loop import parser, train_settings
+from chess_anti_engine.simple_rl.learn import load_window, prepare_targets
+run = Path(sys.argv[1])
+a = parser().parse_args(["run", "--run-dir", str(run), "--generations", "1", *sys.argv[2:]])
+s = train_settings(a, run)
+train, _held, _gens, ids = load_window(run, 1, s)
+rows, _counts = prepare_targets(train, s)
+out = {k: hashlib.sha256(np.ascontiguousarray(v).tobytes()).hexdigest() for k, v in sorted(rows.items())}
+out.update(_row_ids=hashlib.sha256(np.ascontiguousarray(ids).tobytes()).hexdigest(), _rows=int(ids.shape[0]))
+print(json.dumps(out, sort_keys=True))
+EOF
+done
+```
+
+This was smoke-tested on a banked small collect (11,274 rows): two runs gave
+identical digests. It has not yet been run on the pilot's collect.
+
+**(b) The encoder is identical.** Re-encode a fixed set of real move histories at C0
+and at `$PIN`; the digests must be equal. Also, the regime stamps in each shard's
+meta (`input_history_encoding`, `history_rep_fix`, `policy_encoding`) must equal
+`$PIN`'s resolved collect config.
+
+```bash
+PYTHONPATH=. $PY - $R/openings/eval.pgn lc0_root v2_threats <history_rep_fix of $SL: 0|1> <<'EOF'
+import hashlib, json, sys
+import chess, chess.pgn, numpy as np
+from chess_anti_engine.encoding import rep_fix
+from chess_anti_engine.encoding.encode import encode_position
+rep_fix.apply(sys.argv[4] == "1")                       # the regime is process-global: set it explicitly
+h, n = hashlib.sha256(), 0
+with open(sys.argv[1]) as fh:
+    while (g := chess.pgn.read_game(fh)) is not None:
+        b = chess.Board()
+        for mv in g.mainline_moves():
+            b.push(mv)
+            x = encode_position(b, input_history_encoding=sys.argv[2], input_extra_features=sys.argv[3])
+            h.update(np.ascontiguousarray(x, dtype=np.float16).tobytes()); n += 1
+print(json.dumps({"positions": n, "x_sha256": h.hexdigest()}))
+EOF
+```
+
+The encoding names come from `$SL`'s `arch`.
+
+**Deviation from the review's (b).** The review asked to re-encode collection
+positions from `root_fen` + history and compare with the stored `x`. Collection rows
+carry neither: a shard row has `x` plus `game_id` / `ply_index` / `x_hash`, and
+`games.jsonl` has no move list. So (b) re-encodes `eval.pgn`'s 4,000 lines at every
+prefix instead (≈ 64k positions). Those cover only opening positions, with no
+repetitions and no endgames. Therefore: **if the tripwire fires on `encoding/**` or
+on the C extensions, the collect is redone at `$PIN` even when (b) passes.**
 
 **Why one commit.** On 2026-11-21 the 800-game head-swap arms no longer reproduced the
 2026-11-19 bank game for game. This was true of the PLAIN arms too: plain Q50 matched
@@ -253,6 +331,10 @@ nothing conditions on S.
 **S's rules are unchanged.** Its reading rule and its extension rule stay exactly as
 registered. The owner's expectation is a prior, not a change to the thresholds.
 
+**Steps 2 and 3 run whatever S reads.** The Step 2 loop may train all three cells
+back to back, or interleave each with its matches. The S read's real path also
+waits for `$PIN`, which needs #1462 and #1463 merged and this record merged.
+
 **What an early S read licenses:** nothing beyond the registered reading. In
 particular, a second generation from S is its own record. The owner's own concern
 about an unanchored target over many cycles is quoted in the DRAFT section below.
@@ -264,7 +346,7 @@ about an unanchored target over many cycles is quoted in the DRAFT section below
 | collection | ≈ 1.6 h | 5,021 games/h measured |
 | S training | ≈ 16 min | ≈ 758k rows minus the 5% hold-out ≈ 720k trainable rows, one presentation, ≈ 1,406 optimizer updates at batch 512. Updates/s at batch 512 is **unmeasured**; 16 min is the floor rate of ≥ 770 rows/s measured at batch 256 |
 | match 3 | ≈ 0.19 GPU-h | 800 games, plain, measured with CUDA graphs |
-| **Total** | **≈ 2.1 h** | from the collection's start to the S read |
+| **Total** | **≈ 2.1 h** of compute | from the collection's start to the S read, plus the wait for `$PIN` |
 
 ### The matches
 
@@ -496,7 +578,8 @@ collection A (about 1.6 h):
 **p is chosen from the measurement, by a rule fixed now, before the throughput is read.**
 p = the smallest value in {0.5, 0.25, 0.125} whose MEASURED effective policy rows
 at 1.6 GPU-h are ≥ collection A's 198k. B's game count is then fixed from the
-measured games/h × 1.6 h, not from wall time. Until the throughput run
+measured games/h × 1.6 h, not from wall time. **If no p in {0.5, 0.25, 0.125}
+reaches 198k effective policy rows, collection B is not run.** Until the throughput run
 lands, the table below uses the amendment's eval-count model,
 games/h ≈ 1 / (p / 5,021 + (1 − p) / 19,300), which is a **guess**. Policy rows are
 near-independent (residual ICC 0.03), so the policy's effective rows are about
@@ -738,25 +821,77 @@ frozen. Difficulty is regret AND nodes.
   - **Quiet positions keep our search's value.** That avoids importing SF's
     cp-logistic calibration in quiet positions, which is the cost of the primary
     (SF-everywhere) design.
-  - **Model bias:** to be quoted from the statistics reviewer's extension of
-    `outcome_conditioned_variants.py` with variant B, one-sided and two-sided
-    (requested).
+  - **Model bias** (statistics review, `plan-review-1464/variant_b_sim.txt`,
+    `variant_b_per_trigger.txt`; settings (Δ, threshold) = (0.10, 0.80) and
+    (0.20, 0.90); smooth and tactical-jump models):
+    - The bias in an s-bin = trigger share × E[q − s | triggered, bin].
+    - Triggers fire on ≤ 0.4% of rows in the model, so |E[target | s] − s| ≤ 0.008
+      (usually 0.001–0.006). That is an order of magnitude below variant A's
+      −0.024 to −0.061.
+    - Per triggered row, one-sided is −0.23 to −0.34 (to −0.6 / −0.8 in the high-s
+      deciles): pessimistic.
+    - Two-sided is ≈ 0 overall, but ± 0.07–0.15 by bin (sharpening, i.e.
+      overconfident). **Two-sided trades pessimism for overconfidence; it does not
+      remove the bias.**
+    - **The launch table MUST report the trigger share per bin.** The bias is small
+      only if the real share is small.
 
-  **The launch measurement, the same for every candidate on the SAME held-out games.**
-  The table reports E[target − z | value bin] and target sharpness for:
+  **Qualification: some of this bias is correctable after training.**
+
+  The owner, verbatim (2026-11-21):
+
+  > "It's easy to return search to be more optimistic or less sharp and confident."
+
+  What the bank supports:
+  - **Correctable kind.** A bias that is a function of the value alone (a level
+    shift, or sharpening / flattening) is correctable after training by the
+    two-parameter recalibration (T, draw bias).
+  - **Evidence.** Banked: F12 −34.9 → −0.9 and Q50 −63.2 → −14.3 (head-swap bank).
+    The 11-21 reproduction R3 at −31.8 [−50.0, −13.7] makes the size of the
+    recovery uncertain. The pilot's match 2 is the registered test.
+  - **Consequences.**
+    - Variant B's two-sided residual (sharpening by value bin) is of the
+      correctable kind.
+    - What recalibration cannot fix is error that differs by position type at
+      equal value, for example one-sided pessimism concentrated in sharp
+      positions.
+  - **Design option for the multi-generation run (an option, not a plan): a
+    per-generation recalibration against the game results.**
+    - Fit (T, b) on held-out GAMES against their results and fold it into the
+      checkpoint's WDL head. With 2 parameters, thousands of games give a tight
+      fit.
+    - It uses z as an anchor for level and sharpness, without putting the noisy
+      one-hot result into the training target.
+    - Today `scripts/fit_value_recal.py` fits against a REFERENCE NET's WDL
+      (cross-entropy to `p_ref`). A result-referenced fit (cross-entropy to the
+      one-hot z of each row's game) would be a small addition.
+
+  **The launch measurement, the same for every candidate on the SAME games.**
+  The candidates are:
   1. our search WDL alone;
-  2. variant B at two (Δ, threshold) settings fixed in advance;
+  2. variant B at two (Δ, threshold) settings fixed in advance, (0.10, 0.80) and (0.20, 0.90);
   3. the fixed three-way blend.
+
+  - **Decision quantity: the PAIRED column** E[t_X − t_search | bin] on the same rows.
+    At 500 games its SD is ≤ 0.001 (statistics review).
+  - **The z column,** E[t − z | bin], is kept only for the search's own absolute
+    calibration. 500 games cannot resolve 0.02 absolute calibration per bin: the SD
+    is 0.028–0.039 in the model, so ≈ 0.05–0.1 is detectable.
+  - **Binning.** All candidates are binned on ONE common variable: the stored search
+    WDL (primary), or the base's raw value. Bins on each candidate's own value are
+    secondary.
+  - **Also reported:** target sharpness, and variant B's trigger share per bin.
 
   The SF values come from an **offline SF relabel of a game sample of collection A**:
   - whole games, every ply;
-  - the production label path: MultiPV 6, the label node budget (`sf_label_nodes_floor` 150k), the Syzygy pair, a warm TT as in production, and each game's moves sent as history (`position <root> moves ...`, rebuilt from `root_fen` + `history`).
+  - the production label path: MultiPV 6, the label node budget (`sf_label_nodes_floor` 150k), the Syzygy pair, a warm TT as in production, and each game's moves sent as history (`position <root> moves ...`).
+  - **Gap: the move record.** Collection A does not store its games' moves. Shard rows hold `x` plus `game_id` / `ply_index`, and `games.jsonl` has no move list. So the relabel needs a collect that writes each game's move list (a small addition to `simple_rl/collect.py`'s `on_game`), or a collection made with it. A deterministic replay of A's games is not a substitute, because GPU play is not bit-reproducible (see "Why one commit").
   - **P0-aligned.** Collection A stores no SF label, so the relabel queries each trained position itself (P0, our side to move), not the position after our move. This differs from the live loop's stored label, which is P1. The P1 value (after the stored move) can be added for comparison at about twice the cost.
 
-  **Sample size and cost.** About 500 games, ≈ 95k positions. At 0.4–0.7 core-s per label
-  (`docs/sf_cpu_cost_split.md` ≈ L164: 290–370k nps per engine), that is ≈ 38k–66k
-  core-s ≈ 11–18 core-h, or about 0.7–1.2 h on 16 cores. It needs no GPU, and it is
-  run outside training.
+  **Sample size and cost** (corrected; the first version overstated the size 2×).
+  - **Size.** 500 games ≈ 47.5k positions at ≈ 95 rows per game.
+  - **Cost.** At 0.4–0.7 core-s per label (`docs/sf_cpu_cost_split.md` ≈ L164: 290–370k nps per engine), that is ≈ 19k–33k core-s ≈ 5.3–9.2 core-h, about 0.3–0.6 h on 16 cores. It needs no GPU and is run outside training.
+  - **Which games.** The hold-out has only ≈ 400 games (5% of 8,000). A target-only table does not need a hold-out, because no net is scored. So the sample is 500 games drawn from all of A with a fixed seed; the ≈ 400 hold-out games can be used instead.
 
   The gift-win share (won-game rows where full-strength SF had us at win probability
   ≤ 0.20) and the shape statistics (entropy, |W − L|) stay report-only.
