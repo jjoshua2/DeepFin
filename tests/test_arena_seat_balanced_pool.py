@@ -572,6 +572,87 @@ def test_a_hybrid_arm_pools_only_as_the_same_hybrid_with_its_value_file_unchange
                      tmp_path / "B.results.jsonl", arm=str(tmp_path / "arm.pt"))
 
 
+# ---------------------------------------------------------------------------
+# looks: a group-sequential match pooled across several A/B run pairs
+# ---------------------------------------------------------------------------
+
+def _look(tmp: Path, k: int, a_excess: list[float], b_excess: list[float], openings: list[str], *,
+          seed: int | None = None, settings: dict[str, Any] | None = None,
+          row: dict[str, Any] | None = None) -> tuple[Path, Path, Path, Path]:
+    """One look: runs A and B, seat-balanced; ``settings`` / ``row`` change BOTH runs (a valid A/B pair)."""
+    arm_path, base_path = _nets(tmp)
+    s = {"seed": 100 + k if seed is None else seed, **(settings or {})}
+    a_log, a_res = _write_run(tmp, f"L{k}A", candidate=arm_path, reference=base_path, openings=openings,
+                              game_scores=[_split(x) for x in a_excess], settings_over=s, row_over=row)
+    b_log, b_res = _write_run(tmp, f"L{k}B", candidate=base_path, reference=arm_path, openings=openings,
+                              game_scores=[_split(x) for x in b_excess], settings_over=s, row_over=row)
+    return a_log, b_log, a_res, b_res
+
+
+def test_looks_pool_to_the_single_run_over_all_their_pairs(tmp_path: Path) -> None:
+    rng = random.Random(11)
+    a = [rng.choice((-0.25, 0.0, 0.25, 0.5)) for _ in range(30)]
+    b = [rng.choice((-0.25, 0.0, 0.25)) for _ in range(30)]
+    fens = [f"fen{i}" for i in range(30)]
+    arm = str(tmp_path / "arm.pt")
+    looks = [_look(tmp_path, 1, a[:10], b[:10], fens[:10]), _look(tmp_path, 2, a[10:], b[10:], fens[10:])]
+    rep = pool_mod.run_looks(looks, arm=arm)
+    (tmp_path / "one").mkdir()
+    whole = _pair(tmp_path / "one", a, b, openings=fens)
+    assert rep["result"]["pooled"]["excess"] == pytest.approx(whole["result"]["pooled"]["excess"], abs=1e-15)
+    assert rep["result"]["pooled"]["se"] == pytest.approx(whole["result"]["pooled"]["se"], abs=1e-15)
+    assert rep["result"]["n_clusters"] == 30
+    assert rep["result"]["pairs_per_run"] == 30
+    assert rep["result"]["looks"] == 2
+    assert [lk["seed"] for lk in rep["looks"]] == [101, 102]
+    assert rep["looks"][0]["result"]["n_clusters"] == 10
+
+
+def test_an_opening_drawn_in_two_looks_is_one_cluster(tmp_path: Path) -> None:
+    arm = str(tmp_path / "arm.pt")
+    looks = [_look(tmp_path, 1, [0.25, 0.0, 0.5], [0.0, 0.25, 0.0], ["x", "y", "z"]),
+             _look(tmp_path, 2, [0.5, -0.25], [0.25, 0.0], ["x", "w"])]
+    r = pool_mod.run_looks(looks, arm=arm)["result"]
+    assert r["n_clusters"] == 4          # x, y, z, w
+    # x's cluster averages both looks' pairs: e_A = (0.25 + 0.5)/2, e_B = -(0.0 + 0.25)/2
+    d = {"x": ((0.25 + 0.5) / 2 - (0.0 + 0.25) / 2) / 2, "y": (0.0 - 0.25) / 2,
+         "z": (0.5 - 0.0) / 2, "w": (-0.25 - 0.0) / 2}
+    assert r["pooled"]["excess"] == pytest.approx(sum(d.values()) / 4, abs=1e-15)
+
+
+def test_looks_that_are_not_one_match_are_refused(tmp_path: Path) -> None:
+    arm = str(tmp_path / "arm.pt")
+    one = _look(tmp_path, 1, [0.25, 0.0], [0.0, 0.25], ["p", "q"])
+    with pytest.raises(pool_mod.PoolError, match=r"repeats look 1's seed 101"):
+        pool_mod.run_looks([one, _look(tmp_path, 2, [0.0, 0.0], [0.0, 0.0], ["r", "s"], seed=101)], arm=arm)
+    # Each of these looks is a valid A/B pair on its own; only the cross-look check can refuse it.
+    with pytest.raises(pool_mod.PoolError, match=r"look 2 run A: settings\.max_plies 600 != look 1's 300"):
+        pool_mod.run_looks([one, _look(tmp_path, 3, [0.0, 0.0], [0.0, 0.0], ["r", "s"],
+                                       settings={"max_plies": 600})], arm=arm)
+    with pytest.raises(pool_mod.PoolError, match=r"look 2 run A: git_sha 'cafef00d' != look 1's"):
+        pool_mod.run_looks([one, _look(tmp_path, 4, [0.0, 0.0], [0.0, 0.0], ["r", "s"],
+                                       row={"git_sha": "cafef00d"})], arm=arm)
+    with pytest.raises(pool_mod.PoolError, match=r"game log is also look 1's"):
+        pool_mod.run_looks([one, one], arm=arm)
+    # a different game count per look is allowed (the S extension pools an 800-game first read)
+    ok = _look(tmp_path, 5, [0.0, 0.25, 0.0], [0.0, 0.0, 0.25], ["r", "s", "t"])
+    assert pool_mod.run_looks([one, ok], arm=arm)["result"]["pairs_per_run"] == 5
+
+
+def test_the_cli_pools_repeated_looks(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    l1 = _look(tmp_path, 1, [0.25, 0.0, 0.5], [0.0, 0.25, 0.0], ["x", "y", "z"])
+    l2 = _look(tmp_path, 2, [0.5, -0.25], [0.25, 0.0], ["v", "w"])
+    argv = ["--arm", str(tmp_path / "arm.pt"), "--out", str(tmp_path / "p.json")]
+    for a_log, b_log, a_res, b_res in (l1, l2):
+        argv += ["--a-games", str(a_log), "--b-games", str(b_log), "--a-result", str(a_res),
+                 "--b-result", str(b_res)]
+    assert pool_mod.main(argv) == 0
+    report = json.loads((tmp_path / "p.json").read_text())
+    assert report["result"]["n_clusters"] == 5
+    assert len(report["looks"]) == 2
+    assert "2 looks pooled" in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        pool_mod.main([*argv, "--a-games", str(l1[0])])
 def test_a_moved_net_pools_only_through_relocate_which_still_hashes_it(tmp_path: Path) -> None:
     """Review of #1459: a banked result whose net was moved is re-hashed at the new path, never skipped."""
     arm_path, base_path = _nets(tmp_path)
