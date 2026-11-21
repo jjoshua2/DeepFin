@@ -1509,6 +1509,19 @@ def load_generation_rows(collect_dir: Path, *, keys: tuple[str, ...] | None = No
     return arrays, {k: np.concatenate([m[k] for m in metas]) for k in metas[0]}
 
 
+def load_generation_rows_where(collect_dir: Path, select: Any, *, keys: tuple[str, ...] | None = None,
+                               ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+    """The rows ``select(shard_row_meta) -> bool mask`` keeps, from every shard of
+    one generation, plus their row meta: exactly ``load_generation_rows`` followed
+    by the concatenated mask, but only the selected rows are ever held (one shard
+    at a time), so a 5% hold-out of a large generation costs 5% of it."""
+    shards = generation_shards(collect_dir)
+    metas = [shard_row_meta(s) for s in shards]
+    masks = [np.asarray(select(m), dtype=bool) for m in metas]
+    (arrays,) = gather_rows([list(zip(shards, masks, strict=True))], keys=keys)
+    return arrays, {k: np.concatenate([m[k][mk] for m, mk in zip(metas, masks, strict=True)]) for k in metas[0]}
+
+
 def concat_arrays(parts: list[dict[str, np.ndarray]]) -> dict[str, np.ndarray]:
     """Row-concatenate shard arrays; a field absent from a part is zero-filled
     with the schema's own default (flag 0), metadata keys must agree."""
@@ -1544,48 +1557,165 @@ def _entropy(p: np.ndarray) -> np.ndarray:
     return -(p * logp).sum(axis=-1)
 
 
-def policy_stats(arrays: dict[str, np.ndarray]) -> dict[str, float]:
-    """Target/prior entropy, KL(target||prior) and top-1 agreement, from root stats."""
-    target = np.asarray(arrays["policy_target"], dtype=np.float64)
-    target = target / np.maximum(target.sum(axis=1, keepdims=True), 1e-30)
-    policy_rows = np.asarray(arrays.get("has_policy", np.ones(len(target))), dtype=bool)
-    out: dict[str, float] = {
-        "target_entropy": float(_entropy(target[policy_rows]).mean()) if policy_rows.any() else math.nan,
-        "policy_rows": int(policy_rows.sum()),
-    }
-    has = np.asarray(arrays.get("has_root_log_prior", np.zeros(len(target))), dtype=bool)
-    out["root_stats_rows"] = int(has.sum())
-    # Exact root shortcuts (solved / tablebase / single-move / #1410's pruned-draw
-    # fallback) carry no statistics; their value target falls back (learn.py).
-    out["rows_without_root_stats"] = int((~has).sum())
-    # Value diagnostics over every searched row; policy diagnostics (below)
-    # over policy rows only -- a fast ply's stored target is masked.
-    if not has.any():
+class PolicyStatsAccumulator:
+    """Pooled running sums for :func:`policy_stats`, fed one row chunk at a time.
+
+    Every output is a pooled mean, share or count over the generation's rows
+    (sums and counts are accumulated; nothing is a mean of chunk means), so the
+    result equals ``policy_stats`` on the concatenated rows up to float summation
+    order, while memory is bounded by the chunk. A key is "present" if any chunk
+    carried it (the concatenated arrays zero-fill a field a shard lacks)."""
+
+    _VALUE_KEYS = ("root_net_value", "root_survivor_q", "root_node_q")
+
+    def __init__(self) -> None:
+        self.n_policy = 0
+        self.target_entropy_sum = 0.0
+        self.n_root = 0
+        self.n_rows = 0
+        self.present: set[str] = set()
+        self.value_sum = dict.fromkeys((*self._VALUE_KEYS, "gap"), 0.0)
+        self.value_n = dict.fromkeys((*self._VALUE_KEYS, "gap"), 0)
+        self.sv_sum = 0.0
+        self.sv_reused = 0
+        self.n_pol_root = 0
+        self.prior_entropy_sum = 0.0
+        self.kl_sum = 0.0
+        self.top1 = 0
+
+    def add(self, arrays: dict[str, np.ndarray]) -> None:
+        target = np.asarray(arrays["policy_target"], dtype=np.float64)
+        target = target / np.maximum(target.sum(axis=1, keepdims=True), 1e-30)
+        n = len(target)
+        self.n_rows += n
+        self.present.update(k for k in (*self._VALUE_KEYS, "root_start_visits") if k in arrays)
+        policy_rows = np.asarray(arrays.get("has_policy", np.ones(n)), dtype=bool)
+        if policy_rows.any():
+            self.target_entropy_sum += float(_entropy(target[policy_rows]).sum())
+        self.n_policy += int(policy_rows.sum())
+        has = np.asarray(arrays.get("has_root_log_prior", np.zeros(n)), dtype=bool)
+        self.n_root += int(has.sum())
+        if not has.any():
+            return
+        for name in self._VALUE_KEYS:
+            if name in arrays:
+                vals = np.asarray(arrays[name], dtype=np.float64)[has]
+                ok = ~np.isnan(vals)
+                self.value_sum[name] += float(vals[ok].sum())
+                self.value_n[name] += int(ok.sum())
+        if "root_survivor_q" in arrays and "root_node_q" in arrays:
+            gap = (np.asarray(arrays["root_survivor_q"], np.float64)[has]
+                   - np.asarray(arrays["root_node_q"], np.float64)[has])
+            ok = ~np.isnan(gap)
+            self.value_sum["gap"] += float(gap[ok].sum())
+            self.value_n["gap"] += int(ok.sum())
+        if "root_start_visits" in arrays:
+            sv = np.asarray(arrays["root_start_visits"], dtype=np.float64)[has]
+            self.sv_sum += float(sv.sum())
+            self.sv_reused += int((sv > 0).sum())
+        has &= policy_rows
+        if not has.any():
+            return
+        support = np.asarray(arrays["root_child_visits"])[has] >= 0
+        logp = np.where(support, np.asarray(arrays["root_log_prior"], dtype=np.float64)[has], -np.inf)
+        logp = logp - logp.max(axis=1, keepdims=True)
+        prior = np.where(support, np.exp(logp), 0.0)
+        prior /= prior.sum(axis=1, keepdims=True)
+        t = target[has]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            kl = np.where(t > 0, t * (np.log(np.where(t > 0, t, 1.0)) - np.log(np.where(prior > 0, prior, 1e-300))), 0.0).sum(axis=1)
+        self.n_pol_root += int(has.sum())
+        self.prior_entropy_sum += float(_entropy(prior).sum())
+        self.kl_sum += float(kl.sum())
+        self.top1 += int((t.argmax(axis=1) == prior.argmax(axis=1)).sum())
+
+    def result(self) -> dict[str, float]:
+        out: dict[str, float] = {
+            "target_entropy": self.target_entropy_sum / self.n_policy if self.n_policy else math.nan,
+            "policy_rows": self.n_policy,
+            "root_stats_rows": self.n_root,
+            # Exact root shortcuts (solved / tablebase / single-move / #1410's pruned-draw
+            # fallback) carry no statistics; their value target falls back (learn.py).
+            "rows_without_root_stats": self.n_rows - self.n_root,
+        }
+        # Value diagnostics over every searched row; policy diagnostics (below)
+        # over policy rows only -- a fast ply's stored target is masked.
+        if not self.n_root:
+            return out
+        for name in self._VALUE_KEYS:
+            if name in self.present:    # nanmean: the mean of the non-NaN values, NaN if none
+                out[f"mean_{name}"] = self.value_sum[name] / self.value_n[name] if self.value_n[name] else math.nan
+        if {"root_survivor_q", "root_node_q"} <= self.present:
+            out["mean_survivor_minus_node_q"] = (self.value_sum["gap"] / self.value_n["gap"]
+                                                 if self.value_n["gap"] else math.nan)
+        if "root_start_visits" in self.present:
+            out.update(mean_root_start_visits=self.sv_sum / self.n_root, reused_root_share=self.sv_reused / self.n_root)
+        if not self.n_pol_root:
+            return out
+        out.update(prior_entropy=self.prior_entropy_sum / self.n_pol_root, kl_target_prior=self.kl_sum / self.n_pol_root,
+                   top1_agreement=self.top1 / self.n_pol_root)
         return out
-    for name in ("root_net_value", "root_survivor_q", "root_node_q"):
-        if name in arrays:
-            vals = np.asarray(arrays[name], dtype=np.float64)[has]
-            out[f"mean_{name}"] = float(np.nanmean(vals))
-    if "root_survivor_q" in arrays and "root_node_q" in arrays:
-        gap = np.asarray(arrays["root_survivor_q"], np.float64)[has] - np.asarray(arrays["root_node_q"], np.float64)[has]
-        out["mean_survivor_minus_node_q"] = float(np.nanmean(gap))
-    if "root_start_visits" in arrays:
-        sv = np.asarray(arrays["root_start_visits"], dtype=np.float64)[has]
-        out.update(mean_root_start_visits=float(sv.mean()), reused_root_share=float((sv > 0).mean()))
-    has &= policy_rows
-    if not has.any():
-        return out
-    support = np.asarray(arrays["root_child_visits"])[has] >= 0
-    logp = np.where(support, np.asarray(arrays["root_log_prior"], dtype=np.float64)[has], -np.inf)
-    logp = logp - logp.max(axis=1, keepdims=True)
-    prior = np.where(support, np.exp(logp), 0.0)
-    prior /= prior.sum(axis=1, keepdims=True)
-    t = target[has]
-    with np.errstate(divide="ignore", invalid="ignore"):
-        kl = np.where(t > 0, t * (np.log(np.where(t > 0, t, 1.0)) - np.log(np.where(prior > 0, prior, 1e-300))), 0.0).sum(axis=1)
-    out.update(prior_entropy=float(_entropy(prior).mean()), kl_target_prior=float(kl.mean()),
-               top1_agreement=float((t.argmax(axis=1) == prior.argmax(axis=1)).mean()))
-    return out
+
+
+STATS_CHUNK_ROWS = 8192   # float64 N x 1858 temporaries: ~120 MiB each at this size
+
+
+def policy_stats(arrays: dict[str, np.ndarray], *, chunk_rows: int = STATS_CHUNK_ROWS) -> dict[str, float]:
+    """Target/prior entropy, KL(target||prior) and top-1 agreement, from root stats
+    (pooled over ``chunk_rows``-row chunks; see :class:`PolicyStatsAccumulator`)."""
+    acc = PolicyStatsAccumulator()
+    n = len(arrays["policy_target"])
+    for a in range(0, n, max(1, int(chunk_rows))):
+        acc.add({k: (v if str(k).startswith("_") else v[a:a + chunk_rows]) for k, v in arrays.items()})
+    if n == 0:
+        acc.add(arrays)
+    return acc.result()
+
+
+GENERATION_STATS_KEYS = ("policy_target", "wdl_target", "has_policy", "root_log_prior", "has_root_log_prior",
+                         "root_child_visits", "has_root_child_visits", "root_net_value", "root_survivor_q",
+                         "root_node_q", "root_start_visits", "search_budget", "has_search_budget")
+
+
+def stream_generation_row_stats(collect_dir: Path, *, chunk_rows: int = STATS_CHUNK_ROWS,
+                                ) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
+    """``policy_stats`` plus the search-budget row counts and the row count over
+    one generation, ONE SHARD AT A TIME (never ``x``, never the whole
+    generation): peak memory is one shard's stats keys plus one chunk's
+    float64 temporaries. Also returns the concatenated row-meta sidecar."""
+    from chess_anti_engine.replay.shard import open_shard_arrays, zeros_for_storage_field
+
+    shards = generation_shards(collect_dir)
+    present: list[str] = []
+    for s in shards:      # union of fields, as the concatenated arrays would carry them
+        with open_shard_arrays(s, lazy=True, validate=True) as (arrs, _meta):
+            present += [k for k in GENERATION_STATS_KEYS if k in arrs and k not in present]
+    acc = PolicyStatsAccumulator()
+    budgets: dict[int, int] = {}
+    metas: list[dict[str, np.ndarray]] = []
+    n = 0
+    for s in shards:
+        meta = shard_row_meta(s)
+        (arrays,) = gather_rows([[(s, None)]], keys=tuple(present))
+        rows = int(arrays["policy_target"].shape[0])
+        if len(meta["x_hash"]) != rows:
+            raise ValueError(f"{s}: {rows} rows but its meta sidecar has {len(meta['x_hash'])}")
+        for k in present:
+            if k not in arrays:
+                arrays[k] = zeros_for_storage_field(k, n=rows, x_planes=1, policy_size=int(arrays["policy_target"].shape[1]))
+        for a in range(0, rows, max(1, int(chunk_rows))):
+            acc.add({k: v[a:a + chunk_rows] for k, v in arrays.items() if not str(k).startswith("_")})
+        if "search_budget" in arrays:
+            b = np.asarray(arrays["search_budget"])[np.asarray(arrays["has_search_budget"], dtype=bool)]
+            for v, c in zip(*np.unique(b, return_counts=True), strict=True):
+                budgets[int(v)] = budgets.get(int(v), 0) + int(c)
+        metas.append(meta)
+        n += rows
+        del arrays
+    out: dict[str, Any] = {"rows": n, "policy": acc.result()}
+    if "search_budget" in present:
+        out["rows_by_search_budget"] = {str(v): budgets[v] for v in sorted(budgets)}
+    return out, {k: np.concatenate([m[k] for m in metas]) for k in metas[0]}
 
 
 OPENINGS_SEEN_DIR = "openings_seen"
@@ -1639,11 +1769,10 @@ def generation_stats(collect_dir: Path, *, previous: list[Path], generation: int
                      settings: CollectSettings | None = None) -> dict[str, Any]:
     collect_dir = Path(collect_dir)
     games = [json.loads(r) for r in (collect_dir / GAMES).read_text().splitlines() if r.strip()]
-    keys = ("x", "policy_target", "wdl_target", "has_policy", "root_log_prior", "has_root_log_prior",
-            "root_child_visits", "has_root_child_visits", "root_net_value", "root_survivor_q", "root_node_q",
-            "root_start_visits", "search_budget", "has_search_budget")
-    arrays, meta = load_generation_rows(collect_dir, keys=keys)
-    n = int(arrays["x"].shape[0])
+    # Streamed shard by shard: memory independent of the generation's size (the
+    # whole-generation load OOM-killed the pilot's 762k-row seal at ~84 GB RSS).
+    row_stats, meta = stream_generation_row_stats(collect_dir)
+    n = int(row_stats["rows"])
     results = [g["result"] for g in games]
     w, d, l_ = results.count("1-0"), results.count("1/2-1/2"), results.count("0-1")
     hashes = np.asarray(meta["x_hash"], dtype=np.uint64)
@@ -1702,9 +1831,7 @@ def generation_stats(collect_dir: Path, *, previous: list[Path], generation: int
         "previous_generations_compared": len(previous),
         "unique_openings": len({g["opening_id"] for g in games}),
     }
-    stats.update(policy_stats(arrays))
-    if "search_budget" in arrays:
-        has_b = np.asarray(arrays["has_search_budget"], dtype=bool)
-        budgets = np.asarray(arrays["search_budget"])[has_b]
-        stats["rows_by_search_budget"] = {str(int(b)): int((budgets == b).sum()) for b in np.unique(budgets)}
+    stats.update(row_stats["policy"])
+    if "rows_by_search_budget" in row_stats:
+        stats["rows_by_search_budget"] = row_stats["rows_by_search_budget"]
     return stats

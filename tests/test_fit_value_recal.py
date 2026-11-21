@@ -140,3 +140,44 @@ def test_a_fen_list_line_with_moves_is_keyed_by_the_position_the_match_starts_fr
         check_rows_disjoint(z, rows, openings)
     with pytest.raises(SystemExit, match="no fixed opening set"):
         opening_keys(tmp_path / "book.pgn.zip")
+
+
+def test_a_pgn_line_is_keyed_where_the_arena_starts_it_after_opening_plies(tmp_path: Path) -> None:
+    """Review of #1459 (note): the arena truncates a PGN line at --opening-plies, so the guard keys
+    the position after min(len, opening_plies) plies, and refuses a FEN header the arena ignores."""
+    from scripts.fit_value_recal import opening_keys
+
+    pgn = tmp_path / "eval.pgn"
+    pgn.write_text('[Event "x"]\n\n1. e4 e5 2. Nf3 Nc6 *\n')
+    after4, after2 = chess.Board(), chess.Board()
+    for u in ("e2e4", "e7e5", "g1f3", "b8c6"):
+        after4.push_uci(u)
+    for u in ("e2e4", "e7e5"):
+        after2.push_uci(u)
+    assert opening_keys(pgn) == {after4.epd()}                       # 4 plies < the default 16
+    assert opening_keys(pgn, opening_plies=2) == {after2.epd()}      # truncated as the arena would
+    fen_game = tmp_path / "fen.pgn"
+    fen_game.write_text(f'[Event "x"]\n[SetUp "1"]\n[FEN "{after2.fen()}"]\n\n2. Nf3 *\n')
+    with pytest.raises(SystemExit, match="FEN header"):
+        opening_keys(fen_game)
+
+
+def test_the_cli_opening_plies_reaches_the_overlap_guard_and_its_record(tmp_path: Path) -> None:
+    """Review of #1466: --opening-plies must not be accepted and then ignored. A row that passes
+    through only the 2-ply prefix of a 4-ply line is refused at --opening-plies 2, not at 16."""
+    from scripts.fit_value_recal import check_rows_disjoint
+
+    pgn = tmp_path / "eval.pgn"
+    pgn.write_text('[Event "x"]\n\n1. e4 e5 2. Nf3 Nc6 *\n')
+    rows = tmp_path / "rows.npz"
+    np.savez(rows, x=np.zeros((1, 1, 8, 8)), root_fen=np.array([chess.STARTING_FEN]),
+             history=np.array(["e2e4 e7e5 d2d4"]))
+    base = ["--net", "a.pt", "--reference", "b.pt", "--rows", str(rows), "--exclude-openings", str(pgn),
+            "--out", str(tmp_path / "o.json")]
+    with pytest.raises(SystemExit, match="1 rows started at or passed through"):
+        main([*base, "--opening-plies", "2"])
+    with pytest.raises(FileNotFoundError, match=r"no trainer\.pt at a\.pt"):   # past the guard: fails on the absent nets instead
+        main(base)
+    with np.load(rows) as z:
+        assert check_rows_disjoint(z, rows, pgn)["opening_plies"] == 16
+        assert check_rows_disjoint(z, rows, pgn, 3)["opening_plies"] == 3
