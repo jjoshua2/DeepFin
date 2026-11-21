@@ -607,6 +607,16 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
 
 ## Training details
 
+- **Row loading is streamed into preallocated arrays.** `load_window` loads only the
+  keys the loss and the configured target source read (`TRAIN_KEYS` plus
+  `target_source_keys(settings)`: survivor-Q value adds 2–4 small columns, the actor
+  prior mix adds the two float32 1858-wide root arrays), and fills the train and
+  held-out arrays shard by shard, so no full extra copy ever exists. Measured peak
+  (banked under `rl-claude-20261119/loader-ram/`): about 28 KiB per row plus one
+  decoded shard, against about 142 KiB per row before. A 758k-row generation peaks at
+  about 20 GiB, 2M rows at about 54 GiB; the actor prior mix costs about 49 KiB per
+  row. The output is value- and dtype-identical to the old loader
+  (`tests/test_simple_rl_loader_identity.py`).
 - `--optimizer-state fresh` (default) builds a new optimizer each generation. With
   `--warmup-steps 0`, its first Adam steps are full size regardless of gradient
   magnitude.
