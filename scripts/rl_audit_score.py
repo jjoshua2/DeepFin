@@ -166,16 +166,30 @@ REGRET_CAVEAT = ("deep-SF regret tracks RAW-prior strength (it agrees with the t
                  "and not with 64-sim play); reported only, never a dose selector")
 
 
+def _regret_of(move: np.ndarray, table: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
+    """(regret per row, covered per row): an uncovered row has no regret (it is DROPPED, never zero-filled)."""
+    hit = table["moves"] == move[:, None]
+    covered = hit.any(axis=1)
+    return np.where(hit, table["regret_cp"], 0.0).sum(axis=1), covered
+
+
 def regret_column(move: np.ndarray, table: dict[str, np.ndarray], game: np.ndarray) -> dict[str, Any]:
     """Mean deep-SF regret (cp) of each row's chosen move, over the rows whose
     move the label table covers; the coverage count is reported."""
-    moves, cp = table["moves"], table["regret_cp"]
-    hit = moves == move[:, None]
-    covered = hit.any(axis=1)
-    val = np.where(hit, cp, 0.0).sum(axis=1)
+    val, covered = _regret_of(move, table)
     m, se = clustered_mean_se(val[covered], game[covered])
     return {"regret_cp": m, "regret_cp_se": se, "covered": int(covered.sum()), "rows": int(move.size),
             "caveat": REGRET_CAVEAT}
+
+
+def paired_regret(move_a: np.ndarray, move_b: np.ndarray, table: dict[str, np.ndarray],
+                  game: np.ndarray) -> dict[str, Any]:
+    """Paired regret difference a - b (cp) on the rows whose moves the table covers for BOTH nets."""
+    va, ca = _regret_of(move_a, table)
+    vb, cb = _regret_of(move_b, table)
+    both = ca & cb
+    d, se = clustered_mean_se(va[both] - vb[both], game[both])
+    return {"diff_cp": d, "se": se, "lb95": d - 1.96 * se, "ub95": d + 1.96 * se, "rows_both_covered": int(both.sum())}
 
 
 # ---------------------------------------------------------------- loading
@@ -337,7 +351,11 @@ def cmd_score(a: argparse.Namespace) -> int:
             table["nets"][net][rname] = entry
         move = np.argmax(np.where(legal, logits.astype(np.float64), -np.inf), axis=1)
         for gname, tab in regrets.items():
-            table["nets"][net][f"regret:{gname}"] = regret_column(move, tab, game)
+            col = regret_column(move, tab, game)
+            if a.reference and net != a.reference:
+                ref_move = np.argmax(np.where(legal, pols[a.reference].astype(np.float64), -np.inf), axis=1)
+                col["vs_reference"] = paired_regret(move, ref_move, tab, game)
+            table["nets"][net][f"regret:{gname}"] = col
         if net in wdls:
             ref_logits = wdls[a.reference] if a.reference and net != a.reference and a.reference in wdls else None
             table["value"][net] = value_shape(wdls[net], game, ref_wl, ref_logits)
@@ -436,8 +454,10 @@ def cmd_validate(a: argparse.Namespace) -> int:
     return 0
 
 
-def ruler_validation_status(spec: str, validation: str | None) -> tuple[bool, str, dict[str, Any] | None]:
-    """Whether ``validation`` records a PASS for this exact ruler file (name, key, sha)."""
+def ruler_validation_status(spec: str, validation: str | None, rows_record: dict[str, Any] | None = None,
+                            ) -> tuple[bool, str, dict[str, Any] | None]:
+    """Whether ``validation`` records a PASS for this exact ruler file (name, key, sha)
+    on the same rows and mask as the dose (``rows_record``: ``load_rows``'s ``_record``)."""
     if not validation:
         return False, "no --ruler-validation given", None
     vpath = Path(validation)
@@ -448,6 +468,17 @@ def ruler_validation_status(spec: str, validation: str | None) -> tuple[bool, st
     if any(theirs.get(k) != mine[k] for k in ("name", "key", "sha256")):
         other = f"{theirs.get('name')}, sha {str(theirs.get('sha256'))[:12]}"
         return False, f"the validation record is for another ruler file ({other})", ref
+    if rows_record is not None:
+        vin = rec.get("input") or {}
+        if vin.get("rows_sha256") != rows_record["rows_sha256"]:
+            return False, (f"the validation ran on other rows (sha {str(vin.get('rows_sha256'))[:12]}, "
+                           f"dose rows {rows_record['rows_sha256'][:12]})"), ref
+        vmask, dmask = vin.get("mask"), rows_record["mask"]
+        same_mask = (vmask is None and dmask is None) or (
+            vmask is not None and dmask is not None
+            and all(vmask.get(k) == dmask.get(k) for k in ("sha256", "invert", "spec")))
+        if not same_mask:
+            return False, f"the validation used another mask ({vmask} vs the dose's {dmask})", ref
     if not rec.get("passed"):
         failed = [k for k, v in rec.get("conditions", {}).items() if not v.get("pass")]
         return False, f"the ruler failed validation ({', '.join(failed)})", ref
@@ -464,16 +495,19 @@ def cmd_dose(a: argparse.Namespace) -> int:
         raise SystemExit("dose: give --mask (A1 holds rows that reappear in training games; the leak mask) or "
                          "--no-mask explicitly")
     labels_ok = Path(a.ruler.partition("=")[2].rpartition(":")[0]).is_file()
-    validated, vwhy, vref = (ruler_validation_status(a.ruler, a.ruler_validation) if labels_ok
-                             else (False, "labels absent", None))
+    rows = load_rows(Path(a.rows), a.mask, invert=a.mask_invert) if labels_ok else None
+    validated, vwhy, vref = (ruler_validation_status(a.ruler, a.ruler_validation, rows["_record"])
+                             if rows is not None else (False, "labels absent", None))
     record.update({"ruler_validated": validated, "ruler_validation": vref, "ruler_validation_reason": vwhy})
+    if rows is not None:
+        record["input"] = rows["_record"]
     if not labels_ok:
         pick, why = final_i, "the dose ruler's labels have not landed; every cell plays its final model"
     elif not validated:
         record["ruler"] = _ruler_record(a.ruler)
         pick, why = final_i, f"ruler not validated ({vwhy}); final model"
     else:
-        rows = load_rows(Path(a.rows), a.mask, invert=a.mask_invert)
+        assert rows is not None
         record["input"] = rows["_record"]
         keep = rows["_keep"]
         legal, game = rows["legal"][keep], rows["game_id"][keep]
@@ -500,6 +534,115 @@ def cmd_dose(a: argparse.Namespace) -> int:
                    "played_model_sha256": sha256_file(out_model)})
     Path(a.out).write_text(json.dumps(record, indent=1, sort_keys=True) + "\n")
     print(f"dose: {chosen['name']} ({why})")
+    return 0
+
+
+# ---------------------------------------------------------------- deep-SF labels -> regret table
+# The search-compose/scripts/sf_parse.py convention: per (depth, multipv rank) the FIRST
+# complete line (bounds skipped); the deepest depth at which every rank is present;
+# scores cp from the side to move, mate m -> sign(m) * (10000 - 10 * |m|); a "b"
+# searchmoves pass fills moves the MultiPV pass missed; regret = best - move clipped to
+# [0, cap]. A label file with a duplicate FEN is refused. The paired regret
+# difference is a - b (the scored net minus the reference): positive = the net is worse.
+# Intervals are normal 1.96 x the game-clustered SE (the search-compose bank used a game
+# bootstrap; the two agree in the mean and differ by <= 0.3 cp in the bounds on that bank).
+SF_REGRET_CAP = 1000
+
+
+def _sf_score(t: list[str]) -> int:
+    i = t.index("score")
+    kind, v = t[i + 1], int(t[i + 2])
+    return v if kind == "cp" else int(np.sign(v) * (10000 - 10 * abs(v)))
+
+
+def _sf_first_by_depth_rank(lines: list[str]) -> dict[tuple[int, int], tuple[str, int]]:
+    d: dict[tuple[int, int], tuple[str, int]] = {}
+    for line in lines:
+        t = line.split()
+        if "lowerbound" in t or "upperbound" in t or "pv" not in t or "multipv" not in t:
+            continue
+        key = (int(t[t.index("depth") + 1]), int(t[t.index("multipv") + 1]))
+        if key not in d:
+            d[key] = (t[t.index("pv") + 1], _sf_score(t))
+    return d
+
+
+def _sf_final(d: dict[tuple[int, int], tuple[str, int]], nranks: int) -> dict[int, tuple[str, int]]:
+    depths = sorted({k[0] for k in d}, reverse=True)
+    for dep in depths:
+        rs = {r: d[(dep, r)] for r in range(1, nranks + 1) if (dep, r) in d}
+        if len(rs) == nranks:
+            return rs
+    return {r: v for (dd, r), v in d.items() if dd == depths[0]} if depths else {}
+
+
+def sf_record_scores(rec: dict[str, Any]) -> tuple[dict[str, int], int]:
+    """(uci -> cp from the side to move, best cp) for one sf_label.py record."""
+    rs = _sf_final(_sf_first_by_depth_rank(rec["a"]["lines"]), int(rec["multipv_a"]))
+    if not rs:
+        raise ValueError(f"row {rec.get('row')}: no complete MultiPV line")
+    scores = dict(rs.values())
+    best = scores[rs[min(rs)][0]]
+    if "b" in rec:
+        rb = _sf_final(_sf_first_by_depth_rank(rec["b"]["lines"]), len(rec["b"]["searchmoves"]))
+        for mv, cp in rb.values():
+            scores.setdefault(mv, cp)
+    return scores, best
+
+
+def _row_board(root_fen: str, history: str) -> Any:
+    import chess
+
+    board = chess.Board(str(root_fen))
+    for mv in str(history).split():
+        board.push_uci(mv)
+    return board
+
+
+def cmd_sf_regret_table(a: argparse.Namespace) -> int:
+    from chess_anti_engine.moves.encode import FULL_TO_COMPACT_POLICY, move_to_index
+
+    with np.load(a.rows, allow_pickle=False) as z:
+        if "root_fen" not in z.files or "history" not in z.files:
+            raise SystemExit(f"{a.rows}: the converter needs root_fen and history to rebuild each row's board")
+        root_fen, history = z["root_fen"], z["history"]
+    by_fen: dict[str, dict[str, Any]] = {}
+    dup = 0
+    with open(a.sf_jsonl) as fh:
+        for line in fh:
+            rec = json.loads(line)
+            if rec["fen"] in by_fen:
+                dup += 1
+            by_fen[rec["fen"]] = rec
+    if dup:
+        raise SystemExit(f"{a.sf_jsonl}: {dup} duplicate FEN record(s); one label per position is required "
+                         "(which record would win is not a convention, so none is chosen)")
+    n = int(root_fen.shape[0])
+    k = int(a.max_moves)
+    moves = np.full((n, k), -1, dtype=np.int64)
+    regret = np.zeros((n, k), dtype=np.float32)
+    labelled = truncated = 0
+    for i in range(n):
+        board = _row_board(root_fen[i], history[i])
+        rec = by_fen.get(board.fen())
+        if rec is None:
+            continue
+        scores, best = sf_record_scores(rec)
+        legal = {m.uci(): m for m in board.legal_moves}
+        items = sorted(((best - cp, mv) for mv, cp in scores.items() if mv in legal))
+        truncated += max(0, len(items) - k)
+        for j, (r, mv) in enumerate(items[:k]):
+            moves[i, j] = int(FULL_TO_COMPACT_POLICY[move_to_index(legal[mv], board)])
+            regret[i, j] = float(min(max(r, 0), int(a.cap)))
+        labelled += 1
+    np.savez_compressed(a.out, moves=moves, regret_cp=regret)
+    meta = {"rows_file": str(a.rows), "rows_sha256": sha256_file(Path(a.rows)), "sf_jsonl": str(a.sf_jsonl),
+            "sf_jsonl_sha256": sha256_file(Path(a.sf_jsonl)), "rows": n, "rows_labelled": labelled,
+            "duplicate_fens_in_labels": dup, "moves_truncated": truncated, "cap_cp": int(a.cap),
+            "convention": "search-compose sf_parse.py: first line per (depth, rank), deepest complete depth, "
+                          "mate m -> sign(m)*(10000-10|m|), searchmoves pass fills, regret clipped to [0, cap]"}
+    Path(str(a.out) + ".json").write_text(json.dumps(meta, indent=1, sort_keys=True) + "\n")
+    print(f"sf-regret-table: {labelled}/{n} rows labelled -> {a.out}")
     return 0
 
 
@@ -723,6 +866,12 @@ def parser() -> argparse.ArgumentParser:
     d.add_argument("--device", default="cpu")
     d.add_argument("--out", required=True, help="dose.json")
     d.add_argument("--out-model", required=True, help="the played model (a copy, sha recorded)")
+    t = sub.add_parser("sf-regret-table", help="deep-SF label jsonl -> the --regret table for these rows")
+    t.add_argument("--rows", required=True, help="audit rows npz with root_fen and history")
+    t.add_argument("--sf-jsonl", required=True, help="sf_label.py output (e.g. search-compose/sf_deep8M.jsonl)")
+    t.add_argument("--cap", type=int, default=SF_REGRET_CAP)
+    t.add_argument("--max-moves", type=int, default=64, help="K: moves kept per row, lowest regret first")
+    t.add_argument("--out", required=True)
     ao = sub.add_parser("a2-openings")
     ao.add_argument("--eval-jsonl", required=True)
     ao.add_argument("--lines", default="800:1800", help="half-open line range of the block (plan: a2 = 800:1800)")
@@ -746,7 +895,8 @@ def main(argv: list[str] | None = None) -> int:
 
     torch.set_num_threads(max(1, int(a.threads)))
     return {"forward": cmd_forward, "score": cmd_score, "validate": cmd_validate, "dose": cmd_dose,
-            "a2-openings": cmd_a2_openings, "a2-sample": cmd_a2_sample}[a.command](a)
+            "a2-openings": cmd_a2_openings, "a2-sample": cmd_a2_sample,
+            "sf-regret-table": cmd_sf_regret_table}[a.command](a)
 
 
 if __name__ == "__main__":
