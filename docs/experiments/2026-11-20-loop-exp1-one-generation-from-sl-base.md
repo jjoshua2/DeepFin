@@ -1,5 +1,12 @@
 # Loop experiment 1: one self-play generation from the SL base (prospective)
 
+**Superseded as a standalone experiment (2026-11-20).** The owner made the RL loop
+the main path to strength, with doses to come from measurements. This experiment
+is not launched on its own. The
+[RL run 1 plan](2026-11-20-rl-run1-multi-generation-plan.md) takes its
+commands, gates, arena and pooling rules from this record. Its decisions D1–D9
+are replaced by that plan's decisions.
+
 **Status:** DRAFT for owner approval. Nothing has been launched: no collection, no
 training, no arena. This record exists so the experiment can be judged, and its
 rule fixed, before any compute is spent (CLAUDE.md "Experiments" rule 1). It is
