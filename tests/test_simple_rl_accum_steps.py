@@ -259,3 +259,32 @@ def test_train_generation_refuses_value_only_rows_under_accumulation(
         train_generation(run_dir=run, generation=1, init_checkpoint=run / "gen_0000" / "model.pt",
                          prev_trainer_checkpoint=None,
                          settings=TrainSettings(device="cpu", batch_size=8, accum_steps=2, holdout_frac=0.0))
+
+
+def test_rows_off_the_network_turn_are_refused_under_accumulation() -> None:
+    """The WDL (and policy) mask is is_network_turn: a row off it is refused even
+    when every row has a policy target."""
+    from chess_anti_engine.simple_rl.learn import refuse_masked_heads_under_accumulation
+
+    rows = _arrays(24)
+    rows["has_policy"] = np.ones(24, dtype=rows["has_policy"].dtype)
+    rows["is_network_turn"] = np.ones(24, dtype=np.uint8)
+    rows["is_network_turn"][:3] = 0
+    with pytest.raises(ValueError, match=r"wdl \(is_network_turn\)"):
+        refuse_masked_heads_under_accumulation(rows, TrainSettings(accum_steps=2, w_policy=0.0))
+    refuse_masked_heads_under_accumulation(rows, TrainSettings(accum_steps=2, w_policy=0.0, w_wdl=0.0))
+
+
+def test_fast_value_rows_with_accumulation_are_refused_before_anything_is_pinned(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from scripts import simple_rl_loop
+    from tests.test_simple_rl_resume import _setup
+    from tests.test_simple_rl_snapshots_arms import _argv
+
+    openings, model_config = _setup(tmp_path, monkeypatch)
+    run = tmp_path / "fvr"
+    argv = _argv(run, openings, model_config, "--accum-steps", "2", "--full-prob", "0.5", "--fast-value-rows")
+    with pytest.raises(SystemExit, match="--fast-value-rows"):
+        simple_rl_loop.main(argv)
+    assert not (run / "run_config.json").exists()
+    assert not (run / "gen_0001").exists()
