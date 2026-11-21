@@ -378,6 +378,14 @@ def validate_before_pinning(a: argparse.Namespace, run_dir: Path, stages: set[st
         validate_settings(collect_settings(a))
     except ValueError as exc:
         raise SystemExit(f"collect settings refused: {exc}") from exc
+    cs = collect_settings(a)
+    if int(settings.accum_steps) > 1 and float(settings.w_policy) > 0 \
+            and float(cs.full_prob) < 1.0 and bool(cs.fast_value_rows):
+        # train_generation would refuse these value-only rows anyway (each micro-batch normalises
+        # policy by its own has_policy count); refuse before the collect is pinned and spent.
+        raise SystemExit(f"--accum-steps {settings.accum_steps} refused with --full-prob {cs.full_prob} "
+                         "--fast-value-rows: fast plies store value-only rows, which accumulation refuses; "
+                         "use --accum-steps 1 or drop --fast-value-rows")
     # Without the split's summary.json and an explicit --eval-opening-plies the
     # opening plies are unknowable, which only an executing `eval` must refuse.
     knowable = a.eval_opening_plies is not None or (Path(a.openings_dir) / "summary.json").is_file()
