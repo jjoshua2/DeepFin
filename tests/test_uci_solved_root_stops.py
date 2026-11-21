@@ -763,7 +763,12 @@ def test_walker_time_stop_is_named_when_the_batch_reserve_decays(monkeypatch: py
     when it could have decayed. A chunk launched inside its own reserve stops
     before any sim, the re-read reserve said "not yet", and the go ended through
     the zero-progress break with no stop reason. Here the reserve reads 1.5 s at
-    each chunk launch and 0 at each re-check: the go must end as a time stop."""
+    each chunk launch and 0 at each re-check: the go must end as a time stop.
+
+    Deadline-only (no depth/node bound): a real walker chunk that completes 0
+    sims for an unrelated reason (slow CI runner) then idles instead of taking
+    the zero-progress exit, so only the race decides the reason. Without the
+    fix every chunk stops at once and the go runs to the 3 s deadline."""
     worker = _make_worker("walkers")
     calls = [0]
 
@@ -776,7 +781,7 @@ def test_walker_time_stop_is_named_when_the_batch_reserve_decays(monkeypatch: py
         t0 = time.monotonic()
         worker.run(
             chess.Board(), stop_event=threading.Event(),
-            deadline=Deadline(3_000), max_nodes=None, max_depth=50,
+            deadline=Deadline(3_000), max_nodes=None, max_depth=None,
         )
         took = time.monotonic() - t0
         assert worker.last_stop_reason == "time_margin", worker.last_stop_reason
