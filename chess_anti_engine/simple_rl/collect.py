@@ -21,8 +21,10 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import shutil
 import time
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -104,6 +106,11 @@ class CollectSettings:
     # side's targets (docs/simple_rl_loop.md, "Evaluator batch cap"). An explicit
     # value below required_leaf_rows is refused.
     eval_max_batch: int | None = None
+    # Collect processes sharing the device (collect_generation). PINNED: each
+    # process plays its own disjoint opening slice with its own seed, so K sets
+    # the RNG streams and the batch composition. The driver defaults it to 3 on
+    # CUDA (measured fast setting) and 1 on CPU; 1 is the same code path.
+    collect_procs: int = 1
     seed: int = 0
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -397,6 +404,8 @@ def validate_settings(settings: CollectSettings) -> None:
     """
     if settings.opening_sampling not in OPENING_SAMPLING:
         raise ValueError(f"opening_sampling must be one of {OPENING_SAMPLING}")
+    if not 1 <= int(settings.collect_procs) <= int(settings.games):
+        raise ValueError(f"--collect-procs {settings.collect_procs} must be between 1 and --games {settings.games}")
     if str(settings.device).startswith("cuda"):
         realised_eval_max_batch(settings)  # a leaf-dropping evaluator cap
 
@@ -429,55 +438,264 @@ def evaluator_graph_record(evaluator: Any) -> dict[str, Any]:
             "eval_max_batch_realised": None if max_batch is None else int(max_batch)}
 
 
-def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, train_jsonl: Path,
-                       settings: CollectSettings) -> dict[str, Any]:
-    """Play one generation into ``gen_dir`` (a fresh, empty directory)."""
+PLAN = "plan.json"
+PROCS_DIR = "procs"
+PROC_DONE = "done.json"
+PAUSED_ACK = "PAUSED"
+# Peak VRAM per collect process, fitted (least squares) to the 2026-11-20 RTX 5090
+# measurements (SL base, nvidia-smi MiB, total / K): 16 sims x 64 / 96 / 128 games
+# = 2858 / 4321 / 4806, 32 sims x 128 = 6553, 64 sims x 128 / 256 = 7368 / 12085.
+# Per process ~ 48 MiB per sim + 1.11 MiB per leaf row (the evaluator cap the
+# search asks for: 2048 / 3072 / 4096 / 8192 rows at 64 / 96 / 128 / 256 games,
+# topk 16), within -8% / +9% of every one of those points; x 1.10 safety.
+# Above ~8k leaf rows in one process the peak grows faster than that line: 64 sims
+# x 512 games in ONE process (16384 rows) peaked at 28,515 MiB, which the line puts
+# at 21,260 (-25%). The steep segment through 1 x 256 and 1 x 512 (64 sims) is
+# ~2.006 MiB per row - 4348 MiB; the model takes the larger of the two.
+_VRAM_MIB_PER_SIM = 48.0
+_VRAM_MIB_PER_LEAF_ROW = 1.11
+_VRAM_STEEP_MIB_PER_LEAF_ROW = 2.006
+_VRAM_STEEP_MIB_OFFSET = -4348.0
+_VRAM_SAFETY = 1.10
+# Usable fraction of the card's memory: 8 x 96 at 16 sims peaked at 31,048 MiB
+# (95% of the 5090) and ran 22% slower than 6 x 96 at 25,926 MiB (80%), which ran
+# at full speed. Refuse above 83% of total (27.0 GiB on the 5090), never at 100%.
+VRAM_USABLE_FRACTION = 0.83
+
+# Default (collect processes, games per process) on CUDA when neither flag is
+# given, by --sims: the first row whose max_sims >= sims. Measured 2026-11-20
+# (docs/simple_rl_loop.md, "Collect processes"): at 16 sims 8 x 64 forwards
+# 9,689 rows/s (0.88 of the ~11k forward ceiling, 1.85M training rows/h, 22.9 GB)
+# against 7,113 (0.65) at 3 x 128; at 64 sims 3 x 128 reaches 9,487 (0.86, 22.1
+# GB). 32 sims has no K >= 6 measurement yet, so it keeps 3 x 128 (8,679, 0.79).
+# Both values are pinned in run_config like explicit flags.
+CUDA_COLLECT_SHAPES: tuple[tuple[int | None, int, int], ...] = (
+    (16, 8, 64),
+    (None, 3, 128),
+)
+CPU_COLLECT_SHAPE = (1, 64)  # one process, the long-standing --concurrency default
+
+
+class PauseGate:
+    """Cooperative pause of one collect process: ``play_batch``'s ``pause_fn``.
+
+    True while ``<run>/PAUSE`` or any ``--pause-marker`` exists. ``play_batch``
+    checks it once per step (one network turn of every in-flight game) and,
+    while it holds, schedules no search, forward or Stockfish work and keeps
+    every in-flight game in memory; it continues exactly where it stopped once
+    the marker is gone. Nothing on that path has a wall-clock deadline (the
+    engine read timeout applies only inside a search, and searches already
+    submitted finish on the pool's own threads), so a pause may last any time.
+    While holding, ``<proc_dir>/PAUSED`` exists (the acknowledgement), and every
+    interval is recorded so throughput can exclude it. ``STOP`` is not a pause:
+    the driver honours it at the next stage boundary.
+    """
+
+    def __init__(self, run_dir: Path, markers: tuple[str, ...], ack: Path) -> None:
+        from chess_anti_engine.simple_rl.common import PAUSE_FILE
+
+        self._paths = [Path(run_dir) / PAUSE_FILE, *(Path(m).expanduser() for m in markers)]
+        self._ack = ack
+        self._since: float | None = None
+        self.intervals: list[tuple[float, float]] = []
+
+    def __call__(self) -> bool:
+        held = any(p.exists() or p.is_symlink() for p in self._paths)
+        now = time.time()
+        if held and self._since is None:
+            self._since = now
+            self._ack.write_text(f"{now}\n")
+        elif not held and self._since is not None:
+            self.intervals.append((self._since, now))
+            self._since = None
+            self._ack.unlink(missing_ok=True)
+        return held
+
+    def wait(self) -> None:
+        """Hold before any GPU work starts (model load, graph capture)."""
+        while self():
+            time.sleep(0.25)
+
+    @property
+    def paused_seconds(self) -> float:
+        return float(sum(b - a for a, b in self.intervals))
+
+
+def default_collect_shape(device: str, sims: int) -> tuple[int, int]:
+    """(collect processes, games per process) when the flags are not given."""
+    if not str(device).startswith("cuda"):
+        return CPU_COLLECT_SHAPE
+    for max_sims, procs, games in CUDA_COLLECT_SHAPES:
+        if max_sims is None or int(sims) <= max_sims:
+            return procs, games
+    raise AssertionError("CUDA_COLLECT_SHAPES must end with a catch-all row")
+
+
+def proc_seed(settings: CollectSettings, generation: int, proc: int) -> int:
+    """Seed of collect process ``proc``. K = 1 keeps the one-process seed every
+    earlier collect used, so a K = 1 collect is byte-identical to one made before
+    collect processes existed."""
+    if int(settings.collect_procs) == 1:
+        return seed_for(settings.seed, "collect", generation)
+    return seed_for(settings.seed, "collect", generation, "proc", int(proc), "of", int(settings.collect_procs))
+
+
+def proc_openings(openings: list[dict[str, Any]], proc: int, procs: int) -> list[dict[str, Any]]:
+    """Process ``proc``'s disjoint share of the generation's opening list."""
+    return openings[int(proc)::int(procs)]
+
+
+def vram_need_gib(settings: CollectSettings) -> float:
+    """Conservative peak VRAM of ``collect_procs`` processes at these settings (GiB)."""
+    rows = realised_eval_max_batch(settings)
+    per_mib = max(_VRAM_MIB_PER_SIM * int(settings.sims) + _VRAM_MIB_PER_LEAF_ROW * rows,
+                  _VRAM_STEEP_MIB_PER_LEAF_ROW * rows + _VRAM_STEEP_MIB_OFFSET)
+    return _VRAM_SAFETY * per_mib * int(settings.collect_procs) / 1024.0
+
+
+def _gpu_memory(settings: CollectSettings) -> tuple[int, int]:
+    """(free, total) bytes of the collect's device.
+
+    With K > 1 the driver plays nothing on the GPU, so it asks nvidia-smi rather
+    than ``torch.cuda.mem_get_info``: that call would create a CUDA context in
+    the DRIVER that lives for the whole collect, outside the VRAM model. K = 1
+    plays in the driver, which needs the context anyway."""
     import torch
 
-    validate_settings(settings)  # refuse before any work (incl. a leaf-dropping cap)
+    device = torch.device(settings.device)
+    if int(settings.collect_procs) > 1:
+        import subprocess
+
+        index = device.index or 0  # "cuda" alone means the current (first) device
+        try:
+            out = subprocess.run(["nvidia-smi", f"--id={index}", "--query-gpu=memory.free,memory.total",
+                                  "--format=csv,noheader,nounits"], capture_output=True, text=True,
+                                 check=True, timeout=30).stdout
+            free_mib, total_mib = (float(x) for x in out.strip().splitlines()[0].split(","))
+            return int(free_mib * 2**20), int(total_mib * 2**20)
+        except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+            pass  # no usable nvidia-smi: fall back to torch (and its context)
+    free, total = torch.cuda.mem_get_info(device)
+    return int(free), int(total)
+
+
+def check_vram(settings: CollectSettings) -> dict[str, Any] | None:
+    """Refuse before any work when K processes would not fit in usable GPU memory.
+
+    Usable = min(free, VRAM_USABLE_FRACTION x total): past ~83% of the card the
+    collect slows down instead of failing (measured). K is pinned (it sets every
+    process's RNG stream), so it is never stepped down silently: the refusal names
+    the value that would fit."""
+    if not str(settings.device).startswith("cuda"):
+        return None
+    free, total = _gpu_memory(settings)
+    usable = min(free, VRAM_USABLE_FRACTION * total) / 2**30
+    need = vram_need_gib(settings)
+    record = {"free_gib": free / 2**30, "total_gib": total / 2**30, "usable_gib": usable, "need_gib": need,
+              "collect_procs": int(settings.collect_procs)}
+    if need > usable:
+        per = need / int(settings.collect_procs)
+        fit = int(usable // per)
+        advice = (f"pass --collect-procs {fit} explicitly (a pinned run also needs --allow-config-change: K "
+                  "sets the RNG streams)" if fit >= 1 else
+                  f"no process count fits at --concurrency {settings.concurrency}: lower --concurrency")
+        raise ValueError(
+            f"--collect-procs {settings.collect_procs} x --concurrency {settings.concurrency} at --sims "
+            f"{settings.sims} needs about {need:.1f} GiB of GPU memory ({per:.1f} GiB per process, fitted peak x "
+            f"{_VRAM_SAFETY}), but only {usable:.1f} GiB is usable: {free / 2**30:.1f} of {total / 2**30:.1f} GiB "
+            f"free, and the measured usable limit is ~{VRAM_USABLE_FRACTION:.0%} of the card (31.0 GB of 32 ran "
+            f"22% slower than 25.9 GB). Free the GPU, lower --concurrency, or {advice}")
+    return record
+
+
+@dataclass(frozen=True)
+class ProcSpec:
+    """Everything one collect process needs; picklable for a spawned child."""
+
+    proc: int
+    gen_dir: str
+    generation: int
+    checkpoint: str
+    starts_path: str
+    settings: CollectSettings
+    openings: tuple[dict[str, Any], ...]
+    seed: int
+    sf_factory: Any
+    torch_threads: int
+    run_dir: str
+    pause_markers: tuple[str, ...]
+    parent_pid: int
+
+    @property
+    def proc_dir(self) -> Path:
+        return Path(self.gen_dir) / PROCS_DIR / f"{self.proc:02d}"
+
+
+def _plan(settings: CollectSettings, generation: int, checkpoint: Path, openings: list[dict[str, Any]],
+          cursor_before: dict[str, Any] | None) -> dict[str, Any]:
+    """What an interrupted collect must match for its finished processes to be kept."""
+    k = int(settings.collect_procs)
+    return {"generation": int(generation), "collect_procs": k, "checkpoint_sha256": sha256_file(checkpoint),
+            "settings": json.loads(json.dumps(asdict(settings), default=str)),
+            "opening_cursor_before": cursor_before,
+            "procs": [{"proc": p, "seed": proc_seed(settings, generation, p),
+                       "opening_ids": [row["id"] for row in proc_openings(openings, p, k)]} for p in range(k)]}
+
+
+def _proc_done(spec: ProcSpec) -> dict[str, Any] | None:
+    """The finished record of a process whose output is still all on disk."""
+    path = spec.proc_dir / PROC_DONE
+    if not path.is_file():
+        return None
+    done = json.loads(path.read_text())
+    shards = sorted((spec.proc_dir / "shards").glob("shard_*.zarr"))
+    if len(shards) != int(done["shards"]) or sha256_file(spec.proc_dir / GAMES) != done["games_sha256"]:
+        return None
+    return done
+
+
+def _play_proc(spec: ProcSpec) -> dict[str, Any]:
+    """Play one process's share of the generation into its own directory.
+
+    The same code for every K: K = 1 runs it in the driver's process, K > 1 in
+    spawned children. Writes ``shards/``, ``games.jsonl`` and, last,
+    ``done.json`` (its counts, evaluator record and flush count)."""
+    import torch
 
     from chess_anti_engine.replay.shard import ShardMeta, samples_to_arrays, save_local_shard_arrays
     from chess_anti_engine.selfplay import play_batch
     from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
-    gen_dir = Path(gen_dir)
-    if gen_dir.exists():
-        shutil.rmtree(gen_dir)  # an incomplete attempt (no manifest) is redone whole
-    (gen_dir / "shards").mkdir(parents=True)
+    settings = spec.settings
+    proc_dir = spec.proc_dir
+    if proc_dir.exists():
+        shutil.rmtree(proc_dir)  # an unfinished process restarts from its own seed and openings
+    (proc_dir / "shards").mkdir(parents=True)
+    gate = PauseGate(Path(spec.run_dir), spec.pause_markers, proc_dir / PAUSED_ACK)
+    # The process clock starts BEFORE the pre-load hold, so wall_seconds contains
+    # every pause interval it records and active = wall - paused stays >= 0.
+    t0, started_at = time.perf_counter(), time.time()
+    gate.wait()
+    checkpoint = Path(spec.checkpoint)
     arch = _arch(checkpoint)
-    seed = seed_for(settings.seed, "collect", generation)
-    validate_settings(settings)
-    cursor_before = previous_cursor(gen_dir, generation) if settings.opening_sampling == "cycle" else None
-    cursor_after: dict[str, Any] | None = None
-    if settings.opening_sampling == "cycle":
-        openings, cursor_after, cycle_log = cycle_openings(
-            train_jsonl, games=settings.games, book_mix=settings.book_mix, base_seed=settings.seed,
-            generation=generation, start=cursor_before)
-        for line in cycle_log:
-            print(f"[simple_rl] {line}", flush=True)
-    else:
-        openings = sample_openings(train_jsonl, games=settings.games, book_mix=settings.book_mix,
-                                   seed=seed_for(settings.seed, "openings", generation))
-    starts_path = gen_dir / "starts.txt"
-    starts_path.write_text("".join(row["line"] + "\n" for row in openings))
-    # A line can occur twice in one generation only after its book wrapped.
-    by_line = {row["line"]: row for row in openings}
-    cfg = build_configs(settings, arch, starts_path)
+    cfg = build_configs(settings, arch, Path(spec.starts_path))
+    by_line = {row["line"]: row for row in spec.openings}
+    generation = spec.generation
 
-    torch.manual_seed(seed & 0xFFFFFFFF)
+    torch.manual_seed(spec.seed & 0xFFFFFFFF)
     model = load_model_from_checkpoint(checkpoint, device=settings.device).eval()
     evaluator = _evaluator(model, settings)
-    pool = _open_stockfish(settings)
+    pool = spec.sf_factory(settings)
 
     pending: dict[int, list[Any]] = {}
     buffered: list[Any] = []
     buffered_meta: list[tuple[int, int, str, bool, np.uint64]] = []
     shard_index = 0
     games_done = 0
+    rows_done = 0
     from chess_anti_engine.mcts.gumbel_c import buffer_full_flushes
 
     flushes_before = buffer_full_flushes()
-    t0 = time.perf_counter()
     model_sha = sha256_file(checkpoint)
 
     def flush() -> None:
@@ -490,8 +708,8 @@ def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, trai
                          input_history_encoding=cfg["game"].input_history_encoding,
                          history_rep_fix=bool(cfg["game"].history_rep_fix),
                          policy_encoding=cfg["game"].policy_encoding, sf_nodes=int(settings.sf_nodes))
-        save_local_shard_arrays(gen_dir / "shards" / f"shard_{shard_index:05d}.zarr", arrs=arrays, meta=meta)
-        np.savez(gen_dir / "shards" / f"shard_{shard_index:05d}.meta.npz",
+        save_local_shard_arrays(proc_dir / "shards" / f"shard_{shard_index:05d}.zarr", arrs=arrays, meta=meta)
+        np.savez(proc_dir / "shards" / f"shard_{shard_index:05d}.meta.npz",
                  game_id=np.asarray([m[0] for m in buffered_meta], dtype=np.int64),
                  ply_index=np.asarray([m[1] for m in buffered_meta], dtype=np.int32),
                  opening_id=np.asarray([m[2] for m in buffered_meta]),
@@ -506,21 +724,21 @@ def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, trai
         pending[int(batch.samples[0].game_id)] = list(batch.samples)
 
     def on_game(audit: Any) -> None:
-        nonlocal games_done
+        nonlocal games_done, rows_done
         samples = pending.pop(int(audit.game_id), [])
         if len(samples) != int(audit.retained_samples):
             raise ValueError("sample callback and provenance disagree on retained rows")
         line = audit.start.root_fen + " | " + " ".join(audit.start.opening_moves)
         row = by_line.get(line.rstrip())
         if row is None:
-            raise ValueError(f"game started from an opening that was not doled: {line!r}")
+            raise ValueError(f"game started from an opening that was not doled to process {spec.proc}: {line!r}")
         tb_plies = {int(p) for p in audit.tablebase_policy_applied_plies}
         final = chess.Board(audit.final_fen)
         for s in samples:
             buffered.append(s)
             buffered_meta.append((int(audit.game_id), int(s.ply_index), row["id"],
                                   int(s.ply_index) in tb_plies, x_hash(s.x)))
-        append_jsonl(gen_dir / GAMES, {
+        append_jsonl(proc_dir / GAMES, {
             "game_id": int(audit.game_id), "opening_id": row["id"], "book": int(row["book"]),
             "result": audit.result, "resolution": audit.resolution,
             "total_plies": int(audit.total_plies), "start_ply": int(audit.start.start_ply),
@@ -529,25 +747,236 @@ def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, trai
             "cap_reached": bool(audit.cap_reached),
         })
         games_done += 1
+        rows_done += len(samples)
         if len(buffered) >= int(settings.rows_per_shard):
             flush()
 
-    queue = [row["line"] for row in openings]
+    queue = [row["line"] for row in spec.openings]
+    n_games = len(spec.openings)
     try:
         _, batch_stats = play_batch(
-            model, device=settings.device, rng=np.random.default_rng(seed), stockfish=pool,
-            evaluator=evaluator, games=min(int(settings.concurrency), int(settings.games)),
-            target_games=int(settings.games), on_game_complete=on_samples, on_game_provenance=on_game,
-            fen_dole_queue=queue, **cfg,
+            model, device=settings.device, rng=np.random.default_rng(spec.seed), stockfish=pool,
+            evaluator=evaluator, games=min(int(settings.concurrency), n_games),
+            target_games=n_games, on_game_complete=on_samples, on_game_provenance=on_game,
+            fen_dole_queue=queue, pause_fn=gate, **cfg,
         )
     finally:
         pool.close()
     flush()
     wall = time.perf_counter() - t0
-    if games_done != settings.games or queue or pending:
-        raise ValueError(f"incomplete generation: {games_done}/{settings.games} games, "
+    if games_done != n_games or queue or pending:
+        raise ValueError(f"incomplete collect process {spec.proc}: {games_done}/{n_games} games, "
                          f"{len(queue)} undoled openings, {len(pending)} pending")
-    stats = generation_stats(gen_dir, previous=[p for p in sorted(gen_dir.parent.parent.glob("gen_*/collect"))
+    if not (proc_dir / GAMES).exists():
+        (proc_dir / GAMES).write_text("")
+    active = max(wall - gate.paused_seconds, 1e-9)
+    done = {"proc": spec.proc, "seed": spec.seed, "games": games_done, "rows": rows_done, "shards": shard_index,
+            "play_batch_games": int(batch_stats.games), "wall_seconds": wall,
+            "started_at": started_at, "paused_seconds": gate.paused_seconds, "pause_intervals": gate.intervals,
+            # Throughput over the time the process was not paused.
+            "games_per_hour": 3600.0 * games_done / active,
+            "games_sha256": sha256_file(proc_dir / GAMES),
+            # Observed in THIS process (gumbel_c's counter is per process).
+            "buffer_full_flushes": int(buffer_full_flushes() - flushes_before),
+            "leaf_rows_required": required_leaf_rows(settings), **evaluator_graph_record(evaluator)}
+    write_json_atomic(proc_dir / PROC_DONE, done)
+    return done
+
+
+def _proc_main(spec: ProcSpec) -> None:
+    """Entry point of a spawned collect process."""
+    from chess_anti_engine.stockfish.uci import _child_reap_guard
+
+    # Die with the driver however it exits (SIGKILL included); the engines this
+    # process starts carry the same guard against THIS process.
+    _child_reap_guard(spec.parent_pid)
+    os.environ["SIMPLE_RL_COLLECT_PROC"] = str(spec.proc)  # findable, and readable by an engine factory
+    import torch
+
+    torch.set_num_threads(max(1, int(spec.torch_threads)))
+    _play_proc(spec)
+
+
+def _stop_children(children: list[Any], grace_s: float = 10.0) -> None:
+    children = [c for c in children if c.pid is not None]  # never started: nothing to stop
+    for c in children:
+        if c.is_alive():
+            c.terminate()
+    deadline = time.monotonic() + grace_s
+    for c in children:
+        c.join(max(0.0, deadline - time.monotonic()))
+        if c.is_alive():
+            c.kill()
+            c.join()
+
+
+def _run_procs(specs: list[ProcSpec]) -> list[dict[str, Any]]:
+    """Run the unfinished processes: in this process for one, spawned children for more.
+
+    Children die with the driver: a ``finally`` stops them on any exception or
+    Ctrl-C, and each child's parent-death signal covers a driver SIGKILL/SIGTERM."""
+    if len(specs) == 1 and int(specs[0].settings.collect_procs) == 1:
+        return [_play_proc(specs[0])]
+    import multiprocessing as mp
+    from multiprocessing.connection import wait
+
+    ctx = mp.get_context("spawn")  # never fork a process that may hold CUDA or engine threads
+    children = [ctx.Process(target=_proc_main, args=(s,), name=f"simple_rl_collect_{s.proc:02d}") for s in specs]
+    try:
+        for c in children:
+            c.start()
+        while True:
+            codes = [c.exitcode for c in children]
+            bad = [(s.proc, code) for s, code in zip(specs, codes, strict=True) if code not in (None, 0)]
+            if bad:
+                _stop_children(children)
+                raise RuntimeError(f"collect process(es) failed (proc, exit code): {bad}; the finished ones are "
+                                   "kept and the rest restart on the next attempt")
+            if all(code == 0 for code in codes):
+                break
+            wait([c.sentinel for c in children if c.exitcode is None], timeout=5.0)
+    finally:
+        _stop_children(children)
+    return [json.loads((s.proc_dir / PROC_DONE).read_text()) for s in specs]
+
+
+def _merge_procs(gen_dir: Path, procs: int) -> int:
+    """Hard-link every process's shards into ``gen_dir/shards`` (renumbered, in
+    process order) and concatenate their games.jsonl. Idempotent: the process
+    directories stay intact until the manifest seals the collect, so a kill here
+    is redone from them."""
+    import os
+
+    out = gen_dir / "shards"
+    if out.exists():
+        shutil.rmtree(out)
+    out.mkdir()
+    index = 0
+    with (gen_dir / f".{GAMES}.tmp").open("w") as games:
+        for p in range(procs):
+            pdir = gen_dir / PROCS_DIR / f"{p:02d}"
+            for shard in sorted((pdir / "shards").glob("shard_*.zarr")):
+                shutil.copytree(shard, out / f"shard_{index:05d}.zarr", copy_function=os.link)
+                os.link(shard.with_name(shard.name.replace(".zarr", ".meta.npz")), out / f"shard_{index:05d}.meta.npz")
+                index += 1
+            games.write((pdir / GAMES).read_text())
+    (gen_dir / f".{GAMES}.tmp").replace(gen_dir / GAMES)
+    return index
+
+
+def _union_seconds(intervals: list[tuple[float, float]]) -> float:
+    total, end = 0.0, float("-inf")
+    for a, b in sorted(intervals):
+        if b <= end:
+            continue
+        total += b - max(a, end)
+        end = b
+    return total
+
+
+def _sum_graph_stats(records: list[dict[str, Any]]) -> dict[str, Any] | None:
+    raw = [r.get("cuda_graph_stats") for r in records]
+    stats: list[dict[str, Any]] = [s for s in raw if s is not None]
+    if len(stats) != len(raw) or not stats:
+        return None
+    out: dict[str, Any] = {}
+    for key in stats[0]:
+        values = [s.get(key) for s in stats]
+        numbers = [v for v in values if isinstance(v, (int, float)) and not isinstance(v, bool)]
+        if key in ("max_rows", "graphs"):  # per-process settings / captured-shape counts: never summed
+            out[key] = values[0] if len({json.dumps(v) for v in values}) == 1 else values
+        elif len(numbers) == len(values):
+            out[key] = sum(numbers)
+        else:
+            out[key] = values
+    return out
+
+
+def _combined_evaluator_record(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """The collect-level evaluator fields the gates read, from every process's record.
+
+    A field the processes disagree on is None ("mixed" for the mode), which fails
+    its gate rather than reporting one process's value for all of them."""
+    def common(key: str) -> Any:
+        values = {json.dumps(r.get(key)) for r in records}
+        return records[0].get(key) if len(values) == 1 else None
+
+    modes = {r.get("evaluator_mode") for r in records}
+    return {"cuda_graphs": all(bool(r.get("cuda_graphs")) for r in records),
+            "evaluator_mode": records[0].get("evaluator_mode") if len(modes) == 1 else "mixed",
+            "cuda_graph_stats": _sum_graph_stats(records),
+            "eval_max_batch_realised": common("eval_max_batch_realised")}
+
+
+def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, train_jsonl: Path,
+                       settings: CollectSettings, pause_markers: tuple[Path, ...] = ()) -> dict[str, Any]:
+    """Play one generation into ``gen_dir`` with ``settings.collect_procs`` processes.
+
+    The opening list is drawn exactly as for one process (the cursor advances by
+    ``games``); process k plays the disjoint slice ``openings[k::K]`` with its own
+    seed (``proc_seed``) into ``gen_dir/procs/k``. The merge links their shards
+    into ``gen_dir/shards`` in process order and concatenates games.jsonl, and ONE
+    manifest seals the collect with every process's seed and evaluator record.
+    An interrupted collect whose plan (K, seeds, openings, checkpoint, settings)
+    is unchanged keeps its finished processes and restarts the rest; any other
+    unsealed attempt is redone whole."""
+    validate_settings(settings)  # refuse before any work (incl. a leaf-dropping cap)
+    vram = check_vram(settings)
+    import torch
+
+    gen_dir = Path(gen_dir)
+    run_dir = gen_dir.parent.parent
+    k_procs = int(settings.collect_procs)
+    cursor_before = previous_cursor(gen_dir, generation) if settings.opening_sampling == "cycle" else None
+    cursor_after: dict[str, Any] | None = None
+    if settings.opening_sampling == "cycle":
+        openings, cursor_after, cycle_log = cycle_openings(
+            train_jsonl, games=settings.games, book_mix=settings.book_mix, base_seed=settings.seed,
+            generation=generation, start=cursor_before)
+        for line in cycle_log:
+            print(f"[simple_rl] {line}", flush=True)
+    else:
+        openings = sample_openings(train_jsonl, games=settings.games, book_mix=settings.book_mix,
+                                   seed=seed_for(settings.seed, "openings", generation))
+    plan = _plan(settings, generation, checkpoint, openings, cursor_before)
+    if gen_dir.exists():
+        old = json.loads((gen_dir / PLAN).read_text()) if (gen_dir / PLAN).is_file() else None
+        if old != plan:
+            if old is not None:
+                print(f"[simple_rl] generation {generation}: the interrupted collect's plan differs "
+                      "(processes, seeds, openings, checkpoint or settings); redoing it whole", flush=True)
+            shutil.rmtree(gen_dir)  # an incomplete attempt of another plan is redone whole
+    gen_dir.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(gen_dir / PLAN, plan)
+    starts_path = gen_dir / "starts.txt"
+    starts_path.write_text("".join(row["line"] + "\n" for row in openings))
+    arch = _arch(checkpoint)
+    cfg = build_configs(settings, arch, starts_path)
+
+    specs = [ProcSpec(proc=p, gen_dir=str(gen_dir), generation=int(generation), checkpoint=str(checkpoint),
+                      starts_path=str(starts_path), settings=settings,
+                      openings=tuple(proc_openings(openings, p, k_procs)),
+                      seed=proc_seed(settings, generation, p), sf_factory=_open_stockfish,
+                      torch_threads=int(torch.get_num_threads()), run_dir=str(run_dir),
+                      pause_markers=tuple(str(m) for m in pause_markers), parent_pid=os.getpid())
+             for p in range(k_procs)]
+    done = {s.proc: d for s in specs if (d := _proc_done(s)) is not None}
+    if done:
+        print(f"[simple_rl] generation {generation}: keeping finished collect process(es) {sorted(done)}", flush=True)
+    t0 = time.perf_counter()
+    todo = [s for s in specs if s.proc not in done]
+    if todo:
+        for rec in _run_procs(todo):
+            done[int(rec["proc"])] = rec
+    wall = time.perf_counter() - t0
+    records = [done[p] for p in range(k_procs)]
+    shard_count = _merge_procs(gen_dir, k_procs)
+    games_done = sum(int(r["games"]) for r in records)
+    played = Counter(json.loads(r)["opening_id"] for r in (gen_dir / GAMES).read_text().splitlines() if r.strip())
+    if games_done != settings.games or played != Counter(row["id"] for row in openings):
+        raise ValueError(f"incomplete generation: {games_done}/{settings.games} games, or the openings played "
+                         "differ from the ones drawn")
+    stats = generation_stats(gen_dir, previous=[p for p in sorted(run_dir.glob("gen_*/collect"))
                                                 if p != gen_dir and _gen_number(p) < generation],
                              generation=generation, settings=settings)
     stats["opening_sampling"] = settings.opening_sampling
@@ -555,17 +984,39 @@ def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, trai
         start_books = (cursor_before or {}).get("books", {})
         stats["book_pass"] = {b: {"start": int(start_books.get(b, {"pass": 1})["pass"]), "end": int(c["pass"])}
                               for b, c in cursor_after["books"].items()}
-    stats.update(wall_seconds=wall, games_per_hour=3600.0 * games_done / max(wall, 1e-9),
-                 rows_per_second=stats["rows"] / max(wall, 1e-9), sf_nodes=int(settings.sf_nodes),
-                 leaf_rows_required=required_leaf_rows(settings), **evaluator_graph_record(evaluator))
+    # Paused time = the union of this attempt's processes' pause intervals (they
+    # pause together); throughput is over the rest. A paused collect's timing is
+    # not an independent measurement and says so.
+    # Rates count only the games and rows THIS attempt's processes played: a
+    # process kept from an interrupted attempt adds games but none of this wall.
+    # None when no process ran (a resume that only merged and sealed).
+    fresh = {s.proc for s in todo}
+    paused = _union_seconds([tuple(i) for r in records if int(r["proc"]) in fresh
+                             for i in r.get("pause_intervals", [])])
+    active = max(wall - paused, 1e-9)
+    fresh_records = [r for r in records if int(r["proc"]) in fresh]
+    games_now = sum(int(r["games"]) for r in fresh_records)
+    rows_now = sum(int(r["rows"]) for r in fresh_records)
+    stats.update(wall_seconds=wall, paused_seconds=paused, active_seconds=active,
+                 timing_independent=paused == 0.0 and not (set(done) - fresh),
+                 games_per_hour=3600.0 * games_now / active if fresh else None,
+                 rows_per_second=rows_now / active if fresh else None, sf_nodes=int(settings.sf_nodes),
+                 leaf_rows_required=required_leaf_rows(settings), collect_procs=k_procs,
+                 procs_resumed=sorted(p for p in done if p not in fresh),
+                 **_combined_evaluator_record(records))
+    stats["procs"] = records
+    stats["gpu_memory_check"] = vram
+    stats["duplicate_game_ids"] = int(sum(n - 1 for n in Counter(
+        json.loads(r)["game_id"] for r in (gen_dir / GAMES).read_text().splitlines() if r.strip()).values() if n > 1))
     # Observed, not predicted: buffer-full flushes the generation's searches
-    # took (gumbel_c's process counter, read around this collect only). > 0
-    # means the evaluator cap re-batched the searches, i.e. the rows were made
-    # by a different search than the pinned settings describe; written to
-    # stats.json, and the generation is refused unsealed (redone whole).
-    stats["buffer_full_flushes"] = int(buffer_full_flushes() - flushes_before)
+    # took (gumbel_c's per-process counter, read around each process's play and
+    # summed). > 0 means the evaluator cap re-batched the searches, i.e. the rows
+    # were made by a different search than the pinned settings describe; written
+    # to stats.json, and the generation is refused unsealed (redone whole).
+    stats["buffer_full_flushes"] = int(sum(int(r["buffer_full_flushes"]) for r in records))
     write_json_atomic(gen_dir / STATS, stats)
     if stats["buffer_full_flushes"] > 0:
+        shutil.rmtree(gen_dir / PROCS_DIR, ignore_errors=True)  # nothing of this attempt may be kept
         raise RuntimeError(
             f"collect generation {generation}: {stats['buffer_full_flushes']} buffer-full flush(es) -- the "
             "evaluator's max batch is below the leaves the search asks for, so its searches were re-batched "
@@ -578,17 +1029,22 @@ def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, trai
         inputs={"checkpoint": input_ref(checkpoint), "train_openings": input_ref(train_jsonl)},
         outputs={"shards": input_ref(gen_dir / "shards"), "games": input_ref(gen_dir / GAMES),
                  "starts": input_ref(starts_path)},
-        counts={"games": games_done, "rows": stats["rows"], "shards": shard_index,
-                "play_batch_games": int(batch_stats.games)},
-        seeds={"collect": seed, "openings": seed_for(settings.seed, "openings", generation), "base": settings.seed},
+        counts={"games": games_done, "rows": stats["rows"], "shards": shard_count,
+                "play_batch_games": sum(int(r["play_batch_games"]) for r in records)},
+        seeds={"collect": proc_seed(settings, generation, 0) if k_procs == 1 else None,
+               "collect_procs": [int(r["seed"]) for r in records],
+               "openings": seed_for(settings.seed, "openings", generation), "base": settings.seed},
         extra={"generation": generation, "stats": stats, "opening_cursor": cursor_after,
-               "opening_cursor_before": cursor_before,
+               "opening_cursor_before": cursor_before, "collect_procs": k_procs,
                # Derived and rebuildable from the sealed collects; pruned after
                # two generations. A later collect uses one only if it matches.
                "diagnostics_files": {
-                   "dup_sketch": input_ref(sketch_path(gen_dir.parent.parent, generation)),
-                   "openings_seen": input_ref(_seen_path(gen_dir.parent.parent, generation))}},
+                   "dup_sketch": input_ref(sketch_path(run_dir, generation)),
+                   "openings_seen": input_ref(_seen_path(run_dir, generation))}},
     )
+    # Sealed: the process directories only duplicate (hard links to) the merged shards.
+    shutil.rmtree(gen_dir / PROCS_DIR, ignore_errors=True)
+    (gen_dir / PLAN).unlink(missing_ok=True)
     return stats
 
 

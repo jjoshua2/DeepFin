@@ -32,7 +32,7 @@ from chess_anti_engine.uci.root_parallel_gumbel import (
     _SearchState,
     _WorkItem,
 )
-from chess_anti_engine.uci.search import SearchWorker
+from chess_anti_engine.uci.search import PoolSearchCounts, SearchWorker
 
 
 class Event:
@@ -463,6 +463,7 @@ def test_search_dispatch_passes_the_live_probe_to_each_route(route, monkeypatch)
     worker._tree, worker._root_id, _ = branch(board, ["a2a3"])
     worker._pucv_cboard = worker._pucv_pool_cboard = CBoard.from_board(board)
     worker._walker_pool = worker._pucv = worker._pucv_pool = worker._rpg_pool = None
+    worker._pool_search_counts = PoolSearchCounts()
     observed = []
 
     def consume(**kwargs):
@@ -470,7 +471,10 @@ def test_search_dispatch_passes_the_live_probe_to_each_route(route, monkeypatch)
         return (0.0, -1) if route == "rpg" else 1
 
     helper = SimpleNamespace(
-        run=consume, last_stats=lambda: SimpleNamespace(phases=(), root_finished=False)
+        run=consume, last_stats=lambda: SimpleNamespace(
+            phases=(), root_finished=False,
+            leaves=0, evaluated_rows=0, terminal_leaves=0, duplicate_leaves=0,
+        )
     )
     setattr(
         worker,

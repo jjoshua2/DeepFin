@@ -370,6 +370,32 @@ def _visit_gap(actions: np.ndarray, visits: np.ndarray, best_action: int) -> flo
 
 
 @dataclass
+class PoolSearchCounts:
+    """Multi-GPU PUCV pool counters summed over every chunk of one search.
+
+    ``MultiGpuPucvStats`` (``last_multi_gpu_pucv_stats``) covers only the most
+    recent chunk; these accumulate its fields over all chunks of a ``go`` that
+    returned normally (a chunk that raised is not added: the pool's last stats
+    could still be the previous chunk's). ``evals`` = rows forwarded to the
+    device (cache misses only with the eval cache on, so evals + terminal +
+    duplicate <= leaves); evals/terminal/duplicate count prepared batches,
+    ``leaves`` integrated ones."""
+
+    chunks: int = 0
+    leaves: int = 0
+    evals: int = 0
+    terminal: int = 0
+    duplicate: int = 0
+
+    def add(self, stats: MultiGpuPucvStats) -> None:
+        self.chunks += 1
+        self.leaves += int(stats.leaves)
+        self.evals += int(stats.evaluated_rows)
+        self.terminal += int(stats.terminal_leaves)
+        self.duplicate += int(stats.duplicate_leaves)
+
+
+@dataclass
 class SearchResult:
     bestmove_uci: str
     ponder_uci: str | None
@@ -405,6 +431,7 @@ def _pucv_stats_string(
     stats: MultiGpuPucvStats | None,
     *,
     pending_mode: int,
+    search: PoolSearchCounts | None = None,
 ) -> str | None:
     if stats is None or stats.leaves <= 0:
         return None
@@ -420,16 +447,18 @@ def _pucv_stats_string(
             f" cache={stats.cache_hits}/{stats.cache_requests}"
             f"({stats.cache_hit_rate:.1%})"
         )
-    # evals = rows forwarded to the device (cache misses only when the eval
-    # cache is on, so evals + terminal + duplicate <= leaves); evals, terminal
-    # and duplicate count prepared batches, so one that fails after prepare is
-    # counted but its leaves never integrated (leaves= counts integrated ones).
+    # Fields up to `pending`/`cache` describe the LAST CHUNK (the pool's
+    # stats object); from `search_chunks` on they are summed over every chunk
+    # of this search (``PoolSearchCounts``; without one, this chunk alone).
+    if search is None:
+        search = PoolSearchCounts()
+        search.add(stats)
     return (
         f"pucv leaves={stats.leaves} batches={stats.batches} "
         f"avg_batch={stats.avg_batch:.1f} max_batch={max_batch} "
         f"workers={worker_leaves} pending={mode}{cache_part} "
-        f"evals={stats.evaluated_rows} terminal={stats.terminal_leaves} "
-        f"duplicate={stats.duplicate_leaves}"
+        f"search_chunks={search.chunks} search_leaves={search.leaves} "
+        f"evals={search.evals} terminal={search.terminal} duplicate={search.duplicate}"
     )
 
 
@@ -681,6 +710,7 @@ class SearchWorker:
   # Why the last `run()` stopped (`_should_stop_search` reason, or "tree_bytes"
   # from the shared-tree headroom check); None = budget/abort/early return.
         self.last_stop_reason: str | None = None
+        self._pool_search_counts = PoolSearchCounts()
   # `go mate N` bookkeeping (`_proven_mate_within`): the (tree, root, solved
   # status, node count) of the last mate walk, so an unchanged tree is not
   # re-walked; and the node visits that walk spent (test / diagnostics read).
@@ -1182,6 +1212,10 @@ class SearchWorker:
         if self._pucv_pool is None:
             return None
         return self._pucv_pool.last_stats()
+
+    def pool_search_counts(self) -> PoolSearchCounts:
+        """Pool counters summed over every chunk of the current (or last) search."""
+        return self._pool_search_counts
 
     def last_single_pucv_cache_stats(self) -> Any | None:
         """Return cache stats for the active single-thread PUCV chunker."""
@@ -2260,6 +2294,7 @@ class SearchWorker:
             pucv_info = _pucv_stats_string(
                 self.last_multi_gpu_pucv_stats(),
                 pending_mode=self._pucv_vloss_mode,
+                search=self._pool_search_counts,
             )
             if pucv_info is None:
                 pucv_info = _single_pucv_cache_stats_string(
@@ -4229,6 +4264,7 @@ class SearchWorker:
         self._last_pv_info_key = None
         self._drawing_escape_uci = None
         self.last_stop_reason = None
+        self._pool_search_counts = PoolSearchCounts()
         self._mate_check_key = None
         self._ensure_root_eval_cached(board, tb_probe)
         if allowed_root_indices is not None and self._rpg_pool is not None:
@@ -4736,6 +4772,7 @@ class SearchWorker:
                 target_sims=chunk,
                 stop_event=stop_event, **({"tb_probe": tb_probe} if tb_probe is not None else {}),
             )
+            self._pool_search_counts.add(self._pucv_pool.last_stats())
         finally:
             # A device dropped mid-chunk is announced here, on the search thread.
             self._flush_device_notes()
