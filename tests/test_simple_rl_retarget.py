@@ -192,8 +192,10 @@ def test_a_policy_row_without_root_stats_is_refused_unless_solved_or_tablebase()
 
 def test_a_hard_kill_at_publish_leaves_a_partial_that_the_first_rerun_clears(
         pair: tuple[Path, Path, Path, Path, Path], tmp_path: Path) -> None:
-    """A real kill (no exception cleanup) at the rename leaves .<name>.partial on disk;
-    the next attempt removes it and succeeds."""
+    """A real kill (no exception cleanup) at the PUBLISHING rename -- only the rename of
+    the .partial dir is patched, so every shard write inside it completes and both
+    manifests are sealed there (asserted in the child) -- leaves .<name>.partial on
+    disk; the next attempt removes it and succeeds."""
     import subprocess
     import sys
 
@@ -203,7 +205,14 @@ def test_a_hard_kill_at_publish_leaves_a_partial_that_the_first_rerun_clears(
         "import os, sys\n"
         "from pathlib import Path\n"
         "from chess_anti_engine.simple_rl.retarget import retarget_collect\n"
-        "Path.rename = lambda self, target: os._exit(9)\n"
+        "_real = Path.rename\n"
+        "def _rename(self, target):\n"
+        "    if self.name.endswith('.partial'):\n"
+        "        assert (self / 'gen_0001' / 'collect' / 'manifest.json').is_file()\n"
+        "        assert (self / 'gen_0000' / 'manifest.json').is_file()\n"
+        "        os._exit(9)\n"
+        "    return _real(self, target)\n"
+        "Path.rename = _rename\n"
         "retarget_collect(source_run_dir=Path(sys.argv[1]), generation=1, out_run_dir=Path(sys.argv[2]))\n"
     )
     repo = Path(__file__).resolve().parents[1]
