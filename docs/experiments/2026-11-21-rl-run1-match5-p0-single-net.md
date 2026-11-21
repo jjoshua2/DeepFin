@@ -1,125 +1,104 @@
-# 2026-11-21: RL run 1, matches 5, 6 and 7 — P0 as a single net; S's value recalibrated on the base policy; Zq recalibrated vs Zq (pre-registration)
+# 2026-11-21: RL run 1, three follow-up matches — P0 as a single net (5); S's value on the base policy, raw and recalibrated (6); Zq recalibrated vs Zq (7) (pre-registration)
 
 **Status: registered, not launched.** Nothing launches before the statistics review and
-this PR's merge. Both matches are diagnostic: they adopt nothing and change nothing live.
-**Order of play: match 5, then match 7, then match 6.** Total ≈ 4.6 GPU-h (see the end).
+this PR's merge. The three matches are diagnostic: they adopt nothing and change nothing
+live.
 
-## Question
+**Order of play: 5, 7, 6b, 6a.**
+- The two plain-speed matches go first.
+- In match 6, the control (6b) goes before the recal graft (6a).
+- No rule depends on the order.
 
-The pilot's match 4 graft paired P0's policy with the SL base's value, so each seat ran
-two forwards. That graft read +7.7 Elo, interval [−0.1, +15.4]: "unread". The pilot's
-results record holds the full pilot readout.
+**Total ≈ 6.8 GPU-h** at measured rates (see "Cost").
 
-Match 5 asks a different question. **As a SINGLE net, is P0 at least not worse than the
-base?**
-- P0's value head got no value loss.
-- But it shares a trunk that P0's policy training moved.
-- A future policy-only generation would ship P0 as one net, not as a graft.
+**Multiplicity.** There are three post-hoc diagnostic readings, each at ≈ 2.5% one-sided.
+Any "adoptable" or "shape" reading only NOMINATES a candidate. That candidate must be
+confirmed on fresh games in its own record.
 
-## Design
+## Common to all three matches
 
-| Item | Value |
-|---|---|
-| Candidate | P0: `arm_P0/gen_0001/train/model.pt`, sha256 `4503bd4dc0a1d2e3161f65778ab2414407f5297b911a2f63b901156cc244f9b6` |
-| Reference | SL base: `sl_base.pt`, sha256 `a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0` |
-| Seats | plain: no `--*-value-from`, no recalibration |
-| Arena flags | the pilot's `$ARENA` verbatim, from the bank's `run_match.sh`: `--mode matched_sims --sims 64 --search-shape training --no-gumbel-noise --compile off --openings $R/openings/eval.pgn --opening-plies 16 --max-plies 600 --on-max-plies abort --syzygy <production pair> --max-concurrent-games 128` |
-| Commit | the pilot's `$PIN` `0c795fb7a`, from the existing worktree `~/projects/chess-worktrees/rl-run1-pilot-0c795fb7a`; `run_match.sh` refuses any other HEAD |
-| Balance | seat-balanced A/B. Run A has P0 as candidate; run B swaps the seats. Both runs use the same seed, so they play the same openings |
-| Seed | **2026112151**. Not used by any pilot match (2026112101, 2026112103, 2026112141/42/43), by the reserved S extension (2026112131/32/33) or by the collection (2026112100), and not found anywhere under `docs/` |
-| Size | **ONE look of 6,400 games: 3,200 per run, 1,600 openings** |
-| Pool | `arena_seat_balanced_pool.py` at its default z = 1.96 (one look) |
+**Commit.** The pilot's `$PIN` `0c795fb7a`, from the existing worktree
+`~/projects/chess-worktrees/rl-run1-pilot-0c795fb7a`. This is the commit of the pilot's
+matches, at 64 sims, with CUDA graphs and `--compile off`. So the launch record's
+within-run comparison rule holds: every result row's `git_sha` must equal `$PIN`.
 
-**Overlap with the pilot's openings.** I reproduced the arena's own draw read-only:
-`load_paired_openings` with `np.random.default_rng(seed)`. That method reproduces the
-gate's 400 openings exactly. Seed 2026112151 at 1,600 pairs draws 1,600 distinct openings:
+**Nets.** All read by absolute path from the frozen pilot bank
+`~/chess-artifacts/operations/rl-run1-pilot/`, which is read-only:
 
-| Pilot match | Its distinct openings | Shared with match 5 |
+| Net | Path | sha256 |
 |---|---|---|
-| match 4 (graft) | 1,087 | 448 |
-| match 1 (gate) | 400 | 167 |
-| match 3 (S) | 200 | 92 |
-| any pilot match | 1,496 | 620 |
+| SL base | `sl_base.pt` | `a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0` |
+| P0 | `arm_P0/gen_0001/train/model.pt` | `4503bd4dc0a1d2e3161f65778ab2414407f5297b911a2f63b901156cc244f9b6` |
+| S | `arm_S/gen_0001/train/model.pt` | `66ceb271beee37206afca097904156a0f36f23fab5aecda1439aca7bf23f455b` |
+| Zq | `arm_Zq/gen_0001/train/model.pt` | `ad16d2f177036a3246d092856e99477a1e91dddec7f0229801688c2cf5980b0a` |
 
-Both draws come from the same 4,000-line `eval.pgn`, so this is the overlap independent
-seeds give. It does not bias match 5: the opening is a covariate, and the seed is new.
+**Output root.** A new root, `~/chess-artifacts/operations/rl-run1-followup/`:
+- real runs in `arenas/<match>/`;
+- smokes in `smoke/arenas/<match>/`.
 
-## Size and power
+The pilot bank is never written.
 
-All SEs below scale from the gate's measured SE: **6.74 Elo at 1,600 games**. The graft
-measured 3.86 at 4,800, which agrees.
+**Balance and pooling.**
+- Seat-balanced A/B: run B swaps the seats, and both runs use the same seed and openings.
+- One look per match.
+- `arena_seat_balanced_pool.py` at its default z = 1.96.
+- Every rule reads `pool.json` → `result.pooled.elo_ci95`.
 
-"Power" is the chance of reading "adoptable" (LB95 > −10) when the true effect is 0. By
-symmetry, it is also the chance of reading "damage" (UB95 < 0) when the true effect is −10.
+**SEs.** Predicted SEs scale from the gate's measured **6.74 Elo at 1,600 games**. The graft
+measured 3.86 at 4,800, which agrees. At 6,400 games the SE is ≈ 3.37 and the 95% interval
+is ≈ 13.2 Elo wide. **The rules are read on each match's MEASURED clustered SE, and the
+realised SE is reported.**
 
-| Games | SE (Elo) | Power | GPU-h |
+**Kill / void.**
+- The launch record's [max-plies rule](2026-11-21-rl-run1-pilot-launch-record.md#the-max-plies-rule-registered)
+  applies as registered: an aborted look is void and is reported with its sidecar; it is
+  never resumed or re-rolled; it is rerun whole only under that section's backup-seed rule.
+- An arena exit other than 0 voids the run.
+- A failed seat readback (below) voids the run.
+
+**Recovery.** Nothing to recover: no training, no live change.
+
+**Opening overlap.** I reproduced the arena's own draw read-only: `load_paired_openings` with
+`np.random.default_rng(seed)`. That method reproduces the gate's 400 openings exactly. Each
+seed below draws 1,600 distinct openings from the same 4,000-line `eval.pgn`. The overlaps
+are what independent seeds give, and none biases a match: the opening is a covariate.
+
+| Match (seed) | vs the pilot's matches (1,496 distinct) | vs match 5 | vs match 6 |
 |---|---|---|---|
-| 1,600 | 6.74 | 0.32 | 0.38 |
-| 3,200 | 4.77 | 0.55 | 0.76 |
-| 4,800 | 3.89 | 0.73 | 1.14 |
-| **6,400** | **3.37** | **0.84** | **1.52** |
+| 5 (2026112151) | 620, of which 448 with the graft | — | — |
+| 6a and 6b (2026112161) | 595, of which 431 with the graft | 654 | — |
+| 7 (2026112171) | 588, of which 446 with the graft | 640 | 615 |
 
-At 1,600 games, the likeliest reading for a P0 that is truly no worse is "unread". 6,400
-games is the smallest size in steps of 1,600 with power above 0.8.
+**Seeds.** None of the three appears in any pilot match:
+- the pilot matches used 2026112101, 2026112103 and 2026112141/42/43;
+- the S extension reserved 2026112131/32/33;
+- match 2 reserved 2026112102;
+- the collection used 2026112100;
+- none of the three appears anywhere under `docs/`.
 
-## Reading rules (fixed in advance)
+### The launcher (new; flags byte-identical to the pilot's `$ARENA`)
 
-On the pooled estimate and its 95% interval:
-- **"damage"** iff UB95 < 0;
-- **"single-net policy-only step is adoptable"** iff LB95 > −10 (the amendment's adoption margin);
-- otherwise **"unread, insufficient evidence"**.
-
-The first two can both hold, for example [−9, −1]. If so, both are reported, and "damage"
-governs what follows.
-
-**Secondary, pre-declared, report-only.** The cost of P0's value drift, defined as match 5's
-estimate minus the graft's +7.66, with SE ≈ √(3.37² + 3.86²) ≈ 5.1 Elo. The SE treats the
-two matches as independent: separate seeds and separate runs. They share 448 openings,
-which most likely correlates the two estimates positively, so this SE is likely
-conservative. Two caveats:
-- The graft's +7.66 is its third-look estimate from a group-sequential design that never
-  stopped early.
-- No rule reads the secondary.
-
-## What each outcome licenses
-
-| Outcome | Licenses |
-|---|---|
-| adoptable | A second policy-only generation becomes a candidate for the owner, under its own record. Nothing more |
-| damage | Policy-only training needs the value kept out of the moving trunk before any generation 2: for example a frozen value tower, or shipping the hybrid seat |
-| unread | Nothing. The pilot's "stop for the owner" stands |
-
-## Control, confounds, recovery, cost
-
-- **Control.** The SL base, in the same arena invocation, with seats swapped between runs A and B.
-- **Confounds.** None beyond the pilot's. Match 5 runs at 64 sims, with CUDA graphs and `--compile off`, on the same commit (`0c795fb7a`) as the pilot's matches, so the launch record's within-run comparison rule holds: every result row's `git_sha` must equal `$PIN`.
-- **Recovery.** Nothing to recover. Match 5 involves no training and no live change.
-- **Cost.** ≈ 1.5 GPU-h at the measured 0.19 GPU-h per 800 plain games. An earlier ≈ 0.4 GPU-h estimate was for 1,600 games, which has power 0.32.
-- **Kill / void.** The launch record's [max-plies rule](2026-11-21-rl-run1-pilot-launch-record.md#the-max-plies-rule-registered) applies as registered:
-  - an aborted look is void and is reported with its sidecar;
-  - it is never resumed or re-rolled; `run_match.sh` refuses an existing game log;
-  - it is rerun whole only under that section's backup-seed rule.
-
-  An arena exit other than 0 voids the match.
-
-## Commands
-
-The bank's `run_match.sh`, verbatim (`~/chess-artifacts/operations/rl-run1-pilot/run_match.sh`):
+The pilot's `run_match.sh` hard-codes the pilot bank as its output root, so it cannot be
+used. This copy takes the output root as its first argument and refuses the frozen bank.
+`$ARENA` expands to exactly the pilot's string: the same flags, with the openings and
+Syzygy paths read from the pilot bank. It still checks the PIN and refuses a look that
+already has a game log. It is saved as `~/chess-artifacts/operations/rl-run1-followup/run_followup_match.sh`:
 
 ```bash
 #!/bin/bash
-# RL run 1 pilot, Step 4: one arena run at $PIN. Verbatim common flags from the launch record.
-# usage: run_match.sh <match> <look> <A|B> <seed> <games-per-run> <seat args...>
-R=$HOME/chess-artifacts/operations/rl-run1-pilot
-PIN=$(cat $R/PIN.txt)
+# RL run 1 follow-up matches 5/6/7: one arena run at the pilot's PIN, flags identical to the pilot's run_match.sh.
+# usage: run_followup_match.sh <out_root> <match> <look> <A|B> <seed> <games-per-run> <seat args...>
+P=$HOME/chess-artifacts/operations/rl-run1-pilot            # frozen pilot bank: READ ONLY
+PIN=$(cat $P/PIN.txt)
 PINW=$HOME/projects/chess-worktrees/rl-run1-pilot-${PIN:0:9}
 PY=$HOME/projects/chess/.venv/bin/python
 TB="$HOME/projects/chess/data/syzygy_3-4-5:$HOME/projects/chess/data/syzygy_6"
 ARENA="--mode matched_sims --sims 64 --search-shape training --no-gumbel-noise --compile off \
-  --openings $R/openings/eval.pgn --opening-plies 16 --max-plies 600 --on-max-plies abort \
+  --openings $P/openings/eval.pgn --opening-plies 16 --max-plies 600 --on-max-plies abort \
   --syzygy $TB --max-concurrent-games 128"
-m=$1 k=$2 s=$3 seed=$4 n=$5; shift 5
-d=$R/arenas/$m; mkdir -p $d
+O=$1 m=$2 k=$3 s=$4 seed=$5 n=$6; shift 6
+case "$(realpath -m "$O")" in "$(realpath "$P")"|"$(realpath "$P")"/*) echo "refusing to write into the frozen pilot bank"; exit 94;; esac
+d=$O/arenas/$m; mkdir -p $d
 cd $PINW || exit 97
 [ "$(git rev-parse HEAD)" = "$PIN" ] || { echo "worktree not at PIN"; exit 96; }
 [ ! -e $d/${m}_${k}_$s.games.jsonl ] || { echo "look ${m}_${k}_$s already has a game log: never resume or re-roll a registered look"; exit 95; }
@@ -131,319 +110,320 @@ echo "$rc $(date -Is)" > $d/${m}_${k}_$s.exit
 exit $rc
 ```
 
-Match 5. The bank is frozen, so the operator decides where the new `arenas/p0_single`
-directory and the start / exit markers live:
+### Seat readback: how the hybrid seats are proven to take effect (matches 6 and 7)
 
-```bash
-R=$HOME/chess-artifacts/operations/rl-run1-pilot
-SL=$R/sl_base.pt; P0=$R/arm_P0/gen_0001/train/model.pt
-PY=$HOME/projects/chess/.venv/bin/python
-PINW=$HOME/projects/chess-worktrees/rl-run1-pilot-$(cut -c1-9 $R/PIN.txt)
-$R/run_match.sh p0_single 1 A 2026112151 3200 --candidate $P0 --reference $SL || exit 1
-$R/run_match.sh p0_single 1 B 2026112151 3200 --candidate $SL --reference $P0 || exit 1
-d=$R/arenas/p0_single
-cd $PINW && PYTHONPATH=. $PY scripts/arena_seat_balanced_pool.py --arm $P0 \
-  --a-games $d/p0_single_1_A.games.jsonl --b-games $d/p0_single_1_B.games.jsonl \
-  --a-result $d/results.jsonl --b-result $d/results.jsonl \
-  --a-label p0_single_1_A --b-label p0_single_1_B --out $d/pool.json > $d/pool.log 2>&1
+This check is saved as `rl-run1-followup/check_seat.py`. It reads three things, all written
+by the consumer, and exits nonzero on any mismatch:
+- **the built module:** the arena log line from the module itself;
+- **the result row:** what the arena recorded for each seat;
+- **the PGN:** the engine names.
+
+```python
+#!/usr/bin/env python3
+# usage: check_seat.py <arena dir> <label> <hybrid role: candidate|reference> <value-from sha256 or -> <T,b or ->
+import json, re, sys
+d, label, role, vsha, recal = sys.argv[1:6]
+other = "reference" if role == "candidate" else "candidate"
+t_b = None if recal == "-" else [float(v) for v in recal.split(",")]
+log = open(f"{d}/{label}.log").read()
+m = re.search(rf"\[arena\] {role} HYBRID built: value_net=(\w+) recal_T=(\S+) recal_bias=\[([^\]]*)\]", log)
+assert m, f"no '{role} HYBRID built' line in {label}.log"
+assert m.group(1) == ("own" if vsha == "-" else "loaded"), m.group(0)
+if t_b is None:
+    assert m.group(2) == "None", m.group(0)
+else:
+    bias = [float(v) for v in m.group(3).split(",")]
+    assert abs(float(m.group(2)) - t_b[0]) < 1e-9 and abs(bias[1] - t_b[1]) < 1e-6 and bias[0] == bias[2] == 0.0, m.group(0)
+assert f"[arena] {other} HYBRID built" not in log, f"the {other} seat was built as a hybrid"
+row = [json.loads(l) for l in open(f"{d}/results.jsonl") if json.loads(l).get("label") == label][-1]
+v = row.get(f"{role}_value")
+assert v is not None and v.get("recal") == t_b, (role, v)
+assert (v.get("value_from") or {}).get("sha256") == (None if vsha == "-" else vsha), (role, v)
+assert row.get(f"{other}_value") is None, (other, row.get(f"{other}_value"))
+names = re.findall(r'\[(White|Black) "([^"]*)"\]', open(f"{d}/{label}.pgn").read())
+pairs = list(zip(names[::2], names[1::2]))
+assert pairs and all(w[1] != b[1] for w, b in pairs), "engine names coincide in some game"
+print(f"seat readback OK: {label} {role} value_from={vsha[:12]} recal={t_b}")
 ```
 
-The readout is `pool.json` → `result.pooled` (`elo`, `elo_ci95`). It is read by the rules
-above, in the same session, and recorded beside the pilot's results record.
+**When it runs, and how a failure stops a run before any game counts:**
+1. **Smoke first.** Before each real run of 6a, 6b and 7, run a smoke (4 games per run) with the SAME
+   seat arguments and the same seed into `smoke/`, then `check_seat.py` on it. The real run
+   starts only if the smoke passes. That proves the configuration takes effect before a
+   real game is played.
+2. **Smoke pool.** The smoke's A and B are also pooled. The pool must accept them: its
+   `check_seat_values` requires the arm seat's (value-from sha256, [T, b]) to be equal in
+   both runs.
+3. **After each real run,** `check_seat.py` runs on the real log, row and PGN. A mismatch
+   voids that run. No game counts before then, because a match is read only after this
+   check.
 
+For the record, the pool checks the arm seat's value signature. It does not print it, so
+`check_seat.py` reads it from the result rows instead.
 
 ---
 
-# Match 6 — is S's value damage shape or content? (diagnostic, adopts nothing)
+## Match 5 — P0 as a single net vs the SL base
 
-## Question and source
+**Question.**
+- The pilot's match 4 graft paired P0's policy with the SL base's value, using two
+  forwards per seat. It read +7.7 [−0.1, +15.4]: "unread".
+- Match 5 asks whether P0 as a SINGLE net is at least not worse than the base.
+- P0's own value head got no value loss, but it sits on a trunk that the policy training
+  moved.
+- A policy-only generation would ship P0 as one net.
 
-The pilot value diagnosis is banked at
-`~/chess-artifacts/operations/rl-claude-20261119/pilot-value-diagnosis/`
-(README sha256 `0bdac6a50852fa83d4f3cbcc7bfa067696440abcc027e2118eb5aa0ec1c00dbe`). It
-concludes that the value loss changed **content**, not shape:
-- **Recalibration removes little of the change.** S's fitted (T, b) = (0.853, −0.120)
-  removes 24% of its KL to the base; Zq's (0.704, −0.227) removes 60%.
-- **The value got worse at ranking moves.** 1-ply value regret on the frozen audit set,
-  each vs the base:
+**Design.**
+- Plain seats: P0 vs the SL base, with no `--*-value-*`.
+- Seed 2026112151.
+- **6,400 games: 3,200 per run, 1,600 openings.**
 
-  | Net | Regret vs base |
-  |---|---|
-  | S | +6.8 cp [+4.6, +9.2] |
-  | Zq | +2.3 cp [+0.6, +4.0] |
-  | P0's own head | +1.9 cp [+0.2, +3.6] |
+**Size and power.** Power here is P(adoptable | true 0); it equals P(damage | true −10).
 
-  (T, b) changes 1–2% of choices and none of the regret.
-- **Calibration to outcomes improved.** Both trained heads are better calibrated to
-  outcomes on hold-out games.
-
-The diagnosis names its own falsifier: S's value head, recalibrated by (T, b) and grafted
-onto the base policy, recovering most of the −20 in a 64-sim arena. Match 6 is that test.
-
-**Offline prediction now on record (Addendum 1).** Recalibration should NOT recover S's
-loss.
-- Source: `pilot-value-diagnosis/PREREG.addendum1.md`, sha256 `2a07543c…`, sealed before
-  its run; results in `out/sibling_order.json`, sha256 `bb8e5b16…`.
-- Measure: pairwise sibling-ordering accuracy against deep SF on clear pairs (gap ≥ 50 cp,
-  38,705 pairs), where the base scores 0.8554.
-- S scores −0.0096 [−0.0129, −0.0064] against the base, and −0.0093 after recalibration.
-  The ordering is not repaired.
-
-Match 6 tests that prediction; it does not change its rules.
-
-## The seat composes at `$PIN` with no new code (verified)
-
-Read at `0c795fb7a`:
-- **Both options apply to one seat.** `scripts/arena_standard.py` passes both
-  `--candidate-value-from` and `--candidate-value-recal` into one `SeatValue`, and
-  `chess_anti_engine/eval/hybrid_value.py:build_seat_model` builds one
-  `HybridValueNet(policy_net, value_net, recal=...)`.
-- **The recalibration acts on the grafted head.** `HybridValueNet.forward` takes `wdl`
-  from the VALUE net, then applies `wdl / T + [0, b, 0]` to it, at the root and at every
-  leaf. The `--*-value-recal` help says the same: "applied to `--<seat>-value-from`'s net
-  when both are given".
-- **The formula matches the banked fit.** The fit's `apply` field is
-  `softmax(logits / T + [0, b, 0])` on W, D, L logits, side to move.
-- **Consumer-side readback.** At start the arena logs
-  `[arena] candidate HYBRID built: value_net=loaded recal_T=… recal_bias=[0, b, 0]` from the
-  built module. The launch checks that line against the CLI values below.
-- **Tests at the PIN.** `tests/test_arena_hybrid_value.py` exercises value-from plus recal
-  on one seat: provenance, the PGN suffix, and resume refusal.
-
-**Banked fit:** `pilot-value-diagnosis/out/recal_S.json`, field `cli` =
-`0.853159495428655,-0.12023510932922338`.
-- Net: S, sha256 `66ceb271…`. Reference: the SL base.
-- Rows: 39,237 hold-out rows from 416 hold-out games of the pilot collect.
-- Those rows are TRAIN-split openings, disjoint from `eval.pgn` by the split.
-
-**One untested combination: the same checkpoint in both seats.** Both seats are the base
-net, and only the candidate is a hybrid. Read at the PIN:
-- The arena refuses only identical PGN player names. The hybrid seat's name carries a
-  `+V…+recal(…)` suffix, so the names differ.
-- The pool's sha256 seat-swap check passes trivially when the same checkpoint sits in both
-  seats. Its `check_seat_values` is what proves the hybrid sat on the arm seat in both runs.
-
-That combination has not been run. **Launch precondition:** a 4-game A/B smoke of match 6b
-in a scratch directory, outside the bank, must play and pool without error. If it does not,
-match 6 is not played, and the failure is recorded here; no code is changed under this
-record.
-
-## Design
-
-Every row not listed below is match 5's: the pin, the worktree, `run_match.sh`, the
-`$ARENA` flags and the kill / void rules.
-
-| | 6a: recal graft | 6b: raw graft (control) |
-|---|---|---|
-| Arm seat | SL base policy + S's value, recalibrated: `--candidate-value-from $S --candidate-value-recal 0.853159495428655,-0.12023510932922338` | SL base policy + S's value, raw: `--candidate-value-from $S` |
-| Base seat | plain SL base | plain SL base |
-| Run B | seats mirrored: `--reference-value-from $S` (plus `--reference-value-recal …` in 6a) | the same mirroring |
-| Seed | **2026112161** (shared) | **2026112161** (shared) |
-| Size, one look | **6,400 games**: 3,200 per run, 1,600 openings | **1,600 games**: 800 per run, 400 openings |
-| Openings | the 1,600 that seed 2026112161 draws | its first 400, checked to be an exact prefix of 6a's draw |
-
-**Seed checks.**
-- 2026112161 appears in no pilot match, no reservation, nowhere in `docs/`, and is not
-  match 5's seed.
-- Overlap of 6a's 1,600 openings: 595 with the pilot's matches, 654 with match 5.
-- Overlap of 6b's 400: 135 with the pilot, 154 with match 5.
-
-**The raw graft is played as the control; match 3 does not suffice.** Match 3 played S as a
-single net, so its −20 mixes S's policy change with its value change. The "shape" reading
-needs the value damage alone, on the same base policy the recal graft uses.
-- The predicted raw-graft result is ≈ S's −20 minus the policy's share, i.e. ≈ −28 if the
-  graft's +7.7 transfers. That prediction is an estimate, not a rule input.
-- 6b shares 6a's seed and its first 400 openings, so the recalibration's effect is a paired
-  contrast on those openings.
-- Each match's game RNG still differs after the opening draw, so the games themselves are
-  not identical.
-
-## Size and power
-
-SEs scale from the gate's measured 6.74 Elo at 1,600 games. Hybrid seats measured the same
-SE as plain seats in match 4 (3.86 at 4,800).
-
-| Match | Games | SE | Power |
+| Games | SE | Power | GPU-h |
 |---|---|---|---|
-| 6a | 6,400 | 3.37 | P(LB95 > −10 \| true 0) = 0.84; P(UB95 < 0 \| true −10) = 0.84; P(UB95 < 0 \| true −28) ≈ 1.00 |
-| 6b | 1,600 | 6.74 | P(UB95 < 0 \| true −28) = 0.99; P(UB95 < 0 \| true −15) = 0.61 |
+| 1,600 | 6.74 | 0.32 | 0.38 |
+| 3,200 | 4.77 | 0.55 | 0.76 |
+| 4,800 | 3.89 | 0.73 | 1.14 |
+| **6,400** | **3.37** | **0.84** | **1.52** |
 
-The diagnosis bank suggested "the single 800-game recal-graft arena". At 800 games
-(SE ≈ 9.5) the "shape" reading would have power ≈ 0.18, so it is not used.
+**Rules.**
+- **"damage"** iff UB95 < 0;
+- **"single-net policy-only step is adoptable"** iff LB95 > −10;
+- otherwise **"unread"**.
 
-## Reading rules (fixed in advance)
+At 6,400 games the interval is ≈ 13.2 Elo wide, so "damage" and "adoptable" cannot both
+hold.
 
-On each match's pooled 95% interval (`pool.json` → `result.pooled.elo_ci95`):
-- **"the damage is shape after all"** iff 6a's LB95 > −10 AND 6b reads damage (UB95 < 0);
-- **"content"** iff 6a's UB95 < 0;
-- otherwise **"unread, insufficient evidence"**.
+**Secondary, report-only.**
+- The cost of P0's value drift = match 5's estimate − 7.66 (the graft), with
+  SE ≈ √(3.37² + 3.86²) ≈ 5.1.
+- That SE treats the matches as independent. They share 448 openings, which likely
+  correlates them positively, so the SE is conservative.
+- The graft's 7.66 is its third-look estimate from a group-sequential design that never
+  stopped.
 
-If 6b does not read damage, "shape" cannot be read. "Content" depends on 6a alone.
+**Licenses.**
 
-**Secondary, report-only.** The recalibration's recovery, 6a − 6b, with
-SE ≈ √(3.37² + 6.74²) ≈ 7.5. That SE treats the two matches as independent. They share
-400 openings, which most likely correlates them positively, so the SE is likely
-conservative. No rule reads the secondary.
-
-## What each outcome licenses
-
-| Outcome | Licenses |
+| Reading | Licenses |
 |---|---|
-| shape | The value damage is recoverable by a 2-parameter post-fit. A recalibrated S-value cell becomes a candidate for the owner, under its own record. Nothing is adopted here |
-| content | The diagnosis's mechanism stands. A value target built from the 64-sim search value harms ranking that recalibration cannot fix. Value-target work needs a different target or a held-out value before generation 2 |
-| unread | Nothing. |
+| adoptable | NOMINATES a second policy-only generation for the owner, under its own record, confirmed on fresh games. Nothing more |
+| damage | Policy-only training needs the value kept out of the moving trunk before any generation 2: for example a frozen value tower, or shipping the hybrid seat |
+| unread | Nothing; the pilot's "stop for the owner" stands |
 
-## Cost and commands
-
-- **Cost.** Hybrid seats measured 0.27 GPU-h per 800 games. 6a ≈ 2.16 GPU-h; 6b ≈ 0.54
-  GPU-h; match 6 ≈ 2.7 GPU-h.
-- **Total GPU cost of this record:** see the end of match 7.
-- **Control, confounds, recovery.** As for match 5: the same commit, 64 sims, CUDA graphs,
-  `--compile off`. Every row's `git_sha` must equal `$PIN`. Nothing is trained and nothing
-  live changes.
+**Commands.**
 
 ```bash
-R=$HOME/chess-artifacts/operations/rl-run1-pilot
-SL=$R/sl_base.pt; S=$R/arm_S/gen_0001/train/model.pt
-RC=0.853159495428655,-0.12023510932922338        # pilot-value-diagnosis/out/recal_S.json "cli"
-PY=$HOME/projects/chess/.venv/bin/python
-PINW=$HOME/projects/chess-worktrees/rl-run1-pilot-$(cut -c1-9 $R/PIN.txt)
-# 6b first (cheap control), then 6a; both seed 2026112161
-$R/run_match.sh s_value_raw 1 A 2026112161 800 --candidate $SL --reference $SL --candidate-value-from $S || exit 1
-$R/run_match.sh s_value_raw 1 B 2026112161 800 --candidate $SL --reference $SL --reference-value-from $S || exit 1
-$R/run_match.sh s_value_recal 1 A 2026112161 3200 --candidate $SL --reference $SL \
-  --candidate-value-from $S --candidate-value-recal $RC || exit 1
-$R/run_match.sh s_value_recal 1 B 2026112161 3200 --candidate $SL --reference $SL \
-  --reference-value-from $S --reference-value-recal $RC || exit 1
-for m in s_value_raw s_value_recal; do d=$R/arenas/$m
-  cd $PINW && PYTHONPATH=. $PY scripts/arena_seat_balanced_pool.py --arm $SL \
-    --a-games $d/${m}_1_A.games.jsonl --b-games $d/${m}_1_B.games.jsonl \
-    --a-result $d/results.jsonl --b-result $d/results.jsonl \
-    --a-label ${m}_1_A --b-label ${m}_1_B --out $d/pool.json > $d/pool.log 2>&1
+F=$HOME/chess-artifacts/operations/rl-run1-followup; P=$HOME/chess-artifacts/operations/rl-run1-pilot
+SL=$P/sl_base.pt; P0=$P/arm_P0/gen_0001/train/model.pt
+PY=$HOME/projects/chess/.venv/bin/python; PINW=$HOME/projects/chess-worktrees/rl-run1-pilot-$(cut -c1-9 $P/PIN.txt)
+pool() { d=$1/arenas/$2; (cd $PINW && PYTHONPATH=. $PY scripts/arena_seat_balanced_pool.py --arm $3 \
+  --a-games $d/${2}_1_A.games.jsonl --b-games $d/${2}_1_B.games.jsonl --a-result $d/results.jsonl \
+  --b-result $d/results.jsonl --a-label ${2}_1_A --b-label ${2}_1_B --out $d/pool.json > $d/pool.log 2>&1); }
+$F/run_followup_match.sh $F p0_single 1 A 2026112151 3200 --candidate $P0 --reference $SL || exit 1
+$F/run_followup_match.sh $F p0_single 1 B 2026112151 3200 --candidate $SL --reference $P0 || exit 1
+pool $F p0_single $P0
+```
+
+---
+
+## Match 7 — Zq recalibrated vs Zq, head-to-head (a NEW registration)
+
+**Why, and what it is not.**
+- **The pilot skipped its match 2 by rule.** Match 2 was this head-to-head, conditional on
+  the gate reading damage. The gate read −10.0 [−23.2, +3.2].
+- **Match 7 is a NEW registration, motivated by post-hoc offline evidence.** It is Addendum 1
+  of the pilot value diagnosis (`rl-claude-20261119/pilot-value-diagnosis/`):
+  `PREREG.addendum1.md`, sha256 `2a07543c…`, sealed before its run; results in
+  `out/sibling_order.json`, sha256 `bb8e5b16…`.
+- **The finding.** It measured sibling-ordering accuracy against deep SF on clear pairs
+  (gap ≥ 50 cp, 38,705 pairs; the base scores 0.8554). Each net vs the base:
+  - S: −0.0096 [−0.0129, −0.0064]; after recalibration −0.0093, so not repaired;
+  - Zq: −0.0007 [−0.0032, +0.0017];
+  - P0's own head: −0.0020 [−0.0040, +0.0001].
+
+  So broken ranking does not explain Zq's −10. For Zq the shape account stays open: its
+  (T, b) = (0.704, −0.227) removes 60% of its KL to the base (main README of the
+  diagnosis, sha256 `0bdac6a5…`).
+- **Match 7 cannot be read as the pilot's match 2, and it changes no pilot verdict.**
+
+**Design.**
+- Both seats are Zq's file. The arm seat is Zq + recal, a single forward per seat at plain
+  speed.
+- Recal: `--candidate-value-recal 0.7036189636786957,-0.22711530923843357` in run A, and
+  `--reference-value-recal …` with the same value in run B.
+- Seed: a fresh **2026112171**.
+- **6,400 games: 3,200 per run, 1,600 openings.**
+
+**The fit: the banked one is the launch record's Step 3 fit.**
+- The fit is `pilot-value-diagnosis/out/recal_Zq.json`, field `cli`. It was produced at
+  `0c795fb7a` (`scripts/run_fits.sh`) on the same Zq and SL base files, the same collect
+  (manifest sha256 `61fc049f…`), and its hold-out games only: 416 games, 39,237 rows. It ran
+  on CUDA with bf16 logits and batch 256, which is the tool's default.
+- **The one difference from Step 3:** `--holdout-frac 0.05` was passed as a flag
+  (`holdout_frac_source: "flag, unpinned"`). The record expected that value pinned in
+  `$R/collect/run_config.json`, but the file is absent from the collect run dir. The value
+  is the same, so the rows are identical.
+- **No refit.** A refit by Step 3's exact command would need the same flag, and it would be
+  a second fit after the gate and Addendum 1 were seen.
+
+**Seed choice.** A fresh seed rather than the reserved 2026112102.
+- The reserved seed was never played, so the two are statistically equivalent.
+- A game log under 2026112102 would read as the pilot's registered match 2.
+
+**Size and power.**
+- At 6,400 games and the gate's SE, P(LB95 > 0 | true +10) = 0.84.
+- **The gate's SE probably overstates the SE of a head-to-head between two nearly identical
+  nets,** because more games are decided by the same move. The rule is therefore read on
+  the MEASURED clustered SE, and the realised SE is reported.
+
+**Rule.**
+- **"the loss is shape"** iff LB95 > 0, with the arm being the recalibrated seat;
+- otherwise **"unread"**.
+
+**Report-only: the recovered fraction.** This is match 7's estimate divided by 10.0. The
+gate's interval [−3.2, +23.2] puts the denominator near 0, so the fraction is poorly
+determined: it is reported beside its numerator and never read.
+
+**What it can and cannot establish.**
+- It can establish that recalibration improves Zq.
+- An "unread" leaves the shape account open.
+- It says nothing about Zq vs the base.
+
+**Licenses.**
+- "shape" NOMINATES a recalibrated-Zq vs base adoption match, as a later and separate
+  registration.
+- "unread" licenses nothing.
+
+**Seat readback (launch check).**
+- Role: candidate in run A, reference in run B.
+- Value-from: `-` (the arena log line reads `value_net=own`).
+- Recal: the banked `cli` above.
+
+**Commands** (continuing the shell from match 5):
+
+```bash
+Zq=$P/arm_Zq/gen_0001/train/model.pt; RC7=0.7036189636786957,-0.22711530923843357
+for O in $F/smoke $F; do n=$([ $O = $F ] && echo 3200 || echo 4)
+  $F/run_followup_match.sh $O zq_recal_h2h 1 A 2026112171 $n --candidate $Zq --reference $Zq --candidate-value-recal $RC7 || exit 1
+  $PY $F/check_seat.py $O/arenas/zq_recal_h2h zq_recal_h2h_1_A candidate - $RC7 || exit 1
+  $F/run_followup_match.sh $O zq_recal_h2h 1 B 2026112171 $n --candidate $Zq --reference $Zq --reference-value-recal $RC7 || exit 1
+  $PY $F/check_seat.py $O/arenas/zq_recal_h2h zq_recal_h2h_1_B reference - $RC7 || exit 1
+  pool $O zq_recal_h2h $Zq || exit 1
 done
 ```
 
-In each pool, the "arm" is the hybrid seat: run A's candidate and run B's reference. The pool
-proves this through `check_seat_values` (the value-from sha256 and [T, b] must match across
-the runs).
-
+The first pass (`$F/smoke`, 4 games per run: 2 openings, so the pool has two clusters) is the smoke. The second pass plays the
+real match, and runs only if every smoke step exits 0.
 
 ---
 
-# Match 7 — Zq recalibrated vs Zq, head-to-head (a NEW registration; diagnostic, adopts nothing)
+## Match 6 — S's value on the base policy, raw (6b) and (T, b)-recalibrated (6a)
 
-## Why, and what it is not
+**Question and source.**
+- The pilot value diagnosis is at `rl-claude-20261119/pilot-value-diagnosis/` (README sha256
+  `0bdac6a50852fa83d4f3cbcc7bfa067696440abcc027e2118eb5aa0ec1c00dbe`).
+- It concludes that the value loss changed CONTENT, not shape:
+  - S's (T, b) = (0.853, −0.120) removes 24% of its KL to the base;
+  - 1-ply value regret: S +6.8 cp [+4.6, +9.2] vs the base on the frozen audit set;
+  - (T, b) changes 1–2% of choices and none of the regret.
+- It names its falsifier: S's value head, recalibrated and grafted onto the base policy,
+  recovering most of the −20 at 64 sims.
+- **Offline prediction on record (Addendum 1):** recalibration does NOT repair S's sibling
+  ordering (−0.0096 → −0.0093), so it should NOT recover S's loss.
 
-**The pilot skipped its match 2 by rule.** Match 2 was this same head-to-head, and it was
-conditional on the gate reading damage. The gate read −10.0 [−23.2, +3.2], so match 2 was
-skipped.
+**The two seat options compose at `$PIN` (verified in the code).**
+- `scripts/arena_standard.py` builds one `SeatValue(value_from=…, recal=…)` per seat.
+- `chess_anti_engine/eval/hybrid_value.py` → `HybridValueNet.forward` takes the WDL from the
+  VALUE net, then applies `wdl / T + [0, b, 0]` to it, at the root and at every leaf.
+- That is the banked fit's formula: `softmax(logits / T + [0, b, 0])` on W, D, L logits,
+  side to move.
+- The fit is `pilot-value-diagnosis/out/recal_S.json`, field `cli` =
+  `0.853159495428655,-0.12023510932922338`. It was fit on the pilot's 416 hold-out games,
+  which are TRAIN-split openings and so disjoint from `eval.pgn`.
 
-**Match 7 is a NEW registration, motivated by post-hoc offline evidence.** Addendum 1's
-sibling-ordering test (above) found S's ranking broken, but not Zq's:
-- Zq: −0.0007 [−0.0032, +0.0017] vs the base;
-- P0's own head: −0.0020 [−0.0040, +0.0001].
+**Design.**
 
-So "ranking content broke" does not explain Zq's −10. For Zq the shape account is still
-open: its (T, b) = (0.704, −0.227) removes 60% of its KL to the base.
-
-**Match 7 therefore cannot be read as the pilot's match 2, and it changes no pilot
-verdict.** The gate's "not reproduced, not adoptable" and the pilot's "stop for the owner"
-stand whatever match 7 reads.
-
-## Design: the launch record's match 2, as designed there
-
-| Item | Value |
-|---|---|
-| Arm seat | Zq + recal: `--candidate Zq --candidate-value-recal $RC7`, one forward per seat, plain speed |
-| Base seat | plain Zq |
-| Run B | mirrored: `--reference-value-recal $RC7` |
-| Both seats | Zq's file, `arm_Zq/gen_0001/train/model.pt`, sha256 `ad16d2f177036a3246d092856e99477a1e91dddec7f0229801688c2cf5980b0a` |
-| Size | 1,600 games, one look: 800 per run, 400 openings |
-| Seed | **2026112171** (fresh; see below) |
-| Pin, flags, worktree, kill / void | match 5's |
-
-**The fit: the banked one is the record's fit.** `pilot-value-diagnosis/out/recal_Zq.json`,
-`cli` = `0.7036189636786957,-0.22711530923843357`. Compared with the launch record's Step 3
-command, `fit_value_recal.py --net $Zq --reference $SL --collect-dir $R/collect/gen_0001/collect --device cuda`:
-
-| | Banked fit | Launch record's Step 3 |
+| | 6b (control): raw graft | 6a: recal graft |
 |---|---|---|
-| Code | `0c795fb7a` (`run_fits.sh`) | `$PIN` (`0c795fb7a`) |
-| Zq | sha256 `ad16d2f1…` | the same file |
-| Reference | SL base, sha256 `a39f900c…` | the same file |
-| Collect | collect manifest sha256 `61fc049f…` | the same collect |
-| Rows | hold-out games only: 416 games, 39,237 rows | hold-out games only |
-| Device | CUDA, bf16 logits | CUDA, bf16 logits |
-| `--batch` | 256, given explicitly | the tool's default, also 256 |
-| `holdout_frac` | **`--holdout-frac 0.05` passed as a flag** (`holdout_frac_source: "flag, unpinned"`) | read from `$R/collect/run_config.json` |
+| Arm seat | SL base policy + S's value: `--candidate-value-from $S` | the same, plus `--candidate-value-recal $RC6` |
+| Base seat | plain SL base | plain SL base |
+| Seed / openings | 2026112161, 1,600 openings | the same seed, so **exactly the same openings** |
+| Size | **6,400 games** (3,200 per run) | **6,400 games** (3,200 per run) |
 
-The only real difference is the last row. The record expected the run's pinned 0.05 in
-`$R/collect/run_config.json`, but that file is absent from the collect run dir. The fit
-therefore needed the flag, with the same value 0.05, the value the cells trained by. The
-split and the rows are identical.
+**The raw graft is the control; match 3 does not suffice.** Match 3 played S as a single net,
+so its −20 mixes S's policy change with its value change. The predicted raw-graft result is
+≈ −20 − 7.7 ≈ −28. That is an estimate, not a rule input.
 
-**Decision: use the banked fit, no refit.**
-- A refit by the record's exact command would refuse for the missing pin, or need the same
-  flag.
-- A refit would also be a second fit of the same quantity after the gate and Addendum 1
-  were seen.
+**The never-run combination.** Both seats load the same checkpoint (the base). The PGN names
+differ by the hybrid suffix, and `check_seat.py` and the pool prove which seat was the
+hybrid. Both smokes must pass, or match 6 is not played. No code changes under this record.
 
-## Seed: fresh, not the reserved 2026112102
+**The recovery estimator, fixed now.**
+- R = full 6a estimate − full 6b estimate (Elo, each from its own `pool.json`).
+- SE_R = √(SE_a² + SE_b²) ≈ √(3.37² + 3.37²) ≈ **4.8**.
+- The two matches share every opening, so their estimates are likely positively
+  correlated, which makes this SE conservative.
+- A paired-on-openings estimate may be reported as a report-only secondary. No rule reads
+  it.
 
-- **Statistically the two are the same:** 2026112102 was reserved but never played, so it
-  carries no information either way.
-- **The fresh seed is cleaner for bookkeeping:** a game log or pool under the reserved
-  seed would read as the pilot's registered match 2, which match 7 must not be mistaken
-  for.
+**Power.**
+- P(R's LB95 > 0) is 0.55 at true R = +10, and 0.84 at R = +14 (half of the predicted −28).
+- P(6a's UB95 < 0 | true −10) = 0.84.
 
-2026112171 appears nowhere in `docs/`. Its 400 openings overlap 135 with the pilot's
-matches, 162 with match 5 and 158 with match 6.
+**Rules** (on the measured SEs):
+- **"content"** iff 6a's UB95 < 0 AND R's UB95 < +10;
+- **"shape"** iff R's LB95 > 0 AND 6a's LB95 > −10;
+- **everything else "unread".** The remaining cells:
 
-## Reading rule (as the launch record had it)
+  | Case | Reading | What is reported |
+  |---|---|---|
+  | 6b's UB95 ≥ 0 | The value graft's damage is not established, so R cannot be read as a recovery | 6a, 6b and R, each with its interval. Any "content" or "shape" match from the rules above is reported as conditional on a damage that was not established |
+  | 6a reads damage, but R's UB95 ≥ +10 | Partial recovery not excluded: "unread" | — |
+  | R's LB95 > 0, but 6a's LB95 ≤ −10 | Recalibration helps, but the recal graft is not within the margin: "unread". This cell is reported as "recovery without adoption-level strength" | — |
+  | Neither rule fires on either side | "unread" | — |
 
-- **"the loss is shape"** iff LB95 > 0, read on match 7's pooled interval, with the arm
-  being the recalibrated seat;
-- otherwise **"unread"**.
+  At 6,400 games 6a's interval is ≈ 13.2 wide, so "content" and "shape" cannot both hold.
 
-**Report-only: the recovered fraction.** This is match 7's estimate divided by −Elo(Zq)
-= 10.0. The denominator is itself 10.0 [−3.2, +23.2] (the gate), so the fraction is poorly
-determined: unbounded when the gate's true value is near 0. It is reported beside its
-numerator and never read.
+**Licenses.**
 
-**What 1,600 games can and cannot establish.** At SE ≈ 6.74 Elo:
-- "shape" reads with 80% power only if recalibration gains ≈ 19 Elo (2.80 × SE) over raw
-  Zq. That is more than Zq's whole measured loss.
-- If recalibration recovers exactly Zq's −10, the power is 0.32.
+| Reading | Licenses |
+|---|---|
+| shape | NOMINATES a recalibrated S-value cell for the owner, under its own record, confirmed on fresh games. Nothing is adopted |
+| content | The diagnosis's mechanism stands: a value target built from the 64-sim search value harms ranking that recalibration cannot fix. Value-target work needs a different target, or a held-out value, before generation 2 |
+| unread | Nothing |
 
-So the match can establish that recalibration helps Zq. It cannot establish that
-recalibration helps by less than about 19 Elo, and it cannot establish "shape is not the
-cause": an "unread" result leaves the shape account open.
-
-**What it licenses:** at most, a later and separate registration of a recalibrated-Zq vs
-base adoption match. Nothing is adopted here.
-
-## Cost and commands
-
-- **Cost.** Recal-only seats run at plain speed (launch record: 0.19 GPU-h per 800 games),
-  so match 7 ≈ **0.38 GPU-h**.
-- **Total GPU cost of this record:** match 5 ≈ 1.52 + match 7 ≈ 0.38 + match 6 ≈ 2.70 =
-  **≈ 4.6 GPU-h**.
+**Commands** (continuing the shell; 6b first, then 6a; each preceded by its 4-game smoke):
 
 ```bash
-R=$HOME/chess-artifacts/operations/rl-run1-pilot
-Zq=$R/arm_Zq/gen_0001/train/model.pt
-RC7=0.7036189636786957,-0.22711530923843357      # pilot-value-diagnosis/out/recal_Zq.json "cli"
-PY=$HOME/projects/chess/.venv/bin/python
-PINW=$HOME/projects/chess-worktrees/rl-run1-pilot-$(cut -c1-9 $R/PIN.txt)
-$R/run_match.sh zq_recal_h2h 1 A 2026112171 800 --candidate $Zq --reference $Zq --candidate-value-recal $RC7 || exit 1
-$R/run_match.sh zq_recal_h2h 1 B 2026112171 800 --candidate $Zq --reference $Zq --reference-value-recal $RC7 || exit 1
-d=$R/arenas/zq_recal_h2h
-cd $PINW && PYTHONPATH=. $PY scripts/arena_seat_balanced_pool.py --arm $Zq \
-  --a-games $d/zq_recal_h2h_1_A.games.jsonl --b-games $d/zq_recal_h2h_1_B.games.jsonl \
-  --a-result $d/results.jsonl --b-result $d/results.jsonl \
-  --a-label zq_recal_h2h_1_A --b-label zq_recal_h2h_1_B --out $d/pool.json > $d/pool.log 2>&1
+S=$P/arm_S/gen_0001/train/model.pt; SSHA=66ceb271beee37206afca097904156a0f36f23fab5aecda1439aca7bf23f455b
+RC6=0.853159495428655,-0.12023510932922338        # pilot-value-diagnosis/out/recal_S.json "cli"
+for spec in "s_value_raw -" "s_value_recal $RC6"; do set -- $spec; m=$1; rc=$2
+  ra=(); rb=(); [ $rc != - ] && ra=(--candidate-value-recal $rc) && rb=(--reference-value-recal $rc)
+  for O in $F/smoke $F; do n=$([ $O = $F ] && echo 3200 || echo 4)
+    $F/run_followup_match.sh $O $m 1 A 2026112161 $n --candidate $SL --reference $SL --candidate-value-from $S "${ra[@]}" || exit 1
+    $PY $F/check_seat.py $O/arenas/$m ${m}_1_A candidate $SSHA $rc || exit 1
+    $F/run_followup_match.sh $O $m 1 B 2026112161 $n --candidate $SL --reference $SL --reference-value-from $S "${rb[@]}" || exit 1
+    $PY $F/check_seat.py $O/arenas/$m ${m}_1_B reference $SSHA $rc || exit 1
+    pool $O $m $SL || exit 1
+  done
+done
 ```
 
-As the launch record notes for match 2, both seats are Zq's file. The pool refuses unless
-A's `candidate_value` equals B's `reference_value`, and the engine names carry the
-`+recal(T,b)` suffix.
+In each pool, the "arm" is the hybrid seat: run A's candidate and run B's reference.
+
+---
+
+## Cost (measured rates)
+
+- **Rates.** Plain and recal-only seats cost 0.19 GPU-h per 800 games (launch record).
+  Hybrid value-from seats cost 0.23–0.24 GPU-h per 800 games (measured, `plan-review-1473/`).
+- **Smokes.** 4 games per run, 8 per configuration; negligible.
+
+| Match | Games | Seats | GPU-h |
+|---|---|---|---|
+| 5 | 6,400 | plain | 1.52 |
+| 7 | 6,400 | recal only | 1.52 |
+| 6b | 6,400 | hybrid | 1.84–1.92 |
+| 6a | 6,400 | hybrid | 1.84–1.92 |
+| **Total** | 25,600 | | **≈ 6.7–6.9** |
