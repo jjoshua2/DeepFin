@@ -220,7 +220,14 @@ One recipe, not a grid. Items marked **guess** are listed for the owner.
 
 - **Init:** the SL base; Aurora split at batch 512 as the SL base used it
   (`--optimizer aurora --matrix-optimizer-scope mlp_out --optimizer-hparams-source
-  init-checkpoint`, #1445), its realised end-of-SL learning rates, flat schedule.
+  init-checkpoint`, #1445), flat schedule at the SL run's END rates: `--lr 3e-6`
+  (AdamW groups; the Aurora matrices at ×20 = 6e-5), which is what its saved
+  groups hold. The SL run STARTED at `--lr 3e-5` (matrices 6e-4) and decayed to
+  these. The end rates are chosen because this continues training a converged
+  net on new data, and P1 / F12 / Q50 already damaged the value at 3e-6-scale
+  rates. **Guess:** a cosine from the start rates (`--lr 3e-5 --lr-floor 3e-6
+  --lr-schedule cosine-phase`, per-group floors as #1445 now builds them) is the
+  alternative, not tried here.
 - **Heads:** all trained heads (policy and WDL); every other weight stays 0 as the
   driver pins it.
 - **Value target:** s × search WDL (`--value-search-source survivor_q`) + (1 − s) ×
