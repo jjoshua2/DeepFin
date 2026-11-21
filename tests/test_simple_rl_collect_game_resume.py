@@ -536,3 +536,69 @@ def test_stop_drains_the_in_flight_games_and_a_rerun_continues_dealing(
     assert rec["replayed_dole_indices"] == list(range(drained["dealt"], GAMES))  # next dole index on
     assert rec["journaled_games"] == 0
     _same_games(gen, plain)
+
+
+def test_the_replay_takes_its_moves_and_streams_from_the_journal_not_from_free_play(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Free replay on per-game streams reproduces the journal anyway on this fixture,
+    so the journal is TAMPERED to make each mechanism observable: the last journaled
+    move of an in-flight game is changed to another legal move (forcing), its first
+    entry's before-state and its last entry's after-state are replaced by states of
+    another generator (the stream restores). The replay must follow the journal."""
+    import numpy as np
+
+    from chess_anti_engine.moves.encode import index_to_move, move_to_index
+    from chess_anti_engine.selfplay.opening import seed_board_from_line
+
+    monkeypatch.setattr(collect_mod, "_open_stockfish", quiet_stockfish)
+    with monkeypatch.context() as mp:
+        _kill_journal_write(20, torn=False)(mp)
+        with pytest.raises(Killed):
+            _collect(tmp_path, "r")
+    gen = tmp_path / "r" / "gen_0001" / "collect"
+    proc = gen / "procs" / "00"
+    kept_ids = {int(json.loads(ln)["dole_index"]) for ln in _committed_lines(gen)}
+    entries = [e for e in _journal_entries(proc / "journal.jsonl") if int(e["i"]) not in kept_ids]
+    by_game: dict[int, list[dict[str, Any]]] = {}
+    for e in entries:
+        by_game.setdefault(int(e["i"]), []).append(e)
+    i, plies = max(by_game.items(), key=lambda kv: len(kv[1]))
+    plies.sort(key=lambda e: int(e["p"]))
+    assert len(plies) >= 3
+    # replay the journaled prefix on a board (unjournaled plies are single-legal moves)
+    starts = (gen / "starts.txt").read_text().splitlines()
+    board = seed_board_from_line(starts[i])
+    journaled = {int(e["p"]): int(e["m"]) for e in plies}
+    while board.ply() < int(plies[-1]["p"]):
+        legal = list(board.legal_moves)
+        move = index_to_move(journaled[board.ply()], board) if board.ply() in journaled else legal[0]
+        if board.ply() not in journaled:
+            assert len(legal) == 1
+        board.push(move)
+    alt = next(move_to_index(m, board) for m in board.legal_moves
+               if move_to_index(m, board) != int(plies[-1]["m"]) and not board.gives_check(m))
+    other = np.random.default_rng(12345)
+    state_a = other.bit_generator.state
+    other.random(7)
+    state_b = other.bit_generator.state
+    plies[0]["s0"], plies[-1]["s1"], plies[-1]["m"] = state_a, state_b, int(alt)
+    tampered = [e for g in sorted(by_game) for e in by_game[g]]
+    (proc / "journal.jsonl").write_text(json.dumps(tampered) + "\n")
+
+    written: list[dict[str, Any]] = []
+    real = collect_mod._Journal.write
+
+    def record(self: Any, es: list[dict[str, Any]]) -> None:
+        written.extend(es)
+        real(self, es)
+
+    monkeypatch.setattr(collect_mod._Journal, "write", record)
+    _collect(tmp_path, "r")
+    game = {int(g["dole_index"]): g for g in _games(gen / "games.jsonl")}[i]
+    last = int(plies[-1]["p"])
+    assert game["moves"][last - int(game["start_ply"])] == int(alt)  # the journaled move was played
+    replay = {int(e["p"]): e for e in written if int(e["i"]) == i}
+    assert replay[int(plies[0]["p"])]["s0"] == state_a  # its search ran on the journaled stream state
+    nxt = min((p for p in replay if p > last), default=None)
+    assert nxt is not None, "the game ended at its last journaled ply; pick a longer one"
+    assert replay[nxt]["s0"] == state_b  # and it continued from the journaled after-state

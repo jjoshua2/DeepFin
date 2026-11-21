@@ -269,8 +269,8 @@ def _finalize_completed_slots(
                 )
             state.finalized_arr[i] = 1
             state.games_completed += 1
-            if recycle and (continuous or state.games_started < target) and (
-                    getattr(state, "deal_fn", None) is None or state.deal_fn()):
+            deal = getattr(state, "deal_fn", None)  # absent from lightweight state doubles
+            if recycle and (continuous or state.games_started < target) and (deal is None or deal()):
                 ordinal = state.games_started
                 state.recycle_slot(i)
                 if game_starts is not None:
