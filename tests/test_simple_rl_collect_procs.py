@@ -148,6 +148,10 @@ def test_a_killed_k2_collect_resumes_keeping_finished_processes(
     monkeypatch.setattr(collect_mod, "write_manifest", real_manifest)
     stats, _ = _collect(tmp_path, "resumed", 2)
     assert stats["procs_resumed"] == [0, 1]
+    # no process played in this attempt: no rate to report (not games / merge time)
+    assert stats["games_per_hour"] is None
+    assert stats["rows_per_second"] is None
+    assert stats["timing_independent"] is False
     assert content_digest(gen)["content_sha256"] == content_digest(straight)["content_sha256"]
     assert content_digest(gen)["games_sha256"] == content_digest(straight)["games_sha256"]
 
@@ -247,7 +251,12 @@ def test_a_marker_present_at_start_holds_before_any_work(tmp_path: Path, monkeyp
     stats, _ = _collect(tmp_path, "p", 1, pause_markers=(marker,))
     assert stats["paused_seconds"] >= 1.0
     assert stats["games"] == 4
-    (_start, end), = stats["procs"][0]["pause_intervals"]
+    (proc,) = stats["procs"]
+    (start, end), = proc["pause_intervals"]
+    # the pre-load hold is inside the process clock, so its rate is not inflated
+    assert proc["paused_seconds"] <= proc["wall_seconds"]
+    assert start >= proc["started_at"]
+    assert proc["games_per_hour"] < 3600.0 * 4 / 0.5
     assert loads, "the recording loader was not on the collect's path"
     assert min(loads) >= end, "the model was loaded (GPU work) before the pause ended"
 
@@ -398,6 +407,16 @@ def test_vram_refusal_uses_free_memory_and_the_usable_limit(monkeypatch: pytest.
     assert collect_mod.check_vram(replace(settings, collect_procs=8, concurrency=64, sims=16)) is not None
     with pytest.raises(ValueError, match="usable limit"):
         collect_mod.check_vram(replace(settings, collect_procs=8, concurrency=96, sims=16))
+    # One process at 64 sims: 1 x 256 (measured 12.1 GB) fits; 1 x 512 peaked at
+    # 29.9 GB, past the usable limit, which the linear segment alone under-predicted.
+    one = replace(settings, collect_procs=1)
+    assert collect_mod.check_vram(replace(one, concurrency=256)) is not None
+    with pytest.raises(ValueError, match="usable limit"):
+        collect_mod.check_vram(replace(one, concurrency=512))
+    # A shape no process count fits is not told to use --collect-procs 1.
+    with pytest.raises(ValueError, match="no process count fits at --concurrency 1024: lower") as err:
+        collect_mod.check_vram(replace(one, concurrency=1024, games=2048))
+    assert "pass --collect-procs" not in str(err.value)
 
 
 def test_default_shape_table_by_sims() -> None:
@@ -409,12 +428,16 @@ def test_default_shape_table_by_sims() -> None:
 
 
 def test_combined_evaluator_record_fails_closed_on_disagreement() -> None:
+    graph_stats = {"replays": 3, "eager_over_max_rows": 1, "max_rows": 512, "graphs": 2}
     base = {"cuda_graphs": True, "evaluator_mode": "cuda_graphs", "eval_max_batch_realised": 4096,
-            "cuda_graph_stats": {"replays": 3, "eager_over_max_rows": 1, "max_rows": 512}}
+            "cuda_graph_stats": graph_stats}
     same = collect_mod._combined_evaluator_record([base, dict(base)])
     assert same["eval_max_batch_realised"] == 4096
     assert same["evaluator_mode"] == "cuda_graphs"
-    assert same["cuda_graph_stats"] == {"replays": 6, "eager_over_max_rows": 2, "max_rows": 512}
+    # counters sum; the per-process captured-shape count does not
+    assert same["cuda_graph_stats"] == {"replays": 6, "eager_over_max_rows": 2, "max_rows": 512, "graphs": 2}
+    other = {**base, "cuda_graph_stats": {**graph_stats, "graphs": 3}}
+    assert collect_mod._combined_evaluator_record([base, other])["cuda_graph_stats"]["graphs"] == [2, 3]
     odd = collect_mod._combined_evaluator_record([base, {**base, "eval_max_batch_realised": 2048,
                                                          "evaluator_mode": "eager", "cuda_graphs": False}])
     assert odd["eval_max_batch_realised"] is None

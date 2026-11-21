@@ -447,9 +447,15 @@ PAUSED_ACK = "PAUSED"
 # = 2858 / 4321 / 4806, 32 sims x 128 = 6553, 64 sims x 128 / 256 = 7368 / 12085.
 # Per process ~ 48 MiB per sim + 1.11 MiB per leaf row (the evaluator cap the
 # search asks for: 2048 / 3072 / 4096 / 8192 rows at 64 / 96 / 128 / 256 games,
-# topk 16), within -8% / +9% of every point; x 1.10 safety.
+# topk 16), within -8% / +9% of every one of those points; x 1.10 safety.
+# Above ~8k leaf rows in one process the peak grows faster than that line: 64 sims
+# x 512 games in ONE process (16384 rows) peaked at 28,515 MiB, which the line puts
+# at 21,260 (-25%). The steep segment through 1 x 256 and 1 x 512 (64 sims) is
+# ~2.006 MiB per row - 4348 MiB; the model takes the larger of the two.
 _VRAM_MIB_PER_SIM = 48.0
 _VRAM_MIB_PER_LEAF_ROW = 1.11
+_VRAM_STEEP_MIB_PER_LEAF_ROW = 2.006
+_VRAM_STEEP_MIB_OFFSET = -4348.0
 _VRAM_SAFETY = 1.10
 # Usable fraction of the card's memory: 8 x 96 at 16 sims peaked at 31,048 MiB
 # (95% of the 5090) and ran 22% slower than 6 x 96 at 25,926 MiB (80%), which ran
@@ -541,7 +547,9 @@ def proc_openings(openings: list[dict[str, Any]], proc: int, procs: int) -> list
 
 def vram_need_gib(settings: CollectSettings) -> float:
     """Conservative peak VRAM of ``collect_procs`` processes at these settings (GiB)."""
-    per_mib = _VRAM_MIB_PER_SIM * int(settings.sims) + _VRAM_MIB_PER_LEAF_ROW * realised_eval_max_batch(settings)
+    rows = realised_eval_max_batch(settings)
+    per_mib = max(_VRAM_MIB_PER_SIM * int(settings.sims) + _VRAM_MIB_PER_LEAF_ROW * rows,
+                  _VRAM_STEEP_MIB_PER_LEAF_ROW * rows + _VRAM_STEEP_MIB_OFFSET)
     return _VRAM_SAFETY * per_mib * int(settings.collect_procs) / 1024.0
 
 
@@ -564,13 +572,15 @@ def check_vram(settings: CollectSettings) -> dict[str, Any] | None:
     if need > usable:
         per = need / int(settings.collect_procs)
         fit = int(usable // per)
+        advice = (f"pass --collect-procs {fit} explicitly (a pinned run also needs --allow-config-change: K "
+                  "sets the RNG streams)" if fit >= 1 else
+                  f"no process count fits at --concurrency {settings.concurrency}: lower --concurrency")
         raise ValueError(
             f"--collect-procs {settings.collect_procs} x --concurrency {settings.concurrency} at --sims "
             f"{settings.sims} needs about {need:.1f} GiB of GPU memory ({per:.1f} GiB per process, fitted peak x "
             f"{_VRAM_SAFETY}), but only {usable:.1f} GiB is usable: {free / 2**30:.1f} of {total / 2**30:.1f} GiB "
             f"free, and the measured usable limit is ~{VRAM_USABLE_FRACTION:.0%} of the card (31.0 GB of 32 ran "
-            f"22% slower than 25.9 GB). Free the GPU, lower --concurrency, or pass --collect-procs {max(1, fit)} "
-            "explicitly (a pinned run also needs --allow-config-change: K sets the RNG streams)")
+            f"22% slower than 25.9 GB). Free the GPU, lower --concurrency, or {advice}")
     return record
 
 
@@ -638,6 +648,9 @@ def _play_proc(spec: ProcSpec) -> dict[str, Any]:
         shutil.rmtree(proc_dir)  # an unfinished process restarts from its own seed and openings
     (proc_dir / "shards").mkdir(parents=True)
     gate = PauseGate(Path(spec.run_dir), spec.pause_markers, proc_dir / PAUSED_ACK)
+    # The process clock starts BEFORE the pre-load hold, so wall_seconds contains
+    # every pause interval it records and active = wall - paused stays >= 0.
+    t0, started_at = time.perf_counter(), time.time()
     gate.wait()
     checkpoint = Path(spec.checkpoint)
     arch = _arch(checkpoint)
@@ -655,10 +668,10 @@ def _play_proc(spec: ProcSpec) -> dict[str, Any]:
     buffered_meta: list[tuple[int, int, str, bool, np.uint64]] = []
     shard_index = 0
     games_done = 0
+    rows_done = 0
     from chess_anti_engine.mcts.gumbel_c import buffer_full_flushes
 
     flushes_before = buffer_full_flushes()
-    t0 = time.perf_counter()
     model_sha = sha256_file(checkpoint)
 
     def flush() -> None:
@@ -687,7 +700,7 @@ def _play_proc(spec: ProcSpec) -> dict[str, Any]:
         pending[int(batch.samples[0].game_id)] = list(batch.samples)
 
     def on_game(audit: Any) -> None:
-        nonlocal games_done
+        nonlocal games_done, rows_done
         samples = pending.pop(int(audit.game_id), [])
         if len(samples) != int(audit.retained_samples):
             raise ValueError("sample callback and provenance disagree on retained rows")
@@ -710,6 +723,7 @@ def _play_proc(spec: ProcSpec) -> dict[str, Any]:
             "cap_reached": bool(audit.cap_reached),
         })
         games_done += 1
+        rows_done += len(samples)
         if len(buffered) >= int(settings.rows_per_shard):
             flush()
 
@@ -732,9 +746,9 @@ def _play_proc(spec: ProcSpec) -> dict[str, Any]:
     if not (proc_dir / GAMES).exists():
         (proc_dir / GAMES).write_text("")
     active = max(wall - gate.paused_seconds, 1e-9)
-    done = {"proc": spec.proc, "seed": spec.seed, "games": games_done, "shards": shard_index,
+    done = {"proc": spec.proc, "seed": spec.seed, "games": games_done, "rows": rows_done, "shards": shard_index,
             "play_batch_games": int(batch_stats.games), "wall_seconds": wall,
-            "paused_seconds": gate.paused_seconds, "pause_intervals": gate.intervals,
+            "started_at": started_at, "paused_seconds": gate.paused_seconds, "pause_intervals": gate.intervals,
             # Throughput over the time the process was not paused.
             "games_per_hour": 3600.0 * games_done / active,
             "games_sha256": sha256_file(proc_dir / GAMES),
@@ -845,7 +859,7 @@ def _sum_graph_stats(records: list[dict[str, Any]]) -> dict[str, Any] | None:
     for key in stats[0]:
         values = [s.get(key) for s in stats]
         numbers = [v for v in values if isinstance(v, (int, float)) and not isinstance(v, bool)]
-        if key == "max_rows":
+        if key in ("max_rows", "graphs"):  # per-process settings / captured-shape counts: never summed
             out[key] = values[0] if len({json.dumps(v) for v in values}) == 1 else values
         elif len(numbers) == len(values):
             out[key] = sum(numbers)
@@ -946,20 +960,23 @@ def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, trai
         start_books = (cursor_before or {}).get("books", {})
         stats["book_pass"] = {b: {"start": int(start_books.get(b, {"pass": 1})["pass"]), "end": int(c["pass"])}
                               for b, c in cursor_after["books"].items()}
-    # Wall of THIS attempt; processes kept from an interrupted one add their games
-    # but not their time, so a resumed collect's rate is an upper bound (the
-    # per-process records keep each process's own).
     # Paused time = the union of this attempt's processes' pause intervals (they
     # pause together); throughput is over the rest. A paused collect's timing is
     # not an independent measurement and says so.
+    # Rates count only the games and rows THIS attempt's processes played: a
+    # process kept from an interrupted attempt adds games but none of this wall.
+    # None when no process ran (a resume that only merged and sealed).
     fresh = {s.proc for s in todo}
     paused = _union_seconds([tuple(i) for r in records if int(r["proc"]) in fresh
                              for i in r.get("pause_intervals", [])])
     active = max(wall - paused, 1e-9)
+    fresh_records = [r for r in records if int(r["proc"]) in fresh]
+    games_now = sum(int(r["games"]) for r in fresh_records)
+    rows_now = sum(int(r["rows"]) for r in fresh_records)
     stats.update(wall_seconds=wall, paused_seconds=paused, active_seconds=active,
                  timing_independent=paused == 0.0 and not (set(done) - fresh),
-                 games_per_hour=3600.0 * games_done / active,
-                 rows_per_second=stats["rows"] / active, sf_nodes=int(settings.sf_nodes),
+                 games_per_hour=3600.0 * games_now / active if fresh else None,
+                 rows_per_second=rows_now / active if fresh else None, sf_nodes=int(settings.sf_nodes),
                  leaf_rows_required=required_leaf_rows(settings), collect_procs=k_procs,
                  procs_resumed=sorted(p for p in done if p not in fresh),
                  **_combined_evaluator_record(records))
