@@ -95,13 +95,15 @@ Naming: "SL base" is the supervised starting net, sha256
 
 ## Decisions for the owner
 
-| # | Decision | Recommended default | Alternative |
-|---|---|---|---|
-| O1 | **Stage 1's cells** | **Four pre-committed cells, all matched:** (a), (b), (c) at batch 512, and (a) at effective batch 2048 (below) | A different large batch than 2048, or a fifth cell |
-| O2 | **Stage 1's optimizer state** | **Fresh** (the Aurora split as the SL base used it; the split is the owner's and is not an arm) | Continue the SL base's saved Aurora state |
-| O3 | **Stage 1's collection size** | **1,040 games (≈ 100k rows)** | 2,080 games |
-| O4 | **Stage 2's time cap** | **One week** from Stage 2's start | Another cap |
-| O5 | **A 16-sim collection arm at matched GPU time** | **Deferred** until Stage 1 reads (the goal is a working loop at 64 sims) | Add it to Stage 1 as a fifth matched cell: 16 sims gives about **3.8×** the rows of 64 sims per GPU-hour (measured; the exchange-rate table at the end of Stage 1) |
+| # | Decision | Recommended default | Alternative | **Owner's decision** |
+|---|---|---|---|---|
+| O1 | **Stage 1's cells** | **Four pre-committed cells, all matched:** (a), (b), (c) at batch 512, and (a) at effective batch 2048 (below) | A different large batch than 2048, or a fifth cell | *(unfilled)* |
+| O2 | **Stage 1's optimizer state** | **Fresh** (the Aurora split as the SL base used it; the split is the owner's and is not an arm) | Continue the SL base's saved Aurora state | *(unfilled)* |
+| O3 | **Stage 1's collection size** | **1,040 games (≈ 100k rows)** | 2,080 games | *(unfilled)* |
+| O4 | **Stage 2's time cap** | **One week** from Stage 2's start | Another cap | *(unfilled)* |
+| O5 | **A 16-sim collection arm at matched GPU time** | **Deferred** until Stage 1 reads (the goal is a working loop at 64 sims) | Add it to Stage 1 as a fifth matched cell: 16 sims gives about **3.8×** the rows of 64 sims per GPU-hour (measured; the exchange-rate table at the end of Stage 1) | *(unfilled)* |
+
+The owner fills the last column; nothing launches while any cell of it is unfilled.
 
 ## Stage 0: what is known before any training
 
@@ -582,13 +584,16 @@ recorded at each snapshot, descriptively.
 Per cell, the played model is the snapshot with the highest **A1** top-1 against
 the dose ruler, among snapshots inside the
 [calibration band](#calibration-band-used-by-the-dose-choice-and-by-stage-2).
-Snapshots within one game-clustered SE of the best count as tied, and the earliest
-of them is played (less movement). If no snapshot is inside the band, the one
+Snapshots within one SE of the best count as tied, and the earliest of them is
+played (less movement). The SE is that of the **paired** top-1 difference between
+the two snapshots on the same A1 rows, clustered by game. If no snapshot is inside the band, the one
 nearest the band is played. A2 is reported and never used to choose.
 - **The dose ruler** is the Stage 0b-validated ruler, else searched BT4 at 256
   nodes, labelled unvalidated.
-- The scorer is a P5 prerequisite. If it has not landed, every cell plays its
-  final model, pre-committed.
+- The scorer is a P5 prerequisite. If it has not landed, **or if the dose
+  ruler's labels on A1 have not landed** (searched BT4 at 256 nodes needs
+  `ext_search.py`, which defaults to the GPU, and GPU work is held while the
+  owner uses the machine), every cell plays its final model, pre-committed.
 
 ### Exact commands
 
@@ -596,9 +601,15 @@ nearest the band is played. A2 is reported and never used to choose.
 COLLECT1="${COLLECT/--games 16000/--games 1040}"; COLLECT1="${COLLECT1/--seed 2026112000/--seed 2026112300}"
 python -u scripts/simple_rl_loop.py collect --run-dir $R/s1/collect --generation 1 $COLLECT1
 chmod -R a-w $R/s1/collect
-# target (b)'s source: the retarget step (P5) writes the full sealed collect $R/s1/collect_norescale
+# target (b)'s source: the retarget step (PR #1446) writes the full sealed run dir $R/s1/collect_norescale
 #   (gen_0000 + gen_0001/collect), policy_target rebuilt with target_q_rescale=False.
-AUR="--optimizer aurora --matrix-optimizer-scope mlp_out <SL-run Aurora knobs + zclip, from the init checkpoint (flag names from the optimizer PR)>"
+python -u scripts/simple_rl_loop.py retarget --source-run-dir $R/s1/collect --generation 1 \
+  --out-run-dir $R/s1/collect_norescale --no-target-q-rescale
+chmod -R a-w $R/s1/collect_norescale
+# The SL base's Aurora knobs, matrix-LR multiplier, weight decays and zclip, resolved from the init
+# checkpoint and recorded (PR #1445). The LR schedule stays flat (a stated confound; --lr-schedule
+# cosine-phase exists).
+AUR="--optimizer aurora --matrix-optimizer-scope mlp_out --optimizer-hparams-source init-checkpoint"
 BASE="--presentations 1 --mirror-prob 0.5 --warmup-steps 0 $AUR \
   --optimizer-state fresh --init-optimizer-state fresh \
   --holdout-frac 0.05 --probe-rows 2048 --no-eval \
@@ -617,7 +628,9 @@ cell c512  $R/s1/collect            1 3e-6   --w-wdl 0 --train-target-temp 1.5
 cell a2048 $R/s1/collect            4 1.2e-5 --w-wdl 0
 ```
 
-The command is final once the optimizer PR fixes its flag names.
+Flag names are final once PRs #1445 (optimizer), #1446 (retarget) and the
+`--accum-steps` / `--snapshot-rows` PR merge; each cell's manifest records the
+realised param-group table, clip mode, accumulation and resolved snapshot updates.
 
 ### Registered matches: all four cells
 
@@ -625,8 +638,22 @@ Each cell's dose-chosen model plays 2,000 games against the SL base at 64 sims,
 seat-balanced:
 - **Openings:** the 500-line `s1_match` block.
 - **Arena:** loop-exp1's `$COMMON` with `--games 1000 --openings-fen <block>` in
-  place of `--openings`/`--opening-plies`, two runs on one seed with the cell as
-  candidate (A) and as reference (B).
+  place of `--openings`/`--opening-plies` and **`--seed 2026112400`**, two runs
+  with the cell as candidate (A) and as reference (B):
+  ```bash
+  S1M="${COMMON/--seed 2026112001/--seed 2026112400}"; S1M="${S1M/--games 1600/--games 1000}"
+  S1M="${S1M/--openings <run>\/openings\/eval.pgn/--openings-fen $R/blocks/s1_match.fen}"
+  S1M="${S1M/--opening-plies <summary.json eval_max_plies> /}"
+  for c in a512 b512 c512 a2048; do
+    M=$R/s1/$c/played_model.pt   # the dose-chosen snapshot, copied and sha-recorded
+    PYTHONPATH=. python -u scripts/arena_standard.py $S1M --candidate $M --reference $R/sl_base.pt \
+      --label s1_${c}_A --games-out $R/s1/match/s1_${c}_A.games.jsonl \
+      --pgn-out $R/s1/match/s1_${c}_A.pgn --out $R/s1/match/results.jsonl
+    PYTHONPATH=. python -u scripts/arena_standard.py $S1M --candidate $R/sl_base.pt --reference $M \
+      --label s1_${c}_B --games-out $R/s1/match/s1_${c}_B.games.jsonl \
+      --pgn-out $R/s1/match/s1_${c}_B.pgn --out $R/s1/match/results.jsonl
+  done
+  ```
 - **Pooling:**
   ```bash
   python scripts/arena_seat_balanced_pool.py --arm <model.pt> \
@@ -640,7 +667,9 @@ seat-balanced:
 
 **Reading and dispositions (pre-committed, per match):**
 - **Success:** lower bound above 0. Stage 2 launches on that cell; with several, on
-  the one with the highest pooled estimate.
+  the one with the highest pooled estimate. A cell whose success came via its
+  confirmation is ranked by the **confirmation's** pooled estimate, read alone
+  (never pooled with its unread first look).
 - **Kill:** upper bound below 0. The cell is recorded as harmful at this dose.
 - **Unread:** one fresh confirmation, with the same size, on `s1_confirm`, read
   alone at z = Φ⁻¹(1 − 0.025/m), where m is the number of cells taken to
@@ -812,7 +841,11 @@ and dose.
     generations. At a true difference of 0, each generation trips with probability
     0.025, so a stop needs two in a row: about 0.06% per pair and about 1% over 15
     generations, assuming independent generations. Generations share the A2 rows,
-    so the realised rate is higher; it is re-estimated from the first readouts.
+    so the realised rate is higher: **about 5–8%** over 15 generations at a
+    generation-to-generation correlation of 0.5–0.8 (review simulation, SE 0.5 pp;
+    0.8–7.7% across SE 0.4–0.6 pp). It is re-estimated from the alarm's own
+    per-generation reads (the lag-1 correlation of the A2 top-1 difference), not
+    from the readouts, which are matches and cannot measure it.
     (A point-estimate gate would stop a neutral run about half the time per
     generation, review N5.)
   - **Calibration:** stop only if the gap leaves the band by more than 2 SE at two
