@@ -149,6 +149,36 @@ must be verified on the machine being used.
   ±35 Elo near the null at the same variance. Small screens identify large
   differences; more games and independent training seeds answer finer questions.
 
+## A seat with another net's value, or a recalibrated value
+
+`scripts/arena_standard.py --candidate-value-from CKPT` plays the candidate's
+policy with CKPT's WDL. Both nets run a full forward on every batch, because the
+checkpoints have separate trunks. The bank's hybrid arms ran 2.4–3.5× the wall
+of a plain arm without CUDA graphs.
+
+`--candidate-value-recal T,b` turns the WDL logits (W, D, L, side to move) into
+`logits / T + [0, b, 0]` at every forward, root and leaves. Alone it costs no
+second forward. Both options also exist as `--reference-*` for the reference
+seat.
+
+- **Recorded.** The settings (the value-from path and `[T, b]`) are in the
+  game-log fingerprint, so a hybrid run keys its own log and cannot resume or pool
+  as a plain one. The value-from sha256 and `[T, b]` are in the provenance block,
+  the result row (`candidate_value` / `reference_value`) and the PGN tags
+  (`CandidateValueFrom[SHA256]`, `CandidateValueRecal`). A default PGN engine name
+  gets a `+V<net>` / `+recal(T,b)` suffix.
+- **Refused combinations.** `--compile on` is refused; `auto` resolves to off,
+  and on CUDA the evaluator's graphs capture the hybrid's eager forward. Also
+  refused: `--volatility-*` and `matched_time`.
+- **Identity controls (tests).** Value from the seat's own checkpoint with
+  `1,0` plays the plain seat's games move for move. A W/L-swapped value flips
+  the evaluator's WDL and declines a free queen.
+- **Fitting T and b.** Use `scripts/fit_value_recal.py`. It runs the head-swap
+  bank's cross-entropy-to-the-reference fit, and given the bank's logits it
+  reproduces the bank's parameters exactly. Fit on rows disjoint from the
+  match's openings, for example a simple-RL collect's hold-out games
+  (`--collect-dir`), and pre-register the rows.
+
 ## A crashed match is resumable — never replay a finished game
 
 Both drivers (`scripts/arena_standard.py`, `scripts/match_vs_uci.py`) append one

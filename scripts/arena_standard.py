@@ -75,6 +75,7 @@ from chess_anti_engine.eval.arena_durable import (
     file_span,
     validate_source_seal,
 )
+from chess_anti_engine.eval.seat_value import SeatValue, parse_recal
 from chess_anti_engine.eval.sprt import SprtMonitor, SprtSpec
 from chess_anti_engine.moves import ActionDecodeError
 from chess_anti_engine.utils.claimable_outcome import outcome_claim_draw
@@ -1136,7 +1137,62 @@ SPRT_LOG_INFO_KEY = "sprt"
 PROVENANCE_LOG_INFO_KEY = "provenance"
 
 
-def arena_provenance(candidate: str, reference: str, openings_source: str | None) -> dict[str, Any]:
+def hybrid_engine_name(name: str, seat: SeatValue | None) -> str:
+    """A default PGN engine name that cannot collide with the plain seat's.
+
+    Two players with one name are ONE player in a pooled Ordo fit, so a hybrid
+    seat without an explicit ``--pgn-*-name`` gets a suffix naming its value.
+    """
+    if seat is None or not seat.active:
+        return name
+    suffix = ""
+    if seat.value_from is not None:
+        suffix += "+V" + engine_name_from_checkpoint(seat.value_from, fallback="value")
+    if seat.recal is not None:
+        suffix += f"+recal({seat.recal[0]:g},{seat.recal[1]:g})"
+    return name + suffix
+
+
+def seat_value_pgn_tags(provenance: Mapping[str, Any]) -> dict[str, str]:
+    """PGN tags naming each hybrid seat's value-from checkpoint, its sha256 and [T, b]."""
+    tags: dict[str, str] = {}
+    for role, prefix in (("candidate", "Candidate"), ("reference", "Reference")):
+        block = (provenance.get(role) or {}).get("value")
+        if not block:
+            continue
+        tags[f"{prefix}SHA256"] = str((provenance.get(role) or {}).get("sha256"))
+        vf = block.get("value_from")
+        if vf is not None:
+            tags[f"{prefix}ValueFrom"] = str(vf.get("path"))
+            tags[f"{prefix}ValueFromSHA256"] = str(vf.get("sha256"))
+        if block.get("recal") is not None:
+            t, b = block["recal"]
+            tags[f"{prefix}ValueRecal"] = f"T={float(t)!r},b={float(b)!r}"
+    return tags
+
+
+def _path_provenance(path: str, flag: str) -> dict[str, Any]:
+    try:
+        return seat_provenance(path)
+    except ProvenanceError as exc:
+        if Path(path).exists():
+            raise SystemExit(f"[arena] {flag}: {exc}") from exc
+        return {"path": str(path), "sha256": None, "files": []}
+
+
+def seat_value_provenance(seat: SeatValue, *, role: str) -> dict[str, Any]:
+    """A hybrid seat's value block: the value-from checkpoint's sha256 and the recalibration."""
+    return {
+        "value_from": (None if seat.value_from is None
+                       else _path_provenance(seat.value_from, f"--{role}-value-from")),
+        "recal": None if seat.recal is None else [float(seat.recal[0]), float(seat.recal[1])],
+    }
+
+
+def arena_provenance(
+    candidate: str, reference: str, openings_source: str | None, *,
+    value_candidate: SeatValue | None = None, value_reference: SeatValue | None = None,
+) -> dict[str, Any]:
     """sha256 of what each seat loads and of the openings source, computed once per run.
 
     A seat path that does not exist is recorded with ``sha256: null`` (the
@@ -1144,17 +1200,27 @@ def arena_provenance(candidate: str, reference: str, openings_source: str | None
     seat that exists but cannot be hashed consistently -- a JSON spec whose
     recorded ``<key>_sha256`` disagrees with the file it names -- is refused:
     the spec would otherwise claim nets it does not load.
+
+    A seat whose value is not its own (``--<role>-value-from`` /
+    ``--<role>-value-recal``) also carries a ``value`` block: the value-from
+    checkpoint's provenance and ``[T, b]``. A plain seat has no ``value`` key,
+    so a plain log's header is unchanged.
     """
     out: dict[str, Any] = {}
-    for role, path in (("candidate", candidate), ("reference", reference)):
-        try:
-            out[role] = seat_provenance(path)
-        except ProvenanceError as exc:
-            if Path(path).exists():
-                raise SystemExit(f"[arena] --{role}: {exc}") from exc
-            out[role] = {"path": str(path), "sha256": None, "files": []}
+    for role, path, seat in (("candidate", candidate, value_candidate),
+                             ("reference", reference, value_reference)):
+        out[role] = _path_provenance(path, f"--{role}")
+        if seat is not None and seat.active:
+            out[role]["value"] = seat_value_provenance(seat, role=role)
     out["openings_sha256"] = openings_sha256(openings_source)
     return out
+
+
+def _value_signature(block: Mapping[str, Any] | None) -> tuple[Any, Any] | None:
+    if not block:
+        return None
+    vf = block.get("value_from")
+    return ((None if vf is None else vf.get("sha256")), block.get("recal"))
 
 
 def provenance_differences(recorded: Mapping[str, Any], current: Mapping[str, Any]) -> list[str]:
@@ -1169,6 +1235,10 @@ def provenance_differences(recorded: Mapping[str, Any], current: Mapping[str, An
         now_files = [(f.get("role"), f.get("sha256")) for f in (current.get(role) or {}).get("files") or []]
         if was == now and was_files != now_files:
             diffs.append(f"{role} member files {was_files} -> {now_files}")
+        was_value = _value_signature((recorded.get(role) or {}).get("value"))
+        now_value = _value_signature((current.get(role) or {}).get("value"))
+        if was_value != now_value:
+            diffs.append(f"{role} value (value-from sha256, recal) {was_value} -> {now_value}")
     if recorded.get("openings_sha256") != current.get("openings_sha256"):
         diffs.append(f"openings sha256 {recorded.get('openings_sha256')} -> {current.get('openings_sha256')}")
     return diffs
@@ -3072,6 +3142,8 @@ def run_arena(
     durable_source_seal: ValidatedSourceSeal | None = None,
     durable_source_seal_sha256: str | None = None,
     pair_receipts_dir: Path | None = None,
+    value_candidate: SeatValue | None = None,
+    value_reference: SeatValue | None = None,
 ) -> dict:
     """Run one standardized arena and return (and optionally log) the record.
 
@@ -3131,6 +3203,24 @@ def run_arena(
             raise SystemExit("--syzygy requires compiled Gumbel search")
     if games < 2 or games % 2 != 0:
         raise SystemExit("--games must be even and >= 2 (paired openings)")
+    value_candidate = value_candidate if value_candidate is not None and value_candidate.active else None
+    value_reference = value_reference if value_reference is not None and value_reference.active else None
+    hybrid_seats = [role for role, seat in (("candidate", value_candidate),
+                                            ("reference", value_reference)) if seat is not None]
+    if hybrid_seats:
+        if mode != "matched_sims":
+            raise SystemExit("--<seat>-value-from / --<seat>-value-recal need matched_sims: matched_time "
+                             "plays UCI subprocesses that load their own nets")
+        if volatility_candidate is not None:
+            raise SystemExit("--<seat>-value-from / --<seat>-value-recal cannot combine with --volatility-*: "
+                             "that search runs the Python path and reads the volatility head, which the "
+                             "hybrid does not define")
+        if compile_models:
+            raise SystemExit(
+                "--compile on is refused with --<seat>-value-from / --<seat>-value-recal: the hybrid "
+                "forward is untested under torch.compile. Run --compile off (or auto, which resolves to "
+                "off): on CUDA the evaluator's graphs capture the hybrid's eager forward, both nets in "
+                "one graph per batch shape")
     if eval_max_batch < 0:
         raise SystemExit("--eval-max-batch must be >= 0 (0 disables the hoist)")
     # CUDA graphs of the hoisted evaluator's eager dense forward are the ONE
@@ -3258,7 +3348,8 @@ def run_arena(
     openings_kind = "fen" if openings_fen is not None else "book"
     # Hashed ONCE, before any resume decision: a resume onto rewritten files is
     # refused, and every result row carries what was actually played.
-    provenance = arena_provenance(candidate, reference, openings_source)
+    provenance = arena_provenance(candidate, reference, openings_source,
+                                  value_candidate=value_candidate, value_reference=value_reference)
     log_settings = arena_game_log_settings(
         mode=mode,
         candidate=candidate,
@@ -3287,6 +3378,15 @@ def run_arena(
         log_settings["sprt_lookahead_pairs"] = sprt_lookahead_pairs
     if durable:
         log_settings["durable_source_seal_sha256"] = durable_source_seal_sha256
+    # A hybrid seat plays a different evaluator from the plain checkpoint of
+    # the same path, so its settings (value-from path, [T, b]) are bound into
+    # the fingerprint: a hybrid run keys its own game log and can never resume
+    # into, or pool as, a plain run. Added only when set, so every plain
+    # fingerprint is unchanged byte for byte.
+    if value_candidate is not None:
+        log_settings["value_candidate"] = value_candidate.settings_record()
+    if value_reference is not None:
+        log_settings["value_reference"] = value_reference.settings_record()
     fingerprint = settings_fingerprint(log_settings)
     log_path = (
         Path(game_log_path) if game_log_path is not None
@@ -3454,10 +3554,10 @@ def run_arena(
     cand_name = ref_name = ""
     cand_search = ref_search = ""
     if pgn_out is not None:
-        cand_name = pgn_candidate_name or engine_name_from_checkpoint(
-            candidate, fallback="candidate")
-        ref_name = pgn_reference_name or engine_name_from_checkpoint(
-            reference, fallback="reference")
+        cand_name = pgn_candidate_name or hybrid_engine_name(
+            engine_name_from_checkpoint(candidate, fallback="candidate"), value_candidate)
+        ref_name = pgn_reference_name or hybrid_engine_name(
+            engine_name_from_checkpoint(reference, fallback="reference"), value_reference)
         if cand_name == ref_name:
             # Two players that share a name become ONE player in a pooled fit,
             # and the resulting rating is a silent average of both. Refuse
@@ -3480,6 +3580,7 @@ def run_arena(
             base_tags["SyzygyMaxPieces"] = str(tb_max_pieces)
         if label:
             base_tags["ArenaLabel"] = label
+        base_tags.update(seat_value_pgn_tags(provenance))
         pgn_writer = ArenaPgnWriter(
             pgn_out, event=label or "arena", base_tags=base_tags,
             durable=durable,
@@ -3739,6 +3840,27 @@ def run_arena(
         model_reference = load_model_from_checkpoint(reference, device=device)
         print(f"[arena] both checkpoints loaded "
               f"(reference in {time.time() - _t_load:.0f}s)", flush=True)
+        if hybrid_seats:
+            from chess_anti_engine.eval.hybrid_value import build_seat_model
+
+            for role, seat in (("candidate", value_candidate), ("reference", value_reference)):
+                if seat is None:
+                    continue
+                print(f"[arena] {role} value: {seat.describe()}", flush=True)
+                plain = model_candidate if role == "candidate" else model_reference
+                built = build_seat_model(plain, seat, device=device, load=load_model_from_checkpoint)
+                if role == "candidate":
+                    model_candidate = built
+                else:
+                    model_reference = built
+                # Read back off the BUILT module (the consumer), not the CLI.
+                print(
+                    f"[arena] {role} HYBRID built: value_net="
+                    f"{'own' if getattr(built, 'value_net', None) is None else 'loaded'} "
+                    f"recal_T={getattr(built, 'recal_t', None)} "
+                    f"recal_bias={[float(v) for v in getattr(built, 'recal_bias').tolist()]}",
+                    flush=True,
+                )
   # RE-DERIVE the uncapped leaf size now that the checkpoints exist. The launch
   # check had to run before this point so a refusal beats a multi-minute
   # compile, and there it could only assume relations OFF -- a FLOOR. A model
@@ -4270,6 +4392,10 @@ def run_arena(
     record["openings_sha256"] = provenance["openings_sha256"]
     record["candidate_files"] = provenance["candidate"]["files"]
     record["reference_files"] = provenance["reference"]["files"]
+    # Present only for a hybrid seat: the value-from checkpoint's sha256 and [T, b].
+    for role in ("candidate", "reference"):
+        if "value" in provenance[role]:
+            record[f"{role}_value"] = provenance[role]["value"]
     record["game_log_provenance"] = (
         "this_run" if resumed is None else resumed.log_provenance
     )
@@ -4537,6 +4663,17 @@ def main() -> None:
                         "— two arms that share a name become ONE player.")
     p.add_argument("--pgn-reference-name", default=None,
                    help="stable engine identity for the reference in --pgn-out")
+    for seat in ("candidate", "reference"):
+        p.add_argument(f"--{seat}-value-from", default=None, metavar="CKPT",
+                       help=f"the {seat} plays its own checkpoint's POLICY with the WDL of CKPT: both "
+                            "nets run a full forward on every batch (about 2x the evaluation cost; the "
+                            "checkpoints have separate trunks, so one forward cannot serve both). "
+                            "CKPT's sha256 goes into the provenance, the result row and the PGN tags")
+        p.add_argument(f"--{seat}-value-recal", default=None, metavar="T,b",
+                       help=f"the {seat}'s WDL logits (W,D,L, side-to-move) become logits/T + [0,b,0] "
+                            "at every forward, root and leaves (applied to --"
+                            f"{seat}-value-from's net when both are given). Fit T and b with "
+                            "scripts/fit_value_recal.py on rows disjoint from the match openings")
     p.add_argument("--mode", choices=["matched_sims", "matched_time"],
                    default="matched_sims")
     p.add_argument("--sims", type=int, default=64,
@@ -4769,7 +4906,21 @@ def main() -> None:
     sims_cand = int(args.sims if args.sims_candidate is None else args.sims_candidate)
     sims_ref = int(args.sims if args.sims_reference is None else args.sims_reference)
     effective_sims = max(sims_cand, sims_ref)
+    try:
+        value_candidate = SeatValue(
+            value_from=args.candidate_value_from,
+            recal=None if args.candidate_value_recal is None else parse_recal(args.candidate_value_recal))
+        value_reference = SeatValue(
+            value_from=args.reference_value_from,
+            recal=None if args.reference_value_recal is None else parse_recal(args.reference_value_recal))
+    except ValueError as exc:
+        raise SystemExit(f"[arena] {exc}") from None
     compile_mode = "off" if args.no_compile else args.compile
+    if compile_mode == "auto" and (value_candidate.active or value_reference.active):
+        # The hybrid forward is not compiled (run_arena refuses --compile on);
+        # auto resolves to the eager forward, which CUDA graphs capture.
+        compile_mode = "off"
+        print("[arena] compile=auto -> off (a hybrid value seat is never compiled)", flush=True)
     if compile_mode == "off":
         compile_models = False
         if args.mode == "matched_sims":
@@ -4886,6 +5037,8 @@ def main() -> None:
         sprt_lookahead_pairs=args.sprt_lookahead_pairs,
         durable_source_seal=validated_durable_seal,
         pair_receipts_dir=args.pair_receipts_dir,
+        value_candidate=value_candidate,
+        value_reference=value_reference,
     )
 
 
