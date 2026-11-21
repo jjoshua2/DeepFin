@@ -2,8 +2,8 @@
 
 **Superseded as a standalone experiment (2026-11-20).** The owner made the RL loop
 the main path to strength, with doses to come from measurements. This experiment
-is not launched on its own. It is reused as Stage 1 of the
-[RL run 1 plan](2026-11-20-rl-run1-multi-generation-plan.md), which takes its
+is not launched on its own. The
+[RL run 1 plan](2026-11-20-rl-run1-multi-generation-plan.md) takes its
 commands, gates, arena and pooling rules from this record. Its decisions D1–D9
 are replaced by that plan's decisions.
 
