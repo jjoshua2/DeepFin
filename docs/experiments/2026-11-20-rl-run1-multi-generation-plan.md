@@ -423,8 +423,11 @@ the difference?
 
 One SL-base collection: loop-exp1's `$COLLECT` with `--games 1040 --seed
 2026112300`, which gives about 100k rows.
-- **Cost:** about 20 min at the measured 3,284 games/h, or about 12 min at 5,021
-  games/h with `--collect-procs 3` (PR #1441, not merged; interim).
+- **Cost:** about 12 min at 0.49M training rows per GPU-hour (64 sims, 3 processes
+  × 128 games, `--collect-procs` from PR #1441, not merged). Without it, about 20
+  min at the earlier single-process 3,284 games/h. Source: the collect-throughput
+  bank `~/chess-artifacts/operations/rl-claude-20261119/collect-throughput/`
+  (interim, the measuring agent's figures).
 - It must pass loop-exp1's collect gates (G-C1–G-C11), and is frozen once arms
   reference it.
 
@@ -637,7 +640,7 @@ clusters, ρ = +0.12; *review*). That is an SE of 6.06 Elo at 500 clusters, and 
 80%-power MDE of 19.6 Elo at z 2.394, about 10% larger at ρ = +0.36.
 
 **Compute:**
-- collect: 12–20 min;
+- collect: about 12 min (20 without #1441);
 - training: 13 cells, minutes each;
 - offline screen: minutes;
 - matches: 1.1–1.6 h per 2,000 games, so 3.3–4.8 h for three, plus confirmations.
@@ -683,8 +686,19 @@ against R800, Stage 0b).
 **Later, only after Stage 1 has read:**
 - learner recipes (anchor, R1 per-row entropy matching, ranking loss), screened
   the same way;
-- search-depth arms at matched GPU time, sized from the measured exchange rate
-  (16 sims gives 1.9× the games of 64 sims, not 4×; interim).
+- search-depth arms at matched GPU time, sized from the measured exchange rate.
+  The collect-throughput bank (interim) gives training rows per GPU-hour on the SL
+  base, at the best measured multi-process setting each (PR #1441, not merged):
+
+  | Target sims | Rows per GPU-hour | Setting (processes × games) | Share of the forward ceiling |
+  |---:|---:|---|---:|
+  | 16 | 1.86M | 6×96 or 8×64 | 0.89 |
+  | 32 | 0.88M (**provisional**; 8×64 not yet measured) | 3×128 | — |
+  | 64 | 0.49M | 3×128 | 0.86 |
+
+  So 16 sims gives about 3.8× the rows of 64 sims per GPU-hour once the process
+  count is raised, and 2.8× at 3×128. 100k rows take about 12 min at 64 sims and
+  about 3 min at 16. The usable VRAM limit is about 26 GB in total.
 
 These are not planned in detail here.
 
@@ -850,8 +864,8 @@ So offline scores only filter, and only after a ruler is validated; only registe
 | The Stockfish K band (40–60%), the 25–75% re-tune trigger, 400 games | Stage 2 anchor | the tuning ladder and first readouts |
 | G-C3 ≥ +0.50; holdout 0.05; probe 2,048 | gates | not tuned |
 | +50 Elo at one week, and "halved" | success line | Stage 1's projection |
-| 3,284 / 5,021 games/h; 96.8 rows per game; 1,274–1,800 arena games/h | compute | Stage 1's own runs |
-| The 16-vs-64-sim exchange rate (1.9×, one point, interim) | later depth arms | the throughput measurement |
+| 0.49M rows per GPU-hour at 64 sims (3,284 games/h single-process); 96.8 rows per game; 1,274–1,800 arena games/h | compute | Stage 1's own runs |
+| The exchange rate: 1.86M / 0.88M (provisional) / 0.49M rows per GPU-hour at 16 / 32 / 64 sims | later depth arms | the full collect-throughput report, after #1441 |
 | BT4 raw forward cost (about 43 ms per row on 8 CPU threads) | the conditional diagnostic | its own run, if it runs |
 
 ## Pre-launch checks
