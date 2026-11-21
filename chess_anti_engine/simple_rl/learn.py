@@ -150,6 +150,21 @@ class TrainSettings:
     # train/snapshots/step_<k>/ (weights-only model.pt + metrics.json) without
     # changing the training it is part of. See write_snapshot.
     snapshot_updates: tuple[int, ...] = ()
+    # Gradient accumulation: one optimizer step per `accum_steps` micro-batches
+    # of `batch_size` rows, so the effective batch is batch_size * accum_steps.
+    # The Trainer scales each micro-batch's loss by rows / batch_size /
+    # accum_steps, so every row's coefficient is 1 / (batch_size * accum_steps):
+    # the step's gradient is the native big batch's (see plan_batches).
+    # Warmup / the LR schedule / snapshot_updates count OPTIMIZER steps.
+    accum_steps: int = 1
+    # Exact-once only, the alternative to snapshot_updates for comparing
+    # different effective batches at matched samples: snapshot after the first
+    # optimizer step at which this many rows have been presented (resolved
+    # against the batch plan by snapshot_updates_for_rows; recorded).
+    snapshot_rows: tuple[int, ...] = ()
+
+    def effective_batch(self) -> int:
+        return int(self.batch_size) * int(self.accum_steps)
 
     def search_wdl_frac(self) -> float:
         total = float(self.value_outcome_weight) + float(self.value_search_weight)
@@ -185,6 +200,26 @@ class TrainSettings:
             raise ValueError(f"matrix_optimizer_scope {self.matrix_optimizer_scope!r} is read only by the "
                              f"{SCOPED_OPTIMIZERS} optimizers (or weight_decay_mode soda); with optimizer "
                              f"{self.optimizer!r} it would be ignored")
+        if int(self.accum_steps) < 1:
+            raise ValueError(f"accum_steps must be >= 1, got {self.accum_steps}")
+        if int(self.accum_steps) > 1 and (self.kl_policy > 0 or self.kl_wdl > 0):
+            # ReferenceAnchor.penalty is a mean over ONE micro-batch's eligible
+            # rows; the Trainer adds it per micro-batch, so with unequal
+            # eligible counts the accumulated penalty is not the big batch's.
+            raise ValueError("accum_steps > 1 with a KL anchor (kl_policy / kl_wdl) is refused: the anchor's "
+                             "penalty is a per-micro-batch mean, so under accumulation it is not the effective "
+                             "batch's penalty; use a native batch (accum_steps 1) with the anchor")
+        if int(self.accum_steps) > 1 and self.sl_mix_frac > 0:
+            raise ValueError("accum_steps > 1 with sl_mix_frac > 0 is refused: the SL share is rounded per "
+                             "micro-batch, so the accumulated step is not the effective batch's mix")
+        if self.snapshot_updates and self.snapshot_rows:
+            raise ValueError("snapshot_updates and snapshot_rows are alternatives; give one")
+        rows = [int(k) for k in self.snapshot_rows]
+        if rows:
+            if self.sample_with_replacement:
+                raise ValueError("snapshot_rows applies to the exact-once schedule only, not sample_with_replacement")
+            if rows[0] < 1 or any(b <= a for a, b in itertools.pairwise(rows)):
+                raise ValueError(f"snapshot_rows must be strictly increasing positive row counts, got {rows}")
         snaps = [int(k) for k in self.snapshot_updates]
         if snaps:
             if self.sample_with_replacement:
@@ -364,7 +399,32 @@ def planned_phase_updates(run_dir: Path, generation: int, settings: TrainSetting
         if not (Path(run_dir) / f"gen_{g:04d}" / "collect" / "manifest.json").is_file():
             return None
         n += int((~holdout_mask(_generation_meta(run_dir, g), settings.holdout_frac)).sum())
+    if int(settings.accum_steps) > 1:
+        return len(step_row_counts(n, batch_size=int(settings.batch_size), accum_steps=int(settings.accum_steps)))
     return math.ceil(n / settings.own_rows_per_batch())
+
+
+def phase_train_rows(run_dir: Path, generation: int, settings: TrainSettings) -> int | None:
+    """The exact-once phase's trainable rows from sealed metadata (None while unsealed)."""
+    if settings.sample_with_replacement:
+        return None
+    n = 0
+    for g in phase_generations(generation, settings):
+        if not (Path(run_dir) / f"gen_{g:04d}" / "collect" / "manifest.json").is_file():
+            return None
+        n += int((~holdout_mask(_generation_meta(run_dir, g), settings.holdout_frac)).sum())
+    return n
+
+
+def planned_snapshot_updates(run_dir: Path, generation: int, settings: TrainSettings) -> tuple[int, ...] | None:
+    """snapshot_updates, or snapshot_rows resolved against the plan; None while unsealed."""
+    if not settings.snapshot_rows:
+        return tuple(int(k) for k in settings.snapshot_updates)
+    n = phase_train_rows(run_dir, generation, settings)
+    if n is None:
+        return None
+    return snapshot_updates_for_rows(settings.snapshot_rows, step_row_counts(
+        n, batch_size=int(settings.own_rows_per_batch()), accum_steps=int(settings.accum_steps)))
 
 
 def check_snapshot_plan(snapshots: tuple[int, ...] | list[int], updates: int) -> None:
@@ -489,16 +549,99 @@ class ScheduledSampler:
         return batch
 
 
+def step_row_counts(n_own: int, *, batch_size: int, accum_steps: int = 1) -> list[int]:
+    """Rows per OPTIMIZER step of the exact-once plan (no SL share).
+
+    Steps of ``batch_size * accum_steps`` rows and a short last one. Under
+    accumulation each step is split into ``accum_steps`` non-empty
+    micro-batches, so a last step of fewer than ``accum_steps`` rows cannot
+    stand alone: it joins the previous step (the only departure from the
+    native big batch's plan; every row's coefficient stays 1 / effective
+    batch). With accum_steps 1 this is exactly the historical plan.
+    """
+    n, eff, k = int(n_own), int(batch_size) * int(accum_steps), int(accum_steps)
+    if n < k:
+        raise ValueError(f"{n} rows cannot fill {k} non-empty micro-batches")
+    counts = [eff] * (n // eff) + ([n % eff] if n % eff else [])
+    if k > 1 and len(counts) > 1 and counts[-1] < k:
+        tail = counts.pop()
+        counts[-1] += tail
+    return counts
+
+
+def refuse_masked_heads_under_accumulation(rows: dict[str, np.ndarray], settings: TrainSettings) -> None:
+    """Under accumulation every trained head's rows must all carry its target.
+
+    ``compute_loss`` reduces each head to a masked mean over ONE micro-batch
+    (policy over ``is_network_turn * has_policy``, the value over
+    ``is_network_turn``), and the Trainer then scales every micro-batch by
+    rows / (batch * accum_steps). When the valid-row count differs between
+    micro-batches the accumulated step is not the native big batch's masked
+    mean (review of #1447: 2.4e-1 relative gradient difference with 30% value
+    -only rows). With every row valid both reductions agree, so that is the
+    only case accepted. The heads simple-RL trains are policy and WDL; every
+    other weight is pinned to 0 in ``trainer_kwargs``.
+    """
+    if int(settings.accum_steps) <= 1:
+        return
+    n = int(rows["x"].shape[0])
+    net = np.asarray(rows.get("is_network_turn", np.ones(n)), dtype=bool)
+    masks = {}
+    if float(settings.w_policy) > 0:
+        masks["policy (is_network_turn * has_policy)"] = net & np.asarray(rows.get("has_policy", np.ones(n)),
+                                                                          dtype=bool)
+    if float(settings.w_wdl) > 0:
+        masks["wdl (is_network_turn)"] = net
+    bad = {name: int((~m).sum()) for name, m in masks.items() if not m.all()}
+    if bad:
+        raise ValueError(f"accum_steps {settings.accum_steps} refused: phase rows without a trained head's target "
+                         f"{bad} of {n}. Each micro-batch normalises a head by its own valid-row count, so the "
+                         "accumulated gradient would not be the effective batch's; train these rows with "
+                         "accum_steps 1 (a native batch)")
+
+
+def snapshot_updates_for_rows(rows: tuple[int, ...] | list[int], step_rows: list[int]) -> tuple[int, ...]:
+    """The optimizer-step count after which each requested row count has been
+    presented (the first step whose cumulative rows reach it)."""
+    cum = np.cumsum(np.asarray(step_rows, dtype=np.int64))
+    out = []
+    for r in rows:
+        if int(r) > int(cum[-1]):
+            raise ValueError(f"snapshot_rows {list(rows)} reach past the phase's {int(cum[-1])} rows")
+        out.append(int(np.searchsorted(cum, int(r), side="left")) + 1)
+    if any(b <= a for a, b in itertools.pairwise(out)):
+        raise ValueError(f"snapshot_rows {list(rows)} resolve to repeated optimizer steps {out}; space them at "
+                         "least one effective batch apart")
+    return tuple(out)
+
+
 def plan_batches(n_own: int, *, batch_size: int, sl_frac: float, sl_available: int,
-                 rng: np.random.Generator, sl_start: int = 0) -> tuple[list[tuple[np.ndarray, np.ndarray]], int]:
+                 rng: np.random.Generator, sl_start: int = 0,
+                 accum_steps: int = 1) -> tuple[list[tuple[np.ndarray, np.ndarray]], int]:
     """Shuffled exact-once batches over ``n_own`` rows (+ an SL share).
 
     Each full batch holds ``round(sl_frac * batch_size)`` SL rows; the short
     final batch holds the same SL proportion of its own rows, rounded. SL rows
     are taken consecutively from ``sl_start`` in the run's fixed corpus order,
     so none is used twice in a run. Returns (batches, sl_end).
+
+    ``accum_steps`` > 1 (no SL share): the batches returned are MICRO-batches,
+    ``accum_steps`` per optimizer step, in step order. Each step's rows (see
+    ``step_row_counts``) are a contiguous slice of the same shuffled order the
+    native ``batch_size * accum_steps`` plan would use, split into
+    ``accum_steps`` near-equal parts, so the step presents the same rows.
     """
     order = rng.permutation(int(n_own))
+    if int(accum_steps) > 1:
+        if sl_frac > 0:
+            raise ValueError("accum_steps > 1 with an SL share is refused (see TrainSettings.validate)")
+        micro: list[tuple[np.ndarray, np.ndarray]] = []
+        start = 0
+        empty = np.zeros(0, dtype=np.int64)
+        for c in step_row_counts(int(n_own), batch_size=int(batch_size), accum_steps=int(accum_steps)):
+            micro.extend((part, empty) for part in np.array_split(order[start:start + c], int(accum_steps)))
+            start += c
+        return micro, int(sl_start)
     n_sl = round(float(sl_frac) * int(batch_size)) if sl_frac > 0 else 0
     own_per = int(batch_size) - n_sl
     if own_per <= 0:
@@ -666,7 +809,7 @@ def trainer_kwargs(settings: TrainSettings) -> dict[str, Any]:
         "feature_dropout_p": 0.0, "fdp_king_safety": 0.0, "fdp_pins": 0.0, "fdp_pawns": 0.0,
         "fdp_mobility": 0.0, "fdp_outposts": 0.0, "resid_channel_dropout": 0.0,
         "resid_channel_balance_weight": 0.0, "rebuild_sf_targets": False, "sf_policy_sparse_ce": False,
-        "rebuild_categorical_target": False, "swa_start": -1, "accum_steps": 1,
+        "rebuild_categorical_target": False, "swa_start": -1, "accum_steps": int(settings.accum_steps),
         "w_policy": settings.w_policy, "w_wdl": settings.w_wdl,
         "w_soft": 0.0, "w_future": 0.0, "w_sf_own": 0.0, "w_sf_own_regret": 0.0,
         "w_sf_policy_floor": 0.0, "w_sf_shape": 0.0, "w_sf_move": 0.0, "w_sf_eval": 0.0,
@@ -1152,11 +1295,13 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
     run_dir = Path(run_dir)
     settings.validate()
     planned = planned_phase_updates(run_dir, generation, settings)
-    if settings.snapshot_updates:
+    if settings.snapshot_updates or settings.snapshot_rows:
         # Before ANY write (stage dir, run-level probe.npz): a refused plan leaves the run as it was.
         if planned is None:
             raise ValueError(f"generation {generation}: a phase collect is not sealed; refusing to train")
-        check_snapshot_plan(settings.snapshot_updates, planned)
+        planned_snaps = planned_snapshot_updates(run_dir, generation, settings)
+        assert planned_snaps is not None
+        check_snapshot_plan(planned_snaps, planned)
     out_dir = run_dir / f"gen_{generation:04d}" / "train"
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "manifest.json").unlink(missing_ok=True)  # a redo is unsealed until its own manifest lands
@@ -1185,6 +1330,7 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
         reference_prior = _reference_prior
 
     train_rows, target_info = prepare_targets(train_rows, settings, reference_prior)
+    refuse_masked_heads_under_accumulation(train_rows, settings)
     holdout = {k: v for k, v in holdout.items() if k not in TARGET_SOURCE_KEYS}
     if settings.optimizer_state not in ("fresh", "continue"):
         raise ValueError("optimizer_state must be fresh or continue")
@@ -1233,7 +1379,7 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
                                 sl_frac=settings.sl_mix_frac)
         passes = 1.0 if settings.passes is None else float(settings.passes)
         updates = int(settings.updates) if settings.updates > 0 else max(
-            1, math.ceil(passes * sampler.n / int(settings.batch_size)))
+            1, math.ceil(passes * sampler.n / settings.effective_batch()))
         sl_end = sl_cursor
     else:
         # The double-presentation guard: every row this phase presents must
@@ -1249,9 +1395,11 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
         batches, sl_end = plan_batches(
             int(row_ids.shape[0]), batch_size=int(settings.batch_size), sl_frac=settings.sl_mix_frac,
             sl_available=0 if sl_rows is None else int(sl_rows["x"].shape[0]),
-            rng=np.random.default_rng(seed), sl_start=sl_cursor)
+            rng=np.random.default_rng(seed), sl_start=sl_cursor, accum_steps=int(settings.accum_steps))
         sampler = ScheduledSampler(train_rows, batches, rng=np.random.default_rng(seed ^ 0x5A5A), sl_rows=sl_rows)
-        updates = len(batches)
+        if len(batches) % int(settings.accum_steps):
+            raise RuntimeError(f"{len(batches)} micro-batches do not fill whole steps of {settings.accum_steps}")
+        updates = len(batches) // int(settings.accum_steps)
         if planned is not None and planned != updates:
             raise RuntimeError(f"planned_phase_updates said {planned} updates, the batch plan has {updates}")
 
@@ -1263,8 +1411,16 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
         anchor = ReferenceAnchor(reference, policy_coef=settings.kl_policy, wdl_coef=settings.kl_wdl)
         attach_anchor(trainer, anchor)
 
+    if int(trainer.accum_steps) != int(settings.accum_steps):
+        raise RuntimeError(f"Trainer realised accum_steps {trainer.accum_steps}, requested {settings.accum_steps}")
     start_step = int(trainer.step)
-    snapshots = [int(k) for k in settings.snapshot_updates]
+    if settings.snapshot_rows:
+        assert isinstance(sampler, ScheduledSampler)  # validate(): exact-once only
+        step_rows = [int(sum(int(o.size) for o, _ in sampler.batches[i:i + int(settings.accum_steps)]))
+                     for i in range(0, len(sampler.batches), int(settings.accum_steps))]
+        snapshots = list(snapshot_updates_for_rows(settings.snapshot_rows, step_rows))
+    else:
+        snapshots = [int(k) for k in settings.snapshot_updates]
     check_snapshot_plan(snapshots, updates)
     prev_model: Any = None
 
@@ -1379,6 +1535,9 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
         "anchor": None if anchor is None else anchor.diagnostics(), "wall_seconds": wall,
         "updates_per_second": (updates - (resumed_from or 0)) / max(wall, 1e-9),
         "snapshot_updates": snapshots, "resumed_from_snapshot": resumed_from,
+        "snapshot_rows": [int(r) for r in settings.snapshot_rows],
+        "accum_steps": int(trainer.accum_steps), "effective_batch": settings.effective_batch(),
+        "rows_per_optimizer_step": _rows_per_step(sampler, int(settings.accum_steps)),
         "snapshots": [{"update": r["update"], "model_sha256": r["files"][MODEL_FILE]["sha256"],
                        "metrics_sha256": r["files"]["metrics.json"]["sha256"]} for r in snapshot_records],
     }
@@ -1413,7 +1572,9 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
                    config={"settings": asdict(settings), "arch": arch,
                            # realised, read off the objects that consumed them
                            "realised": {"optimizer": realised_opt, "amp": bool(trainer.use_amp),
-                                        "device": str(trainer.device)}},
+                                        "device": str(trainer.device),
+                                        "accum_steps": int(trainer.accum_steps),
+                                        "effective_batch": int(settings.batch_size) * int(trainer.accum_steps)}},
                    inputs=inputs, outputs={"model": input_ref(model_path), "presented": input_ref(out_dir / PRESENTED),
                                            **snapshot_outputs},
                    counts={"updates": updates, "window_rows": sampler.n},
@@ -1423,6 +1584,15 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
         for name in (RESUME_TRAINER, RESUME_STATE):
             (snapshot_dir(out_dir, r["update"]) / name).unlink(missing_ok=True)
     return summary
+
+
+def _rows_per_step(sampler: Any, accum_steps: int) -> dict[str, Any] | None:
+    """Exact-once: rows each optimizer step presented (min / max / steps), from the plan served."""
+    if not isinstance(sampler, ScheduledSampler) or not sampler.served:
+        return None
+    sizes = [int(a.size) for a in sampler.served]
+    per = [sum(sizes[i:i + accum_steps]) for i in range(0, len(sizes), accum_steps)]
+    return {"steps": len(per), "min": min(per), "max": max(per), "rows": sum(per)}
 
 
 def snapshot_resume_key(*, settings: TrainSettings, generation: int, init_checkpoint: Path,

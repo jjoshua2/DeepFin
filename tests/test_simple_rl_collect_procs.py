@@ -507,3 +507,21 @@ def test_overlapping_or_missing_openings_across_processes_are_refused(
     monkeypatch.setattr(collect_mod, "proc_openings", lambda rows, _p, k: rows[:len(rows) // k])
     with pytest.raises(ValueError, match="openings played differ"):
         _collect(tmp_path, "overlap", 2)
+
+
+def test_an_arm_of_a_source_without_run_config_takes_the_collect_manifest_shape(tmp_path: Path) -> None:
+    """A retarget output has sealed collects but no run_config.json; its arm must
+    not fall through to the default table (and then fail settings_diff)."""
+    source = tmp_path / "retargeted"
+    (source / "gen_0001" / "collect").mkdir(parents=True)
+    (source / "gen_0001" / "collect" / "manifest.json").write_text(json.dumps(
+        {"config": {"settings": {"collect_procs": 1, "concurrency": 96}}}))
+    a = simple_rl_loop.parser().parse_args(
+        ["train", "--run-dir", str(tmp_path / "arm"), "--openings-dir", str(tmp_path), "--generation", "1",
+         "--collect-from", str(source), "--sims", "16", "--games", "512", "--device", "cuda"])
+    assert simple_rl_loop.resolve_collect_shape(a) == (1, 96)
+    legacy = tmp_path / "legacy"
+    (legacy / "gen_0001" / "collect").mkdir(parents=True)
+    (legacy / "gen_0001" / "collect" / "manifest.json").write_text(json.dumps({"config": {"settings": {}}}))
+    a.collect_from = str(legacy)
+    assert simple_rl_loop.resolve_collect_shape(a) == (1, 64)  # predates both keys

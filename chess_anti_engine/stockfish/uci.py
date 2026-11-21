@@ -528,6 +528,11 @@ def _validated_position_history(
 # histories whose every move already passed the checks above are stored, and a
 # hit resumes those exact checks at the first move it does not cover, so the
 # accepted set and every error are unchanged. Bounded LRU, shared by threads.
+# Cached boards are copied WITHOUT their move stack: validation only needs the
+# current position (legality, push, and the final FEN with its clocks, castling,
+# turn and EP square, all position state), never pop() or repetition, and a
+# stack copy is O(game length) per label -- 2.7x of the per-label cost on
+# 160-ply games (878 -> 321 us, identical outputs; 2026-11-20).
 _PREFIX_CACHE_MAX = 1024
 _PREFIX_LOOKBACK = 8
 _prefix_cache: OrderedDict[tuple[str, tuple[str, ...]], tuple[str, chess.Board]] = OrderedDict()
@@ -545,7 +550,7 @@ def _validated_prefix(
             if hit is not None:
                 _prefix_cache.move_to_end(key)
                 root, board = hit
-                return root, board.copy(stack=True), n
+                return root, board.copy(stack=False), n
     return None
 
 
@@ -554,7 +559,7 @@ def _remember_validated_prefix(
 ) -> None:
     key = (root_fen, moves)
     with _prefix_lock:
-        _prefix_cache[key] = (root, board.copy(stack=True))
+        _prefix_cache[key] = (root, board.copy(stack=False))
         _prefix_cache.move_to_end(key)
         while len(_prefix_cache) > _PREFIX_CACHE_MAX:
             _prefix_cache.popitem(last=False)
