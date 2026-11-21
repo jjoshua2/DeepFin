@@ -673,11 +673,33 @@ def parser() -> argparse.ArgumentParser:
         sp.add_argument("--redo-downstream", action="store_true",
                         help="with --redo: also unseal every later sealed stage (moved to <run>/superseded/) and "
                              "rewind the run-level files derived from them")
+    rt = sub.add_parser("retarget", help="write a NEW run dir whose generation-G collect is the source's with "
+                                         "the policy target rebuilt from its stored root statistics (offline; "
+                                         "an arm then trains on it with --collect-from)")
+    rt.add_argument("--source-run-dir", required=True)
+    rt.add_argument("--generation", type=int, required=True)
+    rt.add_argument("--out-run-dir", required=True, help="must not exist")
+    rt.add_argument("--no-target-q-rescale", dest="target_q_rescale", action="store_false",
+                    help="rebuild without the min-max Q rescale (the only retarget so far; required)")
     r = sub.add_parser("run", help="generations 1..G of collect -> train -> evaluate")
     _common(r)
     r.add_argument("--generations", type=int, required=True)
     r.add_argument("--allow-config-change", action="store_true")
     return p
+
+
+def cmd_retarget(a: argparse.Namespace) -> int:
+    from chess_anti_engine.simple_rl.retarget import retarget_collect, retarget_summary
+
+    if a.target_q_rescale:
+        raise SystemExit("retarget: pass --no-target-q-rescale (the only rebuild this step offers)")
+    try:
+        record = retarget_collect(source_run_dir=Path(a.source_run_dir), generation=int(a.generation),
+                                  out_run_dir=Path(a.out_run_dir), target_q_rescale=False)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(retarget_summary(record))
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -688,6 +710,8 @@ def main(argv: list[str] | None = None) -> int:
         torch.set_num_threads(int(a.threads))
     if a.command == "split-openings":
         return cmd_split(a)
+    if a.command == "retarget":
+        return cmd_retarget(a)
     if a.command == "run":
         return cmd_run(a)
     return cmd_stage(a)
