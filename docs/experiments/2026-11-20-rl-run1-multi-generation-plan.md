@@ -93,7 +93,7 @@ Naming: "SL base" is the supervised starting net, sha256
 | # | Decision | Recommended default | Alternative |
 |---|---|---|---|
 | O1 | **Stage 1's grid** | **3 policy targets × 4 effective batch sizes, plus a value-first cell** (below) | Fewer batch sizes (256 and 1024 only) |
-| O2 | **Stage 1's optimizer** | **Production's: `--optimizer aurora --matrix-optimizer-scope mlp_out`** (Muon-style on the FFN and attention-output matrices, AdamW on the rest). The owner tuned that split, so it is taken as given, not an arm | `nadamw`, the driver's default, which is what the earlier nulls effectively ran (below) |
+| O2 | **Stage 1's optimizer state** | **Fresh** (the Aurora split as the SL base used it, at batch 512, is the baseline optimizer; the split is the owner's and is not an arm) | Continue the SL base's saved Aurora state (one screen cell either way) |
 | O3 | **Stage 1's collection size** | **1,040 games (≈ 100k rows)** | 2,080 games |
 | O4 | **Stage 2's time cap** | **One week** from Stage 2's start | Another cap |
 
@@ -226,6 +226,26 @@ rows (cycle-1 F12 games, in sample for P1 and F12), with two column groups:
   about 0.7 × the prior's: base prior 1.11 → target 0.74; P1 prior 0.79 → target
   0.56, on the same Q.
 
+### Every loop null so far used an optimizer the owner never tuned
+
+The diagnosis's finding, partly re-checked here:
+- **F12, P1 and Q50** all trained with NAdamW: torch NAdam, betas (0.9, 0.98), eps
+  1e-7, decoupled weight decay 1e-4 on 190 weight tensors and 0 on 289 bias and norm
+  tensors.
+  - They used one flat LR of 3e-6 on both groups, batch 256, no gradient clipping
+    and a fresh optimizer state.
+  - Re-checked here: the F12 contract's `batch_size` 256, and the P1 log's groups
+    `[(3e-06, 0.0001, 190), (3e-06, 0.0, 289)]`.
+- **The SL base was trained with production's Aurora split.** Read here from the
+  SL base file's saved optimizer state:
+  - 48 matrices (scope `mlp_out`) on Aurora at LR 6e-5 (20 × 3e-6), with momentum
+    0.95, Nesterov, weight decay 1e-4;
+  - the other 431 tensors on AdamW at 3e-6, betas (0.9, 0.95), split into groups of
+    142 (weight decay 1e-4) and 289 (no weight decay).
+- So every loop null used an optimizer, split and batch the owner never tuned, at
+  half his tested batch of 512. This is a confound of the earlier nulls, which
+  Stage 1 removes by default.
+
 ### Target pricing depends on the ruler (review; spot-checked here)
 
 Maximum top-1 gain over the base prior if every flip were learned and nothing
@@ -341,6 +361,13 @@ leak-free rows (`external_refs.npz`, `leak_mask.npz`; computed here):
 rulers first. A ruler is *validated* when two things hold. First, it is not the training target. Second, on A1 ∪ A2 it ranks the SL base
 above P1 c12, F12 c12 and Q50 c12, and Q50 c12 last of the four. A pair whose
 difference is within one SE (game-clustered) counts as a tie, not an error.
+
+**The diagnosis's learner screen (Stage 0b, held until the owner finishes using the
+GPU).** Arms N256, N512, N1024, N4096 (NAdamW), N4096 with linear LR, and A512
+(the Aurora split), on the leak-free rows, scored at matched samples and matched
+KL. Its bank (`search-compose/`) is cited here when it lands. If it already
+separates the optimizers or batches, Stage 1's grid narrows to the cells it leaves
+open.
 
 **What Stage 0b decides for Stage 1.** It does not gate Stage 1, with one exception.
 If searched BT4 and Ceres at 256 nodes both price the stored target at or below the
@@ -466,6 +493,9 @@ rows per optimizer step, at an equal number of samples seen.
 - **512** is production's setting (`configs/pbt2_small.yaml`, Aurora; the owner
   found it better than smaller sizes).
 
+**Plus two optimizer cells, offline screen only, on target (a):** the legacy
+NAdamW-256 cell, and Aurora-512 with the SL base's optimizer state continued.
+
 **Plus one value-first cell (d):** value only, on the game outcome (`--w-policy 0
 --w-wdl 1 --value-outcome-weight 1 --value-search-weight 0`), at batch 512. This
 tests the other branch of the candidate mechanism: the loop gains only if the value
@@ -477,35 +507,44 @@ the targets. It does not remove a consistent bias. The measured sharpening (targ
 entropy ≈ 0.7 × the prior's, interim) is a bias every row shares. So the batch axis
 is crossed with the target arms, not a replacement for them.
 
-### The optimizer, read from the code
+### The optimizer: the owner-tested setup is the baseline
 
-- **Production:** `optimizer: aurora`, `matrix_optimizer_scope: mlp_out`,
-  `matrix_lr_multiplier: 20`, `batch_size: 512` (`configs/pbt2_small.yaml`). The
-  owner tuned the Aurora/AdamW split and found 512 better than 256 in his own
-  experiments. Stage 1 takes the split as given, and **512 is the baseline batch.**
+- **Baseline: the Aurora split as the SL base used it, at batch 512.**
+  - The flags: `--optimizer aurora --matrix-optimizer-scope mlp_out --lr 3e-6`.
+  - The Trainer's default `matrix_lr_multiplier` of 20 (which the driver does not
+    expose, and which production also uses) gives the matrix group 6e-5 and the
+    AdamW groups 3e-6. Those are the SL run's end LRs, the natural starting point
+    for fine-tuning. They are a guess, screened by movement per sample (below).
+  - The owner tuned this split and found 512 better than 256
+    (`configs/pbt2_small.yaml`: `optimizer: aurora`, `matrix_optimizer_scope:
+    mlp_out`, `matrix_lr_multiplier: 20`, `batch_size: 512`). The split is taken
+    as given, not screened.
 - **What Aurora does** (`train/aurora.py`, `AuroraWithAuxAdam`; the owner: "aurora
-  is built on muon on top of adamw"):
-  - The matrix group's update is the orthogonalised (polar) Nesterov momentum,
-    with momentum 0.95. That is a fixed-norm step: the LR alone sets how far it
-    moves, whatever the gradient's size or noise.
-  - The matrix group's LR is `lr × matrix_lr_multiplier` = 20 × `lr`
-    (`train/trainer.py`). The driver does not expose the multiplier, so the
-    Trainer default of 20, which matches production, applies.
-  - The other groups are AdamW at `lr`, with betas (0.9, 0.95).
-- **The simple-RL driver's defaults differ from production:** `--optimizer nadamw`
-  and `--batch-size 256` (`scripts/simple_rl_loop.py`). NAdam is β1 0.9, β2 0.98,
-  ε 1e-7, with two groups, decay (1e-4) and no-decay (0), both at `--lr`.
-- **What P1/F12 actually ran:**
-  - **Batch 256:** the F12 contract's `batch_size`, checked here.
-  - **Two parameter groups, both at 3e-6** (the P1 log: `[(3e-06, 0.0001, 190),
-    (3e-06, 0.0, 289)]`). That is an Adam-family layout. An Aurora run would show
-    a matrix group at 20 × `lr`, and there is none. The optimizer class is not named
-    in the contract; the two-group layout is the evidence.
-  - **Confound of the earlier nulls:** P1/F12 departed from the production
-    optimizer setup (no Aurora matrix group, batch 256 against 512). Their 64-sim
-    nulls may partly reflect that. Stage 1 runs the production setup.
-- **The realised LR of every group** is read off the optimizer's param groups in
-  each run's metrics, never off the flag (P8).
+  is built on muon on top of adamw"). The matrix group's update is the
+  orthogonalised Nesterov momentum. That is a fixed-norm step: the LR alone sets
+  how far it moves, whatever the gradient's size or noise. The other groups are
+  AdamW.
+- **Hyperparameters: the driver does not reproduce the SL run's Aurora settings.**
+  - The SL base's saved groups carry `aurora_pp_iterations` 3, `aurora_pp_beta`
+    0.25, `aurora_polar_steps` 8, `aurora_polar_method` `polar_express` and
+    `aurora_polar_dtype` fp16.
+  - The driver passes none of these, so the Trainer's defaults apply instead: 2,
+    0.5, 12, `simple` and `auto` (`train/trainer.py`).
+  - **Code: yes, small.** The driver exposes these five knobs, and the baseline
+    sets them to the SL run's values. The PR is tested by reading the realised
+    group values back off the optimizer (P5, P8).
+- **Optimizer state: fresh, or continued from the SL base. These are different
+  experiments.**
+  - The SL base file stores its optimizer state (`opt`, `opt_param_names`).
+  - **Baseline: fresh state**, as Stage 2 uses each generation.
+  - **One screen cell continues the state:** `--init-optimizer-state checkpoint
+    --adopt-checkpoint-optimizer-hparams`. Both flags exist. The second keeps the
+    checkpoint's group hyperparameters and never adopts the LR.
+- **One legacy comparison cell:** NAdamW at batch 256, LR 3e-6, the driver's
+  default and what the nulls ran. It is in the offline screen only, never the
+  default.
+- **The realised LR and hyperparameters of every group** are read off the
+  optimizer's param groups in each run's metrics, never off the flags (P8).
 - **Momentum's averaging window** is about batch × 1/(1 − β) samples. That is 20
   steps for Aurora's matrix momentum (10,240 samples at batch 512; 81,920 at
   4096), and 10 steps for AdamW's first moment.
@@ -562,8 +601,9 @@ python -u scripts/simple_rl_loop.py collect --run-dir $R/s1/collect --generation
 chmod -R a-w $R/s1/collect
 # target (b)'s source: the retarget step (new PR, P5) writes the sealed reference
 #   collect $R/s1/collect_norescale, whose policy_target is rebuilt with target_q_rescale=False.
-BASE="--presentations 1 --mirror-prob 0.5 --warmup-steps 0 --optimizer aurora \
-  --matrix-optimizer-scope mlp_out --optimizer-state fresh --init-optimizer-state fresh \
+AUR="--optimizer aurora --matrix-optimizer-scope mlp_out <SL-run Aurora knobs: pp 3, pp_beta 0.25, polar 8, polar_express, fp16 (flag names from the P5 PR)>"
+BASE="--presentations 1 --mirror-prob 0.5 --warmup-steps 0 $AUR \
+  --optimizer-state fresh --init-optimizer-state fresh \
   --holdout-frac 0.05 --probe-rows 2048 --no-eval"
 # effective batch -> native micro-batch, accumulation (new flag, P5), base lr (linear scaling)
 declare -A MB=([256]=256 [512]=512 [1024]=512 [4096]=512)
@@ -584,6 +624,9 @@ for b in 256 512 1024 4096; do
   cell c_$b $b $R/s1/collect --w-wdl 0 --train-target-temp 1.5
 done
 cell d_512 512 $R/s1/collect --w-policy 0 --w-wdl 1 --value-outcome-weight 1 --value-search-weight 0
+cell a_512_cont 512 $R/s1/collect --w-wdl 0 --init-optimizer-state checkpoint --adopt-checkpoint-optimizer-hparams
+# legacy cell: NAdamW 256, run with $AUR removed from BASE (the Aurora knobs are refused with nadamw)
+BASE="${BASE/$AUR/--optimizer nadamw}" cell a_256_nadamw 256 $R/s1/collect --w-wdl 0
 ```
 
 `planned_updates b` is loop-exp1's step-2 `planned_phase_updates` reader at that
@@ -641,7 +684,7 @@ clusters, ρ = +0.12; *review*). That is an SE of 6.06 Elo at 500 clusters, and 
 
 **Compute:**
 - collect: about 12 min (20 without #1441);
-- training: 13 cells, minutes each;
+- training: 15 cells, minutes each;
 - offline screen: minutes;
 - matches: 1.1–1.6 h per 2,000 games, so 3.3–4.8 h for three, plus confirmations.
 
@@ -852,7 +895,7 @@ So offline scores only filter, and only after a ruler is validated; only registe
 | Every *interim* number in Stage 0 (veto weights, the 0.7× ratchet) | direction | the diagnosis's full report, T1 / T2 |
 | The ruler validation rule | Stage 0b | Stage 1's results as a positive control |
 | 1,040 games / ≈ 100k rows | Stage 1, Stage 2 | Stage 1's read and O3 |
-| Linear LR scaling anchored at 3e-6 for batch 512 (matrix LR 20×) | Stage 1 batch axis | the matched-KL read |
+| Linear LR scaling anchored at 3e-6 for batch 512 (matrix LR 20× = 6e-5, the SL run's end LRs) | Stage 1 batch axis | the matched-KL read and the Stage 0b learner screen |
 | The matched-KL points (the 512 arm at 10 / 35 / 69 updates) | Stage 1 screen | Stage 1's held-out curves |
 | Snapshot grid 10…276 | Stage 1 dose | Stage 1's held-out curves |
 | `--train-target-temp 1.5` | target (c) | Stage 1 |
@@ -882,7 +925,9 @@ So offline scores only filter, and only after a ruler is validated; only registe
 - **P5.** Two small PRs have merged and were run once on a small collect:
   - the retarget step (target (b)), tested so the rebuilt target equals the shard's
     `policy_target` when rescale is on;
-  - `--accum-steps` (the batch axis), tested so accumulated equals native on CPU.
+  - `--accum-steps` (the batch axis), tested so accumulated equals native on CPU;
+  - the driver's Aurora knobs (pp iterations, pp beta, polar steps, polar method,
+    polar dtype), tested by reading them back off the optimizer's groups.
 - **P6.** For the Stockfish anchor and the optional Stage 0c, the UCI engine's
   settings match the arena's training-shape search on fixed positions. If they
   cannot be matched, both are reported as measuring the UCI agent.
@@ -908,9 +953,9 @@ So offline scores only filter, and only after a ruler is validated; only registe
 - The batch axis: linear LR scaling is exact only for Aurora's fixed-norm matrix
   steps; the AdamW groups' steps also depend on gradient noise, so matched KL is
   the comparison, and the 4096 arm sits mostly inside the optimizer's start-up.
-- The earlier nulls (P1, F12, Q50) ran an Adam-family two-group optimizer at batch
-  256, not production's Aurora split at 512. Stage 1 differs from them in optimizer
-  and batch as well as in the collection.
+- The earlier nulls (P1, F12, Q50) ran NAdamW at batch 256, not the SL base's own
+  Aurora split at 512. Stage 1 differs from them in optimizer and batch as well as
+  in the collection. The legacy cell measures the optimizer's part offline.
 - Selecting the played snapshot is selection. It is done on held-out games of the
   collection, never on a match, and each match is on its own block.
 - loop-exp1's confounds (twofold-repetition draws, the same-coloured-bishops gap)
