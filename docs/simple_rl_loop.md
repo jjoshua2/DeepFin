@@ -746,6 +746,31 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
 
 ## Training details
 
+- **`--value-rows-per-game R`** (default 0 = every row) trains the WDL term on R
+  rows per game, KataGo-style; the policy term stays on every stored row.
+  - The rows are the R of each game with the smallest
+    sha256("value_row:<game_id>:<ply_index>"). The choice is a pure function of
+    (game id, ply), so it is the same in any load order, on a resume and in every
+    arm over the same collect. A game with R or fewer rows trains all of them.
+  - Normalisation: per chosen row, over the phase. Each chosen row carries the
+    weight 1 / f, where f is the chosen share of the phase's network-turn rows.
+    The WDL term stays the batch's masked mean over network-turn rows, so a chosen
+    row's coefficient is 1 / (f x batch rows). Over the phase that is the mean over
+    the chosen rows, and `--w-wdl` means what it means at R = 0.
+  - Why not the per-batch masked mean over chosen rows: at R = 2 of about 95 rows
+    per game a batch holds only a handful of them. That denominator would swing
+    each row's weight with the batch's draw, and a batch with one chosen row would
+    give it the whole term.
+  - Absent the flag, nothing reaches the loss and the reduction is the historical
+    one. A weight of 1 on every row is bit-identical to it
+    (`tests/test_simple_rl_value_rows_per_game.py`).
+  - Refused with `--accum-steps > 1` (micro-batches would hold unequal value-row
+    counts), with `--sl-mix-frac > 0` (SL rows have no game ids) and with
+    `--w-wdl 0` (nothing to mask).
+  - Pinned in `run_config.json`. A run pinned before the flag resumes at 0. The
+    train summary records `value_rows` (R, chosen rows, network-turn rows, games,
+    share). Held-out metrics still score every row.
+
 - **Row loading is streamed into preallocated arrays.** `load_window` loads only the
   keys the loss and the configured target source read (`TRAIN_KEYS` plus
   `target_source_keys(settings)`: survivor-Q value adds 2–4 small columns, the actor

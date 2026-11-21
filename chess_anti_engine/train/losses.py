@@ -3304,7 +3304,16 @@ def compute_loss(
     sf_eval_pv_orphan_rows, sf_eval_pv_checked_rows = sf_eval_pv_orphan_counts(batch)
     batch_rows = net_mask.new_full((), float(net_mask.shape[0]))
     m_wdl_onehot = masked_mean(wdl_onehot_ce, net_mask)
-    m_blended_wdl = masked_mean(blended_wdl_ce, net_mask)
+    # Per-row value weight (simple-RL `value_rows_per_game`): m / f, with m the
+    # chosen value rows and f their share of the phase's network-turn rows, so
+    # this masked mean is the phase mean over the CHOSEN rows (coefficient
+    # 1 / (f * net rows in the batch)), not a per-batch masked mean over them.
+    # Absent (every other caller): the historical reduction, unchanged.
+    if "value_row_weight" in batch:
+        value_row_weight = batch["value_row_weight"].to(blended_wdl_ce.dtype)
+        m_blended_wdl = masked_mean(blended_wdl_ce * value_row_weight, net_mask)
+    else:
+        m_blended_wdl = masked_mean(blended_wdl_ce, net_mask)
     m_sf_move = masked_mean(sf_move_ce, sf_move_base)
     m_sf_eval = masked_mean(sf_eval_ce, m_sf_eval_mask)
     m_cat = masked_mean(cat_ce, categorical_base)
