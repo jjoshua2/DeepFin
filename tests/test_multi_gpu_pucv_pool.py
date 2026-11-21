@@ -800,7 +800,11 @@ def test_debug_counters_sum_every_chunk_of_a_search() -> None:
             assert counts.evals == sum(s.evaluated_rows for s in chunk_stats)
             assert counts.terminal == sum(s.terminal_leaves for s in chunk_stats)
             assert counts.duplicate == sum(s.duplicate_leaves for s in chunk_stats)
-            assert counts.terminal > chunk_stats[-1].terminal_leaves  # more than the last chunk
+            # More than the last chunk, on a counter every chunk adds to: a chunk
+            # always simulates leaves, but it may find no terminal (CI #1451: 3
+            # chunks, terminals 0/0/22 -> 22 > 22 failed). Holds by construction.
+            assert all(s.leaves > 0 for s in chunk_stats)
+            assert counts.leaves > chunk_stats[-1].leaves
             line = _pucv_stats_string(worker.last_multi_gpu_pucv_stats(), pending_mode=0, search=counts)
             assert line is not None
             assert f"leaves={chunk_stats[-1].leaves} " in line  # leading fields: last chunk
