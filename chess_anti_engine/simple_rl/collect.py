@@ -25,6 +25,7 @@ import os
 import shutil
 import time
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -1052,23 +1053,109 @@ def _gen_number(collect_dir: Path) -> int:
     return int(Path(collect_dir).parent.name.split("_")[1])
 
 
-def load_generation_rows(collect_dir: Path, *, keys: tuple[str, ...] | None = None) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
-    """All shards of one generation, concatenated, plus the row-meta sidecar."""
-    from chess_anti_engine.replay.shard import load_shard_arrays
+def generation_shards(collect_dir: Path) -> list[Path]:
+    """One generation's shard stores in load order."""
+    shards = sorted((resolve_collect_dir(collect_dir) / "shards").glob("shard_*.zarr"))
+    if not shards:
+        raise ValueError(f"no shards in {resolve_collect_dir(collect_dir) / 'shards'}")
+    return shards
 
-    shard_dir = resolve_collect_dir(collect_dir) / "shards"
-    parts: list[dict[str, np.ndarray]] = []
-    metas: list[dict[str, np.ndarray]] = []
-    for shard in sorted(shard_dir.glob("shard_*.zarr")):
+
+def shard_row_meta(shard: Path) -> dict[str, np.ndarray]:
+    """A shard's row-meta sidecar (game id, ply, opening, x hash, ...)."""
+    with np.load(shard.with_name(shard.name.replace(".zarr", ".meta.npz"))) as z:
+        return {k: z[k] for k in z.files}
+
+
+def gather_rows(groups: Sequence[Sequence[tuple[Path, np.ndarray | None]]], *,
+                keys: tuple[str, ...] | None = None) -> list[dict[str, np.ndarray]]:
+    """Fill each group's row arrays straight from its shards, in order.
+
+    A group is a list of (shard, row mask or None for every row); the result is
+    exactly what concatenating the masked per-shard arrays would give
+    (``concat_arrays``: same keys and order, ``np.concatenate`` dtypes, absent
+    fields zero-filled with the schema default, metadata keys equal across the
+    group's shards), but the per-shard arrays never coexist with the full copy.
+    A first pass reads only shard declarations (row count, dtype, shape) to
+    preallocate; the second loads each shard once -- eagerly, with the same
+    content validation as any shard read -- copies the wanted rows of the wanted
+    keys into every group that uses it, and drops it. Peak memory is the
+    output plus one shard, instead of about twice the output."""
+    from chess_anti_engine.replay.shard import load_shard_arrays, open_shard_arrays, zeros_for_storage_field
+
+    wanted = (lambda k: True) if keys is None else (lambda k: k in keys or str(k).startswith("_"))
+    decl: dict[Path, dict[str, Any]] = {}
+    for group in groups:
+        for shard, _ in group:
+            if shard in decl:
+                continue
+            with open_shard_arrays(shard, lazy=True, validate=True) as (arrs, _meta):
+                decl[shard] = {
+                    "n": int(arrs["x"].shape[0]), "x_planes": int(arrs["x"].shape[1]),
+                    "policy_size": int(arrs["policy_target"].shape[1]),
+                    "fields": {k: (np.dtype(v.dtype), tuple(int(d) for d in v.shape[1:]))
+                               for k, v in arrs.items() if wanted(k) and not str(k).startswith("_")},
+                    "metadata": {k: np.asarray(v) for k, v in arrs.items() if wanted(k) and str(k).startswith("_")},
+                    "order": [k for k in arrs if wanted(k)]}
+    outs: list[dict[str, np.ndarray]] = []
+    plan: dict[Path, list[tuple[int, np.ndarray | None, int]]] = {}
+    for gi, group in enumerate(groups):
+        if not group:
+            raise ValueError("a row group needs at least one shard")
+        first = decl[group[0][0]]
+        order: list[str] = []
+        for shard, _ in group:
+            order += [k for k in decl[shard]["order"] if k not in order]
+        counts = [decl[s]["n"] if m is None else int(np.count_nonzero(m)) for s, m in group]
+        for (shard, mask), _c in zip(group, counts, strict=True):
+            if mask is not None and mask.shape != (decl[shard]["n"],):
+                raise ValueError(f"row mask for {shard} has shape {mask.shape}, the shard has {decl[shard]['n']} rows")
+        out: dict[str, np.ndarray] = {}
+        for k in order:
+            if str(k).startswith("_"):
+                values = {str(decl[s]["metadata"][k].tolist()) for s, _ in group if k in decl[s]["metadata"]}
+                if len(values) != 1 or any(k not in decl[s]["metadata"] for s, _ in group):
+                    raise ValueError(f"metadata {k} differs across shards: {sorted(values)}")
+                out[k] = decl[group[0][0]]["metadata"][k]
+                continue
+            specs = []
+            for s, _ in group:
+                if k in decl[s]["fields"]:
+                    specs.append(decl[s]["fields"][k])
+                else:
+                    z = zeros_for_storage_field(k, n=0, x_planes=first["x_planes"], policy_size=first["policy_size"])
+                    specs.append((z.dtype, tuple(z.shape[1:])))
+            if len({sh for _, sh in specs}) != 1:
+                raise ValueError(f"field {k} has different row shapes across shards: {sorted({sh for _, sh in specs})}")
+            out[k] = np.empty((sum(counts), *specs[0][1]), dtype=np.result_type(*[dt for dt, _ in specs]))
+        outs.append(out)
+        offset = 0
+        for (shard, mask), c in zip(group, counts, strict=True):
+            plan.setdefault(shard, []).append((gi, mask, offset))
+            offset += c
+    for shard, uses in plan.items():
         arrays, _ = load_shard_arrays(shard, lazy=False, validate=True)
-        if keys is not None:
-            arrays = {k: v for k, v in arrays.items() if k in keys or str(k).startswith("_")}
-        parts.append(arrays)
-        with np.load(shard.with_name(shard.name.replace(".zarr", ".meta.npz"))) as z:
-            metas.append({k: z[k] for k in z.files})
-    if not parts:
-        raise ValueError(f"no shards in {shard_dir}")
-    return concat_arrays(parts), {k: np.concatenate([m[k] for m in metas]) for k in metas[0]}
+        n = decl[shard]["n"]
+        for gi, mask, offset in uses:
+            out = outs[gi]
+            first = decl[groups[gi][0][0]]
+            for k, dst in out.items():
+                if str(k).startswith("_"):
+                    continue
+                src = arrays[k] if k in arrays else zeros_for_storage_field(
+                    k, n=n, x_planes=first["x_planes"], policy_size=first["policy_size"])
+                rows = src if mask is None else np.asarray(src)[mask]
+                dst[offset:offset + rows.shape[0]] = rows
+        del arrays
+    return outs
+
+
+def load_generation_rows(collect_dir: Path, *, keys: tuple[str, ...] | None = None) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+    """All shards of one generation as one set of row arrays, plus the row-meta sidecar."""
+    shards = generation_shards(collect_dir)
+    metas = [shard_row_meta(s) for s in shards]
+    (arrays,) = gather_rows([[(s, None) for s in shards]], keys=keys)
+    return arrays, {k: np.concatenate([m[k] for m in metas]) for k in metas[0]}
 
 
 def concat_arrays(parts: list[dict[str, np.ndarray]]) -> dict[str, np.ndarray]:
