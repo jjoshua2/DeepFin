@@ -119,7 +119,7 @@ def test_dose_falls_back_to_the_final_model_when_the_ruler_labels_have_not_lande
     rows = _rows_npz(tmp_path / "a1.npz")
     out = tmp_path / "dose.json"
     assert ras.main(["dose", "--train-dir", str(train), "--rows", str(rows),
-                     "--ruler", f"bt4s256={tmp_path / 'not_yet.npz'}:move", "--band-lo", "-0.2",
+                     "--ruler", f"bt4s256={tmp_path / 'not_yet.npz'}:move", "--band-lo", "-0.2", "--no-mask",
                      "--out", str(out), "--out-model", str(tmp_path / "played.pt")]) == 0
     rec = json.loads(out.read_text())
     assert rec["played"]["name"] == "final"
@@ -134,10 +134,14 @@ def test_dose_scores_every_snapshot_with_the_forwarded_priors(tmp_path: Path) ->
     rng = np.random.default_rng(1)
     np.savez(tmp_path / "ruler.npz", move=rng.integers(0, 12, 24))
     out = tmp_path / "dose.json"
-    assert ras.main(["dose", "--train-dir", str(train), "--rows", str(rows),
-                     "--ruler", f"r={tmp_path / 'ruler.npz'}:move", "--band-lo", "-1", "--band-hi", "1",
+    spec = f"r={tmp_path / 'ruler.npz'}:move"
+    val = _validation(tmp_path, spec, passed=True)
+    assert ras.main(["dose", "--train-dir", str(train), "--rows", str(rows), "--ruler", spec, "--band-lo", "-1",
+                     "--band-hi", "1", "--no-mask", "--ruler-validation", str(val),
                      "--out", str(out), "--out-model", str(tmp_path / "played.pt")]) == 0
     rec = json.loads(out.read_text())
+    assert rec["ruler_validated"] is True
+    assert rec["ruler"]["sha256"] == ras.sha256_file(tmp_path / "ruler.npz")
     assert len(rec["scores"]) == 3
     # The recorded scores are the snapshot models' own: recompute one through `forward`.
     pri = tmp_path / "pri.npz"
@@ -183,6 +187,17 @@ def test_a2_sample_replays_every_row_and_excludes_training_positions(
     assert ras.main(["a2-sample", "--collect-dir", str(collect), "--exclude-collect", str(collect),
                      "--out", str(out2)]) == 0
     assert json.loads(Path(str(out2) + ".json").read_text())["rows"] == 0
+    src = json.loads(Path(str(out2) + ".json").read_text())["excluded_sources"]
+    assert src[0]["manifest_sha256"] == ras.sha256_file(collect / "manifest.json")
+    # An audit-rows file (root_fen + history) excludes the positions it holds, by key.
+    out3 = tmp_path / "a2r.npz"
+    assert ras.main(["a2-sample", "--collect-dir", str(collect), "--per-game", "2", "--exclude-rows", str(out),
+                     "--out", str(out3)]) == 0
+    s3 = json.loads(Path(str(out3) + ".json").read_text())
+    assert s3["rows_dropped_as_training_positions"] >= summary["rows"]
+    assert s3["excluded_sources"][0]["sha256"] == ras.sha256_file(out)
+    with np.load(out3) as z3, np.load(out) as z1:
+        assert not set(map(str, z3["position_key"])) & set(map(str, z1["position_key"]))
 
 
 def test_a2_openings_takes_exactly_the_block(tmp_path: Path) -> None:
@@ -197,3 +212,194 @@ def test_a2_openings_takes_exactly_the_block(tmp_path: Path) -> None:
         ras.main(["a2-openings", "--eval-jsonl", str(ev), "--lines", "5:12", "--out-dir", str(out)])
     with pytest.raises(SystemExit, match="does not fit"):
         ras.main(["a2-openings", "--eval-jsonl", str(ev), "--lines", "15:25", "--out-dir", str(tmp_path / "x")])
+
+
+def _validation(tmp_path: Path, spec: str, *, passed: bool) -> Path:
+    """A validate record for ``spec`` (its exact file sha), passing or not."""
+    rec = {"ruler": ras._ruler_record(spec), "passed": passed,
+           "conditions": {"3_positive_control": {"pass": passed}}}
+    out = tmp_path / f"validation_{int(passed)}.json"
+    out.write_text(json.dumps(rec))
+    return out
+
+
+def test_dose_plays_the_final_model_unless_this_exact_ruler_validated(tmp_path: Path) -> None:
+    """Review of #1448 (1): an existing but unvalidated ruler never selects a dose."""
+    train = _tiny_run_with_snapshots(tmp_path)
+    rows = _rows_npz(tmp_path / "a1.npz")
+    np.savez(tmp_path / "ruler.npz", move=np.zeros(24, dtype=np.int64))
+    np.savez(tmp_path / "other.npz", move=np.ones(24, dtype=np.int64))
+    spec = f"r={tmp_path / 'ruler.npz'}:move"
+    base = ["dose", "--train-dir", str(train), "--rows", str(rows), "--ruler", spec, "--band-lo", "-1",
+            "--band-hi", "1", "--no-mask", "--out-model", str(tmp_path / "played.pt")]
+    cases = {"none": [], "failed": ["--ruler-validation", str(_validation(tmp_path, spec, passed=False))],
+             "other_file": ["--ruler-validation",
+                            str(_validation(tmp_path, f"r={tmp_path / 'other.npz'}:move", passed=True))]}
+    for name, extra in cases.items():
+        out = tmp_path / f"dose_{name}.json"
+        assert ras.main([*base, "--out", str(out), *extra]) == 0
+        rec = json.loads(out.read_text())
+        assert rec["played"]["name"] == "final", name
+        assert rec["ruler_validated"] is False
+        assert "ruler not validated" in rec["why"]
+        assert "scores" not in rec  # nothing was selected by the ruler
+    assert "another ruler file" in json.loads((tmp_path / "dose_other_file.json").read_text())["why"]
+
+
+def test_dose_refuses_rows_without_a_mask_decision(tmp_path: Path) -> None:
+    train = _tiny_run_with_snapshots(tmp_path)
+    rows = _rows_npz(tmp_path / "a1.npz")
+    with pytest.raises(SystemExit, match="--mask"):
+        ras.main(["dose", "--train-dir", str(train), "--rows", str(rows), "--ruler", f"r={tmp_path / 'x.npz'}:m",
+                  "--band-lo", "-1", "--out", str(tmp_path / "d.json"), "--out-model", str(tmp_path / "p.pt")])
+
+
+def _correlated(n_games: int = 12, per: int = 4) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Rows whose agreement is constant within a game (maximal within-game correlation)."""
+    n = n_games * per
+    legal = _legal(n)
+    game = np.repeat(np.arange(n_games), per)
+    ruler = np.zeros(n, dtype=np.int64)
+    logits = np.zeros((n, N_MOVES))
+    logits[:, 0] = np.where(game % 2 == 0, 5.0, -5.0)  # agrees on every row of even games
+    return logits, legal, ruler, game
+
+
+def test_score_one_and_paired_top1_cluster_by_game_at_the_call_site() -> None:
+    """Review of #1448 (3): the SE used is the game-clustered one, not the row one."""
+    logits, legal, ruler, game = _correlated()
+    agree = (np.argmax(np.where(legal, logits, -np.inf), axis=1) == ruler).astype(float)
+    s = ras.score_one(logits, legal, ruler, game)
+    clustered = ras.clustered_mean_se(agree, game)[1]
+    by_row = ras.clustered_mean_se(agree, np.arange(agree.size))[1]
+    assert s["top1_se"] == pytest.approx(clustered)
+    assert clustered > 1.5 * by_row
+    flat = np.zeros_like(logits)
+    flat[:, 1] = 1.0  # never agrees
+    d = ras.paired_top1(logits, flat, legal, ruler, game)
+    assert d["se"] == pytest.approx(clustered)
+    assert d["se"] > 1.5 * by_row
+
+
+def _scoring_inputs(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
+    n = 24
+    rows = _rows_npz(tmp_path / "rows.npz", n)
+    leak = np.zeros(n, dtype=bool)
+    leak[:6] = True
+    np.savez(tmp_path / "leak.npz", leak=leak)
+    ruler = np.zeros(n, dtype=np.int64)
+    np.savez(tmp_path / "ruler.npz", move=ruler)
+    pol_a = np.zeros((n, N_MOVES))
+    pol_a[:6, 0] = 5.0  # agrees only on the leaked rows
+    pol_a[6:, 1] = 5.0
+    wdl = np.tile(np.array([[1.0, 0.5, -1.0]]), (n, 1))
+    np.savez(tmp_path / "pri.npz", pol_a=pol_a, wdl_a=wdl, pol_b=np.zeros((n, N_MOVES)), wdl_b=np.zeros((n, 3)),
+             rows_sha256=np.array(ras.sha256_file(rows)))
+    return rows, tmp_path / "leak.npz", tmp_path / "ruler.npz", tmp_path / "pri.npz"
+
+
+def test_score_records_the_mask_and_dropping_leaked_rows_changes_the_result(tmp_path: Path) -> None:
+    """Review of #1448 (2): rows sha, mask spec / sha / polarity and the kept count are recorded."""
+    rows, leak, ruler, pri = _scoring_inputs(tmp_path)
+    common = ["score", "--rows", str(rows), "--priors", str(pri), "--ruler", f"r={ruler}:move", "--nets", "a"]
+    assert ras.main([*common, "--out", str(tmp_path / "all.json")]) == 0
+    assert ras.main([*common, "--mask", f"{leak}:leak", "--mask-invert", "--out", str(tmp_path / "clean.json")]) == 0
+    full, clean = (json.loads((tmp_path / f).read_text()) for f in ("all.json", "clean.json"))
+    assert full["input"]["mask"] is None
+    assert full["input"]["rows_kept"] == 24
+    assert clean["input"]["rows_kept"] == 18
+    assert clean["input"]["rows_dropped"] == 6
+    assert clean["input"]["mask"]["invert"] is True
+    assert clean["input"]["mask"]["sha256"] == ras.sha256_file(leak)
+    assert clean["input"]["rows_sha256"] == ras.sha256_file(rows)
+    assert full["nets"]["a"]["r"]["top1"] == pytest.approx(0.25)
+    assert clean["nets"]["a"]["r"]["top1"] == pytest.approx(0.0)  # the leaked rows were dropped, not kept
+    assert clean["rulers_validated"] is False
+
+
+def test_priors_forwarded_on_other_rows_are_refused(tmp_path: Path) -> None:
+    _, _, ruler, pri = _scoring_inputs(tmp_path)
+    other = _rows_npz(tmp_path / "other.npz", 24)
+    with np.load(other) as z:
+        arrs: dict[str, Any] = {k: z[k] for k in z.files}
+    arrs["game_id"] = np.arange(24)  # same N, different rows
+    np.savez(other, x=arrs["x"], legal=arrs["legal"], game_id=arrs["game_id"])
+    with pytest.raises(SystemExit, match="re-run forward"):
+        ras.main(["score", "--rows", str(other), "--priors", str(pri), "--ruler", f"r={ruler}:move",
+                  "--out", str(tmp_path / "x.json")])
+
+
+def test_value_shape_columns_and_regret_with_coverage(tmp_path: Path) -> None:
+    rows, _, _, pri = _scoring_inputs(tmp_path)
+    moves = np.full((24, 2), -1, dtype=np.int64)
+    moves[:, 0] = 1
+    moves[:12, 1] = 0
+    cp = np.zeros((24, 2))
+    cp[:, 0] = 30.0
+    np.savez(tmp_path / "regret.npz", moves=moves, regret_cp=cp)
+    out = tmp_path / "v.json"
+    assert ras.main(["score", "--rows", str(rows), "--priors", str(pri), "--reference", "b",
+                     "--regret", f"sf={tmp_path / 'regret.npz'}", "--out", str(out)]) == 0
+    rec = json.loads(out.read_text())
+    p = np.exp([1.0, 0.5, -1.0]) / np.exp([1.0, 0.5, -1.0]).sum()
+    va = rec["value"]["a"]
+    assert va["p_draw"] == pytest.approx(p[1])
+    assert va["abs_wl"] == pytest.approx(abs(p[0] - p[2]))
+    assert va["entropy"] == pytest.approx(float(-(p * np.log(p)).sum()))
+    assert va["vs_reference"]["abs_wl"]["diff"] == pytest.approx(abs(p[0] - p[2]))  # b is uniform: |W-L| 0
+    assert sum(b["n"] for b in va["p_draw_by_ref_bucket"].values()) == 24
+    ra = rec["nets"]["a"]["regret:sf"]
+    assert ra["covered"] == 24  # net a's move (0 on rows 0-5, 1 elsewhere) is in the table on every row
+    assert ra["regret_cp"] == pytest.approx((6 * 0.0 + 18 * 30.0) / 24)
+    assert "never a dose selector" in ra["caveat"]
+    rb = rec["nets"]["b"]["regret:sf"]  # b's argmax is move 0: covered on rows 0-11 only
+    assert rb["covered"] == 12
+
+
+def test_validate_implements_the_three_conditions() -> None:
+    n_games, per = 40, 3
+    n = n_games * per
+    legal = _legal(n)
+    game = np.repeat(np.arange(n_games), per)
+    rng = np.random.default_rng(5)
+    ruler = np.zeros(n, dtype=np.int64)
+
+    def net(agree_frac: float) -> np.ndarray:
+        lg = np.zeros((n, N_MOVES))
+        hit = rng.random(n) < agree_frac
+        lg[np.arange(n), np.where(hit, 0, 1)] = 5.0
+        return lg
+
+    pols = {"base": net(0.7), "p1": net(0.5), "f12": net(0.5), "q50": net(0.2)}
+    search_good = np.zeros(n, dtype=np.int64)  # always the ruler's move
+    res = ras.validate_ruler(ruler, pols, legal, game, base="base", others=["p1", "f12", "q50"],
+                             search_move=search_good, independent=True)
+    assert res["passed"] is True
+    bad_search = np.argmax(np.where(legal, pols["base"], -np.inf), axis=1)  # = the raw argmax: no gain
+    res = ras.validate_ruler(ruler, pols, legal, game, base="base", others=["p1", "f12", "q50"],
+                             search_move=bad_search, independent=True)
+    assert res["passed"] is False
+    assert res["conditions"]["3_positive_control"]["pass"] is False
+    flipped = {**pols, "p1": net(0.95)}  # a trained net outranks the base
+    res = ras.validate_ruler(ruler, flipped, legal, game, base="base", others=["p1", "f12", "q50"],
+                             search_move=search_good, independent=True)
+    assert res["conditions"]["2_negative_control"]["pass"] is False
+    res = ras.validate_ruler(ruler, pols, legal, game, base="base", others=["p1", "f12", "q50"],
+                             search_move=search_good, independent=False)
+    assert res["conditions"]["1_independent"]["pass"] is False
+
+
+def test_a2_position_key_is_history_free_so_a_transposition_is_excluded(tmp_path: Path) -> None:
+    """Review of #1448 (5): the exclusion key must map transposed move orders together."""
+    import chess
+
+    a, b = chess.Board(), chess.Board()
+    for mv in ("e2e4", "e7e5", "g1f3", "b8c6"):
+        a.push_uci(mv)
+    for mv in ("g1f3", "b8c6", "e2e4", "e7e5"):
+        b.push_uci(mv)
+    assert a.fen() != b.fen()  # the halfmove clocks differ
+    assert ras._position_key(a) == ras._position_key(b)
+    np.savez(tmp_path / "a1.npz", root_fen=np.asarray([chess.STARTING_FEN]),
+             history=np.asarray(["e2e4 e7e5 g1f3 b8c6"]))
+    assert ras.rows_position_keys(tmp_path / "a1.npz") == {ras._position_key(b)}

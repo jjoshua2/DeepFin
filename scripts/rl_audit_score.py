@@ -13,8 +13,11 @@ is the legal argmax) or (N,) int (a move index in the 1858 compact space).
 Subcommands:
   forward    NAME=CKPT ... -> priors npz (pol_NAME, wdl_NAME, sha_NAME)
   score      per net and ruler: top-1, calibration gap, entropy, each with a
-             game-clustered SE; paired top-1 difference vs --reference
-  dose       the plan's dose rule over one cell's snapshots + final model
+             game-clustered SE; paired top-1 difference vs --reference; value
+             SHAPE columns from the saved WDL logits; optional deep-SF regret
+  validate   the plan's three ruler-validation conditions for one ruler file
+  dose       the plan's dose rule over one cell's snapshots + final model; plays
+             the FINAL model unless --ruler-validation passes for that exact ruler
   a2-openings  the a2 block of the EVAL split as a collect's openings dir
   a2-sample  about K rows per game from a sealed collect, with replayed FENs and
              a position-key check against training collections
@@ -28,6 +31,15 @@ A2, end to end (SL base, 64 sims; the collect is GPU work, the rest CPU):
       --exclude-collect $R/s1/collect/gen_0001/collect --out $R/a2/a2_rows.npz
 
 Every SE is clustered by game: rows of one game are not independent.
+
+Every output records the rows file and its sha256, the mask (spec, sha256,
+polarity) and the rows kept. ``dose`` refuses rows without a mask unless
+``--no-mask`` is given (A1 holds rows that reappear in training games).
+
+Deep-SF regret (``--regret NAME=FILE.npz``: ``moves`` (N, K) compact move
+indices, -1 padded, and ``regret_cp`` (N, K)) is a REPORTED column only: it
+tracks raw-prior strength (it agrees with the temperature-0 1-sim matches and
+not with 64-sim play), so it never selects a dose.
 """
 from __future__ import annotations
 
@@ -111,20 +123,86 @@ def paired_top1(logits_a: np.ndarray, logits_b: np.ndarray, legal: np.ndarray, r
     return {"diff": diff, "se": se, "lb95": diff - 1.96 * se, "ub95": diff + 1.96 * se}
 
 
+def softmax_rows(logits: np.ndarray) -> np.ndarray:
+    z = logits.astype(np.float64) - logits.max(axis=1, keepdims=True)
+    e = np.exp(z)
+    return e / e.sum(axis=1, keepdims=True)
+
+
+# |W - L| buckets of the REFERENCE net, as search-compose/wdl_shape.json splits them.
+WL_BUCKETS = ((0.0, 0.1, "|WL_ref|<0.1"), (0.1, 0.3, "0.1-0.3"), (0.3, 1.01, ">0.3"))
+
+
+def value_shape(wdl_logits: np.ndarray, game: np.ndarray, ref_wl: np.ndarray | None = None,
+                ref_logits: np.ndarray | None = None) -> dict[str, Any]:
+    """WDL SHAPE columns (game-clustered): P(draw), WDL entropy, |W - L|, and
+    P(draw) by the reference net's |W - L| bucket; paired differences vs the
+    reference when given. These separated the damaged value heads where the
+    error metrics did not (search-compose/wdl_shape.json)."""
+    p = softmax_rows(wdl_logits)
+    per = {"p_draw": p[:, 1], "entropy": -(p * np.log(np.clip(p, 1e-12, 1.0))).sum(axis=1),
+           "abs_wl": np.abs(p[:, 0] - p[:, 2])}
+    out: dict[str, Any] = {}
+    for k, v in per.items():
+        out[k], out[f"{k}_se"] = clustered_mean_se(v, game)
+    if ref_wl is not None:
+        out["p_draw_by_ref_bucket"] = {}
+        for lo, hi, name in WL_BUCKETS:
+            sel = (ref_wl >= lo) & (ref_wl < hi)
+            m, se = clustered_mean_se(per["p_draw"][sel], game[sel])
+            out["p_draw_by_ref_bucket"][name] = {"n": int(sel.sum()), "mean": m, "se": se}
+    if ref_logits is not None:
+        pr = softmax_rows(ref_logits)
+        ref = {"p_draw": pr[:, 1], "entropy": -(pr * np.log(np.clip(pr, 1e-12, 1.0))).sum(axis=1),
+               "abs_wl": np.abs(pr[:, 0] - pr[:, 2])}
+        out["vs_reference"] = {}
+        for k in per:
+            d, se = clustered_mean_se(per[k] - ref[k], game)
+            out["vs_reference"][k] = {"diff": d, "se": se, "lb95": d - 1.96 * se, "ub95": d + 1.96 * se}
+    return out
+
+
+REGRET_CAVEAT = ("deep-SF regret tracks RAW-prior strength (it agrees with the temperature-0 1-sim matches, "
+                 "and not with 64-sim play); reported only, never a dose selector")
+
+
+def regret_column(move: np.ndarray, table: dict[str, np.ndarray], game: np.ndarray) -> dict[str, Any]:
+    """Mean deep-SF regret (cp) of each row's chosen move, over the rows whose
+    move the label table covers; the coverage count is reported."""
+    moves, cp = table["moves"], table["regret_cp"]
+    hit = moves == move[:, None]
+    covered = hit.any(axis=1)
+    val = np.where(hit, cp, 0.0).sum(axis=1)
+    m, se = clustered_mean_se(val[covered], game[covered])
+    return {"regret_cp": m, "regret_cp_se": se, "covered": int(covered.sum()), "rows": int(move.size),
+            "caveat": REGRET_CAVEAT}
+
+
 # ---------------------------------------------------------------- loading
 
 
-def load_rows(path: Path, mask_spec: str | None = None, *, invert: bool = False) -> dict[str, np.ndarray]:
+def load_rows(path: Path, mask_spec: str | None = None, *, invert: bool = False) -> dict[str, Any]:
+    """The audit rows plus ``_keep`` (the mask applied) and ``_record`` (what was
+    read and kept: rows sha, mask spec / sha / polarity, rows kept and dropped)."""
     with np.load(path, allow_pickle=False) as z:
-        rows = {k: z[k] for k in z.files}
+        rows: dict[str, Any] = {k: z[k] for k in z.files}
     for k in ("x", "legal", "game_id"):
         if k not in rows:
             raise SystemExit(f"{path}: audit rows need {k!r}")
-    keep = np.ones(rows["legal"].shape[0], dtype=bool)
+    n = int(rows["legal"].shape[0])
+    keep = np.ones(n, dtype=bool)
+    mask_rec = None
     if mask_spec:
         m = load_array(mask_spec).astype(bool)
+        if m.shape != (n,):
+            raise SystemExit(f"mask {mask_spec}: shape {m.shape}, rows {n}")
         keep = ~m if invert else m
+        mpath = mask_spec.rpartition(":")[0]
+        mask_rec = {"spec": mask_spec, "sha256": sha256_file(Path(mpath)), "invert": bool(invert),
+                    "true_in_mask": int(m.sum())}
     rows["_keep"] = keep
+    rows["_record"] = {"rows_file": str(path), "rows_sha256": sha256_file(Path(path)), "mask": mask_rec,
+                       "rows_total": n, "rows_kept": int(keep.sum()), "rows_dropped": int(n - keep.sum())}
     return rows
 
 
@@ -170,7 +248,12 @@ def forward_logits(ckpt: Path, x: np.ndarray, *, device: str = "cpu", batch: int
 def cmd_forward(a: argparse.Namespace) -> int:
     rows = load_rows(Path(a.rows))
     out = Path(a.out)
+    rows_sha = rows["_record"]["rows_sha256"]
     have = dict(np.load(out, allow_pickle=False)) if out.exists() else {}
+    if have and str(have.get("rows_sha256", "")) != rows_sha:
+        raise SystemExit(f"{out} holds priors of other rows (sha {str(have.get('rows_sha256', ''))[:12] or '?'}); "
+                         "use a new --out")
+    have["rows_sha256"] = np.array(rows_sha)
     for name, ck in named(a.model):
         sha = sha256_file(Path(ck))
         if f"pol_{name}" in have and str(have.get(f"sha_{name}")) == sha:
@@ -180,6 +263,24 @@ def cmd_forward(a: argparse.Namespace) -> int:
         np.savez_compressed(out, **have)
         print(f"forward {name}: {pol.shape[0]} rows, sha {sha[:12]}", flush=True)
     return 0
+
+
+def load_priors(path: Path, rows: dict[str, Any]) -> dict[str, np.ndarray]:
+    """The priors npz, refused unless it was forwarded on these exact rows."""
+    with np.load(path, allow_pickle=False) as z:
+        pri = {k: z[k] for k in z.files}
+    got = str(pri.get("rows_sha256", ""))
+    want = rows["_record"]["rows_sha256"]
+    if got != want:
+        raise SystemExit(f"{path}: forwarded on rows sha {got[:12] or '<unrecorded>'}, not these rows "
+                         f"({want[:12]}); re-run forward")
+    return pri
+
+
+def _ruler_record(spec: str) -> dict[str, Any]:
+    name, _, rest = spec.partition("=")
+    path, _, key = rest.rpartition(":")
+    return {"name": name, "file": path, "key": key, "sha256": sha256_file(Path(path))}
 
 
 def _rulers(specs: list[str], legal: np.ndarray) -> dict[str, np.ndarray]:
@@ -200,9 +301,17 @@ def cmd_score(a: argparse.Namespace) -> int:
     rows = load_rows(Path(a.rows), a.mask, invert=a.mask_invert)
     keep = rows["_keep"]
     legal, game = rows["legal"][keep], rows["game_id"][keep]
-    rulers = {k: v[keep] for k, v in _rulers(a.ruler, rows["legal"]).items()}
-    with np.load(a.priors, allow_pickle=False) as z:
-        pols = {k[4:]: z[k][keep] for k in z.files if k.startswith("pol_")}
+    rulers = {k: v[keep] for k, v in _rulers(a.ruler or [], rows["legal"]).items()}
+    pri = load_priors(Path(a.priors), rows)
+    pols = {k[4:]: v[keep] for k, v in pri.items() if k.startswith("pol_")}
+    wdls = {k[4:]: v[keep] for k, v in pri.items() if k.startswith("wdl_")}
+    regrets = {}
+    for name, path in named(a.regret or []):
+        with np.load(path, allow_pickle=False) as z:
+            if z["moves"].shape[0] != rows["legal"].shape[0]:
+                raise SystemExit(f"regret {name}: {z['moves'].shape[0]} rows, audit set has {rows['legal'].shape[0]}")
+            regrets[name] = {"moves": z["moves"][keep], "regret_cp": z["regret_cp"][keep],
+                             "_record": {"file": path, "sha256": sha256_file(Path(path))}}
     if a.nets:
         missing = [n for n in a.nets if n not in pols]
         if missing:
@@ -210,7 +319,15 @@ def cmd_score(a: argparse.Namespace) -> int:
         pols = {n: pols[n] for n in a.nets}
     if a.reference and a.reference not in pols:
         raise SystemExit(f"reference {a.reference!r} not in the priors")
-    table: dict[str, Any] = {"rows": int(keep.sum()), "games": int(np.unique(game).size), "nets": {}}
+    table: dict[str, Any] = {"rows": int(keep.sum()), "games": int(np.unique(game).size), "nets": {},
+                             "input": rows["_record"], "rulers": [_ruler_record(r) for r in a.ruler or []],
+                             "rulers_validated": False,
+                             "ruler_note": "top-1 columns are descriptive; no ruler here is validated (see validate)",
+                             "regret": {k: v["_record"] for k, v in regrets.items()}, "value": {}}
+    ref_wl = None
+    if a.reference and a.reference in wdls:
+        pr = softmax_rows(wdls[a.reference])
+        ref_wl = np.abs(pr[:, 0] - pr[:, 2])
     for net, logits in pols.items():
         table["nets"][net] = {}
         for rname, rmove in rulers.items():
@@ -218,10 +335,16 @@ def cmd_score(a: argparse.Namespace) -> int:
             if a.reference and net != a.reference:
                 entry["vs_reference"] = paired_top1(logits, pols[a.reference], legal, rmove, game)
             table["nets"][net][rname] = entry
+        move = np.argmax(np.where(legal, logits.astype(np.float64), -np.inf), axis=1)
+        for gname, tab in regrets.items():
+            table["nets"][net][f"regret:{gname}"] = regret_column(move, tab, game)
+        if net in wdls:
+            ref_logits = wdls[a.reference] if a.reference and net != a.reference and a.reference in wdls else None
+            table["value"][net] = value_shape(wdls[net], game, ref_wl, ref_logits)
     Path(a.out).write_text(json.dumps(table, indent=1, sort_keys=True) + "\n")
     for net, by in table["nets"].items():
         print(net, " ".join(f"{r}: top1 {v['top1']:.4f}±{v['top1_se']:.4f} gap {v['calibration_gap']:+.3f}"
-                            for r, v in by.items()))
+                            for r, v in by.items() if "top1" in v))
     return 0
 
 
@@ -258,16 +381,100 @@ def choose_dose(scores: list[dict[str, Any]], paired: dict[tuple[int, int], dict
                   f"earliest is {pick}")
 
 
+def validate_ruler(ruler_move: np.ndarray, pols: dict[str, np.ndarray], legal: np.ndarray, game: np.ndarray, *,
+                   base: str, others: list[str], search_move: np.ndarray, independent: bool) -> dict[str, Any]:
+    """The plan's three conditions (Stage 0b). (1) not derived from the SL base's
+    net or search (declared); (2) negative control: the base ranks above every
+    other net and the last of ``others`` ranks last, a pair within one paired
+    game-clustered SE being a tie, not an error; (3) positive control: the base's
+    search move agrees with the ruler more than its raw argmax, paired lower
+    bound > 0."""
+    cond1 = {"pass": bool(independent), "declared_independent_of_base": bool(independent)}
+    errors = []
+    pairs = {}
+    for o in others:
+        d = paired_top1(pols[base], pols[o], legal, ruler_move, game)
+        pairs[f"{base}-{o}"] = d
+        if d["diff"] < 0 and abs(d["diff"]) > d["se"]:
+            errors.append(f"{o} ranks above {base}")
+    last = others[-1]
+    for o in [base, *others[:-1]]:
+        d = paired_top1(pols[o], pols[last], legal, ruler_move, game)
+        pairs[f"{o}-{last}"] = d
+        if d["diff"] < 0 and abs(d["diff"]) > d["se"]:
+            errors.append(f"{last} does not rank last ({o} below it)")
+    cond2 = {"pass": not errors, "errors": errors, "pairs": pairs}
+    raw = policy_stats(pols[base], legal, ruler_move)["agree"]
+    srch = (search_move == ruler_move).astype(np.float64)
+    diff, se = clustered_mean_se(srch - raw, game)
+    cond3 = {"pass": bool(diff - 1.96 * se > 0), "diff": diff, "se": se, "lb95": diff - 1.96 * se,
+             "ub95": diff + 1.96 * se}
+    return {"conditions": {"1_independent": cond1, "2_negative_control": cond2, "3_positive_control": cond3},
+            "passed": bool(cond1["pass"] and cond2["pass"] and cond3["pass"])}
+
+
+def cmd_validate(a: argparse.Namespace) -> int:
+    rows = load_rows(Path(a.rows), a.mask, invert=a.mask_invert)
+    keep = rows["_keep"]
+    legal, game = rows["legal"][keep], rows["game_id"][keep]
+    (rname, rmove), = _rulers([a.ruler], rows["legal"]).items()
+    pri = load_priors(Path(a.priors), rows)
+    names = [a.base, *a.others]
+    missing = [n for n in names if f"pol_{n}" not in pri]
+    if missing:
+        raise SystemExit(f"priors have no {missing}")
+    pols = {n: pri[f"pol_{n}"][keep] for n in names}
+    search = legal_argmax(load_array(a.search_move), rows["legal"])[keep]
+    res = validate_ruler(rmove[keep], pols, legal, game, base=a.base, others=list(a.others), search_move=search,
+                         independent=a.provenance == "independent")
+    rec = {"ruler": _ruler_record(a.ruler), "input": rows["_record"], "base": a.base, "others": list(a.others),
+           "search_move": {"spec": a.search_move, "sha256": sha256_file(Path(a.search_move.rpartition(":")[0]))},
+           "provenance": a.provenance, **res}
+    Path(a.out).write_text(json.dumps(rec, indent=1, sort_keys=True) + "\n")
+    print(f"validate {rname}: {'PASS' if res['passed'] else 'FAIL'} "
+          f"({', '.join(k for k, v in res['conditions'].items() if not v['pass']) or 'all conditions'})")
+    return 0
+
+
+def ruler_validation_status(spec: str, validation: str | None) -> tuple[bool, str, dict[str, Any] | None]:
+    """Whether ``validation`` records a PASS for this exact ruler file (name, key, sha)."""
+    if not validation:
+        return False, "no --ruler-validation given", None
+    vpath = Path(validation)
+    rec = json.loads(vpath.read_text())
+    mine = _ruler_record(spec)
+    theirs = rec.get("ruler", {})
+    ref = {"file": str(vpath), "sha256": sha256_file(vpath)}
+    if any(theirs.get(k) != mine[k] for k in ("name", "key", "sha256")):
+        other = f"{theirs.get('name')}, sha {str(theirs.get('sha256'))[:12]}"
+        return False, f"the validation record is for another ruler file ({other})", ref
+    if not rec.get("passed"):
+        failed = [k for k, v in rec.get("conditions", {}).items() if not v.get("pass")]
+        return False, f"the ruler failed validation ({', '.join(failed)})", ref
+    return True, "validated", ref
+
+
 def cmd_dose(a: argparse.Namespace) -> int:
     cands = snapshot_candidates(Path(a.train_dir))
     out_model = Path(a.out_model)
-    record: dict[str, Any] = {"train_dir": str(a.train_dir), "candidates": cands, "band_hi": a.band_hi}
+    record: dict[str, Any] = {"train_dir": str(a.train_dir), "candidates": cands, "band_hi": a.band_hi,
+                              "ruler_spec": a.ruler, "ruler_validated": False}
     final_i = len(cands) - 1
-    labels_ok = all(Path(spec.partition("=")[2].rpartition(":")[0]).is_file() for spec in [a.ruler])
+    if not a.mask and not a.no_mask:
+        raise SystemExit("dose: give --mask (A1 holds rows that reappear in training games; the leak mask) or "
+                         "--no-mask explicitly")
+    labels_ok = Path(a.ruler.partition("=")[2].rpartition(":")[0]).is_file()
+    validated, vwhy, vref = (ruler_validation_status(a.ruler, a.ruler_validation) if labels_ok
+                             else (False, "labels absent", None))
+    record.update({"ruler_validated": validated, "ruler_validation": vref, "ruler_validation_reason": vwhy})
     if not labels_ok:
         pick, why = final_i, "the dose ruler's labels have not landed; every cell plays its final model"
+    elif not validated:
+        record["ruler"] = _ruler_record(a.ruler)
+        pick, why = final_i, f"ruler not validated ({vwhy}); final model"
     else:
         rows = load_rows(Path(a.rows), a.mask, invert=a.mask_invert)
+        record["input"] = rows["_record"]
         keep = rows["_keep"]
         legal, game = rows["legal"][keep], rows["game_id"][keep]
         (rname, rmove), = _rulers([a.ruler], rows["legal"]).items()
@@ -285,7 +492,7 @@ def cmd_dose(a: argparse.Namespace) -> int:
         paired = {(i, j): paired_top1(logits[i], logits[j], legal, rmove, game)
                   for i in range(len(cands)) for j in range(len(cands)) if i != j}
         pick, why = choose_dose(scores, paired, (lo, float(a.band_hi)))
-        record.update({"ruler": rname, "band_lo": lo, "scores": scores})
+        record.update({"ruler": {**_ruler_record(a.ruler), "parsed_name": rname}, "band_lo": lo, "scores": scores})
     chosen = cands[pick]
     out_model.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(chosen["model"], out_model)
@@ -317,6 +524,7 @@ def cmd_a2_sample(a: argparse.Namespace) -> int:
 
     from chess_anti_engine.moves.encode import index_to_move_for_encoding, legal_move_mask_for_encoding
     from chess_anti_engine.simple_rl.collect import load_generation_rows
+    from chess_anti_engine.simple_rl.common import resolve_collect_dir
 
     collect = Path(a.collect_dir)
     manifest = json.loads((collect / "manifest.json").read_text())
@@ -327,10 +535,17 @@ def cmd_a2_sample(a: argparse.Namespace) -> int:
     order = np.lexsort((meta["ply_index"], meta["game_id"]))
     exclude: set[str] = set()
     unkeyed = 0
+    excluded_sources = []
     for d in a.exclude_collect or []:
         keys, gaps = _collect_position_keys(Path(d))
         exclude |= keys
         unkeyed += gaps
+        excluded_sources.append({"collect": str(d), "manifest_sha256": sha256_file(
+            resolve_collect_dir(Path(d)) / "manifest.json"), "keys": len(keys)})
+    for f in a.exclude_rows or []:
+        keys = rows_position_keys(Path(f))
+        exclude |= keys
+        excluded_sources.append({"rows": str(f), "sha256": sha256_file(Path(f)), "keys": len(keys)})
     rng = np.random.default_rng(int(a.seed))
     picked: list[int] = []
     fens, roots, hists, keys = [], [], [], []
@@ -375,6 +590,7 @@ def cmd_a2_sample(a: argparse.Namespace) -> int:
     summary = {"collect": str(collect), "collect_manifest_sha256": sha256_file(collect / "manifest.json"),
                "rows": int(sel.size), "games": int(np.unique(meta["game_id"][sel]).size), "per_game": int(a.per_game),
                "seed": int(a.seed), "excluded_collects": list(a.exclude_collect or []),
+               "excluded_sources": excluded_sources,
                "rows_dropped_as_training_positions": dropped_excluded,
                "games_truncated_at_a_row_gap": truncated,
                "training_positions_unkeyed_after_a_row_gap": unkeyed,
@@ -382,6 +598,24 @@ def cmd_a2_sample(a: argparse.Namespace) -> int:
     Path(str(a.out) + ".json").write_text(json.dumps(summary, indent=1, sort_keys=True) + "\n")
     print(json.dumps(summary))
     return 0
+
+
+def rows_position_keys(path: Path) -> set[str]:
+    """Position keys of an audit-rows file that carries ``root_fen`` + ``history``
+    (A1 or an earlier A2), replayed: a transposition maps to the same key."""
+    import chess
+
+    with np.load(path, allow_pickle=False) as z:
+        if "root_fen" not in z.files or "history" not in z.files:
+            raise SystemExit(f"{path}: --exclude-rows needs root_fen and history")
+        roots, hists = z["root_fen"], z["history"]
+    keys = set()
+    for root, hist in zip(roots, hists, strict=True):
+        b = chess.Board(str(root))
+        for mv in str(hist).split():
+            b.push_uci(mv)
+        keys.add(_position_key(b))
+    return keys
 
 
 def _collect_position_keys(collect: Path) -> tuple[set[str], int]:
@@ -452,12 +686,27 @@ def parser() -> argparse.ArgumentParser:
     s = sub.add_parser("score")
     s.add_argument("--rows", required=True)
     s.add_argument("--priors", required=True)
-    s.add_argument("--ruler", action="append", required=True, metavar="NAME=FILE.npz:KEY")
+    s.add_argument("--ruler", action="append", default=[], metavar="NAME=FILE.npz:KEY")
+    s.add_argument("--regret", action="append", default=[], metavar="NAME=FILE.npz",
+                   help="deep-SF regret table (moves, regret_cp); reported, never a selector")
     s.add_argument("--nets", nargs="*")
     s.add_argument("--reference", default=None)
     s.add_argument("--mask", default=None, metavar="FILE.npz:KEY", help="keep rows where true")
     s.add_argument("--mask-invert", action="store_true", help="keep rows where the mask is false (e.g. leak)")
     s.add_argument("--out", required=True)
+    v = sub.add_parser("validate")
+    v.add_argument("--rows", required=True, help="A1 (and A2) rows")
+    v.add_argument("--priors", required=True)
+    v.add_argument("--ruler", required=True, metavar="NAME=FILE.npz:KEY")
+    v.add_argument("--provenance", required=True, choices=("independent", "base-derived"),
+                   help="condition 1: is the ruler free of the SL base's own net and search?")
+    v.add_argument("--base", required=True, help="the SL base's name in the priors")
+    v.add_argument("--others", nargs="+", required=True,
+                   help="nets the base must outrank; the LAST must rank last (plan: P1c12 F12c12 Q50c12)")
+    v.add_argument("--search-move", required=True, metavar="FILE.npz:KEY", help="the base's 64-sim search move")
+    v.add_argument("--mask", default=None)
+    v.add_argument("--mask-invert", action="store_true")
+    v.add_argument("--out", required=True)
     d = sub.add_parser("dose")
     d.add_argument("--train-dir", required=True, help="<cell run>/gen_0001/train")
     d.add_argument("--rows", required=True, help="A1 rows")
@@ -468,6 +717,9 @@ def parser() -> argparse.ArgumentParser:
     d.add_argument("--band-hi", type=float, default=0.02)
     d.add_argument("--mask", default=None)
     d.add_argument("--mask-invert", action="store_true")
+    d.add_argument("--no-mask", action="store_true", help="score every row (refused without this or --mask)")
+    d.add_argument("--ruler-validation", default=None, metavar="VALIDATION.json",
+                   help="a validate record; without a PASS for this exact ruler file the final model plays")
     d.add_argument("--device", default="cpu")
     d.add_argument("--out", required=True, help="dose.json")
     d.add_argument("--out-model", required=True, help="the played model (a copy, sha recorded)")
@@ -482,6 +734,8 @@ def parser() -> argparse.ArgumentParser:
     a2.add_argument("--seed", type=int, default=2026112500)
     a2.add_argument("--exclude-collect", action="append", default=[],
                     help="a training collect dir; positions it played are dropped (P2)")
+    a2.add_argument("--exclude-rows", action="append", default=[],
+                    help="an audit-rows npz with root_fen + history (A1, an earlier A2); its positions are dropped")
     a2.add_argument("--out", required=True)
     return p
 
@@ -491,8 +745,8 @@ def main(argv: list[str] | None = None) -> int:
     import torch
 
     torch.set_num_threads(max(1, int(a.threads)))
-    return {"forward": cmd_forward, "score": cmd_score, "dose": cmd_dose, "a2-openings": cmd_a2_openings,
-            "a2-sample": cmd_a2_sample}[a.command](a)
+    return {"forward": cmd_forward, "score": cmd_score, "validate": cmd_validate, "dose": cmd_dose,
+            "a2-openings": cmd_a2_openings, "a2-sample": cmd_a2_sample}[a.command](a)
 
 
 if __name__ == "__main__":
