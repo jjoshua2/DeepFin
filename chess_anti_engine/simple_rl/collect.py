@@ -441,25 +441,88 @@ def evaluator_graph_record(evaluator: Any) -> dict[str, Any]:
 PLAN = "plan.json"
 PROCS_DIR = "procs"
 PROC_DONE = "done.json"
-# Exit code of a collect process that found a pause/stop marker before playing.
-PROC_EXIT_BLOCKED = 4
-# Measured peak VRAM per collect process on the RTX 5090 (2026-11-20, SL base,
-# 64 sims): 3 x 128 games peaked at 21.9 GB (7.3 GB each), 2 x 256 at 22.6 GB
-# (11.3 GB each). Linear in the leaf rows one search call asks for (4096 at
-# 128 games / topk 16, 8192 at 256), times a 1.25 safety factor.
-_VRAM_BASE_GIB = 3.3
-_VRAM_GIB_PER_1024_LEAF_ROWS = 0.98
-_VRAM_SAFETY = 1.25
+PAUSED_ACK = "PAUSED"
+# Peak VRAM per collect process, fitted (least squares) to the 2026-11-20 RTX 5090
+# measurements (SL base, nvidia-smi MiB, total / K): 16 sims x 64 / 96 / 128 games
+# = 2858 / 4321 / 4806, 32 sims x 128 = 6553, 64 sims x 128 / 256 = 7368 / 12085.
+# Per process ~ 48 MiB per sim + 1.11 MiB per leaf row (the evaluator cap the
+# search asks for: 2048 / 3072 / 4096 / 8192 rows at 64 / 96 / 128 / 256 games,
+# topk 16), within -8% / +9% of every point; x 1.10 safety.
+_VRAM_MIB_PER_SIM = 48.0
+_VRAM_MIB_PER_LEAF_ROW = 1.11
+_VRAM_SAFETY = 1.10
+# Usable fraction of the card's memory: 8 x 96 at 16 sims peaked at 31,048 MiB
+# (95% of the 5090) and ran 22% slower than 6 x 96 at 25,926 MiB (80%), which ran
+# at full speed. Refuse above 83% of total (27.0 GiB on the 5090), never at 100%.
+VRAM_USABLE_FRACTION = 0.83
+
+# Default (collect processes, games per process) on CUDA when neither flag is
+# given, by --sims: the first row whose max_sims >= sims. Measured 2026-11-20
+# (docs/simple_rl_loop.md, "Collect processes"): at 16 sims 8 x 64 forwards
+# 9,689 rows/s (0.88 of the ~11k forward ceiling, 1.85M training rows/h, 22.9 GB)
+# against 7,113 (0.65) at 3 x 128; at 64 sims 3 x 128 reaches 9,487 (0.86, 22.1
+# GB). 32 sims has no K >= 6 measurement yet, so it keeps 3 x 128 (8,679, 0.79).
+# Both values are pinned in run_config like explicit flags.
+CUDA_COLLECT_SHAPES: tuple[tuple[int | None, int, int], ...] = (
+    (16, 8, 64),
+    (None, 3, 128),
+)
+CPU_COLLECT_SHAPE = (1, 64)  # one process, the long-standing --concurrency default
 
 
-class CollectBlocked(RuntimeError):
-    """A collect process found a STOP/PAUSE/operator marker before playing."""
+class PauseGate:
+    """Cooperative pause of one collect process: ``play_batch``'s ``pause_fn``.
+
+    True while ``<run>/PAUSE`` or any ``--pause-marker`` exists. ``play_batch``
+    checks it once per step (one network turn of every in-flight game) and,
+    while it holds, schedules no search, forward or Stockfish work and keeps
+    every in-flight game in memory; it continues exactly where it stopped once
+    the marker is gone. Nothing on that path has a wall-clock deadline (the
+    engine read timeout applies only inside a search, and searches already
+    submitted finish on the pool's own threads), so a pause may last any time.
+    While holding, ``<proc_dir>/PAUSED`` exists (the acknowledgement), and every
+    interval is recorded so throughput can exclude it. ``STOP`` is not a pause:
+    the driver honours it at the next stage boundary.
+    """
+
+    def __init__(self, run_dir: Path, markers: tuple[str, ...], ack: Path) -> None:
+        from chess_anti_engine.simple_rl.common import PAUSE_FILE
+
+        self._paths = [Path(run_dir) / PAUSE_FILE, *(Path(m).expanduser() for m in markers)]
+        self._ack = ack
+        self._since: float | None = None
+        self.intervals: list[tuple[float, float]] = []
+
+    def __call__(self) -> bool:
+        held = any(p.exists() or p.is_symlink() for p in self._paths)
+        now = time.time()
+        if held and self._since is None:
+            self._since = now
+            self._ack.write_text(f"{now}\n")
+        elif not held and self._since is not None:
+            self.intervals.append((self._since, now))
+            self._since = None
+            self._ack.unlink(missing_ok=True)
+        return held
+
+    def wait(self) -> None:
+        """Hold before any GPU work starts (model load, graph capture)."""
+        while self():
+            time.sleep(0.25)
+
+    @property
+    def paused_seconds(self) -> float:
+        return float(sum(b - a for a, b in self.intervals))
 
 
-def default_collect_procs(device: str) -> int:
-    """K when the flag is not given: 3 on CUDA (the measured fast setting, 2026-11-20:
-    5,021 games/h at 3 x 128 against 2,881 for one process), 1 on CPU."""
-    return 3 if str(device).startswith("cuda") else 1
+def default_collect_shape(device: str, sims: int) -> tuple[int, int]:
+    """(collect processes, games per process) when the flags are not given."""
+    if not str(device).startswith("cuda"):
+        return CPU_COLLECT_SHAPE
+    for max_sims, procs, games in CUDA_COLLECT_SHAPES:
+        if max_sims is None or int(sims) <= max_sims:
+            return procs, games
+    raise AssertionError("CUDA_COLLECT_SHAPES must end with a catch-all row")
 
 
 def proc_seed(settings: CollectSettings, generation: int, proc: int) -> int:
@@ -477,32 +540,37 @@ def proc_openings(openings: list[dict[str, Any]], proc: int, procs: int) -> list
 
 
 def vram_need_gib(settings: CollectSettings) -> float:
-    """Conservative peak VRAM of ``collect_procs`` processes at these settings."""
-    per = _VRAM_BASE_GIB + _VRAM_GIB_PER_1024_LEAF_ROWS * required_leaf_rows(settings) / 1024.0
-    return _VRAM_SAFETY * per * int(settings.collect_procs)
+    """Conservative peak VRAM of ``collect_procs`` processes at these settings (GiB)."""
+    per_mib = _VRAM_MIB_PER_SIM * int(settings.sims) + _VRAM_MIB_PER_LEAF_ROW * realised_eval_max_batch(settings)
+    return _VRAM_SAFETY * per_mib * int(settings.collect_procs) / 1024.0
 
 
 def check_vram(settings: CollectSettings) -> dict[str, Any] | None:
-    """Refuse before any work when the GPU's free memory cannot hold K processes.
+    """Refuse before any work when K processes would not fit in usable GPU memory.
 
-    K is pinned (it sets every process's RNG stream), so it is never stepped down
-    silently: the refusal names the value that would fit."""
+    Usable = min(free, VRAM_USABLE_FRACTION x total): past ~83% of the card the
+    collect slows down instead of failing (measured). K is pinned (it sets every
+    process's RNG stream), so it is never stepped down silently: the refusal names
+    the value that would fit."""
     if not str(settings.device).startswith("cuda"):
         return None
     import torch
 
     free, total = torch.cuda.mem_get_info(torch.device(settings.device))
+    usable = min(free, VRAM_USABLE_FRACTION * total) / 2**30
     need = vram_need_gib(settings)
-    record = {"free_gib": free / 2**30, "total_gib": total / 2**30, "need_gib": need,
+    record = {"free_gib": free / 2**30, "total_gib": total / 2**30, "usable_gib": usable, "need_gib": need,
               "collect_procs": int(settings.collect_procs)}
-    if free / 2**30 < need:
+    if need > usable:
         per = need / int(settings.collect_procs)
-        fit = int((free / 2**30) // per)
+        fit = int(usable // per)
         raise ValueError(
-            f"--collect-procs {settings.collect_procs} needs about {need:.1f} GiB of GPU memory at --concurrency "
-            f"{settings.concurrency} ({per:.1f} GiB per process, measured peak x {_VRAM_SAFETY}), but only "
-            f"{free / 2**30:.1f} of {total / 2**30:.1f} GiB is free. Free the GPU, or pass --collect-procs "
-            f"{max(1, fit)} explicitly (a pinned run also needs --allow-config-change: K sets the RNG streams)")
+            f"--collect-procs {settings.collect_procs} x --concurrency {settings.concurrency} at --sims "
+            f"{settings.sims} needs about {need:.1f} GiB of GPU memory ({per:.1f} GiB per process, fitted peak x "
+            f"{_VRAM_SAFETY}), but only {usable:.1f} GiB is usable: {free / 2**30:.1f} of {total / 2**30:.1f} GiB "
+            f"free, and the measured usable limit is ~{VRAM_USABLE_FRACTION:.0%} of the card (31.0 GB of 32 ran "
+            f"22% slower than 25.9 GB). Free the GPU, lower --concurrency, or pass --collect-procs {max(1, fit)} "
+            "explicitly (a pinned run also needs --allow-config-change: K sets the RNG streams)")
     return record
 
 
@@ -562,17 +630,15 @@ def _play_proc(spec: ProcSpec) -> dict[str, Any]:
 
     from chess_anti_engine.replay.shard import ShardMeta, samples_to_arrays, save_local_shard_arrays
     from chess_anti_engine.selfplay import play_batch
-    from chess_anti_engine.simple_rl.common import blocking_markers
     from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
-    blocked = blocking_markers(Path(spec.run_dir), [Path(m) for m in spec.pause_markers])
-    if blocked:
-        raise CollectBlocked(f"collect process {spec.proc}: " + "; ".join(blocked))
     settings = spec.settings
     proc_dir = spec.proc_dir
     if proc_dir.exists():
         shutil.rmtree(proc_dir)  # an unfinished process restarts from its own seed and openings
     (proc_dir / "shards").mkdir(parents=True)
+    gate = PauseGate(Path(spec.run_dir), spec.pause_markers, proc_dir / PAUSED_ACK)
+    gate.wait()
     checkpoint = Path(spec.checkpoint)
     arch = _arch(checkpoint)
     cfg = build_configs(settings, arch, Path(spec.starts_path))
@@ -654,7 +720,7 @@ def _play_proc(spec: ProcSpec) -> dict[str, Any]:
             model, device=settings.device, rng=np.random.default_rng(spec.seed), stockfish=pool,
             evaluator=evaluator, games=min(int(settings.concurrency), n_games),
             target_games=n_games, on_game_complete=on_samples, on_game_provenance=on_game,
-            fen_dole_queue=queue, **cfg,
+            fen_dole_queue=queue, pause_fn=gate, **cfg,
         )
     finally:
         pool.close()
@@ -665,9 +731,12 @@ def _play_proc(spec: ProcSpec) -> dict[str, Any]:
                          f"{len(queue)} undoled openings, {len(pending)} pending")
     if not (proc_dir / GAMES).exists():
         (proc_dir / GAMES).write_text("")
+    active = max(wall - gate.paused_seconds, 1e-9)
     done = {"proc": spec.proc, "seed": spec.seed, "games": games_done, "shards": shard_index,
             "play_batch_games": int(batch_stats.games), "wall_seconds": wall,
-            "games_per_hour": 3600.0 * games_done / max(wall, 1e-9),
+            "paused_seconds": gate.paused_seconds, "pause_intervals": gate.intervals,
+            # Throughput over the time the process was not paused.
+            "games_per_hour": 3600.0 * games_done / active,
             "games_sha256": sha256_file(proc_dir / GAMES),
             # Observed in THIS process (gumbel_c's counter is per process).
             "buffer_full_flushes": int(buffer_full_flushes() - flushes_before),
@@ -678,8 +747,6 @@ def _play_proc(spec: ProcSpec) -> dict[str, Any]:
 
 def _proc_main(spec: ProcSpec) -> None:
     """Entry point of a spawned collect process."""
-    import sys
-
     from chess_anti_engine.stockfish.uci import _child_reap_guard
 
     # Die with the driver however it exits (SIGKILL included); the engines this
@@ -689,12 +756,7 @@ def _proc_main(spec: ProcSpec) -> None:
     import torch
 
     torch.set_num_threads(max(1, int(spec.torch_threads)))
-    try:
-        _play_proc(spec)
-    except CollectBlocked as exc:
-        print(f"[simple_rl] {exc}", file=sys.stderr, flush=True)
-        sys.stdout.flush()
-        os._exit(PROC_EXIT_BLOCKED)
+    _play_proc(spec)
 
 
 def _stop_children(children: list[Any], grace_s: float = 10.0) -> None:
@@ -730,8 +792,6 @@ def _run_procs(specs: list[ProcSpec]) -> list[dict[str, Any]]:
             bad = [(s.proc, code) for s, code in zip(specs, codes, strict=True) if code not in (None, 0)]
             if bad:
                 _stop_children(children)
-                if all(code == PROC_EXIT_BLOCKED for _, code in bad):
-                    raise CollectBlocked(f"collect process(es) {[p for p, _ in bad]} found a pause/stop marker")
                 raise RuntimeError(f"collect process(es) failed (proc, exit code): {bad}; the finished ones are "
                                    "kept and the rest restart on the next attempt")
             if all(code == 0 for code in codes):
@@ -764,6 +824,16 @@ def _merge_procs(gen_dir: Path, procs: int) -> int:
             games.write((pdir / GAMES).read_text())
     (gen_dir / f".{GAMES}.tmp").replace(gen_dir / GAMES)
     return index
+
+
+def _union_seconds(intervals: list[tuple[float, float]]) -> float:
+    total, end = 0.0, float("-inf")
+    for a, b in sorted(intervals):
+        if b <= end:
+            continue
+        total += b - max(a, end)
+        end = b
+    return total
 
 
 def _sum_graph_stats(records: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -879,10 +949,19 @@ def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, trai
     # Wall of THIS attempt; processes kept from an interrupted one add their games
     # but not their time, so a resumed collect's rate is an upper bound (the
     # per-process records keep each process's own).
-    stats.update(wall_seconds=wall, games_per_hour=3600.0 * games_done / max(wall, 1e-9),
-                 rows_per_second=stats["rows"] / max(wall, 1e-9), sf_nodes=int(settings.sf_nodes),
+    # Paused time = the union of this attempt's processes' pause intervals (they
+    # pause together); throughput is over the rest. A paused collect's timing is
+    # not an independent measurement and says so.
+    fresh = {s.proc for s in todo}
+    paused = _union_seconds([tuple(i) for r in records if int(r["proc"]) in fresh
+                             for i in r.get("pause_intervals", [])])
+    active = max(wall - paused, 1e-9)
+    stats.update(wall_seconds=wall, paused_seconds=paused, active_seconds=active,
+                 timing_independent=paused == 0.0 and not (set(done) - fresh),
+                 games_per_hour=3600.0 * games_done / active,
+                 rows_per_second=stats["rows"] / active, sf_nodes=int(settings.sf_nodes),
                  leaf_rows_required=required_leaf_rows(settings), collect_procs=k_procs,
-                 procs_resumed=sorted(p for p in done if p not in {s.proc for s in todo}),
+                 procs_resumed=sorted(p for p in done if p not in fresh),
                  **_combined_evaluator_record(records))
     stats["procs"] = records
     stats["gpu_memory_check"] = vram

@@ -335,11 +335,19 @@ about 5% as noise. These candidates were measured and not taken:
 
 ## Collect processes
 
-`--collect-procs K` runs the collect as K processes sharing the device. The
-default is 3 on CUDA and 1 on CPU; a run already pinned keeps its pinned value
-(1 for a run pinned before the flag existed), and an arm without the flag takes
-its source run's value. K = 1 is the same code path, run in the driver's own
-process.
+`--collect-procs K` runs the collect as K processes sharing the device, each
+running `--concurrency` games at a time. When a flag is not given it takes the
+run's pinned value (a run pinned before `--collect-procs` existed keeps 1
+process), for an arm its source run's value, else the default table
+`collect.CUDA_COLLECT_SHAPES` by `--sims` (both values are then pinned):
+
+| `--sims` | processes × games per process (CUDA) | measured (2026-11-20, RTX 5090) |
+|---|---|---|
+| ≤ 16 | 8 × 64 | 9,689 forwarded rows/s, 0.88 of the forward ceiling, 1.85M training rows/h, 22.9 GB |
+| > 16 | 3 × 128 | 64 sims: 9,487 rows/s, 0.86, 491k rows/h, 22.1 GB; 32 sims: 8,679, 0.79 |
+
+On CPU the default is 1 × 64. K = 1 is the same code path, run in the driver's
+own process. The 32-sim row has no measurement with K ≥ 6 yet.
 
 Why: the collect search is serial within a process (C tree walk, forward, wait,
 tablebase probes, C tree walk), because the collect carries persistent trees and
@@ -393,14 +401,27 @@ parent-death signal against the driver, so a SIGKILL or SIGTERM of the driver
 kills it; the Stockfish engines a child starts carry the same guard against the
 child (`stockfish.uci._child_reap_guard`). A failing child, an exception or
 Ctrl-C in the driver stops the other children (SIGTERM, then SIGKILL after 10 s).
-Every process checks the run's STOP/PAUSE files and `--pause-marker`s before it
-plays; a blocked process makes the stage exit with the blocked code, keeping the
-finished processes.
+Pause: `<run>/PAUSE` or any `--pause-marker` pauses a RUNNING collect
+cooperatively. Every process checks it before loading its model and once per
+`play_batch` step (one network turn of every in-flight game). While a marker exists
+the process schedules no search, forward or Stockfish work, keeps every in-flight
+game in memory (its VRAM stays allocated) and writes `procs/<k>/PAUSED`; it
+continues exactly where it stopped when the marker is removed, so a paused collect
+makes the same rows (same `--content-digest`) as an unpaused one. Nothing on that
+path has a wall-clock deadline: the engine read timeout applies only inside a
+search, and searches already submitted finish on the pool's threads. Each
+process records its `pause_intervals`; `stats.json` has `paused_seconds`,
+`active_seconds`, games/h over the active time, and `timing_independent: false`
+for a paused (or resumed) collect. `STOP` is not a pause: the driver honours it at
+the next stage boundary, and the driver still refuses to START a stage while a
+pause marker exists.
 
 GPU memory: at the start the collect refuses, and never silently steps K down,
-when the GPU's free memory is below about 1.25 × (3.3 GiB + 0.98 GiB per 1,024
-leaf rows) per process. That is 9.0 GiB per process at `--concurrency` 128
-(27 GiB for K = 3), from the measured peaks below.
+when K × 1.10 × (48 MiB per sim + 1.11 MiB per leaf row) exceeds the usable memory,
+min(free, 83% of the card). The per-process model is a least-squares fit to the
+measured peaks (within −8% / +9% of each). The usable limit is measured: 8 × 96 at
+16 sims peaked at 31.0 GB of 32 and ran 22% slower than 6 × 96 at 25.9 GB, which ran
+at full speed.
 
 Measured on 2026-11-20 on the RTX 5090, GPU otherwise idle (compute-process list
 recorded every 2 s): SL base, 64 sims, cap auto, 0 buffer-full flushes in every
@@ -416,6 +437,28 @@ side by side, which is what `--collect-procs` launches.
 | 2 × 128 | 4,546 | 8,435 | 78% | 16.2 GB |
 | 2 × 256 | 4,553 | 8,412 | 78% | 22.6 GB |
 | 3 × 128 | 5,021 | 9,262 | 87% | 21.9 GB |
+
+Fewer simulations per move (same seed and openings; ceiling = the ~11k rows/s
+plain-forward ceiling at batch ≥ 512):
+
+| sims | setup | forwarded rows/s | share of ceiling | GPU util | training rows/h | peak VRAM |
+|---|---|---|---|---|---|---|
+| 16 | 1 × 256 | 3,146 | 0.29 | 29% | 619k | 9.1 GB |
+| 16 | 3 × 128 | 7,113 | 0.65 | 64% | 1.39M | 14.8 GB |
+| 16 | 4 × 128 | 8,489 | 0.77 | 78% | 1.66M | 18.7 GB |
+| 16 | 8 × 64 | 9,689 | 0.88 | 90% | 1.85M | 22.9 GB |
+| 16 | 6 × 96 | 9,754 | 0.89 | 90% | 1.86M | 25.9 GB |
+| 16 | 8 × 96 | 7,599 | 0.69 | 81% | 1.44M | 31.0 GB (past the usable limit) |
+| 32 | 1 × 256 | 4,510 | 0.41 | 39% | 452k | 12.1 GB |
+| 32 | 3 × 128 | 8,679 | 0.79 | 81% | 879k | 19.7 GB |
+| 64 | 1 × 256 | 6,506 | 0.59 | 58% | 337k | 12.1 GB |
+| 64 | 3 × 128 | 9,487 | 0.86 | 90% | 491k | 22.1 GB |
+
+Training rows per GPU-hour: 1.86M at 16 sims, 0.88M at 32 (3 × 128), 0.49M at 64,
+so 16 sims buys 3.8× the rows of 64 once 6–8 processes fill the GPU (2.8× at
+3 × 128). The Stockfish label pool (one worker, 1 node, strict TB) sustains about
+1,870 labels/s per process, against about 90 rows/s per process at 6 × 96: it is not
+the ceiling.
 
 At 3 × 128, py-spy of one process puts 51% of its main thread in waiting on the
 GPU and 13% in launching forwards; tablebase probing (8%), the C search (6%),

@@ -15,6 +15,7 @@ import signal
 import subprocess
 import sys
 import textwrap
+import threading
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -50,13 +51,15 @@ def _settings(procs: int, games: int = 4) -> CollectSettings:
                            collect_procs=procs, seed=77)
 
 
-def _collect(tmp_path: Path, run: str, procs: int, **kw: Any) -> tuple[dict[str, Any], Path]:
+def _collect(tmp_path: Path, run: str, procs: int, settings: CollectSettings | None = None,
+             **kw: Any) -> tuple[dict[str, Any], Path]:
     ckpt = tmp_path / "gen0.pt"
     if not ckpt.exists():
         save_tiny_checkpoint(ckpt)
     gen = tmp_path / run / "gen_0001" / "collect"
     stats = collect_mod.collect_generation(gen_dir=gen, generation=1, checkpoint=ckpt,
-                                           train_jsonl=_openings(tmp_path), settings=_settings(procs), **kw)
+                                           train_jsonl=_openings(tmp_path),
+                                           settings=settings or _settings(procs), **kw)
     return stats, gen
 
 
@@ -164,14 +167,89 @@ def test_a_changed_plan_redoes_the_interrupted_collect_whole(
     assert stats["collect_procs"] == 1
 
 
+def _pause_once(gen: Path, procs: int, run_dir: Path, hold_s: float, log: dict[str, float]) -> threading.Thread:
+    """Create <run>/PAUSE after the first finished game, wait until every process
+    acknowledges (procs/<k>/PAUSED), hold ``hold_s``, then remove it."""
+    def go() -> None:
+        first = gen / "procs" / "00" / "games.jsonl"
+        while not (first.exists() and first.read_text().strip()):
+            time.sleep(0.02)
+        (run_dir / "PAUSE").write_text("")
+        acks = [gen / "procs" / f"{k:02d}" / "PAUSED" for k in range(procs)]
+        while not all(a.exists() for a in acks):
+            time.sleep(0.02)
+        log["held"] = time.time()
+        time.sleep(hold_s)
+        log["released"] = time.time()
+        (run_dir / "PAUSE").unlink()
+
+    t = threading.Thread(target=go, daemon=True)
+    t.start()
+    return t
+
+
 @pytest.mark.parametrize("procs", [1, 2])
-def test_every_process_honours_the_pause_marker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, procs: int) -> None:
+def test_a_pause_holds_every_process_and_resumes_to_identical_rows(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, procs: int) -> None:
+    from chess_anti_engine.selfplay import network_turn
+
+    monkeypatch.setattr(collect_mod, "_open_stockfish", quiet_stockfish)
+    # Two waves or more per process, so games remain after the first ones end.
+    settings = _settings(procs, games=8)
+    _, plain = _collect(tmp_path, "plain", procs, settings)
+    calls: list[float] = []
+    real = network_turn._run_gumbel_root_many_c
+
+    def counting(*a: Any, **k: Any) -> Any:
+        calls.append(time.time())
+        return real(*a, **k)
+
+    monkeypatch.setattr(network_turn, "_run_gumbel_root_many_c", counting)  # seen in-process (K = 1)
+    log: dict[str, float] = {}
+    gen = tmp_path / "paused" / "gen_0001" / "collect"
+    pauser = _pause_once(gen, procs, tmp_path / "paused", 2.0, log)
+    stats, _ = _collect(tmp_path, "paused", procs, settings)
+    pauser.join(5)
+    assert content_digest(gen)["content_sha256"] == content_digest(plain)["content_sha256"]
+    assert content_digest(gen)["games_sha256"] == content_digest(plain)["games_sha256"]
+    assert stats["paused_seconds"] >= 2.0
+    assert stats["timing_independent"] is False
+    assert all(len(p["pause_intervals"]) == 1 for p in stats["procs"])
+    assert stats["active_seconds"] <= stats["wall_seconds"] - 2.0
+    if procs == 1:
+        assert calls, "the counting search wrapper was not on the collect's path"
+        assert not [c for c in calls if log["held"] <= c <= log["released"]], "a search ran during the pause"
+
+
+def test_a_marker_present_at_start_holds_before_any_work(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(collect_mod, "_open_stockfish", quiet_stockfish)
     marker = tmp_path / "gpu_window"
     marker.write_text("")
-    with pytest.raises(collect_mod.CollectBlocked):
-        _collect(tmp_path, "p", procs, pause_markers=(marker,))
-    assert not list((tmp_path / "p").rglob("done.json"))
+
+    def release() -> None:
+        ack = tmp_path / "p" / "gen_0001" / "collect" / "procs" / "00" / "PAUSED"
+        while not ack.exists():
+            time.sleep(0.02)
+        time.sleep(1.0)
+        marker.unlink()
+
+    from chess_anti_engine.uci import model_loader
+
+    loads: list[float] = []
+    real_load = model_loader.load_model_from_checkpoint
+
+    def recording_load(*a: Any, **k: Any) -> Any:
+        loads.append(time.time())
+        return real_load(*a, **k)
+
+    monkeypatch.setattr(model_loader, "load_model_from_checkpoint", recording_load)
+    threading.Thread(target=release, daemon=True).start()
+    stats, _ = _collect(tmp_path, "p", 1, pause_markers=(marker,))
+    assert stats["paused_seconds"] >= 1.0
+    assert stats["games"] == 4
+    (_start, end), = stats["procs"][0]["pause_intervals"]
+    assert loads, "the recording loader was not on the collect's path"
+    assert min(loads) >= end, "the model was loaded (GPU work) before the pause ended"
 
 
 _LAUNCHER = textwrap.dedent("""
@@ -252,15 +330,18 @@ def _driver_args(run_dir: Path, *extra: str, device: str = "cpu") -> Any:
     return a
 
 
-def test_default_is_three_on_cuda_one_on_cpu_and_a_pinned_value_wins(tmp_path: Path) -> None:
+def test_default_shape_follows_sims_and_a_pinned_value_wins(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
-    assert simple_rl_loop.resolve_collect_procs(_driver_args(run_dir)) == 1
-    assert simple_rl_loop.resolve_collect_procs(_driver_args(run_dir, device="cuda")) == 3
+    assert simple_rl_loop.resolve_collect_shape(_driver_args(run_dir)) == (1, 64)
+    assert simple_rl_loop.resolve_collect_shape(_driver_args(run_dir, device="cuda")) == (3, 128)
+    assert simple_rl_loop.resolve_collect_shape(_driver_args(run_dir, "--sims", "16", device="cuda")) == (8, 64)
+    assert simple_rl_loop.resolve_collect_shape(
+        _driver_args(run_dir, "--sims", "16", "--concurrency", "32", device="cuda")) == (8, 32)
     assert simple_rl_loop.resolve_collect_procs(_driver_args(run_dir, "--collect-procs", "2", device="cuda")) == 2
     run_dir.mkdir()
     # A run pinned before the flag existed resumes at the one process it ran with.
-    (run_dir / simple_rl_loop.RUN_CONFIG).write_text(json.dumps({"settings": {"lr": 1e-3}, "changes": []}))
-    assert simple_rl_loop.resolve_collect_procs(_driver_args(run_dir, device="cuda")) == 1
+    (run_dir / simple_rl_loop.RUN_CONFIG).write_text(json.dumps({"settings": {"concurrency": 64}, "changes": []}))
+    assert simple_rl_loop.resolve_collect_shape(_driver_args(run_dir, "--sims", "16", device="cuda")) == (1, 64)
     (run_dir / simple_rl_loop.RUN_CONFIG).write_text(json.dumps({"settings": {"collect_procs": 2}, "changes": []}))
     assert simple_rl_loop.resolve_collect_procs(_driver_args(run_dir, device="cuda")) == 2
     # An arm without the flag takes its source's value.
@@ -300,17 +381,31 @@ def test_an_arm_must_match_the_source_k() -> None:
     assert settings_diff(old_source, _settings(2)) == {"collect_procs": {"source": 1, "arm": 2}}
 
 
-def test_insufficient_free_vram_is_refused_never_stepped_down(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_vram_refusal_uses_free_memory_and_the_usable_limit(monkeypatch: pytest.MonkeyPatch) -> None:
     import torch
 
-    monkeypatch.setattr(torch.cuda, "mem_get_info", lambda *_a: (10 * 2**30, 32 * 2**30))
-    settings = replace(_settings(3, games=512), concurrency=128, device="cuda")
-    with pytest.raises(ValueError, match=r"--collect-procs 3 needs about .* pass --collect-procs 1 explicitly"):
+    gib = 2**30
+    monkeypatch.setattr(torch.cuda, "mem_get_info", lambda *_a: (10 * gib, 32 * gib))
+    settings = replace(_settings(3, games=512), concurrency=128, sims=64, device="cuda")
+    with pytest.raises(ValueError, match=r"--collect-procs 3 x --concurrency 128 .* pass --collect-procs 1 explicitly"):
         collect_mod.check_vram(settings)
-    monkeypatch.setattr(torch.cuda, "mem_get_info", lambda *_a: (31 * 2**30, 32 * 2**30))
-    record = collect_mod.check_vram(settings)
+    monkeypatch.setattr(torch.cuda, "mem_get_info", lambda *_a: (31 * gib, 32 * gib))
+    record = collect_mod.check_vram(settings)  # measured 22.1 GB: fits
     assert record is not None
-    assert record["need_gib"] < 31
+    assert record["usable_gib"] == pytest.approx(0.83 * 32)
+    # 16 sims: the default 8 x 64 (measured 22.9 GB) fits; 8 x 96 (31.0 GB, ran
+    # 22% slower) is past the usable limit although the card has 31 GiB free.
+    assert collect_mod.check_vram(replace(settings, collect_procs=8, concurrency=64, sims=16)) is not None
+    with pytest.raises(ValueError, match="usable limit"):
+        collect_mod.check_vram(replace(settings, collect_procs=8, concurrency=96, sims=16))
+
+
+def test_default_shape_table_by_sims() -> None:
+    assert collect_mod.default_collect_shape("cuda", 16) == (8, 64)
+    assert collect_mod.default_collect_shape("cuda", 8) == (8, 64)
+    assert collect_mod.default_collect_shape("cuda", 32) == (3, 128)
+    assert collect_mod.default_collect_shape("cuda", 64) == (3, 128)
+    assert collect_mod.default_collect_shape("cpu", 16) == (1, 64)
 
 
 def test_combined_evaluator_record_fails_closed_on_disagreement() -> None:

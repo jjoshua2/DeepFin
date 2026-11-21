@@ -25,10 +25,9 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from chess_anti_engine.simple_rl.collect import (
-    CollectBlocked,
     CollectSettings,
     collect_generation,
-    default_collect_procs,
+    default_collect_shape,
     validate_settings,
 )
 from chess_anti_engine.simple_rl.common import (
@@ -145,7 +144,7 @@ def init_run(run_dir: Path, *, init_checkpoint: str | None, random_init: bool,
 
 def collect_settings(a: argparse.Namespace) -> CollectSettings:
     return CollectSettings(
-        games=a.games, concurrency=a.concurrency, sims=a.sims, full_prob=a.full_prob, fast_sims=a.fast_sims,
+        games=a.games, concurrency=resolve_collect_shape(a)[1], sims=a.sims, full_prob=a.full_prob, fast_sims=a.fast_sims,
         fast_value_rows=a.fast_value_rows, tree_reuse=not a.no_tree_reuse, topk=a.topk, c_scale=a.c_scale,
         c_visit=a.c_visit, target_q_rescale=not a.no_target_q_rescale, policy_temp=a.policy_temp,
         target_untempered_prior=a.target_untempered_prior, vloss_weight=a.vloss_weight,
@@ -244,16 +243,13 @@ def do_collect(a: argparse.Namespace, run_dir: Path, g: int) -> None:
                           **{k: stats.get(k) for k in ("games", "rows", "decisive_rate", "draw_rate")}},
                          default=str), flush=True)
         return
-    try:
-        stats = collect_generation(gen_dir=gen_dir(run_dir, g) / "collect", generation=g, checkpoint=ckpt,
-                                   train_jsonl=Path(a.openings_dir) / "train.jsonl", settings=collect_settings(a),
-                                   pause_markers=tuple(Path(m) for m in (a.pause_marker or ())))
-    except CollectBlocked as exc:
-        print(f"stopping in gen {g} collect: {exc}", file=sys.stderr)
-        raise SystemExit(EXIT_BLOCKED) from exc
+    stats = collect_generation(gen_dir=gen_dir(run_dir, g) / "collect", generation=g, checkpoint=ckpt,
+                               train_jsonl=Path(a.openings_dir) / "train.jsonl", settings=collect_settings(a),
+                               pause_markers=tuple(Path(m) for m in (a.pause_marker or ())))
     print(json.dumps({"stage": "collect", "generation": g, **{k: stats[k] for k in (
         "games", "rows", "decisive_rate", "draw_rate", "repeat_rate_within", "repeat_rate_vs_previous",
-        "target_entropy", "games_per_hour", "cuda_graphs", "evaluator_mode", "collect_procs")}},
+        "target_entropy", "games_per_hour", "cuda_graphs", "evaluator_mode", "collect_procs",
+        "paused_seconds")}},
                      default=str), flush=True)
 
 
@@ -311,26 +307,41 @@ ADDED_SINCE_PINNING = {"init_optimizer_state": "fresh",
                        "collect_procs": 1}
 
 
-def resolve_collect_procs(a: argparse.Namespace) -> int:
-    """``--collect-procs`` as the integer that is pinned and used.
+def _pinned_value(path: Path, key: str, legacy: Any) -> Any:
+    """``key`` from a run_config.json, ``legacy`` when the run predates it, None when unpinned."""
+    if not path.is_file():
+        return None
+    return json.loads(path.read_text())["settings"].get(key, legacy)
 
-    Explicit values are kept. Without the flag: the value a pinned run already
-    recorded (1 for a run pinned before the flag existed), else for an arm the
-    source run's value (its rows were made with it), else 3 on CUDA and 1 on CPU
-    (``collect.default_collect_procs``)."""
-    if a.collect_procs is not None:
-        if int(a.collect_procs) < 1:
-            raise SystemExit(f"--collect-procs must be >= 1, got {a.collect_procs}")
-        return int(a.collect_procs)
-    pinned = Path(a.run_dir) / RUN_CONFIG
-    if pinned.is_file():
-        return int(json.loads(pinned.read_text())["settings"].get("collect_procs", ADDED_SINCE_PINNING["collect_procs"]))
-    if a.collect_from:
-        source = Path(a.collect_from) / RUN_CONFIG
-        if source.is_file():
-            return int(json.loads(source.read_text())["settings"].get("collect_procs",
-                                                                      ADDED_SINCE_PINNING["collect_procs"]))
-    return default_collect_procs(a.device)
+
+def resolve_collect_shape(a: argparse.Namespace) -> tuple[int, int]:
+    """(``--collect-procs``, ``--concurrency``) as the integers that are pinned and used.
+
+    Explicit values are kept. A flag not given takes, in order: the value the run
+    already pinned (1 process for a run pinned before --collect-procs existed); for
+    an arm, the source run's value (its rows were made with it); else the
+    sims-dependent default table ``collect.CUDA_COLLECT_SHAPES`` (CPU: 1 x 64)."""
+    pinned, source = Path(a.run_dir) / RUN_CONFIG, Path(a.collect_from) / RUN_CONFIG if a.collect_from else None
+    default = default_collect_shape(a.device, a.sims)
+    # A defaulted K never exceeds --games (a tiny run would otherwise be refused).
+    default = (min(default[0], max(1, int(a.games))), default[1])
+    out = []
+    for key, given, legacy, fallback in (("collect_procs", a.collect_procs, 1, default[0]),
+                                         ("concurrency", a.concurrency, 64, default[1])):
+        if given is not None:
+            if int(given) < 1:
+                raise SystemExit(f"--{key.replace('_', '-')} must be >= 1, got {given}")
+            out.append(int(given))
+            continue
+        value = _pinned_value(pinned, key, legacy)
+        if value is None and source is not None:
+            value = _pinned_value(source, key, legacy)
+        out.append(int(fallback if value is None else value))
+    return out[0], out[1]
+
+
+def resolve_collect_procs(a: argparse.Namespace) -> int:
+    return resolve_collect_shape(a)[0]
 
 
 def validate_before_pinning(a: argparse.Namespace, run_dir: Path, stages: set[str]) -> None:
@@ -555,7 +566,10 @@ def _common(p: argparse.ArgumentParser) -> None:
 
     c = p.add_argument_group("collect")
     c.add_argument("--games", type=int, default=2000)
-    c.add_argument("--concurrency", type=int, default=64, help="concurrent game slots")
+    c.add_argument("--concurrency", type=int, default=None,
+                   help="concurrent game slots PER collect process (default: the run's pinned value, else by "
+                        "--sims from collect.CUDA_COLLECT_SHAPES on CUDA -- 64 at <= 16 sims, 128 above -- "
+                        "and 64 on CPU)")
     c.add_argument("--sims", type=int, default=64,
                    help="simulations per TARGET (full) ply; the arena's budget is --eval-sims, independent")
     c.add_argument("--full-prob", type=float, default=1.0,
@@ -600,8 +614,8 @@ def _common(p: argparse.ArgumentParser) -> None:
     c.add_argument("--collect-procs", type=int, default=None, metavar="K",
                    help="collect processes sharing the device, each playing a disjoint slice of the openings "
                         "with its own seed (pinned: it sets the RNG streams). Default: the run's pinned value, "
-                        "else 3 on CUDA (needs ~27 GiB free at --concurrency 128; refused, never stepped down, "
-                        "when the GPU has less) and 1 on CPU")
+                        "else by --sims from collect.CUDA_COLLECT_SHAPES on CUDA (8 at <= 16 sims, 3 above) and "
+                        "1 on CPU. Refused, never stepped down, when it would not fit in usable GPU memory")
     c.add_argument("--collect-from", default=None, metavar="SOURCE_RUN_DIR",
                    help="training arm: seal each collect as a verified reference to SOURCE_RUN_DIR's sealed "
                         "collect of the same generation instead of playing games (same gen-0 model, actor, "
@@ -724,7 +738,7 @@ def parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     a = parser().parse_args(argv)
     if hasattr(a, "collect_procs"):
-        a.collect_procs = resolve_collect_procs(a)
+        a.collect_procs, a.concurrency = resolve_collect_shape(a)
     if getattr(a, "threads", 0):
         import torch
 
