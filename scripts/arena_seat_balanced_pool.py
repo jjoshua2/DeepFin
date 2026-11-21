@@ -60,11 +60,20 @@ unless:
   two runs' ``openings_sha256`` must be non-null and equal. Each row's
   ``game_log_provenance`` must be ``this_run`` or ``recorded``: ``absent`` means
   a pre-provenance log was resumed, so its earlier games were never checked.
+  A hybrid seat (``--<seat>-value-from`` / ``-value-recal``; ``candidate_value`` /
+  ``reference_value`` in the row) must be the same hybrid in both runs (value-from
+  sha256 and [T, b]), and each value-from file must hash, AT POOL TIME, to what
+  the row says was played.
   Rows without the seat shas are legacy: refused unless ``--allow-legacy-rows``,
   under which the older mtime heuristic applies (no net file may be modified
   after the earlier run's header ``created``) and the output marks the check as
   ``legacy_mtime``. A mixed pair (one row with shas, one without) is refused
   outright, waiver or not.
+
+A net MOVED after it was played is pooled only with ``--relocate OLD=NEW``: the
+file at NEW is hashed and must equal the sha256 recorded for OLD (the hash is
+never skipped); the mapping is recorded under ``relocated`` and on the file
+(``recorded_path``).
 
 Provenance: the output records the sha256 of the four input files and of every
 net file at pool time, and which net check ran (``row_sha256`` or
@@ -217,11 +226,35 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def pool_time_files(role: str, path: str) -> list[dict[str, Any]]:
+Relocate = dict[str, str]
+
+
+def parse_relocate(specs: Sequence[str] | None) -> Relocate:
+    """``OLD=NEW`` pairs: a net recorded at OLD is now at NEW (moved after it was played)."""
+    out: Relocate = {}
+    for spec in specs or ():
+        old, sep, new = spec.partition("=")
+        if not sep or not old or not new:
+            raise PoolError(f"--relocate {spec!r}: expected OLD=NEW")
+        key = str(Path(old).resolve())
+        if key in out:
+            raise PoolError(f"--relocate names {old} twice")
+        out[key] = new
+    return out
+
+
+def pool_time_files(role: str, path: str, relocate: Relocate | None = None) -> list[dict[str, Any]]:
+    """The seat's files hashed NOW. A path named by ``--relocate`` is hashed at its new location (never
+    skipped), and each such file records the path the run recorded (``recorded_path``)."""
+    new = (relocate or {}).get(str(Path(path).resolve()))
     try:
-        return [dict(f) for f in seat_files(path)]
+        files = [dict(f) for f in seat_files(new if new is not None else path)]
     except ProvenanceError as exc:
-        raise PoolError(f"{role} net {path}: {exc} (cannot record its sha256)") from exc
+        where = path if new is None else f"{path} (relocated to {new})"
+        raise PoolError(f"{role} net {where}: {exc} (cannot record its sha256)") from exc
+    if new is not None:
+        files[0]["recorded_path"] = path
+    return files
 
 
 def run_start(header: dict[str, Any], name: str) -> float:
@@ -245,10 +278,49 @@ def _file_shas(files: Sequence[dict[str, Any]]) -> list[tuple[Any, Any]]:
     return [(f.get("role"), f.get("sha256")) for f in files]
 
 
+def _value_signature(block: dict[str, Any] | None) -> tuple[Any, Any] | None:
+    """A hybrid seat's (value-from sha256, [T, b]); None for a plain seat."""
+    if not block:
+        return None
+    vf = block.get("value_from")
+    recal = block.get("recal")
+    return (None if vf is None else vf.get("sha256"), None if recal is None else tuple(float(x) for x in recal))
+
+
+def check_seat_values(a_row: dict[str, Any], b_row: dict[str, Any],
+                      relocate: Relocate | None = None) -> tuple[list[str], list[dict[str, Any]]]:
+    """A hybrid seat (``--<seat>-value-from`` / ``-value-recal``) must be the SAME hybrid in both runs
+    (A's candidate is B's reference), and every value-from file must still hash to what was played.
+    Returns (problems, pool-time value-from files)."""
+    problems: list[str] = []
+    files: list[dict[str, Any]] = []
+    for who, a_field, b_field in (("arm", "candidate_value", "reference_value"),
+                                  ("base", "reference_value", "candidate_value")):
+        va, vb = a_row.get(a_field), b_row.get(b_field)
+        if _value_signature(va) != _value_signature(vb):
+            problems.append(f"the {who} seat's value differs between runs: A {a_field} {_value_signature(va)} vs "
+                            f"B {b_field} {_value_signature(vb)} (a hybrid seat never pools with another seat)")
+        for name, block in (("A", va), ("B", vb)):
+            vf = (block or {}).get("value_from")
+            if not vf:
+                continue
+            try:
+                now = pool_time_files(f"{who} value-from", str(vf.get("path")), relocate)
+            except PoolError as exc:
+                problems.append(str(exc))
+                continue
+            files.append({"seat": who, "run": name, **now[0]})
+            if now[0]["sha256"] != vf.get("sha256"):
+                problems.append(f"run {name} {who} value-from {vf.get('path')} sha256 {vf.get('sha256')} != "
+                                f"pool-time sha256 {now[0]['sha256']}: the file changed after it was played")
+    return problems, files
+
+
 def check_nets(a_row: dict[str, Any], b_row: dict[str, Any], a_header: dict[str, Any], b_header: dict[str, Any],
-               arm: str, base: str, *, allow_legacy: bool) -> tuple[dict[str, Any], str, list[str]]:
+               arm: str, base: str, *, allow_legacy: bool,
+               relocate: Relocate | None = None) -> tuple[dict[str, Any], str, list[str]]:
     """Prove the pooled nets are the ones played; return (pool-time files, check mode, notes)."""
-    nets = {"arm": pool_time_files("arm", arm), "base": pool_time_files("base", base)}
+    nets = {"arm": pool_time_files("arm", arm, relocate), "base": pool_time_files("base", base, relocate)}
     with_shas = [all(r.get(f) is not None for f in ROW_SHA_FIELDS) for r in (a_row, b_row)]
     if any(with_shas) and not all(with_shas):
         raise PoolError("mixed pair: run " + ("A" if with_shas[0] else "B") + " banks seat sha256s and run "
@@ -280,6 +352,10 @@ def check_nets(a_row: dict[str, Any], b_row: dict[str, Any], a_header: dict[str,
                                     f"{_file_shas(nets[role])}")
         if a_row.get("openings_sha256") != b_row.get("openings_sha256"):
             problems.append(f"openings_sha256: A {a_row.get('openings_sha256')} != B {b_row.get('openings_sha256')}")
+        value_problems, value_files = check_seat_values(a_row, b_row, relocate)
+        problems.extend(value_problems)
+        if value_files:
+            nets["value_from"] = value_files
         if problems:
             raise PoolError("net provenance refused: " + "; ".join(problems))
         return nets, "row_sha256", []
@@ -479,7 +555,7 @@ def summary_text(report: dict[str, Any]) -> str:
 
 def run(a_games_path: Path, b_games_path: Path, a_result: Path, b_result: Path, *, arm: str,
         a_label: str | None = None, b_label: str | None = None, allow_legacy: bool = False,
-        rule: str | None = None, z: float = Z95) -> dict[str, Any]:
+        rule: str | None = None, z: float = Z95, relocate: Relocate | None = None) -> dict[str, Any]:
     if not (math.isfinite(z) and z > 0.0):
         raise PoolError(f"--z must be a finite positive number, got {z!r}")
     a_header, a_g = load_games(a_games_path)
@@ -497,13 +573,14 @@ def run(a_games_path: Path, b_games_path: Path, a_result: Path, b_result: Path, 
         raise PoolError(f"--arm {arm} is not run A's candidate ({sa.get('candidate')}) and run B's reference "
                         f"({sb.get('reference')}); are A and B passed in the right order?")
     nets, net_check, net_notes = check_nets(a_row, b_row, a_header, b_header, str(sa["candidate"]),
-                                            str(sa["reference"]), allow_legacy=allow_legacy)
+                                            str(sa["reference"]), allow_legacy=allow_legacy, relocate=relocate)
     notes += net_notes
     report: dict[str, Any] = {
         "arm": sa.get("candidate"), "base": sa.get("reference"),
         "input_sha256": {"a_games": sha256_file(a_games_path), "b_games": sha256_file(b_games_path),
                          "a_result": sha256_file(a_result), "b_result": sha256_file(b_result)},
         "nets": nets, "net_check": net_check,
+        "relocated": dict(relocate or {}),
         "z": z, "coverage": two_sided_coverage(z),
         "a": {"label": a_row.get("label"), "games": str(a_games_path), "result": str(a_result),
               "game_log_fingerprint": a_header.get("fingerprint"), "row_elo": a_row.get("elo"),
@@ -544,10 +621,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--z", type=float, default=Z95,
                    help="interval half-width in SE, the one the verdict reads (default 1.96 = 95%% two-sided; "
                         "2.2414 = 97.5%% two-sided; O'Brien-Fleming looks 2.797 / 1.977). Recorded in the output")
+    p.add_argument("--relocate", action="append", default=None, metavar="OLD=NEW",
+                   help="a net recorded at OLD was moved to NEW after it was played: hash it at NEW against the "
+                        "recorded sha256 (never skipped) and record the mapping (repeatable)")
     p.add_argument("--out", default=None, help="write the JSON report here")
     a = p.parse_args(argv)
     report = run(Path(a.a_games), Path(a.b_games), Path(a.a_result), Path(a.b_result), arm=a.arm,
-                 a_label=a.a_label, b_label=a.b_label, allow_legacy=a.allow_legacy_rows, rule=a.verdict_rule, z=a.z)
+                 a_label=a.a_label, b_label=a.b_label, allow_legacy=a.allow_legacy_rows, rule=a.verdict_rule, z=a.z,
+                 relocate=parse_relocate(a.relocate))
     if a.out:
         Path(a.out).write_text(json.dumps(report, indent=1, sort_keys=True) + "\n")
     print(summary_text(report))

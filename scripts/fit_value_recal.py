@@ -20,7 +20,13 @@ Rows, one of:
   and its match plays ``eval.pgn``; the split's orbit rule keeps every TRAIN
   game off the EVAL starts, so these rows are disjoint from the match openings
   by construction.
-* ``--rows FILE.npz`` with an ``x`` array (N, planes, 8, 8).
+  The hold-out fraction is read from the run's pinned ``run_config.json``
+  (``holdout_frac``); an explicit ``--holdout-frac`` that disagrees is refused,
+  and a collect whose run pinned none needs it explicitly.
+* ``--rows FILE.npz`` with an ``x`` array (N, planes, 8, 8). With
+  ``--exclude-openings FILE`` (the match's ``eval.pgn`` or a FEN list) the rows
+  must also carry ``root_fen`` and ``history``; any row whose game started at or
+  passed through a match opening's position is refused.
 
 Pre-register which rows before the match, and fit them before it is played.
 The output JSON records both checkpoints' sha256, the rows' source and digest,
@@ -96,6 +102,92 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def _position_key(board: Any) -> str:
+    return board.epd()          # pieces, side to move, castling, en passant; no move counters
+
+
+def opening_keys(path: Path) -> set[str]:
+    """Positions the match starts from.
+
+    * ``.pgn``: each game's mainline final position (the simple-RL ``eval.pgn``
+      the pilot's matches play, whose lines the arena replays in full).
+    * anything else is an arena ``--openings-fen`` seed list, read with the
+      arena's own reader (``_load_fen_list``: ``#`` comments and blanks skipped)
+      and keyed by ``seed_board_from_line``, which REPLAYS a
+      ``<start_fen> | <uci ...>`` line to its terminal position -- the board the
+      match actually starts from, not the line's root.
+
+    A zipped or Polyglot book (the arena's default ``--openings``) samples a
+    weighted subset of its lines per seed, so there is no fixed opening set to
+    compare against: refused.
+    """
+    import chess.pgn
+
+    from chess_anti_engine.selfplay.opening import _load_fen_list, seed_board_from_line
+
+    suffix = path.suffix.lower()
+    if suffix in (".zip", ".bin"):
+        raise SystemExit(f"{path}: a zipped / Polyglot book has no fixed opening set; pass the match's eval.pgn "
+                         "or its --openings-fen list")
+    keys: set[str] = set()
+    if suffix == ".pgn":
+        with open(path) as fh:
+            while (game := chess.pgn.read_game(fh)) is not None:
+                board = game.board()
+                for mv in game.mainline_moves():
+                    board.push(mv)
+                keys.add(_position_key(board))
+    else:
+        try:
+            lines = _load_fen_list(str(path))
+        except ValueError as exc:
+            raise SystemExit(f"{path}: {exc}") from exc
+        keys.update(_position_key(seed_board_from_line(line)) for line in lines)
+    if not keys:
+        raise SystemExit(f"{path}: no openings read")
+    return keys
+
+
+def check_rows_disjoint(z: Any, rows_path: Path, openings: Path) -> dict[str, Any]:
+    """Refuse rows whose game started at or passed through a match opening's position."""
+    import chess
+
+    if "root_fen" not in z.files or "history" not in z.files:
+        raise SystemExit(f"{rows_path}: --exclude-openings needs root_fen and history to rebuild each row's game")
+    keys = opening_keys(openings)
+    hits = 0
+    for root, hist in zip(z["root_fen"], z["history"]):
+        board = chess.Board(str(root))
+        path = {_position_key(board)}
+        for mv in str(hist).split():
+            board.push_uci(mv)
+            path.add(_position_key(board))
+        hits += bool(path & keys)
+    if hits:
+        raise SystemExit(f"{rows_path}: {hits} rows started at or passed through a position of {openings}; "
+                         "fit on rows disjoint from the match openings")
+    return {"excluded_openings": str(openings), "excluded_openings_sha256": _sha256(openings),
+            "opening_positions": len(keys), "rows_overlapping": 0}
+
+
+def pinned_holdout_frac(collect: Path, given: float | None) -> tuple[float, str]:
+    """The run's pinned holdout_frac (the split its learner trained by) and where it came from;
+    refuse a disagreeing flag. A run that pinned none needs the flag, which is then unchecked
+    and recorded as such."""
+    cfg = collect.parent.parent / "run_config.json"
+    pinned = None
+    if cfg.is_file():
+        pinned = json.loads(cfg.read_text()).get("settings", {}).get("holdout_frac")
+    if pinned is None:
+        if given is None:
+            raise SystemExit(f"{cfg} pins no holdout_frac; pass --holdout-frac (the learner's)")
+        return float(given), "flag, unpinned"
+    if given is not None and float(given) != float(pinned):
+        raise SystemExit(f"--holdout-frac {given} disagrees with the run's pinned holdout_frac {pinned} "
+                         f"({cfg}): the fit would include rows the learner trained on")
+    return float(pinned), "run_config"
+
+
 def load_rows(args: argparse.Namespace) -> tuple[np.ndarray, dict[str, Any]]:
     if (args.rows is None) == (args.collect_dir is None):
         raise SystemExit("pass exactly one of --rows or --collect-dir")
@@ -103,8 +195,13 @@ def load_rows(args: argparse.Namespace) -> tuple[np.ndarray, dict[str, Any]]:
         with np.load(args.rows) as z:
             if "x" not in z.files:
                 raise SystemExit(f"{args.rows} has no 'x' array")
+            disjoint = ({} if args.exclude_openings is None
+                        else check_rows_disjoint(z, args.rows, args.exclude_openings))
             x = np.asarray(z["x"])
-        return x, {"rows_file": str(args.rows), "rows_sha256": _sha256(args.rows)}
+        return x, {"rows_file": str(args.rows), "rows_sha256": _sha256(args.rows), **disjoint}
+    if args.exclude_openings is not None:
+        raise SystemExit("--exclude-openings applies to --rows; a collect's hold-out games are disjoint from "
+                         "the EVAL openings by the openings split")
     from chess_anti_engine.simple_rl.collect import load_generation_rows
     from chess_anti_engine.simple_rl.learn import holdout_mask
 
@@ -112,18 +209,21 @@ def load_rows(args: argparse.Namespace) -> tuple[np.ndarray, dict[str, Any]]:
     manifest = collect / "manifest.json"
     if not manifest.is_file():
         raise SystemExit(f"{collect} is not a sealed collect (no manifest.json)")
+    frac, frac_source = pinned_holdout_frac(collect, args.holdout_frac)
     arrays, meta = load_generation_rows(collect, keys=("x",))
-    held = holdout_mask(meta, float(args.holdout_frac))
+    held = holdout_mask(meta, frac)
     if not held.any():
-        raise SystemExit(f"{collect} has no hold-out games at holdout_frac {args.holdout_frac}")
+        raise SystemExit(f"{collect} has no hold-out games at holdout_frac {frac}")
     return np.asarray(arrays["x"])[held], {
         "collect_dir": str(collect), "collect_manifest_sha256": _sha256(manifest),
-        "holdout_frac": float(args.holdout_frac), "holdout_games": int(np.unique(meta["game_id"][held]).size),
+        "holdout_frac": frac, "holdout_frac_source": frac_source, "holdout_games": int(np.unique(meta["game_id"][held]).size),
     }
 
 
-def wdl_logits(ckpt: str, x: np.ndarray, *, device: str, batch: int) -> np.ndarray:
-    """The checkpoint's raw WDL logits, through the arena's own loader and forward."""
+def wdl_logits(ckpt: str, x: np.ndarray, *, device: str, batch: int) -> tuple[np.ndarray, str]:
+    """(the checkpoint's raw WDL logits, their dtype as the forward produced them), through the
+    arena's own loader and forward (``_forward_no_grad``'s default autocast: bf16 on CUDA, as the
+    arena's evaluator runs; fp32 on CPU)."""
     import torch
 
     from chess_anti_engine.inference import _forward_no_grad
@@ -133,10 +233,13 @@ def wdl_logits(ckpt: str, x: np.ndarray, *, device: str, batch: int) -> np.ndarr
     if hasattr(model, "_inference_only"):
         setattr(model, "_inference_only", True)
     out = []
+    dtype = "none"
     for i in range(0, x.shape[0], batch):
         xt = torch.from_numpy(np.ascontiguousarray(x[i:i + batch], dtype=np.float32)).to(device)
-        out.append(_forward_no_grad(model, xt, device=device)["wdl"].float().cpu().numpy())
-    return np.concatenate(out).astype(np.float64)
+        wdl = _forward_no_grad(model, xt, device=device)["wdl"]
+        dtype = str(wdl.dtype).replace("torch.", "")
+        out.append(wdl.float().cpu().numpy())
+    return np.concatenate(out).astype(np.float64), dtype
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -145,7 +248,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--reference", required=True, help="the checkpoint whose WDL the fit matches (the SL base)")
     p.add_argument("--rows", type=Path, default=None, help="npz with an 'x' array")
     p.add_argument("--collect-dir", type=Path, default=None, help="a sealed simple-RL collect; hold-out games only")
-    p.add_argument("--holdout-frac", type=float, default=0.05, help="the learner's holdout_frac (default 0.05)")
+    p.add_argument("--holdout-frac", type=float, default=None,
+                   help="the learner's holdout_frac; read from the run's run_config.json, refused on disagreement")
+    p.add_argument("--exclude-openings", type=Path, default=None,
+                   help="with --rows: the match's openings (eval.pgn or a FEN list); overlapping rows are refused")
     p.add_argument("--device", default="cpu")
     p.add_argument("--batch", type=int, default=256)
     p.add_argument("--out", type=Path, required=True)
@@ -154,8 +260,9 @@ def main(argv: list[str] | None = None) -> int:
     x, rows_record = load_rows(args)
     if x.shape[0] == 0:
         raise SystemExit("no rows to fit on")
-    net_logits = wdl_logits(args.net, x, device=args.device, batch=int(args.batch))
-    ref_probs = _softmax(wdl_logits(args.reference, x, device=args.device, batch=int(args.batch)))
+    net_logits, net_dtype = wdl_logits(args.net, x, device=args.device, batch=int(args.batch))
+    ref_logits, ref_dtype = wdl_logits(args.reference, x, device=args.device, batch=int(args.batch))
+    ref_probs = _softmax(ref_logits)
     fit = fit_temp_drawbias(net_logits, ref_probs)
     record = {
         "method": "temp_drawbias, cross-entropy to the reference net's WDL (bank: ref=base|temp_drawbias|fitCE)",
@@ -165,6 +272,7 @@ def main(argv: list[str] | None = None) -> int:
         "net": str(args.net), "net_sha256": _sha256(Path(args.net)),
         "reference": str(args.reference), "reference_sha256": _sha256(Path(args.reference)),
         "rows": int(x.shape[0]), **rows_record,
+        "device": str(args.device), "logits_dtype": {"net": net_dtype, "reference": ref_dtype},
         "cross_entropy_identity": cross_entropy(net_logits, ref_probs, 1.0, 0.0),
         "cross_entropy_fitted": cross_entropy(net_logits, ref_probs, fit["T"], fit["b"]),
     }
