@@ -11,7 +11,9 @@ root-only training never presents. Scoping evidence:
 **Materialiser** (``materialise``; CLI ``scripts/simple_rl_sibling_pairs.py``).
 From a sealed collect it writes one sidecar directory per shard. For every row
 with root statistics, it samples K pairs among the children with at least
-``min_visits`` visits whose move does not end the game. Pairs are drawn without
+``min_visits`` visits that the search did not score as terminal by its own rule
+(``search_terminal``: game over, or the LC0-style 2-fold repetition the search
+scores as an exact draw without evaluating the net). Pairs are drawn without
 replacement with probability proportional to ``min(v_A, v_B)``, from an RNG keyed
 by ``(seed, game_id, ply)``, so the choice is reproducible and independent of
 shard and row order. The sidecar stores:
@@ -77,7 +79,7 @@ from chess_anti_engine.simple_rl.common import (
     is_holdout_game, read_manifest, resolve_collect_dir, seed_for, sha256_file,
 )
 
-SIDECAR_VERSION = 1
+SIDECAR_VERSION = 2  # 2: children excluded by the search's terminal rule (incl. 2-fold)
 SIDECAR_MANIFEST = "sibling_manifest.json"
 GAME_MOVES = "game_moves.jsonl"
 MAX_BRIDGE_PLIES = 3          # a pilot gap needed at most 3 plies with the first move known
@@ -191,6 +193,25 @@ def apply_collect_regime(view: CollectView) -> dict[str, Any]:
         raise RuntimeError(f"history_rep_fix realised {rep_fix.current()!r}, collect declares {view.history_rep_fix}")
     return {"collect_declared": view.history_rep_fix, "shards_declared": view.history_rep_fix,
             "process_realised": bool(rep_fix.current())}
+
+
+def search_terminal(board: chess.Board) -> str | None:
+    """Whether the SEARCH treats this position as terminal, by its own rule
+    (``mcts/_search_terminal.h::cboard_search_terminal``, through the same C
+    board): ``"game_over"`` (checkmate, stalemate, 3-fold, 50-move, insufficient
+    material), ``"repetition"`` (LC0-style 2-fold, scored as an exact draw, q 0,
+    the net never evaluated), else None. Such a child's q is a rule, not a
+    search value, so it is never paired. python-chess's
+    ``is_game_over(claim_draw=False)`` misses the 2-fold and the 3-fold / 50-move
+    claims the C rule counts."""
+    from chess_anti_engine.encoding.cboard_encode import CBoard
+
+    cb = CBoard.from_board(board)
+    if cb.is_game_over():
+        return "game_over"
+    if cb.is_repetition():
+        return "repetition"
+    return None
 
 
 def encode(board: chess.Board, enc: dict[str, str]) -> np.ndarray:
@@ -374,7 +395,7 @@ def _plan_shard(view: CollectView, shard_index: int, meta: dict[str, np.ndarray]
     plan: list[tuple[Any, ...]] = []
     moves_of: dict[int, list[str]] = {}
     counts = {"rows": len(meta["game_id"]), "rows_with_stats": 0, "rows_with_pairs": 0, "pairs": 0,
-              "terminal_children_excluded": 0}
+              "terminal_children_excluded": 0, "repetition_children_excluded": 0}
     for gid, offs in _game_rows(meta).items():
         plies = np.asarray(meta["ply_index"])[offs]
         it = rebuild_game(view, gid, plies, np.asarray(meta["x_hash"])[offs], rows["played_move_index"][offs],
@@ -391,10 +412,12 @@ def _plan_shard(view: CollectView, shard_index: int, meta: dict[str, np.ndarray]
             for c in np.flatnonzero(visits >= float(min_visits)):
                 m = index_to_move_for_encoding(int(c), board)
                 board.push(m)
-                over = board.is_game_over(claim_draw=False)
+                kind = search_terminal(board)
                 board.pop()
-                if over:
+                if kind == "game_over":
                     counts["terminal_children_excluded"] += 1
+                elif kind == "repetition":
+                    counts["repetition_children_excluded"] += 1
                 else:
                     cand.append(int(c))
             pairs = choose_pairs(np.asarray(cand), visits, k, pair_rng(seed, gid, int(plies[i])))
@@ -509,13 +532,15 @@ def materialise(collect_dir: Path, out_dir: Path, *, k: int = 2, min_visits: flo
         log(f"wrote shard {si}: {counts['pairs']} pairs ({time.perf_counter() - t0:.0f}s, "
             f"peak RSS {_peak_rss_mib():.0f} MiB)")
     totals = {key: int(sum(r["counts"][key] for r in records.values()))
-              for key in ("rows", "rows_with_stats", "rows_with_pairs", "pairs", "terminal_children_excluded")}
+              for key in ("rows", "rows_with_stats", "rows_with_pairs", "pairs", "terminal_children_excluded",
+                          "repetition_children_excluded")}
     manifest = {
         "version": SIDECAR_VERSION, "kind": "simple_rl_sibling_pairs",
         "collect_dir": str(view.collect_dir), "collect_manifest_sha256": view.manifest_sha256,
         "config": {"k": int(k), "min_visits": float(min_visits), "seed": int(seed), "holdout_frac": float(holdout_frac),
                    "weight": "min(v_A, v_B)", "orientation": "A = more-visited child", "dq_pov": "parent",
-                   "max_bridge_plies": MAX_BRIDGE_PLIES, "max_bridge_unknown_first": MAX_BRIDGE_UNKNOWN_FIRST},
+                   "max_bridge_plies": MAX_BRIDGE_PLIES, "max_bridge_unknown_first": MAX_BRIDGE_UNKNOWN_FIRST,
+                   "excluded_children": "search terminal: CBoard is_game_over() or is_repetition() (2-fold)"},
         "encoding": view.enc, "history_rep_fix": stamp, "lines_source": view.lines_source,
         "move_source": "games.jsonl uci" if all("uci" in g for g in view.games.values())
         else "played_move_index + unique-x_hash bridging",

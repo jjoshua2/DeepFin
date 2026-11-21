@@ -401,19 +401,181 @@ def test_materialiser_cli_self_check_exit_codes(run: dict[str, Path]) -> None:
     assert simple_rl_sibling_pairs.main(["--collect", str(bad), "--out", str(run["tmp"] / "bad_cli_out")]) == 2
 
 
-def test_snapshot_resume_restores_the_sibling_counters(run: dict[str, Path]) -> None:
-    straight = _fresh_run(run, "snap_straight")
-    s = _settings(run, w_sibling=1.0, sibling_rows=8, sibling_dir=str(run["side"]))
-    whole = train_generation(run_dir=straight, generation=1, init_checkpoint=run["ckpt"], prev_trainer_checkpoint=None,
-                             settings=s)
-    if whole["updates"] < 2:
-        pytest.skip("phase too short to snapshot")
-    snap = _fresh_run(run, "snap_resumed")
-    s2 = replace(s, snapshot_updates=(1,))
-    done = train_generation(run_dir=snap, generation=1, init_checkpoint=run["ckpt"], prev_trainer_checkpoint=None,
-                            settings=s2)
-    assert done["sibling"]["pairs"] == whole["sibling"]["pairs"]
-    assert done["sibling"]["per_step"] == whole["sibling"]["per_step"]
+class Killed(Exception):
+    pass
+
+
+def _weights(path: Path) -> dict[str, torch.Tensor]:
+    return torch.load(path, weights_only=False)["model"]
+
+
+def _kill_after(monkeypatch: pytest.MonkeyPatch, update: int) -> Any:
+    from chess_anti_engine.simple_rl import learn as learn_mod
+
+    real = learn_mod.write_snapshot
+
+    def die(**kw: Any) -> Any:
+        rec = real(**kw)
+        if kw["update"] == update:
+            raise Killed
+        return rec
+
+    monkeypatch.setattr(learn_mod, "write_snapshot", die)
+    return real
+
+
+def test_a_run_killed_after_a_snapshot_resumes_into_the_uninterrupted_phase(
+        run: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    from chess_anti_engine.simple_rl import learn as learn_mod
+
+    s = _settings(run, w_sibling=1.0, sibling_rows=8, sibling_dir=str(run["side"]), snapshot_updates=(3,))
+    straight = _fresh_run(run, "kill_straight")
+    whole = train_generation(run_dir=straight, generation=1, init_checkpoint=run["ckpt"],
+                             prev_trainer_checkpoint=None, settings=s)
+    assert whole["updates"] > 3
+    killed = _fresh_run(run, "kill_resumed")
+    real = _kill_after(monkeypatch, 3)
+    with pytest.raises(Killed):
+        train_generation(run_dir=killed, generation=1, init_checkpoint=run["ckpt"], prev_trainer_checkpoint=None,
+                         settings=s)
+    monkeypatch.setattr(learn_mod, "write_snapshot", real)
+    assert not (killed / "gen_0001" / "train" / "manifest.json").exists()
+    done = train_generation(run_dir=killed, generation=1, init_checkpoint=run["ckpt"], prev_trainer_checkpoint=None,
+                            settings=s)
+    assert done["resumed_from_snapshot"] == 3
+    for key in ("pairs", "per_step", "steps", "probe_before", "probe_after", "mean_weighted_huber"):
+        assert done["sibling"][key] == whole["sibling"][key], key
+    wa, wb = _weights(killed / "gen_0001" / "train" / "model.pt"), _weights(straight / "gen_0001" / "train" / "model.pt")
+    for k in wa:
+        assert torch.equal(wa[k], wb[k]), k
+    assert (killed / "gen_0001" / "train" / "presented.npz").read_bytes() == \
+        (straight / "gen_0001" / "train" / "presented.npz").read_bytes()
+
+
+def test_a_swapped_sidecar_at_the_same_path_restarts_the_phase(
+        run: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    from chess_anti_engine.simple_rl import learn as learn_mod
+
+    side = run["tmp"] / "swap_side"
+    shutil.copytree(run["side"], side)
+    s = _settings(run, w_sibling=1.0, sibling_rows=8, sibling_dir=str(side), snapshot_updates=(3,))
+    d = _fresh_run(run, "swap_run")
+    real = _kill_after(monkeypatch, 3)
+    with pytest.raises(Killed):
+        train_generation(run_dir=d, generation=1, init_checkpoint=run["ckpt"], prev_trainer_checkpoint=None, settings=s)
+    monkeypatch.setattr(learn_mod, "write_snapshot", real)
+    shutil.rmtree(side / "gen_0001")
+    sib.materialise(run["collect"], side / "gen_0001", k=1, min_visits=3, seed=99, holdout_frac=0.25,
+                    log=lambda _m: None)
+    done = train_generation(run_dir=d, generation=1, init_checkpoint=run["ckpt"], prev_trainer_checkpoint=None,
+                            settings=s)
+    assert done["resumed_from_snapshot"] is None  # another sidecar is another phase
+    assert done["sibling"]["sidecars"]["generations"]["1"]["config"]["k"] == 1
+    assert done["sibling"]["steps"] == done["updates"]
+
+
+def test_sidecar_q_and_visits_are_the_shards_stored_root_statistics(run: dict[str, Path]) -> None:
+    """dq is built from the SHARD's root_child_q, in the shard's (parent) POV."""
+    from chess_anti_engine.replay.shard import open_shard_arrays
+    from chess_anti_engine.simple_rl.collect import generation_shards
+
+    man = json.loads((run["side"] / "gen_0001" / sib.SIDECAR_MANIFEST).read_text())
+    checked = 0
+    for shard in generation_shards(run["collect"]):
+        d = run["side"] / "gen_0001" / shard.name.replace(".zarr", "")
+        z = {k: np.load(d / f"{k}.npy") for k in ("row", "action_a", "action_b", "q_a", "q_b", "visits_a", "visits_b",
+                                                   "dq")}
+        with open_shard_arrays(shard, lazy=True, validate=True) as (arrs, _m):
+            q = np.asarray(arrs["root_child_q"][:])
+            v = np.asarray(arrs["root_child_visits"][:])
+        r = z["row"].astype(np.int64)
+        np.testing.assert_array_equal(z["q_a"], q[r, z["action_a"]])
+        np.testing.assert_array_equal(z["q_b"], q[r, z["action_b"]])
+        np.testing.assert_array_equal(z["visits_a"], v[r, z["action_a"]])
+        np.testing.assert_array_equal(z["visits_b"], v[r, z["action_b"]])
+        np.testing.assert_array_equal(z["dq"], q[r, z["action_a"]] - q[r, z["action_b"]])
+        checked += r.size
+    assert checked == man["totals"]["pairs"] > 0
+
+
+def test_one_visit_children_q_is_the_collecting_nets_parent_pov_value(run: dict[str, Path]) -> None:
+    """A one-visit child's completed Q is the collecting net's own value of the
+    child, L - W of the child's WDL: the sign check of the stored q."""
+    from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
+
+    out = run["tmp"] / "one_visit_side"
+    sib.materialise(run["collect"], out, k=6, min_visits=1, seed=3, holdout_frac=0.25, log=lambda _m: None)
+    model = load_model_from_checkpoint(str(run["ckpt"]), device="cpu").eval()
+    qs, vs = [], []
+    for d in sorted(p for p in out.iterdir() if p.is_dir()):
+        z = {k: np.load(d / f"{k}.npy") for k in ("x_a", "x_b", "q_a", "q_b", "visits_a", "visits_b")}
+        for side_ in ("a", "b"):
+            one = z[f"visits_{side_}"] == 1
+            if not one.any():
+                continue
+            with torch.no_grad():
+                w = model(torch.from_numpy(z[f"x_{side_}"][one].astype(np.float32)))["wdl"]
+            vs.append(sib.child_values(w).numpy())
+            qs.append(z[f"q_{side_}"][one])
+    q, v = np.concatenate(qs), np.concatenate(vs)
+    assert q.size > 20
+    assert np.corrcoef(q, v)[0, 1] > 0.9
+    assert float(np.median(np.abs(q - v))) < 0.02
+
+
+def test_the_search_terminal_rule_excludes_a_two_fold_repetition() -> None:
+    from chess_anti_engine.encoding import rep_fix
+
+    rep_fix.apply(True, boards_discarded=True)
+    b = chess.Board()
+    for u in ("g1f3", "g8f6", "f3g1"):
+        b.push_uci(u)
+    rep = b.copy()
+    rep.push_uci("f6g8")  # back to the start position: a 2-fold repetition
+    assert not rep.is_game_over(claim_draw=False)  # python-chess's rule would pair it
+    assert sib.search_terminal(rep) == "repetition"
+    quiet = b.copy()
+    quiet.push_uci("e7e5")
+    assert sib.search_terminal(quiet) is None
+    mate = chess.Board("6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1")
+    mate.push_uci("a1a8")
+    assert sib.search_terminal(mate) == "game_over"
+
+
+def test_no_paired_child_is_terminal_by_the_search_rule(run: dict[str, Path]) -> None:
+    from chess_anti_engine.moves.encode import index_to_move_for_encoding
+
+    view = sib.open_collect(run["collect"])
+    sib.apply_collect_regime(view)
+    man = json.loads((run["side"] / "gen_0001" / sib.SIDECAR_MANIFEST).read_text())
+    assert man["config"]["excluded_children"].startswith("search terminal")
+    for d in sorted(p for p in (run["side"] / "gen_0001").iterdir() if p.is_dir()):
+        moves = {json.loads(r)["game_id"]: json.loads(r)["uci"] for r in (d / sib.GAME_MOVES).read_text().splitlines()}
+        z = {k: np.load(d / f"{k}.npy") for k in ("game_id", "ply_index", "action_a", "action_b")}
+        for j in range(len(z["game_id"])):
+            g = view.games[int(z["game_id"][j])]
+            b = sib._start_board(view, g)
+            for u in moves[int(z["game_id"][j])][: int(z["ply_index"][j]) - int(g["start_ply"])]:
+                b.push_uci(u)
+            for a in (z["action_a"][j], z["action_b"][j]):
+                b.push(index_to_move_for_encoding(int(a), b))
+                assert sib.search_terminal(b) is None
+                b.pop()
+
+
+def test_the_pair_rng_is_keyed_by_seed_game_and_ply() -> None:
+    from chess_anti_engine.simple_rl.common import seed_for
+
+    visits = np.full(1858, -1.0, dtype=np.float32)
+    kids = np.asarray([3, 9, 27, 81, 243])
+    visits[kids] = [20.0, 12.0, 8.0, 5.0, 3.0]
+    for g in (11, 12):
+        for ply in range(30):
+            want = sib.choose_pairs(kids, visits, 2,
+                                    np.random.default_rng(seed_for(4, "sibling_pairs", g, ply)))
+            assert sib.choose_pairs(kids, visits, 2, sib.pair_rng(4, g, ply)) == want
+    per_ply = {tuple(sib.choose_pairs(kids, visits, 2, sib.pair_rng(4, 11, ply))) for ply in range(30)}
+    assert len(per_ply) > 1  # the ply is part of the key
 
 
 def test_a_bridge_with_two_matching_sequences_is_refused(run: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:

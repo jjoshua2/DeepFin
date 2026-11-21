@@ -2129,4 +2129,12 @@ def snapshot_resume_key(*, settings: TrainSettings, generation: int, init_checkp
              "prev": None if prev_trainer_checkpoint is None else sha256_file(prev_trainer_checkpoint),
              "collects": {g: sha256_file(Path(run_dir) / f"gen_{g:04d}" / "collect" / "manifest.json") for g in gens},
              "probe": sha256_file(probe_path), "plan": h.hexdigest()}
+    if float(settings.w_sibling) > 0:
+        # The sidecar CONTENT, not just its path: a re-materialised sidecar at the
+        # same --sibling-dir is another phase. Added only with the term on, so the
+        # default key is unchanged.
+        from chess_anti_engine.simple_rl.sibling import SIDECAR_MANIFEST
+
+        ident["sibling_sidecars"] = {g: sha256_file(Path(str(settings.sibling_dir)) / f"gen_{g:04d}" / SIDECAR_MANIFEST)
+                                     for g in gens}
     return hashlib.sha256(json.dumps(ident, sort_keys=True, default=str).encode()).hexdigest()

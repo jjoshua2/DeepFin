@@ -927,7 +927,13 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
     SIBLING_DIR/gen_<g>` once per generation, then train with `--sibling-dir
     SIBLING_DIR`.
     - **K pairs per row** (default 2), among children with at least `--min-visits`
-      visits (default 2) whose move does not end the game.
+      visits (default 2) that the search did not score as terminal by its own rule
+      (`mcts/_search_terminal.h::cboard_search_terminal`, through the same C board).
+      Those are game over (including 3-fold and 50-move) and the LC0-style 2-fold
+      repetition, which the search scores as an exact draw (q 0) without evaluating
+      the net, so its q is a rule, not a search value. python-chess's
+      `is_game_over(claim_draw=False)` misses the 2-fold; on the pilot, 0.45% of
+      pair children were such repetitions before this rule (sidecar version 2).
     - **Choice:** drawn without replacement with probability proportional to
       `min(v_A, v_B)`, from an RNG keyed by (seed, game id, ply), so it is
       reproducible and independent of order.
@@ -986,6 +992,21 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
       generation, before and after the phase;
     - K, min visits, and every sidecar's manifest and per-file sha256.
     - The manifest's inputs carry `sibling_gen_<g>`.
+  - **Snapshot resume.** When the term is on, the resume key also hashes every
+    generation's sidecar manifest, so a different sidecar re-materialised at the
+    same `--sibling-dir` restarts the phase instead of resuming. Adding the three
+    `TrainSettings` fields changes `snapshot_resume_key` itself, so an unsealed
+    phase started on older code restarts from its first update.
+  - **Cost (unmeasured on GPU).** At the defaults (128 rows x K 2 = 256 pairs) the
+    term adds 512 child positions, forward and backward, to each 512-row batch.
+    Expect about double the activation memory and step compute.
+    - It also reads the pairs' inputs from the memory-mapped sidecar on the training
+      thread: about 0.19 s of host time per batch (measured by the review on the
+      pilot sidecar).
+    - A background reader would hide that read. The batch plan is fixed in advance,
+      so the next batch's pairs are known one step early. It is worth building only
+      if a measured GPU step is short enough for 0.19 s to matter (for example,
+      under about 1 s per step). Not built.
   - **Default off is bit-identical to main.** A tiny phase trained with the default
     settings on main 918785204 and on this branch gives the same weights sha256,
     the same losses and the same `presented.npz`. Absent the flag, nothing is
