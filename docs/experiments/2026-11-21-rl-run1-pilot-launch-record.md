@@ -477,10 +477,57 @@ at plain speed.
     self-play but not against the outside yardsticks (BT4 node-odds, SF).
   - The design must keep the training target best-move based, never the handicapped
     move SF played.
-- **Value targets from search "when it agrees with z".**
-  - **The problem is selection.** Training only on rows where search and result agree removes exactly the rows that correct the head: the ones where it was wrong. The head would be fit to its own confirmations.
-  - **The unbiased form:** z on the sampled rows, with search values as targets for an *auxiliary* head that MCTS does not read. That is the existing `sf_eval` / `categorical` pattern; `wdl` stays the only value head search uses.
-  - **Launch condition:** the pilot reads damage, and match 2 reads shape.
+- **Outcome-conditioned value source in games against strength-limited Stockfish (DESIGNED arm, not queued).**
+
+  The owner clarified this item (verbatim, 2026-11-21):
+
+  > "I meant we could train on self vs limited stockfish and use our search only on games we win and on games we losd use our search until sf thinks its winning and then use its search values etc"
+
+  So the item is NOT "filter rows where search agrees with z". (Such a filter would
+  be a selection: it drops exactly the rows where the head was wrong.)
+
+  **Definition.** Every row is relabelled, and the result z picks which source labels it:
+
+  | Game result | Value target |
+  |---|---|
+  | **Won** | our stored search WDL on every row |
+  | **Lost** | our stored search WDL up to ply t*; from t* to the end, SF's evaluation converted to WDL by the project's cp-logistic (`sf_wdl_use_cp_logistic`, `sf_wdl_cp_slope` / `sf_wdl_cp_draw_width` from the run's config) and flipped to our POV |
+  | **Drawn** | our stored search WDL |
+
+  t\* is "SF thinks it is winning": the LAST ply after which SF's full-strength
+  evaluation stays at or above a threshold until the game ends.
+
+  **Defaults, each owner-changeable:**
+  1. **Threshold:** SF's win probability (W of the cp-logistic WDL, SF's POV) ≥ 0.80. Using the last ply from which SF *stays* above it means the relabelled segment is consistent with the result. A transient swing earlier in the game is not relabelled.
+  2. **Drawn games:** our search WDL.
+  3. **Share:** the arm is a share of the generation's games, mixed with self-play. The share is an arm parameter (no default proposed until the gift-win measurement below).
+  4. **Policy target:** unchanged (the stored search target).
+
+  **Properties:**
+  - **Grounded in results:** z chooses the source.
+  - **Keeps soft targets:** in line with the pilot's shape hypothesis.
+  - **Disagreement rows are relabelled, not dropped:** a row where our search and the result disagree gets the winner's evaluation.
+  - **One-sided gap:** a win against a deliberately weakened opponent does not show our evaluation was right, so won games get no correction. These are positions where full-strength SF already saw us losing and the limited SF let us off.
+
+  **The cheap measurement that sizes the gap, before any training (report only).**
+  Play a small collection, SL base vs limited SF, and report two things:
+  - the share of won-game rows where SF's full-strength evaluation had us below the same threshold (our win probability ≤ 0.20: "gift wins");
+  - the resulting target's shape statistics (entropy, |W − L|) against the base's.
+
+  **What the simple loop lacks, from the code (estimate only; nothing is built):**
+  - **SF opponents.** `simple_rl/collect.py` forces self-play (`selfplay_fraction=1.0`, a default `OpponentConfig()`, `sf_nodes` 1, with SF labels unused). The play path itself supports SF opponents:
+    - `selfplay_fraction < 1` gives curriculum games;
+    - the opponent's move is drawn from `stockfish_turn.within_regret_candidates`, the candidates within `regret_limit` of SF's best, with the limit driven by the live loop's PID on `wdl_regret`.
+
+    So the strength limit is a choice among SF's MultiPV candidates, not a node cut. A fixed regret limit (no PID) is the simpler arm.
+  - **Per-ply SF evaluation on rows.** The live play path attaches a SF label to each net-turn row (`rec.sf_wdl`, cp-logistic, at the label node budget, which is separate from the handicap).
+    - It is computed AFTER the net's move has been pushed: the position P1, SF to move, flipped to our POV (`stockfish_turn._sf_result_wdl_for_record`).
+    - So it evaluates the row's position *after our chosen move*. That is the P0/P1 alignment trap (`sf_multipv_raw` is the previous ply, so use `sf_p0_regret`).
+    - That is the right quantity for "SF thinks it is winning" after our move, but it is one ply off the row's own position.
+    - Simple-RL's `TRAIN_KEYS` (`simple_rl/learn.py`) do not include `sf_wdl`, so the shards would need it stored.
+  - **A new value option.** It needs a `--value-search-source`-style option that takes z and the per-ply SF evaluation and builds the per-row target above (t\* computed per game from the stored evaluations).
+
+  **Launch condition:** the pilot has read, so we know whether value shape is the damage and whether the policy pays.
 
 ## Cost (GPU-h, measured rates on `$PIN`'s predecessor code)
 
@@ -523,5 +570,5 @@ head-swap harness without CUDA graphs and are superseded by this table.
 | L3 | Cell changes | none (Zq, S, P0 as in the amendment) | |
 | L4 | S's role | a one-generation shape diagnostic only; z in every multi-generation recipe | |
 | L5 | Add collection B and cells K-blend / K-z2 with matches K1–K3 (≈ 3.0–3.3 GPU-h more) | yes, once `--value-rows-per-game` and the playout-cap throughput are banked; p from that measurement | |
-| L6 | The parked anchors (SF opponent; z-agreement) | stay parked with the launch conditions above | |
+| L6 | The parked items (SF opponent as an outside anchor; the outcome-conditioned SF value arm with its defaults) | stay parked with the launch conditions above; run the gift-win measurement when the second unparks | |
 | — | `PIN` (the commit every stage runs from) | | |
