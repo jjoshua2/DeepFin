@@ -24,7 +24,12 @@ from typing import Any
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from chess_anti_engine.simple_rl.collect import CollectSettings, collect_generation, validate_settings
+from chess_anti_engine.simple_rl.collect import (
+    CollectSettings,
+    collect_generation,
+    default_collect_shape,
+    validate_settings,
+)
 from chess_anti_engine.simple_rl.common import (
     blocking_markers,
     input_ref,
@@ -140,7 +145,7 @@ def init_run(run_dir: Path, *, init_checkpoint: str | None, random_init: bool,
 
 def collect_settings(a: argparse.Namespace) -> CollectSettings:
     return CollectSettings(
-        games=a.games, concurrency=a.concurrency, sims=a.sims, full_prob=a.full_prob, fast_sims=a.fast_sims,
+        games=a.games, concurrency=resolve_collect_shape(a)[1], sims=a.sims, full_prob=a.full_prob, fast_sims=a.fast_sims,
         fast_value_rows=a.fast_value_rows, tree_reuse=not a.no_tree_reuse, topk=a.topk, c_scale=a.c_scale,
         c_visit=a.c_visit, target_q_rescale=not a.no_target_q_rescale, policy_temp=a.policy_temp,
         target_untempered_prior=a.target_untempered_prior, vloss_weight=a.vloss_weight,
@@ -152,7 +157,7 @@ def collect_settings(a: argparse.Namespace) -> CollectSettings:
         book_mix=tuple(float(x) for x in a.book_mix.split(",")), rows_per_shard=a.rows_per_shard,
         opening_sampling=a.opening_sampling, dup_sketch_budget=a.dup_sketch_budget,
         exact_repeat_vs_previous=a.exact_repeat_vs_previous,
-        device=a.device, eval_max_batch=a.eval_max_batch, seed=a.seed,
+        device=a.device, eval_max_batch=a.eval_max_batch, collect_procs=resolve_collect_procs(a), seed=a.seed,
     )
 
 
@@ -241,10 +246,13 @@ def do_collect(a: argparse.Namespace, run_dir: Path, g: int) -> None:
                          default=str), flush=True)
         return
     stats = collect_generation(gen_dir=gen_dir(run_dir, g) / "collect", generation=g, checkpoint=ckpt,
-                               train_jsonl=Path(a.openings_dir) / "train.jsonl", settings=collect_settings(a))
+                               train_jsonl=Path(a.openings_dir) / "train.jsonl", settings=collect_settings(a),
+                               pause_markers=tuple(Path(m) for m in (a.pause_marker or ())))
     print(json.dumps({"stage": "collect", "generation": g, **{k: stats[k] for k in (
         "games", "rows", "decisive_rate", "draw_rate", "repeat_rate_within", "repeat_rate_vs_previous",
-        "target_entropy", "games_per_hour", "cuda_graphs", "evaluator_mode")}}, default=str), flush=True)
+        "target_entropy", "games_per_hour", "cuda_graphs", "evaluator_mode", "collect_procs",
+        "paused_seconds", "timing_independent")}},
+                     default=str), flush=True)
 
 
 def do_train(a: argparse.Namespace, run_dir: Path, g: int) -> None:
@@ -298,7 +306,56 @@ RUN_CONFIG_EXEMPT = frozenset({
 ADDED_SINCE_PINNING = {"init_optimizer_state": "fresh",
                        "matrix_optimizer_scope": "default", "adopt_checkpoint_optimizer_hparams": False,
                        "allow_capped_collect_rows": False, "snapshot_updates": None, "collect_from": None,
-                       "accum_steps": 1, "snapshot_rows": None}
+                       # Every collect before --collect-procs ran as one process.
+                       "collect_procs": 1, "accum_steps": 1, "snapshot_rows": None}
+
+
+def _pinned_value(path: Path, key: str, legacy: Any) -> Any:
+    """``key`` from a run_config.json, ``legacy`` when the run predates it, None when unpinned."""
+    if not path.is_file():
+        return None
+    return json.loads(path.read_text())["settings"].get(key, legacy)
+
+
+def _collect_manifest_value(source_run_dir: Path, key: str, legacy: Any) -> Any:
+    """``key`` from the earliest sealed collect manifest of a source run without a
+    run_config.json (e.g. a ``retarget`` output), None when it has none."""
+    for manifest in sorted(source_run_dir.glob("gen_*/collect/manifest.json")):
+        return json.loads(manifest.read_text()).get("config", {}).get("settings", {}).get(key, legacy)
+    return None
+
+
+def resolve_collect_shape(a: argparse.Namespace) -> tuple[int, int]:
+    """(``--collect-procs``, ``--concurrency``) as the integers that are pinned and used.
+
+    Explicit values are kept. A flag not given takes, in order: the value the run
+    already pinned (1 process for a run pinned before --collect-procs existed); for
+    an arm, the source run's value (its rows were made with it; from its collect
+    manifest when the source has no run_config, as a retarget output); else the
+    sims-dependent default table ``collect.CUDA_COLLECT_SHAPES`` (CPU: 1 x 64)."""
+    pinned, source = Path(a.run_dir) / RUN_CONFIG, Path(a.collect_from) / RUN_CONFIG if a.collect_from else None
+    default = default_collect_shape(a.device, a.sims)
+    # A defaulted K never exceeds --games (a tiny run would otherwise be refused).
+    default = (min(default[0], max(1, int(a.games))), default[1])
+    out = []
+    for key, given, legacy, fallback in (("collect_procs", a.collect_procs, 1, default[0]),
+                                         ("concurrency", a.concurrency, 64, default[1])):
+        if given is not None:
+            if int(given) < 1:
+                raise SystemExit(f"--{key.replace('_', '-')} must be >= 1, got {given}")
+            out.append(int(given))
+            continue
+        value = _pinned_value(pinned, key, legacy)
+        if value is None and source is not None:
+            value = _pinned_value(source, key, legacy)
+        if value is None and a.collect_from:
+            value = _collect_manifest_value(Path(a.collect_from), key, legacy)
+        out.append(int(fallback if value is None else value))
+    return out[0], out[1]
+
+
+def resolve_collect_procs(a: argparse.Namespace) -> int:
+    return resolve_collect_shape(a)[0]
 
 
 def validate_before_pinning(a: argparse.Namespace, run_dir: Path, stages: set[str]) -> None:
@@ -524,7 +581,10 @@ def _common(p: argparse.ArgumentParser) -> None:
 
     c = p.add_argument_group("collect")
     c.add_argument("--games", type=int, default=2000)
-    c.add_argument("--concurrency", type=int, default=64, help="concurrent game slots")
+    c.add_argument("--concurrency", type=int, default=None,
+                   help="concurrent game slots PER collect process (default: the run's pinned value, else by "
+                        "--sims from collect.CUDA_COLLECT_SHAPES on CUDA -- 64 at <= 16 sims, 128 above -- "
+                        "and 64 on CPU)")
     c.add_argument("--sims", type=int, default=64,
                    help="simulations per TARGET (full) ply; the arena's budget is --eval-sims, independent")
     c.add_argument("--full-prob", type=float, default=1.0,
@@ -566,6 +626,11 @@ def _common(p: argparse.ArgumentParser) -> None:
     c.add_argument("--eval-max-batch", type=int, default=None,
                    help="CUDA evaluator batch cap (default: the search's leaf-buffer size at this "
                         "--concurrency / --topk; a smaller value is refused -- it would drop leaf evaluations)")
+    c.add_argument("--collect-procs", type=int, default=None, metavar="K",
+                   help="collect processes sharing the device, each playing a disjoint slice of the openings "
+                        "with its own seed (pinned: it sets the RNG streams). Default: the run's pinned value, "
+                        "else by --sims from collect.CUDA_COLLECT_SHAPES on CUDA (8 at <= 16 sims, 3 above) and "
+                        "1 on CPU. Refused, never stepped down, when it would not fit in usable GPU memory")
     c.add_argument("--collect-from", default=None, metavar="SOURCE_RUN_DIR",
                    help="training arm: seal each collect as a verified reference to SOURCE_RUN_DIR's sealed "
                         "collect of the same generation instead of playing games (same gen-0 model, actor, "
@@ -720,6 +785,8 @@ def cmd_retarget(a: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     a = parser().parse_args(argv)
+    if hasattr(a, "collect_procs"):
+        a.collect_procs, a.concurrency = resolve_collect_shape(a)
     if getattr(a, "threads", 0):
         import torch
 

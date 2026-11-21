@@ -47,8 +47,13 @@ def source_collect_dir(source_run_dir: Path, generation: int) -> Path:
     return Path(source_run_dir).resolve() / f"gen_{int(generation):04d}" / "collect"
 
 
+# Collect settings added after sources were sealed, with the value every older
+# source implicitly had (a source manifest without the key ran at it).
+SETTINGS_ADDED_SINCE = {"collect_procs": 1}
+
+
 def settings_diff(source_manifest: dict[str, Any], settings: Any) -> dict[str, Any]:
-    have = dict(source_manifest.get("config", {}).get("settings", {}))
+    have = {**SETTINGS_ADDED_SINCE, **dict(source_manifest.get("config", {}).get("settings", {}))}
     want = {k: (list(v) if isinstance(v, tuple) else v) for k, v in asdict(settings).items()}
     return {k: {"source": have.get(k), "arm": v} for k, v in sorted(want.items())
             if k not in EXECUTION_ONLY_SETTINGS and have.get(k) != v}
