@@ -912,6 +912,7 @@ def run_gumbel_root_many_c(
     vloss_mode: int = 0,
     witness_stop_fn: Callable[[], bool] | None = None,
     root_stats_out: list[RootSearchStats | None] | None = None,
+    per_game_rng: Sequence[np.random.Generator] | None = None,
     return_diagnostics: Literal[False] = False,
 ) -> GumbelManyCResult: ...
 
@@ -943,6 +944,7 @@ def run_gumbel_root_many_c(
     vloss_mode: int = 0,
     witness_stop_fn: Callable[[], bool] | None = None,
     root_stats_out: list[RootSearchStats | None] | None = None,
+    per_game_rng: Sequence[np.random.Generator] | None = None,
     return_diagnostics: Literal[True],
 ) -> GumbelManyCDiagnosticsResult: ...
 
@@ -973,6 +975,7 @@ def run_gumbel_root_many_c(
     vloss_mode: int = 0,
     witness_stop_fn: Callable[[], bool] | None = None,
     root_stats_out: list[RootSearchStats | None] | None = None,
+    per_game_rng: Sequence[np.random.Generator] | None = None,
     return_diagnostics: bool = False,
 ) -> GumbelManyCResult | GumbelManyCDiagnosticsResult:
     """Gumbel root search with MCTSTree C tree + CBoard.
@@ -996,6 +999,13 @@ def run_gumbel_root_many_c(
     already has reusable state, passing it here is a caller assertion that the
     root belongs to the supplied board and history. If that cannot be
     guaranteed, omit that root id and let the runner create a fresh root.
+
+    ``per_game_rng``
+        One generator per board. When given, board ``i``'s Gumbel noise and
+        temperature draw come from ``per_game_rng[i]`` and ``rng`` is not drawn
+        from, so a game's draws depend only on its own positions, not on which
+        other games share the batch or in what order (the simple_rl collect's
+        per-game streams). None keeps the one shared ``rng``.
 
     ``allow_candidate_cap_truncation``
         False by default. The compiled sequential-halving scorer owns a fixed
@@ -1111,6 +1121,8 @@ def run_gumbel_root_many_c(
     _t_func_start = _time.perf_counter()
 
     n_boards = len(boards)
+    if per_game_rng is not None and len(per_game_rng) != n_boards:
+        raise ValueError(f"per_game_rng has {len(per_game_rng)} generators for {n_boards} boards")
     if root_stats_out is not None:
         # Opt-in observation only: filled per board below, never read back.
         # A board whose result did not come from the ordinary completed-Q
@@ -1575,7 +1587,7 @@ def run_gumbel_root_many_c(
             else float(cfg.gumbel_scale)
         ) if _noise_this else 0.0
         g = (
-            _gumbel_scale * _gumbel(rng, legal_idx.size)
+            _gumbel_scale * _gumbel(rng if per_game_rng is None else per_game_rng[i], legal_idx.size)
             if _gumbel_scale > 0.0
             else np.zeros(legal_idx.size, dtype=np.float64)
         )
@@ -2198,7 +2210,8 @@ def run_gumbel_root_many_c(
         best_in_legal = j_best < legal.size and int(legal[j_best]) == best_a
         if best_in_legal:
             action = sample_action_with_temperature(
-                rng, legal, imp_all, float(cfg.temperature), argmax_idx=j_best,
+                rng if per_game_rng is None else per_game_rng[i], legal, imp_all, float(cfg.temperature),
+                argmax_idx=j_best,
             )
         else:
   # Pre-F10 behaviour at temperature <= 0. It also differs from pre-F10 at

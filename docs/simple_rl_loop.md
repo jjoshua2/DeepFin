@@ -365,9 +365,20 @@ How a generation is split:
   `openings[k::K]`, so no line is played twice across processes beyond what the
   book cycle itself repeats. The collect refuses to seal unless the openings
   played equal the openings drawn.
-- **Seeds:** process k uses `seed_for(seed, "collect", g, "proc", k, "of", K)`.
-  K = 1 keeps the one-process seed `seed_for(seed, "collect", g)`, so a K = 1
-  collect has the same `--content-digest` as one made before the flag existed.
+- **Seeds:** process k uses `seed_for(seed, "collect", g, "proc", k, "of", K)`
+  (K = 1: `seed_for(seed, "collect", g)`).
+- **Per-game RNG streams:** every random draw of a game comes from that game's
+  own generator, `SeedSequence(process seed, spawn_key=(dole index,))`, where the
+  dole index is the game's position in the process's opening slice. That covers
+  the full/fast playout-cap draw, the root Gumbel noise, the move temperature and
+  row subsampling; there is no other per-game randomness (no RNG in the compiled
+  search). `play_batch(game_rng_base=, doled_game_indices=)` implements it and
+  refuses any game that is not a doled selfplay game. A game therefore plays the
+  same moves whichever games share its batch and whenever it starts, up to
+  floating-point differences of batched network outputs. **This changed the
+  stream layout (2026-11-21):** a collect made before it, at any K, is not
+  reproduced by digest by this code, and the digests banked on 2026-11-20 (the
+  K = 1 bench equality and the K = 3 repeat) need a new baseline.
 - **Concurrency is per process:** each process runs `--concurrency` games at a
   time, with its own evaluator (its own leaf-buffer cap) and its own Stockfish
   pool.
@@ -386,8 +397,8 @@ How a generation is split:
   that occur more than once (ids are content hashes of opening, moves and
   result, so only identical games share one; holdout membership is by game id).
 
-K is pinned. It sets every process's RNG stream and batch composition, so rows at
-K = 3 are not the rows at K = 1, and a changed K needs `--allow-config-change`.
+K is pinned. It sets every process's seed (so every game's stream) and its batch
+composition, so rows at K = 3 are not the rows at K = 1, and a changed K needs `--allow-config-change`.
 An arm must match its source's K (`reference.settings_diff`; a source sealed
 before the flag counts as 1). The distribution is argued equivalent, not
 identical: each game runs the same search, targets and sampling at any K; the
@@ -409,18 +420,66 @@ still match it). An unfinished process resumes at game granularity:
   stale `done.json`, and truncates games.jsonl (atomic rewrite) to the committed
   lines, dropping a torn tail. The repair is idempotent, so a second kill is
   repaired the same way.
-- The process then replays only its remaining openings, in doled order, with a
-  fresh seed `seed_for(seed, "resume", attempt)`. If nothing was kept, it
-  restarts on its own seed, and its rows equal an uninterrupted run's.
+- The process then replays only its remaining openings (by dole index, which
+  each games.jsonl line records, with the game's moves), in doled order.
+- **Move journal.** A game that was in flight at the kill is long-selected: it
+  is known to have still been running. Re-drawing it after the kill biases the
+  collect toward short, decisive games. Per-game streams alone do not prevent
+  that, because batched network outputs differ in the last bits and the replay
+  diverges (measured 2026-11-21 on 800 CPU games: the in-flight games came back
+  37.9 ± 15.0 and 42.5 ± 14.3 plies shorter and 0.17 / 0.13 more decisive, while
+  the games dealt after the kill were unchanged). So every process appends
+  `procs/<k>/journal.jsonl`: one line per network turn, written to the kernel
+  BEFORE the turn's moves are applied (journal lag 0 plies against a kill), with
+  each moving game's dole index, board ply, played move, full/fast flag and its
+  stream state before and after the ply's draws. It is compacted to the
+  uncommitted games at every shard commit. On a resume each in-flight game (and
+  each finished but uncommitted one) is replayed with, per journaled ply, its
+  stream reset to the journaled state, its full/fast choice and its move forced,
+  and the search re-run so the targets are regenerated under the same noise;
+  after the last journaled ply its stream is set to the journaled after-state
+  and it continues freely. The game is then its journaled prefix plus a
+  continuation drawn from the right conditional. Tree reuse, resign counters,
+  volatility series and tablebase state are rebuilt by re-running the turns.
+  The repair reads only complete journal lines (a torn tail is dropped and the
+  journal rewritten atomically before anything is appended), and a journal
+  entry that disagrees with a committed game's move is refused.
 - `procs/<k>/resumes.json`, then the manifest's `game_resumes` and each process
-  record's `resumes`, list per attempt: the kept and replayed opening ids, kept
-  games, shards and rows, discarded files and the seed. `stats.json` has
-  `procs_game_resumed` and `timing_independent: false`; games/h counts only the
-  games played in this attempt.
-- **A resumed collect that kept games is NOT digest-identical to an unkilled
-  one**: the replayed games use a different RNG stream. Every gate still applies
-  to the merged result, and the merge still refuses an opening played twice or
-  dropped.
+  record's `resumes`, list per attempt: the kept and replayed opening ids, the
+  replayed dole indices and `replayed_share`, kept games, shards and rows, and
+  the discarded files. `stats.json` has `procs_game_resumed` and
+  `timing_independent: false`; games/h counts only the games played in this
+  attempt.
+- A resumed collect that kept games is still not digest-identical to an unkilled
+  one: shard order follows completion order, and batched network outputs can
+  differ in the last bits. Every gate still applies to the merged result, and
+  the merge still refuses an opening (or dole index) played twice or dropped.
+- `plan.json` includes the code identity (git commit and a digest of every
+  source and compiled-extension file of the package): a deploy between a kill
+  and its resume redoes the collect whole instead of mixing versions.
+- Durability: games.jsonl lines are fsynced; the zarr stores, meta files,
+  commit records and the journal are not. The commit protocol covers a killed
+  process (SIGKILL, OOM kill, Ctrl-C), whose completed writes the kernel still
+  persists; it does not cover a power loss or kernel crash, after which a commit
+  record can point at data that never reached the disk. The re-checks (row
+  count, games digest, store present, journal vs committed moves) catch most
+  such cases but are not a guarantee.
+
+**Three ways to stop a collect:**
+
+| Stop | How | Unbiased? | Cost |
+|---|---|---|---|
+| Drain | create `<run>/STOP` | yes, by construction: a game's inclusion is fixed when it is dealt | the in-flight games' remaining time (minutes); frees the GPU when the processes exit |
+| Kill + resume | SIGKILL / crash, then rerun | yes, up to floating-point noise: committed games kept, in-flight games replayed through the journal | instant; replays the in-flight games' journaled plies |
+| PAUSE | create `<run>/PAUSE` or a `--pause-marker` | yes (nothing is re-dealt) | instant, but holds every process's GPU memory (about 23 GB at 3 × 128) |
+
+Drain: while `<run>/STOP` exists a running collect deals no new opening; every
+process lets its in-flight games finish, commits them, writes
+`procs/<k>/drained.json` (games dealt and finished) instead of `done.json`, and
+the collect exits unsealed with exit code 4 (`CollectDrained`). Remove STOP and
+rerun to continue at the next dole index; the resume record says
+`previous_stop: "drain"` and `dealt_before`. Nothing is in flight after a drain,
+so the journal is empty and nothing is forced.
 
 Any other unsealed attempt (changed plan) is redone whole.
 

@@ -444,6 +444,18 @@ PROCS_DIR = "procs"
 PROC_DONE = "done.json"
 PAUSED_ACK = "PAUSED"
 RESUMES = "resumes.json"
+# Per process: one line per network turn, written BEFORE that turn's moves are
+# applied, listing every moving game's (dole index, ply, move, full flag, stream
+# state before / after). Compacted to the uncommitted games at every shard
+# commit; on a resume it forces the in-flight games' journaled plies.
+JOURNAL = "journal.jsonl"
+# Written instead of done.json by a process that drained on <run>/STOP.
+DRAINED = "drained.json"
+
+
+class CollectDrained(Exception):
+    """The collect stopped dealing on ``<run>/STOP``, let its in-flight games
+    finish and exited unsealed; a rerun continues at the next dole index."""
 # Peak VRAM per collect process, fitted (least squares) to the 2026-11-20 RTX 5090
 # measurements (SL base, nvidia-smi MiB, total / K): 16 sims x 64 / 96 / 128 games
 # = 2858 / 4321 / 4806, 32 sims x 128 = 6553, 64 sims x 128 / 256 = 7368 / 12085.
@@ -667,11 +679,30 @@ class ProcSpec:
         return Path(self.gen_dir) / PROCS_DIR / f"{self.proc:02d}"
 
 
+def code_identity() -> dict[str, Any]:
+    """The code a collect runs: the git commit plus a digest of every source and
+    compiled-extension file of the package (which also covers an uncommitted
+    edit or a rebuilt .so that the commit alone would not show)."""
+    import chess_anti_engine
+    from chess_anti_engine.simple_rl.common import git_identity
+
+    root = Path(chess_anti_engine.__file__).resolve().parent
+    h = hashlib.sha256()
+    for path in sorted(p for p in root.rglob("*") if p.suffix in (".py", ".so", ".c", ".h") and p.is_file()):
+        h.update(str(path.relative_to(root)).encode() + b"\0")
+        h.update(hashlib.sha256(path.read_bytes()).digest())
+    return {"git_sha": git_identity()["sha"], "package_sha256": h.hexdigest()}
+
+
 def _plan(settings: CollectSettings, generation: int, checkpoint: Path, openings: list[dict[str, Any]],
           cursor_before: dict[str, Any] | None) -> dict[str, Any]:
-    """What an interrupted collect must match for its finished processes to be kept."""
+    """What an interrupted collect must match for its finished processes (and a
+    killed process's committed games) to be kept. The code identity is part of
+    it: a deploy between a kill and its resume redoes the collect whole instead
+    of mixing games played by two versions."""
     k = int(settings.collect_procs)
     return {"generation": int(generation), "collect_procs": k, "checkpoint_sha256": sha256_file(checkpoint),
+            "code": code_identity(),
             "settings": json.loads(json.dumps(asdict(settings), default=str)),
             "opening_cursor_before": cursor_before,
             "procs": [{"proc": p, "seed": proc_seed(settings, generation, p),
@@ -736,6 +767,83 @@ def _committed_prefix(proc_dir: Path) -> tuple[int, int, list[str]]:
     return kept_shards, kept_lines, lines[:kept_lines]
 
 
+def _read_journal(path: Path) -> list[dict[str, Any]]:
+    """Every entry of the complete journal lines (a torn last line, the only
+    damage a kill leaves on an append-only file, is not read). A complete line
+    that does not parse is an error."""
+    raw = path.read_bytes() if path.is_file() else b""
+    out: list[dict[str, Any]] = []
+    for n, line in enumerate(raw[: raw.rfind(b"\n") + 1].decode().splitlines()):
+        try:
+            entries = json.loads(line)
+        except ValueError as exc:
+            raise ValueError(f"{path}: journal line {n + 1} is corrupt") from exc
+        out.extend(entries)
+    return out
+
+
+class _Journal:
+    """Append-only journal writer: one line per network turn, flushed to the
+    kernel before the turn's moves are applied (a SIGKILL loses no applied
+    move; not fsynced, so a power loss can)."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.fh = path.open("a")
+
+    def write(self, entries: list[dict[str, Any]]) -> None:
+        if entries:
+            self.fh.write(json.dumps(entries, separators=(",", ":")) + "\n")
+            self.fh.flush()
+
+    def flush(self) -> None:
+        self.fh.flush()
+
+    def reopen(self) -> None:
+        self.fh.close()
+        self.fh = self.path.open("a")
+
+    def close(self) -> None:
+        self.fh.close()
+
+
+def _write_journal(path: Path, entries: list[dict[str, Any]]) -> None:
+    """Replace the journal atomically with ``entries`` (one line)."""
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(json.dumps(entries, separators=(",", ":")) + "\n" if entries else "")
+    tmp.replace(path)
+
+
+def _repair_journal(proc_dir: Path, kept: list[dict[str, Any]], replay: set[int],
+                    proc: int) -> dict[int, list[dict[str, Any]]]:
+    """Check the journal against the committed games, keep only the replayed
+    games' entries (rewritten atomically, so a torn tail is gone before anything
+    is appended), and return them as forced prefixes by dole index.
+
+    A journal entry of a committed game must be that game's move at that ply:
+    any disagreement means the journal and the shards are not of the same games,
+    and is refused rather than resolved either way."""
+    path = proc_dir / JOURNAL
+    entries = _read_journal(path)
+    committed = {int(g["dole_index"]): g for g in kept}
+    prefixes: dict[int, dict[int, dict[str, Any]]] = {}
+    for e in entries:
+        i, ply = int(e["i"]), int(e["p"])
+        if i in committed:
+            g = committed[i]
+            k = ply - int(g["start_ply"])
+            if not 0 <= k < len(g["moves"]) or int(g["moves"][k]) != int(e["m"]):
+                raise ValueError(f"collect process {proc}: journal entry (game {i}, ply {ply}, move {e['m']}) "
+                                 f"disagrees with committed game {g['game_id']}")
+        elif i in replay:
+            prefixes.setdefault(i, {})[ply] = e  # a later attempt's replay of the same ply wins (it is the same)
+        else:
+            raise ValueError(f"collect process {proc}: journal entry for game {i}, which is not one of its games")
+    out = {i: [plies[p] for p in sorted(plies)] for i, plies in prefixes.items()}
+    _write_journal(path, [e for i in sorted(out) for e in out[i]])
+    return out
+
+
 def _repair_proc_dir(spec: ProcSpec) -> dict[str, Any] | None:
     """Make a killed process's directory resumable at game granularity, ON DISK,
     before anything is appended to it.
@@ -744,13 +852,14 @@ def _repair_proc_dir(spec: ProcSpec) -> dict[str, Any] | None:
     else: uncommitted or torn shards, temporary zarr stores, orphaned meta or
     commit files, a stale done.json, and games.jsonl lines whose rows were never
     flushed (rewritten atomically). Returns the resume record (kept vs replayed
-    openings and the re-seed), or None for a fresh start. Idempotent: a kill
+    openings and dole indices, the replayed share), or None for a fresh start. Idempotent: a kill
     during or after the repair repairs to the same state next time."""
     proc_dir = spec.proc_dir
     shards = proc_dir / "shards"
     if not proc_dir.exists():
         return None
     (proc_dir / PROC_DONE).unlink(missing_ok=True)  # _proc_done already refused it
+    drained = json.loads((proc_dir / DRAINED).read_text()) if (proc_dir / DRAINED).is_file() else None
     (proc_dir / PAUSED_ACK).unlink(missing_ok=True)
     kept_shards, _, lines = _committed_prefix(proc_dir)
     shards.mkdir(parents=True, exist_ok=True)
@@ -764,26 +873,34 @@ def _repair_proc_dir(spec: ProcSpec) -> dict[str, Any] | None:
     tmp.replace(proc_dir / GAMES)
     previous = json.loads((proc_dir / RESUMES).read_text()) if (proc_dir / RESUMES).is_file() else []
     kept = [json.loads(ln) for ln in lines]
-    remaining = Counter(row["id"] for row in spec.openings)
+    kept_indices: set[int] = set()
     for g in kept:
-        if remaining[g["opening_id"]] <= 0:
-            raise ValueError(f"collect process {spec.proc}: kept game {g['game_id']} played opening "
-                             f"{g['opening_id']!r}, which is not (or no longer) doled to it")
-        remaining[g["opening_id"]] -= 1
-    replay = []
-    for row in spec.openings:
-        if remaining[row["id"]] > 0:
-            replay.append(row["id"])
-            remaining[row["id"]] -= 1
+        i = int(g["dole_index"])
+        if not 0 <= i < len(spec.openings) or i in kept_indices or spec.openings[i]["id"] != g["opening_id"]:
+            raise ValueError(f"collect process {spec.proc}: kept game {g['game_id']} claims doled opening #{i} "
+                             f"({g['opening_id']!r}), which is not (or no longer) its, or is claimed twice")
+        kept_indices.add(i)
+    replay = [i for i in range(len(spec.openings)) if i not in kept_indices]
+    prefixes = _repair_journal(proc_dir, kept, set(replay), spec.proc)
     attempt = len(previous) + 1
-    # Nothing kept: a plain restart on the process's own seed, so its rows are
-    # those of an uninterrupted run. Anything kept: a fresh seed per attempt.
-    seed = seed_for(spec.seed, "resume", attempt) if kept else spec.seed
+    # Every game draws from its own stream keyed by (process seed, dole index),
+    # so a replayed opening plays the game it would have played uninterrupted
+    # (up to floating-point differences of batched network outputs): which games
+    # finished before the kill does not select which games the collect holds.
     record = {"attempt": attempt, "kept_games": len(kept), "kept_shards": kept_shards,
               "kept_rows": int(sum(int(g["rows"]) for g in kept)),
-              "kept_opening_ids": [g["opening_id"] for g in kept], "replayed_opening_ids": replay,
-              "discarded": discarded, "seed": seed}
+              "kept_opening_ids": [g["opening_id"] for g in kept],
+              "replayed_opening_ids": [spec.openings[i]["id"] for i in replay],
+              "replayed_dole_indices": replay, "replayed_share": len(replay) / max(len(spec.openings), 1),
+              # Games in flight at the kill: their journaled plies are replayed forced.
+              "journaled_games": len(prefixes), "journaled_plies": sum(len(v) for v in prefixes.values()),
+              "discarded": discarded, "game_streams": "per game: (process seed, dole index)",
+              # How the previous attempt ended: drained on STOP (with how many games it
+              # had dealt), or killed.
+              "previous_stop": "drain" if drained is not None else "kill",
+              "dealt_before": None if drained is None else int(drained["dealt"])}
     write_json_atomic(proc_dir / RESUMES, [*previous, record])
+    (proc_dir / DRAINED).unlink(missing_ok=True)
     return record
 
 
@@ -802,19 +919,23 @@ def _play_proc(spec: ProcSpec) -> dict[str, Any]:
     settings = spec.settings
     proc_dir = spec.proc_dir
     # A killed process keeps its committed games and replays only the rest of
-    # its openings, with a fresh seed per attempt: its rows are therefore NOT
-    # those an unkilled process would have made (no digest identity).
+    # its openings. Each game draws from its own RNG stream keyed by (process
+    # seed, dole index), so a replayed game is the one an unkilled process would
+    # have played, up to floating-point differences of batched network outputs.
     resume = _repair_proc_dir(spec)
     (proc_dir / "shards").mkdir(parents=True, exist_ok=True)
     resumes = json.loads((proc_dir / RESUMES).read_text()) if resume is not None else []
-    seed = int(resume["seed"]) if resume is not None else spec.seed
-    openings = list(spec.openings)
-    if resume is not None:  # the replayed openings, in doled order
-        openings, left = [], Counter(resume["replayed_opening_ids"])
-        for row in spec.openings:
-            if left[row["id"]] > 0:
-                openings.append(row)
-                left[row["id"]] -= 1
+    seed = spec.seed
+    # (dole index, opening) of the games to play now, in doled order.
+    doled = list(range(len(spec.openings))) if resume is None else [int(i) for i in resume["replayed_dole_indices"]]
+    openings = [spec.openings[i] for i in doled]
+    # The in-flight games of a killed attempt: replayed with their journaled plies forced.
+    forced: dict[int, list[dict[str, Any]]] = {}
+    for e in _read_journal(proc_dir / JOURNAL) if resume is not None else []:
+        forced.setdefault(int(e["i"]), []).append(e)
+    if resume is None:
+        (proc_dir / JOURNAL).unlink(missing_ok=True)
+    finished: set[int] = set()
     gate = PauseGate(Path(spec.run_dir), spec.pause_markers, proc_dir / PAUSED_ACK)
     # The process clock starts BEFORE the pre-load hold, so wall_seconds contains
     # every pause interval it records and active = wall - paused stays >= 0.
@@ -841,6 +962,11 @@ def _play_proc(spec: ProcSpec) -> dict[str, Any]:
 
     flushes_before = buffer_full_flushes()
     model_sha = sha256_file(checkpoint)
+    journal = _Journal(proc_dir / JOURNAL)
+    from chess_anti_engine.simple_rl.common import STOP_FILE
+
+    # <run>/STOP during a collect = drain: deal nothing new, finish what is in flight.
+    stop_file = Path(spec.run_dir) / STOP_FILE
 
     def flush() -> None:
         nonlocal buffered, buffered_meta, shard_index
@@ -867,6 +993,12 @@ def _play_proc(spec: ProcSpec) -> dict[str, Any]:
             "rows": len(buffered), "games_lines": games_bytes.count(b"\n"),
             "games_sha256": hashlib.sha256(games_bytes).hexdigest()})
         shard_index += 1
+        # Compact the journal to the games not committed yet (atomic; a kill
+        # before it leaves committed games' entries, which the repair checks and drops).
+        journal.flush()
+        _write_journal(proc_dir / JOURNAL, [e for e in _read_journal(proc_dir / JOURNAL)
+                                            if int(e["i"]) not in finished])
+        journal.reopen()
         buffered, buffered_meta = [], []
 
     def on_samples(batch: Any) -> None:
@@ -880,9 +1012,11 @@ def _play_proc(spec: ProcSpec) -> dict[str, Any]:
         if len(samples) != int(audit.retained_samples):
             raise ValueError("sample callback and provenance disagree on retained rows")
         line = audit.start.root_fen + " | " + " ".join(audit.start.opening_moves)
-        row = by_line.get(line.rstrip())
-        if row is None:
-            raise ValueError(f"game started from an opening that was not doled to process {spec.proc}: {line!r}")
+        dole_index = doled[int(audit.start.start_ordinal)]  # every game of the call takes the next doled opening
+        row = spec.openings[dole_index]
+        if by_line.get(line.rstrip()) is None or row["line"].rstrip() != line.rstrip():
+            raise ValueError(f"game {audit.start.start_ordinal} of process {spec.proc} started from {line!r}, "
+                             f"not its doled opening #{dole_index} ({row['line']!r})")
         tb_plies = {int(p) for p in audit.tablebase_policy_applied_plies}
         final = chess.Board(audit.final_fen)
         for s in samples:
@@ -890,7 +1024,8 @@ def _play_proc(spec: ProcSpec) -> dict[str, Any]:
             buffered_meta.append((int(audit.game_id), int(s.ply_index), row["id"],
                                   int(s.ply_index) in tb_plies, x_hash(s.x)))
         append_jsonl(proc_dir / GAMES, {
-            "game_id": int(audit.game_id), "opening_id": row["id"], "book": int(row["book"]),
+            "game_id": int(audit.game_id), "opening_id": row["id"], "dole_index": int(dole_index),
+            "book": int(row["book"]), "moves": [int(m) for m in audit.played_move_indices],
             "result": audit.result, "resolution": audit.resolution,
             "total_plies": int(audit.total_plies), "start_ply": int(audit.start.start_ply),
             "rows": len(samples), "mate": bool(final.is_checkmate()),
@@ -899,6 +1034,7 @@ def _play_proc(spec: ProcSpec) -> dict[str, Any]:
         })
         games_done += 1
         rows_done += len(samples)
+        finished.add(int(dole_index))
         if len(buffered) >= int(settings.rows_per_shard):
             flush()
 
@@ -912,18 +1048,29 @@ def _play_proc(spec: ProcSpec) -> dict[str, Any]:
                 model, device=settings.device, rng=np.random.default_rng(seed), stockfish=pool,
                 evaluator=evaluator, games=min(int(settings.concurrency), len(openings)),
                 target_games=len(openings), on_game_complete=on_samples, on_game_provenance=on_game,
-                fen_dole_queue=queue, pause_fn=gate, **cfg,
+                fen_dole_queue=queue, pause_fn=gate, game_rng_base=seed, doled_game_indices=doled,
+                game_journal=journal.write, forced_prefixes=forced,
+                deal_fn=lambda: not stop_file.exists(), **cfg,
             )
         finally:
             pool.close()
+            journal.close()
         played_games = int(batch_stats.games)
     flush()
     wall = time.perf_counter() - t0
+    if games_done != n_games and not pending and stop_file.exists() and len(queue) == n_games - games_done:
+        # Drained: every dealt game finished and is committed; nothing in flight.
+        record = {"proc": spec.proc, "dealt": n_games - len(queue), "games": games_done, "of": n_games,
+                  "stopped_at": time.time(), "wall_seconds": wall}
+        write_json_atomic(proc_dir / DRAINED, record)
+        return {**record, "drained": True}
     if games_done != n_games or queue or pending:
         raise ValueError(f"incomplete collect process {spec.proc}: {games_done}/{n_games} games, "
                          f"{len(queue)} undoled openings, {len(pending)} pending")
-    played_ids = Counter(json.loads(r)["opening_id"] for r in (proc_dir / GAMES).read_text().splitlines() if r)
-    if played_ids != Counter(row["id"] for row in spec.openings):
+    played = [json.loads(r) for r in (proc_dir / GAMES).read_text().splitlines() if r]
+    played_ids = Counter(g["opening_id"] for g in played)
+    if played_ids != Counter(row["id"] for row in spec.openings) or sorted(
+            int(g["dole_index"]) for g in played) != list(range(len(spec.openings))):
         raise ValueError(f"collect process {spec.proc}: the games played (kept + replayed) are not exactly "
                          "its doled openings, each once")
     if not (proc_dir / GAMES).exists():
@@ -933,7 +1080,7 @@ def _play_proc(spec: ProcSpec) -> dict[str, Any]:
             "play_batch_games": played_games + games_kept, "wall_seconds": wall,
             "started_at": started_at, "paused_seconds": gate.paused_seconds, "pause_intervals": gate.intervals,
             # Game-granularity resumes of this process (kept vs replayed openings,
-            # the re-seed); empty when it ran uninterrupted.
+            # the replayed share); empty when it ran uninterrupted.
             "resumes": resumes, "games_this_attempt": games_done - games_kept,
             "rows_this_attempt": rows_done - rows_kept,
             # Throughput over the time the process was not paused, games of THIS attempt.
@@ -1000,7 +1147,8 @@ def _run_procs(specs: list[ProcSpec]) -> list[dict[str, Any]]:
             wait([c.sentinel for c in children if c.exitcode is None], timeout=5.0)
     finally:
         _stop_children(children)
-    return [json.loads((s.proc_dir / PROC_DONE).read_text()) for s in specs]
+    return [json.loads((s.proc_dir / PROC_DONE).read_text()) if (s.proc_dir / PROC_DONE).is_file()
+            else {**json.loads((s.proc_dir / DRAINED).read_text()), "drained": True} for s in specs]
 
 
 def _merge_procs(gen_dir: Path, procs: int) -> int:
@@ -1131,6 +1279,14 @@ def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, trai
     if todo:
         for rec in _run_procs(todo):
             done[int(rec["proc"])] = rec
+    drained = [r for r in done.values() if r.get("drained")]
+    if drained:
+        dealt = sum(int(r["dealt"]) for r in drained) + sum(int(r["games"]) for r in done.values()
+                                                             if not r.get("drained"))
+        raise CollectDrained(
+            f"generation {generation}: drained on {Path(run_dir) / 'STOP'}: {dealt} of {settings.games} games "
+            "dealt, every dealt game finished and committed; remove STOP and rerun to continue at the next "
+            "dole index (the collect is not sealed)")
     wall = time.perf_counter() - t0
     records = [done[p] for p in range(k_procs)]
     shard_count = _merge_procs(gen_dir, k_procs)
@@ -1166,8 +1322,9 @@ def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, trai
                  timing_independent=paused == 0.0 and not (set(done) - fresh) and not resumed_games,
                  games_per_hour=3600.0 * games_now / active if fresh else None,
                  # Processes resumed at game granularity: their kept games came from an
-                 # earlier attempt and the rest were replayed with a fresh seed, so this
-                 # collect is NOT digest-identical to an uninterrupted one.
+                 # earlier attempt and the rest were replayed on their own per-game
+                 # streams. Shard order and batched-network floating point differ from an
+                 # uninterrupted run, so this collect is not digest-identical to one.
                  procs_game_resumed=resumed_games,
                  rows_per_second=rows_now / active if fresh else None, sf_nodes=int(settings.sf_nodes),
                  leaf_rows_required=required_leaf_rows(settings), collect_procs=k_procs,
@@ -1206,8 +1363,9 @@ def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, trai
         extra={"generation": generation, "stats": stats, "opening_cursor": cursor_after,
                "opening_cursor_before": cursor_before, "collect_procs": k_procs,
                # Every game-granularity resume per process (kept vs replayed
-               # openings, discarded torn files, the re-seed). A collect with a
-               # resume that kept games is not digest-identical to an unkilled one.
+               # openings and the replayed share, discarded torn files). A collect
+               # with a resume that kept games is not digest-identical to an
+               # unkilled one (shard order, batched floating point).
                "game_resumes": {str(r["proc"]): r.get("resumes", []) for r in records if r.get("resumes")},
                # Derived and rebuildable from the sealed collects; pruned after
                # two generations. A later collect uses one only if it matches.
