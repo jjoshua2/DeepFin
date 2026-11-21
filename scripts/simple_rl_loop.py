@@ -618,7 +618,8 @@ def _common(p: argparse.ArgumentParser) -> None:
                    help="gradient accumulation: one optimizer step per N micro-batches of --batch-size rows "
                         "(effective batch = batch-size x N; every row's loss coefficient is 1/effective batch, "
                         "so the step's gradient is the native big batch's). Warmup, the LR schedule and "
-                        "--snapshot-updates count optimizer steps. Refused with a KL anchor or an SL share. "
+                        "--snapshot-updates count optimizer steps. Refused with a KL anchor, an SL share, or phase rows "
+                        "missing a trained head's target (e.g. value-only playout-cap rows). "
                         "Default 1 (no accumulation)")
     t.add_argument("--mirror-prob", type=float, default=0.5)
     t.add_argument("--w-policy", type=float, default=1.0)

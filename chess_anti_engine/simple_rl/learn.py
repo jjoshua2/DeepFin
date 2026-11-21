@@ -569,6 +569,37 @@ def step_row_counts(n_own: int, *, batch_size: int, accum_steps: int = 1) -> lis
     return counts
 
 
+def refuse_masked_heads_under_accumulation(rows: dict[str, np.ndarray], settings: TrainSettings) -> None:
+    """Under accumulation every trained head's rows must all carry its target.
+
+    ``compute_loss`` reduces each head to a masked mean over ONE micro-batch
+    (policy over ``is_network_turn * has_policy``, the value over
+    ``is_network_turn``), and the Trainer then scales every micro-batch by
+    rows / (batch * accum_steps). When the valid-row count differs between
+    micro-batches the accumulated step is not the native big batch's masked
+    mean (review of #1447: 2.4e-1 relative gradient difference with 30% value
+    -only rows). With every row valid both reductions agree, so that is the
+    only case accepted. The heads simple-RL trains are policy and WDL; every
+    other weight is pinned to 0 in ``trainer_kwargs``.
+    """
+    if int(settings.accum_steps) <= 1:
+        return
+    n = int(rows["x"].shape[0])
+    net = np.asarray(rows.get("is_network_turn", np.ones(n)), dtype=bool)
+    masks = {}
+    if float(settings.w_policy) > 0:
+        masks["policy (is_network_turn * has_policy)"] = net & np.asarray(rows.get("has_policy", np.ones(n)),
+                                                                          dtype=bool)
+    if float(settings.w_wdl) > 0:
+        masks["wdl (is_network_turn)"] = net
+    bad = {name: int((~m).sum()) for name, m in masks.items() if not m.all()}
+    if bad:
+        raise ValueError(f"accum_steps {settings.accum_steps} refused: phase rows without a trained head's target "
+                         f"{bad} of {n}. Each micro-batch normalises a head by its own valid-row count, so the "
+                         "accumulated gradient would not be the effective batch's; train these rows with "
+                         "accum_steps 1 (a native batch)")
+
+
 def snapshot_updates_for_rows(rows: tuple[int, ...] | list[int], step_rows: list[int]) -> tuple[int, ...]:
     """The optimizer-step count after which each requested row count has been
     presented (the first step whose cumulative rows reach it)."""
@@ -1299,6 +1330,7 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
         reference_prior = _reference_prior
 
     train_rows, target_info = prepare_targets(train_rows, settings, reference_prior)
+    refuse_masked_heads_under_accumulation(train_rows, settings)
     holdout = {k: v for k, v in holdout.items() if k not in TARGET_SOURCE_KEYS}
     if settings.optimizer_state not in ("fresh", "continue"):
         raise ValueError("optimizer_state must be fresh or continue")

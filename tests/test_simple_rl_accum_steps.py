@@ -213,3 +213,49 @@ def test_a_run_pinned_before_the_flag_resumes_at_the_default_and_refuses_another
     with pytest.raises(SystemExit, match="accum_steps"):
         simple_rl_loop.main(_stage(argv, "train", "--redo", "--accum-steps", "2"))
     assert simple_rl_loop.main(argv) == 0  # the default reads as what the run implicitly had
+
+
+def test_value_only_rows_break_equality_so_accumulation_refuses_them() -> None:
+    """Review of #1447: each micro-batch normalises policy by its own has_policy
+    count. With value-only rows the accumulated step is NOT the big batch's, so
+    such a phase is refused under accumulation (and accepted natively)."""
+    from chess_anti_engine.simple_rl.learn import refuse_masked_heads_under_accumulation
+
+    n, b, k = 48, 16, 3
+    rows = _arrays(n)
+    rows["has_policy"] = rows["has_policy"].copy()
+    rows["has_policy"][:12] = 0  # the first micro-batch is 3/4 value-only
+    order = np.arange(n)
+    big = _step_grads(TrainSettings(device="cpu", mirror_prob=0.0, batch_size=b * k),
+                      ScheduledSampler(rows, [(order, np.zeros(0, np.int64))], rng=np.random.default_rng(0)), 1)
+    micro = [(order[i * b:(i + 1) * b], np.zeros(0, np.int64)) for i in range(k)]
+    acc = _step_grads(TrainSettings(device="cpu", mirror_prob=0.0, batch_size=b, accum_steps=k),
+                      ScheduledSampler(rows, micro, rng=np.random.default_rng(0)), 1)
+    with pytest.raises(AssertionError):
+        _assert_same_grads(acc, big)
+    with pytest.raises(ValueError, match="without a trained head's target"):
+        refuse_masked_heads_under_accumulation(rows, TrainSettings(accum_steps=3))
+    refuse_masked_heads_under_accumulation(rows, TrainSettings(accum_steps=1))  # native: accepted
+    refuse_masked_heads_under_accumulation(rows, TrainSettings(accum_steps=3, w_policy=0.0))  # policy untrained
+    rows["has_policy"][:] = 1
+    refuse_masked_heads_under_accumulation(rows, TrainSettings(accum_steps=3))  # every row valid: accepted
+
+
+def test_train_generation_refuses_value_only_rows_under_accumulation(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from chess_anti_engine.simple_rl import learn as learn_mod
+
+    run = _run(tmp_path, 48)
+    real = learn_mod.prepare_targets
+
+    def value_only_some(rows: Any, settings: Any, ref: Any) -> Any:
+        out, info = real(rows, settings, ref)
+        out["has_policy"] = out["has_policy"].copy()
+        out["has_policy"][:5] = 0
+        return out, info
+
+    monkeypatch.setattr(learn_mod, "prepare_targets", value_only_some)
+    with pytest.raises(ValueError, match="without a trained head's target"):
+        train_generation(run_dir=run, generation=1, init_checkpoint=run / "gen_0000" / "model.pt",
+                         prev_trainer_checkpoint=None,
+                         settings=TrainSettings(device="cpu", batch_size=8, accum_steps=2, holdout_frac=0.0))
