@@ -238,11 +238,37 @@ games. Our runs: every ply, ~105 rows per game.
   (`collect-throughput/bench_c128`: 48,641 rows / 512 games; 94.8 in the re-measure).
 - **Collect, 16 sims every ply:** 1.85M training rows/h at 8 × 64 (#1441); 96.0 rows
   per game (`bench_c256_s16_prof`: 49,158 / 512) → **≈ 19.3k games/h** (derived).
-- **Collect, playout cap at 64 / 16 sims: UNMEASURED.** An eval-count model only
-  (**guess**; the diagnosis's own model gives ~2.3× at p = 0.25, agreeing), until a
-  throughput run measures it:
-  games/h ≈ 1 / (p / 5,021 + (1 − p) / 19,300). p = 0.25: ≈ 11.3k games/h;
-  p = 0.021 (≈ 2 full plies per ~96-ply game): ≈ 18.2k games/h.
+- **Collect, playout cap at 64 / 16 sims: measured** (3 × 128, 960 games per p, SL base, the pilot's flags;
+  `collect-throughput/playout-cap/README.md`). Steady-state games/h: p = 0.5 9,038 (play measured, unsealed:
+  killed by the bench's 15 GiB RSS cap at game 959/960); p = 0.25 12,208 (whole run 10,745); p = 0.125 15,077
+  (whole run 13,197). Against the pilot's 5,204 at p = 1.0, that is ×1.74 / ×2.35 / ×2.90. The earlier
+  eval-count guess, games/h ≈ 1 / (p / 5,021 + (1 − p) / 19,300), gave ≈ 11.3k (×2.3) at p = 0.25.
+  - Policy rows per GPU-hour FALL with p: 434k / 299k / 183k per hour, against the pilot's 496k.
+  - **The rule is on EFFECTIVE policy rows**, rows / (1 + (m − 1)·0.03) for m rows per game (the pilot launch record,
+    "2. The owner's design as an equal-GPU-time arm"). At 1.6 GPU-h:
+
+    | p | m (rows/game) | raw policy rows, steady | effective, steady | raw, whole run | effective, whole run |
+    |---|---|---|---|---|---|
+    | 1.0 (the pilot, measured) | 95.25 | 793k | 207k | — | — |
+    | 0.5 (play measured, unsealed: killed by the bench's 15 GiB RSS cap at game 959/960) | 47.57 | 695k | 290k | — | — |
+    | 0.25 | 23.99 | 478k | 283k | 412k | 244k |
+    | 0.125 | 12.18 | 293k | 220k | 257k | 193k |
+
+    Collection A's 198k is itself effective (≈ 758k raw at m = 95); re-derived from the measured pilot it
+    is 207k.
+  - **The steady rate is the applicable one.** A 1.6 GPU-h collection is ≈ 20–24k games over ≈ 5,800 s,
+    with one ramp and one drain. The 960-game bench runs spend ≈ 12% of their wall (262 s at p = 0.125)
+    filling and draining 384 slots: the whole-run rate is 87.5% of the steady rate at p = 0.125 and 88.0%
+    at p = 0.25.
+  - **By the rule as written, the smallest passing p is 0.125 on the steady rate, but only marginally:**
+    220k against 198k (against 207k if A is re-measured). On the whole-run rate it FAILS (193k).
+    p = 0.25 passes on both rates (283k / 244k).
+  - Capped games are more decisive: 0.586 / 0.606 / 0.620 against 0.510 at p = 1.0 (SE about 0.016). Plies
+    per game are unchanged.
+  - A capped full-ply target rests on slightly fewer visits. Carried visits: mean 8.5 at p = 0.25 and 7.1 at
+    p = 0.125, against 12.1. Realised child visits per target: 71.3 / 70.0, against 75.0.
+  - 6 × 96 is refused by `check_vram` (41.8 GiB against 26.4 usable): the estimate uses the 64-sim peak even
+    for a mostly-fast collect.
 - **Disk:** 1.87 KB per row (`snapshots-arms-e2e-20261120/src_graphs`: 23.0 MB of
   shards for 12,299 rows; the collect agent measured 1.86 KB on head 347aaf08c).
 - **RAM:** 28.0 KB per row resident for the training keys (float16 planes and
