@@ -1,4 +1,4 @@
-# RL run 1 pilot: launch record (NOT LAUNCHED)
+# RL run 1 pilot: launch record (launched and completed 2026-11-21)
 
 **Results (2026-11-21):** [pilot results](2026-11-21-rl-run1-pilot-results.md). S damage −20.0 [−36.8, −3.3]; gate −10.0 [−23.2, +3.2], so damage was not reproduced and Zq is not adoptable; match 2 skipped; match 4 unread at +7.7 [−0.1, +15.4]; the adoption order stops for the owner.
 
