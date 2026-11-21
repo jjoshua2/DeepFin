@@ -1,0 +1,105 @@
+{
+  "status": "INDEPENDENT_SAVED_ONLY_PAIRED_COMPARISON",
+  "inputs": {
+    "sf-label-quality-runtime-88151623-3571-4d8c-92bd-c97d3296d337": {
+      "native-results.jsonl": "50aa0a229e3bdb7e3b592c2f58bd49b4203ea40f867b50052b81fa59855c4a29",
+      "engine-build-options.json": "0a6cd9c5d171abf3c428a1011870cc0fea3eba49eb023496b0322c7adccdfbc9"
+    },
+    "sf-label-quality-runtime-v2-d0c41114-a1d5-4fbc-b038-c1161b7844ed": {
+      "native-results.jsonl": "241c62bfb29fc664c47ff91277195ed85f33b28bf6a3a3e3d09aa3732e7d6149",
+      "engine-build-options.json": "0a6cd9c5d171abf3c428a1011870cc0fea3eba49eb023496b0322c7adccdfbc9"
+    },
+    "sf-label-quality-tb6-runtime-20261112-v3": {
+      "native-results.jsonl": "b4fb629274f2b928abfd004a63f1581e0746bc28254d104dd1e8102b3f9d3398",
+      "engine-build-options.json": "204ebfa6fcf8a6c535fd97d98af8f084e98f481556dac3d74cff5626b8d7ec52"
+    }
+  },
+  "roots": 64,
+  "join": "complete exact root_index+FEN+requested budget; no exclusions",
+  "common_settings": "same executable SHA,1thread,Hash16,MultiPV8,cold queries; TB off versus explicitly enabled6-piece",
+  "TB6_vs_TBoff_same_budget": {
+    "5000": {
+      "Q_MAE": 0.01892187531120726,
+      "expected_score_MAE": 0.00946093765560363,
+      "draw_MAE": 0.01889062556256249,
+      "Q_max_abs": 0.9849999835714698,
+      "roots_Q_abs_gt_0.1": 2
+    },
+    "50000": {
+      "Q_MAE": 0.009718748558952939,
+      "expected_score_MAE": 0.004859374279476469,
+      "draw_MAE": 0.009562503508277587,
+      "Q_max_abs": 0.12700000405311584,
+      "roots_Q_abs_gt_0.1": 3
+    },
+    "1000000": {
+      "Q_MAE": 0.022359375847372576,
+      "expected_score_MAE": 0.011179687923686288,
+      "draw_MAE": 0.022328125309286406,
+      "Q_max_abs": 0.6100000143051147,
+      "roots_Q_abs_gt_0.1": 3
+    }
+  },
+  "TBoff_vs_own_TBoff_1M": {
+    "5000": {
+      "Q_MAE": 0.13709374910285987,
+      "expected_score_MAE": 0.06854687455142994,
+      "draw_MAE": 0.1366250012852106,
+      "Q_max_abs": 0.9989999999525025,
+      "roots_Q_abs_gt_0.1": 13
+    },
+    "50000": {
+      "Q_MAE": 0.06631249911697523,
+      "expected_score_MAE": 0.033156249558487616,
+      "draw_MAE": 0.06612500309347524,
+      "Q_max_abs": 0.847000002861023,
+      "roots_Q_abs_gt_0.1": 9
+    }
+  },
+  "TB6_vs_own_TB6_1M": {
+    "5000": {
+      "Q_MAE": 0.10590625026452472,
+      "expected_score_MAE": 0.05295312513226236,
+      "draw_MAE": 0.10543750293072662,
+      "Q_max_abs": 0.9989999999525025,
+      "roots_Q_abs_gt_0.1": 12
+    },
+    "50000": {
+      "Q_MAE": 0.065921874876949,
+      "expected_score_MAE": 0.0329609374384745,
+      "draw_MAE": 0.06585937619274773,
+      "Q_max_abs": 0.931999996304512,
+      "roots_Q_abs_gt_0.1": 10
+    }
+  },
+  "TBoff_vs_common_TB6_1M_reference": {
+    "5000": {
+      "Q_MAE": 0.1197031245137623,
+      "expected_score_MAE": 0.05985156225688115,
+      "draw_MAE": 0.11926562754706538,
+      "Q_max_abs": 0.9989999999525025,
+      "roots_Q_abs_gt_0.1": 13
+    },
+    "50000": {
+      "Q_MAE": 0.06892187431731145,
+      "expected_score_MAE": 0.034460937158655724,
+      "draw_MAE": 0.06870312785031274,
+      "Q_max_abs": 0.847000002861023,
+      "roots_Q_abs_gt_0.1": 10
+    },
+    "1000000": {
+      "Q_MAE": 0.022359375847372576,
+      "expected_score_MAE": 0.011179687923686288,
+      "draw_MAE": 0.022328125309286406,
+      "Q_max_abs": 0.6100000143051147,
+      "roots_Q_abs_gt_0.1": 3
+    }
+  },
+  "limits": [
+    "1M reference is not truth/calibration.",
+    "Changing TB changes both shallow estimates and reference; own-reference differences are not a pure budget effect.",
+    "No repeated runs, significance or causal benefit estimate; selected correlated endgame-heavy panel.",
+    "MultiPV8 only, not evidence for MultiPV1/4 or online teacher floor.",
+    "No engine, tablebase, model or training execution."
+  ]
+}

@@ -1,0 +1,94 @@
+{
+  "created_utc": "2026-11-12T12:49:36.411650+00:00",
+  "eight_record_metrics": [
+    {
+      "search_wdl_effective_frac": 1.0,
+      "sf_rebuild_wdl_frac": 0.0,
+      "sf_wdl_frac": 0.0,
+      "wdl_terminal_outcome_frac": 0.0
+    },
+    {
+      "search_wdl_effective_frac": 1.0,
+      "sf_rebuild_wdl_frac": 0.0,
+      "sf_wdl_frac": 0.0,
+      "wdl_terminal_outcome_frac": 0.0
+    },
+    {
+      "search_wdl_effective_frac": 1.0,
+      "sf_rebuild_wdl_frac": 0.0,
+      "sf_wdl_frac": 0.0,
+      "wdl_terminal_outcome_frac": 0.0
+    },
+    {
+      "search_wdl_effective_frac": 1.0,
+      "sf_rebuild_wdl_frac": 0.0,
+      "sf_wdl_frac": 0.0,
+      "wdl_terminal_outcome_frac": 0.0
+    },
+    {
+      "search_wdl_effective_frac": 1.0,
+      "sf_rebuild_wdl_frac": 0.0,
+      "sf_wdl_frac": 0.0,
+      "wdl_terminal_outcome_frac": 0.0
+    },
+    {
+      "search_wdl_effective_frac": 1.0,
+      "sf_rebuild_wdl_frac": 0.0,
+      "sf_wdl_frac": 0.0,
+      "wdl_terminal_outcome_frac": 0.0
+    },
+    {
+      "search_wdl_effective_frac": 1.0,
+      "sf_rebuild_wdl_frac": 0.0,
+      "sf_wdl_frac": 0.0,
+      "wdl_terminal_outcome_frac": 0.0
+    },
+    {
+      "search_wdl_effective_frac": 1.0,
+      "sf_rebuild_wdl_frac": 0.0,
+      "sf_wdl_frac": 0.0,
+      "wdl_terminal_outcome_frac": 0.0
+    }
+  ],
+  "evidence_sha256": {
+    "actual-worker-configs.json": "4ecc4c4d02d173d08b0da1ac8bdeaa1930304660c1457c5478be2b401c8dfd0e",
+    "params.json": "a8ef9da073a0317bd643fb80333efca12749efd50e9a998fc73ce271ec79cb65",
+    "qualification.json": "89c4abcb680d4bbd8eb7bf89b1d0e725a6aaf734a884308d890052c0a27e1444",
+    "result.json": "d554bcd63639f5bcb9c8d78fbe701b433e30cd80736fc34bf71e71ab9f800d8c",
+    "trainer-kwargs.json": "bc96ec9e222a109163518913f2e5f422e8795d2fb3bc27eef74c51d0f6e1406c"
+  },
+  "findings": [
+    "net_raw search target D retains producer root-network raw softmax D in both Python and C producer paths",
+    "With present finite search targets, actual WDL blend is normalized search target: search weight1/SF0, no adjustment/damping/terminal transfer",
+    "w_future=.01 weights future policy cross-entropy, not a future-WDL transfer",
+    "Diagnostic float64 normalized search targets match configured target semantics on these present rows, not necessarily bit-identical training arithmetic or realized sampled loss"
+  ],
+  "limits": [
+    "Exact sampled-row exposure unknown; this is not realized overall training loss or optimizer objective",
+    "Donor checkpoint versus step0 producer export functional equivalence is not established by these metadata",
+    "No accuracy, strength, heldout or independence claim",
+    "Producer nonfinite-to-draw fallback incidence unknown; real semantic POV control unperformed",
+    "No model inference, dataset decoding or runtime changes during this review"
+  ],
+  "recommended_wording": "On these 254 present-label rows, the normalized recorded search WDL matches the run configured WDL target semantics. Candidate agreement worsens chiefly through draw redistribution. In net_raw mode the draw label preserves producer-network draw probability, so this is partly self-referential and not independent draw-quality evidence.",
+  "schema": "independent-cap40-target-contract-review/v1",
+  "settings": {
+    "rebuild_sf_targets": false,
+    "search_wdl_draw_mode": "net_raw",
+    "search_wdl_frac": 1.0,
+    "sf_search_dampen_sf_high": 0.0,
+    "sf_search_dampen_sf_low": 0.0,
+    "sf_wdl_frac": 0.0,
+    "use_adjusted_wdl_target": false,
+    "w_future": 0.01,
+    "wdl_terminal_outcome_plies": 0
+  },
+  "source_revision": "7a5d3802c1f992cb2e1fc7dfc06afb2f3e4764ad",
+  "source_sha256": {
+    "chess_anti_engine/mcts/_mcts_tree.c": "ee67d41be658edb45a34bf4678a02401b8d7c86d81ae91825f5a0f919d54d845",
+    "chess_anti_engine/selfplay/network_turn.py": "7467139661ab1a725a05721b294cfc49f7da2cc231ae9c3f69a0fdd786339d0a",
+    "chess_anti_engine/train/losses.py": "a70ec504f7a852e639aa9e954000925fb0aeeaeb97304d1e7f1c7fc4f4205820"
+  },
+  "status": "VERIFIED_SOURCE_CONFIG_CONTRACT",
+  "supersedes_caveat": "Generic claim not final mixed training target is overly broad for this actual pure-search configuration; retain distinction from sampled/weighted total training loss."
+}

@@ -1,0 +1,77 @@
+{
+  "all175_exact_independently_recomputed": true,
+  "artifact_pins": {
+    "accepted": {
+      "path": "~/chess-artifacts/operations/stored-wdl-cap40-direct-20261112-tsxbicyz/stored-wdl-prefix-3laxfnm8/result.json",
+      "sha256": "e0e61ac7c6246261d344ac2459c6e01b8512784d64ca49d50b24f843f9ce6249"
+    },
+    "keys": {
+      "path": "~/chess-artifacts/operations/stored-wdl-ply-coverage-20261112-o0xz6jbx/result.json",
+      "sha256": "71df61e36146f66f1a0900a0003db16decce7ad60042b36b706639624bb55072"
+    },
+    "ply": {
+      "path": "~/chess-artifacts/operations/stored-wdl-ply-coverage-20261112-o0xz6jbx/raw-ply.npz",
+      "sha256": "02584ec490c967419d01611d4f0423c71915bb395a4926698200d63c6753ec46"
+    },
+    "transitions": {
+      "path": "~/chess-artifacts/operations/stored-wdl-transition-20261112-tfv8ei80/result.json",
+      "sha256": "5ee1eb7330f64338623bd765fa11d80b730b4c70e66f8515466f59a5798d2538"
+    },
+    "worker": {
+      "path": "~/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/cap40-final-source-qualification-v1/actual-worker-configs.json",
+      "sha256": "4ecc4c4d02d173d08b0da1ac8bdeaa1930304660c1457c5478be2b401c8dfd0e"
+    },
+    "x": {
+      "path": "~/chess-artifacts/operations/stored-wdl-cap40-direct-20261112-tsxbicyz/stored-wdl-prefix-3laxfnm8/rows.npz",
+      "sha256": "76845b9472685e447e8e79749ffbe41b01eb5fc61763d33c6e89d659e372e726"
+    }
+  },
+  "distinct_encoded_positions": 3,
+  "fixed_rows": 5,
+  "limitations": [
+    "Independent arithmetic replay uses the same observed pinned native encoder binaries, not an independently implemented encoder or reproducibly authenticated historical build.",
+    "Historical source/config provenance supports standard starts; exact five stored inputs reproduced after float16 storage conversion.",
+    "Three identical starting rows are not independent positions; this qualifies only this tiny fixed prefix, not remaining254-row histories or representative search performance.",
+    "No model inference or search run; a later crossover requires separate evaluator and execution review."
+  ],
+  "limits": {
+    "AS": 8589934592,
+    "CPU": 60,
+    "CUDA": "",
+    "threads": 1,
+    "wall": 90
+  },
+  "matching_child_pids": [],
+  "model_or_search_run": false,
+  "plan_sha256": "77f9c720971737f727d5f1cb271fec3a6e108b660b62ff56dbfd31881035dd40",
+  "result_sha256": "d9b1a3f5f4b5ccef9a88b1203a12a374781d6a373a24cb554f0104c346e0f242",
+  "row_indices": [
+    157,
+    158,
+    159,
+    70,
+    0
+  ],
+  "schema": "independent-prefix-reconstruction-review-v1",
+  "source_corpus_read": false,
+  "source_hashes": {
+    "chess_anti_engine/encoding/_bitboard_planes_impl.h": "8fdc0ea17025c5543d15997573b2080a1ef99dd9f0b55dab0bb9c3af41cb8d9b",
+    "chess_anti_engine/encoding/_cboard_impl.h": "13560b4908282aca68c3f6c5747dc3848f036f3a494f24500e76fc44a3646572",
+    "chess_anti_engine/encoding/_features_ext.cpython-313-x86_64-linux-gnu.so": "585598df239f8dded917ecbe22968b51cc76f27d1cf7c248919062243e491dc2",
+    "chess_anti_engine/encoding/_features_impl.h": "778856a92e9c6ca179874a977f8b9ea35057d464e98c1f920a271b129c670341",
+    "chess_anti_engine/encoding/_lc0_ext.c": "1f167954b03e6ec912642c81bbe1c7fac37a7adab98fbad497d718270b243149",
+    "chess_anti_engine/encoding/_lc0_ext.cpython-313-x86_64-linux-gnu.so": "3c443c89a43896360eb339075904e755b271ee91001f3898a59741df9b1ffc71",
+    "chess_anti_engine/encoding/_slider_attacks_impl.h": "4bcd20d696241a218adfb15bdf31d0e72ba0a5c75d5c6dd29bbd53ec79d59d5d",
+    "chess_anti_engine/encoding/cboard_encode.py": "9fe7123de8c3ce74d328dc92200b8d5018a1bd4a6d3ed2dc21204c9b95e373b7",
+    "chess_anti_engine/encoding/lc0.py": "a20b56a7c0666e134791855c0f124a66504013983f8f97948539a015dac9c3ee",
+    "chess_anti_engine/selfplay/finalize.py": "e585cef5769bb0e031a0bee8c2e39637b46516d04c51ff4073faabd2adb7b046",
+    "chess_anti_engine/selfplay/network_turn.py": "7467139661ab1a725a05721b294cfc49f7da2cc231ae9c3f69a0fdd786339d0a",
+    "chess_anti_engine/selfplay/opening.py": "aaa2663510aa8dcffcaae83e500bb3aec545d29cccbb67d82da3432b6ef4b3c2",
+    "chess_anti_engine/selfplay/state.py": "20bb1415af356756fdee635edd28dc067207da869340cc06bdab202eaea8fd6a",
+    "scripts/stored_wdl_compare.py": "c713529445e50c3e5306c07de63b8d2b13ea21ee941564e11b050360c11606b9"
+  },
+  "verified_trace": [
+    "g1f3",
+    "d7d5"
+  ]
+}

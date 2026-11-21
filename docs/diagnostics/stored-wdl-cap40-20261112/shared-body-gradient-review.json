@@ -1,0 +1,62 @@
+{
+  "all_masks_present": true,
+  "artifacts_sha256": {
+    "categorical-admission.json": "b7f33517813006d88a4518b3bcc2b5ae009283f83f97149b641cfc3ab01c644b",
+    "categorical.npz": "b1e5f96457b8b43f30f7f8cb27614d7efe0cea9a2cc0e5f640a10238e749b7e9",
+    "frozen-plan.json": "7276d1b66c63b405ca70670ab26ba9330a8e0024ffdc079b0f581c63644664cb",
+    "gradients.npz": "6402ef9e4777939d94e11f63c19285861c52bfb424a664483d8025a7b083be46",
+    "result.json": "ca0ea4d4e2e5b0f857f3779293c4ca2d8b4945d13dff4ab52d28010e7117fd80"
+  },
+  "categorical_sha256": "e421a5f30c3fff996a3ee673bd1e0b031b69a271b38d32856f6a7f1601679871",
+  "categorical_to_wdl_norm_ratio": 3.416460534893978,
+  "checkpoint_sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+  "created_utc": "2026-11-12T13:22:00.979452+00:00",
+  "gradient_elements": 1114368,
+  "interpretation": "Positive but weak aggregate local alignment, not evidence of aggregate WDL-versus-categorical opposition on this donor panel/subset. Larger categorical norm is not proof of harmful dominance.",
+  "limits": {
+    "AS": 17179869184,
+    "CPU": 60,
+    "CUDA": "",
+    "threads": 1,
+    "wall": 90
+  },
+  "receipt_pins": {
+    "accepted": "e0e61ac7c6246261d344ac2459c6e01b8512784d64ca49d50b24f843f9ce6249",
+    "candidate": "3880c651a2893c829ca5b85daec7e57e17faaad8cd4501e695a2fa53498a476f",
+    "donor": "61fc53f312fb1851452c46be4b0f018ec3d20f72f53ea02b89e501b0541584ff",
+    "plan": "66af496839b589b6c773abcb34ff7597569bb9f6c76f02d5cf444e79cee5b63b",
+    "search": "97ec7a37a96c0a6a32ea3e5ccd08537e3a6f3b4218148e714e4ecf5004a2a3ba"
+  },
+  "recomputed_from_saved_raw_gradients": {
+    "categorical_norm": 1.6317003056774901,
+    "categorical_projection_on_wdl": 0.14642756026429454,
+    "cosine": 0.089739249146918,
+    "dot": 0.06993374938846558,
+    "wdl_norm": 0.47759963535715955
+  },
+  "remaining_owned_children": 0,
+  "rows": 254,
+  "rows_sha256": "28fc79b056266bf728c51b8e093312dbe24004b449ec649d295d269cc83e16a5",
+  "runner_sha256": "5b76ac96ce8857cd5b723eb25e0367ddceffb4d526480489eee008cd2b1bdaf6",
+  "schema": "independent-shared-body-gradient-review/v1",
+  "search_raw_sha256": "dbaf8d09949c20d1b1f296c987f30294368a8dd4a3ab8a1f35c0084b073dc17a",
+  "source_revision": "e9e029edb6501703652cf6141c595c5569cb6359",
+  "status": "ACCEPTED_LOCAL_DONOR_GRADIENT_GEOMETRY",
+  "subset": [
+    "value_wdl.token_proj.weight",
+    "value_wdl.token_proj.bias",
+    "value_wdl.net.0.weight",
+    "value_wdl.net.0.bias"
+  ],
+  "verification_limits": [
+    "Geometry independently recomputed from retained raw gradient vectors; gradients themselves not recomputed via model backward",
+    "Whole-model unchanged/.grad untouched are checked execution-receipt assertions, not independently reloaded state",
+    "Actual repeat and batch-invariance controls unperformed",
+    "Four shared-body tensors only; frozen trunk/private output heads; uniform fixed-panel masked means",
+    "No optimizer/preconditioner/clipping/update or causal trajectory/strength conclusion",
+    "Categorical and search targets are producer-derived; exact training sampled exposure unknown",
+    "Real semantic POV unverified; producer fallback incidence unknown",
+    "Review used saved artifacts only; no model rerun/source corpus decode"
+  ],
+  "whole_model_before_after_hash": "cb2cc85563b6e1ed51404fe0c86ed14fb8a0113b904c5b31e75f73ea9d09c41c"
+}

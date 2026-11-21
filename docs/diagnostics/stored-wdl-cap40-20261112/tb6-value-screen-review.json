@@ -1,0 +1,58 @@
+{
+  "status": "INDEPENDENT_SAVED_ONLY_VERIFIED",
+  "inputs": {
+    "result.json": "0f57756ac122ec0cc02f92aa354c926d2b1ad03fc506069354942bbd0fccda38",
+    "native-results.jsonl": "b4fb629274f2b928abfd004a63f1581e0746bc28254d104dd1e8102b3f9d3398",
+    "uci-transcript.jsonl": "f7ee00c0ecd4458a275316af8139266e9af6a67a46264ee21587c553addb49b4",
+    "tb-positive-controls.json": "1a3a819f3ed447988ffbe27ce990d3c3c6a7b1487be3f83cc43f77bc6937e8c6",
+    "terminal.json": "12a5a85301c5bdc37b536a313717319aab09e55c2a67849b6a2656bd1b15b008"
+  },
+  "roots": 64,
+  "queries": 192,
+  "same_root_join": "exact root_index and FEN; complete three rungs, no exclusions",
+  "value_fidelity_vs_same_run_TB6_1M_MultiPV8": {
+    "5000": {
+      "Q_MAE": 0.10590625026452472,
+      "Q_abs_p95": 0.9096000153571356,
+      "Q_max_abs": 0.9989999999525025,
+      "expected_score_MAE": 0.05295312513226236,
+      "draw_MAE": 0.10543750293072662,
+      "mean_squared_WDL_distance_not_outcome_Brier": 0.15279796940438753,
+      "Q_error_gt_0.1": 12
+    },
+    "50000": {
+      "Q_MAE": 0.065921874876949,
+      "Q_abs_p95": 0.27699997425079337,
+      "Q_max_abs": 0.931999996304512,
+      "expected_score_MAE": 0.0329609374384745,
+      "draw_MAE": 0.06585937619274773,
+      "mean_squared_WDL_distance_not_outcome_Brier": 0.07195371819941214,
+      "Q_error_gt_0.1": 10
+    }
+  },
+  "value_semantics": "native root side-to-move WDL, Q=W-L; expected score=(1+Q)/2; raw float32 distributions, no normalization",
+  "panel_queries_positive_tbhits": 131,
+  "panel_max_tbhits": 100853,
+  "positive_control_tbhits": [
+    23,
+    11
+  ],
+  "all_192_cold_standard_TB_commands_and_ready_before_position_verified": true,
+  "old_reference_bestmove_within20cp_counts": {
+    "5000": 46,
+    "50000": 47,
+    "1000000": 50
+  },
+  "owner_cpu_seconds": 60.11,
+  "owner_wall_seconds": 79.31814940599725,
+  "owner_closed_receipt": true,
+  "recorded_pids_currently_absent": true,
+  "limitations": [
+    "1M is a comparison reference, not truth or probability calibration.",
+    "Value agreement distinct from old-reference 20cp bestmove criterion.",
+    "All MultiPV8; does not establish MultiPV1 or4 budget adequacy.",
+    "Fixed selected correlated 64 roots, not representative online training or Elo.",
+    "Direct TB WDL/DTZ checks are retained execution claims; no independent tablebase probes repeated.",
+    "No model, engine, training, corpus or tablebase rerun."
+  ]
+}
