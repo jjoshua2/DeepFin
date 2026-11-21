@@ -292,3 +292,37 @@ def test_the_documented_reproduction_equals_the_checkpoint_state(sl_ckpt: Path) 
     assert check_built_split(trainer, sl_ckpt)["names_equal"] is True
     assert tables_match(param_group_table(trainer), _ckpt_table(sl_ckpt)) == []
     assert trainer.grad_clip_mode == "zclip"
+
+
+def test_accumulation_with_aurora_and_cosine_counts_optimizer_steps_and_keeps_the_ratio(tmp_path: Path) -> None:
+    """Review of #1445: under --accum-steps the cosine's T_0, the planned updates and the
+    realised optimizer steps are all OPTIMIZER steps (not micro-batches), and every group
+    ends at its own floor position with the Aurora/AdamW ratio held at 20."""
+    import math
+
+    from chess_anti_engine.simple_rl.learn import planned_phase_updates, train_generation
+    from tests.simple_rl_helpers import save_tiny_checkpoint
+    from tests.test_simple_rl_learn import _write_generation
+
+    run = tmp_path / "run"
+    (run / "gen_0000").mkdir(parents=True)
+    save_tiny_checkpoint(run / "gen_0000" / "model.pt")
+    _write_generation(run, 1, 40)               # 40 rows: 5 micro-batches of 8, 3 optimizer steps of 16
+    peak, floor = 1e-3, 1e-4
+    settings = TrainSettings(**{**AURORA, "lr": peak}, mirror_prob=0.0, batch_size=8, accum_steps=2,
+                             holdout_frac=0.0, seed=1, lr_floor=floor, lr_schedule="cosine-phase")
+    planned = planned_phase_updates(run, 1, settings)
+    assert planned == 3
+    summary = train_generation(run_dir=run, generation=1, init_checkpoint=run / "gen_0000" / "model.pt",
+                               prev_trainer_checkpoint=None, settings=settings)
+    realised = summary["realised_optimizer"]
+    assert summary["end_step"] - summary["start_step"] == planned == summary["updates"]
+    assert summary["rows_per_optimizer_step"] == {"steps": 3, "min": 8, "max": 16, "rows": 40}
+    assert realised["lr_schedule"]["T_0"] == planned     # optimizer steps, not the 5 micro-batches
+    assert realised["lr_schedule"]["group_eta_min"] == pytest.approx([20 * floor, floor, floor, floor])
+    lrs = realised["param_group_lr"]
+    assert lrs[0] / lrs[2] == pytest.approx(20.0, rel=1e-9)
+    # After the phase's 3rd step the scheduler sits at position 2 of T_0 = 3.
+    want = floor + (peak - floor) * (1 + math.cos(math.pi * 2 / planned)) / 2
+    assert lrs[2] == pytest.approx(want, rel=1e-9)
+    assert lrs[0] == pytest.approx(20 * want, rel=1e-9)
