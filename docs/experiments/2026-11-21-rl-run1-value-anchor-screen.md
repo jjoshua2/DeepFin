@@ -28,9 +28,10 @@ and `~/chess-artifacts/operations/rl-claude-20261119/INDEX.md` for `kl-wdl` / `k
   | Zq (half outcome, half search) | −10.0 [−23.2, +3.2] |
   | P0 (no value loss), as a single net | +2.2 [−4.2, +8.6] (match 5) |
 
-- The value diagnosis (`rl-claude-20261119/pilot-value-diagnosis/`, README `0bdac6a5…`,
-  Addendum 1 `PREREG.addendum1.md` `2a07543c…`) found that S's value loss broke sibling
-  ordering, and that recalibration does not repair it.
+- The value diagnosis found that S's value loss broke sibling ordering, and that
+  recalibration does not repair it. It lives in `rl-claude-20261119/pilot-value-diagnosis/`:
+  current README sha256 `ae5e0866…` (the v1 copy `README.v1-20261121T1323.md` is `0bdac6a5…`),
+  Addendum 1 `PREREG.addendum1.md` `2a07543c…`.
 
 ## What `--kl-wdl` computes (read at the pin, `0c795fb7a`)
 
@@ -67,8 +68,7 @@ and `~/chess-artifacts/operations/rl-claude-20261119/INDEX.md` for `kl-wdl` / `k
   - So `--w-wdl` < 1 mainly lowers the value's share in the SHARED trunk, not the head's
     movement.
   - The anchor is different: it changes the gradient's DIRECTION (toward t_λ), which a
-    scale-invariant step does not undo. The dose arm below is designed and read with this in
-    mind.
+    scale-invariant step does not undo.
 - **Guards at the pin.**
   - The anchor refuses `accum_steps` > 1, prefetch and compile. The simple loop builds the
     Trainer with `prefetch_batches: False` and `use_compile: False`.
@@ -78,22 +78,56 @@ and `~/chess-artifacts/operations/rl-claude-20261119/INDEX.md` for `kl-wdl` / `k
   - No banked or e2e run has used `--kl-wdl` through `run_train`. A refusal is loud: it
     raises before training.
 
-**The observation that proves the anchor took effect** (consumer-side; a cell lacking any of
-these is void):
-1. `gen_0001/train/metrics.json` → `summary.anchor` must show:
-   - `wdl_coef` == λ;
-   - `reference_forwards` == the number of optimizer updates;
-   - `rows` == the trained rows;
-   - `mean_wdl_kl` > 0.
+### Proof that the anchor took effect
 
-   `mean_wdl_kl` is the anchor's own accumulated KL, averaged over every anchored row. The
-   anchor keeps a run sum, not a per-step log; this run mean is the consumer-side record.
-2. The training manifest's `inputs.kl_reference.sha256` == the SL base's sha256
-   (`a39f900c…`).
-3. Offline: the cell's measured KL(base ‖ cell) on hold-out rows falls with λ (Stage A).
+**The code-level proof is the pre-launch test, and it is a launch precondition.**
+`tests/test_simple_rl_learn.py::test_kl_anchor_gradients_are_nonzero_and_reach_the_consumer`
+must pass at the pin, alongside `tests/test_simple_rl_accum_steps.py`. With `w_wdl = 0` the
+test trains the value head ONLY through the anchor and asserts a non-zero value-head gradient.
 
-A cell whose head moves exactly like the unanchored cell is reported as **"anchor not
-taking effect"**, whatever its `summary.anchor` says.
+That test is the only check that kills a no-op anchor. The review's mutant computed the penalty
+but did not add it to the total (`plan-review-1475/diag_under_mutant.py`). Under it,
+`summary.anchor` was still fully populated (`rows`, `reference_forwards`, `mean_wdl_kl` > 0)
+while the value-head gradient was 0.0. So `summary.anchor` is bookkeeping, not proof. The
+run-level gates below are what can fail on a real run.
+
+**Per-cell field checks** (`stage_a/train_check.py`; a mismatch writes `arm_<cell>/VOID`):
+- `summary.realised_w_wdl` == the cell's w:
+  - 1.0 for the anchored S/Zq cells and the truncated-S run;
+  - w for the dose cells;
+  - 0.0 for the P0-anchor cell.
+- `summary.realised_search_wdl_frac` == 1.0 for S-target cells, 0.5 for Zq cells, and 0.0
+  for P0-anchor.
+- `summary.updates` == 1412 and `summary.drawn_rows` == 722,742, the pilot's values.
+- `presented.npz` sha256 == `63e227ac…`, byte-identical to the pilot's S/Zq/P0. This proves,
+  at the consumer, that every cell trained on the same batches.
+- **Anchored cells:** `summary.anchor` must show:
+  - `wdl_coef` == λ and `policy_coef` == 0;
+  - `reference_forwards` == `updates`;
+  - `rows` == `drawn_rows`;
+  - `mean_wdl_kl` > 0.
+
+  The manifest's `inputs.kl_reference.sha256` must equal the SL base's (`a39f900c…`).
+- **Unanchored cells:** `summary.anchor` must be null.
+- **Truncated-S run:** `summary.snapshot_updates` == [353, 635, 988], with complete
+  `snapshots/step_<N>/` directories.
+
+**Gate (i), at training time.** Within each target, `summary.anchor.mean_wdl_kl` must be
+strictly decreasing in λ. If it fails, the target is void (`TARGET_<T>_VOID`) and gets no
+Stage B.
+
+**Gate (ii), in Stage A.** An anchored cell is "anchored" only if both hold:
+- the 95% CI upper bound of its hold-out KL(base ‖ cell) lies below the unanchored cell's
+  lower bound (S 0.01573, Zq 0.02642);
+- its point estimate is below that of every smaller-λ cell of its target.
+
+A cell failing gate (ii) is "not anchored" and is skipped like an inert cell, so the next λ
+is selected.
+
+**Rerun rule.** A crashed cell (exit ≠ 0, or no sealed manifest) may be rerun ONCE, whole: its
+run dir is renamed `arm_<cell>.crash1` and the same command is run again. A field mismatch is
+not a crash: it voids the cell, with no rerun. Stage A and Stage B refuse any cell with a
+`VOID` file and any target with a `TARGET_<T>_VOID` file.
 
 ## Pin
 
@@ -108,47 +142,53 @@ taking effect"**, whatever its `summary.anchor` says.
   no guard needs restating.
 - The matches run at the same pin as every pilot and follow-up match, so the within-run
   comparison rule holds.
+- **`--snapshot-updates` exists at the pin** (`scripts/simple_rl_loop.py` ≈ L735, exact-once
+  schedule only, which `--presentations 1` is). After the listed optimizer update counts it
+  writes `train/snapshots/step_<N>/`, containing a weights-only `model.pt`, `metrics.json` and
+  `snapshot.json`. Its help states that training is unchanged (bit-identical on CPU).
 
-**Pre-launch check (CPU, minutes):** at the pin, run
-`tests/test_simple_rl_learn.py::test_kl_anchor_gradients_are_nonzero_and_reach_the_consumer`
-(with `w_wdl = 0`, the value head learns only through the anchor) and
-`tests/test_simple_rl_accum_steps.py`. Both must pass.
-
-## Strengths: derived from the measured scales, not picked round
+## Strengths: derived from the measured scales and the optimizer model
 
 **Measured on the pilot's hold-out rows** (39,237 rows, 416 games), from
-`pilot-value-diagnosis/out/holdout_logits.npz`:
+`pilot-value-diagnosis/out/holdout_logits.npz`. The review reproduced these
+(`plan-review-1475/recompute_g_lambda.out`):
 
-| Cell | KL(base ‖ cell), unanchored | KL(base ‖ its target) | Fraction moved toward its target, g |
+| Cell | KL(base ‖ cell), unanchored [95% CI] | KL(target ‖ base) | Fraction moved toward its target, g |
 |---|---|---|---|
-| S | 0.0167 | 0.100 | **0.277** |
-| Zq | 0.0275 | 0.229 | **0.116** |
+| S | 0.0167 [0.01573, 0.01771] | 0.0625 | **0.2774** |
+| Zq | 0.0275 [0.02642, 0.02863] | 0.219 | **0.1164** |
 
-g is the regression slope of the cell's W−L move on the target − base W−L gap. Zq's target
-contains the one-hot outcome, so it is farther away, and Zq covered less of it.
+Notes on the columns:
+- g is the no-intercept regression slope of the cell's W−L move on the gap (target − base W−L).
+- KL(target ‖ base) is used because it needs no clipping: 7.6% of `search_wdl` entries are
+  exactly 0, which makes KL(base ‖ target) depend on the clip.
+- Zq's target contains the one-hot outcome, so it is farther from the base, and Zq covered
+  less of it.
 
-**Two models of anchored training, both from first principles:**
-- **Scale-invariant steps (Adam / Aurora).** The head heads for t_λ at roughly the
-  unanchored speed, so its displacement ≈ min(g, a) of the gap, with a = 1 / (1 + λ). The
-  anchor binds only once a < g.
-- **Linear (gradient-flow) transient.** The displacement is
-  a · gap · (1 − (1 − g)^{1 + λ}).
+**Which model sets λ.** The value head is in an AdamW group at 3e-6, and its steps are
+scale-invariant. So the head heads for t_λ at roughly the unanchored speed, and its
+displacement ≈ min(g, a) of the gap, where a = 1 / (1 + λ). The anchor binds only once a < g.
+**λ is set from this min model.**
 
-The two models agree to within about 0.05 at the strengths chosen. **Targets:** hold the
-head to ≈ 0.70, 0.45 and 0.25 of its unanchored displacement, so KL ≈ 0.5, 0.2 and 0.06 of
-the unanchored KL:
+The linear (gradient-flow) model, a · (1 − (1 − g)^{1+λ}) / g, is shown beside it. The two
+models agree at the strong end and diverge by up to 0.15 at the weak end. The rev-1 claim that
+they "agree within 0.05" was false. Under the min model, the rev-1 weak cells (S λ 2.6,
+Zq λ 7.6) would not have bound at all: holds 1.000 and 0.999.
 
-| Cell | λ (`--kl-wdl`) | Predicted displacement / unanchored | KL(base ‖ cell) it should hold to |
-|---|---|---|---|
-| S-anchor weak | **2.6** | ≈ 0.69 | ≈ 0.008 |
-| S-anchor medium | **6.2** | ≈ 0.45 | ≈ 0.0034 |
-| S-anchor strong | **13** | ≈ 0.25 | ≈ 0.0010 |
-| Zq-anchor weak | **7.6** | ≈ 0.65 | ≈ 0.012 |
-| Zq-anchor medium | **16** | ≈ 0.44 | ≈ 0.0053 |
-| Zq-anchor strong | **34** | ≈ 0.25 | ≈ 0.0017 |
+**Targets:** min-model holds of 0.70, 0.45 and 0.25 of the unanchored displacement.
 
-For scale: P0's value head drifted KL 0.0072 from the base with NO value loss. The medium
-and strong cells are held below that policy-induced drift.
+| Cell | λ (`--kl-wdl`) | a | Hold, min model | Hold, linear model | Indicative KL(base ‖ cell) |
+|---|---|---|---|---|---|
+| S weak | **4.1** | 0.196 | 0.707 | 0.572 | ≈ 0.008 |
+| S medium | **7.0** | 0.125 | 0.451 | 0.417 | ≈ 0.003 |
+| S strong | **13.4** | 0.069 | 0.250 | 0.248 | ≈ 0.001 |
+| Zq weak | **11.3** | 0.081 | 0.698 | 0.546 | ≈ 0.013 |
+| Zq medium | **18.1** | 0.052 | 0.450 | 0.407 | ≈ 0.006 |
+| Zq strong | **33.4** | 0.029 | 0.250 | 0.246 | ≈ 0.002 |
+
+The KL column is **indicative only**: hold² × the unanchored KL. It is not a threshold. P0's
+value head drifted KL 0.0072 from the base with NO value loss, so any cell's realised KL also
+contains a policy-induced part. The thresholds that matter are gates (i) and (ii).
 
 ## Cells
 
@@ -165,64 +205,120 @@ TRAIN="--presentations 1 --mirror-prob 0.5 --batch-size 512 --lr 3e-6 --lr-floor
 
 This is the pilot's `TRAIN` with `--kl-wdl 0` removed; each cell passes its own.
 
-| Cell | Value flags |
-|---|---|
-| S-anchor λ ∈ {2.6, 6.2, 13} | S's: `--value-outcome-weight 0 --value-search-weight 1 --value-search-source stored_search_wdl --kl-wdl λ --kl-reference $SL` |
-| Zq-anchor λ ∈ {7.6, 16, 34} | Zq's: `--value-outcome-weight 0.5 --value-search-weight 0.5 --value-search-source stored_search_wdl --kl-wdl λ --kl-reference $SL` |
-| S-dose w ∈ {0.1, 0.03} (no anchor) | S's value flags, `--w-wdl w --kl-wdl 0` |
-| P0-anchor (no value loss) | `--w-wdl 0 --kl-wdl 6.2 --kl-reference $SL` |
-| Controls (no retraining) | the banked S, Zq and P0 (`rl-run1-pilot/arm_*`) |
+| Cell | Value flags | Role |
+|---|---|---|
+| S-anchor λ ∈ {4.1, 7.0, 13.4} | S's flags + `--kl-wdl λ --kl-reference $SL` | screened, matchable |
+| Zq-anchor λ ∈ {11.3, 18.1, 33.4} | Zq's flags + `--kl-wdl λ --kl-reference $SL` | screened, matchable |
+| S-dose w ∈ {0.1, 0.03} | S's flags + `--w-wdl w --kl-wdl 0` | offline, descriptive |
+| Truncated S | S's flags + `--kl-wdl 0 --snapshot-updates 353,635,988` | offline, descriptive (snapshots only) |
+| P0-anchor | `--w-wdl 0 --kl-wdl 7.0 --kl-reference $SL` | offline, descriptive |
+| Controls (no retraining) | the banked S, Zq and P0 (`rl-run1-pilot/arm_*`) | references |
 
-**The dose arm** is the alternative explanation "it is just less movement".
-- It is applied to the S target only, because S is the target with the established ranking
-  damage. Two doses keep the screen to 9 trained cells.
-- **Prediction, from the scale-invariance above:** the dose leaves the value HEAD's movement
-  nearly unchanged and lowers only the value's share of the trunk gradient. So:
-  - if the dose cells' KL(base ‖ cell) stays near 0.0167, "less movement" is not what
-    `--w-wdl` delivers here, and that is reported as such;
-  - if their KL does fall like the anchor's, the dose is a live alternative explanation.
+**The dose arm tests the value's share of the TRUNK update, not the head's displacement.**
+- Scale invariance predicts that `--w-wdl` < 1 leaves the value head's own movement nearly
+  unchanged. So the dose arm cannot rule out the alternative "the anchor works only because
+  the head moved less".
+- It answers a different question: does shrinking the value's pull on the shared trunk alone
+  avoid the damage? Its numbers are descriptive.
 
-**The P0-anchor cell separates the two drifts.** It has no value loss, so the only value
-pull is the anchor, which holds the head against the policy-induced trunk drift alone.
-- Its λ equals S-medium's, so the anchor's share of the trunk gradient matches that cell's.
-- Comparing P0-anchor's drift with P0's (KL 0.0072, uniformly pessimistic −0.012 W−L) shows
-  how much of any anchored cell's effect is "anti-policy-drift" rather than "anti-value-loss".
-- P0-anchor is offline-only here. Matches on it would extend match 5's +2.2 and are not part
-  of this screen.
+**The truncated-S control is the "moved less" control.**
+- It is one extra unanchored S run that writes snapshots at 353, 635 and 988 of its 1,412
+  updates. Under the same min model, those counts give displacements of 0.25, 0.45 and 0.70
+  of the full run's (k = hold × 1412).
+- So each snapshot is S's own direction, stopped at the anchored cells' predicted distance.
+- It is scored in Stage A only. Its final model is an S replicate: its sha256 and its numbers
+  are reported next to the banked S, and nothing else.
+
+**The matched-displacement statistic r is report-only.**
+- Definition: r = (paired clear-pair accuracy difference vs the base) / (top-decile
+  `share_of_gap_closed`). That is ranking damage per unit of movement toward the search value.
+  S's r is −0.0096 / 0.293 = **−0.033**.
+- CI: a game bootstrap. Replicate i of the numerator and replicate i of the denominator use
+  the banked bootstrap weights; the weight matrix's sha256 must match between runs. The cell's
+  r − S's r gets a 95% percentile CI over the 2,000 replicates.
+- **"Direction, not distance"** may be claimed for an anchored cell only if its r − S's r has a
+  CI entirely above 0. The matched truncated-S snapshot's r is reported beside it. If that
+  snapshot's r is as good, distance is named as the explanation.
+- r is not computed for inert cells, because the denominator is near 0.
+
+**The P0-anchor cell is descriptive only.**
+- It has no value loss, so its only value-specific pull is the anchor, against the
+  policy-induced trunk drift.
+- It does NOT match any S cell's anchor share of the trunk gradient: the anchor's gradient
+  scales with the head's distance from the base, which differs between cells.
+- Subtracting its effect from an anchored cell's would assume the two drifts add. That is not
+  assumed here, and no subtraction is reported.
+- It is offline-only. Matches on it would extend match 5's +2.2 and are not part of this
+  screen.
 
 ## Deciding yardstick
 
 ### Stage A: an offline VETO, not a selector
 
-**Instruments:** the banked instruments of `rl-claude-20261119/pilot-value-diagnosis/`, run
-on every trained cell:
-- **clear-pair sibling ordering** (`scripts/sibling_order.py`): pairwise accuracy against
-  deep SF on clear pairs (gap ≥ 50 cp, the `clearplus_50plus` bin), paired against the base,
-  with game-clustered CIs; base 0.8554;
-- **1-ply value regret** (`scripts/value_regret_recal.py`, which takes `--net` / `--recal`);
-- **KL to the base and the (T, b) fit** (`scripts/fit_value_recal.py --collect-dir`, the
-  pilot's hold-out games);
-- **outcome calibration and toward-search movement on hold-out games**
-  (`scripts/collect_logits.py`, `analyze_holdout.py`, `supp_outcome_distance.py`).
+**Instruments:** adapted copies of the banked instruments of
+`rl-claude-20261119/pilot-value-diagnosis/scripts/`, banked at
+`~/chess-artifacts/operations/rl-run1-value-anchor/stage_a/` (read-only). Each copy takes
+the net list and the output directory as arguments. Every statistic is computed by the banked
+lines unchanged.
+- `diffs/` holds the unified diff of each copy against its original.
+- `ORIGINALS.sha256` holds the originals' shas.
+- `SHA256SUMS` covers everything. `run_stage_a.sh` checks it before running anything.
 
-**How the banked scripts are reused.** They hard-code their net list and their output
-directory, and they refuse to overwrite. Stage A therefore runs **copies** of them with
-exactly two edits, the net list and the output directory, writing under
-`~/chess-artifacts/operations/rl-run1-value-anchor/offline/`. Before any cell is scored,
-the copies' diff against the banked files is saved beside them with both sha256s. The diff
-must touch nothing but those two lines; a copy with any other change voids Stage A.
+**The files run are these banked files, identified by sha256:**
 
-**Rules:**
-- **VETOED** iff the cell's paired clear-pair accuracy difference (cell − base, game-clustered
-  95% CI) lies entirely below 0. That is what S's did: −0.0096 [−0.0129, −0.0064].
-- **INERT** ("did it learn anything?") iff the cell's top-decile share of the
-  search-vs-base gap closed (`analyze_holdout.py` → `toward_search_top_decile.share_of_gap_closed`,
-  the 3,924 rows with |search − base| ≥ 0.241) has a 95% CI that includes 0, or a point
-  estimate below 0.1 × the unanchored cell's. The unanchored values are S 0.293 and Zq
-  0.346, so the thresholds are 0.029 and 0.035.
-  - The dose cells use S's threshold.
-  - Inert cells are reported as "inert" and are not matched: passing the veto by not moving
-    at all is not a recipe.
+| File | sha256 | Adapted from (sha256) |
+|---|---|---|
+| `collect_logits.py` | `956c238f88c7…` | `collect_logits.py` `676b45e7e6ee…` |
+| `run_fits.sh` | `5017cea31e6e…` | `run_fits.sh` `3eeff6d1ed65…` |
+| `analyze_holdout.py` | `3291449af64b…` | `analyze_holdout.py` `eb368ea89777…` |
+| `sibling_order.py` | `17eeb159f691…` | `sibling_order.py` `4dd4ea8000ae…` |
+| `supp_outcome_distance.py` | `2ad7f272d00a…` | `supp_outcome_distance.py` `67f72335402f…` |
+| `run_stage_a.sh` | `002d7d4ca8fd…` | replaces `queue_after_fits.sh` `7ee033a63a12…` |
+| `check_control.py` | `413b6e11cfd8…` | new: the step-0 exact-reproduction check |
+| `train_check.py` | `5a2fa045d5e9…` | new: the per-cell field checks and gate (i) |
+| `stage_a_decide.py` | `81cc5e42dd0f…` | new: the rules below, applied mechanically |
+| `value_regret_recal.py` (report-only) | run UNMODIFIED from the bank | `6cddd7d5afd1…` |
+
+What the adapted copies add:
+- `analyze_holdout.py` also writes `holdout_boot.npz`: the bootstrap replicates of
+  `KL_base_net_raw` and `share_of_gap_closed`.
+- `sibling_order.py` also writes `sibling_boot.npz`: the replicates of the clear-pair paired
+  difference.
+- Both store the bootstrap weight matrix's sha256, for gate (ii) and for r.
+
+**Instrument positive control.**
+- *Already done on CPU* (`stage_a/cpu_proof/`): the adapted `analyze_holdout.py` and
+  `supp_outcome_distance.py`, run on the banked logits and fits, reproduce the banked
+  `holdout_analysis.json` and `supp_outcome_distance.json` exactly (parsed JSON equal). The
+  replicate percentiles reproduce the banked CIs, for example S KL [0.01573, 0.01771].
+- *At launch, Stage A step 0* (`run_stage_a.sh control`): the fits, `collect_logits.py` and
+  `sibling_order.py` need the GPU, which is busy until ≈ 21:30. The whole adapted chain runs
+  on the banked base / S / Zq / P0. It must reproduce all of these exactly:
+  - the banked `holdout_logits.npz` arrays, bit-equal;
+  - `recal_{S,Zq,P0}.json`;
+  - `holdout_analysis.json`;
+  - `sibling_order.json`;
+  - `supp_outcome_distance.json`.
+
+  Otherwise Stage A is void (`check_control.py`; no `CONTROL_PASS`, so `cells` refuses to
+  run). A mismatch is reported with its size, and the instrument is never loosened to pass.
+
+**Statistics** (raw heads, no recalibration; `stage_a_decide.py`):
+- **VETOED** iff the 95% CI upper bound of
+  `sibling_order.json → paired_minus_base.all.clearplus_50plus.<cell>_raw` is below 0. That
+  statistic is the paired clear-pair (≥ 50 cp) accuracy difference vs the base, with
+  game-clustered CIs. S's was −0.0096 [−0.0129, −0.0064].
+  - **The veto has NO power for Zq.** Unanchored Zq passes it: −0.0007. For Zq cells, Stage A
+    decides only inert / not anchored.
+- **INERT** ("did it learn anything?") iff
+  `holdout_analysis.json → toward_search_top_decile.<cell>.share_of_gap_closed` (raw; 3,924
+  rows with |search − base| ≥ 0.241) has a CI lower bound ≤ 0, or a point estimate below
+  0.1 × the unanchored cell's.
+  - The unanchored values are S 0.293 and Zq 0.346, so the thresholds are 0.029 and 0.035.
+  - Dose cells, truncated-S snapshots and P0-anchor are compared with S's value, but
+    descriptively only.
+  - Inert cells are not matched: passing the veto by not moving at all is not a recipe.
+- **NOT ANCHORED:** fails gate (ii) on `holdout_analysis.json → divergence.<cell>.KL_base_net_raw`.
 - **No ranking.** The offline numbers may NOT rank survivors. There are three fit→Elo
   transfer failures on record:
   - v020: +3.1 cp audit gain, −9.6 Elo;
@@ -230,36 +326,51 @@ must touch nothing but those two lines; a copy with any other change voids Stage
   - F-only: hold-out CE −0.043 nats for 0 cp.
 
   Stage A only removes cells.
+- **Report-only:**
+  - FEN-only 1-ply value regret (the banked `value_regret_recal.py`);
+  - outcome distance (`supp_outcome_distance.py`);
+  - the (T, b) fits;
+  - r.
 
 ### Stage B: matches
 
-- **Selection, fixed now by λ, not by offline score:** for each target, the **smallest-λ
-  cell that is neither vetoed nor inert**. That is at most two matches, one S-anchor and one
-  Zq-anchor. Dose and P0-anchor cells are not matched.
+- **Selection, fixed now by λ, not by offline score:** for each target that is not void, the
+  **smallest-λ cell that is not VOID, VETOED, INERT or NOT ANCHORED**. That is at most two
+  matches, one S-anchor and one Zq-anchor. Dose, truncated-S and P0-anchor cells are never
+  matched. `stage_a_decide.py` writes the selection to `offline/cells/stage_a_decision.json`
+  → `stage_b`.
 - **Design.**
   - The cell vs the SL base, plain seats, seat-balanced.
   - 6,400 games: 3,200 per run, 1,600 openings.
   - Seeds: **2026112181** for the S-anchor match, **2026112182** for the Zq-anchor match.
     Neither appears in any pilot or follow-up match nor anywhere under `docs/`.
-  - The follow-up launcher (`rl-run1-followup/run_followup_match.sh`, from the follow-up
-    record) with out root `rl-run1-value-anchor/`, the pilot's `$ARENA` flags, and the
-    launch record's max-plies void rule.
+  - The follow-up launcher `~/chess-artifacts/operations/rl-run1-followup/run_followup_match.sh`,
+    pinned by sha256 `7c8fd065865f3d5abcd8e9eb6f7fc1d48e882dfcfb88bbaa92d8696ce4a9510d`, with out
+    root `rl-run1-value-anchor/`, the pilot's `$ARENA` flags, and the launch record's max-plies
+    void rule.
 - **Rules, as match 5:**
   - "damage" iff UB95 < 0;
   - "adoptable" iff LB95 > −10;
   - otherwise "unread".
 
-  Read on the measured clustered SE, with match 5's tie-break: below SE ≈ 2.55, both facts
-  are reported as "adoptable within the margin, with a measured loss".
-- **Pre-declared contrast, report-only:** the anchored cell's estimate minus its unanchored
-  cell's banked result.
+  Match 5's tie-break is kept as written: below SE ≈ 2.55 both can hold, and then both facts
+  are reported as "adoptable within the margin, with a measured loss". At the expected
+  SE ≈ 3.37 it cannot trigger.
+- **False nomination.** Each match nominates falsely with probability ≈ 2.5% when the true
+  effect is at the −10 boundary. Across the two matches, the family false-nomination rate is
+  ≈ 5%.
+- **Pre-declared contrast, report-only and nearly uninformative:** the anchored cell's
+  estimate minus its unanchored cell's banked result. Separate seeds, same pin; the SEs treat
+  the matches as independent.
 
-  | Target | Unanchored result | SE of the difference |
-  |---|---|---|
-  | S | −20.0 (SE 8.5 at 800 games) | ≈ √(3.37² + 8.5²) ≈ 9.2 |
-  | Zq | −10.0 (SE 6.7) | ≈ √(3.37² + 6.74²) ≈ 7.5 |
+  | Target | Unanchored result | SE of the difference | 80%-power MDE |
+  |---|---|---|---|
+  | S | −20.0 (SE 8.5 at 800 games) | ≈ 9.1 | **25.6 Elo** |
+  | Zq | −10.0 (SE 6.74) | ≈ 7.5 | **21.1 Elo** |
 
-  Separate seeds, same pin; the SEs treat the matches as independent.
+  **No anchored-vs-unanchored head-to-head is run in this record.** The owner's question is
+  whether an anchored value recipe stops losing to the base. A sharper mechanism comparison
+  can be bought later.
 
 **What each outcome licenses:**
 
@@ -270,34 +381,42 @@ must touch nothing but those two lines; a copy with any other change voids Stage
 | unread | Nothing |
 
 **What counts as "the anchor is NOT the fix"** for a target:
-- (a) every anchored cell of that target is vetoed or inert;
+- (a) every anchored cell of that target is vetoed, inert or not anchored, or the target is void;
 - OR (b) its matched cell reads "damage".
 
-If the S-dose cells also pass the veto without being inert, "less movement" remains a live
-alternative to "the anchor's direction", and any adoptable reading is reported with that
-alternative named.
+An adoptable reading does not by itself show that the anchor's direction, rather than smaller
+movement, is responsible. That claim needs r, as registered above.
 
 ## Confounds
 
 - **Policy-induced drift.** P0 showed that the trunk moves the value even with no value loss
   (KL 0.0072). So an anchored cell also anchors against policy-induced drift. The P0-anchor
-  cell measures that part alone (see above).
+  cell describes that part alone; no subtraction is made.
 - **One data-affecting change.** Each anchored cell differs from its banked unanchored cell
-  only in `--kl-wdl` / `--kl-reference`: same collection, seed, batch plan, pin and optimizer.
+  only in `--kl-wdl` / `--kl-reference`: same collection, seed, batch plan (proved by
+  `presented.npz`), pin and optimizer.
+- **Match 7 exists.** Recalibrated Zq vs Zq read +21.4 [+15.1, +27.6] ("the loss is shape").
+  Stage A already reports each cell's (T, b) fit; any recalibrated reading of the Zq cells is a
+  follow-up under the match-8 record, not part of this design.
+- **GPU nondeterminism.** The truncated-S run's final model may differ in the last bits from
+  the banked S. Its snapshots are compared with the anchored cells, not with the banked S's
+  weights.
 
 ## Cost
 
 | Item | Cost |
 |---|---|
-| Training, 9 cells | ≈ 7 min each (measured 398–440 s for S / Zq / P0) ≈ **1.1 GPU-h**. The anchor adds one no-grad reference forward per batch, so the realised wall time is reported |
-| Offline Stage A, 9 cells | ≈ 6 min each ≈ **0.9 GPU-h**, capped at 0.24 of the card as banked |
+| Training, 10 runs (9 cells + truncated S) | ≈ 7 min each (measured 398–440 s for S / Zq / P0) ≈ **1.2 GPU-h**. The anchor adds one no-grad reference forward per batch, and the snapshots add three hold-out measurements, so the realised wall time is reported |
+| Offline Stage A | step 0: 4 nets; cells: base + 9 cells + 3 snapshots = 13 nets. About 17 nets × ≈ 6 min ≈ **1.7 GPU-h**, capped at 0.24 of the card as banked |
 | Stage B | ≤ 2 matches × 1.52 GPU-h ≈ **≤ 3.0 GPU-h** |
-| **Total** | **≤ ≈ 5.0 GPU-h** |
+| **Total** | **≤ ≈ 5.9 GPU-h** |
 
 ## Commands
 
 Outputs go to `~/chess-artifacts/operations/rl-run1-value-anchor/` (`V`). The pilot bank
 (`P`) is read-only.
+
+**Training and take-effect check:**
 
 ```bash
 V=$HOME/chess-artifacts/operations/rl-run1-value-anchor; P=$HOME/chess-artifacts/operations/rl-run1-pilot
@@ -315,46 +434,42 @@ TRAIN="--presentations 1 --mirror-prob 0.5 --batch-size 512 --lr 3e-6 --lr-floor
 S_V="--value-outcome-weight 0 --value-search-weight 1 --value-search-source stored_search_wdl"
 Z_V="--value-outcome-weight 0.5 --value-search-weight 0.5 --value-search-source stored_search_wdl"
 declare -A CELL=(
-  [S_k2.6]="$S_V --kl-wdl 2.6 --kl-reference $SL"  [S_k6.2]="$S_V --kl-wdl 6.2 --kl-reference $SL"
-  [S_k13]="$S_V --kl-wdl 13 --kl-reference $SL"
-  [Zq_k7.6]="$Z_V --kl-wdl 7.6 --kl-reference $SL" [Zq_k16]="$Z_V --kl-wdl 16 --kl-reference $SL"
-  [Zq_k34]="$Z_V --kl-wdl 34 --kl-reference $SL"
-  [S_w0.1]="$S_V --w-wdl 0.1 --kl-wdl 0"           [S_w0.03]="$S_V --w-wdl 0.03 --kl-wdl 0"
-  [P0_k6.2]="--w-wdl 0 --kl-wdl 6.2 --kl-reference $SL")
+  [S_k4.1]="$S_V --kl-wdl 4.1 --kl-reference $SL"   [S_k7.0]="$S_V --kl-wdl 7.0 --kl-reference $SL"
+  [S_k13.4]="$S_V --kl-wdl 13.4 --kl-reference $SL"
+  [Zq_k11.3]="$Z_V --kl-wdl 11.3 --kl-reference $SL" [Zq_k18.1]="$Z_V --kl-wdl 18.1 --kl-reference $SL"
+  [Zq_k33.4]="$Z_V --kl-wdl 33.4 --kl-reference $SL"
+  [S_w0.1]="$S_V --w-wdl 0.1 --kl-wdl 0"            [S_w0.03]="$S_V --w-wdl 0.03 --kl-wdl 0"
+  [P0_k7.0]="--w-wdl 0 --kl-wdl 7.0 --kl-reference $SL"
+  [S_trunc]="$S_V --kl-wdl 0 --snapshot-updates 353,635,988")
+(cd $V/stage_a && sha256sum -c --quiet SHA256SUMS) || exit 93
 cd $PINW && [ "$(git rev-parse HEAD)" = "$PIN" ] || exit 96
 CUDA_VISIBLE_DEVICES= PYTHONPATH=. $PY -m pytest -q -p no:cacheprovider \
   "tests/test_simple_rl_learn.py::test_kl_anchor_gradients_are_nonzero_and_reach_the_consumer" \
-  tests/test_simple_rl_accum_steps.py || exit 1
-mkdir -p $V
-for c in S_k2.6 S_k6.2 S_k13 Zq_k7.6 Zq_k16 Zq_k34 S_w0.1 S_w0.03 P0_k6.2; do
+  tests/test_simple_rl_accum_steps.py || exit 1          # launch precondition: the code-level proof
+for c in S_k4.1 S_k7.0 S_k13.4 Zq_k11.3 Zq_k18.1 Zq_k33.4 S_w0.1 S_w0.03 P0_k7.0 S_trunc; do
   date -Is > $V/arm_$c.started
   PYTHONPATH=. $PY -u scripts/simple_rl_loop.py run --run-dir $V/arm_$c --collect-from $P/collect \
     --generations 1 $COLLECT $TRAIN ${CELL[$c]} > $V/arm_$c.log 2>&1; echo "$? $(date -Is)" > $V/arm_$c.exit
 done
-# Take-effect check: every anchored cell (dose cells: anchor must be null)
-for c in "${!CELL[@]}"; do $PY - $V/arm_$c/gen_0001/train "$c" <<'EOF' || echo "VOID $c"
-import json, sys
-d, c = sys.argv[1], sys.argv[2]
-s = json.load(open(f"{d}/metrics.json"))["summary"]; a = s["anchor"]
-lam = float(c.split("_k")[1]) if "_k" in c else None
-if lam is None:
-    sys.exit(0 if a is None else f"{c}: an anchor ran on a dose cell")
-ok = (a is not None and abs(a["wdl_coef"] - lam) < 1e-12 and a["reference_forwards"] == s["updates"]
-      and a["rows"] > 0 and (a["mean_wdl_kl"] or 0) > 0)
-m = json.load(open(f"{d}/manifest.json"))
-ok = ok and m["inputs"]["kl_reference"]["sha256"].startswith("a39f900c")
-print(c, a, "updates/s", s["updates_per_second"]); sys.exit(0 if ok else f"{c}: anchor did not take effect")
-EOF
-done
+$PY $V/stage_a/train_check.py $V      # field checks + gate (i); writes VOID / TARGET_<T>_VOID markers
 ```
 
-The check requires `reference_forwards` == `summary.updates` (one reference forward per batch).
+**Stage A, in order:**
 
-**Stage A** follows the procedure above, writing under `$V/offline/`. **Stage B** then runs,
-for each selected cell `X` with seed `SEED`:
+```bash
+$V/stage_a/run_stage_a.sh control || exit 1   # step 0: banked nets must reproduce the bank exactly -> CONTROL_PASS
+$V/stage_a/run_stage_a.sh cells   || exit 1   # skips VOID cells; fits, logits, analysis, outcome distance, sibling
+                                              # order, value regret (report-only), then stage_a_decide.py
+```
+
+**Stage B**, for each target T whose `stage_b` entry names a cell `X`, with seed `SEED`
+(2026112181 for S, 2026112182 for Zq):
 
 ```bash
 F=$HOME/chess-artifacts/operations/rl-run1-followup
+echo "7c8fd065865f3d5abcd8e9eb6f7fc1d48e882dfcfb88bbaa92d8696ce4a9510d  $F/run_followup_match.sh" | sha256sum -c --quiet || exit 93
+[ "$($PY -c "import json;print(json.load(open('$V/offline/cells/stage_a_decision.json'))['stage_b']['$T'])")" = "$X" ] || exit 91
+[ ! -e $V/arm_$X/VOID ] && [ ! -e $V/TARGET_${T}_VOID ] || exit 91
 $F/run_followup_match.sh $V anchor_$X 1 A $SEED 3200 --candidate $V/arm_$X/gen_0001/train/model.pt --reference $SL || exit 1
 $F/run_followup_match.sh $V anchor_$X 1 B $SEED 3200 --candidate $SL --reference $V/arm_$X/gen_0001/train/model.pt || exit 1
 d=$V/arenas/anchor_$X; cd $PINW && PYTHONPATH=. $PY scripts/arena_seat_balanced_pool.py --arm $V/arm_$X/gen_0001/train/model.pt \
