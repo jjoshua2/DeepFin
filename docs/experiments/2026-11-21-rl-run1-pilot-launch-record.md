@@ -155,7 +155,7 @@ declare -A CELL=(
   [Zq]="--value-outcome-weight 0.5 --value-search-weight 0.5 --value-search-source stored_search_wdl"
   [S]="--value-outcome-weight 0 --value-search-weight 1 --value-search-source stored_search_wdl"
   [P0]="--w-wdl 0")
-for c in Zq S P0; do
+for c in S Zq P0; do      # S first: see 'Order of work' below
   PYTHONPATH=. python -u scripts/simple_rl_loop.py run --run-dir $R/arm_$c --collect-from $R/collect \
     --generations 1 $COLLECT $TRAIN ${CELL[$c]} > $R/arm_$c.log 2>&1 || break
 done
@@ -234,6 +234,37 @@ run() {  # run <match> <look> <A|B> <seed> <games-per-run> <seat args: --candida
   | plain | 698 s | 1.0 | 0.19 |
   | `--*-value-recal` only (one forward) | 657 s | about 0.94 | 0.19 |
   | `--*-value-from` hybrid (two forwards) | 974 s | about 1.4 | 0.27 |
+
+### Order of work: S first
+
+The owner, verbatim (2026-11-21):
+
+> "So how long until we have results of this experiment? Im pretttybsure its going to show that training on the search does best so im wondering if maybe we should just skip to that? Is it really important to know by how much?"
+
+**The order.** The order is changed; the content is not:
+1. train S, then play match 3 (S vs base, 800 games, plain arena);
+2. train Zq, then play match 1 (the gate), then match 2, which stays conditional on the gate as before;
+3. train P0, then play match 4 (the graft, in looks).
+
+**Why the order is free.** The four matches are separate arena invocations with
+their own seeds and opening blocks. Only match 2 is conditional (on the gate), and
+nothing conditions on S.
+
+**S's rules are unchanged.** Its reading rule and its extension rule stay exactly as
+registered. The owner's expectation is a prior, not a change to the thresholds.
+
+**What an early S read licenses:** nothing beyond the registered reading. In
+particular, a second generation from S is its own record. The owner's own concern
+about an unanchored target over many cycles is quoted in the DRAFT section below.
+
+**Wall-clock path to the S read** (measured rates where they exist):
+
+| Step | Time | Basis |
+|---|---|---|
+| collection | ≈ 1.6 h | 5,021 games/h measured |
+| S training | ≈ 16 min | ≈ 758k rows minus the 5% hold-out ≈ 720k trainable rows, one presentation, ≈ 1,406 optimizer updates at batch 512. Updates/s at batch 512 is **unmeasured**; 16 min is the floor rate of ≥ 770 rows/s measured at batch 256 |
+| match 3 | ≈ 0.19 GPU-h | 800 games, plain, measured with CUDA graphs |
+| **Total** | **≈ 2.1 h** | from the collection's start to the S read |
 
 ### The matches
 
