@@ -553,6 +553,32 @@ def vram_need_gib(settings: CollectSettings) -> float:
     return _VRAM_SAFETY * per_mib * int(settings.collect_procs) / 1024.0
 
 
+def _gpu_memory(settings: CollectSettings) -> tuple[int, int]:
+    """(free, total) bytes of the collect's device.
+
+    With K > 1 the driver plays nothing on the GPU, so it asks nvidia-smi rather
+    than ``torch.cuda.mem_get_info``: that call would create a CUDA context in
+    the DRIVER that lives for the whole collect, outside the VRAM model. K = 1
+    plays in the driver, which needs the context anyway."""
+    import torch
+
+    device = torch.device(settings.device)
+    if int(settings.collect_procs) > 1:
+        import subprocess
+
+        index = device.index or 0  # "cuda" alone means the current (first) device
+        try:
+            out = subprocess.run(["nvidia-smi", f"--id={index}", "--query-gpu=memory.free,memory.total",
+                                  "--format=csv,noheader,nounits"], capture_output=True, text=True,
+                                 check=True, timeout=30).stdout
+            free_mib, total_mib = (float(x) for x in out.strip().splitlines()[0].split(","))
+            return int(free_mib * 2**20), int(total_mib * 2**20)
+        except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+            pass  # no usable nvidia-smi: fall back to torch (and its context)
+    free, total = torch.cuda.mem_get_info(device)
+    return int(free), int(total)
+
+
 def check_vram(settings: CollectSettings) -> dict[str, Any] | None:
     """Refuse before any work when K processes would not fit in usable GPU memory.
 
@@ -562,9 +588,7 @@ def check_vram(settings: CollectSettings) -> dict[str, Any] | None:
     the value that would fit."""
     if not str(settings.device).startswith("cuda"):
         return None
-    import torch
-
-    free, total = torch.cuda.mem_get_info(torch.device(settings.device))
+    free, total = _gpu_memory(settings)
     usable = min(free, VRAM_USABLE_FRACTION * total) / 2**30
     need = vram_need_gib(settings)
     record = {"free_gib": free / 2**30, "total_gib": total / 2**30, "usable_gib": usable, "need_gib": need,

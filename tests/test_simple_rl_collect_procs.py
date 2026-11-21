@@ -145,6 +145,13 @@ def test_a_killed_k2_collect_resumes_keeping_finished_processes(
     monkeypatch.setattr(collect_mod, "write_manifest", die)
     with pytest.raises(KeyboardInterrupt):
         _collect(tmp_path, "resumed", 2)
+    # That attempt kept process 0 and played only process 1: its stats (written
+    # before the manifest) rate process 1's games over its own active time.
+    partial = json.loads((gen / "stats.json").read_text())
+    assert partial["procs_resumed"] == [0]
+    fresh_games = partial["procs"][1]["games"]
+    assert fresh_games == 2
+    assert partial["games_per_hour"] == pytest.approx(3600.0 * fresh_games / partial["active_seconds"])
     monkeypatch.setattr(collect_mod, "write_manifest", real_manifest)
     stats, _ = _collect(tmp_path, "resumed", 2)
     assert stats["procs_resumed"] == [0, 1]
@@ -217,6 +224,8 @@ def test_a_pause_holds_every_process_and_resumes_to_identical_rows(
     assert content_digest(gen)["content_sha256"] == content_digest(plain)["content_sha256"]
     assert content_digest(gen)["games_sha256"] == content_digest(plain)["games_sha256"]
     assert stats["paused_seconds"] >= 2.0
+    # the processes pause together: the union of their intervals, not the sum
+    assert stats["paused_seconds"] < 2.0 + 1.5
     assert stats["timing_independent"] is False
     assert all(len(p["pause_intervals"]) == 1 for p in stats["procs"])
     assert stats["active_seconds"] <= stats["wall_seconds"] - 2.0
@@ -391,14 +400,12 @@ def test_an_arm_must_match_the_source_k() -> None:
 
 
 def test_vram_refusal_uses_free_memory_and_the_usable_limit(monkeypatch: pytest.MonkeyPatch) -> None:
-    import torch
-
     gib = 2**30
-    monkeypatch.setattr(torch.cuda, "mem_get_info", lambda *_a: (10 * gib, 32 * gib))
+    monkeypatch.setattr(collect_mod, "_gpu_memory", lambda *_a: (10 * gib, 32 * gib))
     settings = replace(_settings(3, games=512), concurrency=128, sims=64, device="cuda")
     with pytest.raises(ValueError, match=r"--collect-procs 3 x --concurrency 128 .* pass --collect-procs 1 explicitly"):
         collect_mod.check_vram(settings)
-    monkeypatch.setattr(torch.cuda, "mem_get_info", lambda *_a: (31 * gib, 32 * gib))
+    monkeypatch.setattr(collect_mod, "_gpu_memory", lambda *_a: (31 * gib, 32 * gib))
     record = collect_mod.check_vram(settings)  # measured 22.1 GB: fits
     assert record is not None
     assert record["usable_gib"] == pytest.approx(0.83 * 32)
@@ -417,6 +424,33 @@ def test_vram_refusal_uses_free_memory_and_the_usable_limit(monkeypatch: pytest.
     with pytest.raises(ValueError, match="no process count fits at --concurrency 1024: lower") as err:
         collect_mod.check_vram(replace(one, concurrency=1024, games=2048))
     assert "pass --collect-procs" not in str(err.value)
+
+
+def test_the_driver_of_k_processes_reads_gpu_memory_without_a_cuda_context(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+
+    import torch
+
+    def no_context(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("torch.cuda.mem_get_info would create a CUDA context in the driver")
+
+    calls: list[list[str]] = []
+
+    def smi(cmd: list[str], **_k: Any) -> Any:
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="20480, 32607\n", stderr="")
+
+    monkeypatch.setattr(torch.cuda, "mem_get_info", no_context)
+    monkeypatch.setattr(subprocess, "run", smi)
+    settings = replace(_settings(3, games=512), device="cuda:0")
+    assert collect_mod._gpu_memory(settings) == (20480 * 2**20, 32607 * 2**20)
+    assert calls
+    assert calls[0][0] == "nvidia-smi"
+    assert "--id=0" in calls[0]
+    # K = 1 plays in the driver, which needs the context anyway
+    monkeypatch.setattr(torch.cuda, "mem_get_info", lambda *_a: (5, 9))
+    assert collect_mod._gpu_memory(replace(settings, collect_procs=1)) == (5, 9)
 
 
 def test_default_shape_table_by_sims() -> None:
@@ -443,3 +477,27 @@ def test_combined_evaluator_record_fails_closed_on_disagreement() -> None:
     assert odd["eval_max_batch_realised"] is None
     assert odd["evaluator_mode"] == "mixed"
     assert not odd["cuda_graphs"]
+
+
+def test_a_kept_process_is_reverified_by_its_games_digest(tmp_path: Path) -> None:
+    spec = collect_mod.ProcSpec(
+        proc=0, gen_dir=str(tmp_path), generation=1, checkpoint="", starts_path="", settings=_settings(1),
+        openings=(), seed=0, sf_factory=None, torch_threads=1, run_dir=str(tmp_path), pause_markers=(),
+        parent_pid=os.getpid())
+    (spec.proc_dir / "shards").mkdir(parents=True)
+    games = spec.proc_dir / "games.jsonl"
+    games.write_text('{"game_id": 1}\n')
+    (spec.proc_dir / "done.json").write_text(json.dumps(
+        {"proc": 0, "shards": 0, "games_sha256": collect_mod.sha256_file(games)}))
+    assert collect_mod._proc_done(spec) is not None
+    games.write_text('{"game_id": 1}\n{"game_id": 2}\n')  # tampered after done.json
+    assert collect_mod._proc_done(spec) is None
+
+
+def test_overlapping_or_missing_openings_across_processes_are_refused(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(collect_mod, "_open_stockfish", quiet_stockfish)
+    # Both processes get the first half: half the drawn openings twice, half never.
+    monkeypatch.setattr(collect_mod, "proc_openings", lambda rows, _p, k: rows[:len(rows) // k])
+    with pytest.raises(ValueError, match="openings played differ"):
+        _collect(tmp_path, "overlap", 2)
