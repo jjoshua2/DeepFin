@@ -68,7 +68,7 @@ from .protocol import (
     format_uciok,
     set_uci_debug,
 )
-from .search import DEFAULT_LEAF_GATHER, SearchResult, SearchWorker
+from .search import _TREE_ANSWER_MIN_VISITS, DEFAULT_LEAF_GATHER, SearchResult, SearchWorker
 from .time_manager import (
     GO_IMPLICIT_CAP_MS,
     _DEFAULT_MOVES_REMAINING,
@@ -799,6 +799,12 @@ class Engine:
   # immutable ``(fen, uci)`` tuple swapped atomically; the watchdog reads it
   # from its own thread and uses it only for the position it is keyed to.
         self._pv_snapshot: tuple[str, str] | None = None
+  # The snapshot a ponderhit seeded from the finished ponder tree (the tuple
+  # object itself): while `_pv_snapshot` is still this object, the watchdog's
+  # answer comes from the ponder tree -- a searched move, reported as
+  # ``source=ponder_tree`` and not counted as a fallback. The real phase's first
+  # PV publish replaces `_pv_snapshot`, and each `go` clears both.
+        self._ponder_seed: tuple[str, str] | None = None
         # (go generation, first move) of the last `info ... pv` line actually
         # printed with `multipv` 1 or absent; `_publish_bestmove` reads it.
         self._pv_line_head: tuple[int, str] | None = None
@@ -1556,6 +1562,7 @@ class Engine:
             self._search_gen += 1
             gen = self._search_gen
         self._pv_snapshot = None  # only this go's search may publish one
+        self._ponder_seed = None
         self._live_go = (self._board.copy(), tuple(cmd.args.searchmoves))
         # Per-go search thread: not wrapped in ``wedge.parking`` (it ends after
         # every move by design; see ``_run_failed_go_reply``'s note).
@@ -3374,6 +3381,15 @@ class Engine:
                 and (real_limits.clock_exhausted or transition_deadline.expired())
                 else None
             )
+            # (`gen` check: a parked search that wakes into the NEXT go's
+            # ponderhit must not overwrite that go's snapshot.)
+            if popped is not None and quick is None and gen == self._search_gen:
+                # Seed the watchdog's answer while the tree is still the
+                # finished ponder tree (nothing runs on it until `advance_root`
+                # below): should the real phase stall past its deadline, the
+                # watchdog answers this searched move instead of an unsearched
+                # one, without ever reading the tree itself.
+                self._seed_ponder_answer(board, popped, real_board, tuple(real_limits.searchmoves))
             if (popped is not None and not self._cancel_event.is_set()
                     and not transition_deadline.expired()):
                 if not self._worker.advance_root(board, [popped]):
@@ -3634,19 +3650,24 @@ class Engine:
         snap = self._pv_snapshot
         if (snap is not None and snap[0] == entry.board.fen()
                 and _is_playable_fallback(entry.board, snap[1], entry.searchmoves)):
-            move, source = snap[1], "last_pv"
+            # The ponderhit's seed (still unreplaced by a real-phase PV) is
+            # the finished ponder tree's searched answer, not a fallback.
+            move, source = snap[1], ("ponder_tree" if snap is self._ponder_seed else "last_pv")
         else:
             move, source = self._bestmove_fallback(
                 entry.board, entry.searchmoves, allow_fresh_eval=False,
             )
         self._watchdog_fires += 1
-        self._bestmove_fallback_used += 1
-        self._note_unsearched_reply()
+        if source != "ponder_tree":
+            self._bestmove_fallback_used += 1
+            self._note_unsearched_reply()
         elapsed_ms = int((time.monotonic() - entry.started_at) * 1000)
         with _answer_owner():
             self._publish_bestmove(entry.gen, move, prelude=(
                 f"info string WARNING search stalled: {reason}; {elapsed_ms} ms into a "
-                f"clocked move; deadline watchdog answers unsearched source={source} "
+                f"clocked move; deadline watchdog answers "
+                f"{'from the ponder tree' if source == 'ponder_tree' else 'unsearched'} "
+                f"source={source} "
                 f"move={move} bestmove_fallback_used={self._bestmove_fallback_used}"
             ))
 
@@ -4101,6 +4122,30 @@ class Engine:
             lines.append(format_bestmove(move, ponder=ponder))
             if _println("\n".join(lines)) and guard and gen is not None:
                 self._pv_line_head = (gen, move)
+
+    def _seed_ponder_answer(
+        self, board: chess.Board, popped: chess.Move, real_board: chess.Board,
+        searchmoves: tuple[str, ...],
+    ) -> None:
+        """Publish the ponder tree's answer to the played reply as this go's
+        `_pv_snapshot` (see `_ponder_seed`). Only a child with at least
+        `_TREE_ANSWER_MIN_VISITS` visits seeds it: the watchdog reports the seed
+        as a searched move, and below that the tree is the engine's own
+        definition of noise (`SearchWorker.tree_root_bestmove`)."""
+        child = getattr(self._worker, "child_bestmove", None)
+        try:
+            move = (
+                child(board, popped, searchmoves=searchmoves, min_visits=_TREE_ANSWER_MIN_VISITS)
+                if callable(child) else None
+            )
+        except Exception:
+            move = None
+        # Not re-validated here: the watchdog checks the move against the board
+        # and the go's searchmoves before it answers with it.
+        if isinstance(move, str):
+            seed = (real_board.fen(), move)
+            self._ponder_seed = seed
+            self._pv_snapshot = seed
 
     def _ponderhit_tree_answer(
         self, board: chess.Board, popped: chess.Move, searchmoves: tuple[str, ...],
