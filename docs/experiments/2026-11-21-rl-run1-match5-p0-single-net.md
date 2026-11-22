@@ -1,7 +1,9 @@
 # 2026-11-21: RL run 1, three follow-up matches — P0 as a single net (5); S's value on the base policy, raw and recalibrated (6); Zq recalibrated vs Zq (7) (pre-registration)
 
-**Status: registered, not launched.** Nothing launches before the statistics review and
-this PR's merge. The three matches are diagnostic: they adopt nothing and change nothing
+**Results (2026-11-21):** [follow-up results](2026-11-21-rl-run1-followup-results.md). Match 5 +2.2 [−4.2, +8.6], "adoptable"; match 7 +21.4 [+15.1, +27.6], "the loss is shape"; match 6: 6b −21.4, 6a −16.1, R +5.34 [−3.48, +14.15], "unread".
+
+**Status: registered; launched after the merge and completed 2026-11-21** (chain 14:34:46–21:13:57, `chain.exit` 0).
+Nothing launched before the statistics review and this PR's merge. The three matches are diagnostic: they adopt nothing and change nothing
 live.
 
 **Order of play: 5, 7, 6b, 6a.**

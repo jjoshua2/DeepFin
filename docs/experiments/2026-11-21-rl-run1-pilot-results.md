@@ -202,6 +202,7 @@ value-head training is the candidate.** It is a hypothesis these numbers support
   S and Zq are not shown harmless by any game: "the value-head training is the candidate" rests on the policy fit
   numbers above, not on a played seat. The offline diagnosis below speaks to the value heads directly, but it is
   offline and 1-ply, not a played seat, so it addresses this gap only partly.
+  *Update (11-21, [follow-up results](2026-11-21-rl-run1-followup-results.md)):* match 6b now isolates S's value head on the base's own policy, at −21.4 [−27.7, −15.2]. Zq's value head is still not isolated by a played seat.
 
 ### Offline value diagnosis (report-only; pointer)
 
@@ -353,9 +354,13 @@ The pre-training check passed: `R/post_collect_checks.sh` [`4917f83f`] writes `c
 - **Multi-generation behaviour.** This is one generation from the SL base.
 - **Zq's safety.** The gate's failure to read damage is not safety; Zq's LB95 is −23.2.
 - **A deployable policy net.** The graft is a hybrid seat (two forwards: P0's policy, the SL base's value), not a single deployable net.
-- **P0 as a full net.** P0's own value head, which drifted (mean abs(dq) 0.033), was not played.
+- **P0 as a full net.** P0's own value head, which drifted (mean abs(dq) 0.033), was not played. *Closed by match 5* ([follow-up results](2026-11-21-rl-run1-followup-results.md)): P0 as a single net read +2.2 [−4.2, +8.6], "single-net policy-only step is adoptable".
 - **That the policy pays.** Match 4 is unread. The near-miss is not a pass.
-- **Recalibration.** Match 2 did not run, so the pilot says nothing about whether recalibration recovers S's or Zq's loss.
+- **Recalibration.** Match 2 did not run, so the pilot says nothing about whether recalibration recovers S's or Zq's loss. *Update* ([follow-up results](2026-11-21-rl-run1-followup-results.md)):
+  - match 7 (new registration, not match 2): Zq + recal vs Zq +21.4 [+15.1, +27.6], "the loss is shape";
+  - match 6, S's value recalibrated vs raw: R = +5.34 [−3.48, +14.15], "unread".
+
+  No pilot verdict changes.
 
 ## 7. Owner decisions now open
 
@@ -363,7 +368,7 @@ No recommendation is made here.
 
 1. The adoption order has reached step 4, "stop for the owner". What comes after the pilot?
 2. Match 4 is finished and unread. Should a new, separately registered graft match be commissioned, and to what size?
-3. Should the recalibration head-to-head (match 2) be run anyway, outside the skip rule, as its own record?
+3. Should the recalibration head-to-head (match 2) be run anyway, outside the skip rule, as its own record? (Answered by match 7, a new registration; see [follow-up results](2026-11-21-rl-run1-followup-results.md).)
 4. The launch record's owner rows L4 (S's role), L5 (collection B with cells K-blend and K-z2, matches K1–K3) and L6 (the parked anchor: the three-way blend plus an SF-opponent share, or the outcome-conditioned alternative) remain unfilled.
 5. Which value target, if any, should any next generation train? None is adoptable by the registered rule.
 6. Should a next generation train the policy only, with the value held at the SL base's? This is a design question, not a result.
@@ -372,7 +377,7 @@ Fact, not a decision: the three follow-up matches are pre-registered in
 [the follow-up match record](2026-11-21-rl-run1-match5-p0-single-net.md) (PR #1473, merged `51b3d56f3`). They are
 P0 as a single net (5); S's value on the base policy, raw and recalibrated (6a, 6b); and Zq recalibrated vs Zq (7).
 They are played in the order 5, 7, 6b, 6a, at 6,400 games each. They launched on 2026-11-21 after the merge (output
-root `~/chess-artifacts/operations/rl-run1-followup/` [mtime 11-21 14:34]). No result is cited here.
+root `~/chess-artifacts/operations/rl-run1-followup/` [mtime 11-21 14:34]). Their results are in [follow-up results](2026-11-21-rl-run1-followup-results.md).
 
 ## Files
 
