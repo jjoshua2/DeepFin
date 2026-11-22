@@ -1,11 +1,30 @@
 # 2026-11-21: RL run 1 — full-width root round (`--root-full-width`): cost, target audit, search strength, training test (pre-registration)
 
-**Status: registered, not launched.**
-- **Stages 0–2** need two things before they start: this record is reviewed and merged, and the GPU queue has
-  released the card. Every launcher refuses until both queue markers exist (see [the GPU guard](#the-gpu-guard)).
+**Status: registered, not launched, and on HOLD until a second addendum re-pins it.**
+- **No stage launches before the second addendum merges (addendum 2026-11-22).** The pin `fd8c0ce08` and every
+  stage command in this record are superseded by a second addendum (evaluator row chunking, PR #1511), which
+  re-pins them.
+  - **Why:** at that pin the wide full-width shapes went over the card at 3 × 128.
+    - `--topk 64` was refused by the collect's memory check
+      (`~/chess-artifacts/operations/rl-run1-root-full-width.opdiag/mem_wide_20261122/RESULT.md` [`1c0ba196`]).
+    - `--topk 32` and `--topk 21` both aborted at about 31.8 GB
+      (`~/chess-artifacts/operations/rl-run1-root-full-width.opdiag/mem_wide2_20261122/RESULT.md` [`f36a10c5`]).
+  - **The measured remedy:** with forwards bounded at 512 rows, the same 3 × 128 shape peaked at 10,012 MiB for off,
+    10,208 for C (`--topk 32`) and 9,848 for B (`--topk 16`)
+    (`~/chess-artifacts/operations/rl-run1-root-full-width.opdiag/chunk_meas_20261122/README.md` [`ff0f38d5`],
+    `SHA256SUMS` [`288d7227`]).
+  - **The bank enforces the hold**, not only these words. When the staged bank is swapped in, it carries a top-level
+    `HOLD_REPIN` marker:
+    - `gpu_guard.sh` v8, which every stage launcher sources first, refuses every stage with exit 14 while it exists;
+    - `guard_retry` refuses on it at once;
+    - the second addendum removes it.
+- **Stages 0–2** need three things before they start: this record and its second addendum are reviewed and merged,
+  and the GPU queue has released the card. Every launcher refuses until both queue markers exist (see
+  [the GPU guard](#the-gpu-guard)).
 - **Stage 3 is authorised by the owner's standing statement of 2026-11-22: "You dont have to wait for me to approve gpu use it dont have time ill just tell you to stop if necessary" (addendum 2026-11-22).** It is launched on the operator's release only
   after Stages 0–2 have passed by their registered rules and been read in-session. The coordinator records that
-  in the bank as `stage3/OWNER_GO`, and one command then runs the whole stage. Nothing else about the gates
+  in the bank as `stage3/OWNER_GO`, a file that quotes the owner's statement (as the generation-2 record's does),
+  and one command then runs the whole stage. Nothing else about the gates
   changes.
 
 **Queue position:** after the value-anchor screen (#1475) and the sibling-ordering screen (#1481), unless the owner
@@ -119,7 +138,8 @@ at 0–1% utilisation for **six minutes** (until 05:00:15), then 5.5 GB, then 22
 phase the process scan (`gpu_scan.sh`, below) and the operator's release file are the only defences; the memory
 band is a backstop.
 
-**Which launchers are guarded.** `gpu_guard.sh` v7 (sha in the table below; earlier versions kept as `.vN`) is sourced by:
+**Which launchers are guarded.** `gpu_guard.sh` v8 (sha in the table below; earlier versions kept as `.vN`; v8 adds only
+the `HOLD_REPIN` refusal, exit 14, checked right after the stage name and before everything else) is sourced by:
 - `stage0/run_stage0_all.sh` and each `stage0/run_stage0.sh` it starts;
 - `stage1/run_stage1.sh`;
 - `stage2/run_stage2.sh` and each `run_rfw_match.sh` it starts;
@@ -223,7 +243,12 @@ The guard refuses unless **all** of these hold:
     visible from the host through its child pid namespace, so a real scan refuses while it lives. Such harnesses
     (this bank's `guard_test.sh` and its mutant runner among them) must not run while a registered stage relies on a
     re-guard. Both wait, before starting a pass, while the coordinator's `GPU_CHECK_HOLD` file exists (a 5 s file
-    test). The converse trap is in the harness itself: since the exemption, a "refused" or "excluded" case whose
+    test); the v12 runner waits until it has been absent for 60 s. **Known limit:** the harness's one read-only case
+    calls the REAL `nvidia-smi` before entering its namespace, and each call opens `/dev/dxg` for about 0.1 s, so a
+    real scan elsewhere can see a holder at that instant. A v11 series ran four harnesses at a time and repeated
+    that throughout. The v12 runner measures the real probe once per series (hold-gated) and passes it to every
+    harness, which then skips the call. It runs one harness at a time, and no series runs while a generation-2
+    stage boundary is in progress. The converse trap is in the harness itself: since the exemption, a "refused" or "excluded" case whose
     listed process runs WITH the empty entry passes whatever the scan does. Every argv-dependent case therefore
     reads `/proc/<pid>/environ` of the process it started and fails as VACUOUS if the exemption would apply.
   - **Known cosmetic defect (v5, left for the next batch to spare three re-pins).** A launcher log can show
@@ -254,7 +279,12 @@ stage, not abort it. So (`launch_lib.sh` `guard_retry` / `rfw_top_guard`):
     - the child's fd 9 and the parent's fd 9 are both this bank's lock;
     - a fresh open of the lock cannot take it, while `flock -n 9` on the child's fd succeeds, so the child holds the
       parent's own inherited lock;
-  - the first guard of a stage stays single-shot;
+  - the first guard of a stage stays single-shot. **Consequence, stated plainly:** while ANY agent's CPU pytest
+    holds `/dev/dxg`, a stage LAUNCH is refused outright. On WSL2, `torch.cuda.is_available()` and the first CPU
+    `backward()` open the device for the process lifetime, even with `CUDA_VISIBLE_DEVICES` empty. The remedy is
+    the operator's, before a launch: raise the hold file and pause the agents' tests. The operator gates of the
+    2026-11-22 wide-memory diagnostics passed only at attempts 10 (`mem_wide_20261122`) and 23
+    (`mem_wide2_20261122` s2) for this reason;
   - an agent test touching the device during a stage therefore delays that step by up to the bounded wait, and the
     delay is logged.
 
@@ -286,7 +316,9 @@ per-process stats and logs. Idle was 1,138 MiB before each run.
 
 **Rule:** Stage 0 is released only if the knob-ON peak ≤ `memory.total` − 1,024 MiB (31,583 MiB) at the measured
 idle. With the measured +27,182 MiB, that holds for idle ≤ 4,401 MiB: 305 MiB inside at the guard's 4,096 idle cap,
-and 30,564 MiB total at the usual idle of 3,382. PASS, but thin at the cap.
+and 30,564 MiB total at the usual idle of 3,382. PASS, but thin at the cap, and valid only for the topk-16 shape at
+the old pin `fd8c0ce08`. The wide shapes failed at that pin (see the Status), and the second addendum re-measures
+every arm at its new pin.
 
 **Per-leg memory check (manual; addendum 2026-11-22).** `run_stage0.sh` already samples `memory.used` every 500 ms
 into `runs/<tag>/logs/gpu.csv` and writes the run's maximum to its summary row as `gpu_mem_max_mib`. Nothing reads it
@@ -314,8 +346,8 @@ Stage 0's `S_eq` prices exactly that. In the arena (Stage 2, cold trees) the off
 does not, but Stage 2 (b) is played at fixed sims, so this changes only the reported timings.
   - **Measured on the real machine (read-only, 2026-11-22):** `gpu_scan.sh` v2 refused because of another agent's
     pytest child (`python -u -m chess_anti_engine.uci … --device cpu`), which is why v3 added the CPU-only
-    exemption. v4 returns 0 there with agents working, printing only NOTE lines: an exempted `launch_stage3.sh` (a
-    test copy, run with `CUDA_VISIBLE_DEVICES=`), and the allowlisted `/usr/bin/ssh-agent`.
+    exemption. The exemption covers the argv clause only. An agent's CPU test that holds `/dev/dxg` is still
+    refused by the device clause, which is the first-guard consequence stated above.
 - **The queue has released the card.** Both markers exist: `rl-run1-followup/chain.exit` and
   `rl-run1-value-anchor/queue2.exit`.
 - **The operator released THIS stage.** The bank holds a file `GPU_RELEASED_BY_OPERATOR` with a line whose first
