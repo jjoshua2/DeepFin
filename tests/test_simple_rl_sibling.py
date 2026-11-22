@@ -12,6 +12,7 @@ Covered:
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import shutil
 from pathlib import Path
@@ -173,7 +174,7 @@ def test_self_check_is_byte_equal_on_every_game(run: dict[str, Path]) -> None:
     assert res["children"] == res["children_byte_equal"] > 50
 
 
-def _independent_children(collect: Path, game_id: int, ply: int, actions: tuple[int, int]) -> list[np.ndarray]:
+def _independent_children(collect: Path, game_id: int, ply: int, actions: tuple[int, ...]) -> list[np.ndarray]:
     """Rebuild a row's children from games.jsonl (uci) with python-chess only,
     encoded under the collect's declared encoding and repetition regime."""
     from chess_anti_engine.encoding import rep_fix
@@ -529,6 +530,11 @@ def test_settings_refuse_what_the_term_cannot_honour(run: dict[str, Path]) -> No
                       ({"sibling_dir": side}, "ignored"),
                       ({"sibling_rows": 64}, "ignored"),
                       ({"sibling_chunk_pairs": 16}, "ignored"),
+                      ({"sibling_unit": "roots"}, "ignored"),
+                      ({"w_sibling": 1.0, "sibling_dir": side, "sibling_rows": 8, "sibling_unit": "lists"},
+                       "'pairs' or 'roots'"),
+                      ({"w_sibling": 1.0, "sibling_dir": side, "sibling_rows": 8, "sibling_unit": "roots"},
+                       "order form only"),
                       ({"sibling_loss": "order", "sibling_order_margin": 0.05, "sibling_order_min_dq": 0.02},
                        "ignored"),
                       ({"w_sibling": 1.0, "sibling_dir": side, "sibling_rows": 8, "sibling_loss": "rank"},
@@ -586,6 +592,7 @@ def test_cli_flags_reach_the_settings_and_are_pinned_with_defaults(tmp_path: Pat
     assert simple_rl_loop.ADDED_SINCE_PINNING["sibling_loss"] == "diff"
     assert simple_rl_loop.ADDED_SINCE_PINNING["sibling_order_margin"] is None
     assert simple_rl_loop.ADDED_SINCE_PINNING["sibling_order_min_dq"] is None
+    assert simple_rl_loop.ADDED_SINCE_PINNING["sibling_unit"] == "pairs"
     common = ["run", "--run-dir", str(tmp_path / "r"), "--openings-dir", str(tmp_path / "o"), "--generations", "1"]
     off = simple_rl_loop.train_settings(simple_rl_loop.parser().parse_args(common), tmp_path / "r")
     assert (off.w_sibling, off.sibling_rows, off.sibling_dir, off.sibling_chunk_pairs) == (0.0, 128, None, 64)
@@ -598,6 +605,12 @@ def test_cli_flags_reach_the_settings_and_are_pinned_with_defaults(tmp_path: Pat
         [*common, "--w-sibling", "0.5", "--sibling-dir", str(tmp_path / "s"), "--sibling-loss", "order",
          "--sibling-order-margin", "0.0556", "--sibling-order-min-dq", "0.0203"]), tmp_path / "r")
     assert (order.sibling_loss, order.sibling_order_margin, order.sibling_order_min_dq) == ("order", 0.0556, 0.0203)
+    assert (off.sibling_unit, order.sibling_unit) == ("pairs", "pairs")
+    roots = simple_rl_loop.train_settings(simple_rl_loop.parser().parse_args(
+        [*common, "--w-sibling", "0.5", "--sibling-dir", str(tmp_path / "s"), "--sibling-loss", "order",
+         "--sibling-order-margin", "0.0556", "--sibling-order-min-dq", "0.0203", "--sibling-unit", "roots"]),
+        tmp_path / "r")
+    assert roots.sibling_unit == "roots"
     with pytest.raises(ValueError, match="sibling_dir"):
         simple_rl_loop.train_settings(simple_rl_loop.parser().parse_args([*common, "--w-sibling", "0.5"]),
                                       tmp_path / "r")
@@ -666,6 +679,36 @@ def test_a_run_killed_after_a_snapshot_resumes_into_the_uninterrupted_phase(
         assert torch.equal(wa[k], wb[k]), k
     assert (killed / "gen_0001" / "train" / "presented.npz").read_bytes() == \
         (straight / "gen_0001" / "train" / "presented.npz").read_bytes()
+
+
+def test_a_phase_killed_at_one_chunk_size_resumes_at_another(run: dict[str, Path],
+                                                              monkeypatch: pytest.MonkeyPatch) -> None:
+    """The out-of-memory recovery: a phase interrupted at --sibling-chunk-pairs 64
+    resumes from its snapshot at 3 (chunk size never enters the resume key) and
+    finishes within float tolerance of the uninterrupted run; the term records both
+    segments."""
+    from chess_anti_engine.simple_rl import learn as learn_mod
+
+    s = _settings(run, w_sibling=1.0, sibling_rows=8, sibling_dir=str(run["side"]), snapshot_updates=(3,))
+    straight = _fresh_run(run, "chunk_straight")
+    whole = train_generation(run_dir=straight, generation=1, init_checkpoint=run["ckpt"],
+                             prev_trainer_checkpoint=None, settings=s)
+    killed = _fresh_run(run, "chunk_resumed")
+    real = _kill_after(monkeypatch, 3)
+    with pytest.raises(Killed):
+        train_generation(run_dir=killed, generation=1, init_checkpoint=run["ckpt"], prev_trainer_checkpoint=None,
+                         settings=s)
+    monkeypatch.setattr(learn_mod, "write_snapshot", real)
+    done = train_generation(run_dir=killed, generation=1, init_checkpoint=run["ckpt"], prev_trainer_checkpoint=None,
+                            settings=dataclasses.replace(s, sibling_chunk_pairs=3))
+    assert done["resumed_from_snapshot"] == 3
+    assert done["sibling"]["chunk_segments"] == [[0, 64], [3, 3]]
+    assert done["sibling"]["pairs"] == whole["sibling"]["pairs"]
+    np.testing.assert_allclose([r[1] for r in done["sibling"]["per_step"]],
+                               [r[1] for r in whole["sibling"]["per_step"]], rtol=1e-4, atol=1e-7)
+    wa, wb = _weights(killed / "gen_0001" / "train" / "model.pt"), _weights(straight / "gen_0001" / "train" / "model.pt")
+    for k in wa:
+        np.testing.assert_allclose(wa[k].float().numpy(), wb[k].float().numpy(), rtol=1e-4, atol=1e-6, err_msg=k)
 
 
 def test_a_swapped_sidecar_at_the_same_path_restarts_the_phase(
