@@ -341,8 +341,9 @@ banked first (`sibling_holdout_resid.npz`, with `game_id`, `dq`, `min_visits`).
 - **Ruler leakage** (reviewer, `RC/plan-review-1481/ruler_overlap.json`): the sibling-ordering
   ruler (rl-audit, 2,433 leak-free rows, 190 games) shares **0 game ids** with the pilot collect
   (761,979 rows, 8,000 games). **1 ruler row's exact `x` appears in the collect.**
-- This screen's own files (`SB/stage_a/`, revision 6, read-only, `SHA256SUMS` `610347b2…` over
-  every file; revision 1 files kept as `*.v1`, revision 2/3 as `*.v2`, revision 4 as `*.v3`,
+- This screen's own files (`SB/stage_a/`, revision 6 plus the post-merge test addendum, read-only,
+  `SHA256SUMS` `fbc8f863…` over every file; the revision-6 seal `610347b2…` kept as
+  `SHA256SUMS.v5`; revision 1 files kept as `*.v1`, revision 2/3 as `*.v2`, revision 4 as `*.v3`,
   revision 5 as `*.v4`, each with its `SHA256SUMS.v*`):
 
   | File | sha256 prefix |
@@ -352,6 +353,14 @@ banked first (`sibling_holdout_resid.npz`, with `game_id`, `dq`, `min_visits`).
   | `sibling_holdout.py` | `0897bf777521…` |
   | `stage_a_decide.py` (v5: the Zq-branch code-base control) | `9d60b7e1dc3e…` |
   | `run_stage_a.sh` | `241de8fb1dab…` |
+
+  **`fab_v6/` (post-merge addendum, review of revision 6 at `4c73b911b`)** tests the same v5
+  decision script and cells: **36 checks, all pass**: fab_v5's 34 plus P (no usable S replicate, a
+  `Zq_main` gap of 0.158 × KL(base ‖ Zq): the Zq control, on its floor alone, FAILS and both gated
+  families read "unread: Zq code-base control undecidable (no replicate)", P only) and P2 (no
+  replicate, a bit-identical `Zq_main`: passes, P and Zq). **Sixteen mutants, each killed**
+  (`fab_v6/mutants/mutants.txt`): fab_v5's fifteen plus the reviewer's Zq floor 0.05 → 0.5, which
+  survived fab_v5 (`fab_v6/fab_v5_on_m_zq_floor_0p5.log`: ALL_OK) and is killed by P.
 
   `fab_v5/` holds the v5 decision script's test (revision 6): **34 checks, all pass** (rerun on the
   banked files). v4's 27 (the spec check now expects `Zq_main`), plus: a bit-identical `Zq_main`
@@ -370,14 +379,18 @@ banked first (`sibling_holdout_resid.npz`, with `game_id`, `dq`, `min_visits`).
   `m_shape_wl`, undecidable, specs from the wrong family, S added as a second match, smallest-w,
   control ignored, rows check, and the order Zq, P in `cells.json`.
 
-  `SB/stage_b/` (revision 6, read-only, `SHA256SUMS` `01432616…`; revision 5's files as `*.v1`):
+  `SB/stage_b/` (revision 6 plus the post-merge test addendum, read-only, `SHA256SUMS` `02631123…`;
+  the revision-6 seal `01432616…` kept as `SHA256SUMS.v2`; revision 5's files as `*.v1`):
   - `check_both_seats.py` `c205a6e755d5…` (unchanged; match 2's readback; the follow-up
     `check_seat.py` fails by design when the other seat is also a hybrid). Its test now has 11
     cases: candidate T off by 1e-4, reference T differs, reference `value_net=loaded` and reference
     row recal differs were added (review item 4). Four mutants are killed, including the reviewer's
     two survivors ("T matched to 3 decimals", "reference value_net unchecked").
   - `recal_gate.py` v2 `0231f67cd0b9…` (fit control and bounds, now checking what was fitted;
-    18 cases, nine mutants killed; passes on match 8's banked fit).
+    passes on match 8's banked fit). Its test is v3 (addendum; v2 kept as `*.v2`): 20 cases, adding
+    "bounds: 415 games" and "bounds: another collect"; **eleven mutants killed**, including two
+    that skip the games or the collect check in bounds mode only. The games one passed test v2
+    18 / 18 (`test/v2_on_mut_games_unchecked_bounds.txt`).
   - `stage_b_verdict.py` `9fb4d3bc1d6f…` (the registered label from `pool.json`; 7 cases, three
     mutants killed).
   - `SB/prelaunch/validate_cells.py` v2 `ba8f5a6fa0ae…`: `Zq_main`'s flags pass the loop's parser
@@ -509,7 +522,7 @@ term that does nothing (0.86 / 0.71 above), so it was not evidence of any signal
 |---|---|---|---|
 | Candidate | P_sib (largest-w PASS P cell), plain | Zq_sib (largest-w PASS Zq cell) + its own (T, b), fitted before any game | S_sib (largest-w PASS S cell), plain |
 | Opponent | **`P0_main`** (trained at `TSHA` with w 0), plain | **`Zq_main`** (trained at `TSHA`, Zq's flags, w 0) **+ its own (T, b)**, fitted by the same command in the same session, before any game (revision 6) | the pilot's S, plain |
-| Guard on the opponent | the P0 code-base control (P0 vs `P0_main`) passed, and guard (d) (`P0_main` loads identically at the PIN) | the Zq-branch code-base control (Zq vs `Zq_main`) passed, and guard (d) on `Zq_main`; both fits pass the fit control's procedure check and the bounds | the PIN-trained S, guarded by both code-base controls |
+| Guard on the opponent | the P0 code-base control (P0 vs `P0_main`) passed, and guard (d) (`P0_main` loads identically at the PIN) | the Zq-branch code-base control (Zq vs `Zq_main`) passed, and guard (d) on `Zq_main`; both fits pass the fit control's procedure check and the bounds | the PIN-trained S, guarded by both code-base controls. **Why the Zq control covers the S fallback:** S and Zq both train the value head through the same `blended_wdl_ce` code at `w_wdl` 1 and differ only in the outcome / search coefficients; the PIN → `TSHA` diff has no branch that depends on those coefficients (its one new value-loss branch, the per-row `value_row_weight`, is keyed on `value_rows_per_game` > 0, off in every cell); `S_trunc_final` is PIN vs PIN and only sets the nondeterminism scale |
 | Seats | plain both; result-row sha readback | both hybrid (own value + recal), as match 8 seated its candidate; `check_both_seats.py` readback | plain both; result-row sha readback |
 
 - **Why `P0_main`, not the banked P0, for match 1.** P_sib and `P0_main` train at `TSHA` from
@@ -571,8 +584,8 @@ term that does nothing (0.86 / 0.71 above), so it was not evidence of any signal
      and device. The bounds stay centred on the identity, not on Zq's fit (the reviewer's argument:
      re-centring would put the identity on the boundary, and a term that sharpens discrimination
      plausibly needs LESS correction).
-  - Both gates are `SB/stage_b/recal_gate.py` v2 (tested: 18 fabricated cases; nine mutants
-    killed, including each unchecked field of what was fitted).
+  - Both gates are `SB/stage_b/recal_gate.py` v2 (tested: 20 fabricated cases; eleven mutants
+    killed, including each unchecked field of what was fitted, in either mode).
   - **Reported beside the result (report-only):** both seats' `cross_entropy_identity` →
     `cross_entropy_fitted` from their fit files.
   - This supersedes revision 4's "no recalibrated readout" for match 2: match 2 is its own
@@ -856,9 +869,22 @@ warm_ok() { (cd $TW && PYTHONPATH=. $WARM check $SB/warm) || { (cd $TW && PYTHON
 ```
 
 **Step 1b: the cost probe** (GPU alone): cold (report only), then the first warm-up, then warm
-(decides), then no term:
+(decides), then no term.
+
+**GPU check (post-merge addendum).** This screen's commands have no GPU guard of their own: the
+operator runs them. So before step 1b, and again before each later GPU step block, the operator
+runs `SB/operator/operator_gpu_check.sh IDLE_MIB`, with IDLE_MIB the GPU's measured idle
+`memory.used` (this machine idles at about 3,382–3,452 MiB: the Windows side of WSL2). It is the
+generation-2 bank's guard v3 rule: IDLE_MIB an integer ≤ 4,096; every memory line within
+IDLE_MIB ± 512 MiB; utilisation < 10 % over 5 samples one second apart; `ps` readable and no
+`arena_standard.py` / `simple_rl_loop.py` / `match_vs_uci.py` running; fail-closed, read-only.
+`SB/operator/` (read-only, `SHA256SUMS` `029a3eb8…`; script `0e54fc624bb2…`): 28 cases under a
+fake HOME with stubbed `nvidia-smi` / `ps` / `sleep`, one read-only case running its two probe
+commands against the real card (integers: 3,451 MiB, 0 %); twelve mutants, one per clause, each
+killed.
 
 ```bash
+$SB/operator/operator_gpu_check.sh $IDLE_MIB || exit 8   # IDLE_MIB: the operator's measured idle memory.used
 CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. $PY -u $SB/prelaunch/cost_probe.py $SB/cost_probe_sib_cold.json 50 $COLLECT $TRAIN ${CELL[Zq_sib_w366]} || exit 1
 (cd $TW && PYTHONPATH=. $WARM warm $SB/warm) && warm_ok || exit 1
 CUDA_VISIBLE_DEVICES=0 COST_PROBE_CACHE=warm PYTHONPATH=. $PY -u $SB/prelaunch/cost_probe.py $SB/cost_probe_sib.json 50 $COLLECT $TRAIN ${CELL[Zq_sib_w366]} || exit 1
