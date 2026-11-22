@@ -435,11 +435,14 @@ def test_vram_refusal_uses_free_memory_and_the_usable_limit(monkeypatch: pytest.
     with pytest.raises(ValueError, match="usable limit"):
         collect_mod.check_vram(replace(settings, collect_procs=8, concurrency=96, sims=16))
     # One process at 64 sims: 1 x 256 (measured 12.1 GB) fits; 1 x 512 peaked at
-    # 29.9 GB, past the usable limit, which the linear segment alone under-predicted.
+    # 29.9 GB with 16,384-row forwards, past the usable limit, which the linear
+    # segment alone under-predicted. That measured shape is --eval-chunk-rows
+    # 16384; at the default (512-row forwards) the steep segment is not charged.
     one = replace(settings, collect_procs=1)
     assert collect_mod.check_vram(replace(one, concurrency=256)) is not None
     with pytest.raises(ValueError, match="usable limit"):
-        collect_mod.check_vram(replace(one, concurrency=512))
+        collect_mod.check_vram(replace(one, concurrency=512, eval_chunk_rows=16384))
+    assert collect_mod.check_vram(replace(one, concurrency=512)) is not None
     # A shape no process count fits is not told to use --collect-procs 1.
     with pytest.raises(ValueError, match="no process count fits at --concurrency 1024: lower") as err:
         collect_mod.check_vram(replace(one, concurrency=1024, games=2048))
@@ -582,3 +585,51 @@ def test_an_arm_of_a_source_without_run_config_takes_the_collect_manifest_shape(
     (legacy / "gen_0001" / "collect" / "manifest.json").write_text(json.dumps({"config": {"settings": {}}}))
     a.collect_from = str(legacy)
     assert simple_rl_loop.resolve_collect_shape(a) == (1, 64)  # predates both keys
+
+
+def test_vram_charges_boards_and_the_largest_forward_not_the_leaf_reservation() -> None:
+    """A wider topk reserves a larger leaf buffer that no forward reaches once
+    forwards are chunked: the full-width arm's topk 32 / 64 at 3 x 128 is charged
+    like topk 16, and the measured unchunked shapes keep their charge."""
+    base = replace(_settings(3, games=384), concurrency=128, sims=64, device="cuda")
+    need16 = collect_mod.vram_need_gib(base)
+    assert need16 == pytest.approx(1.1 * (48 * 64 + 1.11 * 32 * 128) * 3 / 1024)  # every fitted point unchanged
+    for topk in (21, 32, 64):
+        assert collect_mod.vram_need_gib(replace(base, topk=topk)) == pytest.approx(need16)
+    # forwards of the whole topk-32 buffer (8,192 rows) are charged the steep segment
+    wide = replace(base, topk=32, eval_chunk_rows=8192)
+    assert collect_mod.vram_need_gib(wide) == pytest.approx(1.1 * (2.006 * 8192 - 4348) * 3 / 1024)
+    assert collect_mod.vram_need_gib(wide) > 0.83 * 31.84
+
+
+def test_eval_chunk_rows_reaches_the_evaluator_and_its_record(monkeypatch: pytest.MonkeyPatch) -> None:
+    import chess_anti_engine.inference as inference
+
+    seen: dict[str, Any] = {}
+
+    class Recorder:
+        def __init__(self, _model: Any, **kw: Any) -> None:
+            seen.update(kw)
+            self.forward_chunk_rows = kw["forward_chunk_rows"]
+            self._max_batch = kw["max_batch"]
+            self.cuda_graphs = True
+            self.cuda_graph_stats = {"replays": 1}
+
+    monkeypatch.setattr(inference, "DirectGPUEvaluator", Recorder)
+    settings = replace(_settings(1), device="cuda")
+    ev = collect_mod._evaluator(object(), settings)
+    assert (seen["forward_chunk_rows"], seen["cuda_graph_max_rows"]) == (512, 512)
+    assert collect_mod.evaluator_graph_record(ev)["eval_chunk_rows_realised"] == 512
+    ev = collect_mod._evaluator(object(), replace(settings, eval_chunk_rows=1024))
+    assert seen["forward_chunk_rows"] == 1024
+    assert collect_mod.evaluator_graph_record(ev)["eval_chunk_rows_realised"] == 1024
+    with pytest.raises(ValueError, match="--eval-chunk-rows"):
+        collect_mod.validate_settings(replace(settings, eval_chunk_rows=0))
+    recs = [collect_mod.evaluator_graph_record(ev)] * 2
+    assert collect_mod._combined_evaluator_record(recs)["eval_chunk_rows_realised"] == 1024
+
+
+def test_the_cli_flag_reaches_collect_settings() -> None:
+    a = simple_rl_loop.parser().parse_args(
+        ["collect", "--run-dir", "x", "--generation", "1", "--openings-dir", "o", "--eval-chunk-rows", "2048"])
+    assert simple_rl_loop.collect_settings(a).eval_chunk_rows == 2048

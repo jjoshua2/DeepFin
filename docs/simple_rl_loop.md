@@ -555,8 +555,11 @@ the next stage boundary, and the driver still refuses to START a stage while a
 pause marker exists.
 
 GPU memory: at the start the collect refuses, and never silently steps K down,
-when K × 1.10 × max(48 MiB per sim + 1.11 MiB per leaf row, 2.006 MiB per leaf row
-− 4348 MiB) exceeds the usable memory, min(free, 83% of the card). The first term is
+when K × 1.10 × max(48 MiB per sim + 35.52 MiB per board, 2.006 MiB per forward row
+− 4348 MiB) exceeds the usable memory, min(free, 83% of the card). Forward rows are
+min(leaf buffer, `--eval-chunk-rows`), and the board term is the fitted 1.11 MiB per
+leaf row at topk 16's 32 rows a board (identical on every fitted point; to be
+re-validated after forward chunking, see below). The first term is
 a least-squares fit to the multi-process and ≤ 256-game peaks (within −8% / +9% of
 each); above ~8k leaf rows in one process the peak grows faster (64 sims, 1 × 512
 peaked at 29.9 GB, 25% above the line), which the second term, through 1 × 256 and
@@ -613,6 +616,30 @@ GPU and 13% in launching forwards; tablebase probing (8%), the C search (6%),
 Stockfish labels (6%) and encoding (3%) are each small. The GPU is the
 bottleneck there, so moving any one CPU cost into C buys single-digit percent at
 most.
+
+## Forward chunking (`--eval-chunk-rows`)
+
+Peak GPU memory follows the rows of the largest network forward, about
+1.25 MiB per forwarded row per process at 64 sims (from the knob-off 2,048-row and
+full-width 4,096-row peaks, 20.6 vs 28.3 GB at 3 × 128). It does not follow the leaf
+buffer. The full-width root's round 0 hands every unvisited root child of every
+cold game to one call, about 4,500–5,300 rows at the synchronised start. With the
+buffer of a wider topk (8,192 rows at topk 32, 5,376 at topk 21) that went through
+as one eager forward per process, and both 3 × 128 shapes went over the card within
+30 s (operator diagnostics `mem_wide_20261122`, `mem_wide2_20261122`).
+
+The collect evaluator therefore never runs a forward above `--eval-chunk-rows` rows
+(default 512, the CUDA-graph row cap, so every chunk replays a captured graph). A
+larger call runs as consecutive forwards of at most that many rows on the same
+stream, written into one output in row order, with one completion event. The search
+is unchanged: it hands the same leaves, and the leaf buffer, flushes and the 2-group
+pipeline are not touched. Results are equal up to batch-size effects of the kernels
+(CPU fp32: max |Δ| 4.8e-7 policy logit, 1.8e-8 WDL on a 43-row batch chunked at 8).
+`eval_chunk_rows_realised` and the `chunked_forwards` / `forward_chunks` counters in
+`cuda_graph_stats` are read off the evaluator the search used.
+`DirectGPUEvaluator(forward_chunk_rows=...)` defaults to the evaluator's own graph
+cap when graphs are on, and to no bound otherwise, so the eager, compiled-bucket
+(UCI) and compact-legal evaluators are unchanged.
 
 ## Evaluator batch cap
 

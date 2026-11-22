@@ -108,6 +108,14 @@ class CollectSettings:
     # side's targets (docs/simple_rl_loop.md, "Evaluator batch cap"). An explicit
     # value below required_leaf_rows is refused.
     eval_max_batch: int | None = None
+    # Rows per network forward of the CUDA evaluator (``forward_chunk_rows``).
+    # None (default) = COLLECT_CUDA_GRAPH_MAX_ROWS, the largest batch the
+    # evaluator captures as a CUDA graph, so every forward replays one. It
+    # bounds peak memory (memory follows the rows of the largest forward, not
+    # the leaf buffer) and leaves the search unchanged: the C search hands the
+    # same leaves, a larger call is forwarded in row-ordered chunks. Results
+    # are equal up to bf16 batch-size effects. Execution-only.
+    eval_chunk_rows: int | None = None
     # Collect processes sharing the device (collect_generation). PINNED: each
     # process plays its own disjoint opening slice with its own seed, so K sets
     # the RNG streams and the batch composition. The driver defaults it to 3 on
@@ -399,6 +407,20 @@ def realised_eval_max_batch(settings: CollectSettings) -> int:
     return int(settings.eval_max_batch)
 
 
+# The collect evaluator's CUDA-graph row cap (DirectGPUEvaluator's
+# ``cuda_graph_max_rows`` default): batches above it would run eager.
+COLLECT_CUDA_GRAPH_MAX_ROWS = 512
+
+
+def realised_eval_chunk_rows(settings: CollectSettings) -> int:
+    """Rows per network forward of the collect's CUDA evaluator."""
+    if settings.eval_chunk_rows is None:
+        return COLLECT_CUDA_GRAPH_MAX_ROWS
+    if int(settings.eval_chunk_rows) < 1:
+        raise ValueError(f"--eval-chunk-rows must be >= 1, got {settings.eval_chunk_rows}")
+    return int(settings.eval_chunk_rows)
+
+
 def validate_settings(settings: CollectSettings) -> None:
     """Every refusal a collect would raise from its settings alone, raised up front.
 
@@ -411,6 +433,7 @@ def validate_settings(settings: CollectSettings) -> None:
         raise ValueError(f"--collect-procs {settings.collect_procs} must be between 1 and --games {settings.games}")
     if str(settings.device).startswith("cuda"):
         realised_eval_max_batch(settings)  # a leaf-dropping evaluator cap
+        realised_eval_chunk_rows(settings)
 
 
 def _evaluator(model: Any, settings: CollectSettings) -> Any:
@@ -426,7 +449,8 @@ def _evaluator(model: Any, settings: CollectSettings) -> Any:
     return DirectGPUEvaluator(model, device=settings.device, max_batch=realised_eval_max_batch(settings),
                               use_amp=True, amp_dtype="bfloat16", n_slots=1, input_bf16=False,
                               legal_bf16=False, pad_to_compiled_buckets=False,
-                              cuda_graphs=True)
+                              cuda_graphs=True, cuda_graph_max_rows=COLLECT_CUDA_GRAPH_MAX_ROWS,
+                              forward_chunk_rows=realised_eval_chunk_rows(settings))
 
 
 def evaluator_graph_record(evaluator: Any) -> dict[str, Any]:
@@ -438,7 +462,9 @@ def evaluator_graph_record(evaluator: Any) -> dict[str, Any]:
             "evaluator_mode": "cuda_graphs" if graphs else ("eager_cpu" if evaluator is None else "eager"),
             "cuda_graph_stats": getattr(evaluator, "cuda_graph_stats", None),
             # read off the evaluator the search consumed (None on CPU: no cap)
-            "eval_max_batch_realised": None if max_batch is None else int(max_batch)}
+            "eval_max_batch_realised": None if max_batch is None else int(max_batch),
+            # read off the same evaluator: the most rows one network forward ran
+            "eval_chunk_rows_realised": getattr(evaluator, "forward_chunk_rows", None)}
 
 
 PLAN = "plan.json"
@@ -468,8 +494,19 @@ class CollectDrained(Exception):
 # x 512 games in ONE process (16384 rows) peaked at 28,515 MiB, which the line puts
 # at 21,260 (-25%). The steep segment through 1 x 256 and 1 x 512 (64 sims) is
 # ~2.006 MiB per row - 4348 MiB; the model takes the larger of the two.
+# Since forwards are chunked (``eval_chunk_rows``) the two terms are charged by
+# what each one tracks (TO BE RE-VALIDATED against the post-chunking
+# measurements of knob-off, full-width topk 16 and topk 32 at 3 x 128):
+#   * the line by BOARDS: every fitted point is topk 16, whose leaf buffer is 32
+#     rows a board, so 1.11 MiB a row is 35.52 MiB a board on every fitted point;
+#     charging the board keeps the fit there and stops a wider topk (a larger
+#     reservation no forward reaches) from charging memory it never uses;
+#   * the steep segment by the rows of the largest FORWARD, min(leaf buffer,
+#     eval_chunk_rows): it was measured with 8k-16k-row eager forwards
+#     (memory follows rows forwarded, ~1.25 MiB a row: mem_wide2_20261122).
 _VRAM_MIB_PER_SIM = 48.0
 _VRAM_MIB_PER_LEAF_ROW = 1.11
+_VRAM_FIT_ROWS_PER_BOARD = 32  # topk 16 x 2 (leaf_buffer_rows at every fitted point)
 _VRAM_STEEP_MIB_PER_LEAF_ROW = 2.006
 _VRAM_STEEP_MIB_OFFSET = -4348.0
 _VRAM_SAFETY = 1.10
@@ -563,9 +600,10 @@ def proc_openings(openings: list[dict[str, Any]], proc: int, procs: int) -> list
 
 def vram_need_gib(settings: CollectSettings) -> float:
     """Conservative peak VRAM of ``collect_procs`` processes at these settings (GiB)."""
-    rows = realised_eval_max_batch(settings)
-    per_mib = max(_VRAM_MIB_PER_SIM * int(settings.sims) + _VRAM_MIB_PER_LEAF_ROW * rows,
-                  _VRAM_STEEP_MIB_PER_LEAF_ROW * rows + _VRAM_STEEP_MIB_OFFSET)
+    boards = max(1, min(int(settings.concurrency), int(settings.games)))
+    forward_rows = min(realised_eval_max_batch(settings), realised_eval_chunk_rows(settings))
+    per_mib = max(_VRAM_MIB_PER_SIM * int(settings.sims) + _VRAM_MIB_PER_LEAF_ROW * _VRAM_FIT_ROWS_PER_BOARD * boards,
+                  _VRAM_STEEP_MIB_PER_LEAF_ROW * forward_rows + _VRAM_STEEP_MIB_OFFSET)
     return _VRAM_SAFETY * per_mib * int(settings.collect_procs) / 1024.0
 
 
@@ -1239,7 +1277,8 @@ def _combined_evaluator_record(records: list[dict[str, Any]]) -> dict[str, Any]:
     return {"cuda_graphs": all(bool(r.get("cuda_graphs")) for r in records),
             "evaluator_mode": records[0].get("evaluator_mode") if len(modes) == 1 else "mixed",
             "cuda_graph_stats": _sum_graph_stats(records),
-            "eval_max_batch_realised": common("eval_max_batch_realised")}
+            "eval_max_batch_realised": common("eval_max_batch_realised"),
+            "eval_chunk_rows_realised": common("eval_chunk_rows_realised")}
 
 
 def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, train_jsonl: Path,
