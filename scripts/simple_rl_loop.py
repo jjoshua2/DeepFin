@@ -695,7 +695,8 @@ def _common(p: argparse.ArgumentParser) -> None:
                    help="TEMPORARY, for the N comparison: most rows one network forward of the CUDA evaluator "
                         "runs (1..2048); a larger leaf batch is forwarded in row-ordered chunks (same search, results "
                         "equal up to bf16 batching effects). Default: the evaluator's CUDA-graph row cap (512), so "
-                        "every forward replays a graph; chunks above 512 rows run eager. Bounds peak GPU memory; "
+                        "every forward replays a graph; chunks above 512 rows run EAGER, counted in "
+                        "cuda_graph_stats eager_over_max_rows, which is 0 only at <= 512. Bounds peak GPU memory; "
                         "recorded as eval_chunk_rows_realised")
     c.add_argument("--collect-procs", type=int, default=None, metavar="K",
                    help="collect processes sharing the device, each playing a disjoint slice of the openings "

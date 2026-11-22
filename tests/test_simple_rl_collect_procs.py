@@ -429,6 +429,16 @@ def test_vram_refusal_uses_free_memory_and_the_usable_limit(monkeypatch: pytest.
     assert record is not None
     assert record["usable_gib"] == pytest.approx(0.83 * 32)
     assert record["source"] == "torch"  # the instrument that read the memory is on the record
+    # every fitted point forwarded its whole leaf buffer; a chunked shape is an extrapolation
+    assert record["extrapolated"] is (collect_mod.realised_eval_max_batch(settings) > 512)
+    unchunked = replace(settings, concurrency=32, games=32)  # 1,024 leaf rows: forwarded whole at N = 1024
+    assert collect_mod.realised_eval_max_batch(unchunked) == 1024
+    small = collect_mod.check_vram(replace(unchunked, eval_chunk_rows=1024))
+    assert small is not None
+    assert small["extrapolated"] is False
+    wide = collect_mod.check_vram(replace(settings, concurrency=128, games=384, sims=64))
+    assert wide is not None
+    assert wide["extrapolated"] is True
     # 16 sims: the default 8 x 64 (measured 22.9 GB) fits; 8 x 96 (31.0 GB, ran
     # 22% slower) is past the usable limit although the card has 31 GiB free.
     assert collect_mod.check_vram(replace(settings, collect_procs=8, concurrency=64, sims=16)) is not None
@@ -595,6 +605,9 @@ def test_vram_charges_boards_and_the_largest_forward_not_the_leaf_reservation() 
     base = replace(_settings(3, games=384), concurrency=128, sims=64, device="cuda")
     need16 = collect_mod.vram_need_gib(base)
     assert need16 == pytest.approx(1.1 * (48 * 64 + 1.11 * 32 * 128) * 3 / 1024)  # every fitted point unchanged
+    # NOT a claim that these charges are right: they equal topk 16's because forwards are
+    # chunked. topk 21 at 41 sims (20.99 GiB here) went over the card unchunked
+    # (mem_wide2_20261122) and is on the refit PR's must-refuse-unchunked list.
     for topk in (21, 32, 64):
         assert collect_mod.vram_need_gib(replace(base, topk=topk)) == pytest.approx(need16)
     # The check vouches for forwards up to 2,048 rows (measured 6,476 MiB per process at

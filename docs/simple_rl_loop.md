@@ -641,7 +641,11 @@ read off the evaluator the search used. Every entry chunks, sync and async, on C
 and on the CPU.
 
 `--eval-chunk-rows` accepts 1 to 2,048, and is temporary, for the N comparison.
-Chunks above 512 rows run eager, not as graphs. The memory check vouches only for
+Chunks above 512 rows (the graph cap) are eager forwards, not graph replays: they
+count in `cuda_graph_stats` `eager_over_max_rows`, which is 0 only at N ≤ 512. The
+GPU memory check marks every chunked shape `extrapolated` in its record and log
+line: its fit was made on unchunked peaks. At 3 × 128, N = 512 it predicts 8,381
+MiB per process against a measured 2,560–2,684. The memory check vouches only for
 forwards up to the largest eager forward its line was measured inside: 2,048 rows,
 6,476 MiB per process, against the line's 8,381. A 4,096-row forward measured 9,061
 MiB per process, outside the line, and a 5,300-row forward went over the card. Yet

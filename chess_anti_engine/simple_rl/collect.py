@@ -514,6 +514,13 @@ class CollectDrained(Exception):
 #   * the steep segment by the rows of the largest FORWARD, min(leaf buffer,
 #     eval_chunk_rows): it was measured with 8k-16k-row eager forwards
 #     (memory follows rows forwarded, ~1.25 MiB a row: mem_wide2_20261122).
+# A chunked shape lies OUTSIDE every fitted point (all were unchunked), so its
+# charge is an extrapolation and the record says so (``extrapolated``): at 3 x 128,
+# N = 512 the model predicts 8,381 MiB per process against a measured 2,560-2,684
+# (chunk_meas_20261122), ~3.2x conservative. Known wrong in the other direction,
+# for the refit's must-refuse list: topk 21 at 41 sims at 3 x 128 is charged like
+# topk 16 (20.99 GiB, passes) although that shape, unchunked, went over the card
+# (mem_wide2_20261122); it passes now only because chunking bounds its forwards.
 _VRAM_MIB_PER_SIM = 48.0
 _VRAM_MIB_PER_LEAF_ROW = 1.11
 _VRAM_FIT_ROWS_PER_BOARD = 32  # topk 16 x 2 (leaf_buffer_rows at every fitted point)
@@ -689,8 +696,14 @@ def check_vram(settings: CollectSettings) -> dict[str, Any] | None:
     free, total, source = _gpu_memory(settings)
     usable = min(free, VRAM_USABLE_FRACTION * total) / 2**30
     need = vram_need_gib(settings)
+    # every fitted point forwarded its whole leaf buffer at once; a chunked shape is outside them
+    extrapolated = realised_eval_chunk_rows(settings) < realised_eval_max_batch(settings)
     record = {"free_gib": free / 2**30, "total_gib": total / 2**30, "usable_gib": usable, "need_gib": need,
-              "collect_procs": int(settings.collect_procs), "source": source}
+              "collect_procs": int(settings.collect_procs), "source": source, "extrapolated": extrapolated}
+    if extrapolated:
+        print(f"[simple_rl] GPU memory check: {need:.1f} GiB is EXTRAPOLATED (forwards chunked at "
+              f"{realised_eval_chunk_rows(settings)} rows; the fit is unchunked; ~3x conservative at 3 x 128, "
+              "N = 512); refit pending", flush=True)
     if need > usable:
         per = need / int(settings.collect_procs)
         fit = int(usable // per)
