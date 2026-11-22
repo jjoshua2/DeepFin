@@ -943,7 +943,7 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
     - `diff`: `W · mean over pairs of (min(v_A, v_B) / 64) · Huber_0.2(Δv − dq)`.
       It regresses the difference, so it enforces the size of the gap as well as
       its sign.
-    - `order` (form version 2): per pair `(min(v_A, v_B) / 64) · 1[|dq| ≥ t] ·
+    - `order` (form version 3): per pair `(min(v_A, v_B) / 64) · 1[|dq| ≥ t] ·
       min(|dq|, 0.62) · relu(m_i − sign(dq) · Δv)`, with `m_i = min(m, |dq|)`,
       `m` = `--sibling-order-margin` and `t` = `--sibling-order-min-dq` (both
       required with `order`, refused otherwise).
@@ -957,9 +957,12 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
         wrong child costs the value given up, so a mis-ordered large gap costs more
         than a small one. It is bounded at the v2 pilot sidecar's weighted p90 of
         |dq| (0.619), so decided gaps do not dominate.
-      - Version 1, unweighted, was never registered. The term's snapshot state and
-        the phase resume key carry the form's version, so a version-1 phase never
-        resumes as version 2.
+      - Version 1, unweighted, was never registered. Version 2 weighted roots
+        (list unit) with ρ 0.13; version 3 uses 0.08 (below). The pair unit's loss
+        is the same in versions 2 and 3. The term's snapshot state and the phase
+        resume key carry the form's version, so a phase begun under another version
+        never resumes: its snapshots are refused with a message naming them, never
+        deleted (move `snapshots/` aside to start over).
       - The term goes quiet as pairs are satisfied. The summary's `active_pairs`
         counts pairs with a non-zero loss.
     - **Unit** (`--sibling-unit`, default `pairs`; `roots` needs `order`).
@@ -971,9 +974,13 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
         The term takes the first `--sibling-rows` ROOTS of the batch, forwards each
         child once, and scores EVERY pair among a root's children with `|dq| ≥ t`.
         Each root's loss is the mean over its eligible pairs. Roots are combined with
-        weight `n_eff = n / (1 + (n − 1) · 0.13)` (n = the root's eligible pairs),
-        normalised over the step's roots. `0.13` is the within-row pair correlation
-        from the sibling-target scoping bank, fixed and not refitted.
+        weight `n_eff = n / (1 + (n − 1) · 0.08)` (n = the root's eligible pairs),
+        normalised over the step's roots. `0.08` is the within-root pair correlation
+        measured on full root lists (pre-registered; 0.0782 [0.0681, 0.0924] over
+        66,334 roots, the SL base). It replaced 0.13, the within-row correlation of
+        K = 2 sampled pairs, which lay outside that interval (order form version 3).
+        It is fixed and not refitted, and one value serves every n although the
+        measured correlation varies with n (0.19 at 2–5 pairs, 0.06 at 16–30).
       - Chunks hold whole roots (pairs never cross roots), at most `2 ×
         --sibling-chunk-pairs` child positions unless one root is larger.
       - Use `--min-visits 2` or more: a pair with a 1-visit child carries no ordering

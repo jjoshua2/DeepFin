@@ -67,7 +67,7 @@ Version 1 (unweighted) was never registered.
 row) and averages over the step's pairs. ``roots`` (``SiblingListTerm``, order form
 only) reads a root-list sidecar (every eligible child of each root with >= 2), scores
 EVERY pair among a root's children with ``|dq| >= min_dq``, takes each root's mean and
-combines roots with weight n_eff = n / (1 + (n - 1) * 0.13) (``ROOT_PAIR_ICC``, fixed). Same pairs, same child
+combines roots with weight n_eff = n / (1 + (n - 1) * 0.08) (``ROOT_PAIR_ICC``, fixed). Same pairs, same child
 forwards, same chunking. An experiment arm, not an identity twin.
 
 **Chunked, with a backward per chunk** (the only path). The step's pairs are
@@ -120,13 +120,17 @@ HUBER_DELTA = 0.2
 # |dq|, bounded at the v2 pilot sidecar's min-visits-weighted p90 of |dq| (0.619) so decided / near-mate gaps (|dq| up
 # to 2) do not dominate. Part of the form's definition (no setting).
 ORDER_GAP_CAP = 0.62
-# Version of the ORDER form. 1 = unweighted (never registered); 2 = gap-weighted, pair and root-list units. Carried in
-# the term's snapshot state and the phase resume key, so a version-1 snapshot can never resume as version 2.
-ORDER_FORM_VERSION = 2
+# Version of the ORDER form. 1 = unweighted (never registered); 2 = gap-weighted, pair and root-list units, roots
+# weighted with rho 0.13; 3 = the same with rho 0.08 (ROOT_PAIR_ICC below; the pair unit's loss is unchanged). Carried in
+# the term's snapshot state and the phase resume key, so a snapshot of another version never resumes (it is refused).
+ORDER_FORM_VERSION = 3
 # Root-list unit: a root's pair losses are averaged, and roots are combined with weight n_eff = n / (1 + (n - 1) rho)
 # (n = the root's eligible pairs): the inverse-variance weight of a root's mean under a within-root correlation rho.
-# rho = 0.13 is FIXED from the sibling-target scoping bank (ICC of pairs within a row, 0.11-0.15); never refitted.
-ROOT_PAIR_ICC = 0.13
+# rho = 0.08 is FIXED: the pre-registered full-list measurement (operations bank rl-claude-20261119/
+# sibling-fulllist-rho: the SL base on every eligible child of 66,334 roots, rho 0.0782 [0.0681, 0.0924] by game
+# bootstrap; the earlier 0.13, from K = 2 sampled pairs per row, lies outside it). One rho for every n by that
+# registration, although it varies with n (0.19 at 2-5 pairs, 0.06 at 16-30); never refitted.
+ROOT_PAIR_ICC = 0.08
 PAIR_KIND = "simple_rl_sibling_pairs"
 LIST_KIND = "simple_rl_sibling_lists"
 LIST_SIDECAR_VERSION = 1  # 1: every non-terminal child with >= min_visits visits of every root with >= 2 of them
