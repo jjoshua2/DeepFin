@@ -130,8 +130,8 @@ From the 32 census roots, the net's top-4 prior moves were expanded to depth 4 a
 
 | criterion | value | NEARLY FREE band |
 |---|---:|---|
-| median group |ΔQ| spread | 0.0051 | ≤ 0.01: met |
-| p90 group |ΔQ| spread | **0.0352** | ≤ 0.03: **failed** |
+| median group \|ΔQ\| spread | 0.0051 | ≤ 0.01: met |
+| p90 group \|ΔQ\| spread | **0.0352** | ≤ 0.03: **failed** |
 | median group sym-KL | 0.00047 nats | ≤ 0.02: met |
 | median spread / sibling gap | 0.033 | ≤ 0.10: met |
 
