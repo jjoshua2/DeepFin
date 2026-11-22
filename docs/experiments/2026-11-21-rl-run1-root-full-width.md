@@ -12,7 +12,7 @@
   - **The measured remedy:** with forwards bounded at 512 rows, the same 3 × 128 shape peaked at 10,012 MiB for off,
     10,208 for C (`--topk 32`) and 9,848 for B (`--topk 16`)
     (`~/chess-artifacts/operations/rl-run1-root-full-width.opdiag/chunk_meas_20261122/README.md` [`ff0f38d5`],
-    `SHA256SUMS` [`288d7227`]).
+    `SHA256SUMS` [`91109598`], with `ADDENDUM_1.md` [`00fc377c`] correcting an arithmetic slip in the README).
   - **The bank enforces the hold**, not only these words. When the staged bank is swapped in, it carries a top-level
     `HOLD_REPIN` marker:
     - `gpu_guard.sh` v8, which every stage launcher sources first, refuses every stage with exit 14 while it exists;
@@ -243,12 +243,38 @@ The guard refuses unless **all** of these hold:
     visible from the host through its child pid namespace, so a real scan refuses while it lives. Such harnesses
     (this bank's `guard_test.sh` and its mutant runner among them) must not run while a registered stage relies on a
     re-guard. Both wait, before starting a pass, while the coordinator's `GPU_CHECK_HOLD` file exists (a 5 s file
-    test); the v12 runner waits until it has been absent for 60 s. **Known limit:** the harness's one read-only case
+    test); the v12 runner waits until it has been absent for 60 s.
+    - **No harness or mutant series runs while ANY registered stage relies on a re-guard (2026-11-22).** That
+      covers this bank's stages and every other bank's: generation 2's `launch_gen2.sh` re-guards before every
+      step, for up to 900 s. A v12 series at `--jobs 4` was started during generation 2 and stopped before its
+      collect→checks boundary for this reason. The hold file cannot protect such a boundary, because no operator
+      check raises it.
+    - **The v12 runner enforces this.** It requires `--banks <root,…>`, the registered bank roots. It refuses to
+      start, and it stops every in-flight harness (killing the namespace's init) within 5 s, while any of them is
+      active:
+      - a process holds an flock on `<bank>/.gpu_launch.lock`. This is read from `/proc/<pid>/fdinfo`, never by
+        taking the lock, which could refuse a real launch starting at that instant. `/proc/locks` omits these
+        locks on this kernel;
+      - or a step marker `<bank>/<name>.started` or `<bank>/<dir>/<name>.started` has no `<name>.exit` beside it.
+        A stale marker left by a crashed step also blocks; clear it first.
+    - Its self-test is `guard_test/runner_selftest_v12.txt`. It checks markers with and without `.exit`, a held
+      and a merely open lock, and that killing the init of an `unshare --fork` ends the tree. Against the live
+      banks, the runner refused while generation 2's launcher held its lock and `collect.started` had no
+      `collect.exit`. **Known limit:** the harness's one read-only case
     calls the REAL `nvidia-smi` before entering its namespace, and each call opens `/dev/dxg` for about 0.1 s, so a
     real scan elsewhere can see a holder at that instant. A v11 series ran four harnesses at a time and repeated
     that throughout. The v12 runner measures the real probe once per series (hold-gated) and passes it to every
-    harness, which then skips the call. It runs one harness at a time, and no series runs while a generation-2
-    stage boundary is in progress. The converse trap is in the harness itself: since the exemption, a "refused" or "excluded" case whose
+    harness, which then skips the call. It runs one harness at a time by default, and no series runs while a
+    generation-2 stage boundary is in progress.
+    - **Measured (strace, 2026-11-22):** the coordinator approved `--jobs 4` on this evidence.
+      - Method: `strace -f -y -e openat,open,openat2` over one full `run_mutants_v12.py M0` pass (200/200)
+        (`~/chess-artifacts/operations/rl-claude-20261119/guard-dxg-proof-v12/`).
+      - Result: 12 opens of `/dev/dxg`. Two are the runner's single probe, made before the namespace. The other ten
+        come from processes started after the harness exec'd `unshare`, where `/dev/dxg` is the `/dev/full` bind,
+        asserted before any case runs.
+      - **Limit of that proof:** clone and execve were not traced, so the split between inside and outside the
+        namespace rests on process order. After its probe, the runner's only child is the harness, which execs
+        `unshare` without probing once `GT_REAL_*` is set. The converse trap is in the harness itself: since the exemption, a "refused" or "excluded" case whose
     listed process runs WITH the empty entry passes whatever the scan does. Every argv-dependent case therefore
     reads `/proc/<pid>/environ` of the process it started and fails as VACUOUS if the exemption would apply.
   - **Known cosmetic defect (v5, left for the next batch to spare three re-pins).** A launcher log can show
