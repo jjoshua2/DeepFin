@@ -25,7 +25,10 @@ def install() -> None:
             return
 
         def start_recording_origin(self: threading.Thread) -> None:
-            _ORIGIN[self] = os.environ.get("PYTEST_CURRENT_TEST", "<outside any test>")
+            try:  # diagnostics only: never break Thread.start (e.g. an unhashable subclass)
+                _ORIGIN[self] = os.environ.get("PYTEST_CURRENT_TEST", "<outside any test>")
+            except Exception:
+                pass
             start(self)
 
         start_recording_origin._records_origin = True  # pyright: ignore[reportFunctionMemberAccess]
