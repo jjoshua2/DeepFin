@@ -20,7 +20,8 @@ Optional, each off by default: a KL anchor to a frozen reference net on the
 policy and/or WDL heads (attached through the Trainer's single penalty hook,
 the one ``configure_frozen_policy_anchor`` uses), and a fixed fraction of
 every batch drawn from an external supervised corpus whose rows keep their
-own labels.
+own labels, and the sibling-ordering value term (``w_sibling``; materialised
+child pairs, ``simple_rl/sibling.py``) on the same penalty hook.
 """
 from __future__ import annotations
 
@@ -39,7 +40,7 @@ import numpy as np
 
 from chess_anti_engine.simple_rl.collect import concat_arrays, gather_rows, generation_shards, shard_row_meta
 from chess_anti_engine.simple_rl.common import (
-    input_ref, resolve_collect_dir, seed_for, sha256_file, write_json_atomic, write_manifest,
+    input_ref, is_holdout_game, resolve_collect_dir, seed_for, sha256_file, write_json_atomic, write_manifest,
 )
 
 # Everything the configured loss reads, plus the flags that gate it. Other
@@ -206,6 +207,14 @@ class TrainSettings:
     # same in any row order, on a resume and in every arm. See value_row_weights
     # for the loss normalisation.
     value_rows_per_game: int = 0
+    # Sibling-ordering value term (simple_rl/sibling.py; 0 = off, the default
+    # path is unchanged). w * mean over pairs of (min(v_A, v_B)/64) *
+    # Huber_0.2(dv - dq) on child pairs materialised by
+    # scripts/simple_rl_sibling_pairs.py into sibling_dir/gen_<g>/. The first
+    # `sibling_rows` rows of each batch that carry pairs present all their pairs.
+    w_sibling: float = 0.0
+    sibling_rows: int = 128
+    sibling_dir: str | None = None
 
     def effective_batch(self) -> int:
         return int(self.batch_size) * int(self.accum_steps)
@@ -299,6 +308,7 @@ class TrainSettings:
             raise ValueError("value_rows_per_game > 0 with accum_steps > 1 is refused: micro-batches hold unequal "
                              "value-row counts, so the accumulated value gradient is not the effective batch's; "
                              "use accum_steps 1")
+        self._validate_sibling()
         if self.snapshot_updates and self.snapshot_rows:
             raise ValueError("snapshot_updates and snapshot_rows are alternatives; give one")
         rows = [int(k) for k in self.snapshot_rows]
@@ -314,6 +324,29 @@ class TrainSettings:
                                  "sample_with_replacement")
             if snaps[0] < 1 or any(b <= a for a, b in itertools.pairwise(snaps)):
                 raise ValueError(f"snapshot_updates must be strictly increasing positive update counts, got {snaps}")
+
+    def _validate_sibling(self) -> None:
+        w = float(self.w_sibling)
+        if not math.isfinite(w) or w < 0:
+            raise ValueError(f"w_sibling must be a finite value >= 0, got {self.w_sibling}")
+        if w == 0:
+            if self.sibling_dir is not None or int(self.sibling_rows) != 128:
+                raise ValueError("sibling_dir / sibling_rows are read only with w_sibling > 0; with w_sibling 0 "
+                                 "they would be ignored")
+            return
+        if not self.sibling_dir:
+            raise ValueError("w_sibling > 0 needs sibling_dir (the materialised pair sidecars, "
+                             "scripts/simple_rl_sibling_pairs.py)")
+        if not 1 <= int(self.sibling_rows) <= int(self.batch_size):
+            raise ValueError(f"sibling_rows must be in [1, batch_size {self.batch_size}], got {self.sibling_rows}")
+        if int(self.accum_steps) != 1:
+            # Same reason as the KL anchor: the term is a per-micro-batch mean
+            # added through the Trainer's penalty hook.
+            raise ValueError("w_sibling > 0 with accum_steps > 1 is refused: the sibling term is a per-micro-batch "
+                             "mean on the penalty hook, so under accumulation it is not the effective batch's")
+        if self.sample_with_replacement:
+            raise ValueError("w_sibling > 0 needs the exact-once schedule: the term reads the rows the scheduled "
+                             "sampler served for each batch, which sample_with_replacement does not record")
 
     def realised_grad_clip(self) -> str:
         return "none" if self.grad_clip is None else str(self.grad_clip)
@@ -407,11 +440,6 @@ def prepare_targets(rows: dict[str, np.ndarray], settings: TrainSettings,
     for k in TARGET_SOURCE_KEYS:
         out.pop(k, None)
     return out, info
-
-
-def is_holdout_game(game_id: int, frac: float) -> bool:
-    h = hashlib.sha256(f"holdout:{int(game_id)}".encode()).digest()
-    return int.from_bytes(h[:8], "little") / float(1 << 64) < float(frac)
 
 
 def _select(arrays: dict[str, np.ndarray], mask: np.ndarray) -> dict[str, np.ndarray]:
@@ -965,12 +993,17 @@ class ReferenceAnchor:
                 "mean_wdl_kl": self.wdl_kl_sum / self.rows if self.rows else None}
 
 
-def attach_anchor(trainer: Any, anchor: ReferenceAnchor) -> None:
-    """Install ``anchor`` on the Trainer's penalty hook, refusing a silent no-op."""
+def attach_anchor(trainer: Any, anchor: Any) -> None:
+    """Install ``anchor`` (any object with ``penalty(outputs, batch)``: the KL
+    anchor, the sibling term, or a ``sibling.PenaltyChain`` of both) on the
+    Trainer's penalty hook, refusing a silent no-op."""
     if not hasattr(trainer, "_frozen_policy_anchor"):
-        raise RuntimeError("Trainer has no _frozen_policy_anchor hook; the KL anchor would be ignored")
+        raise RuntimeError("Trainer has no _frozen_policy_anchor hook; the penalty would be ignored")
     if getattr(trainer, "_prefetch_batches", False) or trainer.accum_steps != 1 or hasattr(trainer.model, "_orig_mod"):
-        raise ValueError("the KL anchor needs eager, unprefetched, single-microbatch training")
+        raise ValueError("a penalty-hook term (KL anchor / sibling) needs eager, unprefetched, single-microbatch "
+                         "training")
+    if trainer._frozen_policy_anchor is not None:
+        raise RuntimeError("the Trainer's penalty hook is already taken; chain the terms (sibling.PenaltyChain)")
     trainer._frozen_policy_anchor = anchor
 
 
@@ -1609,7 +1642,7 @@ def _set_rng_states(states: dict[str, Any]) -> None:
 
 def write_snapshot(*, out_dir: Path, update: int, trainer: Any, arch: dict[str, Any], sampler: ScheduledSampler,
                    anchor: ReferenceAnchor | None, chunks: list[dict[str, Any]], measure: Callable[[], dict[str, Any]],
-                   resume_key: str) -> dict[str, Any]:
+                   resume_key: str, sibling: Any = None) -> dict[str, Any]:
     """Write ``train/snapshots/step_<update>/`` mid-phase. Nothing here touches
     the training that continues afterwards (the RNG streams are saved first and
     the measurements run under ``fork_rng``).
@@ -1646,7 +1679,8 @@ def write_snapshot(*, out_dir: Path, update: int, trainer: Any, arch: dict[str, 
                 "served": list(sampler.served), "served_sl": list(sampler.served_sl),
                 "drawn_rows": int(sampler.drawn_rows), "realised_sl_rows": int(sampler.realised_sl_rows),
                 "sampler_rng": sampler.rng.bit_generator.state, "rng": rng, "chunks": chunks,
-                "anchor": None if anchor is None else {k: getattr(anchor, k) for k in _ANCHOR_COUNTERS}},
+                "anchor": None if anchor is None else {k: getattr(anchor, k) for k in _ANCHOR_COUNTERS},
+                "sibling": None if sibling is None else sibling.state()},
                str(d / RESUME_STATE))
     record = {"update": int(update), "resume_key": resume_key,
               "files": {name: input_ref(d / name) for name in (MODEL_FILE, "metrics.json")}}
@@ -1677,7 +1711,7 @@ def resumable_snapshot(out_dir: Path, resume_key: str) -> int | None:
 
 
 def resume_from_snapshot(out_dir: Path, update: int, *, trainer: Any, sampler: ScheduledSampler,
-                         anchor: ReferenceAnchor | None) -> list[dict[str, Any]]:
+                         anchor: ReferenceAnchor | None, sibling: Any = None) -> list[dict[str, Any]]:
     """Restore the phase's whole state as it was when ``step_<update>`` was
     written; returns the trainer metrics of the chunks already trained."""
     import torch
@@ -1694,6 +1728,10 @@ def resume_from_snapshot(out_dir: Path, update: int, *, trainer: Any, sampler: S
     if anchor is not None and state["anchor"] is not None:
         for k in _ANCHOR_COUNTERS:
             setattr(anchor, k, state["anchor"][k])
+    if sibling is not None:
+        if state.get("sibling") is None:
+            raise RuntimeError(f"snapshot step_{update} has no sibling-term state but the phase trains it")
+        sibling.restore(state["sibling"])
     _set_rng_states(state["rng"])
     return list(state["chunks"])
 
@@ -1845,7 +1883,26 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
             raise ValueError("a KL anchor needs a reference checkpoint")
         reference = load_model_from_checkpoint(Path(settings.kl_reference), device=settings.device)
         anchor = ReferenceAnchor(reference, policy_coef=settings.kl_policy, wdl_coef=settings.kl_wdl)
-        attach_anchor(trainer, anchor)
+    sibling: Any = None
+    sibling_pairs: Any = None
+    sibling_probe_before: dict[str, Any] | None = None
+    if float(settings.w_sibling) > 0:
+        from chess_anti_engine.simple_rl.sibling import SiblingTerm, load_sidecars
+
+        if not isinstance(sampler, ScheduledSampler):
+            raise ValueError("w_sibling > 0 needs the exact-once ScheduledSampler")
+        assert settings.sibling_dir is not None  # validate()
+        sibling_pairs = load_sidecars(run_dir, gens, row_ids, Path(settings.sibling_dir),
+                                      holdout_frac=float(settings.holdout_frac), newest=generation)
+        sibling = SiblingTerm(trainer.model, sampler, sibling_pairs, w=float(settings.w_sibling),
+                              rows=int(settings.sibling_rows), device=settings.device)
+        sibling_probe_before = sibling.probe_abs_resid()
+    if anchor is not None and sibling is not None:
+        from chess_anti_engine.simple_rl.sibling import PenaltyChain
+
+        attach_anchor(trainer, PenaltyChain([anchor, sibling]))
+    elif anchor is not None or sibling is not None:
+        attach_anchor(trainer, anchor if anchor is not None else sibling)
 
     if int(trainer.accum_steps) != int(settings.accum_steps):
         raise RuntimeError(f"Trainer realised accum_steps {trainer.accum_steps}, requested {settings.accum_steps}")
@@ -1885,7 +1942,8 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
             if resumed_from is None or int(d.name.split("_")[1]) > resumed_from:
                 shutil.rmtree(d)
         if resumed_from is not None:
-            chunks = resume_from_snapshot(out_dir, resumed_from, trainer=trainer, sampler=sampler, anchor=anchor)
+            chunks = resume_from_snapshot(out_dir, resumed_from, trainer=trainer, sampler=sampler, anchor=anchor,
+                                          sibling=sibling)
             if int(trainer.step) != start_step + resumed_from:
                 raise RuntimeError(f"snapshot step_{resumed_from} restored trainer step {int(trainer.step)}, "
                                    f"expected {start_step + resumed_from}")
@@ -1907,7 +1965,8 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
             done = k
             if k in snapshots:
                 rec = write_snapshot(out_dir=out_dir, update=k, trainer=trainer, arch=arch, sampler=sampler,
-                                     anchor=anchor, chunks=chunks, measure=measure, resume_key=resume_key)
+                                     anchor=anchor, chunks=chunks, measure=measure, resume_key=resume_key,
+                                     sibling=sibling)
                 snapshot_records.append({key: rec[key] for key in ("update", "resume_key", "files")})
     wall = time.perf_counter() - t0
     if int(trainer.step) != start_step + updates:
@@ -1926,6 +1985,21 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
     np.savez(out_dir / PRESENTED, gen=presented_ids[:, 0].astype(np.int32), row=presented_ids[:, 1].astype(np.int32),
              sl_start=np.asarray(sl_cursor), sl_end=np.asarray(sl_end), sl_rows=sl_served.astype(np.int64))
     after = heldout_metrics(trainer.model, holdout, settings.device)
+    sibling_summary: dict[str, Any] | None = None
+    if sibling is not None:
+        gen_cfg = next(iter(sibling_pairs.record["generations"].values()))["config"]
+        sibling_summary = {
+            **sibling.summary(), "k": gen_cfg["k"], "min_visits": gen_cfg["min_visits"],
+            "probe_before": sibling_probe_before, "probe_after": sibling.probe_abs_resid(),
+            "train_rows_with_pairs": int((sibling_pairs.row_count > 0).sum()),
+            "sidecars": sibling_pairs.record,
+            # How it composes: the KL anchor (kl_policy / kl_wdl) and this term share
+            # the penalty hook through PenaltyChain and add; the anchor reads the
+            # root batch only. value_rows_per_game masks the ROOT WDL term only, so
+            # sibling pairs come from any row of the batch whatever r is.
+            "composition": {"kl_anchor_chained": anchor is not None,
+                            "value_rows_per_game": int(settings.value_rows_per_game)},
+        }
     drift = probe_drift(trainer.model, previous_model(), probe, settings.device)
     realised_lr = [float(g["lr"]) for g in trainer.opt.param_groups]
     realised_opt = realised_optimizer(trainer)  # read off the live optimizer after the phase's steps
@@ -1970,7 +2044,8 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
         "value_rows": value_rows_info,
         "losses": {k: m[k] for k in ("loss", "policy_loss", "wdl_loss", "blended_wdl_loss") if k in m},
         "heldout_before": before, "heldout_after": after, "probe_vs_previous": drift,
-        "anchor": None if anchor is None else anchor.diagnostics(), "wall_seconds": wall,
+        "anchor": None if anchor is None else anchor.diagnostics(), "sibling": sibling_summary,
+        "wall_seconds": wall,
         "updates_per_second": (updates - (resumed_from or 0)) / max(wall, 1e-9),
         "snapshot_updates": snapshots, "resumed_from_snapshot": resumed_from,
         "snapshot_rows": [int(r) for r in settings.snapshot_rows],
@@ -1989,6 +2064,11 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
     if reference_prior is not None and settings.prior_mix_reference:
         inputs["prior_mix_reference"] = input_ref(Path(settings.prior_mix_reference))
     inputs["probe"] = input_ref(probe_path)
+    if sibling is not None:
+        from chess_anti_engine.simple_rl.sibling import SIDECAR_MANIFEST
+
+        for g in gens:
+            inputs[f"sibling_gen_{g:04d}"] = input_ref(Path(str(settings.sibling_dir)) / f"gen_{g:04d}" / SIDECAR_MANIFEST)
     for k, shard in enumerate(sl_shards):
         inputs[f"sl_shard_{k:04d}"] = input_ref(shard)
     # Each snapshot's files, re-hashed now: the seal vouches for what is on disk.
@@ -2049,4 +2129,12 @@ def snapshot_resume_key(*, settings: TrainSettings, generation: int, init_checkp
              "prev": None if prev_trainer_checkpoint is None else sha256_file(prev_trainer_checkpoint),
              "collects": {g: sha256_file(Path(run_dir) / f"gen_{g:04d}" / "collect" / "manifest.json") for g in gens},
              "probe": sha256_file(probe_path), "plan": h.hexdigest()}
+    if float(settings.w_sibling) > 0:
+        # The sidecar CONTENT, not just its path: a re-materialised sidecar at the
+        # same --sibling-dir is another phase. Added only with the term on, so the
+        # default key is unchanged.
+        from chess_anti_engine.simple_rl.sibling import SIDECAR_MANIFEST
+
+        ident["sibling_sidecars"] = {g: sha256_file(Path(str(settings.sibling_dir)) / f"gen_{g:04d}" / SIDECAR_MANIFEST)
+                                     for g in gens}
     return hashlib.sha256(json.dumps(ident, sort_keys=True, default=str).encode()).hexdigest()

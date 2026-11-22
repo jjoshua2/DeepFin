@@ -193,6 +193,7 @@ def train_settings(a: argparse.Namespace, run_dir: Path) -> TrainSettings:
         lr_schedule=a.lr_schedule,
         accum_steps=a.accum_steps, snapshot_rows=parse_snapshot_updates(a.snapshot_rows, flag="--snapshot-rows"),
         value_rows_per_game=a.value_rows_per_game,
+        w_sibling=a.w_sibling, sibling_rows=a.sibling_rows, sibling_dir=a.sibling_dir,
     )
     settings.validate()
     if settings.optimizer_hparams_source != "trainer":
@@ -343,7 +344,9 @@ ADDED_SINCE_PINNING = {"init_optimizer_state": "fresh",
                        # Every collect before --collect-procs ran as one process.
                        "collect_procs": 1, "accum_steps": 1, "snapshot_rows": None,
                        # Every run before --value-rows-per-game trained the value on every row.
-                       "value_rows_per_game": 0}
+                       "value_rows_per_game": 0,
+                       # Every run before --w-sibling trained no sibling term.
+                       "w_sibling": 0.0, "sibling_rows": 128, "sibling_dir": None}
 
 
 def _pinned_value(path: Path, key: str, legacy: Any) -> Any:
@@ -762,6 +765,19 @@ def _common(p: argparse.ArgumentParser) -> None:
                         "row's weight is 1 / its share of network-turn rows), so --w-wdl keeps its meaning. "
                         "Pinned in run_config.json. Refused with --accum-steps > 1, --sl-mix-frac > 0 or "
                         "--w-wdl 0. Default 0 = every row (unchanged)")
+    t.add_argument("--w-sibling", type=float, default=0.0,
+                   help="sibling-ordering value term: w * mean over child pairs of (min visits / 64) * "
+                        "Huber_0.2(v(A) - v(B) - (q_A - q_B)), children through the same net in the same step "
+                        "(chess_anti_engine/simple_rl/sibling.py). Needs --sibling-dir; refused with "
+                        "--accum-steps > 1 or --sample-with-replacement; chains with --kl-policy/--kl-wdl; "
+                        "independent of --value-rows-per-game (which masks root rows only). Default 0 = off "
+                        "(the default path is unchanged)")
+    t.add_argument("--sibling-rows", type=int, default=128,
+                   help="with --w-sibling: how many of each batch's rows (the first that carry pairs, in the "
+                        "batch's shuffled order) present their pairs. Default 128")
+    t.add_argument("--sibling-dir", default=None,
+                   help="with --w-sibling: directory holding gen_<g>/ sidecars written by "
+                        "scripts/simple_rl_sibling_pairs.py for every generation the phase trains on")
     t.add_argument("--mirror-prob", type=float, default=0.5)
     t.add_argument("--w-policy", type=float, default=1.0)
     t.add_argument("--w-wdl", type=float, default=1.0, help="0 = policy only")
