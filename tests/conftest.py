@@ -104,6 +104,29 @@ def resolve_thread_cap() -> int | None:
     return cap
 
 
+# ⚑⚑ `CUDA_VISIBLE_DEVICES=` (empty) does NOT keep a process off the GPU on
+# WSL2. `torch.cuda.is_available()` defaults to `cudaGetDeviceCount`, which runs
+# `cuInit`, and on WSL2 the driver opens the adapter (/dev/dxg) BEFORE it
+# applies the visibility mask -- and holds that fd for the life of the process.
+# Measured 2026-11-22 with torch 2.10.0+cu128 and 2.11.0+cu128: with the
+# variable empty, `is_available()` returns False and the process holds
+# /dev/dxg; `device_count()` (the NVML path, which returns 0 for an empty mask
+# before it even loads NVML) opens nothing. The suite reached the real device
+# eight times from `tests/test_uci_selfcheck.py` alone (a real `check_torch`,
+# and engine children started with `--device auto`). A test must never
+# initialise the real GPU: on this box that has crashed training before.
+#
+# `PYTORCH_NVML_BASED_CUDA_CHECK=1` routes `is_available()` through that NVML
+# path. torch reads it on EVERY `is_available()` call (`os.getenv` in
+# `torch.cuda._nvml_based_avail`), not at import, so a plugin that imported
+# torch before this line does not make it late. Children inherit it, like the
+# thread caps below; a child started with an `env` built from scratch does not.
+# Caveat: if NVML discovery/initialisation fails, torch falls back to
+# `cudaGetDeviceCount` (and so to `cuInit`). With a GPU visible (the variable
+# unset), NVML counts it and `is_available()` is still True. `setdefault`: an
+# explicitly exported value (e.g. `0`) still wins.
+os.environ.setdefault("PYTORCH_NVML_BASED_CUDA_CHECK", "1")
+
 _RAW = os.environ.get(_ENV)
 _CAP, _CAP_IS_FALLBACK = classify_thread_cap(_RAW)
 
