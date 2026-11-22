@@ -16,7 +16,9 @@ What counts as a citation
 * A backticked bare relative name (`results.jsonl`, `logs/p1.log`) only when a
   stamp follows it. It resolves against the directory of the most recent
   prefixed citation: earlier on the same line, else on an earlier line.
-  Unstamped bare names are prose (repo paths, flags), not citations.
+  Unstamped bare names are prose (repo paths, flags), not citations, and so is a
+  stamped bare name under a top-level repo code directory that does not resolve in
+  the bank (`scripts/x.py` [`<commit>`] cites code at a commit, not a bank file).
 
 Stamps
 ------
@@ -40,9 +42,13 @@ Statuses
 --------
 One line per citation: OK, DRIFT (the stamp does not match the file), MISSING (the
 path does not resolve) and MALFORMED: a stamp-like bracket the strict form rejects
-(too short, upper-case, no backticks, a bad mtime, separated from its token by a
-colon, or not attached to any token), or a near-miss of a known prefix (`rc/`,
-`RC /`). A MALFORMED citation would otherwise be silently skipped.
+(too short, upper-case, no backticks, letters-only hex without backticks, a bad
+mtime, or separated from its token by a colon), or a near-miss of a known prefix
+(`rc/`, `RC /`). A MALFORMED citation would otherwise be silently skipped. The
+check fires only where a stamp can be: directly after a backticked path-like token
+(one containing `/`, a glob or brace, or ending in an extension), or wrapped onto
+the next line after one. Brackets in prose (`fixed in [0c795fb7a]`, a markdown link
+`[a0bc34416](...)`, `the [mtime column]`) are not stamps and stay silent.
 
 Prefix map
 ----------
@@ -83,13 +89,25 @@ _TOKEN_RE = re.compile(
     r"(?P<stamp>\s*(?:(?P<shas>\[`" + _HEX + r"`\]?(?:\s*/\s*\[?`" + _HEX + r"`\]?)*)"
     r"|\[mtime (?P<mtime>\d\d-\d\d \d\d:\d\d)\]))?"
 )
-# Anything that looks like a stamp; checked against the spans the strict form consumed.
-_LOOSE_STAMP_RE = re.compile(
-    r"\[\s*`[0-9A-Fa-f]+`"  # backticked hex of any length or case
-    r"|\[\s*(?=[0-9A-Fa-f]*\d)(?=[0-9A-Fa-f]*[A-Fa-f])[0-9A-Fa-f]{6,64}(?=[\s\]/])"  # bare hex
-    r"|\[\s*mtime\b",
-    re.IGNORECASE,
+# A stamp-like bracket DIRECTLY after a backticked path-like token (an optional
+# colon allowed): backticked hex of any length or case, bare hex of 6+ (letters-only
+# included), or `[mtime <digit>`. Never a markdown link `[...](`.
+_LOOSE_AFTER_TOKEN_RE = re.compile(
+    r"\s*:?\s*\[\s*(?:`[0-9A-Fa-f]+`|[0-9A-Fa-f]{6,64}(?=[\s\]/])|mtime\s*\d)"
 )
+# Top-level code directories of this repo. A stamped bare name under one of these
+# that does not resolve in the bank cites code at a commit, not a bank file (a bank
+# copy such as `scripts/sibling_order.py` beside a bank citation is still checked).
+_REPO_CODE_DIRS = frozenset({"chess_anti_engine", "configs", "docs", "scripts", "tests", "tools"})
+
+
+def _is_repo_path(token: str) -> bool:
+    """`scripts/x.py` [`<commit>`] names repo code at a commit, not a bank file."""
+    head = token.split("/", 1)[0]
+    return "/" in token and head in _REPO_CODE_DIRS
+
+
+_PATH_LIKE_RE = re.compile(r"[/*{}]|\.[A-Za-z0-9]+$")
 _PREFIX_TABLE_RE = re.compile(r"^\|\s*Prefix\s*\|\s*Expands to\s*\|")
 _TABLE_ROW_RE = re.compile(r"^\|\s*`([^`]+)`\s*\|\s*`([^`]+)`\s*\|")
 _TZ_RE = re.compile(r"Stamp time zone:\s*`([^`]+)`")
@@ -205,7 +223,7 @@ def _resolve(path: str) -> list[list[str]]:
     return groups
 
 
-_WRAPPED_STAMP_RE = re.compile(r"^\s*\[(?:`|mtime\b)")
+_WRAPPED_STAMP_RE = re.compile(r"^\s*\[(?:`|mtime\s*\d|[0-9A-Fa-f]{6,64}(?=[\s\]/]))")
 
 
 def _logical_lines(text: str) -> list[tuple[int, str]]:
@@ -286,6 +304,8 @@ class Verifier:
                 if path is None:
                     if not stamped or token.startswith("/") or " " in token:
                         continue
+                    if _is_repo_path(token) and (last_dir is None or not all(_resolve(last_dir + "/" + token))):
+                        continue  # repo code at a commit, not a bank file
                     if last_dir is None:
                         cite(token, "MISSING", "bare name with no earlier citation")
                         continue
@@ -299,15 +319,17 @@ class Verifier:
                         last_dir = first if os.path.isdir(first) else os.path.dirname(first)
                     elif first is not None:
                         last_dir = os.path.dirname(first)
-            for lm in _LOOSE_STAMP_RE.finditer(line):
-                pos = lm.start()
-                if any(a <= pos < b for a, b in consumed):
+            for _start, end, token in token_spans:
+                if any(a <= end < b for a, b in consumed) or not _PATH_LIKE_RE.search(token):
                     continue
-                before = [t for _s, e, t in token_spans if e <= pos]
-                owner = before[-1] if before else "(no token)"
-                end = line.find("]", pos)
-                text = line[pos: end + 1 if end >= 0 else pos + 40]
-                cite(owner, "MALFORMED", f"stamp-like {text!r} not in the strict form "
+                lm = _LOOSE_AFTER_TOKEN_RE.match(line, end)
+                if not lm:
+                    continue
+                close = line.find("]", lm.end())
+                if close >= 0 and line[close + 1: close + 2] == "(":
+                    continue  # a markdown link, not a stamp
+                text = line[line.find("[", end): close + 1 if close >= 0 else lm.end() + 40]
+                cite(token, "MALFORMED", f"stamp-like {text!r} not in the strict form "
                      f"([`<{MIN_SHA}+ lower-case hex>`] or [mtime MM-DD HH:MM] directly after the token)")
         return cites
 

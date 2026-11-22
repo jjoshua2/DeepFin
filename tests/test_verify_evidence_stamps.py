@@ -282,3 +282,31 @@ def test_stamp_wrapped_onto_the_next_line_still_counts(bank: dict[str, Path]) ->
     rc, out, _ = _run(bank, "See `B/arenas/m1/pool.json`\n  [`deadbeef`].\n")
     assert rc == 1, out
     assert _status(out, "DRIFT"), out
+
+
+@pytest.mark.parametrize(
+    "prose",
+    [
+        "fixed in [0c795fb7a] by the reviewer.",  # commit in brackets
+        "see [a0bc34416](https://example.invalid/commit/a0bc34416).",  # markdown commit link
+        "merged as [`7fea1b889`].",  # backticked commit after a prose word
+        "the [mtime column] is local.",  # prose mtime
+        "the run [deadbeef] and [cafe1234 rows].",  # hex words
+        "see `docs/README.md` [a0bc34416](https://example.invalid/commit/a0bc34416).",  # link after a path
+        "the `F/arenas/` [mtime column] is listed.",  # prose mtime after a path
+        "the `v2` [cafe1234 rows] table.",  # hex word after a token that is not path-like
+        "see `docs/README.md`, fixed later in [0c795fb7a].",  # bracket later on the line, not after the token
+        "`scripts/arena_x.py` [`a0bc34416`] carries the fix.",  # repo code at a commit
+        "see `chess_anti_engine/x.py`\n[`a0bc34416`] for the code.",  # same, wrapped
+    ],
+)
+def test_prose_brackets_are_silent(bank: dict[str, Path], prose: str) -> None:
+    rc, out, _ = _run(bank, prose + "\n")
+    assert rc == 0, out
+    assert not _status(out, "MALFORMED"), out
+
+
+def test_letters_only_hex_after_a_token_is_malformed(bank: dict[str, Path]) -> None:
+    rc, out, _ = _run(bank, _ok_row(bank) + "| x | `B/arenas/m1/pool.json` [deadbeef] |\n")
+    assert rc == 1, out
+    assert _status(out, "MALFORMED"), out
