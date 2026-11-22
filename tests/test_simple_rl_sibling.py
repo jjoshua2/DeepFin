@@ -541,25 +541,50 @@ def test_the_search_terminal_rule_excludes_a_two_fold_repetition() -> None:
     assert sib.search_terminal(mate) == "game_over"
 
 
-def test_no_paired_child_is_terminal_by_the_search_rule(run: dict[str, Path]) -> None:
+def _terminal_by_python_chess(board: chess.Board) -> bool:
+    """The search's terminal rule restated in python-chess, independent of
+    ``sib.search_terminal`` (which goes through the C board): game over, the
+    50-move rule, or any 2-fold repetition over the FULL move history."""
+    return (board.is_checkmate() or board.is_stalemate() or board.is_insufficient_material()
+            or board.is_fifty_moves() or board.is_repetition(2))
+
+
+def test_terminal_children_are_excluded_by_an_independent_rule(run: dict[str, Path]) -> None:
+    """Every candidate child (visits >= min_visits) is classified with python-chess
+    on a board carrying the opening line and every game move. The sidecar pairs
+    none of the terminal ones, and its exclusion count is exactly theirs."""
     from chess_anti_engine.moves.encode import index_to_move_for_encoding
+    from chess_anti_engine.simple_rl.collect import shard_row_meta
 
     view = sib.open_collect(run["collect"])
     sib.apply_collect_regime(view)
-    man = json.loads((run["side"] / "gen_0001" / sib.SIDECAR_MANIFEST).read_text())
+    side = run["tmp"] / "terminal_rule_side"
+    man = sib.materialise(run["collect"], side, k=6, min_visits=1, seed=3, holdout_frac=0.25, log=lambda _m: None)
     assert man["config"]["excluded_children"].startswith("search terminal")
-    for d in sorted(p for p in (run["side"] / "gen_0001").iterdir() if p.is_dir()):
-        moves = {json.loads(r)["game_id"]: json.loads(r)["uci"] for r in (d / sib.GAME_MOVES).read_text().splitlines()}
+    terminal: set[tuple[int, int, int]] = set()
+    for shard in view.shards:
+        meta = shard_row_meta(shard)
+        rows = sib._shard_rows(shard)
+        for gid, offs in sib._game_rows(meta).items():
+            it = sib.rebuild_game(view, gid, np.asarray(meta["ply_index"])[offs], np.asarray(meta["x_hash"])[offs],
+                                  rows["played_move_index"][offs], rows["has_played_move"][offs])
+            for i, board in it:
+                off = int(offs[i])
+                if not bool(rows["has_root_child_q"][off]):
+                    continue
+                for c in np.flatnonzero(rows["root_child_visits"][off] >= 1):
+                    board.push(index_to_move_for_encoding(int(c), board))
+                    if _terminal_by_python_chess(board):
+                        terminal.add((gid, int(meta["ply_index"][off]), int(c)))
+                    board.pop()
+    excluded = man["totals"]["repetition_children_excluded"] + man["totals"]["terminal_children_excluded"]
+    assert man["totals"]["repetition_children_excluded"] > 0  # the fixture exercises the 2-fold rule
+    assert excluded == len(terminal)
+    for d in sorted(p for p in side.iterdir() if p.is_dir()):
         z = {k: np.load(d / f"{k}.npy") for k in ("game_id", "ply_index", "action_a", "action_b")}
         for j in range(len(z["game_id"])):
-            g = view.games[int(z["game_id"][j])]
-            b = sib._start_board(view, g)
-            for u in moves[int(z["game_id"][j])][: int(z["ply_index"][j]) - int(g["start_ply"])]:
-                b.push_uci(u)
             for a in (z["action_a"][j], z["action_b"][j]):
-                b.push(index_to_move_for_encoding(int(a), b))
-                assert sib.search_terminal(b) is None
-                b.pop()
+                assert (int(z["game_id"][j]), int(z["ply_index"][j]), int(a)) not in terminal
 
 
 def test_the_pair_rng_is_keyed_by_seed_game_and_ply() -> None:
