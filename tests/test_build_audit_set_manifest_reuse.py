@@ -14,6 +14,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tests._child_env import gpu_free_env
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 _ROW = {"key": "k0", "fen": "8/8/8/8/8/8/8/K6k w - - 0 1", "phase": 0, "source": "selfplay"}
@@ -23,7 +25,7 @@ def _run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "build_audit_set.py"), *args],
         cwd=cwd, capture_output=True, text=True, check=False,
-        env={"PYTHONPATH": str(REPO_ROOT), "PATH": "/usr/bin:/bin"},
+        env=gpu_free_env({"PYTHONPATH": str(REPO_ROOT), "PATH": "/usr/bin:/bin"}),
     )
 
 
