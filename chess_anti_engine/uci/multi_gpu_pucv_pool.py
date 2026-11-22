@@ -742,10 +742,12 @@ class MultiGpuPucvPool:
             # returns shortly lets it end within a short shared budget.)
             wedge.join_unless_wedged(
                 self._threads[k], max(0.0, abandoned_deadline - time.monotonic()))
-        for k, th in enumerate(self._threads):
-            if k not in stuck:
-                # After a device fault, ending workers park: no join.
-                wedge.join_unless_wedged(th, 2.0)
+        lingering = [
+            th for k, th in enumerate(self._threads)
+            # After a device fault, ending workers park: no join.
+            if k not in stuck and not wedge.join_unless_wedged(th, 2.0)
+        ]
+        wedge.warn_outlived_close(_log, "multi-GPU PUCT pool", lingering, 2.0)
 
     def worker_row_cap(self) -> int:
         """The most rows ``evaluate_rows`` may submit: the gather, which every
