@@ -166,32 +166,111 @@ def test_a_search_that_never_exceeds_n_is_bit_identical_and_a_chunked_one_runs_c
     print(f"cpu search chunked at 4 rows: identical={chunked == plain}")
 
 
+def _bf16_ulp(magnitude: float) -> float:
+    """bf16 spacing at ``magnitude`` (8 significand bits: 2**(exponent - 7))."""
+    return float(2.0 ** (np.floor(np.log2(max(magnitude, 2.0 ** -126))) - 7))
+
+
+def _peak_bytes(ev: DirectGPUEvaluator, x: np.ndarray) -> tuple[int, int]:
+    """(peak, residual) device bytes of one call, each against ITS OWN base taken
+    right before the call: a stale base would charge one call with what an earlier
+    call left allocated."""
+    import gc
+
+    gc.collect()
+    torch.cuda.synchronize()
+    base = torch.cuda.memory_allocated()
+    torch.cuda.reset_peak_memory_stats()
+    _evaluate(ev, x)
+    torch.cuda.synchronize()
+    return torch.cuda.max_memory_allocated() - base, torch.cuda.memory_allocated() - base
+
+
+CUDA_N = 512
+CUDA_ROWS = 5 * CUDA_N + 3
+
+
 @needs_cuda
-def test_cuda_chunked_dense_and_legal_match_and_peak_follows_the_chunk() -> None:
+def test_cuda_graph_chunks_replay_and_match_one_eager_forward_within_bf16_rounding() -> None:
     model = _model("cuda")
-    rows, n = 5 * 512 + 3, 512
-    graph = DirectGPUEvaluator(model, device="cuda", max_batch=rows, legal_bf16=False, cuda_graphs=True)
-    assert graph.forward_chunk_rows == 512  # derived from cuda_graph_max_rows
+    graph = DirectGPUEvaluator(model, device="cuda", max_batch=CUDA_ROWS, legal_bf16=False, cuda_graphs=True)
+    assert graph.forward_chunk_rows == CUDA_N  # derived from cuda_graph_max_rows
     planes = graph.get_input_buffer(1).shape[1]
-    x = _rows(np.random.default_rng(4), rows, planes)
+    x = _rows(np.random.default_rng(4), CUDA_ROWS, planes)
     pol, wdl = _evaluate(graph, x)
     stats = graph.cuda_graph_stats
     assert stats is not None
     assert (stats["eager_over_max_rows"], stats["forward_chunks"]) == (0, 6)
-    eager = DirectGPUEvaluator(model, device="cuda", max_batch=rows, legal_bf16=False)
-    pol1, wdl1 = _evaluate(eager, x)
-    print(f"cuda chunked-graph vs one eager forward: max|dpol|={np.abs(pol - pol1).max():.3g} "
-          f"max|dwdl|={np.abs(wdl - wdl1).max():.3g}")
-    # peak allocated: a call of 5n + 3 rows ~ a call of n rows plus its outputs
-    torch.cuda.synchronize()
-    torch.cuda.reset_peak_memory_stats()
-    base = torch.cuda.memory_allocated()
-    _evaluate(DirectGPUEvaluator(model, device="cuda", max_batch=rows, legal_bf16=False,
-                                 forward_chunk_rows=n), x[:n])
-    peak_n = torch.cuda.max_memory_allocated() - base
-    torch.cuda.reset_peak_memory_stats()
-    _evaluate(DirectGPUEvaluator(model, device="cuda", max_batch=rows, legal_bf16=False,
-                                 forward_chunk_rows=n), x)
-    peak_big = torch.cuda.max_memory_allocated() - base
-    outputs = rows * (1858 + 3) * 4
-    assert peak_big <= peak_n + 2 * outputs, (peak_big, peak_n, outputs)
+    pol1, wdl1 = _evaluate(DirectGPUEvaluator(model, device="cuda", max_batch=CUDA_ROWS, legal_bf16=False), x)
+    # Both run under bf16 autocast and return the bf16 outputs widened to fp32, so a
+    # batch-size-dependent kernel can move a value by one bf16 step at its own
+    # magnitude; allow two steps at the largest magnitude, never more.
+    d_pol, d_wdl = float(np.abs(pol - pol1).max()), float(np.abs(wdl - wdl1).max())
+    tol_pol = 2 * _bf16_ulp(float(np.abs(pol1).max()))
+    tol_wdl = 2 * _bf16_ulp(float(np.abs(wdl1).max()))
+    assert d_pol <= tol_pol, (d_pol, tol_pol)
+    assert d_wdl <= tol_wdl, (d_wdl, tol_wdl)
+
+
+@needs_cuda
+def test_cuda_chunked_eager_fp32_matches_unchunked_eager() -> None:
+    """Like for like: the same eager fp32 forward, chunked vs one call."""
+    model = _model("cuda")
+    kw: dict[str, Any] = {"device": "cuda", "max_batch": CUDA_ROWS, "legal_bf16": False, "use_amp": False}
+    chunked = DirectGPUEvaluator(model, forward_chunk_rows=CUDA_N, **kw)
+    plain = DirectGPUEvaluator(model, **kw)
+    assert plain.forward_chunk_rows is None
+    planes = plain.get_input_buffer(1).shape[1]
+    x = _rows(np.random.default_rng(5), CUDA_ROWS, planes)
+    pol, wdl = _evaluate(chunked, x)
+    pol1, wdl1 = _evaluate(plain, x)
+    assert chunked.forward_chunk_stats == {"chunked_forwards": 1, "forward_chunks": 6}
+    assert float(np.abs(pol - pol1).max()) <= 1e-3
+    assert float(np.abs(wdl - wdl1).max()) <= 1e-3
+
+
+@needs_cuda
+def test_cuda_chunked_compact_legal_matches_unchunked() -> None:
+    model = _model("cuda")
+    kw: dict[str, Any] = {"device": "cuda", "max_batch": CUDA_ROWS, "legal_bf16": True, "use_amp": False}
+    chunked = DirectGPUEvaluator(model, forward_chunk_rows=CUDA_N, **kw)
+    plain = DirectGPUEvaluator(model, **kw)
+    planes = plain.get_input_buffer(1).shape[1]
+    rng = np.random.default_rng(6)
+    x = _rows(rng, CUDA_ROWS, planes)
+    counts = rng.integers(0, 40, size=CUDA_ROWS).astype(np.int32)
+    counts[CUDA_N] = 0
+    counts[2 * CUDA_N:3 * CUDA_N] = 0
+    flat = rng.integers(0, 1858, size=int(counts.sum())).astype(np.int32)
+    a_pol, a_wdl = chunked.evaluate_legal_bf16(x, flat, counts)
+    b_pol, b_wdl = plain.evaluate_legal_bf16(x, flat, counts)
+    assert chunked.forward_chunk_stats["forward_chunks"] == 6
+    a = torch.from_numpy(a_pol).view(torch.bfloat16).float().numpy()
+    b = torch.from_numpy(b_pol).view(torch.bfloat16).float().numpy()
+    assert a.shape == b.shape
+    assert float(np.abs(a - b).max()) <= 2 * _bf16_ulp(float(np.abs(b).max()))
+    assert float(np.abs(a_wdl - b_wdl).max()) <= 1e-3
+
+
+@needs_cuda
+def test_cuda_peak_memory_follows_the_chunk_not_the_call() -> None:
+    """The point of chunking. Against the UNCHUNKED peak of the same rows (fails if
+    the dense chunk loop forwards all rows at once), and against an accounting
+    bound whose every term is named."""
+    model = _model("cuda")
+    kw: dict[str, Any] = {"device": "cuda", "max_batch": CUDA_ROWS, "legal_bf16": False}
+    chunked = DirectGPUEvaluator(model, forward_chunk_rows=CUDA_N, **kw)
+    plain = DirectGPUEvaluator(model, **kw)
+    planes = plain.get_input_buffer(1).shape[1]
+    x = _rows(np.random.default_rng(7), CUDA_ROWS, planes)
+    _evaluate(chunked, x)  # warm every shape (cuBLAS / allocator state) before measuring
+    _evaluate(plain, x)
+    _evaluate(plain, x[:CUDA_N])
+    peak_one, res_one = _peak_bytes(plain, x[:CUDA_N])  # one N-row forward
+    peak_full, res_full = _peak_bytes(plain, x)          # one 5N+3-row forward
+    peak_chunk, res_chunk = _peak_bytes(chunked, x)      # the same rows in 6 chunks
+    detail = {"peak_one": peak_one, "peak_full": peak_full, "peak_chunk": peak_chunk,
+              "residual": (res_one, res_full, res_chunk)}
+    assert peak_chunk <= 0.6 * peak_full, detail
+    call_outputs = CUDA_ROWS * (1858 + 3) * 4   # the call's fp32 policy + wdl, held for the whole loop
+    assert peak_chunk <= peak_one + call_outputs, detail
