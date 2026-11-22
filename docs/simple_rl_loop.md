@@ -932,8 +932,10 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
       Those are game over (including 3-fold and 50-move) and the LC0-style 2-fold
       repetition, which the search scores as an exact draw (q 0) without evaluating
       the net, so its q is a rule, not a search value. python-chess's
-      `is_game_over(claim_draw=False)` misses the 2-fold; on the pilot, 0.45% of
-      pair children were such repetitions before this rule (sidecar version 2).
+      `is_game_over(claim_draw=False)` misses the 2-fold. Under that older rule,
+      0.45% of the pilot's pair children were such repetitions. The version-2 rule
+      excluded 18,169 repetition children and 7 game-over children from the
+      candidates.
     - **Choice:** drawn without replacement with probability proportional to
       `min(v_A, v_B)`, from an RNG keyed by (seed, game id, ply), so it is
       reproducible and independent of order.
@@ -961,10 +963,11 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
       written sequentially through the page cache, so RSS does not grow with the
       output. A version that wrote through memory maps peaked at 2.36 GB.
     - Full collect (39 shards, 761,979 rows, every root hash matched,
-      including 7,611 bridged gaps): 1,491,924 pairs and 63 GB in 20 min 42 s, at
-      a peak RSS of 1,072 MiB.
+      including 7,611 bridged gaps; sidecar version 2): 1,490,177 pairs and 63 GB,
+      at a peak RSS of 1,071 MiB. The version-1 run took 20 min 42 s on an idle
+      CPU; version 2 took 28 min 34 s beside test suites.
     - The trainer's `load_sidecars` on that sidecar verifies every file's sha256
-      in 100 s at a peak RSS of 266 MiB. The child inputs are memory-mapped, two
+      in 100–145 s at a peak RSS of 265 MiB. The child inputs are memory-mapped, two
       descriptors per shard.
   - **Which rows train.** In each batch, the first `--sibling-rows` rows that carry
     pairs (default 128, in the batch's shuffled order) present all their pairs.
