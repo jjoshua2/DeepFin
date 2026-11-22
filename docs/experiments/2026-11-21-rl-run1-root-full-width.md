@@ -103,8 +103,8 @@ roots (`stage1/smoke_cpu/`; a smoke, not a result):
 
 ## The GPU guard
 
-**Which launchers are guarded.** `gpu_guard.sh` v5 (sha256 `30d2226f6a78…`; v1 `a0a2f869a719…`, v2 `997969c87bf3…`,
-v3 `ee073f841a24…`, v4 `b3ffd88cf5f7…`) is sourced by:
+**Which launchers are guarded.** `gpu_guard.sh` v6 (sha256 `c8697d517544…`; v1 `a0a2f869a719…`, v2 `997969c87bf3…`,
+v3 `ee073f841a24…`, v4 `b3ffd88cf5f7…`, v5 `30d2226f6a78…`) is sourced by:
 - `stage0/run_stage0_all.sh` and each `stage0/run_stage0.sh` it starts;
 - `stage1/run_stage1.sh`;
 - `stage2/run_stage2.sh` and each `run_rfw_match.sh` it starts;
@@ -128,7 +128,8 @@ The guard refuses unless **all** of these hold:
   - **Not `--query-compute-apps`.** Under WSL2 that list cannot be relied on to see another process tree. During
     the incident below it listed this bank's three collects in 62 of 64 samples, but it never listed match 8's
     PID 2337486, which was using the card the whole time.
-- **No running GPU work.** An exact `ps -u <me> -o args` scan finds no `arena_standard.py`, `simple_rl_loop.py` or
+- **No running GPU work.** An exact `ps -u <me> -o args` scan finds no `arena_standard.py`, `simple_rl_loop.py`,
+  `count_wrap.py` (Stage 0's collect wrapper, added in v6) or
   `match_vs_uci.py`. The match is on the script's basename as an argv token; `pgrep -f` is never used.
   - **It fails closed** (new in v4). If `ps` exits non-zero, or prints nothing, the guard refuses with exit 10.
     `ps` always lists at least the guard's own shell. v3 read both as "no GPU work".
@@ -141,7 +142,11 @@ The guard refuses unless **all** of these hold:
   - The markers cannot do this job. The sibling screen (#1481) runs after queue 2 and has no marker this guard
     could know about. And between a chain's steps, memory drops below 1 GiB.
 
-It then takes a non-blocking `flock` (exit 9 if held) on the bank's own `.gpu_launch.lock`, so two of this bank's
+It then takes a non-blocking `flock` on the bank's own `.gpu_launch.lock`; if the lock is held it exits 9. Since
+v6 the exit-9 message also names the case where no launcher is running: a child of a SIGKILLed launcher
+inherits fd 9, so an orphan can hold the lock until it exits. The message gives the commands to find the holder
+(`fuser -v <lock>`, or the lock file's inode in `/proc/locks`, whose line carries the PID), and says to stop that
+exact PID, never a pattern match. The flock so two of this bank's
 launches cannot overlap. It never opens `~/projects/chess/scratchpad/gpu0_experiment.lock`. A launcher started by
 another launcher of this bank (`run_stage0_all.sh` → `run_stage0.sh`, `run_stage2.sh` → `run_rfw_match.sh`) inherits
 the parent's locked descriptor and re-locks that, so nesting works; anything else opens the file and must get the lock.
@@ -219,24 +224,71 @@ All three now resume by the same rules, and every decision is appended to `resum
 
   | Step | Completion check |
   |---|---|
-  | Stage 3 collect | its seal: sha256 of the collect's `manifest.json` (which seals the collect) and `stats.json`, written when it passed; plus the take-effect read run again |
-  | Stage 3 training cell | its seal: `model.pt` and the train stage's `manifest.json` |
-  | Stage A | its input shas (the 3 nets and the SL base) unchanged, plus a seal over its outputs |
-  | Arena seat | `seat_state.py` reads DONE: `.exit` 0, exactly n game lines, and its own results row |
-  | Stage 0 run | its tag has a row in `summary.jsonl` |
+  | Step | What it consumed (`.inputs`, must equal now) | Its own outputs |
+  |---|---|---|
+  | Stage 3 collect | launcher sha, PIN, `ARENA_SHA`, seed, `S_eq`, the collect argument string | seal (the collect's sealing `manifest.json` + `stats.json`), and the take-effect read run again |
+  | Stage 3 training cell | sha of the source collect's `manifest.json`, the cell's argument string, `ARENA_SHA`, PIN, `S_eq`, launcher sha | seal (`model.pt` + the train `manifest.json`), plus a cross-check: the cell's own record of the collect it read (`gen_0001/collect/manifest.json` → `inputs.source_collect_manifest.sha256`) names that same manifest |
+  | Stage A | the 3 nets' and the SL base's shas | a seal over its outputs |
+  | Arena seat (stages 2 and 3) | seat, seed, n, both models' shas (stage 2: its seat arguments, i.e. sims and knob, plus the SL base), the opening file's sha, the arena commit or PIN, the match launcher's sha | `seat_state.py` v2 DONE (below) |
+  | Stage 0 run | `s0_inputs`: the run's sims and knob, plus the shas of `run_stage0.sh` (its constants, seeds, `ARENA_SHA`), `count_wrap.py`, `steady_rate.py`, the SL base and the pilot bank's sums | a row in `summary.jsonl` |
+
+  **A step's completion check covers what it CONSUMED, not only what it wrote** (new in this revision). The review
+  reproduced the defect without this: collect GEN-A and a cell are sealed; the collect is cleared and redone as
+  GEN-B; the cell trained on GEN-A was then SKIPPED and reused beside GEN-B. Now:
+  - every step writes `<step>.inputs` when it starts, and on resume a finished step whose `.inputs` differs from
+    now is refused with **exit 87** (never skipped);
+  - a Stage 3 run has one `stage3/inputs.fingerprint`: the launcher sha, `ARENA_SHA`, PIN, `S_eq`, the `OWNER_GO`
+    sha, and the sha of this bank's `SHA256SUMS`. Stage 3 now also checks the bank's sums, as stages 0 and 2 do.
+    The fingerprint is written on the first launch, and any relaunch whose fingerprint differs refuses with 87.
+    Step outputs without a fingerprint also refuse with 87;
+  - `run_stage0_all.sh` reuses an existing `decision.json` only while every row it read still has unchanged inputs
+    (87 otherwise).
+
+  `seat_state.py` v2 reads DONE only if all of these hold:
+  - `.exit` is 0;
+  - there is exactly one header, and its `settings.seed` is the registered seed;
+  - there are exactly n game lines, and every `(pair_id, half)` is unique;
+  - every line is a JSON object;
+  - there is exactly one results row with its label, and that row's `candidate_sha256` / `reference_sha256` equal
+    the model files as they are now, and its seed matches.
+
+  Anything else, including an empty `.exit` or a non-object line, reads PARTIAL; it never raises a traceback.
 
   **Reusing a finished, sealed step is not a re-roll.** Nothing is redrawn; its outputs are the registered ones.
   Guard (d) (CPU) and the pools (read-only) are simply redone on every launch.
+- **A finished step whose inputs differ from now is refused, exit 87** (above): an owner decision, never a skip.
 - **A finished step whose check fails is refused, exit 89.** For example, the collect's seal sha differs, or its
   take-effect read now fails. This means tampered or damaged, and it is an owner decision.
 - **An interrupted or failed step is refused, exit 88.** That covers a `.started` or the step's directory with no
   `.exit`, a non-zero `.exit`, a Stage 0 run directory without a summary row, and a PARTIAL seat. It is never
   silently rerun or blended with a rerun. The refusal prints the one documented recovery command,
-  `clear_step.sh` (`4ace011c377f…`):
-  - `clear_step.sh stage3 <step>`, `clear_step.sh stage0 <tag>`, or `clear_step.sh seat <arena_dir> <label>`;
-  - it moves the step's files into `aborted_<timestamp>/` beside them, and **never deletes**;
-  - it takes the bank lock, so it cannot run beside a launcher;
-  - it refuses a seat whose results row already exists.
+  `clear_step.sh` v2 (`dd07013a9641…`; v1 `4ace011c377f…`):
+  - the forms are `stage3 <step> [--finished] [--cascade a,b]`, `stage0 <tag> [--finished]`, `stage0-block
+    [--finished]` (summary, runs and decision: a fresh ABBA block), and `seat <arena_dir> <label>`.
+  - **Names are validated, never used as paths.** A stage-3 step must be one of the five registered names. A tag
+    must look like `r01_off64`. A label is `[A-Za-z0-9_.-]+`, and not `.` or `..`. A seat's arena directory must
+    not be a symlink, and must resolve (realpath) inside this bank's `stage2/` or `stage3/`. v1 had a path
+    traversal hole, and the review used it three ways: `stage3 ../stage1` moved all of `stage1/`, `stage0
+    ../../../rl-run1-pilot` moved the (fake) pilot bank, and `seat <pilot>/arenas/m1 lab` moved a file inside it.
+  - **It never deletes or overwrites.** v1's "never deletes" was false in one case: two clears in the same second
+    shared one `aborted_<ts>/`, so the second `mv` overwrote the first's games file, and a directory clear could
+    fail half-moved with no log line. v2 changes three things:
+    - each invocation gets its own `mktemp -d aborted_<ts>.XXXX`;
+    - it moves with `mv -n`, then checks that every source is gone and every destination exists;
+    - `resume.log` gets `CLEAR-BEGIN` before the moves and `CLEAR-DONE` or `CLEAR-FAILED` after (`CLEAR-FAILED`
+      exits 4).
+  - **A FINISHED step needs `--finished`** (exit 5 without it). That is a stage-3 step whose `.exit` reads 0, or a
+    stage-0 tag with a summary row. The refusal prints what would be moved. A stage-0 `--finished` clear also takes
+    the tag's row out of `summary.jsonl`, keeping the old file in the aborted directory.
+  - **A stage-3 step with downstream outputs needs `--cascade`** (exit 6 without it). The downstream steps are:
+    - collect → both rfw cells, Stage A, and its four match directories;
+    - a cell → Stage A and its two match directories;
+    - `arm_P0_ctl` → Stage A.
+
+    `--cascade` must name every downstream step that has outputs. They then move in the given order into the same
+    aborted directory.
+  - It takes the bank lock, so it cannot run beside a launcher.
+  - It refuses a seat whose results row already exists (exit 3).
 
   Then relaunch.
 - **An interrupted arena seat is replayed whole, from a clean slate, with its registered seed.** The arena's own
@@ -256,19 +308,21 @@ New shas (previous versions kept as `.vN`):
 
 | Script | New sha | Previous sha |
 |---|---|---|
-| `stage0/run_stage0.sh` v6 | `8aafea169066…` | v5 `eb1dd4d3163b…`, v4 `205bd4f0db30…`, v3 `d0e3bcb6952b…` |
-| `stage0/run_stage0_all.sh` v4 | `09c9eea07472…` | v3 `0d9a81de48f5…`, v2 `98a9bea18970…`, v1 `51482410ec7c…` |
+| `stage0/run_stage0.sh` v7 | `4f851a9c9c4f…` | v6 `8aafea169066…`, v5 `eb1dd4d3163b…`, v4 `205bd4f0db30…`, v3 `d0e3bcb6952b…` |
+| `stage0/run_stage0_all.sh` v5 | `5163ea29e2cb…` | v4 `09c9eea07472…`, v3 `0d9a81de48f5…`, v2 `98a9bea18970…`, v1 `51482410ec7c…` |
+| `stage0/stage0_decide.py` v4 | `f61952c2b32a…` | v3 `4771354e2117…` |
 | `stage1/run_stage1.sh` v5 | `b419265e881d…` | v4 `b9ab2fae46ed…`, v3 `0539b8e1e4f4…`, v2 `3778d06ddad6…` |
 | `run_rfw_match.sh` v5 | `e8e85a601c32…` | v4 `91ef5a8f87ed…`, v3 `b24a435b24e5…`, v2 `0487d857e379…` |
-| `stage2/run_stage2.sh` v5 | `e831f6274f47…` | v4 `174495f8c6eb…`, v3 `ba70d73eb7b7…`, v2 `c07fe428aa39…` |
-| `stage3/launch_stage3.sh` v5 | `b4a0cf0e46f8…` | v4 `f5ea61297307…`, v3 `8bfe478f0db8…`, v2 `a519b39f2200…` |
-| `launch_lib.sh` (new) | `9bae510f71b0…` | — |
-| `seat_state.py` (new) | `1577deaa9a97…` | — |
-| `clear_step.sh` (new) | `4ace011c377f…` | — |
+| `stage2/run_stage2.sh` v6 | `d6839c0ca884…` | v5 `e831f6274f47…`, v4 `174495f8c6eb…`, v3 `ba70d73eb7b7…`, v2 `c07fe428aa39…` |
+| `stage3/launch_stage3.sh` v6 | `86494309a5f5…` | v5 `b4a0cf0e46f8…`, v4 `f5ea61297307…`, v3 `8bfe478f0db8…`, v2 `a519b39f2200…` |
+| `launch_lib.sh` v2 | `218d215dd305…` | v1 `9bae510f71b0…` |
+| `seat_state.py` v2 | `730a1c958edf…` | v1 `1577deaa9a97…` |
+| `clear_step.sh` v2 | `dd07013a9641…` | v1 `4ace011c377f…` |
+| `stage0/fab_test/run_fab.py` (new) | `93e32555a306…` | — |
 
-**Tested** (`guard_test/guard_test.sh` v7 `ac4196580a48…`, output `guard_test/guard_test.txt`; v1 `621a57547b22…`,
-v2 `730d515388e3…`, v3 `b40b08d3d30c…`, v4 `d4ad57efc6f3…`, v5 `d9b84ec2eba5…` and v6 `275c91d526df…`, with their
-outputs, are kept as `.v1` … `.v6`). Since v6 the test **exits non-zero if any case is WRONG**. v5 exited 0 even with WRONG lines, so a
+**Tested** (`guard_test/guard_test.sh` v8 `c835c5280f1c…`, output `guard_test/guard_test.txt`; v1 `621a57547b22…`,
+v2 `730d515388e3…`, v3 `b40b08d3d30c…`, v4 `d4ad57efc6f3…`, v5 `d9b84ec2eba5…`, v6 `275c91d526df…` and v7
+`ac4196580a48…`, with their outputs, are kept as `.v1` … `.v7`). Since v6 the test **exits non-zero if any case is WRONG**. v5 exited 0 even with WRONG lines, so a
 mutant harness must key on the exit code.
 Nothing in the test can reach the GPU:
 - `CUDA_VISIBLE_DEVICES` is empty;
@@ -280,7 +334,7 @@ Every launcher runs through one wrapper. Inside the environment it is about to r
 `$HOME` is the fake and that `command -v` of `python`, `nvidia-smi` and `ps` gives the stubs. If any of this fails, the
 whole test aborts before any case runs. For a collect call the stub records its arguments and fabricates a tiny
 finished collect: step-synchronous fake play in real time, 600 games, 128 slots. For the launcher's summary step it
-runs the real python. All 53 checks pass:
+runs the real python. All 80 checks pass:
 - memory 10,971 MiB, with every other check clear → refused for memory (the test greps "GPU memory in use");
 - `nvidia-smi` printing nothing, printing `N/A`, or exiting 2 while printing 500 → 11;
 - `ps` exiting 1, or printing nothing → 10;
@@ -346,9 +400,71 @@ runs the real python. All 53 checks pass:
   → 8 (GPU work running);
 - `RFW_MEM_WAIT_S=abc` with memory busy → 12, with no endless wait; `RFW_MEM_WAIT_S=-5` → 12;
 - two GPU lines: 500 and 9,000 → 8; 500 and `N/A` → 11;
-- `launch_lib.sh` missing → `run_stage0.sh` refuses (8), and nothing runs.
+- `launch_lib.sh` missing → `run_stage0.sh` refuses (8), and nothing runs;
+- **v8 cases**:
+  - a finished cell whose own record names another source collect → 89 (the cross-check), and nothing runs;
+  - the reviewer's GEN-A/GEN-B repro, with the collect moved by hand → the collect is redone, then the cell refuses
+    87 instead of being skipped;
+  - `clear_step stage3 collect` without `--finished` → 5;
+  - with `--finished` → 6, naming `--cascade arm_P0_rfw,arm_Zq_rfw`;
+  - with one of the two named → 6;
+  - with both named → everything moves into one aborted directory, and nothing is left;
+  - `OWNER_GO` edited → the fingerprint refuses (87);
+  - the three traversal reproductions, plus a symlink out of `stage3/` → each refused (2) and the target intact;
+  - two clears in the same second (time faked) → two aborted directories, and both files kept;
+  - the SL base changed → `run_stage0_all.sh` refuses 87 on r01's reused row, and 87 again when `decision.json`
+    exists;
+  - the openings changed → a DONE stage-2 seat refuses 87;
+  - `clear_step stage0 r01_off64` → 5; with `--finished` → the run moves aside, its row is removed, and the old
+    summary is kept;
+  - `seat_state.py`: a complete seat → DONE; duplicate `(pair_id, half)`, two headers, the wrong header seed, a
+    changed candidate file, an empty `.exit`, or a non-object line → PARTIAL with no traceback (6 cases);
+  - `count_wrap.py` running → 8;
+  - the lock held → the exit-9 message carries the `fuser -v` diagnosis;
+  - `run_fab.py` (the ABBA gap rule, below) → 0 WRONG;
+  - the TERM case now also asserts that the stub's whole process GROUP is gone (`kill -0 -- -<pgid>` fails).
+  - **Not exercised:** Stage 3's seat path. In the fake HOME, guard (d) stops at the missing PIN worktree, so
+    Stage 3's seat inputs and `seat_state.py` call are not reached. They are the same code as Stage 2's seat path,
+    which these cases do test.
 
-**Mutants v7** (`guard_test/run_mutants_v7.py` `eaae8995aa30…`, output `guard_test/guard_mutants_v7.txt`). The
+**Mutants v8** (`guard_test/run_mutants_v8.py` `c841aecdad5b…`, output `guard_test/guard_mutants_v8.txt`).
+- **Method.** Every mutant was run on the FINAL files of this revision. Each mutant edits a fresh COPY of the bank,
+  never the bank itself, and `guard_test.sh` runs with `GT_SRC` pointing at that copy, 4 at a time. The verdict is
+  keyed on the exit code.
+- **Control.** M0, no mutation on a copy, exits 0 with 80/80.
+- **All 27 mutants are caught** (exit 1). Mutants carried over from earlier rounds:
+  - M1, the v4 cleanup;
+  - M2, any open fd 9 accepted;
+  - M3, the other agent's hole;
+  - M4, the Stage 3 re-check made a no-op;
+  - M5, `ps` failing open;
+  - M6, the `nvidia-smi` exit code ignored;
+  - M7, a `.started` counted as done;
+  - M8, a finished collect rerun;
+  - M9, the reviewer's W2 mutant;
+  - M10, `stop_kids` without the wait;
+  - M11, `stop_kids` a no-op;
+  - M12, `RFW_MEM_WAIT_S` not validated;
+  - M13, the first GPU line only.
+- **New in this revision:**
+  - M14, Stage 3 step inputs not compared → the GEN-A/GEN-B case fails;
+  - M15, the run fingerprint not compared;
+  - M16, `--cascade` not required;
+  - M17, the stage-3 step name not validated → `../stage1` is moved;
+  - M18, the seat directory not confined;
+  - M19, a fixed aborted directory plus `mv -f` → the same-second clears collide;
+  - M20, a finished step cleared without `--finished`;
+  - M21, `(pair_id, half)` uniqueness not required;
+  - M22, the results-row shas not compared;
+  - M23, `stop_kids` signalling the pid, not the group (the reviewer's mutant) → the group-gone assertion fails;
+  - M24, the stage-0 row inputs not compared;
+  - M25, the stage-2 seat inputs not compared;
+  - M26, the ABBA gap rule off;
+  - M27, the cell's source-collect cross-check off.
+- **One note.** M17's run printed no total line: moving the fake `stage1/` broke a later case, and the test exited
+  1 there. The `../stage1` case itself is WRONG in that run's output.
+
+**Mutants v7** (superseded by v8 above; `guard_test/run_mutants_v7.py` `eaae8995aa30…`, output `guard_test/guard_mutants_v7.txt`). The
 verdict is keyed on the test's exit code, and each restore is verified by md5. **All 13 are caught** (exit 1):
 - M1, the v4 cleanup → the process-2 case fails;
 - M2, any open fd 9 accepted → the `/dev/null` case fails;
@@ -455,6 +571,29 @@ the test's exit code, and each restore is by copy, checked by md5. All six are c
 **The rule** (`stage0_decide.py` v3 `4771354e2117…`, applied mechanically; v1 `fb099bed9a35…` and v2 `4c02fc7565dd…` are kept;
 v3 changes only the docstring's description of the cost quantity, which `run_stage0.sh` computes, unchanged since v3 `d0e3bcb6952b…`). Cost per stored position is
 t = 1 / steady-state rows/s.
+
+**ABBA integrity** (`stage0_decide.py` v4 `f61952c2b32a…`, pre-registered here).
+- **The rule.** No decision is written, and a fresh ABBA block is required (`clear_step.sh stage0-block`), if either
+  holds:
+  - the largest gap between consecutive ABBA legs exceeds **900 s**;
+  - any ABBA leg was cleared and rerun inside the block, i.e. a `CLEAR-DONE` line in `resume.log` timestamped
+    inside it.
+- **The mechanics.** Every summary row now carries `t0_unix` / `t1_unix` (`run_stage0.sh` v7). `decision.json`
+  records the gaps, the largest gap, and the rerun list.
+- **The derivation.** ABBA cancels a linear drift, and it cancels a step change between legs 2 and 3. A step change
+  δ after leg 1 or after leg 3 leaves a bias of δ/2 on the on/off ratio. Keeping that bias within half the ±3%
+  precision needs δ < 3%.
+- **The assumption.** This bank has no series of collect rate versus time over hours: the collect-throughput
+  benches are single runs, and the repeat gate measures back-to-back runs, within 2%. So the threshold rests on a
+  stated assumption: the card's state (thermals, host load, driver) is stable within one leg's length and not
+  beyond. A leg is ≈ 13–15 min (384 games per process), and legs normally follow each other within seconds. 900 s
+  is one leg.
+- **Tests.** `stage0/fab_test/run_fab.py`, output `fab_test.txt`, runs 12 cases with 0 WRONG:
+  - the original 8, with timestamps added (the pre-v4 fixtures are kept as `*.pre-v4.jsonl`);
+  - a 2 h gap → FRESH_ABBA_REQUIRED;
+  - a leg cleared inside the block → FRESH_ABBA_REQUIRED;
+  - a block clear before the block → not flagged;
+  - rows without timestamps → refused.
 1. **Step A.** Run off@64, on@64, on@64, off@64, in that ABBA order to cancel drift.
 2. **Repeat gate.** Two runs of one configuration that differ by > 2% get exactly one more run, and the
    configuration's t is then the mean of three.
@@ -609,7 +748,7 @@ there are three fit→Elo transfer failures on record (v020, ft595, F-only) and 
   - no value hybrid, and no noise.
 - Fabricated-row tests pass 6/6 (`fab_test/fab_test.txt`): knob on the wrong seat, a changed c_scale, wrong sims,
   a missing knob and a warm tree all fail.
-- **Take effect, observed in the search** (`stage2/run_stage2.sh` v5 `e831f6274f47…`; history in the GPU guard section). gumbel_c logs once per process "disabling
+- **Take effect, observed in the search** (`stage2/run_stage2.sh` v6 `d6839c0ca884…`; history in the GPU guard section). gumbel_c logs once per process "disabling
   the 2-group eval pipeline for this call because root_full_width is on". It does so on a call of ≥ 64 boards, and
   only the knob seat's config can trigger it.
   - After each real run, the knob run's log is grepped for that line, and `TAKE_EFFECT_{A,B}.txt` records OBSERVED
@@ -644,7 +783,7 @@ the knob seat loses the pipeline and evaluates more: (a) ≈ +46% at the root, (
 
 ## Stage 3 — the training test (NOT AUTHORISED; needs the owner's go)
 
-**One command:** `stage3/launch_stage3.sh` (v5 `b4a0cf0e46f8…`; v1 `95c8a66dbc59…`; history in the GPU guard section).
+**One command:** `stage3/launch_stage3.sh` (v6 `86494309a5f5…`; v1 `95c8a66dbc59…`; history in the GPU guard section).
 - It refuses without `stage3/OWNER_GO` (exit 90, tested), a Stage 1 PROCEED, Stage 2 (b) UB95 ≥ −10, Stage 2's
   take effect observed on both (b) runs, and the operator's `stage3` release line.
 - It checks every instrument's sha, sources the GPU guard and holds the bank lock to the end. It re-runs the guard
