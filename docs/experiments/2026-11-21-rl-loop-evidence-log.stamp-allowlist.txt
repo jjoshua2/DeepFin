@@ -1,0 +1,4 @@
+# MISSING citations accepted by scripts/verify_evidence_stamps.py for
+# 2026-11-21-rl-loop-evidence-log.md. One line per token: <token> | <reason>.
+# A citation that goes MISSING and is not listed here fails the check.
+file | the format example "(`file` [`1a2b3c4d`])" in the header, not a citation
