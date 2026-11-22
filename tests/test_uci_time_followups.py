@@ -17,6 +17,7 @@ import time
 from types import SimpleNamespace
 from typing import Any
 
+import chess
 import pytest
 
 import chess_anti_engine.uci.__main__ as main_module
@@ -96,9 +97,10 @@ def test_the_at_once_answer_uses_that_bound_for_its_eval(out, monkeypatch) -> No
     due: list[float] = []
     real = engine._clock_exhausted_move
 
-    def spy(board, searchmoves, answer_by_ms, go_received_at):
+    def spy(board, searchmoves, answer_by_ms, go_received_at, **kw):
         due.append(answer_by_ms)
-        return real(board, searchmoves, answer_by_ms, go_received_at)
+        assert kw == {"min_eval_s": 0.0}  # a binding clock gets no movetime floor
+        return real(board, searchmoves, answer_by_ms, go_received_at, **kw)
 
     monkeypatch.setattr(engine, "_clock_exhausted_move", spy)
     try:
@@ -414,5 +416,437 @@ def test_a_go_that_waited_less_than_its_budget_still_searches(out) -> None:
         assert len(out.wait_bestmoves(1)) == 1
         assert "behind earlier commands" not in out.text()
         assert worker.run.call_count >= 1
+    finally:
+        engine.close()
+
+
+
+class _TimedOut:
+    """Captured stdout that also records when each line was written."""
+
+    def __init__(self) -> None:
+        self.stamps: list[tuple[float, str]] = []
+        self._cond = threading.Condition()
+
+    def write(self, s: str) -> int:
+        now = time.monotonic()
+        with self._cond:
+            self.stamps.extend((now, ln) for ln in s.splitlines() if ln)
+            self._cond.notify_all()
+        return len(s)
+
+    def flush(self) -> None:
+        pass
+
+    def wait_bestmove_after(self, n0: int, timeout: float = 10.0) -> tuple[float, str] | None:
+        with self._cond:
+            self._cond.wait_for(
+                lambda: any(ln.startswith("bestmove ") for _, ln in self.stamps[n0:]), timeout,
+            )
+            hits = [(t, ln) for t, ln in self.stamps[n0:] if ln.startswith("bestmove ")]
+            return hits[0] if hits else None
+
+    def text(self) -> str:
+        with self._cond:
+            return "\n".join(ln for _, ln in self.stamps)
+
+
+@pytest.fixture
+def timed_out(monkeypatch) -> _TimedOut:
+    capture = _TimedOut()
+    monkeypatch.setattr(engine_module, "sys", SimpleNamespace(stdout=capture, stderr=sys.stderr))
+    return capture
+
+
+@pytest.mark.parametrize("age_ms", [900, 930, 945])
+@pytest.mark.parametrize("stop_lag_ms", [50, 80, 150])
+def test_an_aged_go_behind_a_late_stopping_search_answers_within_its_movetime(
+    timed_out, age_ms, stop_lag_ms,
+) -> None:
+    """A live `go infinite` whose search honours stop late, then a `go movetime
+    1000` stamped 900-945 ms before its handler ran. The wait for the old
+    search is sized from what is LEFT of the 970 ms deadline, so it ends at
+    least the 20 ms minimum search before that deadline (950 ms), or is not
+    taken at all when nothing would be left; the old search is parked
+    (silenced) and this `go` answered from the busy-worker fallback: never
+    the watchdog, never the old search's move, no new search started. Before,
+    the wait was sized from the full deadline (100 ms) and these answered at
+    0.997-1.046 s."""
+    worker = _mock_worker()
+    entered = threading.Event()
+    calls = [0]
+
+    def run(_board, *, stop_event, **_kw):
+        calls[0] += 1
+        if calls[0] == 1:
+            entered.set()
+            stop_event.wait(30)
+            time.sleep(stop_lag_ms / 1000.0)
+            return SearchResult("e2e4", None, 16, ("e2e4",), 0)
+        return SearchResult("e7e5", None, 16, ("e7e5",), 0)
+
+    worker.run.side_effect = run
+    engine = Engine(worker, options=EngineOptions())
+    try:
+        engine.dispatch(parse_command("position startpos"))
+        engine.dispatch(parse_command("go infinite"))
+        assert entered.wait(5)
+        engine.dispatch(parse_command("position startpos moves e2e4"))
+        n0 = len(timed_out.stamps)
+        origin = time.monotonic() - age_ms / 1000.0
+        engine.dispatch(stamp_received(parse_command("go movetime 1000"), origin))
+        hit = timed_out.wait_bestmove_after(n0)
+        assert hit is not None
+        at, line = hit
+        assert (at - origin) * 1000.0 <= 1000.0, (at - origin)
+        move = line.split()[1]
+        board = chess.Board()
+        board.push_uci("e2e4")
+        assert chess.Move.from_uci(move) in board.legal_moves
+        time.sleep(stop_lag_ms / 1000.0 + 0.05)  # the parked search returns
+        text = timed_out.text()
+        assert "deadline watchdog answers unsearched" not in text
+        assert sum(ln.startswith("bestmove ") for _, ln in timed_out.stamps[n0:]) == 1
+        assert calls[0] == 1  # no search started for the aged go
+    finally:
+        engine.close()
+
+
+@pytest.mark.parametrize(("age_s", "expect_s"), [
+    (0.3, 0.1), (0.9, 0.0175), (0.93, 0.01), (0.935, 0.01), (0.945, 0.0), (0.96, 0.0),
+])
+def test_the_go_wait_is_sized_from_what_is_left_after_the_gos_age(age_s, expect_s) -> None:
+    """`go movetime 1000` (970 ms deadline at the default overhead): the wait
+    for a live search is a share of the deadline less the go's age, floored at
+    10 ms (the share is 8.75 ms at 35 ms left), and zero once even that floor would leave under the 20 ms minimum
+    search (park at once)."""
+    engine = Engine(_mock_worker(), options=EngineOptions())
+    try:
+        cmd = parse_command("go movetime 1000")
+        assert isinstance(cmd, CmdGo)
+        assert engine._go_wait_budget_s(cmd, age_s=age_s) == pytest.approx(expect_s, abs=1e-9)
+    finally:
+        engine.close()
+
+
+def test_the_queued_check_counts_time_spent_after_the_wait(timed_out, monkeypatch) -> None:
+    """The at-once check is taken after the join AND the tree sync: a `go`
+    with room for a search at handler entry (930 ms of a 970 ms deadline)
+    whose tree sync then takes 50 ms is answered at once, not searched."""
+    worker = _mock_worker()
+    worker.run.return_value = SearchResult("e2e4", None, 16, ("e2e4",), 0)
+    engine = Engine(worker, options=EngineOptions())
+    real_sync = engine._sync_tree_root
+
+    def slow_sync(moves):
+        time.sleep(0.05)
+        return real_sync(moves)
+
+    monkeypatch.setattr(engine, "_sync_tree_root", slow_sync)
+    try:
+        engine.dispatch(parse_command("position startpos"))
+        n0 = len(timed_out.stamps)
+        engine.dispatch(stamp_received(parse_command("go movetime 1000"), time.monotonic() - 0.93))
+        assert timed_out.wait_bestmove_after(n0) is not None
+        assert "behind earlier commands" in timed_out.text()
+        assert worker.run.call_count == 0
+    finally:
+        engine.close()
+
+
+@pytest.mark.parametrize(("go", "age_s"), [
+    ("go nodes 100", 10.0), ("go depth 3", 10.0), ("go infinite", 10.0), ("go ponder", 10.0),
+    ("go mate 2", 10.0), ("go mate 2", 59.99), ("go mate 2", 61.0),
+])
+def test_a_go_with_no_clock_searches_however_long_it_queued(timed_out, go, age_s) -> None:
+    """The queued-go floor is a clock rule: a `go` with no GUI clock (a work
+    bound, `infinite`, `ponder`, `mate`) stamped long ago still searches -- a
+    bare `go mate N` too, past its 60 s implicit safety cap, which is not a GUI
+    clock (`SearchLimits.implicit_cap`)."""
+    worker = _mock_worker()
+    worker.run.return_value = SearchResult("e7e5", None, 16, ("e7e5",), 0)
+    engine = Engine(worker, options=EngineOptions())
+    try:
+        engine.dispatch(parse_command("position startpos moves e2e4"))
+        n0 = len(timed_out.stamps)
+        engine.dispatch(stamp_received(parse_command(go), time.monotonic() - age_s))
+        end = time.monotonic() + 5.0
+        while worker.run.call_count == 0 and time.monotonic() < end:
+            time.sleep(0.005)
+        if go in ("go infinite", "go ponder"):
+            engine.dispatch(parse_command("stop"))
+        assert timed_out.wait_bestmove_after(n0) is not None
+        assert worker.run.call_count >= 1
+        assert "behind earlier commands" not in timed_out.text()
+    finally:
+        engine.close()
+
+
+def test_a_go_that_never_waited_is_not_tipped_by_its_own_setup(timed_out, monkeypatch) -> None:
+    """The at-once rule is for a `go` that WAITED. `go movetime 52` with no
+    overhead fits a 24 ms deadline; a fresh `go` whose tree sync takes 10 ms
+    (its own setup, not a queue) still searches."""
+    worker = _mock_worker()
+    worker.run.return_value = SearchResult("e2e4", None, 16, ("e2e4",), 0)
+    engine = Engine(worker, options=EngineOptions(move_overhead_ms=0))
+    real_sync = engine._sync_tree_root
+
+    def slow_sync(moves):
+        time.sleep(0.01)
+        return real_sync(moves)
+
+    monkeypatch.setattr(engine, "_sync_tree_root", slow_sync)
+    try:
+        assert _mt_limits(52, 0).deadline_ms == 24
+        engine.dispatch(parse_command("position startpos"))
+        n0 = len(timed_out.stamps)
+        engine.dispatch(stamp_received(parse_command("go movetime 52"), time.monotonic()))
+        assert timed_out.wait_bestmove_after(n0) is not None
+        assert "behind earlier commands" not in timed_out.text()
+        assert worker.run.call_count >= 1
+    finally:
+        engine.close()
+
+
+_MATE_IN_ONE = "7k/6pp/8/8/8/8/8/R5K1 w - - 0 1"  # first legal g1h2; Ra8# on the board
+_QUEEN_ATTACKED = "r5k1/8/8/8/8/8/8/Q6K w - - 0 1"  # first legal h1h2 leaves the queen en prise
+_NET_EVAL_S = 0.015  # a net slower than the clock share, inside the movetime floor
+
+
+def _slow_eval(move: str, delay_s: float = _NET_EVAL_S) -> Any:
+    def fresh(_board, **_kw):
+        time.sleep(delay_s)
+        return move
+    return fresh
+
+
+def _dispatch_at_once(engine: Engine, fen: str, go: str, age_s: float) -> None:
+    engine.dispatch(parse_command(f"position fen {fen}"))
+    engine.dispatch(stamp_received(parse_command(go), time.monotonic() - age_s))
+
+
+@pytest.mark.parametrize(("fen", "net_move"), [
+    (_MATE_IN_ONE, "a1a8"), (_QUEEN_ATTACKED, "a1a8"),
+])
+@pytest.mark.parametrize(("go", "age_s"), [
+    ("go movetime 1000", 0.99), ("go movetime 30", 0.0),
+])
+def test_a_movetime_answered_at_once_plays_the_nets_move(timed_out, fen, net_move, go, age_s) -> None:
+    """A `go movetime` answered at once (queued until its movetime was gone,
+    or too short to search) gets one fresh root eval even with no time left
+    before its last moment: the net's move (mate, the queen saved), not the
+    first legal move. The eval here takes 15 ms: more than the old share (2 ms
+    and 10 ms left), inside the 30 ms movetime floor."""
+    worker = _mock_worker()
+    worker.fresh_root_policy_bestmove.side_effect = _slow_eval(net_move)
+    engine = Engine(worker, options=EngineOptions())
+    try:
+        n0 = len(timed_out.stamps)
+        _dispatch_at_once(engine, fen, go, age_s)
+        hit = timed_out.wait_bestmove_after(n0)
+        assert hit is not None
+        assert hit[1].split()[1] == net_move
+        assert "source=fresh_root_eval" in timed_out.text()
+        assert worker.run.call_count == 0
+    finally:
+        engine.close()
+
+
+@pytest.mark.parametrize("go", ["go wtime 30", "go movetime 30 wtime 60"])
+def test_a_clock_answered_at_once_keeps_its_eval_share(timed_out, go) -> None:
+    """When a side clock binds (alone, or at or below the movetime once
+    MoveOverheadMs is taken off) an overrun loses on time: the eval keeps its
+    small share of the clock, and a 15 ms eval falls back to the first legal
+    move."""
+    worker = _mock_worker()
+    worker.fresh_root_policy_bestmove.side_effect = _slow_eval("a1a8")
+    engine = Engine(worker, options=EngineOptions())
+    try:
+        n0 = len(timed_out.stamps)
+        _dispatch_at_once(engine, _QUEEN_ATTACKED, go, 0.0)
+        hit = timed_out.wait_bestmove_after(n0)
+        assert hit is not None
+        assert hit[1].split()[1] == "h1h2"
+        assert "source=first_legal" in timed_out.text()
+    finally:
+        engine.close()
+
+
+def test_a_movetime_eval_slower_than_its_floor_falls_back_to_first_legal(timed_out) -> None:
+    worker = _mock_worker()
+    worker.fresh_root_policy_bestmove.side_effect = _slow_eval("a1a8", delay_s=0.3)
+    engine = Engine(worker, options=EngineOptions())
+    try:
+        n0 = len(timed_out.stamps)
+        t0 = time.monotonic()
+        _dispatch_at_once(engine, _QUEEN_ATTACKED, "go movetime 30", 0.0)
+        hit = timed_out.wait_bestmove_after(n0)
+        assert hit is not None
+        assert hit[1].split()[1] == "h1h2"
+        assert "fresh root-eval fallback timed out after 30 ms" in timed_out.text()
+        assert hit[0] - t0 < 0.3
+    finally:
+        engine.close()
+
+
+def test_a_movetime_at_once_eval_honours_searchmoves(timed_out) -> None:
+    """The eval is asked for the `searchmoves` set, and a move outside it is
+    never played."""
+    worker = _mock_worker()
+    seen: list[tuple[str, ...]] = []
+
+    def fresh(_board, *, searchmoves=()):
+        seen.append(tuple(searchmoves))
+        return "a1a8"  # outside the set
+
+    worker.fresh_root_policy_bestmove.side_effect = fresh
+    engine = Engine(worker, options=EngineOptions())
+    try:
+        n0 = len(timed_out.stamps)
+        _dispatch_at_once(engine, _QUEEN_ATTACKED, "go movetime 30 searchmoves a1b2 h1g1", 0.0)
+        hit = timed_out.wait_bestmove_after(n0)
+        assert hit is not None
+        assert seen == [("a1b2", "h1g1")]
+        assert hit[1].split()[1] == "a1b2"
+    finally:
+        engine.close()
+
+
+def test_a_movetime_at_once_answer_with_one_legal_move_plays_it(timed_out) -> None:
+    worker = _mock_worker()
+    engine = Engine(worker, options=EngineOptions())
+    try:
+        n0 = len(timed_out.stamps)
+        _dispatch_at_once(engine, "7k/8/8/8/8/8/6q1/7K w - - 0 1", "go movetime 30", 0.0)
+        hit = timed_out.wait_bestmove_after(n0)
+        assert hit is not None
+        assert hit[1].split()[1] == "h1g2"
+    finally:
+        engine.close()
+
+
+def test_a_bare_go_mates_wait_budget_ignores_its_age() -> None:
+    """The join budget for a bare `go mate N` is sized from its implicit cap
+    as if fresh: the go's age does not eat into a cap that is not a clock."""
+    engine = Engine(_mock_worker(), options=EngineOptions())
+    try:
+        cmd = parse_command("go mate 2")
+        assert isinstance(cmd, CmdGo)
+        fresh = engine._go_wait_budget_s(cmd, age_s=0.0)
+        assert fresh > 0.1
+        assert engine._go_wait_budget_s(cmd, age_s=61.0) == fresh
+    finally:
+        engine.close()
+
+
+@pytest.mark.parametrize("age_ms", [1040, 1060, 1080])
+@pytest.mark.parametrize("clock", [
+    "wtime 1100 btime 1100", "wtime 1100 btime 1100 winc 100 binc 100",
+    "wtime 1100 btime 1100 movestogo 1",
+])
+def test_the_movetime_eval_floor_never_runs_past_the_side_clock(timed_out, age_ms, clock) -> None:
+    """`go movetime 1000` with 1100 ms on the clock (MoveOverheadMs 30: the
+    movetime binds) stamped 1040-1080 ms ago, and a 60 ms fresh eval: the
+    30 ms movetime floor is capped at what is left of the side CLOCK (less
+    overhead and the watchdog's 8 ms margin, so by 1062 ms), and the bestmove
+    leaves before the 1100 ms flag. Uncapped it left at 1111 ms. The increment
+    is credited only after the move, and `movestogo 1` changes nothing here."""
+    worker = _mock_worker()
+    worker.fresh_root_policy_bestmove.side_effect = _slow_eval("e2e4", delay_s=0.06)
+    engine = Engine(worker, options=EngineOptions())
+    try:
+        engine.dispatch(parse_command("position startpos"))
+        n0 = len(timed_out.stamps)
+        origin = time.monotonic() - age_ms / 1000.0
+        engine.dispatch(stamp_received(parse_command(f"go movetime 1000 {clock}"), origin))
+        hit = timed_out.wait_bestmove_after(n0)
+        assert hit is not None
+        assert (hit[0] - origin) * 1000.0 < 1100.0, (hit[0] - origin)
+        assert worker.run.call_count == 0
+    finally:
+        engine.close()
+
+
+def test_a_claimed_answer_of_a_superseded_go_is_never_printed(timed_out, monkeypatch) -> None:
+    """A search that already CLAIMED its go's answer and sits between that
+    claim and its print when a new `go` parks it: the new go answers once, for
+    the new board, and the old search's bestmove (for the old board) is never
+    written -- the GUI would read it as the reply to its next go."""
+    worker = _mock_worker()
+    entered, release = threading.Event(), threading.Event()
+    calls = [0]
+
+    def run(_board, *, stop_event, **_kw):
+        calls[0] += 1
+        if calls[0] == 1:
+            stop_event.wait(30)
+        return SearchResult("e2e4", None, 16, ("e2e4",), 0)
+
+    worker.run.side_effect = run
+    engine = Engine(worker, options=EngineOptions())
+    real_publish = engine._publish_bestmove
+    old_gen: list[int] = []
+
+    def held_publish(gen, move, *args, **kwargs):
+        if old_gen and gen == old_gen[0]:
+            entered.set()
+            release.wait(10)  # the old search: claimed, not yet printed
+        return real_publish(gen, move, *args, **kwargs)
+
+    monkeypatch.setattr(engine, "_publish_bestmove", held_publish)
+    try:
+        engine.dispatch(parse_command("position startpos"))
+        engine.dispatch(parse_command("go infinite"))
+        end = time.monotonic() + 5.0
+        while calls[0] == 0 and time.monotonic() < end:
+            time.sleep(0.002)
+        old_gen.append(engine._search_gen)
+        engine.dispatch(parse_command("position startpos moves e2e4"))
+        n0 = len(timed_out.stamps)
+        engine.dispatch(parse_command("go movetime 1000"))
+        assert entered.wait(5), "the old search never reached its print"
+        assert timed_out.wait_bestmove_after(n0) is not None
+        release.set()
+        time.sleep(0.2)
+        moves = [ln.split()[1] for _, ln in timed_out.stamps[n0:] if ln.startswith("bestmove ")]
+        board = chess.Board()
+        board.push_uci("e2e4")
+        assert len(moves) == 1, moves
+        assert chess.Move.from_uci(moves[0]) in board.legal_moves, moves
+    finally:
+        release.set()
+        engine.close()
+
+
+def test_a_parked_search_prints_no_info_line_after_the_park(timed_out) -> None:
+    """A search parked by an aged `go` (it honours stop late) is silenced: an
+    info line it produces after the park never reaches stdout."""
+    worker = _mock_worker()
+    entered, sent = threading.Event(), threading.Event()
+    calls = [0]
+
+    def run(_board, *, stop_event, info_cb=None, **_kw):
+        calls[0] += 1
+        if calls[0] == 1:
+            entered.set()
+            stop_event.wait(30)
+            time.sleep(0.1)  # honours stop late: parked before this line
+            assert info_cb is not None
+            info_cb(nodes=16, elapsed_ms=5, score_cp=0, pv=("e2e4",), tbhits=0,
+                    score_mate=None, multipv=None, wdl=None, string="late-info-from-parked-search")
+            sent.set()
+        return SearchResult("e2e4", None, 16, ("e2e4",), 0)
+
+    worker.run.side_effect = run
+    engine = Engine(worker, options=EngineOptions())
+    try:
+        engine.dispatch(parse_command("position startpos"))
+        engine.dispatch(parse_command("go infinite"))
+        assert entered.wait(5)
+        engine.dispatch(parse_command("position startpos moves e2e4"))
+        engine.dispatch(stamp_received(parse_command("go movetime 1000"), time.monotonic() - 0.945))
+        assert sent.wait(5), "the parked search never produced its line"
+        time.sleep(0.05)
+        assert "late-info-from-parked-search" not in timed_out.text()
     finally:
         engine.close()
