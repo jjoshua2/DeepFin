@@ -1416,8 +1416,8 @@ class Engine:
         # busy-worker answer when the wait below raises -- is a move of a game,
         # so a later isready must not run the boundary checks.
         self._in_game = True
-        # The move clock starts at `go` receipt (when the main loop took it
-        # from stdin, `_receipt_time`): the bounded wait for a live search, tree sync (including any
+        # The move clock starts when the `go` arrived on stdin (`_receipt_time`):
+        # any wait behind earlier commands, the bounded wait for a live search, tree sync (including any
         # reuse work) and thread start-up below are all charged to this move's
         # deadline.
         go_received_at = _receipt_time(cmd.received_at)
@@ -1462,6 +1462,19 @@ class Engine:
             min_chunk_ms=self._measured_min_chunk_ms(),
         )
         limits = _fit_movetime_limits(cmd.args, limits)
+        queued_ms = (time.monotonic() - go_received_at) * 1000.0
+        if (not limits.clock_exhausted and not limits.ponder and not limits.infinite
+                and limits.deadline_ms is not None
+                and limits.deadline_ms - queued_ms < _MIN_DEADLINE_MS):
+            # The `go` waited behind earlier commands (or for the worker) until
+            # less than the minimum search is left of its deadline: answer at
+            # once, as for a clock that cannot pay for a search, rather than
+            # start a search already past its deadline (which the watchdog then
+            # answered unsearched, without even the fresh eval).
+            limits = replace(limits, clock_exhausted=True)
+            self._answer_clock_exhausted(cmd.args, search_board, limits, go_received_at,
+                                         queued_ms=queued_ms)
+            return
         if limits.clock_exhausted:
             self._answer_clock_exhausted(cmd.args, search_board, limits, go_received_at)
             return
@@ -1582,7 +1595,7 @@ class Engine:
 
     def _answer_clock_exhausted(
         self, args: GoArgs, board: chess.Board, limits: SearchLimits,
-        go_received_at: float,
+        go_received_at: float, *, queued_ms: float | None = None,
     ) -> None:
         """Answer a clocked `go` at once, without a search: the side to move's
         clock less ``MoveOverheadMs`` and the search slack leaves less than the
@@ -1636,7 +1649,14 @@ class Engine:
                 or not movetime_alone_too_short
                 or int(clock_ms) - max(0, int(self._options.move_overhead_ms)) < args.movetime_ms
             )
-            if not clock_binds:
+            if queued_ms is not None:
+                _println(
+                    f"info string go waited {int(queued_ms)} ms behind earlier commands: its "
+                    f"{max(0, int(limits.deadline_ms or 0))} ms deadline leaves under the "
+                    f"{_MIN_DEADLINE_MS} ms minimum search; answering at once "
+                    f"source={source} move={move}"
+                )
+            elif not clock_binds:
                 _println(
                     f"info string movetime too short to search: movetime {args.movetime_ms} "
                     f"ms leaves a {max(0, int(limits.deadline_ms or 0))} ms deadline, under "
@@ -1851,8 +1871,8 @@ class Engine:
             if self._ponderhit_at is not None:
                 return
             ponder_stop = self._stop_event
-            # The real phase's clock started when the main loop took the
-            # ponderhit from stdin, not when this handler got the GIL.
+            # The real phase's clock started when the ponderhit arrived on
+            # stdin, not when this handler got the GIL.
             self._ponderhit_at = _receipt_time(None if cmd is None else cmd.received_at)
             self._ponderhit_event.set()
             gen = self._search_gen
@@ -4389,12 +4409,13 @@ def _at_once_answer_by_ms(clock_left_ms: float, elapsed_ms: float) -> float:
 
 
 def _receipt_time(received_at: float | None) -> float:
-    """The clock origin of a `go` / `ponderhit`: when the main loop took its line
-    (the command's ``received_at``), never later than now; now when unstamped.
-    The main loop stamps a line when it takes it from stdin (through
-    `__main__._StdinFeed`'s queue), so time a line spends waiting while the loop
-    handles an earlier command is NOT counted (MoveOverheadMs must cover it);
-    the stamp only charges the parse-and-dispatch time before the handler runs."""
+    """The clock origin of a `go` / `ponderhit`: the command's ``received_at``,
+    never later than now; now when unstamped. ``received_at`` is when the line
+    arrived on stdin (`__main__._StdinFeed`'s reader thread), or when the engine
+    became ready for a line that arrived before that (`__main__._clock_origin`).
+    Time the line spent waiting behind an earlier command IS counted: the GUI's
+    clock was running. A `go` whose wait leaves less than the minimum search is
+    answered at once (`_handle_go`)."""
     now = time.monotonic()
     return now if received_at is None else min(float(received_at), now)
 
