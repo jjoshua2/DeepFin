@@ -543,7 +543,14 @@ path has a wall-clock deadline: the engine read timeout applies only inside a
 search, and searches already submitted finish on the pool's threads. Each
 process records its `pause_intervals`; `stats.json` has `paused_seconds`,
 `active_seconds`, games/h over the active time, and `timing_independent: false`
-for a paused (or resumed) collect. `STOP` is not a pause: the driver honours it at
+for a paused (or resumed) collect. `wall_seconds`, `paused_seconds` and `active_seconds`
+are the orchestrator's clock for this attempt. An attempt in which no process ran (a
+merge-only reseal) times only the merge, so those fields and the rates are null.
+Always written, kept processes included: `slowest_process_wall_seconds`, the largest
+per-process wall of each process's FINAL attempt (pauses included), and
+`slowest_process_active_seconds`, that process's wall minus its pauses. Neither counts
+the earlier attempts of a game-resumed process (a killed attempt leaves no clock), so
+after such a resume they are not the collect's whole play time. `STOP` is not a pause: the driver honours it at
 the next stage boundary, and the driver still refuses to START a stage while a
 pause marker exists.
 

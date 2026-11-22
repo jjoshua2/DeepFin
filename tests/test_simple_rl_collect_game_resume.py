@@ -158,6 +158,11 @@ def _check_resumed(gen: Path, stats: dict[str, Any], kept_before: list[str],
     if kept_before:
         assert stats["procs_game_resumed"] == {0: len(kept_before)}
         assert stats["timing_independent"] is False
+    # the per-process clock is the FINAL attempt's own (earlier attempts are not counted)
+    proc = stats["procs"][0]
+    assert stats["slowest_process_wall_seconds"] == proc["wall_seconds"]
+    assert stats["slowest_process_active_seconds"] == pytest.approx(proc["wall_seconds"] - proc["paused_seconds"])
+    assert stats["slowest_process_wall_seconds"] <= stats["wall_seconds"]
     return resumes
 
 

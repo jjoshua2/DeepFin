@@ -42,6 +42,7 @@ on a 2-device pool); a restart frees them.
 from __future__ import annotations
 
 import functools
+import logging
 import threading
 import time
 import types
@@ -195,8 +196,9 @@ def _await_os_exit(thread: threading.Thread) -> None:
     await_os_thread_exit(thread)
 
 
-def join_unless_wedged(thread: threading.Thread, timeout: float) -> None:
-    """``Thread.join`` that also returns once ``thread`` has parked.
+def join_unless_wedged(thread: threading.Thread, timeout: float) -> bool:
+    """``Thread.join`` that also returns once ``thread`` has parked; True if it
+    ended or parked, False if ``timeout`` ran out with it still running.
 
     After a device fault ending workers park instead of exiting, so a plain
     join would only spend the timeout. This waits (at most ``timeout``) until
@@ -207,21 +209,46 @@ def join_unless_wedged(thread: threading.Thread, timeout: float) -> None:
     if device_fault() is None and not any_wedged():
         thread.join(timeout=timeout)  # no fault: workers end normally
         _await_os_exit(thread)
-        return
+        return not thread.is_alive()
     with _lock:
         while thread.is_alive() and thread not in _parked:
             left = deadline - time.monotonic()
             if left <= 0:
-                return
+                return False
             _changed.wait(timeout=min(left, 0.05))
     _await_os_exit(thread)
+    return True
 
 
-def reset_session_for_tests() -> None:
+def warn_outlived_close(log: logging.Logger, pool: str, threads: list[threading.Thread],
+                        join_s: float) -> None:
+    """One warning for a pool ``close()`` whose bounded join ran out, naming the
+    threads still running (left running, daemon; they may still hold their
+    evaluators). Checked now, not at the join: a thread that has since ended, or
+    parked (a device fault latched during a no-fault join), is retired and not
+    named. Not for threads abandoned in a device step (announced as a fault)."""
+    with _lock:
+        names = [th.name for th in threads if th.is_alive() and th not in _parked]
+    if names:
+        log.warning("%s close: %s still running after the %gs join; left running",
+                    pool, ", ".join(names), join_s)
+
+
+def reset_session_for_tests(*, released_join_s: float = 10.0) -> None:
     """Forget wedge marks and the wedged-device registry and let parked
-    threads end (tests only: one pytest process is many engine "sessions")."""
+    threads end (tests only: one pytest process is many engine "sessions").
+
+    Returns only once every thread it released has ENDED, OS thread included
+    (``_await_os_exit``). Parking is a thread's last act (:func:`parking`), so
+    a released thread only returns; but until it is gone it is alive and no
+    longer parked, and a later session's "every helper ended or parked" check
+    over ``threading.enumerate()`` would count it (CI #1480: a previous test's
+    released ``rpg-group-*`` threads, still dying under load on Python 3.13).
+    A released thread still alive after ``released_join_s`` is a real defect
+    and raises, naming it."""
     global _release
     with _lock:
+        released = list(_parked)
         _wedged.clear()
         _wedged_devices.clear()
         _parked.clear()
@@ -229,3 +256,15 @@ def reset_session_for_tests() -> None:
         old, _release = _release, threading.Event()
         old.set()
         _changed.notify_all()
+    me = threading.current_thread()
+    deadline = time.monotonic() + max(0.0, released_join_s)
+    for thread in released:
+        if thread is me:
+            continue
+        thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        if not thread.is_alive():
+            _await_os_exit(thread)
+    stuck = [t.name for t in released if t is not me and t.is_alive()]
+    if stuck:
+        raise RuntimeError(f"wedge.reset_session_for_tests: released parked thread(s) {stuck} "
+                           f"did not end within {released_join_s:g}s")

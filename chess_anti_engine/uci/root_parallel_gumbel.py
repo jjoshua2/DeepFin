@@ -618,10 +618,12 @@ class RootParallelGumbelPool:
                 # ending groups park (``wedge``), so nothing to join.
                 wedge.join_unless_wedged(
                     self._threads[k], max(0.0, abandoned_deadline - time.monotonic()))
-        for k in started:
-            if k not in self._abandoned:
-                # After a device fault, ending groups park: no join.
-                wedge.join_unless_wedged(self._threads[k], 2.0)
+        lingering = [
+            self._threads[k] for k in started
+            # After a device fault, ending groups park: no join.
+            if k not in self._abandoned and not wedge.join_unless_wedged(self._threads[k], 2.0)
+        ]
+        wedge.warn_outlived_close(_log, "root-parallel Gumbel pool", lingering, 2.0)
         # Unblock any orchestrator stuck at a phase barrier mid-close.
         self._phase_done.set()
 
