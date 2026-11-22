@@ -1021,6 +1021,8 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         rows = compiled_forward_rows(bsz, self._max_batch) if self._pad_to_buckets else int(bsz)
         if rows > 0:
             self.shape_ledger.note(entry, rows)
+            if _FORWARD_SIZE_TRACE:
+                _note_forward("dense", int(bsz), rows)
         return rows
 
     @staticmethod
@@ -1334,6 +1336,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
 
     def evaluate_inplace_legal_bf16_async(
         self, bsz: int, legal_flat: np.ndarray, legal_counts: np.ndarray, *, slot: int = 0,
+        live_rows: int | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
         """Async eval returning compact legal policy logits as BF16 bit patterns.
 
@@ -1371,6 +1374,13 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         )
         if fwd_rows > 0:
             self.shape_ledger.note("legal_bf16", fwd_rows, graph="legal")
+        if _FORWARD_SIZE_TRACE:
+            # ``live_rows``: the caller's real count when it pre-padded ``bsz``
+            # (the non-padding sync wrapper). The CPU branch below forwards
+            # through `evaluate_inplace`, whose `_forward_rows` notes the batch.
+            _note_legal_policy(n_legal)
+            if self._use_cuda and fwd_rows > 0:
+                _note_forward("legal", int(bsz if live_rows is None else live_rows), fwd_rows)
         if not self._use_cuda:
             pol, wdl = self.evaluate_inplace(bsz, copy_out=True, slot=slot)
             rows = np.repeat(np.arange(bsz, dtype=np.int64), counts.astype(np.int64, copy=False))
@@ -1418,12 +1428,12 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         # kept bit-for-bit for non-padding evaluators.
         padded = (
             real_n if self._pad_to_buckets
-            else _compiled_padded_batch_size(real_n, capacity=self._max_batch)
+            else _compiled_padded_batch_size(real_n, capacity=self._max_batch, record=False)
         )
         if padded > real_n:
             counts = np.pad(counts, (0, padded - real_n))
         pol_t, wdl_t, event = self.evaluate_inplace_legal_bf16_async(
-            padded, flat, counts, slot=0,
+            padded, flat, counts, slot=0, live_rows=real_n,
         )
         if event is not None:
             event.synchronize()
@@ -1679,8 +1689,10 @@ class ShapeLedger:
 
 # --- Optional forward size histogram (bucket-design diagnostic) ------------
 # Set CAE_BUCKET_HIST=/path/to/hist.json to record the RAW pre-pad forward
-# sizes across whichever inference path is live (broker / dispatcher / threaded
-# all pad through these two functions). Records two axes:
+# sizes across whichever inference path is live: the broker pads through the
+# two functions below; `DirectGPUEvaluator` (every entry, padding or not -- the
+# UCI engine's compiled path) and `AOTEvaluator` note theirs through
+# `_note_forward` / `_note_legal_policy`. Records two axes:
 #   "batch"        — the forward batch total (sizes the _COMPILED_BATCH_BUCKETS
 #                    / AOT _BATCH_BUCKETS ladder must cover)
 #   "legal_policy" — the flat legal-move policy size (the second axis the
@@ -1738,6 +1750,63 @@ if _BUCKET_HIST_ENABLED:
     atexit.register(_flush_bucket_hist_atexit)
 
 
+# --- Optional per-forward timeline JSONL (search batch-size diagnostic) ------
+# Set CAE_BATCH_TRACE=/path/to/trace.jsonl to append one record per forward on
+# the evaluator paths that call `_note_forward` (`DirectGPUEvaluator`,
+# `AOTEvaluator`): {"t": time.monotonic(), "graph": dense|legal|aot,
+# "rows": live rows, "padded": forward rows}. `time.monotonic` is the system
+# CLOCK_MONOTONIC on Linux, so a driver process can line its own `go` times up
+# with the records. Off: both entries check one module-level bool,
+# `_FORWARD_SIZE_TRACE`, and do nothing else.
+_BATCH_TRACE_PATH = os.environ.get("CAE_BATCH_TRACE", "").strip()
+_BATCH_TRACE_ENABLED = bool(_BATCH_TRACE_PATH)
+_FORWARD_SIZE_TRACE = _BUCKET_HIST_ENABLED or _BATCH_TRACE_ENABLED
+_batch_trace_buf: list[str] = []
+_batch_trace_lock = threading.Lock()
+_BATCH_TRACE_FLUSH_EVERY_N = 256
+
+
+def _flush_batch_trace() -> None:
+    """Append buffered records to CAE_BATCH_TRACE (caller holds the lock)."""
+    if not _batch_trace_buf:
+        return
+    try:
+        with open(_BATCH_TRACE_PATH, "a", encoding="utf-8") as fh:
+            fh.writelines(_batch_trace_buf)
+    except OSError:
+        pass  # diagnostic only — never disturb the forward path
+    _batch_trace_buf.clear()
+
+
+def _note_forward(graph: str, rows: int, padded: int) -> None:
+    """One forward of ``rows`` live rows run at ``padded`` rows."""
+    if _BUCKET_HIST_ENABLED:
+        _record_bucket_hist("batch", int(rows))
+    if _BATCH_TRACE_ENABLED:
+        line = (f'{{"t":{time.monotonic():.6f},"graph":"{graph}",'
+                f'"rows":{int(rows)},"padded":{int(padded)}}}\n')
+        with _batch_trace_lock:
+            _batch_trace_buf.append(line)
+            if len(_batch_trace_buf) >= _BATCH_TRACE_FLUSH_EVERY_N:
+                _flush_batch_trace()
+
+
+def _note_legal_policy(total: int) -> None:
+    if _BUCKET_HIST_ENABLED and total > 0:
+        _record_bucket_hist("legal_policy", int(total))
+
+
+def _flush_batch_trace_atexit() -> None:
+    with _batch_trace_lock:
+        _flush_batch_trace()
+
+
+if _BATCH_TRACE_ENABLED:
+    import atexit
+
+    atexit.register(_flush_batch_trace_atexit)
+
+
 # --- Optional arrival-trace JSONL (gather-policy diagnostic) ----------------
 # Set CAE_ARRIVAL_TRACE=/path/to/trace.jsonl to record per-dispatched-batch
 # arrival timestamps (perf_counter) as seen by SlotBroker.serve_forever.
@@ -1791,10 +1860,14 @@ if _ARRIVAL_TRACE_ENABLED:
     atexit.register(_flush_arrival_trace_atexit)
 
 
-def _compiled_padded_batch_size(total: int, *, capacity: int | None = None) -> int:
+def _compiled_padded_batch_size(
+    total: int, *, capacity: int | None = None, record: bool = True,
+) -> int:
+    """``record``: False when the caller's forward entry notes the batch itself
+    (`DirectGPUEvaluator.evaluate_legal_bf16` pre-pads for the legal entry)."""
     if total <= 0:
         return 0
-    if _BUCKET_HIST_ENABLED:
+    if _BUCKET_HIST_ENABLED and record:
         _record_bucket_hist("batch", int(total))
     for bucket in _COMPILED_BATCH_BUCKETS:
         if bucket >= total:
@@ -2144,6 +2217,8 @@ class AOTEvaluator:
             raise ValueError(f"batch {bsz} outside supported range [0, {self._max_batch}]")
         for b in self._sorted_buckets:
             if b >= bsz:
+                if _FORWARD_SIZE_TRACE and bsz > 0:
+                    _note_forward("aot", int(bsz), b)
                 return b
         raise ValueError(f"no AOT package can serve batch {bsz}")
 
