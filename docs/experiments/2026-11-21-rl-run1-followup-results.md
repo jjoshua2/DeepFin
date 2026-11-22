@@ -249,8 +249,9 @@ under its own record.
 **Caveats, as plain as the result.**
 - **The (T, b) fit is post hoc on this one net.** It was made at 13:09 on 11-21 (`pilot-value-diagnosis/logs/fit_Zq.log` [`3a6d157e`], `out/recal_Zq.json` [`7e665c5e`]), after the pilot gate had been read. It was fixed before matches 7 and 8 were registered and run, and was not refit.
 - **What the fit minimised:** the cross-entropy of Zq's recalibrated WDL, softmax(logits / T + [0, b, 0]), to the SL base net's WDL. That ran on the 39,237 rows of the pilot collect's 416 hold-out games: CE 0.556724 → 0.540235 (fit log). The recalibration target is therefore the base net's value shape, not the game outcomes.
+- **What a 2-parameter fit can and cannot do.** softmax(l / T + [0, b, 0]) changes confidence and draw mass. Through the draw bias it can also reorder W − L between positions somewhat. It cannot add information or copy the base head. Pulling Zq's shape toward the base can recover the shape loss that match 7 measured, but any "beats the base" has to come from Zq's own head.
 - **One net and one generation.**
-- **A family of nomination tests ran that night,** with no multiplicity correction registered: four registered readings were played (matches 5, 7, 6 and 8), and the value-anchor screens are still to come. Each reading is at its own 95% interval; any "adoptable" or "shape" reading only nominates.
+- **A family of nomination tests ran that night,** with no multiplicity correction registered: seven registered readings were made that day (pilot matches 1, 3 and 4; follow-up matches 5, 7, 6 and 8, with match 6's one reading resting on two pools), and the value-anchor screens are still to come. Each reading is at its own 95% interval; any "adoptable" or "shape" reading only nominates.
 
 **The Zq chain across the night:**
 
@@ -273,8 +274,9 @@ use different seeds and opening blocks, and Elo need not be transitive across op
 - **Why the result stands without a rerun.** Wall time enters no decision:
   - the arena flags in `run_followup_match.sh` are `--mode matched_sims --sims 64 --max-plies 600 --on-max-plies abort`, with no clock;
   - both result rows have `ms_per_move` null and `max_seconds` null, 64 sims on both sides, `paused_seconds` 0, `timing_independent` true.
+- **Why the moves could not change.** The strays were separate processes and could not enter the arena's batches. GPU contention changes timing, not the arena's sim count or batch membership. Any numeric dependence on batch composition is the ordinary nondeterminism present in every run, not a bias toward a seat.
 - **Symptom check.** A broken seat would most visibly show as a large seat offset. Seat A read +10.9 and seat B +8.4; the offset is +1.2 with an interval [−4.9, +7.4] that includes 0.
-- **In-window diagnostic** (derived, games treated as independent, no rule). Each game row carries `ts` (its end time) and `duration_s`. The 185 seat-A games in flight during the window scored 0.559 for the arm, against 0.513 for the other 3,015. The difference, +0.047 ± 0.028, points the other way from damage.
+- **In-window diagnostic** (derived, games treated as independent, no rule). Each game row carries `ts` (its end time) and `duration_s`. The 185 seat-A games in flight during the window scored 0.559 for the arm, against 0.513 for the other 3,015. The difference is +0.047 ± 0.028, where ± is ONE SE with games treated as independent (95%: ± 0.055; z ≈ 1.65). Clustering by opening (103 openings, at most 2 games each) gives about the same, SE 0.028 and z ≈ 1.67. **Not significant; not evidence for the arm.**
 
 Sources: `F/arenas/zq_recal_vs_base/pool.json` [`3e407ba8`], `pool.log` [`e5176649`], `results.jsonl` [`3f2b62ad`],
 `zq_recal_vs_base_1_A.games.jsonl` [`9e85b212`], `zq_recal_vs_base_1_B.games.jsonl` [`c9b737f7`]. The run walls were

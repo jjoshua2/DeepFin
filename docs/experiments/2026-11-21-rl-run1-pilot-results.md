@@ -266,7 +266,7 @@ The numbers below were read from `out/*.json`:
 **Status, by the addendum's pre-registered rule.**
 - **S: supports "ranking content broke".** The CI is entirely below 0, and (T, b) does not restore it.
 - **Zq: not separated.** This does NOT explain Zq's −10; Zq's shape account (0.60 of its divergence is removable by
-  (T, b)) stays open. *Update:* matches 7 and 8 support the shape account in play ([follow-up results](2026-11-21-rl-run1-followup-results.md)).
+  (T, b)) stays open. *Update:* matches 7 and 8 are consistent with the shape account in play (match 8 is not a test of shape vs content) ([follow-up results](2026-11-21-rl-run1-followup-results.md)).
 - **P0's own head: not separated.**
 
 The mechanism, that the value loss changes what the head says (content) rather than its scale (shape), is therefore
