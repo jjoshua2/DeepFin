@@ -105,9 +105,11 @@ These are as reported by the operator and read from the bank files cited.
 - The release line is `stage0 idle_mib=2398 2026-11-22T14:31:36-05:00`, the first line of
   `G2/GPU_RELEASED_BY_OPERATOR` [`66473b70`] (its first line per stage wins; the operator replaced it for this attempt).
   The file's second line, `gen2 …`, was appended later for the generation-2 stage (below); the stage0 line is
-  untouched.
+  untouched. A later append (for example a relaunch line) moves the whole-file stamp, so the stage0 line can be
+  re-checked on its own: the file's first 47 bytes (that line and its newline) hash to `efee002a`, the stamp the
+  file had before the gen2 line was appended.
 - Start 14:31:43: `G2/stage0/started` [`a247a7c1`] reads `2026-11-22T14:31:43-05:00`, and the first line of
-  `G2/resume.log` (append-only; the running generation-2 stage is still appending to it, so it is not stamped) reads
+  `G2/resume.log` (append-only; in progress as of 16:47: the running generation-2 stage is still appending to it, so it is not stamped) reads
   `2026-11-22T14:31:43-05:00 stage0 launch pid 2832905`.
 - Seat A's game log header is `created` 14:38:35; its first game's `ts` is 14:39:09.
 - Exit 0 at 16:06:23.
@@ -172,9 +174,9 @@ The blanks below are filled from the bank when each stage is read. Each is judge
 - `G2/gen2/OWNER_GO` [`811e857b`], written 16:46:41: it quotes the owner's standing statement and cites Stage 0's
   verdict and the smoke.
 - Release line `gen2 idle_mib=2181 2026-11-22T16:46:41-05:00` appended to `G2/GPU_RELEASED_BY_OPERATOR` [`66473b70`].
-- `G2/gen2/launch_gen2.sh` started under `setsid nohup`, output to `G2/gen2/run.out` (in progress; not stamped).
+- `G2/gen2/launch_gen2.sh` started under `setsid nohup`, output to `G2/gen2/run.out` (in progress as of 16:47; not stamped).
 - First step: `prelaunch/equiv_check.py`. `G2/gen2/equiv.started` [`96df781c`] reads 2026-11-22T16:46:54-05:00;
-  `G2/gen2/equiv.log` is in progress (not stamped).
+  `G2/gen2/equiv.log` is in progress as of 16:47 (not stamped: its content is a B3 result and belongs in the B3 blank).
 
 The result blanks follow.
 - **B2 collect from `gen1_baked.pt`:** _blank: games, rows, wall, checks, bank file + stamp._
