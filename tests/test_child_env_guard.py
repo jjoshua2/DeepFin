@@ -19,32 +19,50 @@ that takes one: ``env -u X``, ``timeout -s KILL``, ``stdbuf -o L``), is ``sys.ex
 ``.executable`` attribute) or a ``python*`` literal; a single string (the
 ``shell=True`` form) counts when its first word is one.
 
-The env may be a dict literal, ``dict(K=...)``, or a name bound once in the
-same function to either; ``env[K] = v`` and ``env.update({...})`` /
-``env.update(K=...)`` on that name in the same function count towards it. A
-dict that spreads anything (``**os.environ``), or is updated from anything
-but a literal, inherits from the suite and is left alone; so is any other
-expression (``gpu_free_env(...)``, ``os.environ.copy()``).
+The env may be a dict literal, ``dict(...)``, or a name; a name is resolved
+AS IT STANDS AT THE LAUNCH: the function's assignments to it and changes to
+it (``env[K] = v``, ``env.update(...)``, ``env |= {...}``, ``setdefault``,
+``pop``, ``del env[K]``, ``clear``, a rebinding) are applied in source order
+up to the launch, on the launch's own control-flow path (a change on a branch
+the launch is not in is skipped; ``with`` and a ``try`` body are straight
+line). A copy (``dict(env, ...)``, ``{**env, ...}``, ``env.copy()``,
+``env | {...}``) takes the source env's state at that point. A dict that
+spreads or is updated from anything that is not a scratch dict of the same
+function (``**os.environ``) inherits from the suite and is left alone; so is
+any other expression (``gpu_free_env(...)``, ``os.environ.copy()``, a
+parameter). A write or removal through a non-constant key is tracked
+separately from inheritance: a required variable it may have overwritten is
+reported.
+
+An env whose state at the launch cannot be resolved is REPORTED, never
+passed: one changed or rebound on a branch the launch is not on, in a loop
+(including a change after the launch inside the loop that holds it), bound
+to a second name (``other = env``), changed by an unknown method or an
+augmented assignment, or built in an enclosing function the launch's
+function closes over.
 
 Still missed: an env from a dict comprehension, or returned by a helper
-function, or built in another function than the launch; an env bound twice
-in the function; a complete env with a key removed afterwards (``env.pop``,
-``del env[...]``); a launch through a helper of its own (e.g. a ``_run``
-wrapper whose argv is a parameter), through
-``functools.partial(subprocess.run, env=...)``, or inside a lambda; an argv
-assembled with ``+`` / ``*`` unpacking from names; python reached through a
-variable (``exe = sys.executable``), ``shutil.which("python3")`` or
+function, or changed by a helper it is passed to (``fill(env)``); a launch
+through a helper of its own (e.g. a ``_run`` wrapper whose argv is a
+parameter), through ``functools.partial(subprocess.run, env=...)``, or
+inside a lambda; an argv bound more than once, or assembled with ``+`` /
+``*`` unpacking from names; python reached through a variable
+(``exe = sys.executable``), ``shutil.which("python3")`` or
 ``str(sys.executable)``; a ``shell=True`` string whose first word is not
 python (``"cd /tmp && python3 x.py"``); ``asyncio.create_subprocess_shell``;
 a ``taskset`` mask written without ``0x`` (``taskset ff ...``). A guard
 against the common shapes, not a proof.
 
-Known false positives: ``env |= {...}``, ``env.setdefault(...)`` and keys
-held in named constants are not read, and any object's ``.run([sys.executable],
-env=...)`` is taken for ``subprocess.run``. The remedy for each is the same:
-wrap the env in ``gpu_free_env(...)``.
+Known false positives (each is reported, and the remedy is the same: wrap
+the env in ``gpu_free_env(...)``): keys held in named constants; a required
+variable set from a non-constant value; any second name for the env, even
+unchanged; a loop that rebinds the env at the top of each iteration and
+changes it after the launch; and any object's ``.run([sys.executable],
+env=...)``, which is taken for ``subprocess.run``.
 """
 from __future__ import annotations
+
+from typing import Any
 
 import ast
 import re
@@ -139,43 +157,68 @@ def _subprocess_names(tree: ast.Module) -> set[str]:
     return names
 
 
+_REQUIRED = frozenset(GPU_FREE)
+_LOOPS = (ast.For, ast.AsyncFor, ast.While)
+# Constructs whose body runs zero, one or several times, or on one path only.
+_CONDITIONAL = (ast.If, *_LOOPS, ast.Match, ast.match_case, ast.ExceptHandler, ast.IfExp,
+                ast.BoolOp, ast.comprehension)
+_READ_ONLY_METHODS = {"copy", "get", "items", "keys", "values", "__contains__", "__getitem__"}
+
+
 class _Env:
-    """What a scope does to one env dict: its constant keys and values, or
-    ``inherits`` when anything non-literal is mixed in."""
+    """One scratch env dict's state at a point: its constant keys and values;
+    ``inherits`` when anything non-literal is mixed in (then it is left alone);
+    ``maybe_changed`` -- required keys a write through a non-constant key may
+    have overwritten since they were last set; ``unresolved`` -- why the state
+    at the launch cannot be known (reported, never passed)."""
 
     def __init__(self) -> None:
         self.values: dict[str, object] = {}
         self.inherits = False
+        self.maybe_changed: set[str] = set()
+        self.unresolved: str | None = None
 
-    def take_dict(self, node: ast.expr) -> bool:
-        if isinstance(node, ast.Dict):
-            for k, v in zip(node.keys, node.values):
-                if k is None:
-                    self.inherits = True
-                elif isinstance(k, ast.Constant) and isinstance(k.value, str):
-                    self.values[k.value] = v.value if isinstance(v, ast.Constant) else ...
-            return True
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "dict"
-                and not node.args):
-            self.take_keywords(node.keywords)
-            return True
-        return False
+    def copy(self) -> _Env:
+        out = _Env()
+        out.values = dict(self.values)
+        out.inherits, out.maybe_changed, out.unresolved = (
+            self.inherits, set(self.maybe_changed), self.unresolved)
+        return out
 
-    def take_keywords(self, keywords: list[ast.keyword]) -> None:
-        for kw in keywords:
-            if kw.arg is None:
-                self.inherits = True
-            else:
-                self.values[kw.arg] = kw.value.value if isinstance(kw.value, ast.Constant) else ...
+    def merge(self, other: _Env) -> None:
+        self.values.update(other.values)
+        self.inherits |= other.inherits
+        self.maybe_changed = (self.maybe_changed - set(other.values)) | other.maybe_changed
+        self.unresolved = self.unresolved or other.unresolved
+
+    def set(self, key: ast.expr | str | None, value: ast.expr | None) -> None:
+        if isinstance(key, ast.Constant) and isinstance(key.value, str):
+            key = key.value
+        if isinstance(key, str):
+            self.values[key] = value.value if isinstance(value, ast.Constant) else ...
+            self.maybe_changed.discard(key)
+        else:  # a non-constant key may name a required variable
+            self.maybe_changed |= _REQUIRED
+
+    def remove(self, key: ast.expr | None) -> None:
+        if isinstance(key, ast.Constant) and isinstance(key.value, str):
+            self.values.pop(key.value, None)
+            self.maybe_changed.discard(key.value)
+        else:
+            self.maybe_changed |= _REQUIRED
 
 
 def _problems(env: _Env) -> list[str]:
+    if env.unresolved:
+        return [f"env at this launch cannot be resolved: {env.unresolved}"]
     out = []
     for key, want in GPU_FREE.items():
         if key not in env.values:
             out.append(f"no {key}")
         elif env.values[key] != want:
             out.append(f"{key} is not {want!r}")
+        elif key in env.maybe_changed:
+            out.append(f"{key} may be overwritten through a non-constant key")
     return out
 
 
@@ -188,35 +231,282 @@ def _binds(name: str, scope_nodes: list[ast.AST]) -> list[ast.Assign | ast.AnnAs
                     for t in (n.targets if isinstance(n, ast.Assign) else [n.target]))]
 
 
-def _resolve_env(node: ast.expr | None, scope_nodes: list[ast.AST]) -> _Env | None:
-    """The env a launch passes, or None when it inherits / is not a literal."""
+def _pos(node: ast.AST) -> tuple[int, int]:
+    return (getattr(node, "lineno", 0), getattr(node, "col_offset", 0))
+
+
+class _Scan:
+    """One parsed file: parent links, so an env is resolved in SOURCE ORDER up
+    to the launch, on the launch's own control-flow path."""
+
+    def __init__(self, tree: ast.Module) -> None:
+        self.parents: dict[ast.AST, tuple[ast.AST, str]] = {}
+        for node in ast.walk(tree):
+            for field, value in ast.iter_fields(node):
+                for child in value if isinstance(value, list) else [value]:
+                    if isinstance(child, ast.AST):
+                        self.parents[child] = (node, field)
+
+    def _path(self, node: ast.AST, scope: ast.AST) -> list[tuple[ast.AST, str]]:
+        out = []
+        while node is not scope and node in self.parents:
+            parent, field = self.parents[node]
+            out.append((parent, field))
+            node = parent
+        return out
+
+    def contains(self, outer: ast.AST, node: ast.AST) -> bool:
+        while node in self.parents:
+            node = self.parents[node][0]
+            if node is outer:
+                return True
+        return False
+
+    def relation(self, event: ast.AST, anchor: ast.AST, scope: ast.AST) -> str:
+        """``before``: runs before ``anchor`` on every path to it; ``never``:
+        not before it on any path; ``maybe``: on some paths only (a branch the
+        anchor is not in, a loop that may run zero times, a later statement of a
+        loop body that also holds the anchor)."""
+        p_event, p_anchor = self._path(event, scope), self._path(anchor, scope)
+        shared = set(p_anchor)
+        anchor_ancestors = {a for a, _ in p_anchor}
+        if _pos(event) >= _pos(anchor):
+            in_shared_loop = any(isinstance(a, _LOOPS) and f == "body" and (a, f) in shared
+                                 for a, f in p_event)
+            return "maybe" if in_shared_loop else "never"
+        for anc, field in p_event:
+            if (anc, field) in shared:
+                return "before"  # the anchor is in this same block, later
+            if anc in anchor_ancestors:
+                return "never"  # another branch of a statement that holds the anchor
+            if isinstance(anc, _CONDITIONAL) or (isinstance(anc, ast.Try)
+                                                  and field in ("handlers", "orelse")):
+                if isinstance(anc, ast.BoolOp) and field == "values" and anc.values[0] is event:
+                    continue  # the first operand always runs
+                return "maybe"
+        return "before"
+
+
+def _events(name: str, nodes: list[ast.AST]) -> list[tuple[tuple[int, int], str, ast.AST, Any]]:
+    """``(position, kind, node, payload)`` for everything a scope does to ``name``."""
+    out: list[tuple[tuple[int, int], str, ast.AST, Any]] = []
+
+    def named(t: ast.AST) -> bool:
+        return isinstance(t, ast.Name) and t.id == name
+
+    for n in nodes:
+        if isinstance(n, ast.Assign):
+            for t in n.targets:
+                if named(t):
+                    out.append((_pos(n), "bind", n, n.value))
+                elif isinstance(t, ast.Subscript) and named(t.value):
+                    out.append((_pos(n), "set", n, (t.slice, n.value)))
+                elif isinstance(t, (ast.Tuple, ast.List)) and any(named(e) for e in ast.walk(t)):
+                    out.append((_pos(n), "opaque", n, "bound by an unpacking assignment"))
+            if named(n.value) and not any(named(t) for t in n.targets):
+                out.append((_pos(n), "opaque", n, f"aliased to another name ({name} is shared)"))
+        elif isinstance(n, (ast.AnnAssign, ast.NamedExpr)) and n.value is not None and named(n.target):
+            out.append((_pos(n), "bind", n, n.value))
+        elif isinstance(n, ast.AugAssign):
+            if named(n.target):
+                if isinstance(n.op, ast.BitOr):
+                    out.append((_pos(n), "update", n, ([n.value], [])))
+                else:
+                    out.append((_pos(n), "opaque", n, "an augmented assignment"))
+            elif isinstance(n.target, ast.Subscript) and named(n.target.value):
+                out.append((_pos(n), "set", n, (n.target.slice, None)))
+        elif isinstance(n, ast.Delete):
+            out.extend((_pos(n), "remove", n, t.slice) for t in n.targets
+                       if isinstance(t, ast.Subscript) and named(t.value))
+        elif isinstance(n, (ast.For, ast.AsyncFor, ast.With, ast.AsyncWith)):
+            targets = [n.target] if isinstance(n, (ast.For, ast.AsyncFor)) else [
+                i.optional_vars for i in n.items if i.optional_vars is not None]
+            if any(named(e) for t in targets for e in ast.walk(t)):
+                out.append((_pos(n), "opaque", n, "bound by a for / with target"))
+        elif (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+              and named(n.func.value)):
+            attr = n.func.attr
+            if attr == "update":
+                out.append((_pos(n), "update", n, (n.args, n.keywords)))
+            elif attr == "pop" and n.args:
+                out.append((_pos(n), "remove", n, n.args[0]))
+            elif attr == "setdefault" and n.args:
+                out.append((_pos(n), "setdefault", n, (n.args[0], n.args[1] if len(n.args) > 1 else None)))
+            elif attr == "clear":
+                out.append((_pos(n), "clear", n, None))
+            elif attr not in _READ_ONLY_METHODS:
+                out.append((_pos(n), "opaque", n, f"changed by .{attr}()"))
+    out.sort(key=lambda e: e[0])
+    return out
+
+
+def _scratch_literal(value: ast.expr | None) -> bool:
+    return isinstance(value, ast.Dict) or (
+        isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id == "dict")
+
+
+class _Resolver:
+    def __init__(self, scan: _Scan) -> None:
+        self.scan = scan
+        self._nodes: dict[int, list[ast.AST]] = {}
+
+    def nodes(self, scope: ast.AST) -> list[ast.AST]:
+        if id(scope) not in self._nodes:
+            self._nodes[id(scope)] = _own_nodes(scope)
+        return self._nodes[id(scope)]
+
+    def value(self, node: ast.expr, scope: ast.AST, depth: int) -> _Env | None:
+        """A bound value's env state, or None when it is not a scratch dict."""
+        if isinstance(node, ast.Dict):
+            env = _Env()
+            for k, v in zip(node.keys, node.values):
+                if k is None:
+                    self.spread(env, v, node, scope, depth)
+                else:
+                    env.set(k, v)
+            return env
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "dict":
+            if len(node.args) > 1:
+                return None
+            env = _Env()
+            for a in node.args:
+                self.spread(env, a, node, scope, depth)
+            self.keywords(env, node.keywords)
+            return env
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "copy" and not node.args and isinstance(node.func.value, ast.Name)):
+            src = self.state(node.func.value.id, node, scope, depth + 1)
+            return src.copy() if src is not None else None
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            # `a | b` builds a new dict: a copy of `a`, not an alias of it.
+            if isinstance(node.left, ast.Name):
+                src = self.state(node.left.id, node, scope, depth + 1)
+                left = src.copy() if src is not None else None
+            else:
+                left = self.value(node.left, scope, depth + 1)
+            if left is None:
+                return None
+            self.spread(left, node.right, node, scope, depth)
+            return left
+        if isinstance(node, ast.Name):
+            src = self.state(node.id, node, scope, depth + 1)
+            if src is None:
+                return None
+            env = src.copy()
+            env.unresolved = env.unresolved or f"an alias of {node.id}"
+            return env
+        return None
+
+    def spread(self, env: _Env, node: ast.expr, anchor: ast.AST, scope: ast.AST, depth: int) -> None:
+        """``env`` updated from ``node`` (``**node``, ``dict(node)``, ``.update(node)``)."""
+        if isinstance(node, ast.Dict) or (
+                isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "dict"):
+            sub = self.value(node, scope, depth + 1)
+        elif isinstance(node, ast.Name):
+            sub = self.state(node.id, anchor, scope, depth + 1)
+        else:
+            sub = None
+        if sub is None:
+            env.inherits = True  # os.environ or anything else: not a scratch env
+        else:
+            env.merge(sub)
+
+    @staticmethod
+    def keywords(env: _Env, keywords: list[ast.keyword]) -> None:
+        for kw in keywords:
+            if kw.arg is None:
+                env.inherits = True
+            else:
+                env.set(kw.arg, kw.value)
+
+    def state(self, name: str, anchor: ast.AST, scope: ast.AST, depth: int = 0) -> _Env | None:
+        """``name``'s env state just before ``anchor``, or None when it is not a
+        scratch dict built in this scope (a parameter, a helper's return, ...)."""
+        if depth > 8:
+            env = _Env()
+            env.unresolved = "too deeply derived"
+            return env
+        env: _Env | None = None
+        seen_bind = False
+        for _, kind, node, payload in _events(name, self.nodes(scope)):
+            if self.scan.contains(node, anchor):
+                continue  # `env = {**env, ...}`: a binding does not precede its own value
+            rel = self.scan.relation(node, anchor, scope)
+            if rel == "never":
+                continue
+            if kind == "bind":
+                seen_bind = True
+                new = self.value(payload, scope, depth)
+                if rel == "maybe":
+                    if new is not None or env is not None:
+                        env = (env or new or _Env()).copy()
+                        env.unresolved = env.unresolved or "rebound on a branch / in a loop"
+                    continue
+                env = new
+                continue
+            if env is None or env.inherits:
+                continue
+            if rel == "maybe":
+                env.unresolved = env.unresolved or "changed on a branch / in a loop"
+                continue
+            if kind == "set":
+                key, value = payload
+                env.set(key, value)
+            elif kind == "remove":
+                env.remove(payload)
+            elif kind == "setdefault":
+                key, value = payload
+                if not (isinstance(key, ast.Constant) and key.value in env.values):
+                    env.set(key, value)
+            elif kind == "clear":
+                env.values.clear()
+                env.maybe_changed.clear()
+            elif kind == "update":
+                args, kws = payload
+                for a in args:
+                    self.spread(env, a, node, scope, depth)
+                self.keywords(env, kws)
+            elif kind == "opaque":
+                env.unresolved = env.unresolved or str(payload)
+        if not seen_bind and not self._is_param(name, scope):
+            return self._enclosing(name, scope)
+        return env
+
+    @staticmethod
+    def _is_param(name: str, scope: ast.AST) -> bool:
+        if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return False
+        a = scope.args
+        params = [*a.posonlyargs, *a.args, *a.kwonlyargs, *(x for x in (a.vararg, a.kwarg) if x)]
+        return any(p.arg == name for p in params)
+
+    def _enclosing(self, name: str, scope: ast.AST) -> _Env | None:
+        """A name the launch's function closes over: if an enclosing function
+        binds it to a scratch dict, when the launch runs relative to that
+        function's changes is unknown -- reported."""
+        node = scope
+        while node in self.scan.parents:
+            node = self.scan.parents[node][0]
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)):
+                if any(_scratch_literal(b.value) for b in _binds(name, self.nodes(node))):
+                    env = _Env()
+                    env.unresolved = f"{name} is built in an enclosing function"
+                    return env
+                if isinstance(node, ast.Module):
+                    return None
+        return None
+
+
+def _resolve_env(node: ast.expr | None, launch: ast.Call, scope: ast.AST, resolver: _Resolver) -> _Env | None:
+    """The env a launch passes, as it stands AT the launch, or None when it
+    inherits / is not built from a literal here."""
     if node is None:
         return None
-    env = _Env()
     if isinstance(node, ast.Name):
-        name = node.id
-        binds = _binds(name, scope_nodes)
-        if len(binds) != 1 or binds[0].value is None or not env.take_dict(binds[0].value):
-            return None
-        for n in scope_nodes:
-            if isinstance(n, ast.Assign):
-                for t in n.targets:
-                    if (isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name)
-                            and t.value.id == name):
-                        key = t.slice
-                        if isinstance(key, ast.Constant) and isinstance(key.value, str):
-                            env.values[key.value] = n.value.value if isinstance(n.value, ast.Constant) else ...
-                        else:
-                            env.inherits = True
-            if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "update"
-                    and isinstance(n.func.value, ast.Name) and n.func.value.id == name):
-                for a in n.args:
-                    if not env.take_dict(a):
-                        env.inherits = True
-                env.take_keywords(n.keywords)
-    elif not env.take_dict(node):
-        return None
-    return None if env.inherits else env
+        env = resolver.state(node.id, launch, scope)
+    else:
+        env = resolver.value(node, scope, 0)
+    return None if env is None or env.inherits else env
 
 
 def _resolve_argv(node: ast.expr | None, scope_nodes: list[ast.AST]) -> list[ast.expr] | None:
@@ -253,9 +543,10 @@ def scratch_env_children(source: str) -> list[tuple[int, list[str]]]:
     GPU-free variables are missing or wrong."""
     tree = ast.parse(source)
     bare = _subprocess_names(tree)
+    resolver = _Resolver(_Scan(tree))
     found: list[tuple[int, list[str]]] = []
     for scope in _scopes(tree):
-        nodes = _own_nodes(scope)
+        nodes = resolver.nodes(scope)
         for node in nodes:
             if not isinstance(node, ast.Call):
                 continue
@@ -271,7 +562,7 @@ def scratch_env_children(source: str) -> list[tuple[int, list[str]]]:
                 program, shell = argv_node, command_line
             if not _is_python(program, shell=shell):
                 continue
-            env = _resolve_env(env_node, nodes)
+            env = _resolve_env(env_node, node, scope, resolver)
             if env is None:
                 continue
             problems = _problems(env)
@@ -413,6 +704,121 @@ def wrapper_options_with_a_word():
         (83, _BOTH),
         (84, _BOTH),
     ]
+
+
+_UNRESOLVED = "env at this launch cannot be resolved: "
+
+
+def test_the_guard_resolves_the_env_as_it_stands_at_the_launch() -> None:
+    """Source order, up to the launch, on the launch's own path; an env whose
+    state there cannot be known is reported, never passed."""
+    ok = '{"CUDA_VISIBLE_DEVICES": "", "PYTORCH_NVML_BASED_CUDA_CHECK": "1"}'
+    src = f'''
+import os, subprocess, sys
+def set_after_launch():
+    env = {{}}
+    subprocess.run([sys.executable], env=env)
+    env.update(CUDA_VISIBLE_DEVICES="", PYTORCH_NVML_BASED_CUDA_CHECK="1")
+def safe_then_unsafe():
+    env = {ok}
+    env["CUDA_VISIBLE_DEVICES"] = "0"
+    subprocess.run([sys.executable], env=env)
+def unsafe_then_safe():
+    env = {{}}
+    env["CUDA_VISIBLE_DEVICES"] = "0"
+    env["CUDA_VISIBLE_DEVICES"] = ""
+    env["PYTORCH_NVML_BASED_CUDA_CHECK"] = "1"
+    subprocess.run([sys.executable], env=env)
+def variable_key(key):
+    env = {{}}
+    env[key] = "anything"
+    subprocess.run([sys.executable], env=env)
+def variable_key_after_complete(key):
+    env = {ok}
+    env[key] = "anything"
+    subprocess.run([sys.executable], env=env)
+def variable_key_on_inherited(key):
+    env = {{**os.environ}}
+    env[key] = "anything"
+    subprocess.run([sys.executable], env=env)
+def popped(key):
+    env = {ok}
+    env.pop("CUDA_VISIBLE_DEVICES")
+    subprocess.run([sys.executable], env=env)
+def deleted():
+    env = {ok}
+    del env["PYTORCH_NVML_BASED_CUDA_CHECK"]
+    subprocess.run([sys.executable], env=env)
+def bound_twice():
+    env = {ok}
+    env = {{"PATH": "/bin"}}
+    subprocess.run([sys.executable], env=env)
+def aliased():
+    env = {{}}
+    other = env
+    other.update({ok})
+    subprocess.run([sys.executable], env=env)
+def or_assign():
+    env = {{}}
+    env |= {ok}
+    subprocess.run([sys.executable], env=env)
+def derived():
+    env = {{"PATH": "/bin"}}
+    a = dict(env, CUDA_VISIBLE_DEVICES="", PYTORCH_NVML_BASED_CUDA_CHECK="1")
+    subprocess.run([sys.executable], env=a)
+    subprocess.run([sys.executable], env={{**env, "X": "1"}})
+    subprocess.run([sys.executable], env=env.copy())
+    subprocess.run([sys.executable], env=env | {ok})
+def on_a_branch(c):
+    env = {{}}
+    if c:
+        env.update({ok})
+    subprocess.run([sys.executable], env=env)
+def other_branch(c):
+    env = {{}}
+    if c:
+        env.update({ok})
+    else:
+        subprocess.run([sys.executable], env=env)
+def in_a_loop(xs):
+    env = {{}}
+    for _ in xs:
+        subprocess.run([sys.executable], env=env)
+        env.update({ok})
+def closure():
+    env = {{}}
+    def inner():
+        subprocess.run([sys.executable], env=env)
+    env.update({ok})
+    inner()
+def set_default():
+    env = {{}}
+    env.setdefault("CUDA_VISIBLE_DEVICES", "")
+    env.setdefault("PYTORCH_NVML_BASED_CUDA_CHECK", "1")
+    subprocess.run([sys.executable], env=env)
+'''
+    may = " may be overwritten through a non-constant key"
+    assert scratch_env_children(src) == [
+        (5, _BOTH),
+        (10, ["CUDA_VISIBLE_DEVICES is not ''"]),
+        (20, _BOTH),
+        (24, ["CUDA_VISIBLE_DEVICES" + may, "PYTORCH_NVML_BASED_CUDA_CHECK" + may]),
+        (32, ["no CUDA_VISIBLE_DEVICES"]),
+        (36, ["no PYTORCH_NVML_BASED_CUDA_CHECK"]),
+        (40, _BOTH),
+        (45, [_UNRESOLVED + "aliased to another name (env is shared)"]),
+        (54, _BOTH),
+        (55, _BOTH),
+        (61, [_UNRESOLVED + "changed on a branch / in a loop"]),
+        (67, _BOTH),
+        (71, [_UNRESOLVED + "changed on a branch / in a loop"]),
+        (76, [_UNRESOLVED + "env is built in an enclosing function"]),
+    ]
+    # A rebinding from the env itself reads the state before that statement.
+    assert scratch_env_children(
+        "import subprocess, sys\ndef f():\n    env = {'PATH': '/bin'}\n"
+        f"    env = {{**env, **{ok}}}\n    subprocess.run([sys.executable], env=env)\n"
+    ) == []
 
 
 def test_gpu_free_env_adds_both_variables_and_overrides_a_visible_gpu() -> None:
