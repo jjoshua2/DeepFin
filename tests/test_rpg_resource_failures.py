@@ -70,6 +70,12 @@ def _ended_or_parked(thread):
     return not thread.is_alive() or thread in wedge.parked_threads()
 
 
+def _notes(error: BaseException) -> tuple[str, ...]:
+    """Cleanup notes on any Python: `__notes__` (3.11+) or the 3.10 fallback
+    (``async_safety.note_cleanup`` stores them as ``_async_cleanup_notes``)."""
+    return (*getattr(error, "__notes__", ()), *getattr(error, "_async_cleanup_notes", ()))
+
+
 def assert_pool_threads_retired():
     assert all(_ended_or_parked(t) for t in threading.enumerate()
                if t.name.startswith(("rpg-group-", "walker-")))
@@ -117,7 +123,7 @@ def test_public_builder_retires_every_startup_owned_helper(monkeypatch, stage, f
         assert not worker_errors
         assert_pool_threads_retired()
         if fail_close:
-            assert any("secondary owner close failure" in note for note in getattr(caught.value, "__notes__", ()))
+            assert any("secondary owner close failure" in note for note in _notes(caught.value))
     finally:
         if engine is not None:
             engine.close()
@@ -267,7 +273,7 @@ def test_public_rpg_owns_valid_returned_receipt_before_cpu_work(monkeypatch, fau
             async_safety.ensure_usable(case["evaluator"])
         assert sum(stream.drains for stream in case["streams"]) == (0 if cleanup_failure == "clean" else 1)
         if fault and cleanup_failure != "clean":
-            assert any("pending receipt drain failed" in note for note in getattr(primary, "__notes__", ()))
+            assert any("pending receipt drain failed" in note for note in _notes(primary))
         assert_pool_threads_retired()
     finally:
         for stream in case["streams"]:
