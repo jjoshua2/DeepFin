@@ -21,6 +21,17 @@ statistics review at `fbb177c9f` (evidence: `plan-review-1481/delta-fbb177c9f/`)
 - a per-cell budget check runs after every sibling cell;
 - `stage_a_decide.py` v3 is tested with 24 fabricated checks and nine mutants.
 
+Revision 5 applies the review at `262a4e56b` (evidence: `plan-review-1481/delta-262a4e56b/`):
+- **Stage B is two head-to-heads against each family's no-term counterpart**: P_sib vs `P0_main`
+  (plain) and recalibrated Zq_sib vs recalibrated Zq (match 8's player); raw cell vs base is dropped;
+  S only if neither P nor Zq has a PASS cell;
+- revision 4's "cleanest evidence" paragraph is withdrawn: against the base, a P cell's "adoptable"
+  was the expected result of a term that does nothing (0.86 at P0's point estimate, 0.71 allowing
+  for its SE); both damage priors (Zq, S) are stated at the point estimate and predictively;
+- match 2's (T, b) is fitted before any game, behind a fit control and a registered bounds stop;
+- `stage_a_decide.py` v4 / `cells.json` v4 carry the head-to-head specs (27 fabricated checks, ten
+  mutants); `SB/stage_b/` banks the two-seat readback and the fit gates, each tested and mutated.
+
 ## Why
 
 The owner asked for the value head to be trained on sibling ORDERING. The term now exists on
@@ -46,8 +57,8 @@ So the sibling target carries information the net lacks (the search is right mor
 clear pairs), its rows are nearly independent within a game (ICC ≈ 0.001), and the one value
 recipe that damaged ordering (S) is also the one that lost most in play. Whether training on
 the sibling difference helps the value in play is unmeasured. This screen measures it. Since
-match 8, the bar for a Zq-family recipe is recalibrated Zq, not the base: see "Stage B" for
-what a raw Zq + sibling result can and cannot show against it.
+match 8, the bar for a Zq-family recipe is recalibrated Zq, not the base: Stage B (revision 5) therefore
+matches recalibrated Zq + sibling against recalibrated Zq.
 
 ## What `--w-sibling` computes (read at main `febed2042`; unchanged at `9c0ff07dc`)
 
@@ -314,18 +325,32 @@ banked first (`sibling_holdout_resid.npz`, with `game_id`, `dq`, `min_visits`).
 - **Ruler leakage** (reviewer, `RC/plan-review-1481/ruler_overlap.json`): the sibling-ordering
   ruler (rl-audit, 2,433 leak-free rows, 190 games) shares **0 game ids** with the pilot collect
   (761,979 rows, 8,000 games). **1 ruler row's exact `x` appears in the collect.**
-- This screen's own files (`SB/stage_a/`, revision 4, read-only, `SHA256SUMS`; revision 1 files
-  kept as `*.v1` with `SHA256SUMS.v1`, revision 2/3 files as `*.v2` with `SHA256SUMS.v2`):
+- This screen's own files (`SB/stage_a/`, revision 5, read-only, `SHA256SUMS` `31da941c…` over
+  every file; revision 1 files kept as `*.v1`, revision 2/3 as `*.v2`, revision 4 as `*.v3`, each
+  with its `SHA256SUMS.v*`):
 
   | File | sha256 prefix |
   |---|---|
-  | `cells.json` (v3: `family_priority` P, Zq, S; `damage_labels`) | `85f5a387a420…` |
+  | `cells.json` (v4: `family_priority` P, Zq; `stage_b_fallback` S; `stage_b` opponent / recal / rule per family) | `916acfed9c5d…` |
   | `train_check.py` | `f739886c075f…` |
   | `sibling_holdout.py` | `0897bf777521…` |
-  | `stage_a_decide.py` (v3) | `5c76f1ea3cd5…` |
+  | `stage_a_decide.py` (v4) | `4d7950ec4773…` |
   | `run_stage_a.sh` | `241de8fb1dab…` |
 
-  `fab_v3/` holds the v3 decision script's test on fabricated inputs and the mutants:
+  `fab_v4/` holds the v4 decision script's test (revision 5): 27 checks, all pass. v3's 24, with
+  the labels check replaced by one on the head-to-head specs (P vs `P0_main`, plain; Zq vs Zq,
+  both recalibrated; rule "LB95 > 0"), plus: P all VOID gives Zq ONLY (S is not added as a second
+  match), Zq all INERT gives P only, and an S fallback carries its known-damage label. Ten mutants,
+  each killed by exit code 1 (`fab_v4/mutants/mutants.txt`): `m_rep1`, `m_anchor_rows`,
+  `m_shape_wl`, undecidable, specs from the wrong family, S added as a second match, smallest-w,
+  control ignored, rows check, and the order Zq, P in `cells.json`.
+
+  `SB/stage_b/` (revision 5, read-only, `SHA256SUMS`): `check_both_seats.py` `c205a6e755d5…`
+  (match 2's readback; the follow-up `check_seat.py` fails by design when the other seat is also a
+  hybrid; 7 fabricated cases, the "reference unchecked" mutant killed) and `recal_gate.py`
+  `523b813e05a3…` (fit control and bounds; 10 cases, three mutants killed).
+
+  `fab_v3/` (kept) holds the v3 decision script's test on fabricated inputs and the mutants:
   - 24 checks, all pass. They add the P, Zq, S order, the damage labels, the absence of any shape
     flag, a report-only ΔWL that must see a +W/−L shift, the "undecidable" control without a
     replicate, and a replicate whose `game_id` differs (scenario E3).
@@ -341,7 +366,7 @@ banked first (`sibling_holdout_resid.npz`, with `game_id`, `dq`, `min_visits`).
   `ad41afdd6590…`, `check_load.py` `e8a870764bb5…`, `guard_a.py` `d247b0f0e665…`, `coherence.py`
   `bcdabcbed5c8…`, `warm_sidecar.py` `1989388fc967…`, `validate_cells.py` `2c4023cef494…`.
 
-**Statistics** (raw heads; `stage_a_decide.py` v3):
+**Statistics** (raw heads; `stage_a_decide.py` v4, whose Stage A statistics are v3's unchanged):
 - **VOID:** `train_check.py` failed the cell, or its VOID marker exists.
 - **Veto, exactly as the anchor screen:** VETOED iff the 95% CI upper bound of
   `sibling_order.json → paired_minus_base.all.clearplus_50plus.<cell>_raw` is below 0.
@@ -401,97 +426,117 @@ banked first (`sibling_holdout_resid.npz`, with `game_id`, `dq`, `min_visits`).
 
 ### Stage B: matches
 
-- **Selection, fixed now, not by offline score (review item 3).** Families in this order: **P,
-  Zq, S**. Per family, the **LARGEST-w** cell that is not VOID, VETOED or INERT. The first two
-  families that have one are matched; at most two matches.
+**Revision 5 (review at `262a4e56b`; evidence `plan-review-1481/delta-262a4e56b/`): both matches
+are head-to-heads against the family's no-term counterpart.** Revisions 1–4 matched each cell
+against the SL base. Against the base, the likely outcome of each match was fixed by its family's
+known result, not by the term:
+
+| Match against the base (dropped) | Null prior: the term adds 0 | Information value (reviewer) |
+|---|---|---|
+| raw P_sib vs base | P0 played +2.2 (SE 3.26), so "adoptable, not improves" has probability **0.86** at P0's point estimate and **0.71** allowing for its SE; "improves" 0.10 / 0.17 | 0.65 bits (point) / 0.49 (predictive) |
+| raw Zq_sib vs base | raw Zq −10.0 (SE 6.74): P(damage) **0.84** at the point estimate, **0.67** predictive | 0.65 / 0.24 |
+| raw S_sib vs base | S −20.0 (SE 8.5): P(damage) **> 0.99** at the point estimate, **0.93** predictive | 0.08 / 0.10 |
+
+A head-to-head against the family's counterpart has the null at 0 by construction: at the same
+SE, P(adds | term adds 0) = 0.025 and P(unread) = 0.95, and its information value is 0.56 bits
+whatever the family's level. **Revision 4's paragraph "Why the P match is still worth its cost"
+is withdrawn.** It called an adoptable P + sibling cell "the cleanest evidence available that the
+term itself carries a value signal". Against the base, "adoptable" was the expected reading of a
+term that does nothing (0.86 / 0.71 above), so it was not evidence of any signal.
+
+- **Selection, fixed now, not by offline score.** Per family, the **LARGEST-w** cell that is not
+  VOID, VETOED or INERT.
+  - **P and Zq are the primary families**: each that has such a cell is matched.
+  - **S is a fallback**: matched only if neither P nor Zq has one. S itself is known damage
+    (−20.0 vs base), so an S match is labelled "repair of a known-damage recipe" and cannot
+    nominate a recipe that competes with P or Zq.
+  - So at most two matches, and the same two whatever the order.
   - Why the largest: the veto already guards against ordering damage, and the smallest dose is
-    the weakest test of a term hypothesised to help. The choice is still fixed by w, never by an
-    offline score.
-  - **Why this order (revision 4, review item 4): a pre-data rule, the smallest report-only
-    contrast MDE first.** P 13.1 Elo, Zq 21.1, S 25.6 (the table below). The family whose match
-    can best separate the term from its banked same-family net goes first. Revision 3 ordered by
-    "nearest to adoption", which match 8 made stale.
-  - **The selected pair does not depend on the order.** With top-two-of-three, S is matched only
-    if P or Zq has no PASS cell, under either order. With all three families passing, the pair is
-    P and Zq either way. The order sets only which match runs first and takes seed 2026112193.
-  - **What a Zq damage reading can say: little about the term.** Raw Zq measured −10.0 against
-    the base. The sibling term ignores the value's level, so it cannot repair raw Zq's shape loss
-    of about 21 Elo (match 7). If the term does nothing, a raw Zq + sibling match reads "damage"
-    with probability about 0.84 (the power table's −10 column; the reviewer's figure). A Zq damage
-    reading is labelled accordingly.
-- **Design.** Cell vs the SL base, plain seats, seat-balanced; 6,400 games (3,200 per run,
-  1,600 openings); seeds **2026112193** (first selected cell) and **2026112194** (second), unused
-  anywhere under `docs/` and in every bank; the follow-up launcher
-  `rl-run1-followup/run_followup_match.sh` (sha256 `7c8fd065…`) at the PIN with output root
-  `SB`, the pilot's `$ARENA` flags and the launch record's max-plies void rule; a 4-game smoke
-  per seat first.
-- **Rules, as match 5:** "damage" iff UB95 < 0; "adoptable" iff LB95 > −10; otherwise
-  "unread". Match 5's tie-break is kept as written (it cannot trigger at the expected SE).
-  "Improves on the base" iff LB95 > 0 is reported alongside "adoptable", as in match 8
-  (revision 4).
-- **Stage B stays raw** and blind to recalibration. A recalibrated P match would be a separate
-  record.
-- **The Zq family after match 8.** Recalibrated Zq beats the base (+9.6 [+3.3, +16.0], match 8),
-  so the base is no longer the bar for a Zq-family recipe; recalibrated Zq is. Stage B is still
-  raw, as registered:
-  - What a raw "adoptable" for a `Zq_sib` cell WOULD show: the raw net (sibling-trained, no
-    recalibration) is not more than 10 Elo below the base. Against raw Zq's own pilot gate
-    (−10.0, SE 6.74) that is the report-only contrast in the table below.
-  - What it would NOT show: that the cell beats recalibrated Zq, that the sibling term adds
-    anything once Zq is recalibrated, or that sibling + recalibration beats recalibration
-    alone. A raw "adoptable" Zq + sibling cell can be weaker than the recipe match 8 already
-    nominated.
-  - **No recalibrated readout of this screen's match pool**, primary or secondary. A
-    recalibrated cell is a different player (its value, and so its search, changes), so the
-    games of the raw match cannot be re-read as its games. Any "Zq + sibling + (T, b)" match is a
-    separate record with its own fit fixed before its games.
-  - A raw Zq + sibling nomination does not compete with match 8's on point estimates: the
-    competing-nominations rule below sends both to a fresh head-to-head.
-- **Power** at the gate-scaled SE 3.37, per match. Selecting the largest dose changes which net
-  is tested, not these operating characteristics:
+    the weakest test of a term hypothesised to help.
+- **Order: P first, then Zq.** The registered rule (smallest MDE first) is kept, but both
+  head-to-heads now have the same SE, so it ties. **Tie-break: fewer confounds.** P is the
+  family where the term alone moves the value head (`--w-wdl 0`); the Zq match adds a fitted
+  recalibration on each seat. P takes seed **2026112193** and Zq **2026112194**; an S fallback
+  match takes 2026112193. Both seeds were re-checked unused on 2026-11-22: absent from `main`,
+  from every open PR other than this one (#1491 and #1484 included), and from the pilot,
+  follow-up, value-anchor, root-full-width, generation-2 and sibling banks.
 
-  | True effect vs base (Elo) | 0 | −5 | −10 | −15 | −21 |
+| | Match 1 (P) | Match 2 (Zq) | Fallback (S, only if neither) |
+|---|---|---|---|
+| Candidate | P_sib (largest-w PASS P cell), plain | Zq_sib (largest-w PASS Zq cell) + its own (T, b), fitted before any game | S_sib (largest-w PASS S cell), plain |
+| Opponent | **`P0_main`** (trained at `TSHA` with w 0), plain | **the pilot's Zq + match 8's banked (T, b) = 0.7036189636786957, −0.22711530923843357**: match 8's player | the pilot's S, plain |
+| Guard on the opponent | the code-base control (P0 vs `P0_main`, Stage A) passed, and guard (d) (`P0_main` loads identically at the PIN) | no `Zq_main` cell exists, so the opponent is the PIN-trained Zq; the code-base control is the guard that main and the PIN train alike | as Zq: the PIN-trained S, guarded by the code-base control |
+| Seats | plain both; result-row sha readback | both hybrid (own value + recal), as match 8 seated its candidate; `check_both_seats.py` readback | plain both; result-row sha readback |
+
+- **Why `P0_main`, not the banked P0, for match 1.** P_sib and `P0_main` train at `TSHA` from
+  the same rows, batches, seed and optimizer, so they differ by the term alone. P0 trained at the
+  PIN would add the code base to the contrast. The code-base control (kl_pair ≤ its tolerance) is
+  the guard that `P0_main` ≈ P0, which is what lets P0's banked +2.2 vs base describe it. Stage B
+  runs only if that control passed.
+- **Why the pilot's Zq for match 2.** No `Zq_main` cell was registered, and adding one would be a
+  new training cell. The opponent is therefore match 8's exact player (the PIN-trained Zq with
+  its banked (T, b)); the contrast includes the code base, guarded by the same control. This is a
+  confound of match 2 only (see Confounds).
+- **Design.** 6,400 games (3,200 per seat run, 1,600 openings), seat-balanced, match 5's
+  machinery: the follow-up launcher `rl-run1-followup/run_followup_match.sh` (sha256
+  `7c8fd065…`) at the PIN with output root `SB`, the pilot's `$ARENA` flags and the launch
+  record's max-plies void rule, a 4-game smoke per seat first, the result-row sha readback, and
+  `arena_seat_balanced_pool.py` with `--arm` = the sibling cell.
+- **Rules, per head-to-head (Elo of the sibling cell over its counterpart):**
+  - **"the term adds"** iff LB95 > 0;
+  - **"the term harms"** iff UB95 < 0;
+  - otherwise **"unread, |effect| below the MDE"**.
+  - At the gate-scaled SE 3.37, the 80%-power MDE is ≈ 2.8 SE ≈ 9 Elo. Power to read "adds" is
+    0.32 at a true +5 and 0.84 at +10 (the reviewer's table, SE 3.37); false "adds" at a true 0
+    is 0.025 per match.
+
+  | True effect vs counterpart (Elo) | −10 | −5 | 0 | +5 | +10 |
   |---|---|---|---|---|---|
-  | P(adoptable) | 0.84 | 0.32 | 0.025 | < 0.001 | < 0.001 |
-  | P(damage) | 0.025 | 0.32 | 0.84 | 0.99 | > 0.999 |
+  | P(the term adds) | < 0.001 | < 0.001 | 0.025 | 0.32 | 0.84 |
+  | P(the term harms) | 0.84 | 0.32 | 0.025 | < 0.001 | < 0.001 |
 
-  False nomination at the −10 boundary is 2.5% per match, so about 5% across this screen's two.
-- **Report-only contrast** with the same-family banked cell:
-
-  | Family | Banked result | SE of the difference | 80%-power MDE |
-  |---|---|---|---|
-  | Zq | Zq gate −10.0 (SE 6.74) | ≈ 7.5 | 21.1 Elo |
-  | P | match 5, P0 single net +2.2 (SE 3.26) | ≈ 4.7 | 13.1 Elo |
-  | S | S −20.0 (SE 8.5) | ≈ 9.1 | 25.6 Elo |
+- **Match 2's recalibration, fixed before any of its games** (Commands, step 5):
+  1. **Fit control first.** `scripts/fit_value_recal.py` (banked sha256 `37e27420…`, at the PIN,
+     `--device cuda`) on the pilot's Zq toward the SL base, on the pilot collection's hold-out
+     (`--holdout-frac 0.05`), must reproduce match 8's banked (T, b) within 1e-3 each, as #1491's
+     fit control does (GPU bf16 forwards are not bit-reproducible). If not, match 2 does not run.
+  2. **The fit.** The same command on Zq_sib: toward the SL base's value, the same hold-out games
+     (which no cell trained on). Its (T, b) is applied exactly as match 8 applied its own
+     (`--candidate-value-recal` / `--reference-value-recal`, own value net).
+  3. **Registered stop: the bounds.** ln T in [2 ln T1, −ln T1] and b in [2 b1, −b1], with
+     (T1, b1) match 8's fit: T in [0.4951, 1.4212], b in [−0.4542, +0.2271]. Derivation: the term
+     is level-invariant, so Zq_sib's correction should lie near Zq's. The bounds allow up to twice
+     Zq's correction, or an overshoot past the identity by Zq's whole correction. Outside them, the
+     fit is not the registered procedure's regime and **match 2 stops before any game**; match 1
+     is unaffected.
+  - Both gates are `SB/stage_b/recal_gate.py` (tested: 10 fabricated cases, three mutants killed).
+  - This supersedes revision 4's "no recalibrated readout" for match 2: match 2 is its own
+    recalibrated match, fitted before its games. **The ban on re-reading a RAW pool as
+    recalibrated stays**: a recalibrated player is a different player, so no raw game is ever
+    re-read as its game.
+- **Report-only contrast** (unchanged; decides nothing): each cell against its family's banked
+  result vs the base, with the MDEs P 13.1, Zq 21.1, S 25.6 Elo (SE of the difference ≈ 4.7 /
+  7.5 / 9.1).
 
 **What each outcome licenses:**
 
 | Reading | Licenses |
 |---|---|
-| adoptable | NOMINATES that recipe (family + w) for a two-generation run with the policy, under its own record. Nothing is adopted here. For the Zq family it is a nomination of the RAW recipe only, which must then meet match 8's "Zq + per-generation recalibration" in a fresh head-to-head (below) |
-| damage, P family | **"damage of the raw recipe; attribution (shape vs content) unread."** The P family leaves the value's level and draw mass free (`--w-wdl 0`), so the loss may be shape, which recalibration could remove, or content. The report-only shape numbers are shown beside it and decide nothing. It **retires the raw recipe** (P + sibling at that w, no recalibration). It is NOT "sibling training is not the fix" |
-| damage, Zq family | **"damage of raw Zq + sibling; says little about the term"**: about 0.84 likely even if the term does nothing (raw Zq −10.0; the term cannot repair its ≈ 21 Elo shape loss). Retires the raw recipe only |
-| damage, S family | **"damage of raw S + sibling; says little about the term"**: S measured −20.0, so a damage reading is more than 0.99 likely if the term does nothing (power table, −21 column). Retires the raw recipe only |
-| unread | Nothing |
+| the term adds, P | **NOMINATES the term for the P family** (P + sibling at that w). Nothing is adopted. Adoption against the base is a later record: P_sib vs the SL base. **P_sib > P0, together with P0 ≈ +2.2 vs base, does not license "P_sib improves on the base"**: the two intervals do not chain into one bound, and P0's +2.2 [−4.2, +8.6] does not exclude 0 |
+| the term adds, Zq | **NOMINATES the term for the Zq family** (Zq + sibling + per-net recalibration at that w). Adoption is a later record: the term inside the generation-2 recipe (#1491's line), never this match's result alone |
+| the term adds, S (fallback only) | The term repairs some of a known-damage recipe. Nominates nothing for adoption; S stays known damage until a match against the base says otherwise |
+| the term harms, any family | **Retires the term at that w for that family's recipe.** For P, the reading is "harm; attribution (shape vs content) unread": the P family leaves the value's level and draw mass free, and the shape numbers are report-only. It is NOT "sibling training is not the fix" |
+| unread | Nothing: \|effect\| below about 9 Elo, or not resolved |
 
-**So Stage B can only nominate (adoptable) or retire a RAW recipe.** "Sibling training is not
-the fix" is not a reachable conclusion from a damage reading alone, in any family. For a family
-it is reachable only from Stage A: every cell of the family is VOID, vetoed or inert.
-
-**Why the P match is still worth its cost (≈ 1.5 GPU-h).**
-- The informative outcomes are "adoptable" and "improves on the base" (LB95 > 0, reported
-  alongside). Either would nominate a new value recipe that keeps the policy-only cell's ordering
-  and adds a value signal.
-- P is the family where the sibling term is the ONLY thing moving the value head (`--w-wdl 0`).
-  An adoptable P + sibling cell is therefore the cleanest evidence available that the term itself
-  carries a value signal the base lacks.
-- Its report-only contrast has the smallest MDE (13.1 Elo).
+**"Sibling training is not the fix" is not a reachable conclusion from Stage B**, in any family:
+a head-to-head tests one w against one counterpart. For a family it is reachable only from
+Stage A: every cell of the family is VOID, vetoed or inert.
 
 **Competing nominations across the value lines (review item 9).** Three records can nominate a
-value recipe: the anchor screen (≤ 2 matches), match 8 (1) and this screen (≤ 2). Zq appears in
-all three. At 2.5% per match, that is about 12% family-wise false nomination at the −10
-boundary. **If more than one recipe is nominated, the choice is made by a fresh head-to-head
-under the next record, never by the best point estimate across screens.**
+value recipe: the anchor screen (≤ 2 matches), match 8 (1) and this screen (≤ 2). Revision 5's
+matches nominate a TERM within a family, not a recipe against the base, so they do not compete
+with match 8 on point estimates. **If more than one recipe is nominated, the choice is made by a
+fresh head-to-head under the next record, never by the best point estimate across screens.**
 
 ## Confounds
 
@@ -507,6 +552,12 @@ under the next record, never by the best point estimate across screens.**
 - **Free level in the P family.** See "Level and draw mass" above.
 - **Code base.** Cells train at `TSHA`, the banked controls trained at the PIN. Guards (a)–(d)
   are what licenses comparing them.
+- **Stage B opponents and the code base (revision 5).** Match 1's opponent is `P0_main`, trained at
+  `TSHA` like P_sib, so match 1's contrast is the term alone; the PIN-vs-`TSHA` code-base control
+  is the guard that `P0_main` ≈ P0 (and Stage B runs only if it passed). Match 2's opponent is the
+  pilot's Zq, trained at the PIN, with match 8's banked (T, b); no `Zq_main` cell exists, so match 2's
+  contrast is the term plus the code base, guarded by the same control. Match 2's two seats also
+  carry different, separately fitted (T, b); the fit control shows the procedure reproduces Zq's.
 - **One data-affecting change** per cell versus its banked family cell: the term (and its
   sidecar); same rows, batches (`presented.npz`), seed and optimizer.
 
@@ -646,7 +697,7 @@ pilot step ≈ 0.31 s (the Zq cell's 440 s / 1,412) → sibling step ≈ 0.75 s.
 | Cost probe (three runs: cold, warm and no-term, each loading the whole window) | ≈ 0.45 |
 | Training: 9 sibling cells × ≈ 27 min + `P0_main` ≈ 11 min | ≈ 4.3 |
 | Stage A: 10 nets through the instruments, ≈ 6 min each, plus the take-effect statistic on 14 nets | ≈ 1.2 |
-| Stage B: ≤ 2 × 1.52 | ≤ 3.0 |
+| Stage B: ≤ 2 head-to-heads × ≈ 1.45, plus match 2's fit control and fit ≈ 0.1 | ≤ ≈ 3.0 |
 | **Total** | **≤ ≈ 9.0** |
 
 **Memory per step (review item 10).** Every step runs alone; pre-launch CPU work was run one job
@@ -825,24 +876,47 @@ self-enforced one rerun, by running the same line again):
 $SB/stage_a/run_stage_a.sh $TW $TSHA || exit 1      # writes $SB/offline/cells/stage_a_decision.json -> stage_b
 ```
 
-**Step 5: Stage B**, for the i-th entry `X` of `stage_b` (i = 1, 2), seed `SEED` = 2026112193
-(i = 1) or 2026112194 (i = 2):
+**Step 5: Stage B (revision 5: head-to-heads).** For the i-th entry `X` of `stage_b` (i = 1, 2),
+its family `FAM` = `stage_b_specs[X].family`, seed `SEED` = 2026112193 (P, or an S fallback) or
+2026112194 (Zq):
 
 ```bash
 F=$HOME/chess-artifacts/operations/rl-run1-followup
 echo "7c8fd065865f3d5abcd8e9eb6f7fc1d48e882dfcfb88bbaa92d8696ce4a9510d  $F/run_followup_match.sh" | sha256sum -c --quiet || exit 93
-[ "$($PY -c "import json;print(json.load(open('$SB/offline/cells/stage_a_decision.json'))['stage_b'][$i-1])")" = "$X" ] || exit 91
+(cd $SB/stage_b && sha256sum -c --quiet SHA256SUMS) || exit 93
+DEC=$SB/offline/cells/stage_a_decision.json
+[ "$($PY -c "import json;print(json.load(open('$DEC'))['stage_b'][$i-1])")" = "$X" ] || exit 91
+FAM=$($PY -c "import json;print(json.load(open('$DEC'))['stage_b_specs']['$X']['family'])")
 [ ! -e $SB/arm_$X/VOID ] || exit 91
 M=$SB/arm_$X/gen_0001/train/model.pt
+RC8=0.7036189636786957,-0.22711530923843357                                    # match 8's banked (T, b)
+case $FAM in
+  P)  OPP=$SB/arm_P0_main/gen_0001/train/model.pt; SEED=2026112193; RA=(); RB=() ;;
+  S)  OPP=$P/arm_S/gen_0001/train/model.pt;        SEED=2026112193; RA=(); RB=() ;;
+  Zq) OPP=$P/arm_Zq/gen_0001/train/model.pt;       SEED=2026112194
+      # match 2's recalibration, fixed before any game: fit control, fit, bounds stop (GPU, alone on the card)
+      echo "37e2742011c48be427a32ad2ecfb6c376228d484f8215b6650e659f150c3d3a5  $PINW/scripts/fit_value_recal.py" | sha256sum -c --quiet || exit 93
+      fit() { (cd $PINW && PYTHONPATH=. $PY scripts/fit_value_recal.py --net $1 --reference $SL \
+        --collect-dir $P/collect/gen_0001/collect --holdout-frac 0.05 --device cuda --out $2 > $2.log 2>&1); }
+      fit $OPP $SB/stage_b_fit_control_Zq.json || exit 1
+      $PY $SB/stage_b/recal_gate.py control $SB/stage_b_fit_control_Zq.json $RC8 > $SB/stage_b_fit_control.verdict \
+        || { echo "fit control failed: match 2 does not run" > $SB/HOLD_FIT; exit 1; }
+      fit $M $SB/stage_b_recal_$X.json || exit 1
+      $PY $SB/stage_b/recal_gate.py bounds $SB/stage_b_recal_$X.json $RC8 > $SB/stage_b_recal_bounds.verdict \
+        || { echo "$X (T, b) outside the registered bounds: match 2 stops before any game" > $SB/HOLD_BOUNDS; exit 1; }
+      RCX=$($PY -c "import json;print(json.load(open('$SB/stage_b_recal_$X.json'))['cli'])")   # the fit's own "T,b"
+      RA=(--candidate-value-recal $RCX --reference-value-recal $RC8)            # seat A: candidate = X
+      RB=(--candidate-value-recal $RC8 --reference-value-recal $RCX) ;;         # seat B: candidate = Zq
+esac
 for O in $SB/smoke $SB; do n=$([ $O = $SB ] && echo 3200 || echo 4)
-  $F/run_followup_match.sh $O sib_$X 1 A $SEED $n --candidate $M --reference $SL || exit 1
-  $F/run_followup_match.sh $O sib_$X 1 B $SEED $n --candidate $SL --reference $M || exit 1
+  $F/run_followup_match.sh $O sib_$X 1 A $SEED $n --candidate $M --reference $OPP "${RA[@]}" || exit 1
+  $F/run_followup_match.sh $O sib_$X 1 B $SEED $n --candidate $OPP --reference $M "${RB[@]}" || exit 1
   d=$O/arenas/sib_$X
-  $PY - $d/results.jsonl sib_$X "$PIN" $M $SL <<'PYEOF' || exit 1
+  $PY - $d/results.jsonl sib_$X "$PIN" $M $OPP <<'PYEOF' || exit 1
 import hashlib, json, sys
-res, lab, pin, m, sl = sys.argv[1:6]
-sha = {p: hashlib.sha256(open(p, "rb").read()).hexdigest() for p in (m, sl)}
-want = {f"{lab}_1_A": (sha[m], sha[sl]), f"{lab}_1_B": (sha[sl], sha[m])}
+res, lab, pin, m, opp = sys.argv[1:6]
+sha = {p: hashlib.sha256(open(p, "rb").read()).hexdigest() for p in (m, opp)}
+want = {f"{lab}_1_A": (sha[m], sha[opp]), f"{lab}_1_B": (sha[opp], sha[m])}
 rows = [json.loads(x) for x in open(res) if x.strip()]
 seen = {r["label"] for r in rows if r["label"] in want}
 bad = [r["label"] for r in rows if r["label"] in want and
@@ -850,6 +924,10 @@ bad = [r["label"] for r in rows if r["label"] in want and
 if seen != set(want) or bad:
     sys.exit(f"result rows: seen {sorted(seen)}, wrong git_sha or net sha256 in {bad}")
 PYEOF
+  if [ $FAM = Zq ]; then
+    $PY $SB/stage_b/check_both_seats.py $d sib_${X}_1_A $RCX $RC8 || exit 1
+    $PY $SB/stage_b/check_both_seats.py $d sib_${X}_1_B $RC8 $RCX || exit 1
+  fi
   (cd $PINW && PYTHONPATH=. $PY scripts/arena_seat_balanced_pool.py --arm $M \
     --a-games $d/sib_${X}_1_A.games.jsonl --b-games $d/sib_${X}_1_B.games.jsonl \
     --a-result $d/results.jsonl --b-result $d/results.jsonl \
@@ -857,7 +935,14 @@ PYEOF
 done
 ```
 
-The first pass is the 4-game smoke (2 openings); the real match runs only if it exits 0.
-Plain seats, so no `check_seat.py` readback applies. The result-row check above requires every
-row of both seats to carry `git_sha` = `$PIN` and the intended candidate and reference sha256,
-as in every follow-up match. The stored decision's `stage_b` already excludes INERT cells.
+- The first pass is the 4-game smoke (2 openings); the real match runs only if it exits 0.
+- **Net identity:** the result-row check requires every row of both seats to carry `git_sha` =
+  `$PIN` and the intended candidate and opponent sha256 (the cell, and `P0_main`, the pilot's Zq or
+  the pilot's S). `P0_main`'s identity at the PIN is also guard (d)'s `check_load` comparison
+  (step 3); a cell's checkpoint is the file `train_check.py` passed.
+- **Seats:** match 1 (and an S fallback) is plain on both seats, so no hybrid readback applies.
+  Match 2 reads back both seats of each run with `check_both_seats.py`: each seat's "HYBRID built"
+  line shows its own value net and exactly its registered (T, b), the result row carries the same,
+  and the engine names differ in every game.
+- The stored decision's `stage_b` already excludes VOID, VETOED and INERT cells, and the control
+  gate.
