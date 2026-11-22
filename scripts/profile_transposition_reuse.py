@@ -36,6 +36,12 @@ from chess_anti_engine.simple_rl.collect import CollectSettings, build_configs
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
 
+# Production's literal at the selfplay call site (chess_anti_engine/selfplay/network_turn.py,
+# the run_gumbel_root_many_c call). tests/test_profile_transposition_reuse.py compares this
+# value with that call site's keyword, so a divergence from production fails a test.
+ALLOW_TERMINAL_ROOT_SHORTCUTS = True
+
+
 class SyntheticEvaluator:
     """Deterministic row-pure fixture, never a strength or throughput model."""
 
@@ -116,7 +122,8 @@ def profile_root(
     policies, actions, values, masks, tree, root_ids = run_gumbel_root_many_c(
         model, [board], device="cpu", rng=np.random.default_rng(seed),
         evaluator=evaluator, per_game_add_noise=[noise_scale > 0],
-        per_game_gumbel_scale=[noise_scale], allow_terminal_root_shortcuts=False,
+        per_game_gumbel_scale=[noise_scale],
+        allow_terminal_root_shortcuts=ALLOW_TERMINAL_ROOT_SHORTCUTS,
         **shape.runner_kwargs(),
     )
     search_seconds = time.perf_counter() - started
@@ -142,7 +149,7 @@ def profile_root(
         "tt_counts": counter_delta(before, after), "census": census,
         "search_seconds": search_seconds, "census_seconds": census_seconds,
         "search_output_sha256": digest, "search_output": output,
-        "realized_shape": asdict(shape),
+        "realized_shape": {**asdict(shape), "allow_terminal_root_shortcuts": ALLOW_TERMINAL_ROOT_SHORTCUTS},
     }
 
 
