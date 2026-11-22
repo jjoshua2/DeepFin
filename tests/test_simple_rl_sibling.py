@@ -278,7 +278,8 @@ def _probe_of(model_path: Path, pairs: sib.SidecarPairs) -> dict[str, Any]:
     from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
     model = load_model_from_checkpoint(str(model_path), device="cpu")
-    term = sib.SiblingTerm(model, SimpleNamespace(cursor=0), pairs, w=1.0, rows=1, device="cpu")
+    term = sib.SiblingTerm(model, SimpleNamespace(cursor=0), pairs, w=1.0, rows=1, chunk_pairs=32, batch_size=32,
+                           device="cpu")
     return term.probe_abs_resid()
 
 
@@ -313,19 +314,27 @@ def _max_change(a: dict[str, torch.Tensor], b: dict[str, torch.Tensor], prefix: 
     return max(float((a[k].float() - b[k].float()).abs().max()) for k in keys)
 
 
+# Order-form test values: the fixture's tiny-net sidecar has |dq| <= ~0.005, so the threshold sits below that and the
+# margin above the tiny net's |dv|, keeping pairs active. The registered values are the record's, not these.
+FORMS = {"diff": {}, "order": {"sibling_loss": "order", "sibling_order_margin": 0.05, "sibling_order_min_dq": 0.001}}
+
+
+@pytest.mark.parametrize("form", sorted(FORMS))
 def test_the_sibling_term_trains_the_value_head_through_the_trainer_hook(
-        run: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+        run: dict[str, Path], monkeypatch: pytest.MonkeyPatch, form: str) -> None:
     """The term reaches the optimizer through Trainer's penalty hook: with every
     loss weight 0 except w_sibling, the value head gets a gradient and moves (and
     the policy head does not); with w_sibling 0 and otherwise the same run, it
     gets none and stays bit-identical."""
     init = _weights(run["ckpt"])
-    on = {"w_sibling": 1.0, "sibling_rows": 8, "sibling_dir": str(run["side"])}
+    on = {"w_sibling": 1.0, "sibling_rows": 8, "sibling_dir": str(run["side"]), **FORMS[form]}
 
     # Term alone: no policy or value loss at all.
-    s, g, path = _train_watching_value_head(run, "term_alone", monkeypatch, w_policy=0.0, w_wdl=0.0, **on)
+    s, g, path = _train_watching_value_head(run, f"term_alone_{form}", monkeypatch, w_policy=0.0, w_wdl=0.0, **on)
     assert s["updates"] > 0
     assert s["sibling"]["pairs"] > 0
+    assert s["sibling"]["loss"] == form
+    assert s["sibling"]["active_pairs"] > 0
     assert g
     assert all(v > 0 for v in g.values()), g
     after = _weights(path)
@@ -334,8 +343,8 @@ def test_the_sibling_term_trains_the_value_head_through_the_trainer_hook(
 
     # Paired control: the same run (policy loss on, so there is something to
     # backpropagate; every value / aux weight 0), term on vs off.
-    s_on, g_on, p_on = _train_watching_value_head(run, "pol_term_on", monkeypatch, w_wdl=0.0, **on)
-    s_off, g_off, p_off = _train_watching_value_head(run, "pol_term_off", monkeypatch, w_wdl=0.0)
+    s_on, g_on, p_on = _train_watching_value_head(run, f"pol_term_on_{form}", monkeypatch, w_wdl=0.0, **on)
+    s_off, g_off, p_off = _train_watching_value_head(run, f"pol_term_off_{form}", monkeypatch, w_wdl=0.0)
     assert s_on["updates"] == s_off["updates"] > 0
     assert all(v > 0 for v in g_on.values()), g_on
     assert g_off
@@ -359,6 +368,69 @@ def test_sibling_rows_caps_the_rows_whose_pairs_each_batch_trains(run: dict[str,
         assert max(per_step) <= k * rows
         totals[rows] = sum(per_step)
     assert 0 < totals[1] < totals[8]
+
+
+def test_sibling_chunk_pairs_reaches_the_term_that_trains_and_is_recorded(
+        run: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    """The setting is read by the consumer: the term built inside train_generation
+    forwards ceil(pairs / chunk) grad-enabled chunks per step, and the manifest's
+    settings and sibling summary both record the value."""
+    real = sib.sibling_loss
+    sizes: list[int] = []
+
+    def count(model: Any, xa: Any, *rest: Any) -> Any:
+        if torch.is_grad_enabled():
+            sizes.append(int(xa.shape[0]))
+        return real(model, xa, *rest)
+
+    monkeypatch.setattr(sib, "sibling_loss", count)
+    d = _fresh_run(run, "chunk3")
+    s = train_generation(run_dir=d, generation=1, init_checkpoint=run["ckpt"], prev_trainer_checkpoint=None,
+                         settings=_settings(run, w_sibling=1.0, sibling_rows=8, sibling_chunk_pairs=3,
+                                            sibling_dir=str(run["side"])))
+    assert s["sibling"]["chunk_pairs"] == 3
+    per_step = [n for n, _ in s["sibling"]["per_step"] if n]
+    assert sizes
+    assert max(sizes) <= 3
+    assert len(sizes) == sum(-(-n // 3) for n in per_step)
+    man = json.loads((d / "gen_0001" / "train" / "manifest.json").read_text())
+    assert man["config"]["settings"]["sibling_chunk_pairs"] == 3
+    assert man["config"]["settings"]["sibling_loss"] == "diff"
+    assert s["sibling"]["loss"] == "diff"
+
+
+def test_the_order_form_reaches_the_term_that_trains_and_is_recorded(
+        run: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    """--sibling-loss order is read by the consumer: the term built inside
+    train_generation calls the order loss with the configured margin and threshold
+    (and never the diff loss), and the manifest and summary record all three."""
+    seen: list[tuple[float, float]] = []
+    real = sib.sibling_order_loss
+
+    def spy(*a: Any, margin: float, min_dq: float) -> Any:
+        seen.append((margin, min_dq))
+        return real(*a, margin=margin, min_dq=min_dq)
+
+    real_diff = sib.sibling_loss
+
+    def no_diff(*a: Any, **k: Any) -> Any:
+        # The eval-mode hold-out probe still reports |dv - dq| through it (no grad); training must not use it.
+        if torch.is_grad_enabled():
+            raise AssertionError("the diff loss trained under --sibling-loss order")
+        return real_diff(*a, **k)
+
+    monkeypatch.setattr(sib, "sibling_order_loss", spy)
+    monkeypatch.setattr(sib, "sibling_loss", no_diff)
+    d = _fresh_run(run, "order_consumer")
+    s = train_generation(run_dir=d, generation=1, init_checkpoint=run["ckpt"], prev_trainer_checkpoint=None,
+                         settings=_settings(run, w_sibling=1.0, sibling_rows=8, sibling_dir=str(run["side"]),
+                                            sibling_loss="order", sibling_order_margin=0.0556,
+                                            sibling_order_min_dq=0.0203))
+    assert seen
+    assert set(seen) == {(0.0556, 0.0203)}
+    assert (s["sibling"]["loss"], s["sibling"]["order_margin"], s["sibling"]["order_min_dq"]) == ("order", 0.0556, 0.0203)
+    man = json.loads((d / "gen_0001" / "train" / "manifest.json").read_text())["config"]["settings"]
+    assert (man["sibling_loss"], man["sibling_order_margin"], man["sibling_order_min_dq"]) == ("order", 0.0556, 0.0203)
 
 
 def test_a_sidecar_materialised_from_another_collect_is_refused(run: dict[str, Path]) -> None:
@@ -456,6 +528,23 @@ def test_settings_refuse_what_the_term_cannot_honour(run: dict[str, Path]) -> No
                       ({"w_sibling": float("nan")}, "finite"),
                       ({"sibling_dir": side}, "ignored"),
                       ({"sibling_rows": 64}, "ignored"),
+                      ({"sibling_chunk_pairs": 16}, "ignored"),
+                      ({"sibling_loss": "order", "sibling_order_margin": 0.05, "sibling_order_min_dq": 0.02},
+                       "ignored"),
+                      ({"w_sibling": 1.0, "sibling_dir": side, "sibling_rows": 8, "sibling_loss": "rank"},
+                       "'diff' or 'order'"),
+                      ({"w_sibling": 1.0, "sibling_dir": side, "sibling_rows": 8, "sibling_loss": "order",
+                        "sibling_order_min_dq": 0.02}, "sibling_order_margin"),
+                      ({"w_sibling": 1.0, "sibling_dir": side, "sibling_rows": 8, "sibling_loss": "order",
+                        "sibling_order_margin": 0.05}, "sibling_order_min_dq"),
+                      ({"w_sibling": 1.0, "sibling_dir": side, "sibling_rows": 8, "sibling_loss": "order",
+                        "sibling_order_margin": -0.1, "sibling_order_min_dq": 0.02}, "sibling_order_margin"),
+                      ({"w_sibling": 1.0, "sibling_dir": side, "sibling_rows": 8, "sibling_loss": "order",
+                        "sibling_order_margin": 0.05, "sibling_order_min_dq": 0.0}, "sibling_order_min_dq"),
+                      ({"w_sibling": 1.0, "sibling_dir": side, "sibling_rows": 8, "sibling_order_margin": 0.05},
+                       "read only with sibling_loss 'order'"),
+                      ({"w_sibling": 1.0, "sibling_dir": side, "sibling_rows": 8, "sibling_chunk_pairs": 0},
+                       "sibling_chunk_pairs"),
                       ({"w_sibling": 1.0, "sibling_dir": side, "sibling_rows": 8, "accum_steps": 2}, "accum_steps"),
                       ({"w_sibling": 1.0, "sibling_dir": side, "sibling_rows": 8, "sample_with_replacement": True},
                        "exact-once"),
@@ -493,12 +582,22 @@ def test_cli_flags_reach_the_settings_and_are_pinned_with_defaults(tmp_path: Pat
     assert simple_rl_loop.ADDED_SINCE_PINNING["w_sibling"] == 0.0
     assert simple_rl_loop.ADDED_SINCE_PINNING["sibling_rows"] == 128
     assert simple_rl_loop.ADDED_SINCE_PINNING["sibling_dir"] is None
+    assert simple_rl_loop.ADDED_SINCE_PINNING["sibling_chunk_pairs"] == 64
+    assert simple_rl_loop.ADDED_SINCE_PINNING["sibling_loss"] == "diff"
+    assert simple_rl_loop.ADDED_SINCE_PINNING["sibling_order_margin"] is None
+    assert simple_rl_loop.ADDED_SINCE_PINNING["sibling_order_min_dq"] is None
     common = ["run", "--run-dir", str(tmp_path / "r"), "--openings-dir", str(tmp_path / "o"), "--generations", "1"]
     off = simple_rl_loop.train_settings(simple_rl_loop.parser().parse_args(common), tmp_path / "r")
-    assert (off.w_sibling, off.sibling_rows, off.sibling_dir) == (0.0, 128, None)
+    assert (off.w_sibling, off.sibling_rows, off.sibling_dir, off.sibling_chunk_pairs) == (0.0, 128, None, 64)
     on = simple_rl_loop.train_settings(simple_rl_loop.parser().parse_args(
-        [*common, "--w-sibling", "0.5", "--sibling-rows", "64", "--sibling-dir", str(tmp_path / "s")]), tmp_path / "r")
-    assert (on.w_sibling, on.sibling_rows, on.sibling_dir) == (0.5, 64, str(tmp_path / "s"))
+        [*common, "--w-sibling", "0.5", "--sibling-rows", "64", "--sibling-dir", str(tmp_path / "s"),
+         "--sibling-chunk-pairs", "7"]), tmp_path / "r")
+    assert (on.w_sibling, on.sibling_rows, on.sibling_dir, on.sibling_chunk_pairs) == (0.5, 64, str(tmp_path / "s"), 7)
+    assert (off.sibling_loss, off.sibling_order_margin, off.sibling_order_min_dq) == ("diff", None, None)
+    order = simple_rl_loop.train_settings(simple_rl_loop.parser().parse_args(
+        [*common, "--w-sibling", "0.5", "--sibling-dir", str(tmp_path / "s"), "--sibling-loss", "order",
+         "--sibling-order-margin", "0.0556", "--sibling-order-min-dq", "0.0203"]), tmp_path / "r")
+    assert (order.sibling_loss, order.sibling_order_margin, order.sibling_order_min_dq) == ("order", 0.0556, 0.0203)
     with pytest.raises(ValueError, match="sibling_dir"):
         simple_rl_loop.train_settings(simple_rl_loop.parser().parse_args([*common, "--w-sibling", "0.5"]),
                                       tmp_path / "r")
