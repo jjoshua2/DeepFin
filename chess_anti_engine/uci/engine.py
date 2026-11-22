@@ -13,6 +13,7 @@ import gc
 import logging
 import math
 import os
+import select
 import sys
 import threading
 import time
@@ -1828,7 +1829,9 @@ class Engine:
             )
         except SearchNotQuiescent as exc:
             # Stop remains requested. Keep the owner available for a later join.
-            _println(f"info string {exc}")
+            # Under `quit` the line is bounded: the search that did not stop may
+            # be a writer blocked on a stdout the GUI no longer drains.
+            (_println_bounded if self._quit_requested else _println)(f"info string {exc}")
 
     def _handle_ponderhit(self, cmd: CmdPonderHit | None = None) -> None:
         """Opponent played our predicted move. Convert open-ended ponder
@@ -4648,6 +4651,53 @@ def _println(s: str) -> bool:
         sys.stdout.write(s + "\n")
         sys.stdout.flush()
         return True
+
+
+# The quit / exit path writes through `_println_bounded`: a GUI that has
+# stopped draining our stdout leaves a writer blocked inside `write` holding
+# `_PRINT_LOCK`, and an unbounded print there kept `quit` from ever exiting.
+# Once a bounded print finds the lock stuck, the exit skips every later stdout
+# write and flush (`stdout_stuck`). A full pipe with no writer in it yet is the
+# `__main__` quit guard's case.
+_QUIT_PRINT_WAIT_S = 0.25
+_STDOUT_STUCK = threading.Event()
+
+
+def stdout_stuck() -> bool:
+    """A quit/exit-path print found stdout not being drained this session."""
+    return _STDOUT_STUCK.is_set()
+
+
+def _stdout_writable(timeout_s: float) -> bool:
+    """stdout can take a write within ``timeout_s`` (True for a non-file).
+
+    Pessimistic on a one-page pipe: Linux reports it unwritable while any byte
+    is pending, though a short write would still fit."""
+    try:
+        fd = sys.stdout.fileno()
+    except (AttributeError, OSError, ValueError):
+        return True  # not a real file (a test's stand-in): writes cannot block
+    try:
+        _r, w, _x = select.select([], [fd], [], max(0.0, timeout_s))
+    except (OSError, ValueError):
+        return True
+    return bool(w)
+
+
+def _println_bounded(s: str, timeout_s: float = _QUIT_PRINT_WAIT_S) -> bool:
+    """`_println` for the quit / exit path only: skip the line (False) rather
+    than wait more than ``timeout_s`` for the print lock -- held by a writer
+    stuck in `write` -- and latch `stdout_stuck` so the exit waits on stdout no
+    more. Otherwise it is `_println` (the same bytes)."""
+    if _STDOUT_STUCK.is_set():
+        return False
+    if not _PRINT_LOCK.acquire(timeout=max(0.0, timeout_s)):
+        _STDOUT_STUCK.set()
+        return False
+    try:
+        return _println(s)
+    finally:
+        _PRINT_LOCK.release()
 
 
 def _emit_info_string(s: str) -> None:
