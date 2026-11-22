@@ -173,7 +173,7 @@ def test_self_check_is_byte_equal_on_every_game(run: dict[str, Path]) -> None:
     assert res["children"] == res["children_byte_equal"] > 50
 
 
-def _independent_children(collect: Path, game_id: int, ply: int, actions: tuple[int, int]) -> list[np.ndarray]:
+def _independent_children(collect: Path, game_id: int, ply: int, actions: tuple[int, ...]) -> list[np.ndarray]:
     """Rebuild a row's children from games.jsonl (uci) with python-chess only,
     encoded under the collect's declared encoding and repetition regime."""
     from chess_anti_engine.encoding import rep_fix
@@ -529,6 +529,11 @@ def test_settings_refuse_what_the_term_cannot_honour(run: dict[str, Path]) -> No
                       ({"sibling_dir": side}, "ignored"),
                       ({"sibling_rows": 64}, "ignored"),
                       ({"sibling_chunk_pairs": 16}, "ignored"),
+                      ({"sibling_unit": "roots"}, "ignored"),
+                      ({"w_sibling": 1.0, "sibling_dir": side, "sibling_rows": 8, "sibling_unit": "lists"},
+                       "'pairs' or 'roots'"),
+                      ({"w_sibling": 1.0, "sibling_dir": side, "sibling_rows": 8, "sibling_unit": "roots"},
+                       "order form only"),
                       ({"sibling_loss": "order", "sibling_order_margin": 0.05, "sibling_order_min_dq": 0.02},
                        "ignored"),
                       ({"w_sibling": 1.0, "sibling_dir": side, "sibling_rows": 8, "sibling_loss": "rank"},
@@ -586,6 +591,7 @@ def test_cli_flags_reach_the_settings_and_are_pinned_with_defaults(tmp_path: Pat
     assert simple_rl_loop.ADDED_SINCE_PINNING["sibling_loss"] == "diff"
     assert simple_rl_loop.ADDED_SINCE_PINNING["sibling_order_margin"] is None
     assert simple_rl_loop.ADDED_SINCE_PINNING["sibling_order_min_dq"] is None
+    assert simple_rl_loop.ADDED_SINCE_PINNING["sibling_unit"] == "pairs"
     common = ["run", "--run-dir", str(tmp_path / "r"), "--openings-dir", str(tmp_path / "o"), "--generations", "1"]
     off = simple_rl_loop.train_settings(simple_rl_loop.parser().parse_args(common), tmp_path / "r")
     assert (off.w_sibling, off.sibling_rows, off.sibling_dir, off.sibling_chunk_pairs) == (0.0, 128, None, 64)
@@ -598,6 +604,12 @@ def test_cli_flags_reach_the_settings_and_are_pinned_with_defaults(tmp_path: Pat
         [*common, "--w-sibling", "0.5", "--sibling-dir", str(tmp_path / "s"), "--sibling-loss", "order",
          "--sibling-order-margin", "0.0556", "--sibling-order-min-dq", "0.0203"]), tmp_path / "r")
     assert (order.sibling_loss, order.sibling_order_margin, order.sibling_order_min_dq) == ("order", 0.0556, 0.0203)
+    assert (off.sibling_unit, order.sibling_unit) == ("pairs", "pairs")
+    roots = simple_rl_loop.train_settings(simple_rl_loop.parser().parse_args(
+        [*common, "--w-sibling", "0.5", "--sibling-dir", str(tmp_path / "s"), "--sibling-loss", "order",
+         "--sibling-order-margin", "0.0556", "--sibling-order-min-dq", "0.0203", "--sibling-unit", "roots"]),
+        tmp_path / "r")
+    assert roots.sibling_unit == "roots"
     with pytest.raises(ValueError, match="sibling_dir"):
         simple_rl_loop.train_settings(simple_rl_loop.parser().parse_args([*common, "--w-sibling", "0.5"]),
                                       tmp_path / "r")

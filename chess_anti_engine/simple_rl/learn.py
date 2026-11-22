@@ -224,6 +224,10 @@ class TrainSettings:
     # the margin ranking loss relu(min(sibling_order_margin, |dq|) - sign(dq) * dv) on pairs with
     # |dq| >= sibling_order_min_dq, weighted by min_visits / 64 (the cap at |dq| is part of the form). Margin and threshold are read only with "order", and must then be given.
     sibling_loss: str = "diff"
+    # The term's unit: "pairs" (the K sampled pairs per row of the version-2 sidecar) or "roots" (the root-list
+    # sidecar: every pair among each root's >= min-visits children, per-root mean, n_eff-weighted over roots; order
+    # form only). With "roots", sibling_rows is the number of ROOTS per batch.
+    sibling_unit: str = "pairs"
     sibling_order_margin: float | None = None
     sibling_order_min_dq: float | None = None
     sibling_dir: str | None = None
@@ -348,7 +352,7 @@ class TrainSettings:
             raise ValueError(f"w_sibling must be a finite value >= 0, got {self.w_sibling}")
         if w == 0:
             if (self.sibling_dir is not None or int(self.sibling_rows) != 128 or int(self.sibling_chunk_pairs) != 64
-                    or self.sibling_loss != "diff" or self.sibling_order_margin is not None
+                    or self.sibling_loss != "diff" or self.sibling_unit != "pairs" or self.sibling_order_margin is not None
                     or self.sibling_order_min_dq is not None):
                 raise ValueError("sibling_dir / sibling_rows / sibling_chunk_pairs / sibling_loss / sibling_order_* "
                                  "are read only with w_sibling > 0; with w_sibling 0 they would be ignored")
@@ -360,6 +364,10 @@ class TrainSettings:
             raise ValueError(f"sibling_rows must be in [1, batch_size {self.batch_size}], got {self.sibling_rows}")
         if int(self.sibling_chunk_pairs) < 1:
             raise ValueError(f"sibling_chunk_pairs must be >= 1, got {self.sibling_chunk_pairs}")
+        if self.sibling_unit not in ("pairs", "roots"):
+            raise ValueError(f"sibling_unit must be 'pairs' or 'roots', got {self.sibling_unit!r}")
+        if self.sibling_unit == "roots" and self.sibling_loss != "order":
+            raise ValueError("sibling_unit 'roots' trains the order form only (sibling_loss 'order')")
         if self.sibling_loss not in ("diff", "order"):
             raise ValueError(f"sibling_loss must be 'diff' or 'order', got {self.sibling_loss!r}")
         if self.sibling_loss == "order":
@@ -1919,13 +1927,14 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
     sibling_pairs: Any = None
     sibling_probe_before: dict[str, Any] | None = None
     if float(settings.w_sibling) > 0:
-        from chess_anti_engine.simple_rl.sibling import SiblingTerm, load_sidecars
+        from chess_anti_engine.simple_rl.sibling import SiblingListTerm, SiblingTerm, load_sidecars
 
         if not isinstance(sampler, ScheduledSampler):
             raise ValueError("w_sibling > 0 needs the exact-once ScheduledSampler")
         assert settings.sibling_dir is not None  # validate()
         sibling_pairs = load_sidecars(run_dir, gens, row_ids, Path(settings.sibling_dir),
-                                      holdout_frac=float(settings.holdout_frac), newest=generation)
+                                      holdout_frac=float(settings.holdout_frac), newest=generation,
+                                      unit=settings.sibling_unit)
         scaler_cls = getattr(torch.amp, "GradScaler", None)
         if scaler_cls is not None and any(isinstance(v, scaler_cls) and v.is_enabled() for v in vars(trainer).values()):
             raise ValueError("w_sibling > 0 with an active GradScaler is refused: the term's per-chunk backward runs "
@@ -1934,7 +1943,8 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
                 getattr(trainer, "resid_channel_balance_weight", 0.0)) > 0:
             raise ValueError("w_sibling > 0 with residual channel dropout or channel balance is refused: each chunk's "
                              "forward would draw its own dropout mask / overwrite the root forward's balance loss")
-        sibling = SiblingTerm(trainer.model, sampler, sibling_pairs, w=float(settings.w_sibling),
+        term_cls = SiblingListTerm if settings.sibling_unit == "roots" else SiblingTerm
+        sibling = term_cls(trainer.model, sampler, sibling_pairs, w=float(settings.w_sibling),
                               rows=int(settings.sibling_rows), chunk_pairs=int(settings.sibling_chunk_pairs),
                               batch_size=int(settings.batch_size), device=settings.device, loss=settings.sibling_loss,
                               order_margin=settings.sibling_order_margin, order_min_dq=settings.sibling_order_min_dq)
@@ -2158,7 +2168,8 @@ def _rows_per_step(sampler: Any, accum_steps: int) -> dict[str, Any] | None:
 # Settings added after snapshots existed, dropped from the resume key at their default so an unsealed phase begun on
 # older code (which trained exactly the default) still resumes; any other value is keyed.
 KEY_NEUTRAL_DEFAULTS: dict[str, Any] = {"sibling_chunk_pairs": 64, "sibling_loss": "diff",
-                                        "sibling_order_margin": None, "sibling_order_min_dq": None}
+                                        "sibling_order_margin": None, "sibling_order_min_dq": None,
+                                        "sibling_unit": "pairs"}
 
 
 def snapshot_resume_key(*, settings: TrainSettings, generation: int, init_checkpoint: Path,
@@ -2187,6 +2198,12 @@ def snapshot_resume_key(*, settings: TrainSettings, generation: int, init_checkp
         # default key is unchanged.
         from chess_anti_engine.simple_rl.sibling import SIDECAR_MANIFEST
 
+        if settings.sibling_loss == "order":
+            # The order form's definition changed (version 2: gap-weighted); a phase begun on another version
+            # never resumes as this one.
+            from chess_anti_engine.simple_rl.sibling import ORDER_FORM_VERSION
+
+            ident["sibling_order_form"] = ORDER_FORM_VERSION
         ident["sibling_sidecars"] = {g: sha256_file(Path(str(settings.sibling_dir)) / f"gen_{g:04d}" / SIDECAR_MANIFEST)
                                      for g in gens}
     return hashlib.sha256(json.dumps(ident, sort_keys=True, default=str).encode()).hexdigest()

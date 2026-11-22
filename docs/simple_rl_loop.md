@@ -943,18 +943,45 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
     - `diff`: `W · mean over pairs of (min(v_A, v_B) / 64) · Huber_0.2(Δv − dq)`.
       It regresses the difference, so it enforces the size of the gap as well as
       its sign.
-    - `order`: `W · mean over pairs of (min(v_A, v_B) / 64) · 1[|dq| ≥ t] ·
-      relu(m_i − sign(dq) · Δv)`, with `m_i = min(m, |dq|)`, `m` =
-      `--sibling-order-margin` and `t` = `--sibling-order-min-dq` (both required
-      with `order`, refused otherwise). A pair costs nothing, and gives exactly zero
-      gradient, once the net orders it as the search does by at least `m_i`.
-      Near-ties (`|dq| < t`) never contribute. **The cap `m_i ≤ |dq|` is part of
-      the form, with no flag to remove it:** the loss never asks the net to separate
-      a pair by more than the search itself does, so it adds no sharpening pressure
-      without a target behind it. The mean is over all of the step's pairs, so the
-      term goes quiet as pairs are satisfied. The summary's `active_pairs` counts
-      pairs with a non-zero loss.
-    - Both forms use the same pairs, the same child forwards and the same chunking.
+    - `order` (form version 2): per pair `(min(v_A, v_B) / 64) · 1[|dq| ≥ t] ·
+      min(|dq|, 0.62) · relu(m_i − sign(dq) · Δv)`, with `m_i = min(m, |dq|)`,
+      `m` = `--sibling-order-margin` and `t` = `--sibling-order-min-dq` (both
+      required with `order`, refused otherwise).
+      - A pair costs nothing, and gives exactly zero gradient, once the net orders it
+        as the search does by at least `m_i`. Near-ties (`|dq| < t`) never
+        contribute.
+      - **The cap `m_i ≤ |dq|` is part of the form, with no flag to remove it:** the
+        loss never asks the net to separate a pair by more than the search itself
+        does, so it adds no sharpening pressure without a target behind it.
+      - **The gap weight `min(|dq|, 0.62)` is part of the form too:** preferring the
+        wrong child costs the value given up, so a mis-ordered large gap costs more
+        than a small one. It is bounded at the v2 pilot sidecar's weighted p90 of
+        |dq| (0.619), so decided gaps do not dominate.
+      - Version 1, unweighted, was never registered. The term's snapshot state and
+        the phase resume key carry the form's version, so a version-1 phase never
+        resumes as version 2.
+      - The term goes quiet as pairs are satisfied. The summary's `active_pairs`
+        counts pairs with a non-zero loss.
+    - **Unit** (`--sibling-unit`, default `pairs`; `roots` needs `order`).
+      - `pairs`: the K sampled pairs per row of the version-2 pair sidecar, averaged
+        over the step's pairs.
+      - `roots`: a root-list sidecar, made with `scripts/simple_rl_sibling_pairs.py
+        --unit roots`, holds every eligible child (≥ `--min-visits` visits, not
+        search-terminal) of every root with at least two of them, one input each.
+        The term takes the first `--sibling-rows` ROOTS of the batch, forwards each
+        child once, and scores EVERY pair among a root's children with `|dq| ≥ t`.
+        Each root's loss is the mean over its eligible pairs. Roots are combined with
+        weight `n_eff = n / (1 + (n − 1) · 0.13)` (n = the root's eligible pairs),
+        normalised over the step's roots. `0.13` is the within-row pair correlation
+        from the sibling-target scoping bank, fixed and not refitted.
+      - Chunks hold whole roots (pairs never cross roots), at most `2 ×
+        --sibling-chunk-pairs` child positions unless one root is larger.
+      - Use `--min-visits 2` or more: a pair with a 1-visit child carries no ordering
+        information beyond the collecting net's own (the order-scoping bank's
+        addendum).
+    - Both units record `child_positions_per_step`, the mean child inputs forwarded
+      with gradient per step that carries the term, so "equal child-forward budget"
+      across cells is a checked quantity.
   - **Chunks** (`--sibling-chunk-pairs`, default 64). The step's pairs are forwarded
     at most this many at a time, with a backward per chunk inside the Trainer's
     penalty hook, scaled by the Trainer's own `rows / batch_size` factor. The chunks
@@ -1038,8 +1065,8 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
     - Refused with `--accum-steps > 1` (the term is a per-micro-batch mean, the
       anchor's reason) and with `--sample-with-replacement` (served rows are not
       recorded).
-    - `--sibling-dir`, or a non-default `--sibling-rows`, `--sibling-chunk-pairs` or
-      `--sibling-loss` / `--sibling-order-*`, with `--w-sibling 0` is refused,
+    - `--sibling-dir`, or a non-default `--sibling-rows`, `--sibling-chunk-pairs`,
+      `--sibling-unit` or `--sibling-loss` / `--sibling-order-*`, with `--w-sibling 0` is refused,
       because it would be ignored.
   - **Take-effect record.** The train summary's `sibling` block holds:
     - pairs, steps, the per-step (pairs, loss) log, the mean weighted loss (keyed
@@ -1052,8 +1079,10 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
   - **Snapshot resume.** When the term is on, the resume key also hashes every
     generation's sidecar manifest, so a different sidecar re-materialised at the
     same `--sibling-dir` restarts the phase instead of resuming.
-    `--sibling-chunk-pairs`, `--sibling-loss` and `--sibling-order-*` enter the key
-    only at a non-default value, so adding them did not change any existing key.
+    `--sibling-chunk-pairs`, `--sibling-unit`, `--sibling-loss` and `--sibling-order-*`
+    enter the key only at a non-default value, so adding them did not change any
+    existing key. With `--sibling-loss order` the key also carries the order form's
+    version.
     Adding the three
     `TrainSettings` fields changes `snapshot_resume_key` itself, so an unsealed
     phase started on older code restarts from its first update.

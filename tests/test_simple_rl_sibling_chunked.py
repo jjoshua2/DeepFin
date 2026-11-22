@@ -363,7 +363,7 @@ def test_the_new_sibling_settings_leave_the_resume_key_unchanged_at_their_defaul
 
     base = TrainSettings(device="cpu")
     assert set(learn.KEY_NEUTRAL_DEFAULTS) == {"sibling_chunk_pairs", "sibling_loss", "sibling_order_margin",
-                                               "sibling_order_min_dq"}
+                                               "sibling_order_min_dq", "sibling_unit"}
     for k, v in learn.KEY_NEUTRAL_DEFAULTS.items():
         assert getattr(base, k) == v
     real_asdict = learn.asdict
@@ -386,16 +386,17 @@ def test_the_new_sibling_settings_leave_the_resume_key_unchanged_at_their_defaul
 def test_the_order_margin_is_capped_at_the_searchs_own_gap() -> None:
     """m_i = min(m, |dq|): a pair the search separates by 0.03 is satisfied at
     s * dv = 0.03 (an uncapped m = 0.0556 would still push it apart); at 0.02 it is
-    not; a pair with |dq| = 0.2 uses m itself."""
+    not; a pair with |dq| = 0.2 uses m itself. (Losses carry the version-2 gap
+    weight min(|dq|, 0.62): x 0.03 and x 0.2 here.)"""
     loss, grad, _ = _order_grad(0.0301, 0.00, dq=0.03)   # 1e-4 above the boundary: float32 softmax round-off
     assert loss == 0.0
     assert torch.count_nonzero(grad) == 0
     loss, grad, _ = _order_grad(0.02, 0.00, dq=0.03)
     assert loss > 0
     assert torch.count_nonzero(grad) > 0
-    assert loss == pytest.approx(0.03 - 0.02, abs=1e-4)
+    assert loss == pytest.approx((0.03 - 0.02) * 0.03, abs=1e-6)
     loss, _, _ = _order_grad(0.03, 0.00, dq=0.2)       # |dq| > m: the margin is m = 0.0556
-    assert loss == pytest.approx(0.0556 - 0.03, abs=1e-4)
+    assert loss == pytest.approx((0.0556 - 0.03) * 0.2, abs=1e-5)
     loss, grad, _ = _order_grad(0.06, 0.00, dq=0.2)
     assert loss == 0.0
     assert torch.count_nonzero(grad) == 0

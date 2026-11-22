@@ -195,7 +195,7 @@ def train_settings(a: argparse.Namespace, run_dir: Path) -> TrainSettings:
         accum_steps=a.accum_steps, snapshot_rows=parse_snapshot_updates(a.snapshot_rows, flag="--snapshot-rows"),
         value_rows_per_game=a.value_rows_per_game,
         w_sibling=a.w_sibling, sibling_rows=a.sibling_rows, sibling_chunk_pairs=a.sibling_chunk_pairs,
-        sibling_loss=a.sibling_loss, sibling_order_margin=a.sibling_order_margin,
+        sibling_loss=a.sibling_loss, sibling_unit=a.sibling_unit, sibling_order_margin=a.sibling_order_margin,
         sibling_order_min_dq=a.sibling_order_min_dq, sibling_dir=a.sibling_dir,
     )
     settings.validate()
@@ -356,7 +356,8 @@ ADDED_SINCE_PINNING = {"init_optimizer_state": "fresh",
                        # term is gradient-equivalent, and the key is read only with --w-sibling.
                        "sibling_chunk_pairs": 64,
                        # Every run before --sibling-loss trained the diff form.
-                       "sibling_loss": "diff", "sibling_order_margin": None, "sibling_order_min_dq": None}
+                       "sibling_loss": "diff", "sibling_order_margin": None, "sibling_order_min_dq": None,
+                       "sibling_unit": "pairs"}
 
 
 def _pinned_value(path: Path, key: str, legacy: Any) -> Any:
@@ -799,6 +800,10 @@ def _common(p: argparse.ArgumentParser) -> None:
                         "relu(min(--sibling-order-margin, |dq|) - sign(dq) * dv) on pairs with |dq| >= "
                         "--sibling-order-min-dq: zero once the net orders the pair as the search does, by the margin "
                         "capped at the search's own gap")
+    t.add_argument("--sibling-unit", choices=("pairs", "roots"), default="pairs",
+                   help="with --sibling-loss order: pairs (default; the K sampled pairs per row) or roots (a root-list "
+                        "sidecar made with simple_rl_sibling_pairs.py --unit roots: every pair among each root's "
+                        "children with >= min visits; --sibling-rows is then roots per batch)")
     t.add_argument("--sibling-order-margin", type=float, default=None,
                    help="with --sibling-loss order (required there): the ranking margin's ceiling, >= 0; "
                         "each pair's margin is min(this, |dq|)")

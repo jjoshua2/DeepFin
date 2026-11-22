@@ -56,10 +56,18 @@ step.
 
 **Loss form** (``loss``). ``diff`` (the registered form): the Huber regression of
 dv onto dq above, which enforces the size of the difference as well as its sign.
-``order``: per pair ``(min_visits / 64) * relu(min(margin, |dq|) - sign(dq) * dv)``
-for pairs with ``|dq| >= min_dq`` (else 0), averaged over the same pairs: zero once
-the net orders the pair as the search does by at least the smaller of ``margin`` and
-the search's own gap (the cap is the form's definition; there is no uncapped path). Same pairs, same child
+``order`` (form version 2): per pair ``(min_visits / 64) * min(|dq|, 0.62) *
+relu(min(margin, |dq|) - sign(dq) * dv)`` for pairs with ``|dq| >= min_dq`` (else 0):
+zero once the net orders the pair as the search does by at least the smaller of
+``margin`` and the search's own gap (the cap is the form's definition; there is no
+uncapped path), and a mis-ordered large gap costs in proportion to the gap, bounded.
+Version 1 (unweighted) was never registered.
+
+**Unit** (``unit``): ``pairs`` reads the version-2 pair sidecar (K sampled pairs per
+row) and averages over the step's pairs. ``roots`` (``SiblingListTerm``, order form
+only) reads a root-list sidecar (every eligible child of each root with >= 2), scores
+EVERY pair among a root's children with ``|dq| >= min_dq``, takes each root's mean and
+combines roots with weight n_eff = n / (1 + (n - 1) * 0.13) (``ROOT_PAIR_ICC``, fixed). Same pairs, same child
 forwards, same chunking. An experiment arm, not an identity twin.
 
 **Chunked, with a backward per chunk** (the only path). The step's pairs are
@@ -108,11 +116,29 @@ MAX_BRIDGE_PLIES = 3          # a pilot gap needed at most 3 plies with the firs
 MAX_BRIDGE_UNKNOWN_FIRST = 2  # ...and at most 2 when the row stored no played move
 VISIT_SCALE = 64.0            # the loss weight is min(v_A, v_B) / 64 (the collection's sims)
 HUBER_DELTA = 0.2
+# The ORDER form's gap weight min(|dq|, ORDER_GAP_CAP): the cost of preferring the wrong child is the value given up,
+# |dq|, bounded at the v2 pilot sidecar's min-visits-weighted p90 of |dq| (0.619) so decided / near-mate gaps (|dq| up
+# to 2) do not dominate. Part of the form's definition (no setting).
+ORDER_GAP_CAP = 0.62
+# Version of the ORDER form. 1 = unweighted (never registered); 2 = gap-weighted, pair and root-list units. Carried in
+# the term's snapshot state and the phase resume key, so a version-1 snapshot can never resume as version 2.
+ORDER_FORM_VERSION = 2
+# Root-list unit: a root's pair losses are averaged, and roots are combined with weight n_eff = n / (1 + (n - 1) rho)
+# (n = the root's eligible pairs): the inverse-variance weight of a root's mean under a within-root correlation rho.
+# rho = 0.13 is FIXED from the sibling-target scoping bank (ICC of pairs within a row, 0.11-0.15); never refitted.
+ROOT_PAIR_ICC = 0.13
+PAIR_KIND = "simple_rl_sibling_pairs"
+LIST_KIND = "simple_rl_sibling_lists"
+LIST_SIDECAR_VERSION = 1  # 1: every non-terminal child with >= min_visits visits of every root with >= 2 of them
 PAIR_FIELDS: dict[str, Any] = {
     "x_a": np.float16, "x_b": np.float16, "dq": np.float32, "q_a": np.float32, "q_b": np.float32,
     "visits_a": np.float32, "visits_b": np.float32, "min_visits": np.float32,
     "action_a": np.int32, "action_b": np.int32, "game_id": np.int64, "ply_index": np.int32,
     "row": np.int32, "holdout": np.bool_,
+}
+LIST_FIELDS: dict[str, Any] = {
+    "x": np.float16, "action": np.int32, "q": np.float32, "visits": np.float32, "game_id": np.int64,
+    "ply_index": np.int32, "row": np.int32, "holdout": np.bool_,
 }
 _ROW_KEYS = ("has_root_child_q", "root_child_q", "root_child_visits", "played_move_index", "has_played_move")
 
@@ -407,8 +433,15 @@ _PLAN_COLUMNS: dict[str, Any] = {
 }
 
 
+_LIST_PLAN_COLUMNS: dict[str, Any] = {
+    "row": np.int32, "game_id": np.int64, "ply_index": np.int32, "action": np.int32, "q": np.float32,
+    "visits": np.float32, "holdout": np.bool_,
+}
+
+
 def _plan_shard(view: CollectView, shard_index: int, meta: dict[str, np.ndarray], *, k: int, min_visits: float,
-                seed: int, holdout_frac: float) -> tuple[dict[str, np.ndarray], dict[int, list[str]], dict[str, int]]:
+                seed: int, holdout_frac: float, unit: str = "pairs",
+                ) -> tuple[dict[str, np.ndarray], dict[int, list[str]], dict[str, int]]:
     """Pass 1: rebuild every game of the shard (every root hash checked), choose
     each row's pairs, and record each game's moves as UCI for pass 2. The plan is
     in (game, ply) order -- the order pass 2 writes -- as compact columns."""
@@ -442,21 +475,29 @@ def _plan_shard(view: CollectView, shard_index: int, meta: dict[str, np.ndarray]
                     counts["repetition_children_excluded"] += 1
                 else:
                     cand.append(int(c))
+            q = rows["root_child_q"][off]
+            if unit == "roots":   # every eligible child of a root with at least two of them
+                counts["rows_with_one_child"] = counts.get("rows_with_one_child", 0) + int(len(cand) == 1)
+                if len(cand) >= 2:
+                    counts["rows_with_pairs"] += 1
+                    plan.extend((off, gid, int(plies[i]), c, float(q[c]), float(visits[c]), held) for c in sorted(cand))
+                continue
             pairs = choose_pairs(np.asarray(cand), visits, k, pair_rng(seed, gid, int(plies[i])))
             if pairs:
                 counts["rows_with_pairs"] += 1
-            q = rows["root_child_q"][off]
             for a, b in pairs:
                 plan.append((off, gid, int(plies[i]), a, b, float(q[a]), float(q[b]), float(visits[a]),
                              float(visits[b]), held))
         if board is not None:
             start = _start_board(view, view.games[gid])
             moves_of[gid] = [m.uci() for m in board.move_stack[len(start.move_stack):]]
-    counts["pairs"] = len(plan)
-    cols = list(zip(*plan, strict=True)) if plan else [() for _ in _PLAN_COLUMNS]
-    out = {name: np.asarray(col, dtype=dt) for (name, dt), col in zip(_PLAN_COLUMNS.items(), cols, strict=True)}
-    out["dq"] = (out["q_a"] - out["q_b"]).astype(np.float32)
-    out["min_visits"] = np.minimum(out["visits_a"], out["visits_b"]).astype(np.float32)
+    columns = _LIST_PLAN_COLUMNS if unit == "roots" else _PLAN_COLUMNS
+    counts["children" if unit == "roots" else "pairs"] = len(plan)
+    cols = list(zip(*plan, strict=True)) if plan else [() for _ in columns]
+    out = {name: np.asarray(col, dtype=dt) for (name, dt), col in zip(columns.items(), cols, strict=True)}
+    if unit == "pairs":
+        out["dq"] = (out["q_a"] - out["q_b"]).astype(np.float32)
+        out["min_visits"] = np.minimum(out["visits_a"], out["visits_b"]).astype(np.float32)
     return out, moves_of, counts
 
 
@@ -470,14 +511,15 @@ def _npy_writer(path: Path, n: int) -> Any:
 
 
 def _write_shard(view: CollectView, out: Path, meta: dict[str, np.ndarray], plan: dict[str, np.ndarray],
-                 moves_of: dict[int, list[str]]) -> dict[str, str]:
+                 moves_of: dict[int, list[str]], unit: str = "pairs") -> dict[str, str]:
     """Pass 2: replay each game's recorded moves and encode the chosen children,
     written sequentially in plan order (bounded RAM)."""
     from chess_anti_engine.moves.encode import index_to_move_for_encoding
 
     out.mkdir(parents=True, exist_ok=False)
-    n = int(plan["dq"].size)
-    fa, fb = _npy_writer(out / "x_a.npy", n), _npy_writer(out / "x_b.npy", n)
+    inputs = (("action", "x"),) if unit == "roots" else (("action_a", "x_a"), ("action_b", "x_b"))
+    n = int(plan["row"].size)
+    writers = [(col, _npy_writer(out / f"{name}.npy", n)) for col, name in inputs]
     plies = np.asarray(meta["ply_index"])
     board: chess.Board | None = None
     current = None
@@ -495,16 +537,17 @@ def _write_shard(view: CollectView, out: Path, meta: dict[str, np.ndarray], plan
                 raise RuntimeError(f"plan out of order at game {gid} ply {ply}")
             while len(board.move_stack) - start < ply - start:
                 board.push_uci(moves[len(board.move_stack) - start])
-            for c, fh in ((plan["action_a"][j], fa), (plan["action_b"][j], fb)):
-                board.push(index_to_move_for_encoding(int(c), board))
+            for col, fh in writers:
+                board.push(index_to_move_for_encoding(int(plan[col][j]), board))
                 fh.write(np.ascontiguousarray(encode(board, view.enc)).tobytes())
                 board.pop()
     finally:
-        fa.close()
-        fb.close()
-    for name in ("row", "game_id", "ply_index", "action_a", "action_b", "q_a", "q_b", "visits_a", "visits_b",
-                 "holdout", "dq", "min_visits"):
-        np.save(out / f"{name}.npy", plan[name])
+        for _col, fh in writers:
+            fh.close()
+    fields = LIST_FIELDS if unit == "roots" else PAIR_FIELDS
+    for name in fields:
+        if not name.startswith("x"):
+            np.save(out / f"{name}.npy", plan[name])
     with (out / GAME_MOVES).open("w") as fh:
         for gid in sorted(moves_of):
             fh.write(json.dumps({"game_id": gid, "uci": moves_of[gid]}) + "\n")
@@ -512,8 +555,14 @@ def _write_shard(view: CollectView, out: Path, meta: dict[str, np.ndarray], plan
 
 
 def materialise(collect_dir: Path, out_dir: Path, *, k: int = 2, min_visits: float = 2.0, seed: int = 0,
-                holdout_frac: float = 0.05, shards: list[int] | None = None, log: Any = print) -> dict[str, Any]:
+                holdout_frac: float = 0.05, shards: list[int] | None = None, log: Any = print,
+                unit: str = "pairs") -> dict[str, Any]:
     """Write the sibling sidecar of a sealed collect into ``out_dir`` (must not exist).
+
+    ``unit`` "pairs" (the registered sidecar, version 2): ``k`` sampled pairs per
+    row. "roots" (list sidecar, version 1): every eligible child (>= ``min_visits``
+    visits, not search-terminal) of every root that has at least two, one input
+    each, with its completed Q (parent POV) and visits; ``k`` and ``seed`` unused.
 
     Every game of every shard is rebuilt (each root hash checked) BEFORE anything
     is written, so a collect that cannot be rebuilt leaves no sidecar.
@@ -521,6 +570,8 @@ def materialise(collect_dir: Path, out_dir: Path, *, k: int = 2, min_visits: flo
     sidecar is refused by the trainer).
     """
     t0 = time.perf_counter()
+    if unit not in ("pairs", "roots"):
+        raise ValueError(f"unit must be 'pairs' or 'roots', got {unit!r}")
     if int(k) < 1:
         raise ValueError(f"k must be >= 1, got {k}")
     if not float(min_visits) >= 1.0:
@@ -537,7 +588,7 @@ def materialise(collect_dir: Path, out_dir: Path, *, k: int = 2, min_visits: flo
     plans = {}
     for si in chosen:
         plans[si] = _plan_shard(view, si, metas[si], k=int(k), min_visits=float(min_visits), seed=int(seed),
-                                holdout_frac=float(holdout_frac))
+                                holdout_frac=float(holdout_frac), unit=unit)
         log(f"planned shard {si}: {plans[si][2]} ({time.perf_counter() - t0:.0f}s, peak RSS {_peak_rss_mib():.0f} MiB)")
     tmp = out_dir.with_name(f".{out_dir.name}.tmp")
     if tmp.exists():
@@ -548,19 +599,23 @@ def materialise(collect_dir: Path, out_dir: Path, *, k: int = 2, min_visits: flo
     records = {}
     for si in chosen:
         plan, moves_of, counts = plans.pop(si)
-        files = _write_shard(view, tmp / view.shards[si].name.replace(".zarr", ""), metas[si], plan, moves_of)
+        files = _write_shard(view, tmp / view.shards[si].name.replace(".zarr", ""), metas[si], plan, moves_of, unit)
         records[view.shards[si].name] = {"index": si, "rows": len(metas[si]["game_id"]), "counts": counts,
                                          "files": files}
-        log(f"wrote shard {si}: {counts['pairs']} pairs ({time.perf_counter() - t0:.0f}s, "
+        log(f"wrote shard {si}: {counts.get('pairs', counts.get('children'))} {'children' if unit == 'roots' else 'pairs'} "
+            f"({time.perf_counter() - t0:.0f}s, "
             f"peak RSS {_peak_rss_mib():.0f} MiB)")
     totals = {key: int(sum(r["counts"][key] for r in records.values()))
-              for key in ("rows", "rows_with_stats", "rows_with_pairs", "pairs", "terminal_children_excluded",
-                          "repetition_children_excluded")}
+              for key in ("rows", "rows_with_stats", "rows_with_pairs", "children" if unit == "roots" else "pairs",
+                          "terminal_children_excluded", "repetition_children_excluded")}
+    unit_cfg: dict[str, Any] = ({"k": None, "seed": None, "unit": "roots", "q_pov": "parent"} if unit == "roots" else
+                                {"k": int(k), "seed": int(seed), "weight": "min(v_A, v_B)",
+                                 "orientation": "A = more-visited child", "dq_pov": "parent"})
     manifest = {
-        "version": SIDECAR_VERSION, "kind": "simple_rl_sibling_pairs",
+        "version": LIST_SIDECAR_VERSION if unit == "roots" else SIDECAR_VERSION,
+        "kind": LIST_KIND if unit == "roots" else PAIR_KIND,
         "collect_dir": str(view.collect_dir), "collect_manifest_sha256": view.manifest_sha256,
-        "config": {"k": int(k), "min_visits": float(min_visits), "seed": int(seed), "holdout_frac": float(holdout_frac),
-                   "weight": "min(v_A, v_B)", "orientation": "A = more-visited child", "dq_pov": "parent",
+        "config": {**unit_cfg, "min_visits": float(min_visits), "holdout_frac": float(holdout_frac),
                    "max_bridge_plies": MAX_BRIDGE_PLIES, "max_bridge_unknown_first": MAX_BRIDGE_UNKNOWN_FIRST,
                    "excluded_children": "search terminal: CBoard is_game_over() or is_repetition() (2-fold)"},
         "encoding": view.enc, "history_rep_fix": stamp, "lines_source": view.lines_source,
@@ -658,12 +713,43 @@ class SidecarPairs:
         return xa, xb
 
 
+@dataclass
+class SidecarLists:
+    """The window's root lists: one entry per eligible child, contiguous per root
+    (row), sorted by the learner's row key; memmapped child inputs per part."""
+    parts: list[dict[str, np.ndarray]]
+    part_of: np.ndarray      # child -> part index
+    local: np.ndarray        # child -> index within its part
+    q: np.ndarray            # completed Q, parent POV
+    visits: np.ndarray
+    holdout: np.ndarray
+    gen: np.ndarray
+    row_start: np.ndarray    # train row -> first child
+    row_count: np.ndarray    # train row -> number of children (0 or >= 2)
+    probe_roots: list[tuple[int, int]]   # (first child, count) of the fixed hold-out probe roots
+    record: dict[str, Any]
+
+    def child_inputs(self, ids: np.ndarray) -> np.ndarray:
+        x = np.empty((len(ids), 175, 8, 8), dtype=np.float16)
+        for p in np.unique(self.part_of[ids]):
+            sel = np.flatnonzero(self.part_of[ids] == p)
+            x[sel] = self.parts[int(p)]["x"][self.local[ids[sel]]]
+        return x
+
+
 def load_sidecars(run_dir: Path, gens: list[int], row_ids: np.ndarray, sidecar_root: Path, *,
-                  holdout_frac: float, newest: int, probe_pairs: int = 1024) -> SidecarPairs:
+                  holdout_frac: float, newest: int, probe_pairs: int = 1024, unit: str = "pairs",
+                  probe_roots: int = 128) -> Any:
     """Open ``sidecar_root/gen_<g>/`` for each window generation and index its
-    pairs by the learner's row ids. Refuses a sidecar of another collect, a partial
-    or changed one, another hold-out split, or a pair of a hold-out game on a
-    training row."""
+    pairs (``unit`` "pairs": ``SidecarPairs``) or root lists ("roots":
+    ``SidecarLists``) by the learner's row ids. Refuses a sidecar of the other unit,
+    of another collect, a partial or changed one, another hold-out split, or an
+    entry of a hold-out game on a training row."""
+    if unit not in ("pairs", "roots"):
+        raise ValueError(f"unit must be 'pairs' or 'roots', got {unit!r}")
+    roots = unit == "roots"
+    want_kind, want_version = (LIST_KIND, LIST_SIDECAR_VERSION) if roots else (PAIR_KIND, SIDECAR_VERSION)
+    fields = LIST_FIELDS if roots else PAIR_FIELDS
     parts: list[dict[str, np.ndarray]] = []
     part_of, local, keys, dq, mv, held, gen_of = [], [], [], [], [], [], []
     record: dict[str, Any] = {"generations": {}}
@@ -673,8 +759,9 @@ def load_sidecars(run_dir: Path, gens: list[int], row_ids: np.ndarray, sidecar_r
         if not mpath.is_file():
             raise ValueError(f"--sibling-dir {sidecar_root}: no sidecar for generation {g} ({mpath} missing)")
         man = json.loads(mpath.read_text())
-        if man.get("version") != SIDECAR_VERSION or man.get("kind") != "simple_rl_sibling_pairs":
-            raise ValueError(f"{mpath}: not a version-{SIDECAR_VERSION} sibling sidecar")
+        if man.get("version") != want_version or man.get("kind") != want_kind:
+            raise ValueError(f"{mpath}: not a version-{want_version} {want_kind} sidecar (--sibling-unit {unit}); it is "
+                             f"{man.get('kind')} version {man.get('version')}")
         collect = resolve_collect_dir(Path(run_dir) / f"gen_{g:04d}" / "collect")
         if man["collect_manifest_sha256"] != sha256_file(collect / "manifest.json"):
             raise ValueError(f"{mpath}: made from another collect than generation {g}'s ({collect})")
@@ -699,8 +786,8 @@ def load_sidecars(run_dir: Path, gens: list[int], row_ids: np.ndarray, sidecar_r
             files_sha[s.name] = dict(rec["files"])
             # Only the child inputs are memory-mapped (two descriptors per shard); the
             # small per-pair arrays are read into RAM.
-            part = {name: np.load(pdir / f"{name}.npy", mmap_mode="r" if name in ("x_a", "x_b") else None)
-                    for name in PAIR_FIELDS}
+            part = {name: np.load(pdir / f"{name}.npy", mmap_mode="r" if name.startswith("x") else None)
+                    for name in fields}
             gids = np.asarray(part["game_id"])
             flags = np.asarray(part["holdout"]).astype(bool)
             recomputed = np.asarray([is_holdout_game(int(x), float(holdout_frac)) for x in np.unique(gids)], bool)
@@ -712,8 +799,8 @@ def load_sidecars(run_dir: Path, gens: list[int], row_ids: np.ndarray, sidecar_r
             part_of.append(np.full(n, pi, np.int32))
             local.append(np.arange(n, dtype=np.int64))
             keys.append((np.int64(g) << 32) | (base + np.asarray(part["row"], np.int64)))
-            dq.append(np.asarray(part["dq"], np.float32))
-            mv.append(np.asarray(part["min_visits"], np.float32))
+            dq.append(np.asarray(part["q" if roots else "dq"], np.float32))
+            mv.append(np.asarray(part["visits" if roots else "min_visits"], np.float32))
             held.append(flags)
             gen_of.append(np.full(n, g, np.int32))
             base += n_rows
@@ -736,6 +823,20 @@ def load_sidecars(run_dir: Path, gens: list[int], row_ids: np.ndarray, sidecar_r
     if bool((trained & held_sorted).any()):
         raise ValueError("a training row carries a pair flagged hold-out; the sidecar and the learner disagree")
     gen_sorted = cat(gen_of, np.int32)[order]
+    if roots:
+        if bool(((hi - lo) == 1).any()):
+            raise ValueError("a training row carries a single list child; a list sidecar has 0 or >= 2 per root")
+        cand = np.flatnonzero(held_sorted & (gen_sorted == int(newest)))
+        probe_list: list[tuple[int, int]] = []
+        if cand.size:
+            ck = keys_sorted[cand]
+            starts = np.flatnonzero(np.r_[True, ck[1:] != ck[:-1]])
+            ends = np.r_[starts[1:], ck.size]
+            probe_list = [(int(cand[a]), int(b - a)) for a, b in zip(starts, ends, strict=True)][: int(probe_roots)]
+        return SidecarLists(parts=parts, part_of=cat(part_of, np.int32)[order], local=cat(local, np.int64)[order],
+                            q=cat(dq, np.float32)[order], visits=cat(mv, np.float32)[order], holdout=held_sorted,
+                            gen=gen_sorted, row_start=lo.astype(np.int64), row_count=(hi - lo).astype(np.int64),
+                            probe_roots=probe_list, record=record)
     probe = np.flatnonzero(held_sorted & (gen_sorted == int(newest)))[: int(probe_pairs)]
     return SidecarPairs(parts=parts, part_of=cat(part_of, np.int32)[order], local=cat(local, np.int64)[order],
                         dq=cat(dq, np.float32)[order], min_visits=cat(mv, np.float32)[order], holdout=held_sorted,
@@ -763,12 +864,28 @@ def sibling_loss(model: Any, xa: Any, xb: Any, dq: Any, min_visits: Any) -> tupl
     return (min_visits / VISIT_SCALE) * huber, resid
 
 
+def order_pair_loss(dv: Any, dq: Any, visit_weight: Any, *, margin: float, min_dq: float) -> Any:
+    """The ORDER form per pair (version 2), given the net's dv = v_A - v_B:
+
+    ``visit_weight * 1[|dq| >= min_dq] * min(|dq|, ORDER_GAP_CAP) * relu(m_i - sign(dq) * dv)``,
+    ``m_i = min(margin, |dq|)``. Zero, with zero gradient, once the net orders the
+    pair as the search does by ``m_i``; a mis-ordered large gap costs more than a
+    small one, in proportion to the value given up (bounded)."""
+    import torch
+
+    gap = dq.abs().to(dv.dtype)
+    clear = (gap >= min_dq).to(dv.dtype)
+    m_i = torch.clamp(gap, max=margin)   # min(margin, |dq|): never ask for more than the search
+    rank = torch.relu(m_i - torch.sign(dq).to(dv.dtype) * dv)
+    return visit_weight * clear * torch.clamp(gap, max=ORDER_GAP_CAP) * rank
+
+
 def sibling_order_loss(model: Any, xa: Any, xb: Any, dq: Any, min_visits: Any, *, margin: float,
                        min_dq: float) -> tuple[Any, Any]:
-    """The ORDER form: (per-pair weighted margin ranking loss, per-pair residual dv - dq).
+    """The ORDER form on pairs: (per-pair weighted loss, per-pair residual dv - dq).
 
-    Per pair ``(min_visits / 64) * relu(m_i - sign(dq) * dv)`` with
-    ``m_i = min(margin, |dq|)``, if ``|dq| >= min_dq``, else 0: zero (and zero
+    Per pair ``(min_visits / 64) * min(|dq|, 0.62) * relu(m_i - sign(dq) * dv)`` with
+    ``m_i = min(margin, |dq|)``, if ``|dq| >= min_dq``, else 0 (``order_pair_loss``): zero (and zero
     gradient) once the net orders the pair as the search does by at least the smaller
     of ``margin`` and the search's own gap. The cap is part of the form: the loss never
     asks the net to separate a pair by more than the search separates it (no
@@ -782,10 +899,19 @@ def sibling_order_loss(model: Any, xa: Any, xb: Any, dq: Any, min_visits: Any, *
     v = child_values(out["wdl"])
     n = int(xa.shape[0])
     dv = v[:n] - v[n:]
-    clear = (dq.abs() >= min_dq).to(dv.dtype)
-    m_i = torch.clamp(dq.abs().to(dv.dtype), max=margin)   # min(margin, |dq|): never ask for more than the search
-    rank = torch.relu(m_i - torch.sign(dq).to(dv.dtype) * dv)
-    return (min_visits / VISIT_SCALE) * clear * rank, dv - dq
+    return order_pair_loss(dv, dq, min_visits / VISIT_SCALE, margin=margin, min_dq=min_dq), dv - dq
+
+
+def root_pairs(q: np.ndarray, min_dq: float) -> tuple[np.ndarray, np.ndarray]:
+    """Local index pairs (i, j), i < j, among one root's children with |q_i - q_j| >= min_dq."""
+    ia, ib = np.triu_indices(len(q), 1)
+    keep = np.abs(q[ia] - q[ib]) >= float(min_dq)
+    return ia[keep], ib[keep]
+
+
+def root_weight(n_pairs: int) -> float:
+    """n_eff of a root's mean over its n eligible pairs at the fixed within-root correlation."""
+    return 0.0 if n_pairs <= 0 else n_pairs / (1.0 + (n_pairs - 1) * ROOT_PAIR_ICC)
 
 
 SIBLING_LOSS_FORMS = ("diff", "order")
@@ -833,6 +959,8 @@ class SiblingTerm:
         self.order_margin = None if order_margin is None else float(order_margin)
         self.order_min_dq = None if order_min_dq is None else float(order_min_dq)
         self.active = 0   # pairs with a non-zero loss (the order form's pairs still to be ordered)
+        self.unit = "pairs"
+        self.child_positions = 0   # child inputs forwarded with grad (the equal-budget check across units)
         self.steps = 0
         self.pairs_seen = 0
         self.loss_sum = 0.0
@@ -916,6 +1044,7 @@ class SiblingTerm:
         assert active_sum is not None
         total = float(weighted_sum)
         self.pairs_seen += n
+        self.child_positions += 2 * n
         self.loss_sum += total
         self.abs_resid_sum += float(abs_resid_sum)
         self.active += int(active_sum)
@@ -932,24 +1061,41 @@ class SiblingTerm:
 
         ids = self.pairs.probe
         if not ids.size:
-            return {"pairs": 0, "mean_abs_resid": None}
+            return {"pairs": 0, "mean_abs_resid": None, "sign_agree": None, "sign_pairs": 0}
         was = self.model.training
         self.model.eval()
         tot = 0.0
+        agree = 0
+        n_sign = 0
+        t = self.order_min_dq or 0.0
         with torch.no_grad():
             for s in range(0, ids.size, 256):
-                _, resid = sibling_loss(self.model, *self._tensors(ids[s:s + 256]))
+                xa, xb, dq, mv = self._tensors(ids[s:s + 256])
+                _, resid = sibling_loss(self.model, xa, xb, dq, mv)
                 tot += float(resid.abs().sum())
+                dv = resid + dq
+                sel = (dq.abs() >= t) & (dq != 0)
+                agree += int((torch.sign(dv[sel]) == torch.sign(dq[sel])).sum())
+                n_sign += int(sel.sum())
         self.model.train(was)
-        return {"pairs": int(ids.size), "mean_abs_resid": tot / ids.size}
+        return {"pairs": int(ids.size), "mean_abs_resid": tot / ids.size,
+                "sign_agree": agree / n_sign if n_sign else None, "sign_pairs": n_sign}
 
     def state(self) -> dict[str, Any]:
         return {"steps": self.steps, "pairs": self.pairs_seen, "loss_sum": self.loss_sum,
                 "abs_resid_sum": self.abs_resid_sum, "per_step": list(self.per_step), "last_cursor": self.last_cursor,
                 "chunk_pairs": self.chunk_pairs, "active": self.active, "loss": self.loss,
-                "order_margin": self.order_margin, "order_min_dq": self.order_min_dq}
+                "order_margin": self.order_margin, "order_min_dq": self.order_min_dq, "unit": self.unit,
+                "child_positions": self.child_positions,
+                "order_form_version": ORDER_FORM_VERSION if self.loss == "order" else None}
 
     def restore(self, state: dict[str, Any]) -> None:
+        if state.get("unit", "pairs") != self.unit:
+            raise RuntimeError(f"sibling term: the snapshot was taken at unit {state.get('unit', 'pairs')!r}, this "
+                               f"phase runs {self.unit!r}")
+        if self.loss == "order" and state.get("order_form_version") != ORDER_FORM_VERSION:
+            raise RuntimeError(f"sibling term: the snapshot's order form is version {state.get('order_form_version')}, "
+                               f"this code trains version {ORDER_FORM_VERSION}")
         for key, mine in (("loss", self.loss), ("order_margin", self.order_margin), ("order_min_dq", self.order_min_dq)):
             if key in state and state[key] != mine:
                 raise RuntimeError(f"sibling term: the snapshot was taken at {key} {state[key]!r}, this phase runs "
@@ -964,15 +1110,177 @@ class SiblingTerm:
         self.per_step = [list(x) for x in state["per_step"]]
         self.last_cursor = int(state["last_cursor"])
         self.active = int(state.get("active", 0))
+        self.child_positions = int(state.get("child_positions", 0))
 
     def summary(self) -> dict[str, Any]:
         n = self.pairs_seen
+        term_steps = sum(1 for r in self.per_step if r[0])
         return {"w": self.w, "sibling_rows": self.rows, "chunk_pairs": self.chunk_pairs, "loss": self.loss,
                 "order_margin": self.order_margin, "order_min_dq": self.order_min_dq, "active_pairs": self.active,
+                "unit": self.unit, "order_form_version": ORDER_FORM_VERSION if self.loss == "order" else None,
+                "child_positions": self.child_positions,
+                "child_positions_per_step": self.child_positions / term_steps if term_steps else None,
                 "steps": self.steps, "pairs": n,
                 "mean_weighted_huber": self.loss_sum / n if n else None,
                 "mean_abs_resid_train": self.abs_resid_sum / n if n else None,
                 "per_step": self.per_step}
+
+
+class SiblingListTerm(SiblingTerm):
+    """The ORDER form on ROOT LISTS (``--sibling-unit roots``).
+
+    Each call takes the first ``rows`` roots of THIS batch that carry a list (every
+    eligible child: >= the sidecar's min visits, not search-terminal), forwards every
+    child once, and applies the ORDER form (``order_pair_loss``) to EVERY pair
+    among a root's children with ``|dq| >= order_min_dq``. A root's loss is the mean
+    over its eligible pairs; roots are combined with weight n_eff (``root_weight``,
+    rho fixed) normalised over the step's roots. Chunks hold whole roots (pairs never
+    cross roots), at most ``2 * chunk_pairs`` child positions unless one root is
+    larger, with a backward per chunk, as in pair mode."""
+
+    def __init__(self, model: Any, sampler: Any, lists: SidecarLists, *, w: float, rows: int, chunk_pairs: int,
+                 batch_size: int, device: str, loss: str = "order", order_margin: float | None = None,
+                 order_min_dq: float | None = None) -> None:
+        if loss != "order":
+            raise ValueError("the root-list unit trains the order form only (--sibling-loss order)")
+        as_pairs: Any = lists   # the base reads only the shared row index (row_start / row_count)
+        super().__init__(model, sampler, as_pairs, w=w, rows=rows, chunk_pairs=chunk_pairs, batch_size=batch_size,
+                         device=device, loss=loss, order_margin=order_margin, order_min_dq=order_min_dq)
+        self.lists = lists
+        self.unit = "roots"
+        self.roots_seen = 0
+
+    def _batch_roots(self) -> np.ndarray:
+        cursor = int(self.sampler.cursor)
+        if cursor != self.last_cursor + 1:
+            raise RuntimeError(f"sibling term: sampler cursor moved {self.last_cursor} -> {cursor} between penalty calls; "
+                               "the served rows are not this batch's (prefetch or a second consumer)")
+        self.last_cursor = cursor
+        own = np.asarray(self.sampler.served[-1], dtype=np.int64)
+        return own[self.lists.row_count[own] > 0][: self.rows]
+
+    def _root_plan(self, rows: np.ndarray) -> list[dict[str, Any]]:
+        return self._root_plan_spans([(int(self.lists.row_start[r]), int(self.lists.row_count[r])) for r in rows])
+
+    def _chunk_loss(self, roots: list[dict[str, Any]], z: float) -> tuple[Any, Any, Any]:
+        """(sum over the chunk's pairs of a_r / (Z n_r) * pair loss, per-pair loss, per-pair dv - dq)."""
+        import torch
+
+        assert self.order_margin is not None
+        assert self.order_min_dq is not None
+        ids = np.concatenate([np.arange(r["start"], r["start"] + r["count"]) for r in roots]).astype(np.int64)
+        x = torch.from_numpy(self.lists.child_inputs(ids)).to(self.device).float()
+        v = child_values(self.model(x)["wdl"])
+        offs = np.cumsum([0] + [r["count"] for r in roots[:-1]])
+        pa = torch.from_numpy(np.concatenate([o + r["ia"] for o, r in zip(offs, roots, strict=True)])).to(self.device)
+        pb = torch.from_numpy(np.concatenate([o + r["ib"] for o, r in zip(offs, roots, strict=True)])).to(self.device)
+        dq = torch.from_numpy(np.concatenate([r["dq"] for r in roots])).to(self.device)
+        wv = torch.from_numpy(np.concatenate([r["wv"] for r in roots])).to(self.device)
+        coef = torch.from_numpy(np.concatenate([np.full(r["ia"].size, r["a"] / (z * r["ia"].size), np.float32)
+                                                for r in roots])).to(self.device)
+        dv = v[pa] - v[pb]
+        pl = order_pair_loss(dv, dq, wv, margin=self.order_margin, min_dq=self.order_min_dq)
+        return (coef * pl).sum(), pl, dv - dq
+
+    def penalty(self, outputs: dict[str, Any], batch: dict[str, Any]) -> Any:
+        del outputs
+        plan = self._root_plan(self._batch_roots())
+        self.steps += 1
+        z = float(sum(r["a"] for r in plan))
+        if not plan or z <= 0:
+            self.per_step.append([0, 0.0])
+            return None
+        scale = self._row_scale(batch)
+        self._require_cleared_grads()
+        budget = 2 * self.chunk_pairs
+        chunks: list[list[dict[str, Any]]] = [[]]
+        used = 0
+        for r in plan:
+            if chunks[-1] and used + r["count"] > budget:
+                chunks.append([])
+                used = 0
+            chunks[-1].append(r)
+            used += r["count"]
+        step_value = abs_resid_sum = active_sum = None
+        for ch in chunks:
+            total, pl, resid = self._chunk_loss(ch, z)
+            (total * (scale * self.w)).backward()
+            parts = (total.detach(), resid.detach().abs().sum(), (pl.detach() > 0).sum())
+            step_value = parts[0] if step_value is None else step_value + parts[0]
+            abs_resid_sum = parts[1] if abs_resid_sum is None else abs_resid_sum + parts[1]
+            active_sum = parts[2] if active_sum is None else active_sum + parts[2]
+            del total, pl, resid, parts   # this chunk's graph is gone before the next forward
+        assert step_value is not None
+        assert abs_resid_sum is not None
+        assert active_sum is not None
+        n_pairs = int(sum(r["ia"].size for r in plan))
+        value = float(step_value)
+        self.pairs_seen += n_pairs
+        self.roots_seen += len(plan)
+        self.child_positions += int(sum(r["count"] for r in plan))
+        self.loss_sum += value
+        self.abs_resid_sum += float(abs_resid_sum)
+        self.active += int(active_sum)
+        self.per_step.append([n_pairs, value])
+        import torch
+
+        return torch.zeros((), device=step_value.device, requires_grad=True)
+
+    def probe_abs_resid(self) -> dict[str, Any]:
+        """On the fixed hold-out probe roots (model in eval mode, no grad), over every
+        pair with |dq| >= order_min_dq: mean |dv - dq| and the rate at which the
+        net orders the pair as the search does."""
+        import torch
+
+        if not self.lists.probe_roots:
+            return {"roots": 0, "pairs": 0, "mean_abs_resid": None, "sign_agree": None}
+        was = self.model.training
+        self.model.eval()
+        tot = 0.0
+        agree = 0
+        n = 0
+        roots = self._root_plan_spans(self.lists.probe_roots)
+        with torch.no_grad():
+            for s in range(0, len(roots), 32):
+                ch = roots[s:s + 32]
+                if not ch:
+                    continue
+                _, _pl, resid = self._chunk_loss(ch, 1.0)
+                dq = torch.from_numpy(np.concatenate([r["dq"] for r in ch]))
+                dv = resid.cpu() + dq
+                tot += float(resid.abs().sum())
+                agree += int((torch.sign(dv) == torch.sign(dq)).sum())
+                n += int(dq.numel())
+        self.model.train(was)
+        return {"roots": len(roots), "pairs": n, "mean_abs_resid": tot / n if n else None,
+                "sign_agree": agree / n if n else None}
+
+    def _root_plan_spans(self, spans: list[tuple[int, int]]) -> list[dict[str, Any]]:
+        assert self.order_min_dq is not None
+        out = []
+        for st, c in spans:
+            q, vis = self.lists.q[st:st + c], self.lists.visits[st:st + c]
+            ia, ib = root_pairs(q, self.order_min_dq)
+            if ia.size:
+                out.append({"start": st, "count": c, "ia": ia, "ib": ib, "dq": (q[ia] - q[ib]).astype(np.float32),
+                            "wv": (np.minimum(vis[ia], vis[ib]) / VISIT_SCALE).astype(np.float32),
+                            "a": root_weight(int(ia.size))})
+        return out
+
+    def state(self) -> dict[str, Any]:
+        return {**super().state(), "roots": self.roots_seen}
+
+    def restore(self, state: dict[str, Any]) -> None:
+        super().restore(state)
+        self.roots_seen = int(state.get("roots", 0))
+
+    def summary(self) -> dict[str, Any]:
+        out = super().summary()
+        term_steps = sum(1 for r in self.per_step if r[0])
+        out.update({"roots": self.roots_seen, "mean_step_loss": self.loss_sum / term_steps if term_steps else None,
+                    "root_weight": f"n / (1 + (n - 1) * {ROOT_PAIR_ICC})", "pair_unit_note":
+                    "mean_weighted_huber here is loss_sum / pairs; the step value is per-root-mean, n_eff-weighted"})
+        return out
 
 
 class PenaltyChain:
