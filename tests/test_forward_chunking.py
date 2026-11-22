@@ -18,6 +18,7 @@ import pytest
 import torch
 
 from chess_anti_engine.inference import DirectGPUEvaluator, forward_chunk_spans
+from chess_anti_engine.moves import POLICY_SIZE  # the evaluator's dense policy width (4672 search actions)
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
 from chess_anti_engine.model import ModelConfig, build_model
@@ -105,7 +106,7 @@ def test_legal_chunks_cut_the_compact_policy_at_the_cumulative_counts() -> None:
     counts[N] = 0                 # first row of chunk 2: zero legal moves on the boundary
     counts[N - 1] = 0             # last row of chunk 1
     counts[2 * N:3 * N] = 0       # chunk 3 owns no compact entries at all
-    flat = rng.integers(0, 1858, size=int(counts.sum())).astype(np.int32)
+    flat = rng.integers(0, POLICY_SIZE, size=int(counts.sum())).astype(np.int32)
     n_legal = int(counts.sum())
     whole_pol = torch.zeros(n_legal, dtype=torch.uint16)
     whole_wdl = torch.zeros((rows, 3), dtype=torch.float32)
@@ -127,6 +128,38 @@ def test_legal_chunks_cut_the_compact_policy_at_the_cumulative_counts() -> None:
     want = torch.from_numpy(dense_pol[rows_idx, flat]).to(torch.bfloat16).view(torch.uint16)
     assert torch.equal(whole_pol, want)
     np.testing.assert_allclose(whole_wdl.numpy(), dense_wdl, atol=1e-5)
+
+
+def test_no_chunk_tensor_outlives_its_chunk() -> None:
+    """At each chunk forward's start, nothing the previous chunk's forward produced
+    (every output tensor) is still referenced: the loop holds only the call's own
+    output across chunks. Runs the dense chunk loop itself on CPU tensors."""
+    # Storage, not Python object: ``.detach()`` / ``.float()`` make new tensor objects
+    # over the same memory, so an object weakref would miss a kept view.
+    from torch.multiprocessing.reductions import StorageWeakRef
+
+    model = _model()
+    rows = 5 * N + 3
+    ev = DirectGPUEvaluator(model, device="cpu", max_batch=rows, forward_chunk_rows=N, legal_bf16=False)
+    prev: list[StorageWeakRef] = []
+    alive: list[int] = []
+    pre = model.register_forward_pre_hook(lambda _m, _a: alive.append(sum(not r.expired() for r in prev)))
+
+    def post(_m: Any, _a: Any, out: Any) -> None:
+        prev.clear()
+        prev.extend(StorageWeakRef(v.untyped_storage()) for v in out.values() if isinstance(v, torch.Tensor))
+
+    hook = model.register_forward_hook(post)
+    try:
+        ev.get_input_buffer(rows)[:] = _rows(np.random.default_rng(8), rows, ev.get_input_buffer(1).shape[1])
+        pol, wdl = ev._dense_forward_on_stream(rows, slot=0, relations=None)
+    finally:
+        pre.remove()
+        hook.remove()
+    assert alive == [0] * 6
+    assert prev  # the hook saw tensors (not vacuous)
+    assert tuple(pol.shape) == (rows, POLICY_SIZE)
+    assert tuple(wdl.shape) == (rows, 3)
 
 
 _BOARDS = (
@@ -171,19 +204,29 @@ def _bf16_ulp(magnitude: float) -> float:
     return float(2.0 ** (np.floor(np.log2(max(magnitude, 2.0 ** -126))) - 7))
 
 
-def _peak_bytes(ev: DirectGPUEvaluator, x: np.ndarray) -> tuple[int, int]:
-    """(peak, residual) device bytes of one call, each against ITS OWN base taken
-    right before the call: a stale base would charge one call with what an earlier
-    call left allocated."""
+def _peak_bytes(ev: DirectGPUEvaluator, x: np.ndarray) -> tuple[int, int, int]:
+    """(allocated peak, requested peak, residual) device bytes of one call, each
+    against ITS OWN base taken right before the call, from an EMPTY allocator cache.
+
+    ``allocated`` counts caching-allocator blocks. A block carved from a larger free
+    block is not split when the remainder is <= 1 MiB, so the same tensors count
+    up to 1 MiB more each depending on what earlier calls left cached; emptying
+    the cache first makes every measured call start from the same state.
+    ``requested`` is the sum of the sizes the code asked for, independent of the
+    allocator's block rounding."""
     import gc
 
     gc.collect()
     torch.cuda.synchronize()
+    torch.cuda.empty_cache()
     base = torch.cuda.memory_allocated()
+    base_req = torch.cuda.memory_stats()["requested_bytes.all.current"]
     torch.cuda.reset_peak_memory_stats()
     _evaluate(ev, x)
     torch.cuda.synchronize()
-    return torch.cuda.max_memory_allocated() - base, torch.cuda.memory_allocated() - base
+    stats = torch.cuda.memory_stats()
+    return (torch.cuda.max_memory_allocated() - base, stats["requested_bytes.all.peak"] - base_req,
+            torch.cuda.memory_allocated() - base)
 
 
 CUDA_N = 512
@@ -241,7 +284,7 @@ def test_cuda_chunked_compact_legal_matches_unchunked() -> None:
     counts = rng.integers(0, 40, size=CUDA_ROWS).astype(np.int32)
     counts[CUDA_N] = 0
     counts[2 * CUDA_N:3 * CUDA_N] = 0
-    flat = rng.integers(0, 1858, size=int(counts.sum())).astype(np.int32)
+    flat = rng.integers(0, POLICY_SIZE, size=int(counts.sum())).astype(np.int32)
     a_pol, a_wdl = chunked.evaluate_legal_bf16(x, flat, counts)
     b_pol, b_wdl = plain.evaluate_legal_bf16(x, flat, counts)
     assert chunked.forward_chunk_stats["forward_chunks"] == 6
@@ -266,11 +309,23 @@ def test_cuda_peak_memory_follows_the_chunk_not_the_call() -> None:
     _evaluate(chunked, x)  # warm every shape (cuBLAS / allocator state) before measuring
     _evaluate(plain, x)
     _evaluate(plain, x[:CUDA_N])
-    peak_one, res_one = _peak_bytes(plain, x[:CUDA_N])  # one N-row forward
-    peak_full, res_full = _peak_bytes(plain, x)          # one 5N+3-row forward
-    peak_chunk, res_chunk = _peak_bytes(chunked, x)      # the same rows in 6 chunks
+    peak_one, req_one, res_one = _peak_bytes(plain, x[:CUDA_N])  # one N-row forward
+    peak_full, req_full, res_full = _peak_bytes(plain, x)          # one 5N+3-row forward
+    peak_chunk, req_chunk, res_chunk = _peak_bytes(chunked, x)     # the same rows in 6 chunks
     detail = {"peak_one": peak_one, "peak_full": peak_full, "peak_chunk": peak_chunk,
-              "residual": (res_one, res_full, res_chunk)}
+              "requested": (req_one, req_full, req_chunk), "residual": (res_one, res_full, res_chunk)}
     assert peak_chunk <= 0.6 * peak_full, detail
-    call_outputs = CUDA_ROWS * (1858 + 3) * 4   # the call's fp32 policy + wdl, held for the whole loop
-    assert peak_chunk <= peak_one + call_outputs, detail
+    # The only allocation the loop holds across chunks is the call's own output: the
+    # fp32 dense policy (POLICY_SIZE = 4672 search actions, not the net's 1858 lc0
+    # outputs) and the fp32 wdl, 2,563 x 4,675 x 4 = 47.9 MB requested.
+    pol_bytes, wdl_bytes = CUDA_ROWS * POLICY_SIZE * 4, CUDA_ROWS * 3 * 4
+    assert req_chunk <= req_one + pol_bytes + wdl_bytes, detail
+    # As allocator blocks: a block above 1 MiB may occupy its whole segment, which is
+    # rounded up to 2 MiB (the remainder of <= 1 MiB is not split off); a small block
+    # is rounded up to 512 B. The first GPU run's excess over one N-row forward was
+    # exactly that: 48,234,496 + 31,232 = 48,265,728 bytes.
+    def ceil_to(n: int, m: int) -> int:
+        return -(-n // m) * m
+
+    held = ceil_to(pol_bytes, 2 * 2**20) + ceil_to(wdl_bytes, 512)
+    assert peak_chunk <= peak_one + held, detail
