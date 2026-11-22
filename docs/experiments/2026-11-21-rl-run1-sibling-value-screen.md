@@ -503,8 +503,9 @@ term that does nothing (0.86 / 0.71 above), so it was not evidence of any signal
   2. **The fit.** The same command on Zq_sib: toward the SL base's value, the same hold-out games
      (which no cell trained on). Its (T, b) is applied exactly as match 8 applied its own
      (`--candidate-value-recal` / `--reference-value-recal`, own value net).
-  3. **Registered stop: the bounds.** ln T in [2 ln T1, −ln T1] and b in [2 b1, −b1], with
-     (T1, b1) match 8's fit: T in [0.4951, 1.4212], b in [−0.4542, +0.2271]. Derivation: the term
+  3. **Registered stop: the bounds, a SANITY stop, not a statistical bound.** ln T in
+     [2 ln T1, −ln T1] = [−0.703, +0.352] (i.e. T in [T1², 1/T1] = [0.4951, 1.4212]) and b in
+     [2 b1, −b1] = [−0.4542, +0.2271], with (T1, b1) match 8's fit. Derivation: the term
      is level-invariant, so Zq_sib's correction should lie near Zq's. The bounds allow up to twice
      Zq's correction, or an overshoot past the identity by Zq's whole correction. Outside them, the
      fit is not the registered procedure's regime and **match 2 stops before any game**; match 1
