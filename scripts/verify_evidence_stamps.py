@@ -16,7 +16,9 @@ What counts as a citation
 * A backticked bare relative name (`results.jsonl`, `logs/p1.log`) only when a
   stamp follows it. It resolves against the directory of the most recent
   prefixed citation: earlier on the same line, else on an earlier line.
-  Unstamped bare names are prose (repo paths, flags), not citations.
+  Unstamped bare names are prose (repo paths, flags), not citations. A commit is
+  cited as code `a0bc34416` (a backticked token), never as a bracketed stamp: a
+  stamped repo path is a bank citation and reads MISSING if the bank lacks it.
 
 Stamps
 ------
@@ -40,9 +42,14 @@ Statuses
 --------
 One line per citation: OK, DRIFT (the stamp does not match the file), MISSING (the
 path does not resolve) and MALFORMED: a stamp-like bracket the strict form rejects
-(too short, upper-case, no backticks, a bad mtime, separated from its token by a
-colon, or not attached to any token), or a near-miss of a known prefix (`rc/`,
-`RC /`). A MALFORMED citation would otherwise be silently skipped.
+(too short, upper-case, no backticks, letters-only hex without backticks, a bad
+mtime, or separated from its token by a colon), or a near-miss of a known prefix
+(`rc/`, `RC /`). A MALFORMED citation would otherwise be silently skipped. The
+check fires only where a stamp can be: directly after a backticked token, or wrapped
+onto the next line after one. Bare lower-case hex in brackets (no backticks) fires
+only after a path-like token (one containing `/`, a glob or brace, or ending in an
+extension), because prose like `v2` [cafe1234 rows] has the same shape. Brackets in prose (`fixed in [0c795fb7a]`, a markdown link
+`[a0bc34416](...)`, `the [mtime column]`) are not stamps and stay silent.
 
 Prefix map
 ----------
@@ -83,13 +90,20 @@ _TOKEN_RE = re.compile(
     r"(?P<stamp>\s*(?:(?P<shas>\[`" + _HEX + r"`\]?(?:\s*/\s*\[?`" + _HEX + r"`\]?)*)"
     r"|\[mtime (?P<mtime>\d\d-\d\d \d\d:\d\d)\]))?"
 )
-# Anything that looks like a stamp; checked against the spans the strict form consumed.
-_LOOSE_STAMP_RE = re.compile(
-    r"\[\s*`[0-9A-Fa-f]+`"  # backticked hex of any length or case
-    r"|\[\s*(?=[0-9A-Fa-f]*\d)(?=[0-9A-Fa-f]*[A-Fa-f])[0-9A-Fa-f]{6,64}(?=[\s\]/])"  # bare hex
-    r"|\[\s*mtime\b",
-    re.IGNORECASE,
+# Stamp-like brackets directly after a backticked token that the strict form did not
+# consume. STRONG shapes fire after ANY backticked token (prose does not produce
+# them): backticked hex of any length or case, bare hex of 6+ carrying an upper-case
+# A-F, `[mtime <digit>`, or any stamp shape after a colon. The WEAK shape, bare
+# lower-case hex of 6+ (letters-only included), also matches prose such as
+# `v2` [cafe1234 rows], so it fires only after a path-like token. Never a markdown
+# link `[...](`.
+_STAMP_SHAPE = r"\[\s*(?:`[0-9A-Fa-f]+`|[0-9A-Fa-f]{6,64}(?=[\s\]/])|mtime\s*\d)"
+_LOOSE_STRONG_RE = re.compile(
+    r"\s*:\s*" + _STAMP_SHAPE
+    + r"|\s*\[\s*(?:`[0-9A-Fa-f]+`|(?=[0-9a-f]*[A-F])[0-9A-Fa-f]{6,64}(?=[\s\]/])|mtime\s*\d)"
 )
+_LOOSE_WEAK_RE = re.compile(r"\s*\[\s*[0-9a-f]{6,64}(?=[\s\]/])")
+_PATH_LIKE_RE = re.compile(r"[/*{}]|\.[A-Za-z0-9]+$")
 _PREFIX_TABLE_RE = re.compile(r"^\|\s*Prefix\s*\|\s*Expands to\s*\|")
 _TABLE_ROW_RE = re.compile(r"^\|\s*`([^`]+)`\s*\|\s*`([^`]+)`\s*\|")
 _TZ_RE = re.compile(r"Stamp time zone:\s*`([^`]+)`")
@@ -205,7 +219,7 @@ def _resolve(path: str) -> list[list[str]]:
     return groups
 
 
-_WRAPPED_STAMP_RE = re.compile(r"^\s*\[(?:`|mtime\b)")
+_WRAPPED_STAMP_RE = re.compile(r"^\s*\[(?:`|mtime\s*\d|[0-9A-Fa-f]{6,64}(?=[\s\]/]))")
 
 
 def _logical_lines(text: str) -> list[tuple[int, str]]:
@@ -299,15 +313,19 @@ class Verifier:
                         last_dir = first if os.path.isdir(first) else os.path.dirname(first)
                     elif first is not None:
                         last_dir = os.path.dirname(first)
-            for lm in _LOOSE_STAMP_RE.finditer(line):
-                pos = lm.start()
-                if any(a <= pos < b for a, b in consumed):
+            for _start, end, token in token_spans:
+                if any(a <= end < b for a, b in consumed):
                     continue
-                before = [t for _s, e, t in token_spans if e <= pos]
-                owner = before[-1] if before else "(no token)"
-                end = line.find("]", pos)
-                text = line[pos: end + 1 if end >= 0 else pos + 40]
-                cite(owner, "MALFORMED", f"stamp-like {text!r} not in the strict form "
+                lm = _LOOSE_STRONG_RE.match(line, end)
+                if lm is None and _PATH_LIKE_RE.search(token):
+                    lm = _LOOSE_WEAK_RE.match(line, end)
+                if lm is None:
+                    continue
+                close = line.find("]", lm.end())
+                if close >= 0 and line[close + 1: close + 2] == "(":
+                    continue  # a markdown link, not a stamp
+                text = line[line.find("[", end): close + 1 if close >= 0 else lm.end() + 40]
+                cite(token, "MALFORMED", f"stamp-like {text!r} not in the strict form "
                      f"([`<{MIN_SHA}+ lower-case hex>`] or [mtime MM-DD HH:MM] directly after the token)")
         return cites
 
