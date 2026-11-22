@@ -50,6 +50,14 @@ def _reference_policy_stats(arrays: dict[str, np.ndarray]) -> dict[str, float]:
     if "root_start_visits" in arrays:
         sv = np.asarray(arrays["root_start_visits"], dtype=np.float64)[has]
         out.update(mean_root_start_visits=float(sv.mean()), reused_root_share=float((sv > 0).mean()))
+    if "root_child_visits" in arrays and (has & policy_rows).any():   # root width, full rows (root_full_width)
+        rcv = np.asarray(arrays["root_child_visits"])[has & policy_rows]
+        out.update(mean_root_support_children=float((rcv >= 0).sum(axis=1).mean()),
+                   mean_root_visited_children=float((rcv > 0).sum(axis=1).mean()))
+    if "root_prelude_visits" in arrays:
+        pre = has & policy_rows & np.asarray(arrays["has_root_prelude_visits"], dtype=bool)
+        if pre.any():
+            out["mean_root_prelude_visits"] = float(np.asarray(arrays["root_prelude_visits"])[pre].mean())
     has &= policy_rows
     if not has.any():
         return out

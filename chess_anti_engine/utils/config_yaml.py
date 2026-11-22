@@ -180,7 +180,7 @@ _SELFPLAY_KEYS = (
     "playout_cap_fraction", "full_ply_pair_fraction", "fast_simulations",
     "fpu_reduction", "fpu_at_root", "gumbel_topk", "gumbel_policy_temp",
     "gumbel_target_batch", "gumbel_vloss_weight",
-    "gumbel_target_max_visit_cap", "gumbel_target_untempered_prior",
+    "gumbel_target_max_visit_cap", "gumbel_target_untempered_prior", "gumbel_root_full_width",
     "gumbel_c_scale", "gumbel_scale", "gumbel_scale_after",
     "gumbel_scale_decay_start_move", "gumbel_scale_decay_moves",
     "curriculum_gumbel_scale", "curriculum_gumbel_scale_after",

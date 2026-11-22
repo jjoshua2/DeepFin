@@ -280,6 +280,17 @@ def assert_python_path_can_run(cfg: GumbelConfig, *, where: str) -> None:
     volatility-forced reroute. That matters because the volatility route is the
     one that fires on a machine where everything else works.
     """
+  # `root_full_width` is C-runner only too, but deliberately NOT in
+  # C_ONLY_GUMBEL_KNOBS: that set also makes `validate_gumbel_config` refuse
+  # the knob at every eval boundary, and the arena's `--search-shape training`
+  # must be able to carry it. The Python reference search has no round 0, so
+  # it refuses here instead of running a narrower search than the record names.
+    if bool(cfg.root_full_width):
+        raise ValueError(
+            f"{where}: root_full_width is read by run_gumbel_root_many_c only; the "
+            "Python reference search has no full-width round 0 and would run the "
+            "plain topk search. Route to the C path or turn it off."
+        )
     offenders = c_only_knobs_set(cfg)
     if not offenders:
         return
@@ -462,6 +473,27 @@ class GumbelConfig:
   # Gumbel descent below the root, which is what BOTH paths run and the only
   # thing the Python path can run.
     full_tree: bool = True
+  # Full-width first round at the root (default False = off, bit-identical).
+  # True = before sequential halving, every searched legal root child that has
+  # no visits yet gets exactly one simulation (one evaluation each, batched),
+  # and the topk candidates are then chosen by gumbel + log prior + sigma(q)
+  # using those evaluations (the Gumbel paper's rule once all actions have a
+  # Q) instead of gumbel + log prior alone. sigma is the PLAY-arm root
+  # transform (no target-only knobs); its scale uses the root's max child
+  # visit count -- 1 on a fresh root, the carried count on a reused one, where
+  # at production c_visit the re-ranking is close to "rank by Q". The halving
+  # schedule over the candidates is unchanged and still spends `simulations`;
+  # the round-0 simulations are spent ON TOP and counted apart
+  # (RootSearchStats.prelude_visits -> the row's root_prelude_visits; they are
+  # in root_child_visits; search_budget stays the budget given). Selfplay runs
+  # round 0 on FULL plies only: a playout-cap fast ply stores no policy target,
+  # so it skips round 0 (`per_game_root_full_width`). Sibling sidecars: with it
+  # on, a candidate eliminated after the first halving round has 2 visits, not 1,
+  # so more children pass the materialiser's min_visits=2 and pair weights shift
+  # up -- never compare sidecars across knob settings without a Confounds line.
+  # Read by the C runner only
+  # (`run_gumbel_root_many_c`); the Python reference search refuses it.
+    root_full_width: bool = False
     add_noise: bool = True  # Backward-compatible gate; use gumbel_scale for partial noise.
     gumbel_scale: float = 1.0
     input_history_encoding: str = LC0_HISTORY_LEGACY

@@ -2136,6 +2136,11 @@ _CALL_SITE_ARGS: dict[str, str] = {
         "Opted into by the play_batch caller, not by any config value; None on "
         "every other path, where the shared `rng` is used as before"
     ),
+    "per_game_root_full_width=None if per_game_full is None else [per_game_full[j] for j in group]": (
+        "the playout-cap is_full mask (runtime, per ply): `root_full_width`'s round 0 "
+        "runs on full plies only. The knob itself rides on the shape's cfg; this only "
+        "says which boards of this call are full plies"
+    ),
     "witness_stop_fn=witness_stop_fn": (
         "the current run cancellation callback for bounded solved-root witness "
         "recovery; supplied by the caller at runtime, with no config value"

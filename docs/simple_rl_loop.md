@@ -276,7 +276,23 @@ so reuse is effectively off at, for example, 8 sims / topk 16.
 played, and stores no policy target (a value-only row with `--fast-value-rows`,
 otherwise no row). Every net-turn row records `search_budget`; `stats.json` counts
 rows by budget. `search_budget` is the budget the ply was given, not the visits it
-spent. A root proven solved mid-search stops early and keeps its statistics, which
+spent, and it stays exactly that with `--root-full-width`.
+
+**Full-width root round 0.** `--root-full-width` (`GumbelConfig.root_full_width`,
+default off): before sequential halving every unvisited legal root child gets one
+simulation, and the `--topk` candidates are then chosen by gumbel + prior + sigma(q)
+from those evaluations; the halving schedule is unchanged and spends `--sims`.
+- Round 0 runs on full plies only. A playout-cap fast ply stores no policy target,
+  so it skips round 0 and spends exactly `--fast-sims`.
+- The round-0 simulations are stored apart, per row, as `root_prelude_visits`
+  (written only with the flag on; 0 on a fast ply). The root's visits are
+  `root_start_visits + root_prelude_visits + search_budget` (less only if a proven
+  root stopped early). `rows_by_search_budget` stays keyed on the budget given.
+- `stats.json` adds `mean_root_visited_children` and `mean_root_support_children`
+  (equal on full rows with the flag on) and `mean_root_prelude_visits` (full rows).
+- sigma is the play-arm root transform (no target-only knobs). Its scale uses the
+  root's max child visit count: 1 on a fresh root, the carried count on a reused
+  root, where at production `c_visit` the re-ranking is close to "rank by Q". A root proven solved mid-search stops early and keeps its statistics, which
 still rebuild its target. On the SL base's real-net smoke this was 132 of 11,823
 rows, all with |survivor Q| = 1.
 
@@ -527,7 +543,14 @@ path has a wall-clock deadline: the engine read timeout applies only inside a
 search, and searches already submitted finish on the pool's threads. Each
 process records its `pause_intervals`; `stats.json` has `paused_seconds`,
 `active_seconds`, games/h over the active time, and `timing_independent: false`
-for a paused (or resumed) collect. `STOP` is not a pause: the driver honours it at
+for a paused (or resumed) collect. `wall_seconds`, `paused_seconds` and `active_seconds`
+are the orchestrator's clock for this attempt. An attempt in which no process ran (a
+merge-only reseal) times only the merge, so those fields and the rates are null.
+Always written, kept processes included: `slowest_process_wall_seconds`, the largest
+per-process wall of each process's FINAL attempt (pauses included), and
+`slowest_process_active_seconds`, that process's wall minus its pauses. Neither counts
+the earlier attempts of a game-resumed process (a killed attempt leaves no clock), so
+after such a resume they are not the collect's whole play time. `STOP` is not a pause: the driver honours it at
 the next stage boundary, and the driver still refuses to START a stage while a
 pause marker exists.
 
@@ -936,6 +959,11 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
       0.45% of the pilot's pair children were such repetitions. The version-2 rule
       excluded 18,169 repetition children and 7 game-over children from the
       candidates.
+    - **`--root-full-width` shifts the candidates.** With it on, a candidate
+      eliminated after the first halving round has 2 visits (round 0 plus one)
+      instead of 1, so more children pass `--min-visits 2` and pair weights shift
+      up. Do not compare sibling sidecars across knob settings without a
+      Confounds line.
     - **Choice:** drawn without replacement with probability proportional to
       `min(v_A, v_B)`, from an RNG keyed by (seed, game id, ply), so it is
       reproducible and independent of order.

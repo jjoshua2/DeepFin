@@ -56,6 +56,7 @@ KNOBS = {
     "gumbel_target_q_rescale": False,
     "gumbel_policy_temp": 1.6,
     "gumbel_topk": 4,
+    "gumbel_root_full_width": True,
 }
 
 
@@ -107,7 +108,7 @@ def test_root_stats_are_off_by_default() -> None:
 
 def test_collector_settings_reach_the_search_config(tmp_path) -> None:
     settings = CollectSettings(games=1, sims=12, topk=5, c_scale=0.3, c_visit=7.0, target_q_rescale=False,
-                               policy_temp=1.3, target_untempered_prior=True, vloss_weight=2,
+                               policy_temp=1.3, target_untempered_prior=True, root_full_width=True, vloss_weight=2,
                                temp_start=0.7, temp_floor=0.05, temp_decay_plies=6,
                                root_noise_scale=0.8, root_noise_after=0.2, root_noise_decay_start_move=9,
                                root_noise_decay_moves=4)
@@ -116,7 +117,8 @@ def test_collector_settings_reach_the_search_config(tmp_path) -> None:
     cfg = build_configs(settings, arch, tmp_path / "starts.txt")
     gumbel = build_selfplay_gumbel_config(search=cfg["search"], game=cfg["game"], simulations=cfg["search"].simulations)
     assert (gumbel.simulations, gumbel.topk, gumbel.c_scale, gumbel.c_visit, gumbel.target_q_rescale,
-            gumbel.policy_temp, gumbel.target_untempered_prior) == (12, 5, 0.3, 7.0, False, 1.3, True)
+            gumbel.policy_temp, gumbel.target_untempered_prior, gumbel.root_full_width) == (
+        12, 5, 0.3, 7.0, False, 1.3, True, True)
     s, t, g = cfg["search"], cfg["temp"], cfg["game"]
     assert (s.gumbel_vloss_weight, s.playout_cap_fraction, s.fast_simulations) == (2, 1.0, 12)
     assert (s.gumbel_scale, s.gumbel_scale_after, s.gumbel_scale_decay_start_move, s.gumbel_scale_decay_moves) == (0.8, 0.2, 9, 4)

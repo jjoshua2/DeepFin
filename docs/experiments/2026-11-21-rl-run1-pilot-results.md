@@ -138,7 +138,7 @@ That totals 1,464/1,970/1,366 over 4,800 games (derived).
 
 Sources:
 - `R/arenas/graft/pool_look1.json` [`d0730fee`], `pool_look2.json` [`900486c4`], `pool_look3.json` [`6316e097`];
-- their `.log` files [`df3e7c1e`, `7377ce02`, `f2d69d62`];
+- their logs, `pool_look1.log` [`df3e7c1e`], `pool_look2.log` [`7377ce02`], `pool_look3.log` [`f2d69d62`];
 - `results.jsonl` [`e9391a58`];
 - the six `graft_{1,2,3}_{A,B}.games.jsonl` (sha256 in `R/SHA256SUMS`).
 
@@ -202,6 +202,7 @@ value-head training is the candidate.** It is a hypothesis these numbers support
   S and Zq are not shown harmless by any game: "the value-head training is the candidate" rests on the policy fit
   numbers above, not on a played seat. The offline diagnosis below speaks to the value heads directly, but it is
   offline and 1-ply, not a played seat, so it addresses this gap only partly.
+  *Update (11-21, [follow-up results](2026-11-21-rl-run1-followup-results.md)):* match 6b now isolates S's value head on the base's own policy, at −21.4 [−27.7, −15.2]. Zq's value head is still not isolated by a played seat.
 
 ### Offline value diagnosis (report-only; pointer)
 
@@ -265,7 +266,7 @@ The numbers below were read from `out/*.json`:
 **Status, by the addendum's pre-registered rule.**
 - **S: supports "ranking content broke".** The CI is entirely below 0, and (T, b) does not restore it.
 - **Zq: not separated.** This does NOT explain Zq's −10; Zq's shape account (0.60 of its divergence is removable by
-  (T, b)) stays open.
+  (T, b)) stays open. *Update:* matches 7 and 8 are consistent with the shape account in play (match 8 is not a test of shape vs content) ([follow-up results](2026-11-21-rl-run1-followup-results.md)).
 - **P0's own head: not separated.**
 
 The mechanism, that the value loss changes what the head says (content) rather than its scale (shape), is therefore
@@ -273,7 +274,7 @@ an S-specific HYPOTHESIS, not a verdict. It is offline and 1-ply, not a played s
 
 ## 3. Training facts (fit numbers, not strength)
 
-From `R/arm_{S,Zq,P0}/gen_0001/train/metrics.json` [`3eb8e85e` / `7f3c610d` / `18f4c79f`] and `manifest.json`
+From `R/arm_{S,Zq,P0}/gen_0001/train/metrics.json` [`3eb8e85e` / `7f3c610d` / `18f4c79f`] and `R/arm_{S,Zq,P0}/gen_0001/train/manifest.json`
 [`5121de42` / `b46d1c77` / `f53fcee5`].
 
 **Shared by all three cells:**
@@ -330,17 +331,17 @@ The pre-training check passed: `R/post_collect_checks.sh` [`4917f83f`] writes `c
 1. **The seal step was OOM-killed after every game had been played.**
    - Exit 137 at 08:26:46 (`R/collect.exit.first_attempt_137` [`86f57604`]); anon-rss 83.7 GB on a 98 GB box (PR #1470 body).
    - Fixed by #1470 (`0c795fb7a`), which streams `generation_stats` per shard.
-   - The games are untouched by the failure and the rerun. `games.jsonl` is byte-equal in the pre-seal backup and the sealed collect [`0ac540bf` both], and so is `starts.txt` [`948d4927`].
+   - The games are untouched by the failure and the rerun. `games.jsonl` is byte-equal in the pre-seal backup and the sealed collect (`R/{collect_backup_20261121_0827,collect/gen_0001/collect}/games.jsonl` [`0ac540bf`], one stamp for both copies), and so is `starts.txt` (`R/{collect_backup_20261121_0827,collect/gen_0001/collect}/starts.txt` [`948d4927`]).
 2. **The games were PLAYED at C0 `6c72b821b` and SEALED at `0c795fb7a`** by a seal-only rerun from 09:51:00 to 09:54:42 (`R/reseal.started` [`00e497ec`], `R/reseal.exit` [`dc8a16ea`], `R/reseal.log` [`3f1bf579`]: "keeping finished collect process(es) [0, 1, 2]").
    - **The manifest's `git.sha` is the sealing commit.** Nothing in the manifest records the playing commit.
    - The playing commit is evidenced only by the play log, which loads `_mcts_tree` from the `rl-run1-pilot-6c72b821b` worktree (`R/collect.log` [`3ebe8c39`]), and by `R/README.md`.
    - The seal-only rerun also left the manifest's aggregate timing meaningless: `games_per_hour` is null, `wall_seconds` is 2.3e-6 and `procs_resumed` is [0, 1, 2]. The per-process walls above are the playing run's.
 3. **`collect.exit` was rewritten** to "0 <reseal time>" (`R/collect.exit` [`dc8a16ea`], identical to `reseal.exit`) so the post-collect check script would run. The originals are kept (`collect.exit.first_attempt_137`, `collect.exit.reseal`, `collect_backup_20261121_0827/`).
 4. **`$PIN` = `0c795fb7a`.** An earlier pin, `db977e47f` (#1464's merge), was replaced before any training, because the seal fix had to merge first. All three prerequisites the launch record listed as open were merged before `$PIN`: #1459 `d268f1e4b`, #1462 `ac688fb3c`, #1463 `daa5d62fd`. `git diff --name-only C0 $PIN` is `R/c0_to_pin_diff.txt` [`08fc1a98`] (19 files, including `simple_rl/collect.py`), so the guards were mandatory.
-5. **Guard (a): byte-equal.** All six files `guard_a_{S,Zq,P0}_{6c72b821b,0c795fb7a}.json` share one sha256, [`715fb5d1`] (722,742 rows each).
+5. **Guard (a): byte-equal.** All six files `guard_a_{S,Zq,P0}_{6c72b821b,0c795fb7a}.json` [`715fb5d1`] share one sha256 (722,742 rows each).
    - The digest is the same for all three cells, not only across commits. It covers the decoded rows after `prepare_targets` and before the cell's value blend, so it checks the shared input, not the cell-specific target.
 6. **Guard (b): byte-equal**, with a correction to the record's text.
-   - The files are `guard_b_{db977e47f,6c72b821b,0c795fb7a}_repfix0.json` [`7ccd71e0` all three] and `_repfix1.json` [`634a5a32` all three]: 300 games, 24,961 positions.
+   - The files are `guard_b_{db977e47f,6c72b821b,0c795fb7a}_repfix0.json` [`7ccd71e0`] and `guard_b_{db977e47f,6c72b821b,0c795fb7a}_repfix1.json` [`634a5a32`] (each stamp holds for all three): 300 games, 24,961 positions.
    - **The correction.** The SL base's `input_history_encoding` is `lc0_root_legacy_meta` (collect manifest, `config.arch`). For it, `selfplay/network_turn.py:_batch_encoder_pair` picks `batch_encode_146_lc0_root_legacy_meta[_bf16]`. The record's guard text named only `batch_encode_146_lc0_root[_bf16]`.
    - The run digested all three encoder pairs, so the encoder actually used is covered.
 7. **The Stockfish label cost** the launch record quotes (53–91 cores) is corrected by evidence-log I34: 53–81 cores at the floor of 150k nodes; 91 is floor-to-cap.
@@ -353,9 +354,14 @@ The pre-training check passed: `R/post_collect_checks.sh` [`4917f83f`] writes `c
 - **Multi-generation behaviour.** This is one generation from the SL base.
 - **Zq's safety.** The gate's failure to read damage is not safety; Zq's LB95 is −23.2.
 - **A deployable policy net.** The graft is a hybrid seat (two forwards: P0's policy, the SL base's value), not a single deployable net.
-- **P0 as a full net.** P0's own value head, which drifted (mean abs(dq) 0.033), was not played.
+- **P0 as a full net.** P0's own value head, which drifted (mean abs(dq) 0.033), was not played. *Closed by match 5* ([follow-up results](2026-11-21-rl-run1-followup-results.md)): P0 as a single net read +2.2 [−4.2, +8.6], "single-net policy-only step is adoptable".
 - **That the policy pays.** Match 4 is unread. The near-miss is not a pass.
-- **Recalibration.** Match 2 did not run, so the pilot says nothing about whether recalibration recovers S's or Zq's loss.
+- **Recalibration.** Match 2 did not run, so the pilot says nothing about whether recalibration recovers S's or Zq's loss. *Update* ([follow-up results](2026-11-21-rl-run1-followup-results.md)):
+  - match 7 (new registration, not match 2): Zq + recal vs Zq +21.4 [+15.1, +27.6], "the loss is shape";
+  - match 6, S's value recalibrated vs raw: R = +5.34 [−3.48, +14.15], "unread";
+  - match 8 (its own record): Zq + recal vs the SL base +9.6 [+3.3, +16.0], "adoptable" and "improves on the base". It nominates "Zq + per-generation recalibration" under its own record; the (T, b) was fitted post hoc on this one net.
+
+  No pilot verdict changes.
 
 ## 7. Owner decisions now open
 
@@ -363,7 +369,7 @@ No recommendation is made here.
 
 1. The adoption order has reached step 4, "stop for the owner". What comes after the pilot?
 2. Match 4 is finished and unread. Should a new, separately registered graft match be commissioned, and to what size?
-3. Should the recalibration head-to-head (match 2) be run anyway, outside the skip rule, as its own record?
+3. Should the recalibration head-to-head (match 2) be run anyway, outside the skip rule, as its own record? (Answered by match 7, a new registration; see [follow-up results](2026-11-21-rl-run1-followup-results.md).)
 4. The launch record's owner rows L4 (S's role), L5 (collection B with cells K-blend and K-z2, matches K1–K3) and L6 (the parked anchor: the three-way blend plus an SF-opponent share, or the outcome-conditioned alternative) remain unfilled.
 5. Which value target, if any, should any next generation train? None is adoptable by the registered rule.
 6. Should a next generation train the policy only, with the value held at the SL base's? This is a design question, not a result.
@@ -372,7 +378,7 @@ Fact, not a decision: the three follow-up matches are pre-registered in
 [the follow-up match record](2026-11-21-rl-run1-match5-p0-single-net.md) (PR #1473, merged `51b3d56f3`). They are
 P0 as a single net (5); S's value on the base policy, raw and recalibrated (6a, 6b); and Zq recalibrated vs Zq (7).
 They are played in the order 5, 7, 6b, 6a, at 6,400 games each. They launched on 2026-11-21 after the merge (output
-root `~/chess-artifacts/operations/rl-run1-followup/` [mtime 11-21 14:34]). No result is cited here.
+root `~/chess-artifacts/operations/rl-run1-followup/`, launched 11-21 14:34; the directory kept growing, so it carries no stamp). Their results are in [follow-up results](2026-11-21-rl-run1-followup-results.md).
 
 ## Files
 

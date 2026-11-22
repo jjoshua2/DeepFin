@@ -1286,6 +1286,9 @@ def _attach_root_stats_to_sample(sample: ReplaySample, rec: _NetRecord) -> None:
     sample.root_survivor_q = float(stats.survivor_q)
     sample.root_node_q = float(stats.node_q)
     sample.root_start_visits = int(stats.start_visits)
+    prelude = getattr(stats, "prelude_visits", None)
+    if prelude is not None:   # root_full_width on: the realised round-0 simulations
+        sample.root_prelude_visits = int(prelude)
     sample.root_survivor_index = survivor
     sample.played_move_index = played_c
 

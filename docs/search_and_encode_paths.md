@@ -133,6 +133,7 @@ The selfplay `fpu_reduction` / `fpu_at_root` yaml keys are dead keys since then:
 | add_noise / gumbel_scale | Y per game | Y | Y (`root_noise_scale`) | Y | Y | – | – | – |
 | temperature | 0, then per-game resample | Y | forced 0 | Y | 0 | – | – | – |
 | full_tree | Y | Y | Y | R | – | – | – | – |
+| root_full_width | Y (sequential path only; turns the 2-group pipeline off) | Y (training shape / `--cand-gumbel`) | – | R | – | – | – | – |
 | target_max_visit_cap / target_untempered_prior / target_q_rescale | Y (stored target only) | n/a | n/a | Y | n/a | – | – | – |
 | volatility_* | R (yaml loader) | R / reroutes to Py | – | Y | – | – | – | – |
 | vloss_weight | Y (yaml) | Y (explicit arg) | Y (3) | – | Y | Y | Y | Y |

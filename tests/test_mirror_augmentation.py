@@ -645,6 +645,7 @@ _NOT_A_MOVE_INDEX: dict[str, str] = {
     "is_selfplay": "boolean",
     "root_start_visits": "visit count already on a carried search root",
     "search_budget": "simulations run on the ply",
+    "root_prelude_visits": "simulations root_full_width's round 0 ran before halving",
 }
 
 
