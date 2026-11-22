@@ -1942,6 +1942,9 @@ def main() -> int:
     engine_ref: list[Engine | None] = [None]
     engine_error: list[BaseException | None] = [None]
     engine_ready = threading.Event()
+    # When the engine became ready (`_receipt_clock`): the clock origin of a
+    # `go` / `ponderhit` that arrived before it (`_clock_origin`).
+    ready_at: list[float | None] = [None]
     engine_owner_lock = threading.Lock()
     shutdown_requested = threading.Event()
 
@@ -2102,6 +2105,7 @@ def main() -> int:
                     if engine_error[0] is None:
                         engine_error[0] = exc
                     _println(f"info string evaluator startup cleanup failed: {exc!r}")
+            ready_at[0] = _receipt_clock()
             engine_ready.set()
 
     builder = threading.Thread(target=wedge.parking(_build), daemon=True, name="deepfin-build")
@@ -2110,8 +2114,8 @@ def main() -> int:
     rc = 0
     feed = _StdinFeed(sys.stdin)
     try:
-        for raw, received_at in _received_lines(feed):
-            cmd = stamp_received(parse_command(raw), received_at)
+        for raw, arrived_at in feed:
+            cmd = parse_command(raw)
             if isinstance(cmd, CmdUci):
                 emit_handshake(startup_options)
                 continue
@@ -2135,6 +2139,7 @@ def main() -> int:
                 break
             engine = engine_ref[0]
             assert engine is not None
+            cmd = stamp_received(cmd, _clock_origin(arrived_at, ready_at[0]))
             try:
                 engine.dispatch(cmd)
             except Exception as exc:
@@ -2226,8 +2231,8 @@ _receipt_clock = time.monotonic
 # our stdout. Then a printing thread -- the search's info line, the main
 # thread's reply to `stop` -- sits in `write` holding the print lock (or waits
 # for it), and the main thread may never read `quit` at all. So stdin is read on
-# its own thread (raw lines only: the main loop still stamps each line when it
-# takes it, `_received_lines`, so the move clock's origin is unchanged), and a
+# its own thread (each line stamped as it arrives, `_received_lines`: the move
+# clock's origin, `_clock_origin`), and a
 # `quit` command (or the main loop's end) arms a guard. The guard hard-exits with
 # status 1 (`_exit_stdout_stuck`) only when a writer is actually blocked: the
 # print lock was held at every look and no print completed for
@@ -2250,9 +2255,10 @@ _GUARD_LOOK_S = 0.05
 
 
 class _StdinFeed:
-    """stdin's raw lines, read on a daemon thread and consumed in order by the
-    main loop; ends after a `quit` command or EOF as the main loop does. A read
-    error is raised in the main loop, where it was raised before."""
+    """stdin's lines with their arrival times (`_received_lines`), read on a
+    daemon thread and consumed in order by the main loop; ends after a `quit`
+    command or EOF as the main loop does. A read error is raised in the main
+    loop, where it was raised before."""
 
     _EOF = object()
 
@@ -2268,8 +2274,8 @@ class _StdinFeed:
 
     def _read(self, stream: Iterable[str]) -> None:
         try:
-            for raw in stream:
-                self._lines.put(raw)
+            for raw, arrived_at in _received_lines(stream):
+                self._lines.put((raw, arrived_at))
                 if isinstance(parse_command(raw), CmdQuit):
                     self.arm_quit_guard()
                     return
@@ -2278,14 +2284,14 @@ class _StdinFeed:
             return
         self._lines.put(self._EOF)
 
-    def __iter__(self) -> Iterator[str]:
+    def __iter__(self) -> Iterator[tuple[str, float]]:
         while True:
             item = self._lines.get()
             if item is self._EOF:
                 return
             if isinstance(item, BaseException):
                 raise item
-            yield cast(str, item)
+            yield cast(tuple[str, float], item)
 
     def arm_quit_guard(self) -> None:
         with self._guard_lock:
@@ -2326,12 +2332,21 @@ def _exit_stdout_stuck(rc: int) -> None:
 
 
 def _received_lines(stream: Iterable[str]) -> Iterator[tuple[str, float]]:
-    """Each line of ``stream`` with the moment the main loop took it: a `go` or
-    `ponderhit` starts the move's clock then (`stamp_received`), not when its
-    handler gets to run. Run on the main loop's side of `_StdinFeed`, so a line
-    queued behind a slow command is stamped when the loop gets to it."""
+    """Each line of ``stream`` with the moment it was read off stdin (by
+    `_StdinFeed`'s reader thread, as it arrives): the GUI starts our clock when
+    it sends `go` / `ponderhit`, so time the line then waits behind an earlier
+    command is this move's time (`_clock_origin`)."""
     for raw in stream:
         yield raw, _receipt_clock()
+
+
+def _clock_origin(arrived_at: float, ready_at: float | None) -> float:
+    """A `go` / `ponderhit`'s clock origin: when it arrived, or -- for one that
+    arrived before the engine was ready -- when the engine became ready. A GUI
+    must not send `go` before `readyok` (UCI: `isready` is answered once the
+    engine can take commands); one that does gets its move timed from when the
+    engine could first act on it, not charged for the model load."""
+    return arrived_at if ready_at is None else max(arrived_at, ready_at)
 
 
 def _report_startup_failure(exc: BaseException) -> None:

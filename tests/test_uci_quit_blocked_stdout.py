@@ -617,11 +617,11 @@ def test_the_guard_fires_when_the_lock_is_held_and_nothing_completes(
 # -- stdin feed: stamps and arming -----------------------------------------------
 
 
-def test_a_line_queued_behind_a_slow_command_is_stamped_when_the_loop_takes_it(
+def test_a_line_queued_behind_a_slow_command_keeps_its_arrival_stamp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The move clock's origin is when the main loop takes the line, as before
-    # the reader thread existed -- not when the reader pulled it off the pipe.
+    # The GUI's clock starts when it sends `go`: a line that waited in the queue
+    # while the loop handled an earlier command is stamped when it arrived.
     from chess_anti_engine.uci import __main__ as uci_main
 
     now = [1.0]
@@ -630,10 +630,10 @@ def test_a_line_queued_behind_a_slow_command_is_stamped_when_the_loop_takes_it(
     deadline = time.monotonic() + 5
     while feed._lines.qsize() < 3 and time.monotonic() < deadline:  # two lines + EOF
         time.sleep(0.01)
-    lines = uci_main._received_lines(feed)
+    lines = iter(feed)
     assert next(lines) == ("isready\n", 1.0)
     now[0] = 9.0  # the loop spent 8 s on `isready` while `go` waited queued
-    assert next(lines) == ("go movetime 1000\n", 9.0)
+    assert next(lines) == ("go movetime 1000\n", 1.0)
 
 
 @pytest.mark.parametrize(("line", "arms"), [
@@ -646,7 +646,7 @@ def test_only_the_quit_command_arms_the_guard(line: str, arms: bool) -> None:
 
     feed = uci_main._StdinFeed(iter([line]))
     try:
-        assert next(iter(feed)) == line  # after `quit` the main loop stops reading
+        assert next(iter(feed))[0] == line  # after `quit` the main loop stops reading
         feed._reader.join(5)
         assert not feed._reader.is_alive()
         assert (feed._guard is not None) is arms
@@ -658,8 +658,9 @@ def test_the_pre_readiness_burst_still_searches_its_movetime(
     tmp_path: Path, launcher: Path,
 ) -> None:
     # `uci / isready / position / go movetime 1000` sent at once while the model
-    # loads for 3 s: `go` is stamped when the loop takes it (after readyok), so
-    # it searches about its movetime instead of answering unsearched.
+    # loads for 3 s: a `go` that arrived before the engine was ready is timed
+    # from readiness (`_clock_origin`), so it searches about its movetime
+    # instead of being charged for the model load.
     eng = _Engine(_make_tiny_checkpoint(tmp_path), tmp_path / "engine.stderr", launcher=launcher,
                   env_extra={"DEEPFIN_TEST_BUILD_SLEEP_S": "3.0"})
     try:
@@ -709,3 +710,36 @@ def test_stderr_note_is_skipped_when_stderr_cannot_be_polled(
     monkeypatch.setattr(sys, "stderr", fake)
     uci_main._stderr_note("deepfin: note")
     assert fake.getvalue() == "deepfin: note\n"
+
+
+
+def test_work_queued_ahead_of_go_is_charged_to_its_movetime(tmp_path: Path) -> None:
+    # 300 long `position` lines, then `go movetime 1000`, in one write. The
+    # GUI's clock starts when it sends `go`; timed from when the main loop got
+    # to it, the bestmove came about 1.6 s after the GUI sent it.
+    import random
+
+    import chess
+
+    moves: list[str] = []
+    for seed in range(1000):  # the first random 120-ply game still in play
+        rng, board, moves = random.Random(seed), chess.Board(), []
+        while len(moves) < 120 and not board.is_game_over(claim_draw=True):
+            mv = rng.choice(list(board.legal_moves))
+            board.push(mv)
+            moves.append(mv.uci())
+        if len(moves) == 120 and not board.is_game_over(claim_draw=True):
+            break
+    assert len(moves) == 120
+    position = "position startpos moves " + " ".join(moves)
+    eng = _ready(_Engine(_make_tiny_checkpoint(tmp_path), tmp_path / "engine.stderr"))
+    try:
+        assert eng.proc.stdin is not None
+        eng.proc.stdin.write(((position + "\n") * 300 + "go movetime 1000\n").encode())
+        eng.proc.stdin.flush()
+        t_sent = time.monotonic()
+        eng.read_until("bestmove", 60)
+        took = time.monotonic() - t_sent
+        assert took <= 1.25, f"bestmove {took:.2f}s after the GUI sent go movetime 1000"
+    finally:
+        eng.close()
