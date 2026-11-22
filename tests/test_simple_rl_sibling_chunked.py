@@ -67,6 +67,7 @@ class ReferenceTerm(sib.SiblingTerm):
         weighted, resid = self._pair_loss(*self._tensors(ids))
         loss = weighted.mean()
         self.pairs_seen += int(ids.size)
+        self.active += int((weighted.detach() > 0).sum())
         self.loss_sum += float(weighted.detach().sum())
         self.abs_resid_sum += float(resid.detach().abs().sum())
         self.per_step.append([int(ids.size), float(loss.detach())])
@@ -130,9 +131,10 @@ def _assert_equal_runs(got: dict[str, Any], ref: dict[str, Any], *, rtol: float 
     for n, p in ref["weights"].items():
         np.testing.assert_allclose(got["weights"][n].float().numpy(), p.float().numpy(), rtol=rtol, atol=1e-6,
                                    err_msg=n)
-    for k in ("steps", "pairs"):
-        assert got["summary"][k] == ref["summary"][k]
-    for k in ("mean_weighted_huber", "mean_abs_resid_train"):
+    for k in ("steps", "pairs", "active_pairs"):
+        assert got["summary"][k] == ref["summary"][k], k
+    assert got["summary"]["mean_weighted_loss"] == got["summary"]["mean_weighted_huber"]
+    for k in ("mean_weighted_loss", "mean_abs_resid_train"):
         assert got["summary"][k] == pytest.approx(ref["summary"][k], rel=1e-5)
     assert [r[0] for r in got["summary"]["per_step"]] == [r[0] for r in ref["summary"]["per_step"]]
     np.testing.assert_allclose([r[1] for r in got["summary"]["per_step"]],
@@ -271,13 +273,21 @@ def test_the_term_refuses_a_non_positive_chunk_or_batch(bad: dict[str, int]) -> 
         sib.SiblingTerm(torch.nn.Linear(1, 1), SimpleNamespace(cursor=0), _fake_pairs(1, 1), **kw)
 
 
-def test_chunk_pairs_is_recorded_and_a_snapshot_at_another_chunk_size_is_refused() -> None:
+def test_chunk_pairs_is_recorded_per_segment_and_a_snapshot_resumes_at_another_chunk_size() -> None:
+    """chunk_pairs changes memory, not the update: restore at another size is
+    allowed and appends a segment [the step it starts at, the new size]."""
     state = _run(sib.SiblingTerm, chunk=3)["state"]
     assert state["chunk_pairs"] == 3
+    assert state["chunk_segments"] == [[0, 3]]
     other = sib.SiblingTerm(torch.nn.Linear(1, 1), SimpleNamespace(cursor=0), _fake_pairs(1, 1), w=1.0, rows=1,
                             chunk_pairs=4, batch_size=4, device="cpu")
-    with pytest.raises(RuntimeError, match="chunk_pairs"):
-        other.restore(state)
+    other.restore(state)
+    assert other.chunk_segments == [[0, 3], [state["steps"], 4]]
+    assert other.summary()["chunk_segments"] == [[0, 3], [state["steps"], 4]]
+    same = sib.SiblingTerm(torch.nn.Linear(1, 1), SimpleNamespace(cursor=0), _fake_pairs(1, 1), w=1.0, rows=1,
+                           chunk_pairs=3, batch_size=4, device="cpu")
+    same.restore(state)
+    assert same.chunk_segments == [[0, 3]]
 
 
 @pytest.mark.parametrize("chunk", [1, 3, 8, 13])
@@ -362,15 +372,16 @@ def test_the_new_sibling_settings_leave_the_resume_key_unchanged_at_their_defaul
                                          batches=[(np.arange(4), np.zeros(0, np.int64))])
 
     base = TrainSettings(device="cpu")
-    assert set(learn.KEY_NEUTRAL_DEFAULTS) == {"sibling_chunk_pairs", "sibling_loss", "sibling_order_margin",
-                                               "sibling_order_min_dq", "sibling_unit"}
+    assert set(learn.KEY_NEUTRAL_DEFAULTS) == {"sibling_loss", "sibling_order_margin", "sibling_order_min_dq",
+                                               "sibling_unit"}
+    assert learn.KEY_EXCLUDED == ("sibling_chunk_pairs",)
     for k, v in learn.KEY_NEUTRAL_DEFAULTS.items():
         assert getattr(base, k) == v
     real_asdict = learn.asdict
 
     def old_asdict(obj: Any) -> dict[str, Any]:
         d = real_asdict(obj)
-        for k in learn.KEY_NEUTRAL_DEFAULTS:
+        for k in (*learn.KEY_NEUTRAL_DEFAULTS, *learn.KEY_EXCLUDED):
             del d[k]
         return d
 
@@ -378,7 +389,7 @@ def test_the_new_sibling_settings_leave_the_resume_key_unchanged_at_their_defaul
         mp.setattr(learn, "asdict", old_asdict)
         before = key(base)
     assert key(base) == before
-    assert key(dataclasses.replace(base, sibling_chunk_pairs=3)) != before
+    assert key(dataclasses.replace(base, sibling_chunk_pairs=3)) == before   # never keyed: memory, not the update
     assert key(dataclasses.replace(base, sibling_loss="order", sibling_order_margin=0.0556,
                                    sibling_order_min_dq=0.0203)) != before
 

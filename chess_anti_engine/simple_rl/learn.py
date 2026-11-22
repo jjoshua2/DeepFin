@@ -2167,9 +2167,12 @@ def _rows_per_step(sampler: Any, accum_steps: int) -> dict[str, Any] | None:
 
 # Settings added after snapshots existed, dropped from the resume key at their default so an unsealed phase begun on
 # older code (which trained exactly the default) still resumes; any other value is keyed.
-KEY_NEUTRAL_DEFAULTS: dict[str, Any] = {"sibling_chunk_pairs": 64, "sibling_loss": "diff",
-                                        "sibling_order_margin": None, "sibling_order_min_dq": None,
-                                        "sibling_unit": "pairs"}
+KEY_NEUTRAL_DEFAULTS: dict[str, Any] = {"sibling_loss": "diff", "sibling_order_margin": None,
+                                        "sibling_order_min_dq": None, "sibling_unit": "pairs"}
+# Settings that never enter the key: they change memory, not the update (gradient-equivalent up to float summation
+# order), so a phase may resume under another value -- the natural out-of-memory recovery. The term records each
+# value per segment in its own state and summary.
+KEY_EXCLUDED: tuple[str, ...] = ("sibling_chunk_pairs",)
 
 
 def snapshot_resume_key(*, settings: TrainSettings, generation: int, init_checkpoint: Path,
@@ -2187,6 +2190,8 @@ def snapshot_resume_key(*, settings: TrainSettings, generation: int, init_checkp
     for k, default in KEY_NEUTRAL_DEFAULTS.items():
         if k in keyed and keyed[k] == default:
             del keyed[k]
+    for k in KEY_EXCLUDED:
+        keyed.pop(k, None)
     ident = {"settings": keyed, "generation": int(generation),
              "init": sha256_file(init_checkpoint),
              "prev": None if prev_trainer_checkpoint is None else sha256_file(prev_trainer_checkpoint),

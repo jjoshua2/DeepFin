@@ -98,6 +98,7 @@ class ReferenceListTerm(sib.SiblingListTerm):
                     dv = v[o + i] - v[o + j]
                     terms.append(wv * min(abs(dq), 0.62) * torch.relu(min(M, abs(dq)) - float(np.sign(dq)) * dv))
             o += c
+            self.active += sum(int(float(x.detach()) > 0) for x in terms)
             if terms:
                 n = len(terms)
                 a = n / (1 + (n - 1) * 0.13)
@@ -147,6 +148,7 @@ def _assert_equal(got: dict[str, Any], ref: dict[str, Any]) -> None:
     for n, p in ref["weights"].items():
         np.testing.assert_allclose(got["weights"][n].numpy(), p.numpy(), rtol=2e-4, atol=1e-6, err_msg=n)
     assert [r[0] for r in got["summary"]["per_step"]] == [r[0] for r in ref["summary"]["per_step"]]
+    assert got["summary"]["active_pairs"] == ref["summary"]["active_pairs"]
     np.testing.assert_allclose([r[1] for r in got["summary"]["per_step"]],
                                [r[1] for r in ref["summary"]["per_step"]], rtol=1e-5)
 

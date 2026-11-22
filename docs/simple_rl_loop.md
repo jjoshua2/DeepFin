@@ -1079,10 +1079,13 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
   - **Snapshot resume.** When the term is on, the resume key also hashes every
     generation's sidecar manifest, so a different sidecar re-materialised at the
     same `--sibling-dir` restarts the phase instead of resuming.
-    `--sibling-chunk-pairs`, `--sibling-unit`, `--sibling-loss` and `--sibling-order-*`
-    enter the key only at a non-default value, so adding them did not change any
-    existing key. With `--sibling-loss order` the key also carries the order form's
-    version.
+    `--sibling-unit`, `--sibling-loss` and `--sibling-order-*` enter the key only at
+    a non-default value, so adding them did not change any existing key. With
+    `--sibling-loss order` the key also carries the order form's version.
+    `--sibling-chunk-pairs` never enters the key: it changes memory, not the update,
+    so an interrupted phase can resume at a smaller chunk (the out-of-memory
+    recovery). The term records each value with the step it started at
+    (`chunk_segments` in its state and summary).
     Adding the three
     `TrainSettings` fields changes `snapshot_resume_key` itself, so an unsealed
     phase started on older code restarts from its first update.

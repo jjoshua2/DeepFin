@@ -953,6 +953,7 @@ class SiblingTerm:
         self.w = float(w)
         self.rows = int(rows)
         self.chunk_pairs = int(chunk_pairs)
+        self.chunk_segments: list[list[int]] = [[0, self.chunk_pairs]]   # [first step, chunk_pairs] per segment
         self.batch_size = int(batch_size)
         self.device = device
         self.loss = loss
@@ -1084,7 +1085,8 @@ class SiblingTerm:
     def state(self) -> dict[str, Any]:
         return {"steps": self.steps, "pairs": self.pairs_seen, "loss_sum": self.loss_sum,
                 "abs_resid_sum": self.abs_resid_sum, "per_step": list(self.per_step), "last_cursor": self.last_cursor,
-                "chunk_pairs": self.chunk_pairs, "active": self.active, "loss": self.loss,
+                "chunk_pairs": self.chunk_pairs, "chunk_segments": [list(x) for x in self.chunk_segments],
+                "active": self.active, "loss": self.loss,
                 "order_margin": self.order_margin, "order_min_dq": self.order_min_dq, "unit": self.unit,
                 "child_positions": self.child_positions,
                 "order_form_version": ORDER_FORM_VERSION if self.loss == "order" else None}
@@ -1100,9 +1102,6 @@ class SiblingTerm:
             if key in state and state[key] != mine:
                 raise RuntimeError(f"sibling term: the snapshot was taken at {key} {state[key]!r}, this phase runs "
                                    f"{mine!r}")
-        if int(state.get("chunk_pairs", self.chunk_pairs)) != self.chunk_pairs:
-            raise RuntimeError(f"sibling term: the snapshot was taken at chunk_pairs {state['chunk_pairs']}, this "
-                               f"phase runs {self.chunk_pairs}")
         self.steps = int(state["steps"])
         self.pairs_seen = int(state["pairs"])
         self.loss_sum = float(state["loss_sum"])
@@ -1110,18 +1109,26 @@ class SiblingTerm:
         self.per_step = [list(x) for x in state["per_step"]]
         self.last_cursor = int(state["last_cursor"])
         self.active = int(state.get("active", 0))
+        # chunk_pairs changes memory, not the update: a phase may resume at another value (OOM recovery). Each
+        # value is recorded with the step it started at.
+        segs = [list(x) for x in state.get("chunk_segments", [[0, int(state.get("chunk_pairs", self.chunk_pairs))]])]
+        if segs[-1][1] != self.chunk_pairs:
+            segs.append([self.steps, self.chunk_pairs])
+        self.chunk_segments = segs
         self.child_positions = int(state.get("child_positions", 0))
 
     def summary(self) -> dict[str, Any]:
         n = self.pairs_seen
         term_steps = sum(1 for r in self.per_step if r[0])
-        return {"w": self.w, "sibling_rows": self.rows, "chunk_pairs": self.chunk_pairs, "loss": self.loss,
+        return {"w": self.w, "sibling_rows": self.rows, "chunk_pairs": self.chunk_pairs,
+                "chunk_segments": [list(x) for x in self.chunk_segments], "loss": self.loss,
                 "order_margin": self.order_margin, "order_min_dq": self.order_min_dq, "active_pairs": self.active,
                 "unit": self.unit, "order_form_version": ORDER_FORM_VERSION if self.loss == "order" else None,
                 "child_positions": self.child_positions,
                 "child_positions_per_step": self.child_positions / term_steps if term_steps else None,
                 "steps": self.steps, "pairs": n,
-                "mean_weighted_huber": self.loss_sum / n if n else None,
+                "mean_weighted_huber": self.loss_sum / n if n else None,   # kept for diff-era readers
+                "mean_weighted_loss": self.loss_sum / n if n else None,    # form-neutral: Huber (diff) or ranking (order)
                 "mean_abs_resid_train": self.abs_resid_sum / n if n else None,
                 "per_step": self.per_step}
 
@@ -1277,9 +1284,11 @@ class SiblingListTerm(SiblingTerm):
     def summary(self) -> dict[str, Any]:
         out = super().summary()
         term_steps = sum(1 for r in self.per_step if r[0])
-        out.update({"roots": self.roots_seen, "mean_step_loss": self.loss_sum / term_steps if term_steps else None,
-                    "root_weight": f"n / (1 + (n - 1) * {ROOT_PAIR_ICC})", "pair_unit_note":
-                    "mean_weighted_huber here is loss_sum / pairs; the step value is per-root-mean, n_eff-weighted"})
+        mean_step = self.loss_sum / term_steps if term_steps else None
+        out.update({"roots": self.roots_seen, "mean_step_loss": mean_step, "mean_weighted_loss": mean_step,
+                    "mean_weighted_huber": None, "root_weight": f"n / (1 + (n - 1) * {ROOT_PAIR_ICC})",
+                    "loss_note": "roots: mean_weighted_loss is the mean per-step term value (per-root means, "
+                                 "n_eff-weighted over roots)"})
         return out
 
 
