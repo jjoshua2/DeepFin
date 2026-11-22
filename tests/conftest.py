@@ -126,6 +126,15 @@ def resolve_thread_cap() -> int | None:
 # unset), NVML counts it and `is_available()` is still True. `setdefault`: an
 # explicitly exported value (e.g. `0`) still wins.
 os.environ.setdefault("PYTORCH_NVML_BASED_CUDA_CHECK", "1")
+# ⚑ What this does NOT cover (accepted, 2026-11-22): on WSL2 the first CPU
+# `backward()` makes the C++ autograd engine count CUDA devices
+# (`cudaGetDeviceCount` -> `cuInit`), which opens /dev/dxg for the process
+# lifetime even with `CUDA_VISIBLE_DEVICES=` empty and the NVML switch on;
+# tests that run a backward pass therefore still touch the adapter; nothing is
+# allocated (no visible device, no context). Reproduction:
+#     x = torch.ones(3, requires_grad=True)
+#     (x * 2).sum()            # no /dev/dxg fd yet
+#     (x * 2).sum().backward() # /dev/dxg fd now held
 
 _RAW = os.environ.get(_ENV)
 _CAP, _CAP_IS_FALLBACK = classify_thread_cap(_RAW)
