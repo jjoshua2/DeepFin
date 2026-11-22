@@ -1416,8 +1416,8 @@ class Engine:
         # busy-worker answer when the wait below raises -- is a move of a game,
         # so a later isready must not run the boundary checks.
         self._in_game = True
-        # The move clock starts at `go` receipt (when the stdin reader read
-        # it): the bounded wait for a live search, tree sync (including any
+        # The move clock starts at `go` receipt (when the main loop took it
+        # from stdin, `_receipt_time`): the bounded wait for a live search, tree sync (including any
         # reuse work) and thread start-up below are all charged to this move's
         # deadline.
         go_received_at = _receipt_time(cmd.received_at)
@@ -1851,8 +1851,8 @@ class Engine:
             if self._ponderhit_at is not None:
                 return
             ponder_stop = self._stop_event
-            # The real phase's clock started when the stdin reader read the
-            # ponderhit, not when this handler got the GIL.
+            # The real phase's clock started when the main loop took the
+            # ponderhit from stdin, not when this handler got the GIL.
             self._ponderhit_at = _receipt_time(None if cmd is None else cmd.received_at)
             self._ponderhit_event.set()
             gen = self._search_gen
