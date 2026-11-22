@@ -64,7 +64,7 @@ class ReferenceTerm(sib.SiblingTerm):
         if not ids.size:
             self.per_step.append([0, 0.0])
             return None
-        weighted, resid = sib.sibling_loss(self.model, *self._tensors(ids))
+        weighted, resid = self._pair_loss(*self._tensors(ids))
         loss = weighted.mean()
         self.pairs_seen += int(ids.size)
         self.loss_sum += float(weighted.detach().sum())
@@ -83,8 +83,11 @@ def _plan(n: int = N_ROWS, b: int = BATCH) -> list[tuple[np.ndarray, np.ndarray]
     return batches
 
 
+ORDER = {"loss": "order", "order_margin": 0.05, "order_min_dq": 0.1}   # |dq| ~ U(-0.5, 0.5): 80% of pairs eligible
+
+
 def _run(term_cls: type, *, chunk: int, steps: int = 3, cpu_bf16: bool = False, w_policy: float = 1.0,
-         w_wdl: float = 1.0) -> dict[str, Any]:
+         w_wdl: float = 1.0, form: dict[str, Any] | None = None) -> dict[str, Any]:
     """Train ``steps`` updates through the real Trainer with the term on its hook;
     return per-step optimizer-step grads, clipped norms, final weights, counters."""
     rows = _arrays(N_ROWS)
@@ -96,7 +99,7 @@ def _run(term_cls: type, *, chunk: int, steps: int = 3, cpu_bf16: bool = False, 
     sampler = ScheduledSampler(rows, _plan(), rng=np.random.default_rng(0))
     pairs = _fake_pairs(N_ROWS, int(rows["x"].shape[1]))
     term = term_cls(trainer.model, sampler, pairs, w=W, rows=ROWS_WITH_PAIRS, chunk_pairs=chunk, batch_size=BATCH,
-                    device="cpu")
+                    device="cpu", **(form or {}))
     attach_anchor(trainer, term)
     grads: list[dict[str, torch.Tensor]] = []
     norms: list[float] = []
@@ -275,3 +278,124 @@ def test_chunk_pairs_is_recorded_and_a_snapshot_at_another_chunk_size_is_refused
                             chunk_pairs=4, batch_size=4, device="cpu")
     with pytest.raises(RuntimeError, match="chunk_pairs"):
         other.restore(state)
+
+
+@pytest.mark.parametrize("chunk", [1, 3, 8, 13])
+def test_the_order_form_chunked_equals_its_single_forward_reference(chunk: int) -> None:
+    got, ref = _run(sib.SiblingTerm, chunk=chunk, form=ORDER), _run(ReferenceTerm, chunk=chunk, form=ORDER)
+    _assert_equal_runs(got, ref)
+    assert got["summary"]["loss"] == "order"
+    assert got["summary"]["active_pairs"] > 0
+    with pytest.raises(AssertionError):   # the order form is not the diff form
+        _assert_equal_runs(got, _run(ReferenceTerm, chunk=chunk))
+
+
+class _TableNet(torch.nn.Module):
+    """Child i's WDL logits are row i of a parameter table (inputs are one-hot rows):
+    each child's value is a free parameter, so the loss's gradient is exact."""
+
+    def __init__(self, logits: list[list[float]]) -> None:
+        super().__init__()
+        self.table = torch.nn.Parameter(torch.tensor(logits))
+
+    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        return {"wdl": x @ self.table}
+
+
+def _order_grad(v_a: float, v_b: float, dq: float, *, margin: float = 0.0556, min_dq: float = 0.0203
+                ) -> tuple[float, torch.Tensor, _TableNet]:
+    """One pair (A, B) whose children have values v_a, v_b (v = p_L - p_W: the
+    child's WDL is p_W = max(-v, 0), p_L = max(v, 0), the rest drawn)."""
+    def logits(v: float) -> list[float]:
+        p_w, p_l = max(-v, 0.0), max(v, 0.0)
+        return [float(np.log(max(p_w, 1e-13))), float(np.log(1 - p_w - p_l)), float(np.log(max(p_l, 1e-13)))]
+
+    net = _TableNet([logits(v_a), logits(v_b)])
+    eye = torch.eye(2)
+    weighted, _ = sib.sibling_order_loss(net, eye[:1], eye[1:], torch.tensor([dq]), torch.tensor([64.0]),
+                                         margin=margin, min_dq=min_dq)
+    weighted.sum().backward()
+    assert net.table.grad is not None
+    return float(weighted.sum()), net.table.grad.clone(), net
+
+
+def test_the_order_form_has_exactly_zero_gradient_on_a_pair_ordered_beyond_the_margin() -> None:
+    loss, grad, _ = _order_grad(0.30, 0.10, dq=0.15)    # search: A > B; net: A - B = 0.20 > margin
+    assert loss == 0.0
+    assert torch.count_nonzero(grad) == 0
+    loss, grad, _ = _order_grad(0.10, 0.30, dq=0.01)    # mis-ordered but |dq| < min_dq: not a clear pair
+    assert loss == 0.0
+    assert torch.count_nonzero(grad) == 0
+
+
+@pytest.mark.parametrize(("v_a", "v_b", "dq"), [(0.10, 0.30, 0.15), (0.30, 0.10, -0.15), (0.20, 0.18, 0.15)])
+def test_the_order_form_pushes_a_mis_ordered_or_too_close_pair_the_searchs_way(v_a: float, v_b: float,
+                                                                              dq: float) -> None:
+    loss, grad, net = _order_grad(v_a, v_b, dq=dq)
+    assert loss > 0
+    assert torch.count_nonzero(grad) > 0
+    with torch.no_grad():
+        before = sib.child_values(net.table)
+        net.table.sub_(grad)                             # one gradient-descent step
+        after = sib.child_values(net.table)
+    s = float(np.sign(dq))
+    assert s * float(after[0] - after[1]) > s * float(before[0] - before[1])
+
+
+def test_the_new_sibling_settings_leave_the_resume_key_unchanged_at_their_defaults(tmp_path: Any) -> None:
+    """An unsealed phase begun before these settings existed trained exactly their
+    defaults, so its snapshot must still resume: at the defaults the key equals the
+    key of the settings without those fields; any other value changes it."""
+    import dataclasses
+
+    from chess_anti_engine.simple_rl import learn
+
+    (tmp_path / "init.pt").write_bytes(b"i")
+    (tmp_path / "probe.npz").write_bytes(b"p")
+    (tmp_path / "gen_0001" / "collect").mkdir(parents=True)
+    (tmp_path / "gen_0001" / "collect" / "manifest.json").write_text("{}")
+
+    def key(settings: TrainSettings) -> str:
+        return learn.snapshot_resume_key(settings=settings, generation=1, init_checkpoint=tmp_path / "init.pt",
+                                         prev_trainer_checkpoint=None, run_dir=tmp_path, gens=[1],
+                                         probe_path=tmp_path / "probe.npz",
+                                         batches=[(np.arange(4), np.zeros(0, np.int64))])
+
+    base = TrainSettings(device="cpu")
+    assert set(learn.KEY_NEUTRAL_DEFAULTS) == {"sibling_chunk_pairs", "sibling_loss", "sibling_order_margin",
+                                               "sibling_order_min_dq"}
+    for k, v in learn.KEY_NEUTRAL_DEFAULTS.items():
+        assert getattr(base, k) == v
+    real_asdict = learn.asdict
+
+    def old_asdict(obj: Any) -> dict[str, Any]:
+        d = real_asdict(obj)
+        for k in learn.KEY_NEUTRAL_DEFAULTS:
+            del d[k]
+        return d
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(learn, "asdict", old_asdict)
+        before = key(base)
+    assert key(base) == before
+    assert key(dataclasses.replace(base, sibling_chunk_pairs=3)) != before
+    assert key(dataclasses.replace(base, sibling_loss="order", sibling_order_margin=0.0556,
+                                   sibling_order_min_dq=0.0203)) != before
+
+
+def test_the_order_margin_is_capped_at_the_searchs_own_gap() -> None:
+    """m_i = min(m, |dq|): a pair the search separates by 0.03 is satisfied at
+    s * dv = 0.03 (an uncapped m = 0.0556 would still push it apart); at 0.02 it is
+    not; a pair with |dq| = 0.2 uses m itself."""
+    loss, grad, _ = _order_grad(0.0301, 0.00, dq=0.03)   # 1e-4 above the boundary: float32 softmax round-off
+    assert loss == 0.0
+    assert torch.count_nonzero(grad) == 0
+    loss, grad, _ = _order_grad(0.02, 0.00, dq=0.03)
+    assert loss > 0
+    assert torch.count_nonzero(grad) > 0
+    assert loss == pytest.approx(0.03 - 0.02, abs=1e-4)
+    loss, _, _ = _order_grad(0.03, 0.00, dq=0.2)       # |dq| > m: the margin is m = 0.0556
+    assert loss == pytest.approx(0.0556 - 0.03, abs=1e-4)
+    loss, grad, _ = _order_grad(0.06, 0.00, dq=0.2)
+    assert loss == 0.0
+    assert torch.count_nonzero(grad) == 0

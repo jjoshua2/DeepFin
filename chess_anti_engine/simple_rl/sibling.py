@@ -54,6 +54,14 @@ the realised one (``rep_fix.current()``), and refuses any disagreement.
 where ``dv = v(A) - v(B)`` comes from the WDL head of the SAME net in the same
 step.
 
+**Loss form** (``loss``). ``diff`` (the registered form): the Huber regression of
+dv onto dq above, which enforces the size of the difference as well as its sign.
+``order``: per pair ``(min_visits / 64) * relu(min(margin, |dq|) - sign(dq) * dv)``
+for pairs with ``|dq| >= min_dq`` (else 0), averaged over the same pairs: zero once
+the net orders the pair as the search does by at least the smaller of ``margin`` and
+the search's own gap (the cap is the form's definition; there is no uncapped path). Same pairs, same child
+forwards, same chunking. An experiment arm, not an identity twin.
+
 **Chunked, with a backward per chunk** (the only path). The step's pairs are
 forwarded ``chunk_pairs`` at a time and each chunk runs its own
 ``(scale * w * chunk_weighted.sum() / n_pairs).backward()`` inside the penalty
@@ -76,6 +84,7 @@ POV, so ``v(child) = softmax(wdl)[2] - softmax(wdl)[0]``.
 from __future__ import annotations
 
 import json
+import math
 import resource
 import time
 from collections import defaultdict
@@ -754,6 +763,32 @@ def sibling_loss(model: Any, xa: Any, xb: Any, dq: Any, min_visits: Any) -> tupl
     return (min_visits / VISIT_SCALE) * huber, resid
 
 
+def sibling_order_loss(model: Any, xa: Any, xb: Any, dq: Any, min_visits: Any, *, margin: float,
+                       min_dq: float) -> tuple[Any, Any]:
+    """The ORDER form: (per-pair weighted margin ranking loss, per-pair residual dv - dq).
+
+    Per pair ``(min_visits / 64) * relu(m_i - sign(dq) * dv)`` with
+    ``m_i = min(margin, |dq|)``, if ``|dq| >= min_dq``, else 0: zero (and zero
+    gradient) once the net orders the pair as the search does by at least the smaller
+    of ``margin`` and the search's own gap. The cap is part of the form: the loss never
+    asks the net to separate a pair by more than the search separates it (no
+    sharpening pressure without a target behind it). Only the ORDER of the search's
+    values is a target, not the size of their difference beyond ``m_i``. Same pairs
+    and the same single forward over A and B as ``sibling_loss``; the residual is
+    returned for the same diagnostics."""
+    import torch
+
+    out = model(torch.cat([xa, xb], dim=0))
+    v = child_values(out["wdl"])
+    n = int(xa.shape[0])
+    dv = v[:n] - v[n:]
+    clear = (dq.abs() >= min_dq).to(dv.dtype)
+    m_i = torch.clamp(dq.abs().to(dv.dtype), max=margin)   # min(margin, |dq|): never ask for more than the search
+    rank = torch.relu(m_i - torch.sign(dq).to(dv.dtype) * dv)
+    return (min_visits / VISIT_SCALE) * clear * rank, dv - dq
+
+
+SIBLING_LOSS_FORMS = ("diff", "order")
 SIBLING_COUNTERS = ("steps", "pairs", "loss_sum", "abs_resid_sum", "per_step", "last_cursor")
 
 
@@ -771,7 +806,17 @@ class SiblingTerm:
     """
 
     def __init__(self, model: Any, sampler: Any, pairs: SidecarPairs, *, w: float, rows: int, chunk_pairs: int,
-                 batch_size: int, device: str) -> None:
+                 batch_size: int, device: str, loss: str = "diff", order_margin: float | None = None,
+                 order_min_dq: float | None = None) -> None:
+        if loss not in SIBLING_LOSS_FORMS:
+            raise ValueError(f"sibling loss must be one of {SIBLING_LOSS_FORMS}, got {loss!r}")
+        if loss == "order":
+            if order_margin is None or not math.isfinite(float(order_margin)) or float(order_margin) < 0:
+                raise ValueError(f"sibling loss 'order' needs a finite order_margin >= 0, got {order_margin}")
+            if order_min_dq is None or not math.isfinite(float(order_min_dq)) or float(order_min_dq) <= 0:
+                raise ValueError(f"sibling loss 'order' needs a finite order_min_dq > 0, got {order_min_dq}")
+        elif order_margin is not None or order_min_dq is not None:
+            raise ValueError("order_margin / order_min_dq are read only with sibling loss 'order'")
         if int(chunk_pairs) < 1:
             raise ValueError(f"sibling chunk_pairs must be >= 1, got {chunk_pairs}")
         if int(batch_size) < 1:
@@ -784,6 +829,10 @@ class SiblingTerm:
         self.chunk_pairs = int(chunk_pairs)
         self.batch_size = int(batch_size)
         self.device = device
+        self.loss = loss
+        self.order_margin = None if order_margin is None else float(order_margin)
+        self.order_min_dq = None if order_min_dq is None else float(order_min_dq)
+        self.active = 0   # pairs with a non-zero loss (the order form's pairs still to be ordered)
         self.steps = 0
         self.pairs_seen = 0
         self.loss_sum = 0.0
@@ -825,6 +874,14 @@ class SiblingTerm:
             raise RuntimeError(f"sibling term: the batch holds {rows} rows, outside [1, batch_size {self.batch_size}]")
         return rows / self.batch_size
 
+    def _pair_loss(self, xa: Any, xb: Any, dq: Any, min_visits: Any) -> tuple[Any, Any]:
+        if self.loss == "order":
+            assert self.order_margin is not None
+            assert self.order_min_dq is not None
+            return sibling_order_loss(self.model, xa, xb, dq, min_visits, margin=self.order_margin,
+                                      min_dq=self.order_min_dq)
+        return sibling_loss(self.model, xa, xb, dq, min_visits)
+
     def _require_cleared_grads(self) -> None:
         """The chunk backwards add into ``.grad`` before the Trainer's own backward;
         gradients left over from anything else would be summed into this update."""
@@ -844,20 +901,24 @@ class SiblingTerm:
         self._require_cleared_grads()
         n = int(ids.size)
         coef = scale * self.w / n
-        weighted_sum = abs_resid_sum = None
+        weighted_sum = abs_resid_sum = active_sum = None
         for start in range(0, n, self.chunk_pairs):
-            weighted, resid = sibling_loss(self.model, *self._tensors(ids[start:start + self.chunk_pairs]))
+            weighted, resid = self._pair_loss(*self._tensors(ids[start:start + self.chunk_pairs]))
             (weighted.sum() * coef).backward()
             w_part, r_part = weighted.detach().sum(), resid.detach().abs().sum()
+            active_part = (weighted.detach() > 0).sum()
+            active_sum = active_part if active_sum is None else active_sum + active_part
             weighted_sum = w_part if weighted_sum is None else weighted_sum + w_part
             abs_resid_sum = r_part if abs_resid_sum is None else abs_resid_sum + r_part
-            del weighted, resid, w_part, r_part   # this chunk's graph is gone before the next forward
+            del weighted, resid, w_part, r_part, active_part   # this chunk's graph is gone before the next forward
         assert weighted_sum is not None
         assert abs_resid_sum is not None
+        assert active_sum is not None
         total = float(weighted_sum)
         self.pairs_seen += n
         self.loss_sum += total
         self.abs_resid_sum += float(abs_resid_sum)
+        self.active += int(active_sum)
         self.per_step.append([n, total / n])
         # Its gradient is already in .grad. A 0-valued leaf (no parameter behind it) keeps the Trainer's
         # ``backward`` well-defined when this term is the only loss (every other weight 0).
@@ -885,9 +946,14 @@ class SiblingTerm:
     def state(self) -> dict[str, Any]:
         return {"steps": self.steps, "pairs": self.pairs_seen, "loss_sum": self.loss_sum,
                 "abs_resid_sum": self.abs_resid_sum, "per_step": list(self.per_step), "last_cursor": self.last_cursor,
-                "chunk_pairs": self.chunk_pairs}
+                "chunk_pairs": self.chunk_pairs, "active": self.active, "loss": self.loss,
+                "order_margin": self.order_margin, "order_min_dq": self.order_min_dq}
 
     def restore(self, state: dict[str, Any]) -> None:
+        for key, mine in (("loss", self.loss), ("order_margin", self.order_margin), ("order_min_dq", self.order_min_dq)):
+            if key in state and state[key] != mine:
+                raise RuntimeError(f"sibling term: the snapshot was taken at {key} {state[key]!r}, this phase runs "
+                                   f"{mine!r}")
         if int(state.get("chunk_pairs", self.chunk_pairs)) != self.chunk_pairs:
             raise RuntimeError(f"sibling term: the snapshot was taken at chunk_pairs {state['chunk_pairs']}, this "
                                f"phase runs {self.chunk_pairs}")
@@ -897,10 +963,13 @@ class SiblingTerm:
         self.abs_resid_sum = float(state["abs_resid_sum"])
         self.per_step = [list(x) for x in state["per_step"]]
         self.last_cursor = int(state["last_cursor"])
+        self.active = int(state.get("active", 0))
 
     def summary(self) -> dict[str, Any]:
         n = self.pairs_seen
-        return {"w": self.w, "sibling_rows": self.rows, "chunk_pairs": self.chunk_pairs, "steps": self.steps, "pairs": n,
+        return {"w": self.w, "sibling_rows": self.rows, "chunk_pairs": self.chunk_pairs, "loss": self.loss,
+                "order_margin": self.order_margin, "order_min_dq": self.order_min_dq, "active_pairs": self.active,
+                "steps": self.steps, "pairs": n,
                 "mean_weighted_huber": self.loss_sum / n if n else None,
                 "mean_abs_resid_train": self.abs_resid_sum / n if n else None,
                 "per_step": self.per_step}

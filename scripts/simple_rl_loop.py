@@ -195,7 +195,8 @@ def train_settings(a: argparse.Namespace, run_dir: Path) -> TrainSettings:
         accum_steps=a.accum_steps, snapshot_rows=parse_snapshot_updates(a.snapshot_rows, flag="--snapshot-rows"),
         value_rows_per_game=a.value_rows_per_game,
         w_sibling=a.w_sibling, sibling_rows=a.sibling_rows, sibling_chunk_pairs=a.sibling_chunk_pairs,
-        sibling_dir=a.sibling_dir,
+        sibling_loss=a.sibling_loss, sibling_order_margin=a.sibling_order_margin,
+        sibling_order_min_dq=a.sibling_order_min_dq, sibling_dir=a.sibling_dir,
     )
     settings.validate()
     if settings.optimizer_hparams_source != "trainer":
@@ -353,7 +354,9 @@ ADDED_SINCE_PINNING = {"init_optimizer_state": "fresh",
                        "w_sibling": 0.0, "sibling_rows": 128, "sibling_dir": None,
                        # Every run before --sibling-chunk-pairs forwarded the step's pairs in one graph; the chunked
                        # term is gradient-equivalent, and the key is read only with --w-sibling.
-                       "sibling_chunk_pairs": 64}
+                       "sibling_chunk_pairs": 64,
+                       # Every run before --sibling-loss trained the diff form.
+                       "sibling_loss": "diff", "sibling_order_margin": None, "sibling_order_min_dq": None}
 
 
 def _pinned_value(path: Path, key: str, legacy: Any) -> Any:
@@ -790,6 +793,17 @@ def _common(p: argparse.ArgumentParser) -> None:
                    help="with --w-sibling: at most this many pairs per forward; each chunk backpropagates inside "
                         "the penalty hook, so peak memory is the root batch + one chunk. Gradient-equivalent at "
                         "any value (float summation order); there is no unchunked path. Default 64")
+    t.add_argument("--sibling-loss", choices=("diff", "order"), default="diff",
+                   help="with --w-sibling: the term's form. diff (default, the registered form): Huber_0.2 of "
+                        "dv - dq, the size of the difference as well as its sign. order: (min visits / 64) * "
+                        "relu(min(--sibling-order-margin, |dq|) - sign(dq) * dv) on pairs with |dq| >= "
+                        "--sibling-order-min-dq: zero once the net orders the pair as the search does, by the margin "
+                        "capped at the search's own gap")
+    t.add_argument("--sibling-order-margin", type=float, default=None,
+                   help="with --sibling-loss order (required there): the ranking margin's ceiling, >= 0; "
+                        "each pair's margin is min(this, |dq|)")
+    t.add_argument("--sibling-order-min-dq", type=float, default=None,
+                   help="with --sibling-loss order (required there): pairs with |dq| below it contribute nothing; > 0")
     t.add_argument("--sibling-dir", default=None,
                    help="with --w-sibling: directory holding gen_<g>/ sidecars written by "
                         "scripts/simple_rl_sibling_pairs.py for every generation the phase trains on")

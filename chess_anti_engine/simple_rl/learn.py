@@ -220,6 +220,12 @@ class TrainSettings:
     # = 16.95 + 0.0574 GiB per pair in one graph (operator diagnostic 2026-11-22, rows 0/16/32/64), so a 64-pair
     # chunk adds ~3.7 GiB; 128 rows (~255 pairs) in one graph needed ~31.6 of 31.8 GiB.
     sibling_chunk_pairs: int = 64
+    # The term's loss form (sibling.py): "diff" regresses dv onto dq (Huber_0.2; the registered form); "order" is
+    # the margin ranking loss relu(min(sibling_order_margin, |dq|) - sign(dq) * dv) on pairs with
+    # |dq| >= sibling_order_min_dq, weighted by min_visits / 64 (the cap at |dq| is part of the form). Margin and threshold are read only with "order", and must then be given.
+    sibling_loss: str = "diff"
+    sibling_order_margin: float | None = None
+    sibling_order_min_dq: float | None = None
     sibling_dir: str | None = None
 
     def effective_batch(self) -> int:
@@ -341,9 +347,11 @@ class TrainSettings:
         if not math.isfinite(w) or w < 0:
             raise ValueError(f"w_sibling must be a finite value >= 0, got {self.w_sibling}")
         if w == 0:
-            if self.sibling_dir is not None or int(self.sibling_rows) != 128 or int(self.sibling_chunk_pairs) != 64:
-                raise ValueError("sibling_dir / sibling_rows / sibling_chunk_pairs are read only with w_sibling > 0; "
-                                 "with w_sibling 0 they would be ignored")
+            if (self.sibling_dir is not None or int(self.sibling_rows) != 128 or int(self.sibling_chunk_pairs) != 64
+                    or self.sibling_loss != "diff" or self.sibling_order_margin is not None
+                    or self.sibling_order_min_dq is not None):
+                raise ValueError("sibling_dir / sibling_rows / sibling_chunk_pairs / sibling_loss / sibling_order_* "
+                                 "are read only with w_sibling > 0; with w_sibling 0 they would be ignored")
             return
         if not self.sibling_dir:
             raise ValueError("w_sibling > 0 needs sibling_dir (the materialised pair sidecars, "
@@ -352,6 +360,17 @@ class TrainSettings:
             raise ValueError(f"sibling_rows must be in [1, batch_size {self.batch_size}], got {self.sibling_rows}")
         if int(self.sibling_chunk_pairs) < 1:
             raise ValueError(f"sibling_chunk_pairs must be >= 1, got {self.sibling_chunk_pairs}")
+        if self.sibling_loss not in ("diff", "order"):
+            raise ValueError(f"sibling_loss must be 'diff' or 'order', got {self.sibling_loss!r}")
+        if self.sibling_loss == "order":
+            m, t = self.sibling_order_margin, self.sibling_order_min_dq
+            if m is None or not math.isfinite(float(m)) or float(m) < 0:
+                raise ValueError(f"sibling_loss 'order' needs a finite sibling_order_margin >= 0, got {m}")
+            if t is None or not math.isfinite(float(t)) or float(t) <= 0:
+                raise ValueError(f"sibling_loss 'order' needs a finite sibling_order_min_dq > 0, got {t}")
+        elif self.sibling_order_margin is not None or self.sibling_order_min_dq is not None:
+            raise ValueError("sibling_order_margin / sibling_order_min_dq are read only with sibling_loss 'order'; "
+                             "with 'diff' they would be ignored")
         if int(self.accum_steps) != 1:
             # Same reason as the KL anchor: the term is a per-micro-batch mean
             # added through the Trainer's penalty hook.
@@ -1917,7 +1936,8 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
                              "forward would draw its own dropout mask / overwrite the root forward's balance loss")
         sibling = SiblingTerm(trainer.model, sampler, sibling_pairs, w=float(settings.w_sibling),
                               rows=int(settings.sibling_rows), chunk_pairs=int(settings.sibling_chunk_pairs),
-                              batch_size=int(settings.batch_size), device=settings.device)
+                              batch_size=int(settings.batch_size), device=settings.device, loss=settings.sibling_loss,
+                              order_margin=settings.sibling_order_margin, order_min_dq=settings.sibling_order_min_dq)
         sibling_probe_before = sibling.probe_abs_resid()
     if anchor is not None and sibling is not None:
         from chess_anti_engine.simple_rl.sibling import PenaltyChain
@@ -2135,6 +2155,12 @@ def _rows_per_step(sampler: Any, accum_steps: int) -> dict[str, Any] | None:
     return {"steps": len(per), "min": min(per), "max": max(per), "rows": sum(per)}
 
 
+# Settings added after snapshots existed, dropped from the resume key at their default so an unsealed phase begun on
+# older code (which trained exactly the default) still resumes; any other value is keyed.
+KEY_NEUTRAL_DEFAULTS: dict[str, Any] = {"sibling_chunk_pairs": 64, "sibling_loss": "diff",
+                                        "sibling_order_margin": None, "sibling_order_min_dq": None}
+
+
 def snapshot_resume_key(*, settings: TrainSettings, generation: int, init_checkpoint: Path,
                         prev_trainer_checkpoint: Path | None, run_dir: Path, gens: list[int], probe_path: Path,
                         batches: list[tuple[np.ndarray, np.ndarray]]) -> str:
@@ -2146,7 +2172,11 @@ def snapshot_resume_key(*, settings: TrainSettings, generation: int, init_checkp
         h.update(b"|")
         h.update(np.ascontiguousarray(sl, dtype=np.int64).tobytes())
         h.update(b"\n")
-    ident = {"settings": asdict(settings), "generation": int(generation),
+    keyed = asdict(settings)
+    for k, default in KEY_NEUTRAL_DEFAULTS.items():
+        if k in keyed and keyed[k] == default:
+            del keyed[k]
+    ident = {"settings": keyed, "generation": int(generation),
              "init": sha256_file(init_checkpoint),
              "prev": None if prev_trainer_checkpoint is None else sha256_file(prev_trainer_checkpoint),
              "collects": {g: sha256_file(Path(run_dir) / f"gen_{g:04d}" / "collect" / "manifest.json") for g in gens},

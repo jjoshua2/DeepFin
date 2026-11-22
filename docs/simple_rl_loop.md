@@ -939,7 +939,30 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
   the parent's POV (`root_child_q`). Code and POV algebra are in
   `chess_anti_engine/simple_rl/sibling.py`; the evidence is the sibling-target
   scoping row in `docs/experiments/2026-11-21-rl-loop-evidence-log.md`.
-  - **Loss:** `W · mean over pairs of (min(v_A, v_B) / 64) · Huber_0.2(Δv − dq)`.
+  - **Loss form** (`--sibling-loss`, default `diff`).
+    - `diff`: `W · mean over pairs of (min(v_A, v_B) / 64) · Huber_0.2(Δv − dq)`.
+      It regresses the difference, so it enforces the size of the gap as well as
+      its sign.
+    - `order`: `W · mean over pairs of (min(v_A, v_B) / 64) · 1[|dq| ≥ t] ·
+      relu(m_i − sign(dq) · Δv)`, with `m_i = min(m, |dq|)`, `m` =
+      `--sibling-order-margin` and `t` = `--sibling-order-min-dq` (both required
+      with `order`, refused otherwise). A pair costs nothing, and gives exactly zero
+      gradient, once the net orders it as the search does by at least `m_i`.
+      Near-ties (`|dq| < t`) never contribute. **The cap `m_i ≤ |dq|` is part of
+      the form, with no flag to remove it:** the loss never asks the net to separate
+      a pair by more than the search itself does, so it adds no sharpening pressure
+      without a target behind it. The mean is over all of the step's pairs, so the
+      term goes quiet as pairs are satisfied. The summary's `active_pairs` counts
+      pairs with a non-zero loss.
+    - Both forms use the same pairs, the same child forwards and the same chunking.
+  - **Chunks** (`--sibling-chunk-pairs`, default 64). The step's pairs are forwarded
+    at most this many at a time, with a backward per chunk inside the Trainer's
+    penalty hook, scaled by the Trainer's own `rows / batch_size` factor. The chunks
+    sum to the one-forward term (float summation order only), and peak memory is the
+    root graph plus one chunk. On the 5090, peak reserved ≈ 16.95 + 0.0574 GiB per
+    pair in one graph, so 128 rows (≈ 255 pairs) in one graph did not fit. The hook
+    refuses uncleared gradients, a GradScaler, residual channel dropout or balance,
+    and a sampler whose loss scale it cannot reproduce.
     The child value is `v = L − W` of the child's own WDL softmax, because the
     child's side to move is the parent's opponent. Both children go through the
     SAME net in the same step, in train mode. Train mode changes no output here:
@@ -1015,22 +1038,28 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
     - Refused with `--accum-steps > 1` (the term is a per-micro-batch mean, the
       anchor's reason) and with `--sample-with-replacement` (served rows are not
       recorded).
-    - `--sibling-dir` or a non-default `--sibling-rows` with `--w-sibling 0` is
-      refused, because it would be ignored.
+    - `--sibling-dir`, or a non-default `--sibling-rows`, `--sibling-chunk-pairs` or
+      `--sibling-loss` / `--sibling-order-*`, with `--w-sibling 0` is refused,
+      because it would be ignored.
   - **Take-effect record.** The train summary's `sibling` block holds:
-    - pairs, steps, the per-step (pairs, loss) log, and the mean weighted Huber;
+    - pairs, steps, the per-step (pairs, loss) log, the mean weighted loss (keyed
+      `mean_weighted_huber` for both forms), the loss form with its margin and
+      threshold, `chunk_pairs`, and `active_pairs`;
     - mean |Δv − dq| on a fixed probe of up to 1,024 hold-out pairs of the newest
       generation, before and after the phase;
     - K, min visits, and every sidecar's manifest and per-file sha256.
     - The manifest's inputs carry `sibling_gen_<g>`.
   - **Snapshot resume.** When the term is on, the resume key also hashes every
     generation's sidecar manifest, so a different sidecar re-materialised at the
-    same `--sibling-dir` restarts the phase instead of resuming. Adding the three
+    same `--sibling-dir` restarts the phase instead of resuming.
+    `--sibling-chunk-pairs`, `--sibling-loss` and `--sibling-order-*` enter the key
+    only at a non-default value, so adding them did not change any existing key.
+    Adding the three
     `TrainSettings` fields changes `snapshot_resume_key` itself, so an unsealed
     phase started on older code restarts from its first update.
-  - **Cost (unmeasured on GPU).** At the defaults (128 rows x K 2 = 256 pairs) the
-    term adds 512 child positions, forward and backward, to each 512-row batch.
-    Expect about double the activation memory and step compute.
+  - **Cost.** At the defaults (128 rows x K 2 = 256 pairs) the term adds 512 child
+    positions, forward and backward, to each 512-row batch, in chunks (above). Step
+    time on GPU is unmeasured.
     - It also reads the pairs' inputs from the memory-mapped sidecar on the training
       thread: about 0.19 s of host time per batch (measured by the review on the
       pilot sidecar).
