@@ -31,10 +31,12 @@ What resolves (the allow-list):
   the suite runs with both exported, as `tests/conftest.py` arranges for the
   NVML switch),
   ``env=None`` / no ``env`` at the launch (the child inherits), and a name.
-* A name: a parameter of the launch's function (a caller's env, taken as
-  inherited; never accepted as a MERGE source, since its keys are unknown;
-  one with a default value is reported), or a local built from the
-  expressions above. Every occurrence of the name in the function must be one
+* A name: a local built from the expressions above. A PARAMETER of the
+  launch's function (a caller's env, a pytest fixture's value, ``**kwargs``,
+  a method's argument) is reported when its value reaches the launch, as
+  the env or merged into it: its keys are unknown, and a GPU-visible env
+  would pass silently. Rebinding it first (``env = gpu_free_env(env)``)
+  resolves it. Every occurrence of the name in the function must be one
   of: a plain ``env = ...`` / ``env: T = ...`` binding; ``env[K] = v``;
   ``del env[K]``; ``env |= x``; a statement-level ``env.update(...)`` /
   ``pop`` / ``setdefault`` / ``clear``; or a read that cannot change it
@@ -67,16 +69,20 @@ variable set to another value or removed (``os.environ[...]``, ``pop``,
 reported; and ``functools.partial(subprocess.Popen, env=...)`` counts as a
 python launch (its program is supplied later).
 
-A finding is waived only by ``# gpu-guard: allow: <reason>`` on the reported
-line or the line above it (``grep -rn "gpu-guard: allow" tests/``).
+A finding is waived only by ``# gpu-guard: allow: <reason>`` as a ``#``
+comment alone on the line directly above the reported call; it waives that
+line only. A marker inside a string, or trailing code, waives nothing
+(``grep -rn "gpu-guard: allow" tests/``; a test pins the exact list).
 
 Known false positives (each reported; the remedy is to pass
 ``env=gpu_free_env(...)`` directly at the launch): keys held in named
 constants; any non-constant key, even on an inherited env; a required
 variable set from a non-constant value; a module-level env or one built by a
-helper (``launcher.environment()``); a dict comprehension over
-``os.environ``; any second name for the env; and any object's
-``.run([sys.executable], env=...)``, which is taken for ``subprocess.run``.
+helper (``launcher.environment()``), including a helper that returns
+``gpu_free_env(...)``; a spread of ``GPU_FREE``; a conditional expression
+of two calls; a dict comprehension over ``os.environ``; any second name for
+the env; and any object's ``.run([sys.executable], env=...)``, which is
+taken for ``subprocess.run``. None of these shapes occurs in tests/ today.
 
 Still missed by this static pass (only a run-time check at the launch can
 see them): a launch
@@ -93,7 +99,9 @@ from __future__ import annotations
 from typing import Any
 
 import ast
+import io
 import re
+import tokenize
 from pathlib import Path
 
 from tests._child_env import GPU_FREE, gpu_free_env
@@ -404,16 +412,6 @@ class _Resolver:
         params = [*a.posonlyargs, *a.args, *a.kwonlyargs, *(x for x in (a.vararg, a.kwarg) if x)]
         return next((p for p in params if p.arg == name), None)
 
-    def _param_default(self, param: ast.arg, scope: ast.FunctionDef | ast.AsyncFunctionDef) -> ast.expr | None:
-        a = scope.args
-        positional = [*a.posonlyargs, *a.args]
-        if param in positional:
-            i = positional.index(param) - (len(positional) - len(a.defaults))
-            return a.defaults[i] if i >= 0 else None
-        if param in a.kwonlyargs:
-            return a.kw_defaults[a.kwonlyargs.index(param)]
-        return None
-
     def _event(self, use: ast.Name, launch_env: ast.AST | None) -> tuple[str, ast.AST, Any] | None:
         """What one occurrence of the name does: ``(kind, statement, payload)``
         for a change, None for a read that cannot change it. Any occurrence
@@ -503,11 +501,8 @@ class _Resolver:
         env: _Env | None = None
         param = self._param(name, scope)
         if param is not None:
-            assert isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
-            default = self._param_default(param, scope)
-            if default is not None and not (isinstance(default, ast.Constant) and default.value is None):
-                raise _Unresolved(f"parameter {name} has a default value")
-            env = _Env(inherited=True)  # a caller's env: documented as inherited
+            # keys unknown: reported if this value reaches the launch (`_resolve_env`)
+            env = _Env(inherited=True)
             env.parameter = name
         events = []
         for use in own:
@@ -571,8 +566,15 @@ def _resolve_env(node: ast.expr | None, launch: ast.Call, scope: ast.AST, resolv
     if isinstance(node, ast.Constant) and node.value is None:
         return None
     if isinstance(node, ast.Name):
-        return resolver.state(node.id, launch, scope, launch_env=node)
-    return resolver.value(node, launch, scope, 0)
+        env = resolver.state(node.id, launch, scope, launch_env=node)
+    else:
+        env = resolver.value(node, launch, scope, 0)
+    if env.parameter is not None:
+        # A caller's env, a fixture's value, or **kwargs: its keys are unknown
+        # here, and a GPU-visible env reaches the child silently. Wrap it.
+        raise _Unresolved(f"env comes from {env.parameter}, a parameter of the launch's function "
+                          "(a caller's or a fixture's env, keys unknown); pass env=gpu_free_env(...)")
+    return env
 
 
 def _resolve_argv(node: ast.expr | None, scope_nodes: list[ast.AST]) -> list[ast.expr] | None:
@@ -717,18 +719,28 @@ def scratch_env_children(source: str) -> list[tuple[int, list[str]]]:
     return sorted(f for f in found if f[0] not in allowed)
 
 
-# A finding is waived only by this marker, with a reason, on the reported line
-# or the line directly above it; `grep -rn "gpu-guard: allow" tests/` lists them.
+# A finding is waived only by this marker, with a reason, in a ``#`` comment that
+# is alone on the line directly above the reported call; it waives that call's
+# line only. A marker inside a string, or trailing code, waives nothing.
+# `grep -rn "gpu-guard: allow" tests/` lists them.
 _ALLOW = re.compile(r"#\s*gpu-guard:\s*allow:\s*(\S.*)$")
 
 
 def _allowed_lines(source: str) -> dict[int, str]:
     """``line -> reason`` for every line a marker waives."""
     out: dict[int, str] = {}
-    for i, text in enumerate(source.splitlines(), start=1):
-        m = _ALLOW.search(text)
-        if m:
-            out[i] = out[i + 1] = m.group(1).strip()
+    lines = source.splitlines()
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
+    except (tokenize.TokenError, SyntaxError):
+        return out
+    for tok in tokens:
+        if tok.type != tokenize.COMMENT:
+            continue
+        m = _ALLOW.search(tok.string)
+        row, col = tok.start
+        if m and not lines[row - 1][:col].strip():
+            out[row + 1] = m.group(1).strip()
     return out
 
 
@@ -1057,6 +1069,14 @@ _TABLE_UNSAFE.update({
     "r5_alias_changed_through_the_other_name": "def f():\n    other = {'CUDA_VISIBLE_DEVICES': '', 'PYTORCH_NVML_BASED_CUDA_CHECK': '1'}\n    env = other\n    other.pop('CUDA_VISIBLE_DEVICES')\n    subprocess.run([sys.executable], env=env)",
     "r5_module_env_written_in_the_function": "ENV = {'PATH': '/bin'}\ndef f():\n    ENV['HOME'] = '/tmp'\n    subprocess.run([sys.executable], env=ENV)",
     "r5_twelve_copies_of_an_incomplete_env": "def f():\n    e0 = {'PATH': '/bin'}\n    e1 = e0.copy()\n    e2 = e1.copy()\n    e3 = e2.copy()\n    e4 = e3.copy()\n    e5 = e4.copy()\n    e6 = e5.copy()\n    e7 = e6.copy()\n    e8 = e7.copy()\n    e9 = e8.copy()\n    e10 = e9.copy()\n    e11 = e10.copy()\n    e12 = e11.copy()\n    subprocess.run([sys.executable], env=e12)",
+    # round 6: an env that reaches the launch as a parameter (the reviewer's h01-h06)
+    "h01_fixture_env": "import pytest\n@pytest.fixture\ndef child_env():\n    return {'PATH': '/bin'}\ndef test_x(child_env):\n    subprocess.run([sys.executable], env=child_env)",
+    "h02_fixture_env_with_a_gpu": "import pytest\n@pytest.fixture\ndef child_env():\n    return {**os.environ, 'CUDA_VISIBLE_DEVICES': '0'}\ndef test_x(child_env):\n    subprocess.run([sys.executable], env=child_env)",
+    "h03_helper_parameter": "def _launch(env):\n    subprocess.run([sys.executable], env=env)",
+    "h04_parameter_defaulting_to_none": "def _launch(env=None):\n    subprocess.run([sys.executable], env=env)",
+    "h05_kwargs_parameter": "def _run(**env):\n    subprocess.run([sys.executable], env=env)",
+    "h06_method_parameter": "class C:\n    def go(self, env):\n        subprocess.run([sys.executable], env=env)",
+    "s2_rebound_to_a_second_name": "def f():\n    e2 = gpu_free_env({})\n    base = {'PATH': '/bin'}\n    e2 = base\n    subprocess.run([sys.executable], env=e2)",
 })
 _TABLE_SAFE = {
     's01_safe_literal': "def f():\n    subprocess.run([sys.executable], env={'CUDA_VISIBLE_DEVICES': '', 'PYTORCH_NVML_BASED_CUDA_CHECK': '1'})",
@@ -1080,7 +1100,7 @@ def test_every_adversarial_unsafe_child_is_reported_and_safe_ones_pass() -> None
     assert silent == []
     reported = {k for k, body in _TABLE_SAFE.items() if scratch_env_children(_TABLE_HEADER + body)}
     assert reported == _TABLE_DOCUMENTED_FALSE_POSITIVES
-    assert len(_TABLE_UNSAFE) == 55 + 8
+    assert len(_TABLE_UNSAFE) == 55 + 8 + 7
     assert len(_TABLE_SAFE) == 8
 
 
@@ -1089,15 +1109,27 @@ def test_a_marked_launch_is_waived_and_only_with_a_reason() -> None:
     assert scratch_env_children(body.format(mark="")) == [(3, _BOTH)]
     assert scratch_env_children(body.format(mark="    # gpu-guard: allow: the child is a stub\n")) == []
     assert scratch_env_children(body.format(mark="    # gpu-guard: allow:\n")) == [(4, _BOTH)]
+    # a trailing marker waives nothing, neither its own line nor the next
+    two = ("import subprocess, sys\ndef f():\n"
+           "    subprocess.run([sys.executable], env={'PATH': '/a'})  # gpu-guard: allow: the child is a stub\n"
+           "    subprocess.run([sys.executable], env={'PATH': '/b'})\n")
+    assert scratch_env_children(two) == [(3, _BOTH), (4, _BOTH)]
+    # a marker inside a string literal is not a comment
+    in_string = ("import subprocess, sys\ndef f():\n    x = '# gpu-guard: allow: the child is a stub'\n"
+                 "    subprocess.run([sys.executable], env={'PATH': '/bin'})\n")
+    assert scratch_env_children(in_string) == [(4, _BOTH)]
 
 
 def test_every_waiver_in_the_suite_names_its_reason() -> None:
-    waivers = {(path.name, line): reason for path in sorted(TESTS.glob("*.py"))
-               if path.name != Path(__file__).name  # this file's samples quote the marker
-               for line, reason in _allowed_lines(path.read_text(encoding="utf-8")).items()}
-    # each marker covers its own line and the next
-    assert sorted({name for name, _ in waivers}) == ["test_conftest_keeps_cuda_probe_off_the_device.py"]
-    assert all(len(reason) > 20 for reason in waivers.values())
+    waivers = []
+    for path in sorted(TESTS.glob("*.py")):  # this file too: its samples are strings, not comments
+        text = path.read_text(encoding="utf-8")
+        lines = text.splitlines()
+        waivers += [(path.name, lines[line - 1].strip(), reason) for line, reason in _allowed_lines(text).items()]
+    assert [(name, line) for name, line, _ in waivers] == [
+        ("test_conftest_keeps_cuda_probe_off_the_device.py", "proc = subprocess.run("),
+    ]
+    assert all(len(reason) > 20 for _, _, reason in waivers)
 
 
 def test_gpu_free_env_adds_both_variables_and_overrides_a_visible_gpu() -> None:
