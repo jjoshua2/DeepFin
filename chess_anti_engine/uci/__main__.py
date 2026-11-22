@@ -2241,11 +2241,15 @@ _receipt_clock = time.monotonic
 # stdout idle never trips it. It uses no `select`: on Windows, `select` on a
 # pipe raises, and the lock works the same there.
 #
-# The window: `quit` must exit within 2.0 s; less the bounded stderr note
-# (`_stderr_note`, 0.25 s) and one look (`_GUARD_LOOK_S`), that leaves 1.7 s. A
-# GUI may therefore stop reading for up to that long after `quit` and still get
-# the clean exit (status 0, everything closed) -- longer than the 1.0 s our own
-# `stop` gives a search before declaring it unresponsive (`_GO_WAIT_NO_CLOCK_S`).
+# The bound: about 2 s typical. The window runs from when a writer blocks, and
+# `quit` is followed by a block at most about 1 s later (stop latency: `stop`
+# waits `_GO_WAIT_NO_CLOCK_S` before parking the search), so by construction the
+# exit is within about 3 s of `quit`. Measured: 1.87-2.09 s under two busy
+# loops, about 2.4 s under heavier load. The window itself: a 2.0 s target, less
+# the bounded stderr note (`_stderr_note`, 0.25 s) and one look
+# (`_GUARD_LOOK_S`), leaves 1.7 s. A GUI may stop reading for up to that long
+# and still get the clean exit (status 0, everything closed) -- longer than the
+# 1.0 s our own `stop` gives a search before declaring it unresponsive.
 _STDOUT_STALL_S = 1.7
 _GUARD_LOOK_S = 0.05
 
