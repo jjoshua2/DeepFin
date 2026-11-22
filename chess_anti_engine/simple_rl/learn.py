@@ -309,6 +309,11 @@ class TrainSettings:
                              "value-row counts, so the accumulated value gradient is not the effective batch's; "
                              "use accum_steps 1")
         self._validate_sibling()
+        if not any(float(w) > 0 for w in (self.w_policy, self.w_wdl, self.w_sibling, self.kl_policy, self.kl_wdl)):
+            # Nothing would carry a gradient: the first backward fails after the
+            # whole phase has been set up. Refused here instead.
+            raise ValueError("every training term is 0 (w_policy, w_wdl, w_sibling, kl_policy, kl_wdl): "
+                             "there is nothing to train")
         if self.snapshot_updates and self.snapshot_rows:
             raise ValueError("snapshot_updates and snapshot_rows are alternatives; give one")
         rows = [int(k) for k in self.snapshot_rows]
