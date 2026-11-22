@@ -42,6 +42,7 @@ on a 2-device pool); a restart frees them.
 from __future__ import annotations
 
 import functools
+import logging
 import threading
 import time
 import types
@@ -195,8 +196,9 @@ def _await_os_exit(thread: threading.Thread) -> None:
     await_os_thread_exit(thread)
 
 
-def join_unless_wedged(thread: threading.Thread, timeout: float) -> None:
-    """``Thread.join`` that also returns once ``thread`` has parked.
+def join_unless_wedged(thread: threading.Thread, timeout: float) -> bool:
+    """``Thread.join`` that also returns once ``thread`` has parked; True if it
+    ended or parked, False if ``timeout`` ran out with it still running.
 
     After a device fault ending workers park instead of exiting, so a plain
     join would only spend the timeout. This waits (at most ``timeout``) until
@@ -207,14 +209,29 @@ def join_unless_wedged(thread: threading.Thread, timeout: float) -> None:
     if device_fault() is None and not any_wedged():
         thread.join(timeout=timeout)  # no fault: workers end normally
         _await_os_exit(thread)
-        return
+        return not thread.is_alive()
     with _lock:
         while thread.is_alive() and thread not in _parked:
             left = deadline - time.monotonic()
             if left <= 0:
-                return
+                return False
             _changed.wait(timeout=min(left, 0.05))
     _await_os_exit(thread)
+    return True
+
+
+def warn_outlived_close(log: logging.Logger, pool: str, threads: list[threading.Thread],
+                        join_s: float) -> None:
+    """One warning for a pool ``close()`` whose bounded join ran out, naming the
+    threads still running (left running, daemon; they may still hold their
+    evaluators). Checked now, not at the join: a thread that has since ended, or
+    parked (a device fault latched during a no-fault join), is retired and not
+    named. Not for threads abandoned in a device step (announced as a fault)."""
+    with _lock:
+        names = [th.name for th in threads if th.is_alive() and th not in _parked]
+    if names:
+        log.warning("%s close: %s still running after the %gs join; left running",
+                    pool, ", ".join(names), join_s)
 
 
 def reset_session_for_tests(*, released_join_s: float = 10.0) -> None:

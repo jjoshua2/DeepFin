@@ -200,9 +200,10 @@ class WalkerPool:
         for ev in self._wakes:
             ev.set()
   # Walkers won't hit the barrier in shutdown mode, so don't wait on it.
-        for th in self._started_threads:
-  # daemon=True; bounded join just ensures clean teardown for tests.
-            wedge.join_unless_wedged(th, 2.0)  # ended, or parked after a device fault
+  # daemon=True; bounded join (ended, or parked after a device fault).
+        lingering = [th for th in self._started_threads
+                     if not wedge.join_unless_wedged(th, 2.0)]
+        wedge.warn_outlived_close(_log, "walker pool", lingering, 2.0)
 
     def run(
         self,
