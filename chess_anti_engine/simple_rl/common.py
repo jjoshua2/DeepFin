@@ -227,3 +227,11 @@ def seed_for(base: int, *parts: object) -> int:
     """Deterministic 63-bit seed derived from a base seed and stage labels."""
     h = hashlib.sha256(repr((int(base), *parts)).encode()).digest()
     return int.from_bytes(h[:8], "little") & ((1 << 63) - 1)
+
+
+def is_holdout_game(game_id: int, frac: float) -> bool:
+    """The learner's hold-out split: a game is held out when sha256("holdout:<id>")
+    falls below ``frac`` (re-exported by ``simple_rl.learn``; the sibling
+    materialiser flags pairs with the same function)."""
+    h = hashlib.sha256(f"holdout:{int(game_id)}".encode()).digest()
+    return int.from_bytes(h[:8], "little") / float(1 << 64) < float(frac)
