@@ -964,10 +964,14 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         """Calls split into chunks and the chunks they ran as (any device)."""
         return {"chunked_forwards": self._chunked_forwards, "forward_chunks": self._forward_chunks}
 
+    def _exceeds_chunk(self, bsz: int) -> bool:
+        """Whether a call of ``bsz`` rows is chunked (not counted)."""
+        return self._forward_chunk_rows is not None and bsz > self._forward_chunk_rows
+
     def _chunk_spans(self, bsz: int) -> tuple[tuple[int, int], ...] | None:
         """The call's chunk spans, counted, or None when it runs unchunked."""
         n = self._forward_chunk_rows
-        if n is None or bsz <= n:
+        if n is None or not self._exceeds_chunk(bsz):
             return None
         spans = forward_chunk_spans(bsz, n)
         self._chunked_forwards += 1
@@ -1229,6 +1233,17 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             return pol_np.copy(), wdl_np.copy()
         return pol_np, wdl_np
 
+    def _cpu_async(
+        self, rows: int, *, slot: int, relations: np.ndarray | None,
+    ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
+        """The async entries off CUDA, for ``rows`` staged rows of ``slot``. Within the
+        chunk bound: the original unchunked forward. Above it: the chunked sync forward
+        (a CPU forward is synchronous anyway), returned in the async shape."""
+        if not self._exceeds_chunk(rows):
+            return super().evaluate_encoded_async(self._pinned_inputs_np[slot][:rows], relations=relations)
+        pol, wdl = self._run_forward(rows, copy_out=True, slot=slot, relations=relations)
+        return torch.from_numpy(pol), torch.from_numpy(wdl), None
+
     def _cpu_forward(
         self, xt: torch.Tensor, relations: np.ndarray | None,
     ) -> tuple[np.ndarray, np.ndarray]:
@@ -1255,6 +1270,9 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         if not self._pad_to_buckets:
             if not self._use_cuda:
                 self.shape_ledger.note("async", int(bsz))
+                if self._exceeds_chunk(bsz):
+                    self._stage_encoded_input(x, bsz)
+                    return self._cpu_async(bsz, slot=0, relations=relations)
                 return super().evaluate_encoded_async(x, relations=relations)
             self._stage_encoded_input(x, bsz)
             self.shape_ledger.note("async", int(bsz))
@@ -1265,9 +1283,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         rows = self._forward_rows(bsz, "async")
         rel = self._pad_relations(relations, bsz, rows)
         if not self._use_cuda:
-            pol_t, wdl_t, event = super().evaluate_encoded_async(
-                self._pinned_inputs_np[0][:rows], relations=rel,
-            )
+            pol_t, wdl_t, event = self._cpu_async(rows, slot=0, relations=rel)
         else:
             pol_t, wdl_t, event = self._async_forward(rows, slot=0, relations=rel)
         return pol_t[:bsz], wdl_t[:bsz], event
@@ -1291,14 +1307,11 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         rows = self._forward_rows(bsz, "async")
         if rows == bsz:
             if not self._use_cuda:
-                xb = self._pinned_inputs_np[slot][:bsz]
-                return super().evaluate_encoded_async(xb, relations=relations)
+                return self._cpu_async(bsz, slot=slot, relations=relations)
             return self._async_forward(bsz, slot=slot, relations=relations)
         rel = self._pad_relations(relations, bsz, rows)
         if not self._use_cuda:
-            pol_t, wdl_t, event = super().evaluate_encoded_async(
-                self._pinned_inputs_np[slot][:rows], relations=rel,
-            )
+            pol_t, wdl_t, event = self._cpu_async(rows, slot=slot, relations=rel)
         else:
             pol_t, wdl_t, event = self._async_forward(rows, slot=slot, relations=rel)
         return pol_t[:bsz], wdl_t[:bsz], event

@@ -162,6 +162,40 @@ def test_no_chunk_tensor_outlives_its_chunk() -> None:
     assert tuple(wdl.shape) == (rows, 3)
 
 
+def test_cpu_async_entries_chunk_too() -> None:
+    """Off CUDA the async entries used to forward the whole call unchunked: the
+    bound was accepted and ignored there. They chunk like the sync entry."""
+    model = _model()
+    rows = 5 * N + 3
+    chunked = DirectGPUEvaluator(model, device="cpu", max_batch=rows, forward_chunk_rows=N, legal_bf16=False)
+    plain = DirectGPUEvaluator(model, device="cpu", max_batch=rows, legal_bf16=False)
+    x = _rows(np.random.default_rng(9), rows, plain.get_input_buffer(1).shape[1])
+    chunked.get_input_buffer(rows)[:] = x
+    pol, wdl, _ev = chunked.evaluate_inplace_async(rows)
+    assert chunked.forward_chunk_stats == {"chunked_forwards": 1, "forward_chunks": 6}
+    pol2, wdl2, _ev2 = chunked.evaluate_encoded_async(x)
+    assert chunked.forward_chunk_stats == {"chunked_forwards": 2, "forward_chunks": 12}
+    want_pol, want_wdl = _evaluate(plain, x)
+    for p_, w_ in ((pol, wdl), (pol2, wdl2)):
+        np.testing.assert_allclose(np.asarray(p_), want_pol, atol=1e-4)
+        np.testing.assert_allclose(np.asarray(w_), want_wdl, atol=1e-4)
+    small = DirectGPUEvaluator(model, device="cpu", max_batch=rows, forward_chunk_rows=N, legal_bf16=False)
+    small.get_input_buffer(N)[:] = x[:N]
+    small.evaluate_inplace_async(N)
+    assert small.forward_chunk_stats["chunked_forwards"] == 0
+    # the bucket-padding branch of both entries (rows padded up to a bucket, then sliced back)
+    padded = DirectGPUEvaluator(
+        model, device="cpu", max_batch=rows, forward_chunk_rows=N, legal_bf16=False, pad_to_compiled_buckets=True,
+    )
+    padded.get_input_buffer(rows)[:] = x
+    pol3, wdl3, _ev3 = padded.evaluate_inplace_async(rows)
+    pol4, wdl4, _ev4 = padded.evaluate_encoded_async(x)
+    assert padded.forward_chunk_stats["chunked_forwards"] == 2
+    for p_, w_ in ((pol3, wdl3), (pol4, wdl4)):
+        np.testing.assert_allclose(np.asarray(p_), want_pol, atol=1e-4)
+        np.testing.assert_allclose(np.asarray(w_), want_wdl, atol=1e-4)
+
+
 _BOARDS = (
     chess.STARTING_FEN,
     "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",

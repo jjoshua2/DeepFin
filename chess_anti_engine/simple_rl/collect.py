@@ -412,12 +412,22 @@ def realised_eval_max_batch(settings: CollectSettings) -> int:
 COLLECT_CUDA_GRAPH_MAX_ROWS = 512
 
 
+# The largest forward the memory model is known to cover: 3 x 128 at 64 sims with 2,048-row eager forwards
+# (knob off, pin fd8c0ce08) measured 6,476 MiB per process, inside the line's 8,381; with 4,096-row forwards
+# (topk 16, knob on) it measured 9,061, outside it, and a 5,300-row forward went over the card
+# (mem_wide2_20261122). A larger bound waits for the post-chunking refit of check_vram.
+COLLECT_MAX_EVAL_CHUNK_ROWS = 2048
+
+
 def realised_eval_chunk_rows(settings: CollectSettings) -> int:
-    """Rows per network forward of the collect's CUDA evaluator."""
+    """Rows per network forward of the collect's CUDA evaluator (forwards above the graph cap run eager)."""
     if settings.eval_chunk_rows is None:
         return COLLECT_CUDA_GRAPH_MAX_ROWS
-    if int(settings.eval_chunk_rows) < 1:
-        raise ValueError(f"--eval-chunk-rows must be >= 1, got {settings.eval_chunk_rows}")
+    if not 1 <= int(settings.eval_chunk_rows) <= COLLECT_MAX_EVAL_CHUNK_ROWS:
+        raise ValueError(
+            f"--eval-chunk-rows must be between 1 and {COLLECT_MAX_EVAL_CHUNK_ROWS}, got {settings.eval_chunk_rows}: "
+            "above that the GPU memory check cannot vouch for the eager forward (a 5,300-row forward went over "
+            "the card at 3 x 128); a larger bound waits for the check's refit")
     return int(settings.eval_chunk_rows)
 
 
@@ -463,7 +473,7 @@ def evaluator_graph_record(evaluator: Any) -> dict[str, Any]:
             "cuda_graph_stats": getattr(evaluator, "cuda_graph_stats", None),
             # read off the evaluator the search consumed (None on CPU: no cap)
             "eval_max_batch_realised": None if max_batch is None else int(max_batch),
-            # read off the same evaluator: the most rows one network forward ran
+            # read off the same evaluator: its forward bound (no network forward ran more rows; None = unbounded)
             "eval_chunk_rows_realised": getattr(evaluator, "forward_chunk_rows", None)}
 
 

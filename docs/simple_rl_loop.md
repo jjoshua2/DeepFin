@@ -635,8 +635,18 @@ stream, written into one output in row order, with one completion event. The sea
 is unchanged: it hands the same leaves, and the leaf buffer, flushes and the 2-group
 pipeline are not touched. Results are equal up to batch-size effects of the kernels
 (CPU fp32: max |Δ| 4.8e-7 policy logit, 1.8e-8 WDL on a 43-row batch chunked at 8).
-`eval_chunk_rows_realised` and the `chunked_forwards` / `forward_chunks` counters in
-`cuda_graph_stats` are read off the evaluator the search used.
+`eval_chunk_rows_realised` (the evaluator's forward bound: no forward ran more
+rows) and the `chunked_forwards` / `forward_chunks` counters in `cuda_graph_stats` are
+read off the evaluator the search used. Every entry chunks, sync and async, on CUDA
+and on the CPU.
+
+`--eval-chunk-rows` accepts 1 to 2,048, and is temporary, for the N comparison.
+Chunks above 512 rows run eager, not as graphs. The memory check vouches only for
+forwards up to the largest eager forward its line was measured inside: 2,048 rows,
+6,476 MiB per process, against the line's 8,381. A 4,096-row forward measured 9,061
+MiB per process, outside the line, and a 5,300-row forward went over the card. Yet
+the steep term passed both at 3 × 128 (24.55 GiB against 26.43 usable). So a larger
+value is refused at start, not charged, until the check is refit after chunking.
 `DirectGPUEvaluator(forward_chunk_rows=...)` defaults to the evaluator's own graph
 cap when graphs are on, and to no bound otherwise, so the eager, compiled-bucket
 (UCI) and compact-legal evaluators are unchanged.

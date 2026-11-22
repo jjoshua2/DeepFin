@@ -692,10 +692,11 @@ def _common(p: argparse.ArgumentParser) -> None:
                    help="CUDA evaluator batch cap (default: the search's leaf-buffer size at this "
                         "--concurrency / --topk; a smaller value is refused -- it would drop leaf evaluations)")
     c.add_argument("--eval-chunk-rows", type=int, default=None, metavar="N",
-                   help="most rows one network forward of the CUDA evaluator runs; a larger leaf batch is "
-                        "forwarded in row-ordered chunks (same search, results equal up to bf16 batching "
-                        "effects). Default: the evaluator's CUDA-graph row cap (512), so every forward replays "
-                        "a graph. Bounds peak GPU memory; recorded as eval_chunk_rows_realised")
+                   help="TEMPORARY, for the N comparison: most rows one network forward of the CUDA evaluator "
+                        "runs (1..2048); a larger leaf batch is forwarded in row-ordered chunks (same search, results "
+                        "equal up to bf16 batching effects). Default: the evaluator's CUDA-graph row cap (512), so "
+                        "every forward replays a graph; chunks above 512 rows run eager. Bounds peak GPU memory; "
+                        "recorded as eval_chunk_rows_realised")
     c.add_argument("--collect-procs", type=int, default=None, metavar="K",
                    help="collect processes sharing the device, each playing a disjoint slice of the openings "
                         "with its own seed (pinned: it sets the RNG streams). Default: the run's pinned value, "

@@ -436,11 +436,12 @@ def test_vram_refusal_uses_free_memory_and_the_usable_limit(monkeypatch: pytest.
         collect_mod.check_vram(replace(settings, collect_procs=8, concurrency=96, sims=16))
     # One process at 64 sims: 1 x 256 (measured 12.1 GB) fits; 1 x 512 peaked at
     # 29.9 GB with 16,384-row forwards, past the usable limit, which the linear
-    # segment alone under-predicted. That measured shape is --eval-chunk-rows
-    # 16384; at the default (512-row forwards) the steep segment is not charged.
+    # segment alone under-predicted. Forwards that large are no longer allowed
+    # (--eval-chunk-rows <= 2048); at the default (512-row forwards) the steep
+    # segment is not charged.
     one = replace(settings, collect_procs=1)
     assert collect_mod.check_vram(replace(one, concurrency=256)) is not None
-    with pytest.raises(ValueError, match="usable limit"):
+    with pytest.raises(ValueError, match="--eval-chunk-rows must be between 1 and 2048"):
         collect_mod.check_vram(replace(one, concurrency=512, eval_chunk_rows=16384))
     assert collect_mod.check_vram(replace(one, concurrency=512)) is not None
     # A shape no process count fits is not told to use --collect-procs 1.
@@ -596,10 +597,17 @@ def test_vram_charges_boards_and_the_largest_forward_not_the_leaf_reservation() 
     assert need16 == pytest.approx(1.1 * (48 * 64 + 1.11 * 32 * 128) * 3 / 1024)  # every fitted point unchanged
     for topk in (21, 32, 64):
         assert collect_mod.vram_need_gib(replace(base, topk=topk)) == pytest.approx(need16)
-    # forwards of the whole topk-32 buffer (8,192 rows) are charged the steep segment
-    wide = replace(base, topk=32, eval_chunk_rows=8192)
-    assert collect_mod.vram_need_gib(wide) == pytest.approx(1.1 * (2.006 * 8192 - 4348) * 3 / 1024)
-    assert collect_mod.vram_need_gib(wide) > 0.83 * 31.84
+    # The check vouches for forwards up to 2,048 rows (measured 6,476 MiB per process at
+    # 2,048-row eager forwards, inside the line). Larger bounds are refused outright,
+    # not charged: 4,096 rows measured 9,061 MiB per process (outside the line) and a
+    # 5,300-row forward went over the card, while the steep term still passed both.
+    wide = replace(base, topk=32)
+    assert collect_mod.vram_need_gib(replace(wide, eval_chunk_rows=2048)) == pytest.approx(need16)
+    for n in (2049, 4096, 5300, 8192):
+        with pytest.raises(ValueError, match="--eval-chunk-rows must be between 1 and 2048"):
+            collect_mod.vram_need_gib(replace(wide, eval_chunk_rows=n))
+        with pytest.raises(ValueError, match="--eval-chunk-rows must be between 1 and 2048"):
+            collect_mod.validate_settings(replace(wide, eval_chunk_rows=n))
 
 
 def test_eval_chunk_rows_reaches_the_evaluator_and_its_record(monkeypatch: pytest.MonkeyPatch) -> None:
