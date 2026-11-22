@@ -10,10 +10,12 @@ The scan is an AST pass over `tests/*.py`. It looks at process launches:
 ``asyncio.create_subprocess_exec``, and ``os.execve`` / ``os.execvpe`` /
 ``os.posix_spawn`` / ``os.posix_spawnp``. The argv may be a list or tuple
 literal, positional or ``args=``, or a name bound once (``cmd = [...]`` or
-``cmd: list[str] = [...]``) in the same function to one. A launch counts as starting python when its first program, after any
+``cmd: list[str] = [...]``; a bare ``cmd: list[str]`` declaration is not a
+binding) in the same function to one. A launch counts as starting python when its first program, after any
 ``timeout`` / ``nice`` / ``env`` / ``setsid`` / ``stdbuf`` / ``ionice`` /
 ``taskset`` wrapper and that wrapper's options (``-n 10``, ``30``, ``5s``,
-``A=1``, a ``0x1`` mask, a ``0-3`` CPU list), is ``sys.executable`` (any
+``A=1``, a ``0x1`` mask, a ``0-3`` CPU list, and the word after an option
+that takes one: ``env -u X``, ``timeout -s KILL``, ``stdbuf -o L``), is ``sys.executable`` (any
 ``.executable`` attribute) or a ``python*`` literal; a single string (the
 ``shell=True`` form) counts when its first word is one.
 
@@ -56,15 +58,31 @@ _ASYNC_CALLS = {"create_subprocess_exec"}
 # name -> (index of the program argument, index of a positional env or None)
 _OS_EXEC_CALLS = {"execve": (0, 2), "execvpe": (0, 2), "posix_spawn": (0, 2), "posix_spawnp": (0, 2)}
 _WRAPPERS = {"timeout", "nice", "env", "setsid", "stdbuf", "ionice", "taskset"}
+# A wrapper's options that take the NEXT word as their argument (`env -u X`,
+# `timeout -s KILL`, `stdbuf -o L`); that word is skipped with the option.
+_WORD_OPTIONS = {
+    "env": {"-u", "--unset", "-C", "--chdir"},
+    "timeout": {"-s", "--signal", "-k", "--kill-after"},
+    "stdbuf": {"-i", "--input", "-o", "--output", "-e", "--error"},
+    "nice": {"-n", "--adjustment"},
+    "ionice": {"-c", "--class", "-n", "--classdata"},
+    "taskset": {"-c", "--cpu-list"},
+}
 
 
-def _is_python(node: ast.expr | None) -> bool:
+def _is_python(node: ast.expr | None, *, shell: bool = False) -> bool:
+    """``shell``: ``node`` is a whole command line (the string form of a
+    subprocess argv), so its first word is the program; otherwise it is one
+    argv element or a program path, which may itself contain spaces."""
     if isinstance(node, ast.Attribute) and node.attr == "executable":
         return True
     if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
         return False
-    words = node.value.split()  # a shell string: its first word is the program
-    return bool(words) and words[0].rsplit("/", 1)[-1].startswith("python")
+    text = node.value
+    if shell:
+        words = text.split()
+        text = words[0] if words else ""
+    return text.rsplit("/", 1)[-1].startswith("python")
 
 
 def _program(elts: list[ast.expr]) -> ast.expr | None:
@@ -84,6 +102,9 @@ def _program(elts: list[ast.expr]) -> ast.expr | None:
                 if not (isinstance(w, ast.Constant) and isinstance(w.value, str)):
                     break
                 t = w.value
+                if t in _WORD_OPTIONS.get(base, ()):
+                    i += 2
+                    continue
                 if (t.startswith("-") or "=" in t or t.replace(".", "", 1).rstrip("smhd").isdigit()
                         or re.fullmatch(r"0[xX][0-9a-fA-F]+|[0-9][0-9,-]*", t)):
                     i += 1
@@ -159,8 +180,10 @@ def _problems(env: _Env) -> list[str]:
 
 
 def _binds(name: str, scope_nodes: list[ast.AST]) -> list[ast.Assign | ast.AnnAssign]:
-    """Every ``name = ...`` / ``name: T = ...`` in the scope."""
-    return [n for n in scope_nodes if isinstance(n, (ast.Assign, ast.AnnAssign))
+    """Every ``name = ...`` / ``name: T = ...`` in the scope (a bare
+    ``name: T`` declaration binds nothing)."""
+    return [n for n in scope_nodes
+            if (isinstance(n, ast.Assign) or (isinstance(n, ast.AnnAssign) and n.value is not None))
             and any(isinstance(t, ast.Name) and t.id == name
                     for t in (n.targets if isinstance(n, ast.Assign) else [n.target]))]
 
@@ -205,22 +228,23 @@ def _resolve_argv(node: ast.expr | None, scope_nodes: list[ast.AST]) -> list[ast
     return None
 
 
-def _launch(node: ast.Call, bare: set[str]) -> tuple[ast.expr | None, ast.expr | None] | None:
-    """``(argv or program node, env node)`` if ``node`` launches a process."""
+def _launch(node: ast.Call, bare: set[str]) -> tuple[ast.expr | None, ast.expr | None, bool] | None:
+    """``(argv or program node, env node, is_subprocess_argv)`` if ``node``
+    launches a process; the flag says a string first argument is a command line."""
     func = node.func
     name = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else None
     env = next((k.value for k in node.keywords if k.arg == "env"), None)
     if ((isinstance(func, ast.Attribute) and name in _SUBPROCESS_CALLS)
             or (isinstance(func, ast.Name) and name in bare)):
         argv = node.args[0] if node.args else next((k.value for k in node.keywords if k.arg == "args"), None)
-        return argv, env
+        return argv, env, True
     if name in _ASYNC_CALLS and isinstance(func, ast.Attribute):
-        return (node.args[0] if node.args else None), env
+        return (node.args[0] if node.args else None), env, False
     if name in _OS_EXEC_CALLS and isinstance(func, ast.Attribute):
         prog, env_at = _OS_EXEC_CALLS[name]
         if env is None and len(node.args) > env_at:
             env = node.args[env_at]
-        return (node.args[prog] if len(node.args) > prog else None), env
+        return (node.args[prog] if len(node.args) > prog else None), env, False
     return None
 
 
@@ -238,13 +262,14 @@ def scratch_env_children(source: str) -> list[tuple[int, list[str]]]:
             launch = _launch(node, bare)
             if launch is None:
                 continue
-            argv_node, env_node = launch
+            argv_node, env_node, command_line = launch
+            shell = False
             if isinstance(argv_node, (ast.Name, ast.List, ast.Tuple)):
                 argv = _resolve_argv(argv_node, nodes)
                 program = _program(argv) if argv is not None else None
             else:
-                program = argv_node
-            if not _is_python(program):
+                program, shell = argv_node, command_line
+            if not _is_python(program, shell=shell):
                 continue
             env = _resolve_env(env_node, nodes)
             if env is None:
@@ -340,6 +365,19 @@ def shell_string_with_a_path():
     subprocess.run("python3 a/b.py", shell=True, env={"PATH": "/bin"})
 def bash_with_a_python_path():
     subprocess.run(["bash", "python/x.sh"], env={"PATH": "/bin"})
+def python_path_with_a_space():
+    subprocess.run(["/opt/my env/bin/python3", "x.py"], env={"PATH": "/bin"})
+def declared_then_assigned():
+    cmd: list[str]
+    cmd = [sys.executable, "x.py"]
+    env: dict[str, str]
+    env = {"PATH": "/bin"}
+    subprocess.run(cmd, env=env)
+def wrapper_options_with_a_word():
+    subprocess.run(["env", "-u", "X", sys.executable], env={"PATH": "/bin"})
+    subprocess.run(["timeout", "-s", "KILL", "30", sys.executable], env={"PATH": "/bin"})
+    subprocess.run(["stdbuf", "-o", "L", sys.executable], env={"PATH": "/bin"})
+    subprocess.run(["timeout", "30", "bash", "x.sh"], env={"PATH": "/bin"})
 '''
     assert scratch_env_children(src) == [
         (5, _BOTH),
@@ -369,6 +407,11 @@ def bash_with_a_python_path():
         (65, _BOTH),
         (68, _BOTH),
         (70, _BOTH),
+        (74, _BOTH),
+        (80, _BOTH),
+        (82, _BOTH),
+        (83, _BOTH),
+        (84, _BOTH),
     ]
 
 
