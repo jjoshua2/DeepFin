@@ -743,7 +743,7 @@ class MultiGpuPucvPool:
             wedge.join_unless_wedged(
                 self._threads[k], max(0.0, abandoned_deadline - time.monotonic()))
         lingering = [
-            th.name for k, th in enumerate(self._threads)
+            th for k, th in enumerate(self._threads)
             # After a device fault, ending workers park: no join.
             if k not in stuck and not wedge.join_unless_wedged(th, 2.0)
         ]

@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import queue
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -108,3 +109,69 @@ def test_join_unless_wedged_reports_ended_parked_or_still_running() -> None:
     parked.start()
     assert wedge.join_unless_wedged(parked, 2.0) is True
     assert parked in wedge.parked_threads()
+
+
+def _warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+
+
+def test_after_a_device_fault_a_worker_that_neither_parks_nor_ends_is_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The production case: an RPG startup failure notes a fault before close().
+    wedge.note_device_fault("test fault before close")
+    release = threading.Event()
+    th = threading.Thread(target=release.wait, args=(_LINGER_S,), name="busy-worker",
+                          daemon=True)  # not wrapped in wedge.parking: never parks
+    th.start()
+    try:
+        assert wedge.join_unless_wedged(th, 0.05) is False
+        with caplog.at_level(logging.WARNING):
+            _walkers(th).close()
+        assert _warnings(caplog) == [
+            "walker pool close: busy-worker still running after the 2s join; left running"
+        ]
+    finally:
+        release.set()
+        th.join(5)
+
+
+def test_two_lingering_workers_get_one_line_naming_both(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    release = threading.Event()
+    threads = [threading.Thread(target=release.wait, args=(_LINGER_S + 2.0,), name=f"w-{k}",
+                                daemon=True) for k in range(2)]
+    for th in threads:
+        th.start()
+    pool = _walkers(threads[0])
+    pool._wakes = [threading.Event(), threading.Event()]
+    pool._started_threads = threads
+    try:
+        with caplog.at_level(logging.WARNING):
+            pool.close()
+        assert _warnings(caplog) == [
+            "walker pool close: w-0, w-1 still running after the 2s join; left running"
+        ]
+    finally:
+        release.set()
+        for th in threads:
+            th.join(5)
+
+
+def test_a_worker_that_parked_during_a_no_fault_join_is_not_called_running(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # No fault when close() starts, so the join is a plain Thread.join; the
+    # worker then latches a fault and parks. The join spends its 2 s and
+    # returns False (alive), but the thread is parked, not running.
+    def work() -> None:
+        time.sleep(0.2)
+        wedge.note_device_fault("fault latched during the join")
+
+    th = threading.Thread(target=wedge.parking(work), name="parks-mid-join", daemon=True)
+    th.start()
+    with caplog.at_level(logging.WARNING):
+        _walkers(th).close()
+    assert th in wedge.parked_threads()
+    assert _warnings(caplog) == []

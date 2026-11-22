@@ -201,7 +201,7 @@ class WalkerPool:
             ev.set()
   # Walkers won't hit the barrier in shutdown mode, so don't wait on it.
   # daemon=True; bounded join (ended, or parked after a device fault).
-        lingering = [th.name for th in self._started_threads
+        lingering = [th for th in self._started_threads
                      if not wedge.join_unless_wedged(th, 2.0)]
         wedge.warn_outlived_close(_log, "walker pool", lingering, 2.0)
 

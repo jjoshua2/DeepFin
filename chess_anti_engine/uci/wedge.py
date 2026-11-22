@@ -220,10 +220,15 @@ def join_unless_wedged(thread: threading.Thread, timeout: float) -> bool:
     return True
 
 
-def warn_outlived_close(log: logging.Logger, pool: str, names: list[str], join_s: float) -> None:
-    """One warning for a pool ``close()`` whose bounded join ran out: the named
-    threads are left running (daemon) and may still hold their evaluators. Not
-    for threads already abandoned in a device step (announced as a device fault)."""
+def warn_outlived_close(log: logging.Logger, pool: str, threads: list[threading.Thread],
+                        join_s: float) -> None:
+    """One warning for a pool ``close()`` whose bounded join ran out, naming the
+    threads still running (left running, daemon; they may still hold their
+    evaluators). Checked now, not at the join: a thread that has since ended, or
+    parked (a device fault latched during a no-fault join), is retired and not
+    named. Not for threads abandoned in a device step (announced as a fault)."""
+    with _lock:
+        names = [th.name for th in threads if th.is_alive() and th not in _parked]
     if names:
         log.warning("%s close: %s still running after the %gs join; left running",
                     pool, ", ".join(names), join_s)

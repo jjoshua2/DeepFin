@@ -619,7 +619,7 @@ class RootParallelGumbelPool:
                 wedge.join_unless_wedged(
                     self._threads[k], max(0.0, abandoned_deadline - time.monotonic()))
         lingering = [
-            self._threads[k].name for k in started
+            self._threads[k] for k in started
             # After a device fault, ending groups park: no join.
             if k not in self._abandoned and not wedge.join_unless_wedged(self._threads[k], 2.0)
         ]
