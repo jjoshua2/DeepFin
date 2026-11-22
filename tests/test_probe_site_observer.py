@@ -20,6 +20,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tests._child_env import gpu_free_env
+
 _REPO = Path(__file__).resolve().parents[1]
 _PROBE_DIR = _REPO / "scripts" / "probe_site"
 
@@ -44,7 +46,7 @@ def _run(body: str, **extra_env: str) -> str:
     env.update(extra_env)
     proc = subprocess.run(
         [sys.executable, "-c", body],
-        env=env, capture_output=True, text=True, timeout=180, check=False,
+        env=gpu_free_env(env), capture_output=True, text=True, timeout=180, check=False,
     )
     assert proc.returncode == 0, f"probe subprocess failed:\n{proc.stdout}\n{proc.stderr}"
     return proc.stdout

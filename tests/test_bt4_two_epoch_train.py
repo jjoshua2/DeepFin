@@ -12,6 +12,7 @@ import pytest
 
 from chess_anti_engine.replay.game_epoch import GameEpochPlan, MIRROR_AUGMENTATION_BATCH_COPIES, _balanced_batch_rows
 from scripts import bt4_two_epoch_train as train
+from tests._child_env import gpu_free_env
 
 
 def write(path: Path, value: Any) -> dict[str, str]:
@@ -368,7 +369,7 @@ def test_real_child_bootstrap_normalizes_threads_and_reaches_actual_driver_cli(t
     assert 'TORCHDYNAMO_SUPPRESS_ERRORS' not in env
     env['TORCHINDUCTOR_COMPILE_THREADS'] = '7'
     result = subprocess.run([sys.executable, '-c', train.CHILD_BOOTSTRAP, str(record),
-                             'scripts/lc0_control_train.py', '--help'], cwd=runtime, env=env,
+                             'scripts/lc0_control_train.py', '--help'], cwd=runtime, env=gpu_free_env(env),
                             text=True, capture_output=True, timeout=90, check=False)
     assert result.returncode == 0, result.stderr
     assert '--epochs' in result.stdout

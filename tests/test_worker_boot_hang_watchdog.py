@@ -47,6 +47,7 @@ from chess_anti_engine.broker_hang import (
     pin_nvml_cuda_check,
     resolve_worker_boot_hang_abort_seconds,
 )
+from tests._child_env import gpu_free_env
 
 
 class _Clock:
@@ -398,7 +399,7 @@ def test_the_worker_entry_point_sets_the_pin() -> None:
     env = {k: v for k, v in os.environ.items() if k != NVML_CUDA_CHECK_ENV}
     env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
     out = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, env=env,
+        [sys.executable, "-c", code], capture_output=True, text=True, env=gpu_free_env(env),
         timeout=300, check=False,
     )
     assert out.returncode == 0, out.stderr

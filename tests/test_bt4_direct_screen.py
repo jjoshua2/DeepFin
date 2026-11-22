@@ -11,6 +11,7 @@ import time
 from typing import Any
 
 import pytest
+from tests._child_env import gpu_free_env
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/bt4_direct_screen.py'
 spec = importlib.util.spec_from_file_location('bt4_direct_screen_test', SCRIPT)
@@ -147,7 +148,7 @@ def test_child_environment_overrides_ambient_live_config(monkeypatch):
     monkeypatch.setenv('BLOSC_NTHREADS', '64')
     code = 'import os,json; print(json.dumps({k:os.environ[k] for k in ("CHESS_ANTI_ENGINE_LIVE_CONFIG","BLOSC_NTHREADS")}))'
     result = json.loads(subprocess.check_output([sys.executable, '-c', code],
-                                                env=launcher.environment(True), text=True))
+                                                env=gpu_free_env(launcher.environment(True)), text=True))
     assert result == {'CHESS_ANTI_ENGINE_LIVE_CONFIG': str(launcher.RUNTIME / 'configs/pbt2_small.yaml'),
                       'BLOSC_NTHREADS': '2'}
 

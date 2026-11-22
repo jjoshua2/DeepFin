@@ -33,6 +33,7 @@ import pytest
 import torch
 
 from chess_anti_engine.model import ModelConfig, build_model
+from tests._child_env import gpu_free_env
 
 def _fault_target(mode: str, where: str, role: str, chain_role: str) -> bool:
     """Whether the driver turns this evaluator bad (its source is pasted into
@@ -151,7 +152,7 @@ class _Session:
             [sys.executable, "-u", str(driver), "--checkpoint", str(ckpt), "--no-compile",
              "--chunk-sims", "64", *args],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, env=full_env, cwd=str(tmp_path), bufsize=1,
+            text=True, env=gpu_free_env(full_env), cwd=str(tmp_path), bufsize=1,
         )
         self.lines: list[str] = []
         import queue

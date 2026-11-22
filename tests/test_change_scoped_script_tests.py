@@ -17,6 +17,7 @@ import pytest
 
 from scripts import validate
 from tests import conftest
+from tests._child_env import gpu_free_env
 
 # The package name is mentioned here on purpose: it keeps this file out of the
 # script-only set, so the scoping tests always run.
@@ -160,12 +161,12 @@ def test_real_pytest_reports_the_listed_deselection(tmp_path: Path) -> None:
     env = {k: v for k, v in os.environ.items() if k != validate.DESELECT_LIST_ENV}
     env["PYTHONPATH"] = str(validate.ROOT) + os.pathsep + env.get("PYTHONPATH", "")
     command = [sys.executable, "-m", "pytest", "--collect-only", "-p", "no:cacheprovider", SCRIPT_ONLY_PROBE]
-    plain = subprocess.run(command, cwd=validate.ROOT, env=env, capture_output=True, text=True, timeout=300,
+    plain = subprocess.run(command, cwd=validate.ROOT, env=gpu_free_env(env), capture_output=True, text=True, timeout=300,
                            check=False)
     listing = tmp_path / "list.txt"
     listing.write_text(f"{SCRIPT_ONLY_PROBE}\n")
     env[validate.DESELECT_LIST_ENV] = str(listing)
-    scoped = subprocess.run(command, cwd=validate.ROOT, env=env, capture_output=True, text=True, timeout=300,
+    scoped = subprocess.run(command, cwd=validate.ROOT, env=gpu_free_env(env), capture_output=True, text=True, timeout=300,
                             check=False)
     assert plain.returncode == 0, plain.stdout + plain.stderr
     assert "deselected" not in plain.stdout

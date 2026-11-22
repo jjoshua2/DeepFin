@@ -13,6 +13,7 @@ import pytest
 import torch
 
 from tests.conftest import classify_thread_cap, resolve_thread_cap, thread_cap_regime_line
+from tests._child_env import gpu_free_env
 
 
 def test_the_configured_cap_is_the_realized_cap(thread_cap: int | None) -> None:
@@ -73,7 +74,7 @@ def test_conftest_caps_or_preserves_a_controlled_baseline(setting: str, expected
     )
     out = subprocess.run(
         [sys.executable, "-c", code],
-        capture_output=True, text=True, env=env, timeout=300, check=False,
+        capture_output=True, text=True, env=gpu_free_env(env), timeout=300, check=False,
         cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     )
     assert out.returncode == 0, f"controlled child failed:\n{out.stdout}\n{out.stderr}"
@@ -177,7 +178,7 @@ def test_the_regime_line_reaches_the_terminal_with_its_payload(
     out = subprocess.run(
         [sys.executable, "-m", "pytest", "tests/test_pytest_thread_cap.py",
          "-k", "resolve_thread_cap", "-q", "-p", "no:cacheprovider"],
-        capture_output=True, text=True, cwd=repo_root, env=env, timeout=600, check=False,
+        capture_output=True, text=True, cwd=repo_root, env=gpu_free_env(env), timeout=600, check=False,
     )
     # ⚑ pytest_terminal_summary fires even when zero tests are collected, so a
     # child that died during collection would still print the line and pass a
