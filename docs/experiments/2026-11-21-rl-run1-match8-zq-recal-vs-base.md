@@ -1,6 +1,6 @@
 # 2026-11-21: RL run 1, match 8 — recalibrated Zq vs the SL base (pre-registration)
 
-**Status: registered, not launched.** Launch requires both:
+**Status: registered; launched after the merge and completed 2026-11-21 (22:41).** Result: +9.6 [+3.3, +16.0], **"adoptable" and "improves on the base"** ([follow-up results](2026-11-21-rl-run1-followup-results.md#match-8-recalibrated-zq-vs-the-sl-base-seed-2026112191)). Launch required both:
 - this record is reviewed and merged;
 - the current follow-up chain (6b, then 6a) has released the GPU.
 

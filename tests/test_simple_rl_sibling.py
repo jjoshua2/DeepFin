@@ -272,6 +272,109 @@ def _fresh_run(run: dict[str, Path], name: str) -> Path:
     return d
 
 
+def _probe_of(model_path: Path, pairs: sib.SidecarPairs) -> dict[str, Any]:
+    from types import SimpleNamespace
+
+    from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
+
+    model = load_model_from_checkpoint(str(model_path), device="cpu")
+    term = sib.SiblingTerm(model, SimpleNamespace(cursor=0), pairs, w=1.0, rows=1, device="cpu")
+    return term.probe_abs_resid()
+
+
+def _train_watching_value_head(run: dict[str, Path], name: str, monkeypatch: pytest.MonkeyPatch,
+                               **kw: Any) -> tuple[dict[str, Any], dict[str, float], Path]:
+    """train_generation through the real Trainer, summing |grad| of every
+    value_wdl parameter as backward reaches it (tensor hooks on the trainer's
+    own model)."""
+    from chess_anti_engine.train.trainer import Trainer
+
+    grads: dict[str, float] = {}
+    real = Trainer.train_steps
+
+    def watch(self: Any, *a: Any, **k: Any) -> Any:
+        if not grads:
+            for n, p in self.model.value_wdl.named_parameters():
+                grads[n] = 0.0
+                p.register_hook(lambda g, n=n: grads.__setitem__(n, grads[n] + float(g.detach().abs().sum())))
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Trainer, "train_steps", watch)
+    d = _fresh_run(run, name)
+    s = train_generation(run_dir=d, generation=1, init_checkpoint=run["ckpt"], prev_trainer_checkpoint=None,
+                         settings=_settings(run, **kw))
+    monkeypatch.setattr(Trainer, "train_steps", real)
+    return s, grads, d / "gen_0001" / "train" / "model.pt"
+
+
+def _max_change(a: dict[str, torch.Tensor], b: dict[str, torch.Tensor], prefix: str) -> float:
+    keys = [k for k in a if k.startswith(prefix)]
+    assert keys, prefix
+    return max(float((a[k].float() - b[k].float()).abs().max()) for k in keys)
+
+
+def test_the_sibling_term_trains_the_value_head_through_the_trainer_hook(
+        run: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    """The term reaches the optimizer through Trainer's penalty hook: with every
+    loss weight 0 except w_sibling, the value head gets a gradient and moves (and
+    the policy head does not); with w_sibling 0 and otherwise the same run, it
+    gets none and stays bit-identical."""
+    init = _weights(run["ckpt"])
+    on = {"w_sibling": 1.0, "sibling_rows": 8, "sibling_dir": str(run["side"])}
+
+    # Term alone: no policy or value loss at all.
+    s, g, path = _train_watching_value_head(run, "term_alone", monkeypatch, w_policy=0.0, w_wdl=0.0, **on)
+    assert s["updates"] > 0
+    assert s["sibling"]["pairs"] > 0
+    assert g
+    assert all(v > 0 for v in g.values()), g
+    after = _weights(path)
+    assert _max_change(init, after, "value_wdl.") > 0
+    assert _max_change(init, after, "policy_own.") == 0  # child values only: no gradient into the policy head
+
+    # Paired control: the same run (policy loss on, so there is something to
+    # backpropagate; every value / aux weight 0), term on vs off.
+    s_on, g_on, p_on = _train_watching_value_head(run, "pol_term_on", monkeypatch, w_wdl=0.0, **on)
+    s_off, g_off, p_off = _train_watching_value_head(run, "pol_term_off", monkeypatch, w_wdl=0.0)
+    assert s_on["updates"] == s_off["updates"] > 0
+    assert all(v > 0 for v in g_on.values()), g_on
+    assert g_off
+    assert all(v == 0 for v in g_off.values()), g_off
+    assert _max_change(init, _weights(p_on), "value_wdl.") > 0
+    assert _max_change(init, _weights(p_off), "value_wdl.") == 0
+
+    # And the all-zero objective is refused up front instead of failing at the first backward.
+    with pytest.raises(ValueError, match="nothing to train"):
+        _settings(run, w_policy=0.0, w_wdl=0.0).validate()
+
+
+def test_sibling_rows_caps_the_rows_whose_pairs_each_batch_trains(run: dict[str, Path]) -> None:
+    k = 2  # the fixture sidecar's pairs per row
+    totals = {}
+    for rows in (1, 8):
+        d = _fresh_run(run, f"rows_{rows}")
+        s = train_generation(run_dir=d, generation=1, init_checkpoint=run["ckpt"], prev_trainer_checkpoint=None,
+                             settings=_settings(run, w_sibling=1.0, sibling_rows=rows, sibling_dir=str(run["side"])))
+        per_step = [int(n) for n, _ in s["sibling"]["per_step"]]
+        assert max(per_step) <= k * rows
+        totals[rows] = sum(per_step)
+    assert 0 < totals[1] < totals[8]
+
+
+def test_a_sidecar_materialised_from_another_collect_is_refused(run: dict[str, Path]) -> None:
+    other = run["tmp"] / "other_collect"
+    shutil.copytree(run["collect"], other)
+    man = json.loads((other / "manifest.json").read_text())
+    man["note_for_test"] = "a different collect manifest"
+    (other / "manifest.json").write_text(json.dumps(man))
+    side = run["tmp"] / "other_side"
+    sib.materialise(other, side / "gen_0001", k=2, min_visits=2, seed=3, holdout_frac=0.25, log=lambda _m: None)
+    d = _fresh_run(run, "foreign_sidecar")
+    with pytest.raises(ValueError, match="manifest"):
+        train_generation(run_dir=d, generation=1, init_checkpoint=run["ckpt"], prev_trainer_checkpoint=None,
+                         settings=_settings(run, w_sibling=1.0, sibling_rows=8, sibling_dir=str(side)))
+
+
 def test_holdout_pairs_are_never_trained_and_the_term_takes_effect(run: dict[str, Path],
                                                                     monkeypatch: pytest.MonkeyPatch) -> None:
     used: list[np.ndarray] = []
@@ -284,6 +387,14 @@ def test_holdout_pairs_are_never_trained_and_the_term_takes_effect(run: dict[str
         return ids
 
     monkeypatch.setattr(sib.SiblingTerm, "_batch_pairs", spy)
+    loaded: list[sib.SidecarPairs] = []
+    real_load = sib.load_sidecars
+
+    def keep(*a: Any, **kw: Any) -> sib.SidecarPairs:
+        loaded.append(real_load(*a, **kw))
+        return loaded[-1]
+
+    monkeypatch.setattr(sib, "load_sidecars", keep)
     d = _fresh_run(run, "train_on")
     s = train_generation(run_dir=d, generation=1, init_checkpoint=run["ckpt"], prev_trainer_checkpoint=None,
                          settings=_settings(run, w_sibling=1.0, sibling_rows=8, sibling_dir=str(run["side"])))
@@ -293,7 +404,14 @@ def test_holdout_pairs_are_never_trained_and_the_term_takes_effect(run: dict[str
     assert sm["steps"] == s["updates"]
     assert len(sm["per_step"]) == s["updates"]
     assert sm["probe_before"]["pairs"] > 0
-    assert sm["probe_after"]["mean_abs_resid"] != sm["probe_before"]["mean_abs_resid"]
+    # Takes effect: the hold-out probe |dv - dq| ends LOWER than after the same
+    # run (same seed, same rows) with the term off, scored on the same probe pairs.
+    off = _fresh_run(run, "train_off_same_seed")
+    train_generation(run_dir=off, generation=1, init_checkpoint=run["ckpt"], prev_trainer_checkpoint=None,
+                     settings=_settings(run))
+    off_probe = _probe_of(off / "gen_0001" / "train" / "model.pt", loaded[0])
+    assert off_probe["pairs"] == sm["probe_after"]["pairs"]
+    assert sm["probe_after"]["mean_abs_resid"] < off_probe["mean_abs_resid"]
     manifest = json.loads((d / "gen_0001" / "train" / "manifest.json").read_text())
     assert manifest["config"]["settings"]["w_sibling"] == 1.0
     assert "sibling_gen_0001" in manifest["inputs"]

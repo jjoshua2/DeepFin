@@ -103,8 +103,8 @@ roots (`stage1/smoke_cpu/`; a smoke, not a result):
 
 ## The GPU guard
 
-Every launcher in the bank sources `gpu_guard.sh` v2 (sha256 `997969c87bf3…`; v1 `a0a2f869a719…`). It refuses (exit 8) unless **all** of
-these hold:
+Every launcher in the bank sources `gpu_guard.sh` v3 (sha256 `ee073f841a24…`; v1 `a0a2f869a719…`, v2 `997969c87bf3…`).
+It refuses (exit 8) unless **all** of these hold:
 - **Memory.** `nvidia-smi --query-gpu=memory.used` is below 1,024 MiB.
   - **Not `--query-compute-apps`.** Under WSL2 that list cannot be relied on to see another process tree. During
     the incident below it listed this bank's three collects in 62 of 64 samples, but it never listed match 8's
@@ -121,13 +121,49 @@ these hold:
     could know about. And between a chain's steps, memory drops below 1 GiB.
 
 It then takes a non-blocking `flock` (exit 9 if held) on the bank's own `.gpu_launch.lock`, so two of this bank's
-launches cannot overlap. It never opens `~/projects/chess/scratchpad/gpu0_experiment.lock`.
+launches cannot overlap. It never opens `~/projects/chess/scratchpad/gpu0_experiment.lock`. A launcher started by
+another launcher of this bank (`run_stage0_all.sh` → `run_stage0.sh`, `run_stage2.sh` → `run_rfw_match.sh`) inherits
+the parent's locked descriptor and re-locks that, so nesting works; anything else opens the file and must get the lock.
+That inheritance is new in v3.
 
-**Tested** (`guard_test/guard_test.sh` v4 `d4ad57efc6f3…`, output `guard_test/guard_test.txt`; v1 `621a57547b22…`, v2
-`730d515388e3…` and v3 `b40b08d3d30c…`, with their outputs, are kept as `.v1` / `.v2` / `.v3`). Nothing in the test can reach the GPU: a fake `nvidia-smi` and `ps` sit first on PATH, HOME is a fake, and the
-launchers' python is replaced by a stub. For a collect call the stub records its arguments and fabricates a tiny
-finished collect: step-synchronous fake play in real time, 300 games, 128 slots. For the launcher's summary step it
-runs the real python. All 17 checks pass:
+**Launcher hardening (2026-11-22).** Another agent's guard test reached the GPU because its launcher had no
+`set -e`, so a failed `source` of a missing guard fell through to the real launch. This bank's launchers had the
+same hole: `run_stage0.sh`, `run_stage1.sh` and `run_rfw_match.sh` sourced the guard without checking the result.
+Every launcher now starts with these lines, before any sha check or use of a path:
+
+```bash
+set -euo pipefail
+GUARD=$HOME/chess-artifacts/operations/rl-run1-root-full-width/gpu_guard.sh
+[ -f "$GUARD" ] || { echo "REFUSED: no GPU guard at $GUARD"; exit 8; }
+RFW_STAGE=<stage> source "$GUARD" || exit 8
+```
+
+Under `set -e`, a command whose exit code is read on purpose is written `cmd && rc=0 || rc=$?`.
+
+New shas (previous versions kept as `.vN`):
+
+| Script | New sha | Previous sha |
+|---|---|---|
+| `stage0/run_stage0.sh` v4 | `205bd4f0db30…` | v3 `d0e3bcb6952b…` |
+| `stage0/run_stage0_all.sh` v2 | `98a9bea18970…` | v1 `51482410ec7c…` |
+| `stage1/run_stage1.sh` v3 | `0539b8e1e4f4…` | v2 `3778d06ddad6…` |
+| `run_rfw_match.sh` v3 | `b24a435b24e5…` | v2 `0487d857e379…` |
+| `stage2/run_stage2.sh` v3 | `ba70d73eb7b7…` | v2 `c07fe428aa39…` |
+| `stage3/launch_stage3.sh` v3 | `8bfe478f0db8…` | v2 `a519b39f2200…` |
+
+**Tested** (`guard_test/guard_test.sh` v5 `d9b84ec2eba5…`, output `guard_test/guard_test.txt`; v1 `621a57547b22…`,
+v2 `730d515388e3…`, v3 `b40b08d3d30c…` and v4 `d4ad57efc6f3…`, with their outputs, are kept as `.v1` … `.v4`).
+Nothing in the test can reach the GPU:
+- `CUDA_VISIBLE_DEVICES` is empty;
+- HOME is a fake;
+- `nvidia-smi`, `ps` and `python` are shadowed by stubs first on PATH;
+- the launchers' venv python is a stub too.
+
+Every launcher runs through one wrapper. Inside the environment it is about to run in, the wrapper asserts that
+`$HOME` is the fake and that `command -v` of `python`, `nvidia-smi` and `ps` gives the stubs. If any of this fails, the
+whole test aborts before any case runs. For a collect call the stub records its arguments and fabricates a tiny
+finished collect: step-synchronous fake play in real time, 600 games, 128 slots. For the launcher's summary step it
+runs the real python. All 29 checks pass:
 - memory 10,971 MiB, with every other check clear → refused for memory (the test greps "GPU memory in use");
 - memory unreadable → refused for memory;
 - a missing queue marker → 8;
@@ -145,16 +181,26 @@ runs the real python. All 17 checks pass:
   - a summary row whose `steady_rows_per_s` comes from `steady_rate.py` on the real progress log and the stub's
     first-forward time. It must lie within **±5%** of the stub's own measured full-concurrency rate. The stub
     records its real step times, because sleep overhead makes the nominal 128 / 0.1 s an overstatement. In v4 the
-    stub plays 600 games per process, about 15 s of full concurrency. The run reads 3,805 against a measured 3,827
-    (ratio 0.994).
+    stub plays 600 games per process, about 15 s of full concurrency. The v5 run reads 3,817 against a measured
+    3,830 (ratio 0.997).
     - v3 allowed ±25% on a 6 s run. That read 3,990 against the nominal 3,840.
     - This case found a real bug: the progress sampler could miss the final games. The launcher now takes one last
       sample after every process exits.
-- `run_stage0.sh` with memory busy → 8, and the stub was never called.
+- `run_stage0.sh` with memory busy → 8, and the stub was never called;
+- **the guard file missing** → 8 with no stub call, for each of `run_stage0.sh`, `run_stage0_all.sh`,
+  `run_stage1.sh`, `run_rfw_match.sh` and `launch_stage3.sh`;
+- **the guard present but failing to `source`** (a syntax error) → 8 with no stub call, for each of
+  `run_stage0.sh`, `run_rfw_match.sh` and `launch_stage3.sh`;
+- a nested launch, where the parent holds the bank lock → the child passes;
+- `launch_stage3.sh` without the operator's stage3 line → 8, and with it but no `OWNER_GO` → 90;
+- `run_rfw_match.sh` writing into the frozen pilot bank → 94.
 
 **Mutants** (`guard_test/guard_mutants.txt`; the restore was checked by md5):
 - with the memory check disabled, the two memory cases fail;
-- with the release-file stage check disabled, the "without the stage" case fails.
+- with the release-file stage check disabled, the "without the stage" case fails;
+- with the other agent's hole re-created in `run_stage0.sh` (no `set -euo pipefail`, no existence check, no
+  `|| exit 8`), both the guard-missing case and the guard-unloadable case for that launcher fail. This is in
+  `guard_test/guard_mutants_v5.txt`.
 
 ## Stage 0 — cost (GPU)
 
@@ -585,7 +631,7 @@ The sidecar step, after Stage 3's collect (CPU):
     ≈ 126 s on the GPU beside the registered match 8 (`zq_recal_vs_base_1_A`).
   - Peak memory was 30,406 MiB, at about 21:40:49.
   - They were killed by exact PID. The match survived: no OOM, no CUDA error. It is matched-sims, so its games are
-    not clock-dependent. The overlap is to be recorded in match 8's results (PR #1482).
+    not clock-dependent. The overlap is recorded in [match 8's results](2026-11-21-rl-run1-followup-results.md#match-8-recalibrated-zq-vs-the-sl-base-seed-2026112191).
   - Their partial outputs, all under this bank, were deleted. `stage0/INCIDENT_guardtest_20261121/` keeps only the
     logs and `INCIDENT.txt`; it is not a measurement.
   - The guard was rewritten as above. From now on, launchers are tested only with the GPU command stubbed and a
