@@ -1435,7 +1435,7 @@ is this arm, `S_C` its sims and `T_C` its topk.
   128 × 2 × `T` is refused.
 
 **Realised width at the candidate sims** (CPU, from the scoping bank's leak-free rows; mean legal 23.84). The table is
-banked with this addendum: `addendum2/width_table.json` [`1edde491`], from `addendum2/width_table.py` [`bcd304df`].
+banked with this addendum: `RFW/addendum2/width_table.json` [`1edde491`], from `RFW/addendum2/width_table.py` [`bcd304df`].
 
 | S_C | T_C = cap | mean realised width | share of rows with width < legal |
 |---|---|---|---|
