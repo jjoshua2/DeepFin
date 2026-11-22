@@ -1315,6 +1315,17 @@ length, the arm gets more or fewer rows and GPU-h than the pilot's 761,979 rows 
     sealed scorer and pool code do not change. Every one of those runs records its realised topk (`<tag>__topk` in
     the Stage 1 bank; the seat's realised `gumbel.topk`, checked by `check_shape.py`).
 
+**Names.** The sealed scorer, pool and match code keep their tags. Each of these now means `fw_wide`, at the topk the
+rule gives for its sims:
+
+| Name in files and logs | Meaning after Addendum 2 | Realised topk recorded as |
+|---|---|---|
+| Stage 0 rows with `knob: on` | `fw_wide` at the row's sims | the row's `topk` |
+| Stage 1 `M64on` | `fw_wide` at 64 sims (topk 32) | `M64on__topk` in the Stage 1 bank |
+| Stage 1 `MSEQon` | `fw_wide` at `S_eq` | `MSEQon__topk` |
+| Stage 2 `rfw_matched`, `rfw_eqtime` (knob seat) | `fw_wide` at 64 / `S_eq` against off at 64 | the seat's `gumbel.topk`, checked by `check_shape.py` |
+| Stage 3 `*_rfw` cells and seats | trained on the `fw_wide` collect at `S_eq` | the collect's `eval_max_batch_realised` = 256 × topk |
+
 **Why the wide arm replaces B rather than joining it:**
 1. **No stage has run,** so this is an amendment before any data.
 2. **The two pre-registered scoping banks answer the B-or-wide design question at equal leaf cost** (below):
