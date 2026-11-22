@@ -16,9 +16,9 @@ What counts as a citation
 * A backticked bare relative name (`results.jsonl`, `logs/p1.log`) only when a
   stamp follows it. It resolves against the directory of the most recent
   prefixed citation: earlier on the same line, else on an earlier line.
-  Unstamped bare names are prose (repo paths, flags), not citations, and so is a
-  stamped bare name under a top-level repo code directory that does not resolve in
-  the bank (`scripts/x.py` [`<commit>`] cites code at a commit, not a bank file).
+  Unstamped bare names are prose (repo paths, flags), not citations. A commit is
+  cited as code `a0bc34416` (a backticked token), never as a bracketed stamp: a
+  stamped repo path is a bank citation and reads MISSING if the bank lacks it.
 
 Stamps
 ------
@@ -45,9 +45,10 @@ path does not resolve) and MALFORMED: a stamp-like bracket the strict form rejec
 (too short, upper-case, no backticks, letters-only hex without backticks, a bad
 mtime, or separated from its token by a colon), or a near-miss of a known prefix
 (`rc/`, `RC /`). A MALFORMED citation would otherwise be silently skipped. The
-check fires only where a stamp can be: directly after a backticked path-like token
-(one containing `/`, a glob or brace, or ending in an extension), or wrapped onto
-the next line after one. Brackets in prose (`fixed in [0c795fb7a]`, a markdown link
+check fires only where a stamp can be: directly after a backticked token, or wrapped
+onto the next line after one. Bare lower-case hex in brackets (no backticks) fires
+only after a path-like token (one containing `/`, a glob or brace, or ending in an
+extension), because prose like `v2` [cafe1234 rows] has the same shape. Brackets in prose (`fixed in [0c795fb7a]`, a markdown link
 `[a0bc34416](...)`, `the [mtime column]`) are not stamps and stay silent.
 
 Prefix map
@@ -89,24 +90,19 @@ _TOKEN_RE = re.compile(
     r"(?P<stamp>\s*(?:(?P<shas>\[`" + _HEX + r"`\]?(?:\s*/\s*\[?`" + _HEX + r"`\]?)*)"
     r"|\[mtime (?P<mtime>\d\d-\d\d \d\d:\d\d)\]))?"
 )
-# A stamp-like bracket DIRECTLY after a backticked path-like token (an optional
-# colon allowed): backticked hex of any length or case, bare hex of 6+ (letters-only
-# included), or `[mtime <digit>`. Never a markdown link `[...](`.
-_LOOSE_AFTER_TOKEN_RE = re.compile(
-    r"\s*:?\s*\[\s*(?:`[0-9A-Fa-f]+`|[0-9A-Fa-f]{6,64}(?=[\s\]/])|mtime\s*\d)"
+# Stamp-like brackets directly after a backticked token that the strict form did not
+# consume. STRONG shapes fire after ANY backticked token (prose does not produce
+# them): backticked hex of any length or case, bare hex of 6+ carrying an upper-case
+# A-F, `[mtime <digit>`, or any stamp shape after a colon. The WEAK shape, bare
+# lower-case hex of 6+ (letters-only included), also matches prose such as
+# `v2` [cafe1234 rows], so it fires only after a path-like token. Never a markdown
+# link `[...](`.
+_STAMP_SHAPE = r"\[\s*(?:`[0-9A-Fa-f]+`|[0-9A-Fa-f]{6,64}(?=[\s\]/])|mtime\s*\d)"
+_LOOSE_STRONG_RE = re.compile(
+    r"\s*:\s*" + _STAMP_SHAPE
+    + r"|\s*\[\s*(?:`[0-9A-Fa-f]+`|(?=[0-9a-f]*[A-F])[0-9A-Fa-f]{6,64}(?=[\s\]/])|mtime\s*\d)"
 )
-# Top-level code directories of this repo. A stamped bare name under one of these
-# that does not resolve in the bank cites code at a commit, not a bank file (a bank
-# copy such as `scripts/sibling_order.py` beside a bank citation is still checked).
-_REPO_CODE_DIRS = frozenset({"chess_anti_engine", "configs", "docs", "scripts", "tests", "tools"})
-
-
-def _is_repo_path(token: str) -> bool:
-    """`scripts/x.py` [`<commit>`] names repo code at a commit, not a bank file."""
-    head = token.split("/", 1)[0]
-    return "/" in token and head in _REPO_CODE_DIRS
-
-
+_LOOSE_WEAK_RE = re.compile(r"\s*\[\s*[0-9a-f]{6,64}(?=[\s\]/])")
 _PATH_LIKE_RE = re.compile(r"[/*{}]|\.[A-Za-z0-9]+$")
 _PREFIX_TABLE_RE = re.compile(r"^\|\s*Prefix\s*\|\s*Expands to\s*\|")
 _TABLE_ROW_RE = re.compile(r"^\|\s*`([^`]+)`\s*\|\s*`([^`]+)`\s*\|")
@@ -304,8 +300,6 @@ class Verifier:
                 if path is None:
                     if not stamped or token.startswith("/") or " " in token:
                         continue
-                    if _is_repo_path(token) and (last_dir is None or not all(_resolve(last_dir + "/" + token))):
-                        continue  # repo code at a commit, not a bank file
                     if last_dir is None:
                         cite(token, "MISSING", "bare name with no earlier citation")
                         continue
@@ -320,10 +314,12 @@ class Verifier:
                     elif first is not None:
                         last_dir = os.path.dirname(first)
             for _start, end, token in token_spans:
-                if any(a <= end < b for a, b in consumed) or not _PATH_LIKE_RE.search(token):
+                if any(a <= end < b for a, b in consumed):
                     continue
-                lm = _LOOSE_AFTER_TOKEN_RE.match(line, end)
-                if not lm:
+                lm = _LOOSE_STRONG_RE.match(line, end)
+                if lm is None and _PATH_LIKE_RE.search(token):
+                    lm = _LOOSE_WEAK_RE.match(line, end)
+                if lm is None:
                     continue
                 close = line.find("]", lm.end())
                 if close >= 0 and line[close + 1: close + 2] == "(":

@@ -296,8 +296,7 @@ def test_stamp_wrapped_onto_the_next_line_still_counts(bank: dict[str, Path]) ->
         "the `F/arenas/` [mtime column] is listed.",  # prose mtime after a path
         "the `v2` [cafe1234 rows] table.",  # hex word after a token that is not path-like
         "see `docs/README.md`, fixed later in [0c795fb7a].",  # bracket later on the line, not after the token
-        "`scripts/arena_x.py` [`a0bc34416`] carries the fix.",  # repo code at a commit
-        "see `chess_anti_engine/x.py`\n[`a0bc34416`] for the code.",  # same, wrapped
+        "see `docs/README.md`, merged as [`7fea1b889`].",  # strong shape later on the line
     ],
 )
 def test_prose_brackets_are_silent(bank: dict[str, Path], prose: str) -> None:
@@ -308,5 +307,35 @@ def test_prose_brackets_are_silent(bank: dict[str, Path], prose: str) -> None:
 
 def test_letters_only_hex_after_a_token_is_malformed(bank: dict[str, Path]) -> None:
     rc, out, _ = _run(bank, _ok_row(bank) + "| x | `B/arenas/m1/pool.json` [deadbeef] |\n")
+    assert rc == 1, out
+    assert _status(out, "MALFORMED"), out
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["`scripts/arena_x.py` [`a0bc34416`] carries the fix.",
+     "see `chess_anti_engine/x.py`\n[`a0bc34416`] for the code."],
+    ids=["plain", "wrapped"],
+)
+def test_stamped_repo_path_not_in_the_bank_reads_missing(bank: dict[str, Path], line: str) -> None:
+    # A commit is cited as code `a0bc34416`; a bracketed stamp after a path is a bank
+    # citation, and one the bank lacks must be loud, not skipped.
+    rc, out, _ = _run(bank, _ok_row(bank) + line + "\n")
+    assert rc == 1, out
+    assert _status(out, "MISSING"), out
+
+
+@pytest.mark.parametrize(
+    "stamp",
+    ["[`dead`]", "[DEADBEEF]", "[`{H}`]", ": [`{h}`]", "[mtime 11-21 9:30]"],
+    ids=["short", "upper-bare", "upper-backticked", "after-colon", "bad-mtime"],
+)
+def test_malformed_after_an_extensionless_token(bank: dict[str, Path], stamp: str) -> None:
+    sums = bank["one"] / "SHA256SUMS"
+    sums.write_text("sums\n")
+    h = _sha8(sums)
+    text = stamp.format(h=h, H=h.upper())
+    sep = "" if text.startswith(":") else " "
+    rc, out, _ = _run(bank, f"| s | `B/SHA256SUMS` [`{h}`] |\n| x | `SHA256SUMS`{sep}{text} |\n")
     assert rc == 1, out
     assert _status(out, "MALFORMED"), out
