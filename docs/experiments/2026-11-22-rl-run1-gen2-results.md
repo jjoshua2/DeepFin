@@ -102,10 +102,13 @@ These are as reported by the operator and read from the bank files cited.
 - Nothing was played.
 
 **Attempt 2.**
-- The release line is `stage0 idle_mib=2398` in `G2/GPU_RELEASED_BY_OPERATOR` [`efee002a`]. Its first line per
-  stage wins, and the operator replaced it for this attempt.
-- Start 14:31:43: `G2/stage0/started` [`a247a7c1`] reads `2026-11-22T14:31:43-05:00`, and `G2/resume.log`
-  [`fd8662b0`] reads `14:31:43 stage0 launch pid 2832905`.
+- The release line is `stage0 idle_mib=2398 2026-11-22T14:31:36-05:00`, the first line of
+  `G2/GPU_RELEASED_BY_OPERATOR` [`66473b70`] (its first line per stage wins; the operator replaced it for this attempt).
+  The file's second line, `gen2 …`, was appended later for the generation-2 stage (below); the stage0 line is
+  untouched.
+- Start 14:31:43: `G2/stage0/started` [`a247a7c1`] reads `2026-11-22T14:31:43-05:00`, and the first line of
+  `G2/resume.log` (append-only; the running generation-2 stage is still appending to it, so it is not stamped) reads
+  `2026-11-22T14:31:43-05:00 stage0 launch pid 2832905`.
 - Seat A's game log header is `created` 14:38:35; its first game's `ts` is 14:39:09.
 - Exit 0 at 16:06:23.
 - The owner's standing go is quoted in `G2/stage0/OWNER_GO` [`7d859aea`].
@@ -121,9 +124,10 @@ These are as reported by the operator and read from the bank files cited.
 **The gap between Stage 0's exit (16:06:23) and the memory smoke (16:40:08).** The operator ran two diagnostics
 unrelated to this record on the idle GPU: an engine warm-start test (16:06–16:10) and the forward-chunking
 measurement for PR #1511 (16:14–16:40). Each went through the operator's GPU gate, and neither wrote anything inside
-this bank; their times are the operator's report. The memory smoke's own gate then measured a fresh idle: the first
-lines of `G2/gen2/smoke_mem.log` [mtime 11-22 16:40] read "OK: memory within [1669, 2693] MiB, utilisation max 1 %
-over 5 samples, no GPU job of this user" (idle 2,181 MiB ± 512), stamped 2026-11-22T16:40:08-05:00.
+this bank; their times are the operator's report. The memory smoke's own gate then measured a fresh idle of 2,181 MiB
+(16:40:02, per the operator): the first lines of `G2/gen2/smoke_mem.log` [`efb7ea1e`] read "OK: memory within
+[1669, 2693] MiB, utilisation max 1 % over 5 samples, no GPU job of this user", and the smoke started at
+2026-11-22T16:40:08-05:00.
 
 **`gpu_scan.sh: line 171: desc: bad array subscript`, printed twice in `run.out`.** It does not change any scan's
 verdict. Source: `G2/gpu_scan.sh` [`949408e7`].
@@ -158,7 +162,21 @@ verdict. Source: `G2/gpu_scan.sh` [`949408e7`].
 
 The blanks below are filled from the bank when each stage is read. Each is judged by its own rule in the record.
 
-- **Memory smoke (pre-launch, 3 updates):** _blank: per-update peaks, verdict, bank file + stamp._
+- **Memory smoke (3 updates, after Stage 0's verdict):** **PASS**, exit 0 at 16:46:16 (per the operator).
+  `G2/gen2/smoke_mem.json` [`b2d0b1a1`]: `cpu_logic_smoke` false (a real GPU run), 722,742 rows, 1,412 batches in
+  the plan, peak reserved 16.957 GiB and peak allocated 15.377 GiB of 31.816 GiB, update 2 → 3 deltas 0.0 GiB
+  (reserved now and peak reserved), wall 364 s. Per-update rows: `G2/gen2/smoke_mem.jsonl` [`55e32161`]. Log:
+  `G2/gen2/smoke_mem.log` [`efb7ea1e`].
+
+**Generation-2 stage: launched.**
+- `G2/gen2/OWNER_GO` [`811e857b`], written 16:46:41: it quotes the owner's standing statement and cites Stage 0's
+  verdict and the smoke.
+- Release line `gen2 idle_mib=2181 2026-11-22T16:46:41-05:00` appended to `G2/GPU_RELEASED_BY_OPERATOR` [`66473b70`].
+- `G2/gen2/launch_gen2.sh` started under `setsid nohup`, output to `G2/gen2/run.out` (in progress; not stamped).
+- First step: `prelaunch/equiv_check.py`. `G2/gen2/equiv.started` [`96df781c`] reads 2026-11-22T16:46:54-05:00;
+  `G2/gen2/equiv.log` is in progress (not stamped).
+
+The result blanks follow.
 - **B2 collect from `gen1_baked.pt`:** _blank: games, rows, wall, checks, bank file + stamp._
 - **B3 equivalence, collect checks and the take-effect proof:** _blank._
 - **B4 training of generation 2:** _blank: updates, losses, trunk2 determinism check, bank file + stamp._
