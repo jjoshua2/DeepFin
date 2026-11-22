@@ -33,7 +33,7 @@ from tests.simple_rl_helpers import QuietStockfish, save_tiny_checkpoint
 
 ROOT_FIELDS = ("root_log_prior", "root_child_q", "root_child_visits")
 SCALAR_FIELDS = ("root_net_value", "root_survivor_q", "root_node_q", "root_start_visits",
-                 "root_survivor_index", "played_move_index", "search_budget")
+                 "root_survivor_index", "played_move_index", "search_budget", "root_prelude_visits")
 
 
 def _sample(rng: np.random.Generator, *, with_root: bool) -> ReplaySample:
@@ -61,6 +61,7 @@ def _sample(rng: np.random.Generator, *, with_root: bool) -> ReplaySample:
         s.root_survivor_index = int(support[0])
         s.played_move_index = int(support[1])
         s.search_budget = int(rng.integers(8, 4000))
+        s.root_prelude_visits = int(rng.integers(0, 60))
     return s
 
 
@@ -96,7 +97,8 @@ def test_root_fields_mirror_with_the_policy() -> None:
     m = mirror_sample(s)
     for name in ROOT_FIELDS:
         np.testing.assert_array_equal(getattr(m, name), mirror_policy(getattr(s, name)))
-    for name in ("root_net_value", "root_survivor_q", "root_node_q", "root_start_visits", "search_budget"):
+    for name in ("root_net_value", "root_survivor_q", "root_node_q", "root_start_visits", "search_budget",
+                 "root_prelude_visits"):
         assert getattr(m, name) == getattr(s, name), name
     assert m.root_net_wdl is not None
     assert s.root_net_wdl is not None
