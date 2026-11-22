@@ -123,8 +123,8 @@ these hold:
 It then takes a non-blocking `flock` (exit 9 if held) on the bank's own `.gpu_launch.lock`, so two of this bank's
 launches cannot overlap. It never opens `~/projects/chess/scratchpad/gpu0_experiment.lock`.
 
-**Tested** (`guard_test/guard_test.sh` v3 `b40b08d3d30c…`, output `guard_test/guard_test.txt`; v1 `621a57547b22…` and v2
-`730d515388e3…` and their outputs are kept as `.v1` / `.v2`). Nothing in the test can reach the GPU: a fake `nvidia-smi` and `ps` sit first on PATH, HOME is a fake, and the
+**Tested** (`guard_test/guard_test.sh` v4 `d4ad57efc6f3…`, output `guard_test/guard_test.txt`; v1 `621a57547b22…`, v2
+`730d515388e3…` and v3 `b40b08d3d30c…`, with their outputs, are kept as `.v1` / `.v2` / `.v3`). Nothing in the test can reach the GPU: a fake `nvidia-smi` and `ps` sit first on PATH, HOME is a fake, and the
 launchers' python is replaced by a stub. For a collect call the stub records its arguments and fabricates a tiny
 finished collect: step-synchronous fake play in real time, 300 games, 128 slots. For the launcher's summary step it
 runs the real python. All 17 checks pass:
@@ -143,8 +143,11 @@ runs the real python. All 17 checks pass:
   - three collect calls, each carrying `--root-full-width`;
   - exit 0;
   - a summary row whose `steady_rows_per_s` comes from `steady_rate.py` on the real progress log and the stub's
-    first-forward time. It reads 3,990 against a planted ≈ 3,840, within the test's ±25% allowance for 1 s sampling
-    of a run only 6 s long.
+    first-forward time. It must lie within **±5%** of the stub's own measured full-concurrency rate. The stub
+    records its real step times, because sleep overhead makes the nominal 128 / 0.1 s an overstatement. In v4 the
+    stub plays 600 games per process, about 15 s of full concurrency. The run reads 3,805 against a measured 3,827
+    (ratio 0.994).
+    - v3 allowed ±25% on a 6 s run. That read 3,990 against the nominal 3,840.
     - This case found a real bug: the progress sampler could miss the final games. The launcher now takes one last
       sample after every process exits.
 - `run_stage0.sh` with memory busy → 8, and the stub was never called.
@@ -205,6 +208,9 @@ runs the real python. All 17 checks pass:
       - With two runs per configuration, the ratio's SD at 384 is about 0.78%, so its 95% interval is
         about ±1.5%, inside ±3%. **384 games per process is kept.**
       - Real run-to-run noise beyond this model is caught by the 2% repeat gate.
+    - **Rows ≠ plies.** A forced ply or a tablebase ply advances a game without storing a row. So a game's row speed
+      at full concurrency varies by about 1% from game to game, around 128 × rows per step. This is the same in both
+      arms, so it does not move the on/off ratio.
   - forwarded positions/s;
   - forwarded evaluations per stored position;
   - evaluations per position computed as sims + mean prelude, from the search's own `mean_root_prelude_visits`;
@@ -460,7 +466,9 @@ length, the arm gets more or fewer rows and GPU-h than the pilot's 761,979 rows 
 **Comparison with the pilot's banked arms.**
 - Banked P0 as a single net (match 5): +2.2 [−4.2, +8.6], SE ≈ 3.3.
 - Banked Zq (match 1, the gate): −10.0 [−23.2, +3.2], SE 6.74 at 1,600 games.
-- Recalibrated Zq per match 8, when it is read.
+- Recalibrated Zq (match 8): +9.61 [+3.27, +15.96], which by its rule "improves on the base". This is a nomination
+  only, not an adoption ([follow-up results](2026-11-21-rl-run1-followup-results.md)).
+- S's value on the base policy (match 6, 6b and 6a): unread by its rules (same results record).
 
 **Power.** The SE of the difference of two independent 6,400-game matches is √2 × 3.3 ≈ 4.7 Elo.
 - The 95% half-width of the difference is ≈ 9.2 Elo.
@@ -489,6 +497,11 @@ length, the arm gets more or fewer rows and GPU-h than the pilot's 761,979 rows 
 - **Dose.** Stage 0's unit is cost per stored position. Stage 3's dose is 8,000 games. If the knob changes game
   length or the decisive/draw mix, rows, training updates and GPU-h all differ from the pilot's, and the training
   comparison carries that difference. Both are reported; neither is equalised after the fact.
+- **The cost estimator leans slightly toward the knob.** Round-0 cost is proportional to support width. Early in a
+  run the 128 slots are in phase, at middlegame plies where the support is widest, and the first wave's games are
+  excluded from the estimator's full-concurrency games. So knob-on's measured cost per position reads slightly low.
+  The review's adversarial model puts the lean of the on/off ratio at +0.5% to +0.8% toward the knob, which is
+  inside the ±3% precision. It is stated here and not corrected.
 - **Stage 1 search config** is the rl-audit protocol's (gumbel scale 0.75, serving max batch 512), chosen to match
   banked R64n. Stage 3's is the pilot's.
 
