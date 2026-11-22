@@ -2,12 +2,17 @@
 
 **Status: registered, not launched.** It launches only after:
 - review and merge of this record;
+- the merge on main of the Trainer-level take-effect test (review item 1, below). Its main
+  commit becomes the training pin `TSHA`, and its test name goes into step 0. Until both are
+  filled in, step 0 refuses to run;
 - the value-anchor screen (queue 2, `rl-run1-value-anchor/`) has finished. This screen
-  queues AFTER it, and its Stage A needs that screen's instrument control.
+  queues AFTER it, and its Stage A needs that screen's instrument control and S replicate.
 
 It trains new cells on the pilot's frozen collection and the banked sibling-pair sidecar,
 plays no new collection games, and changes nothing live. Outputs go to
 `~/chess-artifacts/operations/rl-run1-sibling/` (`SB`); the banks it reads are read-only.
+Revision 2 applies the #1481 statistics review (evidence:
+`~/chess-artifacts/operations/rl-claude-20261119/plan-review-1481/`).
 
 ## Why
 
@@ -26,6 +31,7 @@ has used the term):
 | Intra-game correlation (ICC by game): z − base / survivor_q − base / search_wdl − base / sibling residual | 0.62 / 0.013 / 0.028 / ≈ 0.001 | `out/icc_fixed_pov.json` [`e94618a4`] |
 | The banked pilot sidecar | 1,490,177 pairs on 752,093 rows; 722,742 training rows, 713,407 with pairs; 1,024-pair hold-out probe | `RC/sibling-pairs-pilot/v2/gen_0001/sibling_manifest.json` [`bbd97a99`], README [`dd975485`], `v2/logs/trainer_load_check.txt` [`5006a7ce`]; `SIDECAR_VERSION` 2 |
 | S's root value loss broke sibling ordering (clear pairs, vs base); Zq's did not | S −0.0096 [−0.0129, −0.0064]; Zq −0.0007 [−0.0032, +0.0017] | `RC/pilot-value-diagnosis/out/sibling_order.json` [`bb8e5b16`], README [`ae5e0866`] |
+| Without the term, every banked arm moves the learner's probe AWAY from the search (mean \|Δv − dq\| minus the base's 0.1031; 1,024 pairs from 7 games, game bootstrap) | S +0.0079 [+0.0010, +0.0142]; Zq +0.0107 [+0.0034, +0.0169]; P0 +0.0088 [+0.0050, +0.0127] | `RC/plan-review-1481/probe_banked.json` |
 | Follow-up matches at the PIN, 6,400 games each | 5 (P0 single net vs base) +2.2 [−4.2, +8.6]; 7 (Zq + recal vs Zq) +21.4 [+15.1, +27.6]; 6b (S's value on the base policy vs base) −21.4 [−27.7, −15.2] | `rl-run1-followup/arenas/{p0_single,zq_recal_h2h,s_value_raw}/pool.json` [`22fc7f97`, `e1945cbd`, `3534eac9`] |
 
 So the sibling target carries information the net lacks (the search is right more often on
@@ -45,60 +51,89 @@ the sibling difference helps the value in play is unmeasured. This screen measur
 - **Hook.** The term rides the Trainer's single penalty hook (`attach_anchor`), as the KL
   anchor does. It is added to the training loss before `backward()`.
 - **Hold-out.** Hold-out games' pairs are never trained (the learner refuses otherwise); the
-  first 1,024 hold-out pairs are the probe.
+  first 1,024 hold-out pairs are the learner's probe.
 - **Take-effect record:** `summary.sibling` (pairs, steps, per-step (pairs, loss), the probe's
   mean |Δv − dq| before and after) and the manifest input `sibling_gen_0001`.
 
+### Review item 1: the term's take-effect is not yet tested at the Trainer
+
+A mutant in `sibling.py` (`return self.w * loss` → `return None`: the term still computed and
+recorded, never added to the loss) passes all 24 sibling tests; the existing "takes effect"
+test only asserts that the probe changed. A Trainer-level test is being added on main by the
+value-diagnosis agent: `w_policy` 0, `w_wdl` 0, `w_sibling` > 0 must give a non-zero
+`value_wdl` gradient through `train_steps`, and that mutant must fail it. **Its name goes into
+step 0's pytest line, and its merge commit is the training pin `TSHA`.** Until then both are
+`PENDING` in the commands, and step 0 exits on them.
+
+The run-level evidence in the meantime (the reviewer's, above): with no term, all three banked
+arms RAISE the probe's |Δv − dq| over the base. A cell whose all-pairs |Δv − dq| falls below its
+banked family net's (the Stage A take-effect rule, below) has therefore moved against what
+training without the term does.
+
 ## Code base: train on main, match at the PIN
 
-The term exists only on main (`febed2042`), not at the pilot's PIN `0c795fb7a`. **Training runs
-at main, pinned to `febed2042` in a detached worktree. Every match and every Stage A instrument
-runs at the PIN**, as all pilot, follow-up and anchor-screen numbers did.
+The term exists only on main, not at the pilot's PIN `0c795fb7a`. **Training runs at the pin
+`TSHA` (above) in a detached worktree. Every match and every Stage A instrument except the
+all-pairs take-effect statistic runs at the PIN**, as all pilot, follow-up and anchor-screen
+numbers did. The take-effect statistic needs `sibling.py`, so it runs at `TSHA` with the same
+loader; guard (b) shows `model/`, `uci/` and `inference.py` are unchanged.
 
-**Commits on main since the PIN that touch the trainer path** (`git log --no-merges
-0c795fb7a..febed2042 -- chess_anti_engine/simple_rl chess_anti_engine/train
-scripts/simple_rl_loop.py chess_anti_engine/model chess_anti_engine/uci
-chess_anti_engine/inference.py`):
+**Every non-test file changed between the PIN and main `6769c32f7`** (the main head when this
+revision was written; `git diff --name-only 0c795fb7a 6769c32f7 -- chess_anti_engine
+scripts/simple_rl_loop.py`), by whether it is on the training path:
 
-| Commit | What |
-|---|---|
-| `c661d2bb3`, `7f1a2f2c3`, `d4de13e0c`, `1deeb5afd`, `75e0fc39f`, `cd74e3d87` | simple_rl collect: game-granularity resume, VRAM record, journal, games.jsonl moves. Collect only; no training input changes |
-| `84a47b785`, `8a97a23dd` | `--value-rows-per-game` (default 0 = every row, unchanged) |
-| `fd9ddd17a`, `d18f82f3d`, `a0bc34416` | the sibling term (default 0 = off), its materialiser, docs and review fixes |
+| Files | Change | On the training path? |
+|---|---|---|
+| `simple_rl/learn.py`, `simple_rl/sibling.py`, `simple_rl/common.py` (`is_holdout_game` moved here), `train/losses.py` (11 lines), `scripts/simple_rl_loop.py` | the sibling term (default 0), `--value-rows-per-game` (default 0 = every row), the `root_full_width` collect flag | yes; every new behaviour is default-off, and guard (a) and the `P0_main` control test that |
+| `replay/dataset.py` (3 lines) | `collate_arrays` copies a `value_row_weight` key if present; `compute_loss` uses it only if present | yes, via `collate_arrays`; the key exists only when `--value-rows-per-game` > 0, which no cell sets |
+| `replay/shard.py` (#1477, 5 lines), `replay/sample.py`, `replay/augment.py` | a new OPTIONAL stored field `root_prelude_visits` (`has_root_prelude_visits`), absent from the pilot's shards and not a training key | it is in the shard reader; guard (a) rerun at `6769c32f7` decodes the pilot's rows byte-identically (below) |
+| `simple_rl/collect.py`, `mcts/gumbel_c.py` (per-game RNG plumbing), `mcts/gumbel.py`, `selfplay/{config,finalize,manager,network_turn,state}.py` | collect: game-granularity resume, VRAM record, journal, per-game RNG streams, `root_full_width` (#1477, default off) | no: collect only; these cells read a frozen collect |
+| `tune/{distributed_runtime,trainable_config_ops,trial_config}.py`, `utils/config_yaml.py`, `worker.py` | `root_full_width` plumbing for the distributed path | no |
 
-The diff touches `simple_rl/{collect,common,learn,sibling}.py`, `train/losses.py` (11 lines)
-and `scripts/simple_rl_loop.py`. It touches no model, loader, encoder or `uci/` file. The one
-encode-tripwire path it touches, `selfplay/network_turn.py`, changes only the collect's per-game
-RNG plumbing, not `_batch_encoder_pair`.
+If more lands on main before the take-effect test merges (for example #1483, a collect-stats
+fix), step 0 lists the extra non-test files and re-runs guard (a) at `TSHA`, so the claim is
+always made against the code that trains.
 
-**The pilot's guards, restated for PIN → main:**
-- **(a) The decoded training input is identical.** The pilot launch record's guard (a) body,
-  run at main with each pilot cell's own flags plus `--w-sibling 0`, must be byte-equal, key by
-  key, to the banked `rl-run1-pilot/guard_a_{P0,S,Zq}_0c795fb7a.json`.
-  **Run already (CPU, 2026-11-21) at `febed2042`:** **all three cells byte-equal** (P0, S and Zq; 722,742 rows each, every key and the row ids).
-  Script and outputs: `SB/prelaunch/guard_a.py`, `run_guard_a.sh`, `guard_a_*_febed2042.{json,err}`,
-  `guard_a_febed2042.verdict`.
+**The pilot's guards, restated for PIN → `TSHA`:**
+- **(a) The decoded training input is identical.** This is ONE check. The pilot's three PIN
+  digests `rl-run1-pilot/guard_a_{P0,S,Zq}_0c795fb7a.json` are byte-identical to each other,
+  because `prepare_targets` does not depend on the value flags. The value-loss paths of S and Zq
+  at main are covered by the `realised_*` fields that `train_check.py` checks, and by reading
+  the code (the only change in `compute_loss` is the `value_row_weight` branch above).
+  - Run at `febed2042` (CPU, 2026-11-21): all three byte-equal, as expected
+    (`SB/prelaunch/guard_a_*_febed2042.json`, `guard_a_febed2042.verdict`; 37.2 GB peak RSS each).
+  - Re-run once at `6769c32f7`, past #1477's shard-reader change (P0's flags; CPU, 2026-11-21):
+    **byte-equal** (`SB/prelaunch/guard_a_P0_6769c32f7.json`, `guard_a_6769c32f7.verdict`).
+  - At launch, step 0 re-runs it at `TSHA` if any non-test file differs between `6769c32f7` and
+    `TSHA`.
 - **(b) The encoder that wrote the stored `x` is identical.** It matters less here than at
-  C0 → PIN: cells read the STORED `x`, and matches run at the PIN as before. It holds by
-  construction, checked mechanically (run 2026-11-21, exit 0, and repeated at launch):
-  `git diff --quiet 0c795fb7a febed2042 -- chess_anti_engine/encoding chess_anti_engine/mcts/_mcts_tree.c
-  chess_anti_engine/moves chess_anti_engine/replay/shard.py chess_anti_engine/replay/packed_zarr.py
-  chess_anti_engine/model chess_anti_engine/uci chess_anti_engine/inference.py`.
-  `selfplay/network_turn.py`'s diff does not touch `_batch_encoder_pair`, and `x_hash` is
-  unchanged. (The banked `guard_b_0c795fb7a_*.json` were made by an extended version of the
-  launch record's guard (b) block whose script is not in the pilot bank, so it is not rerun
-  here; the diff check covers every file it exercises.)
+  C0 → PIN: cells read the STORED `x`, and matches run at the PIN as before. Checked
+  mechanically in step 0:
+  - `git diff --quiet 0c795fb7a $TSHA` over `encoding/`, `mcts/_mcts_tree.c`, `moves/`,
+    `replay/packed_zarr.py`, `model/`, `uci/` and `inference.py` must be empty (it is at
+    `febed2042` and `6769c32f7`);
+  - `replay/shard.py`'s diff must be exactly #1477's optional-field addition: its sha256 is
+    pinned (`418b6e96…`, measured at `6769c32f7`). Any other change to it stops the screen.
+  - `selfplay/network_turn.py`'s diff does not touch `_batch_encoder_pair`, and `x_hash` is
+    unchanged. (The banked `guard_b_0c795fb7a_*.json` were made by an extended version of the
+    launch record's guard (b) block whose script is not in the pilot bank, so it is not rerun
+    here; the diff check covers every file it exercises.)
 - **(c) Default off is off on the pilot's real inputs.** The code-base control cell `P0_main`
-  (P0's flags at main, `--w-sibling 0`) is trained like every cell and must match the banked P0
-  in Stage A within run-to-run noise (below). #1478's reviewer showed bit-identity of weights on
-  a tiny phase; this is the same claim on the real phase, judged at the instruments.
+  (P0's flags at `TSHA`, `--w-sibling 0`) is compared with the banked P0, PAIRED, in Stage A
+  (below). #1478's reviewer showed bit-identity of weights on a tiny phase; this is the same
+  claim on the real phase.
 - **(d) A main-written checkpoint loads and evaluates identically at the PIN.**
   `SB/prelaunch/check_load.py` loads `P0_main`'s `model.pt` once at the PIN worktree and once at
   the training worktree, through `uci.model_loader.load_model_from_checkpoint` (the loader the
   arena and every Stage A instrument use). It digests every state_dict tensor and forwards the
   first 512 hold-out rows of shard 0 on CPU in fp32. The two outputs must be bit-equal
-  (`check_load.py --compare`). A failure stops the screen before Stage A. The same check was run
-  on the SL base itself as the instrument's smoke: IDENTICAL for `sl_base.pt` at `0c795fb7a` vs `febed2042` (494 state_dict digests and both logit arrays); a one-ulp change to one WDL logit makes `--compare` print DIFFER and exit 1 (`SB/prelaunch/check_load_mutant.txt`).
+  (`check_load.py --compare`). A failure stops the screen before Stage A.
+  - Smoke on the SL base: IDENTICAL for `sl_base.pt` at `0c795fb7a` vs `febed2042` (494
+    state_dict digests and both logit arrays). A one-ulp change to one WDL logit makes
+    `--compare` print DIFFER and exit 1 (`SB/prelaunch/check_load_mutant.txt`). The reviewer
+    re-ran it on `sl_base` and on the banked P0: IDENTICAL, mutant killed.
+  - `model/`, `uci/` and `inference.py` are unchanged to `TSHA` (guard (b)), so the smoke
+    carries to the pin; step 3 repeats it on `P0_main`.
 
 ## Strengths, derived from the measured step-0 gradients
 
@@ -117,30 +152,45 @@ v2 sidecar's shard 0. 4 batches of 512 rows.
 | sibling term at w = 1 (≈ 255 pairs from 128 rows) | 0.00143 | **0.00896** | **0.0246** |
 
 Per batch, the sibling term's `value_wdl` norm ranged 0.0067–0.0126 (trunk 0.017–0.032), a factor
-of about 1.9: the visit weight makes it heavy-tailed. Cosines with the root terms are small and
-positive on the head (sibling vs S 0.29, vs Zq 0.19); on the trunk, sibling vs policy is 0.04.
-Bank: `SB/prelaunch/grad_scale.json` (sha256 `782d52a2a358…`), script `grad_scale.py`
-(`6a25772191f5…`).
+of about 1.9. Cosines with the root terms are small and positive on the head (sibling vs S 0.29,
+vs Zq 0.19); on the trunk, sibling vs policy is 0.04. Bank: `SB/prelaunch/grad_scale.json`
+(sha256 `782d52a2a358…`), script `grad_scale.py` (`6a25772191f5…`).
+
+**Independent check (the reviewer's; `RC/plan-review-1481/sib_grad_indep.json`)**: 24 random
+128-row pair sets of sidecar shard 0, production `sibling_loss`: `value_wdl` norm 0.00919
+(se 5.4%), trunk 0.0285 (se 4.5%). Both agree with the 4-batch figures within their noise.
+
+**The strengths are nominal.** Four batches put about ± 28% on each w. That is acceptable for a
+9× ladder, but the shares below are labels, not measurements of what a cell experiences:
+- **Coherence.** On the reviewer's 24 sets, ‖mean gradient‖ / mean per-set ‖gradient‖ is 0.63 on
+  the head and **0.28 on the trunk**. Under momentum, which averages across batches, the term's
+  coherent trunk share is therefore well below its per-batch norm share. The same ratio for the
+  policy term is **unknown**: measuring it on CPU (`SB/prelaunch/coherence.py`, 24 batches)
+  peaked at 23.6 GiB RSS on the first batch, above the 15 GiB budget set for it, and stopped
+  (`coherence.json` records that). So the trunk shares are not comparable across the families
+  in coherent terms.
+- **Huber regime.** At the base, 81% of residuals are in Huber's quadratic zone (|r| ≤ 0.2).
+- **Weights.** `min_v / 64` is heavy-tailed: mean 0.112, median 0.0625, p99 0.49.
+- **Drift.** Step-0 shares drift as the head fits: as Δv approaches dq, the term's gradient
+  shrinks, and the root terms' gradients change too.
 
 **Reading.**
 - The sibling term is small in absolute size: its mean weighted Huber is 0.00143, because
-  the visit weight `min(v_A, v_B) / 64` averages well below 1 and most residuals sit in Huber's
-  quadratic zone (mean |Δv − dq| 0.120). Its gradient norm at w = 1 is therefore a small
-  fraction of the WDL CE's.
+  the visit weight averages well below 1 and most residuals sit in the quadratic zone (mean
+  |Δv − dq| 0.120). Its gradient norm at w = 1 is therefore a small fraction of the WDL CE's.
 - Both optimizers here are scale-invariant per update (the anchor screen's derivation): the
   value head is in an AdamW group at 3e-6. So for parameters reached by ONE term, w barely
   changes the step. What w sets is the term's share of the gradient wherever terms mix: the
   value head in the S and Zq families, and the trunk in every family.
+- **The P family is NOT a head-dose ladder.** With `--w-wdl 0` the value head receives only
+  this term, in an AdamW group, so w does not change the head's step. The three P cells are ONE
+  head dose at three trunk shares.
 - **Strength rule:** w is set so that, at step 0, the sibling term contributes a share s of the
   combined gradient norm, s ∈ {0.25, 0.50, 0.75}:
   w = s / (1 − s) × ‖g_other‖ / ‖g_sib(w = 1)‖.
   - S and Zq families: g_other is the root WDL term's value-head gradient (the head is where
     the two value signals compete).
-  - P family (`--w-wdl 0`): the value head gets only the sibling gradient, so its step is set
-    by Adam whatever w is. w then sets the sibling share of the TRUNK gradient against the
-    policy term's, so g_other is the policy term's trunk gradient.
-  - The shares are the design parameter; the w values follow from the measurement. The shares
-    are step-0 shares: as Δv approaches dq, the term's gradient shrinks.
+  - P family: g_other is the policy term's trunk gradient (above).
 
 | Cell | ‖g_other‖ / ‖g_sib‖ | s | `--w-sibling` | Step-0 share on `value_wdl` | Step-0 share on the trunk |
 |---|---|---|---|---|---|
@@ -149,8 +199,7 @@ Bank: `SB/prelaunch/grad_scale.json` (sha256 `782d52a2a358…`), script `grad_sc
 | `S_sib_w28` / `w83` / `w248` | 0.739 / 0.00896 = 82.5 (head, vs S WDL) | 0.25 / 0.50 / 0.75 | **28 / 83 / 248** | 0.25 / 0.50 / 0.75 | 0.22 / 0.45 / 0.71 |
 
 Trunk shares are against the sum of the other terms' trunk norms (policy plus root WDL).
-Values are rounded to 2–3 significant figures; the factor-1.9 batch spread means a nominal 0.50
-share is 0.35–0.60 on a given batch, so the three strengths are distinct but not exact.
+Values are rounded to 2–3 significant figures. The reviewer checked AMP safety at w = 366.
 
 **No `--kl-wdl` cell here.** Whether an anchor helps, and at which λ, is exactly what the
 value-anchor screen decides; a sibling + anchor cell would have to choose λ before that reading
@@ -159,8 +208,8 @@ anchor screen nominates a λ.
 
 ## Cells
 
-All cells train at main `febed2042` on the pilot's frozen collection (`--collect-from`, the
-pilot's `COLLECT` and `--seed`) with the pilot's `$TRAIN` verbatim (it carries `--kl-wdl 0`).
+All cells train at `TSHA` on the pilot's frozen collection (`--collect-from`, the pilot's
+`COLLECT` and `--seed`) with the pilot's `$TRAIN` verbatim (it carries `--kl-wdl 0`).
 
 | Cell | Value flags | Role |
 |---|---|---|
@@ -175,8 +224,8 @@ directory holding `gen_0001/`).
 
 ## Take-effect
 
-`SB/stage_a/train_check.py` (one run, after every crash rerun). A field mismatch writes
-`arm_<cell>/VOID`. For every cell:
+**At training** (`SB/stage_a/train_check.py` v2, one run, after every crash rerun). A field
+mismatch writes `arm_<cell>/VOID`. For every cell:
 - exit 0 and a sealed train manifest; init checkpoint sha256 = the SL base's (`a39f900c…`);
 - `summary.realised_w_wdl` = 0 (P family, `P0_main`) or 1 (Zq, S families);
   `summary.realised_search_wdl_frac` = 0, 0.5 or 1.0 respectively;
@@ -188,10 +237,31 @@ For every sibling cell, additionally:
   entry per update, the per-step pairs summing to `pairs` > 0;
 - the sidecar record and the manifest input `sibling_gen_0001` both carry sha256 `bbd97a99…`
   (the banked v2 sidecar);
-- probe of 1,024 pairs before and after. **A cell whose probe mean |Δv − dq| does not FALL is
-  INERT** (`arm_<cell>/INERT`): scored in Stage A, never matched.
+- the learner's probe has 1,024 pairs before and after. Its values are **reported only**: the
+  probe comes from 7 games, too few to decide on.
 
 `P0_main` must carry no `summary.sibling` and no sidecar input.
+
+**In Stage A: the take-effect statistic, which decides INERT** (`SB/stage_a/sibling_holdout.py`,
+review item 5). On ALL hold-out sibling pairs of the v2 sidecar (the pilot's hold-out games;
+416 games, none trained by any cell), each net's residual Δv − dq through the production
+`load_sidecars` / `sibling_loss` at `TSHA`, eval mode, fp32. Per-pair residuals of every net are
+banked first (`sibling_holdout_resid.npz`, with `game_id`, `dq`, `min_visits`).
+- Statistic: mean |Δv − dq| of the cell minus that of its banked family net, PAIRED by pair:
+  P cells vs P0, Zq cells vs Zq, S cells vs S (and `P0_main` vs P0, reported). CI: 2,000 game
+  bootstrap resamples, seed 20261121.
+- **"Takes effect" iff the 95% CI lies entirely below 0. Otherwise the cell is INERT**: scored,
+  never matched.
+- Reported beside it: each net minus the base (this extends the reviewer's 7-game probe result
+  to all hold-out pairs), the visit-weighted twin of the statistic, and the learner's probe.
+- `sibling_holdout.py --max-pairs` is for the smoke only; the registered run has no limit.
+- **CPU smoke** (2026-11-21, at `febed2042`, the first 4,096 hold-out pairs = 23 games; the
+  banked nets, with a copy of P0 passed as the cell `P0_main`; `SB/stage_a/smoke/`):
+  - base 0.1110;
+  - vs base: P0 +0.0090 [+0.0068, +0.0115], S +0.0031 [+0.0003, +0.0061], Zq +0.0059
+    [+0.0032, +0.0089]. That is the reviewer's direction, on other games;
+  - the P0 copy gives `minus_family` exactly 0, and so INERT, as it must;
+  - peak RSS 3.4 GB; 34.5 min of wall on CPU, most of it the sidecar's sha256 pass.
 
 **Crash rule.** A crashed cell is renamed `arm_<cell>.crash1` and rerun once, whole, before
 `train_check.py` runs; only if no `.crash1` exists. A second crash is VOID.
@@ -211,43 +281,81 @@ For every sibling cell, additionally:
 - **Instrument control:** the anchor screen's step 0 (`rl-run1-value-anchor/offline/control/CONTROL_PASS`)
   ran these exact files on the banked nets and reproduced the bank exactly. It is required, not
   rerun. If the anchor screen's control failed, this Stage A is void too.
-- This screen's own files (`SB/stage_a/`: `cells.json`, `train_check.py`, `stage_a_decide.py`,
-  `run_stage_a.sh`) are banked read-only with `SHA256SUMS`: `cells.json` `12be8a762466…`, `train_check.py` `1bb13026d34a…`, `stage_a_decide.py` `48408ecdc683…`, `run_stage_a.sh` `df63975bb1d5…` (and a fabricated-input test of the decision script in `fab_test/`). The pre-launch scripts are in `SB/prelaunch/` with their own `SHA256SUMS`: `grad_scale.py` `6a25772191f5…`, `cost_probe.py` `000fd1da8892…`, `check_load.py` `e8a870764bb5…`, `guard_a.py` `d247b0f0e665…`.
+- **Ruler leakage** (reviewer, `RC/plan-review-1481/ruler_overlap.json`): the sibling-ordering
+  ruler (rl-audit, 2,433 leak-free rows, 190 games) shares **0 game ids** with the pilot collect
+  (761,979 rows, 8,000 games). **1 ruler row's exact `x` appears in the collect.**
+- This screen's own files (`SB/stage_a/`, revision 2, read-only, `SHA256SUMS`; revision 1 files
+  kept as `*.v1` with `SHA256SUMS.v1`):
 
-**Statistics** (raw heads; `stage_a_decide.py`):
+  | File | sha256 prefix |
+  |---|---|
+  | `cells.json` | `c1b1e7e93a7e…` |
+  | `train_check.py` | `f739886c075f…` |
+  | `sibling_holdout.py` | `0897bf777521…` |
+  | `stage_a_decide.py` | `8dac8d5b782e…` |
+  | `run_stage_a.sh` | `241de8fb1dab…` |
+
+  `fab_v2/` holds the decision script's test on fabricated inputs (17 checks, all pass) and
+  six mutants of its new branches, each killed (`fab_v2/mutants.txt`).
+- The pre-launch scripts are in `SB/prelaunch/` with their own `SHA256SUMS`: `grad_scale.py`
+  `6a25772191f5…`, `cost_probe.py` (revision 2) `ab572566adbe…`, `check_load.py`
+  `e8a870764bb5…`, `guard_a.py` `d247b0f0e665…`, `coherence.py` `bcdabcbed5c8…`.
+
+**Statistics** (raw heads; `stage_a_decide.py` v2):
+- **VOID:** `train_check.py` failed the cell, or its VOID marker exists.
 - **Veto, exactly as the anchor screen:** VETOED iff the 95% CI upper bound of
   `sibling_order.json → paired_minus_base.all.clearplus_50plus.<cell>_raw` is below 0.
 - **The primary offline quantity this term targets is the same statistic**: clear-pair
   sibling-ordering accuracy vs deep SF, cell minus base, game-clustered. For once a POSITIVE CI
   (lower bound > 0) is the interesting outcome, and it is reported as "improves ordering".
-  - The ruler rows are the rl-audit collection's 2,433 leak-free rows, a different collection
-    from the training games.
+  - The ruler rows come from the rl-audit collection, not the training games (leakage above).
   - It still may NOT select between survivors. Three fit→Elo transfer failures are on record:
     v020 (+3.1 cp audit gain, −9.6 Elo), ft595 (−41.0 Elo for better fit), F-only (hold-out CE
     −0.043 nats for 0 cp). An offline gain on the term's own target is the "arm that is the
     gradient of the metric" case: it is expected, not evidence of strength.
-- **INERT:** `train_check.py`'s marker (the probe did not fall).
-- **Code-base control (`P0_main` vs banked P0).** On the clear-pair difference,
-  `KL_base_net_raw` and `share_of_gap_closed`: |P0_main − P0| ≤ tol, where tol = √2 × the banked
-  P0's 95% CI half-width for that statistic (a 95% bound on the gap between two exchangeable
-  replicates if run-to-run noise is no larger than sampling noise). If the anchor screen's
-  measured replicate gap |S_trunc_final − S| for that statistic is larger than half the bound,
-  tol becomes 2 × that gap. **A failure means main trains differently from the PIN on these
-  inputs: no Stage B, verdict "unread: code-base control failed".**
+- **INERT:** the all-pairs take-effect statistic (above) is not entirely below 0.
+- **Code-base control, paired (review item 8).** `P0_main` and the banked P0 are scored on the
+  SAME hold-out rows (`holdout_logits.npz` of this Stage A and of the anchor screen's control).
+  The script first checks that `game_id`, `wdl_target` and the base's logits are bit-equal in
+  both files; otherwise the control fails.
+  - Statistic: kl_pair = mean over rows of KL(p_P0 ‖ p_P0_main) on the WDL softmax.
+  - Scale: kl_rep = mean over rows of KL(p_S ‖ p_S_trunc_final). The anchor screen's truncated-S
+    final model is an S replicate: same flags, same code base, so the gap is GPU
+    nondeterminism only.
+  - **PASS iff kl_pair ≤ max(2 × kl_rep, 0.05 × mean KL(p_base ‖ p_P0)).** The floor applies if
+    the S replicate is void or lands bit-identical. It is 5% of P0's own displacement from the
+    base, a code-base effect far below the effects judged here (S 0.0167, Zq 0.0264 nats).
+  - Reported beside it: whether the logits are bit-identical, the largest logit difference,
+    mean |ΔWL|, the unpaired clear-pair / KL / share differences, and `P0_main` vs P0 on the
+    all-pairs sibling statistic.
+  - **A failure means main trains differently from the PIN on these inputs: no Stage B,
+    verdict "unread: code-base control failed".**
+- **Level and draw mass, for every cell vs its family net (review item 4).** In the P cells
+  (`--w-wdl 0`) only Δ(L − W) is fitted, so the value's level and its draw mass are free to move.
+  The clear-pair veto cannot see that, because it is level-invariant. Shape alone cost Zq about
+  21 Elo in match 7. So, paired on the hold-out rows with the same game bootstrap, the script
+  reports:
+  - the change in `signed_dWL_raw` and in `signed_dP_draw_raw`;
+  - the change in `KL_share_removed`, each net by its own (T, b) fit;
+  - both fits.
+
+  For a P cell, `shape_departs_from_P0` is true iff any of the three CIs excludes 0. For the Zq
+  and S families the same numbers are report-only.
 - **Report-only:** each cell's `KL_base_net_raw`, `share_of_gap_closed`, `KL_share_removed`
-  by its own (T, b), FEN-only value regret, outcome distance, and the probe before/after.
+  by its own (T, b), FEN-only value regret and outcome distance.
 
 ### Stage B: matches
 
-- **Selection, fixed now, not by offline score.** Families in this order: **Zq, P, S**. Per
-  family, the smallest-w cell that is not VOID, VETOED or INERT. The first two families that
-  have one are matched; at most two matches.
+- **Selection, fixed now, not by offline score (review item 3).** Families in this order: **Zq,
+  P, S**. Per family, the **LARGEST-w** cell that is not VOID, VETOED or INERT. The first two
+  families that have one are matched; at most two matches.
+  - Why the largest: the veto already guards against ordering damage, and the smallest dose is
+    the weakest test of a term hypothesised to help. The choice is still fixed by w, never by an
+    offline score.
   - Why this order: Zq + sibling is the recipe nearest to adoption (Zq's root target kept
     ordering intact, and match 7 showed its loss is largely shape); P + sibling is the owner's
     question in its cleanest form; S + sibling is a repair test of a target that loses 20 Elo,
     so it has the least prospect of nominating a recipe.
-  - Smallest w, as in the anchor screen: the least departure from the banked cell that
-    survives.
 - **Design.** Cell vs the SL base, plain seats, seat-balanced; 6,400 games (3,200 per run,
   1,600 openings); seeds **2026112193** (first selected cell) and **2026112194** (second), unused
   anywhere under `docs/` and in every bank; the follow-up launcher
@@ -256,8 +364,17 @@ For every sibling cell, additionally:
   per seat first.
 - **Rules, as match 5:** "damage" iff UB95 < 0; "adoptable" iff LB95 > −10; otherwise
   "unread". Match 5's tie-break is kept as written (it cannot trigger at the expected SE).
-- **Power,** at the gate-scaled SE 3.37: P(adoptable | true 0) ≈ 0.84; family false-nomination
-  ≈ 5% at the −10 boundary across two matches.
+- **Stage B stays raw** and blind to recalibration. A recalibrated P match would be a separate
+  record.
+- **Power** at the gate-scaled SE 3.37, per match. Selecting the largest dose changes which net
+  is tested, not these operating characteristics:
+
+  | True effect vs base (Elo) | 0 | −5 | −10 | −15 | −21 |
+  |---|---|---|---|---|---|
+  | P(adoptable) | 0.84 | 0.32 | 0.025 | < 0.001 | < 0.001 |
+  | P(damage) | 0.025 | 0.32 | 0.84 | 0.99 | > 0.999 |
+
+  False nomination at the −10 boundary is 2.5% per match, so about 5% across this screen's two.
 - **Report-only contrast** with the same-family banked cell:
 
   | Family | Banked result | SE of the difference | 80%-power MDE |
@@ -271,82 +388,153 @@ For every sibling cell, additionally:
 | Reading | Licenses |
 |---|---|
 | adoptable | NOMINATES that recipe (family + w) for a two-generation run with the policy, under its own record. Nothing is adopted here. For the Zq family the nomination record also carries a "Zq + (T, b)" alternative (match 7/8) |
-| damage | The term at that strength does not make that value recipe safe |
+| damage, P cell with `shape_departs_from_P0` | **"damage, shape-confounded"**: the loss may be level or draw mass, which this family leaves free. It is NOT "sibling training is not the fix" |
+| damage (otherwise) | The term at that strength does not make that value recipe safe |
 | unread | Nothing |
 
-**"Sibling training is not the fix"** for a family: every cell of it is vetoed or inert, or its
-matched cell reads damage.
+**"Sibling training is not the fix"** for a family: every cell of it is VOID, vetoed or inert,
+or its matched cell reads damage that is not shape-confounded.
+
+**Competing nominations across the value lines (review item 9).** Three records can nominate a
+value recipe: the anchor screen (≤ 2 matches), match 8 (1) and this screen (≤ 2). Zq appears in
+all three. At 2.5% per match, that is about 12% family-wise false nomination at the −10
+boundary. **If more than one recipe is nominated, the choice is made by a fresh head-to-head
+under the next record, never by the best point estimate across screens.**
 
 ## Confounds
 
 - **Same games, two targets.** The pairs come from the same games as the root rows. Hold-out
-  here means hold-out GAMES (`is_holdout_game` at 0.05): the probe pairs and the Stage A
-  hold-out rows are from those games, which no cell trains on. The sibling-ordering ruler rows
-  (rl-audit, deep SF 8M) are a different collection.
+  here means hold-out GAMES (`is_holdout_game` at 0.05): the take-effect pairs, the learner's
+  probe and the Stage A hold-out rows are all from those games, which no cell trains on. The
+  sibling-ordering ruler rows are a different collection (leakage above).
 - **Same search.** The sibling target is the same 64-sim search that S's root target came from;
   a cell that repairs S's ordering does it with the same teacher, not an independent one.
 - **Policy-induced drift.** P0 showed the trunk moves the value with no value loss (KL 0.0072),
   and every cell trains the policy. The P family is compared with P0 (banked, and `P0_main`)
   for exactly that reason.
-- **Code base.** Cells train at main, the banked controls trained at the PIN. Guards (a)–(d)
+- **Free level in the P family.** See "Level and draw mass" above.
+- **Code base.** Cells train at `TSHA`, the banked controls trained at the PIN. Guards (a)–(d)
   are what licenses comparing them.
 - **One data-affecting change** per cell versus its banked family cell: the term (and its
   sidecar); same rows, batches (`presented.npz`), seed and optimizer.
 
 ## Cost and feasibility
 
-**Registered step 1, before any training: the cost probe** (`SB/prelaunch/cost_probe.py`, GPU,
-alone on the card). Two runs of STEPS = 50 updates of the REAL trainer (settings from the
-loop's own parser, Aurora resolved from the init checkpoint, the production `SiblingTerm` on
-the banked pairs): the heaviest cell's flags (`Zq_sib`, largest w) and the same flags with
-`--w-sibling 0`. It records the median step time over updates 11–50 and
-`torch.cuda.max_memory_reserved`.
+**Registered step 1, before any training: the cost probe** (`SB/prelaunch/cost_probe.py`
+revision 2, GPU, alone on the card; review item 2). Revision 1 read 2 sidecar shards (about
+3.4 GB, page-cached), so it could not see what a real cell pays. A cell random-reads about
+255 × 2 child inputs per step from a 63 GB memmap on a rotational virtual disk, while the trainer
+holds about 37 GB RSS on a 98 GB machine. Revision 2 does what a cell does, in production order:
+- rows from `learn.load_window` over the whole window, with `prepare_targets`;
+- the first 50 batches of the cell's own `plan_batches` plan, with its own seed;
+- pairs from `sibling.load_sidecars` over ALL shards, with its sha256 pass timed as
+  `sidecar_setup_s`, driven by the production `SiblingTerm`.
+
+**Cold cache without root.** After `load_sidecars` (whose sha256 pass reads every file), the
+probe calls `posix_fadvise(DONTNEED)` on every `x_a.npy` / `x_b.npy`. This needs no privilege.
+It records the files' page-cache-resident bytes before and after with util-linux `fincore`.
+The Windows host's cache below the WSL2 virtual disk is outside a guest's control, so "cold" is
+cold in the guest only.
+
+**What it reports:** per update, the wall after `torch.cuda.synchronize`; the seconds spent in
+`SidecarPairs.child_inputs` (the host read); and `gpu_and_rest_s` = step − host read. Each is a
+median over updates 11–50. It also reports peak reserved VRAM and peak RSS. It runs twice: with
+the heaviest cell's flags (`Zq_sib_w366`), and with the same flags at `--w-sibling 0`.
+
+**Gates:**
 - **Abort the screen** if the sibling run's peak reserved memory exceeds **0.85 × the card's
   total memory** (headroom for allocator fragmentation and the CUDA context; the card runs
   nothing else during the screen). An abort is reported; no cell trains.
-- **Hold for the owner** if the projected training total (below) exceeds 2 × the estimate.
-- Projected wall per sibling cell = 1,412 × the measured sibling step time + about 150 s of
-  sidecar sha verification.
-- The probe script was smoke-run on CPU (`COST_PROBE_CPU_SMOKE=1`, 2 steps, Zq + w 366): both
-  steps ran the production `SiblingTerm` (255 pairs each) and it exited 0
-  (`SB/prelaunch/cost_probe_cpu_smoke.json`). That proves the logic, not the timing.
+- **Projected wall per sibling cell** = 419 s + `sidecar_setup_s` + 1,412 × the sibling step
+  median. The 419 s is the pilot Zq cell's measured fixed overhead: its process wall (859 s)
+  minus its training loop's `wall_seconds` (440 s).
+- **Hold for the owner** if the projected training total exceeds 2 × the estimate below.
+- **Realised-wall gate (registered now).** The first sibling cell that exits 0 has its process
+  wall compared with its projection. **If the wall exceeds 1.5 × the projection, the screen
+  stops** (`SB/HOLD_WALL`) and the owner decides.
+- **If the host read dominates** (median host read > half the sibling step), the remedies would
+  be a background reader that prefetches the next batch's pairs, or sorting each batch's pair ids
+  by file offset. Neither is built in this record; either would need its own review.
+
+**CPU smoke of revision 2** (`COST_PROBE_CPU_SMOKE=1`, 2 steps, Zq + w 366, 2026-11-21):
+it exited 0 and ran the real plan: 722,742 rows, 1,412 batches in the plan, the production
+`SiblingTerm` on all 78 sidecar files. Measurements:
+- `load_window` took 353 s; `load_sidecars`, including its sha256 pass, took 68 s.
+- The files held 20.0 GB in the guest page cache before `fadvise` and 0 after. Cold is
+  achievable without root.
+- **The cold host read was 1.60 s per step** (median of the 2 steps). It does not depend on the
+  device. The registered estimate below assumed 0.19 s.
+- Peak RSS 61.7 GiB (CPU: the model, its activations and the rows all on the host). Wall 12.5 min.
+
+This proves the logic, not the GPU timing. **If the GPU probe reads a host read near 1.6 s, the
+HOLD rule fires as registered.** A cell would then be about 419 + 68 + 1,412 × (0.75 − 0.19 +
+1.6) s ≈ 59 min, and training about 9.0 GPU-h, over 2 × 4.3. The page cache cannot hold the
+63 GB sidecar beside the trainer's rows, so the reads stay mostly cold over a cell. The owner
+then chooses between the remedies named above, under an amendment.
 
 **Estimate until the probe reads** (the doc's "about double", plus 0.19 s host read per step):
-pilot step ≈ 0.28 s (3.55 updates/s) → sibling step ≈ 0.75 s → ≈ 22 min per sibling cell.
+pilot step ≈ 0.31 s (the Zq cell's 440 s / 1,412) → sibling step ≈ 0.75 s. Per sibling cell:
+419 s + ≈ 150 s sidecar verification + 1,412 × 0.75 s ≈ 27 min.
 
 | Item | GPU-h |
 |---|---|
-| Cost probe | ≈ 0.05 |
-| Training: 9 sibling cells × ≈ 22 min + `P0_main` ≈ 7 min | ≈ 3.4 |
-| Stage A: 10 nets × ≈ 6 min (no instrument control: reused) | ≈ 1.0 |
+| Cost probe (two runs, each loading the whole window) | ≈ 0.3 |
+| Training: 9 sibling cells × ≈ 27 min + `P0_main` ≈ 11 min | ≈ 4.3 |
+| Stage A: 10 nets through the instruments, ≈ 6 min each, plus the take-effect statistic on 14 nets | ≈ 1.2 |
 | Stage B: ≤ 2 × 1.52 | ≤ 3.0 |
-| **Total** | **≤ ≈ 7.5** |
+| **Total** | **≤ ≈ 8.8** |
+
+**Memory per step (review item 10).** Every step runs alone; pre-launch CPU work was run one job
+at a time.
+
+| Step | Peak RSS |
+|---|---|
+| Guard (a), one run (CPU) | 37.2 GB (measured, `guard_a_*.err`) |
+| Step-0 gradient checks: `grad_scale.py` / the reviewer's `sib_grad_indep.py` / `coherence.py` (first batch) | not recorded / 25 GB / 23.6 GiB |
+| Cost probe (loads the whole window, like a cell) | 61.7 GiB on the CPU smoke (model and activations on the host); on GPU, expected near the trainer's ≈ 37 GB |
+| Training, per cell | ≈ 37 GB (the trainer's rows; the reviewer's figure) |
+| `check_load.py` | one model and 512 rows; not measured |
+| Take-effect statistic (`sibling_holdout.py`; ≈ 3.4 GB of child inputs held in RAM) | 3.4 GB (CPU smoke, 4,096 pairs; the full run holds ≈ 3.4 GB more of child inputs) |
 
 ## Commands
 
-**Step 0: preconditions and worktrees.**
+**Step 0: preconditions and worktrees.** `TSHA` and `TAKE_EFFECT_TEST` are set when the
+Trainer-level take-effect test merges (review item 1); until then step 0 exits 90.
 
 ```bash
 SB=$HOME/chess-artifacts/operations/rl-run1-sibling; P=$HOME/chess-artifacts/operations/rl-run1-pilot
 AV=$HOME/chess-artifacts/operations/rl-run1-value-anchor
 PIN=$(cat $P/PIN.txt); PINW=$HOME/projects/chess-worktrees/rl-run1-pilot-${PIN:0:9}
-TSHA=febed2042b0859ea9216f796c5c4ace7790d1039; TW=$HOME/projects/chess-worktrees/rl-run1-sibling-febed2042
+TSHA=PENDING; TAKE_EFFECT_TEST=PENDING; TW=$HOME/projects/chess-worktrees/rl-run1-sibling-${TSHA:0:9}
 PY=$HOME/projects/chess/.venv/bin/python; SL=$P/sl_base.pt
 SIDE=$HOME/chess-artifacts/operations/rl-claude-20261119/sibling-pairs-pilot/v2
 TB="$HOME/projects/chess/data/syzygy_3-4-5:$HOME/projects/chess/data/syzygy_6"
 SF=$HOME/local_stockfish_linux_latest/stockfish/stockfish-ubuntu-x86-64-bmi2
+[ "$TSHA" != PENDING ] && [ "$TAKE_EFFECT_TEST" != PENDING ] || exit 90           # review item 1 not merged yet
 [ -e $AV/offline/cells/DONE ] && [ -e $AV/offline/control/CONTROL_PASS ] || exit 92   # anchor screen finished, instruments proven
 (cd $SB/stage_a && sha256sum -c --quiet SHA256SUMS) && (cd $SB/prelaunch && sha256sum -c --quiet SHA256SUMS) || exit 93
 [ -d $TW ] || git -C $PINW worktree add --detach $TW $TSHA             # a new detached worktree; no existing tree moves
 cd $TW && [ "$(git rev-parse HEAD)" = "$TSHA" ] || exit 96
-python3 scripts/build_production_extensions.py || exit 1
+$PY scripts/build_production_extensions.py || exit 1
+# guard (b): encoder paths unchanged; shard.py changed only by #1477's optional field
 git diff --quiet 0c795fb7a $TSHA -- chess_anti_engine/encoding chess_anti_engine/mcts/_mcts_tree.c chess_anti_engine/moves \
-  chess_anti_engine/replay/shard.py chess_anti_engine/replay/packed_zarr.py chess_anti_engine/model chess_anti_engine/uci \
-  chess_anti_engine/inference.py || exit 1                             # guard (b)
-grep -c EQUAL $SB/prelaunch/guard_a_febed2042.verdict | grep -qx 3 || exit 1   # guard (a), run 2026-11-21
-CUDA_VISIBLE_DEVICES= PYTHONPATH=. $PY -m pytest -q -p no:cacheprovider tests/test_simple_rl_sibling*.py \
+  chess_anti_engine/replay/packed_zarr.py chess_anti_engine/model chess_anti_engine/uci chess_anti_engine/inference.py || exit 1
+[ "$(git diff 0c795fb7a $TSHA -- chess_anti_engine/replay/shard.py | sha256sum | cut -d' ' -f1)" = \
+  418b6e96e29716160dfaf439b632896191be501018a15f4412b2686d8d2901ff ] || exit 1
+# guard (a): banked EQUAL at 6769c32f7; re-run at TSHA if any non-test file changed since
+grep -qx "P0 EQUAL to guard_a_P0_0c795fb7a" $SB/prelaunch/guard_a_6769c32f7.verdict || exit 1
+git diff --name-only 6769c32f7 $TSHA -- chess_anti_engine scripts | tee $SB/code_diff_since_6769c32f7.txt
+if [ -s $SB/code_diff_since_6769c32f7.txt ]; then
+  CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=4 PYTHONPATH=. nice $PY $SB/prelaunch/guard_a.py $P/collect $COLLECT $TRAIN --w-wdl 0 \
+    --w-sibling 0 > $SB/guard_a_P0_${TSHA:0:9}.json 2> $SB/guard_a_P0_${TSHA:0:9}.err || exit 1
+  cmp -s <($PY -c "import json,sys;print(json.dumps(json.load(open(sys.argv[1])),sort_keys=True))" $SB/guard_a_P0_${TSHA:0:9}.json) \
+         <($PY -c "import json,sys;print(json.dumps(json.load(open(sys.argv[1])),sort_keys=True))" $P/guard_a_P0_0c795fb7a.json) || exit 1
+fi
+CUDA_VISIBLE_DEVICES= PYTHONPATH=. $PY -m pytest -q -p no:cacheprovider tests/test_simple_rl_sibling*.py "$TAKE_EFFECT_TEST" \
   "tests/test_simple_rl_learn.py::test_kl_anchor_gradients_are_nonzero_and_reach_the_consumer" || exit 1
 ```
+
+(`$COLLECT` and `$TRAIN` are defined in the next block; define them first.)
 
 **Cell flags** (all at `$TW`):
 
@@ -381,26 +569,46 @@ import json, sys
 s, b = (json.load(open(f"{sys.argv[1]}/cost_probe_{k}.json")) for k in ("sib", "base"))
 if s["peak_reserved_gib"] > 0.85 * s["device_total_gib"]:
     sys.exit(f"ABORT: peak reserved {s['peak_reserved_gib']:.1f} GiB > 0.85 x {s['device_total_gib']:.1f}")
-cell_s = 1412 * s["step_s_median_11_on"] + 150      # update steps + the sidecar sha verification
-proj = (9 * cell_s + 440) / 3600
-print(f"sibling step {s['step_s_median_11_on']:.3f}s vs {b['step_s_median_11_on']:.3f}s; projected training {proj:.2f} GPU-h")
-if proj > 2 * 3.4:
+cell_s = 419 + s["sidecar_setup_s"] + 1412 * s["step_s_median_11_on"]
+proj = (9 * cell_s + 653) / 3600                     # + P0_main at the pilot P0 cell's process wall
+print(f"sibling step {s['step_s_median_11_on']:.3f}s (host read {s['host_read_s_median_11_on']:.3f}s) vs "
+      f"{b['step_s_median_11_on']:.3f}s; cold cache {s['cold_cache']}; projected cell {cell_s:.0f}s, training {proj:.2f} GPU-h")
+json.dump({"cell_s": cell_s, "training_gpu_h": proj}, open(f"{sys.argv[1]}/cost_projection.json", "x"))
+if proj > 2 * 4.3:
     sys.exit("HOLD for the owner: projected training > 2 x the registered estimate")
 PYEOF
 ```
 
-**Step 2: training, one crash rerun per cell, one take-effect check.**
+**Step 2: training, the realised-wall gate, one crash rerun per cell, one take-effect check.**
 
 ```bash
 train() { date -Is > $SB/arm_$1.started
   PYTHONPATH=. $PY -u scripts/simple_rl_loop.py run --run-dir $SB/arm_$1 --collect-from $P/collect \
     --generations 1 $COLLECT $TRAIN ${CELL[$1]} > $SB/arm_$1.log 2>&1; echo "$? $(date -Is)" > $SB/arm_$1.exit; }
+wall_gate() { [ -e $SB/wall_gate.json ] && return 0
+  $PY - $SB $1 <<'PYEOF'
+import json, sys
+from datetime import datetime
+sb, c = sys.argv[1:3]
+t0 = datetime.fromisoformat(open(f"{sb}/arm_{c}.started").read().strip())
+t1 = datetime.fromisoformat(open(f"{sb}/arm_{c}.exit").read().split()[1])
+wall, proj = (t1 - t0).total_seconds(), json.load(open(f"{sb}/cost_projection.json"))["cell_s"]
+json.dump({"cell": c, "wall_s": wall, "projected_s": proj, "ratio": wall / proj}, open(f"{sb}/wall_gate.json", "x"))
+if wall > 1.5 * proj:
+    open(f"{sb}/HOLD_WALL", "x").write(f"{c}: wall {wall:.0f}s > 1.5 x projected {proj:.0f}s\n")
+    sys.exit(f"HOLD: {c} wall {wall:.0f}s > 1.5 x projected {proj:.0f}s")
+PYEOF
+}
 CELLS="Zq_sib_w41 Zq_sib_w122 Zq_sib_w366 P_sib_w23 P_sib_w69 P_sib_w207 S_sib_w28 S_sib_w83 S_sib_w248 P0_main"
-for c in $CELLS; do train $c; done
+for c in $CELLS; do
+  train $c
+  if [ "$c" != P0_main ] && [ "$(cut -d' ' -f1 $SB/arm_$c.exit)" = 0 ]; then wall_gate $c || exit 1; fi
+done
 for c in $CELLS; do
   [ "$(cut -d' ' -f1 $SB/arm_$c.exit)" = 0 ] && continue
   [ -z "$(compgen -G "$SB/arm_$c.crash1*")" ] || continue
   for f in "" .log .exit .started; do [ ! -e $SB/arm_$c$f ] || mv $SB/arm_$c$f $SB/arm_$c.crash1$f; done; train $c
+  if [ "$c" != P0_main ] && [ "$(cut -d' ' -f1 $SB/arm_$c.exit)" = 0 ]; then wall_gate $c || exit 1; fi
 done
 $PY $SB/stage_a/train_check.py $SB
 ```
@@ -414,10 +622,11 @@ C=$SB/arm_P0_main/gen_0001/train/model.pt
 $PY $SB/prelaunch/check_load.py --compare $SB/check_load_P0main_pin.npz $SB/check_load_P0main_main.npz || exit 1
 ```
 
-**Step 4: Stage A** (at the PIN; self-enforced one rerun, by running the same line again):
+**Step 4: Stage A** (the instruments at the PIN, the take-effect statistic at `$TW`;
+self-enforced one rerun, by running the same line again):
 
 ```bash
-$SB/stage_a/run_stage_a.sh || exit 1      # writes $SB/offline/cells/stage_a_decision.json -> stage_b
+$SB/stage_a/run_stage_a.sh $TW $TSHA || exit 1      # writes $SB/offline/cells/stage_a_decision.json -> stage_b
 ```
 
 **Step 5: Stage B**, for the i-th entry `X` of `stage_b` (i = 1, 2), seed `SEED` = 2026112193
@@ -427,12 +636,25 @@ $SB/stage_a/run_stage_a.sh || exit 1      # writes $SB/offline/cells/stage_a_dec
 F=$HOME/chess-artifacts/operations/rl-run1-followup
 echo "7c8fd065865f3d5abcd8e9eb6f7fc1d48e882dfcfb88bbaa92d8696ce4a9510d  $F/run_followup_match.sh" | sha256sum -c --quiet || exit 93
 [ "$($PY -c "import json;print(json.load(open('$SB/offline/cells/stage_a_decision.json'))['stage_b'][$i-1])")" = "$X" ] || exit 91
-[ ! -e $SB/arm_$X/VOID ] && [ ! -e $SB/arm_$X/INERT ] || exit 91
+[ ! -e $SB/arm_$X/VOID ] || exit 91
 M=$SB/arm_$X/gen_0001/train/model.pt
 for O in $SB/smoke $SB; do n=$([ $O = $SB ] && echo 3200 || echo 4)
   $F/run_followup_match.sh $O sib_$X 1 A $SEED $n --candidate $M --reference $SL || exit 1
   $F/run_followup_match.sh $O sib_$X 1 B $SEED $n --candidate $SL --reference $M || exit 1
-  d=$O/arenas/sib_$X; (cd $PINW && PYTHONPATH=. $PY scripts/arena_seat_balanced_pool.py --arm $M \
+  d=$O/arenas/sib_$X
+  $PY - $d/results.jsonl sib_$X "$PIN" $M $SL <<'PYEOF' || exit 1
+import hashlib, json, sys
+res, lab, pin, m, sl = sys.argv[1:6]
+sha = {p: hashlib.sha256(open(p, "rb").read()).hexdigest() for p in (m, sl)}
+want = {f"{lab}_1_A": (sha[m], sha[sl]), f"{lab}_1_B": (sha[sl], sha[m])}
+rows = [json.loads(x) for x in open(res) if x.strip()]
+seen = {r["label"] for r in rows if r["label"] in want}
+bad = [r["label"] for r in rows if r["label"] in want and
+       (r["git_sha"] != pin or (r["candidate_sha256"], r["reference_sha256"]) != want[r["label"]])]
+if seen != set(want) or bad:
+    sys.exit(f"result rows: seen {sorted(seen)}, wrong git_sha or net sha256 in {bad}")
+PYEOF
+  (cd $PINW && PYTHONPATH=. $PY scripts/arena_seat_balanced_pool.py --arm $M \
     --a-games $d/sib_${X}_1_A.games.jsonl --b-games $d/sib_${X}_1_B.games.jsonl \
     --a-result $d/results.jsonl --b-result $d/results.jsonl \
     --a-label sib_${X}_1_A --b-label sib_${X}_1_B --out $d/pool.json > $d/pool.log 2>&1) || exit 1
@@ -440,5 +662,6 @@ done
 ```
 
 The first pass is the 4-game smoke (2 openings); the real match runs only if it exits 0.
-Plain seats, so no `check_seat.py` readback applies; every result row's `git_sha` must equal
-`$PIN` and its candidate/reference sha256 the intended files, as in every follow-up match.
+Plain seats, so no `check_seat.py` readback applies. The result-row check above requires every
+row of both seats to carry `git_sha` = `$PIN` and the intended candidate and reference sha256,
+as in every follow-up match. The stored decision's `stage_b` already excludes INERT cells.
