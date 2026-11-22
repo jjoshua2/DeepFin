@@ -9,7 +9,8 @@ without its file (exit 90), and an owner's stop ends the run. Every hold below t
 RESULT (a stop rule, a registered note, a reading that goes "to the owner") is unchanged: those
 holds stop the run and the owner decides; the statement authorises starting, not continuing past
 them. Before this revision nothing here ran on the GPU; the sizing below is CPU work plus measured
-costs, and the first GPU step is the 3-update training memory smoke (below).
+costs. The first GPU step is Stage 0; the 3-update training memory smoke runs after Stage 0's
+verdict and before the generation-2 release (revision 5; below).
 
 **Revision 2** applies the #1491 statistics review at `a785315b6` (evidence:
 `$OPS/rl-claude-20261119/plan-review-1491/`):
@@ -58,7 +59,8 @@ costs, and the first GPU step is the 3-update training memory smoke (below).
   machine's IDLE baseline is 3,382 MiB (the Windows side of WSL2). v3 judges memory against the
   operator's measured `idle_mib` (± 512 MiB), adds a 5-sample utilisation check (< 10 %), and
   re-checks before every step and every arena seat;
-- **the first GPU step is a 3-update training memory smoke** (what the sibling screen lacked; its
+- **the first GPU step is a 3-update training memory smoke** (revision 5 moves it after Stage 0's
+  verdict; what the sibling screen lacked; its
   registered step-1b probe died of CUDA out-of-memory on its 2nd update):
   `prelaunch/train_mem_smoke/train_mem_smoke.py` runs generation 2's own training configuration (the
   launcher's `$COLLECT2 $TRAIN $ZQ` flags) for 3 updates and writes the peak allocated and reserved
@@ -67,6 +69,32 @@ costs, and the first GPU step is the 3-update training memory smoke (below).
 - **the collect stage's expected GPU memory** is stated from the pilot's banked collect at the same
   flags (under Guards);
 - **launch is authorised** by the owner's standing statement of 2026-11-22 (Status, above).
+
+**Revision 5** applies the #1491 statistics review at `d8f91bcab` (evidence:
+`$OPS/rl-claude-20261119/plan-review-1491/delta-d8f91bcab/`):
+- **the memory smoke could not have run where revision 4 put it.** It was sequenced before Stage 0,
+  but its `--init-checkpoint` is `gen1/gen1_baked.pt`, which Stage 0 writes; the reviewer's CPU
+  run of the exact command died in `train_settings` 2 s in, and the record's own rule would have
+  turned that into ABORT + `HOLD_MEM`. The smoke now runs **after Stage 0's verdict and before the
+  generation-2 release line**, on the baked generation-1 file itself;
+- **one command, nothing retyped.** `prelaunch/train_mem_smoke/run_smoke.sh IDLE_MIB` runs the
+  operator's GPU gate itself (the sibling bank's `operator_gpu_check.sh`, sha-pinned), refuses
+  before Stage 0's verdict, with damage or with a gen1 file other than the one Stage 0 played, and
+  passes `$COLLECT2 $TRAIN $ZQ` from **`gen2/gen2_flags.sh`, the one sha-pinned file the launcher
+  also sources**. The harness proves the smoke and the training step receive identical strings;
+- **the exact operator command was run once in CPU logic mode from a staged copy, end to end**
+  (stand-in baked file and Stage 0 verdict; output banked), and that is now a pre-launch checklist
+  item for every operator command (Guards);
+- `seat_state.py`'s two untested DONE clauses (unique `(pair_id, half)`, the header seed) and
+  Stage 0's verdict thresholds are now exercised (the reviewer's surviving mutants R3–R5 die);
+- the flaky TERM case waits for the launcher's trap (bound 120 s), and the mutant runner reruns a
+  kill by that case alone;
+- the collect's measured whole-card peak is cited beside the model; the smoke's PASS confirmation
+  adds "reserved memory flat between updates 2 and 3", and the allocations it does not cover are
+  named with their margin;
+- `trunk2` is deterministic on the same inputs, so moving `HOLD_TRUNK2` aside cannot clear the
+  hold by re-rolling (B4);
+- **Commands is the reviewer's operator sequence, steps 0–10.**
 
 **What it is.** Match 8 nominated "Zq + per-generation recalibration" for a 2-generation run under
 its own record. This is that record. It has three parts:
@@ -438,6 +466,14 @@ peak RSS).
     upper edge (1.28) was generation 1's largest single batch, a per-batch extreme set against a
     mean; it is replaced. Leaving the range says the trunk pull moved by more than the whole
     raw-vs-baked difference; it holds the run for the owner and licenses nothing.
+  - **Deterministic on the same inputs (revision 5, review item 8), so a relaunch cannot clear the
+    hold by re-rolling.** The batches are a fixed permutation (seed 20261122) of the hold-out-free
+    rows, each batch's sampler is seeded by its index, `mirror_prob` is 0, and it runs CPU fp32 at a
+    fixed 4 threads with no optimizer step. Observed: my rerun of the reviewer's script was
+    bit-identical to the reviewer's (`trunk_repro.json`), and the first two batches of the 8-batch
+    run equal the reviewer's 2-batch run. Its inputs cannot be re-drawn by `move_aside.sh`: the
+    collect is a completed step (refused) and `gen1_baked.pt` is sha-checked. Moving
+    `HOLD_TRUNK2` aside and relaunching therefore reproduces the same ratio and the same hold.
   - **Re-measured with 8 batches on the pilot rows** (`prelaunch/trunk_check/trunk8_baked.json`,
     CPU fp32, 4 threads): baked Zq start **0.898** (mean of per-batch ratios 0.902, SE 0.042;
     batches 0.97, 0.825, 0.69, 1.045, 0.968, 1.007, 0.886, 0.825; the first two equal the
@@ -606,6 +642,9 @@ readout window):
   relative step is × 0.70 (‖W‖ 1.32 vs 0.93; Δ‖W‖ ≈ 0.001 over generation 1). The residual
   difference cannot be separated from a generation-2 result; generation 2's own ratio is reported
   before training (`trunk2`).
+- Concurrent screens (the sibling and root-full-width screens) use separate banks and nets; the
+  guard keeps the card exclusive to one stage at a time, so they share no data or GPU time with
+  this run.
 
 ## (C) Options — costed, not registered
 
@@ -674,33 +713,69 @@ instead of about 21 GPU-h.
 
 ## Guards, markers and resume
 
-- **GPU memory, training: the 3-update smoke, before Stage 0** (revision 4; the record's first GPU
-  step, run by the operator, alone on the card, after the guard's checks pass).
-  - What it runs: `prelaunch/train_mem_smoke/train_mem_smoke.py` from the PIN worktree, with
-    generation 2's training flags verbatim (`$COLLECT2 $TRAIN $ZQ`, Commands). It uses the PIN's
-    own `load_window` over the pilot collect's whole window (the same size as generation 2's, 8,000
-    games), `prepare_targets`, the first 3 batches of the real `plan_batches` plan, `build_trainer`
-    with the pilot Zq net's weights (generation 1's architecture; the bake changes only values),
+- **GPU memory, training: the 3-update smoke, after Stage 0's verdict and before the generation-2
+  release** (revision 5; revision 4 put it before Stage 0, where its start net does not exist yet).
+  Run by the operator, alone on the card, as ONE command: `run_smoke.sh IDLE_MIB` (Commands, step 7).
+  - **The runner** (`prelaunch/train_mem_smoke/run_smoke.sh`) first runs the operator's GPU gate
+    itself: the sibling bank's `operator_gpu_check.sh IDLE_MIB` (read-only, sha256-pinned:
+    memory within IDLE_MIB ± 512 MiB, utilisation < 10 % over 5 samples, the shared `gpu_scan.sh`).
+    It then refuses (nothing runs) on: the checks library, the flags file, the smoke script or the
+    gate not their pinned sha256 (93); `CUDA_VISIBLE_DEVICES` set to empty (94); Stage 0 with no
+    verdict or with damage (91); `gen1_baked.pt` not the verified file Stage 0 played (92, the
+    launcher's own check); the PIN worktree not at the PIN or dirty (96 / 97); a launch of this bank
+    holding its lock (9; the smoke then holds the lock for its whole run). It passes INIT =
+    `gen1_baked.pt` and the flags `$COLLECT2 $TRAIN $ZQ` from `gen2/gen2_flags.sh`, the one file
+    `launch_gen2.sh` also sources (pinned in both): no string is copied or retyped.
+  - What it runs: `train_mem_smoke.py` from the PIN worktree, with generation 2's training flags.
+    It uses the PIN's own `load_window` over the pilot collect's whole window (the same size as
+    generation 2's, 8,000 games), `prepare_targets`, the first 3 batches of the real
+    `plan_batches` plan, `build_trainer` with `gen1_baked.pt`'s weights (generation 2's actual start),
     then `Trainer.train_steps` one update at a time.
   - What it records: after EACH update, one JSON line in `smoke_mem.jsonl` (flushed and fsynced):
     `max_memory_allocated` and `max_memory_reserved` since the start, `memory_reserved` now, the
-    device total and the update's wall. Then `smoke_mem.json` holds the verdict.
-  - **Abort rule (registered): ABORT iff peak reserved > 0.85 × the device total** (exit 3). An
-    update that dies, CUDA OOM included, is an ABORT too. On ABORT the operator writes
-    `gen2/HOLD_MEM`, nothing launches, and the owner decides.
+    device total and the update's wall. Then `smoke_mem.json` holds the verdict and (revision 5) the
+    update 2 → 3 changes of reserved-now and peak reserved.
+  - **Abort rule (registered, unchanged): ABORT iff peak reserved > 0.85 × the device total** (exit
+    3). An update that dies, CUDA OOM included, and any refusal or other non-zero exit are an ABORT
+    too. On ABORT the operator writes `gen2/HOLD_MEM`, nothing launches, and the owner decides.
+  - **What the operator confirms for PASS** (a check, not a rule change; revision 5): exit 0,
+    `"verdict": "PASS"` in `smoke_mem.json`, and reserved memory flat between updates 2 and 3
+    (`reserved_now_delta_2_to_3_gib` and `peak_reserved_delta_2_to_3_gib` ≈ 0: a step that still
+    grows after update 2 is not a steady state). Anything else is `HOLD_MEM`.
   - Expectation, NOT a substitute for the measurement: generation 2 adds no second
     gradient-carrying forward, so about 17 GiB reserved. The sibling diagnostic's no-term cell, at
     the same flags from the SL base, peaked at 16.96 GiB reserved / 15.38 GiB allocated of 31.82 GiB
     over 6 updates (`~/chess-artifacts/operations/rl-run1-sibling/oprun/diag_mem/RESULT.md` [`0468d345`],
     with `mem_rows0.json` beside it). Update 1 takes 5–7 s (kernel warm-up), so the smoke's walls are not a step-time
     estimate.
+  - **What the smoke does not cover, and the margin that does.** Three later allocations in the
+    training stage never run in the smoke: the hold-out metrics (eval-mode forwards under
+    `no_grad`, smaller than a training step), `probe_drift`'s second copy of the net (≈ 0.25 GiB of
+    fp32 weights for 61 M parameters) and `torch.save` (serialisation; no new activations). Against
+    an expected ≈ 17 GiB peak, the abort line (27.05 GiB) leaves ≈ 10 GiB and the card (31.82 GiB)
+    ≈ 15 GiB; each of the three is well inside that.
   - Tested on CPU at the PIN on a tiny fixture (`tms_test.sh`, 7 / 7): three per-update lines; PASS
     at 27.00 of 31.82 GiB (0.85 × total = 27.047); ABORT (exit 3) at 27.10; refuses to overwrite;
     refuses a CPU run without the logic-smoke flag. The verdict is exercised on CPU through an
     injected (peak, total) pair, accepted only in CPU logic-smoke mode. Three mutants, each killed
     (`mutants/mutant_results.txt`): the abort fraction at 0.95; the abort ignored; the per-update
     line not written. Not covered by a test: a write deferred to the end of the run (the lines
-    exist either way); the code writes and fsyncs each line inside the update loop.
+    exist either way); the code writes and fsyncs each line inside the update loop. In CPU
+    logic mode (revision 5) the exact flags are parsed first, then the device is forced to cpu
+    without autocast, so the operator's own command line (`--device cuda` included) can be run on
+    the CPU.
+  - **The exact operator command, run once in CPU logic mode** (revision 5, review item 1):
+    `run_smoke.sh 1138` with `GEN2_BANK` a scratch copy of the bank files, the banked baked Zq
+    (`prelaunch/bake_test/Zq_baked.pt`, the bake of the same file with the same (T, b)) as the
+    stand-in `gen1_baked.pt`, a stand-in Stage 0 verdict naming its sha, and `TRAIN_MEM_SMOKE_RUN`
+    one pilot shard (18,840 rows, 37 batches of 512). The full `$COLLECT2 $TRAIN $ZQ` parsed,
+    including `--optimizer-hparams-source init-checkpoint` reading INIT; 3 updates ran; exit 0,
+    3 per-update lines, verdict null (CPU). **Footprint: 24.0 GB peak RSS, 3:55 wall** (4 threads,
+    nice 15), mostly the 61 M-parameter net at batch 512 on CPU. Banked:
+    `prelaunch/train_mem_smoke/cpu_logic_run/`.
+  - Harness (v7): the runner's refusals, the gate (a busy GPU, IDLE + 513 MiB, a listed GPU job, a
+    tampered gate), INIT and the output stem, and **the smoke and the training step receiving
+    IDENTICAL flag strings** (both calls logged by the stand-in and compared).
   - Not enforced by the launchers: they are pinned and do not read `smoke_mem.json`. The smoke
     is an operator step, and `gen2/HOLD_MEM` is a registered note.
 - **GPU memory, collect.** Generation 2's collect uses the pilot's flags (`--collect-procs 3
@@ -716,6 +791,26 @@ instead of about 21 GPU-h.
   and refuses before any work if the need exceeds what is usable then. Expected: about 24.6 GiB
   at most. The card must be otherwise idle, which the guard checks.
 
+  **Measured at the same shape** (revision 5, review item 6):
+  - the collect-throughput sweep's `mp3_c128_s64_prof` cell (`~/chess-artifacts/operations/
+    rl-claude-20261119/collect-throughput/logs/sweep.txt` line 37: 3 processes, concurrency 128, 64
+    sims; manifest matching the pilot's on every setting, checked by the reviewer): **22,104 MiB
+    whole-card peak** `memory.used`;
+  - the operator's diagnostic today at the same shape: **20,566 MiB** peak `memory.used` (1 s
+    samples) at an idle of 1,138 MiB
+    (`~/chess-artifacts/operations/rl-run1-root-full-width.opdiag/mem_20261122/RESULT.md` [`0a062442`]).
+
+  Both are whole-card readings (idle included), below the model's 24.55 GiB and the card's 31.8.
+
+- **Pre-launch checklist** (revision 5). Before any operator step:
+  - **every operator command in Commands was executed once in CPU / stub mode from the staged bank,
+    output banked.** Revision 5: Stage 0, generation 2 and `move_aside.sh` by the harness (stub
+    mode, every refusal and path); `run_smoke.sh` by the harness and once for real in CPU logic
+    mode (above; 24.0 GB RSS, ≈ 4 min: run it beside nothing else that needs the RAM). This is the
+    second time a first GPU step failed on something a dry run of the exact command would have
+    caught;
+  - the live bank verifies against `BANK_SHA256SUMS` after the swap;
+  - the queue markers `rl-run1-followup/chain.exit` and `rl-run1-value-anchor/queue2.exit` exist.
 - **Code pin.** Every GPU step runs in the PIN worktree, checked at HEAD = PIN with no tracked
   changes. `fit_value_recal.py` is sha-checked at the PIN, and every match result row must carry
   `git_sha` = PIN.
@@ -907,7 +1002,7 @@ instead of about 21 GPU-h.
   read or pooled. **Stage 0 resumes per seat like the matches** (revision 4, replacing "replayed
   whole"): a completed Stage 0 (`verdict.json`) refuses the next launch (95); otherwise a DONE seat
   is kept, an ABSENT seat plays and a PARTIAL seat stops until `move_aside.sh stage0 --seat`.
-- **Test.** `guard_test/guard_test.sh` **v6** (revision 4; v4 kept) runs everything under the isolation
+- **Test.** `guard_test/guard_test.sh` **v7** (revision 5; v6 and v4 kept) runs everything under the isolation
   described next.
   - **The isolation.** A fake HOME holds only a fake pilot bank, a fake follow-up launcher and a
     throwaway git repo as the PIN worktree. Stubs on PATH replace `python`, `python3`,
@@ -920,7 +1015,27 @@ instead of about 21 GPU-h.
     as the real one does, writes a header, n games and a `.exit`, and logs every arena call. The
     launchers are copies whose pinned sha constants are rewritten to the fake files. The harness
     asserts the isolation before any case runs.
-  - **219 cases, 219 pass** (v4's 102, adapted, plus 117 new). The stand-in GPU device is
+  - **Revision 5 (v7): 247 cases, 247 pass** (v6's 219, the TERM case strengthened, plus 28 new; run
+    from the staged bank, `guard_test/guard_test.out`):
+    - **Stage 0's verdict thresholds** (review item 4; the fake pool returned [1, 20] for every
+      case before): CI [−12, −1] reads damage and generation 2 then refuses (91); [−12, 1] reads
+      unread; [−8, 5] reads adoptable; [−0.5, 0.5] reads adoptable (hi > 0 is not damage);
+    - **seats that exit 0 but are not DONE** (review item 3): a duplicated `(pair_id, half)` and a
+      header carrying another seed each read PARTIAL (`seat_state.py`'s own output asserted) and
+      the relaunch refuses;
+    - **the smoke's runner** (review items 1–2): refused before Stage 0's verdict (91) and on
+      damage (91), on a gen1 file Stage 0 did not play (92), on a drifted flags file (93; the
+      launcher refuses it too), on another smoke script (93), on a held bank lock (9), on an empty
+      `CUDA_VISIBLE_DEVICES` (94, allowed in CPU logic mode), without `IDLE_MIB` (2); **the real
+      operator gate** (copied read-only into the fake HOME) refuses a busy GPU, IDLE + 513 MiB, a
+      listed GPU job and a tampered gate; no refused call reaches the smoke; after Stage 0 the
+      smoke gets INIT = `gen1_baked.pt`, 3 updates and the output stem `gen2/smoke_mem`, and **its
+      flag string equals the training step's** (both calls logged by the stand-in);
+    - the launchers' pins of the flags file, and the runner's pins of the checks library, flags
+      file, smoke script and gate, equal the files under test;
+    - **the TERM case** (review item 5) waits for `stage0/started` (written after the trap is
+      installed) and the sleeping seat, up to 120 s, and asserts it got there.
+  - Revision 4 (v6): **219 cases, 219 pass** (v4's 102, adapted, plus 117 new). The stand-in GPU device is
     `/dev/zero` (a real character device with another rdev) bind-mounted over `/dev/dxg` inside
     the namespace, asserted before any case; the real node is never touched. (The scan owner's own
     harness uses `/dev/full`.) Launchers run with `CUDA_VISIBLE_DEVICES` **unset** inside the
@@ -1009,6 +1124,38 @@ instead of about 21 GPU-h.
       to 1.4 / 1.35);
     - licensing: replicates + gen 2 > gen 1 + gen 2 vs base damage reads "inconsistent readings; no
       claim; owner"; gen 2 vs gen 1 unread + gen 2 vs base improves carries the cumulative claim.
+  - **Revision 5 mutants** (`guard_test/mutants_v7/` once the sweep is complete: `make_mutants_v7.py`,
+    `run_mutants_v7.sh`; one exact replacement each from the FINAL revision-5 files; a replacement
+    that does not match exactly once aborts). 103 in all: the 63 carried-over shell / python mutants
+    (every anchor still matches), the 20 scan clause mutants, five pin mutants (P1–P5: stale
+    `GUARD_SHA` and `FLAGS_SHA` in the launcher, stale `CHECKS_SHA` in `move_aside.sh`, stale
+    `SMOKE_SHA` and `GATE_SHA` in the runner) and 15 new:
+
+    | Mutant | File |
+    |---|---|
+    | m65 the launcher redefines `TRAIN` after sourcing the flags file (drift) | `launch_gen2.sh` |
+    | m66 the runner adds a flag (drift) | `run_smoke.sh` |
+    | m67 no Stage 0 verdict check | `run_smoke.sh` |
+    | m68 no gen1 provenance check | `run_smoke.sh` |
+    | m69 INIT = raw Zq | `run_smoke.sh` |
+    | m70 the gate skipped | `run_smoke.sh` |
+    | m71 the flags pin ignored | `run_smoke.sh` |
+    | m72 the flags pin ignored | `launch_gen2.sh` |
+    | m73 batch 256 in the flags file (both see it) | `gen2_flags.sh` |
+    | m74 the bank lock not taken | `run_smoke.sh` |
+    | m75 empty `CUDA_VISIBLE_DEVICES` accepted | `run_smoke.sh` |
+    | m76 = reviewer's R3: damage at hi < −5 | `run_stage0.sh` |
+    | m77 = reviewer's R4: `(pair_id, half)` uniqueness dropped | `seat_state.py` |
+    | m78 = reviewer's R5: header seed dropped | `seat_state.py` |
+    | m79 adoptable at lo > −15 | `run_stage0.sh` |
+
+    **At this push: the 15 new mutants and P1–P5 are all KILLED** (20 / 20; plus m1–m4 of the
+    carried-over set, KILLED). The carried-over 63 and the 20 scan mutants are being re-run on the
+    unchanged final files; their results are added (and this paragraph updated) before merge.
+    The runner (review item 5) reruns ALONE any kill whose only FAIL line is the TERM case, and the
+    rerun decides; P* mutants count only when a pin case fails; a non-pin kill whose only FAILs are
+    pin cases is vacuous. `train_mem_smoke.py`'s own three mutants, regenerated on the revision-5
+    file: all KILLED (`prelaunch/train_mem_smoke/mutants/mutant_results.txt`; `tms_test.sh` 7 / 7).
   - **Revision 4 mutants: 83 regenerated from the FINAL revision-4 files by one exact
     replacement each and run against harness v6** (`guard_test/mutants_v6/`: `make_mutants_v6.py`,
     the shared scan's `make_scan_mutants.py`, `run_mutants_v6.sh`, every mutant and its output,
@@ -1107,9 +1254,16 @@ instead of about 21 GPU-h.
   - `prelaunch/SHA256SUMS` lists the seven prelaunch scripts (revision 4 adds `seat_state.py`;
     revision 3 added `stage_checks.py` and
     `trunk_pull_gen2.py`); both launchers check it.
-  - `BANK_SHA256SUMS` (sha256 `7bd09092a461dc95c11e232133a75516c3739d0bbfbacbbd4ae86397a4ecfb19`) lists
-    461 files and verifies with `sha256sum -c` (the staged revision-4 bank,
-    `$OPS/rl-run1-gen2.staging`, swapped in for the live bank only on this PR's MERGE verdict).
+  - `BANK_SHA256SUMS` (sha256 `2d6e1b67849cd850c74e28cc8dce59f76e63d42ef6a16b58d13a27187ba5e6f2`) lists
+    482 files and verifies with `sha256sum -c` (the staged revision-5 bank,
+    `$OPS/rl-run1-gen2.staging`, swapped in for the live bank only on this PR's MERGE verdict;
+    Commands step 1). The revision-5 mutant sweep's results are added to `guard_test/mutants_v7/`
+    when it completes, which reseals the bank; this table is then updated in a docs-only commit.
+  - Revision 4 files are kept as `*.v4` (`launch_gen2.sh`, the harness, `fakepy.py`, its output,
+    `train_mem_smoke.py`, `tms_test.out`, `BANK_SHA256SUMS`; the smoke's revision-4 mutants as
+    `prelaunch/train_mem_smoke/mutants.v4/`). Revision 5 adds `gen2/gen2_flags.sh`,
+    `prelaunch/train_mem_smoke/run_smoke.sh` and `prelaunch/train_mem_smoke/cpu_logic_run/` (the
+    exact operator command in CPU logic mode, with its driver and stand-ins).
   - Revision 3 files are kept as `*.v3` (the launchers, `move_aside.sh`, `gen2_checks.sh`, the
     harness, `fakepy.py`, its output, `prelaunch/SHA256SUMS` and `BANK_SHA256SUMS`). Revision 4
     evidence: `prelaunch/trunk_check/trunk8_baked.*` (the 8-batch measurement),
@@ -1126,8 +1280,9 @@ instead of about 21 GPU-h.
 |---|---|
 | `gpu_guard.sh` (revision 4: v3 + the re-guard retry; pinned in both launchers) | `a7a6765c66fd7c6d0c0a9da20c524cdc49b238214509656c4353db3dcab85604` |
 | `gpu_scan.sh` (shared, final v4; pinned in the guard) | `949408e727e7ccbf942dd28f58ad800f958267577a93822950529ac20734f466` |
-| `stage0/run_stage0.sh` (revision 4) | `9280b38f131beb97633c9fff476976f7d6002c05844d5c533a06fec9b31efe0f` |
-| `gen2/launch_gen2.sh` (revision 4) | `da93a734fbd9f33d83ecf7ae140d15e94874d54027f1d8cc9bb48a84f2749a62` |
+| `stage0/run_stage0.sh` (revision 4, unchanged) | `9280b38f131beb97633c9fff476976f7d6002c05844d5c533a06fec9b31efe0f` |
+| `gen2/launch_gen2.sh` (revision 5: sources the pinned flags file) | `55973fa937a031d50ef883682d70277573d65a9d56abf430fe2fb282c3c10f6d` |
+| `gen2/gen2_flags.sh` (new; pinned in the launcher and the smoke's runner) | `7f4d7adff874febd3d0051df090e80a88c3c03676aa666f3fb03cc62fb7be3eb` |
 | `gen2/move_aside.sh` (revision 4) | `a5dcd10191d5251441affe000061485f37985307083edaf6d7a64dd6e9131954` |
 | `gen2/gen2_checks.sh` (revision 4; pinned in both) | `76dc0f691f72b8a49ea9fef871c4e20090b2f89b6c3a424bc4001cb075d33bf3` |
 | `prelaunch/SHA256SUMS` (seven scripts) | `b907ea98504c778e36697ab64ea3dbb40ff2690f81bd15ce3b4e6826aec454f5` |
@@ -1138,11 +1293,14 @@ instead of about 21 GPU-h.
 | `prelaunch/equiv_check.py` | `9af37c1b33bae5008067173d99422151ebe1402cc36989a722702697fe59574b` |
 | `prelaunch/collect_gate.py` | `470a76aebe3a0e1fa94d54ff802024ed803026fae28df2056063e04b6b3023ff` |
 | `prelaunch/take_effect_collect.py` | `9029f146958166c82b83da64de93852ce9adc5edc25171229f4c033f2607e37e` |
-| `prelaunch/train_mem_smoke/train_mem_smoke.py` (new) | `4fff5c0f225de27fe8bd5fcacf4263459741b33a6b545557078f05097a8ebe47` |
+| `prelaunch/train_mem_smoke/train_mem_smoke.py` (revision 5: CPU mode forces cpu after parsing; 2 → 3 deltas; pinned in the runner) | `2ce38774e589c124266381b138ef9f7b689c2b9e2aace05e689c38d1a06d5c54` |
+| `prelaunch/train_mem_smoke/run_smoke.sh` (new: the operator's one smoke command) | `dd523072dcbaea7d8f24c1fce48a8ef79be1ac6dfe3c74f64a954e2b99b1a736` |
+| `prelaunch/train_mem_smoke/mutants/mutant_results.txt` (3 KILLED, revision-5 file) | `48bb0c77e36c941199557a79aa138c7c5b266b6c7d26ffe25ed7fb9cc88e9224` |
+| sibling bank `operator/operator_gpu_check.sh` (read-only; pinned in the runner) | `2c4efb706548b69c78db644e16b4d7b7e60fb0a998236b3e3b1b4630d25e6ccd` |
 | `prelaunch/train_mem_smoke/tms_test.sh` (new) | `13c1817c7f080ea9557fb635786729b8833d6ecd6c97fba71e2833a51b24ef09` |
-| `guard_test/guard_test.sh` (v6) | `a22b7dc6b7bf473587e6411b478e452cbf44ac2eb6723cf1847eb209f88af10e` |
-| `guard_test/fakepy.py` (v6) | `3a1c207232cc48e275b4757fda0cee58ed646efac98ee18d2a900b89cb24873a` |
-| `guard_test/guard_test.out` (219 / 219, run from the staged bank) | `0213e9eb0d1ba16a43185c4837b14531b3eea9db4091f5aceb72825bc525e22b` |
+| `guard_test/guard_test.sh` (v7) | `556f034de7d45803eac78862786d88363128da56dd5353ae39a25843aca54336` |
+| `guard_test/fakepy.py` (v7) | `22959db83b843c3044e0854261ed683b6138a57b0e47c61a7db81342cdf2aa75` |
+| `guard_test/guard_test.out` (247 / 247, run from the staged bank) | `37762cd7a48578f8e95951ae384bdd8057a683eacd281645d77cbfaa8fc07b0e` |
 | `guard_test/mutants_v6/mutant_results.txt` (83 KILLED) | `0aeb0e03c68b6c36d4294562d66095481c37a0f6fef214cb8d1381ccdc216950` |
 | `guard_test/mutants_v6/pin_cases.txt` (2 KILLED) | `869827a8b01992b1dad24b2ebfeac68962eaed449b515c105b8ed75f3530914b` |
 | `guard_test/mutants_v6/make_mutants_v6.py` | `78885df926aff7f413c5bed1c48ee58ea28bdfe83d406cc969826cfe40b086d3` |
@@ -1151,28 +1309,50 @@ instead of about 21 GPU-h.
 
 ## Commands
 
-One command per stage. Each refuses without its OWNER_GO file (written by the coordinator, quoting the
-owner's standing statement of 2026-11-22) and the operator's release line.
+**The operator sequence is the statistics reviewer's** (review of revision 4 at `d8f91bcab`, steps
+0–10, under fix (a)), written here so the coordinator's driver and this record cannot diverge. Step
+7 is one command that runs the gate itself, so nothing is retyped.
+
+0. Before starting: the fixed head is merged with green CI. The GPU is free (the guard refuses
+   otherwise).
+1. Swap the staged bank into the live bank, then run `sha256sum -c BANK_SHA256SUMS` on the live bank
+   (expect the staged value).
+2. Confirm `rl-run1-followup/chain.exit` and `rl-run1-value-anchor/queue2.exit` exist.
+3. The coordinator writes `stage0/OWNER_GO`, quoting the owner's statement.
+4. The operator measures idle (`nvidia-smi` memory.used, utilisation under 10 %) and writes
+   `stage0 idle_mib=<MiB> <time>` in `GPU_RELEASED_BY_OPERATOR`.
+5. `setsid nohup run_stage0.sh`. It bakes and verifies `G1` on CPU, plays the 4-game smoke, then
+   6,400 games. Read `stage0/verdict.json`.
+6. If the reading is damage: stop. Generation 2 refuses with 91; the owner decides.
+7. Otherwise, run the training memory smoke: `run_smoke.sh <idle_mib>`. It runs the named
+   operator gate, takes `$COLLECT2 $TRAIN $ZQ` from the live bank's `gen2/gen2_flags.sh` (the file
+   the launcher sources) and runs `train_mem_smoke.py … gen2/smoke_mem 3 $G1 $COLLECT2 $TRAIN $ZQ`.
+   It passes only with exit 0 and PASS in `smoke_mem.json`, with reserved memory flat between
+   updates 2 and 3. Anything else: write `gen2/HOLD_MEM` and stop.
+8. The coordinator writes `gen2/OWNER_GO`. The operator re-measures idle and writes
+   `gen2 idle_mib=<MiB> <time>`.
+9. `setsid nohup launch_gen2.sh`. On `HOLD_TRUNK2`, a fit2 FAIL, `HOLD_READBACK`, or exit
+   84 / 86 / 88: stop for the owner. Only a PARTIAL seat gets `move_aside.sh <match> --seat <A|B>`
+   and a relaunch.
+10. Read `gen2/verdicts.json` and write the results record in the same session.
 
 ```bash
-OPS=$HOME/chess-artifacts/operations
-# FIRST GPU step (revision 4): the 3-update training memory smoke, alone on the card, after the operator's gate passes.
-# Exit 3 or any non-zero exit = ABORT: write $OPS/rl-run1-gen2/gen2/HOLD_MEM, launch nothing, the owner decides.
-P=$OPS/rl-run1-pilot; PIN=$(cat $P/PIN.txt); cd $HOME/projects/chess-worktrees/rl-run1-pilot-${PIN:0:9}
-# $COLLECT2 $TRAIN $ZQ: exactly as defined in gen2/launch_gen2.sh (copied, never retyped)
-CUDA_VISIBLE_DEVICES=0 PYTORCH_NVML_BASED_CUDA_CHECK=1 PYTHONPATH=. $HOME/projects/chess/.venv/bin/python -u \
-  $OPS/rl-run1-gen2/prelaunch/train_mem_smoke/train_mem_smoke.py $OPS/rl-run1-gen2/gen2/smoke_mem 3 \
-  $P/arm_Zq/gen_0001/train/model.pt $COLLECT2 $TRAIN $ZQ > $OPS/rl-run1-gen2/gen2/smoke_mem.log 2>&1
-# Stage 0 (after: the smoke PASSED; coordinator -> stage0/OWNER_GO quoting the owner's statement; operator measures the idle baseline (nvidia-smi memory.used, GPU idle)
-#          and writes "stage0 idle_mib=<MiB> <time>" in GPU_RELEASED_BY_OPERATOR)
-setsid nohup $OPS/rl-run1-gen2/stage0/run_stage0.sh > $OPS/rl-run1-gen2/stage0/run.out 2>&1 < /dev/null &
-# Generation 2 (after Stage 0's verdict.json is not damage; coordinator -> gen2/OWNER_GO (the same statement); operator -> "gen2 idle_mib=<MiB> <time>")
-setsid nohup $OPS/rl-run1-gen2/gen2/launch_gen2.sh > $OPS/rl-run1-gen2/gen2/run.out 2>&1 < /dev/null &
-# After a FAILED or INTERRUPTED step (the launcher's refusal names it): move its outputs aside, then relaunch.
-# It refuses completed steps, completed matches and a completed Stage 0; a registered reading is re-drawn only under a new record.
-$OPS/rl-run1-gen2/gen2/move_aside.sh <step>
-# A failed match or Stage 0 needs no move: relaunch, it resumes per seat. Only a PARTIAL seat (the refusal names it) moves:
-$OPS/rl-run1-gen2/gen2/move_aside.sh <m_g2_vs_g1|m_g2_vs_base|stage0> --seat <A|B>
+OPS=$HOME/chess-artifacts/operations; B=$OPS/rl-run1-gen2
+# 1. swap (on this PR's MERGE), then verify
+mv $B $OPS/rl-run1-gen2.rev4.$(date -u +%Y%m%dT%H%M%SZ) && mv $OPS/rl-run1-gen2.staging $B
+(cd $B && sha256sum -c --quiet BANK_SHA256SUMS && sha256sum BANK_SHA256SUMS)
+# 2. queue markers
+ls $OPS/rl-run1-followup/chain.exit $OPS/rl-run1-value-anchor/queue2.exit
+# 5. Stage 0 (after stage0/OWNER_GO and the operator's "stage0 idle_mib=<MiB> <time>" line)
+setsid nohup $B/stage0/run_stage0.sh > $B/stage0/run.out 2>&1 < /dev/null &
+cat $B/stage0/verdict.json
+# 7. the training memory smoke (after a non-damage verdict), ONE command; the gate runs inside it
+$B/prelaunch/train_mem_smoke/run_smoke.sh <idle_mib> > $B/gen2/smoke_mem.log 2>&1; echo "exit $?"
+cat $B/gen2/smoke_mem.json   # exit 0 + "verdict": "PASS" + both *_delta_2_to_3_gib ~ 0, else: echo "<why> $(date -Is)" > $B/gen2/HOLD_MEM
+# 9. generation 2 (after gen2/OWNER_GO and the operator's "gen2 idle_mib=<MiB> <time>" line)
+setsid nohup $B/gen2/launch_gen2.sh > $B/gen2/run.out 2>&1 < /dev/null &
+# only for a PARTIAL seat named by the refusal:
+$B/gen2/move_aside.sh <m_g2_vs_g1|m_g2_vs_base|stage0> --seat <A|B>
 ```
 
 Results go into a separate results record, in the same session as the readout, judged by the rules
