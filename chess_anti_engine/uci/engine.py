@@ -795,6 +795,15 @@ class Engine:
   # not print it: the GUI has moved on, and a late bestmove is read as the
   # reply to its NEXT go -- for the wrong board. Checked under `_PRINT_LOCK`.
         self._superseded_through_gen = 0
+  # A ponder phase whose `run()` has returned: ``(gen, ponder board, predicted
+  # reply)``. Set by the search thread after the ponder `run()` returns and
+  # before it waits for `ponderhit` / `stop`; cleared (`_retire_finished_ponder`)
+  # before that thread touches the tree again and when it exits. While it is
+  # set nothing mutates the tree, so the deadline watchdog may read the ponder
+  # tree's answer to the predicted reply -- under this lock, which the clear
+  # also takes, so the tree cannot change under the read.
+        self._finished_ponder: tuple[int, chess.Board, chess.Move] | None = None
+        self._finished_ponder_lock = threading.Lock()
   # The search's latest best move, published by the search thread as ONE
   # immutable ``(fen, uci)`` tuple swapped atomically; the watchdog reads it
   # from its own thread and uses it only for the position it is keyed to.
@@ -3307,6 +3316,53 @@ class Engine:
         *, cancel_event: threading.Event | None = None,
         ponder_release: threading.Event | None = None,
     ) -> None:
+        try:
+            self._run_search_phases(
+                limits, gen, board, go_received_at,
+                cancel_event=cancel_event, ponder_release=ponder_release,
+            )
+        finally:
+            self._retire_finished_ponder()
+
+    def _retire_finished_ponder(self) -> None:
+        """The search thread is about to touch the tree again (or exit): the
+        finished ponder tree is no longer readable. Waits for a watchdog read in
+        progress, so the tree never changes under it."""
+        with self._finished_ponder_lock:
+            self._finished_ponder = None
+
+    def _finished_ponder_move(self, entry: _WatchdogEntry) -> str | None:
+        """The finished ponder tree's most-visited reply for ``entry``'s go, or
+        None: no finished ponder phase of that go (its `run()` still in flight,
+        or the thread has moved on), a board that is not the ponder board plus
+        the predicted reply, or no playable visited child."""
+        with self._finished_ponder_lock:
+            finished = self._finished_ponder
+            if finished is None or finished[0] != entry.gen:
+                return None
+            _gen, ponder_board, popped = finished
+            real = ponder_board.copy(stack=False)
+            real.push(popped)
+            if real.fen() != entry.board.fen():
+                return None
+            child = getattr(self._worker, "child_bestmove", None)
+            try:
+                move = (
+                    child(ponder_board, popped, searchmoves=entry.searchmoves)
+                    if callable(child) else None
+                )
+            except Exception:
+                return None
+        if isinstance(move, str) and _is_playable_fallback(entry.board, move, entry.searchmoves):
+            return move
+        return None
+
+    def _run_search_phases(
+        self, limits: SearchLimits, gen: int, board: chess.Board,
+        go_received_at: float | None = None,
+        *, cancel_event: threading.Event | None = None,
+        ponder_release: threading.Event | None = None,
+    ) -> None:
   # THIS go's events, handed over at thread creation. Every later `go` replaces
   # `self._cancel_event` / `self._ponder_release`; a search parked after `stop`
   # that returned later and then waited on the NEW, never-set event would stay
@@ -3321,6 +3377,11 @@ class Engine:
             limits, is_ponder=limits.ponder, board=board, clock_started_at=go_received_at,
             gen=gen,
         )
+        if limits.ponder and popped_at_start is not None:
+            # The ponder `run()` has returned: until this thread retires it, the
+            # tree is final and the watchdog may read it (`_finished_ponder_move`).
+            with self._finished_ponder_lock:
+                self._finished_ponder = (gen, board.copy(stack=False), popped_at_start)
   # The worker can return before the GUI does. A mated root, a tablebase
   # hit, a declined draw, a full hash, or a search exception is not a
   # ponder release: this phase is still the position *before* the predicted
@@ -3374,6 +3435,9 @@ class Engine:
                 and (real_limits.clock_exhausted or transition_deadline.expired())
                 else None
             )
+            # Everything below may mutate the tree (advance_root, reset_tree,
+            # the real phase's search).
+            self._retire_finished_ponder()
             if (popped is not None and not self._cancel_event.is_set()
                     and not transition_deadline.expired()):
                 if not self._worker.advance_root(board, [popped]):
@@ -3632,7 +3696,13 @@ class Engine:
         for stop in entry.stops:
             stop.set()
         snap = self._pv_snapshot
-        if (snap is not None and snap[0] == entry.board.fen()
+        # An expired ponderhit whose ponder `run()` had already returned: the
+        # finished ponder tree answers the played reply (a searched move, not a
+        # fallback). Otherwise the tree may be mid-search and is not read.
+        tree_move = self._finished_ponder_move(entry)
+        if tree_move is not None:
+            move, source = tree_move, "ponder_tree"
+        elif (snap is not None and snap[0] == entry.board.fen()
                 and _is_playable_fallback(entry.board, snap[1], entry.searchmoves)):
             move, source = snap[1], "last_pv"
         else:
@@ -3640,13 +3710,16 @@ class Engine:
                 entry.board, entry.searchmoves, allow_fresh_eval=False,
             )
         self._watchdog_fires += 1
-        self._bestmove_fallback_used += 1
-        self._note_unsearched_reply()
+        if source != "ponder_tree":
+            self._bestmove_fallback_used += 1
+            self._note_unsearched_reply()
         elapsed_ms = int((time.monotonic() - entry.started_at) * 1000)
         with _answer_owner():
             self._publish_bestmove(entry.gen, move, prelude=(
                 f"info string WARNING search stalled: {reason}; {elapsed_ms} ms into a "
-                f"clocked move; deadline watchdog answers unsearched source={source} "
+                f"clocked move; deadline watchdog answers "
+                f"{'from the finished ponder tree' if source == 'ponder_tree' else 'unsearched'} "
+                f"source={source} "
                 f"move={move} bestmove_fallback_used={self._bestmove_fallback_used}"
             ))
 
