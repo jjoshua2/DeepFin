@@ -373,6 +373,20 @@ SEARCH_SHAPES = ("play", "training")
 
 _GUMBEL_INT_KEYS = {"topk", "halving_div", "simulations"}
 
+# Spellings a `--*-gumbel` BOOL field accepts. Anything else is refused: the
+# number parser used to turn `target_untempered_prior=0.5` into 0.5, which every
+# consumer's `bool(...)` reads as True while the record banks 0.5.
+_GUMBEL_BOOL_SPELLINGS = {"1": True, "true": True, "0": False, "false": False}
+
+
+def _parse_gumbel_bool(k: str, v: str) -> bool:
+    try:
+        return _GUMBEL_BOOL_SPELLINGS[v.strip().lower()]
+    except KeyError:
+        raise SystemExit(
+            f"--*-gumbel: {k}={v!r} is a bool field; pass one of 0, 1, true, false"
+        ) from None
+
 
 def training_shape_carried_fields() -> tuple[str, ...]:
     """GumbelConfig fields the ``training`` shape must carry from production.
@@ -913,6 +927,7 @@ def apply_search_overrides(
     from chess_anti_engine.mcts.gumbel import INERT_GUMBEL_KNOBS, GumbelConfig
 
     fields = {f.name for f in dataclasses.fields(GumbelConfig)}
+    bool_fields = {f.name for f in dataclasses.fields(GumbelConfig) if isinstance(f.default, bool)}
     gumbel = dict(base.gumbel)
     extra: list[str] = []
     for part in (spec or "").split(","):
@@ -941,6 +956,10 @@ def apply_search_overrides(
                 "scratchpad/code_audit_20260803/repro_inert_knobs.py). A Swiss "
                 "over it would return a flat null and read as a measurement."
             )
+        if k in bool_fields:
+            gumbel[k] = _parse_gumbel_bool(k, v)
+            extra.append(part)
+            continue
         try:
             gumbel[k] = int(v) if k in _GUMBEL_INT_KEYS else float(v)
         except ValueError:
