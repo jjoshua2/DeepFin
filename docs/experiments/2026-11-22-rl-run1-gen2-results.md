@@ -12,7 +12,7 @@ that directory.
 
 ### Verdict
 
-**Stage 0 reads "adoptable": consistent with match 8, but it does not replicate it.**
+**Stage 0 reads "adoptable": consistent with match 8; does not replicate it** (the record's Stage 0 table, verbatim).
 - The pooled Elo of the baked generation-1 net vs the SL base is **+4.94 [−1.62, +11.50]**.
 - By the record's Stage 0 rules (`pool.json` → `result.pooled.elo_ci95`; the arm is the baked seat):
   - LB95 −1.62 is not > 0, so the reading is not "replicates";
@@ -25,15 +25,22 @@ that directory.
 - **Nothing is adopted on Stage 0 alone** (record, Stage 0 rules).
 
 **What follows from the record:**
-- Generation 2 proceeds, because Stage 0 is not damage. The generation-2 launcher refuses unless the gen-1 file's
+- Generation 2 proceeds: the record says "Generation 2 proceeds on any **non-damage** Stage 0". The generation-2 launcher refuses unless the gen-1 file's
   sha256 equals `played_sha256`.
 - Stage 0 is not "replicates", so **the "two measured steps" row of the licensing table is now unreachable** for this
   run, whatever generation 2 reads.
-- The rows still open are:
-  - "one measured step (step 2)", if gen 2 vs gen 1 improves;
-  - "one measured step and a cumulative improvement over the base", if gen 2 vs the base improves as well;
-  - a cumulative improvement alone;
-  - no second measured step.
+- The rows still open, with the record's licensed-claim text quoted (record, "What this record can license"):
+  - gen 2 vs gen 1 improves and gen 2 vs base improves: "**one measured step (step 2) and a cumulative improvement
+    over the base; attribution between generations unread**";
+  - gen 2 vs gen 1 improves and gen 2 vs base does not: "one measured step (step 2)";
+  - gen 2 vs gen 1 does not improve and gen 2 vs base improves: "**no second measured step; a cumulative improvement
+    over the base (gen 2 vs base improves); attribution between generations unread**";
+  - neither improves: "no second measured step".
+- **With Stage 0 not "replicates", attribution between generations is unread in every reachable outcome.** B6's
+  escape, "attribution between generations unread unless Stage 0 replicated and gen 2 vs gen 1 improved", is closed.
+- **Option (ii), the fresh generation-1 replicate (record part C3), is not recommended by the record.** C3 recommends
+  it "only if Stage 0 reads unread and the owner wants step 1 confirmed before generation 2"; Stage 0 read
+  adoptable.
 
 ### Estimate (the record's estimator, on the banked games)
 
@@ -70,17 +77,17 @@ mapped to Elo. Source: `G2/stage0/arenas/zq_recal_rep/pool.json` [`842537eb`].
   selected as a winner, so pooling would carry its selection bias; Stage 0 alone is the unbiased estimate of that
   player." A combined number would be exactly that selection-biased quantity, so this record does not give one,
   not even as a descriptive figure.
-- Read as an estimate of the player, the unbiased number is Stage 0's. Match 8 was the best of a set of readings, and
-  its replication came out smaller, which is what selection would produce. Stage 0 does not tell selection apart from
-  noise.
+- Interpretation: read as an estimate of the player, the unbiased number is Stage 0's. Match 8 was the best of a set
+  of readings, and its replication came out smaller, which is what selection would produce. Stage 0 does not tell
+  selection apart from noise.
 
 ### What "adoptable but not replicated" means for "RL improved on the SL base"
 
 **It is not established that RL improved on the SL base.**
 - The one registered reading that nominated an improvement (match 8, +9.6) did not replicate under the record's
   rule. The unbiased estimate of that player is +4.9, with an interval that includes 0.
-- Stage 0 also shows **no damage**: the baked net is not measurably worse than the SL base (UB95 +11.5, LB95 −1.6),
-  so it is safe to collect from.
+- Stage 0 also shows **no damage**: the baked net is not measurably worse than the SL base (UB95 +11.5, LB95 −1.6).
+  By the record, "generation 2 proceeds on any non-damage Stage 0".
 - That is all "adoptable" means here. Under this record:
   - "RL improved on the SL base" can be claimed only via generation 2's cumulative reading (gen 2 vs base improves).
   - "two measured steps" cannot be claimed at all.
@@ -97,19 +104,26 @@ These are as reported by the operator and read from the bank files cited.
 **Attempt 2.**
 - The release line is `stage0 idle_mib=2398` in `G2/GPU_RELEASED_BY_OPERATOR` [`efee002a`]. Its first line per
   stage wins, and the operator replaced it for this attempt.
-- `G2/stage0/started` [`a247a7c1`].
-- The operator reports the start at 14:33:07.
-- Seat A's first game is stamped 14:38:35 in its header.
+- Start 14:31:43: `G2/stage0/started` [`a247a7c1`] reads `2026-11-22T14:31:43-05:00`, and `G2/resume.log`
+  [`fd8662b0`] reads `14:31:43 stage0 launch pid 2832905`.
+- Seat A's game log header is `created` 14:38:35; its first game's `ts` is 14:39:09.
 - Exit 0 at 16:06:23.
 - The owner's standing go is quoted in `G2/stage0/OWNER_GO` [`7d859aea`].
 
-**Re-guard waits at the two seat boundaries.** These are in `G2/stage0/guard.log` [`08088d84`]. Each wait ended in a
-pass:
-- 14:35:58–14:36:09: an agent's pytest held `/dev/dxg`; passed after 5 s of waits.
-- 14:37:06–14:38:29: pytest, then GPU utilisation 16 % / 11 %; passed after 40 s.
-- 15:21:52–15:25:40: utilisation 13–17 %, pytest on `/dev/dxg`, then memory 1,884 MiB outside [1,886, 2,910]; passed
-  after 115 s.
+**Three re-guard waits.** These are in `G2/stage0/guard.log` [`08088d84`]. Each wait ended in a pass:
+- before the smoke seat, 14:35:58–14:36:09: an agent's pytest held `/dev/dxg`; passed after 5 s of waits;
+- between the smoke seat and real seat A, 14:37:06–14:38:29: pytest, then GPU utilisation 16 % / 11 %; passed after
+  40 s;
+- between seats A and B, 15:21:52–15:25:40: utilisation 13–17 %, pytest on `/dev/dxg`, then memory 1,884 MiB outside
+  [1,886, 2,910]; passed after 115 s.
 - The operator raised the hold file at the boundaries. No game was played while a refusal stood.
+
+**The gap between Stage 0's exit (16:06:23) and the memory smoke (16:40:08).** The operator ran two diagnostics
+unrelated to this record on the idle GPU: an engine warm-start test (16:06–16:10) and the forward-chunking
+measurement for PR #1511 (16:14–16:40). Each went through the operator's GPU gate, and neither wrote anything inside
+this bank; their times are the operator's report. The memory smoke's own gate then measured a fresh idle: the first
+lines of `G2/gen2/smoke_mem.log` [mtime 11-22 16:40] read "OK: memory within [1669, 2693] MiB, utilisation max 1 %
+over 5 samples, no GPU job of this user" (idle 2,181 MiB ± 512), stamped 2026-11-22T16:40:08-05:00.
 
 **`gpu_scan.sh: line 171: desc: bad array subscript`, printed twice in `run.out`.** It does not change any scan's
 verdict. Source: `G2/gpu_scan.sh` [`949408e7`].
