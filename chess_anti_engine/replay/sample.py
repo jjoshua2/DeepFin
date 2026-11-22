@@ -154,6 +154,10 @@ class ReplaySample:
   # (tree reuse), so the row's realised budget is that plus the sims run.
   # search_budget: simulations run on this ply (full vs fast under playout
   # cap randomisation); written for every net-turn row, policy or not.
+  # root_prelude_visits: simulations GumbelConfig.root_full_width's round 0 ran
+  # before halving (one per unvisited searched child; 0 on a fast ply). Written
+  # only when the knob is on. The root's visits are root_start_visits +
+  # root_prelude_visits + search_budget (less if a proven root stopped early).
   # The two indices are move indices -> registered in POLICY_INDEX_FIELDS.
     root_log_prior: np.ndarray | None = None
     root_child_q: np.ndarray | None = None
@@ -166,3 +170,4 @@ class ReplaySample:
     root_survivor_index: int | None = None
     played_move_index: int | None = None
     search_budget: int | None = None
+    root_prelude_visits: int | None = None

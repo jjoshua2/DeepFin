@@ -352,6 +352,13 @@ class RootSearchStats:
     survivor_q: float
     node_q: float
     start_visits: int
+  # Simulations the full-width round 0 (`GumbelConfig.root_full_width`) spent
+  # on this root before sequential halving, read off the tree (one per searched
+  # legal child that had no visits; 0 on a playout-cap fast ply, which skips
+  # round 0). None when the knob is off, so nothing new is stored. Included in
+  # ``visits``: the root's visits are ``start_visits + prelude_visits`` plus the
+  # halving budget.
+    prelude_visits: int | None = None
 
 
 def rebuild_improved_policy(
@@ -411,7 +418,13 @@ _EncodeBuffer = NDArray[np.float32] | NDArray[np.uint16]
 # (audit F5 tree-carry vs pipeline, F7 policy_temp vs compact-legal bf16).
 # Module-level so a per-ply search does not re-log every move.
 _PIPELINE_TREE_WARNED = False
+_PIPELINE_FULL_WIDTH_WARNED = False
 _LEGAL_BF16_TEMP_WARNED = False
+
+
+def _mark_pipeline_full_width_warned() -> None:
+    global _PIPELINE_FULL_WIDTH_WARNED
+    _PIPELINE_FULL_WIDTH_WARNED = True
 
 
 def _mark_pipeline_tree_warned() -> None:
@@ -884,6 +897,132 @@ def _recover_root_witness(tree, rid: int, cb, pri: np.ndarray, legal: np.ndarray
     return None, fallback, checks
 
 
+def _root_child_visit_sum(tree: MCTSTree, rid: int) -> int:
+    return int(np.asarray(tree.get_children_visits(rid)[1]).sum())
+
+
+def _full_width_round0(
+    *,
+    tree: MCTSTree,
+    n_boards: int,
+    root_ids: list[int],
+    candidates_per_board: list[list[int] | None],
+    remaining_per_board: list[list[int] | None],
+    root_prep: list[_RootPrep | None],
+    root_pri: list[np.ndarray | None],
+    gumbels_per_board: list[np.ndarray | None],
+    root_qs: list[float],
+    cfg: GumbelConfig,
+    buffer_rows: int,
+    candidate_cap: int,
+    start: Callable[[list[list[int] | None], np.ndarray], int | None],
+    drain: Callable[[int | None], None],
+    prelude_visits: list[int],
+    board_mask: list[bool] | None = None,
+) -> None:
+    """``GumbelConfig.root_full_width``: one simulation per unvisited root child,
+    then re-choose the halving candidates with sigma(q).
+
+    Round 0 drives the UNCHANGED C state machine: a board whose candidate list
+    is its k unvisited children and whose budget is k gets exactly one forced
+    visit per child in one rep, after which its budget is spent and the board
+    goes inactive. So no C or ABI change is needed. The boards are packed into
+    calls of at most ``buffer_rows`` leaves (and at most ``candidate_cap``
+    children per board per call), so a round-0 call can never overflow the leaf
+    buffer and register a buffer-full flush -- the buffer and ``check_vram`` keep
+    their topk-based size; a wide batch takes one or a few more GPU calls.
+
+    The halving candidates are then the top ``m`` of gumbel + log prior +
+    sigma(completed q), with sigma the PLAY-arm root transform -- the one the
+    played move's improved policy uses (``_completed_q_transform(root=True)``
+    with no ``target_max_visit_cap``, ``target_q_rescale=False`` or untempered
+    prior), which is the right one for choosing what to search. Its scale grows
+    with the root's max child visit count: 1 on a fresh root, the carried count
+    on a reused one, so at production ``c_visit`` a reused root's re-ranking is
+    close to "rank by Q". The Gumbel draws are the ones the mutating pass already made, so the
+    RNG streams consume exactly what they consume with the knob off. The
+    halving call that follows still spends ``budget_remaining`` (unchanged);
+    the realised round-0 simulations are written to ``prelude_visits`` from the
+    tree's own visit counts, not from the plan.
+    """
+    boards: list[int] = []
+    pieces: list[tuple[int, list[int]]] = []
+    step = max(1, min(int(candidate_cap), int(buffer_rows)))
+    for i in range(n_boards):
+        prep = root_prep[i]
+        rid = root_ids[i]
+        if candidates_per_board[i] is None or prep is None or rid < 0:
+            continue
+        if board_mask is not None and not board_mask[i]:
+            continue  # a playout-cap fast ply: no round 0, candidates unchanged
+        boards.append(i)
+        if tree.get_solved_status(rid) != 0:
+            continue
+        acts, vis = tree.get_children_visits(rid)
+        searched = {int(a) for a in prep.legal_idx}
+        todo = sorted(
+            int(a) for a, n in zip(np.asarray(acts), np.asarray(vis))
+            if int(n) == 0 and int(a) in searched
+        )
+        pieces.extend((i, todo[k:k + step]) for k in range(0, len(todo), step))
+
+    before = {i: _root_child_visit_sum(tree, root_ids[i]) for i in boards}
+  # First-fit packing: a board appears at most once per call (its list is its
+  # candidate set for that call) and a call never asks for more leaves than
+  # the buffer holds.
+    calls: list[tuple[dict[int, list[int]], int]] = []
+    for i, piece in pieces:
+        for c, (members, size) in enumerate(calls):
+            if i not in members and size + len(piece) <= buffer_rows:
+                members[i] = piece
+                calls[c] = (members, size + len(piece))
+                break
+        else:
+            calls.append(({i: piece}, len(piece)))
+    for members, _size in calls:
+        remaining: list[list[int] | None] = [None] * n_boards
+        budget = np.zeros(n_boards, dtype=np.int32)
+        for i, piece in members.items():
+          # A child found mate/a TB proof in an earlier call: the root is now
+          # solved and the C's witness logic, not round 0, owns it.
+            if tree.get_solved_status(root_ids[i]) != 0:
+                continue
+            remaining[i] = list(piece)
+            budget[i] = len(piece)
+        if budget.any():
+            drain(start(remaining, budget))
+
+    for i in boards:
+        rid = root_ids[i]
+        prelude_visits[i] = _root_child_visit_sum(tree, rid) - before[i]
+        prep = root_prep[i]
+        pri = root_pri[i]
+        g_full = gumbels_per_board[i]
+        assert prep is not None
+        assert pri is not None
+        assert g_full is not None
+        legal = prep.legal_idx
+        root_q = float(root_qs[i])
+        acts, vis, q = tree.get_children_q(rid, root_q)
+        slot = {int(a): j for j, a in enumerate(np.asarray(acts))}
+        visits = np.zeros(legal.size, dtype=np.float64)
+        qvalues = np.full(legal.size, root_q, dtype=np.float64)
+        for j, a in enumerate(legal):
+            sj = slot.get(int(a))
+            if sj is not None and int(vis[sj]) > 0:
+                visits[j] = float(vis[sj])
+                qvalues[j] = float(q[sj])
+        sigma = _completed_q_transform(
+            actions=legal, priors=pri[legal], visits=visits, qvalues=qvalues,
+            raw_value=root_q, cfg=cfg, root=True,
+        )
+        score: np.ndarray = g_full[legal] + np.log(np.maximum(pri[legal], 1e-12)) + sigma
+        order = np.argsort(np.negative(score), kind="stable")[: int(prep.m)]
+        cands = legal[order].astype(int).tolist()
+        candidates_per_board[i] = list(cands)
+        remaining_per_board[i] = list(cands)
+
+
 @torch.no_grad()
 @overload
 def run_gumbel_root_many_c(
@@ -913,6 +1052,7 @@ def run_gumbel_root_many_c(
     witness_stop_fn: Callable[[], bool] | None = None,
     root_stats_out: list[RootSearchStats | None] | None = None,
     per_game_rng: Sequence[np.random.Generator] | None = None,
+    per_game_root_full_width: Sequence[bool] | None = None,
     return_diagnostics: Literal[False] = False,
 ) -> GumbelManyCResult: ...
 
@@ -945,6 +1085,7 @@ def run_gumbel_root_many_c(
     witness_stop_fn: Callable[[], bool] | None = None,
     root_stats_out: list[RootSearchStats | None] | None = None,
     per_game_rng: Sequence[np.random.Generator] | None = None,
+    per_game_root_full_width: Sequence[bool] | None = None,
     return_diagnostics: Literal[True],
 ) -> GumbelManyCDiagnosticsResult: ...
 
@@ -976,6 +1117,7 @@ def run_gumbel_root_many_c(
     witness_stop_fn: Callable[[], bool] | None = None,
     root_stats_out: list[RootSearchStats | None] | None = None,
     per_game_rng: Sequence[np.random.Generator] | None = None,
+    per_game_root_full_width: Sequence[bool] | None = None,
     return_diagnostics: bool = False,
 ) -> GumbelManyCResult | GumbelManyCDiagnosticsResult:
     """Gumbel root search with MCTSTree C tree + CBoard.
@@ -1006,6 +1148,12 @@ def run_gumbel_root_many_c(
         from, so a game's draws depend only on its own positions, not on which
         other games share the batch or in what order (the simple_rl collect's
         per-game streams). None keeps the one shared ``rng``.
+
+    ``per_game_root_full_width``
+        Which boards run ``cfg.root_full_width``'s round 0. None = every board
+        (when the knob is on). Selfplay passes its playout-cap ``is_full`` mask:
+        a fast ply is played but stores no policy target, so spending round 0
+        on it would defeat the cap. Ignored while the knob is off.
 
     ``allow_candidate_cap_truncation``
         False by default. The compiled sequential-halving scorer owns a fixed
@@ -1123,6 +1271,8 @@ def run_gumbel_root_many_c(
     n_boards = len(boards)
     if per_game_rng is not None and len(per_game_rng) != n_boards:
         raise ValueError(f"per_game_rng has {len(per_game_rng)} generators for {n_boards} boards")
+    if per_game_root_full_width is not None and len(per_game_root_full_width) != n_boards:
+        raise ValueError(f"per_game_root_full_width has {len(per_game_root_full_width)} entries for {n_boards} boards")
     if root_stats_out is not None:
         # Opt-in observation only: filled per board below, never read back.
         # A board whose result did not come from the ordinary completed-Q
@@ -1130,6 +1280,7 @@ def run_gumbel_root_many_c(
         # keeps None, so no caller can mistake a one-hot proof for a search.
         root_stats_out[:] = [None] * n_boards
     start_visits_by_board = [0] * n_boards
+    prelude_visits = [0] * n_boards
     if n_boards == 0:
         out_empty = ([], [], [], [], (tree if tree is not None else MCTSTree()), [])
         if return_diagnostics:
@@ -1199,6 +1350,20 @@ def run_gumbel_root_many_c(
                 n_boards,
             )
             _mark_pipeline_tree_warned()
+        _use_pipeline = False
+  # The full-width round 0 runs on the single shared tree before the halving
+  # call (see `_full_width_round0`); the pipeline's ephemeral sub-trees have no
+  # such step, so the knob takes the sequential path.
+    if _use_pipeline and bool(cfg.root_full_width):
+        if not _PIPELINE_FULL_WIDTH_WARNED:
+            _log.warning(
+                "gumbel_c: disabling the 2-group eval pipeline for this call because "
+                "root_full_width is on (n_boards=%d >= 64). Round 0 runs on the single "
+                "shared tree; the pipeline's ephemeral sub-trees have no such step and "
+                "would silently search the plain topk root.",
+                n_boards,
+            )
+            _mark_pipeline_full_width_warned()
         _use_pipeline = False
 
   # Zero-copy path: when the evaluator exposes get_input_buffer + evaluate_inplace_async
@@ -1986,85 +2151,112 @@ def run_gumbel_root_many_c(
             np.zeros((len(_enc_buf), 5, 64, 64), dtype=np.uint8)
             if cfg.compute_relations else None
         )
-        _tp0 = _time.perf_counter()
-        n_leaves = tree.start_gumbel_sims(
-            root_cboards, _root_ids_arr,
-            cast("list[list[int]]", remaining_per_board),
-            cast("list[np.ndarray]", gumbels_per_board),
-            cast("list[np.ndarray]", root_pri),
-            _budget_arr, _root_qs_arr,
-            _c_scale, _c_visit, _c_puct, _fpu_reduction, _full_tree,
-            cast(np.ndarray, _enc_buf),
-          # Same twelve trailing args as the group site above, from the same
-          # helper: this is the only one of the two an argument spy can observe.
-            *_start_gumbel_trailing_args(
-                cfg=cfg, vloss_weight=vloss_weight, target_batch=target_batch,
-                vloss_mode=vloss_mode, rel_buf=_rel_buf,
-            ),
-        )
-        _t_prepare += _time.perf_counter() - _tp0
+        _seq_tree = tree
+        assert _seq_tree is not None
 
-        while n_leaves is not None:
-            n_leaves = int(n_leaves)
-            padded = _pad_for_bucket(n_leaves, len(_enc_buf))
-            # Above the branch on purpose: every arm below sends the same
-            # `_enc_buf` rows, and the zero-copy (`_inplace`) arm is the one
-            # production actually takes -- wiring this only into the copying
-            # arms would have made the instrument read nothing live.
-            _record_batch_dup(
-                _enc_buf, n_leaves,
-                n_leaves if (_use_legal_bf16 or _submit_live_rows_only) else padded,
-            )
-            _tg0 = _time.perf_counter()
-            if _use_legal_bf16:
-                legal_flat, legal_counts = tree.get_pending_legal_indices()
-                pol_all, wdl_all = eval_impl.evaluate_legal_bf16(  # pyright: ignore[reportAttributeAccessIssue]
-                    _enc_buf[:n_leaves], legal_flat, legal_counts,
-                )
-            elif _inplace:
-                if _rel_buf is not None:
-                    pol_t, wdl_t, event = eval_impl.evaluate_inplace_async(  # pyright: ignore[reportAttributeAccessIssue]
-                        padded, slot=0, relations=_rel_buf[:padded],
-                    )
-                else:
-                    pol_t, wdl_t, event = eval_impl.evaluate_inplace_async(padded, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
-                if event is not None:
-                    event.synchronize()
-                pol_all = pol_t[:n_leaves].numpy()
-                wdl_all = wdl_t[:n_leaves].numpy()
-            elif _has_async:
-                pol_t, wdl_t, event = (
-                    _async_eval.evaluate_encoded_async(_enc_buf[:padded], relations=_rel_buf[:padded])
-                    if _rel_buf is not None
-                    else _async_eval.evaluate_encoded_async(_enc_buf[:padded])
-                )
-                if event is not None:
-                    event.synchronize()
-                pol_all = pol_t[:n_leaves].numpy()
-                wdl_all = wdl_t[:n_leaves].numpy()
-            else:
-                _rows = n_leaves if _submit_live_rows_only else padded
-                pol_all, wdl_all = (
-                    eval_impl.evaluate_encoded(_enc_buf[:_rows], relations=_rel_buf[:_rows])
-                    if _rel_buf is not None
-                    else eval_impl.evaluate_encoded(_enc_buf[:_rows])
-                )
-                pol_all = pol_all[:n_leaves]
-                wdl_all = wdl_all[:n_leaves]
-            _t_gpu += _time.perf_counter() - _tg0
-            _n_gpu_calls += 1
-            _n_gpu_positions += n_leaves
-
+        def _start_single(remaining: list[list[int] | None], budget_arr: np.ndarray) -> int | None:
+            nonlocal _t_prepare
             _tp0 = _time.perf_counter()
-            _tb_override(tree, tb_probe, wdl_all)
-            if _use_legal_bf16:
-                n_leaves = tree.continue_gumbel_sims_legal_bf16(pol_all, wdl_all)
-            else:
-                pol_all = _policy_logits_to_full(pol_all, cfg=cfg)
-                n_leaves = tree.continue_gumbel_sims(pol_all, wdl_all)
+            n = _seq_tree.start_gumbel_sims(
+                root_cboards, _root_ids_arr,
+                cast("list[list[int]]", remaining),
+                cast("list[np.ndarray]", gumbels_per_board),
+                cast("list[np.ndarray]", root_pri),
+                budget_arr, _root_qs_arr,
+                _c_scale, _c_visit, _c_puct, _fpu_reduction, _full_tree,
+                cast(np.ndarray, _enc_buf),
+              # Same twelve trailing args as the group site above, from the same
+              # helper: this is the only one of the two an argument spy can observe.
+                *_start_gumbel_trailing_args(
+                    cfg=cfg, vloss_weight=vloss_weight, target_batch=target_batch,
+                    vloss_mode=vloss_mode, rel_buf=_rel_buf,
+                ),
+            )
             _t_prepare += _time.perf_counter() - _tp0
+            return n
 
-        _bank_buffer_full([tree], buffer_rows=len(_enc_buf), n_boards=n_boards)
+        def _drain_single(n_leaves: int | None) -> None:
+            """Evaluate and back up leaves until the started C search is done."""
+            nonlocal _t_gpu, _t_prepare, _n_gpu_calls, _n_gpu_positions
+            tree = _seq_tree
+            while n_leaves is not None:
+                n_leaves = int(n_leaves)
+                padded = _pad_for_bucket(n_leaves, len(_enc_buf))
+                # Above the branch on purpose: every arm below sends the same
+                # `_enc_buf` rows, and the zero-copy (`_inplace`) arm is the one
+                # production actually takes -- wiring this only into the copying
+                # arms would have made the instrument read nothing live.
+                _record_batch_dup(
+                    _enc_buf, n_leaves,
+                    n_leaves if (_use_legal_bf16 or _submit_live_rows_only) else padded,
+                )
+                _tg0 = _time.perf_counter()
+                if _use_legal_bf16:
+                    legal_flat, legal_counts = tree.get_pending_legal_indices()
+                    pol_all, wdl_all = eval_impl.evaluate_legal_bf16(  # pyright: ignore[reportAttributeAccessIssue]
+                        _enc_buf[:n_leaves], legal_flat, legal_counts,
+                    )
+                elif _inplace:
+                    if _rel_buf is not None:
+                        pol_t, wdl_t, event = eval_impl.evaluate_inplace_async(  # pyright: ignore[reportAttributeAccessIssue]
+                            padded, slot=0, relations=_rel_buf[:padded],
+                        )
+                    else:
+                        pol_t, wdl_t, event = eval_impl.evaluate_inplace_async(padded, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
+                    if event is not None:
+                        event.synchronize()
+                    pol_all = pol_t[:n_leaves].numpy()
+                    wdl_all = wdl_t[:n_leaves].numpy()
+                elif _has_async:
+                    pol_t, wdl_t, event = (
+                        _async_eval.evaluate_encoded_async(_enc_buf[:padded], relations=_rel_buf[:padded])
+                        if _rel_buf is not None
+                        else _async_eval.evaluate_encoded_async(_enc_buf[:padded])
+                    )
+                    if event is not None:
+                        event.synchronize()
+                    pol_all = pol_t[:n_leaves].numpy()
+                    wdl_all = wdl_t[:n_leaves].numpy()
+                else:
+                    _rows = n_leaves if _submit_live_rows_only else padded
+                    pol_all, wdl_all = (
+                        eval_impl.evaluate_encoded(_enc_buf[:_rows], relations=_rel_buf[:_rows])
+                        if _rel_buf is not None
+                        else eval_impl.evaluate_encoded(_enc_buf[:_rows])
+                    )
+                    pol_all = pol_all[:n_leaves]
+                    wdl_all = wdl_all[:n_leaves]
+                _t_gpu += _time.perf_counter() - _tg0
+                _n_gpu_calls += 1
+                _n_gpu_positions += n_leaves
+
+                _tp0 = _time.perf_counter()
+                _tb_override(tree, tb_probe, wdl_all)
+                if _use_legal_bf16:
+                    n_leaves = tree.continue_gumbel_sims_legal_bf16(pol_all, wdl_all)
+                else:
+                    pol_all = _policy_logits_to_full(pol_all, cfg=cfg)
+                    n_leaves = tree.continue_gumbel_sims(pol_all, wdl_all)
+                _t_prepare += _time.perf_counter() - _tp0
+            _bank_buffer_full([tree], buffer_rows=len(_enc_buf), n_boards=n_boards)
+
+        if bool(cfg.root_full_width):
+            _full_width_round0(
+                tree=_seq_tree, n_boards=n_boards, root_ids=root_ids,
+                candidates_per_board=candidates_per_board,
+                remaining_per_board=remaining_per_board,
+                root_prep=_root_preps, root_pri=root_pri,
+                gumbels_per_board=gumbels_per_board, root_qs=root_qs,
+                cfg=cfg,
+                buffer_rows=len(_enc_buf), candidate_cap=_c_candidate_cap,
+                start=_start_single, drain=_drain_single,
+                prelude_visits=prelude_visits,
+                board_mask=(None if per_game_root_full_width is None
+                            else [bool(x) for x in per_game_root_full_width]),
+            )
+
+        _drain_single(_start_single(remaining_per_board, _budget_arr))
+        tree = _seq_tree
         remaining_per_board = cast("list[list[int] | None]", tree.get_gumbel_remaining(True))
         _tree_for_board = None  # signal to use single tree
         _rid_for_board = None
@@ -2235,6 +2427,7 @@ def run_gumbel_root_many_c(
                 survivor_q=float(completed_q[j_best]) if best_in_legal else float("nan"),
                 node_q=float(_qtree.node_q(rid)),
                 start_visits=int(start_visits_by_board[i]),
+                prelude_visits=int(prelude_visits[i]) if bool(cfg.root_full_width) else None,
             )
 
   # Value from child

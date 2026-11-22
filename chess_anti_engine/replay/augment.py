@@ -180,7 +180,8 @@ def mirror_sample(s: ReplaySample, *, input_history_encoding: str | None = None)
     for name in ("root_log_prior", "root_child_q", "root_child_visits"):
         v = getattr(s, name, None)
         setattr(out, name, None if v is None else mirror_policy(np.asarray(v, dtype=np.float32)))
-    for name in ("root_net_value", "root_survivor_q", "root_node_q", "root_start_visits", "search_budget"):
+    for name in ("root_net_value", "root_survivor_q", "root_node_q", "root_start_visits", "search_budget",
+                 "root_prelude_visits"):
         setattr(out, name, getattr(s, name, None))
     wdl = getattr(s, "root_net_wdl", None)
     out.root_net_wdl = None if wdl is None else np.asarray(wdl, dtype=np.float32).copy()

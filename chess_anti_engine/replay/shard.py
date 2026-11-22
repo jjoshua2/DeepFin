@@ -213,6 +213,7 @@ _OPTIONAL_FIELD_SPECS: tuple[_OptFieldSpec, ...] = (
     _OptFieldSpec("root_survivor_index",  "has_root_survivor",     (),            _I32_DT),
     _OptFieldSpec("played_move_index",    "has_played_move",       (),            _I32_DT),
     _OptFieldSpec("search_budget",        "has_search_budget",     (),            _I32_DT),
+    _OptFieldSpec("root_prelude_visits",  "has_root_prelude_visits", (),          _I32_DT),
 )
 
 _REQUIRED_STORAGE_FIELDS: tuple[str, ...] = (
@@ -1159,6 +1160,7 @@ _SCALAR_FIELDS: tuple[tuple[str, str, str, object], ...] = (
     ("root_survivor_index", "root_survivor_index", "has_root_survivor", int),
     ("played_move_index", "played_move_index", "has_played_move",   int),
     ("search_budget",     "search_budget",  "has_search_budget",    int),
+    ("root_prelude_visits", "root_prelude_visits", "has_root_prelude_visits", int),
 )
 _VECTOR_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("x_lc0_root",           "x_lc0_root",           "has_x_lc0_root"),
@@ -1764,7 +1766,8 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
             if opt[hk][i]:
                 setattr(s, fk, float(opt[fk][i]))
         for ik, hk in (("root_start_visits", "has_root_start_visits"), ("root_survivor_index", "has_root_survivor"),
-                       ("played_move_index", "has_played_move"), ("search_budget", "has_search_budget")):
+                       ("played_move_index", "has_played_move"), ("search_budget", "has_search_budget"),
+                       ("root_prelude_visits", "has_root_prelude_visits")):
             if opt[hk][i]:
                 setattr(s, ik, int(opt[ik][i]))
         out.append(s)

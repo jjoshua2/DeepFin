@@ -92,6 +92,14 @@ def _optional_pause_file(value: Any) -> str | None:
     return expanded
 
 
+def _strict_bool(value: Any, name: str) -> bool:
+    """A real YAML bool only: ``bool("false")`` is True, so a quoted string or a
+    number would otherwise switch a search knob on while the file says off."""
+    if not isinstance(value, bool):
+        raise ValueError(f"{name} must be true or false, got {value!r}")
+    return value
+
+
 def _unit_fraction(value: Any, *, name: str) -> float:
     frac = _optional_unit_fraction(value, name=name)
     if frac is None:
@@ -314,6 +322,8 @@ class TrialConfig:
   # loop's own training target. False = off/bit-identical.
   # See mcts.gumbel.GumbelConfig.target_untempered_prior for the fixed point.
     gumbel_target_untempered_prior: bool = False
+  # See mcts.gumbel.GumbelConfig.root_full_width. False = off/bit-identical.
+    gumbel_root_full_width: bool = False
     volatility_q_scale: float = 0.0
     volatility_fpu: float = 0.0
     volatility_anchor: float = DEFAULT_VOLATILITY_ANCHOR
@@ -788,6 +798,9 @@ class TrialConfig:
             ),
             gumbel_target_untempered_prior=bool(
                 config.get("gumbel_target_untempered_prior", False),
+            ),
+            gumbel_root_full_width=_strict_bool(
+                config.get("gumbel_root_full_width", False), "gumbel_root_full_width",
             ),
             volatility_q_scale=float(config.get("volatility_q_scale", 0.0)),
             volatility_fpu=float(config.get("volatility_fpu", 0.0)),

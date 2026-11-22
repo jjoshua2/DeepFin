@@ -195,7 +195,10 @@ Normal installs build portable extensions. For deployment on the production host
 validated GCC 15 compiler (`CAE_GCC15_CC` can select it). Rebuild after relevant C or
 header changes: incremental dependency detection can miss headers. Keep distributed
 wheels portable unless all target CPUs are known to match. Building a file does not
-replace an extension already loaded in a running process.
+replace an extension already loaded in a running process. Run the build with the
+venv's python (`.venv/bin/python scripts/build_production_extensions.py`), not a
+system `python3`: an extension built against the system numpy (1.26) fails to import
+under the venv's numpy 2.x.
 
 ## Code and evidence map
 

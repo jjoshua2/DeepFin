@@ -25,6 +25,15 @@ def test_a_bool_field_refuses_anything_else(spelling: str) -> None:
         apply_search_overrides(resolve_search_shape("play"), spec=f"target_untempered_prior={spelling}")
 
 
+def test_root_full_width_is_parsed_strictly() -> None:
+    """The full-width root round is a bool GumbelConfig field: the strict parser
+    picks it up. Mutant: back to float() -> 0.5 accepted, 1 stored as 1.0."""
+    side = apply_search_overrides(resolve_search_shape("play"), spec="root_full_width=1")
+    assert side.gumbel["root_full_width"] is True
+    with pytest.raises(SystemExit, match="root_full_width"):
+        apply_search_overrides(resolve_search_shape("play"), spec="root_full_width=0.5")
+
+
 def test_numeric_fields_are_unchanged() -> None:
     side = apply_search_overrides(resolve_search_shape("play"), spec="c_scale=0.25,topk=8")
     assert side.gumbel["c_scale"] == 0.25
