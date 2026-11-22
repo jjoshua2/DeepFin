@@ -110,8 +110,11 @@ closed; hold-out KL(base ‖ cell). All three come from `V/offline/cells/stage_a
 | truncated S, final (= S) | −0.96 [−1.29, −0.64] | 0.293 | 0.0167 |
 | P0 + anchor λ 7.0 | +0.07 [−0.08, +0.23] | 0.0039 (inert) | 0.00036 (P0 unanchored 0.0072) |
 
-- **Lowering the value-loss weight does not brake the head.** At `--w-wdl` 0.1 and 0.03 the head moves as far as
-  unanchored S (KL ≈ 0.017, share ≈ 0.29). This is the registered scale-invariance prediction.
+- **Lowering the value-loss weight does not brake the head's movement.** At `--w-wdl` 0.1 and 0.03 the head moves as
+  far as unanchored S (KL 0.0169 / 0.0171 vs 0.0167; share ≈ 0.29). This is the registered scale-invariance prediction.
+  - Their clear-pair damage is smaller than S's (−0.72 / −0.62 vs −0.96 pt). But S's own snapshot at update 988 reads
+    −0.67 pt at the same movement, so the gap cannot be separated from variation along S's trajectory. It is
+    descriptive.
 - **The truncated-S snapshots did not provide a "moved less" control.**
   - S had already closed 0.270 of the gap by update 353. The min model predicted 0.25 of the full displacement there,
     ≈ 0.073 (derived).
@@ -210,11 +213,17 @@ anchored vs unanchored was run, by design.
 - **Possible GPU overlap during training, 23:51:14–23:58:18** (`V/INCIDENT_gpu_overlap_20261121.md` [`061f763d`]).
   - What: an agent's launcher guard test fell through to the real arena launcher five times and may have started 4-game
     smoke arenas.
-  - Exposure: `arm_Zq_k11.3` (its last ≈ 77 s) and `arm_Zq_k18.1` (its start). No samples were taken, so whether any
-    test arena reached the GPU is unknown.
-  - Why the numbers stand: training runs a fixed 1,412 updates over a fixed batch plan, and no clock enters any
-    decision. Both cells' `presented_sha256` and fields match. A grep of both logs for OOM, Traceback, CUDA error and
-    RuntimeError finds nothing.
+  - Exposure: `arm_Zq_k11.3` (its last ≈ 77 s) and `arm_Zq_k18.1` (its start).
+    - `arm_Zq_k11.3`'s `model.pt` was written at 23:51:49, INSIDE the window.
+    - No GPU samples were taken. Whether any test arena reached the GPU is, in the note's words, "unknown in both
+      directions".
+  - **Why the numbers stand, according to the operator's note:**
+    - training runs a fixed 1,412 updates over a fixed batch plan, and no clock enters any decision;
+    - GPU contention changes wall time only.
+
+    I add that both cells' `presented_sha256` and fields match, and that a grep of both logs for OOM, Traceback,
+    CUDA error and RuntimeError finds nothing.
+  - REPRO_PLACEHOLDER
   - Only those two cells' `wall_seconds` is not comparable.
   - The first incident that night, beside match 8's seat A, is in the
     [follow-up results](2026-11-21-rl-run1-followup-results.md).
@@ -231,7 +240,8 @@ anchored vs unanchored was run, by design.
   9. Zq + λ 11.3 vs base.
 
   The record states each match nominates falsely with probability ≈ 2.5% at the −10 boundary, ≈ 5% across these two.
-- **Three nominations now stand, each from one generation, and they are never ranked by point estimate:**
+- **Three nominations now stand, each from one generation.** They are listed in chronological order and are never
+  ranked by point estimate:
   - recalibrated Zq, +9.6 [+3.3, +16.0] (match 8);
   - S + anchor λ 7.0, +5.8 [−0.5, +12.2];
   - Zq + anchor λ 11.3, +3.6 [−2.6, +9.8].
@@ -250,8 +260,12 @@ anchored vs unanchored was run, by design.
   - Zq-target training reads +3.6 [−2.6, +9.8], against −10.0.
   - Both are one generation, and neither is shown to work through the anchor's direction rather than through moving
     less.
-- **"Step less unless sure":** the value-loss weight is not the lever. At 0.1 and 0.03 the head moved as far as at 1.0.
-  The anchor is the lever: it changed how far the head moved, by a factor of about 15 in KL at S λ 7.0.
+- **"Step less unless sure":**
+  - The value-loss weight does not brake the head's movement (KL, share of the gap). The anchor does: KL to the base
+    fell from 0.0167 to 0.00108 at S λ 7.0, a factor of 15.5.
+  - The weight's effect on ordering is descriptive and within the range of S's own trajectory, as the truncated
+    snapshots show.
+  - None of the dose cells was played, so nothing here is a strength claim about them.
 
 **Open owner decisions; nothing is recommended or launched here:**
 - which nominated value recipe or recipes a second generation uses: recalibrated Zq, S + anchor, Zq + anchor, or a
