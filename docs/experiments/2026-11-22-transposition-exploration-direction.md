@@ -181,12 +181,14 @@ The owner asked for clock buckets that are "log based on moves until draw, … e
 
 **(A) Log-shaped clock buckets — NOT CONFIRMED.**
 - **Schemes and post-hoc scores.** The owner's shape as literally stated is H1: [0–20] as one bucket, octaves of the half-moves left, exact from half-move clock 90 (17 buckets). Its geometric variant is H2 (26 buckets). Both fail the band, on the wide **low-clock** buckets as much as near the draw: the worst buckets are 41–60, 0–20 and 0–19 as well as 86–89 and 88–89. H1's single [0–20] bucket alone costs per-bucket p90 0.018 on the primary sample, and H2's [0–19] 0.017. H3 (exact from half-move clock 80, 43 buckets) passed post hoc.
-- **Fresh confirmation, pre-registered:** "NOT CONFIRMED: H3 fails the pre-committed band on the fresh sample". Over 331 fresh boards it reads p90 0.0147 against a 0.01 limit, and its failures sit in its width-8 low-clock buckets.
+- **Fresh confirmation, pre-registered:** "NOT CONFIRMED: H3 fails the pre-committed band on the fresh sample". Over 331 fresh boards it reads p90 0.0147 against a 0.01 limit. Its median 0.00228 also misses the 0.002 limit. Its failures sit in its width-8 low-clock buckets. H3 had also failed post hoc on the supplementary sample (p90 0.0228).
+  - **Sampling shortfall:** 331 of 504 registered boards. No boards at half-move clock ≥ 80, and 79 of 126 at 60–79, because a global per-game cap starved the high-clock strata. Disclosed, not re-run. The verdict therefore rests on clocks below 80.
 - **The finer hybrid passes everywhere tested.** Width 4 below half-move clock 48 and exact above (64 buckets) passes on the primary, supplementary and fresh samples (fresh 0.0010 / 0.0060). It was chosen post hoc, from 12 shapes.
 - **Top band: "unread, insufficient evidence".** The fresh sample had no boards with a real half-move clock ≥ 80. The whole pilot holds only 26 such games (319 rows), and all were already used. Syzygy adjudication at ≤ 6 men makes long shuffles rare, so high clocks matter mainly for match play against engines, not for collection-time cache hits. A top-band confirmation of the hybrid is **registered and waiting** on RL run 1 generation 2's collection (`~/chess-artifacts/operations/rl-claude-20261119/eval-key-grouping-scoping/topband/PREREG.md` [`d3eab569`]: verdict on the ±10-of-real-clock subset, at most 5 rows per game per band, at least 150 boards and 30 games per band or the reading is again "unread").
-- **What any bucket buys is small.** Every scheme merges 100% of the real clock-differing transposition pairs seen, because their half-move clocks are ≤ 3 at root plies 12 to 100. On the clock differences real pairs have (1–4 half-moves), the cost is median ≤ 0.001 and p90 ≤ 0.01 below about half-move clock 50, and large above 80 (`pair-cost`). Pure clock-only differences move Q by ≤ 0.0033. So a clock bucket is cheap but buys only the 18-of-1,041 class of transpositions whose history frames already match.
+- **What any bucket buys is small.** Every scheme merges 100% of the real clock-differing transposition pairs seen, because their half-move clocks are ≤ 3 at root plies 12 to 100. On the clock differences real pairs have (1–4 half-moves), the cost is median ≤ 0.0013 and p90 ≤ 0.0104 below half-move clock 50 in every population. A few d = 4 cells sit just over 0.01 (0.0103 at 40–49 on the supplementary sample). The cost is large above 80 (`pair-cost`, post hoc, descriptive). Pure clock-only differences move Q by ≤ 0.0033. So a clock bucket is cheap but buys only the 18-of-1,041 class of transpositions whose history frames already match.
 
-**(B) History depth — the actionable reading.** The verdict, fixed wording: "smallest d = 2: a key of board + rule state + the last 1 plies".
+**(B) History depth — the actionable reading.** The verdict, fixed wording: "smallest d = 2: a key of board + rule state + the last 1 plies". Here **rule state** means the half-move clock plus all 8 window repetition flags.
+- **Limits:** one net (the SL base), CPU fp32. Leaves come from 32 roots in 8 games, so they are not independent. "NEARLY FREE" is a band on |ΔQ| / KL / ratio, not a playing-strength claim.
 
 | first differing ply back (d) | controlled pairs | median \|ΔQ\| | p90 \|ΔQ\| | band | real depth-6 pairs, band |
 |---:|---:|---:|---:|---|---|
@@ -196,15 +198,19 @@ The owner asked for clock buckets that are "log based on moves until draw, … e
 | 8 (outside the input) | 278 | 0 | 0 | identical inputs 278/278 (control PASS) | — |
 
 - **How the pairs were built.** Controlled pairs are commuting swaps that keep the board, the half-move clock and the window repetition flags identical; every row was forwarded at batch 1. Real pairs come from a top-3, depth-6 expansion of 16 census roots, and they agree with the controlled pairs, including the rule-state-equal subset.
-- **What each key would share** (fraction of same-board pairs):
-  - board + rule state + last ply: **36.5%** (depth 4) to **49.8%** (depth 6);
-  - exact input: < 1%;
-  - board + rule state only: 100%, but that key reads AMBIGUOUS.
+- **What each key would group.** The numbers below are **fractions of same-board PAIRS, not of evaluator requests or network calls.** Structural duplicates are only 5–19% of nodes at 256–3,200 sims (census above), and these fractions apply within that share. The verdict's key includes rule state, so it groups only **rule-state-equal** pairs. **It groups 25.7% (depth 4) and 30.3% (depth 6) of same-board pairs.** The "ignoring rule state" column describes a key that drops the clock and the repetition flags; the verdict does not cover that key. Recomputed in `~/chess-artifacts/operations/rl-claude-20261119/eval-key-grouping-scoping/ADDENDUM_1.md` [`6779c2f9`], which corrects the bank README's mislabelled table.
+
+  | key keeps | replay depth-4 pairs (1,409): rule-state-equal | replay depth-4: ignoring rule state | real depth-6 pairs (3,780): rule-state-equal | real depth-6: ignoring rule state |
+  |---|---:|---:|---:|---:|
+  | board (+ rule state) only | 58.2% (reads AMBIGUOUS) | 100% | 47.5% (reads AMBIGUOUS) | 100% |
+  | **+ last 1 ply (the verdict's key)** | **25.7%** | 36.5% | **30.3%** | 49.8% |
+  | + last 2 plies | 0% | 0% | 13.9% | 20.7% |
+  | exact input | 0% | 0% | 0% | 0% |
 - **Limit:** commuting swaps are the mildest history difference, and real paths reach only d ≤ 4.
 
 **(C) Repetition.**
 - **Encoding.** Each frame carries one binary repetition plane (no count, so "twice" encodes as "once").
-- **The current position's flag is load-bearing.** Flipping the frame-0 flag moves Q by a median of 0.078 (p90 0.216), so it stays in any key. Older frames' flags move Q by 0.005–0.020 at the median.
+- **The current position's flag is load-bearing.** Flipping the frame-0 flag moves Q by a median of 0.078 (p90 0.216), so it stays in any key. Older frames' flags are smaller but not free: frames 1 and 2 have medians 0.020 and 0.015 (p90 0.080 and 0.073), and frames 3–7 have medians 0.005–0.007. Any key keeps every frame's flag.
 - **Caveat:** these are synthetic flips. Only 4 of 512 boards carry a real flag.
 
 ### Consequence for Stage 3
@@ -221,8 +227,10 @@ The owner asked for clock buckets that are "log based on moves until draw, … e
 - **Where.** The match engine (UCI), at 800, 3,200 and 10,000+ simulations per move, playing CONSECUTIVE moves with tree reuse. That is the cross-move case the census cannot see.
 - **What to count.** For every evaluator request, the row's key three ways:
   1. exact input (today's fingerprint);
-  2. board + rule state + last ply;
+  2. board + rule state + last ply: the truncated key defined in (b), which is exactly the key (B) tested;
   3. board + rule state.
+
+  In each case, "rule state" is the half-move clock plus every frame's repetition flag.
 
   Count distinct keys per search and across a game's searches, so the output is evaluator requests a cache would have answered, not occupancy.
 - **Where to hook it.** At the evaluator entry, where `PucvEvalCache` and `EncodedEvalCache` already see each row.
@@ -235,15 +243,23 @@ The owner asked for clock buckets that are "log based on moves until draw, … e
 - **What it must not touch.** TT context (`cboard_context_match`), terminal, tablebase and repetition logic stay exact. Only the evaluation lookup is approximate.
 - **Where the key is computed — a small change.**
   - Today the key fingerprints the whole encoded row (`encoded_row_fingerprint128` in `_mcts_tree.c`; `_encoded_row_key` / `_encoded_row_digest` in `inference_cache.py`).
-  - The truncated key hashes planes 0–25 (frames 0 and 1, each with its repetition flag) and 104–174 (castling, side to move, half-move clock, en passant, the bias plane and the v2 feature planes). The feature planes are assumed board-only; verify that before relying on it.
-  - It needs two byte ranges instead of one, in both the C fingerprint and the Python key.
+  - The truncated key hashes:
+    - planes 0–25: frames 0 and 1, each with its repetition flag;
+    - **every frame's repetition plane, 13·i + 12 for i = 2…7: planes 38, 51, 64, 77, 90, 103;**
+    - planes 104–174: castling, side to move, half-move clock, en passant, the bias plane and the v2 feature planes.
+  - **This is exactly the key (B) tested: board + half-move clock + all 8 window repetition flags + the last ply.** The B1 constructions held all 8 flags identical. A key that dropped the frame 2–7 repetition planes would be coarser than the verdict covers, and Part C shows those flags are not free (frame 2 flip: median 0.0148, p90 0.073).
+  - The feature planes are assumed board-only; verify that before relying on it.
+  - It needs a list of byte ranges instead of one (planes 0–25, six single planes, 104–174), in both the C fingerprint and the Python key.
   - **The full-row digest that `PucvEvalCache.get` checks on a hit must use the same truncation. Otherwise every cross-history hit is silently rejected as a miss** — the repo's signature defect, so the take-effect proof is a hit counter that moves.
 - **Cost.** CPU hashing over fewer bytes than today, and no GPU cost. The saving is the forwards answered.
-- **Yardstick** (per `docs/eval_protocol.md`):
-  - policy-target and value-target quality against the frozen deep-SF / BT4 references, at matched sims;
-  - nps at matched time.
+- **Screen, then yardstick** (per `docs/eval_protocol.md`):
+  - **Screen:** policy-target and value-target quality against the frozen deep-SF / BT4 references at matched sims, plus nps. The screen decides whether the arm earns an arena; it is not a strength claim.
+  - **Strength claim:** only from the paired arena (`scripts/arena_standard.py`). Use `matched_time` for the nps gain, and `matched_sims` to show no quality loss.
   - Sample size: the replay's effect sizes (|ΔQ| median 0.002–0.003, p90 ≈ 0.017 at d = 2) need a paired design on a few thousand positions to resolve a target-quality change of the size of C17's 2.8 cp residual. Fix it in the record from (a)'s hit rate.
-- **Kill rule:** any target-quality regression whose 95% interval excludes zero against the exact-key control, or a hit rate below 5% of requests at match budgets, stops the arm.
+- **Kill rule:**
+  - At the screen, stop the arm if a target-quality regression has a 95% interval that excludes zero against the exact-key control, or if the hit rate is below 5% of requests at match budgets.
+  - At the arena, stop if the `matched_sims` paired arena's 95% interval lies wholly below zero, or if the `matched_time` paired arena's interval does not lie above zero.
+- **Success rule:** adoption needs both arenas: a `matched_time` gain whose interval excludes zero, and a `matched_sims` result whose interval includes zero or is above it. The exact numbers go in the record before launch.
 
 ## Stage 2 — actual request accounting
 
