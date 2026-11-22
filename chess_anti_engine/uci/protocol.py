@@ -65,7 +65,7 @@ class GoArgs:
 @dataclass(frozen=True)
 class CmdGo:
     args: GoArgs
-  # `time.monotonic()` when the stdin reader read the line (`stamp_received`);
+  # `time.monotonic()` when the main loop took the line from stdin (`stamp_received`);
   # the move's clock starts there. None: unstamped (the handler uses now).
     received_at: float | None = field(default=None, compare=False)
 
