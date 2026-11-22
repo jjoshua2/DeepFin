@@ -2228,10 +2228,14 @@ def run_gumbel_root_many_c(
                     wdl_all = wdl_t[:n_leaves].numpy()
                 else:
                     _rows = n_leaves if _submit_live_rows_only else padded
+                    # The live selfplay path (slot clients at policy_temp != 1):
+                    # `padded` rows go to the broker, `n_leaves` of them live.
                     pol_all, wdl_all = (
-                        eval_impl.evaluate_encoded(_enc_buf[:_rows], relations=_rel_buf[:_rows])
+                        eval_impl.evaluate_encoded(
+                            _enc_buf[:_rows], relations=_rel_buf[:_rows], **_live,
+                        )
                         if _rel_buf is not None
-                        else eval_impl.evaluate_encoded(_enc_buf[:_rows])
+                        else eval_impl.evaluate_encoded(_enc_buf[:_rows], **_live)
                     )
                     pol_all = pol_all[:n_leaves]
                     wdl_all = wdl_all[:n_leaves]

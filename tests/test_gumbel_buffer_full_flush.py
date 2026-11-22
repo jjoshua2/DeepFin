@@ -66,7 +66,6 @@ class _Evaluator:
 
 
 def _search(ev: _Evaluator, *, root_wdl: np.ndarray | None = None, sims: int = 64, topk: int = 16):
-    gumbel_c_mod._COMPILED_BATCH_BUCKETS = ()
     boards = [chess.Board(f) for f in _FENS]
     cfg = dataclasses.replace(GumbelConfig(simulations=sims, topk=topk, temperature=0.0, add_noise=False),
                               full_tree=True)
@@ -75,9 +74,13 @@ def _search(ev: _Evaluator, *, root_wdl: np.ndarray | None = None, sims: int = 6
         pre_pol = np.zeros((len(boards), POLICY_SIZE), np.float32)
         pre_wdl = np.repeat(root_wdl[None, :], len(boards), axis=0).astype(np.float32)
     tree = MCTSTree()
-    out = run_gumbel_root_many_c(None, boards, device="cpu", rng=np.random.default_rng(3), cfg=cfg, evaluator=ev,
-                                 target_batch=0, vloss_weight=1, tree=tree, root_node_ids=None,
-                                 pre_pol_logits=pre_pol, pre_wdl_logits=pre_wdl)
+    # Scoped: a bare module assignment leaked the empty ladder into every
+    # later test in the session (no drain padded after this file ran).
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(gumbel_c_mod, "_COMPILED_BATCH_BUCKETS", ())
+        out = run_gumbel_root_many_c(None, boards, device="cpu", rng=np.random.default_rng(3), cfg=cfg,
+                                     evaluator=ev, target_batch=0, vloss_weight=1, tree=tree,
+                                     root_node_ids=None, pre_pol_logits=pre_pol, pre_wdl_logits=pre_wdl)
     return out, tree
 
 

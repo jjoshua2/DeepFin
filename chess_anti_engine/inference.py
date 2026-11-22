@@ -138,6 +138,16 @@ def _slot_rows(slot: _InferenceSlot, max_batch: int) -> int:
     return max(0, min(int(slot.batch_size), int(max_batch)))
 
 
+def _slot_live_rows(slot: _InferenceSlot, rows: int) -> int:
+    """The client's diagnostic live count for a slot evaluated at ``rows``.
+
+    0 (an older client, or a caller that did not pad) or anything outside
+    ``1..rows`` (a torn read) means all ``rows``. Trace-only: never sizes a copy.
+    """
+    live = slot.live_rows
+    return live if 0 < live <= rows else rows
+
+
 def _policy_output_full(out: dict[str, torch.Tensor]) -> torch.Tensor:
     """Return dense 4672 policy logits for search-time consumers.
 
@@ -1026,7 +1036,8 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         if rows > 0:
             self.shape_ledger.note(entry, rows)
             if _FORWARD_SIZE_TRACE:
-                _note_forward("dense", int(bsz if live_rows is None else live_rows), rows)
+                _note_forward("dense", int(bsz if live_rows is None else live_rows), rows,
+                              _forward_chunk_rows_of(self))
         return rows
 
     @property
@@ -1305,7 +1316,8 @@ class DirectGPUEvaluator(LocalModelEvaluator):
 
         if not self._pad_to_buckets:
             if _FORWARD_SIZE_TRACE and bsz > 0:
-                _note_forward("dense", int(bsz if live_rows is None else live_rows), int(bsz))
+                _note_forward("dense", int(bsz if live_rows is None else live_rows), int(bsz),
+                              _forward_chunk_rows_of(self))
             if not self._use_cuda:
                 self.shape_ledger.note("async", int(bsz))
                 if self._exceeds_chunk(bsz):
@@ -1405,7 +1417,8 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             # `_forward_rows` notes the batch with the same ``live_rows``.
             _note_legal_policy(n_legal)
             if self._use_cuda and fwd_rows > 0:
-                _note_forward("legal", int(bsz if live_rows is None else live_rows), fwd_rows)
+                _note_forward("legal", int(bsz if live_rows is None else live_rows), fwd_rows,
+                              _forward_chunk_rows_of(self))
         if not self._use_cuda:
             pol, wdl = self.evaluate_inplace(bsz, copy_out=True, slot=slot, live_rows=live_rows)
             rows = np.repeat(np.arange(bsz, dtype=np.int64), counts.astype(np.int64, copy=False))
@@ -1776,16 +1789,32 @@ if _BUCKET_HIST_ENABLED:
 
 
 # --- Optional per-forward timeline JSONL (search batch-size diagnostic) ------
-# Set CAE_BATCH_TRACE=/path/to/trace.jsonl to append one record per forward:
-#   {"t": time.monotonic(), "pid": ..., "graph": ..., "rows": live rows,
-#    "padded": rows the forward ran at}
+# Set CAE_BATCH_TRACE=/path/to/trace.jsonl to append one record per EVALUATOR
+# CALL (not per network forward):
+#   {"t": time.monotonic(), "pid": ..., "graph": ...,
+#    "live_rows": rows of the call that are real positions,
+#    "call_rows": rows the call ran at (after its own / the broker's padding),
+#    "chunk_rows": the evaluator's per-forward row bound, null if it has none,
+#    "chunks": network forwards the call ran as = ceil(call_rows / chunk_rows),
+#              1 when unbounded or call_rows <= chunk_rows}
+# A chunking evaluator (DirectGPUEvaluator's ``forward_chunk_rows``) runs one
+# call as several forwards; the network-forward size histogram is derived from
+# (call_rows, chunk_rows, chunks): chunks-1 forwards of chunk_rows plus one of
+# call_rows - (chunks-1)*chunk_rows.
 # Writers: `DirectGPUEvaluator` (graph "dense" / "legal", every entry, padding
 # or not), `AOTEvaluator` ("aot", once per forward entry), the `SlotBroker`
-# gather ("broker_dense" / "broker_legal" / "broker_aot", rows = the gathered
-# live total) and `SharedSlotBroker` ("shared_broker", unpadded).
+# gather ("broker_dense" / "broker_legal" / "broker_aot", live_rows = the sum of each
+# slot's diagnostic live_rows header field) and `SharedSlotBroker`
+# ("shared_broker", unpadded).
 # Live rows: a caller that pads upstream (the Gumbel leaf drains, the threaded
 # dispatcher) passes its true count as ``live_rows=`` -- see
 # `forward_live_rows_kwargs`; otherwise the entry's own batch is the live count.
+# Every evaluator / wrapper class that a padding search can call declares
+# `accepts_live_rows` and forwards the keyword (the slot clients write it to the
+# slot header for the broker), or is in the exempt table of
+# tests/test_forward_size_trace.py with its reason.
+# ⚑ With `EncodedEvalCache` in the chain the record is the FORWARD size (the
+# cache's de-duplicated misses), not the search's batch size.
 # `time.monotonic` is the system CLOCK_MONOTONIC on Linux, so a driver process
 # can line its own `go` times up with the records.
 # The file is opened for append ONCE, at import, and an unopenable path raises
@@ -1793,7 +1822,10 @@ if _BUCKET_HIST_ENABLED:
 # written every _BATCH_TRACE_FLUSH_EVERY_N records and at exit, each flush ONE
 # O_APPEND write of whole lines, so several processes may share one path; a
 # SIGKILLed process loses at most its unflushed buffer (< that many records).
-# A forked child starts with an empty buffer (it never re-writes the parent's).
+# A forked child starts with an empty buffer (it never re-writes the parent's);
+# a child that leaves through `os._exit` skips atexit and loses its buffer.
+# Every process that imports this module with CAE_BATCH_TRACE set opens (and so
+# creates) the file, whether or not it ever runs a forward.
 # Off: every entry checks one module-level bool, `_FORWARD_SIZE_TRACE`.
 _BATCH_TRACE_PATH = os.environ.get("CAE_BATCH_TRACE", "").strip()
 _BATCH_TRACE_ENABLED = bool(_BATCH_TRACE_PATH)
@@ -1837,22 +1869,40 @@ def _flush_batch_trace() -> None:
         view = view[os.write(_batch_trace_fd, view):]
 
 
-def _note_batch_trace(graph: str, rows: int, padded: int) -> None:
-    """Append one trace record (no histogram)."""
+def _trace_chunks(call_rows: int, chunk_rows: int | None) -> int:
+    """Network forwards a call of ``call_rows`` runs as under a per-forward
+    bound of ``chunk_rows`` rows (None: unbounded, one forward)."""
+    if chunk_rows is None or chunk_rows < 1 or call_rows <= chunk_rows:
+        return 1
+    return -(-int(call_rows) // int(chunk_rows))
+
+
+def _forward_chunk_rows_of(evaluator: object) -> int | None:
+    """The evaluator's per-forward row bound, if it chunks calls (the
+    ``_forward_chunk_rows`` attribute; absent = no chunking)."""
+    n = getattr(evaluator, "_forward_chunk_rows", None)
+    return n if isinstance(n, int) and not isinstance(n, bool) and n >= 1 else None
+
+
+def _note_batch_trace(graph: str, rows: int, padded: int, chunk_rows: int | None = None) -> None:
+    """Append one trace record (no histogram); see the CAE_BATCH_TRACE block."""
+    chunks = _trace_chunks(int(padded), chunk_rows)
     line = (f'{{"t":{time.monotonic():.6f},"pid":{_batch_trace_pid},"graph":"{graph}",'
-            f'"rows":{int(rows)},"padded":{int(padded)}}}\n')
+            f'"live_rows":{int(rows)},"call_rows":{int(padded)},'
+            f'"chunk_rows":{"null" if chunk_rows is None else int(chunk_rows)},"chunks":{chunks}}}\n')
     with _batch_trace_lock:
         _batch_trace_buf.append(line)
         if len(_batch_trace_buf) >= _BATCH_TRACE_FLUSH_EVERY_N:
             _flush_batch_trace()
 
 
-def _note_forward(graph: str, rows: int, padded: int) -> None:
-    """One forward of ``rows`` live rows run at ``padded`` rows."""
+def _note_forward(graph: str, rows: int, padded: int, chunk_rows: int | None = None) -> None:
+    """One evaluator call of ``rows`` live rows run at ``padded`` rows, as
+    ``_trace_chunks(padded, chunk_rows)`` network forwards."""
     if _BUCKET_HIST_ENABLED:
         _record_bucket_hist("batch", int(rows))
     if _BATCH_TRACE_ENABLED:
-        _note_batch_trace(graph, rows, padded)
+        _note_batch_trace(graph, rows, padded, chunk_rows)
 
 
 def _note_legal_policy(total: int) -> None:
@@ -1861,7 +1911,9 @@ def _note_legal_policy(total: int) -> None:
 
 
 def accepts_live_rows(evaluator: object) -> bool:
-    """True when ``evaluator``'s async entries take ``live_rows=``.
+    """True when every entry a padding search calls on ``evaluator``
+    (`evaluate_encoded`, `evaluate_encoded_async`, `evaluate_inplace_async`,
+    whichever it has) takes ``live_rows=``.
 
     Read from the CLASS, so an instance ``__getattr__`` that forwards unknown
     attributes to an inner evaluator (``EncodedEvalCache``) cannot claim it for
@@ -1878,9 +1930,9 @@ def forward_live_rows_kwargs(evaluator: object, live_rows: int) -> Mapping[str, 
 
     Empty -- the call is byte-for-byte what it was -- unless a forward-size
     diagnostic (CAE_BUCKET_HIST / CAE_BATCH_TRACE) is on AND ``evaluator``
-    declares ``accepts_live_rows`` (`DirectGPUEvaluator`, `AOTEvaluator` and the
-    wrappers that forward to one). An evaluator that does not declare it would
-    record the padded batch as live; `_warn_live_rows_unsupported` says so once.
+    declares ``accepts_live_rows`` (`DirectGPUEvaluator`, `AOTEvaluator`, the
+    slot clients and the wrappers that forward to one). For an evaluator that
+    does not declare it, `_warn_live_rows_unsupported` says once what that means.
     """
     if not _FORWARD_SIZE_TRACE:
         return _NO_KWARGS
@@ -1894,14 +1946,19 @@ _live_rows_unsupported_warned: set[str] = set()
 
 
 def _warn_live_rows_unsupported(evaluator: object) -> None:
+    # An evaluator that asks for unpadded leaf rows (`EncodedEvalCache`) is
+    # handed the live rows already; what reaches the recorder behind it is its
+    # de-duplicated misses, i.e. forward size. Nothing to warn about.
+    if getattr(evaluator, "wants_unpadded_leaf_rows", False) is True:
+        return
     name = type(evaluator).__name__
     if name in _live_rows_unsupported_warned:
         return
     _live_rows_unsupported_warned.add(name)
     log.warning(
-        "forward-size diagnostic on, but %s does not accept live_rows: a forward "
-        "it routes to a recording evaluator counts the caller's bucket-padded "
-        "batch as live rows", name,
+        "forward-size diagnostic on, but %s does not take live_rows: when its "
+        "caller padded a batch upstream, a recording evaluator behind it counts "
+        "that padding as live rows", name,
     )
 
 
@@ -2341,7 +2398,8 @@ class AOTEvaluator:
 
     @property
     def accepts_live_rows(self) -> bool:
-        """`evaluate_encoded_async` / `evaluate_inplace_async` take ``live_rows=``."""
+        """`evaluate_encoded` / `evaluate_encoded_async` / `evaluate_inplace_async`
+        take ``live_rows=``."""
         return True
 
     @staticmethod
@@ -2407,7 +2465,8 @@ class AOTEvaluator:
         )
 
     def evaluate_encoded(
-        self, x: np.ndarray, relations: np.ndarray | None = None,
+        self, x: np.ndarray, relations: np.ndarray | None = None, *,
+        live_rows: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         with self._ownership:
             ensure_usable(self)
@@ -2424,7 +2483,7 @@ class AOTEvaluator:
                 raise ValueError(f"batch {bsz} > max {self._max_batch}")
             bucket = self._pick_bucket(bsz)
             model = self._models[bucket]
-            self._note_aot_forward(bsz, bucket, None)
+            self._note_aot_forward(bsz, bucket, live_rows)
 
             # Native search can supply bit-packed BF16 directly; float32 callers
             # convert during H2D.
@@ -2521,7 +2580,10 @@ class AOTEvaluator:
 #   [8:12]     request_id uint32  (client-stamped tag; broker echoes it — see below)
 #   [12:16]    magic      uint32  (_SLOT_MAGIC; written once at slot creation)
 #   [16:20]    layout_id  uint32  (_SlotLayout.identity(); written once at creation)
-#   [20:24]    reserved
+#   [20:24]    live_rows  int32   (diagnostic only: how many of batch_size rows
+#                                  are live when the client's caller padded
+#                                  upstream; 0 = all. Read only by the
+#                                  CAE_BATCH_TRACE record; never sizes a copy)
 #   [24:...]   input      float32 or bf16-bits[max_batch, planes, 8, 8]
 #   [after input]  policy/output float32[max_batch, 4672] or compact metadata/bf16 bits
 #   [after policy] wdl    float32[max_batch, 3]
@@ -2635,6 +2697,7 @@ _OFF_BATCH_SIZE = 4
 _OFF_REQUEST_ID = 8
 _OFF_MAGIC = 12
 _OFF_LAYOUT_ID = 16
+_OFF_LIVE_ROWS = 20
 
 # Bumped whenever the wire format changes. Broker and clients are launched
 # together by distributed_runtime, so a format change is deployable as long as
@@ -2847,6 +2910,15 @@ class _InferenceSlot:
     @request_id.setter
     def request_id(self, v: int) -> None:
         struct.pack_into("<I", self._buf, _OFF_REQUEST_ID, int(v) & _REQUEST_ID_MASK)
+
+    @property
+    def live_rows(self) -> int:
+        """Diagnostic live-row count (0 = all of ``batch_size``); see the header map."""
+        return struct.unpack_from("<i", self._buf, _OFF_LIVE_ROWS)[0]
+
+    @live_rows.setter
+    def live_rows(self, v: int) -> None:
+        struct.pack_into("<i", self._buf, _OFF_LIVE_ROWS, int(v))
 
     def write_protocol_header(self) -> None:
         """Stamp layout id + magic. Called once by whoever CREATES the segment.
@@ -3398,6 +3470,7 @@ class SlotBroker:
         legal_counts_by_slot: list[np.ndarray] = []
         legal_flat_by_slot: list[np.ndarray] = []
         total = 0
+        live_total = 0  # CAE_BATCH_TRACE only: clients' upstream padding excluded
         unanswered_rows = 0
         # ``request_ids`` was snapshotted by _process_batch before it read any
         # other field of these slots; see the ordering note on the header map.
@@ -3489,6 +3562,8 @@ class SlotBroker:
             batch_sizes.append(bsz)
             active_request_ids.append(req_id)
             total += bsz
+            if _BATCH_TRACE_ENABLED:
+                live_total += _slot_live_rows(slot, bsz)
 
         assert total <= self._pinned_input.shape[0], (
             f"gather overflow: {total} > {self._pinned_input.shape[0]}"
@@ -3585,13 +3660,16 @@ class SlotBroker:
                 and _supports_legal_policy_forward(self._model)
             )
             if _BATCH_TRACE_ENABLED:
-                # The gathered live total vs the rows this forward runs at. The
-                # histogram half was already noted by `_compiled_padded_batch_size`.
+                # The gathered LIVE total (each slot's diagnostic live_rows, so a
+                # Gumbel drain's upstream padding is not counted as live) vs the
+                # rows this forward runs at. The histogram half was already
+                # noted by `_compiled_padded_batch_size`, on the submitted total
+                # its bucket ladder pads.
                 _note_batch_trace(
                     "broker_aot" if use_aot
                     else "broker_legal" if (use_legal_rows_forward or use_legal_forward)
                     else "broker_dense",
-                    total, forward_total,
+                    live_total, forward_total,
                 )
             if use_aot:
                 assert self._aot_models is not None
@@ -4181,8 +4259,15 @@ class SlotInferenceClient:
         """
         return True
 
+    @property
+    def accepts_live_rows(self) -> bool:
+        """`evaluate_encoded` takes ``live_rows=`` and writes it to the slot's
+        diagnostic header field for the broker's trace record."""
+        return True
+
     def evaluate_encoded(
-        self, x: np.ndarray, relations: np.ndarray | None = None,
+        self, x: np.ndarray, relations: np.ndarray | None = None, *,
+        live_rows: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         if relations is not None:
             raise NotImplementedError(
@@ -4191,9 +4276,13 @@ class SlotInferenceClient:
                 "check_dynamic_relations_transport)"
             )
         with self._lock:
-            return self._evaluate_encoded_locked(x)
+            if live_rows is None:  # the call shape it always had
+                return self._evaluate_encoded_locked(x)
+            return self._evaluate_encoded_locked(x, live_rows)
 
-    def _evaluate_encoded_locked(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:  # skylos: ignore — called from evaluate_encoded above
+    def _evaluate_encoded_locked(  # skylos: ignore — called from evaluate_encoded above
+        self, x: np.ndarray, live_rows: int | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
         if x.dtype == np.uint16:
             xb = _coerce_bf16_bits_batch(x)
             request_mode = _MODE_DENSE_BF16
@@ -4214,6 +4303,7 @@ class SlotInferenceClient:
                 slot.input[:bsz] = xb
             slot.request_mode = request_mode
             slot.batch_size = bsz
+            slot.live_rows = 0 if live_rows is None else int(live_rows)
             # Tag AFTER the payload, state last. See the ordering note on the
             # header map: the broker reads the tag first, so publishing the tag
             # before the payload would let it echo a tag for data it has not
@@ -4252,6 +4342,7 @@ class SlotInferenceClient:
                 slot.policy_i32[1 + bsz:1 + bsz + n_legal] = flat
                 slot.request_mode = _MODE_LEGAL_BF16
                 slot.batch_size = bsz
+                slot.live_rows = 0  # never a stale dense request's count
                 # Tag last-but-one, state last -- see _evaluate_encoded_locked.
                 slot.request_id = request_id
                 slot.state = _STATE_REQUEST
@@ -4431,8 +4522,14 @@ class MultiSlotInferenceClient:
         """Slot width in input planes — must match the broker's and the model's."""
         return self._input_planes
 
+    @property
+    def accepts_live_rows(self) -> bool:
+        """See ``SlotInferenceClient.accepts_live_rows``."""
+        return True
+
     def evaluate_encoded(
-        self, x: np.ndarray, relations: np.ndarray | None = None,
+        self, x: np.ndarray, relations: np.ndarray | None = None, *,
+        live_rows: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         if relations is not None:
             raise NotImplementedError(
@@ -4443,7 +4540,9 @@ class MultiSlotInferenceClient:
         xb = _coerce_bf16_bits_batch(x) if x.dtype == np.uint16 else _coerce_input_batch(x)
         positions = int(xb.shape[0])
         with self._client_lease(positions=positions, legal=False) as client:
-            return client.evaluate_encoded(xb)
+            if live_rows is None:
+                return client.evaluate_encoded(xb)
+            return client.evaluate_encoded(xb, live_rows=live_rows)
 
     @property
     def supports_input_bf16_bits(self) -> bool:

@@ -22,15 +22,27 @@ import torch
 from chess_anti_engine import inference
 from chess_anti_engine.inference import (
     _MODE_DENSE_F32,
+    _MODE_LEGAL_BF16,
     _POLICY_SIZE,
     _STATE_REQUEST,
+    _STATE_RESPONSE,
     AOTEvaluator,
     DirectGPUEvaluator,
     SharedSlotBroker,
     SlotBroker,
+    LocalModelEvaluator,
+    MultiSlotInferenceClient,
+    SlotInferenceClient,
+    _InferenceSlot,
+    _SlotLayout,
     compiled_forward_rows,
 )
-from chess_anti_engine.inference_dispatcher import CUDAOwnerDispatcher, ThreadSafeGPUDispatcher
+from chess_anti_engine.inference_dispatcher import (
+    BatchCoalescingDispatcher,
+    CUDAOwnerDispatcher,
+    MultiGPUDispatcher,
+    ThreadSafeGPUDispatcher,
+)
 from chess_anti_engine.inference_threaded import ThreadedDispatcher
 from chess_anti_engine.mcts import gumbel_c
 from chess_anti_engine.mcts.gumbel import GumbelConfig
@@ -76,7 +88,7 @@ def _records(path: Path) -> list[dict]:
 
 
 def _triples(path: Path) -> list[tuple[str, int, int]]:
-    return [(r["graph"], r["rows"], r["padded"]) for r in _records(path)]
+    return [(r["graph"], r["live_rows"], r["call_rows"]) for r in _records(path)]
 
 
 def _x(n: int) -> np.ndarray:
@@ -124,7 +136,7 @@ def test_the_batch_trace_writes_one_record_per_forward(trace) -> None:
     with inference._batch_trace_lock:
         inference._flush_batch_trace()
     rows = [json.loads(line) for line in trace.read_text().splitlines()]
-    assert [(r["graph"], r["rows"], r["padded"]) for r in rows] == [
+    assert [(r["graph"], r["live_rows"], r["call_rows"]) for r in rows] == [
         ("dense", n, compiled_forward_rows(n, 64)) for n in (1, 9, 40)
     ]
     assert rows[0]["t"] <= rows[1]["t"] <= rows[2]["t"]
@@ -173,7 +185,7 @@ def test_the_environment_variables_reach_a_fresh_process(tmp_path) -> None:
     assert proc.returncode == 0, proc.stderr[-2000:]
     assert json.loads(hist_path.read_text())["batch_counts"] == {"21": 1}
     (record,) = [json.loads(line) for line in trace_path.read_text().splitlines()]
-    assert (record["graph"], record["rows"], record["padded"]) == ("dense", 21, 32)
+    assert (record["graph"], record["live_rows"], record["call_rows"]) == ("dense", 21, 32)
 
 
 # --- Fix round (review of 897b34d22) ------------------------------------------
@@ -193,7 +205,7 @@ def test_a_flush_empties_the_buffer_so_no_record_is_written_twice(trace) -> None
         inference._flush_batch_trace()
     assert inference._batch_trace_buf == []
     ev.evaluate_encoded(_x(3))
-    assert [r["rows"] for r in _records(trace)] == [2, 3]
+    assert [r["live_rows"] for r in _records(trace)] == [2, 3]
 
 
 def test_an_unwritable_trace_path_fails_loudly_at_enable_time(tmp_path) -> None:
@@ -263,11 +275,13 @@ def test_the_cuda_legal_branch_records_live_rows(trace, monkeypatch) -> None:
         lambda rows, f, c, nl, slot=0: (torch.zeros(nl, dtype=torch.uint16), torch.zeros(rows, 3), None),
         raising=False,
     )
+    monkeypatch.setattr(ev, "_forward_chunk_rows", 4, raising=False)
     flat, counts = _legal_args(5, 16)
     ev.evaluate_inplace_legal_bf16_async(16, flat, counts, slot=0, live_rows=5)
-    ((graph, rows, padded),) = _triples(trace)
-    assert (graph, rows) == ("legal", 5)
-    assert padded >= 16
+    (rec,) = _records(trace)
+    assert (rec["graph"], rec["live_rows"]) == ("legal", 5)
+    assert rec["call_rows"] >= 16
+    assert (rec["chunk_rows"], rec["chunks"]) == (4, -(-rec["call_rows"] // 4))
 
 
 def _aot() -> AOTEvaluator:
@@ -301,8 +315,9 @@ def test_aot_records_once_per_forward_not_per_bucket_lookup(trace) -> None:
     aot.get_input_buffer(64, slot=1)
     aot.evaluate_inplace_async(16, slot=1, live_rows=9)
     aot.evaluate_encoded_async(_x(32), live_rows=30)
+    aot.evaluate_encoded(_x(16), live_rows=11)
     assert _triples(trace) == [
-        ("aot", 5, 8), ("aot", 12, 16), ("aot", 3, 8), ("aot", 9, 16), ("aot", 30, 32),
+        ("aot", 5, 8), ("aot", 12, 16), ("aot", 3, 8), ("aot", 9, 16), ("aot", 30, 32), ("aot", 11, 16),
     ]
 
 
@@ -330,9 +345,10 @@ def test_the_wrappers_forward_live_rows_and_declare_it(trace) -> None:
         chain.get_input_buffer(16, slot=0)[:] = _x(16)
         chain.evaluate_inplace_async(16, slot=0, live_rows=7)
         chain.evaluate_encoded_async(_x(32), live_rows=21)
+        chain.evaluate_encoded(_x(16), live_rows=5)            # the sync arm's entry
     finally:
         chain.close()
-    assert [(g, r) for g, r, _ in _triples(trace)] == [("dense", 7), ("dense", 21)]
+    assert [(g, r) for g, r, _ in _triples(trace)] == [("dense", 7), ("dense", 21), ("dense", 5)]
 
 
 def test_a_getattr_forwarder_cannot_claim_live_rows() -> None:
@@ -407,7 +423,7 @@ _QUICK = "k7/8/1K6/8/8/8/8/7Q w - - 0 1"
 
 
 def _search(ev, n_boards: int, monkeypatch, *, sims: int = 32, relations: bool = False,
-            fens: list[str] | None = None):
+            fens: list[str] | None = None, policy_temp: float = 1.0):
     drains: list[tuple[int, int]] = []
     callers: list[str] = []
     orig = gumbel_c._record_batch_dup
@@ -420,13 +436,16 @@ def _search(ev, n_boards: int, monkeypatch, *, sims: int = 32, relations: bool =
         return orig(x, n, p)
 
     monkeypatch.setattr(gumbel_c, "_record_batch_dup", spy)
+    # Pinned: other test files have emptied this ladder for the session before
+    # (no drain pads then, and these tests' vacuity guard would fire).
+    monkeypatch.setattr(gumbel_c, "_COMPILED_BATCH_BUCKETS", inference._COMPILED_BATCH_BUCKETS)
     torch.manual_seed(1234)
     res = gumbel_c.run_gumbel_root_many_c(
         None, [chess.Board(f) for f in (fens or [_FENS[i % len(_FENS)] for i in range(n_boards)])],
         device="cpu", rng=np.random.default_rng(99),
         cfg=GumbelConfig(simulations=sims, topk=8, add_noise=True,
                          input_extra_features="v2_threats" if relations else "v1",
-                         compute_relations=relations),
+                         compute_relations=relations, policy_temp=policy_temp),
         evaluator=ev, target_batch=32,
     )
     return res, drains, callers
@@ -474,6 +493,26 @@ def test_a_real_relations_search_traces_its_own_leaf_counts(trace, monkeypatch, 
     ev = cls(model, device="cpu", max_batch=512, n_slots=2, use_amp=False,
              pad_to_compiled_buckets=True, legal_bf16=False)
     _, drains, _ = _search(ev, 20, monkeypatch, sims=24, relations=True)
+    leaf = _triples(trace)[-len(drains):]
+    assert [r for _, r, _ in leaf] == [n for n, _ in drains]
+    assert any(n < p for n, p in drains), "no drain was padded upstream -- vacuous"
+
+
+def test_a_real_relations_search_through_the_sync_arm_traces_its_leaf_counts(trace, monkeypatch) -> None:
+    """A sync-only evaluator (no async / in-place API) with relations: the drain's
+    `evaluate_encoded(..., relations=...)` call carries the live count."""
+    from chess_anti_engine.uci.device_guard import GuardedPrimaryEvaluator
+
+    with torch.random.fork_rng(devices=[]):
+        torch.default_generator.manual_seed(6)
+        model = build_model(ModelConfig(
+            embed_dim=16, num_layers=1, num_heads=2, use_smolgen=False,
+            input_extra_features="v2_threats", use_dynamic_relations=True,
+        )).eval()
+    inner = DirectGPUEvaluator(model, device="cpu", max_batch=512, use_amp=False,
+                               pad_to_compiled_buckets=True, legal_bf16=False)
+    _, drains, _ = _search(GuardedPrimaryEvaluator(inner, lambda f: f()), 20, monkeypatch,
+                           sims=24, relations=True)
     leaf = _triples(trace)[-len(drains):]
     assert [r for _, r, _ in leaf] == [n for n, _ in drains]
     assert any(n < p for n, p in drains), "no drain was padded upstream -- vacuous"
@@ -607,3 +646,359 @@ def test_the_shared_broker_records_each_trial_forward(trace) -> None:
     with pytest.raises(RuntimeError, match="forward reached"):
         broker._process_parallel({"t0": [_Slot(3)]})  # pyright: ignore[reportArgumentType]
     assert _triples(trace) == [("shared_broker", 3, 3)]
+
+
+# --- second fix round (review of 607503d5d) -----------------------------------
+
+
+class _ClientShaped:
+    """The live selfplay evaluator's surface (`MultiSlotInferenceClient`): sync
+    `evaluate_encoded` + `evaluate_legal_bf16`, no async / in-place API, pads
+    internally, takes ``live_rows=``. Records what each call SENDS."""
+
+    pads_batches_internally = True
+    supports_input_bf16_bits = False
+
+    def __init__(self) -> None:
+        self.inner = DirectGPUEvaluator(_model_seeded(), device="cpu", max_batch=512, use_amp=False)
+        self.calls: list[tuple[int, int | None]] = []
+
+    @property
+    def accepts_live_rows(self) -> bool:
+        return True
+
+    def evaluate_encoded(self, x, relations=None, *, live_rows=None):
+        del relations
+        self.calls.append((int(x.shape[0]), live_rows))
+        return self.inner.evaluate_encoded(x)
+
+    def evaluate_legal_bf16(self, x, flat, counts):
+        self.calls.append((int(x.shape[0]), None))
+        return self.inner.evaluate_legal_bf16(x, flat, counts)
+
+
+@pytest.mark.usefixtures("trace")
+def test_the_live_selfplay_sync_arm_reports_its_leaf_counts(monkeypatch) -> None:
+    """policy_temp 1.5 (the live yaml) switches the legal-bf16 leaf arm off, so a
+    slot client's drains take the sync arm and SEND `padded` rows: the forwarded
+    rows are unchanged, the live count rides along."""
+    ev = _ClientShaped()
+    _, drains, _ = _search(ev, 20, monkeypatch, sims=64, policy_temp=1.5)
+    leaf = ev.calls[-len(drains):]
+    assert [sent for sent, _ in leaf] == [p for _, p in drains]       # forward unchanged
+    assert [live for _, live in leaf] == [n for n, _ in drains]       # live reported
+    assert any(n < p for n, p in drains), "no drain was padded upstream -- vacuous"
+
+
+def test_switched_off_the_sync_arm_sends_no_keyword(monkeypatch) -> None:
+    monkeypatch.setattr(inference, "_FORWARD_SIZE_TRACE", False)
+    ev = _ClientShaped()
+    _, drains, _ = _search(ev, 20, monkeypatch, sims=32, policy_temp=1.5)
+    assert drains
+    assert all(live is None for _, live in ev.calls)
+
+
+def _fake_broker(slot_name: str, layout: _SlotLayout, seen: list[tuple[int, int, int]], n_requests: int):
+    from multiprocessing.shared_memory import SharedMemory
+
+    shm = SharedMemory(name=slot_name, create=True, size=layout.total_bytes)
+    _InferenceSlot(shm, layout, owns=False).write_protocol_header()
+
+    def serve() -> None:
+        import time
+
+        slot = _InferenceSlot(shm, layout, owns=False)
+        deadline = time.monotonic() + 10.0
+        while len(seen) < n_requests and time.monotonic() < deadline:
+            if int(slot.state) == _STATE_REQUEST:
+                seen.append((slot.request_mode, slot.batch_size, slot.live_rows))
+                slot.policy[: slot.batch_size].fill(0.0)
+                slot.wdl[: slot.batch_size].fill(1.0 / 3.0)
+                slot.state = _STATE_RESPONSE
+            time.sleep(0.0005)
+
+    t = threading.Thread(target=serve, daemon=True)
+    t.start()
+    return shm, t
+
+
+def test_the_slot_client_writes_the_live_count_and_clears_it() -> None:
+    layout = _SlotLayout.compute(16)
+    name = f"cae-live-{uuid.uuid4().hex}"
+    seen: list[tuple[int, int, int]] = []
+    shm, t = _fake_broker(name, layout, seen, 3)
+    client = SlotInferenceClient(slot_name=name, max_batch=16, request_timeout_s=5.0)
+    try:
+        assert inference.accepts_live_rows(client)
+        client.evaluate_encoded(_x(8), live_rows=5)
+        counts = np.array([2, 2, 2], dtype=np.int32)
+        client.evaluate_legal_bf16(np.zeros((3, _PLANES, 8, 8), np.uint16),
+                                   np.zeros(6, np.int32), counts)
+        client.evaluate_encoded(_x(4))
+    finally:
+        client.close()
+        t.join(timeout=5.0)
+        shm.close()
+        shm.unlink()
+    assert seen == [(_MODE_DENSE_F32, 8, 5), (_MODE_LEGAL_BF16, 3, 0), (_MODE_DENSE_F32, 4, 0)]
+
+
+def test_the_multi_slot_client_forwards_the_live_count() -> None:
+    layout = _SlotLayout.compute(16)
+    prefix = f"cae-livem-{uuid.uuid4().hex}"
+    seen: list[tuple[int, int, int]] = []
+    shm, t = _fake_broker(f"{prefix}-0", layout, seen, 1)
+    client = MultiSlotInferenceClient(slot_names=[f"{prefix}-0"], max_batch=16,
+                                      request_timeout_s=5.0)
+    try:
+        assert inference.accepts_live_rows(client)
+        client.evaluate_encoded(_x(8).astype(np.float32), live_rows=6)
+    finally:
+        client.close()
+        t.join(timeout=5.0)
+        shm.close()
+        shm.unlink()
+    assert seen == [(_MODE_DENSE_F32, 8, 6)]
+
+
+def test_the_slot_broker_sums_the_slots_live_counts(trace, tmp_path, monkeypatch) -> None:
+    publish = tmp_path / "publish"
+    publish.mkdir()
+    broker = SlotBroker(publish_dir=publish, num_slots=3, max_batch_per_slot=8, device="cpu",
+                        compile_inference=False, batch_wait_ms=0.0,
+                        slot_prefix=f"cae-trace-{uuid.uuid4().hex}")
+    try:
+        monkeypatch.setattr(SlotBroker, "_ensure_model", lambda _self: None)
+        broker._model = _TinyPolicy().eval()
+        broker._model_sha = "test"
+        slots = []
+        # live 3 of 8, all of 2 (old client / no padding: 0), torn 99 -> all 4
+        for idx, (bsz, live) in enumerate(((8, 3), (2, 0), (4, 99))):
+            slot = broker._slots[idx]
+            slot.batch_size = bsz
+            slot.live_rows = live
+            slot.request_mode = _MODE_DENSE_F32
+            slot.request_id = 50 + idx
+            slot.state = _STATE_REQUEST
+            slots.append(slot)
+        assert broker._process_batch(slots) == 0
+        cap = int(broker._pinned_input.shape[0])
+    finally:
+        broker.shutdown()
+    assert _triples(trace) == [
+        ("broker_dense", 3 + 2 + 4, inference._compiled_padded_batch_size(14, capacity=cap, record=False)),
+    ]
+
+
+# --- every wrapper a padding search can call declares live_rows, or is exempt ---
+
+_SEARCH_ENTRIES = frozenset({"evaluate_encoded", "evaluate_encoded_async", "evaluate_inplace_async"})
+
+# class qualname -> why it need not take ``live_rows``.
+_LIVE_ROWS_EXEMPT: dict[str, str] = {
+    "chess_anti_engine.inference.BatchEvaluator": "Protocol, not an evaluator",
+    "chess_anti_engine.inference.AsyncBatchEvaluator": "Protocol, not an evaluator",
+    "chess_anti_engine.uci.walker_pool._Evaluator": "Protocol, not an evaluator",
+    "chess_anti_engine.inference.LocalModelEvaluator":
+        "eager evaluator; records no forward-size trace, so there is no count to correct",
+    "chess_anti_engine.inference_cache.EncodedEvalCache":
+        "asks for unpadded leaf rows (wants_unpadded_leaf_rows), so it is handed live rows; "
+        "what it forwards is its de-duplicated misses -- the trace is forward size there",
+    "chess_anti_engine.uci.device_guard.PoolRowsEvaluator":
+        "degraded searchmoves fallback after a primary failure; MultiGpuPucvPool.evaluate_rows "
+        "re-splits rows onto pool workers -- its records count the rows it forwards",
+}
+
+
+def _evaluator_classes() -> list[tuple[str, type]]:
+    """Every class under chess_anti_engine that defines a search entry (AST scan,
+    not a hand-kept list)."""
+    import ast
+    import importlib
+
+    root = Path(inference.__file__).resolve().parent
+    found: list[tuple[str, type]] = []
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            names = {f.name for f in node.body if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            if not names & _SEARCH_ENTRIES:
+                continue
+            mod = ".".join(path.relative_to(root.parent).with_suffix("").parts)
+            found.append((f"{mod}.{node.name}", getattr(importlib.import_module(mod), node.name)))
+    return found
+
+
+def test_every_search_entry_class_takes_live_rows_or_is_exempt() -> None:
+    classes = _evaluator_classes()
+    names = {q for q, _ in classes}
+    assert "chess_anti_engine.inference.DirectGPUEvaluator" in names       # the scan works
+    missing = [q for q, cls in classes
+               if q not in _LIVE_ROWS_EXEMPT
+               and not isinstance(inspect_attr(cls, "accepts_live_rows"), property)]
+    assert not missing, f"declare accepts_live_rows (and forward live_rows) or exempt with a reason: {missing}"
+    stale = sorted(set(_LIVE_ROWS_EXEMPT) - names)
+    assert not stale, f"exempt entries for classes that no longer define a search entry: {stale}"
+
+
+def inspect_attr(cls: type, name: str) -> object:
+    import inspect
+
+    return inspect.getattr_static(cls, name, None)
+
+
+def test_every_declaring_class_takes_the_keyword_on_each_search_entry() -> None:
+    import inspect
+
+    for q, cls in _evaluator_classes():
+        if not isinstance(inspect_attr(cls, "accepts_live_rows"), property):
+            continue
+        for entry in _SEARCH_ENTRIES:
+            fn = getattr(cls, entry, None)
+            if fn is None:
+                continue
+            assert "live_rows" in inspect.signature(fn).parameters, f"{q}.{entry}"
+
+
+def test_the_leaf_evaluators_declare_live_rows_true() -> None:
+    assert inference.accepts_live_rows(_aot())
+    assert inference.accepts_live_rows(
+        DirectGPUEvaluator(_model(), device="cpu", max_batch=16, use_amp=False))
+    disp = ThreadedDispatcher(_model(), device="cpu", max_batch=16, legal_bf16=False)
+    try:
+        assert inference.accepts_live_rows(disp)
+    finally:
+        disp.shutdown()
+
+
+@pytest.mark.parametrize("wrap", [ThreadSafeGPUDispatcher, CUDAOwnerDispatcher],
+                         ids=["ThreadSafeGPUDispatcher", "CUDAOwnerDispatcher"])
+@pytest.mark.usefixtures("trace")
+def test_a_wrapper_over_an_inner_without_the_keyword_does_not_claim_it(monkeypatch, wrap) -> None:
+    """Traced search through a wrapper whose inner (an eager evaluator) does not
+    take ``live_rows``: a wrapper that claimed it anyway raises TypeError here."""
+    chain = wrap(LocalModelEvaluator(_model_seeded(), device="cpu"))
+    try:
+        assert not inference.accepts_live_rows(chain)
+        _, drains, _ = _search(chain, 20, monkeypatch, sims=24)
+        assert drains
+    finally:
+        if hasattr(chain, "close"):
+            chain.close()
+
+
+def test_the_multi_gpu_dispatcher_forwards_live_rows_to_the_picked_device(trace, monkeypatch) -> None:
+    devs = [DirectGPUEvaluator(_model_seeded(), device="cpu", max_batch=512, use_amp=False,
+                               pad_to_compiled_buckets=True) for _ in range(2)]
+    chain = MultiGPUDispatcher(devs)
+    assert inference.accepts_live_rows(chain)
+    assert not inference.accepts_live_rows(MultiGPUDispatcher([devs[0], LocalModelEvaluator(_model(), device="cpu")]))
+    chain.evaluate_encoded(_x(16), live_rows=9)
+    chain.evaluate_encoded_async(_x(24), live_rows=7)
+    assert [(g, r) for g, r, _ in _triples(trace)] == [("dense", 9), ("dense", 7)]
+    # And a real search through it (its row cap sizes the leaf buffer, so its
+    # drains arrive unpadded): rows still equal the search's own counts.
+    _, drains, _ = _search(chain, 20, monkeypatch, sims=24)
+    leaf = _triples(trace)[-len(drains):]
+    assert [r for _, r, _ in leaf] == [n for n, _ in drains]
+
+
+def test_the_degrading_dispatcher_forwards_live_rows(trace) -> None:
+    from chess_anti_engine.uci.device_guard import DegradingMultiGPUDispatcher
+
+    dev = DirectGPUEvaluator(_model(), device="cpu", max_batch=64, use_amp=False)
+    chain = DegradingMultiGPUDispatcher([dev], labels=["cpu:0"])
+    try:
+        assert inference.accepts_live_rows(chain)
+        chain.evaluate_encoded(_x(16), live_rows=9)
+    finally:
+        chain.close()
+    assert [(g, r) for g, r, _ in _triples(trace)] == [("dense", 9)]
+
+
+def test_the_guarded_primary_forwards_live_rows(trace) -> None:
+    from chess_anti_engine.uci.device_guard import GuardedPrimaryEvaluator
+
+    dev = DirectGPUEvaluator(_model(), device="cpu", max_batch=64, use_amp=False)
+    guarded = GuardedPrimaryEvaluator(dev, lambda f: f())
+    assert inference.accepts_live_rows(guarded)
+    assert not inference.accepts_live_rows(
+        GuardedPrimaryEvaluator(LocalModelEvaluator(_model(), device="cpu"), lambda f: f()))
+    guarded.evaluate_encoded(_x(16), live_rows=9)
+    assert [(g, r) for g, r, _ in _triples(trace)] == [("dense", 9)]
+
+
+def test_the_coalescer_sums_its_requests_live_rows(trace) -> None:
+    dev = DirectGPUEvaluator(_model(), device="cpu", max_batch=64, use_amp=False)
+    co = BatchCoalescingDispatcher(dev, max_batch=64)
+    try:
+        assert inference.accepts_live_rows(co)
+        co.evaluate_encoded(_x(16), live_rows=9)
+        co.evaluate_encoded(_x(5))
+    finally:
+        co.close()
+    assert not inference.accepts_live_rows(
+        BatchCoalescingDispatcher(LocalModelEvaluator(_model(), device="cpu")))
+    assert [(g, r) for g, r, _ in _triples(trace)] == [("dense", 9), ("dense", 5)]
+
+
+def test_the_threaded_dispatcher_takes_a_callers_live_rows(trace) -> None:
+    disp = ThreadedDispatcher(_model(), device="cpu", max_batch=64, legal_bf16=False)
+    try:
+        disp.evaluate_encoded(_x(16), live_rows=9)
+    finally:
+        disp.shutdown()
+    assert [r for _, r, _ in _triples(trace)] == [9]
+
+
+def test_the_cache_is_not_warned_about_and_an_undeclared_evaluator_is(monkeypatch, caplog) -> None:
+    import logging
+
+    from chess_anti_engine.inference_cache import EncodedEvalCache
+
+    monkeypatch.setattr(inference, "_FORWARD_SIZE_TRACE", True)
+    monkeypatch.setattr(inference, "_live_rows_unsupported_warned", set())
+    cache = EncodedEvalCache(DirectGPUEvaluator(_model(), device="cpu", max_batch=16, use_amp=False),
+                             max_entries=8)
+    with caplog.at_level(logging.WARNING, logger="chess_anti_engine.inference"):
+        assert inference.forward_live_rows_kwargs(cache, 5) == {}
+        assert not caplog.records
+        assert inference.forward_live_rows_kwargs(LocalModelEvaluator(_model(), device="cpu"), 5) == {}
+    (record,) = caplog.records
+    assert "padding as live rows" in record.getMessage()
+
+
+# --- third fix round: one record per CALL, with the chunking that call ran as ---
+
+
+def test_a_chunked_call_is_one_record_carrying_its_chunk_count(trace, monkeypatch) -> None:
+    """A call above the evaluator's per-forward bound N runs as ceil(rows / N)
+    network forwards (#1511's ``forward_chunk_rows``) and is still ONE record:
+    live / call rows of the call, plus N and the chunk count."""
+    ev = DirectGPUEvaluator(_model(), device="cpu", max_batch=64, use_amp=False)
+    # The attribute #1511's ``forward_chunk_rows`` constructor argument sets
+    # (absent before it: raising=False).
+    monkeypatch.setattr(ev, "_forward_chunk_rows", 16, raising=False)
+    ev.evaluate_encoded(_x(40))                  # 40 rows / 16 -> 3 forwards
+    ev.evaluate_encoded(_x(16))                  # at the bound -> 1
+    ev.evaluate_encoded_async(_x(33), live_rows=30)
+    recs = _records(trace)
+    assert [(r["live_rows"], r["call_rows"], r["chunk_rows"], r["chunks"]) for r in recs] == [
+        (40, 40, 16, 3), (16, 16, 16, 1), (30, 33, 16, 3),
+    ]
+
+
+def test_an_unchunked_evaluator_records_no_bound_and_one_forward(trace, monkeypatch) -> None:
+    ev = DirectGPUEvaluator(_model(), device="cpu", max_batch=64, use_amp=False)
+    monkeypatch.setattr(ev, "_forward_chunk_rows", None, raising=False)
+    ev.evaluate_encoded(_x(40))
+    _aot().evaluate_encoded(_x(5))
+    recs = _records(trace)
+    assert [(r["chunk_rows"], r["chunks"]) for r in recs] == [(None, 1), (None, 1)]
+
+
+def test_the_chunk_count_is_the_ceiling() -> None:
+    assert [inference._trace_chunks(r, 16) for r in (1, 16, 17, 32, 33, 64)] == [1, 1, 2, 2, 3, 4]
+    assert inference._trace_chunks(10_000, None) == 1

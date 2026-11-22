@@ -37,7 +37,8 @@ from typing import Any
 import numpy as np
 import torch
 
-from chess_anti_engine.inference_dispatcher import MultiGPUDispatcher, bootstrap_cudagraph_tls
+from chess_anti_engine.inference import accepts_live_rows
+from chess_anti_engine.inference_dispatcher import MultiGPUDispatcher, bootstrap_cudagraph_tls, live_rows_kw
 from chess_anti_engine.uci import multi_gpu_pucv_pool as _pool
 from chess_anti_engine.uci import startup_progress
 from chess_anti_engine.uci import wedge
@@ -422,11 +423,13 @@ class DegradingMultiGPUDispatcher(MultiGPUDispatcher):
         ) from last
 
     def evaluate_encoded(
-        self, x: np.ndarray, relations: np.ndarray | None = None,
+        self, x: np.ndarray, relations: np.ndarray | None = None, *,
+        live_rows: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
+        kw = live_rows_kw(live_rows)
         if relations is not None:
-            return self._dispatch(lambda ev: ev.evaluate_encoded(x, relations=relations))
-        return self._dispatch(lambda ev: ev.evaluate_encoded(x))
+            return self._dispatch(lambda ev: ev.evaluate_encoded(x, relations=relations, **kw))
+        return self._dispatch(lambda ev: ev.evaluate_encoded(x, **kw))
 
     def evaluate_legal_bf16(
         self, x: np.ndarray, legal_flat: np.ndarray, legal_counts: np.ndarray,
@@ -497,14 +500,20 @@ class GuardedPrimaryEvaluator:
         self._call = call
         self.failure: BaseException | None = None
 
+    @property
+    def accepts_live_rows(self) -> bool:
+        return accepts_live_rows(self._inner)
+
     def evaluate_encoded(
-        self, x: np.ndarray, relations: np.ndarray | None = None,
+        self, x: np.ndarray, relations: np.ndarray | None = None, *,
+        live_rows: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         inner = self._inner
+        kw = live_rows_kw(live_rows)
         try:
             if relations is not None:
-                return self._call(lambda: inner.evaluate_encoded(x, relations=relations))
-            return self._call(lambda: inner.evaluate_encoded(x))
+                return self._call(lambda: inner.evaluate_encoded(x, relations=relations, **kw))
+            return self._call(lambda: inner.evaluate_encoded(x, **kw))
         except BaseException as exc:
             if self.failure is None:
                 self.failure = exc
