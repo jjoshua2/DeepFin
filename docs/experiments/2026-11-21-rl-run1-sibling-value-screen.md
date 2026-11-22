@@ -32,6 +32,19 @@ Revision 5 applies the review at `262a4e56b` (evidence: `plan-review-1481/delta-
 - `stage_a_decide.py` v4 / `cells.json` v4 carry the head-to-head specs (27 fabricated checks, ten
   mutants); `SB/stage_b/` banks the two-seat readback and the fit gates, each tested and mutated.
 
+Revision 6 applies the review at `376983c6c` (evidence: `plan-review-1481/delta-376983c6c/`):
+- **"unread" is relabelled** "unread: CI contains 0 (this design had 80% power only for |effect|
+  ≥ ≈ 9)": at SE 3.37 an interval containing 0 is consistent with true effects up to ≈ 13 Elo
+  either way, so it does not show |effect| below the MDE;
+- **a `Zq_main` cell** (Zq's flags at `TSHA`, `--w-sibling 0`) is match 2's opponent, with its own
+  fit and bounds, and kl_pair(Zq ‖ `Zq_main`) is a second code-base control (it exercises the WDL /
+  Zq value-loss branch, which `P0_main` never runs), gating the Zq and S families;
+- the recalibration confound is stated exactly (calibratability is part of the treatment), and both
+  seats' fit cross-entropies are reported;
+- `check_both_seats.py` and `recal_gate.py` gain the cases the review's mutants needed (`recal_gate`
+  now checks what was fitted, not only T and b); `stage_b_verdict.py` applies the rule to `pool.json`;
+- the value-anchor screen's first Stage B result is added to the evidence (context, not a redesign).
+
 ## Why
 
 The owner asked for the value head to be trained on sibling ORDERING. The term now exists on
@@ -45,13 +58,14 @@ has used the term):
 | Evidence | Number | Bank (sha256 prefix) |
 |---|---|---|
 | The 64-sim search orders clear sibling pairs better than the net (vs deep SF 8M, both children ≥ 2 visits, 14,304 pairs) | +0.0274 [+0.018, +0.037] | `RC/sibling-target-scoping/out/searched_order_vs_sf.json` [`5a267ec1`], README [`32a42f9e`] |
-| Share of the searched sibling difference NOT explained by the net's own difference, at ≥ 2 / 4 / 8 visits | 20 / 29 / 35% | same README; `out/signal_pilot.json` [`faa1726e`] |
-| Intra-game correlation (ICC by game): z − base / survivor_q − base / search_wdl − base / sibling residual | 0.62 / 0.013 / 0.028 / ≈ 0.001 | `out/icc_fixed_pov.json` [`e94618a4`] |
-| The banked pilot sidecar | 1,490,177 pairs on 752,093 rows; 722,742 training rows, 713,407 with pairs; 1,024-pair hold-out probe | `RC/sibling-pairs-pilot/v2/gen_0001/sibling_manifest.json` [`bbd97a99`], README [`dd975485`], `v2/logs/trainer_load_check.txt` [`5006a7ce`]; `SIDECAR_VERSION` 2 |
+| Share of the searched sibling difference NOT explained by the net's own difference, at ≥ 2 / 4 / 8 visits | 20 / 29 / 35% | same README; `RC/sibling-target-scoping/out/signal_pilot.json` [`faa1726e`] |
+| Intra-game correlation (ICC by game): z − base / survivor_q − base / search_wdl − base / sibling residual | 0.62 / 0.013 / 0.028 / ≈ 0.001 | `RC/sibling-target-scoping/out/icc_fixed_pov.json` [`e94618a4`] |
+| The banked pilot sidecar | 1,490,177 pairs on 752,093 rows; 722,742 training rows, 713,407 with pairs; 1,024-pair hold-out probe | `RC/sibling-pairs-pilot/v2/gen_0001/sibling_manifest.json` [`bbd97a99`], README [`dd975485`], `RC/sibling-pairs-pilot/v2/logs/trainer_load_check.txt` [`5006a7ce`]; `SIDECAR_VERSION` 2 |
 | S's root value loss broke sibling ordering (clear pairs, vs base); Zq's did not | S −0.0096 [−0.0129, −0.0064]; Zq −0.0007 [−0.0032, +0.0017] | `RC/pilot-value-diagnosis/out/sibling_order.json` [`bb8e5b16`], README [`ae5e0866`] |
 | Without the term, every banked arm moves the learner's probe AWAY from the search (mean \|Δv − dq\| minus the base's 0.1031; 1,024 pairs from 7 games, game bootstrap) | S +0.0079 [+0.0010, +0.0142]; Zq +0.0107 [+0.0034, +0.0169]; P0 +0.0088 [+0.0050, +0.0127] | `RC/plan-review-1481/probe_banked.json` |
-| Follow-up matches at the PIN, 6,400 games each (registered verdicts in #1482) | 5 (P0 single net vs base) +2.2 [−4.2, +8.6]; 7 (Zq + recal vs Zq) +21.4 [+15.1, +27.6], "the loss is shape"; 6b (S's raw value on the base policy vs base) −21.4 [−27.7, −15.2]; 6a (the same, recalibrated) −16.1 [−22.3, −9.9], recovery R +5.3 [−3.5, +14.2]: **match 6 "unread"** | `rl-run1-followup/arenas/{p0_single,zq_recal_h2h,s_value_raw,s_value_recal}/pool.json` [`22fc7f97`, `e1945cbd`, `3534eac9`, `0ff08c98`] |
-| Match 8: recalibrated Zq (0.7036, −0.2271) vs the SL base | **+9.6 [+3.3, +16.0]**, "adoptable" and "improves on the base": nominates "Zq + per-generation recalibration" for a two-generation run under its own record; adopts nothing | `rl-run1-followup/arenas/zq_recal_vs_base/pool.json` [`3e407ba8`] |
+| Follow-up matches at the PIN, 6,400 games each (registered verdicts in #1482) | 5 (P0 single net vs base) +2.2 [−4.2, +8.6]; 7 (Zq + recal vs Zq) +21.4 [+15.1, +27.6], "the loss is shape"; 6b (S's raw value on the base policy vs base) −21.4 [−27.7, −15.2]; 6a (the same, recalibrated) −16.1 [−22.3, −9.9], recovery R +5.3 [−3.5, +14.2]: **match 6 "unread"** | `~/chess-artifacts/operations/rl-run1-followup/arenas/{p0_single,zq_recal_h2h,s_value_raw,s_value_recal}/pool.json` [`22fc7f97` / `e1945cbd` / `3534eac9` / `0ff08c98`] |
+| Match 8: recalibrated Zq (0.7036, −0.2271) vs the SL base | **+9.6 [+3.3, +16.0]**, "adoptable" and "improves on the base": nominates "Zq + per-generation recalibration" for a two-generation run under its own record; adopts nothing | `~/chess-artifacts/operations/rl-run1-followup/arenas/zq_recal_vs_base/pool.json` [`3e407ba8`] |
+| Value-anchor screen, Stage B match 1 (2026-11-22): S + `--kl-wdl` 7.0 vs the SL base, 6,400 games, seed 2026112181 (unanchored S was −20.0) | **+5.81 [−0.53, +12.16]**, "adoptable" (nominates; does not improve on the base). Its Stage A: lowering `--w-wdl` to 0.1 / 0.03 does not brake the head (KL to base 0.017; clear-pair ordering −0.72 / −0.62 pt), the anchor does (λ 7.0: KL 0.0011, ordering −0.17 pt [−0.37, +0.03]). The Zq λ 11.3 match is running | `~/chess-artifacts/operations/rl-run1-value-anchor/arenas/anchor_S_k7.0/pool.json` [`0722d72b`], `~/chess-artifacts/operations/rl-run1-value-anchor/offline/cells/stage_a_decision.json` [`ea8ab67b`] |
 
 So the sibling target carries information the net lacks (the search is right more often on
 clear pairs), its rows are nearly independent within a game (ICC ≈ 0.001), and the one value
@@ -257,7 +271,8 @@ All cells train at `TSHA` (`9c0ff07dc`) on the pilot's frozen collection (`--col
 | `P_sib_*` (3 strengths) | `--w-wdl 0 --w-sibling w --sibling-dir $SIDE` | (a) policy + sibling only: the root value gets no loss. The cleanest test of "does sibling training alone help, or at least not hurt, the value" |
 | `Zq_sib_*` (3) | Zq's flags + `--w-sibling w --sibling-dir $SIDE` | (b) Zq's root target (its loss vs the base is largely shape, match 7) plus the term |
 | `S_sib_*` (3) | S's flags + `--w-sibling w --sibling-dir $SIDE` | (c) does the term repair the ordering S breaks? |
-| `P0_main` | `--w-wdl 0` (term off) | code-base control (c) above; offline only |
+| `P0_main` | `--w-wdl 0` (term off) | code-base control (c) above; match 1's opponent |
+| `Zq_main` (revision 6) | Zq's flags, `--w-sibling 0` (term off; reads no sidecar) | the Zq-branch code-base control (Stage A) and **match 2's opponent** |
 | Controls, not retrained | the banked P0, S, Zq (`rl-run1-pilot/arm_*`) | references |
 
 `$SIDE` = `~/chess-artifacts/operations/rl-claude-20261119/sibling-pairs-pilot/v2` (the
@@ -268,7 +283,7 @@ directory holding `gen_0001/`).
 **At training** (`SB/stage_a/train_check.py` v2, one run, after every crash rerun). A field
 mismatch writes `arm_<cell>/VOID`. For every cell:
 - exit 0 and a sealed train manifest; init checkpoint sha256 = the SL base's (`a39f900c…`);
-- `summary.realised_w_wdl` = 0 (P family, `P0_main`) or 1 (Zq, S families);
+- `summary.realised_w_wdl` = 0 (P family, `P0_main`) or 1 (Zq, S families, `Zq_main`);
   `summary.realised_search_wdl_frac` = 0, 0.5 or 1.0 respectively;
 - `summary.updates` = 1,412, `summary.drawn_rows` = 722,742, `presented.npz` sha256 =
   `63e227ac…` (the pilot's batches, proved at the consumer); no KL anchor.
@@ -281,7 +296,8 @@ For every sibling cell, additionally:
 - the learner's probe has 1,024 pairs before and after. Its values are **reported only**: the
   probe comes from 7 games, too few to decide on.
 
-`P0_main` must carry no `summary.sibling` and no sidecar input.
+`P0_main` and `Zq_main` must carry no `summary.sibling` and no sidecar input (`train_check.py`'s
+`w_sibling` 0 branch; `cells.json` v5 lists `Zq_main` with Zq's `w_wdl` 1 and search fraction 0.5).
 
 **In Stage A: the take-effect statistic, which decides INERT** (`SB/stage_a/sibling_holdout.py`,
 review item 5). On ALL hold-out sibling pairs of the v2 sidecar (the pilot's hold-out games;
@@ -289,7 +305,7 @@ review item 5). On ALL hold-out sibling pairs of the v2 sidecar (the pilot's hol
 `load_sidecars` / `sibling_loss` at `TSHA`, eval mode, fp32. Per-pair residuals of every net are
 banked first (`sibling_holdout_resid.npz`, with `game_id`, `dq`, `min_visits`).
 - Statistic: mean |Δv − dq| of the cell minus that of its banked family net, PAIRED by pair:
-  P cells vs P0, Zq cells vs Zq, S cells vs S (and `P0_main` vs P0, reported). CI: 2,000 game
+  P cells vs P0, Zq cells vs Zq, S cells vs S (and `P0_main` vs P0, `Zq_main` vs Zq, reported). CI: 2,000 game
   bootstrap resamples, seed 20261121.
 - **"Takes effect" iff the 95% CI lies entirely below 0. Otherwise the cell is INERT**: scored,
   never matched.
@@ -325,19 +341,28 @@ banked first (`sibling_holdout_resid.npz`, with `game_id`, `dq`, `min_visits`).
 - **Ruler leakage** (reviewer, `RC/plan-review-1481/ruler_overlap.json`): the sibling-ordering
   ruler (rl-audit, 2,433 leak-free rows, 190 games) shares **0 game ids** with the pilot collect
   (761,979 rows, 8,000 games). **1 ruler row's exact `x` appears in the collect.**
-- This screen's own files (`SB/stage_a/`, revision 5, read-only, `SHA256SUMS` `31da941c…` over
-  every file; revision 1 files kept as `*.v1`, revision 2/3 as `*.v2`, revision 4 as `*.v3`, each
-  with its `SHA256SUMS.v*`):
+- This screen's own files (`SB/stage_a/`, revision 6, read-only, `SHA256SUMS` `610347b2…` over
+  every file; revision 1 files kept as `*.v1`, revision 2/3 as `*.v2`, revision 4 as `*.v3`,
+  revision 5 as `*.v4`, each with its `SHA256SUMS.v*`):
 
   | File | sha256 prefix |
   |---|---|
-  | `cells.json` (v4: `family_priority` P, Zq; `stage_b_fallback` S; `stage_b` opponent / recal / rule per family) | `916acfed9c5d…` |
+  | `cells.json` (v5: adds `Zq_main` (family Zq, `control`); `zq_control_gates` Zq, S; Zq opponent `Zq_main`; the relabelled "otherwise" rule) | `93701afe1f2f…` |
   | `train_check.py` | `f739886c075f…` |
   | `sibling_holdout.py` | `0897bf777521…` |
-  | `stage_a_decide.py` (v4) | `4d7950ec4773…` |
+  | `stage_a_decide.py` (v5: the Zq-branch code-base control) | `9d60b7e1dc3e…` |
   | `run_stage_a.sh` | `241de8fb1dab…` |
 
-  `fab_v4/` holds the v4 decision script's test (revision 5): 27 checks, all pass. v3's 24, with
+  `fab_v5/` holds the v5 decision script's test (revision 6): **34 checks, all pass** (rerun on the
+  banked files). v4's 27 (the spec check now expects `Zq_main`), plus: a bit-identical `Zq_main`
+  passes and is never a cell; `Zq_main` VOID → P only; `Zq_main` far from Zq → the Zq control fails,
+  P only, Zq and S labelled; the Zq control failing with no P cell → no S fallback; a small gap
+  passes; a gap between 1× and 2× the S replicate's passes only under the registered 2×; the
+  relabelled rule. **Fifteen mutants, each killed** with a FAIL line (`fab_v5/mutants/mutants.txt`):
+  v4's ten regenerated on v5, plus the Zq tolerance at 1×, the Zq gate ignored, the S fallback
+  ungated, `Zq_main` treated as a cell, and `Zq_main` VOID ignored.
+
+  `fab_v4/` (kept) holds the v4 decision script's test (revision 5): 27 checks, all pass. v3's 24, with
   the labels check replaced by one on the head-to-head specs (P vs `P0_main`, plain; Zq vs Zq,
   both recalibrated; rule "LB95 > 0"), plus: P all VOID gives Zq ONLY (S is not added as a second
   match), Zq all INERT gives P only, and an S fallback carries its known-damage label. Ten mutants,
@@ -345,10 +370,19 @@ banked first (`sibling_holdout_resid.npz`, with `game_id`, `dq`, `min_visits`).
   `m_shape_wl`, undecidable, specs from the wrong family, S added as a second match, smallest-w,
   control ignored, rows check, and the order Zq, P in `cells.json`.
 
-  `SB/stage_b/` (revision 5, read-only, `SHA256SUMS`): `check_both_seats.py` `c205a6e755d5…`
-  (match 2's readback; the follow-up `check_seat.py` fails by design when the other seat is also a
-  hybrid; 7 fabricated cases, the "reference unchecked" mutant killed) and `recal_gate.py`
-  `523b813e05a3…` (fit control and bounds; 10 cases, three mutants killed).
+  `SB/stage_b/` (revision 6, read-only, `SHA256SUMS` `01432616…`; revision 5's files as `*.v1`):
+  - `check_both_seats.py` `c205a6e755d5…` (unchanged; match 2's readback; the follow-up
+    `check_seat.py` fails by design when the other seat is also a hybrid). Its test now has 11
+    cases: candidate T off by 1e-4, reference T differs, reference `value_net=loaded` and reference
+    row recal differs were added (review item 4). Four mutants are killed, including the reviewer's
+    two survivors ("T matched to 3 decimals", "reference value_net unchecked").
+  - `recal_gate.py` v2 `0231f67cd0b9…` (fit control and bounds, now checking what was fitted;
+    18 cases, nine mutants killed; passes on match 8's banked fit).
+  - `stage_b_verdict.py` `9fb4d3bc1d6f…` (the registered label from `pool.json`; 7 cases, three
+    mutants killed).
+  - `SB/prelaunch/validate_cells.py` v2 `ba8f5a6fa0ae…`: `Zq_main`'s flags pass the loop's parser
+    and `validate()` at `9c0ff07dc` (w_wdl 1, w_sibling 0); the other ten cells' output is
+    byte-identical to v1's.
 
   `fab_v3/` (kept) holds the v3 decision script's test on fabricated inputs and the mutants:
   - 24 checks, all pass. They add the P, Zq, S order, the damage labels, the absence of any shape
@@ -395,6 +429,15 @@ banked first (`sibling_holdout_resid.npz`, with `game_id`, `dq`, `min_visits`).
     all-pairs sibling statistic.
   - **A failure means main trains differently from the PIN on these inputs: no Stage B,
     verdict "unread: code-base control failed".**
+  - **The Zq-branch control (revision 6, review item 2).** `P0_main` trains with `--w-wdl 0`, so it
+    never exercises the WDL / Zq value-loss branch that `Zq_sib` and the pilot's Zq use; revision 5
+    read that branch's equivalence from the diff only. So `Zq_main` (Zq's flags at `TSHA`, w 0) is
+    scored the same way: kl_pair_Zq = mean KL(p_Zq ‖ p_Zq_main) on the same rows, **PASS iff
+    kl_pair_Zq ≤ max(2 × kl_rep, 0.05 × mean KL(p_base ‖ p_Zq))** (the same rule, its floor scaled
+    by Zq's own displacement). It gates the families whose value loss is on: **if it fails (or
+    `Zq_main` is VOID), neither the Zq match nor an S fallback runs** ("unread: Zq code-base control
+    failed", or "undecidable" without a replicate); the P match is unaffected. `Zq_main` is never a
+    Stage B candidate.
   - **Except when the S replicate is VOID** (revision 4, review item 2). If the anchor screen's
     `logits_S_trunc_final` is missing, or its `game_id` / base logits are not bit-equal to the
     control's rows, kl_rep is None. Only the floor then applies, and a failure cannot be told apart
@@ -447,7 +490,8 @@ term that does nothing (0.86 / 0.71 above), so it was not evidence of any signal
 - **Selection, fixed now, not by offline score.** Per family, the **LARGEST-w** cell that is not
   VOID, VETOED or INERT.
   - **P and Zq are the primary families**: each that has such a cell is matched.
-  - **S is a fallback**: matched only if neither P nor Zq has one. S itself is known damage
+  - **S is a fallback**: matched only if neither P nor Zq has one. (Revision 6: the Zq and S
+    matches also need the Zq-branch code-base control to pass.) S itself is known damage
     (−20.0 vs base), so an S match is labelled "repair of a known-damage recipe" and cannot
     nominate a recipe that competes with P or Zq.
   - So at most two matches, and the same two whatever the order.
@@ -464,8 +508,8 @@ term that does nothing (0.86 / 0.71 above), so it was not evidence of any signal
 | | Match 1 (P) | Match 2 (Zq) | Fallback (S, only if neither) |
 |---|---|---|---|
 | Candidate | P_sib (largest-w PASS P cell), plain | Zq_sib (largest-w PASS Zq cell) + its own (T, b), fitted before any game | S_sib (largest-w PASS S cell), plain |
-| Opponent | **`P0_main`** (trained at `TSHA` with w 0), plain | **the pilot's Zq + match 8's banked (T, b) = 0.7036189636786957, −0.22711530923843357**: match 8's player | the pilot's S, plain |
-| Guard on the opponent | the code-base control (P0 vs `P0_main`, Stage A) passed, and guard (d) (`P0_main` loads identically at the PIN) | no `Zq_main` cell exists, so the opponent is the PIN-trained Zq; the code-base control is the guard that main and the PIN train alike | as Zq: the PIN-trained S, guarded by the code-base control |
+| Opponent | **`P0_main`** (trained at `TSHA` with w 0), plain | **`Zq_main`** (trained at `TSHA`, Zq's flags, w 0) **+ its own (T, b)**, fitted by the same command in the same session, before any game (revision 6) | the pilot's S, plain |
+| Guard on the opponent | the P0 code-base control (P0 vs `P0_main`) passed, and guard (d) (`P0_main` loads identically at the PIN) | the Zq-branch code-base control (Zq vs `Zq_main`) passed, and guard (d) on `Zq_main`; both fits pass the fit control's procedure check and the bounds | the PIN-trained S, guarded by both code-base controls |
 | Seats | plain both; result-row sha readback | both hybrid (own value + recal), as match 8 seated its candidate; `check_both_seats.py` readback | plain both; result-row sha readback |
 
 - **Why `P0_main`, not the banked P0, for match 1.** P_sib and `P0_main` train at `TSHA` from
@@ -473,10 +517,14 @@ term that does nothing (0.86 / 0.71 above), so it was not evidence of any signal
   PIN would add the code base to the contrast. The code-base control (kl_pair ≤ its tolerance) is
   the guard that `P0_main` ≈ P0, which is what lets P0's banked +2.2 vs base describe it. Stage B
   runs only if that control passed.
-- **Why the pilot's Zq for match 2.** No `Zq_main` cell was registered, and adding one would be a
-  new training cell. The opponent is therefore match 8's exact player (the PIN-trained Zq with
-  its banked (T, b)); the contrast includes the code base, guarded by the same control. This is a
-  confound of match 2 only (see Confounds).
+- **Why `Zq_main` for match 2 (revision 6, review item 2).** Revision 5 used the pilot's Zq with
+  match 8's banked (T, b), guarded only by a P0 control that never runs the Zq value-loss branch.
+  With `Zq_main`, match 2 is recalibrated Zq_sib vs recalibrated `Zq_main`: they differ only by the
+  term (plus GPU nondeterminism), and both fits come fresh from one procedure in one session.
+  **The cost of the choice:** the opponent is no longer exactly match 8's player. That is
+  acceptable because adoption of a Zq-family term is routed through the generation-2 record, not
+  through this match. The fit control keeps its job: it shows the procedure reproduces the pilot
+  Zq's banked fit.
 - **Design.** 6,400 games (3,200 per seat run, 1,600 openings), seat-balanced, match 5's
   machinery: the follow-up launcher `rl-run1-followup/run_followup_match.sh` (sha256
   `7c8fd065…`) at the PIN with output root `SB`, the pilot's `$ARENA` flags and the launch
@@ -485,10 +533,16 @@ term that does nothing (0.86 / 0.71 above), so it was not evidence of any signal
 - **Rules, per head-to-head (Elo of the sibling cell over its counterpart):**
   - **"the term adds"** iff LB95 > 0;
   - **"the term harms"** iff UB95 < 0;
-  - otherwise **"unread, |effect| below the MDE"**.
+  - otherwise **"unread: CI contains 0 (this design had 80% power only for |effect| ≥ ≈ 9)"**
+    (revision 6). An interval containing 0 does NOT show the effect is below the MDE: at SE 3.37
+    it is consistent with true effects up to ≈ 13 Elo either way.
   - At the gate-scaled SE 3.37, the 80%-power MDE is ≈ 2.8 SE ≈ 9 Elo. Power to read "adds" is
     0.32 at a true +5 and 0.84 at +10 (the reviewer's table, SE 3.37); false "adds" at a true 0
     is 0.025 per match.
+  - **The label is applied by script, not by hand** (revision 6): `SB/stage_b/stage_b_verdict.py
+    <pool.json>` prints it (match 5 was read by hand from `pool.json`). Tested on fabricated pools at
+    the three boundaries (LB exactly 0 and UB exactly 0 read unread; LB 0.01 adds; UB −0.01 harms),
+    a straddling interval and a malformed pool; three mutants killed (≥ for >, ≤ for <, swapped).
 
   | True effect vs counterpart (Elo) | −10 | −5 | 0 | +5 | +10 |
   |---|---|---|---|---|---|
@@ -500,17 +554,27 @@ term that does nothing (0.86 / 0.71 above), so it was not evidence of any signal
      `--device cuda`) on the pilot's Zq toward the SL base, on the pilot collection's hold-out
      (`--holdout-frac 0.05`), must reproduce match 8's banked (T, b) within 1e-3 each, as #1491's
      fit control does (GPU bf16 forwards are not bit-reproducible). If not, match 2 does not run.
-  2. **The fit.** The same command on Zq_sib: toward the SL base's value, the same hold-out games
-     (which no cell trained on). Its (T, b) is applied exactly as match 8 applied its own
-     (`--candidate-value-recal` / `--reference-value-recal`, own value net).
+     The control also checks WHAT was fitted (revision 6): the net is the pilot's Zq (`ad16d2f1…`),
+     the reference the SL base (`a39f900c…`), the collect the pilot's (`61fc049f…`), 416 hold-out
+     games, device cuda. Checked on match 8's banked fit: passes.
+  2. **The fits.** The same command on Zq_sib AND on `Zq_main`: toward the SL base's value, the same
+     416 hold-out games (which no cell trained on). Each (T, b) is applied exactly as match 8
+     applied its own (`--candidate-value-recal` / `--reference-value-recal`, own value net).
   3. **Registered stop: the bounds, a SANITY stop, not a statistical bound.** ln T in
      [2 ln T1, −ln T1] = [−0.703, +0.352] (i.e. T in [T1², 1/T1] = [0.4951, 1.4212]) and b in
      [2 b1, −b1] = [−0.4542, +0.2271], with (T1, b1) match 8's fit. Derivation: the term
      is level-invariant, so Zq_sib's correction should lie near Zq's. The bounds allow up to twice
      Zq's correction, or an overshoot past the identity by Zq's whole correction. Outside them, the
      fit is not the registered procedure's regime and **match 2 stops before any game**; match 1
-     is unaffected.
-  - Both gates are `SB/stage_b/recal_gate.py` (tested: 10 fabricated cases, three mutants killed).
+     is unaffected. **The same bounds apply to `Zq_main`'s fit**, and each bounds check requires the
+     fit to be of the named net (its `model.pt` sha256) with the same reference, collect, 416 games
+     and device. The bounds stay centred on the identity, not on Zq's fit (the reviewer's argument:
+     re-centring would put the identity on the boundary, and a term that sharpens discrimination
+     plausibly needs LESS correction).
+  - Both gates are `SB/stage_b/recal_gate.py` v2 (tested: 18 fabricated cases; nine mutants
+    killed, including each unchecked field of what was fitted).
+  - **Reported beside the result (report-only):** both seats' `cross_entropy_identity` →
+    `cross_entropy_fitted` from their fit files.
   - This supersedes revision 4's "no recalibrated readout" for match 2: match 2 is its own
     recalibrated match, fitted before its games. **The ban on re-reading a RAW pool as
     recalibrated stays**: a recalibrated player is a different player, so no raw game is ever
@@ -526,17 +590,19 @@ term that does nothing (0.86 / 0.71 above), so it was not evidence of any signal
 | the term adds, P | **NOMINATES the term for the P family** (P + sibling at that w). Nothing is adopted. Adoption against the base is a later record: P_sib vs the SL base. **P_sib > P0, together with P0 ≈ +2.2 vs base, does not license "P_sib improves on the base"**: the two intervals do not chain into one bound, and P0's +2.2 [−4.2, +8.6] does not exclude 0 |
 | the term adds, Zq | **NOMINATES the term for the Zq family** (Zq + sibling + per-net recalibration at that w). Adoption is a later record: the term inside the generation-2 recipe (#1491's line), never this match's result alone |
 | the term adds, S (fallback only) | The term repairs some of a known-damage recipe. Nominates nothing for adoption; S stays known damage until a match against the base says otherwise |
-| the term harms, any family | **Retires the term at that w for that family's recipe.** For P, the reading is "harm; attribution (shape vs content) unread": the P family leaves the value's level and draw mass free, and the shape numbers are report-only. It is NOT "sibling training is not the fix" |
-| unread | Nothing: \|effect\| below about 9 Elo, or not resolved |
+| the term harms, any family | **Retires the term at that w for that family's recipe.** For Zq, a harm reading may partly be worse calibratability under a 2-parameter recalibration (part of the treatment; see Confounds). For P, the reading is "harm; attribution (shape vs content) unread": the P family leaves the value's level and draw mass free, and the shape numbers are report-only. It is NOT "sibling training is not the fix" |
+| unread: CI contains 0 | Nothing. The interval contains 0; it is consistent with true effects up to ≈ 13 Elo either way. This design had 80% power only for \|effect\| ≥ ≈ 9 |
 
 **"Sibling training is not the fix" is not a reachable conclusion from Stage B**, in any family:
 a head-to-head tests one w against one counterpart. For a family it is reachable only from
 Stage A: every cell of the family is VOID, vetoed or inert.
 
 **Competing nominations across the value lines (review item 9).** Three records can nominate a
-value recipe: the anchor screen (≤ 2 matches), match 8 (1) and this screen (≤ 2). Revision 5's
-matches nominate a TERM within a family, not a recipe against the base, so they do not compete
-with match 8 on point estimates. **If more than one recipe is nominated, the choice is made by a
+value recipe: the anchor screen (≤ 2 matches), match 8 (1) and this screen (≤ 2). One already
+exists: the anchor screen's S + `--kl-wdl` 7.0, "adoptable" (+5.8 [−0.5, +12.2]), beside match 8's
+recalibrated Zq (+9.6); they are never ranked by point estimate. This screen's matches nominate a
+TERM within a family, not a recipe against the base, so they do not compete with either on point
+estimates. **If more than one recipe is nominated, the choice is made by a
 fresh head-to-head under the next record, never by the best point estimate across screens.**
 
 ## Confounds
@@ -553,12 +619,18 @@ fresh head-to-head under the next record, never by the best point estimate acros
 - **Free level in the P family.** See "Level and draw mass" above.
 - **Code base.** Cells train at `TSHA`, the banked controls trained at the PIN. Guards (a)–(d)
   are what licenses comparing them.
-- **Stage B opponents and the code base (revision 5).** Match 1's opponent is `P0_main`, trained at
-  `TSHA` like P_sib, so match 1's contrast is the term alone; the PIN-vs-`TSHA` code-base control
-  is the guard that `P0_main` ≈ P0 (and Stage B runs only if it passed). Match 2's opponent is the
-  pilot's Zq, trained at the PIN, with match 8's banked (T, b); no `Zq_main` cell exists, so match 2's
-  contrast is the term plus the code base, guarded by the same control. Match 2's two seats also
-  carry different, separately fitted (T, b); the fit control shows the procedure reproduces Zq's.
+- **Stage B opponents and the code base (revision 6).** Both opponents train at `TSHA` like their
+  cells: match 1's is `P0_main`, match 2's is `Zq_main`, so each contrast is the term alone (plus
+  GPU nondeterminism). The two paired code-base controls (P0 vs `P0_main`; Zq vs `Zq_main`, which
+  exercises the WDL / Zq value-loss branch) are what let the banked PIN-trained nets describe them.
+- **Match 2's recalibration (revision 6, review item 3).** The fit control proves the fit procedure
+  is reproducible, not how good each fit is. Match 2's contrast therefore also includes (i) how well
+  Zq_sib calibrates under a 2-parameter recalibration compared with `Zq_main`, and (ii) the two fits'
+  unshared sampling error on the same 416 hold-out games. Neither is in the SE 3.37. **This is
+  acceptable because the nominated recipe is "Zq + sibling + per-net recalibration", so
+  calibratability is part of the treatment.** Both seats' `cross_entropy_identity` →
+  `cross_entropy_fitted` are reported beside the result (report-only), and a "harms" reading may
+  partly be worse calibratability.
 - **One data-affecting change** per cell versus its banked family cell: the term (and its
   sidecar); same rows, batches (`presented.npz`), seed and optimizer.
 
@@ -681,7 +753,9 @@ value-anchor screen's trainer resident: about 26 GB used, `MemAvailable` 72.5–
   one measurement of residency after a sha pass; it is reported, not gated. Its host-read median must be
   ≤ host_read_max = (3,367 − 419 − `sidecar_setup_s`) / 1,412 − `gpu_and_rest_s`, both read from
   the warm probe. 3,367 s is the per-cell budget that keeps training under the registered HOLD
-  limit: (2 × 4.3 × 3,600 − 653) / 9. With the estimate's 0.56 s step and 68 s setup,
+  limit: (2 × 4.3 × 3,600 − 653) / 9. (Revision 6: `Zq_main` reads no sidecar, so it is added to
+  the HOLD limit once, at the pilot Zq cell's 859 s process wall, and the per-sibling-cell budget
+  is unchanged.) With the estimate's 0.56 s step and 68 s setup,
   host_read_max ≈ 1.48 s; the CPU evidence after a sha pass is 0.15 s. Otherwise HOLD, as
   registered. The projection uses the warm probe.
 - **Before EACH sibling cell:** `check` ≥ 0.99, or `warm` again and re-check. A second failure
@@ -696,10 +770,10 @@ pilot step ≈ 0.31 s (the Zq cell's 440 s / 1,412) → sibling step ≈ 0.75 s.
 | Item | GPU-h |
 |---|---|
 | Cost probe (three runs: cold, warm and no-term, each loading the whole window) | ≈ 0.45 |
-| Training: 9 sibling cells × ≈ 27 min + `P0_main` ≈ 11 min | ≈ 4.3 |
-| Stage A: 10 nets through the instruments, ≈ 6 min each, plus the take-effect statistic on 14 nets | ≈ 1.2 |
-| Stage B: ≤ 2 head-to-heads × ≈ 1.45, plus match 2's fit control and fit ≈ 0.1 | ≤ ≈ 3.0 |
-| **Total** | **≤ ≈ 9.0** |
+| Training: 9 sibling cells × ≈ 27 min + `P0_main` ≈ 11 min + `Zq_main` ≈ 14 min (the pilot Zq cell's 859 s; revision 6) | ≈ 4.5 |
+| Stage A: 11 nets through the instruments, ≈ 6 min each, plus the take-effect statistic on 15 nets | ≈ 1.3 |
+| Stage B: ≤ 2 head-to-heads × ≈ 1.45, plus match 2's fit control and two fits (Zq_sib, `Zq_main`) ≈ 0.15 | ≤ ≈ 3.05 |
+| **Total** | **≤ ≈ 9.3** |
 
 **Memory per step (review item 10).** Every step runs alone; pre-launch CPU work was run one job
 at a time.
@@ -761,7 +835,8 @@ declare -A CELL=(
   [P_sib_w23]="--w-wdl 0 $SIB 23"   [P_sib_w69]="--w-wdl 0 $SIB 69"   [P_sib_w207]="--w-wdl 0 $SIB 207"
   [Zq_sib_w41]="$Z_V $SIB 41"       [Zq_sib_w122]="$Z_V $SIB 122"     [Zq_sib_w366]="$Z_V $SIB 366"
   [S_sib_w28]="$S_V $SIB 28"        [S_sib_w83]="$S_V $SIB 83"        [S_sib_w248]="$S_V $SIB 248"
-  [P0_main]="--w-wdl 0 --w-sibling 0")
+  [P0_main]="--w-wdl 0 --w-sibling 0"
+  [Zq_main]="$Z_V --w-sibling 0")                              # revision 6: Zq's flags at TSHA, no term, no sidecar
 ```
 
 The `CELL` table must agree with `SB/stage_a/cells.json` (the checker's source of expected
@@ -798,12 +873,12 @@ if s["peak_reserved_gib"] > 0.85 * s["device_total_gib"]:
 budget = (2 * 4.3 * 3600 - 653) / 9                  # per-cell seconds that keep training under the HOLD limit
 read_max = (budget - 419 - s["sidecar_setup_s"]) / 1412 - s["gpu_and_rest_s_median_11_on"]
 cell_s = 419 + s["sidecar_setup_s"] + 1412 * s["step_s_median_11_on"]
-proj = (9 * cell_s + 653) / 3600                     # + P0_main at the pilot P0 cell's process wall
+proj = (9 * cell_s + 653 + 859) / 3600               # + P0_main and Zq_main at the pilot P0 / Zq cells' process walls
 print(f"warm sibling step {s['step_s_median_11_on']:.3f}s (host read {s['host_read_s_median_11_on']:.3f}s, max "
       f"{read_max:.3f}s); cold host read {c['host_read_s_median_11_on']:.3f}s; no-term step {b['step_s_median_11_on']:.3f}s; "
       f"projected cell {cell_s:.0f}s, training {proj:.2f} GPU-h")
 json.dump({"cell_s": cell_s, "training_gpu_h": proj, "host_read_max_s": read_max}, open(f"{sys.argv[1]}/cost_projection.json", "x"))
-if s["host_read_s_median_11_on"] > read_max or proj > 2 * 4.3:
+if s["host_read_s_median_11_on"] > read_max or proj > 2 * 4.3 + 859 / 3600:   # Zq_main (no sidecar) counted once
     sys.exit("HOLD for the owner: the warm host read or the projected training exceeds the registered limit")
 PYEOF
 ```
@@ -842,11 +917,11 @@ if w > budget:
     sys.exit(f"HOLD: {c} loop wall {w:.0f}s > budget {budget:.0f}s")
 PYEOF
 }
-after_cell() { [ "$1" != P0_main ] && [ "$(cut -d' ' -f1 $SB/arm_$1.exit)" = 0 ] || return 0
+after_cell() { [ "$1" != P0_main ] && [ "$1" != Zq_main ] && [ "$(cut -d' ' -f1 $SB/arm_$1.exit)" = 0 ] || return 0
   wall_gate $1 && budget_check $1; }
-CELLS="Zq_sib_w41 Zq_sib_w122 Zq_sib_w366 P_sib_w23 P_sib_w69 P_sib_w207 S_sib_w28 S_sib_w83 S_sib_w248 P0_main"
+CELLS="Zq_sib_w41 Zq_sib_w122 Zq_sib_w366 P_sib_w23 P_sib_w69 P_sib_w207 S_sib_w28 S_sib_w83 S_sib_w248 P0_main Zq_main"
 for c in $CELLS; do
-  if [ "$c" != P0_main ]; then warm_ok || { echo "$c: touched pages < 99% resident after a re-warm" > $SB/HOLD_WARM; exit 1; }; fi
+  case $c in P0_main|Zq_main) ;; *) warm_ok || { echo "$c: touched pages < 99% resident after a re-warm" > $SB/HOLD_WARM; exit 1; };; esac
   train $c
   after_cell $c || exit 1
 done
@@ -854,20 +929,22 @@ for c in $CELLS; do
   [ "$(cut -d' ' -f1 $SB/arm_$c.exit)" = 0 ] && continue
   [ -z "$(compgen -G "$SB/arm_$c.crash1*")" ] || continue
   for f in "" .log .exit .started; do [ ! -e $SB/arm_$c$f ] || mv $SB/arm_$c$f $SB/arm_$c.crash1$f; done
-  if [ "$c" != P0_main ]; then warm_ok || { echo "$c: touched pages < 99% resident after a re-warm" > $SB/HOLD_WARM; exit 1; }; fi
+  case $c in P0_main|Zq_main) ;; *) warm_ok || { echo "$c: touched pages < 99% resident after a re-warm" > $SB/HOLD_WARM; exit 1; };; esac
   train $c
   after_cell $c || exit 1
 done
 $PY $SB/stage_a/train_check.py $SB
 ```
 
-**Step 3: guard (d), the main-written control loads identically at the PIN.**
+**Step 3: guard (d), the main-written controls load identically at the PIN** (revision 6: both
+`P0_main` and `Zq_main`, the two Stage B opponents).
 
 ```bash
-C=$SB/arm_P0_main/gen_0001/train/model.pt
-(cd $PINW && CUDA_VISIBLE_DEVICES= PYTHONPATH=. $PY $SB/prelaunch/check_load.py $C $SB/check_load_P0main_pin.npz) || exit 1
-(cd $TW && CUDA_VISIBLE_DEVICES= PYTHONPATH=. $PY $SB/prelaunch/check_load.py $C $SB/check_load_P0main_main.npz) || exit 1
-$PY $SB/prelaunch/check_load.py --compare $SB/check_load_P0main_pin.npz $SB/check_load_P0main_main.npz || exit 1
+for K in P0main Zqmain; do C=$SB/arm_${K/main/_main}/gen_0001/train/model.pt
+  (cd $PINW && CUDA_VISIBLE_DEVICES= PYTHONPATH=. $PY $SB/prelaunch/check_load.py $C $SB/check_load_${K}_pin.npz) || exit 1
+  (cd $TW && CUDA_VISIBLE_DEVICES= PYTHONPATH=. $PY $SB/prelaunch/check_load.py $C $SB/check_load_${K}_main.npz) || exit 1
+  $PY $SB/prelaunch/check_load.py --compare $SB/check_load_${K}_pin.npz $SB/check_load_${K}_main.npz || exit 1
+done
 ```
 
 **Step 4: Stage A** (the instruments at the PIN, the take-effect statistic at `$TW`;
@@ -877,7 +954,7 @@ self-enforced one rerun, by running the same line again):
 $SB/stage_a/run_stage_a.sh $TW $TSHA || exit 1      # writes $SB/offline/cells/stage_a_decision.json -> stage_b
 ```
 
-**Step 5: Stage B (revision 5: head-to-heads).** For the i-th entry `X` of `stage_b` (i = 1, 2),
+**Step 5: Stage B (revision 5: head-to-heads; revision 6: `Zq_main`, the verdict script).** For the i-th entry `X` of `stage_b` (i = 1, 2),
 its family `FAM` = `stage_b_specs[X].family`, seed `SEED` = 2026112193 (P, or an S fallback) or
 2026112194 (Zq):
 
@@ -894,20 +971,25 @@ RC8=0.7036189636786957,-0.22711530923843357                                    #
 case $FAM in
   P)  OPP=$SB/arm_P0_main/gen_0001/train/model.pt; SEED=2026112193; RA=(); RB=() ;;
   S)  OPP=$P/arm_S/gen_0001/train/model.pt;        SEED=2026112193; RA=(); RB=() ;;
-  Zq) OPP=$P/arm_Zq/gen_0001/train/model.pt;       SEED=2026112194
-      # match 2's recalibration, fixed before any game: fit control, fit, bounds stop (GPU, alone on the card)
+  Zq) OPP=$SB/arm_Zq_main/gen_0001/train/model.pt; SEED=2026112194                 # revision 6: Zq_main
+      [ ! -e $SB/arm_Zq_main/VOID ] || exit 91
+      # match 2's recalibration, fixed before any game: fit control, both fits, both bounds stops (GPU, alone)
       echo "37e2742011c48be427a32ad2ecfb6c376228d484f8215b6650e659f150c3d3a5  $PINW/scripts/fit_value_recal.py" | sha256sum -c --quiet || exit 93
       fit() { (cd $PINW && PYTHONPATH=. $PY scripts/fit_value_recal.py --net $1 --reference $SL \
         --collect-dir $P/collect/gen_0001/collect --holdout-frac 0.05 --device cuda --out $2 > $2.log 2>&1); }
-      fit $OPP $SB/stage_b_fit_control_Zq.json || exit 1
+      fit $P/arm_Zq/gen_0001/train/model.pt $SB/stage_b_fit_control_Zq.json || exit 1
       $PY $SB/stage_b/recal_gate.py control $SB/stage_b_fit_control_Zq.json $RC8 > $SB/stage_b_fit_control.verdict \
         || { echo "fit control failed: match 2 does not run" > $SB/HOLD_FIT; exit 1; }
-      fit $M $SB/stage_b_recal_$X.json || exit 1
-      $PY $SB/stage_b/recal_gate.py bounds $SB/stage_b_recal_$X.json $RC8 > $SB/stage_b_recal_bounds.verdict \
-        || { echo "$X (T, b) outside the registered bounds: match 2 stops before any game" > $SB/HOLD_BOUNDS; exit 1; }
-      RCX=$($PY -c "import json;print(json.load(open('$SB/stage_b_recal_$X.json'))['cli'])")   # the fit's own "T,b"
-      RA=(--candidate-value-recal $RCX --reference-value-recal $RC8)            # seat A: candidate = X
-      RB=(--candidate-value-recal $RC8 --reference-value-recal $RCX) ;;         # seat B: candidate = Zq
+      for N in $X Zq_main; do NM=$SB/arm_$N/gen_0001/train/model.pt
+        fit $NM $SB/stage_b_recal_$N.json || exit 1
+        $PY $SB/stage_b/recal_gate.py bounds $SB/stage_b_recal_$N.json $RC8 $(sha256sum $NM | cut -d' ' -f1) \
+          > $SB/stage_b_recal_bounds_$N.verdict \
+          || { echo "$N (T, b) outside the registered bounds (or not its fit): match 2 stops before any game" > $SB/HOLD_BOUNDS; exit 1; }
+      done
+      RCX=$($PY -c "import json;print(json.load(open('$SB/stage_b_recal_$X.json'))['cli'])")       # the fits' own "T,b"
+      RCO=$($PY -c "import json;print(json.load(open('$SB/stage_b_recal_Zq_main.json'))['cli'])")
+      RA=(--candidate-value-recal $RCX --reference-value-recal $RCO)            # seat A: candidate = X
+      RB=(--candidate-value-recal $RCO --reference-value-recal $RCX) ;;         # seat B: candidate = Zq_main
 esac
 for O in $SB/smoke $SB; do n=$([ $O = $SB ] && echo 3200 || echo 4)
   $F/run_followup_match.sh $O sib_$X 1 A $SEED $n --candidate $M --reference $OPP "${RA[@]}" || exit 1
@@ -926,20 +1008,24 @@ if seen != set(want) or bad:
     sys.exit(f"result rows: seen {sorted(seen)}, wrong git_sha or net sha256 in {bad}")
 PYEOF
   if [ $FAM = Zq ]; then
-    $PY $SB/stage_b/check_both_seats.py $d sib_${X}_1_A $RCX $RC8 || exit 1
-    $PY $SB/stage_b/check_both_seats.py $d sib_${X}_1_B $RC8 $RCX || exit 1
+    $PY $SB/stage_b/check_both_seats.py $d sib_${X}_1_A $RCX $RCO || exit 1
+    $PY $SB/stage_b/check_both_seats.py $d sib_${X}_1_B $RCO $RCX || exit 1
   fi
   (cd $PINW && PYTHONPATH=. $PY scripts/arena_seat_balanced_pool.py --arm $M \
     --a-games $d/sib_${X}_1_A.games.jsonl --b-games $d/sib_${X}_1_B.games.jsonl \
     --a-result $d/results.jsonl --b-result $d/results.jsonl \
     --a-label sib_${X}_1_A --b-label sib_${X}_1_B --out $d/pool.json > $d/pool.log 2>&1) || exit 1
 done
+$PY $SB/stage_b/stage_b_verdict.py $SB/arenas/sib_$X/pool.json > $SB/arenas/sib_$X/verdict.json || exit 1   # the label, by script
+if [ $FAM = Zq ]; then for N in $X Zq_main; do   # report-only, beside the result
+  $PY -c "import json;r=json.load(open('$SB/stage_b_recal_$N.json'));print('$N', r['cross_entropy_identity'], '->', r['cross_entropy_fitted'])"
+done > $SB/arenas/sib_$X/fit_cross_entropy.txt; fi
 ```
 
 - The first pass is the 4-game smoke (2 openings); the real match runs only if it exits 0.
 - **Net identity:** the result-row check requires every row of both seats to carry `git_sha` =
-  `$PIN` and the intended candidate and opponent sha256 (the cell, and `P0_main`, the pilot's Zq or
-  the pilot's S). `P0_main`'s identity at the PIN is also guard (d)'s `check_load` comparison
+  `$PIN` and the intended candidate and opponent sha256 (the cell, and `P0_main`, `Zq_main` or
+  the pilot's S). `P0_main`'s and `Zq_main`'s identity at the PIN is also guard (d)'s `check_load` comparison
   (step 3); a cell's checkpoint is the file `train_check.py` passed.
 - **Seats:** match 1 (and an S fallback) is plain on both seats, so no hybrid readback applies.
   Match 2 reads back both seats of each run with `check_both_seats.py`: each seat's "HYBRID built"
