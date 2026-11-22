@@ -1,9 +1,10 @@
-"""The sibling term's ORDER form, version 2: the gap weight, and the root-list unit (``--sibling-unit roots``).
+"""The sibling term's ORDER form, version 3 (version 2 with root-list rho 0.08): the gap weight, and the root-list
+unit (``--sibling-unit roots``).
 
 Covered:
 - the gap weight min(|dq|, 0.62): a mis-ordered large gap costs more than a small one, in proportion, bounded;
 - root lists: every pair among a root's children with |dq| >= t, each root's mean, roots combined with weight
-  n_eff = n / (1 + (n - 1) * 0.13) normalised over the step's roots;
+  n_eff = n / (1 + (n - 1) * 0.08) normalised over the step's roots (rho pinned against hand values);
 - the chunked list term equals a single-forward reference written independently here, through the real Trainer,
   at chunk budgets of one root, a few roots and all roots, over a short last batch;
 - the list materialiser on a tiny real collect: every root's list is exactly its eligible children, byte-equal to
@@ -44,7 +45,7 @@ def test_the_gap_weight_scales_a_mis_ordered_pair_by_its_gap_bounded_at_0_62() -
     want = torch.tensor([0.1 * M, 0.5 * M, 0.62 * M, 0.5 * 0.3 * M])
     torch.testing.assert_close(got, want)
     assert sib.ORDER_GAP_CAP == 0.62
-    assert sib.ORDER_FORM_VERSION == 2
+    assert sib.ORDER_FORM_VERSION == 3
 
 
 def test_root_pairs_and_weights() -> None:
@@ -53,8 +54,12 @@ def test_root_pairs_and_weights() -> None:
     assert sorted(zip(ia.tolist(), ib.tolist(), strict=True)) == [(0, 2), (0, 3), (1, 2), (1, 3), (2, 3)]
     assert sib.root_weight(0) == 0.0
     assert sib.root_weight(1) == 1.0
-    assert sib.root_weight(24) == pytest.approx(24 / (1 + 23 * 0.13))
-    assert sib.ROOT_PAIR_ICC == 0.13
+    # rho 0.08 (the sibling-fulllist-rho bank), n_eff by hand: 3 / 1.16, 24 / 2.84, 63 / 5.96
+    assert sib.root_weight(3) == pytest.approx(2.5862069, abs=1e-6)
+    assert sib.root_weight(24) == pytest.approx(8.4507042, abs=1e-6)
+    assert sib.root_weight(63) == pytest.approx(10.5704698, abs=1e-6)
+    assert sib.ROOT_PAIR_ICC == 0.08
+    assert sib.ORDER_FORM_VERSION == 3
 
 
 class FakeLists:
@@ -79,7 +84,7 @@ class ReferenceListTerm(sib.SiblingListTerm):
     """ONE grad-enabled forward over every child of the step's roots; the loss written
     out pair by pair: per root, the mean over pairs (|dq| >= t) of
     (min v / 64) * min(|dq|, 0.62) * relu(min(m, |dq|) - sign(dq) * dv); roots
-    weighted n / (1 + (n - 1) 0.13), normalised; returned for the Trainer to scale."""
+    weighted n / (1 + (n - 1) 0.08), normalised; returned for the Trainer to scale."""
 
     def penalty(self, outputs: dict[str, Any], batch: dict[str, Any]) -> Any:
         del outputs, batch
@@ -104,7 +109,7 @@ class ReferenceListTerm(sib.SiblingListTerm):
             self.active += sum(int(float(x.detach()) > 0) for x in terms)
             if terms:
                 n = len(terms)
-                a = n / (1 + (n - 1) * 0.13)
+                a = n / (1 + (n - 1) * 0.08)
                 num = num + a * torch.stack(terms).mean()
                 den += a
                 n_all += n
@@ -195,7 +200,7 @@ def test_the_list_term_records_its_child_positions_per_step() -> None:
 
 def test_a_version_1_order_snapshot_and_another_unit_are_refused() -> None:
     state = _run(sib.SiblingListTerm, chunk=4)["state"]
-    assert state["order_form_version"] == 2
+    assert state["order_form_version"] == 3
     assert state["unit"] == "roots"
     from types import SimpleNamespace
 
@@ -204,7 +209,7 @@ def test_a_version_1_order_snapshot_and_another_unit_are_refused() -> None:
                                      rows=1, chunk_pairs=4, batch_size=4, device="cpu", loss="order",
                                      order_margin=M, order_min_dq=T)
     with pytest.raises(RuntimeError, match="version"):
-        other.restore({**state, "order_form_version": 1})
+        other.restore({**state, "order_form_version": 2})
     with pytest.raises(RuntimeError, match="unit"):
         other.restore({**state, "unit": "pairs"})
     with pytest.raises(ValueError, match="order form only"):
@@ -322,7 +327,7 @@ def test_the_root_unit_trains_the_value_head_inside_train_generation(run: dict[s
     assert sb["pairs"] > 0
     assert sb["active_pairs"] > 0
     assert sb["child_positions_per_step"] > 0
-    assert sb["order_form_version"] == 2
+    assert sb["order_form_version"] == 3
     after = torch.load(d / "gen_0001" / "train" / "model.pt", map_location="cpu", weights_only=False)["model"]
     moved = max(float((after[k].float() - init[k].float()).abs().max()) for k in init if k.startswith("value_wdl."))
     assert moved > 0
@@ -580,6 +585,27 @@ def test_a_1501_era_diff_phase_resumes_at_any_chunk(run: dict[str, Path], monkey
     segs = done["sibling"]["chunk_segments"]
     assert segs[0] == [0, then]
     assert segs[-1][1] == now
+
+
+def test_an_order_phase_snapshotted_under_form_version_2_is_refused_never_deleted(
+        run: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    from chess_anti_engine.simple_rl import learn as learn_mod
+    from chess_anti_engine.simple_rl.learn import train_generation
+
+    s = _settings(run, w_sibling=1.0, sibling_rows=8, sibling_dir=str(run["side"]), snapshot_updates=(3,), **_ORDER)
+    d = _fresh_run(run, "v2_order")
+    monkeypatch.setattr(sib, "ORDER_FORM_VERSION", 2)   # written by this code as it was at version 2
+    real_snap = _kill_after(monkeypatch, 3)
+    with pytest.raises(Killed):
+        train_generation(run_dir=d, generation=1, init_checkpoint=run["ckpt"], prev_trainer_checkpoint=None, settings=s)
+    monkeypatch.setattr(learn_mod, "write_snapshot", real_snap)
+    monkeypatch.undo()
+    assert sib.ORDER_FORM_VERSION == 3
+    snaps = _snaps(d)
+    assert snaps
+    with pytest.raises(RuntimeError, match="ORDER form version 2"):
+        _train(run, d, s)
+    assert _snaps(d) == snaps
 
 
 def test_a_1501_era_snapshot_that_matches_no_key_is_refused_never_deleted(

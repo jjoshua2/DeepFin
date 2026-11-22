@@ -1994,7 +1994,8 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
                                   "prev_trainer_checkpoint": prev_trainer_checkpoint if continued else None,
                                   "run_dir": run_dir, "gens": gens, "probe_path": probe_path,
                                   "batches": sampler.batches}
-        legacy = legacy_snapshot_states(out_dir) if float(settings.w_sibling) > 0 else {}
+        states = snapshot_sibling_states(out_dir) if float(settings.w_sibling) > 0 else {}
+        legacy = {u: st for u, st in states.items() if "chunk_segments" not in st}
         compatible, incompatible = legacy_resume_keys(
             chunks=sorted({int(st["chunk_pairs"]) for st in legacy.values() if "chunk_pairs" in st}), **key_kw)
         resumed_from = resumable_snapshot(out_dir, [resume_key, *compatible])
@@ -2003,9 +2004,20 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
             if old is not None:   # refuse rather than delete a phase's snapshots under a changed definition
                 raise RuntimeError(
                     f"{out_dir}: snapshot step_{old} was written by this phase under the sibling ORDER form version 1 "
-                    f"(this code trains version {_order_form_version()}); it cannot resume as version 2, and this "
+                    f"(this code trains version {_order_form_version()}); it cannot resume, and this "
                     f"code will not delete it. Move {Path(out_dir, SNAPSHOTS)} aside to start the phase over under "
-                    "version 2, or finish it with the code that wrote it")
+                    f"version {_order_form_version()}, or finish it with the code that wrote it")
+        other_form = {u: st.get("order_form_version") for u, st in states.items() if "chunk_segments" in st
+                      and st.get("loss") == "order" and st.get("order_form_version") != _order_form_version()}
+        if resumed_from is None and other_form:
+            # This code's own state under an earlier ORDER form version (its key carries the version, so it matches
+            # nothing now): refused, never deleted.
+            old = min(other_form)
+            raise RuntimeError(
+                f"{out_dir}: snapshot step_{old} was written by this phase under the sibling ORDER form version "
+                f"{other_form[old]} (this code trains version {_order_form_version()}); it cannot resume, and this "
+                f"code will not delete it. Move {Path(out_dir, SNAPSHOTS)} aside to start the phase over, or finish "
+                "it with the code that wrote it")
         if resumed_from is None and legacy:
             # A #1501-era sibling snapshot that matches no key this code can rebuild: never deleted.
             raise RuntimeError(
@@ -2211,6 +2223,11 @@ def legacy_snapshot_states(out_dir: Path) -> dict[int, dict[str, Any]]:
     wrote (its state has no ``chunk_segments``), by update. That code keyed a
     non-default chunk size and recorded it here (``chunk_pairs``), so its key can be
     rebuilt at the chunk the phase actually ran, whatever chunk resumes it."""
+    return {u: st for u, st in snapshot_sibling_states(out_dir).items() if "chunk_segments" not in st}
+
+
+def snapshot_sibling_states(out_dir: Path) -> dict[int, dict[str, Any]]:
+    """The sibling state of every snapshot with resume files, by update."""
     import torch
 
     out: dict[int, dict[str, Any]] = {}
@@ -2218,7 +2235,7 @@ def legacy_snapshot_states(out_dir: Path) -> dict[int, dict[str, Any]]:
         if not ((d / SNAPSHOT_RECORD).is_file() and (d / RESUME_TRAINER).is_file() and (d / RESUME_STATE).is_file()):
             continue
         st = torch.load(str(d / RESUME_STATE), map_location="cpu", weights_only=False).get("sibling")
-        if isinstance(st, dict) and "chunk_segments" not in st:
+        if isinstance(st, dict):
             out[int(d.name.split("_")[1])] = st
     return out
 
