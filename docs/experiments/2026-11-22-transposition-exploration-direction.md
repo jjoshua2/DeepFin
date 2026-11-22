@@ -103,7 +103,7 @@ The larger fixture distinguishes one repeated structural board from two differen
 
 ## First reading on the SL base
 
-Bank: `~/chess-artifacts/operations/rl-claude-20261119/transposition-census-slbase/` — `README.md` [ff80151e], `output/summary_64_256_800.txt` [ab3f5b9d], `output/summary_3200.txt` [8327fa76]. Driver at the #1499 head, SL base, the pilot's collect settings with the Syzygy pair dropped, CPU, fresh single-root trees. 32 roots from 8 pilot games at plies 12/30/60/100. The 3,200-sim row is 6 ply-12 roots only; the seventh root hit the CPU budget.
+Bank: `~/chess-artifacts/operations/rl-claude-20261119/transposition-census-slbase/` — `~/chess-artifacts/operations/rl-claude-20261119/transposition-census-slbase/README.md` [`ff80151e`], `~/chess-artifacts/operations/rl-claude-20261119/transposition-census-slbase/output/summary_64_256_800.txt` [`ab3f5b9d`], `~/chess-artifacts/operations/rl-claude-20261119/transposition-census-slbase/output/summary_3200.txt` [`8327fa76`]. Driver at the #1499 head, SL base, the pilot's collect settings with the Syzygy pair dropped, CPU, fresh single-root trees. 32 roots from 8 pilot games at plies 12/30/60/100. The 3,200-sim row is 6 ply-12 roots only; the seventh root hit the CPU budget.
 
 | Simulations | Repeated boards (structural duplicate share) | Same search context / model input | TT probe hits → context-rejected |
 |---:|---:|---:|---:|
@@ -116,7 +116,70 @@ Repeated boards grow with budget, but almost none share the model input: history
 
 **Limits.** These are cached-board **occupancy** counts, not evaluator calls saved. The roots are not independent (four per game), so no intervals are given. Tablebases were dropped, because the driver refuses a tablebase profile. Root noise was a constant 1.0, so roots at plies ≥ 30 ran noisier than the pilot's decaying schedule. The bank ran before this driver passed production's root-shortcut flag; its README checked all 32 roots and none had an immediate mate or terminal-draw root action, so that setting changed nothing there.
 
-**Consequence.** Stage 3's first two candidates are an exact-input cache and a context-aware donor index. At these budgets both have under 1% of cached boards to find: same-context and same-input boards are at most 0.76%, even at 3,200 simulations. So neither is worth building on this evidence. The next measurement is Stage 2's actual request accounting, which counts evaluator calls rather than occupancy. Beside it sits a separate question that this census cannot answer: whether an **approximate** share across histories is acceptable, i.e. how far the net's value and policy move between histories that reach the same board.
+**Consequence.** Stage 3's first two candidates are an exact-input cache and a context-aware donor index. At these budgets both have under 1% of cached boards to find: same-context and same-input boards are at most 0.76%, even at 3,200 simulations. That figure is occupancy **within one fresh single-root search**. An exact-input cache could also hit across consecutive moves of a game, or inside a carried (reused) tree, and this census observes neither. So the evidence makes no case for either candidate within a single search, and **cross-move reuse is unmeasured**. The next measurement is Stage 2's actual request accounting, which counts evaluator calls rather than occupancy and should count cross-move and carried-tree repeats explicitly. Beside it sits a separate question that this census cannot answer: whether an **approximate** share across histories is acceptable, i.e. how far the net's value and policy move between histories that reach the same board ([below](#history-sensitivity-would-an-approximate-share-be-nearly-free)).
+
+## History sensitivity: would an approximate share be nearly free?
+
+The census says exact sharing has almost nothing to find because history planes make each transposition a different input. The next question is how far the net's outputs actually move between two real move orders that reach the same board. If they barely move, an evaluation could be shared across histories approximately. Two pre-registered CPU scopings on the SL base answer it. Neither is a candidate, and neither measures a search outcome.
+
+### Replay: same board, different move orders
+
+Bank `~/chess-artifacts/operations/rl-claude-20261119/history-sensitivity-scoping/`: `~/chess-artifacts/operations/rl-claude-20261119/history-sensitivity-scoping/PREREG.md` [`271b8527`], sealed before any output; `~/chess-artifacts/operations/rl-claude-20261119/history-sensitivity-scoping/README.md` [`468e86a0`]; `~/chess-artifacts/operations/rl-claude-20261119/history-sensitivity-scoping/output/summary.json` [`7840451e`]; addendum `~/chess-artifacts/operations/rl-claude-20261119/history-sensitivity-scoping/ADDENDUM_1.md` [`32eaf0af`].
+
+From the 32 census roots, the net's top-4 prior moves were expanded to depth 4 and every node forwarded. That gave 1,041 groups of distinct paths to the same board. The input carries 8 frames (`LC0_HISTORY_FRAMES`, `chess_anti_engine/encoding/lc0.py`). Verdict on the pre-committed screening bands: **AMBIGUOUS**.
+
+| criterion | value | NEARLY FREE band |
+|---|---:|---|
+| median group \|ΔQ\| spread | 0.0051 | ≤ 0.01: met |
+| p90 group \|ΔQ\| spread | **0.0352** | ≤ 0.03: **failed** |
+| median group sym-KL | 0.00047 nats | ≤ 0.02: met |
+| median spread / sibling gap | 0.033 | ≤ 0.10: met |
+
+No CHANGES THE SEARCH band was reached. The built-in control passed: 1,020 pairs extended so that they differ only outside the 8 frames had bitwise-identical inputs and exactly equal outputs. The other 21 differ only in clock or repetition state.
+
+A "first one wins" cache would inject a |ΔQ| error of 0.0048 median and 0.033 p90. It would change the top-1 move for 4.8% of members and flip 1.66% of sibling orderings at the parent. Depth-4 transpositions are the easy case; the census's 3,200-simulation transpositions are deeper.
+
+**Disclosed deviations.** (a) Before the seal, a development smoke of the byte-identical script ran on the first root only (into scratch, discarded) and printed that root's verdict line; the PREREG discloses it, and the bands were fixed before it. (b) The script groups only `depth > 0` nodes (`history_sensitivity_replay.py`, the grouping loop), an exclusion the PREREG did not state: it drops 9 groups where a 4-ply return path reaches the root's own board. With the roots included there are 1,050 groups, spread median 0.00518 and p90 0.03660, so the verdict is still AMBIGUOUS (bank `ADDENDUM_1.md`).
+
+### Rule50: is the clock or the history doing it?
+
+Bank `~/chess-artifacts/operations/rl-claude-20261119/rule50-bucketing-scoping/`: `~/chess-artifacts/operations/rl-claude-20261119/rule50-bucketing-scoping/PREREG.md` [`2648143d`], sealed before any output; `~/chess-artifacts/operations/rl-claude-20261119/rule50-bucketing-scoping/README.md` [`d5143e72`]; `~/chess-artifacts/operations/rl-claude-20261119/rule50-bucketing-scoping/output/part_a_summary.json` [`7d1ed2ca`]; `~/chess-artifacts/operations/rl-claude-20261119/rule50-bucketing-scoping/output/part_b_summary.json` [`2f925d4e`]; addendum `~/chess-artifacts/operations/rl-claude-20261119/rule50-bucketing-scoping/ADDENDUM_1.md` [`bc95432d`].
+
+The owner proposed bucketing the 50-move clock in the key instead of matching it exactly. Clock figures here are the **half-move clock** (the owner counts the rule in moves: half-move clock 2c = move c). The clock enters the input as one scalar plane, 109 = min(half-move clock, 100)/100. Re-encoding 512 boards at 5 clocks changed no other plane.
+
+- **The replay's tail is history, not the clock value.** This is a re-analysis of the banked observations, post hoc.
+  - Pairs that differ only in the clock (window otherwise identical) move Q by a median of 0.0001 (max 0.0033).
+  - In-tree pairs whose clocks differ also differ in *when* a pawn moved or a capture happened. Those move Q by 0.0071 median / 0.039 p90, against 0.0034 / 0.027 for history-only pairs.
+  - Post hoc: keying on board + repetition + **exact** clock re-reads the replay's bands as NEARLY FREE, but only by 0.001 on p90 (0.02897 vs 0.03), on a split chosen after the verdict and on the replay's proxy repetition flags. Any bucket of width ≥ 4 merges every real clock-differing pair and reads AMBIGUOUS again.
+- **Controlled sweep.** Board and history frames were fixed, and only the half-move clock was swept over 0..99. That covered 512 primary boards stratified by piece count and |Q|. A declared addition, descriptive only, added 120 real high-clock positions from pilot shards; **the verdict reads the 512 primary boards only**.
+  - **Verdict on the pre-committed band** (within-bucket |ΔQ| median ≤ 0.002 and p90 ≤ 0.01, sym-KL median ≤ 0.005): **NONE**. No scheme coarser than exact passes: none, w16, the geometric shape, w8, w4, w2. Even w2 fails on p90, 0.063.
+  - **Shape of the curve.** The net is nearly insensitive at low clocks: adjacent-step |ΔQ| p90 ≤ 0.001 below half-move clock 30 (≤ 0.002 on the real high-clock positions). It is steep near 100: adjacent-step p90 0.058 at half-move clock 90 on real high-clock positions, and |Q(99) − Q(0)| up to 0.95. The worst w8 bucket starts at half-move clock ≥ 88 on 415 of 512 boards, mostly endgames. In the owner's units the steep zone starts at about **moves 40–44**, which agrees with his "1 vs 10 moves is identical, 45 vs 48 is very different".
+  - **Post-hoc hybrid** (descriptive, needs fresh confirmation): width 4 below half-move clock 48 and exact above passes on both populations (64 keys). It was chosen from 12 post-hoc shapes tried on the same data. It is consistent with the owner's idea: coarse at low clocks, exact near the draw.
+- **What output spread cannot show.**
+  - The 50-move draw and Syzygy DTZ verdicts depend on the exact clock. The TT context (`cboard_context_match`, `_mcts_tree.c`) and the terminal test (`_lc0_ext.c`) must keep it exact.
+  - A bucketed clock belongs only in the **evaluation** cache key. Those caches fingerprint the encoded row, so quantising plane 109 in the key copy would leave the TT and terminal paths untouched. This is a code reading; nothing was built.
+  - While the history frames stay in the key, bucketing the clock adds almost no hits: 18 of 1,041 extended control pairs, and no in-tree pair. The real gain needs history out of the key too, which is the AMBIGUOUS question above.
+
+### How lc0 handles it (cited from source)
+
+Read from the lc0 source at commit `d8ce482` (v0.33.0-dev, a local clone at `~/local_engines/lc0_033`, outside this repository):
+
+- **The NN cache keys on the current board plus its repetition count; it ignores the history frames and the clock.** `~/local_engines/lc0_033/src/neural/memcache.cc` [`3bae948c`] (lines 38–43): `ComputeEvalPositionHash` returns `pos.pos.back().Hash()`, and `Position::Hash()` is `HashCat({us_board_.Hash(), repetitions_})` (`~/local_engines/lc0_033/src/chess/position.cc` [`0387843a`], lines 59–61). Its TODO says it ignores repetitions and history; it ignores the earlier repetitions and the history frames, not the current repetition count.
+- **The DAG search's TT key is short by default.**
+  - The key is `history.HashLast(params_.GetCacheHistoryLength() + 1)` (`~/local_engines/lc0_033/src/search/dag_classic/search.cc` [`dbe9a497`], line 2095). `HashLast` also mixes in the rule50 ply (`~/local_engines/lc0_033/src/chess/position.cc` [`0387843a`], lines 141–149).
+  - `CacheHistoryLength` defaults to 0 (`~/local_engines/lc0_033/src/search/classic/params.cc` [`5c28b7b3`], line 573), so the key is the current position (board plus repetition count) plus the rule50 ply.
+  - The option's help text says that when it is shorter than the net's history, "the search will use eval of the same position with different history taken from cache".
+- **So lc0 shares evaluations across histories approximately, by design and by default.** Its NN cache also ignores the clock; its DAG TT key does not.
+
+KataGo was not checked: no source was available.
+
+### Consequence for Stage 3
+
+- **Exact candidates:** the exact-input cache and context-aware donor index keep their census reading. They have under 1% to find within one search, and cross-move reuse is unmeasured.
+- **An approximate share is neither ruled in nor out.** The typical error is small, but one group in ten moves value by more than 0.035, and almost all of that comes from history, not the clock.
+- **Hypothesis, not a reading:** a key of board + repetition state + exact clock (dropping the move-order frames, keeping the rule state). Post hoc it passes the replay's p90 band by 0.001 (0.02897 vs 0.03), on a statistic chosen after the verdict and on the replay's proxy repetition flags. It should be tested as a matched-simulation in-search arm, judged on target quality and including the deeper transpositions, before anything is built.
+- **A bucketed clock adds little on top**, because real transpositions rarely differ in the clock alone. If it is tried, the post-hoc hybrid shape (w4 below half-move clock 48, exact above) is the one to confirm on fresh data, and only in the evaluation key.
+- **Stage 2's request accounting comes first.** Only it shows whether repeated boards cost real evaluator calls at match budgets.
 
 ## Stage 2 — actual request accounting
 
