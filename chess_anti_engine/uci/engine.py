@@ -1422,6 +1422,11 @@ class Engine:
         # deadline.
         go_received_at = _receipt_time(cmd.received_at)
         self._go_received_at = go_received_at
+        # How long the `go` waited before this handler ran (behind earlier
+        # commands): the queue's share of its clock, not the handler's own work.
+        # Whole milliseconds, the UCI clock's resolution: a sub-millisecond
+        # wait must not tip a deadline sitting exactly at the minimum search.
+        queued_ms = int((time.monotonic() - go_received_at) * 1000.0)
         # A timeout cannot transfer ownership of the still-live worker; it is
         # bounded by this move's own clock, then `dispatch` answers from the
         # busy-worker fallback for the latest board.
@@ -1462,15 +1467,18 @@ class Engine:
             min_chunk_ms=self._measured_min_chunk_ms(),
         )
         limits = _fit_movetime_limits(cmd.args, limits)
-        queued_ms = (time.monotonic() - go_received_at) * 1000.0
         if (not limits.clock_exhausted and not limits.ponder and not limits.infinite
                 and limits.deadline_ms is not None
+                and limits.deadline_ms >= _MIN_DEADLINE_MS
                 and limits.deadline_ms - queued_ms < _MIN_DEADLINE_MS):
             # The `go` waited behind earlier commands (or for the worker) until
-            # less than the minimum search is left of its deadline: answer at
-            # once, as for a clock that cannot pay for a search, rather than
-            # start a search already past its deadline (which the watchdog then
-            # answered unsearched, without even the fresh eval).
+            # less than the minimum search is left of a deadline that had room
+            # for one: answer at once, as for a clock that cannot pay for a
+            # search, rather than start a search already past its deadline
+            # (which the watchdog then answered unsearched, without even the
+            # fresh eval). A deadline under the minimum from the start (an
+            # explicit work bound, the priced sudden-death rule) keeps its own
+            # handling.
             limits = replace(limits, clock_exhausted=True)
             self._answer_clock_exhausted(cmd.args, search_board, limits, go_received_at,
                                          queued_ms=queued_ms)

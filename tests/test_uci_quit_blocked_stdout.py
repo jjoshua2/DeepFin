@@ -721,6 +721,7 @@ def test_work_queued_ahead_of_go_is_charged_to_its_movetime(tmp_path: Path) -> N
 
     import chess
 
+    moves: list[str] = []
     for seed in range(1000):  # the first random 120-ply game still in play
         rng, board, moves = random.Random(seed), chess.Board(), []
         while len(moves) < 120 and not board.is_game_over(claim_draw=True):
@@ -729,6 +730,7 @@ def test_work_queued_ahead_of_go_is_charged_to_its_movetime(tmp_path: Path) -> N
             moves.append(mv.uci())
         if len(moves) == 120 and not board.is_game_over(claim_draw=True):
             break
+    assert len(moves) == 120
     position = "position startpos moves " + " ".join(moves)
     eng = _ready(_Engine(_make_tiny_checkpoint(tmp_path), tmp_path / "engine.stderr"))
     try:

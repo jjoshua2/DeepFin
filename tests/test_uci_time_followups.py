@@ -288,10 +288,14 @@ def test_the_main_loop_dispatches_stamped_commands(monkeypatch) -> None:
     assert main_module.main() == 0
     gos = [c for c in got if isinstance(c, CmdGo)]
     hits = [c for c in got if isinstance(c, CmdPonderHit)]
-    assert len(gos) == 1 and len(hits) == 1
+    assert len(gos) == 1
+    assert len(hits) == 1
     go_at, hit_at = gos[0].received_at, hits[0].received_at
-    assert go_at in drawn and hit_at in drawn
-    assert go_at is not None and hit_at is not None and go_at < hit_at
+    assert go_at is not None
+    assert hit_at is not None
+    assert go_at in drawn
+    assert hit_at in drawn
+    assert go_at < hit_at
 
 
 def test_a_ponderhit_clock_starts_when_it_was_read(out) -> None:
