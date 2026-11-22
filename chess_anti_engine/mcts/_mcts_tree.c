@@ -3999,6 +3999,13 @@ static PyObject *MCTSTree_tt_entry_stats(MCTSTreeObject *self, PyObject *Py_UNUS
  * boards are inspected, including nodes outside a subsequently advanced root.
  * The caller must have stopped every worker using this tree. Keeping the GIL
  * prevents Python calls from overlapping, not GIL-released native walkers.
+ * Enforcement is asymmetric: only a pending GUMBEL batch is refused (gsim.phase
+ * == 1 below). PUCT has no such flag -- select_leaves/integrate, the pucv pool
+ * and walker_descend_puct[_tb]/walker_integrate_leaf release the GIL inside one
+ * call and leave no tree-level in-flight marker -- so a census taken while a
+ * PUCT walker runs on another thread is NOT detected and may read a torn cache.
+ * Refusing it would need an atomic in-flight counter on every GIL-released
+ * entry (hot-path cost for a diagnostic); the PUCT case is a documented limit.
  *
  * Hashes only select candidates. Structural, context and encoded-row equality
  * are each verified exactly before a group is reused. Two row buffers keep
@@ -6057,6 +6064,8 @@ static PyMethodDef MCTSTree_methods[] = {
      "not visits, NN requests or saved evaluations. Includes roots and TT recipients.\n"
      "Refuses an exceeded bound or pending Gumbel batch. Caller must stop all native\n"
      "walkers; holding the GIL alone does not exclude GIL-released workers.\n"
+     "PUCT walkers (select/integrate, pucv pool, walker_*) are NOT detected: no\n"
+     "in-flight flag exists, so a concurrent PUCT descent is a documented limit.\n"
      "Reconstructed planes are not a log of actual BF16/relations input transport."},
     {"footprint_bytes", (PyCFunction)MCTSTree_footprint_bytes, METH_NOARGS,
      "footprint_bytes() -> int. Bytes the tree really holds resident (the UCI Hash measure)."},
