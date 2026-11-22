@@ -617,3 +617,17 @@ def test_a_1501_era_snapshot_that_matches_no_key_is_refused_never_deleted(
     with pytest.raises(RuntimeError, match="#1501-era sibling state"):
         _train(run, d, dataclasses.replace(s, lr=2e-3, sibling_chunk_pairs=3))   # another attempt's settings
     assert _snaps(d) == snaps
+
+
+def test_an_unreadable_resume_state_is_refused_with_a_message_never_deleted(
+        run: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    from chess_anti_engine.simple_rl.learn import RESUME_STATE, SNAPSHOTS
+
+    d, s = _phase_1501(run, "truncated_state", monkeypatch, sibling_chunk_pairs=5)
+    snaps = _snaps(d)
+    newest = d / "gen_0001" / "train" / SNAPSHOTS / snaps[-1] / RESUME_STATE
+    newest.write_bytes(newest.read_bytes()[:100])   # truncated
+    with pytest.raises(RuntimeError, match=f"snapshot {snaps[-1]}: {RESUME_STATE} unreadable"):
+        _train(run, d, s)
+    assert _snaps(d) == snaps
+    assert newest.stat().st_size == 100

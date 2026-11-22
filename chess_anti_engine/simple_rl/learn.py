@@ -2234,7 +2234,12 @@ def snapshot_sibling_states(out_dir: Path) -> dict[int, dict[str, Any]]:
     for d in Path(out_dir, SNAPSHOTS).glob("step_*"):
         if not ((d / SNAPSHOT_RECORD).is_file() and (d / RESUME_TRAINER).is_file() and (d / RESUME_STATE).is_file()):
             continue
-        st = torch.load(str(d / RESUME_STATE), map_location="cpu", weights_only=False).get("sibling")
+        try:
+            st = torch.load(str(d / RESUME_STATE), map_location="cpu", weights_only=False).get("sibling")
+        except Exception as e:   # any unreadable file: refuse with a message, never delete
+            raise RuntimeError(
+                f"snapshot {d.name}: {RESUME_STATE} unreadable ({type(e).__name__}: {e}); this code will not delete "
+                f"it. Move {d} aside (or the whole {Path(out_dir, SNAPSHOTS)}) to start the phase over") from e
         if isinstance(st, dict):
             out[int(d.name.split("_")[1])] = st
     return out
