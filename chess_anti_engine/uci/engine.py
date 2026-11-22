@@ -789,6 +789,12 @@ class Engine:
   # first (`_claim_answer`), so a go is answered exactly once under any
   # interleaving.
         self._claimed_gen = 0
+  # Generations parked WITHOUT an answer (`_park_search_thread(answer=False)`:
+  # a later go or other command superseded them). A search that had already
+  # claimed such a go's answer and sits between its claim and its print must
+  # not print it: the GUI has moved on, and a late bestmove is read as the
+  # reply to its NEXT go -- for the wrong board. Checked under `_PRINT_LOCK`.
+        self._superseded_through_gen = 0
   # The search's latest best move, published by the search thread as ONE
   # immutable ``(fen, uci)`` tuple swapped atomically; the watchdog reads it
   # from its own thread and uses it only for the position it is keyed to.
@@ -1488,6 +1494,7 @@ class Engine:
         # Re-sampled after the join and the tree sync: everything spent so far.
         queued_ms = int((time.monotonic() - go_received_at) * 1000.0)
         if (not limits.clock_exhausted and not limits.ponder and not limits.infinite
+                and not limits.implicit_cap
                 and limits.deadline_ms is not None
                 and limits.deadline_ms >= _MIN_DEADLINE_MS
                 and waited_ms >= 1
@@ -1663,14 +1670,21 @@ class Engine:
         )
         searchmoves = tuple(args.searchmoves)
         # A movetime binds when no side clock (less MoveOverheadMs) is at or
-        # below it: only then may the eval run past the last moment.
+        # below it: only then may the eval run past the movetime's last moment
+        # -- and never past the side clock's: the floor is capped at what is
+        # LEFT of that clock now (less MoveOverheadMs and the watchdog's own
+        # margin), since the go may already have spent most of it queued.
+        overhead_ms = max(0, int(self._options.move_overhead_ms))
         movetime_binds = args.movetime_ms is not None and (
-            clock_ms is None
-            or int(clock_ms) - max(0, int(self._options.move_overhead_ms)) > int(args.movetime_ms)
+            clock_ms is None or int(clock_ms) - overhead_ms > int(args.movetime_ms)
         )
+        min_eval_s = _AT_ONCE_MOVETIME_EVAL_S if movetime_binds else 0.0
+        if movetime_binds and clock_ms is not None:
+            clock_left_now_ms = (int(clock_ms) - overhead_ms - _WATCHDOG_LAST_MOMENT_MS
+                                 - (time.monotonic() - go_received_at) * 1000.0)
+            min_eval_s = max(0.0, min(min_eval_s, clock_left_now_ms / 1000.0))
         move, source = self._clock_exhausted_move(
-            board, searchmoves, answer_by_ms, go_received_at,
-            min_eval_s=_AT_ONCE_MOVETIME_EVAL_S if movetime_binds else 0.0,
+            board, searchmoves, answer_by_ms, go_received_at, min_eval_s=min_eval_s,
         )
         if not self._claim_answer(gen):
             return
@@ -1862,6 +1876,10 @@ class Engine:
         limits = _fit_movetime_limits(cmd.args, limits)
         if cmd.args.ponder or limits.deadline_ms is None:
             return _GO_WAIT_NO_CLOCK_S
+        if limits.implicit_cap:
+            # `GO_IMPLICIT_CAP_MS` (a bare `go mate N`) is a safety cap, not a
+            # GUI clock: the go's age does not eat into it.
+            age_s = 0.0
         deadline_s = max(0.0, limits.deadline_ms / 1000.0)
         left_s = max(0.0, deadline_s - max(0.0, age_s))
         # The stop floor, itself no more than the share a fresh `go` of this
@@ -4065,6 +4083,11 @@ class Engine:
         thread each re-take can wait a whole switch interval (5 ms) -- a
         last-moment answer measured 5.6 ms from its first line to its bestmove."""
         with _PRINT_LOCK:
+            if gen is not None and gen <= self._superseded_through_gen:
+                # Claimed before a park that superseded it (see
+                # `_superseded_through_gen`): the go it answers is gone, and
+                # the go that replaced it answers once, for the new board.
+                return
             lines = [] if prelude is None else [prelude]
             head = self._pv_line_head
             guard = (gen is not None and head is not None and head[0] == gen
@@ -4337,6 +4360,8 @@ class Engine:
                 self._claimed_gen = self._search_gen
             parked_gen = self._search_gen
             self._search_gen += 1
+            if not answer:
+                self._superseded_through_gen = max(self._superseded_through_gen, parked_gen)
         if thread not in self._orphan_threads:
             self._orphan_threads.append(thread)
         _SILENCED_THREADS.add(thread)  # its later info lines must not reach stdout
