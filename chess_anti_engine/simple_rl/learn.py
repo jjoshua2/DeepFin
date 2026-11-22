@@ -1752,15 +1752,40 @@ def resumable_snapshot(out_dir: Path, resume_key: str | list[str]) -> int | None
     return best
 
 
+_STATE_KEYS = ("cursor", "served", "served_sl", "drawn_rows", "realised_sl_rows", "sampler_rng", "rng", "chunks")
+
+
+def _unreadable(d: Path, name: str, err: BaseException) -> RuntimeError:
+    """The refusal for a snapshot file that cannot be read back: named, never a bare traceback, nothing deleted."""
+    return RuntimeError(
+        f"snapshot {d.name}: {name} unreadable or not a snapshot state ({type(err).__name__}: {err}); this code will "
+        f"not delete it. Move {d} aside (or the whole {d.parent}) to start the phase over")
+
+
+def load_resume_state(d: Path) -> dict[str, Any]:
+    """``resume_state.pt`` of snapshot ``d``, checked to be a snapshot state (a dict with the sampler / rng fields)."""
+    import torch
+
+    try:
+        state = torch.load(str(d / RESUME_STATE), map_location="cpu", weights_only=False)
+        missing = [k for k in _STATE_KEYS if k not in state]   # a non-container raises TypeError here
+        if missing:
+            raise KeyError(f"missing {missing}")
+    except Exception as e:   # any unreadable file: refuse with a message, never delete
+        raise _unreadable(d, RESUME_STATE, e) from e
+    return state
+
+
 def resume_from_snapshot(out_dir: Path, update: int, *, trainer: Any, sampler: ScheduledSampler,
                          anchor: ReferenceAnchor | None, sibling: Any = None) -> list[dict[str, Any]]:
     """Restore the phase's whole state as it was when ``step_<update>`` was
     written; returns the trainer metrics of the chunks already trained."""
-    import torch
-
     d = snapshot_dir(out_dir, update)
-    trainer.load(d / RESUME_TRAINER, exact_resume=True)
-    state = torch.load(str(d / RESUME_STATE), map_location="cpu", weights_only=False)
+    state = load_resume_state(d)
+    try:
+        trainer.load(d / RESUME_TRAINER, exact_resume=True)
+    except Exception as e:   # any unreadable file: refuse with a message, never delete
+        raise _unreadable(d, RESUME_TRAINER, e) from e
     sampler.cursor = int(state["cursor"])
     sampler.served = list(state["served"])
     sampler.served_sl = list(state["served_sl"])
@@ -2228,18 +2253,11 @@ def legacy_snapshot_states(out_dir: Path) -> dict[int, dict[str, Any]]:
 
 def snapshot_sibling_states(out_dir: Path) -> dict[int, dict[str, Any]]:
     """The sibling state of every snapshot with resume files, by update."""
-    import torch
-
     out: dict[int, dict[str, Any]] = {}
     for d in Path(out_dir, SNAPSHOTS).glob("step_*"):
         if not ((d / SNAPSHOT_RECORD).is_file() and (d / RESUME_TRAINER).is_file() and (d / RESUME_STATE).is_file()):
             continue
-        try:
-            st = torch.load(str(d / RESUME_STATE), map_location="cpu", weights_only=False).get("sibling")
-        except Exception as e:   # any unreadable file: refuse with a message, never delete
-            raise RuntimeError(
-                f"snapshot {d.name}: {RESUME_STATE} unreadable ({type(e).__name__}: {e}); this code will not delete "
-                f"it. Move {d} aside (or the whole {Path(out_dir, SNAPSHOTS)}) to start the phase over") from e
+        st = load_resume_state(d).get("sibling")
         if isinstance(st, dict):
             out[int(d.name.split("_")[1])] = st
     return out
