@@ -133,7 +133,7 @@ In both pools the arm is the hybrid seat: the SL base's policy with S's value (`
 - **Verdict: "unread".** It licenses nothing (record's table).
 - **Planned vs observed.** The record's estimate, "not a rule input", was ≈ −28 for 6b; it read −21.4.
 
-**Report-only, POST HOC, not a verdict: R paired by opening.** 6a and 6b share seed 2026112161 and all 1,600
+**Report-only (pre-allowed by the registering record as "a report-only secondary"), not a verdict: R paired by opening.** 6a and 6b share seed 2026112161 and all 1,600
 openings, so R can also be estimated as the mean over openings of (6a's cluster value − 6b's cluster value), from the
 game logs with the pool's own cluster definition.
 - The clusters correlate only weakly across 6a and 6b (r = 0.026), so pairing barely tightens the interval:
