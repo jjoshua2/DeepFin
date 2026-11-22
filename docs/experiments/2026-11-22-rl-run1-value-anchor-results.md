@@ -240,7 +240,7 @@ anchored vs unanchored was run, by design.
     - The incident is therefore closed for both cells' weights; their `wall_seconds` remain not comparable.
     - The Stage B match of Zq λ 11.3 played the banked file (row sha `42a407d5…`), whose weights equal a clean
       retrain's.
-  - **Side observation the launch guards now rely on.** In the retrain's GPU log
+  - **Side observation relevant to the launch guards (a loading job is invisible to memory and utilisation).** In the retrain's GPU log
     (`~/chess-artifacts/operations/rl-run1-value-anchor-repro/arm_Zq_k11.3.gpu.txt` [`1bfc3754`]), the card read idle
     (3,448–3,463 MiB, 0–1% utilisation) from the cell's start at 04:54:28 until 05:00:09. The first busy sample is
     05:00:15 (5,488 MiB, 81%). So a training cell is invisible to memory and utilisation checks for about six minutes
