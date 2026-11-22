@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._child_env import gpu_free_env
+
 _spec = importlib.util.spec_from_file_location(
     "loop_health", Path(__file__).resolve().parents[1] / "scripts" / "loop_health.py"
 )
@@ -475,8 +477,8 @@ def test_the_ratchet_check_is_wired_into_the_exit_status(tmp_path: Path) -> None
             [sys.executable, "scripts/loop_health.py",
              "--result-json", str(result), "--ratchet-attempts", str(path)],
             cwd=str(root), capture_output=True, text=True, check=False,
-            env={"PYTHONPATH": str(root), "PATH": os.environ.get("PATH", ""),
-                 "PYTHONDONTWRITEBYTECODE": "1"},
+            env=gpu_free_env({"PYTHONPATH": str(root), "PATH": os.environ.get("PATH", ""),
+                 "PYTHONDONTWRITEBYTECODE": "1"}),
         )
         return r.returncode, r.stdout + r.stderr
 

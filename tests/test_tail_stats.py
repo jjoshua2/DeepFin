@@ -34,6 +34,8 @@ from scripts.tail_stats import (
     resolve_field_arg,
 )
 
+from tests._child_env import gpu_free_env
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -77,7 +79,7 @@ def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "scripts/tail_stats.py", *args],
         cwd=REPO_ROOT, capture_output=True, text=True, check=False,
-        env={"PYTHONPATH": ".", "PATH": "/usr/bin:/bin"},
+        env=gpu_free_env({"PYTHONPATH": ".", "PATH": "/usr/bin:/bin"}),
     )
 
 
