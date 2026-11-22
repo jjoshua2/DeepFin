@@ -1124,9 +1124,11 @@ instead of about 21 GPU-h.
       to 1.4 / 1.35);
     - licensing: replicates + gen 2 > gen 1 + gen 2 vs base damage reads "inconsistent readings; no
       claim; owner"; gen 2 vs gen 1 unread + gen 2 vs base improves carries the cumulative claim.
-  - **Revision 5 mutants** (`guard_test/mutants_v7/` once the sweep is complete: `make_mutants_v7.py`,
-    `run_mutants_v7.sh`; one exact replacement each from the FINAL revision-5 files; a replacement
-    that does not match exactly once aborts). 103 in all: the 63 carried-over shell / python mutants
+  - **Revision 5 mutants** (generator `make_mutants_v7.py` and runner `run_mutants_v7.sh`, banked
+    OUTSIDE the sealed bank with the full sweep's results at
+    `~/chess-artifacts/operations/rl-run1-gen2.mutants_v7/`, which has its own README and
+    SHA256SUMS; one exact replacement each from the FINAL revision-5 files; a replacement that does
+    not match exactly once aborts). 103 in all: the 63 carried-over shell / python mutants
     (every anchor still matches), the 20 scan clause mutants, five pin mutants (P1–P5: stale
     `GUARD_SHA` and `FLAGS_SHA` in the launcher, stale `CHECKS_SHA` in `move_aside.sh`, stale
     `SMOKE_SHA` and `GATE_SHA` in the runner) and 15 new:
@@ -1149,9 +1151,12 @@ instead of about 21 GPU-h.
     | m78 = reviewer's R5: header seed dropped | `seat_state.py` |
     | m79 adoptable at lo > −15 | `run_stage0.sh` |
 
-    **At this push: the 15 new mutants and P1–P5 are all KILLED** (20 / 20; plus m1–m4 of the
-    carried-over set, KILLED). The carried-over 63 and the 20 scan mutants are being re-run on the
-    unchanged final files; their results are added (and this paragraph updated) before merge.
+    **At this push: the priority set of 20 (the 15 new mutants and P1–P5) are all KILLED.** The
+    carried-over 79 (63 shell / python and the 20 scan mutants; m1–m4 of them were already KILLED
+    at the push) are re-run on the unchanged final files, the bank at `BANK_SHA256SUMS`
+    `2d6e1b67…`. Their results are banked outside the sealed bank at the path above (runner output
+    per mutant, and the md5 of every final file they ran against) and reported in the PR's review
+    record. A survivor means a new revision, not an edit here.
     The runner (review item 5) reruns ALONE any kill whose only FAIL line is the TERM case, and the
     rerun decides; P* mutants count only when a pin case fails; a non-pin kill whose only FAILs are
     pin cases is vacuous. `train_mem_smoke.py`'s own three mutants, regenerated on the revision-5
@@ -1257,8 +1262,8 @@ instead of about 21 GPU-h.
   - `BANK_SHA256SUMS` (sha256 `2d6e1b67849cd850c74e28cc8dce59f76e63d42ef6a16b58d13a27187ba5e6f2`) lists
     482 files and verifies with `sha256sum -c` (the staged revision-5 bank,
     `$OPS/rl-run1-gen2.staging`, swapped in for the live bank only on this PR's MERGE verdict;
-    Commands step 1). The revision-5 mutant sweep's results are added to `guard_test/mutants_v7/`
-    when it completes, which reseals the bank; this table is then updated in a docs-only commit.
+    Commands step 1). The revision-5 mutant sweep's results are banked OUTSIDE this sealed set
+    (`$OPS/rl-run1-gen2.mutants_v7/`), so the seal and the table below are final.
   - Revision 4 files are kept as `*.v4` (`launch_gen2.sh`, the harness, `fakepy.py`, its output,
     `train_mem_smoke.py`, `tms_test.out`, `BANK_SHA256SUMS`; the smoke's revision-4 mutants as
     `prelaunch/train_mem_smoke/mutants.v4/`). Revision 5 adds `gen2/gen2_flags.sh`,
