@@ -10,8 +10,10 @@ import importlib.util
 import os
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from types import ModuleType
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -42,8 +44,12 @@ def _sha8(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()[:8]
 
 
-def _mtime_stamp(path: Path) -> str:
-    return time.strftime("%m-%d %H:%M", time.localtime(path.stat().st_mtime))
+_ZONE = "America/New_York"
+_HEADER = f"# Log. Stamp time zone: `{_ZONE}`\n\n"
+
+
+def _mtime_stamp(path: Path, zone: str = _ZONE) -> str:
+    return datetime.fromtimestamp(path.stat().st_mtime, ZoneInfo(zone)).strftime("%m-%d %H:%M")
 
 
 @pytest.fixture
@@ -67,9 +73,10 @@ def bank(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     return {"root": root, "one": one, "home": home, "tmp": tmp_path}
 
 
-def _run(bank: dict[str, Path], body: str, allow: str | None = None) -> tuple[int, str, Path]:
+def _run(bank: dict[str, Path], body: str, allow: str | None = None,
+         root_flag: bool = True) -> tuple[int, str, Path]:
     log = bank["tmp"] / "log.md"
-    log.write_text("# Log\n\n" + _PREFIX_TABLE + "\n" + body)
+    log.write_text(_HEADER + _PREFIX_TABLE + "\n" + body)
     if allow is not None:
         (bank["tmp"] / "log.stamp-allowlist.txt").write_text(allow)
     import contextlib
@@ -77,7 +84,10 @@ def _run(bank: dict[str, Path], body: str, allow: str | None = None) -> tuple[in
 
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        rc = VES.main([str(log), "--prefix-source", str(log), "--artifacts-root", str(bank["root"])])
+        argv = [str(log), "--prefix-source", str(log)]
+        if root_flag:
+            argv += ["--artifacts-root", str(bank["root"])]
+        rc = VES.main(argv)
     return rc, buf.getvalue(), log
 
 
@@ -178,7 +188,7 @@ def test_prefix_map_is_read_from_the_table(bank: dict[str, Path]) -> None:
     log = bank["tmp"] / "log.md"
     table = _PREFIX_TABLE.replace("ops/bank one", "elsewhere")
     pool = bank["one"] / "arenas" / "m1" / "pool.json"
-    log.write_text("# Log\n\n" + table + f"\n| m1 | `B/arenas/m1/pool.json` [`{_sha8(pool)}`] |\n")
+    log.write_text(_HEADER + table + f"\n| m1 | `B/arenas/m1/pool.json` [`{_sha8(pool)}`] |\n")
     rc = VES.main([str(log), "--prefix-source", str(log), "--artifacts-root", str(bank["root"])])
     assert rc == 1  # resolved under `elsewhere/`, whose pool.json has another sha
 
@@ -192,3 +202,83 @@ def test_real_log_prefix_table_parses() -> None:
     prefixes = VES.read_prefix_map(VES.DEFAULT_LOG, Path("/artifacts"))
     assert {"RC/", "R/", "F/", "WK/", "~/"} <= set(prefixes)
     assert prefixes["RC/"] == "/artifacts/operations/rl-claude-20261119"
+    assert VES.read_declared_tz(VES.DEFAULT_LOG) == "America/New_York"
+
+
+@pytest.mark.parametrize(
+    "stamp",
+    [
+        "[`{h4}`]",  # too short
+        "[`{H}`]",  # upper-case hex
+        "[{h}]",  # no backticks
+        "[mtime 11-21 9:30]",  # malformed mtime
+        ": [`{h}`]",  # separated from the token by a colon
+    ],
+    ids=["short", "uppercase", "no-backticks", "bad-mtime", "after-colon"],
+)
+def test_malformed_stamps_fail(bank: dict[str, Path], stamp: str) -> None:
+    pool = bank["one"] / "arenas" / "m1" / "pool.json"
+    h = _sha8(pool)
+    text = stamp.format(h=h, h4=h[:4], H=h.upper())
+    for token in ("B/arenas/m1/pool.json", "results.jsonl"):  # prefixed and bare
+        rc, out, _ = _run(bank, _ok_row(bank) + f"| x | `{token}`{'' if text.startswith(':') else ' '}{text} |\n")
+        assert rc == 1, out
+        assert _status(out, "MALFORMED"), out
+
+
+def test_minimum_sha_length_is_eight(bank: dict[str, Path]) -> None:
+    pool = bank["one"] / "arenas" / "m1" / "pool.json"
+    h = hashlib.sha256(pool.read_bytes()).hexdigest()
+    assert VES.MIN_SHA == 8
+    rc, out, _ = _run(bank, f"| x | `B/arenas/m1/pool.json` [`{h[:8]}`] |\n")
+    assert rc == 0, out
+    rc, out, _ = _run(bank, f"| x | `B/arenas/m1/pool.json` [`{h[:7]}`] |\n")
+    assert rc == 1, out
+    assert _status(out, "MALFORMED"), out
+    rc, out, _ = _run(bank, f"| x | `B/arenas/m1/pool.json` [`{h}`] |\n")  # the full digest is fine
+    assert rc == 0, out
+
+
+@pytest.mark.parametrize("token", ["b/arenas/m1/pool.json", "B /arenas/m1/pool.json"])
+def test_near_miss_prefix_is_malformed(bank: dict[str, Path], token: str) -> None:
+    rc, out, _ = _run(bank, f"| x | `{token}` |\n")
+    assert rc == 1, out
+    assert _status(out, "MALFORMED"), out
+
+
+def test_mtime_uses_the_declared_zone_not_the_machine_tz(
+        bank: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    living = bank["one"] / "living.log"
+    monkeypatch.setenv("TZ", "UTC")
+    time.tzset()
+    try:
+        rc, out, _ = _run(bank, f"| l | `B/living.log` [mtime {_mtime_stamp(living)}] |\n")
+        assert rc == 0, out
+        rc, out, _ = _run(bank, f"| l | `B/living.log` [mtime {_mtime_stamp(living, 'UTC')}] |\n")
+        assert rc == 1, out
+    finally:
+        monkeypatch.undo()
+        time.tzset()
+
+
+def test_chess_artifacts_root_env(bank: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CHESS_ARTIFACTS_ROOT", str(bank["root"]))
+    rc, out, _ = _run(bank, _ok_row(bank), root_flag=False)
+    assert rc == 0, out
+    monkeypatch.setenv("CHESS_ARTIFACTS_ROOT", str(bank["tmp"] / "nowhere"))
+    rc, out, _ = _run(bank, _ok_row(bank), root_flag=False)
+    assert rc == 1, out
+    assert _status(out, "MISSING"), out
+
+
+def test_prefix_mentions_in_prose_are_not_citations(bank: dict[str, Path]) -> None:
+    body = "`~/chess-artifacts` is the root; `.../` is the previous directory; `B/` is a prefix.\n" + _ok_row(bank)
+    rc, out, _ = _run(bank, body)
+    assert rc == 0, out
+    assert sum(ln.startswith("OK ") for ln in out.splitlines()) == 2, out
+
+
+def test_stamp_wrapped_onto_the_next_line_still_counts(bank: dict[str, Path]) -> None:
+    rc, out, _ = _run(bank, "See `B/arenas/m1/pool.json`\n  [`deadbeef`].\n")
+    assert rc == 1, out
+    assert _status(out, "DRIFT"), out

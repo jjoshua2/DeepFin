@@ -138,7 +138,7 @@ That totals 1,464/1,970/1,366 over 4,800 games (derived).
 
 Sources:
 - `R/arenas/graft/pool_look1.json` [`d0730fee`], `pool_look2.json` [`900486c4`], `pool_look3.json` [`6316e097`];
-- their `.log` files [`df3e7c1e`, `7377ce02`, `f2d69d62`];
+- their logs, `pool_look1.log` [`df3e7c1e`], `pool_look2.log` [`7377ce02`], `pool_look3.log` [`f2d69d62`];
 - `results.jsonl` [`e9391a58`];
 - the six `graft_{1,2,3}_{A,B}.games.jsonl` (sha256 in `R/SHA256SUMS`).
 
@@ -274,7 +274,7 @@ an S-specific HYPOTHESIS, not a verdict. It is offline and 1-ply, not a played s
 
 ## 3. Training facts (fit numbers, not strength)
 
-From `R/arm_{S,Zq,P0}/gen_0001/train/metrics.json` [`3eb8e85e` / `7f3c610d` / `18f4c79f`] and `manifest.json`
+From `R/arm_{S,Zq,P0}/gen_0001/train/metrics.json` [`3eb8e85e` / `7f3c610d` / `18f4c79f`] and `R/arm_{S,Zq,P0}/gen_0001/train/manifest.json`
 [`5121de42` / `b46d1c77` / `f53fcee5`].
 
 **Shared by all three cells:**
@@ -331,14 +331,14 @@ The pre-training check passed: `R/post_collect_checks.sh` [`4917f83f`] writes `c
 1. **The seal step was OOM-killed after every game had been played.**
    - Exit 137 at 08:26:46 (`R/collect.exit.first_attempt_137` [`86f57604`]); anon-rss 83.7 GB on a 98 GB box (PR #1470 body).
    - Fixed by #1470 (`0c795fb7a`), which streams `generation_stats` per shard.
-   - The games are untouched by the failure and the rerun. `games.jsonl` is byte-equal in the pre-seal backup and the sealed collect [`0ac540bf` both], and so is `starts.txt` (`R/collect_backup_20261121_0827/starts.txt` and `R/collect/gen_0001/collect/starts.txt` [`948d4927`] both).
+   - The games are untouched by the failure and the rerun. `games.jsonl` is byte-equal in the pre-seal backup and the sealed collect (`R/{collect_backup_20261121_0827,collect/gen_0001/collect}/games.jsonl` [`0ac540bf`], one stamp for both copies), and so is `starts.txt` (`R/{collect_backup_20261121_0827,collect/gen_0001/collect}/starts.txt` [`948d4927`]).
 2. **The games were PLAYED at C0 `6c72b821b` and SEALED at `0c795fb7a`** by a seal-only rerun from 09:51:00 to 09:54:42 (`R/reseal.started` [`00e497ec`], `R/reseal.exit` [`dc8a16ea`], `R/reseal.log` [`3f1bf579`]: "keeping finished collect process(es) [0, 1, 2]").
    - **The manifest's `git.sha` is the sealing commit.** Nothing in the manifest records the playing commit.
    - The playing commit is evidenced only by the play log, which loads `_mcts_tree` from the `rl-run1-pilot-6c72b821b` worktree (`R/collect.log` [`3ebe8c39`]), and by `R/README.md`.
    - The seal-only rerun also left the manifest's aggregate timing meaningless: `games_per_hour` is null, `wall_seconds` is 2.3e-6 and `procs_resumed` is [0, 1, 2]. The per-process walls above are the playing run's.
 3. **`collect.exit` was rewritten** to "0 <reseal time>" (`R/collect.exit` [`dc8a16ea`], identical to `reseal.exit`) so the post-collect check script would run. The originals are kept (`collect.exit.first_attempt_137`, `collect.exit.reseal`, `collect_backup_20261121_0827/`).
 4. **`$PIN` = `0c795fb7a`.** An earlier pin, `db977e47f` (#1464's merge), was replaced before any training, because the seal fix had to merge first. All three prerequisites the launch record listed as open were merged before `$PIN`: #1459 `d268f1e4b`, #1462 `ac688fb3c`, #1463 `daa5d62fd`. `git diff --name-only C0 $PIN` is `R/c0_to_pin_diff.txt` [`08fc1a98`] (19 files, including `simple_rl/collect.py`), so the guards were mandatory.
-5. **Guard (a): byte-equal.** All six files `guard_a_{S,Zq,P0}_{6c72b821b,0c795fb7a}.json` share one sha256, [`715fb5d1`] (722,742 rows each).
+5. **Guard (a): byte-equal.** All six files `guard_a_{S,Zq,P0}_{6c72b821b,0c795fb7a}.json` [`715fb5d1`] share one sha256 (722,742 rows each).
    - The digest is the same for all three cells, not only across commits. It covers the decoded rows after `prepare_targets` and before the cell's value blend, so it checks the shared input, not the cell-specific target.
 6. **Guard (b): byte-equal**, with a correction to the record's text.
    - The files are `guard_b_{db977e47f,6c72b821b,0c795fb7a}_repfix0.json` [`7ccd71e0`] and `guard_b_{db977e47f,6c72b821b,0c795fb7a}_repfix1.json` [`634a5a32`] (each stamp holds for all three): 300 games, 24,961 positions.

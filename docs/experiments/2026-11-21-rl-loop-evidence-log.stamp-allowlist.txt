@@ -2,5 +2,3 @@
 # 2026-11-21-rl-loop-evidence-log.md. One line per token: <token> | <reason>.
 # A citation that goes MISSING and is not listed here fails the check.
 file | the format example "(`file` [`1a2b3c4d`])" in the header, not a citation
-~/local_engines/ceres-0cb57d8/README.md | no longer in the Ceres install dir (only README.txt, rewritten 11-21 06:12, exists); the 01:44 version cited by I12-era rows is not recoverable
-README.md | the same Ceres README.md, cited as a bare name after a ceres-0cb57d8 path

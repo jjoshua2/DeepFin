@@ -234,7 +234,9 @@ The tie-break applies only below an SE of ≈ 2.55.
 | Games | 6,400, 0 unresolved (longest 308 plies). Both runs exited 0 (21:58:09, 22:41:29). No OOM, Traceback or CUDA error in either run log |
 
 **Seat readback.** The result rows carry `candidate_value` (A) and `reference_value` (B) = {value_from: none, recal:
-[0.7036…, −0.2271…]}. Four "seat readback OK" lines (smoke and real, both seats, `value_from=-`, the same recal) are in
+[0.7036…, −0.2271…]}; those echo the requested configuration. What the arena built is line 40 of
+`F/arenas/zq_recal_vs_base/zq_recal_vs_base_1_A.log` [`d61b3e2e`] and `zq_recal_vs_base_1_B.log` [`7a7d8c48`]
+("HYBRID built: value_net=own recal_T=0.7036189636786957"), which `F/check_seat.py` parses. Four "seat readback OK" lines (smoke and real, both seats, `value_from=-`, the same recal) are in
 `~/chess-artifacts/operations/rl-run1-value-anchor/run_queue2.out` (its first four lines; it was 444 bytes at 22:41 and is a living file, so it carries no stamp). That file belongs to the
 value-anchor queue and may grow. The smoke pool is `F/smoke/arenas/zq_recal_vs_base/pool.json` [`ec58ba16`]; both smoke runs exited 0 (21:14:20, 21:14:39).
 
