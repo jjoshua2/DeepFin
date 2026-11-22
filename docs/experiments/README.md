@@ -16,6 +16,8 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
+- [2026-11-22: Input and encoding refresh](2026-11-22-input-encoding-refresh.md) — historical feature verdicts corrected for seed noise; prospective A39 175-plane reliance/geometry screen, then matched compact-input and typed source-target relation training controls; first instrument only, no new A39 measurement or strength claim.
+
 - [2026-11-21: RL-loop evidence log](2026-11-21-rl-loop-evidence-log.md) — the rolling index of every banked RL-loop measurement (matches, offline rulers, throughput, infrastructure facts, already-answered questions, queued and withdrawn items); grep it before commissioning any measurement, and add a row in the same PR or session that banks one.
 
 - [2026-11-21: RL run 1 follow-up matches 5, 7, 6b, 6a and 8 — results](2026-11-21-rl-run1-followup-results.md) — by the registered rules, 6,400 games each at `$PIN` `0c795fb7a`: P0 single net vs base +2.2 [−4.2, +8.6], **adoptable** (nominates a second policy-only generation, its own record and the owner's go-ahead). Zq + recal vs Zq +21.4 [+15.1, +27.6], **the loss is shape** (nominated match 8). S's value on the base policy: raw −21.4 [−27.7, −15.2], recal −16.1 [−22.3, −9.9], R +5.34 [−3.48, +14.15], so match 6 is **unread**. Match 8, Zq + recal vs the SL base: +9.6 [+3.3, +16.0], **adoptable and improves on the base** (nominates "Zq + per-generation recalibration" under its own record; (T, b) fitted post hoc on this one net). 0 unresolved in 32,000 games.
