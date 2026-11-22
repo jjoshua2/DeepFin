@@ -880,41 +880,72 @@ generation-2 bank's guard v3 rule: IDLE_MIB an integer ≤ 4,096; every memory l
 IDLE_MIB ± 512 MiB; utilisation < 10 % over 5 samples one second apart; and no GPU job of this
 user by the shared process scan `gpu_scan.sh` (one file, byte-identical in the full-width,
 generation-2 and sibling banks, pinned by sha256 in the script). Fail-closed, read-only.
-- **Memory and utilisation cannot see a job that is still loading.** Measured: a reproduction
-  cell read idle memory at 0–1 % for six minutes after it started, then 5.5 GB, then 22 GB. So
-  the process scan and the operator's own release decision are the primary defences, and the
+- **Memory and utilisation cannot see a job that is still loading.** Measured: the value-anchor
+  reproduction's Zq λ 11.3 cell read idle (3,448–3,463 MiB, utilisation 0–1 %) from its start at
+  04:54:28 until 05:00:09, about six minutes; the first busy sample is 05:00:15 (5,488 MiB, 81 %),
+  then 20–22 GB
+  (`~/chess-artifacts/operations/rl-run1-value-anchor-repro/arm_Zq_k11.3.gpu.txt` [`1bfc3754`]).
+  So the process scan and the operator's own release decision are the primary defences, and the
   memory band is the backstop.
-- **The scan** (review of `3324d402d`) reads each same-uid process's argv from
-  `/proc/<pid>/cmdline` and refuses on: a listed GPU entry point (python's first non-option
-  argument, `-m chess_anti_engine…`, a bank launcher run by a shell, or the lc0 / Ceres binary);
-  any holder of `/dev/dxg`; or a process whose fds cannot be listed (except exactly
-  `/usr/bin/ssh-agent` and `/usr/bin/gpg-agent`, which are non-dumpable on this machine). It
-  excludes the caller's ancestors and descendants, so a launcher's own check does not trip on
-  itself, while a sibling copy of the same launcher still refuses. It replaces revision 1's
-  `ps -o args` token scan, which passed this screen's own GPU jobs (`cost_probe.py`,
-  `fit_value_recal.py`, `sibling_holdout.py`, `python -m chess_anti_engine.run`) and refused shells
-  that merely mentioned a script name. The list of entry points is derived, and the derivation is
-  written in the file's header: every `scripts/*.py` at main matching `cuda|--device`, every
-  script in the RL banks that uses cuda or starts one of those programs, the launchers they start,
-  and the lc0 / Ceres binaries.
-- **CPU jobs are exempt by their environment, GPU jobs never.** In gpu_scan v3, a listed process
-  is exempt from the argv clause (never from the `/dev/dxg` clause) iff its environment holds
-  exactly `CUDA_VISIBLE_DEVICES=` with an empty value. This screen's CPU commands set exactly that.
-  **Its GPU commands must be started WITHOUT `CUDA_VISIBLE_DEVICES` set to empty**: they set
+- **The scan** is `gpu_scan.sh` v4, declared final by its owner at sha256 `949408e727e7ccbf942dd28f58ad800f958267577a93822950529ac20734f466` (review of
+  `3324d402d`; the file's header is its full specification). For each same-uid process outside
+  the caller's own ancestry and descendants it refuses on:
+  - **exact argv** (`/proc/<pid>/cmdline`) naming a listed GPU entry point: python's first
+    non-option argument (`-X` / `-W` values skipped; `-c` ends the scan) or `-m chess_anti_engine…`,
+    a shell's script argument (`bash -c` ends the scan), or the lc0 / Ceres binary itself. A shell or
+    `python -c` that merely mentions a script name is not a job;
+  - **the GPU device, identified by rdev**: every fd of the process is `stat -L`'d, and one that is
+    a character device with the major:minor of this machine's `/dev/dxg` refuses, whatever path it
+    was opened by. A file merely named `/dev/dxg` (another agent's namespaced test harness) is a
+    NOTE, not a holder; if the scanner's own `/dev/dxg` is not a character device it refuses;
+  - **fds that cannot actually be read** (by listing and stat'ing them, never by `access(2)`),
+    except a process whose argv[0] is exactly `/usr/bin/ssh-agent` or `/usr/bin/gpg-agent` (both
+    non-dumpable by design): those two paths are skipped for the fd clauses only, with a NOTE per
+    pid.
+
+  A sibling copy of the same launcher still refuses. The list of entry points is derived, and the
+  derivation is written in the file's header: every `scripts/*.py` at main matching
+  `cuda|--device`, every script in the RL banks that uses cuda or starts one of those programs,
+  the launchers they start, and the lc0 / Ceres binaries. Measured cost 0.26–0.75 s per scan. It
+  replaces revision 1's `ps -o args` token scan, which passed this screen's own GPU jobs
+  (`cost_probe.py`, `fit_value_recal.py`, `sibling_holdout.py`, `python -m chess_anti_engine.run`)
+  and refused shells that merely mentioned a script name.
+- **CPU jobs are exempt by their environment, GPU jobs never.** A listed process is exempt from the
+  argv clause (never from the device or unreadable-fd clauses) iff its exec environment
+  (`/proc/<pid>/environ`) is readable and holds exactly `CUDA_VISIBLE_DEVICES=` with an empty value
+  and no other entry for that variable. This screen's CPU commands set exactly that. The stated
+  limit: the environment is the one at exec, so a process that sets the variable itself before
+  importing torch is caught only by the device clause, once its CUDA context exists. **The GPU
+  commands must be started WITHOUT `CUDA_VISIBLE_DEVICES` set to empty**: they set
   `CUDA_VISIBLE_DEVICES=0` explicitly, as written below. `operator_gpu_check.sh` v2 also refuses
   when the shell it runs in carries `CUDA_VISIBLE_DEVICES` set to empty (the same assertion,
   `[ "${CUDA_VISIBLE_DEVICES-unset}" != "" ]`, as the generation-2 launchers), so a job started from
   that shell cannot silently fall back to CPU or crash mid-stage.
-- **Staged, not yet banked:** `SB.staging/operator/` (`SHA256SUMS` `__OPSUMS__`;
-  `operator_gpu_check.sh` v2 `__OPSHA__`; `gpu_scan.sh` `__SCANSHA__`). It is swapped into
-  `SB/operator/` when this record's PR has its MERGE verdict, so the bank matches the record on
+- **Staged, not yet banked:** `SB.staging/operator/` (`SHA256SUMS` `e6756b8e9f69…`;
+  `operator_gpu_check.sh` v2 `2c4efb706548…`; `gpu_scan.sh` `949408e7…`, the final file). It is swapped
+  into `SB/operator/` when this record's PR has its MERGE verdict, so the bank matches the record on
   main in between.
-- **Test:** `__NCASES__` cases. They run inside a private user + PID + mount namespace with an
-  empty file bind-mounted over `/dev/dxg`, so the scan sees only the test's processes and no case
-  can open the real device. Real processes carry the argv of each entry point. Before isolation,
-  two read-only cases run on the real machine: the probe commands against the real card (integers
-  asserted), and the real scan (its verdict printed). Mutants: `__NMUT__`, one per clause, each
-  killed by its own case.
+- **Test:** 54 cases, 54 pass. They run inside a private user + PID + mount namespace, with
+  `/dev/zero` (a real character device with another rdev) bind-mounted over `/dev/dxg`, so the scan
+  sees only the test's processes and no case can open the real device. The harness asserts that
+  stand-in before any case. A regular file named `/dev/dxg` appears only inside a nested mount
+  namespace, for the namespaced-harness case. Real processes carry the argv of each entry point.
+  Before isolation, two read-only cases run on the real machine: the probe commands against the
+  real card (integers asserted), and the real scan (its verdict printed). Mutants: 33, all killed (`test/mutants_v2/mutant_results.txt`).
+  Thirteen are the script's own (one per clause: argument check, cap, upper and lower band,
+  first memory line only, non-integer memory and utilisation, utilisation ignored or `<= 10`,
+  one sample, scan ignored, scan pin ignored, empty `CUDA_VISIBLE_DEVICES` accepted). Twenty are
+  the shared scan's clause mutants (argv branches, `-m`, `-X` / `-W`, `bash -c`, device clause by
+  rdev and type, a regular file named `/dev/dxg`, unreadable fds, allowlist by basename,
+  ancestors, descendants, and the six environ cases). A kill counts only with a FAIL line, no
+  ABORT and a RESULT line (every case ran); a kill by the pin case alone counts as vacuous (none
+  were). The descendant mutant (S11) is killed by a case that sources the check from a caller with
+  a listed child of its own.
+  (The scan owner's own harness uses `/dev/full` as its stand-in; neither touches the real node.)
+- **Real-machine observation.** The read-only real scan refused twice on 2026-11-22 because an
+  agent's CPU test process held the real device (rdev `a:102`) despite an empty
+  `CUDA_VISIBLE_DEVICES`. Its owner is tracing it. The check never waits by itself: the operator
+  re-runs it after a few seconds, and a holder that persists means the GPU is not free.
 
 ```bash
 $SB/operator/operator_gpu_check.sh $IDLE_MIB || exit 8   # IDLE_MIB: the operator's measured idle memory.used
