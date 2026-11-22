@@ -16,6 +16,8 @@ import chess
 import numpy as np
 import pytest
 import torch
+from torch.utils._python_dispatch import TorchDispatchMode
+from torch.utils._pytree import tree_flatten
 
 from chess_anti_engine.inference import DirectGPUEvaluator, forward_chunk_spans
 from chess_anti_engine.moves import POLICY_SIZE  # the evaluator's dense policy width (4672 search actions)
@@ -119,7 +121,14 @@ def test_legal_chunks_cut_the_compact_policy_at_the_cumulative_counts() -> None:
         plain._legal_forward_into(x[lo:hi], flat[f_lo:f_hi], counts[lo:hi], f_hi - f_lo, p, w)
         expected_pol.append(p)
         expected_wdl.append(w)
-    ev._legal_forward_chunks_into(x, flat, counts, forward_chunk_spans(rows, N), whole_pol, whole_wdl)
+    rec = _ForwardRows(model)
+    try:
+        ev._legal_forward_chunks_into(x, flat, counts, forward_chunk_spans(rows, N), whole_pol, whole_wdl)
+    finally:
+        rec.remove()
+    # the counter the CUDA compact-legal test relies on, proven on this loop: one legal forward per span
+    assert rec.legal == [hi - lo for lo, hi in forward_chunk_spans(rows, N)], rec.legal
+    assert rec.dense == [], rec.dense
     assert torch.equal(whole_pol, torch.cat(expected_pol))
     assert torch.equal(whole_wdl, torch.cat(expected_wdl))
     # and the compact entries are each row's own: compare with the dense policy
@@ -128,6 +137,45 @@ def test_legal_chunks_cut_the_compact_policy_at_the_cumulative_counts() -> None:
     want = torch.from_numpy(dense_pol[rows_idx, flat]).to(torch.bfloat16).view(torch.uint16)
     assert torch.equal(whole_pol, want)
     np.testing.assert_allclose(whole_wdl.numpy(), dense_wdl, atol=1e-5)
+
+
+class _ForwardRows:
+    """Record the batch rows of every network forward the evaluator runs.
+
+    The dense forward goes through ``model(...)`` (a forward pre-hook sees it);
+    the compact-legal forward calls ``model.forward_legal_policy`` directly and
+    bypasses every ``__call__`` hook, so that method is wrapped too. ``dense`` and
+    ``legal`` are kept apart so a test can require the path it means."""
+
+    def __init__(self, model: torch.nn.Module) -> None:
+        self.dense: list[int] = []
+        self.legal: list[int] = []
+        self._model: Any = model
+        self._handle = model.register_forward_pre_hook(lambda _m, a: self.dense.append(int(a[0].shape[0])))
+        inner = self._model.forward_legal_policy
+
+        def wrapped(xt: torch.Tensor, *a: Any, **k: Any) -> Any:
+            self.legal.append(int(xt.shape[0]))
+            return inner(xt, *a, **k)
+
+        self._model.forward_legal_policy = wrapped
+
+    def remove(self) -> None:
+        self._handle.remove()
+        del self._model.forward_legal_policy
+
+
+class _OpOutputs(TorchDispatchMode):
+    """Collect every tensor any op returns while active."""
+
+    def __init__(self, sink: list[torch.Tensor]) -> None:
+        super().__init__()
+        self._sink = sink
+
+    def __torch_dispatch__(self, func: Any, types: Any, args: Any = (), kwargs: Any = None) -> Any:
+        out = func(*args, **(kwargs or {}))
+        self._sink.extend(t for t in tree_flatten(out)[0] if isinstance(t, torch.Tensor))
+        return out
 
 
 def _storages(*ts: Any) -> list[Any]:
@@ -150,6 +198,7 @@ def test_no_chunk_tensor_outlives_its_chunk() -> None:
     prev: list[Any] = []
     alive: list[int] = []
     seen = [0]
+    produced = [0]
 
     def post(_m: Any, _a: Any, out: Any) -> None:
         prev.extend(_storages(*out.values()))
@@ -178,7 +227,18 @@ def test_no_chunk_tensor_outlives_its_chunk() -> None:
     def legal(*a: Any, **k: Any) -> Any:
         alive.append(sum(not r.expired() for r in prev))
         prev.clear()
-        return inner_legal(*a, **k)
+        # EVERY tensor the legal step's ops produce (the bf16 copy of the logits included), except
+        # views of the caller's input and outputs and of the weights (``weight.t()``), which outlive
+        # the step by design
+        keep = {int(t.untyped_storage().data_ptr()) for t in a if isinstance(t, torch.Tensor)}
+        keep |= {int(t.untyped_storage().data_ptr()) for t in (*model.parameters(), *model.buffers())}
+        made: list[torch.Tensor] = []
+        with _OpOutputs(made):
+            res = inner_legal(*a, **k)
+        prev.extend(_storages(*(t for t in made if int(t.untyped_storage().data_ptr()) not in keep)))
+        made.clear()
+        produced[0] += len(prev)
+        return res
 
     ev._dense_forward_chunk = dense  # type: ignore[method-assign]
     ev._legal_forward_into = legal  # type: ignore[method-assign]
@@ -201,6 +261,7 @@ def test_no_chunk_tensor_outlives_its_chunk() -> None:
         )
         assert alive == [0] * 6
         assert seen[0] == 12
+        assert produced[0] >= 6 * 3  # each legal step's own tensors were tracked (not vacuous)
     finally:
         hook.remove()
         del m_any.forward_legal_policy
@@ -363,13 +424,6 @@ def test_cuda_graph_chunks_replay_and_match_one_eager_forward_within_bf16_roundi
     assert d_wdl <= tol_wdl, (d_wdl, tol_wdl)
 
 
-def _forwarded_rows(model: torch.nn.Module) -> tuple[list[int], Any]:
-    """Record the batch rows of every network forward (a forward pre-hook)."""
-    seen: list[int] = []
-    handle = model.register_forward_pre_hook(lambda _m, a: seen.append(int(a[0].shape[0])))
-    return seen, handle
-
-
 @needs_cuda
 def test_cuda_chunked_eager_fp32_matches_unchunked_eager() -> None:
     """Like for like: the same eager fp32 forward, chunked vs one call, with TF32
@@ -388,16 +442,17 @@ def test_cuda_chunked_eager_fp32_matches_unchunked_eager() -> None:
         assert plain.forward_chunk_rows is None
         planes = plain.get_input_buffer(1).shape[1]
         x = _rows(np.random.default_rng(5), CUDA_ROWS, planes)
-        seen, handle = _forwarded_rows(model)
+        rec = _ForwardRows(model)
         try:
             pol, wdl = _evaluate(chunked, x)
         finally:
-            handle.remove()
+            rec.remove()
         pol1, wdl1 = _evaluate(plain, x)
     finally:
         torch.backends.cuda.matmul.allow_tf32, torch.backends.cudnn.allow_tf32 = prev
     assert chunked.forward_chunk_stats == {"chunked_forwards": 1, "forward_chunks": 6}
-    assert seen == [hi - lo for lo, hi in forward_chunk_spans(CUDA_ROWS, CUDA_N)]
+    assert rec.dense == [hi - lo for lo, hi in forward_chunk_spans(CUDA_ROWS, CUDA_N)], rec.dense
+    assert rec.legal == [], rec.legal
     d_pol, d_wdl = float(np.abs(pol - pol1).max()), float(np.abs(wdl - wdl1).max())
     print(f"cuda fp32 (TF32 off) chunked vs unchunked: max|dpol|={d_pol:.3g} max|dwdl|={d_wdl:.3g}")
     assert d_pol <= 1e-5
@@ -438,7 +493,7 @@ def test_cuda_chunked_compact_legal_matches_unchunked() -> None:
     counts[CUDA_N] = 0
     counts[2 * CUDA_N:3 * CUDA_N] = 0
     flat = rng.integers(0, POLICY_SIZE, size=int(counts.sum())).astype(np.int32)
-    seen, handle = _forwarded_rows(model)
+    rec = _ForwardRows(model)
     try:
         a_pol, a_wdl = chunked.evaluate_legal_bf16(x, flat, counts)
         # the async entry is the one the threaded / dispatcher search paths call
@@ -448,12 +503,13 @@ def test_cuda_chunked_compact_legal_matches_unchunked() -> None:
             c_ev.synchronize()
         c_pol, c_wdl = c_pol_t.numpy().copy(), c_wdl_t.numpy().copy()
     finally:
-        handle.remove()
+        rec.remove()
     b_pol, b_wdl = plain.evaluate_legal_bf16(x, flat, counts)
     assert chunked.forward_chunk_stats["forward_chunks"] == 12
     # no network forward above N rows (the counter alone cannot see a loop that counts and then forwards all rows)
-    assert max(seen) <= CUDA_N, seen
-    assert len(seen) == 12, seen
+    spans = [hi - lo for lo, hi in forward_chunk_spans(CUDA_ROWS, CUDA_N)]
+    assert rec.legal == spans + spans, rec.legal   # sync then async: one compact-legal forward per span each
+    assert rec.dense == [], rec.dense
     assert c_pol.tobytes() == a_pol.tobytes()
     assert c_wdl.tobytes() == a_wdl.tobytes()
     a = torch.from_numpy(a_pol).view(torch.bfloat16).float().numpy()
