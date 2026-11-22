@@ -1,9 +1,9 @@
-# RL run 1 follow-up matches 5, 7, 6b and 6a: results (2026-11-21)
+# RL run 1 follow-up matches 5, 7, 6b, 6a and 8: results (2026-11-21)
 
 These are the results of the matches registered in
 [the follow-up match record](2026-11-21-rl-run1-match5-p0-single-net.md) (PR #1473), read by its rules in the same
-session as the readout. They follow [the pilot results](2026-11-21-rl-run1-pilot-results.md). All four are
-diagnostic: they adopt nothing and change nothing live.
+session as the readout, plus match 8 from [its own record](2026-11-21-rl-run1-match8-zq-recal-vs-base.md). They
+follow [the pilot results](2026-11-21-rl-run1-pilot-results.md). All five adopt nothing and change nothing live.
 
 **Summary.**
 
@@ -14,9 +14,9 @@ diagnostic: they adopt nothing and change nothing live.
 | 6b: S's raw value on the base policy vs the base | −21.4 [−27.7, −15.2] | reads damage; step 1 is passed |
 | 6a: S's recalibrated value on the base policy vs the base | −16.1 [−22.3, −9.9] | — |
 | Match 6, decision order | R = 6a − 6b = +5.34 [−3.48, +14.15] | **"unread"** (step 5: 6a reads damage, but R's UB95 ≥ +10, so partial recovery is not excluded) |
+| 8: Zq recalibrated vs the SL base ([own record](2026-11-21-rl-run1-match8-zq-recal-vs-base.md)) | +9.6 [+3.3, +16.0] | **"adoptable" and "improves on the base"** ([below](#match-8-recalibrated-zq-vs-the-sl-base-seed-2026112191)) |
 
-Each match was 6,400 games (3,200 per run, 1,600 openings), with 0 unresolved games. Match 8 is
-[below](#match-8-recalibrated-zq-vs-the-sl-base-placeholder).
+Each match was 6,400 games (3,200 per run, 1,600 openings), with 0 unresolved games.
 
 **Bank.** `F` = `~/chess-artifacts/operations/rl-run1-followup`. Every file is cited with its sha256 prefix, and
 every number was read from the bank files named or computed from them where marked "derived".
@@ -200,17 +200,85 @@ reading.
 
 **Confounds.**
 - These are post-hoc diagnostics on one pilot generation.
+- **Incident during match 8's seat A:** three stray collects shared the GPU for ≈ 126 s, from 21:38:48 to 21:40:54. Wall time enters no decision, and the seat offset is +1.2 [−4.9, +7.4] (see match 8).
 - Both recal fits were made after the pilot gate had been read: S at 13:08 and Zq at 13:09, on 11-21
   (`pilot-value-diagnosis/logs/fit_{S,Zq}.log`). The gate finished at 11:10.
 - The matches use the same `eval.pgn` openings as the pilot's matches; the overlaps are listed in the registering
   record.
 
-## Match 8: recalibrated Zq vs the SL base (placeholder)
+## Match 8: recalibrated Zq vs the SL base (seed 2026112191)
 
-**PLACEHOLDER: not yet read.** Match 8 is registered in
-[its own record](2026-11-21-rl-run1-match8-zq-recal-vs-base.md) (seed 2026112191). At the time of writing it is
-running into `F/arenas/zq_recal_vs_base/`; its 4-game smoke has passed (both runs exited 0). Its result and verdict
-by that record's rules will be added here when `pool.json` exists.
+Registered in [its own record](2026-11-21-rl-run1-match8-zq-recal-vs-base.md), which match 7's "shape" licensed. The
+arm is Zq's own file with the recalibration (0.7036189636786957, −0.22711530923843357) applied to its WDL output: one
+forward, no value-from net. The opponent is the plain SL base.
+
+Rules (match-8 record, verbatim). Read on `result.pooled.elo_ci95`, arm = the recalibrated seat, on the measured SE:
+
+| Reading | Condition |
+|---|---|
+| damage | UB95 < 0 |
+| adoptable | LB95 > −10 |
+| unread | neither |
+| **improves on the base** (pre-declared, stronger; reported alongside adoptable) | LB95 > 0 |
+
+The tie-break applies only below an SE of ≈ 2.55.
+
+| Quantity | Value |
+|---|---|
+| **Pooled** | **+9.6 [+3.3, +16.0]** (+9.61 [+3.27, +15.96]; excess +0.0138, SE 0.0047; Elo SE 3.24) |
+| Arm as candidate (A) | +10.9 [+2.0, +19.7] |
+| Arm as reference (B) | +8.4 [−0.5, +17.2] |
+| Seat offset | +1.2 [−4.9, +7.4] |
+| Clusters | 1,600, 0 repeated within a run; A/B correlation +0.031 |
+| Arm's W/D/L | A 962/1,376/862, B 974/1,329/897 (derived) |
+| Games | 6,400, 0 unresolved (longest 308 plies). Both runs exited 0 (21:58:09, 22:41:29). No OOM, Traceback or CUDA error in either run log |
+
+**Seat readback.** The result rows carry `candidate_value` (A) and `reference_value` (B) = {value_from: none, recal:
+[0.7036…, −0.2271…]}. Four "seat readback OK" lines (smoke and real, both seats, `value_from=-`, the same recal) are in
+`~/chess-artifacts/operations/rl-run1-value-anchor/run_queue2.out` [mtime 11-21 22:41]. That file belongs to the
+value-anchor queue and may grow. The smoke pool is `F/smoke/arenas/zq_recal_vs_base/pool.json` [`ec58ba16`]; both smoke runs exited 0 (21:14:20, 21:14:39).
+
+- **Verdict: "adoptable"** (LB95 +3.3 > −10), **and "improves on the base"** (LB95 +3.3 > 0).
+- Not "damage": UB95 +16.0 ≥ 0.
+- No tie-break: the SE is 3.24.
+
+**Licenses** (match-8 record): it "NOMINATES 'Zq + per-generation recalibration' as the value recipe for a
+2-generation run with the policy, under its own record ... It adopts nothing here." Confirmation is a fresh generation
+under its own record.
+
+**Caveats, as plain as the result.**
+- **The (T, b) fit is post hoc on this one net.** It was made at 13:09 on 11-21 (`pilot-value-diagnosis/logs/fit_Zq.log` [`3a6d157e`], `out/recal_Zq.json` [`7e665c5e`]), after the pilot gate had been read. It was fixed before matches 7 and 8 were registered and run, and was not refit.
+- **What the fit minimised:** the cross-entropy of Zq's recalibrated WDL, softmax(logits / T + [0, b, 0]), to the SL base net's WDL. That ran on the 39,237 rows of the pilot collect's 416 hold-out games: CE 0.556724 → 0.540235 (fit log). The recalibration target is therefore the base net's value shape, not the game outcomes.
+- **One net and one generation.**
+- **A family of nomination tests ran that night,** with no multiplicity correction registered: four registered readings were played (matches 5, 7, 6 and 8), and the value-anchor screens are still to come. Each reading is at its own 95% interval; any "adoptable" or "shape" reading only nominates.
+
+**The Zq chain across the night:**
+
+| Match | Contrast | Games | Elo [95%] | Elo SE |
+|---|---|---|---|---|
+| pilot gate (match 1) | raw Zq vs base | 1,600 | −10.0 [−23.2, +3.2] | 6.74 |
+| match 7 | recal Zq vs raw Zq | 6,400 | +21.4 [+15.1, +27.6] | 3.18 |
+| match 8 | recal Zq vs base | 6,400 | +9.6 [+3.3, +16.0] | 3.24 |
+
+The naive sum −10.0 + 21.4 = +11.4 is 1.8 Elo above match 8's +9.6. As independent matches, the difference has an SE of
+√(6.74² + 3.18² + 3.24²) ≈ 8.1, so z ≈ 0.22: **the three are mutually consistent within their SEs** (derived). They
+use different seeds and opening blocks, and Elo need not be transitive across opponent pairs.
+
+**INCIDENT, during seat A (from the evidence, not a measurement).**
+- **What happened.** On 2026-11-21 from 21:38:48 to 21:40:54 −05:00, about 126 s, three stray collect processes from an agent's launcher guard test shared the GPU with match 8's seat A, the arena process PID 2337486.
+- **Window.** The first and last samples that list the stray PIDs are in `logs/pids.txt` [`2e17c16c`].
+- **Memory.** The peak card memory in `logs/gpu.csv` [`2ba32b23`] is 30,406 MiB of 32,607, at sample 224 of 281. The file carries no timestamps; the coordinator's ≈ 21:40:49 is an estimate from the 500 ms sample index. The lowest sample, 10,971 MiB, is the match alone.
+- **Cause.** The guard's busy check used `nvidia-smi --query-compute-apps`, which lists nothing under WSL2.
+- **Handling.** The strays were killed by exact PID, and nothing they wrote was sealed. Evidence: `~/chess-artifacts/operations/rl-run1-root-full-width/stage0/INCIDENT_guardtest_20261121/` (`INCIDENT.txt` [`1f4e5fe7`], `logs/p1.log` [`6c1ab296`], `logs/p2.log` [`2788c568`], `logs/p3.log` [`c6b7cbf9`]).
+- **Why the result stands without a rerun.** Wall time enters no decision:
+  - the arena flags in `run_followup_match.sh` are `--mode matched_sims --sims 64 --max-plies 600 --on-max-plies abort`, with no clock;
+  - both result rows have `ms_per_move` null and `max_seconds` null, 64 sims on both sides, `paused_seconds` 0, `timing_independent` true.
+- **Symptom check.** A broken seat would most visibly show as a large seat offset. Seat A read +10.9 and seat B +8.4; the offset is +1.2 with an interval [−4.9, +7.4] that includes 0.
+- **In-window diagnostic** (derived, games treated as independent, no rule). Each game row carries `ts` (its end time) and `duration_s`. The 185 seat-A games in flight during the window scored 0.559 for the arm, against 0.513 for the other 3,015. The difference, +0.047 ± 0.028, points the other way from damage.
+
+Sources: `F/arenas/zq_recal_vs_base/pool.json` [`3e407ba8`], `pool.log` [`e5176649`], `results.jsonl` [`3f2b62ad`],
+`zq_recal_vs_base_1_A.games.jsonl` [`9e85b212`], `zq_recal_vs_base_1_B.games.jsonl` [`c9b737f7`]. The run walls were
+2,597 s and 2,590 s (1.44 GPU-h).
 
 ## Pilot items these results close
 

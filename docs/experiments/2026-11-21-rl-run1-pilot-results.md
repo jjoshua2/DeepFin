@@ -266,7 +266,7 @@ The numbers below were read from `out/*.json`:
 **Status, by the addendum's pre-registered rule.**
 - **S: supports "ranking content broke".** The CI is entirely below 0, and (T, b) does not restore it.
 - **Zq: not separated.** This does NOT explain Zq's −10; Zq's shape account (0.60 of its divergence is removable by
-  (T, b)) stays open.
+  (T, b)) stays open. *Update:* matches 7 and 8 support the shape account in play ([follow-up results](2026-11-21-rl-run1-followup-results.md)).
 - **P0's own head: not separated.**
 
 The mechanism, that the value loss changes what the head says (content) rather than its scale (shape), is therefore
@@ -358,7 +358,8 @@ The pre-training check passed: `R/post_collect_checks.sh` [`4917f83f`] writes `c
 - **That the policy pays.** Match 4 is unread. The near-miss is not a pass.
 - **Recalibration.** Match 2 did not run, so the pilot says nothing about whether recalibration recovers S's or Zq's loss. *Update* ([follow-up results](2026-11-21-rl-run1-followup-results.md)):
   - match 7 (new registration, not match 2): Zq + recal vs Zq +21.4 [+15.1, +27.6], "the loss is shape";
-  - match 6, S's value recalibrated vs raw: R = +5.34 [−3.48, +14.15], "unread".
+  - match 6, S's value recalibrated vs raw: R = +5.34 [−3.48, +14.15], "unread";
+  - match 8 (its own record): Zq + recal vs the SL base +9.6 [+3.3, +16.0], "adoptable" and "improves on the base". It nominates "Zq + per-generation recalibration" under its own record; the (T, b) was fitted post hoc on this one net.
 
   No pilot verdict changes.
 
