@@ -21,6 +21,8 @@ from scripts.arena_standard import (
     summarize_pentanomial,
 )
 
+from tests._child_env import gpu_free_env
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -344,8 +346,8 @@ def test_print_summary_survives_an_unflushed_process_death(tmp_path):
         rc = subprocess.call(
             [sys.executable, str(script)], stdout=fh, stderr=subprocess.STDOUT,
             cwd=str(ROOT),
-            env={"PYTHONPATH": str(ROOT), "PATH": os.environ.get("PATH", ""),
-                 "HOME": os.environ.get("HOME", "")},
+            env=gpu_free_env({"PYTHONPATH": str(ROOT), "PATH": os.environ.get("PATH", ""),
+                 "HOME": os.environ.get("HOME", "")}),
         )
     text = log.read_text()
     # Report what the child actually said; a bare `assert rc == 137` reads like

@@ -1416,12 +1416,17 @@ class Engine:
         # busy-worker answer when the wait below raises -- is a move of a game,
         # so a later isready must not run the boundary checks.
         self._in_game = True
-        # The move clock starts at `go` receipt (when the stdin reader read
-        # it): the bounded wait for a live search, tree sync (including any
+        # The move clock starts when the `go` arrived on stdin (`_receipt_time`):
+        # any wait behind earlier commands, the bounded wait for a live search, tree sync (including any
         # reuse work) and thread start-up below are all charged to this move's
         # deadline.
         go_received_at = _receipt_time(cmd.received_at)
         self._go_received_at = go_received_at
+        # How long the `go` waited before this handler ran (behind earlier
+        # commands): the queue's share of its clock, not the handler's own work.
+        # Whole milliseconds, the UCI clock's resolution: a sub-millisecond
+        # wait must not tip a deadline sitting exactly at the minimum search.
+        queued_ms = int((time.monotonic() - go_received_at) * 1000.0)
         # A timeout cannot transfer ownership of the still-live worker; it is
         # bounded by this move's own clock, then `dispatch` answers from the
         # busy-worker fallback for the latest board.
@@ -1462,6 +1467,22 @@ class Engine:
             min_chunk_ms=self._measured_min_chunk_ms(),
         )
         limits = _fit_movetime_limits(cmd.args, limits)
+        if (not limits.clock_exhausted and not limits.ponder and not limits.infinite
+                and limits.deadline_ms is not None
+                and limits.deadline_ms >= _MIN_DEADLINE_MS
+                and limits.deadline_ms - queued_ms < _MIN_DEADLINE_MS):
+            # The `go` waited behind earlier commands (or for the worker) until
+            # less than the minimum search is left of a deadline that had room
+            # for one: answer at once, as for a clock that cannot pay for a
+            # search, rather than start a search already past its deadline
+            # (which the watchdog then answered unsearched, without even the
+            # fresh eval). A deadline under the minimum from the start (an
+            # explicit work bound, the priced sudden-death rule) keeps its own
+            # handling.
+            limits = replace(limits, clock_exhausted=True)
+            self._answer_clock_exhausted(cmd.args, search_board, limits, go_received_at,
+                                         queued_ms=queued_ms)
+            return
         if limits.clock_exhausted:
             self._answer_clock_exhausted(cmd.args, search_board, limits, go_received_at)
             return
@@ -1582,7 +1603,7 @@ class Engine:
 
     def _answer_clock_exhausted(
         self, args: GoArgs, board: chess.Board, limits: SearchLimits,
-        go_received_at: float,
+        go_received_at: float, *, queued_ms: float | None = None,
     ) -> None:
         """Answer a clocked `go` at once, without a search: the side to move's
         clock less ``MoveOverheadMs`` and the search slack leaves less than the
@@ -1636,7 +1657,14 @@ class Engine:
                 or not movetime_alone_too_short
                 or int(clock_ms) - max(0, int(self._options.move_overhead_ms)) < args.movetime_ms
             )
-            if not clock_binds:
+            if queued_ms is not None:
+                _println(
+                    f"info string go waited {int(queued_ms)} ms behind earlier commands: its "
+                    f"{max(0, int(limits.deadline_ms or 0))} ms deadline leaves under the "
+                    f"{_MIN_DEADLINE_MS} ms minimum search; answering at once "
+                    f"source={source} move={move}"
+                )
+            elif not clock_binds:
                 _println(
                     f"info string movetime too short to search: movetime {args.movetime_ms} "
                     f"ms leaves a {max(0, int(limits.deadline_ms or 0))} ms deadline, under "
@@ -1828,7 +1856,9 @@ class Engine:
             )
         except SearchNotQuiescent as exc:
             # Stop remains requested. Keep the owner available for a later join.
-            _println(f"info string {exc}")
+            # Under `quit` the line is bounded: the search that did not stop may
+            # be a writer blocked on a stdout the GUI no longer drains.
+            (_println_bounded if self._quit_requested else _println)(f"info string {exc}")
 
     def _handle_ponderhit(self, cmd: CmdPonderHit | None = None) -> None:
         """Opponent played our predicted move. Convert open-ended ponder
@@ -1849,8 +1879,8 @@ class Engine:
             if self._ponderhit_at is not None:
                 return
             ponder_stop = self._stop_event
-            # The real phase's clock started when the stdin reader read the
-            # ponderhit, not when this handler got the GIL.
+            # The real phase's clock started when the ponderhit arrived on
+            # stdin, not when this handler got the GIL.
             self._ponderhit_at = _receipt_time(None if cmd is None else cmd.received_at)
             self._ponderhit_event.set()
             gen = self._search_gen
@@ -4387,12 +4417,13 @@ def _at_once_answer_by_ms(clock_left_ms: float, elapsed_ms: float) -> float:
 
 
 def _receipt_time(received_at: float | None) -> float:
-    """The clock origin of a `go` / `ponderhit`: when the main loop read its line
-    (the command's ``received_at``), never later than now; now when unstamped.
-    The main loop is the stdin reader, so time a line spends unread in the pipe
-    while the loop handles an earlier command is NOT counted (MoveOverheadMs
-    must cover it); the stamp only charges the parse-and-dispatch time before
-    the handler runs."""
+    """The clock origin of a `go` / `ponderhit`: the command's ``received_at``,
+    never later than now; now when unstamped. ``received_at`` is when the line
+    arrived on stdin (`__main__._StdinFeed`'s reader thread), or when the engine
+    became ready for a line that arrived before that (`__main__._clock_origin`).
+    Time the line spent waiting behind an earlier command IS counted: the GUI's
+    clock was running. A `go` whose wait leaves less than the minimum search is
+    answered at once (`_handle_go`)."""
     now = time.monotonic()
     return now if received_at is None else min(float(received_at), now)
 
@@ -4647,7 +4678,54 @@ def _println(s: str) -> bool:
             return False
         sys.stdout.write(s + "\n")
         sys.stdout.flush()
+        global _PRINTS_DONE
+        _PRINTS_DONE += 1
         return True
+
+
+# The quit / exit path writes through `_println_bounded`: a GUI that has
+# stopped draining our stdout leaves a writer blocked inside `write` holding
+# `_PRINT_LOCK`, and an unbounded print there kept `quit` from ever exiting.
+# `stdout_stuck` says the latest bounded print found the lock stuck (cleared by
+# the next one that gets it); `_hard_exit` then skips its stdout flush. The
+# `__main__` quit guard watches `stdout_progress` and `print_lock_held`.
+_QUIT_PRINT_WAIT_S = 0.25
+_STDOUT_STUCK = threading.Event()
+_PRINTS_DONE = 0
+
+
+def stdout_stuck() -> bool:
+    """The latest quit/exit-path print found the print lock held past its wait."""
+    return _STDOUT_STUCK.is_set()
+
+
+def stdout_progress() -> int:
+    """How many UCI lines have been written (a writer blocked in `write` stops it)."""
+    return _PRINTS_DONE
+
+
+def print_lock_held() -> bool:
+    """Some thread holds the print lock right now (is writing, or blocked in
+    `write`). The caller must not hold it itself."""
+    if _PRINT_LOCK.acquire(blocking=False):
+        _PRINT_LOCK.release()
+        return False
+    return True
+
+
+def _println_bounded(s: str, timeout_s: float = _QUIT_PRINT_WAIT_S) -> bool:
+    """`_println` for the quit / exit path only: skip the line (False) rather
+    than wait more than ``timeout_s`` for the print lock -- held by a writer
+    stuck in `write` -- and set `stdout_stuck`; a print that gets the lock
+    clears it. Otherwise it is `_println` (the same bytes)."""
+    if not _PRINT_LOCK.acquire(timeout=max(0.0, timeout_s)):
+        _STDOUT_STUCK.set()
+        return False
+    try:
+        _STDOUT_STUCK.clear()
+        return _println(s)
+    finally:
+        _PRINT_LOCK.release()
 
 
 def _emit_info_string(s: str) -> None:

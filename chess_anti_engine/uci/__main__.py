@@ -16,10 +16,12 @@ from collections.abc import Iterable, Iterator, Mapping
 import logging
 import math
 import os
+import queue
+import select
 import sys
 import threading
 import time
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 if __name__ == "__main__":
   # `python -m chess_anti_engine.uci` lands here BEFORE the imports below, which
@@ -65,7 +67,12 @@ from .engine import (
     SearchNotQuiescent,
     _emit_info_string,
     _println,
+    _STDOUT_STUCK,
+    _println_bounded,
     emit_handshake,
+    print_lock_held,
+    stdout_progress,
+    stdout_stuck,
 )
 from . import startup_progress, wedge
 from .device_guard import DegradingMultiGPUDispatcher, find_degrade_source
@@ -1935,6 +1942,9 @@ def main() -> int:
     engine_ref: list[Engine | None] = [None]
     engine_error: list[BaseException | None] = [None]
     engine_ready = threading.Event()
+    # When the engine became ready (`_receipt_clock`): the clock origin of a
+    # `go` / `ponderhit` that arrived before it (`_clock_origin`).
+    ready_at: list[float | None] = [None]
     engine_owner_lock = threading.Lock()
     shutdown_requested = threading.Event()
 
@@ -2095,15 +2105,17 @@ def main() -> int:
                     if engine_error[0] is None:
                         engine_error[0] = exc
                     _println(f"info string evaluator startup cleanup failed: {exc!r}")
+            ready_at[0] = _receipt_clock()
             engine_ready.set()
 
     builder = threading.Thread(target=wedge.parking(_build), daemon=True, name="deepfin-build")
     builder.start()
 
     rc = 0
+    feed = _StdinFeed(sys.stdin)
     try:
-        for raw, received_at in _received_lines(sys.stdin):
-            cmd = stamp_received(parse_command(raw), received_at)
+        for raw, arrived_at in feed:
+            cmd = parse_command(raw)
             if isinstance(cmd, CmdUci):
                 emit_handshake(startup_options)
                 continue
@@ -2127,6 +2139,7 @@ def main() -> int:
                 break
             engine = engine_ref[0]
             assert engine is not None
+            cmd = stamp_received(cmd, _clock_origin(arrived_at, ready_at[0]))
             try:
                 engine.dispatch(cmd)
             except Exception as exc:
@@ -2142,6 +2155,7 @@ def main() -> int:
   # via ``SearchWorker.set_evaluator``, which already closes the old
   # one; ``engine.close()`` then closes the live one. An unfinished builder
   # retains its local engine and closes it only after its warmup drains.
+        feed.arm_quit_guard()
         with engine_owner_lock:
             _request_builder_shutdown(shutdown_requested)
             eng = engine_ref[0]
@@ -2164,7 +2178,7 @@ def main() -> int:
                 try:
                     quiesce()
                 except SearchNotQuiescent as exc:
-                    _println(f"info string engine shutdown failed: {exc}")
+                    _println_bounded(f"info string engine shutdown failed: {exc}")
                     rc = 1
                 except Exception:
                     pass
@@ -2177,7 +2191,7 @@ def main() -> int:
             try:
                 eng.close()
             except SearchNotQuiescent as exc:
-                _println(f"info string engine shutdown failed: {exc}")
+                _println_bounded(f"info string engine shutdown failed: {exc}")
                 rc = 1
             except Exception:
                 pass
@@ -2197,10 +2211,10 @@ def main() -> int:
                    "evaluator, is still running")
             if getattr(eng, "only_wedged_device_threads", lambda: False)() is True:
                 why = "a multi-GPU worker is still stuck inside a dropped device's call"
-            _println(f"info string quit: {why}; exiting with status {rc} without waiting for it")
-            print(f"deepfin: {why} at shutdown; exiting with status {rc} without waiting for it",
-                  file=sys.stderr)
+            _println_bounded(f"info string quit: {why}; exiting with status {rc} without waiting for it")
+            _stderr_note(f"deepfin: {why} at shutdown; exiting with status {rc} without waiting for it")
             _hard_exit(rc)
+    feed.disarm_quit_guard()
     return rc
 
 
@@ -2213,12 +2227,126 @@ _BUILDER_JOIN_TIMEOUT_S = 3.0
 _receipt_clock = time.monotonic
 
 
+# `quit` must end the process within a bound even when the GUI stopped reading
+# our stdout. Then a printing thread -- the search's info line, the main
+# thread's reply to `stop` -- sits in `write` holding the print lock (or waits
+# for it), and the main thread may never read `quit` at all. So stdin is read on
+# its own thread (each line stamped as it arrives, `_received_lines`: the move
+# clock's origin, `_clock_origin`), and a
+# `quit` command (or the main loop's end) arms a guard. The guard hard-exits with
+# status 1 (`_exit_stdout_stuck`) only when a writer is actually blocked: the
+# print lock was held at every look and no print completed for
+# `_STDOUT_STALL_S`. A free lock or a completed print restarts the window, so a
+# slow but progressing writer, a GUI that reads late, or a slow teardown with
+# stdout idle never trips it. It uses no `select`: on Windows, `select` on a
+# pipe raises, and the lock works the same there.
+#
+# The bound: about 2 s typical. The window runs from when a writer blocks, and
+# `quit` is followed by a block at most about 1 s later (stop latency: `stop`
+# waits `_GO_WAIT_NO_CLOCK_S` before parking the search), so by construction the
+# exit is within about 3 s of `quit`. Measured: 1.87-2.09 s under two busy
+# loops, about 2.4 s under heavier load. The window itself: a 2.0 s target, less
+# the bounded stderr note (`_stderr_note`, 0.25 s) and one look
+# (`_GUARD_LOOK_S`), leaves 1.7 s. A GUI may stop reading for up to that long
+# and still get the clean exit (status 0, everything closed) -- longer than the
+# 1.0 s our own `stop` gives a search before declaring it unresponsive.
+_STDOUT_STALL_S = 1.7
+_GUARD_LOOK_S = 0.05
+
+
+class _StdinFeed:
+    """stdin's lines with their arrival times (`_received_lines`), read on a
+    daemon thread and consumed in order by the main loop; ends after a `quit`
+    command or EOF as the main loop does. A read error is raised in the main
+    loop, where it was raised before."""
+
+    _EOF = object()
+
+    def __init__(self, stream: Iterable[str]) -> None:
+        self._lines: queue.SimpleQueue[object] = queue.SimpleQueue()
+        self._disarmed = threading.Event()
+        self._guard_lock = threading.Lock()
+        self._guard: threading.Thread | None = None
+        self._reader = threading.Thread(
+            target=self._read, args=(stream,), daemon=True, name="deepfin-stdin",
+        )
+        self._reader.start()
+
+    def _read(self, stream: Iterable[str]) -> None:
+        try:
+            for raw, arrived_at in _received_lines(stream):
+                self._lines.put((raw, arrived_at))
+                if isinstance(parse_command(raw), CmdQuit):
+                    self.arm_quit_guard()
+                    return
+        except BaseException as exc:  # handed to the main loop
+            self._lines.put(exc)
+            return
+        self._lines.put(self._EOF)
+
+    def __iter__(self) -> Iterator[tuple[str, float]]:
+        while True:
+            item = self._lines.get()
+            if item is self._EOF:
+                return
+            if isinstance(item, BaseException):
+                raise item
+            yield cast(tuple[str, float], item)
+
+    def arm_quit_guard(self) -> None:
+        with self._guard_lock:
+            if self._guard is not None or self._disarmed.is_set():
+                return
+            self._guard = threading.Thread(
+                target=self._guard_quit, daemon=True, name="deepfin-quit-guard",
+            )
+            self._guard.start()
+
+    def disarm_quit_guard(self) -> None:
+        """`main` is returning normally: nothing left for the guard to rescue."""
+        self._disarmed.set()
+
+    def _guard_quit(self) -> None:
+        seen = stdout_progress()
+        since = time.monotonic()
+        while not self._disarmed.wait(_GUARD_LOOK_S):
+            done = stdout_progress()
+            if done != seen or not print_lock_held():
+                seen, since = done, time.monotonic()  # a print completed, or nobody is blocked
+                continue
+            if time.monotonic() - since >= _STDOUT_STALL_S and not self._disarmed.is_set():
+                _exit_stdout_stuck(1)
+
+
+def _exit_stdout_stuck(rc: int) -> None:
+    """Leave now: stdout is not being read, so a writer is blocked in `write` and
+    no search or evaluator thread can be joined. The OS reclaims the evaluators,
+    the device context and every thread. Status at least 1, as for any quit whose
+    search could not be quiesced: 0 means every thread joined and every evaluator
+    closed."""
+    rc = max(rc, 1)
+    _stderr_note(f"deepfin: stdout is not being read (a write is blocked); quit exits with "
+                 f"status {rc} without closing the evaluators")
+    _STDOUT_STUCK.set()
+    _hard_exit(rc)
+
+
 def _received_lines(stream: Iterable[str]) -> Iterator[tuple[str, float]]:
-    """Each line of ``stream`` with the moment it was read: a `go` or
-    `ponderhit` starts the move's clock then (`stamp_received`), not when its
-    handler gets to run."""
+    """Each line of ``stream`` with the moment it was read off stdin (by
+    `_StdinFeed`'s reader thread, as it arrives): the GUI starts our clock when
+    it sends `go` / `ponderhit`, so time the line then waits behind an earlier
+    command is this move's time (`_clock_origin`)."""
     for raw in stream:
         yield raw, _receipt_clock()
+
+
+def _clock_origin(arrived_at: float, ready_at: float | None) -> float:
+    """A `go` / `ponderhit`'s clock origin: when it arrived, or -- for one that
+    arrived before the engine was ready -- when the engine became ready. A GUI
+    must not send `go` before `readyok` (UCI: `isready` is answered once the
+    engine can take commands); one that does gets its move timed from when the
+    engine could first act on it, not charged for the model load."""
+    return arrived_at if ready_at is None else max(arrived_at, ready_at)
 
 
 def _report_startup_failure(exc: BaseException) -> None:
@@ -2277,23 +2405,45 @@ def _device_thread_wedged(eng: Any) -> bool:
     return callable(check) and check() is True
 
 
+def _stderr_note(line: str, timeout_s: float = 0.25) -> None:
+    """One diagnostic line on stderr, skipped if stderr does not take it within
+    ``timeout_s`` (its reader may be gone with the GUI's stdout reader), and
+    skipped when its writability cannot be known: on Windows `select` on a pipe
+    raises, and an unbounded write there could block the exit."""
+    try:
+        fd = sys.stderr.fileno()
+    except (AttributeError, OSError, ValueError):
+        fd = None  # not a real file (a test's stand-in): writes cannot block
+    if fd is not None:
+        try:
+            _r, w, _x = select.select([], [fd], [], timeout_s)
+        except (OSError, ValueError):
+            return
+        if not w:
+            return
+    print(line, file=sys.stderr)
+
+
 def _announce_wedged_exit(rc: int) -> None:
     why = "a multi-GPU worker is still stuck inside a dropped device's call"
-    _println(f"info string quit: {why}; exiting with status {rc} without waiting for it")
-    print(f"deepfin: {why} at shutdown; exiting with status {rc} without waiting for it",
-          file=sys.stderr)
+    _println_bounded(f"info string quit: {why}; exiting with status {rc} without waiting for it")
+    _stderr_note(f"deepfin: {why} at shutdown; exiting with status {rc} without waiting for it")
 
 
 def _announce_fault_exit(fault: str, rc: int) -> None:
-    _println(f"info string quit: a device failed this session ({fault}); "
-             f"exiting with status {rc} without closing the evaluators")
-    print(f"deepfin: a device failed this session ({fault}); "
-          f"exiting with status {rc} without closing the evaluators", file=sys.stderr)
+    _println_bounded(f"info string quit: a device failed this session ({fault}); "
+                     f"exiting with status {rc} without closing the evaluators")
+    _stderr_note(f"deepfin: a device failed this session ({fault}); "
+                 f"exiting with status {rc} without closing the evaluators")
 
 
 def _hard_exit(rc: int) -> None:
-    """Flush both streams, then leave without interpreter finalization."""
-    for stream in (sys.stdout, sys.stderr):
+    """Flush both streams, then leave without interpreter finalization.
+
+    Not stdout once a quit-path print found it stuck: the flush would block on
+    the same undrained pipe (or on the buffer lock its blocked writer holds)."""
+    streams = (sys.stderr,) if stdout_stuck() else (sys.stdout, sys.stderr)
+    for stream in streams:
         with contextlib.suppress(Exception):
             stream.flush()
     os._exit(rc)

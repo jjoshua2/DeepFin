@@ -248,7 +248,10 @@ def test_the_stdin_reader_stamps_each_line_when_read(monkeypatch) -> None:
 
 def test_the_main_loop_dispatches_stamped_commands(monkeypatch) -> None:
     """Through the real `main` loop: the `go` and `ponderhit` the engine
-    receives carry the time `_received_lines` read them at."""
+    receives carry their clock origin -- when the reader read them, or when
+    the engine became ready if that was later (`_clock_origin`). The reader and
+    the builder both read the clock, from their own threads, so the exact ticks
+    are not fixed; the origin is one of them, after readiness, in order."""
     got: list[Any] = []
 
     class _Engine:
@@ -265,7 +268,15 @@ def test_the_main_loop_dispatches_stamped_commands(monkeypatch) -> None:
             pass
 
     ticks = iter(float(i) for i in range(100, 200))
-    monkeypatch.setattr(main_module, "_receipt_clock", lambda: next(ticks))
+    tick_lock = threading.Lock()
+    drawn: list[float] = []
+
+    def clock() -> float:
+        with tick_lock:
+            drawn.append(next(ticks))
+            return drawn[-1]
+
+    monkeypatch.setattr(main_module, "_receipt_clock", clock)
     monkeypatch.setattr(main_module, "_load_models", lambda *_a, **_kw: [SimpleNamespace()])
     monkeypatch.setattr(main_module, "_make_evaluator_factory",
                         lambda *_a, **_kw: lambda *_a, **_kw: None)
@@ -277,8 +288,14 @@ def test_the_main_loop_dispatches_stamped_commands(monkeypatch) -> None:
     assert main_module.main() == 0
     gos = [c for c in got if isinstance(c, CmdGo)]
     hits = [c for c in got if isinstance(c, CmdPonderHit)]
-    assert [c.received_at for c in gos] == [101.0]
-    assert [c.received_at for c in hits] == [102.0]
+    assert len(gos) == 1
+    assert len(hits) == 1
+    go_at, hit_at = gos[0].received_at, hits[0].received_at
+    assert go_at is not None
+    assert hit_at is not None
+    assert go_at in drawn
+    assert hit_at in drawn
+    assert go_at < hit_at
 
 
 def test_a_ponderhit_clock_starts_when_it_was_read(out) -> None:
@@ -353,5 +370,49 @@ def test_a_go_clock_starts_when_it_was_read(out) -> None:
         assert out.wait_bestmoves(2)[1] == "e7e5"
         assert engine._go_received_at is not None
         assert engine._go_received_at < later
+    finally:
+        engine.close()
+
+
+
+# -- the clock origin: arrival, or readiness for a line that came before it -------
+
+
+def test_the_clock_origin_is_arrival_or_readiness_whichever_is_later() -> None:
+    assert main_module._clock_origin(5.0, None) == 5.0
+    assert main_module._clock_origin(5.0, 9.0) == 9.0  # arrived during the model load
+    assert main_module._clock_origin(12.0, 9.0) == 12.0
+
+
+def test_a_go_whose_wait_left_no_time_to_search_is_answered_at_once(out) -> None:
+    """A `go movetime 1000` that arrived 0.99 s before its handler ran (queued
+    behind earlier commands): less than the minimum search is left of its
+    deadline, so it is answered at once, without starting a search the
+    watchdog would answer unsearched."""
+    worker = _mock_worker()
+    engine = Engine(worker, options=EngineOptions())
+    try:
+        engine.dispatch(parse_command("position startpos"))
+        go = stamp_received(parse_command("go movetime 1000"), time.monotonic() - 0.99)
+        engine.dispatch(go)
+        assert len(out.wait_bestmoves(1)) == 1
+        assert "behind earlier commands" in out.text()
+        assert "deadline watchdog answers unsearched" not in out.text()
+        assert worker.run.call_count == 0
+    finally:
+        engine.close()
+
+
+def test_a_go_that_waited_less_than_its_budget_still_searches(out) -> None:
+    worker = _mock_worker()
+    worker.run.return_value = SearchResult("e2e4", None, 16, ("e2e4",), 0)
+    engine = Engine(worker, options=EngineOptions())
+    try:
+        engine.dispatch(parse_command("position startpos"))
+        go = stamp_received(parse_command("go movetime 1000"), time.monotonic() - 0.3)
+        engine.dispatch(go)
+        assert len(out.wait_bestmoves(1)) == 1
+        assert "behind earlier commands" not in out.text()
+        assert worker.run.call_count >= 1
     finally:
         engine.close()

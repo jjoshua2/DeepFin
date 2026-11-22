@@ -39,6 +39,8 @@ from chess_anti_engine.eval.audit_cache import (
     write_audit_cache,
 )
 
+from tests._child_env import gpu_free_env
+
 ROWS: list[dict[str, Any]] = [
     {"key": "k1", "phase": 1, "source": 0, "gap_cp": 42.0, "best_move": "e2e4",
      "wdl": [0.5, 0.3, 0.2], "exp_regret": 12.5, "top1_regret": 0.0,
@@ -892,8 +894,8 @@ def test_paired_compare_imports_without_torch() -> None:
         [sys.executable, "-c", probe],
         cwd=str(Path(__file__).resolve().parent.parent),
         capture_output=True, text=True, check=True,
-        env={"PATH": "/usr/bin:/bin", "PYTHONPATH": str(Path(__file__).resolve().parent.parent),
-             "HOME": os.environ.get("HOME", "/tmp"), "CUDA_VISIBLE_DEVICES": ""},
+        env=gpu_free_env({"PATH": "/usr/bin:/bin", "PYTHONPATH": str(Path(__file__).resolve().parent.parent),
+             "HOME": os.environ.get("HOME", "/tmp"), "CUDA_VISIBLE_DEVICES": ""}),
     )
     assert out.stdout.strip() == "False", (
         f"scripts/paired_compare.py now imports torch: {out.stdout!r} {out.stderr[-400:]!r}"

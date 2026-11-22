@@ -24,6 +24,8 @@ import pytest
 
 from scripts.ratchet_slope import _one_ruler_only, row_search_shape
 
+from tests._child_env import gpu_free_env
+
 ROOT = Path(__file__).resolve().parent.parent
 RATCHET_SH = ROOT / "scripts" / "daily_gate_ratchet.sh"
 LOOP_SH = ROOT / "scripts" / "ratchet_loop.sh"
@@ -338,6 +340,33 @@ def _sandbox(tmp_path: Path, *, checkpoint: str = "checkpoint_000478") -> Path:
     return root
 
 
+_NVIDIA_SMI_STUB = """#!/bin/sh
+echo "$@" >> "$(dirname "$0")/../nvidia_smi_calls.txt"
+exit 1
+"""
+
+
+def _stubbed_path(root: Path) -> str:
+    """PATH with a stub `nvidia-smi` first. daily_gate_ratchet.sh's VRAM-floor
+    check runs `nvidia-smi`; the real one opens the GPU adapter (/dev/dxg on
+    WSL2) whatever `CUDA_VISIBLE_DEVICES` says. The stub answers like a host
+    without one (exit 1: eager, as on CI) and records each call in
+    `root/nvidia_smi_calls.txt`."""
+    import subprocess
+
+    stub = root / "stub_bin" / "nvidia-smi"
+    stub.parent.mkdir(exist_ok=True)
+    stub.write_text(_NVIDIA_SMI_STUB)
+    stub.chmod(0o755)
+    path = f"{stub.parent}:{os.environ.get('PATH', '')}"
+    # Every caller: under exactly this PATH the script's `nvidia-smi` IS the
+    # stub, so a PATH change cannot silently restore the real binary.
+    resolved = subprocess.run(["bash", "-c", "command -v nvidia-smi"], env={"PATH": path},
+                              capture_output=True, text=True, check=False).stdout.strip()
+    assert resolved == str(stub), (resolved, str(stub))
+    return path
+
+
 def _run_ratchet(root: Path, *args: str, mode: str = "good", env: dict | None = None):
     """Run the real script against `root`. Returns (rc, stdout+stderr)."""
     import subprocess
@@ -346,7 +375,7 @@ def _run_ratchet(root: Path, *args: str, mode: str = "good", env: dict | None = 
         ["bash", f"scripts/{RATCHET_SH.name}", *args],
         cwd=str(root), capture_output=True, text=True, check=False,
         env={
-            "PATH": os.environ.get("PATH", ""),
+            "PATH": _stubbed_path(root),
             "RATCHET_ROOT": str(root),
             "ARENA_MODE": mode,
             "ARENA_CALLS": str(root / "arena_calls.txt"),
@@ -377,6 +406,8 @@ def test_a_readable_arena_writes_a_row_and_exits_zero(tmp_path) -> None:
     root = _sandbox(tmp_path)
     rc, out = _run_ratchet(root)
     assert rc == 0, f"a run that wrote a row must exit 0, got {rc}:\n{out}"
+    # The VRAM-floor check reached the stub, never the real nvidia-smi.
+    assert (root / "nvidia_smi_calls.txt").read_text().startswith("--query-gpu=memory.free"), out
     rows = _csv_rows(root)
     assert len(rows) == 1, f"expected one vs_boot512 row (day 1 has no vs_prev): {rows}"
     assert rows[0].endswith(",training"), rows[0]
@@ -573,7 +604,7 @@ def _run_one_poll(root: Path, *, mode: str = "good", timeout: float = 120.0,
             cwd=str(root), capture_output=True, text=True, check=False,
             timeout=timeout,
             env={
-                "PATH": os.environ.get("PATH", ""),
+                "PATH": _stubbed_path(root),
                 "RATCHET_ROOT": str(root),
                 "TRAIN_PIDFILE": str(pidfile),
                 "RATCHET_POLL": "1",
@@ -620,6 +651,8 @@ def test_one_poll_records_the_outcome_it_actually_got(tmp_path) -> None:
     assert rc == 0, f"a poll that got a reading must exit 0, got {rc}:\n{out}"
     assert _arena_launches(good) == 1, f"the poll never ran the arena:\n{out}"
     assert len(_csv_rows(good)) == 1, f"no CSV row was written:\n{out}"
+    # The poll's VRAM-floor check reached the stub, never the real nvidia-smi.
+    assert (good / "nvidia_smi_calls.txt").read_text().startswith("--query-gpu=memory.free"), out
     assert _loop_state(good) == (today, ""), (
         f"expected only last_run_date stamped, got {_loop_state(good)}:\n{out}"
     )
@@ -996,8 +1029,8 @@ def test_min_pairs_changes_the_fitted_slope(tmp_path) -> None:
              "--ratchet-csv", str(csv_path), "--run-dir", str(trial.parent.parent),
              *extra],
             cwd=str(ROOT), capture_output=True, text=True, check=True,
-            env={"PYTHONPATH": str(ROOT), "PATH": os.environ.get("PATH", ""),
-                 "PYTHONDONTWRITEBYTECODE": "1"},
+            env=gpu_free_env({"PYTHONPATH": str(ROOT), "PATH": os.environ.get("PATH", ""),
+                 "PYTHONDONTWRITEBYTECODE": "1"}),
         ).stdout
 
     default = run()
@@ -1043,8 +1076,8 @@ def test_the_verdict_line_carries_its_own_caveats(tmp_path) -> None:
         [sys.executable, "scripts/ratchet_slope.py",
          "--ratchet-csv", str(csv_path), "--run-dir", str(trial.parent.parent)],
         cwd=str(ROOT), capture_output=True, text=True, check=True,
-        env={"PYTHONPATH": str(ROOT), "PATH": os.environ.get("PATH", ""),
-             "PYTHONDONTWRITEBYTECODE": "1"},
+        env=gpu_free_env({"PYTHONPATH": str(ROOT), "PATH": os.environ.get("PATH", ""),
+             "PYTHONDONTWRITEBYTECODE": "1"}),
     ).stdout
     lines = out.splitlines()
     verdict_idx = next(i for i, ln in enumerate(lines) if "VERDICT:" in ln)
@@ -1069,8 +1102,8 @@ def test_the_verdict_line_carries_its_own_caveats(tmp_path) -> None:
         [sys.executable, "scripts/ratchet_slope.py",
          "--ratchet-csv", str(csv_path), "--run-dir", str(trial.parent.parent)],
         cwd=str(ROOT), capture_output=True, text=True, check=True,
-        env={"PYTHONPATH": str(ROOT), "PATH": os.environ.get("PATH", ""),
-             "PYTHONDONTWRITEBYTECODE": "1"},
+        env=gpu_free_env({"PYTHONPATH": str(ROOT), "PATH": os.environ.get("PATH", ""),
+             "PYTHONDONTWRITEBYTECODE": "1"}),
     ).stdout
     lines2 = out2.splitlines()
     after2 = "\n".join(lines2[next(i for i, ln in enumerate(lines2) if "VERDICT:" in ln):])
@@ -1299,8 +1332,8 @@ def _run_slope(csv_path, run_dir, *extra: str):
         [sys.executable, "scripts/ratchet_slope.py",
          "--ratchet-csv", str(csv_path), "--run-dir", str(run_dir), *extra],
         cwd=str(ROOT), capture_output=True, text=True, check=False,
-        env={"PYTHONPATH": str(ROOT), "PATH": os.environ.get("PATH", ""),
-             "PYTHONDONTWRITEBYTECODE": "1"},
+        env=gpu_free_env({"PYTHONPATH": str(ROOT), "PATH": os.environ.get("PATH", ""),
+             "PYTHONDONTWRITEBYTECODE": "1"}),
     )
     return r.returncode, r.stdout
 

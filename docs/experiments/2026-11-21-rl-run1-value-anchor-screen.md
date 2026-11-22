@@ -1,7 +1,9 @@
 # 2026-11-21: RL run 1 — value-anchor screen (`--kl-wdl` to the SL base) on the pilot's collection (pre-registration)
 
-**Status: registered, not launched.** It launches only after review and merge of this
-record, AND after the follow-up chain releases the GPU (expected ≈ 21:30). It trains new
+**Status: registered; launched after the merge and completed 2026-11-22 (04:36:58).** Results:
+[value-anchor results](2026-11-22-rl-run1-value-anchor-results.md): S + λ 7.0 vs base +5.8 [−0.5, +12.2] and
+Zq + λ 11.3 vs base +3.6 [−2.6, +9.8], both "adoptable"; r reads "none". It launched only after review and merge of this
+record, AND after the follow-up chain released the GPU. It trains new
 cells on the pilot's frozen collection, plays no new collection games, and changes nothing
 live.
 
