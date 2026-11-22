@@ -16,7 +16,7 @@ Pick the table by what was measured:
 (`file` [`1a2b3c4d`]) or, for a directory, glob or file still being written, its mtime. Bank files have been
 rewritten in place (`ruler_consensus.json` at 02:32 and again 02:48, `ruler_table.json` at 02:33 on 11-21), so a path
 alone does not pin a number. In `RC/search-compose/` (read-only since 11-21) cite the frozen `*.v2.json` / `score.v1.json`
-copies, never the unversioned names; for the diagnosis's conclusions cite `RC/search-compose/README.md` [`a7443a65`] (addendum 11). Cite a commit as code `a0bc34416`, a backticked token, never in square brackets: a bracket after a path is read as a bank stamp. Rows marked "same" inherit the row above's citation.
+copies, never the unversioned names; for the diagnosis's conclusions cite `RC/search-compose/README.md` [`a7443a65`] (addendum 11). Cite a commit as code `a0bc34416`, a backticked token, never in square brackets: a bracket after any backticked token is read as a bank stamp. Rows marked "same" inherit the row above's citation.
 - **When a queued item is read,** move it out of "Registered but not yet read / queued" into "Already
 answered" in the same edit, and add its row. When a number is superseded, add a line to the last section.
 - **Status vocabulary.** *registered verdict* (pre-committed rule applied) · *diagnostic* (no rule;
