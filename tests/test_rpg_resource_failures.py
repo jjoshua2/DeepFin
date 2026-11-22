@@ -20,7 +20,10 @@ from chess_anti_engine.uci import wedge
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.uci import __main__ as main
 from chess_anti_engine.uci import root_parallel_gumbel as rpg
+from tests import _thread_origin
 from tests.test_gumbel_pipeline_receipts import ZeroModel, run_pipeline_case
+
+_thread_origin.install()
 
 
 class Owner(CUDAOwnerDispatcher):
@@ -76,9 +79,26 @@ def _notes(error: BaseException) -> tuple[str, ...]:
     return (*getattr(error, "__notes__", ()), *getattr(error, "_async_cleanup_notes", ()))
 
 
+def assert_owners_closed_and_retired(owners):
+    """Each owner closed once and its dispatcher thread ended (or parked);
+    names the offenders, where a bare ``all(...)`` printed ``assert False``."""
+    bad = [o for o in owners if not (o.close_calls == 1 and _ended_or_parked(o._owner))]
+    parked = set(wedge.parked_threads())
+    assert not bad, (
+        f"owners not closed once and retired (device_fault={wedge.device_fault()!r}), "
+        f"close_calls={[o.close_calls for o in bad]}:\n"
+        + _thread_origin.describe([o._owner for o in bad], lambda t: t in parked)
+    )
+
+
 def assert_pool_threads_retired():
-    assert all(_ended_or_parked(t) for t in threading.enumerate()
-               if t.name.startswith(("rpg-group-", "walker-")))
+    offenders = [t for t in threading.enumerate()
+                 if t.name.startswith(("rpg-group-", "walker-")) and not _ended_or_parked(t)]
+    parked = set(wedge.parked_threads())
+    assert not offenders, (
+        f"pool threads neither ended nor parked (device_fault={wedge.device_fault()!r}):\n"
+        + _thread_origin.describe(offenders, lambda t: t in parked)
+    )
 
 
 @pytest.mark.parametrize("stage", ["buffers", "factory", "validation", "interrupt"])
@@ -118,7 +138,7 @@ def test_public_builder_retires_every_startup_owned_helper(monkeypatch, stage, f
             assert caught.value.__cause__ is cause
         assert primary.close_calls == 0  # Public builder retains caller's primary.
         assert created
-        assert all(owner.close_calls == 1 and _ended_or_parked(owner._owner) for owner in created)
+        assert_owners_closed_and_retired(created)
         assert all(owner.closed_on[0].startswith("rpg-group-") for owner in created)
         assert not worker_errors
         assert_pool_threads_retired()
@@ -147,7 +167,7 @@ def test_successful_public_builder_transfers_helpers_for_single_close():
         assert wedge.device_fault() is None  # the no-fault path: threads must END
         assert primary.close_calls == 1
         assert not primary._owner.is_alive()
-        assert all(owner.close_calls == 1 and _ended_or_parked(owner._owner) for owner in created)
+        assert_owners_closed_and_retired(created)
         assert_pool_threads_retired()
     finally:
         cleanup([primary, *created])
