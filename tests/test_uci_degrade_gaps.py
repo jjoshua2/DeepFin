@@ -1551,12 +1551,18 @@ def test_device_call_runner_bootstraps_cudagraph_tls_only_for_cuda(monkeypatch, 
 
     calls: list[str] = []
     monkeypatch.setattr(device_guard, "bootstrap_cudagraph_tls", lambda: calls.append("tls"))
+    # The real `torch.cuda.set_device` runs `cuInit`, which on WSL2 opens the
+    # GPU adapter (/dev/dxg) even with `CUDA_VISIBLE_DEVICES` empty: a test must
+    # never initialise the real device. Recorded instead.
+    set_device: list[int] = []
+    monkeypatch.setattr(device_guard.torch.cuda, "set_device", set_device.append)
     runner = device_guard.DeviceCallRunner("d0", device=device)
     try:
         assert runner.call(lambda: 7, limit_s=5.0) == 7
     finally:
         runner.close(2.0)
     assert len(calls) == expected
+    assert set_device == ([0] if device == "cuda:0" else [])
 
 
 @pytest.mark.parametrize(("line", "search_parallel", "expect"), [
