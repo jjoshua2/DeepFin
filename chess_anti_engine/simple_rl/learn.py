@@ -1790,6 +1790,38 @@ def merged_losses(chunks: list[dict[str, Any]]) -> dict[str, float]:
     return out
 
 
+def build_sibling_term(settings: TrainSettings, *, trainer: Any, sampler: Any, run_dir: Path, gens: list[int],
+                       row_ids: np.ndarray, generation: int) -> tuple[Any, Any]:
+    """The sibling term exactly as a phase trains it, and its sidecar: the one constructor for
+    ``train_generation`` and for any probe that must measure the term a cell runs (memory smoke, cost
+    probe, step-0 gradient scale), so a probe cannot build a different term from the cell's settings."""
+    import torch
+
+    from chess_anti_engine.simple_rl.sibling import SiblingListTerm, SiblingTerm, load_sidecars
+
+    if float(settings.w_sibling) <= 0:
+        raise ValueError("build_sibling_term needs w_sibling > 0")
+    if not isinstance(sampler, ScheduledSampler):
+        raise ValueError("w_sibling > 0 needs the exact-once ScheduledSampler")
+    assert settings.sibling_dir is not None  # validate()
+    sidecar = load_sidecars(run_dir, gens, row_ids, Path(settings.sibling_dir),
+                            holdout_frac=float(settings.holdout_frac), newest=generation, unit=settings.sibling_unit)
+    scaler_cls = getattr(torch.amp, "GradScaler", None)
+    if scaler_cls is not None and any(isinstance(v, scaler_cls) and v.is_enabled() for v in vars(trainer).values()):
+        raise ValueError("w_sibling > 0 with an active GradScaler is refused: the term's per-chunk backward runs "
+                         "inside the penalty hook, unscaled")
+    if float(getattr(trainer, "resid_channel_dropout", 0.0)) > 0 or float(
+            getattr(trainer, "resid_channel_balance_weight", 0.0)) > 0:
+        raise ValueError("w_sibling > 0 with residual channel dropout or channel balance is refused: each chunk's "
+                         "forward would draw its own dropout mask / overwrite the root forward's balance loss")
+    term_cls = SiblingListTerm if settings.sibling_unit == "roots" else SiblingTerm
+    term = term_cls(trainer.model, sampler, sidecar, w=float(settings.w_sibling),
+                    rows=int(settings.sibling_rows), chunk_pairs=int(settings.sibling_chunk_pairs),
+                    batch_size=int(settings.batch_size), device=settings.device, loss=settings.sibling_loss,
+                    order_margin=settings.sibling_order_margin, order_min_dq=settings.sibling_order_min_dq)
+    return term, sidecar
+
+
 def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
                      prev_trainer_checkpoint: Path | None, settings: TrainSettings) -> dict[str, Any]:
     import torch
@@ -1929,27 +1961,8 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
     sibling_pairs: Any = None
     sibling_probe_before: dict[str, Any] | None = None
     if float(settings.w_sibling) > 0:
-        from chess_anti_engine.simple_rl.sibling import SiblingListTerm, SiblingTerm, load_sidecars
-
-        if not isinstance(sampler, ScheduledSampler):
-            raise ValueError("w_sibling > 0 needs the exact-once ScheduledSampler")
-        assert settings.sibling_dir is not None  # validate()
-        sibling_pairs = load_sidecars(run_dir, gens, row_ids, Path(settings.sibling_dir),
-                                      holdout_frac=float(settings.holdout_frac), newest=generation,
-                                      unit=settings.sibling_unit)
-        scaler_cls = getattr(torch.amp, "GradScaler", None)
-        if scaler_cls is not None and any(isinstance(v, scaler_cls) and v.is_enabled() for v in vars(trainer).values()):
-            raise ValueError("w_sibling > 0 with an active GradScaler is refused: the term's per-chunk backward runs "
-                             "inside the penalty hook, unscaled")
-        if float(getattr(trainer, "resid_channel_dropout", 0.0)) > 0 or float(
-                getattr(trainer, "resid_channel_balance_weight", 0.0)) > 0:
-            raise ValueError("w_sibling > 0 with residual channel dropout or channel balance is refused: each chunk's "
-                             "forward would draw its own dropout mask / overwrite the root forward's balance loss")
-        term_cls = SiblingListTerm if settings.sibling_unit == "roots" else SiblingTerm
-        sibling = term_cls(trainer.model, sampler, sibling_pairs, w=float(settings.w_sibling),
-                              rows=int(settings.sibling_rows), chunk_pairs=int(settings.sibling_chunk_pairs),
-                              batch_size=int(settings.batch_size), device=settings.device, loss=settings.sibling_loss,
-                              order_margin=settings.sibling_order_margin, order_min_dq=settings.sibling_order_min_dq)
+        sibling, sibling_pairs = build_sibling_term(settings, trainer=trainer, sampler=sampler, run_dir=run_dir,
+                                                    gens=gens, row_ids=row_ids, generation=generation)
         sibling_probe_before = sibling.probe_abs_resid()
     if anchor is not None and sibling is not None:
         from chess_anti_engine.simple_rl.sibling import PenaltyChain

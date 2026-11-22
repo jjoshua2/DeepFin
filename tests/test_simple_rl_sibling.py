@@ -880,3 +880,45 @@ def test_a_bridge_with_two_matching_sequences_is_refused(run: dict[str, Path], m
         sib.materialise(old, run["tmp"] / "ambiguous_side", k=2, min_visits=2, seed=3, holdout_frac=0.25,
                         log=lambda _m: None)
     assert not (run["tmp"] / "ambiguous_side").exists()
+
+
+def test_train_generation_builds_its_term_with_the_shared_constructor_and_records_per_step_detail(
+        run: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    """One constructor for the cell and every probe: train_generation's term IS
+    build_sibling_term's (a probe calling it cannot run a different term), and the summary
+    carries active pairs and child positions per step, summing to the phase totals."""
+    from chess_anti_engine.simple_rl import learn as learn_mod
+
+    built: list[Any] = []
+    real = learn_mod.build_sibling_term
+
+    def spy(*a: Any, **kw: Any) -> Any:
+        term, side = real(*a, **kw)
+        built.append(term)
+        return term, side
+
+    monkeypatch.setattr(learn_mod, "build_sibling_term", spy)
+    d = _fresh_run(run, "shared_ctor")
+    s = train_generation(run_dir=d, generation=1, init_checkpoint=run["ckpt"], prev_trainer_checkpoint=None,
+                         settings=_settings(run, w_sibling=1.0, sibling_rows=8, sibling_chunk_pairs=3,
+                                            sibling_loss="order", sibling_order_margin=0.05,
+                                            sibling_order_min_dq=0.001, sibling_dir=str(run["side"])))
+    assert len(built) == 1
+    sm = s["sibling"]
+    mine = built[0].summary()
+    assert {k: sm[k] for k in mine} == mine   # the recorded term is the constructed one
+    assert sm["per_step_detail_fields"] == ["active_pairs", "child_positions"]
+    detail = sm["per_step_detail"]
+    assert len(detail) == len(sm["per_step"]) == s["updates"]
+    assert [c for _, c in detail] == [2 * n for n, _ in sm["per_step"]]
+    assert sum(a for a, _ in detail) == sm["active_pairs"]
+    assert sum(c for _, c in detail) == sm["child_positions"]
+    assert all(0 <= a <= n for (a, _), (n, _) in zip(detail, sm["per_step"], strict=True))
+
+
+def test_build_sibling_term_refuses_a_zero_weight() -> None:
+    from chess_anti_engine.simple_rl.learn import build_sibling_term
+
+    with pytest.raises(ValueError, match=r"^build_sibling_term needs w_sibling > 0$"):
+        build_sibling_term(TrainSettings(device="cpu"), trainer=None, sampler=None, run_dir=Path("."), gens=[1],
+                           row_ids=np.zeros((0, 3), dtype=np.int64), generation=1)
