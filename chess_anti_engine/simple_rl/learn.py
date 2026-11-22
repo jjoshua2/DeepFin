@@ -1735,17 +1735,19 @@ def write_snapshot(*, out_dir: Path, update: int, trainer: Any, arch: dict[str, 
 _ANCHOR_COUNTERS = ("rows", "forwards", "policy_kl_sum", "wdl_kl_sum")
 
 
-def resumable_snapshot(out_dir: Path, resume_key: str) -> int | None:
+def resumable_snapshot(out_dir: Path, resume_key: str | list[str]) -> int | None:
     """The newest COMPLETE snapshot of an unsealed attempt with this exact
-    resume key (same settings, inputs and batch plan) whose resume files are
-    still present; None when the phase must start from its first update."""
+    resume key (same settings, inputs and batch plan; or any of a list of keys)
+    whose resume files are still present; None when the phase must start from
+    its first update."""
+    keys = {resume_key} if isinstance(resume_key, str) else set(resume_key)
     best = None
     for d in Path(out_dir, SNAPSHOTS).glob("step_*"):
         rec = d / SNAPSHOT_RECORD
         if not (rec.is_file() and (d / RESUME_TRAINER).is_file() and (d / RESUME_STATE).is_file()):
             continue
         data = json.loads(rec.read_text())
-        if data.get("resume_key") == resume_key and (best is None or int(data["update"]) > best):
+        if data.get("resume_key") in keys and (best is None or int(data["update"]) > best):
             best = int(data["update"])
     return best
 
@@ -1988,7 +1990,20 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
         resume_key = snapshot_resume_key(settings=settings, generation=generation, init_checkpoint=init_checkpoint,
                                          prev_trainer_checkpoint=prev_trainer_checkpoint if continued else None,
                                          run_dir=run_dir, gens=gens, probe_path=probe_path, batches=sampler.batches)
-        resumed_from = resumable_snapshot(out_dir, resume_key)
+        key_kw: dict[str, Any] = {"settings": settings, "generation": generation, "init_checkpoint": init_checkpoint,
+                                  "prev_trainer_checkpoint": prev_trainer_checkpoint if continued else None,
+                                  "run_dir": run_dir, "gens": gens, "probe_path": probe_path,
+                                  "batches": sampler.batches}
+        compatible, incompatible = legacy_resume_keys(**key_kw)
+        resumed_from = resumable_snapshot(out_dir, [resume_key, *compatible])
+        if resumed_from is None and incompatible:
+            old = resumable_snapshot(out_dir, incompatible)
+            if old is not None:   # refuse rather than delete a phase's snapshots under a changed definition
+                raise RuntimeError(
+                    f"{out_dir}: snapshot step_{old} was written by this phase under the sibling ORDER form version 1 "
+                    f"(this code trains version {_order_form_version()}); it cannot resume as version 2, and this "
+                    f"code will not delete it. Move {Path(out_dir, SNAPSHOTS)} aside to start the phase over under "
+                    "version 2, or finish it with the code that wrote it")
         for d in Path(out_dir, SNAPSHOTS).glob("step_*"):
             # Stale (another attempt's plan) or past the resume point (never completed): redone.
             if resumed_from is None or int(d.name.split("_")[1]) > resumed_from:
@@ -2175,11 +2190,37 @@ KEY_NEUTRAL_DEFAULTS: dict[str, Any] = {"sibling_loss": "diff", "sibling_order_m
 KEY_EXCLUDED: tuple[str, ...] = ("sibling_chunk_pairs",)
 
 
+def _order_form_version() -> int:
+    from chess_anti_engine.simple_rl.sibling import ORDER_FORM_VERSION
+
+    return ORDER_FORM_VERSION
+
+
+def legacy_resume_keys(**kw: Any) -> tuple[list[str], list[str]]:
+    """Keys the #1501-era code wrote for this same phase. COMPATIBLE (resumed): a
+    ``diff`` phase snapshotted at a non-default ``--sibling-chunk-pairs``, which that
+    code keyed (chunking is gradient-equivalent). INCOMPATIBLE (refused, never
+    deleted): an ``order`` phase written under form version 1 (no version field
+    in its key, with or without its chunk size)."""
+    s: TrainSettings = kw["settings"]
+    if float(s.w_sibling) <= 0:
+        return [], []
+    chunk_keyed = int(s.sibling_chunk_pairs) != 64
+    if s.sibling_loss == "order":
+        incompatible = [snapshot_resume_key(**kw, order_form=False)]
+        if chunk_keyed:
+            incompatible.append(snapshot_resume_key(**kw, order_form=False, key_chunk=True))
+        return [], incompatible
+    return ([snapshot_resume_key(**kw, key_chunk=True)] if chunk_keyed else []), []
+
+
 def snapshot_resume_key(*, settings: TrainSettings, generation: int, init_checkpoint: Path,
                         prev_trainer_checkpoint: Path | None, run_dir: Path, gens: list[int], probe_path: Path,
-                        batches: list[tuple[np.ndarray, np.ndarray]]) -> str:
+                        batches: list[tuple[np.ndarray, np.ndarray]], order_form: bool = True,
+                        key_chunk: bool = False) -> str:
     """Identity of one phase attempt: a snapshot resumes only an attempt with
-    the same settings, inputs (by sha256) and batch plan."""
+    the same settings, inputs (by sha256) and batch plan. ``order_form=False`` /
+    ``key_chunk=True`` rebuild the #1501-era keys (``legacy_resume_keys``)."""
     h = hashlib.sha256()
     for own, sl in batches:
         h.update(np.ascontiguousarray(own, dtype=np.int64).tobytes())
@@ -2191,7 +2232,8 @@ def snapshot_resume_key(*, settings: TrainSettings, generation: int, init_checkp
         if k in keyed and keyed[k] == default:
             del keyed[k]
     for k in KEY_EXCLUDED:
-        keyed.pop(k, None)
+        if not (key_chunk and k == "sibling_chunk_pairs"):
+            keyed.pop(k, None)
     ident = {"settings": keyed, "generation": int(generation),
              "init": sha256_file(init_checkpoint),
              "prev": None if prev_trainer_checkpoint is None else sha256_file(prev_trainer_checkpoint),
@@ -2203,7 +2245,7 @@ def snapshot_resume_key(*, settings: TrainSettings, generation: int, init_checkp
         # default key is unchanged.
         from chess_anti_engine.simple_rl.sibling import SIDECAR_MANIFEST
 
-        if settings.sibling_loss == "order":
+        if settings.sibling_loss == "order" and order_form:
             # The order form's definition changed (version 2: gap-weighted); a phase begun on another version
             # never resumes as this one.
             from chess_anti_engine.simple_rl.sibling import ORDER_FORM_VERSION

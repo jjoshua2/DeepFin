@@ -27,7 +27,8 @@ from chess_anti_engine.simple_rl import sibling as sib
 from chess_anti_engine.simple_rl.learn import ScheduledSampler, TrainSettings, attach_anchor, build_trainer, plan_batches
 from tests.simple_rl_helpers import tiny_model_config
 from tests.test_simple_rl_accum_steps import _arrays
-from tests.test_simple_rl_sibling import _fresh_run, _independent_children, _settings
+from tests.test_simple_rl_sibling import Killed, _fresh_run, _independent_children, _kill_after, _settings
+from tests.test_simple_rl_sibling_chunked import FakePairs
 from tests.test_simple_rl_sibling import run as run  # the module-scoped collect fixture
 
 N_ROWS, BATCH, ROOTS, W, T, M = 37, 16, 5, 3.0, 0.05, 0.08   # batches of 16, 16, 5
@@ -253,6 +254,9 @@ def test_every_root_list_is_its_eligible_children_byte_equal_to_a_rebuild(run: d
     assert (man["kind"], man["version"]) == (sib.LIST_KIND, sib.LIST_SIDECAR_VERSION)
     assert man["complete"]
     assert man["totals"]["children"] > 20
+    for rec in man["shards"].values():   # each roots shard counts children, never a stale "pairs": 0
+        assert "children" in rec["counts"]
+        assert "pairs" not in rec["counts"]
     assert man["totals"]["rows_with_pairs"] == pair_man["totals"]["rows_with_pairs"]
     checked = 0
     for name in man["shards"]:
@@ -343,3 +347,124 @@ def test_a_root_with_one_eligible_child_writes_no_list(run: dict[str, Path], mon
         rows = np.load(out / "gen_0001" / name.replace(".zarr", "") / "row.npy")
         _, n = np.unique(rows, return_counts=True)
         assert (n >= 2).all()
+
+
+# ---------------------------------------------------------------------------
+# #1503 review: empty steps, the child-position count across a restore, the #1501-era resume keys
+# ---------------------------------------------------------------------------
+
+
+def _setup(kind: str, *, w_policy: float, w_wdl: float, empty: bool) -> tuple[Any, Any, Any]:
+    rows = _arrays(N_ROWS)
+    settings = TrainSettings(device="cpu", mirror_prob=0.0, batch_size=BATCH, w_policy=w_policy, w_wdl=w_wdl)
+    torch.manual_seed(0)
+    trainer = build_trainer(tiny_model_config(), settings, log_dir=None)
+    sampler = ScheduledSampler(rows, _plan(), rng=np.random.default_rng(0))
+    planes = int(rows["x"].shape[1])
+    form: dict[str, Any] = {} if kind == "pairs_diff" else {"loss": "order", "order_margin": M, "order_min_dq": T}
+    if kind == "roots_order":
+        lists: Any = FakeLists(N_ROWS, planes)
+        if empty:
+            lists.q[:] = 0.25   # every child of every root tied: no pair reaches |dq| >= t
+        term: Any = sib.SiblingListTerm(trainer.model, sampler, lists, w=W, rows=ROOTS, chunk_pairs=4,
+                                        batch_size=BATCH, device="cpu", **form)
+    else:
+        pairs: Any = FakePairs(N_ROWS, planes)
+        if empty:
+            pairs.row_count[:] = 0   # no row of the step carries a pair
+        term = sib.SiblingTerm(trainer.model, sampler, pairs, w=W, rows=ROOTS, chunk_pairs=4, batch_size=BATCH,
+                               device="cpu", **form)
+    attach_anchor(trainer, term)
+    return trainer, sampler, term
+
+
+@pytest.mark.parametrize("kind", ["pairs_diff", "pairs_order", "roots_order"])
+def test_a_sibling_only_step_with_nothing_to_score_completes_and_leaves_the_weights_unchanged(kind: str) -> None:
+    """Every other loss weight 0 and no pair to score: the term still returns its
+    0-valued leaf, the Trainer's backward is defined, no parameter receives a
+    gradient, so the optimizer leaves every weight bit-identical (no weight decay is
+    applied either: it acts only on parameters with a gradient)."""
+    trainer, sampler, term = _setup(kind, w_policy=0.0, w_wdl=0.0, empty=True)
+    before = {n: p.detach().clone() for n, p in trainer.model.named_parameters()}
+    trainer.train_steps(sampler, batch_size=BATCH, steps=3)
+    for n, p in trainer.model.named_parameters():
+        assert torch.equal(p.detach(), before[n]), n
+    s = term.summary()
+    assert s["steps"] == 3
+    assert s["per_step"] == [[0, 0.0]] * 3
+    assert s["child_positions"] == 0
+    assert s["child_positions_per_step"] is None
+
+
+@pytest.mark.parametrize("kind", ["pairs_diff", "pairs_order", "roots_order"])
+def test_an_empty_term_step_beside_other_losses_is_counted_the_same_way_in_every_unit(kind: str) -> None:
+    trainer, sampler, term = _setup(kind, w_policy=1.0, w_wdl=1.0, empty=True)
+    before = {n: p.detach().clone() for n, p in trainer.model.named_parameters()}
+    trainer.train_steps(sampler, batch_size=BATCH, steps=3)
+    assert any(not torch.equal(p.detach(), before[n]) for n, p in trainer.model.named_parameters())
+    s = term.summary()
+    assert (s["steps"], s["pairs"], s["per_step"]) == (3, 0, [[0, 0.0]] * 3)
+    assert term.last_cursor == sampler.cursor   # the cursor accounting advanced with every step
+
+
+def test_a_snapshot_from_before_the_child_position_field_counts_from_the_restore() -> None:
+    """A #1501-era state (10 steps of 8 pairs, no child_positions): the count starts
+    at the restore, so one real step of 8 pairs reads 16 per step, not 16 / 11."""
+    trainer, sampler, term = _setup("pairs_diff", w_policy=1.0, w_wdl=1.0, empty=False)
+    old = {"steps": 10, "pairs": 80, "loss_sum": 1.0, "abs_resid_sum": 1.0, "per_step": [[8, 0.1]] * 10,
+           "last_cursor": 0, "chunk_pairs": 64, "active": 0, "loss": "diff", "order_margin": None,
+           "order_min_dq": None}
+    term.restore(old)
+    assert term.summary()["child_positions_per_step"] is None
+    trainer.train_steps(sampler, batch_size=BATCH, steps=1)
+    s = term.summary()
+    n = s["per_step"][-1][0]
+    assert n > 0
+    assert s["child_positions_from_step"] == 10
+    assert s["child_positions_per_step"] == 2 * n
+    st = term.state()
+    fresh = _setup("pairs_diff", w_policy=1.0, w_wdl=1.0, empty=False)[2]
+    fresh.restore(st)   # a state that has the field keeps its starting step
+    assert fresh.summary()["child_positions_per_step"] == 2 * n
+
+
+def _phase(run: dict[str, Path], name: str, monkeypatch: pytest.MonkeyPatch, legacy: dict[str, bool],
+           **kw: Any) -> tuple[Path, Any]:
+    """Run a phase to its update-3 snapshot and kill it, with every resume key
+    rebuilt as the #1501-era code wrote it (``legacy`` = the key variant)."""
+    from chess_anti_engine.simple_rl import learn as learn_mod
+    from chess_anti_engine.simple_rl.learn import train_generation
+
+    s = _settings(run, w_sibling=1.0, sibling_rows=8, sibling_dir=str(run["side"]), snapshot_updates=(3,), **kw)
+    d = _fresh_run(run, name)
+    real_key: Any = learn_mod.snapshot_resume_key
+    monkeypatch.setattr(learn_mod, "snapshot_resume_key", lambda **k: real_key(**{**k, **legacy}))
+    real_snap = _kill_after(monkeypatch, 3)
+    with pytest.raises(Killed):
+        train_generation(run_dir=d, generation=1, init_checkpoint=run["ckpt"], prev_trainer_checkpoint=None, settings=s)
+    monkeypatch.setattr(learn_mod, "write_snapshot", real_snap)
+    monkeypatch.setattr(learn_mod, "snapshot_resume_key", real_key)
+    return d, s
+
+
+def test_an_order_phase_snapshotted_under_form_version_1_is_refused_never_deleted(
+        run: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    from chess_anti_engine.simple_rl.learn import SNAPSHOTS, train_generation
+
+    d, s = _phase(run, "v1_order", monkeypatch, {"order_form": False}, sibling_loss="order",
+                  sibling_order_margin=0.05, sibling_order_min_dq=0.001)
+    snaps = sorted(p.name for p in (d / "gen_0001" / "train" / SNAPSHOTS).glob("step_*"))
+    assert snaps
+    with pytest.raises(RuntimeError, match="version 1"):
+        train_generation(run_dir=d, generation=1, init_checkpoint=run["ckpt"], prev_trainer_checkpoint=None, settings=s)
+    assert sorted(p.name for p in (d / "gen_0001" / "train" / SNAPSHOTS).glob("step_*")) == snaps
+
+
+def test_a_diff_phase_snapshotted_with_its_chunk_size_keyed_resumes(
+        run: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    from chess_anti_engine.simple_rl.learn import train_generation
+
+    d, s = _phase(run, "keyed_chunk", monkeypatch, {"key_chunk": True}, sibling_chunk_pairs=3)
+    done = train_generation(run_dir=d, generation=1, init_checkpoint=run["ckpt"], prev_trainer_checkpoint=None,
+                            settings=s)
+    assert done["resumed_from_snapshot"] == 3

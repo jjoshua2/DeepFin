@@ -449,8 +449,11 @@ def _plan_shard(view: CollectView, shard_index: int, meta: dict[str, np.ndarray]
     rows = _shard_rows(view.shards[shard_index])
     plan: list[tuple[Any, ...]] = []
     moves_of: dict[int, list[str]] = {}
-    counts = {"rows": len(meta["game_id"]), "rows_with_stats": 0, "rows_with_pairs": 0, "pairs": 0,
+    counts = {"rows": len(meta["game_id"]), "rows_with_stats": 0, "rows_with_pairs": 0,
+              "children" if unit == "roots" else "pairs": 0,
               "terminal_children_excluded": 0, "repetition_children_excluded": 0}
+    if unit == "roots":
+        counts["rows_with_one_child"] = 0
     for gid, offs in _game_rows(meta).items():
         plies = np.asarray(meta["ply_index"])[offs]
         it = rebuild_game(view, gid, plies, np.asarray(meta["x_hash"])[offs], rows["played_move_index"][offs],
@@ -477,7 +480,7 @@ def _plan_shard(view: CollectView, shard_index: int, meta: dict[str, np.ndarray]
                     cand.append(int(c))
             q = rows["root_child_q"][off]
             if unit == "roots":   # every eligible child of a root with at least two of them
-                counts["rows_with_one_child"] = counts.get("rows_with_one_child", 0) + int(len(cand) == 1)
+                counts["rows_with_one_child"] += int(len(cand) == 1)
                 if len(cand) >= 2:
                     counts["rows_with_pairs"] += 1
                     plan.extend((off, gid, int(plies[i]), c, float(q[c]), float(visits[c]), held) for c in sorted(cand))
@@ -602,7 +605,8 @@ def materialise(collect_dir: Path, out_dir: Path, *, k: int = 2, min_visits: flo
         files = _write_shard(view, tmp / view.shards[si].name.replace(".zarr", ""), metas[si], plan, moves_of, unit)
         records[view.shards[si].name] = {"index": si, "rows": len(metas[si]["game_id"]), "counts": counts,
                                          "files": files}
-        log(f"wrote shard {si}: {counts.get('pairs', counts.get('children'))} {'children' if unit == 'roots' else 'pairs'} "
+        what = "children" if unit == "roots" else "pairs"
+        log(f"wrote shard {si}: {counts[what]} {what} "
             f"({time.perf_counter() - t0:.0f}s, "
             f"peak RSS {_peak_rss_mib():.0f} MiB)")
     totals = {key: int(sum(r["counts"][key] for r in records.values()))
@@ -962,6 +966,7 @@ class SiblingTerm:
         self.active = 0   # pairs with a non-zero loss (the order form's pairs still to be ordered)
         self.unit = "pairs"
         self.child_positions = 0   # child inputs forwarded with grad (the equal-budget check across units)
+        self.child_positions_from_step = 0   # the term step at which child_positions began counting
         self.steps = 0
         self.pairs_seen = 0
         self.loss_sum = 0.0
@@ -1019,13 +1024,20 @@ class SiblingTerm:
             raise RuntimeError(f"sibling term: {len(stale)} parameter gradients were not cleared before the term's "
                                f"backward (first: {stale[0]}); the Trainer must zero_grad before the hook")
 
+    def _zero_leaf(self) -> Any:
+        """A 0-valued leaf with no parameter behind it: the Trainer adds it to its root loss and calls
+        backward, which stays defined when the term is the only loss (every other weight 0)."""
+        import torch
+
+        return torch.zeros((), device=self.device, requires_grad=True)
+
     def penalty(self, outputs: dict[str, Any], batch: dict[str, Any]) -> Any:
         del outputs
         ids = self._batch_pairs()
         self.steps += 1
-        if not ids.size:
+        if not ids.size:   # no pair this step: still a 0-valued leaf, so a sibling-only step stays well-defined
             self.per_step.append([0, 0.0])
-            return None
+            return self._zero_leaf()
         scale = self._row_scale(batch)
         self._require_cleared_grads()
         n = int(ids.size)
@@ -1088,7 +1100,7 @@ class SiblingTerm:
                 "chunk_pairs": self.chunk_pairs, "chunk_segments": [list(x) for x in self.chunk_segments],
                 "active": self.active, "loss": self.loss,
                 "order_margin": self.order_margin, "order_min_dq": self.order_min_dq, "unit": self.unit,
-                "child_positions": self.child_positions,
+                "child_positions": self.child_positions, "child_positions_from_step": self.child_positions_from_step,
                 "order_form_version": ORDER_FORM_VERSION if self.loss == "order" else None}
 
     def restore(self, state: dict[str, Any]) -> None:
@@ -1115,16 +1127,22 @@ class SiblingTerm:
         if segs[-1][1] != self.chunk_pairs:
             segs.append([self.steps, self.chunk_pairs])
         self.chunk_segments = segs
-        self.child_positions = int(state.get("child_positions", 0))
+        # A snapshot from before the field counted nothing for its steps: count from here on, never divide the new
+        # positions by the old steps.
+        if "child_positions" in state:
+            self.child_positions = int(state["child_positions"])
+            self.child_positions_from_step = int(state.get("child_positions_from_step", 0))
+        else:
+            self.child_positions, self.child_positions_from_step = 0, self.steps
 
     def summary(self) -> dict[str, Any]:
         n = self.pairs_seen
-        term_steps = sum(1 for r in self.per_step if r[0])
+        term_steps = sum(1 for r in self.per_step[self.child_positions_from_step:] if r[0])
         return {"w": self.w, "sibling_rows": self.rows, "chunk_pairs": self.chunk_pairs,
                 "chunk_segments": [list(x) for x in self.chunk_segments], "loss": self.loss,
                 "order_margin": self.order_margin, "order_min_dq": self.order_min_dq, "active_pairs": self.active,
                 "unit": self.unit, "order_form_version": ORDER_FORM_VERSION if self.loss == "order" else None,
-                "child_positions": self.child_positions,
+                "child_positions": self.child_positions, "child_positions_from_step": self.child_positions_from_step,
                 "child_positions_per_step": self.child_positions / term_steps if term_steps else None,
                 "steps": self.steps, "pairs": n,
                 "mean_weighted_huber": self.loss_sum / n if n else None,   # kept for diff-era readers
@@ -1194,9 +1212,9 @@ class SiblingListTerm(SiblingTerm):
         plan = self._root_plan(self._batch_roots())
         self.steps += 1
         z = float(sum(r["a"] for r in plan))
-        if not plan or z <= 0:
+        if not plan or z <= 0:   # no eligible root this step: the same 0-valued leaf as the pair unit
             self.per_step.append([0, 0.0])
-            return None
+            return self._zero_leaf()
         scale = self._row_scale(batch)
         self._require_cleared_grads()
         budget = 2 * self.chunk_pairs

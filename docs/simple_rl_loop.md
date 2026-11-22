@@ -1069,11 +1069,19 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
       `--sibling-unit` or `--sibling-loss` / `--sibling-order-*`, with `--w-sibling 0` is refused,
       because it would be ignored.
   - **Take-effect record.** The train summary's `sibling` block holds:
-    - pairs, steps, the per-step (pairs, loss) log, the mean weighted loss (keyed
-      `mean_weighted_huber` for both forms), the loss form with its margin and
-      threshold, `chunk_pairs`, and `active_pairs`;
-    - mean |Δv − dq| on a fixed probe of up to 1,024 hold-out pairs of the newest
-      generation, before and after the phase;
+    - pairs, steps, the per-step (pairs, loss) log, `mean_weighted_loss` (the
+      form-neutral key: Huber under `diff`, the ranking loss under `order`; in
+      `roots` mode the mean per-step term value), the older `mean_weighted_huber`
+      (kept for diff-era readers; `null` in `roots` mode), the loss form with its
+      margin and threshold, `chunk_pairs` and `chunk_segments`, `active_pairs`,
+      and `child_positions` / `child_positions_per_step` (counted from
+      `child_positions_from_step`: a snapshot from before the field counts from its
+      restore); `roots` mode adds `roots`;
+    - the hold-out probe, before and after the phase. `pairs` mode: up to 1,024
+      hold-out pairs of the newest generation, with mean |Δv − dq| and `sign_agree`
+      (the rate at which the net orders a pair with |dq| ≥ t as the search does).
+      `roots` mode: up to 128 hold-out roots (`probe_roots`), every pair among
+      their children with |dq| ≥ t, with the same two numbers;
     - K, min visits, and every sidecar's manifest and per-file sha256.
     - The manifest's inputs carry `sibling_gen_<g>`.
   - **Snapshot resume.** When the term is on, the resume key also hashes every
@@ -1081,7 +1089,11 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
     same `--sibling-dir` restarts the phase instead of resuming.
     `--sibling-unit`, `--sibling-loss` and `--sibling-order-*` enter the key only at
     a non-default value, so adding them did not change any existing key. With
-    `--sibling-loss order` the key also carries the order form's version.
+    `--sibling-loss order` the key also carries the order form's version. A
+    phase whose snapshots were written under order form version 1 (by the
+    #1501-era code) is refused with a message naming them, never deleted: move the
+    snapshots aside to restart it under version 2. A #1501-era `diff` phase
+    snapshotted at a non-default chunk size (which that code keyed) resumes.
     `--sibling-chunk-pairs` never enters the key: it changes memory, not the update,
     so an interrupted phase can resume at a smaller chunk (the out-of-memory
     recovery). The term records each value with the step it started at
