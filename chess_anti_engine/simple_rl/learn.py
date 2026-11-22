@@ -214,6 +214,12 @@ class TrainSettings:
     # `sibling_rows` rows of each batch that carry pairs present all their pairs.
     w_sibling: float = 0.0
     sibling_rows: int = 128
+    # The term's pairs are forwarded at most `sibling_chunk_pairs` at a time, each chunk with its own backward
+    # inside the penalty hook (sibling.py): peak memory = the root batch + one chunk. Gradient-equivalent at any
+    # value (float summation order only); there is no unchunked path. Default 64: on the 5090, peak reserved
+    # = 16.95 + 0.0574 GiB per pair in one graph (operator diagnostic 2026-11-22, rows 0/16/32/64), so a 64-pair
+    # chunk adds ~3.7 GiB; 128 rows (~255 pairs) in one graph needed ~31.6 of 31.8 GiB.
+    sibling_chunk_pairs: int = 64
     sibling_dir: str | None = None
 
     def effective_batch(self) -> int:
@@ -335,15 +341,17 @@ class TrainSettings:
         if not math.isfinite(w) or w < 0:
             raise ValueError(f"w_sibling must be a finite value >= 0, got {self.w_sibling}")
         if w == 0:
-            if self.sibling_dir is not None or int(self.sibling_rows) != 128:
-                raise ValueError("sibling_dir / sibling_rows are read only with w_sibling > 0; with w_sibling 0 "
-                                 "they would be ignored")
+            if self.sibling_dir is not None or int(self.sibling_rows) != 128 or int(self.sibling_chunk_pairs) != 64:
+                raise ValueError("sibling_dir / sibling_rows / sibling_chunk_pairs are read only with w_sibling > 0; "
+                                 "with w_sibling 0 they would be ignored")
             return
         if not self.sibling_dir:
             raise ValueError("w_sibling > 0 needs sibling_dir (the materialised pair sidecars, "
                              "scripts/simple_rl_sibling_pairs.py)")
         if not 1 <= int(self.sibling_rows) <= int(self.batch_size):
             raise ValueError(f"sibling_rows must be in [1, batch_size {self.batch_size}], got {self.sibling_rows}")
+        if int(self.sibling_chunk_pairs) < 1:
+            raise ValueError(f"sibling_chunk_pairs must be >= 1, got {self.sibling_chunk_pairs}")
         if int(self.accum_steps) != 1:
             # Same reason as the KL anchor: the term is a per-micro-batch mean
             # added through the Trainer's penalty hook.
@@ -1899,8 +1907,17 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
         assert settings.sibling_dir is not None  # validate()
         sibling_pairs = load_sidecars(run_dir, gens, row_ids, Path(settings.sibling_dir),
                                       holdout_frac=float(settings.holdout_frac), newest=generation)
+        scaler_cls = getattr(torch.amp, "GradScaler", None)
+        if scaler_cls is not None and any(isinstance(v, scaler_cls) and v.is_enabled() for v in vars(trainer).values()):
+            raise ValueError("w_sibling > 0 with an active GradScaler is refused: the term's per-chunk backward runs "
+                             "inside the penalty hook, unscaled")
+        if float(getattr(trainer, "resid_channel_dropout", 0.0)) > 0 or float(
+                getattr(trainer, "resid_channel_balance_weight", 0.0)) > 0:
+            raise ValueError("w_sibling > 0 with residual channel dropout or channel balance is refused: each chunk's "
+                             "forward would draw its own dropout mask / overwrite the root forward's balance loss")
         sibling = SiblingTerm(trainer.model, sampler, sibling_pairs, w=float(settings.w_sibling),
-                              rows=int(settings.sibling_rows), device=settings.device)
+                              rows=int(settings.sibling_rows), chunk_pairs=int(settings.sibling_chunk_pairs),
+                              batch_size=int(settings.batch_size), device=settings.device)
         sibling_probe_before = sibling.probe_abs_resid()
     if anchor is not None and sibling is not None:
         from chess_anti_engine.simple_rl.sibling import PenaltyChain

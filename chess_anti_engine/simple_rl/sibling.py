@@ -54,6 +54,19 @@ the realised one (``rep_fix.current()``), and refuses any disagreement.
 where ``dv = v(A) - v(B)`` comes from the WDL head of the SAME net in the same
 step.
 
+**Chunked, with a backward per chunk** (the only path). The step's pairs are
+forwarded ``chunk_pairs`` at a time and each chunk runs its own
+``(scale * w * chunk_weighted.sum() / n_pairs).backward()`` inside the penalty
+hook, which then returns a 0-valued leaf (no parameter behind it). The chunk terms sum to ``w * mean``, so the
+gradient is the single-forward term's up to float summation order, while only
+ONE chunk's child graph is alive at a time: peak memory = the root batch's graph
++ one chunk (a 2 x 255-child forward at 128 rows exhausted a 32 GB card on top of
+a 512-row batch, 2026-11-22). ``scale`` is the Trainer's own ``rows /
+batch_size`` for the exact-once sampler (it multiplies whatever the hook returns,
+and a gradient already taken inside the hook must carry it too). The hook runs
+after the Trainer's ``zero_grad`` and before its ``backward``; it refuses to run
+on gradients that were not cleared for this update.
+
 POV algebra: a child is the position AFTER the parent's move, so the child's
 side to move is the parent's OPPONENT. The head outputs ``(W, D, L)`` for the
 child's side to move, and the parent's value of the child is
@@ -757,12 +770,19 @@ class SiblingTerm:
     applies to the root batch only; children are presented unmirrored.
     """
 
-    def __init__(self, model: Any, sampler: Any, pairs: SidecarPairs, *, w: float, rows: int, device: str) -> None:
+    def __init__(self, model: Any, sampler: Any, pairs: SidecarPairs, *, w: float, rows: int, chunk_pairs: int,
+                 batch_size: int, device: str) -> None:
+        if int(chunk_pairs) < 1:
+            raise ValueError(f"sibling chunk_pairs must be >= 1, got {chunk_pairs}")
+        if int(batch_size) < 1:
+            raise ValueError(f"sibling batch_size must be >= 1, got {batch_size}")
         self.model = model
         self.sampler = sampler
         self.pairs = pairs
         self.w = float(w)
         self.rows = int(rows)
+        self.chunk_pairs = int(chunk_pairs)
+        self.batch_size = int(batch_size)
         self.device = device
         self.steps = 0
         self.pairs_seen = 0
@@ -792,20 +812,58 @@ class SiblingTerm:
         return (torch.from_numpy(xa).to(dev).float(), torch.from_numpy(xb).to(dev).float(),
                 torch.from_numpy(self.pairs.dq[ids]).to(dev), torch.from_numpy(self.pairs.min_visits[ids]).to(dev))
 
+    def _row_scale(self, batch: dict[str, Any]) -> float:
+        """The Trainer's factor on what this hook returns, applied to the gradients
+        taken inside it: ``rows / batch_size`` for a sampler with ``stored_row_quota``
+        (the exact-once ScheduledSampler, whose last batch is short), else refused."""
+        if not getattr(self.sampler, "stored_row_quota", False) or getattr(self.sampler, "exact_without_replacement",
+                                                                           False):
+            raise RuntimeError("sibling term: the Trainer's per-batch loss scale is only reproduced for the "
+                               "exact-once ScheduledSampler (stored_row_quota)")
+        rows = int(batch["x"].shape[0])
+        if not 1 <= rows <= self.batch_size:
+            raise RuntimeError(f"sibling term: the batch holds {rows} rows, outside [1, batch_size {self.batch_size}]")
+        return rows / self.batch_size
+
+    def _require_cleared_grads(self) -> None:
+        """The chunk backwards add into ``.grad`` before the Trainer's own backward;
+        gradients left over from anything else would be summed into this update."""
+        stale = [n for n, p in self.model.named_parameters() if p.grad is not None]
+        if stale:
+            raise RuntimeError(f"sibling term: {len(stale)} parameter gradients were not cleared before the term's "
+                               f"backward (first: {stale[0]}); the Trainer must zero_grad before the hook")
+
     def penalty(self, outputs: dict[str, Any], batch: dict[str, Any]) -> Any:
-        del outputs, batch
+        del outputs
         ids = self._batch_pairs()
         self.steps += 1
         if not ids.size:
             self.per_step.append([0, 0.0])
             return None
-        weighted, resid = sibling_loss(self.model, *self._tensors(ids))
-        loss = weighted.mean()
-        self.pairs_seen += int(ids.size)
-        self.loss_sum += float(weighted.detach().sum())
-        self.abs_resid_sum += float(resid.detach().abs().sum())
-        self.per_step.append([int(ids.size), float(loss.detach())])
-        return self.w * loss
+        scale = self._row_scale(batch)
+        self._require_cleared_grads()
+        n = int(ids.size)
+        coef = scale * self.w / n
+        weighted_sum = abs_resid_sum = None
+        for start in range(0, n, self.chunk_pairs):
+            weighted, resid = sibling_loss(self.model, *self._tensors(ids[start:start + self.chunk_pairs]))
+            (weighted.sum() * coef).backward()
+            w_part, r_part = weighted.detach().sum(), resid.detach().abs().sum()
+            weighted_sum = w_part if weighted_sum is None else weighted_sum + w_part
+            abs_resid_sum = r_part if abs_resid_sum is None else abs_resid_sum + r_part
+            del weighted, resid, w_part, r_part   # this chunk's graph is gone before the next forward
+        assert weighted_sum is not None
+        assert abs_resid_sum is not None
+        total = float(weighted_sum)
+        self.pairs_seen += n
+        self.loss_sum += total
+        self.abs_resid_sum += float(abs_resid_sum)
+        self.per_step.append([n, total / n])
+        # Its gradient is already in .grad. A 0-valued leaf (no parameter behind it) keeps the Trainer's
+        # ``backward`` well-defined when this term is the only loss (every other weight 0).
+        import torch
+
+        return torch.zeros((), device=weighted_sum.device, requires_grad=True)
 
     def probe_abs_resid(self) -> dict[str, Any]:
         """mean |dv - dq| on the fixed hold-out probe, model in eval mode, no grad."""
@@ -826,9 +884,13 @@ class SiblingTerm:
 
     def state(self) -> dict[str, Any]:
         return {"steps": self.steps, "pairs": self.pairs_seen, "loss_sum": self.loss_sum,
-                "abs_resid_sum": self.abs_resid_sum, "per_step": list(self.per_step), "last_cursor": self.last_cursor}
+                "abs_resid_sum": self.abs_resid_sum, "per_step": list(self.per_step), "last_cursor": self.last_cursor,
+                "chunk_pairs": self.chunk_pairs}
 
     def restore(self, state: dict[str, Any]) -> None:
+        if int(state.get("chunk_pairs", self.chunk_pairs)) != self.chunk_pairs:
+            raise RuntimeError(f"sibling term: the snapshot was taken at chunk_pairs {state['chunk_pairs']}, this "
+                               f"phase runs {self.chunk_pairs}")
         self.steps = int(state["steps"])
         self.pairs_seen = int(state["pairs"])
         self.loss_sum = float(state["loss_sum"])
@@ -838,7 +900,7 @@ class SiblingTerm:
 
     def summary(self) -> dict[str, Any]:
         n = self.pairs_seen
-        return {"w": self.w, "sibling_rows": self.rows, "steps": self.steps, "pairs": n,
+        return {"w": self.w, "sibling_rows": self.rows, "chunk_pairs": self.chunk_pairs, "steps": self.steps, "pairs": n,
                 "mean_weighted_huber": self.loss_sum / n if n else None,
                 "mean_abs_resid_train": self.abs_resid_sum / n if n else None,
                 "per_step": self.per_step}

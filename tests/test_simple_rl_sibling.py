@@ -278,7 +278,8 @@ def _probe_of(model_path: Path, pairs: sib.SidecarPairs) -> dict[str, Any]:
     from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
     model = load_model_from_checkpoint(str(model_path), device="cpu")
-    term = sib.SiblingTerm(model, SimpleNamespace(cursor=0), pairs, w=1.0, rows=1, device="cpu")
+    term = sib.SiblingTerm(model, SimpleNamespace(cursor=0), pairs, w=1.0, rows=1, chunk_pairs=32, batch_size=32,
+                           device="cpu")
     return term.probe_abs_resid()
 
 
@@ -359,6 +360,33 @@ def test_sibling_rows_caps_the_rows_whose_pairs_each_batch_trains(run: dict[str,
         assert max(per_step) <= k * rows
         totals[rows] = sum(per_step)
     assert 0 < totals[1] < totals[8]
+
+
+def test_sibling_chunk_pairs_reaches_the_term_that_trains_and_is_recorded(
+        run: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    """The setting is read by the consumer: the term built inside train_generation
+    forwards ceil(pairs / chunk) grad-enabled chunks per step, and the manifest's
+    settings and sibling summary both record the value."""
+    real = sib.sibling_loss
+    sizes: list[int] = []
+
+    def count(model: Any, xa: Any, *rest: Any) -> Any:
+        if torch.is_grad_enabled():
+            sizes.append(int(xa.shape[0]))
+        return real(model, xa, *rest)
+
+    monkeypatch.setattr(sib, "sibling_loss", count)
+    d = _fresh_run(run, "chunk3")
+    s = train_generation(run_dir=d, generation=1, init_checkpoint=run["ckpt"], prev_trainer_checkpoint=None,
+                         settings=_settings(run, w_sibling=1.0, sibling_rows=8, sibling_chunk_pairs=3,
+                                            sibling_dir=str(run["side"])))
+    assert s["sibling"]["chunk_pairs"] == 3
+    per_step = [n for n, _ in s["sibling"]["per_step"] if n]
+    assert sizes
+    assert max(sizes) <= 3
+    assert len(sizes) == sum(-(-n // 3) for n in per_step)
+    man = json.loads((d / "gen_0001" / "train" / "manifest.json").read_text())
+    assert man["config"]["settings"]["sibling_chunk_pairs"] == 3
 
 
 def test_a_sidecar_materialised_from_another_collect_is_refused(run: dict[str, Path]) -> None:
@@ -456,6 +484,9 @@ def test_settings_refuse_what_the_term_cannot_honour(run: dict[str, Path]) -> No
                       ({"w_sibling": float("nan")}, "finite"),
                       ({"sibling_dir": side}, "ignored"),
                       ({"sibling_rows": 64}, "ignored"),
+                      ({"sibling_chunk_pairs": 16}, "ignored"),
+                      ({"w_sibling": 1.0, "sibling_dir": side, "sibling_rows": 8, "sibling_chunk_pairs": 0},
+                       "sibling_chunk_pairs"),
                       ({"w_sibling": 1.0, "sibling_dir": side, "sibling_rows": 8, "accum_steps": 2}, "accum_steps"),
                       ({"w_sibling": 1.0, "sibling_dir": side, "sibling_rows": 8, "sample_with_replacement": True},
                        "exact-once"),
@@ -493,12 +524,14 @@ def test_cli_flags_reach_the_settings_and_are_pinned_with_defaults(tmp_path: Pat
     assert simple_rl_loop.ADDED_SINCE_PINNING["w_sibling"] == 0.0
     assert simple_rl_loop.ADDED_SINCE_PINNING["sibling_rows"] == 128
     assert simple_rl_loop.ADDED_SINCE_PINNING["sibling_dir"] is None
+    assert simple_rl_loop.ADDED_SINCE_PINNING["sibling_chunk_pairs"] == 64
     common = ["run", "--run-dir", str(tmp_path / "r"), "--openings-dir", str(tmp_path / "o"), "--generations", "1"]
     off = simple_rl_loop.train_settings(simple_rl_loop.parser().parse_args(common), tmp_path / "r")
-    assert (off.w_sibling, off.sibling_rows, off.sibling_dir) == (0.0, 128, None)
+    assert (off.w_sibling, off.sibling_rows, off.sibling_dir, off.sibling_chunk_pairs) == (0.0, 128, None, 64)
     on = simple_rl_loop.train_settings(simple_rl_loop.parser().parse_args(
-        [*common, "--w-sibling", "0.5", "--sibling-rows", "64", "--sibling-dir", str(tmp_path / "s")]), tmp_path / "r")
-    assert (on.w_sibling, on.sibling_rows, on.sibling_dir) == (0.5, 64, str(tmp_path / "s"))
+        [*common, "--w-sibling", "0.5", "--sibling-rows", "64", "--sibling-dir", str(tmp_path / "s"),
+         "--sibling-chunk-pairs", "7"]), tmp_path / "r")
+    assert (on.w_sibling, on.sibling_rows, on.sibling_dir, on.sibling_chunk_pairs) == (0.5, 64, str(tmp_path / "s"), 7)
     with pytest.raises(ValueError, match="sibling_dir"):
         simple_rl_loop.train_settings(simple_rl_loop.parser().parse_args([*common, "--w-sibling", "0.5"]),
                                       tmp_path / "r")

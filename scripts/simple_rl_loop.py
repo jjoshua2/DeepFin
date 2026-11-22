@@ -194,7 +194,8 @@ def train_settings(a: argparse.Namespace, run_dir: Path) -> TrainSettings:
         lr_schedule=a.lr_schedule,
         accum_steps=a.accum_steps, snapshot_rows=parse_snapshot_updates(a.snapshot_rows, flag="--snapshot-rows"),
         value_rows_per_game=a.value_rows_per_game,
-        w_sibling=a.w_sibling, sibling_rows=a.sibling_rows, sibling_dir=a.sibling_dir,
+        w_sibling=a.w_sibling, sibling_rows=a.sibling_rows, sibling_chunk_pairs=a.sibling_chunk_pairs,
+        sibling_dir=a.sibling_dir,
     )
     settings.validate()
     if settings.optimizer_hparams_source != "trainer":
@@ -349,7 +350,10 @@ ADDED_SINCE_PINNING = {"init_optimizer_state": "fresh",
                        # Every run before --root-full-width searched the plain topk root.
                        "root_full_width": False,
                        # Every run before --w-sibling trained no sibling term.
-                       "w_sibling": 0.0, "sibling_rows": 128, "sibling_dir": None}
+                       "w_sibling": 0.0, "sibling_rows": 128, "sibling_dir": None,
+                       # Every run before --sibling-chunk-pairs forwarded the step's pairs in one graph; the chunked
+                       # term is gradient-equivalent, and the key is read only with --w-sibling.
+                       "sibling_chunk_pairs": 64}
 
 
 def _pinned_value(path: Path, key: str, legacy: Any) -> Any:
@@ -782,6 +786,10 @@ def _common(p: argparse.ArgumentParser) -> None:
     t.add_argument("--sibling-rows", type=int, default=128,
                    help="with --w-sibling: how many of each batch's rows (the first that carry pairs, in the "
                         "batch's shuffled order) present their pairs. Default 128")
+    t.add_argument("--sibling-chunk-pairs", type=int, default=64,
+                   help="with --w-sibling: at most this many pairs per forward; each chunk backpropagates inside "
+                        "the penalty hook, so peak memory is the root batch + one chunk. Gradient-equivalent at "
+                        "any value (float summation order); there is no unchunked path. Default 64")
     t.add_argument("--sibling-dir", default=None,
                    help="with --w-sibling: directory holding gen_<g>/ sidecars written by "
                         "scripts/simple_rl_sibling_pairs.py for every generation the phase trains on")
