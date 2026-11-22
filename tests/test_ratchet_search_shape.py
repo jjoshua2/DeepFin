@@ -393,6 +393,8 @@ def _run_ratchet(root: Path, *args: str, mode: str = "good", env: dict | None = 
 
 @pytest.mark.parametrize(("free_mib", "compiled"), [
     ("24000", True), ("10240", True), ("10239", False), ("8000", False), ("N/A", False), ("", False),
+    # one line per GPU: the script reads only the first (GPU 0)
+    ("24000\n2000", True), ("2000\n24000", False),
 ])
 def test_the_arena_compiles_only_above_the_vram_floor(tmp_path, free_mib, compiled) -> None:
     """daily_gate_ratchet.sh's VRAM floor protects a live trainer from an OOM:

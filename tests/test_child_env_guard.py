@@ -9,10 +9,13 @@ The scan is an AST pass over `tests/*.py`. It looks at process launches:
 (as attributes, or bare names imported with ``from subprocess import ...``),
 ``asyncio.create_subprocess_exec``, and ``os.execve`` / ``os.execvpe`` /
 ``os.posix_spawn`` / ``os.posix_spawnp``. The argv may be a list or tuple
-literal, positional or ``args=``, or a name bound once in the same function to
-one. A launch counts as starting python when its first program, after any
-``timeout`` / ``nice`` / ``env`` / ``setsid`` / ``stdbuf`` wrapper and that
-wrapper's options, is ``sys.executable`` or a ``python*`` literal.
+literal, positional or ``args=``, or a name bound once (``cmd = [...]`` or
+``cmd: list[str] = [...]``) in the same function to one. A launch counts as starting python when its first program, after any
+``timeout`` / ``nice`` / ``env`` / ``setsid`` / ``stdbuf`` / ``ionice`` /
+``taskset`` wrapper and that wrapper's options (``-n 10``, ``30``, ``5s``,
+``A=1``, a ``0x1`` mask, a ``0-3`` CPU list), is ``sys.executable`` (any
+``.executable`` attribute) or a ``python*`` literal; a single string (the
+``shell=True`` form) counts when its first word is one.
 
 The env may be a dict literal, ``dict(K=...)``, or a name bound once in the
 same function to either; ``env[K] = v`` and ``env.update({...})`` /
@@ -22,14 +25,27 @@ but a literal, inherits from the suite and is left alone; so is any other
 expression (``gpu_free_env(...)``, ``os.environ.copy()``).
 
 Still missed: an env from a dict comprehension, or returned by a helper
-function, or built in another function than the launch; a launch through a
-helper of its own (e.g. a ``_run`` wrapper whose argv is a parameter); an
-argv assembled with ``+`` / ``*`` unpacking from names. A guard against the
-common shapes, not a proof.
+function, or built in another function than the launch; an env bound twice
+in the function; a complete env with a key removed afterwards (``env.pop``,
+``del env[...]``); a launch through a helper of its own (e.g. a ``_run``
+wrapper whose argv is a parameter), through
+``functools.partial(subprocess.run, env=...)``, or inside a lambda; an argv
+assembled with ``+`` / ``*`` unpacking from names; python reached through a
+variable (``exe = sys.executable``), ``shutil.which("python3")`` or
+``str(sys.executable)``; a ``shell=True`` string whose first word is not
+python (``"cd /tmp && python3 x.py"``); ``asyncio.create_subprocess_shell``;
+a ``taskset`` mask written without ``0x`` (``taskset ff ...``). A guard
+against the common shapes, not a proof.
+
+Known false positives: ``env |= {...}``, ``env.setdefault(...)`` and keys
+held in named constants are not read, and any object's ``.run([sys.executable],
+env=...)`` is taken for ``subprocess.run``. The remedy for each is the same:
+wrap the env in ``gpu_free_env(...)``.
 """
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 from tests._child_env import GPU_FREE, gpu_free_env
@@ -45,8 +61,10 @@ _WRAPPERS = {"timeout", "nice", "env", "setsid", "stdbuf", "ionice", "taskset"}
 def _is_python(node: ast.expr | None) -> bool:
     if isinstance(node, ast.Attribute) and node.attr == "executable":
         return True
-    return (isinstance(node, ast.Constant) and isinstance(node.value, str)
-            and node.value.rsplit("/", 1)[-1].startswith("python"))
+    if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+        return False
+    words = node.value.split()  # a shell string: its first word is the program
+    return bool(words) and words[0].rsplit("/", 1)[-1].startswith("python")
 
 
 def _program(elts: list[ast.expr]) -> ast.expr | None:
@@ -60,13 +78,14 @@ def _program(elts: list[ast.expr]) -> ast.expr | None:
         base = word.rsplit("/", 1)[-1]
         if base in _WRAPPERS:
             i += 1
-            # the wrapper's own options / arguments: -n 10, 5s, -k 1, VAR=val, ...
+            # the wrapper's own options / arguments: -n 10, 5s, -k 1, VAR=val, 0x1, 0-3, ...
             while i < len(elts):
                 w = elts[i]
                 if not (isinstance(w, ast.Constant) and isinstance(w.value, str)):
                     break
                 t = w.value
-                if t.startswith("-") or "=" in t or t.replace(".", "", 1).rstrip("smhd").isdigit():
+                if (t.startswith("-") or "=" in t or t.replace(".", "", 1).rstrip("smhd").isdigit()
+                        or re.fullmatch(r"0[xX][0-9a-fA-F]+|[0-9][0-9,-]*", t)):
                     i += 1
                     continue
                 break
@@ -139,6 +158,13 @@ def _problems(env: _Env) -> list[str]:
     return out
 
 
+def _binds(name: str, scope_nodes: list[ast.AST]) -> list[ast.Assign | ast.AnnAssign]:
+    """Every ``name = ...`` / ``name: T = ...`` in the scope."""
+    return [n for n in scope_nodes if isinstance(n, (ast.Assign, ast.AnnAssign))
+            and any(isinstance(t, ast.Name) and t.id == name
+                    for t in (n.targets if isinstance(n, ast.Assign) else [n.target]))]
+
+
 def _resolve_env(node: ast.expr | None, scope_nodes: list[ast.AST]) -> _Env | None:
     """The env a launch passes, or None when it inherits / is not a literal."""
     if node is None:
@@ -146,9 +172,7 @@ def _resolve_env(node: ast.expr | None, scope_nodes: list[ast.AST]) -> _Env | No
     env = _Env()
     if isinstance(node, ast.Name):
         name = node.id
-        binds = [n for n in scope_nodes if isinstance(n, (ast.Assign, ast.AnnAssign))
-                 and any(isinstance(t, ast.Name) and t.id == name
-                         for t in (n.targets if isinstance(n, ast.Assign) else [n.target]))]
+        binds = _binds(name, scope_nodes)
         if len(binds) != 1 or binds[0].value is None or not env.take_dict(binds[0].value):
             return None
         for n in scope_nodes:
@@ -174,8 +198,7 @@ def _resolve_env(node: ast.expr | None, scope_nodes: list[ast.AST]) -> _Env | No
 
 def _resolve_argv(node: ast.expr | None, scope_nodes: list[ast.AST]) -> list[ast.expr] | None:
     if isinstance(node, ast.Name):
-        binds = [n for n in scope_nodes if isinstance(n, ast.Assign)
-                 and any(isinstance(t, ast.Name) and t.id == node.id for t in n.targets)]
+        binds = _binds(node.id, scope_nodes)
         node = binds[0].value if len(binds) == 1 else None
     if isinstance(node, (ast.List, ast.Tuple)):
         return list(node.elts)
@@ -294,6 +317,29 @@ async def async_exec():
     await asyncio.create_subprocess_exec(sys.executable, "x.py", env={"PATH": "/bin"})
 def os_exec():
     os.execve(sys.executable, [sys.executable, "x.py"], {"PATH": "/bin"})
+def other_subprocess_calls():
+    subprocess.check_output([sys.executable], env={"PATH": "/bin"})
+    subprocess.check_call([sys.executable], env={"PATH": "/bin"})
+    subprocess.call([sys.executable], env={"PATH": "/bin"})
+def tuple_argv():
+    subprocess.run((sys.executable, "x.py"), env={"PATH": "/bin"})
+def other_os_exec():
+    os.execvpe("python3", ["python3", "x.py"], {"PATH": "/bin"})
+    os.posix_spawn(sys.executable, [sys.executable], {"PATH": "/bin"})
+    os.posix_spawnp("python3", ["python3"], env={"PATH": "/bin"})
+def other_wrappers():
+    subprocess.run(["setsid", sys.executable], env={"PATH": "/bin"})
+    subprocess.run(["stdbuf", "-oL", sys.executable], env={"PATH": "/bin"})
+    subprocess.run(["ionice", "-c", "3", sys.executable], env={"PATH": "/bin"})
+    subprocess.run(["taskset", "0x1", sys.executable], env={"PATH": "/bin"})
+    subprocess.run(["taskset", "-c", "0-3", sys.executable], env={"PATH": "/bin"})
+def annotated_argv():
+    cmd: list[str] = [sys.executable, "x.py"]
+    subprocess.run(cmd, env={"PATH": "/bin"})
+def shell_string_with_a_path():
+    subprocess.run("python3 a/b.py", shell=True, env={"PATH": "/bin"})
+def bash_with_a_python_path():
+    subprocess.run(["bash", "python/x.sh"], env={"PATH": "/bin"})
 '''
     assert scratch_env_children(src) == [
         (5, _BOTH),
@@ -309,6 +355,20 @@ def os_exec():
         (45, _BOTH),
         (47, _BOTH),
         (49, _BOTH),
+        (51, _BOTH),
+        (52, _BOTH),
+        (53, _BOTH),
+        (55, _BOTH),
+        (57, _BOTH),
+        (58, _BOTH),
+        (59, _BOTH),
+        (61, _BOTH),
+        (62, _BOTH),
+        (63, _BOTH),
+        (64, _BOTH),
+        (65, _BOTH),
+        (68, _BOTH),
+        (70, _BOTH),
     ]
 
 
