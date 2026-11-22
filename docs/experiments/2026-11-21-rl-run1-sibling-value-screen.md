@@ -11,7 +11,15 @@ plays no new collection games, and changes nothing live. Outputs go to
 Revision 2 applied the #1481 statistics review (evidence:
 `~/chess-artifacts/operations/rl-claude-20261119/plan-review-1481/`). Revision 3 sets the training pin to
 main **`9c0ff07dc`** (the merge of #1486, the Trainer-level take-effect test), registers a page-cache warm-up of
-the sidecar bytes the cells read, and restates the Zq family's Stage B after match 8.
+the sidecar bytes the cells read, and restates the Zq family's Stage B after match 8. Revision 4 applies the
+statistics review at `fbb177c9f` (evidence: `plan-review-1481/delta-fbb177c9f/`):
+- the P shape flag is removed, and the shape numbers are report-only;
+- a Stage B damage reading retires the RAW recipe only, with a label per family;
+- a control failure without the S replicate reads "undecidable";
+- the Stage B order is P, Zq, S (smallest contrast MDE first);
+- step 1a/1b text now matches the commands;
+- a per-cell budget check runs after every sibling cell;
+- `stage_a_decide.py` v3 is tested with 24 fabricated checks and nine mutants.
 
 ## Why
 
@@ -236,7 +244,7 @@ All cells train at `TSHA` (`9c0ff07dc`) on the pilot's frozen collection (`--col
 | Cell | Value flags | Role |
 |---|---|---|
 | `P_sib_*` (3 strengths) | `--w-wdl 0 --w-sibling w --sibling-dir $SIDE` | (a) policy + sibling only: the root value gets no loss. The cleanest test of "does sibling training alone help, or at least not hurt, the value" |
-| `Zq_sib_*` (3) | Zq's flags + `--w-sibling w --sibling-dir $SIDE` | (b) the nearest-to-adoptable root target plus the term |
+| `Zq_sib_*` (3) | Zq's flags + `--w-sibling w --sibling-dir $SIDE` | (b) Zq's root target (its loss vs the base is largely shape, match 7) plus the term |
 | `S_sib_*` (3) | S's flags + `--w-sibling w --sibling-dir $SIDE` | (c) does the term repair the ordering S breaks? |
 | `P0_main` | `--w-wdl 0` (term off) | code-base control (c) above; offline only |
 | Controls, not retrained | the banked P0, S, Zq (`rl-run1-pilot/arm_*`) | references |
@@ -306,25 +314,34 @@ banked first (`sibling_holdout_resid.npz`, with `game_id`, `dq`, `min_visits`).
 - **Ruler leakage** (reviewer, `RC/plan-review-1481/ruler_overlap.json`): the sibling-ordering
   ruler (rl-audit, 2,433 leak-free rows, 190 games) shares **0 game ids** with the pilot collect
   (761,979 rows, 8,000 games). **1 ruler row's exact `x` appears in the collect.**
-- This screen's own files (`SB/stage_a/`, revision 2, read-only, `SHA256SUMS`; revision 1 files
-  kept as `*.v1` with `SHA256SUMS.v1`):
+- This screen's own files (`SB/stage_a/`, revision 4, read-only, `SHA256SUMS`; revision 1 files
+  kept as `*.v1` with `SHA256SUMS.v1`, revision 2/3 files as `*.v2` with `SHA256SUMS.v2`):
 
   | File | sha256 prefix |
   |---|---|
-  | `cells.json` | `c1b1e7e93a7e…` |
+  | `cells.json` (v3: `family_priority` P, Zq, S; `damage_labels`) | `85f5a387a420…` |
   | `train_check.py` | `f739886c075f…` |
   | `sibling_holdout.py` | `0897bf777521…` |
-  | `stage_a_decide.py` | `8dac8d5b782e…` |
+  | `stage_a_decide.py` (v3) | `5c76f1ea3cd5…` |
   | `run_stage_a.sh` | `241de8fb1dab…` |
 
-  `fab_v2/` holds the decision script's test on fabricated inputs (17 checks, all pass) and
-  six mutants of its new branches, each killed (`fab_v2/mutants.txt`).
+  `fab_v3/` holds the v3 decision script's test on fabricated inputs and the mutants:
+  - 24 checks, all pass. They add the P, Zq, S order, the damage labels, the absence of any shape
+    flag, a report-only ΔWL that must see a +W/−L shift, the "undecidable" control without a
+    replicate, and a replicate whose `game_id` differs (scenario E3).
+  - Nine mutants, each killed by exit code 1 (`fab_v3/mutants/mutants.txt`): the reviewer's three
+    (`m_rep1`, `m_anchor_rows`, `m_shape_wl`, adapted to v3), plus undecidable, labels,
+    smallest-w, control ignored, rows check, and the v2 order in `cells.json`.
+  - `fab_v3/budget/` runs the step-2 `budget_check` function, extracted verbatim, on fabricated
+    metrics (ok, exceed, the exact edge) with one mutant (2× budget), which is killed.
+
+  `fab_v2/` (v2's 17 checks and six mutants) is kept.
 - The pre-launch scripts are in `SB/prelaunch/` with their own `SHA256SUMS`: `grad_scale.py`
   `6a25772191f5…`, `cost_probe.py` (revision 3; revision 2 kept as `cost_probe.py.v2`)
   `ad41afdd6590…`, `check_load.py` `e8a870764bb5…`, `guard_a.py` `d247b0f0e665…`, `coherence.py`
   `bcdabcbed5c8…`, `warm_sidecar.py` `1989388fc967…`, `validate_cells.py` `2c4023cef494…`.
 
-**Statistics** (raw heads; `stage_a_decide.py` v2):
+**Statistics** (raw heads; `stage_a_decide.py` v3):
 - **VOID:** `train_check.py` failed the cell, or its VOID marker exists.
 - **Veto, exactly as the anchor screen:** VETOED iff the 95% CI upper bound of
   `sibling_order.json → paired_minus_base.all.clearplus_50plus.<cell>_raw` is below 0.
@@ -353,6 +370,11 @@ banked first (`sibling_holdout_resid.npz`, with `game_id`, `dq`, `min_visits`).
     all-pairs sibling statistic.
   - **A failure means main trains differently from the PIN on these inputs: no Stage B,
     verdict "unread: code-base control failed".**
+  - **Except when the S replicate is VOID** (revision 4, review item 2). If the anchor screen's
+    `logits_S_trunc_final` is missing, or its `game_id` / base logits are not bit-equal to the
+    control's rows, kl_rep is None. Only the floor then applies, and a failure cannot be told apart
+    from ordinary GPU nondeterminism. It reads **"unread: control undecidable (no replicate)"**,
+    still with no Stage B. A pass against the floor alone still passes.
 - **Level and draw mass, for every cell vs its family net (review item 4).** In the P cells
   (`--w-wdl 0`) only Δ(L − W) is fitted, so the value's level and its draw mass are free to move.
   The clear-pair veto cannot see that, because it is level-invariant. Shape alone cost Zq about
@@ -362,23 +384,41 @@ banked first (`sibling_holdout_resid.npz`, with `game_id`, `dq`, `min_visits`).
   - the change in `KL_share_removed`, each net by its own (T, b) fit;
   - both fits.
 
-  For a P cell, `shape_departs_from_P0` is true iff any of the three CIs excludes 0. For the Zq
-  and S families the same numbers are report-only.
+  **These numbers are report-only for every family, P included (revision 4, statistics review
+  item 1).** Revision 3 turned a P cell's Stage B "damage" into "damage, shape-confounded" whenever
+  any of the three CIs excluded 0. That flag could not be false:
+  - It had no magnitude threshold. The game bootstrap on these 39,237 rows resolves a ±0.002
+    logit shift (ΔWL 0.0004 [0.00038, 0.00040]).
+  - P0 alone, with no value loss at all, moved ΔWL by −0.0120 [−0.0139, −0.0100] from the base.
+  - A P cell passes INERT only if its value head moves, so every P cell that reached Stage B would
+    have carried the flag, and "damage (otherwise)" could never fire.
+
+  No magnitude threshold replaces it, because ΔWL magnitude does not track Elo here: P0's −0.012
+  played +2.2, while Zq's −0.011 lost about 21 Elo on shape (match 7). The flag is removed. What a
+  P-family match can and cannot conclude is stated under "What each outcome licenses".
 - **Report-only:** each cell's `KL_base_net_raw`, `share_of_gap_closed`, `KL_share_removed`
   by its own (T, b), FEN-only value regret and outcome distance.
 
 ### Stage B: matches
 
-- **Selection, fixed now, not by offline score (review item 3).** Families in this order: **Zq,
-  P, S**. Per family, the **LARGEST-w** cell that is not VOID, VETOED or INERT. The first two
+- **Selection, fixed now, not by offline score (review item 3).** Families in this order: **P,
+  Zq, S**. Per family, the **LARGEST-w** cell that is not VOID, VETOED or INERT. The first two
   families that have one are matched; at most two matches.
   - Why the largest: the veto already guards against ordering damage, and the smallest dose is
     the weakest test of a term hypothesised to help. The choice is still fixed by w, never by an
     offline score.
-  - Why this order: Zq + sibling is the recipe nearest to adoption (Zq's root target kept
-    ordering intact, and match 7 showed its loss is largely shape); P + sibling is the owner's
-    question in its cleanest form; S + sibling is a repair test of a target that loses 20 Elo,
-    so it has the least prospect of nominating a recipe.
+  - **Why this order (revision 4, review item 4): a pre-data rule, the smallest report-only
+    contrast MDE first.** P 13.1 Elo, Zq 21.1, S 25.6 (the table below). The family whose match
+    can best separate the term from its banked same-family net goes first. Revision 3 ordered by
+    "nearest to adoption", which match 8 made stale.
+  - **The selected pair does not depend on the order.** With top-two-of-three, S is matched only
+    if P or Zq has no PASS cell, under either order. With all three families passing, the pair is
+    P and Zq either way. The order sets only which match runs first and takes seed 2026112193.
+  - **What a Zq damage reading can say: little about the term.** Raw Zq measured −10.0 against
+    the base. The sibling term ignores the value's level, so it cannot repair raw Zq's shape loss
+    of about 21 Elo (match 7). If the term does nothing, a raw Zq + sibling match reads "damage"
+    with probability about 0.84 (the power table's −10 column; the reviewer's figure). A Zq damage
+    reading is labelled accordingly.
 - **Design.** Cell vs the SL base, plain seats, seat-balanced; 6,400 games (3,200 per run,
   1,600 openings); seeds **2026112193** (first selected cell) and **2026112194** (second), unused
   anywhere under `docs/` and in every bank; the follow-up launcher
@@ -387,6 +427,8 @@ banked first (`sibling_holdout_resid.npz`, with `game_id`, `dq`, `min_visits`).
   per seat first.
 - **Rules, as match 5:** "damage" iff UB95 < 0; "adoptable" iff LB95 > −10; otherwise
   "unread". Match 5's tie-break is kept as written (it cannot trigger at the expected SE).
+  "Improves on the base" iff LB95 > 0 is reported alongside "adoptable", as in match 8
+  (revision 4).
 - **Stage B stays raw** and blind to recalibration. A recalibrated P match would be a separate
   record.
 - **The Zq family after match 8.** Recalibrated Zq beats the base (+9.6 [+3.3, +16.0], match 8),
@@ -427,12 +469,23 @@ banked first (`sibling_holdout_resid.npz`, with `game_id`, `dq`, `min_visits`).
 | Reading | Licenses |
 |---|---|
 | adoptable | NOMINATES that recipe (family + w) for a two-generation run with the policy, under its own record. Nothing is adopted here. For the Zq family it is a nomination of the RAW recipe only, which must then meet match 8's "Zq + per-generation recalibration" in a fresh head-to-head (below) |
-| damage, P cell with `shape_departs_from_P0` | **"damage, shape-confounded"**: the loss may be level or draw mass, which this family leaves free. It is NOT "sibling training is not the fix" |
-| damage (otherwise) | The term at that strength does not make that value recipe safe |
+| damage, P family | **"damage of the raw recipe; attribution (shape vs content) unread."** The P family leaves the value's level and draw mass free (`--w-wdl 0`), so the loss may be shape, which recalibration could remove, or content. The report-only shape numbers are shown beside it and decide nothing. It **retires the raw recipe** (P + sibling at that w, no recalibration). It is NOT "sibling training is not the fix" |
+| damage, Zq family | **"damage of raw Zq + sibling; says little about the term"**: about 0.84 likely even if the term does nothing (raw Zq −10.0; the term cannot repair its ≈ 21 Elo shape loss). Retires the raw recipe only |
+| damage, S family | **"damage of raw S + sibling; says little about the term"**: S measured −20.0, so a damage reading is more than 0.99 likely if the term does nothing (power table, −21 column). Retires the raw recipe only |
 | unread | Nothing |
 
-**"Sibling training is not the fix"** for a family: every cell of it is VOID, vetoed or inert,
-or its matched cell reads damage that is not shape-confounded.
+**So Stage B can only nominate (adoptable) or retire a RAW recipe.** "Sibling training is not
+the fix" is not a reachable conclusion from a damage reading alone, in any family. For a family
+it is reachable only from Stage A: every cell of the family is VOID, vetoed or inert.
+
+**Why the P match is still worth its cost (≈ 1.5 GPU-h).**
+- The informative outcomes are "adoptable" and "improves on the base" (LB95 > 0, reported
+  alongside). Either would nominate a new value recipe that keeps the policy-only cell's ordering
+  and adds a value signal.
+- P is the family where the sibling term is the ONLY thing moving the value head (`--w-wdl 0`).
+  An adoptable P + sibling cell is therefore the cleanest evidence available that the term itself
+  carries a value signal the base lacks.
+- Its report-only contrast has the smallest MDE (13.1 Elo).
 
 **Competing nominations across the value lines (review item 9).** Three records can nominate a
 value recipe: the anchor screen (≤ 2 matches), match 8 (1) and this screen (≤ 2). Zq appears in
@@ -491,6 +544,15 @@ the heaviest cell's flags (`Zq_sib_w366`), and with the same flags at `--w-sibli
 - **Realised-wall gate (registered now).** The first sibling cell that exits 0 has its process
   wall compared with its projection. **If the wall exceeds 1.5 × the projection, the screen
   stops** (`SB/HOLD_WALL`) and the owner decides.
+- **Per-cell budget check, on EVERY sibling cell (revision 4, review item 6).**
+  - Why it is needed. The 1.5× gate covers only the first sibling cell. Residency after a cell's
+    own sha pass is measured once, in step 1b (reported, not gated). Later cells could still
+    degrade unseen, for example if the page cache is squeezed.
+  - The check. After each sibling cell exits 0, its trainer's own `summary.wall_seconds` (the
+    training loop) is compared with the loop budget = 3,367 − 419 − `sidecar_setup_s` (from the
+    warm probe), where 3,367 s is the per-cell budget that keeps training under the HOLD limit.
+  - **If it exceeds the budget, the screen stops before the next cell** (`SB/HOLD_BUDGET`) and the
+    owner decides. The check costs one JSON read per cell.
 - **The host read is handled by a page-cache warm-up** (revision 3, below), not by a trainer code
   change. No background reader is built.
 
@@ -558,10 +620,13 @@ value-anchor screen's trainer resident: about 26 GB used, `MemAvailable` 72.5–
   steps) with the GPU probe, instead of assuming either.
 
 **Registered warm-up gates (all in the commands):**
-- **Step 1a:** `warm_sidecar.py plan`. Its range-list sha256 must equal `c54a78722450…` and its
-  plan check must pass. Then `warm`, then `check` ≥ 0.99.
-- **Step 1b:** the cost probe is run cold (report only), then WARM (`COST_PROBE_CACHE=warm`, the
-  same 50 batches) after a fresh `warm`. **The warm probe decides.** Its host-read median must be
+- **Step 1a:** `warm_sidecar.py plan` only. Its range-list sha256 must equal `c54a78722450…` and
+  its plan check must pass. Nothing is warmed in step 1a, so the cold probe that follows runs on a
+  cold cache (revision 4, review item 5: the text now matches the commands).
+- **Step 1b:** the cost probe is run cold (report only). Then the FIRST `warm`, then `check`
+  ≥ 0.99, then the WARM probe (`COST_PROBE_CACHE=warm`, the same 50 batches). **The warm probe
+  decides.** After it, `check` reports the residency left by the probe's own sha pass. That is the
+  one measurement of residency after a sha pass; it is reported, not gated. Its host-read median must be
   ≤ host_read_max = (3,367 − 419 − `sidecar_setup_s`) / 1,412 − `gpu_and_rest_s`, both read from
   the warm probe. 3,367 s is the per-cell budget that keeps training under the registered HOLD
   limit: (2 × 4.3 × 3,600 − 653) / 9. With the estimate's 0.56 s step and 68 s setup,
@@ -569,7 +634,8 @@ value-anchor screen's trainer resident: about 26 GB used, `MemAvailable` 72.5–
   registered. The projection uses the warm probe.
 - **Before EACH sibling cell:** `check` ≥ 0.99, or `warm` again and re-check. A second failure
   stops the screen (`SB/HOLD_WARM`).
-- The realised-wall gate on the first sibling cell stays.
+- The realised-wall gate on the first sibling cell stays. The per-cell budget check
+  (`wall_seconds`) runs after every sibling cell.
 
 **Estimate until the probe reads** (the doc's "about double", plus 0.19 s host read per step):
 pilot step ≈ 0.31 s (the Zq cell's 440 s / 1,412) → sibling step ≈ 0.75 s. Per sibling cell:
@@ -650,7 +716,8 @@ The `CELL` table must agree with `SB/stage_a/cells.json` (the checker's source o
 values); `train_check.py` fails any cell whose realised w, w_wdl or search fraction differs.
 
 **Step 1a: the warm-up's touched set** (CPU; can run while the anchor screen trains, subject to
-its `MemAvailable` floor):
+its `MemAvailable` floor). It derives and checks the plan and defines `warm_ok`; it warms
+nothing:
 
 ```bash
 WARM="$PY $SB/prelaunch/warm_sidecar.py"
@@ -661,7 +728,8 @@ warm_ok() { (cd $TW && PYTHONPATH=. $WARM check $SB/warm) || { (cd $TW && PYTHON
   (cd $TW && PYTHONPATH=. $WARM check $SB/warm); }; }
 ```
 
-**Step 1b: the cost probe** (GPU alone): cold (report only), then warm (decides), then no term:
+**Step 1b: the cost probe** (GPU alone): cold (report only), then the first warm-up, then warm
+(decides), then no term:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. $PY -u $SB/prelaunch/cost_probe.py $SB/cost_probe_sib_cold.json 50 $COLLECT $TRAIN ${CELL[Zq_sib_w366]} || exit 1
@@ -708,11 +776,27 @@ if wall > 1.5 * proj:
     sys.exit(f"HOLD: {c} wall {wall:.0f}s > 1.5 x projected {proj:.0f}s")
 PYEOF
 }
+budget_check() {   # every sibling cell: the trainer's own loop wall vs the per-cell loop budget (revision 4)
+  $PY - $SB $1 <<'PYEOF'
+import json, sys
+sb, c = sys.argv[1:3]
+w = json.load(open(f"{sb}/arm_{c}/gen_0001/train/metrics.json"))["summary"]["wall_seconds"]
+setup = json.load(open(f"{sb}/cost_probe_sib.json"))["sidecar_setup_s"]
+budget = (2 * 4.3 * 3600 - 653) / 9 - 419 - setup
+with open(f"{sb}/budget_check.jsonl", "a") as fh:
+    fh.write(json.dumps({"cell": c, "wall_seconds": w, "loop_budget_s": budget}) + "\n")
+if w > budget:
+    open(f"{sb}/HOLD_BUDGET", "x").write(f"{c}: loop wall {w:.0f}s > budget {budget:.0f}s\n")
+    sys.exit(f"HOLD: {c} loop wall {w:.0f}s > budget {budget:.0f}s")
+PYEOF
+}
+after_cell() { [ "$1" != P0_main ] && [ "$(cut -d' ' -f1 $SB/arm_$1.exit)" = 0 ] || return 0
+  wall_gate $1 && budget_check $1; }
 CELLS="Zq_sib_w41 Zq_sib_w122 Zq_sib_w366 P_sib_w23 P_sib_w69 P_sib_w207 S_sib_w28 S_sib_w83 S_sib_w248 P0_main"
 for c in $CELLS; do
   if [ "$c" != P0_main ]; then warm_ok || { echo "$c: touched pages < 99% resident after a re-warm" > $SB/HOLD_WARM; exit 1; }; fi
   train $c
-  if [ "$c" != P0_main ] && [ "$(cut -d' ' -f1 $SB/arm_$c.exit)" = 0 ]; then wall_gate $c || exit 1; fi
+  after_cell $c || exit 1
 done
 for c in $CELLS; do
   [ "$(cut -d' ' -f1 $SB/arm_$c.exit)" = 0 ] && continue
@@ -720,7 +804,7 @@ for c in $CELLS; do
   for f in "" .log .exit .started; do [ ! -e $SB/arm_$c$f ] || mv $SB/arm_$c$f $SB/arm_$c.crash1$f; done
   if [ "$c" != P0_main ]; then warm_ok || { echo "$c: touched pages < 99% resident after a re-warm" > $SB/HOLD_WARM; exit 1; }; fi
   train $c
-  if [ "$c" != P0_main ] && [ "$(cut -d' ' -f1 $SB/arm_$c.exit)" = 0 ]; then wall_gate $c || exit 1; fi
+  after_cell $c || exit 1
 done
 $PY $SB/stage_a/train_check.py $SB
 ```
