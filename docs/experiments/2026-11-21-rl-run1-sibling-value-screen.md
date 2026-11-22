@@ -1,7 +1,9 @@
 # 2026-11-21: RL run 1 — sibling-ordering value screen (`--w-sibling`) (pre-registration, revision 7)
 
 **Status: registered design (revision 7), not launched.** Revision 6's first GPU step failed (step 1b, below), and
-no cell has ever trained. Revision 7 redesigns the cells around the owner's ask and the measurements made since.
+no cell has ever trained. **NO stage of this screen launches — no smoke, probe, training, Stage A or match — before
+the launch addendum is reviewed and merged on main.** That addendum carries the built scripts' sha256, the sealed
+strengths, and the memory smoke's thresholds as coded; this record alone authorises nothing. Revision 7 redesigns the cells around the owner's ask and the measurements made since.
 It launches in two parts:
 - **Part 1, on the pilot's frozen collection, after** this record is reviewed and merged, after generation 2
   ([gen-2 record](2026-11-22-rl-run1-generation2-zq-recal.md)) has released the GPU, and after the launch
@@ -38,8 +40,10 @@ history. In short, they:
    and (b) are re-proved from the PIN to it, and guard (b)'s path list is restated.
 4. **Memory:** the term forwards at most 64 pairs per chunk with a backward per chunk (`--sibling-chunk-pairs` 64).
    A 3-update GPU smoke writes peak memory after each update, and its 0.85 × total abort runs before any cell.
-5. **Stage A for every term cell:** the targeted quantity is the sign-agreement rate with the search on hold-out
-   pairs with |dq| ≥ t, so a term that goes quiet by design is not called inert.
+5. **Stage A for every term cell:** the primary is the value head's child-ordering accuracy against deep SF on the
+   frozen audit set (clear pairs ≥ 50 cp), cell minus control: an INDEPENDENT ruler, and the gate to Stage B. Sign
+   agreement with the search's own dq on hold-out pairs with |dq| ≥ t is a take-effect check only (it decides
+   INERT, so a term that goes quiet by design is not called inert, but it is scored by the teacher itself).
 6. **Equal child-forward budget** is a checked take-effect field. Active pairs, child positions and roots trained
    are recorded per step.
 7. **Start net and control are stated against generation 2's Stage 0**, which read "adoptable, not replicated".
@@ -325,7 +329,7 @@ seat-balanced, both seats recalibrated, read by
 `$PY $SB/stage_b/stage_b_verdict.py $SB7/arenas/sib_<cell>/pool.json`. The thresholds are pre-committed below.
 Stage A only vetoes or declares a cell inert. It never selects between survivors.
 
-### Stage A: veto, targeted quantity, controls
+### Stage A: the independent ordering ruler (primary), the take-effect check, controls
 
 **Instruments:** the value-anchor screen's banked adapted instruments at the PIN, by sha256, exactly as revision 6
 registered them. Their control (`rl-run1-value-anchor/offline/control/CONTROL_PASS`) is required, not rerun.
@@ -334,12 +338,33 @@ collection.
 
 **Per cell:**
 - **VOID:** `train_check.py` failed the cell.
-- **Veto (unchanged):** VETOED iff the 95% upper bound of the deep-SF clear-pair sibling-ordering accuracy, cell
-  minus base (`sibling_order.json → paired_minus_base.all.clearplus_50plus.<cell>_raw`), is below 0. The ruler is
-  the rl-audit collection, which is independent of the training games.
-- **Targeted quantity, which decides INERT (revision 7, every term cell, both forms).** This is the sign-agreement
-  rate with the search on hold-out pairs with |dq| ≥ t = 0.0203, both children ≥ 2 visits, cell minus its part's
-  control, paired by pair, with 2,000 game-bootstrap resamples (seed 20261121):
+- **Primary: ordering accuracy against an INDEPENDENT reference.** On the frozen audit set the two scoping banks
+  and the pilot diagnosis already score (2,433 leak-free rl-audit rows with full history, 190 games; deep SF 8M
+  child scores; 38,705 "clear+" pairs, SF gap ≥ 50 cp, not decided; head ties 0.5), the accuracy with which the
+  value head orders each pair of root children, **cell minus its part's control, paired by pair, 2,000
+  game-clustered resamples (seed 20261121)**.
+  - **Why it is the primary.** The term trains toward the SEARCH's dq. Agreement with that same dq on hold-out
+    games is held out by game but scored by the teacher itself, so it cannot tell "learned the search's ordering"
+    from "learned the search's errors", and a self-search ruler has inverted against an independent one here
+    before (the net's own deep search scored the stored target +8.4 pp; BT4 scored it +0.7). Deep SF on the frozen
+    audit set is a different engine, on a different collection (0 shared games with the pilot collection), and
+    never changes.
+  - **Pre-committed readings:** **"improves independent ordering" iff the 95% lower bound > 0; VETOED ("harms
+    ordering") iff the upper bound < 0; otherwise "not separated".**
+  - **Resolution and headroom.** Paired against the base on these pairs, the pilot arms' intervals were about
+    ± 0.0025–0.0033 wide (S −0.0096 [−0.0129, −0.0064], Zq −0.0007 [−0.0032, +0.0017]). The headroom is the
+    search's own advantage over the net, +0.0274 on the (≥ 2, ≥ 2) clear pairs (14,304 of the 38,705). A term that
+    transferred all of it would move the all-clear+ accuracy by about +0.010; a transfer of about a third is at the
+    edge of resolution. The (≥ 2, ≥ 2) subset is reported beside it, not decided on.
+  - **Base-relative, report-only:** each net minus the base (the old veto's form,
+    `sibling_order.json → paired_minus_base.all.clearplus_50plus`).
+  - It applies unchanged to both parts: the audit set does not depend on the collection a cell trained on.
+  - Built from the instrument's per-pair correctness (`sibling_children.npz` form) for every net, so the contrast
+    with the control is paired by construction (precondition P3).
+- **Take-effect check (demoted from revision 7's first draft; decides INERT).** The sign-agreement rate with the
+  search on hold-out pairs with |dq| ≥ t = 0.0203, both children ≥ 2 visits, cell minus its part's control, paired by
+  pair, with 2,000 game-bootstrap resamples (seed 20261121). It shows that the term reached the net; it is never
+  evidence that the ordering is right:
   - Part 1: every hold-out pair of the pilot pair sidecar v2 (416 hold-out games);
   - Part 2: every pair among each hold-out root's ≥ 2-visit children, from Part 2's root-list sidecar (its 5%
     hold-out games).
@@ -364,8 +389,12 @@ collection.
 - **Report-only:** each cell's ΔWL and Δ draw mass vs its control, `KL_base_net_raw`, `share_of_gap_closed`,
   `KL_share_removed` by its own (T, b), FEN-only value regret and outcome distance (revision 6's list).
 
-**To Stage B:** every term cell that is not VOID, VETOED or INERT, provided the code-base control passed. There is no
-selection by w or by offline score: up to four term matches, two per part.
+**To Stage B:** every term cell that takes effect AND reads **"improves independent ordering"** (primary LB > 0),
+provided the code-base control passed. The hypothesis is that the term improves the value's ordering of children;
+a cell that does not show that on the independent ruler has not shown the mechanism, and a 1.45 GPU-h match would
+test a term whose mechanism is unseen. A "not separated" cell is reported, not matched. There is no selection by w
+or by the size of the gain: up to four term matches, two per part. An offline gain still does not license a
+strength claim (three fit→Elo transfer failures are on record); only Stage B does.
 
 ### Stage B: matches
 
@@ -419,6 +448,8 @@ selection by w or by offline score: up to four term matches, two per part.
 | B5: order beats diff (or diff beats order) | the form choice for the pair unit, at s = 0.50, under recalibration |
 | unread | nothing. The interval contains 0, which is consistent with true effects up to ≈ 13 Elo either way |
 | Stage A: every cell of a form VOID, vetoed or inert | that form does not take effect at the registered dose; it is never matched |
+| Stage A: takes effect, but "not separated" on the independent ruler | the term reached the net, but no improvement of the value's ordering against deep SF is shown at this resolution; not matched |
+| Stage A: "improves independent ordering" | the mechanism is shown offline (the value orders children closer to deep SF); NOT a strength claim; it licenses the match |
 
 **The two list strengths are not matched against each other.** Their Stage A agreement gains and their B3 / B4
 readings are reported side by side as a two-point dose check. A difference between them is not a registered
@@ -556,8 +587,10 @@ launch.
   take-effect record needs. #1515 is open; it must merge, and `TSHA` moves to its merge commit by an addendum, with
   guards (a)/(b) re-checked by the same diff argument.
 - **P3.** `SB7/stage_a/train_check.py` v3 (the fields above, the equal-budget VOID), `sibling_holdout.py` v2 (the
-  sign-agreement statistic over |dq| ≥ t, pair and root units), `stage_a_decide.py` v6 (VOID / VETO / INERT, the
-  Zq code-base gate on both parts, B1–B5 eligibility including B5's "≤ 3 matched").
+  take-effect sign-agreement statistic over |dq| ≥ t, pair and root units), `ordering_vs_control.py` (the primary:
+  per-pair deep-SF clear+ correctness of each net on the frozen audit set, cell minus control, paired, game
+  bootstrap), `stage_a_decide.py` v6 (VOID / VETO / INERT / not separated / improves, the Zq code-base gate on both
+  parts, B1–B5 eligibility including B5's "≤ 3 matched").
 - **P4.** `SB7/prelaunch/sib_mem_smoke.py`, `cost_probe.py` rev 4, `grad_scale.py` v2 → `strengths.json`.
 - **P5.** `SB7/operator/`: the v5 re-pin, the harness and the wording above.
 - **P6.** Generation 2 has released the GPU (its record's end), and the value-anchor screen's `offline/cells/DONE`
