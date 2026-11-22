@@ -17,6 +17,9 @@ from chess_anti_engine.uci.engine import Engine, EngineOptions
 from chess_anti_engine.uci.protocol import CmdSetOption
 from chess_anti_engine.uci.search import SearchWorker
 from chess_anti_engine.uci import walker_pool as walkers
+from tests import _thread_origin
+
+_thread_origin.install()
 
 
 class ConstantModel(torch.nn.Module):
@@ -76,7 +79,8 @@ def fault_allocation(monkeypatch, error, cause):
 
 
 def assert_no_walkers():
-    assert not any(t.name.startswith("walker-") and t.is_alive() for t in threading.enumerate())
+    live = [t for t in threading.enumerate() if t.name.startswith("walker-") and t.is_alive()]
+    assert not live, "walker threads still alive:\n" + _thread_origin.describe(live)
 
 
 def _notes(error: BaseException) -> tuple[str, ...]:
@@ -124,7 +128,11 @@ def test_public_replacement_failure_keeps_old_primary_and_retires_new(monkeypatc
         assert worker._walker_pool is previous_pool
         assert all(t.is_alive() for t in previous_pool._threads)
         live_walkers = {t for t in threading.enumerate() if t.name.startswith("walker-") and t.is_alive()}
-        assert live_walkers == set(previous_pool._threads)  # nothing half-built left running
+        # nothing half-built left running
+        assert live_walkers == set(previous_pool._threads), (
+            "walker threads other than the kept pool's:\n"
+            + _thread_origin.describe(live_walkers - set(previous_pool._threads))
+        )
         assert engine._options.max_batch == max_batch_before
         assert new.close_calls == 1
         assert not new.thread.is_alive()

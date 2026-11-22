@@ -54,7 +54,8 @@ def _argv(run_dir: Path, openings: Path, model_config: Path) -> list[str]:
 
 
 _VOLATILE = {"wall_seconds", "games_per_hour", "rows_per_second", "updates_per_second", "active_seconds",
-             "paused_seconds", "pause_intervals", "started_at"}
+             "paused_seconds", "pause_intervals", "started_at", "slowest_process_wall_seconds",
+             "slowest_process_active_seconds"}
 
 
 def _result(run_dir: Path) -> dict[str, Any]:

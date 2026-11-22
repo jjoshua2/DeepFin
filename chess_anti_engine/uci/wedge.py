@@ -234,11 +234,21 @@ def warn_outlived_close(log: logging.Logger, pool: str, threads: list[threading.
                     pool, ", ".join(names), join_s)
 
 
-def reset_session_for_tests() -> None:
+def reset_session_for_tests(*, released_join_s: float = 10.0) -> None:
     """Forget wedge marks and the wedged-device registry and let parked
-    threads end (tests only: one pytest process is many engine "sessions")."""
+    threads end (tests only: one pytest process is many engine "sessions").
+
+    Returns only once every thread it released has ENDED, OS thread included
+    (``_await_os_exit``). Parking is a thread's last act (:func:`parking`), so
+    a released thread only returns; but until it is gone it is alive and no
+    longer parked, and a later session's "every helper ended or parked" check
+    over ``threading.enumerate()`` would count it (CI #1480: a previous test's
+    released ``rpg-group-*`` threads, still dying under load on Python 3.13).
+    A released thread still alive after ``released_join_s`` is a real defect
+    and raises, naming it."""
     global _release
     with _lock:
+        released = list(_parked)
         _wedged.clear()
         _wedged_devices.clear()
         _parked.clear()
@@ -246,3 +256,15 @@ def reset_session_for_tests() -> None:
         old, _release = _release, threading.Event()
         old.set()
         _changed.notify_all()
+    me = threading.current_thread()
+    deadline = time.monotonic() + max(0.0, released_join_s)
+    for thread in released:
+        if thread is me:
+            continue
+        thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        if not thread.is_alive():
+            _await_os_exit(thread)
+    stuck = [t.name for t in released if t is not me and t.is_alive()]
+    if stuck:
+        raise RuntimeError(f"wedge.reset_session_for_tests: released parked thread(s) {stuck} "
+                           f"did not end within {released_join_s:g}s")

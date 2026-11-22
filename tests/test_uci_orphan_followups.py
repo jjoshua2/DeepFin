@@ -338,18 +338,44 @@ def test_reply_thread_parked_between_claim_and_print_still_prints(monkeypatch) -
 
 
 def test_reply_thread_parked_just_after_printing_is_not_answered_again(monkeypatch) -> None:
+    """The reply thread has printed its bestmove and stalls before exiting;
+    `stop` parks it and must not answer the go a second time.
+
+    The stall is placed where the product can stall: after `_publish_bestmove`
+    has returned, outside `_PRINT_LOCK` (holding that lock is a blocked stdout,
+    which blocks every writer by design). `stop` joins the reply thread only
+    once it has printed and stalled, so the park finds the answer already
+    claimed. The held thread asserts nothing: its wait result is checked here."""
     out: list[str] = []
-    ref: list = [None]
-    release, entered = threading.Event(), threading.Event()
-    hold = _reply_thread_gate(ref, release, entered, line_prefix="bestmove ", when="after")
-    engine, _r, _e = _faulted_go_engine(monkeypatch, out, hold=hold)
-    ref[0] = engine
+    engine, release, entered = _faulted_go_engine(monkeypatch, out, hold=lambda *_a: None)
+    real_publish = engine._publish_bestmove
+    waited: list[bool] = []
+
+    def publish_then_stall(*args, **kwargs):
+        real_publish(*args, **kwargs)
+        if threading.current_thread() is engine._fallback_reply_thread:
+            entered.set()
+            waited.append(release.wait(10))
+
+    monkeypatch.setattr(engine, "_publish_bestmove", publish_then_stall)
+    real_join = engine_module.join_thread
+
+    def join_after_the_print(thread, timeout, **kwargs):
+        if thread is engine._fallback_reply_thread:
+            assert entered.wait(5), "the reply thread never printed"
+        return real_join(thread, timeout, **kwargs)
+
+    monkeypatch.setattr(engine_module, "join_thread", join_after_the_print)
     engine.dispatch(parse_command("go infinite"))
-    engine.dispatch(parse_command("stop"))  # printed, then stalled before exiting
+    reply = engine._fallback_reply_thread
+    assert reply is not None
+    engine.dispatch(parse_command("stop"))  # printed, stalled, parked
     assert entered.is_set()
+    assert reply.is_alive()  # still stalled: stop parked it rather than waiting it out
     moves = _bestmoves("\n".join(out))
     assert len(moves) == 1
     _black_legal(moves)
     _finish(engine, release)
+    assert waited == [True]  # released by the test, not by its own timeout
     assert _bestmoves("\n".join(out)) == moves
     assert engine._consecutive_search_failures == 1
