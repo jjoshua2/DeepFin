@@ -379,8 +379,9 @@ banked first (`sibling_holdout_resid.npz`, with `game_id`, `dq`, `min_visits`).
   `m_shape_wl`, undecidable, specs from the wrong family, S added as a second match, smallest-w,
   control ignored, rows check, and the order Zq, P in `cells.json`.
 
-  `SB/stage_b/` (revision 6 plus the post-merge test addendum, read-only, `SHA256SUMS` `02631123…`;
-  the revision-6 seal `01432616…` kept as `SHA256SUMS.v2`; revision 5's files as `*.v1`):
+  `SB/stage_b/` (revision 6 plus the post-merge test addendum, read-only, `SHA256SUMS` `d3c7cbd5…`;
+  the revision-6 seal `01432616…` kept as `SHA256SUMS.v2`, which verifies with each replaced file's
+  `*.v2` copy, `README.v2` included; revision 5's files as `*.v1`):
   - `check_both_seats.py` `c205a6e755d5…` (unchanged; match 2's readback; the follow-up
     `check_seat.py` fails by design when the other seat is also a hybrid). Its test now has 11
     cases: candidate T off by 1e-4, reference T differs, reference `value_net=loaded` and reference
@@ -876,12 +877,44 @@ operator runs them. So before step 1b, and again before each later GPU step bloc
 runs `SB/operator/operator_gpu_check.sh IDLE_MIB`, with IDLE_MIB the GPU's measured idle
 `memory.used` (this machine idles at about 3,382–3,452 MiB: the Windows side of WSL2). It is the
 generation-2 bank's guard v3 rule: IDLE_MIB an integer ≤ 4,096; every memory line within
-IDLE_MIB ± 512 MiB; utilisation < 10 % over 5 samples one second apart; `ps` readable and no
-`arena_standard.py` / `simple_rl_loop.py` / `match_vs_uci.py` running; fail-closed, read-only.
-`SB/operator/` (read-only, `SHA256SUMS` `029a3eb8…`; script `0e54fc624bb2…`): 28 cases under a
-fake HOME with stubbed `nvidia-smi` / `ps` / `sleep`, one read-only case running its two probe
-commands against the real card (integers: 3,451 MiB, 0 %); twelve mutants, one per clause, each
-killed.
+IDLE_MIB ± 512 MiB; utilisation < 10 % over 5 samples one second apart; and no GPU job of this
+user by the shared process scan `gpu_scan.sh` (one file, byte-identical in the full-width,
+generation-2 and sibling banks, pinned by sha256 in the script). Fail-closed, read-only.
+- **Memory and utilisation cannot see a job that is still loading.** Measured: a reproduction
+  cell read idle memory at 0–1 % for six minutes after it started, then 5.5 GB, then 22 GB. So
+  the process scan and the operator's own release decision are the primary defences, and the
+  memory band is the backstop.
+- **The scan** (review of `3324d402d`) reads each same-uid process's argv from
+  `/proc/<pid>/cmdline` and refuses on: a listed GPU entry point (python's first non-option
+  argument, `-m chess_anti_engine…`, a bank launcher run by a shell, or the lc0 / Ceres binary);
+  any holder of `/dev/dxg`; or a process whose fds cannot be listed (except exactly
+  `/usr/bin/ssh-agent` and `/usr/bin/gpg-agent`, which are non-dumpable on this machine). It
+  excludes the caller's ancestors and descendants, so a launcher's own check does not trip on
+  itself, while a sibling copy of the same launcher still refuses. It replaces revision 1's
+  `ps -o args` token scan, which passed this screen's own GPU jobs (`cost_probe.py`,
+  `fit_value_recal.py`, `sibling_holdout.py`, `python -m chess_anti_engine.run`) and refused shells
+  that merely mentioned a script name. The list of entry points is derived, and the derivation is
+  written in the file's header: every `scripts/*.py` at main matching `cuda|--device`, every
+  script in the RL banks that uses cuda or starts one of those programs, the launchers they start,
+  and the lc0 / Ceres binaries.
+- **CPU jobs are exempt by their environment, GPU jobs never.** In gpu_scan v3, a listed process
+  is exempt from the argv clause (never from the `/dev/dxg` clause) iff its environment holds
+  exactly `CUDA_VISIBLE_DEVICES=` with an empty value. This screen's CPU commands set exactly that.
+  **Its GPU commands must be started WITHOUT `CUDA_VISIBLE_DEVICES` set to empty**: they set
+  `CUDA_VISIBLE_DEVICES=0` explicitly, as written below. `operator_gpu_check.sh` v2 also refuses
+  when the shell it runs in carries `CUDA_VISIBLE_DEVICES` set to empty (the same assertion,
+  `[ "${CUDA_VISIBLE_DEVICES-unset}" != "" ]`, as the generation-2 launchers), so a job started from
+  that shell cannot silently fall back to CPU or crash mid-stage.
+- **Staged, not yet banked:** `SB.staging/operator/` (`SHA256SUMS` `__OPSUMS__`;
+  `operator_gpu_check.sh` v2 `__OPSHA__`; `gpu_scan.sh` `__SCANSHA__`). It is swapped into
+  `SB/operator/` when this record's PR has its MERGE verdict, so the bank matches the record on
+  main in between.
+- **Test:** `__NCASES__` cases. They run inside a private user + PID + mount namespace with an
+  empty file bind-mounted over `/dev/dxg`, so the scan sees only the test's processes and no case
+  can open the real device. Real processes carry the argv of each entry point. Before isolation,
+  two read-only cases run on the real machine: the probe commands against the real card (integers
+  asserted), and the real scan (its verdict printed). Mutants: `__NMUT__`, one per clause, each
+  killed by its own case.
 
 ```bash
 $SB/operator/operator_gpu_check.sh $IDLE_MIB || exit 8   # IDLE_MIB: the operator's measured idle memory.used
