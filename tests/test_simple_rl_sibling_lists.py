@@ -10,8 +10,10 @@ Covered:
   an independent rebuild, and every pair-sidecar pair lies inside its row's list;
 - the unit reaches the term inside train_generation, trains the value head, and is recorded with the child
   positions forwarded per step (the equal-budget check);
-- refusals: a sidecar of the other unit, roots with the diff form, a version-1 order snapshot; the resume key
-  carries the order form's version.
+- refusals: a sidecar of the other unit, roots with the diff form; the resume key carries the order form's version;
+- #1501-era snapshots, written with that code's key re-implemented here (not by the code under test) and checked
+  against keys frozen from that code: a diff phase resumes at any chunk size, an order form version 1 phase is
+  refused at any chunk size, and a snapshot that matches no rebuilt key is refused; none is deleted.
 """
 from __future__ import annotations
 
@@ -428,43 +430,164 @@ def test_a_snapshot_from_before_the_child_position_field_counts_from_the_restore
     assert fresh.summary()["child_positions_per_step"] == 2 * n
 
 
-def _phase(run: dict[str, Path], name: str, monkeypatch: pytest.MonkeyPatch, legacy: dict[str, bool],
-           **kw: Any) -> tuple[Path, Any]:
-    """Run a phase to its update-3 snapshot and kill it, with every resume key
-    rebuilt as the #1501-era code wrote it (``legacy`` = the key variant)."""
+# The #1501-era resume key, re-implemented here from that code (main 3dd621029) rather than produced by the
+# reconstruction under test: settings with its four neutral defaults dropped (sibling_chunk_pairs 64 among them, so
+# a non-default chunk size is keyed), no order-form version, no sibling_unit field (it did not exist).
+_NEUTRAL_1501 = {"sibling_chunk_pairs": 64, "sibling_loss": "diff", "sibling_order_margin": None,
+                 "sibling_order_min_dq": None}
+# The #1501-era sibling state's fields (no chunk_segments, unit, child positions or order-form version).
+_STATE_1501 = ("steps", "pairs", "loss_sum", "abs_resid_sum", "per_step", "last_cursor", "chunk_pairs", "active",
+               "loss", "order_margin", "order_min_dq")
+
+
+def _sha(p: Path) -> str:
+    import hashlib
+
+    return hashlib.sha256(Path(p).read_bytes()).hexdigest()
+
+
+def _key_1501(*, settings: TrainSettings, generation: int, init_checkpoint: Path, prev_trainer_checkpoint: Path | None,
+              run_dir: Path, gens: list[int], probe_path: Path, batches: list[Any], **_head_only: Any) -> str:
+    import dataclasses
+    import hashlib
+
+    h = hashlib.sha256()
+    for own, sl in batches:
+        h.update(np.ascontiguousarray(own, dtype=np.int64).tobytes())
+        h.update(b"|")
+        h.update(np.ascontiguousarray(sl, dtype=np.int64).tobytes())
+        h.update(b"\n")
+    keyed = dataclasses.asdict(settings)
+    assert keyed.pop("sibling_unit") == "pairs"
+    for k, default in _NEUTRAL_1501.items():
+        if keyed[k] == default:
+            del keyed[k]
+    ident: dict[str, Any] = {
+        "settings": keyed, "generation": int(generation), "init": _sha(init_checkpoint),
+        "prev": None if prev_trainer_checkpoint is None else _sha(prev_trainer_checkpoint),
+        "collects": {g: _sha(Path(run_dir) / f"gen_{g:04d}" / "collect" / "manifest.json") for g in gens},
+        "probe": _sha(probe_path), "plan": h.hexdigest()}
+    if float(settings.w_sibling) > 0:
+        ident["sibling_sidecars"] = {g: _sha(Path(str(settings.sibling_dir)) / f"gen_{g:04d}" / sib.SIDECAR_MANIFEST)
+                                     for g in gens}
+    return hashlib.sha256(json.dumps(ident, sort_keys=True, default=str).encode()).hexdigest()
+
+
+# Computed by the #1501-era code itself (main 3dd621029's snapshot_resume_key) on the fixture of
+# test_the_rebuilt_legacy_keys_equal_the_keys_the_1501_code_wrote; frozen here.
+_FROZEN_1501 = {
+    "diff_c5": "bf08f1258fa3ac9539ec12955eea354a6299a713b0f2e8ffad652c82db05b1cb",
+    "diff_c64": "59ecf264b4bd2538465b18ae08e64fb40f8ab03336b1f643716a4dd8e876d2ad",
+    "order_c5": "1b781b73e23858323c07b39aac4a010ea38efd421f87df476cb29a64ffa131b5",
+    "order_c64": "1e4818a1ad53f667a57845b3618019adc1da0a17288ef8e47529d7630303f986",
+}
+
+
+@pytest.mark.parametrize("now_chunk", [5, 32, 64])
+def test_the_rebuilt_legacy_keys_equal_the_keys_the_1501_code_wrote(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, now_chunk: int) -> None:
+    from chess_anti_engine.simple_rl import learn
+
+    monkeypatch.chdir(tmp_path)
+    Path("init.pt").write_bytes(b"init-fixture")
+    Path("probe.npz").write_bytes(b"probe-fixture")
+    (Path("run") / "gen_0001" / "collect").mkdir(parents=True)
+    (Path("run") / "gen_0001" / "collect" / "manifest.json").write_text('{"fixture": 1}')
+    (Path("side") / "gen_0001").mkdir(parents=True)
+    (Path("side") / "gen_0001" / sib.SIDECAR_MANIFEST).write_text('{"fixture": "side"}')
+    kw: dict[str, Any] = {"generation": 1, "init_checkpoint": Path("init.pt"), "prev_trainer_checkpoint": None,
+                          "run_dir": Path("run"), "gens": [1], "probe_path": Path("probe.npz"),
+                          "batches": [(np.arange(4, dtype=np.int64), np.zeros(0, np.int64)),
+                                      (np.arange(4, 8, dtype=np.int64), np.zeros(0, np.int64))]}
+    order: dict[str, Any] = {"sibling_loss": "order", "sibling_order_margin": 0.0556, "sibling_order_min_dq": 0.0203}
+    forms: tuple[tuple[str, dict[str, Any]], ...] = (("diff", {}), ("order", order))
+    for form, extra in forms:
+        s = TrainSettings(device="cpu", w_sibling=1.0, sibling_dir="side", sibling_rows=8,
+                          sibling_chunk_pairs=now_chunk, **extra)
+        for then in (5, 64):   # the chunk size the #1501-era phase ran at, recorded in its snapshot
+            then_s = TrainSettings(device="cpu", w_sibling=1.0, sibling_dir="side", sibling_rows=8,
+                                   sibling_chunk_pairs=then, **extra)
+            assert _key_1501(settings=then_s, **kw) == _FROZEN_1501[f"{form}_c{then}"]   # the re-implementation
+            compatible, incompatible = learn.legacy_resume_keys(chunks=[then], settings=s, **kw)
+            own = learn.snapshot_resume_key(settings=s, **kw)
+            if form == "diff":   # resumed, at any chunk
+                assert _FROZEN_1501[f"diff_c{then}"] in [own, *compatible]
+                assert not incompatible
+            else:                # refused, at any chunk; never this code's own key
+                assert _FROZEN_1501[f"order_c{then}"] in incompatible
+                assert not compatible
+                assert own not in _FROZEN_1501.values()
+
+
+def _phase_1501(run: dict[str, Path], name: str, monkeypatch: pytest.MonkeyPatch, **kw: Any) -> tuple[Path, Any]:
+    """Run a phase to its update-3 snapshot and kill it, its snapshots written as the #1501-era code wrote them:
+    the key by ``_key_1501`` (not the code under test) and the sibling state with that code's fields only."""
     from chess_anti_engine.simple_rl import learn as learn_mod
     from chess_anti_engine.simple_rl.learn import train_generation
 
     s = _settings(run, w_sibling=1.0, sibling_rows=8, sibling_dir=str(run["side"]), snapshot_updates=(3,), **kw)
     d = _fresh_run(run, name)
     real_key: Any = learn_mod.snapshot_resume_key
-    monkeypatch.setattr(learn_mod, "snapshot_resume_key", lambda **k: real_key(**{**k, **legacy}))
+    real_state: Any = sib.SiblingTerm.state
+    monkeypatch.setattr(learn_mod, "snapshot_resume_key", _key_1501)
+    monkeypatch.setattr(sib.SiblingTerm, "state", lambda self: {k: real_state(self)[k] for k in _STATE_1501})
     real_snap = _kill_after(monkeypatch, 3)
     with pytest.raises(Killed):
         train_generation(run_dir=d, generation=1, init_checkpoint=run["ckpt"], prev_trainer_checkpoint=None, settings=s)
     monkeypatch.setattr(learn_mod, "write_snapshot", real_snap)
     monkeypatch.setattr(learn_mod, "snapshot_resume_key", real_key)
+    monkeypatch.setattr(sib.SiblingTerm, "state", real_state)
     return d, s
 
 
-def test_an_order_phase_snapshotted_under_form_version_1_is_refused_never_deleted(
-        run: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
-    from chess_anti_engine.simple_rl.learn import SNAPSHOTS, train_generation
+def _snaps(d: Path) -> list[str]:
+    from chess_anti_engine.simple_rl.learn import SNAPSHOTS
 
-    d, s = _phase(run, "v1_order", monkeypatch, {"order_form": False}, sibling_loss="order",
-                  sibling_order_margin=0.05, sibling_order_min_dq=0.001)
-    snaps = sorted(p.name for p in (d / "gen_0001" / "train" / SNAPSHOTS).glob("step_*"))
-    assert snaps
-    with pytest.raises(RuntimeError, match="version 1"):
-        train_generation(run_dir=d, generation=1, init_checkpoint=run["ckpt"], prev_trainer_checkpoint=None, settings=s)
-    assert sorted(p.name for p in (d / "gen_0001" / "train" / SNAPSHOTS).glob("step_*")) == snaps
+    return sorted(p.name for p in (d / "gen_0001" / "train" / SNAPSHOTS).glob("step_*"))
 
 
-def test_a_diff_phase_snapshotted_with_its_chunk_size_keyed_resumes(
-        run: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+def _train(run: dict[str, Path], d: Path, s: Any) -> dict[str, Any]:
     from chess_anti_engine.simple_rl.learn import train_generation
 
-    d, s = _phase(run, "keyed_chunk", monkeypatch, {"key_chunk": True}, sibling_chunk_pairs=3)
-    done = train_generation(run_dir=d, generation=1, init_checkpoint=run["ckpt"], prev_trainer_checkpoint=None,
+    return train_generation(run_dir=d, generation=1, init_checkpoint=run["ckpt"], prev_trainer_checkpoint=None,
                             settings=s)
+
+
+_ORDER: dict[str, Any] = {"sibling_loss": "order", "sibling_order_margin": 0.05, "sibling_order_min_dq": 0.001}
+
+
+@pytest.mark.parametrize(("then", "now"), [(64, 64), (5, 5), (5, 3), (64, 3)])
+def test_an_order_phase_snapshotted_under_form_version_1_is_refused_never_deleted_at_any_chunk(
+        run: dict[str, Path], monkeypatch: pytest.MonkeyPatch, then: int, now: int) -> None:
+    import dataclasses
+
+    d, s = _phase_1501(run, f"v1_order_{then}_{now}", monkeypatch, sibling_chunk_pairs=then, **_ORDER)
+    snaps = _snaps(d)
+    assert snaps
+    with pytest.raises(RuntimeError, match="version 1"):
+        _train(run, d, dataclasses.replace(s, sibling_chunk_pairs=now))
+    assert _snaps(d) == snaps
+
+
+@pytest.mark.parametrize(("then", "now"), [(5, 5), (5, 3), (64, 3), (3, 64)])
+def test_a_1501_era_diff_phase_resumes_at_any_chunk(run: dict[str, Path], monkeypatch: pytest.MonkeyPatch,
+                                                    then: int, now: int) -> None:
+    import dataclasses
+
+    d, s = _phase_1501(run, f"legacy_diff_{then}_{now}", monkeypatch, sibling_chunk_pairs=then)
+    done = _train(run, d, dataclasses.replace(s, sibling_chunk_pairs=now))
     assert done["resumed_from_snapshot"] == 3
+    segs = done["sibling"]["chunk_segments"]
+    assert segs[0] == [0, then]
+    assert segs[-1][1] == now
+
+
+def test_a_1501_era_snapshot_that_matches_no_key_is_refused_never_deleted(
+        run: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    import dataclasses
+
+    d, s = _phase_1501(run, "legacy_other", monkeypatch, sibling_chunk_pairs=5)
+    snaps = _snaps(d)
+    with pytest.raises(RuntimeError, match="#1501-era sibling state"):
+        _train(run, d, dataclasses.replace(s, lr=2e-3, sibling_chunk_pairs=3))   # another attempt's settings
+    assert _snaps(d) == snaps

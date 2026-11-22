@@ -1089,12 +1089,22 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
     same `--sibling-dir` restarts the phase instead of resuming.
     `--sibling-unit`, `--sibling-loss` and `--sibling-order-*` enter the key only at
     a non-default value, so adding them did not change any existing key. With
-    `--sibling-loss order` the key also carries the order form's version. A
-    phase whose snapshots were written under order form version 1 (by the
-    #1501-era code) is refused with a message naming them, never deleted: move the
-    snapshots aside to restart it under version 2. A #1501-era `diff` phase
-    snapshotted at a non-default chunk size (which that code keyed) resumes.
-    `--sibling-chunk-pairs` never enters the key: it changes memory, not the update,
+    `--sibling-loss order` the key also carries the order form's version.
+  - **Snapshots written by the #1501-era code.** That code keyed a non-default
+    `--sibling-chunk-pairs` and recorded the chunk size in the snapshot's sibling
+    state (`chunk_pairs`; its state has no `chunk_segments`, which is how a
+    #1501-era snapshot is recognised). At phase start the trainer reads that state
+    from the newest snapshot that still has its resume files and rebuilds the
+    #1501-era key at the chunk size recorded there and at this run's own:
+    - a `diff` phase resumes exactly when its other settings, inputs and batch
+      plan are unchanged, at ANY chunk size now (chunking is gradient-equivalent;
+      the term's `chunk_segments` start with the recorded size);
+    - an `order` phase written under form version 1 is refused at any chunk size,
+      with a message naming the snapshot; never deleted;
+    - any other #1501-era snapshot (one whose key matches none rebuilt, e.g. the
+      phase's settings changed) is also refused, never deleted.
+    To start such a phase over, move its `snapshots/` aside.
+    `--sibling-chunk-pairs` never enters this code's key: it changes memory, not the update,
     so an interrupted phase can resume at a smaller chunk (the out-of-memory
     recovery). The term records each value with the step it started at
     (`chunk_segments` in its state and summary).

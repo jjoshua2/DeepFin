@@ -32,7 +32,7 @@ import math
 import shutil
 import time
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -1994,7 +1994,9 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
                                   "prev_trainer_checkpoint": prev_trainer_checkpoint if continued else None,
                                   "run_dir": run_dir, "gens": gens, "probe_path": probe_path,
                                   "batches": sampler.batches}
-        compatible, incompatible = legacy_resume_keys(**key_kw)
+        legacy = legacy_snapshot_states(out_dir) if float(settings.w_sibling) > 0 else {}
+        compatible, incompatible = legacy_resume_keys(
+            chunks=sorted({int(st["chunk_pairs"]) for st in legacy.values() if "chunk_pairs" in st}), **key_kw)
         resumed_from = resumable_snapshot(out_dir, [resume_key, *compatible])
         if resumed_from is None and incompatible:
             old = resumable_snapshot(out_dir, incompatible)
@@ -2004,6 +2006,14 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
                     f"(this code trains version {_order_form_version()}); it cannot resume as version 2, and this "
                     f"code will not delete it. Move {Path(out_dir, SNAPSHOTS)} aside to start the phase over under "
                     "version 2, or finish it with the code that wrote it")
+        if resumed_from is None and legacy:
+            # A #1501-era sibling snapshot that matches no key this code can rebuild: never deleted.
+            raise RuntimeError(
+                f"{out_dir}: snapshot step_{min(legacy)} carries a #1501-era sibling state that this phase cannot "
+                f"resume (its key matches none rebuilt for these settings at chunk sizes "
+                f"{sorted({int(st['chunk_pairs']) for st in legacy.values() if 'chunk_pairs' in st})}), and this code "
+                f"will not delete it. Move {Path(out_dir, SNAPSHOTS)} aside to start the phase over, or finish it "
+                "with the code that wrote it")
         for d in Path(out_dir, SNAPSHOTS).glob("step_*"):
             # Stale (another attempt's plan) or past the resume point (never completed): redone.
             if resumed_from is None or int(d.name.split("_")[1]) > resumed_from:
@@ -2196,22 +2206,43 @@ def _order_form_version() -> int:
     return ORDER_FORM_VERSION
 
 
-def legacy_resume_keys(**kw: Any) -> tuple[list[str], list[str]]:
-    """Keys the #1501-era code wrote for this same phase. COMPATIBLE (resumed): a
-    ``diff`` phase snapshotted at a non-default ``--sibling-chunk-pairs``, which that
-    code keyed (chunking is gradient-equivalent). INCOMPATIBLE (refused, never
-    deleted): an ``order`` phase written under form version 1 (no version field
-    in its key, with or without its chunk size)."""
-    s: TrainSettings = kw["settings"]
+def legacy_snapshot_states(out_dir: Path) -> dict[int, dict[str, Any]]:
+    """The sibling state of every snapshot with resume files that the #1501-era code
+    wrote (its state has no ``chunk_segments``), by update. That code keyed a
+    non-default chunk size and recorded it here (``chunk_pairs``), so its key can be
+    rebuilt at the chunk the phase actually ran, whatever chunk resumes it."""
+    import torch
+
+    out: dict[int, dict[str, Any]] = {}
+    for d in Path(out_dir, SNAPSHOTS).glob("step_*"):
+        if not ((d / SNAPSHOT_RECORD).is_file() and (d / RESUME_TRAINER).is_file() and (d / RESUME_STATE).is_file()):
+            continue
+        st = torch.load(str(d / RESUME_STATE), map_location="cpu", weights_only=False).get("sibling")
+        if isinstance(st, dict) and "chunk_segments" not in st:
+            out[int(d.name.split("_")[1])] = st
+    return out
+
+
+def legacy_resume_keys(*, chunks: list[int] | tuple[int, ...] = (), **kw: Any) -> tuple[list[str], list[str]]:
+    """Keys the #1501-era code wrote for this same phase, rebuilt at this phase's
+    chunk size and at every chunk size in ``chunks`` (those recorded by the
+    #1501-era snapshots on disk, ``legacy_snapshot_states``): that code keyed a
+    non-default ``--sibling-chunk-pairs``. COMPATIBLE (resumed): a ``diff`` phase,
+    at any chunk (chunking is gradient-equivalent). INCOMPATIBLE (refused, never
+    deleted): an ``order`` phase written under form version 1 (no version field in
+    its key), at any chunk."""
+    s: TrainSettings = kw.pop("settings")
     if float(s.w_sibling) <= 0:
         return [], []
-    chunk_keyed = int(s.sibling_chunk_pairs) != 64
-    if s.sibling_loss == "order":
-        incompatible = [snapshot_resume_key(**kw, order_form=False)]
-        if chunk_keyed:
-            incompatible.append(snapshot_resume_key(**kw, order_form=False, key_chunk=True))
-        return [], incompatible
-    return ([snapshot_resume_key(**kw, key_chunk=True)] if chunk_keyed else []), []
+    compatible: list[str] = []
+    incompatible: list[str] = []
+    for c in sorted({int(s.sibling_chunk_pairs), *(int(x) for x in chunks)}):
+        sc = replace(s, sibling_chunk_pairs=c)
+        if s.sibling_loss == "order":
+            incompatible.append(snapshot_resume_key(settings=sc, **kw, order_form=False, key_chunk=c != 64))
+        elif c != 64:   # at 64 the #1501-era diff key is this code's own key
+            compatible.append(snapshot_resume_key(settings=sc, **kw, key_chunk=True))
+    return compatible, incompatible
 
 
 def snapshot_resume_key(*, settings: TrainSettings, generation: int, init_checkpoint: Path,
