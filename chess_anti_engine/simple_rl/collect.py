@@ -1341,8 +1341,16 @@ def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, trai
     fresh_records = [r for r in records if int(r["proc"]) in fresh]
     games_now = sum(int(r["games_this_attempt"]) for r in fresh_records)
     rows_now = sum(int(r["rows_this_attempt"]) for r in fresh_records)
-    stats.update(wall_seconds=wall, paused_seconds=paused, active_seconds=active,
-                 timing_independent=paused == 0.0 and not (set(done) - fresh) and not resumed_games,
+    # A merge-only attempt (every process kept from an earlier one, e.g. a reseal
+    # after the seal step died) times nothing but the merge: its wall is not the
+    # collect's and was once banked as 2.3e-06 s. Report None there, and always
+    # the slowest process's own wall (kept processes included), which is the
+    # collect's play time when its processes ran together.
+    stats["slowest_process_wall_seconds"] = (max(float(r["wall_seconds"]) for r in records)
+                                             if records else None)
+    stats.update(wall_seconds=wall if fresh else None, paused_seconds=paused if fresh else None,
+                 active_seconds=active if fresh else None,
+                 timing_independent=bool(fresh) and paused == 0.0 and not (set(done) - fresh) and not resumed_games,
                  games_per_hour=3600.0 * games_now / active if fresh else None,
                  # Processes resumed at game granularity: their kept games came from an
                  # earlier attempt and the rest were replayed on their own per-game
