@@ -1583,6 +1583,8 @@ class PolicyStatsAccumulator:
         self.n_width = 0
         self.support_sum = 0
         self.visited_sum = 0
+        self.n_prelude = 0
+        self.prelude_sum = 0
         self.n_pol_root = 0
         self.prior_entropy_sum = 0.0
         self.kl_sum = 0.0
@@ -1619,12 +1621,18 @@ class PolicyStatsAccumulator:
             self.sv_sum += float(sv.sum())
             self.sv_reused += int((sv > 0).sum())
         if "root_child_visits" in arrays:
-            # Root width, the observation `root_full_width` must move: with it on,
-            # every searched child has a visit (visited == support).
-            rcv = np.asarray(arrays["root_child_visits"])[has]
+            # Root width over FULL rows, the observation `root_full_width` must
+            # move: with it on every searched child has a visit (visited ==
+            # support). Fast plies skip round 0, so they are left out.
+            rcv = np.asarray(arrays["root_child_visits"])[has & policy_rows]
             self.n_width += int(rcv.shape[0])
             self.support_sum += int((rcv >= 0).sum())
             self.visited_sum += int((rcv > 0).sum())
+        if "root_prelude_visits" in arrays:
+            # root_full_width's round 0, over FULL rows (fast plies skip it).
+            pre = has & policy_rows & np.asarray(arrays.get("has_root_prelude_visits", np.ones(n)), dtype=bool)
+            self.n_prelude += int(pre.sum())
+            self.prelude_sum += int(np.asarray(arrays["root_prelude_visits"])[pre].sum())
         has &= policy_rows
         if not has.any():
             return
@@ -1665,6 +1673,8 @@ class PolicyStatsAccumulator:
         if self.n_width:
             out.update(mean_root_support_children=self.support_sum / self.n_width,
                        mean_root_visited_children=self.visited_sum / self.n_width)
+        if self.n_prelude:
+            out["mean_root_prelude_visits"] = self.prelude_sum / self.n_prelude
         if not self.n_pol_root:
             return out
         out.update(prior_entropy=self.prior_entropy_sum / self.n_pol_root, kl_target_prior=self.kl_sum / self.n_pol_root,
@@ -1689,7 +1699,8 @@ def policy_stats(arrays: dict[str, np.ndarray], *, chunk_rows: int = STATS_CHUNK
 
 GENERATION_STATS_KEYS = ("policy_target", "wdl_target", "has_policy", "root_log_prior", "has_root_log_prior",
                          "root_child_visits", "has_root_child_visits", "root_net_value", "root_survivor_q",
-                         "root_node_q", "root_start_visits", "search_budget", "has_search_budget")
+                         "root_node_q", "root_start_visits", "search_budget", "has_search_budget",
+                         "root_prelude_visits", "has_root_prelude_visits")
 
 
 def stream_generation_row_stats(collect_dir: Path, *, chunk_rows: int = STATS_CHUNK_ROWS,

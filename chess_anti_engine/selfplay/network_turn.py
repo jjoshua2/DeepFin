@@ -1196,6 +1196,7 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
         *,
         per_game_noise: list[bool] | None = None,
         per_game_gumbel_scale: list[float] | None = None,
+        per_game_full: list[bool] | None = None,
     ) -> None:
         if not idxs:
             return
@@ -1269,6 +1270,7 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
                     witness_stop_fn=witness_stop_fn,
                     root_stats_out=root_stats_sub,
                     per_game_rng=None if game_rngs is None else [game_rngs[j] for j in group],
+                    per_game_root_full_width=None if per_game_full is None else [per_game_full[j] for j in group],
                     **search_shape.runner_kwargs(),
                 )
             except SolvedRootWitnessUnavailable as exc:
@@ -1390,6 +1392,7 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
         combined_sims,
         per_game_noise=noise_py,
         per_game_gumbel_scale=scale_py,
+        per_game_full=[bool(f) for f in is_full_py],
     )
 
     if adjudicated_rows:
@@ -1477,10 +1480,9 @@ def _attach_root_stats(
         rec = records[-1]
         rec.root_stats = root_stats_list[j]
         rec.played_action = None if actions[j] is None else int(cast(int, actions[j]))
-      # `root_full_width`'s round 0 is spent on top of the halving budget; the
-      # runner reports what it realised (0 with the knob off).
-        stats = root_stats_list[j]
-        rec.search_budget = int(budgets[j]) + (0 if stats is None else int(stats.prelude_visits))
+      # The budget the ply was GIVEN (full vs fast). `root_full_width`'s round-0
+      # simulations are stored apart, as root_prelude_visits (from root_stats).
+        rec.search_budget = int(budgets[j])
 
 
 __all__ = [

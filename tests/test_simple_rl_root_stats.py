@@ -215,36 +215,47 @@ def test_tree_reuse_flag_controls_inherited_visits(tmp_path: Path, monkeypatch: 
 
 
 def test_root_full_width_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Through collect -> play_batch -> finalize -> shard: with --root-full-width
-    every searched root child holds a visit, the row's search_budget counts the
-    round-0 simulations on top of --sims, and stats.json reports the width.
-    Mutant: network_turn ignoring prelude_visits -> visits exceed start + budget."""
-    on = _collect(tmp_path, "fw", monkeypatch, root_full_width=True)
-    off = _collect(tmp_path, "nofw", monkeypatch)
-    sims = 8
-    for d, full_width in ((on, True), (off, False)):
-        arrays, _ = load_generation_rows(d)
-        has = arrays["has_root_log_prior"].astype(bool)
-        rcv = arrays["root_child_visits"][has]
-        support = (rcv >= 0).sum(axis=1)
-        visited = (rcv > 0).sum(axis=1)
-        total = np.where(rcv >= 0, rcv, 0).sum(axis=1)
-        start = arrays["root_start_visits"][has].astype(np.int64)
-        budget = arrays["search_budget"][has].astype(np.int64)
-        stats = json.loads((d / "stats.json").read_text())
-        if full_width:
-            np.testing.assert_array_equal(visited, support)
-            assert (budget > sims).mean() > 0.9
-            # A root proven mid-search stops early; every other row spends its budget exactly.
-            assert (total <= start + budget).all()
-            assert (total == start + budget).mean() > 0.95
-            assert stats["mean_root_visited_children"] == pytest.approx(stats["mean_root_support_children"])
-        else:
-            assert (visited < support).any()
-            assert (budget == sims).all()
-            assert stats["mean_root_visited_children"] < stats["mean_root_support_children"]
+    """Through collect -> play_batch -> finalize -> shard, with --root-full-width
+    and the playout cap on: full rows hold a visit on every searched child and
+    store their round-0 simulations as root_prelude_visits; fast rows skip round
+    0 and spend exactly --fast-sims; search_budget stays the budget given.
+    Mutants: fast plies widened (mask dropped) / prelude not stored."""
+    sims, fast = 12, 4
+    on = _collect(tmp_path, "fw", monkeypatch, sims=sims, full_prob=0.5, fast_sims=fast, fast_value_rows=True,
+                  root_full_width=True)
+    arrays, _ = load_generation_rows(on)
+    has = arrays["has_root_log_prior"].astype(bool)
+    policy = arrays["has_policy"].astype(bool)
+    assert arrays["has_root_prelude_visits"][has].all()
+    rcv = arrays["root_child_visits"]
+    total = np.where(rcv >= 0, rcv, 0).sum(axis=1).astype(np.int64)
+    start = arrays["root_start_visits"].astype(np.int64)
+    budget = arrays["search_budget"].astype(np.int64)
+    prelude = arrays["root_prelude_visits"].astype(np.int64)
+    full, fastr = has & policy, has & ~policy
+    assert full.sum() > 10
+    assert fastr.sum() > 10
+    assert set(np.unique(budget[full]).tolist()) == {sims}
+    assert set(np.unique(budget[fastr]).tolist()) == {fast}
+    np.testing.assert_array_equal(((rcv >= 0).sum(axis=1))[full], ((rcv > 0).sum(axis=1))[full])
+    assert (prelude[full] > 0).mean() > 0.9
+    assert (prelude[fastr] == 0).all()
+    # A root proven mid-search stops early; every other row spends exactly this.
+    assert (total[has] <= (start + prelude + budget)[has]).all()
+    assert (total[has] == (start + prelude + budget)[has]).mean() > 0.95
+    stats = json.loads((on / "stats.json").read_text())
+    assert stats["mean_root_visited_children"] == pytest.approx(stats["mean_root_support_children"])
+    assert stats["mean_root_prelude_visits"] == pytest.approx(float(prelude[full & arrays["has_root_prelude_visits"].astype(bool)].mean()))
+    assert set(stats["rows_by_search_budget"]) == {str(fast), str(sims)}
     manifest = json.loads((on / "manifest.json").read_text())
     assert manifest["config"]["dataclasses"]["search"]["gumbel_root_full_width"] is True
+    # Knob off: nothing new is stored and the width stats show unvisited children.
+    off = _collect(tmp_path, "nofw", monkeypatch)
+    off_arrays, _ = load_generation_rows(off)
+    assert "root_prelude_visits" not in off_arrays or not off_arrays["has_root_prelude_visits"].any()
+    off_stats = json.loads((off / "stats.json").read_text())
+    assert "mean_root_prelude_visits" not in off_stats
+    assert off_stats["mean_root_visited_children"] < off_stats["mean_root_support_children"]
 
 
 def test_playout_cap_records_the_budget_and_stores_policy_only_at_full(

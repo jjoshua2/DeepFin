@@ -353,10 +353,12 @@ class RootSearchStats:
     node_q: float
     start_visits: int
   # Simulations the full-width round 0 (`GumbelConfig.root_full_width`) spent
-  # on this root before sequential halving: one per searched legal child that
-  # had no visits. 0 when the knob is off. Included in ``visits``; the row's
-  # realised budget is ``start_visits + prelude_visits + simulations``.
-    prelude_visits: int = 0
+  # on this root before sequential halving, read off the tree (one per searched
+  # legal child that had no visits; 0 on a playout-cap fast ply, which skips
+  # round 0). None when the knob is off, so nothing new is stored. Included in
+  # ``visits``: the root's visits are ``start_visits + prelude_visits`` plus the
+  # halving budget.
+    prelude_visits: int | None = None
 
 
 def rebuild_improved_policy(
@@ -416,7 +418,13 @@ _EncodeBuffer = NDArray[np.float32] | NDArray[np.uint16]
 # (audit F5 tree-carry vs pipeline, F7 policy_temp vs compact-legal bf16).
 # Module-level so a per-ply search does not re-log every move.
 _PIPELINE_TREE_WARNED = False
+_PIPELINE_FULL_WIDTH_WARNED = False
 _LEGAL_BF16_TEMP_WARNED = False
+
+
+def _mark_pipeline_full_width_warned() -> None:
+    global _PIPELINE_FULL_WIDTH_WARNED
+    _PIPELINE_FULL_WIDTH_WARNED = True
 
 
 def _mark_pipeline_tree_warned() -> None:
@@ -910,6 +918,7 @@ def _full_width_round0(
     start: Callable[[list[list[int] | None], np.ndarray], int | None],
     drain: Callable[[int | None], None],
     prelude_visits: list[int],
+    board_mask: list[bool] | None = None,
 ) -> None:
     """``GumbelConfig.root_full_width``: one simulation per unvisited root child,
     then re-choose the halving candidates with sigma(q).
@@ -924,8 +933,13 @@ def _full_width_round0(
     their topk-based size; a wide batch takes one or a few more GPU calls.
 
     The halving candidates are then the top ``m`` of gumbel + log prior +
-    sigma(completed q), with sigma the same root transform the stored target
-    uses. The Gumbel draws are the ones the mutating pass already made, so the
+    sigma(completed q), with sigma the PLAY-arm root transform -- the one the
+    played move's improved policy uses (``_completed_q_transform(root=True)``
+    with no ``target_max_visit_cap``, ``target_q_rescale=False`` or untempered
+    prior), which is the right one for choosing what to search. Its scale grows
+    with the root's max child visit count: 1 on a fresh root, the carried count
+    on a reused one, so at production ``c_visit`` a reused root's re-ranking is
+    close to "rank by Q". The Gumbel draws are the ones the mutating pass already made, so the
     RNG streams consume exactly what they consume with the knob off. The
     halving call that follows still spends ``budget_remaining`` (unchanged);
     the realised round-0 simulations are written to ``prelude_visits`` from the
@@ -939,6 +953,8 @@ def _full_width_round0(
         rid = root_ids[i]
         if candidates_per_board[i] is None or prep is None or rid < 0:
             continue
+        if board_mask is not None and not board_mask[i]:
+            continue  # a playout-cap fast ply: no round 0, candidates unchanged
         boards.append(i)
         if tree.get_solved_status(rid) != 0:
             continue
@@ -1000,8 +1016,8 @@ def _full_width_round0(
             actions=legal, priors=pri[legal], visits=visits, qvalues=qvalues,
             raw_value=root_q, cfg=cfg, root=True,
         )
-        score = g_full[legal] + np.log(np.maximum(pri[legal], 1e-12)) + sigma
-        order = np.argsort(-score, kind="stable")[: int(prep.m)]
+        score: np.ndarray = g_full[legal] + np.log(np.maximum(pri[legal], 1e-12)) + sigma
+        order = np.argsort(np.negative(score), kind="stable")[: int(prep.m)]
         cands = legal[order].astype(int).tolist()
         candidates_per_board[i] = list(cands)
         remaining_per_board[i] = list(cands)
@@ -1036,6 +1052,7 @@ def run_gumbel_root_many_c(
     witness_stop_fn: Callable[[], bool] | None = None,
     root_stats_out: list[RootSearchStats | None] | None = None,
     per_game_rng: Sequence[np.random.Generator] | None = None,
+    per_game_root_full_width: Sequence[bool] | None = None,
     return_diagnostics: Literal[False] = False,
 ) -> GumbelManyCResult: ...
 
@@ -1068,6 +1085,7 @@ def run_gumbel_root_many_c(
     witness_stop_fn: Callable[[], bool] | None = None,
     root_stats_out: list[RootSearchStats | None] | None = None,
     per_game_rng: Sequence[np.random.Generator] | None = None,
+    per_game_root_full_width: Sequence[bool] | None = None,
     return_diagnostics: Literal[True],
 ) -> GumbelManyCDiagnosticsResult: ...
 
@@ -1099,6 +1117,7 @@ def run_gumbel_root_many_c(
     witness_stop_fn: Callable[[], bool] | None = None,
     root_stats_out: list[RootSearchStats | None] | None = None,
     per_game_rng: Sequence[np.random.Generator] | None = None,
+    per_game_root_full_width: Sequence[bool] | None = None,
     return_diagnostics: bool = False,
 ) -> GumbelManyCResult | GumbelManyCDiagnosticsResult:
     """Gumbel root search with MCTSTree C tree + CBoard.
@@ -1129,6 +1148,12 @@ def run_gumbel_root_many_c(
         from, so a game's draws depend only on its own positions, not on which
         other games share the batch or in what order (the simple_rl collect's
         per-game streams). None keeps the one shared ``rng``.
+
+    ``per_game_root_full_width``
+        Which boards run ``cfg.root_full_width``'s round 0. None = every board
+        (when the knob is on). Selfplay passes its playout-cap ``is_full`` mask:
+        a fast ply is played but stores no policy target, so spending round 0
+        on it would defeat the cap. Ignored while the knob is off.
 
     ``allow_candidate_cap_truncation``
         False by default. The compiled sequential-halving scorer owns a fixed
@@ -1246,6 +1271,8 @@ def run_gumbel_root_many_c(
     n_boards = len(boards)
     if per_game_rng is not None and len(per_game_rng) != n_boards:
         raise ValueError(f"per_game_rng has {len(per_game_rng)} generators for {n_boards} boards")
+    if per_game_root_full_width is not None and len(per_game_root_full_width) != n_boards:
+        raise ValueError(f"per_game_root_full_width has {len(per_game_root_full_width)} entries for {n_boards} boards")
     if root_stats_out is not None:
         # Opt-in observation only: filled per board below, never read back.
         # A board whose result did not come from the ordinary completed-Q
@@ -1328,6 +1355,15 @@ def run_gumbel_root_many_c(
   # call (see `_full_width_round0`); the pipeline's ephemeral sub-trees have no
   # such step, so the knob takes the sequential path.
     if _use_pipeline and bool(cfg.root_full_width):
+        if not _PIPELINE_FULL_WIDTH_WARNED:
+            _log.warning(
+                "gumbel_c: disabling the 2-group eval pipeline for this call because "
+                "root_full_width is on (n_boards=%d >= 64). Round 0 runs on the single "
+                "shared tree; the pipeline's ephemeral sub-trees have no such step and "
+                "would silently search the plain topk root.",
+                n_boards,
+            )
+            _mark_pipeline_full_width_warned()
         _use_pipeline = False
 
   # Zero-copy path: when the evaluator exposes get_input_buffer + evaluate_inplace_async
@@ -2215,6 +2251,8 @@ def run_gumbel_root_many_c(
                 buffer_rows=len(_enc_buf), candidate_cap=_c_candidate_cap,
                 start=_start_single, drain=_drain_single,
                 prelude_visits=prelude_visits,
+                board_mask=(None if per_game_root_full_width is None
+                            else [bool(x) for x in per_game_root_full_width]),
             )
 
         _drain_single(_start_single(remaining_per_board, _budget_arr))
@@ -2389,7 +2427,7 @@ def run_gumbel_root_many_c(
                 survivor_q=float(completed_q[j_best]) if best_in_legal else float("nan"),
                 node_q=float(_qtree.node_q(rid)),
                 start_visits=int(start_visits_by_board[i]),
-                prelude_visits=int(prelude_visits[i]),
+                prelude_visits=int(prelude_visits[i]) if bool(cfg.root_full_width) else None,
             )
 
   # Value from child

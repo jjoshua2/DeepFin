@@ -478,10 +478,16 @@ class GumbelConfig:
   # no visits yet gets exactly one simulation (one evaluation each, batched),
   # and the topk candidates are then chosen by gumbel + log prior + sigma(q)
   # using those evaluations (the Gumbel paper's rule once all actions have a
-  # Q) instead of gumbel + log prior alone. The halving schedule over the
-  # candidates is unchanged and still spends `simulations`; the round-0
-  # simulations are spent ON TOP and counted (RootSearchStats.prelude_visits,
-  # the row's search_budget, root_child_visits). Read by the C runner only
+  # Q) instead of gumbel + log prior alone. sigma is the PLAY-arm root
+  # transform (no target-only knobs); its scale uses the root's max child
+  # visit count -- 1 on a fresh root, the carried count on a reused one, where
+  # at production c_visit the re-ranking is close to "rank by Q". The halving
+  # schedule over the candidates is unchanged and still spends `simulations`;
+  # the round-0 simulations are spent ON TOP and counted apart
+  # (RootSearchStats.prelude_visits -> the row's root_prelude_visits; they are
+  # in root_child_visits; search_budget stays the budget given). Selfplay runs
+  # round 0 on FULL plies only: a playout-cap fast ply stores no policy target,
+  # so it skips round 0 (`per_game_root_full_width`). Read by the C runner only
   # (`run_gumbel_root_many_c`); the Python reference search refuses it.
     root_full_width: bool = False
     add_noise: bool = True  # Backward-compatible gate; use gumbel_scale for partial noise.

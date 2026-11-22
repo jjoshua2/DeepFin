@@ -14,6 +14,7 @@ from typing import Any
 import chess
 import numpy as np
 import pytest
+import torch
 
 from chess_anti_engine.mcts import gumbel_c as gumbel_c_mod
 from chess_anti_engine.mcts.gumbel import GumbelConfig, _completed_q_transform, run_gumbel_root_many
@@ -62,7 +63,7 @@ def test_round0_visits_every_searched_child_and_is_counted() -> None:
   # spends exactly the budget, so the assertions above can fail.
     _, off = _search(_cfg(), _boards())
     assert any((s.visits == 0).any() for s in off)
-    assert all(s.prelude_visits == 0 and int(s.visits.sum()) == _SIMS for s in off)
+    assert all(s.prelude_visits is None and int(s.visits.sum()) == _SIMS for s in off)
 
 
 def test_a_reused_root_only_evaluates_its_unvisited_children() -> None:
@@ -147,6 +148,69 @@ def test_round0_packs_into_the_leaf_buffer_without_a_flush(monkeypatch: pytest.M
     for s in stats:
         assert (s.visits > 0).all()
         assert int(s.visits.sum()) == _SIMS + s.prelude_visits
+
+
+class _AsyncHashEvaluator(_HashEvaluator):
+    """The same pure function, exposing ``evaluate_encoded_async`` -- the
+    capability that lets the C runner take its 2-group pipeline."""
+
+    def evaluate_encoded_async(self, x: np.ndarray, relations: np.ndarray | None = None) -> tuple[Any, Any, None]:
+        pol, wdl = self.evaluate_encoded(x, relations)
+        return torch.from_numpy(pol), torch.from_numpy(wdl), None
+
+
+def test_the_knob_turns_the_pipeline_off_instead_of_being_dropped(
+        caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+    """70 boards, no tree, an async evaluator: the pipeline's precondition.
+    Mutant: drop the pipeline guard -> the pipeline's ephemeral sub-trees run the
+    plain topk root and the knob is a silent no-op (0/70 boards fully visited)."""
+    monkeypatch.setattr(gumbel_c_mod, "_PIPELINE_FULL_WIDTH_WARNED", False)
+    boards = [chess.Board(_FENS[i % len(_FENS)]) for i in range(70)]
+    stats: list[Any] = []
+    with caplog.at_level("WARNING"):
+        run_gumbel_root_many_c(None, boards, device="cpu", rng=np.random.default_rng(3),
+                               cfg=_cfg(root_full_width=True), evaluator=_AsyncHashEvaluator(),
+                               root_stats_out=stats, vloss_weight=1)
+    assert "root_full_width is on" in caplog.text
+    assert len(stats) == 70
+    for s in stats:
+        assert s is not None
+        assert (s.visits > 0).all()
+        assert s.prelude_visits is not None
+        assert s.prelude_visits > 0
+
+
+@pytest.mark.parametrize("per_game", [False, True])
+def test_round0_consumes_no_rng(per_game: bool) -> None:
+    """Mutant: round 0 draws from the shared or a per-game generator -> the
+    final generator states differ between knob on and off."""
+    def run(cfg: GumbelConfig) -> list[Any]:
+        rng = np.random.default_rng(21)
+        games = [np.random.default_rng(100 + i) for i in range(len(_FENS))] if per_game else None
+        run_gumbel_root_many_c(None, _boards(), device="cpu", rng=rng, cfg=cfg, evaluator=_HashEvaluator(),
+                               per_game_rng=games, vloss_weight=1)
+        return [rng.bit_generator.state, *([g.bit_generator.state for g in games] if games else [])]
+
+    assert run(_cfg(root_full_width=True)) == run(_cfg())
+
+
+def test_a_masked_board_skips_round0() -> None:
+    """Selfplay's playout cap: a fast ply (mask False) gets no round 0 and spends
+    exactly its budget. Mutant: ignore the mask -> the fast board is widened."""
+    stats: list[Any] = []
+    mask = [True, False, True, False]
+    run_gumbel_root_many_c(None, _boards(), device="cpu", rng=np.random.default_rng(7),
+                           cfg=_cfg(root_full_width=True), evaluator=_HashEvaluator(),
+                           per_game_simulations=[_SIMS, 8, _SIMS, 8], per_game_root_full_width=mask,
+                           root_stats_out=stats, vloss_weight=1)
+    for s, full in zip(stats, mask, strict=True):
+        if full:
+            assert (s.visits > 0).all()
+            assert s.prelude_visits == s.legal.size
+            assert int(s.visits.sum()) == _SIMS + s.prelude_visits
+        else:
+            assert s.prelude_visits == 0
+            assert int(s.visits.sum()) == 8
 
 
 def test_the_python_reference_search_refuses_it() -> None:
