@@ -331,7 +331,7 @@ The pre-training check passed: `R/post_collect_checks.sh` [`4917f83f`] writes `c
 1. **The seal step was OOM-killed after every game had been played.**
    - Exit 137 at 08:26:46 (`R/collect.exit.first_attempt_137` [`86f57604`]); anon-rss 83.7 GB on a 98 GB box (PR #1470 body).
    - Fixed by #1470 (`0c795fb7a`), which streams `generation_stats` per shard.
-   - The games are untouched by the failure and the rerun. `games.jsonl` is byte-equal in the pre-seal backup and the sealed collect [`0ac540bf` both], and so is `starts.txt` [`948d4927`].
+   - The games are untouched by the failure and the rerun. `games.jsonl` is byte-equal in the pre-seal backup and the sealed collect [`0ac540bf` both], and so is `starts.txt` (`R/collect_backup_20261121_0827/starts.txt` and `R/collect/gen_0001/collect/starts.txt` [`948d4927`] both).
 2. **The games were PLAYED at C0 `6c72b821b` and SEALED at `0c795fb7a`** by a seal-only rerun from 09:51:00 to 09:54:42 (`R/reseal.started` [`00e497ec`], `R/reseal.exit` [`dc8a16ea`], `R/reseal.log` [`3f1bf579`]: "keeping finished collect process(es) [0, 1, 2]").
    - **The manifest's `git.sha` is the sealing commit.** Nothing in the manifest records the playing commit.
    - The playing commit is evidenced only by the play log, which loads `_mcts_tree` from the `rl-run1-pilot-6c72b821b` worktree (`R/collect.log` [`3ebe8c39`]), and by `R/README.md`.
@@ -341,7 +341,7 @@ The pre-training check passed: `R/post_collect_checks.sh` [`4917f83f`] writes `c
 5. **Guard (a): byte-equal.** All six files `guard_a_{S,Zq,P0}_{6c72b821b,0c795fb7a}.json` share one sha256, [`715fb5d1`] (722,742 rows each).
    - The digest is the same for all three cells, not only across commits. It covers the decoded rows after `prepare_targets` and before the cell's value blend, so it checks the shared input, not the cell-specific target.
 6. **Guard (b): byte-equal**, with a correction to the record's text.
-   - The files are `guard_b_{db977e47f,6c72b821b,0c795fb7a}_repfix0.json` [`7ccd71e0` all three] and `_repfix1.json` [`634a5a32` all three]: 300 games, 24,961 positions.
+   - The files are `guard_b_{db977e47f,6c72b821b,0c795fb7a}_repfix0.json` [`7ccd71e0`] and `guard_b_{db977e47f,6c72b821b,0c795fb7a}_repfix1.json` [`634a5a32`] (each stamp holds for all three): 300 games, 24,961 positions.
    - **The correction.** The SL base's `input_history_encoding` is `lc0_root_legacy_meta` (collect manifest, `config.arch`). For it, `selfplay/network_turn.py:_batch_encoder_pair` picks `batch_encode_146_lc0_root_legacy_meta[_bf16]`. The record's guard text named only `batch_encode_146_lc0_root[_bf16]`.
    - The run digested all three encoder pairs, so the encoder actually used is covered.
 7. **The Stockfish label cost** the launch record quotes (53–91 cores) is corrected by evidence-log I34: 53–81 cores at the floor of 150k nodes; 91 is floor-to-cap.
@@ -378,7 +378,7 @@ Fact, not a decision: the three follow-up matches are pre-registered in
 [the follow-up match record](2026-11-21-rl-run1-match5-p0-single-net.md) (PR #1473, merged `51b3d56f3`). They are
 P0 as a single net (5); S's value on the base policy, raw and recalibrated (6a, 6b); and Zq recalibrated vs Zq (7).
 They are played in the order 5, 7, 6b, 6a, at 6,400 games each. They launched on 2026-11-21 after the merge (output
-root `~/chess-artifacts/operations/rl-run1-followup/` [mtime 11-21 14:34]). Their results are in [follow-up results](2026-11-21-rl-run1-followup-results.md).
+root `~/chess-artifacts/operations/rl-run1-followup/`, launched 11-21 14:34; the directory kept growing, so it carries no stamp). Their results are in [follow-up results](2026-11-21-rl-run1-followup-results.md).
 
 ## Files
 

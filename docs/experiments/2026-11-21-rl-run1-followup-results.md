@@ -235,7 +235,7 @@ The tie-break applies only below an SE of ≈ 2.55.
 
 **Seat readback.** The result rows carry `candidate_value` (A) and `reference_value` (B) = {value_from: none, recal:
 [0.7036…, −0.2271…]}. Four "seat readback OK" lines (smoke and real, both seats, `value_from=-`, the same recal) are in
-`~/chess-artifacts/operations/rl-run1-value-anchor/run_queue2.out` [mtime 11-21 22:41]. That file belongs to the
+`~/chess-artifacts/operations/rl-run1-value-anchor/run_queue2.out` (its first four lines; it was 444 bytes at 22:41 and is a living file, so it carries no stamp). That file belongs to the
 value-anchor queue and may grow. The smoke pool is `F/smoke/arenas/zq_recal_vs_base/pool.json` [`ec58ba16`]; both smoke runs exited 0 (21:14:20, 21:14:39).
 
 - **Verdict: "adoptable"** (LB95 +3.3 > −10), **and "improves on the base"** (LB95 +3.3 > 0).
@@ -247,7 +247,7 @@ value-anchor queue and may grow. The smoke pool is `F/smoke/arenas/zq_recal_vs_b
 under its own record.
 
 **Caveats, as plain as the result.**
-- **The (T, b) fit is post hoc on this one net.** It was made at 13:09 on 11-21 (`pilot-value-diagnosis/logs/fit_Zq.log` [`3a6d157e`], `out/recal_Zq.json` [`7e665c5e`]), after the pilot gate had been read. It was fixed before matches 7 and 8 were registered and run, and was not refit.
+- **The (T, b) fit is post hoc on this one net.** It was made at 13:09 on 11-21 (`~/chess-artifacts/operations/rl-claude-20261119/pilot-value-diagnosis/logs/fit_Zq.log` [`3a6d157e`], `~/chess-artifacts/operations/rl-claude-20261119/pilot-value-diagnosis/out/recal_Zq.json` [`7e665c5e`]), after the pilot gate had been read. It was fixed before matches 7 and 8 were registered and run, and was not refit.
 - **What the fit minimised:** the cross-entropy of Zq's recalibrated WDL, softmax(logits / T + [0, b, 0]), to the SL base net's WDL. That ran on the 39,237 rows of the pilot collect's 416 hold-out games: CE 0.556724 → 0.540235 (fit log). The recalibration target is therefore the base net's value shape, not the game outcomes.
 - **What a 2-parameter fit can and cannot do.** softmax(l / T + [0, b, 0]) changes confidence and draw mass. Through the draw bias it can also reorder W − L between positions somewhat. It cannot add information or copy the base head. Pulling Zq's shape toward the base can recover the shape loss that match 7 measured, but any "beats the base" has to come from Zq's own head.
 - **One net and one generation.**
@@ -267,8 +267,8 @@ use different seeds and opening blocks, and Elo need not be transitive across op
 
 **INCIDENT, during seat A (from the evidence, not a measurement).**
 - **What happened.** On 2026-11-21 from 21:38:48 to 21:40:54 −05:00, about 126 s, three stray collect processes from an agent's launcher guard test shared the GPU with match 8's seat A, the arena process PID 2337486.
-- **Window.** The first and last samples that list the stray PIDs are in `logs/pids.txt` [`2e17c16c`].
-- **Memory.** The peak card memory in `logs/gpu.csv` [`2ba32b23`] is 30,406 MiB of 32,607, at sample 224 of 281. The file carries no timestamps; the coordinator's ≈ 21:40:49 is an estimate from the 500 ms sample index. The lowest sample, 10,971 MiB, is the match alone.
+- **Window.** The first and last samples that list the stray PIDs are in `~/chess-artifacts/operations/rl-run1-root-full-width/stage0/INCIDENT_guardtest_20261121/logs/pids.txt` [`2e17c16c`].
+- **Memory.** The peak card memory in `gpu.csv` [`2ba32b23`] is 30,406 MiB of 32,607, at sample 224 of 281. The file carries no timestamps; the coordinator's ≈ 21:40:49 is an estimate from the 500 ms sample index. The lowest sample, 10,971 MiB, is the match alone.
 - **Cause.** The guard's busy check used `nvidia-smi --query-compute-apps`, which lists nothing under WSL2.
 - **Handling.** The strays were killed by exact PID, and nothing they wrote was sealed. Evidence: `~/chess-artifacts/operations/rl-run1-root-full-width/stage0/INCIDENT_guardtest_20261121/` (`INCIDENT.txt` [`1f4e5fe7`], `logs/p1.log` [`6c1ab296`], `logs/p2.log` [`2788c568`], `logs/p3.log` [`c6b7cbf9`]).
 - **Why the result stands without a rerun.** Wall time enters no decision:
