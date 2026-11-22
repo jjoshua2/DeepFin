@@ -103,14 +103,32 @@ roots (`stage1/smoke_cpu/`; a smoke, not a result):
 
 ## The GPU guard
 
-Every launcher in the bank sources `gpu_guard.sh` v3 (sha256 `ee073f841a24…`; v1 `a0a2f869a719…`, v2 `997969c87bf3…`).
-It refuses (exit 8) unless **all** of these hold:
-- **Memory.** `nvidia-smi --query-gpu=memory.used` is below 1,024 MiB.
+**Which launchers are guarded.** `gpu_guard.sh` v4 (sha256 `b3ffd88cf5f7…`; v1 `a0a2f869a719…`, v2 `997969c87bf3…`,
+v3 `ee073f841a24…`) is sourced by:
+- `stage0/run_stage0_all.sh` and each `stage0/run_stage0.sh` it starts;
+- `stage1/run_stage1.sh`;
+- `stage2/run_stage2.sh` and each `run_rfw_match.sh` it starts;
+- `stage3/launch_stage3.sh`. It sources the guard at its start, and again immediately before **each** GPU step: the
+  collect, each training cell, Stage A, and each match run.
+
+**One child is not guarded itself.** Stage 3's matches run at the PIN through the follow-up bank's sha-pinned
+`run_followup_match.sh` (`7c8fd065…`). That script has no guard and is not changed. The re-check in
+`launch_stage3.sh` immediately before each of its calls is what guards those matches. A re-check runs the full list
+in the same shell, so it takes the nested-lock path. It waits up to 60 s (`RFW_MEM_WAIT_S`) for memory to fall
+after the previous step exits; it never relaxes the bar. Guard (d)'s `check_load.py` runs with
+`CUDA_VISIBLE_DEVICES` empty, on the CPU.
+
+The guard refuses unless **all** of these hold:
+- **Memory.** `nvidia-smi --query-gpu=memory.used` is below 1,024 MiB (exit 8).
+  - **It fails closed.** If `nvidia-smi` exits non-zero, or prints anything but an integer, the guard refuses with
+    exit 11. This is new in v4; v3 read an empty output as unreadable but ignored the exit code.
   - **Not `--query-compute-apps`.** Under WSL2 that list cannot be relied on to see another process tree. During
     the incident below it listed this bank's three collects in 62 of 64 samples, but it never listed match 8's
     PID 2337486, which was using the card the whole time.
 - **No running GPU work.** An exact `ps -u <me> -o args` scan finds no `arena_standard.py`, `simple_rl_loop.py` or
   `match_vs_uci.py`. The match is on the script's basename as an argv token; `pgrep -f` is never used.
+  - **It fails closed** (new in v4). If `ps` exits non-zero, or prints nothing, the guard refuses with exit 10.
+    `ps` always lists at least the guard's own shell. v3 read both as "no GPU work".
 - **The queue has released the card.** Both markers exist: `rl-run1-followup/chain.exit` and
   `rl-run1-value-anchor/queue2.exit`.
 - **The operator released THIS stage.** The bank holds a file `GPU_RELEASED_BY_OPERATOR` with a line whose first
@@ -124,7 +142,9 @@ It then takes a non-blocking `flock` (exit 9 if held) on the bank's own `.gpu_la
 launches cannot overlap. It never opens `~/projects/chess/scratchpad/gpu0_experiment.lock`. A launcher started by
 another launcher of this bank (`run_stage0_all.sh` → `run_stage0.sh`, `run_stage2.sh` → `run_rfw_match.sh`) inherits
 the parent's locked descriptor and re-locks that, so nesting works; anything else opens the file and must get the lock.
-That inheritance is new in v3.
+That inheritance is new in v3. Since v4 the guard reads `/proc/$BASHPID/fd/9` rather than `/proc/$$/fd/9`, so it
+is also correct if sourced inside a subshell. fd 9 open on any other file is replaced by a fresh open of the lock
+file, which must then win the flock.
 
 **Launcher hardening (2026-11-22).** Another agent's guard test reached the GPU because its launcher had no
 `set -e`, so a failed `source` of a missing guard fell through to the real launch. This bank's launchers had the
@@ -140,19 +160,43 @@ RFW_STAGE=<stage> source "$GUARD" || exit 8
 
 Under `set -e`, a command whose exit code is read on purpose is written `cmd && rc=0 || rc=$?`.
 
+**What the guard test does and does not prove.** It does not prove that `set -e` is present. The explicit
+existence check and the `|| exit 8` are what stop a launcher, and the mutant below shows that removing them is
+caught.
+
+**The exit marker is written from an EXIT trap.** Once a launcher has passed its checks, every exit goes through an
+EXIT trap that writes its marker: a success, a failed step, a `set -e` abort, or SIGINT/SIGTERM. The markers are:
+- `run_stage0.sh`: `run.exit` and `REMOVED_ROW_DATA.txt`;
+- `run_stage0_all.sh`: `stage0_all.exit`;
+- `run_stage1.sh`: `stage1.exit`;
+- `run_rfw_match.sh`: the look's `.exit`;
+- `run_stage2.sh`: `stage2.exit`;
+- `launch_stage3.sh`: `stage3.exit`, beside the per-step `.exit` files.
+
+A missing marker can then only mean SIGKILL or the host dying, never "failed".
+
+The review found a real case of the defect this fixes. In `run_stage0.sh` v4, the shard cleanup after the GPU work
+ran `find` on every process directory. Under `set -e`, a process that died before creating its directory made that
+`find` abort the launcher, so neither `run.exit` nor `REMOVED_ROW_DATA.txt` was written. The cleanup now runs inside
+the trap, and only on directories that exist. I checked every launcher for the same class: a command after the GPU
+work whose failure skips a marker. Stage 3's Stage A steps (`|| exit 1` before `stage_a.exit`) were the other
+instance; `stage3.exit` now covers them.
+
 New shas (previous versions kept as `.vN`):
 
 | Script | New sha | Previous sha |
 |---|---|---|
-| `stage0/run_stage0.sh` v4 | `205bd4f0db30…` | v3 `d0e3bcb6952b…` |
-| `stage0/run_stage0_all.sh` v2 | `98a9bea18970…` | v1 `51482410ec7c…` |
-| `stage1/run_stage1.sh` v3 | `0539b8e1e4f4…` | v2 `3778d06ddad6…` |
-| `run_rfw_match.sh` v3 | `b24a435b24e5…` | v2 `0487d857e379…` |
-| `stage2/run_stage2.sh` v3 | `ba70d73eb7b7…` | v2 `c07fe428aa39…` |
-| `stage3/launch_stage3.sh` v3 | `8bfe478f0db8…` | v2 `a519b39f2200…` |
+| `stage0/run_stage0.sh` v5 | `eb1dd4d3163b…` | v4 `205bd4f0db30…`, v3 `d0e3bcb6952b…` |
+| `stage0/run_stage0_all.sh` v3 | `0d9a81de48f5…` | v2 `98a9bea18970…`, v1 `51482410ec7c…` |
+| `stage1/run_stage1.sh` v4 | `b9ab2fae46ed…` | v3 `0539b8e1e4f4…`, v2 `3778d06ddad6…` |
+| `run_rfw_match.sh` v4 | `91ef5a8f87ed…` | v3 `b24a435b24e5…`, v2 `0487d857e379…` |
+| `stage2/run_stage2.sh` v4 | `174495f8c6eb…` | v3 `ba70d73eb7b7…`, v2 `c07fe428aa39…` |
+| `stage3/launch_stage3.sh` v4 | `f5ea61297307…` | v3 `8bfe478f0db8…`, v2 `a519b39f2200…` |
 
-**Tested** (`guard_test/guard_test.sh` v5 `d9b84ec2eba5…`, output `guard_test/guard_test.txt`; v1 `621a57547b22…`,
-v2 `730d515388e3…`, v3 `b40b08d3d30c…` and v4 `d4ad57efc6f3…`, with their outputs, are kept as `.v1` … `.v4`).
+**Tested** (`guard_test/guard_test.sh` v6 `275c91d526df…`, output `guard_test/guard_test.txt`; v1 `621a57547b22…`,
+v2 `730d515388e3…`, v3 `b40b08d3d30c…`, v4 `d4ad57efc6f3…` and v5 `d9b84ec2eba5…`, with their outputs, are kept as
+`.v1` … `.v5`). Since v6 the test **exits non-zero if any case is WRONG**. v5 exited 0 even with WRONG lines, so a
+mutant harness must key on the exit code.
 Nothing in the test can reach the GPU:
 - `CUDA_VISIBLE_DEVICES` is empty;
 - HOME is a fake;
@@ -163,9 +207,10 @@ Every launcher runs through one wrapper. Inside the environment it is about to r
 `$HOME` is the fake and that `command -v` of `python`, `nvidia-smi` and `ps` gives the stubs. If any of this fails, the
 whole test aborts before any case runs. For a collect call the stub records its arguments and fabricates a tiny
 finished collect: step-synchronous fake play in real time, 600 games, 128 slots. For the launcher's summary step it
-runs the real python. All 29 checks pass:
+runs the real python. All 37 checks pass:
 - memory 10,971 MiB, with every other check clear → refused for memory (the test greps "GPU memory in use");
-- memory unreadable → refused for memory;
+- `nvidia-smi` printing nothing, printing `N/A`, or exiting 2 while printing 500 → 11;
+- `ps` exiting 1, or printing nothing → 10;
 - a missing queue marker → 8;
 - each of the three script names running → 8;
 - the name present only as a substring → passes;
@@ -175,14 +220,19 @@ runs the real python. All 29 checks pass:
 - a release file with the requested stage → passes;
 - a stage name outside stage0–3 → 8;
 - the lock held → 9;
+- fd 9 open on `/dev/null` while an unrelated process holds the lock → 9;
+- fd 9 opened on the lock file by the launcher itself (not inherited), with an unrelated holder → 9;
 - `run_stage0.sh` end to end with the stub:
   - three collect calls, each carrying `--root-full-width`;
   - exit 0;
   - a summary row whose `steady_rows_per_s` comes from `steady_rate.py` on the real progress log and the stub's
-    first-forward time. It must lie within **±5%** of the stub's own measured full-concurrency rate. The stub
+    first-forward time. It must lie within **±2%** of the stub's own measured full-concurrency rate. The stub
     records its real step times, because sleep overhead makes the nominal 128 / 0.1 s an overstatement. In v4 the
-    stub plays 600 games per process, about 15 s of full concurrency. The v5 run reads 3,817 against a measured
-    3,830 (ratio 0.997).
+    stub plays 600 games per process, about 15 s of full concurrency.
+    - The bar was tightened from ±5% after 5 consecutive runs (`guard_test/tolerance_5runs.txt`). Their ratios were
+      0.9966, 0.9963, 0.9954, 0.9959 and 0.9942.
+    - The final v6 run reads 0.9903 (3,792 against 3,829). The estimator reads about 0.4–1.0% low on this stub,
+      which leaves the 2% bar about a factor of 2 of margin.
     - v3 allowed ±25% on a 6 s run. That read 3,990 against the nominal 3,840.
     - This case found a real bug: the progress sampler could miss the final games. The launcher now takes one last
       sample after every process exits.
@@ -193,9 +243,23 @@ runs the real python. All 29 checks pass:
   `run_stage0.sh`, `run_rfw_match.sh` and `launch_stage3.sh`;
 - a nested launch, where the parent holds the bank lock → the child passes;
 - `launch_stage3.sh` without the operator's stage3 line → 8, and with it but no `OWNER_GO` → 90;
-- `run_rfw_match.sh` writing into the frozen pilot bank → 94.
+- `run_rfw_match.sh` writing into the frozen pilot bank → 94;
+- `run_stage0.sh` where process 2 exits 3 before creating its run directory: the launcher exits non-zero,
+  `run.exit` holds that same code, `REMOVED_ROW_DATA.txt` is written, and `p2.exit` holds 3;
+- `launch_stage3.sh` with every prerequisite faked: the stub collect revokes the stage3 release mid-run. The launcher
+  refuses before the first training cell, with exit 8. `collect.exit` is 0, `stage3.exit` is 8, and no training cell
+  has started.
 
-**Mutants** (`guard_test/guard_mutants.txt`; the restore was checked by md5):
+**Mutants v6** (`guard_test/run_mutants_v6.sh`, output `guard_test/guard_mutants_v6.txt`). The verdict is keyed on
+the test's exit code, and each restore is by copy, checked by md5. All six are caught (exit 1):
+- M1, the v4 cleanup (`find` on a missing directory, inside the trap) → the process-2 case fails;
+- M2, the reviewer's mutant (any open fd 9 accepted) → the `/dev/null` case fails;
+- M3, the other agent's hole re-created in `run_stage0.sh` → 2 WRONG;
+- M4, `launch_stage3.sh`'s re-check made a no-op → the revoke case fails;
+- M5, the `ps` scan failing open → both `ps` cases fail;
+- M6, the `nvidia-smi` exit code ignored → the exit-2 case fails.
+
+**Earlier mutants** (`guard_test/guard_mutants.txt`; the restore was checked by md5):
 - with the memory check disabled, the two memory cases fail;
 - with the release-file stage check disabled, the "without the stage" case fails;
 - with the other agent's hole re-created in `run_stage0.sh` (no `set -euo pipefail`, no existence check, no
