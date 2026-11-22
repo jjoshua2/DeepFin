@@ -141,19 +141,29 @@ class _Engine:
         self._r = os.open(os.devnull, os.O_RDONLY)
         self._filler = os.open(os.devnull, os.O_WRONLY)
 
-    def wait_blocked_in_write(self, timeout_s: float = 60.0) -> None:
-        """Until an engine thread sits in write(1, ...) (x86-64/arm64 nr 1/64)."""
+    def blocked_in_write(self) -> bool:
+        """An engine thread sits in write(1, ...) now (x86-64/arm64 nr 1/64)."""
         nr = {"x86_64": "1", "aarch64": "64"}.get(os.uname().machine, "1")
+        try:
+            tids = os.listdir(f"/proc/{self.proc.pid}/task")
+        except OSError:
+            return False
+        for tid in tids:
+            try:
+                with open(f"/proc/{self.proc.pid}/task/{tid}/syscall") as fh:
+                    fields = fh.read().split()
+            except OSError:
+                continue
+            if fields[:2] == [nr, "0x1"]:
+                return True
+        return False
+
+    def wait_blocked_in_write(self, timeout_s: float = 60.0) -> None:
+        """Until an engine thread sits in write(1, ...)."""
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
-            for tid in os.listdir(f"/proc/{self.proc.pid}/task"):
-                try:
-                    with open(f"/proc/{self.proc.pid}/task/{tid}/syscall") as fh:
-                        fields = fh.read().split()
-                except OSError:
-                    continue
-                if fields[:2] == [nr, "0x1"]:
-                    return
+            if self.blocked_in_write():
+                return
             time.sleep(0.05)
         raise AssertionError("no engine thread blocked in write(stdout)")
 
@@ -277,16 +287,27 @@ def test_quit_exits_within_bound_while_the_search_is_blocked_writing(
 def test_quit_during_a_search_sent_the_moment_stdout_fills(
     engine: _Engine, tmp_path: Path,
 ) -> None:
-    # No wait for a writer to block: the quit races the search's next line.
+    # No wait for a writer to block: the quit races the search's next line,
+    # which may block only after `quit` arrived (later still under load). The
+    # bound runs from whichever came later: `quit`, or the writer blocking.
     engine.send("position startpos")
     engine.send("go infinite")
     engine.read_until("info")
     engine.block_stdout()
     helpers = _descendants(engine.proc.pid)
     engine.send("quit")
-    took = engine.wait_exit(_NEVER_S)
-    assert took is not None, f"no exit within {_NEVER_S}s\n{_stderr_text(tmp_path)[-2000:]}"
-    assert took <= QUIT_BOUND_S + _SLACK_S, f"exit took {took:.2f}s > {QUIT_BOUND_S}s"
+    t_ref = time.monotonic()
+    seen_block = False
+    deadline = t_ref + _NEVER_S
+    while engine.proc.poll() is None and time.monotonic() < deadline:
+        if not seen_block and engine.blocked_in_write():
+            seen_block, t_ref = True, max(t_ref, time.monotonic())
+        time.sleep(0.01)
+    assert engine.proc.poll() is not None, (
+        f"no exit within {_NEVER_S}s\n{_stderr_text(tmp_path)[-2000:]}")
+    took = time.monotonic() - t_ref
+    assert took <= QUIT_BOUND_S + _SLACK_S, (
+        f"exit took {took:.2f}s after {'the writer blocked' if seen_block else 'quit'}")
     # 0 if the search stopped before its next write, 1 if that write blocked.
     assert engine.proc.returncode in (0, 1)
     assert not [p for p in helpers if _alive(p)]
