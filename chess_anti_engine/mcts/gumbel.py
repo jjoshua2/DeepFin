@@ -487,7 +487,11 @@ class GumbelConfig:
   # (RootSearchStats.prelude_visits -> the row's root_prelude_visits; they are
   # in root_child_visits; search_budget stays the budget given). Selfplay runs
   # round 0 on FULL plies only: a playout-cap fast ply stores no policy target,
-  # so it skips round 0 (`per_game_root_full_width`). Read by the C runner only
+  # so it skips round 0 (`per_game_root_full_width`). Sibling sidecars: with it
+  # on, a candidate eliminated after the first halving round has 2 visits, not 1,
+  # so more children pass the materialiser's min_visits=2 and pair weights shift
+  # up -- never compare sidecars across knob settings without a Confounds line.
+  # Read by the C runner only
   # (`run_gumbel_root_many_c`); the Python reference search refuses it.
     root_full_width: bool = False
     add_noise: bool = True  # Backward-compatible gate; use gumbel_scale for partial noise.

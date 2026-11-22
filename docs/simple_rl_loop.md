@@ -952,6 +952,11 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
       0.45% of the pilot's pair children were such repetitions. The version-2 rule
       excluded 18,169 repetition children and 7 game-over children from the
       candidates.
+    - **`--root-full-width` shifts the candidates.** With it on, a candidate
+      eliminated after the first halving round has 2 visits (round 0 plus one)
+      instead of 1, so more children pass `--min-visits 2` and pair weights shift
+      up. Do not compare sibling sidecars across knob settings without a
+      Confounds line.
     - **Choice:** drawn without replacement with probability proportional to
       `min(v_A, v_B)`, from an RNG keyed by (seed, game id, ply), so it is
       reproducible and independent of order.
