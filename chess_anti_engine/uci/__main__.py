@@ -69,8 +69,9 @@ from .engine import (
     _println,
     _STDOUT_STUCK,
     _println_bounded,
-    _stdout_writable,
     emit_handshake,
+    print_lock_held,
+    stdout_progress,
     stdout_stuck,
 )
 from . import startup_progress, wedge
@@ -2109,7 +2110,7 @@ def main() -> int:
     rc = 0
     feed = _StdinFeed(sys.stdin)
     try:
-        for raw, received_at in feed:
+        for raw, received_at in _received_lines(feed):
             cmd = stamp_received(parse_command(raw), received_at)
             if isinstance(cmd, CmdUci):
                 emit_handshake(startup_options)
@@ -2222,22 +2223,32 @@ _receipt_clock = time.monotonic
 
 
 # `quit` must end the process within a bound even when the GUI stopped reading
-# our stdout. Then any thread printing -- the search's info line, the main
-# thread's reply to `stop` -- sits in `write` (or waits for the print lock its
-# holder keeps there), and the main thread may never read `quit` at all. So stdin
-# is read on its own thread, and a `quit` line (or the main loop's end) arms a
-# guard: if the process is still alive `_QUIT_GRACE_S` later and stdout takes no
-# byte for `_STDOUT_STALL_S`, it hard-exits with status 1 (`_exit_stdout_stuck`).
-# A quit that is merely slow while stdout drains is left alone, and a quit that
-# finishes inside the grace never sees the guard.
-_QUIT_GRACE_S = 0.5
-_STDOUT_STALL_S = 0.5
+# our stdout. Then a printing thread -- the search's info line, the main
+# thread's reply to `stop` -- sits in `write` holding the print lock (or waits
+# for it), and the main thread may never read `quit` at all. So stdin is read on
+# its own thread (raw lines only: the main loop still stamps each line when it
+# takes it, `_received_lines`, so the move clock's origin is unchanged), and a
+# `quit` command (or the main loop's end) arms a guard. The guard hard-exits with
+# status 1 (`_exit_stdout_stuck`) only when a writer is actually blocked: the
+# print lock was held at every look and no print completed for
+# `_STDOUT_STALL_S`. A free lock or a completed print restarts the window, so a
+# slow but progressing writer, a GUI that reads late, or a slow teardown with
+# stdout idle never trips it. It uses no `select`: on Windows, `select` on a
+# pipe raises, and the lock works the same there.
+#
+# The window: `quit` must exit within 2.0 s; less the bounded stderr note
+# (`_stderr_note`, 0.25 s) and one look (`_GUARD_LOOK_S`), that leaves 1.7 s. A
+# GUI may therefore stop reading for up to that long after `quit` and still get
+# the clean exit (status 0, everything closed) -- longer than the 1.0 s our own
+# `stop` gives a search before declaring it unresponsive (`_GO_WAIT_NO_CLOCK_S`).
+_STDOUT_STALL_S = 1.7
+_GUARD_LOOK_S = 0.05
 
 
 class _StdinFeed:
-    """`_received_lines(stream)` read on a daemon thread, consumed in order by
-    the main loop; ends after `quit` or EOF as the main loop does. A read error
-    is raised in the main loop, where it was raised before."""
+    """stdin's raw lines, read on a daemon thread and consumed in order by the
+    main loop; ends after a `quit` command or EOF as the main loop does. A read
+    error is raised in the main loop, where it was raised before."""
 
     _EOF = object()
 
@@ -2253,8 +2264,8 @@ class _StdinFeed:
 
     def _read(self, stream: Iterable[str]) -> None:
         try:
-            for raw, received_at in _received_lines(stream):
-                self._lines.put((raw, received_at))
+            for raw in stream:
+                self._lines.put(raw)
                 if isinstance(parse_command(raw), CmdQuit):
                     self.arm_quit_guard()
                     return
@@ -2263,14 +2274,14 @@ class _StdinFeed:
             return
         self._lines.put(self._EOF)
 
-    def __iter__(self) -> Iterator[tuple[str, float]]:
+    def __iter__(self) -> Iterator[str]:
         while True:
             item = self._lines.get()
             if item is self._EOF:
                 return
             if isinstance(item, BaseException):
                 raise item
-            yield cast(tuple[str, float], item)
+            yield cast(str, item)
 
     def arm_quit_guard(self) -> None:
         with self._guard_lock:
@@ -2286,15 +2297,15 @@ class _StdinFeed:
         self._disarmed.set()
 
     def _guard_quit(self) -> None:
-        if self._disarmed.wait(_QUIT_GRACE_S):
-            return
-        while not self._disarmed.is_set():
-            if stdout_stuck() or not _stdout_writable(_STDOUT_STALL_S):
-                if self._disarmed.is_set():
-                    return
+        seen = stdout_progress()
+        since = time.monotonic()
+        while not self._disarmed.wait(_GUARD_LOOK_S):
+            done = stdout_progress()
+            if done != seen or not print_lock_held():
+                seen, since = done, time.monotonic()  # a print completed, or nobody is blocked
+                continue
+            if time.monotonic() - since >= _STDOUT_STALL_S and not self._disarmed.is_set():
                 _exit_stdout_stuck(1)
-            if self._disarmed.wait(_STDOUT_STALL_S):
-                return
 
 
 def _exit_stdout_stuck(rc: int) -> None:
@@ -2311,9 +2322,10 @@ def _exit_stdout_stuck(rc: int) -> None:
 
 
 def _received_lines(stream: Iterable[str]) -> Iterator[tuple[str, float]]:
-    """Each line of ``stream`` with the moment it was read: a `go` or
+    """Each line of ``stream`` with the moment the main loop took it: a `go` or
     `ponderhit` starts the move's clock then (`stamp_received`), not when its
-    handler gets to run."""
+    handler gets to run. Run on the main loop's side of `_StdinFeed`, so a line
+    queued behind a slow command is stamped when the loop gets to it."""
     for raw in stream:
         yield raw, _receipt_clock()
 
@@ -2376,14 +2388,20 @@ def _device_thread_wedged(eng: Any) -> bool:
 
 def _stderr_note(line: str, timeout_s: float = 0.25) -> None:
     """One diagnostic line on stderr, skipped if stderr does not take it within
-    ``timeout_s`` (its reader may be gone with the GUI's stdout reader)."""
+    ``timeout_s`` (its reader may be gone with the GUI's stdout reader), and
+    skipped when its writability cannot be known: on Windows `select` on a pipe
+    raises, and an unbounded write there could block the exit."""
     try:
         fd = sys.stderr.fileno()
-        _r, w, _x = select.select([], [fd], [], timeout_s)
+    except (AttributeError, OSError, ValueError):
+        fd = None  # not a real file (a test's stand-in): writes cannot block
+    if fd is not None:
+        try:
+            _r, w, _x = select.select([], [fd], [], timeout_s)
+        except (OSError, ValueError):
+            return
         if not w:
             return
-    except (AttributeError, OSError, ValueError):
-        pass  # not a real file: writes cannot block
     print(line, file=sys.stderr)
 
 

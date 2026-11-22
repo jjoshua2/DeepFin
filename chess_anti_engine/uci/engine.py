@@ -13,7 +13,6 @@ import gc
 import logging
 import math
 import os
-import select
 import sys
 import threading
 import time
@@ -4390,12 +4389,12 @@ def _at_once_answer_by_ms(clock_left_ms: float, elapsed_ms: float) -> float:
 
 
 def _receipt_time(received_at: float | None) -> float:
-    """The clock origin of a `go` / `ponderhit`: when the main loop read its line
+    """The clock origin of a `go` / `ponderhit`: when the main loop took its line
     (the command's ``received_at``), never later than now; now when unstamped.
-    The main loop is the stdin reader, so time a line spends unread in the pipe
-    while the loop handles an earlier command is NOT counted (MoveOverheadMs
-    must cover it); the stamp only charges the parse-and-dispatch time before
-    the handler runs."""
+    The main loop stamps a line when it takes it from stdin (through
+    `__main__._StdinFeed`'s queue), so time a line spends waiting while the loop
+    handles an earlier command is NOT counted (MoveOverheadMs must cover it);
+    the stamp only charges the parse-and-dispatch time before the handler runs."""
     now = time.monotonic()
     return now if received_at is None else min(float(received_at), now)
 
@@ -4650,51 +4649,51 @@ def _println(s: str) -> bool:
             return False
         sys.stdout.write(s + "\n")
         sys.stdout.flush()
+        global _PRINTS_DONE
+        _PRINTS_DONE += 1
         return True
 
 
 # The quit / exit path writes through `_println_bounded`: a GUI that has
 # stopped draining our stdout leaves a writer blocked inside `write` holding
 # `_PRINT_LOCK`, and an unbounded print there kept `quit` from ever exiting.
-# Once a bounded print finds the lock stuck, the exit skips every later stdout
-# write and flush (`stdout_stuck`). A full pipe with no writer in it yet is the
-# `__main__` quit guard's case.
+# `stdout_stuck` says the latest bounded print found the lock stuck (cleared by
+# the next one that gets it); `_hard_exit` then skips its stdout flush. The
+# `__main__` quit guard watches `stdout_progress` and `print_lock_held`.
 _QUIT_PRINT_WAIT_S = 0.25
 _STDOUT_STUCK = threading.Event()
+_PRINTS_DONE = 0
 
 
 def stdout_stuck() -> bool:
-    """A quit/exit-path print found stdout not being drained this session."""
+    """The latest quit/exit-path print found the print lock held past its wait."""
     return _STDOUT_STUCK.is_set()
 
 
-def _stdout_writable(timeout_s: float) -> bool:
-    """stdout can take a write within ``timeout_s`` (True for a non-file).
+def stdout_progress() -> int:
+    """How many UCI lines have been written (a writer blocked in `write` stops it)."""
+    return _PRINTS_DONE
 
-    Pessimistic on a one-page pipe: Linux reports it unwritable while any byte
-    is pending, though a short write would still fit."""
-    try:
-        fd = sys.stdout.fileno()
-    except (AttributeError, OSError, ValueError):
-        return True  # not a real file (a test's stand-in): writes cannot block
-    try:
-        _r, w, _x = select.select([], [fd], [], max(0.0, timeout_s))
-    except (OSError, ValueError):
-        return True
-    return bool(w)
+
+def print_lock_held() -> bool:
+    """Some thread holds the print lock right now (is writing, or blocked in
+    `write`). The caller must not hold it itself."""
+    if _PRINT_LOCK.acquire(blocking=False):
+        _PRINT_LOCK.release()
+        return False
+    return True
 
 
 def _println_bounded(s: str, timeout_s: float = _QUIT_PRINT_WAIT_S) -> bool:
     """`_println` for the quit / exit path only: skip the line (False) rather
     than wait more than ``timeout_s`` for the print lock -- held by a writer
-    stuck in `write` -- and latch `stdout_stuck` so the exit waits on stdout no
-    more. Otherwise it is `_println` (the same bytes)."""
-    if _STDOUT_STUCK.is_set():
-        return False
+    stuck in `write` -- and set `stdout_stuck`; a print that gets the lock
+    clears it. Otherwise it is `_println` (the same bytes)."""
     if not _PRINT_LOCK.acquire(timeout=max(0.0, timeout_s)):
         _STDOUT_STUCK.set()
         return False
     try:
+        _STDOUT_STUCK.clear()
         return _println(s)
     finally:
         _PRINT_LOCK.release()
