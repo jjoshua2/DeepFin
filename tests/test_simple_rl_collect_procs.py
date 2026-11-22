@@ -243,6 +243,11 @@ def test_a_pause_holds_every_process_and_resumes_to_identical_rows(
     assert stats["timing_independent"] is False
     assert all(len(p["pause_intervals"]) == 1 for p in stats["procs"])
     assert stats["active_seconds"] <= stats["wall_seconds"] - 2.0
+    # per-process clock of the final attempt: the wall includes the pause, the active field excludes it
+    slowest = max(stats["procs"], key=lambda p: p["wall_seconds"])
+    assert stats["slowest_process_wall_seconds"] == slowest["wall_seconds"]
+    assert stats["slowest_process_active_seconds"] == pytest.approx(slowest["wall_seconds"] - slowest["paused_seconds"])
+    assert stats["slowest_process_active_seconds"] <= stats["slowest_process_wall_seconds"] - 2.0
     if procs == 1:
         assert calls, "the counting search wrapper was not on the collect's path"
         assert not [c for c in calls if log["held"] <= c <= log["released"]], "a search ran during the pause"

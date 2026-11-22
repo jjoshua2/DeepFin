@@ -1341,13 +1341,19 @@ def collect_generation(*, gen_dir: Path, generation: int, checkpoint: Path, trai
     fresh_records = [r for r in records if int(r["proc"]) in fresh]
     games_now = sum(int(r["games_this_attempt"]) for r in fresh_records)
     rows_now = sum(int(r["rows_this_attempt"]) for r in fresh_records)
-    # A merge-only attempt (every process kept from an earlier one, e.g. a reseal
-    # after the seal step died) times nothing but the merge: its wall is not the
-    # collect's and was once banked as 2.3e-06 s. Report None there, and always
-    # the slowest process's own wall (kept processes included), which is the
-    # collect's play time when its processes ran together.
-    stats["slowest_process_wall_seconds"] = (max(float(r["wall_seconds"]) for r in records)
-                                             if records else None)
+    # `wall_seconds` / `paused_seconds` / `active_seconds` are the ORCHESTRATOR's clock
+    # for THIS attempt. A merge-only attempt (every process kept from an earlier one,
+    # e.g. a reseal after the seal step died) times nothing but the merge -- it was once
+    # banked as 2.3e-06 s -- so they are None there.
+    # The per-process fields below are always written (kept processes included) and
+    # describe each process's FINAL attempt only: the process with the largest wall,
+    # its wall (pauses INCLUDED) and its wall minus its pauses (pauses EXCLUDED).
+    # Earlier attempts of a game-resumed process are NOT counted: a killed attempt
+    # leaves no clock behind, so a cumulative figure could only be approximated.
+    slowest = max(records, key=lambda r: float(r["wall_seconds"])) if records else None
+    stats["slowest_process_wall_seconds"] = None if slowest is None else float(slowest["wall_seconds"])
+    stats["slowest_process_active_seconds"] = (None if slowest is None else
+                                               float(slowest["wall_seconds"]) - float(slowest["paused_seconds"]))
     stats.update(wall_seconds=wall if fresh else None, paused_seconds=paused if fresh else None,
                  active_seconds=active if fresh else None,
                  timing_independent=bool(fresh) and paused == 0.0 and not (set(done) - fresh) and not resumed_games,
