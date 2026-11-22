@@ -34,6 +34,20 @@ GPU; the sizing below is CPU work plus measured costs.
 - the confound line is the measured trunk gradient ratio, and generation 2 re-measures it on its
   own rows before training (report-only, with a registered stop for the owner).
 
+**Revision 4** applies the #1491 statistics review at `950be80e3` (evidence:
+`$OPS/rl-claude-20261119/plan-review-1491/delta-950be80e3/`):
+- **a fully played match can no longer be moved aside and replayed.** Both matches and Stage 0
+  resume PER SEAT: a finished seat (exit 0, exactly n games, unique pairs, one header and one result
+  row with the seed, the nets' sha256 and the PIN) is never replayed; only the missing seat plays,
+  then readback and pool run again. `move_aside.sh` refuses a whole match or Stage 0 once any real
+  seat's `.exit` is 0, and moves one interrupted seat only with `--seat A|B`. A seat whose result row
+  names other nets (a sha readback failure) is owner-only: a registered note, never a move;
+- `trunk2` runs 8 batches, re-measured (9:17 wall, 14.1 GB RSS), with per-batch values and their SE;
+  the stop range is a mean-based sanity range [0.59, 1.35], symmetric in log space around the baked
+  start, and only holds for the owner;
+- the anchor screen's S + `--kl-wdl` 7.0 result is in the evidence, as an existing competing
+  nomination; the multiplicity count is eight readings before Stage 0.
+
 **What it is.** Match 8 nominated "Zq + per-generation recalibration" for a 2-generation run under
 its own record. This is that record. It has three parts:
 - **Stage 0:** a replication of match 8's player under a new seed;
@@ -58,12 +72,18 @@ multi-generation loop is the main path to strength. Where step 1 stands, with ev
     (`pilot-value-diagnosis/out/recal_Zq.json`).
   - It is one net from one generation.
   - **Seven registered readings were made that day with no multiplicity correction** (pilot
-    matches 1, 3, 4; follow-ups 5, 7, 6, 8).
+    matches 1, 3, 4; follow-ups 5, 7, 6, 8). An eighth followed on 2026-11-22 (the anchor screen's
+    S + `--kl-wdl` 7.0 vs base; see B6).
 - **What the other cells say:**
   - P0 single net: +2.2 [−4.2, +8.6].
   - Raw Zq vs base: −10.0 [−23.2, +3.2].
   - S's value: −21.4, not rescued by recalibration.
   - The policy-ordering penalty was scoped and declined (#1488).
+  - **Value-anchor screen, Stage B match 1 (2026-11-22): S + `--kl-wdl` 7.0 vs the SL base, 6,400
+    games, seed 2026112181: +5.81 [−0.53, +12.16], "adoptable"** (nominates; it does not improve on
+    the base). `~/chess-artifacts/operations/rl-run1-value-anchor/arenas/anchor_S_k7.0/pool.json`
+    [`0722d72b`]. It is an existing competing nomination (B6). The anchor screen's Zq λ 11.3 match
+    is **running** (one seat's log, no pool, at this revision).
 
 The recipe that won match 8 is therefore Zq's training (0.5 outcome + 0.5 stored search WDL) plus
 a two-parameter WDL recalibration. This record runs that recipe once more, from its own output, and
@@ -91,9 +111,15 @@ opponent pairs is not transitive, and the second match can be won on generation 
 
 - Generation 2 proceeds on any **non-damage** Stage 0.
 - `verdicts.json` carries the licensed claim, computed by this table from the stored readings.
-- **Order of readings (review item 9).** Stage 0 is the eighth reading in this family. Gen 2 vs
-  gen 1 is the ninth and the **primary** reading; gen 2 vs base is the tenth. No correction is
-  registered; each is read at its own 95% interval.
+- **Order of readings (review item 9; recounted in revision 4 from the evidence log).** Eight
+  registered readings come before Stage 0: (1) pilot match 1, Zq vs base; (2) pilot match 3, S vs
+  base; (3) pilot match 4, the P0 hybrid vs base; (4) match 5, P0 single net vs base; (5) match 7,
+  Zq recal vs Zq; (6) match 6, S's value recovery R = 6a − 6b (one registered reading from two
+  matches); (7) match 8, Zq recal vs base; (8) the anchor screen's S + `--kl-wdl` 7.0 vs base.
+  Stage 0 is the **ninth**. Gen 2 vs gen 1 is the **tenth** and the **primary** reading; gen 2 vs
+  base is the **eleventh**. The anchor screen's Zq λ 11.3 match, still running, would be one more
+  before Stage 0 if it finishes first. No correction is registered; each is read at its own 95%
+  interval.
 - **No pooled match 8 + Stage 0 estimate is computed.** Match 8 was selected as a winner, so
   pooling would carry its selection bias; Stage 0 alone is the unbiased estimate of that player.
 
@@ -375,11 +401,22 @@ peak RSS).
   base; that is why the B5 bounds are centred on one generation's drift, not on T1.
 - **Re-measured on generation 2's own rows, before training (step `trunk2`, CPU, report-only).**
   The same script (`prelaunch/trunk_pull_gen2.py`: the reviewer's file with one change, the collect
-  is `TRUNK_COLLECT`; sha256 below) runs on `gen1_baked.pt` over 2 × 256 rows of generation 2's own
-  collect. The ratio is reported. **If it leaves [0.59, 1.28]** (the range between a raw start and
-  generation 1's largest batch), the launcher writes the registered note `gen2/HOLD_TRUNK2` and
-  **stops for the owner before training**. Generation-2 targets differ from generation 1's, so the
-  pilot-row figures are the reference, not a prediction.
+  is `TRUNK_COLLECT`; sha256 below) runs on `gen1_baked.pt` over **8 × 256 rows** (revision 4) of
+  generation 2's own collect. The statistic is the reviewer's: mean value norm / mean policy norm
+  over the batches. `trunk2_verdict.json` also carries the 8 per-batch ratios, their mean and its
+  SE. **If the statistic leaves [0.59, 1.35]**, the launcher writes the registered note
+  `gen2/HOLD_TRUNK2` and **stops for the owner before training**.
+  - **What the range is: a sanity stop, not a test.** It is mean-based and symmetric in log space
+    around the baked start's pilot-row mean 0.894: [0.894 / 1.505, 0.894 × 1.505], where 1.505 =
+    0.894 / 0.594 is the factor between the baked and the raw start's pilot-row means. Revision 3's
+    upper edge (1.28) was generation 1's largest single batch, a per-batch extreme set against a
+    mean; it is replaced. Leaving the range says the trunk pull moved by more than the whole
+    raw-vs-baked difference; it holds the run for the owner and licenses nothing.
+  - **Re-measured with 8 batches on the pilot rows** (`prelaunch/trunk_check/trunk8_baked.json`,
+    CPU fp32, 4 threads): baked Zq start **0.898** (mean of per-batch ratios 0.902, SE 0.042;
+    batches 0.97, 0.825, 0.69, 1.045, 0.968, 1.007, 0.886, 0.825; the first two equal the
+    reviewer's 2-batch run). **9:17 wall, 14.1 GB peak RSS.** Generation-2 targets differ from
+    generation 1's, so the pilot-row figures are the reference, not a prediction.
 - **The realised-optimizer equality check still holds:** the groups and hyper-parameters are
   unchanged by the bake.
 
@@ -468,8 +505,8 @@ Two registered matches, at the PIN, with match 5's rules.
 
 | Match | Seats | Seed | Claim |
 |---|---|---|---|
-| **gen 2 vs gen 1** (primary; reading 9) | `gen2_baked.pt` vs `gen1_baked.pt` | 2026112283 | **the step-2 claim**: "improves" iff LB95 > 0 |
-| gen 2 vs SL base (reading 10) | `gen2_baked.pt` vs `sl_base.pt` | 2026112284 | cumulative, fresh and preregistered: (iii) |
+| **gen 2 vs gen 1** (primary; reading 10) | `gen2_baked.pt` vs `gen1_baked.pt` | 2026112283 | **the step-2 claim**: "improves" iff LB95 > 0 |
+| gen 2 vs SL base (reading 11) | `gen2_baked.pt` vs `sl_base.pt` | 2026112284 | cumulative, fresh and preregistered: (iii) |
 
 Readings for both: damage iff UB95 < 0; adoptable iff LB95 > −10; **improves** iff LB95 > 0;
 otherwise unread. Match 5's tie-break is kept.
@@ -488,8 +525,11 @@ otherwise unread. Match 5's tie-break is kept.
 | gen 2 vs base improves | a **cumulative improvement over the base**; attribution between generations unread unless Stage 0 replicated and gen 2 vs gen 1 improved |
 
 **Recipe frozen.** Within this record the recipe is exactly B1–B5. A competing nomination, for
-example from the value-anchor screen or the sibling screen, does not change it mid-record. It is
-settled by a head-to-head match against this record's champion, under the next record.
+example from the value-anchor screen or the sibling screen, does not change it mid-record. **One
+already exists:** the anchor screen's S + `--kl-wdl` 7.0, "adoptable" at +5.81 [−0.53, +12.16],
+beside match 8's recalibrated Zq at +9.61 [+3.27, +15.96]. The two are **never ranked by point
+estimate** (their intervals overlap, and both are winners of their own screens). It is settled by
+a head-to-head match against this record's champion, under the next record.
 
 ### B7. Seeds and what differs from generation 1
 
@@ -572,7 +612,7 @@ All figures are measured on this machine. No GPU work was run for this record.
 | fit control + fit (T2, b2) | ≈ 0.1 | fit_value_recal on 39k rows, two forwards, cuda |
 | collect, 8,000 games | 1.54 | the pilot's play time, slowest process 5,534 s |
 | collect gate + take effect | ≈ 0.05 | two cuda forwards over about 38k hold-out rows |
-| `trunk2`: trunk gradient ratio on generation 2's rows (CPU, 4 threads, GPU idle) | 0 (≈ 0.05 h wall) | the reproduction: 3:13 wall, 14.0 GB peak RSS |
+| `trunk2`: trunk gradient ratio on generation 2's rows, 8 × 256 (CPU, 4 threads, GPU idle) | 0 (≈ 0.16 h wall) | 8 batches on the pilot rows: 9:17 wall, 14.1 GB peak RSS |
 | train Zq2 | 0.27 | the anchor screen's first cell (16 min); the pilot's Zq was 859 s |
 | bake + verify generation 2 (CPU, GPU held idle) | ≈ 0.1 | as Stage 0's |
 | two matches (12,800 games + smokes) | ≈ 2.95 | 1.45 per 6,400 |
@@ -584,7 +624,7 @@ All figures are measured on this machine. No GPU work was run for this record.
 | Step | Floor | Basis |
 |---|---|---|
 | collect, train | 40 GiB | the pilot's training loader holds 20–23 GiB at ≈ 760k rows (launch record) |
-| `trunk2` | 20 GiB | the reproduction peaked at 14.0 GB RSS |
+| `trunk2` | 20 GiB | 8 batches peaked at 14.1 GB RSS |
 | equivalence, fits, checks, bakes | 12 GiB | bake verify peaked at 3.6 GB RSS |
 | matches, Stage 0 | 16 GiB | |
 
@@ -665,6 +705,24 @@ instead of about 21 GPU-h.
   - A step with a non-zero `.exit` (or a passing exit with a failing check) refuses with exit 88.
   - A step with `.started` but no `.exit` (interrupted) refuses with exit 87.
   - Both refusals name the one documented command, `gen2/move_aside.sh <step>`.
+  - **Except the two match steps (revision 4): they resume per seat.** A failed or interrupted
+    match does not refuse the relaunch (its recorded inputs must still equal the inputs now, else
+    84). `play_seats` (in `gen2_checks.sh`, shared with Stage 0) judges each seat, smoke then real,
+    with `prelaunch/seat_state.py` (the full-width bank's `seat_state.py` v2/v3 with one addition:
+    the row's `git_sha` must be the PIN):
+    - **DONE** (`.exit` 0; exactly one header, with the seed; exactly n games with unique
+      (pair_id, half); no unparsable line; exactly one result row with the seed, the two nets'
+      sha256 as they are now and the PIN): **never replayed**;
+    - **ABSENT** (none of the seat's own files): played, then it must read DONE;
+    - **PARTIAL** (anything else, including an exit-0 seat with too few games): the relaunch stops
+      (1) and names `move_aside.sh <step> --seat <A|B>`;
+    - **STALE** (complete, but the row names other nets or another commit: a sha readback failure):
+      writes the registered note `HOLD_READBACK_<label>` and stops for the owner (86). It has no
+      move_aside path.
+
+    After both seats are DONE, readback and pool run again. A relaunch after a pool failure plays
+    no game. Checked on match 8's real seats: both read DONE; the seats swapped, another commit
+    and a wrong seed each read STALE or PARTIAL (`prelaunch/seat_state_test/`).
 - **`move_aside.sh` (revision 3, review item 1): it moves only failed or interrupted work.** It
   renames to `*.aside.<UTC with nanoseconds>.<pid>`, refuses if any destination exists, and never
   deletes. **It refuses, with no override flag:**
@@ -674,25 +732,56 @@ instead of about 21 GPU-h.
   - **a completed step** (`.exit` 0 and its completion check passes — the launcher's own checks,
     from the shared library);
   - **a match step, always, once it completed (`.exit` 0), has a real `pool.json`, or once
-    `verdicts.json` exists**;
-  - **`stage0` once Stage 0 completed** (exit 0 or `verdict.json`), **and whenever `gen2/` has any
-    marker**.
+    `verdicts.json` exists**, and (revision 4) **once any of its real seats' `.exit` reads 0**;
+  - **`stage0` once Stage 0 completed** (exit 0 or `verdict.json`), **whenever `gen2/` has any
+    marker**, and (revision 4) **once any real Stage 0 seat's `.exit` reads 0**.
+  - **`--seat A|B` (revision 4; the match steps and `stage0` only)** moves one interrupted seat's
+    own files (`.games.jsonl`, `.pgn`, `.log`, `.exit`; smoke and real) and nothing else. It refuses
+    a real seat whose `.exit` is 0 (a finished smoke seat is left in place), a seat with a result
+    row (the row cannot move without rewriting `results.jsonl`: the owner's), a made reading, and
+    when there is nothing to move.
 
-  A registered reading is re-drawn only under a new record. An interrupted or failed match without a
-  real pool is replayed whole (smoke and both seats) from a clean dir; a moved-aside attempt's
-  games are never read or pooled. Stage 0 is never resumed: a failed attempt refuses the next
-  launch (95) until `move_aside.sh stage0`.
-- **Test.** `guard_test/guard_test.sh` **v4** (revision 3) runs everything under the isolation
+  A registered reading is re-drawn only under a new record. A moved-aside seat's games are never
+  read or pooled. **Stage 0 resumes per seat like the matches** (revision 4, replacing "replayed
+  whole"): a completed Stage 0 (`verdict.json`) refuses the next launch (95); otherwise a DONE seat
+  is kept, an ABSENT seat plays and a PARTIAL seat stops until `move_aside.sh stage0 --seat`.
+- **Test.** `guard_test/guard_test.sh` **v5** (revision 4; v4 kept) runs everything under the isolation
   described next.
   - **The isolation.** A fake HOME holds only a fake pilot bank, a fake follow-up launcher and a
     throwaway git repo as the PIN worktree. Stubs on PATH replace `python`, `python3`,
     `nvidia-smi`, `ps` and (v4) `date` (a frozen clock only when a case sets it). Inline checks run
     on the system python3, which is asserted torch-free; script calls run on a stand-in
     (`fakepy.py`) that imports nothing from the repo, except that it runs the REAL
-    `prelaunch/stage_checks.py` (pure stdlib) on manifests written in the loop's real shape. The
+    `prelaunch/stage_checks.py` and (v5) `prelaunch/seat_state.py` (pure stdlib) on manifests and
+    seat logs written in the real shape. The v5 fake follow-up launcher refuses an existing game log
+    as the real one does, writes a header, n games and a `.exit`, and logs every arena call. The
     launchers are copies whose pinned sha constants are rewritten to the fake files. The harness
     asserts the isolation before any case runs.
-  - **102 cases, 102 pass** (v3's 64, plus):
+  - **140 cases, 140 pass** (v4's 102, adapted, plus 38 new in v5):
+    - **per-seat resume (review item 1):** both real seats complete with the pool failing →
+      `move_aside` of the match refused (4), and the relaunch completes with **0 arena calls** for
+      that match (readback + pool only); seat A done, seat B failed → the relaunch plays only seat
+      B; a PARTIAL seat B → relaunch refused, whole-match move refused, `--seat A` refused,
+      `--seat B` moves only B (seat A untouched), a second `--seat B` has nothing to move (7), then
+      the relaunch plays only B; a finished seat whose row names other nets → stops (86) with the
+      `HOLD_READBACK` note and `--seat` refuses it; an exit-0 seat with too few games → relaunch
+      refused and `--seat` refuses it; `--seat` on a non-match step and `--seat C` refused (2);
+      with no real seat finished, a real `pool.json` or `verdicts.json` still refuses a whole-match
+      move (these isolate revision 3's match rule from the new finished-seat rule), and without them
+      the failed match may move whole;
+    - **isolating cases** (each refusal rule alone, with no real seat finished, so the new
+      finished-seat rule cannot shadow it): Stage 0 with a generation-2 marker, and with
+      `verdict.json`, refused, and otherwise movable whole; `--seat` refuses a seat whose `.exit`
+      reads 0 with no result row, and a seat with a result row whose `.exit` is non-zero; a
+      finished seat whose row names another commit is STALE (86);
+    - **Stage 0:** a finished seat A with a failed seat B → whole-Stage-0 move refused, the relaunch
+      plays only seat B and completes; a completed Stage 0 refuses a relaunch (95); a PARTIAL seat B
+      → refused, `--seat A` refused, `--seat B` moves only B (kept, not deleted), then the relaunch
+      completes without replaying A;
+    - `trunk2`: 1.4 stops, the edge 1.35 passes, and the verdict carries 8 per-batch values and an
+      SE.
+
+    v4's cases (v3's 64, plus):
     - `move_aside`: a completed final match and first match refused (4) with the pool left in
       place; a completed Stage 0 refused, both after generation 2 consumed it and before any
       generation-2 marker; Stage 0 refused while `gen2/` has any marker; a match refused when its
@@ -706,10 +795,33 @@ instead of about 21 GPU-h.
       the arm manifest's output each refuse on relaunch (88), never skip;
     - inputs: a changed input file of a done step, and a changed launcher, each refuse (84);
       `resume.log` carries the launcher's sha256; every run step wrote its `.inputs`;
-    - `trunk2`: a ratio of 0.5 or 1.3 stops with `HOLD_TRUNK2` before training; 1.28 passes;
+    - `trunk2`: a ratio of 0.5 stops with `HOLD_TRUNK2` before training (v5 moves the upper cases
+      to 1.4 / 1.35);
     - licensing: replicates + gen 2 > gen 1 + gen 2 vs base damage reads "inconsistent readings; no
       claim; owner"; gen 2 vs gen 1 unread + gen 2 vs base improves carries the cumulative claim.
-  - **Mutants, all made from the FINAL files by one exact replacement each
+  - **Revision 4 mutants: all forty regenerated from the FINAL revision-4 files by one exact
+    replacement each (`guard_test/mutants_v5/make_mutants_v5.py`; a replacement that does not match
+    exactly once aborts) and run against harness v5; each killed**
+    (`guard_test/mutants_v5/mutant_results.txt`). They are v4's twenty-nine (m16 re-anchored on the
+    revision-4 `move_aside.sh`; m24 on the revision-4 trunk check) plus eleven new:
+
+    | Mutant | File |
+    |---|---|
+    | a DONE seat is replayed | `gen2_checks.sh` |
+    | a STALE seat (sha readback failure) treated as DONE | `gen2_checks.sh` |
+    | whole-match move ignores a finished real seat | `move_aside.sh` |
+    | whole-Stage-0 move ignores a finished real seat | `move_aside.sh` |
+    | `--seat` moves a finished seat | `move_aside.sh` |
+    | `--seat` moves a seat that has a result row | `move_aside.sh` |
+    | a failed match refuses the relaunch (no per-seat resume) | `launch_gen2.sh` |
+    | `trunk2` back to 2 batches | `launch_gen2.sh` |
+    | Stage 0 replays whole (any attempt on disk refuses) | `run_stage0.sh` |
+    | game count unchecked | `seat_state.py` |
+    | PIN (`git_sha`) unchecked | `seat_state.py` |
+
+    The licensing grid (`grid_v3.py`) rerun on the revision-4 launcher: 48 / 48, unchanged
+    (`guard_test/grid_v5/`).
+  - **Revision 3 mutants, all made from the FINAL files by one exact replacement each
     (`guard_test/mutants_v4/make_mutants_v4.py`; a replacement that does not match exactly once
     aborts) and each killed** (`guard_test/mutants_v4/mutant_results.txt`). v3's fourteen shell
     mutants are regenerated on the final files: launcher without `|| exit 8`; gen2 with no guard;
@@ -762,9 +874,15 @@ instead of about 21 GPU-h.
     item 5) and the test dirs. The `stage0/` and `gen2/` dirs stay writable for outputs.
   - Revision 1 files are kept as `*.v1`, revision 2 files as `*.v2` (the launcher, `move_aside.sh`,
     the harness, `fakepy.py`, its output, `prelaunch/SHA256SUMS` and `BANK_SHA256SUMS`).
-  - `prelaunch/SHA256SUMS` lists the six prelaunch scripts (revision 3 adds `stage_checks.py` and
+  - `prelaunch/SHA256SUMS` lists the seven prelaunch scripts (revision 4 adds `seat_state.py`;
+    revision 3 added `stage_checks.py` and
     `trunk_pull_gen2.py`); both launchers check it.
   - `BANK_SHA256SUMS` (sha256 `f059b256…`) lists 184 files and verifies with `sha256sum -c`.
+  - Revision 3 files are kept as `*.v3` (the launchers, `move_aside.sh`, `gen2_checks.sh`, the
+    harness, `fakepy.py`, its output, `prelaunch/SHA256SUMS` and `BANK_SHA256SUMS`). Revision 4
+    evidence: `prelaunch/trunk_check/trunk8_baked.*` (the 8-batch measurement),
+    `prelaunch/seat_state_test/` (match 8's real seats), `guard_test/mutants_v5/`,
+    `guard_test/grid_v5/`.
   - Revision 3 evidence: `prelaunch/trunk_check/` (the reviewer's script verbatim, the
     reproduction), `prelaunch/stage_checks_test/` (the pilot collect and arm checks),
     `guard_test/mutants_v4/` (generator, runner, every mutant and its output),
@@ -799,6 +917,8 @@ setsid nohup $OPS/rl-run1-gen2/gen2/launch_gen2.sh > $OPS/rl-run1-gen2/gen2/run.
 # After a FAILED or INTERRUPTED step (the launcher's refusal names it): move its outputs aside, then relaunch.
 # It refuses completed steps, completed matches and a completed Stage 0; a registered reading is re-drawn only under a new record.
 $OPS/rl-run1-gen2/gen2/move_aside.sh <step>
+# A failed match or Stage 0 needs no move: relaunch, it resumes per seat. Only a PARTIAL seat (the refusal names it) moves:
+$OPS/rl-run1-gen2/gen2/move_aside.sh <m_g2_vs_g1|m_g2_vs_base|stage0> --seat <A|B>
 ```
 
 Results go into a separate results record, in the same session as the readout, judged by the rules
