@@ -32,6 +32,12 @@ flag `--root-full-width`. It is default off.
   - They are stored per row as `root_prelude_visits`.
   - The stats field is `mean_root_prelude_visits`.
 
+**The real trade, at equal cost.** Let p be the round-0 visits per position. At equal GPU cost the knob spends
+about `S_eq` + p ≈ 64 evaluations, of which ≈ 64 − p go to sequential halving.
+- So full width moves ≈ p of the 64 evaluations away from depth on the top-16 candidates, and gives one visit to
+  every other legal move instead.
+- What the test asks is whether that buys a better target, and a better player, than the depth it costs.
+
 **Spec deviation, stated once and carried everywhere.** The owner pictured round 0 as one wide batch. The
 implementation drives the unchanged C `start_gumbel_sims` state machine instead. It packs round 0 first-fit into
 calls of at most the existing leaf buffer (`len(enc_buf)`, 4,096 rows at 3 × 128) and at most `GSS_MAX_CANDS` = 64
@@ -91,7 +97,8 @@ roots (`stage1/smoke_cpu/`; a smoke, not a result):
     - `collect.started` 06:41:24;
     - first attempt exit 137 at 08:26:46;
     - reseal 09:51:00 → 09:54:42.
-  - **Play time is 1.54 h (slowest process), 5,204 games/h.**
+  - **Play time is 1.54 h, the slowest process's wall (5,534 s), giving 5,204 games/h.** The pilot was not paused.
+    #1483 adds `slowest_process_wall_seconds` and `slowest_process_active_seconds` for exactly this reading.
   - The stats bug still existed on main and is fixed separately in #1483, with a test.
 
 ## The GPU guard
@@ -116,10 +123,11 @@ these hold:
 It then takes a non-blocking `flock` (exit 9 if held) on the bank's own `.gpu_launch.lock`, so two of this bank's
 launches cannot overlap. It never opens `~/projects/chess/scratchpad/gpu0_experiment.lock`.
 
-**Tested** (`guard_test/guard_test.sh` v2 `730d515388e3…`, output `guard_test/guard_test.txt`; v1 and its output are kept as
-`.v1`). Nothing in the test can reach the GPU: a fake `nvidia-smi` and `ps` sit first on PATH, HOME is a fake, and the
+**Tested** (`guard_test/guard_test.sh` v3 `b40b08d3d30c…`, output `guard_test/guard_test.txt`; v1 `621a57547b22…` and v2
+`730d515388e3…` and their outputs are kept as `.v1` / `.v2`). Nothing in the test can reach the GPU: a fake `nvidia-smi` and `ps` sit first on PATH, HOME is a fake, and the
 launchers' python is replaced by a stub. For a collect call the stub records its arguments and fabricates a tiny
-finished collect; for the launcher's summary step it runs the real python. All 18 cases pass:
+finished collect: step-synchronous fake play in real time, 300 games, 128 slots. For the launcher's summary step it
+runs the real python. All 17 checks pass:
 - memory 10,971 MiB, with every other check clear → refused for memory (the test greps "GPU memory in use");
 - memory unreadable → refused for memory;
 - a missing queue marker → 8;
@@ -134,7 +142,11 @@ finished collect; for the launcher's summary step it runs the real python. All 1
 - `run_stage0.sh` end to end with the stub:
   - three collect calls, each carrying `--root-full-width`;
   - exit 0;
-  - a summary row whose steady-state rows/s comes from the games-progress log;
+  - a summary row whose `steady_rows_per_s` comes from `steady_rate.py` on the real progress log and the stub's
+    first-forward time. It reads 3,990 against a planted ≈ 3,840, within the test's ±25% allowance for 1 s sampling
+    of a run only 6 s long.
+    - This case found a real bug: the progress sampler could miss the final games. The launcher now takes one last
+      sample after every process exits.
 - `run_stage0.sh` with memory busy → 8, and the stub was never called.
 
 **Mutants** (`guard_test/guard_mutants.txt`; the restore was checked by md5):
@@ -151,17 +163,48 @@ finished collect; for the launcher's summary step it runs the real python. All 1
 - Main `fd8c0ce08`, in the detached worktree `rl-run1-rfw-arena-fd8c0ce08`.
 - **One run** is three independent collects × 128 games in flight × 384 games each. This is the collect-throughput
   bench's method (`mp_sims.sh`), and the doc's table says it is what `--collect-procs 3` launches.
-  - Forward rows are counted by `count_wrap.py`, a byte copy of that bench's counter (sha256 `fcb2861aa1a9…`).
+  - Forward rows are counted by `count_wrap.py` v2 (`f1528df4eb34…`): that bench's counter (v1, byte copy,
+    `fcb2861aa1a9…`) plus the time of the first forward.
   - nvidia-smi samples every 500 ms.
 - **Every run uses the same seeds (2026112121/22/23) and the same openings.** Only `--sims` and the knob change.
 - **Measured per run** (`stage0/summary.jsonl`):
-  - **steady-state stored positions/s, the registered cost quantity.** For each process: the rows of the games
-    that finish between its 10% and 90% game counts, divided by the time between those two counts. The counts come
-    from `logs/games_progress.txt`, which samples each process's `games.jsonl` line count every second. The three
-    processes are summed.
-    - This excludes model load and the low-concurrency tail. Rows over the whole wall would include them and pull
-      the ratio toward 1, by about 1–2%, which is worth about 1 sim in the knob's favour.
-    - Rows over the whole wall are reported beside it.
+  - **full-concurrency stored positions/s, the registered cost quantity** (`stage0/steady_rate.py` `41f5006bb850…`, v3).
+    - **Window.** A process plays G games, 128 at a time, refilling a freed slot with the next dole index. So game d
+      starts at play start if d < 128, and otherwise at the (d − 127)-th finish. The process's full-concurrency
+      window runs from its first finish to finish #(G − 128).
+    - **Rate.** The rate is 128 × (Σ rows / Σ durations) over the games that start and finish inside that window,
+      and the three processes are summed. Because the search is batched, every in-flight game advances one stored
+      row per network step, so at full concurrency the process generates 128 × one game's row speed.
+    - **Inputs.**
+      - Finish times come from `logs/games_progress.txt`: each process's `games.jsonl` line count, sampled every
+        second, plus one final sample after the processes exit.
+      - Play start is the process's first network forward, written by `count_wrap.py` v2. That is the only change
+        from the bench's counter, which is kept as `.v1`.
+    - **No per-row timestamps exist.** `games.jsonl` carries none, and neither does the move journal. So spreading
+      each game's rows uniformly over its life is the only per-row alternative. It is reported, not registered,
+      because it over-counts when the tail runs faster per game.
+    - **Rows over the whole wall** are reported as a secondary. They include model load and the low-concurrency
+      tail, which pull the ratio toward 1.
+    - **Why v3 replaces v2.** v2 took the rows of games finishing between the 10% and 90% game counts. That window
+      ends at finish #346 of 384, so about its last 30% is the falling-concurrency tail. And it counts rows of games
+      that FINISH in the window, not rows GENERATED in it.
+      - In simulation (`stage0/sim_estimator.py`; rows per game drawn from the pilot's 8,000 games; step-synchronous
+        play; 200 runs per case; output `sim_estimator.json`), v2 read +4.3% above the
+        planted full-concurrency rate when per-board speed is constant, and +17.1% when total
+        throughput is constant.
+      - It would cancel in the on/off ratio only if both arms shared the throughput-vs-concurrency profile, which
+        the knob changes.
+      - v3 reads +0.1% and +0.2% in the same two cases. The uniform-spread variant reads
+        +0.0% and +3.3%.
+    - **Tests** (`stage0/fab_test/test_steady_rate.py`, 8/8 pass). On fabricated progress logs with known per-game
+      timing, v3 returns the planted rate within 1% in both models at G = 384 and 512, and excludes 300 s of model
+      load. Too few games are refused. **The mutant test shows the v2 estimator missing the planted rate by more
+      than 1%.**
+    - **Run size, re-derived from the estimator's own variance** (same simulation, 15% per-step timing jitter). The
+      SD of a run's estimate (3 processes) is 0.78% at G = 384, 0.59% at 512 and 0.45% at 768.
+      - With two runs per configuration, the ratio's SD at 384 is about 0.78%, so its 95% interval is
+        about ±1.5%, inside ±3%. **384 games per process is kept.**
+      - Real run-to-run noise beyond this model is caught by the 2% repeat gate.
   - forwarded positions/s;
   - forwarded evaluations per stored position;
   - evaluations per position computed as sims + mean prelude, from the search's own `mean_root_prelude_visits`;
@@ -175,7 +218,8 @@ finished collect; for the launcher's summary step it runs the real python. All 1
 - the manifest reads back `root_full_width`;
 - `buffer_full_flushes` = 0 and `eval_max_batch_realised` = 4,096 on every process.
 
-**The rule** (`stage0_decide.py` v2 `4c02fc7565dd…`, applied mechanically; v1 `fb099bed9a35…` is kept as `.v1`). Cost per stored position is
+**The rule** (`stage0_decide.py` v3 `4771354e2117…`, applied mechanically; v1 `fb099bed9a35…` and v2 `4c02fc7565dd…` are kept;
+v3 changes only the docstring's description of the cost quantity, which `run_stage0.sh` v3 `d0e3bcb6952b…` computes). Cost per stored position is
 t = 1 / steady-state rows/s.
 1. **Step A.** Run off@64, on@64, on@64, off@64, in that ABBA order to cancel drift.
 2. **Repeat gate.** Two runs of one configuration that differ by > 2% get exactly one more run, and the
@@ -190,7 +234,7 @@ t = 1 / steady-state rows/s.
    (S1, t_onS1) reaches t_off. Run on@S2 twice. **S_eq = S2**, final, with its measured ratio reported.
 5. If S1 = 64, then S_eq = 64.
 
-**Why ±3% is precise enough.** The SL base gains ≈ 136 Elo per doubling of search: 256 vs 64 is +272 over two
+**Why ±3% is precise enough.** The SL base gains ≈ 136 Elo per doubling of search, measured above 64 sims: 256 vs 64 is +272 over two
 doublings.
 - A 3% cost error is therefore worth ≈ 136 × log2(1.03) ≈ 5.8 Elo of search.
 - A 6% error is worth ≈ 11 Elo, about the size of Stage 2's −10 kill margin.
@@ -455,7 +499,7 @@ length, the arm gets more or fewer rows and GPU-h than the pilot's 761,979 rows 
 | Stage 0: 5–8 runs × ≈ 15–18 min | ≈ 1.3–2.4 |
 | Stage 1: three searches on 3,080 rows (R64n took 91 s; the knob adds ≈ 40%) + model load | ≈ 0.15 |
 | Stage 2: two 6,400-game matches (match 5: 78 min; the knob seat loses the pipeline and evaluates more) + smokes | ≈ 3.0–3.6 |
-| Stage 3: collect (equal cost to the pilot's 1.54 h play + seal) | ≈ 1.6 |
+| Stage 3: collect (equal cost to the pilot's 1.54 h of play, the slowest process's wall, + seal) | ≈ 1.6 |
 | Stage 3: training P0 / Zq / P0_ctl (pilot: 11 / 14 / 11 min) | ≈ 0.6 |
 | Stage 3: Stage A, 3 nets (fits + logits + sibling order) | ≈ 0.3 |
 | Stage 3: two 6,400-game matches + smokes (no knob in these matches) | ≈ 2.7 |
@@ -474,10 +518,18 @@ This is the owner's idea in a form that adds no evaluations.
   schedule instead of adding to it. The C `start_gumbel_sims` state machine would then need to start from a reduced
   budget with a pre-chosen candidate set, or take a per-board budget offset. Tests would need to pin the total root
   visits at `--sims`.
-- **How Stage 0 decides whether it is worth building.** If `S_eq` comes out well below 64 (say ≤ 48), the additive
-  form pays for its width with real search depth, about 0.4 doublings ≈ 55 Elo of search at 136 Elo per doubling.
-  The budget-neutral form then becomes the version worth registering.
-  - If `S_eq` is near 64, the additive form costs little and this option is moot.
+- **Under a cost-proportional model, it is the same search as the registered arm.**
+  - The additive form at `S_eq` spends ≈ `S_eq` + p ≈ 64 evaluations, and halves with ≈ 64 − p.
+  - The budget-neutral form at 64 also spends p on round 0, and also halves with ≈ 64 − p.
+  - So a low `S_eq` does not by itself argue for building it.
+- **When it would be worth building.** Only if a round-0 evaluation costs measurably MORE than a halving one, or the
+  per-call overhead differs, so that the additive form loses evaluations to cost the budget-neutral form would not.
+  - Stage 0 can show this. Compare the measured cost per forwarded evaluation (forwarded rows/s and mean batch,
+    knob on vs off) against the ratio predicted from evaluations per position (sims + prelude).
+  - A knob-on cost per evaluation more than ≈ 3% above knob-off's (the ratio's precision) would make this option
+    worth registering.
+- **Caveat on the Elo-per-doubling figure.** The ≈ 136 Elo per doubling quoted above was measured above 64 sims
+  (256 vs 64). Below 64 the rate is not measured here.
 
 ## Commands
 
@@ -520,8 +572,7 @@ The sidecar step, after Stage 3's collect (CPU):
     ≈ 126 s on the GPU beside the registered match 8 (`zq_recal_vs_base_1_A`).
   - Peak memory was 30,406 MiB, at about 21:40:49.
   - They were killed by exact PID. The match survived: no OOM, no CUDA error. It is matched-sims, so its games are
-    not clock-dependent. A note on it is being added to match 8's results in PR #1482 (not merged at the time of
-    writing).
+    not clock-dependent. The overlap is to be recorded in match 8's results (PR #1482).
   - Their partial outputs, all under this bank, were deleted. `stage0/INCIDENT_guardtest_20261121/` keeps only the
     logs and `INCIDENT.txt`; it is not a measurement.
   - The guard was rewritten as above. From now on, launchers are tested only with the GPU command stubbed and a
