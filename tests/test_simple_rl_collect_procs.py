@@ -159,6 +159,14 @@ def test_a_killed_k2_collect_resumes_keeping_finished_processes(
     assert stats["games_per_hour"] is None
     assert stats["rows_per_second"] is None
     assert stats["timing_independent"] is False
+    # ...and no wall either: this attempt timed only the merge (the pilot's reseal
+    # banked wall_seconds 2.3e-06). The play time is the slowest process's own wall.
+    assert stats["wall_seconds"] is None
+    assert stats["active_seconds"] is None
+    assert stats["paused_seconds"] is None
+    walls = [float(r["wall_seconds"]) for r in stats["procs"]]
+    assert stats["slowest_process_wall_seconds"] == max(walls)
+    assert stats["slowest_process_wall_seconds"] > 0.01
     if stats["procs_game_resumed"]:
         # Process 1 had committed games when it died: they were kept and the rest
         # replayed on a fresh seed (test_simple_rl_collect_game_resume), so only the
@@ -235,6 +243,11 @@ def test_a_pause_holds_every_process_and_resumes_to_identical_rows(
     assert stats["timing_independent"] is False
     assert all(len(p["pause_intervals"]) == 1 for p in stats["procs"])
     assert stats["active_seconds"] <= stats["wall_seconds"] - 2.0
+    # per-process clock of the final attempt: the wall includes the pause, the active field excludes it
+    slowest = max(stats["procs"], key=lambda p: p["wall_seconds"])
+    assert stats["slowest_process_wall_seconds"] == slowest["wall_seconds"]
+    assert stats["slowest_process_active_seconds"] == pytest.approx(slowest["wall_seconds"] - slowest["paused_seconds"])
+    assert stats["slowest_process_active_seconds"] <= stats["slowest_process_wall_seconds"] - 2.0
     if procs == 1:
         assert calls, "the counting search wrapper was not on the collect's path"
         assert not [c for c in calls if log["held"] <= c <= log["released"]], "a search ran during the pause"
