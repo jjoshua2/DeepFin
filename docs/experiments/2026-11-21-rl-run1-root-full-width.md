@@ -3,8 +3,10 @@
 **Status: registered, not launched.**
 - **Stages 0–2** need two things before they start: this record is reviewed and merged, and the GPU queue has
   released the card. Every launcher refuses until both queue markers exist (see [the GPU guard](#the-gpu-guard)).
-- **Stage 3 is NOT AUTHORISED.** It needs the owner's go-ahead. The coordinator records it in the bank as
-  `stage3/OWNER_GO`, and one command then runs the whole stage.
+- **Stage 3 is authorised by the owner's standing statement of 2026-11-22: "You dont have to wait for me to approve gpu use it dont have time ill just tell you to stop if necessary" (addendum 2026-11-22).** It is launched on the operator's release only
+  after Stages 0–2 have passed by their registered rules and been read in-session. The coordinator records that
+  in the bank as `stage3/OWNER_GO`, and one command then runs the whole stage. Nothing else about the gates
+  changes.
 
 **Queue position:** after the value-anchor screen (#1475) and the sibling-ordering screen (#1481), unless the owner
 reorders.
@@ -103,8 +105,21 @@ roots (`stage1/smoke_cpu/`; a smoke, not a result):
 
 ## The GPU guard
 
-**Which launchers are guarded.** `gpu_guard.sh` v6 (sha256 `c8697d517544…`; v1 `a0a2f869a719…`, v2 `997969c87bf3…`,
-v3 `ee073f841a24…`, v4 `b3ffd88cf5f7…`, v5 `30d2226f6a78…`) is sourced by:
+**Addendum (2026-11-22): the guard as first written could never pass on this machine.** v1–v6 refused unless
+`memory.used` < 1,024 MiB. With every queue finished and nothing of ours running, this card reads **3,382 MiB**
+(30 one-second samples, 04:38–04:39 on 2026-11-22: min = max = 3,382 MiB, utilisation mean 0.0%, max 1%; between
+the anchor cells earlier that night it read 3,430 and 3,452 MiB). That memory belongs to the Windows side of WSL2
+(desktop compositor, browser), not to a job. So the old bar refused always, and nobody could have seen it pass,
+because it had only ever been exercised against stubs. v7 replaces it (below), and the guard test now runs the
+guard's two probe commands against the REAL `nvidia-smi` once (read-only), asserting that both parse to integers.
+
+**Memory and utilisation cannot see a loading job.** A reproduction cell started at 04:54:28 read 3,448–3,463 MiB
+at 0–1% utilisation for **six minutes** (until 05:00:15), then 5.5 GB, then 22 GB
+(`~/chess-artifacts/operations/rl-run1-value-anchor-repro/arm_Zq_k11.3.gpu.txt`, 5 s samples). During a job's loading
+phase the process scan (`gpu_scan.sh`, below) and the operator's release file are the only defences; the memory
+band is a backstop.
+
+**Which launchers are guarded.** `gpu_guard.sh` v7 (sha in the table below; earlier versions kept as `.vN`) is sourced by:
 - `stage0/run_stage0_all.sh` and each `stage0/run_stage0.sh` it starts;
 - `stage1/run_stage1.sh`;
 - `stage2/run_stage2.sh` and each `run_rfw_match.sh` it starts;
@@ -114,33 +129,201 @@ v3 `ee073f841a24…`, v4 `b3ffd88cf5f7…`, v5 `30d2226f6a78…`) is sourced by:
 **One child is not guarded itself.** Stage 3's matches run at the PIN through the follow-up bank's sha-pinned
 `run_followup_match.sh` (`7c8fd065…`). That script has no guard and is not changed. The re-check in
 `launch_stage3.sh` immediately before each of its calls is what guards those matches. A re-check runs the full list
-in the same shell, so it takes the nested-lock path. It waits up to 60 s (`RFW_MEM_WAIT_S`) for memory to fall
-after the previous step exits; it never relaxes the bar. Guard (d)'s `check_load.py` runs with
+in the same shell, so it takes the nested-lock path. It waits up to 60 s (`RFW_MEM_WAIT_S`) for memory to
+return to ≤ `idle_mib` + 512 MiB after the previous step exits; it never relaxes the bar. Guard (d)'s `check_load.py` runs with
 `CUDA_VISIBLE_DEVICES` empty, on the CPU.
 
 The guard refuses unless **all** of these hold:
-- **Memory.** `nvidia-smi --query-gpu=memory.used` is below 1,024 MiB on **every** GPU line (exit 8). Since v5
-  the guard reads every line and the maximum decides; v4 read only the first.
+- **Memory, against the operator's measured idle baseline (v7).** The release line carries it:
+  `stage0 idle_mib=3382 2026-11-22T09:00`. The guard refuses (exit 8) if the line has no `idle_mib=<int>`; if
+  `idle_mib` exceeds a 4,096 MiB sanity cap (nobody may declare a busy card idle); if `memory.used`, the maximum over
+  **every** GPU line, exceeds `idle_mib` + 512 MiB (something else holds the card); or if it is below `idle_mib` −
+  512 MiB (the baseline is stale: re-measure it). The ±512 MiB band:
+  - observed idle drift over six hours is about 70 MiB;
+  - our smallest GPU job holds well over 512 MiB once its context and net are loaded. Banked evidence: in
+    `~/chess-artifacts/operations/rl-claude-20261119/engine-speed-profile/idle/*.gpu` (25 runs, 1 s samples, our net
+    in one engine process), every sample from the 6th second on sat **≥ 911 MiB** above the pre-start idle (median
+    +1,151 MiB for the smallest configuration). One run's first 1 s sample was only +27 MiB: a process in its first
+    second, before its CUDA context exists, is inside the band. No banked sampler of a 4-game arena exists; the
+    engine profile is the closest banked measurement of our smallest job;
+  - idle itself moves between sessions (1,575–2,981 MiB on 2026-11-19/20, 3,382 now), which is why the baseline is
+    measured at release time and goes stale.
   - **It fails closed.** If `nvidia-smi` exits non-zero, or prints anything but an integer, the guard refuses with
-    exit 11. This is new in v4; v3 read an empty output as unreadable but ignored the exit code.
-  - `RFW_MEM_WAIT_S` must be a non-negative integer, or the guard refuses with exit 12 (new in v5). Before v5, a
-    non-integer made the wait loop run forever.
+    exit 11. `RFW_MEM_WAIT_S` must be a non-negative integer (exit 12).
   - **Not `--query-compute-apps`.** Under WSL2 that list cannot be relied on to see another process tree. During
     the incident below it listed this bank's three collects in 62 of 64 samples, but it never listed match 8's
     PID 2337486, which was using the card the whole time.
-- **No running GPU work.** An exact `ps -u <me> -o args` scan finds no `arena_standard.py`, `simple_rl_loop.py`,
-  `count_wrap.py` (Stage 0's collect wrapper, added in v6) or
-  `match_vs_uci.py`. The match is on the script's basename as an argv token; `pgrep -f` is never used.
-  - **It fails closed** (new in v4). If `ps` exits non-zero, or prints nothing, the guard refuses with exit 10.
-    `ps` always lists at least the guard's own shell. v3 read both as "no GPU work".
+- **Utilisation (v7).** Five samples of `utilization.gpu`, one second apart, every GPU line: the maximum must be
+  below 10% (idle here reads 0–1%; a foreign job, or the owner gaming, reads more, and when he games the GPU is not
+  ours). A non-integer or a failed `nvidia-smi` refuses with exit 11.
+- **No GPU job of this user (v7: `gpu_scan.sh`).** One file, byte-identical in this bank, the generation-2 bank and
+  the sibling bank (same sha; this bank owns it). It reads `/proc` only. A same-uid process (Uid from
+  `/proc/<pid>/status`) outside the caller's own ancestors and descendants refuses if:
+  - its argv (`/proc/<pid>/cmdline`, NUL-separated) is a GPU entry point: `basename(argv[0])` is listed (`lc0`,
+    `Ceres`, `deepfin`, a script run directly); or `argv[0]` is `python*` and the first non-option argument has a
+    listed basename, or a `-m` names a module starting `chess_anti_engine`; or `argv[0]` is `bash`/`sh`/`dash`/`zsh`
+    and the first non-option argument has a listed basename; or `argv[0]` is `dotnet` and the first argument that
+    is neither an option nor `exec` has a listed basename. Options are parsed as the programs parse them (scan v5,
+    after the first outside review): python's short options are CLUSTERS (`-um mod`, `-bm mod`, `-uB X.py`,
+    `-Wignore X.py`; an `m` or `c` takes the rest of the cluster or the next word as its value and ends the options;
+    `-X`/`-W` take a value); a shell's long options are single words (`--norc` is not `-c`; `--rcfile`/`--init-file`
+    take a value) and `-o`/`-O`/`+O` take a value. A shell that only mentions a script (`bash -c "sha256sum
+    …/arena_standard.py"`) is not a job: v6's `ps -o args` token scan refused it, v7 does not. **Stated limits of
+    the argv clause:** `python -c "runpy.run_path(…)"`, `python -m cProfile X.py` (any runner module) and
+    `--check-hash-based-pycs <mode> X.py` are not matched, nor is a wrapper that forks a python child (`timeout`,
+    `uv run`) at its own argv (the child is scanned as itself). The release file covers these before a launch, and
+    the device clause once CUDA initialises. Processes of other uids are not scanned; the memory band is their
+    backstop.
+    **CPU-only exemption (argv clause only):** a matched process is exempt iff its exec environment
+    (`/proc/<pid>/environ`) is readable and holds the exact entry `CUDA_VISIBLE_DEVICES=` with an empty value and no
+    other `CUDA_VISIBLE_DEVICES` entry. Such a process cannot reach the card: the rule every agent works under, so
+    agents' pytest children, fake-HOME launcher copies and harnesses do not block the operator. The variable absent,
+    any value, a confusable name, two entries, or an unreadable environ → not exempt. A NOTE names each exempted pid.
+    **Honest limit:** `environ` is the environment at exec; a process can still set the variable itself before
+    importing torch. The device clause catches that only once its CUDA context exists, so the release file and the
+    launch discipline remain the primary defence;
+  - it holds the GPU device open, whatever its name. This clause runs for EVERY non-excluded same-uid process,
+    independently of the argv clause: an empty or unreadable cmdline skips only the argv clause (v4 skipped such a
+    process before the device check; the outside review's surviving mutant). The device is identified by rdev, not by name: the scan stats
+    its own `/dev/dxg` once (it must be a character device, else it refuses: "cannot identify the GPU device"), and
+    a process holds the GPU iff one of its fds, by `stat -L` on `/proc/<pid>/fd/<n>`, is a character device with
+    that major:minor. Every fd is checked, so a holder through another path (a second device node, a bind mount) is
+    caught. A file whose link merely reads "/dev/dxg" but is another file is not a holder (a NOTE names it): v1–v3
+    matched the name, and another agent's namespaced test harness, holding a stand-in, made the real guard refuse
+    (processes of a child pid namespace are visible in the parent's `/proc`, and `readlink` prints the path string
+    whatever it resolves to in that mount namespace). That would have aborted a multi-hour stage at its between-step
+    re-guard. Cost of checking every fd: one scan took 0.26–0.75 s wall on 2026-11-22 with agents working (v4: 62
+    same-uid processes / 561 fds; v5: 0.31–0.32 s for 95 processes / 617 fds);
+  - its fds cannot be stat'ed, so the device check cannot be made for it. Readability is decided by actually
+    reading every fd (`find` lists them, `stat -L` reads each target; exit status and error text kept), never by
+    `access(2)`: access
+    to a proc fd entry also goes through the ptrace check, so `access()` can say yes while every readlink is denied
+    (a non-dumpable process in a user namespace, scanned by a capability-free shell; `gpu_scan.sh` v1 scanned such a
+    `/dev/dxg` holder clean). Listing the directory is not enough either: there `readdir` succeeds while `readlink`
+    is denied. A lister failure whose every error is "No such file or directory" means the process exited mid-scan
+    and is skipped; any other failure, including one with no error text, refuses.
+  - **Allowlist, exactly two:** `argv[0]` equal to `/usr/bin/ssh-agent` or `/usr/bin/gpg-agent` (full path). These
+    are same-uid but non-dumpable by design, so their fd links are unreadable; v1 refused permanently on this
+    machine because of `/usr/bin/ssh-agent` (pid 40). An allowlisted process is skipped for the fd checks only, and
+    the scan prints a NOTE naming it. A read-only check of the real machine on 2026-11-22 found exactly one
+    unreadable same-uid process: `/usr/bin/ssh-agent`.
+  - **The list** is derived, not chosen: every `scripts/*.py` at main `fd756be84` matching `git grep -lE
+    "cuda|--device"` (97 files); every `*.sh` / `*.py` in the follow-up, value-anchor, value-anchor-repro,
+    generation-2, sibling, root_full_width and pilot-value-diagnosis banks that uses cuda, `--device cuda`,
+    `torch.load`, `arena_standard.py`, `simple_rl_loop.py`, `match_vs_uci.py`, lc0 or Ceres (minus the guards and
+    test files), plus the launchers those start; every console script of the package (`[project.scripts]`,
+    identical at the pilot PIN, `ARENA_SHA` and main: `deepfin = chess_anti_engine.uci.cli:main`); and the lc0 and
+    Ceres binaries. 128 names; the derivation is in the file's header.
+  - **Excluded:** the caller's ancestors (the launcher that sourced the guard, and its parents) and the descendants
+    of the caller's shell, so a launcher's between-step re-check does not trip on itself or its own child. Process
+    groups are deliberately NOT excluded: a non-interactive shell starts background jobs in its own group, so a
+    sibling copy of the same launcher started from the same shell line would share it. A sibling is always refused.
+  - Seeing no process of this user at all refuses (the scan must see its own shell).
+  - **Harness rule.** A guard harness whose cases run a listed name WITHOUT an empty `CUDA_VISIBLE_DEVICES` is
+    visible from the host through its child pid namespace, so a real scan refuses while it lives. Such harnesses
+    (this bank's `guard_test.sh` and its mutant runner among them) must not run while a registered stage relies on a
+    re-guard. Both wait, before starting a pass, while the coordinator's `GPU_CHECK_HOLD` file exists (a 5 s file
+    test). The converse trap is in the harness itself: since the exemption, a "refused" or "excluded" case whose
+    listed process runs WITH the empty entry passes whatever the scan does. Every argv-dependent case therefore
+    reads `/proc/<pid>/environ` of the process it started and fails as VACUOUS if the exemption would apply.
+  - **Known cosmetic defect (v5, left for the next batch to spare three re-pins).** A launcher log can show
+    `gpu_scan.sh: line 217: desc: bad array subscript`. It is not a failure. Cause: a process exiting mid-scan
+    leaves its PPid empty, and the descendant loop then indexes `desc[""]`. The test fails, so that process is NOT
+    excluded (the safe direction), and the scan's result is unaffected; it is non-fatal under `set -euo pipefail`
+    (verified). The one-line fix for the next batch: store `pp[$p]` only when the PPid read is non-empty
+    (`[ -n "$pa" ] && pp[$p]=$pa`).
+
+**Between-step re-guards retry through a transient GPU user (addendum 2026-11-22).** At about 07:50 on 2026-11-22
+the scan refused, correctly, on an agent's pytest process holding the real device. `torch.cuda.is_available()`
+opens and holds `/dev/dxg` for the process's lifetime even with `CUDA_VISIBLE_DEVICES=` empty, because WSL2's
+`cuInit` opens the adapter before the mask applies. A transient holder like that must delay a registered multi-hour
+stage, not abort it. So (`launch_lib.sh` `guard_retry` / `rfw_top_guard`):
+  - every between-step re-check re-runs the WHOLE guard (release line, memory band, utilisation, process scan, lock)
+    about every 5 s, until it passes or `RFW_REGUARD_WAIT_S` expires (default 900 s; it must be a non-negative
+    integer, else exit 12). Each distinct refusal reason is logged once, with a timestamp, to the stage's
+    `guard.log`, and so is a pass after a wait. The re-check refuses only if the LAST attempt still refuses, with
+    that attempt's reason and a deadline line in the log. A refusal by the operator's release line (revoked,
+    missing, wrong stage) is the operator's intent and refuses at once, never retried;
+  - Stage 3's `reguard` between its steps is this re-check;
+  - the TOP guard of a launcher started by its registered parent (`run_stage0_all.sh` → `run_stage0.sh`,
+    `run_stage2.sh` → `run_rfw_match.sh`) is this re-check too. That covers the gap between Stage 0 runs and between
+    Stage 2 seats. "Started by its registered parent" needs all of the following, and anything else gets the
+    single-shot guard as before (an operator's direct start, or a stray start with a leftover variable):
+    - `RFW_PARENT_PID`, set by the parent on its start line, equals the child's own PPID;
+    - that parent's script fd (`/proc/<pid>/fd/255`) is the registered launcher, and its argv names it;
+    - the child's fd 9 and the parent's fd 9 are both this bank's lock;
+    - a fresh open of the lock cannot take it, while `flock -n 9` on the child's fd succeeds, so the child holds the
+      parent's own inherited lock;
+  - the first guard of a stage stays single-shot;
+  - an agent test touching the device during a stage therefore delays that step by up to the bounded wait, and the
+    delay is logged.
+
+  **Stage 0 timing.** The wait happens BEFORE a run starts: `run_stage0.sh` takes `t0` only after its top guard has
+  passed, so a run never begins while a holder is present and no wait enters a run's timing. The wait (seconds
+  until the passing attempt began; 0 when the first attempt passes) and the guard mode go into the run's summary
+  row (`guard_wait_s`, `guard_mode`). Inside the ABBA block a wait lies in the gap `t1(previous leg) → t0(this leg)`,
+  which the existing `GAP_MAX_S` = 900 s rule (the block's drift tolerance: one leg) already bounds: a gap
+  including a wait above 900 s means FRESH_ABBA_REQUIRED. So the bound on an in-block wait is `GAP_MAX_S` itself,
+  less the normal inter-leg overhead. A wait is never mixed in silently: `stage0_decide.py` v6 reports every leg's
+  wait (`abba_guard_wait_s`) and sets `abba_block_has_guard_wait` iff leg 2, 3 or 4 waited (leg 1's wait comes
+  before the block), and it prints a NOTE naming those legs.
+
+**GPU memory of the full-width collect (addendum 2026-11-22).** The only banked peak at Stage 0's shape is with the
+knob OFF: K=3, C=128, 64 sims, `eval_max_batch_realised` 4096, peak `memory.used` 22,104 MiB in total
+(`~/chess-artifacts/operations/rl-claude-20261119/collect-throughput/logs/sweep.txt`, `mp3_c128_s64_prof`). No
+measurement with the knob ON existed, and a CPU smoke does not measure GPU memory. So the coordinator measured it
+as an operator diagnostic outside this bank, a paired OFF-then-ON collect at Stage 0's exact shape (3 × 128 games,
+64 sims, the arena pin, all processes rc 0, `eval_max_batch_realised` 4096 everywhere):
+`~/chess-artifacts/operations/rl-run1-root-full-width.opdiag/mem_20261122/` — `README.md` [`3d00d75f`] (written
+before the run), `RESULT.md` [`0a062442`], `SHA256SUMS` [`d5251224`], `gpu_{off,on}.txt` (1 s samples), and
+per-process stats and logs. Idle was 1,138 MiB before each run.
+- Peak `memory.used`, knob OFF: 20,566 MiB (peak − idle 19,428).
+- Knob ON: **28,320 MiB** (peak − idle 27,182; median 26,454).
+- The knob adds **7,754 MiB** at this shape. The prereg's expectation of "a similar peak" was wrong by 7.8 GB,
+  which is why it had to be measured.
+- Take effect, read from the consumer: `mean_root_prelude_visits` 25.13 / 25.31 / 24.83 with the knob on, absent
+  with it off.
+
+**Rule:** Stage 0 is released only if the knob-ON peak ≤ `memory.total` − 1,024 MiB (31,583 MiB) at the measured
+idle. With the measured +27,182 MiB, that holds for idle ≤ 4,401 MiB: 305 MiB inside at the guard's 4,096 idle cap,
+and 30,564 MiB total at the usual idle of 3,382. PASS, but thin at the cap.
+
+**Per-leg memory check (manual; addendum 2026-11-22).** `run_stage0.sh` already samples `memory.used` every 500 ms
+into `runs/<tag>/logs/gpu.csv` and writes the run's maximum to its summary row as `gpu_mem_max_mib`. Nothing reads it
+automatically. Before reading any Stage 0 block, the operator compares each knob-ON leg's `gpu_mem_max_mib` with
+`memory.total` − 512 MiB. `memory.total` is read once at the release and recorded in the release line's note. A leg
+above that bound voids the block and holds the stage: a spill into shared memory, which on WSL2 slows a run before
+it fails, must not silently contaminate a timed leg. The coordinator makes this check by hand and records it in the
+stage's readout. The automated version (`run_stage0.sh` recording `memory.total`, `stage0_decide.py` refusing with
+`MEMORY_SPILL_HOLD`) is on the next-batch list, beside the `gpu_scan.sh` `desc` fix.
+
+**Where the 7.8 GB comes from (read from the code and the logs, not changed).** The collect never uses the 2-group
+eval pipeline, in either arm. It reuses trees, and `gumbel_c.py:1342` turns the pipeline off whenever a persistent
+tree is supplied; all six diagnostic logs print that warning, and only that one. Both arms therefore evaluate all 128
+boards in one call per rep, one leaf per active candidate:
+- **knob OFF:** the widest call is the first halving round, 16 candidates × 128 = 2,048 rows (the banked
+  collect-throughput histogram at this shape has no bucket above 2,048);
+- **knob ON:** round 0 adds about 27 unvisited children × 128 ≈ 3,500 rows, packed first-fit up to the 4,096-row
+  buffer (`_full_width_round0`).
+
+CUDA graphs cover only ≤ 512 rows, so these calls run eager. The caching allocator keeps the eager activation
+high-water mark, about 2.6 GB more per process × 3. A lever not taken: cap round-0 calls at 2,048 rows (about two
+calls per ply instead of one). The −26% rows/s of the drain runs is the extra evaluations themselves: 89 against 64
+evaluations predicts ×0.72 at a constant evaluation rate; the reading is ×0.743, at ×1.03 evaluations per second.
+Stage 0's `S_eq` prices exactly that. In the arena (Stage 2, cold trees) the off seat does pipeline and the knob seat
+does not, but Stage 2 (b) is played at fixed sims, so this changes only the reported timings.
+  - **Measured on the real machine (read-only, 2026-11-22):** `gpu_scan.sh` v2 refused because of another agent's
+    pytest child (`python -u -m chess_anti_engine.uci … --device cpu`), which is why v3 added the CPU-only
+    exemption. v4 returns 0 there with agents working, printing only NOTE lines: an exempted `launch_stage3.sh` (a
+    test copy, run with `CUDA_VISIBLE_DEVICES=`), and the allowlisted `/usr/bin/ssh-agent`.
 - **The queue has released the card.** Both markers exist: `rl-run1-followup/chain.exit` and
   `rl-run1-value-anchor/queue2.exit`.
 - **The operator released THIS stage.** The bank holds a file `GPU_RELEASED_BY_OPERATOR` with a line whose first
-  word is the stage the launcher requests (`stage0` … `stage3`), followed by a date, e.g.
-  `stage0 2026-11-22T09:00`.
+  word is the stage the launcher requests (`stage0` … `stage3`), with the measured idle baseline and a date, e.g.
+  `stage0 idle_mib=3382 2026-11-22T09:00`.
   - **Queue order is enforced by that file, which the operator writes. It is never inferred.**
   - The markers cannot do this job. The sibling screen (#1481) runs after queue 2 and has no marker this guard
-    could know about. And between a chain's steps, memory drops below 1 GiB.
+    could know about. And between a chain's steps, memory falls back to idle.
 
 It then takes a non-blocking `flock` on the bank's own `.gpu_launch.lock`; if the lock is held it exits 9. Since
 v6 the exit-9 message also names the case where no launcher is running: a child of a SIGKILLed launcher
@@ -230,8 +413,35 @@ All three now resume by the same rules, and every decision is appended to `resum
   | Arena seat (stages 2 and 3) | seat, seed, n, both models' shas (stage 2: its seat arguments, i.e. sims and knob, plus the SL base), the opening file's sha, the arena commit or PIN, the match launcher's sha, the environment | `seat_state.py` v3 DONE (below) |
   | Stage 0 run | `s0_inputs`: the run's sims and knob, plus the shas of `run_stage0.sh` (its constants, seeds, `ARENA_SHA`), `count_wrap.py`, `steady_rate.py`, `stage0_decide.py`, the SL base, the pilot bank's sums, the environment | a row in `summary.jsonl` |
 
-  "The environment" is `env | grep -E '^(CAE_|CUDA_|PYTORCH_|TORCH|OMP_|CHESS_)' | sort` as one line (`envf` in
-  `launch_lib.sh`): production code reads `CAE_COMPILED_LEGAL_POLICY` and others from the environment.
+  "The environment" (addendum, `launch_lib.sh` v4 `envf`) is the variables production code actually READS on these
+  paths, as one sorted line of shell-quoted `KEY=value` words. v3 fingerprinted whole prefixes (`CUDA_`, `PYTORCH_`,
+  `TORCH`, `OMP_`), so `OMP_NUM_THREADS=3` on a relaunch blocked a whole Stage 3 resume although nothing on these
+  paths reads it, and for Stage 0 the printed remedy threw away a valid run and tripped FRESH_ABBA_REQUIRED. The set,
+  from `git grep` for `os.environ` / `getenv` at `ARENA_SHA` `fd8c0ce08` and PIN `0c795fb7a` (no `getenv` in C):
+  - every `CAE_*`, `CHESS_*` and `DEEPFIN_*` name: the families the repo uses for its own knobs, e.g.
+    `CAE_COMPILED_LEGAL_POLICY` / `CAE_COMPILED_LEGAL_ROWS_POLICY` (`chess_anti_engine/inference.py:191`, `:200`),
+    `CAE_DUP_STATS` (`mcts/gumbel_c.py:113`), `CAE_BUCKET_HIST` (`inference.py:1526`), `CAE_ARRIVAL_TRACE`
+    (`inference.py:1581`), `CAE_NEURAL_WORK` (`inference.py:2572`), `CAE_INFERENCE_COMPILE`
+    (`tune/distributed_runtime.py:1207`; `:1206` at the PIN), `CAE_HEAP_CENSUS_SECONDS` (`heap_census.py:66`),
+    `CAE_SYZYGY_PATH` (`utils/syzygy.py:46`), `CAE_STOCKFISH` (`utils/engine_discovery.py:41`),
+    `CAE_RESEARCH_COMPILE_CACHE_DIR` (`scripts/arena_standard.py:2044`; `:2025` at the PIN), `CHESS_LOG_LEVEL`
+    (`tune/trainable.py:106`), `CHESS_ANTI_ENGINE_LIVE_CONFIG` (`eval/production_shape.py:66`),
+    `CHESS_LIVE_PRODUCTION_CONFIG` (`eval/lc0_control_arch.py:122`);
+  - `CUDA_VISIBLE_DEVICES` (`simple_rl/collect.py:582`) and `CUDA_DEVICE_ORDER` (`simple_rl/collect.py:618`; the
+    PIN does not read it);
+  - `CUBLAS_WORKSPACE_CONFIG` and `PYTHONHASHSEED`, which the arena's own durable record names as run identity
+    (`eval/arena_durable.py:64`): cuBLAS determinism and hash order.
+
+  The full prefix set (`CAE_`, `CHESS_`, `DEEPFIN_`, `CUDA_`, `CUBLAS_`, `PYTORCH_`, `TORCH`, `TRITON_`, `OMP_`,
+  `MKL_`, `OPENBLAS_`, `PYTHON`, `LD_`) is written, report-only and never compared, to an `env.observed` file beside
+  every step's `.inputs` (stage 3 `<step>.env.observed`, each seat's `<label>.env.observed`, each stage-0 run's
+  `env.observed`), so a behaviour difference can still be diagnosed. `clear_step.sh` moves it with its step.
+
+  **An environment difference now says what differs and how to restore it.** Every 87 refusal prints each
+  fingerprinted variable that differs (`KEY: recorded=<value|unset>  now=<value|unset>`) and the lines that restore
+  the recorded environment (`export KEY=…` / `unset KEY`). If nothing but the environment differs it says so:
+  restore and relaunch, never clear. For a stage-0 row that matters most: a clear discards a valid run, and a
+  cleared ABBA leg forces a fresh block.
 
   **A step's completion check covers what it CONSUMED, not only what it wrote** (new in this revision). The review
   reproduced the defect without this: collect GEN-A and a cell are sealed; the collect is cleared and redone as
@@ -278,7 +488,7 @@ All three now resume by the same rules, and every decision is appended to `resum
   silently rerun or blended with a rerun. The refusal prints the one documented recovery command,
   `clear_step.sh` v3 (sha in the table below; v2 `dd07013a9641…`, v1 `4ace011c377f…`):
   - the forms are `stage3 <step> [--finished] [--cascade a,b]`, `stage0 <tag> [--finished]`, `stage0-block
-    [--finished]` (summary, runs and decision: a fresh ABBA block), `seat <arena_dir> <label>`, and (v3)
+    [--finished]` (summary, runs, decision and both series files: a fresh ABBA block), `seat <arena_dir> <label>`, and (v3)
     `stage3-fingerprint` (above).
   - **Names are validated, never used as paths.** A stage-3 step must be one of the five registered names. A tag
     must look like `r01_off64`. A label is `[A-Za-z0-9_.-]+`, and not `.` or `..`. A seat's arena directory must
@@ -327,28 +537,130 @@ All three now resume by the same rules, and every decision is appended to `resum
     leaves a `.started` without an `.exit`. The step must then be cleared and rerun, which costs that step but never
     blends it.
 
-New shas (previous versions kept as `.vN`):
+Shas (addendum 2026-11-22). Every row is a citation in the evidence verifier's stamp form (prefix `RFW/`, declared
+in the evidence log's prefix table), so drift is machine-checked: `CUDA_VISIBLE_DEVICES= python3
+scripts/verify_evidence_stamps.py --quiet docs/experiments/2026-11-21-rl-run1-root-full-width.md` must exit 0.
 
-| Script | New sha | Previous sha |
+| File | Current version | Previous versions (each kept as `.vN`) |
 |---|---|---|
-| `stage0/run_stage0.sh` v7 | `4f851a9c9c4f…` | v6 `8aafea169066…`, v5 `eb1dd4d3163b…`, v4 `205bd4f0db30…`, v3 `d0e3bcb6952b…` |
-| `stage0/run_stage0_all.sh` v5 | `5163ea29e2cb…` | v4 `09c9eea07472…`, v3 `0d9a81de48f5…`, v2 `98a9bea18970…`, v1 `51482410ec7c…` |
-| `stage0/stage0_decide.py` v5 | `cf5e1cbb397f…` | v4 `f61952c2b32a…`, v3 `4771354e2117…` |
-| `stage1/run_stage1.sh` v5 | `b419265e881d…` | v4 `b9ab2fae46ed…`, v3 `0539b8e1e4f4…`, v2 `3778d06ddad6…` |
-| `run_rfw_match.sh` v5 | `e8e85a601c32…` | v4 `91ef5a8f87ed…`, v3 `b24a435b24e5…`, v2 `0487d857e379…` |
-| `stage2/run_stage2.sh` v7 | `a9d05768c5c9…` | v6 `d6839c0ca884…`, v5 `e831f6274f47…`, v4 `174495f8c6eb…`, v3 `ba70d73eb7b7…`, v2 `c07fe428aa39…` |
-| `stage3/launch_stage3.sh` v7 | `2880311d902c…` | v6 `86494309a5f5…`, v5 `b4a0cf0e46f8…`, v4 `f5ea61297307…`, v3 `8bfe478f0db8…`, v2 `a519b39f2200…` |
-| `launch_lib.sh` v3 | `b9723e9355cc…` | v2 `218d215dd305…`, v1 `9bae510f71b0…` |
-| `seat_state.py` v3 | `15022d1b3aa5…` | v2 `730a1c958edf…`, v1 `1577deaa9a97…` |
-| `clear_step.sh` v3 | `e2df58427ed4…` | v2 `dd07013a9641…`, v1 `4ace011c377f…` |
-| `stage0/fab_test/run_fab.py` v2 | `3abfd33405ac…` | v1 `93e32555a306…` |
-| `verify_outputs.py` (new) | `50ca4fa4b77c…` | — |
-| `guard_test/run_mutants_v9.py` (new) | `f6cca534998a…` | — |
+| `RFW/gpu_guard.sh` [`4324d33990f6`] | v7 | `RFW/gpu_guard.sh.v6` [`c8697d517544`], `RFW/gpu_guard.sh.v5` [`30d2226f6a78`], `RFW/gpu_guard.sh.v4` [`b3ffd88cf5f7`], `RFW/gpu_guard.sh.v3` [`ee073f841a24`], `RFW/gpu_guard.sh.v2` [`997969c87bf3`], `RFW/gpu_guard.sh.v1` [`a0a2f869a719`] |
+| `RFW/launch_lib.sh` [`bbdcdb37ed6e`] | v4 | `RFW/launch_lib.sh.v3` [`b9723e9355cc`], `RFW/launch_lib.sh.v2` [`218d215dd305`], `RFW/launch_lib.sh.v1` [`9bae510f71b0`] |
+| `RFW/seat_state.py` [`15022d1b3aa5`] | v3 | `RFW/seat_state.py.v2` [`730a1c958edf`], `RFW/seat_state.py.v1` [`1577deaa9a97`] |
+| `RFW/clear_step.sh` [`e6a3f324e61e`] | v4 | `RFW/clear_step.sh.v3` [`e2df58427ed4`], `RFW/clear_step.sh.v2` [`dd07013a9641`], `RFW/clear_step.sh.v1` [`4ace011c377f`] |
+| `RFW/verify_outputs.py` [`50ca4fa4b77c`] | v1 | — |
+| `RFW/stage0/run_stage0.sh` [`7d4ff2022a2d`] | v8 | `RFW/stage0/run_stage0.sh.v7` [`4f851a9c9c4f`], `RFW/stage0/run_stage0.sh.v6` [`8aafea169066`], `RFW/stage0/run_stage0.sh.v5` [`eb1dd4d3163b`], `RFW/stage0/run_stage0.sh.v4` [`205bd4f0db30`], `RFW/stage0/run_stage0.sh.v3` [`d0e3bcb6952b`], `RFW/stage0/run_stage0.sh.v2` [`39303c3d7620`], `RFW/stage0/run_stage0.sh.v1` [`a84f4c7cfa63`] |
+| `RFW/stage0/run_stage0_all.sh` [`89a04df9ae8f`] | v6 | `RFW/stage0/run_stage0_all.sh.v5` [`5163ea29e2cb`], `RFW/stage0/run_stage0_all.sh.v4` [`09c9eea07472`], `RFW/stage0/run_stage0_all.sh.v3` [`0d9a81de48f5`], `RFW/stage0/run_stage0_all.sh.v2` [`98a9bea18970`], `RFW/stage0/run_stage0_all.sh.v1` [`51482410ec7c`] |
+| `RFW/stage0/stage0_decide.py` [`d2ae12874881`] | v6 | `RFW/stage0/stage0_decide.py.v5` [`cf5e1cbb397f`], `RFW/stage0/stage0_decide.py.v4` [`f61952c2b32a`], `RFW/stage0/stage0_decide.py.v3` [`4771354e2117`], `RFW/stage0/stage0_decide.py.v2` [`4c02fc7565dd`], `RFW/stage0/stage0_decide.py.v1` [`fb099bed9a35`] |
+| `RFW/stage0/fab_test/run_fab.py` [`5360bc2ceb99`] | v3 | `RFW/stage0/fab_test/run_fab.py.v2` [`3abfd33405ac`], `RFW/stage0/fab_test/run_fab.py.v1` [`93e32555a306`] |
+| `RFW/stage1/run_stage1.sh` [`b419265e881d`] | v5 | `RFW/stage1/run_stage1.sh.v4` [`b9ab2fae46ed`], `RFW/stage1/run_stage1.sh.v3` [`0539b8e1e4f4`], `RFW/stage1/run_stage1.sh.v2` [`3778d06ddad6`], `RFW/stage1/run_stage1.sh.v1` [`d83c8601b3a4`] |
+| `RFW/run_rfw_match.sh` [`29aedb0040c9`] | v6 | `RFW/run_rfw_match.sh.v5` [`e8e85a601c32`], `RFW/run_rfw_match.sh.v4` [`91ef5a8f87ed`], `RFW/run_rfw_match.sh.v3` [`b24a435b24e5`], `RFW/run_rfw_match.sh.v2` [`0487d857e379`], `RFW/run_rfw_match.sh.v1` [`0c192e052082`] |
+| `RFW/stage2/run_stage2.sh` [`49c17f057987`] | v8 | `RFW/stage2/run_stage2.sh.v7` [`a9d05768c5c9`], `RFW/stage2/run_stage2.sh.v6` [`d6839c0ca884`], `RFW/stage2/run_stage2.sh.v5` [`e831f6274f47`], `RFW/stage2/run_stage2.sh.v4` [`174495f8c6eb`], `RFW/stage2/run_stage2.sh.v3` [`ba70d73eb7b7`], `RFW/stage2/run_stage2.sh.v2` [`c07fe428aa39`], `RFW/stage2/run_stage2.sh.v1` [`5ba517c5ae0e`] |
+| `RFW/stage3/launch_stage3.sh` [`f154bdbe7bda`] | v8 | `RFW/stage3/launch_stage3.sh.v7` [`2880311d902c`], `RFW/stage3/launch_stage3.sh.v6` [`86494309a5f5`], `RFW/stage3/launch_stage3.sh.v5` [`b4a0cf0e46f8`], `RFW/stage3/launch_stage3.sh.v4` [`f5ea61297307`], `RFW/stage3/launch_stage3.sh.v3` [`8bfe478f0db8`], `RFW/stage3/launch_stage3.sh.v2` [`a519b39f2200`], `RFW/stage3/launch_stage3.sh.v1` [`95c8a66dbc59`] |
+| `RFW/gpu_scan.sh` [`8b4261b0a653`] | v5 | `RFW/gpu_scan.sh.v4` [`949408e727e7`], `RFW/gpu_scan.sh.v3` [`23a504a858bc`], `RFW/gpu_scan.sh.v2` [`38c6db9bbf69`], `RFW/gpu_scan.sh.v1` [`ec611f4b3a5d`] |
+| `RFW/guard_test/guard_test.sh` [`83a3b679efe0`] | v11 | `RFW/guard_test/guard_test.sh.v10` [`78d1b3f40d22`], `RFW/guard_test/guard_test.sh.v9` [`167b79eeee93`], `RFW/guard_test/guard_test.sh.v8` [`c835c5280f1c`], `RFW/guard_test/guard_test.sh.v7` [`ac4196580a48`], `RFW/guard_test/guard_test.sh.v6` [`275c91d526df`], `RFW/guard_test/guard_test.sh.v5` [`d9b84ec2eba5`], `RFW/guard_test/guard_test.sh.v4` [`d4ad57efc6f3`], `RFW/guard_test/guard_test.sh.v3` [`b40b08d3d30c`], `RFW/guard_test/guard_test.sh.v2` [`730d515388e3`], `RFW/guard_test/guard_test.sh.v1` [`621a57547b22`] |
+| `RFW/guard_test/run_mutants_v11.py` [`d3136aea234f`] | v1 | — |
+| `RFW/SHA256SUMS` [`1bd3bec3f25f`] | v5 | `RFW/SHA256SUMS.v4` [`5ebf76b14621`], `RFW/SHA256SUMS.v3` [`5905c14b95f4`], `RFW/SHA256SUMS.v2` [`5816a4677421`], `RFW/SHA256SUMS.v1` [`ac86aa6cbfe9`] |
 
-The table has 13 rows. The bank's `SHA256SUMS` (85 entries, `5905c14b95f4…`; the previous 75-entry file is kept as
-`SHA256SUMS.v2`) passes `sha256sum -c`.
+**Addendum changes beyond the guard (2026-11-22):**
+- **Stage-0 series files.** `clear_step.sh stage0-block` now moves `decision.series.json` and
+  `decision.fresh_abba.series.json` too (v9 left the series behind, and the next decide refused with no clear form).
+  When FRESH_ABBA_REQUIRED fires, `stage0_decide.py` banks the discarded block's series as
+  `decision.fresh_abba.series.json` (written once, never overwritten), so a discarded block still feeds the
+  re-derivation of the 900 s threshold. `gpu.csv` samples now carry the sampler's own timestamp (`run_stage0.sh` v8
+  queries `timestamp,utilization.gpu,memory.used`); v7 placed sample i at t0 + 0.5 i, but the sampler starts about
+  1 s before t0, so the whole curve was shifted. `decision.series.json` says which placement each run used
+  (`gpu_t_source`: `sampler`, or `t0+0.5i` for rows without timestamps).
+- **One aborted directory per stage-0 `--finished` clear** (v3 made two: one for the old summary, one for the run).
+- **`verify_outputs.py` is pinned to the repo's digest by a test.** The guard test writes a stage with nested
+  shard files in the fake HOME, has the repo's own `write_manifest` (the arena worktree at `ARENA_SHA`, imported
+  read-only by the venv interpreter with CUDA hidden) seal it, and requires `verify_outputs.py` to verify it (0),
+  then to refuse one changed shard byte (1). The reviewer's surviving mutant (the digest omits the relative file
+  names) is now killed (M46).
 
-**Tested** (`guard_test/guard_test.sh` v9 `167b79eeee93…`, output `guard_test/guard_test.txt`; v8 `c835c5280f1c…`, v1 `621a57547b22…`,
+**Tested** (`guard_test/guard_test.sh` v11, run on the staging copy; output `guard_test/guard_test.txt`; v10 with
+its output `guard_test.v10.txt`, and v9 with `guard_test.v9.txt`, kept). All 191 checks pass. The whole test runs in its own user + pid namespace: a fresh `/proc` (the scan sees only
+the test's own processes, never another agent's runs); `/dev/full` (a real character device, rdev 1:7) bind-mounted
+over `/dev/dxg`, so no case can open the real node (a:102) while the scan's rdev match is still exercised; every
+capability dropped for good; SIGINT / SIGQUIT / SIGTERM reset to default (`unshare` leaves them ignored in its child).
+The harness asserts each of these before any case runs. It waits, before starting, while the coordinator's
+`GPU_CHECK_HOLD` file exists (see the harness rule above). Every case whose expected result depends on the argv
+clause reads `/proc/<pid>/environ` of the process it started and fails as VACUOUS if the CPU-only exemption would
+apply; only the exemption cases themselves expect it. New cases:
+- the idle-baseline rule: no `idle_mib` → 8; `idle_mib` 5000 → 8; idle + 600 → 8; idle − 600 → 8; idle + 100 with
+  utilisation 0 → passes; idle + 512 exactly → passes; one utilisation sample of 35% in five → 8; at most 9% →
+  passes; utilisation `N/A` or nothing → 11; two GPU lines, `0` and `N/A` → 11 (a non-integer line is never
+  skipped); `RFW_MEM_WAIT_S` waits through idle + 600 twice, then passes;
+- the REAL `nvidia-smi` (read-only, before the namespace): both probe commands print integers and exit 0;
+- the scan (v5): 23 argv unit cases (python short-option clusters `-um` / `-bm` / `-uB` / `-Wignore` / `-W x` /
+  `-X dev` / `-mmod`; `deepfin` as argv[0] and as `python …/deepfin`; `bash --norc` / `-O x` / `+O x` / `-o x` /
+  `--rcfile x`; `dotnet exec --depsfile x`; and, unmatched, `-uc '…'`, `-c '… # …/arena_standard.py'`, `bash -lc`,
+  `python -`, and the stated limits `-m cProfile` and runpy via `-c`); an enumeration that sees no process of this
+  user → refused; a lister error list mixing ENOENT with EACCES → refused; a real single-argument device holder
+  (argv `['cat']`) and a holder whose cmdline reads empty → refused by the device clause; a LISTED parent launcher
+  (not exempt) starting a guarded child → the child passes (ancestors excluded);
+- the scan (v4 and earlier): listed scripts under `python3 -u`, `python3 -I -X dev`, `python3 -m chess_anti_engine…`, `lc0` as
+  argv[0], `dotnet Ceres.dll`, `count_wrap.py`, a sibling copy of a bank launcher → each refused (all started
+  WITHOUT `CUDA_VISIBLE_DEVICES`); a name only as a substring, `bash -c '…sha256sum …/arena_standard.py'`, and
+  `python3 -c '…' …/arena_standard.py` → each passes; a foreign holder of the device → refused; a holder of the same
+  device through another path (`/dev/full`) → refused; a process holding a REGULAR file named `/dev/dxg` in its own
+  mount namespace → NOTE, passes; the scanner's own `/dev/dxg` missing or not a character device → refused; a
+  non-dumpable device holder (access says yes, readlink denied) → refused; `/usr/bin/ssh-agent` / `/usr/bin/gpg-agent` (non-dumpable) → NOTE, passes; the same process as plain
+  `ssh-agent` → refused; three race cases with an interposed lister (ENOENT → skipped; Permission denied → refused;
+  no error text → refused); a launcher's own re-check beside its own running child → passes, while a sibling copy
+  started from the same shell line → refused;
+- the CPU-only exemption: a matched script started with `CUDA_VISIBLE_DEVICES=` (empty) → NOTE, passes; with `=0`,
+  with only `CUDA_VISIBLE_DEVICES_X=` or `XCUDA_VISIBLE_DEVICES=`, or with two entries (`=` then `=0`) → refused; an
+  exempt matched process that holds the device → refused (the exemption is argv-only); an environ that cannot be
+  read (interposed reader) → refused, with the real reader as control → exempt;
+- the environment: `CAE_COMPILED_LEGAL_POLICY=1` on a Stage 3 relaunch → 87 naming it, with the `unset` line and the
+  ONLY-env verdict; `OMP_NUM_THREADS=3`, `TORCH_LOGS`, `PYTORCH_CUDA_ALLOC_CONF` → not refused, every step and seat
+  skipped; the fingerprint holds no `OMP_` name and each step's `env.observed` exists; a stage-0 row differing only
+  by `CAE_DUP_STATS` → 87 naming it, "Do NOT clear"; a row whose SL base changed → no ONLY-env verdict;
+- series and clears: `stage0-block --finished` moves the decision and both series files; a stage-0 `--finished`
+  clear leaves one aborted directory; `run_stage0.sh` writes 3-field `gpu.csv` rows and an `env.observed`;
+- `verify_outputs.py` against the repo's own `write_manifest` (0), and after one changed shard byte (1);
+- the between-step re-guard (`guard_retry`, against a stub guard): a holder gone after 10 s → proceeds, with the
+  reason logged once; a persistent holder with `RFW_REGUARD_WAIT_S=12` → refused at the deadline, with a deadline
+  line; a revoked release → refused at once (bounded at `RFW_REGUARD_WAIT_S=12`, so a mutant that retries it is
+  caught in seconds rather than hanging the harness); `RFW_REGUARD_WAIT_S=abc` → 12; only the memory probe failing → 11;
+- the nested top guard (a second fake bank: the real `launch_lib.sh` / `gpu_guard.sh` / `gpu_scan.sh`, the real top
+  of `run_stage0.sh`, a minimal parent at the registered path, and a holder appended to that bank's scan copy): a
+  nested child plus a holder that goes away → proceeds after the wait, reason and "passed after" logged; plus a
+  persistent holder → refused at the deadline; a direct start plus a holder → single-shot refusal at once; four
+  forgeries → single-shot refusal at once (a hand-set marker, an unregistered parent script, the lock fd closed, a
+  grandchild whose PPID differs); a no-holder control → nested with a 0 s wait. The real `run_stage0_all.sh` and
+  `run_stage2.sh` runs through stubs assert that every child ran its top guard nested (0 s wait), and the stage-0
+  rows carry `"guard_mode": "nested", "guard_wait_s": 0`.
+
+`stage0/fab_test/run_fab.py` v3: 17 cases, 0 WRONG (new: FRESH_ABBA_REQUIRED banks the discarded block's series and
+writes no decision; `gpu.csv` placed by the sampler's own timestamps, the first sample 1.25 s before t0; guard waits
+reported per leg, with the in-block flag set only for legs 2–4).
+
+**Mutants v11** (`guard_test/run_mutants_v11.py`). Each mutant edits a fresh copy of the staging bank, and
+`guard_test.sh` runs against the copy, 4 at a time. The runner asserts the expected count (`--expect N`) and exits
+non-zero unless the control survives with 0 WRONG and every other mutant is CAUGHT: a survivor, a mutant that does
+not apply, a run without a total line, or a timeout all fail it.
+- **Scan series** (M0 + G1–G33, on `gpu_scan.sh` v5): every G mutant CAUGHT. Two needed a harness fix first, and
+  each fix was rerun solo with the control: G19 (rdev compared by its major number only) first aborted the harness on
+  an unbound variable when it read a hang pid; the read is now guarded, and G19 is CAUGHT with 27 WRONG. G32 (`-c`
+  inside a cluster does not end the scan) first survived, because no case ended the command string with a listed
+  path; two such cases were added, and G32 is CAUGHT with 2 WRONG. G10, G11 and G33 are each killed by their own
+  case, not only by a neighbour's.
+- **M-series** (M1–M68; M5 and M9 retired): `MUTANTS RAN=67 EXPECTED=67`. 63 CAUGHT in the series; three were not:
+  - M3 (`run_stage0.sh` without its guard prologue) survived, because its pattern still named the guard line that
+    the restructure moved into `rfw_top_guard`. It was retargeted to replace `rfw_top_guard` with the single-shot
+    guard: CAUGHT, 20 WRONG.
+  - M54 (a non-integer utilisation line skipped: fails open) survived, because no case printed an integer line
+    beside a non-integer one. v11 adds that case: CAUGHT, 1 WRONG.
+  - M57 (a revoked release line retried) timed out. The revoked-release case ran at the default 900 s retry,
+    which the mutant spent in full. v11 bounds that case at 12 s: CAUGHT, 5 WRONG.
+  The harness gained those two cases mid-series. Both are additive (a new case cannot un-catch a mutant), and M0,
+  M3, M54 and M57 were rerun solo on the final v11: `MUTANTS RAN=4 EXPECTED=4 NOT_OK=0`, control 191/191.
+  Outputs: `guard_test/guard_mutants_v11_scan_v5.txt`, `…_G19_v5.txt`, `…_G32_v5.txt`,
+  `…_mseries_final.txt`, `…_rerun4.txt`.
+
+
+**Tested, previous round** (`guard_test/guard_test.sh` v9 `167b79eeee93…`, output `guard_test/guard_test.v9.txt`; v8 `c835c5280f1c…`, v1 `621a57547b22…`,
 v2 `730d515388e3…`, v3 `b40b08d3d30c…`, v4 `d4ad57efc6f3…`, v5 `d9b84ec2eba5…`, v6 `275c91d526df…` and v7
 `ac4196580a48…`, with their outputs, are kept as `.v1` … `.v8`). Since v6 the test **exits non-zero if any case is WRONG**. v5 exited 0 even with WRONG lines, so a
 mutant harness must key on the exit code.
@@ -861,7 +1173,7 @@ the knob seat loses the pipeline and evaluates more: (a) ≈ +46% at the root, (
 - Estimate: ≈ 1.6–1.9 GPU-h per match, ≈ 3.0–3.6 GPU-h with the smokes.
 - The arena's own timings are reported.
 
-## Stage 3 — the training test (NOT AUTHORISED; needs the owner's go)
+## Stage 3 — the training test (authorised by the owner's standing statement of 2026-11-22; launched only after Stages 0–2 pass and are read)
 
 **One command:** `stage3/launch_stage3.sh` (v7 `2880311d902c…`; v1 `95c8a66dbc59…`; history in the GPU guard section).
 - It refuses without `stage3/OWNER_GO` (exit 90, tested), a Stage 1 PROCEED, Stage 2 (b) UB95 ≥ −10, Stage 2's
@@ -1012,7 +1324,8 @@ $B/stage1/run_stage1.sh || exit 1
 $PY $B/stage1/stage1_decide.py $B/stage1/scores/scores.json $B/stage1/verdict.json || exit 1
 # Stage 2 (refuses unless Stage 1 is PROCEED)
 $B/stage2/run_stage2.sh || exit 1
-# Stage 3: NOT AUTHORISED. After the owner's yes, the coordinator writes $B/stage3/OWNER_GO, then:
+# Stage 3: authorised by the owner's standing statement (2026-11-22). After Stages 0-2 pass by their rules and
+# are read in-session, the coordinator writes $B/stage3/OWNER_GO and the operator's stage3 release line, then:
 $B/stage3/launch_stage3.sh
 ```
 
