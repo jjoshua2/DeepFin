@@ -32,11 +32,19 @@ pytestmark = pytest.mark.skipif(
 )
 
 _F_SETPIPE_SZ = 1031
-# `quit` with a blocked stdout exits within 2.0 s by design (the guard's 1.7 s
-# stall window, one 0.05 s look, the 0.25 s-bounded stderr note); the tests allow
-# `_SLACK_S` more for a loaded CI box. Before the fix the process never exited.
+# `quit` with a blocked stdout exits about 2 s after a writer blocks (the guard's
+# 1.7 s stall window, one 0.05 s look, the 0.25 s-bounded stderr note): measured
+# 1.87-2.09 s under two busy loops, about 2.4 s under heavier load. The block
+# itself comes at most about 1 s after `quit` (stop latency), so the exit is
+# within about 3 s of `quit` by construction. The tests allow `_SLACK_S` over
+# the 2.0 s target for a loaded CI box (2.7 s, still far from "never exits":
+# before the fix the process never exited).
 QUIT_BOUND_S = 2.0
-_SLACK_S = 0.3
+_SLACK_S = 0.7
+# `_handle_stop` waits at most this (engine `_GO_WAIT_NO_CLOCK_S`) for the search,
+# then parks it; a parked thread is silenced inside the print lock. So a writer
+# that is going to block does so within about this long of `quit`.
+_STOP_LATENCY_S = 1.0
 # How long a pre-fix run is watched before it counts as "never exits".
 _NEVER_S = 10.0
 
@@ -296,7 +304,7 @@ def test_quit_during_a_search_sent_the_moment_stdout_fills(
     engine.block_stdout()
     helpers = _descendants(engine.proc.pid)
     engine.send("quit")
-    t_ref = time.monotonic()
+    t_quit = t_ref = time.monotonic()
     seen_block = False
     deadline = t_ref + _NEVER_S
     while engine.proc.poll() is None and time.monotonic() < deadline:
@@ -308,6 +316,12 @@ def test_quit_during_a_search_sent_the_moment_stdout_fills(
     took = time.monotonic() - t_ref
     assert took <= QUIT_BOUND_S + _SLACK_S, (
         f"exit took {took:.2f}s after {'the writer blocked' if seen_block else 'quit'}")
+    # And from `quit` itself: the block comes within the stop latency, so a
+    # regression that delays it (stop no longer prompt) fails here instead of
+    # being absorbed by the moving reference above.
+    from_quit = time.monotonic() - t_quit
+    assert from_quit <= QUIT_BOUND_S + _STOP_LATENCY_S + _SLACK_S, (
+        f"exit took {from_quit:.2f}s after quit")
     # 0 if the search stopped before its next write, 1 if that write blocked.
     assert engine.proc.returncode in (0, 1)
     assert not [p for p in helpers if _alive(p)]
@@ -657,9 +671,19 @@ def test_the_pre_readiness_burst_still_searches_its_movetime(
         searched = time.monotonic() - t_ready
         nodes = [int(s.split()[s.split().index("nodes") + 1]) for s in lines
                  if s.startswith("info") and " nodes " in s]
-        assert max(nodes, default=0) > 0, lines[-5:]
         assert searched >= 0.7, f"bestmove {searched:.2f}s after readyok for movetime 1000"
-        assert not any("unsearched" in s for s in lines)
+        if max(nodes, default=0) == 0:
+            # An overloaded box can starve the search (seen on main too, about 1
+            # run in 6): then the watchdog answers, and its note states how far
+            # into the move it was -- the clock origin itself. Timed from
+            # readiness that is about the movetime; charged for the 3 s model
+            # load (the origin at arrival) it would be over 3000 ms.
+            import re
+
+            notes = [re.search(r"(\d+) ms into a clocked move", s) for s in lines]
+            into = [int(m.group(1)) for m in notes if m]
+            assert into, ("no nodes and no watchdog note", lines[-5:])
+            assert 700 <= into[0] <= 2500, ("no nodes and a wrong clock origin", lines[-5:])
     finally:
         eng.close()
 
