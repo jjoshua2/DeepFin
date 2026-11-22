@@ -223,7 +223,28 @@ anchored vs unanchored was run, by design.
 
     I add that both cells' `presented_sha256` and fields match, and that a grep of both logs for OOM, Traceback,
     CUDA error and RuntimeError finds nothing.
-  - REPRO_PLACEHOLDER
+  - **Then measured: a reproduction check.** The operator retrained both cells alone on the idle GPU with the same
+    command, into `~/chess-artifacts/operations/rl-run1-value-anchor-repro/`.
+    - Sources: `README.md` [`66a7cb29`] (the rule), `run_repro.sh` [`ff853796`], `RESULT.md` [`45159a26`] and `SHA256SUMS` [`f6d3f169`]. All 34 entries in
+      `SHA256SUMS` verify.
+    - The rule, written in the README before the run: every tensor equal → "the overlap did not change this cell"; any
+      difference → "not reproduced", with the max abs difference; non-zero exit → "check not completed".
+    - Both retrains exited 0: `arm_Zq_k11.3.exit` [`0822539e`] at 05:08:45, `arm_Zq_k18.1.exit` [`4339acc5`] at
+      05:23:02.
+    - **My own comparison, on CPU:** I compared the `model` state dict of each retrained `gen_0001/train/model.pt`
+      with the banked cell's. `Zq_k11.3`: same keys, 494 / 494 tensors `torch.equal`, max abs difference 0.0.
+      `Zq_k18.1`: 494 / 494, 0.0.
+    - The file sha256 differ in non-tensor metadata, as with the truncated-S final model: `Zq_k11.3` banked
+      `42a407d5…` vs retrained `b304a849…`; `Zq_k18.1` `c0dc517a…` vs `599f71f4…`.
+    - **By the pre-stated rule: "the overlap did not change this cell", for both cells.**
+    - The incident is therefore closed for both cells' weights; their `wall_seconds` remain not comparable.
+    - The Stage B match of Zq λ 11.3 played the banked file (row sha `42a407d5…`), whose weights equal a clean
+      retrain's.
+  - **Side observation the launch guards now rely on.** In the retrain's GPU log
+    (`~/chess-artifacts/operations/rl-run1-value-anchor-repro/arm_Zq_k11.3.gpu.txt` [`1bfc3754`]), the card read idle
+    (3,448–3,463 MiB, 0–1% utilisation) from the cell's start at 04:54:28 until 05:00:09. The first busy sample is
+    05:00:15 (5,488 MiB, 81%). So a training cell is invisible to memory and utilisation checks for about six minutes
+    while it loads rows.
   - Only those two cells' `wall_seconds` is not comparable.
   - The first incident that night, beside match 8's seat A, is in the
     [follow-up results](2026-11-21-rl-run1-followup-results.md).
