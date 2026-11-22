@@ -19,6 +19,21 @@ GPU; the sizing below is CPU work plus measured costs.
 - the order of readings;
 - the incident wording corrected.
 
+**Revision 3** applies the #1491 statistics review at `730e07509` (evidence:
+`$OPS/rl-claude-20261119/plan-review-1491/delta-730e07509/`):
+- **the baked start with no compensation is the multi-generation rule** (the coordinator's
+  decision, on the reviewer's measured step-0 trunk gradients; B4);
+- `move_aside.sh` can no longer re-draw a registered reading: it refuses completed steps,
+  completed matches and a completed Stage 0, and accepts only plain step names;
+- the licensing table names the contradictory cell and carries the cumulative claim whenever gen 2
+  vs base improves (48-cell grid re-fabricated and banked);
+- the (T2, b2) bounds text: [0.4951, 1.4212] are the T bounds; the ln T bounds are
+  [−0.703, +0.352]; it is a sanity stop, not a statistical bound;
+- completion checks verify data and inputs (actor, seed, shard digests, model and source-collect
+  shas; a `<step>.inputs` record compared on resume);
+- the confound line is the measured trunk gradient ratio, and generation 2 re-measures it on its
+  own rows before training (report-only, with a registered stop for the owner).
+
 **What it is.** Match 8 nominated "Zq + per-generation recalibration" for a 2-generation run under
 its own record. This is that record. It has three parts:
 - **Stage 0:** a replication of match 8's player under a new seed;
@@ -61,11 +76,18 @@ opponent pairs is not transitive, and the second match can be won on generation 
 
 | Stage 0 | gen 2 vs gen 1 | gen 2 vs base | Licensed claim |
 |---|---|---|---|
-| **replicates** (LB95 > 0) | **improves** (LB95 > 0) | any | **two measured steps** of RL improvement from the SL base |
+| **replicates** (LB95 > 0) | **improves** (LB95 > 0) | **not damage** | **two measured steps** of RL improvement from the SL base |
+| replicates | improves | **damage** (UB95 < 0) | **"inconsistent readings; no claim; owner"**: gen 1 > base, gen 2 > gen 1 and gen 2 < base cannot all hold, so no claim is made and the owner decides (revision 3) |
 | adoptable or unread | improves | improves | **one measured step (step 2) and a cumulative improvement over the base; attribution between generations unread** |
 | adoptable or unread | improves | not improves | one measured step (step 2) |
-| any non-damage | not improves | any | no second measured step |
+| any non-damage | not improves | **improves** | **no second measured step; a cumulative improvement over the base (gen 2 vs base improves); attribution between generations unread** (revision 3: the B6 claim is carried; 9 of the 48 cells) |
+| any non-damage | not improves | not improves | no second measured step |
 | damage | — | — | generation 2 does not run |
+
+- **Grid (revision 3).** `guard_test/grid/grid_v3.py` extracts the launcher's verdicts code
+  verbatim and runs it on all 48 non-damage combinations (Stage 0 × gen 2 vs gen 1 × gen 2 vs
+  base, each reading fabricated): **48 of 48 equal this table**. Two mutants are killed: dropping
+  the damage clause (1 cell differs) and dropping the cumulative-only row (9 cells differ).
 
 - Generation 2 proceeds on any **non-damage** Stage 0.
 - `verdicts.json` carries the licensed claim, computed by this table from the stored readings.
@@ -313,38 +335,53 @@ with as `root_net_wdl` on each row.
 | `--value-search-source` | stored_search_wdl |
 | collect flags (validated, not re-run) | as B2 |
 
-**Training starts from the BAKED net, not the raw one: the PIN cannot do otherwise (revision 2,
-review item 6).** The coordinator's decision was to train generation 2 from RAW Zq and use the
-baked file only where a searched value is consumed, unless the PIN makes that impossible. It does:
-- An arm that trains on a collect made elsewhere must use `--collect-from`.
-- At the PIN, `chess_anti_engine/simple_rl/reference.py::reference_collect` refuses unless the
-  arm's generation-0 model has the same sha256 as the source run's generation-0 model, AND the
-  source collect was played by the arm's own generation g−1 model ("its rows would be off-policy
-  for this arm").
-- With gen 0 = raw Zq and a collect played by `gen1_baked.pt`, both checks refuse. No loop flag
-  sets a training init different from the collecting net (`retarget` rewrites targets only).
-- Doing it needs a code change, so the baked start is kept and its effect is registered as a
-  **named confound, with its size**:
-  - **Into the hidden layer and the trunk:** the value loss's gradient through the head is
-    dCE/dh = (W/T)ᵀ(p − y). That is **1/T = 1/0.7036 = 1.421×** the raw head's scale, with p the
-    (sharper) recalibrated probabilities.
-    - The head's hidden layers (`value_wdl.token_proj`, `net.0`, AdamW group 2) receive only the
-      value gradient, and Adam normalises per parameter, so the scale largely cancels there.
-    - The trunk's matrices are in the Aurora group (group 0, 48 tensors), whose update is
-      orthogonalised and magnitude-normalised. A 1.42× larger value gradient therefore re-weights
-      the trunk's update direction toward the value loss: roughly the effect of `--w-wdl` ≈ 1.42
-      for the trunk only.
-    - The pilot's evidence is that raw value training is what cost strength (S −20, raw Zq −10),
-      so this is a confound in the risky direction.
-  - **The final layer itself** (`value_wdl.net.2`, AdamW group 2, weight decay 1e-4): its weights
-    are 1.42× larger after the bake while Adam's step size is unchanged. Its relative step per
-    update is therefore **T ≈ 0.70×** generation 1's. Decoupled weight decay is multiplicative, so
-    its relative effect is unchanged.
-  - **Fresh moments** (below) mean no stale second-moment estimate meets the rescaled layer.
+**Training starts from the BAKED net, with no compensation: this is the multi-generation rule
+(revision 3).** Revision 2 kept the baked start because the PIN cannot train from raw weights on a
+collect played by the baked net (`reference.py::reference_collect` requires the arm's generation-0
+sha to equal the source's and the collect to be played by the arm's own generation g−1 model; a raw
+start needs code). It sized the bake's effect on the trunk as 1/T1 = **× 1.421**, "≈ `--w-wdl`
+1.42". **That figure was measured against raw Zq, but generation 1 did not start from raw Zq.** The
+reviewer measured the step-0 trunk gradients directly, with the trainer's own batch construction
+and `compute_loss` at the PIN, on the same pilot rows (2 × 256 rows, CPU fp32, generation-1
+targets; `plan-review-1491/delta-730e07509/trunk/`, script `trunk_pull.py` sha256 `39173757…`):
+
+| Start | Trunk ‖g_value‖ / ‖g_policy‖ at step 0 (per batch) |
+|---|---|
+| SL base (generation 1's actual start) | **0.998** (1.28, 0.70) |
+| baked Zq (generation 2's start, as registered) | **0.894** (0.97, 0.83) |
+| raw Zq (a raw start) | 0.594 (0.54, 0.65) |
+| baked Zq with `--w-wdl` = T1 (a compensated start) | ≈ 0.63 |
+
+I re-ran the reviewer's script for the baked file (banked copy, collect made a parameter,
+default unchanged): trunk value 1.6481881737709045 / policy 1.8444833159446716 = **0.894**,
+bit-identical to the reviewer's (`prelaunch/trunk_check/trunk_repro.json`; 3:13 wall, 14.0 GB
+peak RSS).
+
+- **Why the baked start is base-like.** Zq's training barely moved the final layer (‖W_out‖ 0.9311
+  for the base, 0.9297 for raw Zq) and flattened the value through the body. Baking (T1, b1) into
+  the final layer restores a base-like output shape, and with it a base-like pull on the trunk. A
+  raw start would pull the trunk less (0.59) than generation 1 did; compensating the baked start
+  by `--w-wdl` = T1 would do the same (≈ 0.63). **Neither is adopted: the coordinator's decision
+  (revision 3), and the reviewer withdrew the raw-start preference.**
+- **The final layer itself** (`value_wdl.net.2`, AdamW group 2, weight decay 1e-4): after the bake
+  its weights are larger (‖W‖ 1.32 vs 0.93) while Adam's step size is unchanged, so its relative
+  step per update is **≈ T1 ≈ 0.70×** generation 1's. Generation 1 moved ‖W‖ by only ≈ 0.001, so
+  this changes little. Decoupled weight decay is multiplicative, so its relative effect is
+  unchanged. Fresh moments (below) mean no stale second-moment estimate meets the rescaled layer.
+- **The rule for generation k ≥ 2:** collect, train and play from the BAKED generation k−1 net; fit
+  (T_k, b_k) of the trained generation k toward that baked net, on generation k's own hold-out
+  (B5); bake (T_k, b_k) into generation k. Because each generation starts already recalibrated,
+  (T_k, b_k) measures the drift of ONE generation of training, not the cumulative drift from the
+  base; that is why the B5 bounds are centred on one generation's drift, not on T1.
+- **Re-measured on generation 2's own rows, before training (step `trunk2`, CPU, report-only).**
+  The same script (`prelaunch/trunk_pull_gen2.py`: the reviewer's file with one change, the collect
+  is `TRUNK_COLLECT`; sha256 below) runs on `gen1_baked.pt` over 2 × 256 rows of generation 2's own
+  collect. The ratio is reported. **If it leaves [0.59, 1.28]** (the range between a raw start and
+  generation 1's largest batch), the launcher writes the registered note `gen2/HOLD_TRUNK2` and
+  **stops for the owner before training**. Generation-2 targets differ from generation 1's, so the
+  pilot-row figures are the reference, not a prediction.
 - **The realised-optimizer equality check still holds:** the groups and hyper-parameters are
   unchanged by the bake.
-- The raw-start alternative needs a reference-collect change (allow `--collect-from` with a
-  declared, sha-pinned actor ≠ init). That is a later record's code change, not this one's.
 
 **Other choices:**
 - **Why fresh optimizer state.**
@@ -401,9 +438,10 @@ been checked independently. The control itself decides on the GPU.
   **known limit to revisit once the loop climbs**, in a later record, not this one.
 
 **Registered bounds on (T2, b2): a stop BEFORE the matches.**
-- **The bounds.** With (T1, b1) = Zq's banked fit (0.7036, −0.2271), the launcher stops after the
-  fit, before any match, unless:
-  - ln T2 ∈ [2 ln T1, −ln T1] = **[0.4951, 1.4212]**;
+- **The bounds: a registered SANITY stop, not a statistical bound.** With (T1, b1) = Zq's banked fit
+  (0.7036, −0.2271), the launcher stops after the fit, before any match, unless:
+  - ln T2 ∈ [2 ln T1, −ln T1] = **[−0.703, +0.352]**, i.e. T2 ∈ [T1², 1/T1] = **[0.4951, 1.4212]**
+    (revision 2 printed the T bounds as the ln T bounds; the code was right);
   - b2 ∈ [2 b1, −b1] = **[−0.4542, +0.2271]**.
 - **Derivation.** Generation 2's head STARTS recalibrated (B4), so (T2, b2) measures the drift of
   one more generation of the same training.
@@ -480,7 +518,7 @@ readout window):
 | draw rate, game length, draw share of the value target | 0.49 / 111.6 plies / 0.500 | measured in `collect_gate.json` | yes, follow from the collecting net; reported, not controlled |
 | code at collect | C0 `6c72b821b` | PIN `0c795fb7a` | no (play path unchanged; see B) |
 | training init | SL base | `gen1_baked.pt` | yes, part of "a generation" |
-| **value-gradient scale into the trunk** | raw head (×1) | baked head (**×1.421**, ≈ `--w-wdl` 1.42 for the trunk's direction; final layer's relative step ×0.70) | **yes: a named confound** (B4); the PIN cannot train from the raw head |
+| **value pull on the trunk at step 0** (trunk ‖g_value‖ / ‖g_policy‖, same pilot rows, 2 × 256, generation-1 targets) | **1.00** (SL base start) | **0.89** (baked start); a raw start would be 0.59; final layer's relative step × 0.70 (‖W‖ 1.32 vs 0.93; generation 1 moved it by ≈ 0.001) | **a named confound, measured** (B4); re-measured on generation 2's own rows before training (`trunk2`) |
 | init checkpoint's `grad_clip_mode` field | none | `zclip` | no: the realised optimizer must equal generation 1's (checked) |
 | recalibration reference | SL base (match 8's fit) | `gen1_baked.pt` | the registered per-generation rule |
 | training data | generation-1 collect | generation-2 collect | follows from the collecting net |
@@ -491,9 +529,14 @@ readout window):
 - The collecting net and the training init change together. That is the definition of a
   generation, not two changes inside one readout.
 - The re-rolled collect seed, batch plan and mirror draws are unavoidable.
-- **The baked-start gradient scaling is a genuine second change.** Its direction is toward more
-  value weight on the trunk, which the pilot found harmful. A generation-2 loss vs generation 1
-  cannot be separated from it.
+- **The start's value pull on the trunk** (revision 3, measured, replacing revision 2's "× 1.421 (≈
+  `--w-wdl` 1.42)"): trunk value / policy gradient ratio at step 0 on the same pilot rows is **1.00
+  for generation 1's start and 0.89 for generation 2's baked start**; a raw start would be 0.59
+  (2 × 256 rows, generation-1 targets). The baked start is the closer of the two to generation 1's
+  pull, so it is kept with no compensation as the rule for every generation (B4). The final layer's
+  relative step is × 0.70 (‖W‖ 1.32 vs 0.93; Δ‖W‖ ≈ 0.001 over generation 1). The residual
+  difference cannot be separated from a generation-2 result; generation 2's own ratio is reported
+  before training (`trunk2`).
 
 ## (C) Options — costed, not registered
 
@@ -529,6 +572,7 @@ All figures are measured on this machine. No GPU work was run for this record.
 | fit control + fit (T2, b2) | ≈ 0.1 | fit_value_recal on 39k rows, two forwards, cuda |
 | collect, 8,000 games | 1.54 | the pilot's play time, slowest process 5,534 s |
 | collect gate + take effect | ≈ 0.05 | two cuda forwards over about 38k hold-out rows |
+| `trunk2`: trunk gradient ratio on generation 2's rows (CPU, 4 threads, GPU idle) | 0 (≈ 0.05 h wall) | the reproduction: 3:13 wall, 14.0 GB peak RSS |
 | train Zq2 | 0.27 | the anchor screen's first cell (16 min); the pilot's Zq was 859 s |
 | bake + verify generation 2 (CPU, GPU held idle) | ≈ 0.1 | as Stage 0's |
 | two matches (12,800 games + smokes) | ≈ 2.95 | 1.45 per 6,400 |
@@ -540,6 +584,7 @@ All figures are measured on this machine. No GPU work was run for this record.
 | Step | Floor | Basis |
 |---|---|---|
 | collect, train | 40 GiB | the pilot's training loader holds 20–23 GiB at ≈ 760k rows (launch record) |
+| `trunk2` | 20 GiB | the reproduction peaked at 14.0 GB RSS |
 | equivalence, fits, checks, bakes | 12 GiB | bake verify peaked at 3.6 GB RSS |
 | matches, Stage 0 | 16 GiB | |
 
@@ -581,7 +626,8 @@ instead of about 21 GPU-h.
 - **Launcher refusals** (`set -euo pipefail`; none of them writes a marker):
   1. OWNER_GO (exit 90).
   2. The guard FIRST: it must exist (8), match the sha256 pinned in the launcher (93; review
-     item 5), and source cleanly (`|| exit 8`).
+     item 5), and source cleanly (`|| exit 8`). Then (generation 2) the checks library
+     `gen2/gen2_checks.sh`, pinned by sha256 in both the launcher and `move_aside.sh` (93).
   3. Stage 0: no earlier attempt on disk (95).
   4. Generation 2: Stage 0 not "damage" (91), and `gen1_baked.pt` is the verified file Stage 0
      played (92).
@@ -593,63 +639,104 @@ instead of about 21 GPU-h.
   writes `stage0/exit` or `gen2/exit` as "<code> <time>"; generation 2 also appends
   `gen2/exit.history`.
   - On INT/TERM the launcher first kills its own tracked child (each GPU step runs under `setsid`
-    as its own process group, killed by pid, never by pattern), then exits 130/143.
+    as its own process group, killed by pid, never by pattern), then exits 130/143. **Known gap:**
+    a grandchild that calls `setsid` itself leaves that process group, so the group kill does not
+    reach it (none of the called scripts does this today; it is not tested).
   - `verdict.json` / `verdicts.json` are written to a temp file and renamed.
-- **Generation 2 resume.** Each step writes `<step>.started` and `<step>.exit` and has a
-  completion check. On relaunch:
-  - A step whose `.exit` is 0 AND whose check passes is skipped and reused, and the skip is logged
-    in `resume.log`. A transient refusal after the 1.5 h collect does not cost the collect.
+- **Generation 2 resume (revision 3).** Each step writes `<step>.inputs`, then `<step>.started`,
+  then `<step>.exit`, and has a completion check in `gen2/gen2_checks.sh` that verifies **data and
+  inputs, not existence** (review item 4):
+  - `collect`: `prelaunch/stage_checks.py collect` — the sealed manifest's actor
+    (`inputs.checkpoint.sha256`) is the current `gen1_baked.pt`, its seed (`seeds.base` and
+    `config.settings.seed`) is 2026112282, and its shard, games and starts digests re-verify now
+    (shards by the loop's own `sha256_tree`, copied verbatim). Checked on the real pilot collect:
+    passes with its actor and seed 2026112100; fails with another actor or seed
+    (`prelaunch/stage_checks_test/`).
+  - `arm_Zq2`: the trainer-summary check plus `stage_checks.py arm` — `model.pt`'s sha256 equals the
+    arm manifest's `outputs.model`, the init checkpoint is `gen1_baked.pt`, and the reference
+    collect's `source_collect_manifest` sha256 is generation 2's collect manifest now. Checked on
+    the pilot's `arm_Zq`: passes.
+  - `<step>.inputs` records the launcher's sha256, the checks library's, `prelaunch/SHA256SUMS`'s,
+    the step's seed and the sha256 of every file the step reads. **On resume a done step is reused
+    only if its recorded inputs equal the inputs now; a mismatch refuses (exit 84), never skips and
+    never silently reruns.** Every run and skip line in `resume.log` carries the launcher's sha256.
+  - A step whose `.exit` is 0 AND whose check passes AND whose inputs match is skipped and reused.
+    A transient refusal after the 1.5 h collect does not cost the collect.
   - A step with a non-zero `.exit` (or a passing exit with a failing check) refuses with exit 88.
   - A step with `.started` but no `.exit` (interrupted) refuses with exit 87.
-  - Both refusals name the one documented command, `gen2/move_aside.sh <step>`. It renames that
-    step's outputs to `*.aside.<UTC>` and never deletes; it refuses while a launch holds the bank
-    lock or while a later step has markers.
-  - An interrupted match is replayed whole (smoke and both seats) from a clean dir, never resumed.
-    A moved-aside attempt's games are never read or pooled.
-  - Stage 0 is never resumed: a failed attempt refuses the next launch (95) until
-    `move_aside.sh stage0`. Its verified `gen1_baked.pt` is reused only if its provenance and
-    verify still stand.
-- **Test.** `guard_test/guard_test.sh` v3 runs everything under the isolation described next.
+  - Both refusals name the one documented command, `gen2/move_aside.sh <step>`.
+- **`move_aside.sh` (revision 3, review item 1): it moves only failed or interrupted work.** It
+  renames to `*.aside.<UTC with nanoseconds>.<pid>`, refuses if any destination exists, and never
+  deletes. **It refuses, with no override flag:**
+  - an argument that is not exactly one plain step name from its list (no `/`, `.`, `..`; every
+    source and destination must resolve inside the bank);
+  - while a launch holds the bank lock, or while a later step has markers;
+  - **a completed step** (`.exit` 0 and its completion check passes — the launcher's own checks,
+    from the shared library);
+  - **a match step, always, once it completed (`.exit` 0), has a real `pool.json`, or once
+    `verdicts.json` exists**;
+  - **`stage0` once Stage 0 completed** (exit 0 or `verdict.json`), **and whenever `gen2/` has any
+    marker**.
+
+  A registered reading is re-drawn only under a new record. An interrupted or failed match without a
+  real pool is replayed whole (smoke and both seats) from a clean dir; a moved-aside attempt's
+  games are never read or pooled. Stage 0 is never resumed: a failed attempt refuses the next
+  launch (95) until `move_aside.sh stage0`.
+- **Test.** `guard_test/guard_test.sh` **v4** (revision 3) runs everything under the isolation
+  described next.
   - **The isolation.** A fake HOME holds only a fake pilot bank, a fake follow-up launcher and a
     throwaway git repo as the PIN worktree. Stubs on PATH replace `python`, `python3`,
-    `nvidia-smi` and `ps`. Inline checks run on the system python3, which is asserted torch-free;
-    script calls run on a stand-in (`fakepy.py`) that imports nothing from the repo. The launchers
-    are copies whose pinned sha constants are rewritten to the fake files. The harness asserts the
-    isolation before any case runs.
-  - **64 cases, 64 pass:**
-    - every guard refusal, including `ps` exiting 1 after partial output, empty `ps`, a busy or
-      non-numeric second GPU line, no GPU line, and the 1023/1024 edges;
-    - every launcher refusal, including a tampered guard (93) and a pinned guard whose source fails
-      (8);
-    - Stage 0: a mid-run failure writes the marker with the failing step's code (7); refuse →
-      fix → relaunch; TERM → marker 143 and the tracked child is dead; move-aside keeps the
-      attempt;
-    - generation 2: a full run; relaunch after success skips every step; a non-zero `.exit` whose
-      outputs look fine refuses (88); a failure after the collect, then a transient guard refusal
-      that writes no marker, then move-aside and a relaunch that does **not** replay the collect;
-      `.started` without `.exit` refuses (87); move-aside refuses while a later step has markers;
-      (T2, b2) outside the bounds stops before any match; a `gen1_baked.pt` that is not the one
-      Stage 0 played refuses (92);
-    - nothing called the stub python.
-  - **Mutants**, each killed (`guard_test/mutants_v3/mutant_results.txt`):
+    `nvidia-smi`, `ps` and (v4) `date` (a frozen clock only when a case sets it). Inline checks run
+    on the system python3, which is asserted torch-free; script calls run on a stand-in
+    (`fakepy.py`) that imports nothing from the repo, except that it runs the REAL
+    `prelaunch/stage_checks.py` (pure stdlib) on manifests written in the loop's real shape. The
+    launchers are copies whose pinned sha constants are rewritten to the fake files. The harness
+    asserts the isolation before any case runs.
+  - **102 cases, 102 pass** (v3's 64, plus):
+    - `move_aside`: a completed final match and first match refused (4) with the pool left in
+      place; a completed Stage 0 refused, both after generation 2 consumed it and before any
+      generation-2 marker; Stage 0 refused while `gen2/` has any marker; a match refused when its
+      `.exit` is 0 but its check now fails, when it has a real `pool.json` but a non-zero `.exit`, and
+      once `verdicts.json` exists (these isolate the match rule from the completed-step rule); a
+      completed step refused;
+      `../stage0`, `.`, `..`, `collect/../..`, `../../x`, an empty name, two arguments,
+      `m_g2_vs_base/` and no argument all refused (2) and nothing moved; two moves of the same step
+      under one frozen clock reading keep both attempts; a failed, unpooled match may move;
+    - data checks: a tampered shard, a collect manifest with another seed, and a model that is not
+      the arm manifest's output each refuse on relaunch (88), never skip;
+    - inputs: a changed input file of a done step, and a changed launcher, each refuse (84);
+      `resume.log` carries the launcher's sha256; every run step wrote its `.inputs`;
+    - `trunk2`: a ratio of 0.5 or 1.3 stops with `HOLD_TRUNK2` before training; 1.28 passes;
+    - licensing: replicates + gen 2 > gen 1 + gen 2 vs base damage reads "inconsistent readings; no
+      claim; owner"; gen 2 vs gen 1 unread + gen 2 vs base improves carries the cumulative claim.
+  - **Mutants, all made from the FINAL files by one exact replacement each
+    (`guard_test/mutants_v4/make_mutants_v4.py`; a replacement that does not match exactly once
+    aborts) and each killed** (`guard_test/mutants_v4/mutant_results.txt`). v3's fourteen shell
+    mutants are regenerated on the final files: launcher without `|| exit 8`; gen2 with no guard;
+    guard with no memory check, no release-line check, a substring `ps` match, `ps` failing open,
+    only the first GPU line; Stage 0 trap losing the code; resume skipping without checking `.exit`;
+    fit2 bounds ignored; move-aside deleting; gen2 trap set before the refusals; harness with stubs
+    last on PATH (ABORT); harness with another HOME (ABORT). New in v4:
 
-    | Mutant | Killed by |
+    | Mutant | File |
     |---|---|
-    | launcher without `\|\| exit 8` | exit 3 instead of 8 |
-    | gen2 with no guard | |
-    | guard with no memory check | |
-    | guard with no release-line check | |
-    | guard with a substring `ps` match | |
-    | guard `ps` failing open | review item 4 |
-    | guard reading only the first GPU line | review item 4 |
-    | Stage 0 trap losing the code | marker 0 instead of 7 / 143 |
-    | resume skipping without checking `.exit` | |
-    | fit2 bounds ignored | |
-    | move-aside deleting | |
-    | gen2 trap set before the refusals (a refusal writes a marker) | |
-    | harness with stubs last on PATH | ABORT |
-    | harness with another HOME | ABORT |
-    | collect gate reading a missing key (B3b) | |
+    | a completed match moves | `move_aside.sh` |
+    | any name accepted (no plain-name check, no allowlist) | `move_aside.sh` |
+    | second-resolution stamp, no destination check, overwriting `mv` | `move_aside.sh` |
+    | Stage 0 moves under generation-2 markers | `move_aside.sh` |
+    | a completed step moves | `move_aside.sh` |
+    | a completed Stage 0 moves | `move_aside.sh` |
+    | collect check = existence only | `gen2_checks.sh` |
+    | arm check = existence only | `gen2_checks.sh` |
+    | inputs never compared | `gen2_checks.sh` |
+    | trunk range ignored | `launch_gen2.sh` |
+    | claim ignores gen 2 vs base damage | `launch_gen2.sh` (also killed by the grid: 1 cell) |
+    | claim drops the cumulative-only row | `launch_gen2.sh` (also killed by the grid: 9 cells) |
+    | shards digest unchecked | `stage_checks.py` |
+    | seed unchecked | `stage_checks.py` |
+    | model sha unchecked | `stage_checks.py` |
+
+    The collect-gate mutant (B3b) is unchanged and banked with its own test.
 
 ## Provenance and incident
 
@@ -673,22 +760,31 @@ instead of about 21 GPU-h.
 - **Bank** `$OPS/rl-run1-gen2/` (`$OPS` = `~/chess-artifacts/operations`).
   - **What is read-only:** the scripts, `BANK_SHA256SUMS` (which no longer lists itself; review
     item 5) and the test dirs. The `stage0/` and `gen2/` dirs stay writable for outputs.
-  - Revision 1 files are kept as `*.v1`.
-  - `prelaunch/SHA256SUMS` lists the four prelaunch scripts; both launchers check it.
-  - `BANK_SHA256SUMS` (sha256 `3c6b8df1…`) lists 100 files and verifies with `sha256sum -c`.
+  - Revision 1 files are kept as `*.v1`, revision 2 files as `*.v2` (the launcher, `move_aside.sh`,
+    the harness, `fakepy.py`, its output, `prelaunch/SHA256SUMS` and `BANK_SHA256SUMS`).
+  - `prelaunch/SHA256SUMS` lists the six prelaunch scripts (revision 3 adds `stage_checks.py` and
+    `trunk_pull_gen2.py`); both launchers check it.
+  - `BANK_SHA256SUMS` (sha256 `f059b256…`) lists 184 files and verifies with `sha256sum -c`.
+  - Revision 3 evidence: `prelaunch/trunk_check/` (the reviewer's script verbatim, the
+    reproduction), `prelaunch/stage_checks_test/` (the pilot collect and arm checks),
+    `guard_test/mutants_v4/` (generator, runner, every mutant and its output),
+    `guard_test/grid/` (the 48-cell grid and its two mutants).
 
 | File | sha256 |
 |---|---|
 | `gpu_guard.sh` (v2; pinned in both launchers) | `f1fbd032ecdd2c5afdc4b9a25d7fe7c964b61825455a1928c00b2fe04f9b22c8` |
 | `stage0/run_stage0.sh` | `5ee784b06e2cfb2b76e63d215a440b6887808e951f5ad01561a2a4c89df07857` |
-| `gen2/launch_gen2.sh` | `231fbff95a212e8f8c404df86c8911f294078ef89d0721f8bac5a4f2e8ee7d51` |
-| `gen2/move_aside.sh` | `db8cdc928ad4138cc3491b4dedcbcb9f9cdfc7d017dc3ca1faca6bdb0a04336c` |
+| `gen2/launch_gen2.sh` (revision 3) | `514a941e352ad16b39cf4a8802d4d360dac195b0e94c171f1db54b78ecfb6bd2` |
+| `gen2/move_aside.sh` (revision 3) | `7ef213d3aa954638f070ac22e905d05fc596c58316a0f057de407430b2acc360` |
+| `gen2/gen2_checks.sh` (new; pinned in both) | `2fb12ce918e86351ddcf7f4223b5b412ae10d9abf2245a1f4ab5ede15a8ca732` |
+| `prelaunch/stage_checks.py` (new) | `362abc13f19c7b12c7cf290483c9b3dd67b741e7c3c0d8679378b568cb5ca89d` |
+| `prelaunch/trunk_pull_gen2.py` (new; the reviewer's `39173757…` with the collect as a parameter) | `cfe660c2332b451817b0b8348d0205e60cbaca267a5dc3c78a40b96c5bfc5075` |
 | `prelaunch/bake_recal.py` | `786bb537e0d1130ed2ae20bf81c7791239f4903095fd22a2f40840e3e8a06230` |
 | `prelaunch/equiv_check.py` | `9af37c1b33bae5008067173d99422151ebe1402cc36989a722702697fe59574b` |
 | `prelaunch/collect_gate.py` | `470a76aebe3a0e1fa94d54ff802024ed803026fae28df2056063e04b6b3023ff` |
 | `prelaunch/take_effect_collect.py` | `9029f146958166c82b83da64de93852ce9adc5edc25171229f4c033f2607e37e` |
-| `guard_test/guard_test.sh` (v3) | `4b755ad63492d7f73a0a16fca7e6a5a4462fa3d0fc906d7b39a88ac06e947c4e` |
-| `guard_test/fakepy.py` | `a2e366fed6ad7d6c4c8d5e32ced87147bac68a602626754c49f14177f5fabc4d` |
+| `guard_test/guard_test.sh` (v4) | `77c9ad83abf11105e58dc60256ba1ec6bebeb7c9df75d6192553dd449220cb27` |
+| `guard_test/fakepy.py` (v4) | `ee64e8a414889c945fb0dda90ee36ed2abc4acc482a85e060d19a5a81c99c8a4` |
 
 ## Commands
 
@@ -700,7 +796,8 @@ OPS=$HOME/chess-artifacts/operations
 setsid nohup $OPS/rl-run1-gen2/stage0/run_stage0.sh > $OPS/rl-run1-gen2/stage0/run.out 2>&1 < /dev/null &
 # Generation 2 (after Stage 0's verdict.json is not damage; owner go -> gen2/OWNER_GO; operator -> "gen2 <time>")
 setsid nohup $OPS/rl-run1-gen2/gen2/launch_gen2.sh > $OPS/rl-run1-gen2/gen2/run.out 2>&1 < /dev/null &
-# After a failed or interrupted step (the launcher's refusal names it): move its outputs aside, then relaunch
+# After a FAILED or INTERRUPTED step (the launcher's refusal names it): move its outputs aside, then relaunch.
+# It refuses completed steps, completed matches and a completed Stage 0; a registered reading is re-drawn only under a new record.
 $OPS/rl-run1-gen2/gen2/move_aside.sh <step>
 ```
 
