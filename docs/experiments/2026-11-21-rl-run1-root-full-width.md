@@ -2,14 +2,14 @@
 
 **Status: registered, not launched; re-pinned to `{PIN_NEW}` (forward chunking, PR #1511) by
 [Addendum 2](#addendum-2-2026-11-22-the-re-pin-to-forward-chunking-and-a-second-full-width-arm-c-wide-candidates),
-which also adds arm C.**
+which also makes the registered full-width arm the wide arm, `fw_wide`.**
 - **The old pin `fd8c0ce08` and every stage command written for it are superseded (addendum 2026-11-22).**
   - **Why:** at that pin the wide full-width shapes went over the card at 3 × 128.
     - `--topk 64` was refused by the collect's memory check
       (`~/chess-artifacts/operations/rl-run1-root-full-width.opdiag/mem_wide_20261122/RESULT.md` [`1c0ba196`]).
     - `--topk 32` and `--topk 21` both aborted at about 31.8 GB
       (`~/chess-artifacts/operations/rl-run1-root-full-width.opdiag/mem_wide2_20261122/RESULT.md` [`f36a10c5`]).
-  - **With forwards bounded at 512 rows**, the same 3 × 128 shape peaked at 10,012 MiB for off, 10,208 for C
+  - **With forwards bounded at 512 rows**, the same 3 × 128 shape peaked at 10,012 MiB for off, 10,208 for the wide arm
     (`--topk 32`) and 9,848 for B (`--topk 16`)
     (`~/chess-artifacts/operations/rl-run1-root-full-width.opdiag/chunk_meas_20261122/README.md` [`ff0f38d5`],
     `SHA256SUMS` [`91109598`], with `ADDENDUM_1.md` [`00fc377c`] correcting an arithmetic slip in the README).
@@ -343,7 +343,7 @@ per-process stats and logs. Idle was 1,138 MiB before each run.
 idle. With the measured +27,182 MiB, that holds for idle ≤ 4,401 MiB: 305 MiB inside at the guard's 4,096 idle cap,
 and 30,564 MiB total at the usual idle of 3,382. PASS, but thin at the cap, and valid only for the topk-16 shape at
 the old pin `fd8c0ce08`. The wide shapes failed at that pin (see the Status), and Addendum 2 registers the post-fix
-memory of every arm at the new pin (C's peak − idle 8,051 MiB at 3 × 128).
+memory of every arm at the new pin (the wide arm's peak − idle 8,051 MiB at 3 × 128).
 
 **Per-leg memory check (manual; addendum 2026-11-22).** `run_stage0.sh` already samples `memory.used` every 500 ms
 into `runs/<tag>/logs/gpu.csv` and writes the run's maximum to its summary row as `gpu_mem_max_mib`. Nothing reads it
@@ -1297,18 +1297,45 @@ length, the arm gets more or fewer rows and GPU-h than the pilot's 761,979 rows 
 - **Promise:** "the knob helps training" only if `P0_rfw` − banked P0 has LB95 > 0. A true effect below ≈ 13 Elo is
   likely to read as unread. Nothing smaller is claimed.
 
-## Addendum 2 (2026-11-22): the re-pin to forward chunking, and a second full-width arm, C (wide candidates)
+## Addendum 2 (2026-11-22): the re-pin to forward chunking, and the wide arm replaces the topk-16 arm
 
-**Status.** This addendum does two things:
-- It moves every stage to the pin `{PIN_NEW}`.
-- It adds one arm, C, to Stages 0–2, and makes Stage 3's arm the survivor of a rule fixed here.
+**Status.** This addendum is an amendment made before any data. No stage of this record has run. It does two things:
+- **The re-pin.** Every stage moves to the pin `{PIN_NEW}`.
+- **The arm.** The registered full-width arm becomes the WIDE arm, `fw_wide`, replacing B (`--root-full-width
+  --topk 16`):
+  - B is registered and withdrawn before any data. Its measured numbers stay in this record: 28,320 MiB peak with the
+    knob on at `fd8c0ce08`, and 9,848 MiB post-fix.
+  - `fw_wide` differs from B only in `--topk`, which follows the realised-width rule below.
+  - Every collect also runs `--eval-chunk-rows 512`, with the realised-field gates below.
+  - Everything else is unchanged: the control (knob off, topk 16, 64 sims), the stages, `S_eq`'s formula, every
+    tolerance and every kill (Stage 1's LB95 > 0 and > +1.2 cp; Stage 2's UB95 < −10 Elo). All now apply to
+    `fw_wide`.
+  - Wherever the stages above say "knob on", `--root-full-width`, `MSEQon` or `M64on`, the arm is `fw_wide`.
+  - The Stage 1 arm tags `M64on` / `MSEQon` and the Stage 2 match names `rfw_matched` / `rfw_eqtime` are kept, so the
+    sealed scorer and pool code do not change. Every one of those runs records its realised topk (`<tag>__topk` in
+    the Stage 1 bank; the seat's realised `gumbel.topk`, checked by `check_shape.py`).
 
-It changes no existing threshold, arm or gate for B, the arm already registered (`--root-full-width --topk 16`).
-Nothing in this record had run before the move, so no measurement is invalidated.
+**Why the wide arm replaces B rather than joining it:**
+1. **No stage has run,** so this is an amendment before any data.
+2. **The two pre-registered scoping banks answer the B-or-wide design question at equal leaf cost** (below):
+   - children visited at least twice: wide 21.4 against B 13.8, of 23.8 legal moves;
+   - ordering over all children: +0.098 / +0.090 / +0.081 against equal-leaf knob-off controls;
+   - widening does not weaken the deep children.
+3. **The post-fix measurement shows the same cost.** Peak − idle is 8,051 MiB for wide and 7,679 for B. Rows/s are
+   within 3% (100.6 vs 103.8; single runs).
+4. **B was only ever a fallback.** The record never had a B-vs-wide match, so B served only as "else B if B
+   survives". A fallback that costs a second Stage 0 / 1 / 2 block, an arm-choice rule and several hours of launcher
+   code is not worth its GPU-hours.
+5. **The owner asked for all, or most, root children with 2–3 visits each.** That is the wide arm.
+
+**What is lost, stated plainly:**
+- There is no direct strength comparison of topk 16 against wide under the knob.
+- If `fw_wide` is killed at Stage 1 or Stage 2, the record STOPS. There is no fallback arm, and a topk-16 arm would
+  need a new record.
 
 ### The pin, and why it moved
 
-**Memory follows the largest forward, not the reservation.** At pin `fd8c0ce08`, C could not run at the collect's
+**Memory follows the largest forward, not the reservation.** At pin `fd8c0ce08`, the wide arm could not run at the collect's
 3 × 128 shape:
 - `--topk 64` was refused by `check_vram`, which sized from the 16,384-row reservation
   (`~/chess-artifacts/operations/rl-run1-root-full-width.opdiag/mem_wide_20261122/RESULT.md` [`1c0ba196`]).
@@ -1337,7 +1364,7 @@ re-pin is in it. The mechanism and its harness cases stay.
 | C | 32 | 10,208 (2,157) | 8,051 | 100.6 | 512 | 0 |
 
 - **Memory.** Against the same shape at `fd8c0ce08` (`../mem_20261122/`), per-process memory fell 2.5× for off and
-  3.5× for B. C fits with about 21 GB to spare.
+  3.5× for B. The wide arm (row C) fits with about 21 GB to spare.
 - **Rate.** The rates are single runs of whole-run rows per active second, not Stage 0's steady rate. They support
   "chunking is not slower" (+5.5% off, +7.5% B against the old pin) and nothing more. Stage 0 measures cost by its
   registered method.
@@ -1346,10 +1373,10 @@ re-pin is in it. The mechanism and its harness cases stay.
 addendum depends on a measurement not in hand.
 
 **Optional pre-stage diagnostic (not required, not run yet).** The comparison is N ∈ {1024, 2048} against 512, and
-the larger shapes 4 × 128 and 3 × 192, for knob off and C. Its only allowed effect is one documented change by these
+the larger shapes 4 × 128 and 3 × 192, for knob off and `fw_wide`. Its only allowed effect is one documented change by these
 rules, fixed now. The change is recorded in this section, with its bank and sha, before Stage 0 starts:
-- **N:** N moves to 1024 or 2048 only if an ABBA (off, C, C, off at 64 sims, Stage 0's method and steady rate) shows
-  ≥ +3% steady rows/s for BOTH off and C against N = 512. Both arms must also stay inside the memory rule below.
+- **N:** N moves to 1024 or 2048 only if an ABBA (off, `fw_wide`, `fw_wide`, off at 64 sims, Stage 0's method and steady rate) shows
+  ≥ +3% steady rows/s for BOTH off and `fw_wide` against N = 512. Both arms must also stay inside the memory rule below.
   Otherwise N stays 512; ties go to 512.
   - N above 512 means eager chunks: `eager_over_max_rows` > 0, which the per-arm gate below then expects.
   - `--eval-chunk-rows` accepts at most 2,048.
@@ -1360,12 +1387,12 @@ rules, fixed now. The change is recorded in this section, with its bank and sha,
   - knob-off's steady rows/s rises ≥ +5% over 3 × 128 by ABBA.
 
   Otherwise 3 × 128.
-- No arm ever runs at a shape the others do not. The rule never moves one arm alone. At 3 × 128, C's measured
-  peak − idle of 8,051 MiB is far inside the bound, so the fallback "C at a smaller shape" that the draft carried is
-  not needed and is not registered.
+- The arm and its control always run at the same shape; the rule never moves one alone. At 3 × 128, `fw_wide`'s measured
+  peak − idle of 8,051 MiB is far inside the bound, so no smaller-shape
+  fallback is registered.
 
 **`check_vram` at `{PIN_NEW}`.** It charges boards (35.52 MiB a board) and min(leaf buffer, N) forward rows.
-- At 3 × 128, 64 sims, it predicts 8,381 MiB per process for off, B and C alike, 24.55 GiB at K = 3. That is ≤ the
+- At 3 × 128, 64 sims, it predicts 8,381 MiB per process for off, B and the wide arm alike, 24.55 GiB at K = 3. That is ≤ the
   26.43 GiB usable, so the single `--collect-procs 3` driver Stage 3 uses passes, and **Stage 3 as registered launches
   without the refit.**
 - Measured per process is 2,560–2,684 MiB, so the check is about 3.2× conservative here. Its record says
@@ -1374,7 +1401,7 @@ rules, fixed now. The change is recorded in this section, with its bank and sha,
   topk 21 at 41 sims at 3 × 128 unchunked, which the current model passes at 20.99 GiB although that shape went over
   the card.
 
-### Why arm C exists (two sealed scoping banks)
+### Why the wide arm (two sealed scoping banks)
 
 - **Two-visit scoping** (`~/chess-artifacts/operations/rl-claude-20261119/two-visit-children-scoping/README.md`
   [`7e5a9693`]):
@@ -1383,7 +1410,7 @@ rules, fixed now. The change is recorded in this section, with its bank and sha,
     - A (knob off, topk 16, 64 sims): 7.23;
     - B (knob on, topk 16): 13.77;
     - C (knob on, candidates up to the realised cap): 21.42.
-  - So at C's leaf cost the search carries ordering on 2.7× as many children as arm A.
+  - So at the wide arm's leaf cost the search carries ordering on 2.7× as many children as arm A.
 - **Visits-per-child scoping** (`~/chess-artifacts/operations/rl-claude-20261119/visits-per-child-scoping/README.md`
   [`a77b9936`], PREREG `688242a0`, stamped before the GPU arms). It measures ordering accuracy against SF 8M on
   38,705 clear pairs, with a game bootstrap:
@@ -1395,16 +1422,17 @@ rules, fixed now. The change is recorded in this section, with its bank and sha,
     both families.
   - Caveats: the ruler is SF-referenced and one ply deep, so it cannot speak to Elo. One net, one seed, fresh trees.
 
-These are scoping readouts, not a test. C enters the record as an arm under the same kills as B; it is not adopted.
+These are scoping readouts, not a test. `fw_wide` enters the record under B's kills, unchanged in form; it is not adopted.
 
-### Arm C, and how its topk moves with its sims
+### The wide arm, and how its topk moves with its sims
 
-- **C** = `--root-full-width --topk T_C --sims S_C`, where **`T_C = (S_C + 1) // 2`**.
+- **`fw_wide`** = `--root-full-width --topk T --sims S`, where **`T = (S + 1) // 2`**. In the table below, C
+is this arm, `S_C` its sims and `T_C` its topk.
 - The realised candidate width is `min(topk, L, (sims + 1) // 2)` (`gumbel_c.py` `_realized_candidate_width`), and
   round 0 visits every legal child whatever the topk. So `T_C` is the smallest topk that gives the same search as
   any larger topk at `S_C`: at 64 sims, topk 32 is the same search as topk 64.
-- **`S_C` and `T_C` move together.** Every C run states both, and a run whose realised width differs from this rule
-  is refused.
+- **`S` and `T` move together.** Every run states both, and a run whose realised leaf buffer differs from
+  128 × 2 × `T` is refused.
 
 **Realised width at the candidate sims** (CPU, from the scoping bank's leak-free rows; mean legal 23.84). The table is
 banked with this addendum: `addendum2/width_table.json` [`1edde491`], from `addendum2/width_table.py` [`bcd304df`].
@@ -1426,77 +1454,50 @@ For B, the mean width is 13.95 at every budget. The prediction was checked again
 
 ### The re-pin (bank files changed by this addendum; old versions kept as `.vN`)
 
+The re-pin is mechanical: `addendum2/repin.py <bank> <pin> --apply`. It is idempotent per version, refuses if any edit
+does not apply exactly once, keeps every changed file as `.vN`, and moves `HOLD_REPIN` aside.
+
 | File | Change |
 |---|---|
-| `stage0/run_stage0.sh` | `ARENA_SHA` → `{PIN_NEW}`; an arm argument (`B` default, or `C`), giving `--topk T_C` and `--root-full-width` for C; `--eval-chunk-rows 512`; per-arm realised-field gate (below) |
-| `stage0/run_stage0_all.sh` | C's ABBA and decide loop after B's decision, in `stage0/C/` (own `summary.jsonl`, `runs/`, `decision.json`) |
-| `stage0/stage0_decide.py` | the `eval_max_batch_realised` gate per row from its own topk; the same tolerances and step rule |
+| `stage0/run_stage0.sh` | `ARENA_SHA` → `{PIN_NEW}`; knob on: `--topk (S + 1) // 2`, knob off: `--topk 16`; `--eval-chunk-rows 512`; gates per process: `eval_max_batch_realised` = 128 × 2 × topk, `eval_chunk_rows_realised` = 512, `eager_over_max_rows` = 0; the row records `topk` |
+| `stage0/stage0_decide.py` | per row: topk = the rule (knob on) or 16 (off), chunk rows 512, leaf buffer 256 × topk; the same tolerances and step rule |
 | `stage1/run_stage1.sh` | `ARENA_SHA` → `{PIN_NEW}` |
-| `stage1/stage1_search.py` | `ARENA_SHA` → `{PIN_NEW}`; arm `MSEQon_wide` |
+| `stage1/stage1_search.py` | `ARENA_SHA` → `{PIN_NEW}`; the knob arms search at topk (S + 1) // 2, checked on the built config; `<tag>__topk` banked |
 | `run_rfw_match.sh` | `ARENA_SHA` → `{PIN_NEW}` |
-| `stage2/run_stage2.sh` | `ARENA_SHA` → `{PIN_NEW}`; `rfw_wide_eqtime` seats |
-| `stage3/launch_stage3.sh` | `ARENA_SHA` → `{PIN_NEW}`; the arm from `stage3/ARM_CHOICE.json` (written by the rule below), with `--topk T_C` when C |
-| `guard_test/guard_test.sh` | the arena-worktree link → `rl-run1-rfw-arena-{PIN_NEW_SHORT}`; C cases |
+| `stage2/run_stage2.sh` | `ARENA_SHA` → `{PIN_NEW}`; the knob seat gets `topk=(S + 1) // 2` in its gumbel overrides |
+| `check_shape.py` | the knob seat's realised topk must be (its sims + 1) // 2; the other seat stays the PIN's training shape |
+| `stage3/launch_stage3.sh` | `ARENA_SHA` → `{PIN_NEW}`; the training collect at `--topk (S_eq + 1) // 2 --eval-chunk-rows 512`; its collect check adds the three realised-field gates |
+| `guard_test/guard_test.sh`, `run_mutants_v12.py`, `stage0/fab_test/run_fab.py` | the arena-worktree link → `rl-run1-rfw-arena-{PIN_NEW_SHORT}`; the stub's stats follow the flags passed; cases and mutants M75–M83 for every changed gate; fab fixtures carry topk (originals kept as `*.pre-addendum2.jsonl`) plus two wide-gate cases |
 
-- `SHA256SUMS` and the record's sha table are rebuilt. The guard harness and a FULL M-series run on the re-pinned
-  bank.
+- `SHA256SUMS` and the record's sha table are rebuilt.
+- The guard harness and a FULL M-series run on the re-pinned bank, with the runner's `--banks` enforcement.
 - The arena worktree is a detached `rl-run1-rfw-arena-{PIN_NEW_SHORT}`, with extensions built by
-  `build_production_extensions.py` and the provenance check.
-- The `fd8c0ce08` worktree is left untouched.
+  `build_production_extensions.py` and the provenance check. The `fd8c0ce08` worktree is left untouched.
 
-### Per-arm gates added to every run
+### Realised-field gates on every run
 
-- `eval_max_batch_realised` = 128 × topk × 2: 4,096 for off and B (topk 16), and 128 × `T_C` × 2 for C (8,192 at
-  64 sims).
+- `eval_max_batch_realised` = 128 × topk × 2: 4,096 for the knob-off control (topk 16), and 8,192 for `fw_wide`
+  at 64 sims (topk 32).
 - `eval_chunk_rows_realised` = 512 on every process, and `eager_over_max_rows` = 0.
-- 0 buffer flushes; `mean_root_prelude_visits` > 0 for B and C, and absent or 0 for off.
+- 0 buffer flushes; `mean_root_prelude_visits` > 0 for `fw_wide`, and absent or 0 for off.
 - A run whose realised fields differ from these is refused, never blended.
-
-### Stage 0 for C
-
-- **ABBA.** A second block at 64 sims, run after B's decision: off, C, C, off. The run method, seeds, window and
-  tolerances (±1.5% / ±3%) are identical to B's, at 3 × 128.
-- **`S_C`** is derived from C's ABBA by the registered formula, `S1 = round((64 + p) · t_off / t_C64 − p)`, with the
-  same decide steps. B's `S_eq` is the first step candidate; if it misses tolerance, the existing step rule applies.
-- **Outputs.** C's rows carry `arm: C`, `topk`, and the realised widths. `stage0/C/decision.json` holds `S_C`.
-
-### Stage 1 for C
-
-- **`MSEQon_wide`**: knob on at `S_C`, `--topk T_C`. It is C's registered arm, with exactly MSEQon's rule: the same
-  rows, controls and reproduction gate, and the same kill (LB95 > 0 and estimate > +1.2 cp), applied per arm.
-- **`M64on_wide`** is not run. The visits-per-child bank already holds C@64 on the same 2,433 rows and the same net;
-  it is cited as report-only context, never as a gate.
-
-### Stage 2 for C
-
-- **`rfw_wide_eqtime`**: C at `S_C` against off at 64, with the same match protocol as `rfw_eqtime`.
-- **Kill:** UB95 < −10 Elo, applied to C on its own. B's `rfw_eqtime` kill is unchanged.
-
-### Which arm Stage 3 trains (fixed before any C data exists)
-
-> **C if it survives its own Stage 1 and Stage 2 kills; else B if B survives its own; else STOP.**
-
-- There is no B-vs-C match: the rule picks on survival, not on a comparison of the two.
-- `stage3/ARM_CHOICE.json` records the rule's inputs (four kill outcomes) and its output. `launch_stage3.sh` refuses
-  without it.
-- **Disclosure sentence, required in the Stage 3 readout:** "Stage 3 trained `<arm>`; C was preferred by a rule fixed
-  before its data, on two scoping banks that reward coverage by construction; B was the fallback."
 
 ### Confounds (added)
 
-- **C changes three things at once:** the knob, the candidate width (`topk` = `T_C` instead of 16), and the sims
-  (`S_C`). They are registered as one arm, as B's knob and sims are. A C result cannot attribute itself to the width
-  alone.
+- **`fw_wide` changes three things at once** against the control: the knob, the candidate width (`topk` (S + 1) // 2
+  instead of 16), and the sims (`S_eq`). They are registered as one arm, as B's knob and sims were. A result cannot
+  attribute itself to the width alone; the topk-16 comparison is withdrawn (see "What is lost").
 - **The pin moved** for every arm: `{PIN_NEW}` adds forward chunking.
   - Its effect on results is batch-size rounding. On the CPU (fp32), chunked against unchunked differs by at most
     4.8e-7 in a policy logit; the GPU bf16 bound is checked by the PR's CUDA tests at the merged head.
-  - It applies to off, B and C alike.
+  - It applies to the control and the arm alike.
 
 ### Not tested here: more sims on a fraction of moves
 
 The owner's alternative was "if we only doing a quarter moves high nodes it won't really be expensive". It is not
 proposed, because the visits-per-child scoping does not support it:
-- **At equal mean leaves per move,** wide@S on a fraction p of moves costs the same as C@64 on every move:
+- **At equal mean leaves per move,** wide@S on a fraction p of moves costs the same as `fw_wide`@64 (C@64 in the
+  scoping bank) on every move:
   - p = 0.54 at S = 128;
   - p = 0.27 at S = 270, which is about 25 full-search rows per game instead of about 95.
 - **A fast ply stores no policy row** (no row at all by default).
@@ -1504,16 +1505,9 @@ proposed, because the visits-per-child scoping does not support it:
   - ordering: W270 − C −0.0039 [−0.0089, +0.0013]; W128 − C −0.0039 [−0.0075, −0.0001];
   - policy-target CE against BT4: 2.810 for W270 and 2.532 for W128, against C@64's 2.390.
 
-### Cost (added)
+### Cost
 
-| Item | GPU-h |
-|---|---|
-| C's Stage 0: an ABBA (4 runs) plus 1–3 decide steps, about 15–18 min each | about 1.3–2.1 |
-| C's Stage 1: one search on 3,080 rows | about 0.05 |
-| C's Stage 2: one 6,400-game match plus smoke | about 1.2–1.3 |
-| **Total added** | **about 2.5–3.4** |
-
-Stage 3's cost is unchanged: one arm.
+Unchanged. One arm, as registered; `fw_wide`'s Stage 0 runs at a measured rate within 3% of B's.
 
 ## Confounds
 
