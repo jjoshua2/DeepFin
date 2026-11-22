@@ -21,6 +21,7 @@ from chess_anti_engine.inference import (
     DirectGPUEvaluator,
     _COMPILED_BATCH_BUCKETS,
     _bf16_bits_to_float32_np,
+    forward_live_rows_kwargs,
     model_config_identity_key,
 )
 from chess_anti_engine.model import ModelConfig
@@ -651,6 +652,8 @@ class ThreadedDispatcher:
   # matches the pre-refactor behavior (pad with zeros) functionally;
   # leaving it untouched saves a memset.
         self._lifetime_pack_s += time.perf_counter() - t_pack0
+        # ``bucket`` rows forward; ``real_n`` of them are live.
+        live = forward_live_rows_kwargs(ev, real_n)
         t0 = time.perf_counter()
         if compact:
             if len(items) == 1:
@@ -670,10 +673,10 @@ class ThreadedDispatcher:
             if bucket > real_n:
                 legal_counts = np.pad(legal_counts, (0, bucket - real_n))
             pol_t, wdl_t, evt = ev.evaluate_inplace_legal_bf16_async(
-                bucket, legal_flat, legal_counts, slot=slot,
+                bucket, legal_flat, legal_counts, slot=slot, **live,
             )
         else:
-            pol_t, wdl_t, evt = ev.evaluate_inplace_async(bucket, slot=slot)
+            pol_t, wdl_t, evt = ev.evaluate_inplace_async(bucket, slot=slot, **live)
         self._lifetime_submit_s += time.perf_counter() - t0
         self._lifetime_batches += 1
         self._lifetime_positions += real_n

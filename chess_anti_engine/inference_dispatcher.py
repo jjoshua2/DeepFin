@@ -38,8 +38,14 @@ from chess_anti_engine.async_safety import CompletionEvent
 import numpy as np
 import torch
 
-from chess_anti_engine.inference import BatchEvaluator
+from chess_anti_engine.inference import BatchEvaluator, accepts_live_rows
 from chess_anti_engine.uci import wedge
+
+
+def _live_rows_kw(live_rows: int | None) -> dict[str, int]:
+    """Forward ``live_rows`` only when given: a wrapper's call is unchanged
+    otherwise, so an inner without the keyword still works untraced."""
+    return {} if live_rows is None else {"live_rows": int(live_rows)}
 
 
 def supports_inplace_api(evaluator: object) -> bool:
@@ -161,19 +167,27 @@ class ThreadSafeGPUDispatcher:
 
     def evaluate_inplace_async(
         self, bsz: int, *, slot: int = 0, relations: np.ndarray | None = None,
+        live_rows: int | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
+        kw = _live_rows_kw(live_rows)
         with self._lock:
             if relations is not None:
-                return self._eval.evaluate_inplace_async(bsz, slot=slot, relations=relations)  # pyright: ignore[reportAttributeAccessIssue]
-            return self._eval.evaluate_inplace_async(bsz, slot=slot)  # pyright: ignore[reportAttributeAccessIssue]
+                return self._eval.evaluate_inplace_async(bsz, slot=slot, relations=relations, **kw)  # pyright: ignore[reportAttributeAccessIssue]
+            return self._eval.evaluate_inplace_async(bsz, slot=slot, **kw)  # pyright: ignore[reportAttributeAccessIssue]
 
     def evaluate_encoded_async(
-        self, x: np.ndarray, relations: np.ndarray | None = None,
+        self, x: np.ndarray, relations: np.ndarray | None = None, *,
+        live_rows: int | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
+        kw = _live_rows_kw(live_rows)
         with self._lock:
             if relations is not None:
-                return self._eval.evaluate_encoded_async(x, relations=relations)  # pyright: ignore[reportAttributeAccessIssue]
-            return self._eval.evaluate_encoded_async(x)  # pyright: ignore[reportAttributeAccessIssue]
+                return self._eval.evaluate_encoded_async(x, relations=relations, **kw)  # pyright: ignore[reportAttributeAccessIssue]
+            return self._eval.evaluate_encoded_async(x, **kw)  # pyright: ignore[reportAttributeAccessIssue]
+
+    @property
+    def accepts_live_rows(self) -> bool:
+        return accepts_live_rows(self._eval)
 
 
 def bootstrap_cudagraph_tls() -> None:
@@ -292,15 +306,21 @@ class CUDAOwnerDispatcher:
         )
 
     def evaluate_encoded_async(
-        self, x: np.ndarray, relations: np.ndarray | None = None,
+        self, x: np.ndarray, relations: np.ndarray | None = None, *,
+        live_rows: int | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
+        kw = _live_rows_kw(live_rows)
         return cast(
             "tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]",
             self._call(
-                lambda: self._inner.evaluate_encoded_async(x, relations=relations)
-                if relations is not None else self._inner.evaluate_encoded_async(x)
+                lambda: self._inner.evaluate_encoded_async(x, relations=relations, **kw)
+                if relations is not None else self._inner.evaluate_encoded_async(x, **kw)
             ),
         )
+
+    @property
+    def accepts_live_rows(self) -> bool:
+        return accepts_live_rows(self._inner)
 
     @property
     def async_backend(self) -> Any:
@@ -323,14 +343,16 @@ class CUDAOwnerDispatcher:
 
     def evaluate_inplace_async(
         self, bsz: int, *, slot: int = 0, relations: np.ndarray | None = None,
+        live_rows: int | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
+        kw = _live_rows_kw(live_rows)
         return cast(
             "tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]",
             self._call(
                 lambda: self._inner.evaluate_inplace_async(
-                    bsz, slot=slot, relations=relations,
+                    bsz, slot=slot, relations=relations, **kw,
                 ) if relations is not None else self._inner.evaluate_inplace_async(
-                    bsz, slot=slot,
+                    bsz, slot=slot, **kw,
                 )
             ),
         )
