@@ -1117,7 +1117,11 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
       `--sibling-unit` or `--sibling-loss` / `--sibling-order-*`, with `--w-sibling 0` is refused,
       because it would be ignored.
   - **Take-effect record.** The train summary's `sibling` block holds:
-    - pairs, steps, the per-step (pairs, loss) log, `mean_weighted_loss` (the
+    - pairs, steps, the per-step (pairs, loss) log and beside it `per_step_detail`
+      (`per_step_detail_fields`: active pairs and child positions forwarded per step;
+      `roots` mode adds the roots trained, i.e. roots with at least one pair at
+      |dq| ≥ t, whereas `--sibling-rows` counts roots that carry a list; steps restored
+      from a snapshot written before the field hold `null`), `mean_weighted_loss` (the
       form-neutral key: Huber under `diff`, the ranking loss under `order`; in
       `roots` mode the mean per-step term value), the older `mean_weighted_huber`
       (kept for diff-era readers; `null` in `roots` mode), the loss form with its
