@@ -1756,10 +1756,15 @@ _STATE_KEYS = ("cursor", "served", "served_sl", "drawn_rows", "realised_sl_rows"
 
 
 def _unreadable(d: Path, name: str, err: BaseException) -> RuntimeError:
-    """The refusal for a snapshot file that cannot be read back: named, never a bare traceback, nothing deleted."""
+    """The refusal for a snapshot file that cannot be read back: named, never a bare traceback, nothing deleted.
+
+    The wording says "could not be restored" and carries the exception, because the cause is not always damage: the
+    ``resume_trainer.pt`` wrapper also catches a genuine code incompatibility in ``Trainer.load`` (e.g. an optimizer
+    group mismatch after a code change)."""
     return RuntimeError(
-        f"snapshot {d.name}: {name} unreadable or not a snapshot state ({type(err).__name__}: {err}); this code will "
-        f"not delete it. Move {d} aside (or the whole {d.parent}) to start the phase over")
+        f"snapshot {d.name}: {name} could not be restored ({type(err).__name__}: {err}); it may be unreadable, not a "
+        f"snapshot state, or incompatible with this code. This code will not delete it. Move {d} aside (or the whole "
+        f"{d.parent}) to start the phase over")
 
 
 def load_resume_state(d: Path) -> dict[str, Any]:
@@ -1768,7 +1773,9 @@ def load_resume_state(d: Path) -> dict[str, Any]:
 
     try:
         state = torch.load(str(d / RESUME_STATE), map_location="cpu", weights_only=False)
-        missing = [k for k in _STATE_KEYS if k not in state]   # a non-container raises TypeError here
+        if not isinstance(state, dict):   # a str / list / tuple / set may CONTAIN the names; `in` alone would pass it
+            raise TypeError(f"not a snapshot state: a {type(state).__name__}, not a dict")
+        missing = [k for k in _STATE_KEYS if k not in state]
         if missing:
             raise KeyError(f"missing {missing}")
     except Exception as e:   # any unreadable file: refuse with a message, never delete
