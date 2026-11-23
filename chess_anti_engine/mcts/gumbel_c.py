@@ -2139,11 +2139,18 @@ def run_gumbel_root_many_c(
                  input_plane_count(cfg.input_extra_features), 8, 8),
                 dtype=_enc_dtype,
             )
-  # EncodedEvalCache opts in: rows past n_leaves are stale/uninitialised
-  # padding it would hash, evaluate and store. Every other evaluator keeps
-  # receiving the bucket-padded slice it always has.
-        _submit_live_rows_only = (
-            not _inplace and getattr(eval_impl, "wants_unpadded_leaf_rows", False) is True
+  # Live rows only, for two kinds of evaluator. EncodedEvalCache: rows past
+  # n_leaves are stale/uninitialised padding it would hash, evaluate and store.
+  # An evaluator that pads internally (the broker slot clients): the broker
+  # re-pads the summed total of every slot, so these rows bought no shape
+  # stability and cost the shared-memory write, the H2D copy and the forward
+  # (24% of the rows sent at the live yaml's policy_temp 1.5). Sync arm only
+  # (no in-place, no async API): the in-place / async arms keep the
+  # bucket-padded slice their compiled shapes need -- AOTEvaluator also
+  # declares pads_batches_internally, and its async arm stays padded.
+        _submit_live_rows_only = not _inplace and not _has_async and (
+            getattr(eval_impl, "wants_unpadded_leaf_rows", False) is True
+            or getattr(eval_impl, "pads_batches_internally", False) is True
         )
         _root_ids_arr = np.array(root_ids, dtype=np.int32)
         _budget_arr = np.array(budget_remaining, dtype=np.int32)

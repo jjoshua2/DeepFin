@@ -657,10 +657,10 @@ class _ClientShaped:
     `evaluate_encoded` + `evaluate_legal_bf16`, no async / in-place API, pads
     internally, takes ``live_rows=``. Records what each call SENDS."""
 
-    pads_batches_internally = True
     supports_input_bf16_bits = False
 
-    def __init__(self) -> None:
+    def __init__(self, *, pads_internally: bool = True) -> None:
+        self.pads_batches_internally = pads_internally
         self.inner = DirectGPUEvaluator(_model_seeded(), device="cpu", max_batch=512, use_amp=False)
         self.calls: list[tuple[int, int | None]] = []
 
@@ -680,10 +680,12 @@ class _ClientShaped:
 
 @pytest.mark.usefixtures("trace")
 def test_the_live_selfplay_sync_arm_reports_its_leaf_counts(monkeypatch) -> None:
-    """policy_temp 1.5 (the live yaml) switches the legal-bf16 leaf arm off, so a
-    slot client's drains take the sync arm and SEND `padded` rows: the forwarded
-    rows are unchanged, the live count rides along."""
-    ev = _ClientShaped()
+    """policy_temp 1.5 (the live yaml) switches the legal-bf16 leaf arm off, so the
+    drains take the sync arm. A sync evaluator that does NOT pad internally is
+    SENT `padded` rows (unchanged); the live count rides along. (One that pads
+    internally -- the slot clients -- is sent the live rows only:
+    tests/test_drain_live_rows_to_padding_evaluators.py.)"""
+    ev = _ClientShaped(pads_internally=False)
     _, drains, _ = _search(ev, 20, monkeypatch, sims=64, policy_temp=1.5)
     leaf = ev.calls[-len(drains):]
     assert [sent for sent, _ in leaf] == [p for _, p in drains]       # forward unchanged
