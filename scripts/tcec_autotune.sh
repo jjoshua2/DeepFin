@@ -26,7 +26,9 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --checkpoint) CHECKPOINT="$2"; shift 2;;
     --devices)    DEVICES="$2"; shift 2;;
-    --allow-busy-gpu) ALLOW_BUSY=(--allow-busy-gpu "${2-}"); shift 2;;
+    --allow-busy-gpu)
+      [ $# -ge 2 ] || { echo "--allow-busy-gpu needs a REASON" >&2; exit 2; }
+      ALLOW_BUSY=(--allow-busy-gpu "$2"); shift 2;;
     *) echo "unknown arg: $1"; exit 2;;
   esac
 done

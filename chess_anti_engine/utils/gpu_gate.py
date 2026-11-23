@@ -227,6 +227,9 @@ def argv_entry_point(argv: Sequence[str]) -> str | None:
                 mod = rest[1] if a == "-m" and len(rest) > 1 else a[2:]
                 if mod.startswith("chess_anti_engine") and mod not in _NOT_GPU_MODULES:
                     return f"-m {mod}"
+                # a listed script run as a module (python -m scripts.core_generation_bank_learner)
+                if mod.split(".")[-1] + ".py" in GPU_ENTRY_POINT_NAMES:
+                    return f"-m {mod}"
                 return None
             if a.startswith("-c"):
                 return None

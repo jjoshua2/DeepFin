@@ -1041,8 +1041,10 @@ def load_match_resume(
 
 
 def engine_may_use_gpu(command: str) -> bool:
-    """False only for an engine that cannot touch the GPU: a Stockfish binary, or a command that
-    passes ``--device cpu``. Anything else (DeepFin, lc0, Ceres, an unknown binary) counts as GPU."""
+    """False only for an engine that cannot touch the GPU: a Stockfish binary, or a command whose
+    EFFECTIVE device is cpu: ``--device cpu`` and no ``--devices`` list (``--devices`` overrides
+    ``--device`` in chess_anti_engine.uci). Anything else (DeepFin on a GPU, lc0, Ceres, an
+    unknown binary) counts as GPU."""
     try:
         tokens = shlex.split(command)
     except ValueError:
@@ -1051,10 +1053,20 @@ def engine_may_use_gpu(command: str) -> bool:
         return True
     if os.path.basename(tokens[0]).lower().startswith("stockfish"):
         return False
+    device = devices = None
     for i, tok in enumerate(tokens):
-        if tok == "--device=cpu" or (tok == "--device" and i + 1 < len(tokens) and tokens[i + 1] == "cpu"):
-            return False
-    return True
+        nxt = tokens[i + 1] if i + 1 < len(tokens) else None
+        if tok.startswith("--device="):
+            device = tok.split("=", 1)[1]
+        elif tok == "--device":
+            device = nxt
+        elif tok.startswith("--devices="):
+            devices = tok.split("=", 1)[1]
+        elif tok == "--devices":
+            devices = nxt
+    if devices is not None:  # overrides --device
+        return any(d.strip() != "cpu" for d in devices.split(","))
+    return device != "cpu"
 
 
 def main() -> None:

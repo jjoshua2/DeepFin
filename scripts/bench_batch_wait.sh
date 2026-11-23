@@ -5,7 +5,9 @@ ROOT="${CHESS_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 ALLOW_BUSY=()
 while [ $# -gt 0 ]; do
   case "$1" in
-    --allow-busy-gpu) ALLOW_BUSY=(--allow-busy-gpu "${2-}"); shift 2;;
+    --allow-busy-gpu)
+      [ $# -ge 2 ] || { echo "--allow-busy-gpu needs a REASON" >&2; exit 2; }
+      ALLOW_BUSY=(--allow-busy-gpu "$2"); shift 2;;
     *) echo "unknown arg: $1 (only --allow-busy-gpu REASON)" >&2; exit 2;;
   esac
 done
