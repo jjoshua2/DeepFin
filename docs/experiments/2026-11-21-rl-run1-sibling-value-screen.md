@@ -13,7 +13,8 @@ It launches in two parts:
   cost and the root-list sidecar (below).
 
 The screen plays no match against the SL base and changes nothing live. Revision 7's outputs go to a NEW bank,
-`~/chess-artifacts/operations/rl-run1-sibling-r7/` (`SB7`). Revision 6's bank, `~/chess-artifacts/operations/
+rl-run1-sibling-r7/ beside revision 6's under `~/chess-artifacts/operations/` (`SB7`; created at launch, so not
+cited as evidence here). Revision 6's bank, `~/chess-artifacts/operations/
 rl-run1-sibling/` (`SB`), is frozen and only read. Revision 6's full text, with every number that revisions 1–6
 registered, is this file at main `ea56911fc`.
 
@@ -49,6 +50,17 @@ history. In short, they:
 7. **Start net and control are stated against generation 2's Stage 0**, which read "adoptable, not replicated".
 8. **Resume and legacy snapshot behaviour** after #1501 / #1503 / #1510 / #1514 is stated.
 9. **The GPU check moves to the shared scan v5** (`8b4261b0…`), with the harness and wording fixes listed.
+11. **#1516 review at `aa891a7fa` (FIX), applied in one push:**
+    - Part 2's update count is its OWN plan's count, not the pilot collection's 1,412; R, the decay deciles and the
+      wall projection are formulas of the realised count (the same defect class that stopped generation 2 on
+      2026-11-22: a constant of one collection required of another);
+    - the take-effect check and the smoke accept the part's SEALED chunk size (64, or 32 after the registered
+      fallback), so the fallback no longer voids the cells it rescues;
+    - guard (b) gets a pinned-diff clause for `inference.py` (#1511) and a restated argument for `_mcts_tree.c`;
+    - the family-wise statement covers B5 and "harms" readings, and once B5 runs, B3 and B4 never run;
+    - the memory smoke has fixed stems, a `HOLD_MEM` refusal and a flatness condition (no retry into a pass);
+    - notes: the take-effect check is a wiring check; the equal budget equalises child forwards only; a FEN-level
+      overlap check between the audit set and the collections joins P3; a Stage B futility reading (report-only).
 10. **Evidence-log rows** are added for step 1b, the memory diagnostic, the visit-class split, the full-width visit
     distribution, the two-visit and visits-per-child scopings, the order form's step-0 activity and the full-list ρ.
 
@@ -147,10 +159,10 @@ So:
   - collection ≈ 2.1 GPU-h (the pilot's 5,534 s for 8,000 games, divided by the 0.74 rows/s factor measured for
     full-width at a saturated GPU; #1511's chunking measured +7.5% rows/s, unpinned);
   - root-list sidecar ≈ 350 GB (≈ 21.5 KB per child, measured on the ρ run's 604,884 children; × 21.4 children
-    per root × 761,979 rows) against 547 GB free on the artifacts disk on 2026-11-22.
+    per root × N2 rows, Part 2's own row count; the pilot's 761,979 is used as the illustration) against 547 GB free on the artifacts disk on 2026-11-22.
   **The addendum holds** unless free space ≥ 1.3 × the materialiser's own size estimate at that time. Otherwise a
-  materialiser option that writes only the roots the cells' plan touches (≈ 24 roots per batch × 1,412 batches,
-  plus the hold-out games) is built first, under review.
+  materialiser option that writes only the roots the cells' plan touches (≈ R roots per batch × U2 batches,
+  plus the hold-out games; ≈ 24 × 1,412 on the pilot's counts, an illustration) is built first, under review.
 
 ## What `--w-sibling` computes at `TSHA` (`simple_rl/sibling.py`, read at `ea56911fc`)
 
@@ -197,7 +209,7 @@ ea56911fc -- chess_anti_engine scripts/simple_rl_loop.py`):
 |---|---|---|
 | `simple_rl/sibling.py`, `simple_rl/learn.py`, `scripts/simple_rl_loop.py` | #1501 chunking, #1501 `order` form, #1503 list unit and gap weight, #1510 ρ 0.08 and the snapshot refusals; every new `TrainSettings` field defaults to the earlier behaviour | yes. `learn.py`'s hunks are in `TrainSettings`, the resume-key and snapshot functions, `_rows_per_step` and `train_generation`'s term construction. **None is in `load_window`, `prepare_targets`, `plan_batches` or `ScheduledSampler`** |
 | `simple_rl/collect.py` (#1483) | which clock fields a merge-only attempt reports | no: collect only |
-| `mcts/_mcts_tree.c` / `.pyi` (#1499) | an added post-search transposition census method and one `#include`; additions only (0 removed lines) | no: search diagnostics; cells read stored `x` |
+| `mcts/_mcts_tree.c` / `.pyi` (#1499) | an added post-search transposition census method and one `#include` of an unchanged header; sha-pinned diff | no: search diagnostics; training never runs MCTS; cells read stored `x` |
 | `uci/{__main__,engine,protocol,search,walker_pool,wedge,multi_gpu_pucv_pool,root_parallel_gumbel}.py` | UCI clock, ponder, quit and pool fixes | no: the UCI engine; `uci/model_loader.py` is unchanged |
 
 `train/` and `replay/` are unchanged from `9c0ff07dc` to `ea56911fc`.
@@ -214,14 +226,25 @@ ea56911fc -- chess_anti_engine scripts/simple_rl_loop.py`):
   `uci/`. Restated, checked mechanically in step 0:
   - `git diff --quiet 0c795fb7a $TSHA` over `encoding/`, `moves/`, `replay/packed_zarr.py`, `model/`,
     `inference.py` and `uci/model_loader.py` is empty (checked 2026-11-22);
-  - `_mcts_tree.c`'s diff from the PIN has sha256 `532650fa7477…` and 0 removed lines (#1499's additions only);
+  - `_mcts_tree.c`'s diff from the PIN has sha256 `532650fa7477…`. That is not "additions only": it adds
+    `#include "_position_dag.h"`. It is safe because (i) the diff is sha-pinned, (ii) that header is unchanged from
+    the PIN (`git diff --quiet 0c795fb7a $TSHA -- chess_anti_engine/mcts/_position_dag.h`, checked in step 0), and
+    (iii) training never runs MCTS: cells train on stored `x` and stored targets;
+  - **`inference.py` when `TSHA` moves (#1516 review).** P2 moves `TSHA` to #1515's merge commit. If #1511 merges
+    first, that commit carries #1511's change to `inference.py`, which is in the empty-diff list above. The clause
+    then becomes: `inference.py`'s diff from the PIN equals #1511's merged diff, sha256 recorded in the addendum that
+    moves `TSHA`, and nothing else. The argument: training never calls it. The learner imports `simple_rl/collect.py`
+    for row loading, which imports `inference.py` as a module, but no evaluator is built on the training path. The
+    cells read stored `x` and stored targets, and guard (d) (`check_load.py`) loads through `uci/model_loader.py`.
+    If #1515 merges before #1511, the list stays empty-diff and this clause is not used;
   - `replay/shard.py`'s diff from the PIN is still exactly #1477's optional field (sha256 `418b6e96…`, unchanged).
 - **(c) Default off is off on the real inputs:** `Zq_main` vs the banked Zq, paired, in Stage A (the Zq code-base
   control). Revision 6's `P0_main` control is dropped with the P family. `Zq_main` exercises everything `P0_main`
   did, plus the WDL / Zq value-loss branch.
 - **(d) A main-written checkpoint loads and evaluates identically at the PIN.** `SB/prelaunch/check_load.py` on
   `Zq_main` and `Zq_main_fw` (both Stage B opponents), PIN vs `TSHA`, bit-equal or the screen stops. `model/`,
-  `uci/model_loader.py` and `inference.py` are unchanged.
+  `uci/model_loader.py` is unchanged; `inference.py` is unchanged or carries only the pinned #1511 diff (guard (b)),
+  which `check_load.py` does not call.
 
 ## Resume and legacy snapshots (what a re-run does)
 
@@ -281,13 +304,26 @@ control by the term alone.
 | 2 | `Zq_list_s75` | the same at `W_LIST75` | second dose of the owner's form (report-only dose check) |
 | — | banked Zq (`rl-run1-pilot/arm_Zq`) | — | reference for the code-base control; not retrained |
 
-Every sibling cell passes `--sibling-chunk-pairs 64` explicitly. The pair cells pass `--sibling-rows 128`.
+Every sibling cell passes `--sibling-chunk-pairs C` explicitly, where C is its part's SEALED chunk size: 64, or 32
+if that part's chunk-64 memory smoke aborted and the registered fallback passed. Step 1b writes
+`SB7/prelaunch/chunk_part<k>.json` (`{"chunk_pairs": C}`), and every later check reads C from there. The pair cells pass `--sibling-rows 128`.
+
+**Update counts are each part's own (#1516 review).** U1 = 1,412 is Part 1's plan: the pilot collection's batch plan,
+pinned by `presented.npz` (`63e227ac…`). **U2 is Part 2's plan's count**, read from that plan in the Part 2 addendum
+and sealed there. Part 2 is a different collection: generation 2's collection gave 1,478 updates from the same flags,
+and a full-width collection will differ again. Every formula below is written in U, with the pilot's number only as an
+illustration.
 
 **R for the list cells (equal budget).** R is the smallest integer for which the mean child positions forwarded per
-step, over Part 2's own 1,412-batch plan, is ≥ 507: the pair cells' 2 × 253.7, from revision 6's warm plan of
-358,198 pairs. It is computed on CPU from the plan and the sidecar (`root_pairs` at t, which drops roots without an
+step, over Part 2's own U2-batch plan, is ≥ 507. The target 507 is the pair cells' 2 × 253.7 = 2 × 358,198 / U1: the
+mean pairs per step of Part 1's plan (revision 6's warm plan of 358,198 pairs over U1 = 1,412 steps). It is computed on CPU from the plan and the sidecar (`root_pairs` at t, which drops roots without an
 eligible pair, exactly as the term does) and sealed in the Part 2 addendum. **Estimate: R ≈ 24** (21.4 children per
 root at full-width topk 32). On the pilot's collection the same rule would give ≈ 66 roots at 7.66 children.
+
+**What the equal budget equalises, and what it does not (#1516 review, note).** It equalises child forwards per
+step, not training examples. A list cell trains ≈ R ≈ 24 roots per step against the pair cells' 128 rows: over a
+phase, ≈ 24 × U2 vs 128 × U1 roots, ≈ 34k vs ≈ 181k on the pilot's counts, ≈ 5× fewer roots. A B3 / B4 null can
+therefore be under-dosing in roots rather than a dead term, and the record reads it that way.
 
 ## Take-effect (`SB7/stage_a/train_check.py` v3, one run, after every crash rerun)
 
@@ -295,14 +331,15 @@ A field mismatch writes `arm_<cell>/VOID`. **For every cell:**
 - exit 0 and a sealed train manifest;
 - init sha256 = the SL base's (`a39f900c…`);
 - `realised_w_wdl` 1 and `realised_search_wdl_frac` 0.5;
-- `updates` 1,412, and Part 1's `drawn_rows` 722,742 with `presented.npz` sha256 `63e227ac…` (Part 2: equal
-  across its three cells);
+- `updates` = its part's U: Part 1 U1 = 1,412 with `drawn_rows` 722,742 and `presented.npz` sha256 `63e227ac…`
+  (all three properties of Part 1's pinned plan); Part 2 U2 and the plan's `drawn_rows` and `presented.npz` sha256
+  as sealed in the Part 2 addendum, equal across its three cells;
 - no KL anchor.
 
 **For every sibling cell, additionally, read from `summary.sibling`:**
 - `w` = the cell's sealed w; `loss`, `unit`, `order_margin`, `order_min_dq` and `order_form_version` (3 for
   `order`, null for `diff`) as the cell specifies;
-- `sibling_rows` (128 or R), `chunk_pairs` 64, `chunk_segments` `[[0, 64]]`;
+- `sibling_rows` (128 or R), `chunk_pairs` C and `chunk_segments` `[[0, C]]`, with C the part's sealed chunk size;
 - `steps` = `updates`; one `per_step` entry (pairs, loss) and one `per_step_detail` entry per update (#1515:
   active pairs, child positions; the root unit adds roots trained); per-step pairs summing to `pairs` > 0, per-step
   active summing to `active_pairs`, and per-step child positions summing to `child_positions`;
@@ -313,7 +350,7 @@ cell is VOID ("budget not equal"). Expected: about 507 for the pair cells, by co
 list cells, by R's rule.
 
 **Reported per cell (report-only):**
-- the decay of `active_pairs / pairs` over the 1,412 steps (deciles);
+- the decay of `active_pairs / pairs` over the cell's U steps (deciles);
 - trained roots per step (root unit), against R;
 - the learner's probe before and after (pairs mode: 1,024 hold-out pairs; roots mode: 128 hold-out roots), with
   mean |Δv − dq| and `sign_agree`. It comes from a handful of games, so it decides nothing.
@@ -327,7 +364,8 @@ list cells, by R's rule.
 **The one deciding yardstick: each surviving term cell's head-to-head against its part's control**: 6,400 games,
 seat-balanced, both seats recalibrated, read by
 `$PY $SB/stage_b/stage_b_verdict.py $SB7/arenas/sib_<cell>/pool.json`. The thresholds are pre-committed below.
-Stage A only vetoes or declares a cell inert. It never selects between survivors.
+Stage A vetoes a cell, declares it inert, or clears it for its match ("improves independent ordering" is required
+for Stage B). It never selects between survivors.
 
 ### Stage A: the independent ordering ruler (primary), the take-effect check, controls
 
@@ -355,7 +393,10 @@ collection.
     ± 0.0025–0.0033 wide (S −0.0096 [−0.0129, −0.0064], Zq −0.0007 [−0.0032, +0.0017]). The headroom is the
     search's own advantage over the net, +0.0274 on the (≥ 2, ≥ 2) clear pairs (14,304 of the 38,705). A term that
     transferred all of it would move the all-clear+ accuracy by about +0.010; a transfer of about a third is at the
-    edge of resolution. The (≥ 2, ≥ 2) subset is reported beside it, not decided on.
+    edge of resolution. The (≥ 2, ≥ 2) subset is reported beside it, not decided on, and is
+    not added as a second gate without a multiplicity rule (#1516 reviewer, agreed).
+  - **Power of the "improves" gate (#1516 reviewer, `r1513/power.py`):** 0.84–0.98 at half the headroom, 0.50–0.76
+    at a third; it passes at a true 0 with probability 0.025 per cell.
   - **Base-relative, report-only:** each net minus the base (the old veto's form,
     `sibling_order.json → paired_minus_base.all.clearplus_50plus`).
   - It applies unchanged to both parts: the audit set does not depend on the collection a cell trained on.
@@ -372,10 +413,10 @@ collection.
   - **Why this statistic:** an ordering loss goes quiet by design once pairs are ordered. Revision 6's statistic
     (mean |Δv − dq|) rewards calibrated differences, which the order form does not ask for. The same statistic is
     used for `diff`, so the two forms are judged by one rule. `diff`'s |Δv − dq| movement is reported beside it.
-  - **Resolution, derived from the base's score and its bootstrap width:** on revision 6's CPU smoke (23 hold-out
-    games), the base's clear-pair agreement was 0.752 with a 95% half-width ≈ 0.013. At 416 games that projects to
-    ≈ 0.013 × √(23 / 416) ≈ 0.003. So a cell must move agreement by roughly 0.003 (0.4% of 0.752) to read "takes
-    effect". That bar is small against the order form's 16.8% mis-ordered weight at step 0.
+  - **It is a wiring check (#1516 review, note).** The statistic is the gradient direction of the loss the cell
+    trained, scored on held-out games, so "takes effect" shows the term reached the net and nothing more. Revision 7's
+    draft quoted ≈ 0.003 at 416 games as its resolution; that was an unpaired half-width scaled by √n, not a paired
+    SE, and is dropped. The paired SE is reported by `sibling_holdout.py` v2 for each cell.
   - **Base-relative, report-only:** each net's agreement minus the base's.
 - **Code-base control (Part 1; gates both parts).** kl_pair_Zq = mean over the hold-out rows of KL(p_Zq ‖ p_Zq_main)
   on the WDL softmax, PASS iff kl_pair_Zq ≤ max(2 × kl_rep, 0.05 × mean KL(p_base ‖ p_Zq)). Here kl_rep is the
@@ -433,8 +474,19 @@ strength claim (three fit→Elo transfer failures are on record); only Stage B d
   - At SE ≈ 3.37 the 80%-power MDE is ≈ 9 Elo. P(adds) is 0.025 at a true 0, 0.32 at +5 and 0.84 at +10.
 - **Multiplicity.** At most four Elo readings: B1–B4, or three of them plus B5 (B5 runs only if at most 3 of B1–B4
   ran). Revision 6 had at most two. Each
-  match's false-"adds" rate at a true 0 is 0.025. **Across the readings the family-wise false-"adds" rate is ≤ 4 ×
-  0.025 = 0.10 (Bonferroni bound; four matches at most run).** No correction is applied, as in revisions 1–6.
+  match's false-"adds" rate at a true 0 is 0.025. **The family of false licensing claims (Bonferroni bounds, at a true
+  0 everywhere):**
+  - B1–B4 without B5: false "adds" ≤ 4 × 0.025 = 0.10;
+  - three of B1–B4 plus B5: B5 licenses a claim in EITHER direction (order beats diff, or diff beats order), so it
+    contributes 0.05, and false claims ≤ 3 × 0.025 + 0.05 = 0.125;
+  - each "harms" reading of B1–B4 is also a claim and adds 0.025: counting them, ≤ 4 × 0.05 = 0.20 without B5 and
+    ≤ 3 × 0.05 + 0.05 = 0.20 with it.
+  No correction is applied, as in revisions 1–6.
+- **Once B5 has run, B3 and B4 never run under this record.** The decision file (`stage_a_decision.json`) records
+  `b5_ran` with the time, and `stage_a_decide.py` refuses to list B3 or B4 after it. This closes the order "Part 2
+  declared not launched → B5 runs → Part 2 launches anyway". Running B3 / B4 after that needs a new record.
+- **Futility (report-only, #1516 reviewer):** a match whose UB95 < 10 reads additionally "no gain ≥ 10 Elo". It
+  decides nothing.
   This is why a reading NOMINATES and never adopts, and why competing nominations are settled by a fresh
   head-to-head, never by the best point estimate.
 
@@ -483,7 +535,8 @@ next record, never by the best point estimate across screens.
 **The failure revision 7 fixes.** Revision 6's step 1b (the cold cost probe, `Zq_sib_w366`) completed update 1 and
 died on update 2: `CUBLAS_STATUS_INTERNAL_ERROR`, then `CUDA error: out of memory`. The file is
 `~/chess-artifacts/operations/rl-run1-sibling/oprun/driver.out` [`677d6436`], written 09:17. Six CPU review rounds
-had never measured GPU memory. The operator's diagnostic (`oprun/diag_mem/RESULT.md` [`0468d345`]) measured peak
+had never measured GPU memory. The operator's diagnostic
+(`~/chess-artifacts/operations/rl-run1-sibling/oprun/diag_mem/RESULT.md` [`0468d345`]) measured peak
 reserved = 16.95 + 0.0574 × pairs GiB per gradient-carrying forward:
 - 16.96 GiB with no term;
 - ≈ 31.6 GiB at the registered 255 pairs, on a 31.82 GiB card that also carries the Windows desktop;
@@ -497,14 +550,20 @@ Update 1 takes 5–7 s (kernel warm-up); the probe keeps 50 updates.
   update, max allocated, max reserved, reserved now, device total, wall.
   - The one addition: it attaches the sibling term through the same constructor `train_generation` uses
     (precondition P2), so the smoke cannot run a different term from the cell.
-  - It asserts that the term's own counters (`pairs` > 0, `child_positions` > 0, `chunk_pairs` 64) moved on every
-    update. This proves the consumer received the flags.
+  - It asserts that the term's own counters (`pairs` > 0, `child_positions` > 0, and `chunk_pairs` equal to the
+    run's `--sibling-chunk-pairs`) moved on every update. This proves the consumer received the flags.
 - **3 updates per distinct forward shape:** one run for `Zq_order_s50` (pair unit, rows 128, chunk 64), one for
   `Zq_diff_s50`, and in Part 2 one for `Zq_list_s50` at R.
-- **ABORT iff peak reserved over the 3 updates > 0.85 × the device total (27.0 GiB), or any update dies.** Then no
-  cell trains and `SB7/HOLD_MEM` is written.
+- **ABORT iff peak reserved over the 3 updates > 0.85 × the device total (27.0 GiB), or any update dies, or memory
+  is not flat between updates 2 and 3** (`reserved_now` or peak reserved grows by > 0.10 GiB from update 2 to 3;
+  generation 2's smoke measured exactly 0.0 for both). At chunk 64 that writes `SB7/MEM_ABORT_C64_part<k>` and the
+  fallback below may run once; at chunk 32, or for any other abort, no cell trains and `SB7/HOLD_MEM` is written.
+- **No retry into a pass, mechanically:** the output stems are fixed, `SB7/mem_smoke_<cell>` and
+  `SB7/mem_smoke_<cell>_c32`, and the smoke refuses if its stem exists. It refuses while `SB7/HOLD_MEM` exists, and
+  a `_c32` run refuses unless `MEM_ABORT_C64_part<k>` exists (the fallback follows a chunk-64 abort, never replaces a
+  pass). Step 1b's harness tests all four refusals.
 - **One registered fallback:** if a sibling smoke ABORTs at chunk 64, it is rerun ONCE at `--sibling-chunk-pairs
-  32`. Chunk size is gradient-equivalent and out of the resume key, so this is not a data change. If that passes,
+  32` (stem `mem_smoke_<cell>_c32`). Chunk size is gradient-equivalent and out of the resume key, so this is not a data change. If that passes,
   every sibling cell of that part trains at 32. A second ABORT holds for the owner.
 - Expected at chunk 64: ≈ 20.6 GiB (the diagnostic's fit), against the 27.0 GiB bar.
 
@@ -512,7 +571,8 @@ Update 1 takes 5–7 s (kernel warm-up); the probe keeps 50 updates.
 arguments, `chunk_pairs` and `batch_size`, and building the term through P2). It runs with `Zq_order_s50`'s flags,
 WARM only, after the warm-up. It also writes its per-update peaks incrementally (as the smoke does) and re-applies
 the 0.85 abort. It decides the wall projection:
-- **Per sibling cell:** projected wall = 419 + `sidecar_setup_s` + 1,412 × step median (updates 11–50). HOLD if the
+- **Per sibling cell:** projected wall = 419 + `sidecar_setup_s` + U × step median (updates 11–50), with U its
+  part's update count (U1 = 1,412). HOLD if the
   projected Part 1 training exceeds 2 × its estimate (2 × 1.13 GPU-h).
 - **Per-cell loop budget:** (2 × 1.13 × 3,600 − 859) / 2 − 419 − `sidecar_setup_s` s. Here 859 s is the pilot Zq
   cell's process wall, charged once for `Zq_main`. It is checked after every sibling cell (`SB7/HOLD_BUDGET`). The
@@ -590,7 +650,10 @@ launch.
   take-effect sign-agreement statistic over |dq| ≥ t, pair and root units), `ordering_vs_control.py` (the primary:
   per-pair deep-SF clear+ correctness of each net on the frozen audit set, cell minus control, paired, game
   bootstrap), `stage_a_decide.py` v6 (VOID / VETO / INERT / not separated / improves, the Zq code-base gate on both
-  parts, B1–B5 eligibility including B5's "≤ 3 matched").
+  parts, B1–B5 eligibility including B5's "≤ 3 matched", and the `b5_ran` lock on B3 / B4). P3 also adds a FEN-level
+  overlap check: the audit set's positions against both collections' positions (board + side to move + castling + ep).
+  The 0-shared-games claim is by game; this checks positions. Any overlap is reported and those pairs are scored
+  beside the primary with and without them.
 - **P4.** `SB7/prelaunch/sib_mem_smoke.py`, `cost_probe.py` rev 4, `grad_scale.py` v2 → `strengths.json`.
 - **P5.** `SB7/operator/`: the v5 re-pin, the harness and the wording above.
 - **P6.** Generation 2 has released the GPU (its record's end), and the value-anchor screen's `offline/cells/DONE`
@@ -638,7 +701,8 @@ TRAIN="--presentations 1 --mirror-prob 0.5 --batch-size 512 --lr 3e-6 --lr-floor
   --kl-policy 0 --kl-wdl 0 --sl-mix-frac 0 --holdout-frac 0.05 --probe-rows 2048 --no-eval"
 Z_V="--value-outcome-weight 0.5 --value-search-weight 0.5 --value-search-source stored_search_wdl"
 W_ORDER=$($PY -c "import json;print(json.load(open('$SB7/prelaunch/strengths.json'))['W_ORDER'])")
-SIBP="--sibling-dir $SIDE --sibling-rows 128 --sibling-chunk-pairs 64"
+CHUNK=64   # Part 1's sealed chunk size: 64, or 32 after the registered fallback (SB7/prelaunch/chunk_part1.json)
+SIBP="--sibling-dir $SIDE --sibling-rows 128 --sibling-chunk-pairs $CHUNK"
 ORD="--sibling-loss order --sibling-order-margin 0.0556 --sibling-order-min-dq 0.0203"
 declare -A CELL=(
   [Zq_main]="$Z_V --w-sibling 0"
@@ -652,10 +716,13 @@ declare -A CELL=(
 
 # step 1b: memory smokes (GPU alone), then the warm cost probe
 $SB7/operator/operator_gpu_check.sh $IDLE_MIB || exit 8
-for c in Zq_order_s50 Zq_diff_s50; do
+[ ! -e $SB7/HOLD_MEM ] || exit 1
+for c in Zq_order_s50 Zq_diff_s50; do   # the smoke refuses an existing stem and an existing HOLD_MEM itself
   CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. $PY -u $SB7/prelaunch/sib_mem_smoke.py $SB7/mem_smoke_$c 3 $SL \
-    $COLLECT $TRAIN ${CELL[$c]} || { echo "$c: smoke ABORT at chunk 64" > $SB7/HOLD_MEM; exit 1; }
-done   # the registered chunk-32 fallback is a second, separately logged run of the same line with chunk 32
+    $COLLECT $TRAIN ${CELL[$c]} || { echo "$c: smoke ABORT at chunk 64" > $SB7/MEM_ABORT_C64_part1; exit 1; }
+done   # after MEM_ABORT_C64_part1: the registered fallback, the same line at --sibling-chunk-pairs 32 with stem
+       # mem_smoke_<c>_c32, run once; its abort writes HOLD_MEM (owner); its pass sets CHUNK=32 for every Part 1 cell
+echo "{\"chunk_pairs\": $CHUNK}" > $SB7/prelaunch/chunk_part1.json
 (cd $TW && PYTHONPATH=. $PY $SB/prelaunch/warm_sidecar.py warm $SB7/warm && \
   PYTHONPATH=. $PY $SB/prelaunch/warm_sidecar.py check $SB7/warm) || exit 1
 CUDA_VISIBLE_DEVICES=0 COST_PROBE_CACHE=warm PYTHONPATH=. $PY -u $SB7/prelaunch/cost_probe.py $SB7/cost_probe_sib.json 50 \
