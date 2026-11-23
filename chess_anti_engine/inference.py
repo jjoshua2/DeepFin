@@ -1233,6 +1233,22 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             return pol_np.copy(), wdl_np.copy()
         return pol_np, wdl_np
 
+    def evaluate_encoded_with_volatility(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """(pol, wdl, volatility), as the base class, under the forward bound: a call
+        above it runs the base forward once per chunk of at most N rows and
+        concatenates the three outputs in row order (Python volatility-aware Gumbel
+        search, roots and leaves). At most N rows: the base code unchanged."""
+        n = int(np.asarray(x).shape[0])
+        spans = self._chunk_spans(n)
+        if spans is None:
+            return super().evaluate_encoded_with_volatility(x, relations)
+        parts = [super(DirectGPUEvaluator, self).evaluate_encoded_with_volatility(
+            x[lo:hi], None if relations is None else relations[lo:hi]) for lo, hi in spans]
+        pol, wdl, vol = (np.concatenate([p[i] for p in parts]) for i in range(3))
+        return pol, wdl, vol
+
     def _cpu_async(
         self, rows: int, *, slot: int, relations: np.ndarray | None,
     ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:

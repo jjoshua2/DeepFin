@@ -21,6 +21,7 @@ from torch.utils._pytree import tree_flatten
 
 from chess_anti_engine.inference import DirectGPUEvaluator, forward_chunk_spans
 from chess_anti_engine.moves import POLICY_SIZE  # the evaluator's dense policy width (4672 search actions)
+from chess_anti_engine.moves.torch_maps import full_to_compact_index
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
 from chess_anti_engine.model import ModelConfig, build_model
@@ -237,7 +238,8 @@ def test_no_chunk_tensor_outlives_its_chunk() -> None:
             res = inner_legal(*a, **k)
         prev.extend(_storages(*(t for t in made if int(t.untyped_storage().data_ptr()) not in keep)))
         made.clear()
-        produced[0] += len(prev)
+        assert prev, "the legal step produced no tracked tensor (the check would be vacuous)"
+        produced[0] += 1
         return res
 
     ev._dense_forward_chunk = dense  # type: ignore[method-assign]
@@ -248,6 +250,7 @@ def test_no_chunk_tensor_outlives_its_chunk() -> None:
         pol, wdl = ev._dense_forward_on_stream(rows, slot=0, relations=None)
         assert tuple(pol.shape) == (rows, POLICY_SIZE)
         assert tuple(wdl.shape) == (rows, 3)
+        got = (pol.numpy().copy(), wdl.numpy().copy())   # compared by value below, outside the hooks
         del pol, wdl
         assert alive == [0] * 6
         assert seen[0] == 6  # the hook saw every chunk's outputs (not vacuous)
@@ -261,10 +264,66 @@ def test_no_chunk_tensor_outlives_its_chunk() -> None:
         )
         assert alive == [0] * 6
         assert seen[0] == 12
-        assert produced[0] >= 6 * 3  # each legal step's own tensors were tracked (not vacuous)
+        assert produced[0] == 6  # every legal step's own tensors were tracked (each one non-empty)
     finally:
         hook.remove()
         del m_any.forward_legal_policy
+    # the dense chunk loop CUDA uses, by value: each chunk's rows land at their own offset, equal
+    # to one call of that chunk alone (the same CPU kernels at the same batch size)
+    alone = DirectGPUEvaluator(model, device="cpu", max_batch=rows, legal_bf16=False)
+    want = [_evaluate(alone, x[lo:hi]) for lo, hi in forward_chunk_spans(rows, N)]
+    assert got[0].tobytes() == np.concatenate([p_ for p_, _ in want]).tobytes()
+    assert got[1].tobytes() == np.concatenate([w_ for _, w_ in want]).tobytes()
+
+
+def test_every_public_evaluate_entry_point_honours_the_bound() -> None:
+    """EVERY public ``evaluate*`` method of DirectGPUEvaluator (own or inherited), on
+    CPU at N: no network forward above N rows, and the call is counted as chunked.
+    A new entry point without a decision here fails the enumeration (the bound must
+    never be accepted by one entry and ignored by another)."""
+    model = _model()
+    rows = 5 * N + 3
+    ev = DirectGPUEvaluator(model, device="cpu", max_batch=rows, forward_chunk_rows=N, legal_bf16=False)
+    planes = ev.get_input_buffer(1).shape[1]
+    rng = np.random.default_rng(14)
+    x = _rows(rng, rows, planes)
+    counts = rng.integers(1, 6, size=rows).astype(np.int32)
+    flat = rng.integers(0, POLICY_SIZE, size=int(counts.sum())).astype(np.int32)
+
+    def staged(fn: Any) -> Any:
+        def go() -> Any:
+            ev.get_input_buffer(rows)[:] = x
+            return fn()
+        return go
+
+    calls: dict[str, Any] = {
+        "evaluate_encoded": lambda: ev.evaluate_encoded(x),
+        "evaluate_encoded_async": lambda: ev.evaluate_encoded_async(x),
+        "evaluate_encoded_with_volatility": lambda: ev.evaluate_encoded_with_volatility(x),
+        "evaluate_inplace": staged(lambda: ev.evaluate_inplace(rows)),
+        "evaluate_inplace_async": staged(lambda: ev.evaluate_inplace_async(rows)),
+        "evaluate_inplace_legal_bf16_async": staged(lambda: ev.evaluate_inplace_legal_bf16_async(rows, flat, counts)),
+        "evaluate_legal_bf16": lambda: ev.evaluate_legal_bf16(x, flat, counts),
+    }
+    public = {n for n in dir(DirectGPUEvaluator) if n.startswith("evaluate") and callable(getattr(DirectGPUEvaluator, n))}
+    assert public == set(calls), f"entry points without a chunking decision: {public ^ set(calls)}"
+    for name, call in calls.items():
+        before = ev.forward_chunk_stats["chunked_forwards"]
+        rec = _ForwardRows(model)
+        try:
+            call()
+        finally:
+            rec.remove()
+        seen = rec.dense + rec.legal
+        assert seen, name
+        assert max(seen) <= N, (name, seen)
+        assert sum(seen) == rows, (name, seen)
+        assert ev.forward_chunk_stats["chunked_forwards"] == before + 1, name
+    # the chunked volatility entry returns the same three outputs, in row order
+    plain = DirectGPUEvaluator(model, device="cpu", max_batch=rows, legal_bf16=False)
+    for got, want in zip(ev.evaluate_encoded_with_volatility(x), plain.evaluate_encoded_with_volatility(x)):
+        assert got.shape == want.shape
+        np.testing.assert_allclose(got, want, atol=1e-4)
 
 
 def test_chunks_slice_the_relations_input_with_their_rows() -> None:
@@ -373,6 +432,50 @@ def _bf16_ulp(magnitude: float) -> float:
     return float(2.0 ** (np.floor(np.log2(max(magnitude, 2.0 ** -126))) - 7))
 
 
+_SENTINEL = -1e8  # unmapped 4672 slots hold -1e9 (_policy_output_full); every learned logit is far above
+
+
+def _assert_policy_within_bf16(pol: np.ndarray, ref: np.ndarray, ulps: int = 2) -> None:
+    """Policy equality up to bf16 batching effects, on the LEARNED logits only.
+
+    The dense 4672 policy (and a compact pick of it at an unmapped action id) holds the
+    -1e9 sentinel in every slot the net has no output for. A tolerance taken from
+    max |ref| over all slots would then be bf16-spacing at 1e9, about 8e6, and pass a
+    zeroed or permuted policy. So: the sentinel slots must match exactly and be the same
+    slots; the learned slots are compared at their own largest magnitude."""
+    sent = ref <= _SENTINEL
+    assert np.array_equal(pol <= _SENTINEL, sent), "sentinel slots differ"
+    assert np.array_equal(pol[sent], ref[sent]), "sentinel values differ"
+    learned = ~sent
+    assert learned.any(), "no learned logits compared (vacuous)"
+    d = float(np.abs(pol[learned] - ref[learned]).max())
+    tol = ulps * _bf16_ulp(float(np.abs(ref[learned]).max()))
+    print(f"policy max|d| on learned logits {d:.3g} (tolerance {tol:.3g})")
+    assert d <= tol, (d, tol)
+
+
+def test_the_bf16_policy_comparison_is_not_vacuous() -> None:
+    """The CUDA bf16 comparisons' helper, on a real CPU policy: identical passes;
+    zeroing the learned logits fails; permuting them fails; one bf16 step passes."""
+    model = _model()
+    ev = DirectGPUEvaluator(model, device="cpu", max_batch=64, legal_bf16=False)
+    pol, _ = _evaluate(ev, _rows(np.random.default_rng(13), 40, ev.get_input_buffer(1).shape[1]))
+    assert (pol <= _SENTINEL).any()
+    assert (pol > _SENTINEL).any()
+    _assert_policy_within_bf16(pol.copy(), pol)
+    learned = pol > _SENTINEL
+    zeroed = pol.copy()
+    zeroed[learned] = 0.0
+    permuted = pol.copy()
+    permuted[learned] = np.random.default_rng(0).permutation(pol[learned])
+    shifted = pol.copy()
+    shifted[learned] += _bf16_ulp(float(np.abs(pol[learned]).max()))
+    for bad in (zeroed, permuted):
+        with pytest.raises(AssertionError):
+            _assert_policy_within_bf16(bad, pol)
+    _assert_policy_within_bf16(shifted, pol)
+
+
 def _peak_bytes(ev: DirectGPUEvaluator, x: np.ndarray) -> tuple[int, int, int]:
     """(allocated peak, requested peak, residual) device bytes of one call, each
     against ITS OWN base taken right before the call, from an EMPTY allocator cache.
@@ -417,10 +520,9 @@ def test_cuda_graph_chunks_replay_and_match_one_eager_forward_within_bf16_roundi
     # Both run under bf16 autocast and return the bf16 outputs widened to fp32, so a
     # batch-size-dependent kernel can move a value by one bf16 step at its own
     # magnitude; allow two steps at the largest magnitude, never more.
-    d_pol, d_wdl = float(np.abs(pol - pol1).max()), float(np.abs(wdl - wdl1).max())
-    tol_pol = 2 * _bf16_ulp(float(np.abs(pol1).max()))
+    _assert_policy_within_bf16(pol, pol1)
+    d_wdl = float(np.abs(wdl - wdl1).max())
     tol_wdl = 2 * _bf16_ulp(float(np.abs(wdl1).max()))
-    assert d_pol <= tol_pol, (d_pol, tol_pol)
     assert d_wdl <= tol_wdl, (d_wdl, tol_wdl)
 
 
@@ -476,7 +578,7 @@ def test_cuda_eager_chunks_above_the_graph_cap_use_their_own_device_copy() -> No
     assert stats["forward_chunks"] == 6
     assert stats["eager_over_max_rows"] == 5  # the five full chunks; the 3-row tail replays a graph
     pol1, wdl1 = _evaluate(DirectGPUEvaluator(model, **kw), x)
-    assert float(np.abs(pol - pol1).max()) <= 2 * _bf16_ulp(float(np.abs(pol1).max()))
+    _assert_policy_within_bf16(pol, pol1)
     assert float(np.abs(wdl - wdl1).max()) <= 2 * _bf16_ulp(float(np.abs(wdl1).max()))
 
 
@@ -492,7 +594,10 @@ def test_cuda_chunked_compact_legal_matches_unchunked() -> None:
     counts = rng.integers(0, 40, size=CUDA_ROWS).astype(np.int32)
     counts[CUDA_N] = 0
     counts[2 * CUDA_N:3 * CUDA_N] = 0
-    flat = rng.integers(0, POLICY_SIZE, size=int(counts.sum())).astype(np.int32)
+    # only action ids the compact net has an output for: an unmapped id picks the -1e9 sentinel,
+    # which compares nothing about the chunked forward
+    mapped = np.flatnonzero(full_to_compact_index(torch.device("cpu")).numpy() >= 0)
+    flat = rng.choice(mapped, size=int(counts.sum())).astype(np.int32)
     rec = _ForwardRows(model)
     try:
         a_pol, a_wdl = chunked.evaluate_legal_bf16(x, flat, counts)
@@ -508,6 +613,8 @@ def test_cuda_chunked_compact_legal_matches_unchunked() -> None:
     assert chunked.forward_chunk_stats["forward_chunks"] == 12
     # no network forward above N rows (the counter alone cannot see a loop that counts and then forwards all rows)
     spans = [hi - lo for lo, hi in forward_chunk_spans(CUDA_ROWS, CUDA_N)]
+    # spans + spans holds because max_batch == CUDA_ROWS: the sync entry's legacy pre-pad
+    # (_compiled_padded_batch_size) then returns CUDA_ROWS unpadded, as the async call forwards
     assert rec.legal == spans + spans, rec.legal   # sync then async: one compact-legal forward per span each
     assert rec.dense == [], rec.dense
     assert c_pol.tobytes() == a_pol.tobytes()
@@ -515,7 +622,7 @@ def test_cuda_chunked_compact_legal_matches_unchunked() -> None:
     a = torch.from_numpy(a_pol).view(torch.bfloat16).float().numpy()
     b = torch.from_numpy(b_pol).view(torch.bfloat16).float().numpy()
     assert a.shape == b.shape
-    assert float(np.abs(a - b).max()) <= 2 * _bf16_ulp(float(np.abs(b).max()))
+    _assert_policy_within_bf16(a, b)
     assert float(np.abs(a_wdl - b_wdl).max()) <= 1e-3
 
 
