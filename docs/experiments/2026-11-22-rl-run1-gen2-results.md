@@ -1,12 +1,13 @@
 # 2026-11-22: RL run 1, generation 2 — results
 
-Results of the pre-registered [generation-2 record](2026-11-22-rl-run1-generation2-zq-recal.md) (merged as
-`4ddf03b1e`, revision 5). Every reading below is judged only by that record's pre-committed rules. Stage 0 is
-complete. The generation-2 stages are still to run; their sections are named blanks.
+Results of the pre-registered [generation-2 record](2026-11-22-rl-run1-generation2-zq-recal.md)
+(merged as `4ddf03b1e`, revision 5, with the exact optimizer check and launcher recovery in
+[#1517](https://github.com/jjoshua2/DeepFin/pull/1517), revision 6). Stage 0 and generation 2 both completed.
+The registered verdict is **no second measured step**.
 
-**Bank.** `~/chess-artifacts/operations/rl-run1-gen2/` (`BANK_SHA256SUMS` [`2d6e1b67`], the sealed launch bank). It
-is read-only for this record. File stamps are sha256 prefixes of the file as cited; in the paths below, `G2/` means
-that directory.
+**Bank.** `~/chess-artifacts/operations/rl-run1-gen2/`. The original launch seal is
+`G2/BANK_SHA256SUMS.v5` [`2d6e1b67`] and the recovered launch seal is `G2/BANK_SHA256SUMS` [`d0542e31`].
+File stamps are SHA-256 prefixes. `G2/` means the bank directory.
 
 ## Stage 0: replication of match 8's player under a new seed
 
@@ -29,7 +30,7 @@ that directory.
   sha256 equals `played_sha256`.
 - Stage 0 is not "replicates", so **the "two measured steps" row of the licensing table is now unreachable** for this
   run, whatever generation 2 reads.
-- The rows still open, with the record's licensed-claim text quoted (record, "What this record can license"):
+- The possible rows after Stage 0, with the record's licensed-claim text quoted (record, "What this record can license"):
   - gen 2 vs gen 1 improves and gen 2 vs base improves: "**one measured step (step 2) and a cumulative improvement
     over the base; attribution between generations unread**";
   - gen 2 vs gen 1 improves and gen 2 vs base does not: "one measured step (step 2)";
@@ -38,9 +39,9 @@ that directory.
   - neither improves: "no second measured step".
 - **With Stage 0 not "replicates", attribution between generations is unread in every reachable outcome.** B6's
   escape, "attribution between generations unread unless Stage 0 replicated and gen 2 vs gen 1 improved", is closed.
-- **Option (ii), the fresh generation-1 replicate (record part C3), is not recommended by the record.** C3 recommends
-  it "only if Stage 0 reads unread and the owner wants step 1 confirmed before generation 2"; Stage 0 read
-  adoptable.
+- **Option (ii), the fresh generation-1 replicate (record part C3).** The record's advice against using it
+  before generation 2 applied to Stage 0's result. For the later decision after B6, see the registered
+  verdict below.
 
 ### Estimate (the record's estimator, on the banked games)
 
@@ -103,7 +104,7 @@ These are as reported by the operator and read from the bank files cited.
 
 **Attempt 2.**
 - The release line is `stage0 idle_mib=2398 2026-11-22T14:31:36-05:00`, the first line of
-  `G2/GPU_RELEASED_BY_OPERATOR` [`66473b70`] (its first line per stage wins; the operator replaced it for this attempt).
+  `G2/GPU_RELEASED_BY_OPERATOR.before_v6` [`66473b70`] (its first line per stage wins; the operator replaced it for this attempt).
   The file's second line, `gen2 …`, was appended later for the generation-2 stage (below); the stage0 line is
   untouched. A later append (for example a relaunch line) moves the whole-file stamp, so the stage0 line can be
   re-checked on its own: the file's first 47 bytes (that line and its newline) hash to `efee002a`, the stamp the
@@ -162,7 +163,8 @@ verdict. Source: `G2/gpu_scan.sh` [`949408e7`].
 
 ## Generation 2
 
-The blanks below are filled from the bank when each stage is read. Each is judged by its own rule in the record.
+The operator completed the run after recovering with the revision 6 launcher. The first training
+attempt remains in the bank. `G2/gen2/exit` [`47acd1b1`] records exit 0 at 23:11:01 ET on November 22.
 
 - **Memory smoke (3 updates, after Stage 0's verdict):** **PASS**, exit 0 at 16:46:16 (per the operator).
   `G2/gen2/smoke_mem.json` [`b2d0b1a1`]: `cpu_logic_smoke` false (a real GPU run), 722,742 rows, 1,412 batches in
@@ -170,19 +172,81 @@ The blanks below are filled from the bank when each stage is read. Each is judge
   (reserved now and peak reserved), wall 364 s. Per-update rows: `G2/gen2/smoke_mem.jsonl` [`55e32161`]. Log:
   `G2/gen2/smoke_mem.log` [`efb7ea1e`].
 
-**Generation-2 stage: launched.**
-- `G2/gen2/OWNER_GO` [`811e857b`], written 16:46:41: it quotes the owner's standing statement and cites Stage 0's
-  verdict and the smoke.
-- Release line `gen2 idle_mib=2181 2026-11-22T16:46:41-05:00` appended to `G2/GPU_RELEASED_BY_OPERATOR` [`66473b70`].
-- `G2/gen2/launch_gen2.sh` started under `setsid nohup`, output to `G2/gen2/run.out` (in progress as of 16:47; not stamped).
-- First step: `prelaunch/equiv_check.py`. `G2/gen2/equiv.started` [`96df781c`] reads 2026-11-22T16:46:54-05:00;
-  `G2/gen2/equiv.log` is in progress as of 16:47 (not stamped: its content is a B3 result and belongs in the B3 blank).
+### B2 and B3: collection and take effect
 
-The result blanks follow.
-- **B2 collect from `gen1_baked.pt`:** _blank: games, rows, wall, checks, bank file + stamp._
-- **B3 equivalence, collect checks and the take-effect proof:** _blank._
-- **B4 training of generation 2:** _blank: updates, losses, trunk2 determinism check, bank file + stamp._
-- **B5 per-generation recalibration (T, b):** _blank: fitted values, bounds check, bake verification._
-- **B6 match: gen 2 vs gen 1 (the eleventh reading; PRIMARY):** _blank: Elo [95% CI], seats, reading._
-- **B6 match: gen 2 vs the SL base (the twelfth reading):** _blank: Elo [95% CI], seats, reading._
-- **Licensed claim** (from `verdicts.json` under the record's table, with Stage 0 = adoptable): _blank._
+- The original generation-2 run used the baked generation-1 net from Stage 0. From 16:50:00 to 18:32:15 ET,
+  it collected **8,000 games and 796,341 policy rows in 42 shards** (102 min 15 s). The release for that
+  attempt is retained in `G2/GPU_RELEASED_BY_OPERATOR.before_v6` [`66473b70`].
+  Sources: `G2/gen2/collect.started` [`d4d77bb4`], `G2/gen2/collect.exit` [`9c2cf3a6`],
+  `G2/gen2/collect/gen_0001/collect/manifest.json` [`778b7ecd`].
+- The gate found 8,000 distinct game IDs, zero unresolved games, zero duplicates, no resumed workers, and
+  matching manifest and game row counts. It recorded a 49.74% draw rate and zero buffer-full flushes.
+  Source: `G2/gen2/collect_gate.json` [`983188fa`].
+- Against the pilot collection, rows per game rose from 95.25 to 99.54, draw rate from 49.00% to 49.74%,
+  mean game length from 111.57 to 116.02 plies, and draw share of outcome-target rows from 49.99% to 51.22%.
+  Both had zero buffer-full flushes. The collections used different seeds and position mixes.
+- The baked generation-1 model matched the external recalibration seat under autocast on the 1,218
+  hold-out rows available in the pilot's first shard (the check caps the sample at 2,048).
+  Mean absolute error was 0.000349 against seat rounding noise of 0.000993, with zero WDL argmax
+  disagreements. On the 39,135 generation-2 hold-out rows that stored the actor's root WDL
+  (`root_net_wdl`), mean absolute error was 0.00111 against the baked net and 0.03900 against the raw net.
+  The respective limits were at most 0.004 and at least 0.02. Sources:
+  `G2/gen2/equiv.json` [`16e5f1be`], `G2/gen2/take_effect_collect.json` [`eea29d8f`],
+  `G2/gen2/checks.exit` [`2e48032e`].
+
+### B4: Zq2 training and recovery
+
+- The pretraining trunk value/policy ratio was 1.209, within the registered [0.59, 1.35] sanity range.
+  The eight batch ratios had a mean of 1.253 and SE of 0.137. Source:
+  `G2/gen2/trunk2_verdict.json` [`bab8e9ae`].
+- The first training attempt finished, then the launcher refused the optimizer readback because the inherited
+  learning-rate ratio and the flat scheduler gave a slightly different matrix-group rate. Revision 6
+  compared the exact closed form, and accepted the earlier completed steps with their inputs unchanged.
+  The operator relaunched with the 20:11:44 ET release. The first model (SHA-256 prefix `1db00eca`) was
+  kept aside. The rerun model (prefix `5d019e5e`) differed byte for byte and was the source for the bake.
+  This was a descriptive comparison. Sources: `G2/gen2/arm_Zq2.first_attempt.json` [`5565cf92`],
+  `G2/GPU_RELEASED_BY_OPERATOR` [`1d815e88`], `G2/gen2/arm_Zq2.check.json` [`f11f1c76`],
+  `G2/gen2/gen2_baked.pt.json` [`68a005b5`].
+- The rerun took 467.65 s and passed every optimizer check. It completed **1,478 updates**, drawing
+  756,711 rows once each, with `w_wdl = 1.0` and search-WDL fraction 0.5. Recorded total loss was
+  1.58382 (policy 0.91928, blended WDL 0.66454). On 39,630 held-out rows, policy CE went from
+  0.91432 to 0.90298 and value NLL from 0.72084 to 0.68833. These are losses on the stored targets.
+  Sources: `G2/gen2/arm_Zq2.check.json` [`f11f1c76`],
+  `G2/gen2/arm_Zq2/gen_0001/train/metrics.json` [`859bc31a`].
+
+### B5: recalibration and bake
+
+- The fit toward baked generation 1 returned **T = 0.69965142, b = −0.24673345** on 39,630 held-out rows.
+  Both are inside the registered ranges (T 0.4951–1.4212, b −0.4542 to +0.2271). Cross-entropy to the
+  reference WDL went from 0.575319 to 0.558539. Source: `G2/gen2/fit2.log` [`6be395e0`].
+- Only the final WDL weights and bias changed in the bake. On 1,218 verification rows, the maximum logit
+  and probability errors were 5.87e−6 and 9.95e−8, within their limits of 1e−4 and 1e−5, and the policy
+  was bit identical. Both arena pools identify baked generation 2 as model SHA-256 prefix `5881d2af`.
+  Sources: `G2/gen2/gen2_baked.pt.json` [`68a005b5`], `G2/gen2/gen2_baked.pt.verify.json` [`eba7abbd`].
+
+### B6: registered strength readings
+
+Both matches used the pilot code pin `0c795fb7a`, the same 64-sim search on each side, T0.1, no Gumbel
+noise, production Syzygy and the 16-ply EVAL book. Each played 3,200 games in each seat, for 6,400 games
+over 1,600 opening clusters. All estimates below are in generation 2's direction, including seat B.
+The estimator clusters by opening key and maps the score interval to Elo.
+
+| Reading | Seed | Seat A Elo [95% CI] | Seat B Elo [95% CI] | Pooled Elo [95% CI] | Registered result |
+|---|---:|---|---|---|---|
+| 11. Generation 2 vs baked generation 1 (primary) | 2026112283 | −4.45 [−12.86, +3.95] | +6.73 [−1.76, +15.23] | **+1.14 [−5.04, +7.32]** | Adoptable |
+| 12. Generation 2 vs the SL base | 2026112284 | +2.61 [−6.46, +11.67] | +5.10 [−3.31, +13.52] | **+3.85 [−2.46, +10.17]** | Adoptable |
+
+- The seat-offset intervals both include zero: −5.59 [−11.36, +0.17] vs generation 1 and
+  −1.25 [−7.30, +4.80] vs the SL base. Neither match had an unresolved or capped game.
+- Sources: `G2/gen2/arenas/g2_vs_g1/pool.json` [`cce191d3`] and
+  `G2/gen2/arenas/g2_vs_g1/results.jsonl` [`70dca585`],
+  `G2/gen2/arenas/g2_vs_base/pool.json` [`e85d60f9`] and
+  `G2/gen2/arenas/g2_vs_base/results.jsonl` [`245aa537`].
+
+### Licensed claim
+
+**No second measured step.** Both lower bounds clear −10 Elo and fall below zero. Both upper bounds are
+positive. This yields adoptable on both matches, with neither improvement nor damage under the registered
+rules. There is no measured cumulative improvement over the SL base, and Stage 0 did not replicate the
+first step. The terminal verdict is `G2/gen2/verdicts.json` [`f02646f7`]. B6 leaves the next
+experiment choice with the owner.
